@@ -325,11 +325,33 @@ def get_buy_amount(name: str, ticker: str) -> float:
 
 def get_holding_row(name: str, ticker: str):
     t = normalize_ticker(ticker)
+    n = normalize_text(name)
 
-    if t in portfolio_ticker_map:
-        return portfolio_ticker_map[t]
+    # 1순위: 티커입력 정확매칭
+    matched = portfolio_df[
+        portfolio_df["티커입력"].astype(str).apply(normalize_ticker) == t
+    ]
+    if not matched.empty:
+        return matched.iloc[0]
 
-    matched = portfolio_df[portfolio_df["자산명"].str.lower() == normalize_text(name)]
+    # 2순위: 자산명 정확매칭
+    matched = portfolio_df[
+        portfolio_df["자산명"].astype(str).apply(normalize_text) == n
+    ]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 3순위: 티커 부분매칭
+    matched = portfolio_df[
+        portfolio_df["티커입력"].astype(str).str.lower().str.contains(t, na=False)
+    ]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 4순위: 자산명 부분매칭
+    matched = portfolio_df[
+        portfolio_df["자산명"].astype(str).str.lower().str.contains(n, na=False)
+    ]
     if not matched.empty:
         return matched.iloc[0]
 
