@@ -7,19 +7,16 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # -------------------------------------------------
-# 1. 기본 설정
+# 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v7.8 (현재가 완벽연동)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v8.0 (완벽 연동)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"     # [3] 투자 데이터
 ETF_SHEET_GID = "604547263"        # [4] 주식/채권(ETF)
 CONTROL_SHEET_GID = "1420210871"   # 관제탑
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly", "https://www.googleapis.com/auth/drive.readonly"]
 
 st.markdown("""
 <style>
@@ -32,15 +29,12 @@ st.markdown("""
     .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; }
     .highlight { font-size: 1.4em; font-weight: bold; color: #fbbf24; text-shadow: 1px 1px 2px #000; }
     .score-detail { font-size: 0.85em; font-weight: normal; color: #cbd5e1; margin-top: 8px; }
-    .stTabs [data-baseweb="tab-list"] { background-color: #111827; border-radius: 8px; padding: 5px; }
-    .stTabs [data-baseweb="tab"] { color: #94a3b8; font-weight: bold; }
-    .stTabs [aria-selected="true"] { color: #ffffff !important; background-color: #3b82f6 !important; border-radius: 5px; }
     div[data-baseweb="select"] > div { background-color: #1e293b !important; color: white !important; }
     ul[data-baseweb="menu"] li { color: #000000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v7.8")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v8.0")
 
 # -------------------------------------------------
 # 2. 구글 보안 인증 및 데이터 로드
@@ -77,8 +71,7 @@ def normalize_ticker(t): return str(t).strip().lower().replace(".ks", "").replac
 def parse_num(v):
     if pd.isna(v): return 0.0
     s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
-    if s == "": return 0.0
-    return pd.to_numeric(s, errors="coerce")
+    return pd.to_numeric(s, errors="coerce") if s != "" else 0.0
 
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
@@ -136,7 +129,7 @@ for i, (n, info) in enumerate(macro_res.items()):
     m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------
-# 5. 구글시트 읽기
+# 5. 구글시트 읽기 (수정된 배관 적용!)
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def load_invest_sheet():
@@ -152,9 +145,31 @@ def load_portfolio_sheet():
     data = raw.iloc[5:35, 1:16].copy()   # B:P
     header = raw.iloc[4, 1:16].tolist()
     data.columns = header
-    df = pd.DataFrame({"통화": data.iloc[:, 0], "자산클래스": data.iloc[:, 1], "국가": data.iloc[:, 2], "자산구분": data.iloc[:, 3], "자산명": data.iloc[:, 4], "요약": data.iloc[:, 5], "티커입력": data.iloc[:, 6], "보유량": data.iloc[:, 7], "매입가": data.iloc[:, 8], "현재가(시트)": data.iloc[:, 9], "수익률": data.iloc[:, 10], "평가손익": data.iloc[:, 11], "평가금액": data.iloc[:, 12], "원화환산": data.iloc[:, 13]})
-    for col in ["통화", "자산클래스", "국가", "자산구분", "자산명", "요약", "티커입력"]: df[col] = df[col].astype(str).str.strip()
-    for col in ["보유량", "매입가", "현재가(시트)", "수익률", "평가손익", "평가금액", "원화환산"]: df[col] = df[col].apply(parse_num).fillna(0)
+
+    # 대장님이 전달해주신 완벽한 인덱싱 코드 적용
+    df = pd.DataFrame({
+        "통화": data.iloc[:, 0],        # B
+        "자산클래스": data.iloc[:, 1],  # C
+        "국가": data.iloc[:, 2],        # D
+        "자산구분": data.iloc[:, 3],    # E
+        "자산명": data.iloc[:, 4],      # F
+        "요약": data.iloc[:, 5],        # G
+        "티커입력": data.iloc[:, 6],    # H
+        "보유량": data.iloc[:, 7],      # I
+        "매입단가": data.iloc[:, 9],    # K (매입단가 수정!)
+        "현재가(시트)": data.iloc[:, 10], # L
+        "수익률": data.iloc[:, 11],     # M
+        "평가손익": data.iloc[:, 12],   # N
+        "평가금액": data.iloc[:, 13],   # O
+        "원화환산": data.iloc[:, 14],   # P
+    })
+
+    for col in ["통화", "자산클래스", "국가", "자산구분", "자산명", "요약", "티커입력"]:
+        df[col] = df[col].astype(str).str.strip()
+
+    for col in ["보유량", "매입단가", "현재가(시트)", "수익률", "평가손익", "평가금액", "원화환산"]:
+        df[col] = df[col].apply(parse_num).fillna(0)
+
     return df
 
 @st.cache_data(ttl=300)
@@ -214,7 +229,7 @@ def get_holding_row(name: str, ticker: str):
 def get_my_price(name: str, ticker: str) -> float:
     row = get_holding_row(name, ticker)
     if row is None: return 0.0
-    try: return float(row["매입가"]) if pd.notna(row["매입가"]) else 0.0
+    try: return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0 # 매입단가 적용 완료
     except: return 0.0
 
 def has_position(name: str, ticker: str) -> bool:
@@ -367,6 +382,11 @@ with tab1:
     st.subheader("CCTV 통합 통제실")
     st.write(f'시드머니: {invest_data["seed_money"]:,.0f}원 | 현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
     st.caption("※ 본 화면은 실시간 가격 기준으로 재계산되어 시트 종가판정과 다를 수 있음")
+    
+    # 🔍 대장님용 투명 배관 (디버깅 데이터 원본)
+    with st.expander("🛠️ 엑셀 원본 데이터 확인 (디버그용)"):
+        st.write(portfolio_df[["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"]].head(10))
+
     st.dataframe(get_all_summary(), use_container_width=True, height=720, hide_index=True)
 
 with tab2:
@@ -387,7 +407,6 @@ with tab2:
         with c1:
             st.markdown(f"<h2>📊 {sel_name}</h2>", unsafe_allow_html=True)
             
-            # [수정] 현재가를 확실하게 띄우는 로직 부활
             st.markdown(
                 f"<div class='info-panel'>실시간 현재가: <span class='highlight'>{format_currency(calc['cur_p'], sel_ticker)}</span></div>",
                 unsafe_allow_html=True
