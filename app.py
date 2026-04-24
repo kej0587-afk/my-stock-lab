@@ -358,6 +358,14 @@ def get_holding_row(name: str, ticker: str):
     return None
 
 def get_my_price(name: str, ticker: str) -> float:
+    row = get_holding_row(sel_name, sel_ticker)
+st.write("디버그:", None if row is None else {
+    "자산명": row["자산명"],
+    "티커입력": row["티커입력"],
+    "매입가": row["매입가"],
+    "보유량": row["보유량"],
+    "평가금액": row["평가금액"],
+})
     row = get_holding_row(name, ticker)
     if row is None:
         return 0.0
