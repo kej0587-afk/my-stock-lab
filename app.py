@@ -499,7 +499,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         and adj_tech_score >= 4.0
     )
 
-        if is_etf:
+    if is_etf:
         if target_w == 0 and has_pos:
             dec, col = "🚨비편입 자산: 정리 검토", "#dc2626"
         elif target_w == 0 and not has_pos:
@@ -592,7 +592,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "dec": dec,
         "col": col,
     }
-
+    
 # -------------------------------------------------
 # 8. 요약 전광판
 # -------------------------------------------------
@@ -675,11 +675,11 @@ with tab2:
                 unsafe_allow_html=True
             )
             
-            if has_pos and my_price > 0:
-    st.markdown(
-        f"<div class='info-panel'><b>평단가</b><br><span class='highlight'>{format_currency(my_price, sel_ticker)}</span></div>",
-        unsafe_allow_html=True
-    )
+                    if has_pos and my_price > 0:
+                st.markdown(
+                    f"<div class='info-panel'><b>평단가</b><br><span class='highlight'>{format_currency(my_price, sel_ticker)}</span></div>",
+                    unsafe_allow_html=True
+                )
             st.markdown(
                 f"<div class='info-panel'><b>비중</b><br>목표: {calc['target_w']:.2f}% | 현재: {calc['current_w']:.2f}%<br>부족 매수액: {calc['buy_amount']:,.0f}원</div>",
                 unsafe_allow_html=True
@@ -727,14 +727,14 @@ with tab2:
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
 
-            if has_pos and my_price > 0:
-    fig.add_hline(
-        y=my_price,
-        line_dash="dash",
-        line_color="#22c55e",
-        annotation_text="내 평단가",
-        annotation_position="bottom right"
-    )
+                     if has_pos and my_price > 0:
+                fig.add_hline(
+                    y=my_price,
+                    line_dash="dash",
+                    line_color="#22c55e",
+                    annotation_text="내 평단가",
+                    annotation_position="bottom right"
+                )
 
             fig.update_layout(
                 template="plotly_dark",
