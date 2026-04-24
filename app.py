@@ -500,22 +500,26 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     )
 
     if is_etf:
-        if current_w > target_w and target_w > 0:
-            dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
-        elif current_w >= target_w and target_w > 0:
-            dec, col = "⏸️비중 충족: 관망", "#d97706"
-        elif mfi_now >= 85 and pct_b_now >= 0.98:
-            dec, col = "⚠️극단과열: 소액매수만", "#d97706"
-        elif mfi_now >= 80:
-            dec, col = "⚠️단기과열: 신규는 속도조절", "#d97706"
-        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
-            dec, col = "🎯ETF 눌림목: 분할매수", "#8b5cf6"
-        elif adj_tech_score >= 4:
-            dec, col = "✅분할매수", "#16a34a"
-        elif adj_tech_score >= 2:
-            dec, col = "⏳관망/소액매수", "#64748b"
-        else:
-            dec, col = "🔍대기: 다음 기회 탐색", "#64748b"
+    if target_w == 0 and has_pos:
+        dec, col = "🚨비편입 자산: 정리 검토", "#dc2626"
+    elif target_w == 0 and not has_pos:
+        dec, col = "🚫비편입 자산: 신규매수 제외", "#64748b"
+    elif current_w > target_w:
+        dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
+    elif current_w >= target_w and target_w > 0:
+        dec, col = "⏸️비중 충족: 관망", "#d97706"
+    elif mfi_now >= 85 and pct_b_now >= 0.98:
+        dec, col = "⚠️극단과열: 소액매수만", "#d97706"
+    elif mfi_now >= 80:
+        dec, col = "⚠️단기과열: 신규는 속도조절", "#d97706"
+    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
+        dec, col = "🎯ETF 눌림목: 분할매수", "#8b5cf6"
+    elif adj_tech_score >= 4:
+        dec, col = "✅분할매수", "#16a34a"
+    elif adj_tech_score >= 2:
+        dec, col = "⏳관망/소액매수", "#64748b"
+    else:
+        dec, col = "🔍대기: 다음 기회 탐색", "#64748b"
     else:
         if fin_score == 1:
             dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
@@ -670,6 +674,12 @@ with tab2:
                 f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(calc['cur_p'], sel_ticker)}</span></div>",
                 unsafe_allow_html=True
             )
+            
+            if has_pos and my_price > 0:
+    st.markdown(
+        f"<div class='info-panel'><b>평단가</b><br><span class='highlight'>{format_currency(my_price, sel_ticker)}</span></div>",
+        unsafe_allow_html=True
+    )
             st.markdown(
                 f"<div class='info-panel'><b>비중</b><br>목표: {calc['target_w']:.2f}% | 현재: {calc['current_w']:.2f}%<br>부족 매수액: {calc['buy_amount']:,.0f}원</div>",
                 unsafe_allow_html=True
@@ -717,14 +727,14 @@ with tab2:
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
 
-            if my_price > 0:
-                fig.add_hline(
-                    y=my_price,
-                    line_dash="dash",
-                    line_color="#22c55e",
-                    annotation_text="내 평단가",
-                    annotation_position="bottom right"
-                )
+            if has_pos and my_price > 0:
+    fig.add_hline(
+        y=my_price,
+        line_dash="dash",
+        line_color="#22c55e",
+        annotation_text="내 평단가",
+        annotation_position="bottom right"
+    )
 
             fig.update_layout(
                 template="plotly_dark",
