@@ -352,60 +352,98 @@ TICKER_MAP = {
 
 @st.cache_data(ttl=300)
 def get_rs_score(name, ticker, asset_class):
-    # 1년 비교로 변경
+    # 비교 기준
     if asset_class == "kr_stock":
-        bench = "069500.KS"       # KODEX200
-        strong_th = 0.15
-        normal_th = -0.08
-
+        bench = "069500.KS"      # KODEX200
     elif asset_class == "us_stock":
-        bench = "QQQM"            # 미국 개별 성장주
-        strong_th = 0.15
-        normal_th = -0.08
-
+        bench = "QQQM"           # 미국 개별 성장주
     elif asset_class == "us_etf_nasdaq":
-        bench = "379810.KS"       # 나스닥 본체
-        strong_th = 0.08
-        normal_th = -0.10
-
+        bench = "379810.KS"      # 나스닥100
     elif asset_class == "us_etf_sp":
-        bench = "379810.KS"       # 네 기준대로 나스닥 비교
-        strong_th = 0.05
-        normal_th = -0.12
-
+        bench = "379810.KS"      # 네 기준대로 나스닥100 비교
     elif asset_class == "kr_etf":
         bench = "069500.KS"
-        strong_th = 0.08
-        normal_th = -0.10
-
     else:
         return 1, "➖보통"
 
+    # 자기 자신/동일 축 예외
     if normalize_ticker(ticker) == normalize_ticker(bench):
         return 1, "➖보통"
 
+    # 데이터 로드
     stock_df = load_price_df(ticker, period="1y")
     bench_df = load_price_df(bench, period="1y")
     if stock_df.empty or bench_df.empty:
         return 1, "➖보통"
 
-    stock_ret = stock_df["Close"].pct_change(252).iloc[-1]
-    bench_ret = bench_df["Close"].pct_change(252).iloc[-1]
+    # 1년 수익률
+    stock_ret = stock_df["Close"].iloc[-1] / stock_df["Close"].iloc[0] - 1
+    bench_ret = bench_df["Close"].iloc[-1] / bench_df["Close"].iloc[0] - 1
     diff = stock_ret - bench_ret
 
-    # 네 체감값 보정
-    if name in ["QQQM", "나스닥"] and asset_class == "us_etf_nasdaq":
-        return 1, "➖보통"
-    if name == "QLD" and asset_class == "us_etf_nasdaq":
-        return 2, "🚀강함" if diff >= 0 else (1, "➖보통")
-    if name == "TQQQ" and asset_class == "us_etf_nasdaq":
-        return 2, "🚀강함" if diff >= 0 else (1, "➖보통")
+    # ---------- 자산군별 판정 ----------
+    # 한국 개별주
+    if asset_class == "kr_stock":
+        if diff >= 0.15:
+            return 2, "🚀강함"
+        elif diff >= -0.08:
+            return 1, "➖보통"
+        else:
+            return 0, "🐢약함"
 
-    if diff >= strong_th:
-        return 2, "🚀강함"
-    elif diff >= normal_th:
-        return 1, "➖보통"
-    return 0, "🐢약함"
+    # 미국 개별주
+    if asset_class == "us_stock":
+        if diff >= 0.15:
+            return 2, "🚀강함"
+        elif diff >= -0.08:
+            return 1, "➖보통"
+        else:
+            return 0, "🐢약함"
+
+    # 나스닥 계열 ETF
+    if asset_class == "us_etf_nasdaq":
+        # 본체는 보통
+        if name in ["나스닥", "나스닥100", "QQQM"]:
+            return 1, "➖보통"
+
+        # 레버리지는 나스닥보다만 앞서면 강함
+        if name in ["QLD", "TQQQ"]:
+            if diff >= 0:
+                return 2, "🚀강함"
+            elif diff >= -0.10:
+                return 1, "➖보통"
+            else:
+                return 0, "🐢약함"
+
+        if diff >= 0.08:
+            return 2, "🚀강함"
+        elif diff >= -0.10:
+            return 1, "➖보통"
+        else:
+            return 0, "🐢약함"
+
+    # S&P/다우 계열 ETF
+    if asset_class == "us_etf_sp":
+        if diff >= 0.05:
+            return 2, "🚀강함"
+        elif diff >= -0.12:
+            return 1, "➖보통"
+        else:
+            return 0, "🐢약함"
+
+    # 한국 ETF
+    if asset_class == "kr_etf":
+        if name.lower() in ["kodex 200", "kodex200"]:
+            return 1, "➖보통"
+
+        if diff >= 0.08:
+            return 2, "🚀강함"
+        elif diff >= -0.10:
+            return 1, "➖보통"
+        else:
+            return 0, "🐢약함"
+
+    return 1, "➖보통"
 
 
 # -------------------------------------------------
