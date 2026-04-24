@@ -7,7 +7,7 @@ import ta
 # -------------------------------------------------
 # 1. 기본 설정
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v7.2", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v7.3", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 
@@ -48,7 +48,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v7.2")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v7.3")
 
 
 # -------------------------------------------------
@@ -59,23 +59,19 @@ def format_currency(val, ticker):
         return f"₩{int(val):,}"
     return f"${val:,.2f}"
 
-
 def normalize_text(x):
     return str(x).strip().lower()
-
 
 def normalize_ticker(t):
     return str(t).strip().lower().replace(".ks", "").replace(".kq", "")
 
-
 def parse_num(v):
     if pd.isna(v):
         return 0.0
-    return pd.to_numeric(
-        str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip(),
-        errors="coerce"
-    ) if str(v).strip() != "" else 0.0
-
+    s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
+    if s == "":
+        return 0.0
+    return pd.to_numeric(s, errors="coerce")
 
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
@@ -88,7 +84,6 @@ def load_price_df(ticker, period="1y"):
     df.dropna(inplace=True)
     return df
 
-
 def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
     if last_sqz_on and not prev_sqz_on:
         return "⏳재압축"
@@ -98,7 +93,6 @@ def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
         return "🚀해제직후"
     return "➡️해제유지"
 
-
 def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     if last_macd > last_sig and prev_macd <= prev_sig:
         return 2, "🔥매수신호(골든크로스)"
@@ -107,7 +101,6 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     elif last_macd < last_sig and prev_macd >= prev_sig:
         return -2, "📉하락주의(데드크로스)"
     return 0, "⏳추세관망"
-
 
 def get_fin_label_map():
     return {
@@ -170,7 +163,6 @@ def get_macro_analysis():
     penalty = 2.0 if risk >= 4 else (1.5 if risk >= 2.5 else (0.5 if risk >= 1.5 else 0))
     return results, risk, penalty
 
-
 macro_res, m_risk, m_penalty = get_macro_analysis()
 
 m_cols = st.columns(len(macro_res))
@@ -193,21 +185,20 @@ def load_invest_sheet():
     current_asset = parse_num(raw.iloc[5, 15])   # P6
     cum_profit = parse_num(raw.iloc[5, 16])      # Q6
 
-    asset_class = raw.iloc[5:13, 1:6].copy()     # B:F, 6~13행
-    country = raw.iloc[13:20, 1:6].copy()        # B:F, 14~20행
-    position = raw.iloc[20:26, 1:6].copy()       # B:F, 21~26행
-    right_summary = raw.iloc[6:19, 15:18].copy() # P:R, 7~19행
+    asset_class = raw.iloc[5:13, 1:6].copy()
+    country = raw.iloc[13:20, 1:6].copy()
+    position = raw.iloc[20:26, 1:6].copy()
+    right_summary = raw.iloc[6:19, 15:18].copy()
 
     return {
-        "seed_money": float(seed_money),
-        "current_asset": float(current_asset),
-        "cum_profit": float(cum_profit),
+        "seed_money": float(seed_money) if pd.notna(seed_money) else 0.0,
+        "current_asset": float(current_asset) if pd.notna(current_asset) else 0.0,
+        "cum_profit": float(cum_profit) if pd.notna(cum_profit) else 0.0,
         "asset_class": asset_class,
         "country": country,
         "position": position,
         "right_summary": right_summary
     }
-
 
 @st.cache_data(ttl=300)
 def load_portfolio_sheet():
@@ -243,7 +234,6 @@ def load_portfolio_sheet():
 
     return df
 
-
 @st.cache_data(ttl=300)
 def load_control_sheet():
     raw = pd.read_csv(CONTROL_SHEET_URL, header=None)
@@ -260,7 +250,6 @@ def load_control_sheet():
 
     return block
 
-
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
@@ -274,12 +263,10 @@ portfolio_value_map = {
     if normalize_text(row["자산명"]) != ""
 }
 
-
 def get_current_weight(name: str) -> float:
     if total_eval <= 0:
         return 0.0
     return round((portfolio_value_map.get(normalize_text(name), 0.0) / total_eval) * 100, 2)
-
 
 def get_target_weight_from_sheet(name: str, ticker: str) -> float:
     t = normalize_ticker(ticker)
@@ -294,7 +281,6 @@ def get_target_weight_from_sheet(name: str, ticker: str) -> float:
 
     return 0.0
 
-
 def get_sheet_current_weight(name: str, ticker: str) -> float:
     t = normalize_ticker(ticker)
     matched = control_df[control_df["티커"] == t]
@@ -307,7 +293,6 @@ def get_sheet_current_weight(name: str, ticker: str) -> float:
         return float(matched.iloc[0]["현재비중"])
 
     return get_current_weight(name)
-
 
 def get_buy_amount(name: str, ticker: str) -> float:
     target_w = get_target_weight_from_sheet(name, ticker)
@@ -350,9 +335,11 @@ TICKER_MAP = {
 }
 
 
+# -------------------------------------------------
+# 6. RS 함수 (네 시트 수식 그대로)
+# -------------------------------------------------
 @st.cache_data(ttl=300)
 def get_rs_score(name, ticker, asset_class):
-    # 비교 기준
     if asset_class == "kr_stock":
         bench = "069500.KS"      # KODEX200
     elif asset_class == "us_stock":
@@ -366,88 +353,45 @@ def get_rs_score(name, ticker, asset_class):
     else:
         return 1, "➖보통"
 
-    # 자기 자신/동일 축 예외
     if normalize_ticker(ticker) == normalize_ticker(bench):
         return 1, "➖보통"
 
-    # 데이터 로드
-    stock_df = load_price_df(ticker, period="1y")
-    bench_df = load_price_df(bench, period="1y")
+    stock_df = load_price_df(ticker, period="3mo")
+    bench_df = load_price_df(bench, period="3mo")
     if stock_df.empty or bench_df.empty:
         return 1, "➖보통"
 
-    # 1년 수익률
-    stock_ret = stock_df["Close"].iloc[-1] / stock_df["Close"].iloc[0] - 1
-    bench_ret = bench_df["Close"].iloc[-1] / bench_df["Close"].iloc[0] - 1
-    diff = stock_ret - bench_ret
+    s = stock_df["Close"].dropna().reset_index(drop=True)
+    b = bench_df["Close"].dropna().reset_index(drop=True)
 
-    # ---------- 자산군별 판정 ----------
-    # 한국 개별주
-    if asset_class == "kr_stock":
-        if diff >= 0.15:
-            return 2, "🚀강함"
-        elif diff >= -0.08:
-            return 1, "➖보통"
-        else:
-            return 0, "🐢약함"
+    min_len = min(len(s), len(b))
+    s = s.iloc[-min_len:].reset_index(drop=True)
+    b = b.iloc[-min_len:].reset_index(drop=True)
 
-    # 미국 개별주
-    if asset_class == "us_stock":
-        if diff >= 0.15:
-            return 2, "🚀강함"
-        elif diff >= -0.08:
-            return 1, "➖보통"
-        else:
-            return 0, "🐢약함"
+    if min_len < 11:
+        return 1, "➖보통"
 
-    # 나스닥 계열 ETF
-    if asset_class == "us_etf_nasdaq":
-        # 본체는 보통
-        if name in ["나스닥", "나스닥100", "QQQM"]:
-            return 1, "➖보통"
+    stock_now = float(s.iloc[-1])
+    stock_10d = float(s.iloc[-11])
+    market_now = float(b.iloc[-1])
+    market_10d = float(b.iloc[-11])
 
-        # 레버리지는 나스닥보다만 앞서면 강함
-        if name in ["QLD", "TQQQ"]:
-            if diff >= 0:
-                return 2, "🚀강함"
-            elif diff >= -0.10:
-                return 1, "➖보통"
-            else:
-                return 0, "🐢약함"
+    if market_now == 0 or market_10d == 0:
+        return 1, "➖보통"
 
-        if diff >= 0.08:
-            return 2, "🚀강함"
-        elif diff >= -0.10:
-            return 1, "➖보통"
-        else:
-            return 0, "🐢약함"
+    rs_now = stock_now / market_now
+    rs_10d = stock_10d / market_10d
 
-    # S&P/다우 계열 ETF
-    if asset_class == "us_etf_sp":
-        if diff >= 0.05:
-            return 2, "🚀강함"
-        elif diff >= -0.12:
-            return 1, "➖보통"
-        else:
-            return 0, "🐢약함"
-
-    # 한국 ETF
-    if asset_class == "kr_etf":
-        if name.lower() in ["kodex 200", "kodex200"]:
-            return 1, "➖보통"
-
-        if diff >= 0.08:
-            return 2, "🚀강함"
-        elif diff >= -0.10:
-            return 1, "➖보통"
-        else:
-            return 0, "🐢약함"
-
-    return 1, "➖보통"
+    if rs_now > rs_10d * 1.03:
+        return 2, "🚀강함"
+    elif rs_now < rs_10d * 0.97:
+        return 0, "🐢약함"
+    else:
+        return 1, "➖보통"
 
 
 # -------------------------------------------------
-# 6. 요약 전광판
+# 7. 요약 전광판
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def get_all_summary():
@@ -569,7 +513,7 @@ def get_all_summary():
 
 
 # -------------------------------------------------
-# 7. UI
+# 8. UI
 # -------------------------------------------------
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 개별 상세 관제탑"])
 
