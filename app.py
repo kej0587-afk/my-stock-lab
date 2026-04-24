@@ -109,7 +109,7 @@ def get_macro_analysis():
         cur = float(data["Close"].iloc[-1])
         prev_m = float(data["Close"].iloc[-22]) if len(data) >= 22 else float(data["Close"].iloc[0])
         chg = ((cur - prev_m) / prev_m) * 100
-        icon = "🔺" if chg > 2.0 else ("🔻" if chg < -2.0 else "➖")
+        icon = "🔺" if chg > 0.5 else ("🔻" if chg < -0.5 else "➖")
         if name in ["10Y 금리", "유가", "환율"]:
             if icon == "🔺": macro_trend += 0.5
             elif icon == "🔻": macro_trend -= 0.5
