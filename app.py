@@ -146,23 +146,23 @@ def load_portfolio_sheet():
     header = raw.iloc[4, 1:16].tolist()
     data.columns = header
 
-df = pd.DataFrame({
-    "순번": data.iloc[:, 0],          # B
-    "통화": data.iloc[:, 1],          # C
-    "자산클래스": data.iloc[:, 2],    # D
-    "국가": data.iloc[:, 3],          # E
-    "자산구분": data.iloc[:, 4],      # F
-    "자산명": data.iloc[:, 5],        # G
-    "요약": data.iloc[:, 6],          # H
-    "티커입력": data.iloc[:, 7],      # I
-    "보유량": data.iloc[:, 8],        # J
-    "매입단가": data.iloc[:, 9],      # K
-    "현재가(시트)": data.iloc[:, 10],  # L
-    "수익률": data.iloc[:, 11],       # M
-    "평가손익": data.iloc[:, 12],     # N
-    "평가금액": data.iloc[:, 13],     # O
-    "원화환산": data.iloc[:, 14],     # P
-})
+    df = pd.DataFrame({
+        "순번": data.iloc[:, 0],          # B
+        "통화": data.iloc[:, 1],          # C
+        "자산클래스": data.iloc[:, 2],    # D
+        "국가": data.iloc[:, 3],          # E
+        "자산구분": data.iloc[:, 4],      # F
+        "자산명": data.iloc[:, 5],        # G
+        "요약": data.iloc[:, 6],          # H
+        "티커입력": data.iloc[:, 7],      # I
+        "보유량": data.iloc[:, 8],        # J
+        "매입단가": data.iloc[:, 9],      # K
+        "현재가(시트)": data.iloc[:, 10],  # L
+        "수익률": data.iloc[:, 11],       # M
+        "평가손익": data.iloc[:, 12],     # N
+        "평가금액": data.iloc[:, 13],     # O
+        "원화환산": data.iloc[:, 14],     # P
+    })
 
     for col in ["순번", "통화", "자산클래스", "국가", "자산구분", "자산명", "요약", "티커입력"]:
         df[col] = df[col].astype(str).str.strip()
@@ -228,9 +228,9 @@ def get_holding_row(name: str, ticker: str):
 
 def get_my_price(name: str, ticker: str) -> float:
     row = get_holding_row(name, ticker)
-    if row is None: return 0.0
-    try: return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0 
-    except: return 0.0
+    if row is None:
+        return 0.0
+    return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0
 
 def has_position(name: str, ticker: str) -> bool:
     row = get_holding_row(name, ticker)
