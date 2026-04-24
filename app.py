@@ -499,27 +499,27 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         and adj_tech_score >= 4.0
     )
 
-    if is_etf:
-    if target_w == 0 and has_pos:
-        dec, col = "🚨비편입 자산: 정리 검토", "#dc2626"
-    elif target_w == 0 and not has_pos:
-        dec, col = "🚫비편입 자산: 신규매수 제외", "#64748b"
-    elif current_w > target_w:
-        dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
-    elif current_w >= target_w and target_w > 0:
-        dec, col = "⏸️비중 충족: 관망", "#d97706"
-    elif mfi_now >= 85 and pct_b_now >= 0.98:
-        dec, col = "⚠️극단과열: 소액매수만", "#d97706"
-    elif mfi_now >= 80:
-        dec, col = "⚠️단기과열: 신규는 속도조절", "#d97706"
-    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
-        dec, col = "🎯ETF 눌림목: 분할매수", "#8b5cf6"
-    elif adj_tech_score >= 4:
-        dec, col = "✅분할매수", "#16a34a"
-    elif adj_tech_score >= 2:
-        dec, col = "⏳관망/소액매수", "#64748b"
-    else:
-        dec, col = "🔍대기: 다음 기회 탐색", "#64748b"
+        if is_etf:
+        if target_w == 0 and has_pos:
+            dec, col = "🚨비편입 자산: 정리 검토", "#dc2626"
+        elif target_w == 0 and not has_pos:
+            dec, col = "🚫비편입 자산: 신규매수 제외", "#64748b"
+        elif current_w > target_w:
+            dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
+        elif current_w >= target_w and target_w > 0:
+            dec, col = "⏸️비중 충족: 관망", "#d97706"
+        elif mfi_now >= 85 and pct_b_now >= 0.98:
+            dec, col = "⚠️극단과열: 소액매수만", "#d97706"
+        elif mfi_now >= 80:
+            dec, col = "⚠️단기과열: 신규는 속도조절", "#d97706"
+        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
+            dec, col = "🎯ETF 눌림목: 분할매수", "#8b5cf6"
+        elif adj_tech_score >= 4:
+            dec, col = "✅분할매수", "#16a34a"
+        elif adj_tech_score >= 2:
+            dec, col = "⏳관망/소액매수", "#64748b"
+        else:
+            dec, col = "🔍대기: 다음 기회 탐색", "#64748b"
     else:
         if fin_score == 1:
             dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
