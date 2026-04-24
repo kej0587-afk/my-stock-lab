@@ -7,7 +7,7 @@ import ta
 # -------------------------------------------------
 # 1. 기본 설정
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v7.1", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v7.2", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 
@@ -48,7 +48,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v7.1")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v7.2")
+
 
 # -------------------------------------------------
 # 2. 유틸 함수
@@ -57,6 +58,24 @@ def format_currency(val, ticker):
     if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"):
         return f"₩{int(val):,}"
     return f"${val:,.2f}"
+
+
+def normalize_text(x):
+    return str(x).strip().lower()
+
+
+def normalize_ticker(t):
+    return str(t).strip().lower().replace(".ks", "").replace(".kq", "")
+
+
+def parse_num(v):
+    if pd.isna(v):
+        return 0.0
+    return pd.to_numeric(
+        str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip(),
+        errors="coerce"
+    ) if str(v).strip() != "" else 0.0
+
 
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
@@ -69,6 +88,7 @@ def load_price_df(ticker, period="1y"):
     df.dropna(inplace=True)
     return df
 
+
 def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
     if last_sqz_on and not prev_sqz_on:
         return "⏳재압축"
@@ -77,6 +97,7 @@ def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
     elif (not last_sqz_on) and prev_sqz_on:
         return "🚀해제직후"
     return "➡️해제유지"
+
 
 def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     if last_macd > last_sig and prev_macd <= prev_sig:
@@ -87,6 +108,7 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
         return -2, "📉하락주의(데드크로스)"
     return 0, "⏳추세관망"
 
+
 def get_fin_label_map():
     return {
         0: "0점 (ETF/해당없음)",
@@ -95,6 +117,7 @@ def get_fin_label_map():
         3: "3점 (✅회복형/중간형)",
         4: "4점 (💎완성형 우량)"
     }
+
 
 # -------------------------------------------------
 # 3. 매크로
@@ -147,6 +170,7 @@ def get_macro_analysis():
     penalty = 2.0 if risk >= 4 else (1.5 if risk >= 2.5 else (0.5 if risk >= 1.5 else 0))
     return results, risk, penalty
 
+
 macro_res, m_risk, m_penalty = get_macro_analysis()
 
 m_cols = st.columns(len(macro_res))
@@ -157,112 +181,140 @@ for i, (n, info) in enumerate(macro_res.items()):
         unsafe_allow_html=True
     )
 
+
 # -------------------------------------------------
 # 4. 구글시트 읽기
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def load_invest_sheet():
-    df = pd.read_csv(INVEST_SHEET_URL, header=None)
+    raw = pd.read_csv(INVEST_SHEET_URL, header=None)
 
-    # 시드머니: R4 -> row 3, col 17
-    seed_money = pd.to_numeric(df.iloc[3, 17], errors="coerce")
+    seed_money = parse_num(raw.iloc[3, 17])      # R4
+    current_asset = parse_num(raw.iloc[5, 15])   # P6
+    cum_profit = parse_num(raw.iloc[5, 16])      # Q6
 
-    # 자산클래스: B:F 6~13행
-    asset_class = df.iloc[5:13, 1:6].copy()
-    asset_class.columns = ["구분", "평가금액", "비율", "차이", "목표"]
-
-    # 국가별: B:F 14~20행
-    country = df.iloc[13:20, 1:6].copy()
-    country.columns = ["구분", "평가금액", "비율", "차이", "목표"]
-
-    # 포지션별: B:F 21~26행
-    position = df.iloc[20:26, 1:6].copy()
-    position.columns = ["구분", "평가금액", "비율", "차이", "목표"]
-
-    # 우측 요약: P:R 7~19행
-    right_summary = df.iloc[6:19, 15:18].copy()
+    asset_class = raw.iloc[5:13, 1:6].copy()     # B:F, 6~13행
+    country = raw.iloc[13:20, 1:6].copy()        # B:F, 14~20행
+    position = raw.iloc[20:26, 1:6].copy()       # B:F, 21~26행
+    right_summary = raw.iloc[6:19, 15:18].copy() # P:R, 7~19행
 
     return {
-        "seed_money": float(seed_money) if pd.notna(seed_money) else 0.0,
+        "seed_money": float(seed_money),
+        "current_asset": float(current_asset),
+        "cum_profit": float(cum_profit),
         "asset_class": asset_class,
         "country": country,
         "position": position,
         "right_summary": right_summary
     }
 
+
 @st.cache_data(ttl=300)
 def load_portfolio_sheet():
-    df = pd.read_csv(ETF_SHEET_URL, header=4)
-    df = df.iloc[0:30].copy()  # 6행~35행
+    raw = pd.read_csv(ETF_SHEET_URL, header=None)
 
-    df = df.rename(columns={
-        df.columns[1]: "통화",
-        df.columns[2]: "자산클래스",
-        df.columns[3]: "국가",
-        df.columns[4]: "자산구분",
-        df.columns[5]: "자산명",
-        df.columns[6]: "요약",
-        df.columns[7]: "티커입력",
-        df.columns[8]: "보유량",
-        df.columns[9]: "매입가",
-        df.columns[10]: "현재가",
-        df.columns[11]: "수익률",
-        df.columns[12]: "평가손익",
-        df.columns[13]: "평가금액",
-        df.columns[14]: "원화환산",
+    # 5행 헤더 / 6~35행 데이터
+    data = raw.iloc[5:35, 1:16].copy()   # B:P
+    header = raw.iloc[4, 1:16].tolist()
+    data.columns = header
+
+    df = pd.DataFrame({
+        "통화": data.iloc[:, 0],
+        "자산클래스": data.iloc[:, 1],
+        "국가": data.iloc[:, 2],
+        "자산구분": data.iloc[:, 3],
+        "자산명": data.iloc[:, 4],
+        "요약": data.iloc[:, 5],
+        "티커입력": data.iloc[:, 6],
+        "보유량": data.iloc[:, 7],
+        "매입가": data.iloc[:, 8],
+        "현재가": data.iloc[:, 9],
+        "수익률": data.iloc[:, 10],
+        "평가손익": data.iloc[:, 11],
+        "평가금액": data.iloc[:, 12],
+        "원화환산": data.iloc[:, 13],
     })
 
-    for col in ["자산명", "티커입력", "통화", "자산클래스", "국가", "자산구분"]:
+    for col in ["통화", "자산클래스", "국가", "자산구분", "자산명", "요약", "티커입력"]:
         df[col] = df[col].astype(str).str.strip()
 
-    for col in ["보유량", "매입가", "현재가", "평가손익", "평가금액", "원화환산"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    for col in ["보유량", "매입가", "현재가", "수익률", "평가손익", "평가금액", "원화환산"]:
+        df[col] = df[col].apply(parse_num).fillna(0)
 
     return df
 
+
 @st.cache_data(ttl=300)
 def load_control_sheet():
-    df = pd.read_csv(CONTROL_SHEET_URL, header=None)
+    raw = pd.read_csv(CONTROL_SHEET_URL, header=None)
 
     # D47:G57
-    block = df.iloc[46:57, 3:7].copy()
+    block = raw.iloc[46:57, 3:7].copy()
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
 
-    block["자산명"] = block["자산명"].astype(str).str.strip()
-    block["티커"] = block["티커"].astype(str).str.strip()
-    block["목표비중"] = pd.to_numeric(block["목표비중"], errors="coerce").fillna(0)
-    block["현재비중"] = pd.to_numeric(block["현재비중"], errors="coerce").fillna(0)
+    block["자산명"] = block["자산명"].astype(str).str.strip().str.lower()
+    block["티커"] = block["티커"].astype(str).str.strip().str.lower()
+
+    for col in ["목표비중", "현재비중"]:
+        block[col] = block[col].apply(parse_num).fillna(0)
 
     return block
+
 
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
 
-total_eval = float(portfolio_df["평가금액"].sum())
+# 총평가금액은 [3] 투자 데이터 P6 우선
+total_eval = invest_data["current_asset"] if invest_data["current_asset"] > 0 else float(portfolio_df["평가금액"].sum())
 
 portfolio_value_map = {
-    row["자산명"]: float(row["평가금액"])
+    normalize_text(row["자산명"]): float(row["평가금액"])
     for _, row in portfolio_df.iterrows()
-    if row["자산명"] != ""
+    if normalize_text(row["자산명"]) != ""
 }
+
 
 def get_current_weight(name: str) -> float:
     if total_eval <= 0:
         return 0.0
-    return round((portfolio_value_map.get(name, 0.0) / total_eval) * 100, 2)
+    return round((portfolio_value_map.get(normalize_text(name), 0.0) / total_eval) * 100, 2)
 
-def get_target_weight_from_sheet(name: str) -> float:
-    matched = control_df[control_df["자산명"] == name]
-    if matched.empty:
-        return 0.0
-    return float(matched.iloc[0]["목표비중"])
 
-def get_buy_amount(name: str) -> float:
-    target_w = get_target_weight_from_sheet(name)
-    current_w = get_current_weight(name)
+def get_target_weight_from_sheet(name: str, ticker: str) -> float:
+    t = normalize_ticker(ticker)
+    matched = control_df[control_df["티커"] == t]
+    if not matched.empty:
+        return float(matched.iloc[0]["목표비중"])
+
+    n = normalize_text(name)
+    matched = control_df[control_df["자산명"] == n]
+    if not matched.empty:
+        return float(matched.iloc[0]["목표비중"])
+
+    return 0.0
+
+
+def get_sheet_current_weight(name: str, ticker: str) -> float:
+    t = normalize_ticker(ticker)
+    matched = control_df[control_df["티커"] == t]
+    if not matched.empty:
+        return float(matched.iloc[0]["현재비중"])
+
+    n = normalize_text(name)
+    matched = control_df[control_df["자산명"] == n]
+    if not matched.empty:
+        return float(matched.iloc[0]["현재비중"])
+
+    return get_current_weight(name)
+
+
+def get_buy_amount(name: str, ticker: str) -> float:
+    target_w = get_target_weight_from_sheet(name, ticker)
+    current_w = get_sheet_current_weight(name, ticker)
     gap = max(target_w - current_w, 0)
     return round(total_eval * (gap / 100), 0)
+
 
 # -------------------------------------------------
 # 5. 자산맵
@@ -297,38 +349,64 @@ TICKER_MAP = {
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
 }
 
+
 @st.cache_data(ttl=300)
 def get_rs_score(name, ticker, asset_class):
+    # 1년 비교로 변경
     if asset_class == "kr_stock":
-        bench = "069500.KS"         # KODEX200
+        bench = "069500.KS"       # KODEX200
+        strong_th = 0.15
+        normal_th = -0.08
+
     elif asset_class == "us_stock":
-        bench = "QQQM"              # 미국 개별 성장주
+        bench = "QQQM"            # 미국 개별 성장주
+        strong_th = 0.15
+        normal_th = -0.08
+
     elif asset_class == "us_etf_nasdaq":
-        bench = "379810.KS"         # 나스닥100
+        bench = "379810.KS"       # 나스닥 본체
+        strong_th = 0.08
+        normal_th = -0.10
+
     elif asset_class == "us_etf_sp":
-        bench = "379810.KS"         # 네 기준대로 나스닥100
+        bench = "379810.KS"       # 네 기준대로 나스닥 비교
+        strong_th = 0.05
+        normal_th = -0.12
+
     elif asset_class == "kr_etf":
         bench = "069500.KS"
+        strong_th = 0.08
+        normal_th = -0.10
+
     else:
         return 1, "➖보통"
 
-    if ticker == bench:
+    if normalize_ticker(ticker) == normalize_ticker(bench):
         return 1, "➖보통"
 
-    stock_df = load_price_df(ticker, period="6mo")
-    bench_df = load_price_df(bench, period="6mo")
+    stock_df = load_price_df(ticker, period="1y")
+    bench_df = load_price_df(bench, period="1y")
     if stock_df.empty or bench_df.empty:
         return 1, "➖보통"
 
-    stock_ret = stock_df["Close"].pct_change(63).iloc[-1]
-    bench_ret = bench_df["Close"].pct_change(63).iloc[-1]
+    stock_ret = stock_df["Close"].pct_change(252).iloc[-1]
+    bench_ret = bench_df["Close"].pct_change(252).iloc[-1]
     diff = stock_ret - bench_ret
 
-    if diff >= 0.10:
+    # 네 체감값 보정
+    if name in ["QQQM", "나스닥"] and asset_class == "us_etf_nasdaq":
+        return 1, "➖보통"
+    if name == "QLD" and asset_class == "us_etf_nasdaq":
+        return 2, "🚀강함" if diff >= 0 else (1, "➖보통")
+    if name == "TQQQ" and asset_class == "us_etf_nasdaq":
+        return 2, "🚀강함" if diff >= 0 else (1, "➖보통")
+
+    if diff >= strong_th:
         return 2, "🚀강함"
-    elif diff >= -0.03:
+    elif diff >= normal_th:
         return 1, "➖보통"
     return 0, "🐢약함"
+
 
 # -------------------------------------------------
 # 6. 요약 전광판
@@ -401,9 +479,9 @@ def get_all_summary():
         main_score = trend_score + max(macd_score, 0) + rsi_score + vol_score
         total_score = main_score + rs_score + mfi_score
 
-        current_w = get_current_weight(name)
-        target_w = get_target_weight_from_sheet(name)
-        buy_amount = get_buy_amount(name)
+        current_w = get_sheet_current_weight(name, tkr)
+        target_w = get_target_weight_from_sheet(name, tkr)
+        buy_amount = get_buy_amount(name, tkr)
 
         if is_etf:
             if current_w > target_w and target_w > 0:
@@ -451,6 +529,7 @@ def get_all_summary():
 
     return pd.DataFrame(rows)
 
+
 # -------------------------------------------------
 # 7. UI
 # -------------------------------------------------
@@ -459,7 +538,8 @@ tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 개별 상세 관제
 with tab1:
     st.subheader("CCTV 통합 통제실")
     st.write(f"시드머니: {invest_data['seed_money']:,.0f}원")
-    st.write(f"총 평가금액: {total_eval:,.0f}원")
+    st.write(f"현재자산: {invest_data['current_asset']:,.0f}원")
+    st.write(f"누적손익: {invest_data['cum_profit']:,.0f}원")
 
     summary_df = get_all_summary()
     st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
@@ -468,7 +548,7 @@ with tab2:
     sel_name = st.selectbox("종목 선택", list(TICKER_MAP.keys()))
     sel_ticker, is_etf, asset_class = TICKER_MAP[sel_name]
 
-    matched = portfolio_df[portfolio_df["자산명"] == sel_name]
+    matched = portfolio_df[portfolio_df["자산명"].str.lower() == normalize_text(sel_name)]
     my_price = float(matched.iloc[0]["매입가"]) if not matched.empty else 0.0
 
     fin_labels = get_fin_label_map()
@@ -525,11 +605,11 @@ with tab2:
 
         main_score = trend_s + max(macd_s, 0) + rsi_s + vol_score
         tech_score = main_score + rs_score + mfi_s + sqz_s
-        adj_score = tech_score
+        adj_score = tech_score - m_penalty
 
-        current_w = get_current_weight(sel_name)
-        target_w = get_target_weight_from_sheet(sel_name)
-        buy_amount = get_buy_amount(sel_name)
+        current_w = get_sheet_current_weight(sel_name, sel_ticker)
+        target_w = get_target_weight_from_sheet(sel_name, sel_ticker)
+        buy_amount = get_buy_amount(sel_name, sel_ticker)
 
         if is_etf:
             if current_w > target_w and target_w > 0:
@@ -551,6 +631,8 @@ with tab2:
         else:
             if fin_score == 1:
                 dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
+            elif m_penalty >= 2.0:
+                dec, col = "🛑하드차단: 매크로 퍼펙트스톰", "#dc2626"
             elif mfi_now >= 85:
                 dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
             elif pct_b_now >= 0.95:
@@ -587,17 +669,49 @@ with tab2:
         c1, c2 = st.columns([1.2, 2.3])
 
         with c1:
-            st.markdown(f"## 📊 {sel_name}")
-            st.markdown(f"현재가: **{format_currency(cur_p, sel_ticker)}**")
-            st.markdown(f"비중: 목표 **{target_w:.2f}%** | 현재 **{current_w:.2f}%**")
-            st.markdown(f"부족 매수액: **{buy_amount:,.0f}원**")
-            st.markdown(f"판정: **{dec}**")
-            st.markdown(f"점수: Main {main_score} / RS {rs_score} / MFI {mfi_s} / SQZ {sqz_s} / Adj {adj_score}")
-            st.markdown(f"추세: {trend_label}")
-            st.markdown(f"MACD: {macd_label}")
-            st.markdown(f"RS: {rs_label}")
-            st.markdown(f"SQZ: {sqz_status}")
-            st.markdown(f"RSI: {rsi_now:.1f} / MFI: {mfi_now:.1f} / %B: {pct_b_now:.2f}")
+            st.markdown(f"<h2>📊 {sel_name}</h2>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(cur_p, sel_ticker)}</span></div>",
+                unsafe_allow_html=True
+            )
+
+            st.markdown(
+                f"<div class='info-panel'><b>비중</b><br>목표: {target_w:.2f}% | 현재: {current_w:.2f}%<br>부족 매수액: {buy_amount:,.0f}원</div>",
+                unsafe_allow_html=True
+            )
+
+            st.markdown(f"""
+            <div class="signal-box" style="background-color: {col};">
+                <div style="font-size: 1.5em; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">{dec}</div>
+                <div class="score-detail">
+                    (Main:<b>{main_score}</b> | RS:<b>{rs_score}</b> | MFI:<b>{mfi_s}</b> | SQZ:<b>{sqz_s}</b> | Macro:<b>-{m_penalty}</b>)
+                    ➔ Adj: <b style="color:white; font-size:1.1em;">{adj_score}점</b>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div class='info-panel' style='border-left: 5px solid #e67e22;'>
+                <b>🛡️ SMC / Swing 전술 지표</b><br><br>
+                • 추세: <b>{trend_label}</b><br>
+                • MACD: <b>{macd_label}</b><br>
+                • RS: <b>{rs_label}</b><br>
+                • RSI: <b>{rsi_now:.1f}</b> / MFI: <b>{mfi_now:.1f}</b><br>
+                • 볼린저 %B: <b>{pct_b_now:.2f}</b><br>
+                • SQZ: <span style='color:#fbbf24;'><b>{sqz_status}</b></span><br>
+                <hr style='margin:12px 0; border-color:#334155;'>
+                <span class='smc-tag'>[단기]</span> <b>MA5 :</b> {format_currency(last['MA5'], sel_ticker)}<br>
+                <span class='smc-tag'>[스윙]</span> <b>MA20 :</b> {format_currency(last['MA20'], sel_ticker)}<br>
+                <span class='smc-tag'>[중기]</span> <b>MA50 :</b> {format_currency(last['MA50'], sel_ticker)}<br>
+                <span class='smc-tag'>[기관]</span> <b>MA120 :</b> {format_currency(last['MA120'], sel_ticker)}<br>
+                <hr style='margin:12px 0; border-color:#334155;'>
+                <span class='smc-tag'>[전술 해석]</span><br>
+                • %B 0.45~0.80 + RSI 45~58 → 눌림목 후보<br>
+                • %B ≥ 0.95 → 상단 이탈 주의<br>
+                • SQZ 해제직후 + MACD 상승 → 발사 후보<br>
+                • MFI ≥ 85 → 추격 금지 우선
+            </div>
+            """, unsafe_allow_html=True)
 
         with c2:
             fig = go.Figure(data=[
@@ -622,5 +736,11 @@ with tab2:
                     annotation_position="bottom right"
                 )
 
-            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
+            fig.update_layout(
+                template="plotly_dark",
+                height=600,
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
             st.plotly_chart(fig, use_container_width=True)
