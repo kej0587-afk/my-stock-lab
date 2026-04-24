@@ -280,12 +280,6 @@ portfolio_value_map = {
     if normalize_text(row["자산명"]) != ""
 }
 
-portfolio_ticker_map = {
-    normalize_ticker(row["티커입력"]): row
-    for _, row in portfolio_df.iterrows()
-    if normalize_ticker(row["티커입력"]) != ""
-}
-
 def get_current_weight(name: str) -> float:
     if total_eval <= 0:
         return 0.0
@@ -327,31 +321,35 @@ def get_holding_row(name: str, ticker: str):
     t = normalize_ticker(ticker)
     n = normalize_text(name)
 
-    # 1순위: 티커입력 정확매칭
-    matched = portfolio_df[
-        portfolio_df["티커입력"].astype(str).apply(normalize_ticker) == t
-    ]
+    # 시트 원본 복사본
+    pf = portfolio_df.copy()
+    pf["티커정리"] = pf["티커입력"].astype(str).apply(normalize_ticker)
+    pf["자산명정리"] = pf["자산명"].astype(str).apply(normalize_text)
+
+    # 1순위: 티커 정확매칭
+    matched = pf[pf["티커정리"] == t]
     if not matched.empty:
         return matched.iloc[0]
 
     # 2순위: 자산명 정확매칭
-    matched = portfolio_df[
-        portfolio_df["자산명"].astype(str).apply(normalize_text) == n
-    ]
+    matched = pf[pf["자산명정리"] == n]
     if not matched.empty:
         return matched.iloc[0]
 
-    # 3순위: 티커 부분매칭
-    matched = portfolio_df[
-        portfolio_df["티커입력"].astype(str).str.lower().str.contains(t, na=False)
-    ]
+    # 3순위: 접미사 제거 후 티커 비교
+    t_base = t.replace(".ks", "").replace(".kq", "")
+    pf["티커기본"] = pf["티커정리"].str.replace(".ks", "", regex=False).str.replace(".kq", "", regex=False)
+    matched = pf[pf["티커기본"] == t_base]
     if not matched.empty:
         return matched.iloc[0]
 
-    # 4순위: 자산명 부분매칭
-    matched = portfolio_df[
-        portfolio_df["자산명"].astype(str).str.lower().str.contains(n, na=False)
-    ]
+    # 4순위: 티커 부분매칭
+    matched = pf[pf["티커기본"].str.contains(t_base, na=False)]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 5순위: 자산명 부분매칭
+    matched = pf[pf["자산명정리"].str.contains(n, na=False)]
     if not matched.empty:
         return matched.iloc[0]
 
@@ -361,15 +359,26 @@ def get_my_price(name: str, ticker: str) -> float:
     row = get_holding_row(name, ticker)
     if row is None:
         return 0.0
-    return float(row["매입가"]) if pd.notna(row["매입가"]) else 0.0
+    try:
+        return float(row["매입가"]) if pd.notna(row["매입가"]) else 0.0
+    except:
+        return 0.0
 
 def has_position(name: str, ticker: str) -> bool:
     row = get_holding_row(name, ticker)
     if row is None:
         return False
 
-    qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
-    eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
+    try:
+        qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
+    except:
+        qty = 0.0
+
+    try:
+        eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
+    except:
+        eval_amt = 0.0
+
     return qty > 0 or eval_amt > 0
     
 # -------------------------------------------------
@@ -702,6 +711,8 @@ with tab2:
                     f"<div class='info-panel'><b>평단가</b><br><span class='highlight'>{format_currency(my_price, sel_ticker)}</span></div>",
                     unsafe_allow_html=True
                 )
+                st.write("매칭행 확인:", get_holding_row(sel_name, sel_ticker))
+                st.write("매입가 확인:", my_price)
 
             st.markdown(
                 f"<div class='info-panel'><b>비중</b><br>목표: {calc['target_w']:.2f}% | 현재: {calc['current_w']:.2f}%<br>부족 매수액: {calc['buy_amount']:,.0f}원</div>",
