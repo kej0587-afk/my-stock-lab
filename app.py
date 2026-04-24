@@ -357,14 +357,12 @@ def get_holding_row(name: str, ticker: str):
 
     return None
 
-row = get_holding_row(sel_name, sel_ticker)
-st.write("디버그:", None if row is None else {
-    "자산명": row["자산명"],
-    "티커입력": row["티커입력"],
-    "매입가": row["매입가"],
-    "보유량": row["보유량"],
-    "평가금액": row["평가금액"],
-})
+def get_my_price(name: str, ticker: str) -> float:
+    row = get_holding_row(name, ticker)
+    if row is None:
+        return 0.0
+    return float(row["매입가"]) if pd.notna(row["매입가"]) else 0.0
+
 def has_position(name: str, ticker: str) -> bool:
     row = get_holding_row(name, ticker)
     if row is None:
@@ -373,7 +371,7 @@ def has_position(name: str, ticker: str) -> bool:
     qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
     eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
     return qty > 0 or eval_amt > 0
-
+    
 # -------------------------------------------------
 # 6. 자산맵
 # -------------------------------------------------
