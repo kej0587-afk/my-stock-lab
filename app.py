@@ -146,22 +146,21 @@ def load_portfolio_sheet():
     header = raw.iloc[4, 1:16].tolist()
     data.columns = header
 
-    # 대장님이 전달해주신 완벽한 인덱싱 코드 적용
     df = pd.DataFrame({
-        "통화": data.iloc[:, 0],        # B
-        "자산클래스": data.iloc[:, 1],  # C
-        "국가": data.iloc[:, 2],        # D
-        "자산구분": data.iloc[:, 3],    # E
-        "자산명": data.iloc[:, 4],      # F
-        "요약": data.iloc[:, 5],        # G
-        "티커입력": data.iloc[:, 6],    # H
-        "보유량": data.iloc[:, 7],      # I
-        "매입단가": data.iloc[:, 9],    # K (매입단가 수정!)
-        "현재가(시트)": data.iloc[:, 10], # L
-        "수익률": data.iloc[:, 11],     # M
-        "평가손익": data.iloc[:, 12],   # N
-        "평가금액": data.iloc[:, 13],   # O
-        "원화환산": data.iloc[:, 14],   # P
+        "통화": data.iloc[:, 0],          # B
+        "자산클래스": data.iloc[:, 1],    # C
+        "국가": data.iloc[:, 2],          # D
+        "자산구분": data.iloc[:, 3],      # E
+        "자산명": data.iloc[:, 4],        # F
+        "요약": data.iloc[:, 5],          # G
+        "티커입력": data.iloc[:, 6],      # H
+        "보유량": data.iloc[:, 7],        # I
+        "매입단가": data.iloc[:, 9],      # K
+        "현재가(시트)": data.iloc[:, 10],  # L
+        "수익률": data.iloc[:, 11],       # M
+        "평가손익": data.iloc[:, 12],     # N
+        "평가금액": data.iloc[:, 13],     # O
+        "원화환산": data.iloc[:, 14],     # P
     })
 
     for col in ["통화", "자산클래스", "국가", "자산구분", "자산명", "요약", "티커입력"]:
@@ -172,73 +171,58 @@ def load_portfolio_sheet():
 
     return df
 
-@st.cache_data(ttl=300)
-def load_control_sheet():
-    raw = load_sheet_by_gid(CONTROL_SHEET_GID)
-    block = raw.iloc[46:57, 3:7].copy()   # D47:G57
-    block.columns = ["자산명", "티커", "목표비중", "현재비중"]
-    block["자산명"] = block["자산명"].astype(str).str.strip().str.lower()
-    block["티커"] = block["티커"].astype(str).str.strip().str.lower()
-    for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
-    return block
-
-invest_data = load_invest_sheet()
-portfolio_df = load_portfolio_sheet()
-control_df = load_control_sheet()
-
-total_eval = invest_data["current_asset"] if invest_data["current_asset"] > 0 else float(portfolio_df["평가금액"].sum())
-portfolio_value_map = {normalize_text(row["자산명"]): float(row["평가금액"]) for _, row in portfolio_df.iterrows() if normalize_text(row["자산명"]) != ""}
-
-def get_current_weight(name: str) -> float:
-    if total_eval <= 0: return 0.0
-    return round((portfolio_value_map.get(normalize_text(name), 0.0) / total_eval) * 100, 2)
-
-def get_target_weight_from_sheet(name: str, ticker: str) -> float:
-    t = normalize_ticker(ticker); matched = control_df[control_df["티커"] == t]
-    if not matched.empty: return float(matched.iloc[0]["목표비중"])
-    n = normalize_text(name); matched = control_df[control_df["자산명"] == n]
-    if not matched.empty: return float(matched.iloc[0]["목표비중"])
-    return 0.0
-
-def get_sheet_current_weight(name: str, ticker: str) -> float:
-    t = normalize_ticker(ticker); matched = control_df[control_df["티커"] == t]
-    if not matched.empty: return float(matched.iloc[0]["현재비중"])
-    n = normalize_text(name); matched = control_df[control_df["자산명"] == n]
-    if not matched.empty: return float(matched.iloc[0]["현재비중"])
-    return get_current_weight(name)
-
-def get_buy_amount(name: str, ticker: str) -> float:
-    target_w = get_target_weight_from_sheet(name, ticker); current_w = get_sheet_current_weight(name, ticker)
-    gap = max(target_w - current_w, 0)
-    return round(total_eval * (gap / 100), 0)
 
 def get_holding_row(name: str, ticker: str):
-    t = normalize_ticker(ticker); n = normalize_text(name)
+    t = normalize_ticker(ticker)
+    n = normalize_text(name)
+
     pf = portfolio_df.copy()
-    pf["티커정리"] = pf["티커입력"].astype(str).apply(normalize_ticker); pf["자산명정리"] = pf["자산명"].astype(str).apply(normalize_text)
+    pf["티커정리"] = pf["티커입력"].astype(str).apply(normalize_ticker)
+    pf["자산명정리"] = pf["자산명"].astype(str).apply(normalize_text)
+
+    # 1순위: 티커 정확매칭
     matched = pf[pf["티커정리"] == t]
-    if not matched.empty: return matched.iloc[0]
-    matched = pf[pf["자산명정리"] == n]
-    if not matched.empty: return matched.iloc[0]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 2순위: 한국티커 접미사 제거 후 비교
     t_base = t.replace(".ks", "").replace(".kq", "")
-    pf["티커기본"] = pf["티커정리"].str.replace(".ks", "", regex=False).str.replace(".kq", "", regex=False)
-    matched = pf[pf["티커기본"] == t_base]
-    if not matched.empty: return matched.iloc[0]
+    matched = pf[pf["티커정리"].str.replace(".ks", "", regex=False).str.replace(".kq", "", regex=False) == t_base]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 3순위: 자산명 정확매칭
+    matched = pf[pf["자산명정리"] == n]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 4순위: 티커 부분매칭
+    matched = pf[pf["티커정리"].str.contains(t_base, na=False)]
+    if not matched.empty:
+        return matched.iloc[0]
+
+    # 5순위: 자산명 부분매칭
+    matched = pf[pf["자산명정리"].str.contains(n, na=False)]
+    if not matched.empty:
+        return matched.iloc[0]
+
     return None
+
 
 def get_my_price(name: str, ticker: str) -> float:
     row = get_holding_row(name, ticker)
-    if row is None: return 0.0
-    try: return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0 # 매입단가 적용 완료
-    except: return 0.0
+    if row is None:
+        return 0.0
+    return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0
+
 
 def has_position(name: str, ticker: str) -> bool:
     row = get_holding_row(name, ticker)
-    if row is None: return False
-    try: qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
-    except: qty = 0.0
-    try: eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
-    except: eval_amt = 0.0
+    if row is None:
+        return False
+
+    qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
+    eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
     return qty > 0 or eval_amt > 0
     
 # -------------------------------------------------
