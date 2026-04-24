@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v8.1 (후보등급 통합)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v8.2 (후보등급+재무연동)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"     # [3] 투자 데이터
@@ -49,7 +49,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v8.1")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v8.2")
 
 # -------------------------------------------------
 # 2. 구글 보안 인증 및 데이터 로드
@@ -141,7 +141,18 @@ def get_fin_label_map():
         4: "4점 (💎완성형 우량)"
     }
 
-def get_candidate_grade(tech_total: float, fin_score: int) -> str:
+def get_candidate_grade(tech_total: float, fin_score: int, is_etf: bool = False) -> str:
+    if is_etf:
+        if tech_total < 1:
+            grade = "⏳ETF 관망"
+        elif tech_total < 3:
+            grade = "⚖️ETF 보통"
+        elif tech_total < 5:
+            grade = "✅ETF 양호"
+        else:
+            grade = "💎ETF 우수"
+        return f"📊합계: {tech_total}점 ➔ {grade}"
+
     total_score = tech_total + fin_score
 
     if fin_score == 1:
@@ -284,6 +295,9 @@ def load_control_sheet():
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
+
+if "fin_score_map" not in st.session_state:
+    st.session_state.fin_score_map = {}
 
 total_eval = invest_data["current_asset"] if invest_data["current_asset"] > 0 else float(portfolio_df["평가금액"].sum())
 
@@ -479,16 +493,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rs_score, rs_label = get_rs_score(name, ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
-    # 감독관 B용 점수
+    # 감독관 B
     macd_s_score = 2 if macd_label == "🔥매수신호(골든크로스)" else (1 if macd_label == "📈추세유지(상승중)" else (-2 if macd_label == "📉하락주의(데드크로스)" else 0))
     rt_macd_s = 1 if (rt_macd_label == "📈상승추세" and macd_label in ["📉하락주의(데드크로스)", "⏳추세관망"]) else 0
     sqz_s = 1 if (sqz_status == "🚀해제직후" and (macd_label in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"] or rt_macd_label == "📈상승추세")) else 0
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
     tech_total = rs_score + mfi_s + (2 if trend_label == "🚀정배열(상승)" else 0) + macd_s_score + rt_macd_s + sqz_s
+    candidate_grade = get_candidate_grade(tech_total, fin_score, is_etf)
 
-    candidate_grade = get_candidate_grade(tech_total, fin_score)
-
-    # 감독관 A용 점수
+    # 감독관 A
     main_score = (
         trend_s_final +
         (2 if macd_label == "🔥매수신호(골든크로스)" else 0) +
@@ -497,7 +510,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     )
 
     adj_tech_score = (main_score + rs_score + (2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0))) - macro_penalty
-    current_w, target_w, buy_amount = get_sheet_current_weight(name, ticker), get_target_weight_from_sheet(name, ticker), get_buy_amount(name, ticker)
+    current_w = get_sheet_current_weight(name, ticker)
+    target_w = get_target_weight_from_sheet(name, ticker)
+    buy_amount = get_buy_amount(name, ticker)
 
     is_early_entry = (
         trend_label == "🚀정배열(상승)" and
@@ -604,15 +619,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "col": col,
         "candidate_grade": candidate_grade,
         "fin_score": fin_score,
-        "total_candidate_score": tech_total + fin_score,
+        "total_candidate_score": (tech_total if is_etf else tech_total + fin_score),
     }
 
 # -------------------------------------------------
 # 8. 요약 전광판
 # -------------------------------------------------
 @st.cache_data(ttl=60)
-def get_all_summary():
+def get_all_summary(fin_score_map_items):
     rows = []
+    fin_score_map = dict(fin_score_map_items)
 
     for name, (tkr, is_etf, asset_class) in TICKER_MAP.items():
         df = load_price_df(tkr, "1y")
@@ -622,7 +638,9 @@ def get_all_summary():
         df = build_indicators(df)
         my_price = get_my_price(name, tkr)
         has_pos = has_position(name, tkr)
-        calc = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos, 0 if is_etf else 2)
+        fin_score_used = fin_score_map.get(name, 0 if is_etf else 2)
+
+        calc = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos, fin_score_used)
 
         rows.append({
             "종목명": name,
@@ -658,7 +676,8 @@ with tab1:
     with st.expander("🛠️ 엑셀 원본 데이터 확인 (디버그용)"):
         st.write(portfolio_df[["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"]].head(10))
 
-    st.dataframe(get_all_summary(), use_container_width=True, height=720, hide_index=True)
+    summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())))
+    st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
 
 with tab2:
     sel_name = st.selectbox("종목 선택", list(TICKER_MAP.keys()))
@@ -667,7 +686,18 @@ with tab2:
     has_pos = has_position(sel_name, sel_ticker)
 
     fin_labels = get_fin_label_map()
-    fin_score = st.radio("재무 점수", [0, 1, 2, 3, 4], index=(0 if is_etf else 2), format_func=lambda x: fin_labels[x], horizontal=True)
+    default_fin = st.session_state.fin_score_map.get(sel_name, 0 if is_etf else 2)
+
+    fin_score = st.radio(
+        "재무 점수",
+        [0, 1, 2, 3, 4],
+        index=default_fin,
+        format_func=lambda x: fin_labels[x],
+        horizontal=True
+    )
+
+    st.session_state.fin_score_map[sel_name] = fin_score
+    get_all_summary.clear()
 
     df = load_price_df(sel_ticker, "1y")
     if not df.empty:
