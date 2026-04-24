@@ -7,7 +7,7 @@ import ta
 # -------------------------------------------------
 # 1. 기본 설정
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v7.4", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v7.5", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 
@@ -48,7 +48,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v7.4")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v7.5")
 
 
 # -------------------------------------------------
@@ -182,11 +182,9 @@ for i, (n, info) in enumerate(macro_res.items()):
 @st.cache_data(ttl=300)
 def load_invest_sheet():
     raw = pd.read_csv(INVEST_SHEET_URL, header=None)
-
     seed_money = parse_num(raw.iloc[3, 17])      # R4
     current_asset = parse_num(raw.iloc[5, 15])   # P6
     cum_profit = parse_num(raw.iloc[5, 16])      # Q6
-
     return {
         "seed_money": float(seed_money) if pd.notna(seed_money) else 0.0,
         "current_asset": float(current_asset) if pd.notna(current_asset) else 0.0,
@@ -196,7 +194,6 @@ def load_invest_sheet():
 @st.cache_data(ttl=300)
 def load_portfolio_sheet():
     raw = pd.read_csv(ETF_SHEET_URL, header=None)
-
     data = raw.iloc[5:35, 1:16].copy()   # B:P
     header = raw.iloc[4, 1:16].tolist()
     data.columns = header
@@ -229,7 +226,6 @@ def load_portfolio_sheet():
 @st.cache_data(ttl=300)
 def load_control_sheet():
     raw = pd.read_csv(CONTROL_SHEET_URL, header=None)
-
     block = raw.iloc[46:57, 3:7].copy()   # D47:G57
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
 
@@ -372,8 +368,7 @@ def get_rs_score(name, ticker, asset_class):
         return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97:
         return 0, "🐢약함"
-    else:
-        return 1, "➖보통"
+    return 1, "➖보통"
 
 
 # -------------------------------------------------
@@ -400,7 +395,6 @@ def build_indicators(df):
 
     kc = ta.volatility.KeltnerChannel(df["High"], df["Low"], df["Close"], 20, 20, 1.5)
     df["SQZ_ON"] = (bb_hi < kc.keltner_channel_hband()) & (bb_lo > kc.keltner_channel_lband())
-
     return df
 
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, fin_score):
@@ -413,14 +407,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, fi
     trend_s_score = 2 if trend_label == "🚀정배열(상승)" else 0
 
     macd_label = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
-
-    # 실시간 MACD는 일단 종가기준 대용
     rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
 
     rsi_now = float(last["RSI"])
     mfi_now = float(last["MFI"])
     pct_b_now = float(last["%B"])
-    vol_ratio = float(last["Volume"]) / float(df["Volume"].rolling(20).mean().iloc[-1]) if float(df["Volume"].rolling(20).mean().iloc[-1]) > 0 else 0
+
+    vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 0
+    vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
 
     rs_score, rs_label = get_rs_score(name, ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
@@ -458,17 +452,18 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, fi
     is_hardblock_b = pct_b_now >= 0.95
     is_hardblock_macro = final_macro_risk >= 4.5
 
+    # 최종 선진입 조건 (강화)
     is_early_entry = (
         trend_label == "🚀정배열(상승)"
         and rs_label == "🚀강함"
         and rt_macd_label == "📈상승추세"
+        and macd_label in ["📉하락주의(데드크로스)", "⏳추세관망"]
         and mfi_now < 80
-        and pct_b_now < 0.90
-        and rsi_now >= 50
-        and adj_tech_score >= 3.5
+        and pct_b_now < 0.85
+        and 50 <= rsi_now <= 65
+        and adj_tech_score >= 4.0
     )
 
-    # 최종판단 문구
     if is_etf:
         if is_hardblock_weight:
             dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
@@ -575,7 +570,6 @@ def get_all_summary():
             continue
 
         df = build_indicators(df)
-
         matched = portfolio_df[portfolio_df["자산명"].str.lower() == normalize_text(name)]
         my_price = float(matched.iloc[0]["매입가"]) if not matched.empty else 0.0
         fin_score = 0 if is_etf else 2
@@ -590,6 +584,7 @@ def get_all_summary():
             "부족매수액": f'{calc["buy_amount"]:,.0f}',
             "추세(MA)": calc["trend_label"],
             "MACD": calc["macd_label"],
+            "실시간MACD": calc["rt_macd_label"],
             "RS": calc["rs_label"],
             "RSI": round(calc["rsi_now"], 1),
             "MFI": round(calc["mfi_now"], 1),
@@ -612,6 +607,7 @@ with tab1:
     st.write(f'시드머니: {invest_data["seed_money"]:,.0f}원')
     st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원')
     st.write(f'누적손익: {invest_data["cum_profit"]:,.0f}원')
+    st.caption("※ 본 화면은 실시간 가격 기준으로 재계산되어 시트 종가판정과 다를 수 있음")
 
     summary_df = get_all_summary()
     st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
@@ -684,6 +680,7 @@ with tab2:
                 <hr style='margin:12px 0; border-color:#334155;'>
                 <span class='smc-tag'>[전술 해석]</span><br>
                 • %B 0.45~0.80 + RSI 45~58 → 눌림목 후보<br>
+                • %B 0.85~0.95 → 상단부근 경계<br>
                 • %B ≥ 0.95 → 상단 이탈 주의<br>
                 • SQZ 해제직후 + MACD 상승 → 발사 후보<br>
                 • MFI ≥ 85 → 추격 금지 우선
