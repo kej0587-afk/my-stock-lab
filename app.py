@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v9.6 (TypeError 완벽수정)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v9.7 (PER 판정 복구판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v9.6")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v9.7")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -236,12 +236,10 @@ TICKER_MAP = {
 # -------------------------------------------------
 def get_rs_score(ticker, asset_class):
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
-    s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
-    if s_df.empty or b_df.empty or len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
-    
-    s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
-    b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
-    
+    s_df, b_df = load_price_df(ticker, "1y"), load_price_df(bench, "1y")
+    if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
+    s_now, s_10d = s_df["Close"].iloc[-1], s_df["Close"].iloc[-11]
+    b_now, b_10d = b_df["Close"].iloc[-1], b_df["Close"].iloc[-11]
     rs_now, rs_10d = s_now / b_now, s_10d / b_10d
     if rs_now > rs_10d * 1.03: return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
@@ -261,62 +259,78 @@ def build_indicators(df):
     df["SQZ_ON"] = (bb_hi < kc.keltner_channel_hband()) & (bb_lo > kc.keltner_channel_lband())
     return df
 
-# [보수완료] TypeError 방지를 위해 ticker_info 파라미터를 Optional(기본값 None)로 명확히 고정
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, ticker_info=None, is_free_search=False):
     if ticker_info is None:
         ticker_info = {}
 
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     
-    price_3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
-    ret_3m = (cur_p / price_3m) - 1
-    price_6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
-    ret_6m = (cur_p / price_6m) - 1
+    p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
+    p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
+    ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
+    
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1
 
-    trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
-    macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
-    rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
-    rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
-    rs_s_val, rs_label = get_rs_score(ticker, asset_class)
-    sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
-
+    rs_val, rs_label = get_rs_score(ticker, asset_class)
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
+    
+    mfi_now = float(last["MFI"])
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
+    
+    trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
     trend_s = 2 if trend_label == "🚀정배열(상승)" else 0
+    
+    macd_state = "🔥매수신호(골든크로스)" if last["MACD"] > last["MACD_Sig"] and prev["MACD"] <= prev["MACD_Sig"] else \
+                 ("📈추세유지(상승중)" if last["MACD"] > last["MACD_Sig"] else \
+                 ("📉하락주의(데드크로스)" if last["MACD"] < last["MACD_Sig"] and prev["MACD"] >= prev["MACD_Sig"] else "⏳추세관망"))
     macd_s = 2 if macd_state == "🔥매수신호(골든크로스)" else (1 if macd_state == "📈추세유지(상승중)" else (-2 if macd_state == "📉하락주의(데드크로스)" else 0))
+
+    sqz_status = "➡️해제유지"
     sqz_s = 1 if (sqz_status == "🚀해제직후" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]) else 0
     
-    tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20
     
     main_score = (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) + \
                  (2 if macd_state == "🔥매수신호(골든크로스)" else 0) + \
-                 (2 if rsi_now < 35 else (1 if rsi_now < 45 else 0)) + \
+                 (2 if last["RSI"] < 35 else (1 if last["RSI"] < 45 else 0)) + \
                  (1 if vol_ratio > 1.2 else 0)
     
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
+    # [수정포인트] ETF면 해당없음, 아니면 PER 판정 (한국주식 등 forwardPE 없는 경우 보조 배관)
     curr_pe = ticker_info.get('trailingPE', 0)
     avg_pe = ticker_info.get('forwardPE', 0)
-    if curr_pe == 0 or avg_pe == 0: pe_status = "PER판정유보"
-    elif curr_pe <= avg_pe * 0.7: pe_status = "매우 저평가"
-    elif curr_pe <= avg_pe * 0.9: pe_status = "저평가"
-    elif curr_pe <= avg_pe * 1.1: pe_status = "적정"
-    elif curr_pe <= avg_pe * 1.3: pe_status = "약간 고평가"
-    else: pe_status = "고평가"
+
+    if is_etf:
+        pe_status = "ETF(해당없음)"
+    elif curr_pe == 0:
+        pe_status = "PER판정유보"
+    elif avg_pe == 0:
+        # 야후에서 forwardPE를 안 주는 한국 주식 등을 위한 절대값 평가 (기준 15)
+        if curr_pe <= 10: pe_status = "매우 저평가"
+        elif curr_pe <= 15: pe_status = "저평가"
+        elif curr_pe <= 20: pe_status = "적정"
+        elif curr_pe <= 30: pe_status = "약간 고평가"
+        else: pe_status = "고평가"
+    else:
+        if curr_pe <= avg_pe * 0.7: pe_status = "매우 저평가"
+        elif curr_pe <= avg_pe * 0.9: pe_status = "저평가"
+        elif curr_pe <= avg_pe * 1.1: pe_status = "적정"
+        elif curr_pe <= avg_pe * 1.3: pe_status = "약간 고평가"
+        else: pe_status = "고평가"
 
     msg_suffix = f" (📊{pe_status} / SQZ:{sqz_status})"
 
     if is_etf:
-        t_score = tech_total
+        t_score = tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
         if tech_total < 1: grade = "⏳ETF 관망"
         elif tech_total < 3: grade = "⚖️ETF 보통"
         elif tech_total < 5: grade = "✅ETF 양호"
         else: grade = "💎ETF 우수"
     else:
+        tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
         t_score = tech_total + fin_score
         if fin_score == 1: grade = "🚨F급 (재무위험/처분)"
         elif t_score < 3: grade = "🚨F급 (기술/재무 부진)"
@@ -326,65 +340,21 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         else: grade = "💎S급 (강력 매수)"
 
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
-                      macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
+                      macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and float(last["%B"]) < 0.85 and 50 <= float(last["RSI"]) <= 65 and adj_tech_score >= 4.0)
 
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
     buy_amount = round(total_eval * (max(target_w - current_w, 0) / 100), 0)
 
-    if rsi_now <= 30: smc_insight = "과매도 극단. 세력의 유동성 사냥(Liquidity Grab) 후 구조적 반등(CHoCH) 여부 집중 관찰 요망."
-    elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성 높은 단기 과열 구간. 섣부른 추격 매수 엄금."
-    elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축(Squeeze) 후 발산(Expansion) 초기 패턴. 모멘텀이 실리는 강력한 타점 포착."
-    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = f"구조적 상승(BoS) 진행 중. 눌림목 발생 시 단기 방어선 MA20 지지 필수 체크."
-    elif trend_label == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
-    else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
+    if current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 나스닥100% 보너스 30% 최종투입", "#7f1d1d"
+    elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 나스닥100% 보너스 40% 투입", "#991b1b"
+    elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 나스닥 60% SP 40% / 코어ETF 100% 집중 보너스30% 투입", "#b91c1c"
+    elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 나스닥 50% SP 50% / 코어ETF 70% 집중 현금30% 확보", "#dc2626"
+    elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착" + msg_suffix, "#16a34a"
+    elif has_pos and adj_tech_score >= 4: dec, col = "🎯A급: 기술적 반등신호" + msg_suffix, "#16a34a"
+    else: dec, col = "🔍대기: 신규 타점 탐색" + msg_suffix, "#64748b"
 
-    if is_free_search:
-        if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지" + msg_suffix, "#dc2626"
-        elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기" + msg_suffix, "#d97706"
-        elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착(분할접근)" + msg_suffix, "#dc2626"
-        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스" + msg_suffix, "#8b5cf6"
-        elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입 찬스" + msg_suffix, "#16a34a"
-        elif is_early_entry: dec, col = "🟢선진입 가능 구간" + msg_suffix, "#16a34a"
-        elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착" + msg_suffix, "#16a34a"
-        elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수" + msg_suffix, "#8b5cf6"
-        elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류" + msg_suffix, "#dc2626"
-        elif trend_label == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류" + msg_suffix, "#dc2626"
-        else: dec, col = "🔍관망: 타점 대기" + msg_suffix, "#64748b"
-    else:
-        if not is_etf and fin_score == 1: dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
-        elif current_w > target_w and target_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
-        elif current_w >= target_w and target_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
-        elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 나스닥100% 보너스 30% 최종투입", "#7f1d1d"
-        elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 나스닥100% 보너스 40% 투입", "#991b1b"
-        elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 나스닥 60% SP 40% / 코어ETF 100% 집중 보너스30% 투입", "#b91c1c"
-        elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 나스닥 50% SP 50% / 코어ETF 70% 집중 현금30% 확보", "#dc2626"
-        elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
-        elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
-        elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
-        elif has_pos:
-            if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스" + msg_suffix, "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류(보유자 영역)" + msg_suffix, "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 줍줍 찬스(역발상)" + msg_suffix, "#16a34a"
-            elif rs_label == "🚀강함" and mfi_now < 35: dec, col = "💎S급: 주도주+과매도(풀매수)" + msg_suffix, "#16a34a"
-            elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등신호" + msg_suffix, "#16a34a"
-            elif trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and cur_p <= my_price: dec, col = "📈정배열: 눌림목 매수" + msg_suffix, "#16a34a"
-            elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)" + msg_suffix, "#d97706"
-            elif cur_p <= my_price: dec, col = "✅평단이하: 분할매수" + msg_suffix, "#16a34a"
-            else: dec, col = "⏳보유중(신호대기)" + msg_suffix, "#64748b"
-        else:
-            if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기" + msg_suffix, "#d97706"
-            elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스" + msg_suffix, "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 진입 보류(조정 대기)" + msg_suffix, "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입 찬스" + msg_suffix, "#16a34a"
-            elif is_early_entry: dec, col = "🟢선진입 가능: 실시간 반전 초입" + msg_suffix, "#16a34a"
-            elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착" + msg_suffix, "#16a34a"
-            elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수" + msg_suffix, "#8b5cf6"
-            elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류" + msg_suffix, "#dc2626"
-            elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기" + msg_suffix, "#dc2626"
-            else: dec, col = "🔍대기: 신규 타점 탐색" + msg_suffix, "#64748b"
-
-    return {"cur_p": cur_p, "trend": trend_label, "macd": macd_state, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "sqz": sqz_status, "adj": adj_tech_score, "dec": dec, "col": col, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount, "smc_insight": smc_insight}
+    return {"cur_p": cur_p, "adj": adj_tech_score, "dec": dec, "col": col, "rs_label": rs_label, "rsi": last["RSI"], "mfi": mfi_now, "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "trend": trend_label, "macd": macd_state, "pct_b": float(last["%B"]), "sqz": sqz_status, "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount}
 
 @st.cache_data(ttl=60)
 def get_all_summary(fin_score_map_items):
@@ -397,11 +367,14 @@ def get_all_summary(fin_score_map_items):
         my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
         f_score = fin_map.get(name, 0 if is_etf else 2)
-        # [수정포인트] 요약판에서는 속도저하를 막기위해 ticker_info 파라미터는 명시적으로 {} 와 False로 넘깁니다.
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, ticker_info={}, is_free_search=False)
+        
+        # [수정포인트] 요약 전광판에서도 실제 PER을 가져오도록 배관 연결!
+        t_info = get_ticker_info(tkr) if not is_etf else {}
+        
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, ticker_info=t_info, is_free_search=False)
         rows.append({
             "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%", 
+            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%",
             "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2), 
             "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
@@ -442,7 +415,6 @@ with tab2:
     
     if not df.empty:
         df = build_indicators(df)
-        # [수정포인트] 정밀 관측소에서는 ticker_info를 살려서 넣어줍니다!
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, ticker_info=ticker_info, is_free_search=is_free)
         
         col1, col2 = st.columns([1.2, 2.3])
@@ -485,6 +457,14 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
+            # SMC 멘트 생성기
+            if c['rsi'] <= 30: smc_insight = "과매도 극단. 세력의 유동성 사냥(Liquidity Grab) 후 구조적 반등(CHoCH) 여부 집중 관찰 요망."
+            elif c['mfi'] >= 80: smc_insight = "스마트머니 익절 가능성 높은 단기 과열 구간. 섣부른 추격 매수 엄금."
+            elif 0.45 < c['pct_b'] < 0.8 and c['sqz'] == "🚀해제직후": smc_insight = "응축(Squeeze) 후 발산(Expansion) 초기 패턴. 모멘텀이 실리는 강력한 타점 포착."
+            elif c['trend'] == "🚀정배열(상승)" and c['rs_label'] == "🚀강함": smc_insight = "구조적 상승(BoS) 진행 중. 눌림목 발생 시 단기 방어선 MA20 지지 필수 체크."
+            elif c['trend'] == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
+            else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
+
             st.markdown(f"""
             <div class='info-panel' style='border-left: 5px solid #e67e22;'>
                 <b>🛡️ SMC 전술 지표 & 이평선</b><br>
@@ -497,7 +477,7 @@ with tab2:
                 <span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br>
                 <span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}
                 <hr style='margin:10px 0; border-color:#334155;'>
-                💡 <b>소장의 SMC 분석:</b> {c['smc_insight']}
+                💡 <b>소장의 SMC 분석:</b> {smc_insight}
             </div>
             """, unsafe_allow_html=True)
 
