@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v8.4 (로직 100% 이식)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v8.5 (버그수정 완결판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v8.4")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v8.5")
 
 # -------------------------------------------------
 # 2. 구글 인증 & 데이터 로드
@@ -135,9 +135,15 @@ def load_portfolio_sheet():
     raw = load_sheet_by_gid(ETF_SHEET_GID)
     data = raw.iloc[5:35, 1:16].copy()
     data.columns = raw.iloc[4, 1:16].tolist()
+    
+    # [보수완료] 에러의 원인이었던 '현재가(시트)' 배관을 다시 연결했습니다!
     df = pd.DataFrame({
-        "자산명": data.iloc[:, 5], "티커입력": data.iloc[:, 7], 
-        "보유량": data.iloc[:, 8].apply(parse_num), "매입단가": data.iloc[:, 9].apply(parse_num), "평가금액": data.iloc[:, 13].apply(parse_num)
+        "자산명": data.iloc[:, 5], 
+        "티커입력": data.iloc[:, 7], 
+        "보유량": data.iloc[:, 8].apply(parse_num), 
+        "매입단가": data.iloc[:, 9].apply(parse_num), 
+        "현재가(시트)": data.iloc[:, 10].apply(parse_num), 
+        "평가금액": data.iloc[:, 13].apply(parse_num)
     })
     df["자산명"] = df["자산명"].astype(str).str.strip()
     df["티커입력"] = df["티커입력"].astype(str).str.strip()
@@ -214,7 +220,7 @@ TICKER_MAP = {
 }
 
 # -------------------------------------------------
-# 5. 핵심 로직 엔진 (B99, B71, 점수 체계 등)
+# 5. 핵심 로직 엔진
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def get_rs_score(name, ticker, asset_class):
@@ -250,11 +256,9 @@ def build_indicators(df):
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, is_free_search=False):
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     
-    # [수정1] B99: 3개월 수익률 계산 (영업일 63일 기준)
     price_3m = df["Close"].iloc[-63] if len(df) >= 63 else df["Close"].iloc[0]
     ret_3m = (cur_p - price_3m) / price_3m if price_3m > 0 else 0.0
 
-    # [수정2] B71: 52주 고점 대비 MDD (패닉 대응용)
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p - high_52w) / high_52w if high_52w > 0 else 0.0
 
@@ -265,7 +269,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rs_score, rs_label = get_rs_score(name, ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
-    # [수정3] 엑셀과 100% 동일한 점수 산출 방식 (TechTotal = RS_S + MFI_S + Trend_S + MACD_S + SQZ_S)
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
     trend_s_final = 2 if trend_label == "🚀정배열(상승)" else 0
@@ -275,13 +278,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     tech_total = rs_s + mfi_s + trend_s_final + macd_s_score + sqz_s
     total_score = tech_total + (0 if is_etf else fin_score)
 
-    # 감독관 A (MainScore 기반)
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 0
     vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
     main_score = (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) + (2 if macd_label == "🔥매수신호(골든크로스)" else 0) + (2 if rsi_now < 35 else (1 if rsi_now < 45 else 0)) + (1 if vol_ratio > 1.2 else 0)
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
-    # 후보 등급 라벨링 HTML
     if fin_score == 1 and not is_etf: grade_str = "🚨F급 (재무위험/처분)"
     elif total_score < 3: grade_str = "🚨F급 (기술/재무 부진)"
     elif total_score < 5: grade_str = "⏳C급 (주의/대기)"
@@ -302,7 +303,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and rt_macd_label == "📈상승추세" and macd_label in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    # [수정4] 최종 판정 의사결정 트리 (엑셀 100% 반영)
     if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
@@ -317,20 +317,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         else: dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
     else:
-        # 하드 블록
         if fin_score == 1 and not is_etf: dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
         elif current_w > target_w and target_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif current_w >= target_w and target_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
-        # B71 패닉 대응 로직 (종목별 MDD로 적용)
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 나스닥100% 보너스 30% 최종투입", "#7f1d1d"
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 나스닥100% 보너스 40% 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 나스닥60% 집중 보너스30% 투입", "#b91c1c"
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금30% 확보 및 코어 집중", "#dc2626"
-        
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
         elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
-        
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류(보유자 영역)", "#d97706"
@@ -366,7 +362,7 @@ def get_all_summary(fin_score_map_items):
         my_price = get_my_price(name, tkr)
         has_pos = has_position(name, tkr)
         fin_score_used = fin_score_map.get(name, 0 if is_etf else 2)
-        calc = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos, fin_score_used, False)
+        calc = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos, fin_score_used, is_free_search=False)
         rows.append({
             "종목명": name, "현재가(실시간)": format_currency(calc["cur_p"], tkr), "MDD": f"{calc['current_dd']*100:.1f}%",
             "현재비중": f'{calc["current_w"]:.2f}%', "목표비중": f'{calc["target_w"]:.2f}%',
