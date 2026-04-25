@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v8.6 (가독성 최종복구)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v8.7 (결함 완벽복구)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v8.6")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v8.7")
 
 # -------------------------------------------------
 # 2. 구글 인증 & 데이터 로드
@@ -48,7 +48,12 @@ def load_sheet_by_gid(gid: str) -> pd.DataFrame:
     client = get_gspread_client()
     sh = client.open_by_key(SPREADSHEET_ID)
     ws = sh.get_worksheet_by_id(int(gid))
-    return pd.DataFrame(ws.get_all_values())
+    data = ws.get_all_values()
+    df = pd.DataFrame(data)
+    if df.empty: return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
+    if df.shape[1] < 20:
+        for col in range(df.shape[1], 20): df[col] = ""
+    return df
 
 def format_currency(val, ticker):
     if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"): return f"₩{int(val):,}"
@@ -68,6 +73,21 @@ def load_price_df(ticker, period="1y"):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df.ffill(inplace=True); df.dropna(inplace=True)
     return df
+
+def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
+    if last_sqz_on and not prev_sqz_on: return "⏳재압축"
+    elif last_sqz_on and prev_sqz_on: return "⏳압축중"
+    elif (not last_sqz_on) and prev_sqz_on: return "🚀해제직후"
+    return "➡️해제유지"
+
+def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
+    if last_macd > last_sig and prev_macd <= prev_sig: return "🔥매수신호(골든크로스)"
+    elif last_macd > last_sig: return "📈추세유지(상승중)"
+    elif last_macd < last_sig and prev_macd >= prev_sig: return "📉하락주의(데드크로스)"
+    return "⏳추세관망"
+
+def get_fin_label_map():
+    return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
 # -------------------------------------------------
 # 3. 매크로 분석
@@ -135,11 +155,15 @@ def load_control_sheet():
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
+
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 
 total_eval = invest_data["current_asset"] if invest_data["current_asset"] > 0 else float(portfolio_df["평가금액"].sum())
 portfolio_value_map = {normalize_text(row["자산명"]): float(row["평가금액"]) for _, row in portfolio_df.iterrows() if normalize_text(row["자산명"]) != ""}
 
+# -------------------------------------------------
+# [복구 완료] TICKER_MAP 및 편입/보유 함수들
+# -------------------------------------------------
 def get_target_weight_from_sheet(name: str, ticker: str) -> float:
     t = normalize_ticker(ticker); matched = control_df[control_df["티커"].apply(normalize_ticker) == t]
     if not matched.empty: return float(matched.iloc[0]["목표비중"])
@@ -155,6 +179,11 @@ def get_sheet_current_weight(name: str, ticker: str) -> float:
     if total_eval <= 0: return 0.0
     return round((portfolio_value_map.get(normalize_text(name), 0.0) / total_eval) * 100, 2)
 
+def get_buy_amount(name: str, ticker: str) -> float:
+    target_w = get_target_weight_from_sheet(name, ticker); current_w = get_sheet_current_weight(name, ticker)
+    gap = max(target_w - current_w, 0)
+    return round(total_eval * (gap / 100), 0)
+
 def get_holding_row(name: str, ticker: str):
     t = normalize_ticker(ticker); n = normalize_text(name); pf = portfolio_df.copy()
     pf["티커정리"] = pf["티커입력"].apply(normalize_ticker); pf["자산명정리"] = pf["자산명"].apply(normalize_text)
@@ -162,7 +191,37 @@ def get_holding_row(name: str, ticker: str):
     if not matched.empty: return matched.iloc[0]
     matched = pf[pf["자산명정리"] == n]
     if not matched.empty: return matched.iloc[0]
+    t_base = t.replace(".ks", "").replace(".kq", "")
+    pf["티커기본"] = pf["티커정리"].str.replace(".ks", "", regex=False).str.replace(".kq", "", regex=False)
+    matched = pf[pf["티커기본"] == t_base]
+    if not matched.empty: return matched.iloc[0]
     return None
+
+def get_my_price(name: str, ticker: str) -> float:
+    row = get_holding_row(name, ticker)
+    if row is None: return 0.0
+    try: return float(row["매입단가"]) if pd.notna(row["매입단가"]) else 0.0
+    except: return 0.0
+
+def has_position(name: str, ticker: str) -> bool:
+    row = get_holding_row(name, ticker)
+    if row is None: return False
+    try: qty = float(row["보유량"]) if pd.notna(row["보유량"]) else 0.0
+    except: qty = 0.0
+    try: eval_amt = float(row["평가금액"]) if pd.notna(row["평가금액"]) else 0.0
+    except: eval_amt = 0.0
+    return qty > 0 or eval_amt > 0
+
+TICKER_MAP = {
+    "나스닥": ("379810.KS", True, "us_etf_nasdaq"), "QQQM": ("QQQM", True, "us_etf_nasdaq"), "QLD": ("QLD", True, "us_etf_nasdaq"), "TQQQ": ("TQQQ", True, "us_etf_nasdaq"),
+    "s&p500": ("379800.KS", True, "us_etf_sp"), "다우존스": ("458730.KS", True, "us_etf_sp"), "kodex 200": ("069500.KS", True, "kr_etf"),
+    "MSFT": ("MSFT", False, "us_stock"), "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
+    "샌디스크": ("SNDK", False, "us_stock"), "TSM": ("TSM", False, "us_stock"), "브로드컴": ("AVGO", False, "us_stock"), "MRVL": ("MRVL", False, "us_stock"),
+    "버티브홀딩스": ("VRT", False, "us_stock"), "마이크론": ("MU", False, "us_stock"), "삼성전자": ("005930.KS", False, "kr_stock"),
+    "두산에너빌리티": ("034020.KS", False, "kr_stock"), "하이닉스": ("000660.KS", False, "kr_stock"), "한화에어로스페이스": ("012450.KS", False, "kr_stock"),
+    "HD현대중공업": ("329180.KS", False, "kr_stock"), "에이피알": ("278470.KS", False, "kr_stock"), "HD현대일렉트릭": ("267260.KS", False, "kr_stock"),
+    "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
+}
 
 # -------------------------------------------------
 # 5. 분석 엔진 (로직 및 점수)
@@ -210,7 +269,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rs_s_val, rs_label = get_rs_score(ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
-    # [중요] 점수 시스템 복구
+    # 점수 시스템
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
     trend_s = 2 if trend_label == "🚀정배열(상승)" else 0
@@ -219,7 +278,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     
     tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     
-    # 감독관 A (Adj 점수용 메인 점수)
+    # 감독관 A 점수
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20
     main_score = (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) + \
@@ -228,7 +287,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                  (1 if vol_ratio > 1.2 else 0)
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
-    # 등급 문자열
+    # 등급
     t_score = tech_total + (0 if is_etf else fin_score)
     if not is_etf and fin_score == 1: grade = "🚨F급 (재무위험/처분)"
     elif t_score < 3: grade = "🚨F급 (기술/재무 부진)"
@@ -237,15 +296,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     elif t_score < 9: grade = "✅A급 (분할 매수)"
     else: grade = "💎S급 (강력 매수)"
 
-    # 판정 로직
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
-    buy_amount = round(total_eval * (max(target_w - current_w, 0) / 100), 0)
+    buy_amount = get_buy_amount(name, ticker) if not is_free_search else 0.0
 
-    # 최종 문구
+    # 최종 판정
     if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착(분할접근)", "#dc2626"
@@ -271,15 +329,16 @@ def get_all_summary(fin_score_map_items):
     for name, (tkr, is_etf, a_class) in TICKER_MAP.items():
         df = load_price_df(tkr, "1y")
         if df.empty: continue
-        df = build_indicators(df); info = get_holding_row(name, tkr)
-        my_p = float(info["매입단가"]) if info is not None else 0.0
+        df = build_indicators(df); 
+        my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
         f_score = fin_map.get(name, 0 if is_etf else 2)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score)
         rows.append({
-            "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "현재비중": f"{c['current_w']:.2f}%", 
+            "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
+            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%", 
             "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2), 
-            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1) # [복구] 전광판 Adj점수
+            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
     return pd.DataFrame(rows)
 
@@ -291,6 +350,8 @@ tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측
 with tab1:
     st.subheader("CCTV 통합 통제실")
     st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
+    with st.expander("🛠️ 엑셀 원본 데이터 확인 (디버그용)"):
+        st.write(portfolio_df[["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"]].head(10))
     st.dataframe(get_all_summary(tuple(sorted(st.session_state.fin_score_map.items()))), use_container_width=True, height=720, hide_index=True)
 
 with tab2:
@@ -302,8 +363,8 @@ with tab2:
         user_tkr = st.text_input("티커 입력 (예: GOOGL, 005930.KS)", "GOOGL").upper()
         tkr, is_etf, a_class, name, my_p, has_p = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}", 0.0, False
     else:
-        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]; info = get_holding_row(name, tkr)
-        my_p = float(info["매입단가"]) if info is not None else 0.0; has_p = has_position(name, tkr)
+        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel];
+        my_p = get_my_price(name, tkr); has_p = has_position(name, tkr)
 
     f_labels = get_fin_label_map(); default_f = st.session_state.fin_score_map.get(name, 0 if is_etf else 2)
     fin_score = st.radio("재무 점수", [0, 1, 2, 3, 4], index=default_f, format_func=lambda x: f_labels[x], horizontal=True)
@@ -314,13 +375,13 @@ with tab2:
     if not df.empty:
         df = build_indicators(df)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, is_free)
+        last = df.iloc[-1]
         col1, col2 = st.columns([1.2, 2.3])
         
         with col1:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
             st.markdown(f"<div class='info-panel'>실시간 현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>고점대비 MDD: <b>{c['dd']*100:.1f}%</b></div>", unsafe_allow_html=True)
             
-            # [복구] 신호등 박스 세부 점수 노출
             st.markdown(f"""
             <div class="signal-box" style="background-color: {c['col']};">
                 <div style="font-size: 1.6em;">{c['dec']}</div>
@@ -354,6 +415,6 @@ with tab2:
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
             if not is_free and has_p and my_p > 0:
-                fig.add_hline(y=my_p, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
+                fig.add_hline(y=my_p, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가", annotation_position="bottom right")
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig, use_container_width=True)
