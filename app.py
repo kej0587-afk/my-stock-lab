@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v9.5 (마스터 무결점판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v9.6 (TypeError 완벽수정)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v9.5")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v9.6")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -239,7 +239,6 @@ def get_rs_score(ticker, asset_class):
     s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
     if s_df.empty or b_df.empty or len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
     
-    # [수정포인트] 시트 인덱싱 방식과 동일하게 11번째 전 데이터 사용
     s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
     b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
     
@@ -262,10 +261,13 @@ def build_indicators(df):
     df["SQZ_ON"] = (bb_hi < kc.keltner_channel_hband()) & (bb_lo > kc.keltner_channel_lband())
     return df
 
-def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, is_free_search=False):
+# [보수완료] TypeError 방지를 위해 ticker_info 파라미터를 Optional(기본값 None)로 명확히 고정
+def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, ticker_info=None, is_free_search=False):
+    if ticker_info is None:
+        ticker_info = {}
+
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     
-    # 3M/6M 수익률
     price_3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     ret_3m = (cur_p / price_3m) - 1
     price_6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
@@ -297,8 +299,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
-    # [신설] PER 판정 로직
-    ticker_info = get_ticker_info(ticker)
     curr_pe = ticker_info.get('trailingPE', 0)
     avg_pe = ticker_info.get('forwardPE', 0)
     if curr_pe == 0 or avg_pe == 0: pe_status = "PER판정유보"
@@ -397,11 +397,13 @@ def get_all_summary(fin_score_map_items):
         my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
         f_score = fin_map.get(name, 0 if is_etf else 2)
-        # Summary 에서는 ticker_info 호출 안함 (속도 저하 방지, PER 판정유보로 처리됨)
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, {}, False)
+        # [수정포인트] 요약판에서는 속도저하를 막기위해 ticker_info 파라미터는 명시적으로 {} 와 False로 넘깁니다.
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, ticker_info={}, is_free_search=False)
         rows.append({
             "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "RS": c["rs_label"], "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%", 
+            "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2), 
+            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
     return pd.DataFrame(rows)
 
@@ -440,7 +442,8 @@ with tab2:
     
     if not df.empty:
         df = build_indicators(df)
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, ticker_info, is_free)
+        # [수정포인트] 정밀 관측소에서는 ticker_info를 살려서 넣어줍니다!
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, ticker_info=ticker_info, is_free_search=is_free)
         
         col1, col2 = st.columns([1.2, 2.3])
         with col1:
