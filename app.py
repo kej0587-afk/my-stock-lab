@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v8.9 (ETF 로직 완벽분리)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v9.0 (SMC/6M 수익률 완벽탑재)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -25,7 +25,7 @@ st.markdown("""
     .signal-box { padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; color: white !important; font-weight: bold; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); }
     .macro-panel { background-color: #1e293b; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-top: 4px solid #e74c3c; font-size: 0.95em; color: #f8fafc; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .info-panel { background-color: #1e293b; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #3b82f6; color: #f8fafc; box-shadow: 0 4px 6px rgba(0,0,0,0.3); line-height: 1.6; }
-    .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; }
+    .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; background-color: #1e293b; padding: 2px 6px; border-radius: 4px; border: 1px solid #334155; }
     .highlight { font-size: 1.4em; font-weight: bold; color: #fbbf24; text-shadow: 1px 1px 2px #000; }
     .score-detail { font-size: 0.9em; font-weight: normal; color: #cbd5e1; margin-top: 10px; }
     div[data-baseweb="select"] > div { background-color: #1e293b !important; color: white !important; }
@@ -33,7 +33,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v8.9")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v9.0")
 
 # -------------------------------------------------
 # 2. 구글 인증 & 데이터 로드
@@ -257,12 +257,18 @@ def build_indicators(df):
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, is_free_search=False):
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     
+    # 수익률 & MDD 계산
     price_3m = df["Close"].iloc[-63] if len(df) >= 63 else df["Close"].iloc[0]
     ret_3m = (cur_p - price_3m) / price_3m if price_3m > 0 else 0.0
+
+    # [수정포인트] 6개월 수익률 추가
+    price_6m = df["Close"].iloc[-126] if len(df) >= 126 else df["Close"].iloc[0]
+    ret_6m = (cur_p - price_6m) / price_6m if price_6m > 0 else 0.0
 
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p - high_52w) / high_52w if high_52w > 0 else 0.0
 
+    # 지표 상태
     trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
     macd_state = "🔥매수신호(골든크로스)" if last["MACD"] > last["MACD_Sig"] and prev["MACD"] <= prev["MACD_Sig"] else \
                  ("📈추세유지(상승중)" if last["MACD"] > last["MACD_Sig"] else \
@@ -272,6 +278,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rs_s_val, rs_label = get_rs_score(ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
+    # 점수 시스템
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
     trend_s = 2 if trend_label == "🚀정배열(상승)" else 0
@@ -280,6 +287,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     
     tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     
+    # 감독관 A 점수
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20
     main_score = (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) + \
@@ -288,7 +296,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                  (1 if vol_ratio > 1.2 else 0)
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
-    # [보수완료] ETF 전용 판정 분리
+    # ETF 전용 판정
     if is_etf:
         t_score = tech_total
         if tech_total < 1: grade = "⏳ETF 관망"
@@ -310,6 +318,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
     buy_amount = get_buy_amount(name, ticker) if not is_free_search else 0.0
+
+    # SMC 멘트 (소장의 전술 인사이트)
+    if rsi_now <= 30: smc_insight = "과매도 극단. 세력의 유동성 사냥(Liquidity Grab) 후 구조적 반등(CHoCH) 여부 집중 관찰 요망."
+    elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성 높은 단기 과열 구간. 섣부른 추격 매수 엄금."
+    elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축(Squeeze) 후 발산(Expansion) 초기 패턴. 모멘텀이 실리는 강력한 타점 포착."
+    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = f"구조적 상승(BoS) 진행 중. 눌림목 발생 시 단기 방어선 MA20 지지 필수 체크."
+    elif trend_label == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
+    else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
 
     # 최종 판정
     if is_free_search:
@@ -369,7 +385,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
             else: dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
-    return {"cur_p": cur_p, "trend": trend_label, "macd": macd_state, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "sqz": sqz_status, "adj": adj_tech_score, "dec": dec, "col": col, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "dd": current_dd, "ret_3m": ret_3m, "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount}
+    # [수정포인트] 이평선 가격 딕셔너리에 추가
+    return {"cur_p": cur_p, "trend": trend_label, "macd": macd_state, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "sqz": sqz_status, "adj": adj_tech_score, "dec": dec, "col": col, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount, "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "smc_insight": smc_insight}
 
 @st.cache_data(ttl=60)
 def get_all_summary(fin_score_map_items):
@@ -424,7 +441,6 @@ with tab2:
     if not df.empty:
         df = build_indicators(df)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, is_free)
-        last = df.iloc[-1]
         col1, col2 = st.columns([1.2, 2.3])
         
         with col1:
@@ -434,13 +450,21 @@ with tab2:
             <div class='info-panel'>
                 실시간 현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>
                 고점대비 MDD: <span style='color:{dd_color}; font-weight:bold;'>{c['dd']*100:.1f}%</span><br>
-                3개월 수익률: <span style='color:{"#2ecc71" if c['ret_3m']>0 else "#dc2626"}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span>
+                3개월 수익률: <span style='color:{"#2ecc71" if c['ret_3m']>0 else "#dc2626"}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>
+                6개월 수익률: <span style='color:{"#2ecc71" if c['ret_6m']>0 else "#dc2626"}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span>
             </div>
             """, unsafe_allow_html=True)
             
+            if is_free:
+                st.info("💡 엑셀 미등록 종목입니다. 순수 기술적 타점만 분석합니다.")
+            else:
+                if has_p and my_p > 0:
+                    st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (엑셀 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
+
             st.markdown(f"""
             <div class="signal-box" style="background-color: {c['col']};">
-                <div style="font-size: 1.6em;">{c['dec']}</div>
+                <div style="font-size: 1.6em; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">{c['dec']}</div>
                 <div class="score-detail">
                     (Main:<b>{c['main_s']}</b> | RS:<b>{c['rs_s']}</b> | MFI:<b>{c['mfi_s']}</b> | Macro:<b>-{macro_penalty}</b>)
                     ➔ Adj: <b style="color:white; font-size:1.1em;">{c['adj']:.1f}점</b>
@@ -457,12 +481,20 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
+            # [복구완료] MA 이평선 및 SMC 인사이트 추가!
             st.markdown(f"""
             <div class='info-panel' style='border-left: 5px solid #e67e22;'>
                 <b>🛡️ SMC / Swing 전술 지표</b><br>
                 • 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>
                 • RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>
                 • 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <span style='color:#fbbf24;'><b>{c['sqz']}</b></span>
+                <hr style='margin:12px 0; border-color:#334155;'>
+                <span class='smc-tag'>[단기]</span> <b>MA5 :</b> {format_currency(c['ma5'], tkr)}<br>
+                <span class='smc-tag'>[스윙]</span> <b>MA20 :</b> {format_currency(c['ma20'], tkr)}<br>
+                <span class='smc-tag'>[중기]</span> <b>MA50 :</b> {format_currency(c['ma50'], tkr)}<br>
+                <span class='smc-tag'>[기관]</span> <b>MA120 :</b> {format_currency(c['ma120'], tkr)}<br>
+                <hr style='margin:12px 0; border-color:#334155;'>
+                💡 <b>소장의 SMC 전술평:</b> {c['smc_insight']}
             </div>
             """, unsafe_allow_html=True)
 
