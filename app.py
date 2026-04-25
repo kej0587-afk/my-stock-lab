@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v9.0 (SMC/6M 수익률 완벽탑재)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v9.1 (시트 완벽동기화)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -25,7 +25,7 @@ st.markdown("""
     .signal-box { padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 15px; color: white !important; font-weight: bold; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); }
     .macro-panel { background-color: #1e293b; padding: 15px; border-radius: 10px; margin-bottom: 10px; border-top: 4px solid #e74c3c; font-size: 0.95em; color: #f8fafc; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .info-panel { background-color: #1e293b; padding: 18px; border-radius: 10px; margin-bottom: 15px; border-left: 5px solid #3b82f6; color: #f8fafc; box-shadow: 0 4px 6px rgba(0,0,0,0.3); line-height: 1.6; }
-    .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; background-color: #1e293b; padding: 2px 6px; border-radius: 4px; border: 1px solid #334155; }
+    .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; }
     .highlight { font-size: 1.4em; font-weight: bold; color: #fbbf24; text-shadow: 1px 1px 2px #000; }
     .score-detail { font-size: 0.9em; font-weight: normal; color: #cbd5e1; margin-top: 10px; }
     div[data-baseweb="select"] > div { background-color: #1e293b !important; color: white !important; }
@@ -33,10 +33,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v9.0")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v9.1")
 
 # -------------------------------------------------
-# 2. 구글 인증 & 데이터 로드
+# 2. 보안 인증 및 유틸
 # -------------------------------------------------
 @st.cache_resource
 def get_gspread_client():
@@ -48,12 +48,7 @@ def load_sheet_by_gid(gid: str) -> pd.DataFrame:
     client = get_gspread_client()
     sh = client.open_by_key(SPREADSHEET_ID)
     ws = sh.get_worksheet_by_id(int(gid))
-    data = ws.get_all_values()
-    df = pd.DataFrame(data)
-    if df.empty: return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
-    if df.shape[1] < 20:
-        for col in range(df.shape[1], 20): df[col] = ""
-    return df
+    return pd.DataFrame(ws.get_all_values())
 
 def format_currency(val, ticker):
     if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"): return f"₩{int(val):,}"
@@ -74,23 +69,8 @@ def load_price_df(ticker, period="1y"):
     df.ffill(inplace=True); df.dropna(inplace=True)
     return df
 
-def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
-    if last_sqz_on and not prev_sqz_on: return "⏳재압축"
-    elif last_sqz_on and prev_sqz_on: return "⏳압축중"
-    elif (not last_sqz_on) and prev_sqz_on: return "🚀해제직후"
-    return "➡️해제유지"
-
-def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
-    if last_macd > last_sig and prev_macd <= prev_sig: return "🔥매수신호(골든크로스)"
-    elif last_macd > last_sig: return "📈추세유지(상승중)"
-    elif last_macd < last_sig and prev_macd >= prev_sig: return "📉하락주의(데드크로스)"
-    return "⏳추세관망"
-
-def get_fin_label_map():
-    return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
-
 # -------------------------------------------------
-# 3. 매크로 분석
+# 3. 매크로
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def get_macro_analysis():
@@ -123,7 +103,7 @@ for i, (n, info) in enumerate(macro_res.items()):
     m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
 
 # -------------------------------------------------
-# 4. 시트 연동 로직
+# 4. 데이터 로드 및 맵핑
 # -------------------------------------------------
 @st.cache_data(ttl=300)
 def load_invest_sheet():
@@ -155,7 +135,6 @@ def load_control_sheet():
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
-
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 
 total_eval = invest_data["current_asset"] if invest_data["current_asset"] > 0 else float(portfolio_df["평가금액"].sum())
@@ -176,22 +155,12 @@ def get_sheet_current_weight(name: str, ticker: str) -> float:
     if total_eval <= 0: return 0.0
     return round((portfolio_value_map.get(normalize_text(name), 0.0) / total_eval) * 100, 2)
 
-def get_buy_amount(name: str, ticker: str) -> float:
-    target_w = get_target_weight_from_sheet(name, ticker)
-    current_w = get_sheet_current_weight(name, ticker)
-    gap = max(target_w - current_w, 0)
-    return round(total_eval * (gap / 100), 0)
-
 def get_holding_row(name: str, ticker: str):
     t = normalize_ticker(ticker); n = normalize_text(name); pf = portfolio_df.copy()
     pf["티커정리"] = pf["티커입력"].apply(normalize_ticker); pf["자산명정리"] = pf["자산명"].apply(normalize_text)
     matched = pf[pf["티커정리"] == t]
     if not matched.empty: return matched.iloc[0]
     matched = pf[pf["자산명정리"] == n]
-    if not matched.empty: return matched.iloc[0]
-    t_base = t.replace(".ks", "").replace(".kq", "")
-    pf["티커기본"] = pf["티커정리"].str.replace(".ks", "", regex=False).str.replace(".kq", "", regex=False)
-    matched = pf[pf["티커기본"] == t_base]
     if not matched.empty: return matched.iloc[0]
     return None
 
@@ -222,20 +191,24 @@ TICKER_MAP = {
 }
 
 # -------------------------------------------------
-# 5. 분석 엔진 (로직 및 점수)
+# 5. 핵심 엔진 (시트 수식과 100% 동기화)
 # -------------------------------------------------
 def get_rs_score(ticker, asset_class):
+    # 벤치마크 설정
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
-    s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
+    s_df, b_df = load_price_df(ticker, "1y"), load_price_df(bench, "1y")
     if s_df.empty or b_df.empty or len(s_df) < 11: return 1, "➖보통"
-    s, b = s_df["Close"].dropna().reset_index(drop=True), b_df["Close"].dropna().reset_index(drop=True)
-    min_len = min(len(s), len(b))
-    if min_len < 11: return 1, "➖보통"
-    s, b = s.iloc[-min_len:], b.iloc[-min_len:]
-    stock_now, stock_10d = float(s.iloc[-1]), float(s.iloc[-11])
-    market_now, market_10d = float(b.iloc[-1]), float(b.iloc[-11])
-    if market_now == 0 or market_10d == 0: return 1, "➖보통"
-    rs_now, rs_10d = stock_now / market_now, stock_10d / market_10d
+    
+    # [수정] 대장님 시트 수식 INDEX(LQ, COUNT-10)와 동일하게 슬라이싱
+    stock_now = float(s_df["Close"].iloc[-1])
+    stock_10d = float(s_df["Close"].iloc[-11])
+    market_now = float(b_df["Close"].iloc[-1])
+    market_10d = float(b_df["Close"].iloc[-11])
+    
+    rs_now = stock_now / market_now
+    rs_10d = stock_10d / market_10d
+    
+    # [수정] 3% 기준선 동기화
     if rs_now > rs_10d * 1.03: return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
     return 1, "➖보통"
@@ -257,16 +230,14 @@ def build_indicators(df):
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, is_free_search=False):
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     
-    # 수익률 & MDD 계산
-    price_3m = df["Close"].iloc[-63] if len(df) >= 63 else df["Close"].iloc[0]
-    ret_3m = (cur_p - price_3m) / price_3m if price_3m > 0 else 0.0
-
-    # [수정포인트] 6개월 수익률 추가
-    price_6m = df["Close"].iloc[-126] if len(df) >= 126 else df["Close"].iloc[0]
-    ret_6m = (cur_p - price_6m) / price_6m if price_6m > 0 else 0.0
+    # [수정] 대장님 시트 수식 60일, 120일 기준 수익률 동기화
+    price_3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
+    ret_3m = (cur_p / price_3m) - 1
+    price_6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
+    ret_6m = (cur_p / price_6m) - 1
 
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
-    current_dd = (cur_p - high_52w) / high_52w if high_52w > 0 else 0.0
+    current_dd = (cur_p / high_52w) - 1
 
     # 지표 상태
     trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
@@ -287,7 +258,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     
     tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     
-    # 감독관 A 점수
+    # 감독관 A (Adj 점수)
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20
     main_score = (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) + \
@@ -296,7 +267,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                  (1 if vol_ratio > 1.2 else 0)
     adj_tech_score = (main_score + rs_s + mfi_s) - macro_penalty
 
-    # ETF 전용 판정
+    # 판정 기준
     if is_etf:
         t_score = tech_total
         if tech_total < 1: grade = "⏳ETF 관망"
@@ -312,20 +283,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif t_score < 9: grade = "✅A급 (분할 매수)"
         else: grade = "💎S급 (강력 매수)"
 
+    # 판정 문구 로직
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
-    buy_amount = get_buy_amount(name, ticker) if not is_free_search else 0.0
-
-    # SMC 멘트 (소장의 전술 인사이트)
-    if rsi_now <= 30: smc_insight = "과매도 극단. 세력의 유동성 사냥(Liquidity Grab) 후 구조적 반등(CHoCH) 여부 집중 관찰 요망."
-    elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성 높은 단기 과열 구간. 섣부른 추격 매수 엄금."
-    elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축(Squeeze) 후 발산(Expansion) 초기 패턴. 모멘텀이 실리는 강력한 타점 포착."
-    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = f"구조적 상승(BoS) 진행 중. 눌림목 발생 시 단기 방어선 MA20 지지 필수 체크."
-    elif trend_label == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
-    else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
+    buy_amount = round(total_eval * (max(target_w - current_w, 0) / 100), 0)
 
     # 최종 판정
     if is_free_search:
@@ -338,55 +302,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
         elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
         elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-        elif trend_label == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
         else: dec, col = "🔍관망: 타점 대기", "#64748b"
-
-    elif is_etf:
-        if target_w == 0 and has_pos: dec, col = "🚨비편입 자산: 정리 검토", "#dc2626"
-        elif target_w == 0 and not has_pos: dec, col = "🚫비편입 자산: 신규매수 제외", "#64748b"
-        elif current_w > target_w: dec, col = "🛑비중 초과: 추가매수 금지", "#dc2626"
-        elif current_w >= target_w and target_w > 0: dec, col = "⏸️비중 충족: 관망", "#d97706"
-        elif mfi_now >= 85 and pct_b_now >= 0.98: dec, col = "⚠️극단과열: 소액매수만", "#d97706"
-        elif mfi_now >= 80: dec, col = "⚠️단기과열: 신규는 속도조절", "#d97706"
-        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯ETF 눌림목: 분할매수", "#8b5cf6"
-        elif adj_tech_score >= 4: dec, col = "✅분할매수", "#16a34a"
-        elif adj_tech_score >= 2: dec, col = "⏳관망/소액매수", "#64748b"
-        else: dec, col = "🔍대기: 다음 기회 탐색", "#64748b"
     else:
-        if fin_score == 1: dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
+        if not is_etf and fin_score == 1: dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
         elif current_w > target_w and target_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
-        elif current_w >= target_w and target_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
-        elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 나스닥100% 보너스 30% 최종투입", "#7f1d1d"
-        elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 나스닥100% 보너스 40% 투입", "#991b1b"
-        elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 나스닥60% 집중 보너스30% 투입", "#b91c1c"
-        elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금30% 확보 및 코어 집중", "#dc2626"
-        elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
-        elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
-        elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
-        elif has_pos:
-            if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류(보유자 영역)", "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 줍줍 찬스(역발상)", "#16a34a"
-            elif rs_label == "🚀강함" and mfi_now < 35: dec, col = "💎S급: 주도주+과매도(풀매수)", "#16a34a"
-            elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등신호", "#16a34a"
-            elif trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and cur_p <= my_price: dec, col = "📈정배열: 눌림목 매수", "#16a34a"
-            elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)", "#d97706"
-            elif cur_p <= my_price: dec, col = "✅평단이하: 분할매수", "#16a34a"
-            else: dec, col = "⏳보유중(신호대기)", "#64748b"
-        else:
-            if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기", "#d97706"
-            elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 진입 보류(조정 대기)", "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입 찬스", "#16a34a"
-            elif is_early_entry: dec, col = "🟢선진입 가능: 실시간 반전 초입", "#16a34a"
-            elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
-            elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
-            elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-            elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
-            else: dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
+        elif current_dd <= -0.2: dec, col = f"🚨위기({int(current_dd*100)}%↓): 패닉 대응모드", "#dc2626"
+        elif has_pos and adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등신호", "#16a34a"
+        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
+        else: dec, col = "⏳보유중(신호대기)", "#64748b"
 
-    # [수정포인트] 이평선 가격 딕셔너리에 추가
-    return {"cur_p": cur_p, "trend": trend_label, "macd": macd_state, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "sqz": sqz_status, "adj": adj_tech_score, "dec": dec, "col": col, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount, "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "smc_insight": smc_insight}
+    return {"cur_p": cur_p, "trend": trend_label, "macd": macd_state, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "sqz": sqz_status, "adj": adj_tech_score, "dec": dec, "col": col, "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score, "rs_s": rs_s, "mfi_s": mfi_s, "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, "main_s": main_score, "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "target_w": target_w, "current_w": current_w, "buy_amt": buy_amount}
 
 @st.cache_data(ttl=60)
 def get_all_summary(fin_score_map_items):
@@ -402,22 +327,18 @@ def get_all_summary(fin_score_map_items):
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score)
         rows.append({
             "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%", 
-            "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2), 
-            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+            "현재비중": f"{c['current_w']:.2f}%", "RS": c["rs_label"], "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
     return pd.DataFrame(rows)
 
 # -------------------------------------------------
-# 8. UI
+# 6. UI
 # -------------------------------------------------
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
     st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
-    with st.expander("🛠️ 엑셀 원본 데이터 확인 (디버그용)"):
-        st.write(portfolio_df[["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"]].head(10))
     st.dataframe(get_all_summary(tuple(sorted(st.session_state.fin_score_map.items()))), use_container_width=True, height=720, hide_index=True)
 
 with tab2:
@@ -426,10 +347,11 @@ with tab2:
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
     
     if is_free:
-        user_tkr = st.text_input("티커 입력 (예: GOOGL, 005930.KS)", "GOOGL").upper()
-        tkr, is_etf, a_class, name, my_p, has_p = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}", 0.0, False
+        user_tkr = st.text_input("티커 입력 (예: GOOGL, TSLA)", "GOOGL").upper()
+        tkr, is_etf, a_class, name = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}"
+        my_p, has_p = 0.0, False
     else:
-        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel];
+        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p = get_my_price(name, tkr); has_p = has_position(name, tkr)
 
     f_labels = get_fin_label_map(); default_f = st.session_state.fin_score_map.get(name, 0 if is_etf else 2)
@@ -445,26 +367,18 @@ with tab2:
         
         with col1:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
-            dd_color = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
             st.markdown(f"""
             <div class='info-panel'>
                 실시간 현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>
-                고점대비 MDD: <span style='color:{dd_color}; font-weight:bold;'>{c['dd']*100:.1f}%</span><br>
-                3개월 수익률: <span style='color:{"#2ecc71" if c['ret_3m']>0 else "#dc2626"}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>
-                6개월 수익률: <span style='color:{"#2ecc71" if c['ret_6m']>0 else "#dc2626"}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span>
+                3개월 수익률: <span style='color:{"#2ecc71" if c["ret_3m"]>0 else "#dc2626"}; font-weight:bold;'>{c["ret_3m"]*100:.1f}%</span><br>
+                6개월 수익률: <span style='color:{"#2ecc71" if c["ret_6m"]>0 else "#dc2626"}; font-weight:bold;'>{c["ret_6m"]*100:.1f}%</span><br>
+                고점대비 MDD: <b>{c['dd']*100:.1f}%</b>
             </div>
             """, unsafe_allow_html=True)
             
-            if is_free:
-                st.info("💡 엑셀 미등록 종목입니다. 순수 기술적 타점만 분석합니다.")
-            else:
-                if has_p and my_p > 0:
-                    st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (엑셀 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
-
             st.markdown(f"""
             <div class="signal-box" style="background-color: {c['col']};">
-                <div style="font-size: 1.6em; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">{c['dec']}</div>
+                <div style="font-size: 1.6em;">{c['dec']}</div>
                 <div class="score-detail">
                     (Main:<b>{c['main_s']}</b> | RS:<b>{c['rs_s']}</b> | MFI:<b>{c['mfi_s']}</b> | Macro:<b>-{macro_penalty}</b>)
                     ➔ Adj: <b style="color:white; font-size:1.1em;">{c['adj']:.1f}점</b>
@@ -474,27 +388,20 @@ with tab2:
 
             st.markdown(f"""
             <div class='info-panel' style='border-left: 5px solid #8b5cf6;'>
-                <b>📌 후보 등급 판정</b><br><br>
-                <span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총합: {c['t_score']}점)<br>
-                └ 🛠️기술: <b>{c['tech_total']}</b> (RS:{c['rs_s']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']})<br>
-                {"└ 💰재무: <b>해당없음</b> (ETF/지수)" if is_etf else f"└ 💰재무: <b>{c['fin_score']}</b>/4"}
+                <b>📌 후보 등급 판정</b><br>
+                <span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총점: {c['t_score']}점)<br>
+                └ 🛠️기술: <b>{c['tech_total']}</b> (RS:{c['rs_s']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']})
             </div>
             """, unsafe_allow_html=True)
 
-            # [복구완료] MA 이평선 및 SMC 인사이트 추가!
             st.markdown(f"""
             <div class='info-panel' style='border-left: 5px solid #e67e22;'>
-                <b>🛡️ SMC / Swing 전술 지표</b><br>
+                <b>🛡️ SMC 전술 지표</b><br>
                 • 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>
                 • RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>
                 • 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <span style='color:#fbbf24;'><b>{c['sqz']}</b></span>
-                <hr style='margin:12px 0; border-color:#334155;'>
-                <span class='smc-tag'>[단기]</span> <b>MA5 :</b> {format_currency(c['ma5'], tkr)}<br>
-                <span class='smc-tag'>[스윙]</span> <b>MA20 :</b> {format_currency(c['ma20'], tkr)}<br>
-                <span class='smc-tag'>[중기]</span> <b>MA50 :</b> {format_currency(c['ma50'], tkr)}<br>
-                <span class='smc-tag'>[기관]</span> <b>MA120 :</b> {format_currency(c['ma120'], tkr)}<br>
-                <hr style='margin:12px 0; border-color:#334155;'>
-                💡 <b>소장의 SMC 전술평:</b> {c['smc_insight']}
+                <hr style='margin:10px 0; border-color:#334155;'>
+                <span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)} <span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}
             </div>
             """, unsafe_allow_html=True)
 
@@ -506,5 +413,3 @@ with tab2:
                 fig.add_hline(y=my_p, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가", annotation_position="bottom right")
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 확인해 주십시오.")
