@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v13.0 (그랜드 오픈 마감판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v13.1 (그랜드 오픈 마감판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -45,8 +45,7 @@ with st.sidebar:
     app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 구글 시트 연동, 범용모드는 직접 입력 방식입니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-# [복구] 누락되었던 타이틀 복구 완료
-st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.0 ({app_mode})")
+st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -309,7 +308,7 @@ def get_effective_buy_amount(mode, name, ticker, eff_total, u_curr_w, u_targ_w):
     return round(eff_total * (max(tw - cw, 0) / 100), 0)
 
 # -------------------------------------------------
-# 7. 기술적 분석 메인 엔진 (오리지널 로직 완벽 복원)
+# 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score, 
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0):
@@ -469,8 +468,12 @@ def get_all_summary(fin_score_map_items, mode):
     for name, (tkr, is_etf, a_class) in TICKER_MAP.items():
         df = load_price_df(tkr, "1y")
         if df.empty: continue
+        
+        # [수정] 원본 df에 지표를 덮어쓰기 위해 build_indicators 분리 실행
+        df = build_indicators(df)
         f_score = fin_map.get(name, 0 if is_etf else 2)
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, build_indicators(df), 0, False, f_score, app_mode=mode)
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
+        
         rows.append({
             "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
             "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%",
@@ -506,18 +509,20 @@ def has_position(name, ticker):
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
-# [순서 변경] 매크로 로드 후 st.caption 실행
 macro_res, final_macro_risk, macro_penalty, move_val = get_macro_analysis()
 
 st.caption(f"모드: {app_mode} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
 
-m_cols = st.columns(len(macro_res))
-for i, (n, info) in enumerate(macro_res.items()):
-    s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] else ""
-    m_cols[i].markdown(
-        f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>",
-        unsafe_allow_html=True
-    )
+if macro_res:
+    m_cols = st.columns(len(macro_res))
+    for i, (n, info) in enumerate(macro_res.items()):
+        s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] else ""
+        m_cols[i].markdown(
+            f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>",
+            unsafe_allow_html=True
+        )
+else:
+    st.info("매크로 데이터를 불러오지 못했습니다.")
 
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
@@ -567,7 +572,11 @@ with tab2:
 
     df = load_price_df(tkr, "1y")
     if not df.empty:
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, build_indicators(df), u_price if app_mode=="범용모드" else my_p, 
+        
+        # [수정] 원본 df에 지표를 덮어쓰기 위해 분리 실행 (차트 에러 방지용)
+        df = build_indicators(df)
+        
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p, 
                                      (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free, 
                                      app_mode, u_asset, u_curr_w, u_targ_w)
         
@@ -575,7 +584,7 @@ with tab2:
         with L:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
-            st.markdown(f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>3개월 수익률: {c['ret_3m']*100:.1f}%<br>6개월 수익률: {c['ret_6m']*100:.1f}%<br>고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>3개월 수익률: <span style='color:{"#2ecc71" if c["ret_3m"]>0 else "#dc2626"}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>6개월 수익률: <span style='color:{"#2ecc71" if c["ret_6m"]>0 else "#dc2626"}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>", unsafe_allow_html=True)
             
             if is_free or app_mode == "범용모드": 
                 st.info("💡 직접 입력 기반 분석 모드입니다.")
@@ -599,7 +608,7 @@ with tab2:
             st.markdown(
                 f"<div class='info-panel' style='border-left: 5px solid #8b5cf6;'>"
                 f"<b>📌 후보 등급 판정</b><br>"
-                f"<span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총점: {c['t_score']})<br>"
+                f"<span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총점: {c['t_score']}점)<br>"
                 f"└ 🛠️기술: {c['tech_total']} (RS:{c['rs_s']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']})<br>"
                 f"└ 💰재무: {fin_text}</div>",
                 unsafe_allow_html=True
