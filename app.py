@@ -5,11 +5,14 @@ import plotly.graph_objects as go
 import ta
 import gspread
 from google.oauth2.service_account import Credentials
+import requests
+from bs4 import BeautifulSoup
+import urllib.parse
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v10.0 (대장주 예외 + 뉴스 탑재)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v10.3 (뉴스 강력배관)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -36,7 +39,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v10.0")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v10.3")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -67,15 +70,33 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [신규] 뉴스 로드 함수
+# [신규 완벽 교체] 구글 뉴스 강력 배관 (BeautifulSoup + Requests)
 @st.cache_data(ttl=600)
-def get_ticker_news(ticker):
+def get_ticker_news(ticker, name):
     try:
-        t = yf.Ticker(ticker)
-        news = t.news
-        if not news: return []
-        return [{"title": n.get("title", "제목 없음"), "link": n.get("link", "#"), "publisher": n.get("publisher", "알 수 없음")} for n in news[:3]]
-    except:
+        search_query = name if (".KS" in ticker or ".KQ" in ticker) else ticker
+        encoded_query = urllib.parse.quote(f"{search_query} 주가 OR 실적") # 검색어 최적화
+        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+        
+        # 봇 차단 회피용 헤더
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.content, 'xml') # xml 파서 사용
+        
+        items = soup.find_all('item')
+        news_list = []
+        for item in items[:3]: # 최신 3개만
+            title = item.title.text if item.title else "제목 없음"
+            link = item.link.text if item.link else "#"
+            source = item.source.text if item.source else "Google News"
+            news_list.append({"title": title, "link": link, "publisher": source})
+            
+        return news_list
+    except Exception as e:
+        st.write(f"", unsafe_allow_html=True)
         return []
 
 # -------------------------------------------------
@@ -244,8 +265,8 @@ def get_rs_score(ticker, asset_class):
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
     s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
     if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
-    s_now, s_10d = s_df["Close"].iloc[-1], s_df["Close"].iloc[-11]
-    b_now, b_10d = b_df["Close"].iloc[-1], b_df["Close"].iloc[-11]
+    s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
+    b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
     rs_now, rs_10d = s_now / b_now, s_10d / b_10d
     if rs_now > rs_10d * 1.03: return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
@@ -317,7 +338,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    # [신규] 재무 4점 + Adj 4점 이상 + 강함 상태일 때 밴드상단 이탈 시 예외 허용 로직
+    # [예외 승인] 재무 4점 만점 + 기술 Adj 4점 이상일 때 밴드상단 돌파 시 추격 허용 로직
     is_breakout_buy = (fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now >= 0.95 and rs_label == "🚀강함")
 
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
@@ -491,14 +512,14 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            # [신규] 뉴스 모듈 렌더링
-            st.markdown("### 📰 최신 현장 뉴스 (Yahoo Finance)")
-            news_items = get_ticker_news(tkr)
+            # [신규 완벽 교체] 구글 뉴스 렌더링
+            st.markdown("### 📰 최신 현장 뉴스 (Google News)")
+            news_items = get_ticker_news(tkr, name)
             if news_items:
                 for item in news_items:
                     st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a><br><span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
             else:
-                st.info("현재 제공되는 최신 뉴스가 없습니다. (한국 종목은 지원되지 않을 수 있습니다)")
+                st.info("현재 제공되는 최신 뉴스가 없습니다.")
 
         with col2:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
