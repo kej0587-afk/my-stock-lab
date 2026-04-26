@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v10.8 (뉴스 듀얼모터)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v11.0 (최종 준공 승인판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -39,12 +39,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 좌측 사이드바에 디버그 토글 추가
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v10.8")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v11.0")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -75,10 +74,9 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [수정] 뉴스 듀얼 모터 배관 (네이버 실패 시 구글로 자동 전환)
+# [수정] 뉴스 디버깅 강화 (검색어, URL 출력 추가)
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
-    # 최신 크롬 브라우저로 위장하는 초강력 헤더
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
@@ -87,9 +85,15 @@ def get_ticker_news(ticker, name, debug=False):
     search_query = name.replace("탐색: ", "").replace(".KS", "").replace(".KQ", "").strip()
     encoded_query = urllib.parse.quote(search_query)
     
-    # 1. 네이버 메인 배관 시도
+    if debug:
+        st.warning("🛠️ [뉴스 디버그 모드 활성화됨]")
+        st.write(f"🔍 원본명: `{name}` ➔ 검색어: `{search_query}`")
+
+    # 1. 네이버 메인 배관
     try:
         naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded_query}"
+        if debug: st.write(f"🌐 네이버 URL: `{naver_url}`")
+        
         req = urllib.request.Request(naver_url, headers=headers)
         response = urllib.request.urlopen(req, timeout=4)
         xml_data = response.read()
@@ -105,18 +109,18 @@ def get_ticker_news(ticker, name, debug=False):
                 link = item.find("link").text if item.find("link") is not None else "#"
                 news_list.append({"title": title, "link": link, "publisher": "네이버 뉴스"})
             
-            if debug:
-                st.success("✅ [디버그] 네이버 뉴스(메인 배관)에서 성공적으로 데이터를 가져왔습니다.")
+            if debug: st.success(f"✅ 네이버 뉴스에서 {len(items)}개의 기사 파싱 성공.")
             return news_list
             
     except Exception as e:
-        if debug:
-            st.warning(f"⚠️ [디버그] 네이버 뉴스 차단됨 ({e}). 즉시 구글 뉴스로 우회합니다.")
-        pass # 네이버 실패 시 아래 구글 로직으로 자연스럽게 넘어감
+        if debug: st.warning(f"⚠️ 네이버 뉴스 차단됨: {e}")
+        pass
 
-    # 2. 구글 예비 배관 시도 (네이버 차단 시 자동 작동)
+    # 2. 구글 예비 배관
     try:
         google_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+        if debug: st.write(f"🌐 구글 URL: `{google_url}`")
+        
         req = urllib.request.Request(google_url, headers=headers)
         response = urllib.request.urlopen(req, timeout=4)
         xml_data = response.read()
@@ -133,13 +137,11 @@ def get_ticker_news(ticker, name, debug=False):
                 publisher = source.text if source is not None else "구글 뉴스"
                 news_list.append({"title": title, "link": link, "publisher": publisher})
             
-            if debug:
-                st.success("✅ [디버그] 구글 뉴스(예비 배관)에서 성공적으로 데이터를 가져왔습니다.")
+            if debug: st.success(f"✅ 구글 뉴스에서 {len(items)}개의 기사 파싱 성공.")
             return news_list
             
     except Exception as e:
-        if debug:
-            st.error(f"🚨 [디버그] 양쪽 배관 모두 차단됨: {e}")
+        if debug: st.error(f"🚨 양쪽 배관 모두 실패: {e}")
         return []
         
     return []
@@ -316,13 +318,18 @@ TICKER_MAP = {
 # -------------------------------------------------
 # 6. 기술적 분석 엔진 (핵심 로직)
 # -------------------------------------------------
+# [수정] 벤치마크 자기 자신 비교 시 예외 처리 복구
 def get_rs_score(ticker, asset_class):
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
+    if ticker == bench: return 1, "➖보통" # 자기 자신은 보통 처리
+    
     s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
     if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
+    
     s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
     b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
     rs_now, rs_10d = s_now / b_now, s_10d / b_10d
+    
     if rs_now > rs_10d * 1.03: return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
     return 1, "➖보통"
@@ -353,7 +360,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
     macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
-    rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
     rs_s_val, rs_label = get_rs_score(ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
@@ -507,15 +513,20 @@ with tab2:
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
     
     if is_free:
-        user_tkr = st.text_input("티커 입력 (예: GOOGL, TSLA, 005930)", "GOOGL").upper().strip()
+        # [수정] 코스피/코스닥 선택 스위치 장착
+        col_tkr, col_market = st.columns([2, 1])
+        with col_tkr:
+            user_tkr_raw = st.text_input("티커/종목코드 입력 (예: GOOGL, 005930)", "GOOGL").upper().strip()
+        with col_market:
+            market_opt = st.selectbox("시장 (한국주식 번호입력 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
-        if user_tkr.isdigit() and len(user_tkr) == 6:
-            user_tkr = f"{user_tkr}.KS"
+        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
+            suffix = ".KS" if "KOSPI" in market_opt else ".KQ"
+            user_tkr = f"{user_tkr_raw}{suffix}"
+        else:
+            user_tkr = user_tkr_raw
 
-        tkr = user_tkr
-        is_etf = False
-        a_class = "kr_stock" if user_tkr.endswith(".KS") or user_tkr.endswith(".KQ") else "us_stock"
-        name = f"탐색: {user_tkr}"
+        tkr, is_etf, a_class, name = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}"
         my_p, has_p = 0.0, False
     else:
         name = sel
@@ -589,7 +600,8 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            st.markdown("### 📰 최신 현장 뉴스 (Naver News)")
+            # [수정] 뉴스 간판 교체 및 디버그 연동
+            st.markdown("### 📰 최신 현장 뉴스")
             news_items = get_ticker_news(tkr, name, news_debug)
             if news_items:
                 for item in news_items:
