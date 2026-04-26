@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v11.0 (최종 준공 승인판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v11.1 (과열확장 분리판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -43,7 +43,7 @@ with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v11.0")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v11.1")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -74,7 +74,6 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [수정] 뉴스 디버깅 강화 (검색어, URL 출력 추가)
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
     headers = {
@@ -318,18 +317,15 @@ TICKER_MAP = {
 # -------------------------------------------------
 # 6. 기술적 분석 엔진 (핵심 로직)
 # -------------------------------------------------
-# [수정] 벤치마크 자기 자신 비교 시 예외 처리 복구
 def get_rs_score(ticker, asset_class):
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
-    if ticker == bench: return 1, "➖보통" # 자기 자신은 보통 처리
+    if ticker == bench: return 1, "➖보통"
     
     s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
     if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
-    
     s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
     b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
     rs_now, rs_10d = s_now / b_now, s_10d / b_10d
-    
     if rs_now > rs_10d * 1.03: return 2, "🚀강함"
     elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
     return 1, "➖보통"
@@ -399,7 +395,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    # [예외 승인] 재무 4점 + 기술 4점 이상일 때 밴드상단 돌파 시 추격 허용 로직 (2단계 세분화)
+    # [수정] 불뿜는 대장주 예외 처리 2단계 분리 (과열 확장)
     is_breakout_buy_normal = (
         (not is_etf) and
         fin_score == 4 and
@@ -427,7 +423,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     elif trend_label == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
     else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
 
-   if is_free_search:
+    if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706"
         elif is_breakout_buy_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
@@ -451,10 +447,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금30% 확보 및 코어 집중", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
-        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706" # [추가] 오렌지색 경고
+        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706"
         elif is_breakout_buy_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
-        elif has_pos:
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류(보유자 영역)", "#d97706"
@@ -525,7 +520,6 @@ with tab2:
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
     
     if is_free:
-        # [수정] 코스피/코스닥 선택 스위치 장착
         col_tkr, col_market = st.columns([2, 1])
         with col_tkr:
             user_tkr_raw = st.text_input("티커/종목코드 입력 (예: GOOGL, 005930)", "GOOGL").upper().strip()
@@ -612,7 +606,6 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            # [수정] 뉴스 간판 교체 및 디버그 연동
             st.markdown("### 📰 최신 현장 뉴스")
             news_items = get_ticker_news(tkr, name, news_debug)
             if news_items:
