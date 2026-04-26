@@ -971,14 +971,15 @@ with tab2:
     get_all_summary.clear()
 
     df = load_price_df(tkr, "1y")
-    if not df.empty:
+        if not df.empty:
         df = build_indicators(df)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, is_free)
 
-        col1, col2 = st.columns([1.2, 2.3])
+        top_left, top_right = st.columns([1.05, 2.45])
 
-        with col1:
+        with top_left:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
+
             dd_color = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
 
             st.markdown(f"""
@@ -994,8 +995,15 @@ with tab2:
                 st.info("💡 엑셀 미등록 종목입니다. 순수 기술적 타점만 분석합니다.")
             else:
                 if has_p and my_p > 0:
-                    st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (엑셀 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (엑셀 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>",
+                        unsafe_allow_html=True
+                    )
+
+                st.markdown(
+                    f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>",
+                    unsafe_allow_html=True
+                )
 
             st.markdown(f"""
             <div class="signal-box" style="background-color: {c['col']};">
@@ -1016,6 +1024,54 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
+        with top_right:
+            fig = go.Figure(data=[
+                go.Candlestick(
+                    x=df.index,
+                    open=df["Open"],
+                    high=df["High"],
+                    low=df["Low"],
+                    close=df["Close"],
+                    name="Price"
+                )
+            ])
+
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df["MA20"],
+                line=dict(color="#fbbf24", width=2),
+                name="MA20"
+            ))
+
+            fig.add_trace(go.Scatter(
+                x=df.index, y=df["MA120"],
+                line=dict(color="#94a3b8", width=1.5, dash="dot"),
+                name="MA120"
+            ))
+
+            if not is_free and has_p and my_p > 0:
+                fig.add_hline(
+                    y=my_p,
+                    line_dash="dash",
+                    line_color="#2ecc71",
+                    annotation_text="내 평단가",
+                    annotation_position="bottom right"
+                )
+
+            fig.update_layout(
+                template="plotly_dark",
+                height=620,
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=10, r=10, t=20, b=10)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
+        bottom1, bottom2 = st.columns([1.2, 1.2])
+
+        with bottom1:
             fvg_text = c["fvg_type"]
             if c["fvg_type"] != "없음" and c["fvg_top"] is not None and c["fvg_bottom"] is not None:
                 fvg_text = f'{c["fvg_type"]} | {"미충족" if c["fvg_active"] else "터치됨"}'
@@ -1037,6 +1093,7 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
+        with bottom2:
             st.markdown(f"""
             <div class='info-panel' style='border-left: 5px solid #10b981;'>
                 <b>📐 전술 지표 & 이평선</b><br>
@@ -1053,43 +1110,21 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            st.markdown("### 📰 최신 현장 뉴스")
-            news_items, news_logs = get_ticker_news(tkr, name)
-            if news_items:
-                for item in news_items:
-                    st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a><br><span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
-            else:
-                st.info("현재 제공되는 최신 뉴스가 없습니다.")
+        st.markdown("### 📰 최신 현장 뉴스")
+        news_items, news_logs = get_ticker_news(tkr, name)
 
-            if news_debug:
-                with st.expander("🛠️ 뉴스 디버그 로그", expanded=False):
-                    for log in news_logs:
-                        st.write(log)
-
-        with col2:
-            fig = go.Figure(data=[
-                go.Candlestick(
-                    x=df.index,
-                    open=df["Open"],
-                    high=df["High"],
-                    low=df["Low"],
-                    close=df["Close"],
-                    name="Price"
+        if news_items:
+            for item in news_items:
+                st.markdown(
+                    f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a><br><span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>",
+                    unsafe_allow_html=True
                 )
-            ])
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
+        else:
+            st.info("현재 제공되는 최신 뉴스가 없습니다.")
 
-            if not is_free and has_p and my_p > 0:
-                fig.add_hline(y=my_p, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가", annotation_position="bottom right")
-
-            fig.update_layout(
-                template="plotly_dark",
-                height=600,
-                xaxis_rangeslider_visible=False,
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        if news_debug:
+            with st.expander("🛠️ 뉴스 디버그 로그", expanded=False):
+                for log in news_logs:
+                    st.write(log)
     else:
         st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
