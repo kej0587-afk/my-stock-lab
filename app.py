@@ -9,7 +9,7 @@ from google.oauth2.service_account import Credentials
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v9.8 (PER 철거/초고속판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v9.9 (추격예외+뉴스탑재)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -28,12 +28,15 @@ st.markdown("""
     .smc-tag { font-size: 0.85em; color: #60a5fa; font-weight: bold; background-color: #1e293b; padding: 2px 6px; border-radius: 4px; border: 1px solid #334155; }
     .highlight { font-size: 1.4em; font-weight: bold; color: #fbbf24; text-shadow: 1px 1px 2px #000; }
     .score-detail { font-size: 0.9em; font-weight: normal; color: #cbd5e1; margin-top: 10px; }
+    .news-box { background-color: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #10b981; font-size: 0.9em; }
+    .news-box a { color: #60a5fa; text-decoration: none; font-weight: bold; }
+    .news-box a:hover { text-decoration: underline; }
     div[data-baseweb="select"] > div { background-color: #1e293b !important; color: white !important; }
     ul[data-baseweb="menu"] li { color: #000000 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v9.8")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v9.9")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -91,6 +94,17 @@ def load_price_df(ticker, period="1y"):
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
     df.ffill(inplace=True); df.dropna(inplace=True)
     return df
+
+# [신규] 야후 뉴스 로드 함수
+@st.cache_data(ttl=600)
+def get_ticker_news(ticker):
+    try:
+        t = yf.Ticker(ticker)
+        news = t.news
+        if not news: return []
+        return [{"title": n.get("title", "제목 없음"), "link": n.get("link", "#"), "publisher": n.get("publisher", "알 수 없음")} for n in news[:3]]
+    except:
+        return []
 
 # -------------------------------------------------
 # 4. 매크로 분석
@@ -228,7 +242,7 @@ TICKER_MAP = {
 # -------------------------------------------------
 def get_rs_score(ticker, asset_class):
     bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
-    s_df, b_df = load_price_df(ticker, "1y"), load_price_df(bench, "1y")
+    s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
     if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
     s_now, s_10d = s_df["Close"].iloc[-1], s_df["Close"].iloc[-11]
     b_now, b_10d = b_df["Close"].iloc[-1], b_df["Close"].iloc[-11]
@@ -304,6 +318,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
+    # [신규 추가] 재무 4점 + Adj 4점 이상일 때 밴드 상단 돌파 예외 허용 로직
+    is_breakout_buy = (fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now >= 0.95 and rs_label == "🚀강함")
+
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
     buy_amount = round(total_eval * (max(target_w - current_w, 0) / 100), 0)
@@ -317,6 +334,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지" + msg_suffix, "#dc2626"
+        elif is_breakout_buy: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토" + msg_suffix, "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기" + msg_suffix, "#d97706"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착(분할접근)" + msg_suffix, "#dc2626"
         elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스" + msg_suffix, "#8b5cf6"
@@ -337,6 +355,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 나스닥 50% SP 50% / 코어ETF 70% 집중 현금30% 확보", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
+        elif is_breakout_buy: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토" + msg_suffix, "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스" + msg_suffix, "#8b5cf6"
@@ -472,6 +491,13 @@ with tab2:
                 💡 <b>소장의 SMC 분석:</b> {c['smc_insight']}
             </div>
             """, unsafe_allow_html=True)
+            
+            # [신규] 뉴스 모듈 삽입
+            news_items = get_ticker_news(tkr)
+            if news_items:
+                st.markdown("<b>📰 최신 현장 뉴스 (야후 파이낸스)</b>", unsafe_allow_html=True)
+                for item in news_items:
+                    st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a><br><span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
 
         with col2:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
