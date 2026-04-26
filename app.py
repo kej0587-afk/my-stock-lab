@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v10.7 (궁극의 완벽판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v10.8 (뉴스 듀얼모터)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -39,12 +39,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# [추가] 사이드바 뉴스 디버그 토글
+# 좌측 사이드바에 디버그 토글 추가
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v10.7")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v10.8")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -75,51 +75,74 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [수정] 네이버 RSS 뉴스 직통 배관 (디버그 모드 연동)
+# [수정] 뉴스 듀얼 모터 배관 (네이버 실패 시 구글로 자동 전환)
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
+    # 최신 크롬 브라우저로 위장하는 초강력 헤더
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    }
+    
+    search_query = name.replace("탐색: ", "").replace(".KS", "").replace(".KQ", "").strip()
+    encoded_query = urllib.parse.quote(search_query)
+    
+    # 1. 네이버 메인 배관 시도
     try:
-        search_query = name.replace("탐색: ", "").strip()
-        encoded_query = urllib.parse.quote(search_query)
-        url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded_query}"
-
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        response = urllib.request.urlopen(req, timeout=5)
+        naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded_query}"
+        req = urllib.request.Request(naver_url, headers=headers)
+        response = urllib.request.urlopen(req, timeout=4)
         xml_data = response.read()
-
-        if debug:
-            st.write("뉴스 URL:", url)
-            st.write("응답 앞부분:", xml_data[:300])
 
         root = ET.fromstring(xml_data)
         items = root.findall("./channel/item")
 
-        if debug:
-            st.write("뉴스 item 개수:", len(items))
-
-        news_list = []
-        for item in items[:3]:
-            title = item.find("title").text if item.find("title") is not None else "제목 없음"
-            title = (
-                title.replace("<b>", "")
-                .replace("</b>", "")
-                .replace("&quot;", "\"")
-                .replace("&amp;", "&")
-            )
-            link = item.find("link").text if item.find("link") is not None else "#"
-
-            news_list.append({
-                "title": title,
-                "link": link,
-                "publisher": "네이버 뉴스"
-            })
-
-        return news_list
-
+        if items:
+            news_list = []
+            for item in items[:3]:
+                title = item.find("title").text if item.find("title") is not None else "제목 없음"
+                title = title.replace("<b>", "").replace("</b>", "").replace("&quot;", "\"").replace("&amp;", "&")
+                link = item.find("link").text if item.find("link") is not None else "#"
+                news_list.append({"title": title, "link": link, "publisher": "네이버 뉴스"})
+            
+            if debug:
+                st.success("✅ [디버그] 네이버 뉴스(메인 배관)에서 성공적으로 데이터를 가져왔습니다.")
+            return news_list
+            
     except Exception as e:
         if debug:
-            st.error(f"뉴스 로딩 오류: {e}")
+            st.warning(f"⚠️ [디버그] 네이버 뉴스 차단됨 ({e}). 즉시 구글 뉴스로 우회합니다.")
+        pass # 네이버 실패 시 아래 구글 로직으로 자연스럽게 넘어감
+
+    # 2. 구글 예비 배관 시도 (네이버 차단 시 자동 작동)
+    try:
+        google_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+        req = urllib.request.Request(google_url, headers=headers)
+        response = urllib.request.urlopen(req, timeout=4)
+        xml_data = response.read()
+
+        root = ET.fromstring(xml_data)
+        items = root.findall("./channel/item")
+
+        if items:
+            news_list = []
+            for item in items[:3]:
+                title = item.find("title").text if item.find("title") is not None else "제목 없음"
+                link = item.find("link").text if item.find("link") is not None else "#"
+                source = item.find("source")
+                publisher = source.text if source is not None else "구글 뉴스"
+                news_list.append({"title": title, "link": link, "publisher": publisher})
+            
+            if debug:
+                st.success("✅ [디버그] 구글 뉴스(예비 배관)에서 성공적으로 데이터를 가져왔습니다.")
+            return news_list
+            
+    except Exception as e:
+        if debug:
+            st.error(f"🚨 [디버그] 양쪽 배관 모두 차단됨: {e}")
         return []
+        
+    return []
 
 # -------------------------------------------------
 # 3. 구글 인증 & 차트 데이터 로드
@@ -129,7 +152,6 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
     return gspread.authorize(creds)
 
-# [수정] 행 패딩 복구 완료
 @st.cache_data(ttl=300)
 def load_sheet_by_gid(gid: str) -> pd.DataFrame:
     client = get_gspread_client()
@@ -371,7 +393,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    # [수정] 불뿜는 대장주 예외 처리 (ETF 제외 완벽 반영)
     is_breakout_buy = (
         (not is_etf) and
         fin_score == 4 and
@@ -452,8 +473,6 @@ def get_all_summary(fin_score_map_items):
         has_p = has_position(name, tkr)
         f_score = fin_map.get(name, 0 if is_etf else 2)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, False)
-        
-        # [수정] 요약 전광판에 📌후보등급 완벽 복구
         rows.append({
             "종목명": name,
             "현재가": format_currency(c["cur_p"], tkr),
@@ -488,7 +507,6 @@ with tab2:
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
     
     if is_free:
-        # [수정] 한국 티커 자동 보정 (6자리 숫자 입력 시)
         user_tkr = st.text_input("티커 입력 (예: GOOGL, TSLA, 005930)", "GOOGL").upper().strip()
 
         if user_tkr.isdigit() and len(user_tkr) == 6:
@@ -571,7 +589,6 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            # [수정] 뉴스 모듈 렌더링 호출부 교체 (디버그 모드 연동)
             st.markdown("### 📰 최신 현장 뉴스 (Naver News)")
             news_items = get_ticker_news(tkr, name, news_debug)
             if news_items:
