@@ -427,10 +427,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     elif trend_label == "🌊역배열(하락)": smc_insight = "완벽한 하락 구조(Bearish). 추세 전환 시그널 발생 전까지 현금 보존 권장."
     else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
 
-    if is_free_search:
-        if is_free_search:
+   if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
-        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706" # [추가] 오렌지색 경고
+        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706"
         elif is_breakout_buy_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착(분할접근)", "#dc2626"
