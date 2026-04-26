@@ -734,8 +734,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     elif trend_label == "🌊역배열(하락)":
         smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
     else:
-        smc_insight = "주요 매물대 소화 중. 방향성 확정 대기."
-
+        smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
+        
     # SMC 핵심 이식
     levels = get_recent_levels(df)
     ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
@@ -744,6 +744,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     liq_state = detect_liquidity_grab(df, levels)
     fvg_info = detect_recent_fvg(df)
     pd_zone = get_pd_zone(df)
+    ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
+    int_structure = "Bullish" if rs_label == "🚀강함" else ("Bearish" if rs_label == "🐢약함" else "Neutral")
+    
     smc_action = summarize_smc_action(ext_structure, int_structure, int_event, ext_event, liq_state, fvg_info, pd_zone)
 
     if is_free_search:
