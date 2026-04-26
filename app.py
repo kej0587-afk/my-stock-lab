@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v12.1 (SMC 강화판)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v12.2 (SMC 완벽 클린판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -68,7 +68,7 @@ with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v12.1")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v12.2")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -646,7 +646,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
     rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
-    rs_s_val, rs_label = get_rs_score(ticker, asset_class)
+    
+    # [수정] 불필요한 rs_s_val 제거 최적화
+    _, rs_label = get_rs_score(ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
@@ -736,7 +738,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     else:
         smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
         
-    # SMC 핵심 이식
+    # [수정] SMC 핵심 이식 (중복 덮어쓰기 로직 완벽 제거)
     levels = get_recent_levels(df)
     ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
     int_structure = "Bullish" if rs_label == "🚀강함" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"] else ("Bearish" if trend_label == "🌊역배열(하락)" else "Mixed")
@@ -744,8 +746,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     liq_state = detect_liquidity_grab(df, levels)
     fvg_info = detect_recent_fvg(df)
     pd_zone = get_pd_zone(df)
-    ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
-    int_structure = "Bullish" if rs_label == "🚀강함" else ("Bearish" if rs_label == "🐢약함" else "Neutral")
     
     smc_action = summarize_smc_action(ext_structure, int_structure, int_event, ext_event, liq_state, fvg_info, pd_zone)
 
@@ -959,7 +959,8 @@ with tab2:
         else:
             user_tkr = user_tkr_raw
 
-        tkr, is_etf, a_class, name = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}"
+        # [수정] 정확한 한국주/미국주 분류 로직 적용
+        tkr, is_etf, a_class, name = user_tkr, False, ("kr_stock" if user_tkr.endswith(".KS") or user_tkr.endswith(".KQ") else "us_stock"), f"탐색: {user_tkr}"
         my_p, has_p = 0.0, False
     else:
         name = sel
