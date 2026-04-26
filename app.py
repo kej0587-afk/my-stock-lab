@@ -5,14 +5,14 @@ import plotly.graph_objects as go
 import ta
 import gspread
 from google.oauth2.service_account import Credentials
-import requests
-from bs4 import BeautifulSoup
+import urllib.request
 import urllib.parse
+import xml.etree.ElementTree as ET
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v10.3 (뉴스 강력배관)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v10.4 (네이버 뉴스 직통배관)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -39,7 +39,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v10.3")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v10.4")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -70,33 +70,34 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [신규 완벽 교체] 구글 뉴스 강력 배관 (BeautifulSoup + Requests)
+# [신규 철통 배관] 네이버 뉴스 RSS 
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name):
     try:
-        search_query = name if (".KS" in ticker or ".KQ" in ticker) else ticker
-        encoded_query = urllib.parse.quote(f"{search_query} 주가 OR 실적") # 검색어 최적화
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
+        # 검색어 정제 (종목명 우선)
+        search_query = name.replace("탐색: ", "").strip()
+        encoded_query = urllib.parse.quote(search_query)
         
-        # 봇 차단 회피용 헤더
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # 네이버 뉴스 검색 RSS (구글보다 보안 차단이 덜하고 한국어 기사가 잘 나옴)
+        url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded_query}"
         
-        response = requests.get(url, headers=headers, timeout=5)
-        soup = BeautifulSoup(response.content, 'xml') # xml 파서 사용
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        response = urllib.request.urlopen(req, timeout=5)
+        xml_data = response.read()
         
-        items = soup.find_all('item')
+        root = ET.fromstring(xml_data)
         news_list = []
-        for item in items[:3]: # 최신 3개만
-            title = item.title.text if item.title else "제목 없음"
-            link = item.link.text if item.link else "#"
-            source = item.source.text if item.source else "Google News"
-            news_list.append({"title": title, "link": link, "publisher": source})
+        
+        for item in root.findall('./channel/item')[:3]:
+            title = item.find('title').text if item.find('title') is not None else "제목 없음"
+            # 네이버 RSS의 불필요한 HTML 태그 제거
+            title = title.replace("<b>", "").replace("</b>", "").replace("&quot;", "\"").replace("&amp;", "&")
+            link = item.find('link').text if item.find('link') is not None else "#"
+            
+            news_list.append({"title": title, "link": link, "publisher": "네이버 뉴스"})
             
         return news_list
     except Exception as e:
-        st.write(f"", unsafe_allow_html=True)
         return []
 
 # -------------------------------------------------
@@ -372,7 +373,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 나스닥100% 보너스 30% 최종투입", "#7f1d1d"
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 나스닥100% 보너스 40% 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 나스닥 60% SP 40% / 코어ETF 100% 집중 보너스30% 투입", "#b91c1c"
-        elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금30% 확보 및 코어 집중", "#dc2626"
+        elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 나스닥 50% SP 50% / 코어ETF 70% 집중 현금30% 확보", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
         elif is_breakout_buy: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
@@ -512,8 +513,8 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            # [신규 완벽 교체] 구글 뉴스 렌더링
-            st.markdown("### 📰 최신 현장 뉴스 (Google News)")
+            # [신규] 뉴스 모듈 렌더링
+            st.markdown("### 📰 최신 현장 뉴스 (Naver News)")
             news_items = get_ticker_news(tkr, name)
             if news_items:
                 for item in news_items:
