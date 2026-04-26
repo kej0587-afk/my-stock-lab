@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v10.6 (구글뉴스 글로벌배관)", layout="wide")
+st.set_page_config(page_title="대장님의 최종 관제실 v10.7 (궁극의 완벽판)", layout="wide")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -39,12 +39,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 좌측 사이드바에 디버그 토글 추가
+# [추가] 사이드바 뉴스 디버그 토글
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
-    news_debug = st.checkbox("뉴스 디버그 모드 켜기", value=False, help="뉴스가 안 뜰 때 켜서 응답 상태를 확인하세요.")
+    news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
-st.title("🚀 REALTIME DIGITAL DASHBOARD v10.6")
+st.title("🚀 REALTIME DIGITAL DASHBOARD v10.7")
 
 # -------------------------------------------------
 # 2. 유틸리티 함수
@@ -75,51 +75,50 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 
-# [수정] 가장 튼튼한 구글 뉴스 글로벌 배관
+# [수정] 네이버 RSS 뉴스 직통 배관 (디버그 모드 연동)
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
     try:
-        # 검색어 최적화 (종목명으로 구글 뉴스 검색)
-        search_query = name.replace("탐색: ", "").replace(".KS", "").replace(".KQ", "").strip()
+        search_query = name.replace("탐색: ", "").strip()
         encoded_query = urllib.parse.quote(search_query)
-        
-        # 구글 뉴스 RSS (한국어, 한국지역 설정)
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded_query}"
+
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         response = urllib.request.urlopen(req, timeout=5)
-        
-        status = getattr(response, "status", "unknown")
         xml_data = response.read()
 
         if debug:
-            st.warning("🛠️ [뉴스 디버그 모드 활성화됨]")
-            st.write(f"- 요청 URL: `{url}`")
-            st.write(f"- HTTP 상태 코드: `{status}`")
-            # 디코딩 시 에러 무시 처리하여 안전하게 출력
-            safe_xml_text = xml_data[:300].decode('utf-8', errors='ignore')
-            st.write(f"- 응답 앞부분(300자): `{safe_xml_text}`")
+            st.write("뉴스 URL:", url)
+            st.write("응답 앞부분:", xml_data[:300])
 
         root = ET.fromstring(xml_data)
-        items = root.findall('./channel/item')
-        
+        items = root.findall("./channel/item")
+
         if debug:
-            st.write(f"- 파싱된 기사 개수: `{len(items)}`개")
+            st.write("뉴스 item 개수:", len(items))
 
         news_list = []
         for item in items[:3]:
-            title = item.find('title').text if item.find('title') is not None else "제목 없음"
-            link = item.find('link').text if item.find('link') is not None else "#"
-            source = item.find('source')
-            publisher = source.text if source is not None else "Google News"
-            
-            news_list.append({"title": title, "link": link, "publisher": publisher})
-            
+            title = item.find("title").text if item.find("title") is not None else "제목 없음"
+            title = (
+                title.replace("<b>", "")
+                .replace("</b>", "")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+            )
+            link = item.find("link").text if item.find("link") is not None else "#"
+
+            news_list.append({
+                "title": title,
+                "link": link,
+                "publisher": "네이버 뉴스"
+            })
+
         return news_list
 
     except Exception as e:
         if debug:
-            st.error(f"🚨 뉴스 로딩 예외 발생: {e}")
+            st.error(f"뉴스 로딩 오류: {e}")
         return []
 
 # -------------------------------------------------
@@ -130,6 +129,7 @@ def get_gspread_client():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
     return gspread.authorize(creds)
 
+# [수정] 행 패딩 복구 완료
 @st.cache_data(ttl=300)
 def load_sheet_by_gid(gid: str) -> pd.DataFrame:
     client = get_gspread_client()
@@ -137,16 +137,19 @@ def load_sheet_by_gid(gid: str) -> pd.DataFrame:
     ws = sh.get_worksheet_by_id(int(gid))
     data = ws.get_all_values()
     df = pd.DataFrame(data)
-    
-    if df.empty: return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
+
+    if df.empty:
+        return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
+
     if df.shape[1] < 20:
-        for col in range(df.shape[1], 20): df[col] = ""
-        
+        for col in range(df.shape[1], 20):
+            df[col] = ""
+
     if len(df) < 60:
         pad_rows = pd.DataFrame([[""] * df.shape[1]] * (60 - len(df)))
         pad_rows.columns = df.columns
         df = pd.concat([df, pad_rows], ignore_index=True)
-        
+
     return df
 
 @st.cache_data(ttl=300)
@@ -368,7 +371,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    is_breakout_buy = (fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now >= 0.95 and rs_label == "🚀강함")
+    # [수정] 불뿜는 대장주 예외 처리 (ETF 제외 완벽 반영)
+    is_breakout_buy = (
+        (not is_etf) and
+        fin_score == 4 and
+        adj_tech_score >= 4.0 and
+        pct_b_now >= 0.95 and
+        rs_label == "🚀강함"
+    )
 
     current_w = get_sheet_current_weight(name, ticker) if not is_free_search else 0.0
     target_w = get_target_weight_from_sheet(name, ticker) if not is_free_search else 0.0
@@ -442,12 +452,21 @@ def get_all_summary(fin_score_map_items):
         has_p = has_position(name, tkr)
         f_score = fin_map.get(name, 0 if is_etf else 2)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, f_score, False)
+        
+        # [수정] 요약 전광판에 📌후보등급 완벽 복구
         rows.append({
-            "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%",
+            "종목명": name,
+            "현재가": format_currency(c["cur_p"], tkr),
+            "MDD": f"{c['dd']*100:.1f}%",
+            "현재비중": f"{c['current_w']:.2f}%",
+            "목표비중": f"{c['target_w']:.2f}%",
             "📌후보등급": c["grade"],
-            "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2), 
-            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+            "RS": c["rs_label"],
+            "RSI": round(c["rsi"], 1),
+            "MFI": round(c["mfi"], 1),
+            "볼린저 %B": round(c["pct_b"], 2),
+            "🔥기술적 타점": c["dec"],
+            "Adj점수": round(c["adj"], 1)
         })
     return pd.DataFrame(rows)
 
@@ -469,15 +488,22 @@ with tab2:
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
     
     if is_free:
-        user_tkr_raw = st.text_input("티커 입력 (예: GOOGL, 005930)", "GOOGL").upper().strip()
-        # 6자리 숫자 입력 시 자동으로 .KS 붙여서 한국 주식으로 인식 (자유탐색 보완)
-        user_tkr = user_tkr_raw + ".KS" if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6 else user_tkr_raw
-        
-        tkr, is_etf, a_class, name = user_tkr, False, ("kr_stock" if ".K" in user_tkr else "us_stock"), f"탐색: {user_tkr}"
+        # [수정] 한국 티커 자동 보정 (6자리 숫자 입력 시)
+        user_tkr = st.text_input("티커 입력 (예: GOOGL, TSLA, 005930)", "GOOGL").upper().strip()
+
+        if user_tkr.isdigit() and len(user_tkr) == 6:
+            user_tkr = f"{user_tkr}.KS"
+
+        tkr = user_tkr
+        is_etf = False
+        a_class = "kr_stock" if user_tkr.endswith(".KS") or user_tkr.endswith(".KQ") else "us_stock"
+        name = f"탐색: {user_tkr}"
         my_p, has_p = 0.0, False
     else:
-        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]
-        my_p = get_my_price(name, tkr); has_p = has_position(name, tkr)
+        name = sel
+        tkr, is_etf, a_class = TICKER_MAP[sel]
+        my_p = get_my_price(name, tkr)
+        has_p = has_position(name, tkr)
 
     f_labels = get_fin_label_map(); default_f = st.session_state.fin_score_map.get(name, 0 if is_etf else 2)
     fin_score = st.radio("재무 점수", [0, 1, 2, 3, 4], index=default_f, format_func=lambda x: f_labels[x], horizontal=True)
@@ -545,14 +571,14 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
 
-            # [수정] 뉴스 모듈 렌더링 (디버그 모드 연동)
-            st.markdown("### 📰 최신 현장 뉴스 (Google News)")
-            news_items = get_ticker_news(tkr, name, debug=news_debug)
+            # [수정] 뉴스 모듈 렌더링 호출부 교체 (디버그 모드 연동)
+            st.markdown("### 📰 최신 현장 뉴스 (Naver News)")
+            news_items = get_ticker_news(tkr, name, news_debug)
             if news_items:
                 for item in news_items:
                     st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a><br><span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
             else:
-                st.info("현재 제공되는 최신 뉴스가 없습니다. (좌측 🛠️ 뉴스 디버그 모드를 켜서 원인을 확인해보세요)")
+                st.info("현재 제공되는 최신 뉴스가 없습니다.")
 
         with col2:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
