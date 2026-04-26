@@ -971,7 +971,7 @@ with tab2:
     get_all_summary.clear()
 
     df = load_price_df(tkr, "1y")
-       if not df.empty:
+    if not df.empty:
         df = build_indicators(df)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p, has_p, fin_score, is_free)
 
