@@ -399,11 +399,20 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
 
-    is_breakout_buy = (
+    # [예외 승인] 재무 4점 + 기술 4점 이상일 때 밴드상단 돌파 시 추격 허용 로직 (2단계 세분화)
+    is_breakout_buy_normal = (
         (not is_etf) and
         fin_score == 4 and
         adj_tech_score >= 4.0 and
-        pct_b_now >= 0.95 and
+        0.95 <= pct_b_now <= 1.02 and
+        rs_label == "🚀강함"
+    )
+
+    is_breakout_buy_extreme = (
+        (not is_etf) and
+        fin_score == 4 and
+        adj_tech_score >= 4.0 and
+        pct_b_now > 1.02 and
         rs_label == "🚀강함"
     )
 
@@ -419,8 +428,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 거래량이 실린 확실한 방향성(Breakout) 확인 후 접근."
 
     if is_free_search:
+        if is_free_search:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
-        elif is_breakout_buy: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
+        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706" # [추가] 오렌지색 경고
+        elif is_breakout_buy_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착(분할접근)", "#dc2626"
         elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
@@ -441,8 +452,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금30% 확보 및 코어 집중", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 매크로 퍼펙트스톰(대피)", "#dc2626"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단적 과열(추격금지)", "#dc2626"
-        elif is_breakout_buy: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
+        elif is_breakout_buy_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 복귀 대기", "#d97706" # [추가] 오렌지색 경고
+        elif is_breakout_buy_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입 검토", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린저밴드 상단 이탈(추격금지)", "#dc2626"
+        elif has_pos:
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류(보유자 영역)", "#d97706"
