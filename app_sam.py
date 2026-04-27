@@ -680,17 +680,17 @@ with tab2:
     sel = st.selectbox("종목 선택", options)
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
 
-        if is_free:
+    if is_free:
         c1, c2 = st.columns([2, 1])
         with c1:
             user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
         with c2:
             mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
-        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
+    if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
             tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
-        else:
-            tkr = user_tkr_raw
+    else:
+        tkr = user_tkr_raw
 
         known_etf_tickers = {
             "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
