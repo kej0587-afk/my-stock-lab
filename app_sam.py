@@ -191,9 +191,9 @@ def load_sheet_by_gid(gid: str) -> pd.DataFrame:
             df = pd.concat([df, pad], ignore_index=True)
         return df
     except Exception as e:
-        print(f"Sheet Load Error: {e}")
-        return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
-
+    st.error(f"Sheet Load Error: {e}")
+    return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
+    
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
     df = yf.download(ticker, period=period, interval="1d", progress=False)
