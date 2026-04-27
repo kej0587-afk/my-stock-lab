@@ -693,13 +693,22 @@ with tab2:
             tkr = user_tkr_raw
 
         known_etf_tickers = {
-            "QQQM", "QLD", "TQQQ", "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+            "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
+            "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF",
+            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
         }
-        is_etf = normalize_ticker(tkr) in {normalize_ticker(x) for x in known_etf_tickers} or tkr.upper().endswith("ETF")
+
+        ticker_norm = normalize_ticker(tkr)
+        is_etf = (
+            ticker_norm in {normalize_ticker(x) for x in known_etf_tickers}
+            or "etf" in str(name).lower()
+            or tkr.upper().endswith("ETF")
+        )
+
         a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
             "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
         )
-        name, my_p, has_p = f"탐색: {tkr}", 0.0, False
+              
     else:
         name = sel
         tkr, is_etf, a_class = TICKER_MAP[sel]
