@@ -516,25 +516,40 @@ TICKER_MAP = {
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
 }
 
-@st.cache_data(ttl=60)
-def get_all_summary(fin_score_map_items, mode):
-    rows = []; fin_map = dict(fin_score_map_items)
-    for name, (tkr, is_etf, a_class) in TICKER_MAP.items():
+@st.cache_data(ttl=300)
+def get_all_summary(fin_score_map_items, mode, watchlist_items):
+    rows = []
+    fin_map = dict(fin_score_map_items)
+
+    for name, tkr, is_etf, a_class in watchlist_items:
         df = load_price_df(tkr, "1y")
-        if df.empty: continue
-        
-        # [수정] 원본 df에 지표를 덮어쓰기 위해 build_indicators 분리 실행
+        if df.empty:
+            continue
+
         df = build_indicators(df)
-        sheet_fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        f_score = sheet_fin_score if mode == "개인모드" else fin_map.get(name, sheet_fin_score)
+
+        if mode == "개인모드" and (not name.startswith("탐색:")):
+            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
+        else:
+            fin_key = f"{name}|{normalize_ticker(tkr)}"
+            f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
+
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
-        
+
         rows.append({
-            "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%",
-            "📌후보등급": c["grade"], "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), 
-            "볼린저 %B": round(c["pct_b"], 2), "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+            "종목명": name,
+            "티커": tkr,
+            "현재가": format_currency(c["cur_p"], tkr),
+            "MDD": f"{c['dd']*100:.1f}%",
+            "📌후보등급": c["grade"],
+            "RS": c["rs_label"],
+            "RSI": round(c["rsi"], 1),
+            "MFI": round(c["mfi"], 1),
+            "볼린저 %B": round(c["pct_b"], 2),
+            "🔥기술적 타점": c["dec"],
+            "Adj점수": round(c["adj"], 1)
         })
+
     return pd.DataFrame(rows)
 
 # legacy helper: 현재는 get_effective_weights() 경로를 주로 사용
@@ -578,6 +593,14 @@ def has_position(name, ticker):
     matched = pf[pf["티커정리"] == t_norm]
     return (not matched.empty) and (parse_num(matched.iloc[0]["보유량"]) > 0)
 
+def is_in_watchlist(ticker):
+    t_norm = normalize_ticker(ticker)
+    for item in st.session_state.watchlist:
+        if normalize_ticker(item["ticker"]) == t_norm:
+            return True
+    return False
+    
+
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
@@ -602,15 +625,54 @@ control_df = load_control_sheet()
 fin_score_df = load_fin_score_sheet()
 total_eval = invest_data["current_asset"]
 
-if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
+if "fin_score_map" not in st.session_state:
+    st.session_state.fin_score_map = {}
+if "watchlist" not in st.session_state:
+    st.session_state.watchlist = [
+        {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
+        {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
+        {"name": "하이닉스", "ticker": "000660.KS", "is_etf": False, "asset_class": "kr_stock"},
+        {"name": "두산에너빌리티", "ticker": "034020.KS", "is_etf": False, "asset_class": "kr_stock"},
+    ]    
 
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
-    if app_mode == "개인모드": st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
-    st.dataframe(get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode), use_container_width=True, height=720, hide_index=True)
+    st.caption("전광판 등록 종목만 표시됩니다.")
 
+    c1, c2 = st.columns([3, 1])
+
+    with c1:
+        if st.session_state.watchlist:
+            names = [f"{item['name']} ({item['ticker']})" for item in st.session_state.watchlist]
+            st.write("현재 등록 종목:", ", ".join(names))
+        else:
+            st.info("등록된 관심종목이 없습니다.")
+
+    with c2:
+        remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
+        remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
+
+        if remove_target != "선택" and st.button("전광판에서 제거"):
+            _, remove_ticker = remove_target.split("|", 1)
+            st.session_state.watchlist = [
+                item for item in st.session_state.watchlist
+                if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
+            ]
+            st.rerun()
+
+    summary_df = get_all_summary(
+        tuple(sorted(st.session_state.fin_score_map.items())),
+        app_mode,
+        tuple((item["name"], item["ticker"], item["is_etf"], item["asset_class"]) for item in st.session_state.watchlist)
+    )
+
+    if summary_df.empty:
+        st.warning("전광판에 표시할 종목이 없습니다.")
+    else:
+        st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
+        
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
     sel = st.selectbox("종목 선택", options)
@@ -618,13 +680,27 @@ with tab2:
 
     if is_free:
         c1, c2 = st.columns([2, 1])
-        with c1: user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
-        with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
-        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6: tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
-        else: tkr = user_tkr_raw
-        is_etf, a_class, name, my_p, has_p = False, ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"), f"탐색: {tkr}", 0.0, False
+        with c1:
+            user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
+        with c2:
+            mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
+
+        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
+            tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
+        else:
+            tkr = user_tkr_raw
+
+        known_etf_tickers = {
+            "QQQM", "QLD", "TQQQ", "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+        }
+        is_etf = normalize_ticker(tkr) in {normalize_ticker(x) for x in known_etf_tickers} or tkr.upper().endswith("ETF")
+        a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
+            "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
+        )
+        name, my_p, has_p = f"탐색: {tkr}", 0.0, False
     else:
-        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]
+        name = sel
+        tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
@@ -638,28 +714,62 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    f_labels = get_fin_label_map()
-    sheet_default_f = get_fin_score_from_sheet(name, tkr, is_etf)
+    st.markdown("### ⭐ 관심종목 관리")
+    a1, a2 = st.columns(2)
 
-    if app_mode == "개인모드" and not is_free:
-        fin_score = sheet_default_f
+    current_item = {
+        "name": name,
+        "ticker": tkr,
+        "is_etf": is_etf,
+        "asset_class": a_class
+    }
+
+    with a1:
+        if is_in_watchlist(tkr):
+            st.success("이미 전광판에 등록된 종목입니다.")
+        else:
+            if st.button("전광판에 등록"):
+                st.session_state.watchlist.append(current_item)
+                st.rerun()
+
+    with a2:
+        if is_in_watchlist(tkr):
+            if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
+                st.session_state.watchlist = [
+                    item for item in st.session_state.watchlist
+                    if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
+                ]
+                st.rerun()
+
+    f_labels = get_fin_label_map()
+
+    if is_etf:
+        fin_score = 0
+        st.markdown(
+            f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
+            unsafe_allow_html=True
+        )
+    elif app_mode == "개인모드" and not is_free:
+        fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
         st.markdown(
             f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
             unsafe_allow_html=True
         )
     else:
-        base_default_f = 3 if is_free else sheet_default_f
-        default_f = st.session_state.fin_score_map.get(name, base_default_f)
+        fin_key = f"{name}|{normalize_ticker(tkr)}"
+        base_default_f = 3 if is_free else 2
+        default_f = st.session_state.fin_score_map.get(fin_key, base_default_f)
+
         fin_score = st.radio(
             "재무 점수",
             [0, 1, 2, 3, 4],
             index=default_f,
             format_func=lambda x: f_labels[x],
             horizontal=True,
-            key=f'fin_score_{name}'
+            key=f"fin_score_{fin_key}"
         )
-        st.session_state.fin_score_map[name] = fin_score
-
+        st.session_state.fin_score_map[fin_key] = fin_score
+        
     df = load_price_df(tkr, "1y")
     if not df.empty:
         
