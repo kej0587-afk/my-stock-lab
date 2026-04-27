@@ -708,10 +708,10 @@ with tab2:
         "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
     )
               
-    else:
-        name = sel
-        tkr, is_etf, a_class = TICKER_MAP[sel]
-        my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+        else:
+            name = sel
+            tkr, is_etf, a_class = TICKER_MAP[sel]
+            my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
 
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
