@@ -388,7 +388,43 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
     is_breakout_normal = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and 0.95 <= pct_b_now <= 1.02 and rs_label == "🚀강함"
+   
+    # -------------------------------
+    # 예외 승인 프로세스 (정찰대 진입)
+    # -------------------------------
+    ma5_now = float(last["MA5"]) if pd.notna(last["MA5"]) else 0.0
+    low_now = float(last["Low"])
 
+    is_leader_base = (
+        (not is_etf) and
+        fin_score == 4 and
+        trend_label == "🚀정배열(상승)" and
+        rs_label == "🚀강함" and
+        macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"] and
+        adj_tech_score >= 4.0
+    )
+
+    is_ma5_pullback = (
+        ma5_now > 0 and (
+            abs(cur_p - ma5_now) / ma5_now <= 0.015 or
+            low_now <= ma5_now * 1.01
+        )
+    )
+
+    is_bullish_fvg_pullback = (
+        fvg_info["type"] == "Bullish FVG" and
+        fvg_info["bottom"] is not None and
+        fvg_info["top"] is not None and
+        float(fvg_info["bottom"]) * 0.995 <= cur_p <= float(fvg_info["top"]) * 1.01
+    )
+
+    is_exception_entry = (
+        is_leader_base and
+        (is_ma5_pullback or is_bullish_fvg_pullback) and
+        mfi_now < 90 and
+        pct_b_now < 1.08
+    )
+                                 
     if is_free:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
@@ -412,6 +448,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금 확보", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+        elif is_exception_entry and has_pos:
+            dec, col = "🟣예외승인: 정찰대 추매(MA5/FVG)", "#7c3aed"
+        elif is_exception_entry and (not has_pos):
+            dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"     
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
@@ -584,7 +624,18 @@ with tab2:
         with L:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
-            st.markdown(f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>3개월 수익률: <span style='color:{"#2ecc71" if c["ret_3m"]>0 else "#dc2626"}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>6개월 수익률: <span style='color:{"#2ecc71" if c["ret_6m"]>0 else "#dc2626"}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>", unsafe_allow_html=True)
+            ret3_color = "#2ecc71" if c["ret_3m"] > 0 else "#dc2626"
+            ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
+
+            st.markdown(
+                f"<div class='info-panel'>"
+                f"현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>"
+                f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
+                f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
+                f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
             
             if is_free or app_mode == "범용모드": 
                 st.info("💡 직접 입력 기반 분석 모드입니다.")
