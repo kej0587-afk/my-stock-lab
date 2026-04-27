@@ -78,7 +78,6 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     return "⏳추세관망"
 
 def get_fin_label_map():
-    return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
 DEFAULT_WATCHLIST = [
     {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
     {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
@@ -106,8 +105,11 @@ def load_watchlist_from_query():
     loaded = decode_watchlist(raw)
     return loaded if loaded else [dict(x) for x in DEFAULT_WATCHLIST]
 
-def save_watchlist_to_query():
-    st.query_params["wl"] = encode_watchlist(st.session_state.watchlist)
+def sync_watchlist_to_query():
+    desired = encode_watchlist(st.session_state.watchlist)
+    current = st.query_params.get("wl", "")
+    if current != desired:
+        st.query_params["wl"] = desired
 
 def is_in_watchlist(ticker):
     t_norm = normalize_ticker(ticker)
@@ -580,11 +582,12 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        if mode == "개인모드" and (not name.startswith("탐색:")):
+        # 기존 관리종목은 메인/공개용 모두 시트 점수 사용
+        if not name.startswith("탐색:"):
             f_score = get_fin_score_from_sheet(name, tkr, is_etf)
         else:
             fin_key = f"{name}|{normalize_ticker(tkr)}"
-            f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
+            f_score = 0 if is_etf else fin_map.get(fin_key, 3)
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
@@ -659,7 +662,7 @@ else:
     invest_data = {"seed_money": 0.0, "current_asset": 0.0, "cum_profit": 0.0}
     portfolio_df = pd.DataFrame(columns=["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"])
     control_df = pd.DataFrame(columns=["자산명", "티커", "목표비중", "현재비중"])
-    fin_score_df = pd.DataFrame(columns=["자산명", "티커", "재무점수"])
+    fin_score_df = load_fin_score_sheet()
     total_eval = 0.0
 
 if "fin_score_map" not in st.session_state:
@@ -667,6 +670,8 @@ if "fin_score_map" not in st.session_state:
 
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist_from_query()
+
+sync_watchlist_to_query()
     
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
@@ -683,7 +688,7 @@ with tab1:
             item for item in st.session_state.watchlist
             if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
         ]
-        save_watchlist_to_query()
+        sync_watchlist_to_query()
         st.rerun()
 
     summary_df = get_all_summary(
@@ -696,7 +701,7 @@ with tab1:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:
         st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
-
+        
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
     sel = st.selectbox("종목 선택", options)
@@ -727,7 +732,7 @@ with tab2:
         tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
 
-        st.markdown("### ⭐ 관심종목 관리")
+    st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
     current_item = {
@@ -743,7 +748,7 @@ with tab2:
         else:
             if st.button("전광판에 등록"):
                 st.session_state.watchlist.append(current_item)
-                save_watchlist_to_query()
+                sync_watchlist_to_query()
                 st.rerun()
 
     with a2:
@@ -753,7 +758,7 @@ with tab2:
                     item for item in st.session_state.watchlist
                     if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
                 ]
-                save_watchlist_to_query()
+                sync_watchlist_to_query()
                 st.rerun()
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
@@ -775,7 +780,7 @@ with tab2:
             f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
             unsafe_allow_html=True
         )
-    elif app_mode == "개인모드" and not is_free:
+    elif not is_free:
         fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
         st.markdown(
             f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
@@ -783,8 +788,7 @@ with tab2:
         )
     else:
         fin_key = f"{name}|{normalize_ticker(tkr)}"
-        base_default_f = 3 if is_free else 2
-        default_f = st.session_state.fin_score_map.get(fin_key, base_default_f)
+        default_f = st.session_state.fin_score_map.get(fin_key, 3)
 
         fin_score = st.radio(
             "재무 점수",
