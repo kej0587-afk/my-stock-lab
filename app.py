@@ -13,7 +13,6 @@ import xml.etree.ElementTree as ET
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="대장님의 최종 관제실 v13.1 (그랜드 오픈 마감판)", layout="wide")
-st.error("지금 이 파일이 실행 중입니다")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
@@ -600,20 +599,7 @@ else:
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
-invest_data = load_invest_sheet()
-portfolio_df = load_portfolio_sheet()
-control_df = load_control_sheet()
-
-load_sheet_by_gid.clear()
-load_fin_score_sheet.clear()
 fin_score_df = load_fin_score_sheet()
-st.write("FIN_SHEET_GID:", FIN_SHEET_GID)
-st.write("fin_score_df shape:", fin_score_df.shape)
-st.dataframe(fin_score_df)
-
-total_eval = invest_data["current_asset"]
-load_sheet_by_gid.clear()
-load_fin_score_sheet.clear()
 total_eval = invest_data["current_asset"]
 
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
@@ -654,10 +640,7 @@ with tab2:
 
     f_labels = get_fin_label_map()
     sheet_default_f = get_fin_score_from_sheet(name, tkr, is_etf)
-    st.write("현재 종목명:", name)
-    st.write("현재 티커:", tkr)
-    st.write("시트 재무점수:", get_fin_score_from_sheet(name, tkr, is_etf))
-
+   
     if app_mode == "개인모드":
         fin_score = sheet_default_f
         st.markdown(
