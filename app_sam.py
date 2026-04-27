@@ -20,6 +20,7 @@ SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
 ETF_SHEET_GID = "604547263"
 CONTROL_SHEET_GID = "1420210871"
+FIN_SHEET_GID = "1944167452"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly"
@@ -241,7 +242,36 @@ def load_control_sheet():
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
     for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
     return block
+@st.cache_data(ttl=300)
+def load_fin_score_sheet():
+    raw = load_sheet_by_gid(FIN_SHEET_GID)
 
+    block = raw.iloc[0:19, [0, 1, 6]].copy()
+    block.columns = ["자산명", "티커", "재무점수"]
+
+    block["자산명"] = block["자산명"].astype(str).str.strip()
+    block["티커"] = block["티커"].astype(str).str.strip()
+    block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
+
+    return block
+
+def get_fin_score_from_sheet(name, ticker, is_etf):
+    if is_etf:
+        return 0
+
+    t_norm = normalize_ticker(ticker)
+    n_norm = normalize_text(name)
+
+    matched_t = fin_score_df[fin_score_df["티커"].apply(normalize_ticker) == t_norm]
+    if not matched_t.empty:
+        return int(matched_t.iloc[0]["재무점수"])
+
+    matched_n = fin_score_df[fin_score_df["자산명"].apply(normalize_text) == n_norm]
+    if not matched_n.empty:
+        return int(matched_n.iloc[0]["재무점수"])
+
+    return 2
+    
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
 # -------------------------------------------------
@@ -426,7 +456,41 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
     is_breakout_normal = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and 0.95 <= pct_b_now <= 1.02 and rs_label == "🚀강함"
+    # -------------------------------
+    # 예외 승인 프로세스 (정찰대 진입)
+    # -------------------------------
+    ma5_now = float(last["MA5"]) if pd.notna(last["MA5"]) else 0.0
+    low_now = float(last["Low"])
 
+    is_leader_base = (
+        (not is_etf) and
+        fin_score == 4 and
+        trend_label == "🚀정배열(상승)" and
+        rs_label == "🚀강함" and
+        macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"] and
+        adj_tech_score >= 4.0
+    )
+
+    is_ma5_pullback = (
+        ma5_now > 0 and (
+            abs(cur_p - ma5_now) / ma5_now <= 0.015 or
+            low_now <= ma5_now * 1.01
+        )
+    )
+
+    is_bullish_fvg_pullback = (
+        fvg_info["type"] == "Bullish FVG" and
+        fvg_info["bottom"] is not None and
+        fvg_info["top"] is not None and
+        float(fvg_info["bottom"]) * 0.995 <= cur_p <= float(fvg_info["top"]) * 1.01
+    )
+
+    is_exception_entry = (
+        is_leader_base and
+        (is_ma5_pullback or is_bullish_fvg_pullback) and
+        mfi_now < 90 and
+        pct_b_now < 1.08
+    )
     if is_free:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
@@ -450,6 +514,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금 확보", "#dc2626"
         elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+        elif is_exception_entry and has_pos:
+            dec, col = "🟣예외승인: 정찰대 추매(MA5/FVG)", "#7c3aed"
+        elif is_exception_entry and (not has_pos):
+            dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"    
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
@@ -512,10 +580,16 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        fin_key = f"{name}|{normalize_ticker(tkr)}"
-        f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
+        if mode == "개인모드" and (not name.startswith("탐색:")):
+            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
+        else:
+            fin_key = f"{name}|{normalize_ticker(tkr)}"
+            f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
 
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
+        c = calc_scores_and_decision(
+            name, tkr, is_etf, a_class, df,
+            0, False, f_score, app_mode=mode
+        )
 
         rows.append({
             "종목명": name,
@@ -579,11 +653,13 @@ if app_mode == "개인모드":
     invest_data = load_invest_sheet()
     portfolio_df = load_portfolio_sheet()
     control_df = load_control_sheet()
+    fin_score_df = load_fin_score_sheet()
     total_eval = invest_data["current_asset"]
 else:
     invest_data = {"seed_money": 0.0, "current_asset": 0.0, "cum_profit": 0.0}
     portfolio_df = pd.DataFrame(columns=["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"])
     control_df = pd.DataFrame(columns=["자산명", "티커", "목표비중", "현재비중"])
+    fin_score_df = pd.DataFrame(columns=["자산명", "티커", "재무점수"])
     total_eval = 0.0
 
 if "fin_score_map" not in st.session_state:
@@ -651,7 +727,7 @@ with tab2:
         tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
 
-    st.markdown("### ⭐ 관심종목 관리")
+        st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
     current_item = {
@@ -697,6 +773,12 @@ with tab2:
         fin_score = 0
         st.markdown(
             f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
+            unsafe_allow_html=True
+        )
+    elif app_mode == "개인모드" and not is_free:
+        fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
+        st.markdown(
+            f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
             unsafe_allow_html=True
         )
     else:
