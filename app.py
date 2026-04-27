@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="대장님의 최종 관제실 v13.1 (그랜드 오픈 마감판)", layout="wide")
+st.error("지금 이 파일이 실행 중입니다")
 
 SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
