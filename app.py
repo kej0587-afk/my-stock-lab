@@ -759,4 +759,3 @@ with tab2:
             with st.expander("🛠️ 뉴스 디버그 로그"):
                 for log in news_logs: st.write(log)
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
-
