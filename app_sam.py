@@ -1,3 +1,5 @@
+import json
+import base64
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -76,7 +78,43 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 
 def get_fin_label_map():
     return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
+DEFAULT_WATCHLIST = [
+    {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
+    {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
+    {"name": "TQQQ", "ticker": "TQQQ", "is_etf": True, "asset_class": "us_etf_nasdaq"},
+    {"name": "하이닉스", "ticker": "000660.KS", "is_etf": False, "asset_class": "kr_stock"},
+    {"name": "두산에너빌리티", "ticker": "034020.KS", "is_etf": False, "asset_class": "kr_stock"},
+]
 
+def encode_watchlist(watchlist):
+    raw = json.dumps(watchlist, ensure_ascii=False)
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("utf-8")
+
+def decode_watchlist(value):
+    try:
+        raw = base64.urlsafe_b64decode(value.encode("utf-8")).decode("utf-8")
+        data = json.loads(raw)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def load_watchlist_from_query():
+    raw = st.query_params.get("wl", "")
+    if not raw:
+        return [dict(x) for x in DEFAULT_WATCHLIST]
+    loaded = decode_watchlist(raw)
+    return loaded if loaded else [dict(x) for x in DEFAULT_WATCHLIST]
+
+def save_watchlist_to_query():
+    st.query_params["wl"] = encode_watchlist(st.session_state.watchlist)
+
+def is_in_watchlist(ticker):
+    t_norm = normalize_ticker(ticker)
+    for item in st.session_state.watchlist:
+        if normalize_ticker(item["ticker"]) == t_norm:
+            return True
+    return False
+        
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -467,21 +505,21 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
     fin_map = dict(fin_score_map_items)
 
-    for name in watchlist_items:
-        if name not in TICKER_MAP:
-            continue
-
-        tkr, is_etf, a_class = TICKER_MAP[name]
+    for name, tkr, is_etf, a_class in watchlist_items:
         df = load_price_df(tkr, "1y")
         if df.empty:
             continue
 
         df = build_indicators(df)
-        f_score = fin_map.get(name, 0 if is_etf else 2)
+
+        fin_key = f"{name}|{normalize_ticker(tkr)}"
+        f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
+
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
 
         rows.append({
             "종목명": name,
+            "티커": tkr,
             "현재가": format_currency(c["cur_p"], tkr),
             "MDD": f"{c['dd']*100:.1f}%",
             "📌후보등급": c["grade"],
@@ -494,8 +532,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         })
 
     return pd.DataFrame(rows)
-
-# legacy helper: 현재는 get_effective_weights() 경로를 주로 사용
+    
+@st.cache_data(ttl=300)
 def get_sheet_current_weight(name, ticker):
     t = normalize_ticker(ticker); matched = control_df[control_df["티커"].apply(normalize_ticker) == t]
     return float(matched.iloc[0]["현재비중"]) if not matched.empty else 0.0
@@ -552,49 +590,36 @@ if "fin_score_map" not in st.session_state:
     st.session_state.fin_score_map = {}
 
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = [
-        "MSFT", "QQQM", "TQQQ", "하이닉스", "두산에너빌리티"
-    ]
-
+    st.session_state.watchlist = load_watchlist_from_query()
+    
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
-    st.caption("탐색 후 등록한 관심종목만 전광판에 표시됩니다.")
+    st.caption("전광판 등록 종목만 표시됩니다.")
 
-    c1, c2 = st.columns([3, 1])
+    remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
+    remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
 
-    with c1:
-        if st.session_state.watchlist:
-            st.write("현재 등록 종목:", ", ".join(st.session_state.watchlist))
-        else:
-            st.info("등록된 관심종목이 없습니다.")
-
-    with c2:
-        remove_target = st.selectbox(
-            "제거할 종목",
-            ["선택"] + st.session_state.watchlist if st.session_state.watchlist else ["선택"],
-            key="remove_watchlist_target"
-        )
-        if remove_target != "선택" and st.button("전광판에서 제거"):
-            st.session_state.watchlist.remove(remove_target)
-            st.rerun()
+    if remove_target != "선택" and st.button("전광판에서 제거"):
+        _, remove_ticker = remove_target.split("|", 1)
+        st.session_state.watchlist = [
+            item for item in st.session_state.watchlist
+            if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
+        ]
+        save_watchlist_to_query()
+        st.rerun()
 
     summary_df = get_all_summary(
         tuple(sorted(st.session_state.fin_score_map.items())),
         app_mode,
-        tuple(st.session_state.watchlist)
+        tuple((item["name"], item["ticker"], item["is_etf"], item["asset_class"]) for item in st.session_state.watchlist)
     )
 
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:
-        st.dataframe(
-            summary_df,
-            use_container_width=True,
-            height=720,
-            hide_index=True
-        )
+        st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
 
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
@@ -603,35 +628,57 @@ with tab2:
 
     if is_free:
         c1, c2 = st.columns([2, 1])
-        with c1: user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
-        with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
-        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6: tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
-        else: tkr = user_tkr_raw
-        is_etf, a_class, name, my_p, has_p = False, ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"), f"탐색: {tkr}", 0.0, False
+        with c1:
+            user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
+        with c2:
+            mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
+
+        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
+            tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
+        else:
+            tkr = user_tkr_raw
+
+        known_etf_tickers = {
+            "QQQM", "QLD", "TQQQ", "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+        }
+        is_etf = normalize_ticker(tkr) in {normalize_ticker(x) for x in known_etf_tickers} or tkr.upper().endswith("ETF")
+        a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
+            "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
+        )
+        name, my_p, has_p = f"탐색: {tkr}", 0.0, False
     else:
-        name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]
+        name = sel
+        tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
 
-        st.markdown("### ⭐ 관심종목 관리")
+    st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
+    current_item = {
+        "name": name,
+        "ticker": tkr,
+        "is_etf": is_etf,
+        "asset_class": a_class
+    }
+
     with a1:
-        if not is_free:
-            if name in st.session_state.watchlist:
-                st.success("이미 전광판에 등록된 종목입니다.")
-            else:
-                if st.button("전광판에 등록"):
-                    st.session_state.watchlist.append(name)
-                    st.rerun()
+        if is_in_watchlist(tkr):
+            st.success("이미 전광판에 등록된 종목입니다.")
         else:
-            st.info("자유종목은 전광판 등록 기능을 지원하지 않습니다.")
+            if st.button("전광판에 등록"):
+                st.session_state.watchlist.append(current_item)
+                save_watchlist_to_query()
+                st.rerun()
 
     with a2:
-        if (not is_free) and (name in st.session_state.watchlist):
-            if st.button("전광판에서 제거", key=f"remove_{name}"):
-                st.session_state.watchlist.remove(name)
+        if is_in_watchlist(tkr):
+            if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
+                st.session_state.watchlist = [
+                    item for item in st.session_state.watchlist
+                    if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
+                ]
+                save_watchlist_to_query()
                 st.rerun()
-                
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
     if app_mode == "범용모드":
@@ -644,21 +691,40 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    f_labels = get_fin_label_map(); default_f = st.session_state.fin_score_map.get(name, 0 if is_etf else 2)
-    fin_score = st.radio("재무 점수", [0, 1, 2, 3, 4], index=default_f, format_func=lambda x: f_labels[x], horizontal=True)
-    st.session_state.fin_score_map[name] = fin_score
-    get_all_summary.clear()
+    f_labels = get_fin_label_map()
+
+    if is_etf:
+        fin_score = 0
+        st.markdown(
+            f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        fin_key = f"{name}|{normalize_ticker(tkr)}"
+        base_default_f = 3 if is_free else 2
+        default_f = st.session_state.fin_score_map.get(fin_key, base_default_f)
+
+        fin_score = st.radio(
+            "재무 점수",
+            [0, 1, 2, 3, 4],
+            index=default_f,
+            format_func=lambda x: f_labels[x],
+            horizontal=True,
+            key=f"fin_score_{fin_key}"
+        )
+        st.session_state.fin_score_map[fin_key] = fin_score
 
     df = load_price_df(tkr, "1y")
     if not df.empty:
-        
-        # [수정] 원본 df에 지표를 덮어쓰기 위해 분리 실행 (차트 에러 방지용)
         df = build_indicators(df)
-        
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p, 
-                                     (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free, 
-                                     app_mode, u_asset, u_curr_w, u_targ_w)
-        
+
+        c = calc_scores_and_decision(
+            name, tkr, is_etf, a_class, df,
+            u_price if app_mode == "범용모드" else my_p,
+            (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p,
+            fin_score, is_free, app_mode, u_asset, u_curr_w, u_targ_w
+        )
+
         L, R = st.columns([1.1, 2.4])
         with L:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
@@ -675,20 +741,22 @@ with tab2:
                 f"</div>",
                 unsafe_allow_html=True
             )
-            
-            if is_free or app_mode == "범용모드": 
-                st.info("💡 공개용 범용 분석 모드입니다. 총 자산·평단가·현재비중·목표비중을 직접 입력하세요.")
-                st.markdown(f"<div class='info-panel'><b>입력 기준</b><br>"
+
+            st.info("💡 공개용 범용 분석 모드입니다. 총 자산·평단가·현재비중·목표비중을 직접 입력하세요.")
+            st.markdown(
+                f"<div class='info-panel'><b>입력 기준</b><br>"
                 f"총 자산: {u_asset:,.0f}원<br>"
                 f"평단가: {format_currency(u_price, tkr)}<br>"
                 f"목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>"
                 f"<b>부족 매수액: {c['buy_amt']:,.0f}원</b></div>",
                 unsafe_allow_html=True
-                )
-                
-            
-            st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
-            
+            )
+
+            st.markdown(
+                f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>',
+                unsafe_allow_html=True
+            )
+
             fin_text = "해당없음" if is_etf else f"{c['fin_score']}/4"
             st.markdown(
                 f"<div class='info-panel' style='border-left: 5px solid #8b5cf6;'>"
@@ -698,32 +766,77 @@ with tab2:
                 f"└ 💰재무: {fin_text}</div>",
                 unsafe_allow_html=True
             )
-        
+
         with R:
-            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
+            fig = go.Figure(data=[go.Candlestick(
+                x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price"
+            )])
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
+
             p_line = u_price if app_mode == "범용모드" else my_p
-            if p_line > 0 and ((app_mode == "범용모드" and c['current_w'] > 0) or (app_mode == "개인모드" and not is_free and has_p)): 
+            if p_line > 0 and c['current_w'] > 0:
                 fig.add_hline(y=p_line, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
-            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+
+            fig.update_layout(
+                template="plotly_dark",
+                height=600,
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
         b1, b2 = st.columns(2)
-        with b1: 
+
+        with b1:
             f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
-        with b2: 
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>"
+                f"• 외부구조: <b>{c['ext_structure']}</b><br>"
+                f"• 내부구조: <b>{c['int_structure']}</b><br>"
+                f"• 내부 이벤트: <b>{c['int_event']}</b><br>"
+                f"• 외부 이벤트: <b>{c['ext_event']}</b><br>"
+                f"• 유동성 상태: <b>{c['liq_state']}</b><br>"
+                f"• FVG 상태: <b>{f_txt}</b><br>"
+                f"• P/D Zone: <b>{c['pd_zone']}</b><br>"
+                f"• 실시간 MACD: <b>{c['rt_macd']}</b><br>"
+                f"• SQZ: <b>{c['sqz']}</b>"
+                f"<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>",
+                unsafe_allow_html=True
+            )
+
+        with b2:
+            st.markdown(
+                f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>"
+                f"• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>"
+                f"• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>"
+                f"• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b>"
+                f"<hr style='margin:10px 0; border-color:#334155;'>"
+                f"<span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br>"
+                f"<span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br>"
+                f"<span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br>"
+                f"<span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}"
+                f"<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>",
+                unsafe_allow_html=True
+            )
 
         st.markdown("### 📰 최신 현장 뉴스")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
         if news_items:
-            for item in news_items: st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a> <span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
-        else: st.info("현재 제공되는 최신 뉴스가 없습니다.")
-        
-        if news_debug: 
+            for item in news_items:
+                st.markdown(
+                    f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a> "
+                    f"<span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("현재 제공되는 최신 뉴스가 없습니다.")
+
+        if news_debug:
             with st.expander("🛠️ 뉴스 디버그 로그"):
-                for log in news_logs: st.write(log)
-    else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
+                for log in news_logs:
+                    st.write(log)
+    else:
+        st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
