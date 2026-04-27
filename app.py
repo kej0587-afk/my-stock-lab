@@ -640,15 +640,16 @@ with tab2:
 
     f_labels = get_fin_label_map()
     sheet_default_f = get_fin_score_from_sheet(name, tkr, is_etf)
-   
-    if app_mode == "개인모드":
+
+    if app_mode == "개인모드" and not is_free:
         fin_score = sheet_default_f
         st.markdown(
             f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
             unsafe_allow_html=True
         )
     else:
-        default_f = st.session_state.fin_score_map.get(name, sheet_default_f)
+        base_default_f = 3 if is_free else sheet_default_f
+        default_f = st.session_state.fin_score_map.get(name, base_default_f)
         fin_score = st.radio(
             "재무 점수",
             [0, 1, 2, 3, 4],
