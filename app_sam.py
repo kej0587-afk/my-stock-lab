@@ -463,23 +463,36 @@ TICKER_MAP = {
 }
 
 @st.cache_data(ttl=300)
-def get_all_summary(fin_score_map_items, mode):
-    rows = []; fin_map = dict(fin_score_map_items)
-    for name, (tkr, is_etf, a_class) in TICKER_MAP.items():
+def get_all_summary(fin_score_map_items, mode, watchlist_items):
+    rows = []
+    fin_map = dict(fin_score_map_items)
+
+    for name in watchlist_items:
+        if name not in TICKER_MAP:
+            continue
+
+        tkr, is_etf, a_class = TICKER_MAP[name]
         df = load_price_df(tkr, "1y")
-        if df.empty: continue
-        
-        # [수정] 원본 df에 지표를 덮어쓰기 위해 build_indicators 분리 실행
+        if df.empty:
+            continue
+
         df = build_indicators(df)
         f_score = fin_map.get(name, 0 if is_etf else 2)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
-        
+
         rows.append({
-            "종목명": name, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "현재비중": f"{c['current_w']:.2f}%", "목표비중": f"{c['target_w']:.2f}%",
-            "📌후보등급": c["grade"], "RS": c["rs_label"], "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), 
-            "볼린저 %B": round(c["pct_b"], 2), "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+            "종목명": name,
+            "현재가": format_currency(c["cur_p"], tkr),
+            "MDD": f"{c['dd']*100:.1f}%",
+            "📌후보등급": c["grade"],
+            "RS": c["rs_label"],
+            "RSI": round(c["rsi"], 1),
+            "MFI": round(c["mfi"], 1),
+            "볼린저 %B": round(c["pct_b"], 2),
+            "🔥기술적 타점": c["dec"],
+            "Adj점수": round(c["adj"], 1)
         })
+
     return pd.DataFrame(rows)
 
 # legacy helper: 현재는 get_effective_weights() 경로를 주로 사용
@@ -535,19 +548,53 @@ else:
     control_df = pd.DataFrame(columns=["자산명", "티커", "목표비중", "현재비중"])
     total_eval = 0.0
 
-if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
+if "fin_score_map" not in st.session_state:
+    st.session_state.fin_score_map = {}
+
+if "watchlist" not in st.session_state:
+    st.session_state.watchlist = [
+        "MSFT", "QQQM", "TQQQ", "하이닉스", "두산에너빌리티"
+    ]
 
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
-    st.caption("공개용 범용 버전입니다. 비중·평단가·재무점수는 사용자가 직접 입력합니다.")
-    st.dataframe(
-        get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode),
-        use_container_width=True,
-        height=720,
-        hide_index=True
+    st.caption("탐색 후 등록한 관심종목만 전광판에 표시됩니다.")
+
+    c1, c2 = st.columns([3, 1])
+
+    with c1:
+        if st.session_state.watchlist:
+            st.write("현재 등록 종목:", ", ".join(st.session_state.watchlist))
+        else:
+            st.info("등록된 관심종목이 없습니다.")
+
+    with c2:
+        remove_target = st.selectbox(
+            "제거할 종목",
+            ["선택"] + st.session_state.watchlist if st.session_state.watchlist else ["선택"],
+            key="remove_watchlist_target"
+        )
+        if remove_target != "선택" and st.button("전광판에서 제거"):
+            st.session_state.watchlist.remove(remove_target)
+            st.rerun()
+
+    summary_df = get_all_summary(
+        tuple(sorted(st.session_state.fin_score_map.items())),
+        app_mode,
+        tuple(st.session_state.watchlist)
     )
+
+    if summary_df.empty:
+        st.warning("전광판에 표시할 종목이 없습니다.")
+    else:
+        st.dataframe(
+            summary_df,
+            use_container_width=True,
+            height=720,
+            hide_index=True
+        )
 
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
@@ -564,6 +611,27 @@ with tab2:
     else:
         name = sel; tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+
+        st.markdown("### ⭐ 관심종목 관리")
+    a1, a2 = st.columns(2)
+
+    with a1:
+        if not is_free:
+            if name in st.session_state.watchlist:
+                st.success("이미 전광판에 등록된 종목입니다.")
+            else:
+                if st.button("전광판에 등록"):
+                    st.session_state.watchlist.append(name)
+                    st.rerun()
+        else:
+            st.info("자유종목은 전광판 등록 기능을 지원하지 않습니다.")
+
+    with a2:
+        if (not is_free) and (name in st.session_state.watchlist):
+            if st.button("전광판에서 제거", key=f"remove_{name}"):
+                st.session_state.watchlist.remove(name)
+                st.rerun()
+                
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
     if app_mode == "범용모드":
