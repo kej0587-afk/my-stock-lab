@@ -18,7 +18,7 @@ SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
 ETF_SHEET_GID = "604547263"
 CONTROL_SHEET_GID = "1420210871"
-FIN_SHEET_GID = "여기에_재무제표시트_GID"
+FIN_SHEET_GID = "1944167452"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly"
