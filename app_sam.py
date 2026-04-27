@@ -680,7 +680,7 @@ with tab2:
     sel = st.selectbox("종목 선택", options)
     is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
 
-    if is_free:
+        if is_free:
         c1, c2 = st.columns([2, 1])
         with c1:
             user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
@@ -692,27 +692,30 @@ with tab2:
         else:
             tkr = user_tkr_raw
 
-    known_etf_tickers = {
-        "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
-        "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF",
-        "379810.KS", "379800.KS", "458730.KS", "069500.KS"
-    }
+        known_etf_tickers = {
+            "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
+            "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF",
+            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+        }
 
-    ticker_norm = normalize_ticker(tkr)
-    is_etf = (
-        ticker_norm in {normalize_ticker(x) for x in known_etf_tickers}
-        or tkr.upper().endswith("ETF")
-    )
+        ticker_norm = normalize_ticker(tkr)
+        is_etf = (
+            ticker_norm in {normalize_ticker(x) for x in known_etf_tickers}
+            or tkr.upper().endswith("ETF")
+        )
 
-    a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
-        "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
-    )
-              
-        else:
-            name = sel
-            tkr, is_etf, a_class = TICKER_MAP[sel]
-            my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+        a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
+            "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
+        )
 
+        name = f"탐색: {tkr}"
+        my_p, has_p = 0.0, False
+
+    else:
+        name = sel
+        tkr, is_etf, a_class = TICKER_MAP[sel]
+        my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+        
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
