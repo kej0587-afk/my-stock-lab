@@ -20,7 +20,6 @@ SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
 ETF_SHEET_GID = "604547263"
 CONTROL_SHEET_GID = "1420210871"
-FIN_SHEET_GID = "1944167452"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly"
@@ -252,35 +251,7 @@ def load_control_sheet():
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
     for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
     return block
-@st.cache_data(ttl=300)
-def load_fin_score_sheet():
-    raw = load_sheet_by_gid(FIN_SHEET_GID)
 
-    block = raw.iloc[0:19, [0, 1, 6]].copy()
-    block.columns = ["자산명", "티커", "재무점수"]
-
-    block["자산명"] = block["자산명"].astype(str).str.strip()
-    block["티커"] = block["티커"].astype(str).str.strip()
-    block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
-
-    return block
-
-def get_fin_score_from_sheet(name, ticker, is_etf):
-    if is_etf:
-        return 0
-
-    t_norm = normalize_ticker(ticker)
-    n_norm = normalize_text(name)
-
-    matched_t = fin_score_df[fin_score_df["티커"].apply(normalize_ticker) == t_norm]
-    if not matched_t.empty:
-        return int(matched_t.iloc[0]["재무점수"])
-
-    matched_n = fin_score_df[fin_score_df["자산명"].apply(normalize_text) == n_norm]
-    if not matched_n.empty:
-        return int(matched_n.iloc[0]["재무점수"])
-
-    return 2
     
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
@@ -590,12 +561,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        # 기존 관리종목은 메인/공개용 모두 시트 점수 사용
-        if not name.startswith("탐색:"):
-            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        else:
-            fin_key = f"{name}|{normalize_ticker(tkr)}"
-            f_score = 0 if is_etf else fin_map.get(fin_key, 3)
+        fin_key = f"{name}|{normalize_ticker(tkr)}"
+        f_score = 0 if is_etf else fin_map.get(fin_key, 3)
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
@@ -664,13 +631,11 @@ if app_mode == "개인모드":
     invest_data = load_invest_sheet()
     portfolio_df = load_portfolio_sheet()
     control_df = load_control_sheet()
-    fin_score_df = load_fin_score_sheet()
     total_eval = invest_data["current_asset"]
 else:
     invest_data = {"seed_money": 0.0, "current_asset": 0.0, "cum_profit": 0.0}
     portfolio_df = pd.DataFrame(columns=["자산명", "티커입력", "보유량", "매입단가", "현재가(시트)", "평가금액"])
     control_df = pd.DataFrame(columns=["자산명", "티커", "목표비중", "현재비중"])
-    fin_score_df = load_fin_score_sheet()
     total_eval = 0.0
 
 if "fin_score_map" not in st.session_state:
@@ -780,7 +745,8 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    f_labels = get_fin_label_map()
+        f_labels = get_fin_label_map()
+    fin_key = f"{name}|{normalize_ticker(tkr)}"
 
     if is_etf:
         fin_score = 0
@@ -788,14 +754,7 @@ with tab2:
             f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
             unsafe_allow_html=True
         )
-    elif not is_free:
-        fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        st.markdown(
-            f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
-            unsafe_allow_html=True
-        )
     else:
-        fin_key = f"{name}|{normalize_ticker(tkr)}"
         default_f = st.session_state.fin_score_map.get(fin_key, 3)
 
         fin_score = st.radio(
