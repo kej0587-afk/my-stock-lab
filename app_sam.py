@@ -124,7 +124,7 @@ def is_in_watchlist(ticker):
         if normalize_ticker(item["ticker"]) == t_norm:
             return True
     return False
-        
+
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -252,7 +252,6 @@ def load_control_sheet():
     for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
     return block
 
-    
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
 # -------------------------------------------------
@@ -687,10 +686,10 @@ with tab2:
         with c2:
             mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
-    if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
+        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
             tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
-    else:
-        tkr = user_tkr_raw
+        else:
+            tkr = user_tkr_raw
 
         known_etf_tickers = {
             "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
