@@ -18,6 +18,7 @@ SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
 INVEST_SHEET_GID = "168627640"
 ETF_SHEET_GID = "604547263"
 CONTROL_SHEET_GID = "1420210871"
+FIN_SHEET_GID = "여기에_재무제표시트_GID"
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/drive.readonly"
@@ -202,6 +203,19 @@ def load_control_sheet():
     block = raw.iloc[46:57, 3:7].copy()
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
     for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
+    return block
+@st.cache_data(ttl=300)
+def load_fin_score_sheet():
+    raw = load_sheet_by_gid(FIN_SHEET_GID)
+
+    # A열(0): 종목명, B열(1): 티커, G열(6): 점수
+    block = raw.iloc[0:19, [0, 1, 6]].copy()
+    block.columns = ["자산명", "티커", "재무점수"]
+
+    block["자산명"] = block["자산명"].astype(str).str.strip()
+    block["티커"] = block["티커"].astype(str).str.strip()
+    block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
+
     return block
 
 # -------------------------------------------------
@@ -511,7 +525,8 @@ def get_all_summary(fin_score_map_items, mode):
         
         # [수정] 원본 df에 지표를 덮어쓰기 위해 build_indicators 분리 실행
         df = build_indicators(df)
-        f_score = fin_map.get(name, 0 if is_etf else 2)
+        sheet_fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
+        f_score = fin_map.get(name, sheet_fin_score)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
         
         rows.append({
@@ -539,6 +554,23 @@ def get_my_price(name, ticker):
     matched = pf[pf["티커정리"] == t_norm]
     return float(matched.iloc[0]["매입단가"]) if not matched.empty and pd.notna(matched.iloc[0]["매입단가"]) else 0.0
 
+def get_fin_score_from_sheet(name, ticker, is_etf=False):
+    if is_etf:
+        return 0
+
+    t_norm = normalize_ticker(ticker)
+    n_norm = normalize_text(name)
+
+    matched_t = fin_score_df[fin_score_df["티커"].apply(normalize_ticker) == t_norm]
+    if not matched_t.empty:
+        return int(matched_t.iloc[0]["재무점수"])
+
+    matched_n = fin_score_df[fin_score_df["자산명"].apply(normalize_text) == n_norm]
+    if not matched_n.empty:
+        return int(matched_n.iloc[0]["재무점수"])
+
+    return 2
+    
 def has_position(name, ticker):
     t_norm = normalize_ticker(ticker)
     pf = portfolio_df.copy()
@@ -567,6 +599,7 @@ else:
 invest_data = load_invest_sheet()
 portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
+fin_score_df = load_fin_score_sheet()
 total_eval = invest_data["current_asset"]
 
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
@@ -605,8 +638,17 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    f_labels = get_fin_label_map(); default_f = st.session_state.fin_score_map.get(name, 0 if is_etf else 2)
-    fin_score = st.radio("재무 점수", [0, 1, 2, 3, 4], index=default_f, format_func=lambda x: f_labels[x], horizontal=True)
+    f_labels = get_fin_label_map()
+    sheet_default_f = get_fin_score_from_sheet(name, tkr, is_etf)
+    default_f = st.session_state.fin_score_map.get(name, sheet_default_f)
+
+    fin_score = st.radio(
+        "재무 점수",
+        [0, 1, 2, 3, 4],
+        index=default_f,
+        format_func=lambda x: f_labels[x],
+        horizontal=True
+    )
     st.session_state.fin_score_map[name] = fin_score
     get_all_summary.clear()
 
