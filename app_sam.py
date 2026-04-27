@@ -78,6 +78,14 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     return "⏳추세관망"
 
 def get_fin_label_map():
+    return {
+        0: "0점 (ETF/해당없음)",
+        1: "1점 (🚨F급/처분)",
+        2: "2점 (⚠️불안정/주의)",
+        3: "3점 (✅회복형/중간형)",
+        4: "4점 (💎완성형 우량)"
+    }
+
 DEFAULT_WATCHLIST = [
     {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
     {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
