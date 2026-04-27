@@ -526,7 +526,7 @@ def get_all_summary(fin_score_map_items, mode):
         # [수정] 원본 df에 지표를 덮어쓰기 위해 build_indicators 분리 실행
         df = build_indicators(df)
         sheet_fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        f_score = fin_map.get(name, sheet_fin_score)
+        f_score = sheet_fin_score if mode == "개인모드" else fin_map.get(name, sheet_fin_score)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
         
         rows.append({
@@ -640,17 +640,24 @@ with tab2:
 
     f_labels = get_fin_label_map()
     sheet_default_f = get_fin_score_from_sheet(name, tkr, is_etf)
-    default_f = st.session_state.fin_score_map.get(name, sheet_default_f)
 
-    fin_score = st.radio(
-        "재무 점수",
-        [0, 1, 2, 3, 4],
-        index=default_f,
-        format_func=lambda x: f_labels[x],
-        horizontal=True
-    )
-    st.session_state.fin_score_map[name] = fin_score
-    get_all_summary.clear()
+    if app_mode == "개인모드":
+        fin_score = sheet_default_f
+        st.markdown(
+            f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        default_f = st.session_state.fin_score_map.get(name, sheet_default_f)
+        fin_score = st.radio(
+            "재무 점수",
+            [0, 1, 2, 3, 4],
+            index=default_f,
+            format_func=lambda x: f_labels[x],
+            horizontal=True,
+            key=f'fin_score_{name}'
+        )
+        st.session_state.fin_score_map[name] = fin_score
 
     df = load_price_df(tkr, "1y")
     if not df.empty:
