@@ -462,7 +462,7 @@ TICKER_MAP = {
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
 }
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_all_summary(fin_score_map_items, mode):
     rows = []; fin_map = dict(fin_score_map_items)
     for name, (tkr, is_etf, a_class) in TICKER_MAP.items():
