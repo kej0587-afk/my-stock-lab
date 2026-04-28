@@ -132,7 +132,117 @@ def get_watchlist_item(ticker):
         if normalize_ticker(item["ticker"]) == t_norm:
             return item
     return None
+    
+def build_ai_analysis_prompt(name, ticker, macro_res, final_macro_risk, c):
+    macro_lines = []
+    for k, v in macro_res.items():
+        macro_lines.append(f"- {k}: {v['val']} ({v['icon']}, storm={v['storm']})")
 
+    macro_text = "\n".join(macro_lines) if macro_lines else "- 거시 데이터 없음"
+
+    return f"""
+You are a top-tier macro strategist and technical analyst for public markets.
+당신의 임무는 내가 입력한 **{name} ({ticker})**에 대해, 현시점에서 비중 확대를 위한 매수진입이 적정한지 여부를 판단하는 것이다.
+
+반드시 아래 기준으로 분석하라.
+• 거시경제 분석
+• 현재 금리 방향성
+• 인플레이션 흐름
+• 경기 사이클
+• 유동성 환경
+• 달러 방향성
+• 중앙은행 정책 스탠스
+• 위 요소들이 {name}에 우호적인지, 중립인지, 비우호적인지 판단
+• 기술적 분석
+• 단기 / 중기 / 장기 추세
+• 이동평균선 배열
+• 주요 지지선 / 저항선
+• 거래량 변화
+• RSI, MACD 등 주요 모멘텀 지표
+• 현재 구간이 돌파 매수, 눌림목 매수, 관망 구간 중 어디에 해당하는지 판단
+• 종합 판단
+• 거시경제와 기술적 분석을 통합해 현재 시점의 비중 확대 매수 적정성을 평가하라.
+• 단순 낙관론이 아니라 손익비와 리스크까지 포함해 판단하라.
+• 애매하면 “조건부 적정”으로 판정하고, 어떤 조건이 충족되어야 하는지 명확히 써라.
+
+답변 형식은 반드시 아래 형식으로만 작성하라.
+별점: ★{{별점}}
+최종 판정: {{매수 적정 / 조건부 적정 / 관망 / 부적정}}
+한줄 결론:
+• {name}에 대한 현시점 비중 확대 매수 적정성을 1문장으로 요약
+• 거시경제 분석
+• 핵심 거시 변수 요약
+• 현재 환경이 {name}에 미치는 영향
+• 우호 / 중립 / 비우호 판단
+• 기술적 분석
+• 추세 판단
+• 핵심 지지선 / 저항선
+• 거래량 / RSI / MACD 해석
+• 현재 진입 타점의 매력도 평가
+• 종합 판단
+• 왜 지금 매수진입이 적절한지 또는 부담스러운지 설명
+• 비중 확대, 분할매수, 눌림목 대기, 관망 중 가장 합리적인 선택 제시
+• 실행 전략
+• 공격형 투자자 전략
+• 중립형 투자자 전략
+• 보수형 투자자 전략
+• 리스크 요인
+• 이 판단을 무효화할 수 있는 변수 3가지 이상 제시
+• 최종 한줄 판정
+
+추가 규칙:
+• 최신 기준으로 해석하되, 최신 데이터 확인이 불완전하면 그 한계를 먼저 명시하라.
+• 확실한 것과 불확실한 것을 구분하라.
+• 투자 권유가 아니라 분석 및 의사결정 보조 목적의 답변으로 작성하라.
+• 개별 종목이면 실적, 밸류에이션, 섹터 모멘텀을 보조적으로 반영하라.
+• 지수라면 정책, 유동성, 경기 방향성의 비중을 더 높게 반영하라.
+• 반드시 한국어로 작성하라.
+
+입력 데이터:
+[거시환경]
+매크로 리스크 점수: {final_macro_risk}
+{macro_text}
+
+[기술/전술 데이터]
+종목명: {name}
+티커: {ticker}
+현재가: {c['cur_p']}
+후보등급: {c['grade']}
+최종판정: {c['dec']}
+Adj 점수: {c['adj']}
+RS 라벨: {c['rs_label']}
+RSI: {c['rsi']}
+MFI: {c['mfi']}
+볼린저 %B: {c['pct_b']}
+추세: {c['trend']}
+MACD 상태: {c['macd']}
+실시간 MACD: {c['rt_macd']}
+SQZ: {c['sqz']}
+외부구조: {c['ext_structure']}
+내부구조: {c['int_structure']}
+내부 이벤트: {c['int_event']}
+외부 이벤트: {c['ext_event']}
+유동성 상태: {c['liq_state']}
+FVG 타입: {c['fvg_type']}
+FVG active: {c['fvg_active']}
+P/D Zone: {c['pd_zone']}
+MA5: {c['ma5']}
+MA20: {c['ma20']}
+MA50: {c['ma50']}
+MA120: {c['ma120']}
+3개월 수익률: {c['ret_3m']}
+6개월 수익률: {c['ret_6m']}
+MDD: {c['dd']}
+기술점수: {c['tech_total']}
+재무점수: {c['fin_score']}
+종합 해석: {c['smc_action']}
+보조 해석: {c['smc_insight']}
+""".strip()
+
+
+def call_llm_analysis(prompt: str) -> str:
+    return prompt
+    
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -927,4 +1037,17 @@ with tab2:
         if news_debug: 
             with st.expander("🛠️ 뉴스 디버그 로그"):
                 for log in news_logs: st.write(log)
+        st.markdown("### 🤖 AI 종합 해석 프롬프트")
+
+        if st.button("AI 분석용 프롬프트 생성", key=f"ai_analysis_{normalize_ticker(tkr)}"):
+            prompt = build_ai_analysis_prompt(name, tkr, macro_res, final_macro_risk, c)
+
+            st.info("아래 프롬프트를 복사해서 ChatGPT나 Gemini에 붙여넣으면 됩니다.")
+
+            st.text_area(
+                "분석용 프롬프트",
+                value=prompt,
+                height=500,
+                key=f"prompt_box_{normalize_ticker(tkr)}"
+            )
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
