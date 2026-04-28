@@ -835,44 +835,30 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         }
 
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
+    manual_score = None
     if not matched.empty:
         row = matched.iloc[0]
-        notes = []
-        try:
-            notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else []
-        except Exception:
-            notes = []
-
-        meta = {
-            "auto_score": row["auto_score"],
-            "manual_score": row["manual_score"],
-            "final_score": row["final_score"],
-            "source": row["source"],
-            "notes": notes,
-            "metrics": {}
-        }
-
         if pd.notna(row["manual_score"]):
-            return int(row["manual_score"]), meta
+            manual_score = int(row["manual_score"])
 
-        if pd.notna(row["auto_score"]):
-            return int(row["final_score"]), meta
-
+    # 항상 최신 자동 재무 재계산
     auto_score, fin_auto, fin_notes = get_auto_fin_score_for_ticker(ticker, is_etf)
+
+    final_score = manual_score if manual_score is not None else int(auto_score)
 
     upsert_fin_score_db(
         ticker=key,
         auto_score=int(auto_score),
-        manual_score=None,
-        final_score=int(auto_score),
+        manual_score=manual_score,
+        final_score=int(final_score),
         source=fin_auto.get("source", "unknown"),
         notes=fin_notes
     )
 
-    return int(auto_score), {
+    return int(final_score), {
         "auto_score": int(auto_score),
-        "manual_score": None,
-        "final_score": int(auto_score),
+        "manual_score": manual_score,
+        "final_score": int(final_score),
         "source": fin_auto.get("source", "unknown"),
         "notes": fin_notes,
         "metrics": {
@@ -885,6 +871,18 @@ def get_final_fin_score(ticker, is_etf, asset_class):
             "net_income": fin_auto.get("net_income"),
         }
     }
+    
+if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (normalize_ticker(tkr),))
+    conn.commit()
+    conn.close()
+
+    if fin_key in st.session_state.fin_score_map:
+        del st.session_state.fin_score_map[fin_key]
+
+    st.rerun()
 
 def set_manual_fin_score(ticker, score):
     key = normalize_ticker(ticker)
