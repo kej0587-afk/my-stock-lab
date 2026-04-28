@@ -893,6 +893,24 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         source=fin_auto.get("source", "unknown"),
         notes=fin_notes
     )
+
+    return int(final_score), {
+        "auto_score": int(auto_score),
+        "manual_score": manual_score,
+        "final_score": int(final_score),
+        "source": fin_auto.get("source", "unknown"),
+        "notes": fin_notes,
+        "metrics": {
+            "roe": fin_auto.get("roe"),
+            "op_margin": fin_auto.get("op_margin"),
+            "net_margin": fin_auto.get("net_margin"),
+            "debt_ratio": fin_auto.get("debt_ratio"),
+            "ocf": fin_auto.get("ocf"),
+            "revenue": fin_auto.get("revenue"),
+            "net_income": fin_auto.get("net_income"),
+        }
+    }
+
    
     if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
         fetch_us_financials_auto.clear()
@@ -1640,6 +1658,19 @@ with tab2:
 
         for n in fin_meta.get("notes", []):
             st.write("-", n)
+        if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
+            fetch_us_financials_auto.clear()
+            fetch_kr_financials_auto.clear()
+            get_all_summary.clear()
+
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (fin_key,))
+            conn.commit()
+            conn.close()
+
+            st.session_state.fin_score_map.pop(fin_key, None)
+            st.rerun()
 
     manual_override = st.checkbox("재무점수 수동 수정", key=f"manual_fin_{fin_key}")
     if manual_override:
@@ -1660,22 +1691,7 @@ with tab2:
             st.session_state.fin_score_map[fin_key] = get_final_fin_score(tkr, is_etf, a_class)[0]
             st.rerun()
 
-    return int(final_score), {
-        "auto_score": int(auto_score),
-        "manual_score": manual_score,
-        "final_score": int(final_score),
-        "source": fin_auto.get("source", "unknown"),
-        "notes": fin_notes,
-        "metrics": {
-            "roe": fin_auto.get("roe"),
-            "op_margin": fin_auto.get("op_margin"),
-            "net_margin": fin_auto.get("net_margin"),
-            "debt_ratio": fin_auto.get("debt_ratio"),
-            "ocf": fin_auto.get("ocf"),
-            "revenue": fin_auto.get("revenue"),
-            "net_income": fin_auto.get("net_income"),
-        }
-    }
+  
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
