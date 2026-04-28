@@ -538,6 +538,8 @@ FIN_B_KEYS = [
     "quarter_warning",
 ]
 
+FIN_DATA_TTL_SECONDS = 21600  # 6시간. 점수식은 매번 계산, 원천 API만 캐시
+
 def get_dart_api_key():
     return st.secrets.get("dart_api_key", "d30af980502d18960f63b00d8a0ad28a61823346").strip()
 
@@ -573,7 +575,7 @@ def get_dart_corp_code(stock_code):
     code_map = fetch_dart_corp_code_map()
     return code_map.get(stock_code)
 
-
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
     api_key = get_dart_api_key()
     if not api_key:
@@ -809,6 +811,7 @@ def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quart
 
     return enrich_fin_record(rec)
 
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_kr_financials_auto(ticker: str):
     stock_code = normalize_stock_code(ticker)
     current_year = pd.Timestamp.today().year
@@ -1004,6 +1007,7 @@ def extract_fmp_metrics(inc, bal, cf, period_type):
     return enrich_fin_record(record)
 
 
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_us_financials_auto(ticker: str):
     api_key = st.secrets.get("fmp_api_key", "")
     if not api_key:
@@ -2084,6 +2088,28 @@ TICKER_MAP = {
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
 }
 
+def get_saved_fin_score_fast(ticker, is_etf):
+    if is_etf:
+        return 0
+
+    key = normalize_ticker(ticker)
+
+    if key in st.session_state.fin_score_map:
+        return int(st.session_state.fin_score_map[key])
+
+    fin_scores_df = load_fin_scores_db()
+    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+
+    if not matched.empty:
+        row = matched.iloc[0]
+        if pd.notna(row["final_score"]):
+            score = int(row["final_score"])
+            st.session_state.fin_score_map[key] = score
+            return score
+
+    return 3
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
 
@@ -2099,10 +2125,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        final_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
-        f_score = int(final_fin_score)
-
-        st.session_state.fin_score_map[normalize_ticker(tkr)] = f_score
+        f_score = get_saved_fin_score_fast(tkr, is_etf)
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
@@ -2332,7 +2355,7 @@ with tab2:
                 st.write("-", msg)
 
         if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
-            for fn in [fetch_us_financials_auto, fetch_kr_financials_auto]:
+            for fn in [fetch_us_financials_auto, fetch_kr_financials_auto, fetch_dart_finstate_all_raw]:
                 if hasattr(fn, "clear"):
                     fn.clear()
 
