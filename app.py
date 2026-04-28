@@ -456,7 +456,7 @@ init_db()
 # -------------------------------------------------
 @st.cache_resource
 def get_dart_client():
-    api_key = st.secrets.get("dart_api_key", "")
+    api_key = st.secrets.get("dart_api_key", "d30af980502d18960f63b00d8a0ad28a61823346")
     if not api_key:
         return None
     return OpenDartReader(api_key)
