@@ -539,7 +539,7 @@ FIN_B_KEYS = [
 
 @st.cache_resource
 def get_dart_client():
-    api_key = st.secrets.get("dart_api_key", "uUMjWTgf3eL0qiPxQx07q2M11DOTkYUt")
+    api_key = st.secrets.get("dart_api_key", "")
     if not api_key:
         return None
     return OpenDartReader(api_key)
