@@ -77,6 +77,15 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     elif last_macd < last_sig and prev_macd >= prev_sig: return "📉하락주의(데드크로스)"
     return "⏳추세관망"
 
+def get_fin_label_map():
+    return {
+        0: "0점 (ETF/해당없음)",
+        1: "1점 (🚨F급/처분)",
+        2: "2점 (⚠️불안정/주의)",
+        3: "3점 (✅회복형/중간형)",
+        4: "4점 (💎완성형 우량)"
+    }
+
 DEFAULT_WATCHLIST = [
     {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
     {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
@@ -250,20 +259,19 @@ def load_control_sheet():
     block.columns = ["자산명", "티커", "목표비중", "현재비중"]
     for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
     return block
+
 @st.cache_data(ttl=300)
 def load_fin_score_sheet():
     raw = load_sheet_by_gid(FIN_SHEET_GID)
-
     # A열(0): 종목명, B열(1): 티커, G열(6): 점수
     block = raw.iloc[0:19, [0, 1, 6]].copy()
     block.columns = ["자산명", "티커", "재무점수"]
-
     block["자산명"] = block["자산명"].astype(str).str.strip()
     block["티커"] = block["티커"].astype(str).str.strip()
     block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
-
     return block
-    
+
+# --- 세션 초기화 (유일한 곳) ---
 if "fin_score_map" not in st.session_state:
     st.session_state.fin_score_map = {}
 
@@ -271,6 +279,7 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist_from_query()
 
 sync_watchlist_to_query()
+
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
 # -------------------------------------------------
@@ -455,7 +464,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
     is_breakout_normal = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and 0.95 <= pct_b_now <= 1.02 and rs_label == "🚀강함"
-   
+    
     # -------------------------------
     # 예외 승인 프로세스 (정찰대 진입)
     # -------------------------------
@@ -657,13 +666,6 @@ def has_position(name, ticker):
     matched = pf[pf["티커정리"] == t_norm]
     return (not matched.empty) and (parse_num(matched.iloc[0]["보유량"]) > 0)
 
-def is_in_watchlist(ticker):
-    t_norm = normalize_ticker(ticker)
-    for item in st.session_state.watchlist:
-        if normalize_ticker(item["ticker"]) == t_norm:
-            return True
-    return False
-    
 
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
@@ -688,16 +690,6 @@ portfolio_df = load_portfolio_sheet()
 control_df = load_control_sheet()
 fin_score_df = load_fin_score_sheet()
 total_eval = invest_data["current_asset"]
-
-if "fin_score_map" not in st.session_state:
-    st.session_state.fin_score_map = {}
-if "watchlist" not in st.session_state:
-    st.session_state.watchlist = [
-        {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
-        {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
-        {"name": "하이닉스", "ticker": "000660.KS", "is_etf": False, "asset_class": "kr_stock"},
-        {"name": "두산에너빌리티", "ticker": "034020.KS", "is_etf": False, "asset_class": "kr_stock"},
-    ]    
 
 tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
 
@@ -826,7 +818,14 @@ with tab2:
 
     if name.startswith("탐색:") and not is_etf:
         current_item["fin_score"] = int(fin_score)
-
+        
+    if name.startswith("탐색:") and not is_etf and is_in_watchlist(tkr):
+        for item in st.session_state.watchlist:
+            if normalize_ticker(item["ticker"]) == normalize_ticker(tkr):
+                item["fin_score"] = int(fin_score)
+                break
+        sync_watchlist_to_query()    
+        
     with a1:
         if is_in_watchlist(tkr):
             st.success("이미 전광판에 등록된 종목입니다.")
