@@ -852,14 +852,26 @@ def fmp_request(endpoint, ticker, period, limit, api_key):
         "period": period,
         "limit": limit,
     }
-    headers = {
-        "apikey": api_key
-    }
+    headers = {"apikey": api_key}
 
     try:
         res = requests.get(url, params=params, headers=headers, timeout=15)
     except Exception as e:
-        raise RuntimeError(f"FMP stable {endpoint} 요청 실패: {e}")
+        raise RuntimeError(f"FMP 요청 실패: {endpoint}, {ticker}, {period}, {e}")
+
+    if res.status_code in [402, 403]:
+        try:
+            err = res.json()
+        except Exception:
+            err = res.text[:300]
+
+        raise RuntimeError(
+            f"FMP 구독/권한 제한: {ticker} {endpoint} {period} "
+            f"(HTTP {res.status_code}). 현재 플랜에서 해당 symbol 또는 endpoint 사용 불가. 원문: {err}"
+        )
+
+    if res.status_code == 429:
+        raise RuntimeError(f"FMP 호출 제한 초과: {ticker} {endpoint} {period}")
 
     if res.status_code != 200:
         try:
@@ -868,25 +880,22 @@ def fmp_request(endpoint, ticker, period, limit, api_key):
             err = res.text[:300]
 
         raise RuntimeError(
-            f"FMP stable {endpoint} HTTP {res.status_code} "
-            f"(symbol={ticker}, period={period}): {err}"
+            f"FMP HTTP {res.status_code}: {ticker} {endpoint} {period}. 원문: {err}"
         )
 
     try:
         data = res.json()
     except Exception:
-        raise RuntimeError(f"FMP stable {endpoint} JSON 파싱 실패")
+        raise RuntimeError(f"FMP JSON 파싱 실패: {ticker} {endpoint} {period}")
 
     if isinstance(data, dict):
         msg = data.get("Error Message") or data.get("error") or data.get("message")
         if msg:
-            raise RuntimeError(
-                f"FMP stable {endpoint} 응답 오류 "
-                f"(symbol={ticker}, period={period}): {msg}"
-            )
+            raise RuntimeError(f"FMP 응답 오류: {ticker} {endpoint} {period}. {msg}")
         return []
 
     return data if isinstance(data, list) else []
+
 
 
 def find_fmp_match(records, income_row):
