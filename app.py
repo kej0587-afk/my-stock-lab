@@ -423,6 +423,27 @@ def load_fin_scores_db():
     conn.close()
     return df
 
+def to_jsonable(obj):
+    if isinstance(obj, dict):
+        return {str(k): to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [to_jsonable(v) for v in obj]
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return None if np.isnan(obj) or np.isinf(obj) else float(obj)
+    if isinstance(obj, float):
+        return None if np.isnan(obj) or np.isinf(obj) else obj
+    if isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    try:
+        if pd.isna(obj):
+            return None
+    except Exception:
+        pass
+    return obj
+
+
 def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes):
     conn = get_conn()
     cur = conn.cursor()
@@ -436,7 +457,7 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
         int(manual_score) if manual_score is not None else None,
         int(final_score) if final_score is not None else None,
         str(source),
-        json.dumps(notes, ensure_ascii=False)
+        json.dumps(to_jsonable(notes), ensure_ascii=False)
     ))
     conn.commit()
     conn.close()
@@ -1533,13 +1554,16 @@ def get_final_fin_score(ticker, is_etf, asset_class):
 
     final_score = 0 if is_etf else (manual_score if manual_score is not None else int(auto_score))
 
+    stored_notes = dict(fin_notes) if isinstance(fin_notes, dict) else {"messages": fin_notes}
+    stored_notes["metrics"] = fin_metrics
+
     upsert_fin_score_db(
         ticker=key,
         auto_score=int(auto_score),
         manual_score=manual_score,
         final_score=int(final_score),
         source=fin_auto.get("source", "unknown"),
-        notes=fin_notes
+        notes=stored_notes
     )
 
     return int(final_score), {
@@ -1547,11 +1571,10 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         "manual_score": manual_score,
         "final_score": int(final_score),
         "source": fin_auto.get("source", "unknown"),
-        "mode": fin_notes.get("mode", "unknown") if isinstance(fin_notes, dict) else "unknown",
-        "notes": fin_notes,
+        "mode": stored_notes.get("mode", "unknown"),
+        "notes": stored_notes,
         "metrics": fin_metrics,
     }
-
 
 def set_manual_fin_score(ticker, score):
     key = normalize_ticker(ticker)
@@ -1589,6 +1612,99 @@ def set_manual_fin_score(ticker, score):
 def reset_manual_fin_score(ticker):
     delete_manual_fin_score_db(ticker)
 
+def parse_notes_json(value):
+    try:
+        if value is None or pd.isna(value) or str(value).strip() == "":
+            return {}
+        data = json.loads(value)
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list):
+            return {"messages": data}
+        return {"messages": [str(data)]}
+    except Exception:
+        return {"messages": ["notes_json 파싱 실패"]}
+
+
+def load_fin_score_meta_fast(ticker, is_etf):
+    key = normalize_ticker(ticker)
+
+    if is_etf:
+        return 0, {
+            "auto_score": 0,
+            "manual_score": None,
+            "final_score": 0,
+            "source": "etf",
+            "mode": "ETF",
+            "notes": {
+                "mode": "ETF",
+                "messages": ["ETF는 재무점수 0점 고정"],
+                "annual_judgements": {},
+                "quarter_judgements": {},
+                "weighted_scores": {},
+            },
+            "metrics": {}
+        }
+
+    fin_scores_df = load_fin_scores_db()
+    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+
+    if matched.empty:
+        return 3, {
+            "auto_score": None,
+            "manual_score": None,
+            "final_score": 3,
+            "source": "not_calculated",
+            "mode": "manual_or_default",
+            "notes": {
+                "mode": "manual_or_default",
+                "messages": ["자동 재무점수 미계산 상태입니다. 필요할 때만 자동 재무점수 돌리기를 누르세요."],
+                "annual_judgements": {},
+                "quarter_judgements": {},
+                "weighted_scores": {},
+            },
+            "metrics": {}
+        }
+
+    row = matched.iloc[0]
+    notes = parse_notes_json(row.get("notes_json"))
+    metrics = notes.get("metrics", {}) if isinstance(notes, dict) else {}
+
+    auto_score = int(row["auto_score"]) if pd.notna(row["auto_score"]) else None
+    manual_score = int(row["manual_score"]) if pd.notna(row["manual_score"]) else None
+    db_final_score = int(row["final_score"]) if pd.notna(row["final_score"]) else None
+
+    if manual_score is not None:
+        final_score = manual_score
+    elif db_final_score is not None:
+        final_score = db_final_score
+    elif auto_score is not None:
+        final_score = auto_score
+    else:
+        final_score = 3
+
+    return int(final_score), {
+        "auto_score": auto_score,
+        "manual_score": manual_score,
+        "final_score": int(final_score),
+        "source": row["source"] if pd.notna(row["source"]) else "saved",
+        "mode": notes.get("mode", "saved") if isinstance(notes, dict) else "saved",
+        "notes": notes,
+        "metrics": metrics,
+    }
+
+
+def clear_financial_api_cache():
+    for fn_name in [
+        "fetch_us_financials_auto",
+        "fetch_kr_financials_auto",
+        "fetch_dart_finstate_all_raw",
+        "fetch_dart_corp_code_map",
+    ]:
+        fn = globals().get(fn_name)
+        if fn is not None and hasattr(fn, "clear"):
+            fn.clear()
+    
 # -------------------------------------------------
 # 2-3. 보유자산 계산
 # -------------------------------------------------
@@ -2125,11 +2241,12 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        f_score = get_saved_fin_score_fast(tkr, is_etf)
+        f_score, _ = load_fin_score_meta_fast(tkr, is_etf)
+        st.session_state.fin_score_map[normalize_ticker(tkr)] = int(f_score)
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
-            0, False, f_score, app_mode=mode
+            0, False, int(f_score), app_mode=mode
         )
 
         rows.append({
@@ -2137,7 +2254,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             "티커": tkr,
             "현재가": format_currency(c["cur_p"], tkr),
             "MDD": f"{c['dd']*100:.1f}%",
-            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4",
+            "재무점수": "ETF 0점" if is_etf else f"{int(f_score)}/4",
             "📌후보등급": c["grade"],
             "RS": c["rs_label"],
             "RSI": round(c["rsi"], 1),
@@ -2148,6 +2265,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         })
 
     return pd.DataFrame(rows)
+
 
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
@@ -2271,10 +2389,10 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    f_labels = get_fin_label_map()
+        f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
 
-    fin_score, fin_meta = get_final_fin_score(tkr, is_etf, a_class)
+    fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
     fin_score = int(fin_score)
     st.session_state.fin_score_map[fin_key] = fin_score
 
@@ -2299,6 +2417,15 @@ with tab2:
         st.write("manual_score:", fin_meta.get("manual_score"))
         st.write("final_score:", fin_meta.get("final_score"))
 
+        if not is_etf:
+            if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}"):
+                with st.spinner("DART/FMP 재무 자동 계산 중..."):
+                    clear_financial_api_cache()
+                    new_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+                    st.session_state.fin_score_map[fin_key] = int(new_score)
+                st.success("자동 재무점수 계산 완료")
+                st.rerun()
+
         if weighted:
             st.write("weighted score:", weighted.get("weighted_net_score"))
             st.write("S_sum:", weighted.get("s_sum"))
@@ -2315,19 +2442,21 @@ with tab2:
 
         st.markdown("#### annual 판정 문구")
         if annual_judgements:
-            annual_df = pd.DataFrame(
-                [{"key": k, "judgement": v} for k, v in annual_judgements.items()]
+            st.dataframe(
+                pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]),
+                use_container_width=True,
+                hide_index=True
             )
-            st.dataframe(annual_df, use_container_width=True, hide_index=True)
         else:
             st.write("annual 판정 없음")
 
         st.markdown("#### quarter 판정 문구")
         if quarter_judgements:
-            quarter_df = pd.DataFrame(
-                [{"key": k, "judgement": v} for k, v in quarter_judgements.items()]
+            st.dataframe(
+                pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]),
+                use_container_width=True,
+                hide_index=True
             )
-            st.dataframe(quarter_df, use_container_width=True, hide_index=True)
         else:
             st.write("quarter 판정 없음")
 
@@ -2353,30 +2482,6 @@ with tab2:
             st.markdown("#### notes")
             for msg in messages:
                 st.write("-", msg)
-
-        if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
-            for fn in [fetch_us_financials_auto, fetch_kr_financials_auto, fetch_dart_finstate_all_raw]:
-                if hasattr(fn, "clear"):
-                    fn.clear()
-
-            if hasattr(get_all_summary, "clear"):
-                get_all_summary.clear()
-
-            conn = get_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                UPDATE fin_scores
-                SET auto_score = NULL,
-                    final_score = manual_score,
-                    source = 'refresh_requested',
-                    notes_json = ?
-                WHERE ticker = ?
-            """, (json.dumps({"messages": ["강제 재계산 요청"]}, ensure_ascii=False), fin_key))
-            conn.commit()
-            conn.close()
-
-            st.session_state.fin_score_map.pop(fin_key, None)
-            st.rerun()
 
     if is_etf:
         st.info("ETF는 재무점수 0점 고정입니다. 수동 재무점수도 적용하지 않습니다.")
