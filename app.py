@@ -556,37 +556,75 @@ def fetch_kr_financials_auto(ticker: str):
 @st.cache_data(ttl=3600)
 def fetch_us_financials_auto(ticker: str):
     try:
-        tk = yf.Ticker(ticker)
+        tk = yf.Ticker(str(ticker).strip().upper())
 
-        info = getattr(tk, "info", {}) or {}
-        income_stmt = getattr(tk, "income_stmt", pd.DataFrame())
-        balance_sheet = getattr(tk, "balance_sheet", pd.DataFrame())
-        cashflow = getattr(tk, "cashflow", pd.DataFrame())
+        def load_stmt(func):
+            try:
+                df = func(pretty=True, freq="yearly")
+                return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+            except Exception:
+                return pd.DataFrame()
 
-        if (income_stmt is None or income_stmt.empty) and not info:
-            return {"ok": False, "reason": "Yahoo 재무제표 없음"}
+        income_stmt = load_stmt(tk.get_income_stmt)
+        balance_sheet = load_stmt(tk.get_balance_sheet)
+        cashflow = load_stmt(tk.get_cashflow)
+
+        try:
+            info = tk.get_info() or {}
+        except Exception:
+            info = {}
+
+        def norm_key(x):
+            return "".join(ch.lower() for ch in str(x) if ch.isalnum())
 
         def get_row(df, row_names):
             if df is None or df.empty:
                 return np.nan
+
+            index_map = {norm_key(idx): idx for idx in df.index}
+
             for rn in row_names:
-                if rn in df.index:
-                    vals = pd.to_numeric(df.loc[rn], errors="coerce").dropna()
-                    if not vals.empty:
-                        return float(vals.iloc[0])
+                idx = index_map.get(norm_key(rn))
+                if idx is None:
+                    continue
+
+                row = df.loc[idx]
+                if isinstance(row, pd.DataFrame):
+                    row = row.iloc[0]
+
+                vals = pd.to_numeric(row, errors="coerce").dropna()
+                if not vals.empty:
+                    try:
+                        vals = vals.sort_index(ascending=False)
+                    except Exception:
+                        pass
+                    return float(vals.iloc[0])
+
             return np.nan
 
-        revenue = get_row(income_stmt, ["Total Revenue", "Operating Revenue"])
-        op_income = get_row(income_stmt, ["Operating Income"])
-        net_income = get_row(income_stmt, ["Net Income"])
-        equity = get_row(balance_sheet, ["Stockholders Equity", "Common Stock Equity", "Total Equity Gross Minority Interest"])
-        liabilities = get_row(balance_sheet, ["Total Liabilities Net Minority Interest", "Total Liabilities"])
-        assets = get_row(balance_sheet, ["Total Assets"])
-        ocf = get_row(cashflow, ["Operating Cash Flow"])
+        revenue = get_row(income_stmt, ["Total Revenue", "TotalRevenue", "Operating Revenue", "OperatingRevenue"])
+        op_income = get_row(income_stmt, ["Operating Income", "OperatingIncome"])
+        net_income = get_row(income_stmt, ["Net Income", "NetIncome", "Net Income Common Stockholders"])
+
+        equity = get_row(balance_sheet, [
+            "Stockholders Equity", "StockholdersEquity",
+            "Common Stock Equity", "CommonStockEquity",
+            "Total Equity Gross Minority Interest", "TotalEquityGrossMinorityInterest"
+        ])
+        liabilities = get_row(balance_sheet, [
+            "Total Liabilities Net Minority Interest", "TotalLiabilitiesNetMinorityInterest",
+            "Total Liabilities", "TotalLiabilities"
+        ])
+        assets = get_row(balance_sheet, ["Total Assets", "TotalAssets"])
+
+        ocf = get_row(cashflow, [
+            "Operating Cash Flow", "OperatingCashFlow",
+            "Total Cash From Operating Activities", "TotalCashFromOperatingActivities"
+        ])
 
         roe = safe_float(info.get("returnOnEquity"), np.nan)
         if not np.isnan(roe):
-            roe = roe * 100
+            roe *= 100
         elif not np.isnan(net_income) and not np.isnan(equity) and equity != 0:
             roe = net_income / equity * 100
 
@@ -596,17 +634,17 @@ def fetch_us_financials_auto(ticker: str):
 
         op_margin = safe_float(info.get("operatingMargins"), np.nan)
         if not np.isnan(op_margin):
-            op_margin = op_margin * 100
+            op_margin *= 100
         elif not np.isnan(op_income) and not np.isnan(revenue) and revenue != 0:
             op_margin = op_income / revenue * 100
 
         net_margin = safe_float(info.get("profitMargins"), np.nan)
         if not np.isnan(net_margin):
-            net_margin = net_margin * 100
+            net_margin *= 100
         elif not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
             net_margin = net_income / revenue * 100
 
-        if np.isnan(revenue) and np.isnan(op_income) and np.isnan(net_income) and np.isnan(roe):
+        if all(np.isnan(x) for x in [revenue, op_income, net_income, equity, assets, roe]):
             return {"ok": False, "reason": "Yahoo 재무 핵심값 없음"}
 
         return {
@@ -624,8 +662,10 @@ def fetch_us_financials_auto(ticker: str):
             "op_margin": op_margin,
             "net_margin": net_margin,
         }
+
     except Exception as e:
         return {"ok": False, "reason": f"Yahoo 오류: {e}"}
+
 
 def score_auto_financials(fin):
     if not fin.get("ok", False):
@@ -813,7 +853,6 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     return score, fin, notes
 
 def get_final_fin_score(ticker, is_etf, asset_class):
-    fin_scores_df = load_fin_scores_db()
     key = normalize_ticker(ticker)
 
     if is_etf:
@@ -834,16 +873,16 @@ def get_final_fin_score(ticker, is_etf, asset_class):
             "metrics": {}
         }
 
+    fin_scores_df = load_fin_scores_db()
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
+
     manual_score = None
     if not matched.empty:
         row = matched.iloc[0]
         if pd.notna(row["manual_score"]):
             manual_score = int(row["manual_score"])
 
-    # 항상 최신 자동 재무 재계산
     auto_score, fin_auto, fin_notes = get_auto_fin_score_for_ticker(ticker, is_etf)
-
     final_score = manual_score if manual_score is not None else int(auto_score)
 
     upsert_fin_score_db(
@@ -854,30 +893,18 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         source=fin_auto.get("source", "unknown"),
         notes=fin_notes
     )
-
-    return int(final_score), {
-        "auto_score": int(auto_score),
-        "manual_score": manual_score,
-        "final_score": int(final_score),
-        "source": fin_auto.get("source", "unknown"),
-        "notes": fin_notes,
-        "metrics": {
-            "roe": fin_auto.get("roe"),
-            "op_margin": fin_auto.get("op_margin"),
-            "net_margin": fin_auto.get("net_margin"),
-            "debt_ratio": fin_auto.get("debt_ratio"),
-            "ocf": fin_auto.get("ocf"),
-            "revenue": fin_auto.get("revenue"),
-            "net_income": fin_auto.get("net_income"),
-        }
-    }
-    
+   
     if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
+        fetch_us_financials_auto.clear()
+        fetch_kr_financials_auto.clear()
+        
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (normalize_ticker(tkr),))
         conn.commit()
         conn.close()
+        st.session_state.fin_score_map.pop(fin_key, None)
+        st.rerun()
 
     if fin_key in st.session_state.fin_score_map:
         del st.session_state.fin_score_map[fin_key]
@@ -1633,6 +1660,22 @@ with tab2:
             st.session_state.fin_score_map[fin_key] = get_final_fin_score(tkr, is_etf, a_class)[0]
             st.rerun()
 
+    return int(final_score), {
+        "auto_score": int(auto_score),
+        "manual_score": manual_score,
+        "final_score": int(final_score),
+        "source": fin_auto.get("source", "unknown"),
+        "notes": fin_notes,
+        "metrics": {
+            "roe": fin_auto.get("roe"),
+            "op_margin": fin_auto.get("op_margin"),
+            "net_margin": fin_auto.get("net_margin"),
+            "debt_ratio": fin_auto.get("debt_ratio"),
+            "ocf": fin_auto.get("ocf"),
+            "revenue": fin_auto.get("revenue"),
+            "net_income": fin_auto.get("net_income"),
+        }
+    }
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
