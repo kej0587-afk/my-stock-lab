@@ -1,3 +1,4 @@
+import requests
 import json
 import base64
 from pathlib import Path
@@ -16,7 +17,7 @@ import sqlite3
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="대장님의 최종 관제실 v13.1 (그랜드 오픈 마감판)", layout="wide")
+st.set_page_config(page_title="최종 관제실", layout="wide")
 
 st.markdown("""
 <style>
@@ -451,26 +452,158 @@ def delete_manual_fin_score_db(ticker):
 
 init_db()
 
+# 데이터베이스 구조 변경 등 필요시 한 번만 실행하고 주석/삭제할 코드
+def migrate_fin_scores_keep_manual_only():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE fin_scores
+        SET auto_score = NULL,
+            final_score = manual_score,
+            source = 'migrated_keep_manual',
+            notes_json = ?
+    """, (json.dumps({"messages": ["구글시트식 재무판정 구조로 마이그레이션. 수동점수만 보존."]}, ensure_ascii=False),))
+    conn.commit()
+    conn.close()
+
+# 딱 한 번만 실행 후 삭제
+# migrate_fin_scores_keep_manual_only()
+
 # -------------------------------------------------
-# 2-2. 자동 재무제표 로드 + 점수화
+# 2-2. 자동 재무제표 로드 + 구글시트식 판정 점수화
 # -------------------------------------------------
+ORDER_BASED_TICKERS = {
+    "012450",
+    "329180",
+}
+
+DART_REPORT_LABELS = {
+    "11011": "사업보고서",
+    "11013": "1분기보고서",
+    "11012": "반기보고서",
+    "11014": "3분기보고서",
+}
+
+DART_QUARTER_NO_BY_REPORT = {
+    "11013": 1,  # 1분기 누적
+    "11012": 2,  # 반기 누적
+    "11014": 3,  # 3분기 누적
+    "11011": 4,  # 연간 누적
+}
+
+DART_CUMULATIVE_FLOW_FIELDS = ["revenue", "op_income", "net_income", "ocf"]
+
+FIN_S_KEYS = [
+    "annual_3y_revenue_uptrend",
+    "annual_op_income_uptrend",
+    "annual_recent_high_growth",
+    "annual_profitability_good",
+    "annual_ocf_strength",
+    "quarter_revenue_momentum",
+    "quarter_profit_momentum",
+    "quarter_cashflow_quality",
+]
+
+FIN_A_KEYS = [
+    "annual_recent_revenue_growth",
+    "annual_net_income_positive",
+    "annual_cash_increase",
+    "annual_cash_buffer",
+    "annual_equity_growth",
+    "annual_debt_stability",
+    "quarter_revenue_increase",
+    "quarter_profit_increase",
+    "quarter_ocf_positive",
+    "quarter_margin_good",
+    "quarter_debt_stability",
+    "quarter_equity_maintained",
+]
+
+FIN_B_KEYS = [
+    "annual_average_scale_maintained",
+    "annual_growth_slowdown",
+    "annual_scale_loss",
+    "annual_body_decline",
+    "annual_margin_quality",
+    "annual_roe_quality",
+    "annual_debt_ratio_quality",
+    "annual_hard_risk",
+    "quarter_revenue_quality",
+    "quarter_profit_quality",
+    "quarter_cash_quality",
+    "quarter_margin_quality",
+    "quarter_debt_ratio_quality",
+    "quarter_warning",
+]
+
+
 @st.cache_resource
 def get_dart_client():
-    api_key = st.secrets.get("dart_api_key", "d30af980502d18960f63b00d8a0ad28a61823346")
+    api_key = st.secrets.get("dart_api_key", "")
     if not api_key:
         return None
     return OpenDartReader(api_key)
 
+
+def is_order_based_ticker(ticker: str) -> bool:
+    return normalize_ticker(ticker) in ORDER_BASED_TICKERS
+
+
 def safe_float(x, default=np.nan):
     try:
-        if pd.isna(x):
+        if x is None or pd.isna(x):
             return default
-        s = str(x).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
-        if s == "":
+        s = str(x).strip()
+        if s in ["", "-", "nan", "None"]:
             return default
+        s = (
+            s.replace(",", "")
+            .replace("%", "")
+            .replace("₩", "")
+            .replace("$", "")
+            .replace("−", "-")
+        )
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
         return float(s)
     except Exception:
         return default
+
+
+def finite_num(x):
+    return x is not None and not pd.isna(x) and np.isfinite(float(x))
+
+
+def pct_change(new, old):
+    if not finite_num(new) or not finite_num(old) or float(old) == 0:
+        return np.nan
+    return (float(new) - float(old)) / abs(float(old)) * 100
+
+
+def calc_ratio(numer, denom, multiplier=100):
+    if not finite_num(numer) or not finite_num(denom) or float(denom) == 0:
+        return np.nan
+    return float(numer) / float(denom) * multiplier
+
+
+def fmt_num(v):
+    if not finite_num(v):
+        return "-"
+    v = float(v)
+    if abs(v) >= 1_000_000_000_000:
+        return f"{v / 1_000_000_000_000:.2f}조"
+    if abs(v) >= 100_000_000:
+        return f"{v / 100_000_000:.1f}억"
+    if abs(v) >= 1_000_000:
+        return f"{v / 1_000_000:.1f}백만"
+    return f"{v:,.0f}"
+
+
+def fmt_pct(v):
+    if not finite_num(v):
+        return "-"
+    return f"{float(v):.1f}%"
+
 
 def normalize_stock_code(ticker: str) -> str:
     t = str(ticker).strip().upper()
@@ -478,412 +611,830 @@ def normalize_stock_code(ticker: str) -> str:
         return t.split(".")[0]
     return t
 
-def pick_account_amount(df, keywords):
+
+def pick_account_amount(df, keywords, amount_cols=None, exclude_keywords=None):
     if df is None or df.empty:
         return np.nan
 
-    for col in ["account_nm", "accountNm", "sj_nm", "sjNm"]:
-        if col in df.columns:
-            names = df[col].astype(str)
-            mask = pd.Series(False, index=df.index)
-            for kw in keywords:
-                mask = mask | names.str.contains(kw, case=False, na=False)
-            matched = df[mask]
-            if not matched.empty:
-                for amount_col in ["thstrm_amount", "thstrmAmount", "frmtrm_amount", "frmtrmAmount"]:
-                    if amount_col in matched.columns:
-                        vals = matched[amount_col].apply(safe_float).dropna()
-                        if not vals.empty:
-                            return float(vals.iloc[0])
+    amount_cols = amount_cols or [
+        "thstrm_amount", "thstrmAmount",
+        "thstrm_add_amount", "thstrmAddAmount",
+        "frmtrm_amount", "frmtrmAmount",
+    ]
+    exclude_keywords = exclude_keywords or []
+
+    work = df.copy()
+
+    if "fs_div" in work.columns and (work["fs_div"].astype(str) == "CFS").any():
+        work = work[work["fs_div"].astype(str) == "CFS"]
+
+    name_cols = [c for c in ["account_nm", "accountNm", "account_id", "accountId"] if c in work.columns]
+    if not name_cols:
+        return np.nan
+
+    for kw in keywords:
+        kw_norm = str(kw).replace(" ", "")
+        for name_col in name_cols:
+            names = work[name_col].astype(str).str.replace(" ", "", regex=False)
+            mask = names.str.contains(kw_norm, case=False, na=False, regex=False)
+
+            for ex in exclude_keywords:
+                ex_norm = str(ex).replace(" ", "")
+                mask = mask & ~names.str.contains(ex_norm, case=False, na=False, regex=False)
+
+            matched = work[mask]
+            if matched.empty:
+                continue
+
+            for amount_col in amount_cols:
+                if amount_col in matched.columns:
+                    vals = matched[amount_col].apply(safe_float).dropna()
+                    if not vals.empty:
+                        return float(vals.iloc[0])
+
     return np.nan
 
-@st.cache_data(ttl=3600)
+
+def enrich_fin_record(record):
+    record = dict(record)
+
+    revenue = record.get("revenue", np.nan)
+    op_income = record.get("op_income", np.nan)
+    net_income = record.get("net_income", np.nan)
+    ocf = record.get("ocf", np.nan)
+    equity = record.get("equity", np.nan)
+    liabilities = record.get("liabilities", np.nan)
+
+    record["op_margin"] = calc_ratio(op_income, revenue)
+    record["net_margin"] = calc_ratio(net_income, revenue)
+    record["roe"] = calc_ratio(net_income, equity)
+    record["debt_ratio"] = calc_ratio(liabilities, equity)
+    record["ocf_margin"] = calc_ratio(ocf, revenue)
+    return record
+
+
+def extract_dart_metrics(df, fiscal_year, report_code):
+    quarter_no = DART_QUARTER_NO_BY_REPORT.get(report_code)
+
+    record = {
+        "period": "annual" if report_code == "11011" else "quarter_cumulative",
+        "fiscal_year": str(fiscal_year),
+        "fiscal_quarter": quarter_no,
+        "report_code": report_code,
+        "report_label": DART_REPORT_LABELS.get(report_code, report_code),
+        "date": f"{fiscal_year}-{report_code}",
+        "is_cumulative_ytd": True,
+        "revenue": pick_account_amount(
+            df,
+            ["매출액", "수익(매출액)", "영업수익"],
+            exclude_keywords=["매출원가", "매출채권", "판매비", "관리비"]
+        ),
+        "op_income": pick_account_amount(df, ["영업이익", "영업이익손실"]),
+        "net_income": pick_account_amount(df, ["당기순이익", "연결당기순이익", "분기순이익", "반기순이익"]),
+        "ocf": pick_account_amount(df, ["영업활동현금흐름", "영업활동으로인한현금흐름", "영업에서창출된현금"]),
+        "equity": pick_account_amount(df, ["자본총계"]),
+        "liabilities": pick_account_amount(df, ["부채총계"]),
+        "assets": pick_account_amount(df, ["자산총계"]),
+        "cash": pick_account_amount(df, ["현금및현금성자산", "현금및현금등가물"]),
+    }
+    return enrich_fin_record(record)
+
+
+def has_dart_core_values(record):
+    return any(
+        finite_num(record.get(k))
+        for k in ["revenue", "op_income", "net_income", "ocf"]
+    )
+
+
+def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quarter=None):
+    rec = dict(current_cum)
+    q_no = fiscal_quarter or DART_QUARTER_NO_BY_REPORT.get(str(current_cum.get("report_code")))
+
+    rec["source_report_code"] = current_cum.get("report_code")
+    rec["source_report_label"] = current_cum.get("report_label")
+    rec["period"] = "quarter"
+    rec["fiscal_quarter"] = q_no
+    rec["report_code"] = f"Q{q_no}"
+    rec["report_label"] = f"{q_no}분기(단일)"
+    rec["date"] = f"{rec.get('fiscal_year')}-Q{q_no}"
+    rec["is_cumulative_ytd"] = False
+    rec["is_single_quarter"] = True
+    rec["single_quarter_adjusted"] = False
+
+    if q_no == 1:
+        rec["single_quarter_adjusted"] = True
+        rec["conversion_note"] = "1분기 누적값은 단일 분기값과 동일"
+    elif previous_cum is not None and str(previous_cum.get("fiscal_year")) == str(current_cum.get("fiscal_year")):
+        for field in DART_CUMULATIVE_FLOW_FIELDS:
+            cur_val = current_cum.get(field)
+            prev_val = previous_cum.get(field)
+            if finite_num(cur_val) and finite_num(prev_val):
+                rec[field] = float(cur_val) - float(prev_val)
+            else:
+                rec[field] = cur_val
+
+        rec["single_quarter_adjusted"] = True
+        rec["conversion_note"] = (
+            f"{current_cum.get('report_label')} 누적값 - "
+            f"{previous_cum.get('report_label')} 누적값으로 단일 분기 보정"
+        )
+    else:
+        rec["conversion_note"] = "직전 누적 보고서가 없어 원본 누적값 사용"
+
+    return enrich_fin_record(rec)
+
 def fetch_kr_financials_auto(ticker: str):
     dart = get_dart_client()
     if dart is None:
-        return {"ok": False, "reason": "DART API 키 없음"}
+        return {"ok": False, "source": "dart", "reason": "DART API 키 없음"}
 
     stock_code = normalize_stock_code(ticker)
+    current_year = pd.Timestamp.today().year
+
+    annual_records = []
 
     try:
-        fs = dart.finstate_all(stock_code, bsns_year='2025', reprt_code='11011')
-        if fs is None or len(fs) == 0:
-            fs = dart.finstate_all(stock_code, bsns_year='2024', reprt_code='11011')
+        for year in range(current_year, current_year - 7, -1):
+            if len(annual_records) >= 3:
+                break
 
-        if fs is None or len(fs) == 0:
-            return {"ok": False, "reason": "DART 재무제표 없음"}
+            try:
+                fs = dart.finstate_all(stock_code, bsns_year=str(year), reprt_code="11011")
+                if fs is not None and len(fs) > 0:
+                    rec = extract_dart_metrics(fs, year, "11011")
+                    rec["period"] = "annual"
+                    rec["report_label"] = "사업보고서"
+                    rec["date"] = str(year)
 
-        revenue = pick_account_amount(fs, ["매출액", "수익(매출액)", "영업수익"])
-        op_income = pick_account_amount(fs, ["영업이익"])
-        net_income = pick_account_amount(fs, ["당기순이익", "연결당기순이익", "당기순이익(손실)"])
-        equity = pick_account_amount(fs, ["자본총계"])
-        liabilities = pick_account_amount(fs, ["부채총계"])
-        assets = pick_account_amount(fs, ["자산총계"])
-        ocf = pick_account_amount(fs, ["영업활동현금흐름"])
+                    if has_dart_core_values(rec):
+                        annual_records.append(rec)
+            except Exception:
+                continue
 
-        roe = np.nan
-        debt_ratio = np.nan
-        op_margin = np.nan
-        net_margin = np.nan
+        annual_records = sorted(annual_records, key=lambda r: str(r.get("fiscal_year")))
+        annual_map = {
+            int(r.get("fiscal_year")): r
+            for r in annual_records
+            if str(r.get("fiscal_year", "")).isdigit()
+        }
 
-        if not np.isnan(net_income) and not np.isnan(equity) and equity != 0:
-            roe = net_income / equity * 100
-        if not np.isnan(liabilities) and not np.isnan(equity) and equity != 0:
-            debt_ratio = liabilities / equity * 100
-        if not np.isnan(op_income) and not np.isnan(revenue) and revenue != 0:
-            op_margin = op_income / revenue * 100
-        if not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
-            net_margin = net_income / revenue * 100
+        quarter_cum_by_year = {}
+
+        for year in range(current_year, current_year - 4, -1):
+            for report_code in ["11013", "11012", "11014"]:
+                try:
+                    fs = dart.finstate_all(stock_code, bsns_year=str(year), reprt_code=report_code)
+                    if fs is not None and len(fs) > 0:
+                        rec = extract_dart_metrics(fs, year, report_code)
+                        if has_dart_core_values(rec):
+                            quarter_cum_by_year.setdefault(int(year), {})[report_code] = rec
+                except Exception:
+                    continue
+
+        single_quarter_candidates = []
+
+        for year, reports in quarter_cum_by_year.items():
+            q1 = reports.get("11013")
+            q2 = reports.get("11012")
+            q3 = reports.get("11014")
+            annual = annual_map.get(year)
+
+            if q1 is not None:
+                single_quarter_candidates.append(
+                    make_dart_single_quarter_record(q1, None, fiscal_quarter=1)
+                )
+
+            if q2 is not None:
+                single_quarter_candidates.append(
+                    make_dart_single_quarter_record(q2, q1, fiscal_quarter=2)
+                )
+
+            if q3 is not None:
+                single_quarter_candidates.append(
+                    make_dart_single_quarter_record(q3, q2, fiscal_quarter=3)
+                )
+
+            if annual is not None and q3 is not None:
+                single_quarter_candidates.append(
+                    make_dart_single_quarter_record(annual, q3, fiscal_quarter=4)
+                )
+
+        quarter_records = sorted(
+            single_quarter_candidates,
+            key=lambda r: (
+                int(r.get("fiscal_year", 0)),
+                int(r.get("fiscal_quarter", 0) or 0)
+            )
+        )
+
+        if len(annual_records) < 2:
+            return {"ok": False, "source": "dart", "reason": "DART 최근 연간 재무 2개년 이상 확보 실패"}
+
+        if len(quarter_records) < 1:
+            return {"ok": False, "source": "dart", "reason": "DART 단일 분기 재무 확보 실패"}
 
         return {
             "ok": True,
             "source": "dart",
-            "revenue": revenue,
-            "op_income": op_income,
-            "net_income": net_income,
-            "equity": equity,
-            "liabilities": liabilities,
-            "assets": assets,
-            "ocf": ocf,
-            "roe": roe,
-            "debt_ratio": debt_ratio,
-            "op_margin": op_margin,
-            "net_margin": net_margin,
+            "ticker": ticker,
+            "annual": annual_records[-3:],
+            "quarter": quarter_records[-4:],
         }
+
     except Exception as e:
-        return {"ok": False, "reason": f"DART 오류: {e}"}
+        return {"ok": False, "source": "dart", "reason": f"DART 오류: {e}"}
 
-@st.cache_data(ttl=3600)
+def fmp_request(endpoint, ticker, period, limit, api_key):
+    stable_url = (
+        f"https://financialmodelingprep.com/stable/{endpoint}"
+        f"?symbol={ticker}&period={period}&limit={limit}&apikey={api_key}"
+    )
+    res = requests.get(stable_url, timeout=15)
+    if res.status_code == 200:
+        data = res.json()
+        if isinstance(data, list) and data:
+            return data
+
+    v3_url = (
+        f"https://financialmodelingprep.com/api/v3/{endpoint}/{ticker}"
+        f"?period={period}&limit={limit}&apikey={api_key}"
+    )
+    res = requests.get(v3_url, timeout=15)
+    res.raise_for_status()
+    data = res.json()
+    return data if isinstance(data, list) else []
+
+
+def find_fmp_match(records, income_row):
+    if not records:
+        return {}
+
+    date = income_row.get("date")
+    fiscal_year = str(income_row.get("calendarYear") or income_row.get("fiscalYear") or "")[:4]
+    period = str(income_row.get("period", ""))
+
+    for r in records:
+        if date and r.get("date") == date:
+            return r
+
+    for r in records:
+        r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
+        if fiscal_year and r_year == fiscal_year and str(r.get("period", "")) == period:
+            return r
+
+    for r in records:
+        r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
+        if fiscal_year and r_year == fiscal_year:
+            return r
+
+    return records[0]
+
+
+def extract_fmp_metrics(inc, bal, cf, period_type):
+    fiscal_year = str(inc.get("calendarYear") or inc.get("fiscalYear") or "")[:4]
+    record = {
+        "period": period_type,
+        "fiscal_year": fiscal_year,
+        "report_code": inc.get("period", ""),
+        "report_label": inc.get("period", period_type),
+        "date": inc.get("date", ""),
+        "revenue": safe_float(inc.get("revenue")),
+        "op_income": safe_float(inc.get("operatingIncome")),
+        "net_income": safe_float(inc.get("netIncome")),
+        "ocf": safe_float(cf.get("netCashProvidedByOperatingActivities", cf.get("operatingCashFlow"))),
+        "equity": safe_float(bal.get("totalStockholdersEquity", bal.get("totalEquity", bal.get("totalShareholderEquity")))),
+        "liabilities": safe_float(bal.get("totalLiabilities")),
+        "assets": safe_float(bal.get("totalAssets")),
+        "cash": safe_float(bal.get("cashAndCashEquivalents", bal.get("cashAndShortTermInvestments"))),
+    }
+    return enrich_fin_record(record)
+
+
 def fetch_us_financials_auto(ticker: str):
+    api_key = st.secrets.get("fmp_api_key", "")
+    if not api_key:
+        return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
+
+    symbol = str(ticker).strip().upper()
+
     try:
-        tk = yf.Ticker(str(ticker).strip().upper())
+        annual_income = fmp_request("income-statement", symbol, "annual", 5, api_key)
+        annual_balance = fmp_request("balance-sheet-statement", symbol, "annual", 5, api_key)
+        annual_cashflow = fmp_request("cash-flow-statement", symbol, "annual", 5, api_key)
 
-        def load_stmt(func):
-            try:
-                df = func(pretty=True, freq="yearly")
-                return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
-            except Exception:
-                return pd.DataFrame()
+        quarter_income = fmp_request("income-statement", symbol, "quarter", 5, api_key)
+        quarter_balance = fmp_request("balance-sheet-statement", symbol, "quarter", 5, api_key)
+        quarter_cashflow = fmp_request("cash-flow-statement", symbol, "quarter", 5, api_key)
 
-        income_stmt = load_stmt(tk.get_income_stmt)
-        balance_sheet = load_stmt(tk.get_balance_sheet)
-        cashflow = load_stmt(tk.get_cashflow)
+        if not annual_income:
+            return {"ok": False, "source": "fmp", "reason": "FMP 연간 손익계산서 없음"}
+        if not annual_balance:
+            return {"ok": False, "source": "fmp", "reason": "FMP 연간 재무상태표 없음"}
+        if not annual_cashflow:
+            return {"ok": False, "source": "fmp", "reason": "FMP 연간 현금흐름표 없음"}
+        if not quarter_income:
+            return {"ok": False, "source": "fmp", "reason": "FMP 분기 손익계산서 없음"}
+        if not quarter_balance:
+            return {"ok": False, "source": "fmp", "reason": "FMP 분기 재무상태표 없음"}
+        if not quarter_cashflow:
+            return {"ok": False, "source": "fmp", "reason": "FMP 분기 현금흐름표 없음"}
 
-        try:
-            info = tk.get_info() or {}
-        except Exception:
-            info = {}
+        annual_records = []
+        for inc in annual_income[:3]:
+            bal = find_fmp_match(annual_balance, inc)
+            cf = find_fmp_match(annual_cashflow, inc)
+            annual_records.append(extract_fmp_metrics(inc, bal, cf, "annual"))
 
-        def norm_key(x):
-            return "".join(ch.lower() for ch in str(x) if ch.isalnum())
+        quarter_records = []
+        for inc in quarter_income[:4]:
+            bal = find_fmp_match(quarter_balance, inc)
+            cf = find_fmp_match(quarter_cashflow, inc)
+            quarter_records.append(extract_fmp_metrics(inc, bal, cf, "quarter"))
 
-        def get_row(df, row_names):
-            if df is None or df.empty:
-                return np.nan
+        annual_records = sorted(annual_records, key=lambda r: str(r.get("date")))
+        quarter_records = sorted(quarter_records, key=lambda r: str(r.get("date")))
 
-            index_map = {norm_key(idx): idx for idx in df.index}
-
-            for rn in row_names:
-                idx = index_map.get(norm_key(rn))
-                if idx is None:
-                    continue
-
-                row = df.loc[idx]
-                if isinstance(row, pd.DataFrame):
-                    row = row.iloc[0]
-
-                vals = pd.to_numeric(row, errors="coerce").dropna()
-                if not vals.empty:
-                    try:
-                        vals = vals.sort_index(ascending=False)
-                    except Exception:
-                        pass
-                    return float(vals.iloc[0])
-
-            return np.nan
-
-        revenue = get_row(income_stmt, ["Total Revenue", "TotalRevenue", "Operating Revenue", "OperatingRevenue"])
-        op_income = get_row(income_stmt, ["Operating Income", "OperatingIncome"])
-        net_income = get_row(income_stmt, ["Net Income", "NetIncome", "Net Income Common Stockholders"])
-
-        equity = get_row(balance_sheet, [
-            "Stockholders Equity", "StockholdersEquity",
-            "Common Stock Equity", "CommonStockEquity",
-            "Total Equity Gross Minority Interest", "TotalEquityGrossMinorityInterest"
-        ])
-        liabilities = get_row(balance_sheet, [
-            "Total Liabilities Net Minority Interest", "TotalLiabilitiesNetMinorityInterest",
-            "Total Liabilities", "TotalLiabilities"
-        ])
-        assets = get_row(balance_sheet, ["Total Assets", "TotalAssets"])
-
-        ocf = get_row(cashflow, [
-            "Operating Cash Flow", "OperatingCashFlow",
-            "Total Cash From Operating Activities", "TotalCashFromOperatingActivities"
-        ])
-
-        roe = safe_float(info.get("returnOnEquity"), np.nan)
-        if not np.isnan(roe):
-            roe *= 100
-        elif not np.isnan(net_income) and not np.isnan(equity) and equity != 0:
-            roe = net_income / equity * 100
-
-        debt_ratio = np.nan
-        if not np.isnan(liabilities) and not np.isnan(equity) and equity != 0:
-            debt_ratio = liabilities / equity * 100
-
-        op_margin = safe_float(info.get("operatingMargins"), np.nan)
-        if not np.isnan(op_margin):
-            op_margin *= 100
-        elif not np.isnan(op_income) and not np.isnan(revenue) and revenue != 0:
-            op_margin = op_income / revenue * 100
-
-        net_margin = safe_float(info.get("profitMargins"), np.nan)
-        if not np.isnan(net_margin):
-            net_margin *= 100
-        elif not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
-            net_margin = net_income / revenue * 100
-
-        if all(np.isnan(x) for x in [revenue, op_income, net_income, equity, assets, roe]):
-            return {"ok": False, "reason": "Yahoo 재무 핵심값 없음"}
+        if len(annual_records) < 2:
+            return {"ok": False, "source": "fmp", "reason": "FMP 최근 연간 재무 2개년 이상 확보 실패"}
 
         return {
             "ok": True,
-            "source": "yfinance",
-            "revenue": revenue,
-            "op_income": op_income,
-            "net_income": net_income,
-            "equity": equity,
-            "liabilities": liabilities,
-            "assets": assets,
-            "ocf": ocf,
-            "roe": roe,
-            "debt_ratio": debt_ratio,
-            "op_margin": op_margin,
-            "net_margin": net_margin,
+            "source": "fmp",
+            "ticker": ticker,
+            "annual": annual_records[-3:],
+            "quarter": quarter_records[-4:],
         }
 
     except Exception as e:
-        return {"ok": False, "reason": f"Yahoo 오류: {e}"}
+        return {"ok": False, "source": "fmp", "reason": f"FMP 오류: {e}"}
 
 
-def score_auto_financials(fin):
-    if not fin.get("ok", False):
-        reason = fin.get("reason", "원인 미상")
-        return 3, [
-            "자동 재무 조회 실패 → 기본 3점",
-            f"사유: {reason}"
-        ]
+def getsymbol_score(symbol: str) -> int:
+    s = str(symbol)
+    if "🚨" in s:
+        return 0
+    if "💎" in s or "✅" in s:
+        return 1
+    if "⚠️" in s or "❌" in s:
+        return -1
+    return 0
 
-    roe = fin.get("roe", np.nan)
-    debt_ratio = fin.get("debt_ratio", np.nan)
-    op_margin = fin.get("op_margin", np.nan)
-    net_margin = fin.get("net_margin", np.nan)
-    ocf = fin.get("ocf", np.nan)
-    revenue = fin.get("revenue", np.nan)
-    net_income = fin.get("net_income", np.nan)
 
-    notes = []
-    score = 0
-    danger = 0
+def judge_text(ok_icon, bad_icon, title, body):
+    return f"{ok_icon} {title}: {body}"
 
-    if not np.isnan(roe) and roe < 0:
-        danger += 1
-        notes.append("🚨 ROE 음수")
-    if not np.isnan(net_income) and net_income < 0:
-        danger += 1
-        notes.append("🚨 순이익 음수")
-    if not np.isnan(ocf) and ocf < 0:
-        danger += 1
-        notes.append("🚨 영업현금흐름 음수")
 
-    if not np.isnan(roe) and roe >= 12:
-        score += 3
-        notes.append("💎 ROE 우수")
-    elif not np.isnan(roe) and roe >= 6:
-        score += 1
-        notes.append("✅ ROE 양호")
-    elif not np.isnan(roe) and roe < 3:
-        score -= 2
-        notes.append("❌ ROE 낮음")
+def build_fin_judgements(fin: dict, order_profile: bool = False):
+    annual = fin.get("annual", []) or []
+    quarter = fin.get("quarter", []) or []
 
-    if not np.isnan(op_margin) and op_margin >= 10:
-        score += 3
-        notes.append("💎 영업이익률 우수")
-    elif not np.isnan(op_margin) and op_margin >= 5:
-        score += 1
-        notes.append("✅ 영업이익률 양호")
-    elif not np.isnan(op_margin) and op_margin < 3:
-        score -= 2
-        notes.append("❌ 영업이익률 낮음")
+    latest_a = annual[-1] if annual else {}
+    prev_a = annual[-2] if len(annual) >= 2 else {}
+    old_a = annual[-3] if len(annual) >= 3 else {}
 
-    if not np.isnan(net_margin) and net_margin >= 8:
-        score += 2
-        notes.append("✅ 순이익률 양호")
-    elif not np.isnan(net_margin) and net_margin < 2:
-        score -= 1
-        notes.append("❌ 순이익률 낮음")
+    latest_q = quarter[-1] if quarter else {}
+    prev_q = quarter[-2] if len(quarter) >= 2 else {}
 
-    if not np.isnan(debt_ratio) and debt_ratio <= 100:
-        score += 2
-        notes.append("✅ 부채비율 안정")
-    elif not np.isnan(debt_ratio) and debt_ratio <= 180:
-        score += 1
-        notes.append("➖ 부채비율 보통")
-    elif not np.isnan(debt_ratio) and debt_ratio > 250:
-        score -= 2
-        notes.append("❌ 부채비율 높음")
+    rev_growth = pct_change(latest_a.get("revenue"), prev_a.get("revenue"))
+    prev_rev_growth = pct_change(prev_a.get("revenue"), old_a.get("revenue"))
+    op_growth = pct_change(latest_a.get("op_income"), prev_a.get("op_income"))
+    net_growth = pct_change(latest_a.get("net_income"), prev_a.get("net_income"))
+    ocf_growth = pct_change(latest_a.get("ocf"), prev_a.get("ocf"))
+    cash_growth = pct_change(latest_a.get("cash"), prev_a.get("cash"))
+    equity_growth = pct_change(latest_a.get("equity"), prev_a.get("equity"))
+    liability_growth = pct_change(latest_a.get("liabilities"), prev_a.get("liabilities"))
 
-    if not np.isnan(ocf) and ocf > 0:
-        score += 2
-        notes.append("✅ 영업현금흐름 양수")
+    q_rev_growth = pct_change(latest_q.get("revenue"), prev_q.get("revenue"))
+    q_op_growth = pct_change(latest_q.get("op_income"), prev_q.get("op_income"))
+    q_net_growth = pct_change(latest_q.get("net_income"), prev_q.get("net_income"))
+    q_ocf_growth = pct_change(latest_q.get("ocf"), prev_q.get("ocf"))
+    q_equity_growth = pct_change(latest_q.get("equity"), prev_q.get("equity"))
 
-    if not np.isnan(revenue) and revenue > 0:
-        score += 1
-        notes.append("✅ 매출 존재")
+    op_margin_min = 4 if order_profile else 8
+    q_margin_min = 2 if order_profile else 5
+    debt_limit = 250 if order_profile else 180
+    q_debt_limit = 300 if order_profile else 220
+    revenue_drop_limit = -25 if order_profile else -15
+    high_growth_min = 10 if order_profile else 20
+    op_growth_min = 15 if order_profile else 25
+    scale_floor = 0.75 if order_profile else 0.85
 
-    if danger >= 2:
-        return 1, notes
+    annual_j = {}
+    quarter_j = {}
 
-    if score >= 8:
-        return 4, notes
-    elif score >= 4:
-        return 3, notes
-    elif score >= 1:
-        return 2, notes
+    revenues = [r.get("revenue") for r in annual[-3:]]
+    op_incomes = [r.get("op_income") for r in annual[-3:]]
+    avg_revenue = np.nanmean([x for x in revenues if finite_num(x)]) if any(finite_num(x) for x in revenues) else np.nan
+
+    if len(revenues) >= 3 and all(finite_num(x) for x in revenues):
+        if revenues[0] < revenues[1] < revenues[2]:
+            annual_j["annual_3y_revenue_uptrend"] = judge_text("💎", "⚠️", "3년연속우상향", "최근 3개년 매출이 연속 증가")
+        elif order_profile and revenues[2] > revenues[0] and revenues[2] >= revenues[1] * 0.9:
+            annual_j["annual_3y_revenue_uptrend"] = judge_text("✅", "⚠️", "3년연속우상향", "수주형 완화 기준 통과")
+        else:
+            annual_j["annual_3y_revenue_uptrend"] = judge_text("⚠️", "⚠️", "3년연속우상향", "최근 3개년 매출 연속 증가 실패")
     else:
-        return 1, notes
-        
-ORDER_BASED_TICKERS = {
-    "012450",      # 한화에어로스페이스
-    "012450.ks",
-    "329180",      # HD현대중공업
-    "329180.ks"
-}
+        annual_j["annual_3y_revenue_uptrend"] = "➖ 3년연속우상향: 데이터 부족"
 
-def score_order_based_financials(fin):
-    if not fin.get("ok", False):
-        reason = fin.get("reason", "원인 미상")
-        return 3, [f"자동 재무 조회 실패 → 기본 3점", f"사유: {reason}"]
-
-    roe = fin.get("roe", np.nan)
-    debt_ratio = fin.get("debt_ratio", np.nan)
-    op_margin = fin.get("op_margin", np.nan)
-    net_margin = fin.get("net_margin", np.nan)
-    ocf = fin.get("ocf", np.nan)
-    revenue = fin.get("revenue", np.nan)
-    net_income = fin.get("net_income", np.nan)
-
-    notes = []
-    score = 0
-    danger = 0
-
-    if not np.isnan(net_income) and net_income < 0:
-        danger += 1
-        notes.append("🚨 순이익 음수")
-    if not np.isnan(ocf) and ocf < 0:
-        notes.append("⚠️ 영업현금흐름 음수(수주형 특성 반영)")
-
-    if not np.isnan(roe) and roe >= 8:
-        score += 2
-        notes.append("✅ ROE 양호")
-    elif not np.isnan(roe) and roe >= 3:
-        score += 1
-        notes.append("➖ ROE 보통")
-    elif not np.isnan(roe) and roe < 1:
-        score -= 1
-        notes.append("❌ ROE 낮음")
-
-    if not np.isnan(op_margin) and op_margin >= 8:
-        score += 2
-        notes.append("✅ 영업이익률 양호")
-    elif not np.isnan(op_margin) and op_margin >= 3:
-        score += 1
-        notes.append("➖ 영업이익률 보통")
-    elif not np.isnan(op_margin) and op_margin < 1:
-        score -= 1
-        notes.append("❌ 영업이익률 낮음")
-
-    if not np.isnan(net_margin) and net_margin >= 3:
-        score += 1
-        notes.append("✅ 순이익률 양호")
-    elif not np.isnan(net_margin) and net_margin < 0:
-        score -= 1
-        notes.append("❌ 순이익률 음수")
-
-    if not np.isnan(debt_ratio) and debt_ratio <= 200:
-        score += 2
-        notes.append("✅ 부채비율 허용")
-    elif not np.isnan(debt_ratio) and debt_ratio <= 300:
-        score += 1
-        notes.append("➖ 부채비율 보통")
-    elif not np.isnan(debt_ratio) and debt_ratio > 400:
-        score -= 2
-        notes.append("❌ 부채비율 높음")
-
-    if not np.isnan(revenue) and revenue > 0:
-        score += 1
-        notes.append("✅ 매출 존재")
-
-    if danger >= 2:
-        return 1, notes
-
-    if score >= 6:
-        return 4, notes
-    elif score >= 3:
-        return 3, notes
-    elif score >= 0:
-        return 2, notes
+    if len(op_incomes) >= 3 and all(finite_num(x) for x in op_incomes):
+        if op_incomes[0] < op_incomes[1] < op_incomes[2]:
+            annual_j["annual_op_income_uptrend"] = "💎 영업이익우상향: 최근 3개년 영업이익 연속 증가"
+        elif latest_a.get("op_income", np.nan) > 0 and (order_profile or finite_num(op_growth) and op_growth >= 0):
+            annual_j["annual_op_income_uptrend"] = "✅ 영업이익우상향: 최근 영업이익 양호"
+        else:
+            annual_j["annual_op_income_uptrend"] = "⚠️ 영업이익우상향: 영업이익 추세 둔화"
     else:
-        return 1, notes
+        annual_j["annual_op_income_uptrend"] = "➖ 영업이익우상향: 데이터 부족"
+
+    if (finite_num(rev_growth) and rev_growth >= high_growth_min) or (finite_num(op_growth) and op_growth >= op_growth_min) or (finite_num(latest_a.get("op_margin")) and latest_a.get("op_margin") >= op_margin_min + 4):
+        annual_j["annual_recent_high_growth"] = f"✅ 최근고성장: 매출성장 {fmt_pct(rev_growth)}, 영업이익성장 {fmt_pct(op_growth)}"
+    else:
+        annual_j["annual_recent_high_growth"] = f"⚠️ 최근고성장: 고성장 기준 미달, 매출성장 {fmt_pct(rev_growth)}"
+
+    annual_j["annual_profitability_good"] = (
+        f"✅ 수익성 양호: 영업이익률 {fmt_pct(latest_a.get('op_margin'))}"
+        if finite_num(latest_a.get("op_margin")) and latest_a.get("op_margin") >= op_margin_min and latest_a.get("net_income", 0) >= 0
+        else f"⚠️ 수익성 양호: 영업이익률 {fmt_pct(latest_a.get('op_margin'))}"
+    )
+
+    annual_j["annual_ocf_strength"] = (
+        f"✅ 영업현금흐름 양호: OCF {fmt_num(latest_a.get('ocf'))}"
+        if finite_num(latest_a.get("ocf")) and latest_a.get("ocf") > 0
+        else f"❌ 영업현금흐름 양호: OCF {fmt_num(latest_a.get('ocf'))}"
+    )
+
+    annual_j["annual_recent_revenue_growth"] = (
+        f"✅ 최근매출증가: 전년 대비 {fmt_pct(rev_growth)}"
+        if finite_num(rev_growth) and rev_growth > 0
+        else f"⚠️ 최근매출증가: 전년 대비 {fmt_pct(rev_growth)}"
+    )
+
+    annual_j["annual_net_income_positive"] = (
+        f"✅ 순이익흑자: 순이익 {fmt_num(latest_a.get('net_income'))}"
+        if finite_num(latest_a.get("net_income")) and latest_a.get("net_income") > 0
+        else f"❌ 순이익흑자: 순이익 {fmt_num(latest_a.get('net_income'))}"
+    )
+
+    annual_j["annual_cash_increase"] = (
+        f"✅ 현금증가: 현금성자산 증가율 {fmt_pct(cash_growth)}"
+        if finite_num(cash_growth) and cash_growth > 0
+        else ("➖ 현금증가: 현금성자산 데이터 부족" if not finite_num(cash_growth) else f"⚠️ 현금증가: 현금성자산 증가율 {fmt_pct(cash_growth)}")
+    )
+
+    cash_buffer_ratio = calc_ratio(latest_a.get("cash"), latest_a.get("revenue"))
+    annual_j["annual_cash_buffer"] = (
+        f"✅ 현금확보(유지): 현금/매출 {fmt_pct(cash_buffer_ratio)}"
+        if (finite_num(cash_buffer_ratio) and cash_buffer_ratio >= 8) or (finite_num(latest_a.get("ocf")) and latest_a.get("ocf") > 0)
+        else f"⚠️ 현금확보(유지): 현금/매출 {fmt_pct(cash_buffer_ratio)}"
+    )
+
+    annual_j["annual_equity_growth"] = (
+        f"✅ 자본증가: 자본 증가율 {fmt_pct(equity_growth)}"
+        if finite_num(equity_growth) and equity_growth >= 0
+        else f"⚠️ 자본증가: 자본 증가율 {fmt_pct(equity_growth)}"
+    )
+
+    annual_j["annual_debt_stability"] = (
+        f"✅ 부채안정: 부채비율 {fmt_pct(latest_a.get('debt_ratio'))}"
+        if finite_num(latest_a.get("debt_ratio")) and latest_a.get("debt_ratio") <= debt_limit
+        else f"⚠️ 부채안정: 부채비율 {fmt_pct(latest_a.get('debt_ratio'))}"
+    )
+
+    annual_j["annual_average_scale_maintained"] = (
+        f"✅ 평균규모유지: 최근 매출 {fmt_num(latest_a.get('revenue'))}, 3년 평균 {fmt_num(avg_revenue)}"
+        if finite_num(avg_revenue) and finite_num(latest_a.get("revenue")) and latest_a.get("revenue") >= avg_revenue * scale_floor
+        else f"⚠️ 평균규모유지: 최근 매출 {fmt_num(latest_a.get('revenue'))}, 3년 평균 {fmt_num(avg_revenue)}"
+    )
+
+    annual_j["annual_growth_slowdown"] = (
+        f"⚠️ 성장둔화: 최근 성장률 {fmt_pct(rev_growth)}, 직전 성장률 {fmt_pct(prev_rev_growth)}"
+        if finite_num(rev_growth) and finite_num(prev_rev_growth) and rev_growth < prev_rev_growth - 10 and rev_growth < 5
+        else f"✅ 성장둔화: 뚜렷한 둔화 없음, 최근 성장률 {fmt_pct(rev_growth)}"
+    )
+
+    annual_j["annual_scale_loss"] = (
+        f"❌ 매출규모감소: 매출 증가율 {fmt_pct(rev_growth)}"
+        if finite_num(rev_growth) and rev_growth <= revenue_drop_limit
+        else f"✅ 매출규모감소: 급격한 매출 감소 없음, 증가율 {fmt_pct(rev_growth)}"
+    )
+
+    annual_j["annual_body_decline"] = (
+        f"❌ 체력감소: 순이익성장 {fmt_pct(net_growth)}, OCF성장 {fmt_pct(ocf_growth)}"
+        if finite_num(net_growth) and finite_num(ocf_growth) and net_growth < 0 and ocf_growth < 0
+        else f"✅ 체력감소: 순이익/OCF 동반 악화 아님"
+    )
+
+    annual_j["annual_margin_quality"] = (
+        f"✅ 이익률유지: 순이익률 {fmt_pct(latest_a.get('net_margin'))}"
+        if finite_num(latest_a.get("net_margin")) and latest_a.get("net_margin") >= 3
+        else f"⚠️ 이익률유지: 순이익률 {fmt_pct(latest_a.get('net_margin'))}"
+    )
+
+    annual_j["annual_roe_quality"] = (
+        f"✅ ROE양호: ROE {fmt_pct(latest_a.get('roe'))}"
+        if finite_num(latest_a.get("roe")) and latest_a.get("roe") >= 6
+        else f"⚠️ ROE양호: ROE {fmt_pct(latest_a.get('roe'))}"
+    )
+
+    annual_j["annual_debt_ratio_quality"] = (
+        f"✅ 부채비율품질: 부채비율 {fmt_pct(latest_a.get('debt_ratio'))}, 부채증가율 {fmt_pct(liability_growth)}"
+        if finite_num(latest_a.get("debt_ratio")) and latest_a.get("debt_ratio") <= debt_limit
+        else f"⚠️ 부채비율품질: 부채비율 {fmt_pct(latest_a.get('debt_ratio'))}"
+    )
+
+    hard_risk = (
+        finite_num(latest_a.get("net_income")) and latest_a.get("net_income") < 0 and
+        finite_num(latest_a.get("ocf")) and latest_a.get("ocf") < 0
+    ) or (
+        finite_num(latest_a.get("equity")) and latest_a.get("equity") <= 0
+    ) or (
+        finite_num(latest_a.get("debt_ratio")) and latest_a.get("debt_ratio") >= 500
+    )
+
+    annual_j["annual_hard_risk"] = (
+        "🚨 하드리스크: 순이익 적자와 영업현금흐름 적자 또는 자본잠식/초고부채"
+        if hard_risk else "✅ 하드리스크: 핵심 하드리스크 미발생"
+    )
+
+    quarter_j["quarter_revenue_momentum"] = (
+        f"✅ 최근분기매출증가: 직전분기 대비 {fmt_pct(q_rev_growth)}"
+        if finite_num(q_rev_growth) and q_rev_growth >= (-5 if order_profile else 0)
+        else f"⚠️ 최근분기매출증가: 직전분기 대비 {fmt_pct(q_rev_growth)}"
+    )
+
+    quarter_j["quarter_profit_momentum"] = (
+        f"✅ 최근분기이익증가: 영업이익 증가율 {fmt_pct(q_op_growth)}"
+        if finite_num(q_op_growth) and q_op_growth >= (-10 if order_profile else 0)
+        else f"⚠️ 최근분기이익증가: 영업이익 증가율 {fmt_pct(q_op_growth)}"
+    )
+
+    quarter_j["quarter_cashflow_quality"] = (
+        f"✅ 최근분기현금흐름양호: OCF {fmt_num(latest_q.get('ocf'))}"
+        if finite_num(latest_q.get("ocf")) and latest_q.get("ocf") > 0
+        else f"⚠️ 최근분기현금흐름양호: OCF {fmt_num(latest_q.get('ocf'))}"
+    )
+
+    quarter_j["quarter_revenue_increase"] = quarter_j["quarter_revenue_momentum"]
+    quarter_j["quarter_profit_increase"] = quarter_j["quarter_profit_momentum"]
+
+    quarter_j["quarter_ocf_positive"] = (
+        f"✅ 최근분기OCF흑자: OCF {fmt_num(latest_q.get('ocf'))}"
+        if finite_num(latest_q.get("ocf")) and latest_q.get("ocf") > 0
+        else f"❌ 최근분기OCF흑자: OCF {fmt_num(latest_q.get('ocf'))}"
+    )
+
+    quarter_j["quarter_margin_good"] = (
+        f"✅ 최근분기수익성양호: 영업이익률 {fmt_pct(latest_q.get('op_margin'))}"
+        if finite_num(latest_q.get("op_margin")) and latest_q.get("op_margin") >= q_margin_min
+        else f"⚠️ 최근분기수익성양호: 영업이익률 {fmt_pct(latest_q.get('op_margin'))}"
+    )
+
+    quarter_j["quarter_debt_stability"] = (
+        f"✅ 최근분기부채안정: 부채비율 {fmt_pct(latest_q.get('debt_ratio'))}"
+        if finite_num(latest_q.get("debt_ratio")) and latest_q.get("debt_ratio") <= q_debt_limit
+        else f"⚠️ 최근분기부채안정: 부채비율 {fmt_pct(latest_q.get('debt_ratio'))}"
+    )
+
+    quarter_j["quarter_equity_maintained"] = (
+        f"✅ 최근분기자본유지: 자본증가율 {fmt_pct(q_equity_growth)}"
+        if not finite_num(q_equity_growth) or q_equity_growth >= -5
+        else f"⚠️ 최근분기자본유지: 자본증가율 {fmt_pct(q_equity_growth)}"
+    )
+
+    quarter_j["quarter_revenue_quality"] = (
+        f"✅ 분기매출품질: 매출 {fmt_num(latest_q.get('revenue'))}"
+        if finite_num(latest_q.get("revenue")) and latest_q.get("revenue") > 0
+        else f"❌ 분기매출품질: 매출 {fmt_num(latest_q.get('revenue'))}"
+    )
+
+    quarter_j["quarter_profit_quality"] = (
+        f"✅ 분기이익품질: 순이익 {fmt_num(latest_q.get('net_income'))}"
+        if finite_num(latest_q.get("net_income")) and latest_q.get("net_income") >= 0
+        else f"⚠️ 분기이익품질: 순이익 {fmt_num(latest_q.get('net_income'))}"
+    )
+
+    quarter_j["quarter_cash_quality"] = (
+        f"✅ 분기현금품질: OCF 증가율 {fmt_pct(q_ocf_growth)}"
+        if finite_num(latest_q.get("ocf")) and latest_q.get("ocf") > 0
+        else f"⚠️ 분기현금품질: OCF 증가율 {fmt_pct(q_ocf_growth)}"
+    )
+
+    quarter_j["quarter_margin_quality"] = quarter_j["quarter_margin_good"]
+    quarter_j["quarter_debt_ratio_quality"] = quarter_j["quarter_debt_stability"]
+
+    quarter_hard_risk = (
+        finite_num(latest_q.get("net_income")) and latest_q.get("net_income") < 0 and
+        finite_num(latest_q.get("ocf")) and latest_q.get("ocf") < 0
+    ) or (
+        finite_num(q_rev_growth) and q_rev_growth <= -25 and finite_num(latest_q.get("op_income")) and latest_q.get("op_income") < 0
+    )
+
+    quarter_j["quarter_warning"] = (
+        "🚨 분기경고: 분기 순이익 적자와 OCF 적자 또는 급격한 매출감소"
+        if quarter_hard_risk else "✅ 분기경고: 중대 분기 경고 없음"
+    )
+
+    all_j = {}
+    all_j.update(annual_j)
+    all_j.update(quarter_j)
+
+    metrics = {
+        "annual_latest": latest_a,
+        "annual_previous": prev_a,
+        "quarter_latest": latest_q,
+        "quarter_previous": prev_q,
+        "derived": {
+            "rev_growth": rev_growth,
+            "prev_rev_growth": prev_rev_growth,
+            "op_growth": op_growth,
+            "net_growth": net_growth,
+            "ocf_growth": ocf_growth,
+            "cash_growth": cash_growth,
+            "equity_growth": equity_growth,
+            "liability_growth": liability_growth,
+            "q_rev_growth": q_rev_growth,
+            "q_op_growth": q_op_growth,
+            "q_net_growth": q_net_growth,
+            "q_ocf_growth": q_ocf_growth,
+            "q_equity_growth": q_equity_growth,
+            "order_profile": order_profile,
+        },
+        "annual_judgements": annual_j,
+        "quarter_judgements": quarter_j,
+    }
+
+    return annual_j, quarter_j, all_j, metrics
+
+
+def calc_weighted_fin_total(judgements: dict, danger_limit: int):
+    danger_count = sum(1 for v in judgements.values() if "🚨" in str(v))
+
+    s_sum = sum(getsymbol_score(judgements.get(k, "")) for k in FIN_S_KEYS) * 3
+    a_sum = sum(getsymbol_score(judgements.get(k, "")) for k in FIN_A_KEYS) * 2
+    b_sum = sum(getsymbol_score(judgements.get(k, "")) for k in FIN_B_KEYS) * 1
+
+    weighted = s_sum + a_sum + b_sum
+
+    if danger_count >= danger_limit:
+        total = 1
+    elif weighted >= 45:
+        total = 4
+    elif weighted >= 25:
+        total = 3
+    elif weighted >= 5:
+        total = 2
+    else:
+        total = 1
+
+    return total, {
+        "s_sum": s_sum,
+        "a_sum": a_sum,
+        "b_sum": b_sum,
+        "weighted_net_score": weighted,
+        "danger_count": danger_count,
+        "danger_limit": danger_limit,
+    }
+
+
+def calc_generic_fin_total(judgements: dict):
+    return calc_weighted_fin_total(judgements, danger_limit=1)
+
+
+def calc_order_fin_total(judgements: dict):
+    return calc_weighted_fin_total(judgements, danger_limit=2)
+
+def round_half_up(x):
+    return int(np.floor(float(x) + 0.5))
+
+def calc_middle_fin_total(judgements: dict):
+    generic_score, generic_weighted = calc_generic_fin_total(judgements)
+    order_score, order_weighted = calc_order_fin_total(judgements)
+
+    if generic_score == 1 and order_score == 1:
+        middle_score = 1
+    else:
+        middle_score = round_half_up((generic_score + order_score) / 2)
+
+    return middle_score, {
+        "generic_score": generic_score,
+        "order_score": order_score,
+        "middle_score": middle_score,
+        "generic_weighted": generic_weighted,
+        "order_weighted": order_weighted,
+        "weighted_net_score": generic_weighted["weighted_net_score"],
+        "s_sum": generic_weighted["s_sum"],
+        "a_sum": generic_weighted["a_sum"],
+        "b_sum": generic_weighted["b_sum"],
+        "danger_count": generic_weighted["danger_count"],
+    }
+
 
 def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     if is_etf:
-        return 0, {"ok": True, "source": "etf"}, ["ETF는 재무점수 미합산"]
+        notes = {
+            "ok": True,
+            "source": "etf",
+            "mode": "ETF",
+            "reason": "ETF는 재무점수 미합산",
+            "annual_judgements": {},
+            "quarter_judgements": {},
+            "weighted_scores": {},
+        }
+        return 0, {"ok": True, "source": "etf"}, notes, {}
 
-    is_kr = str(ticker).endswith(".KS") or str(ticker).endswith(".KQ")
+    is_kr = str(ticker).upper().endswith(".KS") or str(ticker).upper().endswith(".KQ")
     fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
 
-    t_norm = normalize_ticker(ticker)
-    if t_norm in ORDER_BASED_TICKERS:
-        score, notes = score_order_based_financials(fin)
-    else:
-        score, notes = score_auto_financials(fin)
+    if not fin.get("ok", False):
+        metrics = {}
+        notes = {
+            "ok": False,
+            "source": fin.get("source", "unknown"),
+            "mode": "fallback",
+            "reason": fin.get("reason", "원인 미상"),
+            "annual_judgements": {},
+            "quarter_judgements": {},
+            "weighted_scores": {},
+            "messages": [
+                "자동 재무 조회 실패 → 기본 3점",
+                f"사유: {fin.get('reason', '원인 미상')}",
+            ],
+        }
+        return 3, fin, notes, metrics
 
-    return score, fin, notes
+    order_profile = is_order_based_ticker(ticker)
+    annual_j, quarter_j, all_j, metrics = build_fin_judgements(fin, order_profile=order_profile)
+
+    generic_score, generic_detail = calc_generic_fin_total(all_j)
+    order_score, order_detail = calc_order_fin_total(all_j)
+    middle_score, middle_detail = calc_middle_fin_total(all_j)
+
+    if order_profile:
+        selected_score = order_score
+        selected_mode = "수주판단"
+    else:
+        selected_score = middle_score
+        selected_mode = "중간형판단"
+
+    weighted_scores = {
+        "selected_mode": selected_mode,
+        "selected_score": selected_score,
+        "generic_score": generic_score,
+        "order_score": order_score,
+        "middle_score": middle_score,
+        "generic_detail": generic_detail,
+        "order_detail": order_detail,
+        "middle_detail": middle_detail,
+        "weighted_net_score": generic_detail["weighted_net_score"],
+        "s_sum": generic_detail["s_sum"],
+        "a_sum": generic_detail["a_sum"],
+        "b_sum": generic_detail["b_sum"],
+        "danger_count": generic_detail["danger_count"],
+        "s_keys": FIN_S_KEYS,
+        "a_keys": FIN_A_KEYS,
+        "b_keys": FIN_B_KEYS,
+    }
+
+    metrics["annual_records"] = fin.get("annual", [])
+    metrics["quarter_records"] = fin.get("quarter", [])
+    metrics["weighted_scores"] = weighted_scores
+
+    notes = {
+        "ok": True,
+        "source": fin.get("source", "unknown"),
+        "mode": selected_mode,
+        "order_profile": order_profile,
+        "annual_judgements": annual_j,
+        "quarter_judgements": quarter_j,
+        "weighted_scores": weighted_scores,
+        "messages": [
+            f"source: {fin.get('source', 'unknown')}",
+            f"mode: {selected_mode}",
+            f"weighted_score: {weighted_scores['weighted_net_score']}",
+            f"S_sum: {weighted_scores['s_sum']}, A_sum: {weighted_scores['a_sum']}, B_sum: {weighted_scores['b_sum']}",
+            f"범용판단: {generic_score}, 수주판단: {order_score}, 중간형판단: {middle_score}",
+        ],
+    }
+
+    return int(selected_score), fin, notes, metrics
+
 
 def get_final_fin_score(ticker, is_etf, asset_class):
     key = normalize_ticker(ticker)
 
-    if is_etf:
-        upsert_fin_score_db(
-            ticker=key,
-            auto_score=0,
-            manual_score=None,
-            final_score=0,
-            source="etf",
-            notes=["ETF는 재무점수 미합산"]
-        )
-        return 0, {
-            "auto_score": 0,
-            "manual_score": None,
-            "final_score": 0,
-            "source": "etf",
-            "notes": ["ETF는 재무점수 미합산"],
-            "metrics": {}
-        }
-
-    fin_scores_df = load_fin_scores_db()
-    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+    auto_score, fin_auto, fin_notes, fin_metrics = get_auto_fin_score_for_ticker(ticker, is_etf)
 
     manual_score = None
-    if not matched.empty:
-        row = matched.iloc[0]
-        if pd.notna(row["manual_score"]):
-            manual_score = int(row["manual_score"])
+    if not is_etf:
+        fin_scores_df = load_fin_scores_db()
+        matched = fin_scores_df[fin_scores_df["ticker"] == key]
+        if not matched.empty:
+            row = matched.iloc[0]
+            if pd.notna(row["manual_score"]):
+                manual_score = int(row["manual_score"])
 
-    auto_score, fin_auto, fin_notes = get_auto_fin_score_for_ticker(ticker, is_etf)
-    final_score = manual_score if manual_score is not None else int(auto_score)
+    final_score = 0 if is_etf else (manual_score if manual_score is not None else int(auto_score))
 
     upsert_fin_score_db(
         ticker=key,
@@ -899,35 +1450,11 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         "manual_score": manual_score,
         "final_score": int(final_score),
         "source": fin_auto.get("source", "unknown"),
+        "mode": fin_notes.get("mode", "unknown") if isinstance(fin_notes, dict) else "unknown",
         "notes": fin_notes,
-        "metrics": {
-            "roe": fin_auto.get("roe"),
-            "op_margin": fin_auto.get("op_margin"),
-            "net_margin": fin_auto.get("net_margin"),
-            "debt_ratio": fin_auto.get("debt_ratio"),
-            "ocf": fin_auto.get("ocf"),
-            "revenue": fin_auto.get("revenue"),
-            "net_income": fin_auto.get("net_income"),
-        }
+        "metrics": fin_metrics,
     }
 
-   
-    if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
-        fetch_us_financials_auto.clear()
-        fetch_kr_financials_auto.clear()
-        
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (normalize_ticker(tkr),))
-        conn.commit()
-        conn.close()
-        st.session_state.fin_score_map.pop(fin_key, None)
-        st.rerun()
-
-    if fin_key in st.session_state.fin_score_map:
-        del st.session_state.fin_score_map[fin_key]
-
-    st.rerun()
 
 def set_manual_fin_score(ticker, score):
     key = normalize_ticker(ticker)
@@ -937,28 +1464,30 @@ def set_manual_fin_score(ticker, score):
     if matched.empty:
         upsert_fin_score_db(
             ticker=key,
-            auto_score=int(score),
+            auto_score=None,
             manual_score=int(score),
             final_score=int(score),
             source="manual",
-            notes=[]
+            notes={"messages": ["수동 재무점수 저장"]}
         )
-    else:
-        row = matched.iloc[0]
-        notes = []
-        try:
-            notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else []
-        except Exception:
-            notes = []
+        return
 
-        upsert_fin_score_db(
-            ticker=key,
-            auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else int(score),
-            manual_score=int(score),
-            final_score=int(score),
-            source=row["source"] if pd.notna(row["source"]) else "manual",
-            notes=notes
-        )
+    row = matched.iloc[0]
+    notes = {}
+    try:
+        notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else {}
+    except Exception:
+        notes = {}
+
+    upsert_fin_score_db(
+        ticker=key,
+        auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else None,
+        manual_score=int(score),
+        final_score=int(score),
+        source=row["source"] if pd.notna(row["source"]) else "manual",
+        notes=notes
+    )
+
 
 def reset_manual_fin_score(ticker):
     delete_manual_fin_score_db(ticker)
@@ -1462,10 +1991,8 @@ TICKER_MAP = {
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
 }
 
-@st.cache_data(ttl=300)
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
-    fin_map = dict(fin_score_map_items)
 
     for item in watchlist_items:
         name = item["name"]
@@ -1479,9 +2006,10 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        auto_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
-        fin_key = normalize_ticker(tkr)
-        f_score = int(fin_map.get(fin_key, auto_fin_score))
+        final_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+        f_score = int(final_fin_score)
+
+        st.session_state.fin_score_map[normalize_ticker(tkr)] = f_score
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
@@ -1493,6 +2021,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             "티커": tkr,
             "현재가": format_currency(c["cur_p"], tkr),
             "MDD": f"{c['dd']*100:.1f}%",
+            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4",
             "📌후보등급": c["grade"],
             "RS": c["rs_label"],
             "RSI": round(c["rsi"], 1),
@@ -1628,12 +2157,10 @@ with tab2:
 
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
-    auto_fin_score, fin_meta = get_final_fin_score(tkr, is_etf, a_class)
 
-    if fin_key not in st.session_state.fin_score_map:
-        st.session_state.fin_score_map[fin_key] = auto_fin_score
-
-    fin_score = int(st.session_state.fin_score_map[fin_key])
+    fin_score, fin_meta = get_final_fin_score(tkr, is_etf, a_class)
+    fin_score = int(fin_score)
+    st.session_state.fin_score_map[fin_key] = fin_score
 
     st.markdown(
         f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>",
@@ -1641,57 +2168,141 @@ with tab2:
     )
 
     with st.expander("재무점수 계산 근거"):
+        notes = fin_meta.get("notes", {})
+        metrics = fin_meta.get("metrics", {})
+        weighted = {}
+
+        if isinstance(notes, dict):
+            weighted = notes.get("weighted_scores", {}) or metrics.get("weighted_scores", {})
+        else:
+            notes = {"messages": notes if isinstance(notes, list) else [str(notes)]}
+
         st.write("source:", fin_meta.get("source"))
+        st.write("mode:", fin_meta.get("mode"))
         st.write("auto_score:", fin_meta.get("auto_score"))
         st.write("manual_score:", fin_meta.get("manual_score"))
         st.write("final_score:", fin_meta.get("final_score"))
 
-        metrics = fin_meta.get("metrics", {})
-        if metrics:
-            st.write("roe:", metrics.get("roe"))
-            st.write("op_margin:", metrics.get("op_margin"))
-            st.write("net_margin:", metrics.get("net_margin"))
-            st.write("debt_ratio:", metrics.get("debt_ratio"))
-            st.write("ocf:", metrics.get("ocf"))
-            st.write("revenue:", metrics.get("revenue"))
-            st.write("net_income:", metrics.get("net_income"))
+        if weighted:
+            st.write("weighted score:", weighted.get("weighted_net_score"))
+            st.write("S_sum:", weighted.get("s_sum"))
+            st.write("A_sum:", weighted.get("a_sum"))
+            st.write("B_sum:", weighted.get("b_sum"))
+            st.write("danger_count:", weighted.get("danger_count"))
+            st.write("범용판단:", weighted.get("generic_score"))
+            st.write("수주판단:", weighted.get("order_score"))
+            st.write("중간형판단:", weighted.get("middle_score"))
+            st.write("selected_mode:", weighted.get("selected_mode"))
 
-        for n in fin_meta.get("notes", []):
-            st.write("-", n)
+        annual_judgements = notes.get("annual_judgements", {})
+        quarter_judgements = notes.get("quarter_judgements", {})
+
+        st.markdown("#### annual 판정 문구")
+        if annual_judgements:
+            annual_df = pd.DataFrame(
+                [{"key": k, "judgement": v} for k, v in annual_judgements.items()]
+            )
+            st.dataframe(annual_df, use_container_width=True, hide_index=True)
+        else:
+            st.write("annual 판정 없음")
+
+        st.markdown("#### quarter 판정 문구")
+        if quarter_judgements:
+            quarter_df = pd.DataFrame(
+                [{"key": k, "judgement": v} for k, v in quarter_judgements.items()]
+            )
+            st.dataframe(quarter_df, use_container_width=True, hide_index=True)
+        else:
+            st.write("quarter 판정 없음")
+
+        st.markdown("#### 핵심 metrics")
+        annual_records = metrics.get("annual_records", [])
+        quarter_records = metrics.get("quarter_records", [])
+
+        if annual_records:
+            st.write("annual records")
+            st.dataframe(pd.DataFrame(annual_records), use_container_width=True, hide_index=True)
+
+        if quarter_records:
+            st.write("quarter records")
+            st.dataframe(pd.DataFrame(quarter_records), use_container_width=True, hide_index=True)
+
+        derived = metrics.get("derived", {})
+        if derived:
+            st.write("derived metrics")
+            st.json(derived)
+
+        messages = notes.get("messages", [])
+        if messages:
+            st.markdown("#### notes")
+            for msg in messages:
+                st.write("-", msg)
+
         if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
-            fetch_us_financials_auto.clear()
-            fetch_kr_financials_auto.clear()
-            get_all_summary.clear()
+            for fn in [fetch_us_financials_auto, fetch_kr_financials_auto]:
+                if hasattr(fn, "clear"):
+                    fn.clear()
+
+            if hasattr(get_all_summary, "clear"):
+                get_all_summary.clear()
 
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (fin_key,))
+            cur.execute("""
+                UPDATE fin_scores
+                SET auto_score = NULL,
+                    final_score = manual_score,
+                    source = 'refresh_requested',
+                    notes_json = ?
+                WHERE ticker = ?
+            """, (json.dumps({"messages": ["강제 재계산 요청"]}, ensure_ascii=False), fin_key))
             conn.commit()
             conn.close()
 
             st.session_state.fin_score_map.pop(fin_key, None)
             st.rerun()
 
-    manual_override = st.checkbox("재무점수 수동 수정", key=f"manual_fin_{fin_key}")
-    if manual_override:
-        manual_score = st.radio(
-            "수동 재무점수",
-            [0, 1, 2, 3, 4],
-            index=int(fin_score),
-            format_func=lambda x: f_labels[x],
-            horizontal=True,
-            key=f"manual_fin_score_{fin_key}"
-        )
-        set_manual_fin_score(tkr, manual_score)
-        st.session_state.fin_score_map[fin_key] = int(manual_score)
-        fin_score = int(manual_score)
+    if is_etf:
+        st.info("ETF는 재무점수 0점 고정입니다. 수동 재무점수도 적용하지 않습니다.")
+    else:
+        had_manual = fin_meta.get("manual_score") is not None
 
-        if st.button("자동 재무점수로 되돌리기", key=f"reset_manual_{fin_key}"):
+        manual_override = st.checkbox(
+            "재무점수 수동 수정",
+            value=had_manual,
+            key=f"manual_fin_{fin_key}"
+        )
+
+        if had_manual and not manual_override:
             reset_manual_fin_score(tkr)
-            st.session_state.fin_score_map[fin_key] = get_final_fin_score(tkr, is_etf, a_class)[0]
+            st.session_state.fin_score_map.pop(fin_key, None)
             st.rerun()
 
-  
+        if manual_override:
+            current_manual = fin_meta.get("manual_score")
+            radio_default = int(current_manual) if current_manual is not None else int(fin_score)
+
+            manual_score = st.radio(
+                "수동 재무점수",
+                [0, 1, 2, 3, 4],
+                index=radio_default,
+                format_func=lambda x: f_labels[x],
+                horizontal=True,
+                key=f"manual_fin_score_{fin_key}"
+            )
+
+            if current_manual != int(manual_score):
+                set_manual_fin_score(tkr, manual_score)
+                st.session_state.fin_score_map[fin_key] = int(manual_score)
+                st.rerun()
+
+            fin_score = int(manual_score)
+
+            if st.button("자동 재무점수로 되돌리기", key=f"reset_manual_{fin_key}"):
+                reset_manual_fin_score(tkr)
+                st.session_state.fin_score_map.pop(fin_key, None)
+                st.rerun()
+
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
