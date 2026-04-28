@@ -846,23 +846,46 @@ def fetch_kr_financials_auto(ticker: str):
         return {"ok": False, "source": "dart", "reason": f"DART 오류: {e}"}
 
 def fmp_request(endpoint, ticker, period, limit, api_key):
-    stable_url = (
-        f"https://financialmodelingprep.com/stable/{endpoint}"
-        f"?symbol={ticker}&period={period}&limit={limit}&apikey={api_key}"
-    )
-    res = requests.get(stable_url, timeout=15)
-    if res.status_code == 200:
-        data = res.json()
-        if isinstance(data, list) and data:
-            return data
+    url = f"https://financialmodelingprep.com/stable/{endpoint}"
+    params = {
+        "symbol": ticker,
+        "period": period,
+        "limit": limit,
+    }
+    headers = {
+        "apikey": api_key
+    }
 
-    v3_url = (
-        f"https://financialmodelingprep.com/api/v3/{endpoint}/{ticker}"
-        f"?period={period}&limit={limit}&apikey={api_key}"
-    )
-    res = requests.get(v3_url, timeout=15)
-    res.raise_for_status()
-    data = res.json()
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=15)
+    except Exception as e:
+        raise RuntimeError(f"FMP stable {endpoint} 요청 실패: {e}")
+
+    if res.status_code != 200:
+        try:
+            err = res.json()
+        except Exception:
+            err = res.text[:300]
+
+        raise RuntimeError(
+            f"FMP stable {endpoint} HTTP {res.status_code} "
+            f"(symbol={ticker}, period={period}): {err}"
+        )
+
+    try:
+        data = res.json()
+    except Exception:
+        raise RuntimeError(f"FMP stable {endpoint} JSON 파싱 실패")
+
+    if isinstance(data, dict):
+        msg = data.get("Error Message") or data.get("error") or data.get("message")
+        if msg:
+            raise RuntimeError(
+                f"FMP stable {endpoint} 응답 오류 "
+                f"(symbol={ticker}, period={period}): {msg}"
+            )
+        return []
+
     return data if isinstance(data, list) else []
 
 
