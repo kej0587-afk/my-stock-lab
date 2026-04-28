@@ -5,3 +5,4 @@ ta
 streamlit
 gspread
 google-auth
+OpenDartReader
