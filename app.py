@@ -1,3 +1,5 @@
+import json
+import base64
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -75,8 +77,52 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
     elif last_macd < last_sig and prev_macd >= prev_sig: return "📉하락주의(데드크로스)"
     return "⏳추세관망"
 
-def get_fin_label_map():
-    return {0: "0점 (ETF/해당없음)", 1: "1점 (🚨F급/처분)", 2: "2점 (⚠️불안정/주의)", 3: "3점 (✅회복형/중간형)", 4: "4점 (💎완성형 우량)"}
+DEFAULT_WATCHLIST = [
+    {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
+    {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
+    {"name": "TQQQ", "ticker": "TQQQ", "is_etf": True, "asset_class": "us_etf_nasdaq"},
+    {"name": "하이닉스", "ticker": "000660.KS", "is_etf": False, "asset_class": "kr_stock"},
+    {"name": "두산에너빌리티", "ticker": "034020.KS", "is_etf": False, "asset_class": "kr_stock"},
+]
+
+def encode_watchlist(watchlist):
+    raw = json.dumps(watchlist, ensure_ascii=False)
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("utf-8")
+
+def decode_watchlist(value):
+    try:
+        raw = base64.urlsafe_b64decode(value.encode("utf-8")).decode("utf-8")
+        data = json.loads(raw)
+        return data if isinstance(data, list) else None
+    except Exception:
+        return None
+
+def load_watchlist_from_query():
+    raw = st.query_params.get("wl", "")
+    if not raw:
+        return [dict(x) for x in DEFAULT_WATCHLIST]
+    loaded = decode_watchlist(raw)
+    return loaded if loaded else [dict(x) for x in DEFAULT_WATCHLIST]
+
+def sync_watchlist_to_query():
+    desired = encode_watchlist(st.session_state.watchlist)
+    current = st.query_params.get("wl", "")
+    if current != desired:
+        st.query_params["wl"] = desired
+
+def is_in_watchlist(ticker):
+    t_norm = normalize_ticker(ticker)
+    for item in st.session_state.watchlist:
+        if normalize_ticker(item["ticker"]) == t_norm:
+            return True
+    return False
+
+def get_watchlist_item(ticker):
+    t_norm = normalize_ticker(ticker)
+    for item in st.session_state.watchlist:
+        if normalize_ticker(item["ticker"]) == t_norm:
+            return item
+    return None
 
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
@@ -217,7 +263,14 @@ def load_fin_score_sheet():
     block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
 
     return block
+    
+if "fin_score_map" not in st.session_state:
+    st.session_state.fin_score_map = {}
 
+if "watchlist" not in st.session_state:
+    st.session_state.watchlist = load_watchlist_from_query()
+
+sync_watchlist_to_query()
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
 # -------------------------------------------------
@@ -521,20 +574,31 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
     fin_map = dict(fin_score_map_items)
 
-    for name, tkr, is_etf, a_class in watchlist_items:
+    for item in watchlist_items:
+        name = item["name"]
+        tkr = item["ticker"]
+        is_etf = item["is_etf"]
+        a_class = item["asset_class"]
+
         df = load_price_df(tkr, "1y")
         if df.empty:
             continue
 
         df = build_indicators(df)
 
-        if mode == "개인모드" and (not name.startswith("탐색:")):
-            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        else:
-            fin_key = f"{name}|{normalize_ticker(tkr)}"
-            f_score = 0 if is_etf else fin_map.get(fin_key, 3 if name.startswith("탐색:") else 2)
+        fin_key = f"{name}|{normalize_ticker(tkr)}"
 
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, 0, False, f_score, app_mode=mode)
+        if is_etf:
+            f_score = 0
+        elif name.startswith("탐색:"):
+            f_score = item.get("fin_score", fin_map.get(fin_key, 3))
+        else:
+            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
+
+        c = calc_scores_and_decision(
+            name, tkr, is_etf, a_class, df,
+            0, False, f_score, app_mode=mode
+        )
 
         rows.append({
             "종목명": name,
@@ -639,33 +703,26 @@ tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
+    if app_mode == "개인모드":
+        st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
     st.caption("전광판 등록 종목만 표시됩니다.")
 
-    c1, c2 = st.columns([3, 1])
+    remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
+    remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
 
-    with c1:
-        if st.session_state.watchlist:
-            names = [f"{item['name']} ({item['ticker']})" for item in st.session_state.watchlist]
-            st.write("현재 등록 종목:", ", ".join(names))
-        else:
-            st.info("등록된 관심종목이 없습니다.")
-
-    with c2:
-        remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
-        remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
-
-        if remove_target != "선택" and st.button("전광판에서 제거"):
-            _, remove_ticker = remove_target.split("|", 1)
-            st.session_state.watchlist = [
-                item for item in st.session_state.watchlist
-                if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
-            ]
-            st.rerun()
+    if remove_target != "선택" and st.button("전광판에서 제거"):
+        _, remove_ticker = remove_target.split("|", 1)
+        st.session_state.watchlist = [
+            item for item in st.session_state.watchlist
+            if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
+        ]
+        sync_watchlist_to_query()
+        st.rerun()
 
     summary_df = get_all_summary(
         tuple(sorted(st.session_state.fin_score_map.items())),
         app_mode,
-        tuple((item["name"], item["ticker"], item["is_etf"], item["asset_class"]) for item in st.session_state.watchlist)
+        tuple(st.session_state.watchlist)
     )
 
     if summary_df.empty:
@@ -691,13 +748,23 @@ with tab2:
             tkr = user_tkr_raw
 
         known_etf_tickers = {
-            "QQQM", "QLD", "TQQQ", "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+            "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
+            "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF",
+            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
         }
-        is_etf = normalize_ticker(tkr) in {normalize_ticker(x) for x in known_etf_tickers} or tkr.upper().endswith("ETF")
+
+        ticker_norm = normalize_ticker(tkr)
+        is_etf = (
+            ticker_norm in {normalize_ticker(x) for x in known_etf_tickers}
+            or tkr.upper().endswith("ETF")
+        )
+
         a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
             "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
         )
-        name, my_p, has_p = f"탐색: {tkr}", 0.0, False
+
+        name = f"탐색: {tkr}"
+        my_p, has_p = 0.0, False
     else:
         name = sel
         tkr, is_etf, a_class = TICKER_MAP[sel]
@@ -714,34 +781,9 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-    st.markdown("### ⭐ 관심종목 관리")
-    a1, a2 = st.columns(2)
-
-    current_item = {
-        "name": name,
-        "ticker": tkr,
-        "is_etf": is_etf,
-        "asset_class": a_class
-    }
-
-    with a1:
-        if is_in_watchlist(tkr):
-            st.success("이미 전광판에 등록된 종목입니다.")
-        else:
-            if st.button("전광판에 등록"):
-                st.session_state.watchlist.append(current_item)
-                st.rerun()
-
-    with a2:
-        if is_in_watchlist(tkr):
-            if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
-                st.session_state.watchlist = [
-                    item for item in st.session_state.watchlist
-                    if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
-                ]
-                st.rerun()
-
     f_labels = get_fin_label_map()
+    fin_key = f"{name}|{normalize_ticker(tkr)}"
+    saved_item = get_watchlist_item(tkr)
 
     if is_etf:
         fin_score = 0
@@ -749,16 +791,18 @@ with tab2:
             f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
             unsafe_allow_html=True
         )
-    elif app_mode == "개인모드" and not is_free:
+    elif not is_free:
         fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
         st.markdown(
             f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
             unsafe_allow_html=True
         )
     else:
-        fin_key = f"{name}|{normalize_ticker(tkr)}"
-        base_default_f = 3 if is_free else 2
-        default_f = st.session_state.fin_score_map.get(fin_key, base_default_f)
+        default_f = 3
+        if saved_item is not None and "fin_score" in saved_item:
+            default_f = int(saved_item["fin_score"])
+        else:
+            default_f = int(st.session_state.fin_score_map.get(fin_key, 3))
 
         fin_score = st.radio(
             "재무 점수",
@@ -769,6 +813,38 @@ with tab2:
             key=f"fin_score_{fin_key}"
         )
         st.session_state.fin_score_map[fin_key] = fin_score
+
+    st.markdown("### ⭐ 관심종목 관리")
+    a1, a2 = st.columns(2)
+
+    current_item = {
+        "name": name,
+        "ticker": tkr,
+        "is_etf": is_etf,
+        "asset_class": a_class
+    }
+
+    if name.startswith("탐색:") and not is_etf:
+        current_item["fin_score"] = int(fin_score)
+
+    with a1:
+        if is_in_watchlist(tkr):
+            st.success("이미 전광판에 등록된 종목입니다.")
+        else:
+            if st.button("전광판에 등록"):
+                st.session_state.watchlist.append(current_item)
+                sync_watchlist_to_query()
+                st.rerun()
+
+    with a2:
+        if is_in_watchlist(tkr):
+            if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
+                st.session_state.watchlist = [
+                    item for item in st.session_state.watchlist
+                    if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
+                ]
+                sync_watchlist_to_query()
+                st.rerun()
         
     df = load_price_df(tkr, "1y")
     if not df.empty:
