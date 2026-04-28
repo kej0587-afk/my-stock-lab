@@ -1,30 +1,22 @@
 import json
 import base64
+from pathlib import Path
+import numpy as np
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import ta
-import gspread
-from google.oauth2.service_account import Credentials
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+import OpenDartReader
+import sqlite3
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="대장님의 최종 관제실 v13.1 (그랜드 오픈 마감판)", layout="wide")
-
-SPREADSHEET_ID = "195Mru5bqt_jvUQbgWcI1vHFDzEJV0wDJc05BXzmi9KA"
-INVEST_SHEET_GID = "168627640"
-ETF_SHEET_GID = "604547263"
-CONTROL_SHEET_GID = "1420210871"
-FIN_SHEET_GID = "1944167452"
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly"
-]
 
 st.markdown("""
 <style>
@@ -45,7 +37,7 @@ st.markdown("""
 
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
-    app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 구글 시트 연동, 범용모드는 직접 입력 방식입니다.")
+    app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 앱 내부 자산 연동, 범용모드는 직접 입력 방식입니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
 
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
@@ -132,7 +124,7 @@ def get_watchlist_item(ticker):
         if normalize_ticker(item["ticker"]) == t_norm:
             return item
     return None
-    
+
 def build_ai_analysis_prompt(name, ticker, macro_res, final_macro_risk, c):
     macro_lines = []
     for k, v in macro_res.items():
@@ -239,10 +231,687 @@ MDD: {c['dd']}
 보조 해석: {c['smc_insight']}
 """.strip()
 
-
 def call_llm_analysis(prompt: str) -> str:
     return prompt
+
+# -------------------------------------------------
+# 2-1. SQLite 저장소
+# -------------------------------------------------
+DB_DIR = Path("data")
+DB_DIR.mkdir(exist_ok=True)
+DB_FILE = DB_DIR / "portfolio.db"
+
+def get_conn():
+    return sqlite3.connect(DB_FILE, check_same_thread=False)
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        seed_money REAL DEFAULT 0,
+        krw_cash REAL DEFAULT 0,
+        usd_cash REAL DEFAULT 0,
+        usdkrw REAL DEFAULT 1400
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS holdings (
+        ticker TEXT PRIMARY KEY,
+        name TEXT,
+        qty REAL DEFAULT 0,
+        avg_price REAL DEFAULT 0,
+        target_weight REAL DEFAULT 0,
+        asset_class TEXT DEFAULT '',
+        is_etf INTEGER DEFAULT 0
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS dividends (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        ticker TEXT,
+        amount REAL DEFAULT 0,
+        currency TEXT DEFAULT 'KRW'
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS monthly_logs (
+        month TEXT PRIMARY KEY,
+        total_invested REAL DEFAULT 0,
+        evaluated_value REAL DEFAULT 0,
+        dividend REAL DEFAULT 0
+    )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS fin_scores (
+        ticker TEXT PRIMARY KEY,
+        auto_score INTEGER,
+        manual_score INTEGER,
+        final_score INTEGER,
+        source TEXT,
+        notes_json TEXT
+    )
+    """)
+
+    cur.execute("SELECT COUNT(*) FROM settings")
+    if cur.fetchone()[0] == 0:
+        cur.execute("""
+            INSERT INTO settings (id, seed_money, krw_cash, usd_cash, usdkrw)
+            VALUES (1, 0, 0, 0, 1400)
+        """)
+
+    conn.commit()
+    conn.close()
+
+def load_settings_db():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM settings WHERE id = 1", conn)
+    conn.close()
+    if df.empty:
+        return {"seed_money": 0.0, "krw_cash": 0.0, "usd_cash": 0.0, "usdkrw": 1400.0}
+    row = df.iloc[0]
+    return {
+        "seed_money": float(row["seed_money"]),
+        "krw_cash": float(row["krw_cash"]),
+        "usd_cash": float(row["usd_cash"]),
+        "usdkrw": float(row["usdkrw"])
+    }
+
+def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE settings
+        SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?
+        WHERE id = 1
+    """, (float(seed_money), float(krw_cash), float(usd_cash), float(usdkrw)))
+    conn.commit()
+    conn.close()
+
+def load_holdings_db():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM holdings", conn)
+    conn.close()
+    return df
+
+def save_holdings_db(df):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM holdings")
+    for _, row in df.iterrows():
+        raw_is_etf = row.get("is_etf", False)
+        if isinstance(raw_is_etf, str):
+            is_etf = 1 if raw_is_etf.strip().lower() in ["true", "1", "yes", "y"] else 0
+        else:
+            is_etf = 1 if bool(raw_is_etf) else 0
+
+        cur.execute("""
+            INSERT OR REPLACE INTO holdings
+            (ticker, name, qty, avg_price, target_weight, asset_class, is_etf)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(row.get("ticker", "")).strip(),
+            str(row.get("name", "")).strip(),
+            float(row.get("qty", 0) or 0),
+            float(row.get("avg_price", 0) or 0),
+            float(row.get("target_weight", 0) or 0),
+            str(row.get("asset_class", "")).strip(),
+            is_etf
+        ))
+    conn.commit()
+    conn.close()
+
+def load_dividends_db():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM dividends ORDER BY date DESC, id DESC", conn)
+    conn.close()
+    return df
+
+def save_dividends_db(df):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM dividends")
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO dividends (date, ticker, amount, currency)
+            VALUES (?, ?, ?, ?)
+        """, (
+            str(row.get("date", "")).strip(),
+            str(row.get("ticker", "")).strip(),
+            float(row.get("amount", 0) or 0),
+            str(row.get("currency", "KRW")).strip().upper()
+        ))
+    conn.commit()
+    conn.close()
+
+def load_monthly_logs_db():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM monthly_logs ORDER BY month", conn)
+    conn.close()
+    return df
+
+def save_monthly_logs_db(df):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM monthly_logs")
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT OR REPLACE INTO monthly_logs (month, total_invested, evaluated_value, dividend)
+            VALUES (?, ?, ?, ?)
+        """, (
+            str(row.get("month", "")).strip(),
+            float(row.get("total_invested", 0) or 0),
+            float(row.get("evaluated_value", 0) or 0),
+            float(row.get("dividend", 0) or 0)
+        ))
+    conn.commit()
+    conn.close()
+
+def load_fin_scores_db():
+    conn = get_conn()
+    df = pd.read_sql_query("SELECT * FROM fin_scores", conn)
+    conn.close()
+    return df
+
+def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT OR REPLACE INTO fin_scores
+        (ticker, auto_score, manual_score, final_score, source, notes_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        normalize_ticker(ticker),
+        int(auto_score) if auto_score is not None else None,
+        int(manual_score) if manual_score is not None else None,
+        int(final_score) if final_score is not None else None,
+        str(source),
+        json.dumps(notes, ensure_ascii=False)
+    ))
+    conn.commit()
+    conn.close()
+
+def delete_manual_fin_score_db(ticker):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE fin_scores
+        SET manual_score = NULL, final_score = auto_score
+        WHERE ticker = ?
+    """, (normalize_ticker(ticker),))
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -------------------------------------------------
+# 2-2. 자동 재무제표 로드 + 점수화
+# -------------------------------------------------
+@st.cache_resource
+def get_dart_client():
+    # 사용자가 직접 전달한 API 키를 기본값으로 하드코딩
+    api_key = st.secrets.get("dart_api_key", "4cef34bd5edf4a8ae9692068323fea678ecad478")
+    if not api_key:
+        return None
+    return OpenDartReader(api_key)
+
+def safe_float(x, default=np.nan):
+    try:
+        if pd.isna(x):
+            return default
+        s = str(x).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
+        if s == "":
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+def normalize_stock_code(ticker: str) -> str:
+    t = str(ticker).strip().upper()
+    if t.endswith(".KS") or t.endswith(".KQ"):
+        return t.split(".")[0]
+    return t
+
+def pick_account_amount(df, keywords):
+    if df is None or df.empty:
+        return np.nan
+
+    for col in ["account_nm", "accountNm", "sj_nm", "sjNm"]:
+        if col in df.columns:
+            names = df[col].astype(str)
+            mask = pd.Series(False, index=df.index)
+            for kw in keywords:
+                mask = mask | names.str.contains(kw, case=False, na=False)
+            matched = df[mask]
+            if not matched.empty:
+                for amount_col in ["thstrm_amount", "thstrmAmount", "frmtrm_amount", "frmtrmAmount"]:
+                    if amount_col in matched.columns:
+                        vals = matched[amount_col].apply(safe_float).dropna()
+                        if not vals.empty:
+                            return float(vals.iloc[0])
+    return np.nan
+
+@st.cache_data(ttl=3600)
+def fetch_kr_financials_auto(ticker: str):
+    dart = get_dart_client()
+    if dart is None:
+        return {"ok": False, "reason": "DART API 키 없음"}
+
+    stock_code = normalize_stock_code(ticker)
+
+    try:
+        fs = dart.finstate_all(stock_code, bsns_year='2025', reprt_code='11011')
+        if fs is None or len(fs) == 0:
+            fs = dart.finstate_all(stock_code, bsns_year='2024', reprt_code='11011')
+
+        if fs is None or len(fs) == 0:
+            return {"ok": False, "reason": "DART 재무제표 없음"}
+
+        revenue = pick_account_amount(fs, ["매출액", "수익(매출액)", "영업수익"])
+        op_income = pick_account_amount(fs, ["영업이익"])
+        net_income = pick_account_amount(fs, ["당기순이익", "연결당기순이익", "당기순이익(손실)"])
+        equity = pick_account_amount(fs, ["자본총계"])
+        liabilities = pick_account_amount(fs, ["부채총계"])
+        assets = pick_account_amount(fs, ["자산총계"])
+        ocf = pick_account_amount(fs, ["영업활동현금흐름"])
+
+        roe = np.nan
+        debt_ratio = np.nan
+        op_margin = np.nan
+        net_margin = np.nan
+
+        if not np.isnan(net_income) and not np.isnan(equity) and equity != 0:
+            roe = net_income / equity * 100
+        if not np.isnan(liabilities) and not np.isnan(equity) and equity != 0:
+            debt_ratio = liabilities / equity * 100
+        if not np.isnan(op_income) and not np.isnan(revenue) and revenue != 0:
+            op_margin = op_income / revenue * 100
+        if not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
+            net_margin = net_income / revenue * 100
+
+        return {
+            "ok": True,
+            "source": "dart",
+            "revenue": revenue,
+            "op_income": op_income,
+            "net_income": net_income,
+            "equity": equity,
+            "liabilities": liabilities,
+            "assets": assets,
+            "ocf": ocf,
+            "roe": roe,
+            "debt_ratio": debt_ratio,
+            "op_margin": op_margin,
+            "net_margin": net_margin,
+        }
+    except Exception as e:
+        return {"ok": False, "reason": f"DART 오류: {e}"}
+
+@st.cache_data(ttl=3600)
+def fetch_us_financials_auto(ticker: str):
+    try:
+        tk = yf.Ticker(ticker)
+
+        info = getattr(tk, "info", {}) or {}
+        income_stmt = getattr(tk, "income_stmt", pd.DataFrame())
+        balance_sheet = getattr(tk, "balance_sheet", pd.DataFrame())
+        cashflow = getattr(tk, "cashflow", pd.DataFrame())
+
+        if income_stmt is None or income_stmt.empty:
+            return {"ok": False, "reason": "Yahoo 재무제표 없음"}
+
+        def get_row(df, row_names):
+            if df is None or df.empty:
+                return np.nan
+            for rn in row_names:
+                if rn in df.index:
+                    vals = pd.to_numeric(df.loc[rn], errors="coerce").dropna()
+                    if not vals.empty:
+                        return float(vals.iloc[0])
+            return np.nan
+
+        revenue = get_row(income_stmt, ["Total Revenue", "Operating Revenue"])
+        op_income = get_row(income_stmt, ["Operating Income"])
+        net_income = get_row(income_stmt, ["Net Income"])
+        equity = get_row(balance_sheet, ["Stockholders Equity", "Common Stock Equity", "Total Equity Gross Minority Interest"])
+        liabilities = get_row(balance_sheet, ["Total Liabilities Net Minority Interest", "Total Liabilities"])
+        assets = get_row(balance_sheet, ["Total Assets"])
+        ocf = get_row(cashflow, ["Operating Cash Flow"])
+
+        roe = safe_float(info.get("returnOnEquity"), np.nan)
+        if not np.isnan(roe):
+            roe = roe * 100
+        elif not np.isnan(net_income) and not np.isnan(equity) and equity != 0:
+            roe = net_income / equity * 100
+
+        debt_ratio = np.nan
+        if not np.isnan(liabilities) and not np.isnan(equity) and equity != 0:
+            debt_ratio = liabilities / equity * 100
+
+        op_margin = safe_float(info.get("operatingMargins"), np.nan)
+        if not np.isnan(op_margin):
+            op_margin = op_margin * 100
+        elif not np.isnan(op_income) and not np.isnan(revenue) and revenue != 0:
+            op_margin = op_income / revenue * 100
+
+        net_margin = safe_float(info.get("profitMargins"), np.nan)
+        if not np.isnan(net_margin):
+            net_margin = net_margin * 100
+        elif not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
+            net_margin = net_income / revenue * 100
+
+        return {
+            "ok": True,
+            "source": "yfinance",
+            "revenue": revenue,
+            "op_income": op_income,
+            "net_income": net_income,
+            "equity": equity,
+            "liabilities": liabilities,
+            "assets": assets,
+            "ocf": ocf,
+            "roe": roe,
+            "debt_ratio": debt_ratio,
+            "op_margin": op_margin,
+            "net_margin": net_margin,
+        }
+    except Exception as e:
+        return {"ok": False, "reason": f"Yahoo 오류: {e}"}
+
+def score_auto_financials(fin):
+    if not fin.get("ok", False):
+        return 3, ["자동 재무 조회 실패 → 기본 3점"]
+
+    roe = fin.get("roe", np.nan)
+    debt_ratio = fin.get("debt_ratio", np.nan)
+    op_margin = fin.get("op_margin", np.nan)
+    net_margin = fin.get("net_margin", np.nan)
+    ocf = fin.get("ocf", np.nan)
+    revenue = fin.get("revenue", np.nan)
+    net_income = fin.get("net_income", np.nan)
+
+    notes = []
+    score = 0
+    danger = 0
+
+    if not np.isnan(roe) and roe < 0:
+        danger += 1
+        notes.append("🚨 ROE 음수")
+    if not np.isnan(net_income) and net_income < 0:
+        danger += 1
+        notes.append("🚨 순이익 음수")
+    if not np.isnan(ocf) and ocf < 0:
+        danger += 1
+        notes.append("🚨 영업현금흐름 음수")
+
+    if not np.isnan(roe) and roe >= 12:
+        score += 3
+        notes.append("💎 ROE 우수")
+    elif not np.isnan(roe) and roe >= 6:
+        score += 1
+        notes.append("✅ ROE 양호")
+    elif not np.isnan(roe) and roe < 3:
+        score -= 2
+        notes.append("❌ ROE 낮음")
+
+    if not np.isnan(op_margin) and op_margin >= 10:
+        score += 3
+        notes.append("💎 영업이익률 우수")
+    elif not np.isnan(op_margin) and op_margin >= 5:
+        score += 1
+        notes.append("✅ 영업이익률 양호")
+    elif not np.isnan(op_margin) and op_margin < 3:
+        score -= 2
+        notes.append("❌ 영업이익률 낮음")
+
+    if not np.isnan(net_margin) and net_margin >= 8:
+        score += 2
+        notes.append("✅ 순이익률 양호")
+    elif not np.isnan(net_margin) and net_margin < 2:
+        score -= 1
+        notes.append("❌ 순이익률 낮음")
+
+    if not np.isnan(debt_ratio) and debt_ratio <= 100:
+        score += 2
+        notes.append("✅ 부채비율 안정")
+    elif not np.isnan(debt_ratio) and debt_ratio <= 180:
+        score += 1
+        notes.append("➖ 부채비율 보통")
+    elif not np.isnan(debt_ratio) and debt_ratio > 250:
+        score -= 2
+        notes.append("❌ 부채비율 높음")
+
+    if not np.isnan(ocf) and ocf > 0:
+        score += 2
+        notes.append("✅ 영업현금흐름 양수")
+
+    if not np.isnan(revenue) and revenue > 0:
+        score += 1
+        notes.append("✅ 매출 존재")
+
+    if danger >= 2:
+        return 1, notes
+
+    if score >= 8:
+        return 4, notes
+    elif score >= 4:
+        return 3, notes
+    elif score >= 1:
+        return 2, notes
+    else:
+        return 1, notes
+
+def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
+    if is_etf:
+        return 0, {"ok": True, "source": "etf"}, ["ETF는 재무점수 미합산"]
+
+    is_kr = str(ticker).endswith(".KS") or str(ticker).endswith(".KQ")
+    fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
+    score, notes = score_auto_financials(fin)
+    return score, fin, notes
+
+def get_final_fin_score(ticker, is_etf, asset_class):
+    fin_scores_df = load_fin_scores_db()
+    key = normalize_ticker(ticker)
+
+    if is_etf:
+        upsert_fin_score_db(
+            ticker=key,
+            auto_score=0,
+            manual_score=None,
+            final_score=0,
+            source="etf",
+            notes=["ETF는 재무점수 미합산"]
+        )
+        return 0, {
+            "auto_score": 0,
+            "manual_score": None,
+            "final_score": 0,
+            "source": "etf",
+            "notes": ["ETF는 재무점수 미합산"]
+        }
+
+    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+    if not matched.empty:
+        row = matched.iloc[0]
+        notes = []
+        try:
+            notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else []
+        except Exception:
+            notes = []
+
+        if pd.notna(row["manual_score"]):
+            return int(row["manual_score"]), {
+                "auto_score": row["auto_score"],
+                "manual_score": row["manual_score"],
+                "final_score": row["final_score"],
+                "source": row["source"],
+                "notes": notes
+            }
+
+        if pd.notna(row["auto_score"]):
+            return int(row["final_score"]), {
+                "auto_score": row["auto_score"],
+                "manual_score": row["manual_score"],
+                "final_score": row["final_score"],
+                "source": row["source"],
+                "notes": notes
+            }
+
+    auto_score, fin_auto, fin_notes = get_auto_fin_score_for_ticker(ticker, is_etf)
+
+    upsert_fin_score_db(
+        ticker=key,
+        auto_score=int(auto_score),
+        manual_score=None,
+        final_score=int(auto_score),
+        source=fin_auto.get("source", "unknown"),
+        notes=fin_notes
+    )
+
+    return int(auto_score), {
+        "auto_score": int(auto_score),
+        "manual_score": None,
+        "final_score": int(auto_score),
+        "source": fin_auto.get("source", "unknown"),
+        "notes": fin_notes
+    }
+
+def set_manual_fin_score(ticker, score):
+    key = normalize_ticker(ticker)
+    fin_scores_df = load_fin_scores_db()
+    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+
+    if matched.empty:
+        upsert_fin_score_db(
+            ticker=key,
+            auto_score=int(score),
+            manual_score=int(score),
+            final_score=int(score),
+            source="manual",
+            notes=[]
+        )
+    else:
+        row = matched.iloc[0]
+        notes = []
+        try:
+            notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else []
+        except Exception:
+            notes = []
+
+        upsert_fin_score_db(
+            ticker=key,
+            auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else int(score),
+            manual_score=int(score),
+            final_score=int(score),
+            source=row["source"] if pd.notna(row["source"]) else "manual",
+            notes=notes
+        )
+
+def reset_manual_fin_score(ticker):
+    delete_manual_fin_score_db(ticker)
+
+# -------------------------------------------------
+# 2-3. 보유자산 계산
+# -------------------------------------------------
+def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
+    if holdings_df.empty:
+        return pd.DataFrame(columns=[
+            "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
+            "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class"
+        ])
+
+    rows = []
+    for _, row in holdings_df.iterrows():
+        name = row.get("name", "")
+        ticker = row.get("ticker", "")
+        qty = float(row.get("qty", 0) or 0)
+        avg_price = float(row.get("avg_price", 0) or 0)
+        target_weight = float(row.get("target_weight", 0) or 0)
+        asset_class = row.get("asset_class", "us_stock")
     
+    raw_is_etf = row.get("is_etf", False)
+    if isinstance(raw_is_etf, str):
+        is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
+    else:
+        is_etf = bool(raw_is_etf)
+
+        px_df = load_price_df(ticker, "1mo")
+        cur_price = float(px_df["Close"].iloc[-1]) if not px_df.empty else 0.0
+
+        eval_amt = qty * cur_price
+        pnl = qty * (cur_price - avg_price)
+        ret = ((cur_price / avg_price) - 1) if avg_price > 0 else 0.0
+
+        is_kr = str(ticker).endswith(".KS") or str(ticker).endswith(".KQ")
+        krw_eval = eval_amt if is_kr else eval_amt * usdkrw
+
+        rows.append({
+            "자산명": name,
+            "티커": ticker,
+            "보유량": qty,
+            "매입가": avg_price,
+            "현재가": cur_price,
+            "평가금액": eval_amt,
+            "평가손익": pnl,
+            "수익률": ret,
+            "원화환산": krw_eval,
+            "목표비중": target_weight,
+            "is_etf": is_etf,
+            "asset_class": asset_class
+        })
+
+    df = pd.DataFrame(rows)
+    total_assets = df["원화환산"].sum() + krw_cash + (usd_cash * usdkrw)
+
+    if total_assets > 0:
+        df["현재비중"] = df["원화환산"] / total_assets * 100
+    else:
+        df["현재비중"] = 0.0
+
+    df["비중차이"] = df["목표비중"] - df["현재비중"]
+    return df
+
+def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df):
+    stock_value = holdings_table["원화환산"].sum() if not holdings_table.empty else 0.0
+    cash_value = krw_cash + (usd_cash * usdkrw)
+    current_asset = stock_value + cash_value
+
+    total_dividend = 0.0
+    if dividends_df is not None and not dividends_df.empty:
+        for _, r in dividends_df.iterrows():
+            amt = float(r.get("amount", 0) or 0)
+            ccy = str(r.get("currency", "KRW")).upper()
+            total_dividend += amt if ccy == "KRW" else amt * usdkrw
+
+    cum_profit = current_asset + total_dividend - seed_money
+    cum_return = (cum_profit / seed_money * 100) if seed_money > 0 else 0.0
+
+    return {
+        "current_asset": current_asset,
+        "stock_value": stock_value,
+        "cash_value": cash_value,
+        "total_dividend": total_dividend,
+        "cum_profit": cum_profit,
+        "cum_return": cum_return
+    }
+
+def get_holding_row_by_ticker(holdings_table, ticker):
+    if holdings_table.empty:
+        return None
+    t = normalize_ticker(ticker)
+    matched = holdings_table[holdings_table["티커"].apply(normalize_ticker) == t]
+    if not matched.empty:
+        return matched.iloc[0]
+    return None
+
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -286,31 +955,8 @@ def get_ticker_news(ticker, name, debug=False):
     return [], logs
 
 # -------------------------------------------------
-# 4. 데이터 로드 및 시트 연동
+# 4. 데이터 로드 (외부 의존성 제거)
 # -------------------------------------------------
-@st.cache_resource
-def get_gspread_client():
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
-    return gspread.authorize(creds)
-
-@st.cache_data(ttl=300)
-def load_sheet_by_gid(gid: str) -> pd.DataFrame:
-    try:
-        client = get_gspread_client()
-        sh = client.open_by_key(SPREADSHEET_ID)
-        ws = sh.get_worksheet_by_id(int(gid))
-        df = pd.DataFrame(ws.get_all_values())
-        if df.empty: return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
-        if df.shape[1] < 20:
-            for col in range(df.shape[1], 20): df[col] = ""
-        if len(df) < 60:
-            pad = pd.DataFrame([[""] * df.shape[1]] * (60 - len(df)), columns=df.columns)
-            df = pd.concat([df, pad], ignore_index=True)
-        return df
-    except Exception as e:
-        st.error(f"Sheet Load Error: {e}")
-        return pd.DataFrame(columns=range(20), index=range(60)).fillna("")
-
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
     df = yf.download(ticker, period=period, interval="1d", progress=False)
@@ -342,44 +988,6 @@ def get_macro_analysis():
     final_macro_risk = storm_count + macro_trend + move_score
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))
     return results, final_macro_risk, macro_penalty, move_val
-
-@st.cache_data(ttl=300)
-def load_invest_sheet():
-    raw = load_sheet_by_gid(INVEST_SHEET_GID)
-    return {"seed_money": parse_num(raw.iloc[3, 17]), "current_asset": parse_num(raw.iloc[5, 15]), "cum_profit": parse_num(raw.iloc[5, 16])}
-
-@st.cache_data(ttl=300)
-def load_portfolio_sheet():
-    raw = load_sheet_by_gid(ETF_SHEET_GID)
-    data = raw.iloc[5:35, 1:16].copy()
-    data.columns = raw.iloc[4, 1:16].tolist()
-    df = pd.DataFrame({
-        "자산명": data.iloc[:, 5], "티커입력": data.iloc[:, 7], 
-        "보유량": data.iloc[:, 8].apply(parse_num), "매입단가": data.iloc[:, 9].apply(parse_num),
-        "현재가(시트)": data.iloc[:, 10].apply(parse_num), "평가금액": data.iloc[:, 13].apply(parse_num)
-    })
-    df["자산명"] = df["자산명"].astype(str).str.strip()
-    df["티커입력"] = df["티커입력"].astype(str).str.strip()
-    return df
-
-@st.cache_data(ttl=300)
-def load_control_sheet():
-    raw = load_sheet_by_gid(CONTROL_SHEET_GID)
-    block = raw.iloc[46:57, 3:7].copy()
-    block.columns = ["자산명", "티커", "목표비중", "현재비중"]
-    for col in ["목표비중", "현재비중"]: block[col] = block[col].apply(parse_num).fillna(0)
-    return block
-
-@st.cache_data(ttl=300)
-def load_fin_score_sheet():
-    raw = load_sheet_by_gid(FIN_SHEET_GID)
-    # A열(0): 종목명, B열(1): 티커, G열(6): 점수
-    block = raw.iloc[0:19, [0, 1, 6]].copy()
-    block.columns = ["자산명", "티커", "재무점수"]
-    block["자산명"] = block["자산명"].astype(str).str.strip()
-    block["티커"] = block["티커"].astype(str).str.strip()
-    block["재무점수"] = block["재무점수"].apply(parse_num).fillna(0).astype(int)
-    return block
 
 # --- 세션 초기화 (유일한 곳) ---
 if "fin_score_map" not in st.session_state:
@@ -476,16 +1084,37 @@ def build_indicators(df):
 # -------------------------------------------------
 # 6. 범용화 인터페이스 함수
 # -------------------------------------------------
+def get_sheet_current_weight(name, ticker):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is None:
+        return 0.0
+    return float(row.get("현재비중", 0.0) or 0.0)
+
+def get_target_weight_from_sheet(name, ticker):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is None:
+        return 0.0
+    return float(row.get("목표비중", 0.0) or 0.0)
+
+def get_my_price(name, ticker):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is None:
+        return 0.0
+    return float(row.get("매입가", 0.0) or 0.0)
+
+def has_position(name, ticker):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is None:
+        return False
+    return float(row.get("보유량", 0.0) or 0.0) > 0
+
 def get_effective_total_asset(mode, user_asset, sheet_eval):
     return sheet_eval if mode == "개인모드" else (float(user_asset) if user_asset > 0 else 0.0)
 
 def get_effective_weights(mode, name, ticker, u_curr_w, u_targ_w):
     if mode == "개인모드":
-        t_norm = normalize_ticker(ticker); n_norm = normalize_text(name)
-        m_t = control_df[control_df["티커"].apply(normalize_ticker) == t_norm]
-        m_n = control_df[control_df["자산명"].apply(normalize_text) == n_norm]
-        cw = float(m_t.iloc[0]["현재비중"]) if not m_t.empty else (float(m_n.iloc[0]["현재비중"]) if not m_n.empty else 0.0)
-        tw = float(m_t.iloc[0]["목표비중"]) if not m_t.empty else (float(m_n.iloc[0]["목표비중"]) if not m_n.empty else 0.0)
+        cw = get_sheet_current_weight(name, ticker)
+        tw = get_target_weight_from_sheet(name, ticker)
         return cw, tw
     return float(u_curr_w), float(u_targ_w)
 
@@ -705,14 +1334,9 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        fin_key = f"{name}|{normalize_ticker(tkr)}"
-
-        if is_etf:
-            f_score = 0
-        elif name.startswith("탐색:"):
-            f_score = item.get("fin_score", fin_map.get(fin_key, 3))
-        else:
-            f_score = get_fin_score_from_sheet(name, tkr, is_etf)
+        auto_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+        fin_key = normalize_ticker(tkr)
+        f_score = int(fin_map.get(fin_key, auto_fin_score))
 
         c = calc_scores_and_decision(
             name, tkr, is_etf, a_class, df,
@@ -735,48 +1359,6 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     return pd.DataFrame(rows)
 
-# legacy helper: 현재는 get_effective_weights() 경로를 주로 사용
-def get_sheet_current_weight(name, ticker):
-    t = normalize_ticker(ticker); matched = control_df[control_df["티커"].apply(normalize_ticker) == t]
-    return float(matched.iloc[0]["현재비중"]) if not matched.empty else 0.0
-
-# legacy helper: 현재는 get_effective_weights() 경로를 주로 사용
-def get_target_weight_from_sheet(name, ticker):
-    t = normalize_ticker(ticker); matched = control_df[control_df["티커"].apply(normalize_ticker) == t]
-    return float(matched.iloc[0]["목표비중"]) if not matched.empty else 0.0
-
-def get_my_price(name, ticker):
-    t_norm = normalize_ticker(ticker)
-    pf = portfolio_df.copy()
-    pf["티커정리"] = pf["티커입력"].apply(normalize_ticker)
-    matched = pf[pf["티커정리"] == t_norm]
-    return float(matched.iloc[0]["매입단가"]) if not matched.empty and pd.notna(matched.iloc[0]["매입단가"]) else 0.0
-
-def get_fin_score_from_sheet(name, ticker, is_etf=False):
-    if is_etf:
-        return 0
-
-    t_norm = normalize_ticker(ticker)
-    n_norm = normalize_text(name)
-
-    matched_t = fin_score_df[fin_score_df["티커"].apply(normalize_ticker) == t_norm]
-    if not matched_t.empty:
-        return int(matched_t.iloc[0]["재무점수"])
-
-    matched_n = fin_score_df[fin_score_df["자산명"].apply(normalize_text) == n_norm]
-    if not matched_n.empty:
-        return int(matched_n.iloc[0]["재무점수"])
-
-    return 2
-    
-def has_position(name, ticker):
-    t_norm = normalize_ticker(ticker)
-    pf = portfolio_df.copy()
-    pf["티커정리"] = pf["티커입력"].apply(normalize_ticker)
-    matched = pf[pf["티커정리"] == t_norm]
-    return (not matched.empty) and (parse_num(matched.iloc[0]["보유량"]) > 0)
-
-
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
@@ -795,18 +1377,34 @@ if macro_res:
 else:
     st.info("매크로 데이터를 불러오지 못했습니다.")
 
-invest_data = load_invest_sheet()
-portfolio_df = load_portfolio_sheet()
-control_df = load_control_sheet()
-fin_score_df = load_fin_score_sheet()
-total_eval = invest_data["current_asset"]
+# --- 데이터 로드 블록 (SQLite DB 연동) ---
+settings = load_settings_db()
+holdings_df = load_holdings_db()
+dividends_df = load_dividends_db()
+monthly_logs_df = load_monthly_logs_db()
 
-tab1, tab2 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소"])
+seed_money = float(settings.get("seed_money", 0.0))
+krw_cash = float(settings.get("krw_cash", 0.0))
+usd_cash = float(settings.get("usd_cash", 0.0))
+usdkrw = float(settings.get("usdkrw", 1400.0))
+
+holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
+portfolio_summary = calc_portfolio_summary(
+    holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df
+)
+total_eval = portfolio_summary["current_asset"]
+# --------------------------------------------
+
+tab1, tab2, tab3 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소", "⚙️ 자산 관리"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
-    if app_mode == "개인모드":
-        st.write(f'현재자산: {invest_data["current_asset"]:,.0f}원 | 누적손익: {invest_data["cum_profit"]:,.0f}원')
+    st.write(
+        f"현재자산: {portfolio_summary['current_asset']:,.0f}원 | "
+        f"누적손익: {portfolio_summary['cum_profit']:,.0f}원 | "
+        f"누적수익률: {portfolio_summary['cum_return']:.2f}% | "
+        f"누적배당금: {portfolio_summary['total_dividend']:,.0f}원"
+    )
     st.caption("전광판 등록 종목만 표시됩니다.")
 
     remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
@@ -884,37 +1482,42 @@ with tab2:
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
     f_labels = get_fin_label_map()
-    fin_key = f"{name}|{normalize_ticker(tkr)}"
-    saved_item = get_watchlist_item(tkr)
+    fin_key = normalize_ticker(tkr)
+    auto_fin_score, fin_meta = get_final_fin_score(tkr, is_etf, a_class)
 
-    if is_etf:
-        fin_score = 0
-        st.markdown(
-            f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]} (ETF는 재무점수 미합산)</div>",
-            unsafe_allow_html=True
-        )
-    elif not is_free:
-        fin_score = get_fin_score_from_sheet(name, tkr, is_etf)
-        st.markdown(
-            f"<div class='info-panel'><b>재무 점수 (시트 고정값)</b><br>{f_labels[fin_score]}</div>",
-            unsafe_allow_html=True
-        )
-    else:
-        default_f = 3
-        if saved_item is not None and "fin_score" in saved_item:
-            default_f = int(saved_item["fin_score"])
-        else:
-            default_f = int(st.session_state.fin_score_map.get(fin_key, 3))
+    if fin_key not in st.session_state.fin_score_map:
+        st.session_state.fin_score_map[fin_key] = auto_fin_score
 
-        fin_score = st.radio(
-            "재무 점수",
+    fin_score = int(st.session_state.fin_score_map[fin_key])
+
+    st.markdown(
+        f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>",
+        unsafe_allow_html=True
+    )
+
+    with st.expander("재무점수 계산 근거"):
+        st.write("source:", fin_meta.get("source"))
+        for n in fin_meta.get("notes", []):
+            st.write("-", n)
+
+    manual_override = st.checkbox("재무점수 수동 수정", key=f"manual_fin_{fin_key}")
+    if manual_override:
+        manual_score = st.radio(
+            "수동 재무점수",
             [0, 1, 2, 3, 4],
-            index=default_f,
+            index=int(fin_score),
             format_func=lambda x: f_labels[x],
             horizontal=True,
-            key=f"fin_score_{fin_key}"
+            key=f"manual_fin_score_{fin_key}"
         )
-        st.session_state.fin_score_map[fin_key] = fin_score
+        set_manual_fin_score(tkr, manual_score)
+        st.session_state.fin_score_map[fin_key] = int(manual_score)
+        fin_score = int(manual_score)
+
+        if st.button("자동 재무점수로 되돌리기", key=f"reset_manual_{fin_key}"):
+            reset_manual_fin_score(tkr)
+            st.session_state.fin_score_map[fin_key] = get_final_fin_score(tkr, is_etf, a_class)[0]
+            st.rerun()
 
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
@@ -923,18 +1526,16 @@ with tab2:
         "name": name,
         "ticker": tkr,
         "is_etf": is_etf,
-        "asset_class": a_class
+        "asset_class": a_class,
+        "fin_score": int(fin_score)
     }
 
-    if name.startswith("탐색:") and not is_etf:
-        current_item["fin_score"] = int(fin_score)
-        
-    if name.startswith("탐색:") and not is_etf and is_in_watchlist(tkr):
+    if is_in_watchlist(tkr):
         for item in st.session_state.watchlist:
             if normalize_ticker(item["ticker"]) == normalize_ticker(tkr):
                 item["fin_score"] = int(fin_score)
                 break
-        sync_watchlist_to_query()    
+        sync_watchlist_to_query()
         
     with a1:
         if is_in_watchlist(tkr):
@@ -957,8 +1558,6 @@ with tab2:
         
     df = load_price_df(tkr, "1y")
     if not df.empty:
-        
-        # [수정] 원본 df에 지표를 덮어쓰기 위해 분리 실행 (차트 에러 방지용)
         df = build_indicators(df)
         
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p, 
@@ -985,7 +1584,7 @@ with tab2:
             if is_free or app_mode == "범용모드": 
                 st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
-                if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (엑셀 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
+                if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
                 st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
             
             if app_mode == "범용모드": 
@@ -1051,3 +1650,88 @@ with tab2:
                 key=f"prompt_box_{normalize_ticker(tkr)}"
             )
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
+
+with tab3:
+    st.subheader("앱 내부 자산 관리")
+
+    st.markdown("### 1) 기본 설정")
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    with col_s1:
+        new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
+    with col_s2:
+        new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
+    with col_s3:
+        new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
+    with col_s4:
+        new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
+
+    if st.button("기본 설정 저장"):
+        save_settings_db(new_seed, new_krw, new_usd, new_fx)
+        st.success("기본 설정 저장 완료")
+        st.rerun()
+
+    st.markdown("### 2) 보유 종목 관리")
+    holdings_editor_df = load_holdings_db()
+    if holdings_editor_df.empty:
+        holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
+
+    edited_holdings = st.data_editor(
+        holdings_editor_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="holdings_editor"
+    )
+
+    if st.button("보유 종목 저장"):
+        save_holdings_db(edited_holdings.fillna(""))
+        st.success("보유 종목 저장 완료")
+        st.rerun()
+
+    st.markdown("### 3) 배당 내역 관리")
+    dividends_editor_df = load_dividends_db()
+    if dividends_editor_df.empty:
+        dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
+
+    edited_dividends = st.data_editor(
+        dividends_editor_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="dividends_editor"
+    )
+
+    if st.button("배당 내역 저장"):
+        save_dividends_db(edited_dividends.fillna(""))
+        st.success("배당 내역 저장 완료")
+        st.rerun()
+
+    st.markdown("### 4) 월별 로그 관리")
+    monthly_editor_df = load_monthly_logs_db()
+    if monthly_editor_df.empty:
+        monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
+
+    edited_monthly = st.data_editor(
+        monthly_editor_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="monthly_editor"
+    )
+
+    if st.button("월별 로그 저장"):
+        save_monthly_logs_db(edited_monthly.fillna(""))
+        st.success("월별 로그 저장 완료")
+        st.rerun()
+
+    st.markdown("### 5) 현재 계산 결과")
+    st.write(
+        f"주식 평가금: {portfolio_summary['stock_value']:,.0f}원 | "
+        f"현금 포함 자산: {portfolio_summary['current_asset']:,.0f}원 | "
+        f"누적손익: {portfolio_summary['cum_profit']:,.0f}원 | "
+        f"누적수익률: {portfolio_summary['cum_return']:.2f}%"
+    )
+
+    if not holdings_table.empty:
+        show_df = holdings_table.copy()
+        show_df["수익률"] = show_df["수익률"].apply(lambda x: f"{x*100:.2f}%")
+        st.dataframe(show_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("등록된 보유 종목이 없습니다.")
