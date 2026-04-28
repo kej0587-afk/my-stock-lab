@@ -456,7 +456,6 @@ init_db()
 # -------------------------------------------------
 @st.cache_resource
 def get_dart_client():
-    # 사용자가 직접 전달한 API 키를 기본값으로 하드코딩
     api_key = st.secrets.get("dart_api_key", "4cef34bd5edf4a8ae9692068323fea678ecad478")
     if not api_key:
         return None
@@ -564,7 +563,7 @@ def fetch_us_financials_auto(ticker: str):
         balance_sheet = getattr(tk, "balance_sheet", pd.DataFrame())
         cashflow = getattr(tk, "cashflow", pd.DataFrame())
 
-        if income_stmt is None or income_stmt.empty:
+        if (income_stmt is None or income_stmt.empty) and not info:
             return {"ok": False, "reason": "Yahoo 재무제표 없음"}
 
         def get_row(df, row_names):
@@ -607,6 +606,9 @@ def fetch_us_financials_auto(ticker: str):
         elif not np.isnan(net_income) and not np.isnan(revenue) and revenue != 0:
             net_margin = net_income / revenue * 100
 
+        if np.isnan(revenue) and np.isnan(op_income) and np.isnan(net_income) and np.isnan(roe):
+            return {"ok": False, "reason": "Yahoo 재무 핵심값 없음"}
+
         return {
             "ok": True,
             "source": "yfinance",
@@ -627,7 +629,11 @@ def fetch_us_financials_auto(ticker: str):
 
 def score_auto_financials(fin):
     if not fin.get("ok", False):
-        return 3, ["자동 재무 조회 실패 → 기본 3점"]
+        reason = fin.get("reason", "원인 미상")
+        return 3, [
+            "자동 재무 조회 실패 → 기본 3점",
+            f"사유: {reason}"
+        ]
 
     roe = fin.get("roe", np.nan)
     debt_ratio = fin.get("debt_ratio", np.nan)
@@ -707,6 +713,89 @@ def score_auto_financials(fin):
         return 2, notes
     else:
         return 1, notes
+        
+ORDER_BASED_TICKERS = {
+    "012450",      # 한화에어로스페이스
+    "012450.ks",
+    "329180",      # HD현대중공업
+    "329180.ks"
+}
+
+def score_order_based_financials(fin):
+    if not fin.get("ok", False):
+        reason = fin.get("reason", "원인 미상")
+        return 3, [f"자동 재무 조회 실패 → 기본 3점", f"사유: {reason}"]
+
+    roe = fin.get("roe", np.nan)
+    debt_ratio = fin.get("debt_ratio", np.nan)
+    op_margin = fin.get("op_margin", np.nan)
+    net_margin = fin.get("net_margin", np.nan)
+    ocf = fin.get("ocf", np.nan)
+    revenue = fin.get("revenue", np.nan)
+    net_income = fin.get("net_income", np.nan)
+
+    notes = []
+    score = 0
+    danger = 0
+
+    if not np.isnan(net_income) and net_income < 0:
+        danger += 1
+        notes.append("🚨 순이익 음수")
+    if not np.isnan(ocf) and ocf < 0:
+        notes.append("⚠️ 영업현금흐름 음수(수주형 특성 반영)")
+
+    if not np.isnan(roe) and roe >= 8:
+        score += 2
+        notes.append("✅ ROE 양호")
+    elif not np.isnan(roe) and roe >= 3:
+        score += 1
+        notes.append("➖ ROE 보통")
+    elif not np.isnan(roe) and roe < 1:
+        score -= 1
+        notes.append("❌ ROE 낮음")
+
+    if not np.isnan(op_margin) and op_margin >= 8:
+        score += 2
+        notes.append("✅ 영업이익률 양호")
+    elif not np.isnan(op_margin) and op_margin >= 3:
+        score += 1
+        notes.append("➖ 영업이익률 보통")
+    elif not np.isnan(op_margin) and op_margin < 1:
+        score -= 1
+        notes.append("❌ 영업이익률 낮음")
+
+    if not np.isnan(net_margin) and net_margin >= 3:
+        score += 1
+        notes.append("✅ 순이익률 양호")
+    elif not np.isnan(net_margin) and net_margin < 0:
+        score -= 1
+        notes.append("❌ 순이익률 음수")
+
+    if not np.isnan(debt_ratio) and debt_ratio <= 200:
+        score += 2
+        notes.append("✅ 부채비율 허용")
+    elif not np.isnan(debt_ratio) and debt_ratio <= 300:
+        score += 1
+        notes.append("➖ 부채비율 보통")
+    elif not np.isnan(debt_ratio) and debt_ratio > 400:
+        score -= 2
+        notes.append("❌ 부채비율 높음")
+
+    if not np.isnan(revenue) and revenue > 0:
+        score += 1
+        notes.append("✅ 매출 존재")
+
+    if danger >= 2:
+        return 1, notes
+
+    if score >= 6:
+        return 4, notes
+    elif score >= 3:
+        return 3, notes
+    elif score >= 0:
+        return 2, notes
+    else:
+        return 1, notes
 
 def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     if is_etf:
@@ -714,7 +803,13 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
 
     is_kr = str(ticker).endswith(".KS") or str(ticker).endswith(".KQ")
     fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
-    score, notes = score_auto_financials(fin)
+
+    t_norm = normalize_ticker(ticker)
+    if t_norm in ORDER_BASED_TICKERS:
+        score, notes = score_order_based_financials(fin)
+    else:
+        score, notes = score_auto_financials(fin)
+
     return score, fin, notes
 
 def get_final_fin_score(ticker, is_etf, asset_class):
@@ -735,7 +830,8 @@ def get_final_fin_score(ticker, is_etf, asset_class):
             "manual_score": None,
             "final_score": 0,
             "source": "etf",
-            "notes": ["ETF는 재무점수 미합산"]
+            "notes": ["ETF는 재무점수 미합산"],
+            "metrics": {}
         }
 
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
@@ -747,23 +843,20 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         except Exception:
             notes = []
 
+        meta = {
+            "auto_score": row["auto_score"],
+            "manual_score": row["manual_score"],
+            "final_score": row["final_score"],
+            "source": row["source"],
+            "notes": notes,
+            "metrics": {}
+        }
+
         if pd.notna(row["manual_score"]):
-            return int(row["manual_score"]), {
-                "auto_score": row["auto_score"],
-                "manual_score": row["manual_score"],
-                "final_score": row["final_score"],
-                "source": row["source"],
-                "notes": notes
-            }
+            return int(row["manual_score"]), meta
 
         if pd.notna(row["auto_score"]):
-            return int(row["final_score"]), {
-                "auto_score": row["auto_score"],
-                "manual_score": row["manual_score"],
-                "final_score": row["final_score"],
-                "source": row["source"],
-                "notes": notes
-            }
+            return int(row["final_score"]), meta
 
     auto_score, fin_auto, fin_notes = get_auto_fin_score_for_ticker(ticker, is_etf)
 
@@ -781,7 +874,16 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         "manual_score": None,
         "final_score": int(auto_score),
         "source": fin_auto.get("source", "unknown"),
-        "notes": fin_notes
+        "notes": fin_notes,
+        "metrics": {
+            "roe": fin_auto.get("roe"),
+            "op_margin": fin_auto.get("op_margin"),
+            "net_margin": fin_auto.get("net_margin"),
+            "debt_ratio": fin_auto.get("debt_ratio"),
+            "ocf": fin_auto.get("ocf"),
+            "revenue": fin_auto.get("revenue"),
+            "net_income": fin_auto.get("net_income"),
+        }
     }
 
 def set_manual_fin_score(ticker, score):
@@ -836,12 +938,12 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         avg_price = float(row.get("avg_price", 0) or 0)
         target_weight = float(row.get("target_weight", 0) or 0)
         asset_class = row.get("asset_class", "us_stock")
-    
-    raw_is_etf = row.get("is_etf", False)
-    if isinstance(raw_is_etf, str):
-        is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
-    else:
-        is_etf = bool(raw_is_etf)
+        
+        raw_is_etf = row.get("is_etf", False)
+        if isinstance(raw_is_etf, str):
+            is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
+        else:
+            is_etf = bool(raw_is_etf)
 
         px_df = load_price_df(ticker, "1mo")
         cur_price = float(px_df["Close"].iloc[-1]) if not px_df.empty else 0.0
@@ -1497,6 +1599,20 @@ with tab2:
 
     with st.expander("재무점수 계산 근거"):
         st.write("source:", fin_meta.get("source"))
+        st.write("auto_score:", fin_meta.get("auto_score"))
+        st.write("manual_score:", fin_meta.get("manual_score"))
+        st.write("final_score:", fin_meta.get("final_score"))
+
+        metrics = fin_meta.get("metrics", {})
+        if metrics:
+            st.write("roe:", metrics.get("roe"))
+            st.write("op_margin:", metrics.get("op_margin"))
+            st.write("net_margin:", metrics.get("net_margin"))
+            st.write("debt_ratio:", metrics.get("debt_ratio"))
+            st.write("ocf:", metrics.get("ocf"))
+            st.write("revenue:", metrics.get("revenue"))
+            st.write("net_income:", metrics.get("net_income"))
+
         for n in fin_meta.get("notes", []):
             st.write("-", n)
 
