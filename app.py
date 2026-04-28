@@ -872,12 +872,12 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         }
     }
     
-if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (normalize_ticker(tkr),))
-    conn.commit()
-    conn.close()
+    if st.button("재무점수 강제 재계산", key=f"refresh_fin_{fin_key}"):
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM fin_scores WHERE ticker = ?", (normalize_ticker(tkr),))
+        conn.commit()
+        conn.close()
 
     if fin_key in st.session_state.fin_score_map:
         del st.session_state.fin_score_map[fin_key]
