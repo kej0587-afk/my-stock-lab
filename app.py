@@ -2389,7 +2389,7 @@ with tab2:
             u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
             u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
-        f_labels = get_fin_label_map()
+    f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
 
     fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
