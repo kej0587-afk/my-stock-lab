@@ -1,3 +1,5 @@
+import io
+import zipfile
 import requests
 import json
 import base64
@@ -536,14 +538,77 @@ FIN_B_KEYS = [
     "quarter_warning",
 ]
 
+def get_dart_api_key():
+    return st.secrets.get("dart_api_key", "d30af980502d18960f63b00d8a0ad28a61823346").strip()
 
-@st.cache_resource
-def get_dart_client():
-    api_key = st.secrets.get("dart_api_key", "")
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_dart_corp_code_map():
+    api_key = get_dart_api_key()
     if not api_key:
-        return None
-    return OpenDartReader(api_key)
+        return {}
 
+    url = "https://opendart.fss.or.kr/api/corpCode.xml"
+
+    res = requests.get(url, params={"crtfc_key": api_key}, timeout=15)
+    res.raise_for_status()
+
+    zf = zipfile.ZipFile(io.BytesIO(res.content))
+    xml_name = zf.namelist()[0]
+    root = ET.fromstring(zf.read(xml_name))
+
+    code_map = {}
+    for item in root.findall("list"):
+        corp_code = (item.findtext("corp_code") or "").strip()
+        stock_code = (item.findtext("stock_code") or "").strip()
+
+        if corp_code and stock_code:
+            code_map[stock_code] = corp_code
+
+    return code_map
+
+
+def get_dart_corp_code(stock_code):
+    stock_code = normalize_stock_code(stock_code)
+    code_map = fetch_dart_corp_code_map()
+    return code_map.get(stock_code)
+
+
+def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
+    api_key = get_dart_api_key()
+    if not api_key:
+        raise RuntimeError("DART API 키 없음")
+
+    corp_code = get_dart_corp_code(stock_code)
+    if not corp_code:
+        raise RuntimeError(f"DART corp_code 매핑 실패: {stock_code}")
+
+    url = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
+    last_message = ""
+
+    for fs_div in ["CFS", "OFS"]:
+        params = {
+            "crtfc_key": api_key,
+            "corp_code": corp_code,
+            "bsns_year": str(fiscal_year),
+            "reprt_code": report_code,
+            "fs_div": fs_div,
+        }
+
+        res = requests.get(url, params=params, timeout=15)
+        res.raise_for_status()
+
+        data = res.json()
+        status = str(data.get("status", ""))
+        message = data.get("message", "")
+        last_message = message
+
+        if status == "000" and data.get("list"):
+            df = pd.DataFrame(data["list"])
+            df["fs_div"] = fs_div
+            return df
+
+    return pd.DataFrame()
 
 def is_order_based_ticker(ticker: str) -> bool:
     return normalize_ticker(ticker) in ORDER_BASED_TICKERS
@@ -745,10 +810,6 @@ def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quart
     return enrich_fin_record(rec)
 
 def fetch_kr_financials_auto(ticker: str):
-    dart = get_dart_client()
-    if dart is None:
-        return {"ok": False, "source": "dart", "reason": "DART API 키 없음"}
-
     stock_code = normalize_stock_code(ticker)
     current_year = pd.Timestamp.today().year
 
@@ -760,8 +821,8 @@ def fetch_kr_financials_auto(ticker: str):
                 break
 
             try:
-                fs = dart.finstate_all(stock_code, bsns_year=str(year), reprt_code="11011")
-                if fs is not None and len(fs) > 0:
+                fs = fetch_dart_finstate_all_raw(stock_code, year, "11011")
+                if fs is not None and not fs.empty:
                     rec = extract_dart_metrics(fs, year, "11011")
                     rec["period"] = "annual"
                     rec["report_label"] = "사업보고서"
@@ -784,8 +845,8 @@ def fetch_kr_financials_auto(ticker: str):
         for year in range(current_year, current_year - 4, -1):
             for report_code in ["11013", "11012", "11014"]:
                 try:
-                    fs = dart.finstate_all(stock_code, bsns_year=str(year), reprt_code=report_code)
-                    if fs is not None and len(fs) > 0:
+                    fs = fetch_dart_finstate_all_raw(stock_code, year, report_code)
+                    if fs is not None and not fs.empty:
                         rec = extract_dart_metrics(fs, year, report_code)
                         if has_dart_core_values(rec):
                             quarter_cum_by_year.setdefault(int(year), {})[report_code] = rec
