@@ -2142,7 +2142,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif rsi_now <= 30: dec, col = "🔥낙폭과대: 줍줍 찬스", "#16a34a"
             elif rs_label == "🚀강함" and mfi_now < 35: dec, col = "💎S급: 과매도(풀매수)", "#16a34a"
             elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등", "#16a34a"
-            elif trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and cur_p <= my_price: dec, col = "📈정배열: 눌림목 매수", "#16a34a"
+            elif (trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and price_vs_avg <= -0.03 and price_vs_avg > -0.15 and curr_w < targ_w): dec, col = "📈정배열: -3% 이상 눌림 분할매수", "#16a34a"
             elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)", "#d97706"
             elif cur_p <= my_price:
                 if curr_w >= targ_w and targ_w > 0:
@@ -2153,9 +2153,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     dec, col = "✅평단 -3~-7%: 소액 분할매수", "#16a34a"
                 elif price_vs_avg >= -0.15 and fin_score >= 3 and final_macro_risk < 4.5:
                     dec, col = "🎯평단 -7~-15%: 조건부 분할매수", "#8b5cf6"
-                else:
+                else: 
                     dec, col = "🚫평단 -15%↓/추세위험: 원인 점검", "#dc2626"
-            else: dec, col = "⏳보유중(신호대기)", "#64748b"
+        else: dec, col = "⏳보유중(신호대기)", "#64748b"
         else:
             if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기", "#d97706"
             elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
