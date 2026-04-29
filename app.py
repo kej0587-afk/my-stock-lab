@@ -2023,7 +2023,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     curr_w, targ_w = get_effective_weights(app_mode, name, ticker, user_curr_w, user_targ_w)
     buy_amount = get_effective_buy_amount(app_mode, name, ticker, eff_total, user_curr_w, user_targ_w)
     price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
-    
+
+    is_stock_add_on_strength = (
+        (not is_etf) and
+        has_pos and
+        my_price > 0 and
+        targ_w > 0 and
+        weight_gap >= 2 and
+        0.00 < price_vs_avg <= 0.05 and
+        trend_label in ["🚀정배열(상승)", "⏳혼조세"] and
+        rs_label in ["🚀강함", "➖보통"] and
+        last["MACD"] > prev["MACD"] and
+        mfi_now < 80 and
+        rsi_now < 70 and
+        pct_b_now < 1.00 and
+        vol_ratio < 2.5 and
+        final_macro_risk < 4.5
+    )
+                             
     is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
@@ -2134,6 +2151,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col = "✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a"
         elif is_etf_accumulation_ok:
             dec, col = "✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a"
+        elif is_stock_add_on_strength:
+            dec, col = "✅상승확인: 2차 정찰 추매 가능", "#16a34a"    
         elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
             dec, col = "⏳평단이상: 추매 대기(보유)", "#d97706"
         elif has_pos:
