@@ -2072,6 +2072,20 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_exception_not_chasing
     )
 
+    weight_gap = targ_w - curr_w
+
+    is_etf_accumulation_ok = (
+        is_etf and
+        has_pos and
+        targ_w > 0 and
+        weight_gap >= 3 and
+        (trend_label != "🌊역배열(하락)" or weight_gap >= 10) and
+        mfi_now < 85 and
+        rsi_now < 75 and
+        pct_b_now < 1.03 and
+        final_macro_risk < 4.5
+    )
+
     if is_free:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
@@ -2113,9 +2127,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
-        elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린상단 이탈", "#dc2626"
+        elif (not is_etf) and pct_b_now >= 0.95:
+            dec, col = "🚫하드차단: 볼린상단 이탈", "#dc2626"
+        elif is_etf_accumulation_ok and weight_gap >= 10:
+            dec, col = "✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a"
+        elif is_etf_accumulation_ok:
+            dec, col = "✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a"
         elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
-            dec, col = "⏳평단이상: 추매 대기(보유)", "#d97706"    
+            dec, col = "⏳평단이상: 추매 대기(보유)", "#d97706"
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류", "#d97706"
