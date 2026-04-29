@@ -2155,7 +2155,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     dec, col = "🎯평단 -7~-15%: 조건부 분할매수", "#8b5cf6"
                 else: 
                     dec, col = "🚫평단 -15%↓/추세위험: 원인 점검", "#dc2626"
-        else: dec, col = "⏳보유중(신호대기)", "#64748b"
+            else: dec, col = "⏳보유중(신호대기)", "#64748b"
         else:
             if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기", "#d97706"
             elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
