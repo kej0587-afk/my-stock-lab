@@ -2022,7 +2022,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     eff_total = get_effective_total_asset(app_mode, user_total_asset, total_eval)
     curr_w, targ_w = get_effective_weights(app_mode, name, ticker, user_curr_w, user_targ_w)
     buy_amount = get_effective_buy_amount(app_mode, name, ticker, eff_total, user_curr_w, user_targ_w)
+                                 
     price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
+    weight_gap = targ_w - curr_w
+
 
     is_stock_add_on_strength = (
         (not is_etf) and
@@ -2089,9 +2092,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         (is_ma5_pullback or is_bullish_fvg_pullback) and
         is_exception_not_chasing
     )
-
-    weight_gap = targ_w - curr_w
-
+ 
     is_etf_accumulation_ok = (
         is_etf and
         has_pos and
