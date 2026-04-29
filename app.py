@@ -2144,7 +2144,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등", "#16a34a"
             elif trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and cur_p <= my_price: dec, col = "📈정배열: 눌림목 매수", "#16a34a"
             elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)", "#d97706"
-                       elif cur_p <= my_price:
+            elif cur_p <= my_price:
                 if curr_w >= targ_w and targ_w > 0:
                     dec, col = "⏸️평단이하: 비중 충족(추매 보류)", "#d97706"
                 elif price_vs_avg > -0.03:
