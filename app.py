@@ -13,7 +13,7 @@ import ta
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
-import OpenDartReader
+import html
 import sqlite3
 
 # -------------------------------------------------
@@ -348,6 +348,9 @@ def save_holdings_db(df):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("DELETE FROM holdings")
+    ticker_value = str(row.get("ticker", "")).strip()
+    if not ticker_value:
+        continue
     for _, row in df.iterrows():
         raw_is_etf = row.get("is_etf", False)
         if isinstance(raw_is_etf, str):
@@ -559,11 +562,28 @@ FIN_B_KEYS = [
     "quarter_warning",
 ]
 
-FIN_DATA_TTL_SECONDS = 21600  # 6시간. 점수식은 매번 계산, 원천 API만 캐시
+FIN_DATA_TTL_SECONDS = 21600
 
+AUTO_FIN_FAIL_SCORE = 2
+UNCALCULATED_FIN_DEFAULT_SCORE = 3
+
+KR_MARKET_BENCHMARK = "069500.KS"
+KR_US_NASDAQ_BENCHMARK = "379810.KS"
+KR_US_SP_BENCHMARK = "379800.KS"
+US_TECH_BENCHMARK = "QQQM"
+US_BROAD_BENCHMARK = "SPYM"
+RS_LOOKBACK_DAYS = 20
+
+US_TECH_OR_GROWTH_TICKERS = {
+    "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
+    "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "TSM",
+    "NBIS", "SNDK", "ADBE", "CRM", "ORCL", "NOW", "SNOW", "PLTR",
+    "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI"
+}
+
+# get_dart_api_key 함수 교체
 def get_dart_api_key():
-    return st.secrets.get("dart_api_key", "d30af980502d18960f63b00d8a0ad28a61823346").strip()
-
+    return str(st.secrets.get("dart_api_key", "")).strip()
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dart_corp_code_map():
@@ -1475,11 +1495,11 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
             "quarter_judgements": {},
             "weighted_scores": {},
             "messages": [
-                "자동 재무 조회 실패 → 기본 3점",
-                f"사유: {fin.get('reason', '원인 미상')}",
+                 f"자동 재무 조회 실패 -> 보수 임시 {AUTO_FIN_FAIL_SCORE}점",
+                 f"사유: {fin.get('reason', '원인 미상')}",
             ],
         }
-        return 3, fin, notes, metrics
+        return AUTO_FIN_FAIL_SCORE, fin, notes, metrics
 
     order_profile = is_order_based_ticker(ticker)
     annual_j, quarter_j, all_j, metrics = build_fin_judgements(fin, order_profile=order_profile)
@@ -1649,11 +1669,12 @@ def load_fin_score_meta_fast(ticker, is_etf):
     fin_scores_df = load_fin_scores_db()
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
 
+    # load_fin_score_meta_fast 함수의 matched.empty 블록 교체
     if matched.empty:
-        return 3, {
+        return UNCALCULATED_FIN_DEFAULT_SCORE, {
             "auto_score": None,
             "manual_score": None,
-            "final_score": 3,
+            "final_score": UNCALCULATED_FIN_DEFAULT_SCORE,
             "source": "not_calculated",
             "mode": "manual_or_default",
             "notes": {
@@ -1665,6 +1686,7 @@ def load_fin_score_meta_fast(ticker, is_etf):
             },
             "metrics": {}
         }
+
 
     row = matched.iloc[0]
     notes = parse_notes_json(row.get("notes_json"))
@@ -1944,17 +1966,71 @@ def summarize_smc_action(ext, int_s, ie, ee, liq, fvg, pdz):
     if ext == "Bullish": return "상승 추세 유지: 눌림 대기"
     return "구조 혼조: 관망"
 
+# 기존 get_rs_score 함수를 통째로 교체
+def clean_symbol(ticker):
+    return str(ticker).strip().upper().replace(".KS", "").replace(".KQ", "")
+
+def is_kr_listed(ticker):
+    return str(ticker).strip().upper().endswith((".KS", ".KQ"))
+
+def get_rs_benchmark(ticker, asset_class):
+    symbol = clean_symbol(ticker)
+    ac = str(asset_class).strip().lower()
+
+    if ac in ["kr_stock", "kr_etf"]:
+        return KR_MARKET_BENCHMARK
+
+    if is_kr_listed(ticker) and ac == "us_etf_nasdaq":
+        return KR_US_NASDAQ_BENCHMARK
+
+    if is_kr_listed(ticker) and ac == "us_etf_sp":
+        return KR_US_SP_BENCHMARK
+
+    if ac == "us_etf_nasdaq":
+        return US_TECH_BENCHMARK
+
+    if ac == "us_etf_sp":
+        return US_BROAD_BENCHMARK
+
+    if ac in ["us_stock_tech", "us_stock_growth"]:
+        return US_TECH_BENCHMARK
+
+    if ac == "us_stock":
+        return US_TECH_BENCHMARK if symbol in US_TECH_OR_GROWTH_TICKERS else US_BROAD_BENCHMARK
+
+    return US_BROAD_BENCHMARK
+
 def get_rs_score(ticker, asset_class):
-    bench = "069500.KS" if asset_class in ["kr_stock", "kr_etf"] else ("QQQM" if asset_class == "us_stock" else "379810.KS")
-    if normalize_ticker(ticker) == normalize_ticker(bench): return 1, "➖보통"
-    s_df, b_df = load_price_df(ticker, "3mo"), load_price_df(bench, "3mo")
-    if len(s_df) < 15 or len(b_df) < 15: return 1, "➖보통"
-    s_now, s_10d = float(s_df["Close"].iloc[-1]), float(s_df["Close"].iloc[-11])
-    b_now, b_10d = float(b_df["Close"].iloc[-1]), float(b_df["Close"].iloc[-11])
-    rs_now, rs_10d = s_now / b_now, s_10d / b_10d
-    if rs_now > rs_10d * 1.03: return 2, "🚀강함"
-    elif rs_now < rs_10d * 0.97: return 0, "🐢약함"
+    bench = get_rs_benchmark(ticker, asset_class)
+
+    if normalize_ticker(ticker) == normalize_ticker(bench):
+        return 1, "➖보통"
+
+    s_df = load_price_df(ticker, "3mo")
+    b_df = load_price_df(bench, "3mo")
+
+    need_len = RS_LOOKBACK_DAYS + 1
+    if len(s_df) < need_len or len(b_df) < need_len:
+        return 1, "➖보통"
+
+    s_now = float(s_df["Close"].iloc[-1])
+    s_then = float(s_df["Close"].iloc[-need_len])
+    b_now = float(b_df["Close"].iloc[-1])
+    b_then = float(b_df["Close"].iloc[-need_len])
+
+    if s_then <= 0 or b_then <= 0 or b_now <= 0:
+        return 1, "➖보통"
+
+    rs_now = s_now / b_now
+    rs_then = s_then / b_then
+
+    if rs_now > rs_then * 1.03:
+        return 2, "🚀강함"
+    elif rs_now < rs_then * 0.97:
+        return 0, "🐢약함"
+
     return 1, "➖보통"
+
 
 def build_indicators(df):
     df = df.copy()
@@ -2142,7 +2218,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif trend_label == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
         else: dec, col = "🔍관망: 타점 대기", "#64748b"
     else:
-        if not is_etf and fin_score == 1: dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
+        if not is_etf and fin_score <= 1:
+            dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
         elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
@@ -2201,7 +2278,7 @@ TICKER_MAP = {
     "버티브홀딩스": ("VRT", False, "us_stock"), "마이크론": ("MU", False, "us_stock"), "삼성전자": ("005930.KS", False, "kr_stock"),
     "두산에너빌리티": ("034020.KS", False, "kr_stock"), "하이닉스": ("000660.KS", False, "kr_stock"), "한화에어로스페이스": ("012450.KS", False, "kr_stock"),
     "HD현대중공업": ("329180.KS", False, "kr_stock"), "에이피알": ("278470.KS", False, "kr_stock"), "HD현대일렉트릭": ("267260.KS", False, "kr_stock"),
-    "에이디테크놀러지": ("200710.KQ", False, "kr_stock"),
+    "에이디테크놀러지": ("200710.KQ", False, "kr_stock"), "SPYM": ("SPYM", True, "us_etf_sp"),
 }
 
 def get_saved_fin_score_fast(ticker, is_etf):
@@ -2241,9 +2318,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        final_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+        final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
         f_score = int(final_fin_score)
-
         st.session_state.fin_score_map[normalize_ticker(tkr)] = f_score
 
         # --- 수정된 부분: 전광판에서도 DB를 확인해 내 평단가와 보유 여부를 가져옵니다 ---
@@ -2372,8 +2448,9 @@ with tab2:
 
         known_etf_tickers = {
             "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
-            "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF",
-            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
+            "SPYM", "SPLG", "SPYG", "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ",
+            "SMH", "XLE", "XLF", "XLK", "IYW",
+            "379810.KS", "379800.KS", "458730.KS", "069500.KS
         }
 
         ticker_norm = normalize_ticker(tkr)
@@ -2515,13 +2592,16 @@ with tab2:
             st.rerun()
 
         if manual_override:
+            manual_options = [1, 2, 3, 4]
             current_manual = fin_meta.get("manual_score")
-            radio_default = int(current_manual) if current_manual is not None else int(fin_score)
-
+            radio_default_value = int(current_manual) if current_manual in manual_options else int(fin_score)
+            if radio_default_value not in manual_options:
+                radio_default_value = 3
+                
             manual_score = st.radio(
                 "수동 재무점수",
-                [0, 1, 2, 3, 4],
-                index=radio_default,
+                manual_options,
+                index=manual_options.index(radio_default_value),
                 format_func=lambda x: f_labels[x],
                 horizontal=True,
                 key=f"manual_fin_score_{fin_key}"
@@ -2649,9 +2729,23 @@ with tab2:
 
         st.markdown("### 📰 최신 현장 뉴스")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
+        # 뉴스 출력 부분 교체
         if news_items:
-            for item in news_items: st.markdown(f"<div class='news-box'><a href='{item['link']}' target='_blank'>🔗 {item['title']}</a> <span style='color:#94a3b8; font-size:0.8em;'>출처: {item['publisher']}</span></div>", unsafe_allow_html=True)
-        else: st.info("현재 제공되는 최신 뉴스가 없습니다.")
+            for item in news_items:
+                safe_title = html.escape(str(item.get("title", "제목 없음")))
+                safe_pub = html.escape(str(item.get("publisher", "")))
+                safe_link = str(item.get("link", "#")).strip()
+                if not safe_link.startswith(("http://", "https://")):
+                    safe_link = "#"
+
+                st.markdown(
+                    f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> "
+                    f"<span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub}</span></div>",
+                    unsafe_allow_html=True
+                )
+        else:
+            st.info("현재 제공되는 최신 뉴스가 없습니다.")
+
         
         if news_debug: 
             with st.expander("🛠️ 뉴스 디버그 로그"):
