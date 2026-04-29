@@ -182,7 +182,7 @@ You are a top-tier macro strategist and technical analyst for public markets.
 • 중립형 투자자 전략
 • 보수형 투자자 전략
 • 리스크 요인
-• 이 판단을 무효화할 수 있는 변수 3가지 이상 제시
+• 이 판단 무효화할 수 있는 변수 3가지 이상 제시
 • 최종 한줄 판정
 
 추가 규칙:
@@ -302,7 +302,18 @@ def init_db():
         notes_json TEXT
     )
     """)
-
+    
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS watchlist (
+        ticker TEXT PRIMARY KEY,
+        name TEXT,
+        is_etf INTEGER DEFAULT 0,
+        asset_class TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        fin_score INTEGER
+    )
+    """)
+   
     cur.execute("SELECT COUNT(*) FROM settings")
     if cur.fetchone()[0] == 0:
         cur.execute("""
@@ -315,8 +326,10 @@ def init_db():
 
 def load_settings_db():
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM settings WHERE id = 1", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM settings WHERE id = 1", conn)
+    finally:
+        conn.close()
     if df.empty:
         return {"seed_money": 0.0, "krw_cash": 0.0, "usd_cash": 0.0, "usdkrw": 1400.0}
     row = df.iloc[0]
@@ -329,115 +342,186 @@ def load_settings_db():
 
 def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE settings
-        SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?
-        WHERE id = 1
-    """, (float(seed_money), float(krw_cash), float(usd_cash), float(usdkrw)))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE settings
+            SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?
+            WHERE id = 1
+        """, (float(seed_money), float(krw_cash), float(usd_cash), float(usdkrw)))
+        conn.commit()
+    finally:
+        conn.close()
 
 def load_holdings_db():
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM holdings", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM holdings", conn)
+    finally:
+        conn.close()
     return df
 
 def save_holdings_db(df):
     conn = get_conn()
-    cur = conn.cursor()
-    
-    # 1. 기존 데이터를 지웁니다.
-    cur.execute("DELETE FROM holdings")
-    
-    # 2. 데이터프레임을 한 줄씩 읽습니다.
-    for _, row in df.iterrows():
-        # 티커 값을 가져와서 공백을 제거합니다.
-        ticker_value = str(row.get("ticker", "")).strip()
-        
-        # [핵심] 티커가 비어있다면 이 행은 저장하지 않고 건너뜁니다.
-        if not ticker_value:
-            continue
-            
-        # is_etf 판정 로직
-        raw_is_etf = row.get("is_etf", False)
-        if isinstance(raw_is_etf, str):
-            is_etf = 1 if raw_is_etf.strip().lower() in ["true", "1", "yes", "y"] else 0
-        else:
-            is_etf = 1 if bool(raw_is_etf) else 0
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM holdings")
+        for _, row in df.iterrows():
+            ticker_value = str(row.get("ticker", "")).strip()
+            if not ticker_value:
+                continue
+            raw_is_etf = row.get("is_etf", False)
+            if isinstance(raw_is_etf, str):
+                is_etf = 1 if raw_is_etf.strip().lower() in ["true", "1", "yes", "y"] else 0
+            else:
+                is_etf = 1 if bool(raw_is_etf) else 0
 
-        # DB에 저장
-        cur.execute("""
-            INSERT OR REPLACE INTO holdings
-            (ticker, name, qty, avg_price, target_weight, asset_class, is_etf)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            ticker_value,
-            str(row.get("name", "")).strip(),
-            float(row.get("qty", 0) or 0),
-            float(row.get("avg_price", 0) or 0),
-            float(row.get("target_weight", 0) or 0),
-            str(row.get("asset_class", "")).strip(),
-            is_etf
-        ))
-        
-    conn.commit()
-    conn.close()
+            cur.execute("""
+                INSERT OR REPLACE INTO holdings
+                (ticker, name, qty, avg_price, target_weight, asset_class, is_etf)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ticker_value,
+                str(row.get("name", "")).strip(),
+                float(row.get("qty", 0) or 0),
+                float(row.get("avg_price", 0) or 0),
+                float(row.get("target_weight", 0) or 0),
+                str(row.get("asset_class", "")).strip(),
+                is_etf
+            ))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def load_dividends_db():
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM dividends ORDER BY date DESC, id DESC", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM dividends ORDER BY date DESC, id DESC", conn)
+    finally:
+        conn.close()
     return df
 
 def save_dividends_db(df):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM dividends")
-    for _, row in df.iterrows():
-        cur.execute("""
-            INSERT INTO dividends (date, ticker, amount, currency)
-            VALUES (?, ?, ?, ?)
-        """, (
-            str(row.get("date", "")).strip(),
-            str(row.get("ticker", "")).strip(),
-            float(row.get("amount", 0) or 0),
-            str(row.get("currency", "KRW")).strip().upper()
-        ))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM dividends")
+        for _, row in df.iterrows():
+            cur.execute("""
+                INSERT INTO dividends (date, ticker, amount, currency)
+                VALUES (?, ?, ?, ?)
+            """, (
+                str(row.get("date", "")).strip(),
+                str(row.get("ticker", "")).strip(),
+                float(row.get("amount", 0) or 0),
+                str(row.get("currency", "KRW")).strip().upper()
+            ))
+        conn.commit()
+    finally:
+        conn.close()
 
 def load_monthly_logs_db():
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM monthly_logs ORDER BY month", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM monthly_logs ORDER BY month", conn)
+    finally:
+        conn.close()
     return df
 
 def save_monthly_logs_db(df):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM monthly_logs")
-    for _, row in df.iterrows():
-        cur.execute("""
-            INSERT OR REPLACE INTO monthly_logs (month, total_invested, evaluated_value, dividend)
-            VALUES (?, ?, ?, ?)
-        """, (
-            str(row.get("month", "")).strip(),
-            float(row.get("total_invested", 0) or 0),
-            float(row.get("evaluated_value", 0) or 0),
-            float(row.get("dividend", 0) or 0)
-        ))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM monthly_logs")
+        for _, row in df.iterrows():
+            cur.execute("""
+                INSERT OR REPLACE INTO monthly_logs (month, total_invested, evaluated_value, dividend)
+                VALUES (?, ?, ?, ?)
+            """, (
+                str(row.get("month", "")).strip(),
+                float(row.get("total_invested", 0) or 0),
+                float(row.get("evaluated_value", 0) or 0),
+                float(row.get("dividend", 0) or 0)
+            ))
+        conn.commit()
+    finally:
+        conn.close()
 
 def load_fin_scores_db():
     conn = get_conn()
-    df = pd.read_sql_query("SELECT * FROM fin_scores", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM fin_scores", conn)
+    finally:
+        conn.close()
     return df
 
+def load_watchlist_db():
+    conn = get_conn()
+    try:
+        df = pd.read_sql_query(
+            "SELECT name, ticker, is_etf, asset_class, fin_score FROM watchlist ORDER BY sort_order, name",
+            conn
+        )
+    finally:
+        conn.close()
+
+    if df.empty:
+        return []
+
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            "name": str(row.get("name", "")).strip(),
+            "ticker": str(row.get("ticker", "")).strip(),
+            "is_etf": bool(int(row.get("is_etf", 0) or 0)),
+            "asset_class": str(row.get("asset_class", "")).strip(),
+            "fin_score": int(row["fin_score"]) if pd.notna(row.get("fin_score")) else None,
+        })
+    return [x for x in items if x["ticker"]]
+
+
+def save_watchlist_db(watchlist):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM watchlist")
+
+        for idx, item in enumerate(watchlist):
+            ticker = str(item.get("ticker", "")).strip()
+            if not ticker:
+                continue
+
+            cur.execute("""
+                INSERT OR REPLACE INTO watchlist
+                (ticker, name, is_etf, asset_class, sort_order, fin_score)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                ticker,
+                str(item.get("name", "")).strip(),
+                1 if bool(item.get("is_etf", False)) else 0,
+                str(item.get("asset_class", "")).strip(),
+                idx,
+                int(item["fin_score"]) if item.get("fin_score") is not None else None,
+            ))
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_watchlist_persistent():
+    db_items = load_watchlist_db()
+    if db_items:
+        return db_items
+
+    query_items = load_watchlist_from_query()
+    save_watchlist_db(query_items)
+    return query_items
+
+def persist_watchlist():
+    save_watchlist_db(st.session_state.watchlist)
+        
 def to_jsonable(obj):
     if isinstance(obj, dict):
         return {str(k): to_jsonable(v) for k, v in obj.items()}
@@ -461,51 +545,38 @@ def to_jsonable(obj):
 
 def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO fin_scores
-        (ticker, auto_score, manual_score, final_score, source, notes_json)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        normalize_ticker(ticker),
-        int(auto_score) if auto_score is not None else None,
-        int(manual_score) if manual_score is not None else None,
-        int(final_score) if final_score is not None else None,
-        str(source),
-        json.dumps(to_jsonable(notes), ensure_ascii=False)
-    ))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR REPLACE INTO fin_scores
+            (ticker, auto_score, manual_score, final_score, source, notes_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            normalize_ticker(ticker),
+            int(auto_score) if auto_score is not None else None,
+            int(manual_score) if manual_score is not None else None,
+            int(final_score) if final_score is not None else None,
+            str(source),
+            json.dumps(to_jsonable(notes), ensure_ascii=False)
+        ))
+        conn.commit()
+    finally:
+        conn.close()
 
 def delete_manual_fin_score_db(ticker):
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE fin_scores
-        SET manual_score = NULL, final_score = auto_score
-        WHERE ticker = ?
-    """, (normalize_ticker(ticker),))
-    conn.commit()
-    conn.close()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE fin_scores
+            SET manual_score = NULL, final_score = auto_score
+            WHERE ticker = ?
+        """, (normalize_ticker(ticker),))
+        conn.commit()
+    finally:
+        conn.close()
 
 init_db()
-
-# 데이터베이스 구조 변경 등 필요시 한 번만 실행하고 주석/삭제할 코드
-def migrate_fin_scores_keep_manual_only():
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        UPDATE fin_scores
-        SET auto_score = NULL,
-            final_score = manual_score,
-            source = 'migrated_keep_manual',
-            notes_json = ?
-    """, (json.dumps({"messages": ["구글시트식 재무판정 구조로 마이그레이션. 수동점수만 보존."]}, ensure_ascii=False),))
-    conn.commit()
-    conn.close()
-
-# 딱 한 번만 실행 후 삭제
-# migrate_fin_scores_keep_manual_only()
 
 # -------------------------------------------------
 # 2-2. 자동 재무제표 로드 + 구글시트식 판정 점수화
@@ -576,14 +647,14 @@ FIN_B_KEYS = [
 
 FIN_DATA_TTL_SECONDS = 21600
 
-AUTO_FIN_FAIL_SCORE = 2
+AUTO_FIN_FAIL_SCORE = 3
 UNCALCULATED_FIN_DEFAULT_SCORE = 3
 
 KR_MARKET_BENCHMARK = "069500.KS"
 KR_US_NASDAQ_BENCHMARK = "379810.KS"
 KR_US_SP_BENCHMARK = "379800.KS"
 US_TECH_BENCHMARK = "QQQM"
-US_BROAD_BENCHMARK = "SPYM"
+US_BROAD_BENCHMARK = "SPY"
 RS_LOOKBACK_DAYS = 20
 
 US_TECH_OR_GROWTH_TICKERS = {
@@ -593,7 +664,6 @@ US_TECH_OR_GROWTH_TICKERS = {
     "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI"
 }
 
-# get_dart_api_key 함수 교체
 def get_dart_api_key():
     return str(st.secrets.get("dart_api_key", "")).strip()
 
@@ -621,7 +691,6 @@ def fetch_dart_corp_code_map():
             code_map[stock_code] = corp_code
 
     return code_map
-
 
 def get_dart_corp_code(stock_code):
     stock_code = normalize_stock_code(stock_code)
@@ -668,7 +737,6 @@ def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
 def is_order_based_ticker(ticker: str) -> bool:
     return normalize_ticker(ticker) in ORDER_BASED_TICKERS
 
-
 def safe_float(x, default=np.nan):
     try:
         if x is None or pd.isna(x):
@@ -689,22 +757,18 @@ def safe_float(x, default=np.nan):
     except Exception:
         return default
 
-
 def finite_num(x):
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
-
 
 def pct_change(new, old):
     if not finite_num(new) or not finite_num(old) or float(old) == 0:
         return np.nan
     return (float(new) - float(old)) / abs(float(old)) * 100
 
-
 def calc_ratio(numer, denom, multiplier=100):
     if not finite_num(numer) or not finite_num(denom) or float(denom) == 0:
         return np.nan
     return float(numer) / float(denom) * multiplier
-
 
 def fmt_num(v):
     if not finite_num(v):
@@ -718,19 +782,16 @@ def fmt_num(v):
         return f"{v / 1_000_000:.1f}백만"
     return f"{v:,.0f}"
 
-
 def fmt_pct(v):
     if not finite_num(v):
         return "-"
     return f"{float(v):.1f}%"
-
 
 def normalize_stock_code(ticker: str) -> str:
     t = str(ticker).strip().upper()
     if t.endswith(".KS") or t.endswith(".KQ"):
         return t.split(".")[0]
     return t
-
 
 def pick_account_amount(df, keywords, amount_cols=None, exclude_keywords=None):
     if df is None or df.empty:
@@ -774,10 +835,8 @@ def pick_account_amount(df, keywords, amount_cols=None, exclude_keywords=None):
 
     return np.nan
 
-
 def enrich_fin_record(record):
     record = dict(record)
-
     revenue = record.get("revenue", np.nan)
     op_income = record.get("op_income", np.nan)
     net_income = record.get("net_income", np.nan)
@@ -792,10 +851,19 @@ def enrich_fin_record(record):
     record["ocf_margin"] = calc_ratio(ocf, revenue)
     return record
 
+def dart_flow_amount_cols(report_code):
+    if report_code == "11011":
+        return ["thstrm_amount", "thstrmAmount", "thstrm_add_amount", "thstrmAddAmount"]
+    return ["thstrm_add_amount", "thstrmAddAmount", "thstrm_amount", "thstrmAmount"]
+
+def dart_point_amount_cols():
+    return ["thstrm_amount", "thstrmAmount"]
 
 def extract_dart_metrics(df, fiscal_year, report_code):
     quarter_no = DART_QUARTER_NO_BY_REPORT.get(report_code)
-
+    flow_cols = dart_flow_amount_cols(report_code)
+    point_cols = dart_point_amount_cols()
+    
     record = {
         "period": "annual" if report_code == "11011" else "quarter_cumulative",
         "fiscal_year": str(fiscal_year),
@@ -807,25 +875,24 @@ def extract_dart_metrics(df, fiscal_year, report_code):
         "revenue": pick_account_amount(
             df,
             ["매출액", "수익(매출액)", "영업수익"],
+            amount_cols=flow_cols,
             exclude_keywords=["매출원가", "매출채권", "판매비", "관리비"]
         ),
-        "op_income": pick_account_amount(df, ["영업이익", "영업이익손실"]),
-        "net_income": pick_account_amount(df, ["당기순이익", "연결당기순이익", "분기순이익", "반기순이익"]),
-        "ocf": pick_account_amount(df, ["영업활동현금흐름", "영업활동으로인한현금흐름", "영업에서창출된현금"]),
-        "equity": pick_account_amount(df, ["자본총계"]),
-        "liabilities": pick_account_amount(df, ["부채총계"]),
-        "assets": pick_account_amount(df, ["자산총계"]),
-        "cash": pick_account_amount(df, ["현금및현금성자산", "현금및현금등가물"]),
+        "op_income": pick_account_amount(df, ["영업이익", "영업이익손실"], amount_cols=flow_cols),
+        "net_income": pick_account_amount(df, ["당기순이익", "연결당기순이익", "분기순이익", "반기순이익"], amount_cols=flow_cols),
+        "ocf": pick_account_amount(df, ["영업활동현금흐름", "영업활동으로인한현금흐름", "영업에서창출된현금"], amount_cols=flow_cols),
+        "equity": pick_account_amount(df, ["자본총계"], amount_cols=point_cols),
+        "liabilities": pick_account_amount(df, ["부채총계"], amount_cols=point_cols),
+        "assets": pick_account_amount(df, ["자산총계"], amount_cols=point_cols),
+        "cash": pick_account_amount(df, ["현금및현금성자산", "현금및현금등가물"], amount_cols=point_cols),
     }
     return enrich_fin_record(record)
-
 
 def has_dart_core_values(record):
     return any(
         finite_num(record.get(k))
         for k in ["revenue", "op_income", "net_income", "ocf"]
     )
-
 
 def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quarter=None):
     rec = dict(current_cum)
@@ -852,7 +919,7 @@ def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quart
             if finite_num(cur_val) and finite_num(prev_val):
                 rec[field] = float(cur_val) - float(prev_val)
             else:
-                rec[field] = cur_val
+                rec[field] = np.nan
 
         rec["single_quarter_adjusted"] = True
         rec["conversion_note"] = (
@@ -868,14 +935,12 @@ def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quart
 def fetch_kr_financials_auto(ticker: str):
     stock_code = normalize_stock_code(ticker)
     current_year = pd.Timestamp.today().year
-
     annual_records = []
 
     try:
         for year in range(current_year, current_year - 7, -1):
             if len(annual_records) >= 3:
                 break
-
             try:
                 fs = fetch_dart_finstate_all_raw(stock_code, year, "11011")
                 if fs is not None and not fs.empty:
@@ -883,7 +948,6 @@ def fetch_kr_financials_auto(ticker: str):
                     rec["period"] = "annual"
                     rec["report_label"] = "사업보고서"
                     rec["date"] = str(year)
-
                     if has_dart_core_values(rec):
                         annual_records.append(rec)
             except Exception:
@@ -897,7 +961,6 @@ def fetch_kr_financials_auto(ticker: str):
         }
 
         quarter_cum_by_year = {}
-
         for year in range(current_year, current_year - 4, -1):
             for report_code in ["11013", "11012", "11014"]:
                 try:
@@ -910,7 +973,6 @@ def fetch_kr_financials_auto(ticker: str):
                     continue
 
         single_quarter_candidates = []
-
         for year, reports in quarter_cum_by_year.items():
             q1 = reports.get("11013")
             q2 = reports.get("11012")
@@ -918,31 +980,17 @@ def fetch_kr_financials_auto(ticker: str):
             annual = annual_map.get(year)
 
             if q1 is not None:
-                single_quarter_candidates.append(
-                    make_dart_single_quarter_record(q1, None, fiscal_quarter=1)
-                )
-
-            if q2 is not None:
-                single_quarter_candidates.append(
-                    make_dart_single_quarter_record(q2, q1, fiscal_quarter=2)
-                )
-
-            if q3 is not None:
-                single_quarter_candidates.append(
-                    make_dart_single_quarter_record(q3, q2, fiscal_quarter=3)
-                )
-
+                single_quarter_candidates.append(make_dart_single_quarter_record(q1, None, fiscal_quarter=1))
+            if q2 is not None and q1 is not None:
+                single_quarter_candidates.append(make_dart_single_quarter_record(q2, q1, fiscal_quarter=2))
+            if q3 is not None and q2 is not None:
+                single_quarter_candidates.append(make_dart_single_quarter_record(q3, q2, fiscal_quarter=3))
             if annual is not None and q3 is not None:
-                single_quarter_candidates.append(
-                    make_dart_single_quarter_record(annual, q3, fiscal_quarter=4)
-                )
+                single_quarter_candidates.append(make_dart_single_quarter_record(annual, q3, fiscal_quarter=4))
 
         quarter_records = sorted(
             single_quarter_candidates,
-            key=lambda r: (
-                int(r.get("fiscal_year", 0)),
-                int(r.get("fiscal_quarter", 0) or 0)
-            )
+            key=lambda r: (int(r.get("fiscal_year", 0)), int(r.get("fiscal_quarter", 0) or 0))
         )
 
         if len(annual_records) < 2:
@@ -964,11 +1012,7 @@ def fetch_kr_financials_auto(ticker: str):
 
 def fmp_request(endpoint, ticker, period, limit, api_key):
     url = f"https://financialmodelingprep.com/stable/{endpoint}"
-    params = {
-        "symbol": ticker,
-        "period": period,
-        "limit": limit,
-    }
+    params = {"symbol": ticker, "period": period, "limit": limit}
     headers = {"apikey": api_key}
 
     try:
@@ -977,68 +1021,44 @@ def fmp_request(endpoint, ticker, period, limit, api_key):
         raise RuntimeError(f"FMP 요청 실패: {endpoint}, {ticker}, {period}, {e}")
 
     if res.status_code in [402, 403]:
-        try:
-            err = res.json()
-        except Exception:
-            err = res.text[:300]
-
-        raise RuntimeError(
-            f"FMP 구독/권한 제한: {ticker} {endpoint} {period} "
-            f"(HTTP {res.status_code}). 현재 플랜에서 해당 symbol 또는 endpoint 사용 불가. 원문: {err}"
-        )
+        try: err = res.json()
+        except Exception: err = res.text[:300]
+        raise RuntimeError(f"FMP 구독/권한 제한: {ticker} {endpoint} {period} (HTTP {res.status_code}). 원문: {err}")
 
     if res.status_code == 429:
         raise RuntimeError(f"FMP 호출 제한 초과: {ticker} {endpoint} {period}")
 
     if res.status_code != 200:
-        try:
-            err = res.json()
-        except Exception:
-            err = res.text[:300]
+        try: err = res.json()
+        except Exception: err = res.text[:300]
+        raise RuntimeError(f"FMP HTTP {res.status_code}: {ticker} {endpoint} {period}. 원문: {err}")
 
-        raise RuntimeError(
-            f"FMP HTTP {res.status_code}: {ticker} {endpoint} {period}. 원문: {err}"
-        )
-
-    try:
-        data = res.json()
-    except Exception:
-        raise RuntimeError(f"FMP JSON 파싱 실패: {ticker} {endpoint} {period}")
+    try: data = res.json()
+    except Exception: raise RuntimeError(f"FMP JSON 파싱 실패: {ticker} {endpoint} {period}")
 
     if isinstance(data, dict):
         msg = data.get("Error Message") or data.get("error") or data.get("message")
-        if msg:
-            raise RuntimeError(f"FMP 응답 오류: {ticker} {endpoint} {period}. {msg}")
+        if msg: raise RuntimeError(f"FMP 응답 오류: {ticker} {endpoint} {period}. {msg}")
         return []
 
     return data if isinstance(data, list) else []
 
-
-
 def find_fmp_match(records, income_row):
-    if not records:
-        return {}
-
+    if not records: return {}
     date = income_row.get("date")
     fiscal_year = str(income_row.get("calendarYear") or income_row.get("fiscalYear") or "")[:4]
     period = str(income_row.get("period", ""))
 
     for r in records:
-        if date and r.get("date") == date:
-            return r
-
+        if date and r.get("date") == date: return r
     for r in records:
         r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
-        if fiscal_year and r_year == fiscal_year and str(r.get("period", "")) == period:
-            return r
-
+        if fiscal_year and r_year == fiscal_year and str(r.get("period", "")) == period: return r
     for r in records:
         r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
-        if fiscal_year and r_year == fiscal_year:
-            return r
+        if fiscal_year and r_year == fiscal_year: return r
 
     return records[0]
-
 
 def extract_fmp_metrics(inc, bal, cf, period_type):
     fiscal_year = str(inc.get("calendarYear") or inc.get("fiscalYear") or "")[:4]
@@ -1059,36 +1079,26 @@ def extract_fmp_metrics(inc, bal, cf, period_type):
     }
     return enrich_fin_record(record)
 
-
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_us_financials_auto(ticker: str):
     api_key = st.secrets.get("fmp_api_key", "")
-    if not api_key:
-        return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
+    if not api_key: return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
 
     symbol = str(ticker).strip().upper()
-
     try:
         annual_income = fmp_request("income-statement", symbol, "annual", 5, api_key)
         annual_balance = fmp_request("balance-sheet-statement", symbol, "annual", 5, api_key)
         annual_cashflow = fmp_request("cash-flow-statement", symbol, "annual", 5, api_key)
-
         quarter_income = fmp_request("income-statement", symbol, "quarter", 5, api_key)
         quarter_balance = fmp_request("balance-sheet-statement", symbol, "quarter", 5, api_key)
         quarter_cashflow = fmp_request("cash-flow-statement", symbol, "quarter", 5, api_key)
 
-        if not annual_income:
-            return {"ok": False, "source": "fmp", "reason": "FMP 연간 손익계산서 없음"}
-        if not annual_balance:
-            return {"ok": False, "source": "fmp", "reason": "FMP 연간 재무상태표 없음"}
-        if not annual_cashflow:
-            return {"ok": False, "source": "fmp", "reason": "FMP 연간 현금흐름표 없음"}
-        if not quarter_income:
-            return {"ok": False, "source": "fmp", "reason": "FMP 분기 손익계산서 없음"}
-        if not quarter_balance:
-            return {"ok": False, "source": "fmp", "reason": "FMP 분기 재무상태표 없음"}
-        if not quarter_cashflow:
-            return {"ok": False, "source": "fmp", "reason": "FMP 분기 현금흐름표 없음"}
+        if not annual_income: return {"ok": False, "source": "fmp", "reason": "FMP 연간 손익계산서 없음"}
+        if not annual_balance: return {"ok": False, "source": "fmp", "reason": "FMP 연간 재무상태표 없음"}
+        if not annual_cashflow: return {"ok": False, "source": "fmp", "reason": "FMP 연간 현금흐름표 없음"}
+        if not quarter_income: return {"ok": False, "source": "fmp", "reason": "FMP 분기 손익계산서 없음"}
+        if not quarter_balance: return {"ok": False, "source": "fmp", "reason": "FMP 분기 재무상태표 없음"}
+        if not quarter_cashflow: return {"ok": False, "source": "fmp", "reason": "FMP 분기 현금흐름표 없음"}
 
         annual_records = []
         for inc in annual_income[:3]:
@@ -1105,8 +1115,7 @@ def fetch_us_financials_auto(ticker: str):
         annual_records = sorted(annual_records, key=lambda r: str(r.get("date")))
         quarter_records = sorted(quarter_records, key=lambda r: str(r.get("date")))
 
-        if len(annual_records) < 2:
-            return {"ok": False, "source": "fmp", "reason": "FMP 최근 연간 재무 2개년 이상 확보 실패"}
+        if len(annual_records) < 2: return {"ok": False, "source": "fmp", "reason": "FMP 최근 연간 재무 2개년 이상 확보 실패"}
 
         return {
             "ok": True,
@@ -1115,25 +1124,18 @@ def fetch_us_financials_auto(ticker: str):
             "annual": annual_records[-3:],
             "quarter": quarter_records[-4:],
         }
-
     except Exception as e:
         return {"ok": False, "source": "fmp", "reason": f"FMP 오류: {e}"}
 
-
 def getsymbol_score(symbol: str) -> int:
     s = str(symbol)
-    if "🚨" in s:
-        return 0
-    if "💎" in s or "✅" in s:
-        return 1
-    if "⚠️" in s or "❌" in s:
-        return -1
+    if "🚨" in s: return 0
+    if "💎" in s or "✅" in s: return 1
+    if "⚠️" in s or "❌" in s: return -1
     return 0
-
 
 def judge_text(ok_icon, bad_icon, title, body):
     return f"{ok_icon} {title}: {body}"
-
 
 def build_fin_judgements(fin: dict, order_profile: bool = False):
     annual = fin.get("annual", []) or []
@@ -1142,7 +1144,6 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
     latest_a = annual[-1] if annual else {}
     prev_a = annual[-2] if len(annual) >= 2 else {}
     old_a = annual[-3] if len(annual) >= 3 else {}
-
     latest_q = quarter[-1] if quarter else {}
     prev_q = quarter[-2] if len(quarter) >= 2 else {}
 
@@ -1416,7 +1417,6 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
 
     return annual_j, quarter_j, all_j, metrics
 
-
 def calc_weighted_fin_total(judgements: dict, danger_limit: int):
     danger_count = sum(1 for v in judgements.values() if "🚨" in str(v))
 
@@ -1426,16 +1426,11 @@ def calc_weighted_fin_total(judgements: dict, danger_limit: int):
 
     weighted = s_sum + a_sum + b_sum
 
-    if danger_count >= danger_limit:
-        total = 1
-    elif weighted >= 45:
-        total = 4
-    elif weighted >= 25:
-        total = 3
-    elif weighted >= 5:
-        total = 2
-    else:
-        total = 1
+    if danger_count >= danger_limit: total = 1
+    elif weighted >= 45: total = 4
+    elif weighted >= 25: total = 3
+    elif weighted >= 5: total = 2
+    else: total = 1
 
     return total, {
         "s_sum": s_sum,
@@ -1446,10 +1441,8 @@ def calc_weighted_fin_total(judgements: dict, danger_limit: int):
         "danger_limit": danger_limit,
     }
 
-
 def calc_generic_fin_total(judgements: dict):
     return calc_weighted_fin_total(judgements, danger_limit=1)
-
 
 def calc_order_fin_total(judgements: dict):
     return calc_weighted_fin_total(judgements, danger_limit=2)
@@ -1461,10 +1454,8 @@ def calc_middle_fin_total(judgements: dict):
     generic_score, generic_weighted = calc_generic_fin_total(judgements)
     order_score, order_weighted = calc_order_fin_total(judgements)
 
-    if generic_score == 1 and order_score == 1:
-        middle_score = 1
-    else:
-        middle_score = round_half_up((generic_score + order_score) / 2)
+    if generic_score == 1 and order_score == 1: middle_score = 1
+    else: middle_score = round_half_up((generic_score + order_score) / 2)
 
     return middle_score, {
         "generic_score": generic_score,
@@ -1479,17 +1470,11 @@ def calc_middle_fin_total(judgements: dict):
         "danger_count": generic_weighted["danger_count"],
     }
 
-
 def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     if is_etf:
         notes = {
-            "ok": True,
-            "source": "etf",
-            "mode": "ETF",
-            "reason": "ETF는 재무점수 미합산",
-            "annual_judgements": {},
-            "quarter_judgements": {},
-            "weighted_scores": {},
+            "ok": True, "source": "etf", "mode": "ETF", "reason": "ETF는 재무점수 미합산",
+            "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {},
         }
         return 0, {"ok": True, "source": "etf"}, notes, {}
 
@@ -1499,17 +1484,9 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     if not fin.get("ok", False):
         metrics = {}
         notes = {
-            "ok": False,
-            "source": fin.get("source", "unknown"),
-            "mode": "fallback",
-            "reason": fin.get("reason", "원인 미상"),
-            "annual_judgements": {},
-            "quarter_judgements": {},
-            "weighted_scores": {},
-            "messages": [
-                 f"자동 재무 조회 실패 -> 보수 임시 {AUTO_FIN_FAIL_SCORE}점",
-                 f"사유: {fin.get('reason', '원인 미상')}",
-            ],
+            "ok": False, "source": fin.get("source", "unknown"), "mode": "fallback",
+            "reason": fin.get("reason", "원인 미상"), "annual_judgements": {}, "quarter_judgements": {},
+            "weighted_scores": {}, "messages": [f"자동 재무 조회 실패 -> 보수 임시 {AUTO_FIN_FAIL_SCORE}점", f"사유: {fin.get('reason', '원인 미상')}"],
         }
         return AUTO_FIN_FAIL_SCORE, fin, notes, metrics
 
@@ -1528,22 +1505,11 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
         selected_mode = "중간형판단"
 
     weighted_scores = {
-        "selected_mode": selected_mode,
-        "selected_score": selected_score,
-        "generic_score": generic_score,
-        "order_score": order_score,
-        "middle_score": middle_score,
-        "generic_detail": generic_detail,
-        "order_detail": order_detail,
-        "middle_detail": middle_detail,
-        "weighted_net_score": generic_detail["weighted_net_score"],
-        "s_sum": generic_detail["s_sum"],
-        "a_sum": generic_detail["a_sum"],
-        "b_sum": generic_detail["b_sum"],
-        "danger_count": generic_detail["danger_count"],
-        "s_keys": FIN_S_KEYS,
-        "a_keys": FIN_A_KEYS,
-        "b_keys": FIN_B_KEYS,
+        "selected_mode": selected_mode, "selected_score": selected_score, "generic_score": generic_score,
+        "order_score": order_score, "middle_score": middle_score, "generic_detail": generic_detail,
+        "order_detail": order_detail, "middle_detail": middle_detail, "weighted_net_score": generic_detail["weighted_net_score"],
+        "s_sum": generic_detail["s_sum"], "a_sum": generic_detail["a_sum"], "b_sum": generic_detail["b_sum"],
+        "danger_count": generic_detail["danger_count"], "s_keys": FIN_S_KEYS, "a_keys": FIN_A_KEYS, "b_keys": FIN_B_KEYS,
     }
 
     metrics["annual_records"] = fin.get("annual", [])
@@ -1551,16 +1517,10 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     metrics["weighted_scores"] = weighted_scores
 
     notes = {
-        "ok": True,
-        "source": fin.get("source", "unknown"),
-        "mode": selected_mode,
-        "order_profile": order_profile,
-        "annual_judgements": annual_j,
-        "quarter_judgements": quarter_j,
-        "weighted_scores": weighted_scores,
-        "messages": [
-            f"source: {fin.get('source', 'unknown')}",
-            f"mode: {selected_mode}",
+        "ok": True, "source": fin.get("source", "unknown"), "mode": selected_mode,
+        "order_profile": order_profile, "annual_judgements": annual_j, "quarter_judgements": quarter_j,
+        "weighted_scores": weighted_scores, "messages": [
+            f"source: {fin.get('source', 'unknown')}", f"mode: {selected_mode}",
             f"weighted_score: {weighted_scores['weighted_net_score']}",
             f"S_sum: {weighted_scores['s_sum']}, A_sum: {weighted_scores['a_sum']}, B_sum: {weighted_scores['b_sum']}",
             f"범용판단: {generic_score}, 수주판단: {order_score}, 중간형판단: {middle_score}",
@@ -1569,10 +1529,8 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
 
     return int(selected_score), fin, notes, metrics
 
-
 def get_final_fin_score(ticker, is_etf, asset_class):
     key = normalize_ticker(ticker)
-
     auto_score, fin_auto, fin_notes, fin_metrics = get_auto_fin_score_for_ticker(ticker, is_etf)
 
     manual_score = None
@@ -1590,22 +1548,14 @@ def get_final_fin_score(ticker, is_etf, asset_class):
     stored_notes["metrics"] = fin_metrics
 
     upsert_fin_score_db(
-        ticker=key,
-        auto_score=int(auto_score),
-        manual_score=manual_score,
-        final_score=int(final_score),
-        source=fin_auto.get("source", "unknown"),
-        notes=stored_notes
+        ticker=key, auto_score=int(auto_score), manual_score=manual_score,
+        final_score=int(final_score), source=fin_auto.get("source", "unknown"), notes=stored_notes
     )
 
     return int(final_score), {
-        "auto_score": int(auto_score),
-        "manual_score": manual_score,
-        "final_score": int(final_score),
-        "source": fin_auto.get("source", "unknown"),
-        "mode": stored_notes.get("mode", "unknown"),
-        "notes": stored_notes,
-        "metrics": fin_metrics,
+        "auto_score": int(auto_score), "manual_score": manual_score, "final_score": int(final_score),
+        "source": fin_auto.get("source", "unknown"), "mode": stored_notes.get("mode", "unknown"),
+        "notes": stored_notes, "metrics": fin_metrics,
     }
 
 def set_manual_fin_score(ticker, score):
@@ -1615,90 +1565,54 @@ def set_manual_fin_score(ticker, score):
 
     if matched.empty:
         upsert_fin_score_db(
-            ticker=key,
-            auto_score=None,
-            manual_score=int(score),
-            final_score=int(score),
-            source="manual",
-            notes={"messages": ["수동 재무점수 저장"]}
+            ticker=key, auto_score=None, manual_score=int(score), final_score=int(score),
+            source="manual", notes={"messages": ["수동 재무점수 저장"]}
         )
         return
 
     row = matched.iloc[0]
     notes = {}
-    try:
-        notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else {}
-    except Exception:
-        notes = {}
+    try: notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else {}
+    except Exception: notes = {}
 
     upsert_fin_score_db(
-        ticker=key,
-        auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else None,
-        manual_score=int(score),
-        final_score=int(score),
-        source=row["source"] if pd.notna(row["source"]) else "manual",
-        notes=notes
+        ticker=key, auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else None,
+        manual_score=int(score), final_score=int(score),
+        source=row["source"] if pd.notna(row["source"]) else "manual", notes=notes
     )
-
 
 def reset_manual_fin_score(ticker):
     delete_manual_fin_score_db(ticker)
 
 def parse_notes_json(value):
     try:
-        if value is None or pd.isna(value) or str(value).strip() == "":
-            return {}
+        if value is None or pd.isna(value) or str(value).strip() == "": return {}
         data = json.loads(value)
-        if isinstance(data, dict):
-            return data
-        if isinstance(data, list):
-            return {"messages": data}
+        if isinstance(data, dict): return data
+        if isinstance(data, list): return {"messages": data}
         return {"messages": [str(data)]}
     except Exception:
         return {"messages": ["notes_json 파싱 실패"]}
-
 
 def load_fin_score_meta_fast(ticker, is_etf):
     key = normalize_ticker(ticker)
 
     if is_etf:
         return 0, {
-            "auto_score": 0,
-            "manual_score": None,
-            "final_score": 0,
-            "source": "etf",
-            "mode": "ETF",
-            "notes": {
-                "mode": "ETF",
-                "messages": ["ETF는 재무점수 0점 고정"],
-                "annual_judgements": {},
-                "quarter_judgements": {},
-                "weighted_scores": {},
-            },
-            "metrics": {}
+            "auto_score": 0, "manual_score": None, "final_score": 0,
+            "source": "etf", "mode": "ETF", "metrics": {},
+            "notes": {"mode": "ETF", "messages": ["ETF는 재무점수 0점 고정"], "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {}},
         }
 
     fin_scores_df = load_fin_scores_db()
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
 
-    # load_fin_score_meta_fast 함수의 matched.empty 블록 교체
     if matched.empty:
         return UNCALCULATED_FIN_DEFAULT_SCORE, {
-            "auto_score": None,
-            "manual_score": None,
-            "final_score": UNCALCULATED_FIN_DEFAULT_SCORE,
-            "source": "not_calculated",
-            "mode": "manual_or_default",
-            "notes": {
-                "mode": "manual_or_default",
-                "messages": ["자동 재무점수 미계산 상태입니다. 필요할 때만 자동 재무점수 돌리기를 누르세요."],
-                "annual_judgements": {},
-                "quarter_judgements": {},
-                "weighted_scores": {},
-            },
-            "metrics": {}
+            "auto_score": None, "manual_score": None, "final_score": UNCALCULATED_FIN_DEFAULT_SCORE,
+            "source": "not_calculated", "mode": "manual_or_default", "metrics": {},
+            "notes": {"mode": "manual_or_default", "messages": ["자동 재무점수 미계산 상태입니다."], "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {}},
         }
-
 
     row = matched.iloc[0]
     notes = parse_notes_json(row.get("notes_json"))
@@ -1708,37 +1622,25 @@ def load_fin_score_meta_fast(ticker, is_etf):
     manual_score = int(row["manual_score"]) if pd.notna(row["manual_score"]) else None
     db_final_score = int(row["final_score"]) if pd.notna(row["final_score"]) else None
 
-    if manual_score is not None:
-        final_score = manual_score
-    elif db_final_score is not None:
-        final_score = db_final_score
-    elif auto_score is not None:
-        final_score = auto_score
-    else:
-        final_score = 3
+    if manual_score is not None: final_score = manual_score
+    elif db_final_score is not None: final_score = db_final_score
+    elif auto_score is not None: final_score = auto_score
+    else: final_score = 3
 
     return int(final_score), {
-        "auto_score": auto_score,
-        "manual_score": manual_score,
-        "final_score": int(final_score),
+        "auto_score": auto_score, "manual_score": manual_score, "final_score": int(final_score),
         "source": row["source"] if pd.notna(row["source"]) else "saved",
         "mode": notes.get("mode", "saved") if isinstance(notes, dict) else "saved",
-        "notes": notes,
-        "metrics": metrics,
+        "notes": notes, "metrics": metrics,
     }
 
-
 def clear_financial_api_cache():
-    for fn_name in [
-        "fetch_us_financials_auto",
-        "fetch_kr_financials_auto",
-        "fetch_dart_finstate_all_raw",
-        "fetch_dart_corp_code_map",
-    ]:
+    for fn_name in ["fetch_us_financials_auto", "fetch_kr_financials_auto", "fetch_dart_finstate_all_raw"]:
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "clear"):
             fn.clear()
-    
+
+
 # -------------------------------------------------
 # 2-3. 보유자산 계산
 # -------------------------------------------------
@@ -1757,12 +1659,10 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         avg_price = float(row.get("avg_price", 0) or 0)
         target_weight = float(row.get("target_weight", 0) or 0)
         asset_class = row.get("asset_class", "us_stock")
-        
+
         raw_is_etf = row.get("is_etf", False)
-        if isinstance(raw_is_etf, str):
-            is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
-        else:
-            is_etf = bool(raw_is_etf)
+        if isinstance(raw_is_etf, str): is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
+        else: is_etf = bool(raw_is_etf)
 
         px_df = load_price_df(ticker, "1mo")
         cur_price = float(px_df["Close"].iloc[-1]) if not px_df.empty else 0.0
@@ -1775,28 +1675,15 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         krw_eval = eval_amt if is_kr else eval_amt * usdkrw
 
         rows.append({
-            "자산명": name,
-            "티커": ticker,
-            "보유량": qty,
-            "매입가": avg_price,
-            "현재가": cur_price,
-            "평가금액": eval_amt,
-            "평가손익": pnl,
-            "수익률": ret,
-            "원화환산": krw_eval,
-            "목표비중": target_weight,
-            "is_etf": is_etf,
-            "asset_class": asset_class
+            "자산명": name, "티커": ticker, "보유량": qty, "매입가": avg_price,
+            "현재가": cur_price, "평가금액": eval_amt, "평가손익": pnl, "수익률": ret,
+            "원화환산": krw_eval, "목표비중": target_weight, "is_etf": is_etf, "asset_class": asset_class
         })
 
     df = pd.DataFrame(rows)
     total_assets = df["원화환산"].sum() + krw_cash + (usd_cash * usdkrw)
-
-    if total_assets > 0:
-        df["현재비중"] = df["원화환산"] / total_assets * 100
-    else:
-        df["현재비중"] = 0.0
-
+    if total_assets > 0: df["현재비중"] = df["원화환산"] / total_assets * 100
+    else: df["현재비중"] = 0.0
     df["비중차이"] = df["목표비중"] - df["현재비중"]
     return df
 
@@ -1816,21 +1703,15 @@ def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkr
     cum_return = (cum_profit / seed_money * 100) if seed_money > 0 else 0.0
 
     return {
-        "current_asset": current_asset,
-        "stock_value": stock_value,
-        "cash_value": cash_value,
-        "total_dividend": total_dividend,
-        "cum_profit": cum_profit,
-        "cum_return": cum_return
+        "current_asset": current_asset, "stock_value": stock_value, "cash_value": cash_value,
+        "total_dividend": total_dividend, "cum_profit": cum_profit, "cum_return": cum_return
     }
 
 def get_holding_row_by_ticker(holdings_table, ticker):
-    if holdings_table.empty:
-        return None
+    if holdings_table.empty: return None
     t = normalize_ticker(ticker)
     matched = holdings_table[holdings_table["티커"].apply(normalize_ticker) == t]
-    if not matched.empty:
-        return matched.iloc[0]
+    if not matched.empty: return matched.iloc[0]
     return None
 
 # -------------------------------------------------
@@ -1838,13 +1719,11 @@ def get_holding_row_by_ticker(holdings_table, ticker):
 # -------------------------------------------------
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     search_query = name.replace("탐색: ", "").replace(".KS", "").replace(".KQ", "").strip()
     encoded = urllib.parse.quote(search_query)
     logs = [f"검색어: {search_query}"]
-    
+
     try:
         url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded}"
         if debug: logs.append(f"네이버 URL: {url}")
@@ -1872,7 +1751,7 @@ def get_ticker_news(ticker, name, debug=False):
             logs.append(f"구글 뉴스 성공 ({len(items)}건)")
             return res, logs
     except Exception as e: logs.append(f"구글 뉴스 실패: {e}")
-    
+
     return [], logs
 
 # -------------------------------------------------
@@ -1883,7 +1762,7 @@ def load_price_df(ticker, period="1y"):
     df = yf.download(ticker, period=period, interval="1d", progress=False)
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        df.ffill(inplace=True); df.dropna(inplace=True)
+        df = df.ffill().dropna()
     return df
 
 @st.cache_data(ttl=300)
@@ -1910,14 +1789,11 @@ def get_macro_analysis():
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))
     return results, final_macro_risk, macro_penalty, move_val
 
-# --- 세션 초기화 (유일한 곳) ---
-if "fin_score_map" not in st.session_state:
-    st.session_state.fin_score_map = {}
-
+if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_watchlist_from_query()
+    st.session_state.watchlist = load_watchlist_persistent()
 
-sync_watchlist_to_query()
+persist_watchlist()
 
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
@@ -1978,7 +1854,6 @@ def summarize_smc_action(ext, int_s, ie, ee, liq, fvg, pdz):
     if ext == "Bullish": return "상승 추세 유지: 눌림 대기"
     return "구조 혼조: 관망"
 
-# 기존 get_rs_score 함수를 통째로 교체
 def clean_symbol(ticker):
     return str(ticker).strip().upper().replace(".KS", "").replace(".KQ", "")
 
@@ -1989,60 +1864,38 @@ def get_rs_benchmark(ticker, asset_class):
     symbol = clean_symbol(ticker)
     ac = str(asset_class).strip().lower()
 
-    if ac in ["kr_stock", "kr_etf"]:
-        return KR_MARKET_BENCHMARK
-
-    if is_kr_listed(ticker) and ac == "us_etf_nasdaq":
-        return KR_US_NASDAQ_BENCHMARK
-
-    if is_kr_listed(ticker) and ac == "us_etf_sp":
-        return KR_US_SP_BENCHMARK
-
-    if ac == "us_etf_nasdaq":
-        return US_TECH_BENCHMARK
-
-    if ac == "us_etf_sp":
-        return US_BROAD_BENCHMARK
-
-    if ac in ["us_stock_tech", "us_stock_growth"]:
-        return US_TECH_BENCHMARK
-
-    if ac == "us_stock":
-        return US_TECH_BENCHMARK if symbol in US_TECH_OR_GROWTH_TICKERS else US_BROAD_BENCHMARK
-
+    if ac in ["kr_stock", "kr_etf"]: return KR_MARKET_BENCHMARK
+    if is_kr_listed(ticker) and ac == "us_etf_nasdaq": return KR_US_NASDAQ_BENCHMARK
+    if is_kr_listed(ticker) and ac == "us_etf_sp": return KR_US_SP_BENCHMARK
+    if ac == "us_etf_nasdaq": return US_TECH_BENCHMARK
+    if ac == "us_etf_sp": return US_BROAD_BENCHMARK
+    if ac in ["us_stock_tech", "us_stock_growth"]: return US_TECH_BENCHMARK
+    if ac == "us_stock": return US_TECH_BENCHMARK if symbol in US_TECH_OR_GROWTH_TICKERS else US_BROAD_BENCHMARK
     return US_BROAD_BENCHMARK
 
 def get_rs_score(ticker, asset_class):
     bench = get_rs_benchmark(ticker, asset_class)
-
-    if normalize_ticker(ticker) == normalize_ticker(bench):
-        return 1, "➖보통"
+    if normalize_ticker(ticker) == normalize_ticker(bench): return 1, "➖보통"
 
     s_df = load_price_df(ticker, "3mo")
     b_df = load_price_df(bench, "3mo")
-
     need_len = RS_LOOKBACK_DAYS + 1
-    if len(s_df) < need_len or len(b_df) < need_len:
-        return 1, "➖보통"
+
+    if len(s_df) < need_len or len(b_df) < need_len: return 1, "➖보통"
 
     s_now = float(s_df["Close"].iloc[-1])
     s_then = float(s_df["Close"].iloc[-need_len])
     b_now = float(b_df["Close"].iloc[-1])
     b_then = float(b_df["Close"].iloc[-need_len])
 
-    if s_then <= 0 or b_then <= 0 or b_now <= 0:
-        return 1, "➖보통"
+    if s_then <= 0 or b_then <= 0 or b_now <= 0: return 1, "➖보통"
 
     rs_now = s_now / b_now
     rs_then = s_then / b_then
 
-    if rs_now > rs_then * 1.03:
-        return 2, "🚀강함"
-    elif rs_now < rs_then * 0.97:
-        return 0, "🐢약함"
-
+    if rs_now > rs_then * 1.03: return 2, "🚀강함"
+    elif rs_now < rs_then * 0.97: return 0, "🐢약함"
     return 1, "➖보통"
-
 
 def build_indicators(df):
     df = df.copy()
@@ -2061,26 +1914,22 @@ def build_indicators(df):
 # -------------------------------------------------
 def get_sheet_current_weight(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
-    if row is None:
-        return 0.0
+    if row is None: return 0.0
     return float(row.get("현재비중", 0.0) or 0.0)
 
 def get_target_weight_from_sheet(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
-    if row is None:
-        return 0.0
+    if row is None: return 0.0
     return float(row.get("목표비중", 0.0) or 0.0)
 
 def get_my_price(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
-    if row is None:
-        return 0.0
+    if row is None: return 0.0
     return float(row.get("매입가", 0.0) or 0.0)
 
 def has_position(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
-    if row is None:
-        return False
+    if row is None: return False
     return float(row.get("보유량", 0.0) or 0.0) > 0
 
 def get_effective_total_asset(mode, user_asset, sheet_eval):
@@ -2121,11 +1970,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     trend_s = 2 if trend_label == "🚀정배열(상승)" else 0
     macd_s = 2 if macd_state == "🔥매수신호(골든크로스)" else (1 if macd_state == "📈추세유지(상승중)" else (-2 if macd_state == "📉하락주의(데드크로스)" else 0))
     sqz_s = 1 if (sqz_status == "🚀해제직후" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]) else 0
-    
+
     tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
-    
+
     main_score = (
         (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) +
         (2 if macd_state == "🔥매수신호(골든크로스)" else 0) +
@@ -2151,12 +2000,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     levels = get_recent_levels(df)
     ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
-    
+
     int_structure = (
         "Bullish" if rs_label == "🚀강함" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
         else ("Bearish" if trend_label == "🌊역배열(하락)" or rs_label == "🐢약함" else "Mixed")
     )
-    
+
     int_event, ext_event = detect_structure_event(df, levels)
     liq_state = detect_liquidity_grab(df, levels)
     fvg_info = detect_recent_fvg(df)
@@ -2178,9 +2027,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
     is_breakout_normal = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and 0.95 <= pct_b_now <= 1.02 and rs_label == "🚀강함"
-    
+
     # -------------------------------
-    # 예외 승인 프로세스 (정찰대 진입)
+    # 예외 승인 프로세스 (정교화된 로직 적용)
     # -------------------------------
     ma5_now = float(last["MA5"]) if pd.notna(last["MA5"]) else 0.0
     low_now = float(last["Low"])
@@ -2194,11 +2043,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         adj_tech_score >= 4.0
     )
 
+    ma5_gap = ((cur_p - ma5_now) / ma5_now) if ma5_now > 0 else np.nan
+
     is_ma5_pullback = (
-        ma5_now > 0 and (
-            abs(cur_p - ma5_now) / ma5_now <= 0.015 or
-            low_now <= ma5_now * 1.01
-        )
+        ma5_now > 0 and
+        low_now <= ma5_now * 1.01 and
+        cur_p <= ma5_now * 1.025 and
+        (not finite_num(ma5_gap) or ma5_gap >= -0.02)
     )
 
     is_bullish_fvg_pullback = (
@@ -2208,13 +2059,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         float(fvg_info["bottom"]) * 0.995 <= cur_p <= float(fvg_info["top"]) * 1.01
     )
 
+    is_exception_not_chasing = (
+        mfi_now < 82 and
+        pct_b_now < 1.00 and
+        rsi_now < 70 and
+        vol_ratio < 2.5
+    )
+
     is_exception_entry = (
         is_leader_base and
         (is_ma5_pullback or is_bullish_fvg_pullback) and
-        mfi_now < 90 and
-        pct_b_now < 1.08
+        is_exception_not_chasing
     )
-                                 
+
     if is_free:
         if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
@@ -2238,15 +2095,27 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 현금 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
         elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금 확보", "#dc2626"
-        elif final_macro_risk >= 4.5: dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
-        elif is_exception_entry and has_pos:
+        
+        elif final_macro_risk >= 4.5:
+            dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+        elif (
+            is_exception_entry and
+            has_pos and
+            my_price > 0 and
+            cur_p <= my_price * 1.02 and
+            targ_w > 0 and
+            curr_w < targ_w
+        ):
             dec, col = "🟣예외승인: 정찰대 추매(MA5/FVG)", "#7c3aed"
         elif is_exception_entry and (not has_pos):
-            dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"     
+            dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"
+
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "🚫하드차단: 볼린상단 이탈", "#dc2626"
+        elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
+            dec, col = "⏳평단이상: 추매 대기(보유)", "#d97706"    
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류", "#d97706"
@@ -2294,13 +2163,9 @@ TICKER_MAP = {
 }
 
 def get_saved_fin_score_fast(ticker, is_etf):
-    if is_etf:
-        return 0
-
+    if is_etf: return 0
     key = normalize_ticker(ticker)
-
-    if key in st.session_state.fin_score_map:
-        return int(st.session_state.fin_score_map[key])
+    if key in st.session_state.fin_score_map: return int(st.session_state.fin_score_map[key])
 
     fin_scores_df = load_fin_scores_db()
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
@@ -2314,10 +2179,8 @@ def get_saved_fin_score_fast(ticker, is_etf):
 
     return 3
 
-
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
-
     for item in watchlist_items:
         name = item["name"]
         tkr = item["ticker"]
@@ -2325,70 +2188,44 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         a_class = item["asset_class"]
 
         df = load_price_df(tkr, "1y")
-        if df.empty:
-            continue
-
+        if df.empty: continue
         df = build_indicators(df)
 
         final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
         f_score = int(final_fin_score)
         st.session_state.fin_score_map[normalize_ticker(tkr)] = f_score
 
-        # --- 수정된 부분: 전광판에서도 DB를 확인해 내 평단가와 보유 여부를 가져옵니다 ---
         my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
 
         c = calc_scores_and_decision(
-            name=name, 
-            ticker=tkr, 
-            is_etf=is_etf, 
-            asset_class=a_class, 
-            df=df,
-            my_price=my_p,       # 기존: 0
-            has_pos=has_p,       # 기존: False
-            fin_score=f_score, 
-            is_free=False, 
-            app_mode=mode
+            name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
+            my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode
         )
-        # -----------------------------------------------------------------
 
         rows.append({
-            "종목명": name,
-            "티커": tkr,
-            "현재가": format_currency(c["cur_p"], tkr),
-            "MDD": f"{c['dd']*100:.1f}%",
-            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4",
-            "📌후보등급": c["grade"],
-            "RS": c["rs_label"],
-            "RSI": round(c["rsi"], 1),
-            "MFI": round(c["mfi"], 1),
-            "볼린저 %B": round(c["pct_b"], 2),
-            "🔥기술적 타점": c["dec"],
-            "Adj점수": round(c["adj"], 1)
+            "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
+            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
+            "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
+            "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
 
     return pd.DataFrame(rows)
-
 
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
 macro_res, final_macro_risk, macro_penalty, move_val = get_macro_analysis()
-
 st.caption(f"모드: {app_mode} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
 
 if macro_res:
     m_cols = st.columns(len(macro_res))
     for i, (n, info) in enumerate(macro_res.items()):
         s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] else ""
-        m_cols[i].markdown(
-            f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>",
-            unsafe_allow_html=True
-        )
+        m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
 else:
     st.info("매크로 데이터를 불러오지 못했습니다.")
 
-# --- 데이터 로드 블록 (SQLite DB 연동) ---
 settings = load_settings_db()
 holdings_df = load_holdings_db()
 dividends_df = load_dividends_db()
@@ -2400,11 +2237,8 @@ usd_cash = float(settings.get("usd_cash", 0.0))
 usdkrw = float(settings.get("usdkrw", 1400.0))
 
 holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
-portfolio_summary = calc_portfolio_summary(
-    holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df
-)
+portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
-# --------------------------------------------
 
 tab1, tab2, tab3 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소", "⚙️ 자산 관리"])
 
@@ -2423,24 +2257,14 @@ with tab1:
 
     if remove_target != "선택" and st.button("전광판에서 제거"):
         _, remove_ticker = remove_target.split("|", 1)
-        st.session_state.watchlist = [
-            item for item in st.session_state.watchlist
-            if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)
-        ]
+        st.session_state.watchlist = [item for item in st.session_state.watchlist if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)]
         sync_watchlist_to_query()
         st.rerun()
 
-    summary_df = get_all_summary(
-        tuple(sorted(st.session_state.fin_score_map.items())),
-        app_mode,
-        tuple(st.session_state.watchlist)
-    )
+    summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
+    if summary_df.empty: st.warning("전광판에 표시할 종목이 없습니다.")
+    else: st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
 
-    if summary_df.empty:
-        st.warning("전광판에 표시할 종목이 없습니다.")
-    else:
-        st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
-        
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
     sel = st.selectbox("종목 선택", options)
@@ -2448,32 +2272,22 @@ with tab2:
 
     if is_free:
         c1, c2 = st.columns([2, 1])
-        with c1:
-            user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
-        with c2:
-            mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
+        with c1: user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
+        with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
-        if user_tkr_raw.isdigit() and len(user_tkr_raw) == 6:
-            tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}"
-        else:
-            tkr = user_tkr_raw
+        tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}" if (user_tkr_raw.isdigit() and len(user_tkr_raw) == 6) else user_tkr_raw
 
-        known_etf_tickers = {
-            "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
-            "SPYM", "SPLG", "SPYG", "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ",
-            "SMH", "XLE", "XLF", "XLK", "IYW",
-            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
-        }
-
+        known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
+        known_nasdaq_etfs = {"QQQ", "QQQM", "QLD", "TQQQ", "379810.KS"}
         ticker_norm = normalize_ticker(tkr)
-        is_etf = (
-            ticker_norm in {normalize_ticker(x) for x in known_etf_tickers}
-            or tkr.upper().endswith("ETF")
-        )
-
-        a_class = "kr_etf" if (is_etf and tkr.endswith((".KS", ".KQ"))) else (
-            "us_etf_nasdaq" if is_etf else ("kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock")
-        )
+        is_etf = (ticker_norm in {normalize_ticker(x) for x in known_sp500_etfs | known_nasdaq_etfs | {"SOXL", "SOXX", "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF", "XLK", "IYW", "458730.KS", "069500.KS"}} or tkr.upper().endswith("ETF"))
+        
+        if is_etf:
+            if tkr.endswith((".KS", ".KQ")): a_class = "kr_etf"
+            elif ticker_norm in {normalize_ticker(x) for x in known_sp500_etfs}: a_class = "us_etf_sp"
+            else: a_class = "us_etf_nasdaq"
+        else:
+            a_class = "kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"
 
         name = f"탐색: {tkr}"
         my_p, has_p = 0.0, False
@@ -2495,25 +2309,21 @@ with tab2:
 
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
-
     fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
     fin_score = int(fin_score)
+    
+    if fin_score not in f_labels:
+        fin_score = UNCALCULATED_FIN_DEFAULT_SCORE
+        
     st.session_state.fin_score_map[fin_key] = fin_score
 
-    st.markdown(
-        f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>", unsafe_allow_html=True)
 
     with st.expander("재무점수 계산 근거"):
         notes = fin_meta.get("notes", {})
         metrics = fin_meta.get("metrics", {})
-        weighted = {}
-
-        if isinstance(notes, dict):
-            weighted = notes.get("weighted_scores", {}) or metrics.get("weighted_scores", {})
-        else:
-            notes = {"messages": notes if isinstance(notes, list) else [str(notes)]}
+        weighted = notes.get("weighted_scores", {}) or metrics.get("weighted_scores", {}) if isinstance(notes, dict) else {}
+        if not isinstance(notes, dict): notes = {"messages": notes if isinstance(notes, list) else [str(notes)]}
 
         st.write("source:", fin_meta.get("source"))
         st.write("mode:", fin_meta.get("mode"))
@@ -2545,24 +2355,12 @@ with tab2:
         quarter_judgements = notes.get("quarter_judgements", {})
 
         st.markdown("#### annual 판정 문구")
-        if annual_judgements:
-            st.dataframe(
-                pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.write("annual 판정 없음")
+        if annual_judgements: st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]), use_container_width=True, hide_index=True)
+        else: st.write("annual 판정 없음")
 
         st.markdown("#### quarter 판정 문구")
-        if quarter_judgements:
-            st.dataframe(
-                pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]),
-                use_container_width=True,
-                hide_index=True
-            )
-        else:
-            st.write("quarter 판정 없음")
+        if quarter_judgements: st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]), use_container_width=True, hide_index=True)
+        else: st.write("quarter 판정 없음")
 
         st.markdown("#### 핵심 metrics")
         annual_records = metrics.get("annual_records", [])
@@ -2584,19 +2382,13 @@ with tab2:
         messages = notes.get("messages", [])
         if messages:
             st.markdown("#### notes")
-            for msg in messages:
-                st.write("-", msg)
+            for msg in messages: st.write("-", msg)
 
     if is_etf:
         st.info("ETF는 재무점수 0점 고정입니다. 수동 재무점수도 적용하지 않습니다.")
     else:
         had_manual = fin_meta.get("manual_score") is not None
-
-        manual_override = st.checkbox(
-            "재무점수 수동 수정",
-            value=had_manual,
-            key=f"manual_fin_{fin_key}"
-        )
+        manual_override = st.checkbox("재무점수 수동 수정", value=had_manual, key=f"manual_fin_{fin_key}")
 
         if had_manual and not manual_override:
             reset_manual_fin_score(tkr)
@@ -2607,17 +2399,9 @@ with tab2:
             manual_options = [1, 2, 3, 4]
             current_manual = fin_meta.get("manual_score")
             radio_default_value = int(current_manual) if current_manual in manual_options else int(fin_score)
-            if radio_default_value not in manual_options:
-                radio_default_value = 3
-                
-            manual_score = st.radio(
-                "수동 재무점수",
-                manual_options,
-                index=manual_options.index(radio_default_value),
-                format_func=lambda x: f_labels[x],
-                horizontal=True,
-                key=f"manual_fin_score_{fin_key}"
-            )
+            if radio_default_value not in manual_options: radio_default_value = 3
+
+            manual_score = st.radio("수동 재무점수", manual_options, index=manual_options.index(radio_default_value), format_func=lambda x: f_labels[x], horizontal=True, key=f"manual_fin_score_{fin_key}")
 
             if current_manual != int(manual_score):
                 set_manual_fin_score(tkr, manual_score)
@@ -2634,13 +2418,7 @@ with tab2:
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
-    current_item = {
-        "name": name,
-        "ticker": tkr,
-        "is_etf": is_etf,
-        "asset_class": a_class,
-        "fin_score": int(fin_score)
-    }
+    current_item = {"name": name, "ticker": tkr, "is_etf": is_etf, "asset_class": a_class, "fin_score": int(fin_score)}
 
     if is_in_watchlist(tkr):
         for item in st.session_state.watchlist:
@@ -2648,34 +2426,29 @@ with tab2:
                 item["fin_score"] = int(fin_score)
                 break
         sync_watchlist_to_query()
-        
+
     with a1:
-        if is_in_watchlist(tkr):
-            st.success("이미 전광판에 등록된 종목입니다.")
+        if is_in_watchlist(tkr): st.success("이미 전광판에 등록된 종목입니다.")
         else:
             if st.button("전광판에 등록"):
-                st.session_state.watchlist.append(current_item)
-                sync_watchlist_to_query()
-                st.rerun()
-
+                 st.session_state.watchlist.append(current_item)
+                 persist_watchlist()
+                 st.rerun()
+                
     with a2:
         if is_in_watchlist(tkr):
             if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
-                st.session_state.watchlist = [
-                    item for item in st.session_state.watchlist
-                    if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)
-                ]
-                sync_watchlist_to_query()
+                st.session_state.watchlist = [item for item in st.session_state.watchlist if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)]
+                persist_watchlist()
                 st.rerun()
-        
+
     df = load_price_df(tkr, "1y")
     if not df.empty:
         df = build_indicators(df)
-        
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p, 
                                      (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free, 
                                      app_mode, u_asset, u_curr_w, u_targ_w)
-        
+
         L, R = st.columns([1.1, 2.4])
         with L:
             st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
@@ -2684,43 +2457,31 @@ with tab2:
             ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
 
             st.markdown(
-                f"<div class='info-panel'>"
-                f"현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>"
+                f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>"
                 f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
                 f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
-                f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span>"
-                f"</div>",
+                f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
                 unsafe_allow_html=True
             )
-            
-            if is_free or app_mode == "범용모드": 
-                st.info("💡 직접 입력 기반 분석 모드입니다.")
+
+            if is_free or app_mode == "범용모드": st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
                 if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
                 st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
-            
+
             if app_mode == "범용모드": 
-                st.markdown(
-                    f"<div class='info-panel'><b>입력 기준</b><br>"
-                    f"총 자산: {u_asset:,.0f}원<br>"
-                    f"평단가: {format_currency(u_price, tkr)}<br>"
-                    f"목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>"
-                    f"<b>부족 매수액: {c['buy_amt']:,.0f}원</b></div>",
-                    unsafe_allow_html=True
-                )
-            
+                st.markdown(f"<div class='info-panel'><b>입력 기준</b><br>총 자산: {u_asset:,.0f}원<br>평단가: {format_currency(u_price, tkr)}<br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br><b>부족 매수액: {c['buy_amt']:,.0f}원</b></div>", unsafe_allow_html=True)
+
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
-            
+
             fin_text = "해당없음" if is_etf else f"{c['fin_score']}/4"
             st.markdown(
-                f"<div class='info-panel' style='border-left: 5px solid #8b5cf6;'>"
-                f"<b>📌 후보 등급 판정</b><br>"
+                f"<div class='info-panel' style='border-left: 5px solid #8b5cf6;'><b>📌 후보 등급 판정</b><br>"
                 f"<span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총점: {c['t_score']}점)<br>"
                 f"└ 🛠️기술: {c['tech_total']} (RS:{c['rs_s']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']})<br>"
-                f"└ 💰재무: {fin_text}</div>",
-                unsafe_allow_html=True
+                f"└ 💰재무: {fin_text}</div>", unsafe_allow_html=True
             )
-        
+
         with R:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
@@ -2741,40 +2502,25 @@ with tab2:
 
         st.markdown("### 📰 최신 현장 뉴스")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
-        # 뉴스 출력 부분 교체
         if news_items:
             for item in news_items:
                 safe_title = html.escape(str(item.get("title", "제목 없음")))
                 safe_pub = html.escape(str(item.get("publisher", "")))
                 safe_link = str(item.get("link", "#")).strip()
-                if not safe_link.startswith(("http://", "https://")):
-                    safe_link = "#"
-
-                st.markdown(
-                    f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> "
-                    f"<span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub}</span></div>",
-                    unsafe_allow_html=True
-                )
+                if not safe_link.startswith(("http://", "https://")): safe_link = "#"
+                st.markdown(f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> <span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub}</span></div>", unsafe_allow_html=True)
         else:
             st.info("현재 제공되는 최신 뉴스가 없습니다.")
 
-        
         if news_debug: 
             with st.expander("🛠️ 뉴스 디버그 로그"):
                 for log in news_logs: st.write(log)
+        
         st.markdown("### 🤖 AI 종합 해석 프롬프트")
-
         if st.button("AI 분석용 프롬프트 생성", key=f"ai_analysis_{normalize_ticker(tkr)}"):
             prompt = build_ai_analysis_prompt(name, tkr, macro_res, final_macro_risk, c)
-
             st.info("아래 프롬프트를 복사해서 ChatGPT나 Gemini에 붙여넣으면 됩니다.")
-
-            st.text_area(
-                "분석용 프롬프트",
-                value=prompt,
-                height=500,
-                key=f"prompt_box_{normalize_ticker(tkr)}"
-            )
+            st.text_area("분석용 프롬프트", value=prompt, height=500, key=f"prompt_box_{normalize_ticker(tkr)}")
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
 
 with tab3:
@@ -2782,14 +2528,10 @@ with tab3:
 
     st.markdown("### 1) 기본 설정")
     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    with col_s1:
-        new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
-    with col_s2:
-        new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
-    with col_s3:
-        new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
-    with col_s4:
-        new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
+    with col_s1: new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
+    with col_s2: new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
+    with col_s3: new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
+    with col_s4: new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
 
     if st.button("기본 설정 저장"):
         save_settings_db(new_seed, new_krw, new_usd, new_fx)
@@ -2798,15 +2540,8 @@ with tab3:
 
     st.markdown("### 2) 보유 종목 관리")
     holdings_editor_df = load_holdings_db()
-    if holdings_editor_df.empty:
-        holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
-
-    edited_holdings = st.data_editor(
-        holdings_editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="holdings_editor"
-    )
+    if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
+    edited_holdings = st.data_editor(holdings_editor_df, num_rows="dynamic", use_container_width=True, key="holdings_editor")
 
     if st.button("보유 종목 저장"):
         save_holdings_db(edited_holdings.fillna(""))
@@ -2815,15 +2550,8 @@ with tab3:
 
     st.markdown("### 3) 배당 내역 관리")
     dividends_editor_df = load_dividends_db()
-    if dividends_editor_df.empty:
-        dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
-
-    edited_dividends = st.data_editor(
-        dividends_editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="dividends_editor"
-    )
+    if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
+    edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
 
     if st.button("배당 내역 저장"):
         save_dividends_db(edited_dividends.fillna(""))
@@ -2832,15 +2560,8 @@ with tab3:
 
     st.markdown("### 4) 월별 로그 관리")
     monthly_editor_df = load_monthly_logs_db()
-    if monthly_editor_df.empty:
-        monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
-
-    edited_monthly = st.data_editor(
-        monthly_editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="monthly_editor"
-    )
+    if monthly_editor_df.empty: monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
+    edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", use_container_width=True, key="monthly_editor")
 
     if st.button("월별 로그 저장"):
         save_monthly_logs_db(edited_monthly.fillna(""))
