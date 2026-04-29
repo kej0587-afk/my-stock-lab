@@ -1737,7 +1737,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         pnl = qty * (cur_price - avg_price)
         ret = ((cur_price / avg_price) - 1) if avg_price > 0 else 0.0
 
-        is_kr = str(ticker).endswith(".KS") or str(ticker).endswith(".KQ")
+        is_kr = str(ticker).upper().endswith(".KS") or str(ticker).upper().endswith(".KQ")
         krw_eval = eval_amt if is_kr else eval_amt * usdkrw
 
         rows.append({
@@ -2241,20 +2241,35 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         df = build_indicators(df)
 
-        f_score, _ = load_fin_score_meta_fast(tkr, is_etf)
-        st.session_state.fin_score_map[normalize_ticker(tkr)] = int(f_score)
+        final_fin_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+        f_score = int(final_fin_score)
+
+        st.session_state.fin_score_map[normalize_ticker(tkr)] = f_score
+
+        # --- 수정된 부분: 전광판에서도 DB를 확인해 내 평단가와 보유 여부를 가져옵니다 ---
+        my_p = get_my_price(name, tkr)
+        has_p = has_position(name, tkr)
 
         c = calc_scores_and_decision(
-            name, tkr, is_etf, a_class, df,
-            0, False, int(f_score), app_mode=mode
+            name=name, 
+            ticker=tkr, 
+            is_etf=is_etf, 
+            asset_class=a_class, 
+            df=df,
+            my_price=my_p,       # 기존: 0
+            has_pos=has_p,       # 기존: False
+            fin_score=f_score, 
+            is_free=False, 
+            app_mode=mode
         )
+        # -----------------------------------------------------------------
 
         rows.append({
             "종목명": name,
             "티커": tkr,
             "현재가": format_currency(c["cur_p"], tkr),
             "MDD": f"{c['dd']*100:.1f}%",
-            "재무점수": "ETF 0점" if is_etf else f"{int(f_score)}/4",
+            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4",
             "📌후보등급": c["grade"],
             "RS": c["rs_label"],
             "RSI": round(c["rsi"], 1),
