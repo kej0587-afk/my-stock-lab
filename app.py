@@ -347,23 +347,33 @@ def load_holdings_db():
 def save_holdings_db(df):
     conn = get_conn()
     cur = conn.cursor()
+    
+    # 1. 기존 데이터를 지웁니다.
     cur.execute("DELETE FROM holdings")
-    ticker_value = str(row.get("ticker", "")).strip()
-    if not ticker_value:
-        continue
+    
+    # 2. 데이터프레임을 한 줄씩 읽습니다.
     for _, row in df.iterrows():
+        # 티커 값을 가져와서 공백을 제거합니다.
+        ticker_value = str(row.get("ticker", "")).strip()
+        
+        # [핵심] 티커가 비어있다면 이 행은 저장하지 않고 건너뜁니다.
+        if not ticker_value:
+            continue
+            
+        # is_etf 판정 로직
         raw_is_etf = row.get("is_etf", False)
         if isinstance(raw_is_etf, str):
             is_etf = 1 if raw_is_etf.strip().lower() in ["true", "1", "yes", "y"] else 0
         else:
             is_etf = 1 if bool(raw_is_etf) else 0
 
+        # DB에 저장
         cur.execute("""
             INSERT OR REPLACE INTO holdings
             (ticker, name, qty, avg_price, target_weight, asset_class, is_etf)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
-            str(row.get("ticker", "")).strip(),
+            ticker_value,
             str(row.get("name", "")).strip(),
             float(row.get("qty", 0) or 0),
             float(row.get("avg_price", 0) or 0),
@@ -371,8 +381,10 @@ def save_holdings_db(df):
             str(row.get("asset_class", "")).strip(),
             is_etf
         ))
+        
     conn.commit()
     conn.close()
+
 
 def load_dividends_db():
     conn = get_conn()
