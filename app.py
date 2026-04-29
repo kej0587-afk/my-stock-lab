@@ -2450,7 +2450,7 @@ with tab2:
             "QQQ", "QQQM", "QLD", "TQQQ", "SOXL", "SOXX", "SPY", "VOO", "IVV",
             "SPYM", "SPLG", "SPYG", "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ",
             "SMH", "XLE", "XLF", "XLK", "IYW",
-            "379810.KS", "379800.KS", "458730.KS", "069500.KS
+            "379810.KS", "379800.KS", "458730.KS", "069500.KS"
         }
 
         ticker_norm = normalize_ticker(tkr)
