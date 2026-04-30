@@ -1714,176 +1714,6 @@ def get_holding_row_by_ticker(holdings_table, ticker):
     if not matched.empty: return matched.iloc[0]
     return None
 
-st.markdown("### 5) 현재 계산 결과")
-settings = load_settings_db()
-holdings_df = load_holdings_db()
-dividends_df = load_dividends_db()
-
-seed_money = float(settings.get("seed_money", 0.0))
-krw_cash = float(settings.get("krw_cash", 0.0))
-usd_cash = float(settings.get("usd_cash", 0.0))
-usdkrw = float(settings.get("usdkrw", 1400.0))
-
-holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
-portfolio_summary = calc_portfolio_summary(
-    holdings_table,
-    seed_money,
-    krw_cash,
-    usd_cash,
-    usdkrw,
-    dividends_df
-)
-total_eval = portfolio_summary["current_asset"]
-
-if not holdings_table.empty:
-    dash_df = holdings_table.copy()
-
-    dash_df["평가손익_원화"] = dash_df.apply(
-        lambda r: r["평가손익"] if str(r["티커"]).upper().endswith((".KS", ".KQ"))
-        else r["평가손익"] * usdkrw,
-        axis=1
-    )
-    dash_df["수익률_pct"] = dash_df["수익률"] * 100
-
-    signal_rows = []
-    for _, r in dash_df.iterrows():
-        tkr = r["티커"]
-        name = r["자산명"]
-        is_etf = bool(r.get("is_etf", False))
-        asset_class = r.get("asset_class", "")
-
-        px = load_price_df(tkr, "1y")
-        if px.empty:
-            continue
-
-        px = build_indicators(px)
-        fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
-
-        c = calc_scores_and_decision(
-            name=name,
-            ticker=tkr,
-            is_etf=is_etf,
-            asset_class=asset_class,
-            df=px,
-            my_price=float(r["매입가"] or 0),
-            has_pos=float(r["보유량"] or 0) > 0,
-            fin_score=int(fin_score),
-            is_free=False,
-            app_mode="개인모드"
-        )
-
-        signal_rows.append({
-            "티커": tkr,
-            "기술적타점": c["dec"],
-            "ADJ점수": round(c["adj"], 1),
-            "후보등급": c["grade"],
-            "추세": c["trend"],
-            "RS": c["rs_label"],
-            "RSI": round(c["rsi"], 1),
-            "MFI": round(c["mfi"], 1),
-            "MACD": c["macd"],
-            "SQZ": c["sqz"],
-        })
-
-    signal_df = pd.DataFrame(signal_rows)
-    if not signal_df.empty:
-        dash_df = dash_df.merge(signal_df, on="티커", how="left")
-
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("주식 평가금", f"{portfolio_summary['stock_value']:,.0f}원")
-    k2.metric("현금 포함 자산", f"{portfolio_summary['current_asset']:,.0f}원")
-    k3.metric("누적손익", f"{portfolio_summary['cum_profit']:,.0f}원")
-    k4.metric("누적수익률", f"{portfolio_summary['cum_return']:.2f}%")
-
-    c1, c2 = st.columns([1.1, 1])
-
-    with c1:
-        fig_tree = go.Figure(go.Treemap(
-            labels=dash_df["자산명"],
-            parents=[""] * len(dash_df),
-            values=dash_df["원화환산"],
-            marker=dict(
-                colors=dash_df["수익률_pct"],
-                colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
-                cmid=0,
-                colorbar=dict(title="수익률%")
-            ),
-            customdata=dash_df[["매입가", "현재가", "평가손익_원화", "현재비중", "목표비중", "기술적타점", "ADJ점수"]],
-            hovertemplate=
-                "<b>%{label}</b><br>" +
-                "매입가: %{customdata[0]:,.2f}<br>" +
-                "현재가: %{customdata[1]:,.2f}<br>" +
-                "평가금액: ₩%{value:,.0f}<br>" +
-                "평가손익: ₩%{customdata[2]:,.0f}<br>" +
-                "현재비중: %{customdata[3]:.2f}%<br>" +
-                "목표비중: %{customdata[4]:.2f}%<br>" +
-                "타점: %{customdata[5]}<br>" +
-                "ADJ: %{customdata[6]}<extra></extra>"
-        ))
-        fig_tree.update_layout(template="plotly_dark", height=430, title="포트폴리오 히트맵")
-        st.plotly_chart(fig_tree, use_container_width=True)
-
-    with c2:
-        fig_bubble = go.Figure(go.Scatter(
-            x=dash_df["비중차이"],
-            y=dash_df["수익률_pct"],
-            mode="markers+text",
-            text=dash_df["자산명"],
-            textposition="top center",
-            marker=dict(
-                size=np.clip(np.sqrt(dash_df["원화환산"] / dash_df["원화환산"].max()) * 55, 14, 55),
-                color=pd.to_numeric(dash_df.get("ADJ점수", 0), errors="coerce"),
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title="ADJ")
-            ),
-            customdata=dash_df[["기술적타점", "후보등급", "현재비중", "목표비중"]],
-            hovertemplate=
-                "<b>%{text}</b><br>" +
-                "비중차이: %{x:.2f}%<br>" +
-                "수익률: %{y:.2f}%<br>" +
-                "타점: %{customdata[0]}<br>" +
-                "등급: %{customdata[1]}<br>" +
-                "현재/목표: %{customdata[2]:.2f}% / %{customdata[3]:.2f}%<extra></extra>"
-        ))
-        fig_bubble.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
-        fig_bubble.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-        fig_bubble.update_layout(template="plotly_dark", height=430, title="타점/비중/수익률 매트릭스")
-        st.plotly_chart(fig_bubble, use_container_width=True)
-
-    w1, w2 = st.columns(2)
-
-    with w1:
-        fig_weight = go.Figure()
-        fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["현재비중"], orientation="h", name="현재비중"))
-        fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["목표비중"], orientation="h", name="목표비중"))
-        fig_weight.update_layout(template="plotly_dark", barmode="group", height=420, title="현재비중 vs 목표비중")
-        st.plotly_chart(fig_weight, use_container_width=True)
-
-    with w2:
-        pnl_color = np.where(dash_df["평가손익_원화"] >= 0, "#16a34a", "#dc2626")
-        fig_pnl = go.Figure(go.Bar(
-            y=dash_df["자산명"],
-            x=dash_df["평가손익_원화"],
-            orientation="h",
-            marker_color=pnl_color
-        ))
-        fig_pnl.add_vline(x=0, line_color="#94a3b8")
-        fig_pnl.update_layout(template="plotly_dark", height=420, title="평가손익 랭킹")
-        st.plotly_chart(fig_pnl, use_container_width=True)
-
-    st.markdown("#### 보유자산 + 기술적 타점 요약")
-    show_cols = [
-        "자산명", "티커", "매입가", "현재가", "평가금액", "평가손익_원화",
-        "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
-        "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ"
-    ]
-    st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
-
-else:
-    st.info("등록된 보유 종목이 없습니다.")
-
-
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -2789,16 +2619,189 @@ with tab3:
         st.rerun()
 
     st.markdown("### 5) 현재 계산 결과")
-    st.write(
-        f"주식 평가금: {portfolio_summary['stock_value']:,.0f}원 | "
-        f"현금 포함 자산: {portfolio_summary['current_asset']:,.0f}원 | "
-        f"누적손익: {portfolio_summary['cum_profit']:,.0f}원 | "
-        f"누적수익률: {portfolio_summary['cum_return']:.2f}%"
-    )
 
     if not holdings_table.empty:
-        show_df = holdings_table.copy()
-        show_df["수익률"] = show_df["수익률"].apply(lambda x: f"{x*100:.2f}%")
-        st.dataframe(show_df, use_container_width=True, hide_index=True)
+        dash_df = holdings_table.copy()
+
+        dash_df["평가손익_원화"] = dash_df.apply(
+            lambda r: r["평가손익"] if str(r["티커"]).upper().endswith((".KS", ".KQ"))
+            else r["평가손익"] * usdkrw,
+            axis=1
+        )
+        dash_df["수익률_pct"] = dash_df["수익률"] * 100
+
+        signal_rows = []
+        for _, r in dash_df.iterrows():
+            tkr = r["티커"]
+            name = r["자산명"]
+            is_etf = bool(r.get("is_etf", False))
+            asset_class = r.get("asset_class", "")
+
+            try:
+                px = load_price_df(tkr, "1y")
+                if px.empty or len(px) < 2:
+                    continue
+
+                px = build_indicators(px)
+                fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
+
+                c = calc_scores_and_decision(
+                    name=name,
+                    ticker=tkr,
+                    is_etf=is_etf,
+                    asset_class=asset_class,
+                    df=px,
+                    my_price=float(r["매입가"] or 0),
+                    has_pos=float(r["보유량"] or 0) > 0,
+                    fin_score=int(fin_score),
+                    is_free=False,
+                    app_mode="개인모드"
+                )
+
+                signal_rows.append({
+                    "티커": tkr,
+                    "기술적타점": c["dec"],
+                    "ADJ점수": round(c["adj"], 1),
+                    "후보등급": c["grade"],
+                    "추세": c["trend"],
+                    "RS": c["rs_label"],
+                    "RSI": round(c["rsi"], 1),
+                    "MFI": round(c["mfi"], 1),
+                    "MACD": c["macd"],
+                    "SQZ": c["sqz"],
+                })
+            except Exception as e:
+                signal_rows.append({
+                    "티커": tkr,
+                    "기술적타점": f"계산 실패: {e}",
+                    "ADJ점수": np.nan,
+                    "후보등급": "-",
+                    "추세": "-",
+                    "RS": "-",
+                    "RSI": np.nan,
+                    "MFI": np.nan,
+                    "MACD": "-",
+                    "SQZ": "-",
+                })
+
+        signal_df = pd.DataFrame(signal_rows)
+        if not signal_df.empty:
+            dash_df = dash_df.merge(signal_df, on="티커", how="left")
+
+        defaults = {
+            "기술적타점": "-",
+            "ADJ점수": 0,
+            "후보등급": "-",
+            "추세": "-",
+            "RS": "-",
+            "RSI": np.nan,
+            "MFI": np.nan,
+            "MACD": "-",
+            "SQZ": "-",
+        }
+        for col, default in defaults.items():
+            if col not in dash_df.columns:
+                dash_df[col] = default
+
+        dash_df["ADJ점수_num"] = pd.to_numeric(dash_df["ADJ점수"], errors="coerce").fillna(0)
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("주식 평가금", f"{portfolio_summary['stock_value']:,.0f}원")
+        k2.metric("현금 포함 자산", f"{portfolio_summary['current_asset']:,.0f}원")
+        k3.metric("누적손익", f"{portfolio_summary['cum_profit']:,.0f}원")
+        k4.metric("누적수익률", f"{portfolio_summary['cum_return']:.2f}%")
+
+        c1, c2 = st.columns([1.1, 1])
+
+        tree_values = dash_df["원화환산"].astype(float).clip(lower=0)
+        if tree_values.sum() <= 0:
+            tree_values = pd.Series([1] * len(dash_df), index=dash_df.index)
+
+        with c1:
+            fig_tree = go.Figure(go.Treemap(
+                labels=dash_df["자산명"],
+                parents=[""] * len(dash_df),
+                values=tree_values,
+                marker=dict(
+                    colors=dash_df["수익률_pct"],
+                    colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
+                    cmid=0,
+                    colorbar=dict(title="수익률%")
+                ),
+                customdata=dash_df[["매입가", "현재가", "원화환산", "평가손익_원화", "현재비중", "목표비중", "기술적타점", "ADJ점수"]],
+                hovertemplate=
+                    "<b>%{label}</b><br>" +
+                    "매입가: %{customdata[0]:,.2f}<br>" +
+                    "현재가: %{customdata[1]:,.2f}<br>" +
+                    "원화환산: ₩%{customdata[2]:,.0f}<br>" +
+                    "평가손익: ₩%{customdata[3]:,.0f}<br>" +
+                    "현재비중: %{customdata[4]:.2f}%<br>" +
+                    "목표비중: %{customdata[5]:.2f}%<br>" +
+                    "타점: %{customdata[6]}<br>" +
+                    "ADJ: %{customdata[7]}<extra></extra>"
+            ))
+            fig_tree.update_layout(template="plotly_dark", height=430, title="포트폴리오 히트맵")
+            st.plotly_chart(fig_tree, use_container_width=True)
+
+        with c2:
+            max_eval = max(float(dash_df["원화환산"].max() or 0), 1.0)
+            bubble_size = np.clip(np.sqrt(dash_df["원화환산"] / max_eval) * 55, 14, 55)
+
+            fig_bubble = go.Figure(go.Scatter(
+                x=dash_df["비중차이"],
+                y=dash_df["수익률_pct"],
+                mode="markers+text",
+                text=dash_df["자산명"],
+                textposition="top center",
+                marker=dict(
+                    size=bubble_size,
+                    color=dash_df["ADJ점수_num"],
+                    colorscale="Viridis",
+                    showscale=True,
+                    colorbar=dict(title="ADJ")
+                ),
+                customdata=dash_df[["기술적타점", "후보등급", "현재비중", "목표비중"]],
+                hovertemplate=
+                    "<b>%{text}</b><br>" +
+                    "비중차이: %{x:.2f}%<br>" +
+                    "수익률: %{y:.2f}%<br>" +
+                    "타점: %{customdata[0]}<br>" +
+                    "등급: %{customdata[1]}<br>" +
+                    "현재/목표: %{customdata[2]:.2f}% / %{customdata[3]:.2f}%<extra></extra>"
+            ))
+            fig_bubble.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
+            fig_bubble.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+            fig_bubble.update_layout(template="plotly_dark", height=430, title="타점/비중/수익률 매트릭스")
+            st.plotly_chart(fig_bubble, use_container_width=True)
+
+        w1, w2 = st.columns(2)
+
+        with w1:
+            fig_weight = go.Figure()
+            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["현재비중"], orientation="h", name="현재비중"))
+            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["목표비중"], orientation="h", name="목표비중"))
+            fig_weight.update_layout(template="plotly_dark", barmode="group", height=420, title="현재비중 vs 목표비중")
+            st.plotly_chart(fig_weight, use_container_width=True)
+
+        with w2:
+            pnl_color = np.where(dash_df["평가손익_원화"] >= 0, "#16a34a", "#dc2626")
+            fig_pnl = go.Figure(go.Bar(
+                y=dash_df["자산명"],
+                x=dash_df["평가손익_원화"],
+                orientation="h",
+                marker_color=pnl_color
+            ))
+            fig_pnl.add_vline(x=0, line_color="#94a3b8")
+            fig_pnl.update_layout(template="plotly_dark", height=420, title="평가손익 랭킹")
+            st.plotly_chart(fig_pnl, use_container_width=True)
+
+        st.markdown("#### 보유자산 + 기술적 타점 요약")
+        show_cols = [
+            "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
+            "평가손익_원화", "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
+            "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ"
+        ]
+        st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
+
     else:
         st.info("등록된 보유 종목이 없습니다.")
