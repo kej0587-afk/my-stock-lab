@@ -1,4 +1,5 @@
-streamlit[auth]
+streamlit
+Authlib>=1.3.2
 supabase
 yfinance
 pandas
