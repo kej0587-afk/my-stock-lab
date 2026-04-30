@@ -1,3 +1,5 @@
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 import io
 import zipfile
 import requests
@@ -1858,6 +1860,32 @@ GENERAL_NOISE_WORDS = [
     "라이트급", "litecoin", "crypto", "코인", "맛집", "여행"
 ]
 
+NEWS_RECENT_DAYS = 14
+NEWS_FALLBACK_DAYS = 90
+KST = timezone(timedelta(hours=9))
+
+def parse_rss_pub_dt(item):
+    raw = item.findtext("pubDate", "") or item.findtext("published", "")
+    if not raw:
+        return None
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+def is_news_within_days(pub_dt, days):
+    if pub_dt is None:
+        return False
+    return pub_dt >= datetime.now(timezone.utc) - timedelta(days=days)
+
+def format_news_pub_date(pub_dt):
+    if pub_dt is None:
+        return ""
+    return pub_dt.astimezone(KST).strftime("%Y-%m-%d %H:%M")
+
 GENERIC_TICKERS = {
     "lite", "on", "now", "snap", "spot", "snow", "mu", "arm", "path", "apps",
     "open", "ai", "u", "net", "shop", "coin", "hood", "sofi"
@@ -1961,12 +1989,14 @@ def get_ticker_news(ticker, name, debug=False):
     logs = [
         f"회사명 후보: {company_names if company_names else '없음'}",
         f"검색어 후보: {queries}",
+        f"최신 필터: 최근 {NEWS_RECENT_DAYS}일 우선, 없으면 {NEWS_FALLBACK_DAYS}일 fallback",
     ]
 
-    collected = []
+    recent_items = []
+    fallback_items = []
     seen_links = set()
 
-    def add_item(title, link, publisher, strict=True):
+    def add_item(title, link, publisher, pub_dt, strict=True):
         if not link or link in seen_links:
             return False
 
@@ -1974,12 +2004,24 @@ def get_ticker_news(ticker, name, debug=False):
             return False
 
         seen_links.add(link)
-        collected.append({
+
+        item_data = {
             "title": title,
             "link": link,
             "publisher": publisher,
-        })
-        return True
+            "published": format_news_pub_date(pub_dt),
+            "_pub_dt": pub_dt,
+        }
+
+        if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
+            recent_items.append(item_data)
+            return True
+
+        if is_news_within_days(pub_dt, NEWS_FALLBACK_DAYS):
+            fallback_items.append(item_data)
+            return True
+
+        return False
 
     def read_rss(url, publisher_fallback, strict=True):
         req = urllib.request.Request(url, headers=headers)
@@ -1991,35 +2033,38 @@ def get_ticker_news(ticker, name, debug=False):
             title = clean_news_text(item.findtext("title", "제목 없음"))
             link = str(item.findtext("link", "#") or "#").strip()
             publisher = clean_news_text(item.findtext("source", publisher_fallback)) or publisher_fallback
+            pub_dt = parse_rss_pub_dt(item)
 
-            if add_item(title, link, publisher, strict=strict):
+            if add_item(title, link, publisher, pub_dt, strict=strict):
                 accepted += 1
 
-            if len(collected) >= 3:
+            if len(recent_items) >= 3:
                 break
 
         return len(items), accepted
 
     for q in queries:
-        if len(collected) >= 3:
+        if len(recent_items) >= 3:
             break
 
-        encoded = urllib.parse.quote(q)
+        google_query = f"{q} when:{NEWS_FALLBACK_DAYS}d"
+        google_encoded = urllib.parse.quote(google_query)
+        normal_encoded = urllib.parse.quote(q)
 
         try:
-            google_url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+            google_url = f"https://news.google.com/rss/search?q={google_encoded}&hl=ko&gl=KR&ceid=KR:ko"
             if debug:
                 logs.append(f"구글 URL: {google_url}")
             total, accepted = read_rss(google_url, "구글 뉴스", strict=True)
-            logs.append(f"구글 검색: {q} / 원문 {total}건, 통과 {accepted}건")
+            logs.append(f"구글 검색: {google_query} / 원문 {total}건, 통과 {accepted}건")
         except Exception as e:
             logs.append(f"구글 뉴스 실패: {q} / {e}")
 
-        if len(collected) >= 3:
+        if len(recent_items) >= 3:
             break
 
         try:
-            naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded}"
+            naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={normal_encoded}&sort=1"
             if debug:
                 logs.append(f"네이버 URL: {naver_url}")
             total, accepted = read_rss(naver_url, "네이버 뉴스", strict=True)
@@ -2027,22 +2072,26 @@ def get_ticker_news(ticker, name, debug=False):
         except Exception as e:
             logs.append(f"네이버 뉴스 실패: {q} / {e}")
 
-    if not collected:
-        logs.append("엄격 필터 통과 뉴스 없음. 회사명 중심으로 완화 필터 1회 실행.")
+    selected = recent_items if recent_items else fallback_items
 
-        for q in queries[:1]:
-            encoded = urllib.parse.quote(q)
-            try:
-                google_url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-                total, accepted = read_rss(google_url, "구글 뉴스", strict=False)
-                logs.append(f"완화 검색: {q} / 원문 {total}건, 통과 {accepted}건")
-            except Exception as e:
-                logs.append(f"완화 검색 실패: {q} / {e}")
+    if not selected:
+        logs.append("최근 주식 관련 뉴스 없음")
+        return [], logs
 
-    if not collected:
-        logs.append("표시할 주식 관련 뉴스 없음")
+    selected = sorted(
+        selected,
+        key=lambda x: x.get("_pub_dt") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True
+    )[:3]
 
-    return collected[:3], logs
+    for item in selected:
+        item.pop("_pub_dt", None)
+
+    if not recent_items and fallback_items:
+        logs.append(f"최근 {NEWS_RECENT_DAYS}일 뉴스가 없어 {NEWS_FALLBACK_DAYS}일 이내 기사로 대체 표시")
+
+    return selected, logs
+
 
 # -------------------------------------------------
 # 4. 데이터 로드 (외부 의존성 제거)
@@ -2943,9 +2992,16 @@ with tab2:
             for item in news_items:
                 safe_title = html.escape(str(item.get("title", "제목 없음")))
                 safe_pub = html.escape(str(item.get("publisher", "")))
+                safe_date = html.escape(str(item.get("published", "")))
+                date_part = f" | {safe_date}" if safe_date else ""
                 safe_link = str(item.get("link", "#")).strip()
                 if not safe_link.startswith(("http://", "https://")): safe_link = "#"
-                st.markdown(f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> <span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub}</span></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> "
+                    f"<span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub}{date_part}</span></div>",
+                    unsafe_allow_html=True
+                )
+
         else:
             st.info("현재 제공되는 최신 뉴스가 없습니다.")
 
