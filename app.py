@@ -37,21 +37,13 @@ def get_secret_emails(name):
 
 
 def require_login():
-    user = st.user if hasattr(st, "user") else st.experimental_user
-    is_logged_in = bool(user.get("is_logged_in", False)) if hasattr(user, "get") else bool(getattr(user, "is_logged_in", False))
-
-    if not is_logged_in:
+    if not st.user.is_logged_in:
         st.title("Stock Lab")
         st.info("Log in with your allowed Google account.")
-        if not st.user.is_logged_in:
-            st.title("Stock Lab")
-            st.info("Log in with your allowed Google account.")
-            st.button("Log in with Google", on_click=st.login, args=("google",))
-            st.stop()
+        st.button("Log in with Google", on_click=st.login, args=("google",))
+        st.stop()
 
-        email = str(st.user.email or "").strip().lower()
-        
-    email = str(user.get("email", "") or "").strip().lower() if hasattr(user, "get") else str(getattr(user, "email", "") or "").strip().lower()
+    email = str(st.user.email or "").strip().lower()
     allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
 
     if not allowed_emails:
@@ -61,14 +53,14 @@ def require_login():
     if email not in allowed_emails:
         st.error("This Google account is not allowed to use this app.")
         st.write(f"Signed in as: {email}")
-        if st.button("Log out"):
-            st.logout()
+        st.button("Log out", on_click=st.logout)
         st.stop()
 
     return email
 
 
 CURRENT_USER_EMAIL = require_login()
+
 
 st.markdown("""
 <style>
