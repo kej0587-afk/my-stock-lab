@@ -5,7 +5,6 @@ import zipfile
 import requests
 import json
 import base64
-from pathlib import Path
 import numpy as np
 import streamlit as st
 import yfinance as yf
@@ -16,12 +15,56 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import html
-import sqlite3
+from supabase import create_client
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="최종 관제실", layout="wide")
+
+def get_secret_value(name, fallback_name=None):
+    value = st.secrets.get(name, "")
+    if (not value) and fallback_name:
+        value = st.secrets.get(fallback_name, "")
+    return str(value).strip()
+
+
+def get_secret_emails(name):
+    value = st.secrets.get(name, [])
+    if isinstance(value, str):
+        value = [x.strip() for x in value.split(",")]
+    return {str(x).strip().lower() for x in value if str(x).strip()}
+
+
+def require_login():
+    user = st.user if hasattr(st, "user") else st.experimental_user
+    is_logged_in = bool(user.get("is_logged_in", False)) if hasattr(user, "get") else bool(getattr(user, "is_logged_in", False))
+
+    if not is_logged_in:
+        st.title("Stock Lab")
+        st.info("Log in with your allowed Google account.")
+        if st.button("Log in with Google"):
+            st.login()
+        st.stop()
+
+    email = str(user.get("email", "") or "").strip().lower() if hasattr(user, "get") else str(getattr(user, "email", "") or "").strip().lower()
+    allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
+
+    if not allowed_emails:
+        st.error("Set ALLOWED_EMAILS or ADMIN_EMAILS in Streamlit Secrets.")
+        st.stop()
+
+    if email not in allowed_emails:
+        st.error("This Google account is not allowed to use this app.")
+        st.write(f"Signed in as: {email}")
+        if st.button("Log out"):
+            st.logout()
+        st.stop()
+
+    return email
+
+
+CURRENT_USER_EMAIL = require_login()
 
 st.markdown("""
 <style>
@@ -44,6 +87,9 @@ with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
     app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 앱 내부 자산 연동, 범용모드는 직접 입력 방식입니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
+    st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
+    if st.button("Log out", key="logout_sidebar"):
+        st.logout()
 
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
 
@@ -262,112 +308,110 @@ def call_llm_analysis(prompt: str) -> str:
     return prompt
 
 # -------------------------------------------------
-# 2-1. SQLite 저장소
+# 2-1. Supabase persistent storage
 # -------------------------------------------------
-DB_DIR = Path("data")
-DB_DIR.mkdir(exist_ok=True)
-DB_FILE = DB_DIR / "portfolio.db"
+SETTINGS_COLUMNS = ["seed_money", "krw_cash", "usd_cash", "usdkrw", "reserve_target_weight"]
+HOLDINGS_COLUMNS = ["ticker", "name", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "bucket"]
+DIVIDENDS_COLUMNS = ["id", "date", "ticker", "amount", "currency"]
+MONTHLY_LOG_COLUMNS = ["month", "total_invested", "evaluated_value", "dividend"]
+FIN_SCORE_COLUMNS = ["ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"]
+WATCHLIST_COLUMNS = ["name", "ticker", "is_etf", "asset_class", "fin_score"]
 
-def get_conn():
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
+
+def clean_float(value, default=0.0):
+    try:
+        if value is None or pd.isna(value) or str(value).strip() == "":
+            return float(default)
+        return float(str(value).replace(",", ""))
+    except Exception:
+        return float(default)
+
+
+def clean_int(value, default=None):
+    try:
+        if value is None or pd.isna(value) or str(value).strip() == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def clean_bool(value):
+    try:
+        if value is None or pd.isna(value):
+            return False
+    except Exception:
+        pass
+    if isinstance(value, str):
+        return value.strip().lower() in ["true", "1", "yes", "y", "t"]
+    return bool(value)
+
+
+@st.cache_resource
+def get_supabase_client():
+    url = get_secret_value("SUPABASE_URL")
+    key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
+
+    if not url or not key:
+        raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Streamlit Secrets.")
+
+    return create_client(url, key)
+
+
+def get_supabase():
+    try:
+        return get_supabase_client()
+    except Exception as e:
+        st.error(f"Supabase connection configuration error: {e}")
+        st.stop()
+
+
+supabase = get_supabase()
+
+
+def run_supabase(query, action="Supabase operation"):
+    try:
+        return query.execute()
+    except Exception as e:
+        st.error(f"{action} failed: {e}")
+        st.info("Check that Supabase tables were created and Streamlit Secrets are correct.")
+        st.stop()
+
+
+def dataframe_from_rows(rows, columns):
+    df = pd.DataFrame(rows or [])
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+    return df[columns]
+
 
 def init_db():
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS settings (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        seed_money REAL DEFAULT 0,
-        krw_cash REAL DEFAULT 0,
-        usd_cash REAL DEFAULT 0,
-        usdkrw REAL DEFAULT 1400,
-        reserve_target_weight REAL DEFAULT 10
+    res = run_supabase(
+        supabase.table("settings").select("owner_email").eq("owner_email", CURRENT_USER_EMAIL),
+        "load default settings row",
     )
-    """)
+    if not res.data:
+        run_supabase(
+            supabase.table("settings").insert({
+                "owner_email": CURRENT_USER_EMAIL,
+                "seed_money": 0,
+                "krw_cash": 0,
+                "usd_cash": 0,
+                "usdkrw": 1400,
+                "reserve_target_weight": 10,
+            }),
+            "create default settings row",
+        )
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS holdings (
-        ticker TEXT PRIMARY KEY,
-        name TEXT,
-        qty REAL DEFAULT 0,
-        avg_price REAL DEFAULT 0,
-        target_weight REAL DEFAULT 0,
-        asset_class TEXT DEFAULT '',
-        is_etf INTEGER DEFAULT 0,
-        bucket TEXT DEFAULT 'core'
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS dividends (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT,
-        ticker TEXT,
-        amount REAL DEFAULT 0,
-        currency TEXT DEFAULT 'KRW'
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS monthly_logs (
-        month TEXT PRIMARY KEY,
-        total_invested REAL DEFAULT 0,
-        evaluated_value REAL DEFAULT 0,
-        dividend REAL DEFAULT 0
-    )
-    """)
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS fin_scores (
-        ticker TEXT PRIMARY KEY,
-        auto_score INTEGER,
-        manual_score INTEGER,
-        final_score INTEGER,
-        source TEXT,
-        notes_json TEXT
-    )
-    """)
-    
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS watchlist (
-        ticker TEXT PRIMARY KEY,
-        name TEXT,
-        is_etf INTEGER DEFAULT 0,
-        asset_class TEXT DEFAULT '',
-        sort_order INTEGER DEFAULT 0,
-        fin_score INTEGER
-    )
-    """)
-    
-    cur.execute("PRAGMA table_info(settings)")
-    setting_cols = [row[1] for row in cur.fetchall()]
-    if "reserve_target_weight" not in setting_cols:
-        cur.execute("ALTER TABLE settings ADD COLUMN reserve_target_weight REAL DEFAULT 10")
-
-    cur.execute("PRAGMA table_info(holdings)")
-    holding_cols = [row[1] for row in cur.fetchall()]
-    if "bucket" not in holding_cols:
-        cur.execute("ALTER TABLE holdings ADD COLUMN bucket TEXT DEFAULT 'core'")
-
-    cur.execute("SELECT COUNT(*) FROM settings")
-    if cur.fetchone()[0] == 0:
-        cur.execute("""
-            INSERT INTO settings (id, seed_money, krw_cash, usd_cash, usdkrw)
-            VALUES (1, 0, 0, 0, 1400)
-        """)
-
-    conn.commit()
-    conn.close()
 
 def load_settings_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query("SELECT * FROM settings WHERE id = 1", conn)
-    finally:
-        conn.close()
+    res = run_supabase(
+        supabase.table("settings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
+        "load settings",
+    )
 
-    if df.empty:
+    if not res.data:
         return {
             "seed_money": 0.0,
             "krw_cash": 0.0,
@@ -376,196 +420,180 @@ def load_settings_db():
             "reserve_target_weight": 10.0,
         }
 
-    row = df.iloc[0]
-    reserve_target = row["reserve_target_weight"] if "reserve_target_weight" in row.index else 10.0
-
+    row = res.data[0]
     return {
-        "seed_money": float(row["seed_money"]),
-        "krw_cash": float(row["krw_cash"]),
-        "usd_cash": float(row["usd_cash"]),
-        "usdkrw": float(row["usdkrw"]),
-        "reserve_target_weight": float(reserve_target) if pd.notna(reserve_target) else 10.0,
+        "seed_money": clean_float(row.get("seed_money"), 0.0),
+        "krw_cash": clean_float(row.get("krw_cash"), 0.0),
+        "usd_cash": clean_float(row.get("usd_cash"), 0.0),
+        "usdkrw": clean_float(row.get("usdkrw"), 1400.0),
+        "reserve_target_weight": clean_float(row.get("reserve_target_weight"), 10.0),
     }
 
+
 def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight=10.0):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE settings
-            SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?, reserve_target_weight = ?
-            WHERE id = 1
-        """, (
-            float(seed_money),
-            float(krw_cash),
-            float(usd_cash),
-            float(usdkrw),
-            float(reserve_target_weight)
-        ))
-        conn.commit()
-    finally:
-        conn.close()
+    run_supabase(
+        supabase.table("settings").upsert({
+            "owner_email": CURRENT_USER_EMAIL,
+            "seed_money": clean_float(seed_money),
+            "krw_cash": clean_float(krw_cash),
+            "usd_cash": clean_float(usd_cash),
+            "usdkrw": clean_float(usdkrw, 1400.0),
+            "reserve_target_weight": clean_float(reserve_target_weight, 10.0),
+        }, on_conflict="owner_email"),
+        "save settings",
+    )
 
 
 def load_holdings_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query("SELECT * FROM holdings", conn)
-    finally:
-        conn.close()
-    return df
+    res = run_supabase(
+        supabase.table("holdings").select(",".join(HOLDINGS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        "load holdings",
+    )
+    return dataframe_from_rows(res.data, HOLDINGS_COLUMNS)
+
 
 def save_holdings_db(df):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM holdings")
-        for _, row in df.iterrows():
-            ticker_value = str(row.get("ticker", "")).strip()
-            if not ticker_value:
-                continue
-            raw_is_etf = row.get("is_etf", False)
-            if isinstance(raw_is_etf, str):
-                is_etf = 1 if raw_is_etf.strip().lower() in ["true", "1", "yes", "y"] else 0
-            else:
-                is_etf = 1 if bool(raw_is_etf) else 0
+    run_supabase(
+        supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing holdings",
+    )
 
-            bucket = infer_bucket(ticker_value, row.get("bucket", "core"))
-            
-            cur.execute("""
-                INSERT OR REPLACE INTO holdings
-                (ticker, name, qty, avg_price, target_weight, asset_class, is_etf, bucket)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                ticker_value,
-                str(row.get("name", "")).strip(),
-                float(row.get("qty", 0) or 0),
-                float(row.get("avg_price", 0) or 0),
-                float(row.get("target_weight", 0) or 0),
-                str(row.get("asset_class", "")).strip(),
-                is_etf,
-                bucket
-            ))
+    rows = []
+    for _, row in df.iterrows():
+        ticker_value = str(row.get("ticker", "")).strip()
+        if not ticker_value:
+            continue
 
-        conn.commit()
-    finally:
-        conn.close()
+        rows.append({
+            "owner_email": CURRENT_USER_EMAIL,
+            "ticker": ticker_value,
+            "name": str(row.get("name", "")).strip(),
+            "qty": clean_float(row.get("qty")),
+            "avg_price": clean_float(row.get("avg_price")),
+            "target_weight": clean_float(row.get("target_weight")),
+            "asset_class": str(row.get("asset_class", "")).strip(),
+            "is_etf": clean_bool(row.get("is_etf", False)),
+            "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
+        })
+
+    if rows:
+        run_supabase(supabase.table("holdings").insert(rows), "save holdings")
 
 
 def load_dividends_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query("SELECT * FROM dividends ORDER BY date DESC, id DESC", conn)
-    finally:
-        conn.close()
-    return df
+    res = run_supabase(
+        supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        "load dividends",
+    )
+    rows = sorted(res.data or [], key=lambda r: (str(r.get("date") or ""), int(r.get("id") or 0)), reverse=True)
+    return dataframe_from_rows(rows, DIVIDENDS_COLUMNS)
+
 
 def save_dividends_db(df):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM dividends")
-        for _, row in df.iterrows():
-            cur.execute("""
-                INSERT INTO dividends (date, ticker, amount, currency)
-                VALUES (?, ?, ?, ?)
-            """, (
-                str(row.get("date", "")).strip(),
-                str(row.get("ticker", "")).strip(),
-                float(row.get("amount", 0) or 0),
-                str(row.get("currency", "KRW")).strip().upper()
-            ))
-        conn.commit()
-    finally:
-        conn.close()
+    run_supabase(
+        supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing dividends",
+    )
+
+    rows = []
+    for _, row in df.iterrows():
+        if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
+            continue
+        rows.append({
+            "owner_email": CURRENT_USER_EMAIL,
+            "date": str(row.get("date", "")).strip(),
+            "ticker": str(row.get("ticker", "")).strip(),
+            "amount": clean_float(row.get("amount")),
+            "currency": str(row.get("currency", "KRW")).strip().upper() or "KRW",
+        })
+
+    if rows:
+        run_supabase(supabase.table("dividends").insert(rows), "save dividends")
+
 
 def load_monthly_logs_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query("SELECT * FROM monthly_logs ORDER BY month", conn)
-    finally:
-        conn.close()
-    return df
+    res = run_supabase(
+        supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        "load monthly logs",
+    )
+    rows = sorted(res.data or [], key=lambda r: str(r.get("month") or ""))
+    return dataframe_from_rows(rows, MONTHLY_LOG_COLUMNS)
+
 
 def save_monthly_logs_db(df):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM monthly_logs")
-        for _, row in df.iterrows():
-            cur.execute("""
-                INSERT OR REPLACE INTO monthly_logs (month, total_invested, evaluated_value, dividend)
-                VALUES (?, ?, ?, ?)
-            """, (
-                str(row.get("month", "")).strip(),
-                float(row.get("total_invested", 0) or 0),
-                float(row.get("evaluated_value", 0) or 0),
-                float(row.get("dividend", 0) or 0)
-            ))
-        conn.commit()
-    finally:
-        conn.close()
+    run_supabase(
+        supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing monthly logs",
+    )
+
+    rows = []
+    for _, row in df.iterrows():
+        month = str(row.get("month", "")).strip()
+        if not month:
+            continue
+        rows.append({
+            "owner_email": CURRENT_USER_EMAIL,
+            "month": month,
+            "total_invested": clean_float(row.get("total_invested")),
+            "evaluated_value": clean_float(row.get("evaluated_value")),
+            "dividend": clean_float(row.get("dividend")),
+        })
+
+    if rows:
+        run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
+
 
 def load_fin_scores_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query("SELECT * FROM fin_scores", conn)
-    finally:
-        conn.close()
-    return df
+    res = run_supabase(
+        supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        "load financial scores",
+    )
+    return dataframe_from_rows(res.data, FIN_SCORE_COLUMNS)
+
 
 def load_watchlist_db():
-    conn = get_conn()
-    try:
-        df = pd.read_sql_query(
-            "SELECT name, ticker, is_etf, asset_class, fin_score FROM watchlist ORDER BY sort_order, name",
-            conn
-        )
-    finally:
-        conn.close()
+    res = run_supabase(
+        supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", CURRENT_USER_EMAIL),
+        "load watchlist",
+    )
 
-    if df.empty:
-        return []
-
+    rows = sorted(res.data or [], key=lambda r: (int(r.get("sort_order") or 0), str(r.get("name") or "")))
     items = []
-    for _, row in df.iterrows():
+    for row in rows:
         items.append({
             "name": str(row.get("name", "")).strip(),
             "ticker": str(row.get("ticker", "")).strip(),
-            "is_etf": bool(int(row.get("is_etf", 0) or 0)),
+            "is_etf": clean_bool(row.get("is_etf", False)),
             "asset_class": str(row.get("asset_class", "")).strip(),
-            "fin_score": int(row["fin_score"]) if pd.notna(row.get("fin_score")) else None,
+            "fin_score": clean_int(row.get("fin_score")),
         })
     return [x for x in items if x["ticker"]]
 
 
 def save_watchlist_db(watchlist):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("DELETE FROM watchlist")
+    run_supabase(
+        supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing watchlist",
+    )
 
-        for idx, item in enumerate(watchlist):
-            ticker = str(item.get("ticker", "")).strip()
-            if not ticker:
-                continue
+    rows = []
+    for idx, item in enumerate(watchlist):
+        ticker = str(item.get("ticker", "")).strip()
+        if not ticker:
+            continue
 
-            cur.execute("""
-                INSERT OR REPLACE INTO watchlist
-                (ticker, name, is_etf, asset_class, sort_order, fin_score)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                ticker,
-                str(item.get("name", "")).strip(),
-                1 if bool(item.get("is_etf", False)) else 0,
-                str(item.get("asset_class", "")).strip(),
-                idx,
-                int(item["fin_score"]) if item.get("fin_score") is not None else None,
-            ))
+        rows.append({
+            "owner_email": CURRENT_USER_EMAIL,
+            "ticker": ticker,
+            "name": str(item.get("name", "")).strip(),
+            "is_etf": clean_bool(item.get("is_etf", False)),
+            "asset_class": str(item.get("asset_class", "")).strip(),
+            "sort_order": idx,
+            "fin_score": clean_int(item.get("fin_score")),
+        })
 
-        conn.commit()
-    finally:
-        conn.close()
+    if rows:
+        run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
 
 
 def load_watchlist_persistent():
@@ -577,9 +605,11 @@ def load_watchlist_persistent():
     save_watchlist_db(query_items)
     return query_items
 
+
 def persist_watchlist():
     save_watchlist_db(st.session_state.watchlist)
-        
+
+
 def to_jsonable(obj):
     if isinstance(obj, dict):
         return {str(k): to_jsonable(v) for k, v in obj.items()}
@@ -602,37 +632,42 @@ def to_jsonable(obj):
 
 
 def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT OR REPLACE INTO fin_scores
-            (ticker, auto_score, manual_score, final_score, source, notes_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            normalize_ticker(ticker),
-            int(auto_score) if auto_score is not None else None,
-            int(manual_score) if manual_score is not None else None,
-            int(final_score) if final_score is not None else None,
-            str(source),
-            json.dumps(to_jsonable(notes), ensure_ascii=False)
-        ))
-        conn.commit()
-    finally:
-        conn.close()
+    run_supabase(
+        supabase.table("fin_scores").upsert({
+            "owner_email": CURRENT_USER_EMAIL,
+            "ticker": normalize_ticker(ticker),
+            "auto_score": clean_int(auto_score),
+            "manual_score": clean_int(manual_score),
+            "final_score": clean_int(final_score),
+            "source": str(source),
+            "notes_json": json.dumps(to_jsonable(notes), ensure_ascii=False),
+        }, on_conflict="owner_email,ticker"),
+        "save financial score",
+    )
+
 
 def delete_manual_fin_score_db(ticker):
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            UPDATE fin_scores
-            SET manual_score = NULL, final_score = auto_score
-            WHERE ticker = ?
-        """, (normalize_ticker(ticker),))
-        conn.commit()
-    finally:
-        conn.close()
+    key = normalize_ticker(ticker)
+    fin_scores_df = load_fin_scores_db()
+    matched = fin_scores_df[fin_scores_df["ticker"] == key]
+
+    if matched.empty:
+        return
+
+    row = matched.iloc[0]
+    run_supabase(
+        supabase.table("fin_scores").upsert({
+            "owner_email": CURRENT_USER_EMAIL,
+            "ticker": key,
+            "auto_score": clean_int(row.get("auto_score")),
+            "manual_score": None,
+            "final_score": clean_int(row.get("auto_score")),
+            "source": str(row.get("source") or "saved"),
+            "notes_json": str(row.get("notes_json") or "{}"),
+        }, on_conflict="owner_email,ticker"),
+        "reset manual financial score",
+    )
+
 
 init_db()
 
