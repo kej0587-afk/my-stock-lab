@@ -50,9 +50,7 @@ def require_login():
             st.stop()
 
         email = str(st.user.email or "").strip().lower()
-
-        st.stop()
-
+        
     email = str(user.get("email", "") or "").strip().lower() if hasattr(user, "get") else str(getattr(user, "email", "") or "").strip().lower()
     allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
 
