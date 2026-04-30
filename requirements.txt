@@ -1,8 +1,9 @@
+streamlit[auth]
+supabase
 yfinance
 pandas
 plotly
 ta
-streamlit
 gspread
 google-auth
 OpenDartReader
