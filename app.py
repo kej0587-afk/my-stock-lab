@@ -37,28 +37,32 @@ def get_secret_emails(name):
 
 
 def require_login():
-    if not st.user.is_logged_in:
-        st.title("Stock Lab")
-        st.info("Log in with your allowed Google account.")
-        if st.button("Log in with Google"):
-            st.login()
-        st.stop()
-
-    email = str(st.user.email or "").strip().lower()
     allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
+    owner_email = sorted(allowed_emails)[0] if allowed_emails else "kej0587@gmail.com"
 
-    if not allowed_emails:
-        st.error("Set ALLOWED_EMAILS or ADMIN_EMAILS in Streamlit Secrets.")
+    app_password = str(st.secrets.get("APP_PASSWORD", "")).strip()
+    if not app_password:
+        st.error("Set APP_PASSWORD in Streamlit Secrets.")
         st.stop()
 
-    if email not in allowed_emails:
-        st.error("This Google account is not allowed to use this app.")
-        st.write(f"Signed in as: {email}")
-        st.button("Log out", on_click=st.logout)
+    if "password_ok" not in st.session_state:
+        st.session_state.password_ok = False
+
+    if not st.session_state.password_ok:
+        st.title("Stock Lab")
+        st.info("Enter password to use this app.")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Log in"):
+            if password == app_password:
+                st.session_state.password_ok = True
+                st.rerun()
+            else:
+                st.error("Wrong password.")
+
         st.stop()
 
-    return email
-
+    return owner_email
 
 CURRENT_USER_EMAIL = require_login()
 
@@ -86,7 +90,9 @@ with st.sidebar:
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
     st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
     if st.button("Log out", key="logout_sidebar"):
-        st.logout()
+        st.session_state.password_ok = False
+        st.rerun()
+
 
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
 
