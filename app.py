@@ -2899,8 +2899,8 @@ with tab3:
         ]
         st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
 
-        else:
-            st.info("등록된 보유 종목이 없습니다.")
+    else:
+        st.info("등록된 보유 종목이 없습니다.")
 
 with tab4:
     render_manual_tab() 
