@@ -1715,6 +1715,25 @@ def get_holding_row_by_ticker(holdings_table, ticker):
     return None
 
 st.markdown("### 5) 현재 계산 결과")
+settings = load_settings_db()
+holdings_df = load_holdings_db()
+dividends_df = load_dividends_db()
+
+seed_money = float(settings.get("seed_money", 0.0))
+krw_cash = float(settings.get("krw_cash", 0.0))
+usd_cash = float(settings.get("usd_cash", 0.0))
+usdkrw = float(settings.get("usdkrw", 1400.0))
+
+holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
+portfolio_summary = calc_portfolio_summary(
+    holdings_table,
+    seed_money,
+    krw_cash,
+    usd_cash,
+    usdkrw,
+    dividends_df
+)
+total_eval = portfolio_summary["current_asset"]
 
 if not holdings_table.empty:
     dash_df = holdings_table.copy()
