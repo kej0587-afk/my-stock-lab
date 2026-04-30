@@ -1843,42 +1843,206 @@ def get_holding_row_by_ticker(holdings_table, ticker):
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
+STOCK_NEWS_WORDS = [
+    "stock", "stocks", "share", "shares", "market", "nasdaq", "nyse", "earnings",
+    "revenue", "profit", "guidance", "analyst", "rating", "price target",
+    "upgrade", "downgrade", "buy", "sell", "hold", "dividend", "etf",
+    "주가", "증시", "주식", "실적", "매출", "영업이익", "순이익", "목표가",
+    "투자의견", "상향", "하향", "매수", "매도", "보유", "배당", "ETF",
+    "코스피", "코스닥", "나스닥", "뉴욕증시"
+]
+
+GENERAL_NOISE_WORDS = [
+    "galaxy", "갤럭시", "iphone", "아이폰", "android", "안드로이드",
+    "recipe", "beer", "game", "gaming", "movie", "music", "lyrics",
+    "라이트급", "litecoin", "crypto", "코인", "맛집", "여행"
+]
+
+GENERIC_TICKERS = {
+    "lite", "on", "now", "snap", "spot", "snow", "mu", "arm", "path", "apps",
+    "open", "ai", "u", "net", "shop", "coin", "hood", "sofi"
+}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_yfinance_company_names(ticker):
+    names = []
+    try:
+        info = yf.Ticker(ticker).get_info()
+        for key in ["longName", "shortName", "displayName"]:
+            value = str(info.get(key, "") or "").strip()
+            if value and value.lower() not in [x.lower() for x in names]:
+                names.append(value)
+    except Exception:
+        pass
+    return names[:3]
+
+def normalize_news_token(text):
+    return str(text or "").replace(".KS", "").replace(".KQ", "").strip()
+
+def clean_news_text(value):
+    return html.unescape(str(value or "")).replace("<b>", "").replace("</b>", "").strip()
+
+def get_news_company_names(ticker, name):
+    symbol = normalize_news_token(ticker).upper()
+    display_name = str(name or "").replace("탐색: ", "").strip()
+
+    names = []
+
+    if display_name and display_name.upper() != symbol:
+        names.append(display_name)
+
+    for n in get_yfinance_company_names(ticker):
+        if n and n.lower() not in [x.lower() for x in names]:
+            names.append(n)
+
+    cleaned = []
+    for n in names:
+        n = n.replace("Inc.", "").replace("Corporation", "").replace("Corp.", "").replace("Co., Ltd.", "").strip()
+        if len(n) >= 2 and n.lower() not in [x.lower() for x in cleaned]:
+            cleaned.append(n)
+
+    return cleaned[:3]
+
+def build_stock_news_queries(ticker, name):
+    symbol = normalize_news_token(ticker).upper()
+    company_names = get_news_company_names(ticker, name)
+    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+
+    main = company_names[0] if company_names else symbol
+
+    if is_kr:
+        queries = [
+            f'"{main}" 주가 실적',
+            f'"{main}" 증권',
+            f'{symbol} 주가 실적',
+        ]
+    else:
+        queries = [
+            f'"{main}" {symbol} stock',
+            f'"{main}" earnings shares',
+            f'"{main}" analyst price target',
+        ]
+
+    return queries, company_names
+
+def symbol_appears_as_token(text, symbol):
+    text = str(text or "").lower()
+    symbol = str(symbol or "").lower()
+    tokens = text.replace("(", " ").replace(")", " ").replace(":", " ").replace(",", " ").replace(".", " ").split()
+    return symbol in tokens
+
+def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
+    text = f"{title} {publisher}".lower()
+    symbol = normalize_news_token(ticker).lower()
+
+    if any(noise in text for noise in GENERAL_NOISE_WORDS):
+        return False
+
+    has_company = any(str(n).lower() in text for n in company_names if str(n).strip())
+    has_symbol = symbol_appears_as_token(text, symbol)
+    has_stock_word = any(w.lower() in text for w in STOCK_NEWS_WORDS)
+
+    if symbol in GENERIC_TICKERS:
+        return has_company and has_stock_word
+
+    if strict:
+        return (has_company or has_symbol) and has_stock_word
+
+    return has_company or (has_symbol and has_stock_word)
+    
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    search_query = name.replace("탐색: ", "").replace(".KS", "").replace(".KQ", "").strip()
-    encoded = urllib.parse.quote(search_query)
-    logs = [f"검색어: {search_query}"]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
-    try:
-        url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded}"
-        if debug: logs.append(f"네이버 URL: {url}")
+    queries, company_names = build_stock_news_queries(ticker, name)
+    logs = [
+        f"회사명 후보: {company_names if company_names else '없음'}",
+        f"검색어 후보: {queries}",
+    ]
+
+    collected = []
+    seen_links = set()
+
+    def add_item(title, link, publisher, strict=True):
+        if not link or link in seen_links:
+            return False
+
+        if not is_relevant_stock_news(title, publisher, ticker, company_names, strict=strict):
+            return False
+
+        seen_links.add(link)
+        collected.append({
+            "title": title,
+            "link": link,
+            "publisher": publisher,
+        })
+        return True
+
+    def read_rss(url, publisher_fallback, strict=True):
         req = urllib.request.Request(url, headers=headers)
         root = ET.fromstring(urllib.request.urlopen(req, timeout=4).read())
         items = root.findall("./channel/item")
-        if items:
-            res = [{"title": i.find("title").text.replace("<b>","").replace("</b>","").replace("&quot;","\"").replace("&amp;","&") if i.find("title") is not None else "제목 없음", 
-                    "link": i.find("link").text if i.find("link") is not None else "#", 
-                    "publisher": "네이버 뉴스"} for i in items[:3]]
-            logs.append(f"네이버 뉴스 성공 ({len(items)}건)")
-            return res, logs
-    except Exception as e: logs.append(f"네이버 뉴스 실패: {e}")
 
-    try:
-        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-        if debug: logs.append(f"구글 URL: {url}")
-        req = urllib.request.Request(url, headers=headers)
-        root = ET.fromstring(urllib.request.urlopen(req, timeout=4).read())
-        items = root.findall("./channel/item")
-        if items:
-            res = [{"title": i.find("title").text if i.find("title") is not None else "제목 없음", 
-                    "link": i.find("link").text if i.find("link") is not None else "#", 
-                    "publisher": i.find("source").text if i.find("source") is not None else "구글 뉴스"} for i in items[:3]]
-            logs.append(f"구글 뉴스 성공 ({len(items)}건)")
-            return res, logs
-    except Exception as e: logs.append(f"구글 뉴스 실패: {e}")
+        accepted = 0
+        for item in items:
+            title = clean_news_text(item.findtext("title", "제목 없음"))
+            link = str(item.findtext("link", "#") or "#").strip()
+            publisher = clean_news_text(item.findtext("source", publisher_fallback)) or publisher_fallback
 
-    return [], logs
+            if add_item(title, link, publisher, strict=strict):
+                accepted += 1
+
+            if len(collected) >= 3:
+                break
+
+        return len(items), accepted
+
+    for q in queries:
+        if len(collected) >= 3:
+            break
+
+        encoded = urllib.parse.quote(q)
+
+        try:
+            google_url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+            if debug:
+                logs.append(f"구글 URL: {google_url}")
+            total, accepted = read_rss(google_url, "구글 뉴스", strict=True)
+            logs.append(f"구글 검색: {q} / 원문 {total}건, 통과 {accepted}건")
+        except Exception as e:
+            logs.append(f"구글 뉴스 실패: {q} / {e}")
+
+        if len(collected) >= 3:
+            break
+
+        try:
+            naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={encoded}"
+            if debug:
+                logs.append(f"네이버 URL: {naver_url}")
+            total, accepted = read_rss(naver_url, "네이버 뉴스", strict=True)
+            logs.append(f"네이버 검색: {q} / 원문 {total}건, 통과 {accepted}건")
+        except Exception as e:
+            logs.append(f"네이버 뉴스 실패: {q} / {e}")
+
+    if not collected:
+        logs.append("엄격 필터 통과 뉴스 없음. 회사명 중심으로 완화 필터 1회 실행.")
+
+        for q in queries[:1]:
+            encoded = urllib.parse.quote(q)
+            try:
+                google_url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+                total, accepted = read_rss(google_url, "구글 뉴스", strict=False)
+                logs.append(f"완화 검색: {q} / 원문 {total}건, 통과 {accepted}건")
+            except Exception as e:
+                logs.append(f"완화 검색 실패: {q} / {e}")
+
+    if not collected:
+        logs.append("표시할 주식 관련 뉴스 없음")
+
+    return collected[:3], logs
 
 # -------------------------------------------------
 # 4. 데이터 로드 (외부 의존성 제거)
