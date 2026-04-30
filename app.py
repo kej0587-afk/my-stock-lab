@@ -60,6 +60,28 @@ def parse_num(v):
     s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
     return pd.to_numeric(s, errors="coerce") if s != "" else 0.0
 
+RESERVE_TICKERS = {"357870", "sgov"}
+RESERVE_BUCKETS = {"reserve", "cash"}
+
+def normalize_bucket(value):
+    raw = str(value or "").strip().lower()
+    if raw in ["core", "swing", "reserve", "cash"]:
+        return raw
+    return "core"
+
+def infer_bucket(ticker, value=""):
+    key = normalize_ticker(ticker)
+    raw = str(value or "").strip().lower()
+
+    if key in RESERVE_TICKERS and raw in ["", "core", "nan", "none"]:
+        return "reserve"
+    if raw in ["core", "swing", "reserve", "cash"]:
+        return raw
+    return "core"
+
+def is_reserve_or_cash_bucket(bucket):
+    return normalize_bucket(bucket) in RESERVE_BUCKETS
+
 def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
     if last_sqz_on and not prev_sqz_on: return "⏳재압축"
     elif last_sqz_on and prev_sqz_on: return "⏳압축중"
@@ -257,7 +279,8 @@ def init_db():
         seed_money REAL DEFAULT 0,
         krw_cash REAL DEFAULT 0,
         usd_cash REAL DEFAULT 0,
-        usdkrw REAL DEFAULT 1400
+        usdkrw REAL DEFAULT 1400,
+        reserve_target_weight REAL DEFAULT 10
     )
     """)
 
@@ -269,7 +292,8 @@ def init_db():
         avg_price REAL DEFAULT 0,
         target_weight REAL DEFAULT 0,
         asset_class TEXT DEFAULT '',
-        is_etf INTEGER DEFAULT 0
+        is_etf INTEGER DEFAULT 0,
+        bucket TEXT DEFAULT 'core'
     )
     """)
 
@@ -313,7 +337,17 @@ def init_db():
         fin_score INTEGER
     )
     """)
-   
+    
+    cur.execute("PRAGMA table_info(settings)")
+    setting_cols = [row[1] for row in cur.fetchall()]
+    if "reserve_target_weight" not in setting_cols:
+        cur.execute("ALTER TABLE settings ADD COLUMN reserve_target_weight REAL DEFAULT 10")
+
+    cur.execute("PRAGMA table_info(holdings)")
+    holding_cols = [row[1] for row in cur.fetchall()]
+    if "bucket" not in holding_cols:
+        cur.execute("ALTER TABLE holdings ADD COLUMN bucket TEXT DEFAULT 'core'")
+
     cur.execute("SELECT COUNT(*) FROM settings")
     if cur.fetchone()[0] == 0:
         cur.execute("""
@@ -330,28 +364,46 @@ def load_settings_db():
         df = pd.read_sql_query("SELECT * FROM settings WHERE id = 1", conn)
     finally:
         conn.close()
+
     if df.empty:
-        return {"seed_money": 0.0, "krw_cash": 0.0, "usd_cash": 0.0, "usdkrw": 1400.0}
+        return {
+            "seed_money": 0.0,
+            "krw_cash": 0.0,
+            "usd_cash": 0.0,
+            "usdkrw": 1400.0,
+            "reserve_target_weight": 10.0,
+        }
+
     row = df.iloc[0]
+    reserve_target = row["reserve_target_weight"] if "reserve_target_weight" in row.index else 10.0
+
     return {
         "seed_money": float(row["seed_money"]),
         "krw_cash": float(row["krw_cash"]),
         "usd_cash": float(row["usd_cash"]),
-        "usdkrw": float(row["usdkrw"])
+        "usdkrw": float(row["usdkrw"]),
+        "reserve_target_weight": float(reserve_target) if pd.notna(reserve_target) else 10.0,
     }
 
-def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw):
+def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight=10.0):
     conn = get_conn()
     try:
         cur = conn.cursor()
         cur.execute("""
             UPDATE settings
-            SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?
+            SET seed_money = ?, krw_cash = ?, usd_cash = ?, usdkrw = ?, reserve_target_weight = ?
             WHERE id = 1
-        """, (float(seed_money), float(krw_cash), float(usd_cash), float(usdkrw)))
+        """, (
+            float(seed_money),
+            float(krw_cash),
+            float(usd_cash),
+            float(usdkrw),
+            float(reserve_target_weight)
+        ))
         conn.commit()
     finally:
         conn.close()
+
 
 def load_holdings_db():
     conn = get_conn()
@@ -376,10 +428,12 @@ def save_holdings_db(df):
             else:
                 is_etf = 1 if bool(raw_is_etf) else 0
 
+            bucket = infer_bucket(ticker_value, row.get("bucket", "core"))
+            
             cur.execute("""
                 INSERT OR REPLACE INTO holdings
-                (ticker, name, qty, avg_price, target_weight, asset_class, is_etf)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (ticker, name, qty, avg_price, target_weight, asset_class, is_etf, bucket)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ticker_value,
                 str(row.get("name", "")).strip(),
@@ -387,8 +441,10 @@ def save_holdings_db(df):
                 float(row.get("avg_price", 0) or 0),
                 float(row.get("target_weight", 0) or 0),
                 str(row.get("asset_class", "")).strip(),
-                is_etf
+                is_etf,
+                bucket
             ))
+
         conn.commit()
     finally:
         conn.close()
@@ -1648,7 +1704,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
     if holdings_df.empty:
         return pd.DataFrame(columns=[
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
-            "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class"
+            "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
         ])
 
     rows = []
@@ -1659,6 +1715,8 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         avg_price = float(row.get("avg_price", 0) or 0)
         target_weight = float(row.get("target_weight", 0) or 0)
         asset_class = row.get("asset_class", "us_stock")
+
+        bucket = infer_bucket(ticker, row.get("bucket", "core"))
 
         raw_is_etf = row.get("is_etf", False)
         if isinstance(raw_is_etf, str): is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
@@ -1677,14 +1735,24 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         rows.append({
             "자산명": name, "티커": ticker, "보유량": qty, "매입가": avg_price,
             "현재가": cur_price, "평가금액": eval_amt, "평가손익": pnl, "수익률": ret,
-            "원화환산": krw_eval, "목표비중": target_weight, "is_etf": is_etf, "asset_class": asset_class
+            "원화환산": krw_eval, "목표비중": target_weight, "is_etf": is_etf, "asset_class": asset_class,
+            "bucket": bucket
         })
 
     df = pd.DataFrame(rows)
     total_assets = df["원화환산"].sum() + krw_cash + (usd_cash * usdkrw)
     if total_assets > 0: df["현재비중"] = df["원화환산"] / total_assets * 100
     else: df["현재비중"] = 0.0
-    df["비중차이"] = df["목표비중"] - df["현재비중"]
+    df["운용대상"] = ~df["bucket"].apply(is_reserve_or_cash_bucket)
+    df["비중차이"] = df.apply(
+        lambda r: 0.0 if is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]) - float(r["현재비중"]),
+        axis=1
+    )
+    df["리밸런싱목표비중"] = df.apply(
+        lambda r: float(r["현재비중"]) if is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]),
+        axis=1
+    )
+
     return df
 
 def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df):
@@ -1705,6 +1773,64 @@ def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkr
     return {
         "current_asset": current_asset, "stock_value": stock_value, "cash_value": cash_value,
         "total_dividend": total_dividend, "cum_profit": cum_profit, "cum_return": cum_return
+    }
+def make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset):
+    rows = []
+    total_asset = float(total_asset or 0)
+
+    if krw_cash > 0:
+        cur_w = krw_cash / total_asset * 100 if total_asset > 0 else 0.0
+        rows.append({
+            "자산명": "원화예수금", "티커": "KRW_CASH", "보유량": krw_cash,
+            "매입가": 1.0, "현재가": 1.0, "평가금액": krw_cash, "평가손익": 0.0,
+            "수익률": 0.0, "원화환산": krw_cash, "현재비중": cur_w,
+            "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
+            "asset_class": "cash", "bucket": "cash", "운용대상": False,
+            "리밸런싱목표비중": cur_w
+        })
+
+    if usd_cash > 0:
+        usd_cash_krw = usd_cash * usdkrw
+        cur_w = usd_cash_krw / total_asset * 100 if total_asset > 0 else 0.0
+        rows.append({
+            "자산명": "달러예수금", "티커": "USD_CASH", "보유량": usd_cash,
+            "매입가": usdkrw, "현재가": usdkrw, "평가금액": usd_cash, "평가손익": 0.0,
+            "수익률": 0.0, "원화환산": usd_cash_krw, "현재비중": cur_w,
+            "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
+            "asset_class": "cash", "bucket": "cash", "운용대상": False,
+            "리밸런싱목표비중": cur_w
+        })
+
+    return rows
+
+def append_cash_rows(df, krw_cash, usd_cash, usdkrw, total_asset):
+    cash_rows = make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset)
+    if cash_rows:
+        return pd.concat([df, pd.DataFrame(cash_rows)], ignore_index=True)
+    return df
+
+def calc_reserve_summary(df, reserve_target_weight):
+    total = float(df["원화환산"].sum()) if not df.empty else 0.0
+    bucket = df["bucket"].apply(normalize_bucket) if not df.empty else pd.Series(dtype=str)
+
+    waiting_value = float(df.loc[bucket.isin(["reserve", "cash"]), "원화환산"].sum()) if total > 0 else 0.0
+    reserve_value = float(df.loc[bucket == "reserve", "원화환산"].sum()) if total > 0 else 0.0
+    cash_value = float(df.loc[bucket == "cash", "원화환산"].sum()) if total > 0 else 0.0
+    invest_value = total - waiting_value
+
+    waiting_pct = waiting_value / total * 100 if total > 0 else 0.0
+    excess_pct = max(waiting_pct - float(reserve_target_weight), 0.0)
+
+    return {
+        "total": total,
+        "invest_value": invest_value,
+        "waiting_value": waiting_value,
+        "reserve_value": reserve_value,
+        "cash_value": cash_value,
+        "waiting_pct": waiting_pct,
+        "target_pct": float(reserve_target_weight),
+        "excess_pct": excess_pct,
+        "deployable_value": total * excess_pct / 100 if total > 0 else 0.0,
     }
 
 def get_holding_row_by_ticker(holdings_table, ticker):
@@ -2381,6 +2507,7 @@ seed_money = float(settings.get("seed_money", 0.0))
 krw_cash = float(settings.get("krw_cash", 0.0))
 usd_cash = float(settings.get("usd_cash", 0.0))
 usdkrw = float(settings.get("usdkrw", 1400.0))
+reserve_target_weight = float(settings.get("reserve_target_weight", 10.0))      
 
 holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
@@ -2673,21 +2800,45 @@ with tab3:
     st.subheader("앱 내부 자산 관리")
 
     st.markdown("### 1) 기본 설정")
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
     with col_s1: new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
     with col_s2: new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
     with col_s3: new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
     with col_s4: new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
+    with col_s5: new_reserve_target = st.number_input("대기자금 목표비중(%)", min_value=0.0, max_value=100.0, value=float(reserve_target_weight), step=0.5)
+
 
     if st.button("기본 설정 저장"):
-        save_settings_db(new_seed, new_krw, new_usd, new_fx)
+        save_settings_db(new_seed, new_krw, new_usd, new_fx, new_reserve_target)
         st.success("기본 설정 저장 완료")
         st.rerun()
 
     st.markdown("### 2) 보유 종목 관리")
     holdings_editor_df = load_holdings_db()
     if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
-    edited_holdings = st.data_editor(holdings_editor_df, num_rows="dynamic", use_container_width=True, key="holdings_editor")
+    if "bucket" not in holdings_editor_df.columns:
+        holdings_editor_df["bucket"] = "core"
+
+    holdings_editor_df["bucket"] = holdings_editor_df.apply(
+        lambda r: infer_bucket(r.get("ticker", ""), r.get("bucket", "core")),
+        axis=1
+    )
+
+    st.caption("bucket: core=장기투자, swing=스윙후보, reserve=비상대기/파킹. 원화/달러 예수금은 자동 cash 처리됩니다.")
+        
+    edited_holdings = st.data_editor(
+        holdings_editor_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="holdings_editor",
+        column_config={
+            "bucket": st.column_config.SelectboxColumn(
+                "bucket",
+                options=["core", "swing", "reserve"],
+                help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
+            )
+        }
+    )
 
     if st.button("보유 종목 저장"):
         save_holdings_db(edited_holdings.fillna(""))
@@ -2716,8 +2867,16 @@ with tab3:
 
     st.markdown("### 5) 현재 계산 결과")
 
-    if not holdings_table.empty:
-        dash_df = holdings_table.copy()
+    dash_df = append_cash_rows(
+        holdings_table.copy(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        portfolio_summary["current_asset"]
+    )
+
+    if not dash_df.empty:
+
 
         dash_df["평가손익_원화"] = dash_df.apply(
             lambda r: r["평가손익"] if str(r["티커"]).upper().endswith((".KS", ".KQ"))
@@ -2725,6 +2884,8 @@ with tab3:
             axis=1
         )
         dash_df["수익률_pct"] = dash_df["수익률"] * 100
+        
+        reserve_summary = calc_reserve_summary(dash_df, reserve_target_weight)
 
         signal_rows = []
         for _, r in dash_df.iterrows():
@@ -2733,6 +2894,24 @@ with tab3:
             is_etf = bool(r.get("is_etf", False))
             asset_class = r.get("asset_class", "")
 
+            bucket = normalize_bucket(r.get("bucket", "core"))
+
+            if bucket in ["reserve", "cash"]:
+                label = "즉시투입 예수금" if bucket == "cash" else "비상대기/파킹"
+                signal_rows.append({
+                    "티커": tkr,
+                    "기술적타점": label,
+                    "ADJ점수": 0,
+                    "후보등급": "대기자금",
+                    "추세": "-",
+                    "RS": "-",
+                    "RSI": np.nan,
+                    "MFI": np.nan,
+                    "MACD": "-",
+                    "SQZ": "-",
+                })
+                continue
+            
             try:
                 px = load_price_df(tkr, "1y")
                 if px.empty or len(px) < 2:
@@ -2807,6 +2986,12 @@ with tab3:
         k3.metric("누적손익", f"{portfolio_summary['cum_profit']:,.0f}원")
         k4.metric("누적수익률", f"{portfolio_summary['cum_return']:.2f}%")
 
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("투자자산", f"{reserve_summary['invest_value']:,.0f}원")
+        r2.metric("대기자금", f"{reserve_summary['waiting_value']:,.0f}원", f"{reserve_summary['waiting_pct']:.2f}%")
+        r3.metric("대기자금 목표", f"{reserve_summary['target_pct']:.2f}%")
+        r4.metric("초과 대기자금", f"{reserve_summary['deployable_value']:,.0f}원", f"{reserve_summary['excess_pct']:.2f}%p")
+        
         c1, c2 = st.columns([1.1, 1])
 
         tree_values = dash_df["원화환산"].astype(float).clip(lower=0)
@@ -2875,7 +3060,7 @@ with tab3:
         with w1:
             fig_weight = go.Figure()
             fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["현재비중"], orientation="h", name="현재비중"))
-            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["목표비중"], orientation="h", name="목표비중"))
+            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["리밸런싱목표비중"], orientation="h", name="관리기준비중"))
             fig_weight.update_layout(template="plotly_dark", barmode="group", height=420, title="현재비중 vs 목표비중")
             st.plotly_chart(fig_weight, use_container_width=True)
 
@@ -2895,7 +3080,7 @@ with tab3:
         show_cols = [
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
             "평가손익_원화", "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
-            "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ"
+            "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ" ,"bucket", "운용대상", "리밸런싱목표비중"
         ]
         st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
 
