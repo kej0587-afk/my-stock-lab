@@ -43,8 +43,14 @@ def require_login():
     if not is_logged_in:
         st.title("Stock Lab")
         st.info("Log in with your allowed Google account.")
-        if st.button("Log in with Google"):
-            st.login()
+        if not st.user.is_logged_in:
+            st.title("Stock Lab")
+            st.info("Log in with your allowed Google account.")
+            st.button("Log in with Google", on_click=st.login, args=("google",))
+            st.stop()
+
+        email = str(st.user.email or "").strip().lower()
+
         st.stop()
 
     email = str(user.get("email", "") or "").strip().lower() if hasattr(user, "get") else str(getattr(user, "email", "") or "").strip().lower()
