@@ -526,13 +526,14 @@ def save_holdings_db(df):
 
     if not rows:
         st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
-        return
+        return False
 
     run_supabase(
         supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
         "delete existing holdings",
     )
     run_supabase(supabase.table("holdings").insert(rows), "save holdings")
+    return True
 
 
 def load_dividends_db():
@@ -559,13 +560,14 @@ def save_dividends_db(df):
 
     if not rows:
         st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
-        return
+        return False
 
     run_supabase(
         supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
         "delete existing dividends",
     )
     run_supabase(supabase.table("dividends").insert(rows), "save dividends")
+    return True
 
 
 def load_monthly_logs_db():
@@ -593,13 +595,14 @@ def save_monthly_logs_db(df):
 
     if not rows:
         st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
-        return
+        return False
 
     run_supabase(
         supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
         "delete existing monthly logs",
     )
     run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
+    return True
 
 
 def load_fin_scores_db():
@@ -648,13 +651,14 @@ def save_watchlist_db(watchlist):
 
     if not rows:
         st.warning("No watchlist rows to save. Existing watchlist was kept unchanged.")
-        return
+        return False
 
     run_supabase(
         supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
         "delete existing watchlist",
     )
     run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
+    return True
 
 
 def load_watchlist_persistent():
@@ -671,24 +675,100 @@ def persist_watchlist():
     save_watchlist_db(st.session_state.watchlist)
 
 
+def count_valid_rows(df, key_columns):
+    if df is None or df.empty:
+        return 0
+
+    count = 0
+    for _, row in df.iterrows():
+        if any(str(row.get(col, "")).strip() for col in key_columns):
+            count += 1
+    return count
+
+
+def dataframe_to_csv_bytes(df):
+    if df is None:
+        df = pd.DataFrame()
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+
+def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs_df, watchlist_items, dashboard_df, fin_scores_df):
+    settings_df = pd.DataFrame([settings or {}])
+    watchlist_df = pd.DataFrame(watchlist_items or [])
+
+    files = {
+        "settings.csv": settings_df,
+        "holdings.csv": holdings_df,
+        "dividends.csv": dividends_df,
+        "monthly_logs.csv": monthly_logs_df,
+        "watchlist.csv": watchlist_df,
+        "fin_scores.csv": fin_scores_df,
+        "dashboard.csv": dashboard_df,
+    }
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename, df in files.items():
+            zf.writestr(filename, dataframe_to_csv_bytes(df))
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def classify_recovery_csv(df):
     cols = set(df.columns)
 
+    if {"seed_money", "krw_cash", "usd_cash", "usdkrw", "reserve_target_weight"}.issubset(cols):
+        return "settings"
     if {"ticker", "name", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "bucket"}.issubset(cols):
         return "holdings"
     if {"date", "ticker", "amount", "currency"}.issubset(cols):
         return "dividends"
     if {"month", "total_invested", "evaluated_value", "dividend"}.issubset(cols):
         return "monthly_logs"
+    if {"name", "ticker", "is_etf", "asset_class"}.issubset(cols):
+        return "watchlist"
+    if {"ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"}.issubset(cols):
+        return "fin_scores"
     if {"자산명", "티커", "보유량", "매입가", "원화환산", "bucket"}.issubset(cols):
         return "dashboard"
 
     return "unknown"
 
 
+def read_recovery_csv_bytes(raw_bytes):
+    for encoding in ["utf-8-sig", "utf-8", "cp949"]:
+        try:
+            df = pd.read_csv(io.BytesIO(raw_bytes), encoding=encoding)
+            df.columns = [str(col).strip().lstrip("\ufeff") for col in df.columns]
+            return df
+        except UnicodeDecodeError:
+            continue
+    df = pd.read_csv(io.BytesIO(raw_bytes))
+    df.columns = [str(col).strip().lstrip("\ufeff") for col in df.columns]
+    return df
+
+
 def read_recovery_csv(uploaded_file):
     uploaded_file.seek(0)
-    return pd.read_csv(uploaded_file)
+    return read_recovery_csv_bytes(uploaded_file.read())
+
+
+def add_recovery_frame(frames, kind, df):
+    if kind in frames:
+        frames[kind] = pd.concat([frames[kind], df], ignore_index=True)
+    else:
+        frames[kind] = df
+
+
+def parse_fin_score_notes_for_restore(value):
+    try:
+        if value is None or pd.isna(value) or str(value).strip() == "":
+            return {}
+        parsed = json.loads(str(value))
+        return parsed if isinstance(parsed, dict) else {"messages": parsed}
+    except Exception:
+        return {"messages": [str(value)]}
 
 
 def restore_from_uploaded_csvs(uploaded_files):
@@ -696,14 +776,44 @@ def restore_from_uploaded_csvs(uploaded_files):
     unknown_files = []
 
     for uploaded_file in uploaded_files or []:
-        df = read_recovery_csv(uploaded_file)
+        filename = str(uploaded_file.name)
+        raw = uploaded_file.getvalue()
+
+        if filename.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    for zip_name in zf.namelist():
+                        if not zip_name.lower().endswith(".csv"):
+                            continue
+                        df = read_recovery_csv_bytes(zf.read(zip_name))
+                        kind = classify_recovery_csv(df)
+                        if kind == "unknown":
+                            unknown_files.append(f"{filename}:{zip_name}")
+                            continue
+                        add_recovery_frame(frames, kind, df)
+            except zipfile.BadZipFile:
+                unknown_files.append(filename)
+            continue
+
+        df = read_recovery_csv_bytes(raw)
         kind = classify_recovery_csv(df)
         if kind == "unknown":
-            unknown_files.append(uploaded_file.name)
+            unknown_files.append(filename)
             continue
-        frames[kind] = df
+        add_recovery_frame(frames, kind, df)
 
     restored = []
+
+    if "settings" in frames and not frames["settings"].empty:
+        settings_row = frames["settings"].iloc[-1]
+        save_settings_db(
+            settings_row.get("seed_money", 0.0),
+            settings_row.get("krw_cash", 0.0),
+            settings_row.get("usd_cash", 0.0),
+            settings_row.get("usdkrw", 1400.0),
+            settings_row.get("reserve_target_weight", 10.0),
+        )
+        restored.append("settings")
 
     if "dashboard" in frames:
         dash = frames["dashboard"].copy()
@@ -733,8 +843,8 @@ def restore_from_uploaded_csvs(uploaded_files):
 
     if "holdings" in frames:
         holdings = frames["holdings"].copy()
-        save_holdings_db(holdings.fillna(""))
-        restored.append(f"holdings {len(holdings)} rows")
+        if save_holdings_db(holdings.fillna("")):
+            restored.append(f"holdings {len(holdings)} rows")
 
     if "dividends" in frames:
         dividends = frames["dividends"].copy()
@@ -743,13 +853,48 @@ def restore_from_uploaded_csvs(uploaded_files):
             dividends["date"].astype(str).str.strip().ne("") |
             dividends["ticker"].astype(str).str.strip().ne("")
         ]
-        save_dividends_db(dividends)
-        restored.append(f"dividends {len(dividends)} rows")
+        if save_dividends_db(dividends):
+            restored.append(f"dividends {len(dividends)} rows")
 
     if "monthly_logs" in frames:
         monthly_logs = frames["monthly_logs"].copy()
-        save_monthly_logs_db(monthly_logs.fillna(""))
-        restored.append(f"monthly_logs {len(monthly_logs)} rows")
+        if save_monthly_logs_db(monthly_logs.fillna("")):
+            restored.append(f"monthly_logs {len(monthly_logs)} rows")
+
+    if "watchlist" in frames:
+        watchlist_rows = []
+        for _, row in frames["watchlist"].fillna("").iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker:
+                continue
+            watchlist_rows.append({
+                "name": str(row.get("name", "")).strip(),
+                "ticker": ticker,
+                "is_etf": clean_bool(row.get("is_etf", False)),
+                "asset_class": str(row.get("asset_class", "")).strip(),
+                "fin_score": clean_int(row.get("fin_score")),
+            })
+        if watchlist_rows and save_watchlist_db(watchlist_rows):
+            st.session_state.watchlist = watchlist_rows
+            restored.append(f"watchlist {len(watchlist_rows)} rows")
+
+    if "fin_scores" in frames:
+        restored_fin_scores = 0
+        for _, row in frames["fin_scores"].fillna("").iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker:
+                continue
+            upsert_fin_score_db(
+                ticker=ticker,
+                auto_score=clean_int(row.get("auto_score")),
+                manual_score=clean_int(row.get("manual_score")),
+                final_score=clean_int(row.get("final_score")),
+                source=str(row.get("source", "restore") or "restore"),
+                notes=parse_fin_score_notes_for_restore(row.get("notes_json")),
+            )
+            restored_fin_scores += 1
+        if restored_fin_scores:
+            restored.append(f"fin_scores {restored_fin_scores} rows")
 
     return restored, unknown_files
 
@@ -3198,11 +3343,47 @@ with tab2:
 with tab3:
     st.subheader("앱 내부 자산 관리")
 
+    st.markdown("### 0) 백업/복구 안전장치")
+
+    backup_dash_df = append_cash_rows(
+        holdings_table.copy(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        portfolio_summary["current_asset"]
+    )
+    fin_scores_backup_df = load_fin_scores_db()
+
+    bkp1, bkp2, bkp3, bkp4 = st.columns(4)
+    bkp1.metric("보유종목 DB", f"{count_valid_rows(holdings_df, ['ticker'])}건")
+    bkp2.metric("배당 DB", f"{count_valid_rows(dividends_df, ['date', 'ticker'])}건")
+    bkp3.metric("월별 로그", f"{count_valid_rows(monthly_logs_df, ['month'])}건")
+    bkp4.metric("관심종목", f"{len(st.session_state.watchlist)}건")
+
+    backup_stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
+    backup_zip = build_portfolio_backup_zip(
+        settings=settings,
+        holdings_df=holdings_df,
+        dividends_df=dividends_df,
+        monthly_logs_df=monthly_logs_df,
+        watchlist_items=st.session_state.watchlist,
+        dashboard_df=backup_dash_df,
+        fin_scores_df=fin_scores_backup_df,
+    )
+    st.download_button(
+        "현재 Supabase 데이터 ZIP 백업",
+        data=backup_zip,
+        file_name=f"stock_lab_backup_{backup_stamp}.zip",
+        mime="application/zip",
+        use_container_width=True,
+        key="download_supabase_backup_zip",
+    )
+
     with st.expander("CSV 백업 복구", expanded=False):
         st.caption("Supabase/SQLite에서 export한 holdings, dividends, monthly_logs, dashboard CSV를 업로드해 현재 계정으로 복구합니다.")
         recovery_files = st.file_uploader(
-            "복구 CSV 업로드",
-            type=["csv"],
+            "복구 CSV/ZIP 업로드",
+            type=["csv", "zip"],
             accept_multiple_files=True,
             key="recovery_csv_files",
         )
@@ -3260,9 +3441,9 @@ with tab3:
     )
 
     if st.button("보유 종목 저장"):
-        save_holdings_db(edited_holdings.fillna(""))
-        st.success("보유 종목 저장 완료")
-        st.rerun()
+        if save_holdings_db(edited_holdings.fillna("")):
+            st.success("보유 종목 저장 완료")
+            st.rerun()
 
     st.markdown("### 3) 배당 내역 관리")
     dividends_editor_df = load_dividends_db()
@@ -3270,9 +3451,9 @@ with tab3:
     edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
 
     if st.button("배당 내역 저장"):
-        save_dividends_db(edited_dividends.fillna(""))
-        st.success("배당 내역 저장 완료")
-        st.rerun()
+        if save_dividends_db(edited_dividends.fillna("")):
+            st.success("배당 내역 저장 완료")
+            st.rerun()
 
     st.markdown("### 4) 월별 로그 관리")
     monthly_editor_df = load_monthly_logs_db()
@@ -3280,9 +3461,9 @@ with tab3:
     edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", use_container_width=True, key="monthly_editor")
 
     if st.button("월별 로그 저장"):
-        save_monthly_logs_db(edited_monthly.fillna(""))
-        st.success("월별 로그 저장 완료")
-        st.rerun()
+        if save_monthly_logs_db(edited_monthly.fillna("")):
+            st.success("월별 로그 저장 완료")
+            st.rerun()
 
     st.markdown("### 5) 현재 계산 결과")
 
