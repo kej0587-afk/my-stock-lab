@@ -369,6 +369,14 @@ DIVIDENDS_COLUMNS = ["id", "date", "ticker", "amount", "currency"]
 MONTHLY_LOG_COLUMNS = ["month", "total_invested", "evaluated_value", "dividend"]
 FIN_SCORE_COLUMNS = ["ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"]
 WATCHLIST_COLUMNS = ["name", "ticker", "is_etf", "asset_class", "fin_score"]
+SWING_RADAR_COLUMNS = [
+    "ticker", "name", "asset_class", "idea",
+    "check_1", "check_2", "check_3",
+    "risk_1", "risk_2", "risk_3",
+    "entry_rule", "exit_rule", "next_event",
+    "status", "decision", "importance",
+    "reference_link", "last_checked", "memo",
+]
 
 
 def clean_float(value, default=0.0):
@@ -675,6 +683,68 @@ def persist_watchlist():
     save_watchlist_db(st.session_state.watchlist)
 
 
+def get_swing_radar_create_sql():
+    return """
+create table if not exists swing_radar (
+  owner_email text not null,
+  ticker text not null,
+  name text,
+  asset_class text default '',
+  idea text default '',
+  check_1 text default '',
+  check_2 text default '',
+  check_3 text default '',
+  risk_1 text default '',
+  risk_2 text default '',
+  risk_3 text default '',
+  entry_rule text default '',
+  exit_rule text default '',
+  next_event text default '',
+  status text default '대기',
+  decision text default '관망',
+  importance text default '중',
+  reference_link text default '',
+  last_checked text default '',
+  memo text default '',
+  primary key (owner_email, ticker)
+);
+""".strip()
+
+
+def load_swing_radar_db_safe():
+    try:
+        res = supabase.table("swing_radar").select(",".join(SWING_RADAR_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL).execute()
+        return dataframe_from_rows(res.data, SWING_RADAR_COLUMNS), None
+    except Exception as e:
+        return dataframe_from_rows([], SWING_RADAR_COLUMNS), str(e)
+
+
+def save_swing_radar_db_safe(df):
+    try:
+        rows = []
+        for _, row in df.iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker:
+                continue
+
+            item = {"owner_email": CURRENT_USER_EMAIL, "ticker": ticker}
+            for col in SWING_RADAR_COLUMNS:
+                if col == "ticker":
+                    continue
+                value = row.get(col, "")
+                item[col] = "" if value is None or pd.isna(value) else str(value).strip()
+            rows.append(item)
+
+        if not rows:
+            return False, "저장할 스윙 레이더 행이 없습니다."
+
+        supabase.table("swing_radar").delete().eq("owner_email", CURRENT_USER_EMAIL).execute()
+        supabase.table("swing_radar").insert(rows).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def count_valid_rows(df, key_columns):
     if df is None or df.empty:
         return 0
@@ -692,7 +762,7 @@ def dataframe_to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
-def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs_df, watchlist_items, dashboard_df, fin_scores_df):
+def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs_df, watchlist_items, dashboard_df, fin_scores_df, swing_radar_df=None):
     settings_df = pd.DataFrame([settings or {}])
     watchlist_df = pd.DataFrame(watchlist_items or [])
 
@@ -703,6 +773,7 @@ def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs
         "monthly_logs.csv": monthly_logs_df,
         "watchlist.csv": watchlist_df,
         "fin_scores.csv": fin_scores_df,
+        "swing_radar.csv": swing_radar_df if swing_radar_df is not None else pd.DataFrame(columns=SWING_RADAR_COLUMNS),
         "dashboard.csv": dashboard_df,
     }
 
@@ -730,6 +801,8 @@ def classify_recovery_csv(df):
         return "watchlist"
     if {"ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"}.issubset(cols):
         return "fin_scores"
+    if set(SWING_RADAR_COLUMNS).issubset(cols):
+        return "swing_radar"
     if {"자산명", "티커", "보유량", "매입가", "원화환산", "bucket"}.issubset(cols):
         return "dashboard"
 
@@ -895,6 +968,13 @@ def restore_from_uploaded_csvs(uploaded_files):
             restored_fin_scores += 1
         if restored_fin_scores:
             restored.append(f"fin_scores {restored_fin_scores} rows")
+
+    if "swing_radar" in frames:
+        ok, message = save_swing_radar_db_safe(frames["swing_radar"].fillna(""))
+        if ok:
+            restored.append(f"swing_radar {len(frames['swing_radar'])} rows")
+        else:
+            unknown_files.append(f"swing_radar restore failed: {message}")
 
     return restored, unknown_files
 
@@ -3353,6 +3433,345 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     return pd.DataFrame(rows)
 
+
+SWING_TEMPLATE_MAP = {
+    "267260": {
+        "idea": "전력기기 슈퍼사이클, 북미 전력망 투자, 수주/마진 성장 모멘텀",
+        "check_1": "수주잔고와 신규수주 흐름이 유지되는지",
+        "check_2": "영업이익률이 둔화되지 않는지",
+        "check_3": "전력 인프라/변압기 수요 뉴스가 계속 나오는지",
+        "risk_1": "실적 쇼크 또는 마진 둔화",
+        "risk_2": "수주 피크아웃 우려",
+        "risk_3": "고밸류 구간에서 장기 이평선 이탈",
+        "entry_rule": "시스템 승인 + 과열 해소 + 목표비중 미달",
+        "exit_rule": "시스템 차단, 추세 훼손, 실적/마진 둔화 확인",
+        "next_event": "분기 실적/수주 업데이트",
+    },
+    "278470": {
+        "idea": "뷰티 디바이스/화장품 성장, 해외 확장, 실적 모멘텀",
+        "check_1": "해외 매출 성장률이 유지되는지",
+        "check_2": "영업이익률과 마케팅비 부담이 관리되는지",
+        "check_3": "신제품/채널 확장 뉴스가 이어지는지",
+        "risk_1": "성장률 둔화",
+        "risk_2": "밸류 부담과 수급 이탈",
+        "risk_3": "보호예수/대주주/경쟁 심화 이슈",
+        "entry_rule": "시스템 승인 + 눌림목 + 과열 신호 해소",
+        "exit_rule": "시스템 차단, 추세 훼손, 성장률 둔화 확인",
+        "next_event": "분기 실적/해외 매출 업데이트",
+    },
+}
+
+
+DEFAULT_SWING_TEMPLATE = {
+    "idea": "시스템 승인 기반 단기/중기 스윙 후보",
+    "check_1": "실적 또는 가이던스가 훼손되지 않는지",
+    "check_2": "섹터 돈흐름과 상대강도가 유지되는지",
+    "check_3": "추세와 수급이 급격히 꺾이지 않는지",
+    "risk_1": "실적 쇼크 또는 주요 뉴스 악화",
+    "risk_2": "MFI 과열 뒤 수급 이탈",
+    "risk_3": "MA50/MA120 등 주요 추세선 이탈",
+    "entry_rule": "시스템 승인 + 목표비중 미달 + 과열 해소",
+    "exit_rule": "시스템 차단, 추세 훼손, 투자 아이디어 무효화",
+    "next_event": "다음 실적/주요 뉴스 확인",
+}
+
+
+def get_swing_template(ticker):
+    return dict(SWING_TEMPLATE_MAP.get(normalize_ticker(ticker), DEFAULT_SWING_TEMPLATE))
+
+
+def make_swing_candidate_row(name, ticker, asset_class=""):
+    template = get_swing_template(ticker)
+    row = {col: "" for col in SWING_RADAR_COLUMNS}
+    row.update(template)
+    row.update({
+        "ticker": str(ticker).strip(),
+        "name": str(name or ticker).strip(),
+        "asset_class": str(asset_class or "").strip(),
+        "status": "진행",
+        "decision": "관망",
+        "importance": "중",
+        "last_checked": pd.Timestamp.today().strftime("%Y-%m-%d"),
+    })
+    return row
+
+
+def get_current_stock_candidates():
+    candidates = {}
+
+    if "watchlist" in st.session_state:
+        for item in st.session_state.watchlist:
+            ticker = str(item.get("ticker", "")).strip()
+            if not ticker or clean_bool(item.get("is_etf", False)):
+                continue
+            candidates[normalize_ticker(ticker)] = {
+                "name": str(item.get("name", ticker)).strip(),
+                "ticker": ticker,
+                "asset_class": str(item.get("asset_class", "")).strip(),
+            }
+
+    if holdings_df is not None and not holdings_df.empty:
+        for _, row in holdings_df.iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker or clean_bool(row.get("is_etf", False)):
+                continue
+            candidates[normalize_ticker(ticker)] = {
+                "name": str(row.get("name", ticker)).strip(),
+                "ticker": ticker,
+                "asset_class": str(row.get("asset_class", "")).strip(),
+            }
+
+    return candidates
+
+
+def build_swing_radar_df(saved_df):
+    rows_by_key = {}
+
+    if saved_df is not None and not saved_df.empty:
+        for _, row in saved_df.iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker:
+                continue
+            item = {col: row.get(col, "") for col in SWING_RADAR_COLUMNS}
+            rows_by_key[normalize_ticker(ticker)] = item
+
+    for key, item in get_current_stock_candidates().items():
+        if key not in rows_by_key:
+            rows_by_key[key] = make_swing_candidate_row(item["name"], item["ticker"], item["asset_class"])
+        else:
+            if not str(rows_by_key[key].get("name", "")).strip():
+                rows_by_key[key]["name"] = item["name"]
+            if not str(rows_by_key[key].get("asset_class", "")).strip():
+                rows_by_key[key]["asset_class"] = item["asset_class"]
+
+    df = pd.DataFrame(list(rows_by_key.values()))
+    for col in SWING_RADAR_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+
+    if df.empty:
+        return dataframe_from_rows([], SWING_RADAR_COLUMNS)
+
+    return df[SWING_RADAR_COLUMNS].sort_values(["importance", "name"], ascending=[True, True])
+
+
+def get_swing_item_context(row):
+    ticker = str(row.get("ticker", "")).strip()
+    name = str(row.get("name", ticker)).strip()
+    asset_class = str(row.get("asset_class", "")).strip()
+    avg_price = 0.0
+    has_pos = False
+
+    holding_row = get_holding_row_by_ticker(holdings_table, ticker)
+    if holding_row is not None:
+        name = str(holding_row.get("자산명", name)).strip() or name
+        asset_class = str(holding_row.get("asset_class", asset_class)).strip() or asset_class
+        avg_price = clean_float(holding_row.get("매입가"), 0.0)
+        has_pos = clean_float(holding_row.get("보유량"), 0.0) > 0
+    else:
+        item = get_watchlist_item(ticker)
+        if item:
+            name = str(item.get("name", name)).strip() or name
+            asset_class = str(item.get("asset_class", asset_class)).strip() or asset_class
+
+    return name, ticker, asset_class, avg_price, has_pos
+
+
+def build_swing_system_df(swing_df):
+    rows = []
+    if swing_df is None or swing_df.empty:
+        return pd.DataFrame(rows)
+
+    for _, row in swing_df.iterrows():
+        name, ticker, asset_class, avg_price, has_pos = get_swing_item_context(row)
+
+        try:
+            px = load_price_df(ticker, "1y")
+            if px.empty or len(px) < 2:
+                raise RuntimeError("가격 데이터 없음")
+
+            px = build_indicators(px)
+            fin_score, _ = load_fin_score_meta_fast(ticker, False)
+            c = calc_scores_and_decision(
+                name=name,
+                ticker=ticker,
+                is_etf=False,
+                asset_class=asset_class or "kr_stock",
+                df=px,
+                my_price=avg_price,
+                has_pos=has_pos,
+                fin_score=int(fin_score),
+                is_free=False,
+                app_mode="개인모드",
+            )
+
+            rows.append({
+                "ticker": ticker,
+                "종목명": name,
+                "시스템판정": c["dec"],
+                "후보등급": c["grade"],
+                "ADJ": round(c["adj"], 1),
+                "RS": c["rs_label"],
+                "RSI": round(c["rsi"], 1),
+                "MFI": round(c["mfi"], 1),
+                "추세": c["trend"],
+                "현재비중": round(c["current_w"], 2),
+                "목표비중": round(c["target_w"], 2),
+                "현재가": format_currency(c["cur_p"], ticker),
+            })
+        except Exception as e:
+            rows.append({
+                "ticker": ticker,
+                "종목명": name,
+                "시스템판정": f"계산 실패: {e}",
+                "후보등급": "-",
+                "ADJ": np.nan,
+                "RS": "-",
+                "RSI": np.nan,
+                "MFI": np.nan,
+                "추세": "-",
+                "현재비중": 0,
+                "목표비중": 0,
+                "현재가": "-",
+            })
+
+    return pd.DataFrame(rows)
+
+
+def render_swing_radar_tab():
+    st.subheader("스윙 레이더")
+    st.caption("개별주 스윙은 공부량을 늘리는 게 아니라, 보유 이유와 위험 신호를 잊지 않게 관리하는 영역입니다.")
+
+    saved_df, load_error = load_swing_radar_db_safe()
+    if load_error:
+        st.warning("스윙 레이더 저장 테이블이 아직 없어서 저장 기능은 비활성입니다. 아래 SQL을 Supabase SQL Editor에서 한 번만 실행하면 저장됩니다.")
+        with st.expander("Supabase swing_radar 테이블 생성 SQL"):
+            st.code(get_swing_radar_create_sql(), language="sql")
+
+    swing_df = build_swing_radar_df(saved_df)
+    if swing_df.empty:
+        st.info("스윙 후보가 없습니다. 관심종목 또는 보유종목에 개별주를 추가하면 자동으로 후보가 생깁니다.")
+        return
+
+    system_df = build_swing_system_df(swing_df)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("스윙 후보", f"{len(swing_df)}개")
+    c2.metric("진행", f"{(swing_df['status'] == '진행').sum()}개")
+    c3.metric("위험 표시", f"{(swing_df['status'] == '위험').sum()}개")
+    c4.metric("종료/보류", f"{swing_df['status'].isin(['종료', '보류']).sum()}개")
+
+    st.markdown("#### 시스템 신호 요약")
+    st.dataframe(system_df, use_container_width=True, hide_index=True)
+
+    selected = st.selectbox(
+        "상세 확인 종목",
+        swing_df["ticker"].tolist(),
+        format_func=lambda t: f"{swing_df[swing_df['ticker'] == t].iloc[0]['name']} ({t})",
+        key="swing_selected_ticker",
+    )
+
+    selected_row = swing_df[swing_df["ticker"] == selected].iloc[0]
+    selected_system = system_df[system_df["ticker"].apply(normalize_ticker) == normalize_ticker(selected)]
+
+    left, right = st.columns([1.15, 1])
+    with left:
+        st.markdown(
+            f"""
+<div class='info-panel'>
+<b>{selected_row['name']} ({selected_row['ticker']})</b><br>
+<span class='smc-tag'>보유 이유</span> {selected_row['idea']}<br><br>
+<b>확인할 것</b><br>
+1. {selected_row['check_1']}<br>
+2. {selected_row['check_2']}<br>
+3. {selected_row['check_3']}<br><br>
+<b>위험 신호</b><br>
+1. {selected_row['risk_1']}<br>
+2. {selected_row['risk_2']}<br>
+3. {selected_row['risk_3']}
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with right:
+        if not selected_system.empty:
+            s = selected_system.iloc[0]
+            st.markdown(
+                f"""
+<div class='info-panel'>
+<b>시스템 판정</b><br>
+<span class='highlight' style='font-size:1.0em;'>{s['시스템판정']}</span><br>
+후보등급: {s['후보등급']}<br>
+ADJ: {s['ADJ']} | RS: {s['RS']}<br>
+RSI: {s['RSI']} | MFI: {s['MFI']}<br>
+추세: {s['추세']}<br>
+현재/목표 비중: {s['현재비중']}% / {s['목표비중']}%
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            f"""
+<div class='info-panel'>
+<b>운영 규칙</b><br>
+진입/추매: {selected_row['entry_rule']}<br>
+종료/축소: {selected_row['exit_rule']}<br>
+다음 확인: {selected_row['next_event']}<br>
+현재 결정: <b>{selected_row['decision']}</b> | 상태: <b>{selected_row['status']}</b>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with st.expander("선택 종목 뉴스 빠르게 보기"):
+        if st.button("관련 뉴스 불러오기", key=f"swing_news_{normalize_ticker(selected)}"):
+            news_items, news_logs = get_ticker_news(selected, str(selected_row["name"]), news_debug)
+            if news_items:
+                for item in news_items:
+                    safe_title = html.escape(str(item.get("title", "제목 없음")))
+                    safe_pub = html.escape(str(item.get("publisher", "")))
+                    safe_date = html.escape(str(item.get("published", "")))
+                    safe_link = str(item.get("link", "#")).strip()
+                    if not safe_link.startswith(("http://", "https://")):
+                        safe_link = "#"
+                    st.markdown(
+                        f"<div class='news-box'><a href='{safe_link}' target='_blank'>🔗 {safe_title}</a> "
+                        f"<span style='color:#94a3b8; font-size:0.8em;'>출처: {safe_pub} | {safe_date}</span></div>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.info("현재 제공되는 관련 뉴스가 없습니다.")
+                if news_debug:
+                    for log in news_logs:
+                        st.write(log)
+
+    st.markdown("#### 스윙 체크리스트 편집")
+    st.caption("처음에는 기본 템플릿 그대로 써도 됩니다. 익숙해지면 보유 이유와 위험 신호만 자기 말로 조금씩 바꾸면 됩니다.")
+    edited_swing_df = st.data_editor(
+        swing_df.fillna(""),
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key="swing_radar_editor",
+        column_config={
+            "status": st.column_config.SelectboxColumn("상태", options=["대기", "진행", "완료", "위험", "보류", "종료"]),
+            "decision": st.column_config.SelectboxColumn("내 결정", options=["관망", "정찰", "추매대기", "유지", "일부익절", "축소", "종료"]),
+            "importance": st.column_config.SelectboxColumn("중요도", options=["상", "중", "하"]),
+            "reference_link": st.column_config.LinkColumn("참고 링크"),
+        },
+    )
+
+    if st.button("스윙 레이더 저장"):
+        ok, message = save_swing_radar_db_safe(edited_swing_df)
+        if ok:
+            st.success("스윙 레이더 저장 완료")
+            st.rerun()
+        else:
+            st.error(f"스윙 레이더 저장 실패: {message}")
+            with st.expander("테이블이 없을 때 실행할 SQL"):
+                st.code(get_swing_radar_create_sql(), language="sql")
+
 # -------------------------------------------------
 # 7-1. 판정 매뉴얼 데이터 + 렌더러
 # -------------------------------------------------
@@ -3611,7 +4030,7 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소", "⚙️ 자산 관리", "💸 돈흐름 레이더", "📘 판정 매뉴얼"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📋 전체 요약 전광판", "🔍 종목 정밀 관측소", "⚙️ 자산 관리", "💸 돈흐름 레이더", "🎯 스윙 레이더", "📘 판정 매뉴얼"])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
@@ -3922,6 +4341,7 @@ with tab3:
     bkp4.metric("관심종목", f"{len(st.session_state.watchlist)}건")
 
     backup_stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
+    swing_radar_backup_df, _ = load_swing_radar_db_safe()
     backup_zip = build_portfolio_backup_zip(
         settings=settings,
         holdings_df=holdings_df,
@@ -3930,6 +4350,7 @@ with tab3:
         watchlist_items=st.session_state.watchlist,
         dashboard_df=backup_dash_df,
         fin_scores_df=fin_scores_backup_df,
+        swing_radar_df=swing_radar_backup_df,
     )
     st.download_button(
         "현재 Supabase 데이터 ZIP 백업",
@@ -4375,4 +4796,7 @@ with tab4:
     render_money_flow_tab()
 
 with tab5:
+    render_swing_radar_tab()
+
+with tab6:
     render_manual_tab() 
