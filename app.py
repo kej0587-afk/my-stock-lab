@@ -3071,6 +3071,73 @@ def get_rs_score(ticker, asset_class):
     elif rs_now < rs_then * 0.97: return 0, "🐢약함"
     return 1, "➖보통"
 
+
+BENCHMARK_LABELS = {
+    "069500.KS": "KODEX 200",
+    "379810.KS": "KOSPI 나스닥100",
+    "379800.KS": "KOSPI S&P500",
+    "QQQM": "QQQM",
+    "SPY": "SPY",
+    "396500.KS": "반도체",
+    "487240.KS": "전력인프라",
+    "494670.KS": "조선",
+    "449450.KS": "방산",
+    "305540.KS": "2차전지",
+}
+
+SECTOR_BENCHMARK_MAP = {
+    "005930": ("396500.KS", "반도체"),
+    "000660": ("396500.KS", "반도체"),
+    "200710": ("396500.KS", "반도체"),
+    "267260": ("487240.KS", "전력인프라"),
+    "329180": ("494670.KS", "조선"),
+    "012450": ("449450.KS", "방산"),
+}
+
+
+def get_benchmark_display_name(ticker):
+    if not ticker:
+        return "-"
+    return BENCHMARK_LABELS.get(str(ticker).upper(), str(ticker).upper())
+
+
+def get_sector_benchmark_info(ticker, asset_class):
+    key = normalize_ticker(ticker)
+    if key in SECTOR_BENCHMARK_MAP:
+        return SECTOR_BENCHMARK_MAP[key]
+    return "", "-"
+
+
+def get_rs_score_against_benchmark(ticker, benchmark):
+    if not benchmark:
+        return 1, "-"
+    if normalize_ticker(ticker) == normalize_ticker(benchmark):
+        return 1, "➖보통"
+
+    s_df = load_price_df(ticker, "3mo")
+    b_df = load_price_df(benchmark, "3mo")
+    need_len = RS_LOOKBACK_DAYS + 1
+
+    if len(s_df) < need_len or len(b_df) < need_len:
+        return 1, "➖보통"
+
+    s_now = float(s_df["Close"].iloc[-1])
+    s_then = float(s_df["Close"].iloc[-need_len])
+    b_now = float(b_df["Close"].iloc[-1])
+    b_then = float(b_df["Close"].iloc[-need_len])
+
+    if s_then <= 0 or b_then <= 0 or b_now <= 0:
+        return 1, "➖보통"
+
+    rs_now = s_now / b_now
+    rs_then = s_then / b_then
+
+    if rs_now > rs_then * 1.03:
+        return 2, "🚀강함"
+    if rs_now < rs_then * 0.97:
+        return 0, "🐢약함"
+    return 1, "➖보통"
+
 def build_indicators(df):
     df = df.copy()
     df["MA5"] = df["Close"].rolling(5).mean(); df["MA20"] = df["Close"].rolling(20).mean()
@@ -3416,6 +3483,24 @@ def get_dashboard_group_label(ticker, is_etf):
     return f"{get_dashboard_market_label(ticker)} {get_dashboard_type_label(is_etf)}"
 
 
+def get_dashboard_swing_status_maps():
+    swing_df, _ = load_swing_radar_db_safe()
+    status_map = {}
+    decision_map = {}
+
+    if swing_df is None or swing_df.empty:
+        return status_map, decision_map
+
+    for _, row in swing_df.iterrows():
+        key = normalize_ticker(row.get("ticker", ""))
+        if not key:
+            continue
+        status_map[key] = str(row.get("status", "") or "").strip() or "-"
+        decision_map[key] = str(row.get("decision", "") or "").strip() or "-"
+
+    return status_map, decision_map
+
+
 def render_dashboard_group_summary(df, group_label):
     if group_label != "전체":
         view_df = df[df["전광판그룹"] == group_label].copy()
@@ -3437,14 +3522,29 @@ def render_dashboard_group_summary(df, group_label):
     m3.metric("매수/관심 신호", f"{buyish_count}개")
     m4.metric("차단/주의 신호", f"{caution_count}개")
 
-    show_cols = [
-        "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-        "📌후보등급", "RS", "RSI", "MFI", "볼린저 %B", "🔥기술적 타점", "Adj점수"
-    ]
+    if "ETF" in group_label:
+        show_cols = [
+            "시장", "유형", "종목명", "티커", "현재가", "MDD",
+            "📌후보등급", "RS", "시장벤치", "RSI", "MFI", "볼린저 %B",
+            "🔥기술적 타점", "Adj점수"
+        ]
+    elif "개별주" in group_label:
+        show_cols = [
+            "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
+            "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
+            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
+        ]
+    else:
+        show_cols = [
+            "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
+            "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
+            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
+        ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
 
 
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
+    swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
     rows = []
     for item in watchlist_items:
         name = item["name"]
@@ -3468,11 +3568,21 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode
         )
 
+        market_bench = get_rs_benchmark(tkr, a_class)
+        sector_bench, _ = get_sector_benchmark_info(tkr, a_class)
+        _, sector_rs_label = get_rs_score_against_benchmark(tkr, sector_bench)
+        swing_key = normalize_ticker(tkr)
+
         rows.append({
             "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
             "전광판그룹": get_dashboard_group_label(tkr, is_etf),
             "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
             "재무점수": "ETF 0점" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
+            "시장벤치": get_benchmark_display_name(market_bench),
+            "섹터벤치": get_benchmark_display_name(sector_bench) if sector_bench else "-",
+            "섹터RS": sector_rs_label if sector_bench else "-",
+            "스윙상태": "-" if is_etf else swing_status_map.get(swing_key, "-"),
+            "내결정": "-" if is_etf else swing_decision_map.get(swing_key, "-"),
             "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
             "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
