@@ -2166,6 +2166,100 @@ def get_holding_row_by_ticker(holdings_table, ticker):
     if not matched.empty: return matched.iloc[0]
     return None
 
+def parse_month_end_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return pd.NaT
+
+    if len(raw) == 7 and raw[4] == "-":
+        dt = pd.to_datetime(f"{raw}-01", errors="coerce")
+    else:
+        dt = pd.to_datetime(raw, errors="coerce")
+
+    if pd.isna(dt):
+        return pd.NaT
+
+    return dt + pd.offsets.MonthEnd(0)
+
+def prepare_monthly_performance_df(monthly_df):
+    required = ["month", "total_invested", "evaluated_value", "dividend"]
+    if monthly_df is None or monthly_df.empty:
+        return pd.DataFrame(columns=required)
+
+    df = monthly_df.copy()
+    for col in required:
+        if col not in df.columns:
+            df[col] = 0 if col != "month" else ""
+
+    df["month_end"] = df["month"].apply(parse_month_end_date)
+    df = df.dropna(subset=["month_end"]).sort_values("month_end")
+
+    if df.empty:
+        return df
+
+    df["month_label"] = df["month_end"].dt.strftime("%y-%m")
+    for col in ["total_invested", "evaluated_value", "dividend"]:
+        df[col] = df[col].apply(clean_float)
+
+    df["cum_dividend"] = df["dividend"].cumsum()
+    df["cum_profit"] = df["evaluated_value"] + df["cum_dividend"] - df["total_invested"]
+    df["cum_return_pct"] = np.where(
+        df["total_invested"] > 0,
+        df["cum_profit"] / df["total_invested"] * 100,
+        0.0
+    )
+
+    first_return = float(df["cum_return_pct"].iloc[0]) if not df.empty else 0.0
+    df["relative_return_pct"] = df["cum_return_pct"] - first_return
+    return df
+
+def build_benchmark_return_df(perf_df):
+    if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
+        return pd.DataFrame(columns=["month_label", "구분", "수익률_pct"])
+
+    rows = []
+    for _, row in perf_df.iterrows():
+        rows.append({
+            "month_label": row["month_label"],
+            "구분": "내 수익률",
+            "수익률_pct": float(row.get("relative_return_pct", 0.0)),
+        })
+
+    benchmarks = {
+        "S&P500": "379800.KS",
+        "나스닥100": "379810.KS",
+        "코스피": "069500.KS",
+    }
+
+    for label, ticker in benchmarks.items():
+        try:
+            px = load_price_df(ticker, "5y")
+            if px.empty:
+                continue
+
+            close = px["Close"].copy()
+            close.index = pd.to_datetime(close.index).tz_localize(None)
+
+            prices = []
+            for month_end in perf_df["month_end"]:
+                target_dt = pd.Timestamp(month_end).tz_localize(None)
+                eligible = close[close.index <= target_dt]
+                prices.append(float(eligible.iloc[-1]) if not eligible.empty else np.nan)
+
+            valid_prices = [p for p in prices if finite_num(p) and p > 0]
+            if not valid_prices:
+                continue
+
+            base = valid_prices[0]
+            for month_label, price in zip(perf_df["month_label"], prices):
+                if finite_num(price) and price > 0:
+                    ret = (float(price) / base - 1) * 100
+                    rows.append({"month_label": month_label, "구분": label, "수익률_pct": ret})
+        except Exception:
+            continue
+
+    return pd.DataFrame(rows)
+
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
 # -------------------------------------------------
@@ -3808,6 +3902,112 @@ with tab3:
             fig_pnl.add_vline(x=0, line_color="#94a3b8")
             fig_pnl.update_layout(template="plotly_dark", height=420, title="평가손익 랭킹")
             st.plotly_chart(fig_pnl, use_container_width=True)
+
+        monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+        if not monthly_perf_df.empty:
+            st.markdown("#### 월별 성과 기록")
+
+            latest_month = monthly_perf_df.iloc[-1]
+            m_k1, m_k2, m_k3, m_k4 = st.columns(4)
+            m_k1.metric("최근 기록월", str(latest_month["month_label"]))
+            m_k2.metric("기록 평가자산", f"{latest_month['evaluated_value']:,.0f}원")
+            m_k3.metric("기록 누적손익", f"{latest_month['cum_profit']:,.0f}원")
+            m_k4.metric("기록 누적수익률", f"{latest_month['cum_return_pct']:.2f}%")
+
+            p1, p2 = st.columns(2)
+
+            with p1:
+                fig_monthly_asset = go.Figure()
+                fig_monthly_asset.add_trace(go.Scatter(
+                    x=monthly_perf_df["month_label"],
+                    y=monthly_perf_df["evaluated_value"],
+                    mode="lines+markers",
+                    name="자산",
+                    line=dict(color="#ef4444", width=3),
+                    hovertemplate="%{x}<br>자산: ₩%{y:,.0f}<extra></extra>"
+                ))
+                fig_monthly_asset.add_trace(go.Scatter(
+                    x=monthly_perf_df["month_label"],
+                    y=monthly_perf_df["total_invested"],
+                    mode="lines+markers",
+                    name="원금",
+                    line=dict(color="#cbd5e1", width=2),
+                    hovertemplate="%{x}<br>원금: ₩%{y:,.0f}<extra></extra>"
+                ))
+                fig_monthly_asset.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    title="월별 투자 기록",
+                    yaxis_title="원",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
+                )
+                st.plotly_chart(fig_monthly_asset, use_container_width=True)
+
+            with p2:
+                pnl_colors = np.where(monthly_perf_df["cum_profit"] >= 0, "#22d3ee", "#ef4444")
+                fig_cum_pnl = go.Figure(go.Bar(
+                    x=monthly_perf_df["month_label"],
+                    y=monthly_perf_df["cum_profit"],
+                    marker_color=pnl_colors,
+                    hovertemplate="%{x}<br>누적손익: ₩%{y:,.0f}<extra></extra>"
+                ))
+                fig_cum_pnl.add_hline(y=0, line_color="#94a3b8")
+                fig_cum_pnl.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    title="누적 손익",
+                    yaxis_title="원"
+                )
+                st.plotly_chart(fig_cum_pnl, use_container_width=True)
+
+            p3, p4 = st.columns(2)
+
+            with p3:
+                benchmark_df = build_benchmark_return_df(monthly_perf_df)
+                fig_benchmark = go.Figure()
+                if not benchmark_df.empty:
+                    color_map = {
+                        "내 수익률": "#00ff38",
+                        "S&P500": "#f87171",
+                        "나스닥100": "#60a5fa",
+                        "코스피": "#a7f3d0",
+                    }
+                    for label in benchmark_df["구분"].drop_duplicates():
+                        part = benchmark_df[benchmark_df["구분"] == label]
+                        fig_benchmark.add_trace(go.Scatter(
+                            x=part["month_label"],
+                            y=part["수익률_pct"],
+                            mode="lines+markers",
+                            name=label,
+                            line=dict(color=color_map.get(label, "#cbd5e1"), width=3 if label == "내 수익률" else 2, dash="solid" if label == "내 수익률" else "dot"),
+                            hovertemplate=f"%{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>"
+                        ))
+                fig_benchmark.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+                fig_benchmark.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    title="내 수익률 vs 벤치마크 지수",
+                    yaxis_title="수익률 %",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
+                )
+                st.plotly_chart(fig_benchmark, use_container_width=True)
+
+            with p4:
+                fig_dividend = go.Figure(go.Bar(
+                    x=monthly_perf_df["month_label"],
+                    y=monthly_perf_df["dividend"],
+                    marker_color="#fbbf24",
+                    hovertemplate="%{x}<br>월별배당금: ₩%{y:,.0f}<extra></extra>"
+                ))
+                fig_dividend.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    title="월별 배당금",
+                    yaxis_title="원"
+                )
+                st.plotly_chart(fig_dividend, use_container_width=True)
+        else:
+            st.info("월별 로그를 입력하면 월별 투자 기록, 누적손익, 벤치마크 비교, 배당금 차트가 표시됩니다.")
 
         st.markdown("#### 보유자산 + 기술적 타점 요약")
         show_cols = [
