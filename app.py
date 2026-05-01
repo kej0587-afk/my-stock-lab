@@ -2364,6 +2364,8 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "반도체", "ticker": "396500.KS", "name": "TIGER 반도체TOP10"},
     {"구분": "한국 섹터", "섹터": "IT/기술", "ticker": "139260.KS", "name": "TIGER 200 IT"},
     {"구분": "한국 섹터", "섹터": "2차전지", "ticker": "305540.KS", "name": "TIGER 2차전지테마"},
+    {"구분": "한국 섹터", "섹터": "전력인프라", "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
+    {"구분": "한국 섹터", "섹터": "전력기기", "ticker": "0117V0.KS", "name": "TIGER 코리아AI전력기기TOP3플러스"},
     {"구분": "한국 섹터", "섹터": "조선", "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
     {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
     {"구분": "한국 섹터", "섹터": "에너지", "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
@@ -2381,6 +2383,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "글로벌", "섹터": "홍콩", "ticker": "EWH", "name": "iShares MSCI Hong Kong ETF"},
     {"구분": "글로벌", "섹터": "중국", "ticker": "MCHI", "name": "iShares MSCI China ETF"},
     {"구분": "글로벌", "섹터": "인도", "ticker": "FLIN", "name": "Franklin FTSE India ETF"},
+    {"구분": "글로벌", "섹터": "글로벌AI전력인프라", "ticker": "491010.KS", "name": "TIGER 글로벌AI전력인프라액티브"},
     {"구분": "글로벌", "섹터": "브라질", "ticker": "EWZ", "name": "iShares MSCI Brazil ETF"},
     {"구분": "글로벌", "섹터": "멕시코", "ticker": "EWW", "name": "iShares MSCI Mexico ETF"},
     {"구분": "글로벌", "섹터": "사우디", "ticker": "KSA", "name": "iShares MSCI Saudi Arabia ETF"},
@@ -3400,6 +3403,47 @@ def get_saved_fin_score_fast(ticker, is_etf):
 
     return 3
 
+
+def get_dashboard_market_label(ticker):
+    return "한국" if str(ticker).upper().endswith((".KS", ".KQ")) else "미국"
+
+
+def get_dashboard_type_label(is_etf):
+    return "ETF" if clean_bool(is_etf) else "개별주"
+
+
+def get_dashboard_group_label(ticker, is_etf):
+    return f"{get_dashboard_market_label(ticker)} {get_dashboard_type_label(is_etf)}"
+
+
+def render_dashboard_group_summary(df, group_label):
+    if group_label != "전체":
+        view_df = df[df["전광판그룹"] == group_label].copy()
+    else:
+        view_df = df.copy()
+
+    if view_df.empty:
+        st.info(f"{group_label}에 표시할 종목이 없습니다.")
+        return
+
+    adj = pd.to_numeric(view_df["Adj점수"], errors="coerce")
+    signal_text = view_df["🔥기술적 타점"].astype(str)
+    buyish_count = signal_text.str.contains("매수|진입|추매|눌림|대장주|정찰|적립", na=False).sum()
+    caution_count = signal_text.str.contains("차단|금지|위기|패닉|역배열|하락|주의", na=False).sum()
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("표시 종목", f"{len(view_df)}개")
+    m2.metric("평균 ADJ", "-" if adj.dropna().empty else f"{adj.mean():.1f}")
+    m3.metric("매수/관심 신호", f"{buyish_count}개")
+    m4.metric("차단/주의 신호", f"{caution_count}개")
+
+    show_cols = [
+        "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
+        "📌후보등급", "RS", "RSI", "MFI", "볼린저 %B", "🔥기술적 타점", "Adj점수"
+    ]
+    st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     rows = []
     for item in watchlist_items:
@@ -3425,6 +3469,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         )
 
         rows.append({
+            "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
+            "전광판그룹": get_dashboard_group_label(tkr, is_etf),
             "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
             "재무점수": "ETF 0점" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
             "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
@@ -3496,13 +3542,70 @@ def make_swing_candidate_row(name, ticker, asset_class=""):
     return row
 
 
+SWING_EXCLUDED_TICKERS = {"krw_cash", "usd_cash", "cash"}
+
+
+def is_swing_excluded_ticker(ticker):
+    key = normalize_ticker(ticker)
+    return (not key) or key in RESERVE_TICKERS or key in SWING_EXCLUDED_TICKERS
+
+
+def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class=""):
+    if is_swing_excluded_ticker(ticker):
+        return False
+    if clean_bool(is_etf):
+        return False
+    if is_reserve_or_cash_bucket(infer_bucket(ticker, bucket)):
+        return False
+    if str(asset_class or "").strip().lower() in ["cash", "reserve", "krw_cash", "usd_cash"]:
+        return False
+    if "etf" in str(asset_class or "").strip().lower():
+        return False
+    return True
+
+
+def is_known_non_swing_asset(ticker, asset_class=""):
+    if is_swing_excluded_ticker(ticker):
+        return True
+    if "etf" in str(asset_class or "").strip().lower():
+        return True
+
+    if holdings_df is not None and not holdings_df.empty:
+        key = normalize_ticker(ticker)
+        matched = holdings_df[holdings_df["ticker"].apply(normalize_ticker) == key] if "ticker" in holdings_df.columns else pd.DataFrame()
+        if not matched.empty:
+            row = matched.iloc[0]
+            return not is_swing_candidate_allowed(
+                ticker,
+                is_etf=row.get("is_etf", False),
+                bucket=row.get("bucket", "core"),
+                asset_class=row.get("asset_class", ""),
+            )
+
+    item = get_watchlist_item(ticker)
+    if item:
+        return not is_swing_candidate_allowed(
+            ticker,
+            is_etf=item.get("is_etf", False),
+            bucket=item.get("bucket", "core"),
+            asset_class=item.get("asset_class", ""),
+        )
+
+    return False
+
+
 def get_current_stock_candidates():
     candidates = {}
 
     if "watchlist" in st.session_state:
         for item in st.session_state.watchlist:
             ticker = str(item.get("ticker", "")).strip()
-            if not ticker or clean_bool(item.get("is_etf", False)):
+            if not is_swing_candidate_allowed(
+                ticker,
+                is_etf=item.get("is_etf", False),
+                bucket=item.get("bucket", "core"),
+                asset_class=item.get("asset_class", ""),
+            ):
                 continue
             candidates[normalize_ticker(ticker)] = {
                 "name": str(item.get("name", ticker)).strip(),
@@ -3513,7 +3616,12 @@ def get_current_stock_candidates():
     if holdings_df is not None and not holdings_df.empty:
         for _, row in holdings_df.iterrows():
             ticker = str(row.get("ticker", "")).strip()
-            if not ticker or clean_bool(row.get("is_etf", False)):
+            if not is_swing_candidate_allowed(
+                ticker,
+                is_etf=row.get("is_etf", False),
+                bucket=row.get("bucket", "core"),
+                asset_class=row.get("asset_class", ""),
+            ):
                 continue
             candidates[normalize_ticker(ticker)] = {
                 "name": str(row.get("name", ticker)).strip(),
@@ -3524,13 +3632,13 @@ def get_current_stock_candidates():
     return candidates
 
 
-def build_swing_radar_df(saved_df):
+def build_swing_radar_df(saved_df, include_hidden=False):
     rows_by_key = {}
 
     if saved_df is not None and not saved_df.empty:
         for _, row in saved_df.iterrows():
             ticker = str(row.get("ticker", "")).strip()
-            if not ticker:
+            if not ticker or is_known_non_swing_asset(ticker, row.get("asset_class", "")):
                 continue
             item = {col: row.get(col, "") for col in SWING_RADAR_COLUMNS}
             rows_by_key[normalize_ticker(ticker)] = item
@@ -3548,6 +3656,12 @@ def build_swing_radar_df(saved_df):
     for col in SWING_RADAR_COLUMNS:
         if col not in df.columns:
             df[col] = ""
+
+    if df.empty:
+        return dataframe_from_rows([], SWING_RADAR_COLUMNS)
+
+    if not include_hidden:
+        df = df[df["status"].astype(str).str.strip() != "숨김"]
 
     if df.empty:
         return dataframe_from_rows([], SWING_RADAR_COLUMNS)
@@ -3648,9 +3762,10 @@ def render_swing_radar_tab():
         with st.expander("Supabase swing_radar 테이블 생성 SQL"):
             st.code(get_swing_radar_create_sql(), language="sql")
 
-    swing_df = build_swing_radar_df(saved_df)
+    show_hidden = st.checkbox("숨김 후보도 보기", value=False, key="swing_show_hidden")
+    swing_df = build_swing_radar_df(saved_df, include_hidden=show_hidden)
     if swing_df.empty:
-        st.info("스윙 후보가 없습니다. 관심종목 또는 보유종목에 개별주를 추가하면 자동으로 후보가 생깁니다.")
+        st.info("스윙 후보가 없습니다. 관심종목 또는 보유종목에 개별주를 추가하면 자동으로 후보가 생깁니다. ETF, 현금성 자산, reserve/cash bucket은 제외됩니다.")
         return
 
     system_df = build_swing_system_df(swing_df)
@@ -3659,7 +3774,7 @@ def render_swing_radar_tab():
     c1.metric("스윙 후보", f"{len(swing_df)}개")
     c2.metric("진행", f"{(swing_df['status'] == '진행').sum()}개")
     c3.metric("위험 표시", f"{(swing_df['status'] == '위험').sum()}개")
-    c4.metric("종료/보류", f"{swing_df['status'].isin(['종료', '보류']).sum()}개")
+    c4.metric("종료/보류/숨김", f"{swing_df['status'].isin(['종료', '보류', '숨김']).sum()}개")
 
     st.markdown("#### 시스템 신호 요약")
     st.dataframe(system_df, use_container_width=True, hide_index=True)
@@ -3755,7 +3870,7 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
         hide_index=True,
         key="swing_radar_editor",
         column_config={
-            "status": st.column_config.SelectboxColumn("상태", options=["대기", "진행", "완료", "위험", "보류", "종료"]),
+            "status": st.column_config.SelectboxColumn("상태", options=["대기", "진행", "완료", "위험", "보류", "종료", "숨김"]),
             "decision": st.column_config.SelectboxColumn("내 결정", options=["관망", "정찰", "추매대기", "유지", "일부익절", "축소", "종료"]),
             "importance": st.column_config.SelectboxColumn("중요도", options=["상", "중", "하"]),
             "reference_link": st.column_config.LinkColumn("참고 링크"),
@@ -4052,8 +4167,19 @@ with tab1:
         st.rerun()
 
     summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
-    if summary_df.empty: st.warning("전광판에 표시할 종목이 없습니다.")
-    else: st.dataframe(summary_df, use_container_width=True, height=720, hide_index=True)
+    if summary_df.empty:
+        st.warning("전광판에 표시할 종목이 없습니다.")
+    else:
+        st.markdown("#### 전광판 보기")
+        group_order = ["전체", "한국 ETF", "한국 개별주", "미국 ETF", "미국 개별주"]
+        group_tabs = st.tabs([
+            f"{label} ({len(summary_df) if label == '전체' else int((summary_df['전광판그룹'] == label).sum())})"
+            for label in group_order
+        ])
+
+        for group_tab, group_label in zip(group_tabs, group_order):
+            with group_tab:
+                render_dashboard_group_summary(summary_df, group_label)
 
 with tab2:
     options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
