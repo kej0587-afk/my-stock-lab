@@ -2221,7 +2221,7 @@ def build_benchmark_return_df(perf_df):
     for _, row in perf_df.iterrows():
         rows.append({
             "month_label": row["month_label"],
-            "구분": "내 수익률",
+            "구분": "내 기간수익률",
             "수익률_pct": float(row.get("relative_return_pct", 0.0)),
         })
 
@@ -3963,11 +3963,28 @@ with tab3:
             p3, p4 = st.columns(2)
 
             with p3:
+                fig_cum_return = go.Figure(go.Scatter(
+                    x=monthly_perf_df["month_label"],
+                    y=monthly_perf_df["cum_return_pct"],
+                    mode="lines+markers",
+                    name="누적수익률",
+                    line=dict(color="#22c55e", width=3),
+                    hovertemplate="%{x}<br>누적수익률: %{y:.2f}%<extra></extra>"
+                ))
+                fig_cum_return.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+                fig_cum_return.update_layout(
+                    template="plotly_dark",
+                    height=220,
+                    title="월별 누적수익률",
+                    yaxis_title="수익률 %"
+                )
+                st.plotly_chart(fig_cum_return, use_container_width=True)
+
                 benchmark_df = build_benchmark_return_df(monthly_perf_df)
                 fig_benchmark = go.Figure()
                 if not benchmark_df.empty:
                     color_map = {
-                        "내 수익률": "#00ff38",
+                        "내 기간수익률": "#00ff38",
                         "S&P500": "#f87171",
                         "나스닥100": "#60a5fa",
                         "코스피": "#a7f3d0",
@@ -3979,14 +3996,14 @@ with tab3:
                             y=part["수익률_pct"],
                             mode="lines+markers",
                             name=label,
-                            line=dict(color=color_map.get(label, "#cbd5e1"), width=3 if label == "내 수익률" else 2, dash="solid" if label == "내 수익률" else "dot"),
+                            line=dict(color=color_map.get(label, "#cbd5e1"), width=3 if label == "내 기간수익률" else 2, dash="solid" if label == "내 기간수익률" else "dot"),
                             hovertemplate=f"%{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>"
                         ))
                 fig_benchmark.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
                 fig_benchmark.update_layout(
                     template="plotly_dark",
-                    height=360,
-                    title="내 수익률 vs 벤치마크 지수",
+                    height=320,
+                    title="첫 기록월 대비 수익률 변화 vs 벤치마크",
                     yaxis_title="수익률 %",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
                 )
