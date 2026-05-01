@@ -2490,17 +2490,25 @@ def render_money_flow_tab():
     m1, m2 = st.columns([1.05, 1])
 
     with m1:
+        tree_df = view_df.reset_index(drop=True).copy()
+        tree_df["tree_id"] = tree_df["구분"] + "|" + tree_df["섹터"] + "|" + tree_df["Ticker"]
+        tree_df["tree_label"] = np.where(
+            selected_group == "전체",
+            tree_df["구분"] + "<br>" + tree_df["섹터"] + "<br>" + tree_df["Ticker"],
+            tree_df["섹터"] + "<br>" + tree_df["Ticker"],
+        )
         fig_tree = go.Figure(go.Treemap(
-            labels=view_df["섹터"] + "<br>" + view_df["Ticker"],
-            parents=view_df["구분"] if selected_group == "전체" else [""] * len(view_df),
-            values=view_df["히트맵크기"],
+            ids=tree_df["tree_id"],
+            labels=tree_df["tree_label"],
+            parents=[""] * len(tree_df),
+            values=tree_df["히트맵크기"].astype(float).clip(lower=1),
             marker=dict(
-                colors=view_df["돈흐름점수"],
+                colors=tree_df["돈흐름점수"],
                 colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
                 cmid=0,
                 colorbar=dict(title="돈흐름")
             ),
-            customdata=view_df[["3개월수익률", "6개월수익률", "가속도", "상태"]],
+            customdata=tree_df[["3개월수익률", "6개월수익률", "가속도", "상태"]],
             hovertemplate=
                 "<b>%{label}</b><br>" +
                 "3개월: %{customdata[0]:.1%}<br>" +
@@ -2508,8 +2516,9 @@ def render_money_flow_tab():
                 "가속도: %{customdata[2]:.1%}<br>" +
                 "상태: %{customdata[3]}<extra></extra>"
         ))
-        fig_tree.update_layout(template="plotly_dark", height=470, title="돈흐름 히트맵")
+        fig_tree.update_layout(template="plotly_dark", height=470, title="돈흐름 히트맵", margin=dict(t=45, l=4, r=4, b=4))
         st.plotly_chart(fig_tree, use_container_width=True)
+        st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 3개월/6개월 흐름과 가속도가 좋다는 뜻입니다.")
 
     with m2:
         fig_quad = go.Figure(go.Scatter(
