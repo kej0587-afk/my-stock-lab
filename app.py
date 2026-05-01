@@ -37,7 +37,18 @@ def get_secret_emails(name):
 
 
 def get_auth_mode():
-    return str(st.secrets.get("AUTH_MODE", "google")).strip().lower()
+    mode = str(st.secrets.get("AUTH_MODE", "")).strip().lower()
+
+    if mode in ["password", "pass", "local"]:
+        return "password"
+    if mode in ["google", "oauth"]:
+        return "google"
+
+    # Emergency-safe default: if APP_PASSWORD is set, avoid Google OAuth.
+    if get_secret_value("APP_PASSWORD"):
+        return "password"
+
+    return "google"
 
 
 def get_owner_email_for_password_login():
