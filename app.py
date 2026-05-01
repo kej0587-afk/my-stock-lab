@@ -36,7 +36,54 @@ def get_secret_emails(name):
     return {str(x).strip().lower() for x in value if str(x).strip()}
 
 
+def get_auth_mode():
+    return str(st.secrets.get("AUTH_MODE", "google")).strip().lower()
+
+
+def get_owner_email_for_password_login():
+    allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
+    return sorted(allowed_emails)[0] if allowed_emails else "kej0587@gmail.com"
+
+
+def require_password_login():
+    app_password = get_secret_value("APP_PASSWORD")
+
+    if not app_password:
+        st.error("Set APP_PASSWORD in Streamlit Secrets or change AUTH_MODE back to google.")
+        st.stop()
+
+    if "password_ok" not in st.session_state:
+        st.session_state.password_ok = False
+
+    if not st.session_state.password_ok:
+        st.title("Stock Lab")
+        st.info("Enter the emergency password.")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Log in"):
+            if password == app_password:
+                st.session_state.password_ok = True
+                st.rerun()
+            else:
+                st.error("Wrong password.")
+
+        st.stop()
+
+    return get_owner_email_for_password_login()
+
+
+def logout_current_user():
+    if get_auth_mode() == "password":
+        st.session_state.password_ok = False
+        st.rerun()
+    else:
+        st.logout()
+
+
 def require_login():
+    if get_auth_mode() == "password":
+        return require_password_login()
+
     if not st.user.is_logged_in:
         st.title("Stock Lab")
         st.info("Log in with your allowed Google account.")
@@ -53,7 +100,7 @@ def require_login():
     if email not in allowed_emails:
         st.error("This Google account is not allowed to use this app.")
         st.write(f"Signed in as: {email}")
-        st.button("Log out", on_click=st.logout)
+        st.button("Log out", on_click=logout_current_user)
         st.stop()
 
     return email
@@ -84,7 +131,7 @@ with st.sidebar:
     app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 앱 내부 자산 연동, 범용모드는 직접 입력 방식입니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
     st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
-    st.button("Log out", on_click=st.logout, key="logout_sidebar")
+    st.button("Log out", on_click=logout_current_user, key="logout_sidebar")
 
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
 
@@ -448,11 +495,6 @@ def load_holdings_db():
 
 
 def save_holdings_db(df):
-    run_supabase(
-        supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing holdings",
-    )
-
     rows = []
     for _, row in df.iterrows():
         ticker_value = str(row.get("ticker", "")).strip()
@@ -471,8 +513,15 @@ def save_holdings_db(df):
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
         })
 
-    if rows:
-        run_supabase(supabase.table("holdings").insert(rows), "save holdings")
+    if not rows:
+        st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
+        return
+
+    run_supabase(
+        supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing holdings",
+    )
+    run_supabase(supabase.table("holdings").insert(rows), "save holdings")
 
 
 def load_dividends_db():
@@ -485,11 +534,6 @@ def load_dividends_db():
 
 
 def save_dividends_db(df):
-    run_supabase(
-        supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing dividends",
-    )
-
     rows = []
     for _, row in df.iterrows():
         if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
@@ -502,8 +546,15 @@ def save_dividends_db(df):
             "currency": str(row.get("currency", "KRW")).strip().upper() or "KRW",
         })
 
-    if rows:
-        run_supabase(supabase.table("dividends").insert(rows), "save dividends")
+    if not rows:
+        st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
+        return
+
+    run_supabase(
+        supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing dividends",
+    )
+    run_supabase(supabase.table("dividends").insert(rows), "save dividends")
 
 
 def load_monthly_logs_db():
@@ -516,11 +567,6 @@ def load_monthly_logs_db():
 
 
 def save_monthly_logs_db(df):
-    run_supabase(
-        supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing monthly logs",
-    )
-
     rows = []
     for _, row in df.iterrows():
         month = str(row.get("month", "")).strip()
@@ -534,8 +580,15 @@ def save_monthly_logs_db(df):
             "dividend": clean_float(row.get("dividend")),
         })
 
-    if rows:
-        run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
+    if not rows:
+        st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
+        return
+
+    run_supabase(
+        supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing monthly logs",
+    )
+    run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
 
 
 def load_fin_scores_db():
@@ -566,11 +619,6 @@ def load_watchlist_db():
 
 
 def save_watchlist_db(watchlist):
-    run_supabase(
-        supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing watchlist",
-    )
-
     rows = []
     for idx, item in enumerate(watchlist):
         ticker = str(item.get("ticker", "")).strip()
@@ -587,8 +635,15 @@ def save_watchlist_db(watchlist):
             "fin_score": clean_int(item.get("fin_score")),
         })
 
-    if rows:
-        run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
+    if not rows:
+        st.warning("No watchlist rows to save. Existing watchlist was kept unchanged.")
+        return
+
+    run_supabase(
+        supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
+        "delete existing watchlist",
+    )
+    run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
 
 
 def load_watchlist_persistent():
@@ -603,6 +658,89 @@ def load_watchlist_persistent():
 
 def persist_watchlist():
     save_watchlist_db(st.session_state.watchlist)
+
+
+def classify_recovery_csv(df):
+    cols = set(df.columns)
+
+    if {"ticker", "name", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "bucket"}.issubset(cols):
+        return "holdings"
+    if {"date", "ticker", "amount", "currency"}.issubset(cols):
+        return "dividends"
+    if {"month", "total_invested", "evaluated_value", "dividend"}.issubset(cols):
+        return "monthly_logs"
+    if {"자산명", "티커", "보유량", "매입가", "원화환산", "bucket"}.issubset(cols):
+        return "dashboard"
+
+    return "unknown"
+
+
+def read_recovery_csv(uploaded_file):
+    uploaded_file.seek(0)
+    return pd.read_csv(uploaded_file)
+
+
+def restore_from_uploaded_csvs(uploaded_files):
+    frames = {}
+    unknown_files = []
+
+    for uploaded_file in uploaded_files or []:
+        df = read_recovery_csv(uploaded_file)
+        kind = classify_recovery_csv(df)
+        if kind == "unknown":
+            unknown_files.append(uploaded_file.name)
+            continue
+        frames[kind] = df
+
+    restored = []
+
+    if "dashboard" in frames:
+        dash = frames["dashboard"].copy()
+        current_settings = load_settings_db()
+
+        seed_money = current_settings.get("seed_money", 0.0)
+        krw_cash = current_settings.get("krw_cash", 0.0)
+        usd_cash = current_settings.get("usd_cash", 0.0)
+        usdkrw = current_settings.get("usdkrw", 1400.0)
+        reserve_target_weight = current_settings.get("reserve_target_weight", 10.0)
+
+        if "monthly_logs" in frames and not frames["monthly_logs"].empty:
+            latest_month = frames["monthly_logs"].sort_values("month").iloc[-1]
+            seed_money = clean_float(latest_month.get("total_invested"), seed_money)
+
+        krw_rows = dash[dash["티커"].astype(str).str.upper() == "KRW_CASH"]
+        if not krw_rows.empty:
+            krw_cash = clean_float(krw_rows.iloc[0].get("원화환산"), krw_cash)
+
+        usd_rows = dash[dash["티커"].astype(str).str.upper() == "USD_CASH"]
+        if not usd_rows.empty:
+            usd_cash = clean_float(usd_rows.iloc[0].get("보유량"), usd_cash)
+            usdkrw = clean_float(usd_rows.iloc[0].get("매입가"), usdkrw)
+
+        save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+        restored.append("settings/cash")
+
+    if "holdings" in frames:
+        holdings = frames["holdings"].copy()
+        save_holdings_db(holdings.fillna(""))
+        restored.append(f"holdings {len(holdings)} rows")
+
+    if "dividends" in frames:
+        dividends = frames["dividends"].copy()
+        dividends = dividends.fillna("")
+        dividends = dividends[
+            dividends["date"].astype(str).str.strip().ne("") |
+            dividends["ticker"].astype(str).str.strip().ne("")
+        ]
+        save_dividends_db(dividends)
+        restored.append(f"dividends {len(dividends)} rows")
+
+    if "monthly_logs" in frames:
+        monthly_logs = frames["monthly_logs"].copy()
+        save_monthly_logs_db(monthly_logs.fillna(""))
+        restored.append(f"monthly_logs {len(monthly_logs)} rows")
+
+    return restored, unknown_files
 
 
 def to_jsonable(obj):
@@ -3048,6 +3186,26 @@ with tab2:
 
 with tab3:
     st.subheader("앱 내부 자산 관리")
+
+    with st.expander("CSV 백업 복구", expanded=False):
+        st.caption("Supabase/SQLite에서 export한 holdings, dividends, monthly_logs, dashboard CSV를 업로드해 현재 계정으로 복구합니다.")
+        recovery_files = st.file_uploader(
+            "복구 CSV 업로드",
+            type=["csv"],
+            accept_multiple_files=True,
+            key="recovery_csv_files",
+        )
+
+        if st.button("업로드 CSV로 복구 실행", key="restore_from_csvs"):
+            restored, unknown_files = restore_from_uploaded_csvs(recovery_files)
+
+            if restored:
+                st.success("복구 완료: " + ", ".join(restored))
+                if unknown_files:
+                    st.warning("인식하지 못한 파일: " + ", ".join(unknown_files))
+                st.rerun()
+            else:
+                st.warning("복구할 수 있는 CSV를 찾지 못했습니다.")
 
     st.markdown("### 1) 기본 설정")
     col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
