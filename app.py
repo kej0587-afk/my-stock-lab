@@ -440,7 +440,10 @@ def run_supabase(query, action="Supabase operation"):
 
 
 def dataframe_from_rows(rows, columns):
-    df = pd.DataFrame(rows or [])
+    if isinstance(rows, pd.DataFrame):
+        df = rows.copy()
+    else:
+        df = pd.DataFrame(rows or [])
     for col in columns:
         if col not in df.columns:
             df[col] = None
