@@ -2358,7 +2358,10 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "부동산", "ticker": "VNQ", "name": "Vanguard Real Estate ETF"},
     {"구분": "미국 섹터", "섹터": "바이오", "ticker": "IBB", "name": "iShares Biotechnology ETF"},
     {"구분": "미국 섹터", "섹터": "신재생", "ticker": "ICLN", "name": "iShares Global Clean Energy ETF"},
+    {"구분": "미국 섹터", "섹터": "인프라", "ticker": "PAVE", "name": "Global X U.S. Infrastructure Development ETF"},
     {"구분": "미국 섹터", "섹터": "방산", "ticker": "SHLD", "name": "Global X Defense Tech ETF"},
+    {"구분": "미국 섹터", "섹터": "항공방산", "ticker": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"},
+    {"구분": "미국 섹터", "섹터": "소프트웨어", "ticker": "IGV", "name": "iShares Expanded Tech-Software Sector ETF"},
 
     {"구분": "한국 섹터", "섹터": "코스피", "ticker": "069500.KS", "name": "KODEX 200"},
     {"구분": "한국 섹터", "섹터": "코스닥", "ticker": "229200.KS", "name": "KODEX 코스닥150"},
@@ -2368,6 +2371,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "전력인프라", "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
     {"구분": "한국 섹터", "섹터": "전력기기", "ticker": "0117V0.KS", "name": "TIGER 코리아AI전력기기TOP3플러스"},
     {"구분": "한국 섹터", "섹터": "원자력", "ticker": "434730.KS", "name": "HANARO 원자력iSelect"},
+    {"구분": "한국 섹터", "섹터": "원자력TOP10", "ticker": "433500.KS", "name": "ACE 원자력TOP10"},
     {"구분": "한국 섹터", "섹터": "조선", "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
     {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
     {"구분": "한국 섹터", "섹터": "K-뷰티", "ticker": "479850.KS", "name": "HANARO K-뷰티"},
@@ -2387,10 +2391,15 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "글로벌", "섹터": "중국", "ticker": "MCHI", "name": "iShares MSCI China ETF"},
     {"구분": "글로벌", "섹터": "인도", "ticker": "FLIN", "name": "Franklin FTSE India ETF"},
     {"구분": "글로벌", "섹터": "글로벌AI전력인프라", "ticker": "491010.KS", "name": "TIGER 글로벌AI전력인프라액티브"},
+    {"구분": "글로벌", "섹터": "미국AI전력인프라", "ticker": "487230.KS", "name": "KODEX 미국AI전력핵심인프라"},
+    {"구분": "글로벌", "섹터": "우라늄/원전", "ticker": "URA", "name": "Global X Uranium ETF"},
     {"구분": "글로벌", "섹터": "브라질", "ticker": "EWZ", "name": "iShares MSCI Brazil ETF"},
     {"구분": "글로벌", "섹터": "멕시코", "ticker": "EWW", "name": "iShares MSCI Mexico ETF"},
     {"구분": "글로벌", "섹터": "사우디", "ticker": "KSA", "name": "iShares MSCI Saudi Arabia ETF"},
     {"구분": "글로벌", "섹터": "베트남", "ticker": "VNM", "name": "VanEck Vietnam ETF"},
+
+    {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
+    {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
 ]
 
 def normalize_money_flow_ticker(ticker):
