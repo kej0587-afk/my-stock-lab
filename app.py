@@ -3692,7 +3692,7 @@ def render_dashboard_group_summary(df, group_label):
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
-            "🔥기술적 타점", "Adj점수"
+            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
@@ -3750,8 +3750,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             "기초벤치": get_benchmark_display_name(underlying_bench) if underlying_bench else "-",
             "섹터벤치": get_benchmark_display_name(sector_bench) if sector_bench else "-",
             "섹터RS": sector_rs_label if sector_bench else "-",
-            "스윙상태": "-" if is_etf else swing_status_map.get(swing_key, "-"),
-            "내결정": "-" if is_etf else swing_decision_map.get(swing_key, "-"),
+            "스윙상태": swing_status_map.get(swing_key, "-"),
+            "내결정": swing_decision_map.get(swing_key, "-"),
             "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
             "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
         })
@@ -3801,12 +3801,31 @@ DEFAULT_SWING_TEMPLATE = {
 }
 
 
-def get_swing_template(ticker):
-    return dict(SWING_TEMPLATE_MAP.get(normalize_ticker(ticker), DEFAULT_SWING_TEMPLATE))
+DEFAULT_SWING_ETF_TEMPLATE = {
+    "idea": "섹터/지수 흐름 기반 ETF 스윙 후보",
+    "check_1": "돈흐름 레이더에서 해당 ETF나 관련 섹터 흐름이 유지되는지",
+    "check_2": "시장벤치 대비 RS가 약해지지 않는지",
+    "check_3": "MFI/RSI 과열 뒤 수급 이탈이 나오지 않는지",
+    "risk_1": "기초지수 추세 훼손",
+    "risk_2": "레버리지/테마 ETF의 변동성 확대",
+    "risk_3": "매크로 리스크 상승 또는 금리/환율 급변",
+    "entry_rule": "돈흐름 우호 + 시스템 승인 + 과열 해소",
+    "exit_rule": "시스템 차단, 기초지수 추세 훼손, 돈흐름 둔화",
+    "next_event": "돈흐름 레이더/시장벤치 RS 주간 확인",
+}
 
 
-def make_swing_candidate_row(name, ticker, asset_class=""):
-    template = get_swing_template(ticker)
+def get_swing_template(ticker, is_etf=False, asset_class=""):
+    key = normalize_ticker(ticker)
+    if key in SWING_TEMPLATE_MAP:
+        return dict(SWING_TEMPLATE_MAP[key])
+    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or "etf" in str(asset_class or "").lower():
+        return dict(DEFAULT_SWING_ETF_TEMPLATE)
+    return dict(DEFAULT_SWING_TEMPLATE)
+
+
+def make_swing_candidate_row(name, ticker, asset_class="", is_etf=False):
+    template = get_swing_template(ticker, is_etf=is_etf, asset_class=asset_class)
     row = {col: "" for col in SWING_RADAR_COLUMNS}
     row.update(template)
     row.update({
@@ -3829,24 +3848,23 @@ def is_swing_excluded_ticker(ticker):
     return (not key) or key in RESERVE_TICKERS or key in SWING_EXCLUDED_TICKERS
 
 
-def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class=""):
+def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class="", include_etf=False):
     if is_swing_excluded_ticker(ticker):
-        return False
-    if clean_bool(is_etf):
         return False
     if is_reserve_or_cash_bucket(infer_bucket(ticker, bucket)):
         return False
-    if str(asset_class or "").strip().lower() in ["cash", "reserve", "krw_cash", "usd_cash"]:
+    asset_class_text = str(asset_class or "").strip().lower()
+    if asset_class_text in ["cash", "reserve", "krw_cash", "usd_cash"]:
         return False
-    if "etf" in str(asset_class or "").strip().lower():
+    if (not include_etf) and (clean_bool(is_etf) or is_known_etf_ticker(ticker) or "etf" in asset_class_text):
         return False
     return True
 
 
-def is_known_non_swing_asset(ticker, asset_class=""):
+def is_known_non_swing_asset(ticker, asset_class="", include_etf=False):
     if is_swing_excluded_ticker(ticker):
         return True
-    if "etf" in str(asset_class or "").strip().lower():
+    if (not include_etf) and ("etf" in str(asset_class or "").strip().lower() or is_known_etf_ticker(ticker)):
         return True
 
     if holdings_df is not None and not holdings_df.empty:
@@ -3859,6 +3877,7 @@ def is_known_non_swing_asset(ticker, asset_class=""):
                 is_etf=row.get("is_etf", False),
                 bucket=row.get("bucket", "core"),
                 asset_class=row.get("asset_class", ""),
+                include_etf=include_etf,
             )
 
     item = get_watchlist_item(ticker)
@@ -3868,68 +3887,78 @@ def is_known_non_swing_asset(ticker, asset_class=""):
             is_etf=item.get("is_etf", False),
             bucket=item.get("bucket", "core"),
             asset_class=item.get("asset_class", ""),
+            include_etf=include_etf,
         )
 
     return False
 
 
-def get_current_stock_candidates():
+def get_current_stock_candidates(include_etf=False):
     candidates = {}
 
     if "watchlist" in st.session_state:
         for item in st.session_state.watchlist:
             ticker = str(item.get("ticker", "")).strip()
+            is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(ticker)
+            asset_class = infer_asset_class_for_ticker(ticker, item.get("asset_class", "")) if is_etf else str(item.get("asset_class", "")).strip()
             if not is_swing_candidate_allowed(
                 ticker,
-                is_etf=item.get("is_etf", False),
+                is_etf=is_etf,
                 bucket=item.get("bucket", "core"),
-                asset_class=item.get("asset_class", ""),
+                asset_class=asset_class,
+                include_etf=include_etf,
             ):
                 continue
             candidates[normalize_ticker(ticker)] = {
                 "name": str(item.get("name", ticker)).strip(),
                 "ticker": ticker,
-                "asset_class": str(item.get("asset_class", "")).strip(),
+                "asset_class": asset_class,
+                "is_etf": is_etf,
             }
 
     if holdings_df is not None and not holdings_df.empty:
         for _, row in holdings_df.iterrows():
             ticker = str(row.get("ticker", "")).strip()
+            is_etf = clean_bool(row.get("is_etf", False)) or is_known_etf_ticker(ticker)
+            asset_class = infer_asset_class_for_ticker(ticker, row.get("asset_class", "")) if is_etf else str(row.get("asset_class", "")).strip()
             if not is_swing_candidate_allowed(
                 ticker,
-                is_etf=row.get("is_etf", False),
+                is_etf=is_etf,
                 bucket=row.get("bucket", "core"),
-                asset_class=row.get("asset_class", ""),
+                asset_class=asset_class,
+                include_etf=include_etf,
             ):
                 continue
             candidates[normalize_ticker(ticker)] = {
                 "name": str(row.get("name", ticker)).strip(),
                 "ticker": ticker,
-                "asset_class": str(row.get("asset_class", "")).strip(),
+                "asset_class": asset_class,
+                "is_etf": is_etf,
             }
 
     return candidates
 
 
-def build_swing_radar_df(saved_df, include_hidden=False):
+def build_swing_radar_df(saved_df, include_hidden=False, include_etf=False, include_auto=True):
     rows_by_key = {}
 
     if saved_df is not None and not saved_df.empty:
         for _, row in saved_df.iterrows():
             ticker = str(row.get("ticker", "")).strip()
-            if not ticker or is_known_non_swing_asset(ticker, row.get("asset_class", "")):
+            if not ticker or is_swing_excluded_ticker(ticker):
                 continue
             item = {col: row.get(col, "") for col in SWING_RADAR_COLUMNS}
             rows_by_key[normalize_ticker(ticker)] = item
 
-    for key, item in get_current_stock_candidates().items():
-        if key not in rows_by_key:
-            rows_by_key[key] = make_swing_candidate_row(item["name"], item["ticker"], item["asset_class"])
-        else:
-            if not str(rows_by_key[key].get("name", "")).strip():
-                rows_by_key[key]["name"] = item["name"]
-            if not str(rows_by_key[key].get("asset_class", "")).strip():
-                rows_by_key[key]["asset_class"] = item["asset_class"]
+    if include_auto:
+        for key, item in get_current_stock_candidates(include_etf=include_etf).items():
+            if key not in rows_by_key:
+                rows_by_key[key] = make_swing_candidate_row(item["name"], item["ticker"], item["asset_class"], item.get("is_etf", False))
+            else:
+                if not str(rows_by_key[key].get("name", "")).strip():
+                    rows_by_key[key]["name"] = item["name"]
+                if not str(rows_by_key[key].get("asset_class", "")).strip():
+                    rows_by_key[key]["asset_class"] = item["asset_class"]
 
     df = pd.DataFrame(list(rows_by_key.values()))
     for col in SWING_RADAR_COLUMNS:
@@ -3948,17 +3977,59 @@ def build_swing_radar_df(saved_df, include_hidden=False):
     return df[SWING_RADAR_COLUMNS].sort_values(["importance", "name"], ascending=[True, True])
 
 
+def merge_swing_editor_with_saved(saved_df, edited_df, visible_df):
+    rows_by_key = {}
+
+    if saved_df is not None and not saved_df.empty:
+        for _, row in saved_df.iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker or is_swing_excluded_ticker(ticker):
+                continue
+            rows_by_key[normalize_ticker(ticker)] = {col: row.get(col, "") for col in SWING_RADAR_COLUMNS}
+
+    visible_keys = {
+        normalize_ticker(row.get("ticker", ""))
+        for _, row in visible_df.iterrows()
+        if str(row.get("ticker", "")).strip()
+    } if visible_df is not None and not visible_df.empty else set()
+
+    edited_keys = {
+        normalize_ticker(row.get("ticker", ""))
+        for _, row in edited_df.iterrows()
+        if str(row.get("ticker", "")).strip()
+    } if edited_df is not None and not edited_df.empty else set()
+
+    for key in visible_keys - edited_keys:
+        rows_by_key.pop(key, None)
+
+    if edited_df is not None and not edited_df.empty:
+        for _, row in edited_df.iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            if not ticker or is_swing_excluded_ticker(ticker):
+                continue
+            rows_by_key[normalize_ticker(ticker)] = {col: row.get(col, "") for col in SWING_RADAR_COLUMNS}
+
+    merged = pd.DataFrame(list(rows_by_key.values()))
+    for col in SWING_RADAR_COLUMNS:
+        if col not in merged.columns:
+            merged[col] = ""
+    return dataframe_from_rows(merged, SWING_RADAR_COLUMNS) if not merged.empty else dataframe_from_rows([], SWING_RADAR_COLUMNS)
+
+
 def get_swing_item_context(row):
     ticker = str(row.get("ticker", "")).strip()
     name = str(row.get("name", ticker)).strip()
     asset_class = str(row.get("asset_class", "")).strip()
     avg_price = 0.0
     has_pos = False
+    is_etf = is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
 
     holding_row = get_holding_row_by_ticker(holdings_table, ticker)
     if holding_row is not None:
         name = str(holding_row.get("자산명", name)).strip() or name
         asset_class = str(holding_row.get("asset_class", asset_class)).strip() or asset_class
+        is_etf = clean_bool(holding_row.get("is_etf", False)) or is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
+        asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
         avg_price = clean_float(holding_row.get("매입가"), 0.0)
         has_pos = clean_float(holding_row.get("보유량"), 0.0) > 0
     else:
@@ -3966,8 +4037,10 @@ def get_swing_item_context(row):
         if item:
             name = str(item.get("name", name)).strip() or name
             asset_class = str(item.get("asset_class", asset_class)).strip() or asset_class
+            is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
+            asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
-    return name, ticker, asset_class, avg_price, has_pos
+    return name, ticker, asset_class, avg_price, has_pos, is_etf
 
 
 def build_swing_system_df(swing_df):
@@ -3976,7 +4049,7 @@ def build_swing_system_df(swing_df):
         return pd.DataFrame(rows)
 
     for _, row in swing_df.iterrows():
-        name, ticker, asset_class, avg_price, has_pos = get_swing_item_context(row)
+        name, ticker, asset_class, avg_price, has_pos, is_etf = get_swing_item_context(row)
 
         try:
             px = load_price_df(ticker, "1y")
@@ -3984,12 +4057,12 @@ def build_swing_system_df(swing_df):
                 raise RuntimeError("가격 데이터 없음")
 
             px = build_indicators(px)
-            fin_score, _ = load_fin_score_meta_fast(ticker, False)
+            fin_score, _ = load_fin_score_meta_fast(ticker, is_etf)
             c = calc_scores_and_decision(
                 name=name,
                 ticker=ticker,
-                is_etf=False,
-                asset_class=asset_class or "kr_stock",
+                is_etf=is_etf,
+                asset_class=asset_class or ("us_etf_nasdaq" if is_etf else "kr_stock"),
                 df=px,
                 my_price=avg_price,
                 has_pos=has_pos,
@@ -4033,7 +4106,7 @@ def build_swing_system_df(swing_df):
 
 def render_swing_radar_tab():
     st.subheader("스윙 레이더")
-    st.caption("개별주 스윙은 공부량을 늘리는 게 아니라, 보유 이유와 위험 신호를 잊지 않게 관리하는 영역입니다.")
+    st.caption("스윙 레이더는 개별주와 ETF의 보유 이유, 진입 조건, 위험 신호를 잊지 않게 관리하는 영역입니다.")
 
     saved_df, load_error = load_swing_radar_db_safe()
     if load_error:
@@ -4041,10 +4114,64 @@ def render_swing_radar_tab():
         with st.expander("Supabase swing_radar 테이블 생성 SQL"):
             st.code(get_swing_radar_create_sql(), language="sql")
 
-    show_hidden = st.checkbox("숨김 후보도 보기", value=False, key="swing_show_hidden")
-    swing_df = build_swing_radar_df(saved_df, include_hidden=show_hidden)
+    opt1, opt2, opt3 = st.columns(3)
+    with opt1:
+        show_hidden = st.checkbox("숨김 후보도 보기", value=False, key="swing_show_hidden")
+    with opt2:
+        include_auto_candidates = st.checkbox("보유/전광판 자동 후보 불러오기", value=True, key="swing_include_auto")
+    with opt3:
+        include_etf_candidates = st.checkbox("ETF도 자동 후보에 포함", value=False, key="swing_include_etf")
+
+    with st.expander("스윙 후보 직접 추가"):
+        st.caption("자동 후보에 없거나 ETF를 따로 스윙 관리하고 싶을 때 사용합니다. 숨김 처리한 기존 후보는 새 후보 추가 시에도 유지됩니다.")
+        add_cols = st.columns([1, 1, 1, 1])
+        with add_cols[0]:
+            new_swing_ticker = st.text_input("티커", "", key="new_swing_ticker").strip().upper()
+        with add_cols[1]:
+            new_swing_name = st.text_input("이름", "", key="new_swing_name").strip()
+        with add_cols[2]:
+            new_swing_is_etf = st.checkbox("ETF", value=False, key="new_swing_is_etf")
+        with add_cols[3]:
+            new_swing_asset_class = st.selectbox(
+                "분류",
+                ["us_stock", "kr_stock", "us_etf_nasdaq", "us_etf_sp", "kr_etf"],
+                index=2 if new_swing_is_etf else 0,
+                key="new_swing_asset_class",
+            )
+
+        if st.button("스윙 후보 추가", key="add_swing_candidate"):
+            if not new_swing_ticker:
+                st.warning("추가할 티커를 입력해 주세요.")
+            elif is_swing_excluded_ticker(new_swing_ticker):
+                st.warning("현금/대기자금/파킹자산은 스윙 후보에 추가하지 않습니다.")
+            else:
+                inferred_is_etf = new_swing_is_etf or is_known_etf_ticker(new_swing_ticker) or "etf" in new_swing_asset_class
+                inferred_asset_class = infer_asset_class_for_ticker(new_swing_ticker, new_swing_asset_class) if inferred_is_etf else new_swing_asset_class
+                new_row = make_swing_candidate_row(
+                    new_swing_name or new_swing_ticker,
+                    new_swing_ticker,
+                    inferred_asset_class,
+                    inferred_is_etf,
+                )
+                append_df = pd.concat([saved_df, pd.DataFrame([new_row])], ignore_index=True) if saved_df is not None and not saved_df.empty else pd.DataFrame([new_row])
+                dedup_df = merge_swing_editor_with_saved(saved_df, append_df, pd.DataFrame(columns=SWING_RADAR_COLUMNS))
+                ok, message = save_swing_radar_db_safe(dedup_df)
+                if ok:
+                    st.success("스윙 후보 추가 완료")
+                    st.rerun()
+                else:
+                    st.error(f"스윙 후보 추가 실패: {message}")
+                    with st.expander("테이블이 없을 때 실행할 SQL"):
+                        st.code(get_swing_radar_create_sql(), language="sql")
+
+    swing_df = build_swing_radar_df(
+        saved_df,
+        include_hidden=show_hidden,
+        include_etf=include_etf_candidates,
+        include_auto=include_auto_candidates,
+    )
     if swing_df.empty:
-        st.info("스윙 후보가 없습니다. 관심종목 또는 보유종목에 개별주를 추가하면 자동으로 후보가 생깁니다. ETF, 현금성 자산, reserve/cash bucket은 제외됩니다.")
+        st.info("스윙 후보가 없습니다. 관심종목/보유종목에 개별주를 추가하거나, ETF 후보를 직접 추가해 주세요. ETF 자동 후보는 체크박스를 켜면 포함됩니다.")
         return
 
     system_df = build_swing_system_df(swing_df)
@@ -4157,7 +4284,8 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
     )
 
     if st.button("스윙 레이더 저장"):
-        ok, message = save_swing_radar_db_safe(edited_swing_df)
+        merged_swing_df = merge_swing_editor_with_saved(saved_df, edited_swing_df, swing_df)
+        ok, message = save_swing_radar_db_safe(merged_swing_df)
         if ok:
             st.success("스윙 레이더 저장 완료")
             st.rerun()
