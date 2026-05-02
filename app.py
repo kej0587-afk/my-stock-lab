@@ -3047,24 +3047,24 @@ def get_rs_benchmark(ticker, asset_class):
         "SOXX": US_BROAD_BENCHMARK,
         "SOXL": US_BROAD_BENCHMARK,
         "SMH": US_BROAD_BENCHMARK,
-        "SPY": US_BROAD_BENCHMARK,
-        "VOO": US_BROAD_BENCHMARK,
-        "IVV": US_BROAD_BENCHMARK,
-        "SPLG": US_BROAD_BENCHMARK,
-        "SPYM": US_BROAD_BENCHMARK,
-        "VTI": US_BROAD_BENCHMARK,
+        "SPY": US_TECH_BENCHMARK,
+        "VOO": US_TECH_BENCHMARK,
+        "IVV": US_TECH_BENCHMARK,
+        "SPLG": US_TECH_BENCHMARK,
+        "SPYM": US_TECH_BENCHMARK,
+        "VTI": US_TECH_BENCHMARK,
         "379810": KR_US_SP_BENCHMARK,
-        "379800": KR_US_SP_BENCHMARK,
-        "069500": KR_MARKET_BENCHMARK,
+        "379800": KR_US_NASDAQ_BENCHMARK,
+        "069500": "^KS11",
     }
     if symbol in etf_market_benchmark_map:
         return etf_market_benchmark_map[symbol]
 
     if ac in ["kr_stock", "kr_etf"]: return KR_MARKET_BENCHMARK
     if is_kr_listed(ticker) and ac == "us_etf_nasdaq": return KR_US_SP_BENCHMARK
-    if is_kr_listed(ticker) and ac == "us_etf_sp": return KR_US_SP_BENCHMARK
+    if is_kr_listed(ticker) and ac == "us_etf_sp": return KR_US_NASDAQ_BENCHMARK
     if ac == "us_etf_nasdaq": return US_BROAD_BENCHMARK
-    if ac == "us_etf_sp": return US_BROAD_BENCHMARK
+    if ac == "us_etf_sp": return US_TECH_BENCHMARK
     if ac in ["us_stock_tech", "us_stock_growth"]: return US_TECH_BENCHMARK
     if ac == "us_stock": return US_TECH_BENCHMARK if symbol in US_TECH_OR_GROWTH_TICKERS else US_BROAD_BENCHMARK
     return US_BROAD_BENCHMARK
@@ -3100,6 +3100,7 @@ BENCHMARK_LABELS = {
     "379800.KS": "S&P500(국내상장)",
     "QQQM": "QQQM(나스닥100)",
     "SPY": "SPY(S&P500)",
+    "^KS11": "KOSPI 종합지수",
     "SMH": "SMH(반도체)",
     "XLK": "XLK(미국 기술)",
     "XLI": "XLI(미국 산업재)",
@@ -3109,6 +3110,8 @@ BENCHMARK_LABELS = {
     "494670.KS": "조선",
     "449450.KS": "방산",
     "305540.KS": "2차전지",
+    "434730.KS": "HANARO 원자력iSelect",
+    "479850.KS": "HANARO K-뷰티",
 }
 
 SECTOR_BENCHMARK_MAP = {
@@ -3116,6 +3119,8 @@ SECTOR_BENCHMARK_MAP = {
     "000660": ("396500.KS", "반도체"),
     "200710": ("396500.KS", "반도체"),
     "267260": ("487240.KS", "전력인프라"),
+    "278470": ("479850.KS", "K-뷰티"),
+    "034020": ("434730.KS", "원자력"),
     "329180": ("494670.KS", "조선"),
     "012450": ("449450.KS", "방산"),
     "MSFT": ("XLK", "미국 기술"),
@@ -3142,7 +3147,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "QQQM": ("QQQM", "나스닥100"),
     "QLD": ("QQQM", "나스닥100"),
     "TQQQ": ("QQQM", "나스닥100"),
-    "379810": ("379810.KS", "나스닥100"),
+    "379810": ("QQQM", "나스닥100"),
     "SOXX": ("SMH", "반도체"),
     "SOXL": ("SMH", "반도체"),
     "SMH": ("SMH", "반도체"),
@@ -3152,7 +3157,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "SPLG": ("SPY", "S&P500"),
     "SPYM": ("SPY", "S&P500"),
     "VTI": ("SPY", "미국 전체시장"),
-    "379800": ("379800.KS", "S&P500"),
+    "379800": ("SPY", "S&P500"),
     "069500": ("069500.KS", "KOSPI200"),
 }
 
@@ -3605,19 +3610,19 @@ def render_dashboard_group_summary(df, group_label):
     if "ETF" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
-            "📌후보등급", "RS", "시장벤치", "기초RS", "기초벤치", "RSI", "MFI", "볼린저 %B",
+            "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
             "🔥기술적 타점", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "📌후보등급", "RS", "시장벤치", "기초RS", "기초벤치", "섹터RS", "섹터벤치",
+            "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
             "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "📌후보등급", "RS", "시장벤치", "기초RS", "기초벤치", "섹터RS", "섹터벤치",
+            "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
             "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
@@ -3649,10 +3654,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         )
 
         market_bench = get_rs_benchmark(tkr, a_class)
-        underlying_bench, _ = get_underlying_benchmark_info(tkr, a_class) if is_etf else ("", "-")
-        _, underlying_rs_label = get_rs_score_against_benchmark(tkr, underlying_bench) if underlying_bench else (1, "-")
-        if underlying_bench and normalize_ticker(tkr) == normalize_ticker(underlying_bench):
-            underlying_rs_label = "자체"
+        underlying_bench, underlying_asset = get_underlying_benchmark_info(tkr, a_class) if is_etf else ("", "-")
         sector_bench, _ = get_sector_benchmark_info(tkr, a_class)
         _, sector_rs_label = get_rs_score_against_benchmark(tkr, sector_bench)
         swing_key = normalize_ticker(tkr)
@@ -3663,8 +3665,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
             "재무점수": "ETF 0점" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
             "시장벤치": get_benchmark_display_name(market_bench),
+            "기초자산": underlying_asset if underlying_bench else "-",
             "기초벤치": get_benchmark_display_name(underlying_bench) if underlying_bench else "-",
-            "기초RS": underlying_rs_label if underlying_bench else "-",
             "섹터벤치": get_benchmark_display_name(sector_bench) if sector_bench else "-",
             "섹터RS": sector_rs_label if sector_bench else "-",
             "스윙상태": "-" if is_etf else swing_status_map.get(swing_key, "-"),
