@@ -2361,8 +2361,8 @@ def build_benchmark_return_df(perf_df):
 MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
     {"구분": "미국 섹터", "섹터": "S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체", "ticker": "SMH", "name": "VanEck Semiconductor ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체(SOXX)", "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
+    {"구분": "미국 섹터", "섹터": "반도체 VanEck", "ticker": "SMH", "name": "VanEck Semiconductor ETF"},
+    {"구분": "미국 섹터", "섹터": "반도체 iShares", "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
     {"구분": "미국 섹터", "섹터": "기술", "ticker": "XLK", "name": "Technology Select Sector SPDR"},
     {"구분": "미국 섹터", "섹터": "커뮤니케이션", "ticker": "XLC", "name": "Communication Services SPDR"},
     {"구분": "미국 섹터", "섹터": "금융", "ticker": "XLF", "name": "Financial Select Sector SPDR"},
