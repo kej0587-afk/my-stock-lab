@@ -4016,6 +4016,37 @@ def merge_swing_editor_with_saved(saved_df, edited_df, visible_df):
     return dataframe_from_rows(merged, SWING_RADAR_COLUMNS) if not merged.empty else dataframe_from_rows([], SWING_RADAR_COLUMNS)
 
 
+def get_swing_editor_base_key(df, show_hidden, include_auto, include_etf):
+    if df is None or df.empty:
+        ticker_part = "empty"
+    else:
+        ticker_part = "|".join(
+            df["ticker"].astype(str).apply(normalize_ticker).fillna("").tolist()
+        )
+    return f"{show_hidden}|{include_auto}|{include_etf}|{ticker_part}"
+
+
+def reset_swing_editor_draft():
+    for key in ["swing_radar_editor_draft_df", "swing_radar_editor_base_key", "swing_radar_editor"]:
+        st.session_state.pop(key, None)
+
+
+def get_swing_editor_draft(base_df, base_key):
+    if (
+        st.session_state.get("swing_radar_editor_base_key") != base_key
+        or "swing_radar_editor_draft_df" not in st.session_state
+    ):
+        st.session_state["swing_radar_editor_base_key"] = base_key
+        st.session_state["swing_radar_editor_draft_df"] = base_df.fillna("").copy()
+        st.session_state.pop("swing_radar_editor", None)
+
+    draft_df = st.session_state["swing_radar_editor_draft_df"].copy()
+    for col in SWING_RADAR_COLUMNS:
+        if col not in draft_df.columns:
+            draft_df[col] = ""
+    return draft_df[SWING_RADAR_COLUMNS]
+
+
 def get_swing_item_context(row):
     ticker = str(row.get("ticker", "")).strip()
     name = str(row.get("name", ticker)).strip()
@@ -4157,6 +4188,7 @@ def render_swing_radar_tab():
                 dedup_df = merge_swing_editor_with_saved(saved_df, append_df, pd.DataFrame(columns=SWING_RADAR_COLUMNS))
                 ok, message = save_swing_radar_db_safe(dedup_df)
                 if ok:
+                    reset_swing_editor_draft()
                     st.success("스윙 후보 추가 완료")
                     st.rerun()
                 else:
@@ -4173,6 +4205,14 @@ def render_swing_radar_tab():
     if swing_df.empty:
         st.info("스윙 후보가 없습니다. 관심종목/보유종목에 개별주를 추가하거나, ETF 후보를 직접 추가해 주세요. ETF 자동 후보는 체크박스를 켜면 포함됩니다.")
         return
+
+    editor_base_key = get_swing_editor_base_key(
+        swing_df,
+        show_hidden=show_hidden,
+        include_auto=include_auto_candidates,
+        include_etf=include_etf_candidates,
+    )
+    editor_draft_df = get_swing_editor_draft(swing_df, editor_base_key)
 
     system_df = build_swing_system_df(swing_df)
 
@@ -4268,9 +4308,9 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
                         st.write(log)
 
     st.markdown("#### 스윙 체크리스트 편집")
-    st.caption("처음에는 기본 템플릿 그대로 써도 됩니다. 익숙해지면 보유 이유와 위험 신호만 자기 말로 조금씩 바꾸면 됩니다.")
+    st.caption("입력 중인 내용은 화면 재실행 중에도 임시 보존됩니다. 최종 반영은 아래 저장 버튼을 눌러야 완료됩니다.")
     edited_swing_df = st.data_editor(
-        swing_df.fillna(""),
+        editor_draft_df.fillna(""),
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
@@ -4282,11 +4322,13 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
             "reference_link": st.column_config.LinkColumn("참고 링크"),
         },
     )
+    st.session_state["swing_radar_editor_draft_df"] = edited_swing_df.fillna("").copy()
 
     if st.button("스윙 레이더 저장"):
         merged_swing_df = merge_swing_editor_with_saved(saved_df, edited_swing_df, swing_df)
         ok, message = save_swing_radar_db_safe(merged_swing_df)
         if ok:
+            reset_swing_editor_draft()
             st.success("스윙 레이더 저장 완료")
             st.rerun()
         else:
