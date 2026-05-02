@@ -1119,6 +1119,21 @@ US_TECH_BENCHMARK = "QQQM"
 US_BROAD_BENCHMARK = "SPY"
 RS_LOOKBACK_DAYS = 20
 
+KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
+KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
+KNOWN_US_OTHER_ETFS = {
+    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
+    "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
+    "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
+    "IYW",
+}
+KNOWN_KR_ETF_SYMBOLS = {
+    "379810", "379800", "458730", "069500", "229200", "396500", "139260",
+    "305540", "487240", "0117V0", "434730", "433500", "494670", "449450",
+    "479850", "139250", "139270", "244580", "329200", "139220", "491010",
+    "487230",
+}
+
 US_TECH_OR_GROWTH_TICKERS = {
     "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
     "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "TSM",
@@ -2128,6 +2143,8 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         raw_is_etf = row.get("is_etf", False)
         if isinstance(raw_is_etf, str): is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
         else: is_etf = bool(raw_is_etf)
+        is_etf = is_etf or is_known_etf_ticker(ticker)
+        asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
         px_df = load_price_df(ticker, "1mo")
         cur_price = float(px_df["Close"].iloc[-1]) if not px_df.empty else 0.0
@@ -2345,6 +2362,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
     {"구분": "미국 섹터", "섹터": "S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
     {"구분": "미국 섹터", "섹터": "반도체", "ticker": "SMH", "name": "VanEck Semiconductor ETF"},
+    {"구분": "미국 섹터", "섹터": "반도체(SOXX)", "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
     {"구분": "미국 섹터", "섹터": "기술", "ticker": "XLK", "name": "Technology Select Sector SPDR"},
     {"구분": "미국 섹터", "섹터": "커뮤니케이션", "ticker": "XLC", "name": "Communication Services SPDR"},
     {"구분": "미국 섹터", "섹터": "금융", "ticker": "XLF", "name": "Financial Select Sector SPDR"},
@@ -3009,6 +3027,8 @@ def detect_structure_event(df, levels):
     if c_prev <= levels["ext_high"] < c_now: ee = "Bullish BoS"
     elif c_prev >= levels["ext_low"] > c_now: ee = "Bearish BoS"
     m20, m50 = float(df["MA20"].iloc[-1]), float(df["MA50"].iloc[-1])
+    if not finite_num(m20) or not finite_num(m50):
+        return ie, ee
     if "Bullish" in ee and m20 < m50: ee = "Bullish CHoCH"
     if "Bearish" in ee and m20 > m50: ee = "Bearish CHoCH"
     return ie, ee
@@ -3046,6 +3066,34 @@ def clean_symbol(ticker):
 def is_kr_listed(ticker):
     return str(ticker).strip().upper().endswith((".KS", ".KQ"))
 
+def is_known_etf_ticker(ticker):
+    raw = str(ticker).strip().upper()
+    symbol = clean_symbol(raw)
+    return (
+        symbol in KNOWN_US_SP_ETFS
+        or symbol in KNOWN_US_NASDAQ_ETFS
+        or symbol in KNOWN_US_OTHER_ETFS
+        or symbol in KNOWN_KR_ETF_SYMBOLS
+        or raw.endswith("ETF")
+    )
+
+def infer_asset_class_for_ticker(ticker, current_asset_class=""):
+    current = str(current_asset_class or "").strip()
+    if not is_known_etf_ticker(ticker):
+        return current
+
+    symbol = clean_symbol(ticker)
+    if is_kr_listed(ticker):
+        if symbol == "379810":
+            return "us_etf_nasdaq"
+        if symbol in {"379800", "458730"}:
+            return "us_etf_sp"
+        return "kr_etf"
+
+    if symbol in KNOWN_US_SP_ETFS:
+        return "us_etf_sp"
+    return "us_etf_nasdaq"
+
 def get_rs_benchmark(ticker, asset_class):
     symbol = clean_symbol(ticker)
     ac = str(asset_class).strip().lower()
@@ -3058,6 +3106,7 @@ def get_rs_benchmark(ticker, asset_class):
         "SOXX": US_BROAD_BENCHMARK,
         "SOXL": US_BROAD_BENCHMARK,
         "SMH": US_BROAD_BENCHMARK,
+        "DRAM": US_BROAD_BENCHMARK,
         "SPY": US_TECH_BENCHMARK,
         "VOO": US_TECH_BENCHMARK,
         "IVV": US_TECH_BENCHMARK,
@@ -3162,6 +3211,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "SOXX": ("SMH", "반도체"),
     "SOXL": ("SMH", "반도체"),
     "SMH": ("SMH", "반도체"),
+    "DRAM": ("SMH", "메모리/반도체"),
     "SPY": ("SPY", "S&P500"),
     "VOO": ("SPY", "S&P500"),
     "IVV": ("SPY", "S&P500"),
@@ -3246,6 +3296,20 @@ def build_indicators(df):
     df["SQZ_ON"] = (bb.bollinger_hband() < kc.keltner_channel_hband()) & (bb.bollinger_lband() > kc.keltner_channel_lband())
     return df
 
+def get_trend_label(last):
+    ma20 = last.get("MA20")
+    ma50 = last.get("MA50")
+    ma120 = last.get("MA120")
+
+    if not finite_num(ma20) or not finite_num(ma50) or not finite_num(ma120):
+        return "🆕신규상장/자료부족"
+
+    if ma20 > ma50 > ma120:
+        return "🚀정배열(상승)"
+    if ma20 > ma50:
+        return "⏳혼조세"
+    return "🌊역배열(하락)"
+
 # -------------------------------------------------
 # 6. 범용화 인터페이스 함수
 # -------------------------------------------------
@@ -3295,7 +3359,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
-    trend_label = "🚀정배열(상승)" if (last["MA20"] > last["MA50"] > last["MA120"]) else ("⏳혼조세" if last["MA20"] > last["MA50"] else "🌊역배열(하락)")
+    short_history = len(df) < 60 or not finite_num(last["MA50"]) or not finite_num(last["MA120"])
+    trend_label = get_trend_label(last)
     macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
     rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
@@ -3351,6 +3416,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     if rsi_now <= 30: smc_insight = "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰."
     elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성이 높은 단기 과열 구간."
+    elif trend_label == "🆕신규상장/자료부족": smc_insight = "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
     elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축 후 발산 초기. 모멘텀 실리는 타점 구간."
     elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
     elif trend_label == "🌊역배열(하락)": smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
@@ -3443,7 +3509,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     )
 
     if is_free:
-        if mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
+        if is_etf and short_history: dec, col = "🆕신규ETF: 데이터 축적 대기", "#64748b"
+        elif mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
@@ -3459,6 +3526,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     else:
         if not is_etf and fin_score <= 1:
             dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
+        elif is_etf and short_history:
+            dec, col = "🆕신규ETF: 데이터 축적 대기", "#64748b"
         elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
@@ -3540,6 +3609,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
 TICKER_MAP = {
     "나스닥": ("379810.KS", True, "us_etf_nasdaq"), "QQQM": ("QQQM", True, "us_etf_nasdaq"), "QLD": ("QLD", True, "us_etf_nasdaq"), "TQQQ": ("TQQQ", True, "us_etf_nasdaq"),
+    "DRAM": ("DRAM", True, "us_etf_nasdaq"),
     "s&p500": ("379800.KS", True, "us_etf_sp"), "다우존스": ("458730.KS", True, "us_etf_sp"), "kodex 200": ("069500.KS", True, "kr_etf"),
     "MSFT": ("MSFT", False, "us_stock"), "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
     "샌디스크": ("SNDK", False, "us_stock"), "TSM": ("TSM", False, "us_stock"), "브로드컴": ("AVGO", False, "us_stock"), "MRVL": ("MRVL", False, "us_stock"),
@@ -3645,8 +3715,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     for item in watchlist_items:
         name = item["name"]
         tkr = item["ticker"]
-        is_etf = item["is_etf"]
-        a_class = item["asset_class"]
+        is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(tkr)
+        a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
         df = load_price_df(tkr, "1y")
         if df.empty: continue
@@ -4405,12 +4475,10 @@ with tab2:
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
         known_nasdaq_etfs = {"QQQ", "QQQM", "QLD", "TQQQ", "379810.KS"}
         ticker_norm = normalize_ticker(tkr)
-        is_etf = (ticker_norm in {normalize_ticker(x) for x in known_sp500_etfs | known_nasdaq_etfs | {"SOXL", "SOXX", "VTI", "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "XLE", "XLF", "XLK", "IYW", "458730.KS", "069500.KS"}} or tkr.upper().endswith("ETF"))
+        is_etf = is_known_etf_ticker(tkr)
         
         if is_etf:
-            if tkr.endswith((".KS", ".KQ")): a_class = "kr_etf"
-            elif ticker_norm in {normalize_ticker(x) for x in known_sp500_etfs}: a_class = "us_etf_sp"
-            else: a_class = "us_etf_nasdaq"
+            a_class = infer_asset_class_for_ticker(tkr)
         else:
             a_class = "kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"
 
