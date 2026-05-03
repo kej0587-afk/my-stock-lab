@@ -4310,7 +4310,52 @@ def render_swing_radar_tab():
     c4.metric("종료/보류/숨김", f"{swing_df['status'].isin(['종료', '보류', '숨김']).sum()}개")
 
     st.markdown("#### 시스템 신호 요약")
-    st.dataframe(system_df, use_container_width=True, hide_index=True)
+    if system_df.empty:
+        st.dataframe(system_df, use_container_width=True, hide_index=True)
+    else:
+        system_hide_df = system_df.copy()
+        system_hide_df.insert(0, "숨김 선택", False)
+        system_hide_key = f"swing_system_hide_editor_{abs(hash(editor_base_key))}"
+        edited_system_hide_df = st.data_editor(
+            system_hide_df,
+            use_container_width=True,
+            hide_index=True,
+            key=system_hide_key,
+            disabled=[col for col in system_hide_df.columns if col != "숨김 선택"],
+            column_config={
+                "숨김 선택": st.column_config.CheckboxColumn(
+                    "숨김",
+                    help="여러 후보를 체크한 뒤 한 번에 숨김 처리합니다.",
+                    default=False,
+                )
+            },
+        )
+
+        batch_hide_mask = edited_system_hide_df["숨김 선택"].fillna(False).astype(bool)
+        batch_hide_tickers = (
+            edited_system_hide_df.loc[batch_hide_mask, "ticker"].astype(str).str.strip().tolist()
+        )
+        batch_cols = st.columns([1, 3])
+        with batch_cols[0]:
+            if st.button(
+                f"체크한 {len(batch_hide_tickers)}개 숨김",
+                key="batch_hide_swing_candidates",
+                disabled=len(batch_hide_tickers) == 0,
+            ):
+                action_df = editor_draft_df.copy()
+                for ticker_to_hide in batch_hide_tickers:
+                    action_df = set_swing_row_status(action_df, ticker_to_hide, "숨김")
+
+                merged_swing_df = merge_swing_editor_with_saved(saved_df, action_df, swing_df)
+                ok, message = save_swing_radar_db_safe(merged_swing_df)
+                if ok:
+                    reset_swing_editor_draft()
+                    st.success(f"{len(batch_hide_tickers)}개 후보를 숨김 처리했습니다.")
+                    st.rerun()
+                else:
+                    st.error(f"일괄 숨김 처리 실패: {message}")
+        with batch_cols[1]:
+            st.caption("여러 후보를 한 번에 숨기면 저장/재실행을 한 번만 하므로 훨씬 덜 버벅입니다.")
 
     selected = st.selectbox(
         "상세 확인 종목",
@@ -4323,29 +4368,17 @@ def render_swing_radar_tab():
     selected_safe = {col: escape_html_value(selected_row.get(col, "")) for col in SWING_RADAR_COLUMNS}
     selected_system = system_df[system_df["ticker"].apply(normalize_ticker) == normalize_ticker(selected)]
 
-    action_cols = st.columns([1, 1.15, 0.9, 1])
+    action_cols = st.columns([1.15, 0.9, 1])
     with action_cols[0]:
-        if st.button("선택 후보 숨김", key=f"hide_swing_{normalize_ticker(selected)}"):
-            action_df = set_swing_row_status(editor_draft_df, selected, "숨김")
-            merged_swing_df = merge_swing_editor_with_saved(saved_df, action_df, swing_df)
-            ok, message = save_swing_radar_db_safe(merged_swing_df)
-            if ok:
-                reset_swing_editor_draft()
-                st.success("선택 후보를 숨김 처리했습니다.")
-                st.rerun()
-            else:
-                st.error(f"숨김 처리 실패: {message}")
-
-    with action_cols[1]:
         if st.button("빈칸 자동문구 채우기", key="fill_empty_swing_templates"):
             editor_draft_df = fill_empty_swing_templates(editor_draft_df)
             st.session_state["swing_radar_editor_draft_df"] = editor_draft_df.fillna("").copy()
             st.success("비어있는 체크리스트 문구만 자동으로 채웠습니다.")
 
-    with action_cols[2]:
+    with action_cols[1]:
         delete_confirm = st.checkbox("삭제 확인", value=False, key=f"delete_confirm_{normalize_ticker(selected)}")
 
-    with action_cols[3]:
+    with action_cols[2]:
         if st.button("선택 후보 삭제", key=f"delete_swing_{normalize_ticker(selected)}"):
             if not delete_confirm:
                 st.warning("삭제하려면 먼저 '삭제 확인'을 체크해 주세요.")
