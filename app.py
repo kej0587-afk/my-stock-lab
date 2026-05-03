@@ -2798,6 +2798,90 @@ def get_yfinance_company_names(ticker):
         pass
     return names[:3]
 
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_analyst_snapshot(ticker):
+    try:
+        info = yf.Ticker(ticker).get_info()
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+
+    if not isinstance(info, dict) or not info:
+        return {"ok": False, "reason": "분석 데이터 없음"}
+
+    keys = [
+        "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
+        "numberOfAnalystOpinions", "recommendationMean", "recommendationKey",
+        "currentPrice", "regularMarketPrice",
+    ]
+    data = {key: info.get(key) for key in keys}
+    has_any = any(data.get(key) not in [None, ""] for key in keys)
+    return {"ok": has_any, "data": data, "reason": "" if has_any else "목표가/투자의견 데이터 없음"}
+
+
+def build_research_report_links(ticker, name):
+    symbol = normalize_news_token(ticker).upper()
+    display_name = str(name or ticker).replace("탐색: ", "").strip()
+    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+
+    if is_kr:
+        query = urllib.parse.quote(f"{display_name} {symbol} 증권사 리포트 목표가")
+        return [
+            {"label": "네이버 리포트 검색", "url": f"https://search.naver.com/search.naver?where=news&query={query}"},
+            {"label": "구글 리포트 검색", "url": f"https://www.google.com/search?q={query}"},
+        ]
+
+    query = urllib.parse.quote(f"{symbol} analyst report price target")
+    nasdaq_symbol = urllib.parse.quote(symbol.lower())
+    yahoo_symbol = urllib.parse.quote(str(ticker).upper())
+    return [
+        {"label": "Yahoo Analysis", "url": f"https://finance.yahoo.com/quote/{yahoo_symbol}/analysis"},
+        {"label": "Nasdaq Analyst", "url": f"https://www.nasdaq.com/market-activity/stocks/{nasdaq_symbol}/analyst-research"},
+        {"label": "Google Report", "url": f"https://www.google.com/search?q={query}"},
+    ]
+
+
+def render_research_report_panel(name, ticker, current_price):
+    st.markdown("### 🧾 리포트 / 목표가")
+    snapshot = get_analyst_snapshot(ticker)
+    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
+
+    target_mean = clean_float(data.get("targetMeanPrice"), np.nan)
+    target_median = clean_float(data.get("targetMedianPrice"), np.nan)
+    target_high = clean_float(data.get("targetHighPrice"), np.nan)
+    target_low = clean_float(data.get("targetLowPrice"), np.nan)
+    opinions = clean_int(data.get("numberOfAnalystOpinions"), 0) or 0
+    rec_key = str(data.get("recommendationKey") or "-").upper()
+
+    target_upside = np.nan
+    cur = clean_float(current_price, np.nan)
+    if finite_num(target_mean) and finite_num(cur) and cur > 0:
+        target_upside = (float(target_mean) / float(cur) - 1) * 100
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("평균 목표가", format_currency(target_mean, ticker) if finite_num(target_mean) else "-")
+    r2.metric("목표가 괴리율", f"{target_upside:.1f}%" if finite_num(target_upside) else "-")
+    r3.metric("참여 애널리스트", f"{opinions}명" if opinions else "-")
+    r4.metric("투자의견", rec_key if rec_key != "-" else "-")
+
+    if finite_num(target_low) or finite_num(target_median) or finite_num(target_high):
+        st.caption(
+            "목표가 범위: "
+            f"하단 {format_currency(target_low, ticker) if finite_num(target_low) else '-'} / "
+            f"중앙 {format_currency(target_median, ticker) if finite_num(target_median) else '-'} / "
+            f"상단 {format_currency(target_high, ticker) if finite_num(target_high) else '-'}"
+        )
+    elif not snapshot.get("ok"):
+        st.caption(f"목표가 데이터 없음: {snapshot.get('reason', '제공 데이터 없음')}")
+
+    links = build_research_report_links(ticker, name)
+    link_cols = st.columns(min(len(links), 3))
+    for i, item in enumerate(links):
+        link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
+
+    st.caption("목표가와 투자의견은 yfinance 제공 데이터 기준입니다. 한국 종목은 제공되지 않는 경우가 많아 리포트 검색 링크를 함께 제공합니다.")
+
+
 def normalize_news_token(text):
     return str(text or "").replace(".KS", "").replace(".KQ", "").strip()
 
@@ -3647,6 +3731,41 @@ TICKER_MAP = {
     "HD현대중공업": ("329180.KS", False, "kr_stock"), "에이피알": ("278470.KS", False, "kr_stock"), "HD현대일렉트릭": ("267260.KS", False, "kr_stock"),
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"), "SPYM": ("SPYM", True, "us_etf_sp"),
 }
+
+FREE_SEARCH_OPTION = "🆓 자유 종목 탐색 (티커 입력)"
+
+
+def build_precision_select_options():
+    options = [FREE_SEARCH_OPTION]
+    option_map = {FREE_SEARCH_OPTION: {"type": "free"}}
+    seen_labels = set(options)
+
+    for item in st.session_state.get("watchlist", []):
+        ticker = str(item.get("ticker", "")).strip()
+        if not ticker:
+            continue
+
+        name = str(item.get("name", ticker)).strip() or ticker
+        label = f"⭐ {name} ({ticker})"
+        base_label = label
+        suffix = 2
+        while label in seen_labels:
+            label = f"{base_label} #{suffix}"
+            suffix += 1
+
+        options.append(label)
+        seen_labels.add(label)
+        option_map[label] = {"type": "watchlist", "item": dict(item)}
+
+    for label in TICKER_MAP.keys():
+        if label in seen_labels:
+            continue
+        options.append(label)
+        seen_labels.add(label)
+        option_map[label] = {"type": "preset"}
+
+    return options, option_map
+
 
 def get_saved_fin_score_fast(ticker, is_etf):
     if is_etf: return 0
@@ -4951,9 +5070,10 @@ with tab1:
                 render_dashboard_group_summary(summary_df, group_label)
 
 with tab2:
-    options = ["🆓 자유 종목 탐색 (티커 입력)"] + list(TICKER_MAP.keys())
+    options, precision_option_map = build_precision_select_options()
     sel = st.selectbox("종목 선택", options)
-    is_free = (sel == "🆓 자유 종목 탐색 (티커 입력)")
+    selected_option = precision_option_map.get(sel, {"type": "preset"})
+    is_free = (selected_option.get("type") == "free")
 
     if is_free:
         c1, c2 = st.columns([2, 1])
@@ -4974,6 +5094,13 @@ with tab2:
 
         name = f"탐색: {tkr}"
         my_p, has_p = 0.0, False
+    elif selected_option.get("type") == "watchlist":
+        watch_item = selected_option.get("item", {})
+        name = str(watch_item.get("name", "")).strip() or str(watch_item.get("ticker", "")).strip()
+        tkr = str(watch_item.get("ticker", "")).strip()
+        is_etf = clean_bool(watch_item.get("is_etf", False)) or is_known_etf_ticker(tkr)
+        a_class = infer_asset_class_for_ticker(tkr, watch_item.get("asset_class", "")) if is_etf else str(watch_item.get("asset_class", "")).strip()
+        my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
     else:
         name = sel
         tkr, is_etf, a_class = TICKER_MAP[sel]
@@ -5182,6 +5309,8 @@ with tab2:
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
         with b2: 
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+
+        render_research_report_panel(name, tkr, c["cur_p"])
 
         st.markdown("### 📰 최신 현장 뉴스")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
