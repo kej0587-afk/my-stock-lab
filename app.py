@@ -3094,12 +3094,46 @@ def load_price_df(ticker, period="1y"):
 def get_macro_analysis():
     tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "MOVE": "^MOVE", "VIX": "^VIX"}
     results = {}; macro_trend = 0; storm_count = 0
+
+    try:
+        data = yf.download(
+            list(tickers.values()),
+            period="2mo",
+            interval="1d",
+            progress=False,
+            group_by="ticker",
+            threads=True,
+            auto_adjust=False,
+        )
+    except Exception:
+        data = pd.DataFrame()
+
+    if data.empty:
+        return results, 0, 0, 0
+
     for name, tkr in tickers.items():
-        data = yf.download(tkr, period="2mo", interval="1d", progress=False)
-        if data.empty: continue
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        cur = float(data["Close"].iloc[-1])
-        prev_m = float(data["Close"].iloc[-22]) if len(data) >= 22 else float(data["Close"].iloc[0])
+        try:
+            if isinstance(data.columns, pd.MultiIndex):
+                if tkr in data.columns.get_level_values(0):
+                    ticker_df = data[tkr]
+                elif tkr in data.columns.get_level_values(-1):
+                    ticker_df = data.xs(tkr, axis=1, level=-1)
+                else:
+                    continue
+            else:
+                ticker_df = data
+
+            close = ticker_df["Close"].ffill().dropna()
+            if close.empty:
+                continue
+
+            cur = float(close.iloc[-1])
+            prev_m = float(close.iloc[-22]) if len(close) >= 22 else float(close.iloc[0])
+            if prev_m == 0:
+                continue
+        except Exception:
+            continue
+
         chg = ((cur - prev_m) / prev_m) * 100
         icon = "🔺" if chg > 0.5 else ("🔻" if chg < -0.5 else "➖")
         if name in ["10Y 금리", "유가", "환율"]:
