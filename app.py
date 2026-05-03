@@ -2841,8 +2841,16 @@ def build_research_report_links(ticker, name):
     ]
 
 
-def render_research_report_panel(name, ticker, current_price):
+def render_research_report_panel(name, ticker, current_price, is_etf=False):
     st.markdown("### 🧾 리포트 / 목표가")
+    if is_etf:
+        st.info("ETF는 보통 애널리스트 목표가가 제공되지 않습니다. 목표가보다 돈흐름 레이더, 기초지수/섹터 흐름, NAV 괴리율은 증권사 앱 기준으로 확인하는 편이 더 적합합니다.")
+        links = build_research_report_links(ticker, name)
+        link_cols = st.columns(min(len(links), 3))
+        for i, item in enumerate(links):
+            link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
+        return
+
     snapshot = get_analyst_snapshot(ticker)
     data = snapshot.get("data", {}) if snapshot.get("ok") else {}
 
@@ -2860,7 +2868,7 @@ def render_research_report_panel(name, ticker, current_price):
 
     r1, r2, r3, r4 = st.columns(4)
     r1.metric("평균 목표가", format_currency(target_mean, ticker) if finite_num(target_mean) else "-")
-    r2.metric("목표가 괴리율", f"{target_upside:.1f}%" if finite_num(target_upside) else "-")
+    r2.metric("목표가 업사이드", f"{target_upside:.1f}%" if finite_num(target_upside) else "-")
     r3.metric("참여 애널리스트", f"{opinions}명" if opinions else "-")
     r4.metric("투자의견", rec_key if rec_key != "-" else "-")
 
@@ -5310,7 +5318,7 @@ with tab2:
         with b2: 
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
-        render_research_report_panel(name, tkr, c["cur_p"])
+        render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
         st.markdown("### 📰 최신 현장 뉴스")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
