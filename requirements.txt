@@ -9,4 +9,3 @@ plotly
 ta
 gspread
 google-auth
-OpenDartReader
