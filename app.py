@@ -389,6 +389,21 @@ SWING_RADAR_COLUMNS = [
     "reference_link", "last_checked", "memo",
 ]
 
+SWING_EDITOR_COLUMNS = [
+    "status", "decision", "importance",
+    "name", "ticker", "asset_class",
+    "idea", "check_1", "check_2", "check_3",
+    "risk_1", "risk_2", "risk_3",
+    "entry_rule", "exit_rule", "next_event",
+    "last_checked", "reference_link", "memo",
+]
+
+SWING_TEMPLATE_TEXT_FIELDS = [
+    "idea", "check_1", "check_2", "check_3",
+    "risk_1", "risk_2", "risk_3",
+    "entry_rule", "exit_rule", "next_event",
+]
+
 
 def clean_float(value, default=0.0):
     try:
@@ -3854,6 +3869,64 @@ def make_swing_candidate_row(name, ticker, asset_class="", is_etf=False):
     return row
 
 
+def infer_swing_row_is_etf(row):
+    ticker = str(row.get("ticker", "")).strip()
+    asset_class = str(row.get("asset_class", "")).strip().lower()
+    return is_known_etf_ticker(ticker) or "etf" in asset_class
+
+
+def fill_empty_swing_templates(df):
+    if df is None or df.empty:
+        return dataframe_from_rows([], SWING_RADAR_COLUMNS)
+
+    work = dataframe_from_rows(df, SWING_RADAR_COLUMNS).copy()
+    today = pd.Timestamp.today().strftime("%Y-%m-%d")
+
+    for idx, row in work.iterrows():
+        ticker = str(row.get("ticker", "")).strip()
+        if not ticker:
+            continue
+
+        asset_class = str(row.get("asset_class", "")).strip()
+        template = get_swing_template(
+            ticker,
+            is_etf=infer_swing_row_is_etf(row),
+            asset_class=asset_class,
+        )
+
+        for col in SWING_TEMPLATE_TEXT_FIELDS:
+            if not str(work.at[idx, col] or "").strip():
+                work.at[idx, col] = template.get(col, "")
+
+        if not str(work.at[idx, "status"] or "").strip():
+            work.at[idx, "status"] = "진행"
+        if not str(work.at[idx, "decision"] or "").strip():
+            work.at[idx, "decision"] = "관망"
+        if not str(work.at[idx, "importance"] or "").strip():
+            work.at[idx, "importance"] = "중"
+        if not str(work.at[idx, "last_checked"] or "").strip():
+            work.at[idx, "last_checked"] = today
+
+    return dataframe_from_rows(work, SWING_RADAR_COLUMNS)
+
+
+def set_swing_row_status(df, ticker, status):
+    work = dataframe_from_rows(df, SWING_RADAR_COLUMNS).copy()
+    key = normalize_ticker(ticker)
+    mask = work["ticker"].apply(normalize_ticker) == key
+    if mask.any():
+        work.loc[mask, "status"] = status
+        work.loc[mask, "last_checked"] = pd.Timestamp.today().strftime("%Y-%m-%d")
+    return dataframe_from_rows(work, SWING_RADAR_COLUMNS)
+
+
+def remove_swing_row(df, ticker):
+    work = dataframe_from_rows(df, SWING_RADAR_COLUMNS).copy()
+    key = normalize_ticker(ticker)
+    work = work[work["ticker"].apply(normalize_ticker) != key]
+    return dataframe_from_rows(work, SWING_RADAR_COLUMNS)
+
+
 SWING_EXCLUDED_TICKERS = {"krw_cash", "usd_cash", "cash"}
 
 
@@ -4250,6 +4323,59 @@ def render_swing_radar_tab():
     selected_safe = {col: escape_html_value(selected_row.get(col, "")) for col in SWING_RADAR_COLUMNS}
     selected_system = system_df[system_df["ticker"].apply(normalize_ticker) == normalize_ticker(selected)]
 
+    action_cols = st.columns([1, 1.15, 0.9, 1])
+    with action_cols[0]:
+        if st.button("선택 후보 숨김", key=f"hide_swing_{normalize_ticker(selected)}"):
+            action_df = set_swing_row_status(editor_draft_df, selected, "숨김")
+            merged_swing_df = merge_swing_editor_with_saved(saved_df, action_df, swing_df)
+            ok, message = save_swing_radar_db_safe(merged_swing_df)
+            if ok:
+                reset_swing_editor_draft()
+                st.success("선택 후보를 숨김 처리했습니다.")
+                st.rerun()
+            else:
+                st.error(f"숨김 처리 실패: {message}")
+
+    with action_cols[1]:
+        if st.button("빈칸 자동문구 채우기", key="fill_empty_swing_templates"):
+            editor_draft_df = fill_empty_swing_templates(editor_draft_df)
+            st.session_state["swing_radar_editor_draft_df"] = editor_draft_df.fillna("").copy()
+            st.success("비어있는 체크리스트 문구만 자동으로 채웠습니다.")
+
+    with action_cols[2]:
+        delete_confirm = st.checkbox("삭제 확인", value=False, key=f"delete_confirm_{normalize_ticker(selected)}")
+
+    with action_cols[3]:
+        if st.button("선택 후보 삭제", key=f"delete_swing_{normalize_ticker(selected)}"):
+            if not delete_confirm:
+                st.warning("삭제하려면 먼저 '삭제 확인'을 체크해 주세요.")
+            else:
+                action_df = remove_swing_row(editor_draft_df, selected)
+
+                auto_candidates = get_current_stock_candidates(include_etf=include_etf_candidates) if include_auto_candidates else {}
+                selected_key = normalize_ticker(selected)
+                if selected_key in auto_candidates:
+                    auto_item = auto_candidates[selected_key]
+                    hidden_row = make_swing_candidate_row(
+                        auto_item.get("name", selected),
+                        auto_item.get("ticker", selected),
+                        auto_item.get("asset_class", ""),
+                        auto_item.get("is_etf", False),
+                    )
+                    hidden_row["status"] = "숨김"
+                    hidden_row["decision"] = "관망"
+                    hidden_row["memo"] = "삭제 버튼으로 자동 후보 숨김 처리"
+                    action_df = pd.concat([action_df, pd.DataFrame([hidden_row])], ignore_index=True)
+
+                merged_swing_df = merge_swing_editor_with_saved(saved_df, action_df, swing_df)
+                ok, message = save_swing_radar_db_safe(merged_swing_df)
+                if ok:
+                    reset_swing_editor_draft()
+                    st.success("선택 후보를 삭제했습니다. 자동 후보였던 경우 다시 뜨지 않도록 숨김 처리했습니다.")
+                    st.rerun()
+                else:
+                    st.error(f"삭제 실패: {message}")
+
     left, right = st.columns([1.15, 1])
     with left:
         st.markdown(
@@ -4325,11 +4451,12 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
     st.markdown("#### 스윙 체크리스트 편집")
     st.caption("입력 중인 내용은 화면 재실행 중에도 임시 보존됩니다. 최종 반영은 아래 저장 버튼을 눌러야 완료됩니다.")
     edited_swing_df = st.data_editor(
-        editor_draft_df.fillna(""),
+        editor_draft_df[SWING_EDITOR_COLUMNS].fillna(""),
         num_rows="dynamic",
         use_container_width=True,
         hide_index=True,
         key="swing_radar_editor",
+        disabled=["ticker"],
         column_config={
             "status": st.column_config.SelectboxColumn("상태", options=["대기", "진행", "완료", "위험", "보류", "종료", "숨김"]),
             "decision": st.column_config.SelectboxColumn("내 결정", options=["관망", "정찰", "추매대기", "유지", "일부익절", "축소", "종료"]),
