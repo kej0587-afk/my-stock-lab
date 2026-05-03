@@ -3,6 +3,8 @@ Authlib==1.6.11
 supabase
 yfinance
 pandas
+numpy>=1.26,<2.0
+requests>=2.32,<3.0
 plotly
 ta
 gspread
