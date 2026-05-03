@@ -53,7 +53,15 @@ def get_auth_mode():
 
 def get_owner_email_for_password_login():
     allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
-    return sorted(allowed_emails)[0] if allowed_emails else "kej0587@gmail.com"
+    if allowed_emails:
+        return sorted(allowed_emails)[0]
+
+    fallback_email = get_secret_value("FALLBACK_OWNER_EMAIL")
+    if fallback_email:
+        return fallback_email.lower()
+
+    st.error("Set ALLOWED_EMAILS, ADMIN_EMAILS, or FALLBACK_OWNER_EMAIL in Streamlit Secrets.")
+    st.stop()
 
 
 def require_password_login():
@@ -153,6 +161,9 @@ def format_currency(val, ticker):
     if pd.isna(val): return "-"
     if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"): return f"₩{int(val):,}"
     return f"${val:,.2f}"
+
+def escape_html_value(value):
+    return html.escape(str(value or ""))
 
 def normalize_text(x): return str(x).strip().lower()
 def normalize_ticker(t): return str(t).strip().lower().replace(".ks", "").replace(".kq", "")
@@ -4236,6 +4247,7 @@ def render_swing_radar_tab():
     )
 
     selected_row = swing_df[swing_df["ticker"] == selected].iloc[0]
+    selected_safe = {col: escape_html_value(selected_row.get(col, "")) for col in SWING_RADAR_COLUMNS}
     selected_system = system_df[system_df["ticker"].apply(normalize_ticker) == normalize_ticker(selected)]
 
     left, right = st.columns([1.15, 1])
@@ -4243,16 +4255,16 @@ def render_swing_radar_tab():
         st.markdown(
             f"""
 <div class='info-panel'>
-<b>{selected_row['name']} ({selected_row['ticker']})</b><br>
-<span class='smc-tag'>보유 이유</span> {selected_row['idea']}<br><br>
+<b>{selected_safe['name']} ({selected_safe['ticker']})</b><br>
+<span class='smc-tag'>보유 이유</span> {selected_safe['idea']}<br><br>
 <b>확인할 것</b><br>
-1. {selected_row['check_1']}<br>
-2. {selected_row['check_2']}<br>
-3. {selected_row['check_3']}<br><br>
+1. {selected_safe['check_1']}<br>
+2. {selected_safe['check_2']}<br>
+3. {selected_safe['check_3']}<br><br>
 <b>위험 신호</b><br>
-1. {selected_row['risk_1']}<br>
-2. {selected_row['risk_2']}<br>
-3. {selected_row['risk_3']}
+1. {selected_safe['risk_1']}<br>
+2. {selected_safe['risk_2']}<br>
+3. {selected_safe['risk_3']}
 </div>
             """,
             unsafe_allow_html=True,
@@ -4279,10 +4291,10 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
             f"""
 <div class='info-panel'>
 <b>운영 규칙</b><br>
-진입/추매: {selected_row['entry_rule']}<br>
-종료/축소: {selected_row['exit_rule']}<br>
-다음 확인: {selected_row['next_event']}<br>
-현재 결정: <b>{selected_row['decision']}</b> | 상태: <b>{selected_row['status']}</b>
+진입/추매: {selected_safe['entry_rule']}<br>
+종료/축소: {selected_safe['exit_rule']}<br>
+다음 확인: {selected_safe['next_event']}<br>
+현재 결정: <b>{selected_safe['decision']}</b> | 상태: <b>{selected_safe['status']}</b>
 </div>
             """,
             unsafe_allow_html=True,
@@ -4962,7 +4974,7 @@ with tab2:
 
         L, R = st.columns([1.1, 2.4])
         with L:
-            st.markdown(f"<h2>📊 {name}</h2>", unsafe_allow_html=True)
+            st.markdown(f"<h2>📊 {escape_html_value(name)}</h2>", unsafe_allow_html=True)
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
             ret3_color = "#2ecc71" if c["ret_3m"] > 0 else "#dc2626"
             ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
