@@ -225,6 +225,81 @@ def get_fin_label_map():
         4: "4점 (💎완성형 우량)"
     }
 
+KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
+KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
+KNOWN_US_OTHER_ETFS = {
+    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
+    "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
+    "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
+    "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
+    "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
+    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
+}
+KNOWN_KR_ETF_SYMBOLS = {
+    "379810", "379800", "458730", "069500", "229200", "396500", "139260",
+    "305540", "487240", "0117V0", "434730", "433500", "494670", "449450",
+    "479850", "139250", "139270", "244580", "329200", "139220", "491010",
+    "487230",
+}
+
+FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
+KR_ETF_NAME_KEYWORDS = (
+    "ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR",
+    "HANARO", "KOSEF", "ARIRANG", "TIMEFOLIO", "히어로즈", "액티브", "레버리지", "인버스"
+)
+
+def clean_symbol(ticker):
+    return str(ticker).strip().upper().replace(".KS", "").replace(".KQ", "")
+
+def is_kr_listed(ticker):
+    return str(ticker).strip().upper().endswith((".KS", ".KQ"))
+
+def is_known_etf_ticker(ticker):
+    raw = str(ticker).strip().upper()
+    symbol = clean_symbol(raw)
+    return (
+        symbol in KNOWN_US_SP_ETFS
+        or symbol in KNOWN_US_NASDAQ_ETFS
+        or symbol in KNOWN_US_OTHER_ETFS
+        or symbol in KNOWN_KR_ETF_SYMBOLS
+        or raw.endswith("ETF")
+    )
+
+def asset_class_marks_fin_score_exempt(asset_class):
+    text = str(asset_class or "").strip().lower()
+    return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
+
+def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
+    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
+        return True
+
+    # 국내 ETF/ETN은 신규 상품이 많아 티커 목록만으로는 누락될 수 있다.
+    # 이름에 ETF 브랜드/레버리지/인버스 단서가 있으면 재무점수 대상에서 제외한다.
+    name_upper = str(name or "").strip().upper()
+    if is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS):
+        return True
+
+    return False
+
+def infer_asset_class_for_ticker(ticker, current_asset_class=""):
+    current = str(current_asset_class or "").strip()
+    if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
+        return current
+
+    symbol = clean_symbol(ticker)
+    if is_kr_listed(ticker):
+        if symbol == "379810":
+            return "us_etf_nasdaq"
+        if symbol in {"379800", "458730"}:
+            return "us_etf_sp"
+        return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
+
+    if symbol in KNOWN_US_SP_ETFS:
+        return "us_etf_sp"
+    if asset_class_marks_fin_score_exempt(current):
+        return current
+    return "us_etf_nasdaq"
+
 DEFAULT_WATCHLIST = [
     {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
     {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
@@ -1200,29 +1275,6 @@ KR_US_SP_BENCHMARK = "379800.KS"
 US_TECH_BENCHMARK = "QQQM"
 US_BROAD_BENCHMARK = "SPY"
 RS_LOOKBACK_DAYS = 20
-
-KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
-KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
-KNOWN_US_OTHER_ETFS = {
-    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
-    "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
-    "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
-    "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
-    "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
-    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
-}
-KNOWN_KR_ETF_SYMBOLS = {
-    "379810", "379800", "458730", "069500", "229200", "396500", "139260",
-    "305540", "487240", "0117V0", "434730", "433500", "494670", "449450",
-    "479850", "139250", "139270", "244580", "329200", "139220", "491010",
-    "487230",
-}
-
-FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
-KR_ETF_NAME_KEYWORDS = (
-    "ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR",
-    "HANARO", "KOSEF", "ARIRANG", "TIMEFOLIO", "히어로즈", "액티브", "레버리지", "인버스"
-)
 
 US_TECH_OR_GROWTH_TICKERS = {
     "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
@@ -3643,58 +3695,6 @@ def summarize_smc_action(ext, int_s, ie, ee, liq, fvg, pdz):
     if fvg["type"] == "Bullish FVG" and fvg["active"] and ext == "Bullish": return "상승 FVG 유지: 눌림 매수 유리"
     if ext == "Bullish": return "상승 추세 유지: 눌림 대기"
     return "구조 혼조: 관망"
-
-def clean_symbol(ticker):
-    return str(ticker).strip().upper().replace(".KS", "").replace(".KQ", "")
-
-def is_kr_listed(ticker):
-    return str(ticker).strip().upper().endswith((".KS", ".KQ"))
-
-def is_known_etf_ticker(ticker):
-    raw = str(ticker).strip().upper()
-    symbol = clean_symbol(raw)
-    return (
-        symbol in KNOWN_US_SP_ETFS
-        or symbol in KNOWN_US_NASDAQ_ETFS
-        or symbol in KNOWN_US_OTHER_ETFS
-        or symbol in KNOWN_KR_ETF_SYMBOLS
-        or raw.endswith("ETF")
-    )
-
-def asset_class_marks_fin_score_exempt(asset_class):
-    text = str(asset_class or "").strip().lower()
-    return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
-
-def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
-    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
-        return True
-
-    # 국내 ETF/ETN은 신규 상품이 많아 티커 목록만으로는 누락될 수 있다.
-    # 이름에 ETF 브랜드/레버리지/인버스 단서가 있으면 재무점수 대상에서 제외한다.
-    name_upper = str(name or "").strip().upper()
-    if is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS):
-        return True
-
-    return False
-
-def infer_asset_class_for_ticker(ticker, current_asset_class=""):
-    current = str(current_asset_class or "").strip()
-    if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
-        return current
-
-    symbol = clean_symbol(ticker)
-    if is_kr_listed(ticker):
-        if symbol == "379810":
-            return "us_etf_nasdaq"
-        if symbol in {"379800", "458730"}:
-            return "us_etf_sp"
-        return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
-
-    if symbol in KNOWN_US_SP_ETFS:
-        return "us_etf_sp"
-    if asset_class_marks_fin_score_exempt(current):
-        return current
-    return "us_etf_nasdaq"
 
 def get_rs_benchmark(ticker, asset_class):
     symbol = clean_symbol(ticker)
