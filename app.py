@@ -949,6 +949,262 @@ def classify_recovery_csv(df):
     return "unknown"
 
 
+RECOVERY_KIND_INFO = {
+    "settings": {
+        "label": "기본 설정",
+        "required": SETTINGS_COLUMNS,
+        "key_columns": ["seed_money", "krw_cash", "usd_cash", "usdkrw"],
+        "restore_mode": "마지막 행 기준으로 설정 저장",
+    },
+    "holdings": {
+        "label": "보유자산",
+        "required": HOLDINGS_COLUMNS,
+        "key_columns": ["ticker"],
+        "unique_column": "ticker",
+        "restore_mode": "기존 보유자산을 대체",
+    },
+    "dividends": {
+        "label": "배당 내역",
+        "required": DIVIDENDS_COLUMNS,
+        "key_columns": ["date", "ticker"],
+        "restore_mode": "기존 배당 내역을 대체",
+    },
+    "monthly_logs": {
+        "label": "월별 로그",
+        "required": MONTHLY_LOG_COLUMNS,
+        "key_columns": ["month"],
+        "unique_column": "month",
+        "restore_mode": "기존 월별 로그를 대체",
+    },
+    "watchlist": {
+        "label": "관심목록",
+        "required": WATCHLIST_COLUMNS,
+        "key_columns": ["ticker"],
+        "unique_column": "ticker",
+        "restore_mode": "기존 관심목록을 대체",
+    },
+    "fin_scores": {
+        "label": "재무점수",
+        "required": FIN_SCORE_COLUMNS,
+        "key_columns": ["ticker"],
+        "restore_mode": "티커별 업서트",
+    },
+    "swing_radar": {
+        "label": "스윙 레이더",
+        "required": SWING_RADAR_COLUMNS,
+        "key_columns": ["ticker"],
+        "unique_column": "ticker",
+        "restore_mode": "기존 스윙 레이더를 대체",
+    },
+    "dashboard": {
+        "label": "계산 결과/현금 추출",
+        "required": ["자산명", "티커", "보유량", "매입가", "원화환산", "bucket"],
+        "key_columns": ["티커"],
+        "restore_mode": "현금/환율 보조 추출",
+    },
+}
+
+
+def add_recovery_issue(issues, severity, dataset, target, problem, suggestion):
+    issues.append({
+        "등급": severity,
+        "데이터": dataset,
+        "대상": str(target or "").strip(),
+        "문제": problem,
+        "확인/조치": suggestion,
+    })
+
+
+def normalize_recovery_key(value, column):
+    text = str(value or "").strip()
+    if column in ["ticker", "티커"]:
+        return normalize_ticker(text)
+    return text
+
+
+def get_duplicate_recovery_values(df, column):
+    if df is None or df.empty or column not in df.columns:
+        return []
+
+    values = df[column].fillna("").apply(lambda v: normalize_recovery_key(v, column))
+    values = values[values.astype(str).str.strip().ne("")]
+    counts = values.value_counts()
+    return [(value, int(count)) for value, count in counts[counts > 1].items()]
+
+
+def collect_recovery_frames(uploaded_files):
+    frames = {}
+    unknown_files = []
+    read_errors = []
+    parsed_files = []
+
+    for uploaded_file in uploaded_files or []:
+        filename = str(getattr(uploaded_file, "name", "uploaded_file"))
+        raw = uploaded_file.getvalue()
+
+        if not raw:
+            read_errors.append(f"{filename}: 빈 파일입니다.")
+            continue
+
+        if filename.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    for zip_name in zf.namelist():
+                        if zip_name.endswith("/") or not zip_name.lower().endswith(".csv"):
+                            continue
+
+                        file_label = f"{filename}:{zip_name}"
+                        try:
+                            df = read_recovery_csv_bytes(zf.read(zip_name))
+                        except Exception as exc:
+                            read_errors.append(f"{file_label}: CSV 읽기 실패 ({exc})")
+                            continue
+
+                        kind = classify_recovery_csv(df)
+                        if kind == "unknown":
+                            unknown_files.append(file_label)
+                            continue
+
+                        add_recovery_frame(frames, kind, df)
+                        parsed_files.append({
+                            "파일": file_label,
+                            "데이터": RECOVERY_KIND_INFO.get(kind, {}).get("label", kind),
+                            "행수": len(df),
+                        })
+            except zipfile.BadZipFile:
+                read_errors.append(f"{filename}: ZIP 파일로 읽을 수 없습니다.")
+            continue
+
+        try:
+            df = read_recovery_csv_bytes(raw)
+        except Exception as exc:
+            read_errors.append(f"{filename}: CSV 읽기 실패 ({exc})")
+            continue
+
+        kind = classify_recovery_csv(df)
+        if kind == "unknown":
+            unknown_files.append(filename)
+            continue
+
+        add_recovery_frame(frames, kind, df)
+        parsed_files.append({
+            "파일": filename,
+            "데이터": RECOVERY_KIND_INFO.get(kind, {}).get("label", kind),
+            "행수": len(df),
+        })
+
+    return frames, unknown_files, read_errors, pd.DataFrame(parsed_files, columns=["파일", "데이터", "행수"])
+
+
+def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None):
+    frames = frames or {}
+    unknown_files = unknown_files or []
+    read_errors = read_errors or []
+    summary_rows = []
+    issues = []
+
+    for error in read_errors:
+        add_recovery_issue(issues, "차단", "파일 읽기", "", error, "파일 형식이나 인코딩을 확인한 뒤 다시 업로드하세요.")
+
+    for filename in unknown_files:
+        add_recovery_issue(issues, "주의", "미인식 파일", filename, "복구 가능한 CSV 구조로 인식하지 못했습니다.", "파일명이 아니라 컬럼 구조로 판별합니다. 필요한 컬럼이 있는지 확인하세요.")
+
+    if not frames:
+        add_recovery_issue(issues, "차단", "업로드", "", "복구 가능한 데이터를 찾지 못했습니다.", "Stock Lab 백업 ZIP 또는 인식 가능한 CSV를 업로드하세요.")
+
+    for kind, df in frames.items():
+        info = RECOVERY_KIND_INFO.get(kind, {})
+        label = info.get("label", kind)
+        key_columns = info.get("key_columns", [])
+        required = info.get("required", [])
+        valid_rows = count_valid_rows(df, key_columns)
+
+        summary_rows.append({
+            "데이터": label,
+            "행수": len(df),
+            "유효행": valid_rows,
+            "복구 방식": info.get("restore_mode", "복구"),
+        })
+
+        missing_cols = [col for col in required if col not in df.columns]
+        if missing_cols:
+            add_recovery_issue(issues, "차단", label, "", f"필수 컬럼이 없습니다: {', '.join(missing_cols)}", "백업 파일 컬럼을 확인하세요.")
+
+        if df.empty or valid_rows == 0:
+            add_recovery_issue(issues, "주의", label, "", "유효한 행이 없습니다.", "이 데이터는 복구해도 반영되지 않을 수 있습니다.")
+
+        unique_column = info.get("unique_column")
+        if unique_column:
+            for value, count in get_duplicate_recovery_values(df, unique_column):
+                add_recovery_issue(issues, "차단", label, value, f"중복 키가 {count}번 들어 있습니다.", "중복 행을 하나로 합친 뒤 복구하세요.")
+
+        if kind == "settings" and len(df) > 1:
+            add_recovery_issue(issues, "참고", label, "", "설정 행이 여러 개입니다.", "복구 시 마지막 행을 기준으로 저장합니다.")
+
+        if kind == "holdings":
+            for idx, row in df.fillna("").iterrows():
+                ticker = str(row.get("ticker", "")).strip()
+                name = str(row.get("name", "")).strip()
+                if not ticker:
+                    add_recovery_issue(issues, "주의", label, f"row {idx + 1}", "티커가 비어 있어 복구 시 건너뜁니다.", "필요한 행이면 티커를 입력하세요.")
+                    continue
+
+                qty = clean_float(row.get("qty"), 0.0)
+                avg_price = clean_float(row.get("avg_price"), 0.0)
+                target_weight = clean_float(row.get("target_weight"), 0.0)
+                asset_class = str(row.get("asset_class", "")).strip()
+                saved_is_etf = clean_bool(row.get("is_etf", False))
+                if qty < 0:
+                    add_recovery_issue(issues, "주의", label, ticker, "보유량이 음수입니다.", "수량을 확인하세요.")
+                if avg_price < 0:
+                    add_recovery_issue(issues, "주의", label, ticker, "매입가가 음수입니다.", "평균 매입가를 확인하세요.")
+                if target_weight < 0 or target_weight > 100:
+                    add_recovery_issue(issues, "주의", label, ticker, "목표비중이 0~100 범위를 벗어났습니다.", "목표비중을 확인하세요.")
+                if is_fin_score_exempt_asset(ticker, saved_is_etf, asset_class, name) and not saved_is_etf:
+                    add_recovery_issue(issues, "참고", label, ticker, "ETF/ETN/레버리지로 보이지만 ETF 체크가 꺼져 있습니다.", "복구 후 ETF/ETN/레버리지 분류를 확인하세요.")
+
+        if kind == "watchlist":
+            for idx, row in df.fillna("").iterrows():
+                ticker = str(row.get("ticker", "")).strip()
+                if not ticker:
+                    add_recovery_issue(issues, "주의", label, f"row {idx + 1}", "티커가 비어 있어 복구 시 건너뜁니다.", "필요한 행이면 티커를 입력하세요.")
+
+        if kind == "monthly_logs":
+            for idx, row in df.fillna("").iterrows():
+                month = str(row.get("month", "")).strip()
+                if not month:
+                    add_recovery_issue(issues, "주의", label, f"row {idx + 1}", "월 값이 비어 있어 복구 시 건너뜁니다.", "YYYY-MM 형식으로 입력하세요.")
+                    continue
+                if pd.isna(pd.to_datetime(month, errors="coerce")):
+                    add_recovery_issue(issues, "주의", label, month, "월 형식을 날짜로 읽지 못했습니다.", "YYYY-MM 형식으로 입력하세요.")
+
+        if kind == "dividends":
+            for idx, row in df.fillna("").iterrows():
+                ticker = str(row.get("ticker", "")).strip()
+                date_text = str(row.get("date", "")).strip()
+                if not ticker and not date_text:
+                    add_recovery_issue(issues, "주의", label, f"row {idx + 1}", "티커와 날짜가 모두 비어 있어 복구 시 건너뜁니다.", "필요한 행이면 티커와 날짜를 입력하세요.")
+                    continue
+                if date_text and pd.isna(pd.to_datetime(date_text, errors="coerce")):
+                    add_recovery_issue(issues, "주의", label, ticker, "배당일 형식을 날짜로 읽지 못했습니다.", "YYYY-MM-DD 형식으로 입력하세요.")
+                if clean_float(row.get("amount"), 0.0) < 0:
+                    add_recovery_issue(issues, "주의", label, ticker, "배당금이 음수입니다.", "정정 목적이 아니라면 금액을 확인하세요.")
+
+    summary_df = pd.DataFrame(summary_rows, columns=["데이터", "행수", "유효행", "복구 방식"])
+    issue_df = pd.DataFrame(issues, columns=["등급", "데이터", "대상", "문제", "확인/조치"])
+    if issue_df.empty:
+        return summary_df, issue_df
+
+    severity_order = {"차단": 0, "주의": 1, "참고": 2}
+    issue_df["_order"] = issue_df["등급"].map(severity_order).fillna(9)
+    issue_df = issue_df.sort_values(["_order", "데이터", "대상"]).drop(columns="_order").reset_index(drop=True)
+    return summary_df, issue_df
+
+
+def has_recovery_blockers(issue_df):
+    return issue_df is not None and not issue_df.empty and bool((issue_df["등급"] == "차단").any())
+
+
 def read_recovery_csv_bytes(raw_bytes):
     for encoding in ["utf-8-sig", "utf-8", "cp949"]:
         try:
@@ -985,35 +1241,10 @@ def parse_fin_score_notes_for_restore(value):
 
 
 def restore_from_uploaded_csvs(uploaded_files):
-    frames = {}
-    unknown_files = []
-
-    for uploaded_file in uploaded_files or []:
-        filename = str(uploaded_file.name)
-        raw = uploaded_file.getvalue()
-
-        if filename.lower().endswith(".zip"):
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for zip_name in zf.namelist():
-                        if not zip_name.lower().endswith(".csv"):
-                            continue
-                        df = read_recovery_csv_bytes(zf.read(zip_name))
-                        kind = classify_recovery_csv(df)
-                        if kind == "unknown":
-                            unknown_files.append(f"{filename}:{zip_name}")
-                            continue
-                        add_recovery_frame(frames, kind, df)
-            except zipfile.BadZipFile:
-                unknown_files.append(filename)
-            continue
-
-        df = read_recovery_csv_bytes(raw)
-        kind = classify_recovery_csv(df)
-        if kind == "unknown":
-            unknown_files.append(filename)
-            continue
-        add_recovery_frame(frames, kind, df)
+    frames, unknown_files, read_errors, _ = collect_recovery_frames(uploaded_files)
+    _, issue_df = build_recovery_preflight_report(frames, unknown_files, read_errors)
+    if has_recovery_blockers(issue_df):
+        return [], unknown_files + ["복구 차단: 사전 점검의 차단 항목을 먼저 해결하세요."]
 
     restored = []
 
@@ -6121,16 +6352,77 @@ with tab3:
             key="recovery_csv_files",
         )
 
-        if st.button("업로드 CSV로 복구 실행", key="restore_from_csvs"):
-            restored, unknown_files = restore_from_uploaded_csvs(recovery_files)
+        recovery_fingerprint = tuple(
+            (str(getattr(file, "name", "")), int(getattr(file, "size", len(file.getvalue())) or 0))
+            for file in (recovery_files or [])
+        )
+        if st.session_state.get("recovery_file_fingerprint") != recovery_fingerprint:
+            st.session_state.recovery_file_fingerprint = recovery_fingerprint
+            st.session_state.confirm_restore_from_csvs = False
 
-            if restored:
-                st.success("복구 완료: " + ", ".join(restored))
-                if unknown_files:
-                    st.warning("인식하지 못한 파일: " + ", ".join(unknown_files))
-                st.rerun()
+        recovery_frames, recovery_unknown_files, recovery_read_errors, recovery_parsed_files = collect_recovery_frames(recovery_files)
+        recovery_summary_df, recovery_issue_df = build_recovery_preflight_report(
+            recovery_frames,
+            recovery_unknown_files,
+            recovery_read_errors,
+        )
+
+        if recovery_files:
+            st.markdown("#### 복구 미리보기")
+
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("인식 데이터", len(recovery_summary_df))
+            p2.metric("차단", int((recovery_issue_df["등급"] == "차단").sum()) if not recovery_issue_df.empty else 0)
+            p3.metric("주의", int((recovery_issue_df["등급"] == "주의").sum()) if not recovery_issue_df.empty else 0)
+            p4.metric("참고", int((recovery_issue_df["등급"] == "참고").sum()) if not recovery_issue_df.empty else 0)
+
+            if not recovery_parsed_files.empty:
+                st.dataframe(recovery_parsed_files, use_container_width=True, hide_index=True)
+
+            if not recovery_summary_df.empty:
+                st.markdown("##### 반영 예정 데이터")
+                st.dataframe(recovery_summary_df, use_container_width=True, hide_index=True)
+
+            if recovery_issue_df.empty:
+                st.success("사전 점검에서 차단 항목이 없습니다.")
             else:
-                st.warning("복구할 수 있는 CSV를 찾지 못했습니다.")
+                st.markdown("##### 사전 점검 결과")
+                st.dataframe(recovery_issue_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "사전 점검 결과 CSV 다운로드",
+                    data=dataframe_to_csv_bytes(recovery_issue_df),
+                    file_name=f"stock_lab_restore_preflight_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                    mime="text/csv",
+                    key="download_restore_preflight_csv",
+                )
+
+            if has_recovery_blockers(recovery_issue_df):
+                st.error("차단 항목이 있으면 복구를 실행하지 않습니다. 중복 키나 읽기 오류를 먼저 정리하세요.")
+            else:
+                st.warning("복구 실행 시 보유자산/배당/월별 로그/관심목록/스윙 레이더는 업로드 데이터로 대체될 수 있습니다.")
+
+            st.checkbox(
+                "미리보기를 확인했고, 복구 시 현재 계정의 일부 데이터가 대체될 수 있음을 이해했습니다.",
+                key="confirm_restore_from_csvs",
+            )
+
+        if st.button("업로드 CSV로 복구 실행", key="restore_from_csvs"):
+            if not recovery_files:
+                st.warning("먼저 복구할 CSV 또는 ZIP 파일을 업로드하세요.")
+            elif has_recovery_blockers(recovery_issue_df):
+                st.error("복구가 차단되었습니다. 사전 점검의 차단 항목을 먼저 해결하세요.")
+            elif not st.session_state.get("confirm_restore_from_csvs", False):
+                st.warning("복구 미리보기를 확인했다는 체크가 필요합니다.")
+            else:
+                restored, unknown_files = restore_from_uploaded_csvs(recovery_files)
+
+                if restored:
+                    st.success("복구 완료: " + ", ".join(restored))
+                    if unknown_files:
+                        st.warning("인식하지 못한 파일: " + ", ".join(unknown_files))
+                    st.rerun()
+                else:
+                    st.warning("복구할 수 있는 CSV를 찾지 못했습니다.")
 
     st.markdown("### 1) 기본 설정")
     col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
