@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 import io
 import zipfile
 import requests
@@ -2502,6 +2503,13 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
             "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
         ])
 
+    price_tickers = tuple(
+        str(ticker).strip()
+        for ticker in holdings_df.get("ticker", pd.Series(dtype=str)).tolist()
+        if str(ticker).strip()
+    )
+    latest_price_map = load_latest_prices_batch(price_tickers)
+
     rows = []
     for _, row in holdings_df.iterrows():
         name = row.get("name", "")
@@ -2516,7 +2524,9 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         is_etf = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
-        cur_price = load_latest_price(ticker)
+        cur_price = clean_float(latest_price_map.get(normalize_price_lookup_key(ticker)), 0.0)
+        if cur_price <= 0:
+            cur_price = load_latest_price(ticker)
 
         eval_amt = qty * cur_price
         pnl = qty * (cur_price - avg_price)
@@ -3808,8 +3818,73 @@ def load_price_df(ticker, period="1y"):
     return df
 
 
-@st.cache_data(ttl=60)
+def normalize_price_lookup_key(ticker):
+    return str(ticker or "").strip().upper()
+
+
+def get_latest_close_from_series(series):
+    if isinstance(series, pd.DataFrame):
+        if series.empty:
+            return 0.0
+        series = series.iloc[:, 0]
+
+    values = pd.to_numeric(series, errors="coerce").ffill().dropna()
+    if values.empty:
+        return 0.0
+    return float(values.iloc[-1])
+
+
+def find_matching_column_value(values, target):
+    target = normalize_price_lookup_key(target)
+    for value in values:
+        if normalize_price_lookup_key(value) == target:
+            return value
+    return None
+
+
+def extract_download_close_series(data, ticker):
+    if data is None or data.empty:
+        return pd.Series(dtype=float)
+
+    if not isinstance(data.columns, pd.MultiIndex):
+        if "Close" in data.columns:
+            return data["Close"]
+        return pd.Series(dtype=float)
+
+    for level_no in range(data.columns.nlevels):
+        matched_ticker = find_matching_column_value(data.columns.get_level_values(level_no), ticker)
+        if matched_ticker is None:
+            continue
+
+        sub = data.xs(matched_ticker, axis=1, level=level_no)
+        if isinstance(sub, pd.Series):
+            return sub
+        if "Close" in sub.columns:
+            return sub["Close"]
+
+    for level_no in range(data.columns.nlevels):
+        matched_close = find_matching_column_value(data.columns.get_level_values(level_no), "Close")
+        if matched_close is None:
+            continue
+
+        sub = data.xs(matched_close, axis=1, level=level_no)
+        matched_ticker = find_matching_column_value(sub.columns, ticker)
+        if matched_ticker is not None:
+            return sub[matched_ticker]
+
+    return pd.Series(dtype=float)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def load_latest_price(ticker):
+    try:
+        df = yf.download(ticker, period="1d", interval="1m", progress=False, prepost=True, auto_adjust=False)
+        price = get_latest_close_from_series(extract_download_close_series(df, ticker))
+        if price > 0:
+            return price
+    except Exception:
+        pass
+
     try:
         df = yf.download(ticker, period="5d", interval="1d", progress=False)
         if df.empty:
@@ -3822,6 +3897,179 @@ def load_latest_price(ticker):
         return float(df["Close"].iloc[-1])
     except Exception:
         return 0.0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_latest_prices_batch(tickers):
+    unique_tickers = []
+    seen = set()
+    for ticker in tickers or []:
+        ticker_value = str(ticker or "").strip()
+        key = normalize_price_lookup_key(ticker_value)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique_tickers.append(ticker_value)
+
+    if not unique_tickers:
+        return {}
+
+    if len(unique_tickers) == 1:
+        ticker = unique_tickers[0]
+        return {normalize_price_lookup_key(ticker): load_latest_price(ticker)}
+
+    try:
+        data = yf.download(
+            unique_tickers,
+            period="5d",
+            interval="1d",
+            progress=False,
+            group_by="ticker",
+            threads=True,
+            auto_adjust=False,
+        )
+    except Exception:
+        return {}
+
+    prices = {}
+    for ticker in unique_tickers:
+        series = extract_download_close_series(data, ticker)
+        price = get_latest_close_from_series(series)
+        if price > 0:
+            prices[normalize_price_lookup_key(ticker)] = price
+
+    return prices
+
+
+def clear_latest_price_cache():
+    for fn in [load_latest_price, load_latest_prices_batch]:
+        if hasattr(fn, "clear"):
+            fn.clear()
+
+
+def clear_selected_price_cache():
+    clear_latest_price_cache()
+
+
+def cache_clear(fn):
+    if fn is not None and hasattr(fn, "clear"):
+        fn.clear()
+
+
+def get_kst_now():
+    return datetime.now(KST)
+
+
+def format_kst_now():
+    return get_kst_now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def record_refresh_event(key):
+    st.session_state[key] = format_kst_now()
+
+
+def get_refresh_event_time(key):
+    return st.session_state.get(key, "-")
+
+
+def clear_price_and_chart_cache():
+    clear_latest_price_cache()
+    cache_clear(load_price_df)
+
+
+def clear_news_report_cache():
+    cache_clear(get_ticker_news)
+    cache_clear(get_analyst_snapshot)
+
+
+def clear_market_context_cache():
+    cache_clear(get_macro_analysis)
+    cache_clear(download_money_flow_prices)
+
+
+def get_market_status_label(ticker=""):
+    ticker_text = str(ticker or "").upper()
+    is_kr = ticker_text.endswith((".KS", ".KQ"))
+
+    if is_kr:
+        now = get_kst_now()
+        minutes = now.hour * 60 + now.minute
+        if now.weekday() >= 5:
+            return "한국장 휴장/주말"
+        if 9 * 60 <= minutes < 15 * 60 + 30:
+            return "한국장 장중"
+        if 8 * 60 <= minutes < 9 * 60:
+            return "한국장 개장 전"
+        if 15 * 60 + 30 <= minutes < 18 * 60:
+            return "한국장 마감 직후"
+        return "한국장 마감"
+
+    try:
+        now = datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now = datetime.now(timezone.utc) - timedelta(hours=5)
+
+    minutes = now.hour * 60 + now.minute
+    if now.weekday() >= 5:
+        return "미국장 휴장/주말"
+    if 4 * 60 <= minutes < 9 * 60 + 30:
+        return "미국장 프리"
+    if 9 * 60 + 30 <= minutes < 16 * 60:
+        return "미국장 본장"
+    if 16 * 60 <= minutes < 20 * 60:
+        return "미국장 애프터"
+    return "미국장 마감"
+
+
+def render_data_basis_caption(area, ticker="", include_news=False, include_fin=False):
+    parts = [
+        f"{area} 기준시각: {format_kst_now()}",
+        f"시장상태: {get_market_status_label(ticker)}",
+        "현재가 TTL 60초",
+        "차트/기술 TTL 5분",
+    ]
+    if include_news:
+        parts.append("뉴스 TTL 10분")
+        parts.append("리포트/목표가 TTL 6시간")
+    if include_fin:
+        parts.append("재무점수 TTL 6시간")
+    st.caption(" | ".join(parts))
+
+
+def render_refresh_control_panel():
+    with st.sidebar.expander("전체 새로고침 메뉴", expanded=False):
+        st.caption("앱 전체 캐시 기준입니다. 빠른 것과 무거운 것을 분리했습니다.")
+
+        if st.button("전체 현재가 새로고침", key="refresh_panel_latest_price", use_container_width=True):
+            clear_latest_price_cache()
+            record_refresh_event("latest_price_refresh_time")
+            st.toast("현재가 캐시를 비웠습니다.")
+            st.rerun()
+
+        if st.button("전체 차트/기술 새로고침", key="refresh_panel_chart_price", use_container_width=True):
+            clear_price_and_chart_cache()
+            record_refresh_event("chart_price_refresh_time")
+            st.toast("차트/기술 캐시를 비웠습니다.")
+            st.rerun()
+
+        if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", use_container_width=True):
+            clear_news_report_cache()
+            record_refresh_event("news_report_refresh_time")
+            st.toast("뉴스/리포트 캐시를 비웠습니다.")
+            st.rerun()
+
+        if st.button("전체 재무점수/매크로 새로고침", key="refresh_panel_fin_macro", use_container_width=True):
+            clear_financial_api_cache()
+            clear_market_context_cache()
+            record_refresh_event("fin_macro_refresh_time")
+            st.toast("재무점수/매크로 캐시를 비웠습니다.")
+            st.rerun()
+
+        st.caption(f"현재가: {get_refresh_event_time('latest_price_refresh_time')}")
+        st.caption(f"차트/기술: {get_refresh_event_time('chart_price_refresh_time')}")
+        st.caption(f"뉴스/리포트: {get_refresh_event_time('news_report_refresh_time')}")
+        st.caption(f"재무/매크로: {get_refresh_event_time('fin_macro_refresh_time')}")
+
 
 @st.cache_data(ttl=300)
 def get_macro_analysis():
@@ -4506,6 +4754,29 @@ def build_precision_select_options():
         option_map[label] = {"type": "preset"}
 
     return options, option_map
+
+
+def find_precision_select_label_by_ticker(ticker, option_map):
+    target = normalize_ticker(ticker)
+    if not target:
+        return None
+
+    for label, meta in option_map.items():
+        if meta.get("type") != "watchlist":
+            continue
+        item = meta.get("item", {})
+        if normalize_ticker(item.get("ticker", "")) == target:
+            return label
+
+    for label, meta in option_map.items():
+        if meta.get("type") == "free":
+            continue
+        if label in TICKER_MAP and normalize_ticker(TICKER_MAP[label][0]) == target:
+            return label
+        if normalize_ticker(label) == target:
+            return label
+
+    return None
 
 
 def get_saved_fin_score_fast(ticker, is_etf):
@@ -7065,6 +7336,113 @@ def render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df,
         """)
 
 
+def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    full_df = append_cash_rows(
+        holdings_table.copy(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        portfolio_summary["current_asset"]
+    )
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+
+    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
+    stock_value = clean_float(portfolio_summary.get("stock_value"), 0.0)
+    cash_value = clean_float(portfolio_summary.get("cash_value"), 0.0)
+    total_dividend = clean_float(portfolio_summary.get("total_dividend"), 0.0)
+    cum_profit = clean_float(portfolio_summary.get("cum_profit"), 0.0)
+    cum_return = clean_float(portfolio_summary.get("cum_return"), 0.0)
+    invest_value = clean_float(reserve_summary.get("invest_value"), 0.0)
+    waiting_value = clean_float(reserve_summary.get("waiting_value"), 0.0)
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_pct = clean_float(reserve_summary.get("target_pct"), 0.0)
+    excess_pct = clean_float(reserve_summary.get("excess_pct"), 0.0)
+
+    profit_label = "수익" if cum_profit >= 0 else "손실"
+    profit_delta = f"{cum_return:.2f}%"
+    waiting_gap = waiting_pct - target_pct
+    waiting_delta = f"{waiting_gap:+.2f}%p vs 목표"
+    invest_pct = (invest_value / current_asset * 100) if current_asset > 0 else 0.0
+
+    st.markdown("### 자산 현황 요약")
+    top_cols = st.columns(4)
+    top_cols[0].metric("총자산", f"{current_asset:,.0f}원", f"투자자산 {stock_value:,.0f}원")
+    top_cols[1].metric(f"누적{profit_label}", f"{cum_profit:,.0f}원", profit_delta)
+    top_cols[2].metric("누적수익률", f"{cum_return:.2f}%", f"누적배당 {total_dividend:,.0f}원")
+    top_cols[3].metric("대기자금", f"{waiting_value:,.0f}원", waiting_delta)
+
+    detail_cols = st.columns(4)
+    detail_cols[0].metric("투자자산", f"{invest_value:,.0f}원", f"{invest_pct:.2f}%")
+    detail_cols[1].metric("현금/예수금", f"{cash_value:,.0f}원")
+    detail_cols[2].metric("대기자금 목표", f"{target_pct:.2f}%")
+    detail_cols[3].metric("초과 대기자금", f"{clean_float(reserve_summary.get('deployable_value'), 0.0):,.0f}원", f"{excess_pct:.2f}%p")
+
+    gauge_cols = st.columns([2, 2, 1.2])
+    with gauge_cols[0]:
+        st.caption(f"투자자산 비중 {invest_pct:.2f}%")
+        st.progress(min(max(invest_pct / 100, 0.0), 1.0))
+    with gauge_cols[1]:
+        st.caption(f"대기자금 비중 {waiting_pct:.2f}% / 목표 {target_pct:.2f}%")
+        st.progress(min(max(waiting_pct / 100, 0.0), 1.0))
+    with gauge_cols[2]:
+        last_price_refresh_time = st.session_state.get("latest_price_refresh_time", "-")
+        st.caption("현재가 갱신")
+        st.write(last_price_refresh_time)
+
+    st.caption("평소에는 자산관리 표 옆 현재가 새로고침만 눌러도 충분합니다. 재무/뉴스 새로고침은 필요할 때만 사용하세요.")
+
+
+def render_speed_check_tab():
+    st.subheader("속도 점검")
+    st.caption("로딩이 느릴 때 어느 데이터를 다시 불러오는지 구분하기 위한 읽기 전용 점검판입니다.")
+
+    rows = [
+        {
+            "구분": "현재가",
+            "체감속도": "빠름",
+            "캐시": "60초",
+            "마지막 수동갱신": get_refresh_event_time("latest_price_refresh_time"),
+            "사용 위치": "보유자산 평가금액, 정밀관측소 현재가",
+            "버튼": "전체 현재가 새로고침",
+        },
+        {
+            "구분": "차트/기술",
+            "체감속도": "중간",
+            "캐시": "5분",
+            "마지막 수동갱신": get_refresh_event_time("chart_price_refresh_time"),
+            "사용 위치": "전광판, 정밀관측소 차트/기술점수, 단기 흐름",
+            "버튼": "전체 차트/기술 새로고침",
+        },
+        {
+            "구분": "뉴스/리포트",
+            "체감속도": "중간",
+            "캐시": "뉴스 10분 / 목표가 6시간",
+            "마지막 수동갱신": get_refresh_event_time("news_report_refresh_time"),
+            "사용 위치": "정밀관측소 뉴스, 증권사/애널리스트 링크",
+            "버튼": "전체 뉴스/리포트 새로고침",
+        },
+        {
+            "구분": "재무점수/매크로",
+            "체감속도": "무거움",
+            "캐시": "재무 6시간 / 매크로 5분",
+            "마지막 수동갱신": get_refresh_event_time("fin_macro_refresh_time"),
+            "사용 위치": "재무점수, 후보등급, 매크로 패널티",
+            "버튼": "전체 재무점수/매크로 새로고침",
+        },
+    ]
+
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("보유종목", f"{len(holdings_df)}개")
+    m2.metric("전광판", f"{len(st.session_state.get('watchlist', []))}개")
+    m3.metric("현금 포함 자산", f"{portfolio_summary['current_asset']:,.0f}원")
+    m4.metric("화면 생성", get_kst_now().strftime("%H:%M:%S"))
+
+    st.info("평소에는 현재가만 새로고침하면 충분합니다. 차트/기술, 뉴스/리포트, 재무점수는 필요할 때만 눌러야 덜 버벅입니다.")
+    render_data_basis_caption("속도점검", include_news=True, include_fin=True)
+
+
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
@@ -7090,11 +7468,13 @@ usd_cash = float(settings.get("usd_cash", 0.0))
 usdkrw = float(settings.get("usdkrw", 1400.0))
 reserve_target_weight = float(settings.get("reserve_target_weight", 10.0))      
 
+render_refresh_control_panel()
+
 holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "📋 전체 요약 전광판",
     "🔍 종목 정밀 관측소",
     "⚙️ 자산 관리",
@@ -7104,12 +7484,14 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "💸 돈흐름 레이더",
     "🎯 스윙 레이더",
     "🧪 데이터 점검",
+    "⏱ 속도 점검",
     "📘 판정 매뉴얼",
     "📖 사용 가이드",
 ])
 
 with tab1:
     st.subheader("CCTV 통합 통제실")
+    render_data_basis_caption("전광판", include_fin=True)
     st.write(
         f"현재자산: {portfolio_summary['current_asset']:,.0f}원 | "
         f"누적손익: {portfolio_summary['cum_profit']:,.0f}원 | "
@@ -7131,6 +7513,35 @@ with tab1:
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:
+        quick_jump_map = {
+            f"{row['종목명']} ({row['티커']})": row["티커"]
+            for _, row in summary_df.iterrows()
+        }
+        quick_jump_cols = st.columns([2.6, 1.0, 2.4])
+        with quick_jump_cols[0]:
+            quick_jump_label = st.selectbox(
+                "정밀관측소로 보낼 종목",
+                ["선택"] + list(quick_jump_map.keys()),
+                key="dashboard_precision_jump_target",
+            )
+        with quick_jump_cols[1]:
+            st.write("")
+            st.write("")
+            if st.button("선택값 적용", key="dashboard_precision_jump_apply", use_container_width=True):
+                jump_ticker = quick_jump_map.get(quick_jump_label, "")
+                if not jump_ticker:
+                    st.warning("먼저 종목을 선택하세요.")
+                else:
+                    precision_options, precision_option_map_for_jump = build_precision_select_options()
+                    precision_label = find_precision_select_label_by_ticker(jump_ticker, precision_option_map_for_jump)
+                    if precision_label:
+                        st.session_state["precision_selected_option"] = precision_label
+                        st.success("정밀관측소 선택값을 바꿨습니다. 위의 정밀관측소 탭을 열어 확인하세요.")
+                    else:
+                        st.warning("정밀관측소 선택값으로 연결할 수 없습니다. 자유 종목 탐색에서 직접 입력해 주세요.")
+        with quick_jump_cols[2]:
+            st.caption("전광판에서 종목을 고른 뒤 적용하면 정밀관측소의 종목 선택이 그 종목으로 맞춰집니다.")
+
         st.markdown("#### 전광판 보기")
         group_order = ["전체", "한국 ETF", "한국 개별주", "미국 ETF", "미국 개별주"]
         group_tabs = st.tabs([
@@ -7144,7 +7555,9 @@ with tab1:
 
 with tab2:
     options, precision_option_map = build_precision_select_options()
-    sel = st.selectbox("종목 선택", options)
+    if st.session_state.get("precision_selected_option") not in options:
+        st.session_state["precision_selected_option"] = options[0]
+    sel = st.selectbox("종목 선택", options, key="precision_selected_option")
     selected_option = precision_option_map.get(sel, {"type": "preset"})
     is_free = (selected_option.get("type") == "free")
 
@@ -7178,6 +7591,8 @@ with tab2:
         name = sel
         tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+
+    render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
     if app_mode == "범용모드":
@@ -7363,14 +7778,32 @@ with tab2:
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
             ret3_color = "#2ecc71" if c["ret_3m"] > 0 else "#dc2626"
             ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
+            display_cur_p = load_latest_price(tkr)
+            if display_cur_p <= 0:
+                display_cur_p = c["cur_p"]
+            price_refresh_key = f"precision_price_refresh_time_{fin_key}"
+            price_refresh_time = st.session_state.get(price_refresh_key)
+            price_source = "최신/프리 가능" if abs(float(display_cur_p) - float(c["cur_p"])) > 1e-9 else "일봉 기준"
 
-            st.markdown(
-                f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(c['cur_p'], tkr)}</span><br>"
-                f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
-                f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
-                f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
-                unsafe_allow_html=True
-            )
+            price_info_col, price_refresh_col = st.columns([2.2, 1])
+            with price_info_col:
+                st.markdown(
+                    f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(display_cur_p, tkr)}</span><br>"
+                    f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
+                    f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
+                    f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
+                    unsafe_allow_html=True
+                )
+            with price_refresh_col:
+                st.caption("현재가")
+                if st.button("새로고침", key=f"refresh_precision_price_{fin_key}", use_container_width=True, help="선택 종목의 현재가 캐시를 비우고 다시 조회합니다. 미국장은 가능하면 프리/애프터 가격을 반영합니다."):
+                    clear_selected_price_cache()
+                    st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+                    st.toast(f"{tkr} 현재가를 다시 조회합니다.")
+                    st.rerun()
+                st.caption(price_source)
+                if price_refresh_time:
+                    st.caption(f"갱신 {price_refresh_time[-8:]}")
 
             if is_free or app_mode == "범용모드": st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
@@ -7431,6 +7864,8 @@ with tab2:
 
 with tab3:
     st.subheader("앱 내부 자산 관리")
+    render_data_basis_caption("자산관리", include_fin=True)
+    render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
     st.markdown("### 0) 백업/복구 안전장치")
 
@@ -7967,7 +8402,21 @@ with tab3:
         else:
             st.info("월별 로그를 입력하면 월별 투자 기록, 누적손익, 벤치마크 비교, 배당금 차트가 표시됩니다.")
 
-        st.markdown("#### 보유자산 + 기술적 타점 요약")
+        asset_summary_title_col, asset_summary_refresh_col = st.columns([3, 1])
+        with asset_summary_title_col:
+            st.markdown("#### 보유자산 + 기술적 타점 요약")
+        with asset_summary_refresh_col:
+            if st.button("현재가 새로고침", key="refresh_asset_table_latest_prices", use_container_width=True, help="보유자산 평가금액에 쓰는 60초 현재가 캐시를 비우고 다시 조회합니다."):
+                clear_latest_price_cache()
+                st.session_state["latest_price_refresh_time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+                st.toast("보유자산 현재가를 다시 조회합니다.")
+                st.rerun()
+        last_price_refresh_time = st.session_state.get("latest_price_refresh_time")
+        if last_price_refresh_time:
+            st.caption(f"현재가 수동 갱신: {last_price_refresh_time}")
+        else:
+            st.caption("현재가 캐시: 60초")
+
         show_cols = [
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
             "평가손익_원화", "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
@@ -7997,7 +8446,10 @@ with tab9:
     render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
 with tab10:
-    render_manual_tab() 
+    render_speed_check_tab()
 
 with tab11:
+    render_manual_tab() 
+
+with tab12:
     render_user_guide_tab()
