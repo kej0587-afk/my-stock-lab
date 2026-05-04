@@ -2516,8 +2516,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         is_etf = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
-        px_df = load_price_df(ticker, "1mo")
-        cur_price = float(px_df["Close"].iloc[-1]) if not px_df.empty else 0.0
+        cur_price = load_latest_price(ticker)
 
         eval_amt = qty * cur_price
         pnl = qty * (cur_price - avg_price)
@@ -2919,6 +2918,12 @@ def fmt_flow_pct(v):
 def render_money_flow_tab():
     st.subheader("돈흐름 레이더")
     st.caption("미국 섹터, 한국 섹터, 글로벌 국가 ETF의 3개월/6개월 흐름과 가속도를 비교해 돈이 어디로 향하는지 봅니다.")
+
+    if not should_run_heavy_analysis(
+        "money_flow_lazy",
+        "돈흐름 레이더는 여러 ETF 가격을 한 번에 조회하므로 필요할 때만 실행합니다.",
+    ):
+        return
 
     with st.spinner("ETF 돈흐름 계산 중..."):
         flow_df = calculate_money_flow_df()
@@ -3801,6 +3806,22 @@ def load_price_df(ticker, period="1y"):
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         df = df.ffill().dropna()
     return df
+
+
+@st.cache_data(ttl=60)
+def load_latest_price(ticker):
+    try:
+        df = yf.download(ticker, period="5d", interval="1d", progress=False)
+        if df.empty:
+            return 0.0
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.ffill().dropna()
+        if df.empty or "Close" not in df.columns:
+            return 0.0
+        return float(df["Close"].iloc[-1])
+    except Exception:
+        return 0.0
 
 @st.cache_data(ttl=300)
 def get_macro_analysis():
@@ -6024,6 +6045,11 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         key="portfolio_analysis_period",
         help="가격 데이터가 짧은 신규 ETF/종목은 일부 계산에서 제외될 수 있습니다.",
     )
+    if not should_run_heavy_analysis(
+        "portfolio_analysis_lazy",
+        "상관관계와 포트폴리오 누적 흐름은 보유 종목별 가격 데이터를 조회하므로 필요할 때만 계산합니다.",
+    ):
+        return
 
     metrics, asset_df, notes_df, corr_df, portfolio_curve = build_portfolio_analysis_report(
         holdings_table,
@@ -6285,6 +6311,12 @@ def build_cash_buffer_scenario(active_df, total_asset, reserve_summary, target_w
 def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.subheader("시나리오 점검")
     st.caption("미래 예측이 아니라 현재 보유자산에 가상의 충격률을 넣어보는 읽기 전용 점검입니다.")
+
+    if not should_run_heavy_analysis(
+        "scenario_check_lazy",
+        "하락 시나리오는 가볍지만 첫 화면에서는 생략하고, 필요할 때 계산합니다.",
+    ):
+        return
 
     context = build_scenario_context(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
     total_asset = context["total_asset"]
@@ -6674,6 +6706,11 @@ def render_short_trend_tab(holdings_table, watchlist_items):
         key="short_trend_period",
         help="3개월은 민감하고, 1년은 더 안정적입니다.",
     )
+    if not should_run_heavy_analysis(
+        "short_trend_lazy",
+        "단기 흐름 점검은 보유/관심 종목 가격을 종목별로 조회하므로 필요할 때만 계산합니다.",
+    ):
+        return
     trend_df, chart_map = build_short_trend_report(holdings_table, watchlist_items, period)
 
     if trend_df.empty:
@@ -6764,6 +6801,33 @@ def render_short_trend_tab(holdings_table, watchlist_items):
 - **하락우위**: 여러 약세 신호가 겹친 상태입니다.
 - **예상범위**: 최근 20거래일 변동성으로 계산한 2~4주 참고 범위입니다. 실제 목표가가 아닙니다.
         """)
+
+
+def should_run_heavy_analysis(key, description, run_label="분석 실행/새로고침"):
+    ready_key = f"{key}_ready"
+    last_key = f"{key}_last_run"
+    if ready_key not in st.session_state:
+        st.session_state[ready_key] = False
+
+    c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
+    if c1.button(run_label, key=f"{key}_run", use_container_width=True):
+        st.session_state[ready_key] = True
+        st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+
+    if st.session_state.get(ready_key, False):
+        if c2.button("계산 접기", key=f"{key}_hide", use_container_width=True):
+            st.session_state[ready_key] = False
+    else:
+        c2.caption("대기 중")
+
+    if not st.session_state.get(ready_key, False):
+        st.info(f"첫 로딩 속도를 위해 아직 계산하지 않았습니다. {description}")
+        return False
+
+    last_run = st.session_state.get(last_key)
+    if last_run:
+        c3.caption(f"마지막 실행: {last_run}")
+    return True
 
 
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
@@ -7584,77 +7648,84 @@ with tab3:
         
         reserve_summary = calc_reserve_summary(dash_df, reserve_target_weight)
 
+        run_asset_tech_summary = should_run_heavy_analysis(
+            "asset_management_tech_summary_lazy",
+            "아래 기본 자산 차트는 표시하되, 종목별 기술적 타점 요약은 버튼을 눌렀을 때만 계산합니다.",
+            run_label="기술적 타점 계산/새로고침",
+        )
+
         signal_rows = []
-        for _, r in dash_df.iterrows():
-            tkr = r["티커"]
-            name = r["자산명"]
-            is_etf = bool(r.get("is_etf", False))
-            asset_class = r.get("asset_class", "")
+        if run_asset_tech_summary:
+            for _, r in dash_df.iterrows():
+                tkr = r["티커"]
+                name = r["자산명"]
+                is_etf = bool(r.get("is_etf", False))
+                asset_class = r.get("asset_class", "")
 
-            bucket = normalize_bucket(r.get("bucket", "core"))
+                bucket = normalize_bucket(r.get("bucket", "core"))
 
-            if bucket in ["reserve", "cash"]:
-                label = "즉시투입 예수금" if bucket == "cash" else "비상대기/파킹"
-                signal_rows.append({
-                    "티커": tkr,
-                    "기술적타점": label,
-                    "ADJ점수": 0,
-                    "후보등급": "대기자금",
-                    "추세": "-",
-                    "RS": "-",
-                    "RSI": np.nan,
-                    "MFI": np.nan,
-                    "MACD": "-",
-                    "SQZ": "-",
-                })
-                continue
-            
-            try:
-                px = load_price_df(tkr, "1y")
-                if px.empty or len(px) < 2:
+                if bucket in ["reserve", "cash"]:
+                    label = "즉시투입 예수금" if bucket == "cash" else "비상대기/파킹"
+                    signal_rows.append({
+                        "티커": tkr,
+                        "기술적타점": label,
+                        "ADJ점수": 0,
+                        "후보등급": "대기자금",
+                        "추세": "-",
+                        "RS": "-",
+                        "RSI": np.nan,
+                        "MFI": np.nan,
+                        "MACD": "-",
+                        "SQZ": "-",
+                    })
                     continue
+                
+                try:
+                    px = load_price_df(tkr, "1y")
+                    if px.empty or len(px) < 2:
+                        continue
 
-                px = build_indicators(px)
-                fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
+                    px = build_indicators(px)
+                    fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
 
-                c = calc_scores_and_decision(
-                    name=name,
-                    ticker=tkr,
-                    is_etf=is_etf,
-                    asset_class=asset_class,
-                    df=px,
-                    my_price=float(r["매입가"] or 0),
-                    has_pos=float(r["보유량"] or 0) > 0,
-                    fin_score=int(fin_score),
-                    is_free=False,
-                    app_mode="개인모드"
-                )
+                    c = calc_scores_and_decision(
+                        name=name,
+                        ticker=tkr,
+                        is_etf=is_etf,
+                        asset_class=asset_class,
+                        df=px,
+                        my_price=float(r["매입가"] or 0),
+                        has_pos=float(r["보유량"] or 0) > 0,
+                        fin_score=int(fin_score),
+                        is_free=False,
+                        app_mode="개인모드"
+                    )
 
-                signal_rows.append({
-                    "티커": tkr,
-                    "기술적타점": c["dec"],
-                    "ADJ점수": round(c["adj"], 1),
-                    "후보등급": c["grade"],
-                    "추세": c["trend"],
-                    "RS": c["rs_label"],
-                    "RSI": round(c["rsi"], 1),
-                    "MFI": round(c["mfi"], 1),
-                    "MACD": c["macd"],
-                    "SQZ": c["sqz"],
-                })
-            except Exception as e:
-                signal_rows.append({
-                    "티커": tkr,
-                    "기술적타점": f"계산 실패: {e}",
-                    "ADJ점수": np.nan,
-                    "후보등급": "-",
-                    "추세": "-",
-                    "RS": "-",
-                    "RSI": np.nan,
-                    "MFI": np.nan,
-                    "MACD": "-",
-                    "SQZ": "-",
-                })
+                    signal_rows.append({
+                        "티커": tkr,
+                        "기술적타점": c["dec"],
+                        "ADJ점수": round(c["adj"], 1),
+                        "후보등급": c["grade"],
+                        "추세": c["trend"],
+                        "RS": c["rs_label"],
+                        "RSI": round(c["rsi"], 1),
+                        "MFI": round(c["mfi"], 1),
+                        "MACD": c["macd"],
+                        "SQZ": c["sqz"],
+                    })
+                except Exception as e:
+                    signal_rows.append({
+                        "티커": tkr,
+                        "기술적타점": f"계산 실패: {e}",
+                        "ADJ점수": np.nan,
+                        "후보등급": "-",
+                        "추세": "-",
+                        "RS": "-",
+                        "RSI": np.nan,
+                        "MFI": np.nan,
+                        "MACD": "-",
+                        "SQZ": "-",
+                    })
 
         signal_df = pd.DataFrame(signal_rows)
         if not signal_df.empty:
