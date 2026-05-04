@@ -5628,6 +5628,9 @@ def render_user_guide_tab():
 **📉 시나리오 점검**  
 전체 하락, 개별 자산 충격, 대기자금 확대 같은 가정을 넣어 손실 규모를 미리 계산해 봅니다.
 
+**📈 단기 흐름 점검**  
+보유자산과 관심종목의 2~4주 단기 흐름을 상승우위/중립/하락주의로 점검합니다.
+
 **💸 돈흐름 레이더**  
 섹터와 ETF 흐름을 보는 곳입니다. 돈흐름 1위는 “이 섹터에서 후보를 먼저 찾아보라”는 뜻이지 즉시 매수 신호가 아닙니다.
 
@@ -5645,8 +5648,9 @@ def render_user_guide_tab():
 3. 정밀 관측소에서 타점 확인
 4. 포트폴리오 분석에서 집중도와 변동성 확인
 5. 시나리오 점검에서 하락 시 손실 규모 확인
-6. 스윙 레이더에서 체크리스트 확인
-7. 목표비중과 현재비중을 보고 최종 판단
+6. 단기 흐름 점검에서 2~4주 방향성 확인
+7. 스윙 레이더에서 체크리스트 확인
+8. 목표비중과 현재비중을 보고 최종 판단
             """)
 
     with signal_tab:
@@ -6404,6 +6408,364 @@ def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserv
     st.warning("이 탭은 가정 계산입니다. 실제 시장에서는 종목별 하락률, 환율, 괴리율, 레버리지 일일복리 효과가 다르게 나타날 수 있습니다.")
 
 
+def get_short_trend_label(score):
+    if score >= 5:
+        return "상승우위", "#22c55e"
+    if score >= 2:
+        return "상승시도", "#84cc16"
+    if score <= -5:
+        return "하락우위", "#ef4444"
+    if score <= -2:
+        return "하락주의", "#f97316"
+    return "중립", "#94a3b8"
+
+
+def calc_pct_change_from_series(series, lookback):
+    series = pd.Series(series).dropna()
+    if len(series) <= lookback:
+        return np.nan
+    base = clean_float(series.iloc[-lookback - 1], 0.0)
+    last = clean_float(series.iloc[-1], 0.0)
+    if base <= 0:
+        return np.nan
+    return (last / base - 1) * 100
+
+
+def build_short_trend_universe(holdings_table, watchlist_items):
+    rows = []
+    seen = set()
+
+    if holdings_table is not None and not holdings_table.empty:
+        for _, row in holdings_table.iterrows():
+            ticker = str(row.get("티커", "")).strip()
+            if not ticker or ticker.upper() in ["KRW_CASH", "USD_CASH"]:
+                continue
+            key = normalize_ticker(ticker)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "name": str(row.get("자산명", "")).strip() or ticker,
+                "ticker": ticker,
+                "asset_class": str(row.get("asset_class", "")).strip(),
+                "is_etf": clean_bool(row.get("is_etf", False)),
+                "source": "보유",
+                "weight": clean_float(row.get("현재비중"), 0.0),
+            })
+
+    for item in watchlist_items or []:
+        ticker = str(item.get("ticker", "")).strip()
+        if not ticker:
+            continue
+        key = normalize_ticker(ticker)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "name": str(item.get("name", "")).strip() or ticker,
+            "ticker": ticker,
+            "asset_class": str(item.get("asset_class", "")).strip(),
+            "is_etf": clean_bool(item.get("is_etf", False)),
+            "source": "관심",
+            "weight": 0.0,
+        })
+
+    return pd.DataFrame(rows, columns=["name", "ticker", "asset_class", "is_etf", "source", "weight"])
+
+
+def analyze_short_trend_item(item, period="6mo"):
+    name = str(item.get("name", "")).strip()
+    ticker = str(item.get("ticker", "")).strip()
+    asset_class = str(item.get("asset_class", "")).strip()
+    is_etf = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), asset_class, name)
+
+    base_row = {
+        "자산명": name or ticker,
+        "티커": ticker,
+        "구분": str(item.get("source", "")).strip(),
+        "현재비중": clean_float(item.get("weight"), 0.0),
+        "단기전망": "데이터부족",
+        "점수": 0,
+        "현재가": np.nan,
+        "5일": np.nan,
+        "20일": np.nan,
+        "60일": np.nan,
+        "RSI": np.nan,
+        "MACD": "-",
+        "MA상태": "-",
+        "예상범위": "-",
+        "핵심근거": "가격 데이터가 부족합니다.",
+    }
+
+    try:
+        price_df = load_price_df(ticker, period)
+    except Exception as exc:
+        base_row["핵심근거"] = f"가격 데이터 조회 실패: {exc}"
+        return base_row, pd.DataFrame()
+
+    if price_df is None or price_df.empty or len(price_df) < 35:
+        return base_row, price_df if price_df is not None else pd.DataFrame()
+
+    try:
+        df = build_indicators(price_df)
+    except Exception as exc:
+        base_row["핵심근거"] = f"지표 계산 실패: {exc}"
+        return base_row, price_df
+
+    df = df.dropna(subset=["Close"]).copy()
+    if len(df) < 35:
+        return base_row, df
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    close = pd.Series(df["Close"]).dropna()
+    cur = clean_float(close.iloc[-1], np.nan)
+    ret5 = calc_pct_change_from_series(close, 5)
+    ret20 = calc_pct_change_from_series(close, 20)
+    ret60 = calc_pct_change_from_series(close, 60)
+    ma5 = clean_float(last.get("MA5"), np.nan)
+    ma20 = clean_float(last.get("MA20"), np.nan)
+    ma20_prev5 = clean_float(df["MA20"].iloc[-6], np.nan) if len(df) >= 26 else np.nan
+    ma20_slope = (ma20 / ma20_prev5 - 1) * 100 if np.isfinite(ma20) and np.isfinite(ma20_prev5) and ma20_prev5 > 0 else np.nan
+    rsi = clean_float(last.get("RSI"), np.nan)
+    macd = clean_float(last.get("MACD"), np.nan)
+    macd_sig = clean_float(last.get("MACD_Sig"), np.nan)
+    prev_macd = clean_float(prev.get("MACD"), np.nan)
+    pct_b = clean_float(last.get("%B"), np.nan)
+    volume = clean_float(last.get("Volume"), 0.0)
+    volume_ma20 = clean_float(df["Volume"].rolling(20).mean().iloc[-1], 0.0) if "Volume" in df.columns else 0.0
+    volume_ratio = volume / volume_ma20 if volume_ma20 > 0 else np.nan
+    daily_vol = close.pct_change().dropna().tail(20).std()
+    expected_range = float(daily_vol * np.sqrt(20) * 100) if np.isfinite(daily_vol) else np.nan
+
+    score = 0
+    reasons = []
+
+    if np.isfinite(ma5) and np.isfinite(ma20):
+        if ma5 > ma20 and np.isfinite(ma20_slope) and ma20_slope > 0:
+            score += 2
+            reasons.append("MA5>MA20, MA20 상승")
+            ma_state = "상승"
+        elif ma5 < ma20 and np.isfinite(ma20_slope) and ma20_slope < 0:
+            score -= 2
+            reasons.append("MA5<MA20, MA20 하락")
+            ma_state = "하락"
+        else:
+            ma_state = "혼조"
+    else:
+        ma_state = "부족"
+
+    if np.isfinite(ret20):
+        if ret20 > 3:
+            score += 1
+            reasons.append("20일 수익률 양호")
+        elif ret20 < -3:
+            score -= 1
+            reasons.append("20일 수익률 부진")
+
+    if np.isfinite(ret5):
+        if ret5 > 1:
+            score += 1
+            reasons.append("5일 단기 반등")
+        elif ret5 < -1:
+            score -= 1
+            reasons.append("5일 단기 약세")
+
+    if np.isfinite(cur) and np.isfinite(ma20):
+        if cur > ma20:
+            score += 1
+            reasons.append("현재가 MA20 위")
+        else:
+            score -= 1
+            reasons.append("현재가 MA20 아래")
+
+    if np.isfinite(macd) and np.isfinite(macd_sig):
+        macd_rising = np.isfinite(prev_macd) and macd > prev_macd
+        if macd > macd_sig and macd_rising:
+            score += 2
+            macd_state = "상승가속"
+            reasons.append("MACD 상승")
+        elif macd > macd_sig:
+            score += 1
+            macd_state = "상승유지"
+            reasons.append("MACD 양호")
+        elif macd < macd_sig and not macd_rising:
+            score -= 2
+            macd_state = "하락가속"
+            reasons.append("MACD 하락")
+        else:
+            score -= 1
+            macd_state = "약세둔화"
+    else:
+        macd_state = "-"
+
+    if np.isfinite(rsi):
+        if 45 <= rsi <= 65:
+            score += 1
+            reasons.append("RSI 정상 상승권")
+        elif rsi < 38:
+            score -= 1
+            reasons.append("RSI 약세권")
+        elif rsi >= 75:
+            score -= 1
+            reasons.append("RSI 과열권")
+
+    if np.isfinite(volume_ratio) and volume_ratio >= 1.2 and np.isfinite(ret5):
+        if ret5 > 0:
+            score += 1
+            reasons.append("거래량 동반 상승")
+        elif ret5 < 0:
+            score -= 1
+            reasons.append("거래량 동반 하락")
+
+    if np.isfinite(pct_b) and pct_b > 1.05:
+        score -= 1
+        reasons.append("볼린저 상단 과열")
+
+    if is_etf and score <= -1 and np.isfinite(ret20) and ret20 > 0:
+        reasons.append("ETF는 추세/비중 중심 확인")
+
+    label, _ = get_short_trend_label(score)
+    base_row.update({
+        "단기전망": label,
+        "점수": int(score),
+        "현재가": cur,
+        "5일": ret5,
+        "20일": ret20,
+        "60일": ret60,
+        "RSI": rsi,
+        "MACD": macd_state,
+        "MA상태": ma_state,
+        "예상범위": "-" if not np.isfinite(expected_range) else f"±{expected_range:.1f}%",
+        "핵심근거": " / ".join(reasons[:4]) if reasons else "뚜렷한 단기 우위 신호 없음",
+    })
+    return base_row, df
+
+
+def build_short_trend_report(holdings_table, watchlist_items, period="6mo"):
+    universe_df = build_short_trend_universe(holdings_table, watchlist_items)
+    rows = []
+    charts = {}
+    if universe_df.empty:
+        return pd.DataFrame(), charts
+
+    for _, item in universe_df.iterrows():
+        row, df = analyze_short_trend_item(item, period)
+        rows.append(row)
+        if df is not None and not df.empty:
+            charts[str(row["티커"])] = df
+
+    result_df = pd.DataFrame(rows)
+    if not result_df.empty:
+        order_map = {"상승우위": 0, "상승시도": 1, "중립": 2, "하락주의": 3, "하락우위": 4, "데이터부족": 5}
+        result_df["_order"] = result_df["단기전망"].map(order_map).fillna(9)
+        result_df = result_df.sort_values(["_order", "점수", "현재비중"], ascending=[True, False, False]).drop(columns="_order").reset_index(drop=True)
+    return result_df, charts
+
+
+def render_short_trend_tab(holdings_table, watchlist_items):
+    st.subheader("단기 흐름 점검")
+    st.caption("2~4주 단기 흐름을 현재 지표로 점검합니다. 미래를 맞히는 예측이 아니라 추세/모멘텀 기반 전망입니다.")
+
+    period = st.selectbox(
+        "분석 데이터 기간",
+        ["3mo", "6mo", "1y"],
+        index=1,
+        key="short_trend_period",
+        help="3개월은 민감하고, 1년은 더 안정적입니다.",
+    )
+    trend_df, chart_map = build_short_trend_report(holdings_table, watchlist_items, period)
+
+    if trend_df.empty:
+        st.info("분석할 보유자산 또는 관심종목이 없습니다.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("상승우위", int((trend_df["단기전망"] == "상승우위").sum()))
+    c2.metric("상승시도", int((trend_df["단기전망"] == "상승시도").sum()))
+    c3.metric("하락주의", int((trend_df["단기전망"] == "하락주의").sum()))
+    c4.metric("하락우위", int((trend_df["단기전망"] == "하락우위").sum()))
+
+    selected_labels = st.multiselect(
+        "전망 필터",
+        ["상승우위", "상승시도", "중립", "하락주의", "하락우위", "데이터부족"],
+        default=["상승우위", "상승시도", "중립", "하락주의", "하락우위"],
+        key="short_trend_filter",
+    )
+    filtered_df = trend_df[trend_df["단기전망"].isin(selected_labels)] if selected_labels else trend_df.iloc[0:0]
+
+    show_df = filtered_df.copy()
+    for col in ["현재비중", "5일", "20일", "60일"]:
+        if col in show_df.columns:
+            show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+    if "RSI" in show_df.columns:
+        show_df["RSI"] = show_df["RSI"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}")
+    if "현재가" in show_df.columns:
+        show_df["현재가"] = show_df["현재가"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):,.2f}")
+
+    st.markdown("#### 단기 전망표")
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.download_button(
+        "단기 흐름 CSV 다운로드",
+        data=dataframe_to_csv_bytes(trend_df),
+        file_name=f"stock_lab_short_trend_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_short_trend_csv",
+    )
+
+    chart_options = [f"{row['자산명']}|{row['티커']}" for _, row in trend_df.iterrows() if str(row.get("티커", "")) in chart_map]
+    if chart_options:
+        st.markdown("#### 선택 종목 흐름")
+        selected = st.selectbox("차트 종목", chart_options, key="short_trend_chart_target")
+        selected_name, selected_ticker = selected.rsplit("|", 1)
+        chart_df = chart_map.get(selected_ticker)
+        selected_row = trend_df[trend_df["티커"] == selected_ticker].iloc[0]
+
+        if chart_df is not None and not chart_df.empty:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["Close"], mode="lines", name="Close", line=dict(color="#e5e7eb", width=2)))
+            if "MA5" in chart_df.columns:
+                fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA5"], mode="lines", name="MA5", line=dict(color="#38bdf8", width=1.5)))
+            if "MA20" in chart_df.columns:
+                fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA20"], mode="lines", name="MA20", line=dict(color="#fbbf24", width=1.5)))
+
+            current_price = clean_float(selected_row.get("현재가"), np.nan)
+            range_text = str(selected_row.get("예상범위", ""))
+            range_pct = clean_float(range_text.replace("±", "").replace("%", ""), np.nan)
+            if np.isfinite(current_price) and np.isfinite(range_pct):
+                fig.add_hline(y=current_price * (1 + range_pct / 100), line_dash="dot", line_color="#22c55e", annotation_text="예상상단")
+                fig.add_hline(y=current_price * (1 - range_pct / 100), line_dash="dot", line_color="#ef4444", annotation_text="예상하단")
+
+            fig.update_layout(
+                template="plotly_dark",
+                height=460,
+                title=f"{selected_name} 단기 흐름",
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            label, color = get_short_trend_label(clean_int(selected_row.get("점수"), 0))
+            st.markdown(
+                f"<div class='info-panel' style='border-left:5px solid {color};'><b>{selected_name}</b><br>"
+                f"전망: <span class='highlight'>{label}</span> | 점수: {int(selected_row.get('점수', 0))}<br>"
+                f"근거: {escape_html_value(selected_row.get('핵심근거', ''))}</div>",
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("점수 해석"):
+        st.markdown("""
+- **상승우위**: MA, MACD, 단기 수익률이 같이 우호적인 상태입니다.
+- **상승시도**: 상승 단서가 있지만 아직 확정적이지 않은 상태입니다.
+- **중립**: 방향성이 애매하거나 신호가 서로 엇갈립니다.
+- **하락주의**: MA/MACD/단기 수익률 중 약세 신호가 우세합니다.
+- **하락우위**: 여러 약세 신호가 겹친 상태입니다.
+- **예상범위**: 최근 20거래일 변동성으로 계산한 2~4주 참고 범위입니다. 실제 목표가가 아닙니다.
+        """)
+
+
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
     issues.append({
         "등급": severity,
@@ -6668,12 +7030,13 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "📋 전체 요약 전광판",
     "🔍 종목 정밀 관측소",
     "⚙️ 자산 관리",
     "📊 포트폴리오 분석",
     "📉 시나리오 점검",
+    "📈 단기 흐름 점검",
     "💸 돈흐름 레이더",
     "🎯 스윙 레이더",
     "🧪 데이터 점검",
@@ -7551,16 +7914,19 @@ with tab5:
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 with tab6:
-    render_money_flow_tab()
+    render_short_trend_tab(holdings_table, st.session_state.watchlist)
 
 with tab7:
-    render_swing_radar_tab()
+    render_money_flow_tab()
 
 with tab8:
-    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
+    render_swing_radar_tab()
 
 with tab9:
-    render_manual_tab() 
+    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
 with tab10:
+    render_manual_tab() 
+
+with tab11:
     render_user_guide_tab()
