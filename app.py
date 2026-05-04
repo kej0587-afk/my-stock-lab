@@ -5622,6 +5622,9 @@ def render_user_guide_tab():
 **⚙️ 자산 관리**  
 시드머니, 예수금, 보유 종목, 배당, 월별 로그를 관리합니다. 입력값이 틀리면 비중/추매금액 판정도 틀어집니다.
 
+**📊 포트폴리오 분석**  
+내 자산 전체의 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 확인합니다.
+
 **💸 돈흐름 레이더**  
 섹터와 ETF 흐름을 보는 곳입니다. 돈흐름 1위는 “이 섹터에서 후보를 먼저 찾아보라”는 뜻이지 즉시 매수 신호가 아닙니다.
 
@@ -5637,8 +5640,9 @@ def render_user_guide_tab():
 1. 돈흐름 레이더에서 강한 섹터 확인
 2. 전광판에서 해당 섹터 관련 종목 확인
 3. 정밀 관측소에서 타점 확인
-4. 스윙 레이더에서 체크리스트 확인
-5. 목표비중과 현재비중을 보고 최종 판단
+4. 포트폴리오 분석에서 집중도와 변동성 확인
+5. 스윙 레이더에서 체크리스트 확인
+6. 목표비중과 현재비중을 보고 최종 판단
             """)
 
     with signal_tab:
@@ -5705,6 +5709,330 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
 > 전광판은 전체 후보 확인, 정밀 관측소는 한 종목 상세 확인, 돈흐름 레이더는 강한 섹터 확인용입니다.  
 > 앱의 매수/관망 문구는 투자 권유가 아니라 판단 보조 신호입니다. 최종 매수/매도 결정은 본인이 직접 해야 합니다.
         """)
+
+def calc_series_mdd(series):
+    series = pd.Series(series).dropna()
+    if series.empty:
+        return 0.0
+
+    running_max = series.cummax()
+    drawdown = series / running_max - 1
+    return float(drawdown.min()) if not drawdown.empty else 0.0
+
+
+def get_active_portfolio_rows(holdings_table):
+    if holdings_table is None or holdings_table.empty:
+        return pd.DataFrame()
+
+    df = holdings_table.copy()
+    if "원화환산" not in df.columns or "티커" not in df.columns:
+        return pd.DataFrame()
+
+    df["원화환산"] = df["원화환산"].apply(clean_float)
+    df = df[df["원화환산"] > 0].copy()
+
+    if "bucket" in df.columns:
+        df = df[~df["bucket"].apply(lambda v: normalize_bucket(v) in ["reserve", "cash"])]
+    if "운용대상" in df.columns:
+        df = df[df["운용대상"].apply(clean_bool)]
+
+    df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+    return df.reset_index(drop=True)
+
+
+def add_portfolio_risk_note(notes, level, area, detail, suggestion):
+    notes.append({
+        "등급": level,
+        "영역": area,
+        "내용": detail,
+        "확인/조치": suggestion,
+    })
+
+
+def classify_portfolio_risk(risk_index):
+    if risk_index >= 70:
+        return "공격/위험", "#dc2626"
+    if risk_index >= 50:
+        return "주의", "#f59e0b"
+    if risk_index >= 30:
+        return "균형", "#10b981"
+    return "방어", "#3b82f6"
+
+
+def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y"):
+    total_asset = (
+        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
+    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
+
+    full_df = append_cash_rows(
+        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        total_asset,
+    )
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+    active_df = get_active_portfolio_rows(full_df)
+
+    asset_rows = []
+    price_series = {}
+    notes = []
+
+    if active_df.empty:
+        add_portfolio_risk_note(notes, "참고", "분석 대상", "운용대상 보유자산이 없습니다.", "보유 종목을 등록하면 포트폴리오 분석이 표시됩니다.")
+
+    active_value = float(active_df["원화환산"].sum()) if not active_df.empty else 0.0
+    for _, row in active_df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        name = str(row.get("자산명", "")).strip()
+        value_krw = clean_float(row.get("원화환산"), 0.0)
+        weight_total = value_krw / total_asset * 100 if total_asset > 0 else 0.0
+        weight_active = value_krw / active_value * 100 if active_value > 0 else 0.0
+
+        row_info = {
+            "자산명": name,
+            "티커": ticker,
+            "원화환산": value_krw,
+            "전체비중": weight_total,
+            "운용비중": weight_active,
+            "기간수익률": np.nan,
+            "연환산변동성": np.nan,
+            "MDD": np.nan,
+            "데이터": "부족",
+        }
+
+        try:
+            px_df = load_price_df(ticker, period)
+        except Exception:
+            px_df = pd.DataFrame()
+
+        if px_df is not None and not px_df.empty and "Close" in px_df.columns:
+            close = pd.Series(px_df["Close"]).dropna()
+            if len(close) >= 20:
+                returns = close.pct_change().dropna()
+                row_info["기간수익률"] = (float(close.iloc[-1]) / float(close.iloc[0]) - 1) * 100 if close.iloc[0] else np.nan
+                row_info["연환산변동성"] = float(returns.std() * np.sqrt(252) * 100) if not returns.empty else np.nan
+                row_info["MDD"] = calc_series_mdd(close) * 100
+                row_info["데이터"] = "정상"
+                price_series[ticker] = close.rename(ticker)
+
+        if row_info["데이터"] == "부족":
+            add_portfolio_risk_note(notes, "참고", "가격 데이터", ticker, "가격 데이터가 부족해 변동성/MDD 계산에서 제외했습니다.")
+
+        asset_rows.append(row_info)
+
+    asset_df = pd.DataFrame(asset_rows, columns=[
+        "자산명", "티커", "원화환산", "전체비중", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
+    ])
+
+    if not asset_df.empty:
+        asset_df = asset_df.sort_values("전체비중", ascending=False).reset_index(drop=True)
+
+    top1_weight = float(asset_df["전체비중"].max()) if not asset_df.empty else 0.0
+    top3_weight = float(asset_df["전체비중"].head(3).sum()) if not asset_df.empty else 0.0
+    hhi = float(((asset_df["전체비중"] / 100) ** 2).sum()) if not asset_df.empty else 0.0
+
+    portfolio_returns = pd.Series(dtype=float)
+    portfolio_curve = pd.Series(dtype=float)
+    corr_df = pd.DataFrame()
+    portfolio_vol = np.nan
+    portfolio_mdd = np.nan
+    portfolio_period_return = np.nan
+    avg_corr = np.nan
+
+    if price_series:
+        prices = pd.concat(price_series.values(), axis=1).sort_index().ffill(limit=3)
+        returns_df = prices.pct_change().replace([np.inf, -np.inf], np.nan).dropna(how="all").fillna(0.0)
+
+        usable_cols = [col for col in returns_df.columns if col in set(asset_df["티커"])]
+        if usable_cols:
+            weight_map = {
+                str(row["티커"]): clean_float(row["운용비중"], 0.0) / 100
+                for _, row in asset_df.iterrows()
+                if str(row["티커"]) in usable_cols
+            }
+            weight_sum = sum(weight_map.values())
+            if weight_sum > 0:
+                weights = pd.Series({ticker: weight / weight_sum for ticker, weight in weight_map.items()})
+                aligned_returns = returns_df[weights.index].copy()
+                portfolio_returns = aligned_returns.mul(weights, axis=1).sum(axis=1)
+                if not portfolio_returns.empty:
+                    portfolio_curve = (1 + portfolio_returns).cumprod()
+                    portfolio_vol = float(portfolio_returns.std() * np.sqrt(252) * 100)
+                    portfolio_mdd = calc_series_mdd(portfolio_curve) * 100
+                    portfolio_period_return = (float(portfolio_curve.iloc[-1]) - 1) * 100
+
+                if len(weights.index) >= 2:
+                    corr_df = aligned_returns.corr()
+                    upper = corr_df.where(np.triu(np.ones(corr_df.shape), k=1).astype(bool))
+                    avg_corr = float(np.nanmean(upper.values)) if np.isfinite(upper.values).any() else np.nan
+
+    vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
+    mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
+    concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
+    corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
+    reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
+    reserve_component = min(reserve_gap * 1.5, 15)
+    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + reserve_component, 100)
+    risk_grade, risk_color = classify_portfolio_risk(risk_index)
+
+    if top1_weight >= 35:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
+    if top3_weight >= 65:
+        add_portfolio_risk_note(notes, "주의", "집중도", f"상위 3개 자산 비중이 {top3_weight:.1f}%입니다.", "의도한 집중 투자라면 괜찮지만, 분산 목적이면 비중을 나눠보세요.")
+    if np.isfinite(portfolio_vol) and portfolio_vol >= 28:
+        add_portfolio_risk_note(notes, "주의", "변동성", f"연환산 변동성이 {portfolio_vol:.1f}%입니다.", "매수 규모와 현금 비중을 보수적으로 점검하세요.")
+    if np.isfinite(portfolio_mdd) and portfolio_mdd <= -25:
+        add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
+    if np.isfinite(avg_corr) and avg_corr >= 0.7:
+        add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
+    if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
+        add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
+
+    notes_df = pd.DataFrame(notes, columns=["등급", "영역", "내용", "확인/조치"])
+    metrics = {
+        "risk_index": risk_index,
+        "risk_grade": risk_grade,
+        "risk_color": risk_color,
+        "portfolio_vol": portfolio_vol,
+        "portfolio_mdd": portfolio_mdd,
+        "portfolio_period_return": portfolio_period_return,
+        "avg_corr": avg_corr,
+        "top1_weight": top1_weight,
+        "top3_weight": top3_weight,
+        "hhi": hhi,
+        "active_value": active_value,
+        "total_asset": total_asset,
+        "reserve_summary": reserve_summary,
+        "usable_asset_count": len(price_series),
+    }
+
+    return metrics, asset_df, notes_df, corr_df, portfolio_curve
+
+
+def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    st.subheader("포트폴리오 분석")
+    st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
+
+    period = st.selectbox(
+        "분석 기간",
+        ["6mo", "1y", "2y", "5y"],
+        index=1,
+        key="portfolio_analysis_period",
+        help="가격 데이터가 짧은 신규 ETF/종목은 일부 계산에서 제외될 수 있습니다.",
+    )
+
+    metrics, asset_df, notes_df, corr_df, portfolio_curve = build_portfolio_analysis_report(
+        holdings_table,
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        reserve_target_weight,
+        period=period,
+    )
+
+    reserve_summary = metrics["reserve_summary"]
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {metrics['risk_color']};'><b>위험도</b><br>"
+        f"<span class='highlight'>{metrics['risk_grade']}</span><br>{metrics['risk_index']:.0f}/100</div>",
+        unsafe_allow_html=True,
+    )
+    m2.metric("연환산 변동성", "-" if not np.isfinite(metrics["portfolio_vol"]) else f"{metrics['portfolio_vol']:.1f}%")
+    m3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
+    m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
+    m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
+
+    if notes_df.empty:
+        st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
+    else:
+        st.markdown("#### 위험/분산 체크")
+        st.dataframe(notes_df, use_container_width=True, hide_index=True)
+
+    if asset_df.empty:
+        st.info("분석할 운용대상 보유자산이 없습니다.")
+        return
+
+    show_df = asset_df.copy()
+    for col in ["전체비중", "운용비중", "기간수익률", "연환산변동성", "MDD"]:
+        if col in show_df.columns:
+            show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+    if "원화환산" in show_df.columns:
+        show_df["원화환산"] = show_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
+
+    st.markdown("#### 자산별 위험 지표")
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.download_button(
+        "자산별 위험 지표 CSV 다운로드",
+        data=dataframe_to_csv_bytes(asset_df),
+        file_name=f"stock_lab_portfolio_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_portfolio_analysis_csv",
+    )
+
+    chart_l, chart_r = st.columns([1.2, 1])
+    with chart_l:
+        st.markdown("#### 포트폴리오 누적 흐름")
+        if portfolio_curve is not None and not portfolio_curve.empty:
+            fig_curve = go.Figure()
+            fig_curve.add_trace(go.Scatter(
+                x=portfolio_curve.index,
+                y=(portfolio_curve - 1) * 100,
+                mode="lines",
+                name="포트폴리오",
+                line=dict(color="#38bdf8", width=2),
+            ))
+            fig_curve.update_layout(
+                template="plotly_dark",
+                height=360,
+                yaxis_title="누적수익률(%)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig_curve, use_container_width=True)
+        else:
+            st.info("누적 흐름을 계산할 가격 데이터가 부족합니다.")
+
+    with chart_r:
+        st.markdown("#### 현재 비중")
+        fig_weight = go.Figure(go.Bar(
+            x=asset_df["전체비중"],
+            y=asset_df["자산명"].where(asset_df["자산명"].astype(str).str.strip().ne(""), asset_df["티커"]),
+            orientation="h",
+            marker_color="#22c55e",
+        ))
+        fig_weight.update_layout(
+            template="plotly_dark",
+            height=360,
+            xaxis_title="전체비중(%)",
+            yaxis=dict(autorange="reversed"),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_weight, use_container_width=True)
+
+    st.markdown("#### 상관관계")
+    if corr_df is not None and not corr_df.empty and len(corr_df.columns) >= 2:
+        fig_corr = go.Figure(data=go.Heatmap(
+            z=corr_df.values,
+            x=corr_df.columns,
+            y=corr_df.index,
+            zmin=-1,
+            zmax=1,
+            colorscale="RdBu",
+            reversescale=True,
+            colorbar=dict(title="corr"),
+        ))
+        fig_corr.update_layout(
+            template="plotly_dark",
+            height=max(360, min(720, 80 + len(corr_df.columns) * 38)),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+    else:
+        st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
+
 
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
     issues.append({
@@ -5970,10 +6298,11 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "📋 전체 요약 전광판",
     "🔍 종목 정밀 관측소",
     "⚙️ 자산 관리",
+    "📊 포트폴리오 분석",
     "💸 돈흐름 레이더",
     "🎯 스윙 레이더",
     "🧪 데이터 점검",
@@ -6845,16 +7174,19 @@ with tab3:
         st.info("등록된 보유 종목이 없습니다.")
 
 with tab4:
-    render_money_flow_tab()
+    render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 with tab5:
-    render_swing_radar_tab()
+    render_money_flow_tab()
 
 with tab6:
-    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
+    render_swing_radar_tab()
 
 with tab7:
-    render_manual_tab() 
+    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
 with tab8:
+    render_manual_tab() 
+
+with tab9:
     render_user_guide_tab()
