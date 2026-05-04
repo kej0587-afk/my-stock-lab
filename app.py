@@ -5771,6 +5771,33 @@ def classify_corr_value(value):
     return "반대", "반대로 움직이는 경향이 있어 변동성 완충에 도움이 될 수 있습니다."
 
 
+def build_asset_label_map(asset_df):
+    if asset_df is None or asset_df.empty or "티커" not in asset_df.columns:
+        return {}
+
+    base_by_ticker = {}
+    label_counts = {}
+    for _, row in asset_df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        if not ticker:
+            continue
+        name = str(row.get("자산명", "")).strip()
+        base_label = name if name else ticker
+        base_by_ticker[ticker] = base_label
+        label_counts[base_label] = label_counts.get(base_label, 0) + 1
+
+    label_map = {}
+    used_labels = set()
+    for ticker, base_label in base_by_ticker.items():
+        label = f"{base_label} ({ticker})" if label_counts.get(base_label, 0) > 1 else base_label
+        if label in used_labels:
+            label = f"{base_label} ({ticker})"
+        label_map[ticker] = label
+        used_labels.add(label)
+
+    return label_map
+
+
 def build_correlation_pair_summary(corr_df):
     if corr_df is None or corr_df.empty or len(corr_df.columns) < 2:
         return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
@@ -5803,6 +5830,7 @@ def build_correlation_pair_summary(corr_df):
 def render_correlation_interpretation(corr_df, avg_corr):
     st.markdown("""
 **읽는 법**
+- 화면 표시는 티커가 아니라 자산명 기준입니다. 같은 자산명이 있으면 뒤에 티커를 붙여 구분합니다.
 - 빨강에 가까울수록 같이 움직입니다. 여러 종목을 들고 있어도 한 방향으로 크게 흔들릴 수 있습니다.
 - 흰색에 가까울수록 관계가 약합니다. 분산 효과가 상대적으로 있습니다.
 - 파랑에 가까울수록 반대로 움직입니다. 하락 방어에 도움이 될 수 있지만 수익도 서로 상쇄될 수 있습니다.
@@ -5892,6 +5920,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
 
     if not asset_df.empty:
         asset_df = asset_df.sort_values("전체비중", ascending=False).reset_index(drop=True)
+    asset_label_map = build_asset_label_map(asset_df)
 
     top1_weight = float(asset_df["전체비중"].max()) if not asset_df.empty else 0.0
     top3_weight = float(asset_df["전체비중"].head(3).sum()) if not asset_df.empty else 0.0
@@ -5931,6 +5960,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     corr_df = aligned_returns.corr()
                     upper = corr_df.where(np.triu(np.ones(corr_df.shape), k=1).astype(bool))
                     avg_corr = float(np.nanmean(upper.values)) if np.isfinite(upper.values).any() else np.nan
+                    corr_df = corr_df.rename(index=asset_label_map, columns=asset_label_map)
 
     vol_component = min(max(float(portfolio_vol) if np.isfinite(portfolio_vol) else 0.0, 0.0) * 1.1, 30)
     mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
@@ -6105,8 +6135,13 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         fig_corr.update_layout(
             template="plotly_dark",
             height=max(360, min(720, 80 + len(corr_df.columns) * 38)),
-            xaxis_title="빨강=같이 움직임 / 흰색=관계 약함 / 파랑=반대 움직임",
-            yaxis=dict(autorange="reversed"),
+            xaxis=dict(
+                title="빨강=같이 움직임 / 흰색=관계 약함 / 파랑=반대 움직임",
+                tickangle=-35,
+                automargin=True,
+            ),
+            yaxis=dict(autorange="reversed", automargin=True),
+            margin=dict(l=120, r=40, t=30, b=110),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
