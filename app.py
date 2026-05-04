@@ -218,7 +218,7 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig):
 
 def get_fin_label_map():
     return {
-        0: "0점 (ETF/해당없음)",
+        0: "해당없음 (ETF/ETN/레버리지)",
         1: "1점 (🚨F급/처분)",
         2: "2점 (⚠️불안정/주의)",
         3: "3점 (✅회복형/중간형)",
@@ -559,15 +559,27 @@ def save_holdings_db(df):
         if not ticker_value:
             continue
 
+        name_value = str(row.get("name", "")).strip()
+        asset_class = str(row.get("asset_class", "")).strip()
+        is_fin_exempt = is_fin_score_exempt_asset(
+            ticker_value,
+            row.get("is_etf", False),
+            asset_class,
+            name_value,
+        )
+        if is_fin_exempt:
+            asset_class = infer_asset_class_for_ticker(ticker_value, asset_class)
+            mark_fin_score_not_applicable_db(ticker_value)
+
         rows.append({
             "owner_email": CURRENT_USER_EMAIL,
             "ticker": ticker_value,
-            "name": str(row.get("name", "")).strip(),
+            "name": name_value,
             "qty": clean_float(row.get("qty")),
             "avg_price": clean_float(row.get("avg_price")),
             "target_weight": clean_float(row.get("target_weight")),
-            "asset_class": str(row.get("asset_class", "")).strip(),
-            "is_etf": clean_bool(row.get("is_etf", False)),
+            "asset_class": asset_class,
+            "is_etf": is_fin_exempt,
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
         })
 
@@ -669,12 +681,19 @@ def load_watchlist_db():
     rows = sorted(res.data or [], key=lambda r: (int(r.get("sort_order") or 0), str(r.get("name") or "")))
     items = []
     for row in rows:
+        name = str(row.get("name", "")).strip()
+        ticker = str(row.get("ticker", "")).strip()
+        asset_class = str(row.get("asset_class", "")).strip()
+        is_fin_exempt = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
+        if is_fin_exempt:
+            asset_class = infer_asset_class_for_ticker(ticker, asset_class)
+
         items.append({
-            "name": str(row.get("name", "")).strip(),
-            "ticker": str(row.get("ticker", "")).strip(),
-            "is_etf": clean_bool(row.get("is_etf", False)),
-            "asset_class": str(row.get("asset_class", "")).strip(),
-            "fin_score": clean_int(row.get("fin_score")),
+            "name": name,
+            "ticker": ticker,
+            "is_etf": is_fin_exempt,
+            "asset_class": asset_class,
+            "fin_score": 0 if is_fin_exempt else clean_int(row.get("fin_score")),
         })
     return [x for x in items if x["ticker"]]
 
@@ -686,14 +705,21 @@ def save_watchlist_db(watchlist):
         if not ticker:
             continue
 
+        name = str(item.get("name", "")).strip()
+        asset_class = str(item.get("asset_class", "")).strip()
+        is_fin_exempt = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), asset_class, name)
+        if is_fin_exempt:
+            asset_class = infer_asset_class_for_ticker(ticker, asset_class)
+            mark_fin_score_not_applicable_db(ticker)
+
         rows.append({
             "owner_email": CURRENT_USER_EMAIL,
             "ticker": ticker,
-            "name": str(item.get("name", "")).strip(),
-            "is_etf": clean_bool(item.get("is_etf", False)),
-            "asset_class": str(item.get("asset_class", "")).strip(),
+            "name": name,
+            "is_etf": is_fin_exempt,
+            "asset_class": asset_class,
             "sort_order": idx,
-            "fin_score": clean_int(item.get("fin_score")),
+            "fin_score": 0 if is_fin_exempt else clean_int(item.get("fin_score")),
         })
 
     if not rows:
@@ -1054,6 +1080,23 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
     )
 
 
+def mark_fin_score_not_applicable_db(ticker, reason="ETF/ETN/레버리지 상품"):
+    upsert_fin_score_db(
+        ticker=ticker,
+        auto_score=0,
+        manual_score=None,
+        final_score=0,
+        source="not_applicable",
+        notes={
+            "mode": "not_applicable",
+            "messages": [f"{reason}: 재무점수 해당없음", "기존 수동 재무점수는 적용하지 않습니다."],
+            "annual_judgements": {},
+            "quarter_judgements": {},
+            "weighted_scores": {},
+        },
+    )
+
+
 def delete_manual_fin_score_db(ticker):
     key = normalize_ticker(ticker)
     fin_scores_df = load_fin_scores_db()
@@ -1164,7 +1207,9 @@ KNOWN_US_OTHER_ETFS = {
     "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
     "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
     "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
-    "IYW",
+    "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
+    "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
+    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
 }
 KNOWN_KR_ETF_SYMBOLS = {
     "379810", "379800", "458730", "069500", "229200", "396500", "139260",
@@ -1172,6 +1217,12 @@ KNOWN_KR_ETF_SYMBOLS = {
     "479850", "139250", "139270", "244580", "329200", "139220", "491010",
     "487230",
 }
+
+FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
+KR_ETF_NAME_KEYWORDS = (
+    "ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR",
+    "HANARO", "KOSEF", "ARIRANG", "TIMEFOLIO", "히어로즈", "액티브", "레버리지", "인버스"
+)
 
 US_TECH_OR_GROWTH_TICKERS = {
     "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
@@ -2118,7 +2169,7 @@ def load_fin_score_meta_fast(ticker, is_etf):
         return 0, {
             "auto_score": 0, "manual_score": None, "final_score": 0,
             "source": "etf", "mode": "ETF", "metrics": {},
-            "notes": {"mode": "ETF", "messages": ["ETF는 재무점수 0점 고정"], "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {}},
+            "notes": {"mode": "ETF", "messages": ["ETF/ETN/레버리지 상품은 재무점수 해당없음"], "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {}},
         }
 
     fin_scores_df = load_fin_scores_db()
@@ -2179,10 +2230,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
 
         bucket = infer_bucket(ticker, row.get("bucket", "core"))
 
-        raw_is_etf = row.get("is_etf", False)
-        if isinstance(raw_is_etf, str): is_etf = raw_is_etf.strip().lower() in ["true", "1", "yes", "y"]
-        else: is_etf = bool(raw_is_etf)
-        is_etf = is_etf or is_known_etf_ticker(ticker)
+        is_etf = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
         px_df = load_price_df(ticker, "1mo")
@@ -3613,9 +3661,25 @@ def is_known_etf_ticker(ticker):
         or raw.endswith("ETF")
     )
 
+def asset_class_marks_fin_score_exempt(asset_class):
+    text = str(asset_class or "").strip().lower()
+    return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
+
+def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
+    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
+        return True
+
+    # 국내 ETF/ETN은 신규 상품이 많아 티커 목록만으로는 누락될 수 있다.
+    # 이름에 ETF 브랜드/레버리지/인버스 단서가 있으면 재무점수 대상에서 제외한다.
+    name_upper = str(name or "").strip().upper()
+    if is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS):
+        return True
+
+    return False
+
 def infer_asset_class_for_ticker(ticker, current_asset_class=""):
     current = str(current_asset_class or "").strip()
-    if not is_known_etf_ticker(ticker):
+    if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
         return current
 
     symbol = clean_symbol(ticker)
@@ -3624,10 +3688,12 @@ def infer_asset_class_for_ticker(ticker, current_asset_class=""):
             return "us_etf_nasdaq"
         if symbol in {"379800", "458730"}:
             return "us_etf_sp"
-        return "kr_etf"
+        return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
 
     if symbol in KNOWN_US_SP_ETFS:
         return "us_etf_sp"
+    if asset_class_marks_fin_score_exempt(current):
+        return current
     return "us_etf_nasdaq"
 
 def get_rs_benchmark(ticker, asset_class):
@@ -4286,7 +4352,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     for item in watchlist_items:
         name = item["name"]
         tkr = item["ticker"]
-        is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(tkr)
+        is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
         a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
         df = load_price_df(tkr, "1y")
@@ -4315,7 +4381,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
             "전광판그룹": get_dashboard_group_label(tkr, is_etf),
             "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
-            "재무점수": "ETF 0점" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
+            "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
             "시장벤치": get_benchmark_display_name(market_bench),
             "기초자산": underlying_asset if underlying_bench else "-",
             "기초벤치": get_benchmark_display_name(underlying_bench) if underlying_bench else "-",
@@ -4390,7 +4456,7 @@ def get_swing_template(ticker, is_etf=False, asset_class=""):
     key = normalize_ticker(ticker)
     if key in SWING_TEMPLATE_MAP:
         return dict(SWING_TEMPLATE_MAP[key])
-    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or "etf" in str(asset_class or "").lower():
+    if is_fin_score_exempt_asset(ticker, is_etf, asset_class):
         return dict(DEFAULT_SWING_ETF_TEMPLATE)
     return dict(DEFAULT_SWING_TEMPLATE)
 
@@ -4413,8 +4479,9 @@ def make_swing_candidate_row(name, ticker, asset_class="", is_etf=False):
 
 def infer_swing_row_is_etf(row):
     ticker = str(row.get("ticker", "")).strip()
-    asset_class = str(row.get("asset_class", "")).strip().lower()
-    return is_known_etf_ticker(ticker) or "etf" in asset_class
+    asset_class = str(row.get("asset_class", "")).strip()
+    name = str(row.get("name", "")).strip()
+    return is_fin_score_exempt_asset(ticker, False, asset_class, name)
 
 
 def fill_empty_swing_templates(df):
@@ -4485,7 +4552,7 @@ def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class="", 
     asset_class_text = str(asset_class or "").strip().lower()
     if asset_class_text in ["cash", "reserve", "krw_cash", "usd_cash"]:
         return False
-    if (not include_etf) and (clean_bool(is_etf) or is_known_etf_ticker(ticker) or "etf" in asset_class_text):
+    if (not include_etf) and is_fin_score_exempt_asset(ticker, is_etf, asset_class_text):
         return False
     return True
 
@@ -4493,7 +4560,7 @@ def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class="", 
 def is_known_non_swing_asset(ticker, asset_class="", include_etf=False):
     if is_swing_excluded_ticker(ticker):
         return True
-    if (not include_etf) and ("etf" in str(asset_class or "").strip().lower() or is_known_etf_ticker(ticker)):
+    if (not include_etf) and is_fin_score_exempt_asset(ticker, False, asset_class):
         return True
 
     if holdings_df is not None and not holdings_df.empty:
@@ -4528,7 +4595,7 @@ def get_current_stock_candidates(include_etf=False):
     if "watchlist" in st.session_state:
         for item in st.session_state.watchlist:
             ticker = str(item.get("ticker", "")).strip()
-            is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(ticker)
+            is_etf = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), item.get("asset_class", ""), item.get("name", ""))
             asset_class = infer_asset_class_for_ticker(ticker, item.get("asset_class", "")) if is_etf else str(item.get("asset_class", "")).strip()
             if not is_swing_candidate_allowed(
                 ticker,
@@ -4548,7 +4615,7 @@ def get_current_stock_candidates(include_etf=False):
     if holdings_df is not None and not holdings_df.empty:
         for _, row in holdings_df.iterrows():
             ticker = str(row.get("ticker", "")).strip()
-            is_etf = clean_bool(row.get("is_etf", False)) or is_known_etf_ticker(ticker)
+            is_etf = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), row.get("asset_class", ""), row.get("name", ""))
             asset_class = infer_asset_class_for_ticker(ticker, row.get("asset_class", "")) if is_etf else str(row.get("asset_class", "")).strip()
             if not is_swing_candidate_allowed(
                 ticker,
@@ -4682,13 +4749,13 @@ def get_swing_item_context(row):
     asset_class = str(row.get("asset_class", "")).strip()
     avg_price = 0.0
     has_pos = False
-    is_etf = is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
+    is_etf = is_fin_score_exempt_asset(ticker, False, asset_class, name)
 
     holding_row = get_holding_row_by_ticker(holdings_table, ticker)
     if holding_row is not None:
         name = str(holding_row.get("자산명", name)).strip() or name
         asset_class = str(holding_row.get("asset_class", asset_class)).strip() or asset_class
-        is_etf = clean_bool(holding_row.get("is_etf", False)) or is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
+        is_etf = is_fin_score_exempt_asset(ticker, holding_row.get("is_etf", False), asset_class, name)
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
         avg_price = clean_float(holding_row.get("매입가"), 0.0)
         has_pos = clean_float(holding_row.get("보유량"), 0.0) > 0
@@ -4697,7 +4764,7 @@ def get_swing_item_context(row):
         if item:
             name = str(item.get("name", name)).strip() or name
             asset_class = str(item.get("asset_class", asset_class)).strip() or asset_class
-            is_etf = clean_bool(item.get("is_etf", False)) or is_known_etf_ticker(ticker) or "etf" in asset_class.lower()
+            is_etf = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), asset_class, name)
             asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
     return name, ticker, asset_class, avg_price, has_pos, is_etf
@@ -4794,7 +4861,7 @@ def render_swing_radar_tab():
         with add_cols[3]:
             new_swing_asset_class = st.selectbox(
                 "분류",
-                ["us_stock", "kr_stock", "us_etf_nasdaq", "us_etf_sp", "kr_etf"],
+                ["us_stock", "kr_stock", "us_etf_nasdaq", "us_etf_sp", "us_etf_other", "kr_etf", "kr_etn", "us_etn", "fund"],
                 index=2 if new_swing_is_etf else 0,
                 key="new_swing_asset_class",
             )
@@ -4805,7 +4872,7 @@ def render_swing_radar_tab():
             elif is_swing_excluded_ticker(new_swing_ticker):
                 st.warning("현금/대기자금/파킹자산은 스윙 후보에 추가하지 않습니다.")
             else:
-                inferred_is_etf = new_swing_is_etf or is_known_etf_ticker(new_swing_ticker) or "etf" in new_swing_asset_class
+                inferred_is_etf = is_fin_score_exempt_asset(new_swing_ticker, new_swing_is_etf, new_swing_asset_class, new_swing_name)
                 inferred_asset_class = infer_asset_class_for_ticker(new_swing_ticker, new_swing_asset_class) if inferred_is_etf else new_swing_asset_class
                 new_row = make_swing_candidate_row(
                     new_swing_name or new_swing_ticker,
@@ -5122,7 +5189,7 @@ def render_manual_tab():
 
 1. 가격 데이터를 불러오고 이동평균, RSI, MFI, MACD, 볼린저 %B, SQZ를 계산합니다.
 2. 종목이 벤치마크보다 강한지 RS로 비교합니다.
-3. 개별주는 재무점수를 더하고, ETF는 재무점수 0점으로 봅니다.
+3. 개별주는 재무점수를 더하고, ETF/ETN/레버리지 상품은 재무점수 해당없음으로 봅니다.
 4. 금리, 환율, VIX, MOVE 같은 매크로 위험을 패널티로 반영합니다.
 5. 마지막으로 보유 여부, 평단가, 현재비중, 목표비중을 보고 최종 타점 문구를 정합니다.
 
@@ -5177,7 +5244,7 @@ RSI 30 이하이거나 하락 추세 속 ADJ가 높을 때 뜹니다. 반등 가
         with st.expander("점수 체계 한눈에 보기"):
             st.markdown("""
 **재무점수**  
-- ETF: 0점 고정
+- ETF/ETN/레버리지 상품: 해당없음
 - 1점: F급/처분 후보
 - 2점: 불안정/주의
 - 3점: 회복형/중간형
@@ -5381,7 +5448,7 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
 - 돈흐름 레이더는 실제 ETF 자금 유입액이 아니라 가격 기반 모멘텀입니다.
 - 목표비중을 입력하지 않으면 비중 기반 판정이 약해집니다.
 - 개별주는 재무점수와 섹터 흐름을 함께 봐야 합니다.
-- ETF는 재무점수 0점 고정이고, 기술/돈흐름/비중 중심으로 봅니다.
+- ETF/ETN/레버리지 상품은 재무점수 해당없음이고, 기술/돈흐름/비중 중심으로 봅니다.
 
 ### 질문이 많을 때 답변 템플릿
 
@@ -5497,7 +5564,7 @@ with tab2:
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
         known_nasdaq_etfs = {"QQQ", "QQQM", "QLD", "TQQQ", "379810.KS"}
         ticker_norm = normalize_ticker(tkr)
-        is_etf = is_known_etf_ticker(tkr)
+        is_etf = is_fin_score_exempt_asset(tkr)
         
         if is_etf:
             a_class = infer_asset_class_for_ticker(tkr)
@@ -5510,7 +5577,7 @@ with tab2:
         watch_item = selected_option.get("item", {})
         name = str(watch_item.get("name", "")).strip() or str(watch_item.get("ticker", "")).strip()
         tkr = str(watch_item.get("ticker", "")).strip()
-        is_etf = clean_bool(watch_item.get("is_etf", False)) or is_known_etf_ticker(tkr)
+        is_etf = is_fin_score_exempt_asset(tkr, watch_item.get("is_etf", False), watch_item.get("asset_class", ""), name)
         a_class = infer_asset_class_for_ticker(tkr, watch_item.get("asset_class", "")) if is_etf else str(watch_item.get("asset_class", "")).strip()
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
     else:
@@ -5531,6 +5598,31 @@ with tab2:
 
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
+
+    auto_fin_exempt = is_fin_score_exempt_asset(tkr, is_etf, a_class, name)
+    fin_exempt_selected = st.checkbox(
+        "ETF/ETN/레버리지 상품: 재무점수 해당없음",
+        value=auto_fin_exempt,
+        disabled=is_known_etf_ticker(tkr),
+        key=f"fin_score_exempt_{fin_key}",
+        help="체크하면 재무점수 수동 선택을 쓰지 않고 해당 종목의 재무점수를 '해당없음'으로 처리합니다.",
+    )
+    if is_known_etf_ticker(tkr):
+        fin_exempt_selected = True
+
+    if fin_exempt_selected:
+        is_etf = True
+        a_class = infer_asset_class_for_ticker(tkr, a_class)
+        marker_key = f"fin_score_exempt_marked_{fin_key}"
+        if not st.session_state.get(marker_key, False):
+            mark_fin_score_not_applicable_db(tkr)
+            st.session_state[marker_key] = True
+    else:
+        is_etf = False
+        st.session_state[f"fin_score_exempt_marked_{fin_key}"] = False
+        if asset_class_marks_fin_score_exempt(a_class):
+            a_class = "kr_stock" if is_kr_listed(tkr) else "us_stock"
+
     fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
     fin_score = int(fin_score)
     
@@ -5607,7 +5699,7 @@ with tab2:
             for msg in messages: st.write("-", msg)
 
     if is_etf:
-        st.info("ETF는 재무점수 0점 고정입니다. 수동 재무점수도 적용하지 않습니다.")
+        st.info("ETF/ETN/레버리지 상품은 재무점수 해당없음입니다. 수동 재무점수도 적용하지 않습니다.")
     else:
         had_manual = fin_meta.get("manual_score") is not None
         manual_override = st.checkbox("재무점수 수동 수정", value=had_manual, key=f"manual_fin_{fin_key}")
@@ -5837,6 +5929,15 @@ with tab3:
         use_container_width=True,
         key="holdings_editor",
         column_config={
+            "is_etf": st.column_config.CheckboxColumn(
+                "ETF/ETN/레버리지",
+                help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
+            ),
+            "asset_class": st.column_config.SelectboxColumn(
+                "asset_class",
+                options=["", "kr_stock", "us_stock", "us_stock_tech", "us_stock_growth", "kr_etf", "us_etf_sp", "us_etf_nasdaq", "us_etf_other", "kr_etn", "us_etn", "fund"],
+                help="ETF/ETN/레버리지 상품은 ETF/ETN 계열로 선택"
+            ),
             "bucket": st.column_config.SelectboxColumn(
                 "bucket",
                 options=["core", "swing", "reserve"],
