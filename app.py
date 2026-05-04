@@ -5625,6 +5625,9 @@ def render_user_guide_tab():
 **📊 포트폴리오 분석**  
 내 자산 전체의 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 확인합니다.
 
+**📉 시나리오 점검**  
+전체 하락, 개별 자산 충격, 대기자금 확대 같은 가정을 넣어 손실 규모를 미리 계산해 봅니다.
+
 **💸 돈흐름 레이더**  
 섹터와 ETF 흐름을 보는 곳입니다. 돈흐름 1위는 “이 섹터에서 후보를 먼저 찾아보라”는 뜻이지 즉시 매수 신호가 아닙니다.
 
@@ -5641,8 +5644,9 @@ def render_user_guide_tab():
 2. 전광판에서 해당 섹터 관련 종목 확인
 3. 정밀 관측소에서 타점 확인
 4. 포트폴리오 분석에서 집중도와 변동성 확인
-5. 스윙 레이더에서 체크리스트 확인
-6. 목표비중과 현재비중을 보고 최종 판단
+5. 시나리오 점검에서 하락 시 손실 규모 확인
+6. 스윙 레이더에서 체크리스트 확인
+7. 목표비중과 현재비중을 보고 최종 판단
             """)
 
     with signal_tab:
@@ -6151,6 +6155,255 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
 
 
+def format_scenario_money(value):
+    return f"{clean_float(value):,.0f}원"
+
+
+def format_scenario_pct(value):
+    return f"{clean_float(value):.1f}%"
+
+
+def infer_scenario_shock_multiplier(row):
+    ticker = str(row.get("티커", row.get("ticker", ""))).strip().upper()
+    name = str(row.get("자산명", row.get("name", ""))).strip().upper()
+    asset_class = str(row.get("asset_class", "")).strip().upper()
+    text = f"{ticker} {name} {asset_class}"
+
+    inverse = any(keyword in text for keyword in [
+        "INVERSE", "인버스", "곱버스", "BEAR", "SHORT", "SQQQ", "SOXS", "SPXU", "SDS", "PSQ", "SH",
+    ])
+
+    multiplier = 1.0
+    if any(keyword in text for keyword in ["3X", "3배", "TQQQ", "SOXL", "SQQQ", "SOXS", "SPXL", "SPXU", "UPRO", "TECL", "FNGU", "BULZ"]):
+        multiplier = 3.0
+    elif any(keyword in text for keyword in ["2X", "2배", "QLD", "SSO", "ROM", "USD", "UWM", "SDS", "QID"]):
+        multiplier = 2.0
+    elif any(keyword in text for keyword in ["레버리지", "LEVERAGE", "LEVERAGED"]):
+        multiplier = 2.0
+
+    return -multiplier if inverse else multiplier
+
+
+def build_scenario_context(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    total_asset = (
+        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
+    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
+    full_df = append_cash_rows(
+        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        total_asset,
+    )
+    active_df = get_active_portfolio_rows(full_df)
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+    label_map = build_asset_label_map(active_df)
+
+    return {
+        "total_asset": total_asset,
+        "full_df": full_df,
+        "active_df": active_df,
+        "reserve_summary": reserve_summary,
+        "label_map": label_map,
+    }
+
+
+def calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier=True):
+    if active_df is None or active_df.empty:
+        return pd.DataFrame(columns=["자산", "티커", "현재금액", "현재비중", "적용충격", "예상손익", "충격후금액", "충격배수"])
+
+    label_map = build_asset_label_map(active_df)
+    rows = []
+    for _, row in active_df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        value = clean_float(row.get("원화환산"), 0.0)
+        multiplier = infer_scenario_shock_multiplier(row) if use_multiplier else 1.0
+        applied_shock = clean_float(shock_pct, 0.0) * multiplier
+        pnl = value * applied_shock / 100
+        rows.append({
+            "자산": label_map.get(ticker, str(row.get("자산명", "")).strip() or ticker),
+            "티커": ticker,
+            "현재금액": value,
+            "현재비중": value / total_asset * 100 if total_asset > 0 else 0.0,
+            "적용충격": applied_shock,
+            "예상손익": pnl,
+            "충격후금액": max(value + pnl, 0.0),
+            "충격배수": multiplier,
+        })
+
+    return pd.DataFrame(rows).sort_values("예상손익").reset_index(drop=True)
+
+
+def build_market_scenario_summary(active_df, total_asset, shock_values, use_multiplier=True):
+    rows = []
+    for shock_pct in shock_values:
+        detail_df = calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier)
+        total_pnl = float(detail_df["예상손익"].sum()) if not detail_df.empty else 0.0
+        after_asset = total_asset + total_pnl
+        rows.append({
+            "시나리오": f"운용자산 {shock_pct:+.0f}%",
+            "기본충격": shock_pct,
+            "예상손익": total_pnl,
+            "충격후자산": after_asset,
+            "총자산변화율": total_pnl / total_asset * 100 if total_asset > 0 else 0.0,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def build_cash_buffer_scenario(active_df, total_asset, reserve_summary, target_waiting_pct, shock_pct, use_multiplier=True):
+    active_value = float(active_df["원화환산"].sum()) if active_df is not None and not active_df.empty else 0.0
+    current_waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_waiting_pct = clean_float(target_waiting_pct, current_waiting_pct)
+    additional_waiting = max(total_asset * (target_waiting_pct - current_waiting_pct) / 100, 0.0)
+
+    current_detail = calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier)
+    current_loss = float(current_detail["예상손익"].sum()) if not current_detail.empty else 0.0
+
+    if active_value <= 0:
+        rebalanced_loss = current_loss
+    else:
+        exposure_ratio = max((active_value - additional_waiting) / active_value, 0.0)
+        rebalanced_loss = current_loss * exposure_ratio
+
+    return {
+        "current_waiting_pct": current_waiting_pct,
+        "target_waiting_pct": target_waiting_pct,
+        "additional_waiting": additional_waiting,
+        "current_loss": current_loss,
+        "rebalanced_loss": rebalanced_loss,
+        "loss_reduction": rebalanced_loss - current_loss,
+        "current_after_asset": total_asset + current_loss,
+        "rebalanced_after_asset": total_asset + rebalanced_loss,
+    }
+
+
+def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    st.subheader("시나리오 점검")
+    st.caption("미래 예측이 아니라 현재 보유자산에 가상의 충격률을 넣어보는 읽기 전용 점검입니다.")
+
+    context = build_scenario_context(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+    total_asset = context["total_asset"]
+    active_df = context["active_df"]
+    reserve_summary = context["reserve_summary"]
+
+    if active_df.empty:
+        st.info("시나리오를 계산할 운용대상 보유자산이 없습니다.")
+        return
+
+    use_multiplier = st.checkbox(
+        "레버리지/인버스 배수 추정 반영",
+        value=True,
+        key="scenario_use_leverage_multiplier",
+        help="TQQQ, QLD, 레버리지, 인버스 같은 단서를 보고 충격률을 2배/3배 또는 반대로 추정합니다.",
+    )
+
+    scenario_shocks = [-5, -10, -20, -30]
+    summary_df = build_market_scenario_summary(active_df, total_asset, scenario_shocks, use_multiplier)
+    selected_shock = st.select_slider(
+        "상세 분석 충격률",
+        options=[-5, -10, -15, -20, -25, -30, -40, -50],
+        value=-20,
+        key="scenario_selected_shock",
+    )
+    detail_df = calc_asset_shock_table(active_df, total_asset, selected_shock, use_multiplier)
+    selected_pnl = float(detail_df["예상손익"].sum()) if not detail_df.empty else 0.0
+    selected_after = total_asset + selected_pnl
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("현재 총자산", format_scenario_money(total_asset))
+    s2.metric(f"{selected_shock}% 충격 손익", format_scenario_money(selected_pnl))
+    s3.metric("충격 후 총자산", format_scenario_money(selected_after))
+    s4.metric("총자산 변화율", format_scenario_pct(selected_pnl / total_asset * 100 if total_asset > 0 else 0.0))
+
+    st.markdown("#### 전체 하락 시나리오")
+    show_summary = summary_df.copy()
+    for col in ["예상손익", "충격후자산"]:
+        show_summary[col] = show_summary[col].apply(format_scenario_money)
+    show_summary["총자산변화율"] = show_summary["총자산변화율"].apply(format_scenario_pct)
+    st.dataframe(show_summary, use_container_width=True, hide_index=True)
+
+    fig_summary = go.Figure(go.Bar(
+        x=summary_df["시나리오"],
+        y=summary_df["예상손익"],
+        marker_color=["#ef4444" if v < 0 else "#22c55e" for v in summary_df["예상손익"]],
+        hovertemplate="%{x}<br>예상손익: ₩%{y:,.0f}<extra></extra>",
+    ))
+    fig_summary.update_layout(
+        template="plotly_dark",
+        height=320,
+        yaxis_title="예상손익(원)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig_summary, use_container_width=True)
+
+    st.markdown("#### 손실 기여 상위")
+    top_loss_df = detail_df.sort_values("예상손익").head(10).copy()
+    show_loss_df = top_loss_df.copy()
+    for col in ["현재금액", "예상손익", "충격후금액"]:
+        show_loss_df[col] = show_loss_df[col].apply(format_scenario_money)
+    for col in ["현재비중", "적용충격"]:
+        show_loss_df[col] = show_loss_df[col].apply(format_scenario_pct)
+    show_loss_df["충격배수"] = show_loss_df["충격배수"].apply(lambda v: f"{clean_float(v):.1f}x")
+    st.dataframe(show_loss_df, use_container_width=True, hide_index=True)
+
+    asset_options = list(detail_df["자산"]) if not detail_df.empty else []
+    if asset_options:
+        st.markdown("#### 개별 자산 충격")
+        a1, a2 = st.columns([2, 1])
+        with a1:
+            selected_asset = st.selectbox("자산 선택", asset_options, key="single_asset_scenario_target")
+        with a2:
+            asset_shock = st.slider("자산 충격률", min_value=-80, max_value=50, value=-20, step=5, key="single_asset_scenario_shock")
+
+        selected_row = detail_df[detail_df["자산"] == selected_asset].iloc[0]
+        asset_value = clean_float(selected_row["현재금액"], 0.0)
+        single_pnl = asset_value * clean_float(asset_shock) / 100
+        single_after_total = total_asset + single_pnl
+        c1, c2, c3 = st.columns(3)
+        c1.metric("해당 자산 현재금액", format_scenario_money(asset_value))
+        c2.metric("개별 충격 손익", format_scenario_money(single_pnl))
+        c3.metric("충격 후 총자산", format_scenario_money(single_after_total))
+
+    st.markdown("#### 대기자금 방어 시뮬레이션")
+    target_waiting_default = int(round(max(reserve_summary.get("waiting_pct", 0.0), reserve_target_weight)))
+    target_waiting_default = min(max(target_waiting_default, 0), 80)
+    b1, b2 = st.columns([1, 1])
+    with b1:
+        target_waiting_pct = st.slider(
+            "목표 대기자금 비중",
+            min_value=0,
+            max_value=80,
+            value=target_waiting_default,
+            step=5,
+            key="scenario_target_waiting_pct",
+        )
+    with b2:
+        buffer_shock = st.select_slider(
+            "방어 효과 계산 충격률",
+            options=[-5, -10, -15, -20, -25, -30, -40, -50],
+            value=selected_shock,
+            key="scenario_buffer_shock",
+        )
+
+    buffer = build_cash_buffer_scenario(active_df, total_asset, reserve_summary, target_waiting_pct, buffer_shock, use_multiplier)
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("현재 대기자금", format_scenario_pct(buffer["current_waiting_pct"]))
+    d2.metric("추가 확보 필요", format_scenario_money(buffer["additional_waiting"]))
+    d3.metric("현재 구조 손익", format_scenario_money(buffer["current_loss"]))
+    d4.metric("목표 구조 손익", format_scenario_money(buffer["rebalanced_loss"]))
+
+    if buffer["additional_waiting"] > 0 and buffer["loss_reduction"] > 0:
+        st.success(f"목표 대기자금까지 올리면 {buffer_shock}% 충격에서 손실을 약 {format_scenario_money(buffer['loss_reduction'])} 줄이는 계산입니다.")
+    elif buffer["additional_waiting"] <= 0:
+        st.info("현재 대기자금 비중이 목표 이상입니다.")
+    else:
+        st.info("대기자금 조정 효과가 작거나 계산할 운용자산이 부족합니다.")
+
+    st.warning("이 탭은 가정 계산입니다. 실제 시장에서는 종목별 하락률, 환율, 괴리율, 레버리지 일일복리 효과가 다르게 나타날 수 있습니다.")
+
+
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
     issues.append({
         "등급": severity,
@@ -6415,11 +6668,12 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "📋 전체 요약 전광판",
     "🔍 종목 정밀 관측소",
     "⚙️ 자산 관리",
     "📊 포트폴리오 분석",
+    "📉 시나리오 점검",
     "💸 돈흐름 레이더",
     "🎯 스윙 레이더",
     "🧪 데이터 점검",
@@ -7294,16 +7548,19 @@ with tab4:
     render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 with tab5:
-    render_money_flow_tab()
+    render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
 with tab6:
-    render_swing_radar_tab()
+    render_money_flow_tab()
 
 with tab7:
-    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
+    render_swing_radar_tab()
 
 with tab8:
-    render_manual_tab() 
+    render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
 with tab9:
+    render_manual_tab() 
+
+with tab10:
     render_user_guide_tab()
