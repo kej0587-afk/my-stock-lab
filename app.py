@@ -5759,6 +5759,71 @@ def classify_portfolio_risk(risk_index):
     return "방어", "#3b82f6"
 
 
+def classify_corr_value(value):
+    if value >= 0.8:
+        return "매우 높음", "거의 같은 방향으로 움직입니다. 분산 효과가 낮습니다."
+    if value >= 0.5:
+        return "높음", "비슷한 방향으로 움직이는 편입니다."
+    if value > 0.3:
+        return "보통", "어느 정도 같은 방향성이 있습니다."
+    if value >= -0.3:
+        return "낮음", "서로 크게 묶여 움직이지 않습니다."
+    return "반대", "반대로 움직이는 경향이 있어 변동성 완충에 도움이 될 수 있습니다."
+
+
+def build_correlation_pair_summary(corr_df):
+    if corr_df is None or corr_df.empty or len(corr_df.columns) < 2:
+        return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
+
+    rows = []
+    cols = list(corr_df.columns)
+    for i, left in enumerate(cols):
+        for j in range(i + 1, len(cols)):
+            right = cols[j]
+            value = clean_float(corr_df.loc[left, right], np.nan)
+            if not np.isfinite(value):
+                continue
+            label, meaning = classify_corr_value(value)
+            rows.append({
+                "자산 A": left,
+                "자산 B": right,
+                "상관계수": value,
+                "구분": label,
+                "해석": meaning,
+            })
+
+    if not rows:
+        return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
+
+    df = pd.DataFrame(rows)
+    df["_abs"] = df["상관계수"].abs()
+    return df.sort_values(["상관계수", "_abs"], ascending=[False, False]).drop(columns="_abs").reset_index(drop=True)
+
+
+def render_correlation_interpretation(corr_df, avg_corr):
+    st.markdown("""
+**읽는 법**
+- 빨강에 가까울수록 같이 움직입니다. 여러 종목을 들고 있어도 한 방향으로 크게 흔들릴 수 있습니다.
+- 흰색에 가까울수록 관계가 약합니다. 분산 효과가 상대적으로 있습니다.
+- 파랑에 가까울수록 반대로 움직입니다. 하락 방어에 도움이 될 수 있지만 수익도 서로 상쇄될 수 있습니다.
+    """)
+
+    if np.isfinite(avg_corr):
+        if avg_corr >= 0.7:
+            st.warning(f"평균 상관계수는 {avg_corr:.2f}입니다. 포트폴리오가 한 방향으로 같이 움직이는 편입니다.")
+        elif avg_corr >= 0.4:
+            st.info(f"평균 상관계수는 {avg_corr:.2f}입니다. 일부 분산은 있지만 같은 방향성도 있습니다.")
+        else:
+            st.success(f"평균 상관계수는 {avg_corr:.2f}입니다. 자산 간 움직임이 비교적 덜 묶여 있습니다.")
+
+    pair_df = build_correlation_pair_summary(corr_df)
+    if not pair_df.empty:
+        st.markdown("##### 상관관계 높은 조합")
+        top_pairs = pair_df.head(5).copy()
+        top_pairs["상관계수"] = top_pairs["상관계수"].apply(lambda v: f"{v:.2f}")
+        st.dataframe(top_pairs, use_container_width=True, hide_index=True)
+
+
 def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y"):
     total_asset = (
         float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
@@ -6019,17 +6084,34 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             y=corr_df.index,
             zmin=-1,
             zmax=1,
-            colorscale="RdBu",
-            reversescale=True,
-            colorbar=dict(title="corr"),
+            zmid=0,
+            colorscale=[
+                [0.0, "#2563eb"],
+                [0.35, "#93c5fd"],
+                [0.5, "#f8fafc"],
+                [0.65, "#fecaca"],
+                [1.0, "#dc2626"],
+            ],
+            xgap=1,
+            ygap=1,
+            hovertemplate="%{y} vs %{x}<br>상관계수: %{z:.2f}<extra></extra>",
+            colorbar=dict(
+                title="상관",
+                tickmode="array",
+                tickvals=[-1, -0.3, 0, 0.3, 1],
+                ticktext=["반대", "-0.3", "약함", "+0.3", "같이"],
+            ),
         ))
         fig_corr.update_layout(
             template="plotly_dark",
             height=max(360, min(720, 80 + len(corr_df.columns) * 38)),
+            xaxis_title="빨강=같이 움직임 / 흰색=관계 약함 / 파랑=반대 움직임",
+            yaxis=dict(autorange="reversed"),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig_corr, use_container_width=True)
+        render_correlation_interpretation(corr_df, metrics.get("avg_corr", np.nan))
     else:
         st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
 
