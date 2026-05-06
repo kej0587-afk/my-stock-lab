@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+﻿from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import io
@@ -17,11 +17,75 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 import html
 from supabase import create_client
+from stock_lab_core.backup import (
+    RECOVERY_KIND_INFO,
+    add_recovery_issue,
+    build_portfolio_backup_zip,
+    collect_recovery_frames,
+    count_valid_rows,
+    dataframe_to_csv_bytes,
+    get_duplicate_recovery_values,
+)
+from stock_lab_core.config import (
+    DEFAULT_WATCHLIST,
+    DIVIDENDS_COLUMNS,
+    FIN_SCORE_COLUMNS,
+    HOLDINGS_COLUMNS,
+    MONTHLY_LOG_COLUMNS,
+    RESERVE_BUCKETS,
+    RESERVE_TICKERS,
+    SETTINGS_COLUMNS,
+    SWING_EDITOR_COLUMNS,
+    SWING_RADAR_COLUMNS,
+    SWING_TEMPLATE_TEXT_FIELDS,
+    WATCHLIST_COLUMNS,
+)
+from stock_lab_core.formatters import (
+    clean_bool,
+    clean_float,
+    clean_int,
+    dataframe_from_rows,
+    escape_html_value,
+    format_currency,
+    normalize_text,
+    normalize_ticker,
+    parse_num,
+)
+from stock_lab_core.news import (
+    get_analyst_snapshot,
+    get_ticker_news,
+    render_news_cards,
+    render_research_report_panel,
+)
+from stock_lab_core.money_flow import (
+    calculate_money_flow_df,
+    download_money_flow_prices,
+)
+from stock_lab_core.prices import (
+    clear_latest_price_cache,
+    clear_selected_price_cache,
+    load_latest_price,
+    load_latest_prices_batch,
+    load_price_df,
+    normalize_price_lookup_key,
+)
+from stock_lab_core.portfolio import (
+    append_cash_rows,
+    apply_holdings_weight_columns,
+    build_benchmark_return_df,
+    calc_portfolio_summary,
+    calc_reserve_summary,
+    get_holding_row_by_ticker,
+    make_cash_rows,
+    parse_month_end_date,
+    prepare_monthly_performance_df,
+)
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="최종 관제실", layout="wide")
+KST = timezone(timedelta(hours=9))
 
 def get_secret_value(name, fallback_name=None):
     value = st.secrets.get(name, "")
@@ -165,27 +229,6 @@ with st.sidebar:
 
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
 
-# -------------------------------------------------
-# 2. 유틸리티 함수
-# -------------------------------------------------
-def format_currency(val, ticker):
-    if pd.isna(val): return "-"
-    if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"): return f"₩{int(val):,}"
-    return f"${val:,.2f}"
-
-def escape_html_value(value):
-    return html.escape(str(value or ""))
-
-def normalize_text(x): return str(x).strip().lower()
-def normalize_ticker(t): return str(t).strip().lower().replace(".ks", "").replace(".kq", "")
-def parse_num(v):
-    if pd.isna(v): return 0.0
-    s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
-    return pd.to_numeric(s, errors="coerce") if s != "" else 0.0
-
-RESERVE_TICKERS = {"357870", "sgov"}
-RESERVE_BUCKETS = {"reserve", "cash"}
-
 def normalize_bucket(value):
     raw = str(value or "").strip().lower()
     if raw in ["core", "swing", "reserve", "cash"]:
@@ -300,14 +343,6 @@ def infer_asset_class_for_ticker(ticker, current_asset_class=""):
     if asset_class_marks_fin_score_exempt(current):
         return current
     return "us_etf_nasdaq"
-
-DEFAULT_WATCHLIST = [
-    {"name": "MSFT", "ticker": "MSFT", "is_etf": False, "asset_class": "us_stock"},
-    {"name": "QQQM", "ticker": "QQQM", "is_etf": True, "asset_class": "us_etf_nasdaq"},
-    {"name": "TQQQ", "ticker": "TQQQ", "is_etf": True, "asset_class": "us_etf_nasdaq"},
-    {"name": "하이닉스", "ticker": "000660.KS", "is_etf": False, "asset_class": "kr_stock"},
-    {"name": "두산에너빌리티", "ticker": "034020.KS", "is_etf": False, "asset_class": "kr_stock"},
-]
 
 def encode_watchlist(watchlist):
     raw = json.dumps(watchlist, ensure_ascii=False)
@@ -460,66 +495,6 @@ def call_llm_analysis(prompt: str) -> str:
 # -------------------------------------------------
 # 2-1. Supabase persistent storage
 # -------------------------------------------------
-SETTINGS_COLUMNS = ["seed_money", "krw_cash", "usd_cash", "usdkrw", "reserve_target_weight"]
-HOLDINGS_COLUMNS = ["ticker", "name", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "bucket"]
-DIVIDENDS_COLUMNS = ["id", "date", "ticker", "amount", "currency"]
-MONTHLY_LOG_COLUMNS = ["month", "total_invested", "evaluated_value", "dividend"]
-FIN_SCORE_COLUMNS = ["ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"]
-WATCHLIST_COLUMNS = ["name", "ticker", "is_etf", "asset_class", "fin_score"]
-SWING_RADAR_COLUMNS = [
-    "ticker", "name", "asset_class", "idea",
-    "check_1", "check_2", "check_3",
-    "risk_1", "risk_2", "risk_3",
-    "entry_rule", "exit_rule", "next_event",
-    "status", "decision", "importance",
-    "reference_link", "last_checked", "memo",
-]
-
-SWING_EDITOR_COLUMNS = [
-    "status", "decision", "importance",
-    "name", "ticker", "asset_class",
-    "idea", "check_1", "check_2", "check_3",
-    "risk_1", "risk_2", "risk_3",
-    "entry_rule", "exit_rule", "next_event",
-    "last_checked", "reference_link", "memo",
-]
-
-SWING_TEMPLATE_TEXT_FIELDS = [
-    "idea", "check_1", "check_2", "check_3",
-    "risk_1", "risk_2", "risk_3",
-    "entry_rule", "exit_rule", "next_event",
-]
-
-
-def clean_float(value, default=0.0):
-    try:
-        if value is None or pd.isna(value) or str(value).strip() == "":
-            return float(default)
-        return float(str(value).replace(",", ""))
-    except Exception:
-        return float(default)
-
-
-def clean_int(value, default=None):
-    try:
-        if value is None or pd.isna(value) or str(value).strip() == "":
-            return default
-        return int(float(value))
-    except Exception:
-        return default
-
-
-def clean_bool(value):
-    try:
-        if value is None or pd.isna(value):
-            return False
-    except Exception:
-        pass
-    if isinstance(value, str):
-        return value.strip().lower() in ["true", "1", "yes", "y", "t"]
-    return bool(value)
-
-
 @st.cache_resource
 def get_supabase_client():
     url = get_secret_value("SUPABASE_URL")
@@ -549,17 +524,6 @@ def run_supabase(query, action="Supabase operation"):
         st.error(f"{action} failed: {e}")
         st.info("Check that Supabase tables were created and Streamlit Secrets are correct.")
         st.stop()
-
-
-def dataframe_from_rows(rows, columns):
-    if isinstance(rows, pd.DataFrame):
-        df = rows.copy()
-    else:
-        df = pd.DataFrame(rows or [])
-    for col in columns:
-        if col not in df.columns:
-            df[col] = None
-    return df[columns]
 
 
 def init_db():
@@ -886,217 +850,6 @@ def save_swing_radar_db_safe(df):
         return False, str(e)
 
 
-def count_valid_rows(df, key_columns):
-    if df is None or df.empty:
-        return 0
-
-    count = 0
-    for _, row in df.iterrows():
-        if any(str(row.get(col, "")).strip() for col in key_columns):
-            count += 1
-    return count
-
-
-def dataframe_to_csv_bytes(df):
-    if df is None:
-        df = pd.DataFrame()
-    return df.to_csv(index=False).encode("utf-8-sig")
-
-
-def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs_df, watchlist_items, dashboard_df, fin_scores_df, swing_radar_df=None):
-    settings_df = pd.DataFrame([settings or {}])
-    watchlist_df = pd.DataFrame(watchlist_items or [])
-
-    files = {
-        "settings.csv": settings_df,
-        "holdings.csv": holdings_df,
-        "dividends.csv": dividends_df,
-        "monthly_logs.csv": monthly_logs_df,
-        "watchlist.csv": watchlist_df,
-        "fin_scores.csv": fin_scores_df,
-        "swing_radar.csv": swing_radar_df if swing_radar_df is not None else pd.DataFrame(columns=SWING_RADAR_COLUMNS),
-        "dashboard.csv": dashboard_df,
-    }
-
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for filename, df in files.items():
-            zf.writestr(filename, dataframe_to_csv_bytes(df))
-
-    buffer.seek(0)
-    return buffer.getvalue()
-
-
-def classify_recovery_csv(df):
-    cols = set(df.columns)
-
-    if {"seed_money", "krw_cash", "usd_cash", "usdkrw", "reserve_target_weight"}.issubset(cols):
-        return "settings"
-    if {"ticker", "name", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "bucket"}.issubset(cols):
-        return "holdings"
-    if {"date", "ticker", "amount", "currency"}.issubset(cols):
-        return "dividends"
-    if {"month", "total_invested", "evaluated_value", "dividend"}.issubset(cols):
-        return "monthly_logs"
-    if {"name", "ticker", "is_etf", "asset_class"}.issubset(cols):
-        return "watchlist"
-    if {"ticker", "auto_score", "manual_score", "final_score", "source", "notes_json"}.issubset(cols):
-        return "fin_scores"
-    if set(SWING_RADAR_COLUMNS).issubset(cols):
-        return "swing_radar"
-    if {"자산명", "티커", "보유량", "매입가", "원화환산", "bucket"}.issubset(cols):
-        return "dashboard"
-
-    return "unknown"
-
-
-RECOVERY_KIND_INFO = {
-    "settings": {
-        "label": "기본 설정",
-        "required": SETTINGS_COLUMNS,
-        "key_columns": ["seed_money", "krw_cash", "usd_cash", "usdkrw"],
-        "restore_mode": "마지막 행 기준으로 설정 저장",
-    },
-    "holdings": {
-        "label": "보유자산",
-        "required": HOLDINGS_COLUMNS,
-        "key_columns": ["ticker"],
-        "unique_column": "ticker",
-        "restore_mode": "기존 보유자산을 대체",
-    },
-    "dividends": {
-        "label": "배당 내역",
-        "required": DIVIDENDS_COLUMNS,
-        "key_columns": ["date", "ticker"],
-        "restore_mode": "기존 배당 내역을 대체",
-    },
-    "monthly_logs": {
-        "label": "월별 로그",
-        "required": MONTHLY_LOG_COLUMNS,
-        "key_columns": ["month"],
-        "unique_column": "month",
-        "restore_mode": "기존 월별 로그를 대체",
-    },
-    "watchlist": {
-        "label": "관심목록",
-        "required": WATCHLIST_COLUMNS,
-        "key_columns": ["ticker"],
-        "unique_column": "ticker",
-        "restore_mode": "기존 관심목록을 대체",
-    },
-    "fin_scores": {
-        "label": "재무점수",
-        "required": FIN_SCORE_COLUMNS,
-        "key_columns": ["ticker"],
-        "restore_mode": "티커별 업서트",
-    },
-    "swing_radar": {
-        "label": "스윙 레이더",
-        "required": SWING_RADAR_COLUMNS,
-        "key_columns": ["ticker"],
-        "unique_column": "ticker",
-        "restore_mode": "기존 스윙 레이더를 대체",
-    },
-    "dashboard": {
-        "label": "계산 결과/현금 추출",
-        "required": ["자산명", "티커", "보유량", "매입가", "원화환산", "bucket"],
-        "key_columns": ["티커"],
-        "restore_mode": "현금/환율 보조 추출",
-    },
-}
-
-
-def add_recovery_issue(issues, severity, dataset, target, problem, suggestion):
-    issues.append({
-        "등급": severity,
-        "데이터": dataset,
-        "대상": str(target or "").strip(),
-        "문제": problem,
-        "확인/조치": suggestion,
-    })
-
-
-def normalize_recovery_key(value, column):
-    text = str(value or "").strip()
-    if column in ["ticker", "티커"]:
-        return normalize_ticker(text)
-    return text
-
-
-def get_duplicate_recovery_values(df, column):
-    if df is None or df.empty or column not in df.columns:
-        return []
-
-    values = df[column].fillna("").apply(lambda v: normalize_recovery_key(v, column))
-    values = values[values.astype(str).str.strip().ne("")]
-    counts = values.value_counts()
-    return [(value, int(count)) for value, count in counts[counts > 1].items()]
-
-
-def collect_recovery_frames(uploaded_files):
-    frames = {}
-    unknown_files = []
-    read_errors = []
-    parsed_files = []
-
-    for uploaded_file in uploaded_files or []:
-        filename = str(getattr(uploaded_file, "name", "uploaded_file"))
-        raw = uploaded_file.getvalue()
-
-        if not raw:
-            read_errors.append(f"{filename}: 빈 파일입니다.")
-            continue
-
-        if filename.lower().endswith(".zip"):
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for zip_name in zf.namelist():
-                        if zip_name.endswith("/") or not zip_name.lower().endswith(".csv"):
-                            continue
-
-                        file_label = f"{filename}:{zip_name}"
-                        try:
-                            df = read_recovery_csv_bytes(zf.read(zip_name))
-                        except Exception as exc:
-                            read_errors.append(f"{file_label}: CSV 읽기 실패 ({exc})")
-                            continue
-
-                        kind = classify_recovery_csv(df)
-                        if kind == "unknown":
-                            unknown_files.append(file_label)
-                            continue
-
-                        add_recovery_frame(frames, kind, df)
-                        parsed_files.append({
-                            "파일": file_label,
-                            "데이터": RECOVERY_KIND_INFO.get(kind, {}).get("label", kind),
-                            "행수": len(df),
-                        })
-            except zipfile.BadZipFile:
-                read_errors.append(f"{filename}: ZIP 파일로 읽을 수 없습니다.")
-            continue
-
-        try:
-            df = read_recovery_csv_bytes(raw)
-        except Exception as exc:
-            read_errors.append(f"{filename}: CSV 읽기 실패 ({exc})")
-            continue
-
-        kind = classify_recovery_csv(df)
-        if kind == "unknown":
-            unknown_files.append(filename)
-            continue
-
-        add_recovery_frame(frames, kind, df)
-        parsed_files.append({
-            "파일": filename,
-            "데이터": RECOVERY_KIND_INFO.get(kind, {}).get("label", kind),
-            "행수": len(df),
-        })
-
-    return frames, unknown_files, read_errors, pd.DataFrame(parsed_files, columns=["파일", "데이터", "행수"])
-
-
 def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None):
     frames = frames or {}
     unknown_files = unknown_files or []
@@ -1204,31 +957,6 @@ def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None
 
 def has_recovery_blockers(issue_df):
     return issue_df is not None and not issue_df.empty and bool((issue_df["등급"] == "차단").any())
-
-
-def read_recovery_csv_bytes(raw_bytes):
-    for encoding in ["utf-8-sig", "utf-8", "cp949"]:
-        try:
-            df = pd.read_csv(io.BytesIO(raw_bytes), encoding=encoding)
-            df.columns = [str(col).strip().lstrip("\ufeff") for col in df.columns]
-            return df
-        except UnicodeDecodeError:
-            continue
-    df = pd.read_csv(io.BytesIO(raw_bytes))
-    df.columns = [str(col).strip().lstrip("\ufeff") for col in df.columns]
-    return df
-
-
-def read_recovery_csv(uploaded_file):
-    uploaded_file.seek(0)
-    return read_recovery_csv_bytes(uploaded_file.read())
-
-
-def add_recovery_frame(frames, kind, df):
-    if kind in frames:
-        frames[kind] = pd.concat([frames[kind], df], ignore_index=True)
-    else:
-        frames[kind] = df
 
 
 def parse_fin_score_notes_for_restore(value):
@@ -2542,383 +2270,9 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
             "bucket": bucket
         })
 
-    df = pd.DataFrame(rows)
-    total_assets = df["원화환산"].sum() + krw_cash + (usd_cash * usdkrw)
-    if total_assets > 0: df["현재비중"] = df["원화환산"] / total_assets * 100
-    else: df["현재비중"] = 0.0
-    df["운용대상"] = ~df["bucket"].apply(is_reserve_or_cash_bucket)
-    df["비중차이"] = df.apply(
-        lambda r: 0.0 if is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]) - float(r["현재비중"]),
-        axis=1
-    )
-    df["리밸런싱목표비중"] = df.apply(
-        lambda r: float(r["현재비중"]) if is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]),
-        axis=1
-    )
+    return apply_holdings_weight_columns(pd.DataFrame(rows), krw_cash, usd_cash, usdkrw)
 
-    return df
-
-def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df):
-    stock_value = holdings_table["원화환산"].sum() if not holdings_table.empty else 0.0
-    cash_value = krw_cash + (usd_cash * usdkrw)
-    current_asset = stock_value + cash_value
-
-    total_dividend = 0.0
-    if dividends_df is not None and not dividends_df.empty:
-        for _, r in dividends_df.iterrows():
-            amt = float(r.get("amount", 0) or 0)
-            ccy = str(r.get("currency", "KRW")).upper()
-            total_dividend += amt if ccy == "KRW" else amt * usdkrw
-
-    cum_profit = current_asset + total_dividend - seed_money
-    cum_return = (cum_profit / seed_money * 100) if seed_money > 0 else 0.0
-
-    return {
-        "current_asset": current_asset, "stock_value": stock_value, "cash_value": cash_value,
-        "total_dividend": total_dividend, "cum_profit": cum_profit, "cum_return": cum_return
-    }
-def make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset):
-    rows = []
-    total_asset = float(total_asset or 0)
-
-    if krw_cash > 0:
-        cur_w = krw_cash / total_asset * 100 if total_asset > 0 else 0.0
-        rows.append({
-            "자산명": "원화예수금", "티커": "KRW_CASH", "보유량": krw_cash,
-            "매입가": 1.0, "현재가": 1.0, "평가금액": krw_cash, "평가손익": 0.0,
-            "수익률": 0.0, "원화환산": krw_cash, "현재비중": cur_w,
-            "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
-            "asset_class": "cash", "bucket": "cash", "운용대상": False,
-            "리밸런싱목표비중": cur_w
-        })
-
-    if usd_cash > 0:
-        usd_cash_krw = usd_cash * usdkrw
-        cur_w = usd_cash_krw / total_asset * 100 if total_asset > 0 else 0.0
-        rows.append({
-            "자산명": "달러예수금", "티커": "USD_CASH", "보유량": usd_cash,
-            "매입가": usdkrw, "현재가": usdkrw, "평가금액": usd_cash, "평가손익": 0.0,
-            "수익률": 0.0, "원화환산": usd_cash_krw, "현재비중": cur_w,
-            "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
-            "asset_class": "cash", "bucket": "cash", "운용대상": False,
-            "리밸런싱목표비중": cur_w
-        })
-
-    return rows
-
-def append_cash_rows(df, krw_cash, usd_cash, usdkrw, total_asset):
-    cash_rows = make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset)
-    if cash_rows:
-        return pd.concat([df, pd.DataFrame(cash_rows)], ignore_index=True)
-    return df
-
-def calc_reserve_summary(df, reserve_target_weight):
-    total = float(df["원화환산"].sum()) if not df.empty else 0.0
-    bucket = df["bucket"].apply(normalize_bucket) if not df.empty else pd.Series(dtype=str)
-
-    waiting_value = float(df.loc[bucket.isin(["reserve", "cash"]), "원화환산"].sum()) if total > 0 else 0.0
-    reserve_value = float(df.loc[bucket == "reserve", "원화환산"].sum()) if total > 0 else 0.0
-    cash_value = float(df.loc[bucket == "cash", "원화환산"].sum()) if total > 0 else 0.0
-    invest_value = total - waiting_value
-
-    waiting_pct = waiting_value / total * 100 if total > 0 else 0.0
-    excess_pct = max(waiting_pct - float(reserve_target_weight), 0.0)
-
-    return {
-        "total": total,
-        "invest_value": invest_value,
-        "waiting_value": waiting_value,
-        "reserve_value": reserve_value,
-        "cash_value": cash_value,
-        "waiting_pct": waiting_pct,
-        "target_pct": float(reserve_target_weight),
-        "excess_pct": excess_pct,
-        "deployable_value": total * excess_pct / 100 if total > 0 else 0.0,
-    }
-
-def get_holding_row_by_ticker(holdings_table, ticker):
-    if holdings_table.empty: return None
-    t = normalize_ticker(ticker)
-    matched = holdings_table[holdings_table["티커"].apply(normalize_ticker) == t]
-    if not matched.empty: return matched.iloc[0]
-    return None
-
-def parse_month_end_date(value):
-    raw = str(value or "").strip()
-    if not raw:
-        return pd.NaT
-
-    if len(raw) == 7 and raw[4] == "-":
-        dt = pd.to_datetime(f"{raw}-01", errors="coerce")
-    else:
-        dt = pd.to_datetime(raw, errors="coerce")
-
-    if pd.isna(dt):
-        return pd.NaT
-
-    return dt + pd.offsets.MonthEnd(0)
-
-def prepare_monthly_performance_df(monthly_df):
-    required = ["month", "total_invested", "evaluated_value", "dividend"]
-    if monthly_df is None or monthly_df.empty:
-        return pd.DataFrame(columns=required)
-
-    df = monthly_df.copy()
-    for col in required:
-        if col not in df.columns:
-            df[col] = 0 if col != "month" else ""
-
-    df["month_end"] = df["month"].apply(parse_month_end_date)
-    df = df.dropna(subset=["month_end"]).sort_values("month_end")
-
-    if df.empty:
-        return df
-
-    df["month_label"] = df["month_end"].dt.strftime("%y-%m")
-    for col in ["total_invested", "evaluated_value", "dividend"]:
-        df[col] = df[col].apply(clean_float)
-
-    df["cum_dividend"] = df["dividend"].cumsum()
-    df["cum_profit"] = df["evaluated_value"] + df["cum_dividend"] - df["total_invested"]
-    df["cum_return_pct"] = np.where(
-        df["total_invested"] > 0,
-        df["cum_profit"] / df["total_invested"] * 100,
-        0.0
-    )
-
-    first_return = float(df["cum_return_pct"].iloc[0]) if not df.empty else 0.0
-    df["relative_return_pct"] = df["cum_return_pct"] - first_return
-    return df
-
-def build_benchmark_return_df(perf_df):
-    if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
-        return pd.DataFrame(columns=["month_label", "구분", "수익률_pct"])
-
-    rows = []
-    for _, row in perf_df.iterrows():
-        rows.append({
-            "month_label": row["month_label"],
-            "구분": "내 기간수익률",
-            "수익률_pct": float(row.get("relative_return_pct", 0.0)),
-        })
-
-    benchmarks = {
-        "S&P500": "379800.KS",
-        "나스닥100": "379810.KS",
-        "코스피": "069500.KS",
-    }
-
-    for label, ticker in benchmarks.items():
-        try:
-            px = load_price_df(ticker, "5y")
-            if px.empty:
-                continue
-
-            close = px["Close"].copy()
-            close.index = pd.to_datetime(close.index).tz_localize(None)
-
-            prices = []
-            for month_end in perf_df["month_end"]:
-                target_dt = pd.Timestamp(month_end).tz_localize(None)
-                eligible = close[close.index <= target_dt]
-                prices.append(float(eligible.iloc[-1]) if not eligible.empty else np.nan)
-
-            valid_prices = [p for p in prices if finite_num(p) and p > 0]
-            if not valid_prices:
-                continue
-
-            base = valid_prices[0]
-            for month_label, price in zip(perf_df["month_label"], prices):
-                if finite_num(price) and price > 0:
-                    ret = (float(price) / base - 1) * 100
-                    rows.append({"month_label": month_label, "구분": label, "수익률_pct": ret})
-        except Exception:
-            continue
-
-    return pd.DataFrame(rows)
-
-MONEY_FLOW_UNIVERSE = [
-    {"구분": "미국 섹터", "섹터": "나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
-    {"구분": "미국 섹터", "섹터": "S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체 VanEck", "ticker": "SMH", "name": "VanEck Semiconductor ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체 iShares", "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
-    {"구분": "미국 섹터", "섹터": "기술", "ticker": "XLK", "name": "Technology Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "커뮤니케이션", "ticker": "XLC", "name": "Communication Services SPDR"},
-    {"구분": "미국 섹터", "섹터": "금융", "ticker": "XLF", "name": "Financial Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "헬스케어", "ticker": "XLV", "name": "Health Care Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "에너지", "ticker": "XLE", "name": "Energy Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "산업재", "ticker": "XLI", "name": "Industrial Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "소재", "ticker": "XLB", "name": "Materials Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "경기소비재", "ticker": "XLY", "name": "Consumer Discretionary SPDR"},
-    {"구분": "미국 섹터", "섹터": "필수소비재", "ticker": "XLP", "name": "Consumer Staples SPDR"},
-    {"구분": "미국 섹터", "섹터": "유틸리티", "ticker": "XLU", "name": "Utilities Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "부동산", "ticker": "VNQ", "name": "Vanguard Real Estate ETF"},
-    {"구분": "미국 섹터", "섹터": "바이오", "ticker": "IBB", "name": "iShares Biotechnology ETF"},
-    {"구분": "미국 섹터", "섹터": "신재생", "ticker": "ICLN", "name": "iShares Global Clean Energy ETF"},
-    {"구분": "미국 섹터", "섹터": "인프라", "ticker": "PAVE", "name": "Global X U.S. Infrastructure Development ETF"},
-    {"구분": "미국 섹터", "섹터": "방산", "ticker": "SHLD", "name": "Global X Defense Tech ETF"},
-    {"구분": "미국 섹터", "섹터": "항공방산", "ticker": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"},
-    {"구분": "미국 섹터", "섹터": "소프트웨어", "ticker": "IGV", "name": "iShares Expanded Tech-Software Sector ETF"},
-
-    {"구분": "한국 섹터", "섹터": "코스피", "ticker": "069500.KS", "name": "KODEX 200"},
-    {"구분": "한국 섹터", "섹터": "코스닥", "ticker": "229200.KS", "name": "KODEX 코스닥150"},
-    {"구분": "한국 섹터", "섹터": "반도체", "ticker": "396500.KS", "name": "TIGER 반도체TOP10"},
-    {"구분": "한국 섹터", "섹터": "IT/기술", "ticker": "139260.KS", "name": "TIGER 200 IT"},
-    {"구분": "한국 섹터", "섹터": "2차전지", "ticker": "305540.KS", "name": "TIGER 2차전지테마"},
-    {"구분": "한국 섹터", "섹터": "전력인프라", "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
-    {"구분": "한국 섹터", "섹터": "전력기기", "ticker": "0117V0.KS", "name": "TIGER 코리아AI전력기기TOP3플러스"},
-    {"구분": "한국 섹터", "섹터": "원자력", "ticker": "434730.KS", "name": "HANARO 원자력iSelect"},
-    {"구분": "한국 섹터", "섹터": "원자력TOP10", "ticker": "433500.KS", "name": "ACE 원자력TOP10"},
-    {"구분": "한국 섹터", "섹터": "조선", "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
-    {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
-    {"구분": "한국 섹터", "섹터": "K-뷰티", "ticker": "479850.KS", "name": "HANARO K-뷰티"},
-    {"구분": "한국 섹터", "섹터": "에너지", "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
-    {"구분": "한국 섹터", "섹터": "금융", "ticker": "139270.KS", "name": "TIGER 200 금융"},
-    {"구분": "한국 섹터", "섹터": "바이오", "ticker": "244580.KS", "name": "KODEX 바이오"},
-    {"구분": "한국 섹터", "섹터": "부동산", "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
-    {"구분": "한국 섹터", "섹터": "건설/유틸", "ticker": "139220.KS", "name": "TIGER 200 건설"},
-
-    {"구분": "글로벌", "섹터": "미국 나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
-    {"구분": "글로벌", "섹터": "미국 S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
-    {"구분": "글로벌", "섹터": "일본", "ticker": "EWJ", "name": "iShares MSCI Japan ETF"},
-    {"구분": "글로벌", "섹터": "캐나다", "ticker": "EWC", "name": "iShares MSCI Canada ETF"},
-    {"구분": "글로벌", "섹터": "한국", "ticker": "EWY", "name": "iShares MSCI South Korea ETF"},
-    {"구분": "글로벌", "섹터": "대만", "ticker": "EWT", "name": "iShares MSCI Taiwan ETF"},
-    {"구분": "글로벌", "섹터": "홍콩", "ticker": "EWH", "name": "iShares MSCI Hong Kong ETF"},
-    {"구분": "글로벌", "섹터": "중국", "ticker": "MCHI", "name": "iShares MSCI China ETF"},
-    {"구분": "글로벌", "섹터": "인도", "ticker": "FLIN", "name": "Franklin FTSE India ETF"},
-    {"구분": "글로벌", "섹터": "글로벌AI전력인프라", "ticker": "491010.KS", "name": "TIGER 글로벌AI전력인프라액티브"},
-    {"구분": "글로벌", "섹터": "미국AI전력인프라", "ticker": "487230.KS", "name": "KODEX 미국AI전력핵심인프라"},
-    {"구분": "글로벌", "섹터": "우라늄/원전", "ticker": "URA", "name": "Global X Uranium ETF"},
-    {"구분": "글로벌", "섹터": "브라질", "ticker": "EWZ", "name": "iShares MSCI Brazil ETF"},
-    {"구분": "글로벌", "섹터": "멕시코", "ticker": "EWW", "name": "iShares MSCI Mexico ETF"},
-    {"구분": "글로벌", "섹터": "사우디", "ticker": "KSA", "name": "iShares MSCI Saudi Arabia ETF"},
-    {"구분": "글로벌", "섹터": "베트남", "ticker": "VNM", "name": "VanEck Vietnam ETF"},
-
-    {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
-    {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
-]
-
-def normalize_money_flow_ticker(ticker):
-    t = str(ticker).strip().upper()
-    if t.endswith(".KS") or t.endswith(".KQ"):
-        code, suffix = t.split(".", 1)
-        return f"{code.zfill(6)}.{suffix}"
-    return t
-
-@st.cache_data(ttl=900, show_spinner=False)
-def download_money_flow_prices(tickers):
-    tickers = sorted({normalize_money_flow_ticker(t) for t in tickers if str(t).strip()})
-    if not tickers:
-        return pd.DataFrame()
-    data = yf.download(
-        tickers,
-        period="1y",
-        interval="1d",
-        progress=False,
-        group_by="ticker",
-        threads=True,
-        auto_adjust=False,
-    )
-    return data
-
-def get_money_flow_ohlc(data, ticker):
-    ticker = normalize_money_flow_ticker(ticker)
-    if data is None or data.empty:
-        return pd.DataFrame()
-
-    if isinstance(data.columns, pd.MultiIndex):
-        level0 = list(data.columns.get_level_values(0))
-        level1 = list(data.columns.get_level_values(1))
-
-        if ticker in level0:
-            out = data[ticker].copy()
-        elif ticker in level1:
-            out = data.xs(ticker, axis=1, level=1).copy()
-        else:
-            return pd.DataFrame()
-    else:
-        out = data.copy()
-
-    needed = [c for c in ["Close", "High", "Low"] if c in out.columns]
-    if len(needed) < 3:
-        return pd.DataFrame()
-
-    out = out[["Close", "High", "Low"]].ffill().dropna()
-    return out
-
-def get_return_by_days(close, days):
-    if close is None or len(close) < 2:
-        return np.nan
-    idx = -days if len(close) > days else 0
-    old = float(close.iloc[idx])
-    new = float(close.iloc[-1])
-    if old <= 0:
-        return np.nan
-    return (new / old) - 1
-
-def classify_money_flow_state(ret_3m, ret_6m, accel):
-    if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
-        return "신규 유입"
-    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m >= 0.05 and ret_6m >= 0.05 and (not finite_num(accel) or accel >= -0.03):
-        return "주도 유지"
-    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
-        return "둔화 경고"
-    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
-        return "소외 지속"
-    return "관찰"
-
-def calculate_money_flow_df():
-    universe = [dict(item, ticker=normalize_money_flow_ticker(item["ticker"])) for item in MONEY_FLOW_UNIVERSE]
-    tickers = [item["ticker"] for item in universe]
-    data = download_money_flow_prices(tickers)
-
-    rows = []
-    for item in universe:
-        px = get_money_flow_ohlc(data, item["ticker"])
-        if px.empty or len(px) < 20:
-            continue
-
-        close = px["Close"]
-        cur = float(close.iloc[-1])
-        high_52w = float(px["High"].max())
-        low_52w = float(px["Low"].min())
-        period_ret = get_return_by_days(close, len(close) - 1)
-        ret_1m = get_return_by_days(close, 21)
-        ret_3m = get_return_by_days(close, 63)
-        ret_6m = get_return_by_days(close, 126)
-        accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
-        price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-        flow_score = (
-            (ret_3m if finite_num(ret_3m) else 0) * 45 +
-            (ret_6m if finite_num(ret_6m) else 0) * 35 +
-            (accel if finite_num(accel) else 0) * 20
-        )
-
-        rows.append({
-            "구분": item["구분"],
-            "섹터": item["섹터"],
-            "Ticker": item["ticker"],
-            "ETF 이름": item["name"],
-            "현재가": cur,
-            "가격수준": price_level,
-            "기간수익률": period_ret,
-            "1개월수익률": ret_1m,
-            "3개월수익률": ret_3m,
-            "6개월수익률": ret_6m,
-            "가속도": accel,
-            "돈흐름점수": flow_score,
-            "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
-            "52주 최고가": high_52w,
-            "52주 최저가": low_52w,
-        })
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-
-    df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return df.sort_values("돈흐름점수", ascending=False)
+# 돈흐름 데이터 로직은 stock_lab_core.money_flow 모듈로 분리
 
 def fmt_flow_pct(v):
     if not finite_num(v):
@@ -3093,864 +2447,11 @@ def render_money_flow_tab():
     )
 
 # -------------------------------------------------
-# 3. 뉴스 듀얼 모터
+# 3. 뉴스/리포트 로직은 stock_lab_core.news 모듈로 분리
 # -------------------------------------------------
-STOCK_NEWS_WORDS = [
-    "stock", "stocks", "share", "shares", "market", "nasdaq", "nyse", "earnings",
-    "revenue", "profit", "guidance", "analyst", "rating", "price target",
-    "upgrade", "downgrade", "buy", "sell", "hold", "dividend", "etf",
-    "주가", "증시", "주식", "실적", "매출", "영업이익", "순이익", "목표가",
-    "투자의견", "상향", "하향", "매수", "매도", "보유", "배당", "ETF",
-    "코스피", "코스닥", "나스닥", "뉴욕증시"
-]
-
-GENERAL_NOISE_WORDS = [
-    "galaxy", "갤럭시", "iphone", "아이폰", "android", "안드로이드",
-    "recipe", "beer", "game", "gaming", "movie", "music", "lyrics",
-    "라이트급", "litecoin", "crypto", "코인", "맛집", "여행"
-]
-
-NEWS_CATEGORY_DIRECT = "종목 직접"
-NEWS_CATEGORY_SECTOR = "섹터/테마"
-NEWS_CATEGORY_MARKET = "시장/매크로"
-NEWS_CATEGORY_ORDER = {
-    NEWS_CATEGORY_DIRECT: 0,
-    NEWS_CATEGORY_SECTOR: 1,
-    NEWS_CATEGORY_MARKET: 2,
-}
-NEWS_CATEGORY_LIMITS = {
-    NEWS_CATEGORY_DIRECT: 3,
-    NEWS_CATEGORY_SECTOR: 2,
-    NEWS_CATEGORY_MARKET: 1,
-}
-NEWS_MAX_ITEMS = 6
-
-LOW_QUALITY_NEWS_WORDS = [
-    "주식 움직였습니다", "핵심 원인 공개", "어떤 신호인가요", "주가 움직였습니다",
-    "stock moved", "why it moved", "price action", "what signal",
-]
-
-HIGH_VALUE_NEWS_WORDS = [
-    "earnings", "revenue", "profit", "margin", "guidance", "outlook", "forecast",
-    "analyst", "price target", "upgrade", "downgrade", "buy rating", "sell rating",
-    "contract", "order", "approval", "regulatory", "antitrust", "lawsuit",
-    "실적", "매출", "영업이익", "순이익", "가이던스", "전망", "목표가", "투자의견",
-    "상향", "하향", "수주", "계약", "승인", "규제", "소송", "조사",
-]
-
-POSITIVE_NEWS_SIGNALS = [
-    ("beat", "실적이 예상보다 좋다는 단서"),
-    ("beats", "실적이 예상보다 좋다는 단서"),
-    ("strong", "수요나 실적 흐름이 강하다는 단서"),
-    ("growth", "성장 흐름이 확인됐다는 단서"),
-    ("grows", "성장 흐름이 확인됐다는 단서"),
-    ("raises guidance", "가이던스 상향은 이익 기대를 높이는 단서"),
-    ("upgrade", "투자의견 상향은 수급에 우호적인 단서"),
-    ("price target raised", "목표가 상향은 기대치 개선 단서"),
-    ("record", "사상 최대/기록 경신은 실적 모멘텀 단서"),
-    ("contract", "계약/수주는 매출 가시성 개선 단서"),
-    ("approval", "승인은 사업 진행에 우호적인 단서"),
-    ("호실적", "호실적은 이익 기대를 높이는 단서"),
-    ("깜짝 실적", "컨센서스 상회 가능성을 시사"),
-    ("서프라이즈", "컨센서스 상회 가능성을 시사"),
-    ("상향", "목표가/투자의견 상향은 수급에 우호적"),
-    ("수주", "수주는 매출 가시성 개선 단서"),
-    ("계약", "계약 체결은 사업 진행에 우호적"),
-    ("승인", "승인은 사업 진행에 우호적"),
-    ("성장", "성장 흐름이 확인됐다는 단서"),
-    ("급증", "수요나 실적 모멘텀 강화 단서"),
-]
-
-NEGATIVE_NEWS_SIGNALS = [
-    ("miss", "실적이 기대에 못 미쳤다는 단서"),
-    ("cuts guidance", "가이던스 하향은 이익 기대를 낮추는 단서"),
-    ("downgrade", "투자의견 하향은 수급에 부담"),
-    ("price target cut", "목표가 하향은 기대치 약화 단서"),
-    ("investigation", "조사/규제 이슈는 밸류에이션 부담"),
-    ("lawsuit", "소송 이슈는 불확실성 확대 단서"),
-    ("antitrust", "반독점/규제 이슈는 사업 리스크"),
-    ("strike", "파업은 생산/운영 차질 가능성"),
-    ("decline", "감소/둔화는 실적 모멘텀 약화 단서"),
-    ("slump", "수요 둔화 가능성"),
-    ("부진", "실적이나 수요 둔화 가능성"),
-    ("적자", "수익성 악화 단서"),
-    ("하향", "목표가/투자의견 하향은 수급 부담"),
-    ("소송", "소송 이슈는 불확실성 확대 단서"),
-    ("규제", "규제 이슈는 밸류에이션 부담"),
-    ("조사", "조사 이슈는 불확실성 확대 단서"),
-    ("파업", "파업은 생산/운영 차질 가능성"),
-    ("감소", "실적 모멘텀 둔화 단서"),
-    ("둔화", "성장률 둔화 가능성"),
-    ("하락", "단기 투자심리 약화 단서"),
-    ("급락", "단기 투자심리 악화 단서"),
-]
-
-NEWS_SOURCE_QUALITY = {
-    "reuters": 3,
-    "bloomberg": 3,
-    "cnbc": 2,
-    "marketwatch": 2,
-    "seeking alpha": 2,
-    "yahoo finance": 2,
-    "nasdaq": 2,
-    "investing.com": 1,
-    "thelec": 2,
-    "전자신문": 2,
-    "연합뉴스": 2,
-    "한국경제": 2,
-    "매일경제": 2,
-    "머니투데이": 1,
-    "tradingkey": -3,
-    "tokenpost": -2,
-}
-
-NEWS_THEME_TERMS_BY_SYMBOL = {
-    "MSFT": ["Azure", "클라우드", "AI cloud", "Copilot", "OpenAI", "enterprise software", "cloud"],
-    "GOOGL": ["Google Cloud", "AI", "advertising", "Gemini", "cloud"],
-    "GOOG": ["Google Cloud", "AI", "advertising", "Gemini", "cloud"],
-    "AMZN": ["AWS", "cloud", "AI demand", "retail", "advertising"],
-    "NVDA": ["AI chip", "GPU", "data center", "semiconductor", "HBM"],
-    "AMD": ["AI chip", "GPU", "data center", "semiconductor"],
-    "AVGO": ["AI chip", "networking", "semiconductor", "VMware"],
-    "TSM": ["foundry", "semiconductor", "AI chip", "TSMC"],
-    "MU": ["DRAM", "HBM", "memory chip", "semiconductor"],
-    "MRVL": ["AI infrastructure", "networking chip", "semiconductor"],
-    "ANET": ["AI networking", "data center", "cloud networking"],
-    "CIEN": ["optical networking", "data center", "AI infrastructure"],
-    "VRT": ["AI data center", "power infrastructure", "cooling"],
-    "LITE": ["optical", "AI data center", "networking"],
-    "SOXX": ["semiconductor", "AI chip", "chip stocks", "Nvidia", "TSMC"],
-    "SMH": ["semiconductor", "AI chip", "chip stocks", "Nvidia", "TSMC"],
-    "DRAM": ["DRAM", "HBM", "memory chip", "semiconductor"],
-    "QQQ": ["Nasdaq 100", "AI stocks", "megacap tech"],
-    "QQQM": ["Nasdaq 100", "AI stocks", "megacap tech"],
-    "QLD": ["Nasdaq 100", "AI stocks", "megacap tech"],
-    "TQQQ": ["Nasdaq 100", "AI stocks", "megacap tech"],
-    "379810": ["나스닥100", "미국 기술주", "AI 주식"],
-    "379800": ["S&P500", "미국 대형주", "미국 증시"],
-    "069500": ["코스피200", "한국 증시", "외국인 수급"],
-    "000660": ["HBM", "DRAM", "반도체", "메모리", "AI 반도체"],
-    "005930": ["HBM", "DRAM", "반도체", "메모리", "파운드리"],
-    "267260": ["전력인프라", "변압기", "전력기기", "AI 전력", "전력망"],
-    "034020": ["원전", "원자력", "SMR", "전력", "에너지"],
-    "278470": ["K-뷰티", "화장품", "뷰티", "인디브랜드", "올리브영"],
-    "329180": ["조선", "LNG선", "선박", "수주", "해양플랜트"],
-    "012450": ["방산", "항공우주", "수출", "수주"],
-    "487240": ["전력인프라", "변압기", "전력기기", "AI 전력"],
-    "479850": ["K-뷰티", "화장품", "뷰티"],
-    "434730": ["원전", "원자력", "SMR"],
-}
-
-NEWS_RECENT_DAYS = 14
-NEWS_FALLBACK_DAYS = 90
-KST = timezone(timedelta(hours=9))
-
-def parse_rss_pub_dt(item):
-    raw = item.findtext("pubDate", "") or item.findtext("published", "")
-    if not raw:
-        return None
-    try:
-        dt = parsedate_to_datetime(raw)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except Exception:
-        return None
-
-def is_news_within_days(pub_dt, days):
-    if pub_dt is None:
-        return False
-    return pub_dt >= datetime.now(timezone.utc) - timedelta(days=days)
-
-def format_news_pub_date(pub_dt):
-    if pub_dt is None:
-        return ""
-    return pub_dt.astimezone(KST).strftime("%Y-%m-%d %H:%M")
-
-def news_sort_timestamp(pub_dt):
-    try:
-        return float(pub_dt.timestamp()) if pub_dt is not None else 0.0
-    except Exception:
-        return 0.0
-
-GENERIC_TICKERS = {
-    "lite", "on", "now", "snap", "spot", "snow", "mu", "arm", "path", "apps",
-    "open", "ai", "u", "net", "shop", "coin", "hood", "sofi"
-}
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def get_yfinance_company_names(ticker):
-    names = []
-    try:
-        info = yf.Ticker(ticker).get_info()
-        for key in ["longName", "shortName", "displayName"]:
-            value = str(info.get(key, "") or "").strip()
-            if value and value.lower() not in [x.lower() for x in names]:
-                names.append(value)
-    except Exception:
-        pass
-    return names[:3]
-
-
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_analyst_snapshot(ticker):
-    try:
-        info = yf.Ticker(ticker).get_info()
-    except Exception as e:
-        return {"ok": False, "reason": str(e)}
-
-    if not isinstance(info, dict) or not info:
-        return {"ok": False, "reason": "분석 데이터 없음"}
-
-    keys = [
-        "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
-        "numberOfAnalystOpinions", "recommendationMean", "recommendationKey",
-        "currentPrice", "regularMarketPrice",
-    ]
-    data = {key: info.get(key) for key in keys}
-    has_any = any(data.get(key) not in [None, ""] for key in keys)
-    return {"ok": has_any, "data": data, "reason": "" if has_any else "목표가/투자의견 데이터 없음"}
-
-
-def build_research_report_links(ticker, name):
-    symbol = normalize_news_token(ticker).upper()
-    display_name = str(name or ticker).replace("탐색: ", "").strip()
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
-
-    if is_kr:
-        query = urllib.parse.quote(f"{display_name} {symbol} 증권사 리포트 목표가")
-        return [
-            {"label": "네이버 리포트 검색", "url": f"https://search.naver.com/search.naver?where=news&query={query}"},
-            {"label": "구글 리포트 검색", "url": f"https://www.google.com/search?q={query}"},
-        ]
-
-    query = urllib.parse.quote(f"{symbol} analyst report price target")
-    nasdaq_symbol = urllib.parse.quote(symbol.lower())
-    yahoo_symbol = urllib.parse.quote(str(ticker).upper())
-    return [
-        {"label": "Yahoo Analysis", "url": f"https://finance.yahoo.com/quote/{yahoo_symbol}/analysis"},
-        {"label": "Nasdaq Analyst", "url": f"https://www.nasdaq.com/market-activity/stocks/{nasdaq_symbol}/analyst-research"},
-        {"label": "Google Report", "url": f"https://www.google.com/search?q={query}"},
-    ]
-
-
-def render_research_report_panel(name, ticker, current_price, is_etf=False):
-    st.markdown("### 🧾 리포트 / 목표가")
-    if is_etf:
-        st.info("ETF는 보통 애널리스트 목표가가 제공되지 않습니다. 목표가보다 돈흐름 레이더, 기초지수/섹터 흐름, NAV 괴리율은 증권사 앱 기준으로 확인하는 편이 더 적합합니다.")
-        links = build_research_report_links(ticker, name)
-        link_cols = st.columns(min(len(links), 3))
-        for i, item in enumerate(links):
-            link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
-        return
-
-    snapshot = get_analyst_snapshot(ticker)
-    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
-
-    target_mean = clean_float(data.get("targetMeanPrice"), np.nan)
-    target_median = clean_float(data.get("targetMedianPrice"), np.nan)
-    target_high = clean_float(data.get("targetHighPrice"), np.nan)
-    target_low = clean_float(data.get("targetLowPrice"), np.nan)
-    opinions = clean_int(data.get("numberOfAnalystOpinions"), 0) or 0
-    rec_key = str(data.get("recommendationKey") or "-").upper()
-
-    target_upside = np.nan
-    cur = clean_float(current_price, np.nan)
-    if finite_num(target_mean) and finite_num(cur) and cur > 0:
-        target_upside = (float(target_mean) / float(cur) - 1) * 100
-
-    r1, r2, r3, r4 = st.columns(4)
-    r1.metric("평균 목표가", format_currency(target_mean, ticker) if finite_num(target_mean) else "-")
-    r2.metric("목표가 업사이드", f"{target_upside:.1f}%" if finite_num(target_upside) else "-")
-    r3.metric("참여 애널리스트", f"{opinions}명" if opinions else "-")
-    r4.metric("투자의견", rec_key if rec_key != "-" else "-")
-
-    if finite_num(target_low) or finite_num(target_median) or finite_num(target_high):
-        st.caption(
-            "목표가 범위: "
-            f"하단 {format_currency(target_low, ticker) if finite_num(target_low) else '-'} / "
-            f"중앙 {format_currency(target_median, ticker) if finite_num(target_median) else '-'} / "
-            f"상단 {format_currency(target_high, ticker) if finite_num(target_high) else '-'}"
-        )
-    elif not snapshot.get("ok"):
-        st.caption(f"목표가 데이터 없음: {snapshot.get('reason', '제공 데이터 없음')}")
-
-    links = build_research_report_links(ticker, name)
-    link_cols = st.columns(min(len(links), 3))
-    for i, item in enumerate(links):
-        link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
-
-    st.caption("목표가와 투자의견은 yfinance 제공 데이터 기준입니다. 한국 종목은 제공되지 않는 경우가 많아 리포트 검색 링크를 함께 제공합니다.")
-
-
-def normalize_news_token(text):
-    return str(text or "").replace(".KS", "").replace(".KQ", "").strip()
-
-def clean_news_text(value):
-    return html.unescape(str(value or "")).replace("<b>", "").replace("</b>", "").strip()
-
-def get_news_company_names(ticker, name):
-    symbol = normalize_news_token(ticker).upper()
-    display_name = str(name or "").replace("탐색: ", "").strip()
-
-    names = []
-
-    if display_name and display_name.upper() != symbol:
-        names.append(display_name)
-
-    for n in get_yfinance_company_names(ticker):
-        if n and n.lower() not in [x.lower() for x in names]:
-            names.append(n)
-
-    cleaned = []
-    for n in names:
-        n = n.replace("Inc.", "").replace("Corporation", "").replace("Corp.", "").replace("Co., Ltd.", "").strip()
-        if len(n) >= 2 and n.lower() not in [x.lower() for x in cleaned]:
-            cleaned.append(n)
-
-    return cleaned[:3]
-
-def build_stock_news_queries(ticker, name):
-    symbol = normalize_news_token(ticker).upper()
-    company_names = get_news_company_names(ticker, name)
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
-
-    main = company_names[0] if company_names else symbol
-
-    if is_kr:
-        queries = [
-            f'"{main}" 주가 실적',
-            f'"{main}" 증권',
-            f'{symbol} 주가 실적',
-        ]
-    else:
-        queries = [
-            f'"{main}" {symbol} stock',
-            f'"{main}" earnings shares',
-            f'"{main}" analyst price target',
-        ]
-
-    return queries, company_names
-
-def keyword_in_text(text, keywords):
-    lowered = str(text or "").lower()
-    return any(str(k).lower() in lowered for k in keywords if str(k).strip())
-
-def first_signal_reason(text, signals):
-    lowered = str(text or "").lower()
-    for keyword, reason in signals:
-        if str(keyword).lower() in lowered:
-            return keyword, reason
-    return "", ""
-
-def get_news_theme_terms(ticker, name):
-    symbol = normalize_news_token(ticker).upper()
-    key = normalize_ticker(ticker).upper()
-    display_name = str(name or "").replace("탐색: ", "").strip()
-    terms = []
-
-    for lookup in [symbol, key]:
-        for term in NEWS_THEME_TERMS_BY_SYMBOL.get(lookup, []):
-            if term and term.lower() not in [x.lower() for x in terms]:
-                terms.append(term)
-
-    if display_name and display_name.upper() != symbol and display_name.lower() not in [x.lower() for x in terms]:
-        terms.append(display_name)
-
-    return terms[:6]
-
-def build_news_query_plan(ticker, name):
-    direct_queries, company_names = build_stock_news_queries(ticker, name)
-    symbol = normalize_news_token(ticker).upper()
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
-    main = company_names[0] if company_names else symbol
-    theme_terms = get_news_theme_terms(ticker, name)
-    first_theme = theme_terms[0] if theme_terms else ""
-
-    plan = [
-        {"query": q, "category": NEWS_CATEGORY_DIRECT, "strict": True}
-        for q in direct_queries
-    ]
-
-    if first_theme:
-        if is_kr:
-            plan.extend([
-                {"query": f'"{first_theme}" "{main}" 증권 실적', "category": NEWS_CATEGORY_SECTOR, "strict": False},
-                {"query": f'"{first_theme}" 수주 실적 주가', "category": NEWS_CATEGORY_SECTOR, "strict": False},
-            ])
-        else:
-            plan.extend([
-                {"query": f'"{main}" "{first_theme}" earnings stock', "category": NEWS_CATEGORY_SECTOR, "strict": False},
-                {"query": f'"{first_theme}" stocks earnings demand', "category": NEWS_CATEGORY_SECTOR, "strict": False},
-            ])
-
-    if is_kr:
-        plan.append({"query": "코스피 환율 금리 외국인 증시", "category": NEWS_CATEGORY_MARKET, "strict": False})
-    else:
-        plan.append({"query": "Nasdaq S&P 500 Fed yields AI stocks", "category": NEWS_CATEGORY_MARKET, "strict": False})
-
-    deduped = []
-    seen = set()
-    for item in plan:
-        key = (item["query"].lower(), item["category"])
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped, company_names, theme_terms
-
-def symbol_appears_as_token(text, symbol):
-    text = str(text or "").lower()
-    symbol = str(symbol or "").lower()
-    tokens = text.replace("(", " ").replace(")", " ").replace(":", " ").replace(",", " ").replace(".", " ").split()
-    return symbol in tokens
-
-def assess_news_item(title, publisher, ticker, company_names, theme_terms, category, strict=True):
-    text = f"{title} {publisher}"
-    text_l = text.lower()
-    symbol = normalize_news_token(ticker).lower()
-
-    if any(noise.lower() in text_l for noise in GENERAL_NOISE_WORDS):
-        return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "주식 뉴스와 무관한 키워드"}
-
-    has_company = any(str(n).lower() in text_l for n in company_names if str(n).strip())
-    has_symbol = symbol_appears_as_token(text, symbol)
-    has_theme = keyword_in_text(text, theme_terms)
-    has_stock_word = keyword_in_text(text, STOCK_NEWS_WORDS)
-    has_high_value_word = keyword_in_text(text, HIGH_VALUE_NEWS_WORDS)
-    has_market_word = keyword_in_text(text, ["nasdaq", "s&p", "fed", "yield", "rate", "inflation", "earnings", "증시", "코스피", "코스닥", "금리", "환율", "외국인"])
-    is_low_quality = keyword_in_text(text, LOW_QUALITY_NEWS_WORDS)
-
-    score = 0
-    if has_company: score += 5
-    if has_symbol: score += 4
-    if has_theme: score += 3
-    if has_high_value_word: score += 2
-    if has_stock_word: score += 1
-    if has_market_word and category == NEWS_CATEGORY_MARKET: score += 2
-    if is_low_quality: score -= 4
-
-    pub_l = str(publisher or "").lower()
-    for source, adj in NEWS_SOURCE_QUALITY.items():
-        if source.lower() in pub_l:
-            score += adj
-            break
-
-    if symbol in GENERIC_TICKERS and not has_company and category == NEWS_CATEGORY_DIRECT:
-        score -= 4
-
-    if category == NEWS_CATEGORY_DIRECT:
-        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or not strict) and score >= 3
-    elif category == NEWS_CATEGORY_SECTOR:
-        ok = (has_company or has_symbol or has_theme) and score >= 2
-    else:
-        ok = has_market_word and score >= 1
-
-    if is_low_quality and category == NEWS_CATEGORY_DIRECT and score < 5:
-        ok = False
-
-    if score >= 7:
-        relation = "관련도 높음"
-    elif score >= 3:
-        relation = "관련도 보통"
-    elif ok:
-        relation = "간접 관련"
-    else:
-        relation = "무관"
-
-    pos_key, pos_reason = first_signal_reason(text, POSITIVE_NEWS_SIGNALS)
-    neg_key, neg_reason = first_signal_reason(text, NEGATIVE_NEWS_SIGNALS)
-
-    if pos_key and not neg_key:
-        sentiment, reason = "호재", pos_reason
-    elif neg_key and not pos_key:
-        sentiment, reason = "악재", neg_reason
-    elif pos_key and neg_key:
-        sentiment, reason = "중립", "호재와 악재 단서가 함께 있어 추가 확인 필요"
-    elif category == NEWS_CATEGORY_DIRECT:
-        sentiment, reason = "중립", "종목 직접 뉴스지만 방향성 단서는 제한적"
-    elif category == NEWS_CATEGORY_SECTOR:
-        sentiment, reason = "중립", "섹터/테마 관련 뉴스로 종목에 간접 영향 가능"
-    else:
-        sentiment, reason = "중립", "시장 환경 관련 뉴스로 전체 투자심리에 영향 가능"
-
-    if is_low_quality and ok:
-        reason = "반복 시세성 기사라 우선순위를 낮춰 표시"
-
-    return {
-        "ok": ok,
-        "score": score,
-        "relation": relation,
-        "sentiment": sentiment,
-        "reason": reason,
-    }
-
-def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
-    text = f"{title} {publisher}".lower()
-    symbol = normalize_news_token(ticker).lower()
-
-    if any(noise in text for noise in GENERAL_NOISE_WORDS):
-        return False
-
-    has_company = any(str(n).lower() in text for n in company_names if str(n).strip())
-    has_symbol = symbol_appears_as_token(text, symbol)
-    has_stock_word = any(w.lower() in text for w in STOCK_NEWS_WORDS)
-
-    if symbol in GENERIC_TICKERS:
-        return has_company and has_stock_word
-
-    if strict:
-        return (has_company or has_symbol) and has_stock_word
-
-    return has_company or (has_symbol and has_stock_word)
-    
-@st.cache_data(ttl=600)
-def get_ticker_news(ticker, name, debug=False):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    query_plan, company_names, theme_terms = build_news_query_plan(ticker, name)
-    logs = [
-        f"회사명 후보: {company_names if company_names else '없음'}",
-        f"테마 키워드: {theme_terms if theme_terms else '없음'}",
-        f"검색어 후보: {[x['query'] for x in query_plan]}",
-        f"뉴스 v2: 직접/섹터/시장 분류, 관련도/호재악재 태그 적용",
-        f"최신 필터: 최근 {NEWS_RECENT_DAYS}일 우선, 없으면 {NEWS_FALLBACK_DAYS}일 fallback",
-    ]
-
-    recent_items = []
-    fallback_items = []
-    seen_links = set()
-    accepted_by_category = {key: 0 for key in NEWS_CATEGORY_LIMITS}
-
-    def add_item(title, link, publisher, pub_dt, category, strict=True):
-        if not link or link in seen_links:
-            return False
-
-        assessment = assess_news_item(
-            title=title,
-            publisher=publisher,
-            ticker=ticker,
-            company_names=company_names,
-            theme_terms=theme_terms,
-            category=category,
-            strict=strict,
-        )
-        if not assessment["ok"]:
-            return False
-
-        item_data = {
-            "title": title,
-            "link": link,
-            "publisher": publisher,
-            "published": format_news_pub_date(pub_dt),
-            "category": category,
-            "relation": assessment["relation"],
-            "sentiment": assessment["sentiment"],
-            "reason": assessment["reason"],
-            "quality_score": assessment["score"],
-            "_pub_dt": pub_dt,
-        }
-
-        if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
-            seen_links.add(link)
-            accepted_by_category[category] = accepted_by_category.get(category, 0) + 1
-            recent_items.append(item_data)
-            return True
-
-        if is_news_within_days(pub_dt, NEWS_FALLBACK_DAYS):
-            seen_links.add(link)
-            accepted_by_category[category] = accepted_by_category.get(category, 0) + 1
-            fallback_items.append(item_data)
-            return True
-
-        return False
-
-    def read_rss(url, publisher_fallback, category, strict=True):
-        req = urllib.request.Request(url, headers=headers)
-        root = ET.fromstring(urllib.request.urlopen(req, timeout=4).read())
-        items = root.findall("./channel/item")
-
-        accepted = 0
-        for item in items:
-            title = clean_news_text(item.findtext("title", "제목 없음"))
-            link = str(item.findtext("link", "#") or "#").strip()
-            publisher = clean_news_text(item.findtext("source", publisher_fallback)) or publisher_fallback
-            pub_dt = parse_rss_pub_dt(item)
-
-            if add_item(title, link, publisher, pub_dt, category=category, strict=strict):
-                accepted += 1
-
-            if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
-                break
-
-        return len(items), accepted
-
-    for plan in query_plan:
-        q = plan["query"]
-        category = plan["category"]
-        strict = plan.get("strict", True)
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
-            continue
-        if sum(accepted_by_category.values()) >= NEWS_MAX_ITEMS:
-            break
-
-        google_query = f"{q} when:{NEWS_FALLBACK_DAYS}d"
-        google_encoded = urllib.parse.quote(google_query)
-        normal_encoded = urllib.parse.quote(q)
-
-        try:
-            google_url = f"https://news.google.com/rss/search?q={google_encoded}&hl=ko&gl=KR&ceid=KR:ko"
-            if debug:
-                logs.append(f"구글 URL: {google_url}")
-            total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
-            logs.append(f"구글 검색({category}): {google_query} / 원문 {total}건, 통과 {accepted}건")
-        except Exception as e:
-            logs.append(f"구글 뉴스 실패: {q} / {e}")
-
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
-            continue
-
-        try:
-            naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={normal_encoded}&sort=1"
-            if debug:
-                logs.append(f"네이버 URL: {naver_url}")
-            total, accepted = read_rss(naver_url, "네이버 뉴스", category=category, strict=strict)
-            logs.append(f"네이버 검색({category}): {q} / 원문 {total}건, 통과 {accepted}건")
-        except Exception as e:
-            logs.append(f"네이버 뉴스 실패: {q} / {e}")
-
-    selected = recent_items if recent_items else fallback_items
-
-    if not selected:
-        logs.append("최근 주식 관련 뉴스 없음")
-        return [], logs
-
-    selected = sorted(
-        selected,
-        key=lambda x: (
-            NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
-            -float(x.get("quality_score") or 0),
-            -news_sort_timestamp(x.get("_pub_dt")),
-        )
-    )
-
-    limited = []
-    final_counts = {}
-    for item in selected:
-        category = item.get("category", NEWS_CATEGORY_DIRECT)
-        if final_counts.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
-            continue
-        final_counts[category] = final_counts.get(category, 0) + 1
-        limited.append(item)
-        if len(limited) >= NEWS_MAX_ITEMS:
-            break
-    selected = limited
-
-    for item in selected:
-        item.pop("_pub_dt", None)
-
-    if not recent_items and fallback_items:
-        logs.append(f"최근 {NEWS_RECENT_DAYS}일 뉴스가 없어 {NEWS_FALLBACK_DAYS}일 이내 기사로 대체 표시")
-
-    return selected, logs
-
-def news_sentiment_class(sentiment):
-    if sentiment == "호재":
-        return "positive"
-    if sentiment == "악재":
-        return "negative"
-    return "neutral"
-
-def render_news_cards(news_items):
-    grouped = {}
-    for item in news_items:
-        grouped.setdefault(item.get("category", NEWS_CATEGORY_DIRECT), []).append(item)
-
-    for category in [NEWS_CATEGORY_DIRECT, NEWS_CATEGORY_SECTOR, NEWS_CATEGORY_MARKET]:
-        items = grouped.get(category, [])
-        if not items:
-            continue
-
-        st.markdown(f"#### {category}")
-        for item in items:
-            safe_title = escape_html_value(item.get("title", "제목 없음"))
-            safe_pub = escape_html_value(item.get("publisher", ""))
-            safe_date = escape_html_value(item.get("published", ""))
-            safe_category = escape_html_value(item.get("category", category))
-            safe_relation = escape_html_value(item.get("relation", "관련도 보통"))
-            safe_sentiment = escape_html_value(item.get("sentiment", "중립"))
-            safe_reason = escape_html_value(item.get("reason", "추가 확인 필요"))
-            safe_score = escape_html_value(item.get("quality_score", ""))
-            date_part = f" | {safe_date}" if safe_date else ""
-            safe_link = str(item.get("link", "#")).strip()
-            if not safe_link.startswith(("http://", "https://")):
-                safe_link = "#"
-            safe_link_attr = html.escape(safe_link, quote=True)
-
-            sentiment_class = news_sentiment_class(item.get("sentiment", "중립"))
-            st.markdown(
-                f"<div class='news-box news-{sentiment_class}'>"
-                f"<a href='{safe_link_attr}' target='_blank'>🔗 {safe_title}</a>"
-                f"<div class='news-meta-row'>"
-                f"<span class='news-chip news-chip-category'>{safe_category}</span>"
-                f"<span class='news-chip news-chip-{sentiment_class}'>{safe_sentiment}</span>"
-                f"<span class='news-chip'>{safe_relation}</span>"
-                f"출처: {safe_pub}{date_part} | 품질점수: {safe_score}"
-                f"</div>"
-                f"<div class='news-reason'>{safe_reason}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-
 # -------------------------------------------------
 # 4. 데이터 로드 (외부 의존성 제거)
 # -------------------------------------------------
-@st.cache_data(ttl=300)
-def load_price_df(ticker, period="1y"):
-    df = yf.download(ticker, period=period, interval="1d", progress=False)
-    if not df.empty:
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        df = df.ffill().dropna()
-    return df
-
-
-def normalize_price_lookup_key(ticker):
-    return str(ticker or "").strip().upper()
-
-
-def get_latest_close_from_series(series):
-    if isinstance(series, pd.DataFrame):
-        if series.empty:
-            return 0.0
-        series = series.iloc[:, 0]
-
-    values = pd.to_numeric(series, errors="coerce").ffill().dropna()
-    if values.empty:
-        return 0.0
-    return float(values.iloc[-1])
-
-
-def find_matching_column_value(values, target):
-    target = normalize_price_lookup_key(target)
-    for value in values:
-        if normalize_price_lookup_key(value) == target:
-            return value
-    return None
-
-
-def extract_download_close_series(data, ticker):
-    if data is None or data.empty:
-        return pd.Series(dtype=float)
-
-    if not isinstance(data.columns, pd.MultiIndex):
-        if "Close" in data.columns:
-            return data["Close"]
-        return pd.Series(dtype=float)
-
-    for level_no in range(data.columns.nlevels):
-        matched_ticker = find_matching_column_value(data.columns.get_level_values(level_no), ticker)
-        if matched_ticker is None:
-            continue
-
-        sub = data.xs(matched_ticker, axis=1, level=level_no)
-        if isinstance(sub, pd.Series):
-            return sub
-        if "Close" in sub.columns:
-            return sub["Close"]
-
-    for level_no in range(data.columns.nlevels):
-        matched_close = find_matching_column_value(data.columns.get_level_values(level_no), "Close")
-        if matched_close is None:
-            continue
-
-        sub = data.xs(matched_close, axis=1, level=level_no)
-        matched_ticker = find_matching_column_value(sub.columns, ticker)
-        if matched_ticker is not None:
-            return sub[matched_ticker]
-
-    return pd.Series(dtype=float)
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def load_latest_price(ticker):
-    try:
-        df = yf.download(ticker, period="1d", interval="1m", progress=False, prepost=True, auto_adjust=False)
-        price = get_latest_close_from_series(extract_download_close_series(df, ticker))
-        if price > 0:
-            return price
-    except Exception:
-        pass
-
-    try:
-        df = yf.download(ticker, period="5d", interval="1d", progress=False)
-        if df.empty:
-            return 0.0
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.ffill().dropna()
-        if df.empty or "Close" not in df.columns:
-            return 0.0
-        return float(df["Close"].iloc[-1])
-    except Exception:
-        return 0.0
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def load_latest_prices_batch(tickers):
-    unique_tickers = []
-    seen = set()
-    for ticker in tickers or []:
-        ticker_value = str(ticker or "").strip()
-        key = normalize_price_lookup_key(ticker_value)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        unique_tickers.append(ticker_value)
-
-    if not unique_tickers:
-        return {}
-
-    if len(unique_tickers) == 1:
-        ticker = unique_tickers[0]
-        return {normalize_price_lookup_key(ticker): load_latest_price(ticker)}
-
-    try:
-        data = yf.download(
-            unique_tickers,
-            period="5d",
-            interval="1d",
-            progress=False,
-            group_by="ticker",
-            threads=True,
-            auto_adjust=False,
-        )
-    except Exception:
-        return {}
-
-    prices = {}
-    for ticker in unique_tickers:
-        series = extract_download_close_series(data, ticker)
-        price = get_latest_close_from_series(series)
-        if price > 0:
-            prices[normalize_price_lookup_key(ticker)] = price
-
-    return prices
-
-
-def clear_latest_price_cache():
-    for fn in [load_latest_price, load_latest_prices_batch]:
-        if hasattr(fn, "clear"):
-            fn.clear()
-
-
-def clear_selected_price_cache():
-    clear_latest_price_cache()
-
-
 def cache_clear(fn):
     if fn is not None and hasattr(fn, "clear"):
         fn.clear()
@@ -5875,20 +4376,20 @@ def render_user_guide_tab():
 1. **로그인**
    허용된 계정으로 로그인합니다. 계정별로 자산, 관심종목, 스윙 레이더가 분리 저장됩니다.
 
-2. **자산 관리 입력**
-   `⚙️ 자산 관리` 탭에서 시드머니, 원화/달러 예수금, 환율, 보유 종목을 입력합니다.
+2. **자산 현황/관리 입력**
+   `💼 자산 현황` 탭에서 시드머니, 원화/달러 예수금, 환율, 보유 종목을 입력합니다.
 
 3. **보유 종목 저장**
    보유 종목 표에는 `ticker`, `name`, `qty`, `avg_price`, `target_weight`, `asset_class`, `is_etf`, `bucket`을 입력합니다.
 
 4. **전광판 확인**
-   `📋 전체 요약 전광판`에서 한국 ETF, 한국 개별주, 미국 ETF, 미국 개별주를 나눠 봅니다.
+   `📋 전광판`에서 한국 ETF, 한국 개별주, 미국 ETF, 미국 개별주를 나눠 봅니다.
 
 5. **정밀 관측소에서 한 종목 확인**
    관심 종목을 하나 골라 현재가, 추세, RS, RSI, MFI, MACD, 볼린저 위치, 최종 판정을 확인합니다.
         """)
 
-        st.info("처음에는 전광판을 먼저 보고, 매수/추매 고민이 생긴 종목만 정밀 관측소에서 확인하는 흐름이 가장 편합니다.")
+        st.info("자산관리만 쓰는 사용자는 자산 현황 탭만 봐도 충분합니다. 매수/추매 고민이 생긴 종목만 전광판이나 정밀관측소에서 확인하면 됩니다.")
 
         with st.expander("보유 종목 입력 예시", expanded=True):
             st.markdown("""
@@ -5905,17 +4406,17 @@ def render_user_guide_tab():
         st.markdown("""
 ### 각 탭은 이렇게 씁니다
 
-**📋 전체 요약 전광판**  
-등록된 종목을 한 번에 보는 첫 화면입니다. 한국/미국, ETF/개별주를 나눠서 보고 `기술적 타점`, `ADJ점수`, `RS`, `시장벤치`, `섹터RS`를 확인합니다.
-
-**🔍 종목 정밀 관측소**  
-한 종목을 깊게 보는 곳입니다. 차트, 추세, MACD, SQZ, SMC 구조, 뉴스, AI 분석용 프롬프트를 확인합니다.
-
-**⚙️ 자산 관리**  
-시드머니, 예수금, 보유 종목, 배당, 월별 로그를 관리합니다. 입력값이 틀리면 비중/추매금액 판정도 틀어집니다.
+**💼 자산 현황**  
+총자산, 손익, 대기자금, 보유자산 상세표를 보는 기본 화면입니다. 입력/수정 영역은 필요할 때만 펼쳐서 사용합니다.
 
 **📊 포트폴리오 분석**  
 내 자산 전체의 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 확인합니다.
+
+**📋 전광판**  
+등록된 종목을 한 번에 보는 첫 화면입니다. 한국/미국, ETF/개별주를 나눠서 보고 `기술적 타점`, `ADJ점수`, `RS`, `시장벤치`, `섹터RS`를 확인합니다.
+
+**🔍 정밀관측소**  
+한 종목을 깊게 보는 곳입니다. 차트, 추세, MACD, SQZ, SMC 구조, 뉴스, AI 분석용 프롬프트를 확인합니다.
 
 **📉 시나리오 점검**  
 전체 하락, 개별 자산 충격, 대기자금 확대 같은 가정을 넣어 손실 규모를 미리 계산해 봅니다.
@@ -5935,14 +4436,13 @@ def render_user_guide_tab():
 
         with st.expander("추천 사용 순서", expanded=True):
             st.markdown("""
-1. 돈흐름 레이더에서 강한 섹터 확인
-2. 전광판에서 해당 섹터 관련 종목 확인
-3. 정밀 관측소에서 타점 확인
-4. 포트폴리오 분석에서 집중도와 변동성 확인
-5. 시나리오 점검에서 하락 시 손실 규모 확인
-6. 단기 흐름 점검에서 2~4주 방향성 확인
-7. 스윙 레이더에서 체크리스트 확인
-8. 목표비중과 현재비중을 보고 최종 판단
+1. 자산 현황에서 총자산, 손익, 대기자금, 보유자산 표를 확인
+2. 필요할 때만 입력/수정 영역을 열어 보유종목, 예수금, 배당, 월별 로그 수정
+3. 포트폴리오 분석에서 집중도, 변동성, 대기자금 비중 확인
+4. 전광판에서 관심종목을 한국/미국, ETF/개별주로 나눠 확인
+5. 정밀관측소에서 매수/추매 고민이 있는 종목만 깊게 확인
+6. 돈흐름 레이더와 스윙 레이더는 고급 분석이 필요할 때만 사용
+7. 시나리오 점검과 단기 흐름 점검은 시장이 흔들릴 때 보조로 확인
             """)
 
     with signal_tab:
@@ -7101,6 +5601,35 @@ def should_run_heavy_analysis(key, description, run_label="분석 실행/새로�
     return True
 
 
+def get_heavy_analysis_ready(key):
+    ready_key = f"{key}_ready"
+    if ready_key not in st.session_state:
+        st.session_state[ready_key] = False
+    return bool(st.session_state.get(ready_key, False))
+
+
+def render_heavy_analysis_button(key, run_label="분석 실행/새로고침"):
+    ready_key = f"{key}_ready"
+    last_key = f"{key}_last_run"
+    if ready_key not in st.session_state:
+        st.session_state[ready_key] = False
+
+    if st.button(run_label, key=f"{key}_run_inline", use_container_width=True):
+        st.session_state[ready_key] = True
+        st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+        st.rerun()
+
+    if st.session_state.get(ready_key, False):
+        if st.button("계산 접기", key=f"{key}_hide_inline", use_container_width=True):
+            st.session_state[ready_key] = False
+            st.rerun()
+        last_run = st.session_state.get(last_key)
+        if last_run:
+            st.caption(f"마지막 실행: {last_run}")
+    else:
+        st.caption("기술적 타점 요약 대기 중")
+
+
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
     issues.append({
         "등급": severity,
@@ -7336,6 +5865,147 @@ def render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df,
         """)
 
 
+def build_asset_quick_quality_report(settings, holdings_df, dividends_df, monthly_logs_df):
+    issues = []
+    settings = settings or {}
+    holdings_df = holdings_df if holdings_df is not None else pd.DataFrame(columns=HOLDINGS_COLUMNS)
+    dividends_df = dividends_df if dividends_df is not None else pd.DataFrame(columns=DIVIDENDS_COLUMNS)
+    monthly_logs_df = monthly_logs_df if monthly_logs_df is not None else pd.DataFrame(columns=MONTHLY_LOG_COLUMNS)
+
+    if clean_float(settings.get("usdkrw"), 0.0) <= 0:
+        add_quality_issue(issues, "위험", "기본 설정", "", "환율이 0 이하입니다.", "입력/수정 영역에서 USD/KRW 환율을 확인하세요.")
+    if clean_float(settings.get("seed_money"), 0.0) < 0:
+        add_quality_issue(issues, "위험", "기본 설정", "", "시드머니가 음수입니다.", "시드머니를 0 이상으로 수정하세요.")
+
+    if holdings_df.empty:
+        add_quality_issue(issues, "참고", "보유자산", "", "등록된 보유자산이 없습니다.", "처음 사용하는 상태라면 정상입니다.")
+    else:
+        ticker_keys = []
+        for idx, row in holdings_df.fillna("").iterrows():
+            ticker = str(row.get("ticker", "")).strip()
+            key = normalize_ticker(ticker)
+            if key:
+                ticker_keys.append(key)
+            else:
+                add_quality_issue(issues, "위험", "보유자산", f"row {idx + 1}", "티커가 비어 있습니다.", "티커를 입력하거나 행을 삭제하세요.")
+
+            if clean_float(row.get("qty"), 0.0) < 0:
+                add_quality_issue(issues, "위험", "보유자산", ticker, "보유량이 음수입니다.", "수량 입력값을 확인하세요.")
+            if clean_float(row.get("avg_price"), 0.0) < 0:
+                add_quality_issue(issues, "위험", "보유자산", ticker, "매입가가 음수입니다.", "평균 매입가를 0 이상으로 수정하세요.")
+
+            target_weight = clean_float(row.get("target_weight"), 0.0)
+            if target_weight < 0 or target_weight > 100:
+                add_quality_issue(issues, "주의", "보유자산", ticker, "목표비중이 0~100 범위를 벗어났습니다.", "목표비중을 확인하세요.")
+
+        duplicated = pd.Series([key for key in ticker_keys if key]).value_counts()
+        for key, count in duplicated[duplicated > 1].items():
+            add_quality_issue(issues, "위험", "보유자산", key, f"같은 티커가 {int(count)}번 등록되어 있습니다.", "중복 행을 정리하세요.")
+
+    if not dividends_df.empty:
+        for idx, row in dividends_df.fillna("").iterrows():
+            if str(row.get("date", "")).strip() and pd.isna(pd.to_datetime(row.get("date"), errors="coerce")):
+                add_quality_issue(issues, "주의", "배당", f"row {idx + 1}", "배당 날짜 형식이 애매합니다.", "YYYY-MM-DD 형식으로 입력하면 가장 안정적입니다.")
+            if clean_float(row.get("amount"), 0.0) < 0:
+                add_quality_issue(issues, "주의", "배당", str(row.get("ticker", "")), "배당금이 음수입니다.", "정정 입력이 아니라면 금액을 확인하세요.")
+
+    if not monthly_logs_df.empty:
+        months = []
+        for idx, row in monthly_logs_df.fillna("").iterrows():
+            month = str(row.get("month", "")).strip()
+            if month:
+                months.append(month)
+            else:
+                add_quality_issue(issues, "주의", "월별 로그", f"row {idx + 1}", "월 정보가 비어 있습니다.", "예: 2026-05 형식으로 입력하세요.")
+
+            for col in ["total_invested", "evaluated_value", "dividend"]:
+                if col in monthly_logs_df.columns and clean_float(row.get(col), 0.0) < 0:
+                    add_quality_issue(issues, "주의", "월별 로그", month, f"{col} 값이 음수입니다.", "입력값을 확인하세요.")
+
+        duplicated_months = pd.Series([m for m in months if m]).value_counts()
+        for month, count in duplicated_months[duplicated_months > 1].items():
+            add_quality_issue(issues, "주의", "월별 로그", month, f"같은 월이 {int(count)}번 등록되어 있습니다.", "월별 로그를 한 행으로 정리하세요.")
+
+    report_df = pd.DataFrame(issues, columns=["등급", "영역", "티커", "문제", "확인/조치"])
+    if report_df.empty:
+        return report_df
+
+    severity_order = {"위험": 0, "주의": 1, "참고": 2}
+    report_df["_order"] = report_df["등급"].map(severity_order).fillna(9)
+    return report_df.sort_values(["_order", "영역", "티커"]).drop(columns="_order").reset_index(drop=True)
+
+
+def render_asset_quick_quality_summary(settings, holdings_df, dividends_df, monthly_logs_df):
+    quick_df = build_asset_quick_quality_report(settings, holdings_df, dividends_df, monthly_logs_df)
+    danger_count = int((quick_df["등급"] == "위험").sum()) if not quick_df.empty else 0
+    warning_count = int((quick_df["등급"] == "주의").sum()) if not quick_df.empty else 0
+    note_count = int((quick_df["등급"] == "참고").sum()) if not quick_df.empty else 0
+
+    status = "정상"
+    if danger_count > 0:
+        status = "위험 확인"
+    elif warning_count > 0:
+        status = "주의 확인"
+    elif note_count > 0:
+        status = "참고 있음"
+
+    q1, q2, q3, q4 = st.columns(4)
+    q1.metric("입력 데이터 상태", status)
+    q2.metric("위험", f"{danger_count}건")
+    q3.metric("주의", f"{warning_count}건")
+    q4.metric("참고", f"{note_count}건")
+
+    if quick_df.empty:
+        st.success("빠른 점검 기준으로 큰 입력 이상은 보이지 않습니다.")
+        return
+
+    with st.expander("빠른 점검 항목 보기", expanded=danger_count > 0):
+        st.dataframe(quick_df, use_container_width=True, hide_index=True)
+        st.caption("더 자세한 점검은 데이터 점검 탭에서 확인할 수 있습니다.")
+
+
+def render_monthly_record_status(monthly_logs_df, portfolio_summary):
+    perf_df = prepare_monthly_performance_df(monthly_logs_df)
+    current_month = get_kst_now().strftime("%Y-%m")
+    previous_month = (pd.Timestamp(get_kst_now().date()).replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+
+    if perf_df is None or perf_df.empty:
+        st.markdown("### 월별 기록 상태")
+        cols = st.columns(4)
+        cols[0].metric("기록 상태", "기록 없음")
+        cols[1].metric("최신 기록월", "-")
+        cols[2].metric("기록 평가자산", "-")
+        cols[3].metric("기록 수익률", "-")
+        st.info("월별 로그를 입력하면 자산 변화, 누적손익, 배당금, 벤치마크 비교 차트가 표시됩니다.")
+        return
+
+    latest = perf_df.iloc[-1]
+    latest_month = pd.Timestamp(latest["month_end"]).strftime("%Y-%m")
+    latest_asset = clean_float(latest.get("evaluated_value"), 0.0)
+    latest_return = clean_float(latest.get("cum_return_pct"), 0.0)
+    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
+    asset_gap = current_asset - latest_asset
+
+    if latest_month == current_month:
+        status = "이번 달 기록 있음"
+    elif latest_month == previous_month:
+        status = "최근 월 기록 완료"
+    else:
+        status = "업데이트 필요"
+
+    st.markdown("### 월별 기록 상태")
+    cols = st.columns(4)
+    cols[0].metric("기록 상태", status)
+    cols[1].metric("최신 기록월", latest_month, f"{len(perf_df)}개월")
+    cols[2].metric("기록 평가자산", f"{latest_asset:,.0f}원", f"현재와 {asset_gap:+,.0f}원")
+    cols[3].metric("기록 누적수익률", f"{latest_return:.2f}%")
+
+    if status == "업데이트 필요":
+        st.warning("월별 로그가 최근 월 기준으로 오래되었습니다. 입력/수정 영역에서 최신 월을 추가하면 차트가 더 정확해집니다.")
+    else:
+        st.caption("월별 로그가 비교적 최신 상태입니다. 월말 기준으로 기록하면 장기 성과 추적이 안정적입니다.")
+
+
 def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     full_df = append_cash_rows(
         holdings_table.copy(),
@@ -7452,7 +6122,7 @@ st.caption(f"모드: {app_mode} | 매크로 리스크: {final_macro_risk:.1f} | 
 if macro_res:
     m_cols = st.columns(len(macro_res))
     for i, (n, info) in enumerate(macro_res.items()):
-        s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] else ""
+        s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] and n != "환율" else ""
         m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
 else:
     st.info("매크로 데이터를 불러오지 못했습니다.")
@@ -7474,11 +6144,11 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
-    "📋 전체 요약 전광판",
-    "🔍 종목 정밀 관측소",
-    "⚙️ 자산 관리",
+tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_money, tab_swing, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
+    "💼 자산 현황",
     "📊 포트폴리오 분석",
+    "📋 전광판",
+    "🔍 정밀관측소",
     "📉 시나리오 점검",
     "📈 단기 흐름 점검",
     "💸 돈흐름 레이더",
@@ -7489,7 +6159,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "📖 사용 가이드",
 ])
 
-with tab1:
+with tab_dashboard:
     st.subheader("CCTV 통합 통제실")
     render_data_basis_caption("전광판", include_fin=True)
     st.write(
@@ -7553,7 +6223,7 @@ with tab1:
             with group_tab:
                 render_dashboard_group_summary(summary_df, group_label)
 
-with tab2:
+with tab_precision:
     options, precision_option_map = build_precision_select_options()
     if st.session_state.get("precision_selected_option") not in options:
         st.session_state["precision_selected_option"] = options[0]
@@ -7862,49 +6532,51 @@ with tab2:
             st.text_area("분석용 프롬프트", value=prompt, height=500, key=f"prompt_box_{normalize_ticker(tkr)}")
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
 
-with tab3:
+with tab_asset:
     st.subheader("앱 내부 자산 관리")
     render_data_basis_caption("자산관리", include_fin=True)
     render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+    render_asset_quick_quality_summary(settings, holdings_df, dividends_df, monthly_logs_df)
+    render_monthly_record_status(monthly_logs_df, portfolio_summary)
 
-    st.markdown("### 0) 백업/복구 안전장치")
-
-    backup_dash_df = append_cash_rows(
-        holdings_table.copy(),
-        krw_cash,
-        usd_cash,
-        usdkrw,
-        portfolio_summary["current_asset"]
-    )
-    fin_scores_backup_df = load_fin_scores_db()
-
-    bkp1, bkp2, bkp3, bkp4 = st.columns(4)
-    bkp1.metric("보유종목 DB", f"{count_valid_rows(holdings_df, ['ticker'])}건")
-    bkp2.metric("배당 DB", f"{count_valid_rows(dividends_df, ['date', 'ticker'])}건")
-    bkp3.metric("월별 로그", f"{count_valid_rows(monthly_logs_df, ['month'])}건")
-    bkp4.metric("관심종목", f"{len(st.session_state.watchlist)}건")
-
-    backup_stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
-    swing_radar_backup_df, _ = load_swing_radar_db_safe()
-    backup_zip = build_portfolio_backup_zip(
-        settings=settings,
-        holdings_df=holdings_df,
-        dividends_df=dividends_df,
-        monthly_logs_df=monthly_logs_df,
-        watchlist_items=st.session_state.watchlist,
-        dashboard_df=backup_dash_df,
-        fin_scores_df=fin_scores_backup_df,
-        swing_radar_df=swing_radar_backup_df,
-    )
-    st.download_button(
-        "현재 Supabase 데이터 ZIP 백업",
-        data=backup_zip,
-        file_name=f"stock_lab_backup_{backup_stamp}.zip",
-        mime="application/zip",
-        use_container_width=True,
-        key="download_supabase_backup_zip",
-    )
-
+    with st.expander("0) 백업 다운로드", expanded=False):
+    
+        backup_dash_df = append_cash_rows(
+            holdings_table.copy(),
+            krw_cash,
+            usd_cash,
+            usdkrw,
+            portfolio_summary["current_asset"]
+        )
+        fin_scores_backup_df = load_fin_scores_db()
+    
+        bkp1, bkp2, bkp3, bkp4 = st.columns(4)
+        bkp1.metric("보유종목 DB", f"{count_valid_rows(holdings_df, ['ticker'])}건")
+        bkp2.metric("배당 DB", f"{count_valid_rows(dividends_df, ['date', 'ticker'])}건")
+        bkp3.metric("월별 로그", f"{count_valid_rows(monthly_logs_df, ['month'])}건")
+        bkp4.metric("관심종목", f"{len(st.session_state.watchlist)}건")
+    
+        backup_stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
+        swing_radar_backup_df, _ = load_swing_radar_db_safe()
+        backup_zip = build_portfolio_backup_zip(
+            settings=settings,
+            holdings_df=holdings_df,
+            dividends_df=dividends_df,
+            monthly_logs_df=monthly_logs_df,
+            watchlist_items=st.session_state.watchlist,
+            dashboard_df=backup_dash_df,
+            fin_scores_df=fin_scores_backup_df,
+            swing_radar_df=swing_radar_backup_df,
+        )
+        st.download_button(
+            "현재 Supabase 데이터 ZIP 백업",
+            data=backup_zip,
+            file_name=f"stock_lab_backup_{backup_stamp}.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key="download_supabase_backup_zip",
+        )
+    
     with st.expander("CSV 백업 복구", expanded=False):
         st.caption("Supabase/SQLite에서 export한 holdings, dividends, monthly_logs, dashboard CSV를 업로드해 현재 계정으로 복구합니다.")
         recovery_files = st.file_uploader(
@@ -7986,82 +6658,85 @@ with tab3:
                 else:
                     st.warning("복구할 수 있는 CSV를 찾지 못했습니다.")
 
-    st.markdown("### 1) 기본 설정")
-    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
-    with col_s1: new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
-    with col_s2: new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
-    with col_s3: new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
-    with col_s4: new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
-    with col_s5: new_reserve_target = st.number_input("대기자금 목표비중(%)", min_value=0.0, max_value=100.0, value=float(reserve_target_weight), step=0.5)
-
-
-    if st.button("기본 설정 저장"):
-        save_settings_db(new_seed, new_krw, new_usd, new_fx, new_reserve_target)
-        st.success("기본 설정 저장 완료")
-        st.rerun()
-
-    st.markdown("### 2) 보유 종목 관리")
-    holdings_editor_df = load_holdings_db()
-    if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
-    if "bucket" not in holdings_editor_df.columns:
-        holdings_editor_df["bucket"] = "core"
-
-    holdings_editor_df["bucket"] = holdings_editor_df.apply(
-        lambda r: infer_bucket(r.get("ticker", ""), r.get("bucket", "core")),
-        axis=1
-    )
-
-    st.caption("bucket: core=장기투자, swing=스윙후보, reserve=비상대기/파킹. 원화/달러 예수금은 자동 cash 처리됩니다.")
-        
-    edited_holdings = st.data_editor(
-        holdings_editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="holdings_editor",
-        column_config={
-            "is_etf": st.column_config.CheckboxColumn(
-                "ETF/ETN/레버리지",
-                help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
-            ),
-            "asset_class": st.column_config.SelectboxColumn(
-                "asset_class",
-                options=["", "kr_stock", "us_stock", "us_stock_tech", "us_stock_growth", "kr_etf", "us_etf_sp", "us_etf_nasdaq", "us_etf_other", "kr_etn", "us_etn", "fund"],
-                help="ETF/ETN/레버리지 상품은 ETF/ETN 계열로 선택"
-            ),
-            "bucket": st.column_config.SelectboxColumn(
-                "bucket",
-                options=["core", "swing", "reserve"],
-                help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
-            )
-        }
-    )
-
-    if st.button("보유 종목 저장"):
-        if save_holdings_db(edited_holdings.fillna("")):
-            st.success("보유 종목 저장 완료")
+    with st.expander("입력/수정 영역", expanded=False):
+        st.caption("기본 설정, 보유종목, 배당, 월별 로그를 수정할 때만 열어주세요.")
+        st.markdown("### 1) 기본 설정")
+        col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+        with col_s1: new_seed = st.number_input("시드머니", min_value=0.0, value=float(seed_money), step=100000.0)
+        with col_s2: new_krw = st.number_input("원화 예수금", min_value=0.0, value=float(krw_cash), step=100000.0)
+        with col_s3: new_usd = st.number_input("달러 예수금", min_value=0.0, value=float(usd_cash), step=100.0)
+        with col_s4: new_fx = st.number_input("환율(USDKRW)", min_value=0.0, value=float(usdkrw), step=1.0)
+        with col_s5: new_reserve_target = st.number_input("대기자금 목표비중(%)", min_value=0.0, max_value=100.0, value=float(reserve_target_weight), step=0.5)
+    
+    
+        if st.button("기본 설정 저장"):
+            save_settings_db(new_seed, new_krw, new_usd, new_fx, new_reserve_target)
+            st.success("기본 설정 저장 완료")
             st.rerun()
-
-    st.markdown("### 3) 배당 내역 관리")
-    dividends_editor_df = load_dividends_db()
-    if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
-    edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
-
-    if st.button("배당 내역 저장"):
-        if save_dividends_db(edited_dividends.fillna("")):
-            st.success("배당 내역 저장 완료")
-            st.rerun()
-
-    st.markdown("### 4) 월별 로그 관리")
-    monthly_editor_df = load_monthly_logs_db()
-    if monthly_editor_df.empty: monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
-    edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", use_container_width=True, key="monthly_editor")
-
-    if st.button("월별 로그 저장"):
-        if save_monthly_logs_db(edited_monthly.fillna("")):
-            st.success("월별 로그 저장 완료")
-            st.rerun()
-
-    st.markdown("### 5) 현재 계산 결과")
+    
+        st.markdown("### 2) 보유 종목 관리")
+        holdings_editor_df = load_holdings_db()
+        if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
+        if "bucket" not in holdings_editor_df.columns:
+            holdings_editor_df["bucket"] = "core"
+    
+        holdings_editor_df["bucket"] = holdings_editor_df.apply(
+            lambda r: infer_bucket(r.get("ticker", ""), r.get("bucket", "core")),
+            axis=1
+        )
+    
+        st.caption("bucket: core=장기투자, swing=스윙후보, reserve=비상대기/파킹. 원화/달러 예수금은 자동 cash 처리됩니다.")
+            
+        edited_holdings = st.data_editor(
+            holdings_editor_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="holdings_editor",
+            column_config={
+                "is_etf": st.column_config.CheckboxColumn(
+                    "ETF/ETN/레버리지",
+                    help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
+                ),
+                "asset_class": st.column_config.SelectboxColumn(
+                    "asset_class",
+                    options=["", "kr_stock", "us_stock", "us_stock_tech", "us_stock_growth", "kr_etf", "us_etf_sp", "us_etf_nasdaq", "us_etf_other", "kr_etn", "us_etn", "fund"],
+                    help="ETF/ETN/레버리지 상품은 ETF/ETN 계열로 선택"
+                ),
+                "bucket": st.column_config.SelectboxColumn(
+                    "bucket",
+                    options=["core", "swing", "reserve"],
+                    help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
+                )
+            }
+        )
+    
+        if st.button("보유 종목 저장"):
+            if save_holdings_db(edited_holdings.fillna("")):
+                st.success("보유 종목 저장 완료")
+                st.rerun()
+    
+        st.markdown("### 3) 배당 내역 관리")
+        dividends_editor_df = load_dividends_db()
+        if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
+        edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
+    
+        if st.button("배당 내역 저장"):
+            if save_dividends_db(edited_dividends.fillna("")):
+                st.success("배당 내역 저장 완료")
+                st.rerun()
+    
+        st.markdown("### 4) 월별 로그 관리")
+        monthly_editor_df = load_monthly_logs_db()
+        if monthly_editor_df.empty: monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
+        edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", use_container_width=True, key="monthly_editor")
+    
+        if st.button("월별 로그 저장"):
+            if save_monthly_logs_db(edited_monthly.fillna("")):
+                st.success("월별 로그 저장 완료")
+                st.rerun()
+    
+    st.markdown("### 포트폴리오 상세")
+    st.caption("상단 자산 현황 요약의 세부 분포, 비중, 손익, 월별 기록을 확인합니다.")
 
     dash_df = append_cash_rows(
         holdings_table.copy(),
@@ -8083,11 +6758,8 @@ with tab3:
         
         reserve_summary = calc_reserve_summary(dash_df, reserve_target_weight)
 
-        run_asset_tech_summary = should_run_heavy_analysis(
-            "asset_management_tech_summary_lazy",
-            "아래 기본 자산 차트는 표시하되, 종목별 기술적 타점 요약은 버튼을 눌렀을 때만 계산합니다.",
-            run_label="기술적 타점 계산/새로고침",
-        )
+        asset_tech_summary_key = "asset_management_tech_summary_lazy"
+        run_asset_tech_summary = get_heavy_analysis_ready(asset_tech_summary_key)
 
         signal_rows = []
         if run_asset_tech_summary:
@@ -8183,18 +6855,8 @@ with tab3:
 
         dash_df["ADJ점수_num"] = pd.to_numeric(dash_df["ADJ점수"], errors="coerce").fillna(0)
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("주식 평가금", f"{portfolio_summary['stock_value']:,.0f}원")
-        k2.metric("현금 포함 자산", f"{portfolio_summary['current_asset']:,.0f}원")
-        k3.metric("누적손익", f"{portfolio_summary['cum_profit']:,.0f}원")
-        k4.metric("누적수익률", f"{portfolio_summary['cum_return']:.2f}%")
+        st.markdown("#### 자산 구성/비중 상세")
 
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("투자자산", f"{reserve_summary['invest_value']:,.0f}원")
-        r2.metric("대기자금", f"{reserve_summary['waiting_value']:,.0f}원", f"{reserve_summary['waiting_pct']:.2f}%")
-        r3.metric("대기자금 목표", f"{reserve_summary['target_pct']:.2f}%")
-        r4.metric("초과 대기자금", f"{reserve_summary['deployable_value']:,.0f}원", f"{reserve_summary['excess_pct']:.2f}%p")
-        
         c1, c2 = st.columns([1.1, 1])
 
         tree_values = dash_df["원화환산"].astype(float).clip(lower=0)
@@ -8402,9 +7064,13 @@ with tab3:
         else:
             st.info("월별 로그를 입력하면 월별 투자 기록, 누적손익, 벤치마크 비교, 배당금 차트가 표시됩니다.")
 
-        asset_summary_title_col, asset_summary_refresh_col = st.columns([3, 1])
+        asset_summary_title_col, asset_summary_tech_col, asset_summary_refresh_col = st.columns([2.4, 1.2, 1])
         with asset_summary_title_col:
             st.markdown("#### 보유자산 + 기술적 타점 요약")
+            if not run_asset_tech_summary:
+                st.caption("기술적 타점은 버튼을 누를 때만 계산합니다. 기본 자산 차트는 위에 먼저 표시됩니다.")
+        with asset_summary_tech_col:
+            render_heavy_analysis_button(asset_tech_summary_key, "기술적 타점계산")
         with asset_summary_refresh_col:
             if st.button("현재가 새로고침", key="refresh_asset_table_latest_prices", use_container_width=True, help="보유자산 평가금액에 쓰는 60초 현재가 캐시를 비우고 다시 조회합니다."):
                 clear_latest_price_cache()
@@ -8427,29 +7093,31 @@ with tab3:
     else:
         st.info("등록된 보유 종목이 없습니다.")
 
-with tab4:
+with tab_portfolio:
     render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
-with tab5:
+with tab_scenario:
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
-with tab6:
+with tab_short:
     render_short_trend_tab(holdings_table, st.session_state.watchlist)
 
-with tab7:
+with tab_money:
     render_money_flow_tab()
 
-with tab8:
+with tab_swing:
     render_swing_radar_tab()
 
-with tab9:
+with tab_data:
     render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
-with tab10:
+with tab_speed:
     render_speed_check_tab()
 
-with tab11:
+with tab_manual:
     render_manual_tab() 
 
-with tab12:
+with tab_guide:
     render_user_guide_tab()
+
+
