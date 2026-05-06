@@ -15,6 +15,22 @@ def load_price_df(ticker, period="1y"):
     return df
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_usdkrw_rate():
+    try:
+        df = yf.download("USDKRW=X", period="5d", interval="1d", progress=False, auto_adjust=False)
+        if df is None or df.empty:
+            return 0.0
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.ffill().dropna()
+        if df.empty or "Close" not in df.columns:
+            return 0.0
+        return float(df["Close"].iloc[-1])
+    except Exception:
+        return 0.0
+
+
 def normalize_price_lookup_key(ticker):
     return str(ticker or "").strip().upper()
 
@@ -146,4 +162,3 @@ def clear_latest_price_cache():
 
 def clear_selected_price_cache():
     clear_latest_price_cache()
-
