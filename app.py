@@ -67,9 +67,25 @@ from stock_lab_core.prices import (
     load_latest_price,
     load_latest_prices_batch,
     load_price_df,
-    load_usdkrw_rate,
     normalize_price_lookup_key,
 )
+try:
+    from stock_lab_core.prices import load_usdkrw_rate
+except ImportError:
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def load_usdkrw_rate():
+        try:
+            df = yf.download("USDKRW=X", period="5d", interval="1d", progress=False, auto_adjust=False)
+            if df is None or df.empty:
+                return 0.0
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df = df.ffill().dropna()
+            if df.empty or "Close" not in df.columns:
+                return 0.0
+            return float(df["Close"].iloc[-1])
+        except Exception:
+            return 0.0
 from stock_lab_core.portfolio import (
     append_cash_rows,
     apply_holdings_weight_columns,
@@ -3022,6 +3038,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
+    prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
+    day_ret = (cur_p / prev_close) - 1 if prev_close > 0 else 0.0
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
@@ -3042,6 +3060,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
+    ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
+    ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
+    below_ma20 = ma20_now > 0 and cur_p < ma20_now * 0.98
+    below_ma50 = ma50_now > 0 and cur_p < ma50_now
+    is_single_day_breakdown = (not is_etf) and day_ret <= -0.06 and vol_ratio >= 1.2
 
     main_score = (
         (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) +
@@ -3161,6 +3184,28 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         (is_ma5_pullback or is_bullish_fvg_pullback) and
         is_exception_not_chasing
     )
+
+    is_structure_damage_entry_risk = (
+        (not is_etf) and
+        (not short_history) and
+        (
+            current_dd <= -0.15 or
+            below_ma50 or
+            (below_ma20 and rs_label != "🚀강함") or
+            is_single_day_breakdown
+        )
+    )
+
+    is_clean_leader_entry = (
+        (not is_etf) and
+        adj_tech_score >= 4.5 and
+        rs_label == "🚀강함" and
+        trend_label == "🚀정배열(상승)" and
+        day_ret > -0.04 and
+        current_dd > -0.15 and
+        (ma20_now <= 0 or cur_p >= ma20_now * 0.98) and
+        not is_structure_damage_entry_risk
+    )
  
     is_etf_accumulation_ok = (
         is_etf and
@@ -3181,10 +3226,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입", "#ec4899"
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착", "#dc2626"
+        elif is_structure_damage_entry_risk: dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
         elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
         elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
         elif is_early_entry: dec, col = "🟢선진입 가능 구간", "#16a34a"
-        elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
+        elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
         elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
         elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
         elif trend_label == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
@@ -3199,10 +3245,21 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 현금 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
-        elif current_dd <= -0.2: dec, col = "🚨위기(-20%↓): 현금 확보", "#dc2626"
+        elif is_structure_damage_entry_risk and not has_pos:
+            dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
+        elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
+            dec, col = "⚠️고점대비 -20%: 추매금지/손절기준 점검", "#d97706"
+        elif current_dd <= -0.2 and has_pos:
+            dec, col = "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706"
+        elif current_dd <= -0.2:
+            dec, col = "⚠️고점대비 -20%: 신규진입 보류", "#d97706"
         
         elif final_macro_risk >= 4.5:
             dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+        elif is_structure_damage_entry_risk and has_pos:
+            dec, col = "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706"
+        elif is_structure_damage_entry_risk:
+            dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
         elif (
             is_exception_entry and
             has_pos and
@@ -3254,7 +3311,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 진입 보류", "#d97706"
             elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
             elif is_early_entry: dec, col = "🟢선진입 가능: 반전 초입", "#16a34a"
-            elif adj_tech_score >= 4.5 and rs_label == "🚀강함": dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
+            elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
             elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
             elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
             elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
@@ -3264,6 +3321,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
         "grade": grade, "t_score": tech_total + (0 if is_etf else fin_score), "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
+        "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
         "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
         "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
         "trend": trend_label, "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
@@ -4271,7 +4329,7 @@ MANUAL_SECTIONS = {
         {"항목": "볼린저 %B", "정의": "볼린저밴드 내 현재 위치", "코드 기준": "0.95 이상 상단권, 1.02 초과 과열확장", "해석": "상단권은 눌림 대기 우선"},
         {"항목": "MACD", "정의": "추세 전환/유지", "코드 기준": "골든크로스 +2, 상승유지 +1, 데드크로스 -2", "해석": "매수 타점의 핵심 모멘텀"},
         {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1", "해석": "압축 후 방향성 분출 체크"},
-        {"항목": "MDD", "정의": "52주 고점 대비 낙폭", "코드 기준": "-20%, -30%, -40%, -50% 단계별 위기/패닉", "해석": "낙폭이 깊을수록 리스크 원인 점검 필요"},
+        {"항목": "MDD", "정의": "52주 고점 대비 낙폭", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
         {"항목": "ADJ점수", "정의": "매크로 패널티 반영 기술점수", "코드 기준": "메인점수 + RS점수 + MFI점수 - 매크로패널티", "해석": "높을수록 현재 타점 우호"},
     ],
     "점수 계산": [
@@ -4314,7 +4372,9 @@ MANUAL_SECTIONS = {
         {"타점": "평단 -3~-7%", "조건": "평단 이하, 추세 훼손 크지 않음, MFI 80 미만", "의미": "소액 분할매수 후보"},
         {"타점": "평단 -7~-15%", "조건": "손실 확대 + 재무 3점 이상 + 매크로 위험 낮음", "의미": "조건부 분할매수"},
         {"타점": "평단 -15%↓", "조건": "평단 대비 큰 손실 또는 추세위험", "의미": "원인 점검 우선"},
-        {"타점": "신규진입: 대장주 포착", "조건": "ADJ 4.5 이상 + RS 강함", "의미": "신규 후보"},
+        {"타점": "고점대비 -20%", "조건": "52주 고점 대비 -20% 이하", "의미": "보유 중이면 추매 금지와 원인 점검, 미보유면 신규진입 보류"},
+        {"타점": "구조훼손: 신규진입 보류", "조건": "개별주 MDD -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나", "의미": "점수가 좋아도 차트 구조 확인 전 신규매수 보류"},
+        {"타점": "신규진입: 대장주 포착", "조건": "ADJ 4.5 이상 + RS 강함 + 정배열 + MA20 근처 이상 + MDD -15% 이내 + 급락 아님", "의미": "구조가 살아있는 신규 후보"},
         {"타점": "관망/대기", "조건": "명확한 우위 없음", "의미": "타점 대기"},
     ],
     "SMC 구조": [
@@ -6628,7 +6688,9 @@ with tab_precision:
 
         with R:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
+            fig.add_trace(go.Scatter(x=df.index, y=df["MA5"], line=dict(color="#22c55e", width=1.4), name="MA5"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
+            fig.add_trace(go.Scatter(x=df.index, y=df["MA50"], line=dict(color="#60a5fa", width=1.6), name="MA50"))
             fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
             p_line = u_price if app_mode == "범용모드" else my_p
             if p_line > 0 and ((app_mode == "범용모드" and c['current_w'] > 0) or (app_mode == "개인모드" and not is_free and has_p)): 
@@ -6642,7 +6704,9 @@ with tab_precision:
             f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
         with b2: 
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+            structure_note = "주의" if c.get("structure_risk") else "정상"
+            structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
+            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• 전일등락: <b>{c['day_ret']*100:.1f}%</b> | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
