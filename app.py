@@ -67,6 +67,7 @@ from stock_lab_core.money_flow import (
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
     build_kr_etf_lab_from_excel_files,
+    derive_kr_etf_tags,
     load_kr_etf_lab_dataframe,
     save_kr_etf_lab_dataframe,
 )
@@ -6373,6 +6374,188 @@ def load_cached_kr_etf_lab_data():
     return load_kr_etf_lab_dataframe()
 
 
+def kr_etf_format_numeric(value, digits=2):
+    number = clean_float(value, np.nan)
+    if not finite_num(number):
+        return ""
+    return f"{float(number):.{digits}f}"
+
+
+def kr_etf_format_krw(value):
+    number = clean_float(value, np.nan)
+    if not finite_num(number):
+        return ""
+    return f"{float(number):.0f}"
+
+
+def get_distribution_refresh_targets(df, scope, max_items):
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    if scope == "월배당/분배금 후보":
+        out = out[(out["monthly_dividend"] == "Y") | (out["source_distribution"] == "Y")]
+
+    out = out[out["ticker"].astype(str).str.strip().ne("")]
+    out = out.drop_duplicates("ticker", keep="first")
+
+    max_items = max(1, int(max_items))
+    return out.head(max_items)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_yfinance_distribution_snapshot(ticker):
+    ticker = sanitize_ticker_value(ticker)
+    if not ticker:
+        return {"ok": False, "ticker": ticker, "reason": "티커 없음"}
+
+    try:
+        divs = yf.Ticker(ticker).dividends
+    except Exception as exc:
+        return {"ok": False, "ticker": ticker, "reason": str(exc)}
+
+    if divs is None or divs.empty:
+        return {"ok": False, "ticker": ticker, "reason": "분배금 이력 없음"}
+
+    divs = pd.to_numeric(divs, errors="coerce").dropna()
+    if divs.empty:
+        return {"ok": False, "ticker": ticker, "reason": "분배금 숫자 변환 실패"}
+
+    divs.index = pd.to_datetime(divs.index, errors="coerce")
+    divs = divs[~pd.isna(divs.index)]
+    if divs.empty:
+        return {"ok": False, "ticker": ticker, "reason": "분배금 날짜 변환 실패"}
+
+    divs = divs.sort_index()
+    cutoff = pd.Timestamp.now(tz=divs.index.tz) - pd.Timedelta(days=370) if getattr(divs.index, "tz", None) else pd.Timestamp.now() - pd.Timedelta(days=370)
+    recent = divs[divs.index >= cutoff]
+    if recent.empty:
+        recent = divs.tail(12)
+
+    latest_date = divs.index[-1]
+    latest_amount = float(divs.iloc[-1])
+    annual_total = float(recent.sum())
+    annual_count = int(len(recent))
+    price = clean_float(load_latest_price(ticker), 0.0)
+    if price <= 0:
+        try:
+            hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
+            if hist is not None and not hist.empty:
+                if isinstance(hist.columns, pd.MultiIndex):
+                    hist.columns = hist.columns.get_level_values(0)
+                close = pd.to_numeric(hist.get("Close", pd.Series(dtype=float)), errors="coerce").dropna()
+                if not close.empty:
+                    price = float(close.iloc[-1])
+        except Exception:
+            price = 0.0
+
+    latest_rate = (latest_amount / price * 100) if price > 0 else np.nan
+    annual_rate = (annual_total / price * 100) if price > 0 else np.nan
+
+    return {
+        "ok": True,
+        "ticker": ticker,
+        "latest_date": latest_date.strftime("%Y-%m-%d"),
+        "latest_amount": latest_amount,
+        "annual_total": annual_total,
+        "annual_count": annual_count,
+        "latest_rate": latest_rate,
+        "annual_rate": annual_rate,
+        "price": price,
+        "source": "Yahoo Finance dividend history",
+    }
+
+
+def build_kr_etf_distribution_refresh_preview(current_df, scope="월배당/분배금 후보", max_items=120):
+    if current_df is None or current_df.empty:
+        raise ValueError("기존 ETF 데이터가 없습니다.")
+
+    preview_df = current_df.copy()
+    targets = get_distribution_refresh_targets(preview_df, scope, max_items)
+    if targets.empty:
+        raise ValueError("조회할 ETF가 없습니다.")
+
+    changed_rows = []
+    failed_rows = []
+    generated_at = format_kst_now()
+
+    for _, target in targets.iterrows():
+        ticker = sanitize_ticker_value(target.get("ticker", ""))
+        code = clean_symbol(ticker)
+        snapshot = fetch_yfinance_distribution_snapshot(ticker)
+        if not snapshot.get("ok"):
+            failed_rows.append({
+                "ticker": ticker,
+                "name": target.get("name", ""),
+                "reason": snapshot.get("reason", "조회 실패"),
+            })
+            continue
+
+        row_mask = preview_df["ticker"].astype(str).str.upper() == ticker.upper()
+        if not row_mask.any():
+            row_mask = preview_df["code"].astype(str).str.zfill(6) == code
+
+        if not row_mask.any():
+            failed_rows.append({"ticker": ticker, "name": target.get("name", ""), "reason": "기존 행 매칭 실패"})
+            continue
+
+        idx = preview_df[row_mask].index[0]
+        old_annual_rate = preview_df.at[idx, "annual_distribution_rate_pct"]
+        old_latest_amount = preview_df.at[idx, "distribution_per_share_krw"]
+
+        preview_df.at[idx, "source_distribution"] = "Y"
+        preview_df.at[idx, "distribution_type"] = "자동조회"
+        preview_df.at[idx, "latest_distribution_rate_pct"] = kr_etf_format_numeric(snapshot.get("latest_rate"), 2)
+        preview_df.at[idx, "distribution_ex_date"] = snapshot.get("latest_date", "")
+        preview_df.at[idx, "distribution_base_date"] = snapshot.get("latest_date", "")
+        preview_df.at[idx, "distribution_per_share_krw"] = kr_etf_format_krw(snapshot.get("latest_amount"))
+        preview_df.at[idx, "annual_distribution_rate_pct"] = kr_etf_format_numeric(snapshot.get("annual_rate"), 2)
+        preview_df.at[idx, "annual_distribution_total_krw"] = kr_etf_format_krw(snapshot.get("annual_total"))
+        preview_df.at[idx, "annual_distribution_count"] = str(snapshot.get("annual_count", ""))
+        preview_df.at[idx, "raw_monthly_dividend_flag"] = "YF"
+        preview_df.at[idx, "current_price_krw"] = kr_etf_format_krw(snapshot.get("price"))
+        preview_df.at[idx, "data_generated_at"] = generated_at
+        source_files = str(preview_df.at[idx, "source_files"] or "")
+        refresh_source = f"Yahoo Finance 분배금 자동조회 {generated_at}"
+        preview_df.at[idx, "source_files"] = refresh_source if not source_files else f"{source_files} / {refresh_source}"
+
+        annual_count = clean_int(snapshot.get("annual_count"), 0) or 0
+        if annual_count >= 8:
+            preview_df.at[idx, "monthly_dividend"] = "Y"
+        preview_df.at[idx, "tags"] = derive_kr_etf_tags(
+            preview_df.at[idx, "name"],
+            preview_df.at[idx, "etf_big_type"],
+            preview_df.at[idx, "etf_small_type"],
+            preview_df.at[idx, "representative_big_type"],
+            preview_df.at[idx, "representative_small_type"],
+            str(preview_df.at[idx, "monthly_dividend"]) == "Y",
+        )
+
+        changed_rows.append({
+            "ticker": ticker,
+            "name": preview_df.at[idx, "name"],
+            "최근분배일": snapshot.get("latest_date", ""),
+            "최근분배금": preview_df.at[idx, "distribution_per_share_krw"],
+            "연분배율(기존)": old_annual_rate,
+            "연분배율(갱신)": preview_df.at[idx, "annual_distribution_rate_pct"],
+            "분배금(기존)": old_latest_amount,
+            "지급횟수": preview_df.at[idx, "annual_distribution_count"],
+        })
+
+    if changed_rows:
+        preview_df["data_generated_at"] = generated_at
+
+    changed_df = pd.DataFrame(changed_rows)
+    failed_df = pd.DataFrame(failed_rows)
+    messages = [
+        f"온라인 분배금 조회: 대상 {len(targets):,}개",
+        f"갱신 성공 {len(changed_df):,}개",
+        f"조회 실패/이력 없음 {len(failed_df):,}개",
+        "출처: Yahoo Finance 분배금 이력, 누락 종목은 기존값 유지",
+    ]
+    return preview_df, changed_df, failed_df, messages
+
+
 def kr_etf_numeric_series(df, col):
     if df is None or df.empty or col not in df.columns:
         return pd.Series(dtype=float)
@@ -6400,7 +6583,43 @@ def kr_etf_tag_options(df):
 
 def render_kr_etf_update_panel(current_df):
     with st.expander("ETF 데이터 갱신/업로드"):
-        st.caption("평소에는 앱 내부 CSV를 사용합니다. 새 자료가 생기면 엑셀을 올려 검토한 뒤 저장하세요.")
+        st.caption("평소에는 앱 내부 CSV를 사용합니다. 새 자료가 생기면 온라인 조회나 엑셀 업로드로 검토한 뒤 저장하세요.")
+
+        st.markdown("#### 온라인 분배금 반자동 갱신")
+        online_cols = st.columns([1.2, 1.0, 1.4])
+        refresh_scope = online_cols[0].selectbox(
+            "조회 범위",
+            ["월배당/분배금 후보", "전체 ETF"],
+            key="kr_etf_distribution_refresh_scope",
+            help="전체 ETF는 오래 걸릴 수 있어 처음에는 월배당/분배금 후보만 권장합니다.",
+        )
+        refresh_limit = online_cols[1].number_input(
+            "최대 조회 수",
+            min_value=10,
+            max_value=1000,
+            value=80,
+            step=10,
+            key="kr_etf_distribution_refresh_limit",
+        )
+        online_cols[2].caption("Yahoo Finance 분배금 이력으로 최근분배금/연분배율을 재계산합니다. 조회 실패 종목은 기존값을 유지합니다.")
+
+        if st.button("온라인 분배금 조회", key="kr_etf_distribution_refresh_btn", disabled=current_df is None or current_df.empty):
+            try:
+                with st.spinner("분배금 이력을 조회하는 중입니다. 대상 수가 많으면 시간이 걸릴 수 있습니다."):
+                    preview_df, changed_df, failed_df, messages = build_kr_etf_distribution_refresh_preview(
+                        current_df,
+                        scope=refresh_scope,
+                        max_items=refresh_limit,
+                    )
+                st.session_state["kr_etf_lab_preview_df"] = preview_df
+                st.session_state["kr_etf_lab_preview_messages"] = messages
+                st.session_state["kr_etf_lab_preview_changed_df"] = changed_df
+                st.session_state["kr_etf_lab_preview_failed_df"] = failed_df
+            except Exception as exc:
+                st.error(f"온라인 분배금 조회 실패: {exc}")
+
+        st.divider()
+        st.markdown("#### 엑셀 업로드 갱신")
         uploads = st.file_uploader(
             "국내 ETF 전체 목록 / 월배당 총정리 / 분배금 지급현황 엑셀",
             type=["xlsx"],
@@ -6413,6 +6632,8 @@ def render_kr_etf_update_panel(current_df):
                 preview_df, messages = build_kr_etf_lab_from_excel_files(uploads, base_df=current_df)
                 st.session_state["kr_etf_lab_preview_df"] = preview_df
                 st.session_state["kr_etf_lab_preview_messages"] = messages
+                st.session_state.pop("kr_etf_lab_preview_changed_df", None)
+                st.session_state.pop("kr_etf_lab_preview_failed_df", None)
             except Exception as exc:
                 st.error(f"업로드 자료를 읽지 못했습니다: {exc}")
 
@@ -6425,6 +6646,16 @@ def render_kr_etf_update_panel(current_df):
             p1.metric("검토 ETF", f"{len(preview_df):,}개")
             p2.metric("월배당", f"{int((preview_df['monthly_dividend'] == 'Y').sum()):,}개")
             p3.metric("분배금 데이터", f"{int((preview_df['source_distribution'] == 'Y').sum()):,}개")
+
+            changed_df = st.session_state.get("kr_etf_lab_preview_changed_df")
+            failed_df = st.session_state.get("kr_etf_lab_preview_failed_df")
+            if isinstance(changed_df, pd.DataFrame) and not changed_df.empty:
+                st.markdown("##### 온라인 갱신 변경 미리보기")
+                st.dataframe(changed_df.head(80), use_container_width=True, hide_index=True)
+            if isinstance(failed_df, pd.DataFrame) and not failed_df.empty:
+                with st.expander(f"조회 실패/분배금 이력 없음 {len(failed_df):,}개"):
+                    st.dataframe(failed_df.head(200), use_container_width=True, hide_index=True)
+
             st.dataframe(
                 preview_df[["ticker", "name", "tags", "annual_distribution_rate_pct", "distribution_per_share_krw", "real_fee_pct"]].head(30),
                 use_container_width=True,
@@ -6437,6 +6668,8 @@ def render_kr_etf_update_panel(current_df):
                     cache_clear(load_cached_kr_etf_lab_data)
                     st.session_state.pop("kr_etf_lab_preview_df", None)
                     st.session_state.pop("kr_etf_lab_preview_messages", None)
+                    st.session_state.pop("kr_etf_lab_preview_changed_df", None)
+                    st.session_state.pop("kr_etf_lab_preview_failed_df", None)
                     st.success("국내 ETF 데이터 저장 완료")
                     st.rerun()
                 except Exception as exc:
@@ -6444,6 +6677,8 @@ def render_kr_etf_update_panel(current_df):
             if clear_col.button("검토 취소", key="kr_etf_lab_clear_preview", use_container_width=True):
                 st.session_state.pop("kr_etf_lab_preview_df", None)
                 st.session_state.pop("kr_etf_lab_preview_messages", None)
+                st.session_state.pop("kr_etf_lab_preview_changed_df", None)
+                st.session_state.pop("kr_etf_lab_preview_failed_df", None)
                 st.rerun()
 
 
