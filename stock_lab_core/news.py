@@ -57,17 +57,33 @@ NEWS_CATEGORY_LIMITS = {
     NEWS_CATEGORY_MARKET: 1,
 }
 NEWS_MAX_ITEMS = 6
+NEWS_MAX_CANDIDATES = 18
+NEWS_CATEGORY_SEARCH_LIMITS = {
+    NEWS_CATEGORY_DIRECT: 10,
+    NEWS_CATEGORY_SECTOR: 6,
+    NEWS_CATEGORY_MARKET: 3,
+}
 
 LOW_QUALITY_NEWS_WORDS = [
     "주식 움직였습니다", "핵심 원인 공개", "어떤 신호인가요", "주가 움직였습니다",
     "stock moved", "why it moved", "price action", "what signal",
 ]
 
+EARNINGS_NEWS_WORDS = [
+    "earnings", "results", "quarterly results", "q1", "q2", "q3", "q4",
+    "revenue", "eps", "profit", "operating margin", "guidance", "outlook",
+    "conference call", "investor relations",
+    "실적", "실적발표", "실적 발표", "분기 실적", "잠정실적", "매출",
+    "영업이익", "순이익", "이익률", "가이던스", "컨퍼런스콜", "IR",
+]
+
 HIGH_VALUE_NEWS_WORDS = [
-    "earnings", "revenue", "profit", "margin", "guidance", "outlook", "forecast",
+    "earnings", "results", "quarterly results", "revenue", "profit", "margin", "guidance", "outlook", "forecast",
+    "eps", "operating margin", "record revenue", "record earnings", "investor relations",
     "analyst", "price target", "upgrade", "downgrade", "buy rating", "sell rating",
     "contract", "order", "approval", "regulatory", "antitrust", "lawsuit",
-    "실적", "매출", "영업이익", "순이익", "가이던스", "전망", "목표가", "투자의견",
+    "실적", "실적발표", "실적 발표", "분기 실적", "잠정실적", "매출", "영업이익", "순이익",
+    "영업이익률", "가이던스", "전망", "목표가", "투자의견", "사상 최대", "역대 최대",
     "상향", "하향", "수주", "계약", "승인", "규제", "소송", "조사",
 ]
 
@@ -81,11 +97,16 @@ POSITIVE_NEWS_SIGNALS = [
     ("upgrade", "투자의견 상향은 수급에 우호적인 단서"),
     ("price target raised", "목표가 상향은 기대치 개선 단서"),
     ("record", "사상 최대/기록 경신은 실적 모멘텀 단서"),
+    ("record revenue", "매출 기록 경신은 실적 모멘텀 단서"),
+    ("record earnings", "이익 기록 경신은 실적 모멘텀 단서"),
     ("contract", "계약/수주는 매출 가시성 개선 단서"),
     ("approval", "승인은 사업 진행에 우호적인 단서"),
     ("호실적", "호실적은 이익 기대를 높이는 단서"),
     ("깜짝 실적", "컨센서스 상회 가능성을 시사"),
     ("서프라이즈", "컨센서스 상회 가능성을 시사"),
+    ("사상 최대", "사상 최대 실적은 실적 모멘텀 단서"),
+    ("역대 최대", "역대 최대 실적은 실적 모멘텀 단서"),
+    ("최대 실적", "최대 실적은 실적 모멘텀 단서"),
     ("상향", "목표가/투자의견 상향은 수급에 우호적"),
     ("수주", "수주는 매출 가시성 개선 단서"),
     ("계약", "계약 체결은 사업 진행에 우호적"),
@@ -126,6 +147,9 @@ NEWS_SOURCE_QUALITY = {
     "seeking alpha": 2,
     "yahoo finance": 2,
     "nasdaq": 2,
+    "business wire": 3,
+    "globenewswire": 3,
+    "pr newswire": 2,
     "investing.com": 1,
     "thelec": 2,
     "전자신문": 2,
@@ -380,14 +404,22 @@ def build_stock_news_queries(ticker, name):
 
     if is_kr:
         queries = [
+            f'"{main}" 실적 발표',
+            f'"{main}" 분기 실적',
+            f'"{main}" 매출 영업이익',
+            f'"{main}" 잠정실적',
             f'"{main}" 주가 실적',
             f'"{main}" 증권',
             f'{symbol} 주가 실적',
         ]
     else:
         queries = [
-            f'"{main}" {symbol} stock',
             f'"{main}" earnings shares',
+            f'"{main}" earnings results {symbol}',
+            f'"{main}" quarterly results revenue guidance',
+            f'"{symbol}" earnings results',
+            f'"{main}" investor relations results',
+            f'"{main}" {symbol} stock',
             f'"{main}" analyst price target',
         ]
 
@@ -479,6 +511,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     has_theme = keyword_in_text(text, theme_terms)
     has_stock_word = keyword_in_text(text, STOCK_NEWS_WORDS)
     has_high_value_word = keyword_in_text(text, HIGH_VALUE_NEWS_WORDS)
+    has_earnings_word = keyword_in_text(text, EARNINGS_NEWS_WORDS)
     has_market_word = keyword_in_text(text, ["nasdaq", "s&p", "fed", "yield", "rate", "inflation", "earnings", "증시", "코스피", "코스닥", "금리", "환율", "외국인"])
     is_low_quality = keyword_in_text(text, LOW_QUALITY_NEWS_WORDS)
 
@@ -487,6 +520,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     if has_symbol: score += 4
     if has_theme: score += 3
     if has_high_value_word: score += 2
+    if has_earnings_word and category == NEWS_CATEGORY_DIRECT: score += 4
+    elif has_earnings_word: score += 2
     if has_stock_word: score += 1
     if has_market_word and category == NEWS_CATEGORY_MARKET: score += 2
     if is_low_quality: score -= 4
@@ -501,7 +536,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         score -= 4
 
     if category == NEWS_CATEGORY_DIRECT:
-        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or not strict) and score >= 3
+        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or has_earnings_word or not strict) and score >= 3
     elif category == NEWS_CATEGORY_SECTOR:
         ok = (has_company or has_symbol or has_theme) and score >= 2
     else:
@@ -510,7 +545,9 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     if is_low_quality and category == NEWS_CATEGORY_DIRECT and score < 5:
         ok = False
 
-    if score >= 7:
+    if category == NEWS_CATEGORY_DIRECT and has_earnings_word and (has_company or has_symbol):
+        relation = "실적 직접"
+    elif score >= 7:
         relation = "관련도 높음"
     elif score >= 3:
         relation = "관련도 보통"
@@ -528,6 +565,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         sentiment, reason = "악재", neg_reason
     elif pos_key and neg_key:
         sentiment, reason = "중립", "호재와 악재 단서가 함께 있어 추가 확인 필요"
+    elif category == NEWS_CATEGORY_DIRECT and has_earnings_word:
+        sentiment, reason = "중립", "실적/가이던스 직접 뉴스입니다. 수치와 컨센서스 대비 여부를 확인하세요."
     elif category == NEWS_CATEGORY_DIRECT:
         sentiment, reason = "중립", "종목 직접 뉴스지만 방향성 단서는 제한적"
     elif category == NEWS_CATEGORY_SECTOR:
@@ -544,6 +583,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         "relation": relation,
         "sentiment": sentiment,
         "reason": reason,
+        "topic": "실적/IR" if has_earnings_word else "",
     }
 
 def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
@@ -612,6 +652,7 @@ def get_ticker_news(ticker, name, debug=False):
             "sentiment": assessment["sentiment"],
             "reason": assessment["reason"],
             "quality_score": assessment["score"],
+            "topic": assessment.get("topic", ""),
             "_pub_dt": pub_dt,
         }
 
@@ -644,7 +685,7 @@ def get_ticker_news(ticker, name, debug=False):
             if add_item(title, link, publisher, pub_dt, category=category, strict=strict):
                 accepted += 1
 
-            if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
+            if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
                 break
 
         return len(items), accepted
@@ -653,9 +694,9 @@ def get_ticker_news(ticker, name, debug=False):
         q = plan["query"]
         category = plan["category"]
         strict = plan.get("strict", True)
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
+        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
             continue
-        if sum(accepted_by_category.values()) >= NEWS_MAX_ITEMS:
+        if sum(accepted_by_category.values()) >= NEWS_MAX_CANDIDATES:
             break
 
         google_query = f"{q} when:{NEWS_FALLBACK_DAYS}d"
@@ -671,7 +712,7 @@ def get_ticker_news(ticker, name, debug=False):
         except Exception as e:
             logs.append(f"구글 뉴스 실패: {q} / {e}")
 
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_LIMITS.get(category, 1):
+        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
             continue
 
         try:
@@ -693,6 +734,7 @@ def get_ticker_news(ticker, name, debug=False):
         selected,
         key=lambda x: (
             NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
+            0 if x.get("topic") == "실적/IR" else 1,
             -float(x.get("quality_score") or 0),
             -news_sort_timestamp(x.get("_pub_dt")),
         )
@@ -745,11 +787,13 @@ def render_news_cards(news_items):
             safe_sentiment = escape_html_value(item.get("sentiment", "중립"))
             safe_reason = escape_html_value(item.get("reason", "추가 확인 필요"))
             safe_score = escape_html_value(item.get("quality_score", ""))
+            safe_topic = escape_html_value(item.get("topic", ""))
             date_part = f" | {safe_date}" if safe_date else ""
             safe_link = str(item.get("link", "#")).strip()
             if not safe_link.startswith(("http://", "https://")):
                 safe_link = "#"
             safe_link_attr = html.escape(safe_link, quote=True)
+            topic_chip = f"<span class='news-chip'>{safe_topic}</span>" if safe_topic else ""
 
             sentiment_class = news_sentiment_class(item.get("sentiment", "중립"))
             st.markdown(
@@ -757,6 +801,7 @@ def render_news_cards(news_items):
                 f"<a href='{safe_link_attr}' target='_blank'>🔗 {safe_title}</a>"
                 f"<div class='news-meta-row'>"
                 f"<span class='news-chip news-chip-category'>{safe_category}</span>"
+                f"{topic_chip}"
                 f"<span class='news-chip news-chip-{sentiment_class}'>{safe_sentiment}</span>"
                 f"<span class='news-chip'>{safe_relation}</span>"
                 f"출처: {safe_pub}{date_part} | 품질점수: {safe_score}"

@@ -7011,6 +7011,549 @@ def render_short_trend_tab(holdings_table, watchlist_items):
         """)
 
 
+def calc_forward_return(close_series, idx, horizon):
+    if idx + horizon >= len(close_series):
+        return np.nan
+    entry = clean_float(close_series.iloc[idx], np.nan)
+    future = clean_float(close_series.iloc[idx + horizon], np.nan)
+    if not finite_num(entry) or not finite_num(future) or entry <= 0:
+        return np.nan
+    return (future / entry - 1) * 100
+
+
+def calc_forward_drawdown(close_series, idx, horizon):
+    if idx + 1 >= len(close_series):
+        return np.nan
+    end_idx = min(idx + horizon, len(close_series) - 1)
+    entry = clean_float(close_series.iloc[idx], np.nan)
+    window = pd.Series(close_series.iloc[idx + 1:end_idx + 1]).dropna()
+    if not finite_num(entry) or entry <= 0 or window.empty:
+        return np.nan
+    return (clean_float(window.min(), np.nan) / entry - 1) * 100
+
+
+def build_signal_backtest_universe(holdings_table, watchlist_items):
+    universe_df = build_short_trend_universe(holdings_table, watchlist_items)
+    if universe_df.empty:
+        return pd.DataFrame(columns=["label", "name", "ticker", "asset_class", "is_etf"])
+
+    rows = []
+    for _, row in universe_df.iterrows():
+        ticker = sanitize_ticker_value(row.get("ticker", ""))
+        name = sanitize_asset_name(row.get("name", ""), ticker)
+        if not ticker:
+            continue
+        rows.append({
+            "label": f"{name} | {ticker}",
+            "name": name,
+            "ticker": ticker,
+            "asset_class": str(row.get("asset_class", "") or "").strip(),
+            "is_etf": clean_bool(row.get("is_etf", False)),
+        })
+    return pd.DataFrame(rows)
+
+
+def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", min_gap=10):
+    price_df = load_price_df(ticker, period)
+    if price_df is None or price_df.empty or len(price_df) < 140:
+        return pd.DataFrame(), pd.DataFrame(), f"{ticker} 가격 데이터가 부족합니다."
+
+    df = build_indicators(price_df).copy()
+    df = df.dropna(subset=["Close"]).copy()
+    if len(df) < 140:
+        return pd.DataFrame(), df, f"{ticker} 지표 계산 데이터가 부족합니다."
+
+    close = pd.Series(df["Close"]).astype(float)
+    df["RET20"] = close.pct_change(20) * 100
+    df["DAY_RET"] = close.pct_change() * 100
+    df["VOL_RATIO"] = df["Volume"] / df["Volume"].rolling(20).mean()
+    df["ROLL_HIGH"] = df["High"].rolling(252, min_periods=60).max()
+    df["MDD_52W"] = df["Close"] / df["ROLL_HIGH"] - 1
+    df["MACD_RISING"] = df["MACD"] > df["MACD"].shift(1)
+
+    bench = get_rs_benchmark(ticker, asset_class)
+    if bench and normalize_ticker(bench) != normalize_ticker(ticker):
+        try:
+            bench_df = load_price_df(bench, period)
+            if bench_df is not None and not bench_df.empty:
+                if isinstance(bench_df.columns, pd.MultiIndex):
+                    bench_df.columns = bench_df.columns.get_level_values(0)
+                bench_close = bench_df["Close"].reindex(df.index).ffill()
+                df["BENCH_RET20"] = bench_close.pct_change(20) * 100
+                df["RS_EDGE20"] = df["RET20"] - df["BENCH_RET20"]
+            else:
+                df["RS_EDGE20"] = df["RET20"]
+        except Exception:
+            df["RS_EDGE20"] = df["RET20"]
+    else:
+        df["RS_EDGE20"] = df["RET20"]
+
+    trend_up = (df["MA20"] > df["MA50"]) & (df["MA50"] > df["MA120"])
+    rs_strong = df["RS_EDGE20"] > 3
+    macd_ok = (df["MACD"] > df["MACD_Sig"]) & df["MACD_RISING"]
+    not_hot = (df["MFI"] < 85) & (df["RSI"] < 70) & (df["%B"] < 1.05)
+    structure_ok = (df["MDD_52W"] > -0.15) & (df["DAY_RET"] > -4) & (df["Close"] >= df["MA20"] * 0.98)
+    structure_damage = (
+        (df["MDD_52W"] <= -0.15) |
+        (df["Close"] < df["MA50"]) |
+        ((df["DAY_RET"] <= -6) & (df["VOL_RATIO"] >= 1.2)) |
+        (df["Close"] < df["MA20"] * 0.98)
+    )
+
+    if signal_type == "신규대장 후보":
+        signal_mask = trend_up & rs_strong & macd_ok & not_hot & structure_ok
+    elif signal_type == "S급 눌림목":
+        signal_mask = trend_up & rs_strong & df["RSI"].between(45, 58, inclusive="both") & df["%B"].between(0.45, 0.8, inclusive="both")
+    elif signal_type == "구조훼손 경고":
+        signal_mask = structure_damage
+    else:
+        signal_mask = trend_up & rs_strong & macd_ok
+
+    events = []
+    last_event_idx = -9999
+    max_horizon = 60
+    for idx, is_signal in enumerate(signal_mask.fillna(False).to_numpy()):
+        if not is_signal:
+            continue
+        if idx < 125 or idx + 5 >= len(df):
+            continue
+        if idx - last_event_idx < int(min_gap):
+            continue
+        last_event_idx = idx
+        row = df.iloc[idx]
+        events.append({
+            "날짜": df.index[idx].strftime("%Y-%m-%d") if hasattr(df.index[idx], "strftime") else str(df.index[idx]),
+            "종목명": name,
+            "티커": ticker,
+            "신호": signal_type,
+            "신호가": clean_float(row.get("Close"), np.nan),
+            "5일후": calc_forward_return(close, idx, 5),
+            "20일후": calc_forward_return(close, idx, 20),
+            "60일후": calc_forward_return(close, idx, max_horizon),
+            "20일최대낙폭": calc_forward_drawdown(close, idx, 20),
+            "60일최대낙폭": calc_forward_drawdown(close, idx, max_horizon),
+            "RSI": clean_float(row.get("RSI"), np.nan),
+            "MFI": clean_float(row.get("MFI"), np.nan),
+            "RS우위20일": clean_float(row.get("RS_EDGE20"), np.nan),
+            "MDD": clean_float(row.get("MDD_52W"), np.nan) * 100,
+        })
+
+    return pd.DataFrame(events), df, ""
+
+
+def summarize_signal_backtest(events_df):
+    rows = []
+    for horizon in ["5일후", "20일후", "60일후"]:
+        series = pd.to_numeric(events_df.get(horizon, pd.Series(dtype=float)), errors="coerce").dropna()
+        if series.empty:
+            rows.append({"기간": horizon, "표본": 0, "승률": np.nan, "평균": np.nan, "중앙값": np.nan, "최악": np.nan, "최고": np.nan})
+            continue
+        rows.append({
+            "기간": horizon,
+            "표본": int(len(series)),
+            "승률": float((series > 0).mean() * 100),
+            "평균": float(series.mean()),
+            "중앙값": float(series.median()),
+            "최악": float(series.min()),
+            "최고": float(series.max()),
+        })
+    return pd.DataFrame(rows)
+
+
+def format_backtest_percent(value):
+    number = clean_float(value, np.nan)
+    if not finite_num(number):
+        return ""
+    return f"{number:.1f}%"
+
+
+def render_signal_backtest_tab(holdings_table, watchlist_items):
+    st.subheader("신호 검증")
+    st.caption("전광판 신호가 과거에 나온 뒤 5/20/60거래일 성과를 확인합니다. 수수료, 세금, 체결가, 매크로 패널티는 반영하지 않은 참고용 검증입니다.")
+
+    universe_df = build_signal_backtest_universe(holdings_table, watchlist_items)
+    if universe_df.empty:
+        st.info("검증할 보유/관심 종목이 없습니다.")
+        return
+
+    c1, c2, c3 = st.columns([2.2, 1.2, 1])
+    with c1:
+        selected_label = st.selectbox("검증 종목", universe_df["label"].tolist(), key="signal_backtest_ticker")
+    selected_row = universe_df[universe_df["label"] == selected_label].iloc[0]
+    with c2:
+        signal_type = st.selectbox("검증 신호", ["신규대장 후보", "S급 눌림목", "구조훼손 경고"], key="signal_backtest_type")
+    with c3:
+        period = st.selectbox("기간", ["1y", "2y", "5y"], index=1, key="signal_backtest_period")
+
+    min_gap = st.slider("중복 신호 간격(거래일)", min_value=1, max_value=30, value=10, step=1, key="signal_backtest_gap")
+
+    if not should_run_heavy_analysis(
+        "signal_backtest_lazy",
+        "백테스트는 선택 종목의 과거 가격과 지표를 다시 계산하므로 필요할 때만 실행합니다.",
+        run_label="신호 검증 실행/새로고침",
+    ):
+        return
+
+    events_df, chart_df, message = build_signal_backtest(
+        ticker=selected_row["ticker"],
+        name=selected_row["name"],
+        asset_class=selected_row["asset_class"],
+        signal_type=signal_type,
+        period=period,
+        min_gap=min_gap,
+    )
+
+    if message:
+        st.warning(message)
+        return
+    if events_df.empty:
+        st.info("선택한 조건에 해당하는 과거 신호가 없습니다. 기간을 늘리거나 중복 간격을 줄여보세요.")
+        return
+
+    summary_df = summarize_signal_backtest(events_df)
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("신호 발생", f"{len(events_df)}회")
+    ret20 = pd.to_numeric(events_df["20일후"], errors="coerce").dropna()
+    ret60 = pd.to_numeric(events_df["60일후"], errors="coerce").dropna()
+    dd20 = pd.to_numeric(events_df["20일최대낙폭"], errors="coerce").dropna()
+    s2.metric("20일 승률", "-" if ret20.empty else f"{(ret20 > 0).mean() * 100:.1f}%")
+    s3.metric("20일 평균", "-" if ret20.empty else f"{ret20.mean():.1f}%")
+    s4.metric("20일 평균낙폭", "-" if dd20.empty else f"{dd20.mean():.1f}%")
+
+    st.markdown("#### 기간별 성과")
+    show_summary = summary_df.copy()
+    for col in ["승률", "평균", "중앙값", "최악", "최고"]:
+        show_summary[col] = show_summary[col].apply(format_backtest_percent)
+    st.dataframe(show_summary, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 신호 발생 내역")
+    show_events = events_df.copy()
+    show_events["신호가"] = show_events["신호가"].apply(lambda v: "" if not finite_num(v) else f"{v:,.2f}")
+    for col in ["5일후", "20일후", "60일후", "20일최대낙폭", "60일최대낙폭", "RSI", "MFI", "RS우위20일", "MDD"]:
+        if col in show_events.columns:
+            suffix = "%" if col not in ["RSI", "MFI"] else ""
+            show_events[col] = show_events[col].apply(lambda v: "" if not finite_num(v) else f"{clean_float(v):.1f}{suffix}")
+    st.dataframe(show_events, use_container_width=True, hide_index=True)
+    st.download_button(
+        "신호 검증 CSV 다운로드",
+        data=dataframe_to_csv_bytes(events_df),
+        file_name=f"stock_lab_signal_backtest_{selected_row['ticker']}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_signal_backtest_csv",
+    )
+
+    if chart_df is not None and not chart_df.empty:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["Close"], mode="lines", name="Close", line=dict(color="#e5e7eb", width=1.8)))
+        if "MA20" in chart_df.columns:
+            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA20"], mode="lines", name="MA20", line=dict(color="#fbbf24", width=1.2)))
+        if "MA50" in chart_df.columns:
+            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA50"], mode="lines", name="MA50", line=dict(color="#60a5fa", width=1.2)))
+        event_dates = pd.to_datetime(events_df["날짜"], errors="coerce")
+        event_prices = pd.to_numeric(events_df["신호가"], errors="coerce")
+        fig.add_trace(go.Scatter(
+            x=event_dates,
+            y=event_prices,
+            mode="markers",
+            name="신호",
+            marker=dict(size=9, color="#22c55e" if signal_type != "구조훼손 경고" else "#ef4444", symbol="diamond"),
+            hovertemplate="신호일 %{x|%Y-%m-%d}<br>가격 %{y:,.2f}<extra></extra>",
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            height=460,
+            title=f"{selected_row['name']} {signal_type} 검증",
+            xaxis_rangeslider_visible=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("신호 정의"):
+        st.markdown("""
+- **신규대장 후보**: 정배열, 벤치마크 대비 20일 상대강도 우위, MACD 양호, 과열/구조훼손 제외 조건을 모두 만족한 날입니다.
+- **S급 눌림목**: 정배열과 상대강도 우위가 살아있고 RSI 45~58, 볼린저 %B 0.45~0.8인 날입니다.
+- **구조훼손 경고**: 고점대비 -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나가 발생한 날입니다.
+- 앱의 실시간 판정 로직과 100% 동일한 백테스트는 아닙니다. 매크로, 재무점수, 목표비중, 뉴스는 제외한 가격/기술 신호 검증용입니다.
+        """)
+
+
+SIGNAL_BACKTEST_TYPES = ["신규대장 후보", "S급 눌림목", "구조훼손 경고"]
+SIGNAL_BACKTEST_RETURN_COLS = ["5일후", "20일후", "60일후"]
+SIGNAL_BACKTEST_DD_COLS = ["20일최대낙폭", "60일최대낙폭"]
+SIGNAL_BACKTEST_NUMERIC_COLS = SIGNAL_BACKTEST_RETURN_COLS + SIGNAL_BACKTEST_DD_COLS + ["RSI", "MFI", "RS우위20일", "MDD"]
+
+
+def build_signal_backtest_universe_v2(holdings_table, watchlist_items):
+    universe_df = build_short_trend_universe(holdings_table, watchlist_items)
+    if universe_df.empty:
+        return pd.DataFrame(columns=["label", "name", "ticker", "asset_class", "is_etf"])
+
+    rows = []
+    seen = set()
+    for _, row in universe_df.iterrows():
+        ticker = sanitize_ticker_value(row.get("ticker", ""))
+        key = normalize_ticker(ticker)
+        if not ticker or key in seen:
+            continue
+        seen.add(key)
+        name = sanitize_asset_name(row.get("name", ""), ticker)
+        rows.append({
+            "label": f"{name} | {ticker}",
+            "name": name,
+            "ticker": ticker,
+            "asset_class": str(row.get("asset_class", "") or "").strip(),
+            "is_etf": clean_bool(row.get("is_etf", False)),
+        })
+    return pd.DataFrame(rows)
+
+
+def build_signal_backtest_batch(universe_df, signal_type, period="2y", min_gap=10, max_tickers=12):
+    frames = []
+    messages = []
+    selected_df = universe_df.head(int(max_tickers)).copy()
+
+    for _, row in selected_df.iterrows():
+        events_df, _, message = build_signal_backtest(
+            ticker=row["ticker"],
+            name=row["name"],
+            asset_class=row.get("asset_class", ""),
+            signal_type=signal_type,
+            period=period,
+            min_gap=min_gap,
+        )
+        if message:
+            messages.append(message)
+        if events_df is not None and not events_df.empty:
+            frames.append(events_df)
+
+    if not frames:
+        return pd.DataFrame(), messages
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined["_날짜정렬"] = pd.to_datetime(combined["날짜"], errors="coerce")
+    combined = combined.sort_values(["_날짜정렬", "티커"], ascending=[False, True]).drop(columns=["_날짜정렬"])
+    return combined, messages
+
+
+def summarize_signal_backtest_by_ticker(events_df):
+    rows = []
+    for (ticker, name), group in events_df.groupby(["티커", "종목명"], dropna=False):
+        ret20 = pd.to_numeric(group.get("20일후"), errors="coerce").dropna()
+        ret60 = pd.to_numeric(group.get("60일후"), errors="coerce").dropna()
+        dd20 = pd.to_numeric(group.get("20일최대낙폭"), errors="coerce").dropna()
+        rows.append({
+            "종목명": name,
+            "티커": ticker,
+            "신호수": int(len(group)),
+            "20일승률": np.nan if ret20.empty else float((ret20 > 0).mean() * 100),
+            "20일평균": np.nan if ret20.empty else float(ret20.mean()),
+            "60일평균": np.nan if ret60.empty else float(ret60.mean()),
+            "20일평균낙폭": np.nan if dd20.empty else float(dd20.mean()),
+            "최근신호": str(group["날짜"].max()) if "날짜" in group.columns else "",
+        })
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values(["20일평균", "신호수"], ascending=[False, False])
+
+
+def render_signal_summary_metrics(events_df):
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("신호 발생", f"{len(events_df)}건")
+    ret20 = pd.to_numeric(events_df["20일후"], errors="coerce").dropna()
+    dd20 = pd.to_numeric(events_df["20일최대낙폭"], errors="coerce").dropna()
+    s2.metric("20일 승률", "-" if ret20.empty else f"{(ret20 > 0).mean() * 100:.1f}%")
+    s3.metric("20일 평균", "-" if ret20.empty else f"{ret20.mean():.1f}%")
+    s4.metric("20일 평균낙폭", "-" if dd20.empty else f"{dd20.mean():.1f}%")
+
+
+def render_signal_summary_table_v2(summary_df):
+    st.markdown("#### 기간별 성과")
+    show_summary = summary_df.copy()
+    for col in ["승률", "평균", "중앙값", "최악", "최고"]:
+        if col in show_summary.columns:
+            show_summary[col] = show_summary[col].apply(format_backtest_percent)
+    st.dataframe(show_summary, use_container_width=True, hide_index=True)
+
+
+def format_signal_events_for_display(events_df):
+    show_events = events_df.copy()
+    if "신호가" in show_events.columns:
+        show_events["신호가"] = show_events["신호가"].apply(lambda v: "" if not finite_num(v) else f"{v:,.2f}")
+    for col in SIGNAL_BACKTEST_NUMERIC_COLS:
+        if col in show_events.columns:
+            suffix = "%" if col not in ["RSI", "MFI"] else ""
+            show_events[col] = show_events[col].apply(lambda v: "" if not finite_num(v) else f"{clean_float(v):.1f}{suffix}")
+    return show_events
+
+
+def render_signal_ticker_summary(events_df):
+    ticker_summary = summarize_signal_backtest_by_ticker(events_df)
+    if ticker_summary.empty:
+        return
+    st.markdown("#### 종목별 요약")
+    show_ticker_summary = ticker_summary.copy()
+    for col in ["20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
+        show_ticker_summary[col] = show_ticker_summary[col].apply(format_backtest_percent)
+    st.dataframe(show_ticker_summary, use_container_width=True, hide_index=True)
+
+
+def render_signal_backtest_chart_v2(chart_df, events_df, selected_name, signal_type):
+    if chart_df is None or chart_df.empty:
+        return
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["Close"], mode="lines", name="Close", line=dict(color="#e5e7eb", width=1.8)))
+    if "MA20" in chart_df.columns:
+        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA20"], mode="lines", name="MA20", line=dict(color="#fbbf24", width=1.2)))
+    if "MA50" in chart_df.columns:
+        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA50"], mode="lines", name="MA50", line=dict(color="#60a5fa", width=1.2)))
+    if "MA120" in chart_df.columns:
+        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df["MA120"], mode="lines", name="MA120", line=dict(color="#a78bfa", width=1, dash="dot")))
+
+    event_dates = pd.to_datetime(events_df["날짜"], errors="coerce")
+    event_prices = pd.to_numeric(events_df["신호가"], errors="coerce")
+    fig.add_trace(go.Scatter(
+        x=event_dates,
+        y=event_prices,
+        mode="markers",
+        name="신호",
+        marker=dict(size=9, color="#22c55e" if signal_type != "구조훼손 경고" else "#ef4444", symbol="diamond"),
+        hovertemplate="신호일: %{x|%Y-%m-%d}<br>가격: %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        template="plotly_dark",
+        height=460,
+        title=f"{selected_name} {signal_type} 검증",
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_signal_backtest_tab(holdings_table, watchlist_items):
+    st.subheader("신호 검증")
+    st.caption("현재의 신호가 과거에 나온 뒤 5/20/60거래일 성과를 확인합니다. 수수료, 세금, 체결가, 매크로 패널티는 반영하지 않은 참고용 검증입니다.")
+
+    universe_df = build_signal_backtest_universe_v2(holdings_table, watchlist_items)
+    if universe_df.empty:
+        st.info("검증할 보유/관심 종목이 없습니다.")
+        return
+
+    mode = st.radio(
+        "검증 방식",
+        ["선택 종목", "전광판/보유종목 묶음"],
+        horizontal=True,
+        key="signal_backtest_mode",
+    )
+
+    c1, c2, c3 = st.columns([2.2, 1.2, 1])
+    selected_row = None
+    selected_subset = universe_df.copy()
+
+    with c1:
+        if mode == "선택 종목":
+            selected_label = st.selectbox("검증 종목", universe_df["label"].tolist(), key="signal_backtest_ticker")
+            selected_row = universe_df[universe_df["label"] == selected_label].iloc[0]
+        else:
+            labels = universe_df["label"].tolist()
+            default_labels = labels[:min(10, len(labels))]
+            selected_labels = st.multiselect(
+                "묶음 검증 종목",
+                labels,
+                default=default_labels,
+                key="signal_backtest_batch_labels",
+            )
+            selected_subset = universe_df[universe_df["label"].isin(selected_labels)].copy()
+    with c2:
+        signal_type = st.selectbox("검증 신호", SIGNAL_BACKTEST_TYPES, key="signal_backtest_type")
+    with c3:
+        period = st.selectbox("기간", ["1y", "2y", "5y"], index=1, key="signal_backtest_period")
+
+    g1, g2 = st.columns([1.2, 1.2])
+    with g1:
+        min_gap = st.slider("중복 신호 간격(거래일)", min_value=1, max_value=30, value=10, step=1, key="signal_backtest_gap")
+    with g2:
+        max_tickers = st.slider("묶음 최대 종목 수", min_value=3, max_value=25, value=min(12, max(3, len(universe_df))), step=1, key="signal_backtest_max_tickers")
+
+    if mode == "전광판/보유종목 묶음":
+        if selected_subset.empty:
+            st.info("묶음 검증할 종목을 1개 이상 선택해 주세요.")
+            return
+        st.caption(f"현재 선택된 {len(selected_subset)}개 중 최대 {max_tickers}개까지 순서대로 검증합니다. 너무 많이 고르면 yfinance 호출 때문에 느려질 수 있습니다.")
+
+    if not should_run_heavy_analysis(
+        "signal_backtest_lazy",
+        "백테스트는 과거 가격과 지표를 다시 계산하므로 필요할 때만 실행합니다.",
+        run_label="신호 검증 실행/새로고침",
+    ):
+        return
+
+    chart_df = pd.DataFrame()
+    messages = []
+    if mode == "선택 종목":
+        events_df, chart_df, message = build_signal_backtest(
+            ticker=selected_row["ticker"],
+            name=selected_row["name"],
+            asset_class=selected_row["asset_class"],
+            signal_type=signal_type,
+            period=period,
+            min_gap=min_gap,
+        )
+        if message:
+            messages.append(message)
+    else:
+        events_df, messages = build_signal_backtest_batch(
+            selected_subset,
+            signal_type=signal_type,
+            period=period,
+            min_gap=min_gap,
+            max_tickers=max_tickers,
+        )
+
+    if messages:
+        with st.expander("검증 제외/주의 메시지"):
+            for msg in messages[:30]:
+                st.write("-", msg)
+
+    if events_df.empty:
+        st.info("선택한 조건에 해당하는 과거 신호가 없습니다. 기간을 늘리거나 중복 간격을 줄여보세요.")
+        return
+
+    summary_df = summarize_signal_backtest(events_df)
+    render_signal_summary_metrics(events_df)
+    render_signal_summary_table_v2(summary_df)
+
+    if mode == "전광판/보유종목 묶음":
+        render_signal_ticker_summary(events_df)
+
+    st.markdown("#### 신호 발생 내역")
+    st.dataframe(format_signal_events_for_display(events_df), use_container_width=True, hide_index=True)
+
+    file_scope = selected_row["ticker"] if mode == "선택 종목" else "batch"
+    st.download_button(
+        "신호 검증 CSV 다운로드",
+        data=dataframe_to_csv_bytes(events_df),
+        file_name=f"stock_lab_signal_backtest_{file_scope}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_signal_backtest_csv",
+    )
+
+    if mode == "선택 종목":
+        render_signal_backtest_chart_v2(chart_df, events_df, selected_row["name"], signal_type)
+
+    with st.expander("신호 정의"):
+        st.markdown("""
+- **신규대장 후보**: 정배열, 벤치마크 대비 20일 상대강도 우위, MACD 양호, 과열/구조훼손 제외 조건을 모두 만족한 신호입니다.
+- **S급 눌림목**: 정배열과 상대강도 우위가 살아있고 RSI 45~58, 볼린저 %B 0.45~0.8인 신호입니다.
+- **구조훼손 경고**: 고점대비 -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나가 발생한 신호입니다.
+- 앱의 실시간 판정 로직과 100% 동일한 백테스트는 아닙니다. 매크로, 재무점수, 목표비중, 뉴스는 제외한 가격/기술 신호 검증용입니다.
+        """)
+
+
 def should_run_heavy_analysis(key, description, run_label="분석 실행/새로고침"):
     ready_key = f"{key}_ready"
     last_key = f"{key}_last_run"
@@ -8234,13 +8777,14 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_money, tab_kr_etf, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
+tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_backtest, tab_money, tab_kr_etf, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
     "💼 자산 현황",
     "📊 포트폴리오 분석",
     "📋 전광판",
     "🔍 정밀관측소",
     "📉 시나리오 점검",
     "📈 단기 흐름 점검",
+    "🧪 신호 검증",
     "💸 돈흐름 레이더",
     "💰 월배당 ETF",
     "🎯 스윙 레이더",
@@ -9237,6 +9781,9 @@ with tab_scenario:
 
 with tab_short:
     render_short_trend_tab(holdings_table, st.session_state.watchlist)
+
+with tab_backtest:
+    render_signal_backtest_tab(holdings_table, st.session_state.watchlist)
 
 with tab_money:
     render_money_flow_tab()
