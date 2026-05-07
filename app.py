@@ -129,17 +129,14 @@ def get_secret_emails(name):
 
 
 def get_auth_mode():
-    mode = str(st.secrets.get("AUTH_MODE", "")).strip().lower()
+    mode = get_secret_value("AUTH_MODE", "auth_mode").strip().lower()
 
     if mode in ["password", "pass", "local"]:
         return "password"
     if mode in ["google", "oauth"]:
         return "google"
 
-    # Emergency-safe default: if APP_PASSWORD is set, avoid Google OAuth.
-    if get_secret_value("APP_PASSWORD"):
-        return "password"
-
+    # Keep Google as the default. Password login is emergency-only and must be explicit.
     return "google"
 
 
