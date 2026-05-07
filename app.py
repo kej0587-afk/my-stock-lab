@@ -7377,6 +7377,79 @@ def render_signal_summary_table_v2(summary_df):
     st.dataframe(show_summary, use_container_width=True, hide_index=True)
 
 
+def interpret_signal_backtest_result(signal_count, win20, avg20, avg60, avg_dd20):
+    signal_count = int(clean_float(signal_count, 0))
+    win20 = clean_float(win20, np.nan)
+    avg20 = clean_float(avg20, np.nan)
+    avg60 = clean_float(avg60, np.nan)
+    avg_dd20 = clean_float(avg_dd20, np.nan)
+
+    if signal_count <= 0 or not finite_num(win20) or not finite_num(avg20):
+        return "해석 불가: 검증 표본이 부족합니다."
+
+    if signal_count < 3:
+        base = "표본 부족: 참고만"
+    elif signal_count < 5:
+        base = "참고 가능: 표본 작음"
+    elif win20 >= 75 and avg20 > 5 and (not finite_num(avg60) or avg60 > 0):
+        base = "검증 우수: 신호 신뢰 높음"
+    elif win20 >= 60 and avg20 > 0 and (not finite_num(avg60) or avg60 >= 0):
+        base = "검증 양호: 장기 후보 점검 가능"
+    elif win20 >= 50 and avg20 > 0:
+        base = "혼조 우위: 분할 접근"
+    elif avg20 <= 0 or win20 < 45:
+        base = "검증 부진: 신호 단독 사용 금지"
+    else:
+        base = "혼조: 보조지표 확인 필요"
+
+    risk_notes = []
+    if signal_count < 10:
+        risk_notes.append("표본 작아 과신 금지")
+    if finite_num(avg_dd20):
+        if avg_dd20 <= -10:
+            risk_notes.append("변동성 큼")
+        elif avg_dd20 <= -7:
+            risk_notes.append("중간 흔들림 감수")
+        elif avg_dd20 >= -3:
+            risk_notes.append("낙폭 안정적")
+
+    return base if not risk_notes else f"{base} / {', '.join(risk_notes)}"
+
+
+def render_signal_auto_interpretation(events_df, signal_type):
+    ret20 = pd.to_numeric(events_df.get("20일후"), errors="coerce").dropna()
+    ret60 = pd.to_numeric(events_df.get("60일후"), errors="coerce").dropna()
+    dd20 = pd.to_numeric(events_df.get("20일최대낙폭"), errors="coerce").dropna()
+
+    if ret20.empty:
+        return
+
+    win20 = float((ret20 > 0).mean() * 100)
+    avg20 = float(ret20.mean())
+    avg60 = np.nan if ret60.empty else float(ret60.mean())
+    avg_dd20 = np.nan if dd20.empty else float(dd20.mean())
+    interpretation = interpret_signal_backtest_result(len(ret20), win20, avg20, avg60, avg_dd20)
+
+    if signal_type == "구조훼손 경고":
+        if avg20 < 0:
+            headline = "구조훼손 경고가 과거에도 대체로 유효했습니다."
+        else:
+            headline = "구조훼손 경고 후 반등도 있었으니 손절/관망 기준을 함께 보세요."
+    else:
+        headline = "이 신호는 과거 성과 기준으로 다음처럼 해석할 수 있습니다."
+
+    st.markdown(
+        f"<div class='info-panel' style='border-left: 5px solid #22c55e;'>"
+        f"<b>자동해석</b><br>{headline}<br>"
+        f"<span class='highlight' style='font-size:1.05em;'>{escape_html_value(interpretation)}</span><br>"
+        f"<span style='color:#cbd5e1;'>표본 {len(ret20)}건 | 20일 승률 {win20:.1f}% | "
+        f"20일 평균 {avg20:.1f}% | 60일 평균 {format_backtest_percent(avg60) or '-'} | "
+        f"20일 평균낙폭 {format_backtest_percent(avg_dd20) or '-'}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def format_signal_events_for_display(events_df):
     show_events = events_df.copy()
     if "신호가" in show_events.columns:
@@ -7394,6 +7467,16 @@ def render_signal_ticker_summary(events_df):
         return
     st.markdown("#### 종목별 요약")
     show_ticker_summary = ticker_summary.copy()
+    show_ticker_summary["자동해석"] = show_ticker_summary.apply(
+        lambda r: interpret_signal_backtest_result(
+            r.get("신호수", 0),
+            r.get("20일승률", np.nan),
+            r.get("20일평균", np.nan),
+            r.get("60일평균", np.nan),
+            r.get("20일평균낙폭", np.nan),
+        ),
+        axis=1,
+    )
     for col in ["20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
         show_ticker_summary[col] = show_ticker_summary[col].apply(format_backtest_percent)
     st.dataframe(show_ticker_summary, use_container_width=True, hide_index=True)
@@ -7525,6 +7608,7 @@ def render_signal_backtest_tab(holdings_table, watchlist_items):
 
     summary_df = summarize_signal_backtest(events_df)
     render_signal_summary_metrics(events_df)
+    render_signal_auto_interpretation(events_df, signal_type)
     render_signal_summary_table_v2(summary_df)
 
     if mode == "전광판/보유종목 묶음":
