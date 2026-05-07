@@ -4340,6 +4340,254 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         st.dataframe(pd.DataFrame(checklist_rows), use_container_width=True, hide_index=True)
 
 
+VALUATION_INFO_KEYS = [
+    "currentPrice",
+    "regularMarketPrice",
+    "targetMeanPrice",
+    "targetMedianPrice",
+    "numberOfAnalystOpinions",
+    "trailingPE",
+    "forwardPE",
+    "priceToSalesTrailing12Months",
+    "enterpriseToRevenue",
+    "enterpriseToEbitda",
+    "pegRatio",
+    "revenueGrowth",
+    "earningsGrowth",
+    "profitMargins",
+    "operatingMargins",
+    "grossMargins",
+    "returnOnEquity",
+    "debtToEquity",
+    "recommendationKey",
+    "recommendationMean",
+]
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_valuation_snapshot(ticker):
+    ticker = sanitize_ticker_value(ticker)
+    if not ticker:
+        return {"ok": False, "reason": "티커 없음", "data": {}}
+    try:
+        info = yf.Ticker(ticker).get_info()
+    except Exception as e:
+        return {"ok": False, "reason": str(e), "data": {}}
+    if not isinstance(info, dict) or not info:
+        return {"ok": False, "reason": "yfinance 밸류 데이터 없음", "data": {}}
+    return {"ok": True, "reason": "", "data": {key: info.get(key) for key in VALUATION_INFO_KEYS}}
+
+
+def fmt_multiple(value, digits=1):
+    number = clean_float(value, np.nan)
+    if not finite_num(number) or number <= 0:
+        return "-"
+    return f"{number:.{digits}f}x"
+
+
+def fmt_growth_pct(value):
+    number = clean_float(value, np.nan)
+    if not finite_num(number):
+        return "-"
+    if abs(number) <= 3:
+        number = number * 100
+    return f"{number:.1f}%"
+
+
+def valuation_factor_label(kind, value):
+    number = clean_float(value, np.nan)
+    if not finite_num(number):
+        return "데이터 없음", 0
+
+    if kind == "target_upside":
+        if number >= 20:
+            return "매력", 2
+        if number >= 8:
+            return "양호", 1
+        if number >= -5:
+            return "중립", 0
+        return "부담", -1
+
+    if kind == "pe":
+        if number <= 20:
+            return "낮음", 2
+        if number <= 35:
+            return "적정", 1
+        if number <= 55:
+            return "성장프리미엄", 0
+        return "높음", -1
+
+    if kind == "ps":
+        if number <= 3:
+            return "낮음", 2
+        if number <= 8:
+            return "적정", 1
+        if number <= 15:
+            return "높음", 0
+        return "매우 높음", -1
+
+    if kind == "peg":
+        if number <= 0:
+            return "해석주의", 0
+        if number <= 1.2:
+            return "매력", 2
+        if number <= 2.0:
+            return "양호", 1
+        if number <= 3.0:
+            return "중립", 0
+        return "부담", -1
+
+    if kind == "growth":
+        if abs(number) <= 3:
+            number = number * 100
+        if number >= 25:
+            return "고성장", 2
+        if number >= 10:
+            return "성장", 1
+        if number >= 0:
+            return "둔화", 0
+        return "역성장", -1
+
+    if kind == "margin":
+        if abs(number) <= 3:
+            number = number * 100
+        if number >= 25:
+            return "우수", 2
+        if number >= 10:
+            return "양호", 1
+        if number >= 0:
+            return "낮음", 0
+        return "적자", -1
+
+    return "중립", 0
+
+
+def build_valuation_interpretation(data, current_price, ticker):
+    cur = clean_float(current_price, np.nan)
+    target_mean = clean_float(data.get("targetMeanPrice"), np.nan)
+    target_upside = np.nan
+    if finite_num(target_mean) and finite_num(cur) and cur > 0:
+        target_upside = (target_mean / cur - 1) * 100
+
+    forward_pe = clean_float(data.get("forwardPE"), np.nan)
+    trailing_pe = clean_float(data.get("trailingPE"), np.nan)
+    pe_for_score = forward_pe if finite_num(forward_pe) else trailing_pe
+    ps = clean_float(data.get("priceToSalesTrailing12Months"), np.nan)
+    peg = clean_float(data.get("pegRatio"), np.nan)
+    revenue_growth = clean_float(data.get("revenueGrowth"), np.nan)
+    earnings_growth = clean_float(data.get("earningsGrowth"), np.nan)
+    profit_margin = clean_float(data.get("profitMargins"), np.nan)
+    operating_margin = clean_float(data.get("operatingMargins"), np.nan)
+
+    factors = [
+        ("목표가 업사이드", "target_upside", target_upside, format_backtest_percent(target_upside)),
+        ("PER", "pe", pe_for_score, fmt_multiple(pe_for_score)),
+        ("PSR", "ps", ps, fmt_multiple(ps)),
+        ("PEG", "peg", peg, fmt_multiple(peg)),
+        ("매출 성장", "growth", revenue_growth, fmt_growth_pct(revenue_growth)),
+        ("이익 성장", "growth", earnings_growth, fmt_growth_pct(earnings_growth)),
+        ("순이익률", "margin", profit_margin, fmt_growth_pct(profit_margin)),
+        ("영업이익률", "margin", operating_margin, fmt_growth_pct(operating_margin)),
+    ]
+
+    rows = []
+    valuation_score = 0
+    quality_score = 0
+    data_count = 0
+    for title, kind, value, display_value in factors:
+        label, score = valuation_factor_label(kind, value)
+        if finite_num(value):
+            data_count += 1
+            if kind in ["target_upside", "pe", "ps", "peg"]:
+                valuation_score += score
+            else:
+                quality_score += score
+        rows.append({"항목": title, "값": display_value or "-", "판정": label})
+
+    if data_count == 0:
+        headline = "밸류 데이터 부족"
+        color = "#64748b"
+        note = "yfinance에서 현재 종목의 밸류/성장 지표를 충분히 제공하지 않았습니다."
+    elif valuation_score >= 4 and quality_score >= 3:
+        headline = "가격매력 우수"
+        color = "#16a34a"
+        note = "목표가/멀티플 부담 대비 성장성과 마진이 같이 뒷받침되는 구간입니다."
+    elif valuation_score >= 2 and quality_score >= 2:
+        headline = "조건부 적정"
+        color = "#22c55e"
+        note = "기업 체력은 양호하나 신호, 실적 발표, 목표비중 안에서 분할 접근이 적합합니다."
+    elif valuation_score <= 0 and quality_score >= 3:
+        headline = "성장 프리미엄"
+        color = "#d97706"
+        note = "좋은 회사일 수 있지만 가격에는 기대가 많이 반영된 구간입니다."
+    elif valuation_score <= 0:
+        headline = "밸류 부담"
+        color = "#dc2626"
+        note = "재무점수가 좋아도 현재 가격 매력은 약할 수 있어 추격매수는 보수적으로 봅니다."
+    else:
+        headline = "중립"
+        color = "#64748b"
+        note = "밸류만으로 강한 결론을 내리기 어려워 기술 신호와 실적 뉴스를 함께 봅니다."
+
+    return {
+        "headline": headline,
+        "color": color,
+        "note": note,
+        "rows": rows,
+        "target_upside": target_upside,
+        "target_mean": target_mean,
+        "forward_pe": forward_pe,
+        "trailing_pe": trailing_pe,
+        "ps": ps,
+        "peg": peg,
+        "revenue_growth": revenue_growth,
+        "profit_margin": profit_margin,
+    }
+
+
+def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
+    st.markdown("### 💎 밸류 / 가격매력 점검")
+
+    if is_etf:
+        st.info("ETF는 개별 기업 PER/목표가보다 기초지수 흐름, 돈흐름 레이더, 운용보수, 괴리율을 보는 편이 더 적합합니다.")
+        return
+
+    snapshot = fetch_valuation_snapshot(ticker)
+    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
+    analyst_snapshot = get_analyst_snapshot(ticker)
+    analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
+    for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
+        if data.get(key) in [None, ""] and analyst_data.get(key) not in [None, ""]:
+            data[key] = analyst_data.get(key)
+
+    cur_p = clean_float(c.get("cur_p"), np.nan)
+    valuation = build_valuation_interpretation(data, cur_p, ticker)
+
+    v1, v2, v3, v4 = st.columns(4)
+    v1.metric("밸류 판정", valuation["headline"])
+    v2.metric("목표가 업사이드", format_backtest_percent(valuation["target_upside"]) or "-")
+    pe_display = fmt_multiple(valuation["forward_pe"]) if finite_num(valuation["forward_pe"]) else fmt_multiple(valuation["trailing_pe"])
+    v3.metric("PER", pe_display)
+    v4.metric("PSR", fmt_multiple(valuation["ps"]))
+
+    st.markdown(
+        f"<div class='info-panel' style='border-left: 5px solid {valuation['color']};'>"
+        f"<b>{escape_html_value(name)} 가격매력 해석</b><br>"
+        f"<span class='highlight' style='font-size:1.05em;'>{valuation['headline']}</span><br>"
+        f"{escape_html_value(valuation['note'])}<br>"
+        f"<span style='color:#cbd5e1;'>재무점수 {fin_score}/4 종목이라도, 밸류 부담이 높으면 분할/대기가 더 유리할 수 있습니다.</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    show_rows = valuation["rows"]
+    if show_rows:
+        with st.expander("밸류 세부 지표", expanded=False):
+            st.dataframe(pd.DataFrame(show_rows), use_container_width=True, hide_index=True)
+    if not snapshot.get("ok"):
+        st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
     rows = []
@@ -9260,6 +9508,8 @@ with tab_precision:
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• 전일등락: <b>{c['day_ret']*100:.1f}%</b> | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
+
+        render_valuation_price_panel(name, tkr, is_etf, c, fin_score)
 
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
