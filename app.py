@@ -2524,6 +2524,212 @@ def load_fin_score_meta_fast(ticker, is_etf):
         "notes": notes, "metrics": metrics,
     }
 
+def get_fin_meta_parts(fin_meta):
+    notes = fin_meta.get("notes", {}) if isinstance(fin_meta, dict) else {}
+    if not isinstance(notes, dict):
+        notes = {"messages": notes if isinstance(notes, list) else [str(notes)]}
+
+    metrics = fin_meta.get("metrics", {}) if isinstance(fin_meta, dict) else {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+    if not metrics and isinstance(notes.get("metrics"), dict):
+        metrics = notes.get("metrics", {})
+
+    weighted = notes.get("weighted_scores", {})
+    if not isinstance(weighted, dict) or not weighted:
+        weighted = metrics.get("weighted_scores", {}) if isinstance(metrics.get("weighted_scores", {}), dict) else {}
+
+    return notes, metrics, weighted
+
+def get_fin_latest_record(metrics, latest_key, records_key):
+    latest = metrics.get(latest_key, {}) if isinstance(metrics, dict) else {}
+    if isinstance(latest, dict) and latest:
+        return latest
+
+    records = metrics.get(records_key, []) if isinstance(metrics, dict) else []
+    if isinstance(records, list):
+        for record in reversed(records):
+            if isinstance(record, dict) and record:
+                return record
+    return {}
+
+def fin_status_from_score(fin_score, is_etf=False):
+    if is_etf:
+        return "해당없음"
+    try:
+        score = int(fin_score)
+    except Exception:
+        return "미계산"
+    if score >= 4:
+        return "양호"
+    if score == 3:
+        return "보통"
+    if score == 2:
+        return "주의"
+    return "위험"
+
+def fin_status_chip(status):
+    color_map = {
+        "양호": "#16a34a",
+        "보통": "#64748b",
+        "주의": "#d97706",
+        "위험": "#dc2626",
+        "해당없음": "#64748b",
+        "미계산": "#64748b",
+    }
+    color = color_map.get(str(status), "#64748b")
+    return (
+        f"<span style='display:inline-block;padding:2px 8px;border-radius:999px;"
+        f"background:{color};color:white;font-size:.82rem;font-weight:700;'>"
+        f"{escape_html_value(status)}</span>"
+    )
+
+def fin_fmt_pct(v):
+    return fmt_pct(v)
+
+def fin_fmt_num(v):
+    return fmt_num(v)
+
+def fin_pick_status(good, warn):
+    if warn:
+        return "주의"
+    if good:
+        return "양호"
+    return "보통"
+
+def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
+    notes, metrics, weighted = get_fin_meta_parts(fin_meta)
+    derived = metrics.get("derived", {}) if isinstance(metrics.get("derived", {}), dict) else {}
+    annual = get_fin_latest_record(metrics, "annual_latest", "annual_records")
+    quarter = get_fin_latest_record(metrics, "quarter_latest", "quarter_records")
+
+    if is_etf:
+        return [{
+            "영역": "재무점수",
+            "상태": "해당없음",
+            "핵심 지표": "ETF/ETN/레버리지 상품",
+            "해석": "개별 기업 재무제표가 아니라 구성자산을 담는 상품이라 재무점수 합산에서 제외합니다.",
+        }]
+
+    if not annual and not quarter and not weighted:
+        return [{
+            "영역": "재무점수",
+            "상태": "미계산",
+            "핵심 지표": "자동 재무점수 미계산",
+            "해석": "버튼을 누르면 DART/FMP 재무 데이터를 불러와 자동으로 판정합니다.",
+        }]
+
+    rev_growth = derived.get("rev_growth")
+    q_rev_growth = derived.get("q_rev_growth")
+    growth_status = fin_pick_status(
+        finite_num(rev_growth) and float(rev_growth) >= 10 and (not finite_num(q_rev_growth) or float(q_rev_growth) >= -5),
+        (finite_num(rev_growth) and float(rev_growth) <= -10) or (finite_num(q_rev_growth) and float(q_rev_growth) <= -15),
+    )
+
+    op_margin = annual.get("op_margin")
+    net_margin = annual.get("net_margin")
+    roe = annual.get("roe")
+    q_op_margin = quarter.get("op_margin")
+    profitability_status = fin_pick_status(
+        (finite_num(op_margin) and float(op_margin) >= 8) or (finite_num(q_op_margin) and float(q_op_margin) >= 8),
+        (finite_num(op_margin) and float(op_margin) < 0) or (finite_num(net_margin) and float(net_margin) < 0),
+    )
+
+    ocf = annual.get("ocf")
+    ocf_margin = annual.get("ocf_margin")
+    q_ocf_growth = derived.get("q_ocf_growth")
+    cashflow_status = fin_pick_status(
+        finite_num(ocf) and float(ocf) > 0 and (not finite_num(q_ocf_growth) or float(q_ocf_growth) > -30),
+        finite_num(ocf) and float(ocf) < 0,
+    )
+
+    debt_ratio = annual.get("debt_ratio")
+    equity_growth = derived.get("equity_growth")
+    cash = annual.get("cash")
+    revenue = annual.get("revenue")
+    cash_to_revenue = calc_ratio(cash, revenue, multiplier=100)
+    stability_status = fin_pick_status(
+        (not finite_num(debt_ratio) or float(debt_ratio) <= 180) and (not finite_num(equity_growth) or float(equity_growth) >= 0),
+        (finite_num(debt_ratio) and float(debt_ratio) >= 300) or (finite_num(equity_growth) and float(equity_growth) <= -10),
+    )
+
+    danger_count = weighted.get("danger_count")
+    weighted_net = weighted.get("weighted_net_score")
+    annual_judgements = notes.get("annual_judgements", {}) if isinstance(notes.get("annual_judgements", {}), dict) else {}
+    quarter_judgements = notes.get("quarter_judgements", {}) if isinstance(notes.get("quarter_judgements", {}), dict) else {}
+    judgement_values = [str(v) for v in list(annual_judgements.values()) + list(quarter_judgements.values())]
+    hard_risks = [v for v in judgement_values if "🚨" in v or "위험" in v]
+    trend_status = "위험" if (finite_num(danger_count) and float(danger_count) >= 1) or hard_risks else fin_status_from_score(fin_score)
+
+    return [
+        {
+            "영역": "성장성",
+            "상태": growth_status,
+            "핵심 지표": f"연매출 {fin_fmt_pct(rev_growth)} / 최근분기 매출 {fin_fmt_pct(q_rev_growth)}",
+            "해석": "매출이 꾸준히 늘고 최근 분기도 꺾이지 않는지 봅니다.",
+        },
+        {
+            "영역": "수익성",
+            "상태": profitability_status,
+            "핵심 지표": f"영업이익률 {fin_fmt_pct(op_margin)} / 순이익률 {fin_fmt_pct(net_margin)} / ROE {fin_fmt_pct(roe)}",
+            "해석": "팔아서 실제로 이익을 남기는 구조인지 봅니다.",
+        },
+        {
+            "영역": "현금흐름",
+            "상태": cashflow_status,
+            "핵심 지표": f"영업현금흐름 {fin_fmt_num(ocf)} / OCF마진 {fin_fmt_pct(ocf_margin)} / 분기 OCF {fin_fmt_pct(q_ocf_growth)}",
+            "해석": "회계상 이익보다 실제 현금이 들어오는지를 확인합니다.",
+        },
+        {
+            "영역": "안정성",
+            "상태": stability_status,
+            "핵심 지표": f"부채비율 {fin_fmt_pct(debt_ratio)} / 자본증가 {fin_fmt_pct(equity_growth)} / 현금-매출 {fin_fmt_pct(cash_to_revenue)}",
+            "해석": "부채 부담과 버틸 체력이 과하지 않은지 봅니다.",
+        },
+        {
+            "영역": "종합 위험",
+            "상태": trend_status,
+            "핵심 지표": f"가중점수 {weighted_net if finite_num(weighted_net) else '-'} / 위험신호 {int(danger_count) if finite_num(danger_count) else 0}개",
+            "해석": "강한 위험 문구가 있으면 최종 점수보다 보수적으로 봅니다.",
+        },
+    ]
+
+def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
+    notes, metrics, weighted = get_fin_meta_parts(fin_meta)
+    source = fin_meta.get("source", "-") if isinstance(fin_meta, dict) else "-"
+    mode = fin_meta.get("mode", "-") if isinstance(fin_meta, dict) else "-"
+    auto_score = fin_meta.get("auto_score", "-") if isinstance(fin_meta, dict) else "-"
+    manual_score = fin_meta.get("manual_score", None) if isinstance(fin_meta, dict) else None
+    danger_count = weighted.get("danger_count", 0)
+    weighted_net = weighted.get("weighted_net_score", np.nan)
+    status = fin_status_from_score(fin_score, is_etf=is_etf)
+
+    cols = st.columns(4)
+    card_items = [
+        ("종합상태", status, f"최종 {fin_score}/4" if not is_etf else "재무점수 제외"),
+        ("판정모드", str(mode), f"자동 {auto_score}" + (f" / 수동 {manual_score}" if manual_score is not None else "")),
+        ("위험신호", f"{int(danger_count) if finite_num(danger_count) else 0}개", f"가중점수 {weighted_net if finite_num(weighted_net) else '-'}"),
+        ("데이터", str(source), "DART/FMP 기준" if not is_etf else "ETF 기준"),
+    ]
+    for col, (title, value, detail) in zip(cols, card_items):
+        with col:
+            st.markdown(
+                f"<div class='info-panel'><b>{escape_html_value(title)}</b><br>"
+                f"<span class='highlight'>{fin_status_chip(value) if title == '종합상태' else escape_html_value(value)}</span><br>"
+                f"<span class='score-detail'>{escape_html_value(detail)}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+    rows = build_fin_health_rows(fin_score, fin_meta, is_etf=is_etf)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    messages = notes.get("messages", []) if isinstance(notes.get("messages", []), list) else []
+    if messages and not is_etf:
+        st.caption(" · ".join(str(m) for m in messages[:3]))
+
+    if not is_etf:
+        st.caption("자동 재무점수는 투자 추천이 아니라 재무제표 기반 체크리스트입니다. 데이터 공백이나 최근 이벤트는 별도 확인이 필요합니다.")
+
 def clear_financial_api_cache():
     for fn_name in ["fetch_us_financials_auto", "fetch_kr_financials_auto", "fetch_dart_finstate_all_raw"]:
         fn = globals().get(fn_name)
@@ -5310,6 +5516,88 @@ def classify_corr_value(value):
     return "반대", "반대로 움직이는 경향이 있어 변동성 완충에 도움이 될 수 있습니다."
 
 
+def annualize_period_return(period_return_decimal, observation_count):
+    if not finite_num(period_return_decimal) or observation_count <= 0:
+        return np.nan
+    growth = 1 + float(period_return_decimal)
+    if growth <= 0:
+        return -1.0
+    return float(growth ** (252 / observation_count) - 1)
+
+
+def calc_downside_volatility(returns, target=0.0):
+    returns = pd.Series(returns).dropna()
+    if returns.empty:
+        return np.nan
+    downside = returns[returns < target] - target
+    if downside.empty:
+        return 0.0
+    return float(downside.std() * np.sqrt(252))
+
+
+def calc_var_cvar(returns, confidence=0.95):
+    returns = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(returns) < 20:
+        return np.nan, np.nan
+
+    tail_cut = float(returns.quantile(1 - confidence))
+    tail = returns[returns <= tail_cut]
+    cvar = float(tail.mean()) if not tail.empty else tail_cut
+    return tail_cut * 100, cvar * 100
+
+
+def ratio_or_nan(numer, denom):
+    if not finite_num(numer) or not finite_num(denom) or float(denom) == 0:
+        return np.nan
+    return float(numer) / float(denom)
+
+
+def build_risk_contribution_df(asset_df, aligned_returns, weights):
+    columns = ["자산명", "티커", "운용비중", "연환산변동성", "리스크기여도", "비중대비리스크"]
+    if asset_df is None or asset_df.empty or aligned_returns is None or aligned_returns.empty or weights is None or weights.empty:
+        return pd.DataFrame(columns=columns)
+
+    cols = [col for col in weights.index if col in aligned_returns.columns]
+    if len(cols) < 2:
+        return pd.DataFrame(columns=columns)
+
+    returns = aligned_returns[cols].replace([np.inf, -np.inf], np.nan).dropna(how="all").fillna(0.0)
+    weights = weights[cols].astype(float)
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0 or returns.empty:
+        return pd.DataFrame(columns=columns)
+    weights = weights / weight_sum
+
+    cov = returns.cov() * 252
+    portfolio_var = float(weights.T @ cov @ weights)
+    if not np.isfinite(portfolio_var) or portfolio_var <= 0:
+        return pd.DataFrame(columns=columns)
+
+    marginal = cov.dot(weights)
+    contribution = (weights * marginal / portfolio_var) * 100
+    vol = returns.std() * np.sqrt(252) * 100
+
+    name_map = {
+        str(row.get("티커", "")): str(row.get("자산명", "") or row.get("티커", ""))
+        for _, row in asset_df.iterrows()
+    }
+
+    rows = []
+    for ticker in cols:
+        weight_pct = float(weights.get(ticker, 0.0) * 100)
+        contrib_pct = float(contribution.get(ticker, np.nan))
+        rows.append({
+            "자산명": name_map.get(ticker, ticker),
+            "티커": ticker,
+            "운용비중": weight_pct,
+            "연환산변동성": float(vol.get(ticker, np.nan)),
+            "리스크기여도": contrib_pct,
+            "비중대비리스크": ratio_or_nan(contrib_pct, weight_pct),
+        })
+
+    return pd.DataFrame(rows, columns=columns).sort_values("리스크기여도", ascending=False).reset_index(drop=True)
+
+
 def build_asset_label_map(asset_df):
     if asset_df is None or asset_df.empty or "티커" not in asset_df.columns:
         return {}
@@ -5471,6 +5759,17 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     portfolio_vol = np.nan
     portfolio_mdd = np.nan
     portfolio_period_return = np.nan
+    portfolio_annual_return = np.nan
+    portfolio_downside_vol = np.nan
+    sharpe_ratio = np.nan
+    sortino_ratio = np.nan
+    calmar_ratio = np.nan
+    daily_var_95 = np.nan
+    daily_cvar_95 = np.nan
+    monthly_var_95 = np.nan
+    active_var_95_krw = np.nan
+    active_cvar_95_krw = np.nan
+    risk_contrib_df = pd.DataFrame()
     avg_corr = np.nan
 
     if price_series:
@@ -5491,9 +5790,23 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                 portfolio_returns = aligned_returns.mul(weights, axis=1).sum(axis=1)
                 if not portfolio_returns.empty:
                     portfolio_curve = (1 + portfolio_returns).cumprod()
-                    portfolio_vol = float(portfolio_returns.std() * np.sqrt(252) * 100)
-                    portfolio_mdd = calc_series_mdd(portfolio_curve) * 100
+                    portfolio_vol_decimal = float(portfolio_returns.std() * np.sqrt(252))
+                    portfolio_vol = portfolio_vol_decimal * 100
+                    portfolio_mdd_decimal = calc_series_mdd(portfolio_curve)
+                    portfolio_mdd = portfolio_mdd_decimal * 100
                     portfolio_period_return = (float(portfolio_curve.iloc[-1]) - 1) * 100
+                    annual_return_decimal = annualize_period_return(portfolio_period_return / 100, len(portfolio_returns))
+                    downside_vol_decimal = calc_downside_volatility(portfolio_returns)
+                    portfolio_annual_return = annual_return_decimal * 100 if np.isfinite(annual_return_decimal) else np.nan
+                    portfolio_downside_vol = downside_vol_decimal * 100 if np.isfinite(downside_vol_decimal) else np.nan
+                    sharpe_ratio = ratio_or_nan(annual_return_decimal, portfolio_vol_decimal)
+                    sortino_ratio = ratio_or_nan(annual_return_decimal, downside_vol_decimal)
+                    calmar_ratio = ratio_or_nan(annual_return_decimal, abs(portfolio_mdd_decimal))
+                    daily_var_95, daily_cvar_95 = calc_var_cvar(portfolio_returns, 0.95)
+                    monthly_var_95 = daily_var_95 * np.sqrt(21) if np.isfinite(daily_var_95) else np.nan
+                    active_var_95_krw = active_value * abs(daily_var_95) / 100 if np.isfinite(daily_var_95) else np.nan
+                    active_cvar_95_krw = active_value * abs(daily_cvar_95) / 100 if np.isfinite(daily_cvar_95) else np.nan
+                    risk_contrib_df = build_risk_contribution_df(asset_df, aligned_returns, weights)
 
                 if len(weights.index) >= 2:
                     corr_df = aligned_returns.corr()
@@ -5522,6 +5835,14 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
     if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
         add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
+    if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
+        add_portfolio_risk_note(notes, "참고", "위험대비수익", f"Sharpe가 {sharpe_ratio:.2f}입니다.", "분석기간에는 변동성 대비 수익 보상이 낮았습니다.")
+    if np.isfinite(daily_cvar_95) and daily_cvar_95 <= -4:
+        add_portfolio_risk_note(notes, "주의", "꼬리위험", f"95% CVaR 기준 나쁜 날 평균 손실이 {daily_cvar_95:.1f}%입니다.", "급락일에 감내 가능한 손실 규모인지 확인하세요.")
+    if risk_contrib_df is not None and not risk_contrib_df.empty:
+        top_risk = risk_contrib_df.iloc[0]
+        if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
+            add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
 
     notes_df = pd.DataFrame(notes, columns=["등급", "영역", "내용", "확인/조치"])
     metrics = {
@@ -5531,6 +5852,16 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "portfolio_vol": portfolio_vol,
         "portfolio_mdd": portfolio_mdd,
         "portfolio_period_return": portfolio_period_return,
+        "portfolio_annual_return": portfolio_annual_return,
+        "portfolio_downside_vol": portfolio_downside_vol,
+        "sharpe_ratio": sharpe_ratio,
+        "sortino_ratio": sortino_ratio,
+        "calmar_ratio": calmar_ratio,
+        "daily_var_95": daily_var_95,
+        "daily_cvar_95": daily_cvar_95,
+        "monthly_var_95": monthly_var_95,
+        "active_var_95_krw": active_var_95_krw,
+        "active_cvar_95_krw": active_cvar_95_krw,
         "avg_corr": avg_corr,
         "top1_weight": top1_weight,
         "top3_weight": top3_weight,
@@ -5541,7 +5872,225 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "usable_asset_count": len(price_series),
     }
 
-    return metrics, asset_df, notes_df, corr_df, portfolio_curve
+    return metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df
+
+
+def format_metric_pct(value, digits=1):
+    return "-" if not np.isfinite(clean_float(value, np.nan)) else f"{clean_float(value):.{digits}f}%"
+
+
+def format_metric_ratio(value, digits=2):
+    return "-" if not np.isfinite(clean_float(value, np.nan)) else f"{clean_float(value):.{digits}f}"
+
+
+def format_metric_money(value):
+    return "-" if not np.isfinite(clean_float(value, np.nan)) else f"{clean_float(value):,.0f}원"
+
+
+def calc_goal_monthly_return(annual_return_pct):
+    annual = clean_float(annual_return_pct, 0.0) / 100
+    if annual <= -0.999:
+        annual = -0.999
+    return float((1 + annual) ** (1 / 12) - 1)
+
+
+def build_long_term_goal_path(start_amount, monthly_add, annual_return_pct, years):
+    months = int(max(clean_float(years, 0), 0) * 12)
+    monthly_return = calc_goal_monthly_return(annual_return_pct)
+    value = clean_float(start_amount, 0.0)
+    monthly_add = clean_float(monthly_add, 0.0)
+
+    rows = [{
+        "개월": 0,
+        "연차": 0.0,
+        "평가자산": value,
+        "누적투입": value,
+        "누적손익": 0.0,
+    }]
+
+    for month in range(1, months + 1):
+        value = value * (1 + monthly_return) + monthly_add
+        contributed = clean_float(start_amount, 0.0) + monthly_add * month
+        rows.append({
+            "개월": month,
+            "연차": month / 12,
+            "평가자산": value,
+            "누적투입": contributed,
+            "누적손익": value - contributed,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def calc_required_monthly_contribution(start_amount, target_amount, years, annual_return_pct):
+    start_amount = clean_float(start_amount, 0.0)
+    target_amount = clean_float(target_amount, 0.0)
+    months = int(max(clean_float(years, 0), 0) * 12)
+    if months <= 0:
+        return np.nan
+
+    monthly_return = calc_goal_monthly_return(annual_return_pct)
+    growth_factor = (1 + monthly_return) ** months
+    start_future = start_amount * growth_factor
+    if start_future >= target_amount:
+        return 0.0
+
+    if abs(monthly_return) < 1e-12:
+        annuity_factor = months
+    else:
+        annuity_factor = (growth_factor - 1) / monthly_return
+    if annuity_factor <= 0:
+        return np.nan
+
+    return max((target_amount - start_future) / annuity_factor, 0.0)
+
+
+def calc_required_annual_return(start_amount, monthly_add, target_amount, years):
+    start_amount = clean_float(start_amount, 0.0)
+    monthly_add = clean_float(monthly_add, 0.0)
+    target_amount = clean_float(target_amount, 0.0)
+    years = clean_float(years, 0.0)
+    if years <= 0:
+        return np.nan
+    if start_amount >= target_amount:
+        return 0.0
+
+    def final_value(rate_pct):
+        path = build_long_term_goal_path(start_amount, monthly_add, rate_pct, years)
+        if path.empty:
+            return start_amount
+        return clean_float(path.iloc[-1].get("평가자산"), start_amount)
+
+    low, high = -30.0, 60.0
+    if final_value(high) < target_amount:
+        return np.nan
+    for _ in range(60):
+        mid = (low + high) / 2
+        if final_value(mid) >= target_amount:
+            high = mid
+        else:
+            low = mid
+    return high
+
+
+def classify_goal_feasibility(required_return, required_monthly, monthly_add):
+    if not np.isfinite(clean_float(required_return, np.nan)):
+        return "공격적", "#ef4444", "현재 조건으로는 목표 수익률이 매우 높게 필요합니다."
+    required_return = clean_float(required_return, 0.0)
+    required_monthly = clean_float(required_monthly, 0.0)
+    monthly_add = clean_float(monthly_add, 0.0)
+
+    if required_return <= 7 and required_monthly <= monthly_add * 1.2 + 1:
+        return "현실권", "#22c55e", "현재 가정이 유지되면 목표권에 가깝습니다."
+    if required_return <= 10 or required_monthly <= monthly_add * 1.8 + 1:
+        return "도전권", "#f59e0b", "월 추가투자나 목표수익률을 조금 더 챙겨야 합니다."
+    return "공격적", "#ef4444", "목표가 크므로 기간, 월투자금, 기대수익률을 보수적으로 다시 점검하세요."
+
+
+def render_long_term_goal_simulator(metrics):
+    current_asset = clean_float(metrics.get("total_asset"), 0.0)
+    if current_asset <= 0:
+        return
+
+    annual_default = clean_float(metrics.get("portfolio_annual_return"), np.nan)
+    if not np.isfinite(annual_default) or annual_default < -10 or annual_default > 20:
+        annual_default = 7.0
+    annual_default = float(min(max(round(annual_default * 2) / 2, -10.0), 20.0))
+
+    vol_default = clean_float(metrics.get("portfolio_vol"), np.nan)
+    spread_default = 4.0 if not np.isfinite(vol_default) else float(min(max(round((vol_default / 4) * 2) / 2, 2.0), 8.0))
+    target_default = int(max(current_asset * 2, current_asset + 100_000_000, 100_000_000))
+
+    st.markdown("#### 10년 목표 시뮬레이션")
+    st.caption("현재 총자산, 월 추가투자, 목표기간, 기대수익률을 넣어 장기 목표를 점검합니다. 배당 재투자까지 포함한 단순 복리 모델입니다.")
+
+    i1, i2, i3, i4 = st.columns(4)
+    with i1:
+        years = st.slider("목표 기간(년)", min_value=3, max_value=30, value=10, step=1, key="long_goal_years")
+    with i2:
+        monthly_add = st.number_input("월 추가투자금", min_value=0, value=0, step=100000, key="long_goal_monthly_add")
+    with i3:
+        target_asset = st.number_input("목표 자산", min_value=0, value=target_default, step=10000000, key="long_goal_target_asset")
+    with i4:
+        base_return = st.slider("기준 연수익률(%)", min_value=-10.0, max_value=20.0, value=annual_default, step=0.5, key="long_goal_base_return")
+
+    spread = st.slider("보수/낙관 시나리오 폭(%p)", min_value=1.0, max_value=12.0, value=spread_default, step=0.5, key="long_goal_spread")
+    scenario_defs = [
+        ("보수", base_return - spread, "#f97316"),
+        ("기준", base_return, "#38bdf8"),
+        ("낙관", base_return + spread, "#22c55e"),
+    ]
+
+    summary_rows = []
+    fig = go.Figure()
+    base_final = 0.0
+    for label, rate, color in scenario_defs:
+        path_df = build_long_term_goal_path(current_asset, monthly_add, rate, years)
+        if path_df.empty:
+            continue
+        final_row = path_df.iloc[-1]
+        final_asset = clean_float(final_row.get("평가자산"), 0.0)
+        if label == "기준":
+            base_final = final_asset
+        summary_rows.append({
+            "시나리오": label,
+            "연수익률": rate,
+            "최종자산": final_asset,
+            "누적투입": clean_float(final_row.get("누적투입"), 0.0),
+            "누적손익": clean_float(final_row.get("누적손익"), 0.0),
+            "목표달성률": final_asset / target_asset * 100 if target_asset > 0 else np.nan,
+        })
+        fig.add_trace(go.Scatter(
+            x=path_df["연차"],
+            y=path_df["평가자산"],
+            mode="lines",
+            name=f"{label} {rate:.1f}%",
+            line=dict(color=color, width=2),
+            hovertemplate="%{x:.1f}년<br>예상자산: ₩%{y:,.0f}<extra></extra>",
+        ))
+
+    if target_asset > 0:
+        fig.add_hline(y=target_asset, line_dash="dash", line_color="#eab308", annotation_text="목표 자산")
+
+    req_monthly = calc_required_monthly_contribution(current_asset, target_asset, years, base_return)
+    req_return = calc_required_annual_return(current_asset, monthly_add, target_asset, years)
+    goal_ratio = base_final / target_asset * 100 if target_asset > 0 else np.nan
+    feasibility, color, message = classify_goal_feasibility(req_return, req_monthly, monthly_add)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("현재 총자산", format_metric_money(current_asset))
+    c2.metric("기준 최종자산", format_metric_money(base_final))
+    c3.metric("목표달성률", format_metric_pct(goal_ratio))
+    c4.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {color};'><b>목표 난이도</b><br>"
+        f"<span class='highlight'>{escape_html_value(feasibility)}</span><br>{escape_html_value(message)}</div>",
+        unsafe_allow_html=True,
+    )
+
+    need_cols = st.columns(2)
+    need_cols[0].metric("필요 월투자금", format_metric_money(req_monthly))
+    need_cols[1].metric("필요 연수익률", format_metric_pct(req_return))
+
+    show_summary = pd.DataFrame(summary_rows)
+    if not show_summary.empty:
+        display_summary = show_summary.copy()
+        display_summary["연수익률"] = display_summary["연수익률"].apply(format_metric_pct)
+        for col in ["최종자산", "누적투입", "누적손익"]:
+            display_summary[col] = display_summary[col].apply(format_metric_money)
+        display_summary["목표달성률"] = display_summary["목표달성률"].apply(format_metric_pct)
+        st.dataframe(display_summary, use_container_width=True, hide_index=True)
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=360,
+        xaxis_title="기간(년)",
+        yaxis_title="예상자산(원)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("단순 복리 모델이라 세금, 수수료, 환율, 배당 변동, 실제 매수 타이밍은 반영하지 않습니다. 목표 점검용으로만 보세요.")
 
 
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
@@ -5561,7 +6110,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     ):
         return
 
-    metrics, asset_df, notes_df, corr_df, portfolio_curve = build_portfolio_analysis_report(
+    metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
         holdings_table,
         krw_cash,
         usd_cash,
@@ -5581,6 +6130,23 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     m3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
     m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
     m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
+
+    st.markdown("#### Risk Metrics")
+    r1, r2, r3, r4, r5 = st.columns(5)
+    r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
+    r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
+    r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
+    r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
+    r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
+
+    tail_cols = st.columns(4)
+    tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
+    tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
+    tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
+    tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
+    st.caption("Risk Metrics는 가격 데이터가 있는 운용자산 기준입니다. VaR/CVaR는 과거 일간수익률 기반의 참고 손실 추정치이며 미래 손실 한도가 아닙니다.")
+
+    render_long_term_goal_simulator(metrics)
 
     if notes_df.empty:
         st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
@@ -5608,6 +6174,45 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         mime="text/csv",
         key="download_portfolio_analysis_csv",
     )
+
+    st.markdown("#### 리스크 기여도")
+    st.caption("운용비중이 아니라 포트폴리오 전체 변동성에 실제로 얼마나 영향을 주는지 보는 표입니다.")
+    if risk_contrib_df is not None and not risk_contrib_df.empty:
+        contrib_show = risk_contrib_df.copy()
+        for col in ["운용비중", "연환산변동성", "리스크기여도"]:
+            contrib_show[col] = contrib_show[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+        contrib_show["비중대비리스크"] = contrib_show["비중대비리스크"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}x")
+        st.dataframe(contrib_show, use_container_width=True, hide_index=True)
+
+        top_contrib = risk_contrib_df.head(12).copy()
+        fig_contrib = go.Figure()
+        fig_contrib.add_trace(go.Bar(
+            x=top_contrib["리스크기여도"],
+            y=top_contrib["자산명"].where(top_contrib["자산명"].astype(str).str.strip().ne(""), top_contrib["티커"]),
+            orientation="h",
+            name="리스크기여도",
+            marker_color="#f97316",
+        ))
+        fig_contrib.add_trace(go.Bar(
+            x=top_contrib["운용비중"],
+            y=top_contrib["자산명"].where(top_contrib["자산명"].astype(str).str.strip().ne(""), top_contrib["티커"]),
+            orientation="h",
+            name="운용비중",
+            marker_color="#38bdf8",
+        ))
+        fig_contrib.update_layout(
+            template="plotly_dark",
+            height=max(360, min(620, 120 + len(top_contrib) * 34)),
+            barmode="group",
+            xaxis_title="비중/기여도(%)",
+            yaxis=dict(autorange="reversed"),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        )
+        st.plotly_chart(fig_contrib, use_container_width=True)
+    else:
+        st.info("리스크 기여도는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
 
     chart_l, chart_r = st.columns([1.2, 1])
     with chart_l:
@@ -7238,6 +7843,158 @@ def render_monthly_record_status(monthly_logs_df, portfolio_summary):
         st.caption("월별 로그가 비교적 최신 상태입니다. 월말 기준으로 기록하면 장기 성과 추적이 안정적입니다.")
 
 
+def format_status_chip(label, color):
+    return (
+        f"<span style='display:inline-block; padding:3px 8px; border-radius:999px; "
+        f"background:{color}22; border:1px solid {color}; color:{color}; font-size:0.85rem; font-weight:700;'>"
+        f"{escape_html_value(label)}</span>"
+    )
+
+
+def classify_kpi_status(level):
+    if level == "위험":
+        return "#ef4444"
+    if level == "주의":
+        return "#f59e0b"
+    if level == "양호":
+        return "#22c55e"
+    return "#60a5fa"
+
+
+def build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary):
+    df = holdings_table.copy() if holdings_table is not None else pd.DataFrame()
+    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
+    cum_return = clean_float(portfolio_summary.get("cum_return"), 0.0)
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_pct = clean_float(reserve_summary.get("target_pct"), 0.0)
+    waiting_gap = waiting_pct - target_pct
+
+    active_df = pd.DataFrame()
+    if not df.empty and "운용대상" in df.columns:
+        active_df = df[df["운용대상"].apply(clean_bool)].copy()
+    elif not df.empty:
+        active_df = df.copy()
+
+    if not active_df.empty and "티커" in active_df.columns:
+        active_df = active_df[~active_df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+
+    top_name = "-"
+    top_weight = 0.0
+    target_sum = 0.0
+    rebalance_count = 0
+    stale_price_count = 0
+    etf_weight = 0.0
+
+    if not active_df.empty:
+        if "현재비중" in active_df.columns:
+            weight_series = active_df["현재비중"].apply(clean_float)
+            top_idx = weight_series.idxmax()
+            top_weight = float(weight_series.loc[top_idx])
+            top_name = str(active_df.loc[top_idx].get("자산명", active_df.loc[top_idx].get("티커", "-")) or "-")
+            if "is_etf" in active_df.columns:
+                etf_weight = float(active_df.loc[active_df["is_etf"].apply(clean_bool), "현재비중"].apply(clean_float).sum())
+
+        if "리밸런싱목표비중" in active_df.columns:
+            target_sum = float(active_df["리밸런싱목표비중"].apply(clean_float).sum())
+        elif "목표비중" in active_df.columns:
+            target_sum = float(active_df["목표비중"].apply(clean_float).sum())
+
+        if "비중차이" in active_df.columns:
+            rebalance_count = int((active_df["비중차이"].apply(clean_float).abs() >= 3.0).sum())
+
+        if "현재가" in active_df.columns:
+            stale_price_count = int((active_df["현재가"].apply(clean_float) <= 0).sum())
+
+    if waiting_gap < -5:
+        cash_status, cash_level = "부족", "주의"
+    elif waiting_gap > 10:
+        cash_status, cash_level = "여유", "양호"
+    else:
+        cash_status, cash_level = "정상", "양호"
+
+    if top_weight >= 50:
+        concentration_status, concentration_level = "집중위험", "위험"
+    elif top_weight >= 35:
+        concentration_status, concentration_level = "집중주의", "주의"
+    else:
+        concentration_status, concentration_level = "분산양호", "양호"
+
+    if target_sum > 100.5:
+        target_status, target_level = "초과", "위험"
+    elif target_sum < 50 and len(active_df) > 0:
+        target_status, target_level = "낮음", "참고"
+    else:
+        target_status, target_level = "정상", "양호"
+
+    if stale_price_count > 0:
+        data_status, data_level = "확인필요", "주의"
+    else:
+        data_status, data_level = "정상", "양호"
+
+    if cum_return < -15:
+        return_status, return_level = "손실확대", "주의"
+    elif cum_return < 0:
+        return_status, return_level = "손실권", "참고"
+    else:
+        return_status, return_level = "수익권", "양호"
+
+    alerts = []
+    if cash_level == "주의":
+        alerts.append(f"대기자금이 목표보다 {abs(waiting_gap):.1f}%p 낮습니다.")
+    elif waiting_gap > 10:
+        alerts.append(f"대기자금이 목표보다 {waiting_gap:.1f}%p 높습니다. 투입 대기 자금인지 확인하세요.")
+    if concentration_level in ["주의", "위험"]:
+        alerts.append(f"최대 비중 자산은 {top_name} {top_weight:.1f}%입니다.")
+    if target_level == "위험":
+        alerts.append(f"운용대상 목표비중 합계가 {target_sum:.1f}%입니다.")
+    if rebalance_count > 0:
+        alerts.append(f"목표비중과 3%p 이상 차이나는 자산이 {rebalance_count}개 있습니다.")
+    if stale_price_count > 0:
+        alerts.append(f"현재가가 0이거나 누락된 운용자산이 {stale_price_count}개 있습니다.")
+
+    kpis = [
+        {"title": "운용 상태", "status": "점검" if alerts else "정상", "level": "주의" if alerts else "양호", "value": f"{len(alerts)}건", "detail": "확인 필요" if alerts else "큰 이상 없음"},
+        {"title": "대기자금", "status": cash_status, "level": cash_level, "value": f"{waiting_pct:.1f}%", "detail": f"목표 {target_pct:.1f}% / {waiting_gap:+.1f}%p"},
+        {"title": "집중도", "status": concentration_status, "level": concentration_level, "value": f"{top_weight:.1f}%", "detail": top_name},
+        {"title": "목표비중", "status": target_status, "level": target_level, "value": f"{target_sum:.1f}%", "detail": f"리밸런싱 {rebalance_count}개"},
+        {"title": "성과 상태", "status": return_status, "level": return_level, "value": f"{cum_return:.2f}%", "detail": f"총자산 {current_asset:,.0f}원"},
+        {"title": "ETF 비중", "status": "참고", "level": "참고", "value": f"{etf_weight:.1f}%", "detail": "운용자산 내 ETF"},
+        {"title": "데이터", "status": data_status, "level": data_level, "value": f"{stale_price_count}개", "detail": "현재가 누락"},
+    ]
+
+    return kpis, alerts
+
+
+def render_kpi_summary_panel(kpis, alerts):
+    st.markdown("### 운영 KPI")
+    kpi_cols = st.columns(4)
+    for idx, item in enumerate(kpis[:4]):
+        color = classify_kpi_status(item["level"])
+        with kpi_cols[idx]:
+            st.markdown(
+                f"<div class='info-panel' style='border-left:5px solid {color};'>"
+                f"<b>{escape_html_value(item['title'])}</b> {format_status_chip(item['status'], color)}<br>"
+                f"<span class='highlight'>{escape_html_value(item['value'])}</span><br>"
+                f"<span class='score-detail'>{escape_html_value(item['detail'])}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    sub_cols = st.columns(3)
+    for idx, item in enumerate(kpis[4:7]):
+        color = classify_kpi_status(item["level"])
+        with sub_cols[idx]:
+            st.metric(item["title"], item["value"], item["detail"])
+            st.markdown(format_status_chip(item["status"], color), unsafe_allow_html=True)
+
+    if alerts:
+        with st.expander("오늘 확인할 항목", expanded=True):
+            for alert in alerts[:6]:
+                st.write(f"- {alert}")
+    else:
+        st.success("오늘 바로 조치가 필요한 KPI 경고는 없습니다.")
+
+
 def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     full_df = append_cash_rows(
         holdings_table.copy(),
@@ -7265,6 +8022,9 @@ def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash,
     waiting_gap = waiting_pct - target_pct
     waiting_delta = f"{waiting_gap:+.2f}%p vs 목표"
     invest_pct = (invest_value / current_asset * 100) if current_asset > 0 else 0.0
+
+    kpis, alerts = build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary)
+    render_kpi_summary_panel(kpis, alerts)
 
     st.markdown("### 자산 현황 요약")
     top_cols = st.columns(4)
@@ -7556,16 +8316,7 @@ with tab_precision:
     st.markdown(f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>", unsafe_allow_html=True)
 
     with st.expander("재무점수 계산 근거"):
-        notes = fin_meta.get("notes", {})
-        metrics = fin_meta.get("metrics", {})
-        weighted = notes.get("weighted_scores", {}) or metrics.get("weighted_scores", {}) if isinstance(notes, dict) else {}
-        if not isinstance(notes, dict): notes = {"messages": notes if isinstance(notes, list) else [str(notes)]}
-
-        st.write("source:", fin_meta.get("source"))
-        st.write("mode:", fin_meta.get("mode"))
-        st.write("auto_score:", fin_meta.get("auto_score"))
-        st.write("manual_score:", fin_meta.get("manual_score"))
-        st.write("final_score:", fin_meta.get("final_score"))
+        notes, metrics, weighted = get_fin_meta_parts(fin_meta)
 
         if not is_etf:
             if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}"):
@@ -7576,49 +8327,78 @@ with tab_precision:
                 st.success("자동 재무점수 계산 완료")
                 st.rerun()
 
-        if weighted:
-            st.write("weighted score:", weighted.get("weighted_net_score"))
-            st.write("S_sum:", weighted.get("s_sum"))
-            st.write("A_sum:", weighted.get("a_sum"))
-            st.write("B_sum:", weighted.get("b_sum"))
-            st.write("danger_count:", weighted.get("danger_count"))
-            st.write("범용판단:", weighted.get("generic_score"))
-            st.write("수주판단:", weighted.get("order_score"))
-            st.write("중간형판단:", weighted.get("middle_score"))
-            st.write("selected_mode:", weighted.get("selected_mode"))
-
         annual_judgements = notes.get("annual_judgements", {})
         quarter_judgements = notes.get("quarter_judgements", {})
 
-        st.markdown("#### annual 판정 문구")
-        if annual_judgements: st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]), use_container_width=True, hide_index=True)
-        else: st.write("annual 판정 없음")
+        summary_tab, judgement_tab, raw_tab = st.tabs(["요약", "판정표", "원자료"])
 
-        st.markdown("#### quarter 판정 문구")
-        if quarter_judgements: st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]), use_container_width=True, hide_index=True)
-        else: st.write("quarter 판정 없음")
+        with summary_tab:
+            render_fin_health_summary(fin_score, fin_meta, is_etf=is_etf)
 
-        st.markdown("#### 핵심 metrics")
-        annual_records = metrics.get("annual_records", [])
-        quarter_records = metrics.get("quarter_records", [])
+        with judgement_tab:
+            meta_rows = [
+                {"항목": "source", "값": fin_meta.get("source")},
+                {"항목": "mode", "값": fin_meta.get("mode")},
+                {"항목": "auto_score", "값": fin_meta.get("auto_score")},
+                {"항목": "manual_score", "값": fin_meta.get("manual_score")},
+                {"항목": "final_score", "값": fin_meta.get("final_score")},
+            ]
+            st.dataframe(pd.DataFrame(meta_rows), use_container_width=True, hide_index=True)
 
-        if annual_records:
-            st.write("annual records")
-            st.dataframe(pd.DataFrame(annual_records), use_container_width=True, hide_index=True)
+            if weighted:
+                weighted_rows = [
+                    {"항목": "weighted score", "값": weighted.get("weighted_net_score")},
+                    {"항목": "S_sum", "값": weighted.get("s_sum")},
+                    {"항목": "A_sum", "값": weighted.get("a_sum")},
+                    {"항목": "B_sum", "값": weighted.get("b_sum")},
+                    {"항목": "danger_count", "값": weighted.get("danger_count")},
+                    {"항목": "범용판단", "값": weighted.get("generic_score")},
+                    {"항목": "수주판단", "값": weighted.get("order_score")},
+                    {"항목": "중간형판단", "값": weighted.get("middle_score")},
+                    {"항목": "selected_mode", "값": weighted.get("selected_mode")},
+                ]
+                st.markdown("#### 가중 판정")
+                st.dataframe(pd.DataFrame(weighted_rows), use_container_width=True, hide_index=True)
 
-        if quarter_records:
-            st.write("quarter records")
-            st.dataframe(pd.DataFrame(quarter_records), use_container_width=True, hide_index=True)
+            st.markdown("#### 연간 판정 문구")
+            if annual_judgements:
+                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]), use_container_width=True, hide_index=True)
+            else:
+                st.write("연간 판정 없음")
 
-        derived = metrics.get("derived", {})
-        if derived:
-            st.write("derived metrics")
-            st.json(derived)
+            st.markdown("#### 분기 판정 문구")
+            if quarter_judgements:
+                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]), use_container_width=True, hide_index=True)
+            else:
+                st.write("분기 판정 없음")
 
-        messages = notes.get("messages", [])
-        if messages:
-            st.markdown("#### notes")
-            for msg in messages: st.write("-", msg)
+            messages = notes.get("messages", [])
+            if messages:
+                st.markdown("#### notes")
+                for msg in messages: st.write("-", msg)
+
+        with raw_tab:
+            annual_records = metrics.get("annual_records", [])
+            quarter_records = metrics.get("quarter_records", [])
+
+            if annual_records:
+                st.write("annual records")
+                st.dataframe(pd.DataFrame(annual_records), use_container_width=True, hide_index=True)
+            else:
+                st.write("annual records 없음")
+
+            if quarter_records:
+                st.write("quarter records")
+                st.dataframe(pd.DataFrame(quarter_records), use_container_width=True, hide_index=True)
+            else:
+                st.write("quarter records 없음")
+
+            derived = metrics.get("derived", {})
+            if derived:
+                st.write("derived metrics")
+                st.json(derived)
+            else:
+                st.write("derived metrics 없음")
 
     if is_etf:
         st.info("ETF/ETN/레버리지 상품은 재무점수 해당없음입니다. 수동 재무점수도 적용하지 않습니다.")
