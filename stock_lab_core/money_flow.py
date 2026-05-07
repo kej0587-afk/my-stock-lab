@@ -50,6 +50,34 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "부동산", "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
     {"구분": "한국 섹터", "섹터": "건설/유틸", "ticker": "139220.KS", "name": "TIGER 200 건설"},
 
+    {"구분": "월배당 ETF", "섹터": "금리형", "ticker": "459580.KS", "name": "KODEX CD금리액티브(합성)"},
+    {"구분": "월배당 ETF", "섹터": "국내 단기채", "ticker": "214980.KS", "name": "KODEX 단기채권PLUS"},
+    {"구분": "월배당 ETF", "섹터": "미국 장기채", "ticker": "453850.KS", "name": "ACE 미국30년국채액티브(H)"},
+    {"구분": "월배당 ETF", "섹터": "장기채 커버드콜", "ticker": "476550.KS", "name": "TIGER 미국30년국채커버드콜액티브(H)"},
+    {"구분": "월배당 ETF", "섹터": "국내 리츠", "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
+    {"구분": "월배당 ETF", "섹터": "국내 고배당", "ticker": "161510.KS", "name": "PLUS 고배당주"},
+    {"구분": "월배당 ETF", "섹터": "은행 고배당", "ticker": "466940.KS", "name": "TIGER 은행고배당플러스TOP10"},
+    {"구분": "월배당 ETF", "섹터": "미국 배당", "ticker": "458730.KS", "name": "TIGER 미국배당다우존스"},
+    {"구분": "월배당 ETF", "섹터": "미국 배당 커버드콜", "ticker": "458760.KS", "name": "TIGER 미국배당다우존스타겟커버드콜2호"},
+    {"구분": "월배당 ETF", "섹터": "나스닥100 커버드콜", "ticker": "486290.KS", "name": "TIGER 미국나스닥100타겟데일리커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "S&P500 커버드콜", "ticker": "482730.KS", "name": "TIGER 미국S&P500타겟데일리커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "KOSPI200 커버드콜", "ticker": "498400.KS", "name": "KODEX 200타겟위클리커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "미국 테크 커버드콜", "ticker": "474220.KS", "name": "TIGER 미국테크TOP10타겟커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "금 커버드콜", "ticker": "0022T0.KS", "name": "SOL 국제금커버드콜액티브"},
+
+    {"구분": "국내상장 대표 ETF", "섹터": "KOSPI200 대형", "ticker": "102110.KS", "name": "TIGER 200"},
+    {"구분": "국내상장 대표 ETF", "섹터": "미국 S&P500", "ticker": "360750.KS", "name": "TIGER 미국S&P500"},
+    {"구분": "국내상장 대표 ETF", "섹터": "미국 나스닥100", "ticker": "133690.KS", "name": "TIGER 미국나스닥100"},
+    {"구분": "국내상장 대표 ETF", "섹터": "인도 Nifty50", "ticker": "453870.KS", "name": "TIGER 인도니프티50"},
+    {"구분": "국내상장 대표 ETF", "섹터": "일본 Nikkei225", "ticker": "241180.KS", "name": "TIGER 일본니케이225"},
+    {"구분": "국내상장 대표 ETF", "섹터": "중국 CSI300", "ticker": "192090.KS", "name": "TIGER 차이나CSI300"},
+    {"구분": "국내상장 대표 ETF", "섹터": "미국 반도체", "ticker": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
+    {"구분": "국내상장 대표 ETF", "섹터": "중국 전기차", "ticker": "371460.KS", "name": "TIGER 차이나전기차SOLACTIVE"},
+    {"구분": "국내상장 대표 ETF", "섹터": "글로벌 AI", "ticker": "456600.KS", "name": "TIMEFOLIO 글로벌AI인공지능액티브"},
+    {"구분": "국내상장 대표 ETF", "섹터": "헬스케어", "ticker": "143860.KS", "name": "TIGER 헬스케어"},
+    {"구분": "국내상장 대표 ETF", "섹터": "종합채권", "ticker": "273130.KS", "name": "KODEX 종합채권(AA-이상)액티브"},
+    {"구분": "국내상장 대표 ETF", "섹터": "머니마켓", "ticker": "488770.KS", "name": "KODEX 머니마켓액티브"},
+
     {"구분": "글로벌", "섹터": "미국 나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
     {"구분": "글로벌", "섹터": "미국 S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
     {"구분": "글로벌", "섹터": "일본", "ticker": "EWJ", "name": "iShares MSCI Japan ETF"},
@@ -68,6 +96,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "글로벌", "섹터": "베트남", "ticker": "VNM", "name": "VanEck Vietnam ETF"},
 
     {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
+    {"구분": "매크로", "섹터": "한국 금현물", "ticker": "411060.KS", "name": "ACE KRX금현물"},
     {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
 ]
 

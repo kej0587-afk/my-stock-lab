@@ -61,6 +61,12 @@ from stock_lab_core.money_flow import (
     calculate_money_flow_df,
     download_money_flow_prices,
 )
+from stock_lab_core.kr_etf_data import (
+    KR_ETF_DATA_PATH,
+    build_kr_etf_lab_from_excel_files,
+    load_kr_etf_lab_dataframe,
+    save_kr_etf_lab_dataframe,
+)
 from stock_lab_core.prices import (
     clear_latest_price_cache,
     clear_selected_price_cache,
@@ -2357,9 +2363,127 @@ def fmt_flow_pct(v):
         return "-"
     return f"{float(v) * 100:.1f}%"
 
+
+def get_plotly_selected_ticker(event):
+    if not event:
+        return ""
+    try:
+        selection = event.get("selection", {})
+    except AttributeError:
+        selection = getattr(event, "selection", {}) or {}
+    try:
+        points = selection.get("points", [])
+    except AttributeError:
+        points = getattr(selection, "points", []) or []
+    if not points:
+        return ""
+
+    point = points[0]
+    if not isinstance(point, dict):
+        point = dict(point)
+
+    customdata = point.get("customdata")
+    if isinstance(customdata, (list, tuple)) and customdata:
+        return str(customdata[0] or "").strip()
+
+    point_id = str(point.get("id", "") or "")
+    if "|" in point_id:
+        return point_id.rsplit("|", 1)[-1].strip()
+
+    label = str(point.get("label", "") or "")
+    if "<br>" in label:
+        return label.split("<br>")[-1].strip()
+    return ""
+
+
+def get_kr_etf_composition(ticker):
+    kr_etf_df = load_cached_kr_etf_lab_data()
+    if kr_etf_df.empty:
+        return pd.DataFrame(), None
+
+    ticker_key = str(ticker or "").strip().upper()
+    matched = kr_etf_df[kr_etf_df["ticker"].astype(str).str.upper() == ticker_key]
+    if matched.empty:
+        return pd.DataFrame(), None
+
+    row = matched.iloc[0]
+    rows = []
+    for idx in range(1, 6):
+        name = str(row.get(f"top_{idx}", "") or "").strip()
+        weight = str(row.get(f"top_{idx}_weight_pct", "") or "").strip()
+        if not name:
+            continue
+        rows.append({
+            "순위": idx,
+            "구성종목": name,
+            "비중(%)": clean_float(weight, np.nan),
+        })
+    return pd.DataFrame(rows), row
+
+
+def render_money_flow_composition_panel(view_df, selected_ticker=""):
+    if view_df is None or view_df.empty:
+        return
+
+    option_rows = view_df[["구분", "섹터", "Ticker", "ETF 이름"]].drop_duplicates("Ticker").reset_index(drop=True)
+    option_labels = [
+        f"{row['구분']} · {row['섹터']} | {row['Ticker']}"
+        for _, row in option_rows.iterrows()
+    ]
+    ticker_by_label = {
+        label: str(row["Ticker"]).strip()
+        for label, (_, row) in zip(option_labels, option_rows.iterrows())
+    }
+
+    selected_key = str(selected_ticker or st.session_state.get("money_flow_selected_ticker", "") or "").strip().upper()
+    default_index = 0
+    for idx, row in option_rows.iterrows():
+        if str(row["Ticker"]).strip().upper() == selected_key:
+            default_index = idx
+            break
+
+    selected_label = st.selectbox(
+        "구성종목 확인",
+        option_labels,
+        index=default_index,
+        key="money_flow_composition_target",
+        help="히트맵 블록을 클릭하거나 여기서 ETF를 선택하면 국내상장 ETF의 TOP 구성종목을 확인합니다.",
+    )
+    ticker = ticker_by_label.get(selected_label, "")
+    st.session_state["money_flow_selected_ticker"] = ticker
+
+    selected_flow = option_rows[option_rows["Ticker"] == ticker]
+    flow_name = selected_flow.iloc[0]["ETF 이름"] if not selected_flow.empty else ticker
+    comp_df, etf_row = get_kr_etf_composition(ticker)
+
+    st.markdown("#### ETF 구성종목")
+    if etf_row is None:
+        st.info(f"{flow_name} ({ticker})는 국내 ETF 1020 데이터에 없어 구성종목 TOP5를 표시할 수 없습니다.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("ETF", str(etf_row.get("name", flow_name))[:18])
+    c2.metric("대유형", str(etf_row.get("etf_big_type", "-") or "-"))
+    c3.metric("운용규모", f"{clean_float(etf_row.get('aum_krw_100m'), 0.0):,.0f}억")
+    c4.metric("실부담", f"{clean_float(etf_row.get('real_fee_pct'), 0.0):.3f}%")
+
+    if comp_df.empty:
+        st.info("이 ETF는 TOP 구성종목 데이터가 비어 있습니다.")
+    else:
+        show_comp = comp_df.copy()
+        show_comp["비중(%)"] = show_comp["비중(%)"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}")
+        st.dataframe(show_comp, use_container_width=True, hide_index=True)
+
+    st.caption(
+        f"기초지수: {etf_row.get('underlying_index', '-') or '-'} | "
+        f"운용사: {etf_row.get('manager', '-') or '-'} | "
+        f"분류: {etf_row.get('tags', '-') or '-'}"
+    )
+
+
 def render_money_flow_tab():
     st.subheader("돈흐름 레이더")
-    st.caption("미국 섹터, 한국 섹터, 글로벌 국가 ETF의 3개월/6개월 흐름과 가속도를 비교해 돈이 어디로 향하는지 봅니다.")
+    st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 3개월/6개월 흐름과 가속도를 비교해 돈이 어디로 향하는지 봅니다.")
 
     if not should_run_heavy_analysis(
         "money_flow_lazy",
@@ -2385,9 +2509,10 @@ def render_money_flow_tab():
     top_us = flow_df[flow_df["구분"] == "미국 섹터"].head(1)
     top_kr = flow_df[flow_df["구분"] == "한국 섹터"].head(1)
     top_global = flow_df[flow_df["구분"] == "글로벌"].head(1)
+    top_income = flow_df[flow_df["구분"] == "월배당 ETF"].head(1)
     top_accel = flow_df.sort_values("가속도", ascending=False).head(1)
 
-    s1, s2, s3, s4 = st.columns(4)
+    s1, s2, s3, s4, s5 = st.columns(5)
     if not top_us.empty:
         r = top_us.iloc[0]
         s1.metric("미국 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
@@ -2397,9 +2522,12 @@ def render_money_flow_tab():
     if not top_global.empty:
         r = top_global.iloc[0]
         s3.metric("글로벌 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+    if not top_income.empty:
+        r = top_income.iloc[0]
+        s4.metric("월배당 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
     if not top_accel.empty:
         r = top_accel.iloc[0]
-        s4.metric("가속도 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["가속도"]))
+        s5.metric("가속도 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["가속도"]))
 
     leader = view_df.iloc[0]
     accel_leader = view_df.sort_values("가속도", ascending=False).iloc[0]
@@ -2418,6 +2546,7 @@ def render_money_flow_tab():
     )
 
     m1, m2 = st.columns([1.05, 1])
+    tree_event = None
 
     with m1:
         tree_df = view_df.reset_index(drop=True).copy()
@@ -2438,17 +2567,24 @@ def render_money_flow_tab():
                 cmid=0,
                 colorbar=dict(title="돈흐름")
             ),
-            customdata=tree_df[["3개월수익률", "6개월수익률", "가속도", "상태"]],
+            customdata=tree_df[["Ticker", "ETF 이름", "3개월수익률", "6개월수익률", "가속도", "상태"]],
             hovertemplate=
                 "<b>%{label}</b><br>" +
-                "3개월: %{customdata[0]:.1%}<br>" +
-                "6개월: %{customdata[1]:.1%}<br>" +
-                "가속도: %{customdata[2]:.1%}<br>" +
-                "상태: %{customdata[3]}<extra></extra>"
+                "%{customdata[1]}<br>" +
+                "3개월: %{customdata[2]:.1%}<br>" +
+                "6개월: %{customdata[3]:.1%}<br>" +
+                "가속도: %{customdata[4]:.1%}<br>" +
+                "상태: %{customdata[5]}<extra></extra>"
         ))
         fig_tree.update_layout(template="plotly_dark", height=470, title="돈흐름 히트맵", margin=dict(t=45, l=4, r=4, b=4))
-        st.plotly_chart(fig_tree, use_container_width=True)
-        st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 3개월/6개월 흐름과 가속도가 좋다는 뜻입니다.")
+        tree_event = st.plotly_chart(
+            fig_tree,
+            use_container_width=True,
+            key="money_flow_heatmap_select",
+            on_select="rerun",
+            selection_mode="points",
+        )
+        st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 3개월/6개월 흐름과 가속도가 좋다는 뜻입니다. 블록을 클릭하면 아래에서 구성종목을 확인합니다.")
 
     with m2:
         fig_quad = go.Figure(go.Scatter(
@@ -2483,6 +2619,11 @@ def render_money_flow_tab():
             yaxis_title="3개월 수익률 %",
         )
         st.plotly_chart(fig_quad, use_container_width=True)
+
+    clicked_ticker = get_plotly_selected_ticker(tree_event)
+    if clicked_ticker:
+        st.session_state["money_flow_selected_ticker"] = clicked_ticker
+    render_money_flow_composition_panel(view_df, clicked_ticker)
 
     b1, b2 = st.columns(2)
     with b1:
@@ -5817,6 +5958,265 @@ def render_heavy_analysis_button(key, run_label="분석 실행/새로고침"):
         st.caption("기술적 타점 요약 대기 중")
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_cached_kr_etf_lab_data():
+    return load_kr_etf_lab_dataframe()
+
+
+def kr_etf_numeric_series(df, col):
+    if df is None or df.empty or col not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(df[col].astype(str).str.replace(",", "", regex=False), errors="coerce")
+
+
+def kr_etf_unique_options(df, col):
+    if df is None or df.empty or col not in df.columns:
+        return []
+    values = df[col].fillna("").astype(str).str.strip()
+    return sorted([x for x in values.unique().tolist() if x])
+
+
+def kr_etf_tag_options(df):
+    tags = set()
+    if df is None or df.empty or "tags" not in df.columns:
+        return []
+    for value in df["tags"].fillna("").astype(str):
+        for item in value.split(","):
+            item = item.strip()
+            if item:
+                tags.add(item)
+    return sorted(tags)
+
+
+def render_kr_etf_update_panel(current_df):
+    with st.expander("ETF 데이터 갱신/업로드"):
+        st.caption("평소에는 앱 내부 CSV를 사용합니다. 새 자료가 생기면 엑셀을 올려 검토한 뒤 저장하세요.")
+        uploads = st.file_uploader(
+            "국내 ETF 전체 목록 / 월배당 총정리 / 분배금 지급현황 엑셀",
+            type=["xlsx"],
+            accept_multiple_files=True,
+            key="kr_etf_lab_uploads",
+        )
+
+        if st.button("업로드 파일 검토", key="kr_etf_lab_preview_btn", disabled=not uploads):
+            try:
+                preview_df, messages = build_kr_etf_lab_from_excel_files(uploads, base_df=current_df)
+                st.session_state["kr_etf_lab_preview_df"] = preview_df
+                st.session_state["kr_etf_lab_preview_messages"] = messages
+            except Exception as exc:
+                st.error(f"업로드 자료를 읽지 못했습니다: {exc}")
+
+        preview_df = st.session_state.get("kr_etf_lab_preview_df")
+        if isinstance(preview_df, pd.DataFrame) and not preview_df.empty:
+            messages = st.session_state.get("kr_etf_lab_preview_messages", [])
+            if messages:
+                st.write(" / ".join(messages))
+            p1, p2, p3 = st.columns(3)
+            p1.metric("검토 ETF", f"{len(preview_df):,}개")
+            p2.metric("월배당", f"{int((preview_df['monthly_dividend'] == 'Y').sum()):,}개")
+            p3.metric("분배금 데이터", f"{int((preview_df['source_distribution'] == 'Y').sum()):,}개")
+            st.dataframe(
+                preview_df[["ticker", "name", "tags", "annual_distribution_rate_pct", "distribution_per_share_krw", "real_fee_pct"]].head(30),
+                use_container_width=True,
+                hide_index=True,
+            )
+            save_col, clear_col = st.columns([1, 1])
+            if save_col.button("검토 데이터 저장", key="kr_etf_lab_save_preview", use_container_width=True):
+                try:
+                    save_kr_etf_lab_dataframe(preview_df)
+                    cache_clear(load_cached_kr_etf_lab_data)
+                    st.session_state.pop("kr_etf_lab_preview_df", None)
+                    st.session_state.pop("kr_etf_lab_preview_messages", None)
+                    st.success("국내 ETF 데이터 저장 완료")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"저장하지 못했습니다: {exc}")
+            if clear_col.button("검토 취소", key="kr_etf_lab_clear_preview", use_container_width=True):
+                st.session_state.pop("kr_etf_lab_preview_df", None)
+                st.session_state.pop("kr_etf_lab_preview_messages", None)
+                st.rerun()
+
+
+def render_kr_etf_lab_tab():
+    st.subheader("월배당 ETF 탐색")
+    st.caption("국내 ETF 전체 목록과 월배당/분배금 자료를 합쳐 장기 월현금흐름 후보를 비교합니다.")
+
+    kr_etf_df = load_cached_kr_etf_lab_data()
+    render_kr_etf_update_panel(kr_etf_df)
+
+    if kr_etf_df.empty:
+        st.warning("국내 ETF 데이터가 없습니다. ETF 데이터 갱신/업로드에서 전체 ETF 목록 엑셀을 먼저 올려주세요.")
+        return
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("전체 ETF", f"{len(kr_etf_df):,}개")
+    m2.metric("월배당 후보", f"{int((kr_etf_df['monthly_dividend'] == 'Y').sum()):,}개")
+    m3.metric("분배금 확인", f"{int((kr_etf_df['source_distribution'] == 'Y').sum()):,}개")
+    generated_at = str(kr_etf_df["data_generated_at"].dropna().iloc[0]) if "data_generated_at" in kr_etf_df.columns and not kr_etf_df["data_generated_at"].dropna().empty else "-"
+    m4.metric("데이터 갱신", generated_at[-8:] if generated_at and generated_at != "-" else "-")
+
+    filter_cols = st.columns([1.6, 1.2, 1.2, 1.2])
+    search_text = filter_cols[0].text_input("검색", placeholder="ETF명, 코드, 기초지수", key="kr_etf_search")
+    big_type = filter_cols[1].selectbox("대유형", ["전체"] + kr_etf_unique_options(kr_etf_df, "etf_big_type"), key="kr_etf_big_type")
+    tag = filter_cols[2].selectbox("분류", ["전체"] + kr_etf_tag_options(kr_etf_df), key="kr_etf_tag")
+    sort_mode = filter_cols[3].selectbox(
+        "정렬",
+        ["연분배율 높은 순", "최근월분배율 높은 순", "운용규모 큰 순", "1년수익률 높은 순", "실부담비율 낮은 순", "이름순"],
+        key="kr_etf_sort_mode",
+    )
+
+    option_cols = st.columns(5)
+    monthly_only = option_cols[0].checkbox("월배당만", value=True, key="kr_etf_monthly_only")
+    distribution_only = option_cols[1].checkbox("분배금 확인분만", value=False, key="kr_etf_distribution_only")
+    pension_only = option_cols[2].checkbox("연금 가능만", value=False, key="kr_etf_pension_only")
+    exclude_leverage = option_cols[3].checkbox("레버리지/인버스 제외", value=True, key="kr_etf_exclude_leverage")
+    covered_call_only = option_cols[4].checkbox("커버드콜만", value=False, key="kr_etf_covered_call_only")
+
+    threshold_cols = st.columns(3)
+    min_annual_rate = threshold_cols[0].slider("최소 연분배율(%)", 0.0, 30.0, 0.0, 0.5, key="kr_etf_min_annual_rate")
+    min_aum = threshold_cols[1].number_input("최소 운용규모(억원)", min_value=0.0, value=0.0, step=100.0, key="kr_etf_min_aum")
+    max_real_fee = threshold_cols[2].number_input("최대 실부담비율(%)", min_value=0.0, value=10.0, step=0.1, key="kr_etf_max_real_fee")
+
+    view_df = kr_etf_df.copy()
+    if monthly_only:
+        view_df = view_df[view_df["monthly_dividend"] == "Y"]
+    if distribution_only:
+        view_df = view_df[view_df["source_distribution"] == "Y"]
+    if pension_only:
+        view_df = view_df[(view_df["personal_pension"] == "Y") | (view_df["retirement_pension"] == "Y")]
+    if exclude_leverage:
+        view_df = view_df[~view_df["tags"].astype(str).str.contains("레버리지|인버스", na=False)]
+    if covered_call_only:
+        view_df = view_df[view_df["tags"].astype(str).str.contains("커버드콜", na=False)]
+    if big_type != "전체":
+        view_df = view_df[view_df["etf_big_type"] == big_type]
+    if tag != "전체":
+        view_df = view_df[view_df["tags"].astype(str).str.contains(tag, regex=False, na=False)]
+    if search_text:
+        search = search_text.strip().lower()
+        target = (
+            view_df["name"].astype(str) + " " +
+            view_df["ticker"].astype(str) + " " +
+            view_df["code"].astype(str) + " " +
+            view_df["underlying_index"].astype(str) + " " +
+            view_df["tags"].astype(str)
+        ).str.lower()
+        view_df = view_df[target.str.contains(search, na=False)]
+
+    annual_rate = kr_etf_numeric_series(view_df, "annual_distribution_rate_pct")
+    latest_rate = kr_etf_numeric_series(view_df, "latest_distribution_rate_pct")
+    aum = kr_etf_numeric_series(view_df, "aum_krw_100m")
+    real_fee = kr_etf_numeric_series(view_df, "real_fee_pct")
+    if min_annual_rate > 0:
+        view_df = view_df[annual_rate >= min_annual_rate]
+    if min_aum > 0:
+        view_df = view_df[aum >= min_aum]
+    if max_real_fee < 10.0:
+        view_df = view_df[real_fee <= max_real_fee]
+
+    sort_col_map = {
+        "연분배율 높은 순": ("annual_distribution_rate_pct", False),
+        "최근월분배율 높은 순": ("latest_distribution_rate_pct", False),
+        "운용규모 큰 순": ("aum_krw_100m", False),
+        "1년수익률 높은 순": ("return_1y_pct", False),
+        "실부담비율 낮은 순": ("real_fee_pct", True),
+        "이름순": ("name", True),
+    }
+    sort_col, ascending = sort_col_map.get(sort_mode, ("annual_distribution_rate_pct", False))
+    if sort_col != "name":
+        view_df = view_df.assign(_sort=kr_etf_numeric_series(view_df, sort_col)).sort_values("_sort", ascending=ascending, na_position="last").drop(columns="_sort")
+    else:
+        view_df = view_df.sort_values("name", ascending=True)
+
+    st.markdown("#### ETF 후보 목록")
+    st.caption(f"조건에 맞는 ETF {len(view_df):,}개")
+
+    display_cols = {
+        "ticker": "티커",
+        "name": "ETF명",
+        "tags": "분류",
+        "etf_big_type": "대유형",
+        "etf_small_type": "소유형",
+        "annual_distribution_rate_pct": "연분배율(%)",
+        "latest_distribution_rate_pct": "최근월분배율(%)",
+        "distribution_per_share_krw": "최근 분배금",
+        "annual_distribution_count": "지급횟수",
+        "real_fee_pct": "실부담(%)",
+        "aum_krw_100m": "운용규모(억)",
+        "return_1m_pct": "1개월(%)",
+        "return_1y_pct": "1년(%)",
+        "personal_pension": "개인연금",
+        "retirement_pension": "퇴직연금",
+        "risk_grade": "위험등급",
+    }
+    show_cols = [col for col in display_cols if col in view_df.columns]
+    show_df = view_df[show_cols].rename(columns=display_cols)
+    st.dataframe(show_df.head(300), use_container_width=True, hide_index=True)
+
+    if view_df.empty:
+        st.info("조건에 맞는 ETF가 없습니다.")
+        return
+
+    st.download_button(
+        "필터 결과 CSV 다운로드",
+        data=dataframe_to_csv_bytes(view_df),
+        file_name=f"stock_lab_kr_monthly_etf_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_kr_etf_lab_csv",
+    )
+
+    st.markdown("#### 선택 ETF")
+    option_map = {
+        f"{row['name']} | {row['ticker']}": row
+        for _, row in view_df.head(300).iterrows()
+    }
+    selected_label = st.selectbox("관심종목으로 보낼 ETF", ["선택"] + list(option_map.keys()), key="kr_etf_selected_for_watchlist")
+    if selected_label != "선택":
+        row = option_map[selected_label]
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("연분배율", f"{clean_float(row.get('annual_distribution_rate_pct'), 0.0):.2f}%")
+        s2.metric("최근 분배금", f"{clean_float(row.get('distribution_per_share_krw'), 0.0):,.0f}원")
+        s3.metric("실부담비율", f"{clean_float(row.get('real_fee_pct'), 0.0):.3f}%")
+        s4.metric("운용규모", f"{clean_float(row.get('aum_krw_100m'), 0.0):,.0f}억")
+
+        add_cols = st.columns([1, 2])
+        if add_cols[0].button("전광판 관심종목 추가", key="add_kr_etf_watchlist", use_container_width=True):
+            ticker = str(row.get("ticker", "")).strip()
+            if is_in_watchlist(ticker):
+                st.info("이미 전광판에 등록된 ETF입니다.")
+            else:
+                st.session_state.watchlist.append({
+                    "name": str(row.get("name", "")).strip(),
+                    "ticker": ticker,
+                    "is_etf": True,
+                    "asset_class": "kr_etf",
+                    "fin_score": 0,
+                })
+                persist_watchlist()
+                st.success("전광판 관심종목에 추가했습니다.")
+                st.rerun()
+
+        input_row = pd.DataFrame([{
+            "name": row.get("name", ""),
+            "ticker": row.get("ticker", ""),
+            "qty": 0,
+            "avg_price": 0,
+            "target_weight": 0,
+            "asset_class": "kr_etf",
+            "is_etf": True,
+            "bucket": "core",
+        }])
+        add_cols[1].dataframe(input_row, use_container_width=True, hide_index=True)
+
+        with st.expander("선택 ETF 상세"):
+            detail_cols = [
+                "underlying_index", "manager", "listing_date", "tax_type", "replication",
+                "top_1", "top_1_weight_pct", "top_2", "top_2_weight_pct", "top_3", "top_3_weight_pct",
+            ]
+            detail = pd.DataFrame([{col: row.get(col, "") for col in detail_cols}])
+            st.dataframe(detail, use_container_width=True, hide_index=True)
+
+
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
     issues.append({
         "등급": severity,
@@ -6336,7 +6736,7 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
-tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_money, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
+tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_money, tab_kr_etf, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
     "💼 자산 현황",
     "📊 포트폴리오 분석",
     "📋 전광판",
@@ -6344,6 +6744,7 @@ tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short,
     "📉 시나리오 점검",
     "📈 단기 흐름 점검",
     "💸 돈흐름 레이더",
+    "💰 월배당 ETF",
     "🎯 스윙 레이더",
     "🎤 피드백/Q&A",
     "🧪 데이터 점검",
@@ -7315,6 +7716,9 @@ with tab_short:
 
 with tab_money:
     render_money_flow_tab()
+
+with tab_kr_etf:
+    render_kr_etf_lab_tab()
 
 with tab_swing:
     render_swing_radar_tab()
