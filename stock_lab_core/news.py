@@ -18,6 +18,7 @@ from stock_lab_core.formatters import (
     escape_html_value,
     format_currency,
     normalize_ticker,
+    strip_search_prefix,
 )
 
 
@@ -163,11 +164,39 @@ NEWS_THEME_TERMS_BY_SYMBOL = {
     "069500": ["코스피200", "한국 증시", "외국인 수급"],
     "000660": ["HBM", "DRAM", "반도체", "메모리", "AI 반도체"],
     "005930": ["HBM", "DRAM", "반도체", "메모리", "파운드리"],
+    "200710": ["반도체", "디자인하우스", "파운드리", "AI 반도체"],
+    "042700": ["반도체", "HBM", "후공정", "AI 반도체"],
+    "403870": ["반도체", "전공정", "장비", "AI 반도체"],
+    "039030": ["반도체", "레이저", "장비", "AI 반도체"],
+    "058470": ["반도체", "소켓", "부품", "AI 반도체"],
     "267260": ["전력인프라", "변압기", "전력기기", "AI 전력", "전력망"],
+    "010120": ["전력인프라", "변압기", "전력기기", "AI 전력", "전력망"],
+    "298040": ["전력인프라", "변압기", "전력기기", "AI 전력", "전력망"],
+    "103590": ["전력인프라", "전선", "전력기기", "AI 전력", "전력망"],
+    "033100": ["전력인프라", "변압기", "전력기기", "전력망"],
+    "001440": ["전력인프라", "전선", "전력망"],
     "034020": ["원전", "원자력", "SMR", "전력", "에너지"],
+    "052690": ["원전", "원자력", "SMR", "전력", "에너지"],
+    "051600": ["원전", "원자력", "정비", "전력"],
     "278470": ["K-뷰티", "화장품", "뷰티", "인디브랜드", "올리브영"],
+    "090430": ["K-뷰티", "화장품", "뷰티", "중국", "면세"],
+    "161890": ["K-뷰티", "화장품", "ODM", "뷰티"],
+    "192820": ["K-뷰티", "화장품", "ODM", "뷰티"],
     "329180": ["조선", "LNG선", "선박", "수주", "해양플랜트"],
+    "009540": ["조선", "LNG선", "선박", "수주", "해양플랜트"],
+    "010140": ["조선", "LNG선", "선박", "수주", "해양플랜트"],
+    "042660": ["조선", "LNG선", "선박", "수주", "해양플랜트"],
     "012450": ["방산", "항공우주", "수출", "수주"],
+    "047810": ["방산", "항공우주", "수출", "수주"],
+    "064350": ["방산", "철도", "방산", "수주"],
+    "079550": ["방산", "미사일", "수출", "수주"],
+    "373220": ["2차전지", "배터리", "전기차", "ESS"],
+    "006400": ["2차전지", "배터리", "전기차", "ESS"],
+    "051910": ["2차전지", "배터리", "화학", "전기차"],
+    "003670": ["2차전지", "양극재", "배터리", "전기차"],
+    "247540": ["2차전지", "양극재", "배터리", "전기차"],
+    "086520": ["2차전지", "양극재", "배터리", "전기차"],
+    "066970": ["2차전지", "양극재", "배터리", "전기차"],
     "487240": ["전력인프라", "변압기", "전력기기", "AI 전력"],
     "479850": ["K-뷰티", "화장품", "뷰티"],
     "434730": ["원전", "원자력", "SMR"],
@@ -246,7 +275,7 @@ def get_analyst_snapshot(ticker):
 
 def build_research_report_links(ticker, name):
     symbol = normalize_news_token(ticker).upper()
-    display_name = str(name or ticker).replace("탐색: ", "").strip()
+    display_name = strip_search_prefix(name or ticker)
     is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
 
     if is_kr:
@@ -316,14 +345,14 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
 
 
 def normalize_news_token(text):
-    return str(text or "").replace(".KS", "").replace(".KQ", "").strip()
+    return strip_search_prefix(text).replace(".KS", "").replace(".KQ", "").strip()
 
 def clean_news_text(value):
     return html.unescape(str(value or "")).replace("<b>", "").replace("</b>", "").strip()
 
 def get_news_company_names(ticker, name):
     symbol = normalize_news_token(ticker).upper()
-    display_name = str(name or "").replace("탐색: ", "").strip()
+    display_name = strip_search_prefix(name)
 
     names = []
 
@@ -378,7 +407,7 @@ def first_signal_reason(text, signals):
 def get_news_theme_terms(ticker, name):
     symbol = normalize_news_token(ticker).upper()
     key = normalize_ticker(ticker).upper()
-    display_name = str(name or "").replace("탐색: ", "").strip()
+    display_name = strip_search_prefix(name)
     terms = []
 
     for lookup in [symbol, key]:

@@ -25,25 +25,8 @@ def normalize_text(x):
     return str(x).strip().lower()
 
 
-SEARCH_TICKER_PREFIXES = ("탐색:", "탐색：", "탐색", "SEARCH:", "SEARCH：")
-
-
-def strip_search_prefix(value):
-    text = str(value or "").strip()
-    upper = text.upper()
-    for prefix in SEARCH_TICKER_PREFIXES:
-        if upper.startswith(prefix.upper()):
-            text = text[len(prefix):].strip()
-            break
-    return text.lstrip(":：").strip()
-
-
-def sanitize_ticker_value(t):
-    return strip_search_prefix(t).upper().replace(" ", "")
-
-
 def normalize_ticker(t):
-    return sanitize_ticker_value(t).lower().replace(".ks", "").replace(".kq", "")
+    return str(t).strip().lower().replace(".ks", "").replace(".kq", "")
 
 
 def parse_num(v):

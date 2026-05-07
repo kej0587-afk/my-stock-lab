@@ -16,6 +16,7 @@ import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 import html
+import re
 from supabase import create_client
 from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
@@ -50,6 +51,8 @@ from stock_lab_core.formatters import (
     normalize_text,
     normalize_ticker,
     parse_num,
+    sanitize_ticker_value,
+    strip_search_prefix,
 )
 from stock_lab_core.news import (
     get_analyst_snapshot,
@@ -315,14 +318,222 @@ KR_ETF_NAME_KEYWORDS = (
     "HANARO", "KOSEF", "ARIRANG", "TIMEFOLIO", "히어로즈", "액티브", "레버리지", "인버스"
 )
 
+KNOWN_TICKER_DISPLAY_NAMES = {
+    "010120": "LS ELECTRIC",
+    "267260": "HD현대일렉트릭",
+    "298040": "효성중공업",
+    "103590": "일진전기",
+    "033100": "제룡전기",
+    "001440": "대한전선",
+    "006260": "LS",
+    "005930": "삼성전자",
+    "000660": "SK하이닉스",
+    "200710": "에이디테크놀러지",
+    "042700": "한미반도체",
+    "403870": "HPSP",
+    "039030": "이오테크닉스",
+    "058470": "리노공업",
+    "034020": "두산에너빌리티",
+    "052690": "한전기술",
+    "051600": "한전KPS",
+    "329180": "HD현대중공업",
+    "009540": "HD한국조선해양",
+    "010140": "삼성중공업",
+    "042660": "한화오션",
+    "012450": "한화에어로스페이스",
+    "047810": "한국항공우주",
+    "064350": "현대로템",
+    "079550": "LIG넥스원",
+    "278470": "에이피알",
+    "090430": "아모레퍼시픽",
+    "161890": "한국콜마",
+    "192820": "코스맥스",
+    "373220": "LG에너지솔루션",
+    "006400": "삼성SDI",
+    "051910": "LG화학",
+    "003670": "포스코퓨처엠",
+    "247540": "에코프로비엠",
+    "086520": "에코프로",
+    "066970": "엘앤에프",
+}
+
+
+def is_ticker_like_text(value):
+    text = sanitize_ticker_value(value)
+    symbol = text.replace(".KS", "").replace(".KQ", "")
+    return bool(symbol) and (
+        symbol.isdigit()
+        or text.endswith((".KS", ".KQ"))
+        or (symbol.isascii() and symbol.replace(".", "").isalnum() and " " not in str(value or ""))
+    )
+
+
 def clean_symbol(ticker):
-    return str(ticker).strip().upper().replace(".KS", "").replace(".KQ", "")
+    return sanitize_ticker_value(ticker).replace(".KS", "").replace(".KQ", "")
+
+
+def get_known_display_name(ticker, fallback=""):
+    symbol = clean_symbol(ticker)
+    return KNOWN_TICKER_DISPLAY_NAMES.get(symbol, str(fallback or sanitize_ticker_value(ticker)).strip())
+
+
+def clean_resolved_display_name(value, ticker=""):
+    text = html.unescape(str(value or "")).strip()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s*[-:|]\s*(Naver|NAVER|Yahoo Finance|네이버페이 증권|네이버 금융).*$", "", text, flags=re.I).strip()
+    text = re.sub(r"\b(Co\.,?\s*Ltd\.?|Corporation|Corp\.?|Inc\.?|Limited|PLC|LLC)\b\.?", "", text, flags=re.I).strip(" -:|")
+    if not text:
+        return ""
+
+    symbol = clean_symbol(ticker)
+    if clean_symbol(text) == symbol:
+        return ""
+    return text
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def lookup_naver_stock_name(symbol):
+    symbol = clean_symbol(symbol)
+    if not (symbol.isdigit() and len(symbol) == 6):
+        return ""
+
+    try:
+        req = urllib.request.Request(
+            f"https://finance.naver.com/item/main.naver?code={symbol}",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        raw = urllib.request.urlopen(req, timeout=4).read()
+        page = raw.decode("euc-kr", errors="ignore")
+    except Exception:
+        return ""
+
+    patterns = [
+        r"<title>\s*([^:<|]+?)\s*[:|]",
+        r"<div[^>]*class=[\"']wrap_company[\"'][\s\S]*?<h2[^>]*>\s*<a[^>]*>(.*?)</a>",
+        r"<h2[^>]*>\s*<a[^>]*>(.*?)</a>",
+    ]
+    for pattern in patterns:
+        matched = re.search(pattern, page, flags=re.I)
+        if not matched:
+            continue
+        name = re.sub(r"<[^>]+>", "", matched.group(1))
+        name = clean_resolved_display_name(name, symbol)
+        if name:
+            return name
+    return ""
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def lookup_kr_etf_display_name(symbol):
+    symbol = clean_symbol(symbol)
+    if not (symbol.isdigit() and len(symbol) == 6):
+        return ""
+
+    try:
+        df = load_kr_etf_lab_dataframe()
+    except Exception:
+        return ""
+
+    if df is None or df.empty or "code" not in df.columns or "name" not in df.columns:
+        return ""
+
+    matched = df[df["code"].astype(str).str.zfill(6) == symbol]
+    if matched.empty:
+        return ""
+
+    return clean_resolved_display_name(matched.iloc[0].get("name", ""), symbol)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def lookup_yfinance_info(ticker):
+    ticker = sanitize_ticker_value(ticker)
+    if not ticker:
+        return {}
+
+    try:
+        info = yf.Ticker(ticker).get_info()
+    except Exception:
+        return {}
+
+    if not isinstance(info, dict):
+        return {}
+
+    keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry"]
+    return {key: info.get(key, "") for key in keys}
+
+
+def lookup_yfinance_display_name(ticker):
+    info = lookup_yfinance_info(ticker)
+    if not info:
+        return ""
+
+    for field in ["shortName", "longName", "displayName", "quoteType"]:
+        name = clean_resolved_display_name(info.get(field, ""), ticker)
+        if name and name.upper() not in {"EQUITY", "ETF", "MUTUALFUND"}:
+            return name
+    return ""
+
+
+def resolve_display_name_for_ticker(ticker, fallback=""):
+    ticker_clean = sanitize_ticker_value(ticker)
+    symbol = clean_symbol(ticker_clean)
+    if not ticker_clean:
+        return str(fallback or "").strip()
+
+    known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
+    if known_name:
+        return known_name
+
+    if ticker_clean.endswith((".KS", ".KQ")) or (symbol.isdigit() and len(symbol) == 6):
+        for resolver in [lookup_kr_etf_display_name, lookup_naver_stock_name]:
+            name = resolver(symbol)
+            if name:
+                return name
+
+    name = lookup_yfinance_display_name(ticker_clean)
+    if name:
+        return name
+
+    fallback_name = strip_search_prefix(fallback).strip()
+    if fallback_name and not (is_ticker_like_text(fallback_name) and clean_symbol(fallback_name) == symbol):
+        return fallback_name
+
+    return ticker_clean
+
+
+def sanitize_asset_name(name, ticker=""):
+    ticker_clean = sanitize_ticker_value(ticker)
+    symbol = clean_symbol(ticker_clean)
+    raw_name = str(name or "").strip()
+    cleaned_name = strip_search_prefix(raw_name).strip()
+    known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
+
+    if not cleaned_name or cleaned_name.startswith((":","：")):
+        return resolve_display_name_for_ticker(ticker_clean, known_name or ticker_clean)
+
+    if is_ticker_like_text(cleaned_name) and clean_symbol(cleaned_name) == symbol:
+        return resolve_display_name_for_ticker(ticker_clean, known_name or ticker_clean)
+
+    if known_name and clean_symbol(cleaned_name) == symbol:
+        return known_name
+
+    return cleaned_name
 
 def is_kr_listed(ticker):
-    return str(ticker).strip().upper().endswith((".KS", ".KQ"))
+    return sanitize_ticker_value(ticker).endswith((".KS", ".KQ"))
+
+
+def sanitize_watchlist_item(item):
+    data = dict(item) if isinstance(item, dict) else {}
+    ticker = sanitize_ticker_value(data.get("ticker", ""))
+    return {
+        **data,
+        "ticker": ticker,
+        "name": sanitize_asset_name(data.get("name", ""), ticker),
+    }
 
 def is_known_etf_ticker(ticker):
-    raw = str(ticker).strip().upper()
+    raw = sanitize_ticker_value(ticker)
     symbol = clean_symbol(raw)
     return (
         symbol in KNOWN_US_SP_ETFS
@@ -382,9 +593,10 @@ def decode_watchlist(value):
 def load_watchlist_from_query():
     raw = st.query_params.get("wl", "")
     if not raw:
-        return [dict(x) for x in DEFAULT_WATCHLIST]
+        return [sanitize_watchlist_item(x) for x in DEFAULT_WATCHLIST]
     loaded = decode_watchlist(raw)
-    return loaded if loaded else [dict(x) for x in DEFAULT_WATCHLIST]
+    source = loaded if loaded else DEFAULT_WATCHLIST
+    return [sanitize_watchlist_item(x) for x in source]
 
 def sync_watchlist_to_query():
     desired = encode_watchlist(st.session_state.watchlist)
@@ -540,13 +752,20 @@ def get_supabase():
 supabase = get_supabase()
 
 
-def run_supabase(query, action="Supabase operation"):
+def run_supabase(query, action="Supabase operation", stop_on_error=True):
     try:
         return query.execute()
     except Exception as e:
-        st.error(f"{action} failed: {e}")
-        st.info("Check that Supabase tables were created and Streamlit Secrets are correct.")
-        st.stop()
+        message = f"{action} failed: {e}"
+        if stop_on_error:
+            st.error(message)
+            st.info("Check that Supabase tables were created and Streamlit Secrets are correct.")
+            st.stop()
+        warn_key = f"soft_supabase_error_{action}"
+        if not st.session_state.get(warn_key, False):
+            st.warning(f"{message} 저장은 건너뛰고 앱은 계속 실행합니다.")
+            st.session_state[warn_key] = True
+        return None
 
 
 def init_db():
@@ -612,17 +831,21 @@ def load_holdings_db():
         supabase.table("holdings").select(",".join(HOLDINGS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
         "load holdings",
     )
-    return dataframe_from_rows(res.data, HOLDINGS_COLUMNS)
+    df = dataframe_from_rows(res.data, HOLDINGS_COLUMNS)
+    if not df.empty:
+        df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
+        df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
+    return df
 
 
 def save_holdings_db(df):
     rows = []
     for _, row in df.iterrows():
-        ticker_value = str(row.get("ticker", "")).strip()
+        ticker_value = sanitize_ticker_value(row.get("ticker", ""))
         if not ticker_value:
             continue
 
-        name_value = str(row.get("name", "")).strip()
+        name_value = sanitize_asset_name(row.get("name", ""), ticker_value)
         asset_class = str(row.get("asset_class", "")).strip()
         is_fin_exempt = is_fin_score_exempt_asset(
             ticker_value,
@@ -632,7 +855,6 @@ def save_holdings_db(df):
         )
         if is_fin_exempt:
             asset_class = infer_asset_class_for_ticker(ticker_value, asset_class)
-            mark_fin_score_not_applicable_db(ticker_value)
 
         rows.append({
             "owner_email": CURRENT_USER_EMAIL,
@@ -675,7 +897,7 @@ def save_dividends_db(df):
         rows.append({
             "owner_email": CURRENT_USER_EMAIL,
             "date": str(row.get("date", "")).strip(),
-            "ticker": str(row.get("ticker", "")).strip(),
+            "ticker": sanitize_ticker_value(row.get("ticker", "")),
             "amount": clean_float(row.get("amount")),
             "currency": str(row.get("currency", "KRW")).strip().upper() or "KRW",
         })
@@ -744,8 +966,8 @@ def load_watchlist_db():
     rows = sorted(res.data or [], key=lambda r: (int(r.get("sort_order") or 0), str(r.get("name") or "")))
     items = []
     for row in rows:
-        name = str(row.get("name", "")).strip()
-        ticker = str(row.get("ticker", "")).strip()
+        ticker = sanitize_ticker_value(row.get("ticker", ""))
+        name = sanitize_asset_name(row.get("name", ""), ticker)
         asset_class = str(row.get("asset_class", "")).strip()
         is_fin_exempt = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
         if is_fin_exempt:
@@ -764,16 +986,16 @@ def load_watchlist_db():
 def save_watchlist_db(watchlist):
     rows = []
     for idx, item in enumerate(watchlist):
-        ticker = str(item.get("ticker", "")).strip()
+        item = sanitize_watchlist_item(item)
+        ticker = item.get("ticker", "")
         if not ticker:
             continue
 
-        name = str(item.get("name", "")).strip()
+        name = item.get("name", "")
         asset_class = str(item.get("asset_class", "")).strip()
         is_fin_exempt = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), asset_class, name)
         if is_fin_exempt:
             asset_class = infer_asset_class_for_ticker(ticker, asset_class)
-            mark_fin_score_not_applicable_db(ticker)
 
         rows.append({
             "owner_email": CURRENT_USER_EMAIL,
@@ -1184,8 +1406,8 @@ def to_jsonable(obj):
     return obj
 
 
-def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes):
-    run_supabase(
+def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes, stop_on_error=False):
+    res = run_supabase(
         supabase.table("fin_scores").upsert({
             "owner_email": CURRENT_USER_EMAIL,
             "ticker": normalize_ticker(ticker),
@@ -1196,11 +1418,13 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
             "notes_json": json.dumps(to_jsonable(notes), ensure_ascii=False),
         }, on_conflict="owner_email,ticker"),
         "save financial score",
+        stop_on_error=stop_on_error,
     )
+    return res is not None
 
 
 def mark_fin_score_not_applicable_db(ticker, reason="ETF/ETN/레버리지 상품"):
-    upsert_fin_score_db(
+    return upsert_fin_score_db(
         ticker=ticker,
         auto_score=0,
         manual_score=None,
@@ -1213,6 +1437,7 @@ def mark_fin_score_not_applicable_db(ticker, reason="ETF/ETN/레버리지 상품
             "quarter_judgements": {},
             "weighted_scores": {},
         },
+        stop_on_error=False,
     )
 
 
@@ -2853,6 +3078,8 @@ def get_macro_analysis():
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = load_watchlist_persistent()
+else:
+    st.session_state.watchlist = [sanitize_watchlist_item(item) for item in st.session_state.watchlist]
 
 persist_watchlist()
 
@@ -2988,24 +3215,68 @@ BENCHMARK_LABELS = {
     "XLK": "XLK(미국 기술)",
     "XLI": "XLI(미국 산업재)",
     "XLC": "XLC(미국 커뮤니케이션)",
+    "XLV": "XLV(미국 헬스케어)",
+    "XLF": "XLF(미국 금융)",
+    "XLE": "XLE(미국 에너지)",
+    "XLY": "XLY(미국 경기소비재)",
+    "XLP": "XLP(미국 필수소비재)",
+    "XLB": "XLB(미국 소재)",
+    "XLU": "XLU(미국 유틸리티)",
+    "VNQ": "VNQ(미국 리츠/부동산)",
     "396500.KS": "한국 반도체",
     "487240.KS": "전력인프라",
     "494670.KS": "조선",
     "449450.KS": "방산",
     "305540.KS": "2차전지",
+    "139260.KS": "IT/기술",
     "434730.KS": "HANARO 원자력iSelect",
     "479850.KS": "HANARO K-뷰티",
+    "139250.KS": "에너지화학",
+    "139270.KS": "금융",
+    "244580.KS": "바이오",
+    "329200.KS": "리츠/부동산",
+    "139220.KS": "건설/유틸",
 }
 
 SECTOR_BENCHMARK_MAP = {
     "005930": ("396500.KS", "반도체"),
     "000660": ("396500.KS", "반도체"),
     "200710": ("396500.KS", "반도체"),
+    "042700": ("396500.KS", "반도체"),
+    "403870": ("396500.KS", "반도체"),
+    "039030": ("396500.KS", "반도체"),
+    "058470": ("396500.KS", "반도체"),
+    "095340": ("396500.KS", "반도체"),
+    "000990": ("396500.KS", "반도체"),
     "267260": ("487240.KS", "전력인프라"),
+    "010120": ("487240.KS", "전력인프라"),
+    "298040": ("487240.KS", "전력인프라"),
+    "103590": ("487240.KS", "전력인프라"),
+    "033100": ("487240.KS", "전력인프라"),
+    "001440": ("487240.KS", "전력인프라"),
+    "006260": ("487240.KS", "전력인프라"),
     "278470": ("479850.KS", "K-뷰티"),
+    "090430": ("479850.KS", "K-뷰티"),
+    "161890": ("479850.KS", "K-뷰티"),
+    "192820": ("479850.KS", "K-뷰티"),
     "034020": ("434730.KS", "원자력"),
+    "052690": ("434730.KS", "원자력"),
+    "051600": ("434730.KS", "원자력"),
     "329180": ("494670.KS", "조선"),
+    "009540": ("494670.KS", "조선"),
+    "010140": ("494670.KS", "조선"),
+    "042660": ("494670.KS", "조선"),
     "012450": ("449450.KS", "방산"),
+    "047810": ("449450.KS", "방산"),
+    "064350": ("449450.KS", "방산"),
+    "079550": ("449450.KS", "방산"),
+    "373220": ("305540.KS", "2차전지"),
+    "006400": ("305540.KS", "2차전지"),
+    "051910": ("305540.KS", "2차전지"),
+    "003670": ("305540.KS", "2차전지"),
+    "247540": ("305540.KS", "2차전지"),
+    "086520": ("305540.KS", "2차전지"),
+    "066970": ("305540.KS", "2차전지"),
     "MSFT": ("XLK", "미국 기술"),
     "LITE": ("XLK", "미국 기술"),
     "CIEN": ("XLK", "미국 기술"),
@@ -3023,6 +3294,131 @@ SECTOR_BENCHMARK_MAP = {
     "ARM": ("SMH", "미국 반도체"),
     "QCOM": ("SMH", "미국 반도체"),
 }
+
+SECTOR_BENCHMARK_SOURCE_ETFS = {
+    "396500.KS": "반도체",
+    "487240.KS": "전력인프라",
+    "494670.KS": "조선",
+    "449450.KS": "방산",
+    "305540.KS": "2차전지",
+    "139260.KS": "IT/기술",
+    "434730.KS": "원자력",
+    "479850.KS": "K-뷰티",
+    "139250.KS": "에너지화학",
+    "139270.KS": "금융",
+    "244580.KS": "바이오",
+    "329200.KS": "리츠/부동산",
+    "139220.KS": "건설/유틸",
+}
+
+SECTOR_BENCHMARK_KEYWORD_RULES = [
+    (("전력인프라", "전력기기", "전력설비", "변압", "전선", "송배전", "ELECTRIC", "일렉트릭", "효성중공업", "일진전기", "제룡전기", "대한전선"), ("487240.KS", "전력인프라")),
+    (("반도체", "HBM", "DRAM", "하이닉스", "한미반도체", "HPSP", "리노공업", "이오테크닉스", "ISC", "DB하이텍"), ("396500.KS", "반도체")),
+    (("2차전지", "이차전지", "배터리", "에너지솔루션", "삼성SDI", "LG화학", "포스코퓨처엠", "에코프로", "엘앤에프"), ("305540.KS", "2차전지")),
+    (("원자력", "원전", "SMR", "두산에너빌리티", "한전기술", "한전KPS"), ("434730.KS", "원자력")),
+    (("조선", "조선해양", "한화오션", "현대미포", "HD현대중공업", "삼성중공업"), ("494670.KS", "조선")),
+    (("방산", "항공우주", "에어로스페이스", "현대로템", "LIG넥스원", "한국항공우주"), ("449450.KS", "방산")),
+    (("K뷰티", "K-뷰티", "화장품", "뷰티", "에이피알", "아모레", "한국콜마", "코스맥스", "파마리서치"), ("479850.KS", "K-뷰티")),
+    (("바이오", "제약", "헬스케어", "셀트리온", "삼성바이오로직스", "알테오젠", "유한양행"), ("244580.KS", "바이오")),
+    (("금융", "은행", "지주", "보험", "증권", "KB금융", "신한지주", "하나금융", "메리츠금융"), ("139270.KS", "금융")),
+    (("에너지", "화학", "정유", "SK이노베이션", "S-OIL", "LG화학", "롯데케미칼"), ("139250.KS", "에너지화학")),
+    (("리츠", "부동산", "인프라", "맥쿼리", "롯데리츠"), ("329200.KS", "리츠/부동산")),
+    (("건설", "유틸", "전기가스", "한국전력", "현대건설", "GS건설"), ("139220.KS", "건설/유틸")),
+]
+
+US_YFINANCE_SECTOR_BENCHMARKS = {
+    "Technology": ("XLK", "미국 기술"),
+    "Communication Services": ("XLC", "미국 커뮤니케이션"),
+    "Industrials": ("XLI", "미국 산업재"),
+    "Healthcare": ("XLV", "미국 헬스케어"),
+    "Health Care": ("XLV", "미국 헬스케어"),
+    "Financial Services": ("XLF", "미국 금융"),
+    "Financial": ("XLF", "미국 금융"),
+    "Energy": ("XLE", "미국 에너지"),
+    "Consumer Cyclical": ("XLY", "미국 경기소비재"),
+    "Consumer Defensive": ("XLP", "미국 필수소비재"),
+    "Basic Materials": ("XLB", "미국 소재"),
+    "Utilities": ("XLU", "미국 유틸리티"),
+    "Real Estate": ("VNQ", "미국 리츠/부동산"),
+}
+
+
+def normalize_sector_match_text(value):
+    text = strip_search_prefix(value).upper()
+    return "".join(ch for ch in text if ch.isalnum())
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_sector_benchmark_holdings_name_map():
+    mapping = {}
+    try:
+        df = load_kr_etf_lab_dataframe()
+    except Exception:
+        return mapping
+
+    if df is None or df.empty:
+        return mapping
+
+    ticker_series = df.get("ticker", pd.Series(dtype=str)).astype(str).str.upper()
+    for benchmark_ticker, label in SECTOR_BENCHMARK_SOURCE_ETFS.items():
+        matched = df[ticker_series == benchmark_ticker.upper()]
+        if matched.empty:
+            continue
+
+        row = matched.iloc[0]
+        for idx in range(1, 6):
+            key = normalize_sector_match_text(row.get(f"top_{idx}", ""))
+            if key:
+                mapping.setdefault(key, (benchmark_ticker, label))
+
+    return mapping
+
+
+def infer_sector_benchmark_by_name(name):
+    key = normalize_sector_match_text(name)
+    if not key:
+        return None
+
+    holding_map = get_sector_benchmark_holdings_name_map()
+    if key in holding_map:
+        return holding_map[key]
+
+    for holding_key, benchmark in holding_map.items():
+        if len(holding_key) >= 3 and (holding_key in key or key in holding_key):
+            return benchmark
+
+    for keywords, benchmark in SECTOR_BENCHMARK_KEYWORD_RULES:
+        for keyword in keywords:
+            kw = normalize_sector_match_text(keyword)
+            if kw and kw in key:
+                return benchmark
+
+    return None
+
+
+def infer_us_sector_benchmark(ticker, asset_class):
+    if is_kr_listed(ticker):
+        return None
+
+    ac = str(asset_class or "").strip().lower()
+    if ac and "stock" not in ac and ac != "us":
+        return None
+
+    info = lookup_yfinance_info(ticker)
+    sector = str(info.get("sector", "") or "").strip()
+    if sector in US_YFINANCE_SECTOR_BENCHMARKS:
+        return US_YFINANCE_SECTOR_BENCHMARKS[sector]
+
+    industry = str(info.get("industry", "") or "")
+    industry_key = industry.lower()
+    if any(word in industry_key for word in ["semiconductor", "chip"]):
+        return ("SMH", "미국 반도체")
+    if any(word in industry_key for word in ["software", "information technology", "computer hardware"]):
+        return ("XLK", "미국 기술")
+    if any(word in industry_key for word in ["aerospace", "defense"]):
+        return ("XLI", "미국 산업재")
+
+    return None
 
 
 UNDERLYING_BENCHMARK_MAP = {
@@ -3067,13 +3463,23 @@ def get_underlying_benchmark_info(ticker, asset_class):
     return "", "-"
 
 
-def get_sector_benchmark_info(ticker, asset_class):
+def get_sector_benchmark_info(ticker, asset_class, name=""):
     key = normalize_ticker(ticker)
     if key in SECTOR_BENCHMARK_MAP:
         return SECTOR_BENCHMARK_MAP[key]
     symbol = clean_symbol(ticker)
     if symbol in SECTOR_BENCHMARK_MAP:
         return SECTOR_BENCHMARK_MAP[symbol]
+
+    us_inferred = infer_us_sector_benchmark(ticker, asset_class)
+    if us_inferred:
+        return us_inferred
+
+    for candidate_name in [name, get_known_display_name(ticker, "")]:
+        inferred = infer_sector_benchmark_by_name(candidate_name)
+        if inferred:
+            return inferred
+
     return "", "-"
 
 
@@ -3481,6 +3887,7 @@ TICKER_MAP = {
     "버티브홀딩스": ("VRT", False, "us_stock"), "마이크론": ("MU", False, "us_stock"), "삼성전자": ("005930.KS", False, "kr_stock"),
     "두산에너빌리티": ("034020.KS", False, "kr_stock"), "하이닉스": ("000660.KS", False, "kr_stock"), "한화에어로스페이스": ("012450.KS", False, "kr_stock"),
     "HD현대중공업": ("329180.KS", False, "kr_stock"), "에이피알": ("278470.KS", False, "kr_stock"), "HD현대일렉트릭": ("267260.KS", False, "kr_stock"),
+    "LS ELECTRIC": ("010120.KS", False, "kr_stock"), "LS일렉트릭": ("010120.KS", False, "kr_stock"),
     "에이디테크놀러지": ("200710.KQ", False, "kr_stock"), "SPYM": ("SPYM", True, "us_etf_sp"),
 }
 
@@ -3493,11 +3900,12 @@ def build_precision_select_options():
     seen_labels = set(options)
 
     for item in st.session_state.get("watchlist", []):
-        ticker = str(item.get("ticker", "")).strip()
+        item = sanitize_watchlist_item(item)
+        ticker = item.get("ticker", "")
         if not ticker:
             continue
 
-        name = str(item.get("name", ticker)).strip() or ticker
+        name = sanitize_asset_name(item.get("name", ticker), ticker)
         label = f"⭐ {name} ({ticker})"
         base_label = label
         suffix = 2
@@ -3636,8 +4044,10 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
     rows = []
     for item in watchlist_items:
-        name = item["name"]
-        tkr = item["ticker"]
+        tkr = sanitize_ticker_value(item.get("ticker", ""))
+        name = sanitize_asset_name(item.get("name", ""), tkr)
+        if not tkr:
+            continue
         is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
         a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
@@ -3659,7 +4069,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
         market_bench = get_rs_benchmark(tkr, a_class)
         underlying_bench, underlying_asset = get_underlying_benchmark_info(tkr, a_class) if is_etf else ("", "-")
-        sector_bench, _ = get_sector_benchmark_info(tkr, a_class)
+        sector_bench, _ = get_sector_benchmark_info(tkr, a_class, name)
         _, sector_rs_label = get_rs_score_against_benchmark(tkr, sector_bench)
         swing_key = normalize_ticker(tkr)
 
@@ -6181,12 +6591,12 @@ def render_kr_etf_lab_tab():
 
         add_cols = st.columns([1, 2])
         if add_cols[0].button("전광판 관심종목 추가", key="add_kr_etf_watchlist", use_container_width=True):
-            ticker = str(row.get("ticker", "")).strip()
+            ticker = sanitize_ticker_value(row.get("ticker", ""))
             if is_in_watchlist(ticker):
                 st.info("이미 전광판에 등록된 ETF입니다.")
             else:
                 st.session_state.watchlist.append({
-                    "name": str(row.get("name", "")).strip(),
+                    "name": sanitize_asset_name(row.get("name", ""), ticker),
                     "ticker": ticker,
                     "is_etf": True,
                     "asset_class": "kr_etf",
@@ -6764,7 +7174,10 @@ with tab_dashboard:
     )
     st.caption("전광판 등록 종목만 표시됩니다.")
 
-    remove_options = ["선택"] + [f"{item['name']}|{item['ticker']}" for item in st.session_state.watchlist]
+    remove_options = ["선택"] + [
+        f"{sanitize_asset_name(item.get('name', ''), item.get('ticker', ''))}|{sanitize_ticker_value(item.get('ticker', ''))}"
+        for item in st.session_state.watchlist
+    ]
     remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
 
     if remove_target != "선택" and st.button("전광판에서 제거"):
@@ -6827,10 +7240,11 @@ with tab_precision:
 
     if is_free:
         c1, c2 = st.columns([2, 1])
-        with c1: user_tkr_raw = st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL").upper().strip()
+        with c1: user_tkr_raw = sanitize_ticker_value(st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL"))
         with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
         tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}" if (user_tkr_raw.isdigit() and len(user_tkr_raw) == 6) else user_tkr_raw
+        tkr = sanitize_ticker_value(tkr)
 
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
         known_nasdaq_etfs = {"QQQ", "QQQM", "QLD", "TQQQ", "379810.KS"}
@@ -6842,12 +7256,12 @@ with tab_precision:
         else:
             a_class = "kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"
 
-        name = f"탐색: {tkr}"
+        name = sanitize_asset_name("", tkr)
         my_p, has_p = 0.0, False
     elif selected_option.get("type") == "watchlist":
         watch_item = selected_option.get("item", {})
-        name = str(watch_item.get("name", "")).strip() or str(watch_item.get("ticker", "")).strip()
-        tkr = str(watch_item.get("ticker", "")).strip()
+        tkr = sanitize_ticker_value(watch_item.get("ticker", ""))
+        name = sanitize_asset_name(watch_item.get("name", ""), tkr)
         is_etf = is_fin_score_exempt_asset(tkr, watch_item.get("is_etf", False), watch_item.get("asset_class", ""), name)
         a_class = infer_asset_class_for_ticker(tkr, watch_item.get("asset_class", "")) if is_etf else str(watch_item.get("asset_class", "")).strip()
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
@@ -7005,7 +7419,7 @@ with tab_precision:
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
-    current_item = {"name": name, "ticker": tkr, "is_etf": is_etf, "asset_class": a_class, "fin_score": int(fin_score)}
+    current_item = {"name": sanitize_asset_name(name, tkr), "ticker": sanitize_ticker_value(tkr), "is_etf": is_etf, "asset_class": a_class, "fin_score": int(fin_score)}
 
     if is_in_watchlist(tkr):
         for item in st.session_state.watchlist:
