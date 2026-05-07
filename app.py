@@ -4588,6 +4588,171 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
         st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
 
 
+def get_valuation_headline_for_final_check(ticker, is_etf, current_price):
+    if is_etf:
+        return "ETF 별도판단", "ETF는 밸류보다 추세/돈흐름/괴리율 중심으로 봅니다.", np.nan
+
+    snapshot = fetch_valuation_snapshot(ticker)
+    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
+    analyst_snapshot = get_analyst_snapshot(ticker)
+    analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
+    for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
+        if data.get(key) in [None, ""] and analyst_data.get(key) not in [None, ""]:
+            data[key] = analyst_data.get(key)
+
+    valuation = build_valuation_interpretation(data, current_price, ticker)
+    return valuation["headline"], valuation["note"], valuation["target_upside"]
+
+
+def final_check_status_style(status):
+    if status == "통과":
+        return "#16a34a"
+    if status == "주의":
+        return "#d97706"
+    if status == "차단":
+        return "#dc2626"
+    return "#64748b"
+
+
+def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price):
+    rows = []
+
+    def add_check(category, status, detail):
+        rows.append({"점검항목": category, "상태": status, "해석": detail})
+
+    dec = str(c.get("dec", ""))
+    trend = str(c.get("trend", ""))
+    rs_label = str(c.get("rs_label", ""))
+    structure_risk = bool(c.get("structure_risk"))
+    mfi = clean_float(c.get("mfi"), np.nan)
+    rsi = clean_float(c.get("rsi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    dd = clean_float(c.get("dd"), 0.0)
+    curr_w = clean_float(c.get("current_w"), 0.0)
+    target_w = clean_float(c.get("target_w"), 0.0)
+    weight_gap = target_w - curr_w
+    macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
+    price_vs_avg = np.nan
+    if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
+        price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
+
+    hard_words = ["하드차단", "진입보류", "추격금지", "구조훼손", "추매금지", "현금 확보", "원인 점검"]
+    positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
+    if any(word in dec for word in hard_words):
+        add_check("시스템 타점", "차단", f"현재 판정이 '{dec}'입니다. 신호가 풀릴 때까지 신규/추매는 보수적으로 봅니다.")
+    elif any(word in dec for word in positive_words):
+        add_check("시스템 타점", "통과", f"현재 판정이 '{dec}'입니다. 다만 비중과 과열 여부를 함께 봅니다.")
+    else:
+        add_check("시스템 타점", "주의", f"현재 판정이 '{dec}'입니다. 강한 매수 신호라기보다 확인 구간입니다.")
+
+    if is_etf:
+        add_check("재무/상품", "통과", "ETF/ETN류는 개별기업 재무점수 대신 기초자산, 돈흐름, 추세를 봅니다.")
+    elif int(fin_score) >= 4:
+        add_check("재무/상품", "통과", "재무 4점입니다. 장기 후보로 볼 수 있는 기본 체력은 양호합니다.")
+    elif int(fin_score) >= 3:
+        add_check("재무/상품", "주의", "재무 3점입니다. 장기보유보다는 실적 개선 지속 여부 확인이 필요합니다.")
+    else:
+        add_check("재무/상품", "차단", "재무점수가 낮습니다. 기술 신호가 좋아도 장기보유 후보로 보기 어렵습니다.")
+
+    valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"))
+    if valuation_headline in ["가격매력 우수", "조건부 적정", "ETF 별도판단"]:
+        val_status = "통과"
+    elif valuation_headline in ["성장 프리미엄", "중립", "밸류 데이터 부족"]:
+        val_status = "주의"
+    else:
+        val_status = "차단"
+    upside_text = "" if not finite_num(target_upside) else f" 목표가 업사이드 {target_upside:.1f}%."
+    add_check("밸류/가격", val_status, f"{valuation_headline}. {valuation_note}{upside_text}")
+
+    if structure_risk or dd <= -0.2:
+        add_check("구조/추세", "차단", f"고점대비 MDD {dd * 100:.1f}% 또는 구조위험이 있습니다. 원인 확인 전 추매는 금지에 가깝게 봅니다.")
+    elif "역배열" in trend or "약함" in rs_label:
+        add_check("구조/추세", "주의", f"{trend} / {rs_label}. 추세 회복을 확인하고 접근하는 쪽이 낫습니다.")
+    else:
+        add_check("구조/추세", "통과", f"{trend} / {rs_label}. 즉시 구조 경고는 크지 않습니다.")
+
+    if (finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02):
+        add_check("과열", "차단", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 추격매수 부담이 큽니다.")
+    elif (finite_num(mfi) and mfi >= 80) or (finite_num(rsi) and rsi >= 70) or (finite_num(pct_b) and pct_b >= 0.95):
+        add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 눌림 대기가 더 유리할 수 있습니다.")
+    else:
+        add_check("과열", "통과", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 극단 과열은 아닙니다.")
+
+    if target_w > 0 and curr_w >= target_w:
+        add_check("비중", "차단", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 목표비중을 이미 채웠습니다.")
+    elif target_w > 0 and weight_gap > 0:
+        add_check("비중", "통과", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 남은 여유비중 {weight_gap:.2f}%p입니다.")
+    else:
+        add_check("비중", "주의", "목표비중이 없거나 부족 매수액 계산이 약합니다. 먼저 목표비중을 정하는 편이 좋습니다.")
+
+    if finite_num(macro_risk) and macro_risk >= 4.5:
+        add_check("매크로", "차단", f"매크로 리스크 {macro_risk:.1f}. 시장 환경상 대피/관망 우선입니다.")
+    elif finite_num(macro_risk) and macro_risk >= 2.5:
+        add_check("매크로", "주의", f"매크로 리스크 {macro_risk:.1f}. 분할 접근이 적합합니다.")
+    else:
+        add_check("매크로", "통과", "-" if not finite_num(macro_risk) else f"매크로 리스크 {macro_risk:.1f}. 큰 차단 신호는 아닙니다.")
+
+    if not has_pos:
+        add_check("보유상태", "주의", "신규 진입입니다. 첫 진입은 정찰 비중으로 시작하는 편이 안전합니다.")
+    elif finite_num(price_vs_avg) and price_vs_avg < -0.07:
+        add_check("보유상태", "주의", f"평단 대비 {price_vs_avg * 100:.1f}%. 추가매수보다 손상 원인 확인이 먼저입니다.")
+    elif finite_num(price_vs_avg):
+        add_check("보유상태", "통과", f"평단 대비 {price_vs_avg * 100:.1f}%. 보유 관리 범위 안에서 판단 가능합니다.")
+    else:
+        add_check("보유상태", "통과", "보유 정보 기준의 특이 위험은 크지 않습니다.")
+
+    status_counts = pd.Series([row["상태"] for row in rows]).value_counts().to_dict()
+    block_count = int(status_counts.get("차단", 0))
+    caution_count = int(status_counts.get("주의", 0))
+    pass_count = int(status_counts.get("통과", 0))
+
+    if block_count >= 2:
+        final_label, final_color, action = "매수 금지", "#dc2626", "차단 항목이 2개 이상입니다. 신규/추매보다 원인 점검과 비중 관리가 우선입니다."
+    elif block_count == 1:
+        final_label, final_color, action = "대기", "#d97706", "차단 항목이 남아 있습니다. 해당 항목이 해소될 때까지 정찰 이상은 보류합니다."
+    elif caution_count >= 3:
+        final_label, final_color, action = "소액 분할", "#d97706", "주의 항목이 많습니다. 매수한다면 소액 정찰 또는 분할 접근이 적합합니다."
+    elif pass_count >= 6 and caution_count <= 2:
+        final_label, final_color, action = "분할 가능", "#16a34a", "대부분의 점검을 통과했습니다. 목표비중 안에서 분할 접근을 검토할 수 있습니다."
+    else:
+        final_label, final_color, action = "조건부 관망", "#64748b", "강한 결론은 아닙니다. 신호, 실적 뉴스, 밸류 중 하나가 더 확인되면 좋습니다."
+
+    return rows, {
+        "final_label": final_label,
+        "final_color": final_color,
+        "action": action,
+        "pass_count": pass_count,
+        "caution_count": caution_count,
+        "block_count": block_count,
+    }
+
+
+def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price):
+    st.markdown("### ✅ 매수 전 최종 체크")
+    rows, summary = build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price)
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("최종 판정", summary["final_label"])
+    k2.metric("통과", f"{summary['pass_count']}개")
+    k3.metric("주의", f"{summary['caution_count']}개")
+    k4.metric("차단", f"{summary['block_count']}개")
+
+    st.markdown(
+        f"<div class='info-panel' style='border-left: 5px solid {summary['final_color']};'>"
+        f"<b>{escape_html_value(name)} 최종 액션</b><br>"
+        f"<span class='highlight' style='font-size:1.08em;'>{summary['final_label']}</span><br>"
+        f"{escape_html_value(summary['action'])}<br>"
+        f"<span style='color:#cbd5e1;'>투자 권유가 아니라, 현재 앱 지표를 한 번에 묶은 의사결정 보조 체크입니다.</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    show_df = pd.DataFrame(rows)
+    if not show_df.empty:
+        show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
     rows = []
@@ -9510,6 +9675,8 @@ with tab_precision:
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
         render_valuation_price_panel(name, tkr, is_etf, c, fin_score)
+
+        render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p)
 
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
