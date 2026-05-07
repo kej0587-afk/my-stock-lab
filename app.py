@@ -4244,6 +4244,102 @@ def render_dashboard_group_summary(df, group_label):
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
 
 
+def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, fin_score, fin_meta, has_pos, my_price):
+    st.markdown("### 🧭 개인 주식분석")
+    st.caption("스윙 신호를 장기 보유 후보로 바꿔도 되는지 점검하는 보조 패널입니다. 투자 권유가 아니라 의사결정 체크리스트입니다.")
+
+    cur_p = clean_float(c.get("cur_p"), 0.0)
+    my_price = clean_float(my_price, 0.0)
+    price_vs_avg = (cur_p / my_price - 1) if has_pos and my_price > 0 else np.nan
+    structure_risk = bool(c.get("structure_risk"))
+    dd = clean_float(c.get("dd"), 0.0)
+    ret_3m = clean_float(c.get("ret_3m"), 0.0)
+    ret_6m = clean_float(c.get("ret_6m"), 0.0)
+    trend = str(c.get("trend", ""))
+    rs_label = str(c.get("rs_label", ""))
+    decision = str(c.get("dec", ""))
+
+    if is_etf:
+        suitability_score = 0
+        suitability_score += 1 if "🚀" in rs_label or "➖" in rs_label else 0
+        suitability_score += 1 if "역배열" not in trend else 0
+        suitability_score += 1 if dd > -0.2 else 0
+        suitability_score += 1 if ret_3m >= -0.03 else 0
+        suitability_score += 1 if not structure_risk else 0
+    else:
+        suitability_score = 0
+        suitability_score += 2 if int(fin_score) >= 4 else (1 if int(fin_score) >= 3 else 0)
+        suitability_score += 1 if "역배열" not in trend else 0
+        suitability_score += 1 if "🚀" in rs_label or "➖" in rs_label else 0
+        suitability_score += 1 if not structure_risk else 0
+        suitability_score += 1 if dd > -0.2 else 0
+
+    suitability_score = min(int(suitability_score), 5)
+    if suitability_score >= 4:
+        long_label, long_color = "장기 후보", "#16a34a"
+    elif suitability_score >= 3:
+        long_label, long_color = "조건부 장기 후보", "#d97706"
+    else:
+        long_label, long_color = "스윙/관망 우선", "#64748b"
+
+    if not has_pos:
+        position_label = "미보유"
+        position_note = "신규 매수는 구조훼손/과열 해소 후 검토"
+    elif structure_risk or dd <= -0.2:
+        position_label = "보유 점검"
+        position_note = "추매 금지, 손절/장투 기준 재확인"
+    elif clean_float(c.get("current_w"), 0.0) >= clean_float(c.get("target_w"), 0.0) > 0:
+        position_label = "비중 충족"
+        position_note = "추가매수보다 보유/리스크 관리 우선"
+    else:
+        position_label = "보유 가능"
+        position_note = "시스템 신호와 목표비중 안에서만 분할 접근"
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("장기 적합도", f"{suitability_score}/5", long_label)
+    m2.metric("내 손익률", "-" if not finite_num(price_vs_avg) else f"{price_vs_avg * 100:.1f}%")
+    m3.metric("고점대비 MDD", f"{dd * 100:.1f}%")
+    m4.metric("포지션 판단", position_label)
+
+    rows = [
+        {
+            "점검항목": "핵심 결론",
+            "상태": long_label,
+            "해석": f"{escape_html_value(name)}({escape_html_value(ticker)})는 현재 {long_label}입니다. {position_note}",
+        },
+        {
+            "점검항목": "재무/기초체력",
+            "상태": "ETF 해당없음" if is_etf else f"{fin_score}/4",
+            "해석": "ETF는 재무점수보다 기초지수/돈흐름 중심으로 봅니다." if is_etf else ("장기 보유 후보로 볼 수 있는 점수입니다." if int(fin_score) >= 3 else "장기 보유 전 재무 훼손 여부를 먼저 확인해야 합니다."),
+        },
+        {
+            "점검항목": "추세/상대강도",
+            "상태": f"{trend} / {rs_label}",
+            "해석": f"3개월 {ret_3m * 100:.1f}%, 6개월 {ret_6m * 100:.1f}%입니다.",
+        },
+        {
+            "점검항목": "구조위험",
+            "상태": "주의" if structure_risk else "정상",
+            "해석": "구조훼손 구간에서는 신규/추매보다 원인 점검이 우선입니다." if structure_risk else "기술 구조상 즉시 하드 경고는 없습니다.",
+        },
+        {
+            "점검항목": "현재 시스템 신호",
+            "상태": decision,
+            "해석": "앱 판정 문구입니다. 장기 전환은 이 신호와 재무/뉴스/비중을 함께 봅니다.",
+        },
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    with st.expander("장기 전환 체크리스트", expanded=False):
+        checklist_rows = [
+            {"구분": "장기 전환 가능", "조건": "재무 3점 이상, 추세 훼손 제한적, 투자 아이디어가 실적/수요로 설명 가능"},
+            {"구분": "추매 금지", "조건": "고점대비 -20% 이하, MA50 이탈, RS 약화, 급락+거래량 증가"},
+            {"구분": "손절/축소 점검", "조건": "처음 산 이유가 사라짐, 실적/가이던스 훼손, 손실 한도 초과"},
+            {"구분": "다시 매수 검토", "조건": "MA20/MA50 회복, RS 회복, 과열 해소 후 거래량 동반 반등"},
+        ]
+        st.dataframe(pd.DataFrame(checklist_rows), use_container_width=True, hide_index=True)
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
     rows = []
@@ -8534,6 +8630,8 @@ with tab_precision:
             structure_note = "주의" if c.get("structure_risk") else "정상"
             structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• 전일등락: <b>{c['day_ret']*100:.1f}%</b> | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+
+        render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 

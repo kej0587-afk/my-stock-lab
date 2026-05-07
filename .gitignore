@@ -1,0 +1,42 @@
+# Python / Streamlit local runtime
+__pycache__/
+*.py[cod]
+.venv/
+.venv*/
+venv/
+env/
+
+# Local secrets and private config
+.streamlit/secrets.toml
+secrets.toml
+*.key
+*.pem
+*.env
+.env
+
+# Local databases and exports
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
+*.sqlite3
+*.zip
+logs-*.txt
+*_export.csv
+
+# Stock Lab local backups
+app.py.bak*
+app_backup_*.py
+stock_lab_backup_*.zip
+requirements*.bak*
+requirements_backup_*.txt
+*_backup_before_*.py
+stock_lab_core/**/*_backup*.py
+stock_lab_core/**/*backup_before*.py
+stock_lab_core/**/*.bak*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
