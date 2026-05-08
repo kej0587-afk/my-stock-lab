@@ -6939,6 +6939,61 @@ def build_asset_label_map(asset_df):
     return label_map
 
 
+def calc_portfolio_leverage_summary(asset_df):
+    columns = ["자산명", "티커", "전체비중", "운용비중", "충격배수", "레버리지환산노출", "추가노출"]
+    summary = {
+        "leveraged_principal_pct": 0.0,
+        "effective_exposure_pct": 0.0,
+        "extra_exposure_pct": 0.0,
+        "active_effective_exposure_pct": 0.0,
+        "max_multiplier": 1.0,
+    }
+
+    if asset_df is None or asset_df.empty:
+        return summary, pd.DataFrame(columns=columns)
+
+    rows = []
+    for _, row in asset_df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        name = str(row.get("자산명", "")).strip()
+        multiplier = abs(clean_float(infer_scenario_shock_multiplier({
+            "티커": ticker,
+            "자산명": name,
+        }), 1.0))
+
+        if multiplier <= 1.05:
+            continue
+
+        total_weight = clean_float(row.get("전체비중"), 0.0)
+        active_weight = clean_float(row.get("운용비중"), 0.0)
+        effective_exposure = total_weight * multiplier
+        active_effective_exposure = active_weight * multiplier
+        extra_exposure = max(effective_exposure - total_weight, 0.0)
+
+        rows.append({
+            "자산명": name if name else ticker,
+            "티커": ticker,
+            "전체비중": total_weight,
+            "운용비중": active_weight,
+            "충격배수": multiplier,
+            "레버리지환산노출": effective_exposure,
+            "추가노출": extra_exposure,
+            "_active_effective_exposure": active_effective_exposure,
+        })
+
+    if not rows:
+        return summary, pd.DataFrame(columns=columns)
+
+    leverage_df = pd.DataFrame(rows)
+    summary["leveraged_principal_pct"] = float(leverage_df["전체비중"].sum())
+    summary["effective_exposure_pct"] = float(leverage_df["레버리지환산노출"].sum())
+    summary["extra_exposure_pct"] = float(leverage_df["추가노출"].sum())
+    summary["active_effective_exposure_pct"] = float(leverage_df["_active_effective_exposure"].sum())
+    summary["max_multiplier"] = float(leverage_df["충격배수"].max())
+
+    return summary, leverage_df.drop(columns=["_active_effective_exposure"], errors="ignore")[columns]
+
+
 def build_correlation_pair_summary(corr_df):
     if corr_df is None or corr_df.empty or len(corr_df.columns) < 2:
         return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
@@ -6948,7 +7003,9 @@ def build_correlation_pair_summary(corr_df):
     for i, left in enumerate(cols):
         for j in range(i + 1, len(cols)):
             right = cols[j]
-            value = clean_float(corr_df.loc[left, right], np.nan)
+            if str(left).strip() == str(right).strip():
+                continue
+            value = clean_float(corr_df.iloc[i, j], np.nan)
             if not np.isfinite(value):
                 continue
             label, meaning = classify_corr_value(value)
@@ -7090,6 +7147,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     if not asset_df.empty:
         asset_df = asset_df.sort_values("전체비중", ascending=False).reset_index(drop=True)
     asset_label_map = build_asset_label_map(asset_df)
+    leverage_summary, leverage_df = calc_portfolio_leverage_summary(asset_df)
 
     top1_weight = float(asset_df["전체비중"].max()) if not asset_df.empty else 0.0
     top3_weight = float(asset_df["전체비중"].head(3).sum()) if not asset_df.empty else 0.0
@@ -7113,6 +7171,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     active_cvar_95_krw = np.nan
     risk_contrib_df = pd.DataFrame()
     avg_corr = np.nan
+    portfolio_observation_count = 0
 
     if price_series:
         prices = pd.concat(price_series.values(), axis=1).sort_index().ffill(limit=3)
@@ -7131,6 +7190,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                 aligned_returns = returns_df[weights.index].copy()
                 portfolio_returns = aligned_returns.mul(weights, axis=1).sum(axis=1)
                 if not portfolio_returns.empty:
+                    portfolio_observation_count = int(len(portfolio_returns))
                     portfolio_curve = (1 + portfolio_returns).cumprod()
                     portfolio_vol_decimal = float(portfolio_returns.std() * np.sqrt(252))
                     portfolio_vol = portfolio_vol_decimal * 100
@@ -7160,9 +7220,10 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     mdd_component = min(abs(float(portfolio_mdd)) if np.isfinite(portfolio_mdd) else 0.0, 30)
     concentration_component = min(top1_weight * 0.45 + top3_weight * 0.2 + hhi * 100 * 0.6, 25)
     corr_component = min(max(float(avg_corr) if np.isfinite(avg_corr) else 0.0, 0.0) * 15, 15)
+    leverage_component = min(max(float(leverage_summary.get("extra_exposure_pct", 0.0)), 0.0) * 0.9, 20)
     reserve_gap = max(float(reserve_target_weight) - float(reserve_summary.get("waiting_pct", 0.0)), 0.0)
     reserve_component = min(reserve_gap * 1.5, 15)
-    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + reserve_component, 100)
+    risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
     risk_grade, risk_color = classify_portfolio_risk(risk_index)
 
     if top1_weight >= 35:
@@ -7175,6 +7236,18 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         add_portfolio_risk_note(notes, "주의", "낙폭", f"분석기간 MDD가 {portfolio_mdd:.1f}%입니다.", "큰 하락을 견딜 수 있는 포지션 크기인지 확인하세요.")
     if np.isfinite(avg_corr) and avg_corr >= 0.7:
         add_portfolio_risk_note(notes, "참고", "상관관계", f"평균 상관계수가 {avg_corr:.2f}입니다.", "종목 수가 많아도 비슷하게 움직일 수 있습니다.")
+    if leverage_summary.get("leveraged_principal_pct", 0.0) > 0:
+        leverage_level = "주의" if leverage_summary.get("extra_exposure_pct", 0.0) >= 8 or leverage_summary.get("effective_exposure_pct", 0.0) >= 15 else "참고"
+        add_portfolio_risk_note(
+            notes,
+            leverage_level,
+            "레버리지",
+            (
+                f"레버리지 ETF 원금비중은 {leverage_summary.get('leveraged_principal_pct', 0.0):.1f}%이고 "
+                f"2배/3배 환산 노출은 {leverage_summary.get('effective_exposure_pct', 0.0):.1f}%입니다."
+            ),
+            "전체 위험도가 균형이어도 레버리지 환산 노출과 손실 속도는 별도로 확인하세요.",
+        )
     if reserve_summary.get("waiting_pct", 0.0) + 0.1 < float(reserve_target_weight):
         add_portfolio_risk_note(notes, "참고", "방어력", f"대기자금 비중이 목표보다 {reserve_gap:.1f}%p 낮습니다.", "시장 변동성이 클 때 투입 여력을 따로 확보할지 확인하세요.")
     if np.isfinite(sharpe_ratio) and sharpe_ratio < 0:
@@ -7211,7 +7284,11 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "active_value": active_value,
         "total_asset": total_asset,
         "reserve_summary": reserve_summary,
+        "leverage_summary": leverage_summary,
+        "leverage_df": leverage_df,
+        "leverage_component": leverage_component,
         "usable_asset_count": len(price_series),
+        "portfolio_observation_count": portfolio_observation_count,
         "analysis_start_date": analysis_start_date,
     }
 
@@ -7228,6 +7305,64 @@ def format_metric_ratio(value, digits=2):
 
 def format_metric_money(value):
     return "-" if not np.isfinite(clean_float(value, np.nan)) else f"{clean_float(value):,.0f}원"
+
+
+def render_portfolio_sample_warning(metrics):
+    observation_count = int(clean_float(metrics.get("portfolio_observation_count", 0), 0))
+    if observation_count <= 0:
+        return
+
+    if observation_count < 63:
+        st.warning(
+            f"가격 표본이 {observation_count}거래일뿐이라 연환산 수익률, Sharpe, Sortino가 크게 왜곡될 수 있습니다. "
+            "최근 흐름 참고용으로만 보세요."
+        )
+    elif observation_count < 126:
+        st.info(
+            f"가격 표본이 {observation_count}거래일입니다. 연환산 지표는 아직 짧은 기간을 1년으로 늘린 값이라 "
+            "실제 장기 성과처럼 해석하면 안 됩니다."
+        )
+
+
+def render_leverage_exposure_panel(metrics):
+    summary = metrics.get("leverage_summary", {}) or {}
+    leverage_df = metrics.get("leverage_df", pd.DataFrame())
+    principal = clean_float(summary.get("leveraged_principal_pct"), 0.0)
+
+    if principal <= 0 or leverage_df is None or leverage_df.empty:
+        return
+
+    effective = clean_float(summary.get("effective_exposure_pct"), 0.0)
+    extra = clean_float(summary.get("extra_exposure_pct"), 0.0)
+    active_effective = clean_float(summary.get("active_effective_exposure_pct"), 0.0)
+    reserve_summary = metrics.get("reserve_summary", {}) or {}
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+
+    st.markdown("#### 레버리지 환산 노출")
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("레버리지 원금비중", f"{principal:.1f}%")
+    l2.metric("2배/3배 환산노출", f"{effective:.1f}%")
+    l3.metric("추가 위험노출", f"+{extra:.1f}%p")
+    l4.metric("운용자산 환산노출", f"{active_effective:.1f}%")
+
+    if extra >= 8 or effective >= 15:
+        st.warning(
+            "전체 위험도가 `균형`으로 보여도 레버리지 ETF는 하락장에서 손실 속도가 더 빠릅니다. "
+            f"대기자금 {waiting_pct:.1f}%가 전체 위험도를 낮춰 보이게 할 수 있으니, 위 환산노출을 별도로 기준 삼으세요."
+        )
+    else:
+        st.info(
+            "레버리지 ETF가 포함되어 있습니다. 현재 환산노출은 과도한 편은 아니지만, "
+            "매수 판단은 전체 위험도보다 레버리지 환산노출과 손실 허용폭을 같이 봐야 합니다."
+        )
+
+    show_df = leverage_df.copy()
+    for col in ["전체비중", "운용비중", "레버리지환산노출", "추가노출"]:
+        if col in show_df.columns:
+            show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+    if "충격배수" in show_df.columns:
+        show_df["충격배수"] = show_df["충격배수"].apply(lambda v: f"{clean_float(v):.1f}x")
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
 
 
 def calc_goal_monthly_return(annual_return_pct):
@@ -7479,6 +7614,8 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
     m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
 
+    render_leverage_exposure_panel(metrics)
+
     st.markdown("#### Risk Metrics")
     r1, r2, r3, r4, r5 = st.columns(5)
     r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
@@ -7493,6 +7630,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
     tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
     st.caption("Risk Metrics는 가격 데이터가 있는 운용자산 기준입니다. VaR/CVaR는 과거 일간수익률 기반의 참고 손실 추정치이며 미래 손실 한도가 아닙니다.")
+    render_portfolio_sample_warning(metrics)
 
     render_long_term_goal_simulator(metrics)
 
