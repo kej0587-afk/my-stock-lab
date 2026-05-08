@@ -1775,6 +1775,12 @@ US_TECH_OR_GROWTH_TICKERS = {
 def get_dart_api_key():
     return str(st.secrets.get("dart_api_key", "")).strip()
 
+def get_krx_api_key():
+    return str(st.secrets.get("krx_api_key", "")).strip()
+
+def get_sec_user_agent():
+    return str(st.secrets.get("sec_user_agent", "")).strip()
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dart_corp_code_map():
     api_key = get_dart_api_key()
@@ -2102,10 +2108,10 @@ def fetch_kr_financials_auto(ticker: str):
         )
 
         if len(annual_records) < 2:
-            return {"ok": False, "source": "dart", "reason": "DART 최근 연간 재무 2개년 이상 확보 실패"}
+            return attach_krx_context_to_kr_failure(ticker, "dart", "DART annual financials under 2 years")
 
         if len(quarter_records) < 1:
-            return {"ok": False, "source": "dart", "reason": "DART 단일 분기 재무 확보 실패"}
+            return attach_krx_context_to_kr_failure(ticker, "dart", "DART single-quarter financials missing")
 
         return {
             "ok": True,
@@ -2116,7 +2122,7 @@ def fetch_kr_financials_auto(ticker: str):
         }
 
     except Exception as e:
-        return {"ok": False, "source": "dart", "reason": f"DART 오류: {e}"}
+        return attach_krx_context_to_kr_failure(ticker, "dart", f"DART error: {e}")
 
 def fmp_request(endpoint, ticker, period, limit, api_key):
     url = f"https://financialmodelingprep.com/stable/{endpoint}"
@@ -2187,8 +2193,338 @@ def extract_fmp_metrics(inc, bal, cf, period_type):
     }
     return enrich_fin_record(record)
 
+KRX_STOCK_API_ENDPOINTS = [
+    ("KOSPI", "https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd"),
+    ("KOSDAQ", "https://data-dbg.krx.co.kr/svc/apis/sto/ksq_bydd_trd"),
+]
+
+def get_krx_stock_api_endpoints_for_ticker(ticker):
+    text = str(ticker or "").strip().upper()
+    if text.endswith(".KS"):
+        return [KRX_STOCK_API_ENDPOINTS[0]]
+    if text.endswith(".KQ"):
+        return [KRX_STOCK_API_ENDPOINTS[1]]
+    return KRX_STOCK_API_ENDPOINTS
+
+SEC_US_GAAP_TAGS = {
+    "revenue": [
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "RevenueFromContractWithCustomerIncludingAssessedTax",
+        "Revenues",
+        "SalesRevenueNet",
+    ],
+    "op_income": ["OperatingIncomeLoss"],
+    "net_income": ["NetIncomeLoss", "ProfitLoss"],
+    "ocf": ["NetCashProvidedByUsedInOperatingActivities"],
+    "equity": [
+        "StockholdersEquity",
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    ],
+    "liabilities": ["Liabilities"],
+    "assets": ["Assets"],
+    "cash": [
+        "CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+    ],
+}
+
+SEC_FLOW_FIELDS = {"revenue", "op_income", "net_income", "ocf"}
+
+def krx_recent_business_dates(days=5):
+    today = datetime.now(KST).date()
+    dates = []
+    cur = today
+    while len(dates) < days:
+        if cur.weekday() < 5:
+            dates.append(cur.strftime("%Y%m%d"))
+        cur = cur - timedelta(days=1)
+    return dates
+
+def get_krx_rows_from_payload(payload):
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ["OutBlock_1", "output", "data", "rows", "list"]:
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return rows
+    return []
+
+def get_krx_row_value(row, keys, default=""):
+    if not isinstance(row, dict):
+        return default
+    for key in keys:
+        value = row.get(key)
+        if value not in [None, ""]:
+            return value
+    return default
+
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
-def fetch_us_financials_auto(ticker: str):
+def fetch_krx_stock_snapshot(ticker: str):
+    api_key = get_krx_api_key()
+    if not api_key:
+        return {"ok": False, "source": "krx", "reason": "KRX API key missing"}
+
+    stock_code = normalize_stock_code(ticker)
+    if not stock_code or not stock_code.isdigit():
+        return {"ok": False, "source": "krx", "reason": f"KRX stock code invalid: {ticker}"}
+
+    errors = []
+    for bas_dd in krx_recent_business_dates(5):
+        for market_name, endpoint in get_krx_stock_api_endpoints_for_ticker(ticker):
+            try:
+                res = requests.get(
+                    endpoint,
+                    params={"basDd": bas_dd, "AUTH_KEY": api_key},
+                    headers={"AUTH_KEY": api_key},
+                    timeout=6,
+                )
+                if res.status_code != 200:
+                    errors.append(f"{market_name} {bas_dd} HTTP {res.status_code}")
+                    continue
+                rows = get_krx_rows_from_payload(res.json())
+                for row in rows:
+                    row_code = str(get_krx_row_value(row, ["ISU_SRT_CD", "ISU_CD", "isuSrtCd", "isuCd"])).strip()
+                    if row_code == stock_code:
+                        name = get_krx_row_value(row, ["ISU_ABBRV", "ISU_NM", "isuAbrv", "isuNm"], "")
+                        market = get_krx_row_value(row, ["MKT_NM", "mktNm"], market_name)
+                        mktcap = get_krx_row_value(row, ["MKTCAP", "mktcap"], "")
+                        listed_shares = get_krx_row_value(row, ["LIST_SHRS", "listShrs"], "")
+                        return {
+                            "ok": True,
+                            "source": "krx",
+                            "basDd": bas_dd,
+                            "market": str(market or market_name),
+                            "name": str(name or ""),
+                            "ticker": ticker,
+                            "stock_code": stock_code,
+                            "mktcap": mktcap,
+                            "listed_shares": listed_shares,
+                            "row": row,
+                        }
+            except Exception as exc:
+                errors.append(f"{market_name} {bas_dd}: {exc}")
+
+    reason = " / ".join(errors[-4:]) if errors else "KRX row not found"
+    return {"ok": False, "source": "krx", "reason": reason}
+
+def attach_krx_context_to_kr_failure(ticker, source, reason):
+    snapshot = fetch_krx_stock_snapshot(ticker)
+    if snapshot.get("ok"):
+        extra = (
+            f"KRX listed: {snapshot.get('market', '-')}, "
+            f"{snapshot.get('name', '-')}, {snapshot.get('basDd', '-')}"
+        )
+    else:
+        extra = f"KRX check failed: {snapshot.get('reason', 'unknown')}"
+    return {
+        "ok": False,
+        "source": f"{source}/krx",
+        "reason": f"{reason} / {extra}",
+        "krx_snapshot": snapshot,
+    }
+
+def sec_request_json(url):
+    user_agent = get_sec_user_agent()
+    if not user_agent:
+        raise RuntimeError("SEC User-Agent missing")
+    headers = {
+        "User-Agent": user_agent,
+        "Accept-Encoding": "gzip, deflate",
+        "Accept": "application/json",
+    }
+    res = requests.get(url, headers=headers, timeout=20)
+    if res.status_code == 429:
+        raise RuntimeError("SEC rate limit")
+    if res.status_code in [403, 404]:
+        raise RuntimeError(f"SEC HTTP {res.status_code}: {res.text[:160]}")
+    res.raise_for_status()
+    return res.json()
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_sec_company_tickers():
+    data = sec_request_json("https://www.sec.gov/files/company_tickers.json")
+    if isinstance(data, dict):
+        return list(data.values())
+    return data if isinstance(data, list) else []
+
+def get_sec_cik_for_ticker(ticker: str):
+    symbol = str(ticker or "").strip().upper()
+    aliases = {symbol, symbol.replace(".", "-"), symbol.replace("-", ".")}
+    for item in fetch_sec_company_tickers():
+        sec_ticker = str(item.get("ticker", "")).strip().upper()
+        if sec_ticker in aliases:
+            return str(int(item.get("cik_str"))).zfill(10), item
+    return "", {}
+
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+def fetch_sec_company_facts(cik: str):
+    cik = str(cik or "").strip().zfill(10)
+    return sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
+
+def sec_fact_rows(company_facts, tags, units=("USD", "shares")):
+    facts = company_facts.get("facts", {}) if isinstance(company_facts, dict) else {}
+    us_gaap = facts.get("us-gaap", {}) if isinstance(facts, dict) else {}
+    rows = []
+    for tag in tags:
+        tag_data = us_gaap.get(tag, {})
+        unit_data = tag_data.get("units", {}) if isinstance(tag_data, dict) else {}
+        for unit in units:
+            for row in unit_data.get(unit, []) or []:
+                if isinstance(row, dict) and row.get("val") not in [None, ""]:
+                    item = dict(row)
+                    item["tag"] = tag
+                    item["unit"] = unit
+                    rows.append(item)
+    return rows
+
+def sec_duration_days(row):
+    try:
+        start = row.get("start")
+        end = row.get("end")
+        if not start or not end:
+            return None
+        return (pd.Timestamp(end) - pd.Timestamp(start)).days
+    except Exception:
+        return None
+
+def sec_pick_value(company_facts, field, fy, forms, fps=None, annual_flow=False, quarterly_flow=False):
+    candidates = []
+    for row in sec_fact_rows(company_facts, SEC_US_GAAP_TAGS.get(field, [])):
+        try:
+            row_fy = int(row.get("fy"))
+        except Exception:
+            continue
+        if row_fy != int(fy):
+            continue
+        form = str(row.get("form", "")).upper()
+        fp = str(row.get("fp", "")).upper()
+        if form not in forms:
+            continue
+        if fps is not None and fp not in fps:
+            continue
+        duration = sec_duration_days(row)
+        if field in SEC_FLOW_FIELDS and annual_flow and duration is not None and duration < 250:
+            continue
+        if field in SEC_FLOW_FIELDS and quarterly_flow and duration is not None and duration > 140:
+            continue
+        candidates.append(row)
+
+    if not candidates:
+        return np.nan
+
+    candidates = sorted(
+        candidates,
+        key=lambda r: (str(r.get("filed", "")), str(r.get("end", "")), str(r.get("tag", ""))),
+    )
+    return safe_float(candidates[-1].get("val"))
+
+def build_sec_annual_records(company_facts):
+    revenue_rows = sec_fact_rows(company_facts, SEC_US_GAAP_TAGS["revenue"])
+    years = sorted({
+        int(row.get("fy"))
+        for row in revenue_rows
+        if str(row.get("form", "")).upper() in {"10-K", "10-K/A"}
+        and str(row.get("fp", "")).upper() == "FY"
+        and str(row.get("fy", "")).isdigit()
+    })
+
+    records = []
+    for fy in years[-5:]:
+        record = {
+            "period": "annual",
+            "fiscal_year": str(fy),
+            "fiscal_quarter": 4,
+            "report_code": "10-K",
+            "report_label": "10-K",
+            "date": str(fy),
+        }
+        for field in SEC_US_GAAP_TAGS:
+            record[field] = sec_pick_value(
+                company_facts,
+                field,
+                fy,
+                forms={"10-K", "10-K/A"},
+                fps={"FY"},
+                annual_flow=True,
+            )
+        record = enrich_fin_record(record)
+        if has_dart_core_values(record):
+            records.append(record)
+    return records[-3:]
+
+def build_sec_quarter_records(company_facts):
+    revenue_rows = sec_fact_rows(company_facts, SEC_US_GAAP_TAGS["revenue"])
+    keys = sorted({
+        (int(row.get("fy")), str(row.get("fp", "")).upper())
+        for row in revenue_rows
+        if str(row.get("form", "")).upper() in {"10-Q", "10-Q/A"}
+        and str(row.get("fp", "")).upper() in {"Q1", "Q2", "Q3"}
+        and str(row.get("fy", "")).isdigit()
+    })
+
+    records = []
+    for fy, fp in keys[-8:]:
+        try:
+            q_no = int(fp.replace("Q", ""))
+        except Exception:
+            q_no = None
+        record = {
+            "period": "quarter",
+            "fiscal_year": str(fy),
+            "fiscal_quarter": q_no,
+            "report_code": fp,
+            "report_label": fp,
+            "date": f"{fy}-{fp}",
+        }
+        for field in SEC_US_GAAP_TAGS:
+            record[field] = sec_pick_value(
+                company_facts,
+                field,
+                fy,
+                forms={"10-Q", "10-Q/A"},
+                fps={fp},
+                quarterly_flow=True,
+            )
+        record = enrich_fin_record(record)
+        if has_dart_core_values(record):
+            records.append(record)
+    return records[-4:]
+
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+def fetch_us_financials_sec(ticker: str):
+    symbol = str(ticker).strip().upper()
+    try:
+        cik, ticker_meta = get_sec_cik_for_ticker(symbol)
+        if not cik:
+            return {"ok": False, "source": "sec_edgar", "reason": f"SEC CIK lookup failed: {symbol}"}
+
+        facts = fetch_sec_company_facts(cik)
+        annual_records = build_sec_annual_records(facts)
+        quarter_records = build_sec_quarter_records(facts)
+
+        if len(annual_records) < 2:
+            return {
+                "ok": False,
+                "source": "sec_edgar",
+                "reason": "SEC annual financials under 2 years",
+                "sec_meta": {"cik": cik, "ticker_meta": ticker_meta},
+            }
+
+        return {
+            "ok": True,
+            "source": "sec_edgar",
+            "ticker": ticker,
+            "annual": annual_records[-3:],
+            "quarter": quarter_records[-4:],
+            "sec_meta": {"cik": cik, "ticker_meta": ticker_meta},
+        }
+    except Exception as exc:
+        return {"ok": False, "source": "sec_edgar", "reason": f"SEC error: {exc}"}
+
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+def fetch_us_financials_fmp(ticker: str):
     api_key = st.secrets.get("fmp_api_key", "")
     if not api_key: return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
 
@@ -2234,6 +2570,32 @@ def fetch_us_financials_auto(ticker: str):
         }
     except Exception as e:
         return {"ok": False, "source": "fmp", "reason": f"FMP 오류: {e}"}
+
+@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+def fetch_us_financials_auto(ticker: str):
+    fmp_result = fetch_us_financials_fmp(ticker)
+    if fmp_result.get("ok", False):
+        return fmp_result
+
+    sec_result = fetch_us_financials_sec(ticker)
+    if sec_result.get("ok", False):
+        sec_result = dict(sec_result)
+        sec_result["fallback_from"] = {
+            "source": fmp_result.get("source", "fmp"),
+            "reason": fmp_result.get("reason", "unknown"),
+        }
+        return sec_result
+
+    return {
+        "ok": False,
+        "source": "fmp/sec_edgar",
+        "reason": (
+            f"FMP: {fmp_result.get('reason', 'unknown')} / "
+            f"SEC: {sec_result.get('reason', 'unknown')}"
+        ),
+        "fmp_error": fmp_result,
+        "sec_error": sec_result,
+    }
 
 def getsymbol_score(symbol: str) -> int:
     s = str(symbol)
@@ -2590,7 +2952,11 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
 
     if not fin.get("ok", False):
-        metrics = {}
+        metrics = {
+            key: fin.get(key)
+            for key in ["krx_snapshot", "sec_meta", "fmp_error", "sec_error"]
+            if fin.get(key) is not None
+        }
         notes = {
             "ok": False, "source": fin.get("source", "unknown"), "mode": "fallback",
             "reason": fin.get("reason", "원인 미상"), "annual_judgements": {}, "quarter_judgements": {},
@@ -2623,6 +2989,12 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     metrics["annual_records"] = fin.get("annual", [])
     metrics["quarter_records"] = fin.get("quarter", [])
     metrics["weighted_scores"] = weighted_scores
+    if fin.get("sec_meta") is not None:
+        metrics["sec_meta"] = fin.get("sec_meta")
+    if fin.get("fallback_from") is not None:
+        metrics["fallback_from"] = fin.get("fallback_from")
+    if fin.get("krx_snapshot") is not None:
+        metrics["krx_snapshot"] = fin.get("krx_snapshot")
 
     notes = {
         "ok": True, "source": fin.get("source", "unknown"), "mode": selected_mode,
@@ -2834,7 +3206,7 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
             "영역": "재무점수",
             "상태": "미계산",
             "핵심 지표": "자동 재무점수 미계산",
-            "해석": "버튼을 누르면 DART/FMP 재무 데이터를 불러와 자동으로 판정합니다.",
+            "해석": "버튼을 누르면 DART/FMP/SEC 재무 데이터를 불러와 자동으로 판정합니다.",
         }]
 
     rev_growth = derived.get("rev_growth")
@@ -2927,7 +3299,7 @@ def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
         ("종합상태", status, f"최종 {fin_score}/4" if not is_etf else "재무점수 제외"),
         ("판정모드", str(mode), f"자동 {auto_score}" + (f" / 수동 {manual_score}" if manual_score is not None else "")),
         ("위험신호", f"{int(danger_count) if finite_num(danger_count) else 0}개", f"가중점수 {weighted_net if finite_num(weighted_net) else '-'}"),
-        ("데이터", str(source), "DART/FMP 기준" if not is_etf else "ETF 기준"),
+        ("데이터", str(source), "DART/FMP/SEC 기준" if not is_etf else "ETF 기준"),
     ]
     for col, (title, value, detail) in zip(cols, card_items):
         with col:
@@ -2949,7 +3321,16 @@ def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
         st.caption("자동 재무점수는 투자 추천이 아니라 재무제표 기반 체크리스트입니다. 데이터 공백이나 최근 이벤트는 별도 확인이 필요합니다.")
 
 def clear_financial_api_cache():
-    for fn_name in ["fetch_us_financials_auto", "fetch_kr_financials_auto", "fetch_dart_finstate_all_raw"]:
+    for fn_name in [
+        "fetch_us_financials_auto",
+        "fetch_us_financials_fmp",
+        "fetch_us_financials_sec",
+        "fetch_sec_company_tickers",
+        "fetch_sec_company_facts",
+        "fetch_kr_financials_auto",
+        "fetch_dart_finstate_all_raw",
+        "fetch_krx_stock_snapshot",
+    ]:
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "clear"):
             fn.clear()
@@ -6165,7 +6546,7 @@ ETF는 개별 기업 리스크가 낮고 적립식 운용 대상이기 때문입
 
 ### 재무점수는 무조건 믿어도 되나요?
 
-아닙니다. DART/FMP 데이터 기반 자동 계산이므로 누락이나 업종 특성이 있을 수 있습니다. 필요하면 수동 점수로 보정할 수 있습니다.
+아닙니다. DART/FMP/SEC 데이터 기반 자동 계산이므로 누락이나 업종 특성이 있을 수 있습니다. 필요하면 수동 점수로 보정할 수 있습니다.
 
 ### S급이면 무조건 사나요?
 
@@ -10047,7 +10428,7 @@ with tab_precision:
 
         if not is_etf:
             if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}"):
-                with st.spinner("DART/FMP 재무 자동 계산 중..."):
+                with st.spinner("DART/FMP/SEC 재무 자동 계산 중..."):
                     clear_financial_api_cache()
                     new_score, _ = get_final_fin_score(tkr, is_etf, a_class)
                     st.session_state.fin_score_map[fin_key] = int(new_score)
