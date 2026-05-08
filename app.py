@@ -3972,6 +3972,88 @@ def get_effective_buy_amount(mode, name, ticker, eff_total, u_curr_w, u_targ_w):
     cw, tw = get_effective_weights(mode, name, ticker, u_curr_w, u_targ_w)
     return round(eff_total * (max(tw - cw, 0) / 100), 0)
 
+def get_effective_bucket(mode, name, ticker):
+    if mode == "개인모드":
+        row = get_holding_row_by_ticker(holdings_table, ticker)
+        if row is not None:
+            return infer_bucket(ticker, row.get("bucket", "core"))
+    return infer_bucket(ticker, "")
+
+def get_cash_available_for_dca(mode):
+    if mode != "개인모드":
+        return 0.0
+    return clean_float(globals().get("krw_cash"), 0.0) + (
+        clean_float(globals().get("usd_cash"), 0.0) * clean_float(globals().get("usdkrw"), 1400.0)
+    )
+
+def get_reserve_available_for_crash_buy(mode):
+    if mode != "개인모드":
+        return 0.0
+    table = globals().get("holdings_table")
+    if table is None or table.empty or "bucket" not in table.columns or "원화환산" not in table.columns:
+        return 0.0
+    reserve_rows = table[table["bucket"].apply(lambda v: normalize_bucket(v) == "reserve")]
+    return float(reserve_rows["원화환산"].apply(clean_float).sum()) if not reserve_rows.empty else 0.0
+
+def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
+    text = f"{name} {ticker} {asset_class}".upper()
+    keywords = [
+        "LEVER", "LEVERAGE", "LEVERAGED", "INVERSE", "인버스", "레버리지", "곱버스",
+        "2X", "3X", "TQQQ", "SQQQ", "QLD", "SOXL", "SOXS", "SPXL", "SPXS", "UPRO", "SPXU",
+    ]
+    return any(keyword in text for keyword in keywords)
+
+def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend_label):
+    if not is_core_etf or weight_gap <= 0:
+        return 0.0, ""
+    if is_leveraged_or_inverse_product(name, ticker, asset_class):
+        return 0.0, ""
+    if final_macro_risk >= 4.5:
+        return 0.0, ""
+
+    if current_dd <= -0.30:
+        return 2.0, "폭락장 200% 집중"
+    if current_dd <= -0.20:
+        return 1.5, "하락장 150% 분할"
+    if current_dd <= -0.10 or (rsi_now <= 55 and mfi_now < 70 and pct_b_now <= 0.70):
+        return 1.0, "눌림 100% 적립"
+    if mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00:
+        return 0.25, "과열 25% 정기적립"
+    if mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90:
+        return 0.25, "상단 25% 정기적립"
+    if trend_label == "🌊역배열(하락)":
+        return 0.25, "하락추세 25% 정기적립"
+    return 0.5, "중립 50% 분할적립"
+
+def build_core_dca_context(mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount, current_dd, rsi_now, mfi_now, pct_b_now, trend_label):
+    rate, label = classify_core_etf_dca_rate(
+        is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend_label
+    )
+    cash_available = get_cash_available_for_dca(mode)
+    reserve_available = get_reserve_available_for_crash_buy(mode)
+
+    if mode == "개인모드":
+        pool = cash_available + (reserve_available if current_dd <= -0.20 else 0.0)
+        pool_label = "예수금+파킹자산" if current_dd <= -0.20 else "예수금"
+    else:
+        pool = max(clean_float(buy_amount), 0.0)
+        pool_label = "직접입력 부족분"
+
+    amount = 0.0
+    if rate > 0:
+        base_amount = max(clean_float(buy_amount), 0.0) * rate
+        amount = min(base_amount, max(pool, 0.0)) if pool > 0 else base_amount
+
+    return {
+        "core_dca_rate": rate,
+        "core_dca_label": label,
+        "core_dca_amt": round(amount, 0),
+        "core_dca_cash": round(cash_available, 0),
+        "core_dca_reserve": round(reserve_available, 0),
+        "core_dca_pool": round(pool, 0),
+        "core_dca_pool_label": pool_label,
+    }
+
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
@@ -4060,6 +4142,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                                  
     price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
     weight_gap = targ_w - curr_w
+    effective_bucket = get_effective_bucket(app_mode, name, ticker)
+    is_core_etf = is_etf and effective_bucket == "core"
+    core_dca_context = build_core_dca_context(
+        app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
+        current_dd, rsi_now, mfi_now, pct_b_now, trend_label
+    )
+    core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
+    is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
 
 
     is_stock_add_on_strength = (
@@ -4185,9 +4275,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col = "🆕신규ETF: 데이터 축적 대기", "#64748b"
         elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
+        elif is_core_dca_allowed and current_dd <= -0.3:
+            dec, col = f"🧱코어 폭락: {core_dca_context['core_dca_label']}", "#b91c1c"
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 현금 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
+        elif is_core_dca_allowed and current_dd <= -0.2:
+            dec, col = f"🧱코어 하락: {core_dca_context['core_dca_label']}", "#16a34a"
         elif is_structure_damage_entry_risk and not has_pos:
             dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
         elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
@@ -4215,6 +4309,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_exception_entry and (not has_pos):
             dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"
 
+        elif is_core_dca_allowed:
+            dca_label = core_dca_context["core_dca_label"]
+            if core_dca_rate <= 0.25:
+                dec, col = f"🧱코어 과열: {dca_label}", "#d97706"
+            elif core_dca_rate <= 0.50:
+                dec, col = f"🧱코어 중립: {dca_label}", "#3b82f6"
+            else:
+                dec, col = f"🧱코어 눌림: {dca_label}", "#16a34a"
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
@@ -4264,6 +4366,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
         "grade": grade, "t_score": tech_total + (0 if is_etf else fin_score), "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
+        "bucket": effective_bucket, **core_dca_context,
         "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
         "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
         "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
@@ -4823,6 +4926,8 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     curr_w = clean_float(c.get("current_w"), 0.0)
     target_w = clean_float(c.get("target_w"), 0.0)
     weight_gap = target_w - curr_w
+    core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
+    is_core_dca = core_dca_rate > 0 and str(c.get("bucket", "")) == "core"
     macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
     price_vs_avg = np.nan
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
@@ -4856,14 +4961,18 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     upside_text = "" if not finite_num(target_upside) else f" 목표가 업사이드 {target_upside:.1f}%."
     add_check("밸류/가격", val_status, f"{valuation_headline}. {valuation_note}{upside_text}")
 
-    if structure_risk or dd <= -0.2:
+    if is_core_dca and dd <= -0.2:
+        add_check("구조/추세", "주의", f"고점대비 MDD {dd * 100:.1f}%. 코어 ETF 급락 구간은 원인 확인 후 파킹자산 일부 투입 후보로 봅니다.")
+    elif structure_risk or dd <= -0.2:
         add_check("구조/추세", "차단", f"고점대비 MDD {dd * 100:.1f}% 또는 구조위험이 있습니다. 원인 확인 전 추매는 금지에 가깝게 봅니다.")
     elif "역배열" in trend or "약함" in rs_label:
         add_check("구조/추세", "주의", f"{trend} / {rs_label}. 추세 회복을 확인하고 접근하는 쪽이 낫습니다.")
     else:
         add_check("구조/추세", "통과", f"{trend} / {rs_label}. 즉시 구조 경고는 크지 않습니다.")
 
-    if (finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02):
+    if is_core_dca and ((finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02)):
+        add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 코어 ETF라 추격매수 대신 {c.get('core_dca_label', '속도 조절 적립')}으로 제한합니다.")
+    elif (finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02):
         add_check("과열", "차단", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 추격매수 부담이 큽니다.")
     elif (finite_num(mfi) and mfi >= 80) or (finite_num(rsi) and rsi >= 70) or (finite_num(pct_b) and pct_b >= 0.95):
         add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 눌림 대기가 더 유리할 수 있습니다.")
@@ -5822,6 +5931,7 @@ MANUAL_SECTIONS = {
         {"타점": "볼린상단 이탈", "조건": "개별주 %B 0.95 이상", "의미": "단기 과열로 신규/추매 차단"},
         {"타점": "예외승인: MA5/FVG", "조건": "재무 4점 + 정배열 + RS 강함 + MACD 양호 + MA5/FVG 눌림", "의미": "우량 대장주 예외 진입"},
         {"타점": "ETF 목표비중 미달", "조건": "ETF 보유 + 목표비중 부족 + 과열 아님", "의미": "적립식 매수 가능"},
+        {"타점": "코어 ETF 적립속도", "조건": "bucket core ETF + 목표비중 부족", "의미": "과열 25%, 중립 50%, 눌림 100%, 급락 150~200%로 투입 속도 조절"},
         {"타점": "상승확인: 2차 정찰 추매", "조건": "평단 대비 0~5% 상승 + 비중부족 + 추세 양호", "의미": "상승 확인 후 제한적 추매"},
         {"타점": "S급 눌림목", "조건": "정배열 + RS 강함 + RSI 45~58 + %B 0.45~0.8", "의미": "가장 선호하는 눌림 매수 구간"},
         {"타점": "낙폭과대", "조건": "RSI 30 이하 또는 하락추세 속 ADJ 높음", "의미": "반등 가능성은 있으나 분할 접근"},
@@ -5861,6 +5971,8 @@ def render_manual_tab():
 5. 마지막으로 보유 여부, 평단가, 현재비중, 목표비중을 보고 최종 타점 문구를 정합니다.
 
 핵심은 하드차단 조건이 먼저라는 점입니다. 아무리 차트가 좋아도 재무F급, 비중초과, 극단과열, 퍼펙트스톰 같은 조건이 있으면 매수 가능 문구보다 금지/관망 문구가 먼저 나옵니다.
+
+다만 `bucket=core`인 장기 ETF는 목표비중이 부족하면 MFI/RSI 과열 구간에서도 완전 대기가 아니라 적립 속도를 줄여 표시합니다. 평상시 재원은 예수금이고, -20% 이상 급락 구간부터는 reserve/CD 같은 파킹자산도 별도 투입 후보로 봅니다.
         """)
 
         with st.expander("하드차단/금지 문구 자세히 보기", expanded=True):
@@ -9835,10 +9947,26 @@ with tab_precision:
             if is_free or app_mode == "범용모드": st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
                 if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원</div>", unsafe_allow_html=True)
+                dca_html = ""
+                if clean_float(c.get("core_dca_rate"), 0.0) > 0:
+                    dca_html = (
+                        "<hr style='margin:8px 0; border-color:#334155;'>"
+                        f"코어 적립안: <b>{escape_html_value(c.get('core_dca_label', ''))}</b><br>"
+                        f"참고금액: <b>{clean_float(c.get('core_dca_amt'), 0.0):,.0f}원</b><br>"
+                        f"재원: {escape_html_value(c.get('core_dca_pool_label', '예수금'))} "
+                        f"{clean_float(c.get('core_dca_pool'), 0.0):,.0f}원"
+                    )
+                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원{dca_html}</div>", unsafe_allow_html=True)
 
-            if app_mode == "범용모드": 
-                st.markdown(f"<div class='info-panel'><b>입력 기준</b><br>총 자산: {u_asset:,.0f}원<br>평단가: {format_currency(u_price, tkr)}<br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br><b>부족 매수액: {c['buy_amt']:,.0f}원</b></div>", unsafe_allow_html=True)
+            if app_mode == "범용모드":
+                dca_html = ""
+                if clean_float(c.get("core_dca_rate"), 0.0) > 0:
+                    dca_html = (
+                        "<hr style='margin:8px 0; border-color:#334155;'>"
+                        f"코어 적립안: <b>{escape_html_value(c.get('core_dca_label', ''))}</b><br>"
+                        f"참고금액: <b>{clean_float(c.get('core_dca_amt'), 0.0):,.0f}원</b>"
+                    )
+                st.markdown(f"<div class='info-panel'><b>입력 기준</b><br>총 자산: {u_asset:,.0f}원<br>평단가: {format_currency(u_price, tkr)}<br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br><b>부족 매수액: {c['buy_amt']:,.0f}원</b>{dca_html}</div>", unsafe_allow_html=True)
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
 
