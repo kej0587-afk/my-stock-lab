@@ -134,6 +134,10 @@ def get_secret_emails(name):
 
 
 def get_auth_mode():
+    forced_mode = os.environ.get("STOCK_LAB_FORCE_AUTH_MODE", "").strip().lower()
+    if forced_mode in ["public_demo", "public-demo", "demo", "public", "체험모드"]:
+        return "public_demo"
+
     mode = get_secret_value("AUTH_MODE", "auth_mode").strip().lower()
 
     if mode in ["password", "pass", "local"]:

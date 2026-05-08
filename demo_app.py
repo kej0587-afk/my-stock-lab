@@ -2,6 +2,7 @@
 
 import os
 
-os.environ.setdefault("AUTH_MODE", "public_demo")
+os.environ["STOCK_LAB_FORCE_AUTH_MODE"] = "public_demo"
+os.environ["AUTH_MODE"] = "public_demo"
 
 import app  # noqa: F401,E402
