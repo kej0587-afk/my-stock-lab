@@ -7139,26 +7139,50 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
 
     chart_l, chart_r = st.columns([1.2, 1])
     with chart_l:
-        st.markdown("#### 포트폴리오 누적 흐름")
-        if portfolio_curve is not None and not portfolio_curve.empty:
+        st.markdown("#### 누적 흐름")
+        actual_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+        has_actual_curve = actual_perf_df is not None and not actual_perf_df.empty and "month_end" in actual_perf_df.columns
+        has_price_curve = portfolio_curve is not None and not portfolio_curve.empty
+        if has_actual_curve or has_price_curve:
             fig_curve = go.Figure()
-            fig_curve.add_trace(go.Scatter(
-                x=portfolio_curve.index,
-                y=(portfolio_curve - 1) * 100,
-                mode="lines",
-                name="포트폴리오",
-                line=dict(color="#38bdf8", width=2),
-            ))
+
+            if has_actual_curve:
+                actual_curve_df = actual_perf_df.copy()
+                actual_curve_df["month_end"] = pd.to_datetime(actual_curve_df["month_end"], errors="coerce")
+                actual_curve_df = actual_curve_df.dropna(subset=["month_end"])
+                fig_curve.add_trace(go.Scatter(
+                    x=actual_curve_df["month_end"],
+                    y=actual_curve_df["cum_return_pct"],
+                    mode="lines+markers",
+                    name="실제 누적수익률",
+                    line=dict(color="#22c55e", width=3),
+                    marker=dict(size=7),
+                    hovertemplate="%{x|%Y-%m}<br>실제 누적수익률: %{y:.2f}%<extra></extra>",
+                ))
+
+            if has_price_curve:
+                fig_curve.add_trace(go.Scatter(
+                    x=portfolio_curve.index,
+                    y=(portfolio_curve - 1) * 100,
+                    mode="lines",
+                    name="가격기반 보유자산 흐름",
+                    line=dict(color="#38bdf8", width=2, dash="dot"),
+                    opacity=0.8,
+                    hovertemplate="%{x|%Y-%m-%d}<br>가격기반 흐름: %{y:.2f}%<extra></extra>",
+                ))
+
             fig_curve.update_layout(
                 template="plotly_dark",
                 height=360,
                 yaxis_title="누적수익률(%)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig_curve, use_container_width=True)
+            st.caption("초록선은 월별 로그/총자산 기준 실제 누적수익률입니다. 파란 점선은 현재 보유 운용자산을 현재 비중으로 보유했다고 가정한 가격 기반 참고선이라 실제 수익률과 다를 수 있습니다.")
         else:
-            st.info("누적 흐름을 계산할 가격 데이터가 부족합니다.")
+            st.info("누적 흐름을 계산할 월별 기록 또는 가격 데이터가 부족합니다.")
 
     with chart_r:
         st.markdown("#### 현재 비중")
