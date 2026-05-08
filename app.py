@@ -4085,6 +4085,34 @@ def build_core_dca_context(mode, is_core_etf, name, ticker, asset_class, weight_
         "core_dca_pool_label": pool_label,
     }
 
+def classify_limited_history_etf_signal(history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg):
+    enough_short_data = history_days >= 20 and finite_num(rsi_now) and finite_num(mfi_now) and finite_num(pct_b_now)
+    if not enough_short_data:
+        return "🆕신규ETF: 최소 데이터 관찰", "#64748b"
+
+    has_target_gap = targ_w > 0 and weight_gap > 0
+    overheat_extreme = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
+    overheat_zone = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.95
+    pullback_zone = (rsi_now <= 55 and mfi_now < 70 and pct_b_now <= 0.75) or pct_b_now <= 0.35
+
+    if overheat_extreme:
+        return "🆕신규ETF 단기과열: 추매 보류", "#d97706"
+    if overheat_zone:
+        return "🆕신규ETF 상단권: 눌림 대기", "#d97706"
+    if has_pos and my_price > 0 and has_target_gap and cur_p <= my_price and mfi_now < 80 and pct_b_now < 0.95:
+        if price_vs_avg <= -0.07:
+            return "🆕신규ETF 평단하회: 소액 분할", "#16a34a"
+        return "🆕신규ETF 평단근처: 제한적 추매", "#16a34a"
+    if has_target_gap and pullback_zone:
+        return "🆕신규ETF 단기눌림: 제한적 매수", "#16a34a"
+    if has_pos and my_price > 0 and cur_p > my_price:
+        return "🆕신규ETF 보유: 눌림 대기", "#64748b"
+    if has_target_gap:
+        return "🆕신규ETF 관찰매수: 정찰만", "#3b82f6"
+    if targ_w > 0 and curr_w >= targ_w:
+        return "🆕신규ETF: 비중 충족 관찰", "#64748b"
+    return "🆕신규ETF: 데이터 축적 관찰", "#64748b"
+
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
@@ -4282,9 +4310,22 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         pct_b_now < 1.03 and
         final_macro_risk < 4.5
     )
+    limited_history_etf_dec, limited_history_etf_col = classify_limited_history_etf_signal(
+        len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg
+    )
 
     if is_free:
-        if is_etf and short_history: dec, col = "🆕신규ETF: 데이터 축적 대기", "#64748b"
+        if is_core_dca_allowed:
+            dca_label = core_dca_context["core_dca_label"]
+            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어 ETF"
+            if core_dca_rate <= 0.25:
+                dec, col = f"{prefix} 과열: {dca_label}", "#d97706"
+            elif core_dca_rate <= 0.50:
+                dec, col = f"{prefix} 중립: {dca_label}", "#3b82f6"
+            else:
+                dec, col = f"{prefix} 눌림: {dca_label}", "#16a34a"
+        elif is_etf and short_history:
+            dec, col = limited_history_etf_dec, limited_history_etf_col
         elif mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입", "#ec4899"
@@ -4302,17 +4343,17 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     else:
         if not is_etf and fin_score <= 1:
             dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
-        elif is_etf and short_history:
-            dec, col = "🆕신규ETF: 데이터 축적 대기", "#64748b"
         elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
         elif is_core_dca_allowed and current_dd <= -0.3:
-            dec, col = f"🧱코어 폭락: {core_dca_context['core_dca_label']}", "#b91c1c"
+            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
+            dec, col = f"{prefix} 폭락: {core_dca_context['core_dca_label']}", "#b91c1c"
         elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
         elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 현금 투입", "#991b1b"
         elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
         elif is_core_dca_allowed and current_dd <= -0.2:
-            dec, col = f"🧱코어 하락: {core_dca_context['core_dca_label']}", "#16a34a"
+            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
+            dec, col = f"{prefix} 하락: {core_dca_context['core_dca_label']}", "#16a34a"
         elif is_structure_damage_entry_risk and not has_pos:
             dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
         elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
@@ -4342,12 +4383,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
         elif is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
+            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             if core_dca_rate <= 0.25:
-                dec, col = f"🧱코어 과열: {dca_label}", "#d97706"
+                dec, col = f"{prefix} 과열: {dca_label}", "#d97706"
             elif core_dca_rate <= 0.50:
-                dec, col = f"🧱코어 중립: {dca_label}", "#3b82f6"
+                dec, col = f"{prefix} 중립: {dca_label}", "#3b82f6"
             else:
-                dec, col = f"🧱코어 눌림: {dca_label}", "#16a34a"
+                dec, col = f"{prefix} 눌림: {dca_label}", "#16a34a"
+        elif is_etf and short_history:
+            dec, col = limited_history_etf_dec, limited_history_etf_col
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
         elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
         elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
@@ -4397,7 +4441,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
         "grade": grade, "t_score": tech_total + (0 if is_etf else fin_score), "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
-        "bucket": effective_bucket, **core_dca_context,
+        "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
         "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
         "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
         "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
@@ -4981,6 +5025,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("재무/상품", "주의", "재무 3점입니다. 장기보유보다는 실적 개선 지속 여부 확인이 필요합니다.")
     else:
         add_check("재무/상품", "차단", "재무점수가 낮습니다. 기술 신호가 좋아도 장기보유 후보로 보기 어렵습니다.")
+
+    if is_etf and bool(c.get("short_history")):
+        add_check("데이터", "주의", f"가격 데이터가 {int(clean_float(c.get('history_days'), 0))}거래일 수준입니다. MA50/MA120 같은 장기 추세보다 RSI/MFI/볼린저/평단 기준 단기 관측을 우선합니다.")
 
     valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"))
     if valuation_headline in ["가격매력 우수", "조건부 적정", "ETF 별도판단"]:
@@ -5963,6 +6010,7 @@ MANUAL_SECTIONS = {
         {"타점": "예외승인: MA5/FVG", "조건": "재무 4점 + 정배열 + RS 강함 + MACD 양호 + MA5/FVG 눌림", "의미": "우량 대장주 예외 진입"},
         {"타점": "ETF 목표비중 미달", "조건": "ETF 보유 + 목표비중 부족 + 과열 아님", "의미": "적립식 매수 가능"},
         {"타점": "코어 ETF 적립속도", "조건": "bucket core ETF + 목표비중 부족", "의미": "과열 25%, 중립 50%, 눌림 100%, 급락 150~200%로 투입 속도 조절"},
+        {"타점": "신규ETF 단기관측", "조건": "ETF 가격 데이터 60거래일 미만", "의미": "장기추세는 보류하되 RSI/MFI/볼린저/평단/비중으로 과열·눌림·소액추매 판단"},
         {"타점": "상승확인: 2차 정찰 추매", "조건": "평단 대비 0~5% 상승 + 비중부족 + 추세 양호", "의미": "상승 확인 후 제한적 추매"},
         {"타점": "S급 눌림목", "조건": "정배열 + RS 강함 + RSI 45~58 + %B 0.45~0.8", "의미": "가장 선호하는 눌림 매수 구간"},
         {"타점": "낙폭과대", "조건": "RSI 30 이하 또는 하락추세 속 ADJ 높음", "의미": "반등 가능성은 있으나 분할 접근"},
@@ -6495,6 +6543,28 @@ def build_correlation_pair_summary(corr_df):
     return df.sort_values(["상관계수", "_abs"], ascending=[False, False]).drop(columns="_abs").reset_index(drop=True)
 
 
+def normalize_datetime_index_no_tz(index):
+    idx = pd.to_datetime(index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert(None)
+    return idx
+
+
+def get_portfolio_analysis_start_date(monthly_logs_df):
+    perf_df = prepare_monthly_performance_df(monthly_logs_df)
+    if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
+        return None
+
+    month_end = pd.to_datetime(perf_df["month_end"], errors="coerce").dropna()
+    if month_end.empty:
+        return None
+
+    first_month = pd.Timestamp(month_end.min())
+    if getattr(first_month, "tzinfo", None) is not None:
+        first_month = first_month.tz_convert(None)
+    return first_month.replace(day=1).normalize()
+
+
 def render_correlation_interpretation(corr_df, avg_corr):
     st.markdown("""
 **읽는 법**
@@ -6520,7 +6590,10 @@ def render_correlation_interpretation(corr_df, avg_corr):
         st.dataframe(top_pairs, use_container_width=True, hide_index=True)
 
 
-def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y"):
+def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
+    if analysis_start_date is not None:
+        analysis_start_date = pd.Timestamp(analysis_start_date).normalize()
+
     total_asset = (
         float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
     ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
@@ -6569,6 +6642,9 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
 
         if px_df is not None and not px_df.empty and "Close" in px_df.columns:
             close = pd.Series(px_df["Close"]).dropna()
+            close.index = normalize_datetime_index_no_tz(close.index)
+            if analysis_start_date is not None:
+                close = close[close.index >= analysis_start_date]
             if len(close) >= 20:
                 returns = close.pct_change().dropna()
                 row_info["기간수익률"] = (float(close.iloc[-1]) / float(close.iloc[0]) - 1) * 100 if close.iloc[0] else np.nan
@@ -6711,6 +6787,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "total_asset": total_asset,
         "reserve_summary": reserve_summary,
         "usable_asset_count": len(price_series),
+        "analysis_start_date": analysis_start_date,
     }
 
     return metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df
@@ -6934,7 +7011,7 @@ def render_long_term_goal_simulator(metrics):
     st.caption("단순 복리 모델이라 세금, 수수료, 환율, 배당 변동, 실제 매수 타이밍은 반영하지 않습니다. 목표 점검용으로만 보세요.")
 
 
-def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
     st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
 
@@ -6951,6 +7028,10 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     ):
         return
 
+    analysis_start_date = get_portfolio_analysis_start_date(monthly_logs_df)
+    if analysis_start_date is not None:
+        st.caption(f"월별 로그 시작월({analysis_start_date.strftime('%Y-%m')}) 이후 가격 흐름만 분석합니다.")
+
     metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
         holdings_table,
         krw_cash,
@@ -6958,6 +7039,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         usdkrw,
         reserve_target_weight,
         period=period,
+        analysis_start_date=analysis_start_date,
     )
 
     reserve_summary = metrics["reserve_summary"]
@@ -10778,7 +10860,7 @@ with tab_asset:
         st.info("등록된 보유 종목이 없습니다.")
 
 with tab_portfolio:
-    render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+    render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df)
 
 with tab_scenario:
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
