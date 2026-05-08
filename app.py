@@ -9583,7 +9583,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
     st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
     demo_page = st.radio(
         "체험 화면",
-        ["자산 현황", "전광판", "정밀관측소", "돈흐름", "월배당 ETF", "피드백", "가이드"],
+        ["자산 현황", "전광판", "정밀관측소", "시나리오", "단기 흐름", "신호 검증", "돈흐름", "월배당 ETF", "피드백", "가이드"],
         horizontal=True,
         key="public_demo_fast_page",
     )
@@ -9648,6 +9648,36 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "후보등급", "값": c["grade"]},
         ]), use_container_width=True, hide_index=True)
         render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        return
+
+    if demo_page == "시나리오":
+        st.subheader("시나리오 점검")
+        if st.button("시나리오 계산 시작", key="public_demo_scenario_run", use_container_width=True):
+            st.session_state["public_demo_scenario_ready"] = True
+        if st.session_state.get("public_demo_scenario_ready", False):
+            render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+        else:
+            st.info("시나리오는 보유자산별 충격률을 계산해서 버튼을 누를 때만 실행합니다.")
+        return
+
+    if demo_page == "단기 흐름":
+        st.subheader("단기 흐름 점검")
+        if st.button("단기 흐름 계산 시작", key="public_demo_short_trend_run", use_container_width=True):
+            st.session_state["public_demo_short_trend_ready"] = True
+        if st.session_state.get("public_demo_short_trend_ready", False):
+            render_short_trend_tab(holdings_table, st.session_state.watchlist)
+        else:
+            st.info("단기 흐름은 여러 종목의 가격 데이터를 읽어서 버튼을 누를 때만 계산합니다.")
+        return
+
+    if demo_page == "신호 검증":
+        st.subheader("신호 검증")
+        if st.button("신호 검증 시작", key="public_demo_backtest_run", use_container_width=True):
+            st.session_state["public_demo_backtest_ready"] = True
+        if st.session_state.get("public_demo_backtest_ready", False):
+            render_signal_backtest_tab(holdings_table, st.session_state.watchlist)
+        else:
+            st.info("신호 검증은 과거 가격을 길게 계산하므로 데모에서는 버튼을 누른 뒤 실행합니다.")
         return
 
     if demo_page == "돈흐름":
