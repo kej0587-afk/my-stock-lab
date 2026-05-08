@@ -6578,11 +6578,52 @@ ETF는 개별 기업 리스크가 낮고 적립식 운용 대상이기 때문입
         """)
 
 
+GUIDE_IMAGE_FILES = [
+    ("자산 현황", "docs/tab_guides/01_asset_overview.svg", "보유종목, 예수금, 목표비중을 입력하고 전체 자산을 확인합니다."),
+    ("포트폴리오 분석", "docs/tab_guides/02_portfolio_analysis.svg", "집중도, 변동성, MDD, 상관관계로 내 포트폴리오 위험을 봅니다."),
+    ("전광판", "docs/tab_guides/03_dashboard.svg", "관심종목을 한국/미국, ETF/개별주로 나눠 한 번에 확인합니다."),
+    ("정밀관측소", "docs/tab_guides/04_precision_lab.svg", "한 종목을 깊게 열어 신호, 차트, 밸류, 최종 체크를 확인합니다."),
+    ("시나리오 평가", "docs/tab_guides/05_scenario_check.svg", "시장 하락, 환율, 레버리지 충격을 가정해 손실 규모를 미리 봅니다."),
+    ("단기 흐름 점검", "docs/tab_guides/06_short_trend.svg", "보유/관심종목의 2~4주 흐름을 빠르게 스캔합니다."),
+    ("신호 검증", "docs/tab_guides/07_signal_backtest.svg", "과거 신호의 5/20/60일 성과와 승률을 확인합니다."),
+    ("돈흐름 레이더", "docs/tab_guides/08_money_flow.svg", "ETF 가격 모멘텀으로 강한 섹터와 새로 힘붙는 테마를 찾습니다."),
+    ("배당 ETF", "docs/tab_guides/09_kr_etf_lab.svg", "국내 ETF의 분배, 비용, 구성, 테마를 비교합니다."),
+    ("스윙 레이더", "docs/tab_guides/10_swing_radar.svg", "스윙 후보의 체크리스트, 메모, 숨김/관리 상태를 저장합니다."),
+    ("피드백/Q&A", "docs/tab_guides/11_feedback.svg", "사용 중 헷갈리는 점과 개선 요청을 앱 안에서 남깁니다."),
+    ("데이터 점검", "docs/tab_guides/12_data_quality.svg", "ETF 분류, 목표비중, 저장 데이터 오류를 점검합니다."),
+    ("속도 점검", "docs/tab_guides/13_speed_check.svg", "무거운 계산과 새로고침 기준을 확인합니다."),
+    ("판정 매뉴얼", "docs/tab_guides/14_manual.svg", "하드차단, S급 눌림목, ETF 적립 등 판정 기준을 찾아봅니다."),
+    ("사용 가이드", "docs/tab_guides/15_user_guide.svg", "처음 쓰는 사람에게 앱 사용 순서와 주의사항을 안내합니다."),
+]
+
+
+def render_guide_image_gallery():
+    st.markdown("### 탭별 이미지 빠른 가이드")
+    st.caption("지인에게 설명할 때 이 이미지만 공유해도 기본 사용법을 이해할 수 있게 만든 요약 카드입니다.")
+
+    for idx, (title, image_path, desc) in enumerate(GUIDE_IMAGE_FILES):
+        with st.expander(f"{idx + 1}. {title}", expanded=(idx == 0)):
+            st.caption(desc)
+            if os.path.exists(image_path):
+                st.image(image_path, use_container_width=True)
+                with open(image_path, "rb") as image_file:
+                    st.download_button(
+                        "이미지 다운로드",
+                        data=image_file.read(),
+                        file_name=os.path.basename(image_path),
+                        mime="image/svg+xml",
+                        key=f"download_guide_image_{idx}",
+                        use_container_width=True,
+                    )
+            else:
+                st.warning(f"가이드 이미지 파일을 찾지 못했습니다: {image_path}")
+
+
 def render_user_guide_tab():
     st.subheader("사용 가이드")
     st.caption("처음 쓰는 사용자를 위한 안내입니다. 앱은 투자 권유가 아니라 포트폴리오 점검과 의사결정 보조 도구입니다.")
 
-    start_tab, flow_tab, signal_tab, faq_tab = st.tabs(["처음 시작", "탭 사용법", "문구 해석", "공유/주의"])
+    start_tab, flow_tab, signal_tab, image_tab, faq_tab = st.tabs(["처음 시작", "탭 사용법", "문구 해석", "이미지 가이드", "공유/주의"])
 
     with start_tab:
         st.markdown("""
@@ -6687,6 +6728,9 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
         """)
 
         st.warning("앱 문구는 매수/매도 명령이 아닙니다. 최종 결정은 사용자가 직접 해야 합니다.")
+
+    with image_tab:
+        render_guide_image_gallery()
 
     with faq_tab:
         st.markdown("""

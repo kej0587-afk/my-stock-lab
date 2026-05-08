@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f19"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <style>
+      .title{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:44px;font-weight:800;fill:#f8fafc;}
+      .subtitle{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:22px;font-weight:600;fill:#cbd5e1;}
+      .section{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:24px;font-weight:800;fill:#fbbf24;}
+      .body{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:20px;font-weight:500;}
+      .small{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:600;fill:#cbd5e1;}
+      .card{fill:#1e293b;stroke:#334155;stroke-width:2;}
+      .mock{fill:#0f172a;stroke:#475569;stroke-width:2;}
+      .accent{fill:#2563eb;}
+      .green{fill:#16a34a;}
+      .orange{fill:#d97706;}
+      .chip{fill:#111827;stroke:#475569;stroke-width:1.5;}
+      .chipText{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:700;fill:#e5e7eb;}
+    </style>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="36" y="32" width="1208" height="656" rx="26" fill="#0b1220" stroke="#1f2937" stroke-width="2"/>
+  <text x="72" y="96" class="title">🧪 데이터 점검</text>
+  <text x="72" y="134" class="subtitle">저장 데이터와 분류 오류를 찾아내는 탭</text>
+
+  <rect x="72" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="100" y="220" class="section">1. 무엇을 넣나요?</text>
+  <text x="100" y="264" class="body" fill="#e5e7eb">• 보유자산/관심종목/재무점수 DB</text>
+<text x="100" y="298" class="body" fill="#e5e7eb">• ETF 체크와 asset_class</text>
+<text x="100" y="332" class="body" fill="#e5e7eb">• 목표비중과 중복 티커</text>
+
+  <rect x="464" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="492" y="220" class="section">2. 무슨 의미인가요?</text>
+  <text x="492" y="264" class="body" fill="#e5e7eb">• ETF가 개별주로 잘못 잡힘</text>
+<text x="492" y="298" class="body" fill="#e5e7eb">• 목표비중 누락</text>
+<text x="492" y="332" class="body" fill="#e5e7eb">• 재무점수 잔존 오류</text>
+
+  <rect x="856" y="176" width="316" height="248" rx="18" class="mock"/>
+  <text x="884" y="220" class="section">화면에서 볼 것</text>
+  <rect x="884" y="250" width="225" height="34" rx="12" class="chip"/><text x="900" y="273" class="chipText">ETF 분류</text>
+<rect x="1139" y="250" width="225" height="34" rx="12" class="chip"/><text x="1155" y="273" class="chipText">목표비중</text>
+<rect x="884" y="298" width="225" height="34" rx="12" class="chip"/><text x="900" y="321" class="chipText">중복 티커</text>
+<rect x="1139" y="298" width="225" height="34" rx="12" class="chip"/><text x="1155" y="321" class="chipText">수정 안내</text>
+
+  <rect x="72" y="462" width="1100" height="130" rx="18" fill="#172554" stroke="#2563eb" stroke-width="2"/>
+  <circle cx="112" cy="527" r="22" class="green"/>
+  <text x="105" y="535" class="body" fill="#ffffff">✓</text>
+  <text x="152" y="516" class="section">이렇게 쓰면 됩니다</text>
+  <text x="152" y="555" class="body" fill="#e0f2fe">앱이 이상하게 판정하면 먼저 이 탭에서 데이터 문제를 확인합니다.</text>
+
+  <text x="72" y="642" class="small">Stock Lab 사용 안내 이미지 · 앱 화면의 실제 값은 사용자 계정과 저장 데이터에 따라 달라집니다.</text>
+</svg>

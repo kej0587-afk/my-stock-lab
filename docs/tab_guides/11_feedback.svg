@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f19"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <style>
+      .title{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:44px;font-weight:800;fill:#f8fafc;}
+      .subtitle{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:22px;font-weight:600;fill:#cbd5e1;}
+      .section{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:24px;font-weight:800;fill:#fbbf24;}
+      .body{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:20px;font-weight:500;}
+      .small{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:600;fill:#cbd5e1;}
+      .card{fill:#1e293b;stroke:#334155;stroke-width:2;}
+      .mock{fill:#0f172a;stroke:#475569;stroke-width:2;}
+      .accent{fill:#2563eb;}
+      .green{fill:#16a34a;}
+      .orange{fill:#d97706;}
+      .chip{fill:#111827;stroke:#475569;stroke-width:1.5;}
+      .chipText{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:700;fill:#e5e7eb;}
+    </style>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="36" y="32" width="1208" height="656" rx="26" fill="#0b1220" stroke="#1f2937" stroke-width="2"/>
+  <text x="72" y="96" class="title">🎤 피드백/Q&amp;A</text>
+  <text x="72" y="134" class="subtitle">사용자 질문과 개선 요청을 저장</text>
+
+  <rect x="72" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="100" y="220" class="section">1. 무엇을 넣나요?</text>
+  <text x="100" y="264" class="body" fill="#e5e7eb">• 카테고리</text>
+<text x="100" y="298" class="body" fill="#e5e7eb">• 우선순위</text>
+<text x="100" y="332" class="body" fill="#e5e7eb">• 제목과 내용</text>
+
+  <rect x="464" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="492" y="220" class="section">2. 무슨 의미인가요?</text>
+  <text x="492" y="264" class="body" fill="#e5e7eb">• 같은 질문 반복을 줄임</text>
+<text x="492" y="298" class="body" fill="#e5e7eb">• 개선 요청을 한 곳에 모음</text>
+<text x="492" y="332" class="body" fill="#e5e7eb">• 운영자가 우선순위 확인</text>
+
+  <rect x="856" y="176" width="316" height="248" rx="18" class="mock"/>
+  <text x="884" y="220" class="section">화면에서 볼 것</text>
+  <rect x="884" y="250" width="225" height="34" rx="12" class="chip"/><text x="900" y="273" class="chipText">개선 제안</text>
+<rect x="1139" y="250" width="225" height="34" rx="12" class="chip"/><text x="1155" y="273" class="chipText">질문</text>
+<rect x="884" y="298" width="225" height="34" rx="12" class="chip"/><text x="900" y="321" class="chipText">오류 제보</text>
+<rect x="1139" y="298" width="225" height="34" rx="12" class="chip"/><text x="1155" y="321" class="chipText">접수 내역</text>
+
+  <rect x="72" y="462" width="1100" height="130" rx="18" fill="#172554" stroke="#2563eb" stroke-width="2"/>
+  <circle cx="112" cy="527" r="22" class="green"/>
+  <text x="105" y="535" class="body" fill="#ffffff">✓</text>
+  <text x="152" y="516" class="section">이렇게 쓰면 됩니다</text>
+  <text x="152" y="555" class="body" fill="#e0f2fe">지인이 헷갈린 부분을 여기에 남기게 하면 다음 업데이트 방향이 선명해집니다.</text>
+
+  <text x="72" y="642" class="small">Stock Lab 사용 안내 이미지 · 앱 화면의 실제 값은 사용자 계정과 저장 데이터에 따라 달라집니다.</text>
+</svg>
