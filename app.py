@@ -135,9 +135,18 @@ def get_auth_mode():
         return "password"
     if mode in ["google", "oauth"]:
         return "google"
+    if mode in ["public_demo", "public-demo", "demo", "public", "체험모드"]:
+        return "public_demo"
 
     # Keep Google as the default. Password login is emergency-only and must be explicit.
     return "google"
+
+
+AUTH_MODE = get_auth_mode()
+
+
+def is_public_demo_mode():
+    return AUTH_MODE == "public_demo"
 
 
 def get_owner_email_for_password_login():
@@ -181,7 +190,9 @@ def require_password_login():
 
 
 def logout_current_user():
-    if get_auth_mode() == "password":
+    if is_public_demo_mode():
+        st.rerun()
+    elif AUTH_MODE == "password":
         st.session_state.password_ok = False
         st.rerun()
     else:
@@ -189,7 +200,10 @@ def logout_current_user():
 
 
 def require_login():
-    if get_auth_mode() == "password":
+    if is_public_demo_mode():
+        return "public_demo@stocklab.local"
+
+    if AUTH_MODE == "password":
         return require_password_login()
 
     if not st.user.is_logged_in:
@@ -215,6 +229,7 @@ def require_login():
 
 
 CURRENT_USER_EMAIL = require_login()
+IS_PUBLIC_DEMO = is_public_demo_mode()
 
 
 st.markdown("""
@@ -246,12 +261,36 @@ st.markdown("""
 
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
-    app_mode = st.radio("사용 모드", ["개인모드", "범용모드"], index=0, help="개인모드는 앱 내부 자산 연동, 범용모드는 직접 입력 방식입니다.")
+    APP_MODE_LABELS = {
+        "개인모드": "내 자산 연동",
+        "범용모드": "직접 입력 분석",
+    }
+    if IS_PUBLIC_DEMO:
+        app_mode = "범용모드"
+        app_mode_label = "체험모드"
+        st.info("체험모드입니다. 로그인 없이 볼 수 있고, 저장/복구/수정 내용은 서버에 반영되지 않습니다.")
+        st.caption("정밀관측소의 직접 입력값과 샘플 포트폴리오로 기능을 체험합니다.")
+    else:
+        app_mode = st.radio(
+            "분석 기준",
+            ["개인모드", "범용모드"],
+            index=0,
+            format_func=lambda mode: APP_MODE_LABELS.get(mode, mode),
+            help="내 자산 연동은 저장된 보유자산/평단/목표비중을 사용합니다. 직접 입력 분석은 정밀관측소에서 임의 값을 넣어 한 종목을 가정 분석합니다.",
+        )
+        app_mode_label = APP_MODE_LABELS.get(app_mode, app_mode)
+        if app_mode == "개인모드":
+            st.caption("저장된 내 보유자산, 평단가, 현재비중, 목표비중을 기준으로 판정합니다.")
+        else:
+            st.caption("공개 접속 모드가 아닙니다. 로그인한 상태에서 총자산, 평단가, 현재/목표비중을 직접 넣어 가정 분석합니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
-    st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
-    st.button("Log out", on_click=logout_current_user, key="logout_sidebar")
+    if IS_PUBLIC_DEMO:
+        st.caption("Signed in: public demo (저장 안 됨)")
+    else:
+        st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
+        st.button("Log out", on_click=logout_current_user, key="logout_sidebar")
 
-st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode})")
+st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
 def normalize_bucket(value):
     raw = str(value or "").strip().lower()
@@ -725,6 +764,72 @@ MDD: {c['dd']}
 def call_llm_analysis(prompt: str) -> str:
     return prompt
 
+
+PUBLIC_DEMO_EMAIL = "public_demo@stocklab.local"
+
+
+def public_demo_write_blocked(action="저장"):
+    st.info(f"체험모드에서는 {action}이 서버에 저장되지 않습니다. 실제 사용은 Google 로그인 버전에서 가능합니다.")
+    return False
+
+
+def get_public_demo_settings():
+    return {
+        "seed_money": 30_000_000.0,
+        "krw_cash": 2_000_000.0,
+        "usd_cash": 1_000.0,
+        "usdkrw": 1400.0,
+        "reserve_target_weight": 12.0,
+    }
+
+
+def get_public_demo_holdings_df():
+    rows = [
+        {"ticker": "QQQM", "name": "QQQM", "qty": 12, "avg_price": 185, "target_weight": 22, "asset_class": "us_etf_nasdaq", "is_etf": True, "bucket": "core"},
+        {"ticker": "SCHD", "name": "SCHD", "qty": 25, "avg_price": 78, "target_weight": 18, "asset_class": "us_etf_other", "is_etf": True, "bucket": "core"},
+        {"ticker": "MSFT", "name": "MSFT", "qty": 5, "avg_price": 390, "target_weight": 14, "asset_class": "us_stock", "is_etf": False, "bucket": "core"},
+        {"ticker": "000660.KS", "name": "SK하이닉스", "qty": 8, "avg_price": 175000, "target_weight": 14, "asset_class": "kr_stock", "is_etf": False, "bucket": "core"},
+        {"ticker": "379810.KS", "name": "TIGER 미국나스닥100", "qty": 35, "avg_price": 23500, "target_weight": 12, "asset_class": "us_etf_nasdaq", "is_etf": True, "bucket": "core"},
+        {"ticker": "357870.KS", "name": "TIGER CD금리투자KIS", "qty": 20, "avg_price": 55000, "target_weight": 12, "asset_class": "kr_etf", "is_etf": True, "bucket": "reserve"},
+    ]
+    return dataframe_from_rows(rows, HOLDINGS_COLUMNS)
+
+
+def get_public_demo_dividends_df():
+    rows = [
+        {"id": 1, "date": "2026-01-15", "ticker": "SCHD", "amount": 42000, "currency": "KRW"},
+        {"id": 2, "date": "2026-02-15", "ticker": "QQQM", "amount": 18000, "currency": "KRW"},
+        {"id": 3, "date": "2026-03-15", "ticker": "SCHD", "amount": 45000, "currency": "KRW"},
+        {"id": 4, "date": "2026-04-15", "ticker": "379810.KS", "amount": 22000, "currency": "KRW"},
+    ]
+    return dataframe_from_rows(rows, DIVIDENDS_COLUMNS)
+
+
+def get_public_demo_monthly_logs_df():
+    rows = [
+        {"month": "2025-11", "total_invested": 25_000_000, "evaluated_value": 25_800_000, "dividend": 25000},
+        {"month": "2025-12", "total_invested": 26_000_000, "evaluated_value": 27_100_000, "dividend": 33000},
+        {"month": "2026-01", "total_invested": 27_000_000, "evaluated_value": 28_000_000, "dividend": 42000},
+        {"month": "2026-02", "total_invested": 28_000_000, "evaluated_value": 29_300_000, "dividend": 18000},
+        {"month": "2026-03", "total_invested": 29_000_000, "evaluated_value": 30_400_000, "dividend": 45000},
+        {"month": "2026-04", "total_invested": 30_000_000, "evaluated_value": 31_200_000, "dividend": 22000},
+    ]
+    return dataframe_from_rows(rows, MONTHLY_LOG_COLUMNS)
+
+
+def get_public_demo_watchlist():
+    holdings = get_public_demo_holdings_df()
+    rows = []
+    for _, row in holdings.iterrows():
+        rows.append({
+            "name": row.get("name", ""),
+            "ticker": row.get("ticker", ""),
+            "is_etf": clean_bool(row.get("is_etf", False)),
+            "asset_class": row.get("asset_class", ""),
+            "fin_score": 0 if clean_bool(row.get("is_etf", False)) else UNCALCULATED_FIN_DEFAULT_SCORE,
+        })
+    return [sanitize_watchlist_item(row) for row in rows]
+
 # -------------------------------------------------
 # 2-1. Supabase persistent storage
 # -------------------------------------------------
@@ -747,7 +852,7 @@ def get_supabase():
         st.stop()
 
 
-supabase = get_supabase()
+supabase = None if IS_PUBLIC_DEMO else get_supabase()
 
 
 def run_supabase(query, action="Supabase operation", stop_on_error=True):
@@ -767,6 +872,9 @@ def run_supabase(query, action="Supabase operation", stop_on_error=True):
 
 
 def init_db():
+    if IS_PUBLIC_DEMO:
+        return
+
     res = run_supabase(
         supabase.table("settings").select("owner_email").eq("owner_email", CURRENT_USER_EMAIL),
         "load default settings row",
@@ -786,6 +894,9 @@ def init_db():
 
 
 def load_settings_db():
+    if IS_PUBLIC_DEMO:
+        return get_public_demo_settings()
+
     res = run_supabase(
         supabase.table("settings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
         "load settings",
@@ -811,6 +922,9 @@ def load_settings_db():
 
 
 def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight=10.0):
+    if IS_PUBLIC_DEMO:
+        return public_demo_write_blocked("기본 설정 저장")
+
     run_supabase(
         supabase.table("settings").upsert({
             "owner_email": CURRENT_USER_EMAIL,
@@ -822,9 +936,13 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
         }, on_conflict="owner_email"),
         "save settings",
     )
+    return True
 
 
 def load_holdings_db():
+    if IS_PUBLIC_DEMO:
+        return get_public_demo_holdings_df()
+
     res = run_supabase(
         supabase.table("holdings").select(",".join(HOLDINGS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
         "load holdings",
@@ -837,6 +955,9 @@ def load_holdings_db():
 
 
 def save_holdings_db(df):
+    if IS_PUBLIC_DEMO:
+        return public_demo_write_blocked("보유 종목 저장")
+
     rows = []
     for _, row in df.iterrows():
         ticker_value = sanitize_ticker_value(row.get("ticker", ""))
@@ -879,6 +1000,9 @@ def save_holdings_db(df):
 
 
 def load_dividends_db():
+    if IS_PUBLIC_DEMO:
+        return get_public_demo_dividends_df()
+
     res = run_supabase(
         supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
         "load dividends",
@@ -888,6 +1012,9 @@ def load_dividends_db():
 
 
 def save_dividends_db(df):
+    if IS_PUBLIC_DEMO:
+        return public_demo_write_blocked("배당 내역 저장")
+
     rows = []
     for _, row in df.iterrows():
         if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
@@ -913,6 +1040,9 @@ def save_dividends_db(df):
 
 
 def load_monthly_logs_db():
+    if IS_PUBLIC_DEMO:
+        return get_public_demo_monthly_logs_df()
+
     res = run_supabase(
         supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
         "load monthly logs",
@@ -922,6 +1052,9 @@ def load_monthly_logs_db():
 
 
 def save_monthly_logs_db(df):
+    if IS_PUBLIC_DEMO:
+        return public_demo_write_blocked("월별 로그 저장")
+
     rows = []
     for _, row in df.iterrows():
         month = str(row.get("month", "")).strip()
@@ -948,6 +1081,9 @@ def save_monthly_logs_db(df):
 
 
 def load_fin_scores_db():
+    if IS_PUBLIC_DEMO:
+        return pd.DataFrame(columns=FIN_SCORE_COLUMNS)
+
     res = run_supabase(
         supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
         "load financial scores",
@@ -956,6 +1092,9 @@ def load_fin_scores_db():
 
 
 def load_watchlist_db():
+    if IS_PUBLIC_DEMO:
+        return []
+
     res = run_supabase(
         supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", CURRENT_USER_EMAIL),
         "load watchlist",
@@ -982,6 +1121,9 @@ def load_watchlist_db():
 
 
 def save_watchlist_db(watchlist):
+    if IS_PUBLIC_DEMO:
+        return False
+
     rows = []
     for idx, item in enumerate(watchlist):
         item = sanitize_watchlist_item(item)
@@ -1018,6 +1160,9 @@ def save_watchlist_db(watchlist):
 
 
 def load_watchlist_persistent():
+    if IS_PUBLIC_DEMO:
+        return get_public_demo_watchlist()
+
     db_items = load_watchlist_db()
     if db_items:
         return db_items
@@ -1028,6 +1173,9 @@ def load_watchlist_persistent():
 
 
 def persist_watchlist():
+    if IS_PUBLIC_DEMO:
+        return False
+
     save_watchlist_db(st.session_state.watchlist)
 
 
@@ -1060,6 +1208,9 @@ create table if not exists swing_radar (
 
 
 def load_swing_radar_db_safe():
+    if IS_PUBLIC_DEMO:
+        return dataframe_from_rows([], SWING_RADAR_COLUMNS), None
+
     try:
         res = supabase.table("swing_radar").select(",".join(SWING_RADAR_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL).execute()
         return dataframe_from_rows(res.data, SWING_RADAR_COLUMNS), None
@@ -1068,6 +1219,9 @@ def load_swing_radar_db_safe():
 
 
 def save_swing_radar_db_safe(df):
+    if IS_PUBLIC_DEMO:
+        return False, "체험모드에서는 스윙 레이더를 저장하지 않습니다."
+
     try:
         rows = []
         for _, row in df.iterrows():
@@ -1124,10 +1278,15 @@ create index if not exists feedback_created_at_idx on feedback(created_at desc);
 
 
 def is_admin_user():
+    if IS_PUBLIC_DEMO:
+        return False
     return normalize_text(CURRENT_USER_EMAIL) in get_secret_emails("ADMIN_EMAILS")
 
 
 def load_feedback_db_safe(limit=200):
+    if IS_PUBLIC_DEMO:
+        return dataframe_from_rows([], FEEDBACK_COLUMNS), None
+
     try:
         query = supabase.table("feedback").select(",".join(FEEDBACK_COLUMNS))
         if not is_admin_user():
@@ -1139,6 +1298,9 @@ def load_feedback_db_safe(limit=200):
 
 
 def save_feedback_db_safe(category, title, body, priority):
+    if IS_PUBLIC_DEMO:
+        return False, "체험모드에서는 피드백을 저장하지 않습니다. 공개 전용 피드백 수집은 별도 폼 연결을 권장합니다."
+
     try:
         payload = {
             "owner_email": CURRENT_USER_EMAIL,
@@ -1274,6 +1436,9 @@ def parse_fin_score_notes_for_restore(value):
 
 
 def restore_from_uploaded_csvs(uploaded_files):
+    if IS_PUBLIC_DEMO:
+        return [], ["체험모드에서는 CSV 복구를 실행하지 않습니다."]
+
     frames, unknown_files, read_errors, _ = collect_recovery_frames(uploaded_files)
     _, issue_df = build_recovery_preflight_report(frames, unknown_files, read_errors)
     if has_recovery_blockers(issue_df):
@@ -1405,6 +1570,9 @@ def to_jsonable(obj):
 
 
 def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, notes, stop_on_error=False):
+    if IS_PUBLIC_DEMO:
+        return False
+
     res = run_supabase(
         supabase.table("fin_scores").upsert({
             "owner_email": CURRENT_USER_EMAIL,
@@ -1440,6 +1608,9 @@ def mark_fin_score_not_applicable_db(ticker, reason="ETF/ETN/레버리지 상품
 
 
 def delete_manual_fin_score_db(ticker):
+    if IS_PUBLIC_DEMO:
+        return False
+
     key = normalize_ticker(ticker)
     fin_scores_df = load_fin_scores_db()
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
@@ -8401,17 +8572,20 @@ def render_kr_etf_update_panel(current_df):
             )
             save_col, clear_col = st.columns([1, 1])
             if save_col.button("검토 데이터 저장", key="kr_etf_lab_save_preview", use_container_width=True):
-                try:
-                    save_kr_etf_lab_dataframe(preview_df)
-                    cache_clear(load_cached_kr_etf_lab_data)
-                    st.session_state.pop("kr_etf_lab_preview_df", None)
-                    st.session_state.pop("kr_etf_lab_preview_messages", None)
-                    st.session_state.pop("kr_etf_lab_preview_changed_df", None)
-                    st.session_state.pop("kr_etf_lab_preview_failed_df", None)
-                    st.success("국내 ETF 데이터 저장 완료")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"저장하지 못했습니다: {exc}")
+                if IS_PUBLIC_DEMO:
+                    st.info("체험모드에서는 ETF 데이터 파일을 저장하지 않습니다.")
+                else:
+                    try:
+                        save_kr_etf_lab_dataframe(preview_df)
+                        cache_clear(load_cached_kr_etf_lab_data)
+                        st.session_state.pop("kr_etf_lab_preview_df", None)
+                        st.session_state.pop("kr_etf_lab_preview_messages", None)
+                        st.session_state.pop("kr_etf_lab_preview_changed_df", None)
+                        st.session_state.pop("kr_etf_lab_preview_failed_df", None)
+                        st.success("국내 ETF 데이터 저장 완료")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"저장하지 못했습니다: {exc}")
             if clear_col.button("검토 취소", key="kr_etf_lab_clear_preview", use_container_width=True):
                 st.session_state.pop("kr_etf_lab_preview_df", None)
                 st.session_state.pop("kr_etf_lab_preview_messages", None)
@@ -8611,6 +8785,9 @@ def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
 
 
 def load_fin_scores_for_quality_check():
+    if IS_PUBLIC_DEMO:
+        return pd.DataFrame(columns=FIN_SCORE_COLUMNS), None
+
     try:
         res = supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL).execute()
         return dataframe_from_rows(res.data, FIN_SCORE_COLUMNS), None
@@ -9242,7 +9419,9 @@ def render_speed_check_tab():
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
 macro_res, final_macro_risk, macro_penalty, move_val = get_macro_analysis()
-st.caption(f"모드: {app_mode} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
+st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
+if IS_PUBLIC_DEMO:
+    st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
 
 if macro_res:
     m_cols = st.columns(len(macro_res))
@@ -9851,9 +10030,9 @@ with tab_asset:
                 st.caption("자동 환율 조회가 실패해 저장 환율로 계산 중입니다. 필요하면 직접 수정 후 저장하세요.")
     
         if st.button("기본 설정 저장"):
-            save_settings_db(new_seed, new_krw, new_usd, new_fx, new_reserve_target)
-            st.success("기본 설정 저장 완료")
-            st.rerun()
+            if save_settings_db(new_seed, new_krw, new_usd, new_fx, new_reserve_target):
+                st.success("기본 설정 저장 완료")
+                st.rerun()
     
         st.markdown("### 2) 보유 종목 관리")
         holdings_editor_df = load_holdings_db()
