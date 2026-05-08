@@ -860,6 +860,15 @@ def get_supabase():
 supabase = None if IS_PUBLIC_DEMO else get_supabase()
 
 
+def get_supabase_for_feedback():
+    if supabase is not None:
+        return supabase, None
+    try:
+        return get_supabase_client(), None
+    except Exception as e:
+        return None, str(e)
+
+
 def run_supabase(query, action="Supabase operation", stop_on_error=True):
     try:
         return query.execute()
@@ -1303,19 +1312,22 @@ def load_feedback_db_safe(limit=200):
 
 
 def save_feedback_db_safe(category, title, body, priority):
-    if IS_PUBLIC_DEMO:
-        return False, "체험모드에서는 피드백을 저장하지 않습니다. 공개 전용 피드백 수집은 별도 폼 연결을 권장합니다."
-
     try:
+        client = supabase
+        if IS_PUBLIC_DEMO:
+            client, config_error = get_supabase_for_feedback()
+            if client is None:
+                return False, f"체험모드 피드백 저장용 Supabase Secrets가 필요합니다: {config_error}"
+
         payload = {
-            "owner_email": CURRENT_USER_EMAIL,
+            "owner_email": PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
             "category": str(category or "개선 제안").strip(),
             "title": str(title or "").strip(),
             "body": str(body or "").strip(),
             "priority": str(priority or "보통").strip(),
             "status": "접수",
         }
-        supabase.table("feedback").insert(payload).execute()
+        client.table("feedback").insert(payload).execute()
         return True, ""
     except Exception as e:
         return False, str(e)
