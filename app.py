@@ -839,6 +839,35 @@ def get_public_demo_watchlist():
         })
     return [sanitize_watchlist_item(row) for row in rows]
 
+
+PUBLIC_DEMO_PRICE_MAP = {
+    "QQQM": 229.0,
+    "SCHD": 79.5,
+    "MSFT": 462.0,
+    "000660.KS": 226000.0,
+    "379810.KS": 28350.0,
+    "357870.KS": 55650.0,
+}
+
+
+def get_public_demo_latest_price_map(tickers):
+    result = {}
+    for ticker in tickers:
+        key = normalize_price_lookup_key(ticker)
+        result[key] = clean_float(PUBLIC_DEMO_PRICE_MAP.get(key), 0.0)
+    return result
+
+
+def get_public_demo_macro_analysis():
+    results = {
+        "10Y 금리": {"val": 4.3, "icon": "➡️", "storm": False},
+        "유가": {"val": 78.0, "icon": "➡️", "storm": False},
+        "환율": {"val": 1400.0, "icon": "➡️", "storm": False},
+        "MOVE": {"val": 102.0, "icon": "➡️", "storm": False},
+        "VIX": {"val": 17.5, "icon": "➡️", "storm": False},
+    }
+    return results, 0.5, 0.0, results["MOVE"]["val"]
+
 # -------------------------------------------------
 # 2-1. Supabase persistent storage
 # -------------------------------------------------
@@ -2941,7 +2970,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         for ticker in holdings_df.get("ticker", pd.Series(dtype=str)).tolist()
         if str(ticker).strip()
     )
-    latest_price_map = load_latest_prices_batch(price_tickers)
+    latest_price_map = get_public_demo_latest_price_map(price_tickers) if IS_PUBLIC_DEMO else load_latest_prices_batch(price_tickers)
 
     rows = []
     for _, row in holdings_df.iterrows():
@@ -2958,8 +2987,10 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
         cur_price = clean_float(latest_price_map.get(normalize_price_lookup_key(ticker)), 0.0)
-        if cur_price <= 0:
+        if cur_price <= 0 and not IS_PUBLIC_DEMO:
             cur_price = load_latest_price(ticker)
+        elif cur_price <= 0:
+            cur_price = avg_price
 
         eval_amt = qty * cur_price
         pnl = qty * (cur_price - avg_price)
@@ -9548,10 +9579,109 @@ def render_speed_check_tab():
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
 
+def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
+    demo_page = st.radio(
+        "체험 화면",
+        ["자산 현황", "전광판", "정밀관측소", "돈흐름", "월배당 ETF", "피드백", "가이드"],
+        horizontal=True,
+        key="public_demo_fast_page",
+    )
+
+    if demo_page == "자산 현황":
+        st.subheader("앱 내부 자산 관리")
+        render_data_basis_caption("자산관리", include_fin=True)
+        render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+        render_asset_quick_quality_summary(settings, holdings_df, dividends_df, monthly_logs_df)
+        render_monthly_record_status(monthly_logs_df, portfolio_summary)
+        return
+
+    if demo_page == "전광판":
+        st.subheader("CCTV 통합 통제실")
+        st.caption("데모에서는 버튼을 눌러야 전광판 기술 계산을 시작합니다.")
+        if st.button("전광판 계산 시작", key="public_demo_dashboard_run", use_container_width=True):
+            st.session_state["public_demo_dashboard_ready"] = True
+        if not st.session_state.get("public_demo_dashboard_ready", False):
+            st.info("첫 접속 속도를 위해 전광판 계산을 멈춰뒀습니다. 누르면 샘플 종목의 기술 신호를 계산합니다.")
+            return
+        summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), "개인모드", tuple(st.session_state.watchlist))
+        if summary_df.empty:
+            st.warning("전광판에 표시할 종목이 없습니다.")
+        else:
+            render_dashboard_group_summary(summary_df, "전체")
+        return
+
+    if demo_page == "정밀관측소":
+        st.subheader("정밀관측소")
+        st.caption("샘플 종목 하나만 골라 가볍게 판정을 확인합니다.")
+        sample_items = [sanitize_watchlist_item(item) for item in st.session_state.get("watchlist", [])]
+        labels = [f"{item['name']} ({item['ticker']})" for item in sample_items]
+        selected_label = st.selectbox("샘플 종목", labels, key="public_demo_precision_sample")
+        item = sample_items[labels.index(selected_label)] if labels else {}
+        if not item:
+            st.info("샘플 종목이 없습니다.")
+            return
+        if st.button("정밀 분석 실행", key="public_demo_precision_run", use_container_width=True):
+            st.session_state["public_demo_precision_ready"] = selected_label
+        if st.session_state.get("public_demo_precision_ready") != selected_label:
+            st.info("첫 화면 속도를 위해 차트 데이터 조회를 멈춰뒀습니다. 버튼을 누르면 이 종목만 분석합니다.")
+            return
+
+        tkr = sanitize_ticker_value(item.get("ticker", ""))
+        name = sanitize_asset_name(item.get("name", ""), tkr)
+        is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
+        asset_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
+        df = load_price_df(tkr, "1y")
+        if df.empty:
+            st.error("샘플 종목 차트 데이터를 불러오지 못했습니다.")
+            return
+        df = build_indicators(df)
+        fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
+        my_price = get_my_price(name, tkr)
+        has_pos_value = has_position(name, tkr)
+        c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드")
+        st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame([
+            {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
+            {"항목": "목표/현재 비중", "값": f"{c['target_w']:.2f}% / {c['current_w']:.2f}%"},
+            {"항목": "RSI/MFI/%B", "값": f"{c['rsi']:.1f} / {c['mfi']:.1f} / {c['pct_b']:.2f}"},
+            {"항목": "후보등급", "값": c["grade"]},
+        ]), use_container_width=True, hide_index=True)
+        render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        return
+
+    if demo_page == "돈흐름":
+        st.subheader("돈흐름 레이더")
+        if st.button("돈흐름 계산 시작", key="public_demo_money_flow_run", use_container_width=True):
+            st.session_state["public_demo_money_flow_ready"] = True
+        if st.session_state.get("public_demo_money_flow_ready", False):
+            render_money_flow_tab()
+        else:
+            st.info("돈흐름은 ETF/섹터 가격을 여러 개 조회해서 무겁습니다. 필요할 때만 계산합니다.")
+        return
+
+    if demo_page == "월배당 ETF":
+        st.subheader("월배당 ETF")
+        if st.button("월배당 ETF 화면 열기", key="public_demo_kr_etf_run", use_container_width=True):
+            st.session_state["public_demo_kr_etf_ready"] = True
+        if st.session_state.get("public_demo_kr_etf_ready", False):
+            render_kr_etf_lab_tab()
+        else:
+            st.info("월배당 ETF 데이터 화면도 표가 커서 버튼을 누를 때만 엽니다.")
+        return
+
+    if demo_page == "피드백":
+        render_feedback_tab()
+        return
+
+    render_user_guide_tab()
+    render_manual_tab()
+
+
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
-macro_res, final_macro_risk, macro_penalty, move_val = get_macro_analysis()
+macro_res, final_macro_risk, macro_penalty, move_val = get_public_demo_macro_analysis() if IS_PUBLIC_DEMO else get_macro_analysis()
 st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
 if IS_PUBLIC_DEMO:
     st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
@@ -9573,7 +9703,7 @@ seed_money = float(settings.get("seed_money", 0.0))
 krw_cash = float(settings.get("krw_cash", 0.0))
 usd_cash = float(settings.get("usd_cash", 0.0))
 saved_usdkrw = float(settings.get("usdkrw", 1400.0))
-auto_usdkrw = load_usdkrw_rate()
+auto_usdkrw = None if IS_PUBLIC_DEMO else load_usdkrw_rate()
 usdkrw = float(auto_usdkrw) if auto_usdkrw and auto_usdkrw > 0 else saved_usdkrw
 usdkrw_source = "자동 환율" if auto_usdkrw and auto_usdkrw > 0 else "저장 환율"
 effective_settings = dict(settings)
@@ -9585,6 +9715,21 @@ render_refresh_control_panel()
 holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
+
+if IS_PUBLIC_DEMO:
+    render_public_demo_fast_shell(
+        effective_settings,
+        holdings_df,
+        holdings_table,
+        dividends_df,
+        monthly_logs_df,
+        portfolio_summary,
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        reserve_target_weight,
+    )
+    st.stop()
 
 tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_backtest, tab_money, tab_kr_etf, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
     "💼 자산 현황",
