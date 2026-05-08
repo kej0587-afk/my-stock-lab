@@ -1,7 +1,7 @@
-"""Public demo entrypoint for Streamlit Community Cloud.
+"""Public demo entrypoint for Streamlit Community Cloud."""
 
-Deploy this file as a separate app and set:
-AUTH_MODE = "public_demo"
-"""
+import os
 
-import app  # noqa: F401
+os.environ.setdefault("AUTH_MODE", "public_demo")
+
+import app  # noqa: F401,E402

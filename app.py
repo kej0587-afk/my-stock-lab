@@ -6,6 +6,7 @@ import zipfile
 import requests
 import json
 import base64
+import os
 import numpy as np
 import streamlit as st
 import yfinance as yf
@@ -116,8 +117,12 @@ KST = timezone(timedelta(hours=9))
 
 def get_secret_value(name, fallback_name=None):
     value = st.secrets.get(name, "")
+    if not value:
+        value = os.environ.get(name, "")
     if (not value) and fallback_name:
         value = st.secrets.get(fallback_name, "")
+    if (not value) and fallback_name:
+        value = os.environ.get(fallback_name, "")
     return str(value).strip()
 
 
