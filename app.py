@@ -4871,7 +4871,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         weight_gap >= 2 and
         0.00 < price_vs_avg <= 0.05 and
         trend_label in ["🚀정배열(상승)", "⏳혼조세"] and
-        rs_label in ["🚀강함", "➖보통"] and
+        rs_label in ["🚀강함"] and
         last["MACD"] > prev["MACD"] and
         mfi_now < 80 and
         rsi_now < 70 and
@@ -4997,6 +4997,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
         elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
         elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
+        elif final_macro_risk >= 4.5:
+            dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
         elif is_core_dca_allowed and current_dd <= -0.3:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col = f"{prefix} 폭락: {core_dca_context['core_dca_label']}", "#b91c1c"
@@ -5015,8 +5017,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.2:
             dec, col = "⚠️고점대비 -20%: 신규진입 보류", "#d97706"
         
-        elif final_macro_risk >= 4.5:
-            dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+        
         elif is_structure_damage_entry_risk and has_pos:
             dec, col = "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706"
         elif is_structure_damage_entry_risk:
@@ -5054,9 +5055,41 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_etf_accumulation_ok:
             dec, col = "✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a"
         elif is_stock_add_on_strength:
-            dec, col = "✅상승확인: 2차 정찰 추매 가능", "#16a34a"    
+            dec, col = "✅상승확인: 2차 정찰 추매 가능", "#16a34a"       
         elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
-            dec, col = "⏳평단이상: 추매 대기(보유)", "#d97706"
+
+            # 최종승인자가 막는 이유를 구체적으로 표시
+            # 케이스 1: 비중이 꽉 참 (가장 명확한 이유)
+            if targ_w > 0 and curr_w >= targ_w * 0.97:
+                if grade.startswith("💎") or grade.startswith("✅"):
+                    # 감독관은 S/A급 판정인데 비중 때문에 막힘
+                    dec, col = "⏸️S급이나 비중 충족: 눌림 오면 재진입", "#8b5cf6"
+                else:
+                    dec, col = "⏸️비중 충족: 보유 유지", "#64748b"
+    
+            # 케이스 2: 비중 여유 있는데 과열
+            elif weight_gap >= 3 and (mfi_now >= 80 or rsi_now >= 72 or pct_b_now >= 0.90):
+                if grade.startswith("💎") or grade.startswith("✅"):
+                    dec, col = "⏳S급 과열 구간: 식힌 뒤 추가", "#d97706"
+            else:
+                dec, col = "⏳과열: 눌림 대기", "#d97706"
+    
+            # 케이스 3: 비중 여유 있고 과열 아님 → 여기서 추가 허용
+            elif weight_gap >= 3 and mfi_now < 75 and rsi_now < 68 and pct_b_now < 0.88:
+                if (grade.startswith("💎") and 
+                    rs_label == "🚀강함" and 
+                    trend_label == "🚀정배열(상승)" and
+                    fin_score >= 4 and
+                    final_macro_risk < 3.5):
+                    dec, col = "✅S급 비중여유: 분할 추가 가능", "#16a34a"
+                elif grade.startswith("✅") and trend_label == "🚀정배열(상승)":
+                    dec, col = "📈A급 비중여유: 소액 추가 검토", "#22c55e"
+                else:
+                    dec, col = "⏳평단이상: 추가 하락 대기", "#64748b"
+    
+            # 케이스 4: 비중 여유 없거나 조건 미달
+            else:
+                dec, col = "⏳평단이상: 보유 유지", "#64748b"
         elif has_pos:
             if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류", "#d97706"
@@ -5087,7 +5120,35 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
             elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
             elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
-            else: dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
+            else:
+                # 상승 추세에서 중립 구간 진입 신호
+                if (
+                    trend_label == "🚀정배열(상승)" and
+                    rs_label == "🚀강함" and
+                    45 <= rsi_now <= 65 and
+                    0.35 <= pct_b_now <= 0.75 and
+                    mfi_now < 75 and
+                    final_macro_risk < 3.5
+                ):
+                    if fin_score >= 4:
+                        dec, col = "🎯우량주 눌림 구간: 정찰 진입 적합", "#8b5cf6"
+                    else:
+                        dec, col = "📈추세 눌림 구간: 소액 탐색 가능", "#3b82f6"
+    
+                elif (
+                    trend_label == "🚀정배열(상승)" and
+                    rs_label == "➖보통" and
+                    rsi_now < 55 and pct_b_now < 0.65
+                ):
+                    dec, col = "🔍정배열 눌림: 신호 확인 후 접근", "#64748b"
+    
+                else:
+                    if grade.startswith("💎") and trend_label == "🚀정배열(상승)":
+                        dec, col = "🔍S급 정배열: 눌림 구간 진입 대기", "#8b5cf6"
+                    elif grade.startswith("✅") and trend_label == "🚀정배열(상승)":
+                        dec, col = "🔍A급 정배열: 타점 탐색 중", "#3b82f6"
+                    else:
+                        dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
     return {
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
@@ -5764,7 +5825,10 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("매크로", "통과", "-" if not finite_num(macro_risk) else f"매크로 리스크 {macro_risk:.1f}. 큰 차단 신호는 아닙니다.")
 
     if not has_pos:
-        add_check("보유상태", "주의", "신규 진입입니다. 첫 진입은 정찰 비중으로 시작하는 편이 안전합니다.")
+        if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함":
+            add_check("보유상태", "통과", "신규 진입. 추세/RS가 양호해 정찰 비중으로 시작 가능합니다.")
+        else:
+            add_check("보유상태", "주의", "신규 진입. 첫 진입은 정찰 비중으로 시작하는 편이 안전합니다.")
     elif finite_num(price_vs_avg) and price_vs_avg < -0.07:
         add_check("보유상태", "주의", f"평단 대비 {price_vs_avg * 100:.1f}%. 추가매수보다 손상 원인 확인이 먼저입니다.")
     elif finite_num(price_vs_avg):
@@ -5822,6 +5886,257 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     if not show_df.empty:
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
     st.dataframe(show_df, use_container_width=True, hide_index=True)
+
+# ─────────────────────────────────────────────────
+# [삽입 위치] render_pre_buy_final_check_panel 함수
+# 정의 바로 아래 (~5825라인 이후)에 이 함수를 추가
+# ─────────────────────────────────────────────────
+
+def detect_fin_trend_direction(fin_meta: dict) -> dict:
+    """재무가 좋아지고 있는지 나빠지고 있는지 방향성을 감지합니다."""
+    notes, metrics, _ = get_fin_meta_parts(fin_meta)
+    derived = metrics.get("derived", {}) if isinstance(metrics, dict) else {}
+
+    rev_growth = clean_float(derived.get("rev_growth"), np.nan)
+    prev_rev_growth = clean_float(derived.get("prev_rev_growth"), np.nan)
+    q_rev_growth = clean_float(derived.get("q_rev_growth"), np.nan)
+    q_op_growth = clean_float(derived.get("q_op_growth"), np.nan)
+    net_growth = clean_float(derived.get("net_growth"), np.nan)
+    ocf_growth = clean_float(derived.get("ocf_growth"), np.nan)
+
+    score = 0
+    signals = []
+
+    # 연간 성장 가속/둔화
+    if finite_num(rev_growth) and finite_num(prev_rev_growth):
+        delta = rev_growth - prev_rev_growth
+        if delta >= 5:
+            signals.append(f"✅ 매출 성장 가속 ({prev_rev_growth:.1f}%→{rev_growth:.1f}%)")
+            score += 2
+        elif delta <= -15 and rev_growth < 5:
+            signals.append(f"🚨 매출 성장 급둔화 ({prev_rev_growth:.1f}%→{rev_growth:.1f}%)")
+            score -= 3
+        elif delta <= -8:
+            signals.append(f"⚠️ 매출 성장 둔화 ({prev_rev_growth:.1f}%→{rev_growth:.1f}%)")
+            score -= 1
+
+    # 분기 최신 모멘텀 (가장 최신 신호)
+    if finite_num(q_rev_growth):
+        if q_rev_growth >= 10:
+            signals.append(f"✅ 최근 분기 매출 강세 (+{q_rev_growth:.1f}%)")
+            score += 2
+        elif q_rev_growth <= -15:
+            signals.append(f"🚨 최근 분기 매출 급감 ({q_rev_growth:.1f}%)")
+            score -= 3
+        elif q_rev_growth <= -5:
+            signals.append(f"⚠️ 최근 분기 매출 위축 ({q_rev_growth:.1f}%)")
+            score -= 1
+
+    if finite_num(q_op_growth):
+        if q_op_growth >= 15:
+            signals.append(f"✅ 최근 분기 영업이익 강세 (+{q_op_growth:.1f}%)")
+            score += 1
+        elif q_op_growth <= -20:
+            signals.append(f"🚨 최근 분기 영업이익 급감 ({q_op_growth:.1f}%)")
+            score -= 2
+
+    # 이익의 질 (순이익 + OCF 동반 방향)
+    if finite_num(net_growth) and finite_num(ocf_growth):
+        if net_growth < 0 and ocf_growth < 0:
+            signals.append("🚨 순이익·OCF 동반 악화: 펀더멘털 훼손")
+            score -= 3
+        elif net_growth > 10 and ocf_growth > 0:
+            signals.append("✅ 순이익·OCF 동반 성장: 이익의 질 양호")
+            score += 2
+
+    # 방향성 레이블 결정
+    if score >= 4:
+        label, color = "📈 강한 개선", "#16a34a"
+    elif score >= 2:
+        label, color = "↗️ 개선 중", "#22c55e"
+    elif score >= 0:
+        label, color = "➡️ 유지", "#64748b"
+    elif score >= -2:
+        label, color = "↘️ 둔화", "#d97706"
+    else:
+        label, color = "📉 훼손 진행", "#dc2626"
+
+    return {
+        "score": score,
+        "label": label,
+        "color": color,
+        "signals": signals,
+        "is_improving": score >= 2,
+        "is_deteriorating": score <= -2,
+        "has_data": len(signals) > 0,
+    }
+
+
+def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
+                              c, my_price, has_pos):
+    """
+    보유 지속 vs 손절 종합 판단 패널.
+    보유 중일 때만 표시. 재무 방향성 + 기술 + 손익 종합.
+    """
+    if not has_pos:
+        return
+
+    cur_p = clean_float(c.get("cur_p"), 0.0)
+    dd = clean_float(c.get("dd"), 0.0)
+    trend = str(c.get("trend", ""))
+    rs_label = str(c.get("rs_label", ""))
+    price_vs_avg = (cur_p / my_price - 1) if my_price > 0 and cur_p > 0 else 0.0
+
+    st.markdown("### 🏛️ 보유 지속 vs 손절 종합 판단")
+    st.caption("재무 방향성(좋아지고 있나 나빠지고 있나) + 기술 구조 + 내 손익을 종합합니다.")
+
+    # ── 점수 계산 ──────────────────────────────
+    total_score = 0
+    hold_reasons = []
+    cut_reasons = []
+    fin_trend = {}
+
+    # 재무 방향성 (개별주만)
+    if not is_etf:
+        fin_trend = detect_fin_trend_direction(fin_meta)
+        total_score += fin_trend["score"]
+        for sig in fin_trend.get("signals", []):
+            if "✅" in sig:
+                hold_reasons.append(sig)
+            else:
+                cut_reasons.append(sig)
+
+        # 재무점수 스냅샷
+        if fin_score >= 4:
+            total_score += 2
+            hold_reasons.append("재무점수 4점: 완성형 우량주")
+        elif fin_score <= 1:
+            total_score -= 4
+            cut_reasons.append("재무점수 1점: 구조적 문제")
+        elif fin_score == 2:
+            total_score -= 1
+            cut_reasons.append("재무점수 2점: 불안정")
+    else:
+        total_score += 1
+        hold_reasons.append("ETF: 개별기업 부도 리스크 없음")
+
+    # 기술 구조
+    if "정배열" in trend:
+        total_score += 2
+        hold_reasons.append("MA 정배열: 중기 추세 유효")
+    elif "역배열" in trend:
+        total_score -= 2
+        cut_reasons.append("MA 역배열: 추세 훼손 상태")
+
+    if rs_label == "🚀강함":
+        total_score += 2
+        hold_reasons.append("RS 강함: 시장/섹터 대비 자금 유입 중")
+    elif rs_label == "🐢약함":
+        total_score -= 2
+        cut_reasons.append("RS 약함: 돈이 다른 종목/섹터로 이동 중")
+
+    # MDD
+    if dd <= -0.30:
+        total_score -= 3
+        cut_reasons.append(f"고점대비 {dd*100:.1f}%: 구조적 손상 수준")
+    elif dd <= -0.20:
+        total_score -= 1
+        cut_reasons.append(f"고점대비 {dd*100:.1f}%: 추세 훼손 주의")
+    elif dd > -0.10:
+        total_score += 1
+        hold_reasons.append("고점 근처 유지: 추세 건전")
+
+    # 내 손익
+    if price_vs_avg <= -0.20:
+        total_score -= 2
+        cut_reasons.append(f"평단 대비 {price_vs_avg*100:.1f}%: 손실 규모 점검")
+    elif price_vs_avg <= -0.10:
+        total_score -= 1
+        cut_reasons.append(f"평단 대비 {price_vs_avg*100:.1f}%: 원인 확인 필요")
+    elif price_vs_avg > 0.20:
+        total_score += 1
+        hold_reasons.append(f"평단 대비 +{price_vs_avg*100:.1f}%: 안전마진 확보")
+
+    # 매크로
+    macro_risk = clean_float(globals().get("final_macro_risk", 0), 0.0)
+    if macro_risk >= 4.5:
+        total_score -= 2
+        cut_reasons.append("퍼펙트스톰: 전체 리스크 상승")
+    elif macro_risk >= 2.5:
+        total_score -= 1
+        cut_reasons.append(f"매크로 리스크 {macro_risk:.1f}: 보수적 접근")
+
+    # ── 하드 손절 조건 ──────────────────────────
+    hard_cut = (
+        (not is_etf and fin_score <= 1) or
+        (price_vs_avg <= -0.25 and dd <= -0.25 and "역배열" in trend)
+    )
+
+    # ── 최종 판정 ──────────────────────────────
+    if hard_cut:
+        decision, color = "❌ 손절 강력 검토", "#7f1d1d"
+        action = "재무 훼손 + 기술 손상 동시 발생. 손실이 더 커지기 전에 포지션 정리를 검토하세요."
+    elif total_score >= 6:
+        decision, color = "💎 장기보유 적합", "#16a34a"
+        action = "재무 방향성·추세·RS 모두 살아있습니다. 목표비중까지 보유 유지, 추가 확대도 검토 가능."
+    elif total_score >= 3:
+        decision, color = "✅ 조건부 보유", "#22c55e"
+        action = "대부분 건전합니다. 다음 실적 발표에서 방향성 재확인 후 추매 여부 결정."
+    elif total_score >= 0:
+        decision, color = "⚠️ 모니터링 강화", "#d97706"
+        action = "긍·부정 혼재. 추매 보류, 다음 트리거(실적/추세 회복)까지 대기."
+    elif total_score >= -3:
+        decision, color = "📉 비중 축소 검토", "#f97316"
+        action = "부정 신호 우세. 일부 익절 또는 비중을 줄이고 현금화 고려."
+    else:
+        decision, color = "🚨 손절 검토", "#dc2626"
+        action = "여러 훼손 신호 동시 발생. 손절선을 명확히 설정하고 지키세요."
+
+    # ── UI 렌더링 ───────────────────────────────
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("종합 판정", decision.split(" ", 1)[-1])
+    h2.metric("종합 점수", f"{total_score:+d}점")
+    h3.metric("평단 대비", f"{price_vs_avg*100:.1f}%" if finite_num(price_vs_avg) else "-")
+    fin_dir_label = fin_trend.get("label", "ETF") if not is_etf else "ETF"
+    h4.metric("재무 방향", fin_dir_label)
+
+    st.markdown(
+        f"<div class='info-panel' style='border-left:6px solid {color};'>"
+        f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+        f"<span class='highlight' style='color:{color};font-size:1.15em;'>"
+        f"{escape_html_value(decision)}</span><br><br>"
+        f"{escape_html_value(action)}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        st.markdown("**✅ 보유 근거**")
+        if hold_reasons:
+            for r in hold_reasons:
+                st.markdown(f"- {r}")
+        else:
+            st.caption("보유 근거 부족")
+    with rc2:
+        st.markdown("**🚨 우려 근거**")
+        if cut_reasons:
+            for r in cut_reasons:
+                st.markdown(f"- {r}")
+        else:
+            st.caption("주요 우려 없음")
+
+    # 재무 방향성 상세 (개별주만)
+    if not is_etf and fin_trend.get("has_data"):
+        with st.expander("재무 방향성 상세"):
+            st.markdown(
+                f"**방향**: {fin_trend['label']} (방향점수 {fin_trend['score']:+d})<br>"
+                f"분기가 가장 최신 신호입니다. 연간은 추세, 분기는 현재 모멘텀으로 봅니다.",
+                unsafe_allow_html=True,
+            )
+            for sig in fin_trend["signals"]:
+                st.markdown(f"- {sig}")
+            st.caption("재무 방향성은 DART/FMP 자동 계산 데이터 기반입니다. 재무점수를 먼저 돌린 뒤 봐야 정확합니다.")
 
 
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
@@ -11160,7 +11475,8 @@ with tab_precision:
         render_valuation_price_panel(name, tkr, is_etf, c, fin_score)
 
         render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p)
-
+        render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
+           
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
         st.markdown("### 📰 최신 현장 뉴스")
