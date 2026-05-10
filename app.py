@@ -108,6 +108,277 @@ from stock_lab_core.portfolio import (
     parse_month_end_date,
     prepare_monthly_performance_df,
 )
+# ==========================================
+# [신규 추가] 유틸리티 및 안전 장치
+# ==========================================
+from dataclasses import dataclass
+from typing import Optional
+import numpy as np
+
+# 1. Supabase 안전 조회 래퍼
+@dataclass
+class DbResult:
+    data: list
+    error: Optional[str] = None
+    
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+def safe_supabase_query(query, action: str = "") -> DbResult:
+    """Supabase 쿼리를 실행하고 결과를 안전하게 반환합니다."""
+    try:
+        res = query.execute()
+        return DbResult(data=res.data or [])
+    except Exception as e:
+        return DbResult(data=[], error=f"{action}: {e}")
+
+# 2. 보유종목 행 파싱 헬퍼 (타입 에러 방지)
+def parse_holding_row(row: dict) -> dict:
+    """보유종목 행에서 타입 안전한 값을 추출합니다."""
+    return {
+        "ticker": sanitize_ticker_value(row.get("ticker", "")),
+        "name": str(row.get("name", "")).strip(),
+        "qty": clean_float(row.get("qty"), 0.0),
+        "avg_price": clean_float(row.get("avg_price"), 0.0),
+        "target_weight": clean_float(row.get("target_weight"), 0.0),
+        "asset_class": str(row.get("asset_class", "")).strip(),
+        "is_etf": clean_bool(row.get("is_etf", False)),
+        "bucket": infer_bucket(row.get("ticker", ""), row.get("bucket", "core")),
+    }
+
+# 3. 매크로 리스크 등급 (상수화)
+class MacroRiskLevel:
+    PERFECT_STORM = 4.5
+    HIGH = 2.5
+    MODERATE = 1.5
+    LOW = 0.0
+
+# ==========================================
+# [신규 추가] 독립 분석 모듈 (신고가, 실적, 사이징)
+# ==========================================
+
+def detect_52w_breakout(df: pd.DataFrame) -> dict:
+    """52주 신고가 돌파 여부와 강도를 분석합니다."""
+    if len(df) < 20:
+        return {"breakout": False, "label": "데이터부족"}
+    
+    # 252거래일(약 1년) 최고가 계산
+    high_52w = df["High"].rolling(252, min_periods=60).max().iloc[-1]
+    cur = float(df["Close"].iloc[-1])
+    prev = float(df["Close"].iloc[-2])
+    
+    # 거래량 분석
+    vol_mean_20 = df["Volume"].rolling(20).mean().iloc[-1]
+    vol_ratio = float(df["Volume"].iloc[-1]) / float(vol_mean_20) if (not pd.isna(vol_mean_20) and vol_mean_20 > 0) else 1.0
+    
+    is_breakout = (prev < high_52w) and (cur >= high_52w) and (vol_ratio >= 1.3)
+    near_high = (cur >= high_52w * 0.97) and not is_breakout
+    
+    if is_breakout:
+        label = f"🚀 52주 신고가 돌파 (거래량 {vol_ratio:.1f}x)"
+    elif near_high:
+        label = f"⚡ 52주 신고가 근접 ({(cur/high_52w - 1)*100:.1f}%)"
+    else:
+        label = f"고점대비 {(cur/high_52w - 1)*100:.1f}%"
+    
+    return {"breakout": is_breakout, "near_high": near_high, "label": label}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_earnings_date(ticker: str) -> dict:
+    """다음 실적 발표일과 이벤트 리스크를 반환합니다."""
+    try:
+        cal = yf.Ticker(ticker).calendar
+        if cal is None or (isinstance(cal, pd.DataFrame) and cal.empty):
+            return {"ok": False, "label": "실적발표일 미확인"}
+        
+        earnings_date = None
+        # yfinance 버전에 따라 calendar 형태가 다를 수 있음
+        if isinstance(cal, dict) and "Earnings Date" in cal:
+            earnings_date = cal["Earnings Date"][0]
+        elif isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.index:
+            earnings_date = cal.loc["Earnings Date"].iloc[0]
+            
+        if not earnings_date or pd.isna(earnings_date):
+            return {"ok": False, "label": "실적발표일 미확인"}
+        
+        # 날짜 비교 (timezone 제거 후 계산)
+        target_dt = pd.to_datetime(earnings_date).tz_localize(None)
+        now_dt = pd.Timestamp.now().tz_localize(None)
+        days_until = (target_dt - now_dt).days
+        
+        if days_until < 0:
+            risk_label = "실적 발표 완료"
+        elif days_until <= 7:
+            risk_label = f"⚠️ 실적 {days_until}일 후 (주의)"
+        else:
+            risk_label = f"📅 실적 {days_until}일 후"
+            
+        return {"ok": True, "label": risk_label, "high_risk": 0 <= days_until <= 7}
+    except Exception:
+        return {"ok": False, "label": "조회 불가"}
+
+def calc_atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Average True Range 계산 (변동성 지표)"""
+    if len(df) < period + 1: return 0.0
+    tr = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift(1)).abs(),
+        (df["Low"] - df["Close"].shift(1)).abs()
+    ], axis=1).max(axis=1)
+    return float(tr.rolling(period).mean().iloc[-1])
+
+def calc_position_size(total_asset: float, target_weight_pct: float, current_weight_pct: float, current_price: float, atr: float) -> dict:
+    """비중 및 ATR 기반 매수/손절 가이드 계산"""
+    weight_gap = max(target_weight_pct - current_weight_pct, 0.0)
+    budget = total_asset * (weight_gap / 100)
+    
+    # 2 ATR 손절선 적용
+    stop_distance = atr * 2.0
+    stop_price = current_price - stop_distance if stop_distance > 0 else 0
+    final_qty = budget / current_price if current_price > 0 else 0
+    
+    return {
+        "budget_amount": budget,
+        "final_qty": final_qty,
+        "stop_price": stop_price,
+        "atr": atr
+    }
+
+# ================================================
+# [신규 추가] 손절 vs 장기보유 종합 판단 엔진
+# ================================================
+from enum import Enum
+from dataclasses import dataclass, field
+
+class HoldDecision(Enum):
+    STRONG_HOLD = "💎 강력 장기보유"
+    CONDITIONAL_HOLD = "✅ 조건부 장기보유"
+    WATCH = "⚠️ 모니터링 강화"
+    REDUCE = "📉 비중 축소 검토"
+    STOP_LOSS = "🚨 손절 검토"
+    EMERGENCY_EXIT = "❌ 긴급 매도"
+
+@dataclass
+class HoldJudgement:
+    decision: HoldDecision
+    score: int
+    fundamental_score: int = 0
+    technical_score: int = 0
+    thesis_score: int = 0
+    risk_score: int = 0
+    reasons_hold: list = field(default_factory=list)
+    reasons_caution: list = field(default_factory=list)
+    reasons_exit: list = field(default_factory=list)
+    action_plan: str = ""
+
+def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -> HoldJudgement:
+    score = 0
+    r_hold, r_caution, r_exit = [], [], []
+
+    cur_p = clean_float(c.get("cur_p"), 0.0)
+    dd = clean_float(c.get("dd"), 0.0)
+    trend = str(c.get("trend", ""))
+    rs_label = str(c.get("rs_label", ""))
+    structure_risk = bool(c.get("structure_risk"))
+    price_vs_avg = (cur_p / my_price - 1) if has_pos and my_price > 0 else np.nan
+
+    # 1. 재무 점수
+    fund_score = 0
+    if is_etf:
+        fund_score = 2
+        r_hold.append("ETF: 개별기업 부도 리스크 없음")
+    else:
+        if fin_score >= 4: fund_score = 4; r_hold.append("재무 4점: 펀더멘털 우수")
+        elif fin_score == 3: fund_score = 1; r_hold.append("재무 3점: 펀더멘털 양호")
+        elif fin_score == 2: fund_score = -2; r_caution.append("재무 2점: 재무 훼손 주의")
+        else: fund_score = -4; r_exit.append("재무 1점: 펀더멘털 위험 수준 (처분 검토)")
+    score += fund_score
+
+    # 2. 기술적 점수
+    tech_score = 0
+    if "정배열" in trend: tech_score += 2; r_hold.append("이동평균선 정배열 유지")
+    elif "역배열" in trend: tech_score -= 2; r_caution.append("이동평균선 역배열 (추세 꺾임)")
+    
+    if "🚀" in rs_label: tech_score += 2; r_hold.append("시장/섹터 대비 강한 상대강도")
+    elif "🐢" in rs_label: tech_score -= 2; r_caution.append("시장/섹터 대비 약한 상대강도")
+        
+    if dd <= -0.30: tech_score -= 3; r_exit.append(f"고점대비 {dd*100:.1f}% 하락 (구조적 손상)")
+    elif dd <= -0.20: tech_score -= 1; r_caution.append(f"고점대비 {dd*100:.1f}% 하락")
+        
+    if structure_risk: tech_score -= 2; r_caution.append("구조 훼손 신호 포착")
+    score += tech_score
+
+    # 3. 리스크/포지션 점수
+    risk_score = 0
+    if has_pos and finite_num(price_vs_avg):
+        if price_vs_avg <= -0.15: risk_score -= 3; r_exit.append(f"내 평단 대비 {price_vs_avg*100:.1f}% 손실")
+        elif price_vs_avg > 0.20: risk_score += 2; r_hold.append("충분한 안전마진 확보")
+    score += risk_score
+
+    # 4. 스윙 레이더
+    thesis_score = 0
+    swing_df, _ = load_swing_radar_db_safe()
+    if swing_df is not None and not swing_df.empty:
+        matched = swing_df[swing_df["ticker"].apply(normalize_ticker) == normalize_ticker(ticker)]
+        if not matched.empty:
+            s_status = str(matched.iloc[0].get("status", "")).strip()
+            if s_status == "위험": thesis_score -= 2; r_exit.append("스윙 레이더: '위험' 지정됨")
+            elif s_status == "종료": thesis_score -= 3; r_exit.append("스윙 레이더: 아이디어 '종료'")
+            elif s_status == "진행": thesis_score += 1; r_hold.append("스윙 레이더: 아이디어 유효")
+    score += thesis_score
+
+    # 5. 최종 판정
+    hard_exit = (not is_etf and fin_score <= 1) or (has_pos and finite_num(price_vs_avg) and price_vs_avg <= -0.25 and dd <= -0.25)
+    
+    if hard_exit: decision = HoldDecision.EMERGENCY_EXIT
+    elif score >= 6: decision = HoldDecision.STRONG_HOLD
+    elif score >= 3: decision = HoldDecision.CONDITIONAL_HOLD
+    elif score >= 0: decision = HoldDecision.WATCH
+    elif score >= -3: decision = HoldDecision.REDUCE
+    else: decision = HoldDecision.STOP_LOSS
+
+    action_plan = "즉시 비중 대폭 축소 또는 매도 검토" if decision in [HoldDecision.EMERGENCY_EXIT, HoldDecision.STOP_LOSS] else ("비중 축소 검토" if decision == HoldDecision.REDUCE else "현재 포지션 유지 가능")
+    if decision == HoldDecision.STRONG_HOLD: action_plan = "장기 보유 유효 (목표 비중까지 분할 매수 가능)"
+
+    return HoldJudgement(decision, score, fund_score, tech_score, thesis_score, risk_score, r_hold, r_caution, r_exit, action_plan)
+
+def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price):
+    st.markdown("### 🏛️ 장기보유 종합 판정 (독립 모듈)")
+    
+    if not has_pos:
+        st.info("보유 포지션이 없습니다. 매수 후 이 패널을 활용해 손절/장기보유를 점검하세요.")
+        return
+        
+    judgement = build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos)
+    
+    color_map = {
+        HoldDecision.STRONG_HOLD: "#16a34a", HoldDecision.CONDITIONAL_HOLD: "#22c55e",
+        HoldDecision.WATCH: "#d97706", HoldDecision.REDUCE: "#f97316",
+        HoldDecision.STOP_LOSS: "#dc2626", HoldDecision.EMERGENCY_EXIT: "#7f1d1d",
+    }
+    color = color_map.get(judgement.decision, "#64748b")
+    
+    st.markdown(
+        f"<div class='info-panel' style='border-left: 6px solid {color};'>"
+        f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+        f"<span class='highlight' style='font-size:1.3em; color:{color};'>"
+        f"{escape_html_value(judgement.decision.value)}</span> (총 {judgement.score}점)<br><br>"
+        f"<b>행동 제안:</b> {escape_html_value(judgement.action_plan)}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("#### ✅ 긍정/유지 요인")
+        for r in judgement.reasons_hold: st.caption(f"- {r}")
+    with col2:
+        st.markdown("#### ⚠️ 주의 요인")
+        for r in judgement.reasons_caution: st.caption(f"- {r}")
+    with col3:
+        st.markdown("#### 🚨 위험/매도 요인")
+        for r in judgement.reasons_exit: st.caption(f"- {r}")
 
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
@@ -5090,6 +5361,46 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         ]
         st.dataframe(pd.DataFrame(checklist_rows), use_container_width=True, hide_index=True)
 
+   # ==========================================
+    # [신규 추가] UI 렌더링: 신규 분석 기능 표출
+    # ==========================================
+    st.markdown("### 🔍 추가 인사이트 (독립 모듈)")
+    
+    # 1. 안전하게 주가 데이터 로드 (캐시되어 있어 매우 빠름)
+    local_df = load_price_df(ticker, "1y")
+
+    # 2. 3단 컬럼으로 정보 표시
+    col_insight1, col_insight2, col_insight3 = st.columns(3)
+    
+    with col_insight1:
+        if not local_df.empty:
+            breakout_data = detect_52w_breakout(local_df)
+            st.info(f"**수급/추세:**\n{breakout_data['label']}")
+        else:
+            st.info("**수급/추세:**\n데이터 없음")
+
+    with col_insight2:
+        earnings_data = fetch_earnings_date(ticker)
+        if earnings_data.get("high_risk"):
+            st.warning(f"**이벤트 리스크:**\n{earnings_data['label']}")
+        else:
+            st.success(f"**이벤트 리스크:**\n{earnings_data['label']}")
+
+    with col_insight3:
+        if not local_df.empty:
+            current_price = float(local_df['Close'].iloc[-1])
+            atr_val = calc_atr(local_df)
+            # 기존 c 딕셔너리에서 값 안전하게 빼오기
+            target_w = clean_float(c.get("target_w"), 0.0)
+            curr_w = clean_float(c.get("current_w"), 0.0)
+            
+            # 총자산은 임시로 1억 세팅 (이후 필요시 portfolio_summary와 연동)
+            size_data = calc_position_size(100000000, target_w, curr_w, current_price, atr_val)
+            st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {size_data['stop_price']:,.0f}")
+        else:
+            st.info("**진입/손절 가이드:**\n데이터 없음")   
+# === 위에서 수정한 '추가 인사이트' UI 코드 밑에 추가 ===
+    render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
 VALUATION_INFO_KEYS = [
     "currentPrice",
