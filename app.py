@@ -11754,6 +11754,20 @@ with tab_asset:
         ]
         st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
 
+        # --- 1. 메인 대시보드 엑셀 다운로드 버튼 추가 ---
+        import io
+        output = io.BytesIO()
+        # xlsxwriter 엔진을 사용하여 한글 깨짐을 원천 봉쇄합니다.
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            dash_df.to_excel(writer, index=False, sheet_name='Main_Dashboard')
+        
+        st.download_button(
+            label="📥 엑셀 다운로드 (한글 깨짐 방지용)",
+            data=output.getvalue(),
+            file_name=f"stock_lab_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     else:
         st.info("등록된 보유 종목이 없습니다.")
 
