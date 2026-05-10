@@ -10,3 +10,4 @@ ta
 gspread
 google-auth
 openpyxl
+xlsxwriter
