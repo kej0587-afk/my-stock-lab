@@ -4604,7 +4604,7 @@ def build_indicators(df):
     df["SQZ_ON"] = (bb.bollinger_hband() < kc.keltner_channel_hband()) & (bb.bollinger_lband() > kc.keltner_channel_lband())
     return df
 
-def get_trend_label(last):
+def get_trend(last):
     ma20 = last.get("MA20")
     ma50 = last.get("MA50")
     ma120 = last.get("MA120")
@@ -4686,7 +4686,7 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     ]
     return any(keyword in text for keyword in keywords)
 
-def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend_label):
+def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend):
     if not is_core_etf or weight_gap <= 0:
         return 0.0, ""
     if is_leveraged_or_inverse_product(name, ticker, asset_class):
@@ -4704,13 +4704,13 @@ def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_ga
         return 0.25, "과열 25% 정기적립"
     if mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90:
         return 0.25, "상단 25% 정기적립"
-    if trend_label == "🌊역배열(하락)":
+    if trend == "🌊역배열(하락)":
         return 0.25, "하락추세 25% 정기적립"
     return 0.5, "중립 50% 분할적립"
 
-def build_core_dca_context(mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount, current_dd, rsi_now, mfi_now, pct_b_now, trend_label):
+def build_core_dca_context(mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount, current_dd, rsi_now, mfi_now, pct_b_now, trend):
     rate, label = classify_core_etf_dca_rate(
-        is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend_label
+        is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend
     )
     cash_available = get_cash_available_for_dca(mode)
     reserve_available = get_reserve_available_for_crash_buy(mode)
@@ -4780,7 +4780,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
     short_history = len(df) < 60 or not finite_num(last["MA50"]) or not finite_num(last["MA120"])
-    trend_label = get_trend_label(last)
+    trend = get_trend(last)
     macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
     rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
@@ -4789,7 +4789,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
     mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
-    trend_s = 2 if trend_label == "🚀정배열(상승)" else 0
+    trend_s = 2 if trend == "🚀정배열(상승)" else 0
     macd_s = 2 if macd_state == "🔥매수신호(골든크로스)" else (1 if macd_state == "📈추세유지(상승중)" else (-2 if macd_state == "📉하락주의(데드크로스)" else 0))
     sqz_s = 1 if (sqz_status == "🚀해제직후" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]) else 0
 
@@ -4803,7 +4803,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_single_day_breakdown = (not is_etf) and day_ret <= -0.06 and vol_ratio >= 1.2
 
     main_score = (
-        (2 if trend_label == "🚀정배열(상승)" else (1 if trend_label == "⏳혼조세" else 0)) +
+        (2 if trend == "🚀정배열(상승)" else (1 if trend == "⏳혼조세" else 0)) +
         (2 if macd_state == "🔥매수신호(골든크로스)" else 0) +
         (2 if rsi_now < 35 else (1 if rsi_now < 45 else 0)) +
         (1 if vol_ratio > 1.2 else 0)
@@ -4826,11 +4826,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         else: grade = "💎S급 (강력 매수)"
 
     levels = get_recent_levels(df)
-    ext_structure = "Bullish" if trend_label == "🚀정배열(상승)" else ("Bearish" if trend_label == "🌊역배열(하락)" else "Neutral")
+    ext_structure = "Bullish" if trend == "🚀정배열(상승)" else ("Bearish" if trend == "🌊역배열(하락)" else "Neutral")
 
     int_structure = (
         "Bullish" if rs_label == "🚀강함" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
-        else ("Bearish" if trend_label == "🌊역배열(하락)" or rs_label == "🐢약함" else "Mixed")
+        else ("Bearish" if trend == "🌊역배열(하락)" or rs_label == "🐢약함" else "Mixed")
     )
 
     int_event, ext_event = detect_structure_event(df, levels)
@@ -4841,10 +4841,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     if rsi_now <= 30: smc_insight = "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰."
     elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성이 높은 단기 과열 구간."
-    elif trend_label == "🆕신규상장/자료부족": smc_insight = "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
+    elif trend == "🆕신규상장/자료부족": smc_insight = "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
     elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축 후 발산 초기. 모멘텀 실리는 타점 구간."
-    elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
-    elif trend_label == "🌊역배열(하락)": smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
+    elif trend == "🚀정배열(상승)" and rs_label == "🚀강함": smc_insight = "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
+    elif trend == "🌊역배열(하락)": smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
     else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 방향성 확정 대기."
 
     eff_total = get_effective_total_asset(app_mode, user_total_asset, total_eval)
@@ -4857,7 +4857,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_core_etf = is_etf and effective_bucket == "core"
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
-        current_dd, rsi_now, mfi_now, pct_b_now, trend_label
+        current_dd, rsi_now, mfi_now, pct_b_now, trend
     )
     core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
     is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
@@ -4870,7 +4870,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         targ_w > 0 and
         weight_gap >= 2 and
         0.00 < price_vs_avg <= 0.05 and
-        trend_label in ["🚀정배열(상승)", "⏳혼조세"] and
+        trend in ["🚀정배열(상승)", "⏳혼조세"] and
         rs_label in ["🚀강함"] and
         last["MACD"] > prev["MACD"] and
         mfi_now < 80 and
@@ -4880,7 +4880,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         final_macro_risk < 4.5
     )
                              
-    is_early_entry = (trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
+    is_early_entry = (trend == "🚀정배열(상승)" and rs_label == "🚀강함" and last["MACD"] > prev["MACD"] and 
                       macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"] and mfi_now < 80 and pct_b_now < 0.85 and 50 <= rsi_now <= 65 and adj_tech_score >= 4.0)
     is_breakout_extreme = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and pct_b_now > 1.02 and rs_label == "🚀강함"
     is_breakout_normal = (not is_etf) and fin_score == 4 and adj_tech_score >= 4.0 and 0.95 <= pct_b_now <= 1.02 and rs_label == "🚀강함"
@@ -4894,7 +4894,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_leader_base = (
         (not is_etf) and
         fin_score == 4 and
-        trend_label == "🚀정배열(상승)" and
+        trend == "🚀정배열(상승)" and
         rs_label == "🚀강함" and
         macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"] and
         adj_tech_score >= 4.0
@@ -4944,7 +4944,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         (not is_etf) and
         adj_tech_score >= 4.5 and
         rs_label == "🚀강함" and
-        trend_label == "🚀정배열(상승)" and
+        trend == "🚀정배열(상승)" and
         day_ret > -0.04 and
         current_dd > -0.15 and
         (ma20_now <= 0 or cur_p >= ma20_now * 0.98) and
@@ -4956,7 +4956,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         has_pos and
         targ_w > 0 and
         weight_gap >= 3 and
-        (trend_label != "🌊역배열(하락)" or weight_gap >= 10) and
+        (trend != "🌊역배열(하락)" or weight_gap >= 10) and
         mfi_now < 85 and
         rsi_now < 75 and
         pct_b_now < 1.03 and
@@ -4984,13 +4984,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
         elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착", "#dc2626"
         elif is_structure_damage_entry_risk: dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
-        elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
+        elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
         elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
         elif is_early_entry: dec, col = "🟢선진입 가능 구간", "#16a34a"
         elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
-        elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
-        elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-        elif trend_label == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
+        elif trend == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
+        elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
+        elif trend == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
         else: dec, col = "🔍관망: 타점 대기", "#64748b"
     else:
         if not is_etf and fin_score <= 1:
@@ -5077,11 +5077,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif weight_gap >= 3 and mfi_now < 75 and rsi_now < 68 and pct_b_now < 0.88:
                 if (grade.startswith("💎") and 
                     rs_label == "🚀강함" and 
-                    trend_label == "🚀정배열(상승)" and
+                    trend == "🚀정배열(상승)" and
                     fin_score >= 4 and
                     final_macro_risk < 3.5):
                     dec, col = "✅S급 비중여유: 분할 추가 가능", "#16a34a"
-                elif grade.startswith("✅") and trend_label == "🚀정배열(상승)":
+                elif grade.startswith("✅") and trend == "🚀정배열(상승)":
                     dec, col = "📈A급 비중여유: 소액 추가 검토", "#22c55e"
                 else:
                     dec, col = "⏳평단이상: 추가 하락 대기", "#64748b"
@@ -5090,19 +5090,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             else:
                 dec, col = "⏳평단이상: 보유 유지", "#64748b"
         elif has_pos:
-            if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
+            if trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류", "#d97706"
             elif rsi_now <= 30: dec, col = "🔥낙폭과대: 줍줍 찬스", "#16a34a"
             elif rs_label == "🚀강함" and mfi_now < 35: dec, col = "💎S급: 과매도(풀매수)", "#16a34a"
             elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등", "#16a34a"
-            elif (trend_label == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and price_vs_avg <= -0.03 and price_vs_avg > -0.15 and curr_w < targ_w): dec, col = "📈정배열: -3% 이상 눌림 분할매수", "#16a34a"
+            elif (trend == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and price_vs_avg <= -0.03 and price_vs_avg > -0.15 and curr_w < targ_w): dec, col = "📈정배열: -3% 이상 눌림 분할매수", "#16a34a"
             elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)", "#d97706"
             elif cur_p <= my_price:
                 if curr_w >= targ_w and targ_w > 0:
                     dec, col = "⏸️평단이하: 비중 충족(추매 보류)", "#d97706"
                 elif price_vs_avg > -0.03:
                     dec, col = "⏳평단근처: 추가 하락 대기", "#64748b"
-                elif price_vs_avg >= -0.07 and trend_label != "🌊역배열(하락)" and mfi_now < 80:
+                elif price_vs_avg >= -0.07 and trend != "🌊역배열(하락)" and mfi_now < 80:
                     dec, col = "✅평단 -3~-7%: 소액 분할매수", "#16a34a"
                 elif price_vs_avg >= -0.15 and fin_score >= 3 and final_macro_risk < 4.5:
                     dec, col = "🎯평단 -7~-15%: 조건부 분할매수", "#8b5cf6"
@@ -5111,18 +5111,18 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             else: dec, col = "⏳보유중(신호대기)", "#64748b"
         else:
             if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기", "#d97706"
-            elif trend_label == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
+            elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
             elif mfi_now >= 80: dec, col = "⚠️단기과열: 진입 보류", "#d97706"
             elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
             elif is_early_entry: dec, col = "🟢선진입 가능: 반전 초입", "#16a34a"
             elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
-            elif trend_label == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
-            elif ret_3m < 0 and trend_label in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-            elif trend_label == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
+            elif trend == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
+            elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
+            elif trend == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
             else:
                 # 상승 추세에서 중립 구간 진입 신호
                 if (
-                    trend_label == "🚀정배열(상승)" and
+                    trend == "🚀정배열(상승)" and
                     rs_label == "🚀강함" and
                     45 <= rsi_now <= 65 and
                     0.35 <= pct_b_now <= 0.75 and
@@ -5135,16 +5135,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         dec, col = "📈추세 눌림 구간: 소액 탐색 가능", "#3b82f6"
     
                 elif (
-                    trend_label == "🚀정배열(상승)" and
+                    trend == "🚀정배열(상승)" and
                     rs_label == "➖보통" and
                     rsi_now < 55 and pct_b_now < 0.65
                 ):
                     dec, col = "🔍정배열 눌림: 신호 확인 후 접근", "#64748b"
     
                 else:
-                    if grade.startswith("💎") and trend_label == "🚀정배열(상승)":
+                    if grade.startswith("💎") and trend == "🚀정배열(상승)":
                         dec, col = "🔍S급 정배열: 눌림 구간 진입 대기", "#8b5cf6"
-                    elif grade.startswith("✅") and trend_label == "🚀정배열(상승)":
+                    elif grade.startswith("✅") and trend == "🚀정배열(상승)":
                         dec, col = "🔍A급 정배열: 타점 탐색 중", "#3b82f6"
                     else:
                         dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
@@ -5157,7 +5157,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
         "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
         "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
-        "trend": trend_label, "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
+        "trend": trend, "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
         "liq_state": liq_state, "int_event": int_event, "ext_event": ext_event, 
         "main_s": main_score, "rs_s": rs_s, "mfi_s": mfi_s, 
         "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s, 
@@ -5824,7 +5824,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("매크로", "통과", "-" if not finite_num(macro_risk) else f"매크로 리스크 {macro_risk:.1f}. 큰 차단 신호는 아닙니다.")
 
     if not has_pos:
-        if trend_label == "🚀정배열(상승)" and rs_label == "🚀강함":
+        if trend == "🚀정배열(상승)" and rs_label == "🚀강함":
             add_check("보유상태", "통과", "신규 진입. 추세/RS가 양호해 정찰 비중으로 시작 가능합니다.")
         else:
             add_check("보유상태", "주의", "신규 진입. 첫 진입은 정찰 비중으로 시작하는 편이 안전합니다.")
@@ -8690,7 +8690,7 @@ def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserv
     st.warning("이 탭은 가정 계산입니다. 실제 시장에서는 종목별 하락률, 환율, 괴리율, 레버리지 일일복리 효과가 다르게 나타날 수 있습니다.")
 
 
-def get_short_trend_label(score):
+def get_short_trend(score):
     if score >= 5:
         return "상승우위", "#22c55e"
     if score >= 2:
@@ -8907,7 +8907,7 @@ def analyze_short_trend_item(item, period="6mo"):
     if is_etf and score <= -1 and np.isfinite(ret20) and ret20 > 0:
         reasons.append("ETF는 추세/비중 중심 확인")
 
-    label, _ = get_short_trend_label(score)
+    label, _ = get_short_trend(score)
     base_row.update({
         "단기전망": label,
         "점수": int(score),
@@ -9034,7 +9034,7 @@ def render_short_trend_tab(holdings_table, watchlist_items):
             )
             st.plotly_chart(fig, use_container_width=True)
 
-            label, color = get_short_trend_label(clean_int(selected_row.get("점수"), 0))
+            label, color = get_short_trend(clean_int(selected_row.get("점수"), 0))
             st.markdown(
                 f"<div class='info-panel' style='border-left:5px solid {color};'><b>{selected_name}</b><br>"
                 f"전망: <span class='highlight'>{label}</span> | 점수: {int(selected_row.get('점수', 0))}<br>"
