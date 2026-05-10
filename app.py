@@ -5057,24 +5057,23 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_stock_add_on_strength:
             dec, col = "✅상승확인: 2차 정찰 추매 가능", "#16a34a"       
         elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
-
             # 최종승인자가 막는 이유를 구체적으로 표시
-            # 케이스 1: 비중이 꽉 참 (가장 명확한 이유)
+            
+            # 케이스 1: 비중이 꽉 참
             if targ_w > 0 and curr_w >= targ_w * 0.97:
                 if grade.startswith("💎") or grade.startswith("✅"):
-                    # 감독관은 S/A급 판정인데 비중 때문에 막힘
                     dec, col = "⏸️S급이나 비중 충족: 눌림 오면 재진입", "#8b5cf6"
                 else:
                     dec, col = "⏸️비중 충족: 보유 유지", "#64748b"
-    
+            
             # 케이스 2: 비중 여유 있는데 과열
             elif weight_gap >= 3 and (mfi_now >= 80 or rsi_now >= 72 or pct_b_now >= 0.90):
                 if grade.startswith("💎") or grade.startswith("✅"):
                     dec, col = "⏳S급 과열 구간: 식힌 뒤 추가", "#d97706"
-            else:
-                dec, col = "⏳과열: 눌림 대기", "#d97706"
-    
-            # 케이스 3: 비중 여유 있고 과열 아님 → 여기서 추가 허용
+                else:
+                    dec, col = "⏳과열: 눌림 대기", "#d97706"
+            
+            # 케이스 3: 비중 여유 있고 과열 아님 → 추가 허용 조건
             elif weight_gap >= 3 and mfi_now < 75 and rsi_now < 68 and pct_b_now < 0.88:
                 if (grade.startswith("💎") and 
                     rs_label == "🚀강함" and 
@@ -5086,8 +5085,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     dec, col = "📈A급 비중여유: 소액 추가 검토", "#22c55e"
                 else:
                     dec, col = "⏳평단이상: 추가 하락 대기", "#64748b"
-    
-            # 케이스 4: 비중 여유 없거나 조건 미달
+            
+            # 케이스 4: 그 외 모든 상황 (비중 여유 없거나 조건 미달 등)
             else:
                 dec, col = "⏳평단이상: 보유 유지", "#64748b"
         elif has_pos:
@@ -12074,7 +12073,7 @@ with tab_asset:
         import io
         output = io.BytesIO()
         # xlsxwriter 엔진을 사용하여 한글 깨짐을 원천 봉쇄합니다.
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
             dash_df.to_excel(writer, index=False, sheet_name='Main_Dashboard')
         
         st.download_button(
