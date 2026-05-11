@@ -113,7 +113,7 @@ from stock_lab_core.portfolio import (
 # ==========================================
 from dataclasses import dataclass
 from typing import Optional
-import numpy as np
+# numpy는 파일 상단에서 이미 import됨 (중복 제거)
 
 # 1. Supabase 안전 조회 래퍼
 @dataclass
@@ -4785,14 +4785,15 @@ def get_effective_bucket(mode, name, ticker):
 def get_cash_available_for_dca(mode):
     if mode != "개인모드":
         return 0.0
-    return clean_float(globals().get("krw_cash"), 0.0) + (
-        clean_float(globals().get("usd_cash"), 0.0) * clean_float(globals().get("usdkrw"), 1400.0)
+    # globals() 대신 session_state 사용 (안전한 참조)
+    return clean_float(st.session_state.get("_app_krw_cash"), 0.0) + (
+        clean_float(st.session_state.get("_app_usd_cash"), 0.0) * clean_float(st.session_state.get("_app_usdkrw", 1400.0), 1400.0)
     )
 
 def get_reserve_available_for_crash_buy(mode):
     if mode != "개인모드":
         return 0.0
-    table = globals().get("holdings_table")
+    table = st.session_state.get("_app_holdings_table")
     if table is None or table.empty or "bucket" not in table.columns or "원화환산" not in table.columns:
         return 0.0
     reserve_rows = table[table["bucket"].apply(lambda v: normalize_bucket(v) == "reserve")]
@@ -5883,7 +5884,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     weight_gap = target_w - curr_w
     core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
     is_core_dca = core_dca_rate > 0 and str(c.get("bucket", "")) == "core"
-    macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
+    macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", np.nan), np.nan)
     price_vs_avg = np.nan
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
         price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
@@ -6185,7 +6186,7 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
         hold_reasons.append(f"평단 대비 +{price_vs_avg*100:.1f}%: 안전마진 확보")
 
     # 매크로
-    macro_risk = clean_float(globals().get("final_macro_risk", 0), 0.0)
+    macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", 0), 0.0)
     if macro_risk >= 4.5:
         total_score -= 2
         cut_reasons.append("퍼펙트스톰: 전체 리스크 상승")
@@ -6266,8 +6267,37 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             st.caption("재무 방향성은 DART/FMP 자동 계산 데이터 기반입니다. 재무점수를 먼저 돌린 뒤 봐야 정확합니다.")
 
 
+def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers: int = 8):
+    """
+    [속도 개선] 여러 티커의 가격 데이터를 ThreadPoolExecutor로 병렬 선제 로딩합니다.
+    load_price_df가 @st.cache_data를 사용하므로 병렬 호출 후 캐시에 저장됩니다.
+    이후 순차 호출 시 캐시 히트로 즉시 반환됩니다.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    if not tickers:
+        return
+    def _fetch(tkr):
+        try:
+            return load_price_df(tkr, period)
+        except Exception:
+            return None
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_fetch, tkr): tkr for tkr in tickers}
+        for future in as_completed(futures):
+            future.result()  # 예외가 있으면 무시하고 계속
+
+
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
+
+    # [속도 개선] 전광판 종목 전체를 병렬로 선제 로딩 (이후 load_price_df는 캐시 히트)
+    all_tickers = [
+        sanitize_ticker_value(item.get("ticker", ""))
+        for item in watchlist_items
+        if sanitize_ticker_value(item.get("ticker", ""))
+    ]
+    prefetch_price_data_parallel(all_tickers, "1y")
+
     rows = []
     for item in watchlist_items:
         tkr = sanitize_ticker_value(item.get("ticker", ""))
@@ -9059,6 +9089,10 @@ def build_short_trend_report(holdings_table, watchlist_items, period="6mo"):
     if universe_df.empty:
         return pd.DataFrame(), charts
 
+    # [속도 개선] 분석 전 전체 티커 병렬 선제 로딩
+    all_tickers = [str(r["ticker"]) for _, r in universe_df.iterrows() if r.get("ticker")]
+    prefetch_price_data_parallel(all_tickers, period)
+
     for _, item in universe_df.iterrows():
         row, df = analyze_short_trend_item(item, period)
         rows.append(row)
@@ -10414,7 +10448,7 @@ def build_data_quality_report(settings, holdings_df, holdings_table, dividends_d
             unique_key = f"{key} ({account_type})" if key else ""
             
             if ticker:
-                ticker_keys.append(key)
+                ticker_keys.append(unique_key)
                 asset_lookup[key] = {
                     "ticker": ticker,
                     "name": name,
@@ -10625,7 +10659,7 @@ def build_asset_quick_quality_report(settings, holdings_df, dividends_df, monthl
             unique_key = f"{key} ({account_type})" if key else ""
 
             if key:
-                ticker_keys.append(key)
+                ticker_keys.append(unique_key)
             else:
                 add_quality_issue(issues, "위험", "보유자산", f"row {idx + 1}", "티커가 비어 있습니다.", "티커를 입력하거나 행을 삭제하세요.")
 
@@ -11141,6 +11175,8 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
 macro_res, final_macro_risk, macro_penalty, move_val = get_public_demo_macro_analysis() if IS_PUBLIC_DEMO else get_macro_analysis()
+# globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
+st.session_state["_app_final_macro_risk"] = final_macro_risk
 st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
 if IS_PUBLIC_DEMO:
     st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
@@ -11172,6 +11208,11 @@ reserve_target_weight = float(settings.get("reserve_target_weight", 10.0))
 render_refresh_control_panel()
 
 holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
+# globals() 의존 제거: 현금/환율/보유자산 테이블을 session_state에 등록
+st.session_state["_app_krw_cash"] = krw_cash
+st.session_state["_app_usd_cash"] = usd_cash
+st.session_state["_app_usdkrw"] = usdkrw
+st.session_state["_app_holdings_table"] = holdings_table
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
 
@@ -11560,7 +11601,28 @@ with tab_precision:
                         f"재원: {escape_html_value(c.get('core_dca_pool_label', '예수금'))} "
                         f"{clean_float(c.get('core_dca_pool'), 0.0):,.0f}원"
                     )
-                st.markdown(f"<div class='info-panel'><b>비중</b><br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>부족 매수액: {c['buy_amt']:,.0f}원{dca_html}</div>", unsafe_allow_html=True)
+                # ── 달러 표시 + 매수 주수 계산 ──────────────────────────
+                _buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+                _cur_p = clean_float(display_cur_p, 0.0)
+                _fx = clean_float(usdkrw, 1400.0)
+                _is_us = not tkr.upper().endswith((".KS", ".KQ"))
+                if _is_us:
+                    _buy_usd = _buy_amt_krw / _fx if _fx > 0 else 0.0
+                    _buy_display = f"${_buy_usd:,.0f} (≈{_buy_amt_krw:,.0f}원)"
+                    _shares = _buy_usd / _cur_p if _cur_p > 0 else 0.0
+                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
+                else:
+                    _buy_display = f"{_buy_amt_krw:,.0f}원"
+                    _shares = _buy_amt_krw / _cur_p if _cur_p > 0 else 0.0
+                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
+                st.markdown(
+                    f"<div class='info-panel'><b>비중</b><br>"
+                    f"목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>"
+                    f"부족 매수액: <b>{_buy_display}</b><br>"
+                    f"현재가({format_currency(_cur_p, tkr)}) 기준 <b>{_shares_txt}</b>"
+                    f"{dca_html}</div>",
+                    unsafe_allow_html=True,
+                )
 
             if app_mode == "범용모드":
                 dca_html = ""
@@ -11570,7 +11632,29 @@ with tab_precision:
                         f"코어 적립안: <b>{escape_html_value(c.get('core_dca_label', ''))}</b><br>"
                         f"참고금액: <b>{clean_float(c.get('core_dca_amt'), 0.0):,.0f}원</b>"
                     )
-                st.markdown(f"<div class='info-panel'><b>입력 기준</b><br>총 자산: {u_asset:,.0f}원<br>평단가: {format_currency(u_price, tkr)}<br>목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br><b>부족 매수액: {c['buy_amt']:,.0f}원</b>{dca_html}</div>", unsafe_allow_html=True)
+                # ── 달러 표시 + 매수 주수 계산 ──────────────────────────
+                _buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+                _cur_p = clean_float(display_cur_p, 0.0)
+                _fx = clean_float(usdkrw, 1400.0)
+                _is_us = not tkr.upper().endswith((".KS", ".KQ"))
+                if _is_us:
+                    _buy_usd = _buy_amt_krw / _fx if _fx > 0 else 0.0
+                    _buy_display = f"${_buy_usd:,.0f} (≈{_buy_amt_krw:,.0f}원)"
+                    _shares = _buy_usd / _cur_p if _cur_p > 0 else 0.0
+                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
+                else:
+                    _buy_display = f"{_buy_amt_krw:,.0f}원"
+                    _shares = _buy_amt_krw / _cur_p if _cur_p > 0 else 0.0
+                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
+                st.markdown(
+                    f"<div class='info-panel'><b>입력 기준</b><br>"
+                    f"총 자산: {u_asset:,.0f}원 | 평단가: {format_currency(u_price, tkr)}<br>"
+                    f"목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>"
+                    f"부족 매수액: <b>{_buy_display}</b><br>"
+                    f"현재가({format_currency(_cur_p, tkr)}) 기준 <b>{_shares_txt}</b>"
+                    f"{dca_html}</div>",
+                    unsafe_allow_html=True,
+                )
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
 
@@ -12214,7 +12298,7 @@ with tab_asset:
         st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
 
         # --- 1. 메인 대시보드 엑셀 다운로드 버튼 추가 ---
-        import io
+        # (io는 파일 상단에서 이미 import됨 - 중복 제거)
         output = io.BytesIO()
         # xlsxwriter 엔진을 사용하여 한글 깨짐을 원천 봉쇄합니다.
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
