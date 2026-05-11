@@ -1746,6 +1746,10 @@ def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None
             add_recovery_issue(issues, "주의", label, "", "유효한 행이 없습니다.", "이 데이터는 복구해도 반영되지 않을 수 있습니다.")
 
         unique_column = info.get("unique_column")
+
+        if kind == "holdings":
+            unique_column = ["ticker", "account_type"]
+            
         if unique_column:
             for value, count in get_duplicate_recovery_values(df, unique_column):
                 add_recovery_issue(issues, "차단", label, value, f"중복 키가 {count}번 들어 있습니다.", "중복 행을 하나로 합친 뒤 복구하세요.")
@@ -11782,7 +11786,7 @@ with tab_asset:
             key="holdings_editor",
             column_config={
                 "owner_email": None,
-                
+
                 "is_etf": st.column_config.CheckboxColumn(
                     "ETF/ETN/레버리지",
                     help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
