@@ -629,14 +629,14 @@ with st.sidebar:
         except:
             pass
 
-        # 2. 빨간 에러 방지용 세션 초기화
+        # 2. [에러 해결 핵심] 세션 값과 목록의 일치 확인
         if "acc_filter" not in st.session_state:
             st.session_state.acc_filter = base_accounts
         else:
-            # 세션에 담긴 값이 현재 목록에 없으면 걸러내서 충돌 방지
+            # 세션에 저장된 값이 현재 목록(base_accounts)에 있는 것만 남김 (이게 없으면 빨간 박스 뜸)
             st.session_state.acc_filter = [x for x in st.session_state.acc_filter if x in base_accounts]
 
-        # 3. 멀티셀렉트 (default를 삭제하고 key만 사용하여 에러 차단)
+        # 3. 멀티셀렉트 실행
         st.multiselect(
             "조회할 계좌 선택",
             options=base_accounts,
@@ -843,23 +843,26 @@ def lookup_yfinance_info(ticker):
         return {}
 
     try:
-        info = yf.Ticker(ticker).get_info()
+        # yfinance를 통해 종목 정보 가져오기
+        info_obj = yf.Ticker(ticker)
+        info = info_obj.info
     except Exception:
         return {}
 
-    if not isinstance(info, dict):
+    if not info or not isinstance(info, dict):
         return {}
 
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
     result = {}
+    
     for key in keys:
         val = info.get(key, "")
-        # 핵심: latin-1으로 깨진 한글을 utf-8로 강제 복구
-        if isinstance(val, str):
+        # [핵심] 한글 깨짐(latin-1) 원천 차단 로직
+        if val and isinstance(val, str):
             try:
-                # 깨진 글자가 있을 때만 변환 시도
+                # 깨진 바이트를 원래의 UTF-8 한글로 변환
                 val = val.encode('latin-1').decode('utf-8')
-            except Exception:
+            except:
                 pass
         result[key] = val
         
@@ -1356,7 +1359,7 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
 
 @st.cache_data(ttl=2, show_spinner=False)
 def load_holdings_db():
-    """보유 종목 DB 로드 (성능 최적화 및 계좌 정보 포함)"""
+    """보유 종목 DB 로드 (중복 호출 방지 및 데이터 정제)"""
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
         
@@ -1365,28 +1368,27 @@ def load_holdings_db():
         if not supabase:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
-        res = run_supabase(
-            supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
-            "load holdings",
-        )
+        # 본인 데이터만 가져오기
+        res = supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL).execute()
         
         if not res or not res.data:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
         df = pd.DataFrame(res.data)
         
-        # 계좌 타입 기본값 설정
+        # 계좌 타입 컬럼 보장
         if "account_type" not in df.columns:
             df["account_type"] = "일반"
             
         if not df.empty:
+            # 티커 및 종목명 정제 (한글 깨짐 방지 포함)
             df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
             df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
             
         return df
         
     except Exception as e:
-        st.error(f"DB 로드 중 오류: {e}")
+        st.error(f"DB 로드 중 오류 발생: {e}")
         return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
 
 def save_holdings_db(df):
