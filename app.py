@@ -630,11 +630,13 @@ with st.sidebar:
     except Exception:
         pass
 
-    # 세션 상태에 초기값이 없으면 기본값으로 전체 선택 설정
+    # 세션 상태에 초기값이 없거나, 유효하지 않은 옛날 값이 남아있으면 정리 (빨간 에러 원천 차단)
     if "acc_filter" not in st.session_state:
         st.session_state.acc_filter = base_accounts
+    else:
+        # 현재 존재하는 계좌(base_accounts)만 필터에 남기기
+        st.session_state.acc_filter = [x for x in st.session_state.acc_filter if x in base_accounts]
 
-    # default 파라미터를 빼고 key만 남겨서 Streamlit 버그 원천 차단
     st.multiselect(
         "조회할 계좌 선택",
         options=base_accounts,
@@ -834,7 +836,6 @@ def lookup_kr_etf_display_name(symbol):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-@st.cache_data(ttl=86400, show_spinner=False)
 def lookup_yfinance_info(ticker):
     """yfinance 종목 정보 조회. 하루 캐싱으로 반복 API 호출 방지."""
     ticker = sanitize_ticker_value(ticker)
@@ -852,7 +853,17 @@ def lookup_yfinance_info(ticker):
     # category: ETF의 테마/유형 분류 (e.g. "Technology", "Equity Precious Metals")
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
     return {key: info.get(key, "") for key in keys}
-
+    for key in keys:
+        val = info.get(key, "")
+        # --- [핵심] 정밀관측소 포함 모든 곳의 한글 깨짐 원천 복구 ---
+        if isinstance(val, str):
+            try:
+                val = val.encode('latin-1').decode('utf-8')
+            except Exception:
+                pass
+        result[key] = val
+        
+    return result
 
 def lookup_yfinance_display_name(ticker):
     info = lookup_yfinance_info(ticker)
@@ -1343,33 +1354,43 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
     )
     return True
 
-
+@st.cache_data(ttl=2, show_spinner=False)
 def load_holdings_db():
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
-
-    # 1. 특정 컬럼만 가져오던 것을 전체(*) 가져오기로 변경
-    res = run_supabase(
-        supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
-        "load holdings",
-    )
-    
-    # 2. 데이터가 없으면 빈 프레임 반환
-    if not res.data:
+        
+    try:
+        supabase = get_supabase_client()
+        if not supabase:
+            return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
+            
+        # 1. 특정 컬럼만 가져오던 것을 전체(*) 가져오기로 변경 (본인 계정 데이터만 가져오기)
+        res = run_supabase(
+            supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
+            "load holdings",
+        )
+        
+        # 2. 데이터가 없으면 빈 프레임 반환
+        if not res or not res.data:
+            return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
+            
+        # 3. 엄격한 필터 대신 유연한 변환 사용
+        df = pd.DataFrame(res.data)
+        
+        # 4. 계좌 열이 DB에 비어있다면 '일반'으로 기본값 채우기
+        if "account_type" not in df.columns:
+            df["account_type"] = "일반"
+            
+        # 5. 티커 및 종목명 정제 로직
+        if not df.empty:
+            df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
+            df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
+            
+        return df
+        
+    except Exception as e:
+        st.error(f"DB 로드 중 오류: {e}")
         return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
-        
-    # 3. 엄격한 필터(dataframe_from_rows) 대신 유연한 변환 사용
-    df = pd.DataFrame(res.data)
-    
-    # 계좌 열이 DB에 비어있다면 '일반'으로 기본값 채우기
-    if "account_type" not in df.columns:
-        df["account_type"] = "일반"
-        
-    if not df.empty:
-        df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
-        df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
-        
-    return df
 
 def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
