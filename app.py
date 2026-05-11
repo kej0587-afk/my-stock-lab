@@ -679,6 +679,7 @@ KNOWN_US_OTHER_ETFS = {
     "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
     "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
     "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
+    "HACK", "CIBR", "BUG",  # 사이버보안 ETF
 }
 KNOWN_KR_ETF_SYMBOLS = {
     "379810", "379800", "458730", "069500", "229200", "396500", "139260",
@@ -820,7 +821,9 @@ def lookup_kr_etf_display_name(symbol):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=86400, show_spinner=False)
 def lookup_yfinance_info(ticker):
+    """yfinance 종목 정보 조회. 하루 캐싱으로 반복 API 호출 방지."""
     ticker = sanitize_ticker_value(ticker)
     if not ticker:
         return {}
@@ -833,7 +836,8 @@ def lookup_yfinance_info(ticker):
     if not isinstance(info, dict):
         return {}
 
-    keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry"]
+    # category: ETF의 테마/유형 분류 (e.g. "Technology", "Equity Precious Metals")
+    keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
     return {key: info.get(key, "") for key in keys}
 
 
@@ -2115,7 +2119,7 @@ US_TECH_OR_GROWTH_TICKERS = {
     "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "TSM",
     "NBIS", "SNDK", "ADBE", "CRM", "ORCL", "NOW", "SNOW", "PLTR",
     "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI",
-    "LITE"
+    "LITE", "PANW", "HACK", "NFLX", "UBER", "ABNB",
 }
 
 def get_dart_api_key():
@@ -4356,6 +4360,8 @@ def get_rs_benchmark(ticker, asset_class):
         "SOXL": US_BROAD_BENCHMARK,
         "SMH": US_BROAD_BENCHMARK,
         "DRAM": US_BROAD_BENCHMARK,
+        "HACK": US_TECH_BENCHMARK,   # 사이버보안 ETF → QQQM 대비 RS
+        "URA": US_BROAD_BENCHMARK,   # 우라늄 테마 → SPY 대비 RS
         "SPY": US_TECH_BENCHMARK,
         "VOO": US_TECH_BENCHMARK,
         "IVV": US_TECH_BENCHMARK,
@@ -4480,7 +4486,15 @@ SECTOR_BENCHMARK_MAP = {
     "LITE": ("XLK", "미국 기술"),
     "CIEN": ("XLK", "미국 기술"),
     "ANET": ("XLK", "미국 기술"),
-    "NBIS": ("QQQM", "미국 성장/AI"),
+    "AAPL": ("XLK", "미국 기술"),
+    "ADBE": ("XLK", "미국 기술"),
+    "CRM": ("XLK", "미국 기술"),
+    "ORCL": ("XLK", "미국 기술"),
+    "NOW": ("XLK", "미국 기술"),
+    "SNOW": ("XLK", "미국 기술"),
+    "PANW": ("XLK", "미국 기술"),          # Palo Alto → 사이버보안/기술
+    "HACK": ("XLK", "미국 기술"),           # Cybersecurity ETF → XLK 기준
+    "NBIS": ("XLK", "미국 기술/AI"),        # QQQM → XLK (시장벤치와 섹터벤치 분리)
     "VRT": ("XLI", "미국 산업재/AI인프라"),
     "TSM": ("SMH", "미국 반도체"),
     "AVGO": ("SMH", "미국 반도체"),
@@ -4492,6 +4506,15 @@ SECTOR_BENCHMARK_MAP = {
     "ASML": ("SMH", "미국 반도체"),
     "ARM": ("SMH", "미국 반도체"),
     "QCOM": ("SMH", "미국 반도체"),
+    "DRAM": ("SMH", "미국 반도체"),         # Roundhill Memory ETF → SMH (키워드 오매핑 방지)
+    "AMZN": ("XLY", "미국 경기소비재"),     # yfinance 의존 제거 → 명시 매핑
+    "TSLA": ("XLY", "미국 경기소비재"),
+    "GOOGL": ("XLC", "미국 커뮤니케이션"),
+    "GOOG": ("XLC", "미국 커뮤니케이션"),
+    "META": ("XLC", "미국 커뮤니케이션"),
+    "NFLX": ("XLC", "미국 커뮤니케이션"),
+    "PLTR": ("XLK", "미국 기술"),
+    "SMCI": ("SMH", "미국 반도체"),
 }
 
 SECTOR_BENCHMARK_SOURCE_ETFS = {
@@ -4541,6 +4564,98 @@ US_YFINANCE_SECTOR_BENCHMARKS = {
     "Real Estate": ("VNQ", "미국 리츠/부동산"),
 }
 
+# yfinance ETF의 category 필드 → 섹터벤치 자동 매핑
+# ETF는 sector 대신 category를 반환함
+ETF_CATEGORY_SECTOR_MAP = {
+    # 기술/성장
+    "Technology": ("XLK", "미국 기술"),
+    "Equity Technology": ("XLK", "미국 기술"),
+    "Technology Growth": ("XLK", "미국 기술"),
+    "Communications": ("XLC", "미국 커뮤니케이션"),
+    "Communication Services": ("XLC", "미국 커뮤니케이션"),
+    # 반도체
+    "Semiconductor": ("SMH", "미국 반도체"),
+    "Semiconductors": ("SMH", "미국 반도체"),
+    # 산업재/인프라
+    "Industrials": ("XLI", "미국 산업재"),
+    "Infrastructure": ("XLI", "미국 산업재"),
+    # 헬스케어
+    "Health": ("XLV", "미국 헬스케어"),
+    "Health Care": ("XLV", "미국 헬스케어"),
+    "Healthcare": ("XLV", "미국 헬스케어"),
+    "Biotechnology": ("XLV", "미국 헬스케어"),
+    # 금융
+    "Financial": ("XLF", "미국 금융"),
+    "Financial Services": ("XLF", "미국 금융"),
+    # 에너지
+    "Energy": ("XLE", "미국 에너지"),
+    "Equity Energy": ("XLE", "미국 에너지"),
+    "Natural Resources": ("XLE", "미국 에너지"),
+    "Equity Precious Metals": ("XLE", "미국 에너지/소재"),
+    # 소비재
+    "Consumer Cyclical": ("XLY", "미국 경기소비재"),
+    "Consumer Defensive": ("XLP", "미국 필수소비재"),
+    # 유틸리티/부동산
+    "Utilities": ("XLU", "미국 유틸리티"),
+    "Real Estate": ("VNQ", "미국 리츠/부동산"),
+}
+
+
+def infer_us_sector_benchmark(ticker, asset_class):
+    """
+    US 종목/ETF의 섹터벤치를 자동 추론.
+    - 주식: yfinance sector/industry → SPDR 섹터 ETF
+    - ETF: yfinance category → 섹터 ETF (SECTOR_BENCHMARK_MAP 미등록 ETF 처리)
+    """
+    if is_kr_listed(ticker):
+        return None
+
+    info = lookup_yfinance_info(ticker)
+    quote_type = str(info.get("quoteType", "") or "").upper()
+    ac = str(asset_class or "").strip().lower()
+
+    # ── ETF 처리 ──────────────────────────────────────
+    if quote_type == "ETF" or ("etf" in ac):
+        category = str(info.get("category", "") or "").strip()
+        # 정확 매칭
+        if category in ETF_CATEGORY_SECTOR_MAP:
+            return ETF_CATEGORY_SECTOR_MAP[category]
+        # 부분 매칭 (예: "Equity Technology" → "Technology" 키로 폴백)
+        cat_lower = category.lower()
+        for key, val in ETF_CATEGORY_SECTOR_MAP.items():
+            if key.lower() in cat_lower or cat_lower in key.lower():
+                return val
+        # category 없으면 ETF 섹터벤치 없음
+        return None
+
+    # ── 주식 처리 ──────────────────────────────────────
+    if ac and "stock" not in ac and ac != "us":
+        return None
+
+    sector = str(info.get("sector", "") or "").strip()
+    if sector in US_YFINANCE_SECTOR_BENCHMARKS:
+        return US_YFINANCE_SECTOR_BENCHMARKS[sector]
+
+    industry = str(info.get("industry", "") or "").lower()
+    if any(w in industry for w in ["semiconductor", "chip", "electronic"]):
+        return ("SMH", "미국 반도체")
+    if any(w in industry for w in ["software", "information technology", "computer hardware", "cybersecurity", "internet"]):
+        return ("XLK", "미국 기술")
+    if any(w in industry for w in ["aerospace", "defense"]):
+        return ("XLI", "미국 산업재")
+    if any(w in industry for w in ["biotechnology", "pharmaceutical", "drug"]):
+        return ("XLV", "미국 헬스케어")
+    if any(w in industry for w in ["bank", "insurance", "asset management", "capital markets"]):
+        return ("XLF", "미국 금융")
+    if any(w in industry for w in ["retail", "e-commerce", "auto", "restaurant"]):
+        return ("XLY", "미국 경기소비재")
+    if any(w in industry for w in ["oil", "gas", "energy"]):
+        return ("XLE", "미국 에너지")
+    if any(w in industry for w in ["entertainment", "media", "streaming", "social", "telecom"]):
+        return ("XLC", "미국 커뮤니케이션")
+
+    return None
+
 
 def normalize_sector_match_text(value):
     text = strip_search_prefix(value).upper()
@@ -4565,7 +4680,7 @@ def get_sector_benchmark_holdings_name_map():
             continue
 
         row = matched.iloc[0]
-        for idx in range(1, 6):
+        for idx in range(1, 11):  # top 5 → top 10으로 확장: 주요 구성 종목 커버리지 향상
             key = normalize_sector_match_text(row.get(f"top_{idx}", ""))
             if key:
                 mapping.setdefault(key, (benchmark_ticker, label))
@@ -4595,31 +4710,6 @@ def infer_sector_benchmark_by_name(name):
     return None
 
 
-def infer_us_sector_benchmark(ticker, asset_class):
-    if is_kr_listed(ticker):
-        return None
-
-    ac = str(asset_class or "").strip().lower()
-    if ac and "stock" not in ac and ac != "us":
-        return None
-
-    info = lookup_yfinance_info(ticker)
-    sector = str(info.get("sector", "") or "").strip()
-    if sector in US_YFINANCE_SECTOR_BENCHMARKS:
-        return US_YFINANCE_SECTOR_BENCHMARKS[sector]
-
-    industry = str(info.get("industry", "") or "")
-    industry_key = industry.lower()
-    if any(word in industry_key for word in ["semiconductor", "chip"]):
-        return ("SMH", "미국 반도체")
-    if any(word in industry_key for word in ["software", "information technology", "computer hardware"]):
-        return ("XLK", "미국 기술")
-    if any(word in industry_key for word in ["aerospace", "defense"]):
-        return ("XLI", "미국 산업재")
-
-    return None
-
-
 UNDERLYING_BENCHMARK_MAP = {
     "QQQ": ("QQQM", "나스닥100"),
     "QQQM": ("QQQM", "나스닥100"),
@@ -4638,6 +4728,19 @@ UNDERLYING_BENCHMARK_MAP = {
     "VTI": ("SPY", "미국 전체시장"),
     "379800": ("SPY", "S&P500"),
     "069500": ("069500.KS", "KOSPI200"),
+    "102110": ("069500.KS", "KOSPI200"),   # TIGER 200
+    "229200": ("069500.KS", "KOSPI200"),   # KODEX 코스닥150
+    # ── 테마/섹터 ETF: 추적지수가 없으므로 기초자산 표시 없음 ──
+    "URA": ("", "-"),       # 우라늄 테마 → 비교 지수 없음
+    "139260": ("", "-"),    # TIGER 200 IT → 섹터ETF, KOSPI200이 기초가 아님
+    "487240": ("", "-"),    # KODEX AI전력핵심설비 → 테마ETF
+    "433500": ("", "-"),    # ACE 원자력테마딥서치 → 테마ETF
+    "396500": ("", "-"),    # KODEX 한국반도체 → 섹터ETF
+    "449450": ("", "-"),    # KODEX K-방산 → 섹터ETF
+    "494670": ("", "-"),    # KODEX 조선 → 섹터ETF
+    "305540": ("", "-"),    # KODEX 2차전지 → 섹터ETF
+    "479850": ("", "-"),    # HANARO K-뷰티 → 테마ETF
+    "434730": ("", "-"),    # HANARO 원자력iSelect → 테마ETF
 }
 
 
@@ -4657,8 +4760,9 @@ def get_underlying_benchmark_info(ticker, asset_class):
         return US_TECH_BENCHMARK, "나스닥100"
     if ac == "us_etf_sp":
         return US_BROAD_BENCHMARK, "S&P500"
-    if ac == "kr_etf":
-        return KR_MARKET_BENCHMARK, "KOSPI200"
+    # kr_etf 폴백: UNDERLYING_BENCHMARK_MAP에 없는 한국 ETF는
+    # 테마/섹터 ETF일 가능성이 높으므로 기초자산 표시 안 함.
+    # 광범위 시장추적 ETF(069500 등)는 위 맵에 명시적으로 등록.
     return "", "-"
 
 
