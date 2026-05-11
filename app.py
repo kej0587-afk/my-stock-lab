@@ -5467,7 +5467,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         ]
         st.dataframe(pd.DataFrame(checklist_rows), use_container_width=True, hide_index=True)
 
-   # ==========================================
+    # ==========================================
     # [신규 추가] UI 렌더링: 신규 분석 기능 표출
     # ==========================================
     st.markdown("### 🔍 추가 인사이트 (독립 모듈)")
@@ -5476,7 +5476,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
     local_df = load_price_df(ticker, "1y")
 
     # 2. 3단 컬럼으로 정보 표시
-    col_insight1, col_insight2, col_insight3 = st.columns(3)
+    col_ins1, col_ins2, col_ins3, col_ins4 = st.columns(4)
     
     with col_insight1:
         if not local_df.empty:
