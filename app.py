@@ -11781,6 +11781,8 @@ with tab_asset:
             use_container_width=True,
             key="holdings_editor",
             column_config={
+                "owner_email": None,
+                
                 "is_etf": st.column_config.CheckboxColumn(
                     "ETF/ETN/레버리지",
                     help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
