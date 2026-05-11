@@ -2002,6 +2002,39 @@ def delete_manual_fin_score_db(ticker):
 
 init_db()
 
+# ==========================================
+# [신규 추가] 2-1. 계좌별 분리 필터 (DB 로드 직후)
+# ==========================================
+# 1. 사이드바 메뉴 구성
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 계좌 필터링")
+
+# 2. 데이터 유효성 검사 (새로 만든 컬럼이 없을 경우 대비)
+if "account_type" not in holdings_table.columns:
+    holdings_table["account_type"] = "일반"
+holdings_table["account_type"] = holdings_table["account_type"].fillna("일반")
+
+# 3. 고유 계좌 목록 추출
+account_list = sorted(holdings_table["account_type"].unique().tolist())
+
+# 4. 사용자 선택 (다중 선택)
+selected_accounts = st.sidebar.multiselect(
+    "조회할 계좌를 선택하세요",
+    options=account_list,
+    default=account_list,
+    key="account_filter_sidebar"
+)
+
+# 5. ★ 데이터 필터링 실행 ★
+# 여기서 holdings_table을 깎아내면, 이후 이 변수를 사용하는 모든 하단 탭이 영향을 받습니다.
+if selected_accounts:
+    holdings_table = holdings_table[holdings_table["account_type"].isin(selected_accounts)]
+else:
+    # 아무것도 선택 안 했을 때 빈 데이터프레임 처리 (에러 방지용)
+    holdings_table = holdings_table.iloc[0:0]
+
+# ==========================================
+
 # -------------------------------------------------
 # 2-2. 자동 재무제표 로드 + 구글시트식 판정 점수화
 # -------------------------------------------------
