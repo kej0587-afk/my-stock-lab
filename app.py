@@ -1749,7 +1749,7 @@ def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None
 
         if kind == "holdings":
             unique_column = ["ticker", "account_type"]
-            
+
         if unique_column:
             for value, count in get_duplicate_recovery_values(df, unique_column):
                 add_recovery_issue(issues, "차단", label, value, f"중복 키가 {count}번 들어 있습니다.", "중복 행을 하나로 합친 뒤 복구하세요.")
@@ -3686,7 +3686,6 @@ def clear_financial_api_cache():
 # 2-3. 보유자산 계산
 # -------------------------------------------------
 def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
-    # --- [안전장치] 빈 화면일 때도 에러 안 나게 기초 공사 ---
     def get_empty_holdings():
         empty_df = pd.DataFrame(columns=[
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
@@ -3703,24 +3702,41 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
 
     # --- 사이드바 필터링 적용 ---
     if "acc_filter" in st.session_state:
-        # 체크를 다 꺼버렸을 때 방어
         if len(st.session_state.acc_filter) == 0:
             return get_empty_holdings()
             
         holdings_df = holdings_df[holdings_df["account_type"].isin(st.session_state.acc_filter)]
-        
-        # 필터링 후 남은 종목이 0개일 때 방어
         if holdings_df.empty:
             return get_empty_holdings()
 
-    # 3. 필터링되어 살아남은 종목들의 티커만 뽑아서 가격을 가져옵니다 (속도 향상!)
-    price_tickers = tuple(
-        str(ticker).strip()
-        for ticker in holdings_df.get("ticker", pd.Series(dtype=str)).tolist()
-        if str(ticker).strip()
-    )
-    latest_price_map = get_public_demo_latest_price_map(price_tickers) if IS_PUBLIC_DEMO else load_latest_prices_batch(price_tickers)
+    # ==========================================
+    # [신규 추가] 동일한 종목(티커) 하나로 합치기
+    # ==========================================
+    # 수량과 매입가를 숫자로 변환
+    holdings_df["qty"] = pd.to_numeric(holdings_df["qty"], errors="coerce").fillna(0.0)
+    holdings_df["avg_price"] = pd.to_numeric(holdings_df["avg_price"], errors="coerce").fillna(0.0)
+    holdings_df["target_weight"] = pd.to_numeric(holdings_df["target_weight"], errors="coerce").fillna(0.0)
+    
+    # 총 매입금액 계산 (가중평균을 위해)
+    holdings_df["invested"] = holdings_df["qty"] * holdings_df["avg_price"]
+    
+    # 티커 기준으로 병합 (수량 합산, 목표비중 합산)
+    grouped = holdings_df.groupby("ticker", as_index=False).agg({
+        "name": "first",
+        "qty": "sum",
+        "invested": "sum",
+        "target_weight": "sum",
+        "asset_class": "first",
+        "is_etf": "first",
+        "bucket": "first"
+    })
+    
+    # 가중 평균 매입가 재계산
+    grouped["avg_price"] = np.where(grouped["qty"] > 0, grouped["invested"] / grouped["qty"], 0.0)
+    holdings_df = grouped
+    # ==========================================
 
+    # --- 가격 가져오기 ---
     price_tickers = tuple(
         str(ticker).strip()
         for ticker in holdings_df.get("ticker", pd.Series(dtype=str)).tolist()
@@ -10394,6 +10410,9 @@ def build_data_quality_report(settings, holdings_df, holdings_table, dividends_d
             ticker = str(row.get("ticker", "")).strip()
             name = str(row.get("name", "")).strip()
             key = normalize_ticker(ticker)
+            account_type = str(row.get("account_type", "일반")).strip()
+            unique_key = f"{key} ({account_type})" if key else ""
+            
             if ticker:
                 ticker_keys.append(key)
                 asset_lookup[key] = {
@@ -10601,6 +10620,10 @@ def build_asset_quick_quality_report(settings, holdings_df, dividends_df, monthl
         for idx, row in holdings_df.fillna("").iterrows():
             ticker = str(row.get("ticker", "")).strip()
             key = normalize_ticker(ticker)
+            account_type = str(row.get("account_type", "일반")).strip()
+
+            unique_key = f"{key} ({account_type})" if key else ""
+
             if key:
                 ticker_keys.append(key)
             else:
