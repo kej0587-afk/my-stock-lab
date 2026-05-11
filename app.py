@@ -617,29 +617,31 @@ with st.sidebar:
         st.button("Log out", on_click=logout_current_user, key="logout_sidebar")
 
 with st.sidebar:
-    st.subheader("📂 계좌 필터링")
-    
-    # 1. 계좌 목록 생성
-    base_accounts = ["일반", "ISA", "연금저축", "IRP"]
-    try:
-        tmp_df = load_holdings_db()
-        if not tmp_df.empty and "account_type" in tmp_df.columns:
-            db_accounts = tmp_df["account_type"].dropna().unique().tolist()
-            base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
-    except:
-        pass
+        st.subheader("📂 계좌 필터링")
+        
+        # 1. 계좌 목록 생성
+        base_accounts = ["일반", "ISA", "연금저축", "IRP"]
+        try:
+            tmp_df = load_holdings_db()
+            if not tmp_df.empty and "account_type" in tmp_df.columns:
+                db_accounts = tmp_df["account_type"].dropna().unique().tolist()
+                base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
+        except:
+            pass
 
-    # 2. 핵심: 세션에 직접 값을 넣지 않고 multiselect의 key만 활용
-    # 만약 이전에 꼬인 값이 있다면 아래 한 줄이 강제로 풀어줍니다.
-    if "acc_filter" in st.session_state and not isinstance(st.session_state.acc_filter, list):
-        del st.session_state["acc_filter"]
+        # 2. 빨간 에러 방지용 세션 초기화
+        if "acc_filter" not in st.session_state:
+            st.session_state.acc_filter = base_accounts
+        else:
+            # 세션에 담긴 값이 현재 목록에 없으면 걸러내서 충돌 방지
+            st.session_state.acc_filter = [x for x in st.session_state.acc_filter if x in base_accounts]
 
-    st.multiselect(
-        "조회할 계좌 선택",
-        options=base_accounts,
-        default=base_accounts, # 여기서 에러가 난다면 이 줄을 지우고 실행해 보세요.
-        key="acc_filter"
-    )
+        # 3. 멀티셀렉트 (default를 삭제하고 key만 사용하여 에러 차단)
+        st.multiselect(
+            "조회할 계좌 선택",
+            options=base_accounts,
+            key="acc_filter"
+        )
     
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
@@ -835,7 +837,7 @@ def lookup_kr_etf_display_name(symbol):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def lookup_yfinance_info(ticker):
-    """yfinance 종목 정보 조회. 하루 캐싱으로 반복 API 호출 방지."""
+    """yfinance 종목 정보 조회 및 한글 깨짐 복구"""
     ticker = sanitize_ticker_value(ticker)
     if not ticker:
         return {}
@@ -848,14 +850,14 @@ def lookup_yfinance_info(ticker):
     if not isinstance(info, dict):
         return {}
 
-    # category: ETF의 테마/유형 분류 (e.g. "Technology", "Equity Precious Metals")
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
-    return {key: info.get(key, "") for key in keys}
+    result = {}
     for key in keys:
         val = info.get(key, "")
-        # --- [핵심] 정밀관측소 포함 모든 곳의 한글 깨짐 원천 복구 ---
+        # 핵심: latin-1으로 깨진 한글을 utf-8로 강제 복구
         if isinstance(val, str):
             try:
+                # 깨진 글자가 있을 때만 변환 시도
                 val = val.encode('latin-1').decode('utf-8')
             except Exception:
                 pass
@@ -1354,6 +1356,7 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
 
 @st.cache_data(ttl=2, show_spinner=False)
 def load_holdings_db():
+    """보유 종목 DB 로드 (성능 최적화 및 계좌 정보 포함)"""
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
         
@@ -1362,24 +1365,20 @@ def load_holdings_db():
         if not supabase:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
-        # 1. 특정 컬럼만 가져오던 것을 전체(*) 가져오기로 변경 (본인 계정 데이터만 가져오기)
         res = run_supabase(
             supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
             "load holdings",
         )
         
-        # 2. 데이터가 없으면 빈 프레임 반환
         if not res or not res.data:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
-        # 3. 엄격한 필터 대신 유연한 변환 사용
         df = pd.DataFrame(res.data)
         
-        # 4. 계좌 열이 DB에 비어있다면 '일반'으로 기본값 채우기
+        # 계좌 타입 기본값 설정
         if "account_type" not in df.columns:
             df["account_type"] = "일반"
             
-        # 5. 티커 및 종목명 정제 로직
         if not df.empty:
             df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
             df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
