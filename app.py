@@ -245,6 +245,52 @@ def calc_position_size(total_asset: float, target_weight_pct: float, current_wei
         "atr": atr
     }
 
+# ==========================================
+# [신규 추가] 고급 차트 분석 (SMC, FVG, 지지/저항)
+# ==========================================
+def detect_smc_features(df: pd.DataFrame) -> dict:
+    """최근 캔들 데이터를 분석하여 FVG(Fair Value Gap) 및 단기 강한 지지선을 찾습니다."""
+    if len(df) < 5:
+        return {"fvg_label": "데이터 부족", "ob_label": "데이터 부족"}
+
+    # 최근 20거래일 데이터로 단기 수급 분석
+    recent_df = df.tail(20).copy()
+    bullish_fvgs = []
+    bearish_fvgs = []
+
+    # 1. FVG(불균형 갭) 탐지: 3개의 캔들 사이의 빈 공간
+    for i in range(2, len(recent_df)):
+        c1_high = float(recent_df['High'].iloc[i-2])
+        c1_low = float(recent_df['Low'].iloc[i-2])
+        c3_high = float(recent_df['High'].iloc[i])
+        c3_low = float(recent_df['Low'].iloc[i])
+
+        # 상승 FVG: 1번 캔들 고가보다 3번 캔들 저가가 높을 때 (매수세가 너무 강해 생긴 빈 공간)
+        if c1_high < c3_low:
+            bullish_fvgs.append((c1_high, c3_low))
+        # 하락 FVG: 1번 캔들 저가보다 3번 캔들 고가가 낮을 때 (매도세가 너무 강해 생긴 빈 공간)
+        if c1_low > c3_high:
+            bearish_fvgs.append((c3_high, c1_low))
+
+    fvg_label = "FVG 갭 없음 (균형 상태)"
+    if bullish_fvgs:
+        latest_bull = bullish_fvgs[-1]
+        fvg_label = f"🔼 지지 갭(FVG): {latest_bull[0]:.2f} ~ {latest_bull[1]:.2f}"
+    elif bearish_fvgs:
+        latest_bear = bearish_fvgs[-1]
+        fvg_label = f"🔽 저항 갭(FVG): {latest_bear[0]:.2f} ~ {latest_bear[1]:.2f}"
+
+    # 2. 단기 강한 지지선 (최근 20일 내 최저점을 만든 캔들의 영역)
+    min_idx = recent_df['Low'].idxmin()
+    ob_low = float(recent_df.loc[min_idx, 'Low'])
+    ob_high = float(recent_df.loc[min_idx, 'High'])
+    ob_label = f"🛡️ 단기 지지선: {ob_low:.2f} ~ {ob_high:.2f}"
+
+    return {
+        "fvg_label": fvg_label,
+        "ob_label": ob_label
+    }
+
 # ================================================
 # [신규 추가] 손절 vs 장기보유 종합 판단 엔진
 # ================================================
@@ -5458,7 +5504,15 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
             size_data = calc_position_size(100000000, target_w, curr_w, current_price, atr_val)
             st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {size_data['stop_price']:,.0f}")
         else:
-            st.info("**진입/손절 가이드:**\n데이터 없음")   
+            st.info("**진입/손절 가이드:**\n데이터 없음")  
+
+    with col_ins4:
+            if not local_df.empty:
+                smc_data = detect_smc_features(local_df)
+                st.info(f"**스마트머니(SMC):**\n{smc_data['fvg_label']}\n{smc_data['ob_label']}")
+            else:
+                st.info("**스마트머니(SMC):**\n데이터 없음")
+                                 
 # === 위에서 수정한 '추가 인사이트' UI 코드 밑에 추가 ===
     render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
