@@ -3973,23 +3973,6 @@ def render_money_flow_tab():
             
     st.divider() # 시각적 구분을 위한 선
 
-    # 4. Plotly 히트맵(Treemap) 시각화
-    import plotly.express as px
-    
-    fig = px.treemap(
-        view_df, # view_df 사용
-        path=[px.Constant("전체 섹터"), "구분", "섹터"], 
-        values="히트맵크기",   
-        color="3개월수익률",    
-        color_continuous_scale='RdYlGn', 
-        color_continuous_midpoint=0,
-        hover_data=["Ticker", "돈흐름점수", "상태"],
-        title=f"머니플로우 섹터 맵 ({selected_group})"
-    )
-    
-    fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
     # 5. 상세 데이터 테이블
     st.markdown("#### 📊 섹터별 상세 지표")
     
