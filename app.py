@@ -5478,21 +5478,21 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
     # 2. 3단 컬럼으로 정보 표시
     col_ins1, col_ins2, col_ins3, col_ins4 = st.columns(4)
     
-    with col_insight1:
+    with col_ins1:
         if not local_df.empty:
             breakout_data = detect_52w_breakout(local_df)
             st.info(f"**수급/추세:**\n{breakout_data['label']}")
         else:
             st.info("**수급/추세:**\n데이터 없음")
 
-    with col_insight2:
+    with col_ins2:
         earnings_data = fetch_earnings_date(ticker)
         if earnings_data.get("high_risk"):
             st.warning(f"**이벤트 리스크:**\n{earnings_data['label']}")
         else:
             st.success(f"**이벤트 리스크:**\n{earnings_data['label']}")
 
-    with col_insight3:
+    with col_ins3:
         if not local_df.empty:
             current_price = float(local_df['Close'].iloc[-1])
             atr_val = calc_atr(local_df)
