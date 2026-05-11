@@ -5507,12 +5507,12 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
             st.info("**진입/손절 가이드:**\n데이터 없음")  
 
     with col_ins4:
-            if not local_df.empty:
-                smc_data = detect_smc_features(local_df)
-                st.info(f"**스마트머니(SMC):**\n{smc_data['fvg_label']}\n{smc_data['ob_label']}")
-            else:
-                st.info("**스마트머니(SMC):**\n데이터 없음")
-                                 
+        if not local_df.empty:
+            smc_data = detect_smc_features(local_df)
+            st.info(f"**스마트머니(SMC):**\n{smc_data['fvg_label']}\n{smc_data['ob_label']}")
+        else:
+            st.info("**스마트머니(SMC):**\n데이터 없음")
+
 # === 위에서 수정한 '추가 인사이트' UI 코드 밑에 추가 ===
     render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
