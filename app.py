@@ -11781,7 +11781,7 @@ with tab_asset:
                     "bucket",
                     options=["core", "swing", "reserve"],
                     help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
-                )
+                ),
                 # bucket SelectboxColumn 아래에 추가
                 "account_type": st.column_config.SelectboxColumn(
                     "계좌 종류",
