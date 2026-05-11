@@ -1361,6 +1361,7 @@ def save_holdings_db(df):
             "asset_class": asset_class,
             "is_etf": is_fin_exempt,
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
+            "account_type": str(row.get("account_type", "일반")).strip() or "일반",
         })
 
     if not rows:
@@ -11749,7 +11750,7 @@ with tab_asset:
     
         st.markdown("### 2) 보유 종목 관리")
         holdings_editor_df = load_holdings_db()
-        if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf"])
+        if holdings_editor_df.empty: holdings_editor_df = pd.DataFrame(columns=["name", "ticker", "qty", "avg_price", "target_weight", "asset_class", "is_etf", "account_type"])
         if "bucket" not in holdings_editor_df.columns:
             holdings_editor_df["bucket"] = "core"
     
@@ -11757,6 +11758,7 @@ with tab_asset:
             lambda r: infer_bucket(r.get("ticker", ""), r.get("bucket", "core")),
             axis=1
         )
+        if "account_type" not in holdings_editor_df.columns: holdings_editor_df["account_type"] = "일반"
     
         st.caption("bucket: core=장기투자, swing=스윙후보, reserve=비상대기/파킹. 원화/달러 예수금은 자동 cash 처리됩니다.")
             
@@ -11780,6 +11782,12 @@ with tab_asset:
                     options=["core", "swing", "reserve"],
                     help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
                 )
+                # bucket SelectboxColumn 아래에 추가
+                "account_type": st.column_config.SelectboxColumn(
+                    "계좌 종류",
+                    options=["일반", "ISA", "연금저축", "IRP"],
+                    help="세금 혜택 계좌를 구분합니다."
+                ),
             }
         )
     
