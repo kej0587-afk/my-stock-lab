@@ -158,15 +158,37 @@ def normalize_recovery_key(value, column):
     return text
 
 
-def get_duplicate_recovery_values(df, column):
-    if df is None or df.empty or column not in df.columns:
+def get_duplicate_recovery_values(df, columns):
+    """
+    지정된 컬럼(단일 문자열 또는 리스트)을 기준으로 중복된 값과 그 개수를 반환합니다.
+    """
+    if df is None or df.empty:
         return []
-
-    values = df[column].fillna("").apply(lambda v: normalize_recovery_key(v, column))
-    values = values[values.astype(str).str.strip().ne("")]
-    counts = values.value_counts()
-    return [(value, int(count)) for value, count in counts[counts > 1].items()]
-
+    
+    # 1. 단어 하나(문자열)가 들어오면 리스트로 감싸서 처리하게 만듭니다.
+    if isinstance(columns, str):
+        columns = [columns]
+        
+    # 2. 우리가 찾는 컬럼들이 엑셀 데이터에 모두 있는지 안전하게 검사합니다.
+    for col in columns:
+        if col not in df.columns:
+            return []
+            
+    # 3. 그룹으로 묶어서 중복(2개 이상)인 것들을 찾아냅니다.
+    sizes = df.groupby(columns, dropna=False).size()
+    dups = sizes[sizes > 1]
+    
+    # 4. 화면에 예쁘게 출력되도록 텍스트를 다듬어서 반환합니다.
+    result = []
+    for idx, count in dups.items():
+        # 컬럼이 여러 개일 경우 (예: MSFT, 일반) 슬래시로 이어붙입니다.
+        if isinstance(idx, tuple):
+            val_str = " / ".join(str(v) for v in idx)
+        else:
+            val_str = str(idx)
+        result.append((val_str, count))
+        
+    return result
 
 def read_recovery_csv_bytes(raw_bytes):
     for encoding in ["utf-8-sig", "utf-8", "cp949"]:
