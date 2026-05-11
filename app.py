@@ -619,7 +619,7 @@ with st.sidebar:
 with st.sidebar:
         st.subheader("📂 계좌 필터링")
         
-        # 1. 계좌 목록 생성
+        # 1. 기본 계좌 목록
         base_accounts = ["일반", "ISA", "연금저축", "IRP"]
         try:
             tmp_df = load_holdings_db()
@@ -629,14 +629,15 @@ with st.sidebar:
         except:
             pass
 
-        # 2. [에러 해결 핵심] 세션 값과 목록의 일치 확인
+        # 2. [필살기] 세션 상태가 현재 리스트와 다르면 강제로 초기화
         if "acc_filter" not in st.session_state:
             st.session_state.acc_filter = base_accounts
         else:
-            # 세션에 저장된 값이 현재 목록(base_accounts)에 있는 것만 남김 (이게 없으면 빨간 박스 뜸)
-            st.session_state.acc_filter = [x for x in st.session_state.acc_filter if x in base_accounts]
+            # 현재 존재하는 계좌 리스트에 있는 것만 남기도록 필터링 (중요)
+            current_selected = [x for x in st.session_state.acc_filter if x in base_accounts]
+            # 만약 아무것도 안 남게 되면 전체 선택으로 복구
+            st.session_state.acc_filter = current_selected if current_selected else base_accounts
 
-        # 3. 멀티셀렉트 실행
         st.multiselect(
             "조회할 계좌 선택",
             options=base_accounts,
@@ -837,35 +838,27 @@ def lookup_kr_etf_display_name(symbol):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def lookup_yfinance_info(ticker):
-    """yfinance 종목 정보 조회 및 한글 깨짐 복구"""
+    """yfinance 정보를 가져오고 한글 깨짐을 즉시 복구"""
     ticker = sanitize_ticker_value(ticker)
-    if not ticker:
-        return {}
+    if not ticker: return {}
 
     try:
-        # yfinance를 통해 종목 정보 가져오기
-        info_obj = yf.Ticker(ticker)
-        info = info_obj.info
-    except Exception:
-        return {}
-
-    if not info or not isinstance(info, dict):
+        info = yf.Ticker(ticker).info
+        if not info or not isinstance(info, dict): return {}
+    except:
         return {}
 
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
     result = {}
-    
     for key in keys:
         val = info.get(key, "")
-        # [핵심] 한글 깨짐(latin-1) 원천 차단 로직
-        if val and isinstance(val, str):
+        if isinstance(val, str) and val:
             try:
-                # 깨진 바이트를 원래의 UTF-8 한글로 변환
+                # yfinance latin-1 버그 복구
                 val = val.encode('latin-1').decode('utf-8')
             except:
                 pass
         result[key] = val
-        
     return result
 
 def lookup_yfinance_display_name(ticker):
@@ -1359,36 +1352,28 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
 
 @st.cache_data(ttl=2, show_spinner=False)
 def load_holdings_db():
-    """보유 종목 DB 로드 (중복 호출 방지 및 데이터 정제)"""
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
         
     try:
         supabase = get_supabase_client()
-        if not supabase:
-            return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
+        if not supabase: return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
-        # 본인 데이터만 가져오기
+        # 939행 근처의 중간 return을 삭제하고 본인 데이터만 가져오도록 통합
         res = supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL).execute()
         
         if not res or not res.data:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
         df = pd.DataFrame(res.data)
-        
-        # 계좌 타입 컬럼 보장
-        if "account_type" not in df.columns:
-            df["account_type"] = "일반"
+        if "account_type" not in df.columns: df["account_type"] = "일반"
             
         if not df.empty:
-            # 티커 및 종목명 정제 (한글 깨짐 방지 포함)
             df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
             df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
-            
         return df
-        
     except Exception as e:
-        st.error(f"DB 로드 중 오류 발생: {e}")
+        st.error(f"DB 로드 중 오류: {e}")
         return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
 
 def save_holdings_db(df):
