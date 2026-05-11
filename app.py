@@ -1319,16 +1319,28 @@ def load_holdings_db():
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
 
+    # 1. 특정 컬럼만 가져오던 것을 전체(*) 가져오기로 변경
     res = run_supabase(
-        supabase.table("holdings").select(",".join(HOLDINGS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
         "load holdings",
     )
-    df = dataframe_from_rows(res.data, HOLDINGS_COLUMNS)
+    
+    # 2. 데이터가 없으면 빈 프레임 반환
+    if not res.data:
+        return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
+        
+    # 3. 엄격한 필터(dataframe_from_rows) 대신 유연한 변환 사용
+    df = pd.DataFrame(res.data)
+    
+    # 계좌 열이 DB에 비어있다면 '일반'으로 기본값 채우기
+    if "account_type" not in df.columns:
+        df["account_type"] = "일반"
+        
     if not df.empty:
         df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
         df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
+        
     return df
-
 
 def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
@@ -3670,31 +3682,32 @@ def clear_financial_api_cache():
 # 2-3. 보유자산 계산
 # -------------------------------------------------
 def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
-    if holdings_df.empty:
-        return pd.DataFrame(columns=[
+    # --- [안전장치] 빈 화면일 때도 에러 안 나게 기초 공사 ---
+    def get_empty_holdings():
+        empty_df = pd.DataFrame(columns=[
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
             "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
         ])
+        return apply_holdings_weight_columns(empty_df, krw_cash, usd_cash, usdkrw)
 
-    # ==========================================
-    # [신규 추가] 2. 계좌 타입 기본값 설정 및 필터링
-    # ==========================================
-    # DB에 account_type 열이 아직 없거나 빈칸이면 '일반'으로 채웁니다.
+    if holdings_df.empty:
+        return get_empty_holdings()
+
     if "account_type" not in holdings_df.columns:
         holdings_df["account_type"] = "일반"
     holdings_df["account_type"] = holdings_df["account_type"].fillna("일반")
 
-    # 스트림릿 사이드바에서 선택한 계좌(key="acc_filter")만 남기고 잘라냅니다.
-    if "acc_filter" in st.session_state and st.session_state.acc_filter:
+    # --- 사이드바 필터링 적용 ---
+    if "acc_filter" in st.session_state:
+        # 체크를 다 꺼버렸을 때 방어
+        if len(st.session_state.acc_filter) == 0:
+            return get_empty_holdings()
+            
         holdings_df = holdings_df[holdings_df["account_type"].isin(st.session_state.acc_filter)]
         
-        # 필터링 결과 내가 가진 종목이 하나도 없게 되면, 에러 방지용 빈 프레임 반환
+        # 필터링 후 남은 종목이 0개일 때 방어
         if holdings_df.empty:
-            return pd.DataFrame(columns=[
-                "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
-                "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
-            ])
-    # ==========================================
+            return get_empty_holdings()
 
     # 3. 필터링되어 살아남은 종목들의 티커만 뽑아서 가격을 가져옵니다 (속도 향상!)
     price_tickers = tuple(
