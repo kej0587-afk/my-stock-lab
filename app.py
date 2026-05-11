@@ -616,6 +616,18 @@ with st.sidebar:
         st.caption(f"Signed in: {CURRENT_USER_EMAIL}")
         st.button("Log out", on_click=logout_current_user, key="logout_sidebar")
 
+with st.sidebar:
+    st.subheader("📂 계좌 필터링")
+    # 가지고 계신 계좌 종류를 여기에 다 적어주세요
+    account_list = ["일반", "ISA", "연금저축", "IRP"] 
+    
+    st.multiselect(
+        "조회할 계좌 선택",
+        options=account_list,
+        default=account_list,  # 처음엔 다 선택된 상태로 켜짐
+        key="acc_filter"       # ★ 중요: 이 키값이 위 함수의 필터링과 통신합니다!
+    )
+    
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
 def normalize_bucket(value):
@@ -2001,39 +2013,6 @@ def delete_manual_fin_score_db(ticker):
 
 
 init_db()
-
-# ==========================================
-# [신규 추가] 2-1. 계좌별 분리 필터 (DB 로드 직후)
-# ==========================================
-# 1. 사이드바 메뉴 구성
-st.sidebar.markdown("---")
-st.sidebar.subheader("📂 계좌 필터링")
-
-# 2. 데이터 유효성 검사 (새로 만든 컬럼이 없을 경우 대비)
-if "account_type" not in holdings_table.columns:
-    holdings_table["account_type"] = "일반"
-holdings_table["account_type"] = holdings_table["account_type"].fillna("일반")
-
-# 3. 고유 계좌 목록 추출
-account_list = sorted(holdings_table["account_type"].unique().tolist())
-
-# 4. 사용자 선택 (다중 선택)
-selected_accounts = st.sidebar.multiselect(
-    "조회할 계좌를 선택하세요",
-    options=account_list,
-    default=account_list,
-    key="account_filter_sidebar"
-)
-
-# 5. ★ 데이터 필터링 실행 ★
-# 여기서 holdings_table을 깎아내면, 이후 이 변수를 사용하는 모든 하단 탭이 영향을 받습니다.
-if selected_accounts:
-    holdings_table = holdings_table[holdings_table["account_type"].isin(selected_accounts)]
-else:
-    # 아무것도 선택 안 했을 때 빈 데이터프레임 처리 (에러 방지용)
-    holdings_table = holdings_table.iloc[0:0]
-
-# ==========================================
 
 # -------------------------------------------------
 # 2-2. 자동 재무제표 로드 + 구글시트식 판정 점수화
@@ -3695,6 +3674,34 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
             "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
         ])
+
+    # ==========================================
+    # [신규 추가] 2. 계좌 타입 기본값 설정 및 필터링
+    # ==========================================
+    # DB에 account_type 열이 아직 없거나 빈칸이면 '일반'으로 채웁니다.
+    if "account_type" not in holdings_df.columns:
+        holdings_df["account_type"] = "일반"
+    holdings_df["account_type"] = holdings_df["account_type"].fillna("일반")
+
+    # 스트림릿 사이드바에서 선택한 계좌(key="acc_filter")만 남기고 잘라냅니다.
+    if "acc_filter" in st.session_state and st.session_state.acc_filter:
+        holdings_df = holdings_df[holdings_df["account_type"].isin(st.session_state.acc_filter)]
+        
+        # 필터링 결과 내가 가진 종목이 하나도 없게 되면, 에러 방지용 빈 프레임 반환
+        if holdings_df.empty:
+            return pd.DataFrame(columns=[
+                "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
+                "수익률", "원화환산", "현재비중", "목표비중", "비중차이", "is_etf", "asset_class", "bucket", "운용대상", "리밸런싱목표비중"
+            ])
+    # ==========================================
+
+    # 3. 필터링되어 살아남은 종목들의 티커만 뽑아서 가격을 가져옵니다 (속도 향상!)
+    price_tickers = tuple(
+        str(ticker).strip()
+        for ticker in holdings_df.get("ticker", pd.Series(dtype=str)).tolist()
+        if str(ticker).strip()
+    )
+    latest_price_map = get_public_demo_latest_price_map(price_tickers) if IS_PUBLIC_DEMO else load_latest_prices_batch(price_tickers)
 
     price_tickers = tuple(
         str(ticker).strip()
