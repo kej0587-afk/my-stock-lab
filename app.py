@@ -618,14 +618,27 @@ with st.sidebar:
 
 with st.sidebar:
     st.subheader("📂 계좌 필터링")
-    # 가지고 계신 계좌 종류를 여기에 다 적어주세요
-    account_list = ["일반", "ISA", "연금저축", "IRP"] 
     
+    # DB에 저장된 실제 계좌 종류를 동적으로 불러오기 (기본값 추가)
+    base_accounts = ["일반", "ISA", "연금저축", "IRP"]
+    try:
+        tmp_df = load_holdings_db()
+        if not tmp_df.empty and "account_type" in tmp_df.columns:
+            db_accounts = tmp_df["account_type"].dropna().unique().tolist()
+            # 기본 계좌와 DB에 있는 계좌 병합 (중복 제거)
+            base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
+    except Exception:
+        pass
+
+    # 세션 상태에 초기값이 없으면 기본값으로 전체 선택 설정
+    if "acc_filter" not in st.session_state:
+        st.session_state.acc_filter = base_accounts
+
+    # default 파라미터를 빼고 key만 남겨서 Streamlit 버그 원천 차단
     st.multiselect(
         "조회할 계좌 선택",
-        options=account_list,
-        default=account_list,  # 처음엔 다 선택된 상태로 켜짐
-        key="acc_filter"       # ★ 중요: 이 키값이 위 함수의 필터링과 통신합니다!
+        options=base_accounts,
+        key="acc_filter"
     )
     
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
@@ -847,9 +860,17 @@ def lookup_yfinance_display_name(ticker):
         return ""
 
     for field in ["shortName", "longName", "displayName", "quoteType"]:
-        name = clean_resolved_display_name(info.get(field, ""), ticker)
-        if name and name.upper() not in {"EQUITY", "ETF", "MUTUALFUND"}:
-            return name
+        raw_name = info.get(field, "")
+        if raw_name:
+            # [수정] yfinance 한글 깨짐(latin-1 오독) 복구 로직 추가
+            try:
+                fixed_name = raw_name.encode('latin-1').decode('utf-8')
+            except Exception:
+                fixed_name = raw_name
+                
+            name = clean_resolved_display_name(fixed_name, ticker)
+            if name and name.upper() not in {"EQUITY", "ETF", "MUTUALFUND"}:
+                return name
     return ""
 
 
@@ -3910,7 +3931,7 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 
 def render_money_flow_tab():
-    st.subheader("돈흐름 레이더")
+    st.subheader("🌊 글로벌 자금 흐름 레이더")
     st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 3개월/6개월 흐름과 가속도를 비교해 돈이 어디로 향하는지 봅니다.")
 
     if not should_run_heavy_analysis(
@@ -3919,6 +3940,7 @@ def render_money_flow_tab():
     ):
         return
 
+    # 1. 가장 먼저 데이터를 불러옵니다.
     with st.spinner("ETF 돈흐름 계산 중..."):
         flow_df = calculate_money_flow_df()
 
@@ -3926,13 +3948,79 @@ def render_money_flow_tab():
         st.warning("돈흐름 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
         return
 
+    # 2. 보기 범위(필터링) 라디오 버튼 구성
     groups = ["전체"] + list(flow_df["구분"].drop_duplicates())
     selected_group = st.radio("보기 범위", groups, horizontal=True, key="money_flow_group")
+    
+    # 선택된 그룹에 따라 보여줄 데이터셋(view_df) 결정
     view_df = flow_df if selected_group == "전체" else flow_df[flow_df["구분"] == selected_group]
 
     if view_df.empty:
         st.info("선택한 범위에 표시할 데이터가 없습니다.")
         return
+
+    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 TOP 3)
+    top_cols = st.columns(3)
+    top_3 = view_df.nlargest(3, "돈흐름점수")
+
+    for i, (idx, row) in enumerate(top_3.iterrows()):
+        with top_cols[i]:
+            st.metric(
+                label=f"TOP {i+1}: {row['섹터']}",
+                value=f"{row['돈흐름점수']:.1f} pts",
+                delta=f"{row['1개월수익률']*100:.1f}% (1M)"
+            )
+            
+    st.divider() # 시각적 구분을 위한 선
+
+    # 4. Plotly 히트맵(Treemap) 시각화
+    import plotly.express as px
+    
+    fig = px.treemap(
+        view_df, # view_df 사용
+        path=[px.Constant("전체 섹터"), "구분", "섹터"], 
+        values="히트맵크기",   
+        color="3개월수익률",    
+        color_continuous_scale='RdYlGn', 
+        color_continuous_midpoint=0,
+        hover_data=["Ticker", "돈흐름점수", "상태"],
+        title=f"머니플로우 섹터 맵 ({selected_group})"
+    )
+    
+    fig.update_layout(margin=dict(t=30, l=10, r=10, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 5. 상세 데이터 테이블
+    st.markdown("#### 📊 섹터별 상세 지표")
+    
+    # 현재가 포맷 결정 (미국주식 알파벳은 소수점 2자리, 한국주식 숫자는 소수점 없음)
+    first_ticker = str(view_df['Ticker'].iloc[0])
+    price_format = "%.2f" if first_ticker.isalpha() else "%.0f"
+
+    st.dataframe(
+        view_df, # view_df 사용
+        column_config={
+            "가격수준": st.column_config.ProgressColumn(
+                "52주 위치",
+                help="0은 52주 최저가, 1은 52주 최고가 (현재 위치 시각화)",
+                format="%.2f",
+                min_value=0.0,
+                max_value=1.0,
+            ),
+            "돈흐름점수": st.column_config.NumberColumn(
+                "스코어", 
+                format="%.1f",
+                help="1개월/3개월/6개월 수익률과 가속도를 합산한 점수"
+            ),
+            "1개월수익률": st.column_config.NumberColumn("1M (%)", format="%.1f%%"),
+            "3개월수익률": st.column_config.NumberColumn("3M (%)", format="%.1f%%"),
+            "6개월수익률": st.column_config.NumberColumn("6M (%)", format="%.1f%%"),
+            "가속도": st.column_config.NumberColumn("가속도", format="%.2f"),
+            "현재가": st.column_config.NumberColumn("현재가", format=price_format)
+        },
+        hide_index=True,
+        use_container_width=True
+    )
 
     top_us = flow_df[flow_df["구분"] == "미국 섹터"].head(1)
     top_kr = flow_df[flow_df["구분"] == "한국 섹터"].head(1)

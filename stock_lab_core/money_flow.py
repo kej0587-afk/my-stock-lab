@@ -31,6 +31,11 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "방산", "ticker": "SHLD", "name": "Global X Defense Tech ETF"},
     {"구분": "미국 섹터", "섹터": "항공방산", "ticker": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"},
     {"구분": "미국 섹터", "섹터": "소프트웨어", "ticker": "IGV", "name": "iShares Expanded Tech-Software Sector ETF"},
+    {"구분": "미국 섹터", "섹터": "사이버보안", "ticker": "CIBR", "name": "First Trust NASDAQ Cybersecurity ETF"},
+    {"구분": "미국 섹터", "섹터": "주택건설", "ticker": "XHB", "name": "SPDR S&P Homebuilders ETF"},
+    {"구분": "미국 섹터", "섹터": "원자재(구리)", "ticker": "COPX", "name": "Global X Copper Miners ETF"},
+
+    # [추가] 한국 섹터 보완
 
     {"구분": "한국 섹터", "섹터": "코스피", "ticker": "069500.KS", "name": "KODEX 200"},
     {"구분": "한국 섹터", "섹터": "코스닥", "ticker": "229200.KS", "name": "KODEX 코스닥150"},
@@ -44,6 +49,8 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "조선", "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
     {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
     {"구분": "한국 섹터", "섹터": "K-뷰티", "ticker": "479850.KS", "name": "HANARO K-뷰티"},
+    {"구분": "한국 섹터", "섹터": "화장품", "ticker": "228790.KS", "name": "TIGER 화장품"}, # K-뷰티와 함께 묶어서 관찰
+    {"구분": "한국 섹터", "섹터": "인터넷/플랫폼", "ticker": "315930.KS", "name": "KODEX Fn웹툰&게임"},
     {"구분": "한국 섹터", "섹터": "에너지", "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
     {"구분": "한국 섹터", "섹터": "금융", "ticker": "139270.KS", "name": "TIGER 200 금융"},
     {"구분": "한국 섹터", "섹터": "바이오", "ticker": "244580.KS", "name": "KODEX 바이오"},
@@ -98,6 +105,9 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
     {"구분": "매크로", "섹터": "한국 금현물", "ticker": "411060.KS", "name": "ACE KRX금현물"},
     {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
+    {"구분": "매크로", "섹터": "비트코인", "ticker": "IBIT", "name": "iShares Bitcoin Trust"}, # 위험자산(Risk-on) 돈흐름 선행지표
+    {"구분": "매크로", "섹터": "미국 달러", "ticker": "UUP", "name": "Invesco DB US Dollar Index Bullish Fund"},
+    {"구분": "매크로", "섹터": "미국 단기채", "ticker": "SHV", "name": "iShares Short Treasury Bond ETF"}, # 현금 대기성 자금 흐름 파악용
 ]
 
 def normalize_money_flow_ticker(ticker):
@@ -191,8 +201,9 @@ def calculate_money_flow_df():
         accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
         price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
         flow_score = (
-            (ret_3m if finite_num(ret_3m) else 0) * 45 +
-            (ret_6m if finite_num(ret_6m) else 0) * 35 +
+            (ret_1m if finite_num(ret_1m) else 0) * 15 +
+            (ret_3m if finite_num(ret_3m) else 0) * 35 +
+            (ret_6m if finite_num(ret_6m) else 0) * 30 +
             (accel if finite_num(accel) else 0) * 20
         )
 
