@@ -619,30 +619,25 @@ with st.sidebar:
 with st.sidebar:
     st.subheader("📂 계좌 필터링")
     
-    # 1. 기본 계좌 + DB에 있는 계좌 불러오기
+    # 1. 계좌 목록 생성
     base_accounts = ["일반", "ISA", "연금저축", "IRP"]
     try:
         tmp_df = load_holdings_db()
         if not tmp_df.empty and "account_type" in tmp_df.columns:
             db_accounts = tmp_df["account_type"].dropna().unique().tolist()
-            # 기본 계좌와 DB에 있는 계좌 병합 (중복 제거)
             base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
-    except Exception:
+    except:
         pass
 
-    # 2. 세션 상태 강제 초기화 및 검증 (빨간 에러 원천 차단)
-    if "acc_filter" not in st.session_state:
-        # 처음 접속 시 전체 계좌 선택 상태로 세팅
-        st.session_state.acc_filter = base_accounts
-    else:
-        # 예전 브라우저 캐시에 남아있는 이상한 값이 있으면 걸러냄
-        valid_filters = [x for x in st.session_state.acc_filter if x in base_accounts]
-        st.session_state.acc_filter = valid_filters
+    # 2. 핵심: 세션에 직접 값을 넣지 않고 multiselect의 key만 활용
+    # 만약 이전에 꼬인 값이 있다면 아래 한 줄이 강제로 풀어줍니다.
+    if "acc_filter" in st.session_state and not isinstance(st.session_state.acc_filter, list):
+        del st.session_state["acc_filter"]
 
-    # 3. 멀티셀렉트 생성 (default 파라미터 없음 -> key만으로 상태 관리)
     st.multiselect(
         "조회할 계좌 선택",
         options=base_accounts,
+        default=base_accounts, # 여기서 에러가 난다면 이 줄을 지우고 실행해 보세요.
         key="acc_filter"
     )
     
