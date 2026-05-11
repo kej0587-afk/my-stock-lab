@@ -619,7 +619,7 @@ with st.sidebar:
 with st.sidebar:
         st.subheader("📂 계좌 필터링")
         
-        # 1. 기본 계좌 목록
+        # 1. DB에서 계좌 목록 불러오기
         base_accounts = ["일반", "ISA", "연금저축", "IRP"]
         try:
             tmp_df = load_holdings_db()
@@ -629,20 +629,21 @@ with st.sidebar:
         except:
             pass
 
-        # 2. [필살기] 세션 상태가 현재 리스트와 다르면 강제로 초기화
-        if "acc_filter" not in st.session_state:
-            st.session_state.acc_filter = base_accounts
-        else:
-            # 현재 존재하는 계좌 리스트에 있는 것만 남기도록 필터링 (중요)
-            current_selected = [x for x in st.session_state.acc_filter if x in base_accounts]
-            # 만약 아무것도 안 남게 되면 전체 선택으로 복구
-            st.session_state.acc_filter = current_selected if current_selected else base_accounts
+        # 2. 스트림릿 고질적 버그(StreamlitAPIException) 완벽 우회
+        # key를 직접 multiselect에 주지 않고 변수로 받아서 세션에 수동 저장합니다.
+        prev_selected = st.session_state.get("my_safe_acc_filter", base_accounts)
+        valid_selected = [x for x in prev_selected if x in base_accounts]
+        if not valid_selected: valid_selected = base_accounts
 
-        st.multiselect(
+        chosen_accounts = st.multiselect(
             "조회할 계좌 선택",
             options=base_accounts,
-            key="acc_filter"
+            default=valid_selected
         )
+        
+        # 수동으로 세션에 값 주입 (시스템 전체가 이 값을 바라보게 됨)
+        st.session_state["my_safe_acc_filter"] = chosen_accounts
+        st.session_state["acc_filter"] = chosen_accounts
     
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
@@ -891,16 +892,24 @@ def resolve_display_name_for_ticker(ticker, fallback=""):
     if not ticker_clean:
         return str(fallback or "").strip()
 
+    # 야후에서 깨지는 대표 종목들 하드코딩 추가 방어
+    KNOWN_TICKER_DISPLAY_NAMES["012330"] = "현대모비스"
+    KNOWN_TICKER_DISPLAY_NAMES["307950"] = "현대오토에버"
+
     known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
     if known_name:
         return known_name
 
-    if ticker_clean.endswith((".KS", ".KQ")) or (symbol.isdigit() and len(symbol) == 6):
+    # [핵심] 한국 주식이면 네이버/KRX 이름만 쓰고 야후 파이낸스는 절대 조회하지 않음!
+    is_kr = ticker_clean.endswith((".KS", ".KQ")) or (symbol.isdigit() and len(symbol) == 6)
+    if is_kr:
         for resolver in [lookup_kr_etf_display_name, lookup_naver_stock_name]:
             name = resolver(symbol)
             if name:
                 return name
+        return strip_search_prefix(fallback).strip() or ticker_clean
 
+    # 미국 주식 등 해외 주식만 야후 파이낸스 이름 조회
     name = lookup_yfinance_display_name(ticker_clean)
     if name:
         return name
