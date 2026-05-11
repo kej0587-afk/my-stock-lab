@@ -858,16 +858,20 @@ def lookup_yfinance_display_name(ticker):
     info = lookup_yfinance_info(ticker)
     if not info:
         return ""
+    
+    def fix_latin(text):
+        if not text or not isinstance(text, str): return text
+        try:
+            # latin-1으로 잘못 읽힌 것을 utf-8으로 재해석
+            return text.encode('latin-1').decode('utf-8')
+        except:
+            return text
 
-    for field in ["shortName", "longName", "displayName", "quoteType"]:
+    for field in ["shortName", "longName", "displayName"]:
         raw_name = info.get(field, "")
         if raw_name:
-            # [수정] yfinance 한글 깨짐(latin-1 오독) 복구 로직 추가
-            try:
-                fixed_name = raw_name.encode('latin-1').decode('utf-8')
-            except Exception:
-                fixed_name = raw_name
-                
+            # 여기서 복구 로직 실행
+            fixed_name = fix_latin(raw_name)
             name = clean_resolved_display_name(fixed_name, ticker)
             if name and name.upper() not in {"EQUITY", "ETF", "MUTUALFUND"}:
                 return name
