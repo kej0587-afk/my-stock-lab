@@ -619,7 +619,7 @@ with st.sidebar:
 with st.sidebar:
     st.subheader("📂 계좌 필터링")
     
-    # DB에 저장된 실제 계좌 종류를 동적으로 불러오기 (기본값 추가)
+    # 1. 기본 계좌 + DB에 있는 계좌 불러오기
     base_accounts = ["일반", "ISA", "연금저축", "IRP"]
     try:
         tmp_df = load_holdings_db()
@@ -630,13 +630,16 @@ with st.sidebar:
     except Exception:
         pass
 
-    # 세션 상태에 초기값이 없거나, 유효하지 않은 옛날 값이 남아있으면 정리 (빨간 에러 원천 차단)
+    # 2. 세션 상태 강제 초기화 및 검증 (빨간 에러 원천 차단)
     if "acc_filter" not in st.session_state:
+        # 처음 접속 시 전체 계좌 선택 상태로 세팅
         st.session_state.acc_filter = base_accounts
     else:
-        # 현재 존재하는 계좌(base_accounts)만 필터에 남기기
-        st.session_state.acc_filter = [x for x in st.session_state.acc_filter if x in base_accounts]
+        # 예전 브라우저 캐시에 남아있는 이상한 값이 있으면 걸러냄
+        valid_filters = [x for x in st.session_state.acc_filter if x in base_accounts]
+        st.session_state.acc_filter = valid_filters
 
+    # 3. 멀티셀렉트 생성 (default 파라미터 없음 -> key만으로 상태 관리)
     st.multiselect(
         "조회할 계좌 선택",
         options=base_accounts,
