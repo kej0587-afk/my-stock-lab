@@ -12,6 +12,12 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+try:
+    import requests as _requests
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
+
 from stock_lab_core.formatters import (
     clean_float,
     clean_int,
@@ -277,15 +283,157 @@ def get_yfinance_company_names(ticker):
     return names[:3]
 
 
+def _parse_kr_num(s):
+    """Parse Korean-formatted number string → float (e.g. '12,345.67' → 12345.67)."""
+    if s is None:
+        return None
+    try:
+        return float(str(s).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+_NAVER_MOBILE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://m.stock.naver.com/",
+}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_naver_kr_snapshot(ticker: str) -> dict:
+    """
+    네이버 증권 모바일 API에서 한국 종목 밸류/애널리스트 데이터를 가져옵니다.
+    yfinance 키 규약과 동일한 data 딕셔너리를 반환합니다:
+      trailingPE, priceToBook, returnOnEquity, profitMargins, operatingMargins,
+      revenueGrowth, targetMeanPrice, numberOfAnalystOpinions, recommendationKey
+    실패하거나 데이터가 없으면 ok=False 반환 (기존 동작 유지).
+    """
+    if not _HAS_REQUESTS:
+        return {"ok": False, "reason": "requests 라이브러리 없음", "data": {}}
+    if not str(ticker).upper().endswith((".KS", ".KQ")):
+        return {"ok": False, "reason": "한국 종목 아님", "data": {}}
+
+    code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
+    result = {}
+
+    # ── 1. Basic info: PER, PBR, EPS ──────────────────────────────────────────
+    try:
+        r = _requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/basic",
+            headers=_NAVER_MOBILE_HEADERS, timeout=6,
+        )
+        if r.status_code == 200:
+            d = r.json()
+            per = _parse_kr_num(d.get("per"))
+            pbr = _parse_kr_num(d.get("pbr"))
+            if per and per > 0:
+                result["trailingPE"] = per
+            if pbr and pbr > 0:
+                result["priceToBook"] = pbr
+    except Exception:
+        pass
+
+    # ── 2. Financial summary: ROE, margins, revenue growth ───────────────────
+    try:
+        r = _requests.get(
+            f"https://m.stock.naver.com/api/stock/{code}/summaryFinancial",
+            headers=_NAVER_MOBILE_HEADERS, timeout=6,
+        )
+        if r.status_code == 200:
+            d = r.json()
+            roe = _parse_kr_num(d.get("roe") or d.get("returnOnEquity") or d.get("ROE"))
+            op_margin = _parse_kr_num(
+                d.get("operatingProfitMargin") or d.get("operatingMarginRatio") or d.get("opm")
+            )
+            net_margin = _parse_kr_num(
+                d.get("netProfitMargin") or d.get("profitMargin") or d.get("npm")
+            )
+            rev_growth = _parse_kr_num(
+                d.get("revenueGrowth") or d.get("salesGrowthRate") or d.get("revGrowth")
+            )
+            if roe:
+                result["returnOnEquity"] = roe / 100.0
+            if op_margin:
+                result["operatingMargins"] = op_margin / 100.0
+            if net_margin:
+                result["profitMargins"] = net_margin / 100.0
+            if rev_growth:
+                result["revenueGrowth"] = rev_growth / 100.0
+    except Exception:
+        pass
+
+    # ── 3. Analyst consensus: target price, opinion ───────────────────────────
+    # Naver wraps FnGuide/WiseReport data. Try a few known endpoint paths.
+    for analytics_path in ("analytics", "consensus", "opinion"):
+        try:
+            r = _requests.get(
+                f"https://m.stock.naver.com/api/stock/{code}/{analytics_path}",
+                headers=_NAVER_MOBILE_HEADERS, timeout=6,
+            )
+            if r.status_code != 200:
+                continue
+            d = r.json()
+            # Consensus may be nested or flat; try common key patterns
+            consensus = d if isinstance(d, dict) else {}
+            for sub_key in ("consensus", "analystConsensus", "targetInfo"):
+                if isinstance(d.get(sub_key), dict):
+                    consensus = d[sub_key]
+                    break
+
+            target = _parse_kr_num(
+                consensus.get("targetPrice")
+                or consensus.get("meanTargetPrice")
+                or consensus.get("avgTargetPrice")
+                or consensus.get("targetPriceMean")
+                or consensus.get("conensusPrice")
+            )
+            opinions_raw = (
+                consensus.get("analystCount")
+                or consensus.get("count")
+                or consensus.get("numberOfAnalysts")
+                or consensus.get("opinionCount")
+            )
+            rec_raw = (
+                consensus.get("opinion")
+                or consensus.get("recommendation")
+                or consensus.get("opinionStr")
+                or consensus.get("consensusOpinion")
+            )
+            if target and target > 0:
+                result["targetMeanPrice"] = target
+            if opinions_raw is not None:
+                try:
+                    result["numberOfAnalystOpinions"] = int(str(opinions_raw).replace(",", ""))
+                except Exception:
+                    pass
+            if rec_raw:
+                result["recommendationKey"] = str(rec_raw)
+            if target:  # got what we need; stop trying other paths
+                break
+        except Exception:
+            pass
+
+    has_any = bool(result)
+    return {
+        "ok": has_any,
+        "data": result,
+        "reason": "" if has_any else "네이버 증권 데이터 없음",
+    }
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_analyst_snapshot(ticker):
     try:
         info = yf.Ticker(ticker).get_info()
     except Exception as e:
-        return {"ok": False, "reason": str(e)}
+        info = {}
 
-    if not isinstance(info, dict) or not info:
-        return {"ok": False, "reason": "분석 데이터 없음"}
+    if not isinstance(info, dict):
+        info = {}
 
     keys = [
         "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
@@ -294,6 +442,17 @@ def get_analyst_snapshot(ticker):
     ]
     data = {key: info.get(key) for key in keys}
     has_any = any(data.get(key) not in [None, ""] for key in keys)
+
+    # ── 한국 종목은 yfinance 목표가가 없는 경우 네이버 증권으로 보완 ────────────
+    if not has_any and str(ticker).upper().endswith((".KS", ".KQ")):
+        naver = fetch_naver_kr_snapshot(ticker)
+        if naver.get("ok"):
+            nd = naver.get("data", {})
+            for key in keys:
+                if data.get(key) in [None, ""] and nd.get(key) not in [None, ""]:
+                    data[key] = nd[key]
+            has_any = any(data.get(key) not in [None, ""] for key in keys)
+
     return {"ok": has_any, "data": data, "reason": "" if has_any else "목표가/투자의견 데이터 없음"}
 
 
@@ -365,7 +524,11 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
     for i, item in enumerate(links):
         link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
 
-    st.caption("목표가와 투자의견은 yfinance 제공 데이터 기준입니다. 한국 종목은 제공되지 않는 경우가 많아 리포트 검색 링크를 함께 제공합니다.")
+    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+    if is_kr:
+        st.caption("목표가와 투자의견: yfinance → 네이버 증권 순서로 자동 보완합니다. 그래도 데이터가 없으면 리포트 검색 링크를 이용하세요.")
+    else:
+        st.caption("목표가와 투자의견은 yfinance 제공 데이터 기준입니다. 한국 종목은 제공되지 않는 경우가 많아 리포트 검색 링크를 함께 제공합니다.")
 
 
 def normalize_news_token(text):

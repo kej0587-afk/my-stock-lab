@@ -60,6 +60,7 @@ from stock_lab_core.news import (
     get_ticker_news,
     render_news_cards,
     render_research_report_panel,
+    fetch_naver_kr_snapshot,
 )
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
@@ -6033,11 +6034,28 @@ def fetch_valuation_snapshot(ticker):
         return {"ok": False, "reason": "티커 없음", "data": {}}
     try:
         info = yf.Ticker(ticker).get_info()
-    except Exception as e:
-        return {"ok": False, "reason": str(e), "data": {}}
-    if not isinstance(info, dict) or not info:
-        return {"ok": False, "reason": "yfinance 밸류 데이터 없음", "data": {}}
-    return {"ok": True, "reason": "", "data": {key: info.get(key) for key in VALUATION_INFO_KEYS}}
+    except Exception:
+        info = {}
+    if not isinstance(info, dict):
+        info = {}
+
+    data = {key: info.get(key) for key in VALUATION_INFO_KEYS}
+    has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
+
+    # ── 한국 종목: yfinance에 데이터가 없으면 네이버 증권으로 보완 ──────────────
+    if str(ticker).upper().endswith((".KS", ".KQ")):
+        naver = fetch_naver_kr_snapshot(ticker)
+        if naver.get("ok"):
+            nd = naver.get("data", {})
+            for key in VALUATION_INFO_KEYS:
+                if data.get(key) in [None, ""] and nd.get(key) not in [None, ""]:
+                    data[key] = nd[key]
+            has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
+
+    if not has_any:
+        reason = "yfinance/네이버 밸류 데이터 없음" if str(ticker).upper().endswith((".KS", ".KQ")) else "yfinance 밸류 데이터 없음"
+        return {"ok": False, "reason": reason, "data": data}
+    return {"ok": True, "reason": "", "data": data}
 
 
 def fmt_multiple(value, digits=1):
@@ -6169,7 +6187,13 @@ def build_valuation_interpretation(data, current_price, ticker):
     if data_count == 0:
         headline = "밸류 데이터 부족"
         color = "#64748b"
-        note = "yfinance에서 현재 종목의 밸류/성장 지표를 충분히 제공하지 않았습니다."
+        is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+        note = (
+            "yfinance 및 네이버 증권에서 현재 종목의 밸류/성장 지표를 가져오지 못했습니다. "
+            "네이버 증권 앱에서 직접 확인하세요."
+            if is_kr else
+            "yfinance에서 현재 종목의 밸류/성장 지표를 충분히 제공하지 않았습니다."
+        )
     elif valuation_score >= 4 and quality_score >= 3:
         headline = "가격매력 우수"
         color = "#16a34a"
