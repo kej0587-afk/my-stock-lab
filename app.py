@@ -426,6 +426,37 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
         st.markdown("#### 🚨 위험/매도 요인")
         for r in judgement.reasons_exit: st.caption(f"- {r}")
 
+# 인쇄 시 불필요한 UI 숨기기 및 페이지 넘김 설정
+st.markdown("""
+    <style>
+    @media print {
+        /* 1. 스트림릿 기본 UI 숨기기 */
+        [data-testid="stSidebar"], .stAppHeader, [data-testid="stHeader"], 
+        .stButton, .stDownloadButton, [data-testid="stHorizontalBlock"] > div:last-child {
+            display: none !important;
+        }
+        
+        /* 2. 메인 컨텐츠 여백 조정 */
+        .main .block-container {
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        /* 3. 챕터별 강제 페이지 넘김 */
+        .print-page-break {
+            page-break-before: always;
+            clear: both;
+            padding-top: 20px;
+        }
+
+        /* 4. 테이블/차트가 페이지 중간에 잘리지 않게 설정 */
+        table, figure, .stPlotlyChart {
+            page-break-inside: avoid !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
@@ -466,6 +497,41 @@ def get_auth_mode():
 
     # Keep Google as the default. Password login is emergency-only and must be explicit.
     return "google"
+
+st.markdown("""
+    <style>
+    /* 인쇄할 때만 적용되는 마법의 CSS */
+    @media print {
+        /* 1. 사이드바, 상단 헤더, 버튼 등 불필요한 UI는 인쇄 안 함 */
+        [data-testid="stSidebar"], 
+        header[data-testid="stHeader"], 
+        .stButton, 
+        .stDownloadButton {
+            display: none !important;
+        }
+        
+        /* 2. 화면 전체를 종이 끝까지 넓게 쓰기 */
+        .main .block-container {
+            max-width: 100% !important;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            padding-left: 1cm !important;
+            padding-right: 1cm !important;
+        }
+
+        /* 3. ★ 핵심: 챕터별 강제 페이지 넘김 ★ */
+        .page-break {
+            page-break-before: always;
+            padding-top: 2cm;
+        }
+
+        /* 4. 표나 차트가 종이 중간에 반으로 잘리지 않게 방지 */
+        table, .stDataFrame, .stPlotlyChart {
+            page-break-inside: avoid !important;
+        }
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 
 AUTH_MODE = get_auth_mode()
@@ -12543,4 +12609,97 @@ with tab_manual:
 with tab_guide:
     render_user_guide_tab()
 
+# ---------------------------------------------------------
+# [수정] 인쇄용 리포트 렌더링 함수 및 스위치 (app.py 맨 아래 배치)
+# ---------------------------------------------------------
+def render_full_print_report():
+    st.title("📑 My Stock Lab 종합 자산 보고서")
+    st.caption(f"보고서 생성 일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}")
+    
+    # --- Chapter 1: 자산 현황 ---
+    st.header("1. 자산 운용 현황")
+    st.write("전체 자산 및 수익률 요약입니다.")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("총자산", f"{portfolio_summary.get('current_asset', 0):,.0f}원")
+    c2.metric("투자자산", f"{portfolio_summary.get('stock_value', 0):,.0f}원")
+    c3.metric("누적수익률", f"{portfolio_summary.get('cum_return', 0):.2f}%")
+    c4.metric("누적손익", f"{portfolio_summary.get('cum_profit', 0):,.0f}원")
+    
+    # 강제 페이지 넘김 (A4 인쇄 시 여기서 다음 장으로 넘어감)
+    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
 
+    # --- Chapter 2: 포트폴리오 분석 ---
+    st.header("2. 포트폴리오 상세 분석")
+    st.write("현재 보유 중인 자산의 상세 비중 및 평가 내역입니다.")
+    if not dash_df.empty:
+        show_cols = ["자산명", "티커", "보유량", "매입가", "현재가", "평가손익_원화", "수익률_pct", "현재비중", "목표비중", "기술적타점"]
+        print_df = dash_df[[c for c in show_cols if c in dash_df.columns]].copy()
+        
+        # 인쇄 시 보기 좋게 단위 포맷팅 적용
+        if "수익률_pct" in print_df.columns:
+            print_df["수익률_pct"] = print_df["수익률_pct"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
+        if "현재비중" in print_df.columns:
+            print_df["현재비중"] = print_df["현재비중"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
+        if "목표비중" in print_df.columns:
+            print_df["목표비중"] = print_df["목표비중"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
+        for col in ["매입가", "현재가", "평가손익_원화"]:
+            if col in print_df.columns:
+                print_df[col] = print_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "-")
+
+        st.dataframe(print_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("보유 중인 자산이 없습니다.")
+    
+    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
+
+    # --- Chapter 3: 정밀 관측소 및 전광판 요약 ---
+    st.header("3. 핵심 종목 기술적 타점 (전광판)")
+    st.write("관심 및 보유 종목의 현재 기술적 분석/대응 시나리오입니다.")
+    with st.spinner("신호 판정 데이터를 굽는 중..."):
+        summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
+        if not summary_df.empty:
+            sig_cols = ["종목명", "티커", "📌후보등급", "🔥기술적 타점", "Adj점수", "추세", "RS", "MDD"]
+            sig_df = summary_df[[c for c in sig_cols if c in summary_df.columns]]
+            st.dataframe(sig_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("전광판에 표시할 종목이 없습니다.")
+
+    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
+
+    # --- Chapter 4: 마켓 머니플로우 ---
+    st.header("4. 글로벌 마켓 돈흐름")
+    st.write("현재 시장의 자금이 쏠리는 섹터와 모멘텀 가속도를 분석합니다.")
+    with st.spinner("돈흐름 데이터를 굽는 중..."):
+        flow_df = calculate_money_flow_df()
+        if not flow_df.empty:
+            flow_cols = ["구분", "섹터", "Ticker", "ETF 이름", "3개월수익률", "6개월수익률", "가속도", "돈흐름점수", "상태"]
+            f_df = flow_df[[c for c in flow_cols if c in flow_df.columns]].copy()
+            for col in ["3개월수익률", "6개월수익률", "가속도"]:
+                if col in f_df.columns:
+                    f_df[col] = f_df[col].apply(fmt_flow_pct)
+            if "돈흐름점수" in f_df.columns:
+                f_df["돈흐름점수"] = f_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
+            st.dataframe(f_df, use_container_width=True, hide_index=True)
+        else:
+            st.warning("돈흐름 데이터를 불러오지 못했습니다.")
+
+# ---------------------------------------------------------
+# 사이드바 인쇄 모드 스위치
+# ---------------------------------------------------------
+with st.sidebar:
+    st.divider()
+    print_mode = st.checkbox("🖨️ 리포트 인쇄 모드 활성화", key="print_mode_toggle")
+    if print_mode:
+        st.info("인쇄 모드가 켜졌습니다. Ctrl + P를 눌러 인쇄하세요.")
+
+# 인쇄 모드가 켜지면 기존 탭들을 아예 숨기고 리포트만 그려줍니다.
+if print_mode:
+    # 스트림릿 기본 탭 컨테이너를 강제로 안 보이게 하는 투명 망토 CSS
+    st.markdown('''
+        <style>
+        div[data-testid="stTabs"] { display: none !important; }
+        </style>
+    ''', unsafe_allow_html=True)
+    
+    # 챕터별로 정렬된 리포트 출력
+    render_full_print_report()
