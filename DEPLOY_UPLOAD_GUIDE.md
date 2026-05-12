@@ -18,6 +18,7 @@ Streamlit Cloud/GitHub에는 앱 실행에 필요한 파일만 올리면 됩니�
   - `prices.py`
   - `data/kr_etf_lab.csv`
 - `.gitignore`
+- `.streamlit/secrets.example.toml`
 - 필요하면 문서 파일: `DEPLOY_UPLOAD_GUIDE.md`, `STOCK_LAB_USER_MANUAL.md`
 
 ## 올리면 안 되는 것
@@ -54,3 +55,11 @@ Streamlit Cloud/GitHub에는 앱 실행에 필요한 파일만 올리면 됩니�
 - `fmp_api_key`
 
 `secrets.toml` 파일 자체를 GitHub에 올리면 안 됩니다.
+`.streamlit/secrets.example.toml`은 실제 키가 없는 예시 템플릿이므로 올려도 됩니다.
+
+## 키가 실수로 올라갔을 때
+
+1. Git에서 `.streamlit/secrets.toml` 추적을 제거합니다.
+2. Streamlit Cloud Secrets에는 새로 발급받은 값을 다시 입력합니다.
+3. Supabase service role key, Google OAuth client secret, FMP/DART API key는 재발급합니다.
+4. GitHub 저장소가 외부에 공개됐던 적이 있다면 기존 키는 유출됐다고 보고 폐기합니다.
