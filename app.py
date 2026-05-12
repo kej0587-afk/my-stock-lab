@@ -12,6 +12,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import ta
 import urllib.request
 import urllib.parse
@@ -2315,6 +2316,79 @@ def get_dart_corp_code(stock_code):
     code_map = fetch_dart_corp_code_map()
     return code_map.get(stock_code)
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_dart_disclosures(corp_code: str, days: int = 30) -> list:
+    """최근 N일 내 DART 공시 목록 (최대 15건)."""
+    import requests as _req
+    from datetime import date as _date, timedelta as _td
+    api_key = get_dart_api_key()
+    if not api_key or not corp_code:
+        return []
+    bgn_de = (_date.today() - _td(days=days)).strftime("%Y%m%d")
+    try:
+        r = _req.get(
+            "https://opendart.fss.or.kr/api/list.json",
+            params={
+                "crtfc_key": api_key,
+                "corp_code": corp_code,
+                "bgn_de": bgn_de,
+                "page_count": 15,
+                "sort": "date",
+                "sort_mth": "desc",
+            },
+            timeout=8,
+        )
+        data = r.json()
+        return data.get("list", [])[:15] if data.get("status") == "000" else []
+    except Exception:
+        return []
+
+
+def render_dart_disclosure_panel(holdings_table):
+    """보유 KR 종목의 최근 공시를 expander로 표시합니다."""
+    if holdings_table is None or holdings_table.empty:
+        return
+
+    kr_tickers = [
+        str(r.get("티커", ""))
+        for _, r in holdings_table.iterrows()
+        if str(r.get("티커", "")).upper().endswith((".KS", ".KQ"))
+    ]
+    if not kr_tickers:
+        return
+
+    all_items = []
+    for tkr in kr_tickers[:12]:
+        code = str(tkr).upper().replace(".KS", "").replace(".KQ", "").strip()
+        corp_code = get_dart_corp_code(code)
+        if not corp_code:
+            continue
+        for item in fetch_dart_disclosures(corp_code, days=30)[:3]:
+            all_items.append({
+                "종목": sanitize_asset_name("", tkr),
+                "날짜": item.get("rcept_dt", "")[:8],
+                "제목": item.get("report_nm", ""),
+                "rcept_no": item.get("rcept_no", ""),
+            })
+
+    if not all_items:
+        return
+
+    all_items = sorted(all_items, key=lambda x: x["날짜"], reverse=True)[:20]
+
+    with st.expander(f"📢 최근 DART 공시 ({len(all_items)}건, 30일)", expanded=False):
+        for d in all_items:
+            ds = d["날짜"]
+            date_fmt = f"{ds[:4]}.{ds[4:6]}.{ds[6:]}" if len(ds) >= 8 else ds
+            link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={d['rcept_no']}"
+            st.markdown(
+                f"<small style='color:#94a3b8'>{date_fmt}</small>&nbsp;&nbsp;"
+                f"<b>{d['종목']}</b> — "
+                f"<a href='{link}' target='_blank' style='color:#60a5fa'>{d['제목']}</a>",
+                unsafe_allow_html=True,
+            )
+
+
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
     api_key = get_dart_api_key()
@@ -2627,6 +2701,100 @@ def fetch_kr_financials_auto(ticker: str):
 
     except Exception as e:
         return attach_krx_context_to_kr_failure(ticker, "dart", f"DART error: {e}")
+
+
+def render_financial_trend_chart(ticker: str, name: str):
+    """DART 연간 재무 트렌드 차트 (매출/영업이익/순이익 + YoY 성장률)."""
+    if not str(ticker).upper().endswith((".KS", ".KQ")):
+        st.caption("재무 트렌드는 한국 DART 데이터 기반입니다.")
+        return
+
+    with st.spinner("재무 데이터 로딩 중…"):
+        fin = fetch_kr_financials_auto(ticker)
+
+    if not fin.get("ok") or not fin.get("annual"):
+        st.caption("DART 재무 데이터를 불러오지 못했습니다.")
+        return
+
+    annual = fin["annual"]
+    if len(annual) < 2:
+        st.caption("연간 재무 데이터가 2년 미만입니다.")
+        return
+
+    _b = 1e8  # 억 단위 변환
+    years      = [str(r.get("fiscal_year", "")) for r in annual]
+    revenues   = [clean_float(r.get("revenue"),   0) / _b for r in annual]
+    op_incomes = [clean_float(r.get("op_income"), 0) / _b for r in annual]
+    net_incomes= [clean_float(r.get("net_income"),0) / _b for r in annual]
+
+    def _yoy(vals):
+        result = [None]
+        for i in range(1, len(vals)):
+            prev = vals[i - 1]
+            result.append(((vals[i] / prev) - 1) * 100 if prev and prev != 0 else None)
+        return result
+
+    rev_yoy = _yoy(revenues)
+    op_yoy  = _yoy(op_incomes)
+    net_yoy = _yoy(net_incomes)
+
+    def _bar_colors(vals):
+        return ["#22c55e" if v >= 0 else "#ef4444" for v in vals]
+
+    def _txt(vals, yoys):
+        lines = []
+        for v, g in zip(vals, yoys):
+            t = f"{v:,.0f}억"
+            if g is not None:
+                arrow = "▲" if g > 0 else "▼"
+                t += f"<br>{arrow}{abs(g):.1f}%"
+            lines.append(t)
+        return lines
+
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=("매출액", "영업이익", "순이익"),
+        horizontal_spacing=0.08,
+    )
+    fig.add_trace(go.Bar(
+        x=years, y=revenues, marker_color="#3b82f6",
+        text=_txt(revenues, rev_yoy), textposition="inside",
+        textfont=dict(size=11), name="매출",
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        x=years, y=op_incomes, marker_color=_bar_colors(op_incomes),
+        text=_txt(op_incomes, op_yoy), textposition="inside",
+        textfont=dict(size=11), name="영업이익",
+    ), row=1, col=2)
+    fig.add_trace(go.Bar(
+        x=years, y=net_incomes, marker_color=_bar_colors(net_incomes),
+        text=_txt(net_incomes, net_yoy), textposition="inside",
+        textfont=dict(size=11), name="순이익",
+    ), row=1, col=3)
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=280,
+        showlegend=False,
+        margin=dict(t=45, b=15, l=10, r=10),
+        font=dict(size=12),
+    )
+    fig.update_yaxes(ticksuffix="억")
+    st.plotly_chart(fig, use_container_width=True)
+
+    last_ry  = rev_yoy[-1]
+    last_oy  = op_yoy[-1]
+    last_ny  = net_yoy[-1]
+    parts = []
+    if last_ry  is not None: parts.append(f"매출 <b style='color:{'#22c55e' if last_ry>=0 else '#ef4444'}'>{last_ry:+.1f}%</b>")
+    if last_oy  is not None: parts.append(f"영업이익 <b style='color:{'#22c55e' if last_oy>=0 else '#ef4444'}'>{last_oy:+.1f}%</b>")
+    if last_ny  is not None: parts.append(f"순이익 <b style='color:{'#22c55e' if last_ny>=0 else '#ef4444'}'>{last_ny:+.1f}%</b>")
+    if parts:
+        st.markdown(
+            f"<small>최근 연간 YoY: {' &nbsp;|&nbsp; '.join(parts)}</small>",
+            unsafe_allow_html=True,
+        )
+
 
 def fmp_request(endpoint, ticker, period, limit, api_key):
     url = f"https://financialmodelingprep.com/stable/{endpoint}"
@@ -3929,11 +4097,18 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         is_kr = str(ticker).upper().endswith(".KS") or str(ticker).upper().endswith(".KQ")
         krw_eval = eval_amt if is_kr else eval_amt * usdkrw
 
+        # ── 손익분기점: 매입가 × (1 + 수수료율) ─────────────────────────────
+        _fee_rate = 0.0015 if is_kr else 0.001   # KRX 0.15%, 해외 0.1%
+        breakeven = round(avg_price * (1 + _fee_rate), 4) if avg_price > 0 else 0.0
+        to_breakeven_pct = round((breakeven / cur_price - 1) * 100, 2) if cur_price > 0 and breakeven > 0 else np.nan
+
         rows.append({
             "자산명": name, "티커": ticker, "보유량": qty, "매입가": avg_price,
             "현재가": cur_price, "평가금액": eval_amt, "평가손익": pnl, "수익률": ret,
             "원화환산": krw_eval, "목표비중": target_weight, "is_etf": is_etf, "asset_class": asset_class,
-            "bucket": bucket
+            "bucket": bucket,
+            "손익분기점": breakeven,
+            "본전까지%": to_breakeven_pct,
         })
 
     return apply_holdings_weight_columns(pd.DataFrame(rows), krw_cash, usd_cash, usdkrw)
@@ -6000,7 +6175,11 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         else:
             st.info("**스마트머니(SMC):**\n데이터 없음")
 
-# === 위에서 수정한 '추가 인사이트' UI 코드 밑에 추가 ===
+    # ── 재무 트렌드 미니차트 (한국 종목 전용) ─────────────────────────────────
+    if not is_etf and str(ticker).upper().endswith((".KS", ".KQ")):
+        with st.expander("📈 재무 트렌드 (연간 DART)", expanded=False):
+            render_financial_trend_chart(ticker, name)
+
     render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
 VALUATION_INFO_KEYS = [
@@ -12227,6 +12406,7 @@ with tab_asset:
     render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
     render_asset_quick_quality_summary(effective_settings, holdings_df, dividends_df, monthly_logs_df)
     render_monthly_record_status(monthly_logs_df, portfolio_summary)
+    render_dart_disclosure_panel(holdings_table)
 
     with st.expander("0) 백업 다운로드", expanded=False):
     
@@ -12817,9 +12997,9 @@ with tab_asset:
             st.caption("현재가 캐시: 60초")
 
         show_cols = [
-            "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
+            "자산명", "티커", "보유량", "매입가", "손익분기점", "본전까지%", "현재가", "평가금액", "평가손익",
             "평가손익_원화", "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
-            "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ" ,"bucket", "운용대상", "리밸런싱목표비중"
+            "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ", "bucket", "운용대상", "리밸런싱목표비중"
         ]
         _summary_display_cols = [c for c in show_cols if c in dash_df.columns]
         _summary_edit_df = dash_df[_summary_display_cols].copy()
