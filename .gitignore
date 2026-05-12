@@ -40,3 +40,4 @@ stock_lab_core/**/*.bak*
 Thumbs.db
 .vscode/
 .idea/
+.claude/

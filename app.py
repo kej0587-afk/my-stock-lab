@@ -1754,6 +1754,30 @@ create table if not exists swing_radar (
   memo text default '',
   primary key (owner_email, ticker)
 );
+
+alter table swing_radar enable row level security;
+
+drop policy if exists swing_radar_owner_select on swing_radar;
+drop policy if exists swing_radar_owner_insert on swing_radar;
+drop policy if exists swing_radar_owner_update on swing_radar;
+drop policy if exists swing_radar_owner_delete on swing_radar;
+
+create policy swing_radar_owner_select
+on swing_radar for select
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy swing_radar_owner_insert
+on swing_radar for insert
+with check (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy swing_radar_owner_update
+on swing_radar for update
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''))
+with check (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy swing_radar_owner_delete
+on swing_radar for delete
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''));
 """.strip()
 
 
@@ -1824,6 +1848,30 @@ create table if not exists feedback (
 
 create index if not exists feedback_owner_email_idx on feedback(owner_email);
 create index if not exists feedback_created_at_idx on feedback(created_at desc);
+
+alter table feedback enable row level security;
+
+drop policy if exists feedback_owner_select on feedback;
+drop policy if exists feedback_owner_insert on feedback;
+drop policy if exists feedback_owner_update on feedback;
+drop policy if exists feedback_owner_delete on feedback;
+
+create policy feedback_owner_select
+on feedback for select
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy feedback_owner_insert
+on feedback for insert
+with check (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy feedback_owner_update
+on feedback for update
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''))
+with check (owner_email = coalesce(auth.jwt() ->> 'email', ''));
+
+create policy feedback_owner_delete
+on feedback for delete
+using (owner_email = coalesce(auth.jwt() ->> 'email', ''));
 """.strip()
 
 
