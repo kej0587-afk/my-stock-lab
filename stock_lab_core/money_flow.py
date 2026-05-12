@@ -233,3 +233,18 @@ def calculate_money_flow_df():
     return df.sort_values("돈흐름점수", ascending=False)
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def get_sector_flow_state(sector_bench_ticker: str) -> str:
+    """단일 섹터 벤치마크 티커의 돈흐름 상태를 반환합니다."""
+    if not sector_bench_ticker:
+        return "-"
+    data = download_money_flow_prices((sector_bench_ticker,))
+    px = get_money_flow_ohlc(data, sector_bench_ticker)
+    if px.empty or len(px) < 20:
+        return "-"
+    close = px["Close"]
+    ret_3m = get_return_by_days(close, 63)
+    ret_6m = get_return_by_days(close, 126)
+    accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
+    return classify_money_flow_state(ret_3m, ret_6m, accel)
+
