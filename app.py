@@ -12127,7 +12127,10 @@ with tab_precision:
         b1, b2 = st.columns(2)
         with b1: 
             f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
+            _rr_str = f"{c['rr_ratio']:.2f} (목표 {format_currency(c['rr_target'], tkr)} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
+            _sf_str = c.get('sector_flow_state', '-')
+            _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
+            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
         with b2: 
             structure_note = "주의" if c.get("structure_risk") else "정상"
             structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
