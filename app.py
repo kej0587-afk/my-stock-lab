@@ -6011,6 +6011,7 @@ VALUATION_INFO_KEYS = [
     "numberOfAnalystOpinions",
     "trailingPE",
     "forwardPE",
+    "priceToBook",
     "priceToSalesTrailing12Months",
     "enterpriseToRevenue",
     "enterpriseToEbitda",
@@ -6024,6 +6025,8 @@ VALUATION_INFO_KEYS = [
     "debtToEquity",
     "recommendationKey",
     "recommendationMean",
+    "trailingEps",
+    "bookValue",
 ]
 
 
@@ -6097,6 +6100,15 @@ def valuation_factor_label(kind, value):
             return "성장프리미엄", 0
         return "높음", -1
 
+    if kind == "pbr":
+        if number <= 1.0:
+            return "자산가치 이하", 2
+        if number <= 2.0:
+            return "적정", 1
+        if number <= 4.0:
+            return "프리미엄", 0
+        return "고평가", -1
+
     if kind == "ps":
         if number <= 3:
             return "낮음", 2
@@ -6152,6 +6164,7 @@ def build_valuation_interpretation(data, current_price, ticker):
     forward_pe = clean_float(data.get("forwardPE"), np.nan)
     trailing_pe = clean_float(data.get("trailingPE"), np.nan)
     pe_for_score = forward_pe if finite_num(forward_pe) else trailing_pe
+    pbr = clean_float(data.get("priceToBook"), np.nan)
     ps = clean_float(data.get("priceToSalesTrailing12Months"), np.nan)
     peg = clean_float(data.get("pegRatio"), np.nan)
     revenue_growth = clean_float(data.get("revenueGrowth"), np.nan)
@@ -6162,6 +6175,7 @@ def build_valuation_interpretation(data, current_price, ticker):
     factors = [
         ("목표가 업사이드", "target_upside", target_upside, format_backtest_percent(target_upside)),
         ("PER", "pe", pe_for_score, fmt_multiple(pe_for_score)),
+        ("PBR", "pbr", pbr, fmt_multiple(pbr)),
         ("PSR", "ps", ps, fmt_multiple(ps)),
         ("PEG", "peg", peg, fmt_multiple(peg)),
         ("매출 성장", "growth", revenue_growth, fmt_growth_pct(revenue_growth)),
@@ -6178,7 +6192,7 @@ def build_valuation_interpretation(data, current_price, ticker):
         label, score = valuation_factor_label(kind, value)
         if finite_num(value):
             data_count += 1
-            if kind in ["target_upside", "pe", "ps", "peg"]:
+            if kind in ["target_upside", "pe", "pbr", "ps", "peg"]:
                 valuation_score += score
             else:
                 quality_score += score

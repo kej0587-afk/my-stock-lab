@@ -320,22 +320,53 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
     code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
     result = {}
 
-    # ── 1. Basic info: PER, PBR, EPS ──────────────────────────────────────────
+    # ── 1. PER, PBR, EPS — KRX 공식 데이터 (pykrx 우선, 네이버 보조) ───────────
+    _krx_ok = False
     try:
-        r = _requests.get(
-            f"https://m.stock.naver.com/api/stock/{code}/basic",
-            headers=_NAVER_MOBILE_HEADERS, timeout=6,
-        )
-        if r.status_code == 200:
-            d = r.json()
-            per = _parse_kr_num(d.get("per"))
-            pbr = _parse_kr_num(d.get("pbr"))
-            if per and per > 0:
-                result["trailingPE"] = per
-            if pbr and pbr > 0:
-                result["priceToBook"] = pbr
-    except Exception:
+        from pykrx import stock as _pykrx
+        from datetime import date as _date, timedelta as _td
+        for _days_back in range(0, 8):  # 오늘부터 최대 7 거래일 전까지 시도
+            _d = (_date.today() - _td(days=_days_back)).strftime("%Y%m%d")
+            try:
+                _df = _pykrx.get_market_fundamental(_d, _d, code)
+                if _df is not None and not _df.empty:
+                    _row = _df.iloc[-1]
+                    _per = float(_row.get("PER") or 0)
+                    _pbr = float(_row.get("PBR") or 0)
+                    _eps = float(_row.get("EPS") or 0)
+                    _bps = float(_row.get("BPS") or 0)
+                    if _per > 0:
+                        result["trailingPE"] = _per
+                    if _pbr > 0:
+                        result["priceToBook"] = _pbr
+                    if _eps != 0:
+                        result["trailingEps"] = _eps
+                    if _bps > 0:
+                        result["bookValue"] = _bps
+                    _krx_ok = True
+                    break
+            except Exception:
+                continue
+    except ImportError:
         pass
+
+    # pykrx 실패 시 네이버 basic API 보조
+    if not _krx_ok and _HAS_REQUESTS:
+        try:
+            r = _requests.get(
+                f"https://m.stock.naver.com/api/stock/{code}/basic",
+                headers=_NAVER_MOBILE_HEADERS, timeout=6,
+            )
+            if r.status_code == 200:
+                d = r.json()
+                per = _parse_kr_num(d.get("per"))
+                pbr = _parse_kr_num(d.get("pbr"))
+                if per and per > 0:
+                    result["trailingPE"] = per
+                if pbr and pbr > 0:
+                    result["priceToBook"] = pbr
+        except Exception:
+            pass
 
     # ── 2. Financial summary: ROE, margins, revenue growth ───────────────────
     try:
