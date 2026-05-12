@@ -426,13 +426,21 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
         st.markdown("#### 🚨 위험/매도 요인")
         for r in judgement.reasons_exit: st.caption(f"- {r}")
 
-# 인쇄 시 불필요한 UI 숨기기 및 페이지 넘김 설정
 st.markdown("""
     <style>
-    /* 인쇄할 때만 적용되는 마법의 CSS */
+    /* 인쇄할 때만 적용되는 강력한 레이아웃 해제 CSS */
     @media print {
+        /* 1. 스트림릿 메인 컨테이너의 높이 제한과 스크롤을 완전히 제거 */
+        html, body, .stApp, .main, .block-container {
+            height: auto !important;
+            overflow: visible !important;
+            display: block !important;
+        }
+        
+        /* 2. 불필요한 UI 요소 숨기기 */
         [data-testid="stSidebar"], 
         header[data-testid="stHeader"], 
+        footer,
         .stButton, 
         .stDownloadButton,
         div[data-baseweb="select"], 
@@ -440,25 +448,26 @@ st.markdown("""
         div[data-testid="stCheckbox"] {
             display: none !important;
         }
-        
-        /* 화면 전체 여백 제거 */
-        .main .block-container {
-            max-width: 100% !important;
+
+        /* 3. ★ 페이지 넘김 핵심: 투명한 벽을 만들어 강제로 다음 장 이동 ★ */
+        .page-break {
+            display: block !important;
+            break-before: page !important;
+            page-break-before: always !important;
+            height: 0 !important;
+            margin: 0 !important;
             padding: 0 !important;
         }
-
-        /* 챕터별 강제 페이지 넘김 */
-        .page-break {
-            page-break-before: always !important;
-            clear: both;
-            padding-top: 20px;
+        
+        /* 4. 차트나 표가 페이지 경계에서 잘리는 것 방지 */
+        .stPlotlyChart, .stDataFrame, table {
+            page-break-inside: avoid !important;
         }
 
-        /* 표 스크롤 없애고 끝까지 전체 출력 */
-        .stDataFrame, div[data-testid="stDataFrame"] > div {
-            overflow: visible !important;
-            height: auto !important;
-            max-height: none !important;
+        /* 5. 여백 조정 */
+        .main .block-container {
+            padding: 1cm !important;
+            max-width: 100% !important;
         }
     }
     </style>
@@ -12862,17 +12871,19 @@ def render_full_print_report():
         st.warning("돈흐름 데이터를 불러오지 못했습니다.")
 
 # ---------------------------------------------------------
-# 사이드바 인쇄 모드 스위치
+# 사이드바 인쇄 모드 스위치 (이전과 동일하지만 if문 위치 확인)
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
-    print_mode = st.checkbox("🖨️ 리포트 인쇄 모드 활성화", key="print_mode_toggle")
-    if print_mode:
-        st.info("인쇄 모드가 켜졌습니다. Ctrl + P를 눌러 인쇄하세요.")
+    print_mode = st.checkbox("🖨️ 리포트 인쇄 모드 활성화", key="print_mode_toggle_final")
 
-# 인쇄 모드가 켜지면 기존 화면 대신 리포트만 보여줌
+# 인쇄 모드가 켜지면 "기존의 모든 화면"을 무시하고 리포트만 그립니다.
 if print_mode:
-    # 기존 화면(탭)들을 숨김 처리
-    st.markdown('<style> div[data-testid="stTabs"] { display: none !important; } </style>', unsafe_allow_html=True)
+    # 탭 컨테이너를 강제로 숨김 (안 그러면 탭 배경이 인쇄를 방해함)
+    st.markdown('<style>div[data-testid="stTabs"] { display: none !important; }</style>', unsafe_allow_html=True)
+    
+    # 리포트 실행
     render_full_print_report()
+    
+    # ★ 매우 중요: 여기서 중단해야 아래에 있는 기존 탭들의 코드가 실행되지 않습니다.
     st.stop()
