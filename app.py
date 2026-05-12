@@ -428,9 +428,9 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
 
 st.markdown("""
     <style>
-    /* 🖨️ 스트림릿 인쇄 고질병(잘림/한장만 인쇄) 완벽 치료 CSS */
+    /* 🖨️ 스트림릿 인쇄 고질병(1장만 인쇄됨) 완벽 치료 CSS */
     @media print {
-        /* 1. 스트림릿의 5중 스크롤 제한 컨테이너 완벽 해제 (핵심) */
+        /* 1. 스트림릿의 겹겹이 쌓인 스크롤 컨테이너 봉인 해제 (가장 중요) */
         html, body, .stApp, 
         [data-testid="stAppViewContainer"], 
         [data-testid="stMain"], 
@@ -439,6 +439,7 @@ st.markdown("""
             display: block !important;
             height: auto !important;
             width: 100% !important;
+            max-height: none !important;
             max-width: 100% !important;
             overflow: visible !important;
             position: static !important;
@@ -450,38 +451,42 @@ st.markdown("""
         [data-testid="stSidebar"], 
         [data-testid="stHeader"], 
         [data-testid="stToolbar"],
-        .stButton, .stDownloadButton {
+        .stButton, .stDownloadButton,
+        div[data-baseweb="select"], 
+        div[data-baseweb="radio"],
+        div[data-testid="stCheckbox"] {
             display: none !important;
         }
 
-        /* 3. 표와 컬럼 가로 잘림 현상 원천 봉쇄 */
+        /* 3. 표와 컬럼 가로 잘림 방지 */
         [data-testid="stHorizontalBlock"] {
             display: flex !important;
             flex-wrap: wrap !important;
+            overflow: visible !important;
             width: 100% !important;
         }
         [data-testid="column"] {
             flex: 1 1 auto !important;
             min-width: 0 !important;
-            width: auto !important;
+            overflow: visible !important;
         }
 
         /* 4. 페이지 넘김 (Page Break) 강제 실행 */
-        .page-break {
+        .print-page-break {
             display: block !important;
             page-break-before: always !important;
             break-before: page !important;
             height: 1px !important;
             margin: 0 !important;
             padding: 0 !important;
+            visibility: hidden !important;
         }
 
-        /* 5. 차트나 표가 페이지 중간에서 반으로 찢어지는 것 방지 */
-        table, .stDataFrame, div[data-testid="stDataFrame"] > div, .js-plotly-plot, .stPlotlyChart {
+        /* 5. 차트/표가 페이지 중간에서 찢어지는 것 방지 */
+        table, .stDataFrame, div[data-testid="stDataFrame"] > div, .stPlotlyChart {
             page-break-inside: avoid !important;
             break-inside: avoid !important;
             overflow: visible !important;
-            max-height: none !important;
         }
     }
     </style>
@@ -12647,7 +12652,7 @@ def render_full_print_report():
     st.caption(f"보고서 생성 일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}")
     
     # ==========================================
-    # Chapter 1: 자산 운용 현황 (글자 잘림 원천 봉쇄)
+    # Chapter 1: 자산 운용 현황
     # ==========================================
     st.header("1. 자산 운용 현황")
     st.markdown(f"""
@@ -12667,14 +12672,14 @@ def render_full_print_report():
     </table>
     """, unsafe_allow_html=True)
     
-    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+    # [핵심] 다음 페이지로 강제 넘김
+    st.markdown('<div class="print-page-break" style="page-break-before: always !important; break-before: page !important;"></div>', unsafe_allow_html=True)
 
     # ==========================================
     # Chapter 2: 포트폴리오 상세 현황
     # ==========================================
-    st.header("2. 포트폴리오 상세 분석")
+    st.header("2. 보유 자산 상세 현황")
     if not dash_df.empty:
-        # 히트맵 & 매트릭스
         st.markdown("#### 🔸 포트폴리오 히트맵 & 매트릭스")
         hc1, hc2 = st.columns(2)
         with hc1:
@@ -12698,7 +12703,6 @@ def render_full_print_report():
             fig_bubble.update_layout(template="plotly_dark", height=320, margin=dict(t=30, l=10, r=10, b=10), title="타점/비중/수익률 매트릭스")
             st.plotly_chart(fig_bubble, use_container_width=True)
 
-        # 비중 & 손익 랭킹
         st.markdown("#### 🔸 현재비중 vs 목표비중 / 평가손익 랭킹")
         wc1, wc2 = st.columns(2)
         with wc1:
@@ -12713,7 +12717,6 @@ def render_full_print_report():
             fig_pnl.update_layout(template="plotly_dark", height=320, margin=dict(t=10, l=10, r=10, b=10))
             st.plotly_chart(fig_pnl, use_container_width=True)
 
-        # 월별 성과 차트
         monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
         if not monthly_perf_df.empty:
             st.markdown("#### 🔸 월별 누적수익률 성과기록")
@@ -12725,7 +12728,8 @@ def render_full_print_report():
     else:
         st.info("보유 중인 자산이 없습니다.")
 
-    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+    # [핵심] 다음 페이지로 강제 넘김
+    st.markdown('<div class="print-page-break" style="page-break-before: always !important; break-before: page !important;"></div>', unsafe_allow_html=True)
 
     # ==========================================
     # Chapter 3: 포트폴리오 리스크 분석 (1년)
@@ -12735,7 +12739,6 @@ def render_full_print_report():
         metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
             holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=get_portfolio_analysis_start_date(monthly_logs_df)
         )
-        
         st.markdown(f"""
         <table style="width:100%; text-align:center; font-size:1.1em; border-collapse:collapse; margin-bottom:20px;">
             <tr style="background-color:#1e293b; color:white;">
@@ -12757,13 +12760,15 @@ def render_full_print_report():
         show_asset_df = asset_df.copy()
         for col in ["전체비중", "운용비중", "연환산변동성", "MDD"]:
             if col in show_asset_df.columns: show_asset_df[col] = show_asset_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+        if "원화환산" in show_asset_df.columns: show_asset_df["원화환산"] = show_asset_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
         st.dataframe(show_asset_df[["자산명", "티커", "운용비중", "연환산변동성", "MDD"]], use_container_width=True, hide_index=True)
 
         if not notes_df.empty:
             st.markdown("#### 🔸 포트폴리오 위험/분산 체크리스트")
             st.dataframe(notes_df, use_container_width=True, hide_index=True)
 
-    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+    # [핵심] 다음 페이지로 강제 넘김
+    st.markdown('<div class="print-page-break" style="page-break-before: always !important; break-before: page !important;"></div>', unsafe_allow_html=True)
 
     # ==========================================
     # Chapter 4: 핵심 종목 기술적 타점 & 예시 분석
@@ -12789,7 +12794,6 @@ def render_full_print_report():
         ex_fin_score, ex_fin_meta = load_fin_score_meta_fast(ex_ticker, ex_is_etf)
         ex_my_p = get_my_price(ex_name, ex_ticker)
         ex_has_p = has_position(ex_name, ex_ticker)
-        
         c = calc_scores_and_decision(ex_name, ex_ticker, ex_is_etf, ex_class, ex_df, ex_my_p, ex_has_p, int(ex_fin_score), False, "개인모드")
         
         st.markdown(f"""
@@ -12814,35 +12818,21 @@ def render_full_print_report():
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>추세: {c['trend']} | RS: {c['rs_label']}<br>RSI: {c['rsi']:.1f} | MFI: {c['mfi']:.1f} | %B: {c['pct_b']:.2f}<br><b>보조:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_personal_stock_analysis_panel(ex_name, ex_ticker, ex_is_etf, ex_class, c, int(ex_fin_score), ex_fin_meta, ex_has_p, ex_my_p)
-        
-        ins1, ins2, ins3, ins4 = st.columns(4)
-        ins1.info(f"**수급/추세**\n(정상 산출 됨)")
-        ins2.info(f"**이벤트 리스크**\n(정상 산출 됨)")
-        ins3.info(f"**손절 가이드**\n(정상 산출 됨)")
-        ins4.info(f"**스마트머니(SMC)**\n(정상 산출 됨)")
-
         render_hold_decision_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score), ex_has_p, ex_my_p)
         render_valuation_price_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score))
         render_pre_buy_final_check_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score), ex_has_p, ex_my_p)
-        
-        st.markdown("#### 📰 최신 현장 뉴스 / 리포트")
-        st.caption("- 나스닥 100 지수 편입 종목 관련 주요 외신 헤드라인 추출 (인쇄 렌더링 정상)")
-        st.markdown("#### 🤖 AI 종합 해석 프롬프트")
-        st.caption("- 거시경제 및 기술적 데이터를 조합한 AI 질문용 프롬프트 생성 (인쇄 렌더링 정상)")
 
-    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+    # [핵심] 다음 페이지로 강제 넘김
+    st.markdown('<div class="print-page-break" style="page-break-before: always !important; break-before: page !important;"></div>', unsafe_allow_html=True)
 
     # ==========================================
-    # Chapter 5: 글로벌 마켓 돈흐름 (섹터별 분할)
+    # Chapter 5: 글로벌 마켓 돈흐름
     # ==========================================
     st.header("5. 글로벌 마켓 돈흐름 레이더")
-    st.write("주요 자산 및 섹터별 자금 유입/유출 모멘텀 현황입니다.")
-    
     with st.spinner("돈흐름 데이터를 계산 중..."):
         flow_df = calculate_money_flow_df()
         
     if not flow_df.empty:
-        # 그룹별 렌더링용 내부 함수
         def render_money_flow_group(group_name):
             g_df = flow_df[flow_df["구분"] == group_name].copy()
             if g_df.empty: return
@@ -12863,7 +12853,7 @@ def render_full_print_report():
                     ids=tree_df["tree_id"], labels=tree_df["tree_label"], parents=[""] * len(tree_df), values=tree_df["히트맵크기"].astype(float).clip(lower=1),
                     marker=dict(colors=tree_df["돈흐름점수"], colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]], cmid=0)
                 ))
-                fig_tree.update_layout(template="plotly_dark", height=320, margin=dict(t=30, l=5, r=5, b=5), title=f"{group_name} 돈흐름 히트맵")
+                fig_tree.update_layout(template="plotly_dark", height=320, margin=dict(t=30, l=5, r=5, b=5), title=f"{group_name} 히트맵")
                 st.plotly_chart(fig_tree, use_container_width=True)
 
             with mc2:
@@ -12873,11 +12863,11 @@ def render_full_print_report():
                 ))
                 fig_quad.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
                 fig_quad.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
-                fig_quad.update_layout(template="plotly_dark", height=320, margin=dict(t=30, l=5, r=5, b=5), title=f"{group_name} 로테이션 사분면", xaxis_title="6M (%)", yaxis_title="3M (%)")
+                fig_quad.update_layout(template="plotly_dark", height=320, margin=dict(t=30, l=5, r=5, b=5), title=f"{group_name} 로테이션 사분면")
                 st.plotly_chart(fig_quad, use_container_width=True)
             
-            # 섹터별로 한 장씩 깔끔하게 끊어줍니다.
-            st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+            # 여기서도 한 챕터마다 페이지를 강제로 넘깁니다.
+            st.markdown('<div class="print-page-break" style="page-break-before: always !important; break-before: page !important;"></div>', unsafe_allow_html=True)
 
         for g_name in ["한국 섹터", "미국 섹터", "글로벌", "매크로"]:
             render_money_flow_group(g_name)
@@ -12885,19 +12875,15 @@ def render_full_print_report():
         st.warning("돈흐름 데이터를 불러오지 못했습니다.")
 
 # ---------------------------------------------------------
-# 사이드바 인쇄 모드 스위치 (이전과 동일하지만 if문 위치 확인)
+# 사이드바 인쇄 모드 스위치
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
     print_mode = st.checkbox("🖨️ 리포트 인쇄 모드 활성화", key="print_mode_toggle_final")
+    if print_mode:
+        st.info("인쇄 모드가 켜졌습니다. Ctrl + P를 눌러 인쇄하세요.")
 
-# 인쇄 모드가 켜지면 "기존의 모든 화면"을 무시하고 리포트만 그립니다.
 if print_mode:
-    # 탭 컨테이너를 강제로 숨김 (안 그러면 탭 배경이 인쇄를 방해함)
-    st.markdown('<style>div[data-testid="stTabs"] { display: none !important; }</style>', unsafe_allow_html=True)
-    
-    # 리포트 실행
+    st.markdown('<style> div[data-testid="stTabs"] { display: none !important; } </style>', unsafe_allow_html=True)
     render_full_print_report()
-    
-    # ★ 매우 중요: 여기서 중단해야 아래에 있는 기존 탭들의 코드가 실행되지 않습니다.
     st.stop()
