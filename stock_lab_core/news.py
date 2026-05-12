@@ -294,6 +294,52 @@ def _parse_kr_num(s):
         return None
 
 
+def _select_krx_fundamental_row(df, code: str, allow_last_row: bool = False):
+    """Return a KRX fundamental row for a single ticker from either by-date or by-ticker output."""
+    if df is None or getattr(df, "empty", True):
+        return None
+
+    code = str(code).zfill(6)
+    try:
+        index_map = {str(idx).zfill(6): idx for idx in df.index}
+        if code in index_map:
+            return df.loc[index_map[code]]
+    except Exception:
+        pass
+
+    if allow_last_row:
+        try:
+            return df.iloc[-1]
+        except Exception:
+            return None
+
+    return None
+
+
+def _fetch_krx_fundamental_row(pykrx_stock, date_text: str, code: str):
+    """Try pykrx date-series and ticker-snapshot APIs because installed versions differ."""
+    candidates = []
+
+    if hasattr(pykrx_stock, "get_market_fundamental_by_date"):
+        candidates.append(("by_date", lambda: pykrx_stock.get_market_fundamental_by_date(date_text, date_text, code), True))
+    if hasattr(pykrx_stock, "get_market_fundamental"):
+        candidates.append(("legacy_by_date", lambda: pykrx_stock.get_market_fundamental(date_text, date_text, code), True))
+    if hasattr(pykrx_stock, "get_market_fundamental_by_ticker"):
+        candidates.append(("by_ticker_all", lambda: pykrx_stock.get_market_fundamental_by_ticker(date_text, market="ALL"), False))
+    if hasattr(pykrx_stock, "get_market_fundamental"):
+        candidates.append(("legacy_by_ticker_all", lambda: pykrx_stock.get_market_fundamental(date_text, market="ALL"), False))
+
+    for _, getter, allow_last_row in candidates:
+        try:
+            row = _select_krx_fundamental_row(getter(), code, allow_last_row=allow_last_row)
+            if row is not None:
+                return row
+        except Exception:
+            continue
+
+    return None
+
+
 _NAVER_MOBILE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
@@ -329,9 +375,8 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
         for _days_back in range(0, 8):  # 오늘부터 최대 7 거래일 전까지 시도
             _d = (_date.today() - _td(days=_days_back)).strftime("%Y%m%d")
             try:
-                _df = _pykrx.get_market_fundamental(_d, _d, code)
-                if _df is not None and not _df.empty:
-                    _row = _df.iloc[-1]
+                _row = _fetch_krx_fundamental_row(_pykrx, _d, code)
+                if _row is not None:
                     _per = float(_row.get("PER") or 0)
                     _pbr = float(_row.get("PBR") or 0)
                     _eps = float(_row.get("EPS") or 0)
@@ -475,8 +520,14 @@ def get_analyst_snapshot(ticker):
     data = {key: info.get(key) for key in keys}
     has_any = any(data.get(key) not in [None, ""] for key in keys)
 
-    # ── 한국 종목은 yfinance 목표가가 없는 경우 네이버 증권으로 보완 ────────────
-    if not has_any and str(ticker).upper().endswith((".KS", ".KQ")):
+    # ── 한국 종목은 yfinance가 현재가만 주고 목표가/의견은 비우는 경우가 많아 네이버로 보완 ──
+    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+    has_target = any(finite_num(data.get(key)) and clean_float(data.get(key), 0) > 0 for key in [
+        "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
+    ])
+    has_opinion = (clean_int(data.get("numberOfAnalystOpinions"), 0) or 0) > 0 or bool(str(data.get("recommendationKey") or "").strip())
+
+    if is_kr and (not has_target or not has_opinion):
         naver = fetch_naver_kr_snapshot(ticker)
         if naver.get("ok"):
             nd = naver.get("data", {})
@@ -548,7 +599,7 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
             f"중앙 {format_currency(target_median, ticker) if finite_num(target_median) else '-'} / "
             f"상단 {format_currency(target_high, ticker) if finite_num(target_high) else '-'}"
         )
-    elif not snapshot.get("ok"):
+    elif not finite_num(target_mean) and not opinions:
         st.caption(f"목표가 데이터 없음: {snapshot.get('reason', '제공 데이터 없음')}")
 
     links = build_research_report_links(ticker, name)
