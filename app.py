@@ -428,46 +428,60 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
 
 st.markdown("""
     <style>
-    /* 인쇄할 때만 적용되는 강력한 레이아웃 해제 CSS */
+    /* 🖨️ 스트림릿 인쇄 고질병(잘림/한장만 인쇄) 완벽 치료 CSS */
     @media print {
-        /* 1. 스트림릿 메인 컨테이너의 높이 제한과 스크롤을 완전히 제거 */
-        html, body, .stApp, .main, .block-container {
-            height: auto !important;
-            overflow: visible !important;
+        /* 1. 스트림릿의 5중 스크롤 제한 컨테이너 완벽 해제 (핵심) */
+        html, body, .stApp, 
+        [data-testid="stAppViewContainer"], 
+        [data-testid="stMain"], 
+        [data-testid="stAppViewBlockContainer"],
+        [data-testid="stMainBlockContainer"] {
             display: block !important;
+            height: auto !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow: visible !important;
+            position: static !important;
+            padding: 0 !important;
+            margin: 0 !important;
         }
         
-        /* 2. 불필요한 UI 요소 숨기기 */
+        /* 2. 불필요한 UI 완벽 숨김 */
         [data-testid="stSidebar"], 
-        header[data-testid="stHeader"], 
-        footer,
-        .stButton, 
-        .stDownloadButton,
-        div[data-baseweb="select"], 
-        div[data-baseweb="radio"],
-        div[data-testid="stCheckbox"] {
+        [data-testid="stHeader"], 
+        [data-testid="stToolbar"],
+        .stButton, .stDownloadButton {
             display: none !important;
         }
 
-        /* 3. ★ 페이지 넘김 핵심: 투명한 벽을 만들어 강제로 다음 장 이동 ★ */
+        /* 3. 표와 컬럼 가로 잘림 현상 원천 봉쇄 */
+        [data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            width: 100% !important;
+        }
+        [data-testid="column"] {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            width: auto !important;
+        }
+
+        /* 4. 페이지 넘김 (Page Break) 강제 실행 */
         .page-break {
             display: block !important;
-            break-before: page !important;
             page-break-before: always !important;
-            height: 0 !important;
+            break-before: page !important;
+            height: 1px !important;
             margin: 0 !important;
             padding: 0 !important;
         }
-        
-        /* 4. 차트나 표가 페이지 경계에서 잘리는 것 방지 */
-        .stPlotlyChart, .stDataFrame, table {
-            page-break-inside: avoid !important;
-        }
 
-        /* 5. 여백 조정 */
-        .main .block-container {
-            padding: 1cm !important;
-            max-width: 100% !important;
+        /* 5. 차트나 표가 페이지 중간에서 반으로 찢어지는 것 방지 */
+        table, .stDataFrame, div[data-testid="stDataFrame"] > div, .js-plotly-plot, .stPlotlyChart {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            overflow: visible !important;
+            max-height: none !important;
         }
     }
     </style>
