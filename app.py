@@ -64,8 +64,11 @@ from stock_lab_core.news import (
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
     download_money_flow_prices,
-    get_sector_flow_state,
 )
+try:
+    from stock_lab_core.money_flow import get_sector_flow_state
+except ImportError:
+    def get_sector_flow_state(ticker): return "-"
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
     build_kr_etf_lab_from_excel_files,
