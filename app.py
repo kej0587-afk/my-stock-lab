@@ -5314,12 +5314,21 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     levels = get_recent_levels(df)
 
-    # Feature ②: R/R 비율 (내부 피벗 기준)
-    # Feature ②: R/R 비율 — 현재가가 내부 고점 위면 외부 고점을 목표로 사용
-    rr_target_price = levels["int_high"] if cur_p < levels["int_high"] else levels["ext_high"]
-    rr_reward = rr_target_price - cur_p
-    rr_risk   = cur_p - levels["int_low"]
-    rr_ratio  = round(rr_reward / rr_risk, 2) if (rr_risk > 0 and rr_reward > 0) else None
+    # Feature ②: R/R 비율 — 추가 인사이트와 동일한 2ATR 손절 기준 사용
+    _atr = calc_atr(df)  # 추가 인사이트(독립 모듈) 손절 계산과 동일한 함수
+    rr_stop_atr  = round(cur_p - _atr * 2.0, 4) if _atr > 0 else None   # 2ATR 손절
+    rr_risk_atr  = cur_p - rr_stop_atr if rr_stop_atr else 0
+
+    # 목표가: 구조적 저항이 현재가 위에 있으면 그것을 사용, 없으면 4ATR 돌파 목표 (2:1 R/R 투영)
+    if levels["int_high"] > cur_p:
+        rr_target_price = levels["int_high"]
+    elif levels["ext_high"] > cur_p:
+        rr_target_price = levels["ext_high"]
+    else:
+        rr_target_price = round(cur_p + _atr * 4.0, 4) if _atr > 0 else None  # 신고가 돌파: 4ATR 목표 투영
+
+    rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
+    rr_ratio  = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
 
     # Feature ④: 52주 신고가 돌파 감지 — near_high 제외, 실제 돌파만 인정
     _bk_info = detect_52w_breakout(df)
@@ -5682,7 +5691,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s,
         "rs_slope_s": rs_slope_s, "rs_slope_label": rs_slope_label, "rs_slope_val": rs_slope_val,
         "profit_take_signal": (has_pos and (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20),
-        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": levels["int_low"],
+        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": rr_stop_atr,
         "is_52w_breakout": is_52w_breakout,
         "sector_flow_state": sector_flow_state,
         "smc_insight": smc_insight
@@ -7586,7 +7595,7 @@ MANUAL_SECTIONS = {
         {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1", "해석": "압축 후 방향성 분출 체크"},
         {"항목": "MDD", "정의": "52주 고점 대비 낙폭", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
         {"항목": "ADJ점수", "정의": "매크로 패널티 반영 기술점수", "코드 기준": "메인점수 + RS점수 + MFI점수 + RS기울기점수 - 매크로패널티", "해석": "높을수록 현재 타점 우호"},
-        {"항목": "R/R 비율", "정의": "내부 피벗 기준 리스크/리워드", "코드 기준": "(목표가 - 현재가) / (현재가 - 손절가). 현재가가 내부 피벗 고점 위면 외부 고점을 목표로 사용", "해석": "1.5 이상이면 타점 우호, 음수·산출불가는 이미 목표권 초과"},
+        {"항목": "R/R 비율", "정의": "2ATR 손절 기준 리스크/리워드", "코드 기준": "손절 = 현재가 - 2ATR (추가 인사이트와 동일). 목표 = 내부 피벗 고점 → 외부 피벗 고점 → 4ATR 투영 순서로 사용. R/R = (목표-현재가)/(현재가-손절)", "해석": "1.5 이상이면 타점 우호. 신고가 돌파 구간은 4ATR 목표로 투영됨"},
         {"항목": "섹터 머니플로우", "정의": "해당 종목의 섹터 ETF 자금흐름 상태", "코드 기준": "3개월·6개월 수익률 + 가속도로 신규유입/주도유지/둔화경고/소외지속/관찰 판정", "해석": "섹터 자체에 돈이 들어오고 있는지 확인"},
     ],
     "점수 계산": [
