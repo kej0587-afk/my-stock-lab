@@ -1036,14 +1036,15 @@ def sanitize_asset_name(name, ticker=""):
     cleaned_name = strip_search_prefix(raw_name).strip()
     known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
 
+    # KNOWN_TICKER_DISPLAY_NAMES에 등록된 종목은 DB 저장값과 무관하게 항상 우선 적용
+    if known_name:
+        return known_name
+
     if not cleaned_name or cleaned_name.startswith((":","：")):
-        return resolve_display_name_for_ticker(ticker_clean, known_name or ticker_clean)
+        return resolve_display_name_for_ticker(ticker_clean, ticker_clean)
 
     if is_ticker_like_text(cleaned_name) and clean_symbol(cleaned_name) == symbol:
-        return resolve_display_name_for_ticker(ticker_clean, known_name or ticker_clean)
-
-    if known_name and clean_symbol(cleaned_name) == symbol:
-        return known_name
+        return resolve_display_name_for_ticker(ticker_clean, ticker_clean)
 
     return cleaned_name
 
