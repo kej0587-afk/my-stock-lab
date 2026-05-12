@@ -2336,7 +2336,7 @@ def get_krx_api_key():
 def get_sec_user_agent():
     return str(st.secrets.get("sec_user_agent", "")).strip()
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_dart_corp_code_map():
     api_key = get_dart_api_key()
     if not api_key:
@@ -2344,12 +2344,15 @@ def fetch_dart_corp_code_map():
 
     url = "https://opendart.fss.or.kr/api/corpCode.xml"
 
-    res = requests.get(url, params={"crtfc_key": api_key}, timeout=15)
-    res.raise_for_status()
+    try:
+        res = requests.get(url, params={"crtfc_key": api_key}, timeout=8)
+        res.raise_for_status()
 
-    zf = zipfile.ZipFile(io.BytesIO(res.content))
-    xml_name = zf.namelist()[0]
-    root = ET.fromstring(zf.read(xml_name))
+        zf = zipfile.ZipFile(io.BytesIO(res.content))
+        xml_name = zf.namelist()[0]
+        root = ET.fromstring(zf.read(xml_name))
+    except Exception:
+        return {}
 
     code_map = {}
     for item in root.findall("list"):
@@ -2363,7 +2366,10 @@ def fetch_dart_corp_code_map():
 
 def get_dart_corp_code(stock_code):
     stock_code = normalize_stock_code(stock_code)
-    code_map = fetch_dart_corp_code_map()
+    try:
+        code_map = fetch_dart_corp_code_map()
+    except Exception:
+        return None
     return code_map.get(stock_code)
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -2410,7 +2416,10 @@ def render_dart_disclosure_panel(holdings_table):
     all_items = []
     for tkr in kr_tickers[:12]:
         code = str(tkr).upper().replace(".KS", "").replace(".KQ", "").strip()
-        corp_code = get_dart_corp_code(code)
+        try:
+            corp_code = get_dart_corp_code(code)
+        except Exception:
+            corp_code = None
         if not corp_code:
             continue
         for item in fetch_dart_disclosures(corp_code, days=30)[:3]:
