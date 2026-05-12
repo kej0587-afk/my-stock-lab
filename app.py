@@ -5315,14 +5315,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     levels = get_recent_levels(df)
 
     # Feature ②: R/R 비율 (내부 피벗 기준)
-    rr_reward = levels["int_high"] - cur_p
+    # Feature ②: R/R 비율 — 현재가가 내부 고점 위면 외부 고점을 목표로 사용
+    rr_target_price = levels["int_high"] if cur_p < levels["int_high"] else levels["ext_high"]
+    rr_reward = rr_target_price - cur_p
     rr_risk   = cur_p - levels["int_low"]
-    rr_ratio  = round(rr_reward / rr_risk, 2) if rr_risk > 0 else None
+    rr_ratio  = round(rr_reward / rr_risk, 2) if (rr_risk > 0 and rr_reward > 0) else None
 
-    # Feature ④: 52주 신고가 돌파 감지 (기존 detect_52w_breakout 활용)
+    # Feature ④: 52주 신고가 돌파 감지 — near_high 제외, 실제 돌파만 인정
     _bk_info = detect_52w_breakout(df)
     is_52w_breakout = (
-        (_bk_info["breakout"] or _bk_info.get("near_high", False)) and
+        _bk_info["breakout"] and
         rs_label == "🚀강함" and
         day_ret > 0
     )
@@ -5680,7 +5682,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s,
         "rs_slope_s": rs_slope_s, "rs_slope_label": rs_slope_label, "rs_slope_val": rs_slope_val,
         "profit_take_signal": (has_pos and (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20),
-        "rr_ratio": rr_ratio, "rr_target": levels["int_high"], "rr_stop": levels["int_low"],
+        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": levels["int_low"],
         "is_52w_breakout": is_52w_breakout,
         "sector_flow_state": sector_flow_state,
         "smc_insight": smc_insight
