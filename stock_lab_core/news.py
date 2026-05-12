@@ -1007,12 +1007,22 @@ def render_news_cards(news_items):
             )
 
 
+_NAVER_PC_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://finance.naver.com/",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
     """
-    네이버 금융 모바일 API에서 외국인/기관 최근 N일 수급 데이터를 가져옵니다.
-    반환: {ok, foreign_net, institution_net, individual_net, rows, reason}
-    rows: list of {date, foreign, institution, individual}
+    네이버 금융 frgn.naver HTML 파싱으로 외국인 일별 수급 데이터를 가져옵니다.
+    반환: {ok, foreign_net, rows, foreign_ratio, reason}
+    rows: list of {date, price, volume, foreign_net, foreign_acc, foreign_ratio}
     """
     if not _HAS_REQUESTS:
         return {"ok": False, "reason": "requests 없음", "rows": []}
@@ -1021,7 +1031,7 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
 
     code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
 
-    # pykrx 우선 (더 정확한 데이터)
+    # pykrx 우선 시도 (외국인+기관+개인 모두 가능)
     try:
         from pykrx import stock as _pykrx
         end_d = _date_cls.today()
@@ -1036,54 +1046,81 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
             for idx_date, row in df.tail(days).iterrows():
                 rows.append({
                     "date": str(idx_date)[:10],
-                    "foreign": int(row.get("외국인합계", 0) or 0),
-                    "institution": int(row.get("기관합계", 0) or 0),
-                    "individual": int(row.get("개인", 0) or 0),
+                    "foreign_net": int(row.get("외국인합계", 0) or 0),
+                    "institution_net": int(row.get("기관합계", 0) or 0),
+                    "individual_net": int(row.get("개인", 0) or 0),
                 })
             rows = list(reversed(rows))
             recent = rows[:5] if len(rows) >= 5 else rows
             return {
                 "ok": True,
-                "foreign_net": sum(r["foreign"] for r in recent),
-                "institution_net": sum(r["institution"] for r in recent),
-                "individual_net": sum(r["individual"] for r in recent),
+                "mode": "all",
+                "foreign_net": sum(r["foreign_net"] for r in recent),
+                "institution_net": sum(r["institution_net"] for r in recent),
+                "individual_net": sum(r["individual_net"] for r in recent),
                 "rows": rows,
                 "source": "pykrx",
             }
     except Exception:
         pass
 
-    # 네이버 모바일 API 보조
+    # 네이버 금융 frgn.naver HTML 스크래핑 (외국인 전용)
     try:
-        url = f"https://m.stock.naver.com/api/stock/{code}/investor"
-        r = _requests.get(url, headers=_NAVER_MOBILE_HEADERS, timeout=8)
+        import io as _io
+        url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+        r = _requests.get(url, headers=_NAVER_PC_HEADERS, timeout=10)
         if r.status_code != 200:
             return {"ok": False, "reason": f"HTTP {r.status_code}", "rows": []}
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("list", [])
+
+        content = r.content.decode("euc-kr", errors="replace")
+        all_tables = pd.read_html(_io.StringIO(content))
+
+        # Table 3: 날짜|현재가|등락폭|등락률|거래량|외국인순매수|누적|보유수|비율
+        raw = None
+        for t in all_tables:
+            if t.shape[1] == 9 and t.shape[0] >= 5:
+                raw = t
+                break
+
+        if raw is None:
+            return {"ok": False, "reason": "수급 테이블을 찾지 못했습니다", "rows": []}
+
+        raw = raw.dropna(subset=[raw.columns[0]])
+        raw = raw[raw.iloc[:, 0].astype(str).str.match(r"\d{4}\.\d{2}\.\d{2}")]
+
         rows = []
-        for item in items[:days]:
+        for _, row in raw.head(days).iterrows():
+            f_net = row.iloc[5]
+            ratio = str(row.iloc[8]).replace("%", "").strip()
             rows.append({
-                "date": str(item.get("date", ""))[:10],
-                "foreign": int(item.get("foreignVolume", item.get("foreign", 0)) or 0),
-                "institution": int(item.get("institutionVolume", item.get("institution", 0)) or 0),
-                "individual": int(item.get("individualVolume", item.get("individual", 0)) or 0),
+                "date": str(row.iloc[0])[:10],
+                "price": int(float(row.iloc[1])) if row.iloc[1] else 0,
+                "volume": int(float(row.iloc[4])) if row.iloc[4] else 0,
+                "foreign_net": int(float(f_net)) if pd.notna(f_net) else 0,
+                "foreign_ratio": ratio,
             })
+
+        if not rows:
+            return {"ok": False, "reason": "파싱된 수급 행이 없습니다", "rows": []}
+
         recent = rows[:5] if len(rows) >= 5 else rows
+        latest_ratio = rows[0]["foreign_ratio"] if rows else "-"
         return {
             "ok": True,
-            "foreign_net": sum(r["foreign"] for r in recent),
-            "institution_net": sum(r["institution"] for r in recent),
-            "individual_net": sum(r["individual"] for r in recent),
+            "mode": "foreign_only",
+            "foreign_net": sum(r["foreign_net"] for r in recent),
+            "institution_net": None,
+            "individual_net": None,
+            "foreign_ratio": latest_ratio,
             "rows": rows,
-            "source": "naver",
+            "source": "naver_html",
         }
     except Exception as e:
         return {"ok": False, "reason": str(e), "rows": []}
 
 
 def render_investor_trend_panel(ticker: str, name: str):
-    """외국인/기관/개인 최근 수급 패널을 렌더링합니다. (한국 종목 전용)"""
+    """외국인 수급 패널을 렌더링합니다. (한국 종목 전용)"""
     if not str(ticker).upper().endswith((".KS", ".KQ")):
         return
 
@@ -1095,32 +1132,55 @@ def render_investor_trend_panel(ticker: str, name: str):
         return
 
     rows = inv.get("rows", [])
-    f_net = inv["foreign_net"]
-    i_net = inv["institution_net"]
-    p_net = inv["individual_net"]
+    mode = inv.get("mode", "foreign_only")
+    f_net = inv.get("foreign_net", 0) or 0
+    i_net = inv.get("institution_net")
+    p_net = inv.get("individual_net")
 
     def _fmt(v):
+        if v is None:
+            return "-"
+        v = int(v)
         if v == 0:
             return "0"
         sign = "▲" if v > 0 else "▼"
         color = "#22c55e" if v > 0 else "#ef4444"
         return f"<span style='color:{color}'>{sign} {abs(v):,}</span>"
 
+    summary_parts = [f"외국인 5일 순매수: {_fmt(f_net)}"]
+    if mode == "all":
+        summary_parts.append(f"기관 5일 순매수: {_fmt(i_net)}")
+        summary_parts.append(f"개인 5일 순매수: {_fmt(p_net)}")
+    if inv.get("foreign_ratio"):
+        summary_parts.append(f"외국인 보유비율: <b>{inv['foreign_ratio']}%</b>")
+
     st.markdown(
-        f"<div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px;'>"
-        f"<span>외국인 5일 순매수: {_fmt(f_net)}</span>"
-        f"<span>기관 5일 순매수: {_fmt(i_net)}</span>"
-        f"<span>개인 5일 순매수: {_fmt(p_net)}</span>"
-        f"</div>",
+        "<div style='display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px;'>"
+        + "".join(f"<span>{p}</span>" for p in summary_parts)
+        + "</div>",
         unsafe_allow_html=True,
     )
 
     if rows:
-        df_inv = pd.DataFrame(rows[:15])
-        df_inv.columns = ["날짜", "외국인", "기관", "개인"]
-        df_inv["외국인"] = df_inv["외국인"].apply(lambda v: f"+{v:,}" if v > 0 else f"{v:,}")
-        df_inv["기관"] = df_inv["기관"].apply(lambda v: f"+{v:,}" if v > 0 else f"{v:,}")
-        df_inv["개인"] = df_inv["개인"].apply(lambda v: f"+{v:,}" if v > 0 else f"{v:,}")
+        if mode == "all":
+            df_inv = pd.DataFrame([
+                {"날짜": r["date"], "외국인": r["foreign_net"],
+                 "기관": r["institution_net"], "개인": r["individual_net"]}
+                for r in rows[:days]
+            ])
+            for col in ["외국인", "기관", "개인"]:
+                df_inv[col] = df_inv[col].apply(
+                    lambda v: f"+{int(v):,}" if v > 0 else f"{int(v):,}"
+                )
+        else:
+            df_inv = pd.DataFrame([
+                {"날짜": r["date"], "현재가": f"{r['price']:,}",
+                 "거래량": f"{r['volume']:,}",
+                 "외국인순매수": f"+{r['foreign_net']:,}" if r['foreign_net'] > 0 else f"{r['foreign_net']:,}",
+                 "외국인비율": f"{r['foreign_ratio']}%"}
+                for r in rows[:20]
+            ])
+            st.caption("※ 기관/개인 수급은 pykrx 설치 시 추가로 표시됩니다.")
         st.dataframe(df_inv, use_container_width=True, hide_index=True)
     else:
         st.caption("일별 상세 수급 데이터가 없습니다.")
