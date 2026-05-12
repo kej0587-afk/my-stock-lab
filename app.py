@@ -62,6 +62,8 @@ from stock_lab_core.news import (
     render_news_cards,
     render_research_report_panel,
     fetch_naver_kr_snapshot,
+    fetch_investor_trend,
+    render_investor_trend_panel,
 )
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
@@ -4100,7 +4102,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         # ── 손익분기점: 매입가 × (1 + 수수료율) ─────────────────────────────
         _fee_rate = 0.0015 if is_kr else 0.001   # KRX 0.15%, 해외 0.1%
         breakeven = round(avg_price * (1 + _fee_rate), 4) if avg_price > 0 else 0.0
-        to_breakeven_pct = round((breakeven / cur_price - 1) * 100, 2) if cur_price > 0 and breakeven > 0 else np.nan
+        to_breakeven_pct = round((cur_price / breakeven - 1) * 100, 2) if cur_price > 0 and breakeven > 0 else np.nan
 
         rows.append({
             "자산명": name, "티커": ticker, "보유량": qty, "매입가": avg_price,
@@ -6175,10 +6177,13 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         else:
             st.info("**스마트머니(SMC):**\n데이터 없음")
 
-    # ── 재무 트렌드 미니차트 (한국 종목 전용) ─────────────────────────────────
-    if not is_etf and str(ticker).upper().endswith((".KS", ".KQ")):
-        with st.expander("📈 재무 트렌드 (연간 DART)", expanded=False):
-            render_financial_trend_chart(ticker, name)
+    # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 ──────────────────────────
+    if str(ticker).upper().endswith((".KS", ".KQ")):
+        with st.expander("📊 외국인/기관 수급 현황 (최근 20거래일)", expanded=False):
+            render_investor_trend_panel(ticker, name)
+        if not is_etf:
+            with st.expander("📈 재무 트렌드 (연간 DART)", expanded=False):
+                render_financial_trend_chart(ticker, name)
 
     render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
