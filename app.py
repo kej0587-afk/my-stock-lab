@@ -429,29 +429,40 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
 # 인쇄 시 불필요한 UI 숨기기 및 페이지 넘김 설정
 st.markdown("""
     <style>
+    /* 인쇄할 때만 적용되는 마법의 CSS */
     @media print {
-        /* 1. 스트림릿 기본 UI 숨기기 */
-        [data-testid="stSidebar"], .stAppHeader, [data-testid="stHeader"], 
-        .stButton, .stDownloadButton, [data-testid="stHorizontalBlock"] > div:last-child {
+        [data-testid="stSidebar"], 
+        header[data-testid="stHeader"], 
+        .stButton, 
+        .stDownloadButton,
+        div[data-baseweb="select"], 
+        div[data-baseweb="radio"],
+        div[data-testid="stCheckbox"] {
             display: none !important;
         }
         
-        /* 2. 메인 컨텐츠 여백 조정 */
+        /* 화면 전체 여백 제거 */
         .main .block-container {
+            max-width: 100% !important;
             padding: 0 !important;
-            margin: 0 !important;
         }
 
-        /* 3. 챕터별 강제 페이지 넘김 */
-        .print-page-break {
+        /* 챕터별 강제 페이지 넘김 */
+        .page-break {
             page-break-before: always;
             clear: both;
             padding-top: 20px;
         }
 
-        /* 4. 테이블/차트가 페이지 중간에 잘리지 않게 설정 */
-        table, figure, .stPlotlyChart {
-            page-break-inside: avoid !important;
+        /* 표 스크롤 없애고 전체 출력 */
+        .stDataFrame, div[data-testid="stDataFrame"] > div {
+            overflow: visible !important;
+            height: auto !important;
+        }
+
+        /* 컬럼 잘림 방지 */
+        [data-testid="column"] {
+            min-width: 0 !important;
         }
     }
     </style>
@@ -12610,78 +12621,220 @@ with tab_guide:
     render_user_guide_tab()
 
 # ---------------------------------------------------------
-# [수정] 인쇄용 리포트 렌더링 함수 및 스위치 (app.py 맨 아래 배치)
+# [수정] 인쇄용 리포트 렌더링 함수 (요구사항 완벽 반영)
 # ---------------------------------------------------------
 def render_full_print_report():
     st.title("📑 My Stock Lab 종합 자산 보고서")
     st.caption(f"보고서 생성 일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')}")
     
-    # --- Chapter 1: 자산 현황 ---
+    # ==========================================
+    # Chapter 1: 자산 운용 현황 (누적손익 잘림 해결)
+    # ==========================================
     st.header("1. 자산 운용 현황")
-    st.write("전체 자산 및 수익률 요약입니다.")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     c1.metric("총자산", f"{portfolio_summary.get('current_asset', 0):,.0f}원")
+    c1.metric("누적수익률", f"{portfolio_summary.get('cum_return', 0):.2f}%")
     c2.metric("투자자산", f"{portfolio_summary.get('stock_value', 0):,.0f}원")
-    c3.metric("누적수익률", f"{portfolio_summary.get('cum_return', 0):.2f}%")
-    c4.metric("누적손익", f"{portfolio_summary.get('cum_profit', 0):,.0f}원")
+    c2.metric("누적손익", f"{portfolio_summary.get('cum_profit', 0):,.0f}원")
     
-    # 강제 페이지 넘김 (A4 인쇄 시 여기서 다음 장으로 넘어감)
-    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
 
-    # --- Chapter 2: 포트폴리오 분석 ---
-    st.header("2. 포트폴리오 상세 분석")
-    st.write("현재 보유 중인 자산의 상세 비중 및 평가 내역입니다.")
+    # ==========================================
+    # Chapter 2: 포트폴리오 상세 분석 (차트/매트릭스 포함)
+    # ==========================================
+    st.header("2. 보유 자산 상세 현황")
     if not dash_df.empty:
-        show_cols = ["자산명", "티커", "보유량", "매입가", "현재가", "평가손익_원화", "수익률_pct", "현재비중", "목표비중", "기술적타점"]
-        print_df = dash_df[[c for c in show_cols if c in dash_df.columns]].copy()
-        
-        # 인쇄 시 보기 좋게 단위 포맷팅 적용
-        if "수익률_pct" in print_df.columns:
-            print_df["수익률_pct"] = print_df["수익률_pct"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
-        if "현재비중" in print_df.columns:
-            print_df["현재비중"] = print_df["현재비중"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
-        if "목표비중" in print_df.columns:
-            print_df["목표비중"] = print_df["목표비중"].apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "-")
-        for col in ["매입가", "현재가", "평가손익_원화"]:
-            if col in print_df.columns:
-                print_df[col] = print_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "-")
+        # 히트맵
+        st.markdown("#### 포트폴리오 히트맵")
+        tree_values = dash_df["원화환산"].astype(float).clip(lower=0)
+        if tree_values.sum() <= 0: tree_values = pd.Series([1] * len(dash_df), index=dash_df.index)
+        fig_tree = go.Figure(go.Treemap(
+            labels=dash_df["자산명"], parents=[""] * len(dash_df), values=tree_values,
+            marker=dict(colors=dash_df["수익률_pct"], colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]], cmid=0)
+        ))
+        fig_tree.update_layout(template="plotly_dark", height=400, margin=dict(t=10, l=10, r=10, b=10))
+        st.plotly_chart(fig_tree, use_container_width=True)
 
-        st.dataframe(print_df, use_container_width=True, hide_index=True)
+        # 타점/비중/수익률 매트릭스
+        st.markdown("#### 타점/비중/수익률 매트릭스")
+        max_eval = max(float(dash_df["원화환산"].max() or 0), 1.0)
+        bubble_size = np.clip(np.sqrt(dash_df["원화환산"] / max_eval) * 55, 14, 55)
+        fig_bubble = go.Figure(go.Scatter(
+            x=dash_df["비중차이"], y=dash_df["수익률_pct"], mode="markers+text", text=dash_df["자산명"], textposition="top center",
+            marker=dict(size=bubble_size, color=dash_df["ADJ점수_num"], colorscale="Viridis", showscale=True)
+        ))
+        fig_bubble.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
+        fig_bubble.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+        fig_bubble.update_layout(template="plotly_dark", height=400, margin=dict(t=10, l=10, r=10, b=10))
+        st.plotly_chart(fig_bubble, use_container_width=True)
+
+        # 비중 바 차트 & 평가손익 랭킹
+        w1, w2 = st.columns(2)
+        with w1:
+            st.markdown("#### 현재비중 vs 목표비중")
+            fig_weight = go.Figure()
+            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["현재비중"], orientation="h", name="현재비중"))
+            fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["리밸런싱목표비중"], orientation="h", name="관리목표"))
+            fig_weight.update_layout(template="plotly_dark", barmode="group", height=350, margin=dict(t=10, l=10, r=10, b=10))
+            st.plotly_chart(fig_weight, use_container_width=True)
+        with w2:
+            st.markdown("#### 평가손익 랭킹")
+            pnl_color = np.where(dash_df["평가손익_원화"] >= 0, "#16a34a", "#dc2626")
+            fig_pnl = go.Figure(go.Bar(y=dash_df["자산명"], x=dash_df["평가손익_원화"], orientation="h", marker_color=pnl_color))
+            fig_pnl.update_layout(template="plotly_dark", height=350, margin=dict(t=10, l=10, r=10, b=10))
+            st.plotly_chart(fig_pnl, use_container_width=True)
+
+        # 월별 성과 차트
+        monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+        if not monthly_perf_df.empty:
+            st.markdown("#### 월별 누적수익률")
+            fig_cum_return = go.Figure(go.Scatter(
+                x=monthly_perf_df["month_label"], y=monthly_perf_df["cum_return_pct"], mode="lines+markers", line=dict(color="#22c55e", width=3)
+            ))
+            fig_cum_return.update_layout(template="plotly_dark", height=250, margin=dict(t=10, l=10, r=10, b=10))
+            st.plotly_chart(fig_cum_return, use_container_width=True)
     else:
         st.info("보유 중인 자산이 없습니다.")
+
+    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+
+    # ==========================================
+    # Chapter 3: 포트폴리오 리스크 분석 (1년)
+    # ==========================================
+    st.header("3. 포트폴리오 위험성 평가 (1년 기준)")
+    with st.spinner("포트폴리오 위험 지표 계산 중..."):
+        metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
+            holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=get_portfolio_analysis_start_date(monthly_logs_df)
+        )
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("위험도 등급", f"{metrics['risk_grade']} ({metrics['risk_index']:.0f}점)")
+        r2.metric("연환산 변동성", "-" if not np.isfinite(metrics["portfolio_vol"]) else f"{metrics['portfolio_vol']:.1f}%")
+        r3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
+        r4.metric("평균 상관계수", "-" if not np.isfinite(metrics.get("avg_corr", np.nan)) else f"{metrics['avg_corr']:.2f}")
+
+        st.markdown("#### 자산별 위험/상관 지표")
+        show_asset_df = asset_df.copy()
+        for col in ["전체비중", "운용비중", "연환산변동성", "MDD"]:
+            if col in show_asset_df.columns: show_asset_df[col] = show_asset_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+        if "원화환산" in show_asset_df.columns: show_asset_df["원화환산"] = show_asset_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
+        st.dataframe(show_asset_df[["자산명", "티커", "운용비중", "연환산변동성", "MDD"]], use_container_width=True, hide_index=True)
+
+        if not notes_df.empty:
+            st.markdown("#### 포트폴리오 위험/분산 체크")
+            st.dataframe(notes_df, use_container_width=True, hide_index=True)
+
+    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
+
+    # ==========================================
+    # Chapter 4: 핵심 종목 기술적 타점 & 예시 분석
+    # ==========================================
+    st.header("4. 전광판 & 대표 종목 정밀 분석")
+    st.markdown("#### 핵심 관심/보유 종목 요약 (전광판)")
+    summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
+    if not summary_df.empty:
+        sig_cols = ["종목명", "티커", "📌후보등급", "🔥기술적 타점", "Adj점수", "추세", "RS", "MDD"]
+        st.dataframe(summary_df[[c for c in sig_cols if c in summary_df.columns]], use_container_width=True, hide_index=True)
     
-    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("#### 🔍 개별 종목 분석 예시 (나스닥 100)")
+    
+    # 분석 예시 종목 세팅 (QQQM)
+    ex_ticker = "QQQM"
+    ex_name = "Invesco NASDAQ 100 (QQQM)"
+    ex_is_etf = True
+    ex_class = "us_etf_nasdaq"
+    ex_df = load_price_df(ex_ticker, "1y")
+    
+    if not ex_df.empty:
+        ex_df = build_indicators(ex_df)
+        ex_fin_score, ex_fin_meta = load_fin_score_meta_fast(ex_ticker, ex_is_etf)
+        ex_my_p = get_my_price(ex_name, ex_ticker)
+        ex_has_p = has_position(ex_name, ex_ticker)
+        
+        c = calc_scores_and_decision(ex_name, ex_ticker, ex_is_etf, ex_class, ex_df, ex_my_p, ex_has_p, int(ex_fin_score), False, "개인모드")
+        
+        # 1. 요약 패널
+        p1, p2, p3 = st.columns(3)
+        p1.metric("현재가", format_currency(c["cur_p"], ex_ticker))
+        p2.metric("3M 수익률", f"{c['ret_3m']*100:.1f}%")
+        p3.metric("최대낙폭(MDD)", f"{c['dd']*100:.1f}%")
+        
+        st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점 | 등급: {c["grade"]}</div></div>', unsafe_allow_html=True)
+        
+        # 2. SMC 및 전술 지표 (2단)
+        smc1, smc2 = st.columns(2)
+        with smc1:
+            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>외부: {c['ext_structure']} | 내부: {c['int_structure']}<br>FVG: {c['fvg_type']} | P/D: {c['pd_zone']}<br><b>실행:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
+        with smc2:
+            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>추세: {c['trend']} | RS: {c['rs_label']}<br>RSI: {c['rsi']:.1f} | MFI: {c['mfi']:.1f} | %B: {c['pct_b']:.2f}<br><b>보조해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
-    # --- Chapter 3: 정밀 관측소 및 전광판 요약 ---
-    st.header("3. 핵심 종목 기술적 타점 (전광판)")
-    st.write("관심 및 보유 종목의 현재 기술적 분석/대응 시나리오입니다.")
-    with st.spinner("신호 판정 데이터를 굽는 중..."):
-        summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
-        if not summary_df.empty:
-            sig_cols = ["종목명", "티커", "📌후보등급", "🔥기술적 타점", "Adj점수", "추세", "RS", "MDD"]
-            sig_df = summary_df[[c for c in sig_cols if c in summary_df.columns]]
-            st.dataframe(sig_df, use_container_width=True, hide_index=True)
-        else:
-            st.info("전광판에 표시할 종목이 없습니다.")
+        # 3. 핵심 판정 모듈들
+        render_personal_stock_analysis_panel(ex_name, ex_ticker, ex_is_etf, ex_class, c, int(ex_fin_score), ex_fin_meta, ex_has_p, ex_my_p)
+        render_hold_decision_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score), ex_has_p, ex_my_p)
+        render_valuation_price_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score))
+        render_pre_buy_final_check_panel(ex_name, ex_ticker, ex_is_etf, c, int(ex_fin_score), ex_has_p, ex_my_p)
+        
+        # 4. 부가 항목 (자리만 표시)
+        st.markdown("#### 📰 최신 현장 뉴스 / 리포트 (예시)")
+        st.caption("- 나스닥 100 지수 편입 종목 관련 주요 외신 헤드라인 추출 (생략)")
+        st.markdown("#### 🤖 AI 종합 해석 프롬프트 (예시)")
+        st.caption("- 거시경제 및 기술적 데이터를 조합한 AI 질문용 프롬프트 생성 영역 (생략)")
 
-    st.markdown('<div class="page-break" style="page-break-before: always; clear: both; padding-top: 20px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-break"></div>', unsafe_allow_html=True)
 
-    # --- Chapter 4: 마켓 머니플로우 ---
-    st.header("4. 글로벌 마켓 돈흐름")
-    st.write("현재 시장의 자금이 쏠리는 섹터와 모멘텀 가속도를 분석합니다.")
+    # ==========================================
+    # Chapter 5: 글로벌 마켓 돈흐름 (섹터별 분할)
+    # ==========================================
+    st.header("5. 글로벌 마켓 돈흐름 레이더")
+    st.write("주요 자산 및 섹터별 자금 유입/유출 모멘텀 현황입니다.")
+    
     with st.spinner("돈흐름 데이터를 굽는 중..."):
         flow_df = calculate_money_flow_df()
-        if not flow_df.empty:
-            flow_cols = ["구분", "섹터", "Ticker", "ETF 이름", "3개월수익률", "6개월수익률", "가속도", "돈흐름점수", "상태"]
-            f_df = flow_df[[c for c in flow_cols if c in flow_df.columns]].copy()
-            for col in ["3개월수익률", "6개월수익률", "가속도"]:
-                if col in f_df.columns:
-                    f_df[col] = f_df[col].apply(fmt_flow_pct)
-            if "돈흐름점수" in f_df.columns:
-                f_df["돈흐름점수"] = f_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
-            st.dataframe(f_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("돈흐름 데이터를 불러오지 못했습니다.")
+        
+    if not flow_df.empty:
+        # 그룹별 렌더링용 내부 함수
+        def render_money_flow_group(group_name):
+            g_df = flow_df[flow_df["구분"] == group_name].copy()
+            if g_df.empty: return
+            
+            st.markdown(f"#### 🌐 [{group_name}] 돈흐름 상세")
+            
+            # 테이블
+            show_g_df = g_df.copy()
+            for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도"]:
+                show_g_df[col] = show_g_df[col].apply(fmt_flow_pct)
+            show_g_df["돈흐름점수"] = show_g_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
+            st.dataframe(show_g_df[["섹터", "Ticker", "ETF 이름", "1개월수익률", "3개월수익률", "가속도", "돈흐름점수", "상태"]], use_container_width=True, hide_index=True)
+            
+            mc1, mc2 = st.columns(2)
+            # 히트맵
+            with mc1:
+                tree_df = g_df.reset_index(drop=True).copy()
+                tree_df["tree_id"] = tree_df["섹터"] + "|" + tree_df["Ticker"]
+                tree_df["tree_label"] = tree_df["섹터"] + "<br>" + tree_df["Ticker"]
+                fig_tree = go.Figure(go.Treemap(
+                    ids=tree_df["tree_id"], labels=tree_df["tree_label"], parents=[""] * len(tree_df), values=tree_df["히트맵크기"].astype(float).clip(lower=1),
+                    marker=dict(colors=tree_df["돈흐름점수"], colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]], cmid=0)
+                ))
+                fig_tree.update_layout(template="plotly_dark", height=350, margin=dict(t=10, l=5, r=5, b=5), title=f"{group_name} 히트맵")
+                st.plotly_chart(fig_tree, use_container_width=True)
+
+            # 로테이션 사분면
+            with mc2:
+                fig_quad = go.Figure(go.Scatter(
+                    x=g_df["6개월수익률"] * 100, y=g_df["3개월수익률"] * 100, mode="markers+text", text=g_df["섹터"], textposition="top center",
+                    marker=dict(size=np.clip(g_df["가격수준"].fillna(0.5)*28, 12, 34), color=g_df["가속도"]*100, colorscale="RdYlGn", cmid=0, showscale=True)
+                ))
+                fig_quad.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
+                fig_quad.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+                fig_quad.update_layout(template="plotly_dark", height=350, margin=dict(t=10, l=5, r=5, b=5), title="로테이션 사분면", xaxis_title="6M (%)", yaxis_title="3M (%)")
+                st.plotly_chart(fig_quad, use_container_width=True)
+
+        # 4개 그룹 순차적 렌더링
+        for g_name in ["한국 섹터", "미국 섹터", "글로벌", "매크로"]:
+            render_money_flow_group(g_name)
+    else:
+        st.warning("돈흐름 데이터를 불러오지 못했습니다.")
 
 # ---------------------------------------------------------
 # 사이드바 인쇄 모드 스위치
@@ -12692,14 +12845,9 @@ with st.sidebar:
     if print_mode:
         st.info("인쇄 모드가 켜졌습니다. Ctrl + P를 눌러 인쇄하세요.")
 
-# 인쇄 모드가 켜지면 기존 탭들을 아예 숨기고 리포트만 그려줍니다.
+# 인쇄 모드가 켜지면 기존 화면 대신 리포트만 보여줌
 if print_mode:
-    # 스트림릿 기본 탭 컨테이너를 강제로 안 보이게 하는 투명 망토 CSS
-    st.markdown('''
-        <style>
-        div[data-testid="stTabs"] { display: none !important; }
-        </style>
-    ''', unsafe_allow_html=True)
-    
-    # 챕터별로 정렬된 리포트 출력
+    # 스트림릿 기본 탭을 아예 보이지 않게 숨기는 CSS 투명망토
+    st.markdown('<style> div[data-testid="stTabs"] { display: none !important; } </style>', unsafe_allow_html=True)
     render_full_print_report()
+    st.stop()
