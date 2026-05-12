@@ -848,6 +848,8 @@ KNOWN_TICKER_DISPLAY_NAMES = {
     "064350": "현대로템",
     "079550": "LIG넥스원",
     "278470": "에이피알",
+    "012330": "현대모비스",
+    "307950": "현대오토에버",
     "090430": "아모레퍼시픽",
     "161890": "한국콜마",
     "192820": "코스맥스",
@@ -1001,10 +1003,6 @@ def resolve_display_name_for_ticker(ticker, fallback=""):
     symbol = clean_symbol(ticker_clean)
     if not ticker_clean:
         return str(fallback or "").strip()
-
-    # 야후에서 깨지는 대표 종목들 하드코딩 추가 방어
-    KNOWN_TICKER_DISPLAY_NAMES["012330"] = "현대모비스"
-    KNOWN_TICKER_DISPLAY_NAMES["307950"] = "현대오토에버"
 
     known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
     if known_name:
