@@ -12398,7 +12398,29 @@ with tab_asset:
             key="holdings_editor",
             column_config={
                 "owner_email": None,
-
+                # ── 소수점 입력 보장: 명시적 NumberColumn ──────────────────────
+                "qty": st.column_config.NumberColumn(
+                    "보유량",
+                    min_value=0,
+                    step=0.0001,
+                    format="%.4f",
+                    help="소수점 입력 가능 (예: 1.5, 0.001)",
+                ),
+                "avg_price": st.column_config.NumberColumn(
+                    "매입가",
+                    min_value=0,
+                    step=0.01,
+                    format="%.4f",
+                    help="소수점 입력 가능 (예: 79500.5)",
+                ),
+                "target_weight": st.column_config.NumberColumn(
+                    "목표비중(%)",
+                    min_value=0,
+                    max_value=100,
+                    step=0.5,
+                    format="%.1f",
+                ),
+                # ──────────────────────────────────────────────────────────────
                 "is_etf": st.column_config.CheckboxColumn(
                     "ETF/ETN/레버리지",
                     help="체크하면 재무점수를 해당없음으로 처리하고 기존 수동 재무점수는 적용하지 않습니다."
@@ -12413,7 +12435,6 @@ with tab_asset:
                     options=["core", "swing", "reserve"],
                     help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
                 ),
-                # bucket SelectboxColumn 아래에 추가
                 "account_type": st.column_config.SelectboxColumn(
                     "계좌 종류",
                     options=["일반", "ISA", "연금저축", "IRP"],
@@ -12800,7 +12821,65 @@ with tab_asset:
             "평가손익_원화", "수익률_pct", "원화환산", "목표비중", "현재비중", "비중차이",
             "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI", "MACD", "SQZ" ,"bucket", "운용대상", "리밸런싱목표비중"
         ]
-        st.dataframe(dash_df[[c for c in show_cols if c in dash_df.columns]], use_container_width=True, hide_index=True)
+        _summary_display_cols = [c for c in show_cols if c in dash_df.columns]
+        _summary_edit_df = dash_df[_summary_display_cols].copy()
+
+        # 편집 불가 컬럼: 보유량/매입가를 제외한 전체
+        _readonly_cols = [c for c in _summary_display_cols if c not in ("보유량", "매입가")]
+        # 예수금 행(티커가 KRW_CASH/USD_CASH)은 보유량/매입가도 읽기전용 처리를 위해 표시만 분리
+        _cash_mask = _summary_edit_df["티커"].isin(["KRW_CASH", "USD_CASH"]) if "티커" in _summary_edit_df.columns else pd.Series([False] * len(_summary_edit_df))
+
+        st.caption("✏️ 보유량·매입가 셀을 직접 클릭해 수정할 수 있습니다. 예수금 행은 기본 설정에서 변경하세요.")
+        _edited_summary = st.data_editor(
+            _summary_edit_df,
+            use_container_width=True,
+            hide_index=True,
+            key="asset_summary_inline_editor",
+            disabled=_readonly_cols,
+            column_config={
+                "보유량": st.column_config.NumberColumn(
+                    "보유량",
+                    min_value=0,
+                    step=0.0001,
+                    format="%.4f",
+                    help="소수점 입력 가능. 예수금 행은 기본 설정에서 변경하세요.",
+                ),
+                "매입가": st.column_config.NumberColumn(
+                    "매입가",
+                    min_value=0,
+                    step=0.01,
+                    format="%.4f",
+                    help="소수점 입력 가능. 예수금 행은 기본 설정에서 변경하세요.",
+                ),
+                "수익률_pct": st.column_config.NumberColumn("수익률(%)", format="%.2f"),
+                "ADJ점수": st.column_config.TextColumn("ADJ점수"),
+            },
+        )
+
+        if st.button("보유량·매입가 변경사항 저장", key="save_inline_qty_price"):
+            _holdings_raw = load_holdings_db()
+            _changed = False
+            if not _holdings_raw.empty and "티커" in _edited_summary.columns:
+                for _, _erow in _edited_summary.iterrows():
+                    _tkr = str(_erow.get("티커", "")).strip()
+                    if _tkr in ("KRW_CASH", "USD_CASH", ""):
+                        continue
+                    _new_qty = clean_float(_erow.get("보유량"), None)
+                    _new_price = clean_float(_erow.get("매입가"), None)
+                    _mask = _holdings_raw["ticker"] == _tkr
+                    if _mask.any():
+                        if _new_qty is not None and _new_qty >= 0:
+                            _holdings_raw.loc[_mask, "qty"] = _new_qty
+                            _changed = True
+                        if _new_price is not None and _new_price >= 0:
+                            _holdings_raw.loc[_mask, "avg_price"] = _new_price
+                            _changed = True
+            if _changed:
+                if save_holdings_db(_holdings_raw.fillna("")):
+                    st.success("보유량·매입가 저장 완료 — 입력/수정 영역에도 반영됩니다.")
+                    st.rerun()
+            else:
+                st.info("변경된 내용이 없습니다.")
 
         # --- 1. 메인 대시보드 엑셀 다운로드 버튼 추가 ---
         # (io는 파일 상단에서 이미 import됨 - 중복 제거)
