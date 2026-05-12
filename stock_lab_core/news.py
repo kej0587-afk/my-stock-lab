@@ -1032,42 +1032,49 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
     code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
 
     try:
-        import io as _io
+        import re as _re
         url = f"https://finance.naver.com/item/frgn.naver?code={code}"
         r = _requests.get(url, headers=_NAVER_PC_HEADERS, timeout=10)
         if r.status_code != 200:
             return {"ok": False, "reason": f"HTTP {r.status_code}", "rows": []}
 
         content = r.content.decode("euc-kr", errors="replace")
-        all_tables = pd.read_html(_io.StringIO(content))
 
-        # 9컬럼 테이블: 날짜|현재가|등락폭|등락률|거래량|외국인순매수|누적|보유수|보유비율
-        raw = next((t for t in all_tables if t.shape[1] == 9 and t.shape[0] >= 5), None)
-        if raw is None:
-            return {"ok": False, "reason": "수급 테이블을 찾지 못했습니다", "rows": []}
-
-        raw = raw.dropna(subset=[raw.columns[0]])
-        raw = raw[raw.iloc[:, 0].astype(str).str.match(r"\d{4}\.\d{2}\.\d{2}")]
-
+        # <tr> 행에서 날짜 패턴(YYYY.MM.DD)이 있는 행만 추출
+        tr_blocks = _re.findall(r"<tr[^>]*>(.*?)</tr>", content, _re.DOTALL)
         rows = []
-        for _, row in raw.head(days).iterrows():
-            f_net = row.iloc[5]
-            ratio = str(row.iloc[8]).replace("%", "").strip()
-            rows.append({
-                "date": str(row.iloc[0])[:10],
-                "price": int(float(row.iloc[1])) if pd.notna(row.iloc[1]) else 0,
-                "volume": int(float(row.iloc[4])) if pd.notna(row.iloc[4]) else 0,
-                "foreign_net": int(float(f_net)) if pd.notna(f_net) else 0,
-                "foreign_ratio": ratio,
-            })
+        for block in tr_blocks:
+            tds = _re.findall(r"<td[^>]*>(.*?)</td>", block, _re.DOTALL)
+            # td 태그 내 HTML 제거 후 텍스트만 추출
+            cells = [_re.sub(r"<[^>]+>", "", td).strip().replace("\xa0", "").replace(",", "") for td in tds]
+            cells = [c for c in cells if c]
+            # 날짜 셀(YYYY.MM.DD) + 9개 컬럼 확인
+            if len(cells) >= 6 and _re.match(r"\d{4}\.\d{2}\.\d{2}", cells[0]):
+                try:
+                    price = int(float(cells[1])) if cells[1] else 0
+                    volume = int(float(cells[4])) if len(cells) > 4 and cells[4] else 0
+                    f_net_raw = cells[5] if len(cells) > 5 else ""
+                    f_net = int(float(f_net_raw)) if f_net_raw and f_net_raw not in ("-", "") else 0
+                    ratio = cells[8].replace("%", "").strip() if len(cells) > 8 else "-"
+                    rows.append({
+                        "date": cells[0],
+                        "price": price,
+                        "volume": volume,
+                        "foreign_net": f_net,
+                        "foreign_ratio": ratio,
+                    })
+                except (ValueError, IndexError):
+                    continue
+            if len(rows) >= days:
+                break
 
         if not rows:
-            return {"ok": False, "reason": "파싱된 수급 행이 없습니다", "rows": []}
+            return {"ok": False, "reason": "수급 행을 파싱하지 못했습니다", "rows": []}
 
         recent = rows[:5] if len(rows) >= 5 else rows
         return {
             "ok": True,
-            "foreign_net": sum(r["foreign_net"] for r in recent),
+            "foreign_net": sum(row["foreign_net"] for row in recent),
             "foreign_ratio": rows[0]["foreign_ratio"],
             "rows": rows,
         }
