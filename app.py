@@ -2775,8 +2775,8 @@ def fetch_kr_financials_auto(ticker: str):
             key=lambda r: (int(r.get("fiscal_year", 0)), int(r.get("fiscal_quarter", 0) or 0))
         )
 
-        if len(annual_records) < 2:
-            return attach_krx_context_to_kr_failure(ticker, "dart", "DART annual financials under 2 years")
+        if len(annual_records) < 1:
+            return attach_krx_context_to_kr_failure(ticker, "dart", "DART annual financials: 0 years found")
 
         if len(quarter_records) < 1:
             return attach_krx_context_to_kr_failure(ticker, "dart", "DART single-quarter financials missing")
@@ -3024,52 +3024,47 @@ def get_krx_row_value(row, keys, default=""):
 
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_krx_stock_snapshot(ticker: str):
-    api_key = get_krx_api_key()
-    if not api_key:
-        return {"ok": False, "source": "krx", "reason": "KRX API key missing"}
-
+    """pykrx 기반 KRX 종목 기본 정보 조회 (API 키 불필요)."""
     stock_code = normalize_stock_code(ticker)
     if not stock_code or not stock_code.isdigit():
         return {"ok": False, "source": "krx", "reason": f"KRX stock code invalid: {ticker}"}
-
-    errors = []
-    for bas_dd in krx_recent_business_dates(5):
-        for market_name, endpoint in get_krx_stock_api_endpoints_for_ticker(ticker):
+    try:
+        from pykrx import stock as _pykrx
+        from datetime import date as _d, timedelta as _td
+        # 최근 거래일 찾기 (최대 5일 소급)
+        for offset in range(5):
+            bas_dd = (_d.today() - _td(days=offset)).strftime("%Y%m%d")
             try:
-                res = requests.get(
-                    endpoint,
-                    params={"basDd": bas_dd, "AUTH_KEY": api_key},
-                    headers={"AUTH_KEY": api_key},
-                    timeout=6,
-                )
-                if res.status_code != 200:
-                    errors.append(f"{market_name} {bas_dd} HTTP {res.status_code}")
+                df = _pykrx.get_market_cap(bas_dd)
+                if df is None or df.empty:
                     continue
-                rows = get_krx_rows_from_payload(res.json())
-                for row in rows:
-                    row_code = str(get_krx_row_value(row, ["ISU_SRT_CD", "ISU_CD", "isuSrtCd", "isuCd"])).strip()
-                    if row_code == stock_code:
-                        name = get_krx_row_value(row, ["ISU_ABBRV", "ISU_NM", "isuAbrv", "isuNm"], "")
-                        market = get_krx_row_value(row, ["MKT_NM", "mktNm"], market_name)
-                        mktcap = get_krx_row_value(row, ["MKTCAP", "mktcap"], "")
-                        listed_shares = get_krx_row_value(row, ["LIST_SHRS", "listShrs"], "")
-                        return {
-                            "ok": True,
-                            "source": "krx",
-                            "basDd": bas_dd,
-                            "market": str(market or market_name),
-                            "name": str(name or ""),
-                            "ticker": ticker,
-                            "stock_code": stock_code,
-                            "mktcap": mktcap,
-                            "listed_shares": listed_shares,
-                            "row": row,
-                        }
-            except Exception as exc:
-                errors.append(f"{market_name} {bas_dd}: {exc}")
-
-    reason = " / ".join(errors[-4:]) if errors else "KRX row not found"
-    return {"ok": False, "source": "krx", "reason": reason}
+                if stock_code not in df.index:
+                    continue
+                row = df.loc[stock_code]
+                mktcap = int(row.get("시가총액", 0) or 0)
+                listed_shares = int(row.get("상장주식수", 0) or 0)
+                # 종목명 조회
+                try:
+                    name = _pykrx.get_market_ticker_name(stock_code) or ""
+                except Exception:
+                    name = ""
+                market_label = "KOSPI" if ticker.upper().endswith(".KS") else "KOSDAQ"
+                return {
+                    "ok": True,
+                    "source": "pykrx",
+                    "basDd": bas_dd,
+                    "market": market_label,
+                    "name": name,
+                    "ticker": ticker,
+                    "stock_code": stock_code,
+                    "mktcap": mktcap,
+                    "listed_shares": listed_shares,
+                }
+            except Exception:
+                continue
+        return {"ok": False, "source": "pykrx", "reason": "pykrx 데이터 없음 (신규 상장 또는 거래정지)"}
+    except ImportError:
+        return {"ok": False, "source": "krx", "reason": "pykrx 미설치"}
 
 def attach_krx_context_to_kr_failure(ticker, source, reason):
     snapshot = fetch_krx_stock_snapshot(ticker)
@@ -3702,6 +3697,54 @@ def calc_middle_fin_total(judgements: dict):
         "danger_count": generic_weighted["danger_count"],
     }
 
+def _estimate_kr_fin_score_from_naver(ticker: str) -> tuple:
+    """
+    DART 완전 실패 시 Naver/pykrx 지표로 간이 재무점수를 추정합니다.
+    최대 3점 (데이터 부족으로 4점 확정 불가).
+    반환: (score, reason_str)
+    """
+    try:
+        naver = fetch_naver_kr_snapshot(ticker)
+        per = clean_float(naver.get("trailingPE"), None)
+        pbr = clean_float(naver.get("priceToBook"), None)
+        roe = clean_float(naver.get("returnOnEquity"), None)  # 0~1 범위
+        op_margin = clean_float(naver.get("operatingMargins"), None)
+        debt_ratio = clean_float(naver.get("debtToEquity"), None)  # yfinance: 0~100+
+
+        hints = []
+        score = 1  # 기본 1점 (DART 없지만 상장 자체가 최소 기준)
+
+        # PER 체크
+        if per is not None and 0 < per <= 15:
+            score += 1; hints.append(f"PER {per:.1f} 저평가")
+        elif per is not None and 0 < per <= 25:
+            hints.append(f"PER {per:.1f} 적정")
+
+        # ROE 체크
+        if roe is not None and roe >= 0.15:
+            score += 1; hints.append(f"ROE {roe*100:.1f}% 우수")
+        elif roe is not None and roe >= 0.08:
+            hints.append(f"ROE {roe*100:.1f}% 양호")
+        elif roe is not None and roe < 0:
+            score -= 1; hints.append(f"ROE {roe*100:.1f}% 적자")
+
+        # 영업이익률
+        if op_margin is not None and op_margin >= 0.10:
+            score += 1; hints.append(f"영업이익률 {op_margin*100:.1f}%")
+        elif op_margin is not None and op_margin < 0:
+            score -= 1; hints.append(f"영업이익률 적자")
+
+        # 부채비율 패널티
+        if debt_ratio is not None and debt_ratio > 200:
+            score -= 1; hints.append(f"부채비율 {debt_ratio:.0f}% 과다")
+
+        score = max(1, min(3, score))  # 1~3점 범위 (데이터 불완전 → 4점 불가)
+        source_str = "Naver간이추정(" + ", ".join(hints) + ")" if hints else "Naver간이추정(지표부족)"
+        return score, source_str
+    except Exception as e:
+        return AUTO_FIN_FAIL_SCORE, f"Naver간이추정 실패: {e}"
+
+
 def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     if is_etf:
         notes = {
@@ -3719,12 +3762,27 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
             for key in ["krx_snapshot", "sec_meta", "fmp_error", "sec_error"]
             if fin.get(key) is not None
         }
-        notes = {
-            "ok": False, "source": fin.get("source", "unknown"), "mode": "fallback",
-            "reason": fin.get("reason", "원인 미상"), "annual_judgements": {}, "quarter_judgements": {},
-            "weighted_scores": {}, "messages": [f"자동 재무 조회 실패 -> 보수 임시 {AUTO_FIN_FAIL_SCORE}점", f"사유: {fin.get('reason', '원인 미상')}"],
-        }
-        return AUTO_FIN_FAIL_SCORE, fin, notes, metrics
+        dart_reason = fin.get("reason", "원인 미상")
+        # KR 종목이면 Naver 간이 추정으로 flat-3 보다 정밀한 폴백 시도
+        if is_kr:
+            naver_score, naver_reason = _estimate_kr_fin_score_from_naver(ticker)
+            notes = {
+                "ok": False, "source": "naver_fallback", "mode": "Naver간이추정",
+                "reason": dart_reason, "annual_judgements": {}, "quarter_judgements": {},
+                "weighted_scores": {}, "messages": [
+                    f"자동 재무 조회 실패 → Naver 간이추정 {naver_score}점 (최대 3점)",
+                    f"DART 사유: {dart_reason}",
+                    f"추정 근거: {naver_reason}",
+                ],
+            }
+            return naver_score, fin, notes, metrics
+        else:
+            notes = {
+                "ok": False, "source": fin.get("source", "unknown"), "mode": "fallback",
+                "reason": dart_reason, "annual_judgements": {}, "quarter_judgements": {},
+                "weighted_scores": {}, "messages": [f"자동 재무 조회 실패 → 보수 임시 {AUTO_FIN_FAIL_SCORE}점", f"사유: {dart_reason}"],
+            }
+            return AUTO_FIN_FAIL_SCORE, fin, notes, metrics
 
     order_profile = is_order_based_ticker(ticker)
     annual_j, quarter_j, all_j, metrics = build_fin_judgements(fin, order_profile=order_profile)
