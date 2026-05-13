@@ -2449,6 +2449,9 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         st.session_state["rebcalc_redistribute"] = True
     if _done_key not in st.session_state:
         st.session_state[_done_key] = {}
+    # 종목별 적립 누적금 (1주 미달 시 매달 쌓아두는 금액, 월 스코프 없이 영구 보관)
+    if "rebcalc_accum" not in st.session_state:
+        st.session_state["rebcalc_accum"] = {}   # {ticker: accumulated_krw}
 
     # 대시보드 "분석 실행" 버튼을 눌렀을 때 캐시된 신호 맵 읽기
     _signal_cache = st.session_state.get("_ticker_signal_cache", {})
@@ -2560,22 +2563,38 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             else:
                 r["final_alloc"] = r["eff_alloc"]
 
-        # ── 3차: 권장 주수 계산 ───────────────────────────────────────────────
+        # ── 3차: 권장 주수 계산 + 1주 미달 감지 ─────────────────────────────
+        _accum = dict(st.session_state["rebcalc_accum"])   # 종목별 누적금 읽기
         for r in calc_rows:
             alloc  = r["final_alloc"]
             cur_p  = r["cur_p"]
             is_usd = r["is_usd"]
+            ticker = r["ticker"]
+
+            # 기존 적립 누적금 포함한 실질 배분 가능금
+            accumulated_krw = _accum.get(ticker, 0.0)
+            effective_alloc = alloc + accumulated_krw   # 누적금 포함
+
             if is_usd:
-                alloc_usd  = alloc / usdkrw if usdkrw > 0 else 0
-                rec_shares = int(alloc_usd / cur_p) if cur_p > 0 else 0
-                rec_krw    = rec_shares * cur_p * usdkrw
-                r["alloc_disp"] = f"${alloc_usd:,.2f}"
+                alloc_usd       = alloc / usdkrw if usdkrw > 0 else 0
+                eff_alloc_usd   = effective_alloc / usdkrw if usdkrw > 0 else 0
+                rec_shares      = int(eff_alloc_usd / cur_p) if cur_p > 0 else 0
+                rec_krw         = rec_shares * cur_p * usdkrw
+                unit_price_krw  = cur_p * usdkrw           # 1주 원화 환산가
+                r["alloc_disp"] = f"${alloc_usd:,.2f}" + (f" (+누적${accumulated_krw/usdkrw:,.2f})" if accumulated_krw > 0 else "")
             else:
-                rec_shares = int(alloc / cur_p) if cur_p > 0 else 0
-                rec_krw    = rec_shares * cur_p
-                r["alloc_disp"] = f"{alloc:,.0f}원"
-            r["rec_shares"] = rec_shares
-            r["rec_krw"]    = rec_krw
+                rec_shares      = int(effective_alloc / cur_p) if cur_p > 0 else 0
+                rec_krw         = rec_shares * cur_p
+                unit_price_krw  = cur_p
+                r["alloc_disp"] = f"{alloc:,.0f}원" + (f" (+누적{accumulated_krw:,.0f}원)" if accumulated_krw > 0 else "")
+            r["rec_shares"]        = rec_shares
+            r["rec_krw"]           = rec_krw
+            r["accumulated_krw"]   = accumulated_krw
+            r["effective_alloc"]   = effective_alloc
+            r["unit_price_krw"]    = unit_price_krw
+
+            # 1주 미달 판정: 투자 신호가 있는데 누적 포함해도 1주를 못 살 때
+            r["is_underalloc"] = (r["multiplier"] > 0 and cur_p > 0 and rec_shares == 0)
 
             # 상태 레이블
             tap = r["tap_raw"]
@@ -2588,14 +2607,30 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     r["status"] = "⏸ 스윙대기"
                 else:
                     r["status"] = "⏸ 제외"
+            elif r["is_underalloc"]:
+                # 전체 배분(100%)으로도 1주 못 사는지 체크
+                full_alloc_krw = total_invest * (r["target_w"] / target_w_sum)
+                full_alloc_krw_eff = full_alloc_krw + accumulated_krw
+                months_at_full = (
+                    int((unit_price_krw - accumulated_krw) / full_alloc_krw) + 1
+                    if full_alloc_krw > 0 else 99
+                )
+                months_at_eff = (
+                    int((unit_price_krw - accumulated_krw) / alloc) + 1
+                    if alloc > 0 else 99
+                )
+                r["months_to_buy"] = months_at_eff
+                r["status"] = f"🟡 적립중 (~{months_at_eff}달 후)"
             elif r["multiplier"] < 1.0:
                 r["status"] = f"⚠️ {int(r['multiplier']*100)}%"
             else:
                 r["status"] = "🟢 투자"
 
-        active_rows  = [r for r in calc_rows if r["multiplier"] > 0]
-        blocked_rows = [r for r in calc_rows if r["multiplier"] == 0]
-        swing_rows   = [r for r in blocked_rows if r["bucket"] == "swing"]
+        active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
+        blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]
+        swing_rows       = [r for r in blocked_rows if r["bucket"] == "swing"]
+        underalloc_rows  = [r for r in active_rows if r["is_underalloc"]]   # 1주 미달
+        buyable_rows     = [r for r in active_rows if not r["is_underalloc"]]  # 실제 매수 가능
 
         # ── 📋 이번달 배분 계획 ───────────────────────────────────────────────
         st.markdown("#### 📋 이번달 배분 계획")
@@ -2647,6 +2682,55 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                        help=f"해외 종목 매수용 · 원화 기준 {rec_usd_krw:,.0f}원 (환율 {usdkrw:,.0f}원/달러 적용)")
             fx3.metric("원화+환전 합계", f"{(rec_krw_only + rec_usd_krw):,.0f}원",
                        help="이번달 실제 필요 원화 총액 (환전분 포함)")
+
+        # ── 🟡 1주 미달 종목: 적립 누적 관리 ────────────────────────────────
+        if underalloc_rows:
+            st.markdown("#### 🟡 1주 미달 종목 — 적립 누적 관리")
+            st.caption(
+                "투자 신호는 있지만 배분금액이 **1주 가격 미만**인 종목입니다. "
+                "매달 이 금액을 누적하거나, 재분배 모드를 켜서 다른 종목에 배분할 수 있습니다."
+            )
+            ua_table = []
+            for r in underalloc_rows:
+                accum = r["accumulated_krw"]
+                needed = max(0, r["unit_price_krw"] - accum)
+                ua_table.append({
+                    "자산명":       r["name"],
+                    "1주 가격":     f"{r['unit_price_krw']:,.0f}원",
+                    "이번달 배분":  r["alloc_disp"],
+                    "현재 누적금":  f"{accum:,.0f}원",
+                    "추가 필요":    f"{needed:,.0f}원",
+                    "예상 구매":    f"~{r.get('months_to_buy', '?')}달 후",
+                    "상태":         r["status"],
+                })
+            st.dataframe(pd.DataFrame(ua_table), use_container_width=True, hide_index=True)
+
+            ua_c1, ua_c2 = st.columns(2)
+            with ua_c1:
+                if st.button("💰 이번달 미달 배분금 누적에 추가", key="rebcalc_accum_add"):
+                    _accum_new = dict(st.session_state["rebcalc_accum"])
+                    added_total = 0
+                    for r in underalloc_rows:
+                        prev = _accum_new.get(r["ticker"], 0.0)
+                        _accum_new[r["ticker"]] = prev + r["final_alloc"]
+                        added_total += r["final_alloc"]
+                    st.session_state["rebcalc_accum"] = _accum_new
+                    st.success(f"✅ {len(underalloc_rows)}개 종목 · 총 {added_total:,.0f}원 누적에 추가됐습니다.")
+                    st.rerun()
+            with ua_c2:
+                if st.button("🗑️ 누적금 전체 초기화", key="rebcalc_accum_reset"):
+                    st.session_state["rebcalc_accum"] = {}
+                    st.success("누적금이 초기화됐습니다.")
+                    st.rerun()
+
+            st.info(
+                "💡 **설계 가이드** — 1주 미달 상황 대처법:\n\n"
+                "• **🟡 적립 이월 (권장·코어ETF)**: '이번달 배분금 누적에 추가' 클릭 → 다음달 자동 합산 → 1주 가격 모이면 구매\n"
+                "• **⚠️ 재분배**: 상단 '미투자금 자동 재분배' 체크 → 미달 배분금이 다른 종목에 추가됨 (비중 왜곡 있음)\n"
+                "• **⏸ 신호 해소 대기**: 과열 신호 → 차단·대기 종목으로 설정 → 신호가 🟢로 바뀔 때 100% 비중으로 구매\n"
+                "• **📅 타이밍 결론**: 코어 ETF는 '적립 이월'이 가장 안전. "
+                "과열 해소되면 배분금이 커지고 주수도 늘어납니다."
+            )
 
         # ── 📊 총 필요 주수 (목표 비중 대비 전체 포트폴리오 기준) ────────────
         st.markdown("#### 📊 총 필요 주수 (목표비중 대비)")
@@ -2706,12 +2790,12 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     swing_done_map[r["ticker"]] = checked
             st.session_state[_done_key] = swing_done_map
 
-        # ── ✅ 투자 완료 체크 ─────────────────────────────────────────────────
+        # ── ✅ 투자 완료 체크 (실제 매수 가능 종목만) ───────────────────────
         st.markdown("#### ✅ 이번달 투자 완료 체크")
         done_map = dict(st.session_state[_done_key])
-        if active_rows:
-            chk_cols = st.columns(min(len(active_rows), 4))
-            for i, r in enumerate(active_rows):
+        if buyable_rows:
+            chk_cols = st.columns(min(len(buyable_rows), 4))
+            for i, r in enumerate(buyable_rows):
                 with chk_cols[i % 4]:
                     checked = st.checkbox(
                         r["name"],
@@ -2721,9 +2805,11 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     done_map[r["ticker"]] = checked
             st.session_state[_done_key] = done_map
 
-            all_done = active_rows and all(done_map.get(r["ticker"], False) for r in active_rows)
-            if all_done:
-                st.success("🎉 이번 달 배분 계획 종목을 모두 체크했습니다!")
+            all_done = all(done_map.get(r["ticker"], False) for r in buyable_rows)
+            if all_done and buyable_rows:
+                st.success("🎉 이번 달 매수 가능 종목을 모두 완료했습니다!")
+        elif active_rows and not buyable_rows:
+            st.caption("이번 달 1주 이상 매수 가능한 종목이 없습니다. 위 적립 누적 섹션을 이용하세요.")
         else:
             st.caption("이번 달 투자 가능한 종목이 없습니다.")
 
@@ -5134,7 +5220,10 @@ def render_refresh_control_panel():
         if st.button("전체 차트/기술 새로고침", key="refresh_panel_chart_price", use_container_width=True):
             clear_price_and_chart_cache()
             record_refresh_event("chart_price_refresh_time")
-            st.toast("차트/기술 캐시를 비웠습니다.")
+            # 자산관리 탭의 기술적 타점도 다음 렌더에서 재계산되도록 플래그 설정
+            st.session_state["asset_management_tech_summary_lazy_ready"] = True
+            st.session_state["_ticker_signal_cache"] = {}   # 이전 캐시 초기화
+            st.toast("차트/기술 캐시를 비웠습니다. 기술적 타점이 재계산됩니다.")
             st.rerun()
 
         if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", use_container_width=True):
