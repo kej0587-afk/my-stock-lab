@@ -2430,22 +2430,53 @@ def render_dart_disclosure_panel(holdings_table):
                 "rcept_no": item.get("rcept_no", ""),
             })
 
-    if not all_items:
-        return
-
     all_items = sorted(all_items, key=lambda x: x["날짜"], reverse=True)[:20]
+    label = f"📢 최근 DART 공시 ({len(all_items)}건, 30일)" if all_items else "📢 최근 DART 공시 (30일)"
 
-    with st.expander(f"📢 최근 DART 공시 ({len(all_items)}건, 30일)", expanded=False):
-        for d in all_items:
-            ds = d["날짜"]
-            date_fmt = f"{ds[:4]}.{ds[4:6]}.{ds[6:]}" if len(ds) >= 8 else ds
-            link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={d['rcept_no']}"
-            st.markdown(
-                f"<small style='color:#94a3b8'>{date_fmt}</small>&nbsp;&nbsp;"
-                f"<b>{d['종목']}</b> — "
-                f"<a href='{link}' target='_blank' style='color:#60a5fa'>{d['제목']}</a>",
-                unsafe_allow_html=True,
-            )
+    with st.expander(label, expanded=False):
+        if not all_items:
+            st.caption("최근 30일 내 공시가 없거나 DART API 키가 설정되지 않았습니다.")
+        else:
+            for d in all_items:
+                ds = d["날짜"]
+                date_fmt = f"{ds[:4]}.{ds[4:6]}.{ds[6:]}" if len(ds) >= 8 else ds
+                link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={d['rcept_no']}"
+                st.markdown(
+                    f"<small style='color:#94a3b8'>{date_fmt}</small>&nbsp;&nbsp;"
+                    f"<b>{d['종목']}</b> — "
+                    f"<a href='{link}' target='_blank' style='color:#60a5fa'>{d['제목']}</a>",
+                    unsafe_allow_html=True,
+                )
+
+
+def _render_dart_disclosure_single(ticker: str, name: str):
+    """개별 종목 분석 패널용 DART 공시 expander."""
+    code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
+    try:
+        corp_code = get_dart_corp_code(code)
+    except Exception:
+        corp_code = None
+
+    items = fetch_dart_disclosures(corp_code, days=60) if corp_code else []
+    label = f"📢 DART 공시 ({len(items)}건, 60일)" if items else "📢 DART 공시 (60일)"
+
+    with st.expander(label, expanded=False):
+        if not items:
+            if not corp_code:
+                st.caption("DART 기업코드를 찾을 수 없습니다.")
+            else:
+                st.caption("최근 60일 내 공시가 없거나 DART API 키가 설정되지 않았습니다.")
+        else:
+            for item in items[:15]:
+                ds = item.get("rcept_dt", "")[:8]
+                date_fmt = f"{ds[:4]}.{ds[4:6]}.{ds[6:]}" if len(ds) >= 8 else ds
+                rcept_no = item.get("rcept_no", "")
+                link = f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={rcept_no}"
+                st.markdown(
+                    f"<small style='color:#94a3b8'>{date_fmt}</small>&nbsp;&nbsp;"
+                    f"<a href='{link}' target='_blank' style='color:#60a5fa'>{item.get('report_nm', '')}</a>",
+                    unsafe_allow_html=True,
+                )
 
 
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
@@ -6234,13 +6265,14 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         else:
             st.info("**스마트머니(SMC):**\n데이터 없음")
 
-    # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 ──────────────────────────
+    # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 + 공시 ────────────────────
     if str(ticker).upper().endswith((".KS", ".KQ")):
         with st.expander("📊 외국인/기관 수급 현황 (최근 20거래일)", expanded=False):
             render_investor_trend_panel(ticker, name)
         if not is_etf:
             with st.expander("📈 재무 트렌드 (연간 DART)", expanded=False):
                 render_financial_trend_chart(ticker, name)
+        _render_dart_disclosure_single(ticker, name)
 
     render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price)
 
