@@ -2618,19 +2618,35 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         blocked_tbl = [t for t, r in zip(table_rows, calc_rows) if r["multiplier"] == 0]
         st.dataframe(pd.DataFrame(active_tbl + blocked_tbl), use_container_width=True, hide_index=True)
 
-        total_rec_krw = sum(r["rec_krw"] for r in active_rows)
-        total_blocked = sum(r["base_alloc"] for r in blocked_rows)
-        remainder_krw = total_invest - total_rec_krw
+        total_rec_krw     = sum(r["rec_krw"] for r in active_rows)
+        total_blocked     = sum(r["base_alloc"] for r in blocked_rows)
+        remainder_krw     = total_invest - total_rec_krw
+
+        # 원화 vs 달러 환전 분리
+        rec_krw_only  = sum(r["rec_krw"] for r in active_rows if not r["is_usd"])   # 원화 직접 투자
+        rec_usd_krw   = sum(r["rec_krw"] for r in active_rows if r["is_usd"])        # 달러 환전 필요분(원화 기준)
+        rec_usd_amt   = rec_usd_krw / usdkrw if usdkrw > 0 else 0                   # 달러 금액
 
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("총 투자 가능", f"{total_invest:,.0f}원")
         s2.metric("이번달 권장 투자금", f"{total_rec_krw:,.0f}원")
-        s3.metric("잔여(반올림 등)", f"{remainder_krw:,.0f}원")
+        s3.metric("잔여(이월 후보)", f"{remainder_krw:,.0f}원",
+                  help="반올림 차이 + 차단·대기로 미투자된 금액. '잔여금 이월' 버튼으로 다음달 적립금에 합산하세요.")
         if not redistribute_mode:
             s4.metric("차단·대기 금액", f"{total_blocked:,.0f}원",
-                      help="재분배 체크 시 투자 가능 종목에 자동 추가됩니다.")
+                      help="재분배 체크 시 투자 가능 종목에 비중대로 추가 배분됩니다.")
         else:
             s4.metric("재분배", "✅ 적용됨")
+
+        # 환전 필요금액 안내
+        if rec_usd_krw > 0 or rec_krw_only > 0:
+            fx1, fx2, fx3 = st.columns(3)
+            fx1.metric("🇰🇷 원화 직접 투자", f"{rec_krw_only:,.0f}원",
+                       help="국내 종목(KS/KQ) 매수에 필요한 원화")
+            fx2.metric("🇺🇸 달러 환전 필요", f"${rec_usd_amt:,.2f}",
+                       help=f"해외 종목 매수용 · 원화 기준 {rec_usd_krw:,.0f}원 (환율 {usdkrw:,.0f}원/달러 적용)")
+            fx3.metric("원화+환전 합계", f"{(rec_krw_only + rec_usd_krw):,.0f}원",
+                       help="이번달 실제 필요 원화 총액 (환전분 포함)")
 
         # ── 📊 총 필요 주수 (목표 비중 대비 전체 포트폴리오 기준) ────────────
         st.markdown("#### 📊 총 필요 주수 (목표비중 대비)")
@@ -2714,10 +2730,6 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         # ── 📅 월별 로그 연동 ─────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("#### 📅 월별 로그 연동")
-        st.caption(
-            "**누적 투자금** = 이전 달 누적 + 이번 달 적립금(입력값 기준). "
-            "실제 체결 금액이 아닌 **적립금 입력값**을 합산합니다."
-        )
 
         prev_total_invested = 0.0
         prev_month_str = ""
@@ -2728,16 +2740,28 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 prev_total_invested = clean_float(_latest.get("total_invested"), 0.0)
                 prev_month_str = str(_latest.get("month", ""))
 
-        # 누적: 이전달 누적 + 이번달 적립금 (monthly 변수 = 적립금 입력값)
+        # 누적 투자금 = 이전달 누적 + 이번달 적립금
+        # (이월 누적금은 "아직 투자 안 한 현금"이므로 누적 투자금에는 포함하지 않음)
         new_total_invested = prev_total_invested + monthly
 
-        if prev_month_str:
-            st.info(
-                f"직전 월 로그: **{prev_month_str}** · 누적 투자금 {prev_total_invested:,.0f}원  \n"
-                f"→ 이번 달 적립금 **{monthly:,.0f}원** 합산 시 누적 **{new_total_invested:,.0f}원**"
-            )
-        else:
-            st.info(f"월별 로그 없음 · 첫 달로 기록됩니다 (누적: {monthly:,.0f}원)")
+        with st.container():
+            if prev_month_str:
+                st.info(
+                    f"직전 월 로그: **{prev_month_str}** · 누적 투자금 {prev_total_invested:,.0f}원  \n"
+                    f"→ 이번 달 적립금 **{monthly:,.0f}원** 합산 → 누적 **{new_total_invested:,.0f}원**"
+                )
+            else:
+                st.info(f"월별 로그 없음 · 첫 달로 기록됩니다 (적립금: {monthly:,.0f}원)")
+
+            # 이월금 개념 설명
+            if carryover > 0:
+                st.caption(
+                    f"💡 **이월 누적금 {carryover:,.0f}원** 안내 — "
+                    "이월금은 지난달 미투자 잔여금으로, 현재 **원화 예수금에 포함**되어 있습니다. "
+                    "월별 누적 투자금에는 실제로 '입금한 적립금'만 더하고, "
+                    "이월금은 이번달 배분 가능 총액(=적립금+이월금)에만 반영합니다. "
+                    f"이번달 총 투자 가능금: **{total_invest:,.0f}원** (적립금 {monthly:,.0f} + 이월금 {carryover:,.0f})"
+                )
 
         b1, b2, b3 = st.columns(3)
         with b1:
@@ -2765,15 +2789,19 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                         logs_copy = pd.concat([logs_copy, new_row], ignore_index=True)
                     if save_monthly_logs_db(logs_copy.fillna("")):
                         st.success(
-                            f"✅ {_this_month} 월별 로그 저장 완료 "
-                            f"(누적 투자금 {new_total_invested:,.0f}원 / 평가금액 {_cur_asset:,.0f}원)"
+                            f"✅ {_this_month} 로그 저장 완료 — "
+                            f"누적 투자금 {new_total_invested:,.0f}원 / 평가금액 {_cur_asset:,.0f}원"
                         )
                         st.rerun()
         with b2:
             if st.button("➡️ 잔여금 다음달 이월", key="rebcalc_do_carryover"):
                 _new_carry = int(st.session_state.get("rebcalc_carryover", 0) + remainder_krw)
                 st.session_state["rebcalc_carryover"] = _new_carry
-                st.success(f"잔여금 {remainder_krw:,.0f}원 이월. 누적 이월금: {_new_carry:,.0f}원")
+                st.success(
+                    f"잔여금 {remainder_krw:,.0f}원 이월 추가. "
+                    f"다음달 이월금: {_new_carry:,.0f}원 "
+                    f"(원화 예수금에 보관 중인 미투자 현금)"
+                )
                 st.rerun()
         with b3:
             if st.button("🔄 이번달 초기화", key="rebcalc_reset"):
@@ -12974,7 +13002,6 @@ with tab_asset:
     render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
     render_asset_quick_quality_summary(effective_settings, holdings_df, dividends_df, monthly_logs_df)
     render_monthly_record_status(monthly_logs_df, portfolio_summary)
-    render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summary, monthly_logs_df=monthly_logs_df)
     render_dart_disclosure_panel(holdings_table)
 
     with st.expander("0) 백업 다운로드", expanded=False):
@@ -13341,6 +13368,13 @@ with tab_asset:
                 dash_df[col] = default
 
         dash_df["ADJ점수_num"] = pd.to_numeric(dash_df["ADJ점수"], errors="coerce").fillna(0)
+
+        # ── 리밸런싱 계산기: 신호 캐시(_ticker_signal_cache) 저장 이후 렌더링 ──
+        # 이 위치에서는 _ticker_signal_cache가 이미 갱신된 상태이므로
+        # "분석 실행" 클릭과 동일한 렌더 사이클에서 최신 신호가 반영됩니다.
+        render_monthly_rebalancing_calculator(
+            holdings_table, usdkrw, portfolio_summary, monthly_logs_df=monthly_logs_df
+        )
 
         st.markdown("#### 자산 구성/비중 상세")
 
