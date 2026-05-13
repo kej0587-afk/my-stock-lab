@@ -767,7 +767,7 @@ st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
 def normalize_bucket(value):
     raw = str(value or "").strip().lower()
-    if raw in ["core", "swing", "reserve", "cash"]:
+    if raw in ["core", "swing", "reserve", "cash", "leverage"]:
         return raw
     return "core"
 
@@ -777,7 +777,7 @@ def infer_bucket(ticker, value=""):
 
     if key in RESERVE_TICKERS and raw in ["", "core", "nan", "none"]:
         return "reserve"
-    if raw in ["core", "swing", "reserve", "cash"]:
+    if raw in ["core", "swing", "reserve", "cash", "leverage"]:
         return raw
     return "core"
 
@@ -2400,29 +2400,39 @@ def fetch_dart_disclosures(corp_code: str, days: int = 30) -> list:
         return []
 
 
-def _rebcalc_signal_multiplier(tap: str, bucket: str) -> float:
-    """기술적타점 문자열 → 배분 배율 (0.0 / 0.25 / 0.5 / 1.0)"""
+def _rebcalc_signal_multiplier(tap: str, bucket: str, is_dip: bool = False) -> float:
+    """기술적타점 문자열 → 배분 배율
+    버킷별 로직:
+      core    : 신호없음=1.0(DCA), 매수=1.0, 과열=0.25, 차단=0.0
+      leverage: 구조훼손=0.0, 과열=0.0, 신호없음=0.5(DCA유지),
+                매수=1.5, 매수+하락=2.0, 대기+하락=1.0
+      swing   : 명시적 매수 신호 없으면 0.0
+    """
     tap = str(tap).strip()
     bucket = str(bucket).strip().lower()
-    tap_lower = tap.lower()
+    is_empty = tap in ("-", "", "nan", "none", "None")
+    is_buy   = any(k in tap for k in ["매수", "분할", "진입", "🟢", "✅"])
+    is_hot   = any(k in tap for k in ["과열", "주의", "⚠"])
+    is_hard  = any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"])
+    is_wait  = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
 
-    # 타점 없음(-) 처리
+    # ── 레버리지 버킷 (QLD, TQQQ 등) ────────────────────────────────────────
+    if bucket == "leverage":
+        if is_hard:           return 0.0   # 구조 훼손 → 완전 중단 (레버리지 특성)
+        if is_hot:            return 0.0   # 과열 상태 레버리지 = 진입 금물
+        if is_buy and is_dip: return 2.0   # 매수신호 + 하락 → 2배 집중 매수
+        if is_buy:            return 1.5   # 매수신호 (고점권) → 1.5배 모멘텀
+        if is_wait and is_dip:return 1.0   # 대기 중 하락 → 1배 (DCA 유지)
+        if is_empty and is_dip:return 1.0  # 신호없음 + 하락 → 1배 DCA
+        return 0.5                         # 그외 (신호없음/대기/중립) → 0.5배 DCA
+
+    # ── 코어 버킷 ────────────────────────────────────────────────────────────
     if tap in ("-", "", "nan", "none", "None"):
-        # 코어 ETF는 신호 없어도 정상 적립
         return 1.0 if bucket == "core" else 0.0
-
-    # 매수/진입 신호 → 100%
-    if any(k in tap for k in ["매수", "분할", "진입", "🟢", "✅"]):
-        return 1.0
-    # 과열/주의 → 25%
-    if any(k in tap for k in ["과열", "주의", "⚠"]):
-        return 0.25
-    # 하드차단 / 구조훼손 → 0%
-    if any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"]):
-        return 0.0
-    # 평단/하락대기 → 0%
-    if any(k in tap for k in ["평단", "하락", "대기", "⏸"]):
-        return 0.0
+    if is_buy:  return 1.0
+    if is_hot:  return 0.25
+    if is_hard: return 0.0
+    if is_wait: return 0.0
 
     # 스윙은 명시적 매수 신호 없으면 0%
     if bucket == "swing":
@@ -2522,6 +2532,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             target_w = clean_float(row.get("목표비중"), 0.0)
             bucket   = normalize_bucket(str(row.get("bucket", "core")))
             cur_p    = clean_float(row.get("현재가"), 0.0)
+            avg_p    = clean_float(row.get("매입가"), 0.0)
             qty      = clean_float(row.get("보유량"), 0.0)
             is_usd   = not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH")
             asset_is_etf = (
@@ -2532,20 +2543,29 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             # 신호: 캐시에서 먼저 조회 (= 대시보드 분석과 동일 값), 없으면 holdings_table 값
             tap_raw = str(_signal_cache.get(ticker, row.get("기술적타점", "-"))).strip()
 
-            # 표시용 레이블: 빈 신호일 때 ETF/일반 구분
+            # 표시용 레이블: 빈 신호일 때 ETF/레버리지/일반 구분
             if tap_raw in ("-", "", "nan", "None", "none"):
-                tap_disp = "ETF (신호없음)" if asset_is_etf else "신호없음"
+                if bucket == "leverage":
+                    tap_disp = "레버리지 (신호없음)"
+                elif asset_is_etf:
+                    tap_disp = "ETF (신호없음)"
+                else:
+                    tap_disp = "신호없음"
             else:
-                tap_disp = tap_raw   # 대시보드와 동일한 원문 그대로 표시
+                tap_disp = tap_raw
+
+            # 레버리지 하락 감지: 현재가가 평단 대비 2% 이상 하락 → 추가 매수 기회
+            is_dip = (bucket == "leverage" and avg_p > 0 and cur_p < avg_p * 0.98)
 
             base_alloc = total_invest * (target_w / target_w_sum)
-            multiplier = _rebcalc_signal_multiplier(tap_raw, bucket)
+            multiplier = _rebcalc_signal_multiplier(tap_raw, bucket, is_dip=is_dip)
             eff_alloc  = base_alloc * multiplier
 
             calc_rows.append({
                 "ticker": ticker, "name": name, "bucket": bucket,
                 "target_w": target_w, "tap_raw": tap_raw, "tap_disp": tap_disp,
-                "is_etf": asset_is_etf,
+                "is_etf": asset_is_etf, "is_dip": is_dip,
+                "avg_p": avg_p,
                 "base_alloc": base_alloc, "multiplier": multiplier,
                 "eff_alloc": eff_alloc,
                 "cur_p": cur_p, "is_usd": is_usd, "qty": qty,
@@ -2557,11 +2577,20 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         inv_w_sum     = sum(r["target_w"] for r in investable) or 1
 
         for r in calc_rows:
-            if redistribute_mode and r["multiplier"] > 0:
+            if r["multiplier"] == 0:
+                r["final_alloc"] = 0.0
+            elif redistribute_mode:
                 bonus = blocked_total * (r["target_w"] / inv_w_sum)
-                r["final_alloc"] = (r["eff_alloc"] + bonus) * r["multiplier"]
+                r["final_alloc"] = r["eff_alloc"] + bonus
             else:
                 r["final_alloc"] = r["eff_alloc"]
+
+        # 레버리지 1.5x/2.0x 등으로 합계가 total_invest 초과 시 비례 정규화
+        total_final = sum(r["final_alloc"] for r in calc_rows)
+        if total_final > total_invest * 1.005:   # 0.5% 허용 오차
+            _scale = total_invest / total_final
+            for r in calc_rows:
+                r["final_alloc"] *= _scale
 
         # ── 3차: 권장 주수 계산 + 1주 미달 감지 ─────────────────────────────
         _accum = dict(st.session_state["rebcalc_accum"])   # 종목별 누적금 읽기
@@ -2597,40 +2626,51 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             r["is_underalloc"] = (r["multiplier"] > 0 and cur_p > 0 and rec_shares == 0)
 
             # 상태 레이블
-            tap = r["tap_raw"]
-            if r["multiplier"] == 0:
+            tap   = r["tap_raw"]
+            mult  = r["multiplier"]
+            bkt   = r["bucket"]
+
+            if mult == 0:
                 if any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"]):
-                    r["status"] = "⛔ 차단"
+                    r["status"] = "⛔ 구조훼손" if bkt == "leverage" else "⛔ 차단"
+                elif bkt == "leverage" and any(k in tap for k in ["과열", "주의", "⚠"]):
+                    r["status"] = "🌡️ 과열패스"   # 레버리지 과열은 완전 중단
                 elif any(k in tap for k in ["평단", "하락", "대기", "⏸"]):
                     r["status"] = "⏸ 대기"
-                elif r["bucket"] == "swing":
+                elif bkt == "swing":
                     r["status"] = "⏸ 스윙대기"
                 else:
                     r["status"] = "⏸ 제외"
             elif r["is_underalloc"]:
-                # 전체 배분(100%)으로도 1주 못 사는지 체크
-                full_alloc_krw = total_invest * (r["target_w"] / target_w_sum)
-                full_alloc_krw_eff = full_alloc_krw + accumulated_krw
-                months_at_full = (
-                    int((unit_price_krw - accumulated_krw) / full_alloc_krw) + 1
-                    if full_alloc_krw > 0 else 99
-                )
+                alloc_for_months = r["final_alloc"]
                 months_at_eff = (
-                    int((unit_price_krw - accumulated_krw) / alloc) + 1
-                    if alloc > 0 else 99
+                    int((unit_price_krw - accumulated_krw) / alloc_for_months) + 1
+                    if alloc_for_months > 0 else 99
                 )
                 r["months_to_buy"] = months_at_eff
                 r["status"] = f"🟡 적립중 (~{months_at_eff}달 후)"
-            elif r["multiplier"] < 1.0:
-                r["status"] = f"⚠️ {int(r['multiplier']*100)}%"
+            elif bkt == "leverage":
+                if mult >= 2.0:
+                    r["status"] = "📉🚀 하락+집중매수"
+                elif mult >= 1.5:
+                    r["status"] = "🚀 레버리지 진입"
+                elif mult >= 1.0:
+                    r["status"] = "〰️ 레버리지 DCA"
+                else:
+                    r["status"] = f"⚠️ 레버리지 {int(mult*100)}%"
+            elif mult < 1.0:
+                r["status"] = f"⚠️ {int(mult*100)}%"
             else:
                 r["status"] = "🟢 투자"
 
         active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
         blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]
         swing_rows       = [r for r in blocked_rows if r["bucket"] == "swing"]
-        underalloc_rows  = [r for r in active_rows if r["is_underalloc"]]   # 1주 미달
-        buyable_rows     = [r for r in active_rows if not r["is_underalloc"]]  # 실제 매수 가능
+        leverage_rows    = [r for r in calc_rows if r["bucket"] == "leverage"]
+        lev_active       = [r for r in leverage_rows if r["multiplier"] > 0]
+        lev_blocked      = [r for r in leverage_rows if r["multiplier"] == 0]
+        underalloc_rows  = [r for r in active_rows if r["is_underalloc"]]
+        buyable_rows     = [r for r in active_rows if not r["is_underalloc"]]
 
         # ── 📋 이번달 배분 계획 ───────────────────────────────────────────────
         st.markdown("#### 📋 이번달 배분 계획")
@@ -2640,18 +2680,31 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 str(r["rec_shares"]) if r["multiplier"] > 0 and r["rec_shares"] > 0
                 else ("-" if r["multiplier"] == 0 else "0주")
             )
+            # 레버리지 배율 표시 추가
+            if r["bucket"] == "leverage" and r["multiplier"] > 0:
+                mult_badge = f" ×{r['multiplier']:.1f}"
+            else:
+                mult_badge = ""
+            # 하락 감지 표시
+            dip_badge = " 📉" if r.get("is_dip") else ""
             table_rows.append({
-                "자산명":     r["name"],
+                "자산명":     r["name"] + dip_badge,
                 "버킷":       r["bucket"],
                 "목표비중":   f"{r['target_w']:.1f}%",
                 "기술적타점": r["tap_disp"],
-                "배분금액":   r["alloc_disp"] if r["multiplier"] > 0 else "-",
+                "배분금액":   (r["alloc_disp"] + mult_badge) if r["multiplier"] > 0 else "-",
                 "권장주수":   shares_disp,
                 "상태":       r["status"],
             })
-        active_tbl  = [t for t, r in zip(table_rows, calc_rows) if r["multiplier"] > 0]
-        blocked_tbl = [t for t, r in zip(table_rows, calc_rows) if r["multiplier"] == 0]
-        st.dataframe(pd.DataFrame(active_tbl + blocked_tbl), use_container_width=True, hide_index=True)
+        # 정렬: 레버리지 투자 → 일반 투자 → 레버리지 패스 → 일반 차단
+        def _sort_key(pair):
+            _, r = pair
+            if r["bucket"] == "leverage" and r["multiplier"] > 0: return 0
+            if r["multiplier"] > 0:                                return 1
+            if r["bucket"] == "leverage":                          return 2
+            return 3
+        sorted_pairs = sorted(zip(table_rows, calc_rows), key=_sort_key)
+        st.dataframe(pd.DataFrame([t for t, _ in sorted_pairs]), use_container_width=True, hide_index=True)
 
         total_rec_krw     = sum(r["rec_krw"] for r in active_rows)
         total_blocked     = sum(r["base_alloc"] for r in blocked_rows)
@@ -2731,6 +2784,45 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 "• **📅 타이밍 결론**: 코어 ETF는 '적립 이월'이 가장 안전. "
                 "과열 해소되면 배분금이 커지고 주수도 늘어납니다."
             )
+
+        # ── ⚡ 레버리지 버킷 전략 현황 ────────────────────────────────────────
+        if leverage_rows:
+            st.markdown("#### ⚡ 레버리지 전략 현황")
+            st.caption(
+                "**레버리지 배율 기준** — "
+                "📉🚀 하락+집중매수 ×2.0 · 🚀 진입 ×1.5 · 〰️ DCA ×0.5~1.0 · "
+                "🌡️ 과열패스 ×0 · ⛔ 구조훼손 ×0\n\n"
+                "평단 대비 **-2% 이하**면 📉 (하락 감지)로 표시되며 배율이 자동 상향됩니다."
+            )
+            lev_table = []
+            for r in leverage_rows:
+                pct_vs_avg = ((r["cur_p"] / r["avg_p"]) - 1) * 100 if r["avg_p"] > 0 else 0
+                pct_disp   = f"{pct_vs_avg:+.1f}%" if r["avg_p"] > 0 else "-"
+                lev_table.append({
+                    "자산명":     r["name"],
+                    "기술적타점": r["tap_disp"],
+                    "평단대비":   pct_disp,
+                    "하락감지":   "📉 하락" if r["is_dip"] else "📈 평단위",
+                    "배율":       f"×{r['multiplier']:.1f}",
+                    "배분금액":   r["alloc_disp"] if r["multiplier"] > 0 else "-",
+                    "권장주수":   str(r["rec_shares"]) if r["rec_shares"] > 0 else "-",
+                    "상태":       r["status"],
+                })
+            st.dataframe(pd.DataFrame(lev_table), use_container_width=True, hide_index=True)
+
+            # 레버리지 전략 요약
+            if lev_active:
+                lev_alloc_total = sum(r["final_alloc"] for r in lev_active)
+                lev_krw_total   = sum(r["rec_krw"] for r in lev_active)
+                dip_cnt         = sum(1 for r in lev_active if r["is_dip"])
+                la1, la2, la3 = st.columns(3)
+                la1.metric("레버리지 배분 합계", f"{lev_alloc_total:,.0f}원")
+                la2.metric("레버리지 권장 투자금", f"{lev_krw_total:,.0f}원")
+                la3.metric("하락 감지 종목", f"{dip_cnt}개", help="평단 -2% 이하 종목 수")
+
+            if lev_blocked:
+                blocked_names = ", ".join(r["name"] for r in lev_blocked)
+                st.caption(f"⚠️ 이번달 패스 레버리지: {blocked_names}")
 
         # ── 📊 총 필요 주수 (목표 비중 대비 전체 포트폴리오 기준) ────────────
         st.markdown("#### 📊 총 필요 주수 (목표비중 대비)")
@@ -13297,8 +13389,8 @@ with tab_asset:
                 ),
                 "bucket": st.column_config.SelectboxColumn(
                     "bucket",
-                    options=["core", "swing", "reserve"],
-                    help="357870.KS, SGOV 같은 파킹자산은 reserve로 설정"
+                    options=["core", "leverage", "swing", "reserve"],
+                    help="core=장기적립 / leverage=레버리지ETF(QLD·TQQQ 등, 타점+하락감지 배율 적용) / swing=스윙후보 / reserve=파킹자산"
                 ),
                 "account_type": st.column_config.SelectboxColumn(
                     "계좌 종류",
