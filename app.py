@@ -2437,9 +2437,8 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
     import datetime as _dt
 
     # ── 이번 달 기준 키 (월이 바뀌면 자동으로 새 상태 사용) ──────────────────
-    _this_month = _dt.date.today().strftime("%Y-%m")   # e.g. "2026-05"
-    _done_key   = f"rebcalc_done_{_this_month}"        # 월별 완료 체크 딕셔너리
-    _actual_key = f"rebcalc_actual_{_this_month}"      # 월별 실제 매수수량 딕셔너리
+    _this_month = _dt.date.today().strftime("%Y-%m")
+    _done_key   = f"rebcalc_done_{_this_month}"   # 월별 완료 체크
 
     # ── session_state 초기화 ──────────────────────────────────────────────────
     if "rebcalc_monthly" not in st.session_state:
@@ -2449,17 +2448,26 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
     if "rebcalc_redistribute" not in st.session_state:
         st.session_state["rebcalc_redistribute"] = True
     if _done_key not in st.session_state:
-        st.session_state[_done_key] = {}       # {"TICKER": True/False, ...}
-    if _actual_key not in st.session_state:
-        st.session_state[_actual_key] = {}     # {"TICKER": 실제_주수, ...}
+        st.session_state[_done_key] = {}
+
+    # 대시보드 "분석 실행" 버튼을 눌렀을 때 캐시된 신호 맵 읽기
+    _signal_cache = st.session_state.get("_ticker_signal_cache", {})
+    _has_signals  = bool(_signal_cache)
 
     with st.expander("💰 월 적립 리밸런싱 계산기", expanded=False):
 
-        st.caption(
-            f"**{_this_month}** 기준 계산 · 기술적 타점 신호에 따라 종목별 배분금이 자동 조정됩니다.\n\n"
-            "**상태 안내:** 🟢 투자 = 신호OK · ⚠️ 부분 = 과열주의 25% · "
-            "⛔ 차단 / ⏸ 대기·스윙대기 = 이번 달 투자 제외"
-        )
+        # 신호 캐시 상태 안내
+        if not _has_signals:
+            st.info(
+                "⚠️ 기술적 타점 신호가 아직 로드되지 않았습니다. "
+                "아래 포트폴리오 섹션의 **'분석 실행/새로고침'** 버튼을 눌러주세요. "
+                "그 다음부터는 대시보드와 동일한 신호가 표시됩니다."
+            )
+        else:
+            st.caption(
+                f"**{_this_month}** 기준 · 신호는 대시보드 분석 기준과 동일 · "
+                "🟢 투자=신호OK · ⚠️ 25%=과열주의 · ⛔ 차단 / ⏸ 대기·스윙 = 이번달 제외"
+            )
 
         # ── 입력 영역 ──────────────────────────────────────────────────────────
         c1, c2, c3, c4 = st.columns(4)
@@ -2506,26 +2514,26 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         # ── 1차 계산: 기본 배분 + 타점 배율 ──────────────────────────────────
         calc_rows = []
         for _, row in eligible.iterrows():
-            ticker    = str(row.get("티커", ""))
-            name      = str(row.get("자산명", ""))
-            target_w  = clean_float(row.get("목표비중"), 0.0)
-            tap_raw   = str(row.get("기술적타점", "-")).strip()
-            bucket    = normalize_bucket(str(row.get("bucket", "core")))
-            cur_p     = clean_float(row.get("현재가"), 0.0)
-            is_usd    = not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH")
+            ticker   = str(row.get("티커", ""))
+            name     = str(row.get("자산명", ""))
+            target_w = clean_float(row.get("목표비중"), 0.0)
+            bucket   = normalize_bucket(str(row.get("bucket", "core")))
+            cur_p    = clean_float(row.get("현재가"), 0.0)
+            qty      = clean_float(row.get("보유량"), 0.0)
+            is_usd   = not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH")
             asset_is_etf = (
                 clean_bool(row.get("is_etf", False))
                 or is_known_etf_ticker(ticker)
             )
 
-            # 기술적 타점 표시값: ETF는 신호 없는 게 정상 → 명시적 레이블
+            # 신호: 캐시에서 먼저 조회 (= 대시보드 분석과 동일 값), 없으면 holdings_table 값
+            tap_raw = str(_signal_cache.get(ticker, row.get("기술적타점", "-"))).strip()
+
+            # 표시용 레이블: 빈 신호일 때 ETF/일반 구분
             if tap_raw in ("-", "", "nan", "None", "none"):
-                if asset_is_etf:
-                    tap_disp = "ETF (신호없음)"
-                else:
-                    tap_disp = "신호없음"
+                tap_disp = "ETF (신호없음)" if asset_is_etf else "신호없음"
             else:
-                tap_disp = tap_raw
+                tap_disp = tap_raw   # 대시보드와 동일한 원문 그대로 표시
 
             base_alloc = total_invest * (target_w / target_w_sum)
             multiplier = _rebcalc_signal_multiplier(tap_raw, bucket)
@@ -2537,7 +2545,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 "is_etf": asset_is_etf,
                 "base_alloc": base_alloc, "multiplier": multiplier,
                 "eff_alloc": eff_alloc,
-                "cur_p": cur_p, "is_usd": is_usd,
+                "cur_p": cur_p, "is_usd": is_usd, "qty": qty,
             })
 
         # ── 2차: 재분배 모드 처리 ─────────────────────────────────────────────
@@ -2552,7 +2560,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             else:
                 r["final_alloc"] = r["eff_alloc"]
 
-        # ── 3차: 권장 주수·실투자금 계산 ─────────────────────────────────────
+        # ── 3차: 권장 주수 계산 ───────────────────────────────────────────────
         for r in calc_rows:
             alloc  = r["final_alloc"]
             cur_p  = r["cur_p"]
@@ -2570,11 +2578,11 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             r["rec_krw"]    = rec_krw
 
             # 상태 레이블
-            tap_raw = r["tap_raw"]
+            tap = r["tap_raw"]
             if r["multiplier"] == 0:
-                if any(k in tap_raw for k in ["하드", "차단", "구조", "🔴", "⛔"]):
+                if any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"]):
                     r["status"] = "⛔ 차단"
-                elif any(k in tap_raw for k in ["평단", "하락", "대기", "⏸"]):
+                elif any(k in tap for k in ["평단", "하락", "대기", "⏸"]):
                     r["status"] = "⏸ 대기"
                 elif r["bucket"] == "swing":
                     r["status"] = "⏸ 스윙대기"
@@ -2585,16 +2593,17 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             else:
                 r["status"] = "🟢 투자"
 
-        # ── 배분 계획 테이블 ──────────────────────────────────────────────────
-        st.markdown("#### 📋 배분 계획")
         active_rows  = [r for r in calc_rows if r["multiplier"] > 0]
         blocked_rows = [r for r in calc_rows if r["multiplier"] == 0]
+        swing_rows   = [r for r in blocked_rows if r["bucket"] == "swing"]
 
+        # ── 📋 이번달 배분 계획 ───────────────────────────────────────────────
+        st.markdown("#### 📋 이번달 배분 계획")
         table_rows = []
         for r in calc_rows:
             shares_disp = (
                 str(r["rec_shares"]) if r["multiplier"] > 0 and r["rec_shares"] > 0
-                else ("-" if r["multiplier"] == 0 else "0")
+                else ("-" if r["multiplier"] == 0 else "0주")
             )
             table_rows.append({
                 "자산명":     r["name"],
@@ -2605,92 +2614,84 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 "권장주수":   shares_disp,
                 "상태":       r["status"],
             })
-        # 투자 가능 종목 → 제외 종목 순서로 정렬
         active_tbl  = [t for t, r in zip(table_rows, calc_rows) if r["multiplier"] > 0]
         blocked_tbl = [t for t, r in zip(table_rows, calc_rows) if r["multiplier"] == 0]
         st.dataframe(pd.DataFrame(active_tbl + blocked_tbl), use_container_width=True, hide_index=True)
 
-        # ── 합계 요약 ─────────────────────────────────────────────────────────
         total_rec_krw = sum(r["rec_krw"] for r in active_rows)
         total_blocked = sum(r["base_alloc"] for r in blocked_rows)
-        remainder_rec = total_invest - total_rec_krw
+        remainder_krw = total_invest - total_rec_krw
 
-        st.markdown("---")
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("총 투자 가능", f"{total_invest:,.0f}원")
-        s2.metric("권장 투자금 합계", f"{total_rec_krw:,.0f}원")
-        s3.metric("잔여(반올림 등)", f"{remainder_rec:,.0f}원")
+        s2.metric("이번달 권장 투자금", f"{total_rec_krw:,.0f}원")
+        s3.metric("잔여(반올림 등)", f"{remainder_krw:,.0f}원")
         if not redistribute_mode:
             s4.metric("차단·대기 금액", f"{total_blocked:,.0f}원",
                       help="재분배 체크 시 투자 가능 종목에 자동 추가됩니다.")
         else:
-            s4.metric("재분배 완료", "✅ 적용됨",
-                      help="차단·대기 금액이 투자 가능 종목에 비중대로 재배분됐습니다.")
+            s4.metric("재분배", "✅ 적용됨")
 
-        # ── 실제 매수수량 입력 ────────────────────────────────────────────────
-        st.markdown("#### ✏️ 실제 매수수량 입력")
-        st.caption("권장 주수를 참고해 실제로 매수한 수량을 입력하세요. 아래 '월별 로그 기록' 버튼과 연동됩니다.")
+        # ── 📊 총 필요 주수 (목표 비중 대비 전체 포트폴리오 기준) ────────────
+        st.markdown("#### 📊 총 필요 주수 (목표비중 대비)")
+        portfolio_total = clean_float(
+            portfolio_summary.get("current_asset") if portfolio_summary else None, 0.0
+        )
+        st.caption(
+            f"현재 포트폴리오 총평가액 **{portfolio_total:,.0f}원** 기준 · "
+            "목표비중을 달성하려면 각 종목을 몇 주 보유해야 하는지 표시합니다. "
+            "매달 적립매수로 자연스럽게 수렴하는 목표치로 활용하세요."
+        )
+        need_rows = []
+        for r in calc_rows:
+            cur_p  = r["cur_p"]
+            is_usd = r["is_usd"]
+            target_w_pct = r["target_w"]
+            qty_now = r["qty"]
 
-        if not active_rows:
-            st.caption("이번 달 투자 가능한 종목이 없습니다.")
-        else:
-            n_cols = min(len(active_rows), 3)
-            inp_cols = st.columns(n_cols)
-            actual_shares_map = dict(st.session_state[_actual_key])  # 기존 값 복사
-
-            for i, r in enumerate(active_rows):
-                ticker = r["ticker"]
-                prev_val = int(actual_shares_map.get(ticker, r["rec_shares"]))
-                with inp_cols[i % n_cols]:
-                    cur_p = r["cur_p"]
-                    price_hint = (
-                        f"권장 {r['rec_shares']}주 / "
-                        f"현재가 {'$' if r['is_usd'] else ''}"
-                        f"{cur_p:,.2f}{'원' if not r['is_usd'] else ''}"
-                    )
-                    bought = st.number_input(
-                        f"{r['name']}",
-                        min_value=0,
-                        value=prev_val,
-                        step=1,
-                        help=price_hint,
-                        key=f"rebcalc_actual_{r['ticker']}_{_this_month}",
-                    )
-                    actual_shares_map[ticker] = bought
-
-            st.session_state[_actual_key] = actual_shares_map
-
-            # ── 실제 투자금 계산 ───────────────────────────────────────────────
-            total_actual_krw = 0.0
-            actual_detail = []
-            for r in active_rows:
-                bought = actual_shares_map.get(r["ticker"], 0)
-                if r["is_usd"]:
-                    krw_spent = bought * r["cur_p"] * usdkrw
-                    spent_disp = f"${bought * r['cur_p']:,.2f} (≈{krw_spent:,.0f}원)"
+            if cur_p <= 0 or portfolio_total <= 0:
+                target_shares = 0.0
+            else:
+                target_krw = portfolio_total * (target_w_pct / 100.0)
+                if is_usd:
+                    target_shares = target_krw / (cur_p * usdkrw) if usdkrw > 0 else 0.0
                 else:
-                    krw_spent  = bought * r["cur_p"]
-                    spent_disp = f"{krw_spent:,.0f}원"
-                total_actual_krw += krw_spent
-                actual_detail.append({
-                    "자산명": r["name"],
-                    "실제매수": f"{bought}주",
-                    "실투자금": spent_disp,
-                })
+                    target_shares = target_krw / cur_p
 
-            # 실제 투자 요약
-            remainder_actual = total_invest - total_actual_krw
-            a1, a2, a3 = st.columns(3)
-            a1.metric("실제 투자금 합계", f"{total_actual_krw:,.0f}원")
-            a2.metric("잔여금 (미투자)", f"{remainder_actual:,.0f}원")
-            a3.metric(
-                "권장 대비",
-                f"{(total_actual_krw - total_rec_krw):+,.0f}원",
-                help="양수 = 권장보다 더 투자, 음수 = 덜 투자",
+            diff = target_shares - qty_now
+            diff_disp = f"+{diff:.2f}" if diff >= 0 else f"{diff:.2f}"
+            need_rows.append({
+                "자산명":   r["name"],
+                "목표비중": f"{target_w_pct:.1f}%",
+                "목표주수": f"{target_shares:.2f}",
+                "현재보유": f"{qty_now:.4f}",
+                "추가필요": diff_disp,
+                "버킷":     r["bucket"],
+                "상태":     ("✅ 완료" if abs(diff) < 0.5
+                              else ("📈 매수필요" if diff > 0 else "📉 비중초과")),
+            })
+        st.dataframe(pd.DataFrame(need_rows), use_container_width=True, hide_index=True)
+
+        # ── 스윙 종목 별도 체크 ───────────────────────────────────────────────
+        if swing_rows:
+            st.markdown("#### ⚡ 스윙 종목 (이번달 매수 여부)")
+            st.caption(
+                "스윙 종목은 자동 배분에서 제외되지만, 기회매수를 했다면 아래에서 체크하세요."
             )
+            sw_cols = st.columns(min(len(swing_rows), 4))
+            swing_done_map = dict(st.session_state[_done_key])
+            for i, r in enumerate(swing_rows):
+                with sw_cols[i % 4]:
+                    checked = st.checkbox(
+                        f"⚡ {r['name']}",
+                        value=swing_done_map.get(r["ticker"], False),
+                        key=f"rebcalc_swing_{r['ticker']}_{_this_month}",
+                    )
+                    swing_done_map[r["ticker"]] = checked
+            st.session_state[_done_key] = swing_done_map
 
-        # ── 완료 체크박스 ─────────────────────────────────────────────────────
-        st.markdown("#### ✅ 종목별 투자 완료 체크")
+        # ── ✅ 투자 완료 체크 ─────────────────────────────────────────────────
+        st.markdown("#### ✅ 이번달 투자 완료 체크")
         done_map = dict(st.session_state[_done_key])
         if active_rows:
             chk_cols = st.columns(min(len(active_rows), 4))
@@ -2704,21 +2705,20 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     done_map[r["ticker"]] = checked
             st.session_state[_done_key] = done_map
 
-            all_done = all(done_map.get(r["ticker"], False) for r in active_rows)
+            all_done = active_rows and all(done_map.get(r["ticker"], False) for r in active_rows)
             if all_done:
-                st.success("🎉 이번 달 투자 대상 종목을 모두 완료했습니다!")
+                st.success("🎉 이번 달 배분 계획 종목을 모두 체크했습니다!")
         else:
             st.caption("이번 달 투자 가능한 종목이 없습니다.")
 
-        # ── 월별 로그 기록 / 이월 버튼 ───────────────────────────────────────
+        # ── 📅 월별 로그 연동 ─────────────────────────────────────────────────
         st.markdown("---")
         st.markdown("#### 📅 월별 로그 연동")
         st.caption(
-            "아래 버튼으로 이번 달 실제 투자금을 월별 로그에 기록할 수 있습니다. "
-            "**total_invested는 누적 투자금**이므로 이전 달 누적액 + 이번 달 실투자금으로 계산됩니다."
+            "**누적 투자금** = 이전 달 누적 + 이번 달 적립금(입력값 기준). "
+            "실제 체결 금액이 아닌 **적립금 입력값**을 합산합니다."
         )
 
-        # 이전 달 누적 투자금 조회
         prev_total_invested = 0.0
         prev_month_str = ""
         if monthly_logs_df is not None and not monthly_logs_df.empty:
@@ -2728,16 +2728,16 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 prev_total_invested = clean_float(_latest.get("total_invested"), 0.0)
                 prev_month_str = str(_latest.get("month", ""))
 
-        new_total_invested = prev_total_invested + (total_actual_krw if active_rows else 0.0)
+        # 누적: 이전달 누적 + 이번달 적립금 (monthly 변수 = 적립금 입력값)
+        new_total_invested = prev_total_invested + monthly
 
         if prev_month_str:
             st.info(
-                f"직전 월 로그: **{prev_month_str}** · 누적 투자금 {prev_total_invested:,.0f}원\n\n"
-                f"→ 이번 달({_this_month}) 실투자금 **{(total_actual_krw if active_rows else 0):,.0f}원** 추가 시 "
-                f"누적 **{new_total_invested:,.0f}원**"
+                f"직전 월 로그: **{prev_month_str}** · 누적 투자금 {prev_total_invested:,.0f}원  \n"
+                f"→ 이번 달 적립금 **{monthly:,.0f}원** 합산 시 누적 **{new_total_invested:,.0f}원**"
             )
         else:
-            st.info("월별 로그 데이터가 없습니다. 첫 달로 기록됩니다.")
+            st.info(f"월별 로그 없음 · 첫 달로 기록됩니다 (누적: {monthly:,.0f}원)")
 
         b1, b2, b3 = st.columns(3)
         with b1:
@@ -2748,35 +2748,36 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     st.warning("데모 모드에서는 저장할 수 없습니다.")
                 else:
                     logs_copy = monthly_logs_df.copy()
-                    # 이미 이번 달 행이 있으면 total_invested만 업데이트, 없으면 추가
                     existing_mask = logs_copy["month"].astype(str) == _this_month
+                    _cur_asset = clean_float(
+                        portfolio_summary.get("current_asset") if portfolio_summary else None, 0.0
+                    )
                     if existing_mask.any():
                         logs_copy.loc[existing_mask, "total_invested"] = new_total_invested
-                        st.toast(f"기존 {_this_month} 로그 업데이트: {new_total_invested:,.0f}원")
+                        logs_copy.loc[existing_mask, "evaluated_value"] = _cur_asset
                     else:
                         new_row = pd.DataFrame([{
                             "month": _this_month,
                             "total_invested": new_total_invested,
-                            "evaluated_value": clean_float(
-                                portfolio_summary.get("total_krw") if portfolio_summary else None, 0.0
-                            ),
+                            "evaluated_value": _cur_asset,
                             "dividend": 0.0,
                         }])
                         logs_copy = pd.concat([logs_copy, new_row], ignore_index=True)
-                        st.toast(f"신규 {_this_month} 로그 추가: {new_total_invested:,.0f}원")
                     if save_monthly_logs_db(logs_copy.fillna("")):
-                        st.success(f"✅ {_this_month} 월별 로그 저장 완료 (누적 투자금 {new_total_invested:,.0f}원)")
+                        st.success(
+                            f"✅ {_this_month} 월별 로그 저장 완료 "
+                            f"(누적 투자금 {new_total_invested:,.0f}원 / 평가금액 {_cur_asset:,.0f}원)"
+                        )
                         st.rerun()
         with b2:
             if st.button("➡️ 잔여금 다음달 이월", key="rebcalc_do_carryover"):
-                _carry = int(st.session_state.get("rebcalc_carryover", 0) + remainder_actual if active_rows else remainder_rec)
-                st.session_state["rebcalc_carryover"] = _carry
-                st.success(f"잔여금이 이월금에 추가됐습니다. 누적 이월금: {_carry:,.0f}원")
+                _new_carry = int(st.session_state.get("rebcalc_carryover", 0) + remainder_krw)
+                st.session_state["rebcalc_carryover"] = _new_carry
+                st.success(f"잔여금 {remainder_krw:,.0f}원 이월. 누적 이월금: {_new_carry:,.0f}원")
                 st.rerun()
         with b3:
             if st.button("🔄 이번달 초기화", key="rebcalc_reset"):
                 st.session_state[_done_key] = {}
-                st.session_state[_actual_key] = {}
                 st.rerun()
 
 
@@ -13317,6 +13318,11 @@ with tab_asset:
 
         signal_df = pd.DataFrame(signal_rows)
         if not signal_df.empty:
+            # 리밸런싱 계산기 등 다른 UI 위치에서 신호를 읽을 수 있도록 session_state에 캐시
+            st.session_state["_ticker_signal_cache"] = {
+                str(row["티커"]): str(row["기술적타점"])
+                for _, row in signal_df.iterrows()
+            }
             dash_df = dash_df.merge(signal_df, on="티커", how="left")
 
         defaults = {
