@@ -5719,13 +5719,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_exception_not_chasing
     )
 
+    # RS가 강하고 대장주 조건(fin4 + 정배열)이면 MA50 눌림은 구조훼손이 아닌 매수 기회
+    _rs_strong = rs_label == "🚀강함"
+    _is_leader_grade = (not is_etf) and fin_score == 4 and trend == "🚀정배열(상승)"
+    _ma50_damage = below_ma50 and not (_rs_strong and _is_leader_grade)
+    # 대장주 + RS 강함이면 -20%까지 허용 (급등 후 조정 구간 진입 정상)
+    _dd_threshold = -0.20 if _is_leader_grade and _rs_strong else -0.15
     is_structure_damage_entry_risk = (
         (not is_etf) and
         (not short_history) and
         (
-            current_dd <= -0.15 or
-            below_ma50 or
-            (below_ma20 and rs_label != "🚀강함") or
+            current_dd <= _dd_threshold or
+            _ma50_damage or
+            (below_ma20 and not _rs_strong) or
             is_single_day_breakdown
         )
     )
@@ -5942,12 +5948,34 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     else:
                         dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
+    # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
+    sizing_hint = ""
+    _is_new_entry_signal = not has_pos and dec in [
+        "🆕신규진입: 대장주 포착", "🟣예외승인: 정찰대 진입(MA5/FVG)",
+        "🎯S급 눌림목: 탑승 찬스", "🚀52주 신고가 돌파: 모멘텀 진입 검토",
+        "🎯우량주 눌림 구간: 정찰 진입 적합",
+    ]
+    if _is_new_entry_signal and targ_w > 0 and eff_total > 0:
+        _first_buy_w = round(targ_w * 0.33, 2)   # 목표비중의 1/3
+        _first_buy_amt = round(eff_total * _first_buy_w / 100, 0)
+        _cur_p_for_size = cur_p if cur_p > 0 else 1
+        _shares_hint = int(_first_buy_amt / _cur_p_for_size) if _cur_p_for_size > 0 else 0
+        sizing_hint = (
+            f"1차 정찰대: 목표비중의 1/3 ({_first_buy_w:.1f}%) "
+            f"≈ {_first_buy_amt:,.0f}원"
+            + (f" / 약 {_shares_hint}주" if not is_etf and _shares_hint > 0 else "")
+            + " | 상승 확인 후 2차·3차 분할"
+        )
+    elif _is_new_entry_signal and targ_w <= 0:
+        sizing_hint = "목표비중 미설정 — 목표비중 먼저 설정 후 1/3씩 분할 진입 권장"
+
     return {
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
         "grade": grade, "t_score": tech_total + (0 if is_etf else fin_score), "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
         "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
         "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
+        "sizing_hint": sizing_hint,
         "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
         "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
         "trend": trend, "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
@@ -12398,6 +12426,13 @@ with tab_precision:
                     f"{dca_html}</div>",
                     unsafe_allow_html=True,
                 )
+                _sizing = c.get("sizing_hint", "")
+                if _sizing:
+                    st.markdown(
+                        f"<div class='info-panel' style='border-left:4px solid #7c3aed;'>"
+                        f"🎯 <b>포지션 사이징</b><br><span style='color:#c4b5fd'>{escape_html_value(_sizing)}</span></div>",
+                        unsafe_allow_html=True,
+                    )
 
             if app_mode == "범용모드":
                 dca_html = ""
