@@ -2400,31 +2400,39 @@ def fetch_dart_disclosures(corp_code: str, days: int = 30) -> list:
         return []
 
 
-def _rebcalc_signal_multiplier(tap: str, bucket: str, is_dip: bool = False) -> float:
+def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> float:
     """기술적타점 문자열 → 배분 배율
     버킷별 로직:
       core    : 신호없음=1.0(DCA), 매수=1.0, 과열=0.25, 차단=0.0
       leverage: 구조훼손=0.0, 과열=0.0, 신호없음=0.5(DCA유지),
-                매수=1.5, 매수+하락=2.0, 대기+하락=1.0
+                매수=1.5, 매수+약하락(dip1)=1.5, 매수+중하락(dip2)=1.75, 매수+강하락(dip3)=2.0
+                대기/신호없음+약하락=0.75, +중하락=1.0, +강하락=1.25
       swing   : 명시적 매수 신호 없으면 0.0
+    dip_level: 0=정상, 1=-5%~-10%(약하락), 2=-10%~-15%(중하락), 3=-15%↓(강하락)
     """
     tap = str(tap).strip()
     bucket = str(bucket).strip().lower()
     is_empty = tap in ("-", "", "nan", "none", "None")
-    is_buy   = any(k in tap for k in ["매수", "분할", "진입", "🟢", "✅"])
+    is_buy   = any(k in tap for k in ["매수", "분할", "진입", "추매", "🟢", "✅", "🟣"])
     is_hot   = any(k in tap for k in ["과열", "주의", "⚠"])
     is_hard  = any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"])
     is_wait  = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
 
     # ── 레버리지 버킷 (QLD, TQQQ 등) ────────────────────────────────────────
     if bucket == "leverage":
-        if is_hard:           return 0.0   # 구조 훼손 → 완전 중단 (레버리지 특성)
-        if is_hot:            return 0.0   # 과열 상태 레버리지 = 진입 금물
-        if is_buy and is_dip: return 2.0   # 매수신호 + 하락 → 2배 집중 매수
-        if is_buy:            return 1.5   # 매수신호 (고점권) → 1.5배 모멘텀
-        if is_wait and is_dip:return 1.0   # 대기 중 하락 → 1배 (DCA 유지)
-        if is_empty and is_dip:return 1.0  # 신호없음 + 하락 → 1배 DCA
-        return 0.5                         # 그외 (신호없음/대기/중립) → 0.5배 DCA
+        if is_hard: return 0.0   # 구조 훼손 → 완전 중단
+        if is_hot:  return 0.0   # 과열 → 진입 금물
+        if is_buy:
+            # 매수 신호: 하락 깊이에 따라 배율 상향
+            if dip_level >= 3: return 2.0    # 매수 + 강하락(-15%↓) → 2배 집중
+            if dip_level == 2: return 1.75   # 매수 + 중하락(-10%~-15%) → 1.75배
+            return 1.5                       # 매수 + 약하락 or 정상 → 1.5배
+        if is_wait or is_empty:
+            # 신호없음/대기: 하락 깊이에 따라 DCA 강도 조절
+            if dip_level >= 3: return 1.25   # 강하락 → 1.25배 DCA
+            if dip_level == 2: return 1.0    # 중하락 → 1배 DCA
+            if dip_level == 1: return 0.75   # 약하락 → 0.75배 DCA
+        return 0.5                           # 그외 (정상 구간) → 0.5배 DCA
 
     # ── 코어 버킷 ────────────────────────────────────────────────────────────
     if tap in ("-", "", "nan", "none", "None"):
@@ -2554,17 +2562,30 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             else:
                 tap_disp = tap_raw
 
-            # 레버리지 하락 감지: 현재가가 평단 대비 2% 이상 하락 → 추가 매수 기회
-            is_dip = (bucket == "leverage" and avg_p > 0 and cur_p < avg_p * 0.98)
+            # 레버리지 하락 감지: 평단 대비 하락 깊이를 3단계로 분류
+            # 일상 변동(-2%~-5%)은 노이즈 → -5% 이상부터 의미있는 하락으로 처리
+            if bucket == "leverage" and avg_p > 0:
+                pct_drop = (cur_p - avg_p) / avg_p   # 음수 = 하락
+                if pct_drop <= -0.15:
+                    dip_level = 3   # 강하락 -15%↓
+                elif pct_drop <= -0.10:
+                    dip_level = 2   # 중하락 -10%~-15%
+                elif pct_drop <= -0.05:
+                    dip_level = 1   # 약하락 -5%~-10%
+                else:
+                    dip_level = 0   # 정상 (평단 -5% 이내)
+            else:
+                dip_level = 0
+            is_dip = dip_level > 0   # 표시용 플래그 유지
 
             base_alloc = total_invest * (target_w / target_w_sum)
-            multiplier = _rebcalc_signal_multiplier(tap_raw, bucket, is_dip=is_dip)
+            multiplier = _rebcalc_signal_multiplier(tap_raw, bucket, dip_level=dip_level)
             eff_alloc  = base_alloc * multiplier
 
             calc_rows.append({
                 "ticker": ticker, "name": name, "bucket": bucket,
                 "target_w": target_w, "tap_raw": tap_raw, "tap_disp": tap_disp,
-                "is_etf": asset_is_etf, "is_dip": is_dip,
+                "is_etf": asset_is_etf, "is_dip": is_dip, "dip_level": dip_level,
                 "avg_p": avg_p,
                 "base_alloc": base_alloc, "multiplier": multiplier,
                 "eff_alloc": eff_alloc,
@@ -2651,13 +2672,19 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 r["status"] = f"🟡 적립중 (~{months_at_eff}달 후)"
             elif bkt == "leverage":
                 if mult >= 2.0:
-                    r["status"] = "📉🚀 하락+집중매수"
+                    r["status"] = "📉📉📉🚀 강하락+집중매수"
+                elif mult >= 1.75:
+                    r["status"] = "📉📉🚀 중하락+집중매수"
                 elif mult >= 1.5:
                     r["status"] = "🚀 레버리지 진입"
+                elif mult >= 1.25:
+                    r["status"] = "📉📉 강하락 DCA"
                 elif mult >= 1.0:
-                    r["status"] = "〰️ 레버리지 DCA"
+                    r["status"] = "📉 중하락 DCA"
+                elif mult >= 0.75:
+                    r["status"] = "〰️ 약하락 DCA"
                 else:
-                    r["status"] = f"⚠️ 레버리지 {int(mult*100)}%"
+                    r["status"] = "〰️ 레버리지 DCA"
             elif mult < 1.0:
                 r["status"] = f"⚠️ {int(mult*100)}%"
             else:
@@ -2790,10 +2817,13 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             st.markdown("#### ⚡ 레버리지 전략 현황")
             st.caption(
                 "**레버리지 배율 기준** — "
-                "📉🚀 하락+집중매수 ×2.0 · 🚀 진입 ×1.5 · 〰️ DCA ×0.5~1.0 · "
+                "🚀 진입 ×1.5 · 📉 약하락 DCA ×0.75 · 📉📉 중하락 DCA ×1.0 · 📉📉 강하락 ×1.25 · "
+                "📉📉🚀 매수+중하락 ×1.75 · 📉📉📉🚀 매수+강하락 ×2.0 · "
                 "🌡️ 과열패스 ×0 · ⛔ 구조훼손 ×0\n\n"
-                "평단 대비 **-2% 이하**면 📉 (하락 감지)로 표시되며 배율이 자동 상향됩니다."
+                "평단 대비 **-5% 이상** 하락 시 단계별 배율 상향 — "
+                "약(-5%~-10%) → 중(-10%~-15%) → 강(-15%↓)"
             )
+            _dip_labels = {0: "📈 정상", 1: "📉 약(-5~-10%)", 2: "📉📉 중(-10~-15%)", 3: "📉📉📉 강(-15%↓)"}
             lev_table = []
             for r in leverage_rows:
                 pct_vs_avg = ((r["cur_p"] / r["avg_p"]) - 1) * 100 if r["avg_p"] > 0 else 0
@@ -2802,8 +2832,8 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     "자산명":     r["name"],
                     "기술적타점": r["tap_disp"],
                     "평단대비":   pct_disp,
-                    "하락감지":   "📉 하락" if r["is_dip"] else "📈 평단위",
-                    "배율":       f"×{r['multiplier']:.1f}",
+                    "하락단계":   _dip_labels.get(r.get("dip_level", 0), "📈 정상"),
+                    "배율":       f"×{r['multiplier']:.2f}",
                     "배분금액":   r["alloc_disp"] if r["multiplier"] > 0 else "-",
                     "권장주수":   str(r["rec_shares"]) if r["rec_shares"] > 0 else "-",
                     "상태":       r["status"],
@@ -2818,7 +2848,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 la1, la2, la3 = st.columns(3)
                 la1.metric("레버리지 배분 합계", f"{lev_alloc_total:,.0f}원")
                 la2.metric("레버리지 권장 투자금", f"{lev_krw_total:,.0f}원")
-                la3.metric("하락 감지 종목", f"{dip_cnt}개", help="평단 -2% 이하 종목 수")
+                la3.metric("하락 감지 종목", f"{dip_cnt}개", help="평단 -5% 이상 하락 종목 수")
 
             if lev_blocked:
                 blocked_names = ", ".join(r["name"] for r in lev_blocked)
