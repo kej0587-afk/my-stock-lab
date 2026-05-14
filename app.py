@@ -61,6 +61,7 @@ from stock_lab_core.financial_score import (
     resolve_fin_score_source,
 )
 from stock_lab_core.decision_engine import (
+    build_decision_outcome,
     build_position_sizing_hint,
     build_core_dca_context_values,
     classify_candidate_grade,
@@ -69,7 +70,7 @@ from stock_lab_core.decision_engine import (
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
     classify_limited_history_etf_signal as classify_limited_history_etf_signal_rule,
     ensure_min_price_rows_for_decision,
-    is_new_entry_decision_label,
+    is_new_entry_decision_code,
     score_main_entry,
     score_technical_components,
 )
@@ -6575,11 +6576,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
-    _is_new_entry_signal = (not has_pos) and is_new_entry_decision_label(dec)
+    decision_outcome = build_decision_outcome(dec, col)
+    _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
     sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
 
     return {
-        "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
+        "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score,
+        "dec": decision_outcome.label, "col": decision_outcome.color,
+        "decision_code": decision_outcome.code, "decision_group": decision_outcome.group,
         "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
         "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
@@ -7700,7 +7704,10 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
         "스윙상태": swing_status_map.get(swing_key, "-"),
         "내결정": swing_decision_map.get(swing_key, "-"),
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
-        "🔥기술적 타점": c["dec"], "판정분류": classify_decision_signal(c["dec"]), "Adj점수": round(c["adj"], 1)
+        "🔥기술적 타점": c["dec"],
+        "판정코드": c.get("decision_code", ""),
+        "판정분류": c.get("decision_group") or classify_decision_signal(c["dec"]),
+        "Adj점수": round(c["adj"], 1)
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 

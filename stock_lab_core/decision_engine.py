@@ -21,6 +21,14 @@ class CandidateGrade:
     grade: str
 
 
+@dataclass(frozen=True)
+class DecisionOutcome:
+    code: str
+    label: str
+    color: str
+    group: str
+
+
 def is_finite_number(value: Any) -> bool:
     try:
         return math.isfinite(float(value))
@@ -118,16 +126,6 @@ def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str
     return f"{prefix} 눌림: {dca_label}", "#16a34a"
 
 
-def is_new_entry_decision_label(decision_label: str) -> bool:
-    return decision_label in {
-        "🆕신규진입: 대장주 포착",
-        "🟣예외승인: 정찰대 진입(MA5/FVG)",
-        "🎯S급 눌림목: 탑승 찬스",
-        "🚀52주 신고가 돌파: 모멘텀 진입 검토",
-        "🎯우량주 눌림 구간: 정찰 진입 적합",
-    }
-
-
 def classify_decision_signal(decision_label: str) -> str:
     """Classify a visible decision label for dashboard counts.
 
@@ -150,6 +148,154 @@ def classify_decision_signal(decision_label: str) -> str:
     if any(keyword in text for keyword in buyish_keywords):
         return "buyish"
     return "neutral"
+
+
+DECISION_CODE_BY_LABEL = {
+    "🚨하드차단: 재무F급(처분)": "HARD_BLOCK_FINANCIAL_F",
+    "🛑하드차단: 비중 초과": "HARD_BLOCK_OVERWEIGHT",
+    "⏸️하드차단: 비중 충족(관망)": "HARD_BLOCK_TARGET_FILLED",
+    "🛑하드차단: 퍼펙트스톰(대피)": "HARD_BLOCK_MACRO_STORM",
+    "💣패닉(-50%↓): 최종투입": "PANIC_FINAL_DEPLOY",
+    "💣패닉(-40%↓): 현금 투입": "PANIC_CASH_DEPLOY",
+    "🚨위기(-30%↓): 코어 집중": "CRISIS_CORE_FOCUS",
+    "⚠️구조훼손: 신규진입 보류": "STRUCTURE_DAMAGE_NO_ENTRY",
+    "⚠️고점대비 -20%: 추매금지/손절기준 점검": "DRAWDOWN_20_HOLDING_STOP_CHECK",
+    "⚠️고점대비 -20%: 추매금지/원인점검": "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
+    "⚠️고점대비 -20%: 신규진입 보류": "DRAWDOWN_20_NO_ENTRY",
+    "⚠️구조훼손: 추매금지/손절기준 점검": "STRUCTURE_DAMAGE_HOLDING_CHECK",
+    "🟣예외승인: 정찰대 추매(MA5/FVG)": "EXCEPTION_ADD_ON",
+    "🟣예외승인: 정찰대 진입(MA5/FVG)": "EXCEPTION_ENTRY",
+    "🚫하드차단: MFI 극단 과열": "HARD_BLOCK_MFI_OVERHEAT",
+    "⚠️과열확장: 추격금지, MA5 대기": "OVERHEAT_EXTENSION_WAIT_MA5",
+    "🔥불뿜는 대장주: MA5 눌림 진입": "LEADER_MA5_PULLBACK_ENTRY",
+    "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입": "LEADER_MA5_FAST_PULLBACK_ENTRY",
+    "🚫하드차단: 볼린상단 이탈": "HARD_BLOCK_BOLLINGER_UPPER",
+    "✅ETF 비중부족 큼: 소액 적립 허용": "ETF_LARGE_GAP_DCA_OK",
+    "✅ETF 목표비중 미달: 적립식 매수 가능": "ETF_DCA_OK",
+    "✅상승확인: 2차 정찰 추매 가능": "STRENGTH_ADD_ON_OK",
+    "⏸️S급이나 비중 충족: 눌림 오면 재진입": "TARGET_FILLED_S_GRADE_WAIT",
+    "⏸️비중 충족: 보유 유지": "TARGET_FILLED_HOLD",
+    "⏳S급 과열 구간: 식힌 뒤 추가": "S_GRADE_OVERHEAT_WAIT",
+    "⏳과열: 눌림 대기": "OVERHEAT_WAIT",
+    "✅S급 비중여유: 분할 추가 가능": "S_GRADE_ADD_ON_OK",
+    "📈A급 비중여유: 소액 추가 검토": "A_GRADE_ADD_ON_REVIEW",
+    "⏳평단이상: 추가 하락 대기": "ABOVE_COST_WAIT_PULLBACK",
+    "⏳평단이상: 보유 유지": "ABOVE_COST_HOLD",
+    "🔔익절 타이밍: 고평가+과열+수익20%↑ (분할 매도 검토)": "PROFIT_TAKE_REVIEW",
+    "🎯S급 눌림목: 추매": "S_PULLBACK_ADD_ON",
+    "⚠️단기과열: 추매 보류": "SHORT_OVERHEAT_NO_ADD",
+    "🔥낙폭과대: 줍줍 찬스": "OVERSOLD_ADD_ON",
+    "💎S급: 과매도(풀매수)": "S_GRADE_OVERSOLD_BUY",
+    "🎯A급: 기술적 반등": "A_GRADE_TECH_REBOUND",
+    "📈정배열: -3% 이상 눌림 분할매수": "UPTREND_PULLBACK_DCA",
+    "⏳평단이상: 하락대기(보유)": "ABOVE_COST_WAIT",
+    "⏸️평단이하: 비중 충족(추매 보류)": "BELOW_COST_TARGET_FILLED",
+    "⏳평단근처: 추가 하락 대기": "NEAR_COST_WAIT",
+    "✅평단 -3~-7%: 소액 분할매수": "COST_MINUS_3_7_DCA",
+    "🎯평단 -7~-15%: 조건부 분할매수": "COST_MINUS_7_15_CONDITIONAL_DCA",
+    "🚫평단 -15%↓/추세위험: 원인 점검": "COST_MINUS_15_TREND_RISK",
+    "⏳보유중(신호대기)": "HOLD_WAIT_SIGNAL",
+    "⚠️상단부근: 눌림 대기": "NEAR_UPPER_WAIT",
+    "🚀52주 신고가 돌파: 모멘텀 진입 검토": "BREAKOUT_52W_ENTRY",
+    "🎯S급 눌림목: 탑승 찬스": "S_PULLBACK_ENTRY",
+    "⚠️단기과열: 진입 보류": "SHORT_OVERHEAT_NO_ENTRY",
+    "🔥낙폭과대: 신규 진입": "OVERSOLD_NEW_ENTRY",
+    "🟢선진입 가능: 반전 초입": "EARLY_REVERSAL_ENTRY",
+    "🟢선진입 가능 구간": "EARLY_ENTRY",
+    "🆕신규진입: 대장주 포착": "NEW_ENTRY_LEADER",
+    "🎯낙폭과대: 분할매수": "OVERSOLD_DCA",
+    "⚠️하락추세: 진입보류": "DOWNTREND_NO_ENTRY",
+    "🚫진입보류: 역배열 대기": "REVERSE_TREND_NO_ENTRY",
+    "🚫역배열: 진입 보류": "REVERSE_TREND_NO_ENTRY",
+    "🎯우량주 눌림 구간: 정찰 진입 적합": "QUALITY_PULLBACK_ENTRY",
+    "📈추세 눌림 구간: 소액 탐색 가능": "TREND_PULLBACK_EXPLORE",
+    "🔍정배열 눌림: 신호 확인 후 접근": "UPTREND_PULLBACK_CONFIRM",
+    "🔍S급 정배열: 눌림 구간 진입 대기": "S_UPTREND_WAIT_PULLBACK",
+    "🔍A급 정배열: 타점 탐색 중": "A_UPTREND_SEARCH_ENTRY",
+    "🔍대기: 신규 타점 탐색": "SEARCH_NEW_ENTRY",
+    "🚫극단과열: 추격금지": "EXTREME_OVERHEAT_NO_CHASE",
+    "⚠️밴드상단: 눌림 대기": "BAND_UPPER_WAIT",
+    "🚨위기/패닉: 투매 포착": "CRISIS_PANIC_SELL_OFF",
+    "🔍관망: 타점 대기": "WATCH_WAIT_ENTRY",
+}
+
+
+NEW_ENTRY_DECISION_CODES = {
+    "NEW_ENTRY_LEADER",
+    "EXCEPTION_ENTRY",
+    "S_PULLBACK_ENTRY",
+    "BREAKOUT_52W_ENTRY",
+    "QUALITY_PULLBACK_ENTRY",
+}
+
+
+def infer_decision_code(decision_label: str) -> str:
+    text = str(decision_label or "").strip()
+    if not text:
+        return "UNKNOWN"
+    exact = DECISION_CODE_BY_LABEL.get(text)
+    if exact:
+        return exact
+
+    if "신규ETF" in text:
+        if "단기과열" in text:
+            return "NEW_ETF_SHORT_OVERHEAT"
+        if "상단권" in text:
+            return "NEW_ETF_UPPER_WAIT"
+        if "평단하회" in text:
+            return "NEW_ETF_BELOW_COST_DCA"
+        if "평단근처" in text:
+            return "NEW_ETF_NEAR_COST_ADD"
+        if "단기눌림" in text:
+            return "NEW_ETF_PULLBACK_BUY"
+        if "관찰매수" in text:
+            return "NEW_ETF_WATCH_BUY"
+        if "비중 충족" in text:
+            return "NEW_ETF_TARGET_FILLED"
+        if "최소 데이터" in text:
+            return "NEW_ETF_MIN_DATA_WATCH"
+        if "데이터 축적" in text:
+            return "NEW_ETF_DATA_ACCUMULATION"
+        return "NEW_ETF_WATCH"
+
+    if "코어" in text:
+        if "폭락" in text:
+            return "CORE_CRASH_DCA"
+        if "하락" in text:
+            return "CORE_DRAWDOWN_DCA"
+        if "과열" in text:
+            return "CORE_OVERHEAT_DCA"
+        if "중립" in text:
+            return "CORE_NEUTRAL_DCA"
+        if "눌림" in text:
+            return "CORE_PULLBACK_DCA"
+        return "CORE_DCA"
+
+    group = classify_decision_signal(text)
+    if group == "buyish":
+        return "BUYISH_GENERIC"
+    if group == "caution":
+        return "CAUTION_GENERIC"
+    return "NEUTRAL_GENERIC"
+
+
+def build_decision_outcome(decision_label: str, color: str, code: str | None = None) -> DecisionOutcome:
+    label = str(decision_label or "")
+    final_code = str(code or "").strip() or infer_decision_code(label)
+    return DecisionOutcome(
+        code=final_code,
+        label=label,
+        color=str(color or "#64748b"),
+        group=classify_decision_signal(label),
+    )
+
+
+def is_new_entry_decision_code(decision_code: str) -> bool:
+    return str(decision_code or "") in NEW_ENTRY_DECISION_CODES
+
+
+def is_new_entry_decision_label(decision_label: str) -> bool:
+    return is_new_entry_decision_code(infer_decision_code(decision_label))
 
 
 def build_position_sizing_hint(
