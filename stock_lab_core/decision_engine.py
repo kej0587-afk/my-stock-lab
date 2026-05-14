@@ -229,6 +229,24 @@ NEW_ENTRY_DECISION_CODES = {
 }
 
 
+DECISION_GROUP_BY_CODE = {
+    "CORE_CRASH_DCA": "buyish",
+    "CORE_DRAWDOWN_DCA": "buyish",
+    "CORE_PULLBACK_DCA": "buyish",
+    "CORE_NEUTRAL_DCA": "buyish",
+    "CORE_OVERHEAT_DCA": "caution",
+    "NEW_ETF_BELOW_COST_DCA": "buyish",
+    "NEW_ETF_NEAR_COST_ADD": "buyish",
+    "NEW_ETF_PULLBACK_BUY": "buyish",
+    "NEW_ETF_WATCH_BUY": "buyish",
+    "NEW_ETF_SHORT_OVERHEAT": "caution",
+    "NEW_ETF_UPPER_WAIT": "caution",
+    "NEW_ETF_TARGET_FILLED": "neutral",
+    "NEW_ETF_MIN_DATA_WATCH": "neutral",
+    "NEW_ETF_DATA_ACCUMULATION": "neutral",
+}
+
+
 def infer_decision_code(decision_label: str) -> str:
     text = str(decision_label or "").strip()
     if not text:
@@ -286,7 +304,7 @@ def build_decision_outcome(decision_label: str, color: str, code: Optional[str] 
         code=final_code,
         label=label,
         color=str(color or "#64748b"),
-        group=classify_decision_signal(label),
+        group=DECISION_GROUP_BY_CODE.get(final_code) or classify_decision_signal(label),
     )
 
 

@@ -6399,58 +6399,101 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg
     )
 
+    decision_outcome = None
+
+    def _set_decision(label, color, code=None):
+        outcome = build_decision_outcome(label, color, code)
+        return outcome.label, outcome.color, outcome
+
     if is_free:
         if is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어 ETF"
             dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
+            if core_dca_rate <= 0.25:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_OVERHEAT_DCA")
+            elif core_dca_rate <= 0.50:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_NEUTRAL_DCA")
+            else:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_PULLBACK_DCA")
         elif is_etf and short_history:
             dec, col = limited_history_etf_dec, limited_history_etf_col
-        elif mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
-        elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
-        elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: 초단기 눌림(MA5) 진입", "#ec4899"
-        elif pct_b_now >= 0.95: dec, col = "⚠️밴드상단: 눌림 대기", "#d97706"
-        elif current_dd <= -0.2: dec, col = "🚨위기/패닉: 투매 포착", "#dc2626"
-        elif is_structure_damage_entry_risk: dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
-        elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95: dec, col = "🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed"
-        elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
-        elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
-        elif is_early_entry: dec, col = "🟢선진입 가능 구간", "#16a34a"
-        elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
-        elif trend == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
-        elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-        elif trend == "🌊역배열(하락)": dec, col = "🚫역배열: 진입 보류", "#dc2626"
-        else: dec, col = "🔍관망: 타점 대기", "#64748b"
+            decision_outcome = build_decision_outcome(dec, col)
+        elif mfi_now >= 85:
+            dec, col, decision_outcome = _set_decision("🚫극단과열: 추격금지", "#dc2626", "EXTREME_OVERHEAT_NO_CHASE")
+        elif is_breakout_extreme:
+            dec, col, decision_outcome = _set_decision("⚠️과열확장: 추격금지, MA5 대기", "#d97706", "OVERHEAT_EXTENSION_WAIT_MA5")
+        elif is_breakout_normal:
+            dec, col, decision_outcome = _set_decision("🔥불뿜는 대장주: 초단기 눌림(MA5) 진입", "#ec4899", "LEADER_MA5_FAST_PULLBACK_ENTRY")
+        elif pct_b_now >= 0.95:
+            dec, col, decision_outcome = _set_decision("⚠️밴드상단: 눌림 대기", "#d97706", "BAND_UPPER_WAIT")
+        elif current_dd <= -0.2:
+            dec, col, decision_outcome = _set_decision("🚨위기/패닉: 투매 포착", "#dc2626", "CRISIS_PANIC_SELL_OFF")
+        elif is_structure_damage_entry_risk:
+            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
+        elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
+            dec, col, decision_outcome = _set_decision("🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed", "BREAKOUT_52W_ENTRY")
+        elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
+            dec, col, decision_outcome = _set_decision("🎯S급 눌림목: 탑승 찬스", "#8b5cf6", "S_PULLBACK_ENTRY")
+        elif rsi_now <= 30:
+            dec, col, decision_outcome = _set_decision("🔥낙폭과대: 신규 진입", "#16a34a", "OVERSOLD_NEW_ENTRY")
+        elif is_early_entry:
+            dec, col, decision_outcome = _set_decision("🟢선진입 가능 구간", "#16a34a", "EARLY_ENTRY")
+        elif is_clean_leader_entry:
+            dec, col, decision_outcome = _set_decision("🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER")
+        elif trend == "🌊역배열(하락)" and adj_tech_score >= 5:
+            dec, col, decision_outcome = _set_decision("🎯낙폭과대: 분할매수", "#8b5cf6", "OVERSOLD_DCA")
+        elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]:
+            dec, col, decision_outcome = _set_decision("⚠️하락추세: 진입보류", "#dc2626", "DOWNTREND_NO_ENTRY")
+        elif trend == "🌊역배열(하락)":
+            dec, col, decision_outcome = _set_decision("🚫역배열: 진입 보류", "#dc2626", "REVERSE_TREND_NO_ENTRY")
+        else:
+            dec, col, decision_outcome = _set_decision("🔍관망: 타점 대기", "#64748b", "WATCH_WAIT_ENTRY")
     else:
         if not is_etf and fin_score <= 1:
-            dec, col = "🚨하드차단: 재무F급(처분)", "#dc2626"
-        elif curr_w > targ_w and targ_w > 0: dec, col = "🛑하드차단: 비중 초과", "#dc2626"
-        elif curr_w >= targ_w and targ_w > 0: dec, col = "⏸️하드차단: 비중 충족(관망)", "#d97706"
+            dec, col, decision_outcome = _set_decision("🚨하드차단: 재무F급(처분)", "#dc2626", "HARD_BLOCK_FINANCIAL_F")
+        elif curr_w > targ_w and targ_w > 0:
+            dec, col, decision_outcome = _set_decision("🛑하드차단: 비중 초과", "#dc2626", "HARD_BLOCK_OVERWEIGHT")
+        elif curr_w >= targ_w and targ_w > 0:
+            dec, col, decision_outcome = _set_decision("⏸️하드차단: 비중 충족(관망)", "#d97706", "HARD_BLOCK_TARGET_FILLED")
         elif _fmr >= 4.5:
-            dec, col = "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626"
+            dec, col, decision_outcome = _set_decision("🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM")
         elif is_core_dca_allowed and current_dd <= -0.3:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            dec, col = f"{prefix} 폭락: {core_dca_context['core_dca_label']}", "#b91c1c"
-        elif current_dd <= -0.5: dec, col = "💣패닉(-50%↓): 최종투입", "#7f1d1d"
-        elif current_dd <= -0.4: dec, col = "💣패닉(-40%↓): 현금 투입", "#991b1b"
-        elif current_dd <= -0.3: dec, col = "🚨위기(-30%↓): 코어 집중", "#b91c1c"
+            dec, col, decision_outcome = _set_decision(
+                f"{prefix} 폭락: {core_dca_context['core_dca_label']}", "#b91c1c", "CORE_CRASH_DCA"
+            )
+        elif current_dd <= -0.5:
+            dec, col, decision_outcome = _set_decision("💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY")
+        elif current_dd <= -0.4:
+            dec, col, decision_outcome = _set_decision("💣패닉(-40%↓): 현금 투입", "#991b1b", "PANIC_CASH_DEPLOY")
+        elif current_dd <= -0.3:
+            dec, col, decision_outcome = _set_decision("🚨위기(-30%↓): 코어 집중", "#b91c1c", "CRISIS_CORE_FOCUS")
         elif is_core_dca_allowed and current_dd <= -0.2:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            dec, col = f"{prefix} 하락: {core_dca_context['core_dca_label']}", "#16a34a"
+            dec, col, decision_outcome = _set_decision(
+                f"{prefix} 하락: {core_dca_context['core_dca_label']}", "#16a34a", "CORE_DRAWDOWN_DCA"
+            )
         elif is_structure_damage_entry_risk and not has_pos:
-            dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
+            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
         elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
-            dec, col = "⚠️고점대비 -20%: 추매금지/손절기준 점검", "#d97706"
+            dec, col, decision_outcome = _set_decision(
+                "⚠️고점대비 -20%: 추매금지/손절기준 점검", "#d97706", "DRAWDOWN_20_HOLDING_STOP_CHECK"
+            )
         elif current_dd <= -0.2 and has_pos:
-            dec, col = "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706"
+            dec, col, decision_outcome = _set_decision(
+                "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706", "DRAWDOWN_20_HOLDING_CAUSE_CHECK"
+            )
         elif current_dd <= -0.2:
-            dec, col = "⚠️고점대비 -20%: 신규진입 보류", "#d97706"
+            dec, col, decision_outcome = _set_decision("⚠️고점대비 -20%: 신규진입 보류", "#d97706", "DRAWDOWN_20_NO_ENTRY")
         
         
         elif is_structure_damage_entry_risk and has_pos:
-            dec, col = "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706"
+            dec, col, decision_outcome = _set_decision(
+                "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706", "STRUCTURE_DAMAGE_HOLDING_CHECK"
+            )
         elif is_structure_damage_entry_risk:
-            dec, col = "⚠️구조훼손: 신규진입 보류", "#d97706"
+            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
         elif (
             is_exception_entry and
             has_pos and
@@ -6459,43 +6502,55 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             targ_w > 0 and
             curr_w < targ_w
         ):
-            dec, col = "🟣예외승인: 정찰대 추매(MA5/FVG)", "#7c3aed"
+            dec, col, decision_outcome = _set_decision("🟣예외승인: 정찰대 추매(MA5/FVG)", "#7c3aed", "EXCEPTION_ADD_ON")
         elif is_exception_entry and (not has_pos):
-            dec, col = "🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed"
+            dec, col, decision_outcome = _set_decision("🟣예외승인: 정찰대 진입(MA5/FVG)", "#7c3aed", "EXCEPTION_ENTRY")
 
         elif is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
+            if core_dca_rate <= 0.25:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_OVERHEAT_DCA")
+            elif core_dca_rate <= 0.50:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_NEUTRAL_DCA")
+            else:
+                decision_outcome = build_decision_outcome(dec, col, "CORE_PULLBACK_DCA")
         elif is_etf and short_history:
             dec, col = limited_history_etf_dec, limited_history_etf_col
-        elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
-        elif is_breakout_extreme: dec, col = "⚠️과열확장: 추격금지, MA5 대기", "#d97706"
-        elif is_breakout_normal: dec, col = "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899"
+            decision_outcome = build_decision_outcome(dec, col)
+        elif mfi_now >= 85:
+            dec, col, decision_outcome = _set_decision("🚫하드차단: MFI 극단 과열", "#dc2626", "HARD_BLOCK_MFI_OVERHEAT")
+        elif is_breakout_extreme:
+            dec, col, decision_outcome = _set_decision("⚠️과열확장: 추격금지, MA5 대기", "#d97706", "OVERHEAT_EXTENSION_WAIT_MA5")
+        elif is_breakout_normal:
+            dec, col, decision_outcome = _set_decision("🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899", "LEADER_MA5_PULLBACK_ENTRY")
         elif (not is_etf) and pct_b_now >= 0.95:
-            dec, col = "🚫하드차단: 볼린상단 이탈", "#dc2626"
+            dec, col, decision_outcome = _set_decision("🚫하드차단: 볼린상단 이탈", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER")
         elif is_etf_accumulation_ok and weight_gap >= 10:
-            dec, col = "✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a"
+            dec, col, decision_outcome = _set_decision("✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a", "ETF_LARGE_GAP_DCA_OK")
         elif is_etf_accumulation_ok:
-            dec, col = "✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a"
+            dec, col, decision_outcome = _set_decision("✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a", "ETF_DCA_OK")
         elif is_stock_add_on_strength:
-            dec, col = "✅상승확인: 2차 정찰 추매 가능", "#16a34a"       
+            dec, col, decision_outcome = _set_decision("✅상승확인: 2차 정찰 추매 가능", "#16a34a", "STRENGTH_ADD_ON_OK")
         elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
             # 최종승인자가 막는 이유를 구체적으로 표시
             
             # 케이스 1: 비중이 꽉 참
             if targ_w > 0 and curr_w >= targ_w * 0.97:
                 if grade.startswith("💎") or grade.startswith("✅"):
-                    dec, col = "⏸️S급이나 비중 충족: 눌림 오면 재진입", "#8b5cf6"
+                    dec, col, decision_outcome = _set_decision(
+                        "⏸️S급이나 비중 충족: 눌림 오면 재진입", "#8b5cf6", "TARGET_FILLED_S_GRADE_WAIT"
+                    )
                 else:
-                    dec, col = "⏸️비중 충족: 보유 유지", "#64748b"
+                    dec, col, decision_outcome = _set_decision("⏸️비중 충족: 보유 유지", "#64748b", "TARGET_FILLED_HOLD")
             
             # 케이스 2: 비중 여유 있는데 과열
             elif weight_gap >= 3 and (mfi_now >= 80 or rsi_now >= 72 or pct_b_now >= 0.90):
                 if grade.startswith("💎") or grade.startswith("✅"):
-                    dec, col = "⏳S급 과열 구간: 식힌 뒤 추가", "#d97706"
+                    dec, col, decision_outcome = _set_decision("⏳S급 과열 구간: 식힌 뒤 추가", "#d97706", "S_GRADE_OVERHEAT_WAIT")
                 else:
-                    dec, col = "⏳과열: 눌림 대기", "#d97706"
+                    dec, col, decision_outcome = _set_decision("⏳과열: 눌림 대기", "#d97706", "OVERHEAT_WAIT")
             
             # 케이스 3: 비중 여유 있고 과열 아님 → 추가 허용 조건
             elif weight_gap >= 3 and mfi_now < 75 and rsi_now < 68 and pct_b_now < 0.88:
@@ -6504,47 +6559,68 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     trend == "🚀정배열(상승)" and
                     fin_score >= 4 and
                     (_fmr < 4.0 if rs_slope_label == "📈RS상승중" else _fmr < 3.5)):
-                    dec, col = "✅S급 비중여유: 분할 추가 가능", "#16a34a"
+                    dec, col, decision_outcome = _set_decision("✅S급 비중여유: 분할 추가 가능", "#16a34a", "S_GRADE_ADD_ON_OK")
                 elif grade.startswith("✅") and trend == "🚀정배열(상승)":
-                    dec, col = "📈A급 비중여유: 소액 추가 검토", "#22c55e"
+                    dec, col, decision_outcome = _set_decision("📈A급 비중여유: 소액 추가 검토", "#22c55e", "A_GRADE_ADD_ON_REVIEW")
                 else:
-                    dec, col = "⏳평단이상: 추가 하락 대기", "#64748b"
+                    dec, col, decision_outcome = _set_decision("⏳평단이상: 추가 하락 대기", "#64748b", "ABOVE_COST_WAIT_PULLBACK")
             
             # 케이스 4: 그 외 모든 상황 (비중 여유 없거나 조건 미달 등)
             else:
-                dec, col = "⏳평단이상: 보유 유지", "#64748b"
+                dec, col, decision_outcome = _set_decision("⏳평단이상: 보유 유지", "#64748b", "ABOVE_COST_HOLD")
         elif has_pos:
-            if (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20: dec, col = "🔔익절 타이밍: 고평가+과열+수익20%↑ (분할 매도 검토)", "#dc2626"
-            elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 추매", "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 추매 보류", "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 줍줍 찬스", "#16a34a"
-            elif rs_label == "🚀강함" and mfi_now < 35: dec, col = "💎S급: 과매도(풀매수)", "#16a34a"
-            elif adj_tech_score >= 4 and cur_p <= my_price: dec, col = "🎯A급: 기술적 반등", "#16a34a"
-            elif (trend == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and price_vs_avg <= -0.03 and price_vs_avg > -0.15 and curr_w < targ_w): dec, col = "📈정배열: -3% 이상 눌림 분할매수", "#16a34a"
-            elif cur_p > my_price: dec, col = "⏳평단이상: 하락대기(보유)", "#d97706"
+            if (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20:
+                dec, col, decision_outcome = _set_decision(
+                    "🔔익절 타이밍: 고평가+과열+수익20%↑ (분할 매도 검토)", "#dc2626", "PROFIT_TAKE_REVIEW"
+                )
+            elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
+                dec, col, decision_outcome = _set_decision("🎯S급 눌림목: 추매", "#8b5cf6", "S_PULLBACK_ADD_ON")
+            elif mfi_now >= 80:
+                dec, col, decision_outcome = _set_decision("⚠️단기과열: 추매 보류", "#d97706", "SHORT_OVERHEAT_NO_ADD")
+            elif rsi_now <= 30:
+                dec, col, decision_outcome = _set_decision("🔥낙폭과대: 줍줍 찬스", "#16a34a", "OVERSOLD_ADD_ON")
+            elif rs_label == "🚀강함" and mfi_now < 35:
+                dec, col, decision_outcome = _set_decision("💎S급: 과매도(풀매수)", "#16a34a", "S_GRADE_OVERSOLD_BUY")
+            elif adj_tech_score >= 4 and cur_p <= my_price:
+                dec, col, decision_outcome = _set_decision("🎯A급: 기술적 반등", "#16a34a", "A_GRADE_TECH_REBOUND")
+            elif (trend == "🚀정배열(상승)" and pct_b_now < 0.8 and rsi_now < 60 and price_vs_avg <= -0.03 and price_vs_avg > -0.15 and curr_w < targ_w):
+                dec, col, decision_outcome = _set_decision("📈정배열: -3% 이상 눌림 분할매수", "#16a34a", "UPTREND_PULLBACK_DCA")
+            elif cur_p > my_price:
+                dec, col, decision_outcome = _set_decision("⏳평단이상: 하락대기(보유)", "#d97706", "ABOVE_COST_WAIT")
             elif cur_p <= my_price:
                 if curr_w >= targ_w and targ_w > 0:
-                    dec, col = "⏸️평단이하: 비중 충족(추매 보류)", "#d97706"
+                    dec, col, decision_outcome = _set_decision("⏸️평단이하: 비중 충족(추매 보류)", "#d97706", "BELOW_COST_TARGET_FILLED")
                 elif price_vs_avg > -0.03:
-                    dec, col = "⏳평단근처: 추가 하락 대기", "#64748b"
+                    dec, col, decision_outcome = _set_decision("⏳평단근처: 추가 하락 대기", "#64748b", "NEAR_COST_WAIT")
                 elif price_vs_avg >= -0.07 and trend != "🌊역배열(하락)" and mfi_now < 80:
-                    dec, col = "✅평단 -3~-7%: 소액 분할매수", "#16a34a"
+                    dec, col, decision_outcome = _set_decision("✅평단 -3~-7%: 소액 분할매수", "#16a34a", "COST_MINUS_3_7_DCA")
                 elif price_vs_avg >= -0.15 and fin_score >= 3 and _fmr < 4.5:
-                    dec, col = "🎯평단 -7~-15%: 조건부 분할매수", "#8b5cf6"
-                else: 
-                    dec, col = "🚫평단 -15%↓/추세위험: 원인 점검", "#dc2626"
-            else: dec, col = "⏳보유중(신호대기)", "#64748b"
+                    dec, col, decision_outcome = _set_decision("🎯평단 -7~-15%: 조건부 분할매수", "#8b5cf6", "COST_MINUS_7_15_CONDITIONAL_DCA")
+                else:
+                    dec, col, decision_outcome = _set_decision("🚫평단 -15%↓/추세위험: 원인 점검", "#dc2626", "COST_MINUS_15_TREND_RISK")
+            else:
+                dec, col, decision_outcome = _set_decision("⏳보유중(신호대기)", "#64748b", "HOLD_WAIT_SIGNAL")
         else:
-            if 0.85 <= pct_b_now < 0.95: dec, col = "⚠️상단부근: 눌림 대기", "#d97706"
-            elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95: dec, col = "🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed"
-            elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8: dec, col = "🎯S급 눌림목: 탑승 찬스", "#8b5cf6"
-            elif mfi_now >= 80: dec, col = "⚠️단기과열: 진입 보류", "#d97706"
-            elif rsi_now <= 30: dec, col = "🔥낙폭과대: 신규 진입", "#16a34a"
-            elif is_early_entry: dec, col = "🟢선진입 가능: 반전 초입", "#16a34a"
-            elif is_clean_leader_entry: dec, col = "🆕신규진입: 대장주 포착", "#16a34a"
-            elif trend == "🌊역배열(하락)" and adj_tech_score >= 5: dec, col = "🎯낙폭과대: 분할매수", "#8b5cf6"
-            elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]: dec, col = "⚠️하락추세: 진입보류", "#dc2626"
-            elif trend == "🌊역배열(하락)": dec, col = "🚫진입보류: 역배열 대기", "#dc2626"
+            if 0.85 <= pct_b_now < 0.95:
+                dec, col, decision_outcome = _set_decision("⚠️상단부근: 눌림 대기", "#d97706", "NEAR_UPPER_WAIT")
+            elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
+                dec, col, decision_outcome = _set_decision("🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed", "BREAKOUT_52W_ENTRY")
+            elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
+                dec, col, decision_outcome = _set_decision("🎯S급 눌림목: 탑승 찬스", "#8b5cf6", "S_PULLBACK_ENTRY")
+            elif mfi_now >= 80:
+                dec, col, decision_outcome = _set_decision("⚠️단기과열: 진입 보류", "#d97706", "SHORT_OVERHEAT_NO_ENTRY")
+            elif rsi_now <= 30:
+                dec, col, decision_outcome = _set_decision("🔥낙폭과대: 신규 진입", "#16a34a", "OVERSOLD_NEW_ENTRY")
+            elif is_early_entry:
+                dec, col, decision_outcome = _set_decision("🟢선진입 가능: 반전 초입", "#16a34a", "EARLY_REVERSAL_ENTRY")
+            elif is_clean_leader_entry:
+                dec, col, decision_outcome = _set_decision("🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER")
+            elif trend == "🌊역배열(하락)" and adj_tech_score >= 5:
+                dec, col, decision_outcome = _set_decision("🎯낙폭과대: 분할매수", "#8b5cf6", "OVERSOLD_DCA")
+            elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]:
+                dec, col, decision_outcome = _set_decision("⚠️하락추세: 진입보류", "#dc2626", "DOWNTREND_NO_ENTRY")
+            elif trend == "🌊역배열(하락)":
+                dec, col, decision_outcome = _set_decision("🚫진입보류: 역배열 대기", "#dc2626", "REVERSE_TREND_NO_ENTRY")
             else:
                 # 상승 추세에서 중립 구간 진입 신호
                 if (
@@ -6556,27 +6632,30 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     _fmr < 3.5
                 ):
                     if fin_score >= 4:
-                        dec, col = "🎯우량주 눌림 구간: 정찰 진입 적합", "#8b5cf6"
+                        dec, col, decision_outcome = _set_decision(
+                            "🎯우량주 눌림 구간: 정찰 진입 적합", "#8b5cf6", "QUALITY_PULLBACK_ENTRY"
+                        )
                     else:
-                        dec, col = "📈추세 눌림 구간: 소액 탐색 가능", "#3b82f6"
+                        dec, col, decision_outcome = _set_decision("📈추세 눌림 구간: 소액 탐색 가능", "#3b82f6", "TREND_PULLBACK_EXPLORE")
     
                 elif (
                     trend == "🚀정배열(상승)" and
                     rs_label == "➖보통" and
                     rsi_now < 55 and pct_b_now < 0.65
                 ):
-                    dec, col = "🔍정배열 눌림: 신호 확인 후 접근", "#64748b"
+                    dec, col, decision_outcome = _set_decision("🔍정배열 눌림: 신호 확인 후 접근", "#64748b", "UPTREND_PULLBACK_CONFIRM")
     
                 else:
                     if grade.startswith("💎") and trend == "🚀정배열(상승)":
-                        dec, col = "🔍S급 정배열: 눌림 구간 진입 대기", "#8b5cf6"
+                        dec, col, decision_outcome = _set_decision("🔍S급 정배열: 눌림 구간 진입 대기", "#8b5cf6", "S_UPTREND_WAIT_PULLBACK")
                     elif grade.startswith("✅") and trend == "🚀정배열(상승)":
-                        dec, col = "🔍A급 정배열: 타점 탐색 중", "#3b82f6"
+                        dec, col, decision_outcome = _set_decision("🔍A급 정배열: 타점 탐색 중", "#3b82f6", "A_UPTREND_SEARCH_ENTRY")
                     else:
-                        dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
+                        dec, col, decision_outcome = _set_decision("🔍대기: 신규 타점 탐색", "#64748b", "SEARCH_NEW_ENTRY")
 
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
-    decision_outcome = build_decision_outcome(dec, col)
+    if decision_outcome is None:
+        decision_outcome = build_decision_outcome(dec, col)
     _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
     sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
 
