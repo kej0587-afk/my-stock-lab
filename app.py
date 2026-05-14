@@ -5401,6 +5401,78 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
     )
 
 
+def render_power_grid_match_panel(rotation_df):
+    if rotation_df is None or rotation_df.empty:
+        return
+
+    matched_themes = rotation_df[rotation_df["테마"].isin(["AI 전력망·전력기기", "AI 에너지·전력", "글로벌 원전·SMR"])].copy()
+    if matched_themes.empty:
+        return
+
+    try:
+        etf_df = calculate_money_flow_df()
+    except Exception:
+        etf_df = pd.DataFrame()
+
+    rows = []
+    if etf_df is not None and not etf_df.empty:
+        if "거래량증가" not in etf_df.columns:
+            etf_df["거래량증가"] = np.nan
+        for sector in ["전력기기", "전력인프라", "글로벌AI전력인프라", "미국AI전력인프라", "원자력", "원자력TOP10", "우라늄/원전"]:
+            match = etf_df[etf_df["섹터"] == sector].head(1)
+            if match.empty:
+                continue
+            r = match.iloc[0]
+            rows.append({
+                "구분": "ETF/섹터",
+                "축": sector,
+                "대표": f"{r['Ticker']} · {r['ETF 이름']}",
+                "3개월수익률": r["3개월수익률"],
+                "가속도": r["가속도"],
+                "거래량증가": r["거래량증가"],
+                "점수": r["돈흐름점수"],
+                "해석": "대표 ETF 가격/거래량 흐름",
+            })
+
+    for _, r in matched_themes.iterrows():
+        rows.append({
+            "구분": "이미지 테마",
+            "축": r["테마"],
+            "대표": r["대표주"],
+            "3개월수익률": r["3개월수익률"],
+            "가속도": r["가속도"],
+            "거래량증가": r["거래량증가"],
+            "점수": r["테마돈흐름점수"],
+            "해석": "구성종목 확산/쏠림 반영",
+        })
+
+    if not rows:
+        return
+
+    st.markdown("#### 전력 ETF ↔ 이미지 테마 매칭")
+    st.markdown(
+        """
+<div class='info-panel'>
+<b>전력 신호를 읽는 순서</b><br>
+ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미지 테마의 <b>AI 전력망·전력기기</b>입니다.
+<b>글로벌 원전·SMR</b>은 원전 운영, SMR, 우라늄/연료 축이라 국내 전력기기 ETF와 별도로 해석합니다.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    show = pd.DataFrame(rows)
+    for col in ["3개월수익률", "가속도", "거래량증가"]:
+        show[col] = show[col].apply(fmt_flow_pct)
+    show["점수"] = show["점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
+    st.dataframe(
+        show[["구분", "축", "대표", "3개월수익률", "가속도", "거래량증가", "점수", "해석"]],
+        use_container_width=True,
+        hide_index=True,
+        height=300,
+    )
+
+
 def render_image_theme_flow_section():
     st.subheader("🧭 이미지 테마 종목 흐름")
     st.caption(
@@ -5455,6 +5527,7 @@ def render_image_theme_flow_section():
 
     rotation_df = calculate_image_theme_rotation_df(rotation_source_df)
     render_image_theme_rotation_overview(rotation_df, selected_market)
+    render_power_grid_match_panel(rotation_df)
     st.divider()
 
     theme_df_all = all_theme_df[all_theme_df["테마"] == selected_theme].copy()
