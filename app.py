@@ -91,6 +91,7 @@ try:
     from stock_lab_core.money_flow import (
         calculate_image_theme_flow_df,
         calculate_image_theme_group_df,
+        calculate_image_theme_rotation_df,
         get_image_theme_names,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
@@ -104,6 +105,9 @@ except ImportError:
         return pd.DataFrame()
 
     def calculate_image_theme_group_df(theme_flow_df):
+        return pd.DataFrame()
+
+    def calculate_image_theme_rotation_df(theme_flow_df):
         return pd.DataFrame()
 try:
     from stock_lab_core.money_flow import get_sector_flow_state
@@ -5246,6 +5250,119 @@ def render_money_flow_etf_section():
     )
 
 
+def render_image_theme_rotation_overview(rotation_df, market_label):
+    if rotation_df is None or rotation_df.empty:
+        st.info("선택한 시장 범위에서 비교할 테마 데이터가 부족합니다.")
+        return
+
+    leader = rotation_df.iloc[0]
+    breadth_leader = rotation_df.sort_values("상승종목비율", ascending=False).iloc[0]
+    volume_leader = rotation_df.sort_values("거래량증가", ascending=False, na_position="last").iloc[0]
+    weak = rotation_df.sort_values("테마돈흐름점수", ascending=True).iloc[0]
+
+    st.markdown("#### 전체 테마 로테이션")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("돈흐름 1위", str(leader["테마"]), f"{leader['테마돈흐름점수']:.1f} pts")
+    c2.metric("확산 1위", str(breadth_leader["테마"]), fmt_flow_pct(breadth_leader["상승종목비율"]))
+    c3.metric("거래량 1위", str(volume_leader["테마"]), fmt_flow_pct(volume_leader["거래량증가"]))
+    c4.metric("약한 테마", str(weak["테마"]), f"{weak['테마돈흐름점수']:.1f} pts")
+
+    st.markdown(
+        f"""
+<div class='info-panel'>
+<b>{market_label} 테마 흐름</b><br>
+현재 전체 테마 기준 강한 쪽은 <b>{leader['테마']}</b>입니다.
+상승 종목이 넓게 퍼진 테마는 <b>{breadth_leader['테마']}</b>,
+거래량이 상대적으로 붙은 테마는 <b>{volume_leader['테마']}</b>입니다.
+<br><span style='color:#94a3b8;'>테마돈흐름점수는 1/3/6개월 평균수익률, 가속도, 상승종목비율, 거래량증가를 더하고 상위 종목 쏠림을 일부 차감한 가격 기반 지표입니다.</span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns([1.05, 1])
+    with left:
+        chart_df = rotation_df.sort_values("테마돈흐름점수", ascending=True)
+        colors = np.where(chart_df["테마돈흐름점수"] >= 0, "#22c55e", "#ef4444")
+        fig_score = go.Figure(go.Bar(
+            x=chart_df["테마돈흐름점수"],
+            y=chart_df["테마"],
+            orientation="h",
+            marker_color=colors,
+            customdata=chart_df[["대표주", "3개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]],
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "대표주: %{customdata[0]}<br>"
+                "3개월 평균: %{customdata[1]:.1%}<br>"
+                "가속도: %{customdata[2]:.1%}<br>"
+                "상승종목비율: %{customdata[3]:.1%}<br>"
+                "거래량증가: %{customdata[4]:.1%}<br>"
+                "상위쏠림: %{customdata[5]:.1%}<extra></extra>"
+            ),
+        ))
+        fig_score.add_vline(x=0, line_color="#94a3b8")
+        fig_score.update_layout(
+            template="plotly_dark",
+            height=max(420, min(640, 150 + len(chart_df) * 40)),
+            title="테마돈흐름점수",
+            xaxis_title="점수",
+            yaxis=dict(autorange="reversed"),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_score, use_container_width=True)
+
+    with right:
+        fig_quad = go.Figure(go.Scatter(
+            x=rotation_df["6개월수익률"] * 100,
+            y=rotation_df["3개월수익률"] * 100,
+            mode="markers+text",
+            text=rotation_df["테마"],
+            textposition="top center",
+            marker=dict(
+                size=np.clip(rotation_df["상승종목비율"].fillna(0.5) * 38, 14, 40),
+                color=rotation_df["가속도"] * 100,
+                colorscale="RdYlGn",
+                cmid=0,
+                showscale=True,
+                colorbar=dict(title="가속도"),
+            ),
+            customdata=rotation_df[["대표주", "테마돈흐름점수", "거래량증가", "상위종목쏠림"]],
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "대표주: %{customdata[0]}<br>"
+                "6개월 평균: %{x:.1f}%<br>"
+                "3개월 평균: %{y:.1f}%<br>"
+                "점수: %{customdata[1]:.1f}<br>"
+                "거래량증가: %{customdata[2]:.1%}<br>"
+                "상위쏠림: %{customdata[3]:.1%}<extra></extra>"
+            ),
+        ))
+        fig_quad.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
+        fig_quad.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+        fig_quad.update_layout(
+            template="plotly_dark",
+            height=470,
+            title="전체 테마 로테이션",
+            xaxis_title="6개월 평균 수익률 %",
+            yaxis_title="3개월 평균 수익률 %",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_quad, use_container_width=True)
+
+    show_rotation = rotation_df.copy()
+    for col in ["1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준"]:
+        show_rotation[col] = show_rotation[col].apply(fmt_flow_pct)
+    show_rotation["테마돈흐름점수"] = show_rotation["테마돈흐름점수"].map(lambda x: f"{x:.1f}")
+    st.dataframe(
+        show_rotation[["테마", "계산종목수", "종목수", "대표주", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "테마돈흐름점수", "상태"]],
+        use_container_width=True,
+        hide_index=True,
+        height=360,
+    )
+
+
 def render_image_theme_flow_section():
     st.subheader("🧭 이미지 테마 종목 흐름")
     st.caption(
@@ -5283,13 +5400,26 @@ def render_image_theme_flow_section():
     ):
         return
 
-    with st.spinner(f"{selected_theme} 종목 흐름 계산 중..."):
-        theme_df_all = calculate_image_theme_flow_df(selected_theme)
+    with st.spinner("전체 이미지 테마 흐름 계산 중..."):
+        all_theme_df = calculate_image_theme_flow_df("")
 
-    if theme_df_all.empty:
-        st.warning("선택한 테마의 종목 데이터를 불러오지 못했습니다.")
+    if all_theme_df.empty:
+        st.warning("이미지 테마 종목 데이터를 불러오지 못했습니다.")
         return
 
+    all_market_suffix = all_theme_df["Ticker"].astype(str).str.upper().str.endswith((".KS", ".KQ"))
+    if selected_market == "국내":
+        rotation_source_df = all_theme_df[all_market_suffix].copy()
+    elif selected_market == "해외":
+        rotation_source_df = all_theme_df[~all_market_suffix].copy()
+    else:
+        rotation_source_df = all_theme_df.copy()
+
+    rotation_df = calculate_image_theme_rotation_df(rotation_source_df)
+    render_image_theme_rotation_overview(rotation_df, selected_market)
+    st.divider()
+
+    theme_df_all = all_theme_df[all_theme_df["테마"] == selected_theme].copy()
     market_suffix = theme_df_all["Ticker"].astype(str).str.upper().str.endswith((".KS", ".KQ"))
     domestic_count = int(market_suffix.sum())
     foreign_count = int((~market_suffix).sum())
@@ -5321,6 +5451,7 @@ def render_image_theme_flow_section():
     accel_leader = group_df.sort_values("가속도", ascending=False).iloc[0]
     weak = group_df.sort_values("돈흐름점수", ascending=True).iloc[0]
 
+    st.markdown(f"#### {selected_theme} 드릴다운")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("계산 종목", f"{available_count}/{total_count}", f"국내 {domestic_count} · 해외 {foreign_count}")
     m2.metric("하위테마 1위", str(leader["하위테마"]), fmt_flow_pct(leader["3개월수익률"]))
@@ -5413,11 +5544,11 @@ def render_image_theme_flow_section():
             st.plotly_chart(fig_quad, use_container_width=True)
 
         show_group = group_df.copy()
-        for col in ["가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도"]:
+        for col in ["가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]:
             show_group[col] = show_group[col].apply(fmt_flow_pct)
         show_group["돈흐름점수"] = show_group["돈흐름점수"].map(lambda x: f"{x:.1f}")
         st.dataframe(
-            show_group[["하위테마", "종목수", "대표주", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "가격수준", "돈흐름점수", "상태", "구성종목"]],
+            show_group[["하위테마", "종목수", "대표주", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준", "돈흐름점수", "상태", "구성종목"]],
             use_container_width=True,
             hide_index=True,
             height=430,
@@ -5460,7 +5591,7 @@ def render_image_theme_flow_section():
             st.plotly_chart(fig_stock, use_container_width=True)
 
         show_stock = stock_view.copy()
-        for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도"]:
+        for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
             show_stock[col] = show_stock[col].apply(fmt_flow_pct)
         show_stock["현재가"] = show_stock.apply(
             lambda r: "-" if not finite_num(r["현재가"]) else format_currency(r["현재가"], r["Ticker"]),
@@ -5470,7 +5601,7 @@ def render_image_theme_flow_section():
             lambda x: "-" if not finite_num(x) else f"{x:.1f}"
         )
         st.dataframe(
-            show_stock[["하위테마", "종목명", "Ticker", "현재가", "가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "돈흐름점수", "상태"]],
+            show_stock[["하위테마", "종목명", "Ticker", "현재가", "가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태"]],
             use_container_width=True,
             hide_index=True,
             height=560,
