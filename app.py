@@ -7263,19 +7263,19 @@ def render_dashboard_group_summary(df, group_label):
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
-            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
+            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
-            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
+            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
-            "스윙상태", "내결정", "🔥기술적 타점", "Adj점수"
+            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
 
@@ -8217,6 +8217,7 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
         "내결정": swing_decision_map.get(swing_key, "-"),
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
         "🔥기술적 타점": c["dec"],
+        "핵심근거": c.get("decision_reasons", ("",))[0] if c.get("decision_reasons") else "",
         "판정코드": c.get("decision_code", ""),
         "판정분류": c.get("decision_group") or classify_decision_signal(c["dec"]),
         "Adj점수": round(c["adj"], 1)
