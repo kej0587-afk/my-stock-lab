@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -279,7 +279,7 @@ def infer_decision_code(decision_label: str) -> str:
     return "NEUTRAL_GENERIC"
 
 
-def build_decision_outcome(decision_label: str, color: str, code: str | None = None) -> DecisionOutcome:
+def build_decision_outcome(decision_label: str, color: str, code: Optional[str] = None) -> DecisionOutcome:
     label = str(decision_label or "")
     final_code = str(code or "").strip() or infer_decision_code(label)
     return DecisionOutcome(

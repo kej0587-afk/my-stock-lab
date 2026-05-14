@@ -8,7 +8,7 @@ labelling should not depend on Streamlit state.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Optional
 
 
 def optional_float(value: Any) -> float | None:
@@ -27,7 +27,7 @@ def optional_float(value: Any) -> float | None:
         return None
 
 
-def unwrap_snapshot_data(snapshot: dict | None) -> dict:
+def unwrap_snapshot_data(snapshot: Optional[dict]) -> dict:
     """Accept either a raw data dict or a wrapper with a `data` key."""
     if not isinstance(snapshot, dict):
         return {}
@@ -38,7 +38,7 @@ def unwrap_snapshot_data(snapshot: dict | None) -> dict:
 
 
 def estimate_kr_fin_score_from_naver_snapshot(
-    snapshot: dict | None,
+    snapshot: Optional[dict],
     default_score: int = 3,
 ) -> tuple[int, str]:
     """Estimate a capped KR stock score from Naver/KRX-style summary fields.
@@ -97,7 +97,7 @@ def estimate_kr_fin_score_from_naver_snapshot(
     return int(score), "Naver fallback: " + ", ".join(hints)
 
 
-def resolve_fin_score_source(fin_auto: dict | None, fin_notes: dict | None) -> str:
+def resolve_fin_score_source(fin_auto: Optional[dict], fin_notes: Optional[dict]) -> str:
     """Prefer the actual scoring source stored in notes over fetch metadata."""
     if isinstance(fin_notes, dict):
         source = str(fin_notes.get("source") or "").strip()
