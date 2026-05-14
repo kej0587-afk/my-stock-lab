@@ -84,12 +84,24 @@ from stock_lab_core.news import (
     render_investor_trend_panel,
 )
 from stock_lab_core.money_flow import (
-    calculate_image_theme_flow_df,
-    calculate_image_theme_group_df,
     calculate_money_flow_df,
     download_money_flow_prices,
-    get_image_theme_names,
 )
+try:
+    from stock_lab_core.money_flow import (
+        calculate_image_theme_flow_df,
+        calculate_image_theme_group_df,
+        get_image_theme_names,
+    )
+except ImportError:
+    def get_image_theme_names():
+        return []
+
+    def calculate_image_theme_flow_df(theme):
+        return pd.DataFrame()
+
+    def calculate_image_theme_group_df(theme_flow_df):
+        return pd.DataFrame()
 try:
     from stock_lab_core.money_flow import get_sector_flow_state
 except ImportError:
