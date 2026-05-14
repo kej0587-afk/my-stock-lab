@@ -9,6 +9,47 @@ import yfinance as yf
 def finite_num(x):
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
 
+
+FLOW_SCORE_WEIGHTS = {
+    "ret_1m": 12,
+    "ret_3m": 33,
+    "ret_6m": 25,
+    "accel": 15,
+    "volume": 15,
+}
+
+
+def clamp_num(x, low, high):
+    if not finite_num(x):
+        return np.nan
+    return min(max(float(x), low), high)
+
+
+def classify_chase_risk(price_level, ret_1m=np.nan):
+    if not finite_num(price_level):
+        return "데이터부족"
+    level = float(price_level)
+    recent = float(ret_1m) if finite_num(ret_1m) else 0.0
+    if level >= 0.92 and recent >= 0.10:
+        return "추격주의"
+    if level >= 0.85:
+        return "고점권"
+    if level <= 0.25:
+        return "저점권"
+    return "중립"
+
+
+def calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth):
+    volume_factor = clamp_num(volume_growth, -1.0, 2.0)
+    return (
+        (ret_1m if finite_num(ret_1m) else 0) * FLOW_SCORE_WEIGHTS["ret_1m"] +
+        (ret_3m if finite_num(ret_3m) else 0) * FLOW_SCORE_WEIGHTS["ret_3m"] +
+        (ret_6m if finite_num(ret_6m) else 0) * FLOW_SCORE_WEIGHTS["ret_6m"] +
+        (accel if finite_num(accel) else 0) * FLOW_SCORE_WEIGHTS["accel"] +
+        (volume_factor if finite_num(volume_factor) else 0) * FLOW_SCORE_WEIGHTS["volume"]
+    )
+
+
 MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
     {"구분": "미국 섹터", "섹터": "S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
@@ -32,6 +73,10 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "미국 섹터", "섹터": "항공방산", "ticker": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"},
     {"구분": "미국 섹터", "섹터": "소프트웨어", "ticker": "IGV", "name": "iShares Expanded Tech-Software Sector ETF"},
     {"구분": "미국 섹터", "섹터": "사이버보안", "ticker": "CIBR", "name": "First Trust NASDAQ Cybersecurity ETF"},
+    {"구분": "미국 섹터", "섹터": "2차전지/리튬", "ticker": "LIT", "name": "Global X Lithium & Battery Tech ETF"},
+    {"구분": "미국 섹터", "섹터": "로봇/AI", "ticker": "BOTZ", "name": "Global X Robotics & Artificial Intelligence ETF"},
+    {"구분": "미국 섹터", "섹터": "핀테크", "ticker": "FINX", "name": "Global X FinTech ETF"},
+    {"구분": "미국 섹터", "섹터": "양자컴퓨팅", "ticker": "QTUM", "name": "Defiance Quantum ETF"},
     {"구분": "미국 섹터", "섹터": "주택건설", "ticker": "XHB", "name": "SPDR S&P Homebuilders ETF"},
     {"구분": "미국 섹터", "섹터": "원자재(구리)", "ticker": "COPX", "name": "Global X Copper Miners ETF"},
 
@@ -50,7 +95,8 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
     {"구분": "한국 섹터", "섹터": "K-뷰티", "ticker": "479850.KS", "name": "HANARO K-뷰티"},
     {"구분": "한국 섹터", "섹터": "화장품", "ticker": "228790.KS", "name": "TIGER 화장품"}, # K-뷰티와 함께 묶어서 관찰
-    {"구분": "한국 섹터", "섹터": "인터넷/플랫폼", "ticker": "315930.KS", "name": "KODEX Fn웹툰&게임"},
+    {"구분": "한국 섹터", "섹터": "웹툰&드라마", "ticker": "395150.KS", "name": "KODEX 웹툰&드라마"},
+    {"구분": "한국 섹터", "섹터": "게임", "ticker": "300950.KS", "name": "KODEX 게임산업"},
     {"구분": "한국 섹터", "섹터": "에너지", "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
     {"구분": "한국 섹터", "섹터": "금융", "ticker": "139270.KS", "name": "TIGER 200 금융"},
     {"구분": "한국 섹터", "섹터": "바이오", "ticker": "244580.KS", "name": "KODEX 바이오"},
@@ -105,6 +151,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
     {"구분": "매크로", "섹터": "한국 금현물", "ticker": "411060.KS", "name": "ACE KRX금현물"},
     {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
+    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG", "name": "iShares iBoxx High Yield Corporate Bond ETF"},
     {"구분": "매크로", "섹터": "비트코인", "ticker": "IBIT", "name": "iShares Bitcoin Trust"}, # 위험자산(Risk-on) 돈흐름 선행지표
     {"구분": "매크로", "섹터": "미국 달러", "ticker": "UUP", "name": "Invesco DB US Dollar Index Bullish Fund"},
     {"구분": "매크로", "섹터": "미국 단기채", "ticker": "SHV", "name": "iShares Short Treasury Bond ETF"}, # 현금 대기성 자금 흐름 파악용
@@ -197,7 +244,7 @@ IMAGE_THEME_GROUPS = [
         "theme": "글로벌 원전·SMR",
         "groups": [
             ("전력 유틸리티", [("컨스텔레이션에너지", "CEG"), ("비스트라", "VST")]),
-            ("SMR 개발사", [("뉴스케일파워", "SMR"), ("오클로", "OKLO"), ("롤스로이스홀딩스", "RR.L")]),
+            ("SMR 개발사", [("뉴스케일파워", "SMR"), ("오클로", "OKLO"), ("롤스로이스홀딩스", "RYCEY")]),
             ("원전 공급망", [("BWX테크놀로지스", "BWXT"), ("카메코", "CCJ"), ("두산에너빌리티", "034020.KS")]),
             ("우라늄/연료", [("카메코", "CCJ"), ("센트러스에너지", "LEU")]),
         ],
@@ -410,6 +457,29 @@ def get_return_by_days(close, days):
     return (new / old) - 1
 
 
+def get_return_by_days_offset(close, days, offset=0):
+    if close is None:
+        return np.nan
+    s = pd.Series(close).dropna()
+    if len(s) < 2:
+        return np.nan
+
+    offset = max(int(offset or 0), 0)
+    if len(s) <= offset + 1:
+        return np.nan
+
+    new_idx = -(1 + offset) if offset > 0 else -1
+    old_idx = -(days + offset)
+    if abs(old_idx) > len(s):
+        return np.nan
+
+    old = float(s.iloc[old_idx])
+    new = float(s.iloc[new_idx])
+    if old <= 0:
+        return np.nan
+    return (new / old) - 1
+
+
 def get_volume_growth(volume, recent_days=20, base_days=60):
     if volume is None:
         return np.nan
@@ -426,19 +496,64 @@ def get_volume_growth(volume, recent_days=20, base_days=60):
         return np.nan
     return (recent / base) - 1
 
-def classify_money_flow_state(ret_3m, ret_6m, accel):
-    if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
+def classify_money_flow_state(ret_3m, ret_6m, accel, relative_3m=np.nan):
+    rel_3m = relative_3m if finite_num(relative_3m) else ret_3m
+    if finite_num(ret_3m) and finite_num(accel) and finite_num(rel_3m) and rel_3m >= 0.03 and accel >= 0.03:
         return "신규 유입"
-    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m >= 0.05 and ret_6m >= 0.05 and (not finite_num(accel) or accel >= -0.03):
+    if finite_num(ret_3m) and finite_num(ret_6m) and finite_num(rel_3m) and ret_3m >= 0.05 and ret_6m >= 0.05 and rel_3m >= -0.02 and (not finite_num(accel) or accel >= -0.03):
         return "주도 유지"
-    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
+    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and (accel <= -0.05 or (finite_num(rel_3m) and rel_3m <= -0.05)):
         return "둔화 경고"
-    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
+    if finite_num(ret_3m) and finite_num(ret_6m) and finite_num(rel_3m) and ret_3m < 0 and ret_6m < 0 and rel_3m < 0:
         return "소외 지속"
+    if finite_num(ret_3m) and finite_num(rel_3m) and ret_3m >= 0 and rel_3m <= -0.05:
+        return "상대 약세"
     return "관찰"
 
+
+def apply_relative_money_flow_state(df, group_col=None, score_col="돈흐름점수"):
+    if df is None or df.empty or "3개월수익률" not in df.columns:
+        return df
+    out = df.copy()
+    out["상대3개월수익률"] = np.nan
+
+    if group_col and group_col in out.columns:
+        groups = out.groupby(group_col, dropna=False).groups.values()
+    else:
+        groups = [out.index]
+
+    for idxs in groups:
+        idxs = list(idxs)
+        valid = out.loc[idxs, "3개월수익률"].dropna()
+        if valid.empty:
+            continue
+        baseline = float(valid.quantile(0.60))
+        out.loc[idxs, "상대3개월수익률"] = out.loc[idxs, "3개월수익률"] - baseline
+
+    out["상태"] = out.apply(
+        lambda r: r["상태"] if r.get("상태") == "가격부족" else classify_money_flow_state(
+            r.get("3개월수익률"),
+            r.get("6개월수익률"),
+            r.get("가속도"),
+            r.get("상대3개월수익률"),
+        ),
+        axis=1,
+    )
+
+    if score_col in out.columns:
+        sort_cols = [score_col]
+        ascending = [False]
+        if "유니버스순번" in out.columns:
+            sort_cols.append("유니버스순번")
+            ascending.append(True)
+        return out.sort_values(sort_cols, ascending=ascending, na_position="last")
+    return out
+
 def calculate_money_flow_df():
-    universe = [dict(item, ticker=normalize_money_flow_ticker(item["ticker"])) for item in MONEY_FLOW_UNIVERSE]
+    universe = [
+        dict(item, ticker=normalize_money_flow_ticker(item["ticker"]), _order=i)
+        for i, item in enumerate(MONEY_FLOW_UNIVERSE)
+    ]
     tickers = [item["ticker"] for item in universe]
     data = download_money_flow_prices(tickers)
 
@@ -446,6 +561,28 @@ def calculate_money_flow_df():
     for item in universe:
         px = get_money_flow_ohlc(data, item["ticker"])
         if px.empty or len(px) < 20:
+            rows.append({
+                "구분": item["구분"],
+                "섹터": item["섹터"],
+                "Ticker": item["ticker"],
+                "ETF 이름": item["name"],
+                "현재가": np.nan,
+                "가격수준": np.nan,
+                "기간수익률": np.nan,
+                "1개월수익률": np.nan,
+                "3개월수익률": np.nan,
+                "이전3개월수익률": np.nan,
+                "상대3개월수익률": np.nan,
+                "6개월수익률": np.nan,
+                "가속도": np.nan,
+                "거래량증가": np.nan,
+                "돈흐름점수": np.nan,
+                "상태": "가격부족",
+                "추격위험": "데이터부족",
+                "52주 최고가": np.nan,
+                "52주 최저가": np.nan,
+                "유니버스순번": item["_order"],
+            })
             continue
 
         close = px["Close"]
@@ -456,16 +593,11 @@ def calculate_money_flow_df():
         ret_1m = get_return_by_days(close, 21)
         ret_3m = get_return_by_days(close, 63)
         ret_6m = get_return_by_days(close, 126)
-        accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
+        ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
+        accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
         volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
         price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-        flow_score = (
-            (ret_1m if finite_num(ret_1m) else 0) * 15 +
-            (ret_3m if finite_num(ret_3m) else 0) * 35 +
-            (ret_6m if finite_num(ret_6m) else 0) * 30 +
-            (accel if finite_num(accel) else 0) * 20 +
-            (volume_growth if finite_num(volume_growth) else 0) * 5
-        )
+        flow_score = calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth)
 
         rows.append({
             "구분": item["구분"],
@@ -477,13 +609,17 @@ def calculate_money_flow_df():
             "기간수익률": period_ret,
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
+            "이전3개월수익률": ret_prev_3m,
+            "상대3개월수익률": np.nan,
             "6개월수익률": ret_6m,
             "가속도": accel,
             "거래량증가": volume_growth,
             "돈흐름점수": flow_score,
             "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
+            "추격위험": classify_chase_risk(price_level, ret_1m),
             "52주 최고가": high_52w,
             "52주 최저가": low_52w,
+            "유니버스순번": item["_order"],
         })
 
     df = pd.DataFrame(rows)
@@ -491,7 +627,7 @@ def calculate_money_flow_df():
         return df
 
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return df.sort_values("돈흐름점수", ascending=False)
+    return apply_relative_money_flow_state(df, group_col="구분", score_col="돈흐름점수")
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -520,11 +656,14 @@ def calculate_image_theme_flow_df(theme):
                 "기간수익률": np.nan,
                 "1개월수익률": np.nan,
                 "3개월수익률": np.nan,
+                "이전3개월수익률": np.nan,
+                "상대3개월수익률": np.nan,
                 "6개월수익률": np.nan,
                 "가속도": np.nan,
                 "거래량증가": np.nan,
                 "돈흐름점수": np.nan,
                 "상태": "가격부족",
+                "추격위험": "데이터부족",
                 "52주 최고가": np.nan,
                 "52주 최저가": np.nan,
             })
@@ -538,16 +677,11 @@ def calculate_image_theme_flow_df(theme):
         ret_1m = get_return_by_days(close, 21)
         ret_3m = get_return_by_days(close, 63)
         ret_6m = get_return_by_days(close, 126)
-        accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
+        ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
+        accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
         volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
         price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-        flow_score = (
-            (ret_1m if finite_num(ret_1m) else 0) * 15 +
-            (ret_3m if finite_num(ret_3m) else 0) * 35 +
-            (ret_6m if finite_num(ret_6m) else 0) * 30 +
-            (accel if finite_num(accel) else 0) * 20 +
-            (volume_growth if finite_num(volume_growth) else 0) * 5
-        )
+        flow_score = calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth)
 
         rows.append({
             "테마": item["테마"],
@@ -559,11 +693,14 @@ def calculate_image_theme_flow_df(theme):
             "기간수익률": period_ret,
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
+            "이전3개월수익률": ret_prev_3m,
+            "상대3개월수익률": np.nan,
             "6개월수익률": ret_6m,
             "가속도": accel,
             "거래량증가": volume_growth,
             "돈흐름점수": flow_score,
             "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
+            "추격위험": classify_chase_risk(price_level, ret_1m),
             "52주 최고가": high_52w,
             "52주 최저가": low_52w,
         })
@@ -572,6 +709,7 @@ def calculate_image_theme_flow_df(theme):
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
+    df = apply_relative_money_flow_state(df, group_col="테마", score_col="돈흐름점수")
     return df.sort_values(["하위테마", "돈흐름점수"], ascending=[True, False], na_position="last")
 
 
@@ -588,6 +726,7 @@ def calculate_image_theme_group_df(theme_flow_df):
         leader = group.sort_values("돈흐름점수", ascending=False).iloc[0]
         ret_1m = group["1개월수익률"].mean()
         ret_3m = group["3개월수익률"].mean()
+        ret_prev_3m = group["이전3개월수익률"].mean() if "이전3개월수익률" in group.columns else np.nan
         ret_6m = group["6개월수익률"].mean()
         accel = group["가속도"].mean()
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
@@ -603,6 +742,8 @@ def calculate_image_theme_group_df(theme_flow_df):
             "대표주": f"{leader['종목명']} ({leader['Ticker']})",
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
+            "이전3개월수익률": ret_prev_3m,
+            "상대3개월수익률": np.nan,
             "6개월수익률": ret_6m,
             "가속도": accel,
             "상승종목비율": up_ratio,
@@ -611,6 +752,7 @@ def calculate_image_theme_group_df(theme_flow_df):
             "가격수준": price_level,
             "돈흐름점수": flow_score,
             "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
+            "추격위험": classify_chase_risk(price_level, ret_1m),
             "구성종목": ", ".join(group["종목명"].drop_duplicates().astype(str).tolist()),
         })
 
@@ -618,7 +760,7 @@ def calculate_image_theme_group_df(theme_flow_df):
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return df.sort_values("돈흐름점수", ascending=False)
+    return apply_relative_money_flow_state(df, group_col="테마", score_col="돈흐름점수")
 
 
 def calculate_image_theme_rotation_df(theme_flow_df):
@@ -637,6 +779,7 @@ def calculate_image_theme_rotation_df(theme_flow_df):
         weak = group.sort_values("돈흐름점수", ascending=True).iloc[0]
         ret_1m = group["1개월수익률"].mean()
         ret_3m = group["3개월수익률"].mean()
+        ret_prev_3m = group["이전3개월수익률"].mean() if "이전3개월수익률" in group.columns else np.nan
         ret_6m = group["6개월수익률"].mean()
         accel = group["가속도"].mean()
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
@@ -667,6 +810,8 @@ def calculate_image_theme_rotation_df(theme_flow_df):
             "약세주": f"{weak['종목명']} ({weak['Ticker']})",
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
+            "이전3개월수익률": ret_prev_3m,
+            "상대3개월수익률": np.nan,
             "6개월수익률": ret_6m,
             "가속도": accel,
             "상승종목비율": up_ratio_3m,
@@ -677,13 +822,14 @@ def calculate_image_theme_rotation_df(theme_flow_df):
             "가격수준": price_level,
             "테마돈흐름점수": theme_score,
             "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
+            "추격위험": classify_chase_risk(price_level, ret_1m),
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return df.sort_values("테마돈흐름점수", ascending=False)
+    return apply_relative_money_flow_state(df, score_col="테마돈흐름점수")
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -698,6 +844,7 @@ def get_sector_flow_state(sector_bench_ticker: str) -> str:
     close = px["Close"]
     ret_3m = get_return_by_days(close, 63)
     ret_6m = get_return_by_days(close, 126)
-    accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
+    ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
+    accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
     return classify_money_flow_state(ret_3m, ret_6m, accel)
 

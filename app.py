@@ -5034,6 +5034,11 @@ def render_money_flow_etf_section():
         return
     if "거래량증가" not in flow_df.columns:
         flow_df["거래량증가"] = np.nan
+    for col in ["이전3개월수익률", "상대3개월수익률"]:
+        if col not in flow_df.columns:
+            flow_df[col] = np.nan
+    if "추격위험" not in flow_df.columns:
+        flow_df["추격위험"] = "-"
 
     # 2. 보기 범위(필터링) 라디오 버튼 구성
     groups = ["전체"] + list(flow_df["구분"].drop_duplicates())
@@ -5041,14 +5046,26 @@ def render_money_flow_etf_section():
     
     # 선택된 그룹에 따라 보여줄 데이터셋(view_df) 결정
     view_df = flow_df if selected_group == "전체" else flow_df[flow_df["구분"] == selected_group]
+    if selected_group == "전체":
+        sort_cols = ["돈흐름점수"]
+        ascending = [False]
+        if "유니버스순번" in view_df.columns:
+            sort_cols.append("유니버스순번")
+            ascending.append(True)
+        view_df = (
+            view_df.sort_values(sort_cols, ascending=ascending, na_position="last")
+            .drop_duplicates(subset=["Ticker"], keep="first")
+        )
 
     if view_df.empty:
         st.info("선택한 범위에 표시할 데이터가 없습니다.")
         return
 
+    rankable_df = view_df.dropna(subset=["돈흐름점수"]).copy()
+
     # 3. 상단 메트릭 카드 (필터링된 view_df 기준 TOP 3 + 거래량)
     top_cols = st.columns(4)
-    top_3 = view_df.nlargest(3, "돈흐름점수")
+    top_3 = rankable_df.nlargest(3, "돈흐름점수") if not rankable_df.empty else pd.DataFrame()
 
     for i, (idx, row) in enumerate(top_3.iterrows()):
         with top_cols[i]:
@@ -5087,18 +5104,34 @@ def render_money_flow_etf_section():
             "돈흐름점수": st.column_config.NumberColumn(
                 "스코어", 
                 format="%.1f",
-                help="1개월/3개월/6개월 수익률, 가속도, 거래량 증가를 합산한 점수"
+                help="1개월 12%, 3개월 33%, 6개월 25%, 가속도 15%, 거래량 증가 15%를 합산한 점수"
             ),
             "1개월수익률": st.column_config.NumberColumn("1M (%)", format="%.1f%%"),
             "3개월수익률": st.column_config.NumberColumn("3M (%)", format="%.1f%%"),
+            "이전3개월수익률": st.column_config.NumberColumn("이전 3M (%)", format="%.1f%%"),
+            "상대3개월수익률": st.column_config.NumberColumn("상대 3M", format="%.1f%%"),
             "6개월수익률": st.column_config.NumberColumn("6M (%)", format="%.1f%%"),
             "가속도": st.column_config.NumberColumn("가속도", format="%.2f"),
             "거래량증가": st.column_config.NumberColumn("거래량증가", format="%.2f"),
+            "추격위험": st.column_config.TextColumn("추격위험"),
             "현재가": st.column_config.NumberColumn("현재가", format=price_format)
         },
         hide_index=True,
         use_container_width=True
     )
+
+    missing_view_df = view_df[view_df["상태"].astype(str).eq("가격부족")].copy() if "상태" in view_df.columns else pd.DataFrame()
+    if not missing_view_df.empty:
+        st.warning("일부 ETF는 이번 조회에서 가격 데이터가 부족해 점수 계산에서 제외했습니다.")
+        st.dataframe(
+            missing_view_df[["구분", "섹터", "Ticker", "ETF 이름", "상태"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if rankable_df.empty:
+        st.info("선택한 범위에 계산 가능한 ETF가 없습니다.")
+        return
 
     top_us = flow_df[flow_df["구분"] == "미국 섹터"].head(1)
     top_kr = flow_df[flow_df["구분"] == "한국 섹터"].head(1)
@@ -5127,10 +5160,10 @@ def render_money_flow_etf_section():
         r = top_volume.iloc[0]
         s6.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
 
-    leader = view_df.iloc[0]
-    accel_leader = view_df.sort_values("가속도", ascending=False).iloc[0]
-    volume_leader = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
-    weak = view_df.sort_values("돈흐름점수", ascending=True).iloc[0]
+    leader = rankable_df.iloc[0]
+    accel_leader = rankable_df.sort_values("가속도", ascending=False).iloc[0]
+    volume_leader = rankable_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
+    weak = rankable_df.sort_values("돈흐름점수", ascending=True).iloc[0]
     volume_text = ""
     if not volume_leader.empty:
         vr = volume_leader.iloc[0]
@@ -5142,7 +5175,7 @@ def render_money_flow_etf_section():
 현재 선택 범위의 돈흐름 1위는 <b>{leader['섹터']} ({leader['Ticker']})</b>입니다.
 최근 새로 힘이 붙는 쪽은 <b>{accel_leader['섹터']} ({accel_leader['Ticker']})</b>,
 상대적으로 약한 쪽은 <b>{weak['섹터']} ({weak['Ticker']})</b>입니다.
-<br>{volume_text}<span style='color:#94a3b8;'>가속도는 3개월수익률 - 6개월수익률입니다. 거래량증가는 최근 20거래일 평균 거래량을 직전 기준 구간과 비교한 값입니다.</span>
+<br>{volume_text}<span style='color:#94a3b8;'>가속도는 최근 3개월수익률 - 이전 3개월수익률입니다. 상태는 같은 구분 안의 3개월 수익률 60퍼센타일 대비 상대강도도 함께 봅니다. 거래량증가는 최근 20거래일 평균 거래량을 직전 기준 구간과 비교한 값입니다.</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -5275,13 +5308,13 @@ def render_money_flow_etf_section():
             st.plotly_chart(fig_volume, use_container_width=True)
 
     show_df = view_df.copy()
-    for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
+    for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
         show_df[col] = show_df[col].apply(fmt_flow_pct)
     show_df["현재가"] = show_df.apply(lambda r: format_currency(r["현재가"], r["Ticker"]), axis=1)
-    show_df["돈흐름점수"] = show_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
+    show_df["돈흐름점수"] = show_df["돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
     st.markdown("#### 돈흐름 상세 테이블")
     st.dataframe(
-        show_df[["구분", "섹터", "Ticker", "ETF 이름", "현재가", "가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태"]],
+        show_df[["구분", "섹터", "Ticker", "ETF 이름", "현재가", "가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태", "추격위험"]],
         use_container_width=True,
         hide_index=True,
         height=520,
@@ -5312,7 +5345,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
 현재 전체 테마 기준 강한 쪽은 <b>{leader['테마']}</b>입니다.
 상승 종목이 넓게 퍼진 테마는 <b>{breadth_leader['테마']}</b>,
 거래량이 상대적으로 붙은 테마는 <b>{volume_leader['테마']}</b>입니다.
-<br><span style='color:#94a3b8;'>테마돈흐름점수는 1/3/6개월 평균수익률, 가속도, 상승종목비율, 거래량증가를 더하고 상위 종목 쏠림을 일부 차감한 가격 기반 지표입니다.</span>
+<br><span style='color:#94a3b8;'>테마돈흐름점수는 1/3/6개월 평균수익률, 최근 3개월-이전 3개월 가속도, 상승종목비율, 거래량증가를 더하고 상위 종목 쏠림을 일부 차감한 가격 기반 지표입니다.</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -5390,11 +5423,15 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         st.plotly_chart(fig_quad, use_container_width=True)
 
     show_rotation = rotation_df.copy()
-    for col in ["1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준"]:
+    for col in ["1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준"]:
+        if col not in show_rotation.columns:
+            show_rotation[col] = np.nan
         show_rotation[col] = show_rotation[col].apply(fmt_flow_pct)
-    show_rotation["테마돈흐름점수"] = show_rotation["테마돈흐름점수"].map(lambda x: f"{x:.1f}")
+    show_rotation["테마돈흐름점수"] = show_rotation["테마돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
+    if "추격위험" not in show_rotation.columns:
+        show_rotation["추격위험"] = "-"
     st.dataframe(
-        show_rotation[["테마", "계산종목수", "종목수", "대표주", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "테마돈흐름점수", "상태"]],
+        show_rotation[["테마", "계산종목수", "종목수", "대표주", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "테마돈흐름점수", "상태", "추격위험"]],
         use_container_width=True,
         hide_index=True,
         height=360,
@@ -5477,7 +5514,7 @@ def render_image_theme_flow_section():
     st.subheader("🧭 이미지 테마 종목 흐름")
     st.caption(
         "첨부 이미지의 테마/하위테마 묶음을 가격 기반 모멘텀으로 비교합니다. "
-        "실제 자금 유입액이 아니라 1개월/3개월/6개월 수익률과 가속도를 합친 참고 지표입니다."
+        "실제 자금 유입액이 아니라 1개월/3개월/6개월 수익률, 최근 3개월-이전 3개월 가속도, 거래량 증가를 합친 참고 지표입니다."
     )
 
     themes = get_image_theme_names()
@@ -5655,11 +5692,15 @@ def render_image_theme_flow_section():
             st.plotly_chart(fig_quad, use_container_width=True)
 
         show_group = group_df.copy()
-        for col in ["가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]:
+        for col in ["가격수준", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]:
+            if col not in show_group.columns:
+                show_group[col] = np.nan
             show_group[col] = show_group[col].apply(fmt_flow_pct)
-        show_group["돈흐름점수"] = show_group["돈흐름점수"].map(lambda x: f"{x:.1f}")
+        show_group["돈흐름점수"] = show_group["돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
+        if "추격위험" not in show_group.columns:
+            show_group["추격위험"] = "-"
         st.dataframe(
-            show_group[["하위테마", "종목수", "대표주", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준", "돈흐름점수", "상태", "구성종목"]],
+            show_group[["하위테마", "종목수", "대표주", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준", "돈흐름점수", "상태", "추격위험", "구성종목"]],
             use_container_width=True,
             hide_index=True,
             height=430,
@@ -5702,7 +5743,9 @@ def render_image_theme_flow_section():
             st.plotly_chart(fig_stock, use_container_width=True)
 
         show_stock = stock_view.copy()
-        for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
+        for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
+            if col not in show_stock.columns:
+                show_stock[col] = np.nan
             show_stock[col] = show_stock[col].apply(fmt_flow_pct)
         show_stock["현재가"] = show_stock.apply(
             lambda r: "-" if not finite_num(r["현재가"]) else format_currency(r["현재가"], r["Ticker"]),
@@ -5711,8 +5754,10 @@ def render_image_theme_flow_section():
         show_stock["돈흐름점수"] = show_stock["돈흐름점수"].apply(
             lambda x: "-" if not finite_num(x) else f"{x:.1f}"
         )
+        if "추격위험" not in show_stock.columns:
+            show_stock["추격위험"] = "-"
         st.dataframe(
-            show_stock[["하위테마", "종목명", "Ticker", "현재가", "가격수준", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태"]],
+            show_stock[["하위테마", "종목명", "Ticker", "현재가", "가격수준", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태", "추격위험"]],
             use_container_width=True,
             hide_index=True,
             height=560,
@@ -15102,10 +15147,14 @@ def render_full_print_report():
             
             st.markdown(f"#### 🌐 [{group_name}] 상세 지표")
             show_g_df = g_df.copy()
-            for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도"]:
+            for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
+                if col not in show_g_df.columns:
+                    show_g_df[col] = np.nan
                 show_g_df[col] = show_g_df[col].apply(fmt_flow_pct)
-            show_g_df["돈흐름점수"] = show_g_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
-            st.dataframe(show_g_df[["섹터", "Ticker", "ETF 이름", "1개월수익률", "3개월수익률", "가속도", "돈흐름점수", "상태"]], use_container_width=True, hide_index=True)
+            show_g_df["돈흐름점수"] = show_g_df["돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
+            if "추격위험" not in show_g_df.columns:
+                show_g_df["추격위험"] = "-"
+            st.dataframe(show_g_df[["섹터", "Ticker", "ETF 이름", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태", "추격위험"]], use_container_width=True, hide_index=True)
             
             mc1, mc2 = st.columns(2)
             with mc1:
