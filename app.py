@@ -6391,8 +6391,21 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     )
     decision_outcome = None
 
-    def _set_decision(label, color, code=None):
-        outcome = build_decision_outcome(label, color, code)
+    # Precompute structure-damage reason strings so each call site stays lean
+    _sd_reasons: list[str] = []
+    if is_structure_damage_entry_risk:
+        if current_dd <= _dd_threshold:
+            _sd_reasons.append(f"고점대비 {current_dd*100:.1f}% 하락 (임계치 {_dd_threshold*100:.0f}%)")
+        if _ma50_damage:
+            _sd_reasons.append("MA50 하회 (대장주 요건 미충족)")
+        if below_ma20 and not _rs_strong:
+            _sd_reasons.append(f"MA20 하회 + RS {rs_label}")
+        if is_single_day_breakdown:
+            _sd_reasons.append("단일 봉 급락 감지")
+    _sd_reasons_t = tuple(_sd_reasons)
+
+    def _set_decision(label, color, code=None, reasons=()):
+        outcome = build_decision_outcome(label, color, code, reasons=reasons)
         return outcome.label, outcome.color, outcome
 
     if is_free:
@@ -6418,17 +6431,34 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif current_dd <= -0.2:
             dec, col, decision_outcome = _set_decision("🚨위기/패닉: 투매 포착", "#dc2626", "CRISIS_PANIC_SELL_OFF")
         elif is_structure_damage_entry_risk:
-            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
+            dec, col, decision_outcome = _set_decision(
+                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                reasons=_sd_reasons_t,
+            )
         elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
             dec, col, decision_outcome = _set_decision("🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed", "BREAKOUT_52W_ENTRY")
         elif trend == "🚀정배열(상승)" and rs_label == "🚀강함" and 45 < rsi_now <= 58 and 0.45 < pct_b_now < 0.8:
             dec, col, decision_outcome = _set_decision("🎯S급 눌림목: 탑승 찬스", "#8b5cf6", "S_PULLBACK_ENTRY")
         elif rsi_now <= 30:
-            dec, col, decision_outcome = _set_decision("🔥낙폭과대: 신규 진입", "#16a34a", "OVERSOLD_NEW_ENTRY")
+            dec, col, decision_outcome = _set_decision(
+                "🔥낙폭과대: 신규 진입", "#16a34a", "OVERSOLD_NEW_ENTRY",
+                reasons=(
+                    f"RSI {rsi_now:.0f} (기준: 30 이하) / MFI {mfi_now:.0f} / %B {pct_b_now:.2f}",
+                    f"고점대비 {current_dd*100:.1f}% / 재무점수 {fin_score}점 / 추세 {trend}",
+                    "과매도 구간 신규 진입 — 소액 분할 매수",
+                ),
+            )
         elif is_early_entry:
             dec, col, decision_outcome = _set_decision("🟢선진입 가능 구간", "#16a34a", "EARLY_ENTRY")
         elif is_clean_leader_entry:
-            dec, col, decision_outcome = _set_decision("🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER")
+            dec, col, decision_outcome = _set_decision(
+                "🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER",
+                reasons=(
+                    f"기술점수 {adj_tech_score:.1f} / 추세 {trend} / RS {rs_label}",
+                    f"고점대비 {current_dd*100:.1f}% (구조훼손 없음) / 재무점수 {fin_score}점",
+                    "대장주 조건 충족 — 1차 정찰 진입 가능",
+                ),
+            )
         elif trend == "🌊역배열(하락)" and adj_tech_score >= 5:
             dec, col, decision_outcome = _set_decision("🎯낙폭과대: 분할매수", "#8b5cf6", "OVERSOLD_DCA")
         elif ret_3m < 0 and trend in ["🌊역배열(하락)", "⏳혼조세"]:
@@ -6439,49 +6469,106 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision("🔍관망: 타점 대기", "#64748b", "WATCH_WAIT_ENTRY")
     else:
         if not is_etf and fin_score <= 1:
-            dec, col, decision_outcome = _set_decision("🚨하드차단: 재무F급(처분)", "#dc2626", "HARD_BLOCK_FINANCIAL_F")
+            dec, col, decision_outcome = _set_decision(
+                "🚨하드차단: 재무F급(처분)", "#dc2626", "HARD_BLOCK_FINANCIAL_F",
+                reasons=(f"재무점수 {fin_score}점 (기준: 2점 이상 필요)", "재무 F급 종목 — 보유 지속 시 손실 위험 높음"),
+            )
         elif curr_w > targ_w and targ_w > 0:
-            dec, col, decision_outcome = _set_decision("🛑하드차단: 비중 초과", "#dc2626", "HARD_BLOCK_OVERWEIGHT")
+            dec, col, decision_outcome = _set_decision(
+                "🛑하드차단: 비중 초과", "#dc2626", "HARD_BLOCK_OVERWEIGHT",
+                reasons=(
+                    f"현재비중 {curr_w:.1f}% > 목표비중 {targ_w:.1f}% (+{curr_w-targ_w:.1f}%p 초과)",
+                    "비중 초과 상태 — 신규 매수 불가, 리밸런싱 또는 익절 검토",
+                ),
+            )
         elif curr_w >= targ_w and targ_w > 0:
-            dec, col, decision_outcome = _set_decision("⏸️하드차단: 비중 충족(관망)", "#d97706", "HARD_BLOCK_TARGET_FILLED")
+            dec, col, decision_outcome = _set_decision(
+                "⏸️하드차단: 비중 충족(관망)", "#d97706", "HARD_BLOCK_TARGET_FILLED",
+                reasons=(
+                    f"현재비중 {curr_w:.1f}% ≥ 목표비중 {targ_w:.1f}%",
+                    "비중 충족 — 추가 매수 불필요, 눌림 시 재검토",
+                ),
+            )
         elif _fmr >= 4.5:
-            dec, col, decision_outcome = _set_decision("🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM")
+            dec, col, decision_outcome = _set_decision(
+                "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM",
+                reasons=(
+                    f"퍼펙트스톰 지수 {_fmr:.1f} (기준: 4.5 이상)",
+                    "매크로 위험 최고조 — 신규 매수 전면 중단, 현금 확보 우선",
+                ),
+            )
         elif is_core_dca_allowed and current_dd <= -0.3:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col, decision_outcome = _set_decision(
                 f"{prefix} 폭락: {core_dca_context['core_dca_label']}", "#b91c1c", "CORE_CRASH_DCA"
             )
         elif current_dd <= -0.5:
-            dec, col, decision_outcome = _set_decision("💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY")
+            dec, col, decision_outcome = _set_decision(
+                "💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (패닉 최심 구간)",
+                    "예비 현금 최종 투입 — 분할 매수 완료 단계",
+                ),
+            )
         elif current_dd <= -0.4:
-            dec, col, decision_outcome = _set_decision("💣패닉(-40%↓): 현금 투입", "#991b1b", "PANIC_CASH_DEPLOY")
+            dec, col, decision_outcome = _set_decision(
+                "💣패닉(-40%↓): 현금 투입", "#991b1b", "PANIC_CASH_DEPLOY",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (패닉 구간)",
+                    "현금 비중 투입 타이밍 — 분할 매수 2~3회차",
+                ),
+            )
         elif current_dd <= -0.3:
-            dec, col, decision_outcome = _set_decision("🚨위기(-30%↓): 코어 집중", "#b91c1c", "CRISIS_CORE_FOCUS")
+            dec, col, decision_outcome = _set_decision(
+                "🚨위기(-30%↓): 코어 집중", "#b91c1c", "CRISIS_CORE_FOCUS",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (위기 구간)",
+                    "코어 ETF 중심 분할 매수 집중 — 스윙 신규 진입 보류",
+                ),
+            )
         elif is_core_dca_allowed and current_dd <= -0.2:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col, decision_outcome = _set_decision(
                 f"{prefix} 하락: {core_dca_context['core_dca_label']}", "#16a34a", "CORE_DRAWDOWN_DCA"
             )
         elif is_structure_damage_entry_risk and not has_pos:
-            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
+            dec, col, decision_outcome = _set_decision(
+                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                reasons=_sd_reasons_t,
+            )
         elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
             dec, col, decision_outcome = _set_decision(
-                "⚠️고점대비 -20%: 추매금지/손절기준 점검", "#d97706", "DRAWDOWN_20_HOLDING_STOP_CHECK"
+                "⚠️고점대비 -20%: 추매금지/손절기준 점검", "#d97706", "DRAWDOWN_20_HOLDING_STOP_CHECK",
+                reasons=(f"고점대비 {current_dd*100:.1f}% 하락",) + _sd_reasons_t,
             )
         elif current_dd <= -0.2 and has_pos:
             dec, col, decision_outcome = _set_decision(
-                "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706", "DRAWDOWN_20_HOLDING_CAUSE_CHECK"
+                "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706", "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (기준: -20%)",
+                    "구조훼손 신호 없음 — 하락 원인(매크로/실적) 점검 후 판단",
+                ),
             )
         elif current_dd <= -0.2:
-            dec, col, decision_outcome = _set_decision("⚠️고점대비 -20%: 신규진입 보류", "#d97706", "DRAWDOWN_20_NO_ENTRY")
+            dec, col, decision_outcome = _set_decision(
+                "⚠️고점대비 -20%: 신규진입 보류", "#d97706", "DRAWDOWN_20_NO_ENTRY",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (기준: -20%)",
+                    "미보유 종목 — 하락 안정 확인 후 재검토",
+                ),
+            )
         
         
         elif is_structure_damage_entry_risk and has_pos:
             dec, col, decision_outcome = _set_decision(
-                "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706", "STRUCTURE_DAMAGE_HOLDING_CHECK"
+                "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706", "STRUCTURE_DAMAGE_HOLDING_CHECK",
+                reasons=_sd_reasons_t,
             )
         elif is_structure_damage_entry_risk:
-            dec, col, decision_outcome = _set_decision("⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY")
+            dec, col, decision_outcome = _set_decision(
+                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                reasons=_sd_reasons_t,
+            )
         elif (
             is_exception_entry and
             has_pos and
@@ -6506,13 +6593,25 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
             dec, col = decision_outcome.label, decision_outcome.color
         elif mfi_now >= 85:
-            dec, col, decision_outcome = _set_decision("🚫하드차단: MFI 극단 과열", "#dc2626", "HARD_BLOCK_MFI_OVERHEAT")
+            dec, col, decision_outcome = _set_decision(
+                "🚫하드차단: MFI 극단 과열", "#dc2626", "HARD_BLOCK_MFI_OVERHEAT",
+                reasons=(
+                    f"MFI {mfi_now:.0f} (기준: 85 초과) / RSI {rsi_now:.0f} / %B {pct_b_now:.2f}",
+                    "자금흐름 극단 과열 — 추격 매수 위험, 눌림 후 재진입",
+                ),
+            )
         elif is_breakout_extreme:
             dec, col, decision_outcome = _set_decision("⚠️과열확장: 추격금지, MA5 대기", "#d97706", "OVERHEAT_EXTENSION_WAIT_MA5")
         elif is_breakout_normal:
             dec, col, decision_outcome = _set_decision("🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899", "LEADER_MA5_PULLBACK_ENTRY")
         elif (not is_etf) and pct_b_now >= 0.95:
-            dec, col, decision_outcome = _set_decision("🚫하드차단: 볼린상단 이탈", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER")
+            dec, col, decision_outcome = _set_decision(
+                "🚫하드차단: 볼린상단 이탈", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER",
+                reasons=(
+                    f"%B {pct_b_now:.2f} (기준: 0.95 초과) / MFI {mfi_now:.0f} / RSI {rsi_now:.0f}",
+                    "볼린저 밴드 상단 이탈 — 과매수 구간, 눌림 대기",
+                ),
+            )
         elif is_etf_accumulation_ok and weight_gap >= 10:
             dec, col, decision_outcome = _set_decision("✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a", "ETF_LARGE_GAP_DCA_OK")
         elif is_etf_accumulation_ok:
@@ -6564,7 +6663,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             elif mfi_now >= 80:
                 dec, col, decision_outcome = _set_decision("⚠️단기과열: 추매 보류", "#d97706", "SHORT_OVERHEAT_NO_ADD")
             elif rsi_now <= 30:
-                dec, col, decision_outcome = _set_decision("🔥낙폭과대: 줍줍 찬스", "#16a34a", "OVERSOLD_ADD_ON")
+                dec, col, decision_outcome = _set_decision(
+                    "🔥낙폭과대: 줍줍 찬스", "#16a34a", "OVERSOLD_ADD_ON",
+                    reasons=(
+                        f"RSI {rsi_now:.0f} (기준: 30 이하) / MFI {mfi_now:.0f} / %B {pct_b_now:.2f}",
+                        f"고점대비 {current_dd*100:.1f}% / 재무점수 {fin_score}점",
+                        "과매도 구간 — 분할 추가 매수 기회",
+                    ),
+                )
             elif rs_label == "🚀강함" and mfi_now < 35:
                 dec, col, decision_outcome = _set_decision("💎S급: 과매도(풀매수)", "#16a34a", "S_GRADE_OVERSOLD_BUY")
             elif adj_tech_score >= 4 and cur_p <= my_price:
