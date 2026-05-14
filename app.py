@@ -56,6 +56,23 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
     strip_search_prefix,
 )
+from stock_lab_core.financial_score import (
+    estimate_kr_fin_score_from_naver_snapshot,
+    resolve_fin_score_source,
+)
+from stock_lab_core.decision_engine import (
+    build_position_sizing_hint,
+    build_core_dca_context_values,
+    classify_candidate_grade,
+    classify_decision_signal,
+    classify_core_dca_decision,
+    classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
+    classify_limited_history_etf_signal as classify_limited_history_etf_signal_rule,
+    ensure_min_price_rows_for_decision,
+    is_new_entry_decision_label,
+    score_main_entry,
+    score_technical_components,
+)
 from stock_lab_core.news import (
     get_analyst_snapshot,
     get_ticker_news,
@@ -3652,7 +3669,10 @@ def fetch_krx_stock_snapshot(ticker: str):
         for offset in range(5):
             bas_dd = (_d.today() - _td(days=offset)).strftime("%Y%m%d")
             try:
-                df = _pykrx.get_market_cap(bas_dd)
+                if hasattr(_pykrx, "get_market_cap_by_ticker"):
+                    df = _pykrx.get_market_cap_by_ticker(bas_dd, market="ALL")
+                else:
+                    df = _pykrx.get_market_cap(bas_dd)
                 if df is None or df.empty:
                     continue
                 if stock_code not in df.index:
@@ -4322,42 +4342,10 @@ def _estimate_kr_fin_score_from_naver(ticker: str) -> tuple:
     """
     try:
         naver = fetch_naver_kr_snapshot(ticker)
-        per = clean_float(naver.get("trailingPE"), None)
-        pbr = clean_float(naver.get("priceToBook"), None)
-        roe = clean_float(naver.get("returnOnEquity"), None)  # 0~1 범위
-        op_margin = clean_float(naver.get("operatingMargins"), None)
-        debt_ratio = clean_float(naver.get("debtToEquity"), None)  # yfinance: 0~100+
-
-        hints = []
-        score = 1  # 기본 1점 (DART 없지만 상장 자체가 최소 기준)
-
-        # PER 체크
-        if per is not None and 0 < per <= 15:
-            score += 1; hints.append(f"PER {per:.1f} 저평가")
-        elif per is not None and 0 < per <= 25:
-            hints.append(f"PER {per:.1f} 적정")
-
-        # ROE 체크
-        if roe is not None and roe >= 0.15:
-            score += 1; hints.append(f"ROE {roe*100:.1f}% 우수")
-        elif roe is not None and roe >= 0.08:
-            hints.append(f"ROE {roe*100:.1f}% 양호")
-        elif roe is not None and roe < 0:
-            score -= 1; hints.append(f"ROE {roe*100:.1f}% 적자")
-
-        # 영업이익률
-        if op_margin is not None and op_margin >= 0.10:
-            score += 1; hints.append(f"영업이익률 {op_margin*100:.1f}%")
-        elif op_margin is not None and op_margin < 0:
-            score -= 1; hints.append(f"영업이익률 적자")
-
-        # 부채비율 패널티
-        if debt_ratio is not None and debt_ratio > 200:
-            score -= 1; hints.append(f"부채비율 {debt_ratio:.0f}% 과다")
-
-        score = max(1, min(3, score))  # 1~3점 범위 (데이터 불완전 → 4점 불가)
-        source_str = "Naver간이추정(" + ", ".join(hints) + ")" if hints else "Naver간이추정(지표부족)"
-        return score, source_str
+        return estimate_kr_fin_score_from_naver_snapshot(
+            naver,
+            default_score=AUTO_FIN_FAIL_SCORE,
+        )
     except Exception as e:
         return AUTO_FIN_FAIL_SCORE, f"Naver간이추정 실패: {e}"
 
@@ -4463,15 +4451,16 @@ def get_final_fin_score(ticker, is_etf, asset_class):
 
     stored_notes = dict(fin_notes) if isinstance(fin_notes, dict) else {"messages": fin_notes}
     stored_notes["metrics"] = fin_metrics
+    score_source = resolve_fin_score_source(fin_auto, stored_notes)
 
     upsert_fin_score_db(
         ticker=key, auto_score=int(auto_score), manual_score=manual_score,
-        final_score=int(final_score), source=fin_auto.get("source", "unknown"), notes=stored_notes
+        final_score=int(final_score), source=score_source, notes=stored_notes
     )
 
     return int(final_score), {
         "auto_score": int(auto_score), "manual_score": manual_score, "final_score": int(final_score),
-        "source": fin_auto.get("source", "unknown"), "mode": stored_notes.get("mode", "unknown"),
+        "source": score_source, "mode": stored_notes.get("mode", "unknown"),
         "notes": stored_notes, "metrics": fin_metrics,
     }
 
@@ -6109,94 +6098,68 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     return any(keyword in text for keyword in keywords)
 
 def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend):
-    if not is_core_etf or weight_gap <= 0:
-        return 0.0, ""
-    if is_leveraged_or_inverse_product(name, ticker, asset_class):
-        return 0.0, ""
-    if final_macro_risk >= 4.5:
-        return 0.0, ""
+    return classify_core_etf_dca_rate_rule(
+        is_core_etf=is_core_etf,
+        weight_gap=weight_gap,
+        current_dd=current_dd,
+        rsi_now=rsi_now,
+        mfi_now=mfi_now,
+        pct_b_now=pct_b_now,
+        trend=trend,
+        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
+        final_macro_risk=final_macro_risk,
+    )
 
-    if current_dd <= -0.30:
-        return 2.0, "폭락장 200% 집중"
-    if current_dd <= -0.20:
-        return 1.5, "하락장 150% 분할"
-    if current_dd <= -0.10 or (rsi_now <= 55 and mfi_now < 70 and pct_b_now <= 0.70):
-        return 1.0, "눌림 100% 적립"
-    if mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00:
-        return 0.25, "과열 25% 정기적립"
-    if mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90:
-        return 0.25, "상단 25% 정기적립"
-    if trend == "🌊역배열(하락)":
-        return 0.25, "하락추세 25% 정기적립"
-    return 0.5, "중립 50% 분할적립"
 
-def build_core_dca_context(mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount, current_dd, rsi_now, mfi_now, pct_b_now, trend):
+def build_core_dca_context(
+    mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
+    current_dd, rsi_now, mfi_now, pct_b_now, trend,
+    cash_available_snapshot=None, reserve_available_snapshot=None,
+):
     rate, label = classify_core_etf_dca_rate(
         is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend
     )
-    cash_available = get_cash_available_for_dca(mode)
-    reserve_available = get_reserve_available_for_crash_buy(mode)
+    cash_available = (
+        get_cash_available_for_dca(mode)
+        if cash_available_snapshot is None
+        else clean_float(cash_available_snapshot, 0.0)
+    )
+    reserve_available = (
+        get_reserve_available_for_crash_buy(mode)
+        if reserve_available_snapshot is None
+        else clean_float(reserve_available_snapshot, 0.0)
+    )
 
-    if mode == "개인모드":
-        pool = cash_available + (reserve_available if current_dd <= -0.20 else 0.0)
-        pool_label = "예수금+파킹자산" if current_dd <= -0.20 else "예수금"
-    else:
-        pool = max(clean_float(buy_amount), 0.0)
-        pool_label = "직접입력 부족분"
 
-    amount = 0.0
-    if rate > 0:
-        base_amount = max(clean_float(buy_amount), 0.0) * rate
-        amount = min(base_amount, max(pool, 0.0)) if pool > 0 else base_amount
-
-    return {
-        "core_dca_rate": rate,
-        "core_dca_label": label,
-        "core_dca_amt": round(amount, 0),
-        "core_dca_cash": round(cash_available, 0),
-        "core_dca_reserve": round(reserve_available, 0),
-        "core_dca_pool": round(pool, 0),
-        "core_dca_pool_label": pool_label,
-    }
+    return build_core_dca_context_values(
+        mode=mode,
+        rate=rate,
+        label=label,
+        buy_amount=buy_amount,
+        current_dd=current_dd,
+        cash_available=cash_available,
+        reserve_available=reserve_available,
+    )
 
 def classify_limited_history_etf_signal(history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg):
-    enough_short_data = history_days >= 20 and finite_num(rsi_now) and finite_num(mfi_now) and finite_num(pct_b_now)
-    if not enough_short_data:
-        return "🆕신규ETF: 최소 데이터 관찰", "#64748b"
-
-    has_target_gap = targ_w > 0 and weight_gap > 0
-    overheat_extreme = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
-    overheat_zone = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.95
-    pullback_zone = (rsi_now <= 55 and mfi_now < 70 and pct_b_now <= 0.75) or pct_b_now <= 0.35
-
-    if overheat_extreme:
-        return "🆕신규ETF 단기과열: 추매 보류", "#d97706"
-    if overheat_zone:
-        return "🆕신규ETF 상단권: 눌림 대기", "#d97706"
-    if has_pos and my_price > 0 and has_target_gap and cur_p <= my_price and mfi_now < 80 and pct_b_now < 0.95:
-        if price_vs_avg <= -0.07:
-            return "🆕신규ETF 평단하회: 소액 분할", "#16a34a"
-        return "🆕신규ETF 평단근처: 제한적 추매", "#16a34a"
-    if has_target_gap and pullback_zone:
-        return "🆕신규ETF 단기눌림: 제한적 매수", "#16a34a"
-    if has_pos and my_price > 0 and cur_p > my_price:
-        return "🆕신규ETF 보유: 눌림 대기", "#64748b"
-    if has_target_gap:
-        return "🆕신규ETF 관찰매수: 정찰만", "#3b82f6"
-    if targ_w > 0 and curr_w >= targ_w:
-        return "🆕신규ETF: 비중 충족 관찰", "#64748b"
-    return "🆕신규ETF: 데이터 축적 관찰", "#64748b"
+    return classify_limited_history_etf_signal_rule(
+        history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
+        rsi_now, mfi_now, pct_b_now, price_vs_avg
+    )
 
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
-                             _macro_penalty=None, _final_macro_risk=None, _total_eval=None):
+                             _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
+                             _cash_available=None, _reserve_available=None):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp  = macro_penalty      if _macro_penalty      is None else _macro_penalty
     _fmr = final_macro_risk   if _final_macro_risk   is None else _final_macro_risk
     _te  = total_eval         if _total_eval         is None else _total_eval
+
+    df = ensure_min_price_rows_for_decision(df)
 
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
@@ -6216,13 +6179,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
     sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
 
-    rs_s = 2 if rs_label == "🚀강함" else (1 if rs_label == "➖보통" else 0)
-    mfi_s = 2 if mfi_now < 30 else (-1 if mfi_now > 80 else 0)
-    trend_s = 2 if trend == "🚀정배열(상승)" else 0
-    macd_s = 2 if macd_state == "🔥매수신호(골든크로스)" else (1 if macd_state == "📈추세유지(상승중)" else (-2 if macd_state == "📉하락주의(데드크로스)" else 0))
-    sqz_s = 1 if (sqz_status == "🚀해제직후" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]) else 0
-
-    tech_total = rs_s + mfi_s + trend_s + macd_s + sqz_s
+    tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
+    rs_s = tech_scores["rs_s"]
+    mfi_s = tech_scores["mfi_s"]
+    trend_s = tech_scores["trend_s"]
+    macd_s = tech_scores["macd_s"]
+    sqz_s = tech_scores["sqz_s"]
+    tech_total = tech_scores["tech_total"]
     vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
     vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
     ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
@@ -6231,29 +6194,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     below_ma50 = ma50_now > 0 and cur_p < ma50_now
     is_single_day_breakdown = (not is_etf) and day_ret <= -0.06 and vol_ratio >= 1.2
 
-    main_score = (
-        (2 if trend == "🚀정배열(상승)" else (1 if trend == "⏳혼조세" else 0)) +
-        (2 if macd_state == "🔥매수신호(골든크로스)" else 0) +
-        (2 if rsi_now < 35 else (1 if rsi_now < 45 else 0)) +
-        (1 if day_ret >= 0 and vol_ratio > 1.2 else (-1 if day_ret < -0.02 and vol_ratio > 1.5 else 0))
-    )
+    main_score = score_main_entry(trend, macd_state, rsi_now, day_ret, vol_ratio)
     # rs_slope_s(±1)는 adj_tech_score에만 반영 — grade 임계값 안정성 유지
     adj_tech_score = (main_score + rs_s + mfi_s + rs_slope_s) - _mp
 
-    if is_etf:
-        t_score = tech_total
-        if tech_total < 1: grade = "⏳ETF 관망"
-        elif tech_total < 3: grade = "⚖️ETF 보통"
-        elif tech_total < 5: grade = "✅ETF 양호"
-        else: grade = "💎ETF 우수"
-    else:
-        t_score = tech_total + fin_score
-        if fin_score == 1: grade = "🚨F급 (재무위험/처분)"
-        elif t_score < 3: grade = "🚨F급 (기술/재무 부진)"
-        elif t_score < 5: grade = "⏳C급 (주의/대기)"
-        elif t_score < 7: grade = "⚖️B급 (신중/관망)"
-        elif t_score < 9: grade = "✅A급 (분할 매수)"
-        else: grade = "💎S급 (강력 매수)"
+    candidate_grade = classify_candidate_grade(is_etf, tech_total, fin_score)
+    t_score = candidate_grade.t_score
+    grade = candidate_grade.grade
 
     levels = get_recent_levels(df)
 
@@ -6324,7 +6271,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_core_etf = is_etf and effective_bucket == "core"
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
-        current_dd, rsi_now, mfi_now, pct_b_now, trend
+        current_dd, rsi_now, mfi_now, pct_b_now, trend,
+        cash_available_snapshot=_cash_available,
+        reserve_available_snapshot=_reserve_available,
     )
     core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
     is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
@@ -6453,12 +6402,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         if is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어 ETF"
-            if core_dca_rate <= 0.25:
-                dec, col = f"{prefix} 과열: {dca_label}", "#d97706"
-            elif core_dca_rate <= 0.50:
-                dec, col = f"{prefix} 중립: {dca_label}", "#3b82f6"
-            else:
-                dec, col = f"{prefix} 눌림: {dca_label}", "#16a34a"
+            dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
         elif is_etf and short_history:
             dec, col = limited_history_etf_dec, limited_history_etf_col
         elif mfi_now >= 85: dec, col = "🚫극단과열: 추격금지", "#dc2626"
@@ -6521,12 +6465,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            if core_dca_rate <= 0.25:
-                dec, col = f"{prefix} 과열: {dca_label}", "#d97706"
-            elif core_dca_rate <= 0.50:
-                dec, col = f"{prefix} 중립: {dca_label}", "#3b82f6"
-            else:
-                dec, col = f"{prefix} 눌림: {dca_label}", "#16a34a"
+            dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
         elif is_etf and short_history:
             dec, col = limited_history_etf_dec, limited_history_etf_col
         elif mfi_now >= 85: dec, col = "🚫하드차단: MFI 극단 과열", "#dc2626"
@@ -6636,29 +6575,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         dec, col = "🔍대기: 신규 타점 탐색", "#64748b"
 
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
-    sizing_hint = ""
-    _is_new_entry_signal = not has_pos and dec in [
-        "🆕신규진입: 대장주 포착", "🟣예외승인: 정찰대 진입(MA5/FVG)",
-        "🎯S급 눌림목: 탑승 찬스", "🚀52주 신고가 돌파: 모멘텀 진입 검토",
-        "🎯우량주 눌림 구간: 정찰 진입 적합",
-    ]
-    if _is_new_entry_signal and targ_w > 0 and eff_total > 0:
-        _first_buy_w = round(targ_w * 0.33, 2)   # 목표비중의 1/3
-        _first_buy_amt = round(eff_total * _first_buy_w / 100, 0)
-        _cur_p_for_size = cur_p if cur_p > 0 else 1
-        _shares_hint = int(_first_buy_amt / _cur_p_for_size) if _cur_p_for_size > 0 else 0
-        sizing_hint = (
-            f"1차 정찰대: 목표비중의 1/3 ({_first_buy_w:.1f}%) "
-            f"≈ {_first_buy_amt:,.0f}원"
-            + (f" / 약 {_shares_hint}주" if not is_etf and _shares_hint > 0 else "")
-            + " | 상승 확인 후 2차·3차 분할"
-        )
-    elif _is_new_entry_signal and targ_w <= 0:
-        sizing_hint = "목표비중 미설정 — 목표비중 먼저 설정 후 1/3씩 분할 진입 권장"
+    _is_new_entry_signal = (not has_pos) and is_new_entry_decision_label(dec)
+    sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
 
     return {
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score, "dec": dec, "col": col,
-        "grade": grade, "t_score": tech_total + (0 if is_etf else fin_score), "tech_total": tech_total, "fin_score": fin_score,
+        "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
         "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
         "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
@@ -6808,9 +6730,12 @@ def render_dashboard_group_summary(df, group_label):
         return
 
     adj = pd.to_numeric(view_df["Adj점수"], errors="coerce")
-    signal_text = view_df["🔥기술적 타점"].astype(str)
-    buyish_count = signal_text.str.contains("매수|진입|추매|눌림|대장주|정찰|적립", na=False).sum()
-    caution_count = signal_text.str.contains("차단|금지|위기|패닉|역배열|하락|주의", na=False).sum()
+    if "판정분류" in view_df.columns:
+        signal_group = view_df["판정분류"].astype(str)
+    else:
+        signal_group = view_df["🔥기술적 타점"].astype(str).map(classify_decision_signal)
+    buyish_count = int((signal_group == "buyish").sum())
+    caution_count = int((signal_group == "caution").sum())
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("표시 종목", f"{len(view_df)}개")
@@ -7725,7 +7650,8 @@ def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers:
 
 
 def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
-                          snap_macro_penalty, snap_final_macro_risk, snap_total_eval):
+                          snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
+                          snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
     tkr = sanitize_ticker_value(item.get("ticker", ""))
@@ -7753,6 +7679,8 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
         _macro_penalty=snap_macro_penalty,
         _final_macro_risk=snap_final_macro_risk,
         _total_eval=snap_total_eval,
+        _cash_available=snap_cash_available,
+        _reserve_available=snap_reserve_available,
     )
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
@@ -7772,7 +7700,7 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
         "스윙상태": swing_status_map.get(swing_key, "-"),
         "내결정": swing_decision_map.get(swing_key, "-"),
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
-        "🔥기술적 타점": c["dec"], "Adj점수": round(c["adj"], 1)
+        "🔥기술적 타점": c["dec"], "판정분류": classify_decision_signal(c["dec"]), "Adj점수": round(c["adj"], 1)
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
@@ -7796,6 +7724,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     snap_mp  = macro_penalty
     snap_fmr = final_macro_risk
     snap_te  = total_eval
+    snap_cash_available = get_cash_available_for_dca(mode)
+    snap_reserve_available = get_reserve_available_for_crash_buy(mode)
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
@@ -7805,6 +7735,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
                 _compute_summary_item,
                 item, mode, swing_status_map, swing_decision_map,
                 snap_mp, snap_fmr, snap_te,
+                snap_cash_available, snap_reserve_available,
             ): i
             for i, item in enumerate(watchlist_items)
         }
