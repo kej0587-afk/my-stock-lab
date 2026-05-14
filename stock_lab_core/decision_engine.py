@@ -27,6 +27,7 @@ class DecisionOutcome:
     label: str
     color: str
     group: str
+    reasons: tuple = ()   # 판단근거 목록 — 기본값 빈 튜플 (기존 호출부 영향 없음)
 
 
 def is_finite_number(value: Any) -> bool:
@@ -130,11 +131,35 @@ def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) ->
     label, color = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
     if core_dca_rate <= 0.25:
         code = "CORE_OVERHEAT_DCA"
+        reasons: tuple = (
+            "코어 ETF 과열 구간 감지 (MFI≥80 또는 RSI≥75 또는 볼린저 상단 근접)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 로 축소 — 고점 추격 억제",
+        )
     elif core_dca_rate <= 0.50:
         code = "CORE_NEUTRAL_DCA"
+        reasons = (
+            "코어 ETF 중립 구간 — 과열·하락 모두 아님",
+            f"적립 비율 {int(core_dca_rate * 100)}% 유지",
+        )
+    elif core_dca_rate <= 1.0:
+        code = "CORE_PULLBACK_DCA"
+        reasons = (
+            "코어 ETF 눌림 구간 (RSI≤55·MFI<70·%B≤0.70 또는 고점대비 -10% 이상)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 상향 — 저가 분할 기회",
+        )
+    elif core_dca_rate <= 1.5:
+        code = "CORE_PULLBACK_DCA"
+        reasons = (
+            "코어 ETF 하락장 구간 (고점대비 -20% 이상)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 상향 — 분할 매수 강화",
+        )
     else:
         code = "CORE_PULLBACK_DCA"
-    return build_decision_outcome(label, color, code)
+        reasons = (
+            "코어 ETF 폭락장 구간 (고점대비 -30% 이상)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 최대 — 집중 분할 매수",
+        )
+    return build_decision_outcome(label, color, code, reasons=reasons)
 
 
 def classify_decision_signal(decision_label: str) -> str:
@@ -308,7 +333,12 @@ def infer_decision_code(decision_label: str) -> str:
     return "NEUTRAL_GENERIC"
 
 
-def build_decision_outcome(decision_label: str, color: str, code: Optional[str] = None) -> DecisionOutcome:
+def build_decision_outcome(
+    decision_label: str,
+    color: str,
+    code: Optional[str] = None,
+    reasons: tuple = (),
+) -> DecisionOutcome:
     label = str(decision_label or "")
     final_code = str(code or "").strip() or infer_decision_code(label)
     return DecisionOutcome(
@@ -316,6 +346,7 @@ def build_decision_outcome(decision_label: str, color: str, code: Optional[str] 
         label=label,
         color=str(color or "#64748b"),
         group=DECISION_GROUP_BY_CODE.get(final_code) or classify_decision_signal(label),
+        reasons=tuple(reasons),
     )
 
 
@@ -479,4 +510,41 @@ def build_limited_history_etf_outcome(
         history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
         rsi_now, mfi_now, pct_b_now, price_vs_avg
     )
-    return build_decision_outcome(label, color)
+
+    r: list = []
+
+    # 데이터 이력
+    if history_days < 20:
+        r.append(f"가격 데이터 {history_days}일 — 최소 20일 미만, 기술 신호 신뢰도 낮음")
+    else:
+        r.append(f"가격 데이터 {history_days}일 (단기 이력 — 신규 ETF 판정 적용)")
+
+    # 과열 상태
+    if is_finite_number(mfi_now) and is_finite_number(rsi_now) and is_finite_number(pct_b_now):
+        if mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00:
+            r.append(f"과열 극단 구간 (MFI {mfi_now:.0f} / RSI {rsi_now:.0f} / %B {pct_b_now:.2f})")
+        elif mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.95:
+            r.append(f"과열 상단 구간 (MFI {mfi_now:.0f} / RSI {rsi_now:.0f} / %B {pct_b_now:.2f})")
+        else:
+            r.append(f"과열 아님 (MFI {mfi_now:.0f} / RSI {rsi_now:.0f} / %B {pct_b_now:.2f})")
+
+    # 보유 및 평단 비교
+    if has_pos and my_price > 0:
+        pct = price_vs_avg * 100
+        if cur_p <= my_price:
+            r.append(f"현재가({cur_p:,.0f}원) ≤ 평단({my_price:,.0f}원) — 평단 하회 {pct:.1f}%")
+        else:
+            r.append(f"현재가({cur_p:,.0f}원) > 평단({my_price:,.0f}원) — 평단 이상 +{pct:.1f}%")
+    elif not has_pos:
+        r.append("미보유 — 신규 진입 여부 판단")
+
+    # 목표비중
+    if targ_w > 0:
+        if weight_gap > 0:
+            r.append(f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족")
+        else:
+            r.append(f"목표비중 {targ_w:.1f}% 달성 (초과 없음)")
+    else:
+        r.append("목표비중 미설정")
+
+    return build_decision_outcome(label, color, reasons=tuple(r))

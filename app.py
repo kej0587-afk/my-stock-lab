@@ -6649,6 +6649,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score,
         "dec": decision_outcome.label, "col": decision_outcome.color,
         "decision_code": decision_outcome.code, "decision_group": decision_outcome.group,
+        "decision_reasons": decision_outcome.reasons,
         "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score,
         "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
         "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
@@ -13123,6 +13124,12 @@ with tab_precision:
                         f"🎯 <b>포지션 사이징</b><br><span style='color:#c4b5fd'>{escape_html_value(_sizing)}</span></div>",
                         unsafe_allow_html=True,
                     )
+
+                _reasons = c.get("decision_reasons", ())
+                if _reasons:
+                    with st.expander("🔍 판단근거 보기", expanded=False):
+                        for _r in _reasons:
+                            st.caption(f"• {_r}")
 
             if app_mode == "범용모드":
                 dca_html = ""
