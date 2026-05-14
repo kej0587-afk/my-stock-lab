@@ -61,14 +61,14 @@ from stock_lab_core.financial_score import (
     resolve_fin_score_source,
 )
 from stock_lab_core.decision_engine import (
+    build_core_dca_outcome,
     build_decision_outcome,
+    build_limited_history_etf_outcome,
     build_position_sizing_hint,
     build_core_dca_context_values,
     classify_candidate_grade,
     classify_decision_signal,
-    classify_core_dca_decision,
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
-    classify_limited_history_etf_signal as classify_limited_history_etf_signal_rule,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
     score_main_entry,
@@ -6142,12 +6142,6 @@ def build_core_dca_context(
         reserve_available=reserve_available,
     )
 
-def classify_limited_history_etf_signal(history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg):
-    return classify_limited_history_etf_signal_rule(
-        history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
-        rsi_now, mfi_now, pct_b_now, price_vs_avg
-    )
-
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
@@ -6395,10 +6389,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         pct_b_now < 1.03 and
         _fmr < 4.5
     )
-    limited_history_etf_dec, limited_history_etf_col = classify_limited_history_etf_signal(
-        len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap, rsi_now, mfi_now, pct_b_now, price_vs_avg
-    )
-
     decision_outcome = None
 
     def _set_decision(label, color, code=None):
@@ -6409,16 +6399,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         if is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어 ETF"
-            dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
-            if core_dca_rate <= 0.25:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_OVERHEAT_DCA")
-            elif core_dca_rate <= 0.50:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_NEUTRAL_DCA")
-            else:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_PULLBACK_DCA")
+            decision_outcome = build_core_dca_outcome(prefix, core_dca_rate, dca_label)
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_etf and short_history:
-            dec, col = limited_history_etf_dec, limited_history_etf_col
-            decision_outcome = build_decision_outcome(dec, col)
+            decision_outcome = build_limited_history_etf_outcome(
+                len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
+                rsi_now, mfi_now, pct_b_now, price_vs_avg
+            )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif mfi_now >= 85:
             dec, col, decision_outcome = _set_decision("🚫극단과열: 추격금지", "#dc2626", "EXTREME_OVERHEAT_NO_CHASE")
         elif is_breakout_extreme:
@@ -6509,16 +6497,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_core_dca_allowed:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            dec, col = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
-            if core_dca_rate <= 0.25:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_OVERHEAT_DCA")
-            elif core_dca_rate <= 0.50:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_NEUTRAL_DCA")
-            else:
-                decision_outcome = build_decision_outcome(dec, col, "CORE_PULLBACK_DCA")
+            decision_outcome = build_core_dca_outcome(prefix, core_dca_rate, dca_label)
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_etf and short_history:
-            dec, col = limited_history_etf_dec, limited_history_etf_col
-            decision_outcome = build_decision_outcome(dec, col)
+            decision_outcome = build_limited_history_etf_outcome(
+                len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
+                rsi_now, mfi_now, pct_b_now, price_vs_avg
+            )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif mfi_now >= 85:
             dec, col, decision_outcome = _set_decision("🚫하드차단: MFI 극단 과열", "#dc2626", "HARD_BLOCK_MFI_OVERHEAT")
         elif is_breakout_extreme:

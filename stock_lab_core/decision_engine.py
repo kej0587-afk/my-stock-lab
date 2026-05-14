@@ -126,6 +126,17 @@ def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str
     return f"{prefix} 눌림: {dca_label}", "#16a34a"
 
 
+def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) -> DecisionOutcome:
+    label, color = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
+    if core_dca_rate <= 0.25:
+        code = "CORE_OVERHEAT_DCA"
+    elif core_dca_rate <= 0.50:
+        code = "CORE_NEUTRAL_DCA"
+    else:
+        code = "CORE_PULLBACK_DCA"
+    return build_decision_outcome(label, color, code)
+
+
 def classify_decision_signal(decision_label: str) -> str:
     """Classify a visible decision label for dashboard counts.
 
@@ -449,3 +460,23 @@ def classify_limited_history_etf_signal(
     if targ_w > 0 and curr_w >= targ_w:
         return "🆕신규ETF: 비중 충족 관찰", "#64748b"
     return "🆕신규ETF: 데이터 축적 관찰", "#64748b"
+
+
+def build_limited_history_etf_outcome(
+    history_days: int,
+    has_pos: bool,
+    my_price: float,
+    cur_p: float,
+    targ_w: float,
+    curr_w: float,
+    weight_gap: float,
+    rsi_now: float,
+    mfi_now: float,
+    pct_b_now: float,
+    price_vs_avg: float,
+) -> DecisionOutcome:
+    label, color = classify_limited_history_etf_signal(
+        history_days, has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
+        rsi_now, mfi_now, pct_b_now, price_vs_avg
+    )
+    return build_decision_outcome(label, color)
