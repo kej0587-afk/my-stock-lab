@@ -93,7 +93,10 @@ try:
         calculate_image_theme_group_df,
         get_image_theme_names,
     )
+    IMAGE_THEME_FLOW_AVAILABLE = True
 except ImportError:
+    IMAGE_THEME_FLOW_AVAILABLE = False
+
     def get_image_theme_names():
         return []
 
@@ -5252,13 +5255,26 @@ def render_image_theme_flow_section():
 
     themes = get_image_theme_names()
     if not themes:
-        st.info("등록된 이미지 테마 universe가 없습니다.")
+        if not IMAGE_THEME_FLOW_AVAILABLE:
+            st.error(
+                "이미지 테마 데이터 모듈이 아직 배포본에 반영되지 않았습니다. "
+                "`stock_lab_core/money_flow.py`까지 함께 배포되어야 국내/해외 테마 종목이 표시됩니다."
+            )
+        else:
+            st.info("등록된 이미지 테마 universe가 없습니다.")
         return
 
-    c1, c2 = st.columns([1.1, 2])
+    c1, c2, c3 = st.columns([1.1, 0.8, 2])
     with c1:
         selected_theme = st.selectbox("테마 선택", themes, key="image_theme_flow_theme")
     with c2:
+        selected_market = st.radio(
+            "시장 범위",
+            ["전체", "국내", "해외"],
+            horizontal=True,
+            key="image_theme_flow_market",
+        )
+    with c3:
         st.info("상장폐지·야후 티커 불확실 종목은 계산 universe에서 제외했습니다. 예: 신코전기, OPNEXT, 카자톰프롬.")
 
     if not should_run_heavy_analysis(
@@ -5268,12 +5284,28 @@ def render_image_theme_flow_section():
         return
 
     with st.spinner(f"{selected_theme} 종목 흐름 계산 중..."):
-        theme_df = calculate_image_theme_flow_df(selected_theme)
-        group_df = calculate_image_theme_group_df(theme_df)
+        theme_df_all = calculate_image_theme_flow_df(selected_theme)
 
-    if theme_df.empty:
+    if theme_df_all.empty:
         st.warning("선택한 테마의 종목 데이터를 불러오지 못했습니다.")
         return
+
+    market_suffix = theme_df_all["Ticker"].astype(str).str.upper().str.endswith((".KS", ".KQ"))
+    domestic_count = int(market_suffix.sum())
+    foreign_count = int((~market_suffix).sum())
+
+    if selected_market == "국내":
+        theme_df = theme_df_all[market_suffix].copy()
+    elif selected_market == "해외":
+        theme_df = theme_df_all[~market_suffix].copy()
+    else:
+        theme_df = theme_df_all.copy()
+
+    if theme_df.empty:
+        st.warning(f"{selected_theme}에는 선택한 시장 범위({selected_market})에 해당하는 종목이 없습니다.")
+        return
+
+    group_df = calculate_image_theme_group_df(theme_df)
 
     available_count = int(theme_df["돈흐름점수"].notna().sum())
     total_count = int(len(theme_df))
@@ -5290,7 +5322,7 @@ def render_image_theme_flow_section():
     weak = group_df.sort_values("돈흐름점수", ascending=True).iloc[0]
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("계산 종목", f"{available_count}/{total_count}")
+    m1.metric("계산 종목", f"{available_count}/{total_count}", f"국내 {domestic_count} · 해외 {foreign_count}")
     m2.metric("하위테마 1위", str(leader["하위테마"]), fmt_flow_pct(leader["3개월수익률"]))
     m3.metric("가속도 1위", str(accel_leader["하위테마"]), fmt_flow_pct(accel_leader["가속도"]))
     m4.metric("약한 하위테마", str(weak["하위테마"]), fmt_flow_pct(weak["3개월수익률"]))
