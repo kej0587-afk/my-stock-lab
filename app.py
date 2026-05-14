@@ -5017,7 +5017,7 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 def render_money_flow_etf_section():
     st.subheader("🌊 글로벌 자금 흐름 레이더")
-    st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 3개월/6개월 흐름과 가속도를 비교해 돈이 어디로 향하는지 봅니다.")
+    st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 가격 모멘텀과 거래량 증가를 함께 비교합니다.")
 
     if not should_run_heavy_analysis(
         "money_flow_lazy",
@@ -5032,6 +5032,8 @@ def render_money_flow_etf_section():
     if flow_df.empty:
         st.warning("돈흐름 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")
         return
+    if "거래량증가" not in flow_df.columns:
+        flow_df["거래량증가"] = np.nan
 
     # 2. 보기 범위(필터링) 라디오 버튼 구성
     groups = ["전체"] + list(flow_df["구분"].drop_duplicates())
@@ -5044,8 +5046,8 @@ def render_money_flow_etf_section():
         st.info("선택한 범위에 표시할 데이터가 없습니다.")
         return
 
-    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 TOP 3)
-    top_cols = st.columns(3)
+    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 TOP 3 + 거래량)
+    top_cols = st.columns(4)
     top_3 = view_df.nlargest(3, "돈흐름점수")
 
     for i, (idx, row) in enumerate(top_3.iterrows()):
@@ -5055,6 +5057,13 @@ def render_money_flow_etf_section():
                 value=f"{row['돈흐름점수']:.1f} pts",
                 delta=f"{row['1개월수익률']*100:.1f}% (1M)"
             )
+    vol_rank = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
+    with top_cols[3]:
+        if not vol_rank.empty:
+            r = vol_rank.iloc[0]
+            st.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
+        else:
+            st.metric("거래량 1위", "-", "-")
             
     st.divider() # 시각적 구분을 위한 선
 
@@ -5078,12 +5087,13 @@ def render_money_flow_etf_section():
             "돈흐름점수": st.column_config.NumberColumn(
                 "스코어", 
                 format="%.1f",
-                help="1개월/3개월/6개월 수익률과 가속도를 합산한 점수"
+                help="1개월/3개월/6개월 수익률, 가속도, 거래량 증가를 합산한 점수"
             ),
             "1개월수익률": st.column_config.NumberColumn("1M (%)", format="%.1f%%"),
             "3개월수익률": st.column_config.NumberColumn("3M (%)", format="%.1f%%"),
             "6개월수익률": st.column_config.NumberColumn("6M (%)", format="%.1f%%"),
             "가속도": st.column_config.NumberColumn("가속도", format="%.2f"),
+            "거래량증가": st.column_config.NumberColumn("거래량증가", format="%.2f"),
             "현재가": st.column_config.NumberColumn("현재가", format=price_format)
         },
         hide_index=True,
@@ -5095,8 +5105,9 @@ def render_money_flow_etf_section():
     top_global = flow_df[flow_df["구분"] == "글로벌"].head(1)
     top_income = flow_df[flow_df["구분"] == "월배당 ETF"].head(1)
     top_accel = flow_df.sort_values("가속도", ascending=False).head(1)
+    top_volume = flow_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
 
-    s1, s2, s3, s4, s5 = st.columns(5)
+    s1, s2, s3, s4, s5, s6 = st.columns(6)
     if not top_us.empty:
         r = top_us.iloc[0]
         s1.metric("미국 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
@@ -5112,10 +5123,18 @@ def render_money_flow_etf_section():
     if not top_accel.empty:
         r = top_accel.iloc[0]
         s5.metric("가속도 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["가속도"]))
+    if not top_volume.empty:
+        r = top_volume.iloc[0]
+        s6.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
 
     leader = view_df.iloc[0]
     accel_leader = view_df.sort_values("가속도", ascending=False).iloc[0]
+    volume_leader = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
     weak = view_df.sort_values("돈흐름점수", ascending=True).iloc[0]
+    volume_text = ""
+    if not volume_leader.empty:
+        vr = volume_leader.iloc[0]
+        volume_text = f"거래량이 가장 붙은 쪽은 <b>{vr['섹터']} ({vr['Ticker']})</b>입니다.<br>"
     st.markdown(
         f"""
 <div class='info-panel'>
@@ -5123,7 +5142,7 @@ def render_money_flow_etf_section():
 현재 선택 범위의 돈흐름 1위는 <b>{leader['섹터']} ({leader['Ticker']})</b>입니다.
 최근 새로 힘이 붙는 쪽은 <b>{accel_leader['섹터']} ({accel_leader['Ticker']})</b>,
 상대적으로 약한 쪽은 <b>{weak['섹터']} ({weak['Ticker']})</b>입니다.
-<br><span style='color:#94a3b8;'>가속도는 3개월수익률 - 6개월수익률입니다. 양수면 최근 힘이 새로 붙는 쪽, 음수면 기존 흐름이 둔화되는 쪽으로 해석합니다.</span>
+<br>{volume_text}<span style='color:#94a3b8;'>가속도는 3개월수익률 - 6개월수익률입니다. 거래량증가는 최근 20거래일 평균 거래량을 직전 기준 구간과 비교한 값입니다.</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -5151,14 +5170,15 @@ def render_money_flow_etf_section():
                 cmid=0,
                 colorbar=dict(title="돈흐름")
             ),
-            customdata=tree_df[["Ticker", "ETF 이름", "3개월수익률", "6개월수익률", "가속도", "상태"]],
+            customdata=tree_df[["Ticker", "ETF 이름", "3개월수익률", "6개월수익률", "가속도", "거래량증가", "상태"]],
             hovertemplate=
                 "<b>%{label}</b><br>" +
                 "%{customdata[1]}<br>" +
                 "3개월: %{customdata[2]:.1%}<br>" +
                 "6개월: %{customdata[3]:.1%}<br>" +
                 "가속도: %{customdata[4]:.1%}<br>" +
-                "상태: %{customdata[5]}<extra></extra>"
+                "거래량증가: %{customdata[5]:.1%}<br>" +
+                "상태: %{customdata[6]}<extra></extra>"
         ))
         fig_tree.update_layout(template="plotly_dark", height=470, title="돈흐름 히트맵", margin=dict(t=45, l=4, r=4, b=4))
         tree_event = st.plotly_chart(
@@ -5168,7 +5188,7 @@ def render_money_flow_etf_section():
             on_select="rerun",
             selection_mode="points",
         )
-        st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 3개월/6개월 흐름과 가속도가 좋다는 뜻입니다. 블록을 클릭하면 아래에서 구성종목을 확인합니다.")
+        st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 가격 흐름과 거래량 확인값이 좋다는 뜻입니다. 블록을 클릭하면 아래에서 구성종목을 확인합니다.")
 
     with m2:
         fig_quad = go.Figure(go.Scatter(
@@ -5185,13 +5205,14 @@ def render_money_flow_etf_section():
                 showscale=True,
                 colorbar=dict(title="가속도")
             ),
-            customdata=view_df[["Ticker", "상태", "돈흐름점수"]],
+            customdata=view_df[["Ticker", "상태", "돈흐름점수", "거래량증가"]],
             hovertemplate=
                 "<b>%{text}</b> (%{customdata[0]})<br>" +
                 "6개월: %{x:.1f}%<br>" +
                 "3개월: %{y:.1f}%<br>" +
                 "상태: %{customdata[1]}<br>" +
-                "돈흐름점수: %{customdata[2]:.1f}<extra></extra>"
+                "돈흐름점수: %{customdata[2]:.1f}<br>" +
+                "거래량증가: %{customdata[3]:.1%}<extra></extra>"
         ))
         fig_quad.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
         fig_quad.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
@@ -5209,7 +5230,7 @@ def render_money_flow_etf_section():
         st.session_state["money_flow_selected_ticker"] = clicked_ticker
     render_money_flow_composition_panel(view_df, clicked_ticker)
 
-    b1, b2 = st.columns(2)
+    b1, b2, b3 = st.columns(3)
     with b1:
         top_3m = view_df.sort_values("3개월수익률", ascending=False).head(12)
         fig_3m = go.Figure(go.Bar(
@@ -5236,14 +5257,31 @@ def render_money_flow_etf_section():
         fig_accel.update_layout(template="plotly_dark", height=430, title="가속도 랭킹", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_accel, use_container_width=True)
 
+    with b3:
+        top_volume_df = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(12)
+        if top_volume_df.empty:
+            st.info("거래량 랭킹을 계산할 데이터가 부족합니다.")
+        else:
+            volume_colors = np.where(top_volume_df["거래량증가"] >= 0, "#22c55e", "#ef4444")
+            fig_volume = go.Figure(go.Bar(
+                y=top_volume_df["섹터"] + " (" + top_volume_df["Ticker"] + ")",
+                x=top_volume_df["거래량증가"] * 100,
+                orientation="h",
+                marker_color=volume_colors,
+                hovertemplate="%{y}<br>거래량증가: %{x:.1f}%<extra></extra>"
+            ))
+            fig_volume.add_vline(x=0, line_color="#94a3b8")
+            fig_volume.update_layout(template="plotly_dark", height=430, title="거래량 증가 랭킹", yaxis=dict(autorange="reversed"))
+            st.plotly_chart(fig_volume, use_container_width=True)
+
     show_df = view_df.copy()
-    for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도"]:
+    for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
         show_df[col] = show_df[col].apply(fmt_flow_pct)
     show_df["현재가"] = show_df.apply(lambda r: format_currency(r["현재가"], r["Ticker"]), axis=1)
     show_df["돈흐름점수"] = show_df["돈흐름점수"].map(lambda x: f"{x:.1f}")
     st.markdown("#### 돈흐름 상세 테이블")
     st.dataframe(
-        show_df[["구분", "섹터", "Ticker", "ETF 이름", "현재가", "가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "돈흐름점수", "상태"]],
+        show_df[["구분", "섹터", "Ticker", "ETF 이름", "현재가", "가격수준", "기간수익률", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태"]],
         use_container_width=True,
         hide_index=True,
         height=520,

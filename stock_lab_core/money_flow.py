@@ -434,12 +434,14 @@ def calculate_money_flow_df():
         ret_3m = get_return_by_days(close, 63)
         ret_6m = get_return_by_days(close, 126)
         accel = ret_3m - ret_6m if finite_num(ret_3m) and finite_num(ret_6m) else np.nan
+        volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
         price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
         flow_score = (
             (ret_1m if finite_num(ret_1m) else 0) * 15 +
             (ret_3m if finite_num(ret_3m) else 0) * 35 +
             (ret_6m if finite_num(ret_6m) else 0) * 30 +
-            (accel if finite_num(accel) else 0) * 20
+            (accel if finite_num(accel) else 0) * 20 +
+            (volume_growth if finite_num(volume_growth) else 0) * 5
         )
 
         rows.append({
@@ -454,6 +456,7 @@ def calculate_money_flow_df():
             "3개월수익률": ret_3m,
             "6개월수익률": ret_6m,
             "가속도": accel,
+            "거래량증가": volume_growth,
             "돈흐름점수": flow_score,
             "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
             "52주 최고가": high_52w,
