@@ -132,32 +132,32 @@ def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) ->
     if core_dca_rate <= 0.25:
         code = "CORE_OVERHEAT_DCA"
         reasons: tuple = (
-            "코어 ETF 과열 구간 감지 (MFI≥80 또는 RSI≥75 또는 볼린저 상단 근접)",
-            f"적립 비율 {int(core_dca_rate * 100)}% 로 축소 — 고점 추격 억제",
+            "코어 ETF 과열 구간 감지 (MFI>=80 또는 RSI>=75 또는 볼린저 상단 근접)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 로 축소 - 고점 추격 억제",
         )
     elif core_dca_rate <= 0.50:
         code = "CORE_NEUTRAL_DCA"
         reasons = (
-            "코어 ETF 중립 구간 — 과열·하락 모두 아님",
+            "코어 ETF 중립 구간 - 과열/하락 모두 아님",
             f"적립 비율 {int(core_dca_rate * 100)}% 유지",
         )
     elif core_dca_rate <= 1.0:
         code = "CORE_PULLBACK_DCA"
         reasons = (
-            "코어 ETF 눌림 구간 (RSI≤55·MFI<70·%B≤0.70 또는 고점대비 -10% 이상)",
-            f"적립 비율 {int(core_dca_rate * 100)}% 상향 — 저가 분할 기회",
+            "코어 ETF 눌림 구간 (RSI<=55 / MFI<70 / %B<=0.70 또는 고점대비 -10% 이상)",
+            f"적립 비율 {int(core_dca_rate * 100)}% 상향 - 저가 분할 기회",
         )
     elif core_dca_rate <= 1.5:
-        code = "CORE_PULLBACK_DCA"
+        code = "CORE_DRAWDOWN_DCA"
         reasons = (
             "코어 ETF 하락장 구간 (고점대비 -20% 이상)",
-            f"적립 비율 {int(core_dca_rate * 100)}% 상향 — 분할 매수 강화",
+            f"적립 비율 {int(core_dca_rate * 100)}% 상향 - 분할 매수 강화",
         )
     else:
-        code = "CORE_PULLBACK_DCA"
+        code = "CORE_CRASH_DCA"
         reasons = (
             "코어 ETF 폭락장 구간 (고점대비 -30% 이상)",
-            f"적립 비율 {int(core_dca_rate * 100)}% 최대 — 집중 분할 매수",
+            f"적립 비율 {int(core_dca_rate * 100)}% 최대 - 집중 분할 매수",
         )
     return build_decision_outcome(label, color, code, reasons=reasons)
 
@@ -372,7 +372,7 @@ def build_position_sizing_hint(
         shares_hint = int(first_buy_amt / cur_p_for_size) if cur_p_for_size > 0 else 0
         return (
             f"1차 정찰대: 목표비중의 1/3 ({first_buy_w:.1f}%) "
-            f"≈ {first_buy_amt:,.0f}원"
+            f"~{first_buy_amt:,.0f}원"
             + (f" / 약 {shares_hint}주" if not is_etf and shares_hint > 0 else "")
             + " | 상승 확인 후 2차·3차 분할"
         )
@@ -532,9 +532,9 @@ def build_limited_history_etf_outcome(
     if has_pos and my_price > 0:
         pct = price_vs_avg * 100
         if cur_p <= my_price:
-            r.append(f"현재가({cur_p:,.0f}원) ≤ 평단({my_price:,.0f}원) — 평단 하회 {pct:.1f}%")
+            r.append(f"현재가({cur_p:,.0f}원) <= 평단({my_price:,.0f}원) - 평단 하회 {pct:.1f}%")
         else:
-            r.append(f"현재가({cur_p:,.0f}원) > 평단({my_price:,.0f}원) — 평단 이상 +{pct:.1f}%")
+            r.append(f"현재가({cur_p:,.0f}원) > 평단({my_price:,.0f}원) - 평단 이상 +{pct:.1f}%")
     elif not has_pos:
         r.append("미보유 — 신규 진입 여부 판단")
 

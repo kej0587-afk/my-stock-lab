@@ -6557,8 +6557,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⏸️하드차단: 비중 충족(관망)", "#d97706", "HARD_BLOCK_TARGET_FILLED",
                 reasons=(
-                    f"현재비중 {curr_w:.1f}% ≥ 목표비중 {targ_w:.1f}%",
-                    "비중 충족 — 추가 매수 불필요, 눌림 시 재검토",
+                    f"현재비중 {curr_w:.1f}% >= 목표비중 {targ_w:.1f}%",
+                    "비중 충족 - 추가 매수 불필요, 눌림 시 재검토",
                 ),
             )
         elif _fmr >= 4.5:
@@ -6749,16 +6749,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     dec, col, decision_outcome = _set_decision(
                         "⏸️S급이나 비중 충족: 눌림 오면 재진입", "#8b5cf6", "TARGET_FILLED_S_GRADE_WAIT",
                         reasons=(
-                            f"현재비중 {curr_w:.1f}% ≥ 목표비중 {targ_w:.1f}% ({grade[:3]})",
-                            "비중 충족 + S급 — 눌림 오면 재진입",
+                            f"현재비중 {curr_w:.1f}% >= 목표비중 {targ_w:.1f}% ({grade[:3]})",
+                            "비중 충족 + S급 - 눌림 오면 재진입",
                         ),
                     )
                 else:
                     dec, col, decision_outcome = _set_decision(
                         "⏸️비중 충족: 보유 유지", "#64748b", "TARGET_FILLED_HOLD",
                         reasons=(
-                            f"현재비중 {curr_w:.1f}% ≥ 목표비중 {targ_w:.1f}%",
-                            "비중 충족 — 보유 유지",
+                            f"현재비중 {curr_w:.1f}% >= 목표비중 {targ_w:.1f}%",
+                            "비중 충족 - 보유 유지",
                         ),
                     )
             
@@ -6892,8 +6892,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     dec, col, decision_outcome = _set_decision(
                         "⏸️평단이하: 비중 충족(추매 보류)", "#d97706", "BELOW_COST_TARGET_FILLED",
                         reasons=(
-                            f"현재비중 {curr_w:.1f}% ≥ 목표비중 {targ_w:.1f}%",
-                            "평단이하지만 비중 충족 — 추매 보류",
+                            f"현재비중 {curr_w:.1f}% >= 목표비중 {targ_w:.1f}%",
+                            "평단이하지만 비중 충족 - 추매 보류",
                         ),
                     )
                 elif price_vs_avg > -0.03:
