@@ -6400,9 +6400,18 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # RS가 강하고 대장주 조건(fin4 + 정배열)이면 MA50 눌림은 구조훼손이 아닌 매수 기회
     _rs_strong = rs_label == "🚀강함"
     _is_leader_grade = (not is_etf) and fin_score == 4 and trend == "🚀정배열(상승)"
-    _ma50_damage = below_ma50 and not (_rs_strong and _is_leader_grade)
-    # 대장주 + RS 강함이면 -20%까지 허용 (급등 후 조정 구간 진입 정상)
-    _dd_threshold = -0.20 if _is_leader_grade and _rs_strong else -0.15
+    # 재무 3점이라도 RS 강함 + 정배열 + MA20 위 5% 이상이면 모멘텀 대장주로 인정
+    # → 고모멘텀 주식의 -15~20% 조정은 정상 눌림 (CANSLIM 기준 허용범위)
+    _is_momentum_leader = (
+        (not is_etf) and
+        fin_score >= 3 and
+        trend == "🚀정배열(상승)" and
+        _rs_strong and
+        ma20_now > 0 and cur_p > ma20_now * 1.05
+    )
+    _ma50_damage = below_ma50 and not (_rs_strong and (_is_leader_grade or _is_momentum_leader))
+    # 재무4 대장주 또는 모멘텀 대장주(재무3+RS강함+MA20위) → -20%까지 허용
+    _dd_threshold = -0.20 if (_is_leader_grade or _is_momentum_leader) and _rs_strong else -0.15
     is_structure_damage_entry_risk = (
         (not is_etf) and
         (not short_history) and
