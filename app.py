@@ -5552,7 +5552,7 @@ def render_image_theme_flow_section():
             st.info("등록된 이미지 테마 universe가 없습니다.")
         return
 
-    c1, c2, c3 = st.columns([1.1, 0.8, 2])
+    c1, c2 = st.columns([1.1, 0.8])
     with c1:
         selected_theme = st.selectbox("테마 선택", themes, key="image_theme_flow_theme")
     with c2:
@@ -5562,8 +5562,6 @@ def render_image_theme_flow_section():
             horizontal=True,
             key="image_theme_flow_market",
         )
-    with c3:
-        st.info("상장폐지·야후 티커 불확실 종목은 계산 universe에서 제외했습니다. 예: 신코전기, OPNEXT, 카자톰프롬.")
 
     if not should_run_heavy_analysis(
         "image_theme_flow_lazy",
@@ -5588,7 +5586,6 @@ def render_image_theme_flow_section():
 
     rotation_df = calculate_image_theme_rotation_df(rotation_source_df)
     render_image_theme_rotation_overview(rotation_df, selected_market)
-    render_power_grid_match_panel(rotation_df)
     st.divider()
 
     theme_df_all = all_theme_df[all_theme_df["테마"] == selected_theme].copy()
@@ -5716,15 +5713,38 @@ def render_image_theme_flow_section():
             st.plotly_chart(fig_quad, use_container_width=True)
 
         show_group = group_df.copy()
-        for col in ["가격수준", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]:
-            if col not in show_group.columns:
-                show_group[col] = np.nan
-            show_group[col] = show_group[col].apply(fmt_flow_pct)
-        show_group["돈흐름점수"] = show_group["돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
         if "추격위험" not in show_group.columns:
             show_group["추격위험"] = "-"
+        _sg_show_cols = [c for c in [
+            "하위테마", "종목수", "대표주",
+            "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
+            "가속도", "상승종목비율", "거래량증가", "상위종목쏠림",
+            "가격수준", "돈흐름점수", "상태", "추격위험", "구성종목",
+        ] if c in show_group.columns]
         st.dataframe(
-            show_group[["하위테마", "종목수", "대표주", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준", "돈흐름점수", "상태", "추격위험", "구성종목"]],
+            show_group[_sg_show_cols],
+            column_config={
+                "가격수준": st.column_config.ProgressColumn(
+                    "52주 위치",
+                    help="0=52주 최저가, 1=52주 최고가",
+                    format="%.2f",
+                    min_value=0.0,
+                    max_value=1.0,
+                ),
+                "돈흐름점수": st.column_config.NumberColumn("스코어", format="%.1f",
+                                help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%"),
+                "1개월수익률":    st.column_config.NumberColumn("1M",     format="%.1f%%"),
+                "3개월수익률":    st.column_config.NumberColumn("3M",     format="%.1f%%"),
+                "이전3개월수익률": st.column_config.NumberColumn("이전3M", format="%.1f%%"),
+                "상대3개월수익률": st.column_config.NumberColumn("상대3M", format="%.1f%%"),
+                "6개월수익률":    st.column_config.NumberColumn("6M",     format="%.1f%%"),
+                "가속도":         st.column_config.NumberColumn("가속도",  format="%.2f",
+                                    help="최근 3M - 이전 3M. 양수=가속"),
+                "상승종목비율":   st.column_config.NumberColumn("상승비율", format="%.1f%%"),
+                "거래량증가":     st.column_config.NumberColumn("거래량↑", format="%.2f"),
+                "상위종목쏠림":   st.column_config.NumberColumn("쏠림",    format="%.2f"),
+                "추격위험":       st.column_config.TextColumn("추격위험"),
+            },
             use_container_width=True,
             hide_index=True,
             height=430,
@@ -5766,22 +5786,58 @@ def render_image_theme_flow_section():
             )
             st.plotly_chart(fig_stock, use_container_width=True)
 
+        _it_state_badge = {
+            "신규 유입": "🟢 신규 유입",
+            "주도 유지": "💚 주도 유지",
+            "둔화 경고": "🟡 둔화 경고",
+            "소외 지속": "🔴 소외 지속",
+            "상대 약세": "🟠 상대 약세",
+            "관찰":     "⚪ 관찰",
+            "가격부족": "⬛ 가격부족",
+        }
         show_stock = stock_view.copy()
-        for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
-            if col not in show_stock.columns:
-                show_stock[col] = np.nan
-            show_stock[col] = show_stock[col].apply(fmt_flow_pct)
-        show_stock["현재가"] = show_stock.apply(
-            lambda r: "-" if not finite_num(r["현재가"]) else format_currency(r["현재가"], r["Ticker"]),
-            axis=1,
-        )
-        show_stock["돈흐름점수"] = show_stock["돈흐름점수"].apply(
-            lambda x: "-" if not finite_num(x) else f"{x:.1f}"
-        )
         if "추격위험" not in show_stock.columns:
             show_stock["추격위험"] = "-"
+        if "상태" in show_stock.columns:
+            show_stock["상태"] = show_stock["상태"].map(lambda s: _it_state_badge.get(str(s), str(s)))
+        # 현재가 포맷 (국내: 정수, 해외: 소수)
+        show_stock["현재가"] = show_stock.apply(
+            lambda r: np.nan if not finite_num(r["현재가"]) else r["현재가"],
+            axis=1,
+        )
+        _it_show_cols = [c for c in [
+            "하위테마", "종목명", "Ticker", "현재가", "상태", "추격위험",
+            "가격수준", "돈흐름점수",
+            "1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률",
+            "가속도", "거래량증가",
+        ] if c in show_stock.columns]
+        # 수익률은 소수 그대로 두고 column_config에서 포맷 지정
         st.dataframe(
-            show_stock[["하위테마", "종목명", "Ticker", "현재가", "가격수준", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "돈흐름점수", "상태", "추격위험"]],
+            show_stock[_it_show_cols],
+            column_config={
+                "가격수준": st.column_config.ProgressColumn(
+                    "52주 위치",
+                    help="0=52주 최저가, 1=52주 최고가",
+                    format="%.2f",
+                    min_value=0.0,
+                    max_value=1.0,
+                ),
+                "돈흐름점수": st.column_config.NumberColumn(
+                    "스코어",
+                    format="%.1f",
+                    help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%",
+                ),
+                "1개월수익률":    st.column_config.NumberColumn("1M",     format="%.1f%%"),
+                "3개월수익률":    st.column_config.NumberColumn("3M",     format="%.1f%%"),
+                "상대3개월수익률": st.column_config.NumberColumn("상대3M", format="%.1f%%"),
+                "6개월수익률":    st.column_config.NumberColumn("6M",     format="%.1f%%"),
+                "가속도":         st.column_config.NumberColumn("가속도",  format="%.2f",
+                                    help="최근 3M - 이전 3M 수익률. 양수=가속, 음수=감속"),
+                "거래량증가":     st.column_config.NumberColumn("거래량↑", format="%.2f",
+                                    help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
+                "현재가":         st.column_config.NumberColumn("현재가",  format="%.2f"),
+                "추격위험":       st.column_config.TextColumn("추격위험"),
+            },
             use_container_width=True,
             hide_index=True,
             height=560,
@@ -10499,8 +10555,9 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     downside_vol_decimal = calc_downside_volatility(portfolio_returns)
                     portfolio_annual_return = annual_return_decimal * 100 if np.isfinite(annual_return_decimal) else np.nan
                     portfolio_downside_vol = downside_vol_decimal * 100 if np.isfinite(downside_vol_decimal) else np.nan
-                    sharpe_ratio = ratio_or_nan(annual_return_decimal, portfolio_vol_decimal)
-                    sortino_ratio = ratio_or_nan(annual_return_decimal, downside_vol_decimal)
+                    _rf_rate = 0.035  # 무위험이율 3.5% (한국 기준금리 근방)
+                    sharpe_ratio = ratio_or_nan(annual_return_decimal - _rf_rate, portfolio_vol_decimal)
+                    sortino_ratio = ratio_or_nan(annual_return_decimal - _rf_rate, downside_vol_decimal)
                     calmar_ratio = ratio_or_nan(annual_return_decimal, abs(portfolio_mdd_decimal))
                     daily_var_95, daily_cvar_95 = calc_var_cvar(portfolio_returns, 0.95)
                     monthly_var_95 = daily_var_95 * np.sqrt(21) if np.isfinite(daily_var_95) else np.nan
@@ -10915,12 +10972,29 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     render_leverage_exposure_panel(metrics)
 
     st.markdown("#### Risk Metrics")
+    st.caption(
+        "**연환산 수익률**: 분석 기간 포트폴리오 가격 흐름을 연 단위로 환산한 참고값.  "
+        "**Sharpe**: (연환산수익률 − 무위험이율 3.5%) ÷ 연환산변동성. 1 이상이면 변동성 대비 수익이 양호한 편.  "
+        "**Sortino**: 하락 변동성만 분모로 사용. Sharpe보다 하락 리스크에 예민.  "
+        "**Calmar**: 연환산수익률 ÷ |MDD|. 낙폭 대비 수익 효율.  "
+        "**VaR/CVaR**: 과거 일간 수익률 기반 참고 손실 추정치입니다."
+    )
     r1, r2, r3, r4, r5 = st.columns(5)
     r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
     r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
     r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
     r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
     r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
+    _sharpe_v = clean_float(metrics.get("sharpe_ratio"), np.nan)
+    _sortino_v = clean_float(metrics.get("sortino_ratio"), np.nan)
+    _obs = metrics.get("portfolio_observation_count", 0)
+    if (np.isfinite(_sharpe_v) and abs(_sharpe_v) > 4) or (np.isfinite(_sortino_v) and abs(_sortino_v) > 6) or _obs < 60:
+        st.warning(
+            f"⚠️ Sharpe/Sortino가 평소보다 높습니다 "
+            f"(Sharpe {format_metric_ratio(_sharpe_v)}, Sortino {format_metric_ratio(_sortino_v)}, 관측일 {_obs}일). "
+            "단기 상승장 구간이거나 관측 기간이 짧으면 연환산 수익률이 과장되어 비율이 크게 나올 수 있습니다. "
+            "참고값으로만 사용하세요."
+        )
 
     tail_cols = st.columns(4)
     tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
@@ -10943,13 +11017,21 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         return
 
     show_df = asset_df.copy()
-    for col in ["전체비중", "운용비중", "기간수익률", "연환산변동성", "MDD"]:
+    # "기간수익률"은 자산 가격의 분석기간 등락률(내 매입가 기준 수익률 아님)임을 명확히 하기 위해 컬럼명 변경
+    if "기간수익률" in show_df.columns:
+        show_df = show_df.rename(columns={"기간수익률": "자산가격등락률"})
+    for col in ["전체비중", "운용비중", "자산가격등락률", "연환산변동성", "MDD"]:
         if col in show_df.columns:
             show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
     if "원화환산" in show_df.columns:
         show_df["원화환산"] = show_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
 
     st.markdown("#### 자산별 위험 지표")
+    st.caption(
+        "**자산가격등락률**: 분석 기간 시작~종료 사이 해당 자산의 가격 변동률입니다. "
+        "내가 매입한 가격 기준 수익률과 다를 수 있습니다(매입 시점 차이). "
+        "**연환산변동성**: 일간 수익률의 표준편차를 연 단위로 환산. **MDD**: 분석 기간 내 최고점 대비 최대 낙폭."
+    )
     st.dataframe(show_df, use_container_width=True, hide_index=True)
     st.download_button(
         "자산별 위험 지표 CSV 다운로드",
@@ -11064,6 +11146,11 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         st.plotly_chart(fig_weight, use_container_width=True)
 
     st.markdown("#### 상관관계")
+    st.caption(
+        "자산 간 일간 수익률이 얼마나 같이 움직이는지를 나타냅니다. "
+        "빨강(+1)에 가까울수록 함께 오르고 내리며, 파랑(−1)에 가까울수록 반대로 움직입니다. "
+        "분산 효과는 상관계수가 낮을수록 더 큽니다."
+    )
     if corr_df is not None and not corr_df.empty and len(corr_df.columns) >= 2:
         fig_corr = go.Figure(data=go.Heatmap(
             z=corr_df.values,
@@ -11106,6 +11193,73 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         render_correlation_interpretation(corr_df, metrics.get("avg_corr", np.nan))
     else:
         st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
+
+    # ── 종합 평가 ──────────────────────────────────────────────────────────
+    st.markdown("#### 📋 종합 포트폴리오 평가")
+    _eval_lines: list[str] = []
+    _rg = metrics.get("risk_grade", "-")
+    _ri = metrics.get("risk_index", 0.0)
+    _pvol = metrics.get("portfolio_vol", np.nan)
+    _pmdd = metrics.get("portfolio_mdd", np.nan)
+    _pann = metrics.get("portfolio_annual_return", np.nan)
+    _sharpe = metrics.get("sharpe_ratio", np.nan)
+    _sortino = metrics.get("sortino_ratio", np.nan)
+    _calmar = metrics.get("calmar_ratio", np.nan)
+    _top1 = metrics.get("top1_weight", 0.0)
+    _top3 = metrics.get("top3_weight", 0.0)
+    _avg_corr = metrics.get("avg_corr", np.nan)
+    _reserve_pct = metrics.get("reserve_summary", {}).get("waiting_pct", 0.0)
+    _reserve_target = float(reserve_target_weight)
+
+    # 위험도 평가
+    _eval_lines.append(f"**위험도 {_rg}** ({_ri:.0f}/100): " + (
+        "전반적으로 안정적인 구성입니다." if _ri < 35
+        else "일부 위험 요인이 있으며 점검이 필요합니다." if _ri < 60
+        else "위험 노출이 높습니다. 포지션 점검을 권장합니다."
+    ))
+
+    # 변동성/MDD
+    if np.isfinite(_pvol):
+        _vol_comment = "낮음(보수적)" if _pvol < 12 else "보통" if _pvol < 22 else "높음(공격적)"
+        _eval_lines.append(f"**변동성**: 연환산 {_pvol:.1f}% — {_vol_comment}.")
+    if np.isfinite(_pmdd):
+        _mdd_comment = "양호" if _pmdd > -15 else "주의 필요" if _pmdd > -30 else "큰 하락 경험 구간"
+        _eval_lines.append(f"**최대낙폭(MDD)**: {_pmdd:.1f}% — {_mdd_comment}.")
+
+    # 수익성
+    if np.isfinite(_pann):
+        _ret_comment = "부진" if _pann < 5 else "양호" if _pann < 20 else "우수 (단기 과장 가능)"
+        _eval_lines.append(f"**연환산 수익률**: {_pann:.1f}% — {_ret_comment}.")
+    if np.isfinite(_sharpe):
+        _sharpe_comment = "낮음" if _sharpe < 0.5 else "보통" if _sharpe < 1.5 else "우수 (단기 상승 과장 가능 확인 권장)"
+        _eval_lines.append(f"**Sharpe**: {_sharpe:.2f} — {_sharpe_comment}.")
+
+    # 집중도
+    if _top1 >= 30:
+        _eval_lines.append(f"**집중도 주의**: 1위 자산 비중이 {_top1:.1f}%입니다. 단일 종목 의존도가 높습니다.")
+    elif _top3 >= 60:
+        _eval_lines.append(f"**집중도 보통**: 상위 3개 비중이 {_top3:.1f}%입니다.")
+    else:
+        _eval_lines.append(f"**집중도 양호**: 상위 3개 비중이 {_top3:.1f}%로 적절히 분산돼 있습니다.")
+
+    # 상관관계
+    if np.isfinite(_avg_corr):
+        _corr_comment = "분산 효과 높음" if _avg_corr < 0.4 else "분산 효과 보통" if _avg_corr < 0.7 else "높은 동조화 — 분산 효과 제한"
+        _eval_lines.append(f"**자산간 상관**: 평균 {_avg_corr:.2f} — {_corr_comment}.")
+
+    # 대기자금
+    _reserve_gap = _reserve_target - _reserve_pct
+    if _reserve_gap > 3:
+        _eval_lines.append(f"**대기자금 부족**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%. 하락 시 투입 여력이 부족합니다.")
+    else:
+        _eval_lines.append(f"**대기자금 충분**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%.")
+
+    _eval_html = "<br>".join(f"• {line}" for line in _eval_lines)
+    st.markdown(
+        f"<div class='info-panel'>{_eval_html}</div>",
+        unsafe_allow_html=True,
+    )
+    st.caption("종합 평가는 분석 기간 내 가격 데이터 기반 자동 생성 참고 의견입니다. 매입 시점·미실현 수익률과 다를 수 있습니다.")
 
 
 def format_scenario_money(value):
@@ -14473,6 +14627,10 @@ with tab_asset:
         if st.button("보유 종목 저장"):
             if save_holdings_db(edited_holdings.fillna("")):
                 st.success("보유 종목 저장 완료")
+                # 에디터 세션 상태 초기화 — 동일 티커 다계좌 편집 시
+                # Streamlit 내부 인덱스 불일치로 행이 잘못 병합되는 문제 방지
+                if "holdings_editor" in st.session_state:
+                    del st.session_state["holdings_editor"]
                 st.rerun()
     
         st.markdown("### 3) 배당 내역 관리")
