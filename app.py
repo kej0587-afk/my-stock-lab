@@ -1077,6 +1077,22 @@ def resolve_display_name_for_ticker(ticker, fallback=""):
     return ticker_clean
 
 
+def _is_garbled_kr_name(name: str, ticker: str) -> bool:
+    """
+    한국 종목(KS/KQ)에서 인코딩 오류로 깨진 이름 감지.
+    원리: 네이버 금융이 UTF-8인데 EUC-KR로 잘못 읽으면
+          UTF-8 3바이트 한글 시퀀스 일부가 CJK 통합 한자(U+4E00~U+9FFF)나
+          호환 한자(U+F900~U+FAFF)로 잘못 디코딩됨.
+          → 한국 회사명에 정상적으로 나오면 안 되는 한자가 섞이는 패턴.
+    """
+    if not name:
+        return False
+    if not str(ticker).upper().endswith((".KS", ".KQ")):
+        return False
+    # CJK 통합 한자 영역에 속하는 문자가 포함되면 깨진 이름으로 판단
+    return any('一' <= ch <= '鿿' or '豈' <= ch <= '﫿' for ch in name)
+
+
 def sanitize_asset_name(name, ticker=""):
     ticker_clean = sanitize_ticker_value(ticker)
     symbol = clean_symbol(ticker_clean)
@@ -1092,6 +1108,11 @@ def sanitize_asset_name(name, ticker=""):
         return resolve_display_name_for_ticker(ticker_clean, ticker_clean)
 
     if is_ticker_like_text(cleaned_name) and clean_symbol(cleaned_name) == symbol:
+        return resolve_display_name_for_ticker(ticker_clean, ticker_clean)
+
+    # 과거 EUC-KR 오디코딩으로 Supabase에 저장된 깨진 이름 자동 재복구
+    # (예: "쇱깆湲" → CJK 한자 포함 패턴 감지 → Naver 재조회)
+    if _is_garbled_kr_name(cleaned_name, ticker_clean):
         return resolve_display_name_for_ticker(ticker_clean, ticker_clean)
 
     return cleaned_name
