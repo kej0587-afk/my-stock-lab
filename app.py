@@ -7935,6 +7935,209 @@ def render_dashboard_group_summary(df, group_label):
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
 
 
+def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
+    """
+    정밀관측소 차트 아래 표시할 종합 서술형 해설.
+    외부 API 없이 이미 계산된 c 딕셔너리와 fin_score만 사용합니다.
+    """
+    dec         = c.get("dec", "")
+    grade       = c.get("grade", "")
+    t_score     = c.get("t_score", 0)
+    tech_total  = c.get("tech_total", 0)
+    trend       = c.get("trend", "")
+    rs_label    = c.get("rs_label", "")
+    rs_slope    = c.get("rs_slope_label", "")
+    rsi         = c.get("rsi", 0.0)
+    mfi         = c.get("mfi", 0.0)
+    pct_b       = c.get("pct_b", 0.0)
+    macd        = c.get("macd", "")
+    sqz         = c.get("sqz", "")
+    ext_struct  = c.get("ext_structure", "")
+    int_struct  = c.get("int_structure", "")
+    int_event   = c.get("int_event", "None")
+    ext_event   = c.get("ext_event", "None")
+    fvg_type    = c.get("fvg_type", "없음")
+    fvg_active  = c.get("fvg_active", False)
+    fvg_top     = c.get("fvg_top", 0)
+    fvg_bottom  = c.get("fvg_bottom", 0)
+    pd_zone     = c.get("pd_zone", "")
+    smc_action  = c.get("smc_action", "")
+    smc_insight = c.get("smc_insight", "")
+    sector_flow = c.get("sector_flow_state", "-")
+    is_52w      = c.get("is_52w_breakout", False)
+    rr_ratio    = c.get("rr_ratio")
+    rr_target   = c.get("rr_target", 0)
+    rr_stop     = c.get("rr_stop", 0)
+    cur_p       = c.get("cur_p", 0)
+    day_ret     = c.get("day_ret", 0.0)
+    vol_ratio   = c.get("vol_ratio", 0.0)
+    ma5         = c.get("ma5", 0)
+    ma20        = c.get("ma20", 0)
+    decision_code = c.get("decision_code", "")
+
+    lines = []
+
+    # ── 1. 현재 판정 한 줄 ──────────────────────────────────
+    fin_labels = {4: "💎완성형 우량(4/4)", 3: "✅양호(3/4)", 2: "🔶보통(2/4)", 1: "⚠️주의(1/4)", 0: "🚨위험(0/4)"}
+    fin_desc = fin_labels.get(fin_score, f"{fin_score}점")
+    lines.append(
+        f"<b>📋 현재 판정</b>: <b>{dec}</b> &nbsp;|&nbsp; "
+        f"후보등급 {grade} &nbsp;|&nbsp; 종합점수 {t_score}점 "
+        f"(기술 {tech_total}점 / 재무 {fin_desc})"
+    )
+
+    # ── 2. 기술 구조 ─────────────────────────────────────────
+    # 추세
+    trend_interp = {
+        "🚀정배열(상승)": "장기 정배열 상승 구조",
+        "🌊역배열(하락)": "역배열 하락 구조",
+        "➡️횡보/혼조": "횡보·혼조 구간",
+        "🆕신규상장/자료부족": "상장 초기(MA 미형성)",
+    }.get(trend, trend)
+
+    # RSI
+    if rsi >= 70:
+        rsi_interp = f"RSI <b>{rsi:.0f}</b> — 단기 과열 구간, 조정·횡보 가능성 있음"
+    elif rsi >= 60:
+        rsi_interp = f"RSI <b>{rsi:.0f}</b> — 강세 유지 중"
+    elif rsi >= 45:
+        rsi_interp = f"RSI <b>{rsi:.0f}</b> — 눌림 구간, 진입 적합 범위"
+    elif rsi >= 30:
+        rsi_interp = f"RSI <b>{rsi:.0f}</b> — 약세·바닥 탐색 중"
+    else:
+        rsi_interp = f"RSI <b>{rsi:.0f}</b> — 극단적 과매도"
+
+    # %B
+    if pct_b > 0.82:
+        pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 상단 초과, 단기 과열"
+    elif pct_b >= 0.75:
+        pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 상단 근접"
+    elif pct_b >= 0.35:
+        pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 중립 구간"
+    else:
+        pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 하단 근접, 과매도 구간"
+
+    # MFI
+    if mfi >= 80:
+        mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유입 과열(익절 주의)"
+    elif mfi >= 55:
+        mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유입 우세"
+    elif mfi >= 40:
+        mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 중립"
+    else:
+        mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유출 우세"
+
+    # RS slope
+    slope_desc = ""
+    if rs_slope == "📈RS상승중":
+        slope_desc = ", 상대강도 가속 중"
+    elif rs_slope == "📉RS하락중":
+        slope_desc = ", 상대강도 약화 중(추격 주의)"
+
+    lines.append(
+        f"🔧 <b>기술 구조</b>: {trend_interp}, RS {rs_label}{slope_desc}. "
+        f"{rsi_interp}. {pb_interp}. {mfi_interp}. "
+        f"MACD: <b>{macd}</b> / SQZ: <b>{sqz}</b>."
+    )
+
+    # ── 3. SMC 구조 ──────────────────────────────────────────
+    smc_parts = [f"외부구조 <b>{ext_struct}</b> / 내부구조 <b>{int_struct}</b>"]
+    if int_event and int_event not in ("None", "없음", ""):
+        smc_parts.append(f"내부 이벤트: <b>{int_event}</b>")
+    if ext_event and ext_event not in ("None", "없음", ""):
+        smc_parts.append(f"외부 이벤트: <b>{ext_event}</b>")
+    if fvg_type != "없음" and fvg_type:
+        fvg_status = "미충족(지지대 유효)" if fvg_active else "이미 터치됨"
+        fvg_range = ""
+        if fvg_bottom and fvg_top and fvg_bottom > 0:
+            fvg_range = f" ({format_currency(fvg_bottom, tkr)}~{format_currency(fvg_top, tkr)})"
+        smc_parts.append(f"FVG: <b>{fvg_type}</b> {fvg_status}{fvg_range}")
+    smc_parts.append(f"현재 가격대: <b>{pd_zone}</b>")
+    if is_52w:
+        smc_parts.append("🚀 <b>52주 신고가 돌파</b>")
+    lines.append("🛡️ <b>SMC 구조</b>: " + " | ".join(smc_parts))
+    if smc_insight:
+        lines.append(f"&nbsp;&nbsp;&nbsp;&nbsp;→ {smc_insight}")
+    if smc_action:
+        lines.append(f"&nbsp;&nbsp;&nbsp;&nbsp;🎯 실행 해석: <b>{smc_action}</b>")
+
+    # ── 4. 수급·가격 흐름 ────────────────────────────────────
+    flow_parts = [f"섹터 머니플로우: <b>{sector_flow}</b>"]
+    if day_ret != 0:
+        dr_emoji = "🔺" if day_ret > 0 else "🔻"
+        flow_parts.append(f"전일 등락: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
+    if vol_ratio > 0:
+        vol_desc = "거래량 급증" if vol_ratio >= 2 else ("보통" if vol_ratio >= 0.7 else "거래량 감소")
+        flow_parts.append(f"거래량 20일비: <b>{vol_ratio:.1f}x</b> ({vol_desc})")
+    if ma5 > 0 and ma20 > 0 and cur_p > 0:
+        pos_vs_ma5 = (cur_p / ma5 - 1) * 100
+        pos_vs_ma20 = (cur_p / ma20 - 1) * 100
+        flow_parts.append(f"MA5 대비 {pos_vs_ma5:+.1f}% / MA20 대비 {pos_vs_ma20:+.1f}%")
+    lines.append("💸 <b>수급·가격 흐름</b>: " + " | ".join(flow_parts))
+
+    # ── 5. 진입 조건 (핵심: 뭐가 부족한지) ──────────────────
+    entry_hint = ""
+    if decision_code == "S_UPTREND_WAIT_PULLBACK":
+        missing = []
+        if rsi > 65:
+            missing.append(f"RSI {rsi:.0f} → <b>65 이하</b>")
+        if pct_b > 0.75:
+            missing.append(f"%B {pct_b:.2f} → <b>0.75 이하</b>")
+        if mfi >= 75:
+            missing.append(f"MFI {mfi:.0f} → <b>75 미만</b>")
+        if missing:
+            entry_hint = (
+                f"⏳ <b>진입 전환 조건</b>: {', '.join(missing)} 충족 시 "
+                f"<b>'우량주 눌림 구간: 정찰 진입 적합'</b>으로 신호 전환됩니다. "
+                f"급락 없이도 며칠 <b>횡보·숨 고르기</b>만으로 충족될 수 있습니다."
+            )
+    elif decision_code == "A_UPTREND_WAIT_PULLBACK":
+        missing = []
+        if rsi > 65: missing.append(f"RSI {rsi:.0f} → <b>65 이하</b>")
+        if pct_b > 0.75: missing.append(f"%B {pct_b:.2f} → <b>0.75 이하</b>")
+        if missing:
+            entry_hint = f"⏳ <b>진입 전환 조건 (A급)</b>: {', '.join(missing)} 충족 필요."
+    elif decision_code in ("QUALITY_PULLBACK_ENTRY", "TREND_PULLBACK_EXPLORE"):
+        entry_hint = "✅ <b>현재 진입 구간</b>: 눌림 매수 적합 시점입니다."
+    elif decision_code == "CORE_ETF_DCA_BUY":
+        entry_hint = "✅ <b>코어 ETF 분할매수</b> 적합 구간입니다."
+    elif decision_code in ("REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY"):
+        entry_hint = "🚫 <b>진입 보류</b>: 역배열·하락 구조. 추세 전환 확인 전까지 신규 진입은 위험합니다."
+    elif decision_code == "PROFIT_TAKE_SIGNAL":
+        entry_hint = "💰 <b>익절 신호</b>: MFI·%B 과열 + 평단 대비 수익 20% 이상. 일부 익절 고려."
+    elif decision_code == "HOLD_QUALITY_UPTREND":
+        entry_hint = "🏆 <b>홀드 구간</b>: 정배열 유지 중이나 추매보다 홀드가 우선인 타이밍."
+
+    if entry_hint:
+        lines.append(entry_hint)
+
+    # ── 6. R/R ───────────────────────────────────────────────
+    if rr_ratio and rr_ratio > 0 and rr_target and rr_stop:
+        lines.append(
+            f"📐 <b>R/R 비율</b>: <b>{rr_ratio:.2f}</b> — "
+            f"목표가 {format_currency(rr_target, tkr)} / 손절 {format_currency(rr_stop, tkr)}"
+        )
+
+    # ── 7. 내 포지션 손익 ─────────────────────────────────────
+    if has_p and my_p > 0 and cur_p > 0:
+        pnl_pct = (cur_p / my_p - 1) * 100
+        pnl_emoji = "📈" if pnl_pct >= 0 else "📉"
+        lines.append(
+            f"{pnl_emoji} <b>내 손익</b>: 평단 {format_currency(my_p, tkr)} 대비 현재가 {pnl_pct:+.1f}%"
+        )
+
+    border_color = "#10b981" if "진입" in dec or "매수" in dec or "홀드" in dec else (
+        "#ef4444" if "보류" in dec or "역배열" in dec else "#6366f1"
+    )
+    html = (
+        f"<div class='info-panel' style='border-left:5px solid {border_color}; line-height:2.0;'>"
+        f"<b>📖 종합 해설</b><br><br>"
+        + "<br>".join(f"• {line}" for line in lines)
+        + "</div>"
+    )
+    return html
+
+
 def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, fin_score, fin_meta, has_pos, my_price):
     st.markdown("### 🧭 개인 주식분석")
     st.caption("스윙 신호를 장기 보유 후보로 바꿔도 되는지 점검하는 보조 패널입니다. 투자 권유가 아니라 의사결정 체크리스트입니다.")
@@ -14384,6 +14587,10 @@ with tab_precision:
                 fig.add_hline(y=p_line, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
             fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig, use_container_width=True)
+            st.markdown(
+                build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
+                unsafe_allow_html=True,
+            )
 
         st.markdown("---")
         b1, b2 = st.columns(2)
