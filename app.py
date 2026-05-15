@@ -419,16 +419,9 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
         elif price_vs_avg > 0.20: risk_score += 2; r_hold.append("충분한 안전마진 확보")
     score += risk_score
 
-    # 4. 스윙 레이더
+    # 4. 투자 논리 점수
+    # 수동 스윙 레이더는 현재 운용 흐름에서 제외하므로 장기보유 판정에 반영하지 않습니다.
     thesis_score = 0
-    swing_df, _ = load_swing_radar_db_safe()
-    if swing_df is not None and not swing_df.empty:
-        matched = swing_df[swing_df["ticker"].apply(normalize_ticker) == normalize_ticker(ticker)]
-        if not matched.empty:
-            s_status = str(matched.iloc[0].get("status", "")).strip()
-            if s_status == "위험": thesis_score -= 2; r_exit.append("스윙 레이더: '위험' 지정됨")
-            elif s_status == "종료": thesis_score -= 3; r_exit.append("스윙 레이더: 아이디어 '종료'")
-            elif s_status == "진행": thesis_score += 1; r_hold.append("스윙 레이더: 아이디어 유효")
     score += thesis_score
 
     # 5. 최종 판정
@@ -555,19 +548,26 @@ st.markdown("""
 st.set_page_config(page_title="최종 관제실", layout="wide")
 KST = timezone(timedelta(hours=9))
 
+def safe_secret_get(name, default=""):
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
 def get_secret_value(name, fallback_name=None):
-    value = st.secrets.get(name, "")
+    value = safe_secret_get(name, "")
     if not value:
         value = os.environ.get(name, "")
     if (not value) and fallback_name:
-        value = st.secrets.get(fallback_name, "")
+        value = safe_secret_get(fallback_name, "")
     if (not value) and fallback_name:
         value = os.environ.get(fallback_name, "")
     return str(value).strip()
 
 
 def get_secret_emails(name):
-    value = st.secrets.get(name, [])
+    value = safe_secret_get(name, [])
     if isinstance(value, str):
         value = [x.strip() for x in value.split(",")]
     return {str(x).strip().lower() for x in value if str(x).strip()}
@@ -2393,13 +2393,13 @@ US_TECH_OR_GROWTH_TICKERS = {
 }
 
 def get_dart_api_key():
-    return str(st.secrets.get("dart_api_key", "")).strip()
+    return get_secret_value("dart_api_key")
 
 def get_krx_api_key():
-    return str(st.secrets.get("krx_api_key", "")).strip()
+    return get_secret_value("krx_api_key")
 
 def get_sec_user_agent():
-    return str(st.secrets.get("sec_user_agent", "")).strip()
+    return get_secret_value("sec_user_agent")
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_dart_corp_code_map():
@@ -3967,7 +3967,7 @@ def fetch_us_financials_sec(ticker: str):
 
 @st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
 def fetch_us_financials_fmp(ticker: str):
-    api_key = st.secrets.get("fmp_api_key", "")
+    api_key = get_secret_value("fmp_api_key")
     if not api_key: return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
 
     symbol = str(ticker).strip().upper()
@@ -6076,8 +6076,6 @@ if "watchlist" not in st.session_state:
 else:
     st.session_state.watchlist = [sanitize_watchlist_item(item) for item in st.session_state.watchlist]
 
-persist_watchlist()
-
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
 # -------------------------------------------------
@@ -7918,19 +7916,19 @@ def render_dashboard_group_summary(df, group_label):
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
-            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
-            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
-            "스윙상태", "내결정", "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
 
@@ -9023,8 +9021,7 @@ def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers:
             future.result()  # 예외가 있으면 무시하고 계속
 
 
-def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
-                          snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
+def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
@@ -9059,7 +9056,6 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
-    swing_key = normalize_ticker(tkr)
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
@@ -9071,8 +9067,6 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
         "기초벤치": get_benchmark_display_name(bm["underlying_bench"]) if bm["underlying_bench"] else "-",
         "섹터벤치": get_benchmark_display_name(bm["sector_bench"]) if bm["sector_bench"] else "-",
         "섹터RS": bm["sector_rs_label"] if bm["sector_bench"] else "-",
-        "스윙상태": swing_status_map.get(swing_key, "-"),
-        "내결정": swing_decision_map.get(swing_key, "-"),
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
         "🔥기술적 타점": c["dec"],
         "핵심근거": c.get("decision_reasons", ("",))[0] if c.get("decision_reasons") else "",
@@ -9085,8 +9079,6 @@ def _compute_summary_item(item, mode, swing_status_map, swing_decision_map,
 
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    swing_status_map, swing_decision_map = get_dashboard_swing_status_maps()
 
     # [속도 개선] 전광판 종목 전체를 병렬로 선제 로딩 (이후 load_price_df는 캐시 히트)
     all_tickers = [
@@ -9111,8 +9103,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         futures = {
             executor.submit(
                 _compute_summary_item,
-                item, mode, swing_status_map, swing_decision_map,
-                snap_mp, snap_fmr, snap_te,
+                item, mode, snap_mp, snap_fmr, snap_te,
                 snap_cash_available, snap_reserve_available,
             ): i
             for i, item in enumerate(watchlist_items)
@@ -10161,6 +10152,7 @@ ETF는 개별 기업 리스크가 낮고 적립식 운용 대상이기 때문입
 
 
 GUIDE_IMAGE_FILES = [
+    ("오늘 점검", "docs/tab_guides/00_today_queue.svg", "매수 후보, 주의/차단, 확인 필요 종목을 먼저 정리합니다."),
     ("자산 현황", "docs/tab_guides/01_asset_overview.svg", "보유종목, 예수금, 목표비중을 입력하고 전체 자산을 확인합니다."),
     ("포트폴리오 분석", "docs/tab_guides/02_portfolio_analysis.svg", "집중도, 변동성, MDD, 상관관계로 내 포트폴리오 위험을 봅니다."),
     ("전광판", "docs/tab_guides/03_dashboard.svg", "관심종목을 한국/미국, ETF/개별주로 나눠 한 번에 확인합니다."),
@@ -10170,7 +10162,6 @@ GUIDE_IMAGE_FILES = [
     ("신호 검증", "docs/tab_guides/07_signal_backtest.svg", "과거 신호의 5/20/60일 성과와 승률을 확인합니다."),
     ("돈흐름 레이더", "docs/tab_guides/08_money_flow.svg", "ETF 가격 모멘텀으로 강한 섹터와 새로 힘붙는 테마를 찾습니다."),
     ("배당 ETF", "docs/tab_guides/09_kr_etf_lab.svg", "국내 ETF의 분배, 비용, 구성, 테마를 비교합니다."),
-    ("스윙 레이더", "docs/tab_guides/10_swing_radar.svg", "스윙 후보의 체크리스트, 메모, 숨김/관리 상태를 저장합니다."),
     ("피드백/Q&A", "docs/tab_guides/11_feedback.svg", "사용 중 헷갈리는 점과 개선 요청을 앱 안에서 남깁니다."),
     ("데이터 점검", "docs/tab_guides/12_data_quality.svg", "ETF 분류, 목표비중, 저장 데이터 오류를 점검합니다."),
     ("속도 점검", "docs/tab_guides/13_speed_check.svg", "무거운 계산과 새로고침 기준을 확인합니다."),
@@ -10205,14 +10196,14 @@ def render_user_guide_tab():
     st.subheader("사용 가이드")
     st.caption("처음 쓰는 사용자를 위한 안내입니다. 앱은 투자 권유가 아니라 포트폴리오 점검과 의사결정 보조 도구입니다.")
 
-    start_tab, flow_tab, signal_tab, image_tab, faq_tab = st.tabs(["처음 시작", "탭 사용법", "문구 해석", "이미지 가이드", "공유/주의"])
+    start_tab, flow_tab, signal_tab, image_tab, faq_tab = st.tabs(["처음 시작", "화면 사용법", "문구 해석", "이미지 가이드", "공유/주의"])
 
     with start_tab:
         st.markdown("""
 ### 처음 5분 세팅
 
 1. **로그인**
-   허용된 계정으로 로그인합니다. 계정별로 자산, 관심종목, 스윙 레이더가 분리 저장됩니다.
+   허용된 계정으로 로그인합니다. 계정별로 자산, 관심종목, 피드백이 분리 저장됩니다.
 
 2. **자산 현황/관리 입력**
    `💼 자산 현황` 탭에서 시드머니, 원화/달러 예수금, 환율, 보유 종목을 입력합니다.
@@ -10242,9 +10233,12 @@ def render_user_guide_tab():
 
     with flow_tab:
         st.markdown("""
-### 각 탭은 이렇게 씁니다
+### 각 화면은 이렇게 씁니다
 
-**💼 자산 현황**  
+**✅ 오늘 점검**
+관심/보유 종목을 자동으로 훑어서 매수 후보, 주의/차단, 확인 필요 종목을 먼저 보여주는 시작 화면입니다.
+
+**💼 자산 현황**
 총자산, 손익, 대기자금, 보유자산 상세표를 보는 기본 화면입니다. 입력/수정 영역은 필요할 때만 펼쳐서 사용합니다.
 
 **📊 포트폴리오 분석**  
@@ -10262,13 +10256,10 @@ def render_user_guide_tab():
 **📈 단기 흐름 점검**  
 보유자산과 관심종목의 2~4주 단기 흐름을 상승우위/중립/하락주의로 점검합니다.
 
-**💸 돈흐름 레이더**  
+**💸 돈흐름 레이더**
 섹터와 ETF 흐름을 보는 곳입니다. 돈흐름 1위는 “이 섹터에서 후보를 먼저 찾아보라”는 뜻이지 즉시 매수 신호가 아닙니다.
 
-**🎯 스윙 레이더**  
-스윙 후보의 투자 아이디어, 체크포인트, 리스크, 진입/청산 기준을 메모하는 곳입니다.
-
-**📘 판정 매뉴얼**  
+**📘 판정 매뉴얼**
 하드차단, S급 눌림목, ETF 적립 가능 같은 문구가 왜 나오는지 확인하는 곳입니다.
         """)
 
@@ -10277,9 +10268,9 @@ def render_user_guide_tab():
 1. 자산 현황에서 총자산, 손익, 대기자금, 보유자산 표를 확인
 2. 필요할 때만 입력/수정 영역을 열어 보유종목, 예수금, 배당, 월별 로그 수정
 3. 포트폴리오 분석에서 집중도, 변동성, 대기자금 비중 확인
-4. 전광판에서 관심종목을 한국/미국, ETF/개별주로 나눠 확인
+4. 오늘 점검에서 매수 후보와 주의/차단 종목을 먼저 확인
 5. 정밀관측소에서 매수/추매 고민이 있는 종목만 깊게 확인
-6. 돈흐름 레이더와 스윙 레이더는 고급 분석이 필요할 때만 사용
+6. 전광판에서 관심종목을 한국/미국, ETF/개별주로 나눠 확인
 7. 시나리오 점검과 단기 흐름 점검은 시장이 흔들릴 때 보조로 확인
             """)
 
@@ -10346,8 +10337,8 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
 
 아래 문구를 그대로 공유해도 됩니다.
 
-> 사용 전 앱 오른쪽 `📖 사용 가이드` 탭을 먼저 읽어주세요.  
-> 전광판은 전체 후보 확인, 정밀 관측소는 한 종목 상세 확인, 돈흐름 레이더는 강한 섹터 확인용입니다.  
+> 사용 전 왼쪽 사이드바의 `📖 사용 가이드` 화면을 먼저 읽어주세요.
+> 오늘 점검은 우선순위 확인, 전광판은 전체 후보 확인, 정밀 관측소는 한 종목 상세 확인용입니다.
 > 앱의 매수/관망 문구는 투자 권유가 아니라 판단 보조 신호입니다. 최종 매수/매도 결정은 본인이 직접 해야 합니다.
         """)
 
@@ -13939,11 +13930,104 @@ def render_speed_check_tab():
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
 
+def render_today_queue_tab(mode):
+    st.subheader("오늘 점검")
+    render_data_basis_caption("오늘점검", include_fin=True)
+    st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
+
+    watch_items = tuple(st.session_state.get("watchlist", []))
+    if not watch_items:
+        st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
+        return
+
+    with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
+        summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+
+    if summary_df.empty:
+        st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
+        return
+
+    if "판정분류" in summary_df.columns:
+        signal_group = summary_df["판정분류"].astype(str)
+    else:
+        signal_group = summary_df["🔥기술적 타점"].astype(str).map(classify_decision_signal)
+
+    code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
+    label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
+    buyish_mask = signal_group.eq("buyish") & ~hard_block_mask
+    caution_mask = signal_group.eq("caution") | hard_block_mask
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("점검 종목", f"{len(summary_df)}개")
+    m2.metric("매수/관심 후보", f"{int(buyish_mask.sum())}개")
+    m3.metric("주의/차단", f"{int(caution_mask.sum())}개")
+    m4.metric("하드차단", f"{int(hard_block_mask.sum())}개")
+
+    cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
+    reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
+    if final_macro_risk >= 4.5:
+        st.error("매크로 리스크가 높은 구간입니다. 신규 매수보다 현금/방어자산 유지와 비중 초과 종목 점검을 우선합니다.")
+    elif hard_block_mask.any():
+        st.warning("하드차단 종목이 있습니다. 비중 초과, 과열, 매크로, 재무 위험 같은 차단 사유를 먼저 확인하세요.")
+    elif buyish_mask.any() and cash_available > 0:
+        st.success("매수/관심 후보가 있습니다. 현금 범위 안에서 정찰 또는 분할 접근 후보로만 검토하세요.")
+    elif buyish_mask.any():
+        st.info("매수/관심 후보는 있지만 적립용 현금이 부족합니다. 신규 매수보다 현금 계획을 먼저 확인하세요.")
+    else:
+        st.info("강한 매수 후보가 많지 않습니다. 오늘은 보유 유지, 비중 점검, 관심종목 정리 쪽이 더 적합합니다.")
+
+    cash_cols = st.columns(2)
+    cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
+    cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
+
+    show_cols = [
+        "종목명", "티커", "유형", "현재가", "📌후보등급", "🔥기술적 타점",
+        "핵심근거", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "MDD",
+    ]
+    show_cols = [col for col in show_cols if col in summary_df.columns]
+
+    view_mode = st.radio(
+        "보기",
+        ["매수/관심 후보", "주의/차단", "전체"],
+        horizontal=True,
+        key="today_queue_view_mode",
+    )
+    if view_mode == "매수/관심 후보":
+        view_df = summary_df.loc[buyish_mask].copy()
+        sort_ascending = False
+    elif view_mode == "주의/차단":
+        view_df = summary_df.loc[caution_mask].copy()
+        view_df["_hard_block"] = hard_block_mask.loc[view_df.index].astype(int)
+        sort_ascending = True
+    else:
+        view_df = summary_df.copy()
+        sort_ascending = False
+
+    if view_df.empty:
+        st.info(f"{view_mode}에 해당하는 종목이 없습니다.")
+        return
+
+    if view_mode == "주의/차단" and "_hard_block" in view_df.columns:
+        sort_cols = ["_hard_block"]
+        ascending = [False]
+        if "Adj점수" in view_df.columns:
+            sort_cols.append("Adj점수")
+            ascending.append(True)
+        view_df = view_df.sort_values(sort_cols, ascending=ascending)
+    elif "Adj점수" in view_df.columns:
+        view_df = view_df.sort_values("Adj점수", ascending=sort_ascending)
+
+    st.dataframe(view_df[show_cols], use_container_width=True, hide_index=True)
+
+    st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
+
+
 def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
     demo_page = st.radio(
         "체험 화면",
-        ["자산 현황", "전광판", "정밀관측소", "시나리오", "단기 흐름", "신호 검증", "돈흐름", "월배당 ETF", "피드백", "가이드"],
+        ["자산 현황", "오늘 점검", "전광판", "정밀관측소", "시나리오", "단기 흐름", "신호 검증", "돈흐름", "월배당 ETF", "피드백", "가이드"],
         horizontal=True,
         key="public_demo_fast_page",
     )
@@ -13954,6 +14038,16 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
         render_asset_quick_quality_summary(settings, holdings_df, dividends_df, monthly_logs_df)
         render_monthly_record_status(monthly_logs_df, portfolio_summary)
+        return
+
+    if demo_page == "오늘 점검":
+        st.caption("데모에서는 버튼을 눌러야 오늘 점검 계산을 시작합니다.")
+        if st.button("오늘 점검 계산 시작", key="public_demo_today_queue_run", use_container_width=True):
+            st.session_state["public_demo_today_queue_ready"] = True
+        if not st.session_state.get("public_demo_today_queue_ready", False):
+            st.info("첫 접속 속도를 위해 오늘 점검 계산을 멈춰뒀습니다. 누르면 샘플 종목의 우선순위를 계산합니다.")
+            return
+        render_today_queue_tab("개인모드")
         return
 
     if demo_page == "전광판":
@@ -14128,25 +14222,31 @@ if IS_PUBLIC_DEMO:
     )
     st.stop()
 
-tab_asset, tab_portfolio, tab_dashboard, tab_precision, tab_scenario, tab_short, tab_backtest, tab_money, tab_kr_etf, tab_swing, tab_feedback, tab_data, tab_speed, tab_manual, tab_guide = st.tabs([
-    "💼 자산 현황",
-    "📊 포트폴리오 분석",
-    "📋 전광판",
-    "🔍 정밀관측소",
-    "📉 시나리오 점검",
-    "📈 단기 흐름 점검",
-    "🧪 신호 검증",
-    "💸 돈흐름 레이더",
-    "💰 월배당 ETF",
-    "🎯 스윙 레이더",
-    "🎤 피드백/Q&A",
-    "🧪 데이터 점검",
-    "⏱ 속도 점검",
-    "📘 판정 매뉴얼",
-    "📖 사용 가이드",
-])
-
-with tab_dashboard:
+MAIN_PAGE_OPTIONS = {
+    "today": "✅ 오늘 점검",
+    "asset": "💼 자산 현황",
+    "portfolio": "📊 포트폴리오 분석",
+    "dashboard": "📋 전광판",
+    "precision": "🔍 정밀관측소",
+    "scenario": "📉 시나리오 점검",
+    "short": "📈 단기 흐름 점검",
+    "backtest": "🧪 신호 검증",
+    "money": "💸 돈흐름 레이더",
+    "kr_etf": "💰 월배당 ETF",
+    "feedback": "🎤 피드백/Q&A",
+    "data": "🧪 데이터 점검",
+    "speed": "⏱ 속도 점검",
+    "manual": "📘 판정 매뉴얼",
+    "guide": "📖 사용 가이드",
+}
+main_page = st.sidebar.radio(
+    "화면 이동",
+    list(MAIN_PAGE_OPTIONS.keys()),
+    format_func=lambda key: MAIN_PAGE_OPTIONS[key],
+    key="main_page_nav",
+)
+st.caption(f"현재 화면: {MAIN_PAGE_OPTIONS[main_page]}")
+if main_page == "dashboard":
     st.subheader("CCTV 통합 통제실")
     render_data_basis_caption("전광판", include_fin=True)
     st.write(
@@ -14196,7 +14296,7 @@ with tab_dashboard:
                     precision_label = find_precision_select_label_by_ticker(jump_ticker, precision_option_map_for_jump)
                     if precision_label:
                         st.session_state["precision_selected_option"] = precision_label
-                        st.success("정밀관측소 선택값을 바꿨습니다. 위의 정밀관측소 탭을 열어 확인하세요.")
+                        st.success("정밀관측소 선택값을 바꿨습니다. 왼쪽 사이드바에서 정밀관측소 화면을 열어 확인하세요.")
                     else:
                         st.warning("정밀관측소 선택값으로 연결할 수 없습니다. 자유 종목 탐색에서 직접 입력해 주세요.")
         with quick_jump_cols[2]:
@@ -14213,7 +14313,7 @@ with tab_dashboard:
             with group_tab:
                 render_dashboard_group_summary(summary_df, group_label)
 
-with tab_precision:
+if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     if st.session_state.get("precision_selected_option") not in options:
         st.session_state["precision_selected_option"] = options[0]
@@ -14633,7 +14733,7 @@ with tab_precision:
             st.text_area("분석용 프롬프트", value=prompt, height=500, key=f"prompt_box_{normalize_ticker(tkr)}")
     else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
 
-with tab_asset:
+if main_page == "asset":
     st.subheader("앱 내부 자산 관리")
     render_data_basis_caption("자산관리", include_fin=True)
     render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
@@ -14735,7 +14835,7 @@ with tab_asset:
             if has_recovery_blockers(recovery_issue_df):
                 st.error("차단 항목이 있으면 복구를 실행하지 않습니다. 중복 키나 읽기 오류를 먼저 정리하세요.")
             else:
-                st.warning("복구 실행 시 보유자산/배당/월별 로그/관심목록/스윙 레이더는 업로드 데이터로 대체될 수 있습니다.")
+                st.warning("복구 실행 시 보유자산/배당/월별 로그/관심목록 등 저장 데이터가 업로드 데이터로 대체될 수 있습니다.")
 
             st.checkbox(
                 "미리보기를 확인했고, 복구 시 현재 계정의 일부 데이터가 대체될 수 있음을 이해했습니다.",
@@ -15327,40 +15427,40 @@ with tab_asset:
     else:
         st.info("등록된 보유 종목이 없습니다.")
 
-with tab_portfolio:
+if main_page == "portfolio":
     render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df)
 
-with tab_scenario:
+if main_page == "scenario":
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
 
-with tab_short:
+if main_page == "short":
     render_short_trend_tab(holdings_table, st.session_state.watchlist)
 
-with tab_backtest:
+if main_page == "backtest":
     render_signal_backtest_tab(holdings_table, st.session_state.watchlist)
 
-with tab_money:
+if main_page == "money":
     render_money_flow_tab()
 
-with tab_kr_etf:
+if main_page == "kr_etf":
     render_kr_etf_lab_tab()
 
-with tab_swing:
-    render_swing_radar_tab()
+if main_page == "today":
+    render_today_queue_tab(app_mode)
 
-with tab_feedback:
+if main_page == "feedback":
     render_feedback_tab()
 
-with tab_data:
+if main_page == "data":
     render_data_quality_tab(effective_settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, st.session_state.watchlist)
 
-with tab_speed:
+if main_page == "speed":
     render_speed_check_tab()
 
-with tab_manual:
+if main_page == "manual":
     render_manual_tab() 
 
-with tab_guide:
+if main_page == "guide":
     render_user_guide_tab()
 
 # ---------------------------------------------------------

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f19"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <style>
+      .title{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:44px;font-weight:800;fill:#f8fafc;}
+      .subtitle{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:22px;font-weight:600;fill:#cbd5e1;}
+      .section{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:24px;font-weight:800;fill:#fbbf24;}
+      .body{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:20px;font-weight:500;fill:#e5e7eb;}
+      .small{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:600;fill:#cbd5e1;}
+      .card{fill:#1e293b;stroke:#334155;stroke-width:2;}
+      .mock{fill:#0f172a;stroke:#475569;stroke-width:2;}
+      .green{fill:#16a34a;}
+      .red{fill:#dc2626;}
+      .orange{fill:#d97706;}
+      .blue{fill:#2563eb;}
+      .chipText{font-family:'Malgun Gothic','Apple SD Gothic Neo',Arial,sans-serif;font-size:18px;font-weight:800;fill:#f8fafc;}
+    </style>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="36" y="32" width="1208" height="656" rx="26" fill="#0b1220" stroke="#1f2937" stroke-width="2"/>
+  <text x="72" y="96" class="title">✅ 오늘 점검</text>
+  <text x="72" y="134" class="subtitle">매일 먼저 볼 종목만 자동으로 추려보기</text>
+
+  <rect x="72" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="100" y="220" class="section">1. 무엇을 보나요?</text>
+  <text x="100" y="264" class="body">• 관심/보유 종목 전체 스캔</text>
+  <text x="100" y="298" class="body">• 매수/관심 후보 개수</text>
+  <text x="100" y="332" class="body">• 주의/하드차단 종목</text>
+  <text x="100" y="366" class="body">• 적립용 현금과 예비자금</text>
+
+  <rect x="464" y="176" width="352" height="248" rx="18" class="card"/>
+  <text x="492" y="220" class="section">2. 어떻게 쓰나요?</text>
+  <text x="492" y="264" class="body">• 매수 후보는 정밀관측소로 확인</text>
+  <text x="492" y="298" class="body">• 하드차단은 사유 먼저 점검</text>
+  <text x="492" y="332" class="body">• 현금이 부족하면 매수 보류</text>
+  <text x="492" y="366" class="body">• 전광판은 전체 목록 확인용</text>
+
+  <rect x="856" y="176" width="316" height="248" rx="18" class="mock"/>
+  <rect x="888" y="214" width="112" height="54" rx="12" class="blue"/>
+  <text x="916" y="248" class="chipText">점검</text>
+  <rect x="1016" y="214" width="112" height="54" rx="12" class="green"/>
+  <text x="1039" y="248" class="chipText">후보</text>
+  <rect x="888" y="292" width="112" height="54" rx="12" class="orange"/>
+  <text x="916" y="326" class="chipText">주의</text>
+  <rect x="1016" y="292" width="112" height="54" rx="12" class="red"/>
+  <text x="1039" y="326" class="chipText">차단</text>
+  <text x="888" y="390" class="small">우선순위만 보고 깊은 분석은 한 종목씩</text>
+
+  <rect x="72" y="472" width="1100" height="136" rx="18" fill="#111827" stroke="#334155" stroke-width="2"/>
+  <text x="104" y="520" class="section">기억할 점</text>
+  <text x="104" y="562" class="body">매수 후보는 “바로 매수”가 아니라, 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.</text>
+</svg>
