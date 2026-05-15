@@ -4923,6 +4923,116 @@ def fmt_flow_pct(v):
     return f"{float(v) * 100:.1f}%"
 
 
+def fmt_flow_score(v):
+    if not finite_num(v):
+        return "-"
+    return f"{float(v):.1f}"
+
+
+def build_today_flow_rank_table(df, group_name, score_col="돈흐름점수", top_n=5):
+    if df is None or df.empty or score_col not in df.columns:
+        return pd.DataFrame()
+    if "구분" not in df.columns:
+        return pd.DataFrame()
+    view = df[df["구분"].astype(str).eq(group_name)].dropna(subset=[score_col]).copy()
+    if view.empty:
+        return pd.DataFrame()
+    return view.sort_values(score_col, ascending=False).head(top_n)
+
+
+def format_today_flow_rank_table(df, score_col="돈흐름점수"):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    view = df.copy()
+    for col in ["1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "상승종목비율"]:
+        if col in view.columns:
+            view[col] = view[col].apply(fmt_flow_pct)
+    if score_col in view.columns:
+        view[score_col] = view[score_col].apply(fmt_flow_score)
+    cols = [
+        "섹터", "Ticker", "ETF 이름", score_col, "상태", "추격위험",
+        "3개월수익률", "가속도", "거래량증가",
+    ]
+    return view[[c for c in cols if c in view.columns]]
+
+
+def format_today_theme_rank_table(df, score_col="테마돈흐름점수"):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    view = df.copy()
+    for col in ["1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "상승종목비율"]:
+        if col in view.columns:
+            view[col] = view[col].apply(fmt_flow_pct)
+    if score_col in view.columns:
+        view[score_col] = view[score_col].apply(fmt_flow_score)
+    cols = [
+        "테마", "하위테마", "대표주", score_col, "상태", "추격위험",
+        "3개월수익률", "상승종목비율", "가속도", "거래량증가", "구성종목",
+    ]
+    return view[[c for c in cols if c in view.columns]]
+
+
+def build_today_theme_flow_tables(theme_flow_df, rotation_df, group_df):
+    if rotation_df is None or rotation_df.empty or "테마돈흐름점수" not in rotation_df.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    theme_rank = rotation_df.dropna(subset=["테마돈흐름점수"]).copy()
+    if theme_rank.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    theme_rank = theme_rank.sort_values("테마돈흐름점수", ascending=False)
+    top_theme = str(theme_rank.iloc[0].get("테마", "") or "")
+
+    subtheme_rank = pd.DataFrame()
+    if group_df is not None and not group_df.empty and top_theme:
+        score_col = "돈흐름점수" if "돈흐름점수" in group_df.columns else "테마돈흐름점수"
+        if score_col in group_df.columns:
+            subtheme_rank = (
+                group_df[group_df["테마"].astype(str).eq(top_theme)]
+                .dropna(subset=[score_col])
+                .sort_values(score_col, ascending=False)
+                .head(3)
+                .copy()
+            )
+
+    return theme_rank.head(5), subtheme_rank
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def get_today_market_flow_snapshot():
+    flow_df = calculate_money_flow_df()
+    us_top5 = build_today_flow_rank_table(flow_df, "미국 섹터", top_n=5)
+    kr_top5 = build_today_flow_rank_table(flow_df, "한국 섹터", top_n=5)
+    global_top = build_today_flow_rank_table(flow_df, "글로벌", top_n=1)
+    local_top = build_today_flow_rank_table(flow_df, "국내상장 대표 ETF", top_n=1)
+
+    theme_flow_df = pd.DataFrame()
+    theme_rotation_df = pd.DataFrame()
+    subtheme_group_df = pd.DataFrame()
+    theme_top5 = pd.DataFrame()
+    subtheme_top = pd.DataFrame()
+    if IMAGE_THEME_FLOW_AVAILABLE:
+        theme_flow_df = calculate_image_theme_flow_df("")
+        theme_rotation_df = calculate_image_theme_rotation_df(theme_flow_df)
+        subtheme_group_df = calculate_image_theme_group_df(theme_flow_df)
+        theme_top5, subtheme_top = build_today_theme_flow_tables(
+            theme_flow_df,
+            theme_rotation_df,
+            subtheme_group_df,
+        )
+
+    return {
+        "flow_df": flow_df,
+        "us_top5": us_top5,
+        "kr_top5": kr_top5,
+        "global_top": global_top,
+        "local_top": local_top,
+        "theme_flow_df": theme_flow_df,
+        "theme_top5": theme_top5,
+        "subtheme_top": subtheme_top,
+    }
+
+
 def get_plotly_selected_ticker(event):
     if not event:
         return ""
@@ -13930,6 +14040,97 @@ def render_speed_check_tab():
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
 
+def render_today_market_flow_panel():
+    st.markdown("#### 시장 돈흐름 요약")
+    st.caption("글로벌 자금 흐름 레이더와 이미지 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
+
+    if not should_run_heavy_analysis(
+        "today_market_flow_lazy",
+        "ETF/섹터와 이미지 테마 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
+        run_label="돈흐름 요약 계산/새로고침",
+    ):
+        return
+
+    try:
+        with st.spinner("ETF/테마 돈흐름 요약 계산 중..."):
+            snapshot = get_today_market_flow_snapshot()
+    except Exception as exc:
+        st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
+        return
+
+    flow_df = snapshot.get("flow_df", pd.DataFrame())
+    if flow_df is None or flow_df.empty:
+        st.info("ETF/섹터 돈흐름 데이터가 아직 없습니다.")
+        return
+
+    us_top5 = snapshot.get("us_top5", pd.DataFrame())
+    kr_top5 = snapshot.get("kr_top5", pd.DataFrame())
+    global_top = snapshot.get("global_top", pd.DataFrame())
+    local_top = snapshot.get("local_top", pd.DataFrame())
+    theme_top5 = snapshot.get("theme_top5", pd.DataFrame())
+    subtheme_top = snapshot.get("subtheme_top", pd.DataFrame())
+
+    metric_cols = st.columns(4)
+    if not kr_top5.empty:
+        r = kr_top5.iloc[0]
+        metric_cols[0].metric("한국 섹터 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+    else:
+        metric_cols[0].metric("한국 섹터 1위", "-", "-")
+
+    if not us_top5.empty:
+        r = us_top5.iloc[0]
+        metric_cols[1].metric("미국 섹터 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+    else:
+        metric_cols[1].metric("미국 섹터 1위", "-", "-")
+
+    if not global_top.empty:
+        r = global_top.iloc[0]
+        metric_cols[2].metric("글로벌 ETF 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+    elif not local_top.empty:
+        r = local_top.iloc[0]
+        metric_cols[2].metric("대표 ETF 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+    else:
+        metric_cols[2].metric("글로벌/대표 ETF 1위", "-", "-")
+
+    if not theme_top5.empty:
+        r = theme_top5.iloc[0]
+        metric_cols[3].metric("이미지 테마 1위", str(r["테마"]), f"{fmt_flow_score(r['테마돈흐름점수'])} pts")
+    else:
+        metric_cols[3].metric("이미지 테마 1위", "-", "-")
+
+    st.caption("돈흐름점수는 1/3/6개월 수익률, 가속도, 거래량 증가를 함께 본 가격 기반 지표입니다. 높다고 바로 매수하라는 뜻은 아닙니다.")
+
+    rank_cols = st.columns(2)
+    with rank_cols[0]:
+        st.markdown("##### 한국 섹터 TOP 5")
+        if kr_top5.empty:
+            st.info("한국 섹터 계산 데이터가 부족합니다.")
+        else:
+            st.dataframe(format_today_flow_rank_table(kr_top5), use_container_width=True, hide_index=True)
+
+    with rank_cols[1]:
+        st.markdown("##### 미국 섹터 TOP 5")
+        if us_top5.empty:
+            st.info("미국 섹터 계산 데이터가 부족합니다.")
+        else:
+            st.dataframe(format_today_flow_rank_table(us_top5), use_container_width=True, hide_index=True)
+
+    theme_cols = st.columns([1.05, 1])
+    with theme_cols[0]:
+        st.markdown("##### 이미지 테마 TOP 5")
+        if theme_top5.empty:
+            st.info("이미지 테마 계산 데이터가 부족합니다.")
+        else:
+            st.dataframe(format_today_theme_rank_table(theme_top5), use_container_width=True, hide_index=True)
+
+    with theme_cols[1]:
+        st.markdown("##### 1위 테마의 하위테마")
+        if subtheme_top.empty:
+            st.info("1위 테마의 하위테마 계산 데이터가 부족합니다.")
+        else:
+            st.dataframe(format_today_theme_rank_table(subtheme_top, "돈흐름점수"), use_container_width=True, hide_index=True)
+
+
 def render_today_queue_tab(mode):
     st.subheader("오늘 점검")
     render_data_basis_caption("오늘점검", include_fin=True)
@@ -13980,6 +14181,10 @@ def render_today_queue_tab(mode):
     cash_cols = st.columns(2)
     cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
     cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
+
+    st.divider()
+    render_today_market_flow_panel()
+    st.divider()
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "📌후보등급", "🔥기술적 타점",
