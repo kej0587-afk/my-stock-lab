@@ -14929,11 +14929,11 @@ def render_print_report_v2():
             ))
             fig_monthly_asset.update_layout(
                 template="plotly_dark",
-                height=330,
-                title="월별 투자 기록",
+                height=350,
+                title=dict(text="월별 투자 기록", y=0.97, x=0.5, xanchor="center"),
                 yaxis_title="원",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-                margin=dict(t=50, l=8, r=8, b=8),
+                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                margin=dict(t=40, l=8, r=8, b=70),
             )
             st.plotly_chart(fig_monthly_asset, use_container_width=True)
 
@@ -14958,10 +14958,10 @@ def render_print_report_v2():
             fig_pnl_div.add_hline(y=0, line_color="#94a3b8")
             fig_pnl_div.update_layout(
                 template="plotly_dark",
-                height=330,
-                title="누적손익 / 월별배당금",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-                margin=dict(t=50, l=8, r=8, b=8),
+                height=350,
+                title=dict(text="누적손익 / 월별배당금", y=0.97, x=0.5, xanchor="center"),
+                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                margin=dict(t=40, l=8, r=8, b=70),
             )
             fig_pnl_div.update_yaxes(title_text="누적손익(원)", secondary_y=False)
             fig_pnl_div.update_yaxes(title_text="배당금(원)", secondary_y=True)
@@ -14980,10 +14980,10 @@ def render_print_report_v2():
             fig_cum_return.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
             fig_cum_return.update_layout(
                 template="plotly_dark",
-                height=300,
-                title="월별 누적수익률",
+                height=320,
+                title=dict(text="월별 누적수익률", y=0.97, x=0.5, xanchor="center"),
                 yaxis_title="수익률(%)",
-                margin=dict(t=42, l=8, r=8, b=8),
+                margin=dict(t=40, l=8, r=8, b=30),
             )
             st.plotly_chart(fig_cum_return, use_container_width=True)
 
@@ -15019,11 +15019,11 @@ def render_print_report_v2():
                 fig_benchmark.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
                 fig_benchmark.update_layout(
                     template="plotly_dark",
-                    height=300,
-                    title="첫 기록월 대비 수익률 변화 vs 벤치마크",
+                    height=320,
+                    title=dict(text="첫 기록월 대비 수익률 변화 vs 벤치마크", y=0.97, x=0.5, xanchor="center"),
                     yaxis_title="수익률(%)",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-                    margin=dict(t=42, l=8, r=8, b=8),
+                    legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                    margin=dict(t=40, l=8, r=8, b=70),
                 )
                 st.plotly_chart(fig_benchmark, use_container_width=True)
 
