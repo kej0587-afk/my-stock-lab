@@ -15084,6 +15084,7 @@ def render_print_report_v2():
         st.markdown("#### 자산 구성/비중 상세")
         asset_detail_df = report_df.sort_values("현재비중", ascending=False) if "현재비중" in report_df.columns else report_df
         st.table(_format_asset_table(asset_detail_df, max_rows=35))
+        _render_asset_report_charts(report_df)
     else:
         st.info("출력할 보유 자산이 없습니다.")
 
@@ -15167,6 +15168,7 @@ def render_print_report_v2():
             "dividend": "월배당",
         })
         st.table(_format_generic_table(perf_df, max_rows=12))
+        _render_monthly_report_charts(monthly_perf_df)
     else:
         st.info("월별 성과 기록이 없습니다.")
 
