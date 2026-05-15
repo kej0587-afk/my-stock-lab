@@ -5086,38 +5086,62 @@ def render_money_flow_etf_section():
 
     # 5. 상세 데이터 테이블
     st.markdown("#### 📊 섹터별 상세 지표")
-    
-    # 현재가 포맷 결정 (미국주식 알파벳은 소수점 2자리, 한국주식 숫자는 소수점 없음)
+
+    # 상태 이모지 배지 추가
+    _state_badge = {
+        "신규 유입": "🟢 신규 유입",
+        "주도 유지": "💚 주도 유지",
+        "둔화 경고": "🟡 둔화 경고",
+        "소외 지속": "🔴 소외 지속",
+        "상대 약세": "🟠 상대 약세",
+        "관찰":     "⚪ 관찰",
+        "가격부족": "⬛ 가격부족",
+    }
+    table_df = view_df.copy()
+    if "상태" in table_df.columns:
+        table_df["상태"] = table_df["상태"].map(lambda s: _state_badge.get(str(s), str(s)))
+
+    # 현재가 포맷 결정
     first_ticker = str(view_df['Ticker'].iloc[0])
     price_format = "%.2f" if first_ticker.isalpha() else "%.0f"
 
+    # 표시할 컬럼 순서 지정 (내부 컬럼 제외)
+    _show_cols = [c for c in [
+        "구분", "섹터", "Ticker", "ETF 이름", "현재가",
+        "상태", "추격위험", "가격수준",
+        "돈흐름점수",
+        "1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률",
+        "가속도", "거래량증가",
+    ] if c in table_df.columns]
+
     st.dataframe(
-        view_df, # view_df 사용
+        table_df[_show_cols],
         column_config={
             "가격수준": st.column_config.ProgressColumn(
                 "52주 위치",
-                help="0은 52주 최저가, 1은 52주 최고가 (현재 위치 시각화)",
+                help="0은 52주 최저가, 1은 52주 최고가",
                 format="%.2f",
                 min_value=0.0,
                 max_value=1.0,
             ),
             "돈흐름점수": st.column_config.NumberColumn(
-                "스코어", 
+                "스코어",
                 format="%.1f",
-                help="1개월 12%, 3개월 33%, 6개월 25%, 가속도 15%, 거래량 증가 15%를 합산한 점수"
+                help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%",
             ),
-            "1개월수익률": st.column_config.NumberColumn("1M (%)", format="%.1f%%"),
-            "3개월수익률": st.column_config.NumberColumn("3M (%)", format="%.1f%%"),
-            "이전3개월수익률": st.column_config.NumberColumn("이전 3M (%)", format="%.1f%%"),
-            "상대3개월수익률": st.column_config.NumberColumn("상대 3M", format="%.1f%%"),
-            "6개월수익률": st.column_config.NumberColumn("6M (%)", format="%.1f%%"),
-            "가속도": st.column_config.NumberColumn("가속도", format="%.2f"),
-            "거래량증가": st.column_config.NumberColumn("거래량증가", format="%.2f"),
-            "추격위험": st.column_config.TextColumn("추격위험"),
-            "현재가": st.column_config.NumberColumn("현재가", format=price_format)
+            "1개월수익률":    st.column_config.NumberColumn("1M",    format="%.1f%%"),
+            "3개월수익률":    st.column_config.NumberColumn("3M",    format="%.1f%%"),
+            "상대3개월수익률": st.column_config.NumberColumn("상대3M", format="%.1f%%"),
+            "6개월수익률":    st.column_config.NumberColumn("6M",    format="%.1f%%"),
+            "가속도":         st.column_config.NumberColumn("가속도", format="%.2f",
+                                help="최근 3M - 이전 3M 수익률. 양수=가속, 음수=감속"),
+            "거래량증가":     st.column_config.NumberColumn("거래량↑", format="%.2f",
+                                help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
+            "추격위험":       st.column_config.TextColumn("추격위험"),
+            "현재가":         st.column_config.NumberColumn("현재가", format=price_format),
         },
         hide_index=True,
-        use_container_width=True
+        use_container_width=True,
     )
 
     missing_view_df = view_df[view_df["상태"].astype(str).eq("가격부족")].copy() if "상태" in view_df.columns else pd.DataFrame()
