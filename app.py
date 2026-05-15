@@ -14139,6 +14139,18 @@ def render_today_queue_tab(mode):
     watch_items = tuple(st.session_state.get("watchlist", []))
     if not watch_items:
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
+        st.divider()
+        render_today_market_flow_panel()
+        return
+
+    st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
+    if not should_run_heavy_analysis(
+        "today_queue_lazy",
+        "오늘 점검은 관심/보유 종목의 가격과 벤치마크를 여러 개 조회하므로 필요할 때만 실행합니다.",
+        run_label="오늘 종목 점검 계산/새로고침",
+    ):
+        st.divider()
+        render_today_market_flow_panel()
         return
 
     with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
@@ -14146,6 +14158,8 @@ def render_today_queue_tab(mode):
 
     if summary_df.empty:
         st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
+        st.divider()
+        render_today_market_flow_panel()
         return
 
     if "판정분류" in summary_df.columns:
@@ -14428,8 +14442,8 @@ if IS_PUBLIC_DEMO:
     st.stop()
 
 MAIN_PAGE_OPTIONS = {
-    "today": "✅ 오늘 점검",
     "asset": "💼 자산 현황",
+    "today": "✅ 오늘 점검",
     "portfolio": "📊 포트폴리오 분석",
     "dashboard": "📋 전광판",
     "precision": "🔍 정밀관측소",
