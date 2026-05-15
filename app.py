@@ -5033,6 +5033,27 @@ def get_today_market_flow_snapshot():
     }
 
 
+def add_money_flow_row_to_watchlist(row):
+    ticker = sanitize_ticker_value(row.get("Ticker", ""))
+    if not ticker:
+        return False, "티커가 없어 전광판에 보낼 수 없습니다."
+    if is_in_watchlist(ticker):
+        return False, f"{ticker}는 이미 전광판에 등록되어 있습니다."
+
+    name = sanitize_asset_name(row.get("ETF 이름", "") or row.get("섹터", ""), ticker)
+    default_asset_class = "kr_etf" if is_kr_listed(ticker) else "us_etf_other"
+    asset_class = infer_asset_class_for_ticker(ticker, default_asset_class)
+    st.session_state.watchlist.append(sanitize_watchlist_item({
+        "name": name,
+        "ticker": ticker,
+        "is_etf": True,
+        "asset_class": asset_class,
+        "fin_score": 0,
+    }))
+    persist_watchlist()
+    return True, f"{name} ({ticker})를 전광판에 추가했습니다."
+
+
 def get_plotly_selected_ticker(event):
     if not event:
         return ""
@@ -14100,6 +14121,48 @@ def render_today_market_flow_panel():
 
     st.caption("돈흐름점수는 1/3/6개월 수익률, 가속도, 거래량 증가를 함께 본 가격 기반 지표입니다. 높다고 바로 매수하라는 뜻은 아닙니다.")
 
+    with st.expander("전광판으로 보내기", expanded=False):
+        send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
+        available_groups = [g for g in send_groups if g in set(flow_df["구분"].astype(str))]
+        if not available_groups:
+            st.info("전광판으로 보낼 ETF 후보가 없습니다.")
+        else:
+            group_col, select_col, action_col = st.columns([1.15, 2.4, 1.0])
+            with group_col:
+                send_group = st.selectbox("그룹", available_groups, key="today_flow_send_group")
+            send_df = (
+                flow_df[flow_df["구분"].astype(str).eq(send_group)]
+                .dropna(subset=["돈흐름점수"])
+                .sort_values("돈흐름점수", ascending=False)
+                .copy()
+            )
+            if send_df.empty:
+                st.info("선택한 그룹에 계산 가능한 ETF가 없습니다.")
+            else:
+                option_rows = send_df.reset_index(drop=True)
+                option_labels = [
+                    f"{idx + 1}. {row['섹터']} | {row['Ticker']} | {fmt_flow_score(row['돈흐름점수'])} pts"
+                    for idx, row in option_rows.iterrows()
+                ]
+                with select_col:
+                    selected_label = st.selectbox("보낼 섹터/ETF", option_labels, key="today_flow_send_target")
+                selected_idx = option_labels.index(selected_label)
+                selected_row = option_rows.iloc[selected_idx]
+                already_added = is_in_watchlist(selected_row["Ticker"])
+                with action_col:
+                    st.write("")
+                    st.write("")
+                    if already_added:
+                        st.caption("이미 등록됨")
+                    elif st.button("전광판 추가", key="today_flow_send_add", use_container_width=True):
+                        ok, message = add_money_flow_row_to_watchlist(selected_row)
+                        if ok:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.info(message)
+                st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
+
     rank_cols = st.columns(2)
     with rank_cols[0]:
         st.markdown("##### 한국 섹터 TOP 5")
@@ -14425,6 +14488,289 @@ st.session_state["_app_usdkrw"] = usdkrw
 st.session_state["_app_holdings_table"] = holdings_table
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
+
+
+def render_print_report_v2():
+    def _num(value, default=0.0):
+        try:
+            return clean_float(value, default)
+        except Exception:
+            try:
+                return float(value)
+            except Exception:
+                return default
+
+    def _fmt_money(value):
+        value = _num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:,.0f}원"
+
+    def _fmt_pct(value, digits=2):
+        value = _num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:.{digits}f}%"
+
+    def _fmt_ratio(value, digits=2):
+        value = _num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:.{digits}f}"
+
+    def _make_report_asset_df():
+        base_df = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
+        total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
+        report_df = append_cash_rows(base_df, krw_cash, usd_cash, usdkrw, total_asset)
+        if report_df is None or report_df.empty:
+            return pd.DataFrame()
+
+        for col in ["원화환산", "현재비중", "목표비중", "리밸런싱목표비중", "비중차이", "평가손익", "수익률"]:
+            if col in report_df.columns:
+                report_df[col] = pd.to_numeric(report_df[col], errors="coerce").fillna(0.0)
+
+        if "리밸런싱목표비중" not in report_df.columns and "목표비중" in report_df.columns:
+            report_df["리밸런싱목표비중"] = report_df["목표비중"]
+        if "비중차이" not in report_df.columns:
+            target_col = "리밸런싱목표비중" if "리밸런싱목표비중" in report_df.columns else "목표비중"
+            if "현재비중" in report_df.columns and target_col in report_df.columns:
+                report_df["비중차이"] = report_df["현재비중"] - report_df[target_col]
+
+        if "평가손익_원화" not in report_df.columns:
+            if "평가손익" in report_df.columns:
+                def _pnl_krw(row):
+                    ticker = str(row.get("티커", "")).upper()
+                    pnl = _num(row.get("평가손익"), 0.0)
+                    if ticker.endswith((".KS", ".KQ")) or "CASH" in ticker:
+                        return pnl
+                    return pnl * _num(usdkrw, 1400.0)
+                report_df["평가손익_원화"] = report_df.apply(_pnl_krw, axis=1)
+            else:
+                report_df["평가손익_원화"] = 0.0
+
+        if "수익률_pct" not in report_df.columns:
+            if "수익률" in report_df.columns:
+                report_df["수익률_pct"] = report_df["수익률"] * 100
+            else:
+                report_df["수익률_pct"] = 0.0
+
+        return report_df
+
+    def _print_table(df, columns, max_rows=20):
+        if df is None or df.empty:
+            st.caption("표시할 데이터가 없습니다.")
+            return
+        show_cols = [col for col in columns if col in df.columns]
+        if not show_cols:
+            show_cols = list(df.columns[:8])
+        st.table(df.loc[:, show_cols].head(max_rows))
+
+    def _format_asset_table(df, max_rows=30):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        view = df.copy()
+        target_col = "리밸런싱목표비중" if "리밸런싱목표비중" in view.columns else "목표비중"
+        rename_map = {
+            "자산명": "자산명",
+            "티커": "티커",
+            "원화환산": "평가금액",
+            "현재비중": "현재비중",
+            target_col: "목표비중",
+            "비중차이": "비중차이",
+            "평가손익_원화": "평가손익",
+            "수익률_pct": "수익률",
+        }
+        cols = [col for col in rename_map if col in view.columns]
+        view = view[cols].rename(columns=rename_map)
+        for col in ["평가금액", "평가손익"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_money)
+        for col in ["현재비중", "목표비중", "비중차이", "수익률"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_pct)
+        return view.head(max_rows)
+
+    def _format_generic_table(df, max_rows=12):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        view = df.copy().head(max_rows)
+        for col in view.columns:
+            col_text = str(col)
+            if any(key in col_text for key in ["금액", "평가자산", "투입원금", "손익", "원화환산", "현재가", "배당"]):
+                view[col] = view[col].apply(_fmt_money)
+            elif any(key in col_text for key in ["비중", "수익률", "변동성", "MDD", "VaR"]):
+                view[col] = view[col].apply(_fmt_pct)
+            elif any(key in col_text for key in ["상관", "샤프", "소르티노", "칼마"]):
+                view[col] = view[col].apply(_fmt_ratio)
+        return view
+
+    with st.sidebar:
+        st.success("인쇄 모드")
+        st.caption("브라우저에서 Ctrl + P를 누르면 현재 리포트를 출력할 수 있습니다.")
+        if st.button("인쇄 모드 끄기", key="print_mode_off_v2"):
+            st.session_state["print_mode_toggle_final"] = False
+            st.rerun()
+
+    st.markdown(
+        """
+        <style>
+        @media print {
+            [data-testid="stSidebar"], [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
+            .main .block-container { max-width: 100% !important; padding: 12px 24px !important; }
+            .print-page-break { page-break-before: always; }
+        }
+        .print-note {
+            border: 1px solid rgba(148, 163, 184, .35);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: #cbd5e1;
+            background: rgba(15, 23, 42, .45);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    report_df = _make_report_asset_df()
+    reserve_summary = calc_reserve_summary(report_df, reserve_target_weight) if not report_df.empty else {}
+    current_asset = _num(portfolio_summary.get("current_asset"), 0.0)
+    stock_value = _num(portfolio_summary.get("stock_value"), 0.0)
+    cash_value = _num(portfolio_summary.get("cash_value"), 0.0)
+    cum_profit = _num(portfolio_summary.get("cum_profit"), 0.0)
+    cum_return = _num(portfolio_summary.get("cum_return"), 0.0)
+    total_dividend = _num(portfolio_summary.get("total_dividend"), 0.0)
+    waiting_value = _num(reserve_summary.get("waiting_value"), cash_value)
+    waiting_pct = _num(reserve_summary.get("waiting_pct"), 0.0)
+    target_waiting_pct = _num(reserve_summary.get("target_pct"), reserve_target_weight)
+
+    st.title("Stock Lab 출력 리포트")
+    st.caption(f"생성일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')} / 기준 환율: {_num(usdkrw, 0):,.2f}원")
+    st.markdown(
+        "<div class='print-note'>투자 추천서가 아니라 현재 자산, 포트폴리오 리스크, 오늘 점검할 항목을 한 번에 보기 위한 개인용 관리 리포트입니다.</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("## 1. 자산현황")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("총자산", _fmt_money(current_asset), f"투자자산 {_fmt_money(stock_value)}")
+    k2.metric("누적손익", _fmt_money(cum_profit), _fmt_pct(cum_return))
+    k3.metric("누적수익률", _fmt_pct(cum_return), f"누적배당 {_fmt_money(total_dividend)}")
+    k4.metric("대기자금", _fmt_money(waiting_value), f"{waiting_pct:.2f}% / 목표 {target_waiting_pct:.2f}%")
+
+    if not report_df.empty:
+        st.markdown("#### 자산별 요약")
+        st.table(_format_asset_table(report_df, max_rows=30))
+
+        top_value_df = report_df.sort_values("원화환산", ascending=False) if "원화환산" in report_df.columns else report_df
+        st.markdown("#### 비중 상위 자산")
+        st.table(_format_asset_table(top_value_df, max_rows=8))
+
+        try:
+            monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+        except Exception:
+            monthly_perf_df = pd.DataFrame()
+        if monthly_perf_df is not None and not monthly_perf_df.empty:
+            st.markdown("#### 최근 월별 기록")
+            recent_cols = ["month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]
+            recent_df = monthly_perf_df.tail(6).copy()
+            label_map = {
+                "month_label": "월",
+                "evaluated_value": "평가자산",
+                "total_invested": "투입원금",
+                "cum_profit": "누적손익",
+                "cum_return_pct": "누적수익률",
+                "dividend": "월배당",
+            }
+            recent_df = recent_df[[c for c in recent_cols if c in recent_df.columns]].rename(columns=label_map)
+            st.table(_format_generic_table(recent_df, max_rows=6))
+    else:
+        st.info("출력할 보유 자산이 없습니다.")
+
+    st.markdown("<div class='print-page-break'></div>", unsafe_allow_html=True)
+    st.markdown("## 2. 포트폴리오 분석")
+    try:
+        metrics, asset_risk_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
+            holdings_table,
+            krw_cash,
+            usd_cash,
+            usdkrw,
+            reserve_target_weight,
+            period="1y",
+            analysis_start_date=get_portfolio_analysis_start_date(monthly_logs_df),
+        )
+    except Exception as exc:
+        metrics, asset_risk_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.Series(dtype=float), pd.DataFrame()
+        st.warning(f"포트폴리오 분석 계산 중 일부 데이터를 불러오지 못했습니다: {exc}")
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("위험도", f"{metrics.get('risk_grade', '-')}", f"{_num(metrics.get('risk_index'), 0):.0f}/100")
+    p2.metric("연환산 변동성", _fmt_pct(metrics.get("portfolio_vol"), 1))
+    p3.metric("분석기간 MDD", _fmt_pct(metrics.get("portfolio_mdd"), 1))
+    p4.metric("상위 3개 비중", _fmt_pct(metrics.get("top3_weight"), 1))
+
+    if asset_risk_df is not None and not asset_risk_df.empty:
+        st.markdown("#### 자산별 위험 요약")
+        _print_table(
+            _format_generic_table(asset_risk_df, max_rows=20),
+            ["자산명", "티커", "원화환산", "전체비중", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"],
+            max_rows=20,
+        )
+    if notes_df is not None and not notes_df.empty:
+        st.markdown("#### 확인할 리스크")
+        st.table(notes_df.head(12))
+
+    st.markdown("<div class='print-page-break'></div>", unsafe_allow_html=True)
+    st.markdown("## 3. 오늘의 점검")
+    watchlist_items = st.session_state.get("watchlist", [])
+    if not watchlist_items:
+        st.info("전광판에 등록된 점검 종목이 없습니다.")
+    else:
+        try:
+            with st.spinner("오늘 점검 데이터를 계산하는 중입니다."):
+                today_df = get_all_summary(
+                    tuple(sorted(st.session_state.fin_score_map.items())),
+                    app_mode,
+                    tuple(watchlist_items),
+                )
+        except Exception as exc:
+            today_df = pd.DataFrame()
+            st.warning(f"오늘 점검 데이터를 불러오지 못했습니다: {exc}")
+
+        if today_df is None or today_df.empty:
+            st.info("오늘 점검 결과가 비어 있습니다.")
+        else:
+            today_df = today_df.copy()
+            for col in ["Adj점수", "RS", "섹터RS", "MDD"]:
+                if col in today_df.columns:
+                    today_df[col] = pd.to_numeric(today_df[col], errors="coerce")
+            hard_block_count = int(today_df.get("하드블록", pd.Series(dtype=bool)).fillna(False).sum()) if "하드블록" in today_df.columns else 0
+            caution_count = int(today_df.astype(str).apply(lambda row: row.str.contains("주의|차단|과열|대기", regex=True).any(), axis=1).sum())
+            buyish_count = int(today_df.astype(str).apply(lambda row: row.str.contains("매수|분할|후보|관심", regex=True).any(), axis=1).sum())
+
+            t1, t2, t3, t4 = st.columns(4)
+            t1.metric("점검 종목", f"{len(today_df)}개")
+            t2.metric("매수/관심 신호", f"{buyish_count}개")
+            t3.metric("주의/대기 신호", f"{caution_count}개")
+            t4.metric("하드블록", f"{hard_block_count}개")
+
+            signal_cols = ["종목명", "티커", "📌후보등급", "🔥기술적 타점", "핵심근거", "Adj점수", "RS", "섹터RS", "MDD"]
+            candidate_df = today_df
+            if "하드블록" in candidate_df.columns:
+                candidate_df = candidate_df[~candidate_df["하드블록"].fillna(False)]
+            if "Adj점수" in candidate_df.columns:
+                candidate_df = candidate_df.sort_values("Adj점수", ascending=False)
+            st.markdown("#### 우선 점검 후보")
+            _print_table(candidate_df, signal_cols, max_rows=12)
+
+            caution_df = today_df
+            if "하드블록" in caution_df.columns:
+                caution_df = caution_df.sort_values("하드블록", ascending=False)
+            if "Adj점수" in caution_df.columns:
+                caution_df = caution_df.sort_values("Adj점수", ascending=True)
+            st.markdown("#### 주의/대기 확인")
+            _print_table(caution_df, signal_cols, max_rows=12)
+
+            st.markdown("#### 전체 점검 요약")
+            _print_table(today_df, signal_cols, max_rows=25)
+
+
+if st.session_state.get("print_mode_toggle_final", False):
+    render_print_report_v2()
+    st.stop()
 
 if IS_PUBLIC_DEMO:
     render_public_demo_fast_shell(
@@ -15929,6 +16275,4 @@ with st.sidebar:
         st.info("인쇄 모드가 켜졌습니다. Ctrl + P를 눌러 인쇄하세요.")
 
 if print_mode:
-    st.markdown('<style> div[data-testid="stTabs"] { display: none !important; } </style>', unsafe_allow_html=True)
-    render_full_print_report()
-    st.stop()
+    st.rerun()
