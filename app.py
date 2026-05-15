@@ -14796,6 +14796,237 @@ def render_print_report_v2():
             view["추가 필요 금액"] = view["추가 필요 금액"].apply(_fmt_money)
         return view
 
+    def _render_asset_report_charts(df):
+        if df is None or df.empty or "원화환산" not in df.columns:
+            return
+
+        chart_df = df.copy()
+        for col in ["원화환산", "수익률_pct", "현재비중", "목표비중", "리밸런싱목표비중", "비중차이", "평가손익_원화"]:
+            if col in chart_df.columns:
+                chart_df[col] = pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0)
+        chart_df = chart_df[chart_df["원화환산"] > 0].copy()
+        if chart_df.empty:
+            return
+
+        if "자산명" not in chart_df.columns:
+            chart_df["자산명"] = chart_df.get("티커", "")
+        if "티커" not in chart_df.columns:
+            chart_df["티커"] = ""
+        target_col = "리밸런싱목표비중" if "리밸런싱목표비중" in chart_df.columns else "목표비중"
+        if target_col not in chart_df.columns:
+            chart_df[target_col] = 0.0
+        if "비중차이" not in chart_df.columns:
+            chart_df["비중차이"] = chart_df["현재비중"] - chart_df[target_col]
+
+        st.markdown("#### 포트폴리오 히트맵 / 타점·비중·수익률 매트릭스")
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_tree = go.Figure(go.Treemap(
+                labels=chart_df["자산명"],
+                parents=[""] * len(chart_df),
+                values=chart_df["원화환산"],
+                marker=dict(
+                    colors=chart_df["수익률_pct"],
+                    colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
+                    cmid=0,
+                    colorbar=dict(title="수익률"),
+                ),
+                customdata=chart_df[[target_col, "현재비중", "평가손익_원화", "수익률_pct"]],
+                hovertemplate=(
+                    "<b>%{label}</b><br>"
+                    "평가금액: ₩%{value:,.0f}<br>"
+                    "현재/목표: %{customdata[1]:.2f}% / %{customdata[0]:.2f}%<br>"
+                    "평가손익: ₩%{customdata[2]:,.0f}<br>"
+                    "수익률: %{customdata[3]:.2f}%<extra></extra>"
+                ),
+            ))
+            fig_tree.update_layout(template="plotly_dark", height=360, margin=dict(t=36, l=8, r=8, b=8), title="포트폴리오 히트맵")
+            st.plotly_chart(fig_tree, use_container_width=True)
+
+        with c2:
+            matrix_df = chart_df.copy()
+            if "bucket" in matrix_df.columns:
+                matrix_df = matrix_df[~matrix_df["bucket"].apply(lambda b: normalize_bucket(str(b)) in {"cash", "reserve"})].copy()
+            if matrix_df.empty:
+                st.info("매트릭스로 표시할 운용 자산이 없습니다.")
+            else:
+                signal_cache = st.session_state.get("_ticker_signal_cache", {})
+                matrix_df["타점"] = matrix_df["티커"].apply(lambda t: str(signal_cache.get(sanitize_ticker_value(t), "-") or "-"))
+                max_value = max(float(matrix_df["원화환산"].max() or 0), 1.0)
+                matrix_df["_size"] = np.clip(np.sqrt(matrix_df["원화환산"] / max_value) * 46, 12, 46)
+                matrix_df["_label"] = ""
+                top_label_idx = matrix_df.sort_values("원화환산", ascending=False).head(12).index
+                matrix_df.loc[top_label_idx, "_label"] = matrix_df.loc[top_label_idx, "자산명"]
+                fig_matrix = go.Figure(go.Scatter(
+                    x=matrix_df["비중차이"],
+                    y=matrix_df["수익률_pct"],
+                    mode="markers+text",
+                    text=matrix_df["_label"],
+                    textposition="top center",
+                    marker=dict(
+                        size=matrix_df["_size"],
+                        color=matrix_df["현재비중"],
+                        colorscale="Viridis",
+                        showscale=True,
+                        colorbar=dict(title="현재비중"),
+                        opacity=0.86,
+                    ),
+                    customdata=matrix_df[["자산명", "티커", "타점", "현재비중", target_col, "원화환산"]],
+                    hovertemplate=(
+                        "<b>%{customdata[0]}</b> (%{customdata[1]})<br>"
+                        "타점: %{customdata[2]}<br>"
+                        "비중차이: %{x:.2f}%p<br>"
+                        "수익률: %{y:.2f}%<br>"
+                        "현재/목표: %{customdata[3]:.2f}% / %{customdata[4]:.2f}%<br>"
+                        "평가금액: ₩%{customdata[5]:,.0f}<extra></extra>"
+                    ),
+                ))
+                fig_matrix.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
+                fig_matrix.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
+                fig_matrix.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    margin=dict(t=36, l=8, r=8, b=8),
+                    title="타점/비중/수익률 매트릭스",
+                    xaxis_title="비중차이(%p)",
+                    yaxis_title="수익률(%)",
+                )
+                st.plotly_chart(fig_matrix, use_container_width=True)
+
+    def _render_monthly_report_charts(monthly_perf_df):
+        if monthly_perf_df is None or monthly_perf_df.empty:
+            return
+        required = {"month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct"}
+        if not required.issubset(set(monthly_perf_df.columns)):
+            return
+
+        st.markdown("#### 월별 흐름 차트")
+        chart_df = monthly_perf_df.copy()
+        for col in ["evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]:
+            if col in chart_df.columns:
+                chart_df[col] = pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0)
+        if "dividend" not in chart_df.columns:
+            chart_df["dividend"] = 0.0
+
+        p1, p2 = st.columns(2)
+        with p1:
+            fig_monthly_asset = go.Figure()
+            fig_monthly_asset.add_trace(go.Scatter(
+                x=chart_df["month_label"],
+                y=chart_df["evaluated_value"],
+                mode="lines+markers",
+                name="평가자산",
+                line=dict(color="#ef4444", width=3),
+                hovertemplate="%{x}<br>평가자산: ₩%{y:,.0f}<extra></extra>",
+            ))
+            fig_monthly_asset.add_trace(go.Scatter(
+                x=chart_df["month_label"],
+                y=chart_df["total_invested"],
+                mode="lines+markers",
+                name="투입원금",
+                line=dict(color="#cbd5e1", width=2),
+                hovertemplate="%{x}<br>투입원금: ₩%{y:,.0f}<extra></extra>",
+            ))
+            fig_monthly_asset.update_layout(
+                template="plotly_dark",
+                height=330,
+                title="월별 투자 기록",
+                yaxis_title="원",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                margin=dict(t=50, l=8, r=8, b=8),
+            )
+            st.plotly_chart(fig_monthly_asset, use_container_width=True)
+
+        with p2:
+            fig_pnl_div = make_subplots(specs=[[{"secondary_y": True}]])
+            pnl_colors = np.where(chart_df["cum_profit"] >= 0, "#22d3ee", "#ef4444")
+            fig_pnl_div.add_trace(go.Bar(
+                x=chart_df["month_label"],
+                y=chart_df["cum_profit"],
+                name="누적손익",
+                marker_color=pnl_colors,
+                hovertemplate="%{x}<br>누적손익: ₩%{y:,.0f}<extra></extra>",
+            ), secondary_y=False)
+            fig_pnl_div.add_trace(go.Scatter(
+                x=chart_df["month_label"],
+                y=chart_df["dividend"],
+                mode="lines+markers",
+                name="월별배당금",
+                line=dict(color="#fbbf24", width=3),
+                hovertemplate="%{x}<br>월별배당금: ₩%{y:,.0f}<extra></extra>",
+            ), secondary_y=True)
+            fig_pnl_div.add_hline(y=0, line_color="#94a3b8")
+            fig_pnl_div.update_layout(
+                template="plotly_dark",
+                height=330,
+                title="누적손익 / 월별배당금",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                margin=dict(t=50, l=8, r=8, b=8),
+            )
+            fig_pnl_div.update_yaxes(title_text="누적손익(원)", secondary_y=False)
+            fig_pnl_div.update_yaxes(title_text="배당금(원)", secondary_y=True)
+            st.plotly_chart(fig_pnl_div, use_container_width=True)
+
+        p3, p4 = st.columns(2)
+        with p3:
+            fig_cum_return = go.Figure(go.Scatter(
+                x=chart_df["month_label"],
+                y=chart_df["cum_return_pct"],
+                mode="lines+markers",
+                name="월별 누적수익률",
+                line=dict(color="#22c55e", width=3),
+                hovertemplate="%{x}<br>누적수익률: %{y:.2f}%<extra></extra>",
+            ))
+            fig_cum_return.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+            fig_cum_return.update_layout(
+                template="plotly_dark",
+                height=300,
+                title="월별 누적수익률",
+                yaxis_title="수익률(%)",
+                margin=dict(t=42, l=8, r=8, b=8),
+            )
+            st.plotly_chart(fig_cum_return, use_container_width=True)
+
+        with p4:
+            try:
+                benchmark_df = build_benchmark_return_df(monthly_perf_df)
+            except Exception:
+                benchmark_df = pd.DataFrame()
+            if benchmark_df is None or benchmark_df.empty:
+                st.info("벤치마크 비교 데이터를 계산할 수 없습니다.")
+            else:
+                fig_benchmark = go.Figure()
+                color_map = {
+                    "내 기간수익률": "#00ff38",
+                    "S&P500": "#f87171",
+                    "나스닥100": "#60a5fa",
+                    "코스피": "#a7f3d0",
+                }
+                for label in benchmark_df["구분"].drop_duplicates():
+                    part = benchmark_df[benchmark_df["구분"] == label]
+                    fig_benchmark.add_trace(go.Scatter(
+                        x=part["month_label"],
+                        y=part["수익률_pct"],
+                        mode="lines+markers",
+                        name=label,
+                        line=dict(
+                            color=color_map.get(label, "#cbd5e1"),
+                            width=3 if label == "내 기간수익률" else 2,
+                            dash="solid" if label == "내 기간수익률" else "dot",
+                        ),
+                        hovertemplate=f"%{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>",
+                    ))
+                fig_benchmark.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+                fig_benchmark.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    title="첫 기록월 대비 수익률 변화 vs 벤치마크",
+                    yaxis_title="수익률(%)",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+                    margin=dict(t=42, l=8, r=8, b=8),
+                )
+                st.plotly_chart(fig_benchmark, use_container_width=True)
+
     with st.sidebar:
         st.success("인쇄 모드")
         st.caption("브라우저에서 Ctrl + P를 누르면 현재 리포트를 출력할 수 있습니다.")
