@@ -14598,6 +14598,204 @@ def render_print_report_v2():
                 view[col] = view[col].apply(_fmt_ratio)
         return view
 
+    def _active_plan_rows():
+        if holdings_table is None or holdings_table.empty:
+            return pd.DataFrame()
+        df = holdings_table.copy()
+        target_col = "리밸런싱목표비중" if "리밸런싱목표비중" in df.columns else "목표비중"
+        if target_col not in df.columns:
+            return pd.DataFrame()
+        if "bucket" in df.columns:
+            df = df[~df["bucket"].apply(lambda b: normalize_bucket(str(b)) in {"reserve", "cash"})].copy()
+        if "운용대상" in df.columns:
+            df = df[df["운용대상"].apply(clean_bool)].copy()
+        df[target_col] = pd.to_numeric(df[target_col], errors="coerce").fillna(0.0)
+        df = df[df[target_col] > 0].copy()
+        df["_print_target_weight"] = df[target_col]
+        return df
+
+    def _build_monthly_plan_report():
+        monthly = _num(st.session_state.get("rebcalc_monthly", 750000), 750000)
+        carryover = _num(st.session_state.get("rebcalc_carryover", 0), 0.0)
+        total_invest = max(monthly + carryover, 0.0)
+        active_df = _active_plan_rows()
+        empty_metrics = {
+            "monthly": monthly,
+            "carryover": carryover,
+            "total_invest": total_invest,
+            "total_rec_krw": 0.0,
+            "krw_buy": 0.0,
+            "usd_buy_krw": 0.0,
+            "usd_buy": 0.0,
+            "underalloc_count": 0,
+        }
+        if active_df.empty or total_invest <= 0:
+            return pd.DataFrame(), empty_metrics
+
+        target_sum = float(active_df["_print_target_weight"].sum())
+        if target_sum <= 0:
+            return pd.DataFrame(), empty_metrics
+
+        signal_cache = st.session_state.get("_ticker_signal_cache", {})
+        accum_map = st.session_state.get("rebcalc_accum", {})
+        rows = []
+        for _, row in active_df.iterrows():
+            ticker = sanitize_ticker_value(row.get("티커", ""))
+            name = sanitize_asset_name(row.get("자산명", ""), ticker)
+            bucket = normalize_bucket(str(row.get("bucket", "core")))
+            target_w = _num(row.get("_print_target_weight"), 0.0)
+            current_price = _num(row.get("현재가"), 0.0)
+            avg_price = _num(row.get("매입가"), 0.0)
+            is_usd = bool(ticker and not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH"))
+            unit_price_krw = current_price * _num(usdkrw, 1400.0) if is_usd else current_price
+            base_alloc = total_invest * (target_w / target_sum)
+
+            signal = str(signal_cache.get(ticker, "") or "").strip()
+            dip_level = 0
+            if bucket == "leverage" and avg_price > 0 and current_price > 0:
+                pct_drop = (current_price - avg_price) / avg_price
+                if pct_drop <= -0.15:
+                    dip_level = 3
+                elif pct_drop <= -0.10:
+                    dip_level = 2
+                elif pct_drop <= -0.05:
+                    dip_level = 1
+            try:
+                multiplier = _rebcalc_signal_multiplier(signal, bucket, dip_level=dip_level) if signal else 1.0
+            except Exception:
+                multiplier = 1.0
+
+            alloc = base_alloc * multiplier
+            rows.append({
+                "name": name,
+                "ticker": ticker,
+                "bucket": bucket,
+                "target_w": target_w,
+                "signal": signal or "목표비중 기준",
+                "multiplier": multiplier,
+                "base_alloc": base_alloc,
+                "alloc": alloc,
+                "unit_price_krw": unit_price_krw,
+                "is_usd": is_usd,
+                "accum": _num(accum_map.get(ticker), 0.0),
+            })
+
+        blocked_total = sum(r["base_alloc"] for r in rows if r["multiplier"] <= 0)
+        investable = [r for r in rows if r["multiplier"] > 0]
+        inv_target_sum = sum(r["target_w"] for r in investable) or 1.0
+        redistribute = bool(st.session_state.get("rebcalc_redistribute", True))
+        for r in rows:
+            if r["multiplier"] <= 0:
+                r["final_alloc"] = 0.0
+            else:
+                bonus = blocked_total * (r["target_w"] / inv_target_sum) if redistribute else 0.0
+                r["final_alloc"] = r["alloc"] + bonus
+
+        total_final = sum(r["final_alloc"] for r in rows)
+        if total_final > total_invest and total_final > 0:
+            scale = total_invest / total_final
+            for r in rows:
+                r["final_alloc"] *= scale
+
+        table_rows = []
+        total_rec_krw = 0.0
+        krw_buy = 0.0
+        usd_buy_krw = 0.0
+        underalloc_count = 0
+        for r in rows:
+            effective_alloc = r["final_alloc"] + r["accum"]
+            shares = int(effective_alloc / r["unit_price_krw"]) if r["unit_price_krw"] > 0 and r["final_alloc"] > 0 else 0
+            rec_krw = shares * r["unit_price_krw"]
+            total_rec_krw += rec_krw
+            if r["is_usd"]:
+                usd_buy_krw += rec_krw
+            else:
+                krw_buy += rec_krw
+            if r["final_alloc"] > 0 and shares == 0:
+                underalloc_count += 1
+            status = "매수 가능" if shares > 0 else ("1주 미달/누적" if r["final_alloc"] > 0 else "이번달 제외")
+            table_rows.append({
+                "자산명": r["name"],
+                "티커": r["ticker"],
+                "버킷": r["bucket"],
+                "목표비중": r["target_w"],
+                "판정기준": r["signal"],
+                "이번달 배분": r["final_alloc"],
+                "1주 가격": r["unit_price_krw"],
+                "예상 주수": shares,
+                "예상 매수금": rec_krw,
+                "현재 누적금": r["accum"],
+                "상태": status,
+            })
+
+        metrics = {
+            "monthly": monthly,
+            "carryover": carryover,
+            "total_invest": total_invest,
+            "total_rec_krw": total_rec_krw,
+            "krw_buy": krw_buy,
+            "usd_buy_krw": usd_buy_krw,
+            "usd_buy": usd_buy_krw / _num(usdkrw, 1400.0) if _num(usdkrw, 0.0) > 0 else 0.0,
+            "underalloc_count": underalloc_count,
+        }
+        return pd.DataFrame(table_rows), metrics
+
+    def _build_total_needed_shares_report():
+        active_df = _active_plan_rows()
+        if active_df.empty:
+            return pd.DataFrame()
+        total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
+        rows = []
+        for _, row in active_df.iterrows():
+            ticker = sanitize_ticker_value(row.get("티커", ""))
+            name = sanitize_asset_name(row.get("자산명", ""), ticker)
+            current_price = _num(row.get("현재가"), 0.0)
+            qty_now = _num(row.get("보유량"), 0.0)
+            target_w = _num(row.get("_print_target_weight"), 0.0)
+            bucket = normalize_bucket(str(row.get("bucket", "core")))
+            is_usd = bool(ticker and not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH"))
+            unit_price_krw = current_price * _num(usdkrw, 1400.0) if is_usd else current_price
+            target_value = total_asset * target_w / 100 if total_asset > 0 else 0.0
+            target_shares = target_value / unit_price_krw if unit_price_krw > 0 else 0.0
+            needed_shares = target_shares - qty_now
+            needed_value = max(needed_shares, 0.0) * unit_price_krw
+            rows.append({
+                "자산명": name,
+                "티커": ticker,
+                "버킷": bucket,
+                "목표비중": target_w,
+                "목표 주수": target_shares,
+                "현재 주수": qty_now,
+                "추가 필요 주수": needed_shares,
+                "추가 필요 금액": needed_value,
+                "상태": "매수 필요" if needed_shares >= 0.5 else ("비중 초과" if needed_shares < -0.5 else "거의 도달"),
+            })
+        return pd.DataFrame(rows)
+
+    def _format_monthly_plan_table(df, max_rows=24):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        view = df.copy().sort_values(["상태", "이번달 배분"], ascending=[True, False]).head(max_rows)
+        for col in ["이번달 배분", "1주 가격", "예상 매수금", "현재 누적금"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_money)
+        if "목표비중" in view.columns:
+            view["목표비중"] = view["목표비중"].apply(_fmt_pct)
+        return view
+
+    def _format_needed_shares_table(df, max_rows=24):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        view = df.copy().sort_values("추가 필요 금액", ascending=False).head(max_rows)
+        for col in ["목표 주수", "현재 주수", "추가 필요 주수"]:
+            if col in view.columns:
+                view[col] = view[col].apply(lambda v: "-" if not np.isfinite(_num(v, np.nan)) else f"{_num(v):,.2f}")
+        if "목표비중" in view.columns:
+            view["목표비중"] = view["목표비중"].apply(_fmt_pct)
+        if "추가 필요 금액" in view.columns:
+            view["추가 필요 금액"] = view["추가 필요 금액"].apply(_fmt_money)
+        return view
+
     with st.sidebar:
         st.success("인쇄 모드")
         st.caption("브라우저에서 Ctrl + P를 누르면 현재 리포트를 출력할 수 있습니다.")
@@ -14652,36 +14850,37 @@ def render_print_report_v2():
     k4.metric("대기자금", _fmt_money(waiting_value), f"{waiting_pct:.2f}% / 목표 {target_waiting_pct:.2f}%")
 
     if not report_df.empty:
-        st.markdown("#### 자산별 요약")
-        st.table(_format_asset_table(report_df, max_rows=30))
-
-        top_value_df = report_df.sort_values("원화환산", ascending=False) if "원화환산" in report_df.columns else report_df
-        st.markdown("#### 비중 상위 자산")
-        st.table(_format_asset_table(top_value_df, max_rows=8))
-
-        try:
-            monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
-        except Exception:
-            monthly_perf_df = pd.DataFrame()
-        if monthly_perf_df is not None and not monthly_perf_df.empty:
-            st.markdown("#### 최근 월별 기록")
-            recent_cols = ["month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]
-            recent_df = monthly_perf_df.tail(6).copy()
-            label_map = {
-                "month_label": "월",
-                "evaluated_value": "평가자산",
-                "total_invested": "투입원금",
-                "cum_profit": "누적손익",
-                "cum_return_pct": "누적수익률",
-                "dividend": "월배당",
-            }
-            recent_df = recent_df[[c for c in recent_cols if c in recent_df.columns]].rename(columns=label_map)
-            st.table(_format_generic_table(recent_df, max_rows=6))
+        st.markdown("#### 자산 구성/비중 상세")
+        asset_detail_df = report_df.sort_values("현재비중", ascending=False) if "현재비중" in report_df.columns else report_df
+        st.table(_format_asset_table(asset_detail_df, max_rows=35))
     else:
         st.info("출력할 보유 자산이 없습니다.")
 
     st.markdown("<div class='print-page-break'></div>", unsafe_allow_html=True)
-    st.markdown("## 2. 포트폴리오 분석")
+    st.markdown("## 2. 이번달 운용계획")
+    plan_df, plan_metrics = _build_monthly_plan_report()
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("이번달 투입 가능", _fmt_money(plan_metrics["total_invest"]), f"적립 {_fmt_money(plan_metrics['monthly'])}")
+    m2.metric("예상 매수금", _fmt_money(plan_metrics["total_rec_krw"]))
+    m3.metric("달러 환전 필요", f"${plan_metrics['usd_buy']:,.2f}", _fmt_money(plan_metrics["usd_buy_krw"]))
+    m4.metric("1주 미달", f"{plan_metrics['underalloc_count']}개", f"이월 {_fmt_money(plan_metrics['carryover'])}")
+
+    st.markdown("#### 이번달 분배계획")
+    if plan_df.empty:
+        st.info("이번달 분배계획을 계산할 목표비중 또는 적립금이 없습니다.")
+    else:
+        st.table(_format_monthly_plan_table(plan_df, max_rows=24))
+        st.caption("인쇄 리포트의 분배계획은 월 적립 리밸런싱 계산기의 월 적립금, 이월금, 누적금을 읽어와 목표비중 기준으로 요약합니다.")
+
+    st.markdown("#### 총 필요 주수")
+    needed_df = _build_total_needed_shares_report()
+    if needed_df.empty:
+        st.info("총 필요 주수를 계산할 운용 대상 자산이 없습니다.")
+    else:
+        st.table(_format_needed_shares_table(needed_df, max_rows=24))
+
+    st.markdown("<div class='print-page-break'></div>", unsafe_allow_html=True)
+    st.markdown("## 3. 포트폴리오 분석 및 월별 성과")
     try:
         metrics, asset_risk_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
             holdings_table,
@@ -14713,59 +14912,32 @@ def render_print_report_v2():
         st.markdown("#### 확인할 리스크")
         st.table(notes_df.head(12))
 
-    st.markdown("<div class='print-page-break'></div>", unsafe_allow_html=True)
-    st.markdown("## 3. 오늘의 점검")
-    watchlist_items = st.session_state.get("watchlist", [])
-    if not watchlist_items:
-        st.info("전광판에 등록된 점검 종목이 없습니다.")
+    try:
+        monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+    except Exception:
+        monthly_perf_df = pd.DataFrame()
+    if monthly_perf_df is not None and not monthly_perf_df.empty:
+        st.markdown("#### 월별 성과 기록")
+        latest_month = monthly_perf_df.iloc[-1]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("최근 기록월", str(latest_month.get("month_label", "-")))
+        c2.metric("기록 평가자산", _fmt_money(latest_month.get("evaluated_value")))
+        c3.metric("기록 누적손익", _fmt_money(latest_month.get("cum_profit")))
+        c4.metric("기록 누적수익률", _fmt_pct(latest_month.get("cum_return_pct")))
+
+        perf_cols = ["month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]
+        perf_df = monthly_perf_df.tail(12).copy()
+        perf_df = perf_df[[c for c in perf_cols if c in perf_df.columns]].rename(columns={
+            "month_label": "월",
+            "evaluated_value": "평가자산",
+            "total_invested": "투입원금",
+            "cum_profit": "누적손익",
+            "cum_return_pct": "누적수익률",
+            "dividend": "월배당",
+        })
+        st.table(_format_generic_table(perf_df, max_rows=12))
     else:
-        try:
-            with st.spinner("오늘 점검 데이터를 계산하는 중입니다."):
-                today_df = get_all_summary(
-                    tuple(sorted(st.session_state.fin_score_map.items())),
-                    app_mode,
-                    tuple(watchlist_items),
-                )
-        except Exception as exc:
-            today_df = pd.DataFrame()
-            st.warning(f"오늘 점검 데이터를 불러오지 못했습니다: {exc}")
-
-        if today_df is None or today_df.empty:
-            st.info("오늘 점검 결과가 비어 있습니다.")
-        else:
-            today_df = today_df.copy()
-            for col in ["Adj점수", "RS", "섹터RS", "MDD"]:
-                if col in today_df.columns:
-                    today_df[col] = pd.to_numeric(today_df[col], errors="coerce")
-            hard_block_count = int(today_df.get("하드블록", pd.Series(dtype=bool)).fillna(False).sum()) if "하드블록" in today_df.columns else 0
-            caution_count = int(today_df.astype(str).apply(lambda row: row.str.contains("주의|차단|과열|대기", regex=True).any(), axis=1).sum())
-            buyish_count = int(today_df.astype(str).apply(lambda row: row.str.contains("매수|분할|후보|관심", regex=True).any(), axis=1).sum())
-
-            t1, t2, t3, t4 = st.columns(4)
-            t1.metric("점검 종목", f"{len(today_df)}개")
-            t2.metric("매수/관심 신호", f"{buyish_count}개")
-            t3.metric("주의/대기 신호", f"{caution_count}개")
-            t4.metric("하드블록", f"{hard_block_count}개")
-
-            signal_cols = ["종목명", "티커", "📌후보등급", "🔥기술적 타점", "핵심근거", "Adj점수", "RS", "섹터RS", "MDD"]
-            candidate_df = today_df
-            if "하드블록" in candidate_df.columns:
-                candidate_df = candidate_df[~candidate_df["하드블록"].fillna(False)]
-            if "Adj점수" in candidate_df.columns:
-                candidate_df = candidate_df.sort_values("Adj점수", ascending=False)
-            st.markdown("#### 우선 점검 후보")
-            _print_table(candidate_df, signal_cols, max_rows=12)
-
-            caution_df = today_df
-            if "하드블록" in caution_df.columns:
-                caution_df = caution_df.sort_values("하드블록", ascending=False)
-            if "Adj점수" in caution_df.columns:
-                caution_df = caution_df.sort_values("Adj점수", ascending=True)
-            st.markdown("#### 주의/대기 확인")
-            _print_table(caution_df, signal_cols, max_rows=12)
-
-            st.markdown("#### 전체 점검 요약")
-            _print_table(today_df, signal_cols, max_rows=25)
+        st.info("월별 성과 기록이 없습니다.")
 
 
 if st.session_state.get("print_mode_toggle_final", False):
