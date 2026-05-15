@@ -1095,7 +1095,11 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
         if r.status_code != 200:
             return {"ok": False, "reason": f"HTTP {r.status_code}", "rows": []}
 
-        content = r.content.decode("euc-kr", errors="replace")
+        # 네이버 금융이 UTF-8로 전환됐으므로 UTF-8 우선 시도, 실패 시 EUC-KR 폴백
+        try:
+            content = r.content.decode("utf-8")
+        except UnicodeDecodeError:
+            content = r.content.decode("euc-kr", errors="replace")
 
         # <tr> 행에서 날짜 패턴(YYYY.MM.DD)이 있는 행만 추출
         tr_blocks = _re.findall(r"<tr[^>]*>(.*?)</tr>", content, _re.DOTALL)

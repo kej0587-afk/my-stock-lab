@@ -952,7 +952,11 @@ def lookup_naver_stock_name(symbol):
             headers={"User-Agent": "Mozilla/5.0"},
         )
         raw = urllib.request.urlopen(req, timeout=4).read()
-        page = raw.decode("euc-kr", errors="ignore")
+        # 네이버 금융이 UTF-8로 전환됐으므로 UTF-8 우선 시도, 실패 시 EUC-KR 폴백
+        try:
+            page = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            page = raw.decode("euc-kr", errors="ignore")
     except Exception:
         return ""
 
