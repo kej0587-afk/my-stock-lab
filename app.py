@@ -5181,25 +5181,152 @@ def _load_benchmark_returns(bench_ticker: str) -> pd.Series:
         return pd.Series(dtype=float)
 
 
-def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline") -> bool:
+# ── 섹터/구분별 벤치마크 매핑 ────────────────────────────────────────
+# (bench_ticker, bench_label) | None → 비교 불가(절대수익 표시)
+_SECTOR_BENCH_MAP: dict[str, tuple[str, str] | None] = {
+    # ── 금/실물 ──────────────────────────────────────────────────────
+    "금":           ("GLD",       "금(GLD)"),
+    "한국 금현물":  ("GLD",       "금(GLD)"),
+    "금 커버드콜":  ("GLD",       "금(GLD)"),
+    "국제금커버드콜액티브": ("GLD", "금(GLD)"),
+    # ── 채권 ─────────────────────────────────────────────────────────
+    "미국 장기채":      ("TLT", "미국장기채(TLT)"),
+    "장기채 커버드콜":  ("TLT", "미국장기채(TLT)"),
+    "미국 단기채":      ("SHV", "미국단기채(SHV)"),
+    "하이일드채권":     ("HYG", "하이일드(HYG)"),
+    "종합채권":         ("AGG", "채권(AGG)"),
+    "국내 단기채":      ("AGG", "채권(AGG)"),
+    "금리형":           ("AGG", "채권(AGG)"),
+    # ── 비교 불가 매크로 ─────────────────────────────────────────────
+    "공포지수(VIX)":  None,
+    "비트코인":       None,
+    "미국 달러":      None,
+    "머니마켓":       None,
+    # ── 글로벌 지역 ──────────────────────────────────────────────────
+    "한국":     ("069500.KS", "KODEX200"),
+    "일본":     ("EWJ",       "일본주식(EWJ)"),
+    "중국":     ("MCHI",      "중국주식(MCHI)"),
+    "대만":     ("EWT",       "대만주식(EWT)"),
+    "홍콩":     ("EWH",       "홍콩주식(EWH)"),
+    "인도":     ("EEM",       "신흥국(EEM)"),
+    "베트남":   ("EEM",       "신흥국(EEM)"),
+    "브라질":   ("EEM",       "신흥국(EEM)"),
+    "멕시코":   ("EEM",       "신흥국(EEM)"),
+    "사우디":   ("EEM",       "신흥국(EEM)"),
+    "캐나다":   ("SPY",       "S&P500(SPY)"),
+    # ── 미국 섹터 ────────────────────────────────────────────────────
+    "반도체 iShares": ("SPY", "S&P500(SPY)"),
+    "반도체 VanEck":  ("SPY", "S&P500(SPY)"),
+    "기술":           ("QQQ", "나스닥100(QQQ)"),
+    "소프트웨어":     ("QQQ", "나스닥100(QQQ)"),
+    "사이버보안":     ("QQQ", "나스닥100(QQQ)"),
+    "로봇/AI":        ("QQQ", "나스닥100(QQQ)"),
+    "핀테크":         ("QQQ", "나스닥100(QQQ)"),
+    "경기소비재":     ("SPY", "S&P500(SPY)"),
+    "필수소비재":     ("SPY", "S&P500(SPY)"),
+    "헬스케어":       ("XLV", "헬스케어(XLV)"),
+    "바이오":         ("XLV", "헬스케어(XLV)"),
+    "금융":           ("XLF", "금융(XLF)"),
+    "에너지":         ("XLE", "에너지(XLE)"),
+    "유틸리티":       ("XLU", "유틸리티(XLU)"),
+    "부동산":         ("VNQ", "리츠(VNQ)"),
+    "산업재":         ("XLI", "산업재(XLI)"),
+    "소재":           ("XLB", "소재(XLB)"),
+    "커뮤니케이션":   ("SPY", "S&P500(SPY)"),
+    "항공방산":       ("SPY", "S&P500(SPY)"),
+    "방산":           ("SPY", "S&P500(SPY)"),
+    "주택건설":       ("SPY", "S&P500(SPY)"),
+    "인프라":         ("SPY", "S&P500(SPY)"),
+    "신재생":         ("SPY", "S&P500(SPY)"),
+    "원자재(구리)":   ("SPY", "S&P500(SPY)"),
+    "리튬/EV밸류체인":("SPY", "S&P500(SPY)"),
+    "우라늄/원전":    ("SPY", "S&P500(SPY)"),
+    # ── 글로벌 AI/인프라 ─────────────────────────────────────────────
+    "글로벌AI전력인프라": ("QQQ", "나스닥100(QQQ)"),
+    "미국AI전력인프라":   ("QQQ", "나스닥100(QQQ)"),
+    "글로벌 AI":          ("QQQ", "나스닥100(QQQ)"),
+    "미국 나스닥":        ("QQQ", "나스닥100(QQQ)"),
+    "미국 나스닥100":     ("QQQ", "나스닥100(QQQ)"),
+    "미국 반도체":        ("SOXX","반도체(SOXX)"),
+    "미국 S&P500":        ("SPY", "S&P500(SPY)"),
+    # ── 월배당 커버드콜 ──────────────────────────────────────────────
+    "나스닥100 커버드콜": ("QQQ", "나스닥100(QQQ)"),
+    "S&P500 커버드콜":    ("SPY", "S&P500(SPY)"),
+    "미국 테크 커버드콜": ("QQQ", "나스닥100(QQQ)"),
+    "미국 배당":          ("SPY", "S&P500(SPY)"),
+    "미국 배당 커버드콜": ("SPY", "S&P500(SPY)"),
+    "KOSPI200 커버드콜":  ("069500.KS", "KODEX200"),
+    "국내 고배당":        ("069500.KS", "KODEX200"),
+    "은행 고배당":        ("139270.KS", "TIGER금융"),
+    # ── 국내 섹터 ────────────────────────────────────────────────────
+    "코스피":       ("069500.KS", "KODEX200"),
+    "코스닥":       ("229200.KS", "KODEX코스닥150"),
+    "반도체":       ("069500.KS", "KODEX200"),
+    "전력인프라":   ("069500.KS", "KODEX200"),
+    "전력기기":     ("069500.KS", "KODEX200"),
+    "2차전지":      ("069500.KS", "KODEX200"),
+    "바이오":       ("069500.KS", "KODEX200"),
+    "건설/유틸":    ("069500.KS", "KODEX200"),
+    "조선":         ("069500.KS", "KODEX200"),
+    "방산":         ("069500.KS", "KODEX200"),
+    "화장품":       ("069500.KS", "KODEX200"),
+    "K-뷰티":       ("069500.KS", "KODEX200"),
+    "웹툰&게임":    ("229200.KS", "KODEX코스닥150"),
+    "IT/기술":      ("069500.KS", "KODEX200"),
+    "에너지":       ("069500.KS", "KODEX200"),
+    "원자력TOP10":  ("069500.KS", "KODEX200"),
+    "원자력":       ("069500.KS", "KODEX200"),
+    "부동산":       ("069500.KS", "KODEX200"),
+    "KOSPI200 대형":("069500.KS", "KODEX200"),
+    "헬스케어":     ("069500.KS", "KODEX200"),
+    "인도 Nifty50": ("EEM",       "신흥국(EEM)"),
+    "일본 Nikkei225":("EWJ",      "일본주식(EWJ)"),
+    "중국 CSI300":  ("MCHI",      "중국주식(MCHI)"),
+    "중국 전기차":  ("MCHI",      "중국주식(MCHI)"),
+}
+
+
+def _resolve_benchmark(ticker: str, sector: str = "", group: str = "") -> tuple[str | None, str]:
+    """섹터/구분/티커 suffix 기반으로 (bench_ticker, bench_label) 결정."""
+    # 1) 섹터명 직접 매칭
+    for key in [sector, group]:
+        if key and key in _SECTOR_BENCH_MAP:
+            result = _SECTOR_BENCH_MAP[key]
+            if result is None:
+                return None, ""          # 비교 불가
+            return result
+
+    # 2) suffix 기반 기본값
+    _upper = ticker.upper()
+    if _upper.endswith(".KS") or _upper.endswith(".KQ"):
+        return "069500.KS", "KODEX200"
+    return "SPY", "S&P500(SPY)"
+
+
+def render_lwc_baseline(
+    ticker: str,
+    label: str = "",
+    key: str = "lwc_baseline",
+    sector: str = "",
+    group: str = "",
+) -> bool:
     """선택 ETF/종목의 벤치마크 대비 초과수익률을 Baseline 차트로 렌더링.
 
     기준선(0%) = 벤치마크와 동일한 수익률.
     초록(위) = 벤치마크보다 강함, 빨강(아래) = 벤치마크보다 약함.
-    - 국내(.KS/.KQ) → KODEX200 (069500.KS)
-    - 미국/글로벌      → S&P500 (SPY)
+
+    sector: 돈흐름 '섹터' 컬럼값 (우선 사용)
+    group:  돈흐름 '구분' 컬럼값 (sector 미매칭 시 fallback)
     """
     if not _LWC_AVAILABLE or not ticker:
         return False
 
-    # 벤치마크 결정
-    _upper = ticker.upper()
-    if _upper.endswith(".KS") or _upper.endswith(".KQ"):
-        bench_ticker = "069500.KS"
-        bench_label  = "KODEX200"
-    else:
-        bench_ticker = "SPY"
-        bench_label  = "S&P500"
+    bench_ticker, bench_label = _resolve_benchmark(ticker, sector, group)
+
+    # 비교 불가 자산 → 절대수익률(자기 자신 기준)로 표시
+    if bench_ticker is None:
+        bench_ticker = ticker
+        bench_label  = "자기자신(절대수익)"
 
     try:
         df = load_price_df(ticker, "6mo")
@@ -5225,28 +5352,43 @@ def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline")
         if not pd.notna(c):
             continue
         etf_ret = (float(c) / base - 1) * 100
-        t_norm = pd.Timestamp(t).normalize()
-        # 벤치마크 수익률을 날짜 기준으로 맞춤 (없으면 0)
-        b_ret = float(bench_ret.get(t_norm, 0.0)) if not bench_ret.empty else 0.0
-        excess = round(etf_ret - b_ret, 3)
+        t_norm  = pd.Timestamp(t).normalize()
+        b_ret   = float(bench_ret.get(t_norm, 0.0)) if not bench_ret.empty else 0.0
+        excess  = round(etf_ret - b_ret, 3)
         data.append({"time": _to_lwc_time(t), "value": excess})
 
     if not data:
         return False
 
+    # 벤치마크 자신 비교(절대수익)이면 타이틀 다르게
+    is_absolute = (bench_ticker == ticker)
+    chart_title = (
+        f"{label or ticker} (절대수익률, 6M)"
+        if is_absolute
+        else f"{label or ticker} vs {bench_label}"
+    )
+    caption_txt = (
+        f"⚠️ 비교 기준이 없는 자산 — 6개월 절대수익률로 표시"
+        if is_absolute
+        else (
+            f"🟢 초록 = {bench_label}보다 강함 &nbsp;|&nbsp; "
+            f"🔴 빨강 = {bench_label}보다 약함 &nbsp;|&nbsp; 단위: %p (6개월)"
+        )
+    )
+
     series = [{
         "type": "Baseline",
         "data": data,
         "options": {
-            "baseValue": {"type": "price", "price": 0},
-            "topLineColor":     "#22c55e",
-            "topFillColor1":    "rgba(34,197,94,0.28)",
-            "topFillColor2":    "rgba(34,197,94,0.02)",
-            "bottomLineColor":  "#ef4444",
-            "bottomFillColor1": "rgba(239,68,68,0.02)",
-            "bottomFillColor2": "rgba(239,68,68,0.28)",
+            "baseValue":      {"type": "price", "price": 0},
+            "topLineColor":    "#22c55e",
+            "topFillColor1":   "rgba(34,197,94,0.28)",
+            "topFillColor2":   "rgba(34,197,94,0.02)",
+            "bottomLineColor": "#ef4444",
+            "bottomFillColor1":"rgba(239,68,68,0.02)",
+            "bottomFillColor2":"rgba(239,68,68,0.28)",
             "lineWidth": 2,
-            "title": f"{label or ticker} vs {bench_label}",
+            "title": chart_title,
         },
     }]
 
@@ -5259,11 +5401,7 @@ def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline")
         },
     }
     renderLightweightCharts([{"chart": chart_opts, "series": series}], key=key)
-    st.caption(
-        f"🟢 초록 = {bench_label}보다 강함 &nbsp;|&nbsp; 🔴 빨강 = {bench_label}보다 약함 &nbsp;|&nbsp; "
-        f"단위: %p (초과수익률, 6개월 기준)",
-        unsafe_allow_html=True,
-    )
+    st.caption(caption_txt, unsafe_allow_html=True)
     return True
 
 
@@ -5357,13 +5495,23 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
     selected_flow = option_rows[option_rows["Ticker"] == ticker]
     flow_name = selected_flow.iloc[0]["ETF 이름"] if not selected_flow.empty else ticker
+    # 섹터·구분 정보 추출 (벤치마크 정확도 향상)
+    _flow_sector = ""
+    _flow_group  = ""
+    if not selected_flow.empty and "섹터" in view_df.columns:
+        _row_full = view_df[view_df["Ticker"] == ticker]
+        if not _row_full.empty:
+            _flow_sector = str(_row_full.iloc[0].get("섹터", ""))
+            _flow_group  = str(_row_full.iloc[0].get("구분", ""))
     comp_df, etf_row = get_kr_etf_composition(ticker)
 
-    # ── 6개월 상대수익률 Baseline 차트 ────────────────────────────────
+    # ── 6개월 초과수익률 Baseline 차트 ───────────────────────────────
     _bl_rendered = render_lwc_baseline(
         ticker,
-        label=f"{flow_name} 6M 수익률 (%)",
+        label=flow_name,
         key=f"lwc_baseline_{ticker}",
+        sector=_flow_sector,
+        group=_flow_group,
     )
     if not _bl_rendered and _LWC_AVAILABLE:
         st.caption(f"📈 {ticker} 가격 데이터를 불러오지 못했습니다.")
@@ -6365,11 +6513,13 @@ def render_image_theme_flow_section():
 
             # ── 선택 종목 Baseline 차트 (벤치마크 대비 초과수익) ────────
             if _send_ticker:
-                _stock_name = _send_row.get("종목명", _send_ticker)
+                _stock_name    = _send_row.get("종목명", _send_ticker)
+                _stock_subtheme = str(_send_row.get("하위테마", ""))
                 render_lwc_baseline(
                     _send_ticker,
                     label=_stock_name,
                     key=f"lwc_baseline_theme_{_send_ticker}",
+                    sector=_stock_subtheme,
                 )
 
     with raw_tab:
