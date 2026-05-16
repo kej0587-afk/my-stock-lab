@@ -5164,14 +5164,43 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
     return True
 
 
-def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline") -> bool:
-    """선택 ETF/종목의 6개월 상대수익률을 Baseline 차트로 렌더링.
+@st.cache_data(ttl=900, show_spinner=False)
+def _load_benchmark_returns(bench_ticker: str) -> pd.Series:
+    """벤치마크 6개월 일별 수익률(%) 시리즈를 반환 (캐시)."""
+    try:
+        df = load_price_df(bench_ticker, "6mo")
+        if df is None or df.empty or "Close" not in df.columns:
+            return pd.Series(dtype=float)
+        base = float(df["Close"].iloc[0])
+        if base <= 0:
+            return pd.Series(dtype=float)
+        ret = ((df["Close"] / base) - 1) * 100
+        ret.index = pd.to_datetime(ret.index).normalize()
+        return ret
+    except Exception:
+        return pd.Series(dtype=float)
 
-    기준선(0%) = 6개월 전 종가 대비 수익률.
-    위(초록) = 플러스, 아래(빨강) = 마이너스.
+
+def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline") -> bool:
+    """선택 ETF/종목의 벤치마크 대비 초과수익률을 Baseline 차트로 렌더링.
+
+    기준선(0%) = 벤치마크와 동일한 수익률.
+    초록(위) = 벤치마크보다 강함, 빨강(아래) = 벤치마크보다 약함.
+    - 국내(.KS/.KQ) → KODEX200 (069500.KS)
+    - 미국/글로벌      → S&P500 (SPY)
     """
     if not _LWC_AVAILABLE or not ticker:
         return False
+
+    # 벤치마크 결정
+    _upper = ticker.upper()
+    if _upper.endswith(".KS") or _upper.endswith(".KQ"):
+        bench_ticker = "069500.KS"
+        bench_label  = "KODEX200"
+    else:
+        bench_ticker = "SPY"
+        bench_label  = "S&P500"
+
     try:
         df = load_price_df(ticker, "6mo")
     except Exception:
@@ -5183,17 +5212,25 @@ def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline")
     if base <= 0:
         return False
 
+    bench_ret = _load_benchmark_returns(bench_ticker)
+
     def _to_lwc_time(idx):
         try:
             return idx.strftime("%Y-%m-%d")
         except Exception:
             return str(idx)[:10]
 
-    data = [
-        {"time": _to_lwc_time(t), "value": round((float(c) / base - 1) * 100, 3)}
-        for t, c in zip(df.index, df["Close"])
-        if pd.notna(c)
-    ]
+    data = []
+    for t, c in zip(df.index, df["Close"]):
+        if not pd.notna(c):
+            continue
+        etf_ret = (float(c) / base - 1) * 100
+        t_norm = pd.Timestamp(t).normalize()
+        # 벤치마크 수익률을 날짜 기준으로 맞춤 (없으면 0)
+        b_ret = float(bench_ret.get(t_norm, 0.0)) if not bench_ret.empty else 0.0
+        excess = round(etf_ret - b_ret, 3)
+        data.append({"time": _to_lwc_time(t), "value": excess})
+
     if not data:
         return False
 
@@ -5209,7 +5246,7 @@ def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline")
             "bottomFillColor1": "rgba(239,68,68,0.02)",
             "bottomFillColor2": "rgba(239,68,68,0.28)",
             "lineWidth": 2,
-            "title": label or ticker,
+            "title": f"{label or ticker} vs {bench_label}",
         },
     }]
 
@@ -5222,6 +5259,11 @@ def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline")
         },
     }
     renderLightweightCharts([{"chart": chart_opts, "series": series}], key=key)
+    st.caption(
+        f"🟢 초록 = {bench_label}보다 강함 &nbsp;|&nbsp; 🔴 빨강 = {bench_label}보다 약함 &nbsp;|&nbsp; "
+        f"단위: %p (초과수익률, 6개월 기준)",
+        unsafe_allow_html=True,
+    )
     return True
 
 
