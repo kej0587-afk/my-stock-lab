@@ -15911,6 +15911,71 @@ if main_page == "dashboard":
             else:
                 st.button("제거", key="remove_watchlist_btn", use_container_width=True, disabled=True)
 
+    # ── 전광판 일괄 재계산 ───────────────────────────────────────────
+    with st.expander("🔄 일괄 재계산 (재무 + 기술)", expanded=False):
+        st.caption(
+            "전광판 등록 종목의 재무점수(개별주만)와 기술신호를 모두 새로 계산합니다. "
+            "종목 수에 따라 수십 초~수 분 소요될 수 있습니다. 필요할 때만 실행하세요."
+        )
+        _stock_items = [
+            item for item in st.session_state.watchlist
+            if not is_fin_score_exempt_asset(
+                sanitize_ticker_value(item.get("ticker", "")),
+                item.get("is_etf", False),
+                item.get("asset_class", ""),
+                item.get("name", ""),
+            )
+        ]
+        _etf_items = [
+            item for item in st.session_state.watchlist
+            if is_fin_score_exempt_asset(
+                sanitize_ticker_value(item.get("ticker", "")),
+                item.get("is_etf", False),
+                item.get("asset_class", ""),
+                item.get("name", ""),
+            )
+        ]
+        st.caption(
+            f"대상: 개별주 {len(_stock_items)}개 (재무 재계산) · ETF {len(_etf_items)}개 (기술만 새로고침)"
+        )
+        if st.button(
+            "▶ 일괄 재계산 실행",
+            key="dashboard_bulk_recalc_btn",
+            use_container_width=True,
+            type="primary",
+        ):
+            # 1) 기술 캐시 비우기
+            clear_price_and_chart_cache()
+            clear_financial_api_cache()
+
+            # 2) 개별주 재무 재계산 (순차 — API rate limit 고려)
+            if _stock_items:
+                prog = st.progress(0, text="재무 재계산 중...")
+                ok_list, fail_list = [], []
+                for idx, item in enumerate(_stock_items, 1):
+                    tkr = sanitize_ticker_value(item.get("ticker", ""))
+                    name = sanitize_asset_name(item.get("name", ""), tkr)
+                    a_class = item.get("asset_class", "")
+                    try:
+                        get_final_fin_score(tkr, False, a_class)
+                        ok_list.append(name or tkr)
+                    except Exception as e:
+                        fail_list.append(f"{name or tkr} ({e})")
+                    prog.progress(
+                        idx / len(_stock_items),
+                        text=f"재무 재계산 중... {idx}/{len(_stock_items)} — {name or tkr}",
+                    )
+                prog.empty()
+                if ok_list:
+                    st.success(f"재무 재계산 완료 ({len(ok_list)}개): {', '.join(ok_list)}")
+                if fail_list:
+                    st.warning(f"재무 조회 실패 ({len(fail_list)}개): {', '.join(fail_list)}")
+            else:
+                st.info("재무 재계산 대상 개별주가 없습니다 (ETF만 등록됨).")
+
+            st.success("기술신호 캐시를 비웠습니다. 아래 전광판이 자동으로 재계산됩니다.")
+            st.rerun()
+
     summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
