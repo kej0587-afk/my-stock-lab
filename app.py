@@ -5170,6 +5170,26 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
         f"분류: {etf_row.get('tags', '-') or '-'}"
     )
 
+    # ── 전광판 추가 버튼 ──────────────────────────────────────────────
+    selected_flow_row = view_df[view_df["Ticker"].astype(str).str.strip() == ticker.strip()]
+    row_dict = selected_flow_row.iloc[0].to_dict() if not selected_flow_row.empty else {}
+    if row_dict:
+        already = is_in_watchlist(ticker)
+        if already:
+            st.success(f"✅ {flow_name} ({ticker})는 이미 전광판에 등록되어 있습니다.")
+        else:
+            if st.button(
+                f"📌 전광판에 추가 — {flow_name} ({ticker})",
+                key="mf_comp_add_watchlist",
+                use_container_width=False,
+            ):
+                ok, msg = add_money_flow_row_to_watchlist(row_dict)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.warning(msg)
+
 
 def render_money_flow_etf_section():
     st.subheader("🌊 글로벌 자금 흐름 레이더")
@@ -5493,6 +5513,77 @@ def render_money_flow_etf_section():
             fig_volume.add_vline(x=0, line_color="#94a3b8")
             fig_volume.update_layout(template="plotly_dark", height=430, title="거래량 증가 랭킹", yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_volume, use_container_width=True)
+
+    # ── 시장 폭(Market Breadth) + 상태 분포 ─────────────────────────
+    st.markdown("#### 📡 시장 폭 & 상태 분포")
+    _calc_df = view_df.dropna(subset=["돈흐름점수"])
+    _total = max(len(_calc_df), 1)
+    _pos_3m  = int((_calc_df["3개월수익률"].fillna(0) > 0).sum())
+    _pos_6m  = int((_calc_df["6개월수익률"].fillna(0) > 0).sum())
+    _pos_acc = int((_calc_df["가속도"].fillna(0) > 0).sum())
+    _avg_pl  = _calc_df["가격수준"].dropna().mean()
+
+    bw1, bw2, bw3, bw4 = st.columns(4)
+    bw1.metric(
+        "3M 상승 ETF",
+        f"{_pos_3m}/{_total}",
+        f"{_pos_3m/_total*100:.0f}%",
+        help="3개월 수익률이 양수인 ETF 비율. 50% 초과 = 위험자산 선호",
+    )
+    bw2.metric(
+        "6M 상승 ETF",
+        f"{_pos_6m}/{_total}",
+        f"{_pos_6m/_total*100:.0f}%",
+        help="6개월 수익률이 양수인 ETF 비율. 중기 추세 건강도",
+    )
+    bw3.metric(
+        "가속 ETF",
+        f"{_pos_acc}/{_total}",
+        f"{_pos_acc/_total*100:.0f}%",
+        help="가속도가 양수인 ETF 비율. 상승 동력이 붙고 있는 비율",
+    )
+    bw4.metric(
+        "평균 52주 위치",
+        f"{_avg_pl:.2f}" if np.isfinite(_avg_pl) else "-",
+        help="0=52주 최저, 1=52주 최고. 0.7 이상이면 전반적 고점권",
+    )
+
+    # 상태 분포 바 차트
+    _state_order = ["과열경보", "강세 가속", "급반등", "고변동", "신규 유입", "주도 유지", "둔화 경고", "관찰", "소외 지속", "급락 경보", "가격부족"]
+    _state_colors = {
+        "과열경보":  "#f97316",
+        "강세 가속": "#22c55e",
+        "급반등":    "#a3e635",
+        "고변동":    "#94a3b8",
+        "신규 유입": "#4ade80",
+        "주도 유지": "#16a34a",
+        "둔화 경고": "#facc15",
+        "관찰":      "#64748b",
+        "소외 지속": "#ef4444",
+        "급락 경보": "#dc2626",
+        "가격부족":  "#374151",
+    }
+    if "상태" in view_df.columns:
+        _state_counts = view_df["상태"].value_counts().reindex(_state_order, fill_value=0)
+        _state_counts = _state_counts[_state_counts > 0]
+        if not _state_counts.empty:
+            fig_state = go.Figure(go.Bar(
+                x=_state_counts.index.tolist(),
+                y=_state_counts.values.tolist(),
+                marker_color=[_state_colors.get(s, "#64748b") for s in _state_counts.index],
+                text=_state_counts.values.tolist(),
+                textposition="outside",
+                hovertemplate="%{x}: %{y}개<extra></extra>",
+            ))
+            fig_state.update_layout(
+                template="plotly_dark",
+                height=220,
+                title="상태별 ETF 분포",
+                margin=dict(t=40, l=10, r=10, b=30),
+                yaxis=dict(showticklabels=False),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_state, use_container_width=True)
 
     show_df = view_df.copy()
     for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
