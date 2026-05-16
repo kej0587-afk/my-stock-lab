@@ -5033,20 +5033,33 @@ def get_today_market_flow_snapshot():
     }
 
 
-def add_money_flow_row_to_watchlist(row):
+def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
+    """ETF/섹터 행 또는 테마 종목 행을 전광판에 추가.
+
+    is_stock=True 이면 개별종목으로 취급(kr_stock / us_stock).
+    """
     ticker = sanitize_ticker_value(row.get("Ticker", ""))
     if not ticker:
         return False, "티커가 없어 전광판에 보낼 수 없습니다."
     if is_in_watchlist(ticker):
         return False, f"{ticker}는 이미 전광판에 등록되어 있습니다."
 
-    name = sanitize_asset_name(row.get("ETF 이름", "") or row.get("섹터", ""), ticker)
-    default_asset_class = "kr_etf" if is_kr_listed(ticker) else "us_etf_other"
+    # ETF 이름 > 종목명 > 섹터 순으로 이름 결정
+    name = sanitize_asset_name(
+        row.get("ETF 이름", "") or row.get("종목명", "") or row.get("섹터", ""),
+        ticker,
+    )
+    if is_stock:
+        default_asset_class = "kr_stock" if is_kr_listed(ticker) else "us_stock"
+        is_etf_flag = False
+    else:
+        default_asset_class = "kr_etf" if is_kr_listed(ticker) else "us_etf_other"
+        is_etf_flag = True
     asset_class = infer_asset_class_for_ticker(ticker, default_asset_class)
     st.session_state.watchlist.append(sanitize_watchlist_item({
         "name": name,
         "ticker": ticker,
-        "is_etf": True,
+        "is_etf": is_etf_flag,
         "asset_class": asset_class,
         "fin_score": 0,
     }))
@@ -5894,6 +5907,22 @@ def render_image_theme_flow_section():
         unsafe_allow_html=True,
     )
 
+    # ── 상태 이모지 배지 (탭 공통) ────────────────────────────────────
+    _it_state_badge = {
+        "과열경보": "🔥 과열경보",
+        "강세 가속": "🚀 강세 가속",
+        "급락 경보": "💥 급락 경보",
+        "급반등":   "⚡ 급반등",
+        "고변동":   "〰️ 고변동",
+        "신규 유입": "🟢 신규 유입",
+        "주도 유지": "💚 주도 유지",
+        "둔화 경고": "🟡 둔화 경고",
+        "소외 지속": "🔴 소외 지속",
+        "상대 약세": "🟠 상대 약세",
+        "관찰":     "⚪ 관찰",
+        "가격부족": "⬛ 가격부족",
+    }
+
     summary_tab, stocks_tab, raw_tab = st.tabs(["하위테마 요약", "종목별 흐름", "원자료"])
 
     with summary_tab:
@@ -5969,6 +5998,8 @@ def render_image_theme_flow_section():
         show_group = group_df.copy()
         if "추격위험" not in show_group.columns:
             show_group["추격위험"] = "-"
+        if "상태" in show_group.columns:
+            show_group["상태"] = show_group["상태"].map(lambda s: _it_state_badge.get(str(s), str(s)))
         _sg_show_cols = [c for c in [
             "하위테마", "종목수", "대표주",
             "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
@@ -6040,22 +6071,6 @@ def render_image_theme_flow_section():
             )
             st.plotly_chart(fig_stock, use_container_width=True)
 
-        _it_state_badge = {
-            # ── 고변동 계열 ──────────────────────────────
-            "과열경보": "🔥 과열경보",
-            "강세 가속": "🚀 강세 가속",
-            "급락 경보": "💥 급락 경보",
-            "급반등":   "⚡ 급반등",
-            "고변동":   "〰️ 고변동",
-            # ── 일반 계열 ────────────────────────────────
-            "신규 유입": "🟢 신규 유입",
-            "주도 유지": "💚 주도 유지",
-            "둔화 경고": "🟡 둔화 경고",
-            "소외 지속": "🔴 소외 지속",
-            "상대 약세": "🟠 상대 약세",
-            "관찰":     "⚪ 관찰",
-            "가격부족": "⬛ 가격부족",
-        }
         show_stock = stock_view.copy()
         if "추격위험" not in show_stock.columns:
             show_stock["추격위험"] = "-"
@@ -6103,6 +6118,41 @@ def render_image_theme_flow_section():
             hide_index=True,
             height=560,
         )
+
+        # ── 전광판 추가 ──────────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("##### 📌 전광판에 종목 추가")
+        _sendable = stock_view.dropna(subset=["Ticker"]).copy()
+        if not _sendable.empty:
+            _send_options = [
+                f"{r['종목명']} ({r['Ticker']}) — {r.get('하위테마', '')}"
+                for _, r in _sendable.iterrows()
+            ]
+            _send_ticker_map = {
+                f"{r['종목명']} ({r['Ticker']}) — {r.get('하위테마', '')}": r.to_dict()
+                for _, r in _sendable.iterrows()
+            }
+            sc1, sc2 = st.columns([3, 1])
+            with sc1:
+                _selected_send = st.selectbox(
+                    "추가할 종목 선택",
+                    _send_options,
+                    key="theme_stock_send_select",
+                )
+            with sc2:
+                _send_row = _send_ticker_map.get(_selected_send, {})
+                _send_ticker = sanitize_ticker_value(_send_row.get("Ticker", ""))
+                _already = is_in_watchlist(_send_ticker) if _send_ticker else False
+                st.write("")  # 버튼 수직 정렬용
+                if _already:
+                    st.caption("✅ 이미 등록됨")
+                elif st.button("전광판 추가", key="theme_stock_send_btn", use_container_width=True):
+                    ok, msg = add_money_flow_row_to_watchlist(_send_row, is_stock=True)
+                    if ok:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
 
     with raw_tab:
         st.dataframe(theme_df, use_container_width=True, hide_index=True, height=520)
