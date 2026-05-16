@@ -702,9 +702,10 @@ def classify_money_flow_state(
 
     [고변동 계열 — abs(ret_3m)>8% AND abs(accel)>6%]
     과열경보 : 52주 고점 85% 초과 → 고점 추격 위험
-    강세 가속: ret_3m>0 AND accel>0 → 상승하면서 가속 중 (좋음)
+    강세 가속: ret_3m>0 AND accel>0 (저점권 아니거나 6m 부진) → 상승·가속 중
     급락 경보: ret_3m<0 AND accel<0 → 하락하면서 가속 중 (나쁨)
-    급반등   : 52주 저점 40% 미만 + ret_3m>0 → 저점 반등 시도
+    급반등   : 저점권(pl<0.40) + ret_3m>0 + ret_6m>-15% → 진짜 저점 반등
+               (6m이 -15% 이하면 역배열 하락 중 단기 반등 → 강세 가속으로 분류)
     고변동   : 방향 혼재 (상승 중 급감속 등) → 관망 필요
 
     [일반 계열]
@@ -722,9 +723,13 @@ def classify_money_flow_state(
         pl = price_level if finite_num(price_level) else 0.5
         if pl > 0.85:
             return "과열경보"
+        # 저점권 반등: 6m도 너무 부정적이지 않아야 진짜 반등
+        # ret_6m < -0.10 이면 중기 하락추세 중 단기 되돌림(bear rally) → 강세 가속으로 분류
         if pl < 0.40 and ret_3m > 0:
-            return "급반등"
-        # 중간 구간(0.40~0.85): 방향성으로 세분화
+            six_ok = (not finite_num(ret_6m)) or ret_6m > -0.10
+            if six_ok:
+                return "급반등"
+        # 중간 구간(0.40~0.85) 또는 저점권이지만 6m이 -15% 이하: 방향성으로 세분화
         if ret_3m > 0 and accel > 0:
             return "강세 가속"
         if ret_3m < 0 and accel < 0:
