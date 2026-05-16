@@ -38,6 +38,12 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+try:
+    import FinanceDataReader as fdr
+    _FDR_AVAILABLE = True
+except ImportError:
+    _FDR_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # 설정
@@ -47,7 +53,8 @@ import yfinance as yf
 # .env 또는 시스템 환경변수에 AV_API_KEY=<key> 설정 시 활성화
 _AV_API_KEY: str = os.getenv("AV_API_KEY", "")
 
-# yfinance 지원 불안정 해외 거래소 접미사 — Alpha Vantage 폴백에서도 제외
+# yfinance 지원 불안정 해외 거래소 접미사
+# .T(도쿄)는 fdr(TSE:) 폴백으로 처리 / .TW .VI .L 은 폴백 없음
 _UNRELIABLE_SUFFIXES = {"T", "TW", "VI", "L"}
 
 
@@ -172,7 +179,9 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "매크로", "섹터": "미국 달러",    "ticker": "UUP",       "name": "Invesco DB US Dollar Index Bullish Fund"},
     {"구분": "매크로", "섹터": "미국 단기채",  "ticker": "SHV",       "name": "iShares Short Treasury Bond ETF"},  # 현금 대기 자금
     # [신규] 위험선호 선행지표 — 상승=리스크온, 하락=리스크오프
-    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG",       "name": "iShares High Yield Corporate Bond ETF"},
+    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG",  "name": "iShares High Yield Corporate Bond ETF"},
+    # [신규] 공포지수 — 점수 해석 주의: 상승=공포(리스크오프), 하강=안도(리스크온)
+    {"구분": "매크로", "섹터": "공포지수(VIX)", "ticker": "^VIX", "name": "CBOE Volatility Index"},
 ]
 
 IMAGE_THEME_GROUPS = [
@@ -478,6 +487,60 @@ def _fetch_alpha_vantage_ohlc(ticker: str) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# FinanceDataReader 폴백
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
+    """FinanceDataReader로 단일 티커 OHLCV 취득.
+
+    적용 케이스:
+    - .T  (도쿄 TSE): '4062.T'   → fdr 'TSE:4062'
+    - .KS/.KQ (KRX) : '0117V0.KS' → fdr '0117V0'  (알파벳 포함 코드 포함)
+    - fdr 전용 심볼 : 'VIX', 'US10YT', 'KS11' 등
+
+    설치: pip install finance-datareader
+    """
+    if not _FDR_AVAILABLE:
+        return pd.DataFrame()
+
+    start = (pd.Timestamp.now() - pd.DateOffset(years=1)).strftime("%Y-%m-%d")
+
+    # 거래소 접미사별 fdr 심볼 변환
+    if ticker.endswith(".T"):
+        fdr_symbol = f"TSE:{ticker[:-2]}"
+    elif ticker.endswith(".KS") or ticker.endswith(".KQ"):
+        fdr_symbol = ticker.split(".")[0]   # 숫자/알파벳 코드 모두 그대로 사용
+    else:
+        fdr_symbol = ticker                 # VIX, US10YT 등 fdr 네이티브 심볼
+
+    try:
+        df = fdr.DataReader(fdr_symbol, start)
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        # fdr 컬럼 정규화 (소문자 → 첫글자 대문자)
+        df = df.rename(columns=lambda c: c.capitalize())
+        # 'Adj close' 같은 케이스 처리
+        if "Close" not in df.columns and "Adj close" in df.columns:
+            df = df.rename(columns={"Adj close": "Close"})
+        if "Change" in df.columns:
+            df = df.drop(columns=["Change"])
+
+        needed = ["Close", "High", "Low"]
+        if not all(c in df.columns for c in needed):
+            # High/Low 없으면 Close로 채움 (지수/금리 데이터)
+            for c in needed:
+                if c not in df.columns:
+                    df[c] = df.get("Close", np.nan)
+
+        cols = ["Close", "High", "Low"] + (["Volume"] if "Volume" in df.columns else [])
+        return df[cols].ffill().dropna(subset=["Close", "High", "Low"])
+    except Exception:
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
 # 가격 다운로드
 # ---------------------------------------------------------------------------
 
@@ -520,11 +583,25 @@ def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
 
 def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """yfinance 결과에서 OHLCV 추출. 데이터 없을 시 Alpha Vantage 폴백."""
+    """yfinance 결과에서 OHLCV 추출. 실패 시 폴백 순서대로 시도.
+
+    폴백 순서:
+    1. yfinance (일괄 다운로드 결과)
+    2. FinanceDataReader — .T(도쿄), .KS/.KQ(KRX 알파벳코드), fdr 전용 심볼
+    3. Alpha Vantage    — 미국 상장 티커 한정 (AV_API_KEY 필요)
+    """
     ticker = normalize_money_flow_ticker(ticker)
     out = _extract_ohlc_from_yf(data, ticker)
+
+    if out.empty and _FDR_AVAILABLE:
+        suffix = ticker.split(".")[-1] if "." in ticker else ""
+        # .T / KRX 알파벳코드 / fdr 전용 심볼에 한해 fdr 시도
+        if suffix == "T" or suffix in ("KS", "KQ") or not suffix:
+            out = _fetch_fdr_ohlc(ticker)
+
     if out.empty and _AV_API_KEY:
         out = _fetch_alpha_vantage_ohlc(ticker)
+
     return out
 
 
