@@ -698,15 +698,20 @@ def classify_money_flow_state(
     accel: float,
     price_level: float | None = None,
 ) -> str:
-    """돈흐름 상태 분류 (7단계).
+    """돈흐름 상태 분류 (9단계).
 
-    과열경보 : 고변동 + 52주 고점 85% 초과 → 하락 위험 구간
-    급반등   : 고변동 + 52주 저점 40% 미만 + 최근 수익 양전 → 반등 시도
-    고변동   : 절대 수익 크고 가속도 반전 급격 (위 두 케이스 제외)
-    신규 유입: 3개월 강세 + 가속도 양전
-    주도 유지: 3·6개월 모두 강세 + 가속도 유지
-    둔화 경고: 6개월 강세였으나 가속도 급락
-    소외 지속: 3·6개월 모두 약세
+    [고변동 계열 — abs(ret_3m)>8% AND abs(accel)>6%]
+    과열경보 : 52주 고점 85% 초과 → 고점 추격 위험
+    강세 가속: ret_3m>0 AND accel>0 → 상승하면서 가속 중 (좋음)
+    급락 경보: ret_3m<0 AND accel<0 → 하락하면서 가속 중 (나쁨)
+    급반등   : 52주 저점 40% 미만 + ret_3m>0 → 저점 반등 시도
+    고변동   : 방향 혼재 (상승 중 급감속 등) → 관망 필요
+
+    [일반 계열]
+    신규 유입: ret_3m≥5% + accel≥3%
+    주도 유지: ret_3m·6m 모두 ≥5% + accel 유지
+    둔화 경고: ret_6m≥5% but accel≤-5%
+    소외 지속: ret_3m·6m 모두 <0
     관찰     : 나머지
     """
     is_volatile = (
@@ -717,9 +722,14 @@ def classify_money_flow_state(
         pl = price_level if finite_num(price_level) else 0.5
         if pl > 0.85:
             return "과열경보"
-        if pl < 0.40 and finite_num(ret_3m) and ret_3m > 0:
+        if pl < 0.40 and ret_3m > 0:
             return "급반등"
-        return "고변동"
+        # 중간 구간(0.40~0.85): 방향성으로 세분화
+        if ret_3m > 0 and accel > 0:
+            return "강세 가속"
+        if ret_3m < 0 and accel < 0:
+            return "급락 경보"
+        return "고변동"  # 상승 중 급감속 등 방향 혼재
 
     if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
         return "신규 유입"
