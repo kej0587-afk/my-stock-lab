@@ -14713,20 +14713,65 @@ def render_today_market_flow_panel():
                             st.info(message)
                 st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
 
+    def _accel_momentum_grade(price_level, ret_6m):
+        """52주 위치 + 6M 수익률로 모멘텀 품질 등급 산출."""
+        pl = price_level if pd.notna(price_level) else np.nan
+        r6 = ret_6m    if pd.notna(ret_6m)    else np.nan
+        high_pl  = (not np.isnan(pl)) and pl >= 60
+        ok_pl    = (not np.isnan(pl)) and pl >= 40
+        pos_r6   = (not np.isnan(r6)) and r6 > 0
+        if high_pl and pos_r6:
+            return "🟢 중장기↑"
+        if ok_pl or pos_r6:
+            return "🟡 혼합"
+        return "🔴 단기반등"
+
+    def _add_momentum_watchlist_cols_etf(raw_df: pd.DataFrame) -> pd.DataFrame:
+        """ETF/섹터 raw df에 모멘텀·전광판 컬럼을 추가한 포맷 테이블 반환."""
+        formatted = format_today_flow_rank_table(raw_df).reset_index(drop=True)
+        raw_reset = raw_df.reset_index(drop=True)
+        formatted.insert(0, "전광판", raw_reset["Ticker"].apply(
+            lambda t: "✅" if is_in_watchlist(str(t)) else "➕"
+        ))
+        formatted.insert(1, "모멘텀", raw_reset.apply(
+            lambda r: _accel_momentum_grade(r.get("가격수준", np.nan), r.get("6개월수익률", np.nan)), axis=1
+        ))
+        return formatted
+
+    def _parse_ticker_from_daepuju(s: str) -> str:
+        """'종목명 (Ticker)' 형식에서 Ticker만 추출."""
+        import re
+        m = re.search(r"\(([^)]+)\)\s*$", str(s))
+        return m.group(1).strip() if m else ""
+
+    def _add_momentum_watchlist_cols_theme(raw_df: pd.DataFrame) -> pd.DataFrame:
+        """테마 rotation raw df에 모멘텀·전광판 컬럼 추가."""
+        formatted = format_today_theme_rank_table(raw_df).reset_index(drop=True)
+        raw_reset = raw_df.reset_index(drop=True)
+        # 전광판: 대표주 Ticker 파싱
+        rep_tickers = raw_reset["대표주"].apply(_parse_ticker_from_daepuju) if "대표주" in raw_reset.columns else pd.Series([""] * len(raw_reset))
+        formatted.insert(0, "전광판", rep_tickers.apply(
+            lambda t: "✅" if (t and is_in_watchlist(t)) else "➕"
+        ))
+        formatted.insert(1, "모멘텀", raw_reset.apply(
+            lambda r: _accel_momentum_grade(r.get("가격수준", np.nan), r.get("6개월수익률", np.nan)), axis=1
+        ))
+        return formatted
+
     rank_cols = st.columns(2)
     with rank_cols[0]:
         st.markdown("##### 한국 섹터 TOP 5")
         if kr_top5.empty:
             st.info("한국 섹터 계산 데이터가 부족합니다.")
         else:
-            st.dataframe(format_today_flow_rank_table(kr_top5), use_container_width=True, hide_index=True)
+            st.dataframe(_add_momentum_watchlist_cols_etf(kr_top5), use_container_width=True, hide_index=True)
 
     with rank_cols[1]:
         st.markdown("##### 미국 섹터 TOP 5")
         if us_top5.empty:
             st.info("미국 섹터 계산 데이터가 부족합니다.")
         else:
-            st.dataframe(format_today_flow_rank_table(us_top5), use_container_width=True, hide_index=True)
+            st.dataframe(_add_momentum_watchlist_cols_etf(us_top5), use_container_width=True, hide_index=True)
 
     theme_cols = st.columns([1.05, 1])
     with theme_cols[0]:
@@ -14734,23 +14779,59 @@ def render_today_market_flow_panel():
         if theme_top5.empty:
             st.info("테마 종목 계산 데이터가 부족합니다.")
         else:
-            st.dataframe(format_today_theme_rank_table(theme_top5), use_container_width=True, hide_index=True)
+            st.dataframe(_add_momentum_watchlist_cols_theme(theme_top5), use_container_width=True, hide_index=True)
+
+        # ── 테마 TOP 5 → 전광판 추가 ─────────────────────────────────
+        if not theme_top5.empty and not theme_flow_df.empty:
+            top_themes = list(theme_top5["테마"].astype(str).unique()) if "테마" in theme_top5.columns else []
+            if top_themes:
+                # TOP5 테마 소속 개별 종목 중 미등록 종목 목록
+                theme_cands = (
+                    theme_flow_df[theme_flow_df["테마"].astype(str).isin(top_themes)]
+                    .dropna(subset=["돈흐름점수"])
+                    .sort_values("돈흐름점수", ascending=False)
+                    .drop_duplicates(subset=["Ticker"], keep="first")
+                )
+                not_in_wl_theme = theme_cands[~theme_cands["Ticker"].apply(is_in_watchlist)].copy()
+                if not_in_wl_theme.empty:
+                    st.caption("✅ TOP 5 테마 소속 종목이 전부 전광판에 있습니다.")
+                else:
+                    theme_send_options = [
+                        f"{r['종목명']}  ({r['Ticker']})"
+                        for _, r in not_in_wl_theme.iterrows()
+                    ]
+                    theme_send_map = {
+                        f"{r['종목명']}  ({r['Ticker']})": r
+                        for _, r in not_in_wl_theme.iterrows()
+                    }
+                    selected_theme_sends = st.multiselect(
+                        "TOP 5 테마 종목 → 전광판 추가",
+                        options=theme_send_options,
+                        key="theme_top5_wl_multiselect",
+                        placeholder="추가할 종목 선택...",
+                    )
+                    if selected_theme_sends:
+                        if st.button(
+                            f"✚ 선택 {len(selected_theme_sends)}개 전광판 추가",
+                            key="theme_top5_wl_send_btn",
+                            use_container_width=True,
+                        ):
+                            added, skipped = [], []
+                            for lbl in selected_theme_sends:
+                                row = theme_send_map.get(lbl)
+                                if row is None:
+                                    continue
+                                send_row = {"종목명": row["종목명"], "Ticker": row["Ticker"]}
+                                ok, _ = add_money_flow_row_to_watchlist(send_row, is_stock=True)
+                                (added if ok else skipped).append(row["종목명"])
+                            if added:
+                                st.success(f"추가 완료 ({len(added)}개): {', '.join(added)}")
+                                st.rerun()
+                            if skipped:
+                                st.info(f"이미 등록됨: {', '.join(skipped)}")
 
     with theme_cols[1]:
         st.markdown("##### 🚀 강세 가속 종목")
-
-        def _accel_momentum_grade(price_level, ret_6m):
-            """52주 위치 + 6M 수익률로 모멘텀 품질 등급 산출."""
-            pl = price_level if pd.notna(price_level) else np.nan
-            r6 = ret_6m    if pd.notna(ret_6m)    else np.nan
-            high_pl  = (not np.isnan(pl)) and pl >= 60
-            ok_pl    = (not np.isnan(pl)) and pl >= 40
-            pos_r6   = (not np.isnan(r6)) and r6 > 0
-            if high_pl and pos_r6:
-                return "🟢 중장기↑"
-            if ok_pl or pos_r6:
-                return "🟡 혼합"
-            return "🔴 단기반등"
 
         # ETF/섹터 강세 가속
         accel_etf_rows = []
