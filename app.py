@@ -6770,6 +6770,18 @@ def get_rs_benchmark(ticker, asset_class):
     if is_kr_listed(ticker) and ac == "us_etf_sp": return KR_US_NASDAQ_BENCHMARK
     # asset_class 미설정 한국 종목 폴백: .KS/.KQ 접미사로 판별
     if is_kr_listed(ticker): return KR_MARKET_BENCHMARK
+
+    # ── 글로벌 거래소 suffix 기반 폴백 ─────────────────────────────
+    _upper = str(ticker).upper()
+    if _upper.endswith(".T"):   return "EWJ"      # 일본 → iShares MSCI Japan
+    if _upper.endswith(".HK"):  return "EWH"      # 홍콩 → iShares MSCI Hong Kong
+    if _upper.endswith(".TW"):  return "EWT"      # 대만 → iShares MSCI Taiwan
+    if _upper.endswith(".L"):   return "EWU"      # 런던 → iShares MSCI UK
+    if _upper.endswith(".AX"):  return "EWA"      # 호주 → iShares MSCI Australia
+    if _upper.endswith(".TO"):  return "EWC"      # 캐나다 → iShares MSCI Canada
+    if _upper.endswith(".PA") or _upper.endswith(".DE") or _upper.endswith(".MI"):
+        return "EZU"                              # 유로존 → iShares MSCI EMU
+
     if ac == "us_etf_nasdaq": return US_BROAD_BENCHMARK
     if ac == "us_etf_sp": return US_TECH_BENCHMARK
     if ac in ["us_stock_tech", "us_stock_growth"]: return US_TECH_BENCHMARK
@@ -7229,6 +7241,18 @@ def get_sector_benchmark_info(ticker, asset_class, name=""):
         inferred = infer_sector_benchmark_by_name(candidate_name)
         if inferred:
             return inferred
+
+    # ── 글로벌 거래소 suffix 기반 폴백 ─────────────────────────────
+    # 섹터를 특정할 수 없을 때 해당 국가 지수 ETF로라도 비교
+    _upper = str(ticker).upper()
+    if _upper.endswith(".T"):   return ("EWJ", "일본주식")
+    if _upper.endswith(".HK"):  return ("EWH", "홍콩주식")
+    if _upper.endswith(".TW"):  return ("EWT", "대만주식")
+    if _upper.endswith(".L"):   return ("EWU", "영국주식")
+    if _upper.endswith(".AX"):  return ("EWA", "호주주식")
+    if _upper.endswith(".TO"):  return ("EWC", "캐나다주식")
+    if _upper.endswith(".PA") or _upper.endswith(".DE") or _upper.endswith(".MI"):
+        return ("EZU", "유로존주식")
 
     return "", "-"
 
@@ -14613,6 +14637,7 @@ def render_today_market_flow_panel():
     local_top = snapshot.get("local_top", pd.DataFrame())
     theme_top5 = snapshot.get("theme_top5", pd.DataFrame())
     subtheme_top = snapshot.get("subtheme_top", pd.DataFrame())
+    theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
 
     metric_cols = st.columns(4)
     if not kr_top5.empty:
@@ -14710,11 +14735,53 @@ def render_today_market_flow_panel():
             st.dataframe(format_today_theme_rank_table(theme_top5), use_container_width=True, hide_index=True)
 
     with theme_cols[1]:
-        st.markdown("##### 1위 테마의 하위테마")
-        if subtheme_top.empty:
-            st.info("1위 테마의 하위테마 계산 데이터가 부족합니다.")
+        st.markdown("##### 🚀 강세 가속 종목")
+
+        # ETF/섹터 강세 가속
+        accel_etf_rows = []
+        if not flow_df.empty and "상태" in flow_df.columns:
+            etf_accel = flow_df[flow_df["상태"].astype(str) == "강세 가속"].copy()
+            if not etf_accel.empty:
+                for _, r in etf_accel.iterrows():
+                    accel_etf_rows.append({
+                        "구분": str(r.get("구분", "ETF")),
+                        "이름": str(r.get("섹터", "")),
+                        "Ticker": str(r.get("Ticker", "")),
+                        "돈흐름점수": r.get("돈흐름점수", np.nan),
+                        "3M수익률": r.get("3개월수익률", np.nan),
+                        "가속도": r.get("가속도", np.nan),
+                    })
+
+        # 테마 종목 강세 가속
+        accel_theme_rows = []
+        if not theme_flow_df.empty and "상태" in theme_flow_df.columns:
+            th_accel = theme_flow_df[theme_flow_df["상태"].astype(str) == "강세 가속"].copy()
+            if not th_accel.empty:
+                for _, r in th_accel.iterrows():
+                    accel_theme_rows.append({
+                        "구분": "테마",
+                        "이름": str(r.get("종목명", "")),
+                        "Ticker": str(r.get("Ticker", "")),
+                        "돈흐름점수": r.get("돈흐름점수", np.nan),
+                        "3M수익률": r.get("3개월수익률", np.nan),
+                        "가속도": r.get("가속도", np.nan),
+                    })
+
+        all_accel_rows = accel_etf_rows + accel_theme_rows
+        if not all_accel_rows:
+            st.info("현재 강세 가속 상태인 ETF/섹터/테마 종목이 없습니다.")
         else:
-            st.dataframe(format_today_theme_rank_table(subtheme_top, "돈흐름점수"), use_container_width=True, hide_index=True)
+            accel_df = pd.DataFrame(all_accel_rows)
+            accel_df = accel_df.dropna(subset=["돈흐름점수"]).sort_values("돈흐름점수", ascending=False).reset_index(drop=True)
+
+            def _fmt_accel_table(df: pd.DataFrame) -> pd.DataFrame:
+                out = df[["구분", "이름", "Ticker", "돈흐름점수", "3M수익률", "가속도"]].copy()
+                out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: f"{v:+.1f}" if pd.notna(v) else "-")
+                out["3M수익률"] = out["3M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                out["가속도"] = out["가속도"].apply(lambda v: f"{v:+.2f}" if pd.notna(v) else "-")
+                return out
+
+            st.dataframe(_fmt_accel_table(accel_df), use_container_width=True, hide_index=True)
 
 
 def render_today_queue_tab(mode):
