@@ -13,3 +13,4 @@ openpyxl
 xlsxwriter
 pykrx
 lxml
+streamlit-lightweight-charts

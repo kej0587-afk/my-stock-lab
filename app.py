@@ -98,6 +98,12 @@ try:
 except ImportError:
     IMAGE_THEME_FLOW_AVAILABLE = False
 
+try:
+    from streamlit_lightweight_charts import renderLightweightCharts
+    _LWC_AVAILABLE = True
+except ImportError:
+    _LWC_AVAILABLE = False
+
     def get_image_theme_names():
         return []
 
@@ -5067,6 +5073,158 @@ def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
     return True, f"{name} ({ticker})를 전광판에 추가했습니다."
 
 
+_LWC_CHART_OPTIONS = {
+    "layout": {
+        "background": {"type": "solid", "color": "transparent"},
+        "textColor": "#94a3b8",
+    },
+    "grid": {
+        "vertLines": {"color": "#1e293b"},
+        "horzLines": {"color": "#1e293b"},
+    },
+    "crosshair": {"mode": 1},
+    "rightPriceScale": {"borderColor": "#334155"},
+    "timeScale": {"borderColor": "#334155", "timeVisible": False},
+}
+
+
+def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = "lwc_candle") -> bool:
+    """TradingView Lightweight Charts 캔들스틱 + MA 라인 렌더링.
+
+    df 컬럼: Open, High, Low, Close, MA5, MA20, MA50, MA120
+    Returns True if rendered, False if fallback needed.
+    """
+    if not _LWC_AVAILABLE or df is None or df.empty:
+        return False
+
+    def _to_lwc_time(idx):
+        try:
+            return idx.strftime("%Y-%m-%d")
+        except Exception:
+            return str(idx)[:10]
+
+    candle_data = [
+        {"time": _to_lwc_time(t), "open": float(o), "high": float(h),
+         "low": float(l), "close": float(c)}
+        for t, o, h, l, c in zip(
+            df.index, df["Open"], df["High"], df["Low"], df["Close"]
+        )
+        if all(pd.notna(v) for v in [o, h, l, c])
+    ]
+    if not candle_data:
+        return False
+
+    def _ma_series(col_name, color, width=1, dash=False):
+        if col_name not in df.columns:
+            return None
+        data = [
+            {"time": _to_lwc_time(t), "value": float(v)}
+            for t, v in zip(df.index, df[col_name])
+            if pd.notna(v)
+        ]
+        opts = {"color": color, "lineWidth": width, "title": col_name}
+        if dash:
+            opts["lineStyle"] = 2   # dashed
+        return {"type": "Line", "data": data, "options": opts}
+
+    series = [
+        {
+            "type": "Candlestick",
+            "data": candle_data,
+            "options": {
+                "upColor": "#22c55e", "downColor": "#ef4444",
+                "borderUpColor": "#22c55e", "borderDownColor": "#ef4444",
+                "wickUpColor": "#22c55e", "wickDownColor": "#ef4444",
+            },
+        },
+    ]
+    for ma in [
+        _ma_series("MA5",   "#22c55e", 1),
+        _ma_series("MA20",  "#fbbf24", 2),
+        _ma_series("MA50",  "#60a5fa", 2),
+        _ma_series("MA120", "#94a3b8", 1, dash=True),
+    ]:
+        if ma:
+            series.append(ma)
+
+    # 평단가 기준선
+    if avg_price and avg_price > 0:
+        series.append({
+            "type": "Line",
+            "data": [
+                {"time": candle_data[0]["time"],  "value": avg_price},
+                {"time": candle_data[-1]["time"], "value": avg_price},
+            ],
+            "options": {"color": "#2ecc71", "lineWidth": 1,
+                        "lineStyle": 2, "title": "평단가"},
+        })
+
+    chart_opts = {**_LWC_CHART_OPTIONS, "height": 600}
+    renderLightweightCharts([{"chart": chart_opts, "series": series}], key=key)
+    return True
+
+
+def render_lwc_baseline(ticker: str, label: str = "", key: str = "lwc_baseline") -> bool:
+    """선택 ETF/종목의 6개월 상대수익률을 Baseline 차트로 렌더링.
+
+    기준선(0%) = 6개월 전 종가 대비 수익률.
+    위(초록) = 플러스, 아래(빨강) = 마이너스.
+    """
+    if not _LWC_AVAILABLE or not ticker:
+        return False
+    try:
+        df = load_price_df(ticker, "6mo")
+    except Exception:
+        return False
+    if df is None or df.empty or "Close" not in df.columns:
+        return False
+
+    base = float(df["Close"].iloc[0])
+    if base <= 0:
+        return False
+
+    def _to_lwc_time(idx):
+        try:
+            return idx.strftime("%Y-%m-%d")
+        except Exception:
+            return str(idx)[:10]
+
+    data = [
+        {"time": _to_lwc_time(t), "value": round((float(c) / base - 1) * 100, 3)}
+        for t, c in zip(df.index, df["Close"])
+        if pd.notna(c)
+    ]
+    if not data:
+        return False
+
+    series = [{
+        "type": "Baseline",
+        "data": data,
+        "options": {
+            "baseValue": {"type": "price", "price": 0},
+            "topLineColor":     "#22c55e",
+            "topFillColor1":    "rgba(34,197,94,0.28)",
+            "topFillColor2":    "rgba(34,197,94,0.02)",
+            "bottomLineColor":  "#ef4444",
+            "bottomFillColor1": "rgba(239,68,68,0.02)",
+            "bottomFillColor2": "rgba(239,68,68,0.28)",
+            "lineWidth": 2,
+            "title": label or ticker,
+        },
+    }]
+
+    chart_opts = {
+        **_LWC_CHART_OPTIONS,
+        "height": 260,
+        "rightPriceScale": {
+            **_LWC_CHART_OPTIONS.get("rightPriceScale", {}),
+            "scaleMargins": {"top": 0.1, "bottom": 0.1},
+        },
+    }
+    renderLightweightCharts([{"chart": chart_opts, "series": series}], key=key)
+    return True
+
+
 def get_plotly_selected_ticker(event):
     if not event:
         return ""
@@ -5158,6 +5316,15 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
     selected_flow = option_rows[option_rows["Ticker"] == ticker]
     flow_name = selected_flow.iloc[0]["ETF 이름"] if not selected_flow.empty else ticker
     comp_df, etf_row = get_kr_etf_composition(ticker)
+
+    # ── 6개월 상대수익률 Baseline 차트 ────────────────────────────────
+    _bl_rendered = render_lwc_baseline(
+        ticker,
+        label=f"{flow_name} 6M 수익률 (%)",
+        key=f"lwc_baseline_{ticker}",
+    )
+    if not _bl_rendered and _LWC_AVAILABLE:
+        st.caption(f"📈 {ticker} 가격 데이터를 불러오지 못했습니다.")
 
     st.markdown("#### ETF 구성종목")
     if etf_row is None:
@@ -15802,16 +15969,34 @@ if main_page == "precision":
             )
 
         with R:
-            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price")])
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA5"], line=dict(color="#22c55e", width=1.4), name="MA5"))
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#fbbf24", width=2), name="MA20"))
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA50"], line=dict(color="#60a5fa", width=1.6), name="MA50"))
-            fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
             p_line = u_price if app_mode == "범용모드" else my_p
-            if p_line > 0 and ((app_mode == "범용모드" and c['current_w'] > 0) or (app_mode == "개인모드" and not is_free and has_p)): 
-                fig.add_hline(y=p_line, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
-            fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig, use_container_width=True)
+            _show_avg = p_line > 0 and (
+                (app_mode == "범용모드" and c['current_w'] > 0)
+                or (app_mode == "개인모드" and not is_free and has_p)
+            )
+            _lwc_rendered = render_lwc_candlestick(
+                df,
+                avg_price=p_line if _show_avg else 0.0,
+                key=f"lwc_candle_{tkr}",
+            )
+            if not _lwc_rendered:
+                # LWC 미설치 시 Plotly fallback
+                fig = go.Figure(data=[go.Candlestick(
+                    x=df.index, open=df["Open"], high=df["High"],
+                    low=df["Low"], close=df["Close"], name="Price",
+                )])
+                fig.add_trace(go.Scatter(x=df.index, y=df["MA5"],   line=dict(color="#22c55e", width=1.4), name="MA5"))
+                fig.add_trace(go.Scatter(x=df.index, y=df["MA20"],  line=dict(color="#fbbf24", width=2),   name="MA20"))
+                fig.add_trace(go.Scatter(x=df.index, y=df["MA50"],  line=dict(color="#60a5fa", width=1.6), name="MA50"))
+                fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
+                if _show_avg:
+                    fig.add_hline(y=p_line, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
+                fig.update_layout(
+                    template="plotly_dark", height=600,
+                    xaxis_rangeslider_visible=False,
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig, use_container_width=True)
             st.markdown(
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,
