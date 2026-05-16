@@ -14750,29 +14750,43 @@ def render_today_market_flow_panel():
                         "돈흐름점수": r.get("돈흐름점수", np.nan),
                         "3M수익률": r.get("3개월수익률", np.nan),
                         "가속도": r.get("가속도", np.nan),
+                        "_is_stock": False,
                     })
 
-        # 테마 종목 강세 가속
+        # 테마 종목 강세 가속 — 같은 Ticker가 여러 테마에 중복될 수 있으므로
+        # 돈흐름점수 기준 내림차순 후 Ticker별 첫 번째 행만 유지(중복 제거)
         accel_theme_rows = []
         if not theme_flow_df.empty and "상태" in theme_flow_df.columns:
             th_accel = theme_flow_df[theme_flow_df["상태"].astype(str) == "강세 가속"].copy()
             if not th_accel.empty:
+                th_accel = (
+                    th_accel
+                    .sort_values("돈흐름점수", ascending=False, na_position="last")
+                    .drop_duplicates(subset=["Ticker"], keep="first")
+                )
                 for _, r in th_accel.iterrows():
                     accel_theme_rows.append({
-                        "구분": "테마",
+                        "구분": str(r.get("하위테마", "테마")),
                         "이름": str(r.get("종목명", "")),
                         "Ticker": str(r.get("Ticker", "")),
                         "돈흐름점수": r.get("돈흐름점수", np.nan),
                         "3M수익률": r.get("3개월수익률", np.nan),
                         "가속도": r.get("가속도", np.nan),
+                        "_is_stock": True,
                     })
 
         all_accel_rows = accel_etf_rows + accel_theme_rows
         if not all_accel_rows:
             st.info("현재 강세 가속 상태인 ETF/섹터/테마 종목이 없습니다.")
         else:
-            accel_df = pd.DataFrame(all_accel_rows)
-            accel_df = accel_df.dropna(subset=["돈흐름점수"]).sort_values("돈흐름점수", ascending=False).reset_index(drop=True)
+            accel_df = (
+                pd.DataFrame(all_accel_rows)
+                .dropna(subset=["돈흐름점수"])
+                .sort_values("돈흐름점수", ascending=False)
+                .reset_index(drop=True)
+            )
+            n_etf = sum(1 for r in accel_etf_rows if pd.notna(r["돈흐름점수"]))
+            n_theme = len(accel_df) - n_etf
 
             def _fmt_accel_table(df: pd.DataFrame) -> pd.DataFrame:
                 out = df[["구분", "이름", "Ticker", "돈흐름점수", "3M수익률", "가속도"]].copy()
@@ -14782,6 +14796,47 @@ def render_today_market_flow_panel():
                 return out
 
             st.dataframe(_fmt_accel_table(accel_df), use_container_width=True, hide_index=True)
+            st.caption(f"총 {len(accel_df)}개 | ETF/섹터 {n_etf}개 · 테마종목 {n_theme}개 (동일 종목 중복 제거됨)")
+
+            # ── 전광판 일괄 추가 ──────────────────────────────────────
+            not_in_wl = accel_df[~accel_df["Ticker"].apply(is_in_watchlist)].copy()
+            if not_in_wl.empty:
+                st.caption("✅ 전부 전광판에 등록되어 있습니다.")
+            else:
+                option_labels = [
+                    f"{row['이름']}  ({row['Ticker']})"
+                    for _, row in not_in_wl.iterrows()
+                ]
+                label_to_row = {
+                    f"{row['이름']}  ({row['Ticker']})": row
+                    for _, row in not_in_wl.iterrows()
+                }
+                selected_labels = st.multiselect(
+                    "전광판에 추가할 종목 선택 (복수 선택 가능)",
+                    options=option_labels,
+                    key="accel_wl_multiselect",
+                    placeholder="종목을 선택하세요...",
+                )
+                if selected_labels:
+                    if st.button(
+                        f"✚ 선택 {len(selected_labels)}개 전광판 추가",
+                        key="accel_wl_send_btn",
+                        use_container_width=True,
+                    ):
+                        added, skipped = [], []
+                        for lbl in selected_labels:
+                            r = label_to_row.get(lbl)
+                            if r is None:
+                                continue
+                            send_row = {"종목명": r["이름"], "Ticker": r["Ticker"]}
+                            is_stk = bool(r.get("_is_stock", False))
+                            ok, _ = add_money_flow_row_to_watchlist(send_row, is_stock=is_stk)
+                            (added if ok else skipped).append(r["이름"])
+                        if added:
+                            st.success(f"추가 완료 ({len(added)}개): {', '.join(added)}")
+                            st.rerun()
+                        if skipped:
+                            st.info(f"이미 등록됨: {', '.join(skipped)}")
 
 
 def render_today_queue_tab(mode):
@@ -15817,17 +15872,44 @@ if main_page == "dashboard":
     )
     st.caption("전광판 등록 종목만 표시됩니다.")
 
-    remove_options = ["선택"] + [
-        f"{sanitize_asset_name(item.get('name', ''), item.get('ticker', ''))}|{sanitize_ticker_value(item.get('ticker', ''))}"
-        for item in st.session_state.watchlist
-    ]
-    remove_target = st.selectbox("제거할 종목", remove_options, key="remove_watchlist_target")
-
-    if remove_target != "선택" and st.button("전광판에서 제거"):
-        _, remove_ticker = remove_target.split("|", 1)
-        st.session_state.watchlist = [item for item in st.session_state.watchlist if normalize_ticker(item["ticker"]) != normalize_ticker(remove_ticker)]
-        sync_watchlist_to_query()
-        st.rerun()
+    # ── 전광판 일괄 제거 ──────────────────────────────────────────────
+    if st.session_state.watchlist:
+        _wl_label_to_ticker = {
+            f"{sanitize_asset_name(item.get('name', ''), item.get('ticker', ''))}  ({sanitize_ticker_value(item.get('ticker', ''))})": sanitize_ticker_value(item.get("ticker", ""))
+            for item in st.session_state.watchlist
+        }
+        _rm_col, _rm_btn_col = st.columns([3.5, 1])
+        with _rm_col:
+            remove_targets = st.multiselect(
+                "전광판에서 제거할 종목 선택 (복수 선택 가능)",
+                options=list(_wl_label_to_ticker.keys()),
+                key="remove_watchlist_multiselect",
+                placeholder="제거할 종목을 선택하세요...",
+            )
+        with _rm_btn_col:
+            st.write("")
+            st.write("")
+            if remove_targets:
+                if st.button(
+                    f"🗑 선택 {len(remove_targets)}개 제거",
+                    key="remove_watchlist_btn",
+                    use_container_width=True,
+                    type="primary",
+                ):
+                    tickers_to_remove = {
+                        normalize_ticker(_wl_label_to_ticker[lbl])
+                        for lbl in remove_targets
+                        if lbl in _wl_label_to_ticker
+                    }
+                    st.session_state.watchlist = [
+                        item for item in st.session_state.watchlist
+                        if normalize_ticker(item["ticker"]) not in tickers_to_remove
+                    ]
+                    persist_watchlist()
+                    sync_watchlist_to_query()
+                    st.rerun()
+            else:
+                st.button("제거", key="remove_watchlist_btn", use_container_width=True, disabled=True)
 
     summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
     if summary_df.empty:
