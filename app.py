@@ -14907,6 +14907,7 @@ def render_today_market_flow_panel():
             etf_accel = flow_df[flow_df["상태"].astype(str).isin(_GOOD_STATES)].copy()
             if not etf_accel.empty:
                 for _, r in etf_accel.iterrows():
+                    _st = str(r.get("상태", ""))
                     accel_etf_rows.append({
                         "구분": str(r.get("구분", "ETF")),
                         "이름": str(r.get("섹터", "")),
@@ -14916,6 +14917,7 @@ def render_today_market_flow_panel():
                         "6M수익률": r.get("6개월수익률", np.nan),
                         "52주위치": r.get("가격수준", np.nan),
                         "가속도": r.get("가속도", np.nan),
+                        "상태": "🚀 강세 가속" if _st == "강세 가속" else "💚 주도 유지",
                         "_is_stock": False,
                     })
 
@@ -14930,6 +14932,7 @@ def render_today_market_flow_panel():
                     .drop_duplicates(subset=["Ticker"], keep="first")
                 )
                 for _, r in th_accel.iterrows():
+                    _st = str(r.get("상태", ""))
                     accel_theme_rows.append({
                         "구분": str(r.get("하위테마", "테마")),
                         "이름": str(r.get("종목명", "")),
@@ -14939,6 +14942,7 @@ def render_today_market_flow_panel():
                         "6M수익률": r.get("6개월수익률", np.nan),
                         "52주위치": r.get("가격수준", np.nan),
                         "가속도": r.get("가속도", np.nan),
+                        "상태": "🚀 강세 가속" if _st == "강세 가속" else "💚 주도 유지",
                         "_is_stock": True,
                     })
 
@@ -14964,7 +14968,7 @@ def render_today_market_flow_panel():
             )
 
             def _fmt_accel_table(df: pd.DataFrame) -> pd.DataFrame:
-                out = df[["전광판", "모멘텀", "구분", "이름", "Ticker",
+                out = df[["전광판", "상태", "모멘텀", "구분", "이름", "Ticker",
                            "돈흐름점수", "3M수익률", "6M수익률", "52주위치", "가속도"]].copy()
                 out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: f"{v:+.1f}" if pd.notna(v) else "-")
                 out["3M수익률"]  = out["3M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
