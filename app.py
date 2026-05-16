@@ -14714,20 +14714,25 @@ def render_today_market_flow_panel():
                 st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
 
     def _accel_momentum_grade(price_level, ret_6m):
-        """52주 위치 + 6M 수익률로 모멘텀 품질 등급 산출."""
+        """52주 위치(0~1 소수) + 6M 수익률로 모멘텀 품질 등급 산출."""
         pl = price_level if pd.notna(price_level) else np.nan
         r6 = ret_6m    if pd.notna(ret_6m)    else np.nan
-        high_pl  = (not np.isnan(pl)) and pl >= 60
-        ok_pl    = (not np.isnan(pl)) and pl >= 40
-        pos_r6   = (not np.isnan(r6)) and r6 > 0
+        # 가격수준은 0~1 범위 소수 (0.60 = 52주 범위의 60% 위치)
+        high_pl = (not np.isnan(pl)) and pl >= 0.60
+        ok_pl   = (not np.isnan(pl)) and pl >= 0.40
+        pos_r6  = (not np.isnan(r6)) and r6 > 0
         if high_pl and pos_r6:
             return "🟢 중장기↑"
         if ok_pl or pos_r6:
             return "🟡 혼합"
         return "🔴 단기반등"
 
+    def _fmt_price_level(v) -> str:
+        """가격수준(0~1 소수)을 '74%' 형식으로 변환."""
+        return f"{v*100:.0f}%" if pd.notna(v) else "-"
+
     def _add_momentum_watchlist_cols_etf(raw_df: pd.DataFrame) -> pd.DataFrame:
-        """ETF/섹터 raw df에 모멘텀·전광판 컬럼을 추가한 포맷 테이블 반환."""
+        """ETF/섹터 raw df에 모멘텀·전광판·6M·52주위치 컬럼을 추가한 포맷 테이블 반환."""
         formatted = format_today_flow_rank_table(raw_df).reset_index(drop=True)
         raw_reset = raw_df.reset_index(drop=True)
         formatted.insert(0, "전광판", raw_reset["Ticker"].apply(
@@ -14736,6 +14741,13 @@ def render_today_market_flow_panel():
         formatted.insert(1, "모멘텀", raw_reset.apply(
             lambda r: _accel_momentum_grade(r.get("가격수준", np.nan), r.get("6개월수익률", np.nan)), axis=1
         ))
+        # 6M수익률·52주위치 추가 (format_today_flow_rank_table에 없는 컬럼)
+        if "6개월수익률" in raw_reset.columns:
+            formatted["6M수익률"] = raw_reset["6개월수익률"].apply(
+                lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-"
+            )
+        if "가격수준" in raw_reset.columns:
+            formatted["52주위치"] = raw_reset["가격수준"].apply(_fmt_price_level)
         return formatted
 
     def _parse_ticker_from_daepuju(s: str) -> str:
@@ -14745,17 +14757,26 @@ def render_today_market_flow_panel():
         return m.group(1).strip() if m else ""
 
     def _add_momentum_watchlist_cols_theme(raw_df: pd.DataFrame) -> pd.DataFrame:
-        """테마 rotation raw df에 모멘텀·전광판 컬럼 추가."""
+        """테마 rotation raw df에 모멘텀·전광판·6M·52주위치 컬럼 추가."""
         formatted = format_today_theme_rank_table(raw_df).reset_index(drop=True)
         raw_reset = raw_df.reset_index(drop=True)
-        # 전광판: 대표주 Ticker 파싱
-        rep_tickers = raw_reset["대표주"].apply(_parse_ticker_from_daepuju) if "대표주" in raw_reset.columns else pd.Series([""] * len(raw_reset))
+        rep_tickers = (
+            raw_reset["대표주"].apply(_parse_ticker_from_daepuju)
+            if "대표주" in raw_reset.columns
+            else pd.Series([""] * len(raw_reset))
+        )
         formatted.insert(0, "전광판", rep_tickers.apply(
             lambda t: "✅" if (t and is_in_watchlist(t)) else "➕"
         ))
         formatted.insert(1, "모멘텀", raw_reset.apply(
             lambda r: _accel_momentum_grade(r.get("가격수준", np.nan), r.get("6개월수익률", np.nan)), axis=1
         ))
+        if "6개월수익률" in raw_reset.columns:
+            formatted["6M수익률"] = raw_reset["6개월수익률"].apply(
+                lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-"
+            )
+        if "가격수준" in raw_reset.columns:
+            formatted["52주위치"] = raw_reset["가격수준"].apply(_fmt_price_level)
         return formatted
 
     rank_cols = st.columns(2)
@@ -14901,7 +14922,7 @@ def render_today_market_flow_panel():
                 out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: f"{v:+.1f}" if pd.notna(v) else "-")
                 out["3M수익률"]  = out["3M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
                 out["6M수익률"]  = out["6M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
-                out["52주위치"]  = out["52주위치"].apply(lambda v: f"{v:.0f}%" if pd.notna(v) else "-")
+                out["52주위치"]  = out["52주위치"].apply(_fmt_price_level)
                 out["가속도"]    = out["가속도"].apply(lambda v: f"{v:+.2f}" if pd.notna(v) else "-")
                 return out
 
