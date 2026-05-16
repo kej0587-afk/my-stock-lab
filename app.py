@@ -4814,6 +4814,8 @@ def clear_financial_api_cache():
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "clear"):
             fn.clear()
+    # imported 함수는 globals()로 못 찾으므로 직접 지움
+    cache_clear(fetch_naver_kr_snapshot)
 
 
 # -------------------------------------------------
