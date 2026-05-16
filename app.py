@@ -6363,6 +6363,15 @@ def render_image_theme_flow_section():
                     else:
                         st.warning(msg)
 
+            # ── 선택 종목 Baseline 차트 (벤치마크 대비 초과수익) ────────
+            if _send_ticker:
+                _stock_name = _send_row.get("종목명", _send_ticker)
+                render_lwc_baseline(
+                    _send_ticker,
+                    label=_stock_name,
+                    key=f"lwc_baseline_theme_{_send_ticker}",
+                )
+
     with raw_tab:
         st.dataframe(theme_df, use_container_width=True, hide_index=True, height=520)
         if not missing_df.empty:
