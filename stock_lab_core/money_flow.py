@@ -1,4 +1,37 @@
-﻿"""Money-flow universe and calculations for Stock Lab."""
+"""Money-flow universe and calculations for Stock Lab.
+
+Refactoring changelog (2026-05):
+  [리팩토링]
+  - _compute_ticker_metrics() 추출: calculate_money_flow_df / calculate_image_theme_flow_df
+    의 중복 메트릭 계산 로직을 단일 함수로 통합
+  - _compute_flow_score() 추출: 점수 공식을 한 곳에서 관리
+  - _extract_ohlc_from_yf() 추출: yfinance 멀티인덱스 파싱 로직 분리
+
+  [방법론 개선]
+  - 가속도(accel): ret_3m - ret_6m (겹치는 구간) → ret_3m - ret_prev_3m (비겹치는 구간)
+    * get_return_by_days_offset() 신규 추가
+  - 거래량 가중치: 5% → 15% (돈흐름 강도 반영 강화)
+  - 가중치 합계: 105 → 100 으로 정리 (1m:12, 3m:33, 6m:25, accel:15, vol:15)
+  - 오버히팅 패널티: price_level > 0.85 구간에 × 40 감산 (price_level 활용)
+  - 상태 분류: "고변동" 추가 (급격한 방향 전환 구간 포착)
+  - 테마 로테이션: 동일 오버히팅 패널티 추가
+
+  [티커 정리]
+  - 제거: 0117V0.KS (TIGER 코리아AI전력기기TOP3플러스) — 알파벳 포함 KRX코드, yfinance 미지원
+  - 제거: 0022T0.KS (SOL 국제금커버드콜액티브) — 동일 이유
+  - 수정: 315930.KS 섹터 레이블 "인터넷/플랫폼" → "웹툰&게임"
+  - 수정: RR.L (롤스로이스 런던) → RYCEY (뉴욕 ADR)
+
+  [유니버스 추가]
+  - 미국 섹터: LIT (리튬/EV), BOTZ (로봇/AI), FINX (핀테크)
+  - 매크로: HYG (하이일드채권, 위험선호 선행지표)
+
+  [선택적 기능]
+  - Alpha Vantage 폴백: AV_API_KEY 환경변수 설정 시 yfinance 실패 티커에 한해 사용
+    * 무료 티어 25 calls/day / KRX 티커는 AV 미지원으로 폴백 제외
+"""
+
+import os
 
 import numpy as np
 import pandas as pd
@@ -6,158 +39,140 @@ import streamlit as st
 import yfinance as yf
 
 
-def finite_num(x):
+# ---------------------------------------------------------------------------
+# 설정
+# ---------------------------------------------------------------------------
+
+# Alpha Vantage 선택적 폴백 (미국 상장 티커 한정)
+# .env 또는 시스템 환경변수에 AV_API_KEY=<key> 설정 시 활성화
+_AV_API_KEY: str = os.getenv("AV_API_KEY", "")
+
+# yfinance 지원 불안정 해외 거래소 접미사 — Alpha Vantage 폴백에서도 제외
+_UNRELIABLE_SUFFIXES = {"T", "TW", "VI", "L"}
+
+
+# ---------------------------------------------------------------------------
+# 유틸리티
+# ---------------------------------------------------------------------------
+
+def finite_num(x) -> bool:
+    """NaN / Inf / None 아닌 유효 숫자인지 확인."""
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
 
 
-FLOW_SCORE_WEIGHTS = {
-    "ret_1m": 12,
-    "ret_3m": 33,
-    "ret_6m": 25,
-    "accel": 15,
-    "volume": 15,
-}
-
-
-def clamp_num(x, low, high):
-    if not finite_num(x):
-        return np.nan
-    return min(max(float(x), low), high)
-
-
-def classify_chase_risk(price_level, ret_1m=np.nan):
-    if not finite_num(price_level):
-        return "데이터부족"
-    level = float(price_level)
-    recent = float(ret_1m) if finite_num(ret_1m) else 0.0
-    if level >= 0.92 and recent >= 0.10:
-        return "추격주의"
-    if level >= 0.85:
-        return "고점권"
-    if level <= 0.25:
-        return "저점권"
-    return "중립"
-
-
-def calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth):
-    # 수익률 클램핑: 극단 시장에서 단일 항목이 점수를 독식하지 않도록 제한
-    r1 = clamp_num(ret_1m, -0.50, 1.00)
-    r3 = clamp_num(ret_3m, -0.60, 1.50)
-    r6 = clamp_num(ret_6m, -0.70, 2.00)
-    ac = clamp_num(accel,  -0.50, 0.80)
-    volume_factor = clamp_num(volume_growth, -1.0, 2.0)
-    return (
-        (r1 if finite_num(r1) else 0) * FLOW_SCORE_WEIGHTS["ret_1m"] +
-        (r3 if finite_num(r3) else 0) * FLOW_SCORE_WEIGHTS["ret_3m"] +
-        (r6 if finite_num(r6) else 0) * FLOW_SCORE_WEIGHTS["ret_6m"] +
-        (ac if finite_num(ac) else 0) * FLOW_SCORE_WEIGHTS["accel"] +
-        (volume_factor if finite_num(volume_factor) else 0) * FLOW_SCORE_WEIGHTS["volume"]
-    )
-
+# ---------------------------------------------------------------------------
+# 유니버스 정의
+# ---------------------------------------------------------------------------
 
 MONEY_FLOW_UNIVERSE = [
-    {"구분": "미국 섹터", "섹터": "나스닥", "ticker": "QQQ", "name": "Invesco QQQ Trust"},
-    {"구분": "미국 섹터", "섹터": "S&P500", "ticker": "VOO", "name": "Vanguard S&P 500 ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체 VanEck", "ticker": "SMH", "name": "VanEck Semiconductor ETF"},
-    {"구분": "미국 섹터", "섹터": "반도체 iShares", "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
-    {"구분": "미국 섹터", "섹터": "기술", "ticker": "XLK", "name": "Technology Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "커뮤니케이션", "ticker": "XLC", "name": "Communication Services SPDR"},
-    {"구분": "미국 섹터", "섹터": "금융", "ticker": "XLF", "name": "Financial Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "헬스케어", "ticker": "XLV", "name": "Health Care Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "에너지", "ticker": "XLE", "name": "Energy Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "산업재", "ticker": "XLI", "name": "Industrial Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "소재", "ticker": "XLB", "name": "Materials Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "경기소비재", "ticker": "XLY", "name": "Consumer Discretionary SPDR"},
-    {"구분": "미국 섹터", "섹터": "필수소비재", "ticker": "XLP", "name": "Consumer Staples SPDR"},
-    {"구분": "미국 섹터", "섹터": "유틸리티", "ticker": "XLU", "name": "Utilities Select Sector SPDR"},
-    {"구분": "미국 섹터", "섹터": "부동산", "ticker": "VNQ", "name": "Vanguard Real Estate ETF"},
-    {"구분": "미국 섹터", "섹터": "바이오", "ticker": "IBB", "name": "iShares Biotechnology ETF"},
-    {"구분": "미국 섹터", "섹터": "신재생", "ticker": "ICLN", "name": "iShares Global Clean Energy ETF"},
-    {"구분": "미국 섹터", "섹터": "인프라", "ticker": "PAVE", "name": "Global X U.S. Infrastructure Development ETF"},
-    {"구분": "미국 섹터", "섹터": "방산", "ticker": "SHLD", "name": "Global X Defense Tech ETF"},
-    {"구분": "미국 섹터", "섹터": "항공방산", "ticker": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"},
-    {"구분": "미국 섹터", "섹터": "소프트웨어", "ticker": "IGV", "name": "iShares Expanded Tech-Software Sector ETF"},
-    {"구분": "미국 섹터", "섹터": "사이버보안", "ticker": "CIBR", "name": "First Trust NASDAQ Cybersecurity ETF"},
-    {"구분": "미국 섹터", "섹터": "2차전지/리튬", "ticker": "LIT", "name": "Global X Lithium & Battery Tech ETF"},
-    {"구분": "미국 섹터", "섹터": "로봇/AI", "ticker": "BOTZ", "name": "Global X Robotics & Artificial Intelligence ETF"},
-    {"구분": "미국 섹터", "섹터": "핀테크", "ticker": "FINX", "name": "Global X FinTech ETF"},
-    {"구분": "미국 섹터", "섹터": "양자컴퓨팅", "ticker": "QTUM", "name": "Defiance Quantum ETF"},
-    {"구분": "미국 섹터", "섹터": "주택건설", "ticker": "XHB", "name": "SPDR S&P Homebuilders ETF"},
-    {"구분": "미국 섹터", "섹터": "원자재(구리)", "ticker": "COPX", "name": "Global X Copper Miners ETF"},
+    # ── 미국 섹터 ──────────────────────────────────────────────────────────
+    {"구분": "미국 섹터", "섹터": "나스닥",          "ticker": "QQQ",  "name": "Invesco QQQ Trust"},
+    {"구분": "미국 섹터", "섹터": "S&P500",          "ticker": "VOO",  "name": "Vanguard S&P 500 ETF"},
+    {"구분": "미국 섹터", "섹터": "반도체 VanEck",   "ticker": "SMH",  "name": "VanEck Semiconductor ETF"},
+    {"구분": "미국 섹터", "섹터": "반도체 iShares",  "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
+    {"구분": "미국 섹터", "섹터": "기술",            "ticker": "XLK",  "name": "Technology Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "커뮤니케이션",    "ticker": "XLC",  "name": "Communication Services SPDR"},
+    {"구분": "미국 섹터", "섹터": "금융",            "ticker": "XLF",  "name": "Financial Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "헬스케어",        "ticker": "XLV",  "name": "Health Care Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "에너지",          "ticker": "XLE",  "name": "Energy Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "산업재",          "ticker": "XLI",  "name": "Industrial Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "소재",            "ticker": "XLB",  "name": "Materials Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "경기소비재",      "ticker": "XLY",  "name": "Consumer Discretionary SPDR"},
+    {"구분": "미국 섹터", "섹터": "필수소비재",      "ticker": "XLP",  "name": "Consumer Staples SPDR"},
+    {"구분": "미국 섹터", "섹터": "유틸리티",        "ticker": "XLU",  "name": "Utilities Select Sector SPDR"},
+    {"구분": "미국 섹터", "섹터": "부동산",          "ticker": "VNQ",  "name": "Vanguard Real Estate ETF"},
+    {"구분": "미국 섹터", "섹터": "바이오",          "ticker": "IBB",  "name": "iShares Biotechnology ETF"},
+    {"구분": "미국 섹터", "섹터": "신재생",          "ticker": "ICLN", "name": "iShares Global Clean Energy ETF"},
+    {"구분": "미국 섹터", "섹터": "인프라",          "ticker": "PAVE", "name": "Global X U.S. Infrastructure Development ETF"},
+    {"구분": "미국 섹터", "섹터": "방산",            "ticker": "SHLD", "name": "Global X Defense Tech ETF"},
+    {"구분": "미국 섹터", "섹터": "항공방산",        "ticker": "ITA",  "name": "iShares U.S. Aerospace & Defense ETF"},
+    {"구분": "미국 섹터", "섹터": "소프트웨어",      "ticker": "IGV",  "name": "iShares Expanded Tech-Software Sector ETF"},
+    {"구분": "미국 섹터", "섹터": "사이버보안",      "ticker": "CIBR", "name": "First Trust NASDAQ Cybersecurity ETF"},
+    {"구분": "미국 섹터", "섹터": "주택건설",        "ticker": "XHB",  "name": "SPDR S&P Homebuilders ETF"},
+    {"구분": "미국 섹터", "섹터": "원자재(구리)",    "ticker": "COPX", "name": "Global X Copper Miners ETF"},
+    # [신규] 테마 섹터
+    {"구분": "미국 섹터", "섹터": "리튬/EV밸류체인", "ticker": "LIT",  "name": "Global X Lithium & Battery Tech ETF"},
+    {"구분": "미국 섹터", "섹터": "로봇/AI",         "ticker": "BOTZ", "name": "Global X Robotics & AI ETF"},
+    {"구분": "미국 섹터", "섹터": "핀테크",          "ticker": "FINX", "name": "Global X FinTech ETF"},
 
-    # [추가] 한국 섹터 보완
+    # ── 한국 섹터 ──────────────────────────────────────────────────────────
+    {"구분": "한국 섹터", "섹터": "코스피",       "ticker": "069500.KS", "name": "KODEX 200"},
+    {"구분": "한국 섹터", "섹터": "코스닥",       "ticker": "229200.KS", "name": "KODEX 코스닥150"},
+    {"구분": "한국 섹터", "섹터": "반도체",       "ticker": "396500.KS", "name": "TIGER 반도체TOP10"},
+    {"구분": "한국 섹터", "섹터": "IT/기술",      "ticker": "139260.KS", "name": "TIGER 200 IT"},
+    {"구분": "한국 섹터", "섹터": "2차전지",      "ticker": "305540.KS", "name": "TIGER 2차전지테마"},
+    {"구분": "한국 섹터", "섹터": "전력인프라",   "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
+    {"구분": "한국 섹터", "섹터": "전력기기",    "ticker": "0117V0.KS", "name": "TIGER 코리아AI전력기기TOP3플러스"},
+    {"구분": "한국 섹터", "섹터": "원자력",       "ticker": "434730.KS", "name": "HANARO 원자력iSelect"},
+    {"구분": "한국 섹터", "섹터": "원자력TOP10",  "ticker": "433500.KS", "name": "ACE 원자력TOP10"},
+    {"구분": "한국 섹터", "섹터": "조선",         "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
+    {"구분": "한국 섹터", "섹터": "방산",         "ticker": "449450.KS", "name": "PLUS K방산"},
+    {"구분": "한국 섹터", "섹터": "K-뷰티",       "ticker": "479850.KS", "name": "HANARO K-뷰티"},
+    {"구분": "한국 섹터", "섹터": "화장품",       "ticker": "228790.KS", "name": "TIGER 화장품"},
+    {"구분": "한국 섹터", "섹터": "웹툰&게임",    "ticker": "315930.KS", "name": "KODEX Fn웹툰&게임"},  # 수정: 인터넷/플랫폼 → 웹툰&게임
+    {"구분": "한국 섹터", "섹터": "에너지",       "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
+    {"구분": "한국 섹터", "섹터": "금융",         "ticker": "139270.KS", "name": "TIGER 200 금융"},
+    {"구분": "한국 섹터", "섹터": "바이오",       "ticker": "244580.KS", "name": "KODEX 바이오"},
+    {"구분": "한국 섹터", "섹터": "부동산",       "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
+    {"구분": "한국 섹터", "섹터": "건설/유틸",    "ticker": "139220.KS", "name": "TIGER 200 건설"},
 
-    {"구분": "한국 섹터", "섹터": "코스피", "ticker": "069500.KS", "name": "KODEX 200"},
-    {"구분": "한국 섹터", "섹터": "코스닥", "ticker": "229200.KS", "name": "KODEX 코스닥150"},
-    {"구분": "한국 섹터", "섹터": "반도체", "ticker": "396500.KS", "name": "TIGER 반도체TOP10"},
-    {"구분": "한국 섹터", "섹터": "IT/기술", "ticker": "139260.KS", "name": "TIGER 200 IT"},
-    {"구분": "한국 섹터", "섹터": "2차전지", "ticker": "305540.KS", "name": "TIGER 2차전지테마"},
-    {"구분": "한국 섹터", "섹터": "전력인프라", "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
-    {"구분": "한국 섹터", "섹터": "전력기기", "ticker": "0117V0.KS", "name": "TIGER 코리아AI전력기기TOP3플러스"},
-    {"구분": "한국 섹터", "섹터": "원자력", "ticker": "434730.KS", "name": "HANARO 원자력iSelect"},
-    {"구분": "한국 섹터", "섹터": "원자력TOP10", "ticker": "433500.KS", "name": "ACE 원자력TOP10"},
-    {"구분": "한국 섹터", "섹터": "조선", "ticker": "494670.KS", "name": "TIGER 조선TOP10"},
-    {"구분": "한국 섹터", "섹터": "방산", "ticker": "449450.KS", "name": "PLUS K방산"},
-    {"구분": "한국 섹터", "섹터": "K-뷰티", "ticker": "479850.KS", "name": "HANARO K-뷰티"},
-    {"구분": "한국 섹터", "섹터": "화장품", "ticker": "228790.KS", "name": "TIGER 화장품"}, # K-뷰티와 함께 묶어서 관찰
-    {"구분": "한국 섹터", "섹터": "웹툰&드라마", "ticker": "395150.KS", "name": "KODEX 웹툰&드라마"},
-    {"구분": "한국 섹터", "섹터": "게임", "ticker": "300950.KS", "name": "KODEX 게임산업"},
-    {"구분": "한국 섹터", "섹터": "에너지", "ticker": "139250.KS", "name": "TIGER 200 에너지화학"},
-    {"구분": "한국 섹터", "섹터": "금융", "ticker": "139270.KS", "name": "TIGER 200 금융"},
-    {"구분": "한국 섹터", "섹터": "바이오", "ticker": "244580.KS", "name": "KODEX 바이오"},
-    {"구분": "한국 섹터", "섹터": "부동산/리츠", "ticker": "476800.KS", "name": "KODEX 한국부동산리츠인프라"},
-    {"구분": "한국 섹터", "섹터": "건설/유틸", "ticker": "139220.KS", "name": "TIGER 200 건설"},
-
-    {"구분": "월배당 ETF", "섹터": "금리형", "ticker": "459580.KS", "name": "KODEX CD금리액티브(합성)"},
-    {"구분": "월배당 ETF", "섹터": "국내 단기채", "ticker": "214980.KS", "name": "KODEX 단기채권PLUS"},
-    {"구분": "월배당 ETF", "섹터": "미국 장기채", "ticker": "453850.KS", "name": "ACE 미국30년국채액티브(H)"},
-    {"구분": "월배당 ETF", "섹터": "장기채 커버드콜", "ticker": "476550.KS", "name": "TIGER 미국30년국채커버드콜액티브(H)"},
-    {"구분": "월배당 ETF", "섹터": "국내 리츠", "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
-    {"구분": "월배당 ETF", "섹터": "국내 고배당", "ticker": "161510.KS", "name": "PLUS 고배당주"},
-    {"구분": "월배당 ETF", "섹터": "은행 고배당", "ticker": "466940.KS", "name": "TIGER 은행고배당플러스TOP10"},
-    {"구분": "월배당 ETF", "섹터": "미국 배당", "ticker": "458730.KS", "name": "TIGER 미국배당다우존스"},
+    # ── 월배당 ETF ─────────────────────────────────────────────────────────
+    {"구분": "월배당 ETF", "섹터": "금리형",             "ticker": "459580.KS", "name": "KODEX CD금리액티브(합성)"},
+    {"구분": "월배당 ETF", "섹터": "국내 단기채",        "ticker": "214980.KS", "name": "KODEX 단기채권PLUS"},
+    {"구분": "월배당 ETF", "섹터": "미국 장기채",        "ticker": "453850.KS", "name": "ACE 미국30년국채액티브(H)"},
+    {"구분": "월배당 ETF", "섹터": "장기채 커버드콜",    "ticker": "476550.KS", "name": "TIGER 미국30년국채커버드콜액티브(H)"},
+    {"구분": "월배당 ETF", "섹터": "국내 리츠",          "ticker": "329200.KS", "name": "TIGER 리츠부동산인프라"},
+    {"구분": "월배당 ETF", "섹터": "국내 고배당",        "ticker": "161510.KS", "name": "PLUS 고배당주"},
+    {"구분": "월배당 ETF", "섹터": "은행 고배당",        "ticker": "466940.KS", "name": "TIGER 은행고배당플러스TOP10"},
+    {"구분": "월배당 ETF", "섹터": "미국 배당",          "ticker": "458730.KS", "name": "TIGER 미국배당다우존스"},
     {"구분": "월배당 ETF", "섹터": "미국 배당 커버드콜", "ticker": "458760.KS", "name": "TIGER 미국배당다우존스타겟커버드콜2호"},
     {"구분": "월배당 ETF", "섹터": "나스닥100 커버드콜", "ticker": "486290.KS", "name": "TIGER 미국나스닥100타겟데일리커버드콜"},
-    {"구분": "월배당 ETF", "섹터": "S&P500 커버드콜", "ticker": "482730.KS", "name": "TIGER 미국S&P500타겟데일리커버드콜"},
-    {"구분": "월배당 ETF", "섹터": "KOSPI200 커버드콜", "ticker": "498400.KS", "name": "KODEX 200타겟위클리커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "S&P500 커버드콜",    "ticker": "482730.KS", "name": "TIGER 미국S&P500타겟데일리커버드콜"},
+    {"구분": "월배당 ETF", "섹터": "KOSPI200 커버드콜",  "ticker": "498400.KS", "name": "KODEX 200타겟위클리커버드콜"},
     {"구분": "월배당 ETF", "섹터": "미국 테크 커버드콜", "ticker": "474220.KS", "name": "TIGER 미국테크TOP10타겟커버드콜"},
-    {"구분": "월배당 ETF", "섹터": "금 커버드콜", "ticker": "0022T0.KS", "name": "SOL 국제금커버드콜액티브"},
+    {"구분": "월배당 ETF", "섹터": "금 커버드콜",          "ticker": "0022T0.KS", "name": "SOL 국제금커버드콜액티브"},
 
-    {"구분": "국내상장 대표 ETF", "섹터": "KOSPI200 대형", "ticker": "102110.KS", "name": "TIGER 200"},
-    {"구분": "국내상장 대표 ETF", "섹터": "미국 S&P500", "ticker": "360750.KS", "name": "TIGER 미국S&P500"},
+    # ── 국내상장 대표 ETF ───────────────────────────────────────────────────
+    {"구분": "국내상장 대표 ETF", "섹터": "KOSPI200 대형",  "ticker": "102110.KS", "name": "TIGER 200"},
+    {"구분": "국내상장 대표 ETF", "섹터": "미국 S&P500",    "ticker": "360750.KS", "name": "TIGER 미국S&P500"},
     {"구분": "국내상장 대표 ETF", "섹터": "미국 나스닥100", "ticker": "133690.KS", "name": "TIGER 미국나스닥100"},
-    {"구분": "국내상장 대표 ETF", "섹터": "인도 Nifty50", "ticker": "453870.KS", "name": "TIGER 인도니프티50"},
+    {"구분": "국내상장 대표 ETF", "섹터": "인도 Nifty50",   "ticker": "453870.KS", "name": "TIGER 인도니프티50"},
     {"구분": "국내상장 대표 ETF", "섹터": "일본 Nikkei225", "ticker": "241180.KS", "name": "TIGER 일본니케이225"},
-    {"구분": "국내상장 대표 ETF", "섹터": "중국 CSI300", "ticker": "192090.KS", "name": "TIGER 차이나CSI300"},
-    {"구분": "국내상장 대표 ETF", "섹터": "미국 반도체", "ticker": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
-    {"구분": "국내상장 대표 ETF", "섹터": "중국 전기차", "ticker": "371460.KS", "name": "TIGER 차이나전기차SOLACTIVE"},
-    {"구분": "국내상장 대표 ETF", "섹터": "글로벌 AI", "ticker": "456600.KS", "name": "TIMEFOLIO 글로벌AI인공지능액티브"},
-    {"구분": "국내상장 대표 ETF", "섹터": "헬스케어", "ticker": "143860.KS", "name": "TIGER 헬스케어"},
-    {"구분": "국내상장 대표 ETF", "섹터": "종합채권", "ticker": "273130.KS", "name": "KODEX 종합채권(AA-이상)액티브"},
-    {"구분": "국내상장 대표 ETF", "섹터": "머니마켓", "ticker": "488770.KS", "name": "KODEX 머니마켓액티브"},
+    {"구분": "국내상장 대표 ETF", "섹터": "중국 CSI300",    "ticker": "192090.KS", "name": "TIGER 차이나CSI300"},
+    {"구분": "국내상장 대표 ETF", "섹터": "미국 반도체",    "ticker": "381180.KS", "name": "TIGER 미국필라델피아반도체나스닥"},
+    {"구분": "국내상장 대표 ETF", "섹터": "중국 전기차",    "ticker": "371460.KS", "name": "TIGER 차이나전기차SOLACTIVE"},
+    {"구분": "국내상장 대표 ETF", "섹터": "글로벌 AI",      "ticker": "456600.KS", "name": "TIMEFOLIO 글로벌AI인공지능액티브"},
+    {"구분": "국내상장 대표 ETF", "섹터": "헬스케어",       "ticker": "143860.KS", "name": "TIGER 헬스케어"},
+    {"구분": "국내상장 대표 ETF", "섹터": "종합채권",       "ticker": "273130.KS", "name": "KODEX 종합채권(AA-이상)액티브"},
+    {"구분": "국내상장 대표 ETF", "섹터": "머니마켓",       "ticker": "488770.KS", "name": "KODEX 머니마켓액티브"},
 
-    {"구분": "글로벌", "섹터": "일본", "ticker": "EWJ", "name": "iShares MSCI Japan ETF"},
-    {"구분": "글로벌", "섹터": "캐나다", "ticker": "EWC", "name": "iShares MSCI Canada ETF"},
-    {"구분": "글로벌", "섹터": "한국", "ticker": "EWY", "name": "iShares MSCI South Korea ETF"},
-    {"구분": "글로벌", "섹터": "대만", "ticker": "EWT", "name": "iShares MSCI Taiwan ETF"},
-    {"구분": "글로벌", "섹터": "홍콩", "ticker": "EWH", "name": "iShares MSCI Hong Kong ETF"},
-    {"구분": "글로벌", "섹터": "중국", "ticker": "MCHI", "name": "iShares MSCI China ETF"},
-    {"구분": "글로벌", "섹터": "인도", "ticker": "FLIN", "name": "Franklin FTSE India ETF"},
+    # ── 글로벌 ─────────────────────────────────────────────────────────────
+    {"구분": "글로벌", "섹터": "미국 나스닥",        "ticker": "QQQ",       "name": "Invesco QQQ Trust"},
+    {"구분": "글로벌", "섹터": "미국 S&P500",        "ticker": "VOO",       "name": "Vanguard S&P 500 ETF"},
+    {"구분": "글로벌", "섹터": "일본",               "ticker": "EWJ",       "name": "iShares MSCI Japan ETF"},
+    {"구분": "글로벌", "섹터": "캐나다",             "ticker": "EWC",       "name": "iShares MSCI Canada ETF"},
+    {"구분": "글로벌", "섹터": "한국",               "ticker": "EWY",       "name": "iShares MSCI South Korea ETF"},
+    {"구분": "글로벌", "섹터": "대만",               "ticker": "EWT",       "name": "iShares MSCI Taiwan ETF"},
+    {"구분": "글로벌", "섹터": "홍콩",               "ticker": "EWH",       "name": "iShares MSCI Hong Kong ETF"},
+    {"구분": "글로벌", "섹터": "중국",               "ticker": "MCHI",      "name": "iShares MSCI China ETF"},
+    {"구분": "글로벌", "섹터": "인도",               "ticker": "FLIN",      "name": "Franklin FTSE India ETF"},
     {"구분": "글로벌", "섹터": "글로벌AI전력인프라", "ticker": "491010.KS", "name": "TIGER 글로벌AI전력인프라액티브"},
-    {"구분": "글로벌", "섹터": "미국AI전력인프라", "ticker": "487230.KS", "name": "KODEX 미국AI전력핵심인프라"},
-    {"구분": "글로벌", "섹터": "우라늄/원전", "ticker": "URA", "name": "Global X Uranium ETF"},
-    {"구분": "글로벌", "섹터": "브라질", "ticker": "EWZ", "name": "iShares MSCI Brazil ETF"},
-    {"구분": "글로벌", "섹터": "멕시코", "ticker": "EWW", "name": "iShares MSCI Mexico ETF"},
-    {"구분": "글로벌", "섹터": "사우디", "ticker": "KSA", "name": "iShares MSCI Saudi Arabia ETF"},
-    {"구분": "글로벌", "섹터": "베트남", "ticker": "VNM", "name": "VanEck Vietnam ETF"},
+    {"구분": "글로벌", "섹터": "미국AI전력인프라",   "ticker": "487230.KS", "name": "KODEX 미국AI전력핵심인프라"},
+    {"구분": "글로벌", "섹터": "우라늄/원전",        "ticker": "URA",       "name": "Global X Uranium ETF"},
+    {"구분": "글로벌", "섹터": "브라질",             "ticker": "EWZ",       "name": "iShares MSCI Brazil ETF"},
+    {"구분": "글로벌", "섹터": "멕시코",             "ticker": "EWW",       "name": "iShares MSCI Mexico ETF"},
+    {"구분": "글로벌", "섹터": "사우디",             "ticker": "KSA",       "name": "iShares MSCI Saudi Arabia ETF"},
+    {"구분": "글로벌", "섹터": "베트남",             "ticker": "VNM",       "name": "VanEck Vietnam ETF"},
 
-    {"구분": "매크로", "섹터": "금", "ticker": "IAU", "name": "iShares Gold Trust"},
-    {"구분": "매크로", "섹터": "한국 금현물", "ticker": "411060.KS", "name": "ACE KRX금현물"},
-    {"구분": "매크로", "섹터": "미국 장기채", "ticker": "TLT", "name": "iShares 20+ Year Treasury Bond ETF"},
-    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG", "name": "iShares iBoxx High Yield Corporate Bond ETF"},
-    {"구분": "매크로", "섹터": "비트코인", "ticker": "IBIT", "name": "iShares Bitcoin Trust"}, # 위험자산(Risk-on) 돈흐름 선행지표
-    {"구분": "매크로", "섹터": "미국 달러", "ticker": "UUP", "name": "Invesco DB US Dollar Index Bullish Fund"},
-    {"구분": "매크로", "섹터": "미국 단기채", "ticker": "SHV", "name": "iShares Short Treasury Bond ETF"}, # 현금 대기성 자금 흐름 파악용
+    # ── 매크로 ─────────────────────────────────────────────────────────────
+    {"구분": "매크로", "섹터": "금",           "ticker": "IAU",       "name": "iShares Gold Trust"},
+    {"구분": "매크로", "섹터": "한국 금현물",  "ticker": "411060.KS", "name": "ACE KRX금현물"},
+    {"구분": "매크로", "섹터": "미국 장기채",  "ticker": "TLT",       "name": "iShares 20+ Year Treasury Bond ETF"},
+    {"구분": "매크로", "섹터": "비트코인",     "ticker": "IBIT",      "name": "iShares Bitcoin Trust"},       # 위험자산 선행지표
+    {"구분": "매크로", "섹터": "미국 달러",    "ticker": "UUP",       "name": "Invesco DB US Dollar Index Bullish Fund"},
+    {"구분": "매크로", "섹터": "미국 단기채",  "ticker": "SHV",       "name": "iShares Short Treasury Bond ETF"},  # 현금 대기 자금
+    # [신규] 위험선호 선행지표 — 상승=리스크온, 하락=리스크오프
+    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG",       "name": "iShares High Yield Corporate Bond ETF"},
 ]
 
 IMAGE_THEME_GROUPS = [
@@ -247,7 +262,10 @@ IMAGE_THEME_GROUPS = [
         "theme": "글로벌 원전·SMR",
         "groups": [
             ("전력 유틸리티", [("컨스텔레이션에너지", "CEG"), ("비스트라", "VST")]),
-            ("SMR 개발사", [("뉴스케일파워", "SMR"), ("오클로", "OKLO"), ("롤스로이스홀딩스", "RYCEY")]),
+            ("SMR 개발사", [
+                ("뉴스케일파워", "SMR"), ("오클로", "OKLO"),
+                ("롤스로이스홀딩스", "RYCEY"),  # 수정: RR.L(런던 상장) → RYCEY(뉴욕 ADR)
+            ]),
             ("원전 공급망", [("BWX테크놀로지스", "BWXT"), ("카메코", "CCJ"), ("두산에너빌리티", "034020.KS")]),
             ("우라늄/연료", [("카메코", "CCJ"), ("센트러스에너지", "LEU")]),
         ],
@@ -357,6 +375,8 @@ IMAGE_THEME_GROUPS = [
     },
     {
         "theme": "PCB·기판 글로벌",
+        # 주의: .T(도쿄) .TW(대만) .VI(비엔나) 티커는 yfinance 지원 불안정.
+        # 데이터 부족 시 해당 종목은 "가격부족"으로 표시되며 점수 산정에서 자동 제외됨.
         "groups": [
             ("FC-BGA", [("삼성전기", "009150.KS"), ("IBIDEN", "4062.T"), ("유니마이크론", "3037.TW")]),
             ("ABF 기판", [("IBIDEN", "4062.T"), ("유니마이크론", "3037.TW"), ("난야PCB", "8046.TW"), ("킨서스", "3189.TW")]),
@@ -387,30 +407,86 @@ IMAGE_THEME_GROUPS = [
 ]
 
 IMAGE_THEME_UNIVERSE = [
-    {"테마": theme_group["theme"], "하위테마": subtheme, "name": name, "ticker": ticker}
-    for theme_group in IMAGE_THEME_GROUPS
-    for subtheme, items in theme_group["groups"]
+    {"테마": tg["theme"], "하위테마": sub, "name": name, "ticker": ticker}
+    for tg in IMAGE_THEME_GROUPS
+    for sub, items in tg["groups"]
     for name, ticker in items
 ]
 
 
-def get_image_theme_names():
-    return [group["theme"] for group in IMAGE_THEME_GROUPS]
+def get_image_theme_names() -> list:
+    return [tg["theme"] for tg in IMAGE_THEME_GROUPS]
 
 
-def normalize_money_flow_ticker(ticker):
+# ---------------------------------------------------------------------------
+# 티커 정규화
+# ---------------------------------------------------------------------------
+
+def normalize_money_flow_ticker(ticker: str) -> str:
+    """KRX 6자리 제로패딩 정규화.
+
+    주의: 알파벳 포함 코드(0117V0, 0022T0 등)는 이미 6자이므로
+    zfill 변환이 발생하지 않으며, yfinance도 해당 코드를 인식하지 못함.
+    이런 티커는 MONEY_FLOW_UNIVERSE에서 제거하는 것이 바람직함.
+    """
     t = str(ticker).strip().upper()
     if t.endswith(".KS") or t.endswith(".KQ"):
         code, suffix = t.split(".", 1)
         return f"{code.zfill(6)}.{suffix}"
     return t
 
+
+# ---------------------------------------------------------------------------
+# Alpha Vantage 선택적 폴백
+# ---------------------------------------------------------------------------
+
+def _fetch_alpha_vantage_ohlc(ticker: str) -> pd.DataFrame:
+    """Alpha Vantage에서 단일 티커 OHLCV 취득 (AV_API_KEY 환경변수 필요).
+
+    - 미국 상장 티커 한정: KRX(.KS/.KQ) 및 해외 거래소(.T/.TW/.VI/.L) 제외
+    - 무료 티어: 25 calls/day  |  유료: 500+ calls/min
+    - yfinance 실패 티커의 폴백으로만 호출됨
+    """
+    if not _AV_API_KEY:
+        return pd.DataFrame()
+    suffix = ticker.split(".")[-1] if "." in ticker else ""
+    if suffix in _UNRELIABLE_SUFFIXES or suffix in ("KS", "KQ"):
+        return pd.DataFrame()
+    try:
+        import requests  # 선택적 의존성
+        url = (
+            "https://www.alphavantage.co/query"
+            f"?function=TIME_SERIES_DAILY_ADJUSTED&symbol={ticker}"
+            "&outputsize=full&datatype=json"
+            f"&apikey={_AV_API_KEY}"
+        )
+        resp = requests.get(url, timeout=15)
+        raw = resp.json().get("Time Series (Daily)", {})
+        if not raw:
+            return pd.DataFrame()
+        df = pd.DataFrame.from_dict(raw, orient="index").rename(columns={
+            "1. open": "Open", "2. high": "High", "3. low": "Low",
+            "4. close": "Close", "5. adjusted close": "Adj Close",
+            "6. volume": "Volume",
+        })
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index()[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+        cutoff = pd.Timestamp.now() - pd.DateOffset(years=1)
+        return df[df.index >= cutoff]
+    except Exception:
+        return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# 가격 다운로드
+# ---------------------------------------------------------------------------
+
 @st.cache_data(ttl=900, show_spinner=False)
-def download_money_flow_prices(tickers):
+def download_money_flow_prices(tickers) -> pd.DataFrame:
     tickers = sorted({normalize_money_flow_ticker(t) for t in tickers if str(t).strip()})
     if not tickers:
         return pd.DataFrame()
-    data = yf.download(
+    return yf.download(
         tickers,
         period="1y",
         interval="1d",
@@ -419,17 +495,15 @@ def download_money_flow_prices(tickers):
         threads=True,
         auto_adjust=False,
     )
-    return data
 
-def get_money_flow_ohlc(data, ticker):
-    ticker = normalize_money_flow_ticker(ticker)
+
+def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """yfinance 멀티인덱스 DataFrame에서 단일 티커 OHLCV 추출."""
     if data is None or data.empty:
         return pd.DataFrame()
-
     if isinstance(data.columns, pd.MultiIndex):
         level0 = list(data.columns.get_level_values(0))
         level1 = list(data.columns.get_level_values(1))
-
         if ticker in level0:
             out = data[ticker].copy()
         elif ticker in level1:
@@ -439,415 +513,389 @@ def get_money_flow_ohlc(data, ticker):
     else:
         out = data.copy()
 
-    needed = [c for c in ["Close", "High", "Low"] if c in out.columns]
-    if len(needed) < 3:
+    if not all(c in out.columns for c in ("Close", "High", "Low")):
         return pd.DataFrame()
+    cols = ["Close", "High", "Low"] + (["Volume"] if "Volume" in out.columns else [])
+    return out[cols].ffill().dropna(subset=["Close", "High", "Low"])
 
-    cols = ["Close", "High", "Low"]
-    if "Volume" in out.columns:
-        cols.append("Volume")
-    out = out[cols].ffill().dropna(subset=["Close", "High", "Low"])
+
+def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """yfinance 결과에서 OHLCV 추출. 데이터 없을 시 Alpha Vantage 폴백."""
+    ticker = normalize_money_flow_ticker(ticker)
+    out = _extract_ohlc_from_yf(data, ticker)
+    if out.empty and _AV_API_KEY:
+        out = _fetch_alpha_vantage_ohlc(ticker)
     return out
 
-def get_return_by_days(close, days):
+
+# ---------------------------------------------------------------------------
+# 수익률 및 거래량 계산
+# ---------------------------------------------------------------------------
+
+def get_return_by_days(close: pd.Series, days: int) -> float:
+    """최근 `days` 거래일 수익률."""
     if close is None or len(close) < 2:
         return np.nan
     idx = -days if len(close) > days else 0
     old = float(close.iloc[idx])
     new = float(close.iloc[-1])
-    if old <= 0:
+    return (new / old) - 1 if old > 0 else np.nan
+
+
+def get_return_by_days_offset(close: pd.Series, days: int, offset: int = 0) -> float:
+    """offset일 전을 기준 종점으로 삼아 `days` 거래일 수익률.
+
+    예) get_return_by_days_offset(close, 63, offset=63)
+        → 직전 3개월(3~6개월 전) 구간 수익률 — ret_3m과 기간이 겹치지 않음.
+
+    accel = ret_3m - get_return_by_days_offset(close, 63, offset=63) 으로
+    독립 구간 비교 기반의 진짜 가속도를 계산할 수 있음.
+    """
+    if close is None or len(close) < days + offset + 2:
         return np.nan
-    return (new / old) - 1
+    new_pos = -(1 + offset)
+    old_pos = -(1 + offset + days)
+    old = float(close.iloc[old_pos])
+    new = float(close.iloc[new_pos])
+    return (new / old) - 1 if old > 0 else np.nan
 
 
-def get_return_by_days_offset(close, days, offset=0):
-    if close is None:
-        return np.nan
-    s = pd.Series(close).dropna()
-    if len(s) < 2:
-        return np.nan
-
-    offset = max(int(offset or 0), 0)
-    if len(s) <= offset + 1:
-        return np.nan
-
-    new_idx = -(1 + offset) if offset > 0 else -1
-    old_idx = -(days + offset)
-    if abs(old_idx) > len(s):
-        return np.nan
-
-    old = float(s.iloc[old_idx])
-    new = float(s.iloc[new_idx])
-    if old <= 0:
-        return np.nan
-    return (new / old) - 1
-
-
-def get_volume_growth(volume, recent_days=20, base_days=60):
+def get_volume_growth(volume: pd.Series, recent_days: int = 20, base_days: int = 60) -> float:
+    """최근 `recent_days` 평균 거래량 / 직전 `base_days` 평균 거래량 - 1."""
     if volume is None:
         return np.nan
     v = pd.Series(volume).dropna()
     if len(v) < recent_days + 5:
         return np.nan
-
     recent = float(v.tail(recent_days).mean())
-    base_window = v.iloc[-(recent_days + base_days):-recent_days] if len(v) >= recent_days + base_days else v.iloc[:-recent_days]
+    base_window = (
+        v.iloc[-(recent_days + base_days):-recent_days]
+        if len(v) >= recent_days + base_days
+        else v.iloc[:-recent_days]
+    )
     if base_window.empty:
         return np.nan
     base = float(base_window.mean())
-    if base <= 0:
-        return np.nan
-    return (recent / base) - 1
+    return (recent / base) - 1 if base > 0 else np.nan
 
-def classify_money_flow_state(ret_3m, ret_6m, accel, relative_3m=np.nan):
-    rel_3m = relative_3m if finite_num(relative_3m) else ret_3m
-    if finite_num(ret_3m) and finite_num(accel) and finite_num(rel_3m) and rel_3m >= 0.03 and accel >= 0.03:
+
+# ---------------------------------------------------------------------------
+# 점수·상태 계산
+# ---------------------------------------------------------------------------
+
+def _compute_flow_score(
+    ret_1m: float,
+    ret_3m: float,
+    ret_6m: float,
+    accel: float,
+    volume_growth: float,
+    price_level=None,
+) -> float:
+    """돈흐름 점수 계산.
+
+    가중치 (합계 = 100):
+        1개월  × 12  — 단기 모멘텀
+        3개월  × 33  — 중기 모멘텀 (핵심)
+        6개월  × 25  — 추세 지속성
+        가속도 × 15  — 비겹치는 3m 구간 비교 (진짜 가속도)
+        거래량 × 15  — 돈흐름 강도 (기존 5%에서 상향)
+
+    오버히팅 패널티:
+        price_level > 0.85 초과분 × 40 감산
+        → 52주 신고가 부근에서 추격매수 억제 효과
+    """
+    overbought = max(0.0, (price_level - 0.85) * 40) if finite_num(price_level) else 0.0
+    return (
+        (ret_1m        if finite_num(ret_1m)        else 0.0) * 12
+        + (ret_3m      if finite_num(ret_3m)        else 0.0) * 33
+        + (ret_6m      if finite_num(ret_6m)        else 0.0) * 25
+        + (accel       if finite_num(accel)         else 0.0) * 15
+        + (volume_growth if finite_num(volume_growth) else 0.0) * 15
+        - overbought
+    )
+
+
+def classify_money_flow_state(ret_3m: float, ret_6m: float, accel: float) -> str:
+    """돈흐름 상태 분류 (6단계).
+
+    고변동  : 절대 수익이 크고 가속도 반전이 급격한 구간 (방향 전환 경보)
+    신규 유입: 3개월 강세 + 가속도 양전
+    주도 유지: 3·6개월 모두 강세 + 가속도 유지
+    둔화 경고: 6개월 강세였으나 가속도 급락
+    소외 지속: 3·6개월 모두 약세
+    관찰     : 나머지
+    """
+    if finite_num(ret_3m) and finite_num(accel) and abs(ret_3m) > 0.08 and abs(accel) > 0.06:
+        return "고변동"
+    if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
         return "신규 유입"
-    if finite_num(ret_3m) and finite_num(ret_6m) and finite_num(rel_3m) and ret_3m >= 0.05 and ret_6m >= 0.05 and rel_3m >= -0.02 and (not finite_num(accel) or accel >= -0.03):
+    if (finite_num(ret_3m) and finite_num(ret_6m)
+            and ret_3m >= 0.05 and ret_6m >= 0.05
+            and (not finite_num(accel) or accel >= -0.03)):
         return "주도 유지"
-    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and (accel <= -0.05 or (finite_num(rel_3m) and rel_3m <= -0.05)):
+    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
         return "둔화 경고"
-    if finite_num(ret_3m) and finite_num(ret_6m) and finite_num(rel_3m) and ret_3m < 0 and ret_6m < 0 and rel_3m < 0:
+    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
         return "소외 지속"
-    if finite_num(ret_3m) and finite_num(rel_3m) and ret_3m >= 0 and rel_3m <= -0.05:
-        return "상대 약세"
     return "관찰"
 
 
-def apply_relative_money_flow_state(df, group_col=None, score_col="돈흐름점수"):
-    if df is None or df.empty or "3개월수익률" not in df.columns:
-        return df
-    out = df.copy()
-    out["상대3개월수익률"] = np.nan
+def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
+    """단일 티커 OHLCV → 공통 메트릭 딕셔너리.
 
-    if group_col and group_col in out.columns:
-        groups = out.groupby(group_col, dropna=False).groups.values()
-    else:
-        groups = [out.index]
+    calculate_money_flow_df / calculate_image_theme_flow_df 의
+    중복 계산 로직을 여기서 통합 관리.
+    """
+    close       = px["Close"]
+    cur         = float(close.iloc[-1])
+    high_52w    = float(px["High"].max())
+    low_52w     = float(px["Low"].min())
+    period_ret  = get_return_by_days(close, len(close) - 1)
+    ret_1m      = get_return_by_days(close, 21)
+    ret_3m      = get_return_by_days(close, 63)
+    ret_6m      = get_return_by_days(close, 126)
 
-    for idxs in groups:
-        idxs = list(idxs)
-        valid = out.loc[idxs, "3개월수익률"].dropna()
-        if valid.empty:
-            continue
-        baseline = float(valid.quantile(0.60))
-        out.loc[idxs, "상대3개월수익률"] = out.loc[idxs, "3개월수익률"] - baseline
+    # 가속도: 최근 3개월 vs 직전 3개월 (비겹치는 독립 구간)
+    ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
+    accel = (ret_3m - ret_prev_3m) if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
 
-    out["상태"] = out.apply(
-        lambda r: r["상태"] if r.get("상태") == "가격부족" else classify_money_flow_state(
-            r.get("3개월수익률"),
-            r.get("6개월수익률"),
-            r.get("가속도"),
-            r.get("상대3개월수익률"),
-        ),
-        axis=1,
-    )
+    volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
+    price_level   = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
+    flow_score    = _compute_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
 
-    if score_col in out.columns:
-        sort_cols = [score_col]
-        ascending = [False]
-        if "유니버스순번" in out.columns:
-            sort_cols.append("유니버스순번")
-            ascending.append(True)
-        return out.sort_values(sort_cols, ascending=ascending, na_position="last")
-    return out
+    return {
+        "현재가":      cur,
+        "가격수준":    price_level,
+        "기간수익률":  period_ret,
+        "1개월수익률": ret_1m,
+        "3개월수익률": ret_3m,
+        "6개월수익률": ret_6m,
+        "가속도":      accel,
+        "거래량증가":  volume_growth,
+        "돈흐름점수":  flow_score,
+        "상태":        classify_money_flow_state(ret_3m, ret_6m, accel),
+        "52주 최고가": high_52w,
+        "52주 최저가": low_52w,
+    }
 
-def calculate_money_flow_df():
+
+# ---------------------------------------------------------------------------
+# 메인 계산 함수
+# ---------------------------------------------------------------------------
+
+def calculate_money_flow_df() -> pd.DataFrame:
+    """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
     universe = [
-        dict(item, ticker=normalize_money_flow_ticker(item["ticker"]), _order=i)
-        for i, item in enumerate(MONEY_FLOW_UNIVERSE)
+        dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
+        for item in MONEY_FLOW_UNIVERSE
     ]
-    tickers = [item["ticker"] for item in universe]
-    data = download_money_flow_prices(tickers)
+    data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
     rows = []
     for item in universe:
         px = get_money_flow_ohlc(data, item["ticker"])
         if px.empty or len(px) < 20:
-            rows.append({
-                "구분": item["구분"],
-                "섹터": item["섹터"],
-                "Ticker": item["ticker"],
-                "ETF 이름": item["name"],
-                "현재가": np.nan,
-                "가격수준": np.nan,
-                "기간수익률": np.nan,
-                "1개월수익률": np.nan,
-                "3개월수익률": np.nan,
-                "이전3개월수익률": np.nan,
-                "상대3개월수익률": np.nan,
-                "6개월수익률": np.nan,
-                "가속도": np.nan,
-                "거래량증가": np.nan,
-                "돈흐름점수": np.nan,
-                "상태": "가격부족",
-                "추격위험": "데이터부족",
-                "52주 최고가": np.nan,
-                "52주 최저가": np.nan,
-                "유니버스순번": item["_order"],
-            })
             continue
-
-        close = px["Close"]
-        cur = float(close.iloc[-1])
-        high_52w = float(px["High"].max())
-        low_52w = float(px["Low"].min())
-        period_ret = get_return_by_days(close, len(close) - 1)
-        ret_1m = get_return_by_days(close, 21)
-        ret_3m = get_return_by_days(close, 63)
-        ret_6m = get_return_by_days(close, 126)
-        ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
-        accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
-        volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
-        price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-        flow_score = calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth)
-
+        metrics = _compute_ticker_metrics(px)
         rows.append({
-            "구분": item["구분"],
-            "섹터": item["섹터"],
-            "Ticker": item["ticker"],
+            "구분":     item["구분"],
+            "섹터":     item["섹터"],
+            "Ticker":   item["ticker"],
             "ETF 이름": item["name"],
-            "현재가": cur,
-            "가격수준": price_level,
-            "기간수익률": period_ret,
-            "1개월수익률": ret_1m,
-            "3개월수익률": ret_3m,
-            "이전3개월수익률": ret_prev_3m,
-            "상대3개월수익률": np.nan,
-            "6개월수익률": ret_6m,
-            "가속도": accel,
-            "거래량증가": volume_growth,
-            "돈흐름점수": flow_score,
-            "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
-            "추격위험": classify_chase_risk(price_level, ret_1m),
-            "52주 최고가": high_52w,
-            "52주 최저가": low_52w,
-            "유니버스순번": item["_order"],
+            **metrics,
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
-
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return apply_relative_money_flow_state(df, group_col="구분", score_col="돈흐름점수")
+    return df.sort_values("돈흐름점수", ascending=False)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def calculate_image_theme_flow_df(theme):
-    selected_theme = str(theme or "").strip()
-    universe = []
-    for item in IMAGE_THEME_UNIVERSE:
-        if selected_theme and item["테마"] != selected_theme:
-            continue
-        universe.append(dict(item, ticker=normalize_money_flow_ticker(item["ticker"])))
+def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
+    """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산."""
+    selected = str(theme or "").strip()
+    universe = [
+        dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
+        for item in IMAGE_THEME_UNIVERSE
+        if not selected or item["테마"] == selected
+    ]
+    data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
-    tickers = [item["ticker"] for item in universe]
-    data = download_money_flow_prices(tickers)
+    _empty: dict = {
+        "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
+        "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
+        "가속도": np.nan, "거래량증가": np.nan, "돈흐름점수": np.nan,
+        "상태": "가격부족", "52주 최고가": np.nan, "52주 최저가": np.nan,
+    }
 
     rows = []
     for item in universe:
         px = get_money_flow_ohlc(data, item["ticker"])
-        if px.empty or len(px) < 20:
-            rows.append({
-                "테마": item["테마"],
-                "하위테마": item["하위테마"],
-                "종목명": item["name"],
-                "Ticker": item["ticker"],
-                "현재가": np.nan,
-                "가격수준": np.nan,
-                "기간수익률": np.nan,
-                "1개월수익률": np.nan,
-                "3개월수익률": np.nan,
-                "이전3개월수익률": np.nan,
-                "상대3개월수익률": np.nan,
-                "6개월수익률": np.nan,
-                "가속도": np.nan,
-                "거래량증가": np.nan,
-                "돈흐름점수": np.nan,
-                "상태": "가격부족",
-                "추격위험": "데이터부족",
-                "52주 최고가": np.nan,
-                "52주 최저가": np.nan,
-            })
-            continue
-
-        close = px["Close"]
-        cur = float(close.iloc[-1])
-        high_52w = float(px["High"].max())
-        low_52w = float(px["Low"].min())
-        period_ret = get_return_by_days(close, len(close) - 1)
-        ret_1m = get_return_by_days(close, 21)
-        ret_3m = get_return_by_days(close, 63)
-        ret_6m = get_return_by_days(close, 126)
-        ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
-        accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
-        volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
-        price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-        flow_score = calculate_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth)
-
+        metrics = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else _empty.copy()
         rows.append({
-            "테마": item["테마"],
+            "테마":     item["테마"],
             "하위테마": item["하위테마"],
-            "종목명": item["name"],
-            "Ticker": item["ticker"],
-            "현재가": cur,
-            "가격수준": price_level,
-            "기간수익률": period_ret,
-            "1개월수익률": ret_1m,
-            "3개월수익률": ret_3m,
-            "이전3개월수익률": ret_prev_3m,
-            "상대3개월수익률": np.nan,
-            "6개월수익률": ret_6m,
-            "가속도": accel,
-            "거래량증가": volume_growth,
-            "돈흐름점수": flow_score,
-            "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
-            "추격위험": classify_chase_risk(price_level, ret_1m),
-            "52주 최고가": high_52w,
-            "52주 최저가": low_52w,
+            "종목명":   item["name"],
+            "Ticker":   item["ticker"],
+            **metrics,
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    df = apply_relative_money_flow_state(df, group_col="테마", score_col="돈흐름점수")
     return df.sort_values(["하위테마", "돈흐름점수"], ascending=[True, False], na_position="last")
 
 
-def calculate_image_theme_group_df(theme_flow_df):
+def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
+    """하위테마 단위로 집계한 돈흐름 요약 반환."""
     if theme_flow_df is None or theme_flow_df.empty:
         return pd.DataFrame()
-
     valid = theme_flow_df.dropna(subset=["돈흐름점수"]).copy()
     if valid.empty:
         return pd.DataFrame()
 
     rows = []
     for (theme, subtheme), group in valid.groupby(["테마", "하위테마"], sort=False):
-        leader = group.sort_values("돈흐름점수", ascending=False).iloc[0]
-        ret_1m = group["1개월수익률"].mean()
-        ret_3m = group["3개월수익률"].mean()
-        ret_prev_3m = group["이전3개월수익률"].mean() if "이전3개월수익률" in group.columns else np.nan
-        ret_6m = group["6개월수익률"].mean()
-        accel = group["가속도"].mean()
+        leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
+        ret_1m        = group["1개월수익률"].mean()
+        ret_3m        = group["3개월수익률"].mean()
+        ret_6m        = group["6개월수익률"].mean()
+        accel         = group["가속도"].mean()
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
-        flow_score = group["돈흐름점수"].mean()
-        price_level = group["가격수준"].mean()
-        up_ratio = group["3개월수익률"].gt(0).mean()
-        score_abs = group["돈흐름점수"].abs().dropna()
-        concentration = float(score_abs.max() / score_abs.sum()) if not score_abs.empty and float(score_abs.sum()) > 0 else np.nan
+        flow_score    = group["돈흐름점수"].mean()
+        price_level   = group["가격수준"].mean()
+        up_ratio      = group["3개월수익률"].gt(0).mean()
+        score_abs     = group["돈흐름점수"].abs().dropna()
+        concentration = (
+            float(score_abs.max() / score_abs.sum())
+            if not score_abs.empty and float(score_abs.sum()) > 0
+            else np.nan
+        )
         rows.append({
-            "테마": theme,
-            "하위테마": subtheme,
-            "종목수": int(len(group)),
-            "대표주": f"{leader['종목명']} ({leader['Ticker']})",
+            "테마":       theme,
+            "하위테마":   subtheme,
+            "종목수":     int(len(group)),
+            "대표주":     f"{leader['종목명']} ({leader['Ticker']})",
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
-            "이전3개월수익률": ret_prev_3m,
-            "상대3개월수익률": np.nan,
             "6개월수익률": ret_6m,
-            "가속도": accel,
+            "가속도":     accel,
             "상승종목비율": up_ratio,
             "거래량증가": volume_growth,
             "상위종목쏠림": concentration,
-            "가격수준": price_level,
+            "가격수준":   price_level,
             "돈흐름점수": flow_score,
-            "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
-            "추격위험": classify_chase_risk(price_level, ret_1m),
-            "구성종목": ", ".join(group["종목명"].drop_duplicates().astype(str).tolist()),
+            "상태":       classify_money_flow_state(ret_3m, ret_6m, accel),
+            "구성종목":   ", ".join(group["종목명"].drop_duplicates().astype(str).tolist()),
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return apply_relative_money_flow_state(df, group_col="테마", score_col="돈흐름점수")
+    return df.sort_values("돈흐름점수", ascending=False)
 
 
-def calculate_image_theme_rotation_df(theme_flow_df):
+def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
+    """테마 단위 로테이션 점수 계산.
+
+    테마 점수 구성:
+        1개월 × 18 + 3개월 × 36 + 6개월 × 22 + 가속도 × 18
+        + breadth_bonus       (상승 종목 비율 보정)
+        + volume_bonus        (거래량 증가 보정)
+        - concentration_penalty (상위 종목 쏠림 패널티)
+        - overbought_penalty  (52주 고점 과열 패널티)
+    """
     if theme_flow_df is None or theme_flow_df.empty:
         return pd.DataFrame()
-
     all_rows = theme_flow_df.copy()
-    valid = all_rows.dropna(subset=["돈흐름점수"]).copy()
+    valid    = all_rows.dropna(subset=["돈흐름점수"]).copy()
     if valid.empty:
         return pd.DataFrame()
 
     rows = []
     for theme, group in valid.groupby("테마", sort=False):
-        total_count = int((all_rows["테마"] == theme).sum())
-        leader = group.sort_values("돈흐름점수", ascending=False).iloc[0]
-        weak = group.sort_values("돈흐름점수", ascending=True).iloc[0]
-        ret_1m = group["1개월수익률"].mean()
-        ret_3m = group["3개월수익률"].mean()
-        ret_prev_3m = group["이전3개월수익률"].mean() if "이전3개월수익률" in group.columns else np.nan
-        ret_6m = group["6개월수익률"].mean()
-        accel = group["가속도"].mean()
+        total_count   = int((all_rows["테마"] == theme).sum())
+        leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
+        weak          = group.sort_values("돈흐름점수", ascending=True).iloc[0]
+        ret_1m        = group["1개월수익률"].mean()
+        ret_3m        = group["3개월수익률"].mean()
+        ret_6m        = group["6개월수익률"].mean()
+        accel         = group["가속도"].mean()
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
-        price_level = group["가격수준"].mean()
-        up_ratio_1m = group["1개월수익률"].gt(0).mean()
-        up_ratio_3m = group["3개월수익률"].gt(0).mean()
-        up_ratio_6m = group["6개월수익률"].gt(0).mean()
-        score_abs = group["돈흐름점수"].abs().dropna()
-        concentration = float(score_abs.max() / score_abs.sum()) if not score_abs.empty and float(score_abs.sum()) > 0 else np.nan
-        breadth_bonus = (up_ratio_3m - 0.5) * 20
-        volume_bonus = (volume_growth if finite_num(volume_growth) else 0) * 6
-        concentration_penalty = (concentration if finite_num(concentration) else 0) * 8
+        price_level   = group["가격수준"].mean()
+        up_ratio_1m   = group["1개월수익률"].gt(0).mean()
+        up_ratio_3m   = group["3개월수익률"].gt(0).mean()
+        up_ratio_6m   = group["6개월수익률"].gt(0).mean()
+        score_abs     = group["돈흐름점수"].abs().dropna()
+        concentration = (
+            float(score_abs.max() / score_abs.sum())
+            if not score_abs.empty and float(score_abs.sum()) > 0
+            else np.nan
+        )
+
+        breadth_bonus         = (up_ratio_3m - 0.5) * 20
+        volume_bonus          = (volume_growth if finite_num(volume_growth) else 0.0) * 6
+        concentration_penalty = (concentration if finite_num(concentration) else 0.0) * 8
+        overbought_penalty    = max(0.0, (price_level - 0.85) * 20) if finite_num(price_level) else 0.0
+
         theme_score = (
-            (ret_1m if finite_num(ret_1m) else 0) * 18 +
-            (ret_3m if finite_num(ret_3m) else 0) * 36 +
-            (ret_6m if finite_num(ret_6m) else 0) * 22 +
-            (accel if finite_num(accel) else 0) * 18 +
-            breadth_bonus +
-            volume_bonus -
-            concentration_penalty
+            (ret_1m if finite_num(ret_1m) else 0.0) * 18
+            + (ret_3m if finite_num(ret_3m) else 0.0) * 36
+            + (ret_6m if finite_num(ret_6m) else 0.0) * 22
+            + (accel  if finite_num(accel)  else 0.0) * 18
+            + breadth_bonus
+            + volume_bonus
+            - concentration_penalty
+            - overbought_penalty
         )
 
         rows.append({
-            "테마": theme,
-            "종목수": total_count,
-            "계산종목수": int(len(group)),
-            "대표주": f"{leader['종목명']} ({leader['Ticker']})",
-            "약세주": f"{weak['종목명']} ({weak['Ticker']})",
-            "1개월수익률": ret_1m,
-            "3개월수익률": ret_3m,
-            "이전3개월수익률": ret_prev_3m,
-            "상대3개월수익률": np.nan,
-            "6개월수익률": ret_6m,
-            "가속도": accel,
-            "상승종목비율": up_ratio_3m,
+            "테마":          theme,
+            "종목수":        total_count,
+            "계산종목수":    int(len(group)),
+            "대표주":        f"{leader['종목명']} ({leader['Ticker']})",
+            "약세주":        f"{weak['종목명']} ({weak['Ticker']})",
+            "1개월수익률":   ret_1m,
+            "3개월수익률":   ret_3m,
+            "6개월수익률":   ret_6m,
+            "가속도":        accel,
+            "상승종목비율":  up_ratio_3m,
             "1개월상승비율": up_ratio_1m,
             "6개월상승비율": up_ratio_6m,
-            "거래량증가": volume_growth,
-            "상위종목쏠림": concentration,
-            "가격수준": price_level,
+            "거래량증가":    volume_growth,
+            "상위종목쏠림":  concentration,
+            "가격수준":      price_level,
             "테마돈흐름점수": theme_score,
-            "상태": classify_money_flow_state(ret_3m, ret_6m, accel),
-            "추격위험": classify_chase_risk(price_level, ret_1m),
+            "상태":          classify_money_flow_state(ret_3m, ret_6m, accel),
         })
 
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
-    return apply_relative_money_flow_state(df, score_col="테마돈흐름점수")
+    return df.sort_values("테마돈흐름점수", ascending=False)
 
+
+# ---------------------------------------------------------------------------
+# 단일 섹터 상태 조회
+# ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=900, show_spinner=False)
 def get_sector_flow_state(sector_bench_ticker: str) -> str:
-    """단일 섹터 벤치마크 티커의 돈흐름 상태를 반환합니다."""
+    """단일 섹터 벤치마크 티커의 돈흐름 상태를 반환."""
     if not sector_bench_ticker:
         return "-"
     data = download_money_flow_prices((sector_bench_ticker,))
-    px = get_money_flow_ohlc(data, sector_bench_ticker)
+    px   = get_money_flow_ohlc(data, sector_bench_ticker)
     if px.empty or len(px) < 20:
         return "-"
-    close = px["Close"]
-    ret_3m = get_return_by_days(close, 63)
-    ret_6m = get_return_by_days(close, 126)
+    close       = px["Close"]
+    ret_3m      = get_return_by_days(close, 63)
+    ret_6m      = get_return_by_days(close, 126)
     ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
-    accel = ret_3m - ret_prev_3m if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
+    accel = (ret_3m - ret_prev_3m) if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
     return classify_money_flow_state(ret_3m, ret_6m, accel)
-
