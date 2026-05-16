@@ -14739,6 +14739,19 @@ def render_today_market_flow_panel():
     with theme_cols[1]:
         st.markdown("##### 🚀 강세 가속 종목")
 
+        def _accel_momentum_grade(price_level, ret_6m):
+            """52주 위치 + 6M 수익률로 모멘텀 품질 등급 산출."""
+            pl = price_level if pd.notna(price_level) else np.nan
+            r6 = ret_6m    if pd.notna(ret_6m)    else np.nan
+            high_pl  = (not np.isnan(pl)) and pl >= 60
+            ok_pl    = (not np.isnan(pl)) and pl >= 40
+            pos_r6   = (not np.isnan(r6)) and r6 > 0
+            if high_pl and pos_r6:
+                return "🟢 중장기↑"
+            if ok_pl or pos_r6:
+                return "🟡 혼합"
+            return "🔴 단기반등"
+
         # ETF/섹터 강세 가속
         accel_etf_rows = []
         if not flow_df.empty and "상태" in flow_df.columns:
@@ -14751,12 +14764,13 @@ def render_today_market_flow_panel():
                         "Ticker": str(r.get("Ticker", "")),
                         "돈흐름점수": r.get("돈흐름점수", np.nan),
                         "3M수익률": r.get("3개월수익률", np.nan),
+                        "6M수익률": r.get("6개월수익률", np.nan),
+                        "52주위치": r.get("가격수준", np.nan),
                         "가속도": r.get("가속도", np.nan),
                         "_is_stock": False,
                     })
 
-        # 테마 종목 강세 가속 — 같은 Ticker가 여러 테마에 중복될 수 있으므로
-        # 돈흐름점수 기준 내림차순 후 Ticker별 첫 번째 행만 유지(중복 제거)
+        # 테마 종목 강세 가속 — Ticker 중복 제거 (최고 돈흐름점수 유지)
         accel_theme_rows = []
         if not theme_flow_df.empty and "상태" in theme_flow_df.columns:
             th_accel = theme_flow_df[theme_flow_df["상태"].astype(str) == "강세 가속"].copy()
@@ -14773,6 +14787,8 @@ def render_today_market_flow_panel():
                         "Ticker": str(r.get("Ticker", "")),
                         "돈흐름점수": r.get("돈흐름점수", np.nan),
                         "3M수익률": r.get("3개월수익률", np.nan),
+                        "6M수익률": r.get("6개월수익률", np.nan),
+                        "52주위치": r.get("가격수준", np.nan),
                         "가속도": r.get("가속도", np.nan),
                         "_is_stock": True,
                     })
@@ -14790,15 +14806,29 @@ def render_today_market_flow_panel():
             n_etf = sum(1 for r in accel_etf_rows if pd.notna(r["돈흐름점수"]))
             n_theme = len(accel_df) - n_etf
 
+            # 파생 컬럼 추가
+            accel_df["모멘텀"] = accel_df.apply(
+                lambda row: _accel_momentum_grade(row["52주위치"], row["6M수익률"]), axis=1
+            )
+            accel_df["전광판"] = accel_df["Ticker"].apply(
+                lambda t: "✅ 등록" if is_in_watchlist(t) else "➕ 미등록"
+            )
+
             def _fmt_accel_table(df: pd.DataFrame) -> pd.DataFrame:
-                out = df[["구분", "이름", "Ticker", "돈흐름점수", "3M수익률", "가속도"]].copy()
+                out = df[["전광판", "모멘텀", "구분", "이름", "Ticker",
+                           "돈흐름점수", "3M수익률", "6M수익률", "52주위치", "가속도"]].copy()
                 out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: f"{v:+.1f}" if pd.notna(v) else "-")
-                out["3M수익률"] = out["3M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
-                out["가속도"] = out["가속도"].apply(lambda v: f"{v:+.2f}" if pd.notna(v) else "-")
+                out["3M수익률"]  = out["3M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                out["6M수익률"]  = out["6M수익률"].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                out["52주위치"]  = out["52주위치"].apply(lambda v: f"{v:.0f}%" if pd.notna(v) else "-")
+                out["가속도"]    = out["가속도"].apply(lambda v: f"{v:+.2f}" if pd.notna(v) else "-")
                 return out
 
             st.dataframe(_fmt_accel_table(accel_df), use_container_width=True, hide_index=True)
-            st.caption(f"총 {len(accel_df)}개 | ETF/섹터 {n_etf}개 · 테마종목 {n_theme}개 (동일 종목 중복 제거됨)")
+            st.caption(
+                f"총 {len(accel_df)}개 | ETF/섹터 {n_etf}개 · 테마종목 {n_theme}개 (중복 제거) | "
+                "🟢 중장기↑ = 52주위치 60%↑ + 6M양수  🟡 혼합 = 둘 중 하나  🔴 단기반등 = 둘 다 미충족"
+            )
 
             # ── 전광판 일괄 추가 ──────────────────────────────────────
             not_in_wl = accel_df[~accel_df["Ticker"].apply(is_in_watchlist)].copy()
