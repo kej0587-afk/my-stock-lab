@@ -14897,12 +14897,14 @@ def render_today_market_flow_panel():
                                 st.info(f"이미 등록됨: {', '.join(skipped)}")
 
     with theme_cols[1]:
-        st.markdown("##### 🚀 강세 가속 종목")
+        st.markdown("##### 🚀 강세 가속 · 💚 주도 유지 종목")
 
-        # ETF/섹터 강세 가속
+        _GOOD_STATES = {"강세 가속", "주도 유지"}
+
+        # ETF/섹터 강세 가속 + 주도 유지
         accel_etf_rows = []
         if not flow_df.empty and "상태" in flow_df.columns:
-            etf_accel = flow_df[flow_df["상태"].astype(str) == "강세 가속"].copy()
+            etf_accel = flow_df[flow_df["상태"].astype(str).isin(_GOOD_STATES)].copy()
             if not etf_accel.empty:
                 for _, r in etf_accel.iterrows():
                     accel_etf_rows.append({
@@ -14917,10 +14919,10 @@ def render_today_market_flow_panel():
                         "_is_stock": False,
                     })
 
-        # 테마 종목 강세 가속 — Ticker 중복 제거 (최고 돈흐름점수 유지)
+        # 테마 종목 강세 가속 + 주도 유지 — Ticker 중복 제거 (최고 돈흐름점수 유지)
         accel_theme_rows = []
         if not theme_flow_df.empty and "상태" in theme_flow_df.columns:
-            th_accel = theme_flow_df[theme_flow_df["상태"].astype(str) == "강세 가속"].copy()
+            th_accel = theme_flow_df[theme_flow_df["상태"].astype(str).isin(_GOOD_STATES)].copy()
             if not th_accel.empty:
                 th_accel = (
                     th_accel
@@ -14942,7 +14944,7 @@ def render_today_market_flow_panel():
 
         all_accel_rows = accel_etf_rows + accel_theme_rows
         if not all_accel_rows:
-            st.info("현재 강세 가속 상태인 ETF/섹터/테마 종목이 없습니다.")
+            st.info("현재 강세 가속·주도 유지 상태인 ETF/섹터/테마 종목이 없습니다.")
         else:
             accel_df = (
                 pd.DataFrame(all_accel_rows)
@@ -14974,6 +14976,7 @@ def render_today_market_flow_panel():
             st.dataframe(_fmt_accel_table(accel_df), use_container_width=True, hide_index=True)
             st.caption(
                 f"총 {len(accel_df)}개 | ETF/섹터 {n_etf}개 · 테마종목 {n_theme}개 (중복 제거) | "
+                "🚀 강세 가속 = 단기 급등 중  💚 주도 유지 = 3M·6M 모두 양수 안정 추세 | "
                 "🟢 중장기↑ = 52주위치 60%↑ + 6M양수  🟡 혼합 = 둘 중 하나  🔴 단기반등 = 둘 다 미충족"
             )
 
