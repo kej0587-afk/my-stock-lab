@@ -5673,7 +5673,7 @@ def render_power_grid_match_panel(rotation_df):
     if not rows:
         return
 
-    st.markdown("#### 전력 ETF ↔ 이미지 테마 매칭")
+    st.markdown("#### 전력 ETF ↔ 테마 종목 매칭")
     st.markdown(
         """
 <div class='info-panel'>
@@ -5698,9 +5698,9 @@ ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미�
 
 
 def render_image_theme_flow_section():
-    st.subheader("🧭 이미지 테마 종목 흐름")
+    st.subheader("🧭 테마 종목 흐름")
     st.caption(
-        "첨부 이미지의 테마/하위테마 묶음을 가격 기반 모멘텀으로 비교합니다. "
+        "테마/하위테마 묶음을 가격 기반 모멘텀으로 비교합니다. "
         "실제 자금 유입액이 아니라 1개월/3개월/6개월 수익률, 최근 3개월-이전 3개월 가속도, 거래량 증가를 합친 참고 지표입니다."
     )
 
@@ -5708,11 +5708,11 @@ def render_image_theme_flow_section():
     if not themes:
         if not IMAGE_THEME_FLOW_AVAILABLE:
             st.error(
-                "이미지 테마 데이터 모듈이 아직 배포본에 반영되지 않았습니다. "
+                "테마 종목 데이터 모듈이 아직 배포본에 반영되지 않았습니다. "
                 "`stock_lab_core/money_flow.py`까지 함께 배포되어야 국내/해외 테마 종목이 표시됩니다."
             )
         else:
-            st.info("등록된 이미지 테마 universe가 없습니다.")
+            st.info("등록된 테마 종목 universe가 없습니다.")
         return
 
     c1, c2 = st.columns([1.1, 0.8])
@@ -5728,15 +5728,15 @@ def render_image_theme_flow_section():
 
     if not should_run_heavy_analysis(
         "image_theme_flow_lazy",
-        "선택한 이미지 테마의 구성종목 가격을 한 번에 조회하므로 필요할 때만 실행합니다.",
+        "선택한 테마의 구성종목 가격을 한 번에 조회하므로 필요할 때만 실행합니다.",
     ):
         return
 
-    with st.spinner("전체 이미지 테마 흐름 계산 중..."):
+    with st.spinner("전체 테마 종목 흐름 계산 중..."):
         all_theme_df = calculate_image_theme_flow_df("")
 
     if all_theme_df.empty:
-        st.warning("이미지 테마 종목 데이터를 불러오지 못했습니다.")
+        st.warning("테마 종목 데이터를 불러오지 못했습니다.")
         return
 
     all_market_suffix = all_theme_df["Ticker"].astype(str).str.upper().str.endswith((".KS", ".KQ"))
@@ -6021,7 +6021,7 @@ def render_image_theme_flow_section():
 
 
 def render_money_flow_tab():
-    etf_tab, image_theme_tab = st.tabs(["ETF/섹터 돈흐름", "이미지 테마 종목"])
+    etf_tab, image_theme_tab = st.tabs(["ETF/섹터 돈흐름", "테마 종목 흐름"])
     with etf_tab:
         render_money_flow_etf_section()
     with image_theme_tab:
@@ -14077,11 +14077,11 @@ def render_speed_check_tab():
 
 def render_today_market_flow_panel():
     st.markdown("#### 시장 돈흐름 요약")
-    st.caption("글로벌 자금 흐름 레이더와 이미지 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
+    st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
 
     if not should_run_heavy_analysis(
         "today_market_flow_lazy",
-        "ETF/섹터와 이미지 테마 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
+        "ETF/섹터와 테마 종목 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
         run_label="돈흐름 요약 계산/새로고침",
     ):
         return
@@ -14129,9 +14129,9 @@ def render_today_market_flow_panel():
 
     if not theme_top5.empty:
         r = theme_top5.iloc[0]
-        metric_cols[3].metric("이미지 테마 1위", str(r["테마"]), f"{fmt_flow_score(r['테마돈흐름점수'])} pts")
+        metric_cols[3].metric("테마 종목 1위", str(r["테마"]), f"{fmt_flow_score(r['테마돈흐름점수'])} pts")
     else:
-        metric_cols[3].metric("이미지 테마 1위", "-", "-")
+        metric_cols[3].metric("테마 종목 1위", "-", "-")
 
     st.caption("돈흐름점수는 1/3/6개월 수익률, 가속도, 거래량 증가를 함께 본 가격 기반 지표입니다. 높다고 바로 매수하라는 뜻은 아닙니다.")
 
@@ -14194,9 +14194,9 @@ def render_today_market_flow_panel():
 
     theme_cols = st.columns([1.05, 1])
     with theme_cols[0]:
-        st.markdown("##### 이미지 테마 TOP 5")
+        st.markdown("##### 테마 종목 TOP 5")
         if theme_top5.empty:
-            st.info("이미지 테마 계산 데이터가 부족합니다.")
+            st.info("테마 종목 계산 데이터가 부족합니다.")
         else:
             st.dataframe(format_today_theme_rank_table(theme_top5), use_container_width=True, hide_index=True)
 
