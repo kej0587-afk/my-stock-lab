@@ -692,18 +692,35 @@ def _compute_flow_score(
     )
 
 
-def classify_money_flow_state(ret_3m: float, ret_6m: float, accel: float) -> str:
-    """돈흐름 상태 분류 (6단계).
+def classify_money_flow_state(
+    ret_3m: float,
+    ret_6m: float,
+    accel: float,
+    price_level: float | None = None,
+) -> str:
+    """돈흐름 상태 분류 (7단계).
 
-    고변동  : 절대 수익이 크고 가속도 반전이 급격한 구간 (방향 전환 경보)
+    과열경보 : 고변동 + 52주 고점 85% 초과 → 하락 위험 구간
+    급반등   : 고변동 + 52주 저점 40% 미만 + 최근 수익 양전 → 반등 시도
+    고변동   : 절대 수익 크고 가속도 반전 급격 (위 두 케이스 제외)
     신규 유입: 3개월 강세 + 가속도 양전
     주도 유지: 3·6개월 모두 강세 + 가속도 유지
     둔화 경고: 6개월 강세였으나 가속도 급락
     소외 지속: 3·6개월 모두 약세
     관찰     : 나머지
     """
-    if finite_num(ret_3m) and finite_num(accel) and abs(ret_3m) > 0.08 and abs(accel) > 0.06:
+    is_volatile = (
+        finite_num(ret_3m) and finite_num(accel)
+        and abs(ret_3m) > 0.08 and abs(accel) > 0.06
+    )
+    if is_volatile:
+        pl = price_level if finite_num(price_level) else 0.5
+        if pl > 0.85:
+            return "과열경보"
+        if pl < 0.40 and finite_num(ret_3m) and ret_3m > 0:
+            return "급반등"
         return "고변동"
+
     if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
         return "신규 유입"
     if (finite_num(ret_3m) and finite_num(ret_6m)
@@ -750,7 +767,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
         "가속도":      accel,
         "거래량증가":  volume_growth,
         "돈흐름점수":  flow_score,
-        "상태":        classify_money_flow_state(ret_3m, ret_6m, accel),
+        "상태":        classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         "52주 최고가": high_52w,
         "52주 최저가": low_52w,
     }
@@ -865,7 +882,7 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
             "상위종목쏠림": concentration,
             "가격수준":   price_level,
             "돈흐름점수": flow_score,
-            "상태":       classify_money_flow_state(ret_3m, ret_6m, accel),
+            "상태":       classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
             "구성종목":   ", ".join(group["종목명"].drop_duplicates().astype(str).tolist()),
         })
 
@@ -947,7 +964,7 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             "상위종목쏠림":  concentration,
             "가격수준":      price_level,
             "테마돈흐름점수": theme_score,
-            "상태":          classify_money_flow_state(ret_3m, ret_6m, accel),
+            "상태":          classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         })
 
     df = pd.DataFrame(rows)
@@ -971,8 +988,12 @@ def get_sector_flow_state(sector_bench_ticker: str) -> str:
     if px.empty or len(px) < 20:
         return "-"
     close       = px["Close"]
+    high_52w    = float(px["High"].max())
+    low_52w     = float(px["Low"].min())
+    cur         = float(close.iloc[-1])
+    price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else None
     ret_3m      = get_return_by_days(close, 63)
     ret_6m      = get_return_by_days(close, 126)
     ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
     accel = (ret_3m - ret_prev_3m) if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
-    return classify_money_flow_state(ret_3m, ret_6m, accel)
+    return classify_money_flow_state(ret_3m, ret_6m, accel, price_level)
