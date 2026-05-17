@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
+import hmac
 import io
 import zipfile
 import requests
@@ -669,7 +670,7 @@ def require_password_login():
         password = st.text_input("Password", type="password")
 
         if st.button("Log in"):
-            if password == app_password:
+            if hmac.compare_digest(str(password), str(app_password)):
                 st.session_state.password_ok = True
                 st.rerun()
             else:
@@ -1549,7 +1550,7 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
     )
     return True
 
-@st.cache_data(ttl=2, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def load_holdings_db():
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()

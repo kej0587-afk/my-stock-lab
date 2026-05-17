@@ -1496,10 +1496,6 @@ def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
                 item = deal[0]  # 최신일 데이터
 
                 # 종목명 추출
-                name = ""
-                for ti in data.get("totalInfos", []):
-                    if ti.get("code") == "lastClosePrice":
-                        break
                 name = data.get("stockName", code)
 
                 return {
@@ -1572,7 +1568,6 @@ def render_investor_top10_panel(ticker_list: list):
         else:
             # KRX 실패 → 조용히 네이버 폴백 (해외 IP 차단 등 환경 문제일 수 있으므로 에러 미표시)
             result = None
-            result = None  # 아래에서 네이버로 재조회
 
     if result is None or not result.get("ok"):
         if not kr_tickers:
