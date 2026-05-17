@@ -1556,19 +1556,6 @@ def render_investor_top10_panel(ticker_list: list):
     )
 
     has_krx = _krx_auth_available()
-
-    # ── KRX 자격증명 없을 때 안내 ──────────────────────────────────────
-    if not has_krx:
-        import os
-        with st.expander("🔑 연기금 포함 전체 시장 TOP 10 활성화 방법"):
-            st.markdown(
-                "`.streamlit/secrets.toml` 파일에 아래 두 줄을 추가한 뒤 앱을 재시작하세요:\n\n"
-                "```toml\n"
-                "KRX_ID = \"data.krx.co.kr 아이디\"\n"
-                "KRX_PW = \"data.krx.co.kr 비밀번호\"\n"
-                "```\n\n"
-                "계정이 없으면 [KRX 마켓데이터](https://data.krx.co.kr)에서 회원가입하세요."
-            )
     result = None
 
     if has_krx:
@@ -1583,24 +1570,18 @@ def render_investor_top10_panel(ticker_list: list):
             _investors = ["연기금", "외국인", "기관합계", "개인"]
             _val_col   = "순매수(백만원)"
         else:
-            # pykrx 실패 → 네이버 폴백
-            _fail_reason = result.get("reason", "")
-            st.warning(
-                f"⚠️ KRX 데이터 로드 실패 → 네이버 폴백\n\n"
-                f"**원인:** `{_fail_reason}`\n\n"
-                f"KRX 계정(data.krx.co.kr)이 올바른지 확인하고 앱을 재시작하세요."
-            )
+            # KRX 실패 → 조용히 네이버 폴백 (해외 IP 차단 등 환경 문제일 수 있으므로 에러 미표시)
+            result = None
             result = None  # 아래에서 네이버로 재조회
 
     if result is None or not result.get("ok"):
         if not kr_tickers:
             st.info("한국 종목이 없습니다.")
             return
-        if not has_krx:  # KRX 없을 때만 안내 caption 표시
-            st.caption(
-                f"추적 종목 {len(kr_tickers)}개 기준 · 외국인/기관/개인 · 단위: 주(株) · 네이버 출처 | "
-                "연기금 포함 전체 시장 TOP 10은 KRX_ID/KRX_PW 설정 후 사용 가능"
-            )
+        # 네이버 폴백 (KRX 실패 또는 미설정)
+        st.caption(
+            f"추적 종목 {len(kr_tickers)}개 기준 · 외국인/기관/개인 · 단위: 주(株) · 네이버 출처"
+        )
         with st.spinner(f"네이버 수급 조회 중… ({len(kr_tickers)}개 종목)"):
             result = fetch_investor_top10_naver(kr_tickers)
         _investors = ["외국인", "기관합계", "개인"]
