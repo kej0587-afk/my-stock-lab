@@ -14,4 +14,4 @@ xlsxwriter
 pykrx
 lxml
 streamlit-lightweight-charts
-setuptools
+setuptools<71

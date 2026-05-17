@@ -1500,23 +1500,34 @@ def render_investor_top10_panel(ticker_list: list):
     )
 
     has_krx = _krx_auth_available()
+    result = None
 
     if has_krx:
-        st.caption("KRX 인증 감지 → 전체 시장 기준 · 연기금/외국인/기관/개인 · 단위: 백만원")
         from datetime import date as _d
         today_str = _d.today().strftime("%Y%m%d")
         with st.spinner("KRX 투자자 순매수 로딩 중…"):
             result = fetch_investor_top10_pykrx(today_str)
-        _investors = ["연기금", "외국인", "기관합계", "개인"]
-        _val_col   = "순매수(백만원)"
-    else:
-        st.caption(
-            f"추적 종목 {len(kr_tickers)}개 기준 · 외국인/기관/개인 · 단위: 주(株) · 네이버 출처 | "
-            "연기금 포함 전체 시장 TOP 10을 보려면 KRX_ID / KRX_PW 환경 변수를 설정하세요."
-        )
+        if result.get("ok"):
+            st.caption("KRX 인증 · 전체 시장 기준 · 연기금/외국인/기관/개인 · 단위: 백만원")
+            _investors = ["연기금", "외국인", "기관합계", "개인"]
+            _val_col   = "순매수(백만원)"
+        else:
+            # pykrx 실패 → 네이버 폴백
+            st.caption(
+                f"⚠️ KRX 로드 실패({result.get('reason','')}) → 네이버 폴백 | "
+                f"추적 종목 {len(kr_tickers)}개 기준 · 단위: 주(株)"
+            )
+            result = None  # 아래에서 네이버로 재조회
+
+    if result is None or not result.get("ok"):
         if not kr_tickers:
             st.info("한국 종목이 없습니다.")
             return
+        if not has_krx:  # KRX 없을 때만 안내 caption 표시
+            st.caption(
+                f"추적 종목 {len(kr_tickers)}개 기준 · 외국인/기관/개인 · 단위: 주(株) · 네이버 출처 | "
+                "연기금 포함 전체 시장 TOP 10은 KRX_ID/KRX_PW 설정 후 사용 가능"
+            )
         with st.spinner(f"네이버 수급 조회 중… ({len(kr_tickers)}개 종목)"):
             result = fetch_investor_top10_naver(kr_tickers)
         _investors = ["외국인", "기관합계", "개인"]
