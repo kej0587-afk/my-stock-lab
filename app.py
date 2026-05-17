@@ -16332,25 +16332,25 @@ if main_page == "precision":
 
         with judgement_tab:
             meta_rows = [
-                {"항목": "source", "값": fin_meta.get("source")},
-                {"항목": "mode", "값": fin_meta.get("mode")},
-                {"항목": "auto_score", "값": fin_meta.get("auto_score")},
-                {"항목": "manual_score", "값": fin_meta.get("manual_score")},
-                {"항목": "final_score", "값": fin_meta.get("final_score")},
+                {"항목": "source", "값": str(fin_meta.get("source") or "-")},
+                {"항목": "mode", "값": str(fin_meta.get("mode") or "-")},
+                {"항목": "auto_score", "값": str(fin_meta.get("auto_score") or "-")},
+                {"항목": "manual_score", "값": str(fin_meta.get("manual_score") or "-")},
+                {"항목": "final_score", "값": str(fin_meta.get("final_score") or "-")},
             ]
             st.dataframe(pd.DataFrame(meta_rows), use_container_width=True, hide_index=True)
 
             if weighted:
                 weighted_rows = [
-                    {"항목": "weighted score", "값": weighted.get("weighted_net_score")},
-                    {"항목": "S_sum", "값": weighted.get("s_sum")},
-                    {"항목": "A_sum", "값": weighted.get("a_sum")},
-                    {"항목": "B_sum", "값": weighted.get("b_sum")},
-                    {"항목": "danger_count", "값": weighted.get("danger_count")},
-                    {"항목": "범용판단", "값": weighted.get("generic_score")},
-                    {"항목": "수주판단", "값": weighted.get("order_score")},
-                    {"항목": "중간형판단", "값": weighted.get("middle_score")},
-                    {"항목": "selected_mode", "값": weighted.get("selected_mode")},
+                    {"항목": "weighted score", "값": str(weighted.get("weighted_net_score") or "-")},
+                    {"항목": "S_sum", "값": str(weighted.get("s_sum") or "-")},
+                    {"항목": "A_sum", "값": str(weighted.get("a_sum") or "-")},
+                    {"항목": "B_sum", "값": str(weighted.get("b_sum") or "-")},
+                    {"항목": "danger_count", "값": str(weighted.get("danger_count") or "-")},
+                    {"항목": "범용판단", "값": str(weighted.get("generic_score") or "-")},
+                    {"항목": "수주판단", "값": str(weighted.get("order_score") or "-")},
+                    {"항목": "중간형판단", "값": str(weighted.get("middle_score") or "-")},
+                    {"항목": "selected_mode", "값": str(weighted.get("selected_mode") or "-")},
                 ]
                 st.markdown("#### 가중 판정")
                 st.dataframe(pd.DataFrame(weighted_rows), use_container_width=True, hide_index=True)

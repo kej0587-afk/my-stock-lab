@@ -1396,19 +1396,29 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         if not date_str:
             return {"ok": False, "reason": "최근 7일 내 거래 데이터 없음", "data": {}}
 
-        results = {}
+        # ── 병렬로 8개 (4투자자 × 2시장) API 호출 ────────────────────────────
+        from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
+
+        def _fetch_krx_one(inv: str, market: str):
+            df = _pykrx.get_market_net_purchases_of_equities_by_ticker(
+                fromdate=date_str, todate=date_str,
+                market=market, investor=inv,
+            )
+            return inv, market, df
+
         investor_list = ["연기금", "외국인", "기관합계", "개인"]
-        for inv in investor_list:
-            rows = []
-            for market in ["KOSPI", "KOSDAQ"]:
-                df = _pykrx.get_market_net_purchases_of_equities_by_ticker(
-                    fromdate=date_str, todate=date_str,
-                    market=market, investor=inv,
-                )
+        raw: dict[str, list] = {inv: [] for inv in investor_list}
+
+        with _TPE(max_workers=8) as ex:
+            futs = {
+                ex.submit(_fetch_krx_one, inv, market): (inv, market)
+                for inv in investor_list
+                for market in ["KOSPI", "KOSDAQ"]
+            }
+            for fut in _ac(futs):
+                inv, market, df = fut.result()
                 if df is None or df.empty:
                     continue
-                # 컬럼 자동 탐지
-                cols_str = [str(c) for c in df.columns]
                 net_val_col = next((c for c in df.columns if "순매수" in str(c) and "대금" in str(c)), None)
                 net_qty_col = next((c for c in df.columns if "순매수" in str(c) and "량" in str(c)), None)
                 name_col    = next((c for c in df.columns if "종목명" in str(c)), None)
@@ -1418,12 +1428,15 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
                     net_val = float(row[net_val_col]) / 1_000_000
                     net_qty = int(float(row[net_qty_col])) if net_qty_col else 0
                     name    = str(row[name_col]) if name_col else str(ticker)
-                    rows.append({
+                    raw[inv].append({
                         "Ticker":        str(ticker),
                         "종목명":        name,
                         "순매수(백만원)": round(net_val, 0),
                         "순매수(주)":    net_qty,
                     })
+
+        results = {}
+        for inv, rows in raw.items():
             if rows:
                 dff = (pd.DataFrame(rows)
                          .sort_values("순매수(백만원)", ascending=False)
@@ -1468,7 +1481,7 @@ def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
             code = full_ticker.upper().replace(".KS", "").replace(".KQ", "").strip()
             try:
                 url = f"https://m.stock.naver.com/api/stock/{code}/integration"
-                r = _requests.get(url, headers=naver_headers, timeout=8)
+                r = _requests.get(url, headers=naver_headers, timeout=4)
                 if r.status_code != 200:
                     return None
                 data = r.json()
@@ -1497,7 +1510,7 @@ def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
                 return None
 
         rows = []
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        with ThreadPoolExecutor(max_workers=15) as ex:  # workers 늘려서 병렬성 향상
             futures = {ex.submit(_fetch_one, t): t for t in ticker_list}
             for fut in _as_completed(futures):
                 result = fut.result()
