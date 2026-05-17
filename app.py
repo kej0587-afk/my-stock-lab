@@ -9004,7 +9004,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
 
     # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 + 공시 ────────────────────
     if str(ticker).upper().endswith((".KS", ".KQ")):
-        with st.expander("📊 외국인/기관 수급 현황 (최근 20거래일)", expanded=False):
+        with st.expander("📊 투자자별 수급 현황 (최근 20거래일)", expanded=False):
             render_investor_trend_panel(ticker, name)
         if not is_etf:
             with st.expander("📈 재무 트렌드 (연간 DART)", expanded=False):

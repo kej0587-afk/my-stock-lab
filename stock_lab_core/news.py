@@ -1146,73 +1146,72 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
 @st.cache_data(ttl=1800, show_spinner=False)
 def _fetch_pykrx_investor_flow(code: str, days: int = 20) -> dict:
     """
-    pykrx를 이용해 외국인·기관 일별 순매수(백만원) 데이터를 반환합니다.
-    반환: {ok, rows: [{date, foreign_net_m, inst_net_m}], reason}
+    pykrx를 이용해 전체 투자자 유형별 일별 순매수(백만원) 데이터를 반환합니다.
+    반환: {ok, rows: [{date, foreign, inst, pension, individual, ...}], reason}
     """
     try:
         from pykrx import stock as _pykrx_stock
         from datetime import date as _d, timedelta as _td
         today = _d.today()
-        # 거래일 여유분을 고려해 2배 range 확보
         start = (today - _td(days=days * 2)).strftime("%Y%m%d")
         end = today.strftime("%Y%m%d")
         df = _pykrx_stock.get_market_trading_value_by_investor(
-            fromdate=start, todate=end, ticker=code, detail=False
+            fromdate=start, todate=end, ticker=code, detail=True
         )
         if df is None or df.empty:
             return {"ok": False, "reason": "pykrx 데이터 없음", "rows": []}
 
-        # 컬럼명 정규화 (pykrx 버전에 따라 다를 수 있음)
         df.index = pd.to_datetime(df.index)
         df = df.sort_index(ascending=False)
 
-        # 외국인·기관 컬럼 탐색
+        # 투자자 유형 키워드 → 내부 키 매핑
+        _INVESTOR_MAP = {
+            "외국인": "foreign",
+            "기관합계": "inst",
+            "연기금": "pension",
+            "개인":   "individual",
+            "금융투자": "fin_inv",
+            "투신":   "trust",
+            "보험":   "insurance",
+            "은행":   "bank",
+            "사모":   "private",
+            "기타법인": "other_corp",
+        }
         col_map = {}
         for col in df.columns:
             col_str = str(col)
-            if "외국인" in col_str:
-                col_map["foreign"] = col
-            elif "기관" in col_str:
-                col_map["inst"] = col
+            for keyword, key in _INVESTOR_MAP.items():
+                if keyword in col_str and key not in col_map:
+                    col_map[key] = col
 
         if not col_map:
             return {"ok": False, "reason": f"수급 컬럼 없음: {list(df.columns)}", "rows": []}
 
         rows = []
         for idx_ts, row in df.head(days).iterrows():
-            f_val = float(row.get(col_map.get("foreign", ""), 0) or 0) / 1_000_000  # → 백만원
-            i_val = float(row.get(col_map.get("inst", ""), 0) or 0) / 1_000_000
-            rows.append({
-                "date": idx_ts.strftime("%Y.%m.%d"),
-                "foreign_net_m": round(f_val, 1),
-                "inst_net_m": round(i_val, 1),
-            })
+            entry = {"date": idx_ts.strftime("%Y.%m.%d")}
+            for key, col in col_map.items():
+                val = float(row.get(col, 0) or 0) / 1_000_000  # → 백만원
+                entry[key] = round(val, 1)
+            rows.append(entry)
 
-        return {"ok": True, "rows": rows}
+        return {"ok": True, "rows": rows, "col_map": col_map}
     except Exception as e:
         return {"ok": False, "reason": str(e), "rows": []}
 
 
 def render_investor_trend_panel(ticker: str, name: str):
-    """외국인·기관 수급 현황 패널. (한국 종목 전용)"""
+    """전체 투자자 유형별 수급 현황 패널. (한국 종목 전용)"""
     if not str(ticker).upper().endswith((".KS", ".KQ")):
         return
 
     code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
 
     with st.spinner("수급 데이터 로딩 중…"):
-        inv = fetch_investor_trend(ticker)          # 네이버: 외국인 보유비율 + 주식수
-        flow = _fetch_pykrx_investor_flow(code)    # pykrx: 외국인·기관 순매수 금액
+        inv  = fetch_investor_trend(ticker)       # 네이버: 외국인 보유비율
+        flow = _fetch_pykrx_investor_flow(code)   # pykrx: 전체 투자자 순매수
 
-    # ── 요약 지표 ──────────────────────────────────────────────────────────────
-    f_ratio = inv.get("foreign_ratio", "-") if inv.get("ok") else "-"
-    f_net_shares = inv.get("foreign_net", 0) or 0   # 5일 누적 (주)
-
-    flow_rows = flow.get("rows", []) if flow.get("ok") else []
-    recent5 = flow_rows[:5] if len(flow_rows) >= 5 else flow_rows
-    f_net_m5 = sum(r["foreign_net_m"] for r in recent5)   # 외국인 5일 순매수 (백만원)
-    i_net_m5 = sum(r["inst_net_m"] for r in recent5)      # 기관   5일 순매수 (백만원)
-
+    # ── 헬퍼 ──────────────────────────────────────────────────────────────────
     def _badge(v, unit="백만원"):
         if v == 0:
             return f"<span style='color:#94a3b8'>0 {unit}</span>"
@@ -1220,56 +1219,121 @@ def render_investor_trend_panel(ticker: str, name: str):
         color = "#22c55e" if v > 0 else "#ef4444"
         return f"<span style='color:{color};font-weight:600'>{sign} {abs(v):,.0f} {unit}</span>"
 
-    cols = st.columns(3)
-    with cols[0]:
-        st.metric("외국인 보유비율", f"{f_ratio}%")
-    with cols[1]:
-        label_f = "외국인 5일 순매수"
-        if flow.get("ok"):
-            st.markdown(f"**{label_f}**<br>{_badge(f_net_m5)}", unsafe_allow_html=True)
-        else:
-            st.markdown(f"**{label_f}**<br>{_badge(f_net_shares, '주')}", unsafe_allow_html=True)
-    with cols[2]:
-        label_i = "기관 5일 순매수"
-        if flow.get("ok"):
-            st.markdown(f"**{label_i}**<br>{_badge(i_net_m5)}", unsafe_allow_html=True)
-        else:
-            st.caption(f"{label_i}: pykrx 로드 실패")
+    def _sum5(rows, key):
+        recent = rows[:5] if len(rows) >= 5 else rows
+        return sum(r.get(key, 0) for r in recent)
 
-    # ── 기관·외국인 순매수 바 차트 (pykrx) ─────────────────────────────────────
-    if flow.get("ok") and flow_rows and _HAS_PLOTLY:
-        chart_rows = list(reversed(flow_rows))   # 오래된 날짜 → 최신
+    flow_rows = flow.get("rows", []) if flow.get("ok") else []
+
+    # ── 요약 메트릭 (외국인 보유비율 + 주요 4개 투자자 5일 순매수) ──────────────
+    f_ratio     = inv.get("foreign_ratio", "-") if inv.get("ok") else "-"
+    f_net_shares = inv.get("foreign_net", 0) or 0
+
+    metric_items = [
+        ("외국인 보유비율", f"{f_ratio}%", None, None),
+    ]
+    if flow.get("ok") and flow_rows:
+        metric_items += [
+            ("외국인 5일", None, _sum5(flow_rows, "foreign"),  "백만원"),
+            ("기관합계 5일", None, _sum5(flow_rows, "inst"),   "백만원"),
+            ("연기금 5일",  None, _sum5(flow_rows, "pension"), "백만원"),
+            ("개인 5일",    None, _sum5(flow_rows, "individual"), "백만원"),
+        ]
+    else:
+        metric_items += [
+            ("외국인 5일 (주)", None, f_net_shares, "주"),
+        ]
+
+    cols = st.columns(len(metric_items))
+    for col, (label, plain_val, badge_val, unit) in zip(cols, metric_items):
+        with col:
+            if plain_val is not None:
+                st.metric(label, plain_val)
+            else:
+                st.markdown(
+                    f"**{label}**<br>{_badge(badge_val, unit)}",
+                    unsafe_allow_html=True,
+                )
+
+    if not flow.get("ok") or not flow_rows:
+        st.caption(f"pykrx 수급 로드 실패: {flow.get('reason', '')}")
+        return
+
+    # ── 주요 투자자 순매수 바 차트 ────────────────────────────────────────────
+    if _HAS_PLOTLY:
+        chart_rows = list(reversed(flow_rows))
         dates = [r["date"] for r in chart_rows]
-        f_vals = [r["foreign_net_m"] for r in chart_rows]
-        i_vals = [r["inst_net_m"] for r in chart_rows]
+
+        # 표시할 투자자 + 색상
+        _CHART_INVESTORS = [
+            ("foreign",    "외국인",  "#22c55e", "#ef4444"),
+            ("inst",       "기관합계", "#3b82f6", "#f97316"),
+            ("pension",    "연기금",  "#a855f7", "#ec4899"),
+            ("individual", "개인",    "#f59e0b", "#64748b"),
+        ]
 
         fig = _go.Figure()
-        fig.add_trace(_go.Bar(
-            x=dates, y=f_vals, name="외국인",
-            marker_color=["#22c55e" if v >= 0 else "#ef4444" for v in f_vals],
-            opacity=0.85,
-        ))
-        fig.add_trace(_go.Bar(
-            x=dates, y=i_vals, name="기관",
-            marker_color=["#3b82f6" if v >= 0 else "#f97316" for v in i_vals],
-            opacity=0.85,
-        ))
+        for key, label, pos_color, neg_color in _CHART_INVESTORS:
+            vals = [r.get(key, 0) for r in chart_rows]
+            if all(v == 0 for v in vals):
+                continue
+            colors = [pos_color if v >= 0 else neg_color for v in vals]
+            fig.add_trace(_go.Bar(
+                x=dates, y=vals, name=label,
+                marker_color=colors,
+                opacity=0.85,
+            ))
+
         fig.update_layout(
             barmode="group",
-            height=280,
-            margin=dict(l=8, r=8, t=24, b=8),
+            height=320,
+            margin=dict(l=8, r=8, t=28, b=8),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             yaxis_title="순매수 (백만원)",
             xaxis_tickangle=-45,
+            template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── 상세 테이블 (네이버 외국인 raw) ───────────────────────────────────────
+    # ── 전체 투자자 상세 테이블 ──────────────────────────────────────────────
+    _LABEL_MAP = {
+        "foreign":    "외국인",
+        "inst":       "기관합계",
+        "pension":    "연기금",
+        "individual": "개인",
+        "fin_inv":    "금융투자",
+        "trust":      "투신",
+        "insurance":  "보험",
+        "bank":       "은행",
+        "private":    "사모",
+        "other_corp": "기타법인",
+    }
+
+    # 실제 데이터에 있는 키만 컬럼으로 사용
+    present_keys = [k for k in _LABEL_MAP if any(k in r for r in flow_rows)]
+
+    def _fmt(v):
+        if v == 0:
+            return "-"
+        return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
+
+    table_data = []
+    for r in flow_rows:
+        row_dict = {"날짜": r["date"]}
+        for k in present_keys:
+            row_dict[_LABEL_MAP[k]] = _fmt(r.get(k, 0))
+        table_data.append(row_dict)
+
+    with st.expander("📋 투자자별 일별 순매수 상세 (백만원)", expanded=False):
+        df_detail = pd.DataFrame(table_data)
+        st.dataframe(df_detail, use_container_width=True, hide_index=True)
+
+    # ── 네이버 외국인 보유비율 상세 (기존 유지) ───────────────────────────────
     naver_rows = inv.get("rows", []) if inv.get("ok") else []
     if naver_rows:
-        with st.expander("외국인 일별 상세 (주식 수 기준, 네이버)", expanded=False):
+        with st.expander("외국인 보유비율 상세 (주식 수 기준, 네이버)", expanded=False):
             df_inv = pd.DataFrame([
                 {
                     "날짜": r["date"],
@@ -1281,6 +1345,4 @@ def render_investor_trend_panel(ticker: str, name: str):
                 for r in naver_rows
             ])
             st.dataframe(df_inv, use_container_width=True, hide_index=True)
-    elif not flow.get("ok"):
-        st.caption(f"수급 데이터를 불러오지 못했습니다. (네이버: {inv.get('reason','')}, pykrx: {flow.get('reason','')})")
 
