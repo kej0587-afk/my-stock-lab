@@ -1376,26 +1376,16 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         from pykrx import stock as _pykrx
         from datetime import datetime as _dt, timedelta as _tdd
 
-        # ── 1. 직전 거래일 탐색 (OHLCV 기반, 인증 불필요) ───────────────────
-        def _last_trading_day(from_str: str) -> str | None:
+        # ── 1. 직전 평일 계산 (API 호출 없이 달력 기반) ──────────────────────
+        def _last_weekday(from_str: str) -> str:
             d = _dt.strptime(from_str, "%Y%m%d")
             for _ in range(10):
-                if d.weekday() < 5:  # 월~금
-                    try:
-                        # OHLCV는 Naver 기반 → 인증 불필요, 빠름
-                        test = _pykrx.get_market_ohlcv_by_ticker(
-                            date=d.strftime("%Y%m%d"), market="KOSPI"
-                        )
-                        if test is not None and not test.empty:
-                            return d.strftime("%Y%m%d")
-                    except Exception:
-                        pass
+                if d.weekday() < 5:   # 월(0)~금(4)
+                    return d.strftime("%Y%m%d")
                 d -= _tdd(days=1)
-            return None
+            return d.strftime("%Y%m%d")
 
-        date_str = _last_trading_day(base_date_str)
-        if not date_str:
-            return {"ok": False, "reason": "최근 10일 내 KOSPI 거래일을 찾을 수 없음", "data": {}}
+        date_str = _last_weekday(base_date_str)
 
         # ── 2. KRX 로그인 확인: 테스트 호출 1회 (외국인 KOSPI) ─────────────
         try:
