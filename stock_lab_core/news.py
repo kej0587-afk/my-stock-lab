@@ -1376,25 +1376,41 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         from pykrx import stock as _pykrx
         from datetime import datetime as _dt, timedelta as _tdd
 
-        # ── 직전 거래일 탐색 (오늘 포함 최대 7일 전까지) ──────────────────
+        # ── 1. KRX 로그인 상태 사전 확인 ─────────────────────────────────────
+        import os as _os
+        from pykrx.website.comm.auth import get_auth_session as _get_krx_sess, build_krx_session as _build_krx_sess
+        _krx_id = _os.getenv("KRX_ID", "")
+        _krx_pw = _os.getenv("KRX_PW", "")
+        if _krx_id and _krx_pw:
+            # 세션이 없으면 명시적으로 로그인 시도
+            _sess = _get_krx_sess()
+            if _sess is None or not _sess.is_authenticated:
+                _sess = _build_krx_sess(_krx_id, _krx_pw)
+            if _sess is None or not _sess.is_authenticated:
+                return {"ok": False,
+                        "reason": "KRX 로그인 실패: 아이디/비밀번호를 확인하거나 data.krx.co.kr에서 비밀번호 변경 여부를 확인하세요.",
+                        "data": {}}
+
+        # ── 2. 직전 거래일 탐색 (OHLCV 기반, 인증 불필요) ───────────────────
         def _last_trading_day(from_str: str) -> str | None:
             d = _dt.strptime(from_str, "%Y%m%d")
-            for _ in range(7):
+            for _ in range(10):
                 if d.weekday() < 5:  # 월~금
-                    # 간단 테스트: KOSPI 연기금 데이터 있는지 확인
-                    test = _pykrx.get_market_net_purchases_of_equities_by_ticker(
-                        fromdate=d.strftime("%Y%m%d"),
-                        todate=d.strftime("%Y%m%d"),
-                        market="KOSPI", investor="연기금",
-                    )
-                    if test is not None and not test.empty:
-                        return d.strftime("%Y%m%d")
+                    try:
+                        # OHLCV는 Naver 기반 → 인증 불필요, 빠름
+                        test = _pykrx.get_market_ohlcv_by_ticker(
+                            date=d.strftime("%Y%m%d"), market="KOSPI"
+                        )
+                        if test is not None and not test.empty:
+                            return d.strftime("%Y%m%d")
+                    except Exception:
+                        pass
                 d -= _tdd(days=1)
             return None
 
         date_str = _last_trading_day(base_date_str)
         if not date_str:
-            return {"ok": False, "reason": "최근 7일 내 거래 데이터 없음", "data": {}}
+            return {"ok": False, "reason": "최근 10일 내 KOSPI 거래일을 찾을 수 없음", "data": {}}
 
         # ── 병렬로 8개 (4투자자 × 2시장) API 호출 ────────────────────────────
         from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
