@@ -1335,3 +1335,220 @@ def render_investor_trend_panel(ticker: str, name: str):
             ])
             st.dataframe(df_inv, use_container_width=True, hide_index=True)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 오늘 투자자별 순매수 TOP 10
+# ──────────────────────────────────────────────────────────────────────────────
+
+_HAS_KRX_AUTH: bool | None = None  # 캐시
+
+
+def _krx_auth_available() -> bool:
+    """KRX_ID / KRX_PW 환경 변수가 설정되어 있으면 True."""
+    global _HAS_KRX_AUTH
+    if _HAS_KRX_AUTH is None:
+        import os
+        _HAS_KRX_AUTH = bool(os.getenv("KRX_ID") and os.getenv("KRX_PW"))
+    return _HAS_KRX_AUTH
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_investor_top10_pykrx(date_str: str) -> dict:
+    """
+    pykrx로 오늘 전체 시장(KOSPI+KOSDAQ) 투자자별 순매수 상위 종목을 가져옵니다.
+    KRX 인증(KRX_ID / KRX_PW)이 필요합니다.
+    반환: {"연기금": df, "외국인": df, "기관합계": df, "개인": df}
+    df columns: ["종목명", "Ticker", "순매수(백만원)", "순매수(주)"]
+    """
+    try:
+        from pykrx import stock as _pykrx
+        results = {}
+        investor_list = ["연기금", "외국인", "기관합계", "개인"]
+        for inv in investor_list:
+            rows = []
+            for market in ["KOSPI", "KOSDAQ"]:
+                df = _pykrx.get_market_net_purchases_of_equities_by_ticker(
+                    fromdate=date_str, todate=date_str,
+                    market=market, investor=inv,
+                )
+                if df is None or df.empty:
+                    continue
+                # 컬럼: 종목명, 매도거래량, 매수거래량, 순매수거래량, 매도거래대금, 매수거래대금, 순매수거래대금
+                net_val_col = [c for c in df.columns if "순매수거래대금" in str(c) or "순매수" in str(c) and "대금" in str(c)]
+                net_qty_col = [c for c in df.columns if "순매수거래량" in str(c) or "순매수" in str(c) and "거래량" in str(c)]
+                name_col = [c for c in df.columns if "종목명" in str(c) or "name" in str(c).lower()]
+                if not net_val_col:
+                    continue
+                nvc = net_val_col[0]
+                nqc = net_qty_col[0] if net_qty_col else None
+                nc  = name_col[0] if name_col else None
+                for ticker, row in df.iterrows():
+                    net_val = float(row[nvc]) / 1_000_000  # → 백만원
+                    net_qty = float(row[nqc]) if nqc else 0
+                    name = str(row[nc]) if nc else str(ticker)
+                    rows.append({
+                        "Ticker":      str(ticker),
+                        "종목명":      name,
+                        "순매수(백만원)": round(net_val, 0),
+                        "순매수(주)":   int(net_qty),
+                    })
+            if rows:
+                dff = pd.DataFrame(rows).sort_values("순매수(백만원)", ascending=False).head(10).reset_index(drop=True)
+                dff.index = dff.index + 1
+                results[inv] = dff
+        return {"ok": True, "data": results, "source": "pykrx(KRX)"}
+    except Exception as e:
+        return {"ok": False, "reason": str(e), "data": {}}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
+    """
+    네이버 모바일 API로 추적 종목 중 투자자별 순매수 TOP 10을 가져옵니다.
+    단위: 주(株).
+    반환: {"외국인": df, "기관합계": df, "개인": df}
+    """
+    if not _HAS_REQUESTS or not ticker_list:
+        return {"ok": False, "reason": "requests 없음 또는 종목 없음", "data": {}}
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        import threading
+
+        naver_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://m.stock.naver.com/",
+        }
+
+        def _parse_qty(s: str) -> int:
+            try:
+                return int(str(s).replace(",", "").replace("+", ""))
+            except Exception:
+                return 0
+
+        def _fetch_one(full_ticker: str):
+            code = full_ticker.upper().replace(".KS", "").replace(".KQ", "").strip()
+            try:
+                url = f"https://m.stock.naver.com/api/stock/{code}/integration"
+                r = _requests.get(url, headers=naver_headers, timeout=8)
+                if r.status_code != 200:
+                    return None
+                data = r.json()
+                deal = data.get("dealTrendInfos", [])
+                if not deal:
+                    return None
+                item = deal[0]  # 최신일 데이터
+
+                # 종목명 추출
+                name = ""
+                for ti in data.get("totalInfos", []):
+                    if ti.get("code") == "lastClosePrice":
+                        break
+                name = data.get("stockName", code)
+
+                return {
+                    "Ticker":   full_ticker,
+                    "code":     code,
+                    "종목명":   name,
+                    "date":     item.get("bizdate", ""),
+                    "foreign":  _parse_qty(item.get("foreignerPureBuyQuant", "0")),
+                    "inst":     _parse_qty(item.get("organPureBuyQuant", "0")),
+                    "individual": _parse_qty(item.get("individualPureBuyQuant", "0")),
+                }
+            except Exception:
+                return None
+
+        rows = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = {ex.submit(_fetch_one, t): t for t in ticker_list}
+            for fut in _as_completed(futures):
+                result = fut.result()
+                if result:
+                    rows.append(result)
+
+        if not rows:
+            return {"ok": False, "reason": "네이버 데이터 없음", "data": {}}
+
+        df_all = pd.DataFrame(rows)
+
+        def _make_top10(key: str, label: str) -> pd.DataFrame:
+            tmp = df_all[["종목명", "Ticker", key]].copy()
+            tmp = tmp.rename(columns={key: f"순매수(주)"})
+            tmp = tmp.sort_values("순매수(주)", ascending=False).head(10).reset_index(drop=True)
+            tmp.index = tmp.index + 1
+            return tmp
+
+        results = {
+            "외국인":   _make_top10("foreign",    "외국인"),
+            "기관합계": _make_top10("inst",        "기관합계"),
+            "개인":     _make_top10("individual",  "개인"),
+        }
+        # 날짜 정보
+        latest_date = df_all["date"].max() if not df_all.empty else ""
+        return {"ok": True, "data": results, "source": "네이버", "date": latest_date}
+    except Exception as e:
+        return {"ok": False, "reason": str(e), "data": {}}
+
+
+def render_investor_top10_panel(ticker_list: list):
+    """오늘 투자자별 순매수 TOP 10 패널. 오늘 점검용."""
+    st.markdown("#### 📊 오늘 투자자별 순매수 TOP 10")
+
+    kr_tickers = tuple(
+        t for t in ticker_list
+        if str(t).upper().endswith((".KS", ".KQ"))
+    )
+
+    has_krx = _krx_auth_available()
+
+    if has_krx:
+        st.caption("KRX 인증 감지 → 전체 시장 기준 · 연기금/외국인/기관/개인 · 단위: 백만원")
+        from datetime import date as _d
+        today_str = _d.today().strftime("%Y%m%d")
+        with st.spinner("KRX 투자자 순매수 로딩 중…"):
+            result = fetch_investor_top10_pykrx(today_str)
+        _investors = ["연기금", "외국인", "기관합계", "개인"]
+        _val_col   = "순매수(백만원)"
+    else:
+        st.caption(
+            f"추적 종목 {len(kr_tickers)}개 기준 · 외국인/기관/개인 · 단위: 주(株) · 네이버 출처 | "
+            "연기금 포함 전체 시장 TOP 10을 보려면 KRX_ID / KRX_PW 환경 변수를 설정하세요."
+        )
+        if not kr_tickers:
+            st.info("한국 종목이 없습니다.")
+            return
+        with st.spinner(f"네이버 수급 조회 중… ({len(kr_tickers)}개 종목)"):
+            result = fetch_investor_top10_naver(kr_tickers)
+        _investors = ["외국인", "기관합계", "개인"]
+        _val_col   = "순매수(주)"
+
+    if not result.get("ok"):
+        st.warning(f"수급 TOP 10 로드 실패: {result.get('reason', '')}")
+        return
+
+    data = result.get("data", {})
+    date_label = result.get("date", "")
+    if date_label and len(date_label) == 8:
+        date_label = f"{date_label[:4]}.{date_label[4:6]}.{date_label[6:]}"
+
+    cols = st.columns(len(_investors))
+    for col, inv_name in zip(cols, _investors):
+        df_top = data.get(inv_name)
+        with col:
+            st.markdown(f"**{inv_name}** 순매수↑")
+            if df_top is None or df_top.empty:
+                st.caption("데이터 없음")
+                continue
+
+            def _fmt_val(v):
+                if v == 0:
+                    return "-"
+                return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
+
+            display = df_top[["종목명", _val_col]].copy()
+            display[_val_col] = display[_val_col].apply(_fmt_val)
+            st.dataframe(display, use_container_width=True, hide_index=False)
+
+    if date_label:
+        st.caption(f"기준일: {date_label} | 출처: {result.get('source', '-')}")
+

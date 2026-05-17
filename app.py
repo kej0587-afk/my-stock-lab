@@ -82,6 +82,7 @@ from stock_lab_core.news import (
     fetch_naver_kr_snapshot,
     fetch_investor_trend,
     render_investor_trend_panel,
+    render_investor_top10_panel,
 )
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
@@ -15023,6 +15024,19 @@ def render_today_market_flow_panel():
                             st.rerun()
                         if skipped:
                             st.info(f"이미 등록됨: {', '.join(skipped)}")
+
+    # ── 투자자별 순매수 TOP 10 ────────────────────────────────────────────────
+    st.divider()
+    # 추적 중인 한국 종목 목록 수집 (테마 종목 + 한국 ETF/섹터)
+    _tracked_kr = []
+    if not theme_flow_df.empty and "Ticker" in theme_flow_df.columns:
+        _tracked_kr += [t for t in theme_flow_df["Ticker"].dropna().unique()
+                        if str(t).upper().endswith((".KS", ".KQ"))]
+    if not flow_df.empty and "Ticker" in flow_df.columns:
+        _tracked_kr += [t for t in flow_df["Ticker"].dropna().unique()
+                        if str(t).upper().endswith((".KS", ".KQ"))]
+    _tracked_kr = list(dict.fromkeys(_tracked_kr))   # 순서 유지 중복 제거
+    render_investor_top10_panel(_tracked_kr)
 
 
 def render_today_queue_tab(mode):
