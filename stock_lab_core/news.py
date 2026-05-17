@@ -1353,15 +1353,37 @@ def _krx_auth_available() -> bool:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_investor_top10_pykrx(date_str: str) -> dict:
+def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
     """
-    pykrx로 오늘 전체 시장(KOSPI+KOSDAQ) 투자자별 순매수 상위 종목을 가져옵니다.
+    pykrx로 전체 시장(KOSPI+KOSDAQ) 투자자별 순매수 상위 종목을 가져옵니다.
+    base_date_str 기준으로 데이터가 없으면 최대 5 거래일 전까지 자동 탐색합니다.
     KRX 인증(KRX_ID / KRX_PW)이 필요합니다.
     반환: {"연기금": df, "외국인": df, "기관합계": df, "개인": df}
-    df columns: ["종목명", "Ticker", "순매수(백만원)", "순매수(주)"]
     """
     try:
         from pykrx import stock as _pykrx
+        from datetime import datetime as _dt, timedelta as _tdd
+
+        # ── 직전 거래일 탐색 (오늘 포함 최대 7일 전까지) ──────────────────
+        def _last_trading_day(from_str: str) -> str | None:
+            d = _dt.strptime(from_str, "%Y%m%d")
+            for _ in range(7):
+                if d.weekday() < 5:  # 월~금
+                    # 간단 테스트: KOSPI 연기금 데이터 있는지 확인
+                    test = _pykrx.get_market_net_purchases_of_equities_by_ticker(
+                        fromdate=d.strftime("%Y%m%d"),
+                        todate=d.strftime("%Y%m%d"),
+                        market="KOSPI", investor="연기금",
+                    )
+                    if test is not None and not test.empty:
+                        return d.strftime("%Y%m%d")
+                d -= _tdd(days=1)
+            return None
+
+        date_str = _last_trading_day(base_date_str)
+        if not date_str:
+            return {"ok": False, "reason": "최근 7일 내 거래 데이터 없음", "data": {}}
+
         results = {}
         investor_list = ["연기금", "외국인", "기관합계", "개인"]
         for inv in investor_list:
@@ -1373,30 +1395,34 @@ def fetch_investor_top10_pykrx(date_str: str) -> dict:
                 )
                 if df is None or df.empty:
                     continue
-                # 컬럼: 종목명, 매도거래량, 매수거래량, 순매수거래량, 매도거래대금, 매수거래대금, 순매수거래대금
-                net_val_col = [c for c in df.columns if "순매수거래대금" in str(c) or "순매수" in str(c) and "대금" in str(c)]
-                net_qty_col = [c for c in df.columns if "순매수거래량" in str(c) or "순매수" in str(c) and "거래량" in str(c)]
-                name_col = [c for c in df.columns if "종목명" in str(c) or "name" in str(c).lower()]
-                if not net_val_col:
+                # 컬럼 자동 탐지
+                cols_str = [str(c) for c in df.columns]
+                net_val_col = next((c for c in df.columns if "순매수" in str(c) and "대금" in str(c)), None)
+                net_qty_col = next((c for c in df.columns if "순매수" in str(c) and "량" in str(c)), None)
+                name_col    = next((c for c in df.columns if "종목명" in str(c)), None)
+                if net_val_col is None:
                     continue
-                nvc = net_val_col[0]
-                nqc = net_qty_col[0] if net_qty_col else None
-                nc  = name_col[0] if name_col else None
                 for ticker, row in df.iterrows():
-                    net_val = float(row[nvc]) / 1_000_000  # → 백만원
-                    net_qty = float(row[nqc]) if nqc else 0
-                    name = str(row[nc]) if nc else str(ticker)
+                    net_val = float(row[net_val_col]) / 1_000_000
+                    net_qty = int(float(row[net_qty_col])) if net_qty_col else 0
+                    name    = str(row[name_col]) if name_col else str(ticker)
                     rows.append({
-                        "Ticker":      str(ticker),
-                        "종목명":      name,
+                        "Ticker":        str(ticker),
+                        "종목명":        name,
                         "순매수(백만원)": round(net_val, 0),
-                        "순매수(주)":   int(net_qty),
+                        "순매수(주)":    net_qty,
                     })
             if rows:
-                dff = pd.DataFrame(rows).sort_values("순매수(백만원)", ascending=False).head(10).reset_index(drop=True)
+                dff = (pd.DataFrame(rows)
+                         .sort_values("순매수(백만원)", ascending=False)
+                         .head(10)
+                         .reset_index(drop=True))
                 dff.index = dff.index + 1
                 results[inv] = dff
-        return {"ok": True, "data": results, "source": "pykrx(KRX)"}
+
+        if not results:
+            return {"ok": False, "reason": f"{date_str} 데이터 없음", "data": {}}
+        return {"ok": True, "data": results, "source": "pykrx(KRX)", "date": date_str}
     except Exception as e:
         return {"ok": False, "reason": str(e), "data": {}}
 
@@ -1508,7 +1534,9 @@ def render_investor_top10_panel(ticker_list: list):
         with st.spinner("KRX 투자자 순매수 로딩 중…"):
             result = fetch_investor_top10_pykrx(today_str)
         if result.get("ok"):
-            st.caption("KRX 인증 · 전체 시장 기준 · 연기금/외국인/기관/개인 · 단위: 백만원")
+            _rd = result.get("date", "")
+            _rd_label = f"{_rd[:4]}.{_rd[4:6]}.{_rd[6:]}" if len(_rd) == 8 else _rd
+            st.caption(f"KRX 인증 · 전체 시장 기준 · 연기금/외국인/기관/개인 · 단위: 백만원 | 기준일: {_rd_label}")
             _investors = ["연기금", "외국인", "기관합계", "개인"]
             _val_col   = "순매수(백만원)"
         else:
