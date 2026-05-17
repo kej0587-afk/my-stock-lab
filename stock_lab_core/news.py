@@ -1376,22 +1376,7 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         from pykrx import stock as _pykrx
         from datetime import datetime as _dt, timedelta as _tdd
 
-        # ── 1. KRX 로그인 상태 사전 확인 ─────────────────────────────────────
-        import os as _os
-        from pykrx.website.comm.auth import get_auth_session as _get_krx_sess, build_krx_session as _build_krx_sess
-        _krx_id = _os.getenv("KRX_ID", "")
-        _krx_pw = _os.getenv("KRX_PW", "")
-        if _krx_id and _krx_pw:
-            # 세션이 없으면 명시적으로 로그인 시도
-            _sess = _get_krx_sess()
-            if _sess is None or not _sess.is_authenticated:
-                _sess = _build_krx_sess(_krx_id, _krx_pw)
-            if _sess is None or not _sess.is_authenticated:
-                return {"ok": False,
-                        "reason": "KRX 로그인 실패: 아이디/비밀번호를 확인하거나 data.krx.co.kr에서 비밀번호 변경 여부를 확인하세요.",
-                        "data": {}}
-
-        # ── 2. 직전 거래일 탐색 (OHLCV 기반, 인증 불필요) ───────────────────
+        # ── 1. 직전 거래일 탐색 (OHLCV 기반, 인증 불필요) ───────────────────
         def _last_trading_day(from_str: str) -> str | None:
             d = _dt.strptime(from_str, "%Y%m%d")
             for _ in range(10):
@@ -1412,7 +1397,21 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         if not date_str:
             return {"ok": False, "reason": "최근 10일 내 KOSPI 거래일을 찾을 수 없음", "data": {}}
 
-        # ── 병렬로 8개 (4투자자 × 2시장) API 호출 ────────────────────────────
+        # ── 2. KRX 로그인 확인: 테스트 호출 1회 (외국인 KOSPI) ─────────────
+        try:
+            _test = _pykrx.get_market_net_purchases_of_equities_by_ticker(
+                fromdate=date_str, todate=date_str,
+                market="KOSPI", investor="외국인",
+            )
+        except Exception as _e:
+            return {"ok": False, "reason": f"KRX API 오류: {_e}", "data": {}}
+
+        if _test is None or _test.empty:
+            return {"ok": False,
+                    "reason": "KRX 로그인 실패 — Streamlit Cloud Secrets에 KRX_ID/KRX_PW가 올바르게 설정됐는지 확인하세요.",
+                    "data": {}}
+
+        # ── 3. 병렬로 8개 (4투자자 × 2시장) API 호출 ────────────────────────
         from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
 
         def _fetch_krx_one(inv: str, market: str):
