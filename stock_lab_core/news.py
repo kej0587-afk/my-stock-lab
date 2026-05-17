@@ -1340,16 +1340,28 @@ def render_investor_trend_panel(ticker: str, name: str):
 # 오늘 투자자별 순매수 TOP 10
 # ──────────────────────────────────────────────────────────────────────────────
 
-_HAS_KRX_AUTH: bool | None = None  # 캐시
-
-
 def _krx_auth_available() -> bool:
-    """KRX_ID / KRX_PW 환경 변수가 설정되어 있으면 True."""
-    global _HAS_KRX_AUTH
-    if _HAS_KRX_AUTH is None:
-        import os
-        _HAS_KRX_AUTH = bool(os.getenv("KRX_ID") and os.getenv("KRX_PW"))
-    return _HAS_KRX_AUTH
+    """
+    KRX_ID / KRX_PW가 os.environ 또는 st.secrets에 있으면 True.
+    st.secrets에 있을 경우 pykrx가 사용할 수 있도록 os.environ에 자동 복사합니다.
+    """
+    import os
+    krx_id = os.getenv("KRX_ID", "")
+    krx_pw = os.getenv("KRX_PW", "")
+
+    # st.secrets 에서 보완
+    if not (krx_id and krx_pw):
+        try:
+            krx_id = str(st.secrets.get("KRX_ID") or st.secrets.get("krx_id") or "")
+            krx_pw = str(st.secrets.get("KRX_PW") or st.secrets.get("krx_pw") or "")
+            if krx_id and krx_pw:
+                # pykrx 는 os.getenv() 로 읽으므로 환경변수에 복사
+                os.environ["KRX_ID"] = krx_id
+                os.environ["KRX_PW"] = krx_pw
+        except Exception:
+            pass
+
+    return bool(krx_id and krx_pw)
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1526,6 +1538,19 @@ def render_investor_top10_panel(ticker_list: list):
     )
 
     has_krx = _krx_auth_available()
+
+    # ── KRX 자격증명 없을 때 안내 ──────────────────────────────────────
+    if not has_krx:
+        import os
+        with st.expander("🔑 연기금 포함 전체 시장 TOP 10 활성화 방법"):
+            st.markdown(
+                "`.streamlit/secrets.toml` 파일에 아래 두 줄을 추가한 뒤 앱을 재시작하세요:\n\n"
+                "```toml\n"
+                "KRX_ID = \"data.krx.co.kr 아이디\"\n"
+                "KRX_PW = \"data.krx.co.kr 비밀번호\"\n"
+                "```\n\n"
+                "계정이 없으면 [KRX 마켓데이터](https://data.krx.co.kr)에서 회원가입하세요."
+            )
     result = None
 
     if has_krx:
@@ -1541,9 +1566,11 @@ def render_investor_top10_panel(ticker_list: list):
             _val_col   = "순매수(백만원)"
         else:
             # pykrx 실패 → 네이버 폴백
-            st.caption(
-                f"⚠️ KRX 로드 실패({result.get('reason','')}) → 네이버 폴백 | "
-                f"추적 종목 {len(kr_tickers)}개 기준 · 단위: 주(株)"
+            _fail_reason = result.get("reason", "")
+            st.warning(
+                f"⚠️ KRX 데이터 로드 실패 → 네이버 폴백\n\n"
+                f"**원인:** `{_fail_reason}`\n\n"
+                f"KRX 계정(data.krx.co.kr)이 올바른지 확인하고 앱을 재시작하세요."
             )
             result = None  # 아래에서 네이버로 재조회
 
