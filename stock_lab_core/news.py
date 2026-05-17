@@ -1144,100 +1144,102 @@ def fetch_investor_trend(ticker: str, days: int = 20) -> dict:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _fetch_pykrx_investor_flow(code: str, days: int = 20) -> dict:
+def _fetch_naver_investor_flow(code: str) -> dict:
     """
-    pykrx를 이용해 전체 투자자 유형별 일별 순매수(백만원) 데이터를 반환합니다.
-    반환: {ok, rows: [{date, foreign, inst, pension, individual, ...}], reason}
+    네이버 증권 모바일 API로 외국인·기관·개인 일별 순매수(주) 데이터를 반환합니다.
+    반환: {ok, rows: [{date, foreign, inst, individual, price, volume}], reason}
+    단위: 주(株)
     """
+    if not _HAS_REQUESTS:
+        return {"ok": False, "reason": "requests 없음", "rows": []}
     try:
-        from pykrx import stock as _pykrx_stock
-        from datetime import date as _d, timedelta as _td
-        today = _d.today()
-        start = (today - _td(days=days * 2)).strftime("%Y%m%d")
-        end = today.strftime("%Y%m%d")
-        df = _pykrx_stock.get_market_trading_value_by_investor(
-            fromdate=start, todate=end, ticker=code, detail=True
-        )
-        if df is None or df.empty:
-            return {"ok": False, "reason": "pykrx 데이터 없음", "rows": []}
-
-        df.index = pd.to_datetime(df.index)
-        df = df.sort_index(ascending=False)
-
-        # 투자자 유형 키워드 → 내부 키 매핑
-        _INVESTOR_MAP = {
-            "외국인": "foreign",
-            "기관합계": "inst",
-            "연기금": "pension",
-            "개인":   "individual",
-            "금융투자": "fin_inv",
-            "투신":   "trust",
-            "보험":   "insurance",
-            "은행":   "bank",
-            "사모":   "private",
-            "기타법인": "other_corp",
+        url = f"https://m.stock.naver.com/api/stock/{code}/integration"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Referer": "https://m.stock.naver.com/",
         }
-        col_map = {}
-        for col in df.columns:
-            col_str = str(col)
-            for keyword, key in _INVESTOR_MAP.items():
-                if keyword in col_str and key not in col_map:
-                    col_map[key] = col
+        r = _requests.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return {"ok": False, "reason": f"HTTP {r.status_code}", "rows": []}
 
-        if not col_map:
-            return {"ok": False, "reason": f"수급 컬럼 없음: {list(df.columns)}", "rows": []}
+        data = r.json()
+        deal_infos = data.get("dealTrendInfos", [])
+        if not deal_infos:
+            return {"ok": False, "reason": "dealTrendInfos 없음", "rows": []}
+
+        def _parse_qty(s: str) -> int:
+            """'+10,257,346' → 10257346, '-8,855,741' → -8855741"""
+            try:
+                return int(str(s).replace(",", "").replace("+", ""))
+            except Exception:
+                return 0
 
         rows = []
-        for idx_ts, row in df.head(days).iterrows():
-            entry = {"date": idx_ts.strftime("%Y.%m.%d")}
-            for key, col in col_map.items():
-                val = float(row.get(col, 0) or 0) / 1_000_000  # → 백만원
-                entry[key] = round(val, 1)
-            rows.append(entry)
+        for item in deal_infos:
+            biz = str(item.get("bizdate", ""))
+            if len(biz) == 8:
+                date_str = f"{biz[:4]}.{biz[4:6]}.{biz[6:]}"
+            else:
+                date_str = biz
 
-        return {"ok": True, "rows": rows, "col_map": col_map}
+            close_raw = str(item.get("closePrice", "0")).replace(",", "")
+            vol_raw   = str(item.get("accumulatedTradingVolume", "0")).replace(",", "")
+
+            rows.append({
+                "date":       date_str,
+                "foreign":    _parse_qty(item.get("foreignerPureBuyQuant", "0")),
+                "inst":       _parse_qty(item.get("organPureBuyQuant",     "0")),
+                "individual": _parse_qty(item.get("individualPureBuyQuant","0")),
+                "price":      int(close_raw) if close_raw.lstrip("-").isdigit() else 0,
+                "volume":     int(vol_raw)   if vol_raw.isdigit() else 0,
+            })
+
+        # 최신일 → 과거 순서로 정렬
+        rows.sort(key=lambda r: r["date"], reverse=True)
+        return {"ok": True, "rows": rows}
     except Exception as e:
         return {"ok": False, "reason": str(e), "rows": []}
 
 
 def render_investor_trend_panel(ticker: str, name: str):
-    """전체 투자자 유형별 수급 현황 패널. (한국 종목 전용)"""
+    """외국인·기관·개인 수급 현황 패널. (한국 종목 전용, 네이버 API)"""
     if not str(ticker).upper().endswith((".KS", ".KQ")):
         return
 
     code = str(ticker).upper().replace(".KS", "").replace(".KQ", "").strip()
 
     with st.spinner("수급 데이터 로딩 중…"):
-        inv  = fetch_investor_trend(ticker)       # 네이버: 외국인 보유비율
-        flow = _fetch_pykrx_investor_flow(code)   # pykrx: 전체 투자자 순매수
+        inv  = fetch_investor_trend(ticker)       # 네이버: 외국인 보유비율 20일
+        flow = _fetch_naver_investor_flow(code)   # 네이버 모바일: 외국인·기관·개인 5일
 
     # ── 헬퍼 ──────────────────────────────────────────────────────────────────
-    def _badge(v, unit="백만원"):
+    def _badge(v, unit="주"):
         if v == 0:
             return f"<span style='color:#94a3b8'>0 {unit}</span>"
         sign = "▲" if v > 0 else "▼"
         color = "#22c55e" if v > 0 else "#ef4444"
         return f"<span style='color:{color};font-weight:600'>{sign} {abs(v):,.0f} {unit}</span>"
 
-    def _sum5(rows, key):
-        recent = rows[:5] if len(rows) >= 5 else rows
-        return sum(r.get(key, 0) for r in recent)
+    def _sum_all(rows, key):
+        return sum(r.get(key, 0) for r in rows)
 
     flow_rows = flow.get("rows", []) if flow.get("ok") else []
 
-    # ── 요약 메트릭 (외국인 보유비율 + 주요 4개 투자자 5일 순매수) ──────────────
-    f_ratio     = inv.get("foreign_ratio", "-") if inv.get("ok") else "-"
-    f_net_shares = inv.get("foreign_net", 0) or 0
+    # ── 요약 메트릭 ───────────────────────────────────────────────────────────
+    f_ratio      = inv.get("foreign_ratio", "-") if inv.get("ok") else "-"
+    f_net_shares = inv.get("foreign_net", 0) or 0   # 외국인 최근 순매수(주)
 
     metric_items = [
         ("외국인 보유비율", f"{f_ratio}%", None, None),
     ]
     if flow.get("ok") and flow_rows:
+        n = len(flow_rows)
+        label_suffix = f"{n}일"
         metric_items += [
-            ("외국인 5일", None, _sum5(flow_rows, "foreign"),  "백만원"),
-            ("기관합계 5일", None, _sum5(flow_rows, "inst"),   "백만원"),
-            ("연기금 5일",  None, _sum5(flow_rows, "pension"), "백만원"),
-            ("개인 5일",    None, _sum5(flow_rows, "individual"), "백만원"),
+            (f"외국인 {label_suffix}", None, _sum_all(flow_rows, "foreign"),    "주"),
+            (f"기관합계 {label_suffix}", None, _sum_all(flow_rows, "inst"),     "주"),
+            (f"개인 {label_suffix}",   None, _sum_all(flow_rows, "individual"), "주"),
         ]
     else:
         metric_items += [
@@ -1256,20 +1258,18 @@ def render_investor_trend_panel(ticker: str, name: str):
                 )
 
     if not flow.get("ok") or not flow_rows:
-        st.caption(f"pykrx 수급 로드 실패: {flow.get('reason', '')}")
+        st.caption(f"⚠️ 수급 상세 로드 실패: {flow.get('reason', '')}")
         return
 
-    # ── 주요 투자자 순매수 바 차트 ────────────────────────────────────────────
+    # ── 투자자별 순매수 바 차트 ───────────────────────────────────────────────
     if _HAS_PLOTLY:
-        chart_rows = list(reversed(flow_rows))
+        chart_rows = list(reversed(flow_rows))  # 날짜 오름차순
         dates = [r["date"] for r in chart_rows]
 
-        # 표시할 투자자 + 색상
         _CHART_INVESTORS = [
-            ("foreign",    "외국인",  "#22c55e", "#ef4444"),
+            ("foreign",    "외국인",   "#22c55e", "#ef4444"),
             ("inst",       "기관합계", "#3b82f6", "#f97316"),
-            ("pension",    "연기금",  "#a855f7", "#ec4899"),
-            ("individual", "개인",    "#f59e0b", "#64748b"),
+            ("individual", "개인",     "#f59e0b", "#64748b"),
         ]
 
         fig = _go.Figure()
@@ -1286,33 +1286,19 @@ def render_investor_trend_panel(ticker: str, name: str):
 
         fig.update_layout(
             barmode="group",
-            height=320,
+            height=300,
             margin=dict(l=8, r=8, t=28, b=8),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            yaxis_title="순매수 (백만원)",
-            xaxis_tickangle=-45,
+            yaxis_title="순매수 (주)",
+            xaxis_tickangle=-30,
             template="plotly_dark",
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── 전체 투자자 상세 테이블 ──────────────────────────────────────────────
-    _LABEL_MAP = {
-        "foreign":    "외국인",
-        "inst":       "기관합계",
-        "pension":    "연기금",
-        "individual": "개인",
-        "fin_inv":    "금융투자",
-        "trust":      "투신",
-        "insurance":  "보험",
-        "bank":       "은행",
-        "private":    "사모",
-        "other_corp": "기타법인",
-    }
-
-    # 실제 데이터에 있는 키만 컬럼으로 사용
-    present_keys = [k for k in _LABEL_MAP if any(k in r for r in flow_rows)]
+    # ── 상세 테이블 ──────────────────────────────────────────────────────────
+    _LABEL_MAP = {"foreign": "외국인", "inst": "기관합계", "individual": "개인"}
 
     def _fmt(v):
         if v == 0:
@@ -1322,13 +1308,16 @@ def render_investor_trend_panel(ticker: str, name: str):
     table_data = []
     for r in flow_rows:
         row_dict = {"날짜": r["date"]}
-        for k in present_keys:
-            row_dict[_LABEL_MAP[k]] = _fmt(r.get(k, 0))
+        for k, lbl in _LABEL_MAP.items():
+            row_dict[lbl] = _fmt(r.get(k, 0))
+        row_dict["종가"] = f"{r.get('price', 0):,}" if r.get("price") else "-"
+        row_dict["거래량"] = f"{r.get('volume', 0):,}" if r.get("volume") else "-"
         table_data.append(row_dict)
 
-    with st.expander("📋 투자자별 일별 순매수 상세 (백만원)", expanded=False):
+    with st.expander("📋 투자자별 일별 순매수 상세 (주)", expanded=False):
         df_detail = pd.DataFrame(table_data)
         st.dataframe(df_detail, use_container_width=True, hide_index=True)
+        st.caption("출처: 네이버 증권 | 단위: 주(株)")
 
     # ── 네이버 외국인 보유비율 상세 (기존 유지) ───────────────────────────────
     naver_rows = inv.get("rows", []) if inv.get("ok") else []
