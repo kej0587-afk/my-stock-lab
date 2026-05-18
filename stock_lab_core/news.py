@@ -1633,3 +1633,6 @@ def render_investor_top10_panel(ticker_list: list):
     if date_label:
         st.caption(f"기준일: {date_label} | 출처: {result.get('source', '-')}")
 
+    # 호출자가 전광판 추가 UI를 구성할 수 있도록 data 반환
+    return data
+

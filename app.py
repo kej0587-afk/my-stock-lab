@@ -15026,18 +15026,115 @@ def render_today_market_flow_panel():
                         if skipped:
                             st.info(f"이미 등록됨: {', '.join(skipped)}")
 
-    # ── 투자자별 순매수 TOP 10 ────────────────────────────────────────────────
+    # ── 투자자별 순매수 TOP 10 은 render_investor_top10_section() 에서 별도 렌더링 ──
+
+
+def render_investor_top10_section():
+    """
+    투자자별 순매수 TOP 10 섹션 (전광판 추가 UI 포함).
+    render_today_market_flow_panel 과 독립적으로 호출한다.
+    """
     st.divider()
-    # 추적 중인 한국 종목 목록 수집 (테마 종목 + 한국 ETF/섹터)
-    _tracked_kr = []
-    if not theme_flow_df.empty and "Ticker" in theme_flow_df.columns:
-        _tracked_kr += [t for t in theme_flow_df["Ticker"].dropna().unique()
-                        if str(t).upper().endswith((".KS", ".KQ"))]
-    if not flow_df.empty and "Ticker" in flow_df.columns:
-        _tracked_kr += [t for t in flow_df["Ticker"].dropna().unique()
-                        if str(t).upper().endswith((".KS", ".KQ"))]
-    _tracked_kr = list(dict.fromkeys(_tracked_kr))   # 순서 유지 중복 제거
-    render_investor_top10_panel(_tracked_kr)
+
+    # ── 추적 KR 종목 수집: 관심목록 + flow 스냅샷(캐시 히트 시만) ────────────
+    _tracked_kr: list[str] = []
+    for _item in st.session_state.get("watchlist", []):
+        _t = sanitize_ticker_value(_item.get("ticker", ""))
+        if _t.upper().endswith((".KS", ".KQ")):
+            _tracked_kr.append(_t)
+    try:
+        _snap = get_today_market_flow_snapshot()
+        for _key in ("theme_flow_df", "flow_df"):
+            _df = _snap.get(_key, pd.DataFrame())
+            if not _df.empty and "Ticker" in _df.columns:
+                _tracked_kr += [
+                    _t for _t in _df["Ticker"].dropna().unique()
+                    if str(_t).upper().endswith((".KS", ".KQ"))
+                ]
+    except Exception:
+        pass
+    _tracked_kr = list(dict.fromkeys(_tracked_kr))  # 순서 유지 중복 제거
+
+    # ── 패널 렌더링 (data 반환) ───────────────────────────────────────────────
+    top10_data = render_investor_top10_panel(_tracked_kr)
+
+    # ── 전광판 추가 UI ────────────────────────────────────────────────────────
+    if not top10_data:
+        return
+
+    # 전 투자자 데이터에서 (종목명, Ticker) 고유 목록 수집
+    _cand_map: dict[str, str] = {}   # ticker → name (순서 유지)
+    for _df_inv in top10_data.values():
+        if _df_inv is None or _df_inv.empty:
+            continue
+        if "Ticker" not in _df_inv.columns or "종목명" not in _df_inv.columns:
+            continue
+        for _, _row in _df_inv.iterrows():
+            _tk = sanitize_ticker_value(str(_row.get("Ticker", "")))
+            _nm = str(_row.get("종목명", _tk))
+            if _tk and _tk not in _cand_map:
+                _cand_map[_tk] = _nm
+
+    if not _cand_map:
+        return
+
+    with st.expander("📌 TOP 10 종목 → 전광판 추가", expanded=False):
+        _option_labels = [
+            f"{_nm}  ({_tk})"
+            for _tk, _nm in _cand_map.items()
+            if not is_in_watchlist(_tk)
+        ]
+        _already_labels = [
+            f"✅ {_nm}  ({_tk})"
+            for _tk, _nm in _cand_map.items()
+            if is_in_watchlist(_tk)
+        ]
+
+        if _already_labels:
+            st.caption("이미 등록된 종목: " + "  ·  ".join(_already_labels))
+
+        if not _option_labels:
+            st.success("TOP 10에 표시된 종목이 전부 전광판에 등록되어 있습니다.")
+            return
+
+        _selected = st.multiselect(
+            "전광판에 추가할 종목 선택 (복수 선택 가능)",
+            options=_option_labels,
+            key="investor_top10_wl_multiselect",
+            placeholder="종목을 선택하세요...",
+        )
+        if _selected:
+            if st.button(
+                f"✚ 선택 {len(_selected)}개 전광판 추가",
+                key="investor_top10_wl_add_btn",
+                use_container_width=True,
+            ):
+                _added, _skipped = [], []
+                for _lbl in _selected:
+                    # 레이블에서 ticker 추출: "이름  (TICKER)"
+                    _m = re.search(r"\(([^)]+)\)\s*$", _lbl)
+                    if not _m:
+                        continue
+                    _tk = _m.group(1).strip()
+                    _nm = _cand_map.get(_tk, _tk)
+                    if is_in_watchlist(_tk):
+                        _skipped.append(_nm)
+                        continue
+                    st.session_state.watchlist.append(sanitize_watchlist_item({
+                        "ticker": _tk,
+                        "name": _nm,
+                        "is_etf": False,
+                        "asset_class": "kr_stock",
+                        "target_weight": 0,
+                        "fin_score": 0,
+                    }))
+                    _added.append(_nm)
+                if _added:
+                    persist_watchlist()
+                    st.success(f"추가 완료 ({len(_added)}개): {', '.join(_added)}")
+                    st.rerun()
+                if _skipped:
+                    st.info(f"이미 등록됨: {', '.join(_skipped)}")
 
 
 def render_today_queue_tab(mode):
@@ -15050,6 +15147,7 @@ def render_today_queue_tab(mode):
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
         render_today_market_flow_panel()
+        render_investor_top10_section()
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -15060,6 +15158,7 @@ def render_today_queue_tab(mode):
     ):
         st.divider()
         render_today_market_flow_panel()
+        render_investor_top10_section()
         return
 
     with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
@@ -15069,6 +15168,7 @@ def render_today_queue_tab(mode):
         st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         st.divider()
         render_today_market_flow_panel()
+        render_investor_top10_section()
         return
 
     if "판정분류" in summary_df.columns:
@@ -15107,6 +15207,7 @@ def render_today_queue_tab(mode):
 
     st.divider()
     render_today_market_flow_panel()
+    render_investor_top10_section()
     st.divider()
 
     show_cols = [
