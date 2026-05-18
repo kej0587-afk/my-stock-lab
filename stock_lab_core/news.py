@@ -1368,7 +1368,8 @@ def _krx_auth_available() -> bool:
 def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
     """
     pykrx로 전체 시장(KOSPI+KOSDAQ) 투자자별 순매수 상위 종목을 가져옵니다.
-    base_date_str 기준으로 데이터가 없으면 최대 5 거래일 전까지 자동 탐색합니다.
+    base_date_str 기준으로 데이터가 없으면 최대 7 거래일 전까지 자동 탐색합니다.
+    (공휴일·임시휴장 등으로 KRX 데이터가 비어도 올바르게 처리합니다.)
     KRX 인증(KRX_ID / KRX_PW)이 필요합니다.
     반환: {"연기금": df, "외국인": df, "기관합계": df, "개인": df}
     """
@@ -1376,27 +1377,47 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         from pykrx import stock as _pykrx
         from datetime import datetime as _dt, timedelta as _tdd
 
-        # ── 1. 직전 평일 계산 (API 호출 없이 달력 기반) ──────────────────────
-        def _last_weekday(from_str: str) -> str:
+        # ── 1. 직전 실제 거래일 탐색 ─────────────────────────────────────────
+        # 달력 상 평일이어도 공휴일(부처님오신날 등)이면 KRX 데이터가 비어 있음.
+        # 최대 10일 전까지 거슬러 올라가며 실제로 데이터가 있는 날을 찾는다.
+        # 첫 번째 시도 결과가 비면 "로그인 실패"가 아닌 "휴장일"로 판단하고
+        # 하루씩 더 거슬러 올라간다. 10번 모두 비면 그때 로그인 실패로 처리.
+        def _candidate_dates(from_str: str, n: int = 10):
+            """from_str 이하의 평일 날짜를 최대 n개 생성"""
             d = _dt.strptime(from_str, "%Y%m%d")
-            for _ in range(10):
-                if d.weekday() < 5:   # 월(0)~금(4)
-                    return d.strftime("%Y%m%d")
+            found = 0
+            for _ in range(n * 3):          # 연속 공휴일 대비 여유있게 반복
+                if d.weekday() < 5:         # 월(0)~금(4)
+                    yield d.strftime("%Y%m%d")
+                    found += 1
+                    if found >= n:
+                        return
                 d -= _tdd(days=1)
-            return d.strftime("%Y%m%d")
 
-        date_str = _last_weekday(base_date_str)
+        date_str = None
+        _test = None
+        first_exception = None
 
-        # ── 2. KRX 로그인 확인: 테스트 호출 1회 (외국인 KOSPI) ─────────────
-        try:
-            _test = _pykrx.get_market_net_purchases_of_equities_by_ticker(
-                fromdate=date_str, todate=date_str,
-                market="KOSPI", investor="외국인",
-            )
-        except Exception as _e:
-            return {"ok": False, "reason": f"KRX API 오류: {_e}", "data": {}}
+        for candidate in _candidate_dates(base_date_str, n=10):
+            try:
+                _df_try = _pykrx.get_market_net_purchases_of_equities_by_ticker(
+                    fromdate=candidate, todate=candidate,
+                    market="KOSPI", investor="외국인",
+                )
+            except Exception as _e:
+                # API 자체 오류(네트워크/인증)는 즉시 실패 처리
+                if first_exception is None:
+                    first_exception = _e
+                # 연속 예외 시 더 이상 시도하지 않음
+                return {"ok": False, "reason": f"KRX API 오류: {first_exception}", "data": {}}
 
-        if _test is None or _test.empty:
+            if _df_try is not None and not _df_try.empty:
+                date_str = candidate
+                _test = _df_try
+                break
+            # 비어 있으면 공휴일/휴장일로 판단하고 하루 더 거슬러 올라감
+
+        if date_str is None or _test is None:
             return {"ok": False,
                     "reason": "KRX 로그인 실패 — Streamlit Cloud Secrets에 KRX_ID/KRX_PW가 올바르게 설정됐는지 확인하세요.",
                     "data": {}}
