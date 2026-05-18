@@ -15035,6 +15035,14 @@ def render_investor_top10_section():
     render_today_market_flow_panel 과 독립적으로 호출한다.
     """
     st.divider()
+    st.markdown("#### 📊 오늘 투자자별 순매수 TOP 10")
+
+    if not should_run_heavy_analysis(
+        "investor_top10_lazy",
+        "KRX/네이버 수급 데이터를 조회합니다. 필요할 때만 실행하세요.",
+        run_label="수급 TOP 10 계산/새로고침",
+    ):
+        return
 
     # ── 추적 KR 종목 수집: 관심목록 + flow 스냅샷(캐시 히트 시만) ────────────
     _tracked_kr: list[str] = []

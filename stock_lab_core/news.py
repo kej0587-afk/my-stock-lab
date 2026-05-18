@@ -1565,8 +1565,6 @@ def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
 
 def render_investor_top10_panel(ticker_list: list):
     """오늘 투자자별 순매수 TOP 10 패널. 오늘 점검용."""
-    st.markdown("#### 📊 오늘 투자자별 순매수 TOP 10")
-
     kr_tickers = tuple(
         t for t in ticker_list
         if str(t).upper().endswith((".KS", ".KQ"))
