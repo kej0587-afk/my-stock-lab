@@ -90,6 +90,7 @@ def extract_download_close_series(data, ticker):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_latest_price(ticker):
+    # 1차: 1분봉 + prepost → 장중/프리마켓/시간외 실시간
     try:
         df = yf.download(ticker, period="1d", interval="1m", progress=False, prepost=True, auto_adjust=False)
         price = get_latest_close_from_series(extract_download_close_series(df, ticker))
@@ -98,8 +99,18 @@ def load_latest_price(ticker):
     except Exception:
         pass
 
+    # 2차: 5분봉 + prepost (1분봉 실패 시 폴백)
     try:
-        df = yf.download(ticker, period="5d", interval="1d", progress=False)
+        df = yf.download(ticker, period="1d", interval="5m", progress=False, prepost=True, auto_adjust=False)
+        price = get_latest_close_from_series(extract_download_close_series(df, ticker))
+        if price > 0:
+            return price
+    except Exception:
+        pass
+
+    # 3차: 일봉 폴백 (주말·데이터 없음)
+    try:
+        df = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
         if df.empty:
             return 0.0
         if isinstance(df.columns, pd.MultiIndex):
@@ -131,25 +142,50 @@ def load_latest_prices_batch(tickers):
         ticker = unique_tickers[0]
         return {normalize_price_lookup_key(ticker): load_latest_price(ticker)}
 
+    prices = {}
+
+    # 1차: 5분봉 intraday + prepost=True → 장중/프리마켓/시간외 실시간 반영
     try:
         data = yf.download(
             unique_tickers,
-            period="5d",
-            interval="1d",
+            period="1d",
+            interval="5m",
+            prepost=True,
             progress=False,
             group_by="ticker",
             threads=True,
             auto_adjust=False,
         )
+        if data is not None and not data.empty:
+            for ticker in unique_tickers:
+                series = extract_download_close_series(data, ticker)
+                price = get_latest_close_from_series(series)
+                if price > 0:
+                    prices[normalize_price_lookup_key(ticker)] = price
     except Exception:
-        return {}
+        pass
 
-    prices = {}
-    for ticker in unique_tickers:
-        series = extract_download_close_series(data, ticker)
-        price = get_latest_close_from_series(series)
-        if price > 0:
-            prices[normalize_price_lookup_key(ticker)] = price
+    # 2차: 5분봉 실패 종목만 일봉 폴백 (주말·시장 닫힌 경우)
+    missing = [t for t in unique_tickers if normalize_price_lookup_key(t) not in prices]
+    if missing:
+        try:
+            fallback_data = yf.download(
+                missing if len(missing) > 1 else missing[0],
+                period="5d",
+                interval="1d",
+                progress=False,
+                group_by="ticker",
+                threads=True,
+                auto_adjust=False,
+            )
+            if fallback_data is not None and not fallback_data.empty:
+                for ticker in missing:
+                    series = extract_download_close_series(fallback_data, ticker)
+                    price = get_latest_close_from_series(series)
+                    if price > 0:
+                        prices[normalize_price_lookup_key(ticker)] = price
+        except Exception:
+            pass
 
     return prices
 
