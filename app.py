@@ -15033,38 +15033,79 @@ def render_investor_top10_section():
     """
     투자자별 순매수 TOP 10 섹션 (전광판 추가 UI 포함).
     render_today_market_flow_panel 과 독립적으로 호출한다.
+
+    ※ should_run_heavy_analysis 를 사용하지 않는다.
+      그 함수는 ready=True 가 세션 내내 유지돼 탭 재방문 시 자동 계산되는 문제가 있기 때문.
+      여기서는 버튼 클릭 시점에만 계산하고 결과를 session_state 에 보관한다.
+      새 세션(앱 재시작) 또는 날짜가 바뀌면 자동 초기화된다.
     """
     st.divider()
     st.markdown("#### 📊 오늘 투자자별 순매수 TOP 10")
 
-    if not should_run_heavy_analysis(
-        "investor_top10_lazy",
-        "KRX/네이버 수급 데이터를 조회합니다. 필요할 때만 실행하세요.",
-        run_label="수급 TOP 10 계산/새로고침",
-    ):
-        return
+    # ── 날짜 기반 캐시 키 (날짜 바뀌면 자동 초기화) ──────────────────────────
+    _today_key = get_kst_now().strftime("%Y%m%d")
+    _SS_DATA   = "investor_top10_data"
+    _SS_DATE   = "investor_top10_date"
+    _SS_TIME   = "investor_top10_calc_time"
 
-    # ── 추적 KR 종목 수집: 관심목록 + flow 스냅샷(캐시 히트 시만) ────────────
-    _tracked_kr: list[str] = []
-    for _item in st.session_state.get("watchlist", []):
-        _t = sanitize_ticker_value(_item.get("ticker", ""))
-        if _t.upper().endswith((".KS", ".KQ")):
-            _tracked_kr.append(_t)
-    try:
-        _snap = get_today_market_flow_snapshot()
-        for _key in ("theme_flow_df", "flow_df"):
-            _df = _snap.get(_key, pd.DataFrame())
-            if not _df.empty and "Ticker" in _df.columns:
-                _tracked_kr += [
-                    _t for _t in _df["Ticker"].dropna().unique()
-                    if str(_t).upper().endswith((".KS", ".KQ"))
-                ]
-    except Exception:
-        pass
-    _tracked_kr = list(dict.fromkeys(_tracked_kr))  # 순서 유지 중복 제거
+    if st.session_state.get(_SS_DATE) != _today_key:
+        # 날짜 바뀌면 이전 결과 삭제
+        st.session_state.pop(_SS_DATA, None)
+        st.session_state[_SS_DATE] = _today_key
 
-    # ── 패널 렌더링 (data 반환) ───────────────────────────────────────────────
-    top10_data = render_investor_top10_panel(_tracked_kr)
+    # ── 버튼 UI ───────────────────────────────────────────────────────────────
+    _has_data = _SS_DATA in st.session_state
+    _b1, _b2, _b3 = st.columns([1.4, 1.0, 3.6])
+    _do_calc = _b1.button(
+        "수급 TOP 10 계산/새로고침",
+        key="investor_top10_calc_btn",
+        use_container_width=True,
+    )
+    if _has_data:
+        if _b2.button("결과 지우기", key="investor_top10_clear_btn", use_container_width=True):
+            st.session_state.pop(_SS_DATA, None)
+            st.session_state.pop(_SS_TIME, None)
+            st.rerun()
+        _last = st.session_state.get(_SS_TIME, "")
+        if _last:
+            _b3.caption(f"마지막 조회: {_last}")
+    else:
+        _b2.caption("대기 중")
+        _b3.caption("버튼을 눌러 KRX/네이버 수급 데이터를 조회합니다.")
+
+    # ── 계산 트리거 ───────────────────────────────────────────────────────────
+    if not _do_calc and not _has_data:
+        return   # 버튼 안 눌렀고 저장 데이터도 없으면 종료
+
+    if _do_calc:
+        st.session_state.pop(_SS_DATA, None)   # 재계산 강제
+
+    if _SS_DATA not in st.session_state:
+        # ── 추적 KR 종목 수집 ────────────────────────────────────────────────
+        _tracked_kr: list[str] = []
+        for _item in st.session_state.get("watchlist", []):
+            _t = sanitize_ticker_value(_item.get("ticker", ""))
+            if _t.upper().endswith((".KS", ".KQ")):
+                _tracked_kr.append(_t)
+        try:
+            _snap = get_today_market_flow_snapshot()
+            for _key in ("theme_flow_df", "flow_df"):
+                _df = _snap.get(_key, pd.DataFrame())
+                if not _df.empty and "Ticker" in _df.columns:
+                    _tracked_kr += [
+                        _t for _t in _df["Ticker"].dropna().unique()
+                        if str(_t).upper().endswith((".KS", ".KQ"))
+                    ]
+        except Exception:
+            pass
+        _tracked_kr = list(dict.fromkeys(_tracked_kr))
+
+        # ── 패널 렌더링 & 결과 저장 ──────────────────────────────────────────
+        _fetched = render_investor_top10_panel(_tracked_kr)
+        st.session_state[_SS_DATA] = _fetched or {}
+        st.session_state[_SS_TIME] = get_kst_now().strftime("%Y-%m-%d %H:%M")
+
+    top10_data = st.session_state.get(_SS_DATA, {})
 
     # ── 전광판 추가 UI ────────────────────────────────────────────────────────
     if not top10_data:
