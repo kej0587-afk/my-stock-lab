@@ -2004,8 +2004,9 @@ def save_swing_radar_db_safe(df):
 
     try:
         rows = []
+        row_keys = []
         for _, row in df.iterrows():
-            ticker = str(row.get("ticker", "")).strip()
+            ticker = sanitize_ticker_value(row.get("ticker", ""))
             if not ticker:
                 continue
 
@@ -2016,12 +2017,52 @@ def save_swing_radar_db_safe(df):
                 value = row.get(col, "")
                 item[col] = "" if value is None or pd.isna(value) else str(value).strip()
             rows.append(item)
+            row_keys.append(normalize_ticker(ticker))
 
         if not rows:
             return False, "저장할 스윙 레이더 행이 없습니다."
 
-        supabase.table("swing_radar").delete().eq("owner_email", CURRENT_USER_EMAIL).execute()
-        supabase.table("swing_radar").insert(rows).execute()
+        duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+        if duplicate_keys:
+            return False, f"스윙 레이더에 같은 티커가 여러 줄 있습니다: {', '.join(duplicate_keys)}"
+
+        existing_res = (
+            supabase.table("swing_radar")
+            .select("ticker")
+            .eq("owner_email", CURRENT_USER_EMAIL)
+            .execute()
+        )
+        existing_tickers = [
+            sanitize_ticker_value(row.get("ticker", ""))
+            for row in (existing_res.data or [])
+            if sanitize_ticker_value(row.get("ticker", ""))
+        ]
+
+        supabase.table("swing_radar").upsert(rows, on_conflict="owner_email,ticker").execute()
+
+        new_keys = {normalize_ticker(row["ticker"]) for row in rows}
+        failed_deletes = []
+        for ticker in existing_tickers:
+            if normalize_ticker(ticker) in new_keys:
+                continue
+            try:
+                (
+                    supabase.table("swing_radar")
+                    .delete()
+                    .eq("owner_email", CURRENT_USER_EMAIL)
+                    .eq("ticker", ticker)
+                    .execute()
+                )
+            except Exception:
+                failed_deletes.append(ticker)
+
+        if failed_deletes:
+            st.warning(
+                "일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요. "
+                f"{', '.join(failed_deletes)}"
+            )
+            return True, f"일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요: {', '.join(failed_deletes)}"
+
         return True, ""
     except Exception as e:
         return False, str(e)
