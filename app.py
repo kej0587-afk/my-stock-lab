@@ -4954,14 +4954,15 @@ def format_today_flow_rank_table(df, score_col="돈흐름점수"):
     if df is None or df.empty:
         return pd.DataFrame()
     view = df.copy()
-    for col in ["1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "상승종목비율"]:
+    for col in ["1개월수익률", "2주수익률", "3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "단기가속도", "거래량증가", "상승종목비율"]:
         if col in view.columns:
             view[col] = view[col].apply(fmt_flow_pct)
-    if score_col in view.columns:
-        view[score_col] = view[score_col].apply(fmt_flow_score)
+    for sc in [score_col, "스윙점수"]:
+        if sc in view.columns:
+            view[sc] = view[sc].apply(fmt_flow_score)
     cols = [
-        "섹터", "Ticker", "ETF 이름", score_col, "상태", "추격위험",
-        "3개월수익률", "가속도", "거래량증가",
+        "섹터", "Ticker", "ETF 이름", score_col, "스윙점수", "상태", "추격위험",
+        "2주수익률", "1개월수익률", "3개월수익률", "단기가속도", "거래량증가",
     ]
     return view[[c for c in cols if c in view.columns]]
 
@@ -5015,6 +5016,10 @@ def get_today_market_flow_snapshot():
     kr_top5 = build_today_flow_rank_table(flow_df, "한국 섹터", top_n=5)
     global_top = build_today_flow_rank_table(flow_df, "글로벌", top_n=1)
     local_top = build_today_flow_rank_table(flow_df, "국내상장 대표 ETF", top_n=1)
+    # 스윙 점수 기준 TOP (스윙 트레이딩용 — 단기 방향 전환 민감)
+    us_swing_top3  = build_today_flow_rank_table(flow_df, "미국 섹터",  score_col="스윙점수", top_n=3)
+    kr_swing_top3  = build_today_flow_rank_table(flow_df, "한국 섹터",  score_col="스윙점수", top_n=3)
+    global_swing_top = build_today_flow_rank_table(flow_df, "글로벌",   score_col="스윙점수", top_n=1)
 
     theme_flow_df = pd.DataFrame()
     theme_rotation_df = pd.DataFrame()
@@ -5037,6 +5042,9 @@ def get_today_market_flow_snapshot():
         "kr_top5": kr_top5,
         "global_top": global_top,
         "local_top": local_top,
+        "us_swing_top3": us_swing_top3,
+        "kr_swing_top3": kr_swing_top3,
+        "global_swing_top": global_swing_top,
         "theme_flow_df": theme_flow_df,
         "theme_top5": theme_top5,
         "subtheme_top": subtheme_top,
@@ -5665,13 +5673,15 @@ def render_money_flow_etf_section():
     table_df["가격수준"] = table_df["가격수준"].apply(
         lambda v: f"{v*100:.1f}%" if finite_num(v) else "-"
     )
-    table_df["돈흐름점수"] = table_df["돈흐름점수"].apply(
-        lambda v: f"{v:.1f}" if finite_num(v) else "-"
-    )
-    for _col in ["1개월수익률", "3개월수익률", "6개월수익률"]:
+    for _score_col in ["돈흐름점수", "스윙점수"]:
+        if _score_col in table_df.columns:
+            table_df[_score_col] = table_df[_score_col].apply(
+                lambda v: f"{v:.1f}" if finite_num(v) else "-"
+            )
+    for _col in ["2주수익률", "1개월수익률", "3개월수익률", "6개월수익률"]:
         if _col in table_df.columns:
             table_df[_col] = table_df[_col].apply(fmt_flow_pct)
-    for _col in ["가속도", "거래량증가"]:
+    for _col in ["가속도", "단기가속도", "거래량증가"]:
         if _col in table_df.columns:
             table_df[_col] = table_df[_col].apply(
                 lambda v: f"{v:.2f}" if finite_num(v) else "-"
@@ -5687,21 +5697,24 @@ def render_money_flow_etf_section():
     # 표시할 컬럼 순서 지정 (내부 컬럼 제외)
     _show_cols = [c for c in [
         "구분", "섹터", "Ticker", "ETF 이름", "현재가",
-        "상태", "가격수준", "돈흐름점수",
-        "1개월수익률", "3개월수익률", "6개월수익률",
-        "가속도", "거래량증가",
+        "상태", "가격수준", "돈흐름점수", "스윙점수",
+        "2주수익률", "1개월수익률", "3개월수익률", "6개월수익률",
+        "단기가속도", "가속도", "거래량증가",
     ] if c in table_df.columns]
 
     st.dataframe(
         table_df[_show_cols],
         column_config={
-            "가격수준":   st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
-            "돈흐름점수": st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%"),
+            "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
+            "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 중기가속도 15% + 거래량 15% — 장기 모멘텀"),
+            "스윙점수":    st.column_config.TextColumn("스윙",      help="2W 25% + 1M 35% + 단기가속도 25% + 거래량 15% — 최근 방향 전환에 민감"),
+            "2주수익률":   st.column_config.TextColumn("2W"),
             "1개월수익률": st.column_config.TextColumn("1M"),
             "3개월수익률": st.column_config.TextColumn("3M"),
             "6개월수익률": st.column_config.TextColumn("6M"),
-            "가속도":      st.column_config.TextColumn("가속도",   help="최근 3M - 이전 3M 수익률. 양수=가속"),
-            "거래량증가":  st.column_config.TextColumn("거래량↑",  help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
+            "단기가속도":  st.column_config.TextColumn("단기가속",  help="최근 1M - 이전 1M. 양수=단기 가속 중"),
+            "가속도":      st.column_config.TextColumn("중기가속",  help="최근 3M - 이전 3M 수익률. 양수=중기 가속"),
+            "거래량증가":  st.column_config.TextColumn("거래량↑",   help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
         },
         hide_index=True,
         use_container_width=True,
@@ -14684,6 +14697,9 @@ def render_today_market_flow_panel():
     kr_top5 = snapshot.get("kr_top5", pd.DataFrame())
     global_top = snapshot.get("global_top", pd.DataFrame())
     local_top = snapshot.get("local_top", pd.DataFrame())
+    us_swing_top3 = snapshot.get("us_swing_top3", pd.DataFrame())
+    kr_swing_top3 = snapshot.get("kr_swing_top3", pd.DataFrame())
+    global_swing_top = snapshot.get("global_swing_top", pd.DataFrame())
     theme_top5 = snapshot.get("theme_top5", pd.DataFrame())
     subtheme_top = snapshot.get("subtheme_top", pd.DataFrame())
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
@@ -14716,7 +14732,7 @@ def render_today_market_flow_panel():
     else:
         metric_cols[3].metric("테마 종목 1위", "-", "-")
 
-    st.caption("돈흐름점수는 1/3/6개월 수익률, 가속도, 거래량 증가를 함께 본 가격 기반 지표입니다. 높다고 바로 매수하라는 뜻은 아닙니다.")
+    st.caption("돈흐름점수(1위)는 3~6개월 누적 모멘텀 기준 — 최근 조정은 반영이 느립니다. 스윙 트레이딩용으로는 아래 **⚡ 스윙 TOP** 을 함께 확인하세요.")
 
     with st.expander("전광판으로 보내기", expanded=False):
         send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
@@ -14840,6 +14856,23 @@ def render_today_market_flow_panel():
             st.info("미국 섹터 계산 데이터가 부족합니다.")
         else:
             st.dataframe(_add_momentum_watchlist_cols_etf(us_top5), use_container_width=True, hide_index=True)
+
+    # ── 스윙 TOP (단기 방향 전환 기준) ──────────────────────────────
+    st.markdown("#### ⚡ 스윙 TOP — 단기 방향 전환 기준")
+    st.caption("2주×25% + 1개월×35% + 단기가속도×25% + 거래량×15% | 장기 모멘텀 점수와 달리 최근 추세 전환에 즉각 반응합니다.")
+    swing_cols = st.columns(2)
+    with swing_cols[0]:
+        st.markdown("##### 한국 섹터 스윙 TOP 3")
+        if kr_swing_top3.empty:
+            st.info("데이터 부족")
+        else:
+            st.dataframe(format_today_flow_rank_table(kr_swing_top3, score_col="스윙점수"), use_container_width=True, hide_index=True)
+    with swing_cols[1]:
+        st.markdown("##### 미국 섹터 스윙 TOP 3")
+        if us_swing_top3.empty:
+            st.info("데이터 부족")
+        else:
+            st.dataframe(format_today_flow_rank_table(us_swing_top3, score_col="스윙점수"), use_container_width=True, hide_index=True)
 
     theme_cols = st.columns([1.05, 1])
     with theme_cols[0]:
