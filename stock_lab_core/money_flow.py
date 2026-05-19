@@ -692,6 +692,33 @@ def _compute_flow_score(
     )
 
 
+def _compute_swing_score(
+    ret_2w: float,
+    ret_1m: float,
+    swing_accel: float,
+    volume_growth: float,
+    price_level=None,
+) -> float:
+    """스윙 전용 점수 계산 (단기 민감도 특화).
+
+    가중치 (합계 = 100):
+        2주    × 25  — 최근 추세 방향
+        1개월  × 35  — 단기 모멘텀 (핵심)
+        단기가속도 × 25  — 최근 1m vs 직전 1m (방향 전환 포착)
+        거래량 × 15  — 돈흐름 강도 확인
+
+    오버히팅 패널티: price_level > 0.85 초과분 × 30 감산
+    """
+    overbought = max(0.0, (price_level - 0.85) * 30) if finite_num(price_level) else 0.0
+    return (
+        (ret_2w       if finite_num(ret_2w)       else 0.0) * 25
+        + (ret_1m     if finite_num(ret_1m)       else 0.0) * 35
+        + (swing_accel if finite_num(swing_accel) else 0.0) * 25
+        + (volume_growth if finite_num(volume_growth) else 0.0) * 15
+        - overbought
+    )
+
+
 def classify_money_flow_state(
     ret_3m: float,
     ret_6m: float,
@@ -760,28 +787,37 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
     high_52w    = float(px["High"].max())
     low_52w     = float(px["Low"].min())
     period_ret  = get_return_by_days(close, len(close) - 1)
+    ret_2w      = get_return_by_days(close, 10)
     ret_1m      = get_return_by_days(close, 21)
     ret_3m      = get_return_by_days(close, 63)
     ret_6m      = get_return_by_days(close, 126)
 
-    # 가속도: 최근 3개월 vs 직전 3개월 (비겹치는 독립 구간)
+    # 중기 가속도: 최근 3개월 vs 직전 3개월 (비겹치는 독립 구간)
     ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
     accel = (ret_3m - ret_prev_3m) if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
+
+    # 단기 가속도: 최근 1개월 vs 직전 1개월 (스윙용 방향 전환 포착)
+    ret_prev_1m  = get_return_by_days_offset(close, 21, offset=21)
+    swing_accel  = (ret_1m - ret_prev_1m) if finite_num(ret_1m) and finite_num(ret_prev_1m) else np.nan
 
     volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
     price_level   = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
     flow_score    = _compute_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
+    swing_score   = _compute_swing_score(ret_2w, ret_1m, swing_accel, volume_growth, price_level)
 
     return {
         "현재가":      cur,
         "가격수준":    price_level,
         "기간수익률":  period_ret,
+        "2주수익률":   ret_2w,
         "1개월수익률": ret_1m,
         "3개월수익률": ret_3m,
         "6개월수익률": ret_6m,
         "가속도":      accel,
+        "단기가속도":  swing_accel,
         "거래량증가":  volume_growth,
         "돈흐름점수":  flow_score,
+        "스윙점수":    swing_score,
         "상태":        classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         "52주 최고가": high_52w,
         "52주 최저가": low_52w,
