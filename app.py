@@ -4947,6 +4947,11 @@ def build_today_flow_rank_table(df, group_name, score_col="돈흐름점수", top
     view = df[df["구분"].astype(str).eq(group_name)].dropna(subset=[score_col]).copy()
     if view.empty:
         return pd.DataFrame()
+    # 스윙 점수 기준일 때: 2주 수익률 -5% 미만이면 제외 (현재 하락 중 = 스윙 자리 아님)
+    if score_col == "스윙점수" and "2주수익률" in view.columns:
+        view = view[view["2주수익률"].apply(lambda v: finite_num(v) and float(v) >= -0.05)]
+    if view.empty:
+        return pd.DataFrame()
     return view.sort_values(score_col, ascending=False).head(top_n)
 
 
@@ -14859,20 +14864,28 @@ def render_today_market_flow_panel():
 
     # ── 스윙 TOP (단기 방향 전환 기준) ──────────────────────────────
     st.markdown("#### ⚡ 스윙 TOP — 단기 방향 전환 기준")
-    st.caption("2주×25% + 1개월×35% + 단기가속도×25% + 거래량×15% | 장기 모멘텀 점수와 달리 최근 추세 전환에 즉각 반응합니다.")
+    st.caption("2주×25% + 1개월×35% + 단기가속도×25% + 거래량×15% | **2주 수익률 -5% 미만은 제외** (현재 하락 중 = 스윙 자리 아님)")
     swing_cols = st.columns(2)
     with swing_cols[0]:
         st.markdown("##### 한국 섹터 스윙 TOP 3")
         if kr_swing_top3.empty:
-            st.info("데이터 부족")
+            st.info("현재 2주 수익률 -5% 이상인 한국 섹터가 없습니다 — 전반적 조정 구간")
         else:
-            st.dataframe(format_today_flow_rank_table(kr_swing_top3, score_col="스윙점수"), use_container_width=True, hide_index=True)
+            _kr_swing_fmt = format_today_flow_rank_table(kr_swing_top3, score_col="스윙점수")
+            if _kr_swing_fmt.empty:
+                st.info("현재 2주 수익률 -5% 이상인 한국 섹터가 없습니다 — 전반적 조정 구간")
+            else:
+                st.dataframe(_kr_swing_fmt, use_container_width=True, hide_index=True)
     with swing_cols[1]:
         st.markdown("##### 미국 섹터 스윙 TOP 3")
         if us_swing_top3.empty:
-            st.info("데이터 부족")
+            st.info("현재 2주 수익률 -5% 이상인 미국 섹터가 없습니다 — 전반적 조정 구간")
         else:
-            st.dataframe(format_today_flow_rank_table(us_swing_top3, score_col="스윙점수"), use_container_width=True, hide_index=True)
+            _us_swing_fmt = format_today_flow_rank_table(us_swing_top3, score_col="스윙점수")
+            if _us_swing_fmt.empty:
+                st.info("현재 2주 수익률 -5% 이상인 미국 섹터가 없습니다 — 전반적 조정 구간")
+            else:
+                st.dataframe(_us_swing_fmt, use_container_width=True, hide_index=True)
 
     theme_cols = st.columns([1.05, 1])
     with theme_cols[0]:
