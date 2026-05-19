@@ -1803,6 +1803,7 @@ def save_watchlist_db(watchlist):
         return False
 
     rows = []
+    row_keys = []
     for idx, item in enumerate(watchlist):
         item = sanitize_watchlist_item(item)
         ticker = item.get("ticker", "")
@@ -1824,16 +1825,54 @@ def save_watchlist_db(watchlist):
             "sort_order": idx,
             "fin_score": 0 if is_fin_exempt else clean_int(item.get("fin_score")),
         })
+        row_keys.append(normalize_ticker(ticker))
 
     if not rows:
         st.warning("No watchlist rows to save. Existing watchlist was kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing watchlist",
+    duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_keys:
+        st.error(
+            "관심목록에 같은 티커가 여러 번 들어 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"티커당 한 줄만 남겨 주세요: {', '.join(duplicate_keys)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("watchlist").select("ticker").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing watchlist before save",
     )
-    run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
+    existing_tickers = [
+        sanitize_ticker_value(row.get("ticker", ""))
+        for row in (existing_res.data or [])
+        if sanitize_ticker_value(row.get("ticker", ""))
+    ]
+
+    run_supabase(
+        supabase.table("watchlist").upsert(rows, on_conflict="owner_email,ticker"),
+        "upsert watchlist",
+    )
+
+    new_keys = {normalize_ticker(row["ticker"]) for row in rows}
+    failed_deletes = []
+    for ticker in existing_tickers:
+        if normalize_ticker(ticker) in new_keys:
+            continue
+        res = run_supabase(
+            supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker),
+            f"delete removed watchlist item {ticker}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(ticker)
+
+    if failed_deletes:
+        st.warning(
+            "일부 제거된 관심종목을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요: "
+            f"{', '.join(failed_deletes)}"
+        )
+
     return True
 
 
