@@ -1025,6 +1025,88 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
     return df.sort_values("테마돈흐름점수", ascending=False)
 
 
+def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
+    """섹터 ETF 로테이션 사분면 계산 (RRG 스타일).
+
+    RS(3M) = 섹터 3M수익률 - 벤치마크 3M수익률
+    RS모멘텀 = 섹터 가속도 - 벤치마크 가속도
+    사분면: 주도(RS≥0 & mom≥0), 약화(RS≥0 & mom<0),
+            개선(RS<0 & mom≥0), 소외(RS<0 & mom<0)
+    진입검토: 개선/주도 + 2주수익률≥+1% + 단기가속도≥0% + 상태≠과열경보
+    """
+    if flow_df is None or flow_df.empty:
+        return pd.DataFrame()
+
+    BENCH_MAP = {
+        "한국 섹터": "069500.KS",
+        "미국 섹터": "VOO",
+        "글로벌":    "VOO",
+    }
+
+    rows = []
+    for group, bench_ticker in BENCH_MAP.items():
+        grp = flow_df[flow_df["구분"].astype(str) == group].copy()
+        if grp.empty:
+            continue
+        bench_rows = grp[grp["Ticker"].astype(str) == bench_ticker]
+        if bench_rows.empty:
+            b_3m = 0.0
+            b_accel = 0.0
+        else:
+            b = bench_rows.iloc[0]
+            b_3m = float(b["3개월수익률"]) if finite_num(b.get("3개월수익률")) else 0.0
+            b_accel = float(b["가속도"]) if finite_num(b.get("가속도")) else 0.0
+
+        for _, r in grp.iterrows():
+            if str(r.get("Ticker", "")) == bench_ticker:
+                continue
+            r3 = r.get("3개월수익률", np.nan)
+            ac = r.get("가속도", np.nan)
+            if not finite_num(r3) or not finite_num(ac):
+                continue
+
+            r2w = r.get("2주수익률", np.nan)
+            swing_ac = r.get("단기가속도", np.nan)
+            state = str(r.get("상태", ""))
+
+            rs_3m = float(r3) - b_3m
+            rs_mom = float(ac) - b_accel
+
+            if rs_3m >= 0 and rs_mom >= 0:
+                quad = "주도"
+            elif rs_3m >= 0 and rs_mom < 0:
+                quad = "약화"
+            elif rs_3m < 0 and rs_mom >= 0:
+                quad = "개선"
+            else:
+                quad = "소외"
+
+            entry_ok = (
+                quad in {"개선", "주도"}
+                and finite_num(r2w) and float(r2w) >= 0.01
+                and finite_num(swing_ac) and float(swing_ac) >= 0.0
+                and state != "과열경보"
+            )
+
+            rows.append({
+                "구분":       group,
+                "섹터":       str(r.get("섹터", "")),
+                "Ticker":     str(r.get("Ticker", "")),
+                "사분면":     quad,
+                "RS(3M)":     rs_3m,
+                "RS모멘텀":   rs_mom,
+                "3M수익률":   float(r3),
+                "2주수익률":  float(r2w) if finite_num(r2w) else np.nan,
+                "단기가속도": float(swing_ac) if finite_num(swing_ac) else np.nan,
+                "상태":       state,
+                "진입검토":   "✅ 진입검토" if entry_ok else "🔸 관망",
+            })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # 섹터 로테이션 분석
 # ---------------------------------------------------------------------------
