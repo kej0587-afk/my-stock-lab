@@ -1693,27 +1693,79 @@ def save_dividends_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("배당 내역 저장")
 
-    rows = []
+    existing_res = run_supabase(
+        supabase.table("dividends").select("id").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing dividends before save",
+    )
+    existing_ids = {
+        clean_int(row.get("id"))
+        for row in (existing_res.data or [])
+        if clean_int(row.get("id")) is not None
+    }
+
+    rows_to_upsert = []
+    rows_to_insert = []
+    kept_existing_ids = []
     for _, row in df.iterrows():
         if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
             continue
-        rows.append({
+
+        item = {
             "owner_email": CURRENT_USER_EMAIL,
             "date": str(row.get("date", "")).strip(),
             "ticker": sanitize_ticker_value(row.get("ticker", "")),
             "amount": clean_float(row.get("amount")),
             "currency": str(row.get("currency", "KRW")).strip().upper() or "KRW",
-        })
+        }
 
-    if not rows:
+        row_id = clean_int(row.get("id"))
+        if row_id in existing_ids:
+            item["id"] = row_id
+            rows_to_upsert.append(item)
+            kept_existing_ids.append(row_id)
+        else:
+            rows_to_insert.append(item)
+
+    if not rows_to_upsert and not rows_to_insert:
         st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing dividends",
-    )
-    run_supabase(supabase.table("dividends").insert(rows), "save dividends")
+    duplicate_ids = sorted({row_id for row_id in kept_existing_ids if kept_existing_ids.count(row_id) > 1})
+    if duplicate_ids:
+        st.error(
+            "배당 내역에 같은 id가 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"id를 확인해 주세요: {', '.join(str(x) for x in duplicate_ids)}"
+        )
+        return False
+
+    if rows_to_upsert:
+        run_supabase(
+            supabase.table("dividends").upsert(rows_to_upsert, on_conflict="id"),
+            "upsert dividends",
+        )
+
+    if rows_to_insert:
+        run_supabase(supabase.table("dividends").insert(rows_to_insert), "insert new dividends")
+
+    failed_deletes = []
+    kept_ids = set(kept_existing_ids)
+    for row_id in existing_ids:
+        if row_id in kept_ids:
+            continue
+        res = run_supabase(
+            supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("id", row_id),
+            f"delete removed dividend {row_id}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(row_id)
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 배당 내역을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
+            f"{', '.join(str(x) for x in failed_deletes)}"
+        )
+
     return True
 
 
