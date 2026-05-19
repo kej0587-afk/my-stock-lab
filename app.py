@@ -1734,6 +1734,7 @@ def save_monthly_logs_db(df):
         return public_demo_write_blocked("월별 로그 저장")
 
     rows = []
+    row_keys = []
     for _, row in df.iterrows():
         month = str(row.get("month", "")).strip()
         if not month:
@@ -1745,16 +1746,54 @@ def save_monthly_logs_db(df):
             "evaluated_value": clean_float(row.get("evaluated_value")),
             "dividend": clean_float(row.get("dividend")),
         })
+        row_keys.append(month)
 
     if not rows:
         st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing monthly logs",
+    duplicate_months = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_months:
+        st.error(
+            "월별 로그에 같은 월이 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"월별로 한 줄만 남겨 주세요: {', '.join(duplicate_months)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("monthly_logs").select("month").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing monthly logs before save",
     )
-    run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
+    existing_months = [
+        str(row.get("month", "")).strip()
+        for row in (existing_res.data or [])
+        if str(row.get("month", "")).strip()
+    ]
+
+    run_supabase(
+        supabase.table("monthly_logs").upsert(rows, on_conflict="owner_email,month"),
+        "upsert monthly logs",
+    )
+
+    new_months = {row["month"] for row in rows}
+    failed_deletes = []
+    for month in existing_months:
+        if month in new_months:
+            continue
+        res = run_supabase(
+            supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("month", month),
+            f"delete removed monthly log {month}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(month)
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 월별 로그를 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
+            f"{', '.join(failed_deletes)}"
+        )
+
     return True
 
 
