@@ -87,6 +87,7 @@ from stock_lab_core.news import (
 )
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
+    calculate_rotation_df,
     download_money_flow_prices,
 )
 try:
@@ -5586,6 +5587,120 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
                     st.warning(msg)
 
 
+def render_rotation_panel(flow_df: pd.DataFrame):
+    """섹터 로테이션 4분면 차트 + 테이블."""
+    st.markdown("#### 🔄 섹터 로테이션 맵")
+    st.caption(
+        "벤치마크(KOSPI200·S&P500) 대비 **상대강도(RS_3m)**와 **RS모멘텀**으로 자금 이동 방향 감지  \n"
+        "**주도** → 약화 → 소외 → 개선 → **주도** 순으로 순환"
+    )
+
+    rot_df = calculate_rotation_df(flow_df)
+    if rot_df is None or rot_df.empty:
+        st.info("로테이션 데이터를 계산할 수 없습니다.")
+        return
+
+    QUAD_COLOR = {"주도": "#16a34a", "약화": "#ea580c", "개선": "#2563eb", "소외": "#dc2626", "-": "#94a3b8"}
+    QUAD_EMOJI = {"주도": "🟢 주도", "약화": "🟠 약화", "개선": "🔵 개선", "소외": "🔴 소외", "-": "⬜ -"}
+
+    group_options = [g for g in ["한국 섹터", "미국 섹터", "글로벌"] if g in rot_df["구분"].values]
+    if not group_options:
+        st.info("데이터 없음")
+        return
+
+    tabs = st.tabs(group_options)
+    for tab, group in zip(tabs, group_options):
+        with tab:
+            gdf = rot_df[rot_df["구분"] == group].dropna(subset=["RS_3m", "RS모멘텀"]).copy()
+            if gdf.empty:
+                st.info("해당 그룹 데이터 없음")
+                continue
+
+            # ── 4분면 scatter ──────────────────────────────────────────────
+            fig = go.Figure()
+
+            # 사분면 배경
+            x_max = max(abs(gdf["RS_3m"].max()), abs(gdf["RS_3m"].min()), 0.05) * 1.4
+            y_max = max(abs(gdf["RS모멘텀"].max()), abs(gdf["RS모멘텀"].min()), 0.03) * 1.4
+            quad_bg = [
+                (0, x_max,  0, y_max,  "rgba(22,163,74,0.07)"),   # 주도 (우상)
+                (0, x_max,  -y_max, 0, "rgba(234,88,12,0.07)"),    # 약화 (우하)
+                (-x_max, 0, 0, y_max,  "rgba(37,99,235,0.07)"),    # 개선 (좌상)
+                (-x_max, 0, -y_max, 0, "rgba(220,38,38,0.07)"),    # 소외 (좌하)
+            ]
+            for x0, x1, y0, y1, color in quad_bg:
+                fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+                              fillcolor=color, line_width=0, layer="below")
+
+            # 기준선
+            fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1)
+            fig.add_vline(x=0, line_dash="dash", line_color="#94a3b8", line_width=1)
+
+            # 사분면 라벨
+            for label, x, y, color in [
+                ("🟢 주도", x_max * 0.85,  y_max * 0.85,  "#16a34a"),
+                ("🟠 약화", x_max * 0.85, -y_max * 0.85,  "#ea580c"),
+                ("🔵 개선", -x_max * 0.85, y_max * 0.85,  "#2563eb"),
+                ("🔴 소외", -x_max * 0.85, -y_max * 0.85, "#dc2626"),
+            ]:
+                fig.add_annotation(x=x, y=y, text=f"<b>{label}</b>",
+                                   showarrow=False, font=dict(color=color, size=12))
+
+            # 섹터 점
+            fig.add_trace(go.Scatter(
+                x=gdf["RS_3m"] * 100,
+                y=gdf["RS모멘텀"] * 100,
+                mode="markers+text",
+                text=gdf["섹터"],
+                textposition="top center",
+                textfont=dict(size=10),
+                marker=dict(
+                    size=14,
+                    color=[QUAD_COLOR.get(q, "#94a3b8") for q in gdf["로테이션"]],
+                    line=dict(width=1, color="#fff"),
+                ),
+                customdata=gdf[["3개월수익률", "1개월수익률", "거래량증가", "상태"]].values,
+                hovertemplate=(
+                    "<b>%{text}</b><br>"
+                    "RS_3m: %{x:.1f}%<br>"
+                    "RS모멘텀: %{y:.1f}%<br>"
+                    "3개월: %{customdata[0]:.1%}<br>"
+                    "1개월: %{customdata[1]:.1%}<br>"
+                    "거래량↑: %{customdata[2]:.1%}<br>"
+                    "상태: %{customdata[3]}<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+
+            fig.update_layout(
+                height=420,
+                xaxis=dict(title="RS_3m (벤치마크 대비 3개월 초과수익, %)",
+                           range=[-x_max * 100, x_max * 100], zeroline=False),
+                yaxis=dict(title="RS모멘텀 (가속도 차이, %)",
+                           range=[-y_max * 100, y_max * 100], zeroline=False),
+                margin=dict(l=10, r=10, t=10, b=10),
+                plot_bgcolor="#0f172a",
+                paper_bgcolor="#0f172a",
+                font=dict(color="#e2e8f0"),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── 요약 테이블 ────────────────────────────────────────────────
+            tbl = gdf[["섹터", "로테이션", "RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률", "상태"]].copy()
+            tbl["로테이션"] = tbl["로테이션"].map(QUAD_EMOJI)
+            for col in ["RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률"]:
+                tbl[col] = tbl[col].apply(lambda v: f"{v*100:+.1f}%" if finite_num(v) else "-")
+            tbl = tbl.sort_values("로테이션")
+            st.dataframe(tbl, use_container_width=True, hide_index=True,
+                         column_config={
+                             "RS_3m":     st.column_config.TextColumn("RS(3m)", help="벤치마크 대비 3개월 초과수익"),
+                             "RS모멘텀":  st.column_config.TextColumn("RS모멘텀", help="벤치마크 대비 가속도 차이. 양수=빨라짐"),
+                             "3개월수익률": st.column_config.TextColumn("3M"),
+                             "1개월수익률": st.column_config.TextColumn("1M"),
+                             "2주수익률":   st.column_config.TextColumn("2W"),
+                         })
+
+
 def render_money_flow_etf_section():
     st.subheader("🌊 글로벌 자금 흐름 레이더")
     st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 가격 모멘텀과 거래량 증가를 함께 비교합니다.")
@@ -5919,6 +6034,9 @@ def render_money_flow_etf_section():
             fig_volume.add_vline(x=0, line_color="#94a3b8")
             fig_volume.update_layout(template="plotly_dark", height=430, title="거래량 증가 랭킹", yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_volume, use_container_width=True)
+
+    # ── 섹터 로테이션 맵 ──────────────────────────────────────────────
+    render_rotation_panel(flow_df)
 
     # ── 시장 폭(Market Breadth) + 상태 분포 ─────────────────────────
     st.markdown("#### 📡 시장 폭 & 상태 분포")

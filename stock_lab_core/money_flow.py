@@ -1026,6 +1026,78 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
 
 
 # ---------------------------------------------------------------------------
+# 섹터 로테이션 분석
+# ---------------------------------------------------------------------------
+
+def calculate_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
+    """벤치마크 대비 상대강도(RS)와 RS 모멘텀으로 섹터 로테이션 사분면 분류.
+
+    사분면 정의:
+        주도(Leading)  : RS_3m >= 0 & RS모멘텀 >= 0  → 지금 돈 유입 중
+        약화(Weakening): RS_3m >= 0 & RS모멘텀 <  0  → 강했지만 식는 중
+        개선(Improving): RS_3m <  0 & RS모멘텀 >= 0  → 다음 주도 후보
+        소외(Lagging)  : RS_3m <  0 & RS모멘텀 <  0  → 피해야 할 구간
+
+    RS_3m    = 섹터_3m수익률 - 벤치마크_3m수익률
+    RS모멘텀 = 섹터_가속도   - 벤치마크_가속도  (중기 가속도 기준)
+    """
+    if flow_df is None or flow_df.empty:
+        return pd.DataFrame()
+
+    # 그룹별 벤치마크 티커
+    BENCHMARKS = {
+        "한국 섹터": "069500.KS",  # KODEX 200
+        "미국 섹터": "VOO",         # S&P500
+        "글로벌":    "VOO",
+    }
+
+    rows = []
+    for group, bench_ticker in BENCHMARKS.items():
+        grp = flow_df[flow_df["구분"].astype(str) == group].copy()
+        bench_rows = flow_df[flow_df["Ticker"].astype(str) == bench_ticker]
+        if grp.empty or bench_rows.empty:
+            continue
+
+        b = bench_rows.iloc[0]
+        b_3m    = float(b["3개월수익률"]) if finite_num(b.get("3개월수익률")) else 0.0
+        b_accel = float(b["가속도"])      if finite_num(b.get("가속도"))      else 0.0
+
+        for _, row in grp.iterrows():
+            r3  = row.get("3개월수익률", np.nan)
+            ac  = row.get("가속도",      np.nan)
+            r1  = row.get("1개월수익률", np.nan)
+            r2w = row.get("2주수익률",   np.nan)
+            vg  = row.get("거래량증가",  np.nan)
+
+            rs_3m  = float(r3) - b_3m    if finite_num(r3) else np.nan
+            rs_mom = float(ac) - b_accel if finite_num(ac) else np.nan
+
+            if finite_num(rs_3m) and finite_num(rs_mom):
+                if   rs_3m >= 0 and rs_mom >= 0: quad = "주도"
+                elif rs_3m >= 0 and rs_mom <  0: quad = "약화"
+                elif rs_3m <  0 and rs_mom >= 0: quad = "개선"
+                else:                             quad = "소외"
+            else:
+                quad = "-"
+
+            rows.append({
+                "구분":       group,
+                "섹터":       row["섹터"],
+                "Ticker":     row["Ticker"],
+                "RS_3m":      rs_3m,
+                "RS모멘텀":   rs_mom,
+                "3개월수익률": r3,
+                "1개월수익률": r1,
+                "2주수익률":   r2w,
+                "거래량증가":  vg,
+                "로테이션":   quad,
+                "상태":       row.get("상태", "-"),
+            })
+
+    return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
 # 단일 섹터 상태 조회
 # ---------------------------------------------------------------------------
 
