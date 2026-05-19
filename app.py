@@ -87,6 +87,7 @@ from stock_lab_core.news import (
 )
 from stock_lab_core.money_flow import (
     calculate_money_flow_df,
+    calculate_sector_rotation_df,
     download_money_flow_prices,
 )
 try:
@@ -5020,6 +5021,7 @@ def get_today_market_flow_snapshot():
     us_swing_top3  = build_today_flow_rank_table(flow_df, "미국 섹터",  score_col="스윙점수", top_n=3)
     kr_swing_top3  = build_today_flow_rank_table(flow_df, "한국 섹터",  score_col="스윙점수", top_n=3)
     global_swing_top = build_today_flow_rank_table(flow_df, "글로벌",   score_col="스윙점수", top_n=1)
+    sector_rotation_df = calculate_sector_rotation_df(flow_df)
 
     theme_flow_df = pd.DataFrame()
     theme_rotation_df = pd.DataFrame()
@@ -5045,6 +5047,7 @@ def get_today_market_flow_snapshot():
         "us_swing_top3": us_swing_top3,
         "kr_swing_top3": kr_swing_top3,
         "global_swing_top": global_swing_top,
+        "sector_rotation_df": sector_rotation_df,
         "theme_flow_df": theme_flow_df,
         "theme_top5": theme_top5,
         "subtheme_top": subtheme_top,
@@ -14700,6 +14703,7 @@ def render_today_market_flow_panel():
     us_swing_top3 = snapshot.get("us_swing_top3", pd.DataFrame())
     kr_swing_top3 = snapshot.get("kr_swing_top3", pd.DataFrame())
     global_swing_top = snapshot.get("global_swing_top", pd.DataFrame())
+    sector_rotation_df = snapshot.get("sector_rotation_df", pd.DataFrame())
     theme_top5 = snapshot.get("theme_top5", pd.DataFrame())
     subtheme_top = snapshot.get("subtheme_top", pd.DataFrame())
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
@@ -14873,6 +14877,117 @@ def render_today_market_flow_panel():
             st.info("데이터 부족")
         else:
             st.dataframe(format_today_flow_rank_table(us_swing_top3, score_col="스윙점수"), use_container_width=True, hide_index=True)
+
+    # ── 섹터 로테이션 사분면 (RRG 스타일) ────────────────────────────
+    st.markdown("#### 🔄 섹터 로테이션 맵 — 진입검토 신호")
+    st.caption(
+        "**X축 RS(3M)**: 벤치마크 대비 3개월 초과 수익률 &nbsp;|&nbsp; "
+        "**Y축 RS모멘텀**: 가속도 초과분 &nbsp;|&nbsp; "
+        "✅ 진입검토 = 개선/주도 사분면 + 2주수익률≥+1% + 단기가속도≥0% + 상태≠과열경보"
+    )
+    if sector_rotation_df.empty:
+        st.info("로테이션 계산 데이터가 부족합니다.")
+    else:
+        _QUAD_COLOR = {"주도": "#22c55e", "약화": "#f59e0b", "개선": "#60a5fa", "소외": "#ef4444"}
+        _QUAD_SYMBOL = {"주도": "circle", "약화": "diamond", "개선": "square", "소외": "x"}
+
+        rot_groups = [g for g in ["한국 섹터", "미국 섹터", "글로벌"] if g in sector_rotation_df["구분"].values]
+        rot_tab_labels = rot_groups if rot_groups else ["전체"]
+        rot_tabs = st.tabs(rot_tab_labels)
+
+        for tab, group_label in zip(rot_tabs, rot_tab_labels):
+            with tab:
+                if group_label == "전체":
+                    grp_df = sector_rotation_df.copy()
+                else:
+                    grp_df = sector_rotation_df[sector_rotation_df["구분"] == group_label].copy()
+                if grp_df.empty:
+                    st.info("데이터 없음")
+                    continue
+
+                fig = go.Figure()
+                for quad, qdf in grp_df.groupby("사분면"):
+                    color = _QUAD_COLOR.get(quad, "#94a3b8")
+                    symbol = _QUAD_SYMBOL.get(quad, "circle")
+                    entry_mask = qdf["진입검토"] == "✅ 진입검토"
+                    for is_entry, subdf in [(True, qdf[entry_mask]), (False, qdf[~entry_mask])]:
+                        if subdf.empty:
+                            continue
+                        marker_size = 14 if is_entry else 9
+                        marker_line_width = 2.5 if is_entry else 0.5
+                        marker_line_color = "#ffffff" if is_entry else color
+                        fig.add_trace(go.Scatter(
+                            x=subdf["RS(3M)"] * 100,
+                            y=subdf["RS모멘텀"] * 100,
+                            mode="markers+text",
+                            name=f"{quad}{'★' if is_entry else ''}",
+                            text=subdf["섹터"],
+                            textposition="top center",
+                            textfont=dict(size=10, color=color),
+                            marker=dict(
+                                size=marker_size,
+                                color=color,
+                                symbol=symbol,
+                                line=dict(width=marker_line_width, color=marker_line_color),
+                                opacity=0.95 if is_entry else 0.65,
+                            ),
+                            customdata=subdf[["Ticker", "3M수익률", "2주수익률", "단기가속도", "상태", "진입검토"]].values,
+                            hovertemplate=(
+                                "<b>%{text}</b> (%{customdata[0]})<br>"
+                                "RS(3M): %{x:.1f}%  RS모멘텀: %{y:.2f}%<br>"
+                                "3M: %{customdata[1]:.1%}  2주: %{customdata[2]:.1%}<br>"
+                                "단기가속도: %{customdata[3]:.2%}  상태: %{customdata[4]}<br>"
+                                "<b>%{customdata[5]}</b><extra></extra>"
+                            ),
+                            showlegend=True,
+                        ))
+
+                # 사분면 배경 + 레이블
+                x_max = max(grp_df["RS(3M)"].abs().max() * 110, 5)
+                y_max = max(grp_df["RS모멘텀"].abs().max() * 110, 5)
+                for qname, (x0, x1, y0, y1) in [
+                    ("주도",  (0, x_max,  0, y_max)),
+                    ("약화",  (0, x_max, -y_max, 0)),
+                    ("개선",  (-x_max, 0, 0, y_max)),
+                    ("소외",  (-x_max, 0, -y_max, 0)),
+                ]:
+                    fig.add_shape(type="rect", x0=x0, x1=x1, y0=y0, y1=y1,
+                                  fillcolor=_QUAD_COLOR[qname], opacity=0.06, line_width=0, layer="below")
+                    fig.add_annotation(x=(x0 + x1) / 2, y=(y0 + y1) / 2,
+                                       text=f"<b>{qname}</b>", showarrow=False,
+                                       font=dict(size=13, color=_QUAD_COLOR[qname]), opacity=0.4)
+
+                fig.add_hline(y=0, line_dash="dot", line_color="#475569", line_width=1)
+                fig.add_vline(x=0, line_dash="dot", line_color="#475569", line_width=1)
+                fig.update_layout(
+                    height=420,
+                    margin=dict(l=10, r=10, t=30, b=40),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(15,23,42,0.6)",
+                    xaxis=dict(title="RS(3M) %p", gridcolor="#1e293b", zerolinecolor="#475569"),
+                    yaxis=dict(title="RS모멘텀 %p", gridcolor="#1e293b", zerolinecolor="#475569"),
+                    legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
+                    font=dict(color="#94a3b8"),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 진입검토 후보 테이블
+                entry_df = grp_df[grp_df["진입검토"] == "✅ 진입검토"].copy()
+                if entry_df.empty:
+                    st.info("현재 진입검토 조건을 모두 충족하는 섹터가 없습니다. (개선/주도 + 2주≥+1% + 단기가속도≥0% + 비과열)")
+                else:
+                    st.markdown("**✅ 진입검토 후보**")
+                    entry_show = entry_df[["섹터", "Ticker", "사분면", "RS(3M)", "RS모멘텀", "3M수익률", "2주수익률", "단기가속도", "상태"]].copy()
+                    for col in ["RS(3M)", "RS모멘텀", "3M수익률", "2주수익률", "단기가속도"]:
+                        entry_show[col] = entry_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                    st.dataframe(entry_show, use_container_width=True, hide_index=True)
+
+                # 전체 테이블 (접기)
+                with st.expander("전체 섹터 로테이션 상세 보기", expanded=False):
+                    show_df = grp_df[["섹터", "Ticker", "사분면", "진입검토", "RS(3M)", "RS모멘텀", "3M수익률", "2주수익률", "단기가속도", "상태"]].copy()
+                    for col in ["RS(3M)", "RS모멘텀", "3M수익률", "2주수익률", "단기가속도"]:
+                        show_df[col] = show_df[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                    st.dataframe(show_df.sort_values(["사분면", "RS(3M)"], ascending=[True, False]), use_container_width=True, hide_index=True)
 
     theme_cols = st.columns([1.05, 1])
     with theme_cols[0]:
