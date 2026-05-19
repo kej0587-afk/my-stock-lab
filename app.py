@@ -4947,11 +4947,16 @@ def build_today_flow_rank_table(df, group_name, score_col="돈흐름점수", top
     view = df[df["구분"].astype(str).eq(group_name)].dropna(subset=[score_col]).copy()
     if view.empty:
         return pd.DataFrame()
-    # 스윙 점수 기준일 때: 2주 -3% 미만 또는 과열경보 제외 (하락 중·고점 추격 = 스윙 자리 아님)
+    # 스윙 점수 기준 필터 (하락·둔화·고점 추격 제외)
     if score_col == "스윙점수":
         if "2주수익률" in view.columns:
-            view = view[view["2주수익률"].apply(lambda v: finite_num(v) and float(v) >= -0.03)]
+            # 2주 +1% 미만 제외 — 진짜 단기 모멘텀 없으면 스윙 자리 아님
+            view = view[view["2주수익률"].apply(lambda v: finite_num(v) and float(v) >= 0.01)]
+        if "단기가속도" in view.columns:
+            # 단기가속도 음수 제외 — 둔화·역전 중인 섹터 차단
+            view = view[view["단기가속도"].apply(lambda v: finite_num(v) and float(v) >= 0.0)]
         if "상태" in view.columns:
+            # 과열경보 제외 — 고점 추격 방지
             view = view[view["상태"].astype(str) != "과열경보"]
     if view.empty:
         return pd.DataFrame()
@@ -14867,7 +14872,7 @@ def render_today_market_flow_panel():
 
     # ── 스윙 TOP (단기 방향 전환 기준) ──────────────────────────────
     st.markdown("#### ⚡ 스윙 TOP — 단기 방향 전환 기준")
-    st.caption("2주×25% + 1개월×35% + 단기가속도×25% + 거래량×15% | **2주 -3% 미만·과열경보 제외** (하락 중·고점 추격 = 스윙 자리 아님)")
+    st.caption("2주×25% + 1개월×35% + 단기가속도×25% + 거래량×15% | **2주 +1% 미만·단기가속도 음수·과열경보 제외**")
     swing_cols = st.columns(2)
     with swing_cols[0]:
         st.markdown("##### 한국 섹터 스윙 TOP 3")
