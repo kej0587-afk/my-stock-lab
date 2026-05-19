@@ -1615,7 +1615,7 @@ def save_holdings_db(df):
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
             "account_type": str(row.get("account_type", "일반")).strip() or "일반",
         })
-        row_keys.append(normalize_ticker(ticker_value))
+        row_keys.append(f"{normalize_ticker(ticker_value)}|{normalize_text(rows[-1].get('account_type', '일반'))}")
 
     if not rows:
         st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
@@ -1623,41 +1623,49 @@ def save_holdings_db(df):
 
     duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
     if duplicate_keys:
+        duplicate_labels = [key.replace("|", " / ") for key in duplicate_keys]
         st.error(
-            "같은 티커가 보유자산에 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
-            f"티커당 한 줄만 남겨 주세요: {', '.join(duplicate_keys)}"
+            "같은 계좌 안에 같은 티커가 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"티커와 계좌 조합을 한 줄만 남겨 주세요: {', '.join(duplicate_labels)}"
         )
         return False
 
     existing_res = run_supabase(
-        supabase.table("holdings").select("ticker").eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("holdings").select("ticker,account_type").eq("owner_email", CURRENT_USER_EMAIL),
         "load existing holdings before save",
     )
-    existing_tickers = [
-        sanitize_ticker_value(row.get("ticker", ""))
+    existing_holdings = [
+        (
+            sanitize_ticker_value(row.get("ticker", "")),
+            str(row.get("account_type", "일반")).strip() or "일반",
+        )
         for row in (existing_res.data or [])
         if sanitize_ticker_value(row.get("ticker", ""))
     ]
 
     run_supabase(
-        supabase.table("holdings").upsert(rows, on_conflict="owner_email,ticker"),
+        supabase.table("holdings").upsert(rows, on_conflict="owner_email,ticker,account_type"),
         "upsert holdings",
     )
 
-    new_keys = {normalize_ticker(row["ticker"]) for row in rows}
-    removed_tickers = [
-        ticker for ticker in existing_tickers
-        if normalize_ticker(ticker) not in new_keys
+    new_keys = {
+        f"{normalize_ticker(row['ticker'])}|{normalize_text(row.get('account_type', '일반'))}"
+        for row in rows
+    }
+    removed_holdings = [
+        (ticker, account_type)
+        for ticker, account_type in existing_holdings
+        if f"{normalize_ticker(ticker)}|{normalize_text(account_type)}" not in new_keys
     ]
     failed_deletes = []
-    for ticker in removed_tickers:
+    for ticker, account_type in removed_holdings:
         res = run_supabase(
-            supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker),
-            f"delete removed holding {ticker}",
+            supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker).eq("account_type", account_type),
+            f"delete removed holding {ticker}/{account_type}",
             stop_on_error=False,
         )
         if res is None:
-            failed_deletes.append(ticker)
+            failed_deletes.append(f"{ticker}({account_type})")
 
     if failed_deletes:
         st.warning(
