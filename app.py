@@ -17321,11 +17321,39 @@ if main_page == "asset":
     
         st.markdown("### 3) 배당 내역 관리")
         dividends_editor_df = load_dividends_db()
-        if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
-        edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
+        if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=DIVIDENDS_COLUMNS)
+        for col in DIVIDENDS_COLUMNS:
+            if col not in dividends_editor_df.columns:
+                dividends_editor_df[col] = ""
+        dividends_editor_df = dividends_editor_df[DIVIDENDS_COLUMNS]
+        edited_dividends = st.data_editor(
+            dividends_editor_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="dividends_editor",
+            column_order=["date", "ticker", "amount", "currency", "id"],
+            disabled=["id"],
+            column_config={
+                "id": st.column_config.TextColumn(
+                    "ID",
+                    help="DB 내부 ID입니다. 기존 배당 수정/삭제를 안전하게 구분하기 위해 자동 관리합니다.",
+                ),
+                "amount": st.column_config.NumberColumn(
+                    "amount",
+                    min_value=0.0,
+                    step=1.0,
+                ),
+                "currency": st.column_config.SelectboxColumn(
+                    "currency",
+                    options=["KRW", "USD"],
+                ),
+            },
+        )
     
         if st.button("배당 내역 저장"):
             if save_dividends_db(edited_dividends.fillna("")):
+                if "dividends_editor" in st.session_state:
+                    del st.session_state["dividends_editor"]
                 st.success("배당 내역 저장 완료")
                 st.rerun()
     
