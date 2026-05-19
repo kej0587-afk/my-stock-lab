@@ -4960,10 +4960,10 @@ def format_today_flow_rank_table(df, score_col="돈흐름점수"):
     for sc in [score_col, "스윙점수"]:
         if sc in view.columns:
             view[sc] = view[sc].apply(fmt_flow_score)
-    cols = [
+    cols = list(dict.fromkeys([  # 중복 제거 (score_col == "스윙점수" 일 때)
         "섹터", "Ticker", "ETF 이름", score_col, "스윙점수", "상태", "추격위험",
         "2주수익률", "1개월수익률", "3개월수익률", "단기가속도", "거래량증가",
-    ]
+    ]))
     return view[[c for c in cols if c in view.columns]]
 
 
