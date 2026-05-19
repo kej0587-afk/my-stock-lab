@@ -1507,12 +1507,13 @@ def init_db():
         )
 
 
-def load_settings_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_settings_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_settings()
 
     res = run_supabase(
-        supabase.table("settings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("settings").select("*").eq("owner_email", owner_email),
         "load settings",
     )
 
@@ -1535,6 +1536,10 @@ def load_settings_db():
     }
 
 
+def load_settings_db():
+    return load_settings_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
 def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight=10.0):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("기본 설정 저장")
@@ -1550,6 +1555,7 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
         }, on_conflict="owner_email"),
         "save settings",
     )
+    load_settings_db_for_user.clear()
     return True
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -1677,16 +1683,21 @@ def save_holdings_db(df):
     return True
 
 
-def load_dividends_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_dividends_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_dividends_df()
 
     res = run_supabase(
-        supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", owner_email),
         "load dividends",
     )
     rows = sorted(res.data or [], key=lambda r: (str(r.get("date") or ""), int(r.get("id") or 0)), reverse=True)
     return dataframe_from_rows(rows, DIVIDENDS_COLUMNS)
+
+
+def load_dividends_db():
+    return load_dividends_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
 
 def save_dividends_db(df):
@@ -1766,19 +1777,25 @@ def save_dividends_db(df):
             f"{', '.join(str(x) for x in failed_deletes)}"
         )
 
+    load_dividends_db_for_user.clear()
     return True
 
 
-def load_monthly_logs_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_monthly_logs_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_monthly_logs_df()
 
     res = run_supabase(
-        supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", owner_email),
         "load monthly logs",
     )
     rows = sorted(res.data or [], key=lambda r: str(r.get("month") or ""))
     return dataframe_from_rows(rows, MONTHLY_LOG_COLUMNS)
+
+
+def load_monthly_logs_db():
+    return load_monthly_logs_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
 
 def save_monthly_logs_db(df):
@@ -1846,26 +1863,33 @@ def save_monthly_logs_db(df):
             f"{', '.join(failed_deletes)}"
         )
 
+    load_monthly_logs_db_for_user.clear()
     return True
 
 
-def load_fin_scores_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_fin_scores_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return pd.DataFrame(columns=FIN_SCORE_COLUMNS)
 
     res = run_supabase(
-        supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", owner_email),
         "load financial scores",
     )
     return dataframe_from_rows(res.data, FIN_SCORE_COLUMNS)
 
 
-def load_watchlist_db():
+def load_fin_scores_db():
+    return load_fin_scores_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_watchlist_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return []
 
     res = run_supabase(
-        supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", owner_email),
         "load watchlist",
     )
 
@@ -1887,6 +1911,10 @@ def load_watchlist_db():
             "fin_score": 0 if is_fin_exempt else clean_int(row.get("fin_score")),
         })
     return [x for x in items if x["ticker"]]
+
+
+def load_watchlist_db():
+    return load_watchlist_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
 
 def save_watchlist_db(watchlist):
@@ -1964,6 +1992,7 @@ def save_watchlist_db(watchlist):
             f"{', '.join(failed_deletes)}"
         )
 
+    load_watchlist_db_for_user.clear()
     return True
 
 
@@ -2490,6 +2519,8 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
         "save financial score",
         stop_on_error=stop_on_error,
     )
+    if res is not None:
+        load_fin_scores_db_for_user.clear()
     return res is not None
 
 
@@ -2535,6 +2566,7 @@ def delete_manual_fin_score_db(ticker):
         }, on_conflict="owner_email,ticker"),
         "reset manual financial score",
     )
+    load_fin_scores_db_for_user.clear()
 
 
 init_db()
