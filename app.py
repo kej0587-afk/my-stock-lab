@@ -1553,7 +1553,7 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
     return True
 
 @st.cache_data(ttl=30, show_spinner=False)
-def load_holdings_db():
+def load_holdings_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
         
@@ -1562,7 +1562,7 @@ def load_holdings_db():
         if not supabase: return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
         # 939행 근처의 중간 return을 삭제하고 본인 데이터만 가져오도록 통합
-        res = supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL).execute()
+        res = supabase.table("holdings").select("*").eq("owner_email", owner_email).execute()
         
         if not res or not res.data:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
@@ -1577,6 +1577,9 @@ def load_holdings_db():
     except Exception as e:
         st.error(f"DB 로드 중 오류: {e}")
         return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
+
+def load_holdings_db():
+    return load_holdings_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
 def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
@@ -1621,6 +1624,7 @@ def save_holdings_db(df):
         "delete existing holdings",
     )
     run_supabase(supabase.table("holdings").insert(rows), "save holdings")
+    load_holdings_db_for_user.clear()
     return True
 
 
