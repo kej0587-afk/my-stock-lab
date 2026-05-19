@@ -1586,6 +1586,7 @@ def save_holdings_db(df):
         return public_demo_write_blocked("보유 종목 저장")
 
     rows = []
+    row_keys = []
     for _, row in df.iterrows():
         ticker_value = sanitize_ticker_value(row.get("ticker", ""))
         if not ticker_value:
@@ -1614,16 +1615,56 @@ def save_holdings_db(df):
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
             "account_type": str(row.get("account_type", "일반")).strip() or "일반",
         })
+        row_keys.append(normalize_ticker(ticker_value))
 
     if not rows:
         st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing holdings",
+    duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_keys:
+        st.error(
+            "같은 티커가 보유자산에 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"티커당 한 줄만 남겨 주세요: {', '.join(duplicate_keys)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("holdings").select("ticker").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing holdings before save",
     )
-    run_supabase(supabase.table("holdings").insert(rows), "save holdings")
+    existing_tickers = [
+        sanitize_ticker_value(row.get("ticker", ""))
+        for row in (existing_res.data or [])
+        if sanitize_ticker_value(row.get("ticker", ""))
+    ]
+
+    run_supabase(
+        supabase.table("holdings").upsert(rows, on_conflict="owner_email,ticker"),
+        "upsert holdings",
+    )
+
+    new_keys = {normalize_ticker(row["ticker"]) for row in rows}
+    removed_tickers = [
+        ticker for ticker in existing_tickers
+        if normalize_ticker(ticker) not in new_keys
+    ]
+    failed_deletes = []
+    for ticker in removed_tickers:
+        res = run_supabase(
+            supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker),
+            f"delete removed holding {ticker}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(ticker)
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 보유자산 행을 지우지 못했습니다. 표를 확인한 뒤 다시 저장해 주세요: "
+            f"{', '.join(failed_deletes)}"
+        )
+
     load_holdings_db_for_user.clear()
     return True
 
