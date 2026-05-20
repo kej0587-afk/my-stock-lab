@@ -170,18 +170,21 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "글로벌", "섹터": "멕시코",             "ticker": "EWW",       "name": "iShares MSCI Mexico ETF"},
     {"구분": "글로벌", "섹터": "사우디",             "ticker": "KSA",       "name": "iShares MSCI Saudi Arabia ETF"},
     {"구분": "글로벌", "섹터": "베트남",             "ticker": "VNM",       "name": "VanEck Vietnam ETF"},
+    {"구분": "글로벌", "섹터": "유럽",              "ticker": "VGK",       "name": "Vanguard FTSE Europe ETF"},
 
     # ── 매크로 ─────────────────────────────────────────────────────────────
-    {"구분": "매크로", "섹터": "금",           "ticker": "IAU",       "name": "iShares Gold Trust"},
-    {"구분": "매크로", "섹터": "한국 금현물",  "ticker": "411060.KS", "name": "ACE KRX금현물"},
-    {"구분": "매크로", "섹터": "미국 장기채",  "ticker": "TLT",       "name": "iShares 20+ Year Treasury Bond ETF"},
-    {"구분": "매크로", "섹터": "비트코인",     "ticker": "IBIT",      "name": "iShares Bitcoin Trust"},       # 위험자산 선행지표
-    {"구분": "매크로", "섹터": "미국 달러",    "ticker": "UUP",       "name": "Invesco DB US Dollar Index Bullish Fund"},
-    {"구분": "매크로", "섹터": "미국 단기채",  "ticker": "SHV",       "name": "iShares Short Treasury Bond ETF"},  # 현금 대기 자금
-    # [신규] 위험선호 선행지표 — 상승=리스크온, 하락=리스크오프
-    {"구분": "매크로", "섹터": "하이일드채권", "ticker": "HYG",  "name": "iShares High Yield Corporate Bond ETF"},
-    # [신규] 공포지수 — 점수 해석 주의: 상승=공포(리스크오프), 하강=안도(리스크온)
-    {"구분": "매크로", "섹터": "공포지수(VIX)", "ticker": "^VIX", "name": "CBOE Volatility Index"},
+    {"구분": "매크로", "섹터": "금",            "ticker": "IAU",       "name": "iShares Gold Trust"},
+    {"구분": "매크로", "섹터": "은(Silver)",    "ticker": "SLV",       "name": "iShares Silver Trust"},       # 산업재 수요+안전자산 혼합
+    {"구분": "매크로", "섹터": "원유",          "ticker": "USO",       "name": "United States Oil Fund"},     # 경기/인플레 바로미터
+    {"구분": "매크로", "섹터": "한국 금현물",   "ticker": "411060.KS", "name": "ACE KRX금현물"},
+    {"구분": "매크로", "섹터": "미국 장기채",   "ticker": "TLT",       "name": "iShares 20+ Year Treasury Bond ETF"},
+    {"구분": "매크로", "섹터": "비트코인",      "ticker": "IBIT",      "name": "iShares Bitcoin Trust"},     # 위험자산 선행지표
+    {"구분": "매크로", "섹터": "미국 달러",     "ticker": "UUP",       "name": "Invesco DB US Dollar Index Bullish Fund"},
+    {"구분": "매크로", "섹터": "미국 단기채",   "ticker": "SHV",       "name": "iShares Short Treasury Bond ETF"},  # 현금 대기 자금
+    # 위험선호 선행지표 — 상승=리스크온, 하락=리스크오프
+    {"구분": "매크로", "섹터": "하이일드채권",  "ticker": "HYG",       "name": "iShares High Yield Corporate Bond ETF"},
+    # 공포지수 — 점수 해석 주의: 상승=공포(리스크오프), 하강=안도(리스크온)
+    {"구분": "매크로", "섹터": "공포지수(VIX)", "ticker": "^VIX",      "name": "CBOE Volatility Index"},
 ]
 
 IMAGE_THEME_GROUPS = [
@@ -787,14 +790,19 @@ def _compute_flow_score(
     오버히팅 패널티:
         price_level > 0.85 초과분 × 40 감산
         → 52주 신고가 부근에서 추격매수 억제 효과
+
+    거래량 cap:
+        volume_growth를 [-1.0, 1.5] 범위로 제한.
+        단기 이상 급증(3배·10배 등)이 점수를 지배하는 현상 방지.
     """
     overbought = max(0.0, (price_level - 0.85) * 40) if finite_num(price_level) else 0.0
+    vol_capped = min(max(volume_growth, -1.0), 1.5) if finite_num(volume_growth) else 0.0
     return (
-        (ret_1m        if finite_num(ret_1m)        else 0.0) * 12
-        + (ret_3m      if finite_num(ret_3m)        else 0.0) * 33
-        + (ret_6m      if finite_num(ret_6m)        else 0.0) * 25
-        + (accel       if finite_num(accel)         else 0.0) * 15
-        + (volume_growth if finite_num(volume_growth) else 0.0) * 15
+        (ret_1m   if finite_num(ret_1m)  else 0.0) * 12
+        + (ret_3m if finite_num(ret_3m)  else 0.0) * 33
+        + (ret_6m if finite_num(ret_6m)  else 0.0) * 25
+        + (accel  if finite_num(accel)   else 0.0) * 15
+        + vol_capped * 15
         - overbought
     )
 
@@ -815,13 +823,15 @@ def _compute_swing_score(
         거래량 × 15  — 돈흐름 강도 확인
 
     오버히팅 패널티: price_level > 0.85 초과분 × 30 감산
+    거래량 cap: volume_growth를 [-1.0, 1.5] 범위로 제한
     """
     overbought = max(0.0, (price_level - 0.85) * 30) if finite_num(price_level) else 0.0
+    vol_capped = min(max(volume_growth, -1.0), 1.5) if finite_num(volume_growth) else 0.0
     return (
-        (ret_2w       if finite_num(ret_2w)       else 0.0) * 25
-        + (ret_1m     if finite_num(ret_1m)       else 0.0) * 35
-        + (swing_accel if finite_num(swing_accel) else 0.0) * 25
-        + (volume_growth if finite_num(volume_growth) else 0.0) * 15
+        (ret_2w        if finite_num(ret_2w)       else 0.0) * 25
+        + (ret_1m      if finite_num(ret_1m)       else 0.0) * 35
+        + (swing_accel if finite_num(swing_accel)  else 0.0) * 25
+        + vol_capped * 15
         - overbought
     )
 
@@ -858,9 +868,9 @@ def classify_money_flow_state(
         if pl > 0.85:
             return "과열경보"
         # 저점권 반등: 6m도 너무 부정적이지 않아야 진짜 반등
-        # ret_6m < -0.10 이면 중기 하락추세 중 단기 되돌림(bear rally) → 강세 가속으로 분류
+        # ret_6m < -0.15 이면 중기 하락추세 중 단기 되돌림(bear rally) → 강세 가속으로 분류
         if pl < 0.40 and ret_3m > 0:
-            six_ok = (not finite_num(ret_6m)) or ret_6m > -0.10
+            six_ok = (not finite_num(ret_6m)) or ret_6m > -0.15
             if six_ok:
                 return "급반등"
         # 중간 구간(0.40~0.85) 또는 저점권이지만 6m이 -15% 이하: 방향성으로 세분화
@@ -870,12 +880,14 @@ def classify_money_flow_state(
             return "급락 경보"
         return "고변동"  # 상승 중 급감속 등 방향 혼재
 
-    if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
-        return "신규 유입"
+    # 주도 유지 먼저 확인 (3m + 6m 모두 강함 = 확립된 상승 추세)
     if (finite_num(ret_3m) and finite_num(ret_6m)
             and ret_3m >= 0.05 and ret_6m >= 0.05
             and (not finite_num(accel) or accel >= -0.03)):
         return "주도 유지"
+    # 신규 유입: 3m은 강하나 6m 미확인 또는 accel이 강한 초기 유입 신호
+    if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
+        return "신규 유입"
     if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
         return "둔화 경고"
     if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
@@ -977,8 +989,9 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
 
     _empty: dict = {
         "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
-        "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
-        "가속도": np.nan, "거래량증가": np.nan, "돈흐름점수": np.nan,
+        "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
+        "가속도": np.nan, "단기가속도": np.nan, "거래량증가": np.nan,
+        "돈흐름점수": np.nan, "스윙점수": np.nan,
         "상태": "가격부족", "52주 최고가": np.nan, "52주 최저가": np.nan,
     }
 
@@ -1090,7 +1103,9 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
         )
 
         breadth_bonus         = (up_ratio_3m - 0.5) * 20
-        volume_bonus          = (volume_growth if finite_num(volume_growth) else 0.0) * 6
+        # volume_growth cap [-1.0, 1.5]: 단기 이상급증이 테마 순위를 왜곡하지 않도록
+        vol_capped_theme      = min(max(volume_growth, -1.0), 1.5) if finite_num(volume_growth) else 0.0
+        volume_bonus          = vol_capped_theme * 6
         concentration_penalty = (concentration if finite_num(concentration) else 0.0) * 8
         overbought_penalty    = max(0.0, (price_level - 0.85) * 20) if finite_num(price_level) else 0.0
 
