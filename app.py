@@ -1508,12 +1508,13 @@ def init_db():
         )
 
 
-def load_settings_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_settings_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_settings()
 
     res = run_supabase(
-        supabase.table("settings").select("*").eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("settings").select("*").eq("owner_email", owner_email),
         "load settings",
     )
 
@@ -1536,6 +1537,10 @@ def load_settings_db():
     }
 
 
+def load_settings_db():
+    return load_settings_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
 def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weight=10.0):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("기본 설정 저장")
@@ -1551,10 +1556,11 @@ def save_settings_db(seed_money, krw_cash, usd_cash, usdkrw, reserve_target_weig
         }, on_conflict="owner_email"),
         "save settings",
     )
+    load_settings_db_for_user.clear()
     return True
 
 @st.cache_data(ttl=30, show_spinner=False)
-def load_holdings_db():
+def load_holdings_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_holdings_df()
         
@@ -1563,7 +1569,7 @@ def load_holdings_db():
         if not supabase: return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
             
         # 939행 근처의 중간 return을 삭제하고 본인 데이터만 가져오도록 통합
-        res = supabase.table("holdings").select("*").eq("owner_email", CURRENT_USER_EMAIL).execute()
+        res = supabase.table("holdings").select("*").eq("owner_email", owner_email).execute()
         
         if not res or not res.data:
             return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
@@ -1579,11 +1585,15 @@ def load_holdings_db():
         st.error(f"DB 로드 중 오류: {e}")
         return pd.DataFrame(columns=HOLDINGS_COLUMNS + ["account_type"])
 
+def load_holdings_db():
+    return load_holdings_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
 def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("보유 종목 저장")
 
     rows = []
+    row_keys = []
     for _, row in df.iterrows():
         ticker_value = sanitize_ticker_value(row.get("ticker", ""))
         if not ticker_value:
@@ -1612,69 +1622,181 @@ def save_holdings_db(df):
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
             "account_type": str(row.get("account_type", "일반")).strip() or "일반",
         })
+        row_keys.append(f"{normalize_ticker(ticker_value)}|{normalize_text(rows[-1].get('account_type', '일반'))}")
 
     if not rows:
         st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing holdings",
+    duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_keys:
+        duplicate_labels = [key.replace("|", " / ") for key in duplicate_keys]
+        st.error(
+            "같은 계좌 안에 같은 티커가 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"티커와 계좌 조합을 한 줄만 남겨 주세요: {', '.join(duplicate_labels)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("holdings").select("ticker,account_type").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing holdings before save",
     )
-    run_supabase(supabase.table("holdings").insert(rows), "save holdings")
+    existing_holdings = [
+        (
+            sanitize_ticker_value(row.get("ticker", "")),
+            str(row.get("account_type", "일반")).strip() or "일반",
+        )
+        for row in (existing_res.data or [])
+        if sanitize_ticker_value(row.get("ticker", ""))
+    ]
+
+    run_supabase(
+        supabase.table("holdings").upsert(rows, on_conflict="owner_email,ticker,account_type"),
+        "upsert holdings",
+    )
+
+    new_keys = {
+        f"{normalize_ticker(row['ticker'])}|{normalize_text(row.get('account_type', '일반'))}"
+        for row in rows
+    }
+    removed_holdings = [
+        (ticker, account_type)
+        for ticker, account_type in existing_holdings
+        if f"{normalize_ticker(ticker)}|{normalize_text(account_type)}" not in new_keys
+    ]
+    failed_deletes = []
+    for ticker, account_type in removed_holdings:
+        res = run_supabase(
+            supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker).eq("account_type", account_type),
+            f"delete removed holding {ticker}/{account_type}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(f"{ticker}({account_type})")
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 보유자산 행을 지우지 못했습니다. 표를 확인한 뒤 다시 저장해 주세요: "
+            f"{', '.join(failed_deletes)}"
+        )
+
+    load_holdings_db_for_user.clear()
     return True
 
 
-def load_dividends_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_dividends_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_dividends_df()
 
     res = run_supabase(
-        supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("dividends").select(",".join(DIVIDENDS_COLUMNS)).eq("owner_email", owner_email),
         "load dividends",
     )
     rows = sorted(res.data or [], key=lambda r: (str(r.get("date") or ""), int(r.get("id") or 0)), reverse=True)
     return dataframe_from_rows(rows, DIVIDENDS_COLUMNS)
 
 
+def load_dividends_db():
+    return load_dividends_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
 def save_dividends_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("배당 내역 저장")
 
-    rows = []
+    existing_res = run_supabase(
+        supabase.table("dividends").select("id").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing dividends before save",
+    )
+    existing_ids = {
+        clean_int(row.get("id"))
+        for row in (existing_res.data or [])
+        if clean_int(row.get("id")) is not None
+    }
+
+    rows_to_upsert = []
+    rows_to_insert = []
+    kept_existing_ids = []
     for _, row in df.iterrows():
         if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
             continue
-        rows.append({
+
+        item = {
             "owner_email": CURRENT_USER_EMAIL,
             "date": str(row.get("date", "")).strip(),
             "ticker": sanitize_ticker_value(row.get("ticker", "")),
             "amount": clean_float(row.get("amount")),
             "currency": str(row.get("currency", "KRW")).strip().upper() or "KRW",
-        })
+        }
 
-    if not rows:
+        row_id = clean_int(row.get("id"))
+        if row_id in existing_ids:
+            item["id"] = row_id
+            rows_to_upsert.append(item)
+            kept_existing_ids.append(row_id)
+        else:
+            rows_to_insert.append(item)
+
+    if not rows_to_upsert and not rows_to_insert:
         st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing dividends",
-    )
-    run_supabase(supabase.table("dividends").insert(rows), "save dividends")
+    duplicate_ids = sorted({row_id for row_id in kept_existing_ids if kept_existing_ids.count(row_id) > 1})
+    if duplicate_ids:
+        st.error(
+            "배당 내역에 같은 id가 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"id를 확인해 주세요: {', '.join(str(x) for x in duplicate_ids)}"
+        )
+        return False
+
+    if rows_to_upsert:
+        run_supabase(
+            supabase.table("dividends").upsert(rows_to_upsert, on_conflict="id"),
+            "upsert dividends",
+        )
+
+    if rows_to_insert:
+        run_supabase(supabase.table("dividends").insert(rows_to_insert), "insert new dividends")
+
+    failed_deletes = []
+    kept_ids = set(kept_existing_ids)
+    for row_id in existing_ids:
+        if row_id in kept_ids:
+            continue
+        res = run_supabase(
+            supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("id", row_id),
+            f"delete removed dividend {row_id}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(row_id)
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 배당 내역을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
+            f"{', '.join(str(x) for x in failed_deletes)}"
+        )
+
+    load_dividends_db_for_user.clear()
     return True
 
 
-def load_monthly_logs_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_monthly_logs_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return get_public_demo_monthly_logs_df()
 
     res = run_supabase(
-        supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("monthly_logs").select(",".join(MONTHLY_LOG_COLUMNS)).eq("owner_email", owner_email),
         "load monthly logs",
     )
     rows = sorted(res.data or [], key=lambda r: str(r.get("month") or ""))
     return dataframe_from_rows(rows, MONTHLY_LOG_COLUMNS)
+
+
+def load_monthly_logs_db():
+    return load_monthly_logs_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
 
 def save_monthly_logs_db(df):
@@ -1682,6 +1804,7 @@ def save_monthly_logs_db(df):
         return public_demo_write_blocked("월별 로그 저장")
 
     rows = []
+    row_keys = []
     for _, row in df.iterrows():
         month = str(row.get("month", "")).strip()
         if not month:
@@ -1693,36 +1816,81 @@ def save_monthly_logs_db(df):
             "evaluated_value": clean_float(row.get("evaluated_value")),
             "dividend": clean_float(row.get("dividend")),
         })
+        row_keys.append(month)
 
     if not rows:
         st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing monthly logs",
+    duplicate_months = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_months:
+        st.error(
+            "월별 로그에 같은 월이 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"월별로 한 줄만 남겨 주세요: {', '.join(duplicate_months)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("monthly_logs").select("month").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing monthly logs before save",
     )
-    run_supabase(supabase.table("monthly_logs").insert(rows), "save monthly logs")
+    existing_months = [
+        str(row.get("month", "")).strip()
+        for row in (existing_res.data or [])
+        if str(row.get("month", "")).strip()
+    ]
+
+    run_supabase(
+        supabase.table("monthly_logs").upsert(rows, on_conflict="owner_email,month"),
+        "upsert monthly logs",
+    )
+
+    new_months = {row["month"] for row in rows}
+    failed_deletes = []
+    for month in existing_months:
+        if month in new_months:
+            continue
+        res = run_supabase(
+            supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("month", month),
+            f"delete removed monthly log {month}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(month)
+
+    if failed_deletes:
+        st.warning(
+            "일부 삭제된 월별 로그를 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
+            f"{', '.join(failed_deletes)}"
+        )
+
+    load_monthly_logs_db_for_user.clear()
     return True
 
 
-def load_fin_scores_db():
+@st.cache_data(ttl=30, show_spinner=False)
+def load_fin_scores_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return pd.DataFrame(columns=FIN_SCORE_COLUMNS)
 
     res = run_supabase(
-        supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("fin_scores").select(",".join(FIN_SCORE_COLUMNS)).eq("owner_email", owner_email),
         "load financial scores",
     )
     return dataframe_from_rows(res.data, FIN_SCORE_COLUMNS)
 
 
-def load_watchlist_db():
+def load_fin_scores_db():
+    return load_fin_scores_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_watchlist_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
         return []
 
     res = run_supabase(
-        supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", CURRENT_USER_EMAIL),
+        supabase.table("watchlist").select("name,ticker,is_etf,asset_class,sort_order,fin_score").eq("owner_email", owner_email),
         "load watchlist",
     )
 
@@ -1746,11 +1914,16 @@ def load_watchlist_db():
     return [x for x in items if x["ticker"]]
 
 
+def load_watchlist_db():
+    return load_watchlist_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+
+
 def save_watchlist_db(watchlist):
     if IS_PUBLIC_DEMO:
         return False
 
     rows = []
+    row_keys = []
     for idx, item in enumerate(watchlist):
         item = sanitize_watchlist_item(item)
         ticker = item.get("ticker", "")
@@ -1772,16 +1945,55 @@ def save_watchlist_db(watchlist):
             "sort_order": idx,
             "fin_score": 0 if is_fin_exempt else clean_int(item.get("fin_score")),
         })
+        row_keys.append(normalize_ticker(ticker))
 
     if not rows:
         st.warning("No watchlist rows to save. Existing watchlist was kept unchanged.")
         return False
 
-    run_supabase(
-        supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL),
-        "delete existing watchlist",
+    duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    if duplicate_keys:
+        st.error(
+            "관심목록에 같은 티커가 여러 번 들어 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
+            f"티커당 한 줄만 남겨 주세요: {', '.join(duplicate_keys)}"
+        )
+        return False
+
+    existing_res = run_supabase(
+        supabase.table("watchlist").select("ticker").eq("owner_email", CURRENT_USER_EMAIL),
+        "load existing watchlist before save",
     )
-    run_supabase(supabase.table("watchlist").insert(rows), "save watchlist")
+    existing_tickers = [
+        sanitize_ticker_value(row.get("ticker", ""))
+        for row in (existing_res.data or [])
+        if sanitize_ticker_value(row.get("ticker", ""))
+    ]
+
+    run_supabase(
+        supabase.table("watchlist").upsert(rows, on_conflict="owner_email,ticker"),
+        "upsert watchlist",
+    )
+
+    new_keys = {normalize_ticker(row["ticker"]) for row in rows}
+    failed_deletes = []
+    for ticker in existing_tickers:
+        if normalize_ticker(ticker) in new_keys:
+            continue
+        res = run_supabase(
+            supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker),
+            f"delete removed watchlist item {ticker}",
+            stop_on_error=False,
+        )
+        if res is None:
+            failed_deletes.append(ticker)
+
+    if failed_deletes:
+        st.warning(
+            "일부 제거된 관심종목을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요: "
+            f"{', '.join(failed_deletes)}"
+        )
+
+    load_watchlist_db_for_user.clear()
     return True
 
 
@@ -1874,8 +2086,9 @@ def save_swing_radar_db_safe(df):
 
     try:
         rows = []
+        row_keys = []
         for _, row in df.iterrows():
-            ticker = str(row.get("ticker", "")).strip()
+            ticker = sanitize_ticker_value(row.get("ticker", ""))
             if not ticker:
                 continue
 
@@ -1886,12 +2099,52 @@ def save_swing_radar_db_safe(df):
                 value = row.get(col, "")
                 item[col] = "" if value is None or pd.isna(value) else str(value).strip()
             rows.append(item)
+            row_keys.append(normalize_ticker(ticker))
 
         if not rows:
             return False, "저장할 스윙 레이더 행이 없습니다."
 
-        supabase.table("swing_radar").delete().eq("owner_email", CURRENT_USER_EMAIL).execute()
-        supabase.table("swing_radar").insert(rows).execute()
+        duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+        if duplicate_keys:
+            return False, f"스윙 레이더에 같은 티커가 여러 줄 있습니다: {', '.join(duplicate_keys)}"
+
+        existing_res = (
+            supabase.table("swing_radar")
+            .select("ticker")
+            .eq("owner_email", CURRENT_USER_EMAIL)
+            .execute()
+        )
+        existing_tickers = [
+            sanitize_ticker_value(row.get("ticker", ""))
+            for row in (existing_res.data or [])
+            if sanitize_ticker_value(row.get("ticker", ""))
+        ]
+
+        supabase.table("swing_radar").upsert(rows, on_conflict="owner_email,ticker").execute()
+
+        new_keys = {normalize_ticker(row["ticker"]) for row in rows}
+        failed_deletes = []
+        for ticker in existing_tickers:
+            if normalize_ticker(ticker) in new_keys:
+                continue
+            try:
+                (
+                    supabase.table("swing_radar")
+                    .delete()
+                    .eq("owner_email", CURRENT_USER_EMAIL)
+                    .eq("ticker", ticker)
+                    .execute()
+                )
+            except Exception:
+                failed_deletes.append(ticker)
+
+        if failed_deletes:
+            st.warning(
+                "일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요. "
+                f"{', '.join(failed_deletes)}"
+            )
+            return True, f"일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요: {', '.join(failed_deletes)}"
+
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -2267,6 +2520,8 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
         "save financial score",
         stop_on_error=stop_on_error,
     )
+    if res is not None:
+        load_fin_scores_db_for_user.clear()
     return res is not None
 
 
@@ -2312,6 +2567,7 @@ def delete_manual_fin_score_db(ticker):
         }, on_conflict="owner_email,ticker"),
         "reset manual financial score",
     )
+    load_fin_scores_db_for_user.clear()
 
 
 init_db()
@@ -17110,11 +17366,39 @@ if main_page == "asset":
     
         st.markdown("### 3) 배당 내역 관리")
         dividends_editor_df = load_dividends_db()
-        if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=["date", "ticker", "amount", "currency"])
-        edited_dividends = st.data_editor(dividends_editor_df, num_rows="dynamic", use_container_width=True, key="dividends_editor")
+        if dividends_editor_df.empty: dividends_editor_df = pd.DataFrame(columns=DIVIDENDS_COLUMNS)
+        for col in DIVIDENDS_COLUMNS:
+            if col not in dividends_editor_df.columns:
+                dividends_editor_df[col] = ""
+        dividends_editor_df = dividends_editor_df[DIVIDENDS_COLUMNS]
+        edited_dividends = st.data_editor(
+            dividends_editor_df,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="dividends_editor",
+            column_order=["date", "ticker", "amount", "currency", "id"],
+            disabled=["id"],
+            column_config={
+                "id": st.column_config.TextColumn(
+                    "ID",
+                    help="DB 내부 ID입니다. 기존 배당 수정/삭제를 안전하게 구분하기 위해 자동 관리합니다.",
+                ),
+                "amount": st.column_config.NumberColumn(
+                    "amount",
+                    min_value=0.0,
+                    step=1.0,
+                ),
+                "currency": st.column_config.SelectboxColumn(
+                    "currency",
+                    options=["KRW", "USD"],
+                ),
+            },
+        )
     
         if st.button("배당 내역 저장"):
             if save_dividends_db(edited_dividends.fillna("")):
+                if "dividends_editor" in st.session_state:
+                    del st.session_state["dividends_editor"]
                 st.success("배당 내역 저장 완료")
                 st.rerun()
     
