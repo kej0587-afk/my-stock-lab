@@ -90,6 +90,7 @@ from stock_lab_core.money_flow import (
     calculate_money_flow_df,
     calculate_rotation_df,
     calculate_sector_rotation_df,
+    classify_money_flow_state,
     download_money_flow_prices,
 )
 try:
@@ -98,10 +99,12 @@ try:
         calculate_image_theme_group_df,
         calculate_image_theme_rotation_df,
         get_image_theme_names,
+        IMAGE_THEME_META,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
 except ImportError:
     IMAGE_THEME_FLOW_AVAILABLE = False
+    IMAGE_THEME_META = {}
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -6970,9 +6973,20 @@ def render_image_theme_flow_section():
             st.info("등록된 테마 종목 universe가 없습니다.")
         return
 
-    c1, c2 = st.columns([1.1, 0.8])
+    # ── 테마 선택 UI ──────────────────────────────────────────────────
+    def _theme_label(t: str) -> str:
+        meta = IMAGE_THEME_META.get(t, {})
+        tag  = meta.get("tag", "")
+        return f"{t}  [{tag}]" if tag else t
+
+    c1, c2 = st.columns([1.3, 0.7])
     with c1:
-        selected_theme = st.selectbox("테마 선택", themes, key="image_theme_flow_theme")
+        selected_theme = st.selectbox(
+            "테마 선택",
+            themes,
+            format_func=_theme_label,
+            key="image_theme_flow_theme",
+        )
     with c2:
         selected_market = st.radio(
             "시장 범위",
@@ -6980,6 +6994,17 @@ def render_image_theme_flow_section():
             horizontal=True,
             key="image_theme_flow_market",
         )
+
+    # ── 선택 테마 설명 칩 ─────────────────────────────────────────────
+    _meta = IMAGE_THEME_META.get(selected_theme, {})
+    if _meta:
+        _etf_hint = f" &nbsp;|&nbsp; 벤치 ETF: <code>{_meta.get('etf','')}</code>" if _meta.get("etf") else ""
+        st.markdown(
+            f"<span style='background:#1e293b;padding:4px 10px;border-radius:6px;font-size:0.88em;'>"
+            f"{_meta.get('tag','')} &nbsp; {_meta.get('desc','')}{_etf_hint}</span>",
+            unsafe_allow_html=True,
+        )
+        st.write("")  # 여백
 
     if not should_run_heavy_analysis(
         "image_theme_flow_lazy",
@@ -7039,11 +7064,31 @@ def render_image_theme_flow_section():
     weak = group_df.sort_values("돈흐름점수", ascending=True).iloc[0]
 
     st.markdown(f"#### {selected_theme} 드릴다운")
-    m1, m2, m3, m4 = st.columns(4)
+
+    # ── 테마 수치 요약 카드 ──────────────────────────────────────────
+    _th_avg_3m   = theme_df["3개월수익률"].dropna().mean()
+    _th_avg_acc  = theme_df["가속도"].dropna().mean()
+    _th_pos_ratio = float((theme_df["3개월수익률"].fillna(0) > 0).mean())
+    _th_n_sub    = int(group_df["하위테마"].nunique()) if not group_df.empty else 0
+    _th_state    = classify_money_flow_state(
+        _th_avg_3m if finite_num(_th_avg_3m) else None,
+        theme_df["6개월수익률"].dropna().mean() if not theme_df.empty else None,
+        _th_avg_acc if finite_num(_th_avg_acc) else None,
+        theme_df["가격수준"].dropna().mean() if not theme_df.empty else None,
+    ) if IMAGE_THEME_FLOW_AVAILABLE else "-"
+    _state_badge_map = {
+        "과열경보": "🔥", "강세 가속": "🚀", "급락 경보": "💥", "급반등": "⚡",
+        "고변동": "〰️", "신규 유입": "🟢", "주도 유지": "💚",
+        "둔화 경고": "🟡", "소외 지속": "🔴", "관찰": "⚪",
+    }
+    _state_icon = _state_badge_map.get(_th_state, "")
+
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("계산 종목", f"{available_count}/{total_count}", f"국내 {domestic_count} · 해외 {foreign_count}")
-    m2.metric("하위테마 1위", str(leader["하위테마"]), fmt_flow_pct(leader["3개월수익률"]))
-    m3.metric("가속도 1위", str(accel_leader["하위테마"]), fmt_flow_pct(accel_leader["가속도"]))
-    m4.metric("약한 하위테마", str(weak["하위테마"]), fmt_flow_pct(weak["3개월수익률"]))
+    m2.metric("하위테마 수", f"{_th_n_sub}개")
+    m3.metric("테마 평균 3M", fmt_flow_pct(_th_avg_3m) if finite_num(_th_avg_3m) else "-")
+    m4.metric("상승 종목 비율", f"{_th_pos_ratio*100:.0f}%")
+    m5.metric("테마 상태", f"{_state_icon} {_th_state}")
 
     _detail_reading = _build_theme_detail_reading(group_df, leader, accel_leader, weak)
     st.markdown(
@@ -7072,6 +7117,16 @@ def render_image_theme_flow_section():
         "관찰":     "⚪ 관찰",
         "가격부족": "⬛ 가격부족",
     }
+
+    # 가격부족 경고
+    if not missing_df.empty:
+        _missing_cnt = len(missing_df)
+        _missing_names = ", ".join(missing_df["종목명"].head(5).astype(str).tolist())
+        st.warning(
+            f"⬛ 가격 데이터 부족 {_missing_cnt}개 종목이 점수 계산에서 제외됐습니다: {_missing_names}"
+            + (" 외" if _missing_cnt > 5 else "")
+            + " (야후파이낸스 조회 실패 또는 상장 1년 미만)"
+        )
 
     summary_tab, stocks_tab, raw_tab = st.tabs(["하위테마 요약", "종목별 흐름", "원자료"])
 
