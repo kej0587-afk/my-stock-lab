@@ -5997,6 +5997,333 @@ def render_rotation_panel(flow_df: pd.DataFrame):
                          })
 
 
+# ---------------------------------------------------------------------------
+# 돈흐름 레이더 해석 헬퍼
+# ---------------------------------------------------------------------------
+
+def _flow_get_val(flow_df, ticker: str, col: str):
+    """flow_df에서 특정 티커 단일 수치 추출. 없으면 np.nan."""
+    r = flow_df[flow_df["Ticker"].astype(str) == ticker]
+    if r.empty:
+        return np.nan
+    v = r.iloc[0].get(col, np.nan)
+    return float(v) if finite_num(v) else np.nan
+
+
+def _build_global_flow_reading(flow_df, rankable_df, leader, accel_leader, weak) -> str:
+    """ETF 돈흐름 레이더 해석 HTML 생성.
+
+    분석 축:
+        1. 리더 vs 가속도 1위 괴리 → 리더 교체 신호 여부
+        2. 시장 폭(Market Breadth) → 광범위 상승/선별/방어/약세
+        3. 매크로 리스크온·오프 → VIX/HYG/TLT/IBIT/UUP 방향성
+        4. 상태 분포 요약 → 우호/경계/부진 개수 + 과열·급락 알림
+    """
+    parts = []
+
+    # ── 1. 리더 vs 가속도 ──────────────────────────────────────────────
+    l_name = f"{leader['섹터']} ({leader['Ticker']})"
+    a_name = f"{accel_leader['섹터']} ({accel_leader['Ticker']})"
+    w_name = f"{weak['섹터']} ({weak['Ticker']})"
+    l_3m   = leader.get("3개월수익률", np.nan)
+    a_acc  = accel_leader.get("가속도", np.nan)
+
+    if leader["Ticker"] == accel_leader["Ticker"]:
+        parts.append(
+            f"돈흐름 1위 <b>{l_name}</b>이 가속도도 1위를 겸하고 있어 "
+            f"추세가 한 방향으로 강화 중입니다."
+            + (f" (3M {l_3m*100:+.1f}%)" if finite_num(l_3m) else "")
+        )
+    else:
+        parts.append(
+            f"기존 강세 1위는 <b>{l_name}</b>"
+            + (f" (3M {l_3m*100:+.1f}%)" if finite_num(l_3m) else "")
+            + f"이지만, 가속도 1위는 <b>{a_name}</b>"
+            + (f" (가속 {a_acc*100:+.1f}%p)" if finite_num(a_acc) else "")
+            + "입니다. 리더 교체 초기일 수 있으므로 두 섹터를 함께 주목합니다."
+        )
+    parts.append(f"현재 가장 약한 구간은 <b>{w_name}</b>입니다.")
+
+    # ── 2. 시장 폭 ────────────────────────────────────────────────────
+    total  = max(len(rankable_df), 1)
+    pos_3m  = int((rankable_df["3개월수익률"].fillna(0) > 0).sum())
+    pos_6m  = int((rankable_df["6개월수익률"].fillna(0) > 0).sum())
+    pos_acc = int((rankable_df["가속도"].fillna(0) > 0).sum())
+    b3 = pos_3m / total
+    ba = pos_acc / total
+
+    if b3 >= 0.70:
+        bw_label, bw_hint = "광범위 상승 국면", "시장 전반에 자금이 유입되는 환경입니다."
+    elif b3 >= 0.50:
+        bw_label, bw_hint = "선별적 상승", "강한 섹터에 집중하고 약한 섹터는 피합니다."
+    elif b3 >= 0.35:
+        bw_label, bw_hint = "방어 국면", "상승 섹터가 소수에 한정. 비중 관리를 우선합니다."
+    else:
+        bw_label, bw_hint = "광범위 하락", "대부분 ETF가 하락 중. 안전자산 또는 현금 비중 확대를 검토합니다."
+
+    bw_line = (
+        f"시장 폭: 3M 상승 ETF <b>{pos_3m}/{total}개 ({b3*100:.0f}%)</b> → <b>{bw_label}</b>. {bw_hint}"
+    )
+    if ba >= 0.60:
+        bw_line += f" 가속 ETF도 {pos_acc}개({ba*100:.0f}%)로 상승 동력이 확산 중입니다."
+    elif ba < 0.40:
+        bw_line += f" 단, 가속 ETF는 {pos_acc}개({ba*100:.0f}%)에 그쳐 상승 동력이 약해지고 있습니다."
+    parts.append(bw_line)
+
+    # ── 3. 매크로 리스크온/오프 ────────────────────────────────────────
+    vix_3m  = _flow_get_val(flow_df, "^VIX",  "3개월수익률")
+    hyg_3m  = _flow_get_val(flow_df, "HYG",   "3개월수익률")
+    tlt_3m  = _flow_get_val(flow_df, "TLT",   "3개월수익률")
+    ibit_3m = _flow_get_val(flow_df, "IBIT",  "3개월수익률")
+    uup_3m  = _flow_get_val(flow_df, "UUP",   "3개월수익률")
+    slv_3m  = _flow_get_val(flow_df, "SLV",   "3개월수익률")
+
+    ron, rof = 0, 0
+    items = []
+
+    if finite_num(vix_3m):
+        if vix_3m > 0.10:
+            rof += 1; items.append(f"VIX <span style='color:#f87171'>+{vix_3m*100:.0f}%</span> 공포 확대")
+        elif vix_3m < -0.05:
+            ron += 1; items.append(f"VIX <span style='color:#4ade80'>{vix_3m*100:.0f}%</span> 공포 완화")
+
+    if finite_num(hyg_3m):
+        if hyg_3m > 0.01:
+            ron += 1; items.append(f"HYG <span style='color:#4ade80'>+{hyg_3m*100:.1f}%</span> 신용 수요↑")
+        elif hyg_3m < -0.03:
+            rof += 1; items.append(f"HYG <span style='color:#f87171'>{hyg_3m*100:.1f}%</span> 신용 수요↓")
+
+    if finite_num(ibit_3m):
+        if ibit_3m > 0.10:
+            ron += 1; items.append(f"BTC <span style='color:#4ade80'>+{ibit_3m*100:.0f}%</span> 위험선호")
+        elif ibit_3m < -0.15:
+            rof += 1; items.append(f"BTC <span style='color:#f87171'>{ibit_3m*100:.0f}%</span> 위험회피")
+
+    if finite_num(tlt_3m):
+        if tlt_3m > 0.05:
+            rof += 1; items.append(f"TLT <span style='color:#fbbf24'>+{tlt_3m*100:.1f}%</span> 안전자산 피신↑")
+        elif tlt_3m < -0.05:
+            ron += 1; items.append(f"TLT <span style='color:#94a3b8'>{tlt_3m*100:.1f}%</span> 채권 이탈·주식 선호")
+
+    if finite_num(uup_3m):
+        if uup_3m > 0.03:
+            rof += 1; items.append(f"달러 <span style='color:#fbbf24'>+{uup_3m*100:.1f}%</span> 강달러(신흥국 부담)")
+        elif uup_3m < -0.02:
+            ron += 1; items.append(f"달러 <span style='color:#4ade80'>{uup_3m*100:.1f}%</span> 약달러(위험자산 우호)")
+
+    if finite_num(slv_3m):
+        if slv_3m > 0.08:
+            items.append(f"은 <span style='color:#94a3b8'>+{slv_3m*100:.0f}%</span> (실물 수요·인플레 기대)")
+
+    if items:
+        if ron > rof + 1:
+            sig = "🟢 리스크온"
+        elif rof > ron + 1:
+            sig = "🔴 리스크오프"
+        elif rof >= 2:
+            sig = "🟠 리스크오프 기울기"
+        else:
+            sig = "🟡 혼조세"
+        parts.append(
+            f"<b>매크로 {sig}</b> — {' &nbsp;·&nbsp; '.join(items)}"
+        )
+
+    # ── 4. 상태 분포 ────────────────────────────────────────────────────
+    if "상태" in rankable_df.columns:
+        sc = rankable_df["상태"].value_counts()
+        n_pos   = sum(sc.get(s, 0) for s in ["강세 가속", "신규 유입", "주도 유지", "급반등"])
+        n_warn  = sum(sc.get(s, 0) for s in ["과열경보", "둔화 경고"])
+        n_neg   = sum(sc.get(s, 0) for s in ["소외 지속", "급락 경보", "고변동"])
+        n_hot   = sc.get("과열경보", 0)
+        n_crash = sc.get("급락 경보", 0)
+
+        dist = (
+            f"상태 분포: <span style='color:#4ade80'>우호 {n_pos}개</span>"
+            f" · <span style='color:#fbbf24'>경계 {n_warn}개</span>"
+            f" · <span style='color:#f87171'>부진 {n_neg}개</span>"
+        )
+        if n_hot >= 3:
+            dist += f" — ⚠️ 과열경보 {n_hot}개: 고점권 추격 매수 주의"
+        if n_crash >= 2:
+            dist += f" — 💥 급락 경보 {n_crash}개: 시장 구조 점검 필요"
+        parts.append(dist)
+
+    return "<br>".join(parts)
+
+
+def _build_rotation_reading(rotation_df) -> str:
+    """전체 테마 로테이션 해석 HTML 생성.
+
+    분석 축:
+        1. 점수·확산·거래량 1위 일치 여부 → 진짜 주도 테마 vs 쏠림
+        2. 테마 폭(양수 점수 비율) → 전반 상승/선별/부진
+        3. 가장 약한 테마 명시
+    """
+    parts = []
+    total = len(rotation_df)
+    if total == 0:
+        return ""
+
+    leader        = rotation_df.iloc[0]
+    breadth_leader = rotation_df.sort_values("상승종목비율", ascending=False).iloc[0]
+    volume_leader  = rotation_df.sort_values("거래량증가", ascending=False, na_position="last").iloc[0]
+    accel_leader   = rotation_df.sort_values("가속도", ascending=False, na_position="last").iloc[0]
+    weak           = rotation_df.sort_values("테마돈흐름점수", ascending=True).iloc[0]
+
+    l_name  = str(leader["테마"])
+    bl_name = str(breadth_leader["테마"])
+    vl_name = str(volume_leader["테마"])
+    al_name = str(accel_leader["테마"])
+    l_score = leader.get("테마돈흐름점수", np.nan)
+
+    pos_themes   = int((rotation_df["테마돈흐름점수"].fillna(-999) > 0).sum())
+    accel_themes = int((rotation_df["가속도"].fillna(0) > 0).sum())
+    b_ratio = pos_themes / max(total, 1)
+
+    # ── 1. 리더 일치성 ─────────────────────────────────────────────────
+    matches = sum([l_name == bl_name, l_name == vl_name, l_name == al_name])
+    if matches == 3:
+        parts.append(
+            f"<b>{l_name}</b>이 점수·상승 확산·가속도·거래량 모두 1위입니다. "
+            f"3가지 축이 일치하는 강한 주도 테마 신호입니다."
+            + (f" (스코어 {l_score:.1f})" if finite_num(l_score) else "")
+        )
+    elif matches == 2:
+        diff = [n for n in [bl_name, vl_name, al_name] if n != l_name]
+        parts.append(
+            f"점수 1위 <b>{l_name}</b>이 주요 지표 2개 이상에서 1위를 겸합니다. "
+            + (f"단, {diff[0]}이 일부 지표에서 앞서고 있어 병행 모니터링을 권장합니다." if diff else "")
+        )
+    else:
+        parts.append(
+            f"점수 1위 <b>{l_name}</b>, 확산 1위 <b>{bl_name}</b>, "
+            f"가속 1위 <b>{al_name}</b>, 거래량 1위 <b>{vl_name}</b>가 서로 다릅니다. "
+            f"테마 간 순환이 빠르게 전개 중이므로 각 테마의 지속성을 개별 확인합니다."
+        )
+
+    # ── 2. 테마 폭 ─────────────────────────────────────────────────────
+    if b_ratio >= 0.65:
+        parts.append(
+            f"테마 {pos_themes}/{total}개 양수 ({b_ratio*100:.0f}%) → <b>테마 전반 상승</b>. "
+            f"가속 테마도 {accel_themes}개로 동력이 넓게 분포합니다."
+        )
+    elif b_ratio >= 0.45:
+        parts.append(
+            f"테마 {pos_themes}/{total}개 양수 ({b_ratio*100:.0f}%) → <b>선별적 상승</b>. "
+            f"상위 테마와 하위 테마 간 격차가 벌어지는 구간입니다."
+        )
+    else:
+        parts.append(
+            f"테마 {pos_themes}/{total}개만 양수 ({b_ratio*100:.0f}%) → <b>테마 전반 부진</b>. "
+            f"방어적 접근 또는 매크로 이벤트 확인이 먼저입니다."
+        )
+
+    # ── 3. 약세 테마 ───────────────────────────────────────────────────
+    w_score = weak.get("테마돈흐름점수", np.nan)
+    w_state = str(weak.get("상태", ""))
+    parts.append(
+        f"현재 가장 약한 테마는 <b>{weak['테마']}</b>"
+        + (
+            f" (스코어 {w_score:.1f}"
+            + (f" · {w_state}" if w_state not in ("", "nan") else "")
+            + ")"
+            if finite_num(w_score) else ""
+        )
+        + "입니다."
+    )
+
+    return "<br>".join(parts)
+
+
+def _build_theme_detail_reading(group_df, leader, accel_leader, weak) -> str:
+    """테마 하위테마별 상세 해석 HTML 생성.
+
+    분석 축:
+        1. 점수 1위 vs 가속도 1위 괴리 여부
+        2. 하위테마 폭(양수 점수 비율)
+        3. 1위 하위테마 3M vs 6M 지속성
+        4. 상위종목 쏠림 경고
+        5. 약한 하위테마 명시
+    """
+    parts = []
+    total_sub = len(group_df)
+    pos_sub   = int((group_df["돈흐름점수"].fillna(-999) > 0).sum())
+    b_ratio   = pos_sub / max(total_sub, 1)
+
+    l_name = str(leader["하위테마"])
+    a_name = str(accel_leader["하위테마"])
+    w_name = str(weak["하위테마"])
+    l_r3   = leader.get("3개월수익률", np.nan)
+    l_r6   = leader.get("6개월수익률", np.nan)
+    a_acc  = accel_leader.get("가속도", np.nan)
+
+    # ── 1. 리더 vs 가속 ────────────────────────────────────────────────
+    if leader["하위테마"] == accel_leader["하위테마"]:
+        parts.append(
+            f"<b>{l_name}</b>이 점수와 가속도 모두 1위입니다."
+            + (f" (3M {l_r3*100:+.1f}%)" if finite_num(l_r3) else "")
+            + " 추세가 더 강화되는 중입니다."
+        )
+    else:
+        parts.append(
+            f"점수 1위 <b>{l_name}</b>"
+            + (f" (3M {l_r3*100:+.1f}%)" if finite_num(l_r3) else "")
+            + f", 가속도 1위 <b>{a_name}</b>"
+            + (f" (가속 {a_acc*100:+.1f}%p)" if finite_num(a_acc) else "")
+            + f". {a_name}의 최근 탄력이 더 강해지고 있으므로 두 하위테마를 함께 주목합니다."
+        )
+
+    # ── 2. 하위테마 폭 ─────────────────────────────────────────────────
+    if b_ratio >= 0.70:
+        parts.append(
+            f"하위테마 <b>{pos_sub}/{total_sub}개</b> 양수 → 테마 내 흐름이 전반적으로 상승 중입니다."
+        )
+    elif b_ratio >= 0.50:
+        parts.append(
+            f"하위테마 <b>{pos_sub}/{total_sub}개</b> 양수 → 일부 하위테마 중심 구간. 점수 높은 하위테마 집중 접근을 권장합니다."
+        )
+    else:
+        parts.append(
+            f"하위테마 <b>{pos_sub}/{total_sub}개</b>만 양수 → 테마 내 흐름 분산. 상위 하위테마로 압축이 필요합니다."
+        )
+
+    # ── 3. 1위 지속성 (3M vs 6M) ───────────────────────────────────────
+    if finite_num(l_r3) and finite_num(l_r6):
+        r3v, r6v = float(l_r3), float(l_r6)
+        if r3v > 0 and r6v > 0:
+            if r3v > r6v * 1.2:
+                parts.append(
+                    f"1위 <b>{l_name}</b>의 3M({r3v*100:+.1f}%)이 6M({r6v*100:+.1f}%)보다 강해 <b>최근 상승이 가속</b>되고 있습니다."
+                )
+            else:
+                parts.append(
+                    f"1위 <b>{l_name}</b>이 3M({r3v*100:+.1f}%)·6M({r6v*100:+.1f}%) 모두 양호해 <b>추세가 지속</b> 중입니다."
+                )
+        elif r3v > 0 >= r6v:
+            parts.append(
+                f"1위 <b>{l_name}</b>의 3M({r3v*100:+.1f}%)은 양수이나 6M({r6v*100:+.1f}%)은 부진합니다. "
+                f"<b>단기 반등</b>인지 추세 전환인지 추가 확인이 필요합니다."
+            )
+
+    # ── 4. 쏠림 경고 ───────────────────────────────────────────────────
+    conc = leader.get("상위종목쏠림", np.nan)
+    if finite_num(conc) and float(conc) > 0.60:
+        parts.append(
+            f"⚠️ <b>{l_name}</b> 내 상위종목 쏠림 {float(conc):.2f} — "
+            f"소수 종목에 점수가 집중되어 있어 리더 종목 훼손 시 하위테마 점수 급락 가능성이 있습니다."
+        )
+
+    # ── 5. 약세 하위테마 ───────────────────────────────────────────────
+    w_r3 = weak.get("3개월수익률", np.nan)
+    parts.append(
+        f"현재 가장 약한 하위테마는 <b>{w_name}</b>"
+        + (f" (3M {float(w_r3)*100:+.1f}%)" if finite_num(w_r3) else "")
+        + "입니다."
+    )
+
+    return "<br>".join(parts)
+
+
 def render_money_flow_etf_section():
     st.subheader("🌊 글로벌 자금 흐름 레이더")
     st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 가격 모멘텀과 거래량 증가를 함께 비교합니다.")
@@ -6186,20 +6513,15 @@ def render_money_flow_etf_section():
 
     leader = rankable_df.iloc[0]
     accel_leader = rankable_df.sort_values("가속도", ascending=False).iloc[0]
-    volume_leader = rankable_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
     weak = rankable_df.sort_values("돈흐름점수", ascending=True).iloc[0]
-    volume_text = ""
-    if not volume_leader.empty:
-        vr = volume_leader.iloc[0]
-        volume_text = f"거래량이 가장 붙은 쪽은 <b>{vr['섹터']} ({vr['Ticker']})</b>입니다.<br>"
+
+    _reading = _build_global_flow_reading(flow_df, rankable_df, leader, accel_leader, weak)
     st.markdown(
         f"""
 <div class='info-panel'>
-<b>해석</b><br>
-현재 선택 범위의 돈흐름 1위는 <b>{leader['섹터']} ({leader['Ticker']})</b>입니다.
-최근 새로 힘이 붙는 쪽은 <b>{accel_leader['섹터']} ({accel_leader['Ticker']})</b>,
-상대적으로 약한 쪽은 <b>{weak['섹터']} ({weak['Ticker']})</b>입니다.
-<br>{volume_text}<span style='color:#94a3b8;'>가속도는 최근 3개월수익률 - 이전 3개월수익률입니다. 상태는 같은 구분 안의 3개월 수익률 60퍼센타일 대비 상대강도도 함께 봅니다. 거래량증가는 최근 20거래일 평균 거래량을 직전 기준 구간과 비교한 값입니다.</span>
+<b>📊 돈흐름 해석</b><br>
+{_reading}
+<br><span style='color:#94a3b8;font-size:0.85em;'>가속도 = 최근 3M - 이전 3M 수익률. 시장 폭은 현재 선택 범위 기준. 매크로 신호는 flow_df 전체에서 해당 티커를 직접 조회합니다.</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -6449,14 +6771,13 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
     c3.metric("거래량 1위", str(volume_leader["테마"]), fmt_flow_pct(volume_leader["거래량증가"]))
     c4.metric("약한 테마", str(weak["테마"]), f"{weak['테마돈흐름점수']:.1f} pts")
 
+    _rot_reading = _build_rotation_reading(rotation_df)
     st.markdown(
         f"""
 <div class='info-panel'>
-<b>{market_label} 테마 흐름</b><br>
-현재 전체 테마 기준 강한 쪽은 <b>{leader['테마']}</b>입니다.
-상승 종목이 넓게 퍼진 테마는 <b>{breadth_leader['테마']}</b>,
-거래량이 상대적으로 붙은 테마는 <b>{volume_leader['테마']}</b>입니다.
-<br><span style='color:#94a3b8;'>테마돈흐름점수는 1/3/6개월 평균수익률, 최근 3개월-이전 3개월 가속도, 상승종목비율, 거래량증가를 더하고 상위 종목 쏠림을 일부 차감한 가격 기반 지표입니다.</span>
+<b>📊 {market_label} 테마 로테이션 해석</b><br>
+{_rot_reading}
+<br><span style='color:#94a3b8;font-size:0.85em;'>테마돈흐름점수 = 1M×18 + 3M×36 + 6M×22 + 가속도×18 + 상승비율 보정 + 거래량 보정 - 쏠림 패널티 - 과열 패널티</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -6724,14 +7045,13 @@ def render_image_theme_flow_section():
     m3.metric("가속도 1위", str(accel_leader["하위테마"]), fmt_flow_pct(accel_leader["가속도"]))
     m4.metric("약한 하위테마", str(weak["하위테마"]), fmt_flow_pct(weak["3개월수익률"]))
 
+    _detail_reading = _build_theme_detail_reading(group_df, leader, accel_leader, weak)
     st.markdown(
         f"""
 <div class='info-panel'>
-<b>{selected_theme} 해석</b><br>
-현재 하위테마 평균 기준 돈흐름 1위는 <b>{leader['하위테마']}</b>이고,
-대표 강세 종목은 <b>{leader['대표주']}</b>입니다.
-최근 새로 힘이 붙는 쪽은 <b>{accel_leader['하위테마']}</b>,
-상대적으로 약한 쪽은 <b>{weak['하위테마']}</b>입니다.
+<b>📊 {selected_theme} 해석</b><br>
+{_detail_reading}
+<br><span style='color:#94a3b8;font-size:0.85em;'>대표주: {leader.get('대표주', '-')} &nbsp;|&nbsp; 스코어: {leader.get('돈흐름점수', float('nan')):.1f}pts (1M×12 + 3M×33 + 6M×25 + 가속도×15 + 거래량×15)</span>
 </div>
         """,
         unsafe_allow_html=True,
