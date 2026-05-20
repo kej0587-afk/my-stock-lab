@@ -6491,7 +6491,8 @@ def render_money_flow_etf_section():
     top_kr = flow_df[flow_df["구분"] == "한국 섹터"].head(1)
     top_global = flow_df[flow_df["구분"] == "글로벌"].head(1)
     top_income = flow_df[flow_df["구분"] == "월배당 ETF"].head(1)
-    top_accel = flow_df.sort_values("가속도", ascending=False).head(1)
+    # 가속도 1위: 매크로(VIX 등 역방향 지표) 제외 — 상승 VIX가 최상위에 오는 혼선 방지
+    top_accel = flow_df[flow_df["구분"] != "매크로"].sort_values("가속도", ascending=False).head(1)
     top_volume = flow_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
 
     s1, s2, s3, s4, s5, s6 = st.columns(6)
@@ -6514,9 +6515,15 @@ def render_money_flow_etf_section():
         r = top_volume.iloc[0]
         s6.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
 
-    leader = rankable_df.iloc[0]
-    accel_leader = rankable_df.sort_values("가속도", ascending=False).iloc[0]
-    weak = rankable_df.sort_values("돈흐름점수", ascending=True).iloc[0]
+    # 해석용 리더 계산 시 매크로(VIX 등 역방향 지표) 제외 — 공포 급등이 리더로 오는 혼선 방지
+    _rank_for_interp = (
+        rankable_df[rankable_df["구분"] != "매크로"].copy()
+        if "구분" in rankable_df.columns and not rankable_df[rankable_df["구분"] != "매크로"].empty
+        else rankable_df
+    )
+    leader = _rank_for_interp.iloc[0]
+    accel_leader = _rank_for_interp.sort_values("가속도", ascending=False).iloc[0]
+    weak = _rank_for_interp.sort_values("돈흐름점수", ascending=True).iloc[0]
 
     _reading = _build_global_flow_reading(flow_df, rankable_df, leader, accel_leader, weak)
     st.markdown(
@@ -6887,7 +6894,7 @@ def render_power_grid_match_panel(rotation_df):
     if rotation_df is None or rotation_df.empty:
         return
 
-    matched_themes = rotation_df[rotation_df["테마"].isin(["AI 전력망·전력기기", "AI 에너지·전력", "글로벌 원전·SMR"])].copy()
+    matched_themes = rotation_df[rotation_df["테마"].isin(["전력·에너지 인프라", "글로벌 원전·SMR"])].copy()
     if matched_themes.empty:
         return
 
@@ -6936,7 +6943,7 @@ def render_power_grid_match_panel(rotation_df):
         """
 <div class='info-panel'>
 <b>전력 신호를 읽는 순서</b><br>
-ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미지 테마의 <b>AI 전력망·전력기기</b>입니다.
+ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미지 테마의 <b>전력·에너지 인프라</b>입니다.
 <b>글로벌 원전·SMR</b>은 원전 운영, SMR, 우라늄/연료 축이라 국내 전력기기 ETF와 별도로 해석합니다.
 </div>
         """,

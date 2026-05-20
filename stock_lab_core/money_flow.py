@@ -17,8 +17,8 @@ Refactoring changelog (2026-05):
   - 테마 로테이션: 동일 오버히팅 패널티 추가
 
   [티커 정리]
-  - 제거: 0117V0.KS (TIGER 코리아AI전력기기TOP3플러스) — 알파벳 포함 KRX코드, yfinance 미지원
-  - 제거: 0022T0.KS (SOL 국제금커버드콜액티브) — 동일 이유
+  - 재추가: 0117V0.KS / 0022T0.KS — FinanceDataReader 폴백 추가 후 조회 가능 확인,
+    yfinance 직접 호출은 실패하지만 fdr 폴백이 처리함 (제거 불필요)
   - 수정: 315930.KS 섹터 레이블 "인터넷/플랫폼" → "웹툰&게임"
   - 수정: RR.L (롤스로이스 런던) → RYCEY (뉴욕 ADR)
 
@@ -1387,13 +1387,4 @@ def get_sector_flow_state(sector_bench_ticker: str) -> str:
     px   = get_money_flow_ohlc(data, sector_bench_ticker)
     if px.empty or len(px) < 20:
         return "-"
-    close       = px["Close"]
-    high_52w    = float(px["High"].max())
-    low_52w     = float(px["Low"].min())
-    cur         = float(close.iloc[-1])
-    price_level = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else None
-    ret_3m      = get_return_by_days(close, 63)
-    ret_6m      = get_return_by_days(close, 126)
-    ret_prev_3m = get_return_by_days_offset(close, 63, offset=63)
-    accel = (ret_3m - ret_prev_3m) if finite_num(ret_3m) and finite_num(ret_prev_3m) else np.nan
-    return classify_money_flow_state(ret_3m, ret_6m, accel, price_level)
+    return _compute_ticker_metrics(px)["상태"]
