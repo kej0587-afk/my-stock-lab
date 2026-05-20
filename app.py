@@ -3,6 +3,7 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import hmac
 import io
+import math
 import zipfile
 import requests
 import json
@@ -2488,7 +2489,7 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     tap = str(tap).strip()
     bucket = str(bucket).strip().lower()
     is_empty = tap in ("-", "", "nan", "none", "None")
-    is_buy   = any(k in tap for k in ["매수", "분할", "진입", "추매", "🟢", "✅", "🟣"])
+    is_buy   = any(k in tap for k in ["매수", "분할", "추매", "🟢", "✅", "🟣"]) or ("진입" in tap and "보류" not in tap)
     is_hot   = any(k in tap for k in ["과열", "주의", "⚠"])
     is_hard  = any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"])
     is_wait  = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
@@ -2740,7 +2741,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             elif r["is_underalloc"]:
                 alloc_for_months = r["final_alloc"]
                 months_at_eff = (
-                    int((unit_price_krw - accumulated_krw) / alloc_for_months) + 1
+                    math.ceil((unit_price_krw - accumulated_krw) / alloc_for_months)
                     if alloc_for_months > 0 else 99
                 )
                 r["months_to_buy"] = months_at_eff
@@ -2764,6 +2765,18 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 r["status"] = f"⚠️ {int(mult*100)}%"
             else:
                 r["status"] = "🟢 투자"
+
+        # 구매 가능해진 종목의 누적금을 구매 후 잔여분으로 자동 정리
+        # (accumulated_krw가 쌓여서 rec_shares > 0이 된 경우, 소진 후 남은 금액만 유지)
+        _accum_refresh = dict(st.session_state["rebcalc_accum"])
+        _accum_refresh_changed = False
+        for r in calc_rows:
+            if r.get("accumulated_krw", 0) > 0 and r.get("rec_shares", 0) > 0:
+                leftover = max(0.0, r["effective_alloc"] - r["rec_krw"])
+                _accum_refresh[r["ticker"]] = leftover
+                _accum_refresh_changed = True
+        if _accum_refresh_changed:
+            st.session_state["rebcalc_accum"] = _accum_refresh
 
         active_rows      = [r for r in calc_rows if r["multiplier"] > 0]
         blocked_rows     = [r for r in calc_rows if r["multiplier"] == 0]
