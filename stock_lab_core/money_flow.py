@@ -1020,6 +1020,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 # 메인 계산 함수
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=900, show_spinner=False)
 def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
     universe = [
