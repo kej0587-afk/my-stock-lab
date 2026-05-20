@@ -107,7 +107,12 @@ def classify_candidate_grade(is_etf: bool, tech_total: float, fin_score: int) ->
         if fin_score == 1:
             grade = "🚨F급 (재무위험/처분)"
         elif t_score < 3:
-            grade = "🚨F급 (기술/재무 부진)"
+            # 재무 3~4점이면 기술이 나빠도 "기술/재무 부진" F는 부적절 → C로 완충
+            # ("F급 기술/재무 부진"은 재무도 좋지 않을 때 쓰는 라벨)
+            if fin_score >= 3:
+                grade = "⏳C급 (기술부진 관망)"
+            else:
+                grade = "🚨F급 (기술/재무 부진)"
         elif t_score < 5:
             grade = "⏳C급 (주의/대기)"
         elif t_score < 7:
