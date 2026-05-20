@@ -2802,6 +2802,9 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
     # 종목별 적립 누적금 (1주 미달 시 매달 쌓아두는 금액, 월 스코프 없이 영구 보관)
     if "rebcalc_accum" not in st.session_state:
         st.session_state["rebcalc_accum"] = {}   # {ticker: accumulated_krw}
+    # 항상 투자 종목 (신호 무관 · 과열/차단 무시하고 배율 1.0 고정)
+    if "rebcalc_always_invest" not in st.session_state:
+        st.session_state["rebcalc_always_invest"] = []
 
     # 대시보드 "분석 실행" 버튼을 눌렀을 때 캐시된 신호 맵 읽기
     _signal_cache = st.session_state.get("_ticker_signal_cache", {})
@@ -2864,6 +2867,23 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             st.warning("목표비중 합계가 0입니다.")
             return
 
+        # ── 항상 투자 종목 선택 (신호 무관 · 배율 1.0 고정) ──────────────────
+        _eligible_ticker_map = {
+            str(row.get("티커", "")): str(row.get("자산명", row.get("티커", "")))
+            for _, row in eligible.iterrows()
+            if str(row.get("티커", ""))
+        }
+        _prev_always = [t for t in st.session_state["rebcalc_always_invest"] if t in _eligible_ticker_map]
+        always_invest_list = st.multiselect(
+            "📌 항상 투자 종목 — 신호 무관하게 매달 100% 배분 (나스닥·S&P500 등 지수 ETF 권장)",
+            options=list(_eligible_ticker_map.keys()),
+            default=_prev_always,
+            format_func=lambda t: f"{_eligible_ticker_map.get(t, t)} ({t})",
+            key="rebcalc_always_invest_sel",
+        )
+        st.session_state["rebcalc_always_invest"] = always_invest_list
+        always_invest_set = set(always_invest_list)
+
         # ── 1차 계산: 기본 배분 + 타점 배율 ──────────────────────────────────
         calc_rows = []
         for _, row in eligible.iterrows():
@@ -2912,6 +2932,9 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
 
             base_alloc = total_invest * (target_w / target_w_sum)
             multiplier = _rebcalc_signal_multiplier(tap_raw, bucket, dip_level=dip_level)
+            if ticker in always_invest_set:
+                multiplier = 1.0
+                tap_disp = f"📌 항상투자" if tap_disp in ("-", "신호없음", "ETF (신호없음)") else f"{tap_disp} → 📌무시"
             eff_alloc  = base_alloc * multiplier
 
             calc_rows.append({
