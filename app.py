@@ -17146,12 +17146,12 @@ def render_full_print_report():
                 "KODEX200": "#a78bfa",
             }
             fig_bench = go.Figure()
-            for label in [c for c in bench_df.columns if c != "month_label"]:
-                part = bench_df[["month_label", label]].dropna().rename(columns={label: "y"})
+            for label in bench_df["구분"].drop_duplicates():
+                part = bench_df[bench_df["구분"] == label]
                 if part.empty:
                     continue
                 fig_bench.add_trace(go.Scatter(
-                    x=part["month_label"], y=part["y"],
+                    x=part["month_label"], y=part["수익률_pct"],
                     mode="lines+markers", name=label,
                     line=dict(
                         color=color_map.get(label, "#cbd5e1"),
