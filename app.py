@@ -16764,9 +16764,423 @@ def render_print_report_v2():
         st.info("월별 성과 기록이 없습니다.")
 
 
+# 자산 현황 인쇄 전용 리포트  (render_full_print_report)
+# ════════════════════════════════════════════════════════════════════════════
+def render_full_print_report():
+    """자산 현황 요약 및 포트폴리오 상세 인쇄 전용 리포트."""
+
+    # ── 공통 포매터 ───────────────────────────────────────────────────────
+    def _num(value, default=0.0):
+        try:
+            return clean_float(value, default)
+        except Exception:
+            try:
+                return float(value)
+            except Exception:
+                return default
+
+    def _fmt_money(value):
+        v = _num(value, np.nan)
+        return "-" if not np.isfinite(v) else f"{v:,.0f}원"
+
+    def _fmt_pct(value, digits=2):
+        v = _num(value, np.nan)
+        return "-" if not np.isfinite(v) else f"{v:.{digits}f}%"
+
+    def _fmt_price(value):
+        v = _num(value, np.nan)
+        return "-" if not np.isfinite(v) else f"{v:,.2f}"
+
+    # ── 보유 자산 DataFrame 구성 ──────────────────────────────────────────
+    def _make_report_df():
+        base_df = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
+        total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
+        rdf = append_cash_rows(base_df, krw_cash, usd_cash, usdkrw, total_asset)
+        if rdf is None or rdf.empty:
+            return pd.DataFrame()
+        for col in ["원화환산", "현재비중", "목표비중", "리밸런싱목표비중", "비중차이", "평가손익", "수익률"]:
+            if col in rdf.columns:
+                rdf[col] = pd.to_numeric(rdf[col], errors="coerce").fillna(0.0)
+        # 평가손익 원화 환산
+        if "평가손익_원화" not in rdf.columns:
+            if "평가손익" in rdf.columns:
+                def _pnl_krw(row):
+                    ticker = str(row.get("티커", "")).upper()
+                    pnl = _num(row.get("평가손익"), 0.0)
+                    return pnl if (ticker.endswith((".KS", ".KQ")) or "CASH" in ticker) else pnl * _num(usdkrw, 1400.0)
+                rdf["평가손익_원화"] = rdf.apply(_pnl_krw, axis=1)
+            else:
+                rdf["평가손익_원화"] = 0.0
+        # 수익률 % 컬럼
+        if "수익률_pct" not in rdf.columns:
+            rdf["수익률_pct"] = rdf["수익률"] * 100 if "수익률" in rdf.columns else 0.0
+        # 리밸런싱 목표비중 폴백
+        if "리밸런싱목표비중" not in rdf.columns and "목표비중" in rdf.columns:
+            rdf["리밸런싱목표비중"] = rdf["목표비중"]
+        # 비중차이 폴백
+        if "비중차이" not in rdf.columns:
+            tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in rdf.columns else "목표비중"
+            if "현재비중" in rdf.columns and tcol in rdf.columns:
+                rdf["비중차이"] = rdf["현재비중"] - rdf[tcol]
+        return rdf
+
+    # ── 보유 자산 표 포매팅 ───────────────────────────────────────────────
+    def _format_holdings_table(df, max_rows=35):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in df.columns else "목표비중"
+        rename_map = {
+            "자산명": "자산명",
+            "티커": "티커",
+            "bucket": "버킷",
+            "보유량": "보유량",
+            "매입가": "평균매입가",
+            "현재가": "현재가",
+            "원화환산": "평가금액",
+            "현재비중": "현재비중",
+            tcol: "목표비중",
+            "비중차이": "비중차이",
+            "평가손익_원화": "평가손익",
+            "수익률_pct": "수익률",
+        }
+        cols = [c for c in rename_map if c in df.columns]
+        view = df[cols].rename(columns=rename_map)
+        for col in ["평가금액", "평가손익"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_money)
+        for col in ["평균매입가", "현재가"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_price)
+        for col in ["현재비중", "목표비중", "비중차이", "수익률"]:
+            if col in view.columns:
+                view[col] = view[col].apply(_fmt_pct)
+        return view.head(max_rows)
+
+    # ── 월별 성과 표 포매팅 ───────────────────────────────────────────────
+    def _format_monthly_table(df, max_rows=24):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        view = df.tail(max_rows).copy()
+        for col in view.columns:
+            ct = str(col)
+            if any(k in ct for k in ["금액", "자산", "원금", "손익", "배당"]):
+                view[col] = view[col].apply(_fmt_money)
+            elif any(k in ct for k in ["수익률", "비중"]):
+                view[col] = view[col].apply(_fmt_pct)
+        return view
+
+    # ── 사이드바 ──────────────────────────────────────────────────────────
+    with st.sidebar:
+        st.success("자산 현황 인쇄 모드")
+        st.caption("브라우저에서 Ctrl+P 를 누르면 현재 리포트를 출력할 수 있습니다.")
+        if st.button("인쇄 모드 끄기", key="full_print_mode_off"):
+            st.session_state["full_print_mode"] = False
+            st.rerun()
+
+    # ── 인쇄 CSS ──────────────────────────────────────────────────────────
+    st.markdown(
+        """
+        <style>
+        @media print {
+            [data-testid="stSidebar"],
+            [data-testid="stToolbar"],
+            [data-testid="stDecoration"] { display: none !important; }
+            .main .block-container { max-width: 100% !important; padding: 12px 24px !important; }
+            .fpr-page-break { page-break-before: always; }
+        }
+        .fpr-note {
+            border: 1px solid rgba(148,163,184,.35);
+            border-radius: 8px;
+            padding: 12px 14px;
+            color: #cbd5e1;
+            background: rgba(15,23,42,.45);
+            margin-bottom: 16px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── 헤더 ──────────────────────────────────────────────────────────────
+    st.title("Stock Lab — 자산 현황 리포트")
+    st.caption(
+        f"생성일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')} "
+        f"/ 기준 환율: {_num(usdkrw, 0):,.2f}원"
+    )
+    st.markdown(
+        "<div class='fpr-note'>현재 자산 현황 및 포트폴리오 구성 요약 개인용 인쇄 리포트입니다.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── 기본 수치 ─────────────────────────────────────────────────────────
+    report_df      = _make_report_df()
+    reserve_summary = calc_reserve_summary(report_df, reserve_target_weight) if not report_df.empty else {}
+    current_asset  = _num(portfolio_summary.get("current_asset"), 0.0)
+    stock_value    = _num(portfolio_summary.get("stock_value"), 0.0)
+    cash_value     = _num(portfolio_summary.get("cash_value"), 0.0)
+    cum_profit     = _num(portfolio_summary.get("cum_profit"), 0.0)
+    cum_return     = _num(portfolio_summary.get("cum_return"), 0.0)
+    total_dividend = _num(portfolio_summary.get("total_dividend"), 0.0)
+    waiting_value  = _num(reserve_summary.get("waiting_value"), cash_value)
+    waiting_pct    = _num(reserve_summary.get("waiting_pct"), 0.0)
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 1장 : 자산 현황 요약
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown("## 1. 자산 현황 요약")
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("총자산",    _fmt_money(current_asset), f"환율 {_num(usdkrw, 0):,.0f}원")
+    k2.metric("투자자산",  _fmt_money(stock_value),   f"현금 {_fmt_money(cash_value)}")
+    k3.metric("대기자금",  _fmt_money(waiting_value), f"{waiting_pct:.2f}%")
+
+    k4, k5, k6 = st.columns(3)
+    k4.metric("누적손익",    _fmt_money(cum_profit))
+    k5.metric("누적수익률",  _fmt_pct(cum_return))
+    k6.metric("누적수령배당", _fmt_money(total_dividend))
+
+    if not report_df.empty:
+        st.markdown("#### 보유 자산 요약")
+        sorted_df = (
+            report_df.sort_values("현재비중", ascending=False)
+            if "현재비중" in report_df.columns
+            else report_df
+        )
+        st.table(_format_holdings_table(sorted_df, max_rows=35))
+    else:
+        st.info("보유 자산 데이터가 없습니다.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 2장 : 포트폴리오 상세
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='fpr-page-break'></div>", unsafe_allow_html=True)
+    st.markdown("## 2. 포트폴리오 상세")
+
+    if not report_df.empty and "원화환산" in report_df.columns:
+        chart_df = report_df.copy()
+        for col in ["원화환산", "수익률_pct", "현재비중", "비중차이", "평가손익_원화"]:
+            if col in chart_df.columns:
+                chart_df[col] = pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0)
+        chart_df = chart_df[chart_df["원화환산"] > 0].copy()
+
+        if "자산명" not in chart_df.columns:
+            chart_df["자산명"] = chart_df.get("티커", "")
+        tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in chart_df.columns else "목표비중"
+        if tcol not in chart_df.columns:
+            chart_df[tcol] = 0.0
+
+        c1, c2 = st.columns(2)
+        with c1:
+            # 트리맵 (수익률 히트맵)
+            fig_tree = go.Figure(go.Treemap(
+                labels=chart_df["자산명"],
+                parents=[""] * len(chart_df),
+                values=chart_df["원화환산"],
+                marker=dict(
+                    colors=chart_df["수익률_pct"],
+                    colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
+                    cmid=0,
+                    showscale=True,
+                    colorbar=dict(title="수익률%", thickness=12),
+                ),
+                customdata=chart_df[["티커", "현재비중", tcol, "평가손익_원화", "수익률_pct"]],
+                hovertemplate=(
+                    "<b>%{label}</b> (%{customdata[0]})<br>"
+                    "평가금액: ₩%{value:,.0f}<br>"
+                    "현재/목표: %{customdata[1]:.2f}% / %{customdata[2]:.2f}%<br>"
+                    "평가손익: ₩%{customdata[3]:,.0f}<br>"
+                    "수익률: %{customdata[4]:.2f}%<extra></extra>"
+                ),
+            ))
+            fig_tree.update_layout(
+                template="plotly_dark",
+                height=360,
+                margin=dict(t=36, l=8, r=8, b=8),
+                title="포트폴리오 히트맵 (수익률)",
+            )
+            st.plotly_chart(fig_tree, use_container_width=True)
+
+        with c2:
+            # 현재비중 vs 목표비중 가로 막대
+            bar_df = chart_df[chart_df[tcol] > 0].copy() if tcol in chart_df.columns else pd.DataFrame()
+            if not bar_df.empty:
+                bar_df = bar_df.sort_values("현재비중", ascending=True).tail(15)
+                fig_bar = go.Figure()
+                fig_bar.add_trace(go.Bar(
+                    y=bar_df["자산명"], x=bar_df["현재비중"],
+                    name="현재비중", orientation="h",
+                    marker_color="#22d3ee",
+                ))
+                fig_bar.add_trace(go.Bar(
+                    y=bar_df["자산명"], x=bar_df[tcol],
+                    name="목표비중", orientation="h",
+                    marker_color="#f59e0b", opacity=0.55,
+                ))
+                fig_bar.update_layout(
+                    barmode="overlay",
+                    template="plotly_dark",
+                    height=360,
+                    title="현재비중 vs 목표비중",
+                    xaxis_title="비중(%)",
+                    legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
+                    margin=dict(t=36, l=8, r=8, b=60),
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+            else:
+                st.info("목표비중이 설정된 자산이 없습니다.")
+
+        # 버킷별 요약
+        if "bucket" in chart_df.columns:
+            st.markdown("#### 버킷별 비중 요약")
+            inv_df = chart_df[
+                ~chart_df["bucket"].apply(lambda b: normalize_bucket(str(b)) in {"reserve", "cash"})
+            ].copy()
+            if not inv_df.empty:
+                bucket_grp = (
+                    inv_df.groupby("bucket")
+                    .agg(평가금액=("원화환산", "sum"), 개수=("자산명", "count"), 평균수익률=("수익률_pct", "mean"))
+                    .reset_index()
+                )
+                total_val = max(float(bucket_grp["평가금액"].sum()), 1.0)
+                bucket_grp["비중"] = (bucket_grp["평가금액"] / total_val * 100).apply(_fmt_pct)
+                bucket_grp["평가금액"] = bucket_grp["평가금액"].apply(_fmt_money)
+                bucket_grp["평균수익률"] = bucket_grp["평균수익률"].apply(_fmt_pct)
+                st.table(bucket_grp.rename(columns={"bucket": "버킷"}))
+    else:
+        st.info("포트폴리오 차트를 표시할 자산 데이터가 없습니다.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 3장 : 월별 성과
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown("<div class='fpr-page-break'></div>", unsafe_allow_html=True)
+    st.markdown("## 3. 월별 성과")
+
+    try:
+        monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
+    except Exception:
+        monthly_perf_df = pd.DataFrame()
+
+    if monthly_perf_df is not None and not monthly_perf_df.empty:
+        latest = monthly_perf_df.iloc[-1]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("최근 기록월",    str(latest.get("month_label", "-")))
+        m2.metric("기록 평가자산",  _fmt_money(latest.get("evaluated_value")))
+        m3.metric("기록 누적손익",  _fmt_money(latest.get("cum_profit")))
+        m4.metric("기록 누적수익률", _fmt_pct(latest.get("cum_return_pct")))
+
+        # 월별 성과 표 (최근 24개월)
+        perf_cols = ["month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]
+        perf_view = monthly_perf_df.tail(24).copy()
+        perf_view = perf_view[[c for c in perf_cols if c in perf_view.columns]].rename(columns={
+            "month_label": "월",
+            "evaluated_value": "평가자산",
+            "total_invested": "투입원금",
+            "cum_profit": "누적손익",
+            "cum_return_pct": "누적수익률(%)",
+            "dividend": "월배당",
+        })
+        st.table(_format_monthly_table(perf_view, max_rows=24))
+
+        # 차트
+        _c = monthly_perf_df.copy()
+        for col in ["evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]:
+            if col in _c.columns:
+                _c[col] = pd.to_numeric(_c[col], errors="coerce").fillna(0.0)
+        if "dividend" not in _c.columns:
+            _c["dividend"] = 0.0
+
+        p1, p2 = st.columns(2)
+        with p1:
+            fig_asset = go.Figure()
+            fig_asset.add_trace(go.Scatter(
+                x=_c["month_label"], y=_c["evaluated_value"],
+                mode="lines+markers", name="평가자산",
+                line=dict(color="#ef4444", width=3),
+                hovertemplate="%{x}<br>평가자산: ₩%{y:,.0f}<extra></extra>",
+            ))
+            fig_asset.add_trace(go.Scatter(
+                x=_c["month_label"], y=_c["total_invested"],
+                mode="lines+markers", name="투입원금",
+                line=dict(color="#cbd5e1", width=2),
+                hovertemplate="%{x}<br>투입원금: ₩%{y:,.0f}<extra></extra>",
+            ))
+            fig_asset.update_layout(
+                template="plotly_dark", height=320,
+                title=dict(text="월별 투자 기록", y=0.97, x=0.5, xanchor="center"),
+                yaxis_title="원",
+                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                margin=dict(t=40, l=8, r=8, b=70),
+            )
+            st.plotly_chart(fig_asset, use_container_width=True)
+
+        with p2:
+            fig_ret = go.Figure()
+            fig_ret.add_trace(go.Scatter(
+                x=_c["month_label"], y=_c["cum_return_pct"],
+                mode="lines+markers", name="누적수익률",
+                line=dict(color="#22d3ee", width=3),
+                hovertemplate="%{x}<br>누적수익률: %{y:.2f}%<extra></extra>",
+            ))
+            fig_ret.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+            fig_ret.update_layout(
+                template="plotly_dark", height=320,
+                title=dict(text="누적 수익률 추이", y=0.97, x=0.5, xanchor="center"),
+                yaxis_title="수익률(%)",
+                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                margin=dict(t=40, l=8, r=8, b=70),
+            )
+            st.plotly_chart(fig_ret, use_container_width=True)
+
+        # 벤치마크 비교
+        try:
+            bench_df = build_benchmark_return_df(monthly_perf_df)
+        except Exception:
+            bench_df = pd.DataFrame()
+
+        if bench_df is not None and not bench_df.empty and "month_label" in bench_df.columns:
+            st.markdown("#### 벤치마크 비교")
+            color_map = {
+                "내 기간수익률": "#ef4444",
+                "S&P500": "#22d3ee",
+                "나스닥100": "#f59e0b",
+                "KODEX200": "#a78bfa",
+            }
+            fig_bench = go.Figure()
+            for label in [c for c in bench_df.columns if c != "month_label"]:
+                part = bench_df[["month_label", label]].dropna().rename(columns={label: "y"})
+                if part.empty:
+                    continue
+                fig_bench.add_trace(go.Scatter(
+                    x=part["month_label"], y=part["y"],
+                    mode="lines+markers", name=label,
+                    line=dict(
+                        color=color_map.get(label, "#cbd5e1"),
+                        width=3 if label == "내 기간수익률" else 2,
+                        dash="solid" if label == "내 기간수익률" else "dot",
+                    ),
+                    hovertemplate=f"%{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>",
+                ))
+            fig_bench.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
+            fig_bench.update_layout(
+                template="plotly_dark", height=320,
+                title=dict(text="첫 기록월 대비 수익률 변화 vs 벤치마크", y=0.97, x=0.5, xanchor="center"),
+                yaxis_title="수익률(%)",
+                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
+                margin=dict(t=40, l=8, r=8, b=70),
+            )
+            st.plotly_chart(fig_bench, use_container_width=True)
+    else:
+        st.info("월별 성과 기록이 없습니다.")
+
+
 if st.session_state.get("print_mode_toggle_final", False):
     render_print_report_v2()
     st.stop()
+
+if st.session_state.get("full_print_mode", False):
+    render_full_print_report()
+    st.stop()
+
 
 if IS_PUBLIC_DEMO:
     render_public_demo_fast_shell(
@@ -18173,416 +18587,3 @@ if main_page == "guide":
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# 자산 현황 인쇄 전용 리포트  (render_full_print_report)
-# ════════════════════════════════════════════════════════════════════════════
-def render_full_print_report():
-    """자산 현황 요약 및 포트폴리오 상세 인쇄 전용 리포트."""
-
-    # ── 공통 포매터 ───────────────────────────────────────────────────────
-    def _num(value, default=0.0):
-        try:
-            return clean_float(value, default)
-        except Exception:
-            try:
-                return float(value)
-            except Exception:
-                return default
-
-    def _fmt_money(value):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:,.0f}원"
-
-    def _fmt_pct(value, digits=2):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:.{digits}f}%"
-
-    def _fmt_price(value):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:,.2f}"
-
-    # ── 보유 자산 DataFrame 구성 ──────────────────────────────────────────
-    def _make_report_df():
-        base_df = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
-        total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
-        rdf = append_cash_rows(base_df, krw_cash, usd_cash, usdkrw, total_asset)
-        if rdf is None or rdf.empty:
-            return pd.DataFrame()
-        for col in ["원화환산", "현재비중", "목표비중", "리밸런싱목표비중", "비중차이", "평가손익", "수익률"]:
-            if col in rdf.columns:
-                rdf[col] = pd.to_numeric(rdf[col], errors="coerce").fillna(0.0)
-        # 평가손익 원화 환산
-        if "평가손익_원화" not in rdf.columns:
-            if "평가손익" in rdf.columns:
-                def _pnl_krw(row):
-                    ticker = str(row.get("티커", "")).upper()
-                    pnl = _num(row.get("평가손익"), 0.0)
-                    return pnl if (ticker.endswith((".KS", ".KQ")) or "CASH" in ticker) else pnl * _num(usdkrw, 1400.0)
-                rdf["평가손익_원화"] = rdf.apply(_pnl_krw, axis=1)
-            else:
-                rdf["평가손익_원화"] = 0.0
-        # 수익률 % 컬럼
-        if "수익률_pct" not in rdf.columns:
-            rdf["수익률_pct"] = rdf["수익률"] * 100 if "수익률" in rdf.columns else 0.0
-        # 리밸런싱 목표비중 폴백
-        if "리밸런싱목표비중" not in rdf.columns and "목표비중" in rdf.columns:
-            rdf["리밸런싱목표비중"] = rdf["목표비중"]
-        # 비중차이 폴백
-        if "비중차이" not in rdf.columns:
-            tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in rdf.columns else "목표비중"
-            if "현재비중" in rdf.columns and tcol in rdf.columns:
-                rdf["비중차이"] = rdf["현재비중"] - rdf[tcol]
-        return rdf
-
-    # ── 보유 자산 표 포매팅 ───────────────────────────────────────────────
-    def _format_holdings_table(df, max_rows=35):
-        if df is None or df.empty:
-            return pd.DataFrame()
-        tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in df.columns else "목표비중"
-        rename_map = {
-            "자산명": "자산명",
-            "티커": "티커",
-            "bucket": "버킷",
-            "보유량": "보유량",
-            "매입가": "평균매입가",
-            "현재가": "현재가",
-            "원화환산": "평가금액",
-            "현재비중": "현재비중",
-            tcol: "목표비중",
-            "비중차이": "비중차이",
-            "평가손익_원화": "평가손익",
-            "수익률_pct": "수익률",
-        }
-        cols = [c for c in rename_map if c in df.columns]
-        view = df[cols].rename(columns=rename_map)
-        for col in ["평가금액", "평가손익"]:
-            if col in view.columns:
-                view[col] = view[col].apply(_fmt_money)
-        for col in ["평균매입가", "현재가"]:
-            if col in view.columns:
-                view[col] = view[col].apply(_fmt_price)
-        for col in ["현재비중", "목표비중", "비중차이", "수익률"]:
-            if col in view.columns:
-                view[col] = view[col].apply(_fmt_pct)
-        return view.head(max_rows)
-
-    # ── 월별 성과 표 포매팅 ───────────────────────────────────────────────
-    def _format_monthly_table(df, max_rows=24):
-        if df is None or df.empty:
-            return pd.DataFrame()
-        view = df.tail(max_rows).copy()
-        for col in view.columns:
-            ct = str(col)
-            if any(k in ct for k in ["금액", "자산", "원금", "손익", "배당"]):
-                view[col] = view[col].apply(_fmt_money)
-            elif any(k in ct for k in ["수익률", "비중"]):
-                view[col] = view[col].apply(_fmt_pct)
-        return view
-
-    # ── 사이드바 ──────────────────────────────────────────────────────────
-    with st.sidebar:
-        st.success("자산 현황 인쇄 모드")
-        st.caption("브라우저에서 Ctrl+P 를 누르면 현재 리포트를 출력할 수 있습니다.")
-        if st.button("인쇄 모드 끄기", key="full_print_mode_off"):
-            st.session_state["full_print_mode"] = False
-            st.rerun()
-
-    # ── 인쇄 CSS ──────────────────────────────────────────────────────────
-    st.markdown(
-        """
-        <style>
-        @media print {
-            [data-testid="stSidebar"],
-            [data-testid="stToolbar"],
-            [data-testid="stDecoration"] { display: none !important; }
-            .main .block-container { max-width: 100% !important; padding: 12px 24px !important; }
-            .fpr-page-break { page-break-before: always; }
-        }
-        .fpr-note {
-            border: 1px solid rgba(148,163,184,.35);
-            border-radius: 8px;
-            padding: 12px 14px;
-            color: #cbd5e1;
-            background: rgba(15,23,42,.45);
-            margin-bottom: 16px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ── 헤더 ──────────────────────────────────────────────────────────────
-    st.title("Stock Lab — 자산 현황 리포트")
-    st.caption(
-        f"생성일시: {datetime.now(KST).strftime('%Y-%m-%d %H:%M')} "
-        f"/ 기준 환율: {_num(usdkrw, 0):,.2f}원"
-    )
-    st.markdown(
-        "<div class='fpr-note'>현재 자산 현황 및 포트폴리오 구성 요약 개인용 인쇄 리포트입니다.</div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── 기본 수치 ─────────────────────────────────────────────────────────
-    report_df      = _make_report_df()
-    reserve_summary = calc_reserve_summary(report_df, reserve_target_weight) if not report_df.empty else {}
-    current_asset  = _num(portfolio_summary.get("current_asset"), 0.0)
-    stock_value    = _num(portfolio_summary.get("stock_value"), 0.0)
-    cash_value     = _num(portfolio_summary.get("cash_value"), 0.0)
-    cum_profit     = _num(portfolio_summary.get("cum_profit"), 0.0)
-    cum_return     = _num(portfolio_summary.get("cum_return"), 0.0)
-    total_dividend = _num(portfolio_summary.get("total_dividend"), 0.0)
-    waiting_value  = _num(reserve_summary.get("waiting_value"), cash_value)
-    waiting_pct    = _num(reserve_summary.get("waiting_pct"), 0.0)
-
-    # ══════════════════════════════════════════════════════════════════════
-    # 1장 : 자산 현황 요약
-    # ══════════════════════════════════════════════════════════════════════
-    st.markdown("## 1. 자산 현황 요약")
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("총자산",    _fmt_money(current_asset), f"환율 {_num(usdkrw, 0):,.0f}원")
-    k2.metric("투자자산",  _fmt_money(stock_value),   f"현금 {_fmt_money(cash_value)}")
-    k3.metric("대기자금",  _fmt_money(waiting_value), f"{waiting_pct:.2f}%")
-
-    k4, k5, k6 = st.columns(3)
-    k4.metric("누적손익",    _fmt_money(cum_profit))
-    k5.metric("누적수익률",  _fmt_pct(cum_return))
-    k6.metric("누적수령배당", _fmt_money(total_dividend))
-
-    if not report_df.empty:
-        st.markdown("#### 보유 자산 요약")
-        sorted_df = (
-            report_df.sort_values("현재비중", ascending=False)
-            if "현재비중" in report_df.columns
-            else report_df
-        )
-        st.table(_format_holdings_table(sorted_df, max_rows=35))
-    else:
-        st.info("보유 자산 데이터가 없습니다.")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # 2장 : 포트폴리오 상세
-    # ══════════════════════════════════════════════════════════════════════
-    st.markdown("<div class='fpr-page-break'></div>", unsafe_allow_html=True)
-    st.markdown("## 2. 포트폴리오 상세")
-
-    if not report_df.empty and "원화환산" in report_df.columns:
-        chart_df = report_df.copy()
-        for col in ["원화환산", "수익률_pct", "현재비중", "비중차이", "평가손익_원화"]:
-            if col in chart_df.columns:
-                chart_df[col] = pd.to_numeric(chart_df[col], errors="coerce").fillna(0.0)
-        chart_df = chart_df[chart_df["원화환산"] > 0].copy()
-
-        if "자산명" not in chart_df.columns:
-            chart_df["자산명"] = chart_df.get("티커", "")
-        tcol = "리밸런싱목표비중" if "리밸런싱목표비중" in chart_df.columns else "목표비중"
-        if tcol not in chart_df.columns:
-            chart_df[tcol] = 0.0
-
-        c1, c2 = st.columns(2)
-        with c1:
-            # 트리맵 (수익률 히트맵)
-            fig_tree = go.Figure(go.Treemap(
-                labels=chart_df["자산명"],
-                parents=[""] * len(chart_df),
-                values=chart_df["원화환산"],
-                marker=dict(
-                    colors=chart_df["수익률_pct"],
-                    colorscale=[[0, "#dc2626"], [0.5, "#64748b"], [1, "#16a34a"]],
-                    cmid=0,
-                    showscale=True,
-                    colorbar=dict(title="수익률%", thickness=12),
-                ),
-                customdata=chart_df[["티커", "현재비중", tcol, "평가손익_원화", "수익률_pct"]],
-                hovertemplate=(
-                    "<b>%{label}</b> (%{customdata[0]})<br>"
-                    "평가금액: ₩%{value:,.0f}<br>"
-                    "현재/목표: %{customdata[1]:.2f}% / %{customdata[2]:.2f}%<br>"
-                    "평가손익: ₩%{customdata[3]:,.0f}<br>"
-                    "수익률: %{customdata[4]:.2f}%<extra></extra>"
-                ),
-            ))
-            fig_tree.update_layout(
-                template="plotly_dark",
-                height=360,
-                margin=dict(t=36, l=8, r=8, b=8),
-                title="포트폴리오 히트맵 (수익률)",
-            )
-            st.plotly_chart(fig_tree, use_container_width=True)
-
-        with c2:
-            # 현재비중 vs 목표비중 가로 막대
-            bar_df = chart_df[chart_df[tcol] > 0].copy() if tcol in chart_df.columns else pd.DataFrame()
-            if not bar_df.empty:
-                bar_df = bar_df.sort_values("현재비중", ascending=True).tail(15)
-                fig_bar = go.Figure()
-                fig_bar.add_trace(go.Bar(
-                    y=bar_df["자산명"], x=bar_df["현재비중"],
-                    name="현재비중", orientation="h",
-                    marker_color="#22d3ee",
-                ))
-                fig_bar.add_trace(go.Bar(
-                    y=bar_df["자산명"], x=bar_df[tcol],
-                    name="목표비중", orientation="h",
-                    marker_color="#f59e0b", opacity=0.55,
-                ))
-                fig_bar.update_layout(
-                    barmode="overlay",
-                    template="plotly_dark",
-                    height=360,
-                    title="현재비중 vs 목표비중",
-                    xaxis_title="비중(%)",
-                    legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
-                    margin=dict(t=36, l=8, r=8, b=60),
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
-            else:
-                st.info("목표비중이 설정된 자산이 없습니다.")
-
-        # 버킷별 요약
-        if "bucket" in chart_df.columns:
-            st.markdown("#### 버킷별 비중 요약")
-            inv_df = chart_df[
-                ~chart_df["bucket"].apply(lambda b: normalize_bucket(str(b)) in {"reserve", "cash"})
-            ].copy()
-            if not inv_df.empty:
-                bucket_grp = (
-                    inv_df.groupby("bucket")
-                    .agg(평가금액=("원화환산", "sum"), 개수=("자산명", "count"), 평균수익률=("수익률_pct", "mean"))
-                    .reset_index()
-                )
-                total_val = max(float(bucket_grp["평가금액"].sum()), 1.0)
-                bucket_grp["비중"] = (bucket_grp["평가금액"] / total_val * 100).apply(_fmt_pct)
-                bucket_grp["평가금액"] = bucket_grp["평가금액"].apply(_fmt_money)
-                bucket_grp["평균수익률"] = bucket_grp["평균수익률"].apply(_fmt_pct)
-                st.table(bucket_grp.rename(columns={"bucket": "버킷"}))
-    else:
-        st.info("포트폴리오 차트를 표시할 자산 데이터가 없습니다.")
-
-    # ══════════════════════════════════════════════════════════════════════
-    # 3장 : 월별 성과
-    # ══════════════════════════════════════════════════════════════════════
-    st.markdown("<div class='fpr-page-break'></div>", unsafe_allow_html=True)
-    st.markdown("## 3. 월별 성과")
-
-    try:
-        monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
-    except Exception:
-        monthly_perf_df = pd.DataFrame()
-
-    if monthly_perf_df is not None and not monthly_perf_df.empty:
-        latest = monthly_perf_df.iloc[-1]
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("최근 기록월",    str(latest.get("month_label", "-")))
-        m2.metric("기록 평가자산",  _fmt_money(latest.get("evaluated_value")))
-        m3.metric("기록 누적손익",  _fmt_money(latest.get("cum_profit")))
-        m4.metric("기록 누적수익률", _fmt_pct(latest.get("cum_return_pct")))
-
-        # 월별 성과 표 (최근 24개월)
-        perf_cols = ["month_label", "evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]
-        perf_view = monthly_perf_df.tail(24).copy()
-        perf_view = perf_view[[c for c in perf_cols if c in perf_view.columns]].rename(columns={
-            "month_label": "월",
-            "evaluated_value": "평가자산",
-            "total_invested": "투입원금",
-            "cum_profit": "누적손익",
-            "cum_return_pct": "누적수익률(%)",
-            "dividend": "월배당",
-        })
-        st.table(_format_monthly_table(perf_view, max_rows=24))
-
-        # 차트
-        _c = monthly_perf_df.copy()
-        for col in ["evaluated_value", "total_invested", "cum_profit", "cum_return_pct", "dividend"]:
-            if col in _c.columns:
-                _c[col] = pd.to_numeric(_c[col], errors="coerce").fillna(0.0)
-        if "dividend" not in _c.columns:
-            _c["dividend"] = 0.0
-
-        p1, p2 = st.columns(2)
-        with p1:
-            fig_asset = go.Figure()
-            fig_asset.add_trace(go.Scatter(
-                x=_c["month_label"], y=_c["evaluated_value"],
-                mode="lines+markers", name="평가자산",
-                line=dict(color="#ef4444", width=3),
-                hovertemplate="%{x}<br>평가자산: ₩%{y:,.0f}<extra></extra>",
-            ))
-            fig_asset.add_trace(go.Scatter(
-                x=_c["month_label"], y=_c["total_invested"],
-                mode="lines+markers", name="투입원금",
-                line=dict(color="#cbd5e1", width=2),
-                hovertemplate="%{x}<br>투입원금: ₩%{y:,.0f}<extra></extra>",
-            ))
-            fig_asset.update_layout(
-                template="plotly_dark", height=320,
-                title=dict(text="월별 투자 기록", y=0.97, x=0.5, xanchor="center"),
-                yaxis_title="원",
-                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
-                margin=dict(t=40, l=8, r=8, b=70),
-            )
-            st.plotly_chart(fig_asset, use_container_width=True)
-
-        with p2:
-            fig_ret = go.Figure()
-            fig_ret.add_trace(go.Scatter(
-                x=_c["month_label"], y=_c["cum_return_pct"],
-                mode="lines+markers", name="누적수익률",
-                line=dict(color="#22d3ee", width=3),
-                hovertemplate="%{x}<br>누적수익률: %{y:.2f}%<extra></extra>",
-            ))
-            fig_ret.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
-            fig_ret.update_layout(
-                template="plotly_dark", height=320,
-                title=dict(text="누적 수익률 추이", y=0.97, x=0.5, xanchor="center"),
-                yaxis_title="수익률(%)",
-                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
-                margin=dict(t=40, l=8, r=8, b=70),
-            )
-            st.plotly_chart(fig_ret, use_container_width=True)
-
-        # 벤치마크 비교
-        try:
-            bench_df = build_benchmark_return_df(monthly_perf_df)
-        except Exception:
-            bench_df = pd.DataFrame()
-
-        if bench_df is not None and not bench_df.empty and "month_label" in bench_df.columns:
-            st.markdown("#### 벤치마크 비교")
-            color_map = {
-                "내 기간수익률": "#ef4444",
-                "S&P500": "#22d3ee",
-                "나스닥100": "#f59e0b",
-                "KODEX200": "#a78bfa",
-            }
-            fig_bench = go.Figure()
-            for label in [c for c in bench_df.columns if c != "month_label"]:
-                part = bench_df[["month_label", label]].dropna().rename(columns={label: "y"})
-                if part.empty:
-                    continue
-                fig_bench.add_trace(go.Scatter(
-                    x=part["month_label"], y=part["y"],
-                    mode="lines+markers", name=label,
-                    line=dict(
-                        color=color_map.get(label, "#cbd5e1"),
-                        width=3 if label == "내 기간수익률" else 2,
-                        dash="solid" if label == "내 기간수익률" else "dot",
-                    ),
-                    hovertemplate=f"%{{x}}<br>{label}: %{{y:.2f}}%<extra></extra>",
-                ))
-            fig_bench.add_hline(y=0, line_color="#94a3b8", line_dash="dash")
-            fig_bench.update_layout(
-                template="plotly_dark", height=320,
-                title=dict(text="첫 기록월 대비 수익률 변화 vs 벤치마크", y=0.97, x=0.5, xanchor="center"),
-                yaxis_title="수익률(%)",
-                legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
-                margin=dict(t=40, l=8, r=8, b=70),
-            )
-            st.plotly_chart(fig_bench, use_container_width=True)
-    else:
-        st.info("월별 성과 기록이 없습니다.")
-
-
-if st.session_state.get("full_print_mode", False):
-    render_full_print_report()
-    st.stop()
-
