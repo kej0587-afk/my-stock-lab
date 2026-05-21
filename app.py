@@ -918,6 +918,9 @@ KNOWN_TICKER_DISPLAY_NAMES = {
     "247540": "에코프로비엠",
     "086520": "에코프로",
     "066970": "엘앤에프",
+    # 영숫자 혼합 6자리 KR ETF 코드 (isdigit() 검사 우회)
+    "0117V0": "TIGER 코리아AI전력기기TOP3플러스",
+    "0022T0": "SOL 국제금커버드콜액티브",
 }
 
 
@@ -1071,7 +1074,12 @@ def resolve_display_name_for_ticker(ticker, fallback=""):
         return known_name
 
     # [핵심] 한국 주식이면 네이버/KRX 이름만 쓰고 야후 파이낸스는 절대 조회하지 않음!
-    is_kr = ticker_clean.endswith((".KS", ".KQ")) or (symbol.isdigit() and len(symbol) == 6)
+    # 0117V0, 0022T0 같이 영숫자 혼합 6자리 코드도 KR로 인식
+    is_kr = (
+        ticker_clean.endswith((".KS", ".KQ"))
+        or (symbol.isdigit() and len(symbol) == 6)
+        or (len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum())
+    )
     if is_kr:
         for resolver in [lookup_kr_etf_display_name, lookup_naver_stock_name]:
             name = resolver(symbol)
@@ -1591,6 +1599,18 @@ def load_holdings_db_for_user(owner_email):
 def load_holdings_db():
     return load_holdings_db_for_user(PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
 
+def _normalize_kr_ticker_suffix(ticker: str) -> str:
+    """6자리 영숫자 KR 코드에 .KS 접미사가 없으면 자동으로 추가.
+    예: 0117V0 → 0117V0.KS, 069500 → 069500.KS
+    """
+    t = str(ticker or "").strip().upper()
+    if not t or t.endswith((".KS", ".KQ")):
+        return t
+    if len(t) == 6 and t[0].isdigit() and t.isalnum():
+        return t + ".KS"
+    return t
+
+
 def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("보유 종목 저장")
@@ -1599,6 +1619,7 @@ def save_holdings_db(df):
     row_keys = []
     for _, row in df.iterrows():
         ticker_value = sanitize_ticker_value(row.get("ticker", ""))
+        ticker_value = _normalize_kr_ticker_suffix(ticker_value)
         if not ticker_value:
             continue
 
@@ -16126,7 +16147,13 @@ def render_print_report_v2():
                 def _pnl_krw(row):
                     ticker = str(row.get("티커", "")).upper()
                     pnl = _num(row.get("평가손익"), 0.0)
-                    if ticker.endswith((".KS", ".KQ")) or "CASH" in ticker:
+                    code = ticker.replace(".KS", "").replace(".KQ", "")
+                    is_kr = (
+                        ticker.endswith((".KS", ".KQ"))
+                        or "CASH" in ticker
+                        or (len(code) == 6 and code[0].isdigit() and code.isalnum())
+                    )
+                    if is_kr:
                         return pnl
                     return pnl * _num(usdkrw, 1400.0)
                 report_df["평가손익_원화"] = report_df.apply(_pnl_krw, axis=1)
@@ -16807,7 +16834,13 @@ def render_full_print_report():
                 def _pnl_krw(row):
                     ticker = str(row.get("티커", "")).upper()
                     pnl = _num(row.get("평가손익"), 0.0)
-                    return pnl if (ticker.endswith((".KS", ".KQ")) or "CASH" in ticker) else pnl * _num(usdkrw, 1400.0)
+                    code = ticker.replace(".KS", "").replace(".KQ", "")
+                    is_kr = (
+                        ticker.endswith((".KS", ".KQ"))
+                        or "CASH" in ticker
+                        or (len(code) == 6 and code[0].isdigit() and code.isalnum())
+                    )
+                    return pnl if is_kr else pnl * _num(usdkrw, 1400.0)
                 rdf["평가손익_원화"] = rdf.apply(_pnl_krw, axis=1)
             else:
                 rdf["평가손익_원화"] = 0.0
@@ -18121,11 +18154,16 @@ if main_page == "asset":
     if not dash_df.empty:
 
 
-        dash_df["평가손익_원화"] = dash_df.apply(
-            lambda r: r["평가손익"] if str(r["티커"]).upper().endswith((".KS", ".KQ"))
-            else r["평가손익"] * usdkrw,
-            axis=1
-        )
+        def _dash_pnl_krw(r):
+            ticker = str(r["티커"]).upper()
+            code = ticker.replace(".KS", "").replace(".KQ", "")
+            is_kr = (
+                ticker.endswith((".KS", ".KQ"))
+                or "CASH" in ticker
+                or (len(code) == 6 and code[0].isdigit() and code.isalnum())
+            )
+            return r["평가손익"] if is_kr else r["평가손익"] * usdkrw
+        dash_df["평가손익_원화"] = dash_df.apply(_dash_pnl_krw, axis=1)
         dash_df["수익률_pct"] = dash_df["수익률"] * 100
         
         reserve_summary = calc_reserve_summary(dash_df, reserve_target_weight)

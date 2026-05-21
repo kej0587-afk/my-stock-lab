@@ -20,7 +20,11 @@ _NAVER_HEADERS = {
 
 def _is_kr_ticker(ticker: str) -> bool:
     t = str(ticker or "").strip().upper()
-    return t.endswith(".KS") or t.endswith(".KQ")
+    if t.endswith(".KS") or t.endswith(".KQ"):
+        return True
+    # 0117V0, 0022T0 같이 .KS 접미사 없는 6자리 영숫자 KR ETF 코드
+    code = re.sub(r"\.(KS|KQ)$", "", t, flags=re.IGNORECASE)
+    return len(code) == 6 and code[0].isdigit() and code.isalnum()
 
 
 def _kr_code(ticker: str) -> str:
