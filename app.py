@@ -12479,6 +12479,26 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     top1_weight = float(asset_df["전체비중"].max()) if not asset_df.empty else 0.0
     top3_weight = float(asset_df["전체비중"].head(3).sum()) if not asset_df.empty else 0.0
     hhi = float(((asset_df["전체비중"] / 100) ** 2).sum()) if not asset_df.empty else 0.0
+    if not asset_df.empty:
+        data_ok_mask = asset_df["데이터"].astype(str).eq("정상")
+        usable_asset_count = int(data_ok_mask.sum())
+        missing_asset_count = int((~data_ok_mask).sum())
+        usable_total_weight = float(asset_df.loc[data_ok_mask, "전체비중"].sum())
+        missing_total_weight = float(asset_df.loc[~data_ok_mask, "전체비중"].sum())
+        usable_active_weight = float(asset_df.loc[data_ok_mask, "운용비중"].sum())
+        missing_active_weight = float(asset_df.loc[~data_ok_mask, "운용비중"].sum())
+        missing_asset_names = [
+            str(row.get("자산명") or row.get("티커") or "").strip()
+            for _, row in asset_df.loc[~data_ok_mask, ["자산명", "티커"]].head(8).iterrows()
+        ]
+    else:
+        usable_asset_count = 0
+        missing_asset_count = 0
+        usable_total_weight = 0.0
+        missing_total_weight = 0.0
+        usable_active_weight = 0.0
+        missing_active_weight = 0.0
+        missing_asset_names = []
 
     portfolio_returns = pd.Series(dtype=float)
     portfolio_curve = pd.Series(dtype=float)
@@ -12568,6 +12588,44 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     reserve_component = min(reserve_gap * 1.5, 15)
     risk_index = min(vol_component + mdd_component + concentration_component + corr_component + leverage_component + reserve_component, 100)
     risk_grade, risk_color = classify_portfolio_risk(risk_index)
+    risk_components = [
+        {
+            "영역": "변동성",
+            "점수": vol_component,
+            "최대": 30,
+            "판단근거": f"연환산 변동성 {portfolio_vol:.1f}%" if np.isfinite(portfolio_vol) else "가격 데이터 부족",
+        },
+        {
+            "영역": "MDD",
+            "점수": mdd_component,
+            "최대": 30,
+            "판단근거": f"분석기간 MDD {portfolio_mdd:.1f}%" if np.isfinite(portfolio_mdd) else "가격 데이터 부족",
+        },
+        {
+            "영역": "집중도",
+            "점수": concentration_component,
+            "최대": 25,
+            "판단근거": f"1위 {top1_weight:.1f}%, 상위3개 {top3_weight:.1f}%",
+        },
+        {
+            "영역": "상관관계",
+            "점수": corr_component,
+            "최대": 15,
+            "판단근거": f"평균 상관계수 {avg_corr:.2f}" if np.isfinite(avg_corr) else "상관관계 산출 불가",
+        },
+        {
+            "영역": "레버리지",
+            "점수": leverage_component,
+            "최대": 20,
+            "판단근거": f"추가 환산노출 {leverage_summary.get('extra_exposure_pct', 0.0):.1f}%",
+        },
+        {
+            "영역": "대기자금",
+            "점수": reserve_component,
+            "최대": 15,
+            "판단근거": f"목표 대비 부족 {reserve_gap:.1f}%p" if reserve_gap > 0 else "목표 이상 확보",
+        },
+    ]
 
     if top1_weight >= 35:
         add_portfolio_risk_note(notes, "주의", "집중도", f"1위 자산 비중이 {top1_weight:.1f}%입니다.", "단일 종목/ETF 의존도가 높은지 확인하세요.")
@@ -12634,7 +12692,19 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "leverage_summary": leverage_summary,
         "leverage_df": leverage_df,
         "leverage_component": leverage_component,
-        "usable_asset_count": len(price_series),
+        "reserve_gap": reserve_gap,
+        "reserve_target_weight": reserve_target_weight,
+        "risk_components": risk_components,
+        "data_coverage": {
+            "usable_asset_count": usable_asset_count,
+            "missing_asset_count": missing_asset_count,
+            "usable_total_weight": usable_total_weight,
+            "missing_total_weight": missing_total_weight,
+            "usable_active_weight": usable_active_weight,
+            "missing_active_weight": missing_active_weight,
+            "missing_asset_names": missing_asset_names,
+        },
+        "usable_asset_count": usable_asset_count,
         "portfolio_observation_count": portfolio_observation_count,
         "analysis_start_date": analysis_start_date,
         "drawdown_details": drawdown_details,
@@ -12674,6 +12744,130 @@ def render_portfolio_sample_warning(metrics):
             f"가격 표본이 {observation_count}거래일입니다. 연환산 지표는 아직 짧은 기간을 1년으로 늘린 값이라 "
             "실제 장기 성과처럼 해석하면 안 됩니다."
         )
+
+
+def render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df=None):
+    risk_index = clean_float(metrics.get("risk_index"), 0.0)
+    risk_grade = str(metrics.get("risk_grade", "-"))
+    risk_color = str(metrics.get("risk_color", "#f97316"))
+    components = metrics.get("risk_components", []) or []
+    coverage = metrics.get("data_coverage", {}) or {}
+    leverage_summary = metrics.get("leverage_summary", {}) or {}
+
+    if risk_index >= 70:
+        status = "위험 관리 우선"
+        tone = "공격성은 살아 있지만 하락장 충격을 먼저 점검해야 하는 구간입니다."
+    elif risk_index >= 50:
+        status = "공격형 점검"
+        tone = "수익 추구 비중이 있는 포트폴리오입니다. 집중도와 대기자금을 같이 봐야 합니다."
+    elif risk_index >= 30:
+        status = "균형 유지"
+        tone = "현재는 무리한 위험 신호보다 균형 관리가 더 중요한 구간입니다."
+    else:
+        status = "안정권"
+        tone = "가격 변동 위험은 낮은 편입니다. 기회비용과 목표비중 미달 여부를 같이 보세요."
+
+    driver_components = sorted(
+        [c for c in components if clean_float(c.get("점수"), 0.0) > 0.5],
+        key=lambda c: clean_float(c.get("점수"), 0.0),
+        reverse=True,
+    )
+    if driver_components:
+        driver_text = ", ".join(
+            f"{c.get('영역')} {clean_float(c.get('점수'), 0.0):.1f}점"
+            for c in driver_components[:3]
+        )
+    else:
+        driver_text = "도드라진 단일 위험요인 없음"
+
+    actions = []
+    reserve_gap = clean_float(metrics.get("reserve_gap"), 0.0)
+    top1 = clean_float(metrics.get("top1_weight"), 0.0)
+    top3 = clean_float(metrics.get("top3_weight"), 0.0)
+    extra_exposure = clean_float(leverage_summary.get("extra_exposure_pct"), 0.0)
+    missing_weight = clean_float(coverage.get("missing_total_weight"), 0.0)
+    observation_count = int(clean_float(metrics.get("portfolio_observation_count"), 0))
+
+    if reserve_gap > 2:
+        actions.append(f"대기자금이 목표보다 {reserve_gap:.1f}%p 부족하니 신규 매수 속도를 조절하세요.")
+    if top1 >= 35:
+        actions.append(f"1위 자산 비중이 {top1:.1f}%라 추가매수 전 상한을 먼저 정하세요.")
+    elif top3 >= 65:
+        actions.append(f"상위 3개 자산이 {top3:.1f}%라 보완 섹터나 현금 비중을 같이 점검하세요.")
+    if extra_exposure >= 8:
+        actions.append(f"레버리지 추가 환산노출이 {extra_exposure:.1f}%p라 손실 허용폭을 별도 기준으로 두세요.")
+    if missing_weight >= 10:
+        actions.append(f"가격 데이터 부족 자산이 {missing_weight:.1f}%라 차트/수동 점검을 병행하세요.")
+    if observation_count and observation_count < 126:
+        actions.append("가격 표본이 짧아 연환산 수익률보다 구조와 비중을 우선 보세요.")
+    if not actions:
+        actions.append("현재 비중을 유지하되 목표비중 미달 자산만 천천히 분할 점검하세요.")
+    actions = actions[:3]
+
+    action_html = "<br>".join(f"{idx}. {html.escape(item)}" for idx, item in enumerate(actions, 1))
+    log_state = "월별 기록 있음" if isinstance(monthly_logs_df, pd.DataFrame) and not monthly_logs_df.empty else "월별 기록 없음"
+
+    st.markdown(f"""
+<div class='info-panel' style='border-left:5px solid {risk_color}; margin-bottom:12px;'>
+<b>포트폴리오 결론</b><br>
+<span class='highlight'>{html.escape(status)}</span> · 위험도 {html.escape(risk_grade)} ({risk_index:.0f}/100)<br>
+주요 원인: {html.escape(driver_text)}<br>
+{html.escape(tone)}<br><br>
+<b>이번 달 우선순위</b><br>
+{action_html}
+</div>
+""", unsafe_allow_html=True)
+
+    analysis_start = metrics.get("analysis_start_date")
+    start_text = analysis_start.strftime("%Y-%m") if isinstance(analysis_start, pd.Timestamp) else "선택 기간"
+    st.caption(
+        f"분석 기준: 실제 투자 성과는 월별 성과 기록({log_state})으로 보고, "
+        f"아래 위험지표는 {start_text} 이후 현재 보유비중을 가격 흐름에 적용한 참고 분석입니다."
+    )
+
+
+def render_portfolio_data_coverage_notice(metrics):
+    coverage = metrics.get("data_coverage", {}) or {}
+    usable_count = int(clean_float(coverage.get("usable_asset_count"), 0))
+    missing_count = int(clean_float(coverage.get("missing_asset_count"), 0))
+    usable_weight = clean_float(coverage.get("usable_total_weight"), 0.0)
+    missing_weight = clean_float(coverage.get("missing_total_weight"), 0.0)
+    missing_names = [name for name in coverage.get("missing_asset_names", []) if str(name).strip()]
+
+    if missing_count <= 0:
+        st.caption(f"가격 데이터 커버리지: 정상 {usable_count}개, 총자산 기준 {usable_weight:.1f}%가 위험지표 계산에 반영됐습니다.")
+        return
+
+    names_text = ", ".join(missing_names)
+    more_text = " 등" if missing_count > len(missing_names) else ""
+    asset_text = f"({names_text}{more_text})" if names_text else ""
+    st.warning(
+        f"가격 데이터 부족 자산 {missing_count}개가 있습니다"
+        f"{asset_text}. 총자산 기준 {missing_weight:.1f}%는 변동성/MDD/상관관계가 덜 반영될 수 있습니다."
+    )
+
+
+def render_portfolio_risk_breakdown(metrics):
+    components = metrics.get("risk_components", []) or []
+    if not components:
+        return
+
+    comp_df = pd.DataFrame(components)
+    if comp_df.empty:
+        return
+
+    comp_df["점수값"] = comp_df["점수"].apply(lambda v: clean_float(v, 0.0))
+    comp_df = comp_df.sort_values("점수값", ascending=False).reset_index(drop=True)
+    show_df = comp_df[["영역", "점수", "최대", "판단근거"]].copy()
+    show_df["점수"] = show_df.apply(
+        lambda row: f"{clean_float(row['점수'], 0.0):.1f} / {clean_float(row['최대'], 0.0):.0f}",
+        axis=1,
+    )
+    show_df = show_df.drop(columns=["최대"])
+
+    st.markdown("#### 위험점수 분해")
+    st.caption("위험도 총점이 어디서 올라왔는지 보여줍니다. 점수가 높은 항목부터 이번 달 점검 우선순위로 보면 됩니다.")
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
 
 
 def render_leverage_exposure_panel(metrics):
@@ -12965,6 +13159,10 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     m3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
     m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
     m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
+
+    render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
+    render_portfolio_data_coverage_notice(metrics)
+    render_portfolio_risk_breakdown(metrics)
 
     render_leverage_exposure_panel(metrics)
 
