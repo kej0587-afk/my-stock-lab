@@ -12415,6 +12415,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     active_df = get_active_portfolio_rows(full_df)
 
     asset_rows = []
+    strategy_rows = []
     price_series = {}
     notes = []
 
@@ -12430,6 +12431,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         weight_active = value_krw / active_value * 100 if active_value > 0 else 0.0
 
         target_weight = clean_float(row.get("목표비중"), 0.0)
+        bucket = normalize_bucket(row.get("bucket", "core"))
+        timing_text = str(row.get("기술적타점", "") or "").strip()
         row_info = {
             "자산명": name,
             "티커": ticker,
@@ -12443,6 +12446,15 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
             "MDD": np.nan,
             "데이터": "부족",
         }
+        strategy_rows.append({
+            "자산명": name or ticker,
+            "티커": ticker,
+            "버킷": bucket,
+            "기술적타점": timing_text,
+            "현재비중": weight_total,
+            "목표비중": target_weight,
+            "비중차이": target_weight - weight_total,
+        })
 
         try:
             px_df = load_price_df(ticker, period)
@@ -12473,12 +12485,54 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
 
     if not asset_df.empty:
         asset_df = asset_df.sort_values("전체비중", ascending=False).reset_index(drop=True)
+    strategy_df = pd.DataFrame(strategy_rows)
     asset_label_map = build_asset_label_map(asset_df)
     leverage_summary, leverage_df = calc_portfolio_leverage_summary(asset_df)
 
     top1_weight = float(asset_df["전체비중"].max()) if not asset_df.empty else 0.0
     top3_weight = float(asset_df["전체비중"].head(3).sum()) if not asset_df.empty else 0.0
     hhi = float(((asset_df["전체비중"] / 100) ** 2).sum()) if not asset_df.empty else 0.0
+    target_top3_weight = 0.0
+    target_concentration_gap = np.nan
+    leverage_control = {
+        "has_leverage": False,
+        "blocked_count": 0,
+        "overweight_block_count": 0,
+        "active_buy_count": 0,
+        "signals": [],
+    }
+    core_control = {
+        "core_count": 0,
+        "overheat_count": 0,
+        "under_target_count": 0,
+    }
+    if not strategy_df.empty:
+        sorted_strategy = strategy_df.sort_values("현재비중", ascending=False).reset_index(drop=True)
+        target_top3_weight = float(sorted_strategy["목표비중"].head(3).apply(clean_float).sum())
+        target_concentration_gap = top3_weight - target_top3_weight
+
+        lev_df = strategy_df[strategy_df["버킷"].astype(str).eq("leverage")].copy()
+        if not lev_df.empty:
+            lev_signals = lev_df["기술적타점"].fillna("").astype(str)
+            blocked_mask = lev_signals.str.contains("하드차단|구조훼손|과열패스|추매금지|비중 초과|비중 충족", regex=True)
+            overweight_mask = lev_signals.str.contains("비중 초과|비중 충족", regex=True)
+            buy_mask = lev_signals.str.contains("매수|DCA|진입", regex=True) & ~blocked_mask
+            leverage_control = {
+                "has_leverage": True,
+                "blocked_count": int(blocked_mask.sum()),
+                "overweight_block_count": int(overweight_mask.sum()),
+                "active_buy_count": int(buy_mask.sum()),
+                "signals": [s for s in lev_signals.tolist() if s],
+            }
+
+        core_df = strategy_df[strategy_df["버킷"].astype(str).eq("core")].copy()
+        if not core_df.empty:
+            core_signals = core_df["기술적타점"].fillna("").astype(str)
+            core_control = {
+                "core_count": int(len(core_df)),
+                "overheat_count": int(core_signals.str.contains("과열", regex=False).sum()),
+                "under_target_count": int((core_df["비중차이"].apply(clean_float) > 0.2).sum()),
+            }
     if not asset_df.empty:
         data_ok_mask = asset_df["데이터"].astype(str).eq("정상")
         usable_asset_count = int(data_ok_mask.sum())
@@ -12685,6 +12739,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "avg_corr": avg_corr,
         "top1_weight": top1_weight,
         "top3_weight": top3_weight,
+        "target_top3_weight": target_top3_weight,
+        "target_concentration_gap": target_concentration_gap,
         "hhi": hhi,
         "active_value": active_value,
         "total_asset": total_asset,
@@ -12695,6 +12751,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "reserve_gap": reserve_gap,
         "reserve_target_weight": reserve_target_weight,
         "risk_components": risk_components,
+        "leverage_control": leverage_control,
+        "core_control": core_control,
         "data_coverage": {
             "usable_asset_count": usable_asset_count,
             "missing_asset_count": missing_asset_count,
@@ -12753,6 +12811,8 @@ def render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df=None):
     components = metrics.get("risk_components", []) or []
     coverage = metrics.get("data_coverage", {}) or {}
     leverage_summary = metrics.get("leverage_summary", {}) or {}
+    leverage_control = metrics.get("leverage_control", {}) or {}
+    core_control = metrics.get("core_control", {}) or {}
 
     if risk_index >= 70:
         status = "위험 관리 우선"
@@ -12784,18 +12844,35 @@ def render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df=None):
     reserve_gap = clean_float(metrics.get("reserve_gap"), 0.0)
     top1 = clean_float(metrics.get("top1_weight"), 0.0)
     top3 = clean_float(metrics.get("top3_weight"), 0.0)
+    target_top3 = clean_float(metrics.get("target_top3_weight"), np.nan)
+    target_gap = clean_float(metrics.get("target_concentration_gap"), np.nan)
+    target_designed_concentration = np.isfinite(target_top3) and target_top3 >= 70 and np.isfinite(target_gap) and abs(target_gap) <= 5
+    if target_designed_concentration and "집중도" in driver_text:
+        driver_text = driver_text.replace("집중도", "집중도(목표설계)")
     extra_exposure = clean_float(leverage_summary.get("extra_exposure_pct"), 0.0)
+    leverage_blocked = int(clean_float(leverage_control.get("blocked_count"), 0)) > 0
+    leverage_overweight_blocked = int(clean_float(leverage_control.get("overweight_block_count"), 0)) > 0
     missing_weight = clean_float(coverage.get("missing_total_weight"), 0.0)
     observation_count = int(clean_float(metrics.get("portfolio_observation_count"), 0))
 
     if reserve_gap > 2:
         actions.append(f"대기자금이 목표보다 {reserve_gap:.1f}%p 부족하니 신규 매수 속도를 조절하세요.")
-    if top1 >= 35:
+    if target_designed_concentration:
+        tone = "목표비중 자체가 공격형 집중 구조입니다. 나쁜 상태라는 뜻보다 하락장 충격을 감수하는 설계인지 확인하는 신호입니다."
+        actions.append(f"상위 3개 {top3:.1f}%는 목표 설계({target_top3:.1f}%)와 거의 일치합니다. 매도 신호가 아니라 집중형 전략 확인 신호입니다.")
+    elif top1 >= 35:
         actions.append(f"1위 자산 비중이 {top1:.1f}%라 추가매수 전 상한을 먼저 정하세요.")
     elif top3 >= 65:
         actions.append(f"상위 3개 자산이 {top3:.1f}%라 보완 섹터나 현금 비중을 같이 점검하세요.")
     if extra_exposure >= 8:
-        actions.append(f"레버리지 추가 환산노출이 {extra_exposure:.1f}%p라 손실 허용폭을 별도 기준으로 두세요.")
+        if leverage_overweight_blocked:
+            actions.append(f"레버리지는 이미 비중 초과/충족으로 차단 중입니다. 추가매수보다 코어 부족분과 대기자금 복구를 우선하세요.")
+        elif leverage_blocked:
+            actions.append(f"레버리지는 현재 차단 신호가 있습니다. 단계별 DCA 기준이 풀릴 때까지 추가매수는 보류하세요.")
+        else:
+            actions.append(f"레버리지 추가 환산노출이 {extra_exposure:.1f}%p라 손실 허용폭을 별도 기준으로 두세요.")
+    elif int(clean_float(core_control.get("under_target_count"), 0)) > 0 and int(clean_float(core_control.get("overheat_count"), 0)) > 0:
+        actions.append("코어는 과열이어도 목표 미달분을 천천히 적립하는 구조입니다. 일괄매수보다 정해둔 투입률을 지키세요.")
     if missing_weight >= 10:
         actions.append(f"가격 데이터 부족 자산이 {missing_weight:.1f}%라 차트/수동 점검을 병행하세요.")
     if observation_count and observation_count < 126:
