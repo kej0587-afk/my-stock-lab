@@ -11922,6 +11922,187 @@ def calc_series_mdd(series):
     return float(drawdown.min()) if not drawdown.empty else 0.0
 
 
+def calc_drawdown_details(portfolio_curve):
+    """낙폭 구간 상세: 수중(underwater) 시리즈, 평균낙폭, MDD지속일, 회복일."""
+    if portfolio_curve is None or len(portfolio_curve) < 2:
+        return {}
+    series = pd.Series(portfolio_curve).dropna()
+    running_max = series.cummax()
+    drawdown = series / running_max - 1
+    underwater = drawdown * 100  # percent series
+
+    in_dd = drawdown[drawdown < -0.001]
+    avg_drawdown = float(in_dd.mean() * 100) if not in_dd.empty else 0.0
+
+    # Longest continuous drawdown duration (trading days)
+    dd_bool = (drawdown < -0.001)
+    max_dur = cur_dur = 0
+    for v in dd_bool:
+        cur_dur = cur_dur + 1 if v else 0
+        max_dur = max(max_dur, cur_dur)
+
+    # Recovery time from MDD bottom
+    mdd_idx = int(drawdown.argmin())
+    peak_val = float(running_max.iloc[mdd_idx])
+    recovery_days = np.nan
+    if mdd_idx < len(series) - 1:
+        post = series.iloc[mdd_idx:]
+        recovered = post[post >= peak_val]
+        if not recovered.empty:
+            recovery_days = (recovered.index[0] - series.index[mdd_idx]).days
+
+    # Count distinct drawdown periods
+    n_periods = 0
+    in_period = False
+    for v in dd_bool:
+        if v and not in_period:
+            n_periods += 1
+            in_period = True
+        elif not v:
+            in_period = False
+
+    return {
+        "underwater": underwater,
+        "avg_drawdown": avg_drawdown,
+        "mdd_duration_days": max_dur,
+        "mdd_recovery_days": recovery_days,
+        "n_drawdown_periods": n_periods,
+    }
+
+
+def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
+    """벤치마크 대비 Beta, Alpha(Jensen), Tracking Error, Information Ratio."""
+    if portfolio_returns is None or portfolio_returns.empty:
+        return {}
+    try:
+        bm_df = load_price_df(benchmark_ticker, period)
+        if bm_df is None or bm_df.empty or "Close" not in bm_df.columns:
+            return {}
+        bm_close = pd.Series(bm_df["Close"]).dropna()
+        bm_close.index = normalize_datetime_index_no_tz(bm_close.index)
+        if analysis_start_date is not None:
+            bm_close = bm_close[bm_close.index >= analysis_start_date]
+        bm_returns = bm_close.pct_change().dropna()
+
+        common = portfolio_returns.index.intersection(bm_returns.index)
+        if len(common) < 20:
+            return {}
+        pr = portfolio_returns.loc[common]
+        br = bm_returns.loc[common]
+
+        bm_var = float(br.var())
+        if bm_var <= 0:
+            return {}
+
+        beta = float(np.cov(pr.values, br.values)[0, 1] / bm_var)
+        bm_period_ret = float(bm_close.iloc[-1] / bm_close.iloc[0] - 1) if len(bm_close) > 1 else np.nan
+        bm_annual = annualize_period_return(bm_period_ret, len(br)) if np.isfinite(bm_period_ret) else np.nan
+        port_annual = annualize_period_return(float((1 + pr).prod() - 1), len(pr))
+
+        alpha = np.nan
+        if np.isfinite(bm_annual) and np.isfinite(port_annual):
+            alpha = (port_annual - (rf_rate + beta * (bm_annual - rf_rate))) * 100
+
+        active_ret = pr - br
+        tracking_error = float(active_ret.std() * np.sqrt(252) * 100)
+        info_ratio = ratio_or_nan(float(active_ret.mean() * 252 * 100), tracking_error)
+
+        return {
+            "beta": round(beta, 2),
+            "alpha": round(alpha, 2) if np.isfinite(alpha) else np.nan,
+            "tracking_error": round(tracking_error, 1),
+            "info_ratio": round(info_ratio, 2) if np.isfinite(info_ratio) else np.nan,
+            "bm_annual_return": round(bm_annual * 100, 1) if np.isfinite(bm_annual) else np.nan,
+            "bm_period_return": round(bm_period_ret * 100, 1) if np.isfinite(bm_period_ret) else np.nan,
+            "benchmark_ticker": benchmark_ticker,
+            "n_common_days": len(common),
+        }
+    except Exception:
+        return {}
+
+
+def calc_rolling_metrics(portfolio_returns, window=63, rf_rate=0.035):
+    """Rolling Sharpe(window일)·변동성 시리즈 반환."""
+    if portfolio_returns is None or len(portfolio_returns) < window + 5:
+        return pd.DataFrame()
+    rolling_vol = portfolio_returns.rolling(window).std() * np.sqrt(252) * 100
+    rolling_ret = portfolio_returns.rolling(window).mean() * 252
+    rolling_sharpe = ((rolling_ret - rf_rate) / (rolling_vol / 100)).replace([np.inf, -np.inf], np.nan)
+    df = pd.DataFrame({"rolling_vol": rolling_vol, "rolling_sharpe": rolling_sharpe}, index=portfolio_returns.index)
+    return df.dropna(how="all")
+
+
+# 역사적 위기 시나리오: (이름, 시작, 종료, 설명, 미국충격%, 한국충격%)
+_STRESS_SCENARIOS = [
+    ("2008 금융위기",      "2008-09-01", "2008-11-28", "리먼 파산, 글로벌 금융 시스템 붕괴",         -35.0, -30.0),
+    ("2020 코로나 폭락",   "2020-02-20", "2020-03-23", "팬데믹 선언 직후 사상 최대 속도 급락",        -34.0, -35.0),
+    ("2022 금리인상 충격", "2022-01-03", "2022-10-12", "Fed 급격한 금리인상, 성장주·채권 동반하락",   -25.0, -28.0),
+    ("2011 유럽 재정위기", "2011-07-21", "2011-10-03", "그리스 부채·미국 신용등급 강등 동시 발생",    -20.0, -25.0),
+]
+
+
+def calc_historical_stress_test(price_series_dict, asset_df, total_asset):
+    """각 위기 시나리오별 포트폴리오 추정 손익 산출."""
+    from stock_lab_core.prices import _is_kr_ticker
+
+    def _asset_shock(ticker, asset_name, us_s, kr_s, t_start, t_end):
+        is_kr = _is_kr_ticker(ticker)
+        base = kr_s if is_kr else us_s
+        # 실제 가격 데이터 우선
+        if ticker in price_series_dict:
+            try:
+                s = price_series_dict[ticker]
+                mask = (s.index >= pd.Timestamp(t_start)) & (s.index <= pd.Timestamp(t_end))
+                rng = s[mask]
+                if len(rng) >= 10:
+                    return float(rng.iloc[-1] / rng.iloc[0] - 1) * 100
+            except Exception:
+                pass
+        # 프록시 충격 (레버리지·인버스·자산유형 반영)
+        text = f"{str(ticker).upper()} {str(asset_name or '').upper()}"
+        if any(k in text for k in ["SQQQ", "SOXS", "SPXU", "SDOW", "인버스", "INVERSE", "BEAR", "곱버스"]):
+            return base * -1.5
+        if any(k in text for k in ["3X", "TQQQ", "SOXL", "SPXL", "UPRO", "TECL", "FNGU", "BULZ"]):
+            return base * 2.8
+        if any(k in text for k in ["2X", "2배", "QLD", "SSO", "레버리지", "LEVERAGE"]):
+            return base * 1.85
+        if any(k in text for k in ["GLD", "IAU", "금커버", "GOLD"]):
+            return base * 0.05
+        if any(k in text for k in ["TLT", "IEF", "AGG", "BND", "채권"]):
+            return base * -0.25  # 위기 시 채권은 반대 방향
+        if "CASH" in text:
+            return 0.0
+        return base
+
+    results = []
+    for name_kr, t_start, t_end, desc, us_s, kr_s in _STRESS_SCENARIOS:
+        port_shock = 0.0
+        asset_breakdown = []
+        for _, row in asset_df.iterrows():
+            ticker = str(row.get("티커", "")).strip()
+            aname = str(row.get("자산명", ""))
+            wt = clean_float(row.get("전체비중"), 0.0) / 100
+            if wt <= 0 or not ticker:
+                continue
+            shock = _asset_shock(ticker, aname, us_s, kr_s, t_start, t_end)
+            contrib = wt * shock
+            port_shock += contrib
+            asset_breakdown.append({
+                "자산명": aname or ticker,
+                "개별충격(%)": round(shock, 1),
+                "기여(%)": round(contrib, 2),
+            })
+        results.append({
+            "시나리오": name_kr,
+            "기간": f"{t_start[:7]} ~ {t_end[:7]}",
+            "설명": desc,
+            "포트 추정 손익(%)": round(port_shock, 1),
+            "추정 손실액(원)": int(-total_asset * port_shock / 100) if port_shock < 0 else 0,
+            "asset_breakdown": asset_breakdown,
+        })
+    return results
+
+
 def get_active_portfolio_rows(holdings_table):
     if holdings_table is None or holdings_table.empty:
         return pd.DataFrame()
@@ -12318,6 +12499,11 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     risk_contrib_df = pd.DataFrame()
     avg_corr = np.nan
     portfolio_observation_count = 0
+    drawdown_details = {}
+    benchmark_metrics_voo = {}
+    benchmark_metrics_kr = {}
+    rolling_df = pd.DataFrame()
+    stress_results = []
 
     if price_series:
         prices = pd.concat(price_series.values(), axis=1).sort_index().ffill(limit=3)
@@ -12358,6 +12544,14 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     active_var_95_krw = total_asset * abs(daily_var_95) / 100 if np.isfinite(daily_var_95) else np.nan
                     active_cvar_95_krw = total_asset * abs(daily_cvar_95) / 100 if np.isfinite(daily_cvar_95) else np.nan
                     risk_contrib_df = build_risk_contribution_df(asset_df, aligned_returns, weights)
+                    drawdown_details = calc_drawdown_details(portfolio_curve)
+                    rolling_df = calc_rolling_metrics(portfolio_returns)
+                    benchmark_metrics_voo = calc_benchmark_comparison(
+                        portfolio_returns, "VOO", period, analysis_start_date=analysis_start_date
+                    )
+                    benchmark_metrics_kr = calc_benchmark_comparison(
+                        portfolio_returns, "069500.KS", period, analysis_start_date=analysis_start_date
+                    )
 
                 if len(weights.index) >= 2:
                     corr_df = aligned_returns.corr()
@@ -12408,6 +12602,10 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         if clean_float(top_risk.get("리스크기여도"), 0.0) >= 45:
             add_portfolio_risk_note(notes, "주의", "리스크기여도", f"{top_risk.get('자산명')} 리스크 기여도가 {clean_float(top_risk.get('리스크기여도')):.1f}%입니다.", "비중보다 실제 변동성 영향이 큰 자산인지 확인하세요.")
 
+    # 스트레스 테스트는 asset_df 구성 후 실행
+    if not asset_df.empty:
+        stress_results = calc_historical_stress_test(price_series, asset_df, total_asset)
+
     notes_df = pd.DataFrame(notes, columns=["등급", "영역", "내용", "확인/조치"])
     metrics = {
         "risk_index": risk_index,
@@ -12439,6 +12637,11 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "usable_asset_count": len(price_series),
         "portfolio_observation_count": portfolio_observation_count,
         "analysis_start_date": analysis_start_date,
+        "drawdown_details": drawdown_details,
+        "benchmark_voo": benchmark_metrics_voo,
+        "benchmark_kr": benchmark_metrics_kr,
+        "rolling_df": rolling_df,
+        "stress_results": stress_results,
     }
 
     return metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df
@@ -13033,6 +13236,173 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     else:
         st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
 
+    # ── 낙폭 상세 분석 ────────────────────────────────────────────────────
+    dd = metrics.get("drawdown_details", {})
+    if dd and "underwater" in dd:
+        st.markdown("#### 낙폭 상세 분석")
+        dd_c1, dd_c2, dd_c3, dd_c4 = st.columns(4)
+        avg_dd = dd.get("avg_drawdown", np.nan)
+        dur = dd.get("mdd_duration_days", np.nan)
+        rec = dd.get("mdd_recovery_days", np.nan)
+        n_dd = dd.get("n_drawdown_periods", 0)
+        dd_c1.metric("평균 낙폭",     f"{avg_dd:.1f}%" if np.isfinite(avg_dd) else "-")
+        dd_c2.metric("MDD 지속(영업일)", f"{int(dur)}일" if np.isfinite(dur) and dur > 0 else "-")
+        dd_c3.metric("MDD 회복기간",  f"{int(rec)}일" if np.isfinite(rec) else "미회복")
+        dd_c4.metric("낙폭 구간 수",  f"{n_dd}회")
+        underwater = dd["underwater"]
+        if not underwater.empty:
+            fig_uw = go.Figure()
+            fig_uw.add_trace(go.Scatter(
+                x=underwater.index,
+                y=underwater.values,
+                mode="lines",
+                fill="tozeroy",
+                fillcolor="rgba(239,68,68,0.25)",
+                line=dict(color="#ef4444", width=1.5),
+                hovertemplate="%{x|%Y-%m-%d}<br>낙폭: %{y:.2f}%<extra></extra>",
+                name="수중(Underwater)",
+            ))
+            fig_uw.add_hline(y=0, line_color="rgba(255,255,255,0.3)", line_dash="dot")
+            fig_uw.update_layout(
+                template="plotly_dark",
+                height=220,
+                yaxis_title="낙폭(%)",
+                margin=dict(t=10, b=30),
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig_uw, use_container_width=True)
+            st.caption("Underwater 차트: 고점 대비 현재 포트폴리오가 얼마나 아래에 있는지 보여줍니다. 0선 위로 올라오면 전 고점 회복입니다.")
+
+    # ── 롤링 지표 ─────────────────────────────────────────────────────────
+    rolling_df_local = metrics.get("rolling_df", pd.DataFrame())
+    if rolling_df_local is not None and not rolling_df_local.empty:
+        st.markdown("#### 롤링 지표 (63일 이동창)")
+        st.caption("분석 기간 내 3개월(63거래일) 이동창으로 본 변동성·Sharpe 추이입니다. 지표가 꾸준히 개선·유지되는지 확인하세요.")
+        fig_roll = go.Figure()
+        if "rolling_vol" in rolling_df_local.columns:
+            fig_roll.add_trace(go.Scatter(
+                x=rolling_df_local.index,
+                y=rolling_df_local["rolling_vol"],
+                mode="lines",
+                name="롤링 변동성(%)",
+                line=dict(color="#f97316", width=2),
+                yaxis="y1",
+                hovertemplate="%{x|%Y-%m-%d}<br>변동성: %{y:.1f}%<extra></extra>",
+            ))
+        if "rolling_sharpe" in rolling_df_local.columns:
+            fig_roll.add_trace(go.Scatter(
+                x=rolling_df_local.index,
+                y=rolling_df_local["rolling_sharpe"],
+                mode="lines",
+                name="롤링 Sharpe",
+                line=dict(color="#38bdf8", width=2),
+                yaxis="y2",
+                hovertemplate="%{x|%Y-%m-%d}<br>Sharpe: %{y:.2f}<extra></extra>",
+            ))
+        fig_roll.add_hline(y=0, line_color="rgba(255,255,255,0.2)", line_dash="dot", row=1, col=1)
+        fig_roll.update_layout(
+            template="plotly_dark",
+            height=280,
+            yaxis=dict(title="변동성(%)", side="left", showgrid=False),
+            yaxis2=dict(title="Sharpe", side="right", overlaying="y", showgrid=True, gridcolor="rgba(255,255,255,0.08)"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(t=10, b=30),
+        )
+        st.plotly_chart(fig_roll, use_container_width=True)
+
+    # ── 벤치마크 비교 ─────────────────────────────────────────────────────
+    bm_voo = metrics.get("benchmark_voo", {})
+    bm_kr  = metrics.get("benchmark_kr", {})
+    if bm_voo or bm_kr:
+        st.markdown("#### 벤치마크 비교")
+        st.caption(
+            "**Beta**: 벤치마크 1% 움직임에 내 포트가 얼마나 반응하는지. 1이면 시장과 같이 움직임.  "
+            "**Alpha(Jensen's α)**: 베타 위험을 감안한 초과수익. 양수면 시장 대비 더 벌었음.  "
+            "**Tracking Error**: 벤치마크 대비 일간수익률 차이의 변동성(연환산).  "
+            "**IR(정보비율)**: 초과수익 / Tracking Error. 높을수록 벤치 대비 효율적."
+        )
+        bm_col1, bm_col2 = st.columns(2)
+        for col, bm, label in [(bm_col1, bm_voo, "vs VOO(미국 S&P500)"), (bm_col2, bm_kr, "vs KODEX200(한국)")]:
+            if not bm:
+                col.info(f"{label}: 데이터 부족")
+                continue
+            with col:
+                st.markdown(f"**{label}**")
+                b1, b2 = st.columns(2)
+                b3, b4 = st.columns(2)
+                b1.metric("Beta",          f"{bm.get('beta', '-'):.2f}" if np.isfinite(clean_float(bm.get('beta'), np.nan)) else "-")
+                b2.metric("Alpha(연환산)",  f"{bm.get('alpha', '-'):.1f}%" if np.isfinite(clean_float(bm.get('alpha'), np.nan)) else "-")
+                b3.metric("Tracking Error", f"{bm.get('tracking_error', '-'):.1f}%" if np.isfinite(clean_float(bm.get('tracking_error'), np.nan)) else "-")
+                b4.metric("IR",            f"{bm.get('info_ratio', '-'):.2f}" if np.isfinite(clean_float(bm.get('info_ratio'), np.nan)) else "-")
+                bm_ret = bm.get("bm_period_return", np.nan)
+                port_ret = metrics.get("portfolio_period_return", np.nan)
+                if np.isfinite(clean_float(bm_ret, np.nan)) and np.isfinite(clean_float(port_ret, np.nan)):
+                    gap = clean_float(port_ret) - clean_float(bm_ret)
+                    st.caption(f"분석기간 포트 {clean_float(port_ret):.1f}% vs {label.split('(')[0].strip()} {clean_float(bm_ret):.1f}% → 초과 {gap:+.1f}%")
+                n_days = bm.get("n_common_days", 0)
+                st.caption(f"공통 관측일: {n_days}일")
+
+    # ── 스트레스 테스트 ───────────────────────────────────────────────────
+    stress = metrics.get("stress_results", [])
+    if stress:
+        st.markdown("#### 역사적 위기 스트레스 테스트")
+        st.caption(
+            "과거 주요 위기 구간에 현재 포트폴리오를 그대로 보유했다면 얼마나 손실이 났을지 추정합니다. "
+            "가격 데이터가 있는 자산은 실제 구간 가격 변동, 없는 자산은 자산유형별 프록시 충격을 적용합니다. "
+            "참고용 추정치이며 실제 손실과 다를 수 있습니다."
+        )
+        sc_rows = []
+        for r in stress:
+            pnl = r.get("포트 추정 손익(%)", 0.0)
+            loss_krw = r.get("추정 손실액(원)", 0)
+            sc_rows.append({
+                "시나리오": r["시나리오"],
+                "기간": r["기간"],
+                "설명": r["설명"],
+                "추정 손익(%)": f"{pnl:+.1f}%",
+                "추정 손실액": f"{loss_krw:,.0f}원" if loss_krw > 0 else "이익",
+            })
+        sc_df = pd.DataFrame(sc_rows)
+        st.dataframe(sc_df, use_container_width=True, hide_index=True)
+
+        # 시나리오별 바 차트
+        fig_stress = go.Figure()
+        colors = ["#ef4444" if r.get("포트 추정 손익(%)", 0) < 0 else "#22c55e" for r in stress]
+        fig_stress.add_trace(go.Bar(
+            x=[r["시나리오"] for r in stress],
+            y=[r.get("포트 추정 손익(%)", 0) for r in stress],
+            marker_color=colors,
+            text=[f"{r.get('포트 추정 손익(%)', 0):+.1f}%" for r in stress],
+            textposition="outside",
+            hovertemplate="%{x}<br>추정 손익: %{y:.1f}%<extra></extra>",
+        ))
+        fig_stress.update_layout(
+            template="plotly_dark",
+            height=280,
+            yaxis_title="추정 손익(%)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            showlegend=False,
+            margin=dict(t=30, b=10),
+        )
+        st.plotly_chart(fig_stress, use_container_width=True)
+
+        # 자산별 기여도 상세 (펼치기)
+        with st.expander("자산별 충격 기여도 상세"):
+            for r in stress:
+                bd = r.get("asset_breakdown", [])
+                if not bd:
+                    continue
+                st.markdown(f"**{r['시나리오']}** ({r['기간']}) — 포트 추정 {r.get('포트 추정 손익(%)', 0):+.1f}%")
+                bd_df = pd.DataFrame(bd).sort_values("기여(%)")
+                bd_df["개별충격(%)"] = bd_df["개별충격(%)"].apply(lambda v: f"{v:+.1f}%")
+                bd_df["기여(%)"] = bd_df["기여(%)"].apply(lambda v: f"{v:+.2f}%")
+                st.dataframe(bd_df, use_container_width=True, hide_index=True)
+
     # ── 종합 평가 ──────────────────────────────────────────────────────────
     st.markdown("#### 📋 종합 포트폴리오 평가")
     _eval_lines: list[str] = []
@@ -13092,6 +13462,34 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         _eval_lines.append(f"**대기자금 부족**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%. 하락 시 투입 여력이 부족합니다.")
     else:
         _eval_lines.append(f"**대기자금 충분**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%.")
+
+    # 벤치마크 비교 요약
+    _bm_voo = metrics.get("benchmark_voo", {})
+    _bm_kr  = metrics.get("benchmark_kr", {})
+    for _bm, _bm_name in [(_bm_voo, "VOO"), (_bm_kr, "KODEX200")]:
+        if not _bm:
+            continue
+        _alpha = clean_float(_bm.get("alpha"), np.nan)
+        _beta  = clean_float(_bm.get("beta"), np.nan)
+        _ir    = clean_float(_bm.get("info_ratio"), np.nan)
+        if np.isfinite(_alpha) and np.isfinite(_beta):
+            _alpha_comment = "시장 대비 초과수익" if _alpha > 0 else "시장 대비 부진"
+            _beta_comment  = "방어적" if _beta < 0.8 else "시장과 비슷" if _beta < 1.2 else "공격적"
+            _ir_str = f", IR {_ir:.2f}" if np.isfinite(_ir) else ""
+            _eval_lines.append(
+                f"**벤치마크({_bm_name})**: Beta {_beta:.2f}({_beta_comment}), Alpha {_alpha:+.1f}%({_alpha_comment}){_ir_str}."
+            )
+
+    # 스트레스 테스트 요약 (최악 시나리오)
+    _stress = metrics.get("stress_results", [])
+    if _stress:
+        _worst = min(_stress, key=lambda r: r.get("포트 추정 손익(%)", 0))
+        _wpnl  = _worst.get("포트 추정 손익(%)", 0)
+        _wloss = _worst.get("추정 손실액(원)", 0)
+        _comment = "양호(−15% 이내)" if _wpnl > -15 else "주의(−15~−25%)" if _wpnl > -25 else "위험(−25% 이상)"
+        _eval_lines.append(
+            f"**최악 시나리오({_worst['시나리오']})**: 포트 추정 손익 {_wpnl:+.1f}%, 손실액 {_wloss:,.0f}원 — {_comment}."
+        )
 
     _eval_html = "<br>".join(f"• {line}" for line in _eval_lines)
     st.markdown(
