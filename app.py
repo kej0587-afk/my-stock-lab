@@ -12248,11 +12248,14 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         weight_total = value_krw / total_asset * 100 if total_asset > 0 else 0.0
         weight_active = value_krw / active_value * 100 if active_value > 0 else 0.0
 
+        target_weight = clean_float(row.get("목표비중"), 0.0)
         row_info = {
             "자산명": name,
             "티커": ticker,
             "원화환산": value_krw,
             "전체비중": weight_total,
+            "목표비중": target_weight,
+            "비중차이": target_weight - weight_total,
             "운용비중": weight_active,
             "기간수익률": np.nan,
             "연환산변동성": np.nan,
@@ -12284,7 +12287,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         asset_rows.append(row_info)
 
     asset_df = pd.DataFrame(asset_rows, columns=[
-        "자산명", "티커", "원화환산", "전체비중", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
+        "자산명", "티커", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
     ])
 
     if not asset_df.empty:
@@ -12322,14 +12325,15 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
 
         usable_cols = [col for col in returns_df.columns if col in set(asset_df["티커"])]
         if usable_cols:
+            # 전체비중(현금 포함 총자산 기준) 사용 — 운용비중으로 재정규화하면 현금의 리스크 완충 효과가 사라짐
             weight_map = {
-                str(row["티커"]): clean_float(row["운용비중"], 0.0) / 100
+                str(row["티커"]): clean_float(row["전체비중"], 0.0) / 100
                 for _, row in asset_df.iterrows()
                 if str(row["티커"]) in usable_cols
             }
             weight_sum = sum(weight_map.values())
             if weight_sum > 0:
-                weights = pd.Series({ticker: weight / weight_sum for ticker, weight in weight_map.items()})
+                weights = pd.Series({ticker: weight for ticker, weight in weight_map.items()})
                 aligned_returns = returns_df[weights.index].copy()
                 portfolio_returns = aligned_returns.mul(weights, axis=1).sum(axis=1)
                 if not portfolio_returns.empty:
@@ -12350,8 +12354,9 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     calmar_ratio = ratio_or_nan(annual_return_decimal, abs(portfolio_mdd_decimal))
                     daily_var_95, daily_cvar_95 = calc_var_cvar(portfolio_returns, 0.95)
                     monthly_var_95 = daily_var_95 * np.sqrt(21) if np.isfinite(daily_var_95) else np.nan
-                    active_var_95_krw = active_value * abs(daily_var_95) / 100 if np.isfinite(daily_var_95) else np.nan
-                    active_cvar_95_krw = active_value * abs(daily_cvar_95) / 100 if np.isfinite(daily_cvar_95) else np.nan
+                    # 전체자산 기준으로 VaR/CVaR 원화 손실액 산출 (현금 비중이 이미 수익률에 반영됨)
+                    active_var_95_krw = total_asset * abs(daily_var_95) / 100 if np.isfinite(daily_var_95) else np.nan
+                    active_cvar_95_krw = total_asset * abs(daily_cvar_95) / 100 if np.isfinite(daily_cvar_95) else np.nan
                     risk_contrib_df = build_risk_contribution_df(asset_df, aligned_returns, weights)
 
                 if len(weights.index) >= 2:
@@ -12790,7 +12795,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
     tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
     tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
-    st.caption("Risk Metrics는 가격 데이터가 있는 운용자산 기준입니다. VaR/CVaR는 과거 일간수익률 기반의 참고 손실 추정치이며 미래 손실 한도가 아닙니다.")
+    st.caption("Risk Metrics는 총자산(현금 포함) 기준의 가중 포트폴리오 수익률을 사용합니다. VaR/CVaR 손실액도 총자산 기준이며, 현금 비중이 높을수록 손실 추정액이 낮아집니다. 미래 손실 한도가 아닌 참고값입니다.")
     render_portfolio_sample_warning(metrics)
 
     render_long_term_goal_simulator(metrics)
@@ -12805,13 +12810,58 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         st.info("분석할 운용대상 보유자산이 없습니다.")
         return
 
+    # ── 목표비중 vs 현재비중 비교 ──────────────────────────────────────────
+    if "목표비중" in asset_df.columns and asset_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum() > 0:
+        st.markdown("#### 목표비중 vs 현재비중")
+        st.caption(
+            "**현재비중**: 총자산(현금 포함) 대비 해당 자산의 비중. "
+            "**목표비중**: 보유종목관리에서 설정한 목표 배분. "
+            "**비중차이**: 목표 − 현재(양수=미달, 음수=초과)."
+        )
+        wt_df = asset_df[["자산명", "티커", "전체비중", "목표비중", "비중차이"]].copy()
+        wt_df = wt_df[wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)) > 0].copy()
+        if not wt_df.empty:
+            wt_df = wt_df.sort_values("비중차이", ascending=False).reset_index(drop=True)
+            wt_show = wt_df.copy()
+            for col in ["전체비중", "목표비중", "비중차이"]:
+                wt_show[col] = wt_show[col].apply(
+                    lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%"
+                )
+            wt_show = wt_show.rename(columns={"전체비중": "현재비중"})
+            st.dataframe(wt_show, use_container_width=True, hide_index=True)
+
+            # 비중 불일치 경고
+            big_under = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) >= 5]
+            big_over  = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) <= -5]
+            if not big_under.empty:
+                names = ", ".join(big_under["자산명"].fillna(big_under["티커"]).tolist())
+                st.warning(f"목표보다 5%p 이상 미달인 자산: {names} — 매수 또는 현금 투입을 검토하세요.")
+            if not big_over.empty:
+                names = ", ".join(big_over["자산명"].fillna(big_over["티커"]).tolist())
+                st.info(f"목표보다 5%p 이상 초과인 자산: {names} — 비중 조정 또는 트리밍을 고려하세요.")
+
+            # 현금 비중 현황
+            total_asset_val = metrics.get("total_asset", 0.0)
+            active_val = metrics.get("active_value", 0.0)
+            cash_pct = (total_asset_val - active_val) / total_asset_val * 100 if total_asset_val > 0 else 0.0
+            target_stock_pct = wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum()
+            implied_cash_target = max(100.0 - target_stock_pct, 0.0)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("현재 현금비중", f"{cash_pct:.1f}%")
+            c2.metric("목표 주식비중 합계", f"{target_stock_pct:.1f}%")
+            c3.metric("암묵적 현금 목표", f"{implied_cash_target:.1f}%")
+
+    # ── 자산별 위험 지표 ───────────────────────────────────────────────────
     show_df = asset_df.copy()
     # "기간수익률"은 자산 가격의 분석기간 등락률(내 매입가 기준 수익률 아님)임을 명확히 하기 위해 컬럼명 변경
     if "기간수익률" in show_df.columns:
         show_df = show_df.rename(columns={"기간수익률": "자산가격등락률"})
-    for col in ["전체비중", "운용비중", "자산가격등락률", "연환산변동성", "MDD"]:
+    for col in ["전체비중", "목표비중", "비중차이", "운용비중", "자산가격등락률", "연환산변동성", "MDD"]:
         if col in show_df.columns:
-            show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+            if col == "비중차이":
+                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):+.1f}%")
+            else:
+                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
     if "원화환산" in show_df.columns:
         show_df["원화환산"] = show_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
 
