@@ -13405,98 +13405,315 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
 
     # ── 종합 평가 ──────────────────────────────────────────────────────────
     st.markdown("#### 📋 종합 포트폴리오 평가")
-    _eval_lines: list[str] = []
-    _rg = metrics.get("risk_grade", "-")
-    _ri = metrics.get("risk_index", 0.0)
+
+    _rg   = metrics.get("risk_grade", "-")
+    _ri   = metrics.get("risk_index", 0.0)
     _pvol = metrics.get("portfolio_vol", np.nan)
     _pmdd = metrics.get("portfolio_mdd", np.nan)
     _pann = metrics.get("portfolio_annual_return", np.nan)
-    _sharpe = metrics.get("sharpe_ratio", np.nan)
-    _sortino = metrics.get("sortino_ratio", np.nan)
-    _calmar = metrics.get("calmar_ratio", np.nan)
+    _sharpe   = metrics.get("sharpe_ratio", np.nan)
     _top1 = metrics.get("top1_weight", 0.0)
     _top3 = metrics.get("top3_weight", 0.0)
     _avg_corr = metrics.get("avg_corr", np.nan)
-    _reserve_pct = metrics.get("reserve_summary", {}).get("waiting_pct", 0.0)
+    _reserve_pct    = metrics.get("reserve_summary", {}).get("waiting_pct", 0.0)
     _reserve_target = float(reserve_target_weight)
-
-    # 위험도 평가
-    _eval_lines.append(f"**위험도 {_rg}** ({_ri:.0f}/100): " + (
-        "전반적으로 안정적인 구성입니다." if _ri < 35
-        else "일부 위험 요인이 있으며 점검이 필요합니다." if _ri < 60
-        else "위험 노출이 높습니다. 포지션 점검을 권장합니다."
-    ))
-
-    # 변동성/MDD
-    if np.isfinite(_pvol):
-        _vol_comment = "낮음(보수적)" if _pvol < 12 else "보통" if _pvol < 22 else "높음(공격적)"
-        _eval_lines.append(f"**변동성**: 연환산 {_pvol:.1f}% — {_vol_comment}.")
-    if np.isfinite(_pmdd):
-        _mdd_comment = "양호" if _pmdd > -15 else "주의 필요" if _pmdd > -30 else "큰 하락 경험 구간"
-        _eval_lines.append(f"**최대낙폭(MDD)**: {_pmdd:.1f}% — {_mdd_comment}.")
-
-    # 수익성
-    if np.isfinite(_pann):
-        _ret_comment = "부진" if _pann < 5 else "양호" if _pann < 20 else "우수 (단기 과장 가능)"
-        _eval_lines.append(f"**연환산 수익률**: {_pann:.1f}% — {_ret_comment}.")
-    if np.isfinite(_sharpe):
-        _sharpe_comment = "낮음" if _sharpe < 0.5 else "보통" if _sharpe < 1.5 else "우수 (단기 상승 과장 가능 확인 권장)"
-        _eval_lines.append(f"**Sharpe**: {_sharpe:.2f} — {_sharpe_comment}.")
-
-    # 집중도
-    if _top1 >= 30:
-        _eval_lines.append(f"**집중도 주의**: 1위 자산 비중이 {_top1:.1f}%입니다. 단일 종목 의존도가 높습니다.")
-    elif _top3 >= 60:
-        _eval_lines.append(f"**집중도 보통**: 상위 3개 비중이 {_top3:.1f}%입니다.")
-    else:
-        _eval_lines.append(f"**집중도 양호**: 상위 3개 비중이 {_top3:.1f}%로 적절히 분산돼 있습니다.")
-
-    # 상관관계
-    if np.isfinite(_avg_corr):
-        _corr_comment = "분산 효과 높음" if _avg_corr < 0.4 else "분산 효과 보통" if _avg_corr < 0.7 else "높은 동조화 — 분산 효과 제한"
-        _eval_lines.append(f"**자산간 상관**: 평균 {_avg_corr:.2f} — {_corr_comment}.")
-
-    # 대기자금
-    _reserve_gap = _reserve_target - _reserve_pct
-    if _reserve_gap > 3:
-        _eval_lines.append(f"**대기자금 부족**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%. 하락 시 투입 여력이 부족합니다.")
-    else:
-        _eval_lines.append(f"**대기자금 충분**: 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}%.")
-
-    # 벤치마크 비교 요약
+    _reserve_gap    = _reserve_target - _reserve_pct
+    _obs  = metrics.get("portfolio_observation_count", 0)
+    _lev  = metrics.get("leverage_summary", {})
     _bm_voo = metrics.get("benchmark_voo", {})
     _bm_kr  = metrics.get("benchmark_kr", {})
-    for _bm, _bm_name in [(_bm_voo, "VOO"), (_bm_kr, "KODEX200")]:
+    _stress = metrics.get("stress_results", [])
+    _dd     = metrics.get("drawdown_details", {})
+    _total  = metrics.get("total_asset", 0.0)
+    _active = metrics.get("active_value", 0.0)
+    _cash_pct = (_total - _active) / _total * 100 if _total > 0 else 0.0
+
+    # ── 1. 분석기간 경고 ──────────────────────────────────────────────────
+    _short_period = _obs > 0 and _obs < 252
+    _very_short   = _obs > 0 and _obs < 126
+    if _very_short:
+        st.warning(
+            f"⚠️ **분석 기간 주의**: 현재 가격 데이터가 {_obs}거래일({_obs//21:.0f}개월 미만)뿐입니다. "
+            "연환산 수익률·Sharpe·Alpha 등 '연환산'이 붙은 모든 수치는 단기 상승장을 1년으로 환산한 값으로 "
+            "실제 장기 실력과 크게 다를 수 있습니다. **숫자보다 구조(집중도·레버리지·현금)를 보세요.**"
+        )
+    elif _short_period:
+        st.info(
+            f"ℹ️ 분석 기간 {_obs}거래일({_obs//21:.0f}개월). 1년 미만이라 연환산 지표가 과장될 수 있습니다. "
+            "장기 평가는 1년 이상 데이터가 쌓인 뒤 다시 확인하세요."
+        )
+
+    # ── 2. 위험도 ─────────────────────────────────────────────────────────
+    _lev_pct   = clean_float(_lev.get("leveraged_principal_pct"), 0.0)
+    _lev_eff   = clean_float(_lev.get("effective_exposure_pct"), 0.0)
+    _conc_pts  = min(_top1 * 0.45 + _top3 * 0.2, 25)
+    _risk_driver = []
+    if _conc_pts >= 18:
+        _risk_driver.append(f"집중도({_top1:.0f}% 최대 보유)")
+    if _lev_pct >= 10:
+        _risk_driver.append(f"레버리지({_lev_eff:.0f}% 환산노출)")
+    if np.isfinite(_pvol) and _pvol >= 22:
+        _risk_driver.append(f"변동성({_pvol:.0f}%)")
+    _driver_str = " + ".join(_risk_driver) if _risk_driver else "복합 요인"
+
+    _risk_panel_color = metrics.get("risk_color", "#f97316")
+    st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_risk_panel_color}; margin-bottom:12px;'>
+
+**위험도 {_rg} ({_ri:.0f}/100) — 주요 원인: {_driver_str}**
+
+위험도 점수는 6가지 요소(변동성·MDD·집중도·상관관계·레버리지·대기자금)의 합산입니다.
+{"변동성·MDD는 아직 큰 하락을 겪지 않아 낮게 나오지만, " if _short_period else ""}
+**집중도와 레버리지는 분석기간과 무관한 구조적 위험**이라 기간을 바꿔도 점수가 크게 달라지지 않습니다.
+점수가 높다고 반드시 잘못된 것은 아닙니다 — 레버리지를 의도적으로 늘리는 공격적 성장 전략이라면
+이 수준의 위험도는 전략과 일치하는 상태입니다. 단, 이 구조에서 큰 하락이 오면 아래 스트레스 테스트가 보여주는 수준의 충격을 받을 수 있습니다.
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 3. 변동성 & MDD ──────────────────────────────────────────────────
+    if np.isfinite(_pvol) or np.isfinite(_pmdd):
+        _vol_str = f"{_pvol:.1f}%" if np.isfinite(_pvol) else "-"
+        _mdd_str = f"{_pmdd:.1f}%" if np.isfinite(_pmdd) else "-"
+        _avg_dd  = clean_float(_dd.get("avg_drawdown"), np.nan)
+        _dur     = _dd.get("mdd_duration_days", 0)
+        _rec     = _dd.get("mdd_recovery_days", np.nan)
+
+        if np.isfinite(_pvol):
+            _vol_level = "아주 낮음(채권형 수준)" if _pvol < 8 else "낮음(보수적)" if _pvol < 12 else "보통(균형형)" if _pvol < 22 else "높음(공격적)" if _pvol < 32 else "매우 높음(레버리지 수준)"
+        else:
+            _vol_level = "-"
+        if np.isfinite(_pmdd):
+            _mdd_level = "아주 양호(거의 빠지지 않음)" if _pmdd > -8 else "양호" if _pmdd > -15 else "주의 필요" if _pmdd > -30 else "큰 낙폭 경험"
+        else:
+            _mdd_level = "-"
+
+        _vol_mdd_note = ""
+        if np.isfinite(_pvol) and np.isfinite(_pann) and _pvol < 20 and _pann > 30:
+            _vol_mdd_note = (
+                f"**⚠️ 수익률({_pann:.0f}%)과 변동성({_pvol:.1f}%)이 모순적으로 보입니다.** "
+                "이 조합은 분석기간이 짧고 그 기간이 상승장이었을 때 나타납니다. "
+                "변동성은 하락을 겪어봐야 올라가기 때문에, 지금 숫자는 진짜 위험을 과소평가하고 있습니다. "
+            )
+
+        _rec_str = f"{int(_rec)}일" if np.isfinite(_rec) else "아직 미회복 또는 기록 없음"
+        st.markdown(f"""
+<div class='info-panel' style='margin-bottom:12px;'>
+
+**변동성 {_vol_str} ({_vol_level}) / MDD {_mdd_str} ({_mdd_level})**
+
+변동성은 "이 포트가 얼마나 흔들리는지"입니다. S&P500 장기 평균이 약 16%이므로, {_vol_str}은 시장 평균과 비교해 {"낮은" if np.isfinite(_pvol) and _pvol < 16 else "높은"} 수준입니다.
+
+MDD는 "분석기간 중 고점에서 얼마까지 빠졌나"입니다. {_mdd_str}은 현재 구간에서 최대 {abs(_pmdd):.1f}% 하락을 겪었다는 뜻입니다.{"  평균 낙폭은 " + f"{_avg_dd:.1f}%" if np.isfinite(_avg_dd) else ""}{"이고, MDD 후 회복에 " + _rec_str + " 걸렸습니다." if np.isfinite(_rec) else "."}
+
+{_vol_mdd_note}{"⚠️ 주의: 분석기간이 짧아 큰 하락장을 아직 겪지 않았습니다. 실제 위험 규모는 아래 스트레스 테스트를 참고하세요." if _short_period and np.isfinite(_pmdd) and _pmdd > -15 else ""}
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 4. 수익성 지표 ────────────────────────────────────────────────────
+    if np.isfinite(_pann) or np.isfinite(_sharpe):
+        _ann_str    = f"{_pann:.1f}%" if np.isfinite(_pann) else "-"
+        _sharpe_str = f"{_sharpe:.2f}" if np.isfinite(_sharpe) else "-"
+        _calmar     = metrics.get("calmar_ratio", np.nan)
+        _sortino    = metrics.get("sortino_ratio", np.nan)
+
+        _sharpe_warn = ""
+        if np.isfinite(_sharpe) and _sharpe > 2.5:
+            _sharpe_warn = (
+                f"**⚠️ Sharpe {_sharpe:.2f}는 단기 데이터 왜곡 신호입니다.** "
+                "세계 최고 헤지펀드도 장기 Sharpe 2를 넘기기 어렵습니다. "
+                "현재 값은 짧은 상승 구간을 1년으로 환산해서 나온 숫자이며, "
+                "1~2년 이상 데이터가 쌓이면 자연스럽게 1~1.5 수준으로 내려옵니다. "
+                "이 숫자를 투자 실력의 증거로 받아들이면 과신으로 이어질 수 있습니다. "
+            )
+        elif np.isfinite(_sharpe) and _sharpe > 1.0:
+            _sharpe_warn = "Sharpe 1.0 이상은 변동성 대비 수익이 양호한 구간입니다. "
+
+        _ann_warn = ""
+        if np.isfinite(_pann) and _pann > 30 and _very_short:
+            _ann_warn = (
+                f"연환산 {_pann:.0f}%는 단기 상승장을 연 단위로 환산한 참고값입니다. "
+                "3개월 수익 15%를 연 단위로 환산하면 76%가 넘게 나오는 것처럼, "
+                "분석기간이 짧을수록 연환산 수치는 극단적으로 나옵니다. "
+                "장기(3~5년) 연평균 10~20%가 실제 우수한 성과의 기준입니다. "
+            )
+
+        st.markdown(f"""
+<div class='info-panel' style='margin-bottom:12px;'>
+
+**수익성 — 연환산 수익률 {_ann_str} / Sharpe {_sharpe_str}{"/ Sortino " + f"{_sortino:.2f}" if np.isfinite(_sortino) else ""}{"/ Calmar " + f"{_calmar:.2f}" if np.isfinite(_calmar) else ""}**
+
+{_ann_warn}{_sharpe_warn}
+Sortino는 Sharpe와 비슷하지만 **하락 변동성만 분모로 씁니다.** 하락장에서 얼마나 잘 버티는지에 더 민감합니다.
+Calmar는 연환산수익률 ÷ |MDD|입니다. 낙폭 대비 수익 효율을 보며, 1 이상이면 양호합니다.
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 5. 집중도 ─────────────────────────────────────────────────────────
+    _conc_color = "#ef4444" if _top1 >= 35 else "#f97316" if _top1 >= 25 else "#22c55e"
+    if _top1 >= 35:
+        _conc_msg = (
+            f"전체 자산의 {_top1:.1f}%가 한 종목/ETF에 몰려 있습니다. "
+            f"이 자산이 30% 빠지면 포트 전체가 {_top1*0.3:.0f}% 손실납니다. "
+            "다른 종목들이 모두 버텨도 한 곳에서 포트를 끌어내릴 수 있는 구조입니다. "
+            "의도한 집중 베팅이라면 인지된 리스크로 수용 가능하지만, 25% 이하로 낮추는 게 일반적인 기준입니다."
+        )
+    elif _top1 >= 25:
+        _conc_msg = (
+            f"1위 자산 비중 {_top1:.1f}% — 주의 구간입니다. "
+            f"상위 3개 자산이 전체의 {_top3:.1f}%를 차지합니다. "
+            "레버리지 ETF가 상위에 있다면 실제 노출은 2~3배 이상이 됩니다."
+        )
+    else:
+        _conc_msg = (
+            f"1위 자산 {_top1:.1f}%, 상위 3개 {_top3:.1f}% — 분산이 적절히 돼 있습니다. "
+            "단일 종목 리스크는 관리 가능한 수준입니다."
+        )
+    st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_conc_color}; margin-bottom:12px;'>
+
+**집중도 — 1위 자산 {_top1:.1f}% / 상위 3개 {_top3:.1f}%**
+
+{_conc_msg}
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 6. 상관관계 & 분산 효과 ──────────────────────────────────────────
+    if np.isfinite(_avg_corr):
+        _corr_color = "#ef4444" if _avg_corr >= 0.7 else "#f97316" if _avg_corr >= 0.5 else "#22c55e"
+        _corr_level = "높은 동조화 — 분산 효과 제한됨" if _avg_corr >= 0.7 else "보통 — 분산 효과 부분적" if _avg_corr >= 0.4 else "낮음 — 분산 효과 높음"
+        _corr_explain = (
+            "자산들이 비슷한 방향으로 함께 움직입니다. 종목 수가 많아도 같이 오르고 같이 빠집니다." if _avg_corr >= 0.7
+            else "일부 자산은 같이 움직이고 일부는 독립적입니다. 완전한 분산은 아니지만 어느 정도 효과가 있습니다." if _avg_corr >= 0.4
+            else "자산들이 서로 다른 방향으로 움직이는 편입니다. 한 자산이 빠져도 다른 자산이 버텨줄 가능성이 높습니다."
+        )
+        st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_corr_color}; margin-bottom:12px;'>
+
+**자산간 상관관계 — 평균 {_avg_corr:.2f} ({_corr_level})**
+
+상관계수는 자산들이 얼마나 같이 움직이는지입니다. +1이면 완전히 같이 움직이고, 0이면 완전히 독립적, −1이면 반대 방향입니다.
+현재 평균 {_avg_corr:.2f}: {_corr_explain}
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 7. 현금 & 대기자금 ───────────────────────────────────────────────
+    _cash_color = "#ef4444" if _reserve_gap > 5 else "#f97316" if _reserve_gap > 2 else "#22c55e"
+    _cash_action = (
+        f"{_reserve_gap:.1f}%p 부족합니다. 신규 매수 전에 현금 비중을 {_reserve_target:.0f}%로 먼저 채우세요. "
+        "하락장에서 현금이 없으면 저점 매수 기회를 놓치고, 심리적 압박으로 고점에 팔게 됩니다." if _reserve_gap > 2
+        else f"목표({_reserve_target:.0f}%) 대비 충분합니다. 하락 시 투입 여력이 있습니다."
+    )
+    st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_cash_color}; margin-bottom:12px;'>
+
+**현금 & 대기자금 — 현재 {_reserve_pct:.1f}% / 목표 {_reserve_target:.1f}% (전체비중 기준 현금 {_cash_pct:.1f}%)**
+
+현금 비중은 두 가지 역할을 합니다: ① 하락장 저점 매수 실탄, ② 심리적 완충(현금이 없으면 공황 매도 위험).
+현재: {_cash_action}
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 8. 레버리지 ──────────────────────────────────────────────────────
+    if _lev_pct > 0:
+        _lev_extra = clean_float(_lev.get("extra_exposure_pct"), 0.0)
+        _lev_color = "#ef4444" if _lev_eff >= 25 or _lev_extra >= 12 else "#f97316" if _lev_eff >= 15 else "#38bdf8"
+        _lev_explain = (
+            "레버리지 2배 ETF는 지수가 10% 빠지면 약 20%, 3배 ETF는 약 30% 빠집니다. "
+            "또한 횡보장이 길면 일간 복리 효과 때문에 지수보다 더 손실이 나는 변동성 감쇠(Volatility Decay) 현상이 발생합니다. "
+            "3~5년 상승장 흐름에 베팅하는 전략이라면 유효하지만, "
+            "**방향이 반대로 가는 구간이 수개월 이상 이어질 경우 손실이 기하급수적으로 커질 수 있습니다.**"
+        )
+        st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_lev_color}; margin-bottom:12px;'>
+
+**레버리지 — 원금비중 {_lev_pct:.1f}% / 환산노출 {_lev_eff:.1f}% / 추가위험 +{_lev_extra:.1f}%p**
+
+{_lev_explain}
+
+레버리지 ETF를 활용하는 공격적 성장 전략은 상승장에서 강력하지만, 진입 타이밍과 분할 매수가 핵심입니다.
+하락 구간에서 추가 매수 여력(현금)을 남겨두는 것이 장기적으로 레버리지 전략의 수익률을 지키는 방법입니다.
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 9. 벤치마크 비교 ─────────────────────────────────────────────────
+    _bm_blocks = []
+    for _bm, _bm_label, _bm_market in [(_bm_voo, "VOO (미국 S&P500)", "미국"), (_bm_kr, "KODEX200 (한국)", "한국")]:
         if not _bm:
             continue
         _alpha = clean_float(_bm.get("alpha"), np.nan)
         _beta  = clean_float(_bm.get("beta"), np.nan)
         _ir    = clean_float(_bm.get("info_ratio"), np.nan)
-        if np.isfinite(_alpha) and np.isfinite(_beta):
-            _alpha_comment = "시장 대비 초과수익" if _alpha > 0 else "시장 대비 부진"
-            _beta_comment  = "방어적" if _beta < 0.8 else "시장과 비슷" if _beta < 1.2 else "공격적"
-            _ir_str = f", IR {_ir:.2f}" if np.isfinite(_ir) else ""
-            _eval_lines.append(
-                f"**벤치마크({_bm_name})**: Beta {_beta:.2f}({_beta_comment}), Alpha {_alpha:+.1f}%({_alpha_comment}){_ir_str}."
-            )
+        _bm_ret = clean_float(_bm.get("bm_period_return"), np.nan)
+        _port_ret = clean_float(metrics.get("portfolio_period_return"), np.nan)
+        if not (np.isfinite(_alpha) and np.isfinite(_beta)):
+            continue
+        _beta_desc  = "방어적(시장의 절반 수준으로 반응)" if _beta < 0.6 else "다소 방어적" if _beta < 0.9 else "시장과 비슷하게 움직임" if _beta < 1.1 else "공격적(시장보다 더 크게 반응)"
+        _alpha_desc = f"시장 위험을 감안해도 {_alpha:+.1f}% 초과수익" if _alpha > 0 else f"시장 위험을 감안하면 {abs(_alpha):.1f}% 부진"
+        _ir_desc    = ("우수 — 일관되게 벤치마크를 앞섬" if _ir > 0.5 else "보통" if _ir > 0 else "벤치마크 대비 일관되게 부진") if np.isfinite(_ir) else ""
+        _gap_str    = f"분석기간 포트 {_port_ret:.1f}% vs {_bm_market} {_bm_ret:.1f}% → 초과 {_port_ret-_bm_ret:+.1f}%" if np.isfinite(_bm_ret) and np.isfinite(_port_ret) else ""
+        _bm_blocks.append(f"""
+**{_bm_label}**
+Beta {_beta:.2f}: {_beta_desc}.
+Alpha {_alpha:+.1f}%: {_alpha_desc}{"(단기 과장 가능)" if _short_period else ""}.
+{"IR " + f"{_ir:.2f}: {_ir_desc}." if np.isfinite(_ir) else ""}
+{_gap_str}
+""")
 
-    # 스트레스 테스트 요약 (최악 시나리오)
-    _stress = metrics.get("stress_results", [])
+    if _bm_blocks:
+        st.markdown(f"""
+<div class='info-panel' style='margin-bottom:12px;'>
+
+**벤치마크 비교 — Beta·Alpha·IR**
+
+Beta는 "벤치마크가 1% 움직일 때 내 포트가 얼마나 반응하는가"입니다.
+Alpha(Jensen's α)는 베타 위험을 감안하고도 초과로 벌었는지입니다. 양수면 시장 이상으로 잘한 것.
+IR(정보비율)은 초과수익의 일관성입니다. 1 이상이면 우수, 음수면 벤치마크보다 일관되게 부진.
+
+{"  |  ".join(_bm_blocks)}
+
+</div>
+""", unsafe_allow_html=True)
+
+    # ── 10. 스트레스 테스트 ──────────────────────────────────────────────
     if _stress:
-        _worst = min(_stress, key=lambda r: r.get("포트 추정 손익(%)", 0))
-        _wpnl  = _worst.get("포트 추정 손익(%)", 0)
-        _wloss = _worst.get("추정 손실액(원)", 0)
-        _comment = "양호(−15% 이내)" if _wpnl > -15 else "주의(−15~−25%)" if _wpnl > -25 else "위험(−25% 이상)"
-        _eval_lines.append(
-            f"**최악 시나리오({_worst['시나리오']})**: 포트 추정 손익 {_wpnl:+.1f}%, 손실액 {_wloss:,.0f}원 — {_comment}."
+        _worst   = min(_stress, key=lambda r: r.get("포트 추정 손익(%)", 0))
+        _wpnl    = _worst.get("포트 추정 손익(%)", 0)
+        _wloss   = _worst.get("추정 손실액(원)", 0)
+        _wname   = _worst["시나리오"]
+        _stress_color = "#ef4444" if _wpnl <= -25 else "#f97316" if _wpnl <= -15 else "#22c55e"
+        _survive_msg = (
+            f"**이 포트폴리오로 {_wname}급 충격이 오면 약 {abs(_wpnl):.0f}% 하락, {_wloss:,.0f}원 손실이 예상됩니다.** "
+            f"레버리지를 높게 유지하는 공격적 전략에서는 이 수준의 손실 가능성을 미리 인지하고 있어야 합니다. "
+            "실제 하락장에서 '버틸 수 있는가'가 장기 전략의 핵심입니다 — "
+            "손절하면 반등을 못 따라가고, 버티면 결국 회복됩니다. "
+            "레버리지 ETF는 하락 후 회복 속도도 더 빠르기 때문에, 현금 여력만 있다면 하락을 오히려 분할 매수 기회로 활용할 수 있습니다."
+        ) if _wpnl <= -25 else (
+            f"{_wname}급 충격 시 약 {abs(_wpnl):.0f}% 하락, {_wloss:,.0f}원 손실 추정 — 주의 구간입니다. "
+            "현금 비중을 목표치로 유지하면 하락장에서 추가 매수 여력이 생깁니다."
+        ) if _wpnl <= -15 else (
+            f"최악 시나리오에서도 추정 손실이 {abs(_wpnl):.0f}% 수준입니다. 상대적으로 충격이 완충돼 있습니다."
         )
+        st.markdown(f"""
+<div class='info-panel' style='border-left:4px solid {_stress_color}; margin-bottom:12px;'>
 
-    _eval_html = "<br>".join(f"• {line}" for line in _eval_lines)
-    st.markdown(
-        f"<div class='info-panel'>{_eval_html}</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption("종합 평가는 분석 기간 내 가격 데이터 기반 자동 생성 참고 의견입니다. 매입 시점·미실현 수익률과 다를 수 있습니다.")
+**스트레스 테스트 — 최악 시나리오: {_wname} (추정 {_wpnl:+.1f}%)**
+
+스트레스 테스트는 변동성·MDD 같은 "최근 측정값"과 달리, **진짜 위기가 오면 얼마나 빠질지**를 추정합니다.
+현재 MDD가 낮게 나오는 이유는 큰 하락장을 아직 겪지 않았기 때문일 수 있습니다. 스트레스 테스트가 더 현실적인 위험 기준입니다.
+
+{_survive_msg}
+
+</div>
+""", unsafe_allow_html=True)
+
+    st.caption("종합 평가는 가격 데이터 기반 자동 생성 참고 의견입니다. 매입 시점·미실현 수익률·세금 효과는 반영되지 않습니다.")
 
 
 def format_scenario_money(value):
