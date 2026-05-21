@@ -16532,6 +16532,44 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
     if merged.empty:
         return
 
+    merged["_flow_score"] = merged["돈흐름점수"].apply(clean_float)
+
+    def _connection_label(row):
+        parts = []
+        for col in ["돈흐름출처", "흐름명", "연결테마", "연결하위테마"]:
+            val = str(row.get(col, "") or "").strip()
+            if val and val not in parts:
+                parts.append(val)
+        return " > ".join(parts)
+
+    merged["_connection_label"] = merged.apply(
+        _connection_label,
+        axis=1,
+    )
+
+    connection_count_map = merged.groupby("_ticker_key").size().to_dict()
+    extra_connection_map = {}
+    for key, group in merged.groupby("_ticker_key"):
+        raw_labels = (
+            group.sort_values("_flow_score", ascending=False, na_position="last")["_connection_label"]
+            .dropna()
+            .astype(str)
+            .tolist()
+        )
+        labels = list(dict.fromkeys([x for x in raw_labels if x]))
+        extras = labels[1:4]
+        if len(labels) > 4:
+            extras.append(f"외 {len(labels) - 4}개")
+        extra_connection_map[key] = ", ".join(extras)
+
+    merged = (
+        merged.sort_values("_flow_score", ascending=False, na_position="last")
+        .drop_duplicates("_ticker_key", keep="first")
+        .copy()
+    )
+    merged["연결개수"] = merged["_ticker_key"].map(connection_count_map).fillna(1).astype(int)
+    merged["추가연결"] = merged["_ticker_key"].map(extra_connection_map).fillna("")
+
     if "비중차이" not in merged.columns:
         merged["비중차이"] = 0.0
     if "현재비중" not in merged.columns:
@@ -16539,7 +16577,6 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
     if "목표비중" not in merged.columns:
         merged["목표비중"] = np.nan
 
-    merged["_flow_score"] = merged["돈흐름점수"].apply(clean_float)
     merged["_gap"] = merged["비중차이"].apply(clean_float)
     under_good = merged[(merged["_gap"] > 0.2) & (merged["_flow_score"] > 0)].sort_values("_flow_score", ascending=False).head(8)
     over_hot = merged[(merged["_gap"] < -0.2) & (merged["_flow_score"] > 0)].sort_values("_flow_score", ascending=False).head(8)
@@ -16561,7 +16598,8 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
             show["돈흐름점수"] = show["돈흐름점수"].apply(fmt_flow_score)
         cols = [
             "종목명", "티커", "돈흐름출처", "흐름명", "연결테마", "연결하위테마", "내위치",
-            "테마대표주", "하위테마대표주", "현재비중", "목표비중", "비중차이",
+            "테마대표주", "하위테마대표주", "연결개수", "추가연결",
+            "현재비중", "목표비중", "비중차이",
             "돈흐름점수", "돈흐름상태", "3개월수익률", "가속도", "거래량증가",
         ]
         return show[[c for c in cols if c in show.columns]]
@@ -17048,21 +17086,70 @@ def render_today_queue_tab(mode):
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
-    if not should_run_heavy_analysis(
-        "today_queue_lazy",
-        "오늘 점검은 관심/보유 종목의 가격과 벤치마크를 여러 개 조회하므로 필요할 때만 실행합니다.",
-        run_label="오늘 종목 점검 계산/새로고침",
-    ):
-        st.divider()
-        render_today_market_flow_panel()
-        render_investor_top10_section()
-        return
+    queue_sig = json.dumps(
+        {
+            "mode": mode,
+            "watchlist": [
+                {
+                    "name": str(item.get("name", "")),
+                    "ticker": sanitize_ticker_value(item.get("ticker", "")),
+                    "is_etf": bool(item.get("is_etf", False)),
+                    "asset_class": str(item.get("asset_class", "")),
+                    "fin_score": item.get("fin_score"),
+                }
+                for item in watch_items
+            ],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    summary_key = "today_queue_summary_df"
+    sig_key = "today_queue_summary_sig"
+    last_key = "today_queue_summary_last_run"
 
-    with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
-        summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+    cached_summary = st.session_state.get(summary_key)
+    if not isinstance(cached_summary, pd.DataFrame):
+        cached_summary = pd.DataFrame()
+
+    c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
+    run_summary = c1.button(
+        "오늘 종목 점검 계산/새로고침",
+        key="today_queue_run_once",
+        use_container_width=True,
+    )
+
+    if not cached_summary.empty:
+        if c2.button("결과 지우기", key="today_queue_clear_cached", use_container_width=True):
+            for key in [summary_key, sig_key, last_key]:
+                st.session_state.pop(key, None)
+            st.rerun()
+        last_run = st.session_state.get(last_key)
+        if last_run:
+            c3.caption(f"마지막 계산: {last_run}")
+    else:
+        c2.caption("대기 중")
+
+    signature_changed = (
+        not cached_summary.empty
+        and st.session_state.get(sig_key) not in [None, queue_sig]
+    )
+    if signature_changed and not run_summary:
+        st.warning("관심목록, 모드, ETF/재무점수 정보가 바뀐 뒤의 이전 계산 결과입니다. 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
+
+    if run_summary:
+        with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
+            summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+        st.session_state[summary_key] = summary_df
+        st.session_state[sig_key] = queue_sig
+        st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    else:
+        summary_df = cached_summary
 
     if summary_df.empty:
-        st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
+        if run_summary:
+            st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
+        else:
+            st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
         render_today_market_flow_panel()
         render_investor_top10_section()
