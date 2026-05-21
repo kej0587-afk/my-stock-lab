@@ -5257,6 +5257,46 @@ def fmt_flow_score(v):
     return f"{float(v):.1f}"
 
 
+FLOW_SCORE_PART_COLUMNS = [
+    ("점수_1개월", "1M"),
+    ("점수_3개월", "3M"),
+    ("점수_6개월", "6M"),
+    ("점수_가속도", "가속"),
+    ("점수_거래량", "거래량"),
+    ("점수_상승비율", "상승비율"),
+    ("점수_쏠림패널티", "쏠림"),
+    ("점수_과열패널티", "과열"),
+]
+
+
+def render_flow_score_breakdown(title, df, score_col="돈흐름점수", label_cols=None, top_n=8):
+    if df is None or df.empty or score_col not in df.columns:
+        return
+    part_cols = [col for col, _ in FLOW_SCORE_PART_COLUMNS if col in df.columns]
+    if not part_cols:
+        return
+
+    label_cols = [c for c in (label_cols or []) if c in df.columns]
+    view = df.dropna(subset=[score_col]).copy()
+    if view.empty:
+        return
+    view = view.sort_values(score_col, ascending=False).head(top_n)
+
+    show_cols = label_cols + [score_col] + part_cols
+    show = view[show_cols].copy()
+    rename_map = {col: label for col, label in FLOW_SCORE_PART_COLUMNS if col in show.columns}
+    show = show.rename(columns={score_col: "총점", **rename_map})
+    for col in ["총점"] + [rename_map[c] for c in part_cols if c in rename_map]:
+        if col in show.columns:
+            show[col] = show[col].apply(lambda v: "-" if not finite_num(v) else f"{float(v):+.1f}")
+
+    with st.expander(title, expanded=False):
+        st.caption(
+            "점수 구성요소를 분해한 표입니다. 양수는 점수를 올린 요인, 음수는 과열/쏠림처럼 점수를 깎은 요인입니다."
+        )
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+
 def build_today_flow_rank_table(df, group_name, score_col="돈흐름점수", top_n=5):
     if df is None or df.empty or score_col not in df.columns:
         return pd.DataFrame()
@@ -6414,8 +6454,15 @@ def render_money_flow_etf_section():
             st.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
         else:
             st.metric("거래량 1위", "-", "-")
-            
+
     st.divider() # 시각적 구분을 위한 선
+    render_flow_score_breakdown(
+        "ETF 돈흐름 점수 분해",
+        rankable_df,
+        score_col="돈흐름점수",
+        label_cols=["구분", "섹터", "Ticker", "ETF 이름", "상태"],
+        top_n=10,
+    )
 
     # 5. 상세 데이터 테이블
     st.markdown("#### 📊 섹터별 상세 지표")
@@ -6813,6 +6860,13 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         """,
         unsafe_allow_html=True,
     )
+    render_flow_score_breakdown(
+        "전체 테마 돈흐름 점수 분해",
+        rotation_df,
+        score_col="테마돈흐름점수",
+        label_cols=["테마", "대표주", "상태"],
+        top_n=10,
+    )
 
     left, right = st.columns([1.05, 1])
     with left:
@@ -7129,6 +7183,13 @@ def render_image_theme_flow_section():
         """,
         unsafe_allow_html=True,
     )
+    render_flow_score_breakdown(
+        f"{selected_theme} 하위테마 점수 분해",
+        group_df,
+        score_col="돈흐름점수",
+        label_cols=["하위테마", "대표주", "상태"],
+        top_n=10,
+    )
 
     # ── 상태 이모지 배지 (탭 공통) ────────────────────────────────────
     _it_state_badge = {
@@ -7314,6 +7375,13 @@ def render_image_theme_flow_section():
                 plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig_stock, use_container_width=True)
+        render_flow_score_breakdown(
+            "종목별 돈흐름 점수 분해",
+            stock_view,
+            score_col="돈흐름점수",
+            label_cols=["하위테마", "종목명", "Ticker", "상태"],
+            top_n=12,
+        )
 
         show_stock = stock_view.copy()
         if "상태" in show_stock.columns:
@@ -16307,23 +16375,183 @@ def render_speed_check_tab():
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
 
-def render_today_market_flow_panel():
+def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available):
+    if summary_df is None or summary_df.empty:
+        return
+
+    label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    ticker_series = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str).str.upper()
+    bucket_series = summary_df.get("bucket", summary_df.get("버킷", pd.Series("", index=summary_df.index))).astype(str).str.lower()
+    weight_gap = summary_df.get("비중차이", pd.Series(0.0, index=summary_df.index)).apply(clean_float)
+
+    leverage_mask = bucket_series.eq("leverage") | ticker_series.str.contains("QLD|TQQQ|SOXL|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+    core_mask = bucket_series.eq("core")
+    leverage_blocked = bool((leverage_mask & hard_block_mask).any())
+    leverage_dca_ready = bool((leverage_mask & buyish_mask & ~hard_block_mask).any())
+    core_under_count = int((core_mask & (weight_gap > 0.2)).sum())
+    core_overheat_count = int((core_mask & label_series.str.contains("과열", na=False)).sum())
+    buyish_count = int(buyish_mask.sum())
+    caution_count = int(caution_mask.sum())
+    hard_count = int(hard_block_mask.sum())
+
+    if leverage_blocked:
+        headline = "오늘은 레버리지 추가매수보다 코어/대기자금 관리가 우선입니다."
+    elif leverage_dca_ready:
+        headline = "레버리지 DCA 후보가 있습니다. 정해둔 배율과 손실 허용폭 안에서만 검토하세요."
+    elif buyish_count > 0 and cash_available > 0:
+        headline = "매수 후보가 있지만, 현금 범위 안에서 분할 접근만 검토하는 구간입니다."
+    elif buyish_count > 0:
+        headline = "매수 후보는 있지만 적립용 현금이 부족합니다."
+    else:
+        headline = "오늘은 보유 유지와 비중 점검이 우선입니다."
+
+    actions = []
+    if leverage_blocked:
+        actions.append("레버리지는 차단 신호를 유지하고, 단계별 DCA 조건이 풀릴 때까지 추가매수 보류")
+    elif leverage_dca_ready:
+        actions.append("레버리지는 평단 대비 하락 단계에 맞춘 배율만 적용")
+    if core_under_count > 0:
+        if core_overheat_count > 0:
+            actions.append(f"코어 목표 미달 {core_under_count}개는 과열 여부를 반영해 정해둔 적립률로만 접근")
+        else:
+            actions.append(f"코어 목표 미달 {core_under_count}개는 우선 점검")
+    if cash_available <= 0 and buyish_count > 0:
+        actions.append("적립용 현금이 부족하므로 신규 매수보다 현금 계획 확인")
+    if reserve_available > 0:
+        actions.append("폭락장 예비자금은 평상시 적립이 아니라 큰 하락 구간용으로 분리 유지")
+    if hard_count > 0:
+        actions.append(f"하드차단 {hard_count}개는 비중초과/과열/구조훼손 사유부터 확인")
+    if not actions:
+        actions.append("후보를 늘리기보다 관심목록 정리와 목표비중 점검")
+    actions = actions[:4]
+
+    action_html = "<br>".join(f"{idx}. {html.escape(action)}" for idx, action in enumerate(actions, 1))
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid #38bdf8; margin-bottom:12px;'>
+<b>오늘의 실행 카드</b><br>
+<span class='highlight'>{html.escape(headline)}</span><br>
+매수/관심 {buyish_count}개 · 주의/차단 {caution_count}개 · 하드차단 {hard_count}개<br><br>
+<b>우선순위</b><br>
+{action_html}
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_today_portfolio_flow_bridge(summary_df, snapshot):
+    if summary_df is None or summary_df.empty or not snapshot:
+        return
+    flow_df = snapshot.get("flow_df", pd.DataFrame())
+    theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
+    frames = []
+    if flow_df is not None and not flow_df.empty:
+        tmp = flow_df.copy()
+        tmp["돈흐름출처"] = tmp.get("구분", "ETF/섹터")
+        tmp["흐름명"] = tmp.get("섹터", tmp.get("ETF 이름", tmp.get("Ticker", "")))
+        frames.append(tmp)
+    if theme_flow_df is not None and not theme_flow_df.empty:
+        tmp = theme_flow_df.copy()
+        tmp["돈흐름출처"] = "테마 종목"
+        tmp["흐름명"] = tmp.get("하위테마", tmp.get("종목명", tmp.get("Ticker", "")))
+        frames.append(tmp)
+    if not frames:
+        return
+
+    flow_all = pd.concat(frames, ignore_index=True, sort=False)
+    if "Ticker" not in flow_all.columns:
+        return
+    flow_all["_ticker_key"] = flow_all["Ticker"].astype(str).str.upper().str.strip()
+    if "상태" in flow_all.columns:
+        flow_all["돈흐름상태"] = flow_all["상태"]
+
+    base = summary_df.copy()
+    if "티커" not in base.columns:
+        return
+    base["_ticker_key"] = base["티커"].astype(str).str.upper().str.strip()
+    merged = base.merge(
+        flow_all[[
+            c for c in [
+                "_ticker_key", "돈흐름출처", "흐름명", "돈흐름점수", "스윙점수",
+                "돈흐름상태", "1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가",
+            ]
+            if c in flow_all.columns
+        ]],
+        on="_ticker_key",
+        how="inner",
+    )
+    if merged.empty:
+        return
+
+    if "비중차이" not in merged.columns:
+        merged["비중차이"] = 0.0
+    if "현재비중" not in merged.columns:
+        merged["현재비중"] = np.nan
+    if "목표비중" not in merged.columns:
+        merged["목표비중"] = np.nan
+
+    merged["_flow_score"] = merged["돈흐름점수"].apply(clean_float)
+    merged["_gap"] = merged["비중차이"].apply(clean_float)
+    under_good = merged[(merged["_gap"] > 0.2) & (merged["_flow_score"] > 0)].sort_values("_flow_score", ascending=False).head(8)
+    over_hot = merged[(merged["_gap"] < -0.2) & (merged["_flow_score"] > 0)].sort_values("_flow_score", ascending=False).head(8)
+
+    st.markdown("#### 내 자산과 돈흐름 연결")
+    st.caption("보유/관심 종목이 돈흐름 레이더나 테마 종목 흐름에 잡히는 경우만 표시합니다.")
+
+    def _format_bridge(df):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        show = df.copy()
+        for col in ["현재비중", "목표비중", "비중차이"]:
+            if col in show.columns:
+                show[col] = show[col].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%")
+        for col in ["1개월수익률", "3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
+            if col in show.columns:
+                show[col] = show[col].apply(fmt_flow_pct)
+        if "돈흐름점수" in show.columns:
+            show["돈흐름점수"] = show["돈흐름점수"].apply(fmt_flow_score)
+        cols = [
+            "종목명", "티커", "돈흐름출처", "흐름명", "현재비중", "목표비중", "비중차이",
+            "돈흐름점수", "돈흐름상태", "3개월수익률", "가속도", "거래량증가",
+        ]
+        return show[[c for c in cols if c in show.columns]]
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("##### 목표 미달 + 흐름 양호")
+        formatted = _format_bridge(under_good)
+        if formatted.empty:
+            st.info("목표 미달이면서 돈흐름이 양호한 보유/관심 자산은 없습니다.")
+        else:
+            st.dataframe(formatted, use_container_width=True, hide_index=True)
+    with right:
+        st.markdown("##### 과비중 + 흐름 강함")
+        formatted = _format_bridge(over_hot)
+        if formatted.empty:
+            st.info("과비중이면서 돈흐름이 강한 자산은 없습니다.")
+        else:
+            st.dataframe(formatted, use_container_width=True, hide_index=True)
+
+
+def render_today_market_flow_panel(snapshot=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
 
-    if not should_run_heavy_analysis(
-        "today_market_flow_lazy",
-        "ETF/섹터와 테마 종목 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
-        run_label="돈흐름 요약 계산/새로고침",
-    ):
-        return
+    if snapshot is None:
+        if not should_run_heavy_analysis(
+            "today_market_flow_lazy",
+            "ETF/섹터와 테마 종목 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
+            run_label="돈흐름 요약 계산/새로고침",
+        ):
+            return
 
-    try:
-        with st.spinner("ETF/테마 돈흐름 요약 계산 중..."):
-            snapshot = get_today_market_flow_snapshot()
-    except Exception as exc:
-        st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
-        return
+        try:
+            with st.spinner("ETF/테마 돈흐름 요약 계산 중..."):
+                snapshot = get_today_market_flow_snapshot()
+        except Exception as exc:
+            st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
+            return
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
     if flow_df is None or flow_df.empty:
@@ -16810,8 +17038,19 @@ def render_today_queue_tab(mode):
     cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
     cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
 
+    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available)
+
+    flow_snapshot = None
+    try:
+        with st.spinner("보유/관심 자산과 돈흐름을 연결하는 중입니다..."):
+            flow_snapshot = get_today_market_flow_snapshot()
+    except Exception as exc:
+        st.caption(f"돈흐름 연결은 건너뜁니다: {exc}")
+    if flow_snapshot:
+        render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
+
     st.divider()
-    render_today_market_flow_panel()
+    render_today_market_flow_panel(flow_snapshot)
     render_investor_top10_section()
     st.divider()
 

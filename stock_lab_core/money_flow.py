@@ -868,16 +868,31 @@ def _compute_flow_score(
         volume_growth를 [-1.0, 1.5] 범위로 제한.
         단기 이상 급증(3배·10배 등)이 점수를 지배하는 현상 방지.
     """
+    parts = _compute_flow_score_components(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
+    return parts["점수_합계"]
+
+
+def _compute_flow_score_components(
+    ret_1m: float,
+    ret_3m: float,
+    ret_6m: float,
+    accel: float,
+    volume_growth: float,
+    price_level=None,
+) -> dict:
+    """돈흐름 점수 구성요소를 개별 컬럼으로 남긴다."""
     overbought = max(0.0, (price_level - 0.85) * 40) if finite_num(price_level) else 0.0
     vol_capped = min(max(volume_growth, -1.0), 1.5) if finite_num(volume_growth) else 0.0
-    return (
-        (ret_1m   if finite_num(ret_1m)  else 0.0) * 12
-        + (ret_3m if finite_num(ret_3m)  else 0.0) * 33
-        + (ret_6m if finite_num(ret_6m)  else 0.0) * 25
-        + (accel  if finite_num(accel)   else 0.0) * 15
-        + vol_capped * 15
-        - overbought
-    )
+    parts = {
+        "점수_1개월": (ret_1m if finite_num(ret_1m) else 0.0) * 12,
+        "점수_3개월": (ret_3m if finite_num(ret_3m) else 0.0) * 33,
+        "점수_6개월": (ret_6m if finite_num(ret_6m) else 0.0) * 25,
+        "점수_가속도": (accel if finite_num(accel) else 0.0) * 15,
+        "점수_거래량": vol_capped * 15,
+        "점수_과열패널티": -overbought,
+    }
+    parts["점수_합계"] = sum(parts.values())
+    return parts
 
 
 def _compute_swing_score(
@@ -994,7 +1009,8 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 
     volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
     price_level   = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
-    flow_score    = _compute_flow_score(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
+    flow_parts    = _compute_flow_score_components(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
+    flow_score    = flow_parts["점수_합계"]
     swing_score   = _compute_swing_score(ret_2w, ret_1m, swing_accel, volume_growth, price_level)
 
     return {
@@ -1010,6 +1026,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
         "거래량증가":  volume_growth,
         "돈흐름점수":  flow_score,
         "스윙점수":    swing_score,
+        **flow_parts,
         "상태":        classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         "52주 최고가": high_52w,
         "52주 최저가": low_52w,
@@ -1066,6 +1083,9 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
         "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
         "가속도": np.nan, "단기가속도": np.nan, "거래량증가": np.nan,
         "돈흐름점수": np.nan, "스윙점수": np.nan,
+        "점수_1개월": np.nan, "점수_3개월": np.nan, "점수_6개월": np.nan,
+        "점수_가속도": np.nan, "점수_거래량": np.nan, "점수_과열패널티": np.nan,
+        "점수_합계": np.nan,
         "상태": "가격부족", "52주 최고가": np.nan, "52주 최저가": np.nan,
     }
 
@@ -1127,6 +1147,12 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
             "상위종목쏠림": concentration,
             "가격수준":   price_level,
             "돈흐름점수": flow_score,
+            "점수_1개월": group["점수_1개월"].mean() if "점수_1개월" in group.columns else np.nan,
+            "점수_3개월": group["점수_3개월"].mean() if "점수_3개월" in group.columns else np.nan,
+            "점수_6개월": group["점수_6개월"].mean() if "점수_6개월" in group.columns else np.nan,
+            "점수_가속도": group["점수_가속도"].mean() if "점수_가속도" in group.columns else np.nan,
+            "점수_거래량": group["점수_거래량"].mean() if "점수_거래량" in group.columns else np.nan,
+            "점수_과열패널티": group["점수_과열패널티"].mean() if "점수_과열패널티" in group.columns else np.nan,
             "상태":       classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
             "구성종목":   ", ".join(group["종목명"].drop_duplicates().astype(str).tolist()),
         })
@@ -1182,16 +1208,24 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
         volume_bonus          = vol_capped_theme * 6
         concentration_penalty = (concentration if finite_num(concentration) else 0.0) * 8
         overbought_penalty    = max(0.0, (price_level - 0.85) * 20) if finite_num(price_level) else 0.0
+        score_1m              = (ret_1m if finite_num(ret_1m) else 0.0) * 18
+        score_3m              = (ret_3m if finite_num(ret_3m) else 0.0) * 36
+        score_6m              = (ret_6m if finite_num(ret_6m) else 0.0) * 22
+        score_accel           = (accel if finite_num(accel) else 0.0) * 18
+        score_breadth         = breadth_bonus
+        score_volume          = volume_bonus
+        score_concentration   = -concentration_penalty
+        score_overbought      = -overbought_penalty
 
         theme_score = (
-            (ret_1m if finite_num(ret_1m) else 0.0) * 18
-            + (ret_3m if finite_num(ret_3m) else 0.0) * 36
-            + (ret_6m if finite_num(ret_6m) else 0.0) * 22
-            + (accel  if finite_num(accel)  else 0.0) * 18
-            + breadth_bonus
-            + volume_bonus
-            - concentration_penalty
-            - overbought_penalty
+            score_1m
+            + score_3m
+            + score_6m
+            + score_accel
+            + score_breadth
+            + score_volume
+            + score_concentration
+            + score_overbought
         )
 
         rows.append({
@@ -1211,6 +1245,14 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             "상위종목쏠림":  concentration,
             "가격수준":      price_level,
             "테마돈흐름점수": theme_score,
+            "점수_1개월":     score_1m,
+            "점수_3개월":     score_3m,
+            "점수_6개월":     score_6m,
+            "점수_가속도":    score_accel,
+            "점수_상승비율":  score_breadth,
+            "점수_거래량":    score_volume,
+            "점수_쏠림패널티": score_concentration,
+            "점수_과열패널티": score_overbought,
             "상태":          classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         })
 
