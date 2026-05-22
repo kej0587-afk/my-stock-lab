@@ -12504,6 +12504,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         row_info = {
             "자산명": name,
             "티커": ticker,
+            "버킷": bucket,
             "원화환산": value_krw,
             "전체비중": weight_total,
             "목표비중": target_weight,
@@ -12548,7 +12549,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         asset_rows.append(row_info)
 
     asset_df = pd.DataFrame(asset_rows, columns=[
-        "자산명", "티커", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
+        "자산명", "티커", "버킷", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
     ])
 
     if not asset_df.empty:
@@ -13015,6 +13016,316 @@ def render_portfolio_risk_breakdown(metrics):
     st.dataframe(show_df, use_container_width=True, hide_index=True)
 
 
+TEN_YEAR_STAGE_PROFILES = {
+    "공격수": {
+        "year_range": "1~3년차",
+        "desc": "성장, 코어 적립, 제한적 레버리지까지 허용하는 자산 증식 구간",
+        "reserve_min": 3.0,
+        "reserve_target": 8.0,
+        "reserve_max": 18.0,
+        "leverage_ok": 25.0,
+        "leverage_warn": 35.0,
+        "vol_ok": 32.0,
+        "mdd_ok": 35.0,
+        "top3_ok": 90.0,
+        "active_min": 75.0,
+    },
+    "미드필더": {
+        "year_range": "4~6년차",
+        "desc": "공격은 유지하되 현금흐름, 분산, 리밸런싱을 같이 키우는 전환 구간",
+        "reserve_min": 8.0,
+        "reserve_target": 15.0,
+        "reserve_max": 25.0,
+        "leverage_ok": 12.0,
+        "leverage_warn": 20.0,
+        "vol_ok": 24.0,
+        "mdd_ok": 28.0,
+        "top3_ok": 75.0,
+        "active_min": 65.0,
+    },
+    "수비형": {
+        "year_range": "7~9년차",
+        "desc": "낙폭을 줄이고 채권/CD/현금성/배당형 같은 방어 역할을 늘리는 구간",
+        "reserve_min": 15.0,
+        "reserve_target": 25.0,
+        "reserve_max": 40.0,
+        "leverage_ok": 5.0,
+        "leverage_warn": 10.0,
+        "vol_ok": 18.0,
+        "mdd_ok": 22.0,
+        "top3_ok": 60.0,
+        "active_min": 50.0,
+    },
+    "골키퍼": {
+        "year_range": "10년차 이후",
+        "desc": "월 현금흐름과 원금 방어를 최우선으로 보는 방어 구간",
+        "reserve_min": 25.0,
+        "reserve_target": 35.0,
+        "reserve_max": 60.0,
+        "leverage_ok": 0.0,
+        "leverage_warn": 3.0,
+        "vol_ok": 12.0,
+        "mdd_ok": 15.0,
+        "top3_ok": 45.0,
+        "active_min": 35.0,
+    },
+}
+
+
+def classify_ten_year_project_stage(year_index):
+    year_index = max(int(clean_float(year_index, 1)), 1)
+    if year_index <= 3:
+        return "공격수"
+    if year_index <= 6:
+        return "미드필더"
+    if year_index <= 9:
+        return "수비형"
+    return "골키퍼"
+
+
+def get_next_ten_year_stage(stage):
+    order = ["공격수", "미드필더", "수비형", "골키퍼"]
+    try:
+        idx = order.index(stage)
+    except ValueError:
+        return None
+    return order[min(idx + 1, len(order) - 1)] if idx < len(order) - 1 else None
+
+
+def score_under_limit(value, ok_limit, warn_limit, max_points):
+    value = clean_float(value, np.nan)
+    if not np.isfinite(value):
+        return max_points * 0.45
+    if value <= ok_limit:
+        return max_points
+    if value >= warn_limit:
+        return 0.0
+    return max_points * (1 - (value - ok_limit) / max(warn_limit - ok_limit, 1e-9))
+
+
+def score_in_band(value, low, high, target, max_points):
+    value = clean_float(value, np.nan)
+    if not np.isfinite(value):
+        return max_points * 0.45
+    if low <= value <= high:
+        return max_points
+    distance = min(abs(value - low), abs(value - high))
+    tolerance = max(target, 5.0)
+    return max(max_points * (1 - distance / tolerance), 0.0)
+
+
+def infer_project_start_date(monthly_logs_df):
+    start = get_portfolio_analysis_start_date(monthly_logs_df)
+    if start is not None:
+        return pd.Timestamp(start).date()
+    today = get_kst_now().date()
+    return today.replace(month=1, day=1)
+
+
+def build_ten_year_project_fit_report(metrics, asset_df, project_start_date):
+    today = get_kst_now().date()
+    try:
+        start_date = pd.Timestamp(project_start_date).date()
+    except Exception:
+        start_date = today.replace(month=1, day=1)
+    elapsed_days = max((today - start_date).days, 0)
+    project_year = int(elapsed_days // 365) + 1
+    stage = classify_ten_year_project_stage(project_year)
+    profile = TEN_YEAR_STAGE_PROFILES[stage]
+    next_stage = get_next_ten_year_stage(stage)
+    next_profile = TEN_YEAR_STAGE_PROFILES.get(next_stage, profile)
+
+    total_asset = clean_float(metrics.get("total_asset"), 0.0)
+    active_value = clean_float(metrics.get("active_value"), 0.0)
+    active_pct = active_value / total_asset * 100 if total_asset > 0 else 0.0
+    reserve_summary = metrics.get("reserve_summary", {}) or {}
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    leverage_summary = metrics.get("leverage_summary", {}) or {}
+    leverage_pct = clean_float(leverage_summary.get("leveraged_principal_pct"), 0.0)
+    effective_leverage_pct = clean_float(leverage_summary.get("effective_exposure_pct"), 0.0)
+    top3 = clean_float(metrics.get("top3_weight"), 0.0)
+    top1 = clean_float(metrics.get("top1_weight"), 0.0)
+    vol = clean_float(metrics.get("portfolio_vol"), np.nan)
+    mdd = abs(clean_float(metrics.get("portfolio_mdd"), np.nan))
+    risk_index = clean_float(metrics.get("risk_index"), 0.0)
+    avg_corr = clean_float(metrics.get("avg_corr"), np.nan)
+    coverage = metrics.get("data_coverage", {}) or {}
+    usable_weight = clean_float(coverage.get("usable_total_weight"), 0.0)
+
+    bucket_weights = {}
+    if asset_df is not None and not asset_df.empty and "버킷" in asset_df.columns:
+        for bucket, group in asset_df.groupby(asset_df["버킷"].astype(str).str.lower()):
+            bucket_weights[bucket] = float(group["전체비중"].apply(clean_float).sum())
+    core_pct = bucket_weights.get("core", 0.0)
+    swing_pct = bucket_weights.get("swing", 0.0)
+
+    stage_score = 0.0
+    stage_score += score_in_band(waiting_pct, profile["reserve_min"], profile["reserve_max"], profile["reserve_target"], 1.0)
+    stage_score += score_under_limit(leverage_pct, profile["leverage_ok"], profile["leverage_warn"], 0.9)
+    stage_score += score_under_limit(top3, profile["top3_ok"], min(profile["top3_ok"] + 18, 100), 0.6)
+    if stage == "공격수":
+        stage_score += min(max((active_pct - profile["active_min"]) / 20, 0), 1) * 0.5
+    else:
+        active_ok_by_stage = {"미드필더": 92.0, "수비형": 82.0, "골키퍼": 65.0}
+        stage_score += score_under_limit(active_pct, active_ok_by_stage.get(stage, 90.0), 100, 0.5)
+    stage_score = min(stage_score, 3.0)
+
+    risk_score = 0.0
+    risk_score += score_under_limit(vol, profile["vol_ok"], profile["vol_ok"] + 14, 0.8)
+    risk_score += score_under_limit(mdd, profile["mdd_ok"], profile["mdd_ok"] + 18, 0.8)
+    risk_score += score_under_limit(risk_index, 70 if stage == "공격수" else 55, 95 if stage == "공격수" else 80, 0.6)
+    if usable_weight >= 85:
+        risk_score += 0.3
+    elif usable_weight >= 65:
+        risk_score += 0.18
+    risk_score = min(risk_score, 2.5)
+
+    transition_score = 0.0
+    if next_stage is None:
+        transition_score += score_under_limit(leverage_pct, profile["leverage_ok"], profile["leverage_warn"], 0.8)
+        transition_score += score_in_band(waiting_pct, profile["reserve_min"], profile["reserve_max"], profile["reserve_target"], 0.8)
+        transition_score += score_under_limit(vol, profile["vol_ok"], profile["vol_ok"] + 10, 0.4)
+    else:
+        transition_score += score_under_limit(leverage_pct, next_profile["leverage_ok"], next_profile["leverage_warn"], 0.8)
+        transition_score += score_in_band(waiting_pct, next_profile["reserve_min"], next_profile["reserve_max"], next_profile["reserve_target"], 0.8)
+        transition_score += score_under_limit(vol, next_profile["vol_ok"], next_profile["vol_ok"] + 12, 0.4)
+    transition_score = min(transition_score, 2.0)
+
+    diversification_score = 0.0
+    diversification_score += score_under_limit(top1, 35 if stage == "공격수" else 25, 55 if stage == "공격수" else 40, 0.45)
+    diversification_score += score_under_limit(top3, profile["top3_ok"], min(profile["top3_ok"] + 16, 100), 0.55)
+    corr_limit = 0.75 if stage == "공격수" else 0.6
+    diversification_score += score_under_limit(avg_corr, corr_limit, min(corr_limit + 0.25, 0.98), 0.5)
+    diversification_score = min(diversification_score, 1.5)
+
+    discipline_score = 0.0
+    leverage_control = metrics.get("leverage_control", {}) or {}
+    if leverage_pct <= 0:
+        discipline_score += 0.25
+    elif clean_float(leverage_control.get("blocked_count"), 0) > 0:
+        discipline_score += 0.35
+    else:
+        discipline_score += 0.2
+    if metrics.get("target_concentration_gap") is not None and np.isfinite(clean_float(metrics.get("target_concentration_gap"), np.nan)):
+        discipline_score += 0.25 if abs(clean_float(metrics.get("target_concentration_gap"), 0.0)) <= 5 else 0.12
+    if usable_weight >= 85:
+        discipline_score += 0.2
+    if total_asset > 0:
+        discipline_score += 0.3
+    discipline_score = min(discipline_score, 1.0)
+
+    total_score = min(stage_score + risk_score + transition_score + diversification_score + discipline_score, 10.0)
+    if total_score >= 8.0:
+        verdict = "작전 적합"
+        color = "#22c55e"
+    elif total_score >= 6.5:
+        verdict = "대체로 적합"
+        color = "#38bdf8"
+    elif total_score >= 5.0:
+        verdict = "보완 필요"
+        color = "#f59e0b"
+    else:
+        verdict = "작전 불일치"
+        color = "#ef4444"
+
+    suggestions = []
+    if waiting_pct < profile["reserve_min"]:
+        suggestions.append(f"대기자금이 {waiting_pct:.1f}%로 현재 단계 최소권({profile['reserve_min']:.0f}%+)보다 낮습니다. 신규자금 일부는 현금성/CD/단기채 역할로 돌려 방어력을 회복하세요.")
+    if leverage_pct > profile["leverage_ok"]:
+        suggestions.append(f"레버리지 원금비중 {leverage_pct:.1f}%는 {stage} 단계 허용권({profile['leverage_ok']:.0f}% 이하)을 넘습니다. 추가매수는 단계별 DCA 규칙이 켜질 때만 제한적으로 보세요.")
+    if next_stage and transition_score < 1.0:
+        suggestions.append(f"다음 단계({next_stage}) 준비도가 낮습니다. 3년 차가 끝나기 전부터 레버리지 비중을 낮추고 대기자금/채권형/현금성 역할을 조금씩 늘리는 계획이 필요합니다.")
+    if top3 > profile["top3_ok"]:
+        suggestions.append(f"상위 3개 비중 {top3:.1f}%는 현재 단계 기준보다 높습니다. 매도보다 신규자금을 다른 역할 자산에 배분해 천천히 희석하는 방식이 적합합니다.")
+    if np.isfinite(vol) and vol > profile["vol_ok"]:
+        suggestions.append(f"변동성 {vol:.1f}%는 현재 단계 기준보다 높습니다. 같은 성장/테마 추가보다 채권, CD금리형, 현금성, 금 같은 완충 역할을 검토하세요.")
+    if not suggestions:
+        suggestions.append("현재 단계와 큰 충돌은 없습니다. 정해둔 적립률, 레버리지 차단 기준, 대기자금 목표를 유지하는 쪽이 좋습니다.")
+
+    components = pd.DataFrame([
+        {"평가항목": "현재 단계 적합도", "점수": stage_score, "만점": 3.0, "해석": f"{stage} 단계의 공격/현금/레버리지 구조와 맞는지"},
+        {"평가항목": "리스크 통제력", "점수": risk_score, "만점": 2.5, "해석": "변동성, MDD, 위험도, 데이터 커버리지"},
+        {"평가항목": "다음 단계 준비도", "점수": transition_score, "만점": 2.0, "해석": f"{next_stage or stage} 단계로 넘어갈 준비"},
+        {"평가항목": "분산/쏠림 관리", "점수": diversification_score, "만점": 1.5, "해석": "상위 비중과 상관관계"},
+        {"평가항목": "운용 규칙 일관성", "점수": discipline_score, "만점": 1.0, "해석": "목표비중, 레버리지 차단, 데이터 관리"},
+    ])
+
+    role_rows = pd.DataFrame([
+        {"역할": "운용자산", "현재비중": active_pct, "현재 단계 기준": f"{profile['active_min']:.0f}% 이상"},
+        {"역할": "코어", "현재비중": core_pct, "현재 단계 기준": "장기 적립의 중심"},
+        {"역할": "레버리지", "현재비중": leverage_pct, "현재 단계 기준": f"{profile['leverage_ok']:.0f}% 이하 권장"},
+        {"역할": "스윙/테마", "현재비중": swing_pct, "현재 단계 기준": "보조 공격수"},
+        {"역할": "대기자금", "현재비중": waiting_pct, "현재 단계 기준": f"{profile['reserve_min']:.0f}~{profile['reserve_max']:.0f}%"},
+    ])
+
+    return {
+        "score": total_score,
+        "verdict": verdict,
+        "color": color,
+        "stage": stage,
+        "stage_desc": profile["desc"],
+        "stage_range": profile["year_range"],
+        "project_year": project_year,
+        "elapsed_days": elapsed_days,
+        "next_stage": next_stage,
+        "components": components,
+        "role_rows": role_rows,
+        "suggestions": suggestions,
+        "effective_leverage_pct": effective_leverage_pct,
+    }
+
+
+def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None):
+    if metrics is None or clean_float(metrics.get("total_asset"), 0.0) <= 0:
+        return
+
+    default_start = infer_project_start_date(monthly_logs_df)
+    st.markdown("#### 10년 작전 적합도")
+    st.caption("현재 포트폴리오가 10년 장기 시나리오의 어느 단계와 맞는지 평가합니다. 투자 추천이 아니라 작전표와의 적합도 점검입니다.")
+    selected_start = st.date_input(
+        "프로젝트 시작일",
+        value=default_start,
+        key="ten_year_project_start_date",
+        help="월별 로그가 있으면 첫 기록월을 기본값으로 사용합니다. 필요하면 직접 바꿔서 평가할 수 있습니다.",
+    )
+
+    report = build_ten_year_project_fit_report(metrics, asset_df, selected_start)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {report['color']};'><b>작전 적합도</b><br>"
+        f"<span class='highlight'>{report['score']:.1f}/10</span><br>{escape_html_value(report['verdict'])}</div>",
+        unsafe_allow_html=True,
+    )
+    c2.metric("현재 포지션", f"{report['stage']} ({report['stage_range']})", f"{report['project_year']}년차")
+    c3.metric("다음 전환", report["next_stage"] or "최종 방어", "준비도 참고")
+    c4.metric("레버리지 환산노출", f"{report['effective_leverage_pct']:.1f}%")
+
+    st.markdown(
+        f"""
+<div class='info-panel' style='margin-bottom:12px;'>
+<b>{escape_html_value(report['stage'])} 모드 해석</b><br>
+{escape_html_value(report['stage_desc'])}<br>
+현재 점수는 “수익률이 좋다/나쁘다”가 아니라, 이 단계의 역할 배분과 리스크 규칙에 얼마나 맞는지를 본 값입니다.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    comp_df = report["components"].copy()
+    comp_df["점수"] = comp_df.apply(lambda r: f"{clean_float(r['점수']):.1f} / {clean_float(r['만점']):.1f}", axis=1)
+    comp_df = comp_df.drop(columns=["만점"])
+    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+
+    with st.expander("역할별 비중 해석", expanded=False):
+        role_df = report["role_rows"].copy()
+        role_df["현재비중"] = role_df["현재비중"].apply(lambda v: f"{clean_float(v):.1f}%")
+        st.dataframe(role_df, use_container_width=True, hide_index=True)
+
+    st.markdown("##### 보완 방향")
+    for suggestion in report["suggestions"][:5]:
+        st.write(f"- {suggestion}")
+
+
 def render_leverage_exposure_panel(metrics):
     summary = metrics.get("leverage_summary", {}) or {}
     leverage_df = metrics.get("leverage_df", pd.DataFrame())
@@ -13345,6 +13656,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     render_portfolio_sample_warning(metrics)
 
     render_long_term_goal_simulator(metrics)
+    render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df)
 
     if notes_df.empty:
         st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
