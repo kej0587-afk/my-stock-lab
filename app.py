@@ -5620,6 +5620,44 @@ def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
     return out.dropna(subset=["Open", "High", "Low", "Close"])
 
 
+def get_precision_timeframe_trend(label: str, tf_df: pd.DataFrame, last) -> str:
+    close = clean_float(last.get("Close"), np.nan)
+    ma5 = clean_float(last.get("MA5"), np.nan)
+    ma20 = clean_float(last.get("MA20"), np.nan)
+    ma50 = clean_float(last.get("MA50"), np.nan)
+    ma120 = clean_float(last.get("MA120"), np.nan)
+    row_count = len(tf_df) if tf_df is not None else 0
+
+    if label == "일봉":
+        return get_trend(last)
+
+    if label == "주봉":
+        if np.isfinite(ma20) and np.isfinite(ma50):
+            if ma20 > ma50 and (not np.isfinite(close) or close >= ma20 * 0.98):
+                return "🚀정배열(상승)"
+            if np.isfinite(close) and close < ma50 and ma20 < ma50:
+                return "🌊역배열(하락)"
+            return "⏳혼조세"
+        if row_count >= 12 and np.isfinite(close) and np.isfinite(ma5):
+            return "⏳단기상승" if close >= ma5 else "⏳단기혼조"
+        return "자료제한"
+
+    if label == "월봉":
+        # 월봉 MA120은 10년 평균이라 정밀관측소 타점 보정에는 과하게 엄격합니다.
+        # 월봉은 MA5/MA20(약 5개월/20개월) 중심으로 장기 위치를 봅니다.
+        if np.isfinite(ma5) and np.isfinite(ma20):
+            if ma5 > ma20 and (not np.isfinite(close) or close >= ma5 * 0.95):
+                return "🚀정배열(상승)"
+            if np.isfinite(close) and close < ma20 and ma5 < ma20:
+                return "🌊역배열(하락)"
+            return "⏳혼조세"
+        if row_count >= 6 and np.isfinite(close) and np.isfinite(ma5):
+            return "⏳단기상승" if close >= ma5 else "⏳단기혼조"
+        return "자료제한"
+
+    return get_trend(last)
+
+
 def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     if df is None or df.empty or len(df) < 3:
         return {
@@ -5645,7 +5683,7 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     close = clean_float(last.get("Close"), np.nan)
     high_ref = clean_float(tf_df["High"].tail(min(len(tf_df), 52)).max(), np.nan)
     dd = (close / high_ref - 1) * 100 if np.isfinite(close) and np.isfinite(high_ref) and high_ref > 0 else np.nan
-    trend = get_trend(last)
+    trend = get_precision_timeframe_trend(label, tf_df, last)
     macd = get_macd_state(last.get("MACD"), last.get("MACD_Sig"), prev.get("MACD"), prev.get("MACD_Sig"))
     rsi = clean_float(last.get("RSI"), np.nan)
     mfi = clean_float(last.get("MFI"), np.nan)
@@ -5659,23 +5697,27 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
         (np.isfinite(mfi) and mfi >= 80) or
         (np.isfinite(pct_b) and pct_b >= 0.90)
     )
+    is_uptrend = trend == "🚀정배열(상승)" or trend == "⏳단기상승"
     pullback = (
-        trend == "🚀정배열(상승)" and
+        is_uptrend and
         (not np.isfinite(rsi) or 42 <= rsi <= 65) and
         (not np.isfinite(pct_b) or 0.25 <= pct_b <= 0.78)
     )
     damage = trend == "🌊역배열(하락)" or (np.isfinite(close) and np.isfinite(ma50) and ma50 > 0 and close < ma50)
 
-    if damage:
+    if trend == "자료제한":
+        state, color = "자료제한", "#64748b"
+        summary = f"{label} 데이터가 짧아 장기 이평 판정은 보류합니다. 차트 길이를 확인하고 일봉/주봉을 우선 참고하세요."
+    elif damage:
         state, color = "추세훼손", "#ef4444"
         summary = f"{label} 기준 추세가 약합니다. 일봉 반등만 보고 크게 들어가기보다 구조 회복을 먼저 확인하세요."
-    elif overheat and trend == "🚀정배열(상승)":
+    elif overheat and is_uptrend:
         state, color = "상승 과열권", "#f59e0b"
         summary = f"{label}은 상승 추세지만 가격대가 높습니다. 일봉 눌림 신호가 떠도 정찰/분할만 적합합니다."
     elif pullback:
         state, color = "상승 눌림권", "#22c55e"
         summary = f"{label}도 상승 추세 안의 눌림권입니다. 일봉 신호와 방향이 맞습니다."
-    elif trend == "🚀정배열(상승)":
+    elif is_uptrend:
         state, color = "상승 유지", "#38bdf8"
         summary = f"{label}은 상승 추세를 유지 중입니다. 다만 실제 타점은 일봉 눌림으로 조절하세요."
     elif trend == "⏳혼조세":
@@ -5703,10 +5745,15 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
 
 def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame) -> dict:
     raw_long = pd.DataFrame()
-    try:
-        raw_long = load_price_df(ticker, "10y")
-    except Exception:
-        raw_long = pd.DataFrame()
+    for period in ("10y", "max", "5y", "2y"):
+        try:
+            candidate = load_price_df(ticker, period)
+        except Exception:
+            candidate = pd.DataFrame()
+        if candidate is not None and not candidate.empty and len(candidate) > len(raw_long):
+            raw_long = candidate
+        if raw_long is not None and not raw_long.empty and len(raw_long) >= 520:
+            break
     if raw_long is None or raw_long.empty:
         raw_long = daily_df.copy() if daily_df is not None else pd.DataFrame()
 
@@ -5748,7 +5795,7 @@ def get_precision_mtf_bias(mtf_pack: dict, c: dict) -> dict:
             "color": "#f59e0b",
             "text": "일봉 눌림 신호가 있어도 주봉/월봉 가격대가 높습니다. 풀진입이 아니라 목표비중의 1/3 이하 정찰 접근이 맞습니다.",
         }
-    if is_entry_like and all(state in ("상승 눌림권", "상승 유지", "자료부족") for state in states):
+    if is_entry_like and all(state in ("상승 눌림권", "상승 유지", "자료부족", "자료제한") for state in states):
         return {
             "label": "상위 시간대 우호",
             "color": "#22c55e",
