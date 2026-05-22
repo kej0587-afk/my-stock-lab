@@ -5550,6 +5550,230 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
     return True
 
 
+def render_precision_candlestick_chart(df: pd.DataFrame, avg_price: float = 0.0, key: str = "precision_candle"):
+    if df is None or df.empty:
+        st.info("표시할 가격 데이터가 없습니다.")
+        return
+    if render_lwc_candlestick(df, avg_price=avg_price, key=key):
+        return
+    fig = go.Figure(data=[go.Candlestick(
+        x=df.index, open=df["Open"], high=df["High"],
+        low=df["Low"], close=df["Close"], name="Price",
+    )])
+    for col, color, width, dash in [
+        ("MA5", "#22c55e", 1.4, None),
+        ("MA20", "#fbbf24", 2, None),
+        ("MA50", "#60a5fa", 1.6, None),
+        ("MA120", "#94a3b8", 1.5, "dot"),
+    ]:
+        if col in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df.index,
+                y=df[col],
+                line=dict(color=color, width=width, dash=dash),
+                name=col,
+            ))
+    if avg_price and avg_price > 0:
+        fig.add_hline(y=avg_price, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
+    fig.update_layout(
+        template="plotly_dark", height=600,
+        xaxis_rangeslider_visible=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def resample_ohlcv_timeframe(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    required_cols = ["Open", "High", "Low", "Close", "Volume"]
+    if any(col not in df.columns for col in required_cols):
+        return pd.DataFrame()
+    source = df[required_cols].copy()
+    source.index = pd.to_datetime(source.index)
+    source = source.sort_index()
+    out = source.resample(rule).agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    })
+    return out.dropna(subset=["Open", "High", "Low", "Close"])
+
+
+def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
+    if df is None or df.empty or len(df) < 3:
+        return {
+            "label": label,
+            "state": "자료부족",
+            "color": "#64748b",
+            "summary": "가격 데이터가 부족해 상위 시간대 해석을 보류합니다.",
+        }
+
+    try:
+        tf_df = build_indicators(df.copy())
+    except Exception:
+        tf_df = df.copy()
+    if tf_df is None or tf_df.empty or len(tf_df) < 3:
+        return {
+            "label": label,
+            "state": "자료부족",
+            "color": "#64748b",
+            "summary": "지표 계산에 필요한 데이터가 부족합니다.",
+        }
+
+    last, prev = tf_df.iloc[-1], tf_df.iloc[-2]
+    close = clean_float(last.get("Close"), np.nan)
+    high_ref = clean_float(tf_df["High"].tail(min(len(tf_df), 52)).max(), np.nan)
+    dd = (close / high_ref - 1) * 100 if np.isfinite(close) and np.isfinite(high_ref) and high_ref > 0 else np.nan
+    trend = get_trend(last)
+    macd = get_macd_state(last.get("MACD"), last.get("MACD_Sig"), prev.get("MACD"), prev.get("MACD_Sig"))
+    rsi = clean_float(last.get("RSI"), np.nan)
+    mfi = clean_float(last.get("MFI"), np.nan)
+    pct_b = clean_float(last.get("%B"), np.nan)
+    ma20 = clean_float(last.get("MA20"), np.nan)
+    ma50 = clean_float(last.get("MA50"), np.nan)
+    ma20_gap = (close / ma20 - 1) * 100 if np.isfinite(close) and np.isfinite(ma20) and ma20 > 0 else np.nan
+
+    overheat = (
+        (np.isfinite(rsi) and rsi >= 70) or
+        (np.isfinite(mfi) and mfi >= 80) or
+        (np.isfinite(pct_b) and pct_b >= 0.90)
+    )
+    pullback = (
+        trend == "🚀정배열(상승)" and
+        (not np.isfinite(rsi) or 42 <= rsi <= 65) and
+        (not np.isfinite(pct_b) or 0.25 <= pct_b <= 0.78)
+    )
+    damage = trend == "🌊역배열(하락)" or (np.isfinite(close) and np.isfinite(ma50) and ma50 > 0 and close < ma50)
+
+    if damage:
+        state, color = "추세훼손", "#ef4444"
+        summary = f"{label} 기준 추세가 약합니다. 일봉 반등만 보고 크게 들어가기보다 구조 회복을 먼저 확인하세요."
+    elif overheat and trend == "🚀정배열(상승)":
+        state, color = "상승 과열권", "#f59e0b"
+        summary = f"{label}은 상승 추세지만 가격대가 높습니다. 일봉 눌림 신호가 떠도 정찰/분할만 적합합니다."
+    elif pullback:
+        state, color = "상승 눌림권", "#22c55e"
+        summary = f"{label}도 상승 추세 안의 눌림권입니다. 일봉 신호와 방향이 맞습니다."
+    elif trend == "🚀정배열(상승)":
+        state, color = "상승 유지", "#38bdf8"
+        summary = f"{label}은 상승 추세를 유지 중입니다. 다만 실제 타점은 일봉 눌림으로 조절하세요."
+    elif trend == "⏳혼조세":
+        state, color = "혼조 확인", "#94a3b8"
+        summary = f"{label}은 방향 확인이 필요한 구간입니다. 일봉 신호의 신뢰도를 한 단계 낮춰 보세요."
+    else:
+        state, color = "관찰", "#64748b"
+        summary = f"{label} 해석은 중립입니다. 일봉 신호를 단독으로 크게 확대하지 않는 편이 좋습니다."
+
+    return {
+        "label": label,
+        "state": state,
+        "color": color,
+        "summary": summary,
+        "trend": trend,
+        "macd": macd,
+        "rsi": rsi,
+        "mfi": mfi,
+        "pct_b": pct_b,
+        "ma20_gap": ma20_gap,
+        "dd": dd,
+        "rows": len(tf_df),
+    }
+
+
+def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame) -> dict:
+    raw_long = pd.DataFrame()
+    try:
+        raw_long = load_price_df(ticker, "10y")
+    except Exception:
+        raw_long = pd.DataFrame()
+    if raw_long is None or raw_long.empty:
+        raw_long = daily_df.copy() if daily_df is not None else pd.DataFrame()
+
+    weekly_raw = resample_ohlcv_timeframe(raw_long, "W-FRI")
+    monthly_raw = resample_ohlcv_timeframe(raw_long, "M")
+    weekly_df = build_indicators(weekly_raw.tail(260)) if not weekly_raw.empty else pd.DataFrame()
+    monthly_df = build_indicators(monthly_raw.tail(180)) if not monthly_raw.empty else pd.DataFrame()
+
+    return {
+        "일봉": {"df": daily_df, "snapshot": build_precision_timeframe_snapshot("일봉", daily_df)},
+        "주봉": {"df": weekly_df, "snapshot": build_precision_timeframe_snapshot("주봉", weekly_df)},
+        "월봉": {"df": monthly_df, "snapshot": build_precision_timeframe_snapshot("월봉", monthly_df)},
+    }
+
+
+def get_precision_mtf_bias(mtf_pack: dict, c: dict) -> dict:
+    weekly = (mtf_pack.get("주봉") or {}).get("snapshot", {})
+    monthly = (mtf_pack.get("월봉") or {}).get("snapshot", {})
+    decision_code = str(c.get("decision_code", ""))
+    is_entry_like = decision_code in {
+        "QUALITY_PULLBACK_ENTRY",
+        "TREND_PULLBACK_EXPLORE",
+        "S_PULLBACK_ENTRY",
+        "NEW_ENTRY_LEADER",
+        "BREAKOUT_52W_ENTRY",
+        "EARLY_REVERSAL_ENTRY",
+        "OVERSOLD_NEW_ENTRY",
+    }
+    states = [weekly.get("state", ""), monthly.get("state", "")]
+    if any(state == "추세훼손" for state in states):
+        return {
+            "label": "상위 시간대 경고",
+            "color": "#ef4444",
+            "text": "주봉/월봉 중 하나가 추세훼손입니다. 일봉 반등은 짧게 보고 신규 비중 확대는 보류가 안전합니다.",
+        }
+    if any(state == "상승 과열권" for state in states):
+        return {
+            "label": "정찰만 적합",
+            "color": "#f59e0b",
+            "text": "일봉 눌림 신호가 있어도 주봉/월봉 가격대가 높습니다. 풀진입이 아니라 목표비중의 1/3 이하 정찰 접근이 맞습니다.",
+        }
+    if is_entry_like and all(state in ("상승 눌림권", "상승 유지", "자료부족") for state in states):
+        return {
+            "label": "상위 시간대 우호",
+            "color": "#22c55e",
+            "text": "일봉 신호와 주봉/월봉 흐름이 크게 충돌하지 않습니다. 그래도 실행은 분할 기준을 우선합니다.",
+        }
+    return {
+        "label": "중립 확인",
+        "color": "#64748b",
+        "text": "상위 시간대가 강한 반대 신호를 내지는 않습니다. 일봉 판정과 포지션 사이징을 함께 보세요.",
+    }
+
+
+def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
+    if not mtf_pack:
+        return
+    bias = get_precision_mtf_bias(mtf_pack, c)
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {bias['color']}; margin-bottom:12px;'>
+<b>상위 시간대 보정: {escape_html_value(bias['label'])}</b><br>
+{escape_html_value(bias['text'])}
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    rows = []
+    for label in ["일봉", "주봉", "월봉"]:
+        snap = (mtf_pack.get(label) or {}).get("snapshot", {})
+        rows.append({
+            "구분": label,
+            "상태": snap.get("state", "-"),
+            "추세": snap.get("trend", "-"),
+            "MACD": snap.get("macd", "-"),
+            "RSI": "-" if not np.isfinite(clean_float(snap.get("rsi"), np.nan)) else f"{clean_float(snap.get('rsi')):.0f}",
+            "MFI": "-" if not np.isfinite(clean_float(snap.get("mfi"), np.nan)) else f"{clean_float(snap.get('mfi')):.0f}",
+            "%B": "-" if not np.isfinite(clean_float(snap.get("pct_b"), np.nan)) else f"{clean_float(snap.get('pct_b')):.2f}",
+            "MA20 이격": "-" if not np.isfinite(clean_float(snap.get("ma20_gap"), np.nan)) else f"{clean_float(snap.get('ma20_gap')):+.1f}%",
+            "고점대비": "-" if not np.isfinite(clean_float(snap.get("dd"), np.nan)) else f"{clean_float(snap.get('dd')):+.1f}%",
+            "해석": snap.get("summary", "-"),
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def _load_benchmark_returns(bench_ticker: str) -> pd.Series:
     """벤치마크 6개월 일별 수익률(%) 시리즈를 반환 (캐시)."""
@@ -9148,10 +9372,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 )
             elif rs_label == "🚀강함" and mfi_now < 35:
                 dec, col, decision_outcome = _set_decision(
-                    "💎S급: 과매도(풀매수)", "#16a34a", "S_GRADE_OVERSOLD_BUY",
+                    "💎S급 과매도: 강한 분할추매", "#16a34a", "S_GRADE_OVERSOLD_BUY",
                     reasons=(
                         f"RS강함 / MFI {mfi_now:.0f} (기준: 35 이하) / RSI {rsi_now:.0f}",
-                        "S급 과매도 — 풀매수 타이밍",
+                        "S급 과매도 — 강한 분할추매 후보",
                     ),
                 )
             elif adj_tech_score >= 4 and cur_p <= my_price:
@@ -19423,9 +19647,11 @@ if main_page == "precision":
     df = load_price_df(tkr, "1y")
     if not df.empty:
         df = build_indicators(df)
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p, 
-                                     (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free, 
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p,
+                                     (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free,
                                      app_mode, u_asset, u_curr_w, u_targ_w)
+        with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
+            mtf_pack = build_precision_multi_timeframe_pack(tkr, df)
 
         L, R = st.columns([1.1, 2.4])
         with L:
@@ -19549,6 +19775,7 @@ if main_page == "precision":
                 f"└ 🛠️기술: {c['tech_total']} (RS:{c['rs_s']} {c['rs_slope_label']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']}) Adj보정:{c['rs_slope_s']:+d}<br>"
                 f"└ 💰재무: {fin_text}</div>", unsafe_allow_html=True
             )
+            st.caption("후보 등급은 종목의 우선순위입니다. 실제 매수 강도는 위 타점 문구, 목표비중, 포지션 사이징, 주봉·월봉 보정을 같이 봅니다.")
 
         with R:
             p_line = u_price if app_mode == "범용모드" else my_p
@@ -19556,29 +19783,15 @@ if main_page == "precision":
                 (app_mode == "범용모드" and c['current_w'] > 0)
                 or (app_mode == "개인모드" and not is_free and has_p)
             )
-            _lwc_rendered = render_lwc_candlestick(
-                df,
-                avg_price=p_line if _show_avg else 0.0,
-                key=f"lwc_candle_{tkr}",
-            )
-            if not _lwc_rendered:
-                # LWC 미설치 시 Plotly fallback
-                fig = go.Figure(data=[go.Candlestick(
-                    x=df.index, open=df["Open"], high=df["High"],
-                    low=df["Low"], close=df["Close"], name="Price",
-                )])
-                fig.add_trace(go.Scatter(x=df.index, y=df["MA5"],   line=dict(color="#22c55e", width=1.4), name="MA5"))
-                fig.add_trace(go.Scatter(x=df.index, y=df["MA20"],  line=dict(color="#fbbf24", width=2),   name="MA20"))
-                fig.add_trace(go.Scatter(x=df.index, y=df["MA50"],  line=dict(color="#60a5fa", width=1.6), name="MA50"))
-                fig.add_trace(go.Scatter(x=df.index, y=df["MA120"], line=dict(color="#94a3b8", width=1.5, dash="dot"), name="MA120"))
-                if _show_avg:
-                    fig.add_hline(y=p_line, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
-                fig.update_layout(
-                    template="plotly_dark", height=600,
-                    xaxis_rangeslider_visible=False,
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            avg_line = p_line if _show_avg else 0.0
+            day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
+            with day_tab:
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}")
+            with week_tab:
+                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}")
+            with month_tab:
+                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}")
+            render_precision_multi_timeframe_summary(mtf_pack, c)
             st.markdown(
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,

@@ -120,7 +120,7 @@ def classify_candidate_grade(is_etf: bool, tech_total: float, fin_score: int) ->
         elif t_score < 9:
             grade = "✅A급 (분할 매수)"
         else:
-            grade = "💎S급 (강력 매수)"
+            grade = "💎S급 (최우선 후보)"
     return CandidateGrade(t_score=t_score, grade=grade)
 
 
@@ -226,7 +226,7 @@ DECISION_CODE_BY_LABEL = {
     "🎯S급 눌림목: 추매": "S_PULLBACK_ADD_ON",
     "⚠️단기과열: 추매 보류": "SHORT_OVERHEAT_NO_ADD",
     "🔥낙폭과대: 줍줍 찬스": "OVERSOLD_ADD_ON",
-    "💎S급: 과매도(풀매수)": "S_GRADE_OVERSOLD_BUY",
+    "💎S급 과매도: 강한 분할추매": "S_GRADE_OVERSOLD_BUY",
     "🎯A급: 기술적 반등": "A_GRADE_TECH_REBOUND",
     "📈정배열: -3% 이상 눌림 분할매수": "UPTREND_PULLBACK_DCA",
     "⏳평단이상: 하락대기(보유)": "ABOVE_COST_WAIT",
