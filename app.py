@@ -5600,8 +5600,10 @@ def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
         "Volume": "sum",
     }
     if isinstance(rule, pd.offsets.MonthEnd) or str(rule).upper() in {"M", "ME"}:
-        month_keys = list(zip(source.index.year, source.index.month))
-        out = source.groupby(month_keys).agg(agg_map)
+        month_source = source.copy()
+        month_source["_year"] = source.index.year
+        month_source["_month"] = source.index.month
+        out = month_source.groupby(["_year", "_month"], sort=True).agg(agg_map)
         out.index = pd.to_datetime([f"{year}-{month:02d}-01" for year, month in out.index]) + pd.offsets.MonthEnd(0)
         out.index.name = source.index.name
         return out.dropna(subset=["Open", "High", "Low", "Close"])
