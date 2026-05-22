@@ -5688,16 +5688,26 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     rsi = clean_float(last.get("RSI"), np.nan)
     mfi = clean_float(last.get("MFI"), np.nan)
     pct_b = clean_float(last.get("%B"), np.nan)
+    ma5 = clean_float(last.get("MA5"), np.nan)
     ma20 = clean_float(last.get("MA20"), np.nan)
     ma50 = clean_float(last.get("MA50"), np.nan)
     ma20_gap = (close / ma20 - 1) * 100 if np.isfinite(close) and np.isfinite(ma20) and ma20 > 0 else np.nan
+    below_ma20 = np.isfinite(ma20_gap) and ma20_gap <= -2.0
+    below_ma5 = np.isfinite(close) and np.isfinite(ma5) and ma5 > 0 and close < ma5
+    is_uptrend = trend == "🚀정배열(상승)" or trend == "⏳단기상승"
+    short_term_pressure = (
+        is_uptrend and (
+            below_ma20 or
+            (label == "일봉" and below_ma5 and np.isfinite(pct_b) and pct_b <= 0.35) or
+            macd in ["📉하락주의(데드크로스)", "⏳추세관망"]
+        )
+    )
 
     overheat = (
         (np.isfinite(rsi) and rsi >= 70) or
         (np.isfinite(mfi) and mfi >= 80) or
         (np.isfinite(pct_b) and pct_b >= 0.90)
     )
-    is_uptrend = trend == "🚀정배열(상승)" or trend == "⏳단기상승"
     pullback = (
         is_uptrend and
         (not np.isfinite(rsi) or 42 <= rsi <= 65) and
@@ -5714,6 +5724,9 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     elif overheat and is_uptrend:
         state, color = "상승 과열권", "#f59e0b"
         summary = f"{label}은 상승 추세지만 가격대가 높습니다. 일봉 눌림 신호가 떠도 정찰/분할만 적합합니다."
+    elif short_term_pressure:
+        state, color = "상승추세 내 조정", "#f59e0b"
+        summary = f"{label}은 큰 이평 배열은 상승이지만 현재가는 단기 이평 아래에서 조정 중입니다. 반등 확인 전 신규진입은 보류가 더 맞습니다."
     elif pullback:
         state, color = "상승 눌림권", "#22c55e"
         summary = f"{label}도 상승 추세 안의 눌림권입니다. 일봉 신호와 방향이 맞습니다."
