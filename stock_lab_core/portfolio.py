@@ -191,7 +191,102 @@ def prepare_monthly_performance_df(monthly_df):
     return df
 
 
-def build_benchmark_return_df(perf_df):
+def _month_end_price_points(close, month_ends):
+    close = pd.Series(close).dropna().copy()
+    if close.empty:
+        return []
+
+    close.index = pd.to_datetime(close.index).tz_localize(None)
+    prices = []
+    for month_end in month_ends:
+        target_dt = pd.Timestamp(month_end).tz_localize(None)
+        eligible = close[close.index <= target_dt]
+        prices.append(float(eligible.iloc[-1]) if not eligible.empty else np.nan)
+    return prices
+
+
+def _add_single_benchmark_rows(rows, perf_df, label, ticker):
+    try:
+        px = load_price_df(ticker, "5y")
+        if px.empty or "Close" not in px.columns:
+            return
+
+        prices = _month_end_price_points(px["Close"], perf_df["month_end"])
+        valid_prices = [p for p in prices if finite_num(p) and p > 0]
+        if not valid_prices:
+            return
+
+        base = valid_prices[0]
+        for month_label, price in zip(perf_df["month_label"], prices):
+            if finite_num(price) and price > 0:
+                ret = (float(price) / base - 1) * 100
+                rows.append({"month_label": month_label, "구분": label, "수익률_pct": ret})
+    except Exception:
+        return
+
+
+def _add_blended_benchmark_rows(rows, perf_df, benchmark_spec):
+    if not benchmark_spec:
+        return
+
+    components = benchmark_spec.get("components", []) if isinstance(benchmark_spec, dict) else []
+    if not components:
+        return
+
+    weighted_returns = []
+    weight_sum = 0.0
+    for comp in components:
+        try:
+            ticker = str(comp.get("ticker", "")).strip()
+            weight = clean_float(comp.get("weight"), 0.0)
+            multiplier = clean_float(comp.get("multiplier"), 1.0)
+            if not ticker or weight <= 0:
+                continue
+
+            px = load_price_df(ticker, "5y")
+            if px.empty or "Close" not in px.columns:
+                continue
+
+            prices = _month_end_price_points(px["Close"], perf_df["month_end"])
+            valid_prices = [p for p in prices if finite_num(p) and p > 0]
+            if not valid_prices:
+                continue
+
+            base = valid_prices[0]
+            comp_returns = []
+            for price in prices:
+                if finite_num(price) and price > 0:
+                    comp_returns.append((float(price) / base - 1) * 100 * multiplier)
+                else:
+                    comp_returns.append(np.nan)
+            weighted_returns.append((weight, comp_returns))
+            weight_sum += weight
+        except Exception:
+            continue
+
+    if not weighted_returns or weight_sum <= 0:
+        return
+
+    label = str(benchmark_spec.get("label") or "내 목표비중 벤치")
+    for idx, month_label in enumerate(perf_df["month_label"]):
+        numerator = 0.0
+        usable_weight = 0.0
+        for weight, comp_returns in weighted_returns:
+            if idx >= len(comp_returns):
+                continue
+            value = comp_returns[idx]
+            if finite_num(value):
+                numerator += weight * value
+                usable_weight += weight
+        if usable_weight > 0:
+            rows.append({
+                "month_label": month_label,
+                "구분": label,
+                "수익률_pct": numerator / usable_weight,
+            })
+
+
+def build_benchmark_return_df(perf_df, benchmark_spec=None):
     if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
         return pd.DataFrame(columns=["month_label", "구분", "수익률_pct"])
 
@@ -209,31 +304,9 @@ def build_benchmark_return_df(perf_df):
         "코스피": "069500.KS",
     }
 
+    _add_blended_benchmark_rows(rows, perf_df, benchmark_spec)
+
     for label, ticker in benchmarks.items():
-        try:
-            px = load_price_df(ticker, "5y")
-            if px.empty:
-                continue
-
-            close = px["Close"].copy()
-            close.index = pd.to_datetime(close.index).tz_localize(None)
-
-            prices = []
-            for month_end in perf_df["month_end"]:
-                target_dt = pd.Timestamp(month_end).tz_localize(None)
-                eligible = close[close.index <= target_dt]
-                prices.append(float(eligible.iloc[-1]) if not eligible.empty else np.nan)
-
-            valid_prices = [p for p in prices if finite_num(p) and p > 0]
-            if not valid_prices:
-                continue
-
-            base = valid_prices[0]
-            for month_label, price in zip(perf_df["month_label"], prices):
-                if finite_num(price) and price > 0:
-                    ret = (float(price) / base - 1) * 100
-                    rows.append({"month_label": month_label, "구분": label, "수익률_pct": ret})
-        except Exception:
-            continue
+        _add_single_benchmark_rows(rows, perf_df, label, ticker)
 
     return pd.DataFrame(rows)

@@ -12340,32 +12340,162 @@ def calc_drawdown_details(portfolio_curve):
     }
 
 
-def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
-    """벤치마크 대비 Beta, Alpha(Jensen), Tracking Error, Information Ratio."""
-    if portfolio_returns is None or portfolio_returns.empty:
-        return {}
-    try:
-        bm_df = load_price_df(benchmark_ticker, period)
-        if bm_df is None or bm_df.empty or "Close" not in bm_df.columns:
-            return {}
-        bm_close = pd.Series(bm_df["Close"]).dropna()
-        bm_close.index = normalize_datetime_index_no_tz(bm_close.index)
-        if analysis_start_date is not None:
-            bm_close = bm_close[bm_close.index >= analysis_start_date]
-        bm_returns = bm_close.pct_change().dropna()
+def infer_benchmark_leverage_multiplier(ticker, asset_name=""):
+    text = f"{str(ticker or '').upper()} {str(asset_name or '').upper()}".replace(" ", "")
 
-        common = portfolio_returns.index.intersection(bm_returns.index)
+    inverse = any(k in text for k in ["INVERSE", "BEAR", "인버스", "곱버스", "SQQQ", "SOXS", "SPXU", "SDOW"])
+    if any(k in text for k in ["3X", "3배", "TQQQ", "SOXL", "UPRO", "SPXL", "TECL", "FNGU"]):
+        return -3.0 if inverse else 3.0
+    if any(k in text for k in ["2X", "2배", "QLD", "SSO", "레버리지", "LEVERAGE", "ULTRA"]):
+        return -2.0 if inverse else 2.0
+    if inverse:
+        return -1.0
+    return 1.0
+
+
+def infer_blended_benchmark_proxy(ticker, asset_name="", asset_class="", bucket=""):
+    symbol = normalize_ticker(ticker)
+    text = f"{symbol} {asset_name or ''} {asset_class or ''} {bucket or ''}".upper()
+    compact = text.replace(" ", "").replace("-", "")
+
+    if not symbol or "CASH" in symbol or normalize_bucket(bucket) in {"cash", "reserve"}:
+        return None
+
+    if any(k in compact for k in ["NASDAQ100", "NASDAQ", "나스닥100", "나스닥", "QQQ", "QQQM", "QLD", "TQQQ", "379810"]):
+        return {"label": "나스닥100", "ticker": "379810.KS"}
+    if any(k in compact for k in ["S&P500", "SP500", "SNP500", "에스앤피", "SPY", "VOO", "IVV", "SPLG", "379800"]):
+        return {"label": "S&P500", "ticker": "379800.KS"}
+    if any(k in compact for k in ["KOSPI", "코스피", "KODEX200", "KODEX 200", "069500", "KODEX200"]):
+        return {"label": "코스피", "ticker": "069500.KS"}
+
+    clean_symbol_only = symbol.split(".")[0]
+    if is_kr_listed(symbol):
+        return {"label": "코스피", "ticker": "069500.KS"}
+    if clean_symbol_only in US_TECH_OR_GROWTH_TICKERS:
+        return {"label": "나스닥100", "ticker": "379810.KS"}
+    return {"label": "S&P500", "ticker": "379800.KS"}
+
+
+def build_portfolio_blended_benchmark_spec(holdings_df):
+    if holdings_df is None or getattr(holdings_df, "empty", True):
+        return {}
+
+    df = holdings_df.copy()
+    if "티커" not in df.columns:
+        return {}
+
+    for col in ["목표비중", "현재비중", "전체비중", "원화환산"]:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    if "bucket" not in df.columns:
+        df["bucket"] = "core"
+    if "자산명" not in df.columns:
+        df["자산명"] = df["티커"]
+
+    df["티커"] = df["티커"].astype(str).str.strip()
+    df = df[df["티커"].ne("")]
+    df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+    df = df[~df["bucket"].apply(lambda v: normalize_bucket(v) in {"cash", "reserve"})]
+    if "운용대상" in df.columns:
+        df = df[df["운용대상"].apply(clean_bool)]
+
+    if df.empty:
+        return {}
+
+    target_sum = float(df["목표비중"].apply(clean_float).clip(lower=0).sum())
+    current_sum = float(df["현재비중"].apply(clean_float).clip(lower=0).sum())
+    total_value = float(df["원화환산"].apply(clean_float).clip(lower=0).sum())
+
+    if target_sum > 0:
+        weight_col = "목표비중"
+        basis = "목표비중"
+    elif current_sum > 0:
+        weight_col = "현재비중"
+        basis = "현재비중"
+    elif total_value > 0:
+        weight_col = "원화환산"
+        basis = "현재금액"
+    else:
+        return {}
+
+    merged = {}
+    order = []
+    for _, row in df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        name = str(row.get("자산명", "") or ticker).strip()
+        bucket = str(row.get("bucket", "core") or "core").strip()
+        asset_class = str(row.get("asset_class", "") or row.get("자산군", "") or "").strip()
+
+        raw_weight = clean_float(row.get(weight_col), 0.0)
+        if weight_col == "원화환산" and total_value > 0:
+            weight = raw_weight / total_value * 100
+        else:
+            weight = raw_weight
+        if weight <= 0:
+            continue
+
+        proxy = infer_blended_benchmark_proxy(ticker, name, asset_class, bucket)
+        if not proxy:
+            continue
+        multiplier = infer_benchmark_leverage_multiplier(ticker, name)
+        key = (proxy["label"], proxy["ticker"], float(multiplier))
+        if key not in merged:
+            merged[key] = {
+                "label": proxy["label"],
+                "ticker": proxy["ticker"],
+                "weight": 0.0,
+                "multiplier": float(multiplier),
+            }
+            order.append(key)
+        merged[key]["weight"] += float(weight)
+
+    components = [merged[key] for key in order if merged[key]["weight"] > 0]
+    total_weight = sum(comp["weight"] for comp in components)
+    if not components or total_weight <= 0:
+        return {}
+
+    parts = []
+    for comp in components:
+        multiplier = clean_float(comp.get("multiplier"), 1.0)
+        mult_txt = f"x{multiplier:g}" if abs(multiplier) != 1 else ""
+        parts.append(f"{comp['label']}{mult_txt} {comp['weight']:.1f}%")
+
+    return {
+        "label": "내 목표비중 벤치",
+        "basis": basis,
+        "components": components,
+        "description": f"{basis} 기준: " + " + ".join(parts),
+    }
+
+
+def get_current_blended_benchmark_spec():
+    try:
+        return build_portfolio_blended_benchmark_spec(globals().get("holdings_table", pd.DataFrame()))
+    except Exception:
+        return {}
+
+
+def calc_benchmark_metrics_from_returns(portfolio_returns, benchmark_returns, label="", benchmark_ticker="", rf_rate=0.035):
+    if portfolio_returns is None or portfolio_returns.empty or benchmark_returns is None or benchmark_returns.empty:
+        return {}
+
+    try:
+        br_all = pd.Series(benchmark_returns).replace([np.inf, -np.inf], np.nan).dropna()
+        br_all.index = normalize_datetime_index_no_tz(br_all.index)
+        common = portfolio_returns.index.intersection(br_all.index)
         if len(common) < 20:
             return {}
-        pr = portfolio_returns.loc[common]
-        br = bm_returns.loc[common]
+
+        pr = pd.Series(portfolio_returns.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        br = pd.Series(br_all.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
         bm_var = float(br.var())
         if bm_var <= 0:
             return {}
 
         beta = float(np.cov(pr.values, br.values)[0, 1] / bm_var)
-        bm_period_ret = float(bm_close.iloc[-1] / bm_close.iloc[0] - 1) if len(bm_close) > 1 else np.nan
+        bm_period_ret = float((1 + br).prod() - 1)
         bm_annual = annualize_period_return(bm_period_ret, len(br)) if np.isfinite(bm_period_ret) else np.nan
         port_annual = annualize_period_return(float((1 + pr).prod() - 1), len(pr))
 
@@ -12385,8 +12515,101 @@ def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_ra
             "bm_annual_return": round(bm_annual * 100, 1) if np.isfinite(bm_annual) else np.nan,
             "bm_period_return": round(bm_period_ret * 100, 1) if np.isfinite(bm_period_ret) else np.nan,
             "benchmark_ticker": benchmark_ticker,
+            "benchmark_label": label,
             "n_common_days": len(common),
         }
+    except Exception:
+        return {}
+
+
+def build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=None):
+    if not benchmark_spec:
+        return pd.Series(dtype=float)
+
+    components = benchmark_spec.get("components", []) if isinstance(benchmark_spec, dict) else []
+    if not components:
+        return pd.Series(dtype=float)
+
+    series_list = []
+    weight_map = {}
+    for idx, comp in enumerate(components):
+        try:
+            ticker = str(comp.get("ticker", "")).strip()
+            weight = clean_float(comp.get("weight"), 0.0)
+            multiplier = clean_float(comp.get("multiplier"), 1.0)
+            if not ticker or weight <= 0:
+                continue
+
+            px_df = load_price_df(ticker, period)
+            if px_df is None or px_df.empty or "Close" not in px_df.columns:
+                continue
+            close = pd.Series(px_df["Close"]).dropna()
+            close.index = normalize_datetime_index_no_tz(close.index)
+            if analysis_start_date is not None:
+                close = close[close.index >= analysis_start_date]
+            if len(close) < 20:
+                continue
+
+            key = f"bench_{idx}"
+            ret = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna() * multiplier
+            if ret.empty:
+                continue
+            series_list.append(ret.rename(key))
+            weight_map[key] = weight
+        except Exception:
+            continue
+
+    if not series_list or not weight_map:
+        return pd.Series(dtype=float)
+
+    returns_df = pd.concat(series_list, axis=1).sort_index().ffill(limit=3).dropna(how="all").fillna(0.0)
+    weights = pd.Series(weight_map, dtype=float)
+    usable = [col for col in returns_df.columns if col in weights.index]
+    if not usable:
+        return pd.Series(dtype=float)
+
+    weights = weights[usable]
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0:
+        return pd.Series(dtype=float)
+
+    return returns_df[usable].mul(weights / weight_sum, axis=1).sum(axis=1).dropna()
+
+
+def calc_blended_benchmark_comparison(portfolio_returns, benchmark_spec, period, rf_rate=0.035, analysis_start_date=None):
+    benchmark_returns = build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=analysis_start_date)
+    result = calc_benchmark_metrics_from_returns(
+        portfolio_returns,
+        benchmark_returns,
+        label=benchmark_spec.get("label", "내 목표비중 벤치") if benchmark_spec else "",
+        benchmark_ticker="BLENDED",
+        rf_rate=rf_rate,
+    )
+    if result and benchmark_spec:
+        result["benchmark_description"] = benchmark_spec.get("description", "")
+    return result
+
+
+def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
+    """벤치마크 대비 Beta, Alpha(Jensen), Tracking Error, Information Ratio."""
+    if portfolio_returns is None or portfolio_returns.empty:
+        return {}
+    try:
+        bm_df = load_price_df(benchmark_ticker, period)
+        if bm_df is None or bm_df.empty or "Close" not in bm_df.columns:
+            return {}
+        bm_close = pd.Series(bm_df["Close"]).dropna()
+        bm_close.index = normalize_datetime_index_no_tz(bm_close.index)
+        if analysis_start_date is not None:
+            bm_close = bm_close[bm_close.index >= analysis_start_date]
+        bm_returns = bm_close.pct_change().dropna()
+        return calc_benchmark_metrics_from_returns(
+            portfolio_returns,
+            bm_returns,
+            label=benchmark_ticker,
+            benchmark_ticker=benchmark_ticker,
+            rf_rate=rf_rate,
+        )
     except Exception:
         return {}
 
@@ -12783,6 +13006,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     )
     reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
     active_df = get_active_portfolio_rows(full_df)
+    blended_benchmark_spec = build_portfolio_blended_benchmark_spec(full_df)
 
     asset_rows = []
     strategy_rows = []
@@ -12945,6 +13169,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     avg_corr = np.nan
     portfolio_observation_count = 0
     drawdown_details = {}
+    benchmark_metrics_blended = {}
     benchmark_metrics_voo = {}
     benchmark_metrics_kr = {}
     rolling_df = pd.DataFrame()
@@ -12991,6 +13216,9 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                     risk_contrib_df = build_risk_contribution_df(asset_df, aligned_returns, weights)
                     drawdown_details = calc_drawdown_details(portfolio_curve)
                     rolling_df = calc_rolling_metrics(portfolio_returns)
+                    benchmark_metrics_blended = calc_blended_benchmark_comparison(
+                        portfolio_returns, blended_benchmark_spec, period, analysis_start_date=analysis_start_date
+                    )
                     benchmark_metrics_voo = calc_benchmark_comparison(
                         portfolio_returns, "VOO", period, analysis_start_date=analysis_start_date
                     )
@@ -13137,6 +13365,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "portfolio_observation_count": portfolio_observation_count,
         "analysis_start_date": analysis_start_date,
         "drawdown_details": drawdown_details,
+        "benchmark_blended": benchmark_metrics_blended,
+        "blended_benchmark_spec": blended_benchmark_spec,
         "benchmark_voo": benchmark_metrics_voo,
         "benchmark_kr": benchmark_metrics_kr,
         "rolling_df": rolling_df,
@@ -14401,9 +14631,11 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         st.plotly_chart(fig_roll, use_container_width=True)
 
     # ── 벤치마크 비교 ─────────────────────────────────────────────────────
+    bm_blended = metrics.get("benchmark_blended", {})
+    bm_spec = metrics.get("blended_benchmark_spec", {})
     bm_voo = metrics.get("benchmark_voo", {})
     bm_kr  = metrics.get("benchmark_kr", {})
-    if bm_voo or bm_kr:
+    if bm_blended or bm_voo or bm_kr:
         st.markdown("#### 벤치마크 비교")
         st.caption(
             "**Beta**: 벤치마크 1% 움직임에 내 포트가 얼마나 반응하는지. 1이면 시장과 같이 움직임.  "
@@ -14411,8 +14643,14 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             "**Tracking Error**: 벤치마크 대비 일간수익률 차이의 변동성(연환산).  "
             "**IR(정보비율)**: 초과수익 / Tracking Error. 높을수록 벤치 대비 효율적."
         )
-        bm_col1, bm_col2 = st.columns(2)
-        for col, bm, label in [(bm_col1, bm_voo, "vs VOO(미국 S&P500)"), (bm_col2, bm_kr, "vs KODEX200(한국)")]:
+        if bm_spec.get("description"):
+            st.caption(f"내 목표비중 벤치: {bm_spec.get('description')}")
+        bm_items = []
+        if bm_blended:
+            bm_items.append((bm_blended, "vs 내 목표비중 벤치"))
+        bm_items.extend([(bm_voo, "vs VOO(미국 S&P500)"), (bm_kr, "vs KODEX200(한국)")])
+        bm_cols = st.columns(len(bm_items))
+        for col, (bm, label) in zip(bm_cols, bm_items):
             if not bm:
                 col.info(f"{label}: 데이터 부족")
                 continue
@@ -14509,6 +14747,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     _reserve_gap    = _reserve_target - _reserve_pct
     _obs  = metrics.get("portfolio_observation_count", 0)
     _lev  = metrics.get("leverage_summary", {})
+    _bm_blended = metrics.get("benchmark_blended", {})
     _bm_voo = metrics.get("benchmark_voo", {})
     _bm_kr  = metrics.get("benchmark_kr", {})
     _stress = metrics.get("stress_results", [])
@@ -14733,7 +14972,11 @@ Calmar는 연환산수익률 ÷ |MDD|입니다. 낙폭 대비 수익 효율을 �
 
     # ── 9. 벤치마크 비교 ─────────────────────────────────────────────────
     _bm_blocks = []
-    for _bm, _bm_label, _bm_market in [(_bm_voo, "VOO (미국 S&P500)", "미국"), (_bm_kr, "KODEX200 (한국)", "한국")]:
+    for _bm, _bm_label, _bm_market in [
+        (_bm_blended, "내 목표비중 벤치", "목표비중 벤치"),
+        (_bm_voo, "VOO (미국 S&P500)", "미국"),
+        (_bm_kr, "KODEX200 (한국)", "한국"),
+    ]:
         if not _bm:
             continue
         _alpha = clean_float(_bm.get("alpha"), np.nan)
@@ -18683,7 +18926,7 @@ def render_print_report_v2():
 
         with p4:
             try:
-                benchmark_df = build_benchmark_return_df(monthly_perf_df)
+                benchmark_df = build_benchmark_return_df(monthly_perf_df, get_current_blended_benchmark_spec())
             except Exception:
                 benchmark_df = pd.DataFrame()
             if benchmark_df is None or benchmark_df.empty:
@@ -18692,6 +18935,7 @@ def render_print_report_v2():
                 fig_benchmark = go.Figure()
                 color_map = {
                     "내 기간수익률": "#00ff38",
+                    "내 목표비중 벤치": "#facc15",
                     "S&P500": "#f87171",
                     "나스닥100": "#60a5fa",
                     "코스피": "#a7f3d0",
@@ -19242,7 +19486,7 @@ def render_full_print_report():
 
         # 벤치마크 비교
         try:
-            bench_df = build_benchmark_return_df(monthly_perf_df)
+            bench_df = build_benchmark_return_df(monthly_perf_df, get_current_blended_benchmark_spec())
         except Exception:
             bench_df = pd.DataFrame()
 
@@ -19250,8 +19494,10 @@ def render_full_print_report():
             st.markdown("#### 벤치마크 비교")
             color_map = {
                 "내 기간수익률": "#ef4444",
+                "내 목표비중 벤치": "#facc15",
                 "S&P500": "#22d3ee",
                 "나스닥100": "#f59e0b",
+                "코스피": "#a78bfa",
                 "KODEX200": "#a78bfa",
             }
             fig_bench = go.Figure()
@@ -20505,11 +20751,12 @@ if main_page == "asset":
                 )
                 st.plotly_chart(fig_cum_return, use_container_width=True)
 
-                benchmark_df = build_benchmark_return_df(monthly_perf_df)
+                benchmark_df = build_benchmark_return_df(monthly_perf_df, get_current_blended_benchmark_spec())
                 fig_benchmark = go.Figure()
                 if not benchmark_df.empty:
                     color_map = {
                         "내 기간수익률": "#00ff38",
+                        "내 목표비중 벤치": "#facc15",
                         "S&P500": "#f87171",
                         "나스닥100": "#60a5fa",
                         "코스피": "#a7f3d0",
