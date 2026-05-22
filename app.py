@@ -13072,19 +13072,58 @@ TEN_YEAR_STAGE_PROFILES = {
 }
 
 
-def classify_ten_year_project_stage(year_index):
+TEN_YEAR_STAGE_ORDER = ["공격수", "미드필더", "수비형", "골키퍼"]
+
+
+def build_ten_year_stage_plan(striker_end=3, midfielder_end=6, defender_end=9):
+    striker_end = max(int(clean_float(striker_end, 3)), 1)
+    midfielder_end = max(int(clean_float(midfielder_end, 6)), striker_end + 1)
+    defender_end = max(int(clean_float(defender_end, 9)), midfielder_end + 1)
+    return [
+        {"stage": "공격수", "start": 1, "end": striker_end},
+        {"stage": "미드필더", "start": striker_end + 1, "end": midfielder_end},
+        {"stage": "수비형", "start": midfielder_end + 1, "end": defender_end},
+        {"stage": "골키퍼", "start": defender_end + 1, "end": None},
+    ]
+
+
+def format_ten_year_stage_range(stage_plan_item):
+    if not stage_plan_item:
+        return "-"
+    start = int(clean_float(stage_plan_item.get("start"), 1))
+    end = stage_plan_item.get("end")
+    if end is None:
+        return f"{start}년차 이후"
+    end = int(clean_float(end, start))
+    if start == end:
+        return f"{start}년차"
+    return f"{start}~{end}년차"
+
+
+def get_ten_year_stage_item(stage, stage_plan=None):
+    plan = stage_plan or build_ten_year_stage_plan()
+    for item in plan:
+        if item.get("stage") == stage:
+            return item
+    return None
+
+
+def classify_ten_year_project_stage(year_index, stage_plan=None):
     year_index = max(int(clean_float(year_index, 1)), 1)
-    if year_index <= 3:
-        return "공격수"
-    if year_index <= 6:
-        return "미드필더"
-    if year_index <= 9:
-        return "수비형"
+    plan = stage_plan or build_ten_year_stage_plan()
+    for item in plan:
+        start = int(clean_float(item.get("start"), 1))
+        end = item.get("end")
+        if end is None and year_index >= start:
+            return item.get("stage", "골키퍼")
+        if end is not None and start <= year_index <= int(clean_float(end, start)):
+            return item.get("stage", "골키퍼")
     return "골키퍼"
 
 
-def get_next_ten_year_stage(stage):
-    order = ["공격수", "미드필더", "수비형", "골키퍼"]
+def get_next_ten_year_stage(stage, stage_plan=None):
+    plan = stage_plan or build_ten_year_stage_plan()
+    order = [item.get("stage") for item in plan] or TEN_YEAR_STAGE_ORDER
     try:
         idx = order.index(stage)
     except ValueError:
@@ -13122,7 +13161,7 @@ def infer_project_start_date(monthly_logs_df):
     return today.replace(month=1, day=1)
 
 
-def build_ten_year_project_fit_report(metrics, asset_df, project_start_date):
+def build_ten_year_project_fit_report(metrics, asset_df, project_start_date, stage_plan=None):
     today = get_kst_now().date()
     try:
         start_date = pd.Timestamp(project_start_date).date()
@@ -13130,9 +13169,11 @@ def build_ten_year_project_fit_report(metrics, asset_df, project_start_date):
         start_date = today.replace(month=1, day=1)
     elapsed_days = max((today - start_date).days, 0)
     project_year = int(elapsed_days // 365) + 1
-    stage = classify_ten_year_project_stage(project_year)
+    stage_plan = stage_plan or build_ten_year_stage_plan()
+    stage = classify_ten_year_project_stage(project_year, stage_plan)
+    stage_item = get_ten_year_stage_item(stage, stage_plan)
     profile = TEN_YEAR_STAGE_PROFILES[stage]
-    next_stage = get_next_ten_year_stage(stage)
+    next_stage = get_next_ten_year_stage(stage, stage_plan)
     next_profile = TEN_YEAR_STAGE_PROFILES.get(next_stage, profile)
 
     total_asset = clean_float(metrics.get("total_asset"), 0.0)
@@ -13264,7 +13305,8 @@ def build_ten_year_project_fit_report(metrics, asset_df, project_start_date):
         "color": color,
         "stage": stage,
         "stage_desc": profile["desc"],
-        "stage_range": profile["year_range"],
+        "stage_range": format_ten_year_stage_range(stage_item) or profile["year_range"],
+        "stage_plan": stage_plan,
         "project_year": project_year,
         "elapsed_days": elapsed_days,
         "next_stage": next_stage,
@@ -13275,21 +13317,40 @@ def build_ten_year_project_fit_report(metrics, asset_df, project_start_date):
     }
 
 
-def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None):
+def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None, show_title=True):
     if metrics is None or clean_float(metrics.get("total_asset"), 0.0) <= 0:
         return
 
     default_start = infer_project_start_date(monthly_logs_df)
-    st.markdown("#### 10년 작전 적합도")
+    if show_title:
+        st.markdown("#### 10년 작전 적합도")
     st.caption("현재 포트폴리오가 10년 장기 시나리오의 어느 단계와 맞는지 평가합니다. 투자 추천이 아니라 작전표와의 적합도 점검입니다.")
-    selected_start = st.date_input(
-        "프로젝트 시작일",
-        value=default_start,
-        key="ten_year_project_start_date",
-        help="월별 로그가 있으면 첫 기록월을 기본값으로 사용합니다. 필요하면 직접 바꿔서 평가할 수 있습니다.",
-    )
 
-    report = build_ten_year_project_fit_report(metrics, asset_df, selected_start)
+    start_col, plan_col = st.columns([1.1, 2.2])
+    with start_col:
+        selected_start = st.date_input(
+            "프로젝트 시작일",
+            value=default_start,
+            key="ten_year_project_start_date",
+            help="월별 로그가 있으면 첫 기록월을 기본값으로 사용합니다. 필요하면 직접 바꿔서 평가할 수 있습니다.",
+        )
+    with plan_col:
+        st.caption("단계별 종료 연차를 바꾸면 다른 사용자도 자기 투자 계획에 맞춰 평가할 수 있습니다.")
+        b1, b2, b3 = st.columns(3)
+        striker_end = b1.number_input("공격수 종료", min_value=1, max_value=30, value=3, step=1, key="ten_year_stage_striker_end")
+        midfielder_end = b2.number_input("미드필더 종료", min_value=2, max_value=35, value=6, step=1, key="ten_year_stage_midfielder_end")
+        defender_end = b3.number_input("수비형 종료", min_value=3, max_value=40, value=9, step=1, key="ten_year_stage_defender_end")
+
+    raw_stage_ends = (int(striker_end), int(midfielder_end), int(defender_end))
+    stage_plan = build_ten_year_stage_plan(*raw_stage_ends)
+    normalized_stage_ends = tuple(int(item["end"]) for item in stage_plan[:3])
+    if normalized_stage_ends != raw_stage_ends:
+        st.info("단계 종료 연차가 겹치지 않도록 자동 보정했습니다. 예: 공격수 종료 < 미드필더 종료 < 수비형 종료")
+
+    plan_text = " · ".join(f"{item['stage']} {format_ten_year_stage_range(item)}" for item in stage_plan)
+    st.caption(f"현재 작전표: {plan_text}")
+
+    report = build_ten_year_project_fit_report(metrics, asset_df, selected_start, stage_plan=stage_plan)
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(
         f"<div class='info-panel' style='border-left:5px solid {report['color']};'><b>작전 적합도</b><br>"
@@ -13316,7 +13377,7 @@ def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None):
     comp_df = comp_df.drop(columns=["만점"])
     st.dataframe(comp_df, use_container_width=True, hide_index=True)
 
-    with st.expander("역할별 비중 해석", expanded=False):
+    if st.toggle("역할별 비중 해석 보기", value=False, key="ten_year_role_breakdown_toggle"):
         role_df = report["role_rows"].copy()
         role_df["현재비중"] = role_df["현재비중"].apply(lambda v: f"{clean_float(v):.1f}%")
         st.dataframe(role_df, use_container_width=True, hide_index=True)
@@ -13324,6 +13385,65 @@ def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None):
     st.markdown("##### 보완 방향")
     for suggestion in report["suggestions"][:5]:
         st.write(f"- {suggestion}")
+    return report
+
+
+def render_portfolio_final_summary_card(metrics, ten_year_report=None, reserve_target_weight=0.0):
+    risk_grade = metrics.get("risk_grade", "-")
+    risk_index = clean_float(metrics.get("risk_index"), 0.0)
+    risk_color = metrics.get("risk_color", "#f97316")
+    vol = clean_float(metrics.get("portfolio_vol"), np.nan)
+    top1 = clean_float(metrics.get("top1_weight"), 0.0)
+    top3 = clean_float(metrics.get("top3_weight"), 0.0)
+    reserve_pct = clean_float((metrics.get("reserve_summary") or {}).get("waiting_pct"), 0.0)
+    reserve_target = clean_float(reserve_target_weight, 0.0)
+    leverage_summary = metrics.get("leverage_summary", {}) or {}
+    leverage_pct = clean_float(leverage_summary.get("leveraged_principal_pct"), 0.0)
+    leverage_eff = clean_float(leverage_summary.get("effective_exposure_pct"), 0.0)
+
+    drivers = []
+    if top3 >= 75:
+        drivers.append(f"상위 3개 {top3:.1f}%")
+    elif top1 >= 30:
+        drivers.append(f"1위 자산 {top1:.1f}%")
+    if leverage_pct >= 10:
+        drivers.append(f"레버리지 환산 {leverage_eff:.1f}%")
+    if np.isfinite(vol) and vol >= 22:
+        drivers.append(f"변동성 {vol:.1f}%")
+    if reserve_target > 0 and reserve_pct + 2 < reserve_target:
+        drivers.append(f"대기자금 목표 대비 {reserve_target - reserve_pct:.1f}%p 부족")
+    driver_text = ", ".join(drivers) if drivers else "특정 위험 요인이 크게 튀지 않음"
+
+    if ten_year_report:
+        stage = ten_year_report.get("stage", "-")
+        stage_range = ten_year_report.get("stage_range", "-")
+        stage_score = clean_float(ten_year_report.get("score"), 0.0)
+        stage_verdict = ten_year_report.get("verdict", "-")
+        first_action = (ten_year_report.get("suggestions") or ["현재 운용 규칙을 유지하면서 위험도와 대기자금을 주기적으로 점검하세요."])[0]
+        fit_line = f"{stage} {stage_range} · {stage_score:.1f}/10 · {stage_verdict}"
+    else:
+        fit_line = "10년 작전 적합도 계산 전"
+        first_action = "10년 작전 적합도를 먼저 계산하면 현재 단계 기준의 우선 행동을 함께 볼 수 있습니다."
+
+    if risk_index >= 75:
+        conclusion = "공격성은 살아 있지만 하락 충격 관리가 먼저입니다."
+    elif risk_index >= 55:
+        conclusion = "성장성과 위험이 같이 있는 구간입니다. 매수 속도와 현금 여력을 같이 보세요."
+    else:
+        conclusion = "위험은 비교적 안정적입니다. 목표비중과 장기 계획의 일관성을 우선 확인하세요."
+
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {risk_color}; margin-bottom:12px;'>
+<b>한눈에 보는 종합 결론</b><br>
+<span class='highlight'>위험도 {escape_html_value(risk_grade)} ({risk_index:.0f}/100)</span> · 10년 작전 {escape_html_value(fit_line)}<br>
+{escape_html_value(conclusion)}<br><br>
+<b>주요 원인</b>: {escape_html_value(driver_text)}<br>
+<b>이번에 먼저 볼 것</b>: {escape_html_value(first_action)}
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_leverage_exposure_panel(metrics):
@@ -13616,47 +13736,56 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
     m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
 
+    st.markdown("### 핵심 요약")
     render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
-    render_portfolio_data_coverage_notice(metrics)
-    render_portfolio_risk_breakdown(metrics)
 
-    render_leverage_exposure_panel(metrics)
+    ten_year_report = None
+    with st.expander("10년 작전 적합도", expanded=True):
+        ten_year_report = render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df, show_title=False)
 
-    st.markdown("#### Risk Metrics")
-    st.caption(
-        "**연환산 수익률**: 분석 기간 포트폴리오 가격 흐름을 연 단위로 환산한 참고값.  "
-        "**Sharpe**: (연환산수익률 − 무위험이율 3.5%) ÷ 연환산변동성. 1 이상이면 변동성 대비 수익이 양호한 편.  "
-        "**Sortino**: 하락 변동성만 분모로 사용. Sharpe보다 하락 리스크에 예민.  "
-        "**Calmar**: 연환산수익률 ÷ |MDD|. 낙폭 대비 수익 효율.  "
-        "**VaR/CVaR**: 과거 일간 수익률 기반 참고 손실 추정치입니다."
-    )
-    r1, r2, r3, r4, r5 = st.columns(5)
-    r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
-    r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
-    r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
-    r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
-    r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
-    _sharpe_v = clean_float(metrics.get("sharpe_ratio"), np.nan)
-    _sortino_v = clean_float(metrics.get("sortino_ratio"), np.nan)
-    _obs = metrics.get("portfolio_observation_count", 0)
-    if (np.isfinite(_sharpe_v) and abs(_sharpe_v) > 4) or (np.isfinite(_sortino_v) and abs(_sortino_v) > 6) or _obs < 60:
-        st.warning(
-            f"⚠️ Sharpe/Sortino가 평소보다 높습니다 "
-            f"(Sharpe {format_metric_ratio(_sharpe_v)}, Sortino {format_metric_ratio(_sortino_v)}, 관측일 {_obs}일). "
-            "단기 상승장 구간이거나 관측 기간이 짧으면 연환산 수익률이 과장되어 비율이 크게 나올 수 있습니다. "
-            "참고값으로만 사용하세요."
+    st.markdown("#### 종합 포트폴리오 평가")
+    render_portfolio_final_summary_card(metrics, ten_year_report, reserve_target_weight)
+
+    with st.expander("위험도 계산 근거와 상세 지표", expanded=False):
+        render_portfolio_data_coverage_notice(metrics)
+        render_portfolio_risk_breakdown(metrics)
+        render_leverage_exposure_panel(metrics)
+
+        st.markdown("#### Risk Metrics")
+        st.caption(
+            "**연환산 수익률**: 분석 기간 포트폴리오 가격 흐름을 연 단위로 환산한 참고값.  "
+            "**Sharpe**: (연환산수익률 − 무위험이율 3.5%) ÷ 연환산변동성. 1 이상이면 변동성 대비 수익이 양호한 편.  "
+            "**Sortino**: 하락 변동성만 분모로 사용. Sharpe보다 하락 리스크에 예민.  "
+            "**Calmar**: 연환산수익률 ÷ |MDD|. 낙폭 대비 수익 효율.  "
+            "**VaR/CVaR**: 과거 일간 수익률 기반 참고 손실 추정치입니다."
         )
+        r1, r2, r3, r4, r5 = st.columns(5)
+        r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
+        r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
+        r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
+        r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
+        r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
+        _sharpe_v = clean_float(metrics.get("sharpe_ratio"), np.nan)
+        _sortino_v = clean_float(metrics.get("sortino_ratio"), np.nan)
+        _obs = metrics.get("portfolio_observation_count", 0)
+        if (np.isfinite(_sharpe_v) and abs(_sharpe_v) > 4) or (np.isfinite(_sortino_v) and abs(_sortino_v) > 6) or _obs < 60:
+            st.warning(
+                f"⚠️ Sharpe/Sortino가 평소보다 높습니다 "
+                f"(Sharpe {format_metric_ratio(_sharpe_v)}, Sortino {format_metric_ratio(_sortino_v)}, 관측일 {_obs}일). "
+                "단기 상승장 구간이거나 관측 기간이 짧으면 연환산 수익률이 과장되어 비율이 크게 나올 수 있습니다. "
+                "참고값으로만 사용하세요."
+            )
 
-    tail_cols = st.columns(4)
-    tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
-    tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
-    tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
-    tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
-    st.caption("Risk Metrics는 총자산(현금 포함) 기준의 가중 포트폴리오 수익률을 사용합니다. VaR/CVaR 손실액도 총자산 기준이며, 현금 비중이 높을수록 손실 추정액이 낮아집니다. 미래 손실 한도가 아닌 참고값입니다.")
-    render_portfolio_sample_warning(metrics)
+        tail_cols = st.columns(4)
+        tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
+        tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
+        tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
+        tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
+        st.caption("Risk Metrics는 총자산(현금 포함) 기준의 가중 포트폴리오 수익률을 사용합니다. VaR/CVaR 손실액도 총자산 기준이며, 현금 비중이 높을수록 손실 추정액이 낮아집니다. 미래 손실 한도가 아닌 참고값입니다.")
+        render_portfolio_sample_warning(metrics)
 
-    render_long_term_goal_simulator(metrics)
-    render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df)
+    with st.expander("10년 목표 시뮬레이션", expanded=False):
+        render_long_term_goal_simulator(metrics)
 
     if notes_df.empty:
         st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
@@ -14059,7 +14188,10 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 st.dataframe(bd_df, use_container_width=True, hide_index=True)
 
     # ── 종합 평가 ──────────────────────────────────────────────────────────
-    st.markdown("#### 📋 종합 포트폴리오 평가")
+    st.markdown("#### 📋 상세 종합 포트폴리오 평가")
+    if not st.toggle("상세 평가 보기", value=False, key="portfolio_detail_eval_toggle"):
+        st.caption("위쪽 종합 포트폴리오 평가만 봐도 현재 결론은 확인할 수 있습니다. 세부 해석이 필요할 때만 펼치세요.")
+        return
 
     _rg   = metrics.get("risk_grade", "-")
     _ri   = metrics.get("risk_index", 0.0)
