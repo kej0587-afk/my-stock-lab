@@ -5583,7 +5583,7 @@ def render_precision_candlestick_chart(df: pd.DataFrame, avg_price: float = 0.0,
     st.plotly_chart(fig, use_container_width=True)
 
 
-def resample_ohlcv_timeframe(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     required_cols = ["Open", "High", "Low", "Close", "Volume"]
@@ -5592,13 +5592,29 @@ def resample_ohlcv_timeframe(df: pd.DataFrame, rule: str) -> pd.DataFrame:
     source = df[required_cols].copy()
     source.index = pd.to_datetime(source.index)
     source = source.sort_index()
-    out = source.resample(rule).agg({
+    agg_map = {
         "Open": "first",
         "High": "max",
         "Low": "min",
         "Close": "last",
         "Volume": "sum",
-    })
+    }
+    if isinstance(rule, pd.offsets.MonthEnd) or str(rule).upper() in {"M", "ME"}:
+        month_keys = list(zip(source.index.year, source.index.month))
+        out = source.groupby(month_keys).agg(agg_map)
+        out.index = pd.to_datetime([f"{year}-{month:02d}-01" for year, month in out.index]) + pd.offsets.MonthEnd(0)
+        out.index.name = source.index.name
+        return out.dropna(subset=["Open", "High", "Low", "Close"])
+    try:
+        grouped = source.resample(rule)
+    except ValueError:
+        # Pandas 3 no longer accepts the old "M" month-end alias. Keep a
+        # fallback here so Streamlit Cloud and local pandas versions both work.
+        if str(rule).upper() in {"M", "ME"}:
+            grouped = source.resample(pd.offsets.MonthEnd())
+        else:
+            raise
+    out = grouped.agg(agg_map)
     return out.dropna(subset=["Open", "High", "Low", "Close"])
 
 
@@ -5693,7 +5709,7 @@ def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame) ->
         raw_long = daily_df.copy() if daily_df is not None else pd.DataFrame()
 
     weekly_raw = resample_ohlcv_timeframe(raw_long, "W-FRI")
-    monthly_raw = resample_ohlcv_timeframe(raw_long, "M")
+    monthly_raw = resample_ohlcv_timeframe(raw_long, pd.offsets.MonthEnd())
     weekly_df = build_indicators(weekly_raw.tail(260)) if not weekly_raw.empty else pd.DataFrame()
     monthly_df = build_indicators(monthly_raw.tail(180)) if not monthly_raw.empty else pd.DataFrame()
 
