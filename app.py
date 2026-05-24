@@ -18123,6 +18123,7 @@ def render_today_queue_tab(mode):
         if last_run:
             c3.caption(f"마지막 계산: {last_run}")
     else:
+        last_run = None
         c2.caption("대기 중")
 
     signature_changed = (
@@ -18131,6 +18132,23 @@ def render_today_queue_tab(mode):
     )
     if signature_changed and not run_summary:
         st.warning("관심목록, 모드, ETF/재무점수 정보가 바뀐 뒤의 이전 계산 결과입니다. 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
+
+    # ── 결과 만료 알림 (2시간 경과, signature 변경과 별도) ───────────────
+    if not run_summary and last_run and not signature_changed:
+        try:
+            _last_dt = datetime.strptime(last_run, "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone(timedelta(hours=9))
+            )
+            _elapsed = datetime.now(timezone(timedelta(hours=9))) - _last_dt
+            if _elapsed.total_seconds() > 7200:
+                _h = int(_elapsed.total_seconds() // 3600)
+                _m = int((_elapsed.total_seconds() % 3600) // 60)
+                st.warning(
+                    f"⏰ 마지막 계산으로부터 **{_h}시간 {_m}분**이 지났습니다. "
+                    "장중이라면 새로고침을 눌러 신호를 다시 확인하세요."
+                )
+        except Exception:
+            pass
 
     if run_summary:
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
