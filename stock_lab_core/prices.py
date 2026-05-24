@@ -168,13 +168,19 @@ def extract_download_close_series(data, ticker):
 
 
 def _fetch_yf_fast_info_price(ticker: str) -> float:
-    """yf.Ticker.fast_info — download() 보다 최신 캐시 사용, 미국 주식에 유리."""
+    """
+    yf.Ticker.fast_info — 프리마켓/애프터마켓 포함 최신가.
+    우선순위: last_price(프리·정규·애프터 통합) → pre_market_price → post_market_price → regular_market_price
+    """
     try:
         fi = yf.Ticker(ticker).fast_info
-        for attr in ("last_price", "regular_market_price"):
-            val = getattr(fi, attr, None)
-            if val and float(val) > 0:
-                return float(val)
+        for attr in ("last_price", "pre_market_price", "post_market_price", "regular_market_price"):
+            try:
+                val = getattr(fi, attr, None)
+                if val is not None and float(val) > 0:
+                    return float(val)
+            except Exception:
+                continue
     except Exception:
         pass
     return 0.0

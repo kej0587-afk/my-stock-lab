@@ -8741,7 +8741,8 @@ def build_core_dca_context(
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
-                             _cash_available=None, _reserve_available=None):
+                             _cash_available=None, _reserve_available=None,
+                             live_price: float = 0.0):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp  = macro_penalty      if _macro_penalty      is None else _macro_penalty
     _fmr = final_macro_risk   if _final_macro_risk   is None else _final_macro_risk
@@ -8750,6 +8751,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     df = ensure_min_price_rows_for_decision(df)
 
     last, prev, cur_p = df.iloc[-1], df.iloc[-2], float(df.iloc[-1]["Close"])
+    # 프리마켓·애프터마켓 실시간가가 전달된 경우 일봉 종가 대신 사용 (day_ret·MDD·R/R 계산에 반영)
+    if live_price > 0 and abs(live_price - cur_p) / max(cur_p, 1) < 0.5:  # 50% 이상 괴리 시 오류로 간주하고 무시
+        cur_p = float(live_price)
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
@@ -10983,6 +10987,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     my_p = get_my_price(name, tkr)
     has_p = has_position(name, tkr)
+    _live_p = load_latest_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
 
     c = calc_scores_and_decision(
         name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
@@ -10992,6 +10997,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         _total_eval=snap_total_eval,
         _cash_available=snap_cash_available,
         _reserve_available=snap_reserve_available,
+        live_price=_live_p,
     )
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
@@ -11469,6 +11475,7 @@ def build_swing_system_df(swing_df):
                 fin_score=int(fin_score),
                 is_free=False,
                 app_mode="개인모드",
+                live_price=load_latest_price(ticker),
             )
 
             rows.append({
@@ -19971,9 +19978,12 @@ if main_page == "precision":
     df = load_price_df(tkr, "1y")
     if not df.empty:
         df = build_indicators(df)
+        # 프리마켓·애프터마켓 실시간가 선취득 → calc_scores에 live_price로 주입
+        display_cur_p = load_latest_price(tkr)
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p,
                                      (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free,
-                                     app_mode, u_asset, u_curr_w, u_targ_w)
+                                     app_mode, u_asset, u_curr_w, u_targ_w,
+                                     live_price=display_cur_p)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, df)
 
@@ -19983,7 +19993,6 @@ if main_page == "precision":
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
             ret3_color = "#2ecc71" if c["ret_3m"] > 0 else "#dc2626"
             ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
-            display_cur_p = load_latest_price(tkr)
             if display_cur_p <= 0:
                 display_cur_p = c["cur_p"]
             price_refresh_key = f"precision_price_refresh_time_{fin_key}"
@@ -20526,7 +20535,8 @@ if main_page == "asset":
                         has_pos=float(r["보유량"] or 0) > 0,
                         fin_score=int(fin_score),
                         is_free=False,
-                        app_mode="개인모드"
+                        app_mode="개인모드",
+                        live_price=load_latest_price(tkr),
                     )
 
                     signal_rows.append({
