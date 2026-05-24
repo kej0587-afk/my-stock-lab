@@ -18222,11 +18222,24 @@ def render_today_queue_tab(mode):
     render_investor_top10_section()
     st.divider()
 
+    # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
+    _upside_map: dict[str, str] = {}
+    if buyish_mask.any() and "티커" in summary_df.columns:
+        for _t in summary_df.loc[buyish_mask, "티커"].astype(str):
+            try:
+                _snap = get_analyst_snapshot(_t)
+                _target = clean_float((_snap.get("data") or {}).get("targetMeanPrice"), 0.0) or 0.0
+                _cur = load_latest_price(_t)
+                if _target > 0 and _cur > 0:
+                    _up = (_target - _cur) / _cur * 100
+                    _upside_map[_t] = f"+{_up:.1f}%" if _up >= 0 else f"{_up:.1f}%"
+            except Exception:
+                pass
+
     show_cols = [
-        "종목명", "티커", "유형", "현재가", "📌후보등급", "🔥기술적 타점",
+        "종목명", "티커", "유형", "현재가", "목표Upside", "📌후보등급", "🔥기술적 타점",
         "핵심근거", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "MDD",
     ]
-    show_cols = [col for col in show_cols if col in summary_df.columns]
 
     view_mode = st.radio(
         "보기",
@@ -18259,7 +18272,16 @@ def render_today_queue_tab(mode):
     elif "Adj점수" in view_df.columns:
         view_df = view_df.sort_values("Adj점수", ascending=sort_ascending)
 
-    st.dataframe(view_df[show_cols], use_container_width=True, hide_index=True)
+    # upside 컬럼 주입 (없으면 "-")
+    if "티커" in view_df.columns:
+        view_df["목표Upside"] = view_df["티커"].astype(str).map(_upside_map).fillna("-")
+
+    st.dataframe(
+        view_df[[col for col in show_cols if col in view_df.columns]],
+        column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
 
