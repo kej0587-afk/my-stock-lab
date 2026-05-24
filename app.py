@@ -6895,12 +6895,34 @@ def render_money_flow_etf_section():
     accel_leader = _rank_for_interp.sort_values("가속도", ascending=False).iloc[0]
     weak = _rank_for_interp.sort_values("돈흐름점수", ascending=True).iloc[0]
 
+    # ── 6. 섹터 로테이션 교체 감지 ──────────────────────────────────────
+    _PREV_LEADER_KEY = "money_flow_prev_leader_ticker"
+    _curr_leader_tkr = str(leader["Ticker"])
+    _prev_leader_tkr = st.session_state.get(_PREV_LEADER_KEY, "")
+    _rotation_signal = ""
+    if _prev_leader_tkr and _prev_leader_tkr != _curr_leader_tkr:
+        _prev_name = _prev_leader_tkr  # 이름 없으면 티커로 표기
+        # flow_df 에서 이전 리더 섹터명 복원 시도
+        try:
+            _prev_row = flow_df[flow_df["Ticker"].astype(str) == _prev_leader_tkr]
+            if not _prev_row.empty:
+                _prev_name = f"{_prev_row.iloc[0]['섹터']} ({_prev_leader_tkr})"
+        except Exception:
+            pass
+        _curr_name = f"{leader['섹터']} ({_curr_leader_tkr})"
+        _rotation_signal = (
+            f"<br>🔄 <b>섹터 로테이션 감지</b>: 이전 1위 <b>{_prev_name}</b> → 현재 1위 <b>{_curr_name}</b>. "
+            "리더 교체가 확인되면 이전 섹터 비중 점검과 신규 리더 추가 진입을 검토하세요."
+        )
+    # 현재 리더를 다음 비교를 위해 저장
+    st.session_state[_PREV_LEADER_KEY] = _curr_leader_tkr
+
     _reading = _build_global_flow_reading(flow_df, rankable_df, leader, accel_leader, weak)
     st.markdown(
         f"""
 <div class='info-panel'>
 <b>📊 돈흐름 해석</b><br>
-{_reading}
+{_reading}{_rotation_signal}
 <br><span style='color:#94a3b8;font-size:0.85em;'>가속도 = 최근 3M - 이전 3M 수익률. 시장 폭은 현재 선택 범위 기준. 매크로 신호는 flow_df 전체에서 해당 티커를 직접 조회합니다.</span>
 </div>
         """,
@@ -7114,6 +7136,24 @@ def render_money_flow_etf_section():
         f"{_avg_pl:.2f}" if np.isfinite(_avg_pl) else "-",
         help="0=52주 최저, 1=52주 최고. 0.7 이상이면 전반적 고점권",
     )
+
+    # ── 5. 시장 폭 한 줄 해석 ──────────────────────────────────────────
+    _b3 = _pos_3m / _total
+    _ba = _pos_acc / _total
+    if _b3 >= 0.70:
+        _bw_label = "🟢 광범위 상승 — 위험자산 선호 우세"
+    elif _b3 >= 0.50:
+        _bw_label = "🟡 선별적 상승 — 강한 섹터에 집중, 약한 섹터는 관망"
+    elif _b3 >= 0.35:
+        _bw_label = "🟠 방어 국면 — 상승 섹터 소수. 비중 축소·현금 확보 우선"
+    else:
+        _bw_label = "🔴 광범위 하락 — 대부분 ETF 하락 중. 현금·안전자산 확대 검토"
+    _acc_note = ""
+    if _ba >= 0.60:
+        _acc_note = f"  ·  가속 ETF {_pos_acc}개({_ba*100:.0f}%) — 상승 동력 확산 중"
+    elif _ba < 0.40:
+        _acc_note = f"  ·  가속 ETF {_pos_acc}개({_ba*100:.0f}%) — 상승 동력 약화 주의"
+    st.caption(f"{_bw_label}{_acc_note}")
 
     # 상태 분포 바 차트
     _state_order = ["과열경보", "강세 가속", "급반등", "고변동", "신규 유입", "주도 유지", "둔화 경고", "관찰", "소외 지속", "급락 경보", "가격부족"]
