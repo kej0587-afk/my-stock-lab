@@ -421,85 +421,71 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
         except Exception:
             pass
 
-    # ── 2. Financial summary: ROE, margins, revenue growth ───────────────────
+    # ── 2. Financial summary: ROE, margins, PER/PBR/EPS/BPS (finance/annual) ──
+    # summaryFinancial endpoint is defunct (404). finance/annual is the correct source.
     try:
         r = _requests.get(
-            f"https://m.stock.naver.com/api/stock/{code}/summaryFinancial",
+            f"https://m.stock.naver.com/api/stock/{code}/finance/annual",
             headers=_NAVER_MOBILE_HEADERS, timeout=6,
         )
         if r.status_code == 200:
-            d = r.json()
-            roe = _parse_kr_num(d.get("roe") or d.get("returnOnEquity") or d.get("ROE"))
-            op_margin = _parse_kr_num(
-                d.get("operatingProfitMargin") or d.get("operatingMarginRatio") or d.get("opm")
-            )
-            net_margin = _parse_kr_num(
-                d.get("netProfitMargin") or d.get("profitMargin") or d.get("npm")
-            )
-            rev_growth = _parse_kr_num(
-                d.get("revenueGrowth") or d.get("salesGrowthRate") or d.get("revGrowth")
-            )
-            if roe:
-                result["returnOnEquity"] = roe / 100.0
-            if op_margin:
-                result["operatingMargins"] = op_margin / 100.0
-            if net_margin:
-                result["profitMargins"] = net_margin / 100.0
-            if rev_growth:
-                result["revenueGrowth"] = rev_growth / 100.0
+            fi = (r.json().get("financeInfo") or {})
+            tr_titles = fi.get("trTitleList") or []
+            row_list = fi.get("rowList") or []
+
+            # Latest non-consensus (실적) period key
+            actual_keys = [t["key"] for t in tr_titles if t.get("isConsensus") == "N"]
+            period_key = actual_keys[-1] if actual_keys else (tr_titles[-1]["key"] if tr_titles else None)
+
+            if period_key and row_list:
+                # {title: {period_key: value_str, ...}, ...}
+                row_map = {
+                    row.get("title", ""): row.get("columns") or {}
+                    for row in row_list
+                    if row.get("title")
+                }
+
+                def _col_val(title: str):
+                    cols = row_map.get(title, {})
+                    raw = cols.get(period_key) or (list(cols.values())[-1] if cols else None)
+                    if raw is None:
+                        return None
+                    # value may be a dict {"value": "10.85"} or a plain string
+                    if isinstance(raw, dict):
+                        raw = raw.get("value") or ""
+                    return _parse_kr_num(str(raw).replace(",", ""))
+
+                roe = _col_val("ROE")
+                op_margin = _col_val("영업이익률")
+                net_margin = _col_val("순이익률")
+
+                if roe:
+                    result["returnOnEquity"] = roe / 100.0
+                if op_margin:
+                    result["operatingMargins"] = op_margin / 100.0
+                if net_margin:
+                    result["profitMargins"] = net_margin / 100.0
+
+                # Fill PER/PBR/EPS/BPS from finance/annual when pykrx was unavailable
+                if not _krx_ok:
+                    per = _col_val("PER")
+                    pbr = _col_val("PBR")
+                    eps = _col_val("EPS")
+                    bps = _col_val("BPS")
+                    if per and per > 0:
+                        result.setdefault("trailingPE", per)
+                    if pbr and pbr > 0:
+                        result.setdefault("priceToBook", pbr)
+                    if eps:
+                        result.setdefault("trailingEps", eps)
+                    if bps and bps > 0:
+                        result.setdefault("bookValue", bps)
     except Exception:
         pass
 
-    # ── 3. Analyst consensus: target price, opinion ───────────────────────────
-    # Naver wraps FnGuide/WiseReport data. Try a few known endpoint paths.
-    for analytics_path in ("analytics", "consensus", "opinion"):
-        try:
-            r = _requests.get(
-                f"https://m.stock.naver.com/api/stock/{code}/{analytics_path}",
-                headers=_NAVER_MOBILE_HEADERS, timeout=6,
-            )
-            if r.status_code != 200:
-                continue
-            d = r.json()
-            # Consensus may be nested or flat; try common key patterns
-            consensus = d if isinstance(d, dict) else {}
-            for sub_key in ("consensus", "analystConsensus", "targetInfo"):
-                if isinstance(d.get(sub_key), dict):
-                    consensus = d[sub_key]
-                    break
-
-            target = _parse_kr_num(
-                consensus.get("targetPrice")
-                or consensus.get("meanTargetPrice")
-                or consensus.get("avgTargetPrice")
-                or consensus.get("targetPriceMean")
-                or consensus.get("conensusPrice")
-            )
-            opinions_raw = (
-                consensus.get("analystCount")
-                or consensus.get("count")
-                or consensus.get("numberOfAnalysts")
-                or consensus.get("opinionCount")
-            )
-            rec_raw = (
-                consensus.get("opinion")
-                or consensus.get("recommendation")
-                or consensus.get("opinionStr")
-                or consensus.get("consensusOpinion")
-            )
-            if target and target > 0:
-                result["targetMeanPrice"] = target
-            if opinions_raw is not None:
-                try:
-                    result["numberOfAnalystOpinions"] = int(str(opinions_raw).replace(",", ""))
-                except Exception:
-                    pass
-            if rec_raw:
-                result["recommendationKey"] = str(rec_raw)
-            if target:  # got what we need; stop trying other paths
-                break
-        except Exception:
-            pass
+    # ── 3. Analyst consensus ──────────────────────────────────────────────────
+    # Naver mobile analytics/consensus/opinion endpoints all return 404.
+    # Consensus data is sourced from yfinance in get_analyst_snapshot() instead.
 
     has_any = bool(result)
     return {
