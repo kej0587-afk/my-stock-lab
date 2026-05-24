@@ -6950,35 +6950,80 @@ def render_money_flow_etf_section():
         st.caption("블록이 클수록 최근 3개월 움직임이 크고, 초록색일수록 가격 흐름과 거래량 확인값이 좋다는 뜻입니다. 블록을 클릭하면 아래에서 구성종목을 확인합니다.")
 
     with m2:
-        fig_quad = go.Figure(go.Scatter(
-            x=view_df["6개월수익률"] * 100,
-            y=view_df["3개월수익률"] * 100,
-            mode="markers+text",
-            text=view_df["섹터"],
-            textposition="top center",
-            marker=dict(
-                size=np.clip(view_df["가격수준"].fillna(0.5) * 28, 12, 34),
-                color=view_df["가속도"] * 100,
-                colorscale="RdYlGn",
-                cmid=0,
-                showscale=True,
-                colorbar=dict(title="가속도")
-            ),
-            customdata=view_df[["Ticker", "상태", "돈흐름점수", "거래량증가"]],
-            hovertemplate=
-                "<b>%{text}</b> (%{customdata[0]})<br>" +
-                "6개월: %{x:.1f}%<br>" +
-                "3개월: %{y:.1f}%<br>" +
-                "상태: %{customdata[1]}<br>" +
-                "돈흐름점수: %{customdata[2]:.1f}<br>" +
-                "거래량증가: %{customdata[3]:.1%}<extra></extra>"
-        ))
+        # 보유 ETF 식별 (holdings_table 글로벌 변수)
+        _held_tickers: set[str] = set()
+        try:
+            if "티커" in holdings_table.columns:
+                _held_tickers = {
+                    str(t).strip().upper()
+                    for t in holdings_table["티커"].dropna()
+                    if str(t).strip()
+                }
+        except Exception:
+            pass
+
+        _ticker_upper = view_df["Ticker"].astype(str).str.upper()
+        _is_held = _ticker_upper.isin(_held_tickers)
+        _held_df = view_df[_is_held]
+        _rest_df = view_df[~_is_held]
+
+        _hover_tmpl = (
+            "<b>%{text}</b> (%{customdata[0]})<br>"
+            "6개월: %{x:.1f}%<br>"
+            "3개월: %{y:.1f}%<br>"
+            "상태: %{customdata[1]}<br>"
+            "돈흐름점수: %{customdata[2]:.1f}<br>"
+            "거래량증가: %{customdata[3]:.1%}<extra></extra>"
+        )
+
+        fig_quad = go.Figure()
+
+        # ── 비보유 ETF (원형 마커, 가속도 색상) ─────────────────────────
+        if not _rest_df.empty:
+            fig_quad.add_trace(go.Scatter(
+                x=_rest_df["6개월수익률"] * 100,
+                y=_rest_df["3개월수익률"] * 100,
+                mode="markers+text",
+                name="ETF",
+                text=_rest_df["섹터"],
+                textposition="top center",
+                marker=dict(
+                    size=np.clip(_rest_df["가격수준"].fillna(0.5) * 28, 12, 34),
+                    color=_rest_df["가속도"] * 100,
+                    colorscale="RdYlGn",
+                    cmid=0,
+                    showscale=True,
+                    colorbar=dict(title="가속도"),
+                ),
+                customdata=_rest_df[["Ticker", "상태", "돈흐름점수", "거래량증가"]],
+                hovertemplate=_hover_tmpl,
+            ))
+
+        # ── 보유 ETF (별 마커, 금색 강조) ───────────────────────────────
+        if not _held_df.empty:
+            fig_quad.add_trace(go.Scatter(
+                x=_held_df["6개월수익률"] * 100,
+                y=_held_df["3개월수익률"] * 100,
+                mode="markers+text",
+                name="⭐ 내 보유",
+                text=_held_df["섹터"],
+                textposition="top center",
+                marker=dict(
+                    symbol="star",
+                    size=np.clip(_held_df["가격수준"].fillna(0.5) * 28, 18, 42),
+                    color="#facc15",
+                    line=dict(color="#1e293b", width=1.5),
+                ),
+                customdata=_held_df[["Ticker", "상태", "돈흐름점수", "거래량증가"]],
+                hovertemplate=_hover_tmpl,
+            ))
+
         fig_quad.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
         fig_quad.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
         fig_quad.update_layout(
             template="plotly_dark",
             height=470,
-            title="로테이션 사분면",
+            title="로테이션 사분면 (⭐ 내 보유)" if not _held_df.empty else "로테이션 사분면",
             xaxis_title="6개월 수익률 %",
             yaxis_title="3개월 수익률 %",
         )
