@@ -18181,6 +18181,27 @@ def render_today_queue_tab(mode):
     else:
         st.info("강한 매수 후보가 많지 않습니다. 오늘은 보유 유지, 비중 점검, 관심종목 정리 쪽이 더 적합합니다.")
 
+    # ── 섹터 집중도 경고 ─────────────────────────────────────────────────
+    # 매수/관심 후보가 2개 이상이면 같은 asset_class 끼리 묶어 중복 섹터를 잡아냄
+    if buyish_mask.sum() >= 2 and "티커" in summary_df.columns:
+        _ticker_to_class = {
+            str(it.get("ticker", "")).strip().upper(): str(it.get("asset_class", "")).strip()
+            for it in watch_items
+        }
+        _class_buckets: dict[str, list[str]] = {}
+        for _tkr in summary_df.loc[buyish_mask, "티커"].astype(str).str.upper():
+            _cls = _ticker_to_class.get(_tkr, "")
+            if _cls:
+                _class_buckets.setdefault(_cls, []).append(_tkr)
+        _concentrated = {cls: tks for cls, tks in _class_buckets.items() if len(tks) >= 2}
+        if _concentrated:
+            _warn_parts = [f"**{cls}** ({', '.join(tks)})" for cls, tks in _concentrated.items()]
+            st.warning(
+                "⚠️ **섹터 집중 주의** — 같은 섹터에 매수/관심 후보가 2개 이상입니다: "
+                + " / ".join(_warn_parts)
+                + "\n\n동시에 진입하면 해당 섹터 비중이 집중될 수 있습니다. 분할 우선순위를 정한 뒤 순차 접근을 권장합니다."
+            )
+
     cash_cols = st.columns(2)
     cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
     cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
