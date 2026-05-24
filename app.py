@@ -10262,8 +10262,8 @@ def fetch_valuation_snapshot(ticker):
         return {"ok": False, "reason": "티커 없음", "data": {}}
     try:
         info = yf.Ticker(ticker).get_info()
-    except Exception:
-        info = {}
+    except Exception as _e:
+        return {"ok": False, "reason": f"yfinance 오류: {_e}", "data": {}}
     if not isinstance(info, dict):
         info = {}
 

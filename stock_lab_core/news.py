@@ -279,11 +279,13 @@ GENERIC_TICKERS = {
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_yfinance_company_names(ticker):
     names = []
+    seen_lower: set = set()
     try:
         info = yf.Ticker(ticker).get_info()
         for key in ["longName", "shortName", "displayName"]:
             value = str(info.get(key, "") or "").strip()
-            if value and value.lower() not in [x.lower() for x in names]:
+            if value and value.lower() not in seen_lower:
+                seen_lower.add(value.lower())
                 names.append(value)
     except Exception:
         pass
@@ -377,9 +379,8 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
     _krx_ok = False
     try:
         from pykrx import stock as _pykrx
-        from datetime import date as _date, timedelta as _td
-        for _days_back in range(0, 8):  # 오늘부터 최대 7 거래일 전까지 시도
-            _d = (_date.today() - _td(days=_days_back)).strftime("%Y%m%d")
+        for _days_back in range(0, 4):  # 최대 3 캘린더일 전까지 (주말+공휴일 커버)
+            _d = (_date_cls.today() - _td_cls(days=_days_back)).strftime("%Y%m%d")
             try:
                 _row = _fetch_krx_fundamental_row(_pykrx, _d, code)
                 if _row is not None:
@@ -631,18 +632,23 @@ def get_news_company_names(ticker, name):
     display_name = strip_search_prefix(name)
 
     names = []
+    names_lower: set = set()
 
     if display_name and display_name.upper() != symbol:
         names.append(display_name)
+        names_lower.add(display_name.lower())
 
     for n in get_yfinance_company_names(ticker):
-        if n and n.lower() not in [x.lower() for x in names]:
+        if n and n.lower() not in names_lower:
+            names_lower.add(n.lower())
             names.append(n)
 
     cleaned = []
+    cleaned_lower: set = set()
     for n in names:
         n = n.replace("Inc.", "").replace("Corporation", "").replace("Corp.", "").replace("Co., Ltd.", "").strip()
-        if len(n) >= 2 and n.lower() not in [x.lower() for x in cleaned]:
+        if len(n) >= 2 and n.lower() not in cleaned_lower:
+            cleaned_lower.add(n.lower())
             cleaned.append(n)
 
     return cleaned[:3]
@@ -693,13 +699,15 @@ def get_news_theme_terms(ticker, name):
     key = normalize_ticker(ticker).upper()
     display_name = strip_search_prefix(name)
     terms = []
+    terms_lower: set = set()
 
     for lookup in [symbol, key]:
         for term in NEWS_THEME_TERMS_BY_SYMBOL.get(lookup, []):
-            if term and term.lower() not in [x.lower() for x in terms]:
+            if term and term.lower() not in terms_lower:
+                terms_lower.add(term.lower())
                 terms.append(term)
 
-    if display_name and display_name.upper() != symbol and display_name.lower() not in [x.lower() for x in terms]:
+    if display_name and display_name.upper() != symbol and display_name.lower() not in terms_lower:
         terms.append(display_name)
 
     return terms[:6]
@@ -1405,11 +1413,9 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
                     market="KOSPI", investor="외국인",
                 )
             except Exception as _e:
-                # API 자체 오류(네트워크/인증)는 즉시 실패 처리
                 if first_exception is None:
                     first_exception = _e
-                # 연속 예외 시 더 이상 시도하지 않음
-                return {"ok": False, "reason": f"KRX API 오류: {first_exception}", "data": {}}
+                continue  # 공휴일/네트워크 일시오류는 다음 날짜로 재시도
 
             if _df_try is not None and not _df_try.empty:
                 date_str = candidate
@@ -1418,6 +1424,8 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
             # 비어 있으면 공휴일/휴장일로 판단하고 하루 더 거슬러 올라감
 
         if date_str is None or _test is None:
+            if first_exception is not None:
+                return {"ok": False, "reason": f"KRX API 오류: {first_exception}", "data": {}}
             return {"ok": False,
                     "reason": "KRX 로그인 실패 — Streamlit Cloud Secrets에 KRX_ID/KRX_PW가 올바르게 설정됐는지 확인하세요.",
                     "data": {}}
@@ -1532,7 +1540,7 @@ def fetch_investor_top10_naver(ticker_list: tuple) -> dict:
                 return None
 
         rows = []
-        with ThreadPoolExecutor(max_workers=15) as ex:  # workers 늘려서 병렬성 향상
+        with ThreadPoolExecutor(max_workers=min(8, len(ticker_list))) as ex:
             futures = {ex.submit(_fetch_one, t): t for t in ticker_list}
             for fut in _as_completed(futures):
                 result = fut.result()
@@ -1610,6 +1618,11 @@ def render_investor_top10_panel(ticker_list: list):
     if date_label and len(date_label) == 8:
         date_label = f"{date_label[:4]}.{date_label[4:6]}.{date_label[6:]}"
 
+    def _fmt_val(v):
+        if v == 0:
+            return "-"
+        return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
+
     cols = st.columns(len(_investors))
     for col, inv_name in zip(cols, _investors):
         df_top = data.get(inv_name)
@@ -1618,11 +1631,6 @@ def render_investor_top10_panel(ticker_list: list):
             if df_top is None or df_top.empty:
                 st.caption("데이터 없음")
                 continue
-
-            def _fmt_val(v):
-                if v == 0:
-                    return "-"
-                return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
 
             display = df_top[["종목명", _val_col]].copy()
             display[_val_col] = display[_val_col].apply(_fmt_val)
