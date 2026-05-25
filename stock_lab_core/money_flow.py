@@ -1429,6 +1429,9 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 and finite_num(r2w) and float(r2w) >= 0.01
                 and finite_num(swing_ac) and float(swing_ac) >= 0.0
                 and state != "과열경보"
+                # 주도 사분면은 RS가 실질적인 리더십(8% 이상)일 때만 진입검토
+                # 개선 사분면은 RS < 0 → 역전 모멘텀이므로 임계값 불필요
+                and (quad == "개선" or float(rs_3m) >= 0.08)
             )
 
             rows.append({
