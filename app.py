@@ -18018,13 +18018,45 @@ def render_today_market_flow_panel(snapshot=None):
             st.info("현재 진입검토 조건(개선/주도 + 단기 상승 확인 + 비과열)을 모두 충족한 항목이 없습니다.")
         else:
             st.markdown("**✅ 진입검토 후보**")
-            show_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "RS(3M)", "RS모멘텀",
-                                      "3M수익률", "1개월수익률", "상태"] if c in entry_df.columns]
+            # 투자유형 컬럼 추가
+            def _today_type(r):
+                rs3m  = r.get("RS(3M)",   np.nan)
+                rsmom = r.get("RS모멘텀", np.nan)
+                r1m   = r.get("1개월수익률", r.get("3M수익률", np.nan))
+                if not (finite_num(rs3m) and finite_num(rsmom)):
+                    return "?"
+                if finite_num(rsmom) and float(rsmom) >= 0.05 and finite_num(r1m) and float(r1m) > 0:
+                    return "🚀 스윙"
+                if finite_num(rs3m) and float(rs3m) >= 0.10:
+                    return "🌱 장기"
+                return "⚪ 관망"
+            entry_df["유형"] = entry_df.apply(_today_type, axis=1)
+            show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker", "사분면",
+                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "상태"] if c in entry_df.columns]
             entry_show = entry_df[show_cols].copy()
             for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률"]:
                 if col in entry_show.columns:
                     entry_show[col] = entry_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
             st.dataframe(entry_show, width='stretch', hide_index=True)
+
+            # 테마 바로가기 버튼 (ETF 티커가 있는 경우)
+            if ETF_TO_THEME and IMAGE_THEME_FLOW_AVAILABLE and "Ticker" in entry_df.columns:
+                _entry_tickers = entry_df["Ticker"].astype(str).str.upper().tolist()
+                _jump_map = {ETF_TO_THEME[t]: t for t in _entry_tickers if t in ETF_TO_THEME}
+                if _jump_map:
+                    st.markdown("**📌 진입검토 ETF 연관 테마 → 정밀분석**")
+                    _jcols = st.columns(min(len(_jump_map), 4))
+                    for (theme_name, etf_t), jcol in zip(_jump_map.items(), _jcols):
+                        _meta = IMAGE_THEME_META.get(theme_name, {})
+                        _tag  = _meta.get("tag", "")
+                        if jcol.button(
+                            f"{_tag} {theme_name}",
+                            key=f"today_rot_jump_{etf_t}",
+                            help=f"{etf_t} 진입검토 → 돈흐름 레이더에서 {theme_name} 상세 분석",
+                        ):
+                            st.session_state["image_theme_flow_theme"] = theme_name
+                            st.session_state["_theme_jump_triggered"] = True
+                            st.toast(f"돈흐름 레이더 탭에서 '{theme_name}' 선택됨 →", icon="📌")
 
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "진입검토",
@@ -18057,6 +18089,7 @@ def render_today_market_flow_panel(snapshot=None):
 
         def _entry(r):
             quad  = r.get("사분면", "")
+            rs3m  = r.get("RS(3M)", np.nan)
             r1m   = r.get("1개월수익률", np.nan)
             accel = r.get("가속도", np.nan)
             state = str(r.get("상태", ""))
@@ -18065,6 +18098,8 @@ def render_today_market_flow_panel(snapshot=None):
                 and finite_num(r1m) and float(r1m) >= 0.01
                 and finite_num(accel) and float(accel) >= 0.0
                 and state != "과열경보"
+                # 주도 사분면은 RS 8% 이상 실질 리더십 확인 (돈흐름 레이더와 동일 기준)
+                and (quad == "개선" or (finite_num(rs3m) and float(rs3m) >= 0.08))
             )
             return "✅ 진입검토" if ok else "🔸 관망"
 
@@ -18080,6 +18115,37 @@ def render_today_market_flow_panel(snapshot=None):
         "✅ 진입검토 = 개선/주도 + 단기 상승 확인(1M≥+1%) + 가속도≥0 + 비과열 &nbsp;|&nbsp; "
         "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200"
     )
+
+    # ── 클러스터 히트바 ───────────────────────────────────────────────
+    if SECTOR_CLUSTERS and not sector_rotation_df.empty:
+        _t2rs = {}
+        for _, _rr in sector_rotation_df.iterrows():
+            _t = str(_rr.get("Ticker", "")).upper()
+            _rs = _rr.get("RS(3M)", np.nan)
+            if finite_num(_rs):
+                _t2rs[_t] = float(_rs)
+        _cl_rows = []
+        for _cl_name, _cl_tickers in SECTOR_CLUSTERS.items():
+            _rs_vals = [_t2rs[t.upper()] for t in _cl_tickers if t.upper() in _t2rs]
+            if _rs_vals:
+                _cl_rows.append({"클러스터": _cl_name, "평균RS": float(np.mean(_rs_vals))})
+        if _cl_rows:
+            _cl_df = pd.DataFrame(_cl_rows).sort_values("평균RS", ascending=False)
+            st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+            _cl_cols = st.columns(len(_cl_df))
+            for _col, (_, _crow) in zip(_cl_cols, _cl_df.iterrows()):
+                _rs = _crow["평균RS"]
+                _clr = "#22c55e" if _rs > 0.05 else ("#ea580c" if _rs > 0 else "#dc2626")
+                _arr = "▲" if _rs > 0.05 else ("▶" if _rs > 0 else "▼")
+                _col.markdown(
+                    f"<div style='text-align:center;padding:8px 4px;border-radius:8px;"
+                    f"background:#1e293b;border:1px solid {_clr}44;'>"
+                    f"<div style='font-size:0.78em;color:#94a3b8;'>{_crow['클러스터']}</div>"
+                    f"<div style='font-size:1.1em;font-weight:700;color:{_clr};'>"
+                    f"{_arr} {_rs*100:+.1f}%</div></div>",
+                    unsafe_allow_html=True,
+                )
+            st.write("")
 
     _rot_tab_labels = ["한국섹터", "미국섹터", "테마종목"]
     _rot_tabs = st.tabs(_rot_tab_labels)
