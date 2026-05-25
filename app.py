@@ -7837,14 +7837,23 @@ def render_image_theme_flow_section():
                     "장기: 3M 수익률·안전 구간 기준 — 수개월~장기 보유"
                 ),
             )
-        stock_view = theme_df if selected_subtheme == "전체" else theme_df[theme_df["하위테마"] == selected_subtheme]
+        if selected_subtheme == "전체":
+            # 전체 보기: 종목(Ticker)당 돈흐름점수 최고 행만 남겨 중복 제거
+            stock_view = (
+                theme_df
+                .sort_values("돈흐름점수", ascending=False, na_position="last")
+                .drop_duplicates(subset=["Ticker"], keep="first")
+            )
+        else:
+            stock_view = theme_df[theme_df["하위테마"] == selected_subtheme]
 
         # 투자유형 라벨 계산 (수치 컬럼 원본으로 계산)
         def _classify_stock_type(row) -> str:
-            accel = row.get("가속도", None)
-            ret1m = row.get("1개월수익률", None)
-            ret3m = row.get("3개월수익률", None)
-            pl    = row.get("가격수준", None)
+            accel  = row.get("가속도", None)
+            ret1m  = row.get("1개월수익률", None)
+            ret3m  = row.get("3개월수익률", None)
+            pl     = row.get("가격수준", None)
+            flow   = row.get("돈흐름점수", None)
             if not finite_num(accel):
                 return "데이터부족"
             near_high = finite_num(pl) and float(pl) > 0.85
@@ -7852,11 +7861,12 @@ def render_image_theme_flow_section():
             accel_ok  = float(accel) >= 0.05
             ret1m_ok  = finite_num(ret1m) and float(ret1m) > 0
             ret3m_ok  = finite_num(ret3m) and float(ret3m) > 0.05
+            flow_pos  = finite_num(flow) and float(flow) > 0   # 돈흐름점수 양수 필수
             if near_high:
                 return "⚠️ 고점추격"
-            if accel_ok and ret1m_ok and not near_high:
+            if accel_ok and ret1m_ok and flow_pos:
                 return "🚀 스윙후보"
-            if ret3m_ok and safe_zone:
+            if ret3m_ok and safe_zone and flow_pos:
                 return "🌱 장기후보"
             return "⚪ 관망"
 
