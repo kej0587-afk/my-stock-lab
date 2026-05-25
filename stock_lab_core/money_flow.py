@@ -1415,11 +1415,14 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
             rs_3m = float(r3) - b_3m
             rs_mom = float(ac) - b_accel
 
-            if rs_3m >= 0 and rs_mom >= 0:
+            # RS모멘텀 ±5% 이내는 노이즈로 간주 — 약화/개선 판정 제외
+            # (예: UFO -3.6%, ICLN -1.6% → 실제 강세지만 약화 오표시 방지)
+            _RS_MOM_BAND = 0.05
+            if rs_3m >= 0 and rs_mom >= -_RS_MOM_BAND:
                 quad = "주도"
-            elif rs_3m >= 0 and rs_mom < 0:
+            elif rs_3m >= 0 and rs_mom < -_RS_MOM_BAND:
                 quad = "약화"
-            elif rs_3m < 0 and rs_mom >= 0:
+            elif rs_3m < 0 and rs_mom >= _RS_MOM_BAND:
                 quad = "개선"
             else:
                 quad = "소외"
