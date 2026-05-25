@@ -6853,6 +6853,21 @@ def render_money_flow_etf_section():
     if "상태" in table_df.columns:
         table_df["상태"] = table_df["상태"].map(lambda s: _state_badge.get(str(s), str(s)))
 
+    # ── 스윙 진입가능 여부 (포맷 전 원본 수치로 계산) ─────────────────
+    def _swing_entry_label(row) -> str:
+        sw  = row.get("스윙점수",  None)
+        pl  = row.get("가격수준", None)
+        if not finite_num(sw):
+            return "-"
+        sw, pl_v = float(sw), float(pl) if finite_num(pl) else 1.0
+        if sw <= 0:
+            return "❌ 비추"
+        if pl_v >= 0.85:
+            return "⚠️ 고점주의"   # 모멘텀은 있지만 52주 고점 85% 초과 — 추격 위험
+        return "✅ 진입가능"
+
+    table_df["진입가능"] = table_df.apply(_swing_entry_label, axis=1)
+
     # 현재가 포맷 결정
     first_ticker = str(view_df['Ticker'].iloc[0])
     # ── CSV 내보내기까지 올바르게 나오도록 모든 숫자를 문자열로 포맷 ──
@@ -6884,7 +6899,7 @@ def render_money_flow_etf_section():
     # 표시할 컬럼 순서 지정 (내부 컬럼 제외)
     _show_cols = [c for c in [
         "구분", "섹터", "Ticker", "ETF 이름", "현재가",
-        "상태", "가격수준", "돈흐름점수", "스윙점수",
+        "상태", "가격수준", "돈흐름점수", "스윙점수", "진입가능",
         "2주수익률", "1개월수익률", "3개월수익률", "6개월수익률",
         "단기가속도", "가속도", "거래량증가",
     ] if c in table_df.columns]
@@ -6895,6 +6910,7 @@ def render_money_flow_etf_section():
             "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
             "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 중기가속도 15% + 거래량 15% — 장기 모멘텀"),
             "스윙점수":    st.column_config.TextColumn("스윙",      help="2W 25% + 1M 35% + 단기가속도 25% + 거래량 15% — 최근 방향 전환에 민감"),
+            "진입가능":    st.column_config.TextColumn("스윙진입",  help="✅ 진입가능: 스윙점수>0 + 52주위치<85%  ⚠️ 고점주의: 스윙점수>0이나 52주고점 85% 초과  ❌ 비추: 스윙점수≤0"),
             "2주수익률":   st.column_config.TextColumn("2W"),
             "1개월수익률": st.column_config.TextColumn("1M"),
             "3개월수익률": st.column_config.TextColumn("3M"),
