@@ -100,11 +100,15 @@ try:
         calculate_image_theme_rotation_df,
         get_image_theme_names,
         IMAGE_THEME_META,
+        SECTOR_CLUSTERS,
+        ETF_TO_THEME,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
 except ImportError:
     IMAGE_THEME_FLOW_AVAILABLE = False
     IMAGE_THEME_META = {}
+    SECTOR_CLUSTERS = {}
+    ETF_TO_THEME = {}
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -6258,6 +6262,39 @@ def render_rotation_panel(flow_df: pd.DataFrame):
     )
 
     rot_df = calculate_rotation_df(flow_df)
+    # ── Task 4: 클러스터 히트바 ─────────────────────────────────────────────
+    if SECTOR_CLUSTERS and rot_df is not None and not rot_df.empty:
+        _ticker_to_rs = dict(zip(rot_df["Ticker"].astype(str).str.upper(),
+                                  rot_df["RS_3m"].astype(float)))
+        cluster_rows = []
+        for cl_name, cl_tickers in SECTOR_CLUSTERS.items():
+            rs_vals = [_ticker_to_rs[t.upper()] for t in cl_tickers
+                       if t.upper() in _ticker_to_rs]
+            if rs_vals:
+                avg_rs = float(np.mean(rs_vals))
+                best_t = cl_tickers[
+                    int(np.argmax([_ticker_to_rs.get(t.upper(), -99) for t in cl_tickers]))
+                ]
+                cluster_rows.append({"클러스터": cl_name, "평균RS": avg_rs, "대표티커": best_t})
+        if cluster_rows:
+            cl_df = pd.DataFrame(cluster_rows).sort_values("평균RS", ascending=False)
+            st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+            cl_cols = st.columns(len(cl_df))
+            for col, (_, row) in zip(cl_cols, cl_df.iterrows()):
+                _rs = row["평균RS"]
+                _color = "#22c55e" if _rs > 0.05 else ("#ea580c" if _rs > 0 else "#dc2626")
+                _arrow = "▲" if _rs > 0.05 else ("▶" if _rs > 0 else "▼")
+                col.markdown(
+                    f"<div style='text-align:center;padding:8px 4px;border-radius:8px;"
+                    f"background:#1e293b;border:1px solid {_color}44;'>"
+                    f"<div style='font-size:0.78em;color:#94a3b8;'>{row['클러스터']}</div>"
+                    f"<div style='font-size:1.1em;font-weight:700;color:{_color};'>"
+                    f"{_arrow} {_rs*100:+.1f}%</div>"
+                    f"<div style='font-size:0.72em;color:#64748b;'>{row['대표티커']}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            st.write("")
     if rot_df is None or rot_df.empty:
         st.info("로테이션 데이터를 계산할 수 없습니다.")
         return
@@ -6348,12 +6385,12 @@ def render_rotation_panel(flow_df: pd.DataFrame):
             st.plotly_chart(fig, width='stretch')
 
             # ── 요약 테이블 ────────────────────────────────────────────────
-            tbl = gdf[["섹터", "로테이션", "RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률", "상태"]].copy()
+            tbl = gdf[["섹터", "Ticker", "로테이션", "RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률", "상태"]].copy()
             tbl["로테이션"] = tbl["로테이션"].map(QUAD_EMOJI)
             for col in ["RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률"]:
                 tbl[col] = tbl[col].apply(lambda v: f"{v*100:+.1f}%" if finite_num(v) else "-")
             tbl = tbl.sort_values("로테이션")
-            st.dataframe(tbl, width='stretch', hide_index=True,
+            st.dataframe(tbl.drop(columns=["Ticker"]), width='stretch', hide_index=True,
                          column_config={
                              "RS_3m":     st.column_config.TextColumn("RS(3m)", help="벤치마크 대비 3개월 초과수익"),
                              "RS모멘텀":  st.column_config.TextColumn("RS모멘텀", help="벤치마크 대비 가속도 차이. 양수=빨라짐"),
@@ -6361,6 +6398,32 @@ def render_rotation_panel(flow_df: pd.DataFrame):
                              "1개월수익률": st.column_config.TextColumn("1M"),
                              "2주수익률":   st.column_config.TextColumn("2W"),
                          })
+
+            # ── Task 2: 주도/개선 섹터 → 연관 테마 바로가기 ──────────────
+            if ETF_TO_THEME and IMAGE_THEME_FLOW_AVAILABLE:
+                _leading_tickers = (
+                    gdf[gdf["로테이션"].isin(["주도", "개선"])]
+                    ["Ticker"].astype(str).str.upper().tolist()
+                )
+                _jump_links = {
+                    ETF_TO_THEME[t]: t
+                    for t in _leading_tickers
+                    if t in ETF_TO_THEME
+                }
+                if _jump_links:
+                    st.markdown("**📌 주도·개선 섹터 연관 테마 바로가기**")
+                    _btn_cols = st.columns(min(len(_jump_links), 4))
+                    for (theme_name, etf_t), bcol in zip(_jump_links.items(), _btn_cols):
+                        _meta = IMAGE_THEME_META.get(theme_name, {})
+                        _tag  = _meta.get("tag", "")
+                        if bcol.button(
+                            f"{_tag} {theme_name}",
+                            key=f"jump_{group}_{etf_t}",
+                            help=f"{etf_t} 주도 → {theme_name} 종목 분석",
+                        ):
+                            st.session_state["image_theme_flow_theme"] = theme_name
+                            st.session_state["_theme_jump_triggered"] = True
+                            st.toast(f"테마 종목 흐름 탭에서 '{theme_name}' 선택됨", icon="📌")
 
 
 # ---------------------------------------------------------------------------
@@ -7728,10 +7791,57 @@ def render_image_theme_flow_section():
         )
 
     with stocks_tab:
-        subthemes = ["전체"] + list(theme_df["하위테마"].drop_duplicates())
-        selected_subtheme = st.selectbox("하위테마 필터", subthemes, key="image_theme_flow_subtheme")
+        _fc1, _fc2 = st.columns([1.4, 0.6])
+        with _fc1:
+            subthemes = ["전체"] + list(theme_df["하위테마"].drop_duplicates())
+            selected_subtheme = st.selectbox("하위테마 필터", subthemes, key="image_theme_flow_subtheme")
+        with _fc2:
+            _analysis_mode = st.radio(
+                "분석 모드",
+                ["종합", "스윙", "장기"],
+                horizontal=True,
+                key="image_theme_stock_mode",
+                help=(
+                    "종합: 돈흐름점수 기준  "
+                    "스윙: 가속도(단기모멘텀) 기준 — 수주~2개월 트레이딩  "
+                    "장기: 3M 수익률·안전 구간 기준 — 수개월~장기 보유"
+                ),
+            )
         stock_view = theme_df if selected_subtheme == "전체" else theme_df[theme_df["하위테마"] == selected_subtheme]
-        stock_view = stock_view.sort_values("돈흐름점수", ascending=False, na_position="last")
+
+        # 투자유형 라벨 계산 (수치 컬럼 원본으로 계산)
+        def _classify_stock_type(row) -> str:
+            accel = row.get("가속도", None)
+            ret1m = row.get("1개월수익률", None)
+            ret3m = row.get("3개월수익률", None)
+            pl    = row.get("가격수준", None)
+            if not finite_num(accel):
+                return "데이터부족"
+            near_high = finite_num(pl) and float(pl) > 0.85
+            safe_zone = finite_num(pl) and 0.35 <= float(pl) <= 0.80
+            accel_ok  = float(accel) >= 0.05
+            ret1m_ok  = finite_num(ret1m) and float(ret1m) > 0
+            ret3m_ok  = finite_num(ret3m) and float(ret3m) > 0.05
+            if near_high:
+                return "⚠️ 고점추격"
+            if accel_ok and ret1m_ok and not near_high:
+                return "🚀 스윙후보"
+            if ret3m_ok and safe_zone:
+                return "🌱 장기후보"
+            return "⚪ 관망"
+
+        stock_view = stock_view.copy()
+        stock_view["투자유형"] = stock_view.apply(_classify_stock_type, axis=1)
+
+        # 모드별 정렬
+        if _analysis_mode == "스윙":
+            stock_view = stock_view.sort_values("가속도", ascending=False, na_position="last")
+            st.caption("🚀 **스윙 모드** — 가속도(최근 3M vs 이전 3M) 기준 정렬. '스윙후보' 종목 우선 검토.")
+        elif _analysis_mode == "장기":
+            stock_view = stock_view.sort_values("3개월수익률", ascending=False, na_position="last")
+            st.caption("🌱 **장기 모드** — 3M 수익률 기준 정렬. '장기후보'(52주 35~80% 구간) 종목 우선 검토.")
+        else:
+            stock_view = stock_view.sort_values("돈흐름점수", ascending=False, na_position="last")
 
         chart_stock_df = stock_view.dropna(subset=["돈흐름점수"]).head(20).sort_values("돈흐름점수", ascending=True)
         if not chart_stock_df.empty:
@@ -7771,6 +7881,7 @@ def render_image_theme_flow_section():
         )
 
         show_stock = stock_view.copy()
+        # 투자유형은 이미 stock_view에 있음 — 포맷 유지
         if "상태" in show_stock.columns:
             show_stock["상태"] = show_stock["상태"].map(lambda s: _it_state_badge.get(str(s), str(s)))
         # 현재가 포맷 (국내: 정수, 해외: 소수 2자리)
@@ -7802,7 +7913,7 @@ def render_image_theme_flow_section():
                 if _vals.empty or (_vals.astype(str).str.strip() == "").all():
                     show_stock.drop(columns=[_col], inplace=True)
         _it_show_cols = [c for c in [
-            "하위테마", "종목명", "Ticker", "현재가", "상태",
+            "투자유형", "하위테마", "종목명", "Ticker", "현재가", "상태",
             "가격수준", "돈흐름점수",
             "1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률",
             "가속도", "거래량증가",
@@ -7810,6 +7921,7 @@ def render_image_theme_flow_section():
         st.dataframe(
             show_stock[_it_show_cols],
             column_config={
+                "투자유형":    st.column_config.TextColumn("유형", help="스윙후보: 가속도↑+1M↑  장기후보: 3M↑+52주35~80%  고점추격: 52주85% 초과"),
                 "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
                 "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%"),
                 "1개월수익률": st.column_config.TextColumn("1M"),
