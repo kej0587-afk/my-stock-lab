@@ -561,7 +561,7 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
         links = build_research_report_links(ticker, name)
         link_cols = st.columns(min(len(links), 3))
         for i, item in enumerate(links):
-            link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
+            link_cols[i % len(link_cols)].link_button(item["label"], item["url"], width='stretch')
         return
 
     snapshot = get_analyst_snapshot(ticker)
@@ -598,7 +598,7 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
     links = build_research_report_links(ticker, name)
     link_cols = st.columns(min(len(links), 3))
     for i, item in enumerate(links):
-        link_cols[i % len(link_cols)].link_button(item["label"], item["url"], use_container_width=True)
+        link_cols[i % len(link_cols)].link_button(item["label"], item["url"], width='stretch')
 
     is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
     if is_kr:
@@ -1289,7 +1289,7 @@ def render_investor_trend_panel(ticker: str, name: str):
             plot_bgcolor="rgba(0,0,0,0)",
             paper_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     # ── 상세 테이블 ──────────────────────────────────────────────────────────
     _LABEL_MAP = {"foreign": "외국인", "inst": "기관합계", "individual": "개인"}
@@ -1310,7 +1310,7 @@ def render_investor_trend_panel(ticker: str, name: str):
 
     with st.expander("📋 투자자별 일별 순매수 상세 (주)", expanded=False):
         df_detail = pd.DataFrame(table_data)
-        st.dataframe(df_detail, use_container_width=True, hide_index=True)
+        st.dataframe(df_detail, width='stretch', hide_index=True)
         st.caption("출처: 네이버 증권 | 단위: 주(株)")
 
     # ── 네이버 외국인 보유비율 상세 (기존 유지) ───────────────────────────────
@@ -1327,7 +1327,7 @@ def render_investor_trend_panel(ticker: str, name: str):
                 }
                 for r in naver_rows
             ])
-            st.dataframe(df_inv, use_container_width=True, hide_index=True)
+            st.dataframe(df_inv, width='stretch', hide_index=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1620,7 +1620,7 @@ def render_investor_top10_panel(ticker_list: list):
 
             display = df_top[["종목명", _val_col]].copy()
             display[_val_col] = display[_val_col].apply(_fmt_val)
-            st.dataframe(display, use_container_width=True, hide_index=False)
+            st.dataframe(display, width='stretch', hide_index=False)
 
     if date_label:
         st.caption(f"기준일: {date_label} | 출처: {result.get('source', '-')}")

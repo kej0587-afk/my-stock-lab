@@ -3122,7 +3122,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             if r["bucket"] == "leverage":                          return 2
             return 3
         sorted_pairs = sorted(zip(table_rows, calc_rows), key=_sort_key)
-        st.dataframe(pd.DataFrame([t for t, _ in sorted_pairs]), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame([t for t, _ in sorted_pairs]), width='stretch', hide_index=True)
 
         total_rec_krw     = sum(r["rec_krw"] for r in active_rows)
         total_blocked     = sum(r["base_alloc"] for r in blocked_rows)
@@ -3174,7 +3174,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     "예상 구매":    f"~{r.get('months_to_buy', '?')}달 후",
                     "상태":         r["status"],
                 })
-            st.dataframe(pd.DataFrame(ua_table), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(ua_table), width='stretch', hide_index=True)
 
             ua_c1, ua_c2 = st.columns(2)
             with ua_c1:
@@ -3229,7 +3229,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     "권장주수":   str(r["rec_shares"]) if r["rec_shares"] > 0 else "-",
                     "상태":       r["status"],
                 })
-            st.dataframe(pd.DataFrame(lev_table), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(lev_table), width='stretch', hide_index=True)
 
             # 레버리지 전략 요약
             if lev_active:
@@ -3283,7 +3283,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 "상태":     ("✅ 완료" if abs(diff) < 0.5
                               else ("📈 매수필요" if diff > 0 else "📉 비중초과")),
             })
-        st.dataframe(pd.DataFrame(need_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(need_rows), width='stretch', hide_index=True)
 
         # ── 스윙 종목 별도 체크 ───────────────────────────────────────────────
         if swing_rows:
@@ -3878,7 +3878,7 @@ def render_financial_trend_chart(ticker: str, name: str):
         font=dict(size=12),
     )
     fig.update_yaxes(ticksuffix="억")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     last_ry  = rev_yoy[-1]
     last_oy  = op_yoy[-1]
@@ -5111,7 +5111,7 @@ def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
             )
 
     rows = build_fin_health_rows(fin_score, fin_meta, is_etf=is_etf)
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     messages = notes.get("messages", []) if isinstance(notes.get("messages", []), list) else []
     if messages and not is_etf:
@@ -5294,7 +5294,7 @@ def render_flow_score_breakdown(title, df, score_col="돈흐름점수", label_co
         st.caption(
             "점수 구성요소를 분해한 표입니다. 양수는 점수를 올린 요인, 음수는 과열/쏠림처럼 점수를 깎은 요인입니다."
         )
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        st.dataframe(show, width='stretch', hide_index=True)
 
 
 def build_today_flow_rank_table(df, group_name, score_col="돈흐름점수", top_n=5):
@@ -5580,7 +5580,7 @@ def render_precision_candlestick_chart(df: pd.DataFrame, avg_price: float = 0.0,
         xaxis_rangeslider_visible=False,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -5849,7 +5849,7 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
             "고점대비": "-" if not np.isfinite(clean_float(snap.get("dd"), np.nan)) else f"{clean_float(snap.get('dd')):+.1f}%",
             "해석": snap.get("summary", "-"),
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -6220,7 +6220,7 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
     else:
         show_comp = comp_df.copy()
         show_comp["비중(%)"] = show_comp["비중(%)"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}")
-        st.dataframe(show_comp, use_container_width=True, hide_index=True)
+        st.dataframe(show_comp, width='stretch', hide_index=True)
 
     st.caption(
         f"기초지수: {etf_row.get('underlying_index', '-') or '-'} | "
@@ -6239,7 +6239,7 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
             if st.button(
                 f"📌 전광판에 추가 — {flow_name} ({ticker})",
                 key="mf_comp_add_watchlist",
-                use_container_width=False,
+                width='content',
             ):
                 ok, msg = add_money_flow_row_to_watchlist(row_dict)
                 if ok:
@@ -6345,7 +6345,7 @@ def render_rotation_panel(flow_df: pd.DataFrame):
                 paper_bgcolor="#0f172a",
                 font=dict(color="#e2e8f0"),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # ── 요약 테이블 ────────────────────────────────────────────────
             tbl = gdf[["섹터", "로테이션", "RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률", "상태"]].copy()
@@ -6353,7 +6353,7 @@ def render_rotation_panel(flow_df: pd.DataFrame):
             for col in ["RS_3m", "RS모멘텀", "3개월수익률", "1개월수익률", "2주수익률"]:
                 tbl[col] = tbl[col].apply(lambda v: f"{v*100:+.1f}%" if finite_num(v) else "-")
             tbl = tbl.sort_values("로테이션")
-            st.dataframe(tbl, use_container_width=True, hide_index=True,
+            st.dataframe(tbl, width='stretch', hide_index=True,
                          column_config={
                              "RS_3m":     st.column_config.TextColumn("RS(3m)", help="벤치마크 대비 3개월 초과수익"),
                              "RS모멘텀":  st.column_config.TextColumn("RS모멘텀", help="벤치마크 대비 가속도 차이. 양수=빨라짐"),
@@ -6841,7 +6841,7 @@ def render_money_flow_etf_section():
             "거래량증가":  st.column_config.TextColumn("거래량↑",   help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
         },
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
     )
 
     missing_view_df = view_df[view_df["상태"].astype(str).eq("가격부족")].copy() if "상태" in view_df.columns else pd.DataFrame()
@@ -6849,7 +6849,7 @@ def render_money_flow_etf_section():
         st.warning("일부 ETF는 이번 조회에서 가격 데이터가 부족해 점수 계산에서 제외했습니다.")
         st.dataframe(
             missing_view_df[["구분", "섹터", "Ticker", "ETF 이름", "상태"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
@@ -6964,7 +6964,7 @@ def render_money_flow_etf_section():
         fig_tree.update_layout(template="plotly_dark", height=470, title="돈흐름 히트맵", margin=dict(t=45, l=4, r=4, b=4))
         tree_event = st.plotly_chart(
             fig_tree,
-            use_container_width=True,
+            width='stretch',
             key="money_flow_heatmap_select",
             on_select="rerun",
             selection_mode="points",
@@ -7049,7 +7049,7 @@ def render_money_flow_etf_section():
             xaxis_title="6개월 수익률 %",
             yaxis_title="3개월 수익률 %",
         )
-        st.plotly_chart(fig_quad, use_container_width=True)
+        st.plotly_chart(fig_quad, width='stretch')
 
     clicked_ticker = get_plotly_selected_ticker(tree_event)
     if clicked_ticker:
@@ -7067,7 +7067,7 @@ def render_money_flow_etf_section():
             hovertemplate="%{y}<br>3개월: %{x:.1f}%<extra></extra>"
         ))
         fig_3m.update_layout(template="plotly_dark", height=430, title="3개월 수익률 랭킹", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_3m, use_container_width=True)
+        st.plotly_chart(fig_3m, width='stretch')
 
     with b2:
         top_accel_df = view_df.sort_values("가속도", ascending=False).head(12)
@@ -7081,7 +7081,7 @@ def render_money_flow_etf_section():
         ))
         fig_accel.add_vline(x=0, line_color="#94a3b8")
         fig_accel.update_layout(template="plotly_dark", height=430, title="가속도 랭킹", yaxis=dict(autorange="reversed"))
-        st.plotly_chart(fig_accel, use_container_width=True)
+        st.plotly_chart(fig_accel, width='stretch')
 
     with b3:
         top_volume_df = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(12)
@@ -7098,7 +7098,7 @@ def render_money_flow_etf_section():
             ))
             fig_volume.add_vline(x=0, line_color="#94a3b8")
             fig_volume.update_layout(template="plotly_dark", height=430, title="거래량 증가 랭킹", yaxis=dict(autorange="reversed"))
-            st.plotly_chart(fig_volume, use_container_width=True)
+            st.plotly_chart(fig_volume, width='stretch')
 
     # ── 섹터 로테이션 맵 ──────────────────────────────────────────────
     render_rotation_panel(flow_df)
@@ -7190,7 +7190,7 @@ def render_money_flow_etf_section():
                 yaxis=dict(showticklabels=False),
                 showlegend=False,
             )
-            st.plotly_chart(fig_state, use_container_width=True)
+            st.plotly_chart(fig_state, width='stretch')
 
     show_df = view_df.copy()
     for col in ["가격수준", "기간수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가"]:
@@ -7213,7 +7213,7 @@ def render_money_flow_etf_section():
     st.markdown("#### 돈흐름 상세 테이블")
     st.dataframe(
         show_df[_detail_cols],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=520,
     )
@@ -7285,7 +7285,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_score, use_container_width=True)
+        st.plotly_chart(fig_score, width='stretch')
 
     with right:
         fig_quad = go.Figure(go.Scatter(
@@ -7324,7 +7324,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_quad, use_container_width=True)
+        st.plotly_chart(fig_quad, width='stretch')
 
     show_rotation = rotation_df.copy()
     for col in ["1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준"]:
@@ -7346,7 +7346,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
     ] if c in show_rotation.columns]
     st.dataframe(
         show_rotation[_rot_cols],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=360,
     )
@@ -7418,7 +7418,7 @@ ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미�
     show["점수"] = show["점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
     st.dataframe(
         show[["구분", "축", "대표", "3개월수익률", "가속도", "거래량증가", "점수", "해석"]],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         height=300,
     )
@@ -7525,7 +7525,7 @@ def render_image_theme_flow_section():
     if group_df.empty:
         st.warning("계산 가능한 가격 데이터가 부족합니다. 티커 또는 야후파이낸스 조회 상태를 확인해 주세요.")
         if not missing_df.empty:
-            st.dataframe(missing_df[["하위테마", "종목명", "Ticker", "상태"]], use_container_width=True, hide_index=True)
+            st.dataframe(missing_df[["하위테마", "종목명", "Ticker", "상태"]], width='stretch', hide_index=True)
         return
 
     leader = group_df.iloc[0]
@@ -7636,7 +7636,7 @@ def render_image_theme_flow_section():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_score, use_container_width=True)
+            st.plotly_chart(fig_score, width='stretch')
 
         with right:
             fig_quad = go.Figure(go.Scatter(
@@ -7674,7 +7674,7 @@ def render_image_theme_flow_section():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_quad, use_container_width=True)
+            st.plotly_chart(fig_quad, width='stretch')
 
         show_group = group_df.copy()
         if "상태" in show_group.columns:
@@ -7722,7 +7722,7 @@ def render_image_theme_flow_section():
                 "거래량증가":   st.column_config.TextColumn("거래량↑"),
                 "상위종목쏠림": st.column_config.TextColumn("쏠림"),
             },
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=430,
         )
@@ -7761,7 +7761,7 @@ def render_image_theme_flow_section():
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_stock, use_container_width=True)
+            st.plotly_chart(fig_stock, width='stretch')
         render_flow_score_breakdown(
             "종목별 돈흐름 점수 분해",
             stock_view,
@@ -7818,7 +7818,7 @@ def render_image_theme_flow_section():
                 "가속도":      st.column_config.TextColumn("가속도",    help="최근 3M - 이전 3M. 양수=가속"),
                 "거래량증가":  st.column_config.TextColumn("거래량↑",   help="최근 20일 평균 거래량 / 직전 60일 평균 - 1"),
             },
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=560,
         )
@@ -7850,7 +7850,7 @@ def render_image_theme_flow_section():
                 st.write("")  # 버튼 수직 정렬용
                 if _already:
                     st.caption("✅ 이미 등록됨")
-                elif st.button("전광판 추가", key="theme_stock_send_btn", use_container_width=True):
+                elif st.button("전광판 추가", key="theme_stock_send_btn", width='stretch'):
                     ok, msg = add_money_flow_row_to_watchlist(_send_row, is_stock=True)
                     if ok:
                         st.success(msg)
@@ -7870,10 +7870,10 @@ def render_image_theme_flow_section():
                 )
 
     with raw_tab:
-        st.dataframe(theme_df, use_container_width=True, hide_index=True, height=520)
+        st.dataframe(theme_df, width='stretch', hide_index=True, height=520)
         if not missing_df.empty:
             st.warning("아래 종목은 이번 조회에서 가격 데이터가 부족했습니다. 티커 오류, 거래소 suffix, 야후파이낸스 지연을 확인하세요.")
-            st.dataframe(missing_df[["하위테마", "종목명", "Ticker", "상태"]], use_container_width=True, hide_index=True)
+            st.dataframe(missing_df[["하위테마", "종목명", "Ticker", "상태"]], width='stretch', hide_index=True)
 
 
 def render_money_flow_tab():
@@ -7979,13 +7979,13 @@ def render_refresh_control_panel():
     with st.sidebar.expander("전체 새로고침 메뉴", expanded=False):
         st.caption("앱 전체 캐시 기준입니다. 빠른 것과 무거운 것을 분리했습니다.")
 
-        if st.button("전체 현재가 새로고침", key="refresh_panel_latest_price", use_container_width=True):
+        if st.button("전체 현재가 새로고침", key="refresh_panel_latest_price", width='stretch'):
             clear_latest_price_cache()
             record_refresh_event("latest_price_refresh_time")
             st.toast("현재가 캐시를 비웠습니다.")
             st.rerun()
 
-        if st.button("전체 차트/기술 새로고침", key="refresh_panel_chart_price", use_container_width=True):
+        if st.button("전체 차트/기술 새로고침", key="refresh_panel_chart_price", width='stretch'):
             clear_price_and_chart_cache()
             record_refresh_event("chart_price_refresh_time")
             # 자산관리 탭의 기술적 타점도 다음 렌더에서 재계산되도록 플래그 설정
@@ -7994,13 +7994,13 @@ def render_refresh_control_panel():
             st.toast("차트/기술 캐시를 비웠습니다. 기술적 타점이 재계산됩니다.")
             st.rerun()
 
-        if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", use_container_width=True):
+        if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", width='stretch'):
             clear_news_report_cache()
             record_refresh_event("news_report_refresh_time")
             st.toast("뉴스/리포트 캐시를 비웠습니다.")
             st.rerun()
 
-        if st.button("전체 재무점수/매크로 새로고침", key="refresh_panel_fin_macro", use_container_width=True):
+        if st.button("전체 재무점수/매크로 새로고침", key="refresh_panel_fin_macro", width='stretch'):
             clear_financial_api_cache()
             clear_market_context_cache()
             record_refresh_event("fin_macro_refresh_time")
@@ -9959,7 +9959,7 @@ def render_dashboard_group_summary(df, group_label):
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
             "🔥기술적 타점", "핵심근거", "Adj점수"
         ]
-    st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], use_container_width=True, height=640, hide_index=True)
+    st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], width='stretch', height=640, hide_index=True)
 
 
 def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
@@ -10249,7 +10249,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
             "해석": "앱 판정 문구입니다. 장기 전환은 이 신호와 재무/뉴스/비중을 함께 봅니다.",
         },
     ]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     with st.expander("장기 전환 체크리스트", expanded=False):
         checklist_rows = [
@@ -10258,7 +10258,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
             {"구분": "손절/축소 점검", "조건": "처음 산 이유가 사라짐, 실적/가이던스 훼손, 손실 한도 초과"},
             {"구분": "다시 매수 검토", "조건": "MA20/MA50 회복, RS 회복, 과열 해소 후 거래량 동반 반등"},
         ]
-        st.dataframe(pd.DataFrame(checklist_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(checklist_rows), width='stretch', hide_index=True)
 
     # ==========================================
     # [신규 추가] UI 렌더링: 신규 분석 기능 표출
@@ -10597,7 +10597,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
     show_rows = valuation["rows"]
     if show_rows:
         with st.expander("밸류 세부 지표", expanded=False):
-            st.dataframe(pd.DataFrame(show_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(show_rows), width='stretch', hide_index=True)
     if not snapshot.get("ok"):
         st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
 
@@ -10776,7 +10776,7 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     show_df = pd.DataFrame(rows)
     if not show_df.empty:
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True)
 
 # ─────────────────────────────────────────────────
 # [삽입 위치] render_pre_buy_final_check_panel 함수
@@ -11685,14 +11685,14 @@ def render_swing_radar_tab():
 
     st.markdown("#### 시스템 신호 요약")
     if system_df.empty:
-        st.dataframe(system_df, use_container_width=True, hide_index=True)
+        st.dataframe(system_df, width='stretch', hide_index=True)
     else:
         system_hide_df = system_df.copy()
         system_hide_df.insert(0, "숨김 선택", False)
         system_hide_key = f"swing_system_hide_editor_{abs(hash(editor_base_key))}"
         edited_system_hide_df = st.data_editor(
             system_hide_df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             key=system_hide_key,
             disabled=[col for col in system_hide_df.columns if col != "숨김 선택"],
@@ -11849,7 +11849,7 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
     edited_swing_df = st.data_editor(
         editor_draft_df[SWING_EDITOR_COLUMNS].fillna(""),
         num_rows="dynamic",
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         key="swing_radar_editor",
         disabled=["ticker"],
@@ -11931,7 +11931,7 @@ def render_feedback_tab():
         if not is_admin_user() and "owner_email" in show_df.columns:
             show_df = show_df.drop(columns=["owner_email"])
         preferred_cols = [col for col in ["created_at", "category", "priority", "status", "title", "body", "owner_email"] if col in show_df.columns]
-        st.dataframe(show_df[preferred_cols], use_container_width=True, hide_index=True, height=360)
+        st.dataframe(show_df[preferred_cols], width='stretch', hide_index=True, height=360)
 
     with st.expander("관리자용: 피드백 테이블 생성 SQL"):
         st.caption("이 SQL은 Supabase 프로젝트에서 한 번만 실행하면 됩니다. 같은 프로젝트를 쓰는 모든 사용자에게 적용됩니다.")
@@ -12137,7 +12137,7 @@ RSI 30 이하이거나 하락 추세 속 ADJ가 높을 때 뜹니다. 반등 가
                     ).any(axis=1)
                     df = df[mask]
 
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
 
     with faq_tab:
         st.markdown("""
@@ -12210,7 +12210,7 @@ def render_guide_image_gallery():
         with st.expander(f"{idx + 1}. {title}", expanded=(idx == 0)):
             st.caption(desc)
             if os.path.exists(image_path):
-                st.image(image_path, use_container_width=True)
+                st.image(image_path, width='stretch')
                 with open(image_path, "rb") as image_file:
                     st.download_button(
                         "이미지 다운로드",
@@ -12218,7 +12218,7 @@ def render_guide_image_gallery():
                         file_name=os.path.basename(image_path),
                         mime="image/svg+xml",
                         key=f"download_guide_image_{idx}",
-                        use_container_width=True,
+                        width='stretch',
                     )
             else:
                 st.warning(f"가이드 이미지 파일을 찾지 못했습니다: {image_path}")
@@ -13078,7 +13078,7 @@ def render_correlation_interpretation(corr_df, avg_corr):
         st.markdown("##### 상관관계 높은 조합")
         top_pairs = pair_df.head(5).copy()
         top_pairs["상관계수"] = top_pairs["상관계수"].apply(lambda v: f"{v:.2f}")
-        st.dataframe(top_pairs, use_container_width=True, hide_index=True)
+        st.dataframe(top_pairs, width='stretch', hide_index=True)
 
 
 def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, period="1y", analysis_start_date=None):
@@ -13637,7 +13637,7 @@ def render_portfolio_risk_breakdown(metrics):
 
     st.markdown("#### 위험점수 분해")
     st.caption("위험도 총점이 어디서 올라왔는지 보여줍니다. 점수가 높은 항목부터 이번 달 점검 우선순위로 보면 됩니다.")
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True)
 
 
 TEN_YEAR_STAGE_PROFILES = {
@@ -13999,12 +13999,12 @@ def render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df=None, s
     comp_df = report["components"].copy()
     comp_df["점수"] = comp_df.apply(lambda r: f"{clean_float(r['점수']):.1f} / {clean_float(r['만점']):.1f}", axis=1)
     comp_df = comp_df.drop(columns=["만점"])
-    st.dataframe(comp_df, use_container_width=True, hide_index=True)
+    st.dataframe(comp_df, width='stretch', hide_index=True)
 
     if st.toggle("역할별 비중 해석 보기", value=False, key="ten_year_role_breakdown_toggle"):
         role_df = report["role_rows"].copy()
         role_df["현재비중"] = role_df["현재비중"].apply(lambda v: f"{clean_float(v):.1f}%")
-        st.dataframe(role_df, use_container_width=True, hide_index=True)
+        st.dataframe(role_df, width='stretch', hide_index=True)
 
     st.markdown("##### 보완 방향")
     for suggestion in report["suggestions"][:5]:
@@ -14108,7 +14108,7 @@ def render_leverage_exposure_panel(metrics):
             show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
     if "충격배수" in show_df.columns:
         show_df["충격배수"] = show_df["충격배수"].apply(lambda v: f"{clean_float(v):.1f}x")
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True)
 
 
 def calc_goal_monthly_return(annual_return_pct):
@@ -14302,7 +14302,7 @@ def render_long_term_goal_simulator(metrics):
         for col in ["최종자산", "누적투입", "누적손익"]:
             display_summary[col] = display_summary[col].apply(format_metric_money)
         display_summary["목표달성률"] = display_summary["목표달성률"].apply(format_metric_pct)
-        st.dataframe(display_summary, use_container_width=True, hide_index=True)
+        st.dataframe(display_summary, width='stretch', hide_index=True)
 
     fig.update_layout(
         template="plotly_dark",
@@ -14313,7 +14313,7 @@ def render_long_term_goal_simulator(metrics):
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     st.caption("단순 복리 모델이라 세금, 수수료, 환율, 배당 변동, 실제 매수 타이밍은 반영하지 않습니다. 목표 점검용으로만 보세요.")
 
 
@@ -14415,7 +14415,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
     else:
         st.markdown("#### 위험/분산 체크")
-        st.dataframe(notes_df, use_container_width=True, hide_index=True)
+        st.dataframe(notes_df, width='stretch', hide_index=True)
 
     if asset_df.empty:
         st.info("분석할 운용대상 보유자산이 없습니다.")
@@ -14439,7 +14439,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                     lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%"
                 )
             wt_show = wt_show.rename(columns={"전체비중": "현재비중"})
-            st.dataframe(wt_show, use_container_width=True, hide_index=True)
+            st.dataframe(wt_show, width='stretch', hide_index=True)
 
             # 비중 불일치 경고
             big_under = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) >= 5]
@@ -14482,7 +14482,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         "내가 매입한 가격 기준 수익률과 다를 수 있습니다(매입 시점 차이). "
         "**연환산변동성**: 일간 수익률의 표준편차를 연 단위로 환산. **MDD**: 분석 기간 내 최고점 대비 최대 낙폭."
     )
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True)
     st.download_button(
         "자산별 위험 지표 CSV 다운로드",
         data=dataframe_to_csv_bytes(asset_df),
@@ -14498,7 +14498,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
         for col in ["운용비중", "연환산변동성", "리스크기여도"]:
             contrib_show[col] = contrib_show[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
         contrib_show["비중대비리스크"] = contrib_show["비중대비리스크"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}x")
-        st.dataframe(contrib_show, use_container_width=True, hide_index=True)
+        st.dataframe(contrib_show, width='stretch', hide_index=True)
 
         top_contrib = risk_contrib_df.head(12).copy()
         fig_contrib = go.Figure()
@@ -14526,7 +14526,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             plot_bgcolor="rgba(0,0,0,0)",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         )
-        st.plotly_chart(fig_contrib, use_container_width=True)
+        st.plotly_chart(fig_contrib, width='stretch')
     else:
         st.info("리스크 기여도는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
 
@@ -14572,7 +14572,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
-            st.plotly_chart(fig_curve, use_container_width=True)
+            st.plotly_chart(fig_curve, width='stretch')
             st.caption("초록선은 월별 로그/총자산 기준 실제 누적수익률입니다. 파란 점선은 현재 보유 운용자산을 현재 비중으로 보유했다고 가정한 가격 기반 참고선이라 실제 수익률과 다를 수 있습니다.")
         else:
             st.info("누적 흐름을 계산할 월별 기록 또는 가격 데이터가 부족합니다.")
@@ -14593,7 +14593,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_weight, use_container_width=True)
+        st.plotly_chart(fig_weight, width='stretch')
 
     st.markdown("#### 상관관계")
     st.caption(
@@ -14639,7 +14639,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width='stretch')
         render_correlation_interpretation(corr_df, metrics.get("avg_corr", np.nan))
     else:
         st.info("상관관계는 가격 데이터가 있는 운용자산이 2개 이상일 때 표시됩니다.")
@@ -14680,7 +14680,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 plot_bgcolor="rgba(0,0,0,0)",
                 showlegend=False,
             )
-            st.plotly_chart(fig_uw, use_container_width=True)
+            st.plotly_chart(fig_uw, width='stretch')
             st.caption("Underwater 차트: 고점 대비 현재 포트폴리오가 얼마나 아래에 있는지 보여줍니다. 0선 위로 올라오면 전 고점 회복입니다.")
 
     # ── 롤링 지표 ─────────────────────────────────────────────────────────
@@ -14720,7 +14720,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             plot_bgcolor="rgba(0,0,0,0)",
             margin=dict(t=10, b=30),
         )
-        st.plotly_chart(fig_roll, use_container_width=True)
+        st.plotly_chart(fig_roll, width='stretch')
 
     # ── 벤치마크 비교 ─────────────────────────────────────────────────────
     bm_blended = metrics.get("benchmark_blended", {})
@@ -14783,7 +14783,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 "추정 손실액": f"{loss_krw:,.0f}원" if loss_krw > 0 else "이익",
             })
         sc_df = pd.DataFrame(sc_rows)
-        st.dataframe(sc_df, use_container_width=True, hide_index=True)
+        st.dataframe(sc_df, width='stretch', hide_index=True)
 
         # 시나리오별 바 차트
         fig_stress = go.Figure()
@@ -14805,7 +14805,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
             showlegend=False,
             margin=dict(t=30, b=10),
         )
-        st.plotly_chart(fig_stress, use_container_width=True)
+        st.plotly_chart(fig_stress, width='stretch')
 
         # 자산별 기여도 상세 (펼치기)
         with st.expander("자산별 충격 기여도 상세"):
@@ -14817,7 +14817,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 bd_df = pd.DataFrame(bd).sort_values("기여(%)")
                 bd_df["개별충격(%)"] = bd_df["개별충격(%)"].apply(lambda v: f"{v:+.1f}%")
                 bd_df["기여(%)"] = bd_df["기여(%)"].apply(lambda v: f"{v:+.2f}%")
-                st.dataframe(bd_df, use_container_width=True, hide_index=True)
+                st.dataframe(bd_df, width='stretch', hide_index=True)
 
     # ── 종합 평가 ──────────────────────────────────────────────────────────
     st.markdown("#### 📋 상세 종합 포트폴리오 평가")
@@ -15312,7 +15312,7 @@ def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserv
     for col in ["예상손익", "충격후자산"]:
         show_summary[col] = show_summary[col].apply(format_scenario_money)
     show_summary["총자산변화율"] = show_summary["총자산변화율"].apply(format_scenario_pct)
-    st.dataframe(show_summary, use_container_width=True, hide_index=True)
+    st.dataframe(show_summary, width='stretch', hide_index=True)
 
     fig_summary = go.Figure(go.Bar(
         x=summary_df["시나리오"],
@@ -15327,7 +15327,7 @@ def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserv
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
     )
-    st.plotly_chart(fig_summary, use_container_width=True)
+    st.plotly_chart(fig_summary, width='stretch')
 
     st.markdown("#### 손실 기여 상위")
     top_loss_df = detail_df.sort_values("예상손익").head(10).copy()
@@ -15337,7 +15337,7 @@ def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserv
     for col in ["현재비중", "적용충격"]:
         show_loss_df[col] = show_loss_df[col].apply(format_scenario_pct)
     show_loss_df["충격배수"] = show_loss_df["충격배수"].apply(lambda v: f"{clean_float(v):.1f}x")
-    st.dataframe(show_loss_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_loss_df, width='stretch', hide_index=True)
 
     asset_options = list(detail_df["자산"]) if not detail_df.empty else []
     if asset_options:
@@ -15700,7 +15700,7 @@ def render_short_trend_tab(holdings_table, watchlist_items):
         show_df["현재가"] = show_df["현재가"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):,.2f}")
 
     st.markdown("#### 단기 전망표")
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True)
     st.download_button(
         "단기 흐름 CSV 다운로드",
         data=dataframe_to_csv_bytes(trend_df),
@@ -15741,7 +15741,7 @@ def render_short_trend_tab(holdings_table, watchlist_items):
                 plot_bgcolor="rgba(0,0,0,0)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             label, color = get_short_trend(clean_int(selected_row.get("점수"), 0))
             st.markdown(
@@ -15992,7 +15992,7 @@ def render_signal_summary_table_v2(summary_df):
     for col in ["승률", "평균", "중앙값", "최악", "최고"]:
         if col in show_summary.columns:
             show_summary[col] = show_summary[col].apply(format_backtest_percent)
-    st.dataframe(show_summary, use_container_width=True, hide_index=True)
+    st.dataframe(show_summary, width='stretch', hide_index=True)
 
 
 def interpret_signal_backtest_result(signal_count, win20, avg20, avg60, avg_dd20):
@@ -16097,7 +16097,7 @@ def render_signal_ticker_summary(events_df):
     )
     for col in ["20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
         show_ticker_summary[col] = show_ticker_summary[col].apply(format_backtest_percent)
-    st.dataframe(show_ticker_summary, use_container_width=True, hide_index=True)
+    st.dataframe(show_ticker_summary, width='stretch', hide_index=True)
 
 
 def render_signal_backtest_chart_v2(chart_df, events_df, selected_name, signal_type):
@@ -16132,7 +16132,7 @@ def render_signal_backtest_chart_v2(chart_df, events_df, selected_name, signal_t
         plot_bgcolor="rgba(0,0,0,0)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_signal_backtest_tab(holdings_table, watchlist_items):
@@ -16233,7 +16233,7 @@ def render_signal_backtest_tab(holdings_table, watchlist_items):
         render_signal_ticker_summary(events_df)
 
     st.markdown("#### 신호 발생 내역")
-    st.dataframe(format_signal_events_for_display(events_df), use_container_width=True, hide_index=True)
+    st.dataframe(format_signal_events_for_display(events_df), width='stretch', hide_index=True)
 
     file_scope = selected_row["ticker"] if mode == "선택 종목" else "batch"
     st.download_button(
@@ -16263,12 +16263,12 @@ def should_run_heavy_analysis(key, description, run_label="분석 실행/새로�
         st.session_state[ready_key] = False
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
-    if c1.button(run_label, key=f"{key}_run", use_container_width=True):
+    if c1.button(run_label, key=f"{key}_run", width='stretch'):
         st.session_state[ready_key] = True
         st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
 
     if st.session_state.get(ready_key, False):
-        if c2.button("계산 접기", key=f"{key}_hide", use_container_width=True):
+        if c2.button("계산 접기", key=f"{key}_hide", width='stretch'):
             st.session_state[ready_key] = False
     else:
         c2.caption("대기 중")
@@ -16296,13 +16296,13 @@ def render_heavy_analysis_button(key, run_label="분석 실행/새로고침"):
     if ready_key not in st.session_state:
         st.session_state[ready_key] = False
 
-    if st.button(run_label, key=f"{key}_run_inline", use_container_width=True):
+    if st.button(run_label, key=f"{key}_run_inline", width='stretch'):
         st.session_state[ready_key] = True
         st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.rerun()
 
     if st.session_state.get(ready_key, False):
-        if st.button("계산 접기", key=f"{key}_hide_inline", use_container_width=True):
+        if st.button("계산 접기", key=f"{key}_hide_inline", width='stretch'):
             st.session_state[ready_key] = False
             st.rerun()
         last_run = st.session_state.get(last_key)
@@ -16594,18 +16594,18 @@ def render_kr_etf_update_panel(current_df):
             failed_df = st.session_state.get("kr_etf_lab_preview_failed_df")
             if isinstance(changed_df, pd.DataFrame) and not changed_df.empty:
                 st.markdown("##### 온라인 갱신 변경 미리보기")
-                st.dataframe(changed_df.head(80), use_container_width=True, hide_index=True)
+                st.dataframe(changed_df.head(80), width='stretch', hide_index=True)
             if isinstance(failed_df, pd.DataFrame) and not failed_df.empty:
                 with st.expander(f"조회 실패/분배금 이력 없음 {len(failed_df):,}개"):
-                    st.dataframe(failed_df.head(200), use_container_width=True, hide_index=True)
+                    st.dataframe(failed_df.head(200), width='stretch', hide_index=True)
 
             st.dataframe(
                 preview_df[["ticker", "name", "tags", "annual_distribution_rate_pct", "distribution_per_share_krw", "real_fee_pct"]].head(30),
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
             save_col, clear_col = st.columns([1, 1])
-            if save_col.button("검토 데이터 저장", key="kr_etf_lab_save_preview", use_container_width=True):
+            if save_col.button("검토 데이터 저장", key="kr_etf_lab_save_preview", width='stretch'):
                 if IS_PUBLIC_DEMO:
                     st.info("체험모드에서는 ETF 데이터 파일을 저장하지 않습니다.")
                 else:
@@ -16620,7 +16620,7 @@ def render_kr_etf_update_panel(current_df):
                         st.rerun()
                     except Exception as exc:
                         st.error(f"저장하지 못했습니다: {exc}")
-            if clear_col.button("검토 취소", key="kr_etf_lab_clear_preview", use_container_width=True):
+            if clear_col.button("검토 취소", key="kr_etf_lab_clear_preview", width='stretch'):
                 st.session_state.pop("kr_etf_lab_preview_df", None)
                 st.session_state.pop("kr_etf_lab_preview_messages", None)
                 st.session_state.pop("kr_etf_lab_preview_changed_df", None)
@@ -16742,7 +16742,7 @@ def render_kr_etf_lab_tab():
     }
     show_cols = [col for col in display_cols if col in view_df.columns]
     show_df = view_df[show_cols].rename(columns=display_cols)
-    st.dataframe(show_df.head(300), use_container_width=True, hide_index=True)
+    st.dataframe(show_df.head(300), width='stretch', hide_index=True)
 
     if view_df.empty:
         st.info("조건에 맞는 ETF가 없습니다.")
@@ -16771,7 +16771,7 @@ def render_kr_etf_lab_tab():
         s4.metric("운용규모", f"{clean_float(row.get('aum_krw_100m'), 0.0):,.0f}억")
 
         add_cols = st.columns([1, 2])
-        if add_cols[0].button("전광판 관심종목 추가", key="add_kr_etf_watchlist", use_container_width=True):
+        if add_cols[0].button("전광판 관심종목 추가", key="add_kr_etf_watchlist", width='stretch'):
             ticker = sanitize_ticker_value(row.get("ticker", ""))
             if is_in_watchlist(ticker):
                 st.info("이미 전광판에 등록된 ETF입니다.")
@@ -16797,7 +16797,7 @@ def render_kr_etf_lab_tab():
             "is_etf": True,
             "bucket": "core",
         }])
-        add_cols[1].dataframe(input_row, use_container_width=True, hide_index=True)
+        add_cols[1].dataframe(input_row, width='stretch', hide_index=True)
 
         with st.expander("선택 ETF 상세"):
             detail_cols = [
@@ -16805,7 +16805,7 @@ def render_kr_etf_lab_tab():
                 "top_1", "top_1_weight_pct", "top_2", "top_2_weight_pct", "top_3", "top_3_weight_pct",
             ]
             detail = pd.DataFrame([{col: row.get(col, "") for col in detail_cols}])
-            st.dataframe(detail, use_container_width=True, hide_index=True)
+            st.dataframe(detail, width='stretch', hide_index=True)
 
 
 def add_quality_issue(issues, severity, area, ticker, problem, suggestion):
@@ -17026,7 +17026,7 @@ def render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df,
     else:
         selected_levels = st.multiselect("등급 필터", ["위험", "주의", "참고"], default=["위험", "주의", "참고"])
         filtered_df = report_df[report_df["등급"].isin(selected_levels)] if selected_levels else report_df.iloc[0:0]
-        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        st.dataframe(filtered_df, width='stretch', hide_index=True)
         st.download_button(
             "점검 결과 CSV 다운로드",
             data=dataframe_to_csv_bytes(filtered_df),
@@ -17148,7 +17148,7 @@ def render_asset_quick_quality_summary(settings, holdings_df, dividends_df, mont
         return
 
     with st.expander("빠른 점검 항목 보기", expanded=danger_count > 0):
-        st.dataframe(quick_df, use_container_width=True, hide_index=True)
+        st.dataframe(quick_df, width='stretch', hide_index=True)
         st.caption("더 자세한 점검은 데이터 점검 탭에서 확인할 수 있습니다.")
 
 
@@ -17444,7 +17444,7 @@ def render_speed_check_tab():
         },
     ]
 
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("보유종목", f"{len(holdings_df)}개")
@@ -17692,7 +17692,7 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
         if formatted.empty:
             st.info("목표 미달이면서 돈흐름이 양호한 보유/관심 자산은 없습니다.")
         else:
-            st.dataframe(formatted, use_container_width=True, hide_index=True)
+            st.dataframe(formatted, width='stretch', hide_index=True)
 
     with right:
         st.markdown("##### 과비중 + 흐름 강함")
@@ -17700,12 +17700,12 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
         if formatted.empty:
             st.info("과비중이면서 돈흐름이 강한 자산은 없습니다.")
         else:
-            st.dataframe(formatted, use_container_width=True, hide_index=True)
+            st.dataframe(formatted, width='stretch', hide_index=True)
 
     with st.expander("연결 전체 보기", expanded=False):
         all_connected = merged.sort_values("_flow_score", ascending=False).head(40)
         st.caption("내 보유/관심 종목이 어떤 ETF·섹터·테마 흐름에 연결되는지 전체 목록으로 확인합니다.")
-        st.dataframe(_format_bridge(all_connected), use_container_width=True, hide_index=True)
+        st.dataframe(_format_bridge(all_connected), width='stretch', hide_index=True)
 
 
 def render_today_market_flow_panel(snapshot=None):
@@ -17810,7 +17810,7 @@ def render_today_market_flow_panel(snapshot=None):
                     st.write("")
                     if already_added:
                         st.caption("이미 등록됨")
-                    elif st.button("전광판 추가", key="today_flow_send_add", use_container_width=True):
+                    elif st.button("전광판 추가", key="today_flow_send_add", width='stretch'):
                         ok, message = add_money_flow_row_to_watchlist(selected_row)
                         if ok:
                             st.success(message)
@@ -17898,7 +17898,7 @@ def render_today_market_flow_panel(snapshot=None):
             legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
             font=dict(color="#94a3b8"),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # 진입검토 후보 테이블
         entry_df = grp_df[grp_df["진입검토"] == "✅ 진입검토"].copy()
@@ -17912,7 +17912,7 @@ def render_today_market_flow_panel(snapshot=None):
             for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률"]:
                 if col in entry_show.columns:
                     entry_show[col] = entry_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
-            st.dataframe(entry_show, use_container_width=True, hide_index=True)
+            st.dataframe(entry_show, width='stretch', hide_index=True)
 
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "진입검토",
@@ -17922,7 +17922,7 @@ def render_today_market_flow_panel(snapshot=None):
                 if col in all_show.columns:
                     all_show[col] = all_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
             st.dataframe(all_show.sort_values(["사분면", "RS(3M)"], ascending=[True, False]),
-                         use_container_width=True, hide_index=True)
+                         width='stretch', hide_index=True)
 
     # ── 테마 rotation df에 RS vs KOSPI200 + 사분면 + 진입검토 추가 ─
     _bench_kr = flow_df[flow_df["Ticker"].astype(str) == "069500.KS"] if not flow_df.empty else pd.DataFrame()
@@ -18026,10 +18026,10 @@ def render_investor_top10_section():
     _do_calc = _b1.button(
         "수급 TOP 10 계산/새로고침",
         key="investor_top10_calc_btn",
-        use_container_width=True,
+        width='stretch',
     )
     if _has_data:
-        if _b2.button("결과 지우기", key="investor_top10_clear_btn", use_container_width=True):
+        if _b2.button("결과 지우기", key="investor_top10_clear_btn", width='stretch'):
             st.session_state.pop(_SS_DATA, None)
             st.session_state.pop(_SS_TIME, None)
             st.rerun()
@@ -18123,7 +18123,7 @@ def render_investor_top10_section():
             if st.button(
                 f"✚ 선택 {len(_selected)}개 전광판 추가",
                 key="investor_top10_wl_add_btn",
-                use_container_width=True,
+                width='stretch',
             ):
                 _added, _skipped = [], []
                 for _lbl in _selected:
@@ -18196,11 +18196,11 @@ def render_today_queue_tab(mode):
     run_summary = c1.button(
         "오늘 종목 점검 계산/새로고침",
         key="today_queue_run_once",
-        use_container_width=True,
+        width='stretch',
     )
 
     if not cached_summary.empty:
-        if c2.button("결과 지우기", key="today_queue_clear_cached", use_container_width=True):
+        if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
             for key in [summary_key, sig_key, last_key]:
                 st.session_state.pop(key, None)
             st.rerun()
@@ -18382,7 +18382,7 @@ def render_today_queue_tab(mode):
     st.dataframe(
         view_df[[col for col in show_cols if col in view_df.columns]],
         column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -18408,7 +18408,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
     if demo_page == "오늘 점검":
         st.caption("데모에서는 버튼을 눌러야 오늘 점검 계산을 시작합니다.")
-        if st.button("오늘 점검 계산 시작", key="public_demo_today_queue_run", use_container_width=True):
+        if st.button("오늘 점검 계산 시작", key="public_demo_today_queue_run", width='stretch'):
             st.session_state["public_demo_today_queue_ready"] = True
         if not st.session_state.get("public_demo_today_queue_ready", False):
             st.info("첫 접속 속도를 위해 오늘 점검 계산을 멈춰뒀습니다. 누르면 샘플 종목의 우선순위를 계산합니다.")
@@ -18419,7 +18419,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
     if demo_page == "전광판":
         st.subheader("CCTV 통합 통제실")
         st.caption("데모에서는 버튼을 눌러야 전광판 기술 계산을 시작합니다.")
-        if st.button("전광판 계산 시작", key="public_demo_dashboard_run", use_container_width=True):
+        if st.button("전광판 계산 시작", key="public_demo_dashboard_run", width='stretch'):
             st.session_state["public_demo_dashboard_ready"] = True
         if not st.session_state.get("public_demo_dashboard_ready", False):
             st.info("첫 접속 속도를 위해 전광판 계산을 멈춰뒀습니다. 누르면 샘플 종목의 기술 신호를 계산합니다.")
@@ -18441,7 +18441,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         if not item:
             st.info("샘플 종목이 없습니다.")
             return
-        if st.button("정밀 분석 실행", key="public_demo_precision_run", use_container_width=True):
+        if st.button("정밀 분석 실행", key="public_demo_precision_run", width='stretch'):
             st.session_state["public_demo_precision_ready"] = selected_label
         if st.session_state.get("public_demo_precision_ready") != selected_label:
             st.info("첫 화면 속도를 위해 차트 데이터 조회를 멈춰뒀습니다. 버튼을 누르면 이 종목만 분석합니다.")
@@ -18466,13 +18466,13 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "목표/현재 비중", "값": f"{c['target_w']:.2f}% / {c['current_w']:.2f}%"},
             {"항목": "RSI/MFI/%B", "값": f"{c['rsi']:.1f} / {c['mfi']:.1f} / {c['pct_b']:.2f}"},
             {"항목": "후보등급", "값": c["grade"]},
-        ]), use_container_width=True, hide_index=True)
+        ]), width='stretch', hide_index=True)
         render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
         return
 
     if demo_page == "시나리오":
         st.subheader("시나리오 점검")
-        if st.button("시나리오 계산 시작", key="public_demo_scenario_run", use_container_width=True):
+        if st.button("시나리오 계산 시작", key="public_demo_scenario_run", width='stretch'):
             st.session_state["public_demo_scenario_ready"] = True
         if st.session_state.get("public_demo_scenario_ready", False):
             render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
@@ -18482,7 +18482,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
     if demo_page == "단기 흐름":
         st.subheader("단기 흐름 점검")
-        if st.button("단기 흐름 계산 시작", key="public_demo_short_trend_run", use_container_width=True):
+        if st.button("단기 흐름 계산 시작", key="public_demo_short_trend_run", width='stretch'):
             st.session_state["public_demo_short_trend_ready"] = True
         if st.session_state.get("public_demo_short_trend_ready", False):
             render_short_trend_tab(holdings_table, st.session_state.watchlist)
@@ -18492,7 +18492,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
     if demo_page == "신호 검증":
         st.subheader("신호 검증")
-        if st.button("신호 검증 시작", key="public_demo_backtest_run", use_container_width=True):
+        if st.button("신호 검증 시작", key="public_demo_backtest_run", width='stretch'):
             st.session_state["public_demo_backtest_ready"] = True
         if st.session_state.get("public_demo_backtest_ready", False):
             render_signal_backtest_tab(holdings_table, st.session_state.watchlist)
@@ -18502,7 +18502,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
     if demo_page == "돈흐름":
         st.subheader("돈흐름 레이더")
-        if st.button("돈흐름 계산 시작", key="public_demo_money_flow_run", use_container_width=True):
+        if st.button("돈흐름 계산 시작", key="public_demo_money_flow_run", width='stretch'):
             st.session_state["public_demo_money_flow_ready"] = True
         if st.session_state.get("public_demo_money_flow_ready", False):
             render_money_flow_tab()
@@ -18512,7 +18512,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
     if demo_page == "월배당 ETF":
         st.subheader("월배당 ETF")
-        if st.button("월배당 ETF 화면 열기", key="public_demo_kr_etf_run", use_container_width=True):
+        if st.button("월배당 ETF 화면 열기", key="public_demo_kr_etf_run", width='stretch'):
             st.session_state["public_demo_kr_etf_ready"] = True
         if st.session_state.get("public_demo_kr_etf_ready", False):
             render_kr_etf_lab_tab()
@@ -18931,7 +18931,7 @@ def render_print_report_v2():
                 ),
             ))
             fig_tree.update_layout(template="plotly_dark", height=360, margin=dict(t=36, l=8, r=8, b=8), title="포트폴리오 히트맵")
-            st.plotly_chart(fig_tree, use_container_width=True)
+            st.plotly_chart(fig_tree, width='stretch')
 
         with c2:
             matrix_df = chart_df.copy()
@@ -18981,7 +18981,7 @@ def render_print_report_v2():
                     xaxis_title="비중차이(%p)",
                     yaxis_title="수익률(%)",
                 )
-                st.plotly_chart(fig_matrix, use_container_width=True)
+                st.plotly_chart(fig_matrix, width='stretch')
 
     def _render_monthly_report_charts(monthly_perf_df):
         if monthly_perf_df is None or monthly_perf_df.empty:
@@ -19025,7 +19025,7 @@ def render_print_report_v2():
                 legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
                 margin=dict(t=40, l=8, r=8, b=70),
             )
-            st.plotly_chart(fig_monthly_asset, use_container_width=True)
+            st.plotly_chart(fig_monthly_asset, width='stretch')
 
         with p2:
             fig_pnl_div = make_subplots(specs=[[{"secondary_y": True}]])
@@ -19055,7 +19055,7 @@ def render_print_report_v2():
             )
             fig_pnl_div.update_yaxes(title_text="누적손익(원)", secondary_y=False)
             fig_pnl_div.update_yaxes(title_text="배당금(원)", secondary_y=True)
-            st.plotly_chart(fig_pnl_div, use_container_width=True)
+            st.plotly_chart(fig_pnl_div, width='stretch')
 
         p3, p4 = st.columns(2)
         with p3:
@@ -19075,7 +19075,7 @@ def render_print_report_v2():
                 yaxis_title="수익률(%)",
                 margin=dict(t=40, l=8, r=8, b=30),
             )
-            st.plotly_chart(fig_cum_return, use_container_width=True)
+            st.plotly_chart(fig_cum_return, width='stretch')
 
         with p4:
             try:
@@ -19116,7 +19116,7 @@ def render_print_report_v2():
                     legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
                     margin=dict(t=40, l=8, r=8, b=70),
                 )
-                st.plotly_chart(fig_benchmark, use_container_width=True)
+                st.plotly_chart(fig_benchmark, width='stretch')
 
     with st.sidebar:
         st.success("인쇄 모드")
@@ -19504,7 +19504,7 @@ def render_full_print_report():
                 margin=dict(t=36, l=8, r=8, b=8),
                 title="포트폴리오 히트맵 (수익률)",
             )
-            st.plotly_chart(fig_tree, use_container_width=True)
+            st.plotly_chart(fig_tree, width='stretch')
 
         with c2:
             # 현재비중 vs 목표비중 가로 막대
@@ -19531,7 +19531,7 @@ def render_full_print_report():
                     legend=dict(orientation="h", y=-0.18, x=0.5, xanchor="center"),
                     margin=dict(t=36, l=8, r=8, b=60),
                 )
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, width='stretch')
             else:
                 st.info("목표비중이 설정된 자산이 없습니다.")
 
@@ -19617,7 +19617,7 @@ def render_full_print_report():
                 legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
                 margin=dict(t=40, l=8, r=8, b=70),
             )
-            st.plotly_chart(fig_asset, use_container_width=True)
+            st.plotly_chart(fig_asset, width='stretch')
 
         with p2:
             fig_ret = go.Figure()
@@ -19635,7 +19635,7 @@ def render_full_print_report():
                 legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
                 margin=dict(t=40, l=8, r=8, b=70),
             )
-            st.plotly_chart(fig_ret, use_container_width=True)
+            st.plotly_chart(fig_ret, width='stretch')
 
         # 벤치마크 비교
         try:
@@ -19676,7 +19676,7 @@ def render_full_print_report():
                 legend=dict(orientation="h", yanchor="top", y=-0.18, x=0.5, xanchor="center"),
                 margin=dict(t=40, l=8, r=8, b=70),
             )
-            st.plotly_chart(fig_bench, use_container_width=True)
+            st.plotly_chart(fig_bench, width='stretch')
     else:
         st.info("월별 성과 기록이 없습니다.")
 
@@ -19761,7 +19761,7 @@ if main_page == "dashboard":
                 if st.button(
                     f"🗑 선택 {len(remove_targets)}개 제거",
                     key="remove_watchlist_btn",
-                    use_container_width=True,
+                    width='stretch',
                     type="primary",
                 ):
                     tickers_to_remove = {
@@ -19777,7 +19777,7 @@ if main_page == "dashboard":
                     sync_watchlist_to_query()
                     st.rerun()
             else:
-                st.button("제거", key="remove_watchlist_btn", use_container_width=True, disabled=True)
+                st.button("제거", key="remove_watchlist_btn", width='stretch', disabled=True)
 
     # ── 전광판 일괄 재계산 ───────────────────────────────────────────
     with st.expander("🔄 일괄 재계산 (재무 + 기술)", expanded=False):
@@ -19809,7 +19809,7 @@ if main_page == "dashboard":
         if st.button(
             "▶ 일괄 재계산 실행",
             key="dashboard_bulk_recalc_btn",
-            use_container_width=True,
+            width='stretch',
             type="primary",
         ):
             # 1) 기술 캐시 비우기
@@ -19862,7 +19862,7 @@ if main_page == "dashboard":
         with quick_jump_cols[1]:
             st.write("")
             st.write("")
-            if st.button("선택값 적용", key="dashboard_precision_jump_apply", use_container_width=True):
+            if st.button("선택값 적용", key="dashboard_precision_jump_apply", width='stretch'):
                 jump_ticker = quick_jump_map.get(quick_jump_label, "")
                 if not jump_ticker:
                     st.warning("먼저 종목을 선택하세요.")
@@ -20006,7 +20006,7 @@ if main_page == "precision":
                 {"항목": "manual_score", "값": str(fin_meta.get("manual_score") or "-")},
                 {"항목": "final_score", "값": str(fin_meta.get("final_score") or "-")},
             ]
-            st.dataframe(pd.DataFrame(meta_rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(meta_rows), width='stretch', hide_index=True)
 
             if weighted:
                 weighted_rows = [
@@ -20021,17 +20021,17 @@ if main_page == "precision":
                     {"항목": "selected_mode", "값": str(weighted.get("selected_mode") or "-")},
                 ]
                 st.markdown("#### 가중 판정")
-                st.dataframe(pd.DataFrame(weighted_rows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(weighted_rows), width='stretch', hide_index=True)
 
             st.markdown("#### 연간 판정 문구")
             if annual_judgements:
-                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in annual_judgements.items()]), width='stretch', hide_index=True)
             else:
                 st.write("연간 판정 없음")
 
             st.markdown("#### 분기 판정 문구")
             if quarter_judgements:
-                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame([{"key": k, "judgement": v} for k, v in quarter_judgements.items()]), width='stretch', hide_index=True)
             else:
                 st.write("분기 판정 없음")
 
@@ -20046,13 +20046,13 @@ if main_page == "precision":
 
             if annual_records:
                 st.write("annual records")
-                st.dataframe(pd.DataFrame(annual_records), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(annual_records), width='stretch', hide_index=True)
             else:
                 st.write("annual records 없음")
 
             if quarter_records:
                 st.write("quarter records")
-                st.dataframe(pd.DataFrame(quarter_records), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(quarter_records), width='stretch', hide_index=True)
             else:
                 st.write("quarter records 없음")
 
@@ -20156,7 +20156,7 @@ if main_page == "precision":
                 )
             with price_refresh_col:
                 st.caption("현재가")
-                if st.button("새로고침", key=f"refresh_precision_price_{fin_key}", use_container_width=True, help="선택 종목의 현재가 캐시를 비우고 다시 조회합니다. 미국장은 가능하면 프리/애프터 가격을 반영합니다."):
+                if st.button("새로고침", key=f"refresh_precision_price_{fin_key}", width='stretch', help="선택 종목의 현재가 캐시를 비우고 다시 조회합니다. 미국장은 가능하면 프리/애프터 가격을 반영합니다."):
                     clear_selected_price_cache()
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     st.toast(f"{tkr} 현재가를 다시 조회합니다.")
@@ -20327,10 +20327,10 @@ if main_page == "asset":
 
     # ── 인쇄 리포트 버튼 ─────────────────────────────────────────────────
     _pr1, _pr2, _pr3 = st.columns([2, 2, 4])
-    if _pr1.button("🖨️ 자산 현황 리포트", use_container_width=True, key="btn_full_print_mode"):
+    if _pr1.button("🖨️ 자산 현황 리포트", width='stretch', key="btn_full_print_mode"):
         st.session_state["full_print_mode"] = True
         st.rerun()
-    if _pr2.button("🖨️ 종합 리포트 (운용계획 포함)", use_container_width=True, key="btn_print_mode_v2"):
+    if _pr2.button("🖨️ 종합 리포트 (운용계획 포함)", width='stretch', key="btn_print_mode_v2"):
         st.session_state["print_mode_toggle_final"] = True
         st.rerun()
 
@@ -20368,7 +20368,7 @@ if main_page == "asset":
             data=backup_zip,
             file_name=f"stock_lab_backup_{backup_stamp}.zip",
             mime="application/zip",
-            use_container_width=True,
+            width='stretch',
             key="download_supabase_backup_zip",
         )
     
@@ -20406,17 +20406,17 @@ if main_page == "asset":
             p4.metric("참고", int((recovery_issue_df["등급"] == "참고").sum()) if not recovery_issue_df.empty else 0)
 
             if not recovery_parsed_files.empty:
-                st.dataframe(recovery_parsed_files, use_container_width=True, hide_index=True)
+                st.dataframe(recovery_parsed_files, width='stretch', hide_index=True)
 
             if not recovery_summary_df.empty:
                 st.markdown("##### 반영 예정 데이터")
-                st.dataframe(recovery_summary_df, use_container_width=True, hide_index=True)
+                st.dataframe(recovery_summary_df, width='stretch', hide_index=True)
 
             if recovery_issue_df.empty:
                 st.success("사전 점검에서 차단 항목이 없습니다.")
             else:
                 st.markdown("##### 사전 점검 결과")
-                st.dataframe(recovery_issue_df, use_container_width=True, hide_index=True)
+                st.dataframe(recovery_issue_df, width='stretch', hide_index=True)
                 st.download_button(
                     "사전 점검 결과 CSV 다운로드",
                     data=dataframe_to_csv_bytes(recovery_issue_df),
@@ -20500,7 +20500,7 @@ if main_page == "asset":
         edited_holdings = st.data_editor(
             holdings_editor_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             key="holdings_editor",
             column_config={
                 "owner_email": None,
@@ -20568,7 +20568,7 @@ if main_page == "asset":
         edited_dividends = st.data_editor(
             dividends_editor_df,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             key="dividends_editor",
             column_order=["date", "ticker", "amount", "currency", "id"],
             disabled=["id"],
@@ -20599,7 +20599,7 @@ if main_page == "asset":
         st.markdown("### 4) 월별 로그 관리")
         monthly_editor_df = load_monthly_logs_db()
         if monthly_editor_df.empty: monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
-        edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", use_container_width=True, key="monthly_editor")
+        edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", width='stretch', key="monthly_editor")
     
         if st.button("월별 로그 저장"):
             if save_monthly_logs_db(edited_monthly.fillna("")):
@@ -20776,7 +20776,7 @@ if main_page == "asset":
                     "ADJ: %{customdata[7]}<extra></extra>"
             ))
             fig_tree.update_layout(template="plotly_dark", height=430, title="포트폴리오 히트맵")
-            st.plotly_chart(fig_tree, use_container_width=True)
+            st.plotly_chart(fig_tree, width='stretch')
 
         with c2:
             max_eval = max(float(dash_df["원화환산"].max() or 0), 1.0)
@@ -20807,7 +20807,7 @@ if main_page == "asset":
             fig_bubble.add_vline(x=0, line_dash="dash", line_color="#94a3b8")
             fig_bubble.add_hline(y=0, line_dash="dash", line_color="#94a3b8")
             fig_bubble.update_layout(template="plotly_dark", height=430, title="타점/비중/수익률 매트릭스")
-            st.plotly_chart(fig_bubble, use_container_width=True)
+            st.plotly_chart(fig_bubble, width='stretch')
 
         w1, w2 = st.columns(2)
 
@@ -20816,7 +20816,7 @@ if main_page == "asset":
             fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["현재비중"], orientation="h", name="현재비중"))
             fig_weight.add_trace(go.Bar(y=dash_df["자산명"], x=dash_df["리밸런싱목표비중"], orientation="h", name="관리기준비중"))
             fig_weight.update_layout(template="plotly_dark", barmode="group", height=420, title="현재비중 vs 목표비중")
-            st.plotly_chart(fig_weight, use_container_width=True)
+            st.plotly_chart(fig_weight, width='stretch')
 
         with w2:
             pnl_color = np.where(dash_df["평가손익_원화"] >= 0, "#16a34a", "#dc2626")
@@ -20828,7 +20828,7 @@ if main_page == "asset":
             ))
             fig_pnl.add_vline(x=0, line_color="#94a3b8")
             fig_pnl.update_layout(template="plotly_dark", height=420, title="평가손익 랭킹")
-            st.plotly_chart(fig_pnl, use_container_width=True)
+            st.plotly_chart(fig_pnl, width='stretch')
 
         monthly_perf_df = prepare_monthly_performance_df(monthly_logs_df)
         if not monthly_perf_df.empty:
@@ -20868,7 +20868,7 @@ if main_page == "asset":
                     yaxis_title="원",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
                 )
-                st.plotly_chart(fig_monthly_asset, use_container_width=True)
+                st.plotly_chart(fig_monthly_asset, width='stretch')
 
             with p2:
                 pnl_colors = np.where(monthly_perf_df["cum_profit"] >= 0, "#22d3ee", "#ef4444")
@@ -20885,7 +20885,7 @@ if main_page == "asset":
                     title="누적 손익",
                     yaxis_title="원"
                 )
-                st.plotly_chart(fig_cum_pnl, use_container_width=True)
+                st.plotly_chart(fig_cum_pnl, width='stretch')
 
             p3, p4 = st.columns(2)
 
@@ -20905,7 +20905,7 @@ if main_page == "asset":
                     title="월별 누적수익률",
                     yaxis_title="수익률 %"
                 )
-                st.plotly_chart(fig_cum_return, use_container_width=True)
+                st.plotly_chart(fig_cum_return, width='stretch')
 
                 benchmark_df = build_benchmark_return_df(monthly_perf_df, get_current_blended_benchmark_spec())
                 fig_benchmark = go.Figure()
@@ -20935,7 +20935,7 @@ if main_page == "asset":
                     yaxis_title="수익률 %",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
                 )
-                st.plotly_chart(fig_benchmark, use_container_width=True)
+                st.plotly_chart(fig_benchmark, width='stretch')
 
             with p4:
                 fig_dividend = go.Figure(go.Bar(
@@ -20950,7 +20950,7 @@ if main_page == "asset":
                     title="월별 배당금",
                     yaxis_title="원"
                 )
-                st.plotly_chart(fig_dividend, use_container_width=True)
+                st.plotly_chart(fig_dividend, width='stretch')
         else:
             st.info("월별 로그를 입력하면 월별 투자 기록, 누적손익, 벤치마크 비교, 배당금 차트가 표시됩니다.")
 
@@ -20962,7 +20962,7 @@ if main_page == "asset":
         with asset_summary_tech_col:
             render_heavy_analysis_button(asset_tech_summary_key, "기술적 타점계산")
         with asset_summary_refresh_col:
-            if st.button("현재가 새로고침", key="refresh_asset_table_latest_prices", use_container_width=True, help="보유자산 평가금액에 쓰는 60초 현재가 캐시를 비우고 다시 조회합니다."):
+            if st.button("현재가 새로고침", key="refresh_asset_table_latest_prices", width='stretch', help="보유자산 평가금액에 쓰는 60초 현재가 캐시를 비우고 다시 조회합니다."):
                 clear_latest_price_cache()
                 st.session_state["latest_price_refresh_time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                 st.toast("보유자산 현재가를 다시 조회합니다.")
@@ -20989,7 +20989,7 @@ if main_page == "asset":
         st.caption("✏️ 보유량·매입가 셀을 직접 클릭해 수정할 수 있습니다. 예수금 행은 기본 설정에서 변경하세요.")
         _edited_summary = st.data_editor(
             _summary_edit_df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             key="asset_summary_inline_editor",
             disabled=_readonly_cols,
