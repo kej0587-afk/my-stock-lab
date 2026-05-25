@@ -6854,16 +6854,30 @@ def render_money_flow_etf_section():
         table_df["상태"] = table_df["상태"].map(lambda s: _state_badge.get(str(s), str(s)))
 
     # ── 스윙 진입가능 여부 (포맷 전 원본 수치로 계산) ─────────────────
+    # 조건:
+    #   ✅ 진입가능  : 스윙점수 ≥ 5  AND  52주위치 < 85%  AND  상태 비소외·비급락
+    #   ⚠️ 고점주의  : 스윙점수 ≥ 5  AND  52주위치 ≥ 85%  (모멘텀 있지만 고점 추격 위험)
+    #   💤 약모멘텀  : 0 < 스윙점수 < 5  (양수지만 유의미한 모멘텀 부족)
+    #   ❌ 비추      : 스윙점수 ≤ 0  OR  상태가 "소외 지속" · "급락 경보"
+    _BAD_STATES = {"소외 지속", "급락 경보"}
+    _SWING_MIN  = 5.0
+
     def _swing_entry_label(row) -> str:
-        sw  = row.get("스윙점수",  None)
-        pl  = row.get("가격수준", None)
+        sw    = row.get("스윙점수",  None)
+        pl    = row.get("가격수준", None)
+        state = str(row.get("상태",  ""))
+        # 상태 배지 이모지 제거 후 원본 텍스트 추출
+        state_clean = state.replace("🔴","").replace("💥","").replace("💚","").replace("🔥","").replace("🚀","").replace("🟡","").replace("⚪","").replace("〰️","").replace("⚡","").replace("🟢","").replace("⬛","").strip()
         if not finite_num(sw):
             return "-"
-        sw, pl_v = float(sw), float(pl) if finite_num(pl) else 1.0
-        if sw <= 0:
+        sw_v  = float(sw)
+        pl_v  = float(pl) if finite_num(pl) else 1.0
+        if sw_v <= 0 or state_clean in _BAD_STATES:
             return "❌ 비추"
+        if sw_v < _SWING_MIN:
+            return "💤 약모멘텀"   # 양수지만 너무 약함
         if pl_v >= 0.85:
-            return "⚠️ 고점주의"   # 모멘텀은 있지만 52주 고점 85% 초과 — 추격 위험
+            return "⚠️ 고점주의"   # 모멘텀 충분하나 52주 고점 85% 초과
         return "✅ 진입가능"
 
     table_df["진입가능"] = table_df.apply(_swing_entry_label, axis=1)
