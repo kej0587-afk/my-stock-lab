@@ -7857,16 +7857,21 @@ def render_image_theme_flow_section():
             if not finite_num(accel):
                 return "데이터부족"
             near_high = finite_num(pl) and float(pl) > 0.85
-            safe_zone = finite_num(pl) and 0.35 <= float(pl) <= 0.80
+            # safe_zone 상한을 near_high 기준(0.85)과 맞춤 — 기존 0.80 상한은 0.80~0.85 사각지대 발생
+            safe_zone = finite_num(pl) and 0.30 <= float(pl) <= 0.85
             accel_ok  = float(accel) >= 0.05
             ret1m_ok  = finite_num(ret1m) and float(ret1m) > 0
             ret3m_ok  = finite_num(ret3m) and float(ret3m) > 0.05
-            flow_pos  = finite_num(flow) and float(flow) > 0   # 돈흐름점수 양수 필수
+            # 스윙후보: 돈흐름 최소 20점 이상 (기존 >0은 너무 낮은 점수도 포함됨)
+            flow_swing = finite_num(flow) and float(flow) >= 20
+            # 장기후보: 돈흐름 최소 10점 이상 + 가속도 급락 제외
+            flow_long  = finite_num(flow) and float(flow) >= 10
+            accel_ok_long = float(accel) > -0.5
             if near_high:
                 return "⚠️ 고점추격"
-            if accel_ok and ret1m_ok and flow_pos:
+            if accel_ok and ret1m_ok and flow_swing:
                 return "🚀 스윙후보"
-            if ret3m_ok and safe_zone and flow_pos:
+            if ret3m_ok and safe_zone and flow_long and accel_ok_long:
                 return "🌱 장기후보"
             return "⚪ 관망"
 
@@ -18055,7 +18060,7 @@ def render_today_market_flow_panel(snapshot=None):
         # 진입검토 후보 테이블
         entry_df = grp_df[grp_df["진입검토"] == "✅ 진입검토"].copy()
         if entry_df.empty:
-            st.info("현재 진입검토 조건(개선/주도 + 단기 상승 확인 + 비과열)을 모두 충족한 항목이 없습니다.")
+            st.info("현재 진입검토 조건(개선/주도 + 단기 상승 확인 + 비과열)을 모두 충족한 섹터가 없습니다. 이 조건은 섹터 전체 기준이며, 개별 종목 진입 신호는 위 오늘 점검 표를 참고하세요.")
         else:
             st.markdown("**✅ 진입검토 후보**")
             # 투자유형 컬럼 추가
@@ -18531,8 +18536,8 @@ def render_today_queue_tab(mode):
 
     flow_snapshot = None
     try:
-        with st.spinner("보유/관심 자산과 돈흐름을 연결하는 중입니다..."):
-            flow_snapshot = get_today_market_flow_snapshot()
+        # get_today_market_flow_snapshot은 @st.cache_data(ttl=900)로 캐시됨 — 스피너 불필요
+        flow_snapshot = get_today_market_flow_snapshot()
     except Exception as exc:
         st.caption(f"돈흐름 연결은 건너뜁니다: {exc}")
     if flow_snapshot:
@@ -20060,9 +20065,46 @@ if main_page == "dashboard":
                 st.info("재무 재계산 대상 개별주가 없습니다 (ETF만 등록됨).")
 
             st.success("기술신호 캐시를 비웠습니다. 아래 전광판이 자동으로 재계산됩니다.")
+            st.session_state.pop("dashboard_summary_df", None)
             st.rerun()
 
-    summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
+    # ── 전광판 session state 캐싱 (매 방문시 재계산 방지) ───────────────
+    _DASH_KEY      = "dashboard_summary_df"
+    _DASH_SIG_KEY  = "dashboard_summary_sig"
+    _DASH_LAST_KEY = "dashboard_summary_last_run"
+
+    _dash_sig = json.dumps(
+        {"mode": app_mode, "tickers": sorted(
+            sanitize_ticker_value(it.get("ticker", ""))
+            for it in st.session_state.watchlist
+        )},
+        sort_keys=True, ensure_ascii=False,
+    )
+    _dash_cached = st.session_state.get(_DASH_KEY)
+    if not isinstance(_dash_cached, pd.DataFrame):
+        _dash_cached = pd.DataFrame()
+
+    _d1, _d2, _d3 = st.columns([1.4, 1.0, 3.6])
+    _run_dash = _d1.button("전광판 새로고침", key="dashboard_run_once", width="stretch")
+    if not _dash_cached.empty:
+        if _d2.button("결과 지우기", key="dashboard_clear_cached", width="stretch"):
+            for _k in [_DASH_KEY, _DASH_SIG_KEY, _DASH_LAST_KEY]:
+                st.session_state.pop(_k, None)
+            st.rerun()
+        _dash_last = st.session_state.get(_DASH_LAST_KEY, "")
+        if _dash_last:
+            _d3.caption(f"마지막 계산: {_dash_last}")
+        if st.session_state.get(_DASH_SIG_KEY) not in [None, _dash_sig] and not _run_dash:
+            st.warning("관심목록이 변경됐습니다. 새로고침을 눌러 최신 상태로 다시 계산하세요.")
+
+    if _run_dash or _dash_cached.empty:
+        with st.spinner("전광판 계산 중..."):
+            summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, tuple(st.session_state.watchlist))
+        st.session_state[_DASH_KEY] = summary_df
+        st.session_state[_DASH_SIG_KEY] = _dash_sig
+        st.session_state[_DASH_LAST_KEY] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    else:
+        summary_df = _dash_cached
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:
