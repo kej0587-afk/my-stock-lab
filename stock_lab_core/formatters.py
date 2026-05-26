@@ -92,3 +92,32 @@ def dataframe_from_rows(rows, columns):
             df[col] = None
     return df[columns]
 
+
+def clean_symbol(ticker: str) -> str:
+    """티커에서 .KS / .KQ 접미사를 제거하고 대문자로 반환. '005930.KS' → '005930'"""
+    return sanitize_ticker_value(ticker).replace(".KS", "").replace(".KQ", "")
+
+
+def is_ticker_like_text(value) -> bool:
+    """문자열이 종목 코드처럼 생겼는지 판별 (6자리 숫자, .KS/.KQ 접미사, 영문 심볼 등)."""
+    text = sanitize_ticker_value(value)
+    symbol = text.replace(".KS", "").replace(".KQ", "")
+    return bool(symbol) and (
+        symbol.isdigit()
+        or text.endswith((".KS", ".KQ"))
+        or (symbol.isascii() and symbol.replace(".", "").isalnum() and " " not in str(value or ""))
+    )
+
+
+def is_kr_listed(ticker: str) -> bool:
+    """KRX 상장 종목인지 확인 (.KS 또는 .KQ 접미사)."""
+    return sanitize_ticker_value(ticker).endswith((".KS", ".KQ"))
+
+
+def normalize_bucket(value) -> str:
+    """포트폴리오 버킷값을 정규화. 알 수 없는 값은 'core'로 폴백."""
+    raw = str(value or "").strip().lower()
+    if raw in ["core", "swing", "reserve", "cash", "leverage"]:
+        return raw
+    return "core"
+

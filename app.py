@@ -1,3 +1,9 @@
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 01: IMPORTS & 전역 설정
+# Python 표준 라이브러리 + 서드파티 + stock_lab_core imports
+# ════════════════════════════════════════════════════════════════════════════
+
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
@@ -50,14 +56,27 @@ from stock_lab_core.formatters import (
     clean_bool,
     clean_float,
     clean_int,
+    clean_symbol,
     dataframe_from_rows,
     escape_html_value,
     format_currency,
+    is_kr_listed,
+    is_ticker_like_text,
+    normalize_bucket,
     normalize_text,
     normalize_ticker,
     parse_num,
     sanitize_ticker_value,
     strip_search_prefix,
+)
+from stock_lab_core.constants import (
+    FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
+    KNOWN_KR_ETF_SYMBOLS,
+    KNOWN_TICKER_DISPLAY_NAMES,
+    KNOWN_US_NASDAQ_ETFS,
+    KNOWN_US_OTHER_ETFS,
+    KNOWN_US_SP_ETFS,
+    KR_ETF_NAME_KEYWORDS,
 )
 from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
@@ -184,6 +203,12 @@ from typing import Optional
 
 # 1. Supabase 안전 조회 래퍼
 @dataclass
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 02: Supabase 기초 & 데이터 모델
+# DbResult, safe_supabase_query, parse_holding_row, detect_52w_breakout
+# ════════════════════════════════════════════════════════════════════════════
+
 class DbResult:
     data: list
     error: Optional[str] = None
@@ -567,6 +592,12 @@ st.markdown("""
 st.set_page_config(page_title="최종 관제실", layout="wide")
 KST = timezone(timedelta(hours=9))
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 03: 인증 & 보안
+# safe_secret_get, auth_mode, require_login, logout
+# ════════════════════════════════════════════════════════════════════════════
+
 def safe_secret_get(name, default=""):
     try:
         return st.secrets.get(name, default)
@@ -824,11 +855,11 @@ with st.sidebar:
     
 st.title(f"🚀 REALTIME DIGITAL DASHBOARD v13.1 ({app_mode_label})")
 
-def normalize_bucket(value):
-    raw = str(value or "").strip().lower()
-    if raw in ["core", "swing", "reserve", "cash", "leverage"]:
-        return raw
-    return "core"
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 04: 유틸리티 함수 (티커·이름·자산 분류)
+# normalize_bucket, is_ticker_like_text, clean_symbol, resolve_display_name
+# ════════════════════════════════════════════════════════════════════════════
 
 def infer_bucket(ticker, value=""):
     key = normalize_ticker(ticker)
@@ -860,88 +891,12 @@ def get_fin_label_map():
         4: "4점 (💎완성형 우량)"
     }
 
-KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
-KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
-KNOWN_US_OTHER_ETFS = {
-    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
-    "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
-    "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
-    "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
-    "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
-    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
-    "HACK", "CIBR", "BUG",  # 사이버보안 ETF
-}
-KNOWN_KR_ETF_SYMBOLS = {
-    "379810", "379800", "458730", "069500", "229200", "396500", "139260",
-    "305540", "487240", "0117V0", "434730", "433500", "494670", "449450",
-    "479850", "139250", "139270", "244580", "329200", "139220", "491010",
-    "487230",
-}
-
-FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
-KR_ETF_NAME_KEYWORDS = (
-    "ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR",
-    "HANARO", "KOSEF", "ARIRANG", "TIMEFOLIO", "히어로즈", "액티브", "레버리지", "인버스"
-)
-
-KNOWN_TICKER_DISPLAY_NAMES = {
-    "010120": "LS ELECTRIC",
-    "267260": "HD현대일렉트릭",
-    "298040": "효성중공업",
-    "103590": "일진전기",
-    "033100": "제룡전기",
-    "001440": "대한전선",
-    "006260": "LS",
-    "005930": "삼성전자",
-    "000660": "SK하이닉스",
-    "200710": "에이디테크놀러지",
-    "042700": "한미반도체",
-    "403870": "HPSP",
-    "039030": "이오테크닉스",
-    "058470": "리노공업",
-    "034020": "두산에너빌리티",
-    "052690": "한전기술",
-    "051600": "한전KPS",
-    "329180": "HD현대중공업",
-    "009540": "HD한국조선해양",
-    "010140": "삼성중공업",
-    "042660": "한화오션",
-    "012450": "한화에어로스페이스",
-    "047810": "한국항공우주",
-    "064350": "현대로템",
-    "079550": "LIG넥스원",
-    "278470": "에이피알",
-    "012330": "현대모비스",
-    "307950": "현대오토에버",
-    "090430": "아모레퍼시픽",
-    "161890": "한국콜마",
-    "192820": "코스맥스",
-    "373220": "LG에너지솔루션",
-    "006400": "삼성SDI",
-    "051910": "LG화학",
-    "003670": "포스코퓨처엠",
-    "247540": "에코프로비엠",
-    "086520": "에코프로",
-    "066970": "엘앤에프",
-    # 영숫자 혼합 6자리 KR ETF 코드 (isdigit() 검사 우회)
-    "0117V0": "TIGER 코리아AI전력기기TOP3플러스",
-    "0022T0": "SOL 국제금커버드콜액티브",
-}
+# KNOWN_US_SP_ETFS, KNOWN_US_NASDAQ_ETFS, KNOWN_US_OTHER_ETFS, KNOWN_KR_ETF_SYMBOLS,
+# FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS, KR_ETF_NAME_KEYWORDS, KNOWN_TICKER_DISPLAY_NAMES
+# → stock_lab_core/constants.py 로 이관됨 (상단 import 참조)
 
 
-def is_ticker_like_text(value):
-    text = sanitize_ticker_value(value)
-    symbol = text.replace(".KS", "").replace(".KQ", "")
-    return bool(symbol) and (
-        symbol.isdigit()
-        or text.endswith((".KS", ".KQ"))
-        or (symbol.isascii() and symbol.replace(".", "").isalnum() and " " not in str(value or ""))
-    )
-
-
-def clean_symbol(ticker):
-    return sanitize_ticker_value(ticker).replace(".KS", "").replace(".KQ", "")
-
+# is_ticker_like_text, clean_symbol → stock_lab_core/formatters.py 로 이관됨
 
 def get_known_display_name(ticker, fallback=""):
     symbol = clean_symbol(ticker)
@@ -1144,9 +1099,7 @@ def sanitize_asset_name(name, ticker=""):
 
     return cleaned_name
 
-def is_kr_listed(ticker):
-    return sanitize_ticker_value(ticker).endswith((".KS", ".KQ"))
-
+# is_kr_listed → stock_lab_core/formatters.py 로 이관됨
 
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
@@ -1456,6 +1409,12 @@ def get_public_demo_macro_analysis():
 # 2-1. Supabase persistent storage
 # -------------------------------------------------
 @st.cache_resource
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 05: 데이터베이스 (Supabase DB 로드/저장)
+# load/save: holdings, dividends, monthly_logs, fin_scores, watchlist, feedback
+# ════════════════════════════════════════════════════════════════════════════
+
 def get_supabase_client():
     url = get_secret_value("SUPABASE_URL")
     key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
@@ -2687,6 +2646,12 @@ US_TECH_OR_GROWTH_TICKERS = {
     "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI",
     "LITE", "PANW", "HACK", "NFLX", "UBER", "ABNB",
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 06: DART 공시 & 재무 데이터 API
+# get_dart_api_key, render_dart_disclosure_panel, FMP API, fin_score
+# ════════════════════════════════════════════════════════════════════════════
 
 def get_dart_api_key():
     return get_secret_value("dart_api_key")
@@ -5249,6 +5214,12 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
     return apply_holdings_weight_columns(pd.DataFrame(rows), krw_cash, usd_cash, usdkrw)
 
 # 돈흐름 데이터 로직은 stock_lab_core.money_flow 모듈로 분리
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 07: 돈흐름 & 로테이션 엔진
+# flow score, rotation panel, ETF section, theme flow
+# ════════════════════════════════════════════════════════════════════════════
 
 def fmt_flow_pct(v):
     if not finite_num(v):
@@ -8034,6 +8005,12 @@ def render_image_theme_flow_section():
             st.dataframe(missing_df[["하위테마", "종목명", "Ticker", "상태"]], width='stretch', hide_index=True)
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 08a: 공통 렌더 헬퍼
+# render_money_flow_tab, render_data_basis_caption, render_refresh_control_panel
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_money_flow_tab():
     etf_tab, image_theme_tab = st.tabs(["ETF/섹터 돈흐름", "테마 종목 흐름"])
     with etf_tab:
@@ -8406,6 +8383,12 @@ BENCHMARK_LABELS = {
     "329200.KS": "리츠/부동산",
     "139220.KS": "건설/유틸",
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 08b: 섹터 벤치마크 & RS 계산 엔진
+# _load_sector_map, get_sector_benchmark_info, get_rs_score_against_benchmark
+# ════════════════════════════════════════════════════════════════════════════
 
 def _load_sector_map() -> dict:
     """sector_map.json 에서 섹터 벤치마크 맵을 로드합니다.
@@ -9914,6 +9897,12 @@ TICKER_MAP = {
 
 FREE_SEARCH_OPTION = "🆓 자유 종목 탐색 (티커 입력)"
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 09: 종목 분석 패널 (정밀 분석)
+# build_precision_select_options, render_personal_stock_analysis_panel
+# ════════════════════════════════════════════════════════════════════════════
 
 def build_precision_select_options():
     options = [FREE_SEARCH_OPTION]
@@ -11698,6 +11687,12 @@ def build_swing_system_df(swing_df):
     return pd.DataFrame(rows)
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 10: 전광판 (스윙 레이더) 탭
+# render_swing_radar_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_swing_radar_tab():
     st.subheader("스윙 레이더")
     st.caption("스윙 레이더는 개별주와 ETF의 보유 이유, 진입 조건, 위험 신호를 잊지 않게 관리하는 영역입니다.")
@@ -11977,6 +11972,12 @@ RSI: {s['RSI']} | MFI: {s['MFI']}<br>
                 st.code(get_swing_radar_create_sql(), language="sql")
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 11: 피드백 탭
+# render_feedback_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_feedback_tab():
     st.subheader("Q&A / 피드백")
     st.caption("사용하면서 불편한 점, 오류, 개선 아이디어를 남기는 공간입니다. 작은 의견도 장기 운영 품질을 올리는 데 도움이 됩니다.")
@@ -12120,6 +12121,12 @@ MANUAL_SECTIONS = {
         {"항목": "P/D Zone", "기준": "200일 평균과 표준편차 기준 Premium/Discount", "의미": "비싼 구간/싼 구간 판단"},
     ],
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 12: 판정 매뉴얼 탭
+# MANUAL_SECTIONS, render_manual_tab()
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_manual_tab():
     st.subheader("판정 매뉴얼")
@@ -12326,6 +12333,12 @@ def render_guide_image_gallery():
                 st.warning(f"가이드 이미지 파일을 찾지 못했습니다: {image_path}")
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 13: 사용 가이드 탭
+# render_guide_image_gallery, render_user_guide_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_user_guide_tab():
     st.subheader("사용 가이드")
     st.caption("처음 쓰는 사용자를 위한 안내입니다. 앱은 투자 권유가 아니라 포트폴리오 점검과 의사결정 보조 도구입니다.")
@@ -12475,6 +12488,12 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
 > 오늘 점검은 우선순위 확인, 전광판은 전체 후보 확인, 정밀 관측소는 한 종목 상세 확인용입니다.
 > 앱의 매수/관망 문구는 투자 권유가 아니라 판단 보조 신호입니다. 최종 매수/매도 결정은 본인이 직접 해야 합니다.
         """)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 14a: 포트폴리오 — 수학 & 계산 유틸
+# MDD, 샤프, 상관관계, 드로다운, 10년 플랜
+# ════════════════════════════════════════════════════════════════════════════
 
 def calc_series_mdd(series):
     series = pd.Series(series).dropna()
@@ -14419,6 +14438,12 @@ def render_long_term_goal_simulator(metrics):
     st.caption("단순 복리 모델이라 세금, 수수료, 환율, 배당 변동, 실제 매수 타이밍은 반영하지 않습니다. 목표 점검용으로만 보세요.")
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 14b: 포트폴리오 분석 탭
+# render_portfolio_analysis_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
     st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
@@ -15365,6 +15390,12 @@ def build_cash_buffer_scenario(active_df, total_asset, reserve_summary, target_w
     }
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 15a: 시나리오 점검 탭
+# render_scenario_check_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.subheader("시나리오 점검")
     st.caption("미래 예측이 아니라 현재 보유자산에 가상의 충격률을 넣어보는 읽기 전용 점검입니다.")
@@ -15755,6 +15786,12 @@ def build_short_trend_report(holdings_table, watchlist_items, period="6mo"):
         result_df = result_df.sort_values(["_order", "점수", "현재비중"], ascending=[True, False, False]).drop(columns="_order").reset_index(drop=True)
     return result_df, charts
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 15b: 단기 추세 탭
+# render_short_trend_tab()
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_short_trend_tab(holdings_table, watchlist_items):
     st.subheader("단기 흐름 점검")
@@ -16236,6 +16273,12 @@ def render_signal_backtest_chart_v2(chart_df, events_df, selected_name, signal_t
     )
     st.plotly_chart(fig, width='stretch')
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 16: 백테스트 탭
+# render_signal_backtest_tab()
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_signal_backtest_tab(holdings_table, watchlist_items):
     st.subheader("신호 검증")
@@ -16730,6 +16773,12 @@ def render_kr_etf_update_panel(current_df):
                 st.rerun()
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 17: KR ETF 연구소 탭
+# render_kr_etf_lab_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_kr_etf_lab_tab():
     st.subheader("월배당 ETF 탐색")
     st.caption("국내 ETF 전체 목록과 월배당/분배금 자료를 합쳐 장기 월현금흐름 후보를 비교합니다.")
@@ -17103,6 +17152,12 @@ def build_data_quality_report(settings, holdings_df, holdings_table, dividends_d
     report_df["_order"] = report_df["등급"].map(severity_order).fillna(9)
     return report_df.sort_values(["_order", "영역", "티커"]).drop(columns="_order").reset_index(drop=True)
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 18: 데이터 품질 탭
+# render_data_quality_tab()
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_data_quality_tab(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, watchlist_items):
     st.subheader("데이터 점검")
@@ -17507,6 +17562,12 @@ def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash,
     st.caption("평소에는 자산관리 표 옆 현재가 새로고침만 눌러도 충분합니다. 재무/뉴스 새로고침은 필요할 때만 사용하세요.")
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 19: 속도 점검 탭
+# render_speed_check_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_speed_check_tab():
     st.subheader("속도 점검")
     st.caption("로딩이 느릴 때 어느 데이터를 다시 불러오는지 구분하기 위한 읽기 전용 점검판입니다.")
@@ -17557,6 +17618,12 @@ def render_speed_check_tab():
     st.info("평소에는 현재가만 새로고침하면 충분합니다. 차트/기술, 뉴스/리포트, 재무점수는 필요할 때만 눌러야 덜 버벅입니다.")
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 20: 오늘 점검 — 서브 렌더러
+# render_today_action_card, render_today_portfolio_flow_bridge, render_today_market_flow_panel
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available):
     if summary_df is None or summary_df.empty:
@@ -18321,6 +18388,12 @@ def render_investor_top10_section():
                     st.info(f"이미 등록됨: {', '.join(_skipped)}")
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 20a: 오늘 점검 탭
+# render_today_queue_tab()
+# ════════════════════════════════════════════════════════════════════════════
+
 def render_today_queue_tab(mode):
     st.subheader("오늘 점검")
     render_data_basis_caption("오늘점검", include_fin=True)
@@ -18556,6 +18629,12 @@ def render_today_queue_tab(mode):
 
     st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
 
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 20b: 공개 데모 & 인쇄 리포트
+# render_public_demo_fast_shell, render_print_report_v2, render_full_print_report
+# ════════════════════════════════════════════════════════════════════════════
 
 def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
@@ -21259,6 +21338,12 @@ if main_page == "asset":
 
     else:
         st.info("등록된 보유 종목이 없습니다.")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SECTION 21: 메인 네비게이션
+# 페이지 라우팅 및 실제 렌더 호출
+# ════════════════════════════════════════════════════════════════════════════
 
 if main_page == "portfolio":
     render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df)
