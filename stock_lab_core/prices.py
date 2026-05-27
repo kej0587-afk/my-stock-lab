@@ -233,10 +233,9 @@ def _fetch_yf_download_price(ticker: str, interval: str = "5m", prepost: bool = 
         return 0.0
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def load_latest_price(ticker: str) -> float:
+def _fetch_price_uncached(ticker: str) -> float:
     """
-    단일 종목 현재가 조회. TTL=60초.
+    캐시 없는 현재가 조회 로직. load_latest_price 와 clear_latest_price_cache 가 공유.
 
     한국 주식 (.KS/.KQ):
         1차 - 네이버 모바일 API  (장중 실시간에 가까움)
@@ -244,13 +243,13 @@ def load_latest_price(ticker: str) -> float:
         3차 - yfinance 일봉 폴백
 
     미국·기타 주식:
-        1차 - yf.fast_info.last_price  (download보다 최신)
-        2차 - yfinance 1분봉 + prepost
-        3차 - yfinance 5분봉 + prepost
-        4차 - yfinance 일봉 폴백
+        1차 - Yahoo Finance API 직접 조회  (SQLite 없음, 스레드 안전)
+        2차 - yf.fast_info.regular_market_price (정규장 현재가 우선)
+        3차 - yfinance 1분봉 + prepost
+        4차 - yfinance 5분봉 + prepost
+        5차 - yfinance 일봉 폴백
     """
     if _is_kr_ticker(ticker):
-        # 한국: 네이버 우선
         price = _fetch_naver_price(ticker)
         if price > 0:
             return price
@@ -258,12 +257,11 @@ def load_latest_price(ticker: str) -> float:
         if price > 0:
             return price
     else:
-        # 미국/기타: fast_info → Yahoo 직접 API → yfinance 다운로드 순
-        price = _fetch_yf_fast_info_price(ticker)
+        # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
+        price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
-        # fast_info 실패(SQLite lock 등) 시 Yahoo Finance API 직접 조회 (캐시 없음, 안전)
-        price = _fetch_yahoo_quote(ticker)
+        price = _fetch_yf_fast_info_price(ticker)
         if price > 0:
             return price
         price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
@@ -286,6 +284,25 @@ def load_latest_price(ticker: str) -> float:
         return float(df["Close"].iloc[-1])
     except Exception:
         return 0.0
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_latest_price_cached(ticker: str) -> float:
+    """TTL=60초 캐시 래퍼. 성공값(>0)만 캐시에 저장하기 위해 내부에서 검증."""
+    return _fetch_price_uncached(ticker)
+
+
+def load_latest_price(ticker: str) -> float:
+    """
+    단일 종목 현재가 조회 (공개 API, TTL=60초).
+    캐시 결과가 0(조회 실패)이면 캐시를 거치지 않고 즉시 재시도.
+    → '실패 결과 캐싱' 문제 방지.
+    """
+    price = _load_latest_price_cached(ticker)
+    if price > 0:
+        return price
+    # 캐시된 0: 이 티커만 우회하고 바로 재시도 (다른 티커 캐시 보존)
+    return _fetch_price_uncached(ticker)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -393,7 +410,7 @@ def load_latest_prices_batch(tickers) -> dict:
 
 
 def clear_latest_price_cache():
-    for fn in [load_latest_price, load_latest_prices_batch]:
+    for fn in [_load_latest_price_cached, load_latest_prices_batch]:
         if hasattr(fn, "clear"):
             fn.clear()
 
