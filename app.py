@@ -121,6 +121,8 @@ try:
         get_image_theme_names,
         IMAGE_THEME_META,
         SECTOR_CLUSTERS,
+        SECTOR_CLUSTERS_KR,
+        SECTOR_CLUSTERS_US,
         ETF_TO_THEME,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
@@ -128,6 +130,8 @@ except ImportError:
     IMAGE_THEME_FLOW_AVAILABLE = False
     IMAGE_THEME_META = {}
     SECTOR_CLUSTERS = {}
+    SECTOR_CLUSTERS_KR = {}
+    SECTOR_CLUSTERS_US = {}
     ETF_TO_THEME = {}
 
 try:
@@ -6287,25 +6291,8 @@ def _render_cluster_card(col, cl: dict, rank: int):
     )
 
 
-def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6):
-    """
-    클러스터 강도 패널 v2 — RS강도·방향·부상감지 통합.
-
-    rotation_df: calculate_rotation_df(RS_3m 컬럼) 또는
-                 calculate_sector_rotation_df(RS(3M) 컬럼) 결과 모두 지원.
-    clusters   : SECTOR_CLUSTERS dict  {클러스터명: [티커목록]}
-    top_n      : 전체 클러스터 중 열기점수 상위 N개만 표시 (기본 6)
-                 지금 돈이 몰리는 섹터만 자동으로 표면에 올라옴
-
-    부상(🔥) 조건:
-      - RS모멘텀 ≥ +4%  (빠른 방향 전환)  +  아직 지배적이지 않은 상태(RS<20%)
-      - 또는: RS모멘텀 ≥ +2%  +  과반(≥50%) 이상 개선/주도 사분면
-      → 3M 절대 강도는 약해도 최근 돈이 들어오기 시작한 섹터 조기 포착
-    """
-    if not clusters or rotation_df is None or rotation_df.empty:
-        return
-
-    # ── 컬럼명 정규화 (두 가지 포맷 통일) ─────────────────────────
+def _build_cluster_list(rotation_df, clusters: dict) -> list:
+    """rotation_df + clusters 로 클러스터 집계 리스트 생성 (내부 헬퍼)."""
     df = rotation_df.copy()
     if "RS_3m" in df.columns and "RS(3M)" not in df.columns:
         df["RS(3M)"] = df["RS_3m"]
@@ -6314,11 +6301,10 @@ def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6)
     if "1개월수익률" not in df.columns:
         df["1개월수익률"] = np.nan
 
-    # ── 티커별 지표 맵 ─────────────────────────────────────────────
-    t2 = {}
+    t2: dict = {}
     for _, r in df.iterrows():
-        t = str(r.get("Ticker", "")).upper()
-        rs3m  = r.get("RS(3M)",  np.nan)
+        t     = str(r.get("Ticker", "")).upper()
+        rs3m  = r.get("RS(3M)",   np.nan)
         rsmom = r.get("RS모멘텀", np.nan)
         quad  = str(r.get("사분면", "-"))
         r1m   = r.get("1개월수익률", np.nan)
@@ -6330,10 +6316,6 @@ def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6)
                 "r1m":   float(r1m) if finite_num(r1m) else float("nan"),
             }
 
-    if not t2:
-        return
-
-    # ── 클러스터별 집계 ────────────────────────────────────────────
     cl_list = []
     for cl_name, cl_tickers in clusters.items():
         matched = [t2[t.upper()] for t in cl_tickers if t.upper() in t2]
@@ -6351,40 +6333,128 @@ def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6)
                 qcnt[m["quad"]] += 1
         pos_frac = (qcnt["주도"] + qcnt["개선"]) / n
 
-        # 부상 감지
         is_surging = (
             (avg_rsmom >= 0.04 and avg_rs3m < 0.20)
             or (avg_rsmom >= 0.02 and pos_frac >= 0.50 and avg_rs3m < 0.15)
         )
-
-        # 랭킹 점수: RS방향 가중(60%) + RS강도(40%)
         heat = avg_rs3m * 0.40 + avg_rsmom * 0.60
 
         cl_list.append({
-            "name":       cl_name,
-            "rs3m":       avg_rs3m,
-            "rsmom":      avg_rsmom,
-            "r1m":        avg_r1m,
-            "qcnt":       qcnt,
-            "n":          n,
-            "pos_frac":   pos_frac,
-            "is_surging": is_surging,
-            "heat":       heat,
+            "name": cl_name, "rs3m": avg_rs3m, "rsmom": avg_rsmom,
+            "r1m": avg_r1m, "qcnt": qcnt, "n": n,
+            "pos_frac": pos_frac, "is_surging": is_surging, "heat": heat,
         })
 
+    cl_list.sort(key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0), reverse=True)
+    return cl_list
+
+
+def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str, rank_offset: int = 0):
+    """한 시장(한국/미국)의 클러스터 상위 top_n 카드 행 렌더."""
+    total_all = len(cl_list)
+    visible   = cl_list[:top_n]
+    if not visible:
+        return
+
+    # 시장 레이블 소제목
+    surging_here = [c for c in visible if c["is_surging"]]
+    fire = " 🔥" if surging_here else ""
+    st.markdown(
+        f"<div style='font-size:0.82em;font-weight:600;color:#94a3b8;"
+        f"margin:6px 0 4px;'>{market_label}{fire} "
+        f"<span style='font-weight:400;font-size:0.88em;'>"
+        f"({total_all}개 중 상위 {len(visible)}개)</span></div>",
+        unsafe_allow_html=True,
+    )
+    n_cols = min(len(visible), 3)
+    cols   = st.columns(n_cols)
+    for i, cl in enumerate(visible):
+        _render_cluster_card(cols[i], cl, rank=rank_offset + i + 1)
+
+
+def render_cluster_heatmap_enhanced(
+    rotation_df,
+    clusters: dict,
+    top_n: int = 6,
+    # ── 한국/미국 분리 모드 ──
+    clusters_kr: dict | None = None,
+    clusters_us: dict | None = None,
+    top_n_per_market: int = 3,
+):
+    """
+    클러스터 강도 패널 v2 — RS강도·방향·부상감지 통합.
+
+    [기본 모드] clusters 만 전달 → 단일 패널 top_n 표시
+    [분리 모드] clusters_kr + clusters_us 전달 →
+               한국(KOSPI200 기준) / 미국(S&P500 기준) 각 top_n_per_market 카드
+               → 벤치마크가 달라 혼합하면 잘못된 비교가 되는 문제 해결
+
+    부상(🔥) 조건:
+      RS모멘텀 ≥ +4%  +  RS3M < 20%   (빠른 방향 전환, 아직 과열 아님)
+      또는: RS모멘텀 ≥ +2%  +  과반 이상 개선/주도  +  RS3M < 15%
+    """
+    if rotation_df is None or rotation_df.empty:
+        return
+
+    # ── 분리 모드 ─────────────────────────────────────────────────
+    if clusters_kr is not None or clusters_us is not None:
+        df = rotation_df.copy()
+        if "RS_3m" in df.columns and "RS(3M)" not in df.columns:
+            df["RS(3M)"] = df["RS_3m"]
+        if "로테이션" in df.columns and "사분면" not in df.columns:
+            df["사분면"] = df["로테이션"]
+
+        # 구분 컬럼이 있으면 필터, 없으면 전체 사용
+        def _sub(구분_val):
+            if "구분" in df.columns:
+                sub = df[df["구분"] == 구분_val]
+                return sub if not sub.empty else df
+            return df
+
+        kr_df = _sub("한국 섹터")
+        us_df = _sub("미국 섹터")
+
+        kr_list = _build_cluster_list(kr_df, clusters_kr) if clusters_kr else []
+        us_list = _build_cluster_list(us_df, clusters_us) if clusters_us else []
+
+        if not kr_list and not us_list:
+            return
+
+        # 전체 부상 요약
+        all_surging = [c for c in (us_list[:top_n_per_market] + kr_list[:top_n_per_market])
+                       if c["is_surging"]]
+
+        st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+        if all_surging:
+            names = "·".join(f"**{c['name']}**" for c in all_surging)
+            st.caption(
+                f"🔥 새로 부상하는 군: {names}  "
+                "— RS 방향 전환 + 단기 가속 감지. 아직 3M RS가 낮아도 돈이 들어오기 시작한 구간."
+            )
+        else:
+            st.caption(
+                "🔵 주도 = 지금 돈 유입 중 &nbsp;|&nbsp; 🟢 개선 = 다음 주도 후보 "
+                "&nbsp;|&nbsp; 🔥부상 = RS방향 급반전, 단기 조기 진입 구간 &nbsp;|&nbsp; "
+                "한국/미국 각자 벤치마크(KOSPI200·S&P500) 기준으로 별도 계산"
+            )
+
+        _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터")
+        _render_market_cluster_row(kr_list, top_n_per_market, "🇰🇷 한국 섹터",
+                                   rank_offset=top_n_per_market)
+        st.write("")
+        return
+
+    # ── 단일 모드 (하위 호환) ──────────────────────────────────────
+    if not clusters:
+        return
+
+    cl_list = _build_cluster_list(rotation_df, clusters)
     if not cl_list:
         return
 
-    # 부상 클러스터에 랭킹 보너스 → 정렬
-    cl_list.sort(
-        key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0),
-        reverse=True,
-    )
+    total_all = len(cl_list)
+    cl_list   = cl_list[:top_n]
 
-    total_all = len(cl_list)          # 전체 클러스터 수 (헤더 표시용)
-    cl_list   = cl_list[:top_n]       # 상위 N개만 표시
-
-    # ── 헤더 + 부상 요약 ───────────────────────────────────────────
     st.markdown(
         f"##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나? "
         f"<span style='font-size:0.72em;color:#64748b;font-weight:400;'>"
@@ -6402,9 +6472,8 @@ def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6)
         st.caption("🔵 주도 = 지금 돈 유입 중 &nbsp;|&nbsp; 🟢 개선 = 다음 주도 후보 "
                    "&nbsp;|&nbsp; 🔥부상 = RS방향 급반전, 단기 조기 진입 구간")
 
-    # ── 3열 그리드 렌더 ────────────────────────────────────────────
-    n_cols   = min(len(cl_list), 3)
-    n_rows   = math.ceil(len(cl_list) / n_cols)
+    n_cols = min(len(cl_list), 3)
+    n_rows = math.ceil(len(cl_list) / n_cols)
     for row_i in range(n_rows):
         cols = st.columns(n_cols)
         for col_i in range(n_cols):
@@ -6424,7 +6493,12 @@ def render_rotation_panel(flow_df: pd.DataFrame):
     )
 
     rot_df = calculate_rotation_df(flow_df)
-    render_cluster_heatmap_enhanced(rot_df, SECTOR_CLUSTERS)
+    render_cluster_heatmap_enhanced(
+        rot_df, clusters={},
+        clusters_kr=SECTOR_CLUSTERS_KR,
+        clusters_us=SECTOR_CLUSTERS_US,
+        top_n_per_market=3,
+    )
     if rot_df is None or rot_df.empty:
         st.info("로테이션 데이터를 계산할 수 없습니다.")
         return
@@ -18332,7 +18406,12 @@ def render_today_market_flow_panel(snapshot=None):
         "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200"
     )
 
-    render_cluster_heatmap_enhanced(sector_rotation_df, SECTOR_CLUSTERS)
+    render_cluster_heatmap_enhanced(
+        sector_rotation_df, clusters={},
+        clusters_kr=SECTOR_CLUSTERS_KR,
+        clusters_us=SECTOR_CLUSTERS_US,
+        top_n_per_market=3,
+    )
 
     _rot_tab_labels = ["한국섹터", "미국섹터", "테마종목"]
     _rot_tabs = st.tabs(_rot_tab_labels)
