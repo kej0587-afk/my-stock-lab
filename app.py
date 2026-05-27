@@ -6230,7 +6230,7 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 
 def _render_cluster_card(col, cl: dict, rank: int):
-    """클러스터 카드 단위 HTML 렌더링."""
+    """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
     rsmom  = cl["rsmom"]
     is_sur = cl["is_surging"]
@@ -6249,7 +6249,7 @@ def _render_cluster_card(col, cl: dict, rank: int):
     elif rsmom > -0.02: mom_clr, mom_sym = "#fbbf24", "→"
     else:               mom_clr, mom_sym = "#ef4444",  "↓"
 
-    # ── 4분면 도트 ──
+    # ── 4분면 도트 요약 ──
     QDOT = {"주도": "🟢", "개선": "🔵", "약화": "🟠", "소외": "🔴"}
     quad_str = " ".join(f"{QDOT[q]}{qcnt[q]}" for q in ["주도", "개선", "약화", "소외"] if qcnt.get(q, 0))
 
@@ -6268,9 +6268,37 @@ def _render_cluster_card(col, cl: dict, rank: int):
         r1m_html = (f"<span style='color:{r1m_clr};font-size:0.68em;'>"
                     f"&nbsp;1M {r1m*100:+.1f}%</span>")
 
+    # ── 구성 ETF 상세 (RS 강한 순 정렬) ──
+    tickers = cl.get("tickers", [])
+    ticker_rows_html = ""
+    if tickers:
+        rows = []
+        for t in tickers:   # 이미 rs3m 내림차순으로 정렬됨
+            q    = QDOT.get(t["quad"], "⚪")
+            rm   = t["rsmom"]
+            arr  = "↑" if rm > 0.01 else ("↓" if rm < -0.01 else "→")
+            aclr = "#4ade80" if rm > 0.01 else ("#f87171" if rm < -0.01 else "#fbbf24")
+            r3   = t["rs3m"] * 100
+            rclr = "#4ade80" if r3 > 2 else ("#f87171" if r3 < -2 else "#fbbf24")
+            label = t.get("name", t.get("ticker", "?"))
+            rows.append(
+                f"<span style='display:inline-block;margin:1px 4px 1px 0;white-space:nowrap;'>"
+                f"{q}&nbsp;"
+                f"<span style='color:#cbd5e1;'>{label}</span>"
+                f"&nbsp;<span style='color:{rclr};font-size:0.9em;'>{r3:+.0f}%</span>"
+                f"<span style='color:{aclr};font-size:0.85em;'>{arr}</span>"
+                f"</span>"
+            )
+        ticker_rows_html = (
+            "<div style='border-top:1px solid #334155;margin-top:7px;padding-top:5px;"
+            "font-size:0.63em;line-height:1.8;'>"
+            + "".join(rows)
+            + "</div>"
+        )
+
     col.markdown(
-        f"<div style='padding:10px 10px;border-radius:10px;background:#1e293b;"
-        f"border:1.5px solid {border_clr}55;min-height:105px;'>"
+        f"<div style='padding:10px 10px 8px;border-radius:10px;background:#1e293b;"
+        f"border:1.5px solid {border_clr}55;'>"
         # 헤더
         f"<div style='font-size:0.71em;color:#94a3b8;margin-bottom:3px;'>"
         f"#{rank}&nbsp;{cl['name']}{badge}</div>"
@@ -6284,9 +6312,11 @@ def _render_cluster_card(col, cl: dict, rank: int):
         f"<div style='background:#0f172a;border-radius:3px;height:5px;margin-bottom:5px;'>"
         f"<div style='width:{bar_pct}%;height:5px;background:{main_clr};border-radius:3px;'>"
         f"</div></div>"
-        # 4분면 분포
+        # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
-        f"</div>",
+        # ETF 상세
+        + ticker_rows_html
+        + f"</div>",
         unsafe_allow_html=True,
     )
 
@@ -6308,17 +6338,22 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         rsmom = r.get("RS모멘텀", np.nan)
         quad  = str(r.get("사분면", "-"))
         r1m   = r.get("1개월수익률", np.nan)
+        # 섹터명 우선, 없으면 ticker 코드 그대로
+        name  = str(r.get("섹터", r.get("name", t)))
         if finite_num(rs3m) and finite_num(rsmom):
             t2[t] = {
                 "rs3m":  float(rs3m),
                 "rsmom": float(rsmom),
                 "quad":  quad,
                 "r1m":   float(r1m) if finite_num(r1m) else float("nan"),
+                "name":  name,
+                "ticker": t,
             }
 
     cl_list = []
     for cl_name, cl_tickers in clusters.items():
-        matched = [t2[t.upper()] for t in cl_tickers if t.upper() in t2]
+        matched = [{"ticker": t.upper(), **t2[t.upper()]}
+                   for t in cl_tickers if t.upper() in t2]
         if not matched:
             continue
         n         = len(matched)
@@ -6339,10 +6374,14 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         )
         heat = avg_rs3m * 0.40 + avg_rsmom * 0.60
 
+        # RS 강한 순으로 정렬해서 카드 상세에 표시
+        tickers_detail = sorted(matched, key=lambda x: x["rs3m"], reverse=True)
+
         cl_list.append({
             "name": cl_name, "rs3m": avg_rs3m, "rsmom": avg_rsmom,
             "r1m": avg_r1m, "qcnt": qcnt, "n": n,
             "pos_frac": pos_frac, "is_surging": is_surging, "heat": heat,
+            "tickers": tickers_detail,
         })
 
     cl_list.sort(key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0), reverse=True)
