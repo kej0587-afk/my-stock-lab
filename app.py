@@ -6225,6 +6225,186 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
                     st.warning(msg)
 
 
+def _render_cluster_card(col, cl: dict, rank: int):
+    """클러스터 카드 단위 HTML 렌더링."""
+    rs3m   = cl["rs3m"]
+    rsmom  = cl["rsmom"]
+    is_sur = cl["is_surging"]
+    qcnt   = cl["qcnt"]
+    n      = cl["n"]
+
+    # ── 강도 색상 ──
+    if   rs3m > 0.08: main_clr = "#22c55e"
+    elif rs3m > 0.02: main_clr = "#86efac"
+    elif rs3m > -0.02: main_clr = "#fbbf24"
+    else:              main_clr = "#ef4444"
+    border_clr = "#f97316" if is_sur else main_clr
+
+    # ── RS 방향 ──
+    if   rsmom > 0.02: mom_clr, mom_sym = "#22c55e", "↑"
+    elif rsmom > -0.02: mom_clr, mom_sym = "#fbbf24", "→"
+    else:               mom_clr, mom_sym = "#ef4444",  "↓"
+
+    # ── 4분면 도트 ──
+    QDOT = {"주도": "🟢", "개선": "🔵", "약화": "🟠", "소외": "🔴"}
+    quad_str = " ".join(f"{QDOT[q]}{qcnt[q]}" for q in ["주도", "개선", "약화", "소외"] if qcnt.get(q, 0))
+
+    # ── 배지 ──
+    badge = (" <span style='background:#f97316;color:#fff;font-size:0.60em;"
+             "padding:1px 5px;border-radius:3px;'>🔥부상</span>") if is_sur else ""
+
+    # ── 강도 막대 (RS -20%~+30% → 0~100%) ──
+    bar_pct = min(100, max(4, int((rs3m + 0.20) / 0.50 * 100)))
+
+    # ── 1M 보조 수치 ──
+    r1m = cl.get("r1m", float("nan"))
+    r1m_html = ""
+    if finite_num(r1m):
+        r1m_clr = "#22c55e" if r1m > 0 else "#ef4444"
+        r1m_html = (f"<span style='color:{r1m_clr};font-size:0.68em;'>"
+                    f"&nbsp;1M {r1m*100:+.1f}%</span>")
+
+    col.markdown(
+        f"<div style='padding:10px 10px;border-radius:10px;background:#1e293b;"
+        f"border:1.5px solid {border_clr}55;min-height:105px;'>"
+        # 헤더
+        f"<div style='font-size:0.71em;color:#94a3b8;margin-bottom:3px;'>"
+        f"#{rank}&nbsp;{cl['name']}{badge}</div>"
+        # RS 강도
+        f"<div style='font-size:1.05em;font-weight:700;color:{main_clr};'>"
+        f"{rs3m*100:+.1f}%{r1m_html}</div>"
+        # RS 방향
+        f"<div style='font-size:0.78em;color:{mom_clr};margin-bottom:5px;'>"
+        f"{mom_sym}&nbsp;RS방향&nbsp;{rsmom*100:+.1f}%</div>"
+        # 막대
+        f"<div style='background:#0f172a;border-radius:3px;height:5px;margin-bottom:5px;'>"
+        f"<div style='width:{bar_pct}%;height:5px;background:{main_clr};border-radius:3px;'>"
+        f"</div></div>"
+        # 4분면 분포
+        f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_cluster_heatmap_enhanced(rotation_df, clusters: dict):
+    """
+    클러스터 강도 패널 v2 — RS강도·방향·부상감지 통합.
+
+    rotation_df: calculate_rotation_df(RS_3m 컬럼) 또는
+                 calculate_sector_rotation_df(RS(3M) 컬럼) 결과 모두 지원.
+    clusters   : SECTOR_CLUSTERS dict  {클러스터명: [티커목록]}
+
+    부상(🔥) 조건:
+      - RS모멘텀 ≥ +4%  (빠른 방향 전환)  +  아직 지배적이지 않은 상태(RS<20%)
+      - 또는: RS모멘텀 ≥ +2%  +  과반(≥50%) 이상 개선/주도 사분면
+      → 3M 절대 강도는 약해도 최근 돈이 들어오기 시작한 섹터 조기 포착
+    """
+    if not clusters or rotation_df is None or rotation_df.empty:
+        return
+
+    # ── 컬럼명 정규화 (두 가지 포맷 통일) ─────────────────────────
+    df = rotation_df.copy()
+    if "RS_3m" in df.columns and "RS(3M)" not in df.columns:
+        df["RS(3M)"] = df["RS_3m"]
+    if "로테이션" in df.columns and "사분면" not in df.columns:
+        df["사분면"] = df["로테이션"]
+    if "1개월수익률" not in df.columns:
+        df["1개월수익률"] = np.nan
+
+    # ── 티커별 지표 맵 ─────────────────────────────────────────────
+    t2 = {}
+    for _, r in df.iterrows():
+        t = str(r.get("Ticker", "")).upper()
+        rs3m  = r.get("RS(3M)",  np.nan)
+        rsmom = r.get("RS모멘텀", np.nan)
+        quad  = str(r.get("사분면", "-"))
+        r1m   = r.get("1개월수익률", np.nan)
+        if finite_num(rs3m) and finite_num(rsmom):
+            t2[t] = {
+                "rs3m":  float(rs3m),
+                "rsmom": float(rsmom),
+                "quad":  quad,
+                "r1m":   float(r1m) if finite_num(r1m) else float("nan"),
+            }
+
+    if not t2:
+        return
+
+    # ── 클러스터별 집계 ────────────────────────────────────────────
+    cl_list = []
+    for cl_name, cl_tickers in clusters.items():
+        matched = [t2[t.upper()] for t in cl_tickers if t.upper() in t2]
+        if not matched:
+            continue
+        n         = len(matched)
+        avg_rs3m  = float(np.mean([m["rs3m"]  for m in matched]))
+        avg_rsmom = float(np.mean([m["rsmom"] for m in matched]))
+        r1m_vals  = [m["r1m"] for m in matched if finite_num(m["r1m"])]
+        avg_r1m   = float(np.mean(r1m_vals)) if r1m_vals else float("nan")
+
+        qcnt = {"주도": 0, "개선": 0, "약화": 0, "소외": 0}
+        for m in matched:
+            if m["quad"] in qcnt:
+                qcnt[m["quad"]] += 1
+        pos_frac = (qcnt["주도"] + qcnt["개선"]) / n
+
+        # 부상 감지
+        is_surging = (
+            (avg_rsmom >= 0.04 and avg_rs3m < 0.20)
+            or (avg_rsmom >= 0.02 and pos_frac >= 0.50 and avg_rs3m < 0.15)
+        )
+
+        # 랭킹 점수: RS방향 가중(60%) + RS강도(40%)
+        heat = avg_rs3m * 0.40 + avg_rsmom * 0.60
+
+        cl_list.append({
+            "name":       cl_name,
+            "rs3m":       avg_rs3m,
+            "rsmom":      avg_rsmom,
+            "r1m":        avg_r1m,
+            "qcnt":       qcnt,
+            "n":          n,
+            "pos_frac":   pos_frac,
+            "is_surging": is_surging,
+            "heat":       heat,
+        })
+
+    if not cl_list:
+        return
+
+    # 부상 클러스터에 랭킹 보너스
+    cl_list.sort(
+        key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0),
+        reverse=True,
+    )
+
+    # ── 헤더 + 부상 요약 ───────────────────────────────────────────
+    st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+    surging = [c for c in cl_list if c["is_surging"]]
+    if surging:
+        names = "·".join(f"**{c['name']}**" for c in surging)
+        st.caption(
+            f"🔥 새로 부상하는 군: {names}  "
+            "— RS 방향 전환 + 단기 가속 감지. 아직 3M RS가 낮아도 돈이 들어오기 시작한 구간."
+        )
+    else:
+        st.caption("🔵 주도 = 지금 돈 유입 중 &nbsp;|&nbsp; 🟢 개선 = 다음 주도 후보 "
+                   "&nbsp;|&nbsp; 🔥부상 = RS방향 급반전, 단기 조기 진입 구간")
+
+    # ── 3열 그리드 렌더 ────────────────────────────────────────────
+    n_cols   = min(len(cl_list), 3)
+    n_rows   = math.ceil(len(cl_list) / n_cols)
+    for row_i in range(n_rows):
+        cols = st.columns(n_cols)
+        for col_i in range(n_cols):
+            idx = row_i * n_cols + col_i
+            if idx >= len(cl_list):
+                break
+            _render_cluster_card(cols[col_i], cl_list[idx], rank=idx + 1)
+    st.write("")
+
+
 def render_rotation_panel(flow_df: pd.DataFrame):
     """섹터 로테이션 4분면 차트 + 테이블."""
     st.markdown("#### 🔄 섹터 로테이션 맵")
@@ -6234,39 +6414,7 @@ def render_rotation_panel(flow_df: pd.DataFrame):
     )
 
     rot_df = calculate_rotation_df(flow_df)
-    # ── Task 4: 클러스터 히트바 ─────────────────────────────────────────────
-    if SECTOR_CLUSTERS and rot_df is not None and not rot_df.empty:
-        _ticker_to_rs = dict(zip(rot_df["Ticker"].astype(str).str.upper(),
-                                  rot_df["RS_3m"].astype(float)))
-        cluster_rows = []
-        for cl_name, cl_tickers in SECTOR_CLUSTERS.items():
-            rs_vals = [_ticker_to_rs[t.upper()] for t in cl_tickers
-                       if t.upper() in _ticker_to_rs]
-            if rs_vals:
-                avg_rs = float(np.mean(rs_vals))
-                best_t = cl_tickers[
-                    int(np.argmax([_ticker_to_rs.get(t.upper(), -99) for t in cl_tickers]))
-                ]
-                cluster_rows.append({"클러스터": cl_name, "평균RS": avg_rs, "대표티커": best_t})
-        if cluster_rows:
-            cl_df = pd.DataFrame(cluster_rows).sort_values("평균RS", ascending=False)
-            st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
-            cl_cols = st.columns(len(cl_df))
-            for col, (_, row) in zip(cl_cols, cl_df.iterrows()):
-                _rs = row["평균RS"]
-                _color = "#22c55e" if _rs > 0.05 else ("#ea580c" if _rs > 0 else "#dc2626")
-                _arrow = "▲" if _rs > 0.05 else ("▶" if _rs > 0 else "▼")
-                col.markdown(
-                    f"<div style='text-align:center;padding:8px 4px;border-radius:8px;"
-                    f"background:#1e293b;border:1px solid {_color}44;'>"
-                    f"<div style='font-size:0.78em;color:#94a3b8;'>{row['클러스터']}</div>"
-                    f"<div style='font-size:1.1em;font-weight:700;color:{_color};'>"
-                    f"{_arrow} {_rs*100:+.1f}%</div>"
-                    f"<div style='font-size:0.72em;color:#64748b;'>{row['대표티커']}</div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            st.write("")
+    render_cluster_heatmap_enhanced(rot_df, SECTOR_CLUSTERS)
     if rot_df is None or rot_df.empty:
         st.info("로테이션 데이터를 계산할 수 없습니다.")
         return
@@ -18174,36 +18322,7 @@ def render_today_market_flow_panel(snapshot=None):
         "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200"
     )
 
-    # ── 클러스터 히트바 ───────────────────────────────────────────────
-    if SECTOR_CLUSTERS and not sector_rotation_df.empty:
-        _t2rs = {}
-        for _, _rr in sector_rotation_df.iterrows():
-            _t = str(_rr.get("Ticker", "")).upper()
-            _rs = _rr.get("RS(3M)", np.nan)
-            if finite_num(_rs):
-                _t2rs[_t] = float(_rs)
-        _cl_rows = []
-        for _cl_name, _cl_tickers in SECTOR_CLUSTERS.items():
-            _rs_vals = [_t2rs[t.upper()] for t in _cl_tickers if t.upper() in _t2rs]
-            if _rs_vals:
-                _cl_rows.append({"클러스터": _cl_name, "평균RS": float(np.mean(_rs_vals))})
-        if _cl_rows:
-            _cl_df = pd.DataFrame(_cl_rows).sort_values("평균RS", ascending=False)
-            st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
-            _cl_cols = st.columns(len(_cl_df))
-            for _col, (_, _crow) in zip(_cl_cols, _cl_df.iterrows()):
-                _rs = _crow["평균RS"]
-                _clr = "#22c55e" if _rs > 0.05 else ("#ea580c" if _rs > 0 else "#dc2626")
-                _arr = "▲" if _rs > 0.05 else ("▶" if _rs > 0 else "▼")
-                _col.markdown(
-                    f"<div style='text-align:center;padding:8px 4px;border-radius:8px;"
-                    f"background:#1e293b;border:1px solid {_clr}44;'>"
-                    f"<div style='font-size:0.78em;color:#94a3b8;'>{_crow['클러스터']}</div>"
-                    f"<div style='font-size:1.1em;font-weight:700;color:{_clr};'>"
-                    f"{_arr} {_rs*100:+.1f}%</div></div>",
-                    unsafe_allow_html=True,
-                )
-            st.write("")
+    render_cluster_heatmap_enhanced(sector_rotation_df, SECTOR_CLUSTERS)
 
     _rot_tab_labels = ["한국섹터", "미국섹터", "테마종목"]
     _rot_tabs = st.tabs(_rot_tab_labels)
