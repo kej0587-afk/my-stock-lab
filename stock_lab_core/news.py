@@ -7,6 +7,7 @@ import http.cookiejar
 import json
 import threading
 import time
+import urllib.error
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -107,62 +108,82 @@ def _get_yahoo_crumb() -> str:
         return _yf_crumb
 
 
+def _parse_fd_to_dict(fd: dict) -> dict:
+    """financialData 필드를 추출해 평탄화된 dict 반환."""
+    def _raw(field):
+        v = fd.get(field)
+        return v.get("raw") if isinstance(v, dict) else v
+
+    return {
+        "targetMeanPrice":         _raw("targetMeanPrice"),
+        "targetMedianPrice":       _raw("targetMedianPrice"),
+        "targetHighPrice":         _raw("targetHighPrice"),
+        "targetLowPrice":          _raw("targetLowPrice"),
+        "numberOfAnalystOpinions": _raw("numberOfAnalystOpinions"),
+        "recommendationMean":      _raw("recommendationMean"),
+        "recommendationKey":       fd.get("recommendationKey"),
+        "currentPrice":            _raw("currentPrice"),
+        "regularMarketPrice":      _raw("currentPrice"),
+    }
+
+
+def _try_one_host(host: str, ticker: str, crumb: str) -> dict | None:
+    """
+    지정 호스트(query1/query2)로 v10 quoteSummary 시도.
+    성공 → dict 반환 / 401 → None 반환(크럼 갱신 신호) / 기타 오류 → {} 반환
+    """
+    crumb_param = f"&crumb={urllib.parse.quote(crumb)}" if crumb else ""
+    url = (
+        f"https://{host}.finance.yahoo.com/v10/finance/quoteSummary/"
+        f"{urllib.parse.quote(ticker)}"
+        f"?modules=financialData{crumb_param}"
+    )
+    try:
+        req = urllib.request.Request(url, headers=_YF_ANALYST_HEADERS)
+        with _yf_opener.open(req, timeout=9) as resp:
+            data = json.loads(resp.read())
+        results = (data.get("quoteSummary") or {}).get("result") or []
+        if not results:
+            return {}
+        out = _parse_fd_to_dict(results[0].get("financialData", {}))
+        return out if any(v not in (None, "") for v in out.values()) else {}
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None  # 크럼 만료 신호
+        return {}
+    except Exception:
+        return {}
+
+
 def _fetch_yahoo_analyst_data(ticker: str) -> dict:
     """
-    Yahoo Finance v10 quoteSummary API 직접 호출로 애널리스트 데이터 조회.
-    yfinance SQLite lock 없음 — Streamlit Cloud 멀티스레드 환경에서도 안전.
-    반환 키: targetMeanPrice, targetMedianPrice, targetHighPrice, targetLowPrice,
-             numberOfAnalystOpinions, recommendationMean, recommendationKey, currentPrice
-    실패 시 빈 dict 반환.
+    Yahoo Finance v10 quoteSummary API 직접 호출 — yfinance SQLite lock 없음.
+
+    흐름:
+      1) 현재 크럼으로 query1 시도
+      2) 실패(401) → 크럼 갱신 후 query1 재시도
+      3) 그래도 401 또는 빈 결과 → query2 시도
+      4) 모두 실패 → {} 반환 (yfinance 폴백으로 이어짐)
     """
     crumb = _get_yahoo_crumb()
-    crumb_param = f"&crumb={urllib.parse.quote(crumb)}" if crumb else ""
 
-    for host in ("query1", "query2"):
-        url = (
-            f"https://{host}.finance.yahoo.com/v10/finance/quoteSummary/"
-            f"{urllib.parse.quote(ticker)}"
-            f"?modules=financialData{crumb_param}"
-        )
-        try:
-            req = urllib.request.Request(url, headers=_YF_ANALYST_HEADERS)
-            with _yf_opener.open(req, timeout=7) as resp:
-                data = json.loads(resp.read())
+    # ── 1차 시도: query1 ─────────────────────────────────────────────────────
+    result = _try_one_host("query1", ticker, crumb)
+    if result:          # 유효 데이터
+        return result
+    if result is None:  # 401 → 크럼 갱신
+        with _yf_crumb_lock:
+            _yf_crumb_ts = 0.0
+        crumb = _get_yahoo_crumb()  # 새 크럼 획득
 
-            results = (data.get("quoteSummary") or {}).get("result") or []
-            if not results:
-                continue
+    # ── 2차 시도: query1 (갱신된 크럼) ─────────────────────────────────────
+    result = _try_one_host("query1", ticker, crumb)
+    if result:
+        return result
 
-            fd = results[0].get("financialData", {})
-
-            def _raw(field):
-                v = fd.get(field)
-                if isinstance(v, dict):
-                    return v.get("raw")
-                return v
-
-            out = {
-                "targetMeanPrice":           _raw("targetMeanPrice"),
-                "targetMedianPrice":         _raw("targetMedianPrice"),
-                "targetHighPrice":           _raw("targetHighPrice"),
-                "targetLowPrice":            _raw("targetLowPrice"),
-                "numberOfAnalystOpinions":   _raw("numberOfAnalystOpinions"),
-                "recommendationMean":        _raw("recommendationMean"),
-                "recommendationKey":         fd.get("recommendationKey"),
-                "currentPrice":              _raw("currentPrice"),
-                "regularMarketPrice":        _raw("currentPrice"),
-            }
-            # 유효한 값이 하나라도 있으면 반환
-            if any(v not in (None, "") for v in out.values()):
-                return out
-
-        except Exception:
-            # 401이면 크럼 갱신 후 1회 재시도
-            with _yf_crumb_lock:
-                _yf_crumb_ts = 0.0  # 강제 만료
-            break
-
-    return {}
+    # ── 3차 시도: query2 ────────────────────────────────────────────────────
+    result = _try_one_host("query2", ticker, crumb)
+    return result or {}
 
 
 # -------------------------------------------------
