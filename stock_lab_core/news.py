@@ -3,6 +3,10 @@
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import html
+import http.cookiejar
+import json
+import threading
+import time
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -37,6 +41,129 @@ from datetime import date as _date_cls, timedelta as _td_cls
 
 def finite_num(x):
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
+
+
+# ── Yahoo Finance 크럼(crumb) 인증 캐시 ─────────────────────────────────────
+# v10 quoteSummary API는 쿠키+크럼 없이 호출하면 401 반환.
+# 모듈 레벨에서 세션(CookieJar)과 크럼을 캐싱해 재사용.
+
+_YF_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+_YF_ANALYST_HEADERS = {
+    "User-Agent": _YF_UA,
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://finance.yahoo.com/",
+}
+
+_yf_crumb_lock = threading.Lock()
+_yf_crumb: str = ""
+_yf_crumb_ts: float = 0.0
+_yf_cookie_jar = http.cookiejar.CookieJar()
+_yf_opener = urllib.request.build_opener(
+    urllib.request.HTTPCookieProcessor(_yf_cookie_jar)
+)
+_YF_CRUMB_TTL = 3600  # 1시간마다 크럼 갱신
+
+
+def _refresh_yahoo_crumb() -> str:
+    """Yahoo Finance 쿠키+크럼 획득. 실패 시 빈 문자열 반환."""
+    global _yf_crumb, _yf_crumb_ts
+    try:
+        # Step 1: fc.yahoo.com → 쿠키 세팅
+        try:
+            _yf_opener.open(
+                urllib.request.Request("https://fc.yahoo.com", headers={"User-Agent": _YF_UA}),
+                timeout=4,
+            )
+        except Exception:
+            pass  # 쿠키 없어도 크럼 시도
+        # Step 2: crumb 획득
+        with _yf_opener.open(
+            urllib.request.Request(
+                "https://query1.finance.yahoo.com/v1/test/getcrumb",
+                headers={"User-Agent": _YF_UA},
+            ),
+            timeout=4,
+        ) as resp:
+            crumb = resp.read().decode("utf-8").strip()
+        if crumb:
+            _yf_crumb = crumb
+            _yf_crumb_ts = time.time()
+            return crumb
+    except Exception:
+        pass
+    return _yf_crumb  # 갱신 실패 시 기존 크럼 재사용
+
+
+def _get_yahoo_crumb() -> str:
+    """크럼을 반환. TTL 만료 시 자동 갱신. 스레드 안전."""
+    with _yf_crumb_lock:
+        if not _yf_crumb or (time.time() - _yf_crumb_ts) > _YF_CRUMB_TTL:
+            return _refresh_yahoo_crumb()
+        return _yf_crumb
+
+
+def _fetch_yahoo_analyst_data(ticker: str) -> dict:
+    """
+    Yahoo Finance v10 quoteSummary API 직접 호출로 애널리스트 데이터 조회.
+    yfinance SQLite lock 없음 — Streamlit Cloud 멀티스레드 환경에서도 안전.
+    반환 키: targetMeanPrice, targetMedianPrice, targetHighPrice, targetLowPrice,
+             numberOfAnalystOpinions, recommendationMean, recommendationKey, currentPrice
+    실패 시 빈 dict 반환.
+    """
+    crumb = _get_yahoo_crumb()
+    crumb_param = f"&crumb={urllib.parse.quote(crumb)}" if crumb else ""
+
+    for host in ("query1", "query2"):
+        url = (
+            f"https://{host}.finance.yahoo.com/v10/finance/quoteSummary/"
+            f"{urllib.parse.quote(ticker)}"
+            f"?modules=financialData{crumb_param}"
+        )
+        try:
+            req = urllib.request.Request(url, headers=_YF_ANALYST_HEADERS)
+            with _yf_opener.open(req, timeout=7) as resp:
+                data = json.loads(resp.read())
+
+            results = (data.get("quoteSummary") or {}).get("result") or []
+            if not results:
+                continue
+
+            fd = results[0].get("financialData", {})
+
+            def _raw(field):
+                v = fd.get(field)
+                if isinstance(v, dict):
+                    return v.get("raw")
+                return v
+
+            out = {
+                "targetMeanPrice":           _raw("targetMeanPrice"),
+                "targetMedianPrice":         _raw("targetMedianPrice"),
+                "targetHighPrice":           _raw("targetHighPrice"),
+                "targetLowPrice":            _raw("targetLowPrice"),
+                "numberOfAnalystOpinions":   _raw("numberOfAnalystOpinions"),
+                "recommendationMean":        _raw("recommendationMean"),
+                "recommendationKey":         fd.get("recommendationKey"),
+                "currentPrice":              _raw("currentPrice"),
+                "regularMarketPrice":        _raw("currentPrice"),
+            }
+            # 유효한 값이 하나라도 있으면 반환
+            if any(v not in (None, "") for v in out.values()):
+                return out
+
+        except Exception:
+            # 401이면 크럼 갱신 후 1회 재시도
+            with _yf_crumb_lock:
+                _yf_crumb_ts = 0.0  # 강제 만료
+            break
+
+    return {}
+
 
 # -------------------------------------------------
 # 3. 뉴스 듀얼 모터
@@ -497,38 +624,56 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
 
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_analyst_snapshot(ticker):
-    try:
-        info = yf.Ticker(ticker).get_info()
-    except Exception as e:
-        info = {}
-
-    if not isinstance(info, dict):
-        info = {}
-
     keys = [
         "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
         "numberOfAnalystOpinions", "recommendationMean", "recommendationKey",
         "currentPrice", "regularMarketPrice",
     ]
-    data = {key: info.get(key) for key in keys}
-    has_any = any(data.get(key) not in [None, ""] for key in keys)
+    data = {key: None for key in keys}
 
-    # ── 한국 종목은 yfinance가 현재가만 주고 목표가/의견은 비우는 경우가 많아 네이버로 보완 ──
     is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
-    has_target = any(finite_num(data.get(key)) and clean_float(data.get(key), 0) > 0 for key in [
-        "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
-    ])
-    has_opinion = (clean_int(data.get("numberOfAnalystOpinions"), 0) or 0) > 0 or bool(str(data.get("recommendationKey") or "").strip())
 
-    if is_kr and (not has_target or not has_opinion):
+    # ── 1차: Yahoo Finance v10 직접 API (SQLite lock 없음, Streamlit Cloud 안전) ──
+    if not is_kr:
+        direct = _fetch_yahoo_analyst_data(ticker)
+        if direct:
+            for key in keys:
+                if direct.get(key) not in (None, ""):
+                    data[key] = direct[key]
+
+    # ── 2차: yfinance get_info() 폴백 ────────────────────────────────────────
+    #  직접 API에서 목표가를 못 받았거나 한국 종목이면 yfinance 시도
+    has_target = any(
+        finite_num(data.get(k)) and clean_float(data.get(k), 0) > 0
+        for k in ["targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice"]
+    )
+    if not has_target:
+        try:
+            info = yf.Ticker(ticker).get_info() or {}
+            if isinstance(info, dict):
+                for key in keys:
+                    if data.get(key) in (None, "") and info.get(key) not in (None, ""):
+                        data[key] = info[key]
+        except Exception:
+            pass
+
+    # ── 3차: 한국 종목은 네이버로 보완 ──────────────────────────────────────
+    has_target2 = any(
+        finite_num(data.get(k)) and clean_float(data.get(k), 0) > 0
+        for k in ["targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice"]
+    )
+    has_opinion = (clean_int(data.get("numberOfAnalystOpinions"), 0) or 0) > 0 or bool(
+        str(data.get("recommendationKey") or "").strip()
+    )
+    if is_kr and (not has_target2 or not has_opinion):
         naver = fetch_naver_kr_snapshot(ticker)
         if naver.get("ok"):
             nd = naver.get("data", {})
             for key in keys:
-                if data.get(key) in [None, ""] and nd.get(key) not in [None, ""]:
+                if data.get(key) in (None, "") and nd.get(key) not in (None, ""):
                     data[key] = nd[key]
-            has_any = any(data.get(key) not in [None, ""] for key in keys)
 
+    has_any = any(data.get(key) not in (None, "") for key in keys)
     return {"ok": has_any, "data": data, "reason": "" if has_any else "목표가/투자의견 데이터 없음"}
 
 
