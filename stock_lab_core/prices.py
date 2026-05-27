@@ -1,5 +1,6 @@
 """Price loading and latest-price cache helpers for Stock Lab."""
 
+import json
 import re
 import urllib.request
 
@@ -167,14 +168,48 @@ def extract_download_close_series(data, ticker):
     return pd.Series(dtype=float)
 
 
+def _fetch_yahoo_quote(ticker: str) -> float:
+    """
+    Yahoo Finance chart API를 직접 호출해 현재가를 조회합니다.
+    yfinance SQLite tz 캐시 lock 없이 동작 — Streamlit Cloud 병렬 환경에서도 안전.
+    regularMarketPrice (정규장 현재가) → currentPrice 순으로 시도.
+    """
+    try:
+        url = (
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.request.quote(ticker)}"
+            "?interval=1m&range=1d&includePrePost=true"
+        )
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        meta = data["chart"]["result"][0]["meta"]
+        for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
+            val = meta.get(key)
+            if val and float(val) > 0:
+                return float(val)
+    except Exception:
+        pass
+    return 0.0
+
+
 def _fetch_yf_fast_info_price(ticker: str) -> float:
     """
     yf.Ticker.fast_info — 프리마켓/애프터마켓 포함 최신가.
-    우선순위: last_price(프리·정규·애프터 통합) → pre_market_price → post_market_price → regular_market_price
+    우선순위: regular_market_price(정규장) → pre/post_market_price → last_price
     """
     try:
         fi = yf.Ticker(ticker).fast_info
-        for attr in ("last_price", "pre_market_price", "post_market_price", "regular_market_price"):
+        for attr in ("regular_market_price", "last_price", "pre_market_price", "post_market_price"):
             try:
                 val = getattr(fi, attr, None)
                 if val is not None and float(val) > 0:
@@ -223,8 +258,12 @@ def load_latest_price(ticker: str) -> float:
         if price > 0:
             return price
     else:
-        # 미국/기타: fast_info 우선
+        # 미국/기타: fast_info → Yahoo 직접 API → yfinance 다운로드 순
         price = _fetch_yf_fast_info_price(ticker)
+        if price > 0:
+            return price
+        # fast_info 실패(SQLite lock 등) 시 Yahoo Finance API 직접 조회 (캐시 없음, 안전)
+        price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
         price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
@@ -324,10 +363,12 @@ def load_latest_prices_batch(tickers) -> dict:
         except Exception:
             pass
 
-        # 실패 종목은 fast_info 개별 조회
+        # 실패 종목: fast_info → Yahoo 직접 API 순으로 개별 조회
         us_missing = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for t in us_missing:
             p = _fetch_yf_fast_info_price(t)
+            if p <= 0:
+                p = _fetch_yahoo_quote(t)  # SQLite lock 없이 동작하는 직접 조회
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
