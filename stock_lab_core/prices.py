@@ -2,11 +2,18 @@
 
 import json
 import re
+import threading
 import urllib.request
 
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+
+# ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
+# Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
+# SQLite tz 캐시에 동시 쓰기 → "database is locked" 오류 발생.
+# 모듈 레벨 Lock으로 yfinance 호출을 직렬화해 방지.
+_YF_LOCK = threading.Lock()
 
 _NAVER_HEADERS = {
     "User-Agent": (
@@ -168,37 +175,76 @@ def extract_download_close_series(data, ticker):
     return pd.Series(dtype=float)
 
 
-def _fetch_yahoo_quote(ticker: str) -> float:
+_YQ_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://finance.yahoo.com/",
+}
+
+
+def _last_candle_close(result: dict) -> float:
     """
-    Yahoo Finance chart API를 직접 호출해 현재가를 조회합니다.
-    yfinance SQLite tz 캐시 lock 없이 동작 — Streamlit Cloud 병렬 환경에서도 안전.
-    regularMarketPrice (정규장 현재가) → currentPrice 순으로 시도.
+    Yahoo v8 chart 응답에서 가장 최근 1분봉 Close 값을 꺼냅니다.
+    meta.regularMarketPrice 는 종종 이전 세션 종가를 캐싱하므로 캔들이 더 정확합니다.
     """
     try:
-        url = (
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{urllib.request.quote(ticker)}"
-            "?interval=1m&range=1d&includePrePost=true"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-        meta = data["chart"]["result"][0]["meta"]
-        for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
-            val = meta.get(key)
-            if val and float(val) > 0:
-                return float(val)
+        closes = result["indicators"]["quote"][0].get("close") or []
+        # null(None) 제거 후 마지막 값
+        valid = [c for c in closes if c is not None and float(c) > 0]
+        if valid:
+            return float(valid[-1])
     except Exception:
         pass
+    return 0.0
+
+
+def _fetch_yahoo_quote(ticker: str) -> float:
+    """
+    Yahoo Finance chart API 직접 호출 — yfinance SQLite lock 없음.
+
+    우선순위:
+      1) 최근 1분봉 캔들의 마지막 Close  ← 진짜 실시간 체결가
+      2) meta.regularMarketPrice          ← Yahoo 캐시값(이전 종가일 수 있음)
+      3) meta.currentPrice / chartPreviousClose
+
+    query1 실패 시 query2 로 재시도.
+    """
+    for host in ("query1", "query2"):
+        try:
+            url = (
+                f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+                f"{urllib.request.quote(ticker)}"
+                "?interval=1m&range=1d&includePrePost=true"
+            )
+            req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read())
+
+            results = (data.get("chart") or {}).get("result") or []
+            if not results:
+                continue
+            result = results[0]
+            meta = result.get("meta", {})
+
+            # 1) 최근 캔들 Close (가장 정확한 실시간 체결가)
+            price = _last_candle_close(result)
+            if price > 0:
+                return price
+
+            # 2) meta 필드 폴백
+            for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
+                val = meta.get(key)
+                if val and float(val) > 0:
+                    return float(val)
+
+        except Exception:
+            continue
+
     return 0.0
 
 
@@ -206,9 +252,11 @@ def _fetch_yf_fast_info_price(ticker: str) -> float:
     """
     yf.Ticker.fast_info — 프리마켓/애프터마켓 포함 최신가.
     우선순위: regular_market_price(정규장) → pre/post_market_price → last_price
+    _YF_LOCK 으로 SQLite tz 캐시 동시 쓰기 방지.
     """
     try:
-        fi = yf.Ticker(ticker).fast_info
+        with _YF_LOCK:
+            fi = yf.Ticker(ticker).fast_info
         for attr in ("regular_market_price", "last_price", "pre_market_price", "post_market_price"):
             try:
                 val = getattr(fi, attr, None)
@@ -222,11 +270,14 @@ def _fetch_yf_fast_info_price(ticker: str) -> float:
 
 
 def _fetch_yf_download_price(ticker: str, interval: str = "5m", prepost: bool = True) -> float:
+    """_YF_LOCK 으로 SQLite tz 캐시 동시 쓰기 방지. threads=False 로 내부 병렬 차단."""
     try:
-        df = yf.download(
-            ticker, period="1d", interval=interval,
-            progress=False, prepost=prepost, auto_adjust=False,
-        )
+        with _YF_LOCK:
+            df = yf.download(
+                ticker, period="1d", interval=interval,
+                progress=False, prepost=prepost, auto_adjust=False,
+                threads=False,
+            )
         price = get_latest_close_from_series(extract_download_close_series(df, ticker))
         return price if price > 0 else 0.0
     except Exception:
@@ -271,9 +322,13 @@ def _fetch_price_uncached(ticker: str) -> float:
         if price > 0:
             return price
 
-    # 공통 일봉 최종 폴백
+    # 공통 일봉 최종 폴백 (lock + threads=False)
     try:
-        df = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
+        with _YF_LOCK:
+            df = yf.download(
+                ticker, period="5d", interval="1d",
+                progress=False, auto_adjust=False, threads=False,
+            )
         if df.empty:
             return 0.0
         if isinstance(df.columns, pd.MultiIndex):
@@ -347,15 +402,16 @@ def load_latest_prices_batch(tickers) -> dict:
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
-        # 그래도 없으면 yfinance 5분봉
+        # 그래도 없으면 yfinance 5분봉 (lock + threads=False로 SQLite 충돌 방지)
         kr_still_missing = [t for t in kr_tickers if normalize_price_lookup_key(t) not in prices]
         if kr_still_missing:
             try:
-                data = yf.download(
-                    kr_still_missing if len(kr_still_missing) > 1 else kr_still_missing[0],
-                    period="1d", interval="5m", prepost=True,
-                    progress=False, group_by="ticker", threads=True, auto_adjust=False,
-                )
+                with _YF_LOCK:
+                    data = yf.download(
+                        kr_still_missing if len(kr_still_missing) > 1 else kr_still_missing[0],
+                        period="1d", interval="5m", prepost=True,
+                        progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                    )
                 if data is not None and not data.empty:
                     for t in kr_still_missing:
                         p = get_latest_close_from_series(extract_download_close_series(data, t))
@@ -364,28 +420,36 @@ def load_latest_prices_batch(tickers) -> dict:
             except Exception:
                 pass
 
-    # ── 미국/기타: yfinance 5분봉 + prepost ────────────────────────────
+    # ── 미국/기타: Yahoo 직접 API 우선 → yfinance 5분봉 폴백 ────────────
     if us_tickers:
-        try:
-            data = yf.download(
-                us_tickers if len(us_tickers) > 1 else us_tickers[0],
-                period="1d", interval="5m", prepost=True,
-                progress=False, group_by="ticker", threads=True, auto_adjust=False,
-            )
-            if data is not None and not data.empty:
-                for t in us_tickers:
-                    p = get_latest_close_from_series(extract_download_close_series(data, t))
-                    if p > 0:
-                        prices[normalize_price_lookup_key(t)] = p
-        except Exception:
-            pass
+        # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
+        for t in us_tickers:
+            p = _fetch_yahoo_quote(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
 
-        # 실패 종목: fast_info → Yahoo 직접 API 순으로 개별 조회
-        us_missing = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
-        for t in us_missing:
+        # 2차: Yahoo 직접 실패 종목만 yfinance 5분봉으로 보완
+        us_yf_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        if us_yf_needed:
+            try:
+                with _YF_LOCK:
+                    data = yf.download(
+                        us_yf_needed if len(us_yf_needed) > 1 else us_yf_needed[0],
+                        period="1d", interval="5m", prepost=True,
+                        progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                    )
+                if data is not None and not data.empty:
+                    for t in us_yf_needed:
+                        p = get_latest_close_from_series(extract_download_close_series(data, t))
+                        if p > 0:
+                            prices[normalize_price_lookup_key(t)] = p
+            except Exception:
+                pass
+
+        # 3차: 여전히 없는 종목은 fast_info
+        us_still_missing = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        for t in us_still_missing:
             p = _fetch_yf_fast_info_price(t)
-            if p <= 0:
-                p = _fetch_yahoo_quote(t)  # SQLite lock 없이 동작하는 직접 조회
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
@@ -393,11 +457,12 @@ def load_latest_prices_batch(tickers) -> dict:
     all_missing = [t for t in unique_tickers if normalize_price_lookup_key(t) not in prices]
     if all_missing:
         try:
-            fallback = yf.download(
-                all_missing if len(all_missing) > 1 else all_missing[0],
-                period="5d", interval="1d",
-                progress=False, group_by="ticker", threads=True, auto_adjust=False,
-            )
+            with _YF_LOCK:
+                fallback = yf.download(
+                    all_missing if len(all_missing) > 1 else all_missing[0],
+                    period="5d", interval="1d",
+                    progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                )
             if fallback is not None and not fallback.empty:
                 for t in all_missing:
                     p = get_latest_close_from_series(extract_download_close_series(fallback, t))
