@@ -94,7 +94,16 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
 
 @st.cache_data(ttl=300)
 def load_price_df(ticker, period="1y"):
-    df = yf.download(ticker, period=period, interval="1d", progress=False)
+    """
+    일봉 OHLCV 다운로드 (TTL=5분).
+    _YF_LOCK으로 yfinance 동시 호출 직렬화 — prefetch_price_data_parallel 같은
+    멀티스레드 환경에서 SQLite tz-cache 충돌("database is locked") 방지.
+    """
+    with _YF_LOCK:
+        df = yf.download(
+            ticker, period=period, interval="1d",
+            progress=False, threads=False,
+        )
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
@@ -105,7 +114,11 @@ def load_price_df(ticker, period="1y"):
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_usdkrw_rate():
     try:
-        df = yf.download("USDKRW=X", period="5d", interval="1d", progress=False, auto_adjust=False)
+        with _YF_LOCK:
+            df = yf.download(
+                "USDKRW=X", period="5d", interval="1d",
+                progress=False, auto_adjust=False, threads=False,
+            )
         if df is None or df.empty:
             return 0.0
         if isinstance(df.columns, pd.MultiIndex):
