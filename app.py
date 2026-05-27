@@ -6287,13 +6287,15 @@ def _render_cluster_card(col, cl: dict, rank: int):
     )
 
 
-def render_cluster_heatmap_enhanced(rotation_df, clusters: dict):
+def render_cluster_heatmap_enhanced(rotation_df, clusters: dict, top_n: int = 6):
     """
     클러스터 강도 패널 v2 — RS강도·방향·부상감지 통합.
 
     rotation_df: calculate_rotation_df(RS_3m 컬럼) 또는
                  calculate_sector_rotation_df(RS(3M) 컬럼) 결과 모두 지원.
     clusters   : SECTOR_CLUSTERS dict  {클러스터명: [티커목록]}
+    top_n      : 전체 클러스터 중 열기점수 상위 N개만 표시 (기본 6)
+                 지금 돈이 몰리는 섹터만 자동으로 표면에 올라옴
 
     부상(🔥) 조건:
       - RS모멘텀 ≥ +4%  (빠른 방향 전환)  +  아직 지배적이지 않은 상태(RS<20%)
@@ -6373,14 +6375,22 @@ def render_cluster_heatmap_enhanced(rotation_df, clusters: dict):
     if not cl_list:
         return
 
-    # 부상 클러스터에 랭킹 보너스
+    # 부상 클러스터에 랭킹 보너스 → 정렬
     cl_list.sort(
         key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0),
         reverse=True,
     )
 
+    total_all = len(cl_list)          # 전체 클러스터 수 (헤더 표시용)
+    cl_list   = cl_list[:top_n]       # 상위 N개만 표시
+
     # ── 헤더 + 부상 요약 ───────────────────────────────────────────
-    st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+    st.markdown(
+        f"##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나? "
+        f"<span style='font-size:0.72em;color:#64748b;font-weight:400;'>"
+        f"({total_all}개 중 상위 {len(cl_list)}개 자동표시)</span>",
+        unsafe_allow_html=True,
+    )
     surging = [c for c in cl_list if c["is_surging"]]
     if surging:
         names = "·".join(f"**{c['name']}**" for c in surging)
