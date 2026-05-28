@@ -5323,14 +5323,19 @@ def format_today_theme_rank_table(df, score_col="테마돈흐름점수"):
     if df is None or df.empty:
         return pd.DataFrame()
     view = df.copy()
-    for col in ["1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "거래량증가", "상승종목비율"]:
+    for col in [
+        "2주수익률", "1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률",
+        "가속도", "단기가속도", "거래량증가", "2주상승비율", "1개월상승비율",
+        "상승종목비율", "네이버테마상승비율",
+    ]:
         if col in view.columns:
             view[col] = view[col].apply(fmt_flow_pct)
     if score_col in view.columns:
         view[score_col] = view[score_col].apply(fmt_flow_score)
     cols = [
-        "테마", "하위테마", "대표주", score_col, "상태", "추격위험",
-        "3개월수익률", "상승종목비율", "가속도", "거래량증가", "구성종목",
+        "테마", "하위테마", "대표주", score_col, "테마판정", "상태", "추격위험",
+        "2주수익률", "1개월수익률", "3개월수익률", "2주상승비율", "상승종목비율",
+        "가속도", "단기가속도", "거래량증가", "네이버테마근거", "구성종목",
     ]
     return view[[c for c in cols if c in view.columns]]
 
@@ -7011,7 +7016,8 @@ def _build_rotation_reading(rotation_df) -> str:
         return ""
 
     leader        = rotation_df.iloc[0]
-    breadth_leader = rotation_df.sort_values("상승종목비율", ascending=False).iloc[0]
+    breadth_col = "2주상승비율" if "2주상승비율" in rotation_df.columns else "상승종목비율"
+    breadth_leader = rotation_df.sort_values(breadth_col, ascending=False).iloc[0]
     volume_leader  = rotation_df.sort_values("거래량증가", ascending=False, na_position="last").iloc[0]
     accel_leader   = rotation_df.sort_values("가속도", ascending=False, na_position="last").iloc[0]
     weak           = rotation_df.sort_values("테마돈흐름점수", ascending=True).iloc[0]
@@ -7021,6 +7027,7 @@ def _build_rotation_reading(rotation_df) -> str:
     vl_name = str(volume_leader["테마"])
     al_name = str(accel_leader["테마"])
     l_score = leader.get("테마돈흐름점수", np.nan)
+    l_signal = str(leader.get("테마판정", "") or "")
 
     pos_themes   = int((rotation_df["테마돈흐름점수"].fillna(-999) > 0).sum())
     accel_themes = int((rotation_df["가속도"].fillna(0) > 0).sum())
@@ -7033,18 +7040,21 @@ def _build_rotation_reading(rotation_df) -> str:
             f"<b>{l_name}</b>이 점수·상승 확산·가속도·거래량 모두 1위입니다. "
             f"3가지 축이 일치하는 강한 주도 테마 신호입니다."
             + (f" (스코어 {l_score:.1f})" if finite_num(l_score) else "")
+            + (f" 현재 판정은 <b>{l_signal}</b>입니다." if l_signal else "")
         )
     elif matches == 2:
         diff = [n for n in [bl_name, vl_name, al_name] if n != l_name]
         parts.append(
             f"점수 1위 <b>{l_name}</b>이 주요 지표 2개 이상에서 1위를 겸합니다. "
             + (f"단, {diff[0]}이 일부 지표에서 앞서고 있어 병행 모니터링을 권장합니다." if diff else "")
+            + (f" 현재 판정은 <b>{l_signal}</b>입니다." if l_signal else "")
         )
     else:
         parts.append(
             f"점수 1위 <b>{l_name}</b>, 확산 1위 <b>{bl_name}</b>, "
             f"가속 1위 <b>{al_name}</b>, 거래량 1위 <b>{vl_name}</b>가 서로 다릅니다. "
             f"테마 간 순환이 빠르게 전개 중이므로 각 테마의 지속성을 개별 확인합니다."
+            + (f" 현재 판정은 <b>{l_signal}</b>입니다." if l_signal else "")
         )
 
     # ── 2. 테마 폭 ─────────────────────────────────────────────────────
@@ -7742,16 +7752,25 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         return
 
     leader = rotation_df.iloc[0]
-    breadth_leader = rotation_df.sort_values("상승종목비율", ascending=False).iloc[0]
+    breadth_col = "2주상승비율" if "2주상승비율" in rotation_df.columns else "상승종목비율"
+    breadth_leader = rotation_df.sort_values(breadth_col, ascending=False).iloc[0]
     volume_leader = rotation_df.sort_values("거래량증가", ascending=False, na_position="last").iloc[0]
     weak = rotation_df.sort_values("테마돈흐름점수", ascending=True).iloc[0]
+    approach_count = (
+        int(rotation_df["테마판정"].isin(["진입검토", "부상감시"]).sum())
+        if "테마판정" in rotation_df.columns else 0
+    )
 
     st.markdown("#### 전체 테마 로테이션")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("돈흐름 1위", str(leader["테마"]), f"{leader['테마돈흐름점수']:.1f} pts")
-    c2.metric("확산 1위", str(breadth_leader["테마"]), fmt_flow_pct(breadth_leader["상승종목비율"]))
+    c1.metric(
+        "접근 후보 1위",
+        str(leader["테마"]),
+        f"{leader['테마돈흐름점수']:.1f} pts · {leader.get('테마판정', leader.get('상태', ''))}",
+    )
+    c2.metric("단기 확산 1위", str(breadth_leader["테마"]), fmt_flow_pct(breadth_leader[breadth_col]))
     c3.metric("거래량 1위", str(volume_leader["테마"]), fmt_flow_pct(volume_leader["거래량증가"]))
-    c4.metric("약한 테마", str(weak["테마"]), f"{weak['테마돈흐름점수']:.1f} pts")
+    c4.metric("접근 가능 테마", f"{approach_count}개", f"약세: {weak['테마']}")
 
     _rot_reading = _build_rotation_reading(rotation_df)
     st.markdown(
@@ -7759,7 +7778,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
 <div class='info-panel'>
 <b>📊 {market_label} 테마 로테이션 해석</b><br>
 {_rot_reading}
-<br><span style='color:#94a3b8;font-size:0.85em;'>테마돈흐름점수 = 1M×18 + 3M×36 + 6M×22 + 가속도×18 + 상승비율 보정 + 거래량 보정 - 쏠림 패널티 - 과열 패널티</span>
+<br><span style='color:#94a3b8;font-size:0.85em;'>테마돈흐름점수 = 2주/1개월 확인 + 3개월 주도력 + 가속도 + 확산 + 거래량 + 네이버 테마 보조 - 쏠림/과열/하락 패널티</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -7768,28 +7787,44 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         "전체 테마 돈흐름 점수 분해",
         rotation_df,
         score_col="테마돈흐름점수",
-        label_cols=["테마", "대표주", "상태"],
+        label_cols=["테마", "대표주", "테마판정", "상태"],
         top_n=10,
     )
 
     left, right = st.columns([1.05, 1])
     with left:
         chart_df = rotation_df.sort_values("테마돈흐름점수", ascending=True)
+        for _col, _default in {
+            "2주수익률": np.nan,
+            "1개월수익률": np.nan,
+            "테마판정": "",
+            "네이버테마근거": "",
+        }.items():
+            if _col not in chart_df.columns:
+                chart_df[_col] = _default
         colors = np.where(chart_df["테마돈흐름점수"] >= 0, "#22c55e", "#ef4444")
         fig_score = go.Figure(go.Bar(
             x=chart_df["테마돈흐름점수"],
             y=chart_df["테마"],
             orientation="h",
             marker_color=colors,
-            customdata=chart_df[["대표주", "3개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림"]],
+            customdata=chart_df[[
+                "대표주", "2주수익률", "1개월수익률", "3개월수익률",
+                "가속도", "상승종목비율", "거래량증가", "상위종목쏠림",
+                "테마판정", "네이버테마근거",
+            ]],
             hovertemplate=(
                 "<b>%{y}</b><br>"
                 "대표주: %{customdata[0]}<br>"
-                "3개월 평균: %{customdata[1]:.1%}<br>"
-                "가속도: %{customdata[2]:.1%}<br>"
-                "상승종목비율: %{customdata[3]:.1%}<br>"
-                "거래량증가: %{customdata[4]:.1%}<br>"
-                "상위쏠림: %{customdata[5]:.1%}<extra></extra>"
+                "판정: %{customdata[8]}<br>"
+                "2주 평균: %{customdata[1]:.1%}<br>"
+                "1개월 평균: %{customdata[2]:.1%}<br>"
+                "3개월 평균: %{customdata[3]:.1%}<br>"
+                "가속도: %{customdata[4]:.1%}<br>"
+                "상승종목비율: %{customdata[5]:.1%}<br>"
+                "거래량증가: %{customdata[6]:.1%}<br>"
+                "상위쏠림: %{customdata[7]:.1%}<br>"
+                "네이버 보조: %{customdata[9]}<extra></extra>"
             ),
         ))
         fig_score.add_vline(x=0, line_color="#94a3b8")
@@ -7819,10 +7854,11 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
                 showscale=True,
                 colorbar=dict(title="가속도"),
             ),
-            customdata=rotation_df[["대표주", "테마돈흐름점수", "거래량증가", "상위종목쏠림"]],
+            customdata=rotation_df[["대표주", "테마돈흐름점수", "거래량증가", "상위종목쏠림", "테마판정"]],
             hovertemplate=(
                 "<b>%{text}</b><br>"
                 "대표주: %{customdata[0]}<br>"
+                "판정: %{customdata[4]}<br>"
                 "6개월 평균: %{x:.1f}%<br>"
                 "3개월 평균: %{y:.1f}%<br>"
                 "점수: %{customdata[1]:.1f}<br>"
@@ -7844,11 +7880,18 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         st.plotly_chart(fig_quad, width='stretch')
 
     show_rotation = rotation_df.copy()
-    for col in ["1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률", "가속도", "상승종목비율", "거래량증가", "상위종목쏠림", "가격수준"]:
+    for col in [
+        "2주수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
+        "가속도", "단기가속도", "2주상승비율", "1개월상승비율", "상승종목비율",
+        "거래량증가", "상위종목쏠림", "가격수준", "네이버테마상승비율",
+    ]:
         if col not in show_rotation.columns:
             show_rotation[col] = np.nan
         show_rotation[col] = show_rotation[col].apply(fmt_flow_pct)
     show_rotation["테마돈흐름점수"] = show_rotation["테마돈흐름점수"].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
+    for col in ["점수_네이버테마", "점수_하락패널티"]:
+        if col in show_rotation.columns:
+            show_rotation[col] = show_rotation[col].apply(lambda x: "-" if not finite_num(x) else f"{x:.1f}")
     # 데이터 없는 컬럼 제거
     for _col in ["이전3개월수익률", "상대3개월수익률", "추격위험"]:
         if _col in show_rotation.columns:
@@ -7856,9 +7899,10 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
             if _vals.empty or (_vals.astype(str).str.strip() == "").all():
                 show_rotation.drop(columns=[_col], inplace=True)
     _rot_cols = [c for c in [
-        "테마", "계산종목수", "종목수", "대표주",
-        "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
-        "가속도", "상승종목비율", "거래량증가", "상위종목쏠림",
+        "테마", "계산종목수", "종목수", "대표주", "테마판정",
+        "2주수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
+        "가속도", "단기가속도", "2주상승비율", "상승종목비율", "거래량증가", "상위종목쏠림",
+        "점수_네이버테마", "점수_하락패널티", "네이버테마근거",
         "테마돈흐름점수", "상태",
     ] if c in show_rotation.columns]
     st.dataframe(
@@ -8133,14 +8177,16 @@ def render_image_theme_flow_section():
                 y=chart_df["하위테마"],
                 orientation="h",
                 marker_color=colors,
-                customdata=chart_df[["대표주", "3개월수익률", "6개월수익률", "가속도", "상태"]],
+                customdata=chart_df[["대표주", "2주수익률", "1개월수익률", "3개월수익률", "가속도", "단기가속도", "상태"]],
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     "대표주: %{customdata[0]}<br>"
-                    "3개월: %{customdata[1]:.1%}<br>"
-                    "6개월: %{customdata[2]:.1%}<br>"
-                    "가속도: %{customdata[3]:.1%}<br>"
-                    "상태: %{customdata[4]}<extra></extra>"
+                    "2주: %{customdata[1]:.1%}<br>"
+                    "1개월: %{customdata[2]:.1%}<br>"
+                    "3개월: %{customdata[3]:.1%}<br>"
+                    "가속도: %{customdata[4]:.1%}<br>"
+                    "단기가속도: %{customdata[5]:.1%}<br>"
+                    "상태: %{customdata[6]}<extra></extra>"
                 ),
             ))
             fig_score.add_vline(x=0, line_color="#94a3b8")
@@ -8197,11 +8243,11 @@ def render_image_theme_flow_section():
         if "상태" in show_group.columns:
             show_group["상태"] = show_group["상태"].map(lambda s: _it_state_badge.get(str(s), str(s)))
         # ── CSV 내보내기까지 올바르게 나오도록 모든 숫자를 문자열로 포맷 ──
-        for _col in ["1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률",
-                     "6개월수익률", "상승종목비율"]:
+        for _col in ["2주수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률",
+                     "6개월수익률", "2주상승비율", "1개월상승비율", "상승종목비율"]:
             if _col in show_group.columns:
                 show_group[_col] = show_group[_col].apply(fmt_flow_pct)
-        for _col in ["가속도", "거래량증가", "상위종목쏠림"]:
+        for _col in ["가속도", "단기가속도", "거래량증가", "상위종목쏠림"]:
             if _col in show_group.columns:
                 show_group[_col] = show_group[_col].apply(
                     lambda v: f"{v:.2f}" if finite_num(v) else "-"
@@ -8222,8 +8268,8 @@ def render_image_theme_flow_section():
                     show_group.drop(columns=[_col], inplace=True)
         _sg_show_cols = [c for c in [
             "하위테마", "종목수", "대표주",
-            "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
-            "가속도", "상승종목비율", "거래량증가", "상위종목쏠림",
+            "2주수익률", "1개월수익률", "3개월수익률", "이전3개월수익률", "상대3개월수익률", "6개월수익률",
+            "가속도", "단기가속도", "2주상승비율", "상승종목비율", "거래량증가", "상위종목쏠림",
             "가격수준", "돈흐름점수", "상태", "구성종목",
         ] if c in show_group.columns]
         st.dataframe(
@@ -8231,10 +8277,13 @@ def render_image_theme_flow_section():
             column_config={
                 "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치(평균)"),
                 "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 가속도 15% + 거래량 15%"),
+                "2주수익률":   st.column_config.TextColumn("2W"),
                 "1개월수익률":  st.column_config.TextColumn("1M"),
                 "3개월수익률":  st.column_config.TextColumn("3M"),
                 "6개월수익률":  st.column_config.TextColumn("6M"),
                 "가속도":       st.column_config.TextColumn("가속도",   help="최근 3M - 이전 3M. 양수=가속"),
+                "단기가속도":   st.column_config.TextColumn("단기",     help="최근 2주와 1개월 흐름의 변화"),
+                "2주상승비율":  st.column_config.TextColumn("2W상승"),
                 "상승종목비율": st.column_config.TextColumn("상승비율"),
                 "거래량증가":   st.column_config.TextColumn("거래량↑"),
                 "상위종목쏠림": st.column_config.TextColumn("쏠림"),
@@ -18391,13 +18440,17 @@ def render_today_market_flow_panel(snapshot=None):
 
     if not theme_top5.empty:
         r = theme_top5.iloc[0]
-        metric_cols[3].metric("테마 종목 1위", str(r["테마"]), f"{fmt_flow_score(r['테마돈흐름점수'])} pts")
+        metric_cols[3].metric(
+            "테마 종목 1위",
+            str(r["테마"]),
+            f"{fmt_flow_score(r['테마돈흐름점수'])} pts · {r.get('테마판정', r.get('상태', ''))}",
+        )
         if "대표주" in r.index:
             metric_cols[3].caption(f"대표주: {r.get('대표주', '-')}")
     else:
         metric_cols[3].metric("테마 종목 1위", "-", "-")
 
-    st.caption("돈흐름점수(1위)는 3~6개월 누적 모멘텀 기준 — 최근 조정은 반영이 느립니다. 진입 시점은 아래 **로테이션 맵 → ✅ 진입검토** 를 함께 확인하세요.")
+    st.caption("돈흐름점수는 2주/1개월 확인, 3개월 주도력, 확산, 거래량, 네이버 테마 보조를 함께 봅니다. `하락중 관망`은 강해 보여도 단기 하락이 이어지는 테마입니다.")
 
     with st.expander("전광판으로 보내기", expanded=False):
         send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]

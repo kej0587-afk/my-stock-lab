@@ -223,6 +223,136 @@ def fetch_naver_etf_ranking_universe(limit_per_rank: int = 8, max_total: int = 4
     return out[:max_total]
 
 
+def _map_naver_kr_theme_to_stocklab_theme(name: str) -> str:
+    """네이버 국내 테마명을 Stock Lab 내부 테마명으로 느슨하게 매핑."""
+    text = str(name or "").replace(" ", "").upper()
+    if not text:
+        return ""
+    if any(k in text for k in ["MLCC", "적층세라믹", "콘덴서", "전장부품", "카메라모듈"]):
+        return "전자부품·MLCC"
+    if any(k in text for k in ["2차전지", "리튬", "니켈", "전고체", "나트륨이온", "배터리"]):
+        return "2차전지 밸류체인"
+    if any(k in text for k in ["로봇", "휴머노이드", "스마트팩토리", "자동화"]):
+        return "휴머노이드·로봇"
+    if any(k in text for k in ["PCB", "FPCB", "기판", "FC-BGA", "ABF"]):
+        return "PCB·기판 글로벌"
+    if any(k in text for k in ["반도체", "HBM", "CXL", "온디바이스", "소부장"]):
+        return "국내 AI 반도체·소부장"
+    if any(k in text for k in ["원자력", "원전", "SMR", "우라늄"]):
+        return "글로벌 원전·SMR"
+    if any(k in text for k in ["전력", "전선", "변압", "전력설비", "스마트그리드", "ESS"]):
+        return "전력·에너지 인프라"
+    if any(k in text for k in ["방산", "우주", "항공", "드론", "위성"]):
+        return "우주항공·방산"
+    if any(k in text for k in ["조선", "해양", "LNG", "선박"]):
+        return "조선·해양"
+    if any(k in text for k in ["바이오", "제약", "의료", "헬스", "신약"]):
+        return "바이오·제약"
+    if any(k in text for k in ["화장품", "뷰티", "패션", "소비재"]):
+        return "K-뷰티·소비재"
+    if any(k in text for k in ["광통신", "포토닉", "데이터센터", "광모듈"]):
+        return "포토닉스·광통신"
+    return ""
+
+
+def _add_naver_theme_evidence(bucket: dict, theme: str, label: str, score: float, rise_ratio=np.nan):
+    if not theme:
+        return
+    entry = bucket.setdefault(theme, {
+        "점수_네이버테마": 0.0,
+        "네이버테마근거": [],
+        "네이버테마상승비율": [],
+    })
+    entry["점수_네이버테마"] += float(score)
+    if label:
+        entry["네이버테마근거"].append(str(label))
+    if finite_num(rise_ratio):
+        entry["네이버테마상승비율"].append(float(rise_ratio))
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_naver_theme_context_snapshot(kr_limit: int = 80, us_limit: int = 12) -> dict[str, dict]:
+    """네이버 테마/미국 업종 화면을 보조 신호로 요약한다.
+
+    네이버 화면의 당일 테마 강도는 단기 노이즈가 크므로, 테마돈흐름점수에는
+    작은 보조점수로만 반영하고 2주/1개월 가격 흐름이 최종 판정을 우선한다.
+    """
+    out: dict[str, dict] = {}
+
+    try:
+        url = (
+            "https://stock.naver.com/api/domestic/market/theme/list?"
+            + urllib.parse.urlencode({
+                "startIdx": 0,
+                "pageSize": max(10, min(int(kr_limit or 80), 120)),
+                "sortType": "changeRate",
+            })
+        )
+        rows = _open_naver_json(url, "https://stock.naver.com/market/stock/kr/theme/1")
+        if not isinstance(rows, list):
+            rows = []
+    except Exception:
+        rows = []
+
+    for idx, row in enumerate(rows, start=1):
+        theme = _map_naver_kr_theme_to_stocklab_theme(row.get("name", ""))
+        if not theme:
+            continue
+        change = _to_float(row.get("changeRate"), 0.0) / 100.0
+        recent3 = _to_float(row.get("recent3daysChangeRate"), 0.0) / 100.0
+        total_cnt = max(1.0, _to_float(row.get("totalCnt"), 1.0))
+        rise_ratio = _to_float(row.get("riseCnt"), 0.0) / total_cnt
+        amount = max(0.0, _to_float(row.get("totalAccAmount"), 0.0))
+        rank_bonus = _rank_bonus(2.5, idx, min(len(rows), 40))
+        amount_bonus = min(np.log10(amount + 1.0) / 3.0, 3.0) if amount > 0 else 0.0
+        raw_score = (change * 65.0) + (recent3 * 18.0) + ((rise_ratio - 0.5) * 5.0) + rank_bonus + amount_bonus
+        score = max(-3.0, min(raw_score, 7.0))
+        label = f"{row.get('name', '')} {change:+.1%}"
+        _add_naver_theme_evidence(out, theme, label, score, rise_ratio)
+
+    try:
+        url = (
+            "https://stock.naver.com/api/foreign/market/USA/upjong/57201020/list?"
+            + urllib.parse.urlencode({"orderType": "priceTop", "startIdx": 0, "pageSize": max(5, min(int(us_limit or 12), 25))})
+        )
+        us_rows = _open_naver_json(url, "https://stock.naver.com/market/stock/usa/industry/57201020")
+        if not isinstance(us_rows, list):
+            us_rows = []
+    except Exception:
+        us_rows = []
+
+    if us_rows:
+        changes = []
+        labels = []
+        for row in us_rows[:us_limit]:
+            symbol = _normalize_naver_us_etf_symbol(row.get("symbolCode") or row.get("reutersCode", ""))
+            change = max(-0.08, min(_to_float(row.get("fluctuationsRatio"), 0.0) / 100.0, 0.08))
+            changes.append(change)
+            if symbol:
+                labels.append(f"{symbol} {change:+.1%}")
+        avg_change = float(np.nanmean(changes)) if changes else 0.0
+        rise_ratio = float(np.mean([x > 0 for x in changes])) if changes else np.nan
+        score = max(-2.5, min(avg_change * 30.0 + (rise_ratio - 0.5) * 3.0 + 1.0, 4.0))
+        _add_naver_theme_evidence(
+            out,
+            "미국 AI·빅테크",
+            "미국 소프트웨어 " + ", ".join(labels[:4]),
+            score,
+            rise_ratio,
+        )
+
+    normalized = {}
+    for theme, entry in out.items():
+        evidence = list(dict.fromkeys(entry.get("네이버테마근거", [])))[:4]
+        ratios = entry.get("네이버테마상승비율", [])
+        normalized[theme] = {
+            "점수_네이버테마": max(-4.0, min(float(entry.get("점수_네이버테마", 0.0)), 8.0)),
+            "네이버테마근거": ", ".join(evidence),
+            "네이버테마상승비율": float(np.nanmean(ratios)) if ratios else np.nan,
+        }
+    return normalized
+
+
 def build_money_flow_universe_with_naver_rankings() -> list[dict]:
     base = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]), 랭킹보조점수=0.0, 네이버랭킹="")
@@ -482,6 +612,12 @@ IMAGE_THEME_GROUPS = [
             ("AI 데이터·분석", [
                 ("팔란티어", "PLTR"), ("스노우플레이크", "SNOW"),
                 ("데이터독", "DDOG"), ("ServiceNow", "NOW"),
+                ("앱러빈", "APP"),
+            ]),
+            ("AI 소프트웨어·사이버보안", [
+                ("오라클", "ORCL"), ("팔로알토네트웍스", "PANW"),
+                ("크라우드스트라이크", "CRWD"), ("지스케일러", "ZS"),
+                ("클라우드플레어", "NET"),
             ]),
             ("AI 모빌리티·로보틱스", [
                 ("테슬라", "TSLA"), ("우버", "UBER"), ("모바일아이", "MBLY"),
@@ -695,6 +831,23 @@ IMAGE_THEME_GROUPS = [
         ],
     },
     {
+        "theme": "전자부품·MLCC",
+        "groups": [
+            ("MLCC·콘덴서", [
+                ("삼성전기", "009150.KS"), ("삼화콘덴서", "001820.KS"),
+                ("코칩", "126730.KQ"), ("아모텍", "052710.KQ"),
+            ]),
+            ("전장·카메라모듈", [
+                ("LG이노텍", "011070.KS"), ("엠씨넥스", "097520.KS"),
+                ("파트론", "091700.KQ"), ("나무가", "190510.KQ"),
+            ]),
+            ("전자소재·부품", [
+                ("대주전자재료", "078600.KQ"), ("나노신소재", "121600.KQ"),
+                ("아비코전자", "036010.KQ"), ("비에이치", "090460.KS"),
+            ]),
+        ],
+    },
+    {
         "theme": "포토닉스·광통신",
         "groups": [
             ("포토닉 소재/기판", [("코닝", "GLW"), ("라이트웨이브로직", "LWLG"), ("AXT", "AXTI"), ("알버말", "ALB")]),
@@ -865,6 +1018,11 @@ IMAGE_THEME_META: dict[str, dict] = {
         "tag": "🌐 글로벌",
         "desc": "FC-BGA·ABF기판, AI 서버 MLB, 메모리 패키지 — 한국·일본·대만·미국 비교",
         "etf": "SOXX",
+    },
+    "전자부품·MLCC": {
+        "tag": "🇰🇷 국내",
+        "desc": "MLCC·콘덴서, 전장부품, 카메라모듈, 전자소재 국내 부품 밸류체인",
+        "etf": "139260.KS",
     },
     "포토닉스·광통신": {
         "tag": "🇺🇸 미국",
@@ -1490,13 +1648,17 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (theme, subtheme), group in valid.groupby(["테마", "하위테마"], sort=False):
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
+        ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
         ret_3m        = group["3개월수익률"].mean()
         ret_6m        = group["6개월수익률"].mean()
         accel         = group["가속도"].mean()
+        short_accel   = group["단기가속도"].mean() if "단기가속도" in group.columns else np.nan
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
         flow_score    = group["돈흐름점수"].mean()
         price_level   = group["가격수준"].mean()
+        up_ratio_2w   = group["2주수익률"].gt(0).mean() if "2주수익률" in group.columns else np.nan
+        up_ratio_1m   = group["1개월수익률"].gt(0).mean()
         up_ratio      = group["3개월수익률"].gt(0).mean()
         score_abs     = group["돈흐름점수"].abs().dropna()
         concentration = (
@@ -1509,10 +1671,14 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
             "하위테마":   subtheme,
             "종목수":     int(len(group)),
             "대표주":     f"{leader['종목명']} ({leader['Ticker']})",
+            "2주수익률":   ret_2w,
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
             "6개월수익률": ret_6m,
             "가속도":     accel,
+            "단기가속도":  short_accel,
+            "2주상승비율": up_ratio_2w,
+            "1개월상승비율": up_ratio_1m,
             "상승종목비율": up_ratio,
             "거래량증가": volume_growth,
             "상위종목쏠림": concentration,
@@ -1539,11 +1705,8 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
     """테마 단위 로테이션 점수 계산.
 
     테마 점수 구성:
-        1개월 × 18 + 3개월 × 36 + 6개월 × 22 + 가속도 × 18
-        + breadth_bonus       (상승 종목 비율 보정)
-        + volume_bonus        (거래량 증가 보정)
-        - concentration_penalty (상위 종목 쏠림 패널티)
-        - overbought_penalty  (52주 고점 과열 패널티)
+        2주·1개월 확인 + 3개월 주도력 + 가속도 + 상승 확산 + 거래량 + 네이버 테마 보조
+        - 상위 종목 쏠림/과열/하락 지속 패널티
     """
     if theme_flow_df is None or theme_flow_df.empty:
         return pd.DataFrame()
@@ -1552,17 +1715,25 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
     if valid.empty:
         return pd.DataFrame()
 
+    try:
+        naver_theme_snapshot = fetch_naver_theme_context_snapshot()
+    except Exception:
+        naver_theme_snapshot = {}
+
     rows = []
     for theme, group in valid.groupby("테마", sort=False):
         total_count   = int((all_rows["테마"] == theme).sum())
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
         weak          = group.sort_values("돈흐름점수", ascending=True).iloc[0]
+        ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
         ret_3m        = group["3개월수익률"].mean()
         ret_6m        = group["6개월수익률"].mean()
         accel         = group["가속도"].mean()
+        short_accel   = group["단기가속도"].mean() if "단기가속도" in group.columns else np.nan
         volume_growth = group["거래량증가"].mean() if "거래량증가" in group.columns else np.nan
         price_level   = group["가격수준"].mean()
+        up_ratio_2w   = group["2주수익률"].gt(0).mean() if "2주수익률" in group.columns else np.nan
         up_ratio_1m   = group["1개월수익률"].gt(0).mean()
         up_ratio_3m   = group["3개월수익률"].gt(0).mean()
         up_ratio_6m   = group["6개월수익률"].gt(0).mean()
@@ -1573,31 +1744,62 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             else np.nan
         )
 
-        breadth_bonus         = (up_ratio_3m - 0.5) * 20
+        breadth_mix = (
+            (up_ratio_2w if finite_num(up_ratio_2w) else 0.5) * 0.35
+            + (up_ratio_1m if finite_num(up_ratio_1m) else 0.5) * 0.35
+            + (up_ratio_3m if finite_num(up_ratio_3m) else 0.5) * 0.30
+        )
         # volume_growth cap [-1.0, 1.5]: 단기 이상급증이 테마 순위를 왜곡하지 않도록
         vol_capped_theme      = min(max(volume_growth, -1.0), 1.5) if finite_num(volume_growth) else 0.0
-        volume_bonus          = vol_capped_theme * 6
+        naver_meta            = naver_theme_snapshot.get(theme, {}) if isinstance(naver_theme_snapshot, dict) else {}
+        score_naver           = float(naver_meta.get("점수_네이버테마", 0.0) or 0.0)
+        volume_bonus          = vol_capped_theme * 7
         concentration_penalty = (concentration if finite_num(concentration) else 0.0) * 8
-        overbought_penalty    = max(0.0, (price_level - 0.85) * 20) if finite_num(price_level) else 0.0
-        score_1m              = (ret_1m if finite_num(ret_1m) else 0.0) * 18
-        score_3m              = (ret_3m if finite_num(ret_3m) else 0.0) * 36
-        score_6m              = (ret_6m if finite_num(ret_6m) else 0.0) * 22
-        score_accel           = (accel if finite_num(accel) else 0.0) * 18
-        score_breadth         = breadth_bonus
+        overbought_penalty    = max(0.0, (price_level - 0.86) * 24) if finite_num(price_level) else 0.0
+        down_1m               = abs(min(ret_1m if finite_num(ret_1m) else 0.0, 0.0))
+        down_2w               = abs(min(ret_2w if finite_num(ret_2w) else 0.0, 0.0))
+        pullback_penalty      = 0.0
+        if down_1m > 0 and down_2w > 0:
+            pullback_penalty = min(8.0, 2.0 + down_1m * 30 + down_2w * 40)
+        score_2w              = (ret_2w if finite_num(ret_2w) else 0.0) * 28
+        score_1m              = (ret_1m if finite_num(ret_1m) else 0.0) * 26
+        score_3m              = (ret_3m if finite_num(ret_3m) else 0.0) * 20
+        score_6m              = (ret_6m if finite_num(ret_6m) else 0.0) * 8
+        score_accel           = (accel if finite_num(accel) else 0.0) * 16
+        score_short_accel     = (short_accel if finite_num(short_accel) else 0.0) * 14
+        score_breadth         = (breadth_mix - 0.5) * 24
         score_volume          = volume_bonus
         score_concentration   = -concentration_penalty
         score_overbought      = -overbought_penalty
+        score_downtrend       = -pullback_penalty
 
         theme_score = (
-            score_1m
+            score_2w
+            + score_1m
             + score_3m
             + score_6m
             + score_accel
+            + score_short_accel
             + score_breadth
             + score_volume
+            + score_naver
             + score_concentration
             + score_overbought
+            + score_downtrend
         )
+
+        if (ret_1m if finite_num(ret_1m) else 0.0) <= -0.02 and (ret_2w if finite_num(ret_2w) else 0.0) < 0:
+            theme_signal = "하락중 관망"
+        elif finite_num(price_level) and price_level >= 0.90 and (ret_3m if finite_num(ret_3m) else 0.0) >= 0.10:
+            theme_signal = "강하지만 과열"
+        elif theme_score >= 10 and (ret_1m if finite_num(ret_1m) else 0.0) >= -0.005 and (ret_2w if finite_num(ret_2w) else 0.0) >= 0 and breadth_mix >= 0.52:
+            theme_signal = "진입검토"
+        elif theme_score >= 6 and (short_accel if finite_num(short_accel) else 0.0) >= 0 and (ret_1m if finite_num(ret_1m) else 0.0) >= -0.02 and breadth_mix >= 0.45:
+            theme_signal = "부상감시"
+        elif (ret_3m if finite_num(ret_3m) else 0.0) >= 0.08 and (ret_1m if finite_num(ret_1m) else 0.0) < 0:
+            theme_signal = "주도 후 조정"
+        else:
+            theme_signal = "관망"
 
         rows.append({
             "테마":          theme,
@@ -1605,25 +1807,35 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             "계산종목수":    int(len(group)),
             "대표주":        f"{leader['종목명']} ({leader['Ticker']})",
             "약세주":        f"{weak['종목명']} ({weak['Ticker']})",
+            "2주수익률":     ret_2w,
             "1개월수익률":   ret_1m,
             "3개월수익률":   ret_3m,
             "6개월수익률":   ret_6m,
             "가속도":        accel,
+            "단기가속도":    short_accel,
             "상승종목비율":  up_ratio_3m,
+            "2주상승비율":   up_ratio_2w,
             "1개월상승비율": up_ratio_1m,
             "6개월상승비율": up_ratio_6m,
             "거래량증가":    volume_growth,
             "상위종목쏠림":  concentration,
             "가격수준":      price_level,
             "테마돈흐름점수": theme_score,
+            "테마판정":      theme_signal,
+            "네이버테마근거": naver_meta.get("네이버테마근거", ""),
+            "네이버테마상승비율": naver_meta.get("네이버테마상승비율", np.nan),
+            "점수_2주":       score_2w,
             "점수_1개월":     score_1m,
             "점수_3개월":     score_3m,
             "점수_6개월":     score_6m,
             "점수_가속도":    score_accel,
+            "점수_단기가속도": score_short_accel,
             "점수_상승비율":  score_breadth,
             "점수_거래량":    score_volume,
+            "점수_네이버테마": score_naver,
             "점수_쏠림패널티": score_concentration,
             "점수_과열패널티": score_overbought,
+            "점수_하락패널티": score_downtrend,
             "상태":          classify_money_flow_state(ret_3m, ret_6m, accel, price_level),
         })
 
