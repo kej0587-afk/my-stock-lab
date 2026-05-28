@@ -7751,6 +7751,31 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         st.info("선택한 시장 범위에서 비교할 테마 데이터가 부족합니다.")
         return
 
+    rotation_df = rotation_df.copy()
+    # 배포/캐시가 섞이면 새 컬럼(테마판정 등)이 없을 수 있어 화면단에서 한 번 더 보강한다.
+    for _col, _default in {
+        "테마판정": "",
+        "네이버테마근거": "",
+        "네이버테마상승비율": np.nan,
+        "2주수익률": np.nan,
+        "1개월수익률": np.nan,
+        "3개월수익률": np.nan,
+        "6개월수익률": np.nan,
+        "가속도": np.nan,
+        "단기가속도": np.nan,
+        "2주상승비율": np.nan,
+        "1개월상승비율": np.nan,
+        "상승종목비율": np.nan,
+        "거래량증가": np.nan,
+        "상위종목쏠림": np.nan,
+        "가격수준": np.nan,
+        "점수_네이버테마": np.nan,
+        "점수_하락패널티": np.nan,
+        "상태": "",
+    }.items():
+        if _col not in rotation_df.columns:
+            rotation_df[_col] = _default
+
     leader = rotation_df.iloc[0]
     breadth_col = "2주상승비율" if "2주상승비율" in rotation_df.columns else "상승종목비율"
     breadth_leader = rotation_df.sort_values(breadth_col, ascending=False).iloc[0]
