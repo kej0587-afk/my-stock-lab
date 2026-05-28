@@ -10470,6 +10470,36 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         decision_outcome = build_decision_outcome(dec, col)
     _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
     sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
+    # 기존 보유 + 비중 부족 + "MA5 눌림 대기" 신호 → 눌림 시 추가 규모 안내
+    if (
+        not sizing_hint and
+        has_pos and
+        targ_w > 0 and
+        weight_gap >= 1.0 and
+        decision_outcome.code in ("LEADER_MA5_PULLBACK_ENTRY", "LEADER_MA5_FAST_PULLBACK_ENTRY",
+                                  "OVERHEAT_EXTENSION_WAIT_MA5", "S_GRADE_OVERHEAT_WAIT")
+    ):
+        _add_w   = round(weight_gap * 0.40, 2)          # 부족분의 40%씩 1차 추가
+        _add_amt = round(eff_total * _add_w / 100, 0)
+        _add_p   = cur_p if cur_p > 0 else 1
+        _add_shares = _add_amt / _add_p if _add_p > 0 else 0
+        if _add_amt > 0:
+            _is_us = not ticker.upper().endswith((".KS", ".KQ"))
+            if _is_us:
+                _add_usd = _add_amt / 1400.0  # eff_total이 KRW 기준이므로 1400 근사 사용
+                sizing_hint = (
+                    f"MA5 눌림 확인 시 1차 추가 기준 — "
+                    f"부족분({weight_gap:.1f}%p)의 40%: "
+                    f"≈${_add_usd:,.0f} / 약 {_add_shares:.2f}주 "
+                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                )
+            else:
+                sizing_hint = (
+                    f"MA5 눌림 확인 시 1차 추가 기준 — "
+                    f"부족분({weight_gap:.1f}%p)의 40%: "
+                    f"≈{_add_amt:,.0f}원 / 약 {_add_shares:.1f}주 "
+                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                )
 
     return {
         "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score,
@@ -10838,6 +10868,35 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         entry_hint = "💰 <b>익절 신호</b>: MFI·%B 과열 + 평단 대비 수익 20% 이상. 일부 익절 고려."
     elif decision_code == "HOLD_QUALITY_UPTREND":
         entry_hint = "🏆 <b>홀드 구간</b>: 정배열 유지 중이나 추매보다 홀드가 우선인 타이밍."
+    elif decision_code in ("LEADER_MA5_PULLBACK_ENTRY", "LEADER_MA5_FAST_PULLBACK_ENTRY",
+                           "OVERHEAT_EXTENSION_WAIT_MA5"):
+        _ma5_str = format_currency(ma5, tkr) if ma5 > 0 else "MA5"
+        _curr_w  = c.get("current_w", 0.0)
+        _targ_w  = c.get("target_w",  0.0)
+        if has_p and _targ_w > 0 and _curr_w < _targ_w * 0.97:
+            # 기존 보유 + 비중 부족 → "MA5 눌림 시 추가" 안내
+            entry_hint = (
+                f"⏳ <b>추매 대기 — MA5 눌림 확인 후 추가</b>: "
+                f"볼린저 상단권(%B {pct_b:.2f})이라 지금 바로 추매는 불리합니다. "
+                f"{_ma5_str} 근처로 조정 시 현재 비중 부족분 "
+                f"(<b>{_curr_w:.1f}% → 목표 {_targ_w:.1f}%</b>) 일부 분할 추가를 검토하세요. "
+                f"별도 급락 없이 며칠 <b>횡보·숨 고르기</b>만으로도 %B가 내려올 수 있습니다."
+            )
+        elif has_p:
+            # 기존 보유 + 비중 충족·초과 → 홀드
+            entry_hint = (
+                f"🏆 <b>홀드 — MA5 눌림까지 관망</b>: "
+                f"볼린저 상단권(%B {pct_b:.2f}). "
+                f"비중이 충족된 상태이므로 추매보다 홀드 유지가 우선입니다. "
+                f"{_ma5_str} 눌림 후 재평가하세요."
+            )
+        else:
+            # 미보유 → 신규 진입 대기
+            entry_hint = (
+                f"⏳ <b>진입 대기 — MA5 눌림 확인 후 정찰</b>: "
+                f"볼린저 상단권(%B {pct_b:.2f}) 추격 진입은 위험합니다. "
+                f"{_ma5_str} 근처로 조정 시 목표비중의 1/3 소량 정찰 진입을 검토하세요."
+            )
 
     if entry_hint:
         lines.append(entry_hint)
