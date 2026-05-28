@@ -1675,7 +1675,12 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 continue
 
             r2w = r.get("2주수익률", np.nan)
+            r1m = r.get("1개월수익률", np.nan)
             swing_ac = r.get("단기가속도", np.nan)
+            volume_growth = r.get("거래량증가", np.nan)
+            price_level = r.get("가격수준", np.nan)
+            rank_bonus = r.get("점수_랭킹보조", 0.0)
+            flow_score = r.get("돈흐름점수", np.nan)
             state = str(r.get("상태", ""))
 
             rs_3m = float(r3) - b_3m
@@ -1711,8 +1716,15 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 "RS(3M)":     rs_3m,
                 "RS모멘텀":   rs_mom,
                 "3M수익률":   float(r3),
+                "1개월수익률": float(r1m) if finite_num(r1m) else np.nan,
                 "2주수익률":  float(r2w) if finite_num(r2w) else np.nan,
                 "단기가속도": float(swing_ac) if finite_num(swing_ac) else np.nan,
+                "거래량증가":  float(volume_growth) if finite_num(volume_growth) else np.nan,
+                "가격수준":    float(price_level) if finite_num(price_level) else np.nan,
+                "돈흐름점수":  float(flow_score) if finite_num(flow_score) else np.nan,
+                "점수_랭킹보조": float(rank_bonus) if finite_num(rank_bonus) else 0.0,
+                "네이버랭킹":  str(r.get("네이버랭킹", "")),
+                "ETF 이름":    str(r.get("ETF 이름", "")),
                 "상태":       state,
                 "진입검토":   "✅ 진입검토" if entry_ok else "🔸 관망",
             })

@@ -6237,12 +6237,29 @@ def _render_cluster_card(col, cl: dict, rank: int):
     is_sur = cl["is_surging"]
     qcnt   = cl["qcnt"]
     n      = cl["n"]
+    fit_score = float(cl.get("fit_score", cl.get("heat", 0.0)) or 0.0)
+    flow_label = cl.get("flow_label", "관망")
+    breadth = float(cl.get("breadth", cl.get("pos_frac", 0.0)) or 0.0)
+    avg_r1m = cl.get("r1m", float("nan"))
+    avg_r2w = cl.get("r2w", float("nan"))
+    volume_growth = cl.get("volume_growth", float("nan"))
+    rank_bonus = float(cl.get("rank_bonus", 0.0) or 0.0)
+    overheat_penalty = float(cl.get("overheat_penalty", 0.0) or 0.0)
+    pullback_penalty = float(cl.get("pullback_penalty", 0.0) or 0.0)
 
-    # ── 강도 색상 ──
-    if   rs3m > 0.08: main_clr = "#22c55e"
-    elif rs3m > 0.02: main_clr = "#86efac"
-    elif rs3m > -0.02: main_clr = "#fbbf24"
-    else:              main_clr = "#ef4444"
+    # ── 진입 적합도 색상 ──
+    if flow_label == "하락중 관망":
+        main_clr = "#ef4444"
+    elif flow_label == "강하지만 과열":
+        main_clr = "#fbbf24"
+    elif flow_label == "진입검토" and fit_score >= 12:
+        main_clr = "#22c55e"
+    elif flow_label == "부상감시" or fit_score >= 8:
+        main_clr = "#60a5fa"
+    elif flow_label == "주도 후 조정" or fit_score >= 0:
+        main_clr = "#fbbf24"
+    else:
+        main_clr = "#ef4444"
     border_clr = "#f97316" if is_sur else main_clr
 
     # ── RS 방향 ──
@@ -6257,36 +6274,56 @@ def _render_cluster_card(col, cl: dict, rank: int):
     # ── 배지 ──
     badge = (" <span style='background:#f97316;color:#fff;font-size:0.60em;"
              "padding:1px 5px;border-radius:3px;'>🔥부상</span>") if is_sur else ""
+    label_badge = (
+        f" <span style='background:{main_clr}22;color:{main_clr};font-size:0.60em;"
+        "padding:1px 5px;border-radius:3px;'>"
+        f"{flow_label}</span>"
+    )
 
-    # ── 강도 막대 (RS -20%~+30% → 0~100%) ──
-    bar_pct = min(100, max(4, int((rs3m + 0.20) / 0.50 * 100)))
+    # ── 적합도 막대 (-20~+40점 → 0~100%) ──
+    bar_pct = min(100, max(4, int((fit_score + 20) / 60 * 100)))
 
-    # ── 1M 보조 수치 ──
-    r1m = cl.get("r1m", float("nan"))
+    # ── 단기 확인 수치 ──
     r1m_html = ""
-    if finite_num(r1m):
-        r1m_clr = "#22c55e" if r1m > 0 else "#ef4444"
+    if finite_num(avg_r1m):
+        r1m_clr = "#22c55e" if avg_r1m > 0 else "#ef4444"
         r1m_html = (f"<span style='color:{r1m_clr};font-size:0.68em;'>"
-                    f"&nbsp;1M {r1m*100:+.1f}%</span>")
+                    f"&nbsp;1M {avg_r1m*100:+.1f}%</span>")
+    r2w_html = ""
+    if finite_num(avg_r2w):
+        r2w_clr = "#22c55e" if avg_r2w > 0 else "#ef4444"
+        r2w_html = (f"<span style='color:{r2w_clr};font-size:0.68em;'>"
+                    f"&nbsp;2W {avg_r2w*100:+.1f}%</span>")
+    vol_html = f"거래 {volume_growth*100:+.0f}%" if finite_num(volume_growth) else "거래 -"
+    rank_html = f"랭킹 +{rank_bonus:.1f}" if rank_bonus else "랭킹 -"
+    penalty_html = ""
+    if overheat_penalty > 0.1 or pullback_penalty > 0.1:
+        penalty_html = (
+            f"<div style='font-size:0.66em;color:#fca5a5;margin-top:3px;'>"
+            f"감점 하락 -{pullback_penalty:.1f} / 과열 -{overheat_penalty:.1f}</div>"
+        )
 
-    # ── 구성 ETF 상세 (RS 강한 순 정렬) ──
+    # ── 구성 ETF 상세 (최근 확인이 강한 순 정렬) ──
     tickers = cl.get("tickers", [])
     ticker_rows_html = ""
     if tickers:
         rows = []
-        for t in tickers:   # 이미 rs3m 내림차순으로 정렬됨
+        for t in tickers:
             q    = QDOT.get(t["quad"], "⚪")
             rm   = t["rsmom"]
             arr  = "↑" if rm > 0.01 else ("↓" if rm < -0.01 else "→")
             aclr = "#4ade80" if rm > 0.01 else ("#f87171" if rm < -0.01 else "#fbbf24")
             r3   = t["rs3m"] * 100
+            r1   = t.get("r1m", float("nan"))
             rclr = "#4ade80" if r3 > 2 else ("#f87171" if r3 < -2 else "#fbbf24")
+            r1_txt = f" 1M {r1*100:+.0f}%" if finite_num(r1) else ""
             label = t.get("name", t.get("ticker", "?"))
             rows.append(
                 f"<span style='display:inline-block;margin:1px 4px 1px 0;white-space:nowrap;'>"
                 f"{q}&nbsp;"
                 f"<span style='color:#cbd5e1;'>{label}</span>"
                 f"&nbsp;<span style='color:{rclr};font-size:0.9em;'>{r3:+.0f}%</span>"
+                f"<span style='color:#94a3b8;font-size:0.82em;'>{r1_txt}</span>"
                 f"<span style='color:{aclr};font-size:0.85em;'>{arr}</span>"
                 f"</span>"
             )
@@ -6302,17 +6339,20 @@ def _render_cluster_card(col, cl: dict, rank: int):
         f"border:1.5px solid {border_clr}55;'>"
         # 헤더
         f"<div style='font-size:0.71em;color:#94a3b8;margin-bottom:3px;'>"
-        f"#{rank}&nbsp;{cl['name']}{badge}</div>"
-        # RS 강도
+        f"#{rank}&nbsp;{cl['name']}{badge}{label_badge}</div>"
+        # 진입 적합도
         f"<div style='font-size:1.05em;font-weight:700;color:{main_clr};'>"
-        f"{rs3m*100:+.1f}%{r1m_html}</div>"
+        f"적합도 {fit_score:+.1f}점{r1m_html}{r2w_html}</div>"
         # RS 방향
         f"<div style='font-size:0.78em;color:{mom_clr};margin-bottom:5px;'>"
-        f"{mom_sym}&nbsp;RS방향&nbsp;{rsmom*100:+.1f}%</div>"
+        f"{mom_sym}&nbsp;RS {rs3m*100:+.1f}% / 방향 {rsmom*100:+.1f}%</div>"
         # 막대
         f"<div style='background:#0f172a;border-radius:3px;height:5px;margin-bottom:5px;'>"
         f"<div style='width:{bar_pct}%;height:5px;background:{main_clr};border-radius:3px;'>"
         f"</div></div>"
+        f"<div style='font-size:0.68em;color:#94a3b8;'>"
+        f"확산 {breadth*100:.0f}% · {vol_html} · {rank_html}</div>"
+        f"{penalty_html}"
         # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
         # ETF 상세
@@ -6323,14 +6363,46 @@ def _render_cluster_card(col, cl: dict, rank: int):
 
 
 def _build_cluster_list(rotation_df, clusters: dict) -> list:
-    """rotation_df + clusters 로 클러스터 집계 리스트 생성 (내부 헬퍼)."""
+    """rotation_df + clusters 로 클러스터 집계 리스트 생성 (내부 헬퍼).
+
+    단순 RS 강도보다 실제 접근 가능성을 우선한다.
+    """
     df = rotation_df.copy()
     if "RS_3m" in df.columns and "RS(3M)" not in df.columns:
         df["RS(3M)"] = df["RS_3m"]
     if "로테이션" in df.columns and "사분면" not in df.columns:
         df["사분면"] = df["로테이션"]
-    if "1개월수익률" not in df.columns:
-        df["1개월수익률"] = np.nan
+    for col, default in {
+        "1개월수익률": np.nan,
+        "2주수익률": np.nan,
+        "단기가속도": np.nan,
+        "거래량증가": np.nan,
+        "가격수준": np.nan,
+        "점수_랭킹보조": 0.0,
+        "네이버랭킹": "",
+        "돈흐름점수": np.nan,
+        "상태": "",
+    }.items():
+        if col not in df.columns:
+            df[col] = default
+
+    def _num(value, default=np.nan):
+        return float(value) if finite_num(value) else default
+
+    def _clip_score(value, low, high):
+        if not finite_num(value):
+            return 0.0
+        return min(max(float(value), low), high)
+
+    def _avg(values):
+        vals = [float(v) for v in values if finite_num(v)]
+        return float(np.mean(vals)) if vals else float("nan")
+
+    def _positive_fraction(values, threshold=0.0):
+        vals = [float(v) for v in values if finite_num(v)]
+        if not vals:
+            return 0.0
+        return sum(v >= threshold for v in vals) / len(vals)
 
     t2: dict = {}
     for _, r in df.iterrows():
@@ -6339,6 +6411,12 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         rsmom = r.get("RS모멘텀", np.nan)
         quad  = str(r.get("사분면", "-"))
         r1m   = r.get("1개월수익률", np.nan)
+        r2w   = r.get("2주수익률", np.nan)
+        short_accel = r.get("단기가속도", np.nan)
+        volume_growth = r.get("거래량증가", np.nan)
+        price_level = r.get("가격수준", np.nan)
+        rank_bonus = r.get("점수_랭킹보조", 0.0)
+        flow_score = r.get("돈흐름점수", np.nan)
         # 섹터명 우선, 없으면 ticker 코드 그대로
         name  = str(r.get("섹터", r.get("name", t)))
         if finite_num(rs3m) and finite_num(rsmom):
@@ -6346,7 +6424,15 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
                 "rs3m":  float(rs3m),
                 "rsmom": float(rsmom),
                 "quad":  quad,
-                "r1m":   float(r1m) if finite_num(r1m) else float("nan"),
+                "r1m":   _num(r1m),
+                "r2w":   _num(r2w),
+                "short_accel": _num(short_accel),
+                "volume_growth": _num(volume_growth),
+                "price_level": _num(price_level),
+                "rank_bonus": _num(rank_bonus, 0.0),
+                "flow_score": _num(flow_score),
+                "naver_rank": str(r.get("네이버랭킹", "")),
+                "state": str(r.get("상태", "")),
                 "name":  name,
                 "ticker": t,
             }
@@ -6360,32 +6446,117 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         n         = len(matched)
         avg_rs3m  = float(np.mean([m["rs3m"]  for m in matched]))
         avg_rsmom = float(np.mean([m["rsmom"] for m in matched]))
-        r1m_vals  = [m["r1m"] for m in matched if finite_num(m["r1m"])]
-        avg_r1m   = float(np.mean(r1m_vals)) if r1m_vals else float("nan")
+        avg_r1m   = _avg([m["r1m"] for m in matched])
+        avg_r2w   = _avg([m["r2w"] for m in matched])
+        avg_short_accel = _avg([m["short_accel"] for m in matched])
+        avg_volume_growth = _avg([m["volume_growth"] for m in matched])
+        avg_price_level = _avg([m["price_level"] for m in matched])
+        rank_vals = [m["rank_bonus"] for m in matched if finite_num(m["rank_bonus"])]
+        avg_rank_bonus = float(np.mean(rank_vals)) if rank_vals else 0.0
+        max_rank_bonus = float(max(rank_vals)) if rank_vals else 0.0
 
         qcnt = {"주도": 0, "개선": 0, "약화": 0, "소외": 0}
         for m in matched:
             if m["quad"] in qcnt:
                 qcnt[m["quad"]] += 1
         pos_frac = (qcnt["주도"] + qcnt["개선"]) / n
+        r1m_pos_frac = _positive_fraction([m["r1m"] for m in matched])
+        r2w_pos_frac = _positive_fraction([m["r2w"] for m in matched])
+        breadth = pos_frac * 0.45 + r1m_pos_frac * 0.35 + r2w_pos_frac * 0.20
 
-        is_surging = (
-            (avg_rsmom >= 0.04 and avg_rs3m < 0.20)
-            or (avg_rsmom >= 0.02 and pos_frac >= 0.50 and avg_rs3m < 0.15)
+        short_down = (
+            finite_num(avg_r1m) and avg_r1m <= -0.02
+            and (not finite_num(avg_r2w) or avg_r2w < 0)
         )
-        heat = avg_rs3m * 0.40 + avg_rsmom * 0.60
+        short_confirm = (
+            finite_num(avg_r1m) and avg_r1m >= 0
+            and (not finite_num(avg_r2w) or avg_r2w >= 0)
+        )
+        is_overheated = (
+            finite_num(avg_price_level) and avg_price_level >= 0.90
+            and avg_rs3m >= 0.08
+        )
 
-        # RS 강한 순으로 정렬해서 카드 상세에 표시
-        tickers_detail = sorted(matched, key=lambda x: x["rs3m"], reverse=True)
+        lead_score = _clip_score(avg_rs3m * 95, -18, 28)
+        momentum_score = _clip_score(avg_rsmom * 130, -20, 26)
+        short_score = (
+            _clip_score(avg_r1m * 110, -18, 18)
+            + _clip_score(avg_r2w * 120, -12, 14)
+            + _clip_score(avg_short_accel * 45, -8, 10)
+        )
+        volume_score = _clip_score(avg_volume_growth * 7, -7, 11)
+        rank_score = min(max(avg_rank_bonus * 0.8 + max_rank_bonus * 0.7, 0.0), 8.0)
+        breadth_score = (breadth - 0.5) * 22
+        overheat_penalty = (
+            max(0.0, (avg_price_level - 0.86) * 45)
+            if finite_num(avg_price_level) else 0.0
+        )
+        if is_overheated:
+            overheat_penalty += 6.0
+        pullback_penalty = (
+            max(0.0, -avg_r1m * 120) if finite_num(avg_r1m) else 0.0
+        ) + (
+            max(0.0, -avg_r2w * 140) if finite_num(avg_r2w) else 0.0
+        )
+        fit_score = (
+            lead_score + momentum_score + short_score + volume_score
+            + rank_score + breadth_score - overheat_penalty - pullback_penalty
+        )
+
+        if short_down:
+            flow_label = "하락중 관망"
+        elif is_overheated:
+            flow_label = "강하지만 과열"
+        elif fit_score >= 12 and short_confirm and breadth >= 0.52:
+            flow_label = "진입검토"
+        elif avg_rsmom >= 0.02 and finite_num(avg_r1m) and avg_r1m >= -0.01 and breadth >= 0.45:
+            flow_label = "부상감시"
+        elif avg_rs3m >= 0.08 and finite_num(avg_r1m) and avg_r1m < 0:
+            flow_label = "주도 후 조정"
+        else:
+            flow_label = "관망"
+        is_surging = (
+            flow_label in {"진입검토", "부상감시"}
+            and avg_rsmom >= 0.02
+        )
+        heat = fit_score
+
+        # 최근 확인이 되는 ETF를 먼저 보여준다. 오래 강했지만 한 달 하락 중인 후보는 뒤로 밀린다.
+        tickers_detail = sorted(
+            matched,
+            key=lambda x: (
+                _num(x.get("r1m"), -9.0),
+                _num(x.get("r2w"), -9.0),
+                x["rsmom"],
+                x["rs3m"],
+            ),
+            reverse=True,
+        )
 
         cl_list.append({
             "name": cl_name, "rs3m": avg_rs3m, "rsmom": avg_rsmom,
-            "r1m": avg_r1m, "qcnt": qcnt, "n": n,
-            "pos_frac": pos_frac, "is_surging": is_surging, "heat": heat,
+            "r1m": avg_r1m, "r2w": avg_r2w, "qcnt": qcnt, "n": n,
+            "pos_frac": pos_frac, "breadth": breadth,
+            "volume_growth": avg_volume_growth,
+            "price_level": avg_price_level,
+            "rank_bonus": max_rank_bonus,
+            "fit_score": fit_score,
+            "flow_label": flow_label,
+            "is_surging": is_surging, "heat": heat,
+            "overheat_penalty": overheat_penalty,
+            "pullback_penalty": pullback_penalty,
+            "score_parts": {
+                "주도": lead_score,
+                "방향": momentum_score,
+                "단기": short_score,
+                "거래": volume_score,
+                "랭킹": rank_score,
+                "확산": breadth_score,
+            },
             "tickers": tickers_detail,
         })
 
-    cl_list.sort(key=lambda x: x["heat"] + (0.06 if x["is_surging"] else 0), reverse=True)
+    cl_list.sort(key=lambda x: x["fit_score"], reverse=True)
     return cl_list
 
 
@@ -6422,7 +6593,7 @@ def render_cluster_heatmap_enhanced(
     top_n_per_market: int = 3,
 ):
     """
-    클러스터 강도 패널 v2 — RS강도·방향·부상감지 통합.
+    클러스터 적합도 패널 v3 — RS강도·방향·단기확인·거래강도·랭킹·확산도 통합.
 
     [기본 모드] clusters 만 전달 → 단일 패널 top_n 표시
     [분리 모드] clusters_kr + clusters_us 전달 →
@@ -6430,8 +6601,8 @@ def render_cluster_heatmap_enhanced(
                → 벤치마크가 달라 혼합하면 잘못된 비교가 되는 문제 해결
 
     부상(🔥) 조건:
-      RS모멘텀 ≥ +4%  +  RS3M < 20%   (빠른 방향 전환, 아직 과열 아님)
-      또는: RS모멘텀 ≥ +2%  +  과반 이상 개선/주도  +  RS3M < 15%
+      RS모멘텀 양호 + 1개월/2주 흐름 확인 + 내부 확산도 양호.
+      오래 강했지만 최근 한 달 하락 중이면 '주도 후 조정/하락중 관망'으로 분리한다.
     """
     if rotation_df is None or rotation_df.empty:
         return
@@ -6464,18 +6635,19 @@ def render_cluster_heatmap_enhanced(
         all_surging = [c for c in (us_list[:top_n_per_market] + kr_list[:top_n_per_market])
                        if c["is_surging"]]
 
-        st.markdown("##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나?")
+        st.markdown("##### 📊 클러스터 적합도 — 어디가 강하고, 지금 접근 가능한가?")
         if all_surging:
             names = "·".join(f"**{c['name']}**" for c in all_surging)
             st.caption(
-                f"🔥 새로 부상하는 군: {names}  "
-                "— RS 방향 전환 + 단기 가속 감지. 아직 3M RS가 낮아도 돈이 들어오기 시작한 구간."
+                f"🔥 새 돈 후보: {names}  "
+                "— RS 방향 전환, 1개월/2주 확인, 내부 확산도가 같이 잡힌 구간입니다."
             )
         else:
             st.caption(
-                "🔵 주도 = 지금 돈 유입 중 &nbsp;|&nbsp; 🟢 개선 = 다음 주도 후보 "
-                "&nbsp;|&nbsp; 🔥부상 = RS방향 급반전, 단기 조기 진입 구간 &nbsp;|&nbsp; "
-                "한국/미국 각자 벤치마크(KOSPI200·S&P500) 기준으로 별도 계산"
+                "진입검토 = 강도+단기확인+확산도 양호 &nbsp;|&nbsp; "
+                "부상감시 = 새 돈이 붙는 초입 &nbsp;|&nbsp; "
+                "주도 후 조정 = 강하지만 1개월 흐름 약화 &nbsp;|&nbsp; "
+                "한국/미국은 각각 KOSPI200·S&P500 기준"
             )
 
         _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터")
@@ -6496,7 +6668,7 @@ def render_cluster_heatmap_enhanced(
     cl_list   = cl_list[:top_n]
 
     st.markdown(
-        f"##### 📊 클러스터 강도 — 어느 군에 돈이 몰리나? "
+        f"##### 📊 클러스터 적합도 — 어디가 강하고, 지금 접근 가능한가? "
         f"<span style='font-size:0.72em;color:#64748b;font-weight:400;'>"
         f"({total_all}개 중 상위 {len(cl_list)}개 자동표시)</span>",
         unsafe_allow_html=True,
@@ -6506,11 +6678,12 @@ def render_cluster_heatmap_enhanced(
         names = "·".join(f"**{c['name']}**" for c in surging)
         st.caption(
             f"🔥 새로 부상하는 군: {names}  "
-            "— RS 방향 전환 + 단기 가속 감지. 아직 3M RS가 낮아도 돈이 들어오기 시작한 구간."
+            "— RS 방향 전환, 1개월/2주 확인, 내부 확산도가 같이 잡힌 구간입니다."
         )
     else:
-        st.caption("🔵 주도 = 지금 돈 유입 중 &nbsp;|&nbsp; 🟢 개선 = 다음 주도 후보 "
-                   "&nbsp;|&nbsp; 🔥부상 = RS방향 급반전, 단기 조기 진입 구간")
+        st.caption("진입검토 = 강도+단기확인+확산도 양호 &nbsp;|&nbsp; "
+                   "부상감시 = 새 돈이 붙는 초입 &nbsp;|&nbsp; "
+                   "주도 후 조정 = 강하지만 1개월 흐름 약화")
 
     n_cols = min(len(cl_list), 3)
     n_rows = math.ceil(len(cl_list) / n_cols)
@@ -18369,11 +18542,14 @@ def render_today_market_flow_panel(snapshot=None):
                 return "⚪ 관망"
             entry_df["유형"] = entry_df.apply(_today_type, axis=1)
             show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker", "사분면",
-                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "상태"] if c in entry_df.columns]
+                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
+                                      "거래량증가", "점수_랭킹보조", "네이버랭킹", "상태"] if c in entry_df.columns]
             entry_show = entry_df[show_cols].copy()
-            for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률"]:
+            for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "거래량증가"]:
                 if col in entry_show.columns:
                     entry_show[col] = entry_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+            if "점수_랭킹보조" in entry_show.columns:
+                entry_show["점수_랭킹보조"] = entry_show["점수_랭킹보조"].apply(lambda v: f"+{float(v):.1f}" if finite_num(v) and float(v) else "-")
             st.dataframe(entry_show, width='stretch', hide_index=True)
 
             # 테마 바로가기 버튼 (ETF 티커가 있는 경우)
@@ -18397,11 +18573,14 @@ def render_today_market_flow_panel(snapshot=None):
 
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "진입검토",
-                                     "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "상태"] if c in grp_df.columns]
+                                     "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
+                                     "거래량증가", "점수_랭킹보조", "네이버랭킹", "상태"] if c in grp_df.columns]
             all_show = grp_df[all_cols].copy()
-            for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률"]:
+            for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "거래량증가"]:
                 if col in all_show.columns:
                     all_show[col] = all_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+            if "점수_랭킹보조" in all_show.columns:
+                all_show["점수_랭킹보조"] = all_show["점수_랭킹보조"].apply(lambda v: f"+{float(v):.1f}" if finite_num(v) and float(v) else "-")
             st.dataframe(all_show.sort_values(["사분면", "RS(3M)"], ascending=[True, False]),
                          width='stretch', hide_index=True)
 
