@@ -10480,13 +10480,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                                   "OVERHEAT_EXTENSION_WAIT_MA5", "S_GRADE_OVERHEAT_WAIT")
     ):
         _add_w   = round(weight_gap * 0.40, 2)          # 부족분의 40%씩 1차 추가
-        _add_amt = round(eff_total * _add_w / 100, 0)
+        _add_amt = round(eff_total * _add_w / 100, 0)  # KRW 기준 금액
         _add_p   = cur_p if cur_p > 0 else 1
-        _add_shares = _add_amt / _add_p if _add_p > 0 else 0
         if _add_amt > 0:
             _is_us = not ticker.upper().endswith((".KS", ".KQ"))
             if _is_us:
-                _add_usd = _add_amt / 1400.0  # eff_total이 KRW 기준이므로 1400 근사 사용
+                # eff_total·_add_amt는 KRW → USD 환산 후 주수 계산
+                _add_usd    = _add_amt / 1400.0
+                _add_shares = _add_usd / _add_p if _add_p > 0 else 0
                 sizing_hint = (
                     f"MA5 눌림 확인 시 1차 추가 기준 — "
                     f"부족분({weight_gap:.1f}%p)의 40%: "
@@ -10494,6 +10495,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     f"(잔여 비중 부족: {weight_gap:.1f}%p)"
                 )
             else:
+                _add_shares = _add_amt / _add_p if _add_p > 0 else 0
                 sizing_hint = (
                     f"MA5 눌림 확인 시 1차 추가 기준 — "
                     f"부족분({weight_gap:.1f}%p)의 40%: "
