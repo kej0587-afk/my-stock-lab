@@ -5406,6 +5406,7 @@ def get_today_market_flow_snapshot():
         "sector_rotation_df": sector_rotation_df,
         "theme_flow_df": theme_flow_df,
         "theme_rotation_df": theme_rotation_df,
+        "subtheme_group_df": subtheme_group_df,
         "theme_top5": theme_top5,
         "subtheme_top": subtheme_top,
     }
@@ -6235,6 +6236,81 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
                     st.warning(msg)
 
 
+FLOW_THEME_BRIDGE_RULES = [
+    {"market": "미국 섹터", "keys": ["소프트웨어·사이버", "소프트웨어", "사이버보안", "IGV", "CIBR", "XLC"], "themes": ["미국 AI·빅테크"], "subthemes": ["AI 소프트웨어·사이버보안", "클라우드·AI 플랫폼", "AI 데이터·분석"], "label": "미국 AI·빅테크 > AI 소프트웨어·사이버보안"},
+    {"market": "미국 섹터", "keys": ["AI·반도체", "반도체", "SOXX", "SMH", "QQQ", "XLK", "QTUM"], "themes": ["미국 AI·빅테크", "PCB·기판 글로벌", "포토닉스·광통신"], "subthemes": ["메모리·CPU", "AI 반도체 코어", "파운드리·인터커넥트", "서버·네트워크 인프라"], "label": "미국 AI·빅테크 > 반도체·서버"},
+    {"market": "한국 섹터", "keys": ["AI·반도체", "반도체", "396500.KS", "139260.KS", "381180.KS", "456600.KS"], "themes": ["국내 AI 반도체·소부장", "PCB·기판 글로벌", "전자부품·MLCC"], "subthemes": ["HBM/메모리", "기판/PCB", "검사/테스트", "MLCC·콘덴서"], "label": "국내 AI 반도체·소부장 > HBM·기판·MLCC"},
+    {"market": "미국 섹터", "keys": ["방산·우주", "우주/위성통신", "방산", "UFO", "SHLD", "ITA"], "themes": ["우주·위성 RF통신", "우주항공·방산"], "subthemes": ["위성 서비스·발사 (성장형)", "미국 방산 프라임", "RF GaN 반도체 부품"], "label": "우주·위성 RF통신 / 우주항공·방산"},
+    {"market": "한국 섹터", "keys": ["방산·조선", "방산", "조선", "449450.KS", "494670.KS"], "themes": ["우주항공·방산", "조선·해양"], "subthemes": ["한국 항공엔진/기체", "조선 대형 3사", "엔진·추진"], "label": "우주항공·방산 / 조선·해양"},
+    {"market": "미국 섹터", "keys": ["전력·인프라", "GRID", "PAVE", "ICLN", "XLU"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["전력기기 (글로벌)", "DC 전력·냉각", "전력 유틸리티"], "label": "전력·에너지 인프라 / 글로벌 원전·SMR"},
+    {"market": "한국 섹터", "keys": ["전력·인프라", "전력", "487240.KS", "487230.KS", "491010.KS"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["변압기·전력기기 (국내)", "케이블·전선", "원전·SMR"], "label": "전력·에너지 인프라 > 전력기기·케이블"},
+    {"market": "한국 섹터", "keys": ["원전·우라늄", "원전", "우라늄", "434730.KS", "433500.KS"], "themes": ["글로벌 원전·SMR", "전력·에너지 인프라"], "subthemes": ["원전·SMR", "원전 공급망", "우라늄/연료"], "label": "글로벌 원전·SMR > 원전 공급망"},
+    {"market": "한국 섹터", "keys": ["2차전지", "305540.KS", "LIT"], "themes": ["2차전지 밸류체인"], "subthemes": ["셀 메이커", "양극재", "음극재·전해질", "장비"], "label": "2차전지 밸류체인"},
+    {"market": "미국 섹터", "keys": ["2차전지·EV", "LIT"], "themes": ["2차전지 밸류체인"], "subthemes": ["셀 메이커", "양극재", "음극재·전해질"], "label": "2차전지 밸류체인"},
+    {"market": "한국 섹터", "keys": ["K뷰티·콘텐츠", "K뷰티", "콘텐츠", "479850.KS", "266360.KS", "228790.KS"], "themes": ["K-뷰티·소비재"], "subthemes": ["화장품 대형 브랜드", "OEM·ODM", "인디·중소 브랜드"], "label": "K-뷰티·소비재"},
+    {"market": "한국 섹터", "keys": ["바이오", "244580.KS", "143860.KS"], "themes": ["바이오·제약"], "subthemes": ["CDMO·위탁생산", "신약 파이프라인", "제약 대형주"], "label": "바이오·제약"},
+    {"market": "미국 섹터", "keys": ["바이오·헬스", "XLV", "IBB"], "themes": ["미국 헬스케어·바이오텍"], "subthemes": ["빅파마 (Big Pharma)", "바이오텍", "의료기기"], "label": "미국 헬스케어·바이오텍"},
+]
+
+
+def resolve_flow_theme_bridge(name="", ticker="", market=""):
+    text = " ".join([str(name or ""), str(ticker or "")]).upper()
+    market_text = str(market or "")
+    for rule in FLOW_THEME_BRIDGE_RULES:
+        rule_market = str(rule.get("market", ""))
+        if rule_market and market_text and rule_market != market_text:
+            continue
+        if any(str(key).upper() in text for key in rule.get("keys", [])):
+            return dict(rule)
+    for rule in FLOW_THEME_BRIDGE_RULES:
+        if any(str(key).upper() in text for key in rule.get("keys", [])):
+            return dict(rule)
+    return {"themes": [], "subthemes": [], "label": ""}
+
+
+def _best_theme_row(theme_rotation_df, themes):
+    if theme_rotation_df is None or theme_rotation_df.empty or not themes:
+        return pd.Series(dtype=object)
+    work = theme_rotation_df[theme_rotation_df["테마"].astype(str).isin([str(t) for t in themes])].copy()
+    if work.empty:
+        return pd.Series(dtype=object)
+    if "테마돈흐름점수" in work.columns:
+        work = work.sort_values("테마돈흐름점수", ascending=False, na_position="last")
+    return work.iloc[0]
+
+
+def _best_subtheme_row(group_df, theme_name, subthemes):
+    if group_df is None or group_df.empty or not theme_name:
+        return pd.Series(dtype=object)
+    work = group_df[group_df["테마"].astype(str).eq(str(theme_name))].copy()
+    if work.empty:
+        return pd.Series(dtype=object)
+    if subthemes and "하위테마" in work.columns:
+        preferred = work[work["하위테마"].astype(str).isin([str(s) for s in subthemes])].copy()
+        if not preferred.empty:
+            work = preferred
+    if "돈흐름점수" in work.columns:
+        work = work.sort_values("돈흐름점수", ascending=False, na_position="last")
+    return work.iloc[0]
+
+
+def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", theme_state="", sub_state="", price_level=np.nan):
+    text = " ".join(str(x or "") for x in [cluster_label, theme_signal, sector_state, theme_state, sub_state])
+    if "하락중 관망" in text or "소외 지속" in text or "급락" in text:
+        return "🔸 관망", "단기 흐름이 꺾인 구간입니다."
+    if "극단과열" in text:
+        return "🚫 추격금지", "종목 타점에서 과열이 풀릴 때까지 대기합니다."
+    if "과열" in text or (finite_num(price_level) and float(price_level) >= 0.90):
+        return "⏳ 눌림대기", "큰 흐름은 강하지만 가격 위치가 높습니다."
+    if str(cluster_label) == "진입검토" and str(theme_signal) in {"진입검토", "부상감시", "주도 후 조정"}:
+        return "✅ 정밀관측", "연결 흐름이 맞습니다. 종목별 과열/눌림을 확인합니다."
+    if str(cluster_label) in {"진입검토", "부상감시"} or str(theme_signal) in {"진입검토", "부상감시"}:
+        return "👀 관심등록", "새 돈 후보입니다. 대표주를 전광판/정밀관측소에 올려둡니다."
+    if str(cluster_label) == "주도 후 조정" or str(theme_signal) == "주도 후 조정":
+        return "⏳ 눌림대기", "주도 테마지만 단기 조정 확인이 필요합니다."
+    return "🔸 관망", "섹터·테마·타점 중 하나 이상이 아직 약합니다."
+
+
 def _render_cluster_card(col, cl: dict, rank: int):
     """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
@@ -6310,6 +6386,15 @@ def _render_cluster_card(col, cl: dict, rank: int):
 
     # ── 구성 ETF 상세 (최근 확인이 강한 순 정렬) ──
     tickers = cl.get("tickers", [])
+    ticker_codes = [str(t.get("ticker", "")).upper() for t in tickers if isinstance(t, dict)]
+    market_hint = "한국 섹터" if any(t.endswith((".KS", ".KQ")) for t in ticker_codes) else "미국 섹터"
+    bridge = resolve_flow_theme_bridge(cl.get("name", ""), " ".join(ticker_codes), market_hint)
+    bridge_html = ""
+    if bridge.get("label"):
+        bridge_html = (
+            "<div style='font-size:0.66em;color:#bae6fd;margin-top:4px;'>"
+            f"연결테마: {html.escape(str(bridge.get('label', '')))}</div>"
+        )
     ticker_rows_html = ""
     if tickers:
         rows = []
@@ -6358,6 +6443,7 @@ def _render_cluster_card(col, cl: dict, rank: int):
         f"<div style='font-size:0.68em;color:#94a3b8;'>"
         f"확산 {breadth*100:.0f}% · {vol_html} · {rank_html}</div>"
         f"{penalty_html}"
+        f"{bridge_html}"
         # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
         # ETF 상세
@@ -18404,6 +18490,144 @@ def render_today_portfolio_flow_bridge(summary_df, snapshot):
         st.dataframe(_format_bridge(all_connected), width='stretch', hide_index=True)
 
 
+def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df):
+    """섹터 ETF → 내부 테마 → 하위테마 → 행동라벨을 한 줄로 묶는다."""
+    rows = []
+    if sector_rotation_df is not None and not sector_rotation_df.empty:
+        kr_df = sector_rotation_df[sector_rotation_df.get("구분", "").astype(str).eq("한국 섹터")].copy() if "구분" in sector_rotation_df.columns else pd.DataFrame()
+        us_df = sector_rotation_df[sector_rotation_df.get("구분", "").astype(str).eq("미국 섹터")].copy() if "구분" in sector_rotation_df.columns else pd.DataFrame()
+        cluster_items = []
+        if not us_df.empty:
+            cluster_items.extend([("미국 섹터", c) for c in _build_cluster_list(us_df, SECTOR_CLUSTERS_US)])
+        if not kr_df.empty:
+            cluster_items.extend([("한국 섹터", c) for c in _build_cluster_list(kr_df, SECTOR_CLUSTERS_KR)])
+
+        for market, cl in sorted(cluster_items, key=lambda x: x[1].get("fit_score", -999), reverse=True):
+            tickers = " ".join(str(t.get("ticker", "")) for t in cl.get("tickers", []) if isinstance(t, dict))
+            bridge = resolve_flow_theme_bridge(cl.get("name", ""), tickers, market)
+            theme_row = _best_theme_row(theme_rotation_df, bridge.get("themes", []))
+            theme_name = str(theme_row.get("테마", bridge.get("themes", [""])[0] if bridge.get("themes") else "") or "")
+            sub_row = _best_subtheme_row(subtheme_group_df, theme_name, bridge.get("subthemes", []))
+
+            theme_signal = str(theme_row.get("테마판정", "") or "")
+            theme_state = str(theme_row.get("상태", "") or "")
+            sub_state = str(sub_row.get("상태", "") or "")
+            price_level = cl.get("price_level", np.nan)
+            action, reason = _unified_flow_action(
+                cluster_label=cl.get("flow_label", ""),
+                theme_signal=theme_signal,
+                sector_state="",
+                theme_state=theme_state,
+                sub_state=sub_state,
+                price_level=price_level,
+            )
+            representative = str(sub_row.get("대표주", "") or theme_row.get("대표주", "") or "")
+            next_check = "대표주를 정밀관측소에서 과열/눌림 확인"
+            if action == "⏳ 눌림대기":
+                next_check = "관심등록 후 MA20/볼린저 중단 눌림 대기"
+            elif action == "👀 관심등록":
+                next_check = "전광판 등록 후 2주·1개월 흐름 유지 확인"
+            elif action == "🔸 관망":
+                next_check = "섹터와 하위테마가 같은 방향으로 맞을 때 재검토"
+
+            rows.append({
+                "출처": "ETF/섹터",
+                "시장": market.replace(" 섹터", ""),
+                "후보군": cl.get("name", ""),
+                "큰돈판정": cl.get("flow_label", ""),
+                "연결테마": theme_name,
+                "테마판정": theme_signal or theme_state,
+                "핵심하위테마": str(sub_row.get("하위테마", "") or ""),
+                "하위상태": sub_state,
+                "대표주": representative,
+                "통합판정": action,
+                "다음확인": next_check,
+                "이유": reason,
+                "적합도": cl.get("fit_score", np.nan),
+                "테마점수": theme_row.get("테마돈흐름점수", np.nan),
+                "하위점수": sub_row.get("돈흐름점수", np.nan),
+                "1개월": cl.get("r1m", np.nan),
+                "2주": cl.get("r2w", np.nan),
+                "가격수준": price_level,
+            })
+
+    linked_themes = {str(r.get("연결테마", "")) for r in rows if str(r.get("연결테마", ""))}
+    if theme_rotation_df is not None and not theme_rotation_df.empty:
+        theme_rank = theme_rotation_df.copy()
+        if "테마돈흐름점수" in theme_rank.columns:
+            theme_rank = theme_rank.sort_values("테마돈흐름점수", ascending=False, na_position="last")
+        for _, theme_row in theme_rank.head(5).iterrows():
+            theme_name = str(theme_row.get("테마", "") or "")
+            if not theme_name or theme_name in linked_themes:
+                continue
+            sub_row = _best_subtheme_row(subtheme_group_df, theme_name, [])
+            action, reason = _unified_flow_action(
+                cluster_label="",
+                theme_signal=str(theme_row.get("테마판정", "") or ""),
+                theme_state=str(theme_row.get("상태", "") or ""),
+                sub_state=str(sub_row.get("상태", "") or ""),
+                price_level=theme_row.get("가격수준", np.nan),
+            )
+            rows.append({
+                "출처": "테마 단독",
+                "시장": IMAGE_THEME_META.get(theme_name, {}).get("tag", ""),
+                "후보군": theme_name,
+                "큰돈판정": "-",
+                "연결테마": theme_name,
+                "테마판정": str(theme_row.get("테마판정", "") or theme_row.get("상태", "")),
+                "핵심하위테마": str(sub_row.get("하위테마", "") or ""),
+                "하위상태": str(sub_row.get("상태", "") or ""),
+                "대표주": str(sub_row.get("대표주", "") or theme_row.get("대표주", "")),
+                "통합판정": action,
+                "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
+                "이유": reason,
+                "적합도": np.nan,
+                "테마점수": theme_row.get("테마돈흐름점수", np.nan),
+                "하위점수": sub_row.get("돈흐름점수", np.nan),
+                "1개월": theme_row.get("1개월수익률", np.nan),
+                "2주": theme_row.get("2주수익률", np.nan),
+                "가격수준": theme_row.get("가격수준", np.nan),
+            })
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    priority = {"✅ 정밀관측": 4, "👀 관심등록": 3, "⏳ 눌림대기": 2, "🚫 추격금지": 1, "🔸 관망": 0}
+    out["_priority"] = out["통합판정"].map(priority).fillna(0)
+    out["_score"] = out["적합도"].apply(clean_float).fillna(0) + out["테마점수"].apply(clean_float).fillna(0) * 0.35 + out["하위점수"].apply(clean_float).fillna(0) * 0.20
+    return out.sort_values(["_priority", "_score"], ascending=False).drop(columns=["_priority", "_score"])
+
+
+def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df):
+    unified_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+    if unified_df.empty:
+        return
+
+    st.markdown("#### 돈흐름 통합 판정")
+    st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서로 한 줄에 묶었습니다. `정밀관측`은 매수 신호가 아니라 종목 타점 확인 단계입니다.")
+
+    show = unified_df.head(12).copy()
+    for col in ["적합도", "테마점수", "하위점수"]:
+        if col in show.columns:
+            show[col] = show[col].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}")
+    for col in ["1개월", "2주", "가격수준"]:
+        if col in show.columns:
+            show[col] = show[col].apply(fmt_flow_pct)
+    cols = [
+        "통합판정", "후보군", "큰돈판정", "연결테마", "테마판정", "핵심하위테마",
+        "하위상태", "대표주", "1개월", "2주", "가격수준", "다음확인",
+    ]
+    st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
+
+    with st.expander("통합 판정 기준", expanded=False):
+        st.markdown(
+            "- `정밀관측`: ETF/섹터와 연결 테마가 같은 방향입니다. 정밀관측소에서 과열/눌림을 확인합니다.\n"
+            "- `관심등록`: 새 돈 후보지만 아직 타점 확정 전입니다. 전광판에 올려 흐름 유지 여부를 봅니다.\n"
+            "- `눌림대기`: 큰 흐름은 강하지만 가격 위치나 과열 상태가 높습니다.\n"
+            "- `관망`: 섹터, 테마, 하위테마 중 하나 이상이 아직 맞지 않습니다."
+        )
+
+
 def render_today_market_flow_panel(snapshot=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
@@ -18440,6 +18664,7 @@ def render_today_market_flow_panel(snapshot=None):
     subtheme_top = snapshot.get("subtheme_top", pd.DataFrame())
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
     theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
+    subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
 
     metric_cols = st.columns(4)
     if not kr_top5.empty:
@@ -18476,6 +18701,8 @@ def render_today_market_flow_panel(snapshot=None):
         metric_cols[3].metric("테마 종목 1위", "-", "-")
 
     st.caption("돈흐름점수는 2주/1개월 확인, 3개월 주도력, 확산, 거래량, 네이버 테마 보조를 함께 봅니다. `하락중 관망`은 강해 보여도 단기 하락이 이어지는 테마입니다.")
+
+    render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df)
 
     with st.expander("전광판으로 보내기", expanded=False):
         send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
