@@ -5243,6 +5243,7 @@ FLOW_SCORE_PART_COLUMNS = [
     ("점수_6개월", "6M"),
     ("점수_가속도", "가속"),
     ("점수_거래량", "거래량"),
+    ("점수_랭킹보조", "네이버랭킹"),
     ("점수_상승비율", "상승비율"),
     ("점수_쏠림패널티", "쏠림"),
     ("점수_과열패널티", "과열"),
@@ -7137,6 +7138,10 @@ def render_money_flow_etf_section():
             table_df[_score_col] = table_df[_score_col].apply(
                 lambda v: f"{v:.1f}" if finite_num(v) else "-"
             )
+    if "점수_랭킹보조" in table_df.columns:
+        table_df["점수_랭킹보조"] = table_df["점수_랭킹보조"].apply(
+            lambda v: f"{v:+.1f}" if finite_num(v) and abs(float(v)) > 0 else "-"
+        )
     for _col in ["2주수익률", "1개월수익률", "3개월수익률", "6개월수익률"]:
         if _col in table_df.columns:
             table_df[_col] = table_df[_col].apply(fmt_flow_pct)
@@ -7156,7 +7161,8 @@ def render_money_flow_etf_section():
     # 표시할 컬럼 순서 지정 (내부 컬럼 제외)
     _show_cols = [c for c in [
         "구분", "섹터", "Ticker", "ETF 이름", "현재가",
-        "상태", "가격수준", "돈흐름점수", "스윙점수", "진입가능",
+        "상태", "가격수준", "돈흐름점수", "스윙점수", "점수_랭킹보조", "진입가능",
+        "네이버랭킹",
         "2주수익률", "1개월수익률", "3개월수익률", "6개월수익률",
         "단기가속도", "가속도", "거래량증가",
     ] if c in table_df.columns]
@@ -7167,7 +7173,9 @@ def render_money_flow_etf_section():
             "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
             "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 중기가속도 15% + 거래량 15% — 장기 모멘텀"),
             "스윙점수":    st.column_config.TextColumn("스윙",      help="2W 25% + 1M 35% + 단기가속도 25% + 거래량 15% — 최근 방향 전환에 민감"),
+            "점수_랭킹보조": st.column_config.TextColumn("랭킹+",    help="네이버 ETF 거래대금·거래량·수익률 상위권 포착 보조점수"),
             "진입가능":    st.column_config.TextColumn("스윙진입",  help="✅ 진입가능: 스윙점수>0 + 52주위치<85%  ⚠️ 고점주의: 스윙점수>0이나 52주고점 85% 초과  ❌ 비추: 스윙점수≤0"),
+            "네이버랭킹":  st.column_config.TextColumn("네이버 랭킹", help="네이버 국내/미국 ETF 랭킹에서 포착된 위치"),
             "2주수익률":   st.column_config.TextColumn("2W"),
             "1개월수익률": st.column_config.TextColumn("1M"),
             "3개월수익률": st.column_config.TextColumn("3M"),

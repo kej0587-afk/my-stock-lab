@@ -31,7 +31,11 @@ Refactoring changelog (2026-05):
     * 무료 티어 25 calls/day / KRX 티커는 AV 미지원으로 폴백 제외
 """
 
+import json
+import logging
 import os
+import urllib.parse
+import urllib.request
 
 import numpy as np
 import pandas as pd
@@ -43,6 +47,12 @@ try:
     _FDR_AVAILABLE = True
 except ImportError:
     _FDR_AVAILABLE = False
+
+for _streamlit_logger in (
+    "streamlit.runtime.scriptrunner_utils.script_run_context",
+    "streamlit.runtime.scriptrunner.script_run_context",
+):
+    logging.getLogger(_streamlit_logger).setLevel(logging.ERROR)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +67,30 @@ _AV_API_KEY: str = os.getenv("AV_API_KEY", "")
 # .T(도쿄)는 fdr(TSE:) 폴백으로 처리 / .TW .VI .L 은 폴백 없음
 _UNRELIABLE_SUFFIXES = {"T", "TW", "VI", "L"}
 
+_NAVER_ETF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://stock.naver.com/",
+}
+
+_NAVER_KR_ETF_RANKINGS = [
+    ("국내 거래대금", "tradingValueDesc", 3.0),
+    ("국내 거래량급증", "tradingVolumeIncreaseRateDesc", 2.0),
+    ("국내 1M수익률", "returnRate1mDesc", 1.5),
+    ("국내 3M수익률", "returnRate3mDesc", 2.5),
+    ("국내 6M수익률", "returnRate6mDesc", 1.5),
+]
+
+_NAVER_US_ETF_RANKINGS = [
+    ("미국 거래대금", "priceTop", 3.0),
+    ("미국 거래량", "quantTop", 2.0),
+    ("미국 시총", "marketValue", 1.5),
+]
+
 
 # ---------------------------------------------------------------------------
 # 유틸리티
@@ -65,6 +99,158 @@ _UNRELIABLE_SUFFIXES = {"T", "TW", "VI", "L"}
 def finite_num(x) -> bool:
     """NaN / Inf / None 아닌 유효 숫자인지 확인."""
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
+
+
+def _to_float(value, default=np.nan) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(str(value).replace(",", ""))
+    except Exception:
+        return default
+
+
+def _rank_bonus(weight: float, rank: int, limit: int) -> float:
+    if limit <= 0:
+        return 0.0
+    rank_factor = max(0.0, 1.0 - ((rank - 1) / max(limit, 1)))
+    return float(weight) * rank_factor
+
+
+def _open_naver_json(url: str, referer: str) -> object:
+    headers = dict(_NAVER_ETF_HEADERS)
+    headers["Referer"] = referer
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=8) as res:
+        raw = res.read().decode("utf-8", errors="ignore")
+    return json.loads(raw)
+
+
+def _normalize_naver_us_etf_symbol(value: str) -> str:
+    symbol = str(value or "").strip().upper()
+    if "." in symbol:
+        symbol = symbol.split(".", 1)[0]
+    return symbol
+
+
+def _merge_naver_rank_item(items: dict, ticker: str, name: str, rank_label: str, rank: int, bonus: float, market: str):
+    if not ticker:
+        return
+    key = normalize_money_flow_ticker(ticker)
+    if key not in items:
+        items[key] = {
+            "구분": "네이버 ETF 랭킹",
+            "섹터": rank_label,
+            "ticker": key,
+            "name": name or key,
+            "네이버랭킹": [],
+            "랭킹보조점수": 0.0,
+            "네이버시장": market,
+        }
+    else:
+        if not items[key].get("name") and name:
+            items[key]["name"] = name
+    items[key]["네이버랭킹"].append(f"{rank_label} #{rank}")
+    items[key]["랭킹보조점수"] += float(bonus)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_naver_etf_ranking_universe(limit_per_rank: int = 8, max_total: int = 45) -> list[dict]:
+    """네이버 국내/미국 ETF 랭킹 상위만 후보풀로 가져온다.
+
+    전체 ETF를 매번 긁지 않고 거래대금·거래량·수익률 상위권만 가져와
+    돈흐름 레이더의 후보 발견력을 보강한다. 실패해도 기존 유니버스는 그대로 동작한다.
+    """
+    limit = max(1, min(int(limit_per_rank or 8), 20))
+    merged: dict[str, dict] = {}
+
+    for rank_label, listing_type, weight in _NAVER_KR_ETF_RANKINGS:
+        url = (
+            "https://stock.naver.com/api/stockSecurity/etfs/v1/domestic?"
+            + urllib.parse.urlencode({"listingType": listing_type, "size": limit, "index": 0})
+        )
+        try:
+            payload = _open_naver_json(url, "https://stock.naver.com/market/stock/kr/etf/priceTop")
+            rows = payload.get("items", []) if isinstance(payload, dict) else []
+        except Exception:
+            rows = []
+        for idx, row in enumerate(rows[:limit], start=1):
+            code = str(row.get("itemCode", "")).strip()
+            if not code:
+                continue
+            _merge_naver_rank_item(
+                merged,
+                f"{code}.KS",
+                str(row.get("itemName", "") or code),
+                rank_label,
+                idx,
+                _rank_bonus(weight, idx, limit),
+                "KR",
+            )
+
+    for rank_label, order_type, weight in _NAVER_US_ETF_RANKINGS:
+        url = (
+            "https://stock.naver.com/api/foreign/market/etf/usa?"
+            + urllib.parse.urlencode({"orderType": order_type, "startIdx": 0, "pageSize": limit})
+        )
+        try:
+            rows = _open_naver_json(url, "https://stock.naver.com/market/stock/usa/etf/priceTop")
+            if not isinstance(rows, list):
+                rows = []
+        except Exception:
+            rows = []
+        for idx, row in enumerate(rows[:limit], start=1):
+            symbol = _normalize_naver_us_etf_symbol(row.get("reutersCode", "") or row.get("symbolCode", ""))
+            if not symbol:
+                continue
+            _merge_naver_rank_item(
+                merged,
+                symbol,
+                str(row.get("koreanCodeName") or row.get("englishCodeName") or symbol),
+                rank_label,
+                idx,
+                _rank_bonus(weight, idx, limit),
+                "US",
+            )
+
+    out = []
+    for item in merged.values():
+        item["랭킹보조점수"] = min(float(item.get("랭킹보조점수", 0.0)), 6.0)
+        item["네이버랭킹"] = ", ".join(dict.fromkeys(item.get("네이버랭킹", [])))
+        out.append(item)
+
+    out.sort(key=lambda r: float(r.get("랭킹보조점수", 0.0)), reverse=True)
+    return out[:max_total]
+
+
+def build_money_flow_universe_with_naver_rankings() -> list[dict]:
+    base = [
+        dict(item, ticker=normalize_money_flow_ticker(item["ticker"]), 랭킹보조점수=0.0, 네이버랭킹="")
+        for item in MONEY_FLOW_UNIVERSE
+    ]
+    base_tickers = {item["ticker"] for item in base}
+
+    try:
+        naver_items = fetch_naver_etf_ranking_universe()
+    except Exception:
+        naver_items = []
+
+    naver_by_ticker = {normalize_money_flow_ticker(item.get("ticker", "")): item for item in naver_items}
+    for item in base:
+        naver = naver_by_ticker.get(item["ticker"])
+        if not naver:
+            continue
+        item["랭킹보조점수"] = float(naver.get("랭킹보조점수", 0.0))
+        item["네이버랭킹"] = naver.get("네이버랭킹", "")
+        item["네이버시장"] = naver.get("네이버시장", "")
+
+    for item in naver_items:
+        ticker = normalize_money_flow_ticker(item.get("ticker", ""))
+        if ticker and ticker not in base_tickers:
+            base.append(dict(item, ticker=ticker))
+            base_tickers.add(ticker)
+
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -918,7 +1104,7 @@ def download_money_flow_prices(tickers) -> pd.DataFrame:
         interval="1d",
         progress=False,
         group_by="ticker",
-        threads=True,
+        threads=min(4, max(1, len(tickers))),
         auto_adjust=False,
     )
 
@@ -1222,7 +1408,7 @@ def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
     universe = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
-        for item in MONEY_FLOW_UNIVERSE
+        for item in build_money_flow_universe_with_naver_rankings()
     ]
     data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
@@ -1232,11 +1418,16 @@ def calculate_money_flow_df() -> pd.DataFrame:
         if px.empty or len(px) < 20:
             continue
         metrics = _compute_ticker_metrics(px)
+        rank_bonus = float(item.get("랭킹보조점수", 0.0) or 0.0)
+        if rank_bonus:
+            metrics["돈흐름점수"] = float(metrics.get("돈흐름점수", 0.0)) + rank_bonus
+        metrics["점수_랭킹보조"] = rank_bonus
         rows.append({
             "구분":     item["구분"],
             "섹터":     item["섹터"],
             "Ticker":   item["ticker"],
             "ETF 이름": item["name"],
+            "네이버랭킹": item.get("네이버랭킹", ""),
             **metrics,
         })
 
