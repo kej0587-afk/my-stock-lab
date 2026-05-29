@@ -169,6 +169,7 @@ from stock_lab_core.kr_etf_data import (
 from stock_lab_core.prices import (
     clear_latest_price_cache,
     clear_selected_price_cache,
+    enable_force_live_price_refresh,
     load_latest_price,
     load_latest_prices_batch,
     load_price_df,
@@ -8743,6 +8744,7 @@ def render_refresh_control_panel():
 
         if st.button("전체 현재가 새로고침", key="refresh_panel_latest_price", width='stretch'):
             clear_latest_price_cache()
+            enable_force_live_price_refresh()
             record_refresh_event("latest_price_refresh_time")
             st.toast("현재가 캐시를 비웠습니다.")
             st.rerun()
@@ -21263,6 +21265,7 @@ if main_page == "precision":
                 st.caption("현재가")
                 if st.button("새로고침", key=f"refresh_precision_price_{fin_key}", width='stretch', help="선택 종목의 현재가 캐시를 비우고 다시 조회합니다. 미국장은 가능하면 프리/애프터 가격을 반영합니다."):
                     clear_selected_price_cache()
+                    enable_force_live_price_refresh()
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     st.toast(f"{tkr} 현재가를 다시 조회합니다.")
                     st.rerun()
@@ -22069,6 +22072,7 @@ if main_page == "asset":
         with asset_summary_refresh_col:
             if st.button("현재가 새로고침", key="refresh_asset_table_latest_prices", width='stretch', help="보유자산 평가금액에 쓰는 60초 현재가 캐시를 비우고 다시 조회합니다."):
                 clear_latest_price_cache()
+                enable_force_live_price_refresh()
                 st.session_state["latest_price_refresh_time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                 st.toast("보유자산 현재가를 다시 조회합니다.")
                 st.rerun()

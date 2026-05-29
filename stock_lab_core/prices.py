@@ -21,10 +21,28 @@ logging.getLogger("peewee").setLevel(logging.CRITICAL)
 _YAHOO_BLOCK_UNTIL = 0.0
 _YAHOO_BLOCK_LOCK = threading.Lock()
 _YAHOO_BLOCK_SECONDS = 180
+_FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
+
+
+def enable_force_live_price_refresh(seconds: int = 45) -> None:
+    """Temporarily use slower live-price fallbacks after a manual refresh."""
+    try:
+        st.session_state[_FORCE_LIVE_REFRESH_KEY] = (
+            pd.Timestamp.now().timestamp() + max(int(seconds), 1)
+        )
+    except Exception:
+        pass
+
+
+def _force_live_price_refresh_active() -> bool:
+    try:
+        return pd.Timestamp.now().timestamp() < float(st.session_state.get(_FORCE_LIVE_REFRESH_KEY, 0.0))
+    except Exception:
+        return False
 
 
 def _is_yahoo_temporarily_blocked() -> bool:
-    return pd.Timestamp.now().timestamp() < _YAHOO_BLOCK_UNTIL
+    return (not _force_live_price_refresh_active()) and pd.Timestamp.now().timestamp() < _YAHOO_BLOCK_UNTIL
 
 _NAVER_HEADERS = {
     "User-Agent": (
@@ -150,6 +168,24 @@ def _fetch_naver_price(ticker: str) -> float:
         if not m:
             # 장 시작 전/후 stockEndType 대비 fallback
             m = re.search(r'"stockEndPrice"\s*:\s*"([\d,]+)"', text)
+        if m:
+            return float(m.group(1).replace(",", ""))
+    except Exception:
+        pass
+    return 0.0
+
+
+def _fetch_naver_realtime_price(ticker: str) -> float:
+    code = _kr_code(ticker)
+    if not code:
+        return 0.0
+    try:
+        query = urllib.request.quote(f"SERVICE_ITEM:{code}")
+        url = f"https://polling.finance.naver.com/api/realtime?query={query}"
+        req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        raw = urllib.request.urlopen(req, timeout=4).read()
+        text = raw.decode("utf-8", errors="ignore")
+        m = re.search(r'"nv"\s*:\s*"?([\d,]+)"?', text)
         if m:
             return float(m.group(1).replace(",", ""))
     except Exception:
@@ -323,7 +359,7 @@ def _fetch_yahoo_quote(ticker: str) -> float:
     """
     global _YAHOO_BLOCK_UNTIL
     now_ts = pd.Timestamp.now().timestamp()
-    if now_ts < _YAHOO_BLOCK_UNTIL:
+    if (not _force_live_price_refresh_active()) and now_ts < _YAHOO_BLOCK_UNTIL:
         return 0.0
 
     for host in ("query1", "query2"):
@@ -421,9 +457,19 @@ def _fetch_price_uncached(ticker: str) -> float:
         5차 - yfinance 일봉 폴백
     """
     if _is_kr_ticker(ticker):
+        price = _fetch_naver_realtime_price(ticker)
+        if price > 0:
+            return price
         price = _fetch_naver_price(ticker)
         if price > 0:
             return price
+        if _force_live_price_refresh_active():
+            price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
+            if price > 0:
+                return price
+            price = _fetch_yf_download_price(ticker, interval="5m", prepost=True)
+            if price > 0:
+                return price
         price = _fetch_pykrx_latest_close(ticker)
         if price > 0:
             return price
@@ -525,7 +571,24 @@ def load_latest_prices_batch(tickers) -> dict:
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
-        # 그래도 없으면 pykrx 최근 종가로 보완한다. 한국 티커는 yfinance로 보내지 않는다.
+        kr_still_missing = [t for t in kr_tickers if normalize_price_lookup_key(t) not in prices]
+        if kr_still_missing and _force_live_price_refresh_active():
+            try:
+                with _YF_LOCK:
+                    data = yf.download(
+                        kr_still_missing if len(kr_still_missing) > 1 else kr_still_missing[0],
+                        period="1d", interval="1m", prepost=True,
+                        progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                    )
+                if data is not None and not data.empty:
+                    for t in kr_still_missing:
+                        p = get_latest_close_from_series(extract_download_close_series(data, t))
+                        if p > 0:
+                            prices[normalize_price_lookup_key(t)] = p
+            except Exception:
+                pass
+
+        # 그래도 없으면 pykrx 최근 종가로 보완한다.
         kr_still_missing = [t for t in kr_tickers if normalize_price_lookup_key(t) not in prices]
         for t in kr_still_missing:
             p = _fetch_pykrx_latest_close(t)
