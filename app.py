@@ -5417,6 +5417,36 @@ def get_today_market_flow_snapshot():
     }
 
 
+TODAY_MARKET_FLOW_SNAPSHOT_KEY = "today_market_flow_snapshot"
+TODAY_MARKET_FLOW_LAST_RUN_KEY = "today_market_flow_snapshot_last_run"
+
+
+def get_cached_today_market_flow_snapshot():
+    snapshot = st.session_state.get(TODAY_MARKET_FLOW_SNAPSHOT_KEY)
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
+    st.session_state.pop(TODAY_MARKET_FLOW_SNAPSHOT_KEY, None)
+    st.session_state.pop(TODAY_MARKET_FLOW_LAST_RUN_KEY, None)
+    if clear_data_cache:
+        cache_clear(get_today_market_flow_snapshot)
+        cache_clear(calculate_money_flow_df)
+        cache_clear(download_money_flow_prices)
+        if IMAGE_THEME_FLOW_AVAILABLE:
+            cache_clear(calculate_image_theme_flow_df)
+
+
+def refresh_today_market_flow_snapshot():
+    clear_today_market_flow_snapshot_cache(clear_data_cache=True)
+    snapshot = get_today_market_flow_snapshot()
+    st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
+    st.session_state[TODAY_MARKET_FLOW_LAST_RUN_KEY] = datetime.now(
+        timezone(timedelta(hours=9))
+    ).strftime("%Y-%m-%d %H:%M")
+    return snapshot
+
+
 def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
     """ETF/섹터 행 또는 테마 종목 행을 전광판에 추가.
 
@@ -8687,6 +8717,7 @@ def clear_market_context_cache():
     cache_clear(get_macro_analysis)
     cache_clear(download_money_flow_prices)
     cache_clear(load_usdkrw_rate)
+    clear_today_market_flow_snapshot_cache(clear_data_cache=False)
 
 
 def get_market_status_label(ticker=""):
@@ -18715,25 +18746,48 @@ def render_today_market_flow_panel(snapshot=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
 
+    cached_snapshot = get_cached_today_market_flow_snapshot()
     if snapshot is None:
-        if not should_run_heavy_analysis(
-            "today_market_flow_lazy",
-            "ETF/섹터와 테마 종목 가격을 여러 개 조회하므로 필요할 때만 계산합니다.",
-            run_label="돈흐름 요약 계산/새로고침",
-        ):
-            return
+        snapshot = cached_snapshot
 
+    refresh_col, clear_col, status_col = st.columns([1.4, 1.0, 3.6])
+    refresh_clicked = refresh_col.button(
+        "돈흐름 요약 새로고침",
+        key="today_market_flow_refresh_once",
+        width='stretch',
+    )
+    clear_clicked = False
+    if snapshot:
+        clear_clicked = clear_col.button("결과 지우기", key="today_market_flow_clear_cached", width='stretch')
+    else:
+        clear_col.caption("대기 중")
+
+    if clear_clicked:
+        clear_today_market_flow_snapshot_cache(clear_data_cache=False)
+        st.rerun()
+
+    last_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY)
+    if last_run:
+        status_col.caption(f"마지막 계산: {last_run}")
+    elif snapshot:
+        status_col.caption("저장된 계산 결과를 표시 중")
+
+    if refresh_clicked:
         try:
             with st.spinner("ETF/테마 돈흐름 요약 계산 중..."):
-                snapshot = get_today_market_flow_snapshot()
+                snapshot = refresh_today_market_flow_snapshot()
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
-            return
+            return None
+
+    if snapshot is None:
+        st.info("첫 로딩 속도를 위해 아직 돈흐름 요약을 계산하지 않았습니다. 버튼을 누르면 ETF/섹터와 테마 종목 흐름을 계산해 마지막 결과로 저장합니다.")
+        return None
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
     if flow_df is None or flow_df.empty:
         st.info("ETF/섹터 돈흐름 데이터가 아직 없습니다.")
-        return
+        return snapshot
 
     us_top5 = snapshot.get("us_top5", pd.DataFrame())
     kr_top5 = snapshot.get("kr_top5", pd.DataFrame())
@@ -19052,6 +19106,7 @@ def render_today_market_flow_panel(snapshot=None):
             _render_rotation_chart_and_table(theme_rot_map_df, label_col="테마", ret_col_1m="1개월수익률")
 
     # ── 투자자별 순매수 TOP 10 은 render_investor_top10_section() 에서 별도 렌더링 ──
+    return snapshot
 
 
 def render_investor_top10_section():
@@ -19113,7 +19168,7 @@ def render_investor_top10_section():
             if _t.upper().endswith((".KS", ".KQ")):
                 _tracked_kr.append(_t)
         try:
-            _snap = get_today_market_flow_snapshot()
+            _snap = get_cached_today_market_flow_snapshot() or {}
             for _key in ("theme_flow_df", "flow_df"):
                 _df = _snap.get(_key, pd.DataFrame())
                 if not _df.empty and "Ticker" in _df.columns:
@@ -19375,17 +19430,11 @@ def render_today_queue_tab(mode):
 
     render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available)
 
-    flow_snapshot = None
-    try:
-        # get_today_market_flow_snapshot은 @st.cache_data(ttl=900)로 캐시됨 — 스피너 불필요
-        flow_snapshot = get_today_market_flow_snapshot()
-    except Exception as exc:
-        st.caption(f"돈흐름 연결은 건너뜁니다: {exc}")
+    st.divider()
+    flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
     if flow_snapshot:
         render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
 
-    st.divider()
-    render_today_market_flow_panel(flow_snapshot)
     render_investor_top10_section()
     st.divider()
 
