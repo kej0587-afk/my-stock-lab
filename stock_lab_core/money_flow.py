@@ -143,19 +143,22 @@ def _merge_naver_rank_item(items: dict, ticker: str, name: str, rank_label: str,
     if not ticker:
         return
     key = normalize_money_flow_ticker(ticker)
+    display_name = str(name or "").strip() or key
     if key not in items:
         items[key] = {
             "구분": "네이버 ETF 랭킹",
-            "섹터": rank_label,
+            "섹터": display_name,
             "ticker": key,
-            "name": name or key,
+            "name": display_name,
             "네이버랭킹": [],
             "랭킹보조점수": 0.0,
             "네이버시장": market,
         }
     else:
-        if not items[key].get("name") and name:
-            items[key]["name"] = name
+        if display_name and (not items[key].get("name") or items[key].get("name") == key):
+            items[key]["name"] = display_name
+        if display_name and items[key].get("섹터") in {key, rank_label, ""}:
+            items[key]["섹터"] = display_name
     items[key]["네이버랭킹"].append(f"{rank_label} #{rank}")
     items[key]["랭킹보조점수"] += float(bonus)
 
