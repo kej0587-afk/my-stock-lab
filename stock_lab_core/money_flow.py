@@ -48,6 +48,12 @@ try:
 except ImportError:
     _FDR_AVAILABLE = False
 
+try:
+    from pykrx import stock as krx_stock
+    _PYKRX_AVAILABLE = True
+except ImportError:
+    _PYKRX_AVAILABLE = False
+
 for _streamlit_logger in (
     "streamlit.runtime.scriptrunner_utils.script_run_context",
     "streamlit.runtime.scriptrunner.script_run_context",
@@ -1152,6 +1158,15 @@ def normalize_money_flow_ticker(ticker: str) -> str:
     return t
 
 
+def _money_flow_suffix(ticker: str) -> str:
+    t = str(ticker or "").strip().upper()
+    return t.rsplit(".", 1)[-1] if "." in t else ""
+
+
+def _is_krx_money_flow_ticker(ticker: str) -> bool:
+    return _money_flow_suffix(ticker) in ("KS", "KQ")
+
+
 # ---------------------------------------------------------------------------
 # Alpha Vantage 선택적 폴백
 # ---------------------------------------------------------------------------
@@ -1251,18 +1266,73 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
 # 가격 다운로드
 # ---------------------------------------------------------------------------
 
+def _normalize_krx_ohlc(df) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy().rename(columns={
+        "시가": "Open",
+        "고가": "High",
+        "저가": "Low",
+        "종가": "Close",
+        "거래량": "Volume",
+    })
+    if "Close" not in out.columns:
+        return pd.DataFrame()
+    for col in ("High", "Low"):
+        if col not in out.columns:
+            out[col] = out["Close"]
+    if "Volume" not in out.columns:
+        out["Volume"] = 0
+    cols = ["Close", "High", "Low", "Volume"]
+    out = out[cols].apply(pd.to_numeric, errors="coerce")
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()].sort_index().ffill()
+    return out.dropna(subset=["Close", "High", "Low"])
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_pykrx_ohlc(ticker: str) -> pd.DataFrame:
+    if not _PYKRX_AVAILABLE:
+        return pd.DataFrame()
+    ticker = normalize_money_flow_ticker(ticker)
+    if not _is_krx_money_flow_ticker(ticker):
+        return pd.DataFrame()
+    code = ticker.split(".", 1)[0]
+    start = (pd.Timestamp.now() - pd.DateOffset(years=1)).strftime("%Y%m%d")
+    end = pd.Timestamp.now().strftime("%Y%m%d")
+    getters = []
+    if hasattr(krx_stock, "get_market_ohlcv_by_date"):
+        getters.append(lambda: krx_stock.get_market_ohlcv_by_date(start, end, code))
+    if hasattr(krx_stock, "get_etf_ohlcv_by_date"):
+        getters.append(lambda: krx_stock.get_etf_ohlcv_by_date(start, end, code))
+    for getter in getters:
+        try:
+            out = _normalize_krx_ohlc(getter())
+            if not out.empty:
+                return out
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def download_money_flow_prices(tickers) -> pd.DataFrame:
     tickers = sorted({normalize_money_flow_ticker(t) for t in tickers if str(t).strip()})
     if not tickers:
         return pd.DataFrame()
+    yf_tickers = [
+        t for t in tickers
+        if not _is_krx_money_flow_ticker(t) and _money_flow_suffix(t) not in _UNRELIABLE_SUFFIXES
+    ]
+    if not yf_tickers:
+        return pd.DataFrame()
     return yf.download(
-        tickers,
+        yf_tickers,
         period="1y",
         interval="1d",
         progress=False,
         group_by="ticker",
-        threads=min(4, max(1, len(tickers))),
+        threads=min(4, max(1, len(yf_tickers))),
         auto_adjust=False,
     )
 
@@ -1298,12 +1368,24 @@ def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     3. Alpha Vantage    — 미국 상장 티커 한정 (AV_API_KEY 필요)
     """
     ticker = normalize_money_flow_ticker(ticker)
+    suffix = _money_flow_suffix(ticker)
+
+    if _is_krx_money_flow_ticker(ticker):
+        out = _fetch_pykrx_ohlc(ticker)
+        if out.empty and _FDR_AVAILABLE:
+            out = _fetch_fdr_ohlc(ticker)
+        return out
+
+    if suffix == "T" and _FDR_AVAILABLE:
+        out = _fetch_fdr_ohlc(ticker)
+        if not out.empty:
+            return out
+
     out = _extract_ohlc_from_yf(data, ticker)
 
     if out.empty and _FDR_AVAILABLE:
-        suffix = ticker.split(".")[-1] if "." in ticker else ""
         # .T / KRX 알파벳코드 / fdr 전용 심볼에 한해 fdr 시도
-        if suffix == "T" or suffix in ("KS", "KQ") or not suffix:
+        if suffix == "T" or not suffix:
             out = _fetch_fdr_ohlc(ticker)
 
     if out.empty and _AV_API_KEY:

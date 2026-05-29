@@ -40,6 +40,86 @@ def _kr_code(ticker: str) -> str:
     return re.sub(r"\.(KS|KQ)$", "", str(ticker).strip().upper(), flags=re.IGNORECASE)
 
 
+def _period_start_timestamp(period: str) -> pd.Timestamp:
+    text = str(period or "1y").strip().lower()
+    today = pd.Timestamp.today().normalize()
+    if text == "ytd":
+        return pd.Timestamp(year=today.year, month=1, day=1)
+    if text == "max":
+        return today - pd.DateOffset(years=10)
+    try:
+        if text.endswith("mo"):
+            return today - pd.DateOffset(months=max(int(text[:-2]), 1))
+        if text.endswith("y"):
+            return today - pd.DateOffset(years=max(int(text[:-1]), 1))
+        if text.endswith("d"):
+            return today - pd.DateOffset(days=max(int(text[:-1]), 1) + 7)
+    except Exception:
+        pass
+    return today - pd.DateOffset(years=1)
+
+
+def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy().rename(columns={
+        "시가": "Open",
+        "고가": "High",
+        "저가": "Low",
+        "종가": "Close",
+        "거래량": "Volume",
+    })
+    if "Close" not in out.columns:
+        return pd.DataFrame()
+    for col in ("Open", "High", "Low"):
+        if col not in out.columns:
+            out[col] = out["Close"]
+    if "Volume" not in out.columns:
+        out["Volume"] = 0
+    cols = ["Open", "High", "Low", "Close", "Volume"]
+    out = out[cols].apply(pd.to_numeric, errors="coerce")
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()].sort_index().ffill()
+    return out.dropna(subset=["Close", "High", "Low"])
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _fetch_pykrx_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
+    if not _is_kr_ticker(ticker):
+        return pd.DataFrame()
+    try:
+        from pykrx import stock as _pykrx
+    except Exception:
+        return pd.DataFrame()
+
+    code = _kr_code(ticker)
+    if not code:
+        return pd.DataFrame()
+    start = _period_start_timestamp(period).strftime("%Y%m%d")
+    end = pd.Timestamp.today().normalize().strftime("%Y%m%d")
+    getters = []
+    if hasattr(_pykrx, "get_market_ohlcv_by_date"):
+        getters.append(lambda: _pykrx.get_market_ohlcv_by_date(start, end, code))
+    if hasattr(_pykrx, "get_etf_ohlcv_by_date"):
+        getters.append(lambda: _pykrx.get_etf_ohlcv_by_date(start, end, code))
+
+    for getter in getters:
+        try:
+            out = _normalize_pykrx_ohlcv(getter())
+            if not out.empty:
+                return out
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
+def _fetch_pykrx_latest_close(ticker: str) -> float:
+    df = _fetch_pykrx_ohlcv(ticker, "1mo")
+    if df.empty or "Close" not in df.columns:
+        return 0.0
+    return get_latest_close_from_series(df["Close"])
+
+
 def _fetch_naver_price(ticker: str) -> float:
     """
     네이버 모바일 API로 한국 주식 현재가 조회.
@@ -99,6 +179,9 @@ def load_price_df(ticker, period="1y"):
     _YF_LOCK으로 yfinance 동시 호출 직렬화 — prefetch_price_data_parallel 같은
     멀티스레드 환경에서 SQLite tz-cache 충돌("database is locked") 방지.
     """
+    if _is_kr_ticker(ticker):
+        return _fetch_pykrx_ohlcv(ticker, period)
+
     with _YF_LOCK:
         df = yf.download(
             ticker, period=period, interval="1d",
@@ -303,8 +386,8 @@ def _fetch_price_uncached(ticker: str) -> float:
 
     한국 주식 (.KS/.KQ):
         1차 - 네이버 모바일 API  (장중 실시간에 가까움)
-        2차 - yfinance 5분봉 + prepost
-        3차 - yfinance 일봉 폴백
+        2차 - pykrx 최근 종가
+        3차 - 실패 시 0 반환 (yfinance 지연/오류 로그 방지)
 
     미국·기타 주식:
         1차 - Yahoo Finance API 직접 조회  (SQLite 없음, 스레드 안전)
@@ -317,9 +400,10 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_naver_price(ticker)
         if price > 0:
             return price
-        price = _fetch_yf_download_price(ticker, interval="5m", prepost=True)
+        price = _fetch_pykrx_latest_close(ticker)
         if price > 0:
             return price
+        return 0.0
     else:
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
         price = _fetch_yahoo_quote(ticker)
@@ -378,7 +462,7 @@ def load_latest_prices_batch(tickers) -> dict:
     """
     여러 종목 현재가 일괄 조회. TTL=60초.
 
-    한국 (.KS/.KQ):  네이버 bulk API → 개별 네이버 → yfinance 5분봉
+    한국 (.KS/.KQ):  네이버 bulk API → 개별 네이버 → pykrx 최근 종가
     미국/기타:       yfinance 5분봉 + prepost → 일봉 폴백
     """
     unique_tickers: list[str] = []
@@ -415,23 +499,12 @@ def load_latest_prices_batch(tickers) -> dict:
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
-        # 그래도 없으면 yfinance 5분봉 (lock + threads=False로 SQLite 충돌 방지)
+        # 그래도 없으면 pykrx 최근 종가로 보완한다. 한국 티커는 yfinance로 보내지 않는다.
         kr_still_missing = [t for t in kr_tickers if normalize_price_lookup_key(t) not in prices]
-        if kr_still_missing:
-            try:
-                with _YF_LOCK:
-                    data = yf.download(
-                        kr_still_missing if len(kr_still_missing) > 1 else kr_still_missing[0],
-                        period="1d", interval="5m", prepost=True,
-                        progress=False, group_by="ticker", threads=False, auto_adjust=False,
-                    )
-                if data is not None and not data.empty:
-                    for t in kr_still_missing:
-                        p = get_latest_close_from_series(extract_download_close_series(data, t))
-                        if p > 0:
-                            prices[normalize_price_lookup_key(t)] = p
-            except Exception:
-                pass
+        for t in kr_still_missing:
+            p = _fetch_pykrx_latest_close(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
 
     # ── 미국/기타: Yahoo 직접 API 우선 → yfinance 5분봉 폴백 ────────────
     if us_tickers:
@@ -467,7 +540,10 @@ def load_latest_prices_batch(tickers) -> dict:
                 prices[normalize_price_lookup_key(t)] = p
 
     # ── 공통 일봉 최종 폴백 ────────────────────────────────────────────
-    all_missing = [t for t in unique_tickers if normalize_price_lookup_key(t) not in prices]
+    all_missing = [
+        t for t in unique_tickers
+        if normalize_price_lookup_key(t) not in prices and not _is_kr_ticker(t)
+    ]
     if all_missing:
         try:
             with _YF_LOCK:
