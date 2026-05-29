@@ -9,6 +9,7 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import hmac
 import io
+import logging
 import math
 import zipfile
 import requests
@@ -29,6 +30,9 @@ import xml.etree.ElementTree as ET
 import html
 import re
 from supabase import create_client
+
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
 from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
     add_recovery_issue,
@@ -8773,7 +8777,7 @@ def render_refresh_control_panel():
 
 @st.cache_data(ttl=300)
 def get_macro_analysis():
-    tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "MOVE": "^MOVE", "VIX": "^VIX"}
+    tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX"}
     results = {}; macro_trend = 0; storm_count = 0
 
     try:
@@ -8783,7 +8787,7 @@ def get_macro_analysis():
             interval="1d",
             progress=False,
             group_by="ticker",
-            threads=True,
+            threads=False,
             auto_adjust=False,
         )
     except Exception:

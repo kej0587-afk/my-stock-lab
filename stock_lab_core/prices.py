@@ -1,6 +1,7 @@
 """Price loading and latest-price cache helpers for Stock Lab."""
 
 import json
+import logging
 import re
 import threading
 import urllib.request
@@ -14,6 +15,16 @@ import yfinance as yf
 # SQLite tz 캐시에 동시 쓰기 → "database is locked" 오류 발생.
 # 모듈 레벨 Lock으로 yfinance 호출을 직렬화해 방지.
 _YF_LOCK = threading.Lock()
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
+
+_YAHOO_BLOCK_UNTIL = 0.0
+_YAHOO_BLOCK_LOCK = threading.Lock()
+_YAHOO_BLOCK_SECONDS = 180
+
+
+def _is_yahoo_temporarily_blocked() -> bool:
+    return pd.Timestamp.now().timestamp() < _YAHOO_BLOCK_UNTIL
 
 _NAVER_HEADERS = {
     "User-Agent": (
@@ -310,6 +321,11 @@ def _fetch_yahoo_quote(ticker: str) -> float:
 
     query1 실패 시 query2 로 재시도.
     """
+    global _YAHOO_BLOCK_UNTIL
+    now_ts = pd.Timestamp.now().timestamp()
+    if now_ts < _YAHOO_BLOCK_UNTIL:
+        return 0.0
+
     for host in ("query1", "query2"):
         try:
             url = (
@@ -338,7 +354,15 @@ def _fetch_yahoo_quote(ticker: str) -> float:
                 if val and float(val) > 0:
                     return float(val)
 
-        except Exception:
+        except Exception as exc:
+            message = str(exc)
+            if "401" in message or "Too Many Requests" in message or "Rate" in message:
+                with _YAHOO_BLOCK_LOCK:
+                    _YAHOO_BLOCK_UNTIL = max(
+                        _YAHOO_BLOCK_UNTIL,
+                        pd.Timestamp.now().timestamp() + _YAHOO_BLOCK_SECONDS,
+                    )
+                return 0.0
             continue
 
     return 0.0
@@ -409,6 +433,8 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
+        if _is_yahoo_temporarily_blocked():
+            return 0.0
         price = _fetch_yf_fast_info_price(ticker)
         if price > 0:
             return price
@@ -513,6 +539,9 @@ def load_latest_prices_batch(tickers) -> dict:
             p = _fetch_yahoo_quote(t)
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
+
+        if _is_yahoo_temporarily_blocked():
+            return prices
 
         # 2차: Yahoo 직접 실패 종목만 yfinance 5분봉으로 보완
         us_yf_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
