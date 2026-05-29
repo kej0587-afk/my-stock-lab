@@ -7902,6 +7902,17 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
         top_n=10,
     )
 
+    def _theme_customdata(df, cols):
+        safe = df.reindex(columns=cols).copy()
+        for col in cols:
+            if col not in safe.columns:
+                safe[col] = ""
+            elif safe[col].dtype == "O":
+                safe[col] = safe[col].fillna("")
+            else:
+                safe[col] = safe[col].fillna(np.nan)
+        return safe
+
     left, right = st.columns([1.05, 1])
     with left:
         chart_df = rotation_df.sort_values("테마돈흐름점수", ascending=True)
@@ -7919,11 +7930,11 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
             y=chart_df["테마"],
             orientation="h",
             marker_color=colors,
-            customdata=chart_df[[
+            customdata=_theme_customdata(chart_df, [
                 "대표주", "2주수익률", "1개월수익률", "3개월수익률",
                 "가속도", "상승종목비율", "거래량증가", "상위종목쏠림",
                 "테마판정", "네이버테마근거",
-            ]],
+            ]),
             hovertemplate=(
                 "<b>%{y}</b><br>"
                 "대표주: %{customdata[0]}<br>"
@@ -7965,7 +7976,7 @@ def render_image_theme_rotation_overview(rotation_df, market_label):
                 showscale=True,
                 colorbar=dict(title="가속도"),
             ),
-            customdata=rotation_df[["대표주", "테마돈흐름점수", "거래량증가", "상위종목쏠림", "테마판정"]],
+            customdata=_theme_customdata(rotation_df, ["대표주", "테마돈흐름점수", "거래량증가", "상위종목쏠림", "테마판정"]),
             hovertemplate=(
                 "<b>%{text}</b><br>"
                 "대표주: %{customdata[0]}<br>"
@@ -18555,8 +18566,13 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
     """섹터 ETF → 내부 테마 → 하위테마 → 행동라벨을 한 줄로 묶는다."""
     rows = []
     if sector_rotation_df is not None and not sector_rotation_df.empty:
-        kr_df = sector_rotation_df[sector_rotation_df.get("구분", "").astype(str).eq("한국 섹터")].copy() if "구분" in sector_rotation_df.columns else pd.DataFrame()
-        us_df = sector_rotation_df[sector_rotation_df.get("구분", "").astype(str).eq("미국 섹터")].copy() if "구분" in sector_rotation_df.columns else pd.DataFrame()
+        if "구분" in sector_rotation_df.columns:
+            group_series = sector_rotation_df["구분"].astype(str)
+            kr_df = sector_rotation_df[group_series.eq("한국 섹터")].copy()
+            us_df = sector_rotation_df[group_series.eq("미국 섹터")].copy()
+        else:
+            kr_df = pd.DataFrame()
+            us_df = pd.DataFrame()
         cluster_items = []
         if not us_df.empty:
             cluster_items.extend([("미국 섹터", c) for c in _build_cluster_list(us_df, SECTOR_CLUSTERS_US)])
