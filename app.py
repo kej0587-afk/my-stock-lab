@@ -19143,12 +19143,15 @@ def render_today_market_flow_panel(snapshot=None):
                 _name = str(_r.get("종목명", _tkr))
                 _lbl  = find_precision_select_label_by_ticker(_tkr, _pm)
                 with _bcols[_i % 3]:
-                    if _lbl:
-                        if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
+                    if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
+                        if _lbl:
+                            # 전광판/프리셋 종목: 직접 선택
                             st.session_state["precision_selected_option"] = _lbl
-                            st.toast(f"'{_name}' 정밀관측소 설정 완료. 사이드바에서 정밀관측소를 여세요.", icon="🔍")
-                    else:
-                        st.caption(f"{_name}  \n`{_tkr}` (전광판 추가 후 연결)")
+                        else:
+                            # 미등록 종목: 자유탐색 모드로 전환 + 티커 pre-fill
+                            st.session_state["precision_selected_option"] = FREE_SEARCH_OPTION
+                            st.session_state["_precision_prefill_ticker"] = _tkr
+                        st.toast(f"'{_name}' → 정밀관측소 설정 완료. 사이드바에서 정밀관측소 탭을 여세요.", icon="🔍")
 
         with _sc_tab:
             st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 85%")
@@ -21145,8 +21148,10 @@ if main_page == "precision":
     is_free = (selected_option.get("type") == "free")
 
     if is_free:
+        # 오늘의 종목 후보 등에서 전달된 pre-fill 티커가 있으면 기본값으로 사용
+        _prefill_ticker = st.session_state.pop("_precision_prefill_ticker", "GOOGL")
         c1, c2 = st.columns([2, 1])
-        with c1: user_tkr_raw = sanitize_ticker_value(st.text_input("티커/종목코드 (예: GOOGL, 005930)", "GOOGL"))
+        with c1: user_tkr_raw = sanitize_ticker_value(st.text_input("티커/종목코드 (예: GOOGL, 005930)", _prefill_ticker))
         with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
 
         tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}" if (user_tkr_raw.isdigit() and len(user_tkr_raw) == 6) else user_tkr_raw
