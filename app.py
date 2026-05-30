@@ -19065,6 +19065,98 @@ def render_today_market_flow_panel(snapshot=None):
         _td["진입검토"] = _td.apply(_entry, axis=1)
         theme_rot_map_df = _td
 
+    # ── 오늘의 종목 후보 숏리스트 (테마 종목 흐름 기반 자동 추출) ─────
+    if not theme_flow_df.empty:
+        st.markdown("#### 🎯 오늘의 종목 후보")
+        st.caption(
+            "테마 종목 흐름에서 자동 추출한 1차 후보입니다. "
+            "▶ **정밀관측소**에서 한 번 더 확인 후 진입을 결정하세요."
+        )
+        _BAD_ST = {"소외 지속", "급락 경보"}
+
+        def _ctype(row) -> str:
+            accel = row.get("가속도", None)
+            ret1m = row.get("1개월수익률", None)
+            ret3m = row.get("3개월수익률", None)
+            pl    = row.get("가격수준", None)
+            flow  = row.get("돈흐름점수", None)
+            st_raw = str(row.get("상태", ""))
+            for _e in ["🔴","💥","💚","🔥","🚀","🟡","⚪","〰️","⚡","🟢","⬛"]:
+                st_raw = st_raw.replace(_e, "")
+            if st_raw.strip() in _BAD_ST:
+                return "❌"
+            if not finite_num(accel):
+                return "?"
+            near_high  = finite_num(pl) and float(pl) > 0.85
+            safe_zone  = finite_num(pl) and 0.30 <= float(pl) <= 0.85
+            accel_ok   = float(accel) >= 0.05
+            ret1m_ok   = finite_num(ret1m) and float(ret1m) > 0
+            ret3m_ok   = finite_num(ret3m) and float(ret3m) > 0.05
+            flow_swing = finite_num(flow) and float(flow) >= 20
+            flow_long  = finite_num(flow) and float(flow) >= 10
+            if near_high:
+                return "고점"
+            if accel_ok and ret1m_ok and flow_swing:
+                return "스윙"
+            if ret3m_ok and safe_zone and flow_long and float(accel) > -0.5:
+                return "장기"
+            return "관망"
+
+        # 종목당 1행 (돈흐름점수 최고 행 대표)
+        _tfd_short = (
+            theme_flow_df
+            .sort_values("돈흐름점수", ascending=False, na_position="last")
+            .drop_duplicates(subset=["Ticker"], keep="first")
+            .copy()
+        )
+        _tfd_short["_st"] = _tfd_short.apply(_ctype, axis=1)
+        _swing_c = _tfd_short[_tfd_short["_st"] == "스윙"].sort_values("돈흐름점수", ascending=False).head(8)
+        _long_c  = _tfd_short[_tfd_short["_st"] == "장기"].sort_values("3개월수익률", ascending=False).head(8)
+
+        _sc_tab, _lc_tab = st.tabs([
+            f"🚀 스윙후보 ({len(_swing_c)})",
+            f"🌱 장기후보 ({len(_long_c)})",
+        ])
+        _SL_COLS = ["종목명", "Ticker", "하위테마", "상태", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률"]
+
+        def _render_shortlist(cdf: pd.DataFrame, key_suffix: str):
+            if cdf.empty:
+                st.info("현재 조건에 맞는 후보가 없습니다.")
+                return
+            av = [c for c in _SL_COLS if c in cdf.columns]
+            disp = cdf[av].copy()
+            for _c in ["가격수준", "1개월수익률", "3개월수익률"]:
+                if _c in disp.columns:
+                    disp[_c] = disp[_c].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+            if "돈흐름점수" in disp.columns:
+                disp["돈흐름점수"] = disp["돈흐름점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
+            st.dataframe(disp, width='stretch', hide_index=True)
+            # 정밀분석 버튼 (최대 6종목, 3열)
+            top6 = cdf.head(6).reset_index(drop=True)
+            if top6.empty:
+                return
+            st.markdown("**🔍 정밀관측소 바로가기** — 클릭 후 사이드바에서 정밀관측소 탭을 여세요.")
+            _bcols = st.columns(3)
+            _po, _pm = build_precision_select_options()
+            for _i, _r in top6.iterrows():
+                _tkr  = str(_r.get("Ticker", ""))
+                _name = str(_r.get("종목명", _tkr))
+                _lbl  = find_precision_select_label_by_ticker(_tkr, _pm)
+                with _bcols[_i % 3]:
+                    if _lbl:
+                        if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
+                            st.session_state["precision_selected_option"] = _lbl
+                            st.toast(f"'{_name}' 정밀관측소 설정 완료. 사이드바에서 정밀관측소를 여세요.", icon="🔍")
+                    else:
+                        st.caption(f"{_name}  \n`{_tkr}` (전광판 추가 후 연결)")
+
+        with _sc_tab:
+            st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 85%")
+            _render_shortlist(_swing_c, "sw")
+        with _lc_tab:
+            st.caption("기준: 돈흐름점수 ≥ 10 · 3M 수익률 > 5% · 52주위치 30~85%")
+            _render_shortlist(_long_c, "lt")
+
     # ── 통합 로테이션 맵 (한국섹터 / 미국섹터 / 테마종목) ──────────────
     st.markdown("#### 🔄 로테이션 맵 — 섹터 · 테마 진입검토")
     st.caption(
