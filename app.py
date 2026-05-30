@@ -19065,21 +19065,42 @@ def render_today_market_flow_panel(snapshot=None):
         _td["진입검토"] = _td.apply(_entry, axis=1)
         theme_rot_map_df = _td
 
-    # ── 오늘의 종목 후보 숏리스트 (테마 종목 흐름 기반 자동 추출) ─────
+    # ── 로테이션 맵 진입검토 테마 추출 (개별 종목 후보 필터 기준) ─────
+    _strong_themes: set = set()
+    if not theme_rot_map_df.empty and "진입검토" in theme_rot_map_df.columns:
+        _strong_themes = set(
+            theme_rot_map_df[theme_rot_map_df["진입검토"] == "✅ 진입검토"]["테마"].dropna().tolist()
+        )
+
+    # ── 오늘의 종목 후보 숏리스트 ─────────────────────────────────────
+    # 흐름: 로테이션 맵 진입검토 테마 → 해당 테마 개별 종목 → 1차 필터 → 정밀관측소
     if not theme_flow_df.empty:
         st.markdown("#### 🎯 오늘의 종목 후보")
-        st.caption(
-            "테마 종목 흐름에서 자동 추출한 1차 후보입니다. "
-            "▶ **정밀관측소**에서 한 번 더 확인 후 진입을 결정하세요."
-        )
+
+        # 강세 테마 필터링
+        if _strong_themes:
+            _tfd_base = theme_flow_df[theme_flow_df["테마"].isin(_strong_themes)].copy()
+            _theme_tags = "  ".join(f"`{t}`" for t in sorted(_strong_themes))
+            st.caption(
+                f"📌 **로테이션 맵 진입검토 테마** → {_theme_tags}  \n"
+                "해당 테마 소속 종목만 1차 후보로 추출합니다. "
+                "▶ **정밀관측소**에서 최종 확인 후 진입을 결정하세요."
+            )
+        else:
+            _tfd_base = theme_flow_df.copy()
+            st.caption(
+                "현재 로테이션 맵 진입검토 테마 없음 → 전체 테마에서 후보 추출.  \n"
+                "▶ **정밀관측소**에서 최종 확인 후 진입을 결정하세요."
+            )
+
         _BAD_ST = {"소외 지속", "급락 경보"}
 
         def _ctype(row) -> str:
-            accel = row.get("가속도", None)
-            ret1m = row.get("1개월수익률", None)
-            ret3m = row.get("3개월수익률", None)
-            pl    = row.get("가격수준", None)
-            flow  = row.get("돈흐름점수", None)
+            accel  = row.get("가속도", None)
+            ret1m  = row.get("1개월수익률", None)
+            ret3m  = row.get("3개월수익률", None)
+            pl     = row.get("가격수준", None)
+            flow   = row.get("돈흐름점수", None)
             st_raw = str(row.get("상태", ""))
             for _e in ["🔴","💥","💚","🔥","🚀","🟡","⚪","〰️","⚡","🟢","⬛"]:
                 st_raw = st_raw.replace(_e, "")
@@ -19104,7 +19125,7 @@ def render_today_market_flow_panel(snapshot=None):
 
         # 종목당 1행 (돈흐름점수 최고 행 대표)
         _tfd_short = (
-            theme_flow_df
+            _tfd_base
             .sort_values("돈흐름점수", ascending=False, na_position="last")
             .drop_duplicates(subset=["Ticker"], keep="first")
             .copy()
@@ -19117,11 +19138,15 @@ def render_today_market_flow_panel(snapshot=None):
             f"🚀 스윙후보 ({len(_swing_c)})",
             f"🌱 장기후보 ({len(_long_c)})",
         ])
-        _SL_COLS = ["종목명", "Ticker", "하위테마", "상태", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률"]
+        # 테마 컬럼 포함: 어떤 테마 소속인지 바로 확인
+        _SL_COLS = ["종목명", "Ticker", "테마", "하위테마", "상태", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률"]
 
         def _render_shortlist(cdf: pd.DataFrame, key_suffix: str):
             if cdf.empty:
-                st.info("현재 조건에 맞는 후보가 없습니다.")
+                if _strong_themes:
+                    st.info("진입검토 테마 내 현재 조건에 맞는 후보가 없습니다. 로테이션 맵 탭에서 테마 상태를 확인하세요.")
+                else:
+                    st.info("현재 조건에 맞는 후보가 없습니다.")
                 return
             av = [c for c in _SL_COLS if c in cdf.columns]
             disp = cdf[av].copy()
@@ -19145,10 +19170,8 @@ def render_today_market_flow_panel(snapshot=None):
                 with _bcols[_i % 3]:
                     if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
                         if _lbl:
-                            # 전광판/프리셋 종목: 직접 선택
                             st.session_state["precision_selected_option"] = _lbl
                         else:
-                            # 미등록 종목: 자유탐색 모드로 전환 + 티커 pre-fill
                             st.session_state["precision_selected_option"] = FREE_SEARCH_OPTION
                             st.session_state["_precision_prefill_ticker"] = _tkr
                         st.toast(f"'{_name}' → 정밀관측소 설정 완료. 사이드바에서 정밀관측소 탭을 여세요.", icon="🔍")
