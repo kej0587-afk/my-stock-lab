@@ -19066,11 +19066,23 @@ def render_today_market_flow_panel(snapshot=None):
         theme_rot_map_df = _td
 
     # ── 로테이션 맵 진입검토 테마 추출 (개별 종목 후보 필터 기준) ─────
+    # ① 테마종목 탭: theme_rot_map_df 진입검토 테마
     _strong_themes: set = set()
     if not theme_rot_map_df.empty and "진입검토" in theme_rot_map_df.columns:
         _strong_themes = set(
             theme_rot_map_df[theme_rot_map_df["진입검토"] == "✅ 진입검토"]["테마"].dropna().tolist()
         )
+
+    # ② 한국/미국 섹터 탭: 진입검토 ETF 티커 → ETF_TO_THEME 으로 테마 매핑
+    if ETF_TO_THEME and not sector_rotation_df.empty and "진입검토" in sector_rotation_df.columns:
+        _strong_etfs = set(
+            sector_rotation_df[sector_rotation_df["진입검토"] == "✅ 진입검토"]["Ticker"]
+            .dropna().astype(str).str.upper().tolist()
+        )
+        for _etf in _strong_etfs:
+            _mapped = ETF_TO_THEME.get(_etf)
+            if _mapped:
+                _strong_themes.add(_mapped)
 
     # ── 오늘의 종목 후보 숏리스트 ─────────────────────────────────────
     # 흐름: 로테이션 맵 진입검토 테마 → 해당 테마 개별 종목 → 1차 필터 → 정밀관측소
@@ -19156,18 +19168,18 @@ def render_today_market_flow_panel(snapshot=None):
             if "돈흐름점수" in disp.columns:
                 disp["돈흐름점수"] = disp["돈흐름점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
             st.dataframe(disp, width='stretch', hide_index=True)
-            # 정밀분석 버튼 (최대 6종목, 3열)
-            top6 = cdf.head(6).reset_index(drop=True)
-            if top6.empty:
+            # 정밀분석 버튼 — 테이블과 동일한 종목 수 (최대 8개, 4열)
+            all_cands = cdf.reset_index(drop=True)
+            if all_cands.empty:
                 return
             st.markdown("**🔍 정밀관측소 바로가기** — 클릭 후 사이드바에서 정밀관측소 탭을 여세요.")
-            _bcols = st.columns(3)
+            _bcols = st.columns(4)
             _po, _pm = build_precision_select_options()
-            for _i, _r in top6.iterrows():
+            for _i, _r in all_cands.iterrows():
                 _tkr  = str(_r.get("Ticker", ""))
                 _name = str(_r.get("종목명", _tkr))
                 _lbl  = find_precision_select_label_by_ticker(_tkr, _pm)
-                with _bcols[_i % 3]:
+                with _bcols[_i % 4]:
                     if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
                         if _lbl:
                             st.session_state["precision_selected_option"] = _lbl
