@@ -19146,19 +19146,24 @@ def render_today_market_flow_panel(snapshot=None):
         _swing_c = _tfd_short[_tfd_short["_st"] == "스윙"].sort_values("돈흐름점수", ascending=False).head(8)
         _long_c  = _tfd_short[_tfd_short["_st"] == "장기"].sort_values("3개월수익률", ascending=False).head(8)
 
-        _sc_tab, _lc_tab = st.tabs([
+        # 고점주의: 진입검토 테마 내 강세지만 52주 85% 초과 → 눌림 대기 후보
+        _high_c = (
+            _tfd_short[_tfd_short["_st"] == "고점"]
+            .sort_values("돈흐름점수", ascending=False)
+            .head(8)
+        )
+
+        _sc_tab, _lc_tab, _hi_tab = st.tabs([
             f"🚀 스윙후보 ({len(_swing_c)})",
             f"🌱 장기후보 ({len(_long_c)})",
+            f"⚠️ 고점주의 ({len(_high_c)})",
         ])
         # 테마 컬럼 포함: 어떤 테마 소속인지 바로 확인
         _SL_COLS = ["종목명", "Ticker", "테마", "하위테마", "상태", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률"]
 
-        def _render_shortlist(cdf: pd.DataFrame, key_suffix: str):
+        def _render_shortlist(cdf: pd.DataFrame, key_suffix: str, empty_msg: str = ""):
             if cdf.empty:
-                if _strong_themes:
-                    st.info("진입검토 테마 내 현재 조건에 맞는 후보가 없습니다. 로테이션 맵 탭에서 테마 상태를 확인하세요.")
-                else:
-                    st.info("현재 조건에 맞는 후보가 없습니다.")
+                st.info(empty_msg or "현재 조건에 맞는 후보가 없습니다.")
                 return
             av = [c for c in _SL_COLS if c in cdf.columns]
             disp = cdf[av].copy()
@@ -19168,10 +19173,8 @@ def render_today_market_flow_panel(snapshot=None):
             if "돈흐름점수" in disp.columns:
                 disp["돈흐름점수"] = disp["돈흐름점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
             st.dataframe(disp, width='stretch', hide_index=True)
-            # 정밀분석 버튼 — 테이블과 동일한 종목 수 (최대 8개, 4열)
+            # 정밀분석 버튼 — 테이블과 동일한 종목 수 (4열)
             all_cands = cdf.reset_index(drop=True)
-            if all_cands.empty:
-                return
             st.markdown("**🔍 정밀관측소 바로가기** — 클릭 후 사이드바에서 정밀관측소 탭을 여세요.")
             _bcols = st.columns(4)
             _po, _pm = build_precision_select_options()
@@ -19190,10 +19193,21 @@ def render_today_market_flow_panel(snapshot=None):
 
         with _sc_tab:
             st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 85%")
-            _render_shortlist(_swing_c, "sw")
+            _render_shortlist(_swing_c, "sw",
+                "진입검토 테마 내 스윙 조건 충족 종목 없음. "
+                "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
         with _lc_tab:
             st.caption("기준: 돈흐름점수 ≥ 10 · 3M 수익률 > 5% · 52주위치 30~85%")
-            _render_shortlist(_long_c, "lt")
+            _render_shortlist(_long_c, "lt",
+                "진입검토 테마 내 장기후보 조건 충족 종목 없음. "
+                "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
+        with _hi_tab:
+            st.caption(
+                "진입검토 테마 내 강세지만 52주 고점 85% 초과 종목. "
+                "추격 매수 대신 **MA20/볼린저 중단 눌림** 구간 진입을 노리세요."
+            )
+            _render_shortlist(_high_c, "hi",
+                "진입검토 테마 내 고점 구간 종목도 없습니다.")
 
     # ── 통합 로테이션 맵 (한국섹터 / 미국섹터 / 테마종목) ──────────────
     st.markdown("#### 🔄 로테이션 맵 — 섹터 · 테마 진입검토")
