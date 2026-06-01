@@ -18796,24 +18796,18 @@ def render_today_market_flow_panel(snapshot=None):
     if snapshot is None:
         snapshot = cached_snapshot
 
-    btn_c1, btn_c2, btn_c3, btn_c4 = st.columns([1.5, 1.8, 1.0, 2.7])
-    fast_clicked  = btn_c1.button(
-        "⚡ ETF/섹터만 (빠름)",
-        key="today_market_flow_refresh_fast",
-        width='stretch',
-        help="ETF/섹터 데이터만 재계산 (~15초). 기존 테마 종목 결과는 유지됩니다.",
-    )
-    full_clicked  = btn_c2.button(
-        "🔄 전체 새로고침 (느림)",
-        key="today_market_flow_refresh_full",
+    refresh_col, clear_col, status_col = st.columns([1.5, 1.0, 3.5])
+    refresh_clicked = refresh_col.button(
+        "🔄 돈흐름 요약 새로고침",
+        key="today_market_flow_refresh_once",
         width='stretch',
         help="ETF/섹터 + 테마 종목 전체 재계산 (~60초 이상 소요).",
     )
     clear_clicked = False
     if snapshot:
-        clear_clicked = btn_c3.button("지우기", key="today_market_flow_clear_cached", width='stretch')
+        clear_clicked = clear_col.button("지우기", key="today_market_flow_clear_cached", width='stretch')
     else:
-        btn_c3.caption("대기 중")
+        clear_col.caption("대기 중")
 
     if clear_clicked:
         clear_today_market_flow_snapshot_cache(clear_data_cache=False)
@@ -18821,37 +18815,23 @@ def render_today_market_flow_panel(snapshot=None):
 
     last_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY)
     if last_run:
-        btn_c4.caption(f"마지막 계산: {last_run}")
+        status_col.caption(f"마지막 계산: {last_run}")
     elif snapshot:
-        btn_c4.caption("저장된 결과 표시 중")
+        status_col.caption("저장된 결과 표시 중")
 
-    if fast_clicked:
+    if refresh_clicked:
         # 클러스터 점수 delta 추적: 현재 → prev로 보존
         if "_cluster_fit_curr" in st.session_state:
             st.session_state["_cluster_fit_prev"] = st.session_state["_cluster_fit_curr"]
         try:
-            with st.spinner("ETF/섹터 돈흐름 계산 중 (~15초)..."):
-                snapshot = refresh_today_market_flow_snapshot(include_theme=False)
-        except Exception as exc:
-            st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
-            return None
-
-    if full_clicked:
-        # 클러스터 점수 delta 추적: 현재 → prev로 보존
-        if "_cluster_fit_curr" in st.session_state:
-            st.session_state["_cluster_fit_prev"] = st.session_state["_cluster_fit_curr"]
-        try:
-            with st.spinner("전체 돈흐름 계산 중 — ETF/섹터 + 테마 종목 (~60초 이상)..."):
-                snapshot = refresh_today_market_flow_snapshot(include_theme=True)
+            with st.spinner("돈흐름 계산 중 — ETF/섹터 + 테마 종목 (~60초 이상)..."):
+                snapshot = refresh_today_market_flow_snapshot()
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
             return None
 
     if snapshot is None:
-        st.info(
-            "⚡ **ETF/섹터만 (빠름)**: 섹터 로테이션과 오늘의 종목 후보를 ~15초 안에 확인합니다.  \n"
-            "🔄 **전체 새로고침 (느림)**: 테마 종목 돈흐름까지 포함한 전체 분석 (~60초 이상)."
-        )
+        st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 + 테마 종목 분석을 시작하세요.")
         return None
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
@@ -19190,8 +19170,8 @@ def render_today_market_flow_panel(snapshot=None):
                 return "❌"
             if not finite_num(accel):
                 return "?"
-            near_high  = finite_num(pl) and float(pl) > 0.85
-            safe_zone  = finite_num(pl) and 0.30 <= float(pl) <= 0.85
+            near_high  = finite_num(pl) and float(pl) > 0.90
+            safe_zone  = finite_num(pl) and 0.30 <= float(pl) <= 0.90
             accel_ok   = float(accel) >= 0.05
             ret1m_ok   = finite_num(ret1m) and float(ret1m) > 0
             ret3m_ok   = finite_num(ret3m) and float(ret3m) > 0.05
@@ -19216,7 +19196,7 @@ def render_today_market_flow_panel(snapshot=None):
         _swing_c = _tfd_short[_tfd_short["_st"] == "스윙"].sort_values("돈흐름점수", ascending=False).head(8)
         _long_c  = _tfd_short[_tfd_short["_st"] == "장기"].sort_values("3개월수익률", ascending=False).head(8)
 
-        # 고점주의: 진입검토 테마 내 강세지만 52주 85% 초과 → 눌림 대기 후보
+        # 고점주의: 진입검토 테마 내 강세지만 52주 90% 초과 → 눌림 대기 후보
         _high_c = (
             _tfd_short[_tfd_short["_st"] == "고점"]
             .sort_values("돈흐름점수", ascending=False)
@@ -19262,12 +19242,12 @@ def render_today_market_flow_panel(snapshot=None):
                         st.toast(f"'{_name}' → 정밀관측소 설정 완료. 사이드바에서 정밀관측소 탭을 여세요.", icon="🔍")
 
         with _sc_tab:
-            st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 85%")
+            st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 90%")
             _render_shortlist(_swing_c, "sw",
                 "진입검토 테마 내 스윙 조건 충족 종목 없음. "
                 "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
         with _lc_tab:
-            st.caption("기준: 돈흐름점수 ≥ 10 · 3M 수익률 > 5% · 52주위치 30~85%")
+            st.caption("기준: 돈흐름점수 ≥ 10 · 3M 수익률 > 5% · 52주위치 30~90%")
             _render_shortlist(_long_c, "lt",
                 "진입검토 테마 내 장기후보 조건 충족 종목 없음. "
                 "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
