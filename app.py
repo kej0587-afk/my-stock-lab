@@ -5437,13 +5437,38 @@ def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
             cache_clear(calculate_image_theme_flow_df)
 
 
-def refresh_today_market_flow_snapshot():
-    clear_today_market_flow_snapshot_cache(clear_data_cache=True)
-    snapshot = get_today_market_flow_snapshot()
+def refresh_today_market_flow_snapshot(include_theme: bool = True):
+    """ETF/섹터 데이터 + 테마종목(옵션) 계산.
+    include_theme=False이면 ETF/섹터만 빠르게 계산하고 기존 테마 결과를 유지.
+    """
+    _kst_now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+
+    if not include_theme:
+        # ── 빠른 모드: ETF/섹터만 재계산, 기존 스냅샷의 테마 결과 유지 ──
+        cache_clear(calculate_money_flow_df)
+        cache_clear(download_money_flow_prices)
+        flow_df = calculate_money_flow_df()
+        sector_rotation_df = calculate_sector_rotation_df(flow_df)
+        prev = get_cached_today_market_flow_snapshot() or {}
+        snapshot = {
+            **prev,  # 테마 결과는 기존 것 유지
+            "flow_df":           flow_df,
+            "us_top5":           build_today_flow_rank_table(flow_df, "미국 섹터", top_n=5),
+            "kr_top5":           build_today_flow_rank_table(flow_df, "한국 섹터", top_n=5),
+            "global_top":        build_today_flow_rank_table(flow_df, "글로벌",    top_n=1),
+            "local_top":         build_today_flow_rank_table(flow_df, "국내상장 대표 ETF", top_n=1),
+            "us_swing_top3":     build_today_flow_rank_table(flow_df, "미국 섹터", score_col="스윙점수", top_n=3),
+            "kr_swing_top3":     build_today_flow_rank_table(flow_df, "한국 섹터", score_col="스윙점수", top_n=3),
+            "global_swing_top":  build_today_flow_rank_table(flow_df, "글로벌",    score_col="스윙점수", top_n=1),
+            "sector_rotation_df": sector_rotation_df,
+        }
+    else:
+        # ── 전체 모드: ETF/섹터 + 테마종목 전부 재계산 ──
+        clear_today_market_flow_snapshot_cache(clear_data_cache=True)
+        snapshot = get_today_market_flow_snapshot()
+
     st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
-    st.session_state[TODAY_MARKET_FLOW_LAST_RUN_KEY] = datetime.now(
-        timezone(timedelta(hours=9))
-    ).strftime("%Y-%m-%d %H:%M")
+    st.session_state[TODAY_MARKET_FLOW_LAST_RUN_KEY] = _kst_now
     return snapshot
 
 
@@ -6346,7 +6371,7 @@ def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", the
     return "🔸 관망", "섹터·테마·타점 중 하나 이상이 아직 약합니다."
 
 
-def _render_cluster_card(col, cl: dict, rank: int):
+def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
     rsmom  = cl["rsmom"]
@@ -6467,7 +6492,14 @@ def _render_cluster_card(col, cl: dict, rank: int):
         f"#{rank}&nbsp;{cl['name']}{badge}{label_badge}</div>"
         # 진입 적합도
         f"<div style='font-size:1.05em;font-weight:700;color:{main_clr};'>"
-        f"적합도 {fit_score:+.1f}점{r1m_html}{r2w_html}</div>"
+        f"적합도 {fit_score:+.1f}점"
+        + (
+            f"<span style='font-size:0.65em;color:{'#4ade80' if delta > 0 else '#f87171' if delta < 0 else '#94a3b8'}"
+            f";margin-left:5px;font-weight:500;'>{'▲' if delta > 0 else '▼' if delta < 0 else '─'}"
+            f"{abs(delta):.1f}</span>"
+            if delta is not None else ""
+        )
+        + f"{r1m_html}{r2w_html}</div>"
         # RS 방향
         f"<div style='font-size:0.78em;color:{mom_clr};margin-bottom:5px;'>"
         f"{mom_sym}&nbsp;RS {rs3m*100:+.1f}% / 방향 {rsmom*100:+.1f}%</div>"
@@ -6686,7 +6718,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
     return cl_list
 
 
-def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str, rank_offset: int = 0):
+def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
+                               rank_offset: int = 0, prev_scores: dict | None = None):
     """한 시장(한국/미국)의 클러스터 상위 top_n 카드 행 렌더."""
     total_all = len(cl_list)
     visible   = cl_list[:top_n]
@@ -6706,7 +6739,9 @@ def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str, ran
     n_cols = min(len(visible), 3)
     cols   = st.columns(n_cols)
     for i, cl in enumerate(visible):
-        _render_cluster_card(cols[i], cl, rank=rank_offset + i + 1)
+        _prev = (prev_scores or {}).get(cl["name"])
+        _delta = (float(cl.get("fit_score", 0)) - float(_prev)) if _prev is not None else None
+        _render_cluster_card(cols[i], cl, rank=rank_offset + i + 1, delta=_delta)
 
 
 def render_cluster_heatmap_enhanced(
@@ -6732,6 +6767,11 @@ def render_cluster_heatmap_enhanced(
     """
     if rotation_df is None or rotation_df.empty:
         return
+
+    # ── 클러스터 점수 delta 추적 ──────────────────────────────────
+    _PREV_KEY = "_cluster_fit_prev"
+    _CURR_KEY = "_cluster_fit_curr"
+    _prev_scores: dict = st.session_state.get(_PREV_KEY, {})
 
     # ── 분리 모드 ─────────────────────────────────────────────────
     if clusters_kr is not None or clusters_us is not None:
@@ -6776,9 +6816,14 @@ def render_cluster_heatmap_enhanced(
                 "한국/미국은 각각 KOSPI200·S&P500 기준"
             )
 
-        _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터")
+        # 현재 점수 세션 저장 (다음 렌더 시 prev로 활용)
+        _curr = {cl["name"]: float(cl.get("fit_score", 0)) for cl in us_list + kr_list}
+        st.session_state[_CURR_KEY] = _curr
+
+        _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터",
+                                   prev_scores=_prev_scores)
         _render_market_cluster_row(kr_list, top_n_per_market, "🇰🇷 한국 섹터",
-                                   rank_offset=top_n_per_market)
+                                   rank_offset=top_n_per_market, prev_scores=_prev_scores)
         st.write("")
         return
 
@@ -8717,7 +8762,8 @@ def clear_market_context_cache():
     cache_clear(get_macro_analysis)
     cache_clear(download_money_flow_prices)
     cache_clear(load_usdkrw_rate)
-    clear_today_market_flow_snapshot_cache(clear_data_cache=False)
+    # 돈흐름 스냅샷은 재무/매크로와 무관하므로 여기서 지우지 않음
+    # (오늘 점검 '결과 지우기' 버튼에서만 명시적으로 초기화)
 
 
 def get_market_status_label(ticker=""):
@@ -18750,17 +18796,24 @@ def render_today_market_flow_panel(snapshot=None):
     if snapshot is None:
         snapshot = cached_snapshot
 
-    refresh_col, clear_col, status_col = st.columns([1.4, 1.0, 3.6])
-    refresh_clicked = refresh_col.button(
-        "돈흐름 요약 새로고침",
-        key="today_market_flow_refresh_once",
+    btn_c1, btn_c2, btn_c3, btn_c4 = st.columns([1.5, 1.8, 1.0, 2.7])
+    fast_clicked  = btn_c1.button(
+        "⚡ ETF/섹터만 (빠름)",
+        key="today_market_flow_refresh_fast",
         width='stretch',
+        help="ETF/섹터 데이터만 재계산 (~15초). 기존 테마 종목 결과는 유지됩니다.",
+    )
+    full_clicked  = btn_c2.button(
+        "🔄 전체 새로고침 (느림)",
+        key="today_market_flow_refresh_full",
+        width='stretch',
+        help="ETF/섹터 + 테마 종목 전체 재계산 (~60초 이상 소요).",
     )
     clear_clicked = False
     if snapshot:
-        clear_clicked = clear_col.button("결과 지우기", key="today_market_flow_clear_cached", width='stretch')
+        clear_clicked = btn_c3.button("지우기", key="today_market_flow_clear_cached", width='stretch')
     else:
-        clear_col.caption("대기 중")
+        btn_c3.caption("대기 중")
 
     if clear_clicked:
         clear_today_market_flow_snapshot_cache(clear_data_cache=False)
@@ -18768,20 +18821,37 @@ def render_today_market_flow_panel(snapshot=None):
 
     last_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY)
     if last_run:
-        status_col.caption(f"마지막 계산: {last_run}")
+        btn_c4.caption(f"마지막 계산: {last_run}")
     elif snapshot:
-        status_col.caption("저장된 계산 결과를 표시 중")
+        btn_c4.caption("저장된 결과 표시 중")
 
-    if refresh_clicked:
+    if fast_clicked:
+        # 클러스터 점수 delta 추적: 현재 → prev로 보존
+        if "_cluster_fit_curr" in st.session_state:
+            st.session_state["_cluster_fit_prev"] = st.session_state["_cluster_fit_curr"]
         try:
-            with st.spinner("ETF/테마 돈흐름 요약 계산 중..."):
-                snapshot = refresh_today_market_flow_snapshot()
+            with st.spinner("ETF/섹터 돈흐름 계산 중 (~15초)..."):
+                snapshot = refresh_today_market_flow_snapshot(include_theme=False)
+        except Exception as exc:
+            st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
+            return None
+
+    if full_clicked:
+        # 클러스터 점수 delta 추적: 현재 → prev로 보존
+        if "_cluster_fit_curr" in st.session_state:
+            st.session_state["_cluster_fit_prev"] = st.session_state["_cluster_fit_curr"]
+        try:
+            with st.spinner("전체 돈흐름 계산 중 — ETF/섹터 + 테마 종목 (~60초 이상)..."):
+                snapshot = refresh_today_market_flow_snapshot(include_theme=True)
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
             return None
 
     if snapshot is None:
-        st.info("첫 로딩 속도를 위해 아직 돈흐름 요약을 계산하지 않았습니다. 버튼을 누르면 ETF/섹터와 테마 종목 흐름을 계산해 마지막 결과로 저장합니다.")
+        st.info(
+            "⚡ **ETF/섹터만 (빠름)**: 섹터 로테이션과 오늘의 종목 후보를 ~15초 안에 확인합니다.  \n"
+            "🔄 **전체 새로고침 (느림)**: 테마 종목 돈흐름까지 포함한 전체 분석 (~60초 이상)."
+        )
         return None
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())

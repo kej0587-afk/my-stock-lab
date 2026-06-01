@@ -379,12 +379,30 @@ def _fetch_yahoo_quote(ticker: str) -> float:
             result = results[0]
             meta = result.get("meta", {})
 
-            # 1) 최근 캔들 Close (가장 정확한 실시간 체결가)
+            # 1) 최근 캔들 Close (가장 정확한 실시간 체결가, prepost=true 포함)
             price = _last_candle_close(result)
             if price > 0:
                 return price
 
-            # 2) meta 필드 폴백
+            # 2) meta 필드 폴백 — timestamp 기준 가장 최근 가격 선택
+            #    정규장/프리마켓/데이마켓(after-hours) 중 timestamp가 가장 늦은 것 사용
+            best_price, best_ts = 0.0, 0
+            for price_key, time_key in (
+                ("postMarketPrice",    "postMarketTime"),
+                ("preMarketPrice",     "preMarketTime"),
+                ("regularMarketPrice", "regularMarketTime"),
+            ):
+                val = meta.get(price_key)
+                ts  = meta.get(time_key) or 0
+                try:
+                    ts = int(ts)
+                except Exception:
+                    ts = 0
+                if val and float(val) > 0 and ts > best_ts:
+                    best_price, best_ts = float(val), ts
+            if best_price > 0:
+                return best_price
+            # timestamp 없는 폴백
             for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
                 val = meta.get(key)
                 if val and float(val) > 0:
@@ -413,7 +431,9 @@ def _fetch_yf_fast_info_price(ticker: str) -> float:
     try:
         with _YF_LOCK:
             fi = yf.Ticker(ticker).fast_info
-        for attr in ("regular_market_price", "last_price", "pre_market_price", "post_market_price"):
+        # last_price: yfinance가 세션 구분 없이 가장 최근 체결가를 반환
+        # regular_market_price는 장중 또는 정규 종가이므로 last_price 우선
+        for attr in ("last_price", "post_market_price", "pre_market_price", "regular_market_price"):
             try:
                 val = getattr(fi, attr, None)
                 if val is not None and float(val) > 0:
