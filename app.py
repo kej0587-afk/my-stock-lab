@@ -6310,6 +6310,9 @@ FLOW_THEME_BRIDGE_RULES = [
     {"market": "한국 섹터", "keys": ["K뷰티·콘텐츠", "K뷰티", "콘텐츠", "479850.KS", "266360.KS", "228790.KS"], "themes": ["K-뷰티·소비재"], "subthemes": ["화장품 대형 브랜드", "OEM·ODM", "인디·중소 브랜드"], "label": "K-뷰티·소비재"},
     {"market": "한국 섹터", "keys": ["바이오", "244580.KS", "143860.KS"], "themes": ["바이오·제약"], "subthemes": ["CDMO·위탁생산", "신약 파이프라인", "제약 대형주"], "label": "바이오·제약"},
     {"market": "미국 섹터", "keys": ["바이오·헬스", "XLV", "IBB"], "themes": ["미국 헬스케어·바이오텍"], "subthemes": ["빅파마 (Big Pharma)", "바이오텍", "의료기기"], "label": "미국 헬스케어·바이오텍"},
+    {"market": "한국 섹터", "keys": ["금융", "139270.KS"], "themes": ["한국 금융"], "subthemes": ["은행", "증권", "보험", "카드·핀테크"], "label": "한국 금융"},
+    {"market": "미국 섹터", "keys": ["금융·핀테크", "금융", "핀테크", "XLF", "FINX"], "themes": ["미국 금융·핀테크"], "subthemes": ["미국 대형 은행", "핀테크·결제", "보험·자산운용"], "label": "미국 금융·핀테크"},
+    {"market": "미국 섹터", "keys": ["산업재·원자재", "산업재", "원자재", "XLI", "XLB", "COPX", "XHB"], "themes": ["글로벌 인프라·산업재"], "subthemes": ["미국 산업재 대형주", "구리·광물 소재", "건설·주택"], "label": "글로벌 인프라·산업재"},
 ]
 
 
@@ -9828,15 +9831,36 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         ma20_now > 0 and cur_p > ma20_now * 1.05
     )
     _ma50_damage = below_ma50 and not (_rs_strong and (_is_leader_grade or _is_momentum_leader))
+    # 파라볼릭 모멘텀: RS강함 + 정배열 + MA20 이격 20% 이상 → 고점에서 크게 빠져도 정상 눌림 범주
+    # (MA20 +40% 종목이 -30% 하락해도 MA20은 여전히 +10%, 투매/위기 아님)
+    _is_extreme_momentum = (
+        (not is_etf) and
+        fin_score >= 3 and
+        trend == "🚀정배열(상승)" and
+        _rs_strong and
+        ma20_now > 0 and cur_p > ma20_now * 1.20
+    )
     # 재무4 대장주 또는 모멘텀 대장주(재무3+RS강함+MA20위) → -20%까지 허용
-    _dd_threshold = -0.20 if (_is_leader_grade or _is_momentum_leader) and _rs_strong else -0.15
+    # 파라볼릭 극단 모멘텀(MA20 이격 20%+) → -35%까지 허용
+    if _is_extreme_momentum:
+        _dd_threshold = -0.35
+    elif (_is_leader_grade or _is_momentum_leader) and _rs_strong:
+        _dd_threshold = -0.20
+    else:
+        _dd_threshold = -0.15
+    # 급락 후 정배열 회복 중: 오늘 양봉 + MA20 7% 이내 + 정배열 유지 → MA20 하회 구조훼손 오진 방지
+    _is_recovering_from_drop = (
+        trend == "🚀정배열(상승)" and
+        day_ret > 0.0 and
+        ma20_now > 0 and cur_p > ma20_now * 0.93
+    )
     is_structure_damage_entry_risk = (
         (not is_etf) and
         (not short_history) and
         (
             current_dd <= _dd_threshold or
             _ma50_damage or
-            (below_ma20 and not _rs_strong) or
+            (below_ma20 and not _rs_strong and not _is_recovering_from_drop) or
             is_single_day_breakdown
         )
     )
@@ -9926,7 +9950,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     "볼린저 밴드 상단 근접 — 눌림 대기 후 진입",
                 ),
             )
-        elif current_dd <= -0.2:
+        elif current_dd <= -0.2 and not _is_extreme_momentum:
             dec, col, decision_outcome = _set_decision(
                 "🚨위기/패닉: 투매 포착", "#dc2626", "CRISIS_PANIC_SELL_OFF",
                 reasons=(
@@ -18755,7 +18779,10 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
     priority = {"✅ 정밀관측": 4, "👀 관심등록": 3, "⏳ 눌림대기": 2, "🚫 추격금지": 1, "🔸 관망": 0}
     out["_priority"] = out["통합판정"].map(priority).fillna(0)
     out["_score"] = out["적합도"].apply(clean_float).fillna(0) + out["테마점수"].apply(clean_float).fillna(0) * 0.35 + out["하위점수"].apply(clean_float).fillna(0) * 0.20
-    return out.sort_values(["_priority", "_score"], ascending=False).drop(columns=["_priority", "_score"])
+    out = out.sort_values(["_priority", "_score"], ascending=False)
+    # 같은 (후보군 + 연결테마) 조합이 미국/한국 섹터에서 중복 생성되는 경우 높은 점수 행만 유지
+    out = out.drop_duplicates(subset=["후보군", "연결테마"], keep="first")
+    return out.drop(columns=["_priority", "_score"])
 
 
 def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df):
@@ -21597,6 +21624,11 @@ if main_page == "precision":
                     f"{dca_html}</div>",
                     unsafe_allow_html=True,
                 )
+                _reasons = c.get("decision_reasons", ())
+                if _reasons:
+                    with st.expander("🔍 판단근거 보기", expanded=False):
+                        for _r in _reasons:
+                            st.caption(f"• {_r}")
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
 

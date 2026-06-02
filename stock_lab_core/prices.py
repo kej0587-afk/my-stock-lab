@@ -346,80 +346,105 @@ def _last_candle_close(result: dict) -> float:
     return 0.0
 
 
+def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, dict]:
+    """
+    Yahoo v8 chart API 단일 호출 — (캔들 마지막 Close, meta 딕셔너리) 반환.
+    실패 시 (0.0, {}) 반환. 401/Rate 에러면 (−1.0, {}) 로 블록 신호 전달.
+    """
+    global _YAHOO_BLOCK_UNTIL
+    for host in ("query1", "query2"):
+        try:
+            url = (
+                f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+                f"{urllib.request.quote(ticker)}"
+                f"?interval={interval}&range={range_}&includePrePost=true"
+            )
+            req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read())
+            results = (data.get("chart") or {}).get("result") or []
+            if not results:
+                continue
+            result = results[0]
+            meta = result.get("meta", {})
+            return _last_candle_close(result), meta
+        except Exception as exc:
+            message = str(exc)
+            if "401" in message or "Too Many Requests" in message or "Rate" in message:
+                return -1.0, {}
+            continue
+    return 0.0, {}
+
+
+def _meta_best_price(meta: dict) -> float:
+    """meta 필드에서 timestamp 기준 가장 최근 가격을 뽑는다."""
+    best_price, best_ts = 0.0, 0
+    for price_key, time_key in (
+        ("postMarketPrice",    "postMarketTime"),
+        ("preMarketPrice",     "preMarketTime"),
+        ("regularMarketPrice", "regularMarketTime"),
+    ):
+        val = meta.get(price_key)
+        ts = meta.get(time_key) or 0
+        try:
+            ts = int(ts)
+        except Exception:
+            ts = 0
+        if val and float(val) > 0 and ts > best_ts:
+            best_price, best_ts = float(val), ts
+    if best_price > 0:
+        return best_price
+    for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
+        val = meta.get(key)
+        if val and float(val) > 0:
+            return float(val)
+    return 0.0
+
+
 def _fetch_yahoo_quote(ticker: str) -> float:
     """
     Yahoo Finance chart API 직접 호출 — yfinance SQLite lock 없음.
 
     우선순위:
-      1) 최근 1분봉 캔들의 마지막 Close  ← 진짜 실시간 체결가
-      2) meta.regularMarketPrice          ← Yahoo 캐시값(이전 종가일 수 있음)
-      3) meta.currentPrice / chartPreviousClose
+      1) 1분봉(range=1d) 캔들의 마지막 Close  ← 진짜 실시간 체결가
+      2) 5분봉(range=2d) 캔들의 마지막 Close  ← 1분봉 데이터 없을 때 재시도
+      3) meta.postMarket/preMarket/regularMarketPrice (timestamp 최신 기준)
+      4) meta.currentPrice / chartPreviousClose
 
-    query1 실패 시 query2 로 재시도.
+    query1 실패 시 query2 로 재시도. 401/Rate 에러 시 블록 설정.
     """
     global _YAHOO_BLOCK_UNTIL
     now_ts = pd.Timestamp.now().timestamp()
     if (not _force_live_price_refresh_active()) and now_ts < _YAHOO_BLOCK_UNTIL:
         return 0.0
 
-    for host in ("query1", "query2"):
-        try:
-            url = (
-                f"https://{host}.finance.yahoo.com/v8/finance/chart/"
-                f"{urllib.request.quote(ticker)}"
-                "?interval=1m&range=1d&includePrePost=true"
+    # 1) 1분봉 시도
+    candle_price, meta = _fetch_yahoo_chart(ticker, "1m", "1d")
+    if candle_price == -1.0:
+        with _YAHOO_BLOCK_LOCK:
+            _YAHOO_BLOCK_UNTIL = max(
+                _YAHOO_BLOCK_UNTIL,
+                pd.Timestamp.now().timestamp() + _YAHOO_BLOCK_SECONDS,
             )
-            req = urllib.request.Request(url, headers=_YQ_HEADERS)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read())
+        return 0.0
+    if candle_price > 0:
+        return candle_price
 
-            results = (data.get("chart") or {}).get("result") or []
-            if not results:
-                continue
-            result = results[0]
-            meta = result.get("meta", {})
+    # 2) 1분봉 캔들 없음 → 5분봉(2일치)으로 재시도 (prepost 포함, 추가 지연 없음)
+    candle_5m, meta_5m = _fetch_yahoo_chart(ticker, "5m", "2d")
+    if candle_5m == -1.0:
+        with _YAHOO_BLOCK_LOCK:
+            _YAHOO_BLOCK_UNTIL = max(
+                _YAHOO_BLOCK_UNTIL,
+                pd.Timestamp.now().timestamp() + _YAHOO_BLOCK_SECONDS,
+            )
+        return 0.0
+    if candle_5m > 0:
+        return candle_5m
 
-            # 1) 최근 캔들 Close (가장 정확한 실시간 체결가, prepost=true 포함)
-            price = _last_candle_close(result)
-            if price > 0:
-                return price
-
-            # 2) meta 필드 폴백 — timestamp 기준 가장 최근 가격 선택
-            #    정규장/프리마켓/데이마켓(after-hours) 중 timestamp가 가장 늦은 것 사용
-            best_price, best_ts = 0.0, 0
-            for price_key, time_key in (
-                ("postMarketPrice",    "postMarketTime"),
-                ("preMarketPrice",     "preMarketTime"),
-                ("regularMarketPrice", "regularMarketTime"),
-            ):
-                val = meta.get(price_key)
-                ts  = meta.get(time_key) or 0
-                try:
-                    ts = int(ts)
-                except Exception:
-                    ts = 0
-                if val and float(val) > 0 and ts > best_ts:
-                    best_price, best_ts = float(val), ts
-            if best_price > 0:
-                return best_price
-            # timestamp 없는 폴백
-            for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
-                val = meta.get(key)
-                if val and float(val) > 0:
-                    return float(val)
-
-        except Exception as exc:
-            message = str(exc)
-            if "401" in message or "Too Many Requests" in message or "Rate" in message:
-                with _YAHOO_BLOCK_LOCK:
-                    _YAHOO_BLOCK_UNTIL = max(
-                        _YAHOO_BLOCK_UNTIL,
-                        pd.Timestamp.now().timestamp() + _YAHOO_BLOCK_SECONDS,
-                    )
-                return 0.0
-            continue
-
-    return 0.0
+    # 3/4) 캔들 데이터 없음 → meta 필드 폴백 (1분봉 meta 우선, 없으면 5분봉 meta)
+    price = _meta_best_price(meta) or _meta_best_price(meta_5m)
+    return price
 
 
 def _fetch_yf_fast_info_price(ticker: str) -> float:
