@@ -362,6 +362,109 @@ def fetch_naver_theme_context_snapshot(kr_limit: int = 80, us_limit: int = 12) -
     return normalized
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_naver_theme_coverage_snapshot(kr_limit: int = 100, etf_limit: int = 10) -> dict[str, object]:
+    """네이버 강세 테마/ETF가 내부 money_flow 테마로 얼마나 매핑되는지 점검한다.
+
+    실시간 판정에는 기존 가격/거래량 기반 점수를 우선 사용하고, 이 함수는
+    누락된 테마를 찾기 위한 운영 진단용 데이터만 만든다.
+    """
+    mapped: list[dict] = []
+    unmapped: list[dict] = []
+
+    try:
+        url = (
+            "https://stock.naver.com/api/domestic/market/theme/list?"
+            + urllib.parse.urlencode({
+                "startIdx": 0,
+                "pageSize": max(10, min(int(kr_limit or 100), 120)),
+                "sortType": "changeRate",
+            })
+        )
+        rows = _open_naver_json(url, "https://stock.naver.com/market/stock/kr/theme/1")
+        if not isinstance(rows, list):
+            rows = []
+    except Exception:
+        rows = []
+
+    for idx, row in enumerate(rows, start=1):
+        name = str(row.get("name", "") or "").strip()
+        if not name:
+            continue
+        change = _to_float(row.get("changeRate"), 0.0) / 100.0
+        recent3 = _to_float(row.get("recent3daysChangeRate"), 0.0) / 100.0
+        total_cnt = max(1.0, _to_float(row.get("totalCnt"), 1.0))
+        rise_ratio = _to_float(row.get("riseCnt"), 0.0) / total_cnt
+        amount = max(0.0, _to_float(row.get("totalAccAmount"), 0.0))
+        theme = _map_naver_kr_theme_to_stocklab_theme(name)
+        item = {
+            "출처": "네이버 국내테마",
+            "네이버명": name,
+            "내부테마": theme,
+            "순위": idx,
+            "등락률": change,
+            "3일등락률": recent3,
+            "상승비율": rise_ratio,
+            "거래대금": amount,
+            "상태": "매핑완료" if theme else "미분류",
+        }
+        (mapped if theme else unmapped).append(item)
+
+    try:
+        etf_rows = fetch_naver_etf_ranking_universe(limit_per_rank=etf_limit, max_total=60)
+    except Exception:
+        etf_rows = []
+
+    for item in etf_rows:
+        ticker = normalize_money_flow_ticker(item.get("ticker", ""))
+        if not ticker:
+            continue
+        theme = ETF_TO_THEME.get(ticker, "")
+        row = {
+            "출처": f"네이버 ETF랭킹/{item.get('네이버시장', '')}",
+            "네이버명": str(item.get("name") or item.get("섹터") or ticker),
+            "티커": ticker,
+            "내부테마": theme,
+            "순위": np.nan,
+            "등락률": np.nan,
+            "3일등락률": np.nan,
+            "상승비율": np.nan,
+            "거래대금": np.nan,
+            "네이버랭킹": item.get("네이버랭킹", ""),
+            "랭킹보조점수": item.get("랭킹보조점수", 0.0),
+            "상태": "매핑완료" if theme else "미분류",
+        }
+        (mapped if theme else unmapped).append(row)
+
+    mapped = sorted(
+        mapped,
+        key=lambda r: (
+            float(r.get("랭킹보조점수", 0.0) or 0.0),
+            float(r.get("등락률", 0.0) or 0.0),
+            -float(r.get("순위", 9999) if finite_num(r.get("순위", np.nan)) else 9999),
+        ),
+        reverse=True,
+    )
+    unmapped = sorted(
+        unmapped,
+        key=lambda r: (
+            float(r.get("랭킹보조점수", 0.0) or 0.0),
+            float(r.get("등락률", 0.0) or 0.0),
+            -float(r.get("순위", 9999) if finite_num(r.get("순위", np.nan)) else 9999),
+        ),
+        reverse=True,
+    )
+    return {
+        "mapped": mapped[:60],
+        "unmapped": unmapped[:40],
+        "summary": {
+            "mapped_count": len(mapped),
+            "unmapped_count": len(unmapped),
+            "coverage_pct": (len(mapped) / max(len(mapped) + len(unmapped), 1)) * 100,
+        },
+    }
+
+
 def build_money_flow_universe_with_naver_rankings() -> list[dict]:
     base = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]), 랭킹보조점수=0.0, 네이버랭킹="")

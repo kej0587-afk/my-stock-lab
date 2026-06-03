@@ -128,6 +128,7 @@ try:
         SECTOR_CLUSTERS_KR,
         SECTOR_CLUSTERS_US,
         ETF_TO_THEME,
+        fetch_naver_theme_coverage_snapshot,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
 except ImportError:
@@ -137,6 +138,9 @@ except ImportError:
     SECTOR_CLUSTERS_KR = {}
     SECTOR_CLUSTERS_US = {}
     ETF_TO_THEME = {}
+
+    def fetch_naver_theme_coverage_snapshot(*args, **kwargs):
+        return {}
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -18858,6 +18862,81 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         )
 
 
+def render_naver_theme_coverage_panel():
+    with st.expander("네이버 테마 커버리지 점검", expanded=False):
+        st.caption(
+            "네이버 국내 테마/ETF 랭킹 중 Stock Lab 내부 money_flow 테마로 묶인 것과 아직 미분류인 것을 확인합니다. "
+            "자동 판정이 아니라 누락 테마를 찾기 위한 점검용입니다."
+        )
+
+        cache_key = "naver_theme_coverage_snapshot"
+        c1, c2, c3 = st.columns([1.5, 1.0, 3.5])
+        run_check = c1.button("네이버 커버리지 점검 실행", key="naver_theme_coverage_run", width='stretch')
+        if cache_key in st.session_state:
+            if c2.button("결과 지우기", key="naver_theme_coverage_clear", width='stretch'):
+                st.session_state.pop(cache_key, None)
+                st.rerun()
+            c3.caption("저장된 점검 결과 표시 중")
+        else:
+            c2.caption("대기 중")
+
+        if run_check:
+            try:
+                with st.spinner("네이버 테마/ETF 랭킹 커버리지를 확인하는 중입니다..."):
+                    st.session_state[cache_key] = fetch_naver_theme_coverage_snapshot()
+            except Exception as exc:
+                st.info(f"네이버 커버리지 점검을 불러오지 못했습니다: {exc}")
+                return
+
+        snapshot = st.session_state.get(cache_key)
+        if not snapshot:
+            st.info("버튼을 누르면 네이버에서 강하게 보이는 테마 중 내부 테마로 아직 못 묶은 항목을 보여줍니다.")
+            return
+
+        summary = snapshot.get("summary", {}) if isinstance(snapshot, dict) else {}
+        mapped_df = pd.DataFrame(snapshot.get("mapped", [])) if isinstance(snapshot, dict) else pd.DataFrame()
+        unmapped_df = pd.DataFrame(snapshot.get("unmapped", [])) if isinstance(snapshot, dict) else pd.DataFrame()
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("매핑 완료", f"{int(summary.get('mapped_count', len(mapped_df)) or 0)}개")
+        m2.metric("미분류", f"{int(summary.get('unmapped_count', len(unmapped_df)) or 0)}개")
+        m3.metric("커버리지", f"{float(summary.get('coverage_pct', 0.0) or 0.0):.1f}%")
+
+        def _format_coverage_df(df):
+            if df is None or df.empty:
+                return pd.DataFrame()
+            show = df.copy()
+            for col in ["등락률", "3일등락률", "상승비율"]:
+                if col in show.columns:
+                    show[col] = show[col].apply(fmt_flow_pct)
+            if "거래대금" in show.columns:
+                show["거래대금"] = show["거래대금"].apply(
+                    lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v) / 100_000_000:,.0f}억"
+                )
+            if "랭킹보조점수" in show.columns:
+                show["랭킹보조점수"] = show["랭킹보조점수"].apply(
+                    lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}"
+                )
+            cols = [
+                "출처", "네이버명", "티커", "내부테마", "상태", "순위",
+                "등락률", "3일등락률", "상승비율", "거래대금", "네이버랭킹", "랭킹보조점수",
+            ]
+            return show[[c for c in cols if c in show.columns]]
+
+        st.markdown("##### 미분류 강세 후보")
+        if unmapped_df.empty:
+            st.success("현재 점검 범위에서는 미분류 후보가 없습니다.")
+        else:
+            st.dataframe(_format_coverage_df(unmapped_df.head(20)), width='stretch', hide_index=True)
+            st.caption("미분류가 반복해서 등장하면 money_flow 내부 테마 또는 ETF 유니버스에 승격할 후보입니다.")
+
+        with st.expander("매핑 완료 상위 보기", expanded=False):
+            if mapped_df.empty:
+                st.info("매핑 완료 항목이 없습니다.")
+            else:
+                st.dataframe(_format_coverage_df(mapped_df.head(30)), width='stretch', hide_index=True)
+
+
 def render_today_market_flow_panel(snapshot=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
@@ -18960,6 +19039,7 @@ def render_today_market_flow_panel(snapshot=None):
     st.caption("돈흐름점수는 2주/1개월 확인, 3개월 주도력, 확산, 거래량, 네이버 테마 보조를 함께 봅니다. `하락중 관망`은 강해 보여도 단기 하락이 이어지는 테마입니다.")
 
     render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+    render_naver_theme_coverage_panel()
 
     with st.expander("전광판으로 보내기", expanded=False):
         send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
