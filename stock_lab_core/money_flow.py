@@ -261,6 +261,18 @@ def _map_naver_kr_theme_to_stocklab_theme(name: str) -> str:
         return "K-뷰티·소비재"
     if any(k in text for k in ["광통신", "포토닉", "데이터센터", "광모듈"]):
         return "포토닉스·광통신"
+    if any(k in text for k in ["생명보험", "손해보험", "보험", "토스", "핀테크", "은행", "증권"]):
+        return "한국 금융"
+    if any(k in text for k in ["통신", "5G", "LTE", "통신장비"]):
+        return "전력·에너지 인프라"
+    if any(k in text for k in ["백화점", "면세점", "홈쇼핑", "소매유통", "유통", "출산장려"]):
+        return "K-뷰티·소비재"
+    if any(k in text for k in ["게임", "웹툰", "저작권", "콘텐츠", "엔터"]):
+        return "K-뷰티·소비재"
+    if any(k in text for k in ["자동차", "전기차", "수소차", "자율주행"]):
+        return "2차전지 밸류체인"
+    if any(k in text for k in ["비트코인", "BITCOIN", "가상화폐", "암호화폐"]):
+        return "미국 금융·핀테크"
     return ""
 
 
@@ -271,6 +283,8 @@ def _map_naver_etf_to_stocklab_theme(name: str, ticker: str = "") -> str:
         return ETF_TO_THEME.get(symbol, "")
     text = (str(name or "") + " " + str(symbol or "")).replace(" ", "").upper()
     if not text:
+        return ""
+    if symbol in {"VEA", "IEFA", "VTI", "VUG", "VTV", "IWM", "BITO", "IBIT"}:
         return ""
     if any(k in text for k in ["반도체", "필라델피아", "SEMICONDUCTOR", "SOXX", "SMH", "SOXL", "SOXS", "하이닉스", "삼성전자"]):
         return "국내 AI 반도체·소부장" if symbol.endswith(".KS") else "미국 AI·빅테크"
@@ -296,6 +310,12 @@ def _map_naver_etf_to_stocklab_theme(name: str, ticker: str = "") -> str:
         return "휴머노이드·로봇"
     if any(k in text for k in ["구리", "COPPER", "산업재", "소재", "VALUEUP", "밸류업"]):
         return "글로벌 인프라·산업재"
+    if any(k in text for k in ["게임", "GAME", "저작권", "COPYRIGHT", "콘텐츠", "CONTENT"]):
+        return "K-뷰티·소비재"
+    if any(k in text for k in ["자동차", "부품", "전기&수소차", "수소차", "CAR", "AUTO"]):
+        return "2차전지 밸류체인"
+    if any(k in text for k in ["BITCOIN", "비트코인"]):
+        return "미국 금융·핀테크"
     return ""
 
 
@@ -307,6 +327,8 @@ def _is_naver_etf_mapping_excluded(name: str, ticker: str = "") -> tuple[bool, s
     if any(k in text for k in ["단일종목", "삼성전자", "SK하이닉스", "엔비디아", "테슬라"]) and "ETF" in text:
         return True, "단일종목 ETF"
     if any(k in text for k in ["KODEX200", "TIGER200", "KOSPI200", "S&P500", "S&P 500", "SPY", "VOO", "KODEX코스피"]):
+        return True, "광범위 시장지수 ETF"
+    if any(k in text for k in ["TOTALSTOCK", "RUSSELL2000", "GROWTHINDEX", "VALUEINDEX", "EAFE", "선진국", "전세계", "글로벌주식"]):
         return True, "광범위 시장지수 ETF"
     return False, ""
 
