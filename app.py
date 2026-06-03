@@ -6305,6 +6305,8 @@ FLOW_THEME_BRIDGE_RULES = [
     {"market": "미국 섹터", "keys": ["전력·인프라", "GRID", "PAVE", "ICLN", "XLU"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["전력기기 (글로벌)", "DC 전력·냉각", "전력 유틸리티"], "label": "전력·에너지 인프라 / 글로벌 원전·SMR"},
     {"market": "한국 섹터", "keys": ["전력·인프라", "전력", "487240.KS", "487230.KS", "491010.KS"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["변압기·전력기기 (국내)", "케이블·전선", "원전·SMR"], "label": "전력·에너지 인프라 > 전력기기·케이블"},
     {"market": "한국 섹터", "keys": ["원전·우라늄", "원전", "우라늄", "434730.KS", "433500.KS"], "themes": ["글로벌 원전·SMR", "전력·에너지 인프라"], "subthemes": ["원전·SMR", "원전 공급망", "우라늄/연료"], "label": "글로벌 원전·SMR > 원전 공급망"},
+    {"market": "미국 섹터", "keys": ["에너지", "XLE", "USO"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["가스터빈·LNG 발전", "전력 유틸리티", "재생에너지 (태양광·풍력)"], "label": "전력·에너지 인프라 > 에너지·발전"},
+    {"market": "한국 섹터", "keys": ["에너지·건설", "에너지", "건설", "139250.KS", "139220.KS"], "themes": ["전력·에너지 인프라", "글로벌 인프라·산업재"], "subthemes": ["가스터빈·LNG 발전", "재생에너지 (태양광·풍력)", "EPC·건설"], "label": "전력·에너지 인프라 > 에너지·건설"},
     {"market": "한국 섹터", "keys": ["2차전지", "305540.KS", "LIT"], "themes": ["2차전지 밸류체인"], "subthemes": ["셀 메이커", "양극재", "음극재·전해질", "장비"], "label": "2차전지 밸류체인"},
     {"market": "미국 섹터", "keys": ["2차전지·EV", "LIT"], "themes": ["2차전지 밸류체인"], "subthemes": ["셀 메이커", "양극재", "음극재·전해질"], "label": "2차전지 밸류체인"},
     {"market": "한국 섹터", "keys": ["K뷰티·콘텐츠", "K뷰티", "콘텐츠", "479850.KS", "266360.KS", "228790.KS"], "themes": ["K-뷰티·소비재"], "subthemes": ["화장품 대형 브랜드", "OEM·ODM", "인디·중소 브랜드"], "label": "K-뷰티·소비재"},
@@ -6355,6 +6357,26 @@ def _best_subtheme_row(group_df, theme_name, subthemes):
     if "돈흐름점수" in work.columns:
         work = work.sort_values("돈흐름점수", ascending=False, na_position="last")
     return work.iloc[0]
+
+
+def _flow_text(value, default=""):
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    text = str(value or "").strip()
+    if text.lower() in ["", "nan", "none", "null"]:
+        return default
+    return text
+
+
+def _first_flow_text(*values, default=""):
+    for value in values:
+        text = _flow_text(value)
+        if text:
+            return text
+    return default
 
 
 def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", theme_state="", sub_state="", price_level=np.nan):
@@ -18690,12 +18712,23 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             tickers = " ".join(str(t.get("ticker", "")) for t in cl.get("tickers", []) if isinstance(t, dict))
             bridge = resolve_flow_theme_bridge(cl.get("name", ""), tickers, market)
             theme_row = _best_theme_row(theme_rotation_df, bridge.get("themes", []))
-            theme_name = str(theme_row.get("테마", bridge.get("themes", [""])[0] if bridge.get("themes") else "") or "")
+            theme_name = _first_flow_text(
+                theme_row.get("테마", ""),
+                *((bridge.get("themes", []) or [])[:1]),
+                cl.get("name", ""),
+            )
             sub_row = _best_subtheme_row(subtheme_group_df, theme_name, bridge.get("subthemes", []))
 
-            theme_signal = str(theme_row.get("테마판정", "") or "")
-            theme_state = str(theme_row.get("상태", "") or "")
-            sub_state = str(sub_row.get("상태", "") or "")
+            theme_signal = _flow_text(theme_row.get("테마판정", ""))
+            theme_state = _flow_text(theme_row.get("상태", ""))
+            sub_state = _flow_text(sub_row.get("상태", ""))
+            display_theme_signal = _first_flow_text(theme_signal, theme_state, cl.get("flow_label", ""), default="-")
+            display_subtheme = _first_flow_text(
+                sub_row.get("하위테마", ""),
+                *((bridge.get("subthemes", []) or [])[:1]),
+                default="하위테마 확인 필요",
+            )
+            display_sub_state = _first_flow_text(sub_state, theme_state, theme_signal, default="-")
             price_level = cl.get("price_level", np.nan)
             action, reason = _unified_flow_action(
                 cluster_label=cl.get("flow_label", ""),
@@ -18705,7 +18738,11 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 sub_state=sub_state,
                 price_level=price_level,
             )
-            representative = str(sub_row.get("대표주", "") or theme_row.get("대표주", "") or "")
+            representative = _first_flow_text(
+                sub_row.get("대표주", ""),
+                theme_row.get("대표주", ""),
+                default="대표주 확인 필요",
+            )
             next_check = "대표주를 정밀관측소에서 과열/눌림 확인"
             if action == "⏳ 눌림대기":
                 next_check = "관심등록 후 MA20/볼린저 중단 눌림 대기"
@@ -18720,9 +18757,9 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "후보군": cl.get("name", ""),
                 "큰돈판정": cl.get("flow_label", ""),
                 "연결테마": theme_name,
-                "테마판정": theme_signal or theme_state,
-                "핵심하위테마": str(sub_row.get("하위테마", "") or ""),
-                "하위상태": sub_state,
+                "테마판정": display_theme_signal,
+                "핵심하위테마": display_subtheme,
+                "하위상태": display_sub_state,
                 "대표주": representative,
                 "통합판정": action,
                 "다음확인": next_check,
@@ -18741,15 +18778,18 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
         if "테마돈흐름점수" in theme_rank.columns:
             theme_rank = theme_rank.sort_values("테마돈흐름점수", ascending=False, na_position="last")
         for _, theme_row in theme_rank.head(5).iterrows():
-            theme_name = str(theme_row.get("테마", "") or "")
+            theme_name = _flow_text(theme_row.get("테마", ""))
             if not theme_name or theme_name in linked_themes:
                 continue
             sub_row = _best_subtheme_row(subtheme_group_df, theme_name, [])
+            theme_signal = _flow_text(theme_row.get("테마판정", ""))
+            theme_state = _flow_text(theme_row.get("상태", ""))
+            sub_state = _flow_text(sub_row.get("상태", ""))
             action, reason = _unified_flow_action(
                 cluster_label="",
-                theme_signal=str(theme_row.get("테마판정", "") or ""),
-                theme_state=str(theme_row.get("상태", "") or ""),
-                sub_state=str(sub_row.get("상태", "") or ""),
+                theme_signal=theme_signal,
+                theme_state=theme_state,
+                sub_state=sub_state,
                 price_level=theme_row.get("가격수준", np.nan),
             )
             rows.append({
@@ -18758,10 +18798,10 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "후보군": theme_name,
                 "큰돈판정": "-",
                 "연결테마": theme_name,
-                "테마판정": str(theme_row.get("테마판정", "") or theme_row.get("상태", "")),
-                "핵심하위테마": str(sub_row.get("하위테마", "") or ""),
-                "하위상태": str(sub_row.get("상태", "") or ""),
-                "대표주": str(sub_row.get("대표주", "") or theme_row.get("대표주", "")),
+                "테마판정": _first_flow_text(theme_signal, theme_state, default="-"),
+                "핵심하위테마": _first_flow_text(sub_row.get("하위테마", ""), default="하위테마 확인 필요"),
+                "하위상태": _first_flow_text(sub_state, theme_state, theme_signal, default="-"),
+                "대표주": _first_flow_text(sub_row.get("대표주", ""), theme_row.get("대표주", ""), default="대표주 확인 필요"),
                 "통합판정": action,
                 "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
                 "이유": reason,
@@ -18780,9 +18820,12 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
     out["_priority"] = out["통합판정"].map(priority).fillna(0)
     out["_score"] = out["적합도"].apply(clean_float).fillna(0) + out["테마점수"].apply(clean_float).fillna(0) * 0.35 + out["하위점수"].apply(clean_float).fillna(0) * 0.20
     out = out.sort_values(["_priority", "_score"], ascending=False)
-    # 같은 (후보군 + 연결테마) 조합이 미국/한국 섹터에서 중복 생성되는 경우 높은 점수 행만 유지
-    out = out.drop_duplicates(subset=["후보군", "연결테마"], keep="first")
-    return out.drop(columns=["_priority", "_score"])
+    # 같은 테마/하위테마/대표주가 ETF·섹터와 테마 단독에서 중복 생성되면 가장 강한 행만 유지한다.
+    out["_dedupe_theme"] = out.apply(lambda r: _first_flow_text(r.get("연결테마", ""), r.get("후보군", "")), axis=1)
+    out["_dedupe_subtheme"] = out.apply(lambda r: _first_flow_text(r.get("핵심하위테마", ""), r.get("후보군", "")), axis=1)
+    out["_dedupe_leader"] = out.apply(lambda r: _first_flow_text(r.get("대표주", ""), r.get("후보군", "")), axis=1)
+    out = out.drop_duplicates(subset=["_dedupe_theme", "_dedupe_subtheme", "_dedupe_leader"], keep="first")
+    return out.drop(columns=["_priority", "_score", "_dedupe_theme", "_dedupe_subtheme", "_dedupe_leader"])
 
 
 def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df):
