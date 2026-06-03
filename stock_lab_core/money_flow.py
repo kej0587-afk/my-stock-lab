@@ -271,6 +271,8 @@ def _map_naver_kr_theme_to_stocklab_theme(name: str) -> str:
         return "K-뷰티·소비재"
     if any(k in text for k in ["자동차", "전기차", "수소차", "자율주행"]):
         return "2차전지 밸류체인"
+    if any(k in text for k in ["재개발", "도시개발", "SOC", "인프라", "건설", "터미널"]):
+        return "글로벌 인프라·산업재"
     if any(k in text for k in ["비트코인", "BITCOIN", "가상화폐", "암호화폐"]):
         return "미국 금융·핀테크"
     return ""
@@ -330,6 +332,8 @@ def _is_naver_etf_mapping_excluded(name: str, ticker: str = "") -> tuple[bool, s
         return True, "광범위 시장지수 ETF"
     if any(k in text for k in ["TOTALSTOCK", "RUSSELL2000", "GROWTHINDEX", "VALUEINDEX", "EAFE", "선진국", "전세계", "글로벌주식"]):
         return True, "광범위 시장지수 ETF"
+    if any(k in text for k in ["BITCOIN", "비트코인", "IBIT", "BITO"]):
+        return True, "크립토 ETF(내부 테마 미운영)"
     return False, ""
 
 

@@ -6324,6 +6324,7 @@ FLOW_THEME_BRIDGE_RULES = [
     {"market": "한국 섹터", "keys": ["금융", "139270.KS"], "themes": ["한국 금융"], "subthemes": ["은행", "증권", "보험", "카드·핀테크"], "label": "한국 금융"},
     {"market": "미국 섹터", "keys": ["금융·핀테크", "금융", "핀테크", "XLF", "FINX"], "themes": ["미국 금융·핀테크"], "subthemes": ["미국 대형 은행", "핀테크·결제", "보험·자산운용"], "label": "미국 금융·핀테크"},
     {"market": "미국 섹터", "keys": ["산업재·원자재", "산업재", "원자재", "XLI", "XLB", "COPX", "XHB"], "themes": ["글로벌 인프라·산업재"], "subthemes": ["미국 산업재 대형주", "구리·광물 소재", "건설·주택"], "label": "글로벌 인프라·산업재"},
+    {"market": "미국 섹터", "keys": ["소비재", "경기소비재", "필수소비재", "XLY", "XLP"], "themes": ["소비재"], "subthemes": ["경기/필수 소비재"], "label": "소비재 > 경기/필수 소비재"},
 ]
 
 
@@ -6386,6 +6387,50 @@ def _first_flow_text(*values, default=""):
         if text:
             return text
     return default
+
+
+FLOW_FALLBACK_REPRESENTATIVES = {
+    ("글로벌 인프라·산업재", "미국 산업재 대형주"): "캐터필러 (CAT)",
+    ("글로벌 인프라·산업재", "구리·광물 소재"): "프리포트맥모란 (FCX)",
+    ("글로벌 인프라·산업재", "건설·주택"): "DR호튼 (DHI)",
+    ("한국 금융", "은행"): "KB금융 (105560.KS)",
+    ("한국 금융", "증권"): "미래에셋증권 (006800.KS)",
+    ("한국 금융", "보험"): "삼성생명 (032830.KS)",
+    ("한국 금융", "카드·핀테크"): "카카오뱅크 (323410.KS)",
+    ("미국 금융·핀테크", "미국 대형 은행"): "JP모건 (JPM)",
+    ("미국 금융·핀테크", "핀테크·결제"): "비자 (V)",
+    ("미국 금융·핀테크", "보험·자산운용"): "버크셔해서웨이 (BRK-B)",
+    ("미국 헬스케어·바이오텍", "빅파마 (Big Pharma)"): "일라이릴리 (LLY)",
+    ("미국 헬스케어·바이오텍", "바이오텍"): "암젠 (AMGN)",
+    ("미국 헬스케어·바이오텍", "의료기기"): "애보트 (ABT)",
+    ("소비재", "경기/필수 소비재"): "아마존·월마트 (AMZN/WMT)",
+    ("소비재", "경기소비재"): "아마존 (AMZN)",
+    ("소비재", "필수소비재"): "월마트 (WMT)",
+}
+
+FLOW_FALLBACK_SUBTHEMES = {
+    "소비재": "경기/필수 소비재",
+    "금융": "은행",
+    "금융·핀테크": "미국 대형 은행",
+    "산업재·원자재": "미국 산업재 대형주",
+    "바이오·헬스": "빅파마 (Big Pharma)",
+}
+
+
+def _fallback_flow_subtheme(theme_name="", candidate_name=""):
+    theme = _flow_text(theme_name)
+    candidate = _flow_text(candidate_name)
+    return FLOW_FALLBACK_SUBTHEMES.get(theme) or FLOW_FALLBACK_SUBTHEMES.get(candidate, "")
+
+
+def _fallback_flow_representative(theme_name="", subtheme_name="", candidate_name=""):
+    theme = _flow_text(theme_name)
+    subtheme = _flow_text(subtheme_name)
+    candidate = _flow_text(candidate_name)
+    for key in [(theme, subtheme), (candidate, subtheme)]:
+        if key in FLOW_FALLBACK_REPRESENTATIVES:
+            return FLOW_FALLBACK_REPRESENTATIVES[key]
+    return ""
 
 
 def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", theme_state="", sub_state="", price_level=np.nan):
@@ -18735,6 +18780,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             display_subtheme = _first_flow_text(
                 sub_row.get("하위테마", ""),
                 *((bridge.get("subthemes", []) or [])[:1]),
+                _fallback_flow_subtheme(theme_name, cl.get("name", "")),
                 default="하위테마 확인 필요",
             )
             display_sub_state = _first_flow_text(sub_state, theme_state, theme_signal, default="-")
@@ -18750,6 +18796,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
                 theme_row.get("대표주", ""),
+                _fallback_flow_representative(theme_name, display_subtheme, cl.get("name", "")),
                 default="대표주 확인 필요",
             )
             next_check = "대표주를 정밀관측소에서 과열/눌림 확인"
@@ -18794,6 +18841,17 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             theme_signal = _flow_text(theme_row.get("테마판정", ""))
             theme_state = _flow_text(theme_row.get("상태", ""))
             sub_state = _flow_text(sub_row.get("상태", ""))
+            display_subtheme = _first_flow_text(
+                sub_row.get("하위테마", ""),
+                _fallback_flow_subtheme(theme_name, theme_name),
+                default="하위테마 확인 필요",
+            )
+            representative = _first_flow_text(
+                sub_row.get("대표주", ""),
+                theme_row.get("대표주", ""),
+                _fallback_flow_representative(theme_name, display_subtheme, theme_name),
+                default="대표주 확인 필요",
+            )
             action, reason = _unified_flow_action(
                 cluster_label="",
                 theme_signal=theme_signal,
@@ -18808,9 +18866,9 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "큰돈판정": "-",
                 "연결테마": theme_name,
                 "테마판정": _first_flow_text(theme_signal, theme_state, default="-"),
-                "핵심하위테마": _first_flow_text(sub_row.get("하위테마", ""), default="하위테마 확인 필요"),
+                "핵심하위테마": display_subtheme,
                 "하위상태": _first_flow_text(sub_state, theme_state, theme_signal, default="-"),
-                "대표주": _first_flow_text(sub_row.get("대표주", ""), theme_row.get("대표주", ""), default="대표주 확인 필요"),
+                "대표주": representative,
                 "통합판정": action,
                 "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
                 "이유": reason,
@@ -18871,7 +18929,8 @@ def render_naver_theme_coverage_panel():
     with st.expander("네이버 테마 커버리지 점검", expanded=False):
         st.caption(
             "네이버 국내 테마/ETF 랭킹 중 Stock Lab 내부 money_flow 테마로 묶인 것과 아직 미분류인 것을 확인합니다. "
-            "자동 판정이 아니라 누락 테마를 찾기 위한 점검용입니다."
+            "자동 판정이 아니라 누락 테마를 찾기 위한 점검용입니다. "
+            "매핑 완료 항목은 테마돈흐름점수의 네이버 보조점수/근거에 일부 반영되고, 클러스터 적합도는 ETF 가격흐름 기준으로 따로 계산됩니다."
         )
         if not NAVER_THEME_COVERAGE_AVAILABLE:
             st.info("네이버 커버리지 점검 함수가 아직 배포된 money_flow.py에 없습니다. app.py와 stock_lab_core/money_flow.py를 함께 업로드하면 활성화됩니다.")
