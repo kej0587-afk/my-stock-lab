@@ -128,7 +128,6 @@ try:
         SECTOR_CLUSTERS_KR,
         SECTOR_CLUSTERS_US,
         ETF_TO_THEME,
-        fetch_naver_theme_coverage_snapshot,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
 except ImportError:
@@ -138,6 +137,12 @@ except ImportError:
     SECTOR_CLUSTERS_KR = {}
     SECTOR_CLUSTERS_US = {}
     ETF_TO_THEME = {}
+
+try:
+    from stock_lab_core.money_flow import fetch_naver_theme_coverage_snapshot
+    NAVER_THEME_COVERAGE_AVAILABLE = True
+except ImportError:
+    NAVER_THEME_COVERAGE_AVAILABLE = False
 
     def fetch_naver_theme_coverage_snapshot(*args, **kwargs):
         return {}
@@ -18868,8 +18873,14 @@ def render_naver_theme_coverage_panel():
             "네이버 국내 테마/ETF 랭킹 중 Stock Lab 내부 money_flow 테마로 묶인 것과 아직 미분류인 것을 확인합니다. "
             "자동 판정이 아니라 누락 테마를 찾기 위한 점검용입니다."
         )
+        if not NAVER_THEME_COVERAGE_AVAILABLE:
+            st.info("네이버 커버리지 점검 함수가 아직 배포된 money_flow.py에 없습니다. app.py와 stock_lab_core/money_flow.py를 함께 업로드하면 활성화됩니다.")
+            return
 
         cache_key = "naver_theme_coverage_snapshot"
+        if cache_key in st.session_state and not st.session_state.get(cache_key):
+            st.session_state.pop(cache_key, None)
+
         c1, c2, c3 = st.columns([1.5, 1.0, 3.5])
         run_check = c1.button("네이버 커버리지 점검 실행", key="naver_theme_coverage_run", width='stretch')
         if cache_key in st.session_state:
@@ -18883,8 +18894,14 @@ def render_naver_theme_coverage_panel():
         if run_check:
             try:
                 with st.spinner("네이버 테마/ETF 랭킹 커버리지를 확인하는 중입니다..."):
-                    st.session_state[cache_key] = fetch_naver_theme_coverage_snapshot()
+                    coverage_snapshot = fetch_naver_theme_coverage_snapshot()
+                if not coverage_snapshot:
+                    st.session_state.pop(cache_key, None)
+                    st.info("네이버 커버리지 점검 결과가 비어 있습니다. 네이버 응답이 일시적으로 없거나 네트워크가 막혔을 수 있습니다.")
+                    return
+                st.session_state[cache_key] = coverage_snapshot
             except Exception as exc:
+                st.session_state.pop(cache_key, None)
                 st.info(f"네이버 커버리지 점검을 불러오지 못했습니다: {exc}")
                 return
 
