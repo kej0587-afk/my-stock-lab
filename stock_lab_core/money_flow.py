@@ -264,6 +264,53 @@ def _map_naver_kr_theme_to_stocklab_theme(name: str) -> str:
     return ""
 
 
+def _map_naver_etf_to_stocklab_theme(name: str, ticker: str = "") -> str:
+    """네이버 ETF 랭킹명을 내부 테마로 느슨하게 연결."""
+    symbol = normalize_money_flow_ticker(ticker)
+    if symbol in ETF_TO_THEME:
+        return ETF_TO_THEME.get(symbol, "")
+    text = (str(name or "") + " " + str(symbol or "")).replace(" ", "").upper()
+    if not text:
+        return ""
+    if any(k in text for k in ["반도체", "필라델피아", "SEMICONDUCTOR", "SOXX", "SMH", "SOXL", "SOXS", "하이닉스", "삼성전자"]):
+        return "국내 AI 반도체·소부장" if symbol.endswith(".KS") else "미국 AI·빅테크"
+    if any(k in text for k in ["NASDAQ", "나스닥", "QQQ", "TQQQ", "QLD", "빅테크", "TOP10"]):
+        return "미국 AI·빅테크"
+    if any(k in text for k in ["전력", "전기", "수소", "인프라", "전선", "NETWORK", "GRID"]):
+        return "전력·에너지 인프라"
+    if any(k in text for k in ["원전", "원자력", "우라늄", "SMR"]):
+        return "글로벌 원전·SMR"
+    if any(k in text for k in ["2차전지", "전고체", "배터리", "BATTERY", "LITHIUM", "LIT", "전기차", "EV"]):
+        return "2차전지 밸류체인"
+    if any(k in text for k in ["방산", "우주", "항공", "SPACE", "DEFENSE", "AEROSPACE"]):
+        return "우주항공·방산"
+    if any(k in text for k in ["조선", "해양", "선박", "LNG"]):
+        return "조선·해양"
+    if any(k in text for k in ["바이오", "헬스", "제약", "HEALTH", "BIOTECH"]):
+        return "바이오·제약" if symbol.endswith(".KS") else "미국 헬스케어·바이오텍"
+    if any(k in text for k in ["화장품", "뷰티", "소비재", "K뷰티"]):
+        return "K-뷰티·소비재"
+    if any(k in text for k in ["금융", "은행", "증권", "보험", "FINANCIAL", "FINTECH"]):
+        return "한국 금융" if symbol.endswith(".KS") else "미국 금융·핀테크"
+    if any(k in text for k in ["로봇", "ROBOT", "BOTZ", "AI"]):
+        return "휴머노이드·로봇"
+    if any(k in text for k in ["구리", "COPPER", "산업재", "소재", "VALUEUP", "밸류업"]):
+        return "글로벌 인프라·산업재"
+    return ""
+
+
+def _is_naver_etf_mapping_excluded(name: str, ticker: str = "") -> tuple[bool, str]:
+    """광범위 지수/레버리지/인버스 등 테마 매핑 대상이 아닌 ETF를 커버리지 분모에서 제외."""
+    text = (str(name or "") + " " + str(ticker or "")).replace(" ", "").upper()
+    if any(k in text for k in ["레버리지", "인버스", "BEAR", "BULL", "2X", "3X", "ULTRA", "ULTRAPRO", "선물레버리지"]):
+        return True, "레버리지/인버스 ETF"
+    if any(k in text for k in ["단일종목", "삼성전자", "SK하이닉스", "엔비디아", "테슬라"]) and "ETF" in text:
+        return True, "단일종목 ETF"
+    if any(k in text for k in ["KODEX200", "TIGER200", "KOSPI200", "S&P500", "S&P 500", "SPY", "VOO", "KODEX코스피"]):
+        return True, "광범위 시장지수 ETF"
+    return False, ""
+
+
 def _add_naver_theme_evidence(bucket: dict, theme: str, label: str, score: float, rise_ratio=np.nan):
     if not theme:
         return
@@ -371,6 +418,7 @@ def fetch_naver_theme_coverage_snapshot(kr_limit: int = 100, etf_limit: int = 10
     """
     mapped: list[dict] = []
     unmapped: list[dict] = []
+    excluded: list[dict] = []
 
     try:
         url = (
@@ -419,10 +467,12 @@ def fetch_naver_theme_coverage_snapshot(kr_limit: int = 100, etf_limit: int = 10
         ticker = normalize_money_flow_ticker(item.get("ticker", ""))
         if not ticker:
             continue
-        theme = ETF_TO_THEME.get(ticker, "")
+        name = str(item.get("name") or item.get("섹터") or ticker)
+        excluded_flag, excluded_reason = _is_naver_etf_mapping_excluded(name, ticker)
+        theme = _map_naver_etf_to_stocklab_theme(name, ticker)
         row = {
             "출처": f"네이버 ETF랭킹/{item.get('네이버시장', '')}",
-            "네이버명": str(item.get("name") or item.get("섹터") or ticker),
+            "네이버명": name,
             "티커": ticker,
             "내부테마": theme,
             "순위": np.nan,
@@ -432,9 +482,13 @@ def fetch_naver_theme_coverage_snapshot(kr_limit: int = 100, etf_limit: int = 10
             "거래대금": np.nan,
             "네이버랭킹": item.get("네이버랭킹", ""),
             "랭킹보조점수": item.get("랭킹보조점수", 0.0),
-            "상태": "매핑완료" if theme else "미분류",
+            "상태": "제외" if excluded_flag else ("매핑완료" if theme else "미분류"),
+            "제외사유": excluded_reason,
         }
-        (mapped if theme else unmapped).append(row)
+        if excluded_flag:
+            excluded.append(row)
+        else:
+            (mapped if theme else unmapped).append(row)
 
     mapped = sorted(
         mapped,
@@ -457,9 +511,11 @@ def fetch_naver_theme_coverage_snapshot(kr_limit: int = 100, etf_limit: int = 10
     return {
         "mapped": mapped[:60],
         "unmapped": unmapped[:40],
+        "excluded": excluded[:40],
         "summary": {
             "mapped_count": len(mapped),
             "unmapped_count": len(unmapped),
+            "excluded_count": len(excluded),
             "coverage_pct": (len(mapped) / max(len(mapped) + len(unmapped), 1)) * 100,
         },
     }

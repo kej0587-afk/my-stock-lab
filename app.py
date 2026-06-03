@@ -18913,11 +18913,14 @@ def render_naver_theme_coverage_panel():
         summary = snapshot.get("summary", {}) if isinstance(snapshot, dict) else {}
         mapped_df = pd.DataFrame(snapshot.get("mapped", [])) if isinstance(snapshot, dict) else pd.DataFrame()
         unmapped_df = pd.DataFrame(snapshot.get("unmapped", [])) if isinstance(snapshot, dict) else pd.DataFrame()
+        excluded_df = pd.DataFrame(snapshot.get("excluded", [])) if isinstance(snapshot, dict) else pd.DataFrame()
 
-        m1, m2, m3 = st.columns(3)
+        m1, m2, m3, m4 = st.columns(4)
         m1.metric("매핑 완료", f"{int(summary.get('mapped_count', len(mapped_df)) or 0)}개")
         m2.metric("미분류", f"{int(summary.get('unmapped_count', len(unmapped_df)) or 0)}개")
-        m3.metric("커버리지", f"{float(summary.get('coverage_pct', 0.0) or 0.0):.1f}%")
+        m3.metric("제외", f"{int(summary.get('excluded_count', len(excluded_df)) or 0)}개")
+        m4.metric("커버리지", f"{float(summary.get('coverage_pct', 0.0) or 0.0):.1f}%")
+        st.caption("커버리지는 광범위 지수/레버리지/인버스/단일종목 ETF를 제외하고, 실제 테마 매핑 후보만 기준으로 계산합니다.")
 
         def _format_coverage_df(df):
             if df is None or df.empty:
@@ -18936,7 +18939,7 @@ def render_naver_theme_coverage_panel():
                 )
             cols = [
                 "출처", "네이버명", "티커", "내부테마", "상태", "순위",
-                "등락률", "3일등락률", "상승비율", "거래대금", "네이버랭킹", "랭킹보조점수",
+                "등락률", "3일등락률", "상승비율", "거래대금", "네이버랭킹", "랭킹보조점수", "제외사유",
             ]
             return show[[c for c in cols if c in show.columns]]
 
@@ -18952,6 +18955,12 @@ def render_naver_theme_coverage_panel():
                 st.info("매핑 완료 항목이 없습니다.")
             else:
                 st.dataframe(_format_coverage_df(mapped_df.head(30)), width='stretch', hide_index=True)
+
+        with st.expander("분모 제외 항목 보기", expanded=False):
+            if excluded_df.empty:
+                st.info("제외된 항목이 없습니다.")
+            else:
+                st.dataframe(_format_coverage_df(excluded_df.head(30)), width='stretch', hide_index=True)
 
 
 def render_today_market_flow_panel(snapshot=None):
