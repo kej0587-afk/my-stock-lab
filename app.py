@@ -18530,7 +18530,299 @@ def render_speed_check_tab():
 # render_today_action_card, render_today_portfolio_flow_bridge, render_today_market_flow_panel
 # ════════════════════════════════════════════════════════════════════════════
 
-def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available):
+TODAY_MARKET_GUARD_BENCHMARKS = [
+    ("SPY", "S&P500"),
+    ("QQQ", "나스닥100"),
+    ("069500.KS", "KOSPI200"),
+    ("229200.KS", "KOSDAQ150"),
+]
+
+
+def _format_today_signed_pct(value, digits=1):
+    if not finite_num(value):
+        return "-"
+    return f"{float(value) * 100:+.{digits}f}%"
+
+
+def _calc_today_benchmark_guard_row(ticker: str, label: str) -> dict:
+    row = {
+        "시장": label,
+        "티커": ticker,
+        "1일": np.nan,
+        "5일": np.nan,
+        "20일": np.nan,
+        "20일고점대비": np.nan,
+        "MA20": "-",
+        "MA50": "-",
+        "연속하락": 0,
+        "데이터": "부족",
+    }
+    try:
+        df = load_price_df(ticker, "3mo")
+        if df is None or df.empty or "Close" not in df.columns:
+            return row
+        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if len(close) < 25:
+            return row
+        last = float(close.iloc[-1])
+        row["1일"] = (last / float(close.iloc[-2]) - 1) if len(close) >= 2 and close.iloc[-2] else np.nan
+        row["5일"] = (last / float(close.iloc[-6]) - 1) if len(close) >= 6 and close.iloc[-6] else np.nan
+        row["20일"] = (last / float(close.iloc[-21]) - 1) if len(close) >= 21 and close.iloc[-21] else np.nan
+        recent_high = float(close.tail(20).max())
+        row["20일고점대비"] = (last / recent_high - 1) if recent_high else np.nan
+        ma20 = float(close.tail(20).mean())
+        ma50 = float(close.tail(min(50, len(close))).mean())
+        row["MA20"] = "하회" if last < ma20 else "상회"
+        row["MA50"] = "하회" if last < ma50 else "상회"
+        diffs = close.diff().tail(8).dropna()
+        streak = 0
+        for v in reversed(diffs.tolist()):
+            if v < 0:
+                streak += 1
+            else:
+                break
+        row["연속하락"] = int(streak)
+        row["데이터"] = "정상"
+    except Exception:
+        return row
+    return row
+
+
+def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
+    benchmark_rows = [
+        _calc_today_benchmark_guard_row(ticker, label)
+        for ticker, label in TODAY_MARKET_GUARD_BENCHMARKS
+    ]
+    bench_df = pd.DataFrame(benchmark_rows)
+    valid = bench_df[bench_df["데이터"].eq("정상")].copy() if not bench_df.empty else pd.DataFrame()
+
+    score = 0
+    reasons = []
+
+    valid_count = max(len(valid), 1)
+    below20 = int(valid["MA20"].eq("하회").sum()) if not valid.empty else 0
+    below50 = int(valid["MA50"].eq("하회").sum()) if not valid.empty else 0
+    down3 = int(valid["연속하락"].ge(3).sum()) if not valid.empty else 0
+    weak5 = int(valid["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03).sum()) if not valid.empty else 0
+    sharp_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015).sum()) if not valid.empty else 0
+
+    if below20 >= 3:
+        score += 2
+        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+    elif below20 >= 2:
+        score += 1
+        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+    if below50 >= 2:
+        score += 2
+        reasons.append(f"주요지수 {below50}개가 MA50 아래")
+    if down3 >= 2:
+        score += 2
+        reasons.append(f"연속 하락 3일 이상 지수 {down3}개")
+    if weak5 >= 2:
+        score += 2
+        reasons.append(f"5거래일 -3% 이하 지수 {weak5}개")
+    if sharp_day >= 2:
+        score += 1
+        reasons.append(f"하루 -1.5% 이하 급락 지수 {sharp_day}개")
+
+    flow_breadth = np.nan
+    flow_accel = np.nan
+    if snapshot:
+        flow_df = snapshot.get("flow_df", pd.DataFrame())
+        if flow_df is not None and not flow_df.empty:
+            flow_calc = flow_df[flow_df.get("구분", pd.Series("", index=flow_df.index)).astype(str).ne("매크로")].copy()
+            if "3개월수익률" in flow_calc.columns and not flow_calc.empty:
+                flow_breadth = float((flow_calc["3개월수익률"].fillna(0) > 0).mean())
+                if flow_breadth < 0.35:
+                    score += 2
+                    reasons.append(f"돈흐름 3M 상승 비율 {flow_breadth*100:.0f}%")
+                elif flow_breadth < 0.50:
+                    score += 1
+                    reasons.append(f"돈흐름 3M 상승 비율 {flow_breadth*100:.0f}%")
+            if "가속도" in flow_calc.columns and not flow_calc.empty:
+                flow_accel = float((flow_calc["가속도"].fillna(0) > 0).mean())
+                if flow_accel < 0.35:
+                    score += 1
+                    reasons.append(f"가속 ETF 비율 {flow_accel*100:.0f}%")
+
+    macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
+    if finite_num(macro_risk):
+        if float(macro_risk) >= 4.5:
+            score += 3
+            reasons.append(f"매크로 리스크 {float(macro_risk):.1f}")
+        elif float(macro_risk) >= 3.5:
+            score += 2
+            reasons.append(f"매크로 리스크 {float(macro_risk):.1f}")
+
+    hard_count = 0
+    caution_count = 0
+    if summary_df is not None and not summary_df.empty:
+        code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
+        label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+        hard_count = int((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)).sum())
+        caution_count = int(label_series.str.contains("구조훼손|추매금지|진입 보류|과열|차단", regex=True, na=False).sum())
+        if hard_count >= 3:
+            score += 2
+            reasons.append(f"내 관심목록 하드차단 {hard_count}개")
+        elif hard_count >= 1:
+            score += 1
+            reasons.append(f"내 관심목록 하드차단 {hard_count}개")
+
+    if score >= 8:
+        mode, level, action = "위험", "danger", "신규매수 중단 · 현금/리스크 점검"
+        actions = [
+            "신규 후보 탐색보다 보유 종목 손실 단계와 비중 초과를 먼저 확인",
+            "레버리지 추가매수는 평단 하락 조건이 와도 시장 안정 신호 확인 전 보류",
+            "현금이 부족하면 반등 매수보다 현금 확보 계획을 우선",
+        ]
+    elif score >= 5:
+        mode, level, action = "방어", "warning", "정찰만 · 현금 확보 우선"
+        actions = [
+            "신규매수는 목표금액의 일부만 정찰",
+            "코어 적립은 유지하되 과열/구조훼손 종목은 제외",
+            "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
+        ]
+    elif score >= 2:
+        mode, level, action = "주의", "caution", "분할 접근 · 후보만 선별"
+        actions = [
+            "후보는 전광판/정밀관측소에서 눌림 확인 후 분할",
+            "현금 비중이 목표보다 낮으면 신규매수 속도 조절",
+        ]
+    else:
+        mode, level, action = "정상", "normal", "선별 매수 가능"
+        actions = [
+            "돈흐름과 정밀관측소 타점이 같이 맞는 후보만 선별",
+            "목표비중 초과 종목은 추가매수 제외",
+        ]
+
+    if not reasons:
+        reasons.append("주요 위험 신호 제한적")
+
+    return {
+        "mode": mode,
+        "level": level,
+        "score": int(score),
+        "action": action,
+        "reasons": reasons[:5],
+        "actions": actions,
+        "bench_df": bench_df,
+        "flow_breadth": flow_breadth,
+        "flow_accel": flow_accel,
+        "macro_risk": macro_risk,
+        "hard_count": hard_count,
+        "caution_count": caution_count,
+    }
+
+
+def render_today_market_guard_panel(guard: dict):
+    if not guard:
+        return
+
+    mode = guard.get("mode", "주의")
+    level = guard.get("level", "caution")
+    color_map = {
+        "normal": "#22c55e",
+        "caution": "#f59e0b",
+        "warning": "#fb923c",
+        "danger": "#ef4444",
+    }
+    color = color_map.get(level, "#f59e0b")
+    reason_text = " · ".join(str(x) for x in guard.get("reasons", []) if str(x).strip())
+    action_text = str(guard.get("action", "-"))
+
+    st.markdown("#### 1. 시장 안전벨트")
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {color}; margin-bottom:10px;'>
+<b>시장 모드: <span style='color:{color};'>{html.escape(mode)}</span></b><br>
+<span class='highlight'>{html.escape(action_text)}</span><br>
+<span style='color:#94a3b8;'>근거: {html.escape(reason_text)}</span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("위험점수", f"{guard.get('score', 0)}점")
+    flow_breadth = guard.get("flow_breadth", np.nan)
+    flow_accel = guard.get("flow_accel", np.nan)
+    macro_risk = guard.get("macro_risk", np.nan)
+    c2.metric("돈흐름 상승폭", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
+    c3.metric("가속 ETF 비율", "-" if not finite_num(flow_accel) else f"{float(flow_accel)*100:.0f}%")
+    c4.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+
+    with st.expander("시장 안전벨트 세부 지표", expanded=False):
+        bench_df = guard.get("bench_df", pd.DataFrame())
+        if bench_df is None or bench_df.empty:
+            st.info("시장 지표 데이터가 부족합니다.")
+        else:
+            show = bench_df.copy()
+            for col in ["1일", "5일", "20일", "20일고점대비"]:
+                if col in show.columns:
+                    show[col] = show[col].apply(_format_today_signed_pct)
+            st.dataframe(show, width='stretch', hide_index=True)
+
+
+def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
+    if summary_df is None or summary_df.empty:
+        return pd.DataFrame()
+
+    risk_df = summary_df.copy()
+    label_series = risk_df.get("🔥기술적 타점", pd.Series("", index=risk_df.index)).astype(str)
+    code_series = risk_df.get("판정코드", pd.Series("", index=risk_df.index)).astype(str)
+    mdd_series = risk_df.get("MDD", pd.Series("", index=risk_df.index)).apply(safe_float)
+    adj_series = risk_df.get("Adj점수", pd.Series(np.nan, index=risk_df.index)).apply(safe_float)
+
+    risk_score = pd.Series(0.0, index=risk_df.index)
+    risk_score += hard_block_mask.reindex(risk_df.index, fill_value=False).astype(int) * 5
+    risk_score += caution_mask.reindex(risk_df.index, fill_value=False).astype(int) * 2
+    risk_score += label_series.str.contains("구조훼손|추매금지|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
+    risk_score += label_series.str.contains("과열|추격금지|비중 초과|비중 충족", regex=True, na=False).astype(int) * 2
+    risk_score += mdd_series.apply(lambda v: 3 if finite_num(v) and float(v) <= -20 else (2 if finite_num(v) and float(v) <= -15 else (1 if finite_num(v) and float(v) <= -10 else 0)))
+    risk_score += adj_series.apply(lambda v: 1 if finite_num(v) and float(v) < 0 else 0)
+    risk_df["_위험점수"] = risk_score
+
+    def _risk_action(row):
+        label = str(row.get("🔥기술적 타점", ""))
+        code = str(row.get("판정코드", ""))
+        mdd = safe_float(row.get("MDD"), np.nan)
+        if "HARD_BLOCK" in code or "하드차단" in label:
+            return "추가매수 금지 · 사유 확인"
+        if any(k in label for k in ["구조훼손", "추매금지", "진입 보류"]):
+            return "보유/손절 기준 점검"
+        if any(k in label for k in ["과열", "추격금지"]):
+            return "추격 금지 · 눌림 대기"
+        if finite_num(mdd) and float(mdd) <= -15:
+            return "낙폭 원인 확인"
+        return "관찰"
+
+    risk_df["오늘조치"] = risk_df.apply(_risk_action, axis=1)
+    risk_df = risk_df[risk_df["_위험점수"] > 0].sort_values("_위험점수", ascending=False)
+    return risk_df.head(10)
+
+
+def render_today_holdings_risk_panel(risk_df):
+    st.markdown("#### 2. 내 보유/관심 위험 TOP")
+    if risk_df is None or risk_df.empty:
+        st.success("현재 오늘점검 기준으로 우선 확인할 위험 후보는 많지 않습니다.")
+        return
+
+    show = risk_df.copy()
+    if "_위험점수" in show.columns:
+        show["_위험점수"] = show["_위험점수"].apply(lambda v: f"{float(v):.0f}" if finite_num(v) else "-")
+    cols = [
+        "오늘조치", "종목명", "티커", "유형", "현재가", "MDD", "🔥기술적 타점",
+        "핵심근거", "Adj점수", "RS", "섹터RS", "_위험점수",
+    ]
+    st.dataframe(
+        show[[c for c in cols if c in show.columns]],
+        width='stretch',
+        hide_index=True,
+        height=min(360, 90 + len(show) * 38),
+    )
+
+
+def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard=None):
     if summary_df is None or summary_df.empty:
         return
 
@@ -18548,8 +18840,11 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     buyish_count = int(buyish_mask.sum())
     caution_count = int(caution_mask.sum())
     hard_count = int(hard_block_mask.sum())
+    market_mode = str((market_guard or {}).get("mode", ""))
 
-    if leverage_blocked:
+    if market_mode in {"위험", "방어"}:
+        headline = f"시장 모드가 {market_mode}입니다. 오늘은 후보보다 방어와 현금 계획이 우선입니다."
+    elif leverage_blocked:
         headline = "오늘은 레버리지 추가매수보다 코어/대기자금 관리가 우선입니다."
     elif leverage_dca_ready:
         headline = "레버리지 DCA 후보가 있습니다. 정해둔 배율과 손실 허용폭 안에서만 검토하세요."
@@ -18561,6 +18856,8 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         headline = "오늘은 보유 유지와 비중 점검이 우선입니다."
 
     actions = []
+    if market_mode in {"위험", "방어"}:
+        actions.extend((market_guard or {}).get("actions", [])[:2])
     if leverage_blocked:
         actions.append("레버리지는 차단 신호를 유지하고, 단계별 DCA 조건이 풀릴 때까지 추가매수 보류")
     elif leverage_dca_ready:
@@ -19931,6 +20228,10 @@ def render_today_queue_tab(mode):
     hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
     buyish_mask = signal_group.eq("buyish") & ~hard_block_mask
     caution_mask = signal_group.eq("caution") | hard_block_mask
+    market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
+    risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask)
+
+    render_today_market_guard_panel(market_guard)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("점검 종목", f"{len(summary_df)}개")
@@ -19940,16 +20241,8 @@ def render_today_queue_tab(mode):
 
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
-    if final_macro_risk >= 4.5:
-        st.error("매크로 리스크가 높은 구간입니다. 신규 매수보다 현금/방어자산 유지와 비중 초과 종목 점검을 우선합니다.")
-    elif hard_block_mask.any():
-        st.warning("하드차단 종목이 있습니다. 비중 초과, 과열, 매크로, 재무 위험 같은 차단 사유를 먼저 확인하세요.")
-    elif buyish_mask.any() and cash_available > 0:
-        st.success("매수/관심 후보가 있습니다. 현금 범위 안에서 정찰 또는 분할 접근 후보로만 검토하세요.")
-    elif buyish_mask.any():
-        st.info("매수/관심 후보는 있지만 적립용 현금이 부족합니다. 신규 매수보다 현금 계획을 먼저 확인하세요.")
-    else:
-        st.info("강한 매수 후보가 많지 않습니다. 오늘은 보유 유지, 비중 점검, 관심종목 정리 쪽이 더 적합합니다.")
+
+    render_today_holdings_risk_panel(risk_df)
 
     # ── 섹터 집중도 경고 ─────────────────────────────────────────────────
     # 매수/관심 후보가 2개 이상이면 같은 asset_class 끼리 묶어 중복 섹터를 잡아냄
@@ -19976,15 +20269,10 @@ def render_today_queue_tab(mode):
     cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
     cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
 
-    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available)
+    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
 
     st.divider()
-    flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
-    if flow_snapshot:
-        render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
-
-    render_investor_top10_section()
-    st.divider()
+    st.markdown("#### 3. 관심/보유 종목 판정표")
 
     # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
     _upside_map: dict[str, str] = {}
@@ -20048,6 +20336,18 @@ def render_today_queue_tab(mode):
     )
 
     st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
+
+    st.divider()
+    st.markdown("#### 4. 후보 확인 도구")
+    st.caption("돈흐름과 수급은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
+
+    with st.expander("돈흐름/테마 후보 확인", expanded=False):
+        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
+        if flow_snapshot:
+            render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
+
+    with st.expander("수급 TOP10 확인", expanded=False):
+        render_investor_top10_section()
 
 
 
