@@ -20111,9 +20111,34 @@ def render_investor_top10_section():
                     st.info(f"이미 등록됨: {', '.join(_skipped)}")
 
 
-def render_today_candidate_tools(summary_df=None, heading="#### 후보 확인 도구"):
-    st.markdown(heading)
-    st.caption("돈흐름과 수급은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
+def render_today_pending_risk_panel():
+    st.markdown("#### 2. 내 보유/관심 위험 TOP")
+    st.info(
+        "오늘 종목 점검 계산/새로고침을 누르면 하드차단, 구조훼손, 과열, MDD 기준으로 "
+        "먼저 확인할 종목을 보여줍니다."
+    )
+
+
+def render_today_pending_action_card(market_guard=None):
+    st.markdown("#### 3. 오늘의 실행 카드")
+    guard = market_guard or {}
+    mode_label = guard.get("mode", "대기")
+    action_label = guard.get("action", "시장 안전벨트 기준만 표시 중")
+    st.markdown(
+        f"""
+<div style="border:1px solid rgba(148,163,184,.28); border-radius:10px; padding:14px 16px; background:rgba(15,23,42,.52);">
+<b>시장 모드 기준 임시 판단</b><br>
+<span style="color:#cbd5e1;">현재 시장 안전벨트: {mode_label} · {action_label}</span><br>
+<span style="color:#94a3b8;">종목별 매수/보류 판단은 오늘 종목 점검 계산 후 이 자리에 채워집니다.</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_today_candidate_tools(summary_df=None, start_index=4):
+    st.markdown(f"#### {start_index}. 돈흐름 후보 압축")
+    st.caption("돈흐름은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
 
     with st.expander("돈흐름/테마 후보 확인", expanded=False):
         flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
@@ -20125,6 +20150,8 @@ def render_today_candidate_tools(summary_df=None, heading="#### 후보 확인 �
         ):
             render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
 
+    st.markdown(f"#### {start_index + 1}. 수급 확인")
+    st.caption("수급 TOP10은 같은 방향의 돈이 실제로 들어오는지 확인하는 보조 체크입니다.")
     with st.expander("수급 TOP10 확인", expanded=False):
         render_investor_top10_section()
 
@@ -20142,10 +20169,13 @@ def render_today_queue_tab(mode):
 
     watch_items = tuple(st.session_state.get("watchlist", []))
     if not watch_items:
-        render_today_market_guard_panel(build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame()))
+        market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
+        render_today_market_guard_panel(market_guard)
+        render_today_pending_risk_panel()
+        render_today_pending_action_card(market_guard)
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
-        render_today_candidate_tools(pd.DataFrame(), "#### 2. 후보 확인 도구")
+        render_today_candidate_tools(pd.DataFrame(), start_index=4)
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -20227,13 +20257,16 @@ def render_today_queue_tab(mode):
         summary_df = cached_summary
 
     if summary_df.empty:
-        render_today_market_guard_panel(build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame()))
+        market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
+        render_today_market_guard_panel(market_guard)
+        render_today_pending_risk_panel()
+        render_today_pending_action_card(market_guard)
         if run_summary:
             st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
-        render_today_candidate_tools(pd.DataFrame(), "#### 2. 후보 확인 도구")
+        render_today_candidate_tools(pd.DataFrame(), start_index=4)
         return
 
     if "판정분류" in summary_df.columns:
@@ -20287,10 +20320,11 @@ def render_today_queue_tab(mode):
     cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
     cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
 
+    st.markdown("#### 3. 오늘의 실행 카드")
     render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
 
     st.divider()
-    st.markdown("#### 3. 관심/보유 종목 판정표")
+    st.markdown("#### 상세 판정표")
 
     # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
     _upside_map: dict[str, str] = {}
@@ -20330,33 +20364,32 @@ def render_today_queue_tab(mode):
 
     if view_df.empty:
         st.info(f"{view_mode}에 해당하는 종목이 없습니다.")
-        return
+    else:
+        if view_mode == "주의/차단" and "_hard_block" in view_df.columns:
+            sort_cols = ["_hard_block"]
+            ascending = [False]
+            if "Adj점수" in view_df.columns:
+                sort_cols.append("Adj점수")
+                ascending.append(True)
+            view_df = view_df.sort_values(sort_cols, ascending=ascending)
+        elif "Adj점수" in view_df.columns:
+            view_df = view_df.sort_values("Adj점수", ascending=sort_ascending)
 
-    if view_mode == "주의/차단" and "_hard_block" in view_df.columns:
-        sort_cols = ["_hard_block"]
-        ascending = [False]
-        if "Adj점수" in view_df.columns:
-            sort_cols.append("Adj점수")
-            ascending.append(True)
-        view_df = view_df.sort_values(sort_cols, ascending=ascending)
-    elif "Adj점수" in view_df.columns:
-        view_df = view_df.sort_values("Adj점수", ascending=sort_ascending)
+        # upside 컬럼 주입 (없으면 "-")
+        if "티커" in view_df.columns:
+            view_df["목표Upside"] = view_df["티커"].astype(str).map(_upside_map).fillna("-")
 
-    # upside 컬럼 주입 (없으면 "-")
-    if "티커" in view_df.columns:
-        view_df["목표Upside"] = view_df["티커"].astype(str).map(_upside_map).fillna("-")
+        st.dataframe(
+            view_df[[col for col in show_cols if col in view_df.columns]],
+            column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
+            width='stretch',
+            hide_index=True,
+        )
 
-    st.dataframe(
-        view_df[[col for col in show_cols if col in view_df.columns]],
-        column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
-        width='stretch',
-        hide_index=True,
-    )
-
-    st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
+        st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
 
     st.divider()
-    render_today_candidate_tools(summary_df, "#### 4. 후보 확인 도구")
+    render_today_candidate_tools(summary_df, start_index=4)
 
 
 
