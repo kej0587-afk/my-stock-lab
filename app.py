@@ -8935,7 +8935,7 @@ def render_refresh_control_panel():
 
 @st.cache_data(ttl=300)
 def get_macro_analysis():
-    tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX"}
+    tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
     results = {}; macro_trend = 0; storm_count = 0
 
     try:
@@ -8984,7 +8984,7 @@ def get_macro_analysis():
             elif icon == "🔻": macro_trend -= 0.5
         is_storm = ((name == "VIX" and cur > 30) or (name == "환율" and cur > 1400) or (name == "10Y 금리" and cur > 4.7))
         if is_storm: storm_count += 1
-        results[name] = {"val": cur, "icon": icon, "storm": is_storm}
+        results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg}
     move_val = results.get("MOVE", {"val": 0})["val"]
     move_score = 1.5 if move_val >= 120 else (0.5 if move_val >= 100 else 0)
     final_macro_risk = storm_count + macro_trend + move_score
@@ -18533,9 +18533,12 @@ def render_speed_check_tab():
 TODAY_MARKET_GUARD_BENCHMARKS = [
     ("SPY", "S&P500"),
     ("QQQ", "나스닥100"),
+    ("IWM", "러셀2000"),
     ("069500.KS", "KOSPI200"),
     ("229200.KS", "KOSDAQ150"),
 ]
+
+TODAY_MARKET_GUARD_MACRO_ORDER = ["10Y 금리", "환율", "VIX", "MOVE", "유가"]
 
 
 def _format_today_signed_pct(value, digits=1):
@@ -18586,6 +18589,87 @@ def _calc_today_benchmark_guard_row(ticker: str, label: str) -> dict:
     except Exception:
         return row
     return row
+
+
+def build_today_macro_guard_table(macro_data=None) -> tuple[pd.DataFrame, int, int, str]:
+    macro_data = macro_data if isinstance(macro_data, dict) else globals().get("macro_res", {})
+    rows = []
+    pressure_count = 0
+    relief_count = 0
+
+    for name in TODAY_MARKET_GUARD_MACRO_ORDER:
+        info = macro_data.get(name, {}) if isinstance(macro_data, dict) else {}
+        val = clean_float(info.get("val"), np.nan)
+        chg = clean_float(info.get("chg"), np.nan)
+        icon = str(info.get("icon", "-") or "-")
+        storm = bool(info.get("storm", False))
+        state = "미수집"
+        note = "데이터 없음"
+
+        if finite_num(val):
+            state = "중립"
+            note = "큰 경고 없음"
+
+            if name == "10Y 금리":
+                if storm or float(val) >= 4.7:
+                    state, note = "경고", "성장주·레버리지 부담"
+                elif float(val) >= 4.4 and icon == "🔺":
+                    state, note = "주의", "금리 압박 확대"
+                elif icon == "🔻":
+                    state, note = "완화", "금리 부담 완화"
+            elif name == "환율":
+                if storm or float(val) >= 1450:
+                    state, note = "경고", "원화 약세·해외자산 변동성 확대"
+                elif float(val) >= 1400 and icon == "🔺":
+                    state, note = "주의", "환율 부담 확대"
+                elif icon == "🔻":
+                    state, note = "완화", "환율 부담 완화"
+            elif name == "VIX":
+                if storm or float(val) >= 30:
+                    state, note = "경고", "단기 공포 확대"
+                elif float(val) >= 22 and icon == "🔺":
+                    state, note = "주의", "변동성 상승"
+                elif float(val) <= 18 and icon == "🔻":
+                    state, note = "완화", "공포 완화"
+            elif name == "MOVE":
+                if float(val) >= 120:
+                    state, note = "경고", "채권시장 변동성 확대"
+                elif float(val) >= 100:
+                    state, note = "주의", "금리 변동성 주의"
+                elif float(val) < 90:
+                    state, note = "완화", "채권 변동성 안정"
+            elif name == "유가":
+                if float(val) >= 90 and icon == "🔺":
+                    state, note = "주의", "인플레 압박 가능"
+                elif icon == "🔻":
+                    state, note = "완화", "인플레 압박 완화"
+
+            if state == "경고":
+                pressure_count += 2
+            elif state == "주의":
+                pressure_count += 1
+            elif state == "완화":
+                relief_count += 1
+
+        rows.append({
+            "지표": name,
+            "현재값": "-" if not finite_num(val) else f"{float(val):,.1f}",
+            "1개월변화": "-" if not finite_num(chg) else f"{float(chg):+.1f}%",
+            "방향": icon,
+            "상태": state,
+            "해석": note,
+        })
+
+    if pressure_count >= 4:
+        note = "금리·환율·변동성 경고가 겹쳐 신규매수보다 현금과 비중 점검이 우선입니다."
+    elif pressure_count >= 2:
+        note = "매크로 부담이 일부 있어 신규매수는 정찰·분할 접근이 적합합니다."
+    elif relief_count >= 2:
+        note = "매크로 부담은 낮아지는 편이며, 지수 추세와 종목 타점을 중심으로 보면 됩니다."
+    else:
+        note = "매크로는 중립권이라 가격 추세와 돈흐름 신호를 우선 봅니다."
+
+    return pd.DataFrame(rows), int(pressure_count), int(relief_count), note
 
 
 def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
@@ -18645,14 +18729,23 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
                     score += 1
                     reasons.append(f"가속 ETF 비율 {flow_accel*100:.0f}%")
 
+    macro_df, macro_pressure, macro_relief, macro_note = build_today_macro_guard_table()
     macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
+    macro_score = 0
+    if macro_pressure >= 4:
+        macro_score += 2
+    elif macro_pressure >= 2:
+        macro_score += 1
     if finite_num(macro_risk):
         if float(macro_risk) >= 4.5:
-            score += 3
-            reasons.append(f"매크로 리스크 {float(macro_risk):.1f}")
+            macro_score += 2
         elif float(macro_risk) >= 3.5:
-            score += 2
-            reasons.append(f"매크로 리스크 {float(macro_risk):.1f}")
+            macro_score += 1
+    macro_score = min(macro_score, 3)
+    if macro_score > 0:
+        score += macro_score
+        risk_text = "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}"
+        reasons.append(f"매크로 경고 {macro_pressure}점/리스크 {risk_text}")
 
     hard_count = 0
     caution_count = 0
@@ -18709,6 +18802,10 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "flow_breadth": flow_breadth,
         "flow_accel": flow_accel,
         "macro_risk": macro_risk,
+        "macro_df": macro_df,
+        "macro_pressure": macro_pressure,
+        "macro_relief": macro_relief,
+        "macro_note": macro_note,
         "hard_count": hard_count,
         "caution_count": caution_count,
     }
@@ -18729,6 +18826,7 @@ def render_today_market_guard_panel(guard: dict):
     color = color_map.get(level, "#f59e0b")
     reason_text = " · ".join(str(x) for x in guard.get("reasons", []) if str(x).strip())
     action_text = str(guard.get("action", "-"))
+    macro_note = str(guard.get("macro_note", "") or "")
 
     st.markdown("#### 1. 시장 안전벨트")
     st.markdown(
@@ -18736,7 +18834,8 @@ def render_today_market_guard_panel(guard: dict):
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:10px;'>
 <b>시장 모드: <span style='color:{color};'>{html.escape(mode)}</span></b><br>
 <span class='highlight'>{html.escape(action_text)}</span><br>
-<span style='color:#94a3b8;'>근거: {html.escape(reason_text)}</span>
+<span style='color:#94a3b8;'>근거: {html.escape(reason_text)}</span><br>
+<span style='color:#cbd5e1;'>매크로 해석: {html.escape(macro_note)}</span>
 </div>
         """,
         unsafe_allow_html=True,
@@ -18761,6 +18860,11 @@ def render_today_market_guard_panel(guard: dict):
                 if col in show.columns:
                     show[col] = show[col].apply(_format_today_signed_pct)
             st.dataframe(show, width='stretch', hide_index=True)
+
+        macro_df = guard.get("macro_df", pd.DataFrame())
+        if macro_df is not None and not macro_df.empty:
+            st.markdown("##### 매크로 경고등")
+            st.dataframe(macro_df, width='stretch', hide_index=True)
 
 
 def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
