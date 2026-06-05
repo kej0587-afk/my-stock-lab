@@ -10799,6 +10799,43 @@ def find_precision_select_label_by_ticker(ticker, option_map):
     return None
 
 
+PRECISION_FREE_TICKER_KEY = "precision_free_ticker_input"
+PRECISION_FREE_MARKET_KEY = "precision_free_market_option"
+
+
+def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
+    raw = sanitize_ticker_value(ticker)
+    upper = raw.upper()
+    if upper.endswith(".KQ"):
+        return upper[:-3], "KOSDAQ (.KQ)"
+    if upper.endswith(".KS"):
+        return upper[:-3], "KOSPI (.KS)"
+    return upper, st.session_state.get(PRECISION_FREE_MARKET_KEY, "KOSPI (.KS)")
+
+
+def set_precision_target_ticker(ticker: str, option_map: dict | None = None) -> str:
+    """정밀관측소 선택값을 안정적으로 세팅한다.
+
+    전광판/프리셋에 없는 종목은 자유 종목 탐색 입력값에 고정 저장한다.
+    """
+    target = sanitize_ticker_value(ticker)
+    if not target:
+        return ""
+
+    option_map = option_map or build_precision_select_options()[1]
+    label = find_precision_select_label_by_ticker(target, option_map)
+    if label:
+        st.session_state["precision_selected_option"] = label
+        return label
+
+    base_ticker, market_option = _split_precision_free_ticker(target)
+    st.session_state["precision_selected_option"] = FREE_SEARCH_OPTION
+    st.session_state[PRECISION_FREE_TICKER_KEY] = base_ticker
+    st.session_state[PRECISION_FREE_MARKET_KEY] = market_option
+    st.session_state["_precision_prefill_ticker"] = target
+    return FREE_SEARCH_OPTION
+
+
 def get_saved_fin_score_fast(ticker, is_etf):
     if is_etf: return 0
     key = normalize_ticker(ticker)
@@ -19547,15 +19584,12 @@ def render_today_market_flow_panel(snapshot=None):
             for _i, _r in all_cands.iterrows():
                 _tkr  = str(_r.get("Ticker", ""))
                 _name = str(_r.get("종목명", _tkr))
-                _lbl  = find_precision_select_label_by_ticker(_tkr, _pm)
                 with _bcols[_i % 4]:
                     if st.button(f"🔍 {_name}", key=f"sc_{key_suffix}_{_tkr}", width='stretch', help=_tkr):
-                        if _lbl:
-                            st.session_state["precision_selected_option"] = _lbl
-                        else:
-                            st.session_state["precision_selected_option"] = FREE_SEARCH_OPTION
-                            st.session_state["_precision_prefill_ticker"] = _tkr
-                        st.toast(f"'{_name}' → 정밀관측소 설정 완료. 사이드바에서 정밀관측소 탭을 여세요.", icon="🔍")
+                        set_precision_target_ticker(_tkr, _pm)
+                        st.session_state["_pending_main_page_nav"] = "precision"
+                        st.session_state["_precision_jump_notice"] = f"'{_name}' 정밀관측소로 이동했습니다."
+                        st.rerun()
 
         with _lead_tab:
             st.caption("기준: 로테이션/테마 진입검토 후보 안에서 테마별 돈흐름 상위 1~2개. 매수 신호가 아니라 ‘어떤 종목이 주도주인지’ 빠르게 확인하는 탭입니다.")
@@ -21355,6 +21389,10 @@ MAIN_PAGE_OPTIONS = {
     "manual": "📘 판정 매뉴얼",
     "guide": "📖 사용 가이드",
 }
+_pending_main_page_nav = st.session_state.pop("_pending_main_page_nav", None)
+if _pending_main_page_nav in MAIN_PAGE_OPTIONS:
+    st.session_state["main_page_nav"] = _pending_main_page_nav
+
 main_page = st.sidebar.radio(
     "화면 이동",
     list(MAIN_PAGE_OPTIONS.keys()),
@@ -21562,16 +21600,41 @@ if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     if st.session_state.get("precision_selected_option") not in options:
         st.session_state["precision_selected_option"] = options[0]
+    _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
+    if _precision_jump_notice:
+        st.toast(_precision_jump_notice, icon="🔍")
     sel = st.selectbox("종목 선택", options, key="precision_selected_option")
     selected_option = precision_option_map.get(sel, {"type": "preset"})
     is_free = (selected_option.get("type") == "free")
 
     if is_free:
-        # 오늘의 종목 후보 등에서 전달된 pre-fill 티커가 있으면 기본값으로 사용
-        _prefill_ticker = st.session_state.pop("_precision_prefill_ticker", "GOOGL")
+        # 오늘의 종목 후보 등에서 전달된 티커는 rerun 이후에도 유지한다.
+        if "_precision_prefill_ticker" in st.session_state:
+            _base_ticker, _market_option = _split_precision_free_ticker(
+                st.session_state.pop("_precision_prefill_ticker", "")
+            )
+            if _base_ticker:
+                st.session_state[PRECISION_FREE_TICKER_KEY] = _base_ticker
+                st.session_state[PRECISION_FREE_MARKET_KEY] = _market_option
+        if PRECISION_FREE_TICKER_KEY not in st.session_state:
+            st.session_state[PRECISION_FREE_TICKER_KEY] = "GOOGL"
+        if st.session_state.get(PRECISION_FREE_MARKET_KEY) not in ["KOSPI (.KS)", "KOSDAQ (.KQ)"]:
+            st.session_state[PRECISION_FREE_MARKET_KEY] = "KOSPI (.KS)"
+
         c1, c2 = st.columns([2, 1])
-        with c1: user_tkr_raw = sanitize_ticker_value(st.text_input("티커/종목코드 (예: GOOGL, 005930)", _prefill_ticker))
-        with c2: mkt_opt = st.selectbox("시장 (한국주식 시)", ["KOSPI (.KS)", "KOSDAQ (.KQ)"])
+        with c1:
+            user_tkr_raw = sanitize_ticker_value(
+                st.text_input(
+                    "티커/종목코드 (예: GOOGL, 005930)",
+                    key=PRECISION_FREE_TICKER_KEY,
+                )
+            )
+        with c2:
+            mkt_opt = st.selectbox(
+                "시장 (한국주식 시)",
+                ["KOSPI (.KS)", "KOSDAQ (.KQ)"],
+                key=PRECISION_FREE_MARKET_KEY,
+            )
 
         tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}" if (user_tkr_raw.isdigit() and len(user_tkr_raw) == 6) else user_tkr_raw
         tkr = sanitize_ticker_value(tkr)
