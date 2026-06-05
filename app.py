@@ -20111,6 +20111,24 @@ def render_investor_top10_section():
                     st.info(f"이미 등록됨: {', '.join(_skipped)}")
 
 
+def render_today_candidate_tools(summary_df=None, heading="#### 후보 확인 도구"):
+    st.markdown(heading)
+    st.caption("돈흐름과 수급은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
+
+    with st.expander("돈흐름/테마 후보 확인", expanded=False):
+        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
+        if (
+            flow_snapshot
+            and summary_df is not None
+            and isinstance(summary_df, pd.DataFrame)
+            and not summary_df.empty
+        ):
+            render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
+
+    with st.expander("수급 TOP10 확인", expanded=False):
+        render_investor_top10_section()
+
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 20a: 오늘 점검 탭
@@ -20124,10 +20142,10 @@ def render_today_queue_tab(mode):
 
     watch_items = tuple(st.session_state.get("watchlist", []))
     if not watch_items:
+        render_today_market_guard_panel(build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame()))
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
-        render_today_market_flow_panel()
-        render_investor_top10_section()
+        render_today_candidate_tools(pd.DataFrame(), "#### 2. 후보 확인 도구")
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -20209,13 +20227,13 @@ def render_today_queue_tab(mode):
         summary_df = cached_summary
 
     if summary_df.empty:
+        render_today_market_guard_panel(build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame()))
         if run_summary:
             st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
-        render_today_market_flow_panel()
-        render_investor_top10_section()
+        render_today_candidate_tools(pd.DataFrame(), "#### 2. 후보 확인 도구")
         return
 
     if "판정분류" in summary_df.columns:
@@ -20338,16 +20356,7 @@ def render_today_queue_tab(mode):
     st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
 
     st.divider()
-    st.markdown("#### 4. 후보 확인 도구")
-    st.caption("돈흐름과 수급은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
-
-    with st.expander("돈흐름/테마 후보 확인", expanded=False):
-        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
-        if flow_snapshot:
-            render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
-
-    with st.expander("수급 TOP10 확인", expanded=False):
-        render_investor_top10_section()
+    render_today_candidate_tools(summary_df, "#### 4. 후보 확인 도구")
 
 
 
