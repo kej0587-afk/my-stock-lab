@@ -6702,8 +6702,10 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         breadth = pos_frac * 0.45 + r1m_pos_frac * 0.35 + r2w_pos_frac * 0.20
 
         short_down = (
-            finite_num(avg_r1m) and avg_r1m <= -0.02
-            and (not finite_num(avg_r2w) or avg_r2w < 0)
+            (finite_num(avg_r1m) and avg_r1m <= -0.02
+             and (not finite_num(avg_r2w) or avg_r2w < 0))
+            or (finite_num(avg_r2w) and avg_r2w <= -0.03
+                and (not finite_num(avg_r1m) or avg_r1m <= 0))
         )
         short_confirm = (
             finite_num(avg_r1m) and avg_r1m >= 0
@@ -6746,7 +6748,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             flow_label = "강하지만 과열"
         elif fit_score >= 12 and short_confirm and breadth >= 0.52:
             flow_label = "진입검토"
-        elif avg_rsmom >= 0.02 and finite_num(avg_r1m) and avg_r1m >= -0.01 and breadth >= 0.45:
+        elif (avg_rsmom >= 0.02 and finite_num(avg_r1m) and avg_r1m >= -0.01 and breadth >= 0.45
+              and (not finite_num(avg_r2w) or avg_r2w >= -0.01)):
             flow_label = "부상감시"
         elif avg_rs3m >= 0.08 and finite_num(avg_r1m) and avg_r1m < 0:
             flow_label = "주도 후 조정"
@@ -19778,11 +19781,13 @@ def render_today_market_flow_panel(snapshot=None):
             quad  = r.get("사분면", "")
             rs3m  = r.get("RS(3M)", np.nan)
             r1m   = r.get("1개월수익률", np.nan)
+            r2w   = r.get("2주수익률", np.nan)
             accel = r.get("가속도", np.nan)
             state = str(r.get("상태", ""))
             ok = (
                 quad in {"개선", "주도"}
                 and finite_num(r1m) and float(r1m) >= 0.01
+                and (not finite_num(r2w) or float(r2w) >= -0.02)
                 and finite_num(accel) and float(accel) >= 0.0
                 and state != "과열경보"
                 # 주도 사분면은 RS 8% 이상 실질 리더십 확인 (돈흐름 레이더와 동일 기준)
