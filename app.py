@@ -6759,6 +6759,7 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         is_surging = (
             flow_label in {"진입검토", "부상감시"}
             and avg_rsmom >= 0.02
+            and (not finite_num(avg_r2w) or avg_r2w >= 0)
         )
         heat = fit_score
 
