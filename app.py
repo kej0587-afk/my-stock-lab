@@ -10412,6 +10412,22 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
                 reasons=_sd_reasons_t,
             )
+        elif live_price_used and is_exception_entry and has_pos:
+            dec, col, decision_outcome = _set_decision(
+                "🟡프리장 반등: 추매는 정규장 확인", "#d97706", "PREMARKET_REBOUND_HOLDING_WAIT",
+                reasons=(
+                    f"실시간등락 {day_ret*100:.1f}% / MA5·FVG 구간 반등",
+                    "프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인",
+                ),
+            )
+        elif live_price_used and is_exception_entry:
+            dec, col, decision_outcome = _set_decision(
+                "🟡프리장 반등: 정규장 확인대기", "#d97706", "PREMARKET_REBOUND_WAIT",
+                reasons=(
+                    f"실시간등락 {day_ret*100:.1f}% / MA5·FVG 구간 반등",
+                    "프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인",
+                ),
+            )
         elif (
             is_exception_entry and
             has_pos and
@@ -11387,6 +11403,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
         "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
+        "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_blocked = decision_code in block_codes or rr < 1.0
@@ -11400,9 +11417,13 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         status_color = "#d97706"
         status_note = "R/R이 1.5 미만이라 풀비중보다 1차 정찰 중심이 맞습니다."
     elif is_wait:
-        status = "눌림 대기"
+        status = "정규장 확인대기" if decision_code.startswith("PREMARKET_REBOUND") else "눌림 대기"
         status_color = "#8b5cf6"
-        status_note = "추격보다 MA5/MA20/FVG 눌림 확인 후 분할 진입합니다."
+        status_note = (
+            "프리/애프터 반등은 참고만 하고 정규장 초반 거래량, MA5/FVG 지지를 확인합니다."
+            if decision_code.startswith("PREMARKET_REBOUND")
+            else "추격보다 MA5/MA20/FVG 눌림 확인 후 분할 진입합니다."
+        )
     else:
         status = "분할 진입 가능"
         status_color = "#10b981"
@@ -12027,6 +12048,8 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
         add_check("시스템 타점", "차단", f"현재 판정이 '{dec}'입니다. 신호가 풀릴 때까지 신규/추매는 보수적으로 봅니다.")
+    elif "프리장 반등" in dec:
+        add_check("시스템 타점", "주의", f"현재 판정이 '{dec}'입니다. 프리장 반등은 정규장 초반 거래량과 지지 확인 후 판단합니다.")
     elif any(word in dec for word in positive_words):
         add_check("시스템 타점", "통과", f"현재 판정이 '{dec}'입니다. 다만 비중과 과열 여부를 함께 봅니다.")
     else:
