@@ -11187,10 +11187,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
         return
 
-    risk = max(cur - stop, atr * 2.0 if atr > 0 else 0.0)
+    risk = cur - stop
     if risk <= 0:
         st.info("손절 폭을 산출할 수 없어 신규진입 실행 계획을 만들 수 없습니다.")
         return
+    rr = round((target - cur) / risk, 2) if target > cur else rr
 
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
@@ -11234,6 +11235,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         if finite_num(value) and stop < value < cur:
             support_candidates.append((label, float(value)))
     support_candidates = sorted(support_candidates, key=lambda item: item[1], reverse=True)
+    unique_candidates = []
+    min_gap = max(cur * 0.003, 1.0)
+    for label, value in support_candidates:
+        if all(abs(value - used_value) > min_gap for _, used_value in unique_candidates):
+            unique_candidates.append((label, value))
+    support_candidates = unique_candidates
 
     if is_wait and support_candidates:
         entry1_label, entry1 = support_candidates[0]
@@ -11252,7 +11259,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     if len(support_candidates) >= 3:
         entry3_label, entry3 = support_candidates[2]
     else:
-        entry3_label, entry3 = "손절 전 마지막 방어선", max(stop + risk * 0.25, cur - risk * 0.5)
+        entry3_label = "손절 전 마지막 방어선"
+        entry3 = stop + risk * 0.25
+        if abs(entry3 - entry2) <= min_gap:
+            entry3 = max(stop + risk * 0.15, entry2 - risk * 0.25)
 
     tp1 = min(target, cur + risk)
     tp2 = target
@@ -11459,17 +11469,20 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
 
     with col_ins3:
         if not local_df.empty:
-            current_price = float(local_df['Close'].iloc[-1])
-            atr_val = calc_atr(local_df)
+            current_price = clean_float(c.get("cur_p"), 0.0) or float(local_df['Close'].iloc[-1])
+            atr_val = clean_float(c.get("atr"), 0.0) or calc_atr(local_df)
+            stop_price = clean_float(c.get("rr_stop"), 0.0)
             # 기존 c 딕셔너리에서 값 안전하게 빼오기
             target_w = clean_float(c.get("target_w"), 0.0)
             curr_w = clean_float(c.get("current_w"), 0.0)
-            
+
             # 총자산은 임시로 1억 세팅 (이후 필요시 portfolio_summary와 연동)
             size_data = calc_position_size(100000000, target_w, curr_w, current_price, atr_val)
-            st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {size_data['stop_price']:,.0f}")
+            if stop_price <= 0:
+                stop_price = clean_float(size_data.get("stop_price"), 0.0)
+            st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {stop_price:,.0f}\n정밀관측소 R/R과 동일 기준")
         else:
-            st.info("**진입/손절 가이드:**\n데이터 없음")  
+            st.info("**진입/손절 가이드:**\n데이터 없음")
 
     with col_ins4:
         if not local_df.empty:
