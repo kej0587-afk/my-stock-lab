@@ -6464,18 +6464,23 @@ def _fallback_flow_representative(theme_name="", subtheme_name="", candidate_nam
     return ""
 
 
-def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", theme_state="", sub_state="", price_level=np.nan):
+def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", theme_state="",
+                         sub_state="", price_level=np.nan, cluster_timing=""):
+    """cluster_label(강도: 주도/부상/소외/중립)과 cluster_timing(타이밍: 진입 가능/눌림 대기/과열/하락 중)을
+    독립 입력으로 받아, 강도와 타이밍이 둘 다 맞을 때만 '정밀관측'으로 묶는다."""
     text = " ".join(str(x or "") for x in [cluster_label, theme_signal, sector_state, theme_state, sub_state])
-    if "하락중 관망" in text or "소외 지속" in text or "급락" in text:
+    if "하락중 관망" in text or "소외 지속" in text or "급락" in text or str(cluster_timing) == "하락 중":
         return "🔸 관망", "단기 흐름이 꺾인 구간입니다."
     if "극단과열" in text:
         return "🚫 추격금지", "종목 타점에서 과열이 풀릴 때까지 대기합니다."
-    if "과열" in text or (finite_num(price_level) and float(price_level) >= 0.90):
+    if "과열" in text or str(cluster_timing) in {"과열", "눌림 대기"} or (finite_num(price_level) and float(price_level) >= 0.90):
         return "⏳ 눌림대기", "큰 흐름은 강하지만 가격 위치가 높습니다."
-    if str(cluster_label) == "진입검토" and str(theme_signal) in {"진입검토", "부상감시", "주도 후 조정"}:
-        return "✅ 정밀관측", "연결 흐름이 맞습니다. 종목별 과열/눌림을 확인합니다."
-    if str(cluster_label) in {"진입검토", "부상감시"} or str(theme_signal) in {"진입검토", "부상감시"}:
-        return "👀 관심등록", "새 돈 후보입니다. 대표주를 전광판/정밀관측소에 올려둡니다."
+    cluster_strong = str(cluster_label) in {"주도", "부상", "진입검토", "부상감시"}
+    theme_strong = str(theme_signal) in {"진입검토", "부상감시", "주도 후 조정"}
+    if cluster_strong and theme_strong and str(cluster_timing) in {"진입 가능", ""}:
+        return "✅ 정밀관측", "연결 흐름과 타이밍이 같이 맞습니다. 종목별 과열/눌림을 확인합니다."
+    if cluster_strong or theme_strong:
+        return "👀 관심등록", "돈은 쏠리는 중입니다. 대표주를 전광판/정밀관측소에 올려두고 타이밍을 지켜봅니다."
     if str(cluster_label) == "주도 후 조정" or str(theme_signal) == "주도 후 조정":
         return "⏳ 눌림대기", "주도 테마지만 단기 조정 확인이 필요합니다."
     return "🔸 관망", "섹터·테마·타점 중 하나 이상이 아직 약합니다."
@@ -6488,8 +6493,9 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     is_sur = cl["is_surging"]
     qcnt   = cl["qcnt"]
     n      = cl["n"]
-    fit_score = float(cl.get("fit_score", cl.get("heat", 0.0)) or 0.0)
-    flow_label = cl.get("flow_label", "관망")
+    strength_score = float(cl.get("strength_score", cl.get("heat", 0.0)) or 0.0)
+    flow_label = cl.get("flow_label", "중립")
+    timing_state = cl.get("timing_state", "확인 필요")
     breadth = float(cl.get("breadth", cl.get("pos_frac", 0.0)) or 0.0)
     avg_r1m = cl.get("r1m", float("nan"))
     avg_r2w = cl.get("r2w", float("nan"))
@@ -6498,20 +6504,26 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     overheat_penalty = float(cl.get("overheat_penalty", 0.0) or 0.0)
     pullback_penalty = float(cl.get("pullback_penalty", 0.0) or 0.0)
 
-    # ── 진입 적합도 색상 ──
-    if flow_label == "하락중 관망":
-        main_clr = "#ef4444"
-    elif flow_label == "강하지만 과열":
-        main_clr = "#fbbf24"
-    elif flow_label == "진입검토" and fit_score >= 12:
+    # ── ① 강도(쏠림) 색상 — 순수 3개월 RS·확산도 기준, 단기 흐름과 무관 ──
+    if flow_label == "주도":
         main_clr = "#22c55e"
-    elif flow_label == "부상감시" or fit_score >= 8:
+    elif flow_label == "부상":
         main_clr = "#60a5fa"
-    elif flow_label == "주도 후 조정" or fit_score >= 0:
-        main_clr = "#fbbf24"
-    else:
+    elif flow_label == "소외":
         main_clr = "#ef4444"
+    else:
+        main_clr = "#94a3b8"
     border_clr = "#f97316" if is_sur else main_clr
+
+    # ── ② 타이밍 색상 — 1M/2W·가격위치 기준, 강도와 별개 ──
+    TIMING_COLORS = {
+        "진입 가능": "#22c55e",
+        "확인 필요": "#94a3b8",
+        "눌림 대기": "#fbbf24",
+        "과열":     "#fbbf24",
+        "하락 중":   "#ef4444",
+    }
+    timing_clr = TIMING_COLORS.get(timing_state, "#94a3b8")
 
     # ── RS 방향 ──
     if   rsmom > 0.02: mom_clr, mom_sym = "#22c55e", "↑"
@@ -6522,17 +6534,20 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     QDOT = {"주도": "🟢", "개선": "🔵", "약화": "🟠", "소외": "🔴"}
     quad_str = " ".join(f"{QDOT[q]}{qcnt[q]}" for q in ["주도", "개선", "약화", "소외"] if qcnt.get(q, 0))
 
-    # ── 배지 ──
+    # ── 배지: 강도 라벨과 타이밍 상태를 서로 다른 배지로 분리 표시 ──
     badge = (" <span style='background:#f97316;color:#fff;font-size:0.60em;"
-             "padding:1px 5px;border-radius:3px;'>🔥부상</span>") if is_sur else ""
+             "padding:1px 5px;border-radius:3px;'>🔥쏠림+진입가능</span>") if is_sur else ""
     label_badge = (
         f" <span style='background:{main_clr}22;color:{main_clr};font-size:0.60em;"
-        "padding:1px 5px;border-radius:3px;'>"
-        f"{flow_label}</span>"
+        "padding:1px 5px;border-radius:3px;' title='강도: 돈이 쏠리는 정도'>"
+        f"강도·{flow_label}</span>"
+        f" <span style='background:{timing_clr}22;color:{timing_clr};font-size:0.60em;"
+        "padding:1px 5px;border-radius:3px;' title='타이밍: 지금 들어가도 되는가'>"
+        f"타이밍·{timing_state}</span>"
     )
 
-    # ── 적합도 막대 (-20~+40점 → 0~100%) ──
-    bar_pct = min(100, max(4, int((fit_score + 20) / 60 * 100)))
+    # ── 강도 막대 (-20~+40점 → 0~100%) ──
+    bar_pct = min(100, max(4, int((strength_score + 20) / 60 * 100)))
 
     # ── 단기 확인 수치 ──
     r1m_html = ""
@@ -6547,12 +6562,18 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
                     f"&nbsp;2W {avg_r2w*100:+.1f}%</span>")
     vol_html = f"거래 {volume_growth*100:+.0f}%" if finite_num(volume_growth) else "거래 -"
     rank_html = f"랭킹 +{rank_bonus:.1f}" if rank_bonus else "랭킹 -"
-    penalty_html = ""
-    if overheat_penalty > 0.1 or pullback_penalty > 0.1:
-        penalty_html = (
-            f"<div style='font-size:0.66em;color:#fca5a5;margin-top:3px;'>"
-            f"감점 하락 -{pullback_penalty:.1f} / 과열 -{overheat_penalty:.1f}</div>"
-        )
+    # ── 타이밍 사유 (왜 그 timing_state인지) ──
+    timing_reason_bits = []
+    if overheat_penalty > 0.1:
+        timing_reason_bits.append(f"과열 -{overheat_penalty:.1f}")
+    if pullback_penalty > 0.1:
+        timing_reason_bits.append(f"눌림 -{pullback_penalty:.1f}")
+    timing_reason_html = (
+        f"<div style='font-size:0.66em;color:{timing_clr};margin-top:3px;'>"
+        f"⏱ 타이밍 · {timing_state}{r1m_html}{r2w_html}"
+        + (f"&nbsp;<span style='color:#fca5a5;'>({' / '.join(timing_reason_bits)})</span>" if timing_reason_bits else "")
+        + "</div>"
+    )
 
     # ── 구성 ETF 상세 (최근 확인이 강한 순 정렬) ──
     tickers = cl.get("tickers", [])
@@ -6600,26 +6621,27 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         # 헤더
         f"<div style='font-size:0.71em;color:#94a3b8;margin-bottom:3px;'>"
         f"#{rank}&nbsp;{cl['name']}{badge}{label_badge}</div>"
-        # 진입 적합도
+        # ① 강도(쏠림) — 3개월 RS 기준, 단기 변동에 흔들리지 않는 점수
         f"<div style='font-size:1.05em;font-weight:700;color:{main_clr};'>"
-        f"적합도 {fit_score:+.1f}점"
+        f"💰 강도 {strength_score:+.1f}점"
         + (
             f"<span style='font-size:0.65em;color:{'#4ade80' if delta > 0 else '#f87171' if delta < 0 else '#94a3b8'}"
-            f";margin-left:5px;font-weight:500;'>{'▲' if delta > 0 else '▼' if delta < 0 else '─'}"
-            f"{abs(delta):.1f}</span>"
+            f";margin-left:5px;font-weight:500;' title='어제 대비 (파일 기준)'>{'▲' if delta > 0 else '▼' if delta < 0 else '─'}"
+            f"{abs(delta):.1f} 어제比</span>"
             if delta is not None else ""
         )
-        + f"{r1m_html}{r2w_html}</div>"
+        + "</div>"
         # RS 방향
         f"<div style='font-size:0.78em;color:{mom_clr};margin-bottom:5px;'>"
         f"{mom_sym}&nbsp;RS {rs3m*100:+.1f}% / 방향 {rsmom*100:+.1f}%</div>"
-        # 막대
+        # 강도 막대
         f"<div style='background:#0f172a;border-radius:3px;height:5px;margin-bottom:5px;'>"
         f"<div style='width:{bar_pct}%;height:5px;background:{main_clr};border-radius:3px;'>"
         f"</div></div>"
         f"<div style='font-size:0.68em;color:#94a3b8;'>"
         f"확산 {breadth*100:.0f}% · {vol_html} · {rank_html}</div>"
-        f"{penalty_html}"
+        # ② 타이밍(진입 가능 여부) — ①과 분리된 별도 영역
+        f"{timing_reason_html}"
         f"{bridge_html}"
         # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
@@ -6628,6 +6650,48 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         + f"</div>",
         unsafe_allow_html=True,
     )
+
+
+_CLUSTER_STRENGTH_HISTORY_PATH = Path(__file__).parent / "cache" / "cluster_strength_history.json"
+_CLUSTER_STRENGTH_HISTORY_KEEP_DAYS = 14
+
+
+def _load_cluster_strength_history() -> dict:
+    """일자별 강도 점수 스냅샷을 파일에서 읽어온다. {날짜: {클러스터명: strength_score}}.
+
+    세션 상태(st.session_state)는 새로고침/재방문 시 사라져 '어제 대비'를
+    추적할 수 없으므로, 파일에 영속화해 진짜 일자 간 비교를 가능하게 한다.
+    """
+    try:
+        with open(_CLUSTER_STRENGTH_HISTORY_PATH, encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw if isinstance(raw, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cluster_strength_snapshot(date_key: str, scores: dict) -> None:
+    """오늘 날짜 키로 강도 점수 스냅샷을 저장하고 오래된 기록은 정리한다."""
+    history = _load_cluster_strength_history()
+    history[date_key] = {name: float(v) for name, v in scores.items()}
+    # 최근 N일치만 유지
+    kept_keys = sorted(history.keys())[-_CLUSTER_STRENGTH_HISTORY_KEEP_DAYS:]
+    history = {k: history[k] for k in kept_keys}
+    try:
+        _CLUSTER_STRENGTH_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_CLUSTER_STRENGTH_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def _prev_cluster_strength_scores(today_key: str) -> dict:
+    """오늘이 아닌 가장 최근 날짜의 강도 점수 스냅샷을 돌려준다 ('어제 대비' 비교용)."""
+    history = _load_cluster_strength_history()
+    other_days = sorted(k for k in history.keys() if k != today_key)
+    if not other_days:
+        return {}
+    return history[other_days[-1]]
 
 
 def _build_cluster_list(rotation_df, clusters: dict) -> list:
@@ -6753,16 +6817,31 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             or (len(overheated_members) / n >= 0.3 and avg_rs3m >= 0.08)
         )
 
+        # ── ① 강도 점수 (돈이 어디로 쏠리는가 — 3개월 RS 기준, 단기 변동에 흔들리지 않음) ──
         lead_score = _clip_score(avg_rs3m * 95, -18, 28)
         momentum_score = _clip_score(avg_rsmom * 130, -20, 26)
+        volume_score = _clip_score(avg_volume_growth * 7, -7, 11)
+        rank_score = min(max(avg_rank_bonus * 0.8 + max_rank_bonus * 0.7, 0.0), 8.0)
+        breadth_score = (breadth - 0.5) * 22
+        strength_score = lead_score + momentum_score + volume_score + rank_score + breadth_score
+
+        # 강도 라벨: 1개월/2주 단기 확인을 게이트로 쓰지 않는다
+        # ("장기로는 강한데 최근 한 달이 약해서 관망"이라는 모순을 없애기 위함).
+        if strength_score >= 12 and breadth >= 0.52:
+            flow_label = "주도"
+        elif strength_score >= 6 and avg_rsmom >= 0.02 and breadth >= 0.45:
+            flow_label = "부상"
+        elif strength_score <= -6 and breadth < 0.45:
+            flow_label = "소외"
+        else:
+            flow_label = "중립"
+
+        # ── ② 타이밍 상태 (지금 들어가도 되는가 — 1M/2W/가격위치만으로 독립 판정) ──
         short_score = (
             _clip_score(avg_r1m * 110, -18, 18)
             + _clip_score(avg_r2w * 120, -12, 14)
             + _clip_score(avg_short_accel * 45, -8, 10)
         )
-        volume_score = _clip_score(avg_volume_growth * 7, -7, 11)
-        rank_score = min(max(avg_rank_bonus * 0.8 + max_rank_bonus * 0.7, 0.0), 8.0)
-        breadth_score = (breadth - 0.5) * 22
         overheat_penalty = (
             max(0.0, (avg_price_level - 0.86) * 45)
             if finite_num(avg_price_level) else 0.0
@@ -6774,31 +6853,26 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         ) + (
             max(0.0, -avg_r2w * 140) if finite_num(avg_r2w) else 0.0
         )
-        fit_score = (
-            lead_score + momentum_score + short_score + volume_score
-            + rank_score + breadth_score - overheat_penalty - pullback_penalty
-        )
 
         if short_down:
-            flow_label = "하락중 관망"
+            timing_state = "하락 중"
         elif is_overheated:
-            flow_label = "강하지만 과열"
-        elif fit_score >= 12 and short_confirm and breadth >= 0.52:
-            flow_label = "진입검토"
-        elif (avg_rsmom >= 0.02 and finite_num(avg_r1m) and avg_r1m >= -0.01 and breadth >= 0.45
-              and (not finite_num(avg_r2w) or avg_r2w >= -0.03
-                   or (finite_num(avg_r1m) and avg_r1m >= 0.02))):
-            flow_label = "부상감시"
-        elif avg_rs3m >= 0.08 and finite_num(avg_r1m) and avg_r1m < 0:
-            flow_label = "주도 후 조정"
+            timing_state = "과열"
+        elif short_confirm:
+            timing_state = "진입 가능"
+        elif pullback_penalty > 0.1:
+            timing_state = "눌림 대기"
         else:
-            flow_label = "관망"
+            timing_state = "확인 필요"
+
+        # 하위 호환을 위해 fit_score/heat은 강도+타이밍 결합 점수로 유지 (정렬 등에서 참조)
+        fit_score = strength_score + short_score - overheat_penalty - pullback_penalty
         is_surging = (
-            flow_label in {"진입검토", "부상감시"}
+            flow_label in {"주도", "부상"}
+            and timing_state == "진입 가능"
             and avg_rsmom >= 0.02
-            and (not finite_num(avg_r2w) or avg_r2w >= 0)
         )
-        heat = fit_score
+        heat = strength_score
 
         # 최근 확인이 되는 ETF를 먼저 보여준다. 오래 강했지만 한 달 하락 중인 후보는 뒤로 밀린다.
         tickers_detail = sorted(
@@ -6820,6 +6894,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             "price_level": avg_price_level,
             "rank_bonus": max_rank_bonus,
             "fit_score": fit_score,
+            "strength_score": strength_score,
+            "timing_state": timing_state,
             "flow_label": flow_label,
             "is_surging": is_surging, "heat": heat,
             "overheat_penalty": overheat_penalty,
@@ -6835,7 +6911,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             "tickers": tickers_detail,
         })
 
-    cl_list.sort(key=lambda x: x["fit_score"], reverse=True)
+    # "어디로 쏠리는가" 랭킹은 단기 변동에 흔들리지 않는 strength_score 기준으로 정렬한다.
+    cl_list.sort(key=lambda x: x["strength_score"], reverse=True)
     return cl_list
 
 
@@ -6861,7 +6938,7 @@ def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
     cols   = st.columns(n_cols)
     for i, cl in enumerate(visible):
         _prev = (prev_scores or {}).get(cl["name"])
-        _delta = (float(cl.get("fit_score", 0)) - float(_prev)) if _prev is not None else None
+        _delta = (float(cl.get("strength_score", 0)) - float(_prev)) if _prev is not None else None
         _render_cluster_card(cols[i], cl, rank=rank_offset + i + 1, delta=_delta)
 
 
@@ -6882,17 +6959,17 @@ def render_cluster_heatmap_enhanced(
                한국(KOSPI200 기준) / 미국(S&P500 기준) 각 top_n_per_market 카드
                → 벤치마크가 달라 혼합하면 잘못된 비교가 되는 문제 해결
 
-    부상(🔥) 조건:
-      RS모멘텀 양호 + 1개월/2주 흐름 확인 + 내부 확산도 양호.
-      오래 강했지만 최근 한 달 하락 중이면 '주도 후 조정/하락중 관망'으로 분리한다.
+    v4: "어디로 돈이 쏠리는가"(strength_score, 3개월 RS·모멘텀·거래량·확산도 — 단기
+    변동에 흔들리지 않음)와 "지금 들어가도 되는가"(timing_state, 1개월·2주·가격위치
+    기준 진입 가능/눌림 대기/과열/하락 중)를 완전히 분리해서 계산·표시한다.
+    🔥(쏠림+진입가능) = strength 상위(주도/부상) + timing_state == '진입 가능'.
     """
     if rotation_df is None or rotation_df.empty:
         return
 
-    # ── 클러스터 점수 delta 추적 ──────────────────────────────────
-    _PREV_KEY = "_cluster_fit_prev"
-    _CURR_KEY = "_cluster_fit_curr"
-    _prev_scores: dict = st.session_state.get(_PREV_KEY, {})
+    # ── 클러스터 강도 점수 delta 추적 (파일 영속화 — 새로고침/재방문에도 유지) ──
+    _today_key = get_kst_now().strftime("%Y-%m-%d")
+    _prev_scores: dict = _prev_cluster_strength_scores(_today_key)
 
     # ── 분리 모드 ─────────────────────────────────────────────────
     if clusters_kr is not None or clusters_us is not None:
@@ -6918,35 +6995,34 @@ def render_cluster_heatmap_enhanced(
         if not kr_list and not us_list:
             return
 
-        # 전체 부상 요약
-        all_surging = [c for c in (us_list[:top_n_per_market] + kr_list[:top_n_per_market])
-                       if c["is_surging"]]
+        # 강도(쏠림)와 타이밍(진입 가능 여부)을 분리해서 두 줄로 요약한다.
+        # — "강한데 왜 관망?" 같은 혼란을 없애기 위해, 강도 상위 클러스터를
+        #   먼저 뽑고 그 안에서 타이밍이 갈리는 걸 보여준다 (서로 다른 질문이므로).
+        top_pool = us_list[:top_n_per_market] + kr_list[:top_n_per_market]
+        strong_pool = [c for c in top_pool if c["flow_label"] in {"주도", "부상"}]
+        ready_now = [c for c in strong_pool if c["timing_state"] == "진입 가능"]
+        wait_timing = [c for c in strong_pool if c["timing_state"] != "진입 가능"]
 
-        st.markdown("##### 📊 클러스터 적합도 — 어디가 강하고, 지금 접근 가능한가?")
-        if all_surging:
-            # 이미 '진입검토' 단계까지 온 클러스터는 '새 돈 후보'(초입)라고 부르면
-            # 정밀관측 단계라는 통합판정과 어긋나므로 단계별로 문구를 분리한다.
-            entry_ready = [c for c in all_surging if c["flow_label"] == "진입검토"]
-            early_stage = [c for c in all_surging if c["flow_label"] != "진입검토"]
+        st.markdown("##### 📊 클러스터 적합도 — 어디로 돈이 쏠리고(강도), 지금 들어가도 되는가(타이밍)")
+        if strong_pool:
             parts = []
-            if entry_ready:
-                names = "·".join(f"**{c['name']}**" for c in entry_ready)
-                parts.append(f"🔍 정밀관측 단계: {names} — 연결 흐름 확인, 대표주 과열/눌림만 점검하면 됩니다.")
-            if early_stage:
-                names = "·".join(f"**{c['name']}**" for c in early_stage)
-                parts.append(f"🔥 새 돈 후보(초입): {names} — RS 방향 전환, 1개월/2주 확인, 내부 확산도가 같이 잡힌 구간입니다.")
+            if ready_now:
+                names = "·".join(f"**{c['name']}**" for c in ready_now)
+                parts.append(f"🔥 쏠림+진입 가능: {names} — 강도(3M RS·확산도)도 좋고 단기 흐름(1M/2W)도 확인된 구간입니다.")
+            if wait_timing:
+                bits = "·".join(f"**{c['name']}**({c['timing_state']})" for c in wait_timing)
+                parts.append(f"⏳ 쏠림은 강하지만 타이밍 대기: {bits} — 돈은 쏠리는 중이나 단기 과열/눌림 확인이 더 필요합니다.")
             st.caption("  ".join(parts))
         else:
             st.caption(
-                "진입검토 = 강도+단기확인+확산도 양호 &nbsp;|&nbsp; "
-                "부상감시 = 새 돈이 붙는 초입 &nbsp;|&nbsp; "
-                "주도 후 조정 = 강하지만 1개월 흐름 약화 &nbsp;|&nbsp; "
-                "한국/미국은 각각 KOSPI200·S&P500 기준"
+                "강도(주도/부상/소외)는 3개월 RS·모멘텀·확산도만으로, "
+                "타이밍(진입 가능/눌림 대기/과열/하락 중)은 1개월·2주·가격위치만으로 따로 판정합니다 "
+                "&nbsp;|&nbsp; 한국/미국은 각각 KOSPI200·S&P500 기준"
             )
 
-        # 현재 점수 세션 저장 (다음 렌더 시 prev로 활용)
-        _curr = {cl["name"]: float(cl.get("fit_score", 0)) for cl in us_list + kr_list}
-        st.session_state[_CURR_KEY] = _curr
+        # 오늘 강도 점수를 파일에 저장 (다음 날/재방문 시 진짜 '어제 대비' 비교에 사용)
+        _curr = {cl["name"]: float(cl.get("strength_score", 0)) for cl in us_list + kr_list}
+        _save_cluster_strength_snapshot(_today_key, _curr)
 
         _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터",
                                    prev_scores=_prev_scores)
@@ -19681,6 +19757,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 theme_state=theme_state,
                 sub_state=sub_state,
                 price_level=price_level,
+                cluster_timing=cl.get("timing_state", ""),
             )
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
@@ -19971,9 +20048,8 @@ def render_today_market_flow_panel(snapshot=None):
         status_col.caption("저장된 결과 표시 중")
 
     if refresh_clicked:
-        # 클러스터 점수 delta 추적: 현재 → prev로 보존
-        if "_cluster_fit_curr" in st.session_state:
-            st.session_state["_cluster_fit_prev"] = st.session_state["_cluster_fit_curr"]
+        # 강도 점수 delta 추적은 이제 파일(cache/cluster_strength_history.json)에
+        # 일자별로 저장되므로 세션 간 prev/curr 스왑이 더 이상 필요 없다.
         try:
             with st.spinner("돈흐름 계산 중 — ETF/섹터 + 테마 종목 (~60초 이상)..."):
                 snapshot = refresh_today_market_flow_snapshot()
