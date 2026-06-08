@@ -9864,7 +9864,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
-    day_ret = (cur_p / prev_close) - 1 if prev_close > 0 else 0.0
+    day_ret_base = daily_close if live_price_used and daily_close > 0 else prev_close
+    day_ret = (cur_p / day_ret_base) - 1 if day_ret_base > 0 else 0.0
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
