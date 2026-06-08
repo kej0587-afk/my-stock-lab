@@ -714,15 +714,15 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_pyth_us_live_price(ticker)
         if price > 0:
             return price
+        price = _fetch_yf_fast_info_price(ticker)
+        if price > 0:
+            return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
         price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
         if _is_yahoo_temporarily_blocked():
             return 0.0
-        price = _fetch_yf_fast_info_price(ticker)
-        if price > 0:
-            return price
         price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
         if price > 0:
             return price
@@ -837,6 +837,12 @@ def load_latest_prices_batch(tickers) -> dict:
     # ── 미국/기타: Yahoo 직접 API 우선 → yfinance 5분봉 폴백 ────────────
     if us_tickers:
         prices.update(_fetch_pyth_us_live_prices_batch(us_tickers))
+
+        us_fast_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        for t in us_fast_needed:
+            p = _fetch_yf_fast_info_price(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
 
         # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
         us_yahoo_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
