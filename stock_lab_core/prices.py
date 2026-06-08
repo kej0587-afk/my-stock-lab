@@ -2,8 +2,11 @@
 
 import json
 import logging
+import os
 import re
 import threading
+import time
+import urllib.parse
 import urllib.request
 
 import pandas as pd
@@ -180,7 +183,7 @@ def _fetch_naver_realtime_price(ticker: str) -> float:
     if not code:
         return 0.0
     try:
-        query = urllib.request.quote(f"SERVICE_ITEM:{code}")
+        query = urllib.parse.quote(f"SERVICE_ITEM:{code}")
         url = f"https://polling.finance.naver.com/api/realtime?query={query}"
         req = urllib.request.Request(url, headers=_NAVER_HEADERS)
         raw = urllib.request.urlopen(req, timeout=4).read()
@@ -203,7 +206,7 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
     codes = [_kr_code(t) for t in kr_tickers]
     try:
         query = "|".join(f"SERVICE_ITEM:{c}" for c in codes)
-        url = f"https://polling.finance.naver.com/api/realtime?query={urllib.request.quote(query)}"
+        url = f"https://polling.finance.naver.com/api/realtime?query={urllib.parse.quote(query)}"
         req = urllib.request.Request(url, headers=_NAVER_HEADERS)
         raw = urllib.request.urlopen(req, timeout=6).read()
         text = raw.decode("utf-8", errors="ignore")
@@ -330,6 +333,194 @@ _YQ_HEADERS = {
 }
 
 
+_PYTH_BENCHMARKS_BASE_URL = "https://benchmarks.pyth.network/v1"
+_PYTH_HERMES_BASE_URL = "https://hermes.pyth.network/v2"
+_PYTH_PRICE_MAX_AGE_SECONDS = 180
+_PYTH_CONFIDENCE_MAX_RATIO = 0.05
+
+
+def _pyth_headers() -> dict:
+    headers = dict(_YQ_HEADERS)
+    headers["Referer"] = "https://app.pyth.network/"
+    token = os.getenv("PYTH_API_KEY") or os.getenv("PYTH_HERMES_API_KEY")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _looks_like_us_equity_ticker(ticker: str) -> bool:
+    t = normalize_price_lookup_key(ticker)
+    if not t or _is_kr_ticker(t):
+        return False
+    if any(marker in t for marker in ("=", "^", "/")) or t.endswith("-USD"):
+        return False
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,11}", t))
+
+
+def _pyth_ticker_variants(ticker: str) -> set[str]:
+    t = normalize_price_lookup_key(ticker)
+    variants = {t, t.replace("-", "."), t.replace(".", "-")}
+    if t.endswith(".US"):
+        base = t[:-3]
+        variants.update({base, base.replace("-", "."), base.replace(".", "-")})
+    return {v for v in variants if v}
+
+
+def _pyth_symbol_matches_ticker(feed: dict, variants: set[str]) -> bool:
+    attrs = feed.get("attributes") or {}
+    symbol_values = [
+        attrs.get("base"),
+        attrs.get("cms_symbol"),
+        attrs.get("cqs_symbol"),
+        attrs.get("nasdaq_symbol"),
+    ]
+    display_symbol = str(attrs.get("display_symbol") or "")
+    if "/" in display_symbol:
+        symbol_values.append(display_symbol.split("/", 1)[0])
+
+    normalized = {
+        normalize_price_lookup_key(v)
+        for v in symbol_values
+        if str(v or "").strip()
+    }
+    normalized |= {v.replace("-", ".") for v in normalized}
+    normalized |= {v.replace(".", "-") for v in normalized}
+    return bool(normalized & variants)
+
+
+def _pyth_session_rank(feed: dict) -> int:
+    attrs = feed.get("attributes") or {}
+    text = f"{attrs.get('symbol', '')} {attrs.get('display_symbol', '')}".upper()
+    if ".ON" in text or "OVERNIGHT" in text:
+        return 0
+    if ".PRE" in text or "PRE MARKET" in text:
+        return 1
+    if ".POST" in text or "POST MARKET" in text:
+        return 2
+    return 3
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_pyth_us_feed_candidates(ticker: str) -> list:
+    if not _looks_like_us_equity_ticker(ticker):
+        return []
+
+    queries: list[str] = []
+    for q in _pyth_ticker_variants(ticker):
+        if q not in queries:
+            queries.append(q)
+
+    feeds: list[dict] = []
+    seen_ids: set[str] = set()
+    for query in queries:
+        try:
+            params = urllib.parse.urlencode({"query": query, "asset_type": "equity"})
+            url = f"{_PYTH_BENCHMARKS_BASE_URL}/price_feeds/?{params}"
+            req = urllib.request.Request(url, headers=_pyth_headers())
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read())
+            if not isinstance(data, list):
+                continue
+            for feed in data:
+                feed_id = str((feed or {}).get("id") or "").lower().removeprefix("0x")
+                if not feed_id or feed_id in seen_ids:
+                    continue
+                seen_ids.add(feed_id)
+                feeds.append(feed)
+        except Exception:
+            continue
+    return feeds
+
+
+def _find_pyth_active_us_feed(ticker: str) -> dict:
+    variants = _pyth_ticker_variants(ticker)
+    matches = []
+    for feed in _fetch_pyth_us_feed_candidates(ticker):
+        if not _pyth_symbol_matches_ticker(feed, variants):
+            continue
+        market_hours = feed.get("market_hours") or {}
+        if market_hours.get("is_open") is True:
+            matches.append(feed)
+    if not matches:
+        return {}
+    matches.sort(key=_pyth_session_rank)
+    return matches[0]
+
+
+def _parse_pyth_price(price_obj: dict) -> float:
+    try:
+        raw_price = float(price_obj.get("price"))
+        expo = int(price_obj.get("expo", 0))
+        price = raw_price * (10 ** expo)
+        if price <= 0:
+            return 0.0
+
+        publish_time = int(price_obj.get("publish_time") or 0)
+        if publish_time:
+            age = time.time() - publish_time
+            if age > _PYTH_PRICE_MAX_AGE_SECONDS or age < -300:
+                return 0.0
+
+        raw_conf = price_obj.get("conf")
+        if raw_conf is not None:
+            conf = abs(float(raw_conf)) * (10 ** expo)
+            if conf > 0 and (conf / price) > _PYTH_CONFIDENCE_MAX_RATIO:
+                return 0.0
+        return float(price)
+    except Exception:
+        return 0.0
+
+
+def _fetch_pyth_prices_by_feed_id(feed_ids: list[str]) -> dict:
+    clean_ids = []
+    for feed_id in feed_ids:
+        fid = str(feed_id or "").strip().lower().removeprefix("0x")
+        if re.fullmatch(r"[0-9a-f]{64}", fid) and fid not in clean_ids:
+            clean_ids.append(fid)
+    if not clean_ids:
+        return {}
+
+    try:
+        params = urllib.parse.urlencode([("ids[]", f"0x{fid}") for fid in clean_ids])
+        url = f"{_PYTH_HERMES_BASE_URL}/updates/price/latest?{params}"
+        req = urllib.request.Request(url, headers=_pyth_headers())
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        out = {}
+        for item in data.get("parsed") or []:
+            feed_id = str((item or {}).get("id") or "").lower().removeprefix("0x")
+            price = _parse_pyth_price((item or {}).get("price") or {})
+            if feed_id and price > 0:
+                out[feed_id] = price
+        return out
+    except Exception:
+        return {}
+
+
+def _fetch_pyth_us_live_prices_batch(tickers: list) -> dict:
+    feed_by_ticker = {}
+    for ticker in tickers or []:
+        feed = _find_pyth_active_us_feed(ticker)
+        feed_id = str((feed or {}).get("id") or "").lower().removeprefix("0x")
+        if feed_id:
+            feed_by_ticker[normalize_price_lookup_key(ticker)] = feed_id
+
+    id_to_price = _fetch_pyth_prices_by_feed_id(list(feed_by_ticker.values()))
+    return {
+        ticker_key: id_to_price[feed_id]
+        for ticker_key, feed_id in feed_by_ticker.items()
+        if feed_id in id_to_price
+    }
+
+
+def _fetch_pyth_us_live_price(ticker: str) -> float:
+    prices = _fetch_pyth_us_live_prices_batch([ticker])
+    try:
+        return float(prices.get(normalize_price_lookup_key(ticker), 0.0) or 0.0)
+    except Exception:
+        return 0.0
+
+
 def _last_candle_close(result: dict) -> float:
     """
     Yahoo v8 chart 응답에서 가장 최근 1분봉 Close 값을 꺼냅니다.
@@ -356,7 +547,7 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
         try:
             url = (
                 f"https://{host}.finance.yahoo.com/v8/finance/chart/"
-                f"{urllib.request.quote(ticker)}"
+                f"{urllib.parse.quote(ticker)}"
                 f"?interval={interval}&range={range_}&includePrePost=true"
             )
             req = urllib.request.Request(url, headers=_YQ_HEADERS)
@@ -520,6 +711,9 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
+        price = _fetch_pyth_us_live_price(ticker)
+        if price > 0:
+            return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
         price = _fetch_yahoo_quote(ticker)
         if price > 0:
@@ -642,8 +836,11 @@ def load_latest_prices_batch(tickers) -> dict:
 
     # ── 미국/기타: Yahoo 직접 API 우선 → yfinance 5분봉 폴백 ────────────
     if us_tickers:
+        prices.update(_fetch_pyth_us_live_prices_batch(us_tickers))
+
         # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
-        for t in us_tickers:
+        us_yahoo_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        for t in us_yahoo_needed:
             p = _fetch_yahoo_quote(t)
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
