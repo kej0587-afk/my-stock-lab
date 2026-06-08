@@ -6389,6 +6389,26 @@ def _first_flow_text(*values, default=""):
     return default
 
 
+def _flow_num(row, col, default=np.nan):
+    if row is None or not isinstance(row, (pd.Series, dict)):
+        return default
+    value = row.get(col, default)
+    return clean_float(value, default)
+
+
+def _flow_state_with_recent_check(state, ret_1m=np.nan, ret_2w=np.nan):
+    state_text = _flow_text(state, default="-")
+    strong_states = {"강세 가속", "신규 유입", "주도 유지", "급반등"}
+    if state_text in strong_states:
+        one_m_down = finite_num(ret_1m) and float(ret_1m) <= -0.02
+        two_w_down = finite_num(ret_2w) and float(ret_2w) < 0
+        if one_m_down and two_w_down:
+            return f"{state_text}(단기 조정)"
+        if two_w_down:
+            return f"{state_text}(2주 조정)"
+    return state_text
+
+
 FLOW_FALLBACK_REPRESENTATIVES = {
     ("글로벌 인프라·산업재", "미국 산업재 대형주"): "캐터필러 (CAT)",
     ("글로벌 인프라·산업재", "구리·광물 소재"): "프리포트맥모란 (FCX)",
@@ -19535,6 +19555,15 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             theme_signal = _flow_text(theme_row.get("테마판정", ""))
             theme_state = _flow_text(theme_row.get("상태", ""))
             sub_state = _flow_text(sub_row.get("상태", ""))
+            cluster_1m = clean_float(cl.get("r1m", np.nan), np.nan)
+            cluster_2w = clean_float(cl.get("r2w", np.nan), np.nan)
+            cluster_price = clean_float(cl.get("price_level", np.nan), np.nan)
+            theme_1m = _flow_num(theme_row, "1개월수익률")
+            theme_2w = _flow_num(theme_row, "2주수익률")
+            theme_price = _flow_num(theme_row, "가격수준")
+            sub_1m = _flow_num(sub_row, "1개월수익률")
+            sub_2w = _flow_num(sub_row, "2주수익률")
+            sub_price = _flow_num(sub_row, "가격수준")
             display_theme_signal = _first_flow_text(theme_signal, theme_state, cl.get("flow_label", ""), default="-")
             display_subtheme = _first_flow_text(
                 sub_row.get("하위테마", ""),
@@ -19542,8 +19571,15 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 _fallback_flow_subtheme(theme_name, cl.get("name", "")),
                 default="하위테마 확인 필요",
             )
-            display_sub_state = _first_flow_text(sub_state, theme_state, theme_signal, default="-")
-            price_level = cl.get("price_level", np.nan)
+            display_sub_state = _flow_state_with_recent_check(
+                _first_flow_text(sub_state, theme_state, theme_signal, default="-"),
+                sub_1m,
+                sub_2w,
+            )
+            price_level = cluster_price
+            display_1m = sub_1m if finite_num(sub_1m) else (theme_1m if finite_num(theme_1m) else cluster_1m)
+            display_2w = sub_2w if finite_num(sub_2w) else (theme_2w if finite_num(theme_2w) else cluster_2w)
+            display_price = sub_price if finite_num(sub_price) else (theme_price if finite_num(theme_price) else cluster_price)
             action, reason = _unified_flow_action(
                 cluster_label=cl.get("flow_label", ""),
                 theme_signal=theme_signal,
@@ -19582,9 +19618,15 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "적합도": cl.get("fit_score", np.nan),
                 "테마점수": theme_row.get("테마돈흐름점수", np.nan),
                 "하위점수": sub_row.get("돈흐름점수", np.nan),
-                "1개월": cl.get("r1m", np.nan),
-                "2주": cl.get("r2w", np.nan),
-                "가격수준": price_level,
+                "큰돈1M": cluster_1m,
+                "큰돈2W": cluster_2w,
+                "테마1M": theme_1m,
+                "테마2W": theme_2w,
+                "하위1M": sub_1m,
+                "하위2W": sub_2w,
+                "1개월": display_1m,
+                "2주": display_2w,
+                "가격수준": display_price,
             })
 
     linked_themes = {str(r.get("연결테마", "")) for r in rows if str(r.get("연결테마", ""))}
@@ -19600,11 +19642,25 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             theme_signal = _flow_text(theme_row.get("테마판정", ""))
             theme_state = _flow_text(theme_row.get("상태", ""))
             sub_state = _flow_text(sub_row.get("상태", ""))
+            theme_1m = _flow_num(theme_row, "1개월수익률")
+            theme_2w = _flow_num(theme_row, "2주수익률")
+            theme_price = _flow_num(theme_row, "가격수준")
+            sub_1m = _flow_num(sub_row, "1개월수익률")
+            sub_2w = _flow_num(sub_row, "2주수익률")
+            sub_price = _flow_num(sub_row, "가격수준")
             display_subtheme = _first_flow_text(
                 sub_row.get("하위테마", ""),
                 _fallback_flow_subtheme(theme_name, theme_name),
                 default="하위테마 확인 필요",
             )
+            display_sub_state = _flow_state_with_recent_check(
+                _first_flow_text(sub_state, theme_state, theme_signal, default="-"),
+                sub_1m,
+                sub_2w,
+            )
+            display_1m = sub_1m if finite_num(sub_1m) else theme_1m
+            display_2w = sub_2w if finite_num(sub_2w) else theme_2w
+            display_price = sub_price if finite_num(sub_price) else theme_price
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
                 theme_row.get("대표주", ""),
@@ -19626,7 +19682,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "연결테마": theme_name,
                 "테마판정": _first_flow_text(theme_signal, theme_state, default="-"),
                 "핵심하위테마": display_subtheme,
-                "하위상태": _first_flow_text(sub_state, theme_state, theme_signal, default="-"),
+                "하위상태": display_sub_state,
                 "대표주": representative,
                 "통합판정": action,
                 "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
@@ -19634,9 +19690,15 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "적합도": np.nan,
                 "테마점수": theme_row.get("테마돈흐름점수", np.nan),
                 "하위점수": sub_row.get("돈흐름점수", np.nan),
-                "1개월": theme_row.get("1개월수익률", np.nan),
-                "2주": theme_row.get("2주수익률", np.nan),
-                "가격수준": theme_row.get("가격수준", np.nan),
+                "큰돈1M": np.nan,
+                "큰돈2W": np.nan,
+                "테마1M": theme_1m,
+                "테마2W": theme_2w,
+                "하위1M": sub_1m,
+                "하위2W": sub_2w,
+                "1개월": display_1m,
+                "2주": display_2w,
+                "가격수준": display_price,
             })
 
     out = pd.DataFrame(rows)
@@ -19660,18 +19722,20 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         return
 
     st.markdown("#### 돈흐름 통합 판정")
-    st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서로 한 줄에 묶었습니다. `정밀관측`은 매수 신호가 아니라 종목 타점 확인 단계입니다.")
+    st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서로 한 줄에 묶었습니다. 수익률은 큰돈/테마/하위 기준을 분리해 표시합니다. `정밀관측`은 매수 신호가 아니라 종목 타점 확인 단계입니다.")
 
     show = unified_df.head(12).copy()
     for col in ["적합도", "테마점수", "하위점수"]:
         if col in show.columns:
             show[col] = show[col].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}")
-    for col in ["1개월", "2주", "가격수준"]:
+    for col in ["큰돈1M", "큰돈2W", "테마1M", "테마2W", "하위1M", "하위2W", "1개월", "2주", "가격수준"]:
         if col in show.columns:
             show[col] = show[col].apply(fmt_flow_pct)
     cols = [
-        "통합판정", "후보군", "큰돈판정", "연결테마", "테마판정", "핵심하위테마",
-        "하위상태", "대표주", "1개월", "2주", "가격수준", "다음확인",
+        "통합판정", "후보군", "큰돈판정", "큰돈1M", "큰돈2W",
+        "연결테마", "테마판정", "테마1M", "테마2W",
+        "핵심하위테마", "하위상태", "하위1M", "하위2W",
+        "대표주", "가격수준", "다음확인",
     ]
     st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
 
