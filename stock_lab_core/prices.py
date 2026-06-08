@@ -640,15 +640,16 @@ def _fetch_yahoo_quote(ticker: str) -> float:
 
 def _fetch_yf_fast_info_price(ticker: str) -> float:
     """
-    yf.Ticker.fast_info — 프리마켓/애프터마켓 포함 최신가.
-    우선순위: regular_market_price(정규장) → pre/post_market_price → last_price
+    yf.Ticker.fast_info 폴백.
+
+    일부 미국 종목은 fast_info.last_price/currentPrice가 프리마켓 체결가보다
+    이전 정규가로 남는 경우가 있어 Yahoo chart 1분봉 뒤에서만 사용한다.
     _YF_LOCK 으로 SQLite tz 캐시 동시 쓰기 방지.
     """
     try:
         with _YF_LOCK:
             fi = yf.Ticker(ticker).fast_info
-        # last_price: yfinance가 세션 구분 없이 가장 최근 체결가를 반환
-        # regular_market_price는 장중 또는 정규 종가이므로 last_price 우선
+        # fast_info에는 timestamp가 없어 세션 판정이 불안정하다. 최종 폴백용.
         for attr in ("last_price", "post_market_price", "pre_market_price", "regular_market_price"):
             try:
                 val = getattr(fi, attr, None)
@@ -686,11 +687,12 @@ def _fetch_price_uncached(ticker: str) -> float:
         3차 - 실패 시 0 반환 (yfinance 지연/오류 로그 방지)
 
     미국·기타 주식:
-        1차 - Yahoo Finance API 직접 조회  (SQLite 없음, 스레드 안전)
-        2차 - yf.fast_info.regular_market_price (정규장 현재가 우선)
+        1차 - Pyth 실시간 피드  (지원 종목)
+        2차 - Yahoo Finance chart 1분봉 + prepost
         3차 - yfinance 1분봉 + prepost
         4차 - yfinance 5분봉 + prepost
-        5차 - yfinance 일봉 폴백
+        5차 - yf.fast_info 폴백
+        6차 - yfinance 일봉 폴백
     """
     if _is_kr_ticker(ticker):
         price = _fetch_naver_realtime_price(ticker)
@@ -714,19 +716,17 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_pyth_us_live_price(ticker)
         if price > 0:
             return price
-        price = _fetch_yf_fast_info_price(ticker)
-        if price > 0:
-            return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
         price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
-        if _is_yahoo_temporarily_blocked():
-            return 0.0
         price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
         if price > 0:
             return price
         price = _fetch_yf_download_price(ticker, interval="5m", prepost=True)
+        if price > 0:
+            return price
+        price = _fetch_yf_fast_info_price(ticker)
         if price > 0:
             return price
 
@@ -774,7 +774,7 @@ def load_latest_prices_batch(tickers) -> dict:
     여러 종목 현재가 일괄 조회. TTL=60초.
 
     한국 (.KS/.KQ):  네이버 bulk API → 개별 네이버 → pykrx 최근 종가
-    미국/기타:       yfinance 5분봉 + prepost → 일봉 폴백
+    미국/기타:       Pyth → Yahoo chart/prepost → yfinance 분봉 → fast_info → 일봉 폴백
     """
     unique_tickers: list[str] = []
     seen: set[str] = set()
@@ -834,15 +834,9 @@ def load_latest_prices_batch(tickers) -> dict:
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
-    # ── 미국/기타: Yahoo 직접 API 우선 → yfinance 5분봉 폴백 ────────────
+    # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
         prices.update(_fetch_pyth_us_live_prices_batch(us_tickers))
-
-        us_fast_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
-        for t in us_fast_needed:
-            p = _fetch_yf_fast_info_price(t)
-            if p > 0:
-                prices[normalize_price_lookup_key(t)] = p
 
         # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
         us_yahoo_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
@@ -850,9 +844,6 @@ def load_latest_prices_batch(tickers) -> dict:
             p = _fetch_yahoo_quote(t)
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
-
-        if _is_yahoo_temporarily_blocked():
-            return prices
 
         # 2차: Yahoo 직접 실패 종목만 yfinance 5분봉으로 보완
         us_yf_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
