@@ -8938,6 +8938,115 @@ def render_refresh_control_panel():
         st.caption(f"재무/매크로: {get_refresh_event_time('fin_macro_refresh_time')}")
 
 
+MACRO_EVENT_RISK_EVENTS = [
+    {
+        "date": "2026-06-10",
+        "end_date": "2026-06-10",
+        "event": "미국 CPI 발표",
+        "market": "미국 성장주/레버리지",
+        "weight": 1.0,
+        "pre_days": 2,
+        "post_days": 1,
+        "note": "예상치 상회 시 금리·달러·나스닥 변동성 확대",
+    },
+    {
+        "date": "2026-06-11",
+        "end_date": "2026-06-11",
+        "event": "KOSPI 200 옵션/선물 만기",
+        "market": "국내 대형주/KOSPI",
+        "weight": 0.7,
+        "pre_days": 1,
+        "post_days": 0,
+        "note": "2번째 목요일 만기. 종가 부근 수급 흔들림 주의",
+    },
+    {
+        "date": "2026-06-12",
+        "end_date": "2026-06-12",
+        "event": "SpaceX 대형 IPO 수급 이벤트",
+        "market": "미국 성장주/테크",
+        "weight": 0.8,
+        "pre_days": 2,
+        "post_days": 1,
+        "note": "보도 기반 이벤트. 대형 IPO 청약·상장일 전후 수급 분산 가능성",
+    },
+    {
+        "date": "2026-06-15",
+        "end_date": "2026-06-16",
+        "event": "BOJ 금융정책결정회의",
+        "market": "엔/금리/글로벌 수급",
+        "weight": 0.8,
+        "pre_days": 2,
+        "post_days": 1,
+        "note": "금리인상·국채매입 축소 언급 시 글로벌 금리 변동성 확대",
+    },
+    {
+        "date": "2026-06-16",
+        "end_date": "2026-06-17",
+        "event": "FOMC",
+        "market": "미국 주식/달러/금리",
+        "weight": 1.2,
+        "pre_days": 3,
+        "post_days": 1,
+        "note": "점도표·성명·기자회견 전후 변동성 확대",
+    },
+]
+
+
+def build_macro_event_risk_table(today=None):
+    today = today or datetime.now(KST).date()
+    rows = []
+    total_risk = 0.0
+    active_count = 0
+
+    for event in MACRO_EVENT_RISK_EVENTS:
+        try:
+            start = pd.to_datetime(event["date"]).date()
+            end = pd.to_datetime(event.get("end_date") or event["date"]).date()
+        except Exception:
+            continue
+
+        pre_start = start - timedelta(days=int(event.get("pre_days", 0)))
+        post_end = end + timedelta(days=int(event.get("post_days", 0)))
+        days_to_start = (start - today).days
+
+        if today < pre_start:
+            state = "대기"
+            applied = 0.0
+            timing = f"D-{days_to_start}"
+        elif pre_start <= today < start:
+            state = "임박"
+            applied = float(event.get("weight", 0.0))
+            timing = f"D-{days_to_start}"
+        elif start <= today <= end:
+            state = "당일"
+            applied = float(event.get("weight", 0.0)) * 1.25
+            timing = "D-Day"
+        elif end < today <= post_end:
+            state = "잔여"
+            applied = float(event.get("weight", 0.0)) * 0.5
+            timing = f"D+{(today - end).days}"
+        else:
+            state = "종료"
+            applied = 0.0
+            timing = f"D+{(today - end).days}"
+
+        if applied > 0:
+            active_count += 1
+            total_risk += applied
+
+        rows.append({
+            "일정": f"{start:%m/%d}" if start == end else f"{start:%m/%d}~{end:%m/%d}",
+            "이벤트": event.get("event", "-"),
+            "시장": event.get("market", "-"),
+            "상태": state,
+            "D-Day": timing,
+            "점수": round(applied, 2),
+            "해석": event.get("note", "-"),
+        })
+
+    return pd.DataFrame(rows), round(min(total_risk, 3.0), 2), active_count
+
+
 @st.cache_data(ttl=300)
 def get_macro_analysis():
     tickers = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
@@ -8992,7 +9101,8 @@ def get_macro_analysis():
         results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg}
     move_val = results.get("MOVE", {"val": 0})["val"]
     move_score = 1.5 if move_val >= 120 else (0.5 if move_val >= 100 else 0)
-    final_macro_risk = storm_count + macro_trend + move_score
+    _, event_risk, _ = build_macro_event_risk_table()
+    final_macro_risk = storm_count + macro_trend + move_score + event_risk
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))
     return results, final_macro_risk, macro_penalty, move_val
 
@@ -18928,6 +19038,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
                     reasons.append(f"가속 ETF 비율 {flow_accel*100:.0f}%")
 
     macro_df, macro_pressure, macro_relief, macro_note = build_today_macro_guard_table()
+    event_df, event_risk, event_count = build_macro_event_risk_table()
     macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
     macro_score = 0
     if macro_pressure >= 4:
@@ -18944,6 +19055,10 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         score += macro_score
         risk_text = "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}"
         reasons.append(f"매크로 경고 {macro_pressure}점/리스크 {risk_text}")
+    if event_risk > 0:
+        event_score = 2 if event_risk >= 2.0 else 1
+        score += event_score
+        reasons.append(f"이벤트 임박 {event_count}개/점수 {event_risk:.1f}")
 
     hard_count = 0
     caution_count = 0
@@ -19001,6 +19116,9 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "flow_accel": flow_accel,
         "macro_risk": macro_risk,
         "macro_df": macro_df,
+        "event_df": event_df,
+        "event_risk": event_risk,
+        "event_count": event_count,
         "macro_pressure": macro_pressure,
         "macro_relief": macro_relief,
         "macro_note": macro_note,
@@ -19063,6 +19181,11 @@ def render_today_market_guard_panel(guard: dict):
         if macro_df is not None and not macro_df.empty:
             st.markdown("##### 매크로 경고등")
             st.dataframe(macro_df, width='stretch', hide_index=True)
+
+        event_df = guard.get("event_df", pd.DataFrame())
+        if event_df is not None and not event_df.empty:
+            st.markdown("##### 이벤트 캘린더")
+            st.dataframe(event_df, width='stretch', hide_index=True)
 
 
 def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
@@ -20846,9 +20969,11 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
 macro_res, final_macro_risk, macro_penalty, move_val = get_public_demo_macro_analysis() if IS_PUBLIC_DEMO else get_macro_analysis()
+macro_event_df, macro_event_risk, macro_event_count = build_macro_event_risk_table()
 # globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
 st.session_state["_app_final_macro_risk"] = final_macro_risk
-st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 매크로 패널티: -{macro_penalty}")
+st.session_state["_app_macro_event_risk"] = macro_event_risk
+st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 이벤트 리스크: {macro_event_risk:.1f} | 매크로 패널티: -{macro_penalty}")
 if IS_PUBLIC_DEMO:
     st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
 
