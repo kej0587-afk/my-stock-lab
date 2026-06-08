@@ -6742,9 +6742,15 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             finite_num(avg_r1m) and avg_r1m >= 0
             and (not finite_num(avg_r2w) or avg_r2w >= 0)
         )
+        overheated_members = [
+            m for m in matched
+            if finite_num(m["price_level"]) and m["price_level"] >= 0.90
+        ]
+        # 평균 가격위치만 보면 과열 멤버가 다른 멤버에 희석돼 라벨이 어긋난다
+        # (예: SOXX/SMH는 이미 과열경보인데 클러스터 평균은 정상 범위로 보이는 경우).
         is_overheated = (
-            finite_num(avg_price_level) and avg_price_level >= 0.90
-            and avg_rs3m >= 0.08
+            (finite_num(avg_price_level) and avg_price_level >= 0.90 and avg_rs3m >= 0.08)
+            or (len(overheated_members) / n >= 0.3 and avg_rs3m >= 0.08)
         )
 
         lead_score = _clip_score(avg_rs3m * 95, -18, 28)
@@ -6918,11 +6924,18 @@ def render_cluster_heatmap_enhanced(
 
         st.markdown("##### 📊 클러스터 적합도 — 어디가 강하고, 지금 접근 가능한가?")
         if all_surging:
-            names = "·".join(f"**{c['name']}**" for c in all_surging)
-            st.caption(
-                f"🔥 새 돈 후보: {names}  "
-                "— RS 방향 전환, 1개월/2주 확인, 내부 확산도가 같이 잡힌 구간입니다."
-            )
+            # 이미 '진입검토' 단계까지 온 클러스터는 '새 돈 후보'(초입)라고 부르면
+            # 정밀관측 단계라는 통합판정과 어긋나므로 단계별로 문구를 분리한다.
+            entry_ready = [c for c in all_surging if c["flow_label"] == "진입검토"]
+            early_stage = [c for c in all_surging if c["flow_label"] != "진입검토"]
+            parts = []
+            if entry_ready:
+                names = "·".join(f"**{c['name']}**" for c in entry_ready)
+                parts.append(f"🔍 정밀관측 단계: {names} — 연결 흐름 확인, 대표주 과열/눌림만 점검하면 됩니다.")
+            if early_stage:
+                names = "·".join(f"**{c['name']}**" for c in early_stage)
+                parts.append(f"🔥 새 돈 후보(초입): {names} — RS 방향 전환, 1개월/2주 확인, 내부 확산도가 같이 잡힌 구간입니다.")
+            st.caption("  ".join(parts))
         else:
             st.caption(
                 "진입검토 = 강도+단기확인+확산도 양호 &nbsp;|&nbsp; "
