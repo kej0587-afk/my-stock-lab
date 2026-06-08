@@ -10720,7 +10720,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s,
         "rs_slope_s": rs_slope_s, "rs_slope_label": rs_slope_label, "rs_slope_val": rs_slope_val,
         "profit_take_signal": (has_pos and (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20),
-        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": rr_stop_atr,
+        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": rr_stop_atr, "atr": _atr,
         "is_52w_breakout": is_52w_breakout,
         "sector_flow_state": sector_flow_state,
         "smc_insight": smc_insight
@@ -11164,6 +11164,177 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         + "</div>"
     )
     return html
+
+
+def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
+    """Show a concrete entry/exit plan using the app's existing R/R logic."""
+    cur = clean_float(c.get("cur_p"), 0.0)
+    atr = clean_float(c.get("atr"), 0.0)
+    stop = clean_float(c.get("rr_stop"), 0.0)
+    target = clean_float(c.get("rr_target"), 0.0)
+    rr = clean_float(c.get("rr_ratio"), 0.0)
+    buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+    ma5 = clean_float(c.get("ma5"), 0.0)
+    ma20 = clean_float(c.get("ma20"), 0.0)
+    fvg_top = clean_float(c.get("fvg_top"), 0.0)
+    fvg_bottom = clean_float(c.get("fvg_bottom"), 0.0)
+    pct_b = clean_float(c.get("pct_b"), 0.0)
+    decision_code = str(c.get("decision_code", "") or "")
+    decision_label = str(c.get("dec", "") or "")
+    pd_zone = str(c.get("pd_zone", "") or "")
+
+    if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
+        st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
+        return
+
+    risk = max(cur - stop, atr * 2.0 if atr > 0 else 0.0)
+    if risk <= 0:
+        st.info("손절 폭을 산출할 수 없어 신규진입 실행 계획을 만들 수 없습니다.")
+        return
+
+    block_codes = {
+        "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
+        "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK",
+    }
+    wait_codes = {
+        "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
+        "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
+        "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
+    }
+    is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
+    is_blocked = decision_code in block_codes or rr < 1.0
+
+    if is_blocked:
+        status = "진입 보류"
+        status_color = "#ef4444"
+        status_note = "R/R 또는 추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
+    elif rr < 1.5:
+        status = "정찰만"
+        status_color = "#d97706"
+        status_note = "R/R이 1.5 미만이라 풀비중보다 1차 정찰 중심이 맞습니다."
+    elif is_wait:
+        status = "눌림 대기"
+        status_color = "#8b5cf6"
+        status_note = "추격보다 MA5/MA20/FVG 눌림 확인 후 분할 진입합니다."
+    else:
+        status = "분할 진입 가능"
+        status_color = "#10b981"
+        status_note = "현재 앱 신호 기준으로 1차 정찰 후 눌림에서 추가하는 구간입니다."
+
+    support_candidates = []
+    for label, value in [
+        ("MA5", ma5),
+        ("MA20", ma20),
+        ("FVG 상단", fvg_top),
+        ("FVG 하단", fvg_bottom),
+        ("0.5ATR 눌림", cur - atr * 0.5 if atr > 0 else 0.0),
+        ("1ATR 눌림", cur - atr if atr > 0 else 0.0),
+    ]:
+        if finite_num(value) and stop < value < cur:
+            support_candidates.append((label, float(value)))
+    support_candidates = sorted(support_candidates, key=lambda item: item[1], reverse=True)
+
+    if is_wait and support_candidates:
+        entry1_label, entry1 = support_candidates[0]
+        entry1_cond = f"{entry1_label} 눌림 확인 후 1차"
+    else:
+        entry1 = cur
+        entry1_cond = "현재가 부근 1차 정찰"
+
+    if len(support_candidates) >= 2:
+        entry2_label, entry2 = support_candidates[1]
+    elif support_candidates:
+        entry2_label, entry2 = support_candidates[0]
+    else:
+        entry2_label, entry2 = "0.5ATR 눌림", max(stop + risk * 0.45, cur - risk * 0.25)
+
+    if len(support_candidates) >= 3:
+        entry3_label, entry3 = support_candidates[2]
+    else:
+        entry3_label, entry3 = "손절 전 마지막 방어선", max(stop + risk * 0.25, cur - risk * 0.5)
+
+    tp1 = min(target, cur + risk)
+    tp2 = target
+
+    if is_blocked:
+        tranche_weights = [0.0, 0.0, 0.0]
+    elif rr < 1.5:
+        tranche_weights = [0.30, 0.0, 0.0]
+    elif is_wait:
+        tranche_weights = [0.30, 0.40, 0.30]
+    else:
+        tranche_weights = [0.40, 0.35, 0.25]
+
+    def order_text(amount_krw, price):
+        if amount_krw <= 0 or price <= 0:
+            return "-"
+        is_us = not str(ticker).upper().endswith((".KS", ".KQ"))
+        if is_us:
+            fx = clean_float(usdkrw, 1400.0) or 1400.0
+            amount_usd = amount_krw / fx
+            shares = amount_usd / price if price > 0 else 0.0
+            return f"${amount_usd:,.0f} / {shares:.2f}주"
+        shares = amount_krw / price if price > 0 else 0.0
+        return f"{amount_krw:,.0f}원 / {shares:.2f}주"
+
+    rows = [
+        {
+            "단계": "1차 진입",
+            "가격": format_currency(entry1, ticker),
+            "금액/수량": order_text(buy_amt_krw * tranche_weights[0], entry1),
+            "조건": entry1_cond,
+        },
+        {
+            "단계": "2차 추가",
+            "가격": format_currency(entry2, ticker),
+            "금액/수량": order_text(buy_amt_krw * tranche_weights[1], entry2),
+            "조건": f"{entry2_label} 근처에서 반등 확인",
+        },
+        {
+            "단계": "3차 예비",
+            "가격": format_currency(entry3, ticker),
+            "금액/수량": order_text(buy_amt_krw * tranche_weights[2], entry3),
+            "조건": f"{entry3_label} 근처, 손절가 이탈 전까지만",
+        },
+        {
+            "단계": "1차 익절",
+            "가격": format_currency(tp1, ticker),
+            "금액/수량": "보유분 30~50%",
+            "조건": "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향",
+        },
+        {
+            "단계": "최종 익절",
+            "가격": format_currency(tp2, ticker),
+            "금액/수량": "잔여분",
+            "조건": "구조 목표가 도달 또는 MFI/%B 과열 동반 시",
+        },
+        {
+            "단계": "손절",
+            "가격": format_currency(stop, ticker),
+            "금액/수량": "전량 또는 계획분",
+            "조건": "종가 기준 이탈 시 신규진입 시나리오 무효",
+        },
+    ]
+
+    if buy_amt_krw <= 0 and not has_pos:
+        amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
+    elif has_pos:
+        amount_note = "이미 보유 중이면 위 금액은 잔여 목표비중 기준 추가 계획으로 해석하세요."
+    else:
+        amount_note = f"계획 투입금: {buy_amt_krw:,.0f}원 기준"
+
+    st.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {status_color}; line-height:1.8;'>"
+        f"<b>🎯 신규진입 실행 계획</b><br>"
+        f"<span class='highlight'>{status}</span> — {escape_html_value(status_note)}<br>"
+        f"기준가 {format_currency(cur, ticker)} / R/R {rr:.2f} / 1R {format_currency(risk, ticker)}<br>"
+        f"{escape_html_value(amount_note)}<br>"
+        f"<span style='color:#94a3b8;'>투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, fin_score, fin_meta, has_pos, my_price):
@@ -22479,6 +22650,8 @@ if main_page == "precision":
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,
             )
+            _plan_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
+            render_entry_execution_plan(name, tkr, c, has_pos=_plan_has_pos, usdkrw=usdkrw)
 
         st.markdown("---")
         b1, b2 = st.columns(2)
