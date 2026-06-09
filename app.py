@@ -8972,6 +8972,10 @@ def clear_market_context_cache():
     cache_clear(get_macro_analysis)
     cache_clear(download_money_flow_prices)
     cache_clear(load_usdkrw_rate)
+    if "fetch_fomc_calendar_events" in globals():
+        cache_clear(fetch_fomc_calendar_events)
+    if "fetch_forexfactory_major_events" in globals():
+        cache_clear(fetch_forexfactory_major_events)
     # 돈흐름 스냅샷은 재무/매크로와 무관하므로 여기서 지우지 않음
     # (오늘 점검 '결과 지우기' 버튼에서만 명시적으로 초기화)
 
@@ -9118,13 +9122,318 @@ MACRO_EVENT_RISK_EVENTS = [
 ]
 
 
+AUTO_MACRO_EVENT_LOOKBACK_DAYS = 3
+AUTO_MACRO_EVENT_LOOKAHEAD_DAYS = 45
+FED_FOMC_CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+FOREX_FACTORY_WEEKLY_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+
+
+FALLBACK_AUTO_MACRO_EVENTS = [
+    {
+        "date": "2026-06-10",
+        "event": "미국 CPI 발표",
+        "market": "미국 성장주/레버리지",
+        "weight": 1.0,
+        "pre_days": 2,
+        "post_days": 1,
+        "note": "BLS 공식 일정 fallback. 예상치 상회 시 금리·달러·나스닥 변동성 확대",
+        "source": "fallback",
+    },
+    {
+        "date": "2026-07-14",
+        "event": "미국 CPI 발표",
+        "market": "미국 성장주/레버리지",
+        "weight": 1.0,
+        "pre_days": 2,
+        "post_days": 1,
+        "note": "BLS 공식 일정 fallback. 예상치 상회 시 금리·달러·나스닥 변동성 확대",
+        "source": "fallback",
+    },
+    {
+        "date": "2026-06-16",
+        "end_date": "2026-06-17",
+        "event": "FOMC",
+        "market": "미국 주식/달러/금리",
+        "weight": 1.2,
+        "pre_days": 3,
+        "post_days": 1,
+        "note": "Fed 일정 fallback. 점도표·성명·기자회견 전후 변동성 확대",
+        "source": "fallback",
+    },
+    {
+        "date": "2026-07-28",
+        "end_date": "2026-07-29",
+        "event": "FOMC",
+        "market": "미국 주식/달러/금리",
+        "weight": 1.2,
+        "pre_days": 3,
+        "post_days": 1,
+        "note": "Fed 일정 fallback. 성명·기자회견 전후 변동성 확대",
+        "source": "fallback",
+    },
+]
+
+
+def macro_event_window(today):
+    today = today or datetime.now(KST).date()
+    return today - timedelta(days=AUTO_MACRO_EVENT_LOOKBACK_DAYS), today + timedelta(days=AUTO_MACRO_EVENT_LOOKAHEAD_DAYS)
+
+
+def parse_macro_event_date(value):
+    try:
+        return pd.to_datetime(value).date()
+    except Exception:
+        return None
+
+
+def macro_event_in_window(event, today):
+    window_start, window_end = macro_event_window(today)
+    start = parse_macro_event_date(event.get("date"))
+    end = parse_macro_event_date(event.get("end_date") or event.get("date"))
+    if start is None or end is None:
+        return False
+    return end >= window_start and start <= window_end
+
+
+def canonical_macro_event_name(name):
+    text = str(name or "").strip()
+    low = text.lower()
+    if "consumer price index" in low or "core cpi" in low or re.search(r"\bcpi\b", low):
+        return "미국 CPI 발표"
+    if "producer price index" in low or re.search(r"\bppi\b", low):
+        return "미국 PPI 발표"
+    if "fomc" in low or "federal funds" in low or "fed interest rate" in low:
+        return "FOMC"
+    if "non-farm" in low or "nonfarm" in low or "employment situation" in low:
+        return "미국 고용지표"
+    if "main refinancing rate" in low or "ecb press conference" in low or "monetary policy statement" in low:
+        return "ECB 통화정책"
+    if "boj" in low or "bank of japan" in low:
+        return "BOJ 금융정책결정회의"
+    return text
+
+
+def macro_event_market_for_country(country):
+    country = str(country or "").upper()
+    if country == "USD":
+        return "미국 주식/달러/금리"
+    if country == "EUR":
+        return "유럽 금리/달러/글로벌 수급"
+    if country == "JPY":
+        return "엔/금리/글로벌 수급"
+    if country == "CNY":
+        return "중국/원자재/한국 수출주"
+    return "글로벌 수급/원자재"
+
+
+def macro_event_default_weight(event_name):
+    low = str(event_name or "").lower()
+    if "fomc" in low:
+        return 1.2
+    if "cpi" in low or "고용" in event_name:
+        return 1.0
+    if "ppi" in low or "ecb" in low or "boj" in low:
+        return 0.8
+    return 0.7
+
+
+def normalize_macro_event(event, source="수동"):
+    item = dict(event or {})
+    item["event"] = canonical_macro_event_name(item.get("event", ""))
+    item.setdefault("end_date", item.get("date"))
+    item.setdefault("source", source)
+    item.setdefault("weight", macro_event_default_weight(item.get("event", "")))
+    item.setdefault("pre_days", 2)
+    item.setdefault("post_days", 1)
+    item.setdefault("market", "글로벌 수급")
+    item.setdefault("note", "-")
+    return item
+
+
+def add_macro_event(events, event, today, source="수동"):
+    item = normalize_macro_event(event, source=source)
+    if macro_event_in_window(item, today):
+        events.append(item)
+
+
+def second_thursday(year, month):
+    first_day = datetime(year, month, 1).date()
+    days_to_thursday = (3 - first_day.weekday()) % 7
+    return first_day + timedelta(days=days_to_thursday + 7)
+
+
+def add_months(year, month, offset):
+    raw = (year * 12 + (month - 1)) + offset
+    return raw // 12, raw % 12 + 1
+
+
+def build_kospi_expiry_events(today):
+    events = []
+    for offset in range(-1, 5):
+        year, month = add_months(today.year, today.month, offset)
+        expiry = second_thursday(year, month)
+        events.append({
+            "date": expiry.isoformat(),
+            "event": "KOSPI 200 옵션/선물 만기",
+            "market": "국내 대형주/KOSPI",
+            "weight": 0.7,
+            "pre_days": 1,
+            "post_days": 0,
+            "note": "매월 2번째 목요일 기준 자동 계산. 종가 부근 수급 흔들림 주의",
+            "source": "자동: 규칙",
+        })
+    return events
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_fomc_calendar_events(years):
+    try:
+        res = requests.get(FED_FOMC_CALENDAR_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if res.status_code != 200:
+            return []
+        text = html.unescape(re.sub(r"<[^>]+>", "\n", res.text))
+        lines = [line.strip().replace("\xa0", " ") for line in text.splitlines() if line.strip()]
+    except Exception:
+        return []
+
+    month_map = {
+        "January": 1, "February": 2, "March": 3, "April": 4, "May": 5, "June": 6,
+        "July": 7, "August": 8, "September": 9, "October": 10, "November": 11, "December": 12,
+        "Jan/Feb": 1, "Apr/May": 4, "Oct/Nov": 10,
+    }
+    events = []
+    for year in years:
+        try:
+            start_idx = next(i for i, line in enumerate(lines) if line == f"{year} FOMC Meetings")
+        except StopIteration:
+            continue
+        current_month = None
+        for line in lines[start_idx + 1:]:
+            if re.match(r"^\d{4} FOMC Meetings$", line):
+                break
+            if line in month_map:
+                current_month = month_map[line]
+                continue
+            date_match = re.match(r"^(\d{1,2})(?:-(\d{1,2}))?\*?$", line)
+            if not date_match or current_month is None:
+                continue
+            start_day = int(date_match.group(1))
+            end_day = int(date_match.group(2) or start_day)
+            end_month = current_month + 1 if end_day < start_day else current_month
+            end_year = year + 1 if end_month > 12 else year
+            end_month = 1 if end_month > 12 else end_month
+            try:
+                start_date = datetime(year, current_month, start_day).date()
+                end_date = datetime(end_year, end_month, end_day).date()
+            except ValueError:
+                continue
+            has_sep = "*" in line
+            events.append({
+                "date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "event": "FOMC",
+                "market": "미국 주식/달러/금리",
+                "weight": 1.2,
+                "pre_days": 3,
+                "post_days": 1,
+                "note": "Fed 공식 일정 자동 수집. " + ("점도표 포함 회의" if has_sep else "성명·기자회견 전후 변동성 확대"),
+                "source": "자동: Fed",
+            })
+    return events
+
+
+def ff_macro_event_from_title(title, country):
+    title = str(title or "").strip()
+    event_name = canonical_macro_event_name(title)
+    if event_name == title:
+        return None
+    country = str(country or "").upper()
+    return {
+        "event": event_name,
+        "market": macro_event_market_for_country(country),
+        "weight": macro_event_default_weight(event_name),
+        "pre_days": 2 if event_name != "FOMC" else 3,
+        "post_days": 1,
+        "note": f"ForexFactory 주간 고영향 일정 자동 수집: {title}",
+        "source": "자동: FF",
+    }
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_forexfactory_major_events():
+    try:
+        res = requests.get(FOREX_FACTORY_WEEKLY_CALENDAR_URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=6)
+        if res.status_code != 200:
+            return []
+        root = ET.fromstring(res.content)
+    except Exception:
+        return []
+
+    events = []
+    allowed_countries = {"USD", "EUR", "JPY", "CNY", "All"}
+    for node in root.findall("event"):
+        impact = str(node.findtext("impact") or "").strip()
+        country = str(node.findtext("country") or "").strip()
+        if impact != "High" or country not in allowed_countries:
+            continue
+        title = str(node.findtext("title") or "").strip()
+        event = ff_macro_event_from_title(title, country)
+        if not event:
+            continue
+        raw_date = str(node.findtext("date") or "").strip()
+        try:
+            event_date = datetime.strptime(raw_date, "%m-%d-%Y").date()
+        except Exception:
+            continue
+        event["date"] = event_date.isoformat()
+        event["end_date"] = event["date"]
+        events.append(event)
+    return events
+
+
+def build_macro_event_candidates(today):
+    today = today or datetime.now(KST).date()
+    events = []
+    for event in MACRO_EVENT_RISK_EVENTS:
+        add_macro_event(events, event, today, source=event.get("source", "수동"))
+    for event in build_kospi_expiry_events(today):
+        add_macro_event(events, event, today, source=event.get("source", "자동: 규칙"))
+    years = tuple(sorted({today.year, (today + timedelta(days=AUTO_MACRO_EVENT_LOOKAHEAD_DAYS)).year}))
+    for event in fetch_fomc_calendar_events(years):
+        add_macro_event(events, event, today, source=event.get("source", "자동: Fed"))
+    for event in fetch_forexfactory_major_events():
+        add_macro_event(events, event, today, source=event.get("source", "자동: FF"))
+    for event in FALLBACK_AUTO_MACRO_EVENTS:
+        add_macro_event(events, event, today, source=event.get("source", "fallback"))
+
+    deduped = {}
+    source_rank = {"자동: Fed": 0, "자동: FF": 1, "수동": 2, "자동: 규칙": 3, "fallback": 9}
+    for event in events:
+        start = str(event.get("date", ""))
+        end = str(event.get("end_date") or start)
+        name = canonical_macro_event_name(event.get("event", ""))
+        key = (start, end, name)
+        old = deduped.get(key)
+        if old is None or source_rank.get(event.get("source", ""), 5) < source_rank.get(old.get("source", ""), 5):
+            deduped[key] = event
+
+    return sorted(
+        deduped.values(),
+        key=lambda x: (
+            parse_macro_event_date(x.get("date")) or datetime.max.date(),
+            NEWS_CATEGORY_ORDER.get(x.get("category", ""), 9) if "NEWS_CATEGORY_ORDER" in globals() else 0,
+            str(x.get("event", "")),
+        ),
+    )
+
+
 def build_macro_event_risk_table(today=None):
     today = today or datetime.now(KST).date()
     rows = []
     total_risk = 0.0
     active_count = 0
 
-    for event in MACRO_EVENT_RISK_EVENTS:
+    for event in build_macro_event_candidates(today):
         try:
             start = pd.to_datetime(event["date"]).date()
             end = pd.to_datetime(event.get("end_date") or event["date"]).date()
@@ -9168,6 +9477,7 @@ def build_macro_event_risk_table(today=None):
             "D-Day": timing,
             "점수": round(applied, 2),
             "해석": event.get("note", "-"),
+            "출처": event.get("source", "수동"),
         })
 
     return pd.DataFrame(rows), round(min(total_risk, 3.0), 2), active_count
@@ -19381,6 +19691,7 @@ def render_today_market_guard_panel(guard: dict):
         event_df = guard.get("event_df", pd.DataFrame())
         if event_df is not None and not event_df.empty:
             st.markdown("##### 이벤트 캘린더")
+            st.caption("수동 등록 일정에 Fed 공식 일정, 국내 만기 규칙, ForexFactory 주간 고영향 일정을 6시간 캐시로 자동 보강합니다.")
             st.dataframe(event_df, width='stretch', hide_index=True)
 
 
