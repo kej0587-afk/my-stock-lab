@@ -220,14 +220,16 @@ NEWS_CATEGORY_LIMITS = {
 NEWS_MAX_ITEMS = 6
 NEWS_MAX_CANDIDATES = 18
 NEWS_CATEGORY_SEARCH_LIMITS = {
-    NEWS_CATEGORY_DIRECT: 10,
-    NEWS_CATEGORY_SECTOR: 6,
+    NEWS_CATEGORY_DIRECT: 12,
+    NEWS_CATEGORY_SECTOR: 7,
     NEWS_CATEGORY_MARKET: 3,
 }
 
 LOW_QUALITY_NEWS_WORDS = [
     "주식 움직였습니다", "핵심 원인 공개", "어떤 신호인가요", "주가 움직였습니다",
-    "stock moved", "why it moved", "price action", "what signal",
+    "주식 예측", "주가 전망", "stock moved", "why it moved", "price action",
+    "what signal", "stock forecast", "stock prediction", "price forecast",
+    "price prediction",
 ]
 
 EARNINGS_NEWS_WORDS = [
@@ -246,6 +248,15 @@ HIGH_VALUE_NEWS_WORDS = [
     "실적", "실적발표", "실적 발표", "분기 실적", "잠정실적", "매출", "영업이익", "순이익",
     "영업이익률", "가이던스", "전망", "목표가", "투자의견", "사상 최대", "역대 최대",
     "상향", "하향", "수주", "계약", "승인", "규제", "소송", "조사",
+]
+
+FIELD_NEWS_WORDS = [
+    "contract", "order", "deal", "partnership", "launch", "product", "shipment",
+    "supply", "capacity", "factory", "plant", "expansion", "investment",
+    "acquisition", "merger", "m&a", "joint venture", "customer", "approval",
+    "수주", "계약", "공급", "납품", "출시", "신제품", "승인", "투자", "증설",
+    "공장", "생산", "양산", "공급망", "인수", "합병", "제휴", "협력", "고객사",
+    "사업", "매각", "진출", "점유율", "수출",
 ]
 
 POSITIVE_NEWS_SIGNALS = [
@@ -319,6 +330,8 @@ NEWS_SOURCE_QUALITY = {
     "매일경제": 2,
     "머니투데이": 1,
     "tradingkey": -3,
+    "traders union": -3,
+    "litefinance": -3,
     "tokenpost": -2,
 }
 
@@ -814,22 +827,29 @@ def build_stock_news_queries(ticker, name):
 
     if is_kr:
         queries = [
+            f'"{main}" 최신 뉴스',
+            f'"{main}" 주가 뉴스',
+            f'"{main}" 공시 수주 계약',
+            f'"{main}" 공급 투자 증설',
             f'"{main}" 실적 발표',
             f'"{main}" 분기 실적',
             f'"{main}" 매출 영업이익',
             f'"{main}" 잠정실적',
-            f'"{main}" 주가 실적',
             f'"{main}" 증권',
-            f'{symbol} 주가 실적',
+            f'{symbol} {main} 뉴스',
         ]
     else:
         queries = [
+            f'"{main}" latest news {symbol}',
+            f'"{main}" stock news',
+            f'"{main}" shares today',
+            f'"{symbol}" stock news',
+            f'"{main}" contract partnership supply',
             f'"{main}" earnings shares',
             f'"{main}" earnings results {symbol}',
             f'"{main}" quarterly results revenue guidance',
             f'"{symbol}" earnings results',
             f'"{main}" investor relations results',
-            f'"{main}" {symbol} stock',
             f'"{main}" analyst price target',
         ]
 
@@ -924,6 +944,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     has_stock_word = keyword_in_text(text, STOCK_NEWS_WORDS)
     has_high_value_word = keyword_in_text(text, HIGH_VALUE_NEWS_WORDS)
     has_earnings_word = keyword_in_text(text, EARNINGS_NEWS_WORDS)
+    has_field_word = keyword_in_text(text, FIELD_NEWS_WORDS)
     has_market_word = keyword_in_text(text, ["nasdaq", "s&p", "fed", "yield", "rate", "inflation", "earnings", "증시", "코스피", "코스닥", "금리", "환율", "외국인"])
     is_low_quality = keyword_in_text(text, LOW_QUALITY_NEWS_WORDS)
 
@@ -932,6 +953,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     if has_symbol: score += 4
     if has_theme: score += 3
     if has_high_value_word: score += 2
+    if has_field_word: score += 2
     if has_earnings_word and category == NEWS_CATEGORY_DIRECT: score += 4
     elif has_earnings_word: score += 2
     if has_stock_word: score += 1
@@ -948,17 +970,19 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         score -= 4
 
     if category == NEWS_CATEGORY_DIRECT:
-        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or has_earnings_word or not strict) and score >= 3
+        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or has_earnings_word or has_field_word or not strict) and score >= 3
     elif category == NEWS_CATEGORY_SECTOR:
         ok = (has_company or has_symbol or has_theme) and score >= 2
     else:
         ok = has_market_word and score >= 1
 
-    if is_low_quality and category == NEWS_CATEGORY_DIRECT and score < 5:
+    if is_low_quality and category == NEWS_CATEGORY_DIRECT:
         ok = False
 
     if category == NEWS_CATEGORY_DIRECT and has_earnings_word and (has_company or has_symbol):
         relation = "실적 직접"
+    elif category == NEWS_CATEGORY_DIRECT and has_field_word and (has_company or has_symbol):
+        relation = "현장 직접"
     elif score >= 7:
         relation = "관련도 높음"
     elif score >= 3:
@@ -979,6 +1003,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         sentiment, reason = "중립", "호재와 악재 단서가 함께 있어 추가 확인 필요"
     elif category == NEWS_CATEGORY_DIRECT and has_earnings_word:
         sentiment, reason = "중립", "실적/가이던스 직접 뉴스입니다. 수치와 컨센서스 대비 여부를 확인하세요."
+    elif category == NEWS_CATEGORY_DIRECT and has_field_word:
+        sentiment, reason = "중립", "수주/공급/투자/제품 등 사업 현장성 직접 뉴스입니다. 금액과 지속성을 확인하세요."
     elif category == NEWS_CATEGORY_DIRECT:
         sentiment, reason = "중립", "종목 직접 뉴스지만 방향성 단서는 제한적"
     elif category == NEWS_CATEGORY_SECTOR:
@@ -995,7 +1021,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         "relation": relation,
         "sentiment": sentiment,
         "reason": reason,
-        "topic": "실적/IR" if has_earnings_word else "",
+        "topic": "실적/IR" if has_earnings_word else ("현장/사업" if has_field_word else ""),
     }
 
 def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
@@ -1016,12 +1042,31 @@ def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True)
         return (has_company or has_symbol) and has_stock_word
 
     return has_company or (has_symbol and has_stock_word)
+
+
+def normalize_news_title_key(title, publisher=""):
+    cleaned = clean_news_text(title).lower()
+    pub = clean_news_text(publisher).lower()
+    suffix = f" - {pub}"
+    if pub and cleaned.endswith(suffix):
+        cleaned = cleaned[:-len(suffix)]
+    return " ".join(cleaned.split())[:160]
     
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    is_kr_ticker = str(ticker).upper().endswith((".KS", ".KQ"))
+    google_locale = {
+        "hl": "ko",
+        "gl": "KR",
+        "ceid": "KR:ko",
+    } if is_kr_ticker else {
+        "hl": "en-US",
+        "gl": "US",
+        "ceid": "US:en",
     }
 
     query_plan, company_names, theme_terms = build_news_query_plan(ticker, name)
@@ -1036,10 +1081,15 @@ def get_ticker_news(ticker, name, debug=False):
     recent_items = []
     fallback_items = []
     seen_links = set()
+    seen_titles = set()
     accepted_by_category = {key: 0 for key in NEWS_CATEGORY_LIMITS}
 
     def add_item(title, link, publisher, pub_dt, category, strict=True):
         if not link or link in seen_links:
+            return False
+
+        title_key = normalize_news_title_key(title, publisher)
+        if title_key and title_key in seen_titles:
             return False
 
         assessment = assess_news_item(
@@ -1070,12 +1120,16 @@ def get_ticker_news(ticker, name, debug=False):
 
         if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
             seen_links.add(link)
+            if title_key:
+                seen_titles.add(title_key)
             accepted_by_category[category] = accepted_by_category.get(category, 0) + 1
             recent_items.append(item_data)
             return True
 
         if is_news_within_days(pub_dt, NEWS_FALLBACK_DAYS):
             seen_links.add(link)
+            if title_key:
+                seen_titles.add(title_key)
             accepted_by_category[category] = accepted_by_category.get(category, 0) + 1
             fallback_items.append(item_data)
             return True
@@ -1116,7 +1170,10 @@ def get_ticker_news(ticker, name, debug=False):
         normal_encoded = urllib.parse.quote(q)
 
         try:
-            google_url = f"https://news.google.com/rss/search?q={google_encoded}&hl=ko&gl=KR&ceid=KR:ko"
+            google_url = (
+                f"https://news.google.com/rss/search?q={google_encoded}"
+                f"&hl={google_locale['hl']}&gl={google_locale['gl']}&ceid={google_locale['ceid']}"
+            )
             if debug:
                 logs.append(f"구글 URL: {google_url}")
             total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
@@ -1125,6 +1182,9 @@ def get_ticker_news(ticker, name, debug=False):
             logs.append(f"구글 뉴스 실패: {q} / {e}")
 
         if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
+            continue
+
+        if not is_kr_ticker:
             continue
 
         try:
@@ -1146,9 +1206,9 @@ def get_ticker_news(ticker, name, debug=False):
         selected,
         key=lambda x: (
             NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
+            -news_sort_timestamp(x.get("_pub_dt")),
             0 if x.get("topic") == "실적/IR" else 1,
             -float(x.get("quality_score") or 0),
-            -news_sort_timestamp(x.get("_pub_dt")),
         )
     )
 

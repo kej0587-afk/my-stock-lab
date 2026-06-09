@@ -23065,7 +23065,20 @@ if main_page == "precision":
            
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 
-        st.markdown("### 📰 최신 현장 뉴스")
+        news_title_col, news_refresh_col = st.columns([0.72, 0.28])
+        with news_title_col:
+            st.markdown("### 📰 최신 현장 뉴스")
+        with news_refresh_col:
+            if st.button(
+                "뉴스 새로고침",
+                key=f"precision_news_refresh_{normalize_ticker(tkr)}",
+                width='stretch',
+                help="뉴스 캐시를 비우고 최신 RSS를 다시 불러옵니다.",
+            ):
+                cache_clear(get_ticker_news)
+                record_refresh_event("news_report_refresh_time")
+                st.toast("뉴스 캐시를 비웠습니다.")
+                st.rerun()
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
         if news_items:
             render_news_cards(news_items)
