@@ -9237,6 +9237,57 @@ def macro_event_default_weight(event_name):
     return 0.7
 
 
+def macro_event_impact_text(event_name):
+    name = canonical_macro_event_name(event_name)
+    if name == "미국 CPI 발표":
+        return "예상 상회: 금리·달러 상승, 나스닥/성장주/레버리지 부담. 예상 하회: 금리 부담 완화와 성장주 반등 재료."
+    if name == "미국 PPI 발표":
+        return "생산자 물가가 높으면 CPI 재가속 우려로 금리 부담 확대. 낮으면 인플레 둔화 확인 재료."
+    if name == "FOMC":
+        return "성명·점도표·기자회견이 금리 경로를 바꿀 수 있어 달러, 장기금리, 성장주 변동성이 커집니다."
+    if name == "ECB 통화정책":
+        return "유로 금리와 달러 흐름에 영향. 매파적이면 글로벌 금리 부담, 완화적이면 위험자산 심리 개선 가능."
+    if name == "BOJ 금융정책결정회의":
+        return "일본 금리·엔화가 움직이면 글로벌 채권금리와 엔캐리 청산 우려가 커질 수 있습니다."
+    if name == "미국 고용지표":
+        return "고용이 강하면 금리 인하 기대가 밀리고, 약하면 경기 둔화 우려와 금리 하락 재료가 동시에 생깁니다."
+    if "KOSPI 200" in name:
+        return "파생 만기 수급으로 장중·종가 변동성이 커질 수 있어 국내 대형주 추격매수는 보수적으로 봅니다."
+    if "IPO" in name:
+        return "대형 IPO 전후로 성장주 자금이 분산될 수 있어 같은 테마의 단기 수급 공백을 확인합니다."
+    return "고영향 일정 전후에는 포지션 확대보다 발표 결과와 시장 반응을 먼저 확인합니다."
+
+
+def macro_event_context_note(event):
+    name = canonical_macro_event_name(event.get("event", ""))
+    source = str(event.get("source", ""))
+    raw_title = str(event.get("raw_title", "")).strip()
+    note = str(event.get("note", "") or "").strip()
+
+    if name == "미국 CPI 발표":
+        base = "Core/MoM/YoY 중 컨센서스 대비 방향이 핵심입니다."
+    elif name == "미국 PPI 발표":
+        base = "CPI보다 한발 앞선 비용 압력 확인용입니다."
+    elif name == "FOMC":
+        base = "정책금리보다 점도표, 물가 판단, 파월 발언 톤이 더 중요할 수 있습니다."
+    elif name == "ECB 통화정책":
+        base = "달러 인덱스와 글로벌 금리 방향에 간접 영향을 줍니다."
+    elif name == "BOJ 금융정책결정회의":
+        base = "국채매입 축소, 금리 인상, 엔화 급등 가능성을 봅니다."
+    elif name == "미국 고용지표":
+        base = "고용 강도와 임금 압력이 금리 기대를 흔듭니다."
+    elif "KOSPI 200" in name:
+        base = "종가 부근 외국인/기관 파생 수급 흔들림을 조심합니다."
+    else:
+        base = note or "-"
+
+    if source == "자동: FF" and raw_title:
+        return f"{base} 원문 일정: {raw_title}"
+    if source == "fallback":
+        return f"{base} 외부 수집 실패 시 보조 일정으로 표시됩니다."
+    return note if note and "자동 수집" not in note and "fallback" not in note.lower() else base
+
+
 def normalize_macro_event(event, source="수동"):
     item = dict(event or {})
     item["event"] = canonical_macro_event_name(item.get("event", ""))
@@ -9354,7 +9405,8 @@ def ff_macro_event_from_title(title, country):
         "weight": macro_event_default_weight(event_name),
         "pre_days": 2 if event_name != "FOMC" else 3,
         "post_days": 1,
-        "note": f"ForexFactory 주간 고영향 일정 자동 수집: {title}",
+        "note": macro_event_context_note({"event": event_name, "source": "자동: FF", "raw_title": title}),
+        "raw_title": title,
         "source": "자동: FF",
     }
 
@@ -9476,7 +9528,8 @@ def build_macro_event_risk_table(today=None):
             "상태": state,
             "D-Day": timing,
             "점수": round(applied, 2),
-            "해석": event.get("note", "-"),
+            "영향": macro_event_impact_text(event.get("event", "-")),
+            "해석": macro_event_context_note(event),
             "출처": event.get("source", "수동"),
         })
 
