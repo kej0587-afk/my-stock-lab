@@ -6942,6 +6942,136 @@ def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
         _render_cluster_card(cols[i], cl, rank=rank_offset + i + 1, delta=_delta)
 
 
+def _cluster_timing_axis_value(timing_state: str) -> float:
+    """그래프 X축용 타이밍 점수. 높을수록 지금 접근하기 좋다."""
+    timing_state = str(timing_state or "")
+    return {
+        "하락 중": -1.4,
+        "과열": -0.7,
+        "확인 필요": 0.2,
+        "눌림 대기": 0.8,
+        "진입 가능": 1.6,
+    }.get(timing_state, 0.0)
+
+
+def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_market: int = 3):
+    """클러스터 강도와 타이밍을 2축 버블 차트로 표시."""
+    rows = []
+    for market, items in [("미국", us_list or []), ("한국", kr_list or [])]:
+        for rank, cl in enumerate(items[:max(top_n_per_market, 1)], 1):
+            strength = clean_float(cl.get("strength_score", np.nan), np.nan)
+            timing_state = str(cl.get("timing_state", "확인 필요"))
+            breadth = clean_float(cl.get("breadth", np.nan), np.nan)
+            r1m = clean_float(cl.get("r1m", np.nan), np.nan)
+            r2w = clean_float(cl.get("r2w", np.nan), np.nan)
+            rs3m = clean_float(cl.get("rs3m", np.nan), np.nan)
+            volume = clean_float(cl.get("volume_growth", np.nan), np.nan)
+            if not finite_num(strength):
+                continue
+            rows.append({
+                "시장": market,
+                "클러스터": str(cl.get("name", "")),
+                "강도": float(strength),
+                "타이밍점수": _cluster_timing_axis_value(timing_state),
+                "타이밍": timing_state,
+                "강도라벨": str(cl.get("flow_label", "중립")),
+                "확산도": float(breadth) if finite_num(breadth) else 0.0,
+                "1M": float(r1m) if finite_num(r1m) else np.nan,
+                "2W": float(r2w) if finite_num(r2w) else np.nan,
+                "RS3M": float(rs3m) if finite_num(rs3m) else np.nan,
+                "거래": float(volume) if finite_num(volume) else np.nan,
+                "순위": rank,
+                "라벨": f"{'🇺🇸' if market == '미국' else '🇰🇷'} {cl.get('name', '')}",
+                "크기": max(16, min(44, 16 + (float(breadth) if finite_num(breadth) else 0.0) * 34)),
+            })
+    if not rows:
+        return
+
+    chart_df = pd.DataFrame(rows)
+    timing_colors = {
+        "진입 가능": "#22c55e",
+        "눌림 대기": "#facc15",
+        "확인 필요": "#94a3b8",
+        "과열": "#fb923c",
+        "하락 중": "#ef4444",
+    }
+    symbols = chart_df["시장"].map({"미국": "circle", "한국": "diamond"}).fillna("circle").tolist()
+    colors = chart_df["타이밍"].map(timing_colors).fillna("#94a3b8").tolist()
+
+    fig = go.Figure()
+    fig.add_shape(
+        type="rect", x0=0.65, x1=2.05, y0=0, y1=max(70, chart_df["강도"].max() + 8),
+        fillcolor="rgba(34,197,94,0.08)", line_width=0, layer="below",
+    )
+    fig.add_shape(
+        type="rect", x0=-1.8, x1=0.65, y0=0, y1=max(70, chart_df["강도"].max() + 8),
+        fillcolor="rgba(250,204,21,0.07)", line_width=0, layer="below",
+    )
+    fig.add_shape(
+        type="rect", x0=-1.8, x1=2.05, y0=min(-55, chart_df["강도"].min() - 8), y1=0,
+        fillcolor="rgba(239,68,68,0.07)", line_width=0, layer="below",
+    )
+    fig.add_hline(y=0, line_dash="dash", line_color="#64748b", line_width=1)
+    fig.add_vline(x=0.65, line_dash="dash", line_color="#64748b", line_width=1)
+    fig.add_annotation(x=1.35, y=max(38, chart_df["강도"].max() * 0.92), text="<b>쏠림+진입 후보</b>", showarrow=False, font=dict(color="#86efac", size=12))
+    fig.add_annotation(x=-0.55, y=max(32, chart_df["강도"].max() * 0.70), text="<b>돈은 쏠리지만 대기</b>", showarrow=False, font=dict(color="#fde68a", size=12))
+    fig.add_annotation(x=-0.70, y=min(-22, chart_df["강도"].min() * 0.70), text="<b>약세/회피</b>", showarrow=False, font=dict(color="#fca5a5", size=12))
+
+    fig.add_trace(go.Scatter(
+        x=chart_df["타이밍점수"],
+        y=chart_df["강도"],
+        mode="markers+text",
+        text=chart_df["라벨"],
+        textposition="top center",
+        textfont=dict(size=11, color="#e2e8f0"),
+        marker=dict(
+            size=chart_df["크기"],
+            color=colors,
+            symbol=symbols,
+            opacity=0.86,
+            line=dict(color="#f8fafc", width=1),
+        ),
+        customdata=chart_df[["시장", "타이밍", "강도라벨", "확산도", "RS3M", "1M", "2W", "거래"]],
+        hovertemplate=(
+            "<b>%{text}</b><br>"
+            "시장: %{customdata[0]}<br>"
+            "강도: %{y:.1f}점 (%{customdata[2]})<br>"
+            "타이밍: %{customdata[1]}<br>"
+            "확산도: %{customdata[3]:.0%}<br>"
+            "RS 3M: %{customdata[4]:+.1%}<br>"
+            "1M: %{customdata[5]:+.1%}<br>"
+            "2W: %{customdata[6]:+.1%}<br>"
+            "거래: %{customdata[7]:+.0%}<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=430,
+        margin=dict(l=10, r=10, t=20, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,0.18)",
+        xaxis=dict(
+            title="타이밍: 지금 들어가도 되는가",
+            range=[-1.85, 2.05],
+            tickmode="array",
+            tickvals=[-1.4, -0.7, 0.2, 0.8, 1.6],
+            ticktext=["하락 중", "과열", "확인", "눌림", "진입"],
+            gridcolor="rgba(148,163,184,0.15)",
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title="강도: 어디로 돈이 쏠리는가",
+            gridcolor="rgba(148,163,184,0.15)",
+            zeroline=False,
+        ),
+        font=dict(color="#e2e8f0"),
+    )
+    st.plotly_chart(fig, width='stretch')
+    st.caption("버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. 오른쪽 위일수록 쏠림과 진입 타이밍이 함께 맞습니다.")
+
+
 def render_cluster_heatmap_enhanced(
     rotation_df,
     clusters: dict,
@@ -7004,6 +7134,7 @@ def render_cluster_heatmap_enhanced(
         wait_timing = [c for c in strong_pool if c["timing_state"] != "진입 가능"]
 
         st.markdown("##### 📊 클러스터 적합도 — 어디로 돈이 쏠리고(강도), 지금 들어가도 되는가(타이밍)")
+        _render_cluster_fit_bubble_chart(us_list, kr_list, top_n_per_market=top_n_per_market)
         if strong_pool:
             parts = []
             if ready_now:
@@ -7019,21 +7150,26 @@ def render_cluster_heatmap_enhanced(
                 "타이밍(진입 가능/눌림 대기/과열/하락 중)은 1개월·2주·가격위치만으로 따로 판정합니다 "
                 "&nbsp;|&nbsp; 한국/미국은 각각 KOSPI200·S&P500 기준"
             )
-        st.caption(
-            "💡 여기 '타이밍'(진입 가능/눌림 대기 등)은 클러스터의 1개월·2주 가격 흐름 기준입니다. "
-            "반면 상세 판정표의 '눌림목'은 종목별 RSI·볼린저 %B 같은 더 빠른 기술 지표 기준이라 시간축이 다릅니다 — "
-            "그래서 클러스터가 아직 '눌림 대기'인데 그 안의 종목이 이미 '눌림목 탑승 찬스'로 뜨는 경우가 흔합니다. "
-            "이건 모순이 아니라 종목 신호가 클러스터보다 먼저 반응한 것으로, 오히려 정밀관측소에서 먼저 확인해볼 좋은 조합입니다."
-        )
+        with st.expander("그래프 읽는 법", expanded=False):
+            st.caption(
+                "X축은 타이밍입니다. 오른쪽일수록 지금 접근하기 좋고, 왼쪽은 과열·하락으로 대기해야 합니다. "
+                "Y축은 강도입니다. 위쪽일수록 3개월 RS·확산도·거래가 강합니다. "
+                "버블 크기는 내부 확산도라서, 같은 강도라도 버블이 클수록 구성 ETF가 넓게 같이 움직입니다."
+            )
+            st.caption(
+                "클러스터 타이밍은 1개월·2주 가격 흐름 기준이고, 종목별 눌림목은 RSI·볼린저 %B 같은 더 빠른 기술 지표 기준입니다. "
+                "그래서 클러스터가 아직 '눌림 대기'인데 그 안의 종목이 이미 '눌림목 탑승 찬스'로 뜰 수 있습니다."
+            )
 
         # 오늘 강도 점수를 파일에 저장 (다음 날/재방문 시 진짜 '어제 대비' 비교에 사용)
         _curr = {cl["name"]: float(cl.get("strength_score", 0)) for cl in us_list + kr_list}
         _save_cluster_strength_snapshot(_today_key, _curr)
 
-        _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터",
-                                   prev_scores=_prev_scores)
-        _render_market_cluster_row(kr_list, top_n_per_market, "🇰🇷 한국 섹터",
-                                   rank_offset=top_n_per_market, prev_scores=_prev_scores)
+        with st.expander("클러스터 상세 카드 보기", expanded=False):
+            _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터",
+                                       prev_scores=_prev_scores)
+            _render_market_cluster_row(kr_list, top_n_per_market, "🇰🇷 한국 섹터",
+                                       rank_offset=top_n_per_market, prev_scores=_prev_scores)
         st.write("")
         return
 
