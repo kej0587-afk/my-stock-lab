@@ -218,7 +218,7 @@ NEWS_CATEGORY_LIMITS = {
     NEWS_CATEGORY_MARKET: 1,
 }
 NEWS_MAX_ITEMS = 6
-NEWS_MAX_CANDIDATES = 18
+NEWS_MAX_CANDIDATES = 30
 NEWS_CATEGORY_SEARCH_LIMITS = {
     NEWS_CATEGORY_DIRECT: 12,
     NEWS_CATEGORY_SECTOR: 7,
@@ -1116,6 +1116,7 @@ def get_ticker_news(ticker, name, debug=False):
         }
 
         if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
+            item_data["freshness"] = f"최근 {NEWS_RECENT_DAYS}일"
             seen_links.add(link)
             if title_key:
                 seen_titles.add(title_key)
@@ -1124,6 +1125,7 @@ def get_ticker_news(ticker, name, debug=False):
             return True
 
         if is_news_within_days(pub_dt, NEWS_FALLBACK_DAYS):
+            item_data["freshness"] = "보충"
             seen_links.add(link)
             if title_key:
                 seen_titles.add(title_key)
@@ -1159,7 +1161,10 @@ def get_ticker_news(ticker, name, debug=False):
         strict = plan.get("strict", True)
         if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
             continue
-        if sum(accepted_by_category.values()) >= NEWS_MAX_CANDIDATES:
+        if (
+            sum(accepted_by_category.values()) >= NEWS_MAX_CANDIDATES
+            and accepted_by_category.get(NEWS_CATEGORY_MARKET, 0) > 0
+        ):
             break
 
         google_query = f"{q} when:{NEWS_FALLBACK_DAYS}d"
@@ -1193,7 +1198,7 @@ def get_ticker_news(ticker, name, debug=False):
         except Exception as e:
             logs.append(f"네이버 뉴스 실패: {q} / {e}")
 
-    selected = recent_items if recent_items else fallback_items
+    selected = recent_items + fallback_items
 
     if not selected:
         logs.append("최근 주식 관련 뉴스 없음")
@@ -1203,6 +1208,7 @@ def get_ticker_news(ticker, name, debug=False):
         selected,
         key=lambda x: (
             NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
+            0 if is_news_within_days(x.get("_pub_dt"), NEWS_RECENT_DAYS) else 1,
             -news_sort_timestamp(x.get("_pub_dt")),
             0 if x.get("topic") == "실적/IR" else 1,
             -float(x.get("quality_score") or 0),
@@ -1226,6 +1232,8 @@ def get_ticker_news(ticker, name, debug=False):
 
     if not recent_items and fallback_items:
         logs.append(f"최근 {NEWS_RECENT_DAYS}일 뉴스가 없어 {NEWS_FALLBACK_DAYS}일 이내 기사로 대체 표시")
+    elif fallback_items:
+        logs.append(f"최근 {NEWS_RECENT_DAYS}일 뉴스가 부족한 카테고리는 {NEWS_FALLBACK_DAYS}일 이내 기사로 보충 표시")
 
     return selected, logs
 
@@ -1257,12 +1265,14 @@ def render_news_cards(news_items):
             safe_reason = escape_html_value(item.get("reason", "추가 확인 필요"))
             safe_score = escape_html_value(item.get("quality_score", ""))
             safe_topic = escape_html_value(item.get("topic", ""))
+            safe_freshness = escape_html_value(item.get("freshness", ""))
             date_part = f" | {safe_date}" if safe_date else ""
             safe_link = str(item.get("link", "#")).strip()
             if not safe_link.startswith(("http://", "https://")):
                 safe_link = "#"
             safe_link_attr = html.escape(safe_link, quote=True)
             topic_chip = f"<span class='news-chip'>{safe_topic}</span>" if safe_topic else ""
+            freshness_chip = f"<span class='news-chip'>{safe_freshness}</span>" if safe_freshness else ""
 
             sentiment_class = news_sentiment_class(item.get("sentiment", "중립"))
             st.markdown(
@@ -1271,6 +1281,7 @@ def render_news_cards(news_items):
                 f"<div class='news-meta-row'>"
                 f"<span class='news-chip news-chip-category'>{safe_category}</span>"
                 f"{topic_chip}"
+                f"{freshness_chip}"
                 f"<span class='news-chip news-chip-{sentiment_class}'>{safe_sentiment}</span>"
                 f"<span class='news-chip'>{safe_relation}</span>"
                 f"출처: {safe_pub}{date_part} | 품질점수: {safe_score}"
