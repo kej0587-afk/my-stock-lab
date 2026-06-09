@@ -6999,22 +6999,30 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
     colors = chart_df["타이밍"].map(timing_colors).fillna("#94a3b8").tolist()
 
     fig = go.Figure()
+    y_top = max(70, chart_df["강도"].max() + 8)
+    y_bottom = min(-55, chart_df["강도"].min() - 8)
     fig.add_shape(
-        type="rect", x0=0.65, x1=2.05, y0=0, y1=max(70, chart_df["강도"].max() + 8),
+        type="rect", x0=1.25, x1=2.05, y0=0, y1=y_top,
         fillcolor="rgba(34,197,94,0.08)", line_width=0, layer="below",
     )
     fig.add_shape(
-        type="rect", x0=-1.8, x1=0.65, y0=0, y1=max(70, chart_df["강도"].max() + 8),
-        fillcolor="rgba(250,204,21,0.07)", line_width=0, layer="below",
+        type="rect", x0=0.45, x1=1.25, y0=0, y1=y_top,
+        fillcolor="rgba(250,204,21,0.08)", line_width=0, layer="below",
     )
     fig.add_shape(
-        type="rect", x0=-1.8, x1=2.05, y0=min(-55, chart_df["강도"].min() - 8), y1=0,
+        type="rect", x0=-1.8, x1=0.45, y0=0, y1=y_top,
+        fillcolor="rgba(148,163,184,0.06)", line_width=0, layer="below",
+    )
+    fig.add_shape(
+        type="rect", x0=-1.8, x1=2.05, y0=y_bottom, y1=0,
         fillcolor="rgba(239,68,68,0.07)", line_width=0, layer="below",
     )
     fig.add_hline(y=0, line_dash="dash", line_color="#64748b", line_width=1)
-    fig.add_vline(x=0.65, line_dash="dash", line_color="#64748b", line_width=1)
-    fig.add_annotation(x=1.35, y=max(38, chart_df["강도"].max() * 0.92), text="<b>쏠림+진입 후보</b>", showarrow=False, font=dict(color="#86efac", size=12))
-    fig.add_annotation(x=-0.55, y=max(32, chart_df["강도"].max() * 0.70), text="<b>돈은 쏠리지만 대기</b>", showarrow=False, font=dict(color="#fde68a", size=12))
+    fig.add_vline(x=1.25, line_dash="dash", line_color="#64748b", line_width=1)
+    fig.add_vline(x=0.45, line_dash="dot", line_color="rgba(100,116,139,0.70)", line_width=1)
+    fig.add_annotation(x=1.62, y=max(38, chart_df["강도"].max() * 0.92), text="<b>쏠림+진입 가능</b>", showarrow=False, font=dict(color="#86efac", size=12))
+    fig.add_annotation(x=0.84, y=max(34, chart_df["강도"].max() * 0.76), text="<b>쏠림 강함 · 눌림/확인</b>", showarrow=False, font=dict(color="#fde68a", size=12))
+    fig.add_annotation(x=-0.55, y=max(30, chart_df["강도"].max() * 0.58), text="<b>대기/회피 확인</b>", showarrow=False, font=dict(color="#cbd5e1", size=12))
     fig.add_annotation(x=-0.70, y=min(-22, chart_df["강도"].min() * 0.70), text="<b>약세/회피</b>", showarrow=False, font=dict(color="#fca5a5", size=12))
 
     fig.add_trace(go.Scatter(
@@ -7057,7 +7065,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             range=[-1.85, 2.05],
             tickmode="array",
             tickvals=[-1.4, -0.7, 0.2, 0.8, 1.6],
-            ticktext=["하락 중", "과열", "확인", "눌림", "진입"],
+            ticktext=["하락 중", "과열", "확인", "눌림대기", "진입가능"],
             gridcolor="rgba(148,163,184,0.15)",
             zeroline=False,
         ),
@@ -7069,7 +7077,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
         font=dict(color="#e2e8f0"),
     )
     st.plotly_chart(fig, width='stretch')
-    st.caption("버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. 오른쪽 위일수록 쏠림과 진입 타이밍이 함께 맞습니다.")
+    st.caption("버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. '진입가능' 칸만 실제 진입 후보이고, '눌림대기/확인/과열'은 관망 또는 정찰 후보입니다.")
 
 
 def render_cluster_heatmap_enhanced(
@@ -7142,7 +7150,7 @@ def render_cluster_heatmap_enhanced(
                 parts.append(f"🔥 쏠림+진입 가능: {names} — 강도(3M RS·확산도)도 좋고 단기 흐름(1M/2W)도 확인된 구간입니다.")
             if wait_timing:
                 bits = "·".join(f"**{c['name']}**({c['timing_state']})" for c in wait_timing)
-                parts.append(f"⏳ 쏠림은 강하지만 타이밍 대기: {bits} — 돈은 쏠리는 중이나 단기 과열/눌림 확인이 더 필요합니다.")
+                parts.append(f"⏳ 쏠림은 강하지만 타이밍 대기: {bits} — 돈은 쏠리는 중이나 아직 진입 후보가 아니라 관망/정찰 구간입니다.")
             st.caption("  ".join(parts))
         else:
             st.caption(
@@ -7152,7 +7160,7 @@ def render_cluster_heatmap_enhanced(
             )
         with st.expander("그래프 읽는 법", expanded=False):
             st.caption(
-                "X축은 타이밍입니다. 오른쪽일수록 지금 접근하기 좋고, 왼쪽은 과열·하락으로 대기해야 합니다. "
+                "X축은 타이밍입니다. '진입가능'만 실제 클러스터 진입 후보이고, '눌림대기'는 강한 테마라도 관망/정찰 구간입니다. "
                 "Y축은 강도입니다. 위쪽일수록 3개월 RS·확산도·거래가 강합니다. "
                 "버블 크기는 내부 확산도라서, 같은 강도라도 버블이 클수록 구성 ETF가 넓게 같이 움직입니다."
             )
