@@ -362,6 +362,7 @@ NEWS_THEME_TERMS_BY_SYMBOL = {
     "069500": ["코스피200", "한국 증시", "외국인 수급"],
     "000660": ["HBM", "DRAM", "반도체", "메모리", "AI 반도체"],
     "005930": ["HBM", "DRAM", "반도체", "메모리", "파운드리"],
+    "009150": ["MLCC", "FC-BGA", "패키지기판", "카메라모듈", "전장부품", "AI 부품"],
     "200710": ["반도체", "디자인하우스", "파운드리", "AI 반도체"],
     "042700": ["반도체", "HBM", "후공정", "AI 반도체"],
     "403870": ["반도체", "전공정", "장비", "AI 반도체"],
@@ -400,7 +401,7 @@ NEWS_THEME_TERMS_BY_SYMBOL = {
     "434730": ["원전", "원자력", "SMR"],
 }
 
-NEWS_RECENT_DAYS = 14
+NEWS_RECENT_DAYS = 7
 NEWS_FALLBACK_DAYS = 90
 KST = timezone(timedelta(hours=9))
 
@@ -869,7 +870,6 @@ def first_signal_reason(text, signals):
 def get_news_theme_terms(ticker, name):
     symbol = normalize_news_token(ticker).upper()
     key = normalize_ticker(ticker).upper()
-    display_name = strip_search_prefix(name)
     terms = []
     terms_lower: set = set()
 
@@ -878,9 +878,6 @@ def get_news_theme_terms(ticker, name):
             if term and term.lower() not in terms_lower:
                 terms_lower.add(term.lower())
                 terms.append(term)
-
-    if display_name and display_name.upper() != symbol and display_name.lower() not in terms_lower:
-        terms.append(display_name)
 
     return terms[:6]
 
