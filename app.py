@@ -10400,6 +10400,22 @@ def classify_core_etf_dca_rate(
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
 ):
     macro_risk_value = final_macro_risk if final_macro_risk_value is None else final_macro_risk_value
+    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    if macro_risk_value >= 4.5:
+        if not is_core_etf or weight_gap <= 0 or is_leveraged_or_inverse:
+            return 0.0, ""
+        is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
+        is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
+        if is_extreme_overheat:
+            return 0.0, ""
+        if is_kr_listed(ticker):
+            if current_dd <= -0.20 and not is_upper_overheat:
+                return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
+            return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
+        if current_dd <= -0.20 and not is_upper_overheat:
+            return 0.50, "퍼펙트스톰 50% 감속 적립"
+        return 0.25, "퍼펙트스톰 25% 방어적 적립"
+
     return classify_core_etf_dca_rate_rule(
         is_core_etf=is_core_etf,
         weight_gap=weight_gap,
@@ -10408,8 +10424,7 @@ def classify_core_etf_dca_rate(
         mfi_now=mfi_now,
         pct_b_now=pct_b_now,
         trend=trend,
-        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
-        is_kr_listed_core_etf=is_kr_listed(ticker),
+        is_leveraged_or_inverse=is_leveraged_or_inverse,
         final_macro_risk=macro_risk_value,
     )
 
@@ -10913,8 +10928,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_core_dca_allowed and _fmr >= 4.5:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            decision_outcome = build_core_dca_outcome(prefix, core_dca_rate, dca_label)
-            dec, col = decision_outcome.label, decision_outcome.color
+            dec, col, decision_outcome = _set_decision(
+                f"{prefix} 방어: {dca_label}",
+                "#d97706" if core_dca_rate <= 0.25 else "#3b82f6",
+                "CORE_STORM_DCA",
+                reasons=(
+                    "퍼펙트스톰 구간이지만 코어 ETF 목표비중 미달 - 전면 차단 대신 감속 적립",
+                    f"적립 비율 {int(core_dca_rate * 100)}% 로 제한 - 변동성 확대 구간 방어적 접근",
+                ),
+            )
         elif _fmr >= 4.5:
             dec, col, decision_outcome = _set_decision(
                 "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM",
