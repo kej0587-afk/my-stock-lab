@@ -10395,6 +10395,18 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     ]
     return any(keyword in text for keyword in keywords)
 
+
+def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
+    ac = str(asset_class or "").strip().lower()
+    if ac in {"us_etf_sp", "us_etf_nasdaq"}:
+        return True
+    text = f"{ticker} {name} {asset_class}".upper()
+    return any(keyword in text for keyword in ["S&P500", "S&P 500", "SP500", "나스닥100", "NASDAQ100", "NASDAQ 100"])
+
+
+def is_domestic_kr_core_etf(ticker, asset_class="", name=""):
+    return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
+
 def classify_core_etf_dca_rate(
     is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
@@ -10404,11 +10416,13 @@ def classify_core_etf_dca_rate(
     if macro_risk_value >= 4.5:
         if not is_core_etf or weight_gap <= 0 or is_leveraged_or_inverse:
             return 0.0, ""
+        if is_us_broad_index_core_etf(ticker, asset_class, name):
+            return 1.0, "미국지수 퍼펙트스톰 100% 거치 적립"
         is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
         is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
         if is_extreme_overheat:
             return 0.0, ""
-        if is_kr_listed(ticker):
+        if is_domestic_kr_core_etf(ticker, asset_class, name):
             if current_dd <= -0.20 and not is_upper_overheat:
                 return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
             return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
@@ -10928,14 +10942,23 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         elif is_core_dca_allowed and _fmr >= 4.5:
             dca_label = core_dca_context["core_dca_label"]
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            dec, col, decision_outcome = _set_decision(
-                f"{prefix} 방어: {dca_label}",
-                "#d97706" if core_dca_rate <= 0.25 else "#3b82f6",
-                "CORE_STORM_DCA",
-                reasons=(
+            if core_dca_rate >= 1.0:
+                storm_color = "#16a34a"
+                storm_reasons = (
+                    "퍼펙트스톰 구간이지만 미국 대표지수 코어 ETF 목표비중 미달 - 거치식 원칙 유지",
+                    f"적립 비율 {int(core_dca_rate * 100)}% 적용 - 장기 우상향 코어는 매크로 타이밍보다 시장 노출 우선",
+                )
+            else:
+                storm_color = "#d97706" if core_dca_rate <= 0.25 else "#3b82f6"
+                storm_reasons = (
                     "퍼펙트스톰 구간이지만 코어 ETF 목표비중 미달 - 전면 차단 대신 감속 적립",
                     f"적립 비율 {int(core_dca_rate * 100)}% 로 제한 - 변동성 확대 구간 방어적 접근",
-                ),
+                )
+            dec, col, decision_outcome = _set_decision(
+                f"{prefix} 방어: {dca_label}",
+                storm_color,
+                "CORE_STORM_DCA",
+                reasons=storm_reasons,
             )
         elif _fmr >= 4.5:
             dec, col, decision_outcome = _set_decision(
@@ -14029,7 +14052,7 @@ MANUAL_SECTIONS = {
         {"타점": "하드차단: 재무F급", "조건": "개별주 재무점수 1 이하", "의미": "기술 신호와 무관하게 매수 차단"},
         {"타점": "하드차단: 비중 초과", "조건": "현재비중 > 목표비중", "의미": "추가매수 금지"},
         {"타점": "하드차단: 비중 충족", "조건": "현재비중 >= 목표비중", "의미": "목표 도달, 관망"},
-        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "시장 위험 우선 회피. 단, 목표비중 미달 코어 ETF는 감속 적립 예외"},
+        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "시장 위험 우선 회피. 단, 목표비중 미달 코어 ETF는 기초자산별 예외 적용"},
         {"타점": "MFI 극단 과열", "조건": "MFI 85 이상", "의미": "추격매수 금지"},
         {"타점": "과열확장", "조건": "재무 4점 + ADJ 4 이상 + %B 1.02 초과 + RS 강함", "의미": "대장주지만 MA5 눌림 대기"},
         {"타점": "불뿜는 대장주", "조건": "재무 4점 + ADJ 4 이상 + %B 0.95~1.02 + RS 강함", "의미": "강한 종목, 단기 눌림 진입 후보"},
@@ -14088,7 +14111,7 @@ def render_manual_tab():
 
 핵심은 하드차단 조건이 먼저라는 점입니다. 아무리 차트가 좋아도 재무F급, 비중초과, 극단과열, 퍼펙트스톰 같은 조건이 있으면 매수 가능 문구보다 금지/관망 문구가 먼저 나옵니다.
 
-다만 `bucket=core`인 장기 ETF는 목표비중이 부족하면 MFI/RSI 과열 또는 퍼펙트스톰 구간에서도 완전 대기가 아니라 적립 속도를 줄여 표시합니다. 국장 상장 코어 ETF는 변동성을 감안해 퍼펙트스톰 구간에서 더 낮은 방어 적립률을 적용합니다. 평상시 재원은 예수금이고, -20% 이상 급락 구간부터는 reserve/CD 같은 파킹자산도 별도 투입 후보로 봅니다.
+다만 `bucket=core`인 장기 ETF는 목표비중이 부족하면 MFI/RSI 과열 또는 퍼펙트스톰 구간에서도 완전 대기가 아니라 기초자산별 적립 속도를 표시합니다. `us_etf_sp`, `us_etf_nasdaq`은 한국 상장이어도 미국 대표지수 코어로 보며, 퍼펙트스톰에도 100% 거치 적립 원칙을 유지합니다. `kr_etf` 국내 주식형 코어 ETF는 변동성을 감안해 퍼펙트스톰 구간에서 더 낮은 방어 적립률을 적용합니다. 평상시 재원은 예수금이고, -20% 이상 급락 구간부터는 reserve/CD 같은 파킹자산도 별도 투입 후보로 봅니다.
         """)
 
         with st.expander("하드차단/금지 문구 자세히 보기", expanded=True):
@@ -14103,7 +14126,7 @@ def render_manual_tab():
 현재비중이 목표비중에 도달했을 때 뜹니다. 목표를 채웠으니 더 사기보다 관망하라는 뜻입니다.
 
 **하드차단: 퍼펙트스톰**  
-매크로 리스크가 4.5 이상일 때 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 감속 적립으로 표시될 수 있습니다.
+매크로 리스크가 4.5 이상일 때 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다.
 
 **하드차단: MFI 극단 과열**  
 MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심해서 추격매수를 막습니다.

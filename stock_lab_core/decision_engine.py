@@ -126,7 +126,7 @@ def classify_candidate_grade(is_etf: bool, tech_total: float, fin_score: int) ->
 
 def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str) -> tuple[str, str]:
     if "퍼펙트스톰" in str(dca_label or ""):
-        color = "#d97706" if core_dca_rate <= 0.25 else "#3b82f6"
+        color = "#16a34a" if core_dca_rate >= 1.0 else ("#d97706" if core_dca_rate <= 0.25 else "#3b82f6")
         return f"{prefix} 방어: {dca_label}", color
     if core_dca_rate <= 0.25:
         return f"{prefix} 과열: {dca_label}", "#d97706"
@@ -139,10 +139,16 @@ def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) ->
     label, color = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
     if "퍼펙트스톰" in str(dca_label or ""):
         code = "CORE_STORM_DCA"
-        reasons: tuple = (
-            "퍼펙트스톰 구간이지만 코어 ETF 목표비중 미달 - 전면 차단 대신 감속 적립",
-            f"적립 비율 {int(core_dca_rate * 100)}% 로 제한 - 변동성 확대 구간 방어적 접근",
-        )
+        if core_dca_rate >= 1.0:
+            reasons: tuple = (
+                "퍼펙트스톰 구간이지만 미국 대표지수 코어 ETF 목표비중 미달 - 거치식 원칙 유지",
+                f"적립 비율 {int(core_dca_rate * 100)}% 적용 - 장기 우상향 코어는 매크로 타이밍보다 시장 노출 우선",
+            )
+        else:
+            reasons = (
+                "퍼펙트스톰 구간이지만 코어 ETF 목표비중 미달 - 전면 차단 대신 감속 적립",
+                f"적립 비율 {int(core_dca_rate * 100)}% 로 제한 - 변동성 확대 구간 방어적 접근",
+            )
     elif core_dca_rate <= 0.25:
         code = "CORE_OVERHEAT_DCA"
         reasons = (
@@ -405,6 +411,7 @@ def classify_core_etf_dca_rate(
     trend: str,
     *,
     is_leveraged_or_inverse: bool = False,
+    is_us_broad_index_core_etf: bool = False,
     is_kr_listed_core_etf: bool = False,
     final_macro_risk: float = 0.0,
 ) -> tuple[float, str]:
@@ -416,6 +423,8 @@ def classify_core_etf_dca_rate(
     is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
     is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
     if final_macro_risk >= 4.5:
+        if is_us_broad_index_core_etf:
+            return 1.0, "미국지수 퍼펙트스톰 100% 거치 적립"
         if is_extreme_overheat:
             return 0.0, ""
         if is_kr_listed_core_etf:
