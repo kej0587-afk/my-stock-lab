@@ -10395,7 +10395,11 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     ]
     return any(keyword in text for keyword in keywords)
 
-def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend):
+def classify_core_etf_dca_rate(
+    is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
+    rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
+):
+    macro_risk_value = final_macro_risk if final_macro_risk_value is None else final_macro_risk_value
     return classify_core_etf_dca_rate_rule(
         is_core_etf=is_core_etf,
         weight_gap=weight_gap,
@@ -10405,7 +10409,8 @@ def classify_core_etf_dca_rate(is_core_etf, name, ticker, asset_class, weight_ga
         pct_b_now=pct_b_now,
         trend=trend,
         is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
-        final_macro_risk=final_macro_risk,
+        is_kr_listed_core_etf=is_kr_listed(ticker),
+        final_macro_risk=macro_risk_value,
     )
 
 
@@ -10413,9 +10418,11 @@ def build_core_dca_context(
     mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
     current_dd, rsi_now, mfi_now, pct_b_now, trend,
     cash_available_snapshot=None, reserve_available_snapshot=None,
+    final_macro_risk_value=None,
 ):
     rate, label = classify_core_etf_dca_rate(
-        is_core_etf, name, ticker, asset_class, weight_gap, current_dd, rsi_now, mfi_now, pct_b_now, trend
+        is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
+        rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value
     )
     cash_available = (
         get_cash_available_for_dca(mode)
@@ -10581,6 +10588,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         current_dd, rsi_now, mfi_now, pct_b_now, trend,
         cash_available_snapshot=_cash_available,
         reserve_available_snapshot=_reserve_available,
+        final_macro_risk_value=_fmr,
     )
     core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
     is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
@@ -10902,6 +10910,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     "비중 충족 - 추가 매수 불필요, 눌림 시 재검토",
                 ),
             )
+        elif is_core_dca_allowed and _fmr >= 4.5:
+            dca_label = core_dca_context["core_dca_label"]
+            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
+            decision_outcome = build_core_dca_outcome(prefix, core_dca_rate, dca_label)
+            dec, col = decision_outcome.label, decision_outcome.color
         elif _fmr >= 4.5:
             dec, col, decision_outcome = _set_decision(
                 "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM",
@@ -13994,7 +14007,7 @@ MANUAL_SECTIONS = {
         {"타점": "하드차단: 재무F급", "조건": "개별주 재무점수 1 이하", "의미": "기술 신호와 무관하게 매수 차단"},
         {"타점": "하드차단: 비중 초과", "조건": "현재비중 > 목표비중", "의미": "추가매수 금지"},
         {"타점": "하드차단: 비중 충족", "조건": "현재비중 >= 목표비중", "의미": "목표 도달, 관망"},
-        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "시장 위험 우선 회피"},
+        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "시장 위험 우선 회피. 단, 목표비중 미달 코어 ETF는 감속 적립 예외"},
         {"타점": "MFI 극단 과열", "조건": "MFI 85 이상", "의미": "추격매수 금지"},
         {"타점": "과열확장", "조건": "재무 4점 + ADJ 4 이상 + %B 1.02 초과 + RS 강함", "의미": "대장주지만 MA5 눌림 대기"},
         {"타점": "불뿜는 대장주", "조건": "재무 4점 + ADJ 4 이상 + %B 0.95~1.02 + RS 강함", "의미": "강한 종목, 단기 눌림 진입 후보"},
@@ -14053,7 +14066,7 @@ def render_manual_tab():
 
 핵심은 하드차단 조건이 먼저라는 점입니다. 아무리 차트가 좋아도 재무F급, 비중초과, 극단과열, 퍼펙트스톰 같은 조건이 있으면 매수 가능 문구보다 금지/관망 문구가 먼저 나옵니다.
 
-다만 `bucket=core`인 장기 ETF는 목표비중이 부족하면 MFI/RSI 과열 구간에서도 완전 대기가 아니라 적립 속도를 줄여 표시합니다. 평상시 재원은 예수금이고, -20% 이상 급락 구간부터는 reserve/CD 같은 파킹자산도 별도 투입 후보로 봅니다.
+다만 `bucket=core`인 장기 ETF는 목표비중이 부족하면 MFI/RSI 과열 또는 퍼펙트스톰 구간에서도 완전 대기가 아니라 적립 속도를 줄여 표시합니다. 국장 상장 코어 ETF는 변동성을 감안해 퍼펙트스톰 구간에서 더 낮은 방어 적립률을 적용합니다. 평상시 재원은 예수금이고, -20% 이상 급락 구간부터는 reserve/CD 같은 파킹자산도 별도 투입 후보로 봅니다.
         """)
 
         with st.expander("하드차단/금지 문구 자세히 보기", expanded=True):
@@ -14068,7 +14081,7 @@ def render_manual_tab():
 현재비중이 목표비중에 도달했을 때 뜹니다. 목표를 채웠으니 더 사기보다 관망하라는 뜻입니다.
 
 **하드차단: 퍼펙트스톰**  
-매크로 리스크가 4.5 이상일 때 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선입니다.
+매크로 리스크가 4.5 이상일 때 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 감속 적립으로 표시될 수 있습니다.
 
 **하드차단: MFI 극단 과열**  
 MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심해서 추격매수를 막습니다.

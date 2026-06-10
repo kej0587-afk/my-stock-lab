@@ -125,6 +125,9 @@ def classify_candidate_grade(is_etf: bool, tech_total: float, fin_score: int) ->
 
 
 def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str) -> tuple[str, str]:
+    if "퍼펙트스톰" in str(dca_label or ""):
+        color = "#d97706" if core_dca_rate <= 0.25 else "#3b82f6"
+        return f"{prefix} 방어: {dca_label}", color
     if core_dca_rate <= 0.25:
         return f"{prefix} 과열: {dca_label}", "#d97706"
     if core_dca_rate <= 0.50:
@@ -134,9 +137,15 @@ def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str
 
 def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) -> DecisionOutcome:
     label, color = classify_core_dca_decision(prefix, core_dca_rate, dca_label)
-    if core_dca_rate <= 0.25:
-        code = "CORE_OVERHEAT_DCA"
+    if "퍼펙트스톰" in str(dca_label or ""):
+        code = "CORE_STORM_DCA"
         reasons: tuple = (
+            "퍼펙트스톰 구간이지만 코어 ETF 목표비중 미달 - 전면 차단 대신 감속 적립",
+            f"적립 비율 {int(core_dca_rate * 100)}% 로 제한 - 변동성 확대 구간 방어적 접근",
+        )
+    elif core_dca_rate <= 0.25:
+        code = "CORE_OVERHEAT_DCA"
+        reasons = (
             "코어 ETF 과열 구간 감지 (MFI>=80 또는 RSI>=75 또는 볼린저 상단 근접)",
             f"적립 비율 {int(core_dca_rate * 100)}% 로 축소 - 고점 추격 억제",
         )
@@ -396,14 +405,26 @@ def classify_core_etf_dca_rate(
     trend: str,
     *,
     is_leveraged_or_inverse: bool = False,
+    is_kr_listed_core_etf: bool = False,
     final_macro_risk: float = 0.0,
 ) -> tuple[float, str]:
     if not is_core_etf or weight_gap <= 0:
         return 0.0, ""
     if is_leveraged_or_inverse:
         return 0.0, ""
+
+    is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
+    is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
     if final_macro_risk >= 4.5:
-        return 0.0, ""
+        if is_extreme_overheat:
+            return 0.0, ""
+        if is_kr_listed_core_etf:
+            if current_dd <= -0.20 and not is_upper_overheat:
+                return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
+            return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
+        if current_dd <= -0.20 and not is_upper_overheat:
+            return 0.50, "퍼펙트스톰 50% 감속 적립"
+        return 0.25, "퍼펙트스톰 25% 방어적 적립"
 
     if current_dd <= -0.30:
         return 2.0, "폭락장 200% 집중"
@@ -411,9 +432,9 @@ def classify_core_etf_dca_rate(
         return 1.5, "하락장 150% 분할"
     if current_dd <= -0.10 or (rsi_now <= 55 and mfi_now < 70 and pct_b_now <= 0.70):
         return 1.0, "눌림 100% 적립"
-    if mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00:
+    if is_extreme_overheat:
         return 0.25, "과열 25% 정기적립"
-    if mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90:
+    if is_upper_overheat:
         return 0.25, "상단 25% 정기적립"
     if trend == "🌊역배열(하락)":
         return 0.25, "하락추세 25% 정기적립"
