@@ -10428,54 +10428,19 @@ def classify_core_etf_dca_rate(
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
 ):
     _, macro_risk_value, _ = resolve_decision_runtime_inputs(final_macro_risk_value=final_macro_risk_value)
-    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
-    is_us_broad_core = is_us_broad_index_core_etf(ticker, asset_class, name)
-    is_kr_core = is_domestic_kr_core_etf(ticker, asset_class, name)
-    if macro_risk_value >= 4.5:
-        if not is_core_etf or weight_gap <= 0 or is_leveraged_or_inverse:
-            return 0.0, ""
-        if is_us_broad_core:
-            return 1.0, "미국지수 퍼펙트스톰 100% 거치 적립"
-        is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
-        is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
-        if is_extreme_overheat:
-            return 0.0, ""
-        if is_kr_core:
-            if current_dd <= -0.20 and not is_upper_overheat:
-                return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
-            return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
-        if current_dd <= -0.20 and not is_upper_overheat:
-            return 0.50, "퍼펙트스톰 50% 감속 적립"
-        return 0.25, "퍼펙트스톰 25% 방어적 적립"
-
-    try:
-        return classify_core_etf_dca_rate_rule(
-            is_core_etf=is_core_etf,
-            weight_gap=weight_gap,
-            current_dd=current_dd,
-            rsi_now=rsi_now,
-            mfi_now=mfi_now,
-            pct_b_now=pct_b_now,
-            trend=trend,
-            is_leveraged_or_inverse=is_leveraged_or_inverse,
-            is_us_broad_index_core_etf=is_us_broad_core,
-            is_kr_listed_core_etf=is_kr_core,
-            final_macro_risk=macro_risk_value,
-        )
-    except TypeError as exc:
-        if "unexpected keyword" not in str(exc) and "got an unexpected keyword" not in str(exc):
-            raise
-        return classify_core_etf_dca_rate_rule(
-            is_core_etf=is_core_etf,
-            weight_gap=weight_gap,
-            current_dd=current_dd,
-            rsi_now=rsi_now,
-            mfi_now=mfi_now,
-            pct_b_now=pct_b_now,
-            trend=trend,
-            is_leveraged_or_inverse=is_leveraged_or_inverse,
-            final_macro_risk=macro_risk_value,
-        )
+    return classify_core_etf_dca_rate_rule(
+        is_core_etf=is_core_etf,
+        weight_gap=weight_gap,
+        current_dd=current_dd,
+        rsi_now=rsi_now,
+        mfi_now=mfi_now,
+        pct_b_now=pct_b_now,
+        trend=trend,
+        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
+        is_us_broad_index_core_etf=is_us_broad_index_core_etf(ticker, asset_class, name),
+        is_kr_listed_core_etf=is_domestic_kr_core_etf(ticker, asset_class, name),
+        final_macro_risk=macro_risk_value,
+    )
 
 
 def build_core_dca_context(
