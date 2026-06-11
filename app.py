@@ -95,6 +95,8 @@ from stock_lab_core.decision_engine import (
     build_core_dca_context_values,
     classify_candidate_grade,
     classify_decision_signal,
+    classify_safety_state,
+    classify_macro_state,
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
@@ -10412,24 +10414,6 @@ def classify_core_etf_dca_rate(
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
 ):
     macro_risk_value = final_macro_risk if final_macro_risk_value is None else final_macro_risk_value
-    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
-    if macro_risk_value >= 4.5:
-        if not is_core_etf or weight_gap <= 0 or is_leveraged_or_inverse:
-            return 0.0, ""
-        if is_us_broad_index_core_etf(ticker, asset_class, name):
-            return 1.0, "미국지수 퍼펙트스톰 100% 거치 적립"
-        is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
-        is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
-        if is_extreme_overheat:
-            return 0.0, ""
-        if is_domestic_kr_core_etf(ticker, asset_class, name):
-            if current_dd <= -0.20 and not is_upper_overheat:
-                return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
-            return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
-        if current_dd <= -0.20 and not is_upper_overheat:
-            return 0.50, "퍼펙트스톰 50% 감속 적립"
-        return 0.25, "퍼펙트스톰 25% 방어적 적립"
-
     return classify_core_etf_dca_rate_rule(
         is_core_etf=is_core_etf,
         weight_gap=weight_gap,
@@ -10438,7 +10422,9 @@ def classify_core_etf_dca_rate(
         mfi_now=mfi_now,
         pct_b_now=pct_b_now,
         trend=trend,
-        is_leveraged_or_inverse=is_leveraged_or_inverse,
+        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
+        is_us_broad_index_core_etf=is_us_broad_index_core_etf(ticker, asset_class, name),
+        is_kr_listed_core_etf=is_domestic_kr_core_etf(ticker, asset_class, name),
         final_macro_risk=macro_risk_value,
     )
 
@@ -10544,6 +10530,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     candidate_grade = classify_candidate_grade(is_etf, tech_total, fin_score)
     t_score = candidate_grade.t_score
     grade = candidate_grade.grade
+
+    # 조직도 상태값 (additive) — 기존 dec/col 분기 로직은 변경하지 않음.
+    # safety_state: 안전관리자(tech_total) 상태. RED/YELLOW/GREEN.
+    # macro_state : 매크로/재난경보(final_macro_risk) 상태. STORM/CAUTION/NORMAL.
+    # 다음 단계에서 dec 분기를 이 상태값 기준으로 재배선할 예정.
+    safety_state = classify_safety_state(tech_total)
+    macro_state = classify_macro_state(_fmr)
 
     levels = get_recent_levels(df)
 
@@ -11584,7 +11577,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": rr_stop_atr, "atr": _atr,
         "is_52w_breakout": is_52w_breakout,
         "sector_flow_state": sector_flow_state,
-        "smc_insight": smc_insight
+        "smc_insight": smc_insight,
+        "safety_state": safety_state, "macro_state": macro_state,
     }
 
 TICKER_MAP = {

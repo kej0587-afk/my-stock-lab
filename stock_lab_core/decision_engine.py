@@ -124,6 +124,55 @@ def classify_candidate_grade(is_etf: bool, tech_total: float, fin_score: int) ->
     return CandidateGrade(t_score=t_score, grade=grade)
 
 
+def classify_safety_state(tech_total: float) -> str:
+    """안전관리자 상태 — tech_total(RS+MFI+추세+MACD+SQZ) 기반.
+
+    이 상태는 "전면 중지" 권한이 아니라 "작업 종류별 허가권자" 역할이다.
+
+    - RED:    개별주 신규진입/추격매수/대장주 포착 등 공격적 진입 차단.
+              단, 코어 ETF 정기적립(core_dca)·낙폭과대 분할매수 등은
+              asset_policy(core_dca, classify_core_etf_dca_rate 등)가
+              별도로 판단하므로 RED여도 막히지 않을 수 있다.
+    - YELLOW: 소액/분할/정찰(스카우트) 진입만 허용.
+    - GREEN:  main_score(현장소장)가 정상적으로 실행 강도를 결정한다.
+
+    임계값은 classify_candidate_grade의 ETF 등급 경계(<1, <3)와 동일하게
+    맞춰 기존 grade 체계와 일관성을 유지한다.
+    """
+    if not is_finite_number(tech_total):
+        return "RED"
+    tech_total = float(tech_total)
+    if tech_total < 1:
+        return "RED"
+    if tech_total < 3:
+        return "YELLOW"
+    return "GREEN"
+
+
+def classify_macro_state(final_macro_risk: float) -> str:
+    """매크로/재난 상태 — final_macro_risk 기반.
+
+    - STORM:   퍼펙트스톰 (final_macro_risk >= 4.5).
+               대부분의 신규 진입은 중단되지만, 미국 대표지수 코어 ETF 등은
+               정책상 예외로 정기 적립이 허용된다 (classify_core_etf_dca_rate 참고).
+    - CAUTION: 매크로 리스크 상승 구간 (macro_penalty가 0보다 큰 구간, >= 1.5).
+               main_score 기반 진입 강도를 한 단계 보수적으로 조정.
+    - NORMAL:  매크로 리스크 낮음. 정상 판단.
+    - UNKNOWN: 매크로 리스크 값이 없거나 비정상. 낙관적으로 NORMAL 처리하지 않는다.
+
+    임계값은 get_macro_analysis()의 macro_penalty 분기(>=4, >=2.5, >=1.5)
+    및 app.py 전역에서 쓰이는 퍼펙트스톰 기준(>=4.5)과 정합성을 맞췄다.
+    """
+    if not is_finite_number(final_macro_risk):
+        return "UNKNOWN"
+    final_macro_risk = float(final_macro_risk)
+    if final_macro_risk >= 4.5:
+        return "STORM"
+    if final_macro_risk >= 1.5:
+        return "CAUTION"
+    return "NORMAL"
+
+
 def classify_core_dca_decision(prefix: str, core_dca_rate: float, dca_label: str) -> tuple[str, str]:
     if "퍼펙트스톰" in str(dca_label or ""):
         color = "#16a34a" if core_dca_rate >= 1.0 else ("#d97706" if core_dca_rate <= 0.25 else "#3b82f6")
@@ -286,6 +335,7 @@ NEW_ENTRY_DECISION_CODES = {
 
 
 DECISION_GROUP_BY_CODE = {
+    "CORE_STORM_DCA": "buyish",
     "CORE_CRASH_DCA": "buyish",
     "CORE_DRAWDOWN_DCA": "buyish",
     "CORE_PULLBACK_DCA": "buyish",
