@@ -10473,6 +10473,47 @@ def build_core_dca_context(
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
+def _build_decision_result(ctx: dict) -> dict:
+    """Assemble calc_scores_and_decision's return dict.
+
+    Extracted verbatim from the final `return {...}` of
+    calc_scores_and_decision (step 2 of the guard -> policy -> signal ->
+    sizing decomposition). `ctx` is that function's `locals()` at the point
+    of return, so this is a pure, behavior-preserving move — no renames, no
+    logic changes.
+    """
+    decision_outcome = ctx["decision_outcome"]
+    last = ctx["last"]
+    fvg_info = ctx["fvg_info"]
+    core_dca_context = ctx["core_dca_context"]
+    df = ctx["df"]
+    return {
+        "cur_p": ctx["cur_p"], "rsi": ctx["rsi_now"], "mfi": ctx["mfi_now"], "pct_b": ctx["pct_b_now"], "rs_label": ctx["rs_label"], "adj": ctx["adj_tech_score"],
+        "dec": decision_outcome.label, "col": decision_outcome.color,
+        "decision_code": decision_outcome.code, "decision_group": decision_outcome.group,
+        "decision_reasons": decision_outcome.reasons,
+        "grade": ctx["grade"], "t_score": ctx["t_score"], "tech_total": ctx["tech_total"], "fin_score": ctx["fin_score"],
+        "dd": ctx["current_dd"], "ret_3m": ctx["ret_3m"], "ret_6m": ctx["ret_6m"], "target_w": ctx["targ_w"], "current_w": ctx["curr_w"], "buy_amt": ctx["buy_amount"],
+        "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df), **core_dca_context,
+        "day_ret": ctx["day_ret"], "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
+        "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
+        "sizing_hint": ctx["sizing_hint"],
+        "ext_structure": ctx["ext_structure"], "int_structure": ctx["int_structure"], "pd_zone": ctx["pd_zone"], "smc_action": ctx["smc_action"],
+        "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": ctx["sqz_status"], "macd": ctx["macd_state"], "rt_macd": ctx["rt_macd_label"],
+        "trend": ctx["trend"], "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
+        "liq_state": ctx["liq_state"], "int_event": ctx["int_event"], "ext_event": ctx["ext_event"],
+        "main_s": ctx["main_score"], "rs_s": ctx["rs_s"], "mfi_s": ctx["mfi_s"],
+        "trend_s": ctx["trend_s"], "macd_s": ctx["macd_s"], "sqz_s": ctx["sqz_s"],
+        "rs_slope_s": ctx["rs_slope_s"], "rs_slope_label": ctx["rs_slope_label"], "rs_slope_val": ctx["rs_slope_val"],
+        "profit_take_signal": (ctx["has_pos"] and (not ctx["is_core_etf"]) and ctx["mfi_now"] >= 80 and ctx["pct_b_now"] > 0.9 and ctx["price_vs_avg"] > 0.20),
+        "rr_ratio": ctx["rr_ratio"], "rr_target": ctx["rr_target_price"], "rr_stop": ctx["rr_stop_atr"], "atr": ctx["_atr"],
+        "is_52w_breakout": ctx["is_52w_breakout"],
+        "sector_flow_state": ctx["sector_flow_state"],
+        "smc_insight": ctx["smc_insight"],
+        "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -11586,31 +11627,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     f"(잔여 비중 부족: {weight_gap:.1f}%p)"
                 )
 
-    return {
-        "cur_p": cur_p, "rsi": rsi_now, "mfi": mfi_now, "pct_b": pct_b_now, "rs_label": rs_label, "adj": adj_tech_score,
-        "dec": decision_outcome.label, "col": decision_outcome.color,
-        "decision_code": decision_outcome.code, "decision_group": decision_outcome.group,
-        "decision_reasons": decision_outcome.reasons,
-        "grade": grade, "t_score": t_score, "tech_total": tech_total, "fin_score": fin_score,
-        "dd": current_dd, "ret_3m": ret_3m, "ret_6m": ret_6m, "target_w": targ_w, "current_w": curr_w, "buy_amt": buy_amount,
-        "bucket": effective_bucket, "short_history": short_history, "history_days": len(df), **core_dca_context,
-        "day_ret": day_ret, "vol_ratio": vol_ratio, "structure_risk": is_structure_damage_entry_risk,
-        "live_price_used": live_price_used, "daily_close": daily_close, "live_gap_shock": is_live_gap_shock,
-        "sizing_hint": sizing_hint,
-        "ext_structure": ext_structure, "int_structure": int_structure, "pd_zone": pd_zone, "smc_action": smc_action,
-        "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": sqz_status, "macd": macd_state, "rt_macd": rt_macd_label,
-        "trend": trend, "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
-        "liq_state": liq_state, "int_event": int_event, "ext_event": ext_event, 
-        "main_s": main_score, "rs_s": rs_s, "mfi_s": mfi_s,
-        "trend_s": trend_s, "macd_s": macd_s, "sqz_s": sqz_s,
-        "rs_slope_s": rs_slope_s, "rs_slope_label": rs_slope_label, "rs_slope_val": rs_slope_val,
-        "profit_take_signal": (has_pos and (not is_core_etf) and mfi_now >= 80 and pct_b_now > 0.9 and price_vs_avg > 0.20),
-        "rr_ratio": rr_ratio, "rr_target": rr_target_price, "rr_stop": rr_stop_atr, "atr": _atr,
-        "is_52w_breakout": is_52w_breakout,
-        "sector_flow_state": sector_flow_state,
-        "smc_insight": smc_insight,
-        "safety_state": safety_state, "macro_state": macro_state,
-    }
+    return _build_decision_result(locals())
 
 TICKER_MAP = {
     "나스닥": ("379810.KS", True, "us_etf_nasdaq"), "QQQM": ("QQQM", True, "us_etf_nasdaq"), "QLD": ("QLD", True, "us_etf_nasdaq"), "TQQQ": ("TQQQ", True, "us_etf_nasdaq"),
