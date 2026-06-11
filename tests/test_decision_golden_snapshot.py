@@ -200,6 +200,32 @@ SCENARIOS = [
         ),
     ),
     (
+        "free_stock_new_entry_leader",
+        dict(daily_drift=0.0020, daily_vol=0.012, seed=2),
+        (2, "🚀강함"),
+        (5.0, "📈RS상승중", 1),
+        dict(
+            name="대장주후보", ticker="TST8.KS", is_etf=False, asset_class="kr_stock",
+            my_price=0.0, has_pos=False, fin_score=4, is_free=True,
+            app_mode="자유모드", user_total_asset=10_000_000, user_curr_w=0.0, user_targ_w=10.0,
+            _macro_penalty=0.0, _final_macro_risk=1.0, _total_eval=10_000_000,
+            _cash_available=0.0, _reserve_available=0.0,
+        ),
+    ),
+    (
+        "free_stock_s_pullback_entry",
+        dict(daily_drift=0.0013, daily_vol=0.012, seed=6),
+        (2, "🚀강함"),
+        (5.0, "📈RS상승중", 1),
+        dict(
+            name="S급눌림목", ticker="TST9.KS", is_etf=False, asset_class="kr_stock",
+            my_price=0.0, has_pos=False, fin_score=4, is_free=True,
+            app_mode="자유모드", user_total_asset=10_000_000, user_curr_w=0.0, user_targ_w=10.0,
+            _macro_penalty=0.0, _final_macro_risk=1.0, _total_eval=10_000_000,
+            _cash_available=0.0, _reserve_available=0.0,
+        ),
+    ),
+    (
         # NB: with this seed the price path lands in a deep (~-54%) drawdown,
         # so this currently exercises CRISIS_PANIC_SELL_OFF rather than the
         # SAFETY_RED_NO_NEW_ENTRY override. Kept as-is (frozen baseline);
