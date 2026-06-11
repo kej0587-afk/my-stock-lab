@@ -335,6 +335,9 @@ NEW_ENTRY_DECISION_CODES = {
 
 
 DECISION_GROUP_BY_CODE = {
+    "DATA_UNAVAILABLE": "caution",
+    "DATA_ERROR": "caution",
+    "SAFETY_RED_NO_NEW_ENTRY": "caution",
     "CORE_STORM_DCA": "buyish",
     "CORE_CRASH_DCA": "buyish",
     "CORE_DRAWDOWN_DCA": "buyish",

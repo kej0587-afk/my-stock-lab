@@ -88,6 +88,7 @@ from stock_lab_core.financial_score import (
     resolve_fin_score_source,
 )
 from stock_lab_core.decision_engine import (
+    DECISION_GROUP_BY_CODE,
     build_core_dca_outcome,
     build_decision_outcome,
     build_limited_history_etf_outcome,
@@ -1331,7 +1332,7 @@ MA50: {c['ma50']}
 MA120: {c['ma120']}
 3개월 수익률: {c['ret_3m']}
 6개월 수익률: {c['ret_6m']}
-MDD: {c['dd']}
+52주 고점대비: {c['dd']}
 기술점수: {c['tech_total']}
 재무점수: {c['fin_score']}
 종합 해석: {c['smc_action']}
@@ -10409,11 +10410,24 @@ def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
 def is_domestic_kr_core_etf(ticker, asset_class="", name=""):
     return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
 
+
+def resolve_decision_runtime_inputs(macro_penalty_value=None, final_macro_risk_value=None, total_eval_value=None):
+    """Resolve decision inputs without raising if app globals are not ready yet."""
+    mp = globals().get("macro_penalty", 0.0) if macro_penalty_value is None else macro_penalty_value
+    fmr = globals().get("final_macro_risk", np.nan) if final_macro_risk_value is None else final_macro_risk_value
+    te = globals().get("total_eval", 0.0) if total_eval_value is None else total_eval_value
+    return (
+        clean_float(mp, 0.0),
+        clean_float(fmr, np.nan),
+        clean_float(te, 0.0),
+    )
+
+
 def classify_core_etf_dca_rate(
     is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
 ):
-    macro_risk_value = final_macro_risk if final_macro_risk_value is None else final_macro_risk_value
+    _, macro_risk_value, _ = resolve_decision_runtime_inputs(final_macro_risk_value=final_macro_risk_value)
     return classify_core_etf_dca_rate_rule(
         is_core_etf=is_core_etf,
         weight_gap=weight_gap,
@@ -10470,9 +10484,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                              _cash_available=None, _reserve_available=None,
                              live_price: float = 0.0):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
-    _mp  = macro_penalty      if _macro_penalty      is None else _macro_penalty
-    _fmr = final_macro_risk   if _final_macro_risk   is None else _final_macro_risk
-    _te  = total_eval         if _total_eval         is None else _total_eval
+    _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
 
     df = ensure_min_price_rows_for_decision(df)
 
@@ -11520,6 +11532,30 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
     if decision_outcome is None:
         decision_outcome = build_decision_outcome(dec, col)
+    aggressive_new_entry_codes = {
+        "BREAKOUT_52W_ENTRY",
+        "S_PULLBACK_ENTRY",
+        "OVERSOLD_NEW_ENTRY",
+        "EARLY_ENTRY",
+        "EARLY_REVERSAL_ENTRY",
+        "NEW_ENTRY_LEADER",
+        "QUALITY_PULLBACK_ENTRY",
+        "TREND_PULLBACK_EXPLORE",
+        "EXCEPTION_ENTRY",
+        "LEADER_MA5_FAST_PULLBACK_ENTRY",
+        "LEADER_MA5_PULLBACK_ENTRY",
+    }
+    if safety_state == "RED" and (not has_pos) and decision_outcome.code in aggressive_new_entry_codes:
+        dec, col, decision_outcome = _set_decision(
+            "🧯안전관리자 RED: 신규진입 보류",
+            "#d97706",
+            "SAFETY_RED_NO_NEW_ENTRY",
+            reasons=(
+                f"안전상태 RED / 기존 신호 {decision_outcome.label}",
+                f"tech_total {tech_total:.1f} / main_score {main_score:.1f} / Adj {adj_tech_score:.1f}",
+                "코어 ETF 적립과 보유종목 분할매수는 별도 정책으로 판단하고, 공격적 신규진입만 보류",
+            ),
+        )
     _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
     sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
     # 기존 보유 + 비중 부족 + "MA5 눌림 대기" 신호 → 눌림 시 추가 규모 안내
@@ -12261,7 +12297,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("장기 적합도", f"{suitability_score}/5", long_label)
     m2.metric("내 손익률", "-" if not finite_num(price_vs_avg) else f"{price_vs_avg * 100:.1f}%")
-    m3.metric("고점대비 MDD", f"{dd * 100:.1f}%")
+    m3.metric("52주 고점대비", f"{dd * 100:.1f}%")
     m4.metric("포지션 판단", position_label)
 
     rows = [
@@ -12732,11 +12768,11 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     add_check("밸류/가격", val_status, f"{valuation_headline}. {valuation_note}{upside_text}")
 
     if is_core_dca and dd <= -0.2:
-        add_check("구조/추세", "주의", f"고점대비 MDD {dd * 100:.1f}%. 코어 ETF 급락 구간은 원인 확인 후 파킹자산 일부 투입 후보로 봅니다.")
+        add_check("구조/추세", "주의", f"52주 고점대비 {dd * 100:.1f}%. 코어 ETF 급락 구간은 원인 확인 후 파킹자산 일부 투입 후보로 봅니다.")
     elif live_gap_shock:
         add_check("구조/추세", "차단", f"현재/전거래일 대비 {clean_float(c.get('day_ret'), 0.0) * 100:.1f}% 실시간 급락 구간입니다. 정규장 종가와 거래량 확인 전 신규/추매는 보류합니다.")
     elif structure_risk or dd <= -0.2:
-        add_check("구조/추세", "차단", f"고점대비 MDD {dd * 100:.1f}% 또는 구조위험이 있습니다. 원인 확인 전 추매는 금지에 가깝게 봅니다.")
+        add_check("구조/추세", "차단", f"52주 고점대비 {dd * 100:.1f}% 또는 구조위험이 있습니다. 원인 확인 전 추매는 금지에 가깝게 봅니다.")
     elif "역배열" in trend or "약함" in rs_label:
         add_check("구조/추세", "주의", f"{trend} / {rs_label}. 추세 회복을 확인하고 접근하는 쪽이 낫습니다.")
     else:
@@ -13100,6 +13136,47 @@ def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers:
             future.result()  # 예외가 있으면 무시하고 계속
 
 
+def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_macro_risk=np.nan):
+    """Build a visible today-queue row when a ticker cannot be judged."""
+    tkr = sanitize_ticker_value(item.get("ticker", ""))
+    name = sanitize_asset_name(item.get("name", ""), tkr)
+    is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
+    label = "⚠️데이터 없음: 가격조회 실패" if code == "DATA_UNAVAILABLE" else "⚠️판단 오류: 점검 필요"
+    row = {
+        "시장": get_dashboard_market_label(tkr),
+        "유형": get_dashboard_type_label(is_etf),
+        "전광판그룹": get_dashboard_group_label(tkr, is_etf),
+        "종목명": name,
+        "티커": tkr,
+        "현재가": "-",
+        "MDD": "-",
+        "고점대비": "-",
+        "재무점수": "해당없음" if is_etf else "-",
+        "📌후보등급": "판단불가",
+        "RS": "-",
+        "시장벤치": "-",
+        "기초자산": "-",
+        "기초벤치": "-",
+        "섹터벤치": "-",
+        "섹터RS": "-",
+        "RSI": np.nan,
+        "MFI": np.nan,
+        "볼린저 %B": np.nan,
+        "🔥기술적 타점": label,
+        "핵심근거": reason,
+        "판정코드": code,
+        "판정분류": DECISION_GROUP_BY_CODE.get(code) or "caution",
+        "Adj점수": np.nan,
+        "안전상태": "DATA",
+        "매크로상태": classify_macro_state(snap_final_macro_risk),
+        "데이터상태": reason,
+        "bucket": str(item.get("bucket", "")),
+        "버킷": str(item.get("bucket", "")),
+        "비중차이": 0.0,
+    }
+    return {"tkr": tkr, "f_score": None, "row": row}
+
+
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
@@ -13111,29 +13188,58 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
     a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
-    df = load_price_df(tkr, "1y")
+    try:
+        df = load_price_df(tkr, "1y")
+    except Exception as exc:
+        return build_summary_status_item(
+            item,
+            f"가격 데이터 조회 예외: {type(exc).__name__}",
+            code="DATA_ERROR",
+            snap_final_macro_risk=snap_final_macro_risk,
+        )
     if df.empty:
-        return None
+        return build_summary_status_item(
+            item,
+            "가격 데이터가 비어 있어 판단하지 않음",
+            code="DATA_UNAVAILABLE",
+            snap_final_macro_risk=snap_final_macro_risk,
+        )
     # tail(300)으로 슬라이싱해 TA 계산량 제한 (1y ≈ 250행이라 실질적 안전망)
-    df = build_indicators(df.tail(300))
+    try:
+        df = build_indicators(df.tail(300))
+    except Exception as exc:
+        return build_summary_status_item(
+            item,
+            f"지표 계산 예외: {type(exc).__name__}",
+            code="DATA_ERROR",
+            snap_final_macro_risk=snap_final_macro_risk,
+        )
 
-    final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
-    f_score = int(final_fin_score)
+    try:
+        final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
+        f_score = int(final_fin_score)
 
-    my_p = get_my_price(name, tkr)
-    has_p = has_position(name, tkr)
-    _live_p = load_latest_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
+        my_p = get_my_price(name, tkr)
+        has_p = has_position(name, tkr)
+        _live_p = load_latest_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
 
-    c = calc_scores_and_decision(
-        name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
-        my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode,
-        _macro_penalty=snap_macro_penalty,
-        _final_macro_risk=snap_final_macro_risk,
-        _total_eval=snap_total_eval,
-        _cash_available=snap_cash_available,
-        _reserve_available=snap_reserve_available,
-        live_price=_live_p,
-    )
+        c = calc_scores_and_decision(
+            name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
+            my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode,
+            _macro_penalty=snap_macro_penalty,
+            _final_macro_risk=snap_final_macro_risk,
+            _total_eval=snap_total_eval,
+            _cash_available=snap_cash_available,
+            _reserve_available=snap_reserve_available,
+            live_price=_live_p,
+        )
+    except Exception as exc:
+        return build_summary_status_item(
+            item,
+            f"판단 계산 예외: {type(exc).__name__}",
+            code="DATA_ERROR",
+            snap_final_macro_risk=snap_final_macro_risk,
+        )
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
@@ -13142,6 +13248,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
+        "고점대비": f"{c['dd']*100:.1f}%",
         "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
@@ -13153,7 +13260,13 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "핵심근거": c.get("decision_reasons", ("",))[0] if c.get("decision_reasons") else "",
         "판정코드": c.get("decision_code", ""),
         "판정분류": c.get("decision_group") or classify_decision_signal(c["dec"]),
-        "Adj점수": round(c["adj"], 1)
+        "Adj점수": round(c["adj"], 1),
+        "안전상태": c.get("safety_state", ""),
+        "매크로상태": c.get("macro_state", ""),
+        "데이터상태": "OK",
+        "bucket": c.get("bucket", ""),
+        "버킷": c.get("bucket", ""),
+        "비중차이": clean_float(c.get("target_w"), 0.0) - clean_float(c.get("current_w"), 0.0),
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
@@ -13172,9 +13285,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
     prefetch_benchmark_info_parallel(watchlist_items)
 
     # 매크로 전역값을 워커 진입 전에 스냅샷 — 스레드 간 일관성 보장
-    snap_mp  = macro_penalty
-    snap_fmr = final_macro_risk
-    snap_te  = total_eval
+    snap_mp, snap_fmr, snap_te = resolve_decision_runtime_inputs()
     snap_cash_available = get_cash_available_for_dca(mode)
     snap_reserve_available = get_reserve_available_for_crash_buy(mode)
 
@@ -13204,7 +13315,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         r = results_map.get(i)
         if r is None:
             continue
-        st.session_state.fin_score_map[normalize_ticker(r["tkr"])] = r["f_score"]
+        if r.get("f_score") is not None:
+            st.session_state.fin_score_map[normalize_ticker(r["tkr"])] = r["f_score"]
         rows.append(r["row"])
 
     return pd.DataFrame(rows)
@@ -14012,7 +14124,7 @@ MANUAL_SECTIONS = {
         {"항목": "볼린저 %B", "정의": "볼린저밴드 내 현재 위치", "코드 기준": "0.95 이상 상단권, 1.02 초과 과열확장", "해석": "상단권은 눌림 대기 우선"},
         {"항목": "MACD", "정의": "추세 전환/유지", "코드 기준": "골든크로스 +2, 상승유지 +1, 데드크로스 -2", "해석": "매수 타점의 핵심 모멘텀"},
         {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1", "해석": "압축 후 방향성 분출 체크"},
-        {"항목": "MDD", "정의": "52주 고점 대비 낙폭", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
+        {"항목": "52주 고점대비", "정의": "52주 고점 대비 현재 하락률", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이나 엄밀한 MDD가 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
         {"항목": "ADJ점수", "정의": "매크로 패널티 반영 기술점수", "코드 기준": "메인점수 + RS점수 + MFI점수 + RS기울기점수 - 매크로패널티", "해석": "높을수록 현재 타점 우호"},
         {"항목": "R/R 비율", "정의": "2ATR 손절 기준 리스크/리워드", "코드 기준": "손절 = 현재가 - 2ATR (추가 인사이트와 동일). 목표 = 내부 피벗 고점 → 외부 피벗 고점 → 4ATR 투영 순서로 사용. R/R = (목표-현재가)/(현재가-손절)", "해석": "1.5 이상이면 타점 우호. 신고가 돌파 구간은 4ATR 목표로 투영됨"},
         {"항목": "섹터 머니플로우", "정의": "해당 종목의 섹터 ETF 자금흐름 상태", "코드 기준": "3개월·6개월 수익률 + 가속도로 신규유입/주도유지/둔화경고/소외지속/관찰 판정", "해석": "섹터 자체에 돈이 들어오고 있는지 확인"},
@@ -14062,8 +14174,8 @@ MANUAL_SECTIONS = {
         {"타점": "평단 -7~-15%", "조건": "손실 확대 + 재무 3점 이상 + 매크로 위험 낮음", "의미": "조건부 분할매수"},
         {"타점": "평단 -15%↓", "조건": "평단 대비 큰 손실 또는 추세위험", "의미": "원인 점검 우선"},
         {"타점": "고점대비 -20%", "조건": "52주 고점 대비 -20% 이하", "의미": "보유 중이면 추매 금지와 원인 점검, 미보유면 신규진입 보류"},
-        {"타점": "구조훼손: 신규진입 보류", "조건": "개별주 MDD -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나", "의미": "점수가 좋아도 차트 구조 확인 전 신규매수 보류"},
-        {"타점": "신규진입: 대장주 포착", "조건": "ADJ 4.5 이상 + RS 강함 + 정배열 + MA20 근처 이상 + MDD -15% 이내 + 급락 아님", "의미": "구조가 살아있는 신규 후보"},
+        {"타점": "구조훼손: 신규진입 보류", "조건": "개별주 52주 고점대비 -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나", "의미": "점수가 좋아도 차트 구조 확인 전 신규매수 보류"},
+        {"타점": "신규진입: 대장주 포착", "조건": "ADJ 4.5 이상 + RS 강함 + 정배열 + MA20 근처 이상 + 52주 고점대비 -15% 이내 + 급락 아님", "의미": "구조가 살아있는 신규 후보"},
         {"타점": "52주 신고가 돌파", "조건": "전일 52주 고점 이하 → 당일 돌파 + 거래량 1.3배↑ + RS 강함 + 양봉", "의미": "모멘텀 진입 검토 (MFI<80, %B<0.95 조건 추가)"},
         {"타점": "예외승인 차단 (RS하락중)", "조건": "예외승인 MA5/FVG 조건 충족이어도 RS 기울기가 하락 중이면 예외 불허", "의미": "RS 모멘텀이 꺾이는 구간의 추격 진입 방지"},
         {"타점": "익절 타이밍", "조건": "보유 중 + 코어ETF 아님 + MFI≥80 + %B>0.9 + 수익률 20%↑", "의미": "분할 매도 검토 신호 (판단은 투자자 몫)"},
@@ -20028,7 +20140,7 @@ def render_today_holdings_risk_panel(risk_df):
     if "_위험점수" in show.columns:
         show["_위험점수"] = show["_위험점수"].apply(lambda v: f"{float(v):.0f}" if finite_num(v) else "-")
     cols = [
-        "오늘조치", "종목명", "티커", "유형", "현재가", "MDD", "🔥기술적 타점",
+        "오늘조치", "종목명", "티커", "유형", "현재가", "고점대비", "🔥기술적 타점",
         "핵심근거", "Adj점수", "RS", "섹터RS", "_위험점수",
     ]
     st.dataframe(
@@ -21608,7 +21720,7 @@ def render_today_queue_tab(mode):
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "목표Upside", "📌후보등급", "🔥기술적 타점",
-        "핵심근거", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "MDD",
+        "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
     view_mode = st.radio(
@@ -23503,7 +23615,7 @@ if main_page == "precision":
                     f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(display_cur_p, tkr)}</span><br>"
                     f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
                     f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
-                    f"고점대비 MDD: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
+                    f"52주 고점대비: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
                     unsafe_allow_html=True
                 )
             with price_refresh_col:

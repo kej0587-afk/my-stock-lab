@@ -31,6 +31,11 @@ class TestCoreStormDcaGroupMapping:
     def test_core_storm_dca_is_buyish(self):
         assert DECISION_GROUP_BY_CODE["CORE_STORM_DCA"] == "buyish"
 
+    def test_operational_guard_codes_are_caution(self):
+        assert DECISION_GROUP_BY_CODE["DATA_UNAVAILABLE"] == "caution"
+        assert DECISION_GROUP_BY_CODE["DATA_ERROR"] == "caution"
+        assert DECISION_GROUP_BY_CODE["SAFETY_RED_NO_NEW_ENTRY"] == "caution"
+
     def test_build_core_dca_outcome_storm_us_broad_group(self):
         # 미국 대표지수 퍼펙트스톰: 100% 거치 → buyish
         outcome = build_core_dca_outcome("코어 ETF", core_dca_rate=1.0, dca_label="미국지수 퍼펙트스톰 100% 거치 적립")
