@@ -87,8 +87,8 @@ from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
     resolve_fin_score_source,
 )
-import stock_lab_core.decision_engine as decision_engine_module
 from stock_lab_core.decision_engine import (
+    DECISION_GROUP_BY_CODE,
     build_core_dca_outcome,
     build_decision_outcome,
     build_limited_history_etf_outcome,
@@ -97,53 +97,13 @@ from stock_lab_core.decision_engine import (
     classify_candidate_grade,
     classify_decision_signal,
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
+    classify_safety_state,
+    classify_macro_state,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
     score_main_entry,
     score_technical_components,
 )
-
-DECISION_GROUP_BY_CODE = dict(getattr(decision_engine_module, "DECISION_GROUP_BY_CODE", {}) or {})
-DECISION_GROUP_BY_CODE.update({
-    "DATA_UNAVAILABLE": "caution",
-    "DATA_ERROR": "caution",
-    "SAFETY_RED_NO_NEW_ENTRY": "caution",
-    "CORE_STORM_DCA": "buyish",
-})
-
-
-def classify_safety_state(tech_total):
-    rule = getattr(decision_engine_module, "classify_safety_state", None)
-    if callable(rule):
-        return rule(tech_total)
-    try:
-        value = float(tech_total)
-        if not math.isfinite(value):
-            return "RED"
-    except Exception:
-        return "RED"
-    if value < 1:
-        return "RED"
-    if value < 3:
-        return "YELLOW"
-    return "GREEN"
-
-
-def classify_macro_state(final_macro_risk):
-    rule = getattr(decision_engine_module, "classify_macro_state", None)
-    if callable(rule):
-        return rule(final_macro_risk)
-    try:
-        value = float(final_macro_risk)
-        if not math.isfinite(value):
-            return "UNKNOWN"
-    except Exception:
-        return "UNKNOWN"
-    if value >= 4.5:
-        return "STORM"
-    if value >= 1.5:
-        return "CAUTION"
-    return "NORMAL"
 from stock_lab_core.news import (
     get_analyst_snapshot,
     get_ticker_news,
