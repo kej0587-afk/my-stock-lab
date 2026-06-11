@@ -9,7 +9,6 @@ from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import hmac
 import io
-import importlib
 import logging
 import math
 import zipfile
@@ -179,10 +178,6 @@ from stock_lab_core.kr_etf_data import (
     load_kr_etf_lab_dataframe,
     save_kr_etf_lab_dataframe,
 )
-import stock_lab_core.prices as _stock_lab_prices
-
-_stock_lab_prices = importlib.reload(_stock_lab_prices)
-
 from stock_lab_core.prices import (
     clear_latest_price_cache,
     clear_selected_price_cache,
