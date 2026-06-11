@@ -10473,6 +10473,87 @@ def build_core_dca_context(
 # -------------------------------------------------
 # 7. 기술적 분석 메인 엔진
 # -------------------------------------------------
+def _apply_safety_state_override(decision_outcome, dec, col, *, safety_state, has_pos,
+                                  tech_total, main_score, adj_tech_score):
+    """Downgrade aggressive new-entry signals to SAFETY_RED_NO_NEW_ENTRY.
+
+    Step 3 of the guard -> policy -> signal -> sizing decomposition —
+    extracted verbatim from calc_scores_and_decision's post-processing
+    block. No logic changes.
+    """
+    if decision_outcome is None:
+        decision_outcome = build_decision_outcome(dec, col)
+
+    aggressive_new_entry_codes = {
+        "BREAKOUT_52W_ENTRY",
+        "S_PULLBACK_ENTRY",
+        "OVERSOLD_NEW_ENTRY",
+        "EARLY_ENTRY",
+        "EARLY_REVERSAL_ENTRY",
+        "NEW_ENTRY_LEADER",
+        "QUALITY_PULLBACK_ENTRY",
+        "TREND_PULLBACK_EXPLORE",
+        "EXCEPTION_ENTRY",
+        "LEADER_MA5_FAST_PULLBACK_ENTRY",
+        "LEADER_MA5_PULLBACK_ENTRY",
+    }
+    if safety_state == "RED" and (not has_pos) and decision_outcome.code in aggressive_new_entry_codes:
+        decision_outcome = build_decision_outcome(
+            "🧯안전관리자 RED: 신규진입 보류",
+            "#d97706",
+            "SAFETY_RED_NO_NEW_ENTRY",
+            reasons=(
+                f"안전상태 RED / 기존 신호 {decision_outcome.label}",
+                f"tech_total {tech_total:.1f} / main_score {main_score:.1f} / Adj {adj_tech_score:.1f}",
+                "코어 ETF 적립과 보유종목 분할매수는 별도 정책으로 판단하고, 공격적 신규진입만 보류",
+            ),
+        )
+    return decision_outcome.label, decision_outcome.color, decision_outcome
+
+
+def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p, is_etf,
+                          weight_gap, ticker):
+    """Compute the position-sizing hint shown alongside the decision.
+
+    Step 3 of the decomposition — extracted verbatim. No logic changes.
+    """
+    _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
+    sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
+    # 기존 보유 + 비중 부족 + "MA5 눌림 대기" 신호 → 눌림 시 추가 규모 안내
+    if (
+        not sizing_hint and
+        has_pos and
+        targ_w > 0 and
+        weight_gap >= 1.0 and
+        decision_outcome.code in ("LEADER_MA5_PULLBACK_ENTRY", "LEADER_MA5_FAST_PULLBACK_ENTRY",
+                                  "OVERHEAT_EXTENSION_WAIT_MA5", "S_GRADE_OVERHEAT_WAIT")
+    ):
+        _add_w   = round(weight_gap * 0.40, 2)          # 부족분의 40%씩 1차 추가
+        _add_amt = round(eff_total * _add_w / 100, 0)  # KRW 기준 금액
+        _add_p   = cur_p if cur_p > 0 else 1
+        if _add_amt > 0:
+            _is_us = not ticker.upper().endswith((".KS", ".KQ"))
+            if _is_us:
+                # eff_total·_add_amt는 KRW → USD 환산 후 주수 계산
+                _add_usd    = _add_amt / 1400.0
+                _add_shares = _add_usd / _add_p if _add_p > 0 else 0
+                sizing_hint = (
+                    f"MA5 눌림 확인 시 1차 추가 기준 — "
+                    f"부족분({weight_gap:.1f}%p)의 40%: "
+                    f"≈${_add_usd:,.0f} / 약 {_add_shares:.2f}주 "
+                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                )
+            else:
+                _add_shares = _add_amt / _add_p if _add_p > 0 else 0
+                sizing_hint = (
+                    f"MA5 눌림 확인 시 1차 추가 기준 — "
+                    f"부족분({weight_gap:.1f}%p)의 40%: "
+                    f"≈{_add_amt:,.0f}원 / 약 {_add_shares:.1f}주 "
+                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                )
+    return sizing_hint
+
+
 def _build_decision_result(ctx: dict) -> dict:
     """Assemble calc_scores_and_decision's return dict.
 
@@ -11566,66 +11647,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         )
 
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
-    if decision_outcome is None:
-        decision_outcome = build_decision_outcome(dec, col)
-    aggressive_new_entry_codes = {
-        "BREAKOUT_52W_ENTRY",
-        "S_PULLBACK_ENTRY",
-        "OVERSOLD_NEW_ENTRY",
-        "EARLY_ENTRY",
-        "EARLY_REVERSAL_ENTRY",
-        "NEW_ENTRY_LEADER",
-        "QUALITY_PULLBACK_ENTRY",
-        "TREND_PULLBACK_EXPLORE",
-        "EXCEPTION_ENTRY",
-        "LEADER_MA5_FAST_PULLBACK_ENTRY",
-        "LEADER_MA5_PULLBACK_ENTRY",
-    }
-    if safety_state == "RED" and (not has_pos) and decision_outcome.code in aggressive_new_entry_codes:
-        dec, col, decision_outcome = _set_decision(
-            "🧯안전관리자 RED: 신규진입 보류",
-            "#d97706",
-            "SAFETY_RED_NO_NEW_ENTRY",
-            reasons=(
-                f"안전상태 RED / 기존 신호 {decision_outcome.label}",
-                f"tech_total {tech_total:.1f} / main_score {main_score:.1f} / Adj {adj_tech_score:.1f}",
-                "코어 ETF 적립과 보유종목 분할매수는 별도 정책으로 판단하고, 공격적 신규진입만 보류",
-            ),
-        )
-    _is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
-    sizing_hint = build_position_sizing_hint(_is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
-    # 기존 보유 + 비중 부족 + "MA5 눌림 대기" 신호 → 눌림 시 추가 규모 안내
-    if (
-        not sizing_hint and
-        has_pos and
-        targ_w > 0 and
-        weight_gap >= 1.0 and
-        decision_outcome.code in ("LEADER_MA5_PULLBACK_ENTRY", "LEADER_MA5_FAST_PULLBACK_ENTRY",
-                                  "OVERHEAT_EXTENSION_WAIT_MA5", "S_GRADE_OVERHEAT_WAIT")
-    ):
-        _add_w   = round(weight_gap * 0.40, 2)          # 부족분의 40%씩 1차 추가
-        _add_amt = round(eff_total * _add_w / 100, 0)  # KRW 기준 금액
-        _add_p   = cur_p if cur_p > 0 else 1
-        if _add_amt > 0:
-            _is_us = not ticker.upper().endswith((".KS", ".KQ"))
-            if _is_us:
-                # eff_total·_add_amt는 KRW → USD 환산 후 주수 계산
-                _add_usd    = _add_amt / 1400.0
-                _add_shares = _add_usd / _add_p if _add_p > 0 else 0
-                sizing_hint = (
-                    f"MA5 눌림 확인 시 1차 추가 기준 — "
-                    f"부족분({weight_gap:.1f}%p)의 40%: "
-                    f"≈${_add_usd:,.0f} / 약 {_add_shares:.2f}주 "
-                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
-                )
-            else:
-                _add_shares = _add_amt / _add_p if _add_p > 0 else 0
-                sizing_hint = (
-                    f"MA5 눌림 확인 시 1차 추가 기준 — "
-                    f"부족분({weight_gap:.1f}%p)의 40%: "
-                    f"≈{_add_amt:,.0f}원 / 약 {_add_shares:.1f}주 "
-                    f"(잔여 비중 부족: {weight_gap:.1f}%p)"
-                )
+    dec, col, decision_outcome = _apply_safety_state_override(
+        decision_outcome, dec, col,
+        safety_state=safety_state, has_pos=has_pos,
+        tech_total=tech_total, main_score=main_score, adj_tech_score=adj_tech_score,
+    )
+    sizing_hint = _compute_sizing_hint(
+        decision_outcome,
+        has_pos=has_pos, targ_w=targ_w, eff_total=eff_total, cur_p=cur_p, is_etf=is_etf,
+        weight_gap=weight_gap, ticker=ticker,
+    )
 
     return _build_decision_result(locals())
 
