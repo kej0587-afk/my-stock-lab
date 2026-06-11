@@ -87,8 +87,8 @@ from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
     resolve_fin_score_source,
 )
+import stock_lab_core.decision_engine as decision_engine_module
 from stock_lab_core.decision_engine import (
-    DECISION_GROUP_BY_CODE,
     build_core_dca_outcome,
     build_decision_outcome,
     build_limited_history_etf_outcome,
@@ -96,14 +96,54 @@ from stock_lab_core.decision_engine import (
     build_core_dca_context_values,
     classify_candidate_grade,
     classify_decision_signal,
-    classify_safety_state,
-    classify_macro_state,
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
     score_main_entry,
     score_technical_components,
 )
+
+DECISION_GROUP_BY_CODE = dict(getattr(decision_engine_module, "DECISION_GROUP_BY_CODE", {}) or {})
+DECISION_GROUP_BY_CODE.update({
+    "DATA_UNAVAILABLE": "caution",
+    "DATA_ERROR": "caution",
+    "SAFETY_RED_NO_NEW_ENTRY": "caution",
+    "CORE_STORM_DCA": "buyish",
+})
+
+
+def classify_safety_state(tech_total):
+    rule = getattr(decision_engine_module, "classify_safety_state", None)
+    if callable(rule):
+        return rule(tech_total)
+    try:
+        value = float(tech_total)
+        if not math.isfinite(value):
+            return "RED"
+    except Exception:
+        return "RED"
+    if value < 1:
+        return "RED"
+    if value < 3:
+        return "YELLOW"
+    return "GREEN"
+
+
+def classify_macro_state(final_macro_risk):
+    rule = getattr(decision_engine_module, "classify_macro_state", None)
+    if callable(rule):
+        return rule(final_macro_risk)
+    try:
+        value = float(final_macro_risk)
+        if not math.isfinite(value):
+            return "UNKNOWN"
+    except Exception:
+        return "UNKNOWN"
+    if value >= 4.5:
+        return "STORM"
+    if value >= 1.5:
+        return "CAUTION"
+    return "NORMAL"
 from stock_lab_core.news import (
     get_analyst_snapshot,
     get_ticker_news,
@@ -10428,19 +10468,54 @@ def classify_core_etf_dca_rate(
     rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
 ):
     _, macro_risk_value, _ = resolve_decision_runtime_inputs(final_macro_risk_value=final_macro_risk_value)
-    return classify_core_etf_dca_rate_rule(
-        is_core_etf=is_core_etf,
-        weight_gap=weight_gap,
-        current_dd=current_dd,
-        rsi_now=rsi_now,
-        mfi_now=mfi_now,
-        pct_b_now=pct_b_now,
-        trend=trend,
-        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
-        is_us_broad_index_core_etf=is_us_broad_index_core_etf(ticker, asset_class, name),
-        is_kr_listed_core_etf=is_domestic_kr_core_etf(ticker, asset_class, name),
-        final_macro_risk=macro_risk_value,
-    )
+    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    is_us_broad_core = is_us_broad_index_core_etf(ticker, asset_class, name)
+    is_kr_core = is_domestic_kr_core_etf(ticker, asset_class, name)
+    if macro_risk_value >= 4.5:
+        if not is_core_etf or weight_gap <= 0 or is_leveraged_or_inverse:
+            return 0.0, ""
+        if is_us_broad_core:
+            return 1.0, "미국지수 퍼펙트스톰 100% 거치 적립"
+        is_extreme_overheat = mfi_now >= 85 or rsi_now >= 80 or pct_b_now >= 1.00
+        is_upper_overheat = mfi_now >= 80 or rsi_now >= 75 or pct_b_now >= 0.90
+        if is_extreme_overheat:
+            return 0.0, ""
+        if is_kr_core:
+            if current_dd <= -0.20 and not is_upper_overheat:
+                return 0.50, "국장 퍼펙트스톰 50% 제한적 적립"
+            return 0.25, "국장 퍼펙트스톰 25% 방어적 적립"
+        if current_dd <= -0.20 and not is_upper_overheat:
+            return 0.50, "퍼펙트스톰 50% 감속 적립"
+        return 0.25, "퍼펙트스톰 25% 방어적 적립"
+
+    try:
+        return classify_core_etf_dca_rate_rule(
+            is_core_etf=is_core_etf,
+            weight_gap=weight_gap,
+            current_dd=current_dd,
+            rsi_now=rsi_now,
+            mfi_now=mfi_now,
+            pct_b_now=pct_b_now,
+            trend=trend,
+            is_leveraged_or_inverse=is_leveraged_or_inverse,
+            is_us_broad_index_core_etf=is_us_broad_core,
+            is_kr_listed_core_etf=is_kr_core,
+            final_macro_risk=macro_risk_value,
+        )
+    except TypeError as exc:
+        if "unexpected keyword" not in str(exc) and "got an unexpected keyword" not in str(exc):
+            raise
+        return classify_core_etf_dca_rate_rule(
+            is_core_etf=is_core_etf,
+            weight_gap=weight_gap,
+            current_dd=current_dd,
+            rsi_now=rsi_now,
+            mfi_now=mfi_now,
+            pct_b_now=pct_b_now,
+            trend=trend,
+            is_leveraged_or_inverse=is_leveraged_or_inverse,
+            final_macro_risk=macro_risk_value,
+        )
 
 
 def build_core_dca_context(
