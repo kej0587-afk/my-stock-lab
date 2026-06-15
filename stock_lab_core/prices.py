@@ -337,6 +337,68 @@ _PYTH_BENCHMARKS_BASE_URL = "https://benchmarks.pyth.network/v1"
 _PYTH_HERMES_BASE_URL = "https://hermes.pyth.network/v2"
 _PYTH_PRICE_MAX_AGE_SECONDS = 180
 _PYTH_CONFIDENCE_MAX_RATIO = 0.05
+_US_INTRADAY_QUOTE_MAX_AGE_SECONDS = 16 * 60 * 60
+
+
+def _secret_or_env(*names: str) -> str:
+    for name in names:
+        for key in {name, name.upper(), name.lower()}:
+            value = os.getenv(key, "")
+            if value:
+                return str(value).strip()
+            try:
+                value = st.secrets.get(key, "")
+                if value:
+                    return str(value).strip()
+            except Exception:
+                pass
+    return ""
+
+
+def _is_recent_epoch(ts, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> bool:
+    try:
+        epoch = int(float(ts))
+    except Exception:
+        return False
+    age = time.time() - epoch
+    return -300 <= age <= max_age
+
+
+def _parse_epoch(value) -> int:
+    if value in (None, ""):
+        return 0
+    try:
+        text = str(value).strip()
+        if re.fullmatch(r"\d{13,}", text):
+            return int(float(text) / 1000)
+        if re.fullmatch(r"\d{10}", text):
+            return int(text)
+        ts = pd.to_datetime(text, utc=True, errors="coerce")
+        if pd.isna(ts):
+            return 0
+        return int(ts.timestamp())
+    except Exception:
+        return 0
+
+
+def _latest_recent_close_from_series(series, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> float:
+    if isinstance(series, pd.DataFrame):
+        if series.empty:
+            return 0.0
+        series = series.iloc[:, 0]
+    if series is None or series.empty:
+        return 0.0
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    if values.empty:
+        return 0.0
+    try:
+        idx = values.index[-1]
+        ts = pd.to_datetime(idx, utc=True, errors="coerce")
+        if pd.isna(ts) or not _is_recent_epoch(int(ts.timestamp()), max_age=max_age):
+            return 0.0
+    except Exception:
+        return 0.0
+    return float(values.iloc[-1])
 
 
 def _pyth_headers() -> dict:
@@ -521,6 +583,89 @@ def _fetch_pyth_us_live_price(ticker: str) -> float:
         return 0.0
 
 
+def _fetch_configured_us_quote_price(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+
+    endpoints = []
+    fmp_key = _secret_or_env("FMP_API_KEY", "fmp_api_key")
+    if fmp_key:
+        endpoints.append((
+            f"https://financialmodelingprep.com/api/v3/quote-short/{urllib.parse.quote(t)}?apikey={urllib.parse.quote(fmp_key)}",
+            lambda data: (data[0] if isinstance(data, list) and data else data or {}).get("price"),
+        ))
+        endpoints.append((
+            f"https://financialmodelingprep.com/stable/quote-short?symbol={urllib.parse.quote(t)}&apikey={urllib.parse.quote(fmp_key)}",
+            lambda data: (data[0] if isinstance(data, list) and data else data or {}).get("price"),
+        ))
+
+    finnhub_key = _secret_or_env("FINNHUB_API_KEY", "finnhub_api_key")
+    if finnhub_key:
+        endpoints.append((
+            f"https://finnhub.io/api/v1/quote?symbol={urllib.parse.quote(t)}&token={urllib.parse.quote(finnhub_key)}",
+            lambda data: (data or {}).get("c"),
+        ))
+
+    twelve_key = _secret_or_env("TWELVEDATA_API_KEY", "TWELVE_DATA_API_KEY", "twelvedata_api_key")
+    if twelve_key:
+        endpoints.append((
+            f"https://api.twelvedata.com/price?symbol={urllib.parse.quote(t)}&apikey={urllib.parse.quote(twelve_key)}",
+            lambda data: (data or {}).get("price"),
+        ))
+
+    av_key = _secret_or_env("AV_API_KEY", "ALPHAVANTAGE_API_KEY", "alpha_vantage_api_key")
+    if av_key:
+        endpoints.append((
+            f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={urllib.parse.quote(t)}&apikey={urllib.parse.quote(av_key)}",
+            lambda data: ((data or {}).get("Global Quote") or {}).get("05. price"),
+        ))
+
+    for url, extractor in endpoints:
+        try:
+            req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            price = float(str(extractor(data)).replace(",", ""))
+            if price > 0:
+                return price
+        except Exception:
+            continue
+    return 0.0
+
+
+def _fetch_robinhood_us_quote(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+    try:
+        url = f"https://api.robinhood.com/marketdata/quotes/{urllib.parse.quote(t)}/"
+        headers = dict(_YQ_HEADERS)
+        headers["Referer"] = "https://robinhood.com/"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        candidates = (
+            ("last_non_reg_trade_price", "venue_last_non_reg_trade_time"),
+            ("last_extended_hours_trade_price", "venue_last_non_reg_trade_time"),
+            ("ask_price", "venue_ask_time"),
+            ("bid_price", "venue_bid_time"),
+            ("last_trade_price", "venue_last_trade_time"),
+        )
+        for price_key, time_key in candidates:
+            price = data.get(price_key)
+            ts = _parse_epoch(data.get(time_key))
+            try:
+                price = float(price)
+            except Exception:
+                price = 0.0
+            if price > 0 and ts and _is_recent_epoch(ts):
+                return price
+    except Exception:
+        pass
+    return 0.0
+
+
 def _last_candle_close(result: dict) -> float:
     """
     Yahoo v8 chart 응답에서 가장 최근 1분봉 Close 값을 꺼냅니다.
@@ -529,7 +674,15 @@ def _last_candle_close(result: dict) -> float:
     try:
         closes = result["indicators"]["quote"][0].get("close") or []
         # null(None) 제거 후 마지막 값
-        valid = [c for c in closes if c is not None and float(c) > 0]
+        stamps = result.get("timestamp") or []
+        valid = []
+        for idx, close in enumerate(closes):
+            if close is None or float(close) <= 0:
+                continue
+            ts = stamps[idx] if idx < len(stamps) else 0
+            if stamps and not _is_recent_epoch(ts):
+                continue
+            valid.append(close)
         if valid:
             return float(valid[-1])
     except Exception:
@@ -581,7 +734,7 @@ def _meta_best_price(meta: dict) -> float:
             ts = int(ts)
         except Exception:
             ts = 0
-        if val and float(val) > 0 and ts > best_ts:
+        if val and float(val) > 0 and ts > best_ts and _is_recent_epoch(ts):
             best_price, best_ts = float(val), ts
     if best_price > 0:
         return best_price
@@ -671,7 +824,7 @@ def _fetch_yf_download_price(ticker: str, interval: str = "5m", prepost: bool = 
                 progress=False, prepost=prepost, auto_adjust=False,
                 threads=False,
             )
-        price = get_latest_close_from_series(extract_download_close_series(df, ticker))
+        price = _latest_recent_close_from_series(extract_download_close_series(df, ticker))
         return price if price > 0 else 0.0
     except Exception:
         return 0.0
@@ -713,10 +866,16 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
+        price = _fetch_configured_us_quote_price(ticker)
+        if price > 0:
+            return price
         price = _fetch_pyth_us_live_price(ticker)
         if price > 0:
             return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
+        price = _fetch_robinhood_us_quote(ticker)
+        if price > 0:
+            return price
         price = _fetch_yahoo_quote(ticker)
         if price > 0:
             return price
