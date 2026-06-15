@@ -23700,13 +23700,24 @@ if main_page == "precision":
     if not df.empty:
         df = build_indicators(df)
         # 프리마켓·애프터마켓 실시간가 선취득 → calc_scores에 live_price로 주입
-        display_cur_p = load_latest_price(tkr)
+        auto_cur_p = load_latest_price(tkr)
+        manual_price_key = f"precision_manual_live_price_{fin_key}"
+        manual_cur_p = clean_float(st.session_state.get(manual_price_key), 0.0)
+        display_cur_p = manual_cur_p if manual_cur_p > 0 else auto_cur_p
+        chart_df, _precision_live_ohlcv_applied = apply_live_price_to_ohlcv(df, display_cur_p, tkr)
+        if _precision_live_ohlcv_applied:
+            try:
+                chart_df = build_indicators(chart_df)
+            except Exception:
+                chart_df = df
+        else:
+            chart_df = df
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p,
                                      (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free,
                                      app_mode, u_asset, u_curr_w, u_targ_w,
                                      live_price=display_cur_p)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
-            mtf_pack = build_precision_multi_timeframe_pack(tkr, df)
+            mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
 
         L, R = st.columns([1.1, 2.4])
         with L:
