@@ -10595,6 +10595,73 @@ def _build_decision_result(ctx: dict) -> dict:
     }
 
 
+def _get_live_price_row_date(ticker: str):
+    try:
+        is_us = not str(ticker or "").upper().endswith((".KS", ".KQ"))
+        zone = ZoneInfo("America/New_York") if is_us else KST
+        now = datetime.now(zone)
+        if now.weekday() >= 5:
+            return None
+        return pd.Timestamp(now.date())
+    except Exception:
+        return None
+
+
+def apply_live_price_to_ohlcv(
+    df: pd.DataFrame,
+    live_price: float,
+    ticker: str = "",
+    *,
+    min_gap: float = 0.003,
+    max_gap: float = 0.5,
+):
+    live = clean_float(live_price, 0.0)
+    if df is None or df.empty or live <= 0 or "Close" not in df.columns:
+        return df, False
+
+    out = df.copy()
+    last_close = clean_float(out["Close"].iloc[-1], 0.0)
+    if last_close <= 0:
+        return out, False
+
+    gap = abs(live - last_close) / max(abs(last_close), 1.0)
+    if gap <= min_gap or gap >= max_gap:
+        return out, False
+
+    for col in ("Open", "High", "Low", "Volume"):
+        if col not in out.columns:
+            out[col] = out["Close"] if col != "Volume" else 0.0
+
+    live_date = _get_live_price_row_date(ticker)
+    try:
+        last_date = pd.Timestamp(out.index[-1]).tz_localize(None).normalize()
+    except Exception:
+        last_date = pd.Timestamp.today().normalize()
+
+    if live_date is not None and last_date < live_date:
+        row = out.iloc[-1].copy()
+        row["Open"] = last_close
+        row["High"] = max(last_close, live)
+        row["Low"] = min(last_close, live)
+        row["Close"] = live
+        row["Volume"] = clean_float(row.get("Volume"), 0.0)
+        if row["Volume"] <= 0:
+            row["Volume"] = clean_float(out["Volume"].tail(20).mean(), 0.0)
+        out.loc[live_date] = row
+        out = out.sort_index()
+    else:
+        idx = out.index[-1]
+        high = clean_float(out.at[idx, "High"], last_close)
+        low = clean_float(out.at[idx, "Low"], last_close)
+        if clean_float(out.at[idx, "Open"], 0.0) <= 0:
+            out.at[idx, "Open"] = last_close
+        out.at[idx, "High"] = max(high, live)
+        out.at[idx, "Low"] = min(low, live)
+        out.at[idx, "Close"] = live
+
+    return out, True
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -10603,16 +10670,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
 
+    source_daily_close = clean_float(df["Close"].iloc[-1], 0.0) if df is not None and not df.empty and "Close" in df.columns else 0.0
+    df, live_ohlcv_applied = apply_live_price_to_ohlcv(df, live_price, ticker)
+    if live_ohlcv_applied:
+        try:
+            df = build_indicators(df)
+        except Exception:
+            pass
+
     df = ensure_min_price_rows_for_decision(df)
 
     last, prev = df.iloc[-1], df.iloc[-2]
-    daily_close = float(df.iloc[-1]["Close"])
-    cur_p = daily_close
-    live_price_used = False
+    daily_close = source_daily_close if source_daily_close > 0 else float(df.iloc[-1]["Close"])
+    cur_p = float(df.iloc[-1]["Close"])
+    live_price_used = bool(live_ohlcv_applied)
     # 프리마켓·애프터마켓 실시간가가 전달된 경우 일봉 종가 대신 사용 (day_ret·MDD·R/R 계산에 반영)
     if live_price > 0 and abs(live_price - cur_p) / max(cur_p, 1) < 0.5:  # 50% 이상 괴리 시 오류로 간주하고 무시
         cur_p = float(live_price)
-        live_price_used = abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
+        live_price_used = live_price_used or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
