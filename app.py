@@ -12181,6 +12181,224 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     return html
 
 
+PEER_COMPARE_ALIAS_MAP = {
+    "SANDISK": "SNDK",
+    "SANDISKCORP": "SNDK",
+    "SANDISK CORPORATION": "SNDK",
+    "SAN DISK": "SNDK",
+    "샌디스크": "SNDK",
+}
+
+
+def resolve_peer_compare_ticker(raw_value: str) -> str:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return ""
+    if raw in TICKER_MAP:
+        return sanitize_ticker_value(TICKER_MAP[raw][0])
+    compact = re.sub(r"\s+", " ", raw.upper()).strip()
+    no_space = compact.replace(" ", "")
+    if compact in PEER_COMPARE_ALIAS_MAP:
+        return sanitize_ticker_value(PEER_COMPARE_ALIAS_MAP[compact])
+    if no_space in PEER_COMPARE_ALIAS_MAP:
+        return sanitize_ticker_value(PEER_COMPARE_ALIAS_MAP[no_space])
+    return sanitize_ticker_value(raw)
+
+
+def parse_peer_compare_tickers(raw_text: str, max_items: int = 6) -> list[str]:
+    parts = re.split(r"[,;/\n]+", str(raw_text or ""))
+    tickers: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        ticker = resolve_peer_compare_ticker(part)
+        key = normalize_ticker(ticker)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        tickers.append(ticker)
+        if len(tickers) >= max_items:
+            break
+    return tickers
+
+
+def _period_return_from_close(close: pd.Series, bars: int) -> float:
+    if close is None or len(close) <= bars:
+        return np.nan
+    start = clean_float(close.iloc[-bars - 1], np.nan)
+    end = clean_float(close.iloc[-1], np.nan)
+    if not finite_num(start) or not finite_num(end) or start <= 0:
+        return np.nan
+    return (end / start) - 1
+
+
+def _rank_pct_series(values: pd.Series, *, ascending: bool = True) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    if numeric.notna().sum() <= 1:
+        return pd.Series(0.5, index=values.index)
+    ranked = numeric.rank(pct=True, ascending=ascending)
+    return ranked.fillna(0.5)
+
+
+def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", period: str = "6mo") -> tuple[pd.DataFrame, pd.DataFrame]:
+    rows = []
+    curve_parts = {}
+    for ticker in tickers:
+        t = sanitize_ticker_value(ticker)
+        if not t:
+            continue
+        df = load_price_df(t, period)
+        if df is None or df.empty or "Close" not in df.columns:
+            rows.append({"티커": t, "상태": "가격 데이터 부족"})
+            continue
+
+        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if close.empty:
+            rows.append({"티커": t, "상태": "가격 데이터 부족"})
+            continue
+
+        name = sanitize_asset_name("", t)
+        is_etf = is_fin_score_exempt_asset(t, False, "", name)
+        asset_class = infer_asset_class_for_ticker(t, base_asset_class) if is_etf else (
+            "kr_stock" if is_kr_listed(t) else "us_stock"
+        )
+        market_score, market_rs = get_rs_score(t, asset_class)
+        rs_slope_val, rs_slope_label, _ = get_rs_slope(t, asset_class)
+        bench_info = get_auto_benchmark_info(t, name, asset_class, is_etf)
+
+        ret_2w = _period_return_from_close(close, 10)
+        ret_1m = _period_return_from_close(close, 21)
+        ret_3m = _period_return_from_close(close, 63)
+        ret_6m = _period_return_from_close(close, 126)
+        accel = ret_1m - (ret_3m / 3.0) if finite_num(ret_1m) and finite_num(ret_3m) else np.nan
+        high_3m = clean_float(close.tail(63).max(), np.nan)
+        last = clean_float(close.iloc[-1], np.nan)
+        dd_3m = (last / high_3m) - 1 if finite_num(last) and finite_num(high_3m) and high_3m > 0 else np.nan
+        vol_3m = close.pct_change().tail(63).std() * np.sqrt(252) if len(close) >= 20 else np.nan
+
+        if len(close) >= 2:
+            curve_parts[t] = ((close / close.iloc[0] - 1) * 100).rename(t)
+
+        rows.append({
+            "티커": t,
+            "상태": "OK",
+            "2주": ret_2w,
+            "1개월": ret_1m,
+            "3개월": ret_3m,
+            "6개월": ret_6m,
+            "가속도": accel,
+            "고점대비": dd_3m,
+            "변동성": vol_3m,
+            "시장RS": market_rs,
+            "시장RS점수": market_score,
+            "섹터RS": bench_info.get("sector_rs_label", "-"),
+            "섹터벤치": bench_info.get("sector_bench", ""),
+            "RS방향": rs_slope_label,
+            "RS방향값": rs_slope_val,
+        })
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result, pd.DataFrame()
+
+    ok_mask = result.get("상태", "") == "OK"
+    ok = result[ok_mask].copy()
+    if not ok.empty:
+        peer_median_3m = pd.to_numeric(ok["3개월"], errors="coerce").median()
+        ok["동종3M우위"] = pd.to_numeric(ok["3개월"], errors="coerce") - peer_median_3m
+        ok["동종점수"] = (
+            _rank_pct_series(ok["3개월"]) * 35
+            + _rank_pct_series(ok["1개월"]) * 25
+            + _rank_pct_series(ok["2주"]) * 15
+            + _rank_pct_series(ok["가속도"]) * 15
+            + _rank_pct_series(ok["고점대비"]) * 10
+        ).round(1)
+        ok["동종판정"] = ok["동종점수"].apply(
+            lambda v: "리더" if v >= 75 else ("강함" if v >= 60 else ("보통" if v >= 45 else "약함"))
+        )
+        ok = ok.sort_values(["동종점수", "3개월", "1개월"], ascending=[False, False, False])
+        ok.insert(0, "순위", range(1, len(ok) + 1))
+        result = pd.concat([ok, result[~ok_mask]], ignore_index=True)
+
+    curve_df = pd.concat(curve_parts.values(), axis=1).ffill().dropna(how="all") if curve_parts else pd.DataFrame()
+    return result, curve_df
+
+
+def _format_peer_pct(value) -> str:
+    v = clean_float(value, np.nan)
+    return "-" if not finite_num(v) else f"{v * 100:+.1f}%"
+
+
+def render_peer_comparison_panel(current_ticker: str, current_name: str = "", asset_class: str = ""):
+    key_base = normalize_ticker(current_ticker) or "peer"
+    with st.expander("🔬 동종 후보 상대비교", expanded=False):
+        st.caption(
+            "시장/섹터 벤치 대비 모두 강한 후보끼리 직접 비교합니다. "
+            "쉼표로 2~6개를 입력하세요. 예: CRDO, MRVL, Sandisk"
+        )
+        raw = st.text_input(
+            "비교 종목",
+            value=st.session_state.get(f"peer_compare_text_{key_base}", current_ticker),
+            key=f"peer_compare_text_{key_base}",
+            help="티커를 쉼표로 구분합니다. Sandisk는 SNDK로 자동 변환됩니다.",
+        )
+        period = st.radio(
+            "차트 기간",
+            ["3mo", "6mo", "1y"],
+            index=1,
+            key=f"peer_compare_period_{key_base}",
+            horizontal=True,
+        )
+        tickers = parse_peer_compare_tickers(raw)
+        if len(tickers) < 2:
+            st.info("비교할 종목을 2개 이상 입력하면 상대강도 표와 리베이스 차트가 표시됩니다.")
+            return
+
+        result, curve_df = build_peer_comparison_data(tickers, asset_class, period)
+        ok = result[result.get("상태", "") == "OK"].copy() if not result.empty else pd.DataFrame()
+        if ok.empty:
+            st.warning("비교 가능한 가격 데이터가 부족합니다.")
+            return
+
+        leader = ok.iloc[0]
+        st.markdown(
+            f"<div class='info-panel' style='border-left:4px solid #22c55e;'>"
+            f"<b>현재 비교군 리더</b>: <span class='highlight'>{escape_html_value(leader.get('티커', '-'))}</span> "
+            f"({leader.get('동종판정', '-')}, 점수 {clean_float(leader.get('동종점수'), 0.0):.1f})<br>"
+            f"3개월 {_format_peer_pct(leader.get('3개월'))} / 1개월 {_format_peer_pct(leader.get('1개월'))} / "
+            f"동종 3M 우위 {_format_peer_pct(leader.get('동종3M우위'))}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        if not curve_df.empty:
+            fig = go.Figure()
+            for t in ok["티커"].tolist():
+                if t in curve_df.columns:
+                    fig.add_trace(go.Scatter(x=curve_df.index, y=curve_df[t], mode="lines", name=t))
+            fig.update_layout(
+                template="plotly_dark",
+                height=320,
+                margin=dict(l=10, r=10, t=35, b=10),
+                title="비교 시작일 대비 누적수익률",
+                yaxis_title="수익률(%)",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            fig.add_hline(y=0, line_color="#64748b", line_dash="dash")
+            st.plotly_chart(fig, width="stretch")
+
+        show = ok[[
+            "순위", "티커", "동종판정", "동종점수", "2주", "1개월", "3개월", "6개월",
+            "동종3M우위", "시장RS", "섹터RS", "RS방향", "고점대비", "변동성"
+        ]].copy()
+        for col in ["2주", "1개월", "3개월", "6개월", "동종3M우위", "고점대비", "변동성"]:
+            show[col] = show[col].apply(_format_peer_pct)
+        st.dataframe(show, width="stretch", hide_index=True)
+
+        failed = result[result.get("상태", "") != "OK"] if not result.empty else pd.DataFrame()
+        if not failed.empty:
+            st.caption("데이터 부족: " + ", ".join(failed["티커"].astype(str).tolist()))
+
+
 def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     """Show a concrete entry/exit plan using the app's existing R/R logic."""
     cur = clean_float(c.get("cur_p"), 0.0)
@@ -23946,6 +24164,7 @@ if main_page == "precision":
             )
             _plan_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
             render_entry_execution_plan(name, tkr, c, has_pos=_plan_has_pos, usdkrw=usdkrw)
+            render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")
         b1, b2 = st.columns(2)
