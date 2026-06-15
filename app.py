@@ -10589,6 +10589,7 @@ def _build_decision_result(ctx: dict) -> dict:
         "rs_slope_s": ctx["rs_slope_s"], "rs_slope_label": ctx["rs_slope_label"], "rs_slope_val": ctx["rs_slope_val"],
         "profit_take_signal": (ctx["has_pos"] and (not ctx["is_core_etf"]) and ctx["mfi_now"] >= 80 and ctx["pct_b_now"] > 0.9 and ctx["price_vs_avg"] > 0.20),
         "rr_ratio": ctx["rr_ratio"], "rr_target": ctx["rr_target_price"], "rr_stop": ctx["rr_stop_atr"], "atr": ctx["_atr"],
+        "rr_target_source": ctx["rr_target_source"], "rr_stop_source": ctx["rr_stop_source"],
         "is_52w_breakout": ctx["is_52w_breakout"],
         "sector_flow_state": ctx["sector_flow_state"],
         "smc_insight": ctx["smc_insight"],
@@ -10753,10 +10754,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # 목표가: 구조적 저항이 현재가 위에 있으면 그것을 사용, 없으면 4ATR 돌파 목표 (2:1 R/R 투영)
     if levels["int_high"] > cur_p:
         rr_target_price = levels["int_high"]
+        rr_target_source = "차트 구조: 최근 내부고점"
     elif levels["ext_high"] > cur_p:
         rr_target_price = levels["ext_high"]
+        rr_target_source = "차트 구조: 최근 외부고점"
     else:
         rr_target_price = round(cur_p + _atr * 4.0, 4) if _atr > 0 else None  # 신고가 돌파: 4ATR 목표 투영
+        rr_target_source = "변동성 투영: 현재가 + 4ATR"
+    rr_stop_source = "변동성 손절: 현재가 - 2ATR"
 
     rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
     rr_ratio  = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
@@ -12212,6 +12217,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     decision_code = str(c.get("decision_code", "") or "")
     decision_label = str(c.get("dec", "") or "")
     pd_zone = str(c.get("pd_zone", "") or "")
+    target_source = str(c.get("rr_target_source", "") or "차트 구조 목표가")
+    stop_source = str(c.get("rr_stop_source", "") or "2ATR 손절")
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
         st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
@@ -12328,41 +12335,58 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         shares = amount_krw / price if price > 0 else 0.0
         return f"{amount_krw:,.0f}원 / {shares:.2f}주"
 
+    def rr_text(entry_price):
+        entry = clean_float(entry_price, 0.0)
+        if entry <= 0 or stop <= 0 or target <= entry or stop >= entry:
+            return "-"
+        return f"{(target - entry) / (entry - stop):.2f}"
+
+    rr_now_text = rr_text(cur)
+    rr_entry1_text = rr_text(entry1)
+    rr_entry2_text = rr_text(entry2)
+    rr_entry3_text = rr_text(entry3)
+
     rows = [
         {
             "단계": "1차 진입",
             "가격": format_currency(entry1, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[0], entry1),
+            "예상 R/R": rr_entry1_text,
             "조건": entry1_cond,
         },
         {
             "단계": "2차 추가",
             "가격": format_currency(entry2, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[1], entry2),
+            "예상 R/R": rr_entry2_text,
             "조건": f"{entry2_label} 근처에서 반등 확인",
         },
         {
             "단계": "3차 예비",
             "가격": format_currency(entry3, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[2], entry3),
+            "예상 R/R": rr_entry3_text,
             "조건": f"{entry3_label} 근처, 손절가 이탈 전까지만",
         },
         {
             "단계": "1차 익절",
             "가격": format_currency(tp1, ticker),
             "금액/수량": "보유분 30~50%",
+            "예상 R/R": "-",
             "조건": "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향",
         },
         {
             "단계": "최종 익절",
             "가격": format_currency(tp2, ticker),
             "금액/수량": "잔여분",
+            "예상 R/R": "-",
             "조건": "구조 목표가 도달 또는 MFI/%B 과열 동반 시",
         },
         {
             "단계": "손절",
             "가격": format_currency(stop, ticker),
             "금액/수량": "전량 또는 계획분",
+            "예상 R/R": "-",
             "조건": "종가 기준 이탈 시 신규진입 시나리오 무효",
         },
     ]
@@ -12378,7 +12402,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         f"<div class='info-panel' style='border-left:5px solid {status_color}; line-height:1.8;'>"
         f"<b>🎯 신규진입 실행 계획</b><br>"
         f"<span class='highlight'>{status}</span> — {escape_html_value(status_note)}<br>"
-        f"기준가 {format_currency(cur, ticker)} / R/R {rr:.2f} / 1R {format_currency(risk, ticker)}<br>"
+        f"목표가 {format_currency(target, ticker)} <span style='color:#94a3b8;'>({escape_html_value(target_source)})</span> / "
+        f"손절 {format_currency(stop, ticker)} <span style='color:#94a3b8;'>({escape_html_value(stop_source)})</span><br>"
+        f"기준가 {format_currency(cur, ticker)} / 현재가 기준 R/R {rr_now_text} / "
+        f"1차 {rr_entry1_text} · 2차 {rr_entry2_text} · 3차 {rr_entry3_text}<br>"
         f"{escape_html_value(amount_note)}<br>"
         f"<span style='color:#94a3b8;'>투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</span>"
         f"</div>",
@@ -12788,7 +12815,10 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
     st.markdown("### 💎 밸류 / 가격매력 점검")
 
     if is_etf:
-        st.info("ETF는 개별 기업 PER/목표가보다 기초지수 흐름, 돈흐름 레이더, 운용보수, 괴리율을 보는 편이 더 적합합니다.")
+        st.info(
+            "ETF는 개별 기업 PER/애널리스트 목표가보다 기초지수 흐름, 돈흐름 레이더, 운용보수, 괴리율을 보는 편이 더 적합합니다. "
+            "단, 신규진입 실행계획의 R/R 목표가는 애널리스트 목표가가 아니라 최근 고점과 ATR로 계산한 차트 구조 목표가입니다."
+        )
         return
 
     snapshot = fetch_valuation_snapshot(ticker)
@@ -23921,7 +23951,8 @@ if main_page == "precision":
         b1, b2 = st.columns(2)
         with b1: 
             f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
-            _rr_str = f"{c['rr_ratio']:.2f} (목표 {format_currency(c['rr_target'], tkr)} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
+            _rr_src = c.get("rr_target_source", "차트 구조")
+            _rr_str = f"{c['rr_ratio']:.2f} (목표 {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
             _sf_str = c.get('sector_flow_state', '-')
             _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
