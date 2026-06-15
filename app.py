@@ -12269,6 +12269,7 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
         ret_1m = _period_return_from_close(close, 21)
         ret_3m = _period_return_from_close(close, 63)
         ret_6m = _period_return_from_close(close, 126)
+        ret_selected = _period_return_from_close(close, len(close) - 1)
         accel = ret_1m - (ret_3m / 3.0) if finite_num(ret_1m) and finite_num(ret_3m) else np.nan
         high_3m = clean_float(close.tail(63).max(), np.nan)
         last = clean_float(close.iloc[-1], np.nan)
@@ -12285,6 +12286,7 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
             "1개월": ret_1m,
             "3개월": ret_3m,
             "6개월": ret_6m,
+            "선택기간": ret_selected,
             "가속도": accel,
             "고점대비": dd_3m,
             "변동성": vol_3m,
@@ -12313,10 +12315,11 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
             + _rank_pct_series(ok["고점대비"]) * 10
         ).round(1)
         ok["누적주도점수"] = (
-            _rank_pct_series(ok["6개월"]) * 35
+            _rank_pct_series(ok["선택기간"]) * 30
+            + _rank_pct_series(ok["6개월"]) * 20
             + _rank_pct_series(ok["3개월"]) * 25
             + _rank_pct_series(ok["1개월"]) * 15
-            + _rank_pct_series(ok["2주"]) * 10
+            + _rank_pct_series(ok["2주"]) * 5
             + _rank_pct_series(ok["가속도"]) * 5
             + _rank_pct_series(ok["고점대비"]) * 10
         ).round(1)
@@ -12374,7 +12377,8 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
             f"<div class='info-panel' style='border-left:4px solid #22c55e;'>"
             f"<b>누적 주도 리더</b>: <span class='highlight'>{escape_html_value(leader.get('티커', '-'))}</span> "
             f"({leader.get('동종판정', '-')}, 누적점수 {clean_float(leader.get('동종점수'), 0.0):.1f})<br>"
-            f"6개월 {_format_peer_pct(leader.get('6개월'))} / 3개월 {_format_peer_pct(leader.get('3개월'))} / "
+            f"선택기간 {_format_peer_pct(leader.get('선택기간'))} / 6개월 {_format_peer_pct(leader.get('6개월'))} / "
+            f"3개월 {_format_peer_pct(leader.get('3개월'))} / "
             f"동종 3M 우위 {_format_peer_pct(leader.get('동종3M우위'))}<br>"
             f"<span style='color:#94a3b8;'>최근 탄력 리더: {escape_html_value(recent_leader.get('티커', '-'))} "
             f"(최근점수 {clean_float(recent_leader.get('최근탄력점수'), 0.0):.1f})</span>"
@@ -12391,7 +12395,7 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
                 template="plotly_dark",
                 height=320,
                 margin=dict(l=10, r=10, t=35, b=10),
-                title="비교 시작일 대비 누적수익률",
+                title=f"비교 시작일 대비 누적수익률 ({period})",
                 yaxis_title="수익률(%)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             )
@@ -12399,11 +12403,11 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
             st.plotly_chart(fig, width="stretch")
 
         show = ok[[
-            "순위", "티커", "동종판정", "동종점수", "최근탄력점수", "2주", "1개월", "3개월", "6개월",
+            "순위", "티커", "동종판정", "동종점수", "최근탄력점수", "선택기간", "2주", "1개월", "3개월", "6개월",
             "동종3M우위", "시장RS", "섹터RS", "RS방향", "고점대비", "변동성"
         ]].copy()
         show = show.rename(columns={"동종점수": "누적주도점수"})
-        for col in ["2주", "1개월", "3개월", "6개월", "동종3M우위", "고점대비", "변동성"]:
+        for col in ["선택기간", "2주", "1개월", "3개월", "6개월", "동종3M우위", "고점대비", "변동성"]:
             show[col] = show[col].apply(_format_peer_pct)
         st.dataframe(show, width="stretch", hide_index=True)
 
