@@ -337,6 +337,7 @@ _PYTH_BENCHMARKS_BASE_URL = "https://benchmarks.pyth.network/v1"
 _PYTH_HERMES_BASE_URL = "https://hermes.pyth.network/v2"
 _PYTH_PRICE_MAX_AGE_SECONDS = 180
 _PYTH_CONFIDENCE_MAX_RATIO = 0.05
+_LATEST_PRICE_CACHE_TTL_SECONDS = 15
 _US_INTRADAY_QUOTE_MAX_AGE_SECONDS = 16 * 60 * 60
 
 
@@ -666,6 +667,41 @@ def _fetch_robinhood_us_quote(ticker: str) -> float:
     return 0.0
 
 
+def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+    try:
+        url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(t)}/"
+        headers = dict(_YQ_HEADERS)
+        headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+
+        symbol = re.escape(t)
+        match = re.search(
+            rf'\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
+            text,
+            flags=re.DOTALL,
+        )
+        if not match:
+            match = re.search(
+                rf'\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
+                text,
+                flags=re.DOTALL,
+            )
+        if not match:
+            return 0.0
+        price = float(match.group(1))
+        ts = int(match.group(2))
+        if price > 0 and _is_recent_epoch(ts):
+            return price
+    except Exception:
+        pass
+    return 0.0
+
+
 def _last_candle_close(result: dict) -> float:
     """
     Yahoo v8 chart 응답에서 가장 최근 1분봉 Close 값을 꺼냅니다.
@@ -866,6 +902,9 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
+        price = _fetch_yahoo_overnight_page_price(ticker)
+        if price > 0:
+            return price
         price = _fetch_configured_us_quote_price(ticker)
         if price > 0:
             return price
@@ -908,15 +947,15 @@ def _fetch_price_uncached(ticker: str) -> float:
         return 0.0
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
 def _load_latest_price_cached(ticker: str) -> float:
-    """TTL=60초 캐시 래퍼. 성공값(>0)만 캐시에 저장하기 위해 내부에서 검증."""
+    """Short TTL cache wrapper. Only successful prices (>0) are cached."""
     return _fetch_price_uncached(ticker)
 
 
 def load_latest_price(ticker: str) -> float:
     """
-    단일 종목 현재가 조회 (공개 API, TTL=60초).
+    단일 종목 현재가 조회 (공개 API, 짧은 TTL).
     캐시 결과가 0(조회 실패)이면 캐시를 거치지 않고 즉시 재시도.
     → '실패 결과 캐싱' 문제 방지.
     """
@@ -927,10 +966,10 @@ def load_latest_price(ticker: str) -> float:
     return _fetch_price_uncached(ticker)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
 def load_latest_prices_batch(tickers) -> dict:
     """
-    여러 종목 현재가 일괄 조회. TTL=60초.
+    여러 종목 현재가 일괄 조회. 짧은 TTL.
 
     한국 (.KS/.KQ):  네이버 bulk API → 개별 네이버 → pykrx 최근 종가
     미국/기타:       Pyth → Yahoo chart/prepost → yfinance 분봉 → fast_info → 일봉 폴백
@@ -995,7 +1034,13 @@ def load_latest_prices_batch(tickers) -> dict:
 
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
-        prices.update(_fetch_pyth_us_live_prices_batch(us_tickers))
+        for t in us_tickers:
+            p = _fetch_yahoo_overnight_page_price(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
+
+        us_live_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        prices.update(_fetch_pyth_us_live_prices_batch(us_live_needed))
 
         # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
         us_yahoo_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
