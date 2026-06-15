@@ -12324,11 +12324,28 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
             + _rank_pct_series(ok["고점대비"]) * 10
         ).round(1)
         ok["동종점수"] = ok["누적주도점수"]
-        ok["동종판정"] = ok["동종점수"].apply(
-            lambda v: "리더" if v >= 75 else ("강함" if v >= 60 else ("보통" if v >= 45 else "약함"))
-        )
         ok = ok.sort_values(["동종점수", "6개월", "3개월"], ascending=[False, False, False])
         ok.insert(0, "순위", range(1, len(ok) + 1))
+        ok["동종판정"] = ok.apply(
+            lambda r: (
+                "누적 리더"
+                if int(r.get("순위", 0) or 0) == 1
+                else (
+                    "강한 추격"
+                    if clean_float(r.get("동종점수"), 0.0) >= 75
+                    else (
+                        "최근 탄력"
+                        if clean_float(r.get("최근탄력점수"), 0.0) >= 75
+                        else (
+                            "강함"
+                            if clean_float(r.get("동종점수"), 0.0) >= 60
+                            else ("보통" if clean_float(r.get("동종점수"), 0.0) >= 45 else "약함")
+                        )
+                    )
+                )
+            ),
+            axis=1,
+        )
         result = pd.concat([ok, result[~ok_mask]], ignore_index=True)
 
     curve_df = pd.concat(curve_parts.values(), axis=1).ffill().dropna(how="all") if curve_parts else pd.DataFrame()
