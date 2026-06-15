@@ -10575,6 +10575,7 @@ def _build_decision_result(ctx: dict) -> dict:
         "decision_reasons": decision_outcome.reasons,
         "grade": ctx["grade"], "t_score": ctx["t_score"], "tech_total": ctx["tech_total"], "fin_score": ctx["fin_score"],
         "dd": ctx["current_dd"], "ret_3m": ctx["ret_3m"], "ret_6m": ctx["ret_6m"], "target_w": ctx["targ_w"], "current_w": ctx["curr_w"], "buy_amt": ctx["buy_amount"],
+        "effective_total_asset": ctx["eff_total"], "weight_gap": ctx["weight_gap"], "app_mode": ctx["app_mode"],
         "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df), **core_dca_context,
         "day_ret": ctx["day_ret"], "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
         "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
@@ -12183,6 +12184,26 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     target = clean_float(c.get("rr_target"), 0.0)
     rr = clean_float(c.get("rr_ratio"), 0.0)
     buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+    target_w = clean_float(c.get("target_w"), 0.0)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    weight_gap = max(clean_float(c.get("weight_gap"), target_w - current_w), 0.0)
+    effective_total_asset = clean_float(c.get("effective_total_asset"), 0.0)
+    if buy_amt_krw <= 0 and effective_total_asset > 0 and weight_gap > 0:
+        buy_amt_krw = round(effective_total_asset * weight_gap / 100.0, 0)
+    if buy_amt_krw <= 0 and str(c.get("app_mode", "")) != "범용모드":
+        try:
+            sheet_target_w = clean_float(get_target_weight_from_sheet(name, ticker), 0.0)
+            sheet_current_w = clean_float(get_sheet_current_weight(name, ticker), 0.0)
+            sheet_gap = max(sheet_target_w - sheet_current_w, 0.0)
+            sheet_total = clean_float(globals().get("total_eval", 0.0), 0.0)
+            if sheet_total > 0 and sheet_gap > 0:
+                target_w = sheet_target_w
+                current_w = sheet_current_w
+                weight_gap = sheet_gap
+                effective_total_asset = sheet_total
+                buy_amt_krw = round(sheet_total * sheet_gap / 100.0, 0)
+        except Exception:
+            pass
     ma5 = clean_float(c.get("ma5"), 0.0)
     ma20 = clean_float(c.get("ma20"), 0.0)
     fvg_top = clean_float(c.get("fvg_top"), 0.0)
@@ -12214,12 +12235,17 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
-    is_blocked = decision_code in block_codes or rr < 1.0
+    is_hard_blocked = decision_code in block_codes
+    is_poor_rr = rr < 1.0
 
-    if is_blocked:
+    if is_hard_blocked:
         status = "진입 보류"
         status_color = "#ef4444"
-        status_note = "R/R 또는 추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
+        status_note = "추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
+    elif is_poor_rr:
+        status = "현재가 보류 / 눌림 대기"
+        status_color = "#d97706"
+        status_note = "현재가 기준 R/R이 1 미만입니다. 아래 금액/수량은 목표비중 기준의 대기 계획이며, 조건 확인 후만 사용하세요."
     elif rr < 1.5:
         status = "정찰만"
         status_color = "#d97706"
@@ -12281,12 +12307,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     tp1 = min(target, cur + risk)
     tp2 = target
 
-    if is_blocked:
+    if is_hard_blocked:
         tranche_weights = [0.0, 0.0, 0.0]
-    elif rr < 1.5:
-        tranche_weights = [0.30, 0.0, 0.0]
     elif is_wait:
         tranche_weights = [0.30, 0.40, 0.30]
+    elif rr < 1.5:
+        tranche_weights = [0.30, 0.0, 0.0]
     else:
         tranche_weights = [0.40, 0.35, 0.25]
 
