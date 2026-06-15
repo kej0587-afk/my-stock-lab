@@ -23738,6 +23738,9 @@ if main_page == "precision":
                 else "일봉 기준"
             )
 
+            if manual_cur_p > 0:
+                price_source = "직접입력"
+
             price_info_col, price_refresh_col = st.columns([2.2, 1])
             with price_info_col:
                 st.markdown(
@@ -23754,6 +23757,17 @@ if main_page == "precision":
                     enable_force_live_price_refresh()
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     st.toast(f"{tkr} 현재가를 다시 조회합니다.")
+                    st.rerun()
+                st.number_input(
+                    "직접입력",
+                    min_value=0.0,
+                    step=0.01 if not tkr.upper().endswith((".KS", ".KQ")) else 1.0,
+                    format="%.2f" if not tkr.upper().endswith((".KS", ".KQ")) else "%.0f",
+                    key=manual_price_key,
+                    help="브로커 가격이 공개 API와 다를 때 임시 현재가를 넣으면 판정 지표도 이 가격 기준으로 재계산됩니다.",
+                )
+                if manual_cur_p > 0 and st.button("해제", key=f"clear_precision_manual_price_{fin_key}", width='stretch'):
+                    st.session_state[manual_price_key] = 0.0
                     st.rerun()
                 st.caption(price_source)
                 if price_refresh_time:
@@ -23864,7 +23878,7 @@ if main_page == "precision":
             avg_line = p_line if _show_avg else 0.0
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}")
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}")
             with week_tab:
                 render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}")
             with month_tab:
