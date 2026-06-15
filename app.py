@@ -12221,6 +12221,62 @@ def parse_peer_compare_tickers(raw_text: str, max_items: int = 6) -> list[str]:
     return tickers
 
 
+def _is_recent_us_daymarket_epoch(ts, max_age_seconds: int = 16 * 60 * 60) -> bool:
+    try:
+        epoch = int(float(ts))
+    except Exception:
+        return False
+    age = datetime.now(timezone.utc).timestamp() - epoch
+    return -300 <= age <= max_age_seconds
+
+
+def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
+    t = normalize_ticker(ticker)
+    if not t or is_kr_listed(t):
+        return 0.0
+    try:
+        url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(t)}/"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://finance.yahoo.com/",
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+
+        symbol = re.escape(t)
+        match = re.search(
+            rf'\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
+            text,
+            flags=re.DOTALL,
+        )
+        if not match:
+            match = re.search(
+                rf'\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
+                text,
+                flags=re.DOTALL,
+            )
+        if not match:
+            return 0.0
+        price = clean_float(match.group(1), 0.0)
+        ts = int(match.group(2))
+        return price if price > 0 and _is_recent_us_daymarket_epoch(ts) else 0.0
+    except Exception:
+        return 0.0
+
+
+def load_display_live_price(ticker: str) -> float:
+    direct = fetch_yahoo_daymarket_price_direct(ticker)
+    if direct > 0:
+        return direct
+    return clean_float(load_latest_price(ticker), 0.0)
+
+
 def _period_return_from_close(close: pd.Series, bars: int) -> float:
     if close is None or len(close) <= bars:
         return np.nan
@@ -12257,7 +12313,9 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
             rows.append({"티커": t, "상태": "가격 데이터 부족"})
             continue
 
-        live_price = clean_float(live_price_map.get(normalize_price_lookup_key(t)), 0.0)
+        live_price = fetch_yahoo_daymarket_price_direct(t)
+        if live_price <= 0:
+            live_price = clean_float(live_price_map.get(normalize_price_lookup_key(t)), 0.0)
         if live_price > 0:
             df, _ = apply_live_price_to_ohlcv(df, live_price, t)
 
@@ -24018,7 +24076,7 @@ if main_page == "precision":
     if not df.empty:
         df = build_indicators(df)
         # 프리마켓·애프터마켓 실시간가 선취득 → calc_scores에 live_price로 주입
-        auto_cur_p = load_latest_price(tkr)
+        auto_cur_p = load_display_live_price(tkr)
         manual_price_key = f"precision_manual_live_price_{fin_key}"
         manual_cur_p = clean_float(st.session_state.get(manual_price_key), 0.0)
         display_cur_p = manual_cur_p if manual_cur_p > 0 else auto_cur_p
