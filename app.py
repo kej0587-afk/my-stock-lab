@@ -12242,7 +12242,13 @@ def _rank_pct_series(values: pd.Series, *, ascending: bool = True) -> pd.Series:
 def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", period: str = "6mo") -> tuple[pd.DataFrame, pd.DataFrame]:
     rows = []
     curve_parts = {}
-    for ticker in tickers:
+    normalized_tickers = [sanitize_ticker_value(ticker) for ticker in tickers if sanitize_ticker_value(ticker)]
+    try:
+        live_price_map = load_latest_prices_batch(normalized_tickers)
+    except Exception:
+        live_price_map = {}
+
+    for ticker in normalized_tickers:
         t = sanitize_ticker_value(ticker)
         if not t:
             continue
@@ -12250,6 +12256,10 @@ def build_peer_comparison_data(tickers: list[str], base_asset_class: str = "", p
         if df is None or df.empty or "Close" not in df.columns:
             rows.append({"티커": t, "상태": "가격 데이터 부족"})
             continue
+
+        live_price = clean_float(live_price_map.get(normalize_price_lookup_key(t)), 0.0)
+        if live_price > 0:
+            df, _ = apply_live_price_to_ohlcv(df, live_price, t)
 
         close = pd.to_numeric(df["Close"], errors="coerce").dropna()
         if close.empty:
