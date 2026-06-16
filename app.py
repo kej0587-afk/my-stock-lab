@@ -9585,6 +9585,85 @@ def fetch_forexfactory_major_events():
     return events
 
 
+def macro_event_source_rank(source):
+    source_rank = {"자동: Fed": 0, "자동: FF": 1, "수동": 2, "자동: 규칙": 3, "fallback": 9}
+    parts = [p.strip() for p in str(source or "").split("+") if p.strip()]
+    if not parts:
+        return 5
+    return min(source_rank.get(part, 5) for part in parts)
+
+
+def combine_macro_event_sources(*sources):
+    order = ["자동: Fed", "자동: FF", "수동", "자동: 규칙", "fallback"]
+    parts = []
+    for source in sources:
+        for part in str(source or "").split("+"):
+            part = part.strip()
+            if part and part not in parts:
+                parts.append(part)
+    if any(part != "fallback" for part in parts):
+        parts = [part for part in parts if part != "fallback"]
+    return "+".join(sorted(parts, key=lambda part: order.index(part) if part in order else len(order)))
+
+
+def macro_event_date_range(event):
+    start = parse_macro_event_date(event.get("date"))
+    end = parse_macro_event_date(event.get("end_date") or event.get("date"))
+    if start is None:
+        return None, None
+    if end is None or end < start:
+        end = start
+    return start, end
+
+
+def macro_events_overlap(left, right):
+    left_start, left_end = macro_event_date_range(left)
+    right_start, right_end = macro_event_date_range(right)
+    if None in (left_start, left_end, right_start, right_end):
+        return False
+    return left_start <= right_end and right_start <= left_end
+
+
+def merge_macro_events(left, right):
+    left_start, left_end = macro_event_date_range(left)
+    right_start, right_end = macro_event_date_range(right)
+    primary, secondary = (left, right)
+    if macro_event_source_rank(right.get("source")) < macro_event_source_rank(left.get("source")):
+        primary, secondary = right, left
+
+    merged = dict(primary)
+    if None not in (left_start, left_end, right_start, right_end):
+        merged["date"] = min(left_start, right_start).isoformat()
+        merged["end_date"] = max(left_end, right_end).isoformat()
+    merged["weight"] = max(
+        float(primary.get("weight", 0.0) or 0.0),
+        float(secondary.get("weight", 0.0) or 0.0),
+    )
+    merged["pre_days"] = max(int(primary.get("pre_days", 0) or 0), int(secondary.get("pre_days", 0) or 0))
+    merged["post_days"] = max(int(primary.get("post_days", 0) or 0), int(secondary.get("post_days", 0) or 0))
+
+    primary_source = str(primary.get("source", "") or "").strip()
+    secondary_source = str(secondary.get("source", "") or "").strip()
+    merged["source"] = combine_macro_event_sources(primary_source, secondary_source)
+    return merged
+
+
+def dedupe_macro_events(events):
+    deduped = []
+    for event in events:
+        name = canonical_macro_event_name(event.get("event", ""))
+        match_idx = None
+        for idx, old in enumerate(deduped):
+            if canonical_macro_event_name(old.get("event", "")) == name and macro_events_overlap(old, event):
+                match_idx = idx
+                break
+        if match_idx is None:
+            deduped.append(event)
+        else:
+            deduped[match_idx] = merge_macro_events(deduped[match_idx], event)
+    return deduped
+
+
 def build_macro_event_candidates(today):
     today = today or datetime.now(KST).date()
     events = []
@@ -9600,19 +9679,10 @@ def build_macro_event_candidates(today):
     for event in FALLBACK_AUTO_MACRO_EVENTS:
         add_macro_event(events, event, today, source=event.get("source", "fallback"))
 
-    deduped = {}
-    source_rank = {"자동: Fed": 0, "자동: FF": 1, "수동": 2, "자동: 규칙": 3, "fallback": 9}
-    for event in events:
-        start = str(event.get("date", ""))
-        end = str(event.get("end_date") or start)
-        name = canonical_macro_event_name(event.get("event", ""))
-        key = (start, end, name)
-        old = deduped.get(key)
-        if old is None or source_rank.get(event.get("source", ""), 5) < source_rank.get(old.get("source", ""), 5):
-            deduped[key] = event
+    deduped = dedupe_macro_events(events)
 
     return sorted(
-        deduped.values(),
+        deduped,
         key=lambda x: (
             parse_macro_event_date(x.get("date")) or datetime.max.date(),
             NEWS_CATEGORY_ORDER.get(x.get("category", ""), 9) if "NEWS_CATEGORY_ORDER" in globals() else 0,
