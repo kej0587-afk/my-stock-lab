@@ -62,6 +62,7 @@ from stock_lab_core.formatters import (
     clean_int,
     clean_symbol,
     dataframe_from_rows,
+    ensure_kr_suffix_if_code,
     escape_html_value,
     format_currency,
     is_kr_listed,
@@ -1062,11 +1063,7 @@ def resolve_display_name_for_ticker(ticker, fallback=""):
 
     # [핵심] 한국 주식이면 네이버/KRX 이름만 쓰고 야후 파이낸스는 절대 조회하지 않음!
     # 0117V0, 0022T0 같이 영숫자 혼합 6자리 코드도 KR로 인식
-    is_kr = (
-        ticker_clean.endswith((".KS", ".KQ"))
-        or (symbol.isdigit() and len(symbol) == 6)
-        or (len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum())
-    )
+    is_kr = is_kr_listed(ticker_clean)
     if is_kr:
         for resolver in [lookup_kr_etf_display_name, lookup_naver_stock_name]:
             name = resolver(symbol)
@@ -1096,7 +1093,7 @@ def _is_garbled_kr_name(name: str, ticker: str) -> bool:
     """
     if not name:
         return False
-    if not str(ticker).upper().endswith((".KS", ".KQ")):
+    if not is_kr_listed(ticker):
         return False
     # CJK 통합 한자 영역에 속하는 문자가 포함되면 깨진 이름으로 판단
     return any('一' <= ch <= '鿿' or '豈' <= ch <= '﫿' for ch in name)
@@ -1130,7 +1127,7 @@ def sanitize_asset_name(name, ticker=""):
 
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
-    ticker = sanitize_ticker_value(data.get("ticker", ""))
+    ticker = ensure_kr_suffix_if_code(data.get("ticker", ""))
     return {
         **data,
         "ticker": ticker,
@@ -1580,7 +1577,7 @@ def load_holdings_db_for_user(owner_email):
         if "account_type" not in df.columns: df["account_type"] = "일반"
             
         if not df.empty:
-            df["ticker"] = df["ticker"].apply(sanitize_ticker_value)
+            df["ticker"] = df["ticker"].apply(ensure_kr_suffix_if_code)
             df["name"] = df.apply(lambda row: sanitize_asset_name(row.get("name", ""), row.get("ticker", "")), axis=1)
         return df
     except Exception as e:
@@ -1594,12 +1591,7 @@ def _normalize_kr_ticker_suffix(ticker: str) -> str:
     """6자리 영숫자 KR 코드에 .KS 접미사가 없으면 자동으로 추가.
     예: 0117V0 → 0117V0.KS, 069500 → 069500.KS
     """
-    t = str(ticker or "").strip().upper()
-    if not t or t.endswith((".KS", ".KQ")):
-        return t
-    if len(t) == 6 and t[0].isdigit() and t.isalnum():
-        return t + ".KS"
-    return t
+    return ensure_kr_suffix_if_code(ticker, ".KS")
 
 
 def save_holdings_db(df):
@@ -2945,7 +2937,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             cur_p    = clean_float(row.get("현재가"), 0.0)
             avg_p    = clean_float(row.get("매입가"), 0.0)
             qty      = clean_float(row.get("보유량"), 0.0)
-            is_usd   = not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH")
+            is_usd   = not is_kr_listed(ticker) and ticker not in ("KRW_CASH", "USD_CASH")
             asset_is_etf = (
                 clean_bool(row.get("is_etf", False))
                 or is_known_etf_ticker(ticker)
@@ -3443,7 +3435,7 @@ def render_dart_disclosure_panel(holdings_table):
     kr_tickers = [
         str(r.get("티커", ""))
         for _, r in holdings_table.iterrows()
-        if str(r.get("티커", "")).upper().endswith((".KS", ".KQ"))
+        if is_kr_listed(r.get("티커", ""))
     ]
     if not kr_tickers:
         return
@@ -3866,7 +3858,7 @@ def fetch_kr_financials_auto(ticker: str):
 
 def render_financial_trend_chart(ticker: str, name: str):
     """DART 연간 재무 트렌드 차트 (매출/영업이익/순이익 + YoY 성장률)."""
-    if not str(ticker).upper().endswith((".KS", ".KQ")):
+    if not is_kr_listed(ticker):
         st.caption("재무 트렌드는 한국 DART 데이터 기반입니다.")
         return
 
@@ -4097,7 +4089,7 @@ def get_krx_row_value(row, keys, default=""):
 def fetch_krx_stock_snapshot(ticker: str):
     """pykrx 기반 KRX 종목 기본 정보 조회 (API 키 불필요)."""
     stock_code = normalize_stock_code(ticker)
-    if not stock_code or not stock_code.isdigit():
+    if not stock_code or not (len(stock_code) == 6 and stock_code[0].isdigit() and stock_code.isalnum()):
         return {"ok": False, "source": "krx", "reason": f"KRX stock code invalid: {ticker}"}
     try:
         from pykrx import stock as _pykrx
@@ -4122,7 +4114,7 @@ def fetch_krx_stock_snapshot(ticker: str):
                     name = _pykrx.get_market_ticker_name(stock_code) or ""
                 except Exception:
                     name = ""
-                market_label = "KOSPI" if ticker.upper().endswith(".KS") else "KOSDAQ"
+                market_label = "KOSDAQ" if str(ticker).upper().endswith(".KQ") else "KOSPI"
                 return {
                     "ok": True,
                     "source": "pykrx",
@@ -4913,7 +4905,7 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
         }
         return 0, {"ok": True, "source": "etf"}, notes, {}
 
-    is_kr = str(ticker).upper().endswith(".KS") or str(ticker).upper().endswith(".KQ")
+    is_kr = is_kr_listed(ticker)
     fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
 
     if not fin.get("ok", False):
@@ -5441,7 +5433,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         pnl = qty * (cur_price - avg_price)
         ret = ((cur_price / avg_price) - 1) if avg_price > 0 else 0.0
 
-        is_kr = str(ticker).upper().endswith(".KS") or str(ticker).upper().endswith(".KQ")
+        is_kr = is_kr_listed(ticker)
         krw_eval = eval_amt if is_kr else eval_amt * usdkrw
 
         # ── 손익분기점: 매입가 × (1 + 수수료율) ─────────────────────────────
@@ -6137,6 +6129,51 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
+def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
+    text = f"{name} {ticker} {asset_class}".lower()
+    if any(key in text for key in ["반도체", "semiconductor", "soxx", "smh", "0167a0"]):
+        return [
+            {"축": "국내 동종 ETF", "확인 대상": "396500.KS, 139260.KS", "판단": "국내 반도체 ETF의 3M/6M 추세와 거래대금"},
+            {"축": "해외 기초 흐름", "확인 대상": "SOXX, SMH", "판단": "미국 반도체 사이클과 AI 반도체 수급 방향"},
+            {"축": "핵심 구성", "확인 대상": "삼성전자, SK하이닉스", "판단": "Top2 집중 ETF라 두 종목의 추세 훼손 여부가 중요"},
+        ]
+    return [
+        {"축": "기초지수", "확인 대상": "운용사 지수/구성종목", "판단": "ETF 자체 차트보다 기초지수 흐름을 우선"},
+        {"축": "동종 ETF", "확인 대상": "상장 6개월 이상 유사 ETF", "판단": "충분한 가격 이력이 있는 대체 차트로 추세 확인"},
+        {"축": "상품 품질", "확인 대상": "거래대금, AUM, NAV 괴리율", "판단": "신규 ETF는 유동성과 괴리율이 매수 품질을 좌우"},
+    ]
+
+
+def render_newly_listed_core_etf_guide(name, ticker, is_etf, asset_class, c, mtf_pack):
+    if not is_etf:
+        return
+    history_days = int(clean_float(c.get("history_days"), 0))
+    short_history = bool(c.get("short_history")) or history_days < 80
+    if not short_history:
+        return
+
+    daily_rows = ((mtf_pack.get("일봉") or {}).get("snapshot") or {}).get("rows", history_days)
+    mode_label = "코어 후보" if str(c.get("bucket", "")).lower() == "core" else "ETF 후보"
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid #38bdf8; margin-bottom:10px;'>
+<b>신규상장 {escape_html_value(mode_label)} 관측 모드</b><br>
+가격 이력 {int(clean_float(daily_rows, history_days))}거래일 기준입니다. MA50/MA120, 52주 고점, 장기 MDD는 아직 신뢰도가 낮아서
+ETF 자체 일봉보다 기초지수·동종 ETF·구성종목 흐름을 먼저 봅니다.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    rule_rows = [
+        {"구분": "초기 진입", "기준": "상장 20거래일 전후", "운용": "목표비중의 25~33% 이하 정찰"},
+        {"구분": "검증 진입", "기준": "60거래일 전후", "운용": "거래대금·괴리율 안정 + 프록시 추세 우호 시 50~70%"},
+        {"구분": "정상 코어", "기준": "120거래일 이상", "운용": "MA50/MA120, MDD, R/R 등 기존 체계 비중 확대"},
+    ]
+    st.dataframe(pd.DataFrame(rule_rows), width='stretch', hide_index=True)
+    st.dataframe(pd.DataFrame(infer_new_etf_proxy_checks(name, ticker, asset_class)), width='stretch', hide_index=True)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def _load_benchmark_returns(bench_ticker: str) -> pd.Series:
     """벤치마크 6개월 일별 수익률(%) 시리즈를 반환 (캐시)."""
@@ -6796,7 +6833,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     # ── 구성 ETF 상세 (최근 확인이 강한 순 정렬) ──
     tickers = cl.get("tickers", [])
     ticker_codes = [str(t.get("ticker", "")).upper() for t in tickers if isinstance(t, dict)]
-    market_hint = "한국 섹터" if any(t.endswith((".KS", ".KQ")) for t in ticker_codes) else "미국 섹터"
+    market_hint = "한국 섹터" if any(is_kr_listed(t) for t in ticker_codes) else "미국 섹터"
     bridge = resolve_flow_theme_bridge(cl.get("name", ""), " ".join(ticker_codes), market_hint)
     bridge_html = ""
     if bridge.get("label"):
@@ -9343,8 +9380,7 @@ def clear_market_context_cache():
 
 
 def get_market_status_label(ticker=""):
-    ticker_text = str(ticker or "").upper()
-    is_kr = ticker_text.endswith((".KS", ".KQ"))
+    is_kr = is_kr_listed(ticker)
 
     if is_kr:
         now = get_kst_now()
@@ -10822,7 +10858,7 @@ def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p,
         _add_amt = round(eff_total * _add_w / 100, 0)  # KRW 기준 금액
         _add_p   = cur_p if cur_p > 0 else 1
         if _add_amt > 0:
-            _is_us = not ticker.upper().endswith((".KS", ".KQ"))
+            _is_us = not is_kr_listed(ticker)
             if _is_us:
                 # eff_total·_add_amt는 KRW → USD 환산 후 주수 계산
                 _add_usd    = _add_amt / 1400.0
@@ -10889,7 +10925,7 @@ def _build_decision_result(ctx: dict) -> dict:
 
 def _get_live_price_row_date(ticker: str):
     try:
-        is_us = not str(ticker or "").upper().endswith((".KS", ".KQ"))
+        is_us = not is_kr_listed(ticker)
         zone = ZoneInfo("America/New_York") if is_us else KST
         now = datetime.now(zone)
         if now.weekday() >= 5:
@@ -12165,7 +12201,7 @@ def get_saved_fin_score_fast(ticker, is_etf):
 
 
 def get_dashboard_market_label(ticker):
-    return "한국" if str(ticker).upper().endswith((".KS", ".KQ")) else "미국"
+    return "한국" if is_kr_listed(ticker) else "미국"
 
 
 def get_dashboard_type_label(is_etf):
@@ -12936,7 +12972,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     def order_text(amount_krw, price):
         if amount_krw <= 0 or price <= 0:
             return "-"
-        is_us = not str(ticker).upper().endswith((".KS", ".KQ"))
+        is_us = not is_kr_listed(ticker)
         if is_us:
             fx = clean_float(usdkrw, 1400.0) or 1400.0
             amount_usd = amount_krw / fx
@@ -13169,7 +13205,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
             st.info("**스마트머니(SMC):**\n데이터 없음")
 
     # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 + 공시 ────────────────────
-    if str(ticker).upper().endswith((".KS", ".KQ")):
+    if is_kr_listed(ticker):
         with st.expander("📊 투자자별 수급 현황 (최근 20거래일)", expanded=False):
             render_investor_trend_panel(ticker, name)
         if not is_etf:
@@ -13222,7 +13258,7 @@ def fetch_valuation_snapshot(ticker):
     has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
 
     # ── 한국 종목: yfinance에 데이터가 없으면 네이버 증권으로 보완 ──────────────
-    if str(ticker).upper().endswith((".KS", ".KQ")):
+    if is_kr_listed(ticker):
         naver = fetch_naver_kr_snapshot(ticker)
         if naver.get("ok"):
             nd = naver.get("data", {})
@@ -13232,7 +13268,7 @@ def fetch_valuation_snapshot(ticker):
             has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
 
     if not has_any:
-        reason = "yfinance/네이버 밸류 데이터 없음" if str(ticker).upper().endswith((".KS", ".KQ")) else "yfinance 밸류 데이터 없음"
+        reason = "yfinance/네이버 밸류 데이터 없음" if is_kr_listed(ticker) else "yfinance 밸류 데이터 없음"
         return {"ok": False, "reason": reason, "data": data}
     return {"ok": True, "reason": "", "data": data}
 
@@ -13377,7 +13413,7 @@ def build_valuation_interpretation(data, current_price, ticker):
     if data_count == 0:
         headline = "밸류 데이터 부족"
         color = "#64748b"
-        is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+        is_kr = is_kr_listed(ticker)
         note = (
             "yfinance 및 네이버 증권에서 현재 종목의 밸류/성장 지표를 가져오지 못했습니다. "
             "네이버 증권 앱에서 직접 확인하세요."
@@ -22172,7 +22208,7 @@ def render_investor_top10_section():
         _tracked_kr: list[str] = []
         for _item in st.session_state.get("watchlist", []):
             _t = sanitize_ticker_value(_item.get("ticker", ""))
-            if _t.upper().endswith((".KS", ".KQ")):
+            if is_kr_listed(_t):
                 _tracked_kr.append(_t)
         try:
             _snap = get_cached_today_market_flow_snapshot() or {}
@@ -22181,7 +22217,7 @@ def render_investor_top10_section():
                 if not _df.empty and "Ticker" in _df.columns:
                     _tracked_kr += [
                         _t for _t in _df["Ticker"].dropna().unique()
-                        if str(_t).upper().endswith((".KS", ".KQ"))
+                        if is_kr_listed(_t)
                     ]
         except Exception:
             pass
@@ -22792,12 +22828,7 @@ def render_print_report_v2():
                 def _pnl_krw(row):
                     ticker = str(row.get("티커", "")).upper()
                     pnl = _num(row.get("평가손익"), 0.0)
-                    code = ticker.replace(".KS", "").replace(".KQ", "")
-                    is_kr = (
-                        ticker.endswith((".KS", ".KQ"))
-                        or "CASH" in ticker
-                        or (len(code) == 6 and code[0].isdigit() and code.isalnum())
-                    )
+                    is_kr = is_kr_listed(ticker) or "CASH" in ticker
                     if is_kr:
                         return pnl
                     return pnl * _num(usdkrw, 1400.0)
@@ -22909,7 +22940,7 @@ def render_print_report_v2():
             target_w = _num(row.get("_print_target_weight"), 0.0)
             current_price = _num(row.get("현재가"), 0.0)
             avg_price = _num(row.get("매입가"), 0.0)
-            is_usd = bool(ticker and not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH"))
+            is_usd = bool(ticker and not is_kr_listed(ticker) and ticker not in ("KRW_CASH", "USD_CASH"))
             unit_price_krw = current_price * _num(usdkrw, 1400.0) if is_usd else current_price
             base_alloc = total_invest * (target_w / target_sum)
 
@@ -23016,7 +23047,7 @@ def render_print_report_v2():
             qty_now = _num(row.get("보유량"), 0.0)
             target_w = _num(row.get("_print_target_weight"), 0.0)
             bucket = normalize_bucket(str(row.get("bucket", "core")))
-            is_usd = bool(ticker and not ticker.upper().endswith((".KS", ".KQ")) and ticker not in ("KRW_CASH", "USD_CASH"))
+            is_usd = bool(ticker and not is_kr_listed(ticker) and ticker not in ("KRW_CASH", "USD_CASH"))
             unit_price_krw = current_price * _num(usdkrw, 1400.0) if is_usd else current_price
             target_value = total_asset * target_w / 100 if total_asset > 0 else 0.0
             target_shares = target_value / unit_price_krw if unit_price_krw > 0 else 0.0
@@ -23480,12 +23511,7 @@ def render_full_print_report():
                 def _pnl_krw(row):
                     ticker = str(row.get("티커", "")).upper()
                     pnl = _num(row.get("평가손익"), 0.0)
-                    code = ticker.replace(".KS", "").replace(".KQ", "")
-                    is_kr = (
-                        ticker.endswith((".KS", ".KQ"))
-                        or "CASH" in ticker
-                        or (len(code) == 6 and code[0].isdigit() and code.isalnum())
-                    )
+                    is_kr = is_kr_listed(ticker) or "CASH" in ticker
                     return pnl if is_kr else pnl * _num(usdkrw, 1400.0)
                 rdf["평가손익_원화"] = rdf.apply(_pnl_krw, axis=1)
             else:
@@ -24142,7 +24168,7 @@ if main_page == "precision":
                 key=PRECISION_FREE_MARKET_KEY,
             )
 
-        tkr = f"{user_tkr_raw}{'.KS' if 'KOSPI' in mkt_opt else '.KQ'}" if (user_tkr_raw.isdigit() and len(user_tkr_raw) == 6) else user_tkr_raw
+        tkr = ensure_kr_suffix_if_code(user_tkr_raw, ".KS" if "KOSPI" in mkt_opt else ".KQ")
         tkr = sanitize_ticker_value(tkr)
 
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
@@ -24153,7 +24179,7 @@ if main_page == "precision":
         if is_etf:
             a_class = infer_asset_class_for_ticker(tkr)
         else:
-            a_class = "kr_stock" if tkr.endswith((".KS", ".KQ")) else "us_stock"
+            a_class = "kr_stock" if is_kr_listed(tkr) else "us_stock"
 
         name = sanitize_asset_name("", tkr)
         my_p, has_p = 0.0, False
@@ -24427,8 +24453,8 @@ if main_page == "precision":
                 st.number_input(
                     "직접입력",
                     min_value=0.0,
-                    step=0.01 if not tkr.upper().endswith((".KS", ".KQ")) else 1.0,
-                    format="%.2f" if not tkr.upper().endswith((".KS", ".KQ")) else "%.0f",
+                    step=0.01 if not is_kr_listed(tkr) else 1.0,
+                    format="%.2f" if not is_kr_listed(tkr) else "%.0f",
                     key=manual_price_key,
                     help="브로커 가격이 공개 API와 다를 때 임시 현재가를 넣으면 판정 지표도 이 가격 기준으로 재계산됩니다.",
                 )
@@ -24455,7 +24481,7 @@ if main_page == "precision":
                 _buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
                 _cur_p = clean_float(display_cur_p, 0.0)
                 _fx = clean_float(usdkrw, 1400.0)
-                _is_us = not tkr.upper().endswith((".KS", ".KQ"))
+                _is_us = not is_kr_listed(tkr)
                 if _is_us:
                     _buy_usd = _buy_amt_krw / _fx if _fx > 0 else 0.0
                     _buy_display = f"${_buy_usd:,.0f} (≈{_buy_amt_krw:,.0f}원)"
@@ -24499,7 +24525,7 @@ if main_page == "precision":
                 _buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
                 _cur_p = clean_float(display_cur_p, 0.0)
                 _fx = clean_float(usdkrw, 1400.0)
-                _is_us = not tkr.upper().endswith((".KS", ".KQ"))
+                _is_us = not is_kr_listed(tkr)
                 if _is_us:
                     _buy_usd = _buy_amt_krw / _fx if _fx > 0 else 0.0
                     _buy_display = f"${_buy_usd:,.0f} (≈{_buy_amt_krw:,.0f}원)"
@@ -24550,6 +24576,7 @@ if main_page == "precision":
             with month_tab:
                 render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}")
             render_precision_multi_timeframe_summary(mtf_pack, c)
+            render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,
@@ -24923,12 +24950,7 @@ if main_page == "asset":
 
         def _dash_pnl_krw(r):
             ticker = str(r["티커"]).upper()
-            code = ticker.replace(".KS", "").replace(".KQ", "")
-            is_kr = (
-                ticker.endswith((".KS", ".KQ"))
-                or "CASH" in ticker
-                or (len(code) == 6 and code[0].isdigit() and code.isalnum())
-            )
+            is_kr = is_kr_listed(ticker) or "CASH" in ticker
             return r["평가손익"] if is_kr else r["평가손익"] * usdkrw
         dash_df["평가손익_원화"] = dash_df.apply(_dash_pnl_krw, axis=1)
         dash_df["수익률_pct"] = dash_df["수익률"] * 100

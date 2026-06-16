@@ -5,6 +5,7 @@ Streamlit, Supabase, yfinance, or scoring code.
 """
 
 import html
+import re
 
 import pandas as pd
 
@@ -12,7 +13,7 @@ import pandas as pd
 def format_currency(val, ticker):
     if pd.isna(val):
         return "-"
-    if str(ticker).endswith(".KS") or str(ticker).endswith(".KQ"):
+    if is_kr_listed(ticker):
         return f"₩{int(val):,}"
     return f"${val:,.2f}"
 
@@ -98,6 +99,22 @@ def clean_symbol(ticker: str) -> str:
     return sanitize_ticker_value(ticker).replace(".KS", "").replace(".KQ", "")
 
 
+def is_kr_code_like(ticker: str) -> bool:
+    """6자리 숫자/영숫자 KRX 코드 판별. 예: 005930, 0167A0, 0117V0."""
+    text = sanitize_ticker_value(ticker)
+    symbol = re.sub(r"\.(KS|KQ)$", "", text, flags=re.IGNORECASE)
+    return len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum()
+
+
+def ensure_kr_suffix_if_code(ticker: str, market_suffix: str = ".KS") -> str:
+    """KRX 6자리 코드에 거래소 접미사가 없으면 기본 .KS/.KQ를 붙인다."""
+    text = sanitize_ticker_value(ticker)
+    if not text or text.endswith((".KS", ".KQ")):
+        return text
+    suffix = ".KQ" if str(market_suffix or "").upper().endswith(".KQ") else ".KS"
+    return f"{text}{suffix}" if is_kr_code_like(text) else text
+
+
 def is_ticker_like_text(value) -> bool:
     """문자열이 종목 코드처럼 생겼는지 판별 (6자리 숫자, .KS/.KQ 접미사, 영문 심볼 등)."""
     text = sanitize_ticker_value(value)
@@ -110,8 +127,9 @@ def is_ticker_like_text(value) -> bool:
 
 
 def is_kr_listed(ticker: str) -> bool:
-    """KRX 상장 종목인지 확인 (.KS 또는 .KQ 접미사)."""
-    return sanitize_ticker_value(ticker).endswith((".KS", ".KQ"))
+    """KRX 상장 종목인지 확인 (.KS/.KQ 또는 6자리 숫자/영숫자 KRX 코드)."""
+    text = sanitize_ticker_value(ticker)
+    return text.endswith((".KS", ".KQ")) or is_kr_code_like(text)
 
 
 def normalize_bucket(value) -> str:
