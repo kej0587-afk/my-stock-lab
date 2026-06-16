@@ -121,6 +121,7 @@ from stock_lab_core.money_flow import (
     classify_money_flow_state,
     download_money_flow_prices,
 )
+from stock_lab_core.market_memo import analyze_market_memo
 try:
     from stock_lab_core.money_flow import (
         calculate_image_theme_flow_df,
@@ -20930,6 +20931,155 @@ def render_today_market_guard_panel(guard: dict):
             st.dataframe(event_df, width='stretch', hide_index=True)
 
 
+def build_today_market_memo_universe(summary_df=None):
+    records: dict[str, dict] = {}
+    status_map: dict[str, str] = {}
+
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
+        for _, row in summary_df.iterrows():
+            key = normalize_ticker(row.get("티커", ""))
+            if not key:
+                continue
+            status_map[key] = str(row.get("🔥기술적 타점", "") or row.get("판정분류", "") or "")
+
+    def add_record(ticker, name="", source="관심", asset_class="", is_etf=False):
+        ticker = sanitize_ticker_value(ticker)
+        key = normalize_ticker(ticker)
+        if not key:
+            return
+        prev = records.get(key, {})
+        merged_source = source
+        if prev.get("source") == "보유" or source == "보유":
+            merged_source = "보유"
+        records[key] = {
+            "ticker": ticker,
+            "name": str(name or prev.get("name") or ticker),
+            "source": merged_source,
+            "asset_class": str(asset_class or prev.get("asset_class") or ""),
+            "is_etf": bool(is_etf or prev.get("is_etf", False)),
+            "status": status_map.get(key, prev.get("status", "")),
+        }
+
+    table = globals().get("holdings_table", pd.DataFrame())
+    if isinstance(table, pd.DataFrame) and not table.empty:
+        for _, row in table.iterrows():
+            ticker = row.get("티커", "")
+            qty = clean_float(row.get("보유량", 0.0), 0.0)
+            value = clean_float(row.get("원화환산", 0.0), 0.0)
+            source = "보유" if qty > 0 or value > 0 else "자산"
+            add_record(
+                ticker,
+                row.get("자산명", ticker),
+                source,
+                row.get("asset_class", row.get("유형", "")),
+                clean_bool(row.get("is_etf", False)),
+            )
+
+    for item in st.session_state.get("watchlist", []) or []:
+        item = sanitize_watchlist_item(item)
+        add_record(
+            item.get("ticker", ""),
+            item.get("name", ""),
+            "관심",
+            item.get("asset_class", ""),
+            clean_bool(item.get("is_etf", False)),
+        )
+
+    return list(records.values()), status_map
+
+
+def render_today_market_memo_panel(summary_df=None):
+    universe, status_map = build_today_market_memo_universe(summary_df)
+    st.markdown("#### 시황 메모 분석")
+
+    def _clear_market_memo():
+        st.session_state["today_market_memo_text"] = ""
+
+    with st.expander("뉴스픽/시황 붙여넣기", expanded=False):
+        memo_text = st.text_area(
+            "시황 메모",
+            key="today_market_memo_text",
+            height=220,
+            placeholder="반도체·AI, 매크로, 지정학, 종목 뉴스 메모를 붙여넣으세요.",
+        )
+        st.button("시황 메모 지우기", key="today_market_memo_clear", on_click=_clear_market_memo)
+
+        if not str(memo_text or "").strip():
+            st.caption("붙여넣은 메모가 있으면 카테고리 톤, 확인 필요 문장, 내 종목 연결을 표시합니다.")
+            return
+
+        result = analyze_market_memo(memo_text, universe)
+        if not result.get("has_content"):
+            st.info("분석할 시황 문장이 없습니다.")
+            return
+
+        total_score = clean_float(result.get("total_score"), 0.0)
+        caution_count = int(clean_float(result.get("caution_count"), 0.0))
+        if caution_count >= 2:
+            color = "#f59e0b"
+        elif total_score >= 2:
+            color = "#22c55e"
+        elif total_score <= -2:
+            color = "#ef4444"
+        else:
+            color = "#64748b"
+
+        st.markdown(
+            f"""
+<div class='info-panel' style='border-left:5px solid {color}; line-height:1.75;'>
+<b>시황 요약: <span style='color:{color};'>{html.escape(str(result.get("headline", "")))}</span></b><br>
+<span class='highlight'>{html.escape(str(result.get("action_bias", "")))}</span><br>
+<span style='color:#94a3b8;'>붙여넣은 메모는 검증 전 입력값입니다. 확인 필요 항목은 별도로 표시합니다.</span>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("시황점수", f"{total_score:+.0f}")
+        m2.metric("확인필요", f"{caution_count}건")
+        m3.metric("연결종목", f"{len(result.get('ticker_rows', []))}개")
+        m4.metric("카테고리", f"{len(result.get('category_rows', []))}개")
+
+        category_df = pd.DataFrame(result.get("category_rows", []))
+        link_df = pd.DataFrame(result.get("ticker_rows", []))
+        verify_df = pd.DataFrame(result.get("verification_flags", []))
+        line_df = pd.DataFrame(result.get("line_items", []))
+
+        if not link_df.empty and "티커" in link_df.columns:
+            link_df["오늘점검 타점"] = link_df["티커"].astype(str).map(lambda x: status_map.get(normalize_ticker(x), "-") or "-")
+            link_cols = ["구분", "종목", "티커", "연결방식", "영향", "점수", "카테고리", "오늘점검 타점", "오늘점검", "근거"]
+        else:
+            link_cols = []
+
+        memo_tabs = st.tabs(["카테고리", "내 종목 연결", "확인 필요", "원문 분해"])
+        with memo_tabs[0]:
+            if category_df.empty:
+                st.info("분류된 카테고리가 없습니다.")
+            else:
+                st.dataframe(category_df, width='stretch', hide_index=True)
+        with memo_tabs[1]:
+            if link_df.empty:
+                st.info("현재 보유/관심종목과 직접 연결된 항목이 없습니다.")
+            else:
+                st.dataframe(link_df[[col for col in link_cols if col in link_df.columns]], width='stretch', hide_index=True)
+        with memo_tabs[2]:
+            if verify_df.empty:
+                st.success("메모 안에서 별도 확인이 필요한 문장은 많지 않습니다.")
+            else:
+                st.dataframe(verify_df, width='stretch', hide_index=True)
+        with memo_tabs[3]:
+            if line_df.empty:
+                st.info("원문 분해 결과가 없습니다.")
+            else:
+                show = line_df.copy()
+                if "tickers" in show.columns:
+                    show["tickers"] = show["tickers"].apply(lambda xs: ", ".join(xs) if isinstance(xs, list) else str(xs))
+                if "tags" in show.columns:
+                    show["tags"] = show["tags"].apply(lambda xs: ", ".join(xs) if isinstance(xs, list) else str(xs))
+                st.dataframe(show, width='stretch', hide_index=True)
+
+
 def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
     if summary_df is None or summary_df.empty:
         return pd.DataFrame()
@@ -22387,6 +22537,7 @@ def render_today_queue_tab(mode):
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
+        render_today_market_memo_panel(pd.DataFrame())
         render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
@@ -22475,6 +22626,7 @@ def render_today_queue_tab(mode):
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
+        render_today_market_memo_panel(pd.DataFrame())
         render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
         if run_summary:
@@ -22499,6 +22651,7 @@ def render_today_queue_tab(mode):
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask)
 
     render_today_market_guard_panel(market_guard)
+    render_today_market_memo_panel(summary_df)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("점검 종목", f"{len(summary_df)}개")
