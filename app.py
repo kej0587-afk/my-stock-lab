@@ -12987,28 +12987,44 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             return "-"
         return f"{(target - entry) / (entry - stop):.2f}"
 
+    def tranche_label(label, weight):
+        pct = clean_float(weight, 0.0) * 100
+        return f"{label} ({pct:.0f}%)" if pct > 0 else label
+
     rr_now_text = rr_text(cur)
     rr_entry1_text = rr_text(entry1)
     rr_entry2_text = rr_text(entry2)
     rr_entry3_text = rr_text(entry3)
+    total_order_text = order_text(buy_amt_krw, cur)
+    if weight_gap > 0:
+        total_condition = f"목표 {target_w:.2f}% - 현재 {current_w:.2f}% = 부족 {weight_gap:.2f}%p"
+    else:
+        total_condition = "목표비중 기준 추가 필요 없음"
 
     rows = [
         {
-            "단계": "1차 진입",
+            "단계": "총 추가 필요",
+            "가격": format_currency(cur, ticker),
+            "금액/수량": total_order_text,
+            "예상 R/R": rr_now_text,
+            "조건": total_condition,
+        },
+        {
+            "단계": tranche_label("1차 진입", tranche_weights[0]),
             "가격": format_currency(entry1, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[0], entry1),
             "예상 R/R": rr_entry1_text,
             "조건": entry1_cond,
         },
         {
-            "단계": "2차 추가",
+            "단계": tranche_label("2차 추가", tranche_weights[1]),
             "가격": format_currency(entry2, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[1], entry2),
             "예상 R/R": rr_entry2_text,
             "조건": f"{entry2_label} 근처에서 반등 확인",
         },
         {
-            "단계": "3차 예비",
+            "단계": tranche_label("3차 예비", tranche_weights[2]),
             "가격": format_currency(entry3, ticker),
             "금액/수량": order_text(buy_amt_krw * tranche_weights[2], entry3),
             "예상 R/R": rr_entry3_text,
@@ -13040,9 +13056,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     if buy_amt_krw <= 0 and not has_pos:
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
     elif has_pos:
-        amount_note = "이미 보유 중이면 위 금액은 잔여 목표비중 기준 추가 계획으로 해석하세요."
+        amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
-        amount_note = f"계획 투입금: {buy_amt_krw:,.0f}원 기준"
+        amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
+    if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked:
+        amount_note += " R/R이 낮아 현재 실행분은 1차 정찰만 열어둡니다."
 
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {status_color}; line-height:1.8;'>"
