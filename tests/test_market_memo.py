@@ -1,4 +1,6 @@
-from stock_lab_core.market_memo import analyze_market_memo
+from datetime import datetime
+
+from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
 
 
 def test_market_memo_links_semiconductor_watchlist_and_flags_sources():
@@ -32,3 +34,46 @@ def test_market_memo_macro_negative_bias_is_detected():
     macro = next(row for row in result["category_rows"] if row["카테고리"] in {"매크로", "외환/금리"})
     assert macro["점수"] < 0
     assert result["verification_flags"]
+
+
+def test_auto_market_memo_builds_newspick_style_draft():
+    flow_snapshot = {
+        "flow_df": [
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체",
+                "Ticker": "SOXX",
+                "돈흐름점수": 24.5,
+                "3개월수익률": 0.12,
+                "가속도": 0.03,
+                "상태": "주도",
+            }
+        ],
+        "us_top5": [
+            {
+                "섹터": "반도체",
+                "Ticker": "SOXX",
+                "돈흐름점수": 24.5,
+                "3개월수익률": 0.12,
+                "가속도": 0.03,
+                "상태": "주도",
+            }
+        ],
+    }
+    macro_data = {
+        "10Y 금리": {"val": 4.3, "chg": -1.2, "icon": "🔻", "storm": False},
+    }
+    news_rows = [{"ticker": "NVDA", "name": "NVIDIA", "title": "NVIDIA AI 수요 강세", "sentiment": "호재"}]
+
+    memo = build_auto_market_memo(
+        flow_snapshot=flow_snapshot,
+        macro_data=macro_data,
+        news_rows=news_rows,
+        now=datetime(2026, 6, 16, 15, 0),
+    )
+
+    assert "Stock Lab 자동 뉴스픽" in memo
+    assert "반도체·AI" in memo
+    assert "SOXX" in memo
+    assert "10Y 금리" in memo
+    assert "NVIDIA AI 수요 강세" in memo

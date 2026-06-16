@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Iterable
 
 
@@ -254,6 +255,240 @@ def _source_check_reason(line: str) -> str:
     if re.search(r"(\d+\.?\d*)\s*(억|조|bp|%|달러|위안)", line):
         reasons.append("숫자 데이터 확인")
     return " · ".join(dict.fromkeys(reasons)) or "출처 확인 필요"
+
+
+def _iter_table_rows(table, limit: int = 5) -> list[dict]:
+    if table is None:
+        return []
+    try:
+        if hasattr(table, "empty") and table.empty:
+            return []
+        if hasattr(table, "head") and hasattr(table, "iterrows"):
+            return [row.to_dict() for _, row in table.head(limit).iterrows()]
+    except Exception:
+        return []
+    if isinstance(table, dict):
+        return [table]
+    rows = []
+    try:
+        for item in list(table)[:limit]:
+            rows.append(dict(item) if isinstance(item, dict) else {"value": item})
+    except Exception:
+        return []
+    return rows
+
+
+def _fmt_auto_pct(value) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return "-"
+    if not (number == number):
+        return "-"
+    pct = number * 100 if abs(number) <= 3 else number
+    return f"{pct:+.1f}%"
+
+
+def _fmt_auto_num(value, digits: int = 2) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return "-"
+    if not (number == number):
+        return "-"
+    return f"{number:,.{digits}f}"
+
+
+def _flow_row_label(row: dict) -> str:
+    name = _norm(row.get("섹터") or row.get("테마") or row.get("하위테마") or row.get("ETF 이름") or row.get("종목명"))
+    ticker = _norm(row.get("Ticker") or row.get("티커"))
+    if name and ticker:
+        return f"{name}({ticker})"
+    return name or ticker or "-"
+
+
+def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
+    label = _flow_row_label(row)
+    score = _fmt_auto_num(row.get(score_col), 1) if row.get(score_col) not in [None, ""] else "-"
+    ret_3m = _fmt_auto_pct(row.get("3개월수익률"))
+    accel = _fmt_auto_pct(row.get("가속도"))
+    state = _norm(row.get("상태") or row.get("테마판정"))
+    tail = f", 상태 {state}" if state else ""
+    return f"{label} 돈흐름 {score}점, 3M {ret_3m}, 가속도 {accel}{tail}"
+
+
+def _weekday_kr(dt: datetime) -> str:
+    return ("월", "화", "수", "목", "금", "토", "일")[dt.weekday()]
+
+
+def _format_auto_memo_time(now: datetime | None = None) -> str:
+    dt = now or datetime.now()
+    hour = dt.hour
+    ampm = "오전" if hour < 12 else "오후"
+    display_hour = hour if 1 <= hour <= 12 else (hour - 12 if hour > 12 else 12)
+    return f"{dt.month}/{dt.day} ({_weekday_kr(dt)}) · {ampm} {display_hour}시"
+
+
+def _macro_bullets(macro_data: dict | None) -> list[str]:
+    bullets = []
+    if not isinstance(macro_data, dict):
+        return bullets
+    for name in ("10Y 금리", "환율", "VIX", "MOVE", "유가"):
+        info = macro_data.get(name)
+        if not isinstance(info, dict):
+            continue
+        val = _fmt_auto_num(info.get("val"), 2)
+        chg = _fmt_auto_pct(info.get("chg"))
+        icon = _norm(info.get("icon"))
+        storm = bool(info.get("storm", False))
+        note = "경고권" if storm else ("상승" if icon == "🔺" else ("하락" if icon == "🔻" else "중립"))
+        bullets.append(f"{name} {val}, 1개월 {chg}, 방향 {note}")
+    return bullets
+
+
+def _event_bullets(event_rows) -> list[str]:
+    bullets = []
+    for row in _iter_table_rows(event_rows, limit=8):
+        state = _norm(row.get("상태"))
+        if state not in {"임박", "당일", "잔여"}:
+            continue
+        event = _norm(row.get("이벤트"))
+        dday = _norm(row.get("D-Day"))
+        impact = _norm(row.get("영향") or row.get("해석"))
+        market = _norm(row.get("시장"))
+        if event:
+            suffix = f", {impact}" if impact else ""
+            bullets.append(f"{event} {dday}({state}) · {market}{suffix}")
+    return bullets[:5]
+
+
+def _summary_bullets(summary_rows) -> list[str]:
+    bullets = []
+    rows = _iter_table_rows(summary_rows, limit=80)
+    buyish = []
+    caution = []
+    hard = []
+    for row in rows:
+        name = _norm(row.get("종목명") or row.get("자산명"))
+        ticker = _norm(row.get("티커"))
+        label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
+        code = _norm(row.get("판정코드"))
+        item = f"{name or ticker}({ticker})" if ticker else (name or "-")
+        if "HARD_BLOCK" in code or "하드차단" in label:
+            hard.append(item)
+        elif any(word in label for word in ("매수", "진입", "DCA", "적립", "탑승", "눌림")):
+            buyish.append(item)
+        elif any(word in label for word in ("주의", "차단", "과열", "보류", "관망")):
+            caution.append(item)
+    if buyish:
+        bullets.append("매수/관심 후보: " + ", ".join(buyish[:5]))
+    if caution:
+        bullets.append("주의/차단 후보: " + ", ".join(caution[:5]))
+    if hard:
+        bullets.append("하드차단 우선 확인: " + ", ".join(hard[:5]))
+    return bullets
+
+
+def _news_bullets(news_rows) -> list[str]:
+    bullets = []
+    for row in _iter_table_rows(news_rows, limit=20):
+        title = _norm(row.get("title") or row.get("제목"))
+        if not title:
+            continue
+        ticker = _norm(row.get("ticker") or row.get("티커"))
+        name = _norm(row.get("name") or row.get("종목명"))
+        sentiment = _norm(row.get("sentiment") or row.get("감성"))
+        publisher = _norm(row.get("publisher") or row.get("출처"))
+        subject = name or ticker
+        prefix = f"{subject}: " if subject else ""
+        tail_parts = [x for x in (sentiment, publisher) if x]
+        tail = f" ({', '.join(tail_parts)})" if tail_parts else ""
+        bullets.append(f"{prefix}{title}{tail}")
+    return bullets
+
+
+def build_auto_market_memo(
+    flow_snapshot: dict | None = None,
+    macro_data: dict | None = None,
+    event_rows=None,
+    news_rows=None,
+    summary_rows=None,
+    now: datetime | None = None,
+) -> str:
+    """Build a paste-ready market memo from existing app data.
+
+    This produces a deterministic draft; it does not verify external facts
+    beyond the data already collected by the app.
+    """
+    flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
+    lines = [
+        "🌇 Stock Lab 자동 뉴스픽",
+        _format_auto_memo_time(now),
+        "━━━━━━━━━━━━",
+        "📊  시 황",
+        "━━━━━━━━━━━━",
+        "",
+    ]
+
+    semis = []
+    flow_df = flow_snapshot.get("flow_df")
+    for row in _iter_table_rows(flow_df, limit=200):
+        joined = " ".join(_lower(row.get(k, "")) for k in ("섹터", "Ticker", "ETF 이름"))
+        if any(key in joined for key in ("반도체", "semiconductor", "soxx", "soxl", "smh", "0167a0")):
+            semis.append(row)
+    if semis:
+        lines.append("🖥 반도체·AI")
+        for row in sorted(semis, key=lambda r: float(r.get("돈흐름점수") or -999), reverse=True)[:3]:
+            lines.append(f"• {_flow_bullet(row)}")
+        lines.append("")
+
+    flow_sections = [
+        ("🌊 돈흐름", "미국 섹터", flow_snapshot.get("us_top5"), "돈흐름점수", 3),
+        ("🇰🇷 국내 섹터", "한국 섹터", flow_snapshot.get("kr_top5"), "돈흐름점수", 3),
+        ("🌐 글로벌/ETF", "글로벌", flow_snapshot.get("global_top"), "돈흐름점수", 2),
+        ("🧩 테마", "테마", flow_snapshot.get("theme_top5"), "테마돈흐름점수", 3),
+    ]
+    used_header = set()
+    for header, _, table, score_col, limit in flow_sections:
+        rows = _iter_table_rows(table, limit=limit)
+        if not rows:
+            continue
+        if header not in used_header:
+            lines.append(header)
+            used_header.add(header)
+        for row in rows:
+            lines.append(f"• {_flow_bullet(row, score_col=score_col)}")
+        lines.append("")
+
+    macro_lines = _macro_bullets(macro_data)
+    event_lines = _event_bullets(event_rows)
+    if macro_lines or event_lines:
+        lines.append("📉 매크로·이벤트")
+        for item in macro_lines[:5]:
+            lines.append(f"• {item}")
+        for item in event_lines:
+            lines.append(f"• {item}")
+        lines.append("")
+
+    portfolio_lines = _summary_bullets(summary_rows)
+    if portfolio_lines:
+        lines.append("🧭 오늘점검")
+        for item in portfolio_lines:
+            lines.append(f"• {item}")
+        lines.append("")
+
+    news_lines = _news_bullets(news_rows)
+    if news_lines:
+        lines.append("━━━━━━━━━━━━")
+        lines.append("🎯  종 목")
+        lines.append("━━━━━━━━━━━━")
+        lines.append("")
+        for item in news_lines[:12]:
+            lines.append(f"• {item}")
+        lines.append("")
+
+    lines.append("※ 자동 생성 초안입니다. RSS/시장 데이터 수집 시점과 원문 출처를 확인한 뒤 판단하세요.")
+    return "\n".join(lines).strip()
 
 
 def _build_extra_aliases(universe: Iterable[dict] | None) -> dict[str, tuple[str, ...]]:

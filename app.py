@@ -121,7 +121,7 @@ from stock_lab_core.money_flow import (
     classify_money_flow_state,
     download_money_flow_prices,
 )
-from stock_lab_core.market_memo import analyze_market_memo
+from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
 try:
     from stock_lab_core.money_flow import (
         calculate_image_theme_flow_df,
@@ -20988,6 +20988,76 @@ def build_today_market_memo_universe(summary_df=None):
     return list(records.values()), status_map
 
 
+def select_today_auto_newspick_targets(universe, summary_df=None, max_count=5):
+    targets: list[dict] = []
+    seen: set[str] = set()
+
+    def add_target(ticker, name="", reason="", priority=10):
+        ticker = sanitize_ticker_value(ticker)
+        key = normalize_ticker(ticker)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        targets.append({
+            "ticker": ticker,
+            "name": str(name or ticker),
+            "reason": str(reason or "관심"),
+            "priority": int(priority),
+        })
+
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
+        work = summary_df.copy()
+        label = work.get("🔥기술적 타점", pd.Series("", index=work.index)).astype(str)
+        code = work.get("판정코드", pd.Series("", index=work.index)).astype(str)
+        score = work.get("Adj점수", pd.Series(0.0, index=work.index)).apply(clean_float)
+        work["_newspick_priority"] = 6
+        work.loc[label.str.contains("매수|진입|DCA|적립|눌림|탑승", regex=True, na=False), "_newspick_priority"] = 1
+        work.loc[code.str.contains("HARD_BLOCK", na=False) | label.str.contains("하드차단|구조훼손|추매금지", regex=True, na=False), "_newspick_priority"] = 2
+        work["_newspick_score"] = score
+        for _, row in work.sort_values(["_newspick_priority", "_newspick_score"], ascending=[True, False]).head(max_count * 2).iterrows():
+            add_target(
+                row.get("티커", ""),
+                row.get("종목명", ""),
+                row.get("🔥기술적 타점", "오늘점검"),
+                row.get("_newspick_priority", 6),
+            )
+            if len(targets) >= max_count:
+                return targets
+
+    for item in universe or []:
+        if str(item.get("source", "")) == "보유":
+            add_target(item.get("ticker", ""), item.get("name", ""), "보유", 3)
+        if len(targets) >= max_count:
+            return targets
+
+    for item in universe or []:
+        add_target(item.get("ticker", ""), item.get("name", ""), item.get("source", "관심"), 5)
+        if len(targets) >= max_count:
+            return targets
+    return targets[:max_count]
+
+
+def collect_today_auto_newspick_news(universe, summary_df=None, max_count=5):
+    news_rows = []
+    targets = select_today_auto_newspick_targets(universe, summary_df, max_count=max_count)
+    for target in targets:
+        ticker = target.get("ticker", "")
+        name = target.get("name", ticker)
+        if not ticker:
+            continue
+        try:
+            items, _logs = get_ticker_news(ticker, name, debug=False)
+        except Exception:
+            items = []
+        for item in (items or [])[:2]:
+            row = dict(item)
+            row["ticker"] = ticker
+            row["name"] = name
+            row["target_reason"] = target.get("reason", "")
+            news_rows.append(row)
+    return news_rows, targets
+
+
 def render_today_market_memo_panel(summary_df=None):
     universe, status_map = build_today_market_memo_universe(summary_df)
     st.markdown("#### 시황 메모 분석")
@@ -20996,6 +21066,70 @@ def render_today_market_memo_panel(summary_df=None):
         st.session_state["today_market_memo_text"] = ""
 
     with st.expander("뉴스픽/시황 붙여넣기", expanded=False):
+        auto_cols = st.columns([1.15, 1.25, 0.9])
+        auto_generate = auto_cols[0].button(
+            "자동 뉴스픽 생성",
+            key="today_market_memo_auto_generate",
+            width='stretch',
+            help="현재 앱의 돈흐름, 매크로, 이벤트, 오늘점검 결과를 묶어 시황 메모 초안을 만듭니다.",
+        )
+        include_rss_news = auto_cols[1].checkbox(
+            "관심종목 RSS 포함",
+            value=False,
+            key="today_market_memo_include_rss",
+            help="체크하면 오늘점검 후보/보유 종목의 최신 RSS 뉴스를 일부 수집합니다. 네트워크 때문에 시간이 더 걸릴 수 있습니다.",
+        )
+        max_news_targets = int(auto_cols[2].number_input(
+            "뉴스 종목수",
+            min_value=1,
+            max_value=8,
+            value=4,
+            step=1,
+            key="today_market_memo_news_count",
+        ))
+
+        if auto_generate:
+            with st.spinner("자동 뉴스픽 초안을 만드는 중입니다..."):
+                snapshot = get_cached_today_market_flow_snapshot()
+                if snapshot is None:
+                    try:
+                        snapshot = refresh_today_market_flow_snapshot(include_theme=False)
+                    except Exception:
+                        snapshot = {}
+
+                event_rows = globals().get("macro_event_df", pd.DataFrame())
+                if not isinstance(event_rows, pd.DataFrame) or event_rows.empty:
+                    try:
+                        event_rows, _, _ = build_macro_event_risk_table()
+                    except Exception:
+                        event_rows = pd.DataFrame()
+
+                news_rows = []
+                news_targets = []
+                if include_rss_news:
+                    news_rows, news_targets = collect_today_auto_newspick_news(
+                        universe,
+                        summary_df,
+                        max_count=max_news_targets,
+                    )
+
+                st.session_state["today_market_memo_text"] = build_auto_market_memo(
+                    flow_snapshot=snapshot,
+                    macro_data=globals().get("macro_res", {}),
+                    event_rows=event_rows,
+                    news_rows=news_rows,
+                    summary_rows=summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
+                    now=datetime.now(timezone(timedelta(hours=9))),
+                )
+
+            if include_rss_news:
+                target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
+                st.success(
+                    f"자동 뉴스픽을 만들었습니다. RSS 대상: {', '.join(target_labels) if target_labels else '없음'}"
+                )
+            else:
+                st.success("자동 뉴스픽을 만들었습니다. 필요하면 RSS 포함을 켜고 다시 생성할 수 있습니다.")
+
         memo_text = st.text_area(
             "시황 메모",
             key="today_market_memo_text",
