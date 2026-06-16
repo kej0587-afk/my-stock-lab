@@ -2611,6 +2611,36 @@ DART_QUARTER_NO_BY_REPORT = {
 
 DART_CUMULATIVE_FLOW_FIELDS = ["revenue", "op_income", "net_income", "ocf"]
 
+DART_REVENUE_KEYWORDS = [
+    "매출액", "수익(매출액)", "영업수익", "수익총계",
+    "보험수익", "보험료수익", "보험영업수익", "순보험수익",
+    "이자수익", "순이자수익", "수수료수익", "순수수료수익",
+]
+DART_REVENUE_EXCLUDE_KEYWORDS = [
+    "매출원가", "매출채권", "판매비", "관리비", "비용", "손실",
+    "보험서비스비용", "이자비용", "수수료비용",
+]
+DART_OPERATING_INCOME_KEYWORDS = [
+    "영업이익", "영업이익손실", "영업손익", "보험영업이익", "보험영업손익",
+]
+DART_NET_INCOME_KEYWORDS = [
+    "당기순이익", "연결당기순이익", "분기순이익", "반기순이익",
+    "지배기업소유주지분순이익", "지배기업의소유주에게귀속되는당기순이익",
+]
+DART_OCF_KEYWORDS = [
+    "영업활동현금흐름", "영업활동으로인한현금흐름", "영업에서창출된현금",
+    "영업활동순현금흐름",
+]
+DART_CASH_KEYWORDS = [
+    "현금및현금성자산", "현금및현금등가물", "현금및예치금", "현금예치금",
+]
+
+FINANCIAL_PROFILE_LABELS = {
+    "general": "일반기업",
+    "insurance": "보험/금융",
+    "financial": "금융",
+}
+
 FIN_S_KEYS = [
     "annual_3y_revenue_uptrend",
     "annual_op_income_uptrend",
@@ -3580,6 +3610,33 @@ def normalize_stock_code(ticker: str) -> str:
         return t.split(".")[0]
     return t
 
+def get_dart_account_text(df):
+    if df is None or df.empty:
+        return ""
+    name_cols = [c for c in ["account_nm", "accountNm", "account_id", "accountId"] if c in df.columns]
+    if not name_cols:
+        return ""
+    parts = []
+    for col in name_cols:
+        parts.extend(df[col].dropna().astype(str).tolist())
+    return " ".join(parts).replace(" ", "")
+
+def infer_dart_financial_profile(df):
+    text = get_dart_account_text(df)
+    if not text:
+        return "general"
+    insurance_hits = ["보험수익", "보험료수익", "보험계약", "보험영업", "책임준비금", "재보험"]
+    bank_hits = ["이자수익", "순이자수익", "대출채권", "예수부채", "신용손실", "수수료수익"]
+    securities_hits = ["순수수료수익", "당기손익공정가치", "파생상품", "금융상품평가"]
+    if any(k in text for k in insurance_hits):
+        return "insurance"
+    if sum(1 for k in bank_hits + securities_hits if k in text) >= 2:
+        return "financial"
+    return "general"
+
+def is_financial_statement_profile(profile):
+    return str(profile or "").lower() in {"insurance", "financial"}
+
 def pick_account_amount(df, keywords, amount_cols=None, exclude_keywords=None):
     if df is None or df.empty:
         return np.nan
@@ -3650,7 +3707,8 @@ def extract_dart_metrics(df, fiscal_year, report_code):
     quarter_no = DART_QUARTER_NO_BY_REPORT.get(report_code)
     flow_cols = dart_flow_amount_cols(report_code)
     point_cols = dart_point_amount_cols()
-    
+    financial_profile = infer_dart_financial_profile(df)
+
     record = {
         "period": "annual" if report_code == "11011" else "quarter_cumulative",
         "fiscal_year": str(fiscal_year),
@@ -3659,19 +3717,20 @@ def extract_dart_metrics(df, fiscal_year, report_code):
         "report_label": DART_REPORT_LABELS.get(report_code, report_code),
         "date": f"{fiscal_year}-{report_code}",
         "is_cumulative_ytd": True,
+        "financial_profile": financial_profile,
         "revenue": pick_account_amount(
             df,
-            ["매출액", "수익(매출액)", "영업수익"],
+            DART_REVENUE_KEYWORDS,
             amount_cols=flow_cols,
-            exclude_keywords=["매출원가", "매출채권", "판매비", "관리비"]
+            exclude_keywords=DART_REVENUE_EXCLUDE_KEYWORDS
         ),
-        "op_income": pick_account_amount(df, ["영업이익", "영업이익손실"], amount_cols=flow_cols),
-        "net_income": pick_account_amount(df, ["당기순이익", "연결당기순이익", "분기순이익", "반기순이익"], amount_cols=flow_cols),
-        "ocf": pick_account_amount(df, ["영업활동현금흐름", "영업활동으로인한현금흐름", "영업에서창출된현금"], amount_cols=flow_cols),
+        "op_income": pick_account_amount(df, DART_OPERATING_INCOME_KEYWORDS, amount_cols=flow_cols),
+        "net_income": pick_account_amount(df, DART_NET_INCOME_KEYWORDS, amount_cols=flow_cols),
+        "ocf": pick_account_amount(df, DART_OCF_KEYWORDS, amount_cols=flow_cols),
         "equity": pick_account_amount(df, ["자본총계"], amount_cols=point_cols),
         "liabilities": pick_account_amount(df, ["부채총계"], amount_cols=point_cols),
         "assets": pick_account_amount(df, ["자산총계"], amount_cols=point_cols),
-        "cash": pick_account_amount(df, ["현금및현금성자산", "현금및현금등가물"], amount_cols=point_cols),
+        "cash": pick_account_amount(df, DART_CASH_KEYWORDS, amount_cols=point_cols),
     }
     return enrich_fin_record(record)
 
@@ -3783,15 +3842,22 @@ def fetch_kr_financials_auto(ticker: str):
         if len(annual_records) < 1:
             return attach_krx_context_to_kr_failure(ticker, "dart", "DART annual financials: 0 years found")
 
-        if len(quarter_records) < 1:
-            return attach_krx_context_to_kr_failure(ticker, "dart", "DART single-quarter financials missing")
+        financial_profile = next(
+            (
+                r.get("financial_profile")
+                for r in reversed(annual_records + quarter_records)
+                if r.get("financial_profile") and r.get("financial_profile") != "general"
+            ),
+            "general",
+        )
 
         return {
             "ok": True,
-            "source": "dart",
+            "source": "dart" if len(quarter_records) >= 1 else "dart_annual_only",
             "ticker": ticker,
             "annual": annual_records[-3:],
             "quarter": quarter_records[-4:],
+            "financial_profile": financial_profile,
         }
 
     except Exception as e:
@@ -4372,6 +4438,38 @@ def getsymbol_score(symbol: str) -> int:
 def judge_text(ok_icon, bad_icon, title, body):
     return f"{ok_icon} {title}: {body}"
 
+def build_missing_quarter_judgements(reason="분기 데이터 부족"):
+    labels = {
+        "quarter_revenue_momentum": "최근분기매출증가",
+        "quarter_profit_momentum": "최근분기이익증가",
+        "quarter_cashflow_quality": "최근분기현금흐름양호",
+        "quarter_revenue_increase": "최근분기매출증가",
+        "quarter_profit_increase": "최근분기이익증가",
+        "quarter_ocf_positive": "최근분기OCF흑자",
+        "quarter_margin_good": "최근분기수익성양호",
+        "quarter_debt_stability": "최근분기부채안정",
+        "quarter_equity_maintained": "최근분기자본유지",
+        "quarter_revenue_quality": "분기매출품질",
+        "quarter_profit_quality": "분기이익품질",
+        "quarter_cash_quality": "분기현금품질",
+        "quarter_margin_quality": "분기이익률품질",
+        "quarter_debt_ratio_quality": "분기부채비율품질",
+        "quarter_warning": "분기경고",
+    }
+    return {key: f"➖ {label}: {reason}" for key, label in labels.items()}
+
+def get_financial_profile_from_fin(fin, latest_a=None, latest_q=None):
+    candidates = [
+        fin.get("financial_profile") if isinstance(fin, dict) else None,
+        latest_a.get("financial_profile") if isinstance(latest_a, dict) else None,
+        latest_q.get("financial_profile") if isinstance(latest_q, dict) else None,
+    ]
+    for value in candidates:
+        value = str(value or "").strip()
+        if value and value != "general":
+            return value
+    return "general"
+
 def build_fin_judgements(fin: dict, order_profile: bool = False):
     annual = fin.get("annual", []) or []
     quarter = fin.get("quarter", []) or []
@@ -4381,6 +4479,9 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
     old_a = annual[-3] if len(annual) >= 3 else {}
     latest_q = quarter[-1] if quarter else {}
     prev_q = quarter[-2] if len(quarter) >= 2 else {}
+    financial_profile = get_financial_profile_from_fin(fin, latest_a, latest_q)
+    financial_business = is_financial_statement_profile(financial_profile)
+    financial_label = FINANCIAL_PROFILE_LABELS.get(financial_profile, "일반기업")
 
     rev_growth = pct_change(latest_a.get("revenue"), prev_a.get("revenue"))
     prev_rev_growth = pct_change(prev_a.get("revenue"), old_a.get("revenue"))
@@ -4405,6 +4506,13 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
     high_growth_min = 10 if order_profile else 20
     op_growth_min = 15 if order_profile else 25
     scale_floor = 0.75 if order_profile else 0.85
+    if financial_business:
+        debt_limit = 9999
+        q_debt_limit = 9999
+        high_growth_min = 5
+        op_growth_min = 8
+        revenue_drop_limit = -20
+        scale_floor = 0.80
 
     annual_j = {}
     quarter_j = {}
@@ -4621,6 +4729,80 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
         if quarter_hard_risk else "✅ 분기경고: 중대 분기 경고 없음"
     )
 
+    if not latest_q:
+        quarter_j = build_missing_quarter_judgements("DART 단일분기 데이터 부족")
+
+    if financial_business:
+        annual_j["annual_profitability_good"] = (
+            f"✅ 수익성 양호: 순이익 {fmt_num(latest_a.get('net_income'))}, ROE {fmt_pct(latest_a.get('roe'))}"
+            if finite_num(latest_a.get("net_income")) and latest_a.get("net_income") >= 0 and (
+                finite_num(latest_a.get("roe")) and latest_a.get("roe") >= 5
+                or finite_num(latest_a.get("net_margin")) and latest_a.get("net_margin") >= 3
+            )
+            else f"⚠️ 수익성 양호: 순이익 {fmt_num(latest_a.get('net_income'))}, ROE {fmt_pct(latest_a.get('roe'))}"
+        )
+        annual_j["annual_ocf_strength"] = (
+            f"➖ 영업현금흐름 양호: {financial_label}은 OCF가 영업 체력을 왜곡할 수 있어 점수에서 중립 처리"
+        )
+        annual_j["annual_cash_buffer"] = (
+            f"➖ 현금확보(유지): {financial_label}은 현금/매출보다 순이익, ROE, 자본 유지 중심으로 확인"
+        )
+        annual_j["annual_debt_stability"] = (
+            f"✅ 자본안정: 자본 {fmt_num(latest_a.get('equity'))}, 순이익 {fmt_num(latest_a.get('net_income'))}"
+            if finite_num(latest_a.get("equity")) and latest_a.get("equity") > 0 and finite_num(latest_a.get("net_income")) and latest_a.get("net_income") >= 0
+            else f"⚠️ 자본안정: 자본 {fmt_num(latest_a.get('equity'))}, 순이익 {fmt_num(latest_a.get('net_income'))}"
+        )
+        annual_j["annual_debt_ratio_quality"] = (
+            f"➖ 부채비율품질: {financial_label}은 보험계약부채/예수부채 특성상 단순 부채비율 벌점 제외"
+        )
+        annual_j["annual_margin_quality"] = (
+            f"✅ 이익률유지: 순이익률 {fmt_pct(latest_a.get('net_margin'))}, ROE {fmt_pct(latest_a.get('roe'))}"
+            if (
+                finite_num(latest_a.get("net_margin")) and latest_a.get("net_margin") >= 3
+            ) or (
+                finite_num(latest_a.get("roe")) and latest_a.get("roe") >= 6
+            )
+            else f"⚠️ 이익률유지: 순이익률 {fmt_pct(latest_a.get('net_margin'))}, ROE {fmt_pct(latest_a.get('roe'))}"
+        )
+        annual_hard_risk_fin = (
+            finite_num(latest_a.get("net_income")) and latest_a.get("net_income") < 0
+        ) or (
+            finite_num(latest_a.get("equity")) and latest_a.get("equity") <= 0
+        )
+        annual_j["annual_hard_risk"] = (
+            f"🚨 하드리스크: {financial_label} 순이익 적자 또는 자본 훼손"
+            if annual_hard_risk_fin else f"✅ 하드리스크: {financial_label} 핵심 하드리스크 미발생"
+        )
+        if latest_q:
+            quarter_j["quarter_cashflow_quality"] = (
+                f"➖ 최근분기현금흐름양호: {financial_label}은 OCF 대신 분기 순이익/자본 유지 확인"
+            )
+            quarter_j["quarter_ocf_positive"] = (
+                f"➖ 최근분기OCF흑자: {financial_label}은 OCF 항목 점수 제외"
+            )
+            quarter_j["quarter_cash_quality"] = (
+                f"➖ 분기현금품질: {financial_label}은 현금흐름보다 자본·이익 안정성 중심"
+            )
+            quarter_j["quarter_debt_stability"] = (
+                f"✅ 최근분기자본유지: 자본 {fmt_num(latest_q.get('equity'))}, 순이익 {fmt_num(latest_q.get('net_income'))}"
+                if finite_num(latest_q.get("equity")) and latest_q.get("equity") > 0 and finite_num(latest_q.get("net_income")) and latest_q.get("net_income") >= 0
+                else f"⚠️ 최근분기자본유지: 자본 {fmt_num(latest_q.get('equity'))}, 순이익 {fmt_num(latest_q.get('net_income'))}"
+            )
+            quarter_j["quarter_margin_good"] = (
+                f"✅ 최근분기수익성양호: 순이익 {fmt_num(latest_q.get('net_income'))}"
+                if finite_num(latest_q.get("net_income")) and latest_q.get("net_income") >= 0
+                else f"⚠️ 최근분기수익성양호: 순이익 {fmt_num(latest_q.get('net_income'))}"
+            )
+            quarter_j["quarter_margin_quality"] = quarter_j["quarter_margin_good"]
+            quarter_j["quarter_debt_ratio_quality"] = (
+                f"➖ 분기부채비율품질: {financial_label}은 단순 부채비율 벌점 제외"
+            )
+            quarter_j["quarter_warning"] = (
+                f"🚨 분기경고: {financial_label} 최근분기 순이익 적자"
+                if finite_num(latest_q.get("net_income")) and latest_q.get("net_income") < 0
+                else f"✅ 분기경고: {financial_label} 중대 분기 경고 없음"
+            )
+
     all_j = {}
     all_j.update(annual_j)
     all_j.update(quarter_j)
@@ -4645,6 +4827,8 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
             "q_ocf_growth": q_ocf_growth,
             "q_equity_growth": q_equity_growth,
             "order_profile": order_profile,
+            "financial_profile": financial_profile,
+            "financial_profile_label": financial_label,
         },
         "annual_judgements": annual_j,
         "quarter_judgements": quarter_j,
@@ -4762,12 +4946,18 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
 
     order_profile = is_order_based_ticker(ticker)
     annual_j, quarter_j, all_j, metrics = build_fin_judgements(fin, order_profile=order_profile)
+    financial_profile = metrics.get("derived", {}).get("financial_profile", "general")
+    financial_label = metrics.get("derived", {}).get("financial_profile_label", "일반기업")
+    financial_business = is_financial_statement_profile(financial_profile)
 
     generic_score, generic_detail = calc_generic_fin_total(all_j)
     order_score, order_detail = calc_order_fin_total(all_j)
     middle_score, middle_detail = calc_middle_fin_total(all_j)
 
-    if order_profile:
+    if financial_business:
+        selected_score = middle_score
+        selected_mode = "금융/보험판단"
+    elif order_profile:
         selected_score = order_score
         selected_mode = "수주판단"
     else:
@@ -4780,6 +4970,7 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
         "order_detail": order_detail, "middle_detail": middle_detail, "weighted_net_score": generic_detail["weighted_net_score"],
         "s_sum": generic_detail["s_sum"], "a_sum": generic_detail["a_sum"], "b_sum": generic_detail["b_sum"],
         "danger_count": generic_detail["danger_count"], "s_keys": FIN_S_KEYS, "a_keys": FIN_A_KEYS, "b_keys": FIN_B_KEYS,
+        "financial_profile": financial_profile, "financial_profile_label": financial_label,
     }
 
     metrics["annual_records"] = fin.get("annual", [])
@@ -4797,6 +4988,7 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
         "order_profile": order_profile, "annual_judgements": annual_j, "quarter_judgements": quarter_j,
         "weighted_scores": weighted_scores, "messages": [
             f"source: {fin.get('source', 'unknown')}", f"mode: {selected_mode}",
+            f"업종판정: {financial_label}",
             f"weighted_score: {weighted_scores['weighted_net_score']}",
             f"S_sum: {weighted_scores['s_sum']}, A_sum: {weighted_scores['a_sum']}, B_sum: {weighted_scores['b_sum']}",
             f"범용판단: {generic_score}, 수주판단: {order_score}, 중간형판단: {middle_score}",
@@ -4989,6 +5181,9 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
     derived = metrics.get("derived", {}) if isinstance(metrics.get("derived", {}), dict) else {}
     annual = get_fin_latest_record(metrics, "annual_latest", "annual_records")
     quarter = get_fin_latest_record(metrics, "quarter_latest", "quarter_records")
+    financial_profile = str(derived.get("financial_profile") or annual.get("financial_profile") or "general")
+    financial_business = is_financial_statement_profile(financial_profile)
+    financial_label = FINANCIAL_PROFILE_LABELS.get(financial_profile, "일반기업")
 
     if is_etf:
         return [{
@@ -5016,6 +5211,7 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
     op_margin = annual.get("op_margin")
     net_margin = annual.get("net_margin")
     roe = annual.get("roe")
+    net_income = annual.get("net_income")
     q_op_margin = quarter.get("op_margin")
     profitability_status = fin_pick_status(
         (finite_num(op_margin) and float(op_margin) >= 8) or (finite_num(q_op_margin) and float(q_op_margin) >= 8),
@@ -5032,6 +5228,7 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
 
     debt_ratio = annual.get("debt_ratio")
     equity_growth = derived.get("equity_growth")
+    equity = annual.get("equity")
     cash = annual.get("cash")
     revenue = annual.get("revenue")
     cash_to_revenue = calc_ratio(cash, revenue, multiplier=100)
@@ -5039,6 +5236,29 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
         (not finite_num(debt_ratio) or float(debt_ratio) <= 180) and (not finite_num(equity_growth) or float(equity_growth) >= 0),
         (finite_num(debt_ratio) and float(debt_ratio) >= 300) or (finite_num(equity_growth) and float(equity_growth) <= -10),
     )
+
+    growth_metric = f"연매출 {fin_fmt_pct(rev_growth)} / 최근분기 매출 {fin_fmt_pct(q_rev_growth)}"
+    profitability_metric = f"영업이익률 {fin_fmt_pct(op_margin)} / 순이익률 {fin_fmt_pct(net_margin)} / ROE {fin_fmt_pct(roe)}"
+    cashflow_metric = f"영업현금흐름 {fin_fmt_num(ocf)} / OCF마진 {fin_fmt_pct(ocf_margin)} / 분기 OCF {fin_fmt_pct(q_ocf_growth)}"
+    cashflow_note = "회계상 이익보다 실제 현금이 들어오는지를 확인합니다."
+    stability_metric = f"부채비율 {fin_fmt_pct(debt_ratio)} / 자본증가 {fin_fmt_pct(equity_growth)} / 현금-매출 {fin_fmt_pct(cash_to_revenue)}"
+    stability_note = "부채 부담과 버틸 체력이 과하지 않은지 봅니다."
+
+    if financial_business:
+        profitability_status = fin_pick_status(
+            (finite_num(net_income) and float(net_income) >= 0 and finite_num(roe) and float(roe) >= 6),
+            finite_num(net_income) and float(net_income) < 0,
+        )
+        cashflow_status = "보통"
+        stability_status = fin_pick_status(
+            finite_num(equity) and float(equity) > 0 and (not finite_num(equity_growth) or float(equity_growth) >= -5),
+            (finite_num(equity) and float(equity) <= 0) or (finite_num(net_income) and float(net_income) < 0),
+        )
+        profitability_metric = f"순이익 {fin_fmt_num(net_income)} / ROE {fin_fmt_pct(roe)} / 순이익률 {fin_fmt_pct(net_margin)}"
+        cashflow_metric = f"{financial_label} OCF 중립 / 순이익 {fin_fmt_num(net_income)} / 분기 순이익 {fin_fmt_num(quarter.get('net_income'))}"
+        cashflow_note = "보험/금융업은 영업현금흐름이 일반 제조업처럼 해석되지 않아 보조 지표로만 봅니다."
+        stability_metric = f"자본 {fin_fmt_num(equity)} / 자본증가 {fin_fmt_pct(equity_growth)} / 부채비율 {fin_fmt_pct(debt_ratio)}"
+        stability_note = "보험/금융업은 보험계약부채·예수부채 특성상 단순 부채비율보다 자본 유지와 순이익을 우선 확인합니다."
 
     danger_count = weighted.get("danger_count")
     weighted_net = weighted.get("weighted_net_score")
@@ -5052,26 +5272,26 @@ def build_fin_health_rows(fin_score, fin_meta, is_etf=False):
         {
             "영역": "성장성",
             "상태": growth_status,
-            "핵심 지표": f"연매출 {fin_fmt_pct(rev_growth)} / 최근분기 매출 {fin_fmt_pct(q_rev_growth)}",
+            "핵심 지표": growth_metric,
             "해석": "매출이 꾸준히 늘고 최근 분기도 꺾이지 않는지 봅니다.",
         },
         {
             "영역": "수익성",
             "상태": profitability_status,
-            "핵심 지표": f"영업이익률 {fin_fmt_pct(op_margin)} / 순이익률 {fin_fmt_pct(net_margin)} / ROE {fin_fmt_pct(roe)}",
+            "핵심 지표": profitability_metric,
             "해석": "팔아서 실제로 이익을 남기는 구조인지 봅니다.",
         },
         {
             "영역": "현금흐름",
             "상태": cashflow_status,
-            "핵심 지표": f"영업현금흐름 {fin_fmt_num(ocf)} / OCF마진 {fin_fmt_pct(ocf_margin)} / 분기 OCF {fin_fmt_pct(q_ocf_growth)}",
-            "해석": "회계상 이익보다 실제 현금이 들어오는지를 확인합니다.",
+            "핵심 지표": cashflow_metric,
+            "해석": cashflow_note,
         },
         {
             "영역": "안정성",
             "상태": stability_status,
-            "핵심 지표": f"부채비율 {fin_fmt_pct(debt_ratio)} / 자본증가 {fin_fmt_pct(equity_growth)} / 현금-매출 {fin_fmt_pct(cash_to_revenue)}",
-            "해석": "부채 부담과 버틸 체력이 과하지 않은지 봅니다.",
+            "핵심 지표": stability_metric,
+            "해석": stability_note,
         },
         {
             "영역": "종합 위험",

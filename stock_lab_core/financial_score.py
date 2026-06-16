@@ -50,8 +50,10 @@ def estimate_kr_fin_score_from_naver_snapshot(
     data = unwrap_snapshot_data(snapshot)
 
     per = optional_float(data.get("trailingPE"))
+    pbr = optional_float(data.get("priceToBook"))
     roe = optional_float(data.get("returnOnEquity"))
     op_margin = optional_float(data.get("operatingMargins"))
+    net_margin = optional_float(data.get("profitMargins"))
     debt_ratio = optional_float(data.get("debtToEquity"))
 
     hints: list[str] = []
@@ -77,6 +79,13 @@ def estimate_kr_fin_score_from_naver_snapshot(
             score -= 1
             hints.append(f"ROE {roe_pct:.1f}% negative")
 
+    if pbr is not None:
+        if 0 < pbr <= 1.2:
+            score += 1
+            hints.append(f"PBR {pbr:.2f} reasonable")
+        elif pbr > 4:
+            hints.append(f"PBR {pbr:.2f} high")
+
     if op_margin is not None:
         op_margin_pct = op_margin * 100 if abs(op_margin) <= 1 else op_margin
         if op_margin_pct >= 10:
@@ -86,8 +95,18 @@ def estimate_kr_fin_score_from_naver_snapshot(
             score -= 1
             hints.append("operating margin negative")
 
-    if debt_ratio is not None and debt_ratio > 200:
-        score -= 1
+    if net_margin is not None:
+        net_margin_pct = net_margin * 100 if abs(net_margin) <= 1 else net_margin
+        if net_margin_pct >= 8:
+            score += 1
+            hints.append(f"net margin {net_margin_pct:.1f}%")
+        elif net_margin_pct < 0:
+            score -= 1
+            hints.append("net margin negative")
+
+    if debt_ratio is not None and debt_ratio > 250:
+        if op_margin is not None or net_margin is not None:
+            score -= 1
         hints.append(f"debt/equity {debt_ratio:.0f}% high")
 
     if not hints:
