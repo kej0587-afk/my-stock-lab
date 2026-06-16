@@ -583,7 +583,7 @@ def build_auto_market_memo(
             semis.append(row)
     if semis:
         lines.append("🖥 반도체·AI")
-        for row in sorted(semis, key=lambda r: float(r.get("돈흐름점수") or -999), reverse=True)[:3]:
+        for row in sorted(semis, key=lambda r: _flow_value(r, "돈흐름점수", -999.0), reverse=True)[:3]:
             lines.append(f"• {_flow_bullet(row)}")
         lines.append("")
 

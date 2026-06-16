@@ -21252,15 +21252,44 @@ def render_today_market_memo_panel(summary_df=None):
                         max_count=max_news_targets,
                     )
 
-                st.session_state["today_market_memo_text"] = build_auto_market_memo(
-                    flow_snapshot=snapshot,
-                    macro_data=globals().get("macro_res", {}),
-                    event_rows=event_rows,
-                    market_news_rows=market_news_rows,
-                    news_rows=news_rows,
-                    summary_rows=summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
-                    now=datetime.now(timezone(timedelta(hours=9))),
-                )
+                memo_kwargs = {
+                    "flow_snapshot": snapshot,
+                    "macro_data": globals().get("macro_res", {}),
+                    "event_rows": event_rows,
+                    "market_news_rows": market_news_rows,
+                    "news_rows": news_rows,
+                    "summary_rows": summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
+                    "now": datetime.now(timezone(timedelta(hours=9))),
+                }
+                try:
+                    generated_memo = build_auto_market_memo(**memo_kwargs)
+                except TypeError:
+                    # Streamlit Cloud may briefly serve an older market_memo.py while app.py is new.
+                    # Retry without the new optional market_news_rows argument instead of crashing.
+                    fallback_kwargs = dict(memo_kwargs)
+                    fallback_kwargs.pop("market_news_rows", None)
+                    try:
+                        generated_memo = build_auto_market_memo(**fallback_kwargs)
+                        st.warning("시장 전체 RSS는 이번 생성에서 제외됐습니다. 새 파일 배포가 반영되면 다시 포함됩니다.")
+                    except TypeError:
+                        fallback_kwargs["flow_snapshot"] = {}
+                        fallback_kwargs["event_rows"] = pd.DataFrame()
+                        try:
+                            generated_memo = build_auto_market_memo(**fallback_kwargs)
+                            st.warning("일부 시장 데이터 형식이 맞지 않아 뉴스/RSS 중심 초안으로 생성했습니다.")
+                        except TypeError:
+                            generated_memo = (
+                                "🌇 Stock Lab 자동 뉴스픽\n"
+                                f"{datetime.now(timezone(timedelta(hours=9))).strftime('%m/%d · %H:%M')}\n"
+                                "━━━━━━━━━━━━\n"
+                                "📊  시 황\n"
+                                "━━━━━━━━━━━━\n\n"
+                                "• 자동 뉴스픽 생성 중 데이터 형식이 맞지 않아 초안 생성을 보류했습니다.\n"
+                                "• 시장 전체 RSS 또는 관심종목 RSS 옵션을 하나씩 끄고 다시 시도하세요.\n"
+                                "• 앱 파일 배포가 모두 반영된 뒤 다시 생성하면 정상화될 수 있습니다."
+                            )
+                            st.warning("자동 뉴스픽 일부 모듈이 맞지 않아 안전 안내 초안으로 대체했습니다.")
+                st.session_state["today_market_memo_text"] = generated_memo
 
             if include_market_rss or include_rss_news:
                 target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
