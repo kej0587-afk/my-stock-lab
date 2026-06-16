@@ -442,7 +442,22 @@ def _news_bullets(news_rows) -> list[str]:
     return bullets
 
 
-def _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows) -> list[str]:
+def _market_news_bullets(news_rows) -> list[str]:
+    bullets = []
+    for row in _iter_table_rows(news_rows, limit=30):
+        title = _norm(row.get("title") or row.get("제목"))
+        if not title:
+            continue
+        category = _norm(row.get("market_category") or row.get("category") or "시장")
+        publisher = _norm(row.get("publisher") or row.get("source") or row.get("출처"))
+        published = _norm(row.get("published"))
+        meta = " · ".join(x for x in (publisher, published) if x)
+        tail = f" ({meta})" if meta else ""
+        bullets.append(f"[{category}] {title}{tail}")
+    return bullets
+
+
+def _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows, market_news_rows=None) -> list[str]:
     bullets: list[str] = []
     flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
     flow_df = flow_snapshot.get("flow_df")
@@ -520,6 +535,10 @@ def _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summ
     if news_count:
         bullets.append(f"종목 뉴스는 {news_count}건을 수집했지만 RSS 제목 기준이므로 원문 확인 후 재료 강도를 판단합니다.")
 
+    market_news_count = len(_market_news_bullets(market_news_rows))
+    if market_news_count:
+        bullets.append(f"시장 뉴스/서사 {market_news_count}건을 수집했습니다. 돈흐름과 같은 방향인지 확인하세요.")
+
     if not bullets:
         bullets.append("자동 수집 데이터가 제한적입니다. 돈흐름보다 직접 붙여넣은 뉴스/시황을 함께 확인하세요.")
     return bullets[:6]
@@ -529,6 +548,7 @@ def build_auto_market_memo(
     flow_snapshot: dict | None = None,
     macro_data: dict | None = None,
     event_rows=None,
+    market_news_rows=None,
     news_rows=None,
     summary_rows=None,
     now: datetime | None = None,
@@ -548,7 +568,7 @@ def build_auto_market_memo(
         "",
     ]
 
-    insight_lines = _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows)
+    insight_lines = _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows, market_news_rows)
     if insight_lines:
         lines.append("🧠 핵심 해석")
         for item in insight_lines:
@@ -592,6 +612,13 @@ def build_auto_market_memo(
         for item in macro_lines[:5]:
             lines.append(f"• {item}")
         for item in event_lines:
+            lines.append(f"• {item}")
+        lines.append("")
+
+    market_news_lines = _market_news_bullets(market_news_rows)
+    if market_news_lines:
+        lines.append("📰 시장 뉴스/서사")
+        for item in market_news_lines[:15]:
             lines.append(f"• {item}")
         lines.append("")
 

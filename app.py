@@ -21058,6 +21058,115 @@ def collect_today_auto_newspick_news(universe, summary_df=None, max_count=5):
     return news_rows, targets
 
 
+TODAY_MARKET_STORY_RSS_PLAN = [
+    {
+        "category": "반도체·AI",
+        "query": 'NVIDIA OR Micron OR HBM OR "AI chip" OR semiconductor',
+    },
+    {
+        "category": "지정학",
+        "query": 'Iran ceasefire OR "Middle East" peace OR Taiwan defense OR Strait',
+    },
+    {
+        "category": "매크로/중국",
+        "query": 'China industrial production retail sales unemployment fixed asset investment',
+    },
+    {
+        "category": "외환/금리",
+        "query": 'BOJ OR RBA OR FOMC OR "dollar yen" OR "Treasury yields"',
+    },
+    {
+        "category": "에너지/해운",
+        "query": 'oil prices OR Hormuz shipping OR tanker OR PEMEX OR energy market',
+    },
+    {
+        "category": "우주/항공",
+        "query": 'SpaceX OR Starlink OR satellite OR aerospace',
+    },
+    {
+        "category": "정책/규제",
+        "query": 'EU carbon border adjustment OR tech regulation OR banking regulation',
+    },
+]
+
+
+def _market_story_title_key(title, publisher=""):
+    text = re.sub(r"\s+", " ", str(title or "").strip().lower())
+    text = re.sub(r"\s+-\s+[^-]{2,80}$", "", text)
+    pub = re.sub(r"\s+", " ", str(publisher or "").strip().lower())
+    return f"{text}|{pub}"
+
+
+def _market_story_pub_dt(item):
+    raw = item.findtext("pubDate", "") or item.findtext("published", "")
+    try:
+        return parsedate_to_datetime(raw)
+    except Exception:
+        return None
+
+
+def _format_market_story_pub_dt(dt):
+    if dt is None:
+        return ""
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        kst_dt = dt.astimezone(timezone(timedelta(hours=9)))
+        return kst_dt.strftime("%m/%d %H:%M")
+    except Exception:
+        return ""
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2):
+    selected = set(selected_categories or [])
+    per_category = max(1, min(int(per_category or 2), 4))
+    days = max(1, min(int(days or 2), 7))
+    rows = []
+    seen = set()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    for plan in TODAY_MARKET_STORY_RSS_PLAN:
+        category = str(plan.get("category", "시장"))
+        if selected and category not in selected:
+            continue
+        query = f"{plan.get('query', '')} when:{days}d"
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+        accepted = 0
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
+            items = root.findall("./channel/item")
+        except Exception:
+            items = []
+
+        for item in items:
+            title = html.unescape(str(item.findtext("title", "") or "").strip())
+            link = str(item.findtext("link", "") or "").strip()
+            publisher = html.unescape(str(item.findtext("source", "구글 뉴스") or "구글 뉴스").strip())
+            key = _market_story_title_key(title, publisher)
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            pub_dt = _market_story_pub_dt(item)
+            rows.append({
+                "market_category": category,
+                "title": title,
+                "link": link,
+                "publisher": publisher,
+                "published": _format_market_story_pub_dt(pub_dt),
+                "source": "Google News RSS",
+            })
+            accepted += 1
+            if accepted >= per_category:
+                break
+    return rows
+
+
 def render_today_market_memo_panel(summary_df=None):
     universe, status_map = build_today_market_memo_universe(summary_df)
     st.markdown("#### 시황 메모 분석")
@@ -21087,6 +21196,29 @@ def render_today_market_memo_panel(summary_df=None):
             step=1,
             key="today_market_memo_news_count",
         ))
+        story_cols = st.columns([1.05, 2.0, 0.8])
+        include_market_rss = story_cols[0].checkbox(
+            "시장 전체 RSS 포함",
+            value=True,
+            key="today_market_memo_include_market_rss",
+            help="반도체/AI, 지정학, 매크로, 금리 등 장 전체 키워드 뉴스 RSS를 함께 수집합니다.",
+        )
+        market_story_categories = [row["category"] for row in TODAY_MARKET_STORY_RSS_PLAN]
+        selected_market_story_categories = story_cols[1].multiselect(
+            "시장 뉴스 범위",
+            options=market_story_categories,
+            default=["반도체·AI", "지정학", "매크로/중국", "외환/금리"],
+            key="today_market_memo_story_categories",
+        )
+        market_story_per_category = int(story_cols[2].number_input(
+            "분야별",
+            min_value=1,
+            max_value=4,
+            value=2,
+            step=1,
+            key="today_market_memo_story_per_category",
+            help="각 시장 뉴스 카테고리에서 가져올 제목 수입니다.",
+        ))
 
         if auto_generate:
             with st.spinner("자동 뉴스픽 초안을 만드는 중입니다..."):
@@ -21106,6 +21238,13 @@ def render_today_market_memo_panel(summary_df=None):
 
                 news_rows = []
                 news_targets = []
+                market_news_rows = []
+                if include_market_rss:
+                    market_news_rows = fetch_today_market_story_news(
+                        tuple(selected_market_story_categories),
+                        per_category=market_story_per_category,
+                        days=2,
+                    )
                 if include_rss_news:
                     news_rows, news_targets = collect_today_auto_newspick_news(
                         universe,
@@ -21117,18 +21256,19 @@ def render_today_market_memo_panel(summary_df=None):
                     flow_snapshot=snapshot,
                     macro_data=globals().get("macro_res", {}),
                     event_rows=event_rows,
+                    market_news_rows=market_news_rows,
                     news_rows=news_rows,
                     summary_rows=summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
                     now=datetime.now(timezone(timedelta(hours=9))),
                 )
 
-            if include_rss_news:
+            if include_market_rss or include_rss_news:
                 target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
-                st.success(
-                    f"자동 뉴스픽을 만들었습니다. RSS 대상: {', '.join(target_labels) if target_labels else '없음'}"
-                )
+                market_count = len(market_news_rows)
+                target_text = f" · 종목 RSS 대상: {', '.join(target_labels)}" if target_labels else ""
+                st.success(f"자동 뉴스픽을 만들었습니다. 시장뉴스 {market_count}건{target_text}")
             else:
-                st.success("자동 뉴스픽을 만들었습니다. 필요하면 RSS 포함을 켜고 다시 생성할 수 있습니다.")
+                st.success("자동 뉴스픽을 만들었습니다. 필요하면 시장/RSS 포함을 켜고 다시 생성할 수 있습니다.")
 
         memo_text = st.text_area(
             "시황 메모",

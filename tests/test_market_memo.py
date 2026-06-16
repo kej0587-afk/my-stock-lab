@@ -64,10 +64,12 @@ def test_auto_market_memo_builds_newspick_style_draft():
         "10Y 금리": {"val": 4.3, "chg": -1.2, "icon": "🔻", "storm": False},
     }
     news_rows = [{"ticker": "NVDA", "name": "NVIDIA", "title": "NVIDIA AI 수요 강세", "sentiment": "호재"}]
+    market_news_rows = [{"market_category": "지정학", "title": "Middle East ceasefire talks continue", "publisher": "Reuters"}]
 
     memo = build_auto_market_memo(
         flow_snapshot=flow_snapshot,
         macro_data=macro_data,
+        market_news_rows=market_news_rows,
         news_rows=news_rows,
         now=datetime(2026, 6, 16, 15, 0),
     )
@@ -78,6 +80,8 @@ def test_auto_market_memo_builds_newspick_style_draft():
     assert "SOXX" in memo
     assert "10Y 금리" in memo
     assert "1개월 -1.2%" in memo
+    assert "시장 뉴스/서사" in memo
+    assert "[지정학] Middle East ceasefire talks continue" in memo
     assert "NVIDIA AI 수요 강세" in memo
 
 
