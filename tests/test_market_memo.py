@@ -73,7 +73,19 @@ def test_auto_market_memo_builds_newspick_style_draft():
     )
 
     assert "Stock Lab 자동 뉴스픽" in memo
+    assert "핵심 해석" in memo
     assert "반도체·AI" in memo
     assert "SOXX" in memo
     assert "10Y 금리" in memo
+    assert "1개월 -1.2%" in memo
     assert "NVIDIA AI 수요 강세" in memo
+
+
+def test_auto_market_memo_does_not_double_scale_macro_change():
+    memo = build_auto_market_memo(
+        macro_data={"10Y 금리": {"val": 4.49, "chg": -2.942, "icon": "🔻", "storm": False}},
+        now=datetime(2026, 6, 16, 16, 0),
+    )
+
+    assert "1개월 -2.9%" in memo
+    assert "-294.2%" not in memo

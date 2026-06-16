@@ -285,8 +285,18 @@ def _fmt_auto_pct(value) -> str:
         return "-"
     if not (number == number):
         return "-"
-    pct = number * 100 if abs(number) <= 3 else number
+    pct = number * 100
     return f"{pct:+.1f}%"
+
+
+def _fmt_macro_chg_pct(value) -> str:
+    try:
+        number = float(value)
+    except Exception:
+        return "-"
+    if not (number == number):
+        return "-"
+    return f"{number:+.1f}%"
 
 
 def _fmt_auto_num(value, digits: int = 2) -> str:
@@ -307,14 +317,39 @@ def _flow_row_label(row: dict) -> str:
     return name or ticker or "-"
 
 
+def _flow_value(row: dict, key: str, default: float = 0.0) -> float:
+    try:
+        value = float(row.get(key, default))
+    except Exception:
+        return default
+    return value if value == value else default
+
+
+def _flow_action_phrase(row: dict) -> str:
+    state = _norm(row.get("상태") or row.get("테마판정"))
+    ret_3m = _flow_value(row, "3개월수익률")
+    accel = _flow_value(row, "가속도")
+    score = _flow_value(row, "돈흐름점수", _flow_value(row, "테마돈흐름점수"))
+    if "과열" in state or ret_3m >= 0.45 or accel >= 0.35:
+        return "추격보다 눌림 확인"
+    if "강세" in state or score >= 30:
+        return "주도 흐름 유지"
+    if accel < 0:
+        return "상승은 있으나 탄력 둔화"
+    if score <= 0:
+        return "관찰 우선"
+    return "선별 관찰"
+
+
 def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     label = _flow_row_label(row)
     score = _fmt_auto_num(row.get(score_col), 1) if row.get(score_col) not in [None, ""] else "-"
     ret_3m = _fmt_auto_pct(row.get("3개월수익률"))
     accel = _fmt_auto_pct(row.get("가속도"))
     state = _norm(row.get("상태") or row.get("테마판정"))
-    tail = f", 상태 {state}" if state else ""
-    return f"{label} 돈흐름 {score}점, 3M {ret_3m}, 가속도 {accel}{tail}"
+    action = _flow_action_phrase(row)
+    state_text = f", 상태 {state}" if state else ""
+    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text} — {action}"
 
 
 def _weekday_kr(dt: datetime) -> str:
@@ -338,7 +373,7 @@ def _macro_bullets(macro_data: dict | None) -> list[str]:
         if not isinstance(info, dict):
             continue
         val = _fmt_auto_num(info.get("val"), 2)
-        chg = _fmt_auto_pct(info.get("chg"))
+        chg = _fmt_macro_chg_pct(info.get("chg"))
         icon = _norm(info.get("icon"))
         storm = bool(info.get("storm", False))
         note = "경고권" if storm else ("상승" if icon == "🔺" else ("하락" if icon == "🔻" else "중립"))
@@ -407,6 +442,89 @@ def _news_bullets(news_rows) -> list[str]:
     return bullets
 
 
+def _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows) -> list[str]:
+    bullets: list[str] = []
+    flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
+    flow_df = flow_snapshot.get("flow_df")
+    flow_rows = _iter_table_rows(flow_df, limit=250)
+    semi_rows = [
+        row for row in flow_rows
+        if any(
+            key in " ".join(_lower(row.get(k, "")) for k in ("섹터", "Ticker", "ETF 이름"))
+            for key in ("반도체", "semiconductor", "soxx", "soxl", "smh", "0167a0")
+        )
+    ]
+    if semi_rows:
+        top = sorted(semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
+        overheated = sum(
+            1 for row in semi_rows
+            if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
+        )
+        if overheated >= 2:
+            bullets.append(
+                f"반도체/AI는 {_flow_row_label(top)} 중심으로 돈흐름이 강하지만 과열 표식이 많아 추격보다 눌림 확인이 우선입니다."
+            )
+        else:
+            bullets.append(
+                f"반도체/AI는 {_flow_row_label(top)} 중심으로 주도 흐름이 유지됩니다. 후보는 정밀관측소 타점과 같이 봅니다."
+            )
+
+    top_tables = [
+        flow_snapshot.get("us_top5"),
+        flow_snapshot.get("kr_top5"),
+        flow_snapshot.get("theme_top5"),
+    ]
+    leaders = []
+    for table in top_tables:
+        rows = _iter_table_rows(table, limit=1)
+        if rows:
+            leaders.append(_flow_row_label(rows[0]))
+    if leaders:
+        bullets.append("오늘 돈흐름 상위 축은 " + ", ".join(dict.fromkeys(leaders[:4])) + "입니다.")
+
+    if isinstance(macro_data, dict) and macro_data:
+        relief = []
+        pressure = []
+        for name, info in macro_data.items():
+            if not isinstance(info, dict):
+                continue
+            icon = _norm(info.get("icon"))
+            storm = bool(info.get("storm", False))
+            if storm:
+                pressure.append(name)
+            elif name in {"10Y 금리", "VIX", "MOVE", "유가"} and icon == "🔻":
+                relief.append(name)
+            elif name in {"환율", "10Y 금리", "VIX"} and icon == "🔺":
+                pressure.append(name)
+        if relief or pressure:
+            text = []
+            if relief:
+                text.append(f"완화: {', '.join(relief[:3])}")
+            if pressure:
+                text.append(f"부담: {', '.join(pressure[:3])}")
+            bullets.append("매크로는 " + " / ".join(text) + " 흐름입니다.")
+
+    active_events = [
+        row for row in _iter_table_rows(event_rows, limit=12)
+        if _norm(row.get("상태")) in {"임박", "당일", "잔여"}
+    ]
+    if active_events:
+        events = [_norm(row.get("이벤트")) for row in active_events if _norm(row.get("이벤트"))]
+        bullets.append("이벤트 리스크는 " + ", ".join(events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
+
+    portfolio_lines = _summary_bullets(summary_rows)
+    if portfolio_lines:
+        bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "를 먼저 확인합니다.")
+
+    news_count = len(_news_bullets(news_rows))
+    if news_count:
+        bullets.append(f"종목 뉴스는 {news_count}건을 수집했지만 RSS 제목 기준이므로 원문 확인 후 재료 강도를 판단합니다.")
+
+    if not bullets:
+        bullets.append("자동 수집 데이터가 제한적입니다. 돈흐름보다 직접 붙여넣은 뉴스/시황을 함께 확인하세요.")
+    return bullets[:6]
+
+
 def build_auto_market_memo(
     flow_snapshot: dict | None = None,
     macro_data: dict | None = None,
@@ -429,6 +547,13 @@ def build_auto_market_memo(
         "━━━━━━━━━━━━",
         "",
     ]
+
+    insight_lines = _auto_insight_bullets(flow_snapshot, macro_data, event_rows, news_rows, summary_rows)
+    if insight_lines:
+        lines.append("🧠 핵심 해석")
+        for item in insight_lines:
+            lines.append(f"• {item}")
+        lines.append("")
 
     semis = []
     flow_df = flow_snapshot.get("flow_df")
