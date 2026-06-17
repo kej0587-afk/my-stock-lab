@@ -14554,11 +14554,12 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     dashboard_timing = format_dashboard_timing_label(c)
     dashboard_reason = format_dashboard_reason(c)
     dashboard_grade = format_dashboard_candidate_grade(c)
-    dashboard_group = (
-        "caution"
-        if is_dashboard_low_rr_caution(c) or "후보제외" in dashboard_grade or "매수금지" in dashboard_grade or str(c.get("mtf_bias_label", "")) == "정찰만 적합"
-        else (c.get("decision_group") or classify_decision_signal(dashboard_timing))
-    )
+    if "후보제외" in dashboard_grade or "매수금지" in dashboard_grade:
+        dashboard_group = "caution"
+    elif is_dashboard_actionable_signal(c) or "실행보류" in dashboard_grade or "상위과열 정찰" in dashboard_grade:
+        dashboard_group = "buyish"
+    else:
+        dashboard_group = c.get("decision_group") or classify_decision_signal(dashboard_timing)
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
