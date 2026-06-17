@@ -6099,8 +6099,8 @@ def get_precision_mtf_bias(mtf_pack: dict, c: dict) -> dict:
     }
 
 
-def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict) -> dict:
-    """Downgrade aggressive daily pullback labels when weekly/monthly are too hot."""
+def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict, has_pos: bool = False) -> dict:
+    """Downgrade aggressive new-entry labels when weekly/monthly are too hot."""
     if not isinstance(c, dict):
         return c
     guarded = dict(c)
@@ -6135,8 +6135,18 @@ def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict) -> dict:
     if not is_entry_like:
         return guarded
 
+    bias_label = str(bias.get("label", "") or "")
+    if has_pos and bias_label in ("상위 시간대 경고", "정찰만 적합"):
+        if bias_label == "상위 시간대 경고":
+            mtf_note = "상위 시간대 추세훼손: 기존 보유 분할 신호는 유지하되 추가매수보다 손절선과 훼손 원인 점검이 우선입니다."
+        else:
+            mtf_note = "상위 시간대 과열: 기존 보유 분할 신호는 유지하되 부족분 전체가 아니라 1차/소액 중심으로 제한하세요."
+        old_hint = str(guarded.get("sizing_hint", "") or "")
+        guarded["sizing_hint"] = f"{old_hint} / {mtf_note}" if old_hint else mtf_note
+        return guarded
+
     old_reasons = tuple(guarded.get("decision_reasons") or ())
-    if bias.get("label") == "상위 시간대 경고":
+    if bias_label == "상위 시간대 경고":
         guarded.update({
             "dec": "⚠️상위시간대 경고: 신규/추매 보류",
             "col": "#d97706",
@@ -6149,7 +6159,7 @@ def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict) -> dict:
             ) + old_reasons[:2],
             "sizing_hint": "상위 시간대 추세훼손: 손절선과 원인 점검이 우선입니다. 신규/추매는 구조 회복 후 다시 판단하세요.",
         })
-    elif bias.get("label") == "정찰만 적합":
+    elif bias_label == "정찰만 적합":
         guarded.update({
             "dec": "🟡상위과열 눌림: 1차 정찰만",
             "col": "#f59e0b",
@@ -14323,6 +14333,31 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
     return {"tkr": tkr, "f_score": None, "row": row}
 
 
+def is_dashboard_low_rr_caution(c: dict) -> bool:
+    label = str((c or {}).get("dec", "") or "")
+    rr = clean_float((c or {}).get("rr_ratio"), np.nan)
+    if not np.isfinite(rr) or rr >= 1.0:
+        return False
+    return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
+
+
+def format_dashboard_timing_label(c: dict) -> str:
+    label = str((c or {}).get("dec", "") or "")
+    if label and is_dashboard_low_rr_caution(c) and "R/R<1" not in label:
+        return f"{label} / R/R<1 정찰"
+    return label
+
+
+def format_dashboard_reason(c: dict) -> str:
+    reasons = tuple((c or {}).get("decision_reasons") or ())
+    base = str(reasons[0]) if reasons else ""
+    if is_dashboard_low_rr_caution(c):
+        rr = clean_float((c or {}).get("rr_ratio"), np.nan)
+        rr_note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
+        return f"{base} / {rr_note}" if base else rr_note
+    return base
+
+
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
@@ -14389,6 +14424,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
+    dashboard_timing = format_dashboard_timing_label(c)
+    dashboard_reason = format_dashboard_reason(c)
+    dashboard_group = "caution" if is_dashboard_low_rr_caution(c) else (c.get("decision_group") or classify_decision_signal(dashboard_timing))
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
@@ -14402,10 +14440,10 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "섹터벤치": get_benchmark_display_name(bm["sector_bench"]) if bm["sector_bench"] else "-",
         "섹터RS": bm["sector_rs_label"] if bm["sector_bench"] else "-",
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
-        "🔥기술적 타점": c["dec"],
-        "핵심근거": c.get("decision_reasons", ("",))[0] if c.get("decision_reasons") else "",
+        "🔥기술적 타점": dashboard_timing,
+        "핵심근거": dashboard_reason,
         "판정코드": c.get("decision_code", ""),
-        "판정분류": c.get("decision_group") or classify_decision_signal(c["dec"]),
+        "판정분류": dashboard_group,
         "Adj점수": round(c["adj"], 1),
         "안전상태": c.get("safety_state", ""),
         "매크로상태": c.get("macro_state", ""),
@@ -25197,13 +25235,14 @@ if main_page == "precision":
                 chart_df = df
         else:
             chart_df = df
+        precision_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p,
-                                     (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p, fin_score, is_free,
+                                     precision_has_pos, fin_score, is_free,
                                      app_mode, u_asset, u_curr_w, u_targ_w,
                                      live_price=display_cur_p)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
-        c = apply_precision_mtf_decision_guard(c, mtf_pack)
+        c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=precision_has_pos)
 
         L, R = st.columns([1.1, 2.4])
         with L:
