@@ -11197,7 +11197,10 @@ def _build_decision_result(ctx: dict) -> dict:
         "effective_total_asset": ctx["eff_total"], "weight_gap": ctx["weight_gap"], "app_mode": ctx["app_mode"],
         "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df),
         "is_leveraged_or_inverse": ctx["is_leveraged_or_inverse"], **core_dca_context,
-        "day_ret": ctx["day_ret"], "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
+        "day_ret": ctx["day_ret"], "day_ret_label": ctx.get("day_ret_label", "전일등락"),
+        "regular_day_ret": ctx.get("regular_day_ret", np.nan), "live_ref_ret": ctx.get("live_ref_ret", np.nan),
+        "leveraged_drop_ret": ctx.get("leveraged_drop_ret", ctx["day_ret"]),
+        "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
         "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
         "sizing_hint": ctx["sizing_hint"],
         "ext_structure": ctx["ext_structure"], "int_structure": ctx["int_structure"], "pd_zone": ctx["pd_zone"], "smc_action": ctx["smc_action"],
@@ -11293,6 +11296,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
 
     source_daily_close = clean_float(df["Close"].iloc[-1], 0.0) if df is not None and not df.empty and "Close" in df.columns else 0.0
+    source_prev_close = clean_float(df["Close"].iloc[-2], 0.0) if df is not None and len(df) >= 2 and "Close" in df.columns else 0.0
     df, live_ohlcv_applied = apply_live_price_to_ohlcv(df, live_price, ticker)
     if live_ohlcv_applied:
         try:
@@ -11314,10 +11318,25 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
-    # 전일등락은 라이브/프리 가격을 쓰더라도 항상 전 거래일 종가 대비로 계산한다.
-    # 같은 날 일봉 Close가 이미 갱신된 상태에서 live_price와 비교하면 정규장 -16% 급락이 +0.x%처럼 보일 수 있다.
-    day_ret_base = prev_close
-    day_ret = (cur_p / day_ret_base) - 1 if day_ret_base > 0 else 0.0
+    regular_day_ret = (source_daily_close / source_prev_close) - 1 if source_daily_close > 0 and source_prev_close > 0 else np.nan
+    live_ref_ret = (cur_p / daily_close) - 1 if live_price_used and daily_close > 0 else np.nan
+    fallback_day_ret = (cur_p / prev_close) - 1 if prev_close > 0 else 0.0
+    # 라이브 행이 붙으면 prev가 "방금 끝난 정규장 종가"가 되어 정규장 -17%가 +0.8%처럼 보일 수 있다.
+    # 그래서 정규장 전일등락과 최신가-종가 등락을 분리하고, 더 큰 위험 신호를 대표 day_ret로 쓴다.
+    if live_price_used and finite_num(regular_day_ret) and finite_num(live_ref_ret):
+        if abs(regular_day_ret) >= abs(live_ref_ret):
+            day_ret = regular_day_ret
+            day_ret_label = "정규장 전일등락"
+        else:
+            day_ret = live_ref_ret
+            day_ret_label = "최신가/직전종가"
+    elif finite_num(regular_day_ret):
+        day_ret = regular_day_ret
+        day_ret_label = "전일등락"
+    else:
+        day_ret = fallback_day_ret
+        day_ret_label = "전일등락"
+    live_gap_move = live_ref_ret if live_price_used and finite_num(live_ref_ret) else day_ret
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
@@ -11343,7 +11362,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
     below_ma20 = ma20_now > 0 and cur_p < ma20_now * 0.98
     below_ma50 = ma50_now > 0 and cur_p < ma50_now
-    is_live_gap_shock = (not is_etf) and live_price_used and day_ret <= -0.06
+    is_live_gap_shock = (not is_etf) and live_price_used and live_gap_move <= -0.06
     is_single_day_breakdown = (
         (not is_etf)
         and (not live_price_used)
@@ -11439,7 +11458,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_core_etf = is_etf and effective_bucket == "core"
     is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
     is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
-    is_leveraged_daily_drop = is_leveraged_or_inverse and day_ret <= -0.08
+    leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
+    is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
         current_dd, rsi_now, mfi_now, pct_b_now, trend,
@@ -11662,7 +11682,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚠️실시간 급락: 정규장 확인대기", "#d97706", "LIVE_GAP_SHOCK_WAIT",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% (프리/실시간 가격 반영)",
+                    f"현재/전거래일 대비 {live_gap_move*100:.1f}% (프리/실시간 가격 반영)",
                     "정규장 종가와 거래량 확정 전 — 신규진입은 보류하고 MA5/FVG 지지 확인",
                 ),
             )
@@ -11675,7 +11695,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚡레버리지 급락: 신규/추매 보류", "#dc2626", "LEVERAGED_DAILY_DROP_NO_ADD",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% 급락",
+                    f"위험 기준 등락 {leveraged_drop_ret*100:.1f}% 급락",
                     "레버리지/인버스 상품은 하락폭이 커질 때 복리 손실이 빨라 종가와 기초지수 회복 확인 전 매수 보류",
                 ),
             )
@@ -11816,7 +11836,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚡레버리지 급락: 추매금지/종가 확인", "#dc2626", "LEVERAGED_DAILY_DROP_NO_ADD",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% 급락",
+                    f"위험 기준 등락 {leveraged_drop_ret*100:.1f}% 급락",
                     "레버리지/인버스 상품은 큰 하루 급락 뒤 반등 실패 시 손실 속도가 빨라 추가매수보다 종가·기초지수 회복 확인이 우선",
                 ),
             )
@@ -11866,7 +11886,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚠️실시간 급락: 정규장 확인대기", "#d97706", "LIVE_GAP_SHOCK_WAIT",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% (프리/실시간 가격 반영)",
+                    f"현재/전거래일 대비 {live_gap_move*100:.1f}% (프리/실시간 가격 반영)",
                     "정규장 종가와 거래량 확정 전 — 신규진입은 보류하고 MA5/FVG 지지 확인",
                 ),
             )
@@ -11902,7 +11922,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚠️실시간 급락: 추매금지/정규장 확인", "#d97706", "LIVE_GAP_SHOCK_HOLDING_CHECK",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% (프리/실시간 가격 반영)",
+                    f"현재/전거래일 대비 {live_gap_move*100:.1f}% (프리/실시간 가격 반영)",
                     "정규장 종가와 거래량 확정 전 — 추매 금지, 손절선/MA5/FVG 지지 확인",
                 ),
             )
@@ -11915,7 +11935,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col, decision_outcome = _set_decision(
                 "⚠️실시간 급락: 정규장 확인대기", "#d97706", "LIVE_GAP_SHOCK_WAIT",
                 reasons=(
-                    f"현재/전거래일 대비 {day_ret*100:.1f}% (프리/실시간 가격 반영)",
+                    f"현재/전거래일 대비 {live_gap_move*100:.1f}% (프리/실시간 가격 반영)",
                     "정규장 종가와 거래량 확정 전 — 신규/추매 보류",
                 ),
             )
@@ -12633,7 +12653,9 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     rr_stop     = c.get("rr_stop", 0)
     cur_p       = c.get("cur_p", 0)
     day_ret     = c.get("day_ret", 0.0)
-    day_ret_label = "현재/전일등락" if c.get("live_price_used") else "전일 등락"
+    day_ret_label = c.get("day_ret_label", "전일등락")
+    regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
+    live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
     vol_ratio   = c.get("vol_ratio", 0.0)
     ma5         = c.get("ma5", 0)
     ma20        = c.get("ma20", 0)
@@ -12727,7 +12749,13 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
 
     # ── 4. 수급·가격 흐름 ────────────────────────────────────
     flow_parts = [f"섹터 머니플로우: <b>{sector_flow}</b>"]
-    if day_ret != 0:
+    if c.get("live_price_used") and finite_num(regular_day_ret):
+        reg_emoji = "🔺" if regular_day_ret > 0 else "🔻"
+        flow_parts.append(f"정규장 전일등락: {reg_emoji} <b>{regular_day_ret*100:.1f}%</b>")
+        if finite_num(live_ref_ret) and abs(live_ref_ret) > 0.003:
+            live_emoji = "🔺" if live_ref_ret > 0 else "🔻"
+            flow_parts.append(f"최신가-종가: {live_emoji} <b>{live_ref_ret*100:.1f}%</b>")
+    elif day_ret != 0:
         dr_emoji = "🔺" if day_ret > 0 else "🔻"
         flow_parts.append(f"{day_ret_label}: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
     if vol_ratio > 0:
@@ -25482,8 +25510,16 @@ if main_page == "precision":
             else:
                 structure_note = "주의" if c.get("structure_risk") else "정상"
                 structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
-            ret_label = "현재/전일등락" if c.get("live_price_used") else "전일등락"
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_label}: <b>{c['day_ret']*100:.1f}%</b> | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+            _regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
+            _live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
+            if c.get("live_price_used") and finite_num(_regular_day_ret):
+                ret_html = f"정규장전일등락: <b>{_regular_day_ret*100:.1f}%</b>"
+                if finite_num(_live_ref_ret) and abs(_live_ref_ret) > 0.003:
+                    ret_html += f" | 최신가-종가: <b>{_live_ref_ret*100:.1f}%</b>"
+            else:
+                ret_label = str(c.get("day_ret_label") or "전일등락")
+                ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
+            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
