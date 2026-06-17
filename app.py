@@ -6099,6 +6099,72 @@ def get_precision_mtf_bias(mtf_pack: dict, c: dict) -> dict:
     }
 
 
+def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict) -> dict:
+    """Downgrade aggressive daily pullback labels when weekly/monthly are too hot."""
+    if not isinstance(c, dict):
+        return c
+    guarded = dict(c)
+    bias = get_precision_mtf_bias(mtf_pack, guarded) if mtf_pack else {
+        "label": "",
+        "color": "#64748b",
+        "text": "",
+    }
+    guarded["mtf_bias_label"] = bias.get("label", "")
+    guarded["mtf_bias_text"] = bias.get("text", "")
+    guarded["mtf_bias_color"] = bias.get("color", "#64748b")
+
+    decision_code = str(guarded.get("decision_code", "") or "")
+    decision_label = str(guarded.get("dec", "") or "")
+    entry_like_codes = {
+        "S_PULLBACK_ENTRY",
+        "S_PULLBACK_ADD_ON",
+        "QUALITY_PULLBACK_ENTRY",
+        "TREND_PULLBACK_EXPLORE",
+        "NEW_ENTRY_LEADER",
+        "BREAKOUT_52W_ENTRY",
+        "EARLY_REVERSAL_ENTRY",
+        "UPTREND_PULLBACK_DCA",
+        "COST_MINUS_3_7_DCA",
+        "COST_MINUS_7_15_CONDITIONAL_DCA",
+        "A_GRADE_TECH_REBOUND",
+    }
+    is_entry_like = (
+        decision_code in entry_like_codes
+        or any(word in decision_label for word in ("S급", "탑승", "분할매수", "추매", "진입"))
+    )
+    if not is_entry_like:
+        return guarded
+
+    old_reasons = tuple(guarded.get("decision_reasons") or ())
+    if bias.get("label") == "상위 시간대 경고":
+        guarded.update({
+            "dec": "⚠️상위시간대 경고: 신규/추매 보류",
+            "col": "#d97706",
+            "decision_code": "MTF_DAMAGE_NO_ADD",
+            "decision_group": "caution",
+            "decision_reasons": (
+                f"기존 신호: {decision_label}",
+                bias.get("text", "주봉/월봉 흐름이 일봉 신호와 충돌합니다."),
+                "상위 시간대 회복 전까지 신규 비중 확대는 보류",
+            ) + old_reasons[:2],
+            "sizing_hint": "상위 시간대 추세훼손: 손절선과 원인 점검이 우선입니다. 신규/추매는 구조 회복 후 다시 판단하세요.",
+        })
+    elif bias.get("label") == "정찰만 적합":
+        guarded.update({
+            "dec": "🟡상위과열 눌림: 1차 정찰만",
+            "col": "#f59e0b",
+            "decision_code": "MTF_OVERHEAT_SCOUT_ONLY",
+            "decision_group": "caution",
+            "decision_reasons": (
+                f"기존 신호: {decision_label}",
+                bias.get("text", "주봉/월봉 가격대가 높아 풀진입보다 정찰만 적합합니다."),
+                "부족분 전체 매수가 아니라 1차 정찰 후 MA20/FVG/종가 확인",
+            ) + old_reasons[:2],
+            "sizing_hint": "상위 시간대 과열: 부족분 전부가 아니라 1차 정찰(목표비중 부족분의 30% 이하)만 열고, MA20/FVG 지지와 종가 확인 후 추가하세요.",
+        })
+    return guarded
+
+
 def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
     if not mtf_pack:
         return
@@ -13094,13 +13160,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
         "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
-        "STRUCTURE_DAMAGE_HOLDING_CHECK",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK", "MTF_DAMAGE_NO_ADD",
     }
     wait_codes = {
         "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
         "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
+        "MTF_OVERHEAT_SCOUT_ONLY",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
@@ -13118,6 +13185,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         status = "정찰만"
         status_color = "#d97706"
         status_note = "R/R이 1.5 미만이라 풀비중보다 1차 정찰 중심이 맞습니다."
+    elif decision_code == "MTF_OVERHEAT_SCOUT_ONLY":
+        status = "상위과열 / 1차 정찰만"
+        status_color = "#d97706"
+        status_note = "일봉은 눌림이지만 주봉/월봉 가격대가 높습니다. 부족분 전체가 아니라 1차 정찰 후 추가 확인이 맞습니다."
     elif is_wait:
         status = "정규장 확인대기" if decision_code.startswith("PREMARKET_REBOUND") else "눌림 대기"
         status_color = "#8b5cf6"
@@ -13783,6 +13854,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
     is_core_dca = core_dca_rate > 0 and str(c.get("bucket", "")) == "core"
     macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", np.nan), np.nan)
+    mtf_bias_label = str(c.get("mtf_bias_label", ""))
+    mtf_bias_text = str(c.get("mtf_bias_text", ""))
+    rr_ratio = clean_float(c.get("rr_ratio"), np.nan)
     price_vs_avg = np.nan
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
         price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
@@ -13831,6 +13905,15 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     else:
         add_check("구조/추세", "통과", f"{trend} / {rs_label}. 즉시 구조 경고는 크지 않습니다.")
 
+    if mtf_bias_label == "상위 시간대 경고":
+        add_check("상위 시간대", "차단", mtf_bias_text or "주봉/월봉 흐름이 일봉 신호와 충돌합니다. 신규/추매는 보류가 우선입니다.")
+    elif mtf_bias_label == "정찰만 적합":
+        add_check("상위 시간대", "주의", mtf_bias_text or "주봉/월봉 가격대가 높아 풀진입보다 1차 정찰만 적합합니다.")
+    elif mtf_bias_label == "상위 시간대 우호":
+        add_check("상위 시간대", "통과", mtf_bias_text or "일봉과 주봉/월봉 흐름이 크게 충돌하지 않습니다.")
+    elif mtf_bias_label:
+        add_check("상위 시간대", "주의", mtf_bias_text or "상위 시간대 확인이 필요합니다.")
+
     if is_core_dca and ((finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02)):
         add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 코어 ETF라 추격매수 대신 {c.get('core_dca_label', '속도 조절 적립')}으로 제한합니다.")
     elif (finite_num(mfi) and mfi >= 85) or (finite_num(rsi) and rsi >= 75) or (finite_num(pct_b) and pct_b >= 1.02):
@@ -13839,6 +13922,16 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 눌림 대기가 더 유리할 수 있습니다.")
     else:
         add_check("과열", "통과", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 극단 과열은 아닙니다.")
+
+    if finite_num(rr_ratio):
+        if rr_ratio < 1.0:
+            add_check("손익비", "차단", f"현재가 기준 R/R {rr_ratio:.2f}. 기대수익보다 손절폭이 커서 현재가 실행은 보류가 맞습니다.")
+        elif rr_ratio < 1.5:
+            add_check("손익비", "주의", f"현재가 기준 R/R {rr_ratio:.2f}. 풀비중보다 1차 정찰 중심이 맞습니다.")
+        else:
+            add_check("손익비", "통과", f"현재가 기준 R/R {rr_ratio:.2f}. 최소 손익비 조건은 충족합니다.")
+    else:
+        add_check("손익비", "주의", "R/R을 산출하지 못했습니다. 목표가/손절가 확인 전에는 분할 규모를 낮추세요.")
 
     if target_w > 0 and curr_w >= target_w:
         add_check("비중", "차단", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 목표비중을 이미 채웠습니다.")
@@ -25110,6 +25203,7 @@ if main_page == "precision":
                                      live_price=display_cur_p)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
+        c = apply_precision_mtf_decision_guard(c, mtf_pack)
 
         L, R = st.columns([1.1, 2.4])
         with L:
