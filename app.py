@@ -6223,6 +6223,185 @@ def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
     ]
 
 
+def infer_new_etf_proxy_tickers(name="", ticker="", asset_class=""):
+    text = f"{name} {ticker} {asset_class}".lower()
+    if any(key in text for key in ["반도체", "semiconductor", "soxx", "smh", "0167a0"]):
+        return [
+            ("국내 반도체 ETF", "396500.KS"),
+            ("국내 IT/기술 ETF", "139260.KS"),
+            ("SOXX", "SOXX"),
+            ("SMH", "SMH"),
+            ("삼성전자", "005930.KS"),
+            ("SK하이닉스", "000660.KS"),
+        ]
+    return []
+
+
+def calc_simple_return_from_close(df, days):
+    if df is None or df.empty or "Close" not in df.columns:
+        return np.nan
+    close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    if len(close) < 2:
+        return np.nan
+    lookback = min(int(days), len(close) - 1)
+    base = clean_float(close.iloc[-lookback - 1], np.nan)
+    last = clean_float(close.iloc[-1], np.nan)
+    if not finite_num(base) or base <= 0 or not finite_num(last):
+        return np.nan
+    return last / base - 1
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_new_etf_price_quality_snapshot(ticker):
+    try:
+        px = load_price_df(ticker, "6mo")
+        if px is None or px.empty or "Close" not in px.columns:
+            return {"ok": False, "reason": "가격 데이터 없음"}
+        close = pd.to_numeric(px["Close"], errors="coerce")
+        volume = pd.to_numeric(px.get("Volume", pd.Series(0, index=px.index)), errors="coerce").fillna(0.0)
+        trade_value = close.fillna(0.0) * volume
+        return {
+            "ok": True,
+            "rows": int(len(px)),
+            "ret_20d": calc_simple_return_from_close(px, 20),
+            "ret_60d": calc_simple_return_from_close(px, 60),
+            "last_trade_value_krw": clean_float(trade_value.iloc[-1], np.nan),
+            "avg20_trade_value_krw": clean_float(trade_value.tail(20).mean(), np.nan),
+            "last_volume": clean_float(volume.iloc[-1], np.nan),
+            "avg20_volume": clean_float(volume.tail(20).mean(), np.nan),
+        }
+    except Exception as exc:
+        return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_proxy_flow_snapshot(proxy_items):
+    rows = []
+    for label, proxy_ticker in tuple(proxy_items or ()):
+        try:
+            px = load_price_df(proxy_ticker, "6mo")
+            rows.append({
+                "이름": label,
+                "티커": proxy_ticker,
+                "20D": calc_simple_return_from_close(px, 20),
+                "60D": calc_simple_return_from_close(px, 60),
+                "상태": "OK" if px is not None and not px.empty else "데이터 없음",
+            })
+        except Exception as exc:
+            rows.append({"이름": label, "티커": proxy_ticker, "20D": np.nan, "60D": np.nan, "상태": f"오류: {type(exc).__name__}"})
+    return rows
+
+
+def lookup_kr_etf_lab_row_for_verification(ticker):
+    try:
+        kr_etf_df = load_cached_kr_etf_lab_data()
+        if kr_etf_df is None or kr_etf_df.empty:
+            return None
+        ticker_key = str(ticker or "").strip().upper()
+        code_key = ticker_key.replace(".KS", "")
+        matched = kr_etf_df[
+            kr_etf_df.get("ticker", pd.Series("", index=kr_etf_df.index)).astype(str).str.upper().eq(ticker_key)
+            | kr_etf_df.get("code", pd.Series("", index=kr_etf_df.index)).astype(str).str.upper().eq(code_key)
+        ]
+        if matched.empty:
+            return None
+        return matched.iloc[0]
+    except Exception:
+        return None
+
+
+def build_new_core_etf_verification(name, ticker, asset_class, c):
+    history_days = int(clean_float(c.get("history_days"), 0))
+    rows = []
+
+    def add_row(item, status, detail):
+        rows.append({"검증항목": item, "상태": status, "해석": detail})
+
+    if history_days >= 60:
+        add_row("상장/가격 이력", "통과", f"{history_days}거래일 확보. 2차 검증을 시작할 수 있는 구간입니다.")
+    elif history_days >= 45:
+        add_row("상장/가격 이력", "주의", f"{history_days}거래일. 60거래일 전까지는 1차 정찰 중심이 맞습니다.")
+    else:
+        add_row("상장/가격 이력", "대기", f"{history_days}거래일. 신규 ETF 최소 관측 기간이 부족합니다.")
+
+    quality = load_new_etf_price_quality_snapshot(ticker)
+    avg_trade_100m = clean_float(quality.get("avg20_trade_value_krw"), np.nan) / 100_000_000
+    last_trade_100m = clean_float(quality.get("last_trade_value_krw"), np.nan) / 100_000_000
+    if finite_num(avg_trade_100m):
+        if avg_trade_100m >= 10:
+            add_row("거래대금", "통과", f"20일 평균 약 {avg_trade_100m:,.1f}억원 / 최근 약 {last_trade_100m:,.1f}억원. 코어 분할 체결에 무리가 크지 않습니다.")
+        elif avg_trade_100m >= 3:
+            add_row("거래대금", "주의", f"20일 평균 약 {avg_trade_100m:,.1f}억원. 주문은 지정가와 소액 분할이 적합합니다.")
+        else:
+            add_row("거래대금", "차단", f"20일 평균 약 {avg_trade_100m:,.1f}억원. 유동성 부족으로 2차 확대는 보수적으로 봅니다.")
+    else:
+        add_row("거래대금", "확인필요", "가격 데이터에서 거래대금을 계산하지 못했습니다.")
+
+    lab_row = lookup_kr_etf_lab_row_for_verification(ticker)
+    premium = np.nan
+    lab_date = ""
+    if lab_row is not None:
+        premium = clean_float(lab_row.get("premium_discount_3m_pct"), np.nan)
+        lab_date = str(lab_row.get("data_generated_at", "") or "")
+    if finite_num(premium):
+        abs_premium = abs(float(premium))
+        date_note = f" · 기준 {lab_date[:10]}" if lab_date else ""
+        if abs_premium <= 1.0:
+            add_row("NAV 괴리율", "통과", f"3개월 괴리율 {premium:+.2f}%{date_note}. ETF 가격 품질은 양호합니다.")
+        elif abs_premium <= 2.0:
+            add_row("NAV 괴리율", "주의", f"3개월 괴리율 {premium:+.2f}%{date_note}. 지정가와 괴리율 확인이 필요합니다.")
+        else:
+            add_row("NAV 괴리율", "차단", f"3개월 괴리율 {premium:+.2f}%{date_note}. 괴리 확대 구간은 추매를 늦춥니다.")
+    else:
+        add_row("NAV 괴리율", "확인필요", "ETF 연구소 데이터에 괴리율이 없습니다. 2차 진입 전 증권사/운용사 NAV 괴리율을 수동 확인하세요.")
+
+    proxy_items = infer_new_etf_proxy_tickers(name, ticker, asset_class)
+    proxy_rows = load_proxy_flow_snapshot(tuple(proxy_items))
+    ok_proxy = [r for r in proxy_rows if r.get("상태") == "OK" and finite_num(r.get("60D"))]
+    positive_60d = sum(1 for r in ok_proxy if clean_float(r.get("60D"), 0.0) > 0)
+    ret20_vals = [clean_float(r.get("20D"), np.nan) for r in ok_proxy if finite_num(r.get("20D"))]
+    ret60_vals = [clean_float(r.get("60D"), np.nan) for r in ok_proxy if finite_num(r.get("60D"))]
+    avg_20d = float(np.mean(ret20_vals)) if ret20_vals else np.nan
+    avg_60d = float(np.mean(ret60_vals)) if ret60_vals else np.nan
+    if ok_proxy:
+        if positive_60d >= max(2, int(np.ceil(len(ok_proxy) * 0.55))) and (not finite_num(avg_20d) or avg_20d > -0.03):
+            add_row("기초/프록시 흐름", "통과", f"{positive_60d}/{len(ok_proxy)}개 60D 상승. 평균 20D {avg_20d*100:+.1f}% / 60D {avg_60d*100:+.1f}%.")
+        elif positive_60d >= max(1, int(np.ceil(len(ok_proxy) * 0.40))):
+            add_row("기초/프록시 흐름", "주의", f"{positive_60d}/{len(ok_proxy)}개 60D 상승. 흐름은 살아 있으나 확산은 약합니다.")
+        else:
+            add_row("기초/프록시 흐름", "차단", f"{positive_60d}/{len(ok_proxy)}개만 60D 상승. 기초 흐름 회복 전 2차 확대는 보류가 맞습니다.")
+    else:
+        add_row("기초/프록시 흐름", "확인필요", "동종 ETF/구성종목 가격 데이터를 충분히 가져오지 못했습니다.")
+
+    blocking = any(r["상태"] in ("차단", "대기") for r in rows)
+    needs_manual = any(r["상태"] == "확인필요" for r in rows)
+    caution = any(r["상태"] == "주의" for r in rows)
+    if blocking:
+        verdict_code = "wait"
+        verdict = "2차 대기"
+        detail = "상장기간, 거래대금, 기초흐름 중 차단/대기 항목이 있어 2차 확대는 보류합니다."
+    elif needs_manual:
+        verdict_code = "conditional"
+        verdict = "2차 조건부 가능"
+        detail = "60일·거래대금·기초흐름 조건은 볼 수 있으나 괴리율 등 일부 항목은 주문 전 수동 확인이 필요합니다."
+    elif caution:
+        verdict_code = "caution"
+        verdict = "2차 소액 가능"
+        detail = "핵심 조건은 통과했지만 주의 항목이 있어 이번 회차 적립률 안에서만 접근합니다."
+    else:
+        verdict_code = "pass"
+        verdict = "2차 검증 통과"
+        detail = "60일·거래대금·괴리율·기초흐름 조건이 모두 우호적입니다. 그래도 120일 전까지는 정상 코어 100%가 아니라 50~70% 상한이 적합합니다."
+
+    return {
+        "rows": rows,
+        "proxy_rows": proxy_rows,
+        "verdict": verdict,
+        "verdict_code": verdict_code,
+        "detail": detail,
+    }
+
+
 def render_newly_listed_core_etf_guide(name, ticker, is_etf, asset_class, c, mtf_pack):
     if not is_etf:
         return
@@ -6250,6 +6429,31 @@ ETF 자체 일봉보다 기초지수·동종 ETF·구성종목 흐름을 먼저 
         {"구분": "정상 코어", "기준": "120거래일 이상", "운용": "MA50/MA120, MDD, R/R 등 기존 체계 비중 확대"},
     ]
     st.dataframe(pd.DataFrame(rule_rows), width='stretch', hide_index=True)
+    verification = build_new_core_etf_verification(name, ticker, asset_class, c)
+    verdict_color = {
+        "pass": "#16a34a",
+        "caution": "#d97706",
+        "conditional": "#3b82f6",
+        "wait": "#ef4444",
+    }.get(verification.get("verdict_code"), "#64748b")
+    st.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {verdict_color}; margin-bottom:10px;'>"
+        f"<b>신규 ETF 2차 자동 검증</b><br>"
+        f"<span class='highlight'>{escape_html_value(verification.get('verdict', '-'))}</span> — "
+        f"{escape_html_value(verification.get('detail', ''))}<br>"
+        f"<span style='color:#94a3b8;'>120거래일은 풀코어 전환 기준이고, 60거래일 검증 통과 시 2차 제한 확대는 가능합니다.</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(pd.DataFrame(verification["rows"]), width='stretch', hide_index=True)
+    proxy_rows = verification.get("proxy_rows") or []
+    if proxy_rows:
+        proxy_df = pd.DataFrame(proxy_rows)
+        for col in ["20D", "60D"]:
+            if col in proxy_df.columns:
+                proxy_df[col] = proxy_df[col].apply(lambda v: "-" if not finite_num(v) else f"{float(v)*100:+.1f}%")
+        with st.expander("기초/프록시 흐름 자동 계산", expanded=False):
+            st.dataframe(proxy_df, width='stretch', hide_index=True)
     st.dataframe(pd.DataFrame(infer_new_etf_proxy_checks(name, ticker, asset_class)), width='stretch', hide_index=True)
 
 
@@ -11195,7 +11399,8 @@ def _build_decision_result(ctx: dict) -> dict:
         "grade": ctx["grade"], "t_score": ctx["t_score"], "tech_total": ctx["tech_total"], "fin_score": ctx["fin_score"],
         "dd": ctx["current_dd"], "ret_3m": ctx["ret_3m"], "ret_6m": ctx["ret_6m"], "target_w": ctx["targ_w"], "current_w": ctx["curr_w"], "buy_amt": ctx["buy_amount"],
         "effective_total_asset": ctx["eff_total"], "weight_gap": ctx["weight_gap"], "app_mode": ctx["app_mode"],
-        "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df),
+        "bucket": ctx["effective_bucket"], "asset_class": ctx.get("asset_class", ""),
+        "short_history": ctx["short_history"], "history_days": len(df),
         "is_leveraged_or_inverse": ctx["is_leveraged_or_inverse"], **core_dca_context,
         "day_ret": ctx["day_ret"], "day_ret_label": ctx.get("day_ret_label", "전일등락"),
         "regular_day_ret": ctx.get("regular_day_ret", np.nan), "live_ref_ret": ctx.get("live_ref_ret", np.nan),
@@ -13224,6 +13429,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     history_days = clean_float(c.get("history_days"), np.nan)
     is_core_dca = bucket == "core" and core_dca_rate > 0 and target_w > 0 and weight_gap > 0
     is_new_core_etf = is_core_dca and (bool(c.get("short_history")) or (np.isfinite(history_days) and history_days < 80))
+    new_core_verification = build_new_core_etf_verification(name, ticker, str(c.get("asset_class", "") or ""), c) if is_new_core_etf else {}
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
         st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
@@ -13267,13 +13473,25 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         status_note = "현재가 기준 R/R이 1 미만입니다. 아래 금액/수량은 목표비중 기준의 대기 계획이며, 조건 확인 후만 사용하세요."
     elif is_new_core_etf:
         initial_cap_w = target_w * 0.33
-        status = "1차 정찰 완료 / 2차 검증 대기" if has_pos and current_w >= initial_cap_w * 0.90 else "신규 코어 ETF 1차 정찰"
+        verification_code = str(new_core_verification.get("verdict_code", "wait"))
+        verification_verdict = str(new_core_verification.get("verdict", "2차 검증 대기"))
+        if has_pos and current_w >= initial_cap_w * 0.90 and verification_code in ("pass", "caution", "conditional"):
+            status = verification_verdict
+        else:
+            status = "1차 정찰 완료 / 2차 검증 대기" if has_pos and current_w >= initial_cap_w * 0.90 else "신규 코어 ETF 1차 정찰"
         status_color = "#3b82f6"
-        status_note = (
-            "신규상장 코어 ETF는 총 부족분을 바로 채우지 않습니다. "
-            "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
-            "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
-        )
+        if has_pos and current_w >= initial_cap_w * 0.90 and verification_code in ("pass", "caution", "conditional"):
+            status_note = (
+                f"{new_core_verification.get('detail', '')} "
+                "2차는 하락만 기다리는 규칙이 아니라 검증 통과 후 이번 회차 적립률 안에서 열 수 있고, "
+                "120거래일은 풀코어 전환 기준입니다."
+            )
+        else:
+            status_note = (
+                "신규상장 코어 ETF는 총 부족분을 바로 채우지 않습니다. "
+                "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
+                "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
+            )
     elif rr < 1.5:
         status = "정찰만"
         status_color = "#d97706"
@@ -14024,6 +14242,16 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
 
     if is_etf and bool(c.get("short_history")):
         add_check("데이터", "주의", f"가격 데이터가 {int(clean_float(c.get('history_days'), 0))}거래일 수준입니다. MA50/MA120 같은 장기 추세보다 RSI/MFI/볼린저/평단 기준 단기 관측을 우선합니다.")
+
+    if is_etf and is_core_dca and bool(c.get("short_history")):
+        verification = build_new_core_etf_verification(name, ticker, str(c.get("asset_class", "") or ""), c)
+        code = str(verification.get("verdict_code", "wait"))
+        if code == "pass":
+            add_check("신규ETF 2차검증", "통과", f"{verification.get('verdict')}: {verification.get('detail')}")
+        elif code in ("caution", "conditional"):
+            add_check("신규ETF 2차검증", "주의", f"{verification.get('verdict')}: {verification.get('detail')}")
+        else:
+            add_check("신규ETF 2차검증", "차단", f"{verification.get('verdict')}: {verification.get('detail')}")
 
     valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"))
     if valuation_headline in ["가격매력 우수", "조건부 적정", "ETF 별도판단"]:
