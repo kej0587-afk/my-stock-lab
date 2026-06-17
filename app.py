@@ -13217,6 +13217,13 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     pd_zone = str(c.get("pd_zone", "") or "")
     target_source = str(c.get("rr_target_source", "") or "차트 구조 목표가")
     stop_source = str(c.get("rr_stop_source", "") or "2ATR 손절")
+    bucket = str(c.get("bucket", "") or "").lower()
+    core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
+    core_dca_amt = clean_float(c.get("core_dca_amt"), 0.0)
+    core_dca_label = str(c.get("core_dca_label", "") or "")
+    history_days = clean_float(c.get("history_days"), np.nan)
+    is_core_dca = bucket == "core" and core_dca_rate > 0 and target_w > 0 and weight_gap > 0
+    is_new_core_etf = is_core_dca and (bool(c.get("short_history")) or (np.isfinite(history_days) and history_days < 80))
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
         st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
@@ -13258,6 +13265,15 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         status = "현재가 보류 / 눌림 대기"
         status_color = "#d97706"
         status_note = "현재가 기준 R/R이 1 미만입니다. 아래 금액/수량은 목표비중 기준의 대기 계획이며, 조건 확인 후만 사용하세요."
+    elif is_new_core_etf:
+        initial_cap_w = target_w * 0.33
+        status = "1차 정찰 완료 / 2차 검증 대기" if has_pos and current_w >= initial_cap_w * 0.90 else "신규 코어 ETF 1차 정찰"
+        status_color = "#3b82f6"
+        status_note = (
+            "신규상장 코어 ETF는 총 부족분을 바로 채우지 않습니다. "
+            "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
+            "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
+        )
     elif rr < 1.5:
         status = "정찰만"
         status_color = "#d97706"
@@ -13325,6 +13341,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
 
     if is_hard_blocked:
         tranche_weights = [0.0, 0.0, 0.0]
+    elif is_new_core_etf and has_pos and current_w >= (target_w * 0.33 * 0.90):
+        tranche_weights = [0.0, 0.45, 0.55]
+    elif is_new_core_etf:
+        tranche_weights = [0.35, 0.35, 0.30]
     elif is_wait:
         tranche_weights = [0.30, 0.40, 0.30]
     elif rr < 1.5:
@@ -13354,15 +13374,37 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         pct = clean_float(weight, 0.0) * 100
         return f"{label} ({pct:.0f}%)" if pct > 0 else label
 
+    plan_buy_amt_krw = buy_amt_krw
+    if is_core_dca and core_dca_amt > 0:
+        plan_buy_amt_krw = min(core_dca_amt, buy_amt_krw) if buy_amt_krw > 0 else core_dca_amt
+
     rr_now_text = rr_text(cur)
     rr_entry1_text = rr_text(entry1)
     rr_entry2_text = rr_text(entry2)
     rr_entry3_text = rr_text(entry3)
+    rr_entry2_display = rr_entry2_text
+    rr_entry3_display = rr_entry3_text
     total_order_text = order_text(buy_amt_krw, cur)
+    plan_order_text = order_text(plan_buy_amt_krw, cur)
     if weight_gap > 0:
         total_condition = f"목표 {target_w:.2f}% - 현재 {current_w:.2f}% = 부족 {weight_gap:.2f}%p"
     else:
         total_condition = "목표비중 기준 추가 필요 없음"
+
+    if is_new_core_etf:
+        initial_cap_w = target_w * 0.33
+        entry1_cond = f"초기 정찰 한도 {initial_cap_w:.2f}% 확인 · 현재 {current_w:.2f}%"
+        entry2_cond = "60거래일+거래대금/NAV 괴리율+동종·기초흐름 우호 확인. 현재가 추격보다 종가 유지 또는 MA20/FVG 눌림 우선"
+        entry3_cond = "120거래일 이상 자료 확보 후 MA50/MA120, 장기 MDD, 기초지수 흐름으로 정상 코어 전환 확인"
+        entry2_price_text = f"{format_currency(cur, ticker)} 또는 {format_currency(entry2, ticker)}"
+        entry3_price_text = "120거래일 검증 후"
+        rr_entry2_display = f"{rr_now_text}/{rr_entry2_text}"
+        rr_entry3_display = "검증 후 재산출"
+    else:
+        entry2_cond = f"{entry2_label} 근처에서 반등 확인"
+        entry3_cond = f"{entry3_label} 근처, 손절가 이탈 전까지만"
+        entry2_price_text = format_currency(entry2, ticker)
+        entry3_price_text = format_currency(entry3, ticker)
 
     rows = [
         {
@@ -13372,26 +13414,36 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             "예상 R/R": rr_now_text,
             "조건": total_condition,
         },
+    ]
+    if is_core_dca:
+        rows.append({
+            "단계": "이번 회차 적립 기준",
+            "가격": format_currency(cur, ticker),
+            "금액/수량": plan_order_text,
+            "예상 R/R": rr_now_text,
+            "조건": f"{core_dca_label or f'적립률 {core_dca_rate * 100:.0f}%'} 적용. 전체 부족분을 한 번에 채우지 않고 이번 회차만 나눕니다.",
+        })
+    rows += [
         {
             "단계": tranche_label("1차 진입", tranche_weights[0]),
             "가격": format_currency(entry1, ticker),
-            "금액/수량": order_text(buy_amt_krw * tranche_weights[0], entry1),
+            "금액/수량": order_text(plan_buy_amt_krw * tranche_weights[0], entry1),
             "예상 R/R": rr_entry1_text,
             "조건": entry1_cond,
         },
         {
             "단계": tranche_label("2차 추가", tranche_weights[1]),
-            "가격": format_currency(entry2, ticker),
-            "금액/수량": order_text(buy_amt_krw * tranche_weights[1], entry2),
-            "예상 R/R": rr_entry2_text,
-            "조건": f"{entry2_label} 근처에서 반등 확인",
+            "가격": entry2_price_text,
+            "금액/수량": order_text(plan_buy_amt_krw * tranche_weights[1], entry2),
+            "예상 R/R": rr_entry2_display,
+            "조건": entry2_cond,
         },
         {
             "단계": tranche_label("3차 예비", tranche_weights[2]),
-            "가격": format_currency(entry3, ticker),
-            "금액/수량": order_text(buy_amt_krw * tranche_weights[2], entry3),
-            "예상 R/R": rr_entry3_text,
-            "조건": f"{entry3_label} 근처, 손절가 이탈 전까지만",
+            "가격": entry3_price_text,
+            "금액/수량": order_text(plan_buy_amt_krw * tranche_weights[2], entry3),
+            "예상 R/R": rr_entry3_display,
+            "조건": entry3_cond,
         },
         {
             "단계": "1차 익절",
@@ -13418,6 +13470,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
 
     if buy_amt_krw <= 0 and not has_pos:
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
+    elif is_core_dca:
+        amount_note = (
+            f"총 추가 필요: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
+            "아래 단계별 금액은 전체 부족분이 아니라 이번 회차 적립 기준금액을 나눈 값입니다."
+        )
     elif has_pos:
         amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
