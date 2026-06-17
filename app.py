@@ -6115,6 +6115,8 @@ def apply_precision_mtf_decision_guard(c: dict, mtf_pack: dict, has_pos: bool = 
 
     decision_code = str(guarded.get("decision_code", "") or "")
     decision_label = str(guarded.get("dec", "") or "")
+    if any(word in decision_label for word in ("금지", "차단", "보류", "대기", "관망", "정리대상")):
+        return guarded
     entry_like_codes = {
         "S_PULLBACK_ENTRY",
         "S_PULLBACK_ADD_ON",
@@ -11193,7 +11195,8 @@ def _build_decision_result(ctx: dict) -> dict:
         "grade": ctx["grade"], "t_score": ctx["t_score"], "tech_total": ctx["tech_total"], "fin_score": ctx["fin_score"],
         "dd": ctx["current_dd"], "ret_3m": ctx["ret_3m"], "ret_6m": ctx["ret_6m"], "target_w": ctx["targ_w"], "current_w": ctx["curr_w"], "buy_amt": ctx["buy_amount"],
         "effective_total_asset": ctx["eff_total"], "weight_gap": ctx["weight_gap"], "app_mode": ctx["app_mode"],
-        "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df), **core_dca_context,
+        "bucket": ctx["effective_bucket"], "short_history": ctx["short_history"], "history_days": len(df),
+        "is_leveraged_or_inverse": ctx["is_leveraged_or_inverse"], **core_dca_context,
         "day_ret": ctx["day_ret"], "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
         "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
         "sizing_hint": ctx["sizing_hint"],
@@ -11311,7 +11314,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
-    day_ret_base = daily_close if live_price_used and daily_close > 0 else prev_close
+    # 전일등락은 라이브/프리 가격을 쓰더라도 항상 전 거래일 종가 대비로 계산한다.
+    # 같은 날 일봉 Close가 이미 갱신된 상태에서 live_price와 비교하면 정규장 -16% 급락이 +0.x%처럼 보일 수 있다.
+    day_ret_base = prev_close
     day_ret = (cur_p / day_ret_base) - 1 if day_ret_base > 0 else 0.0
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
@@ -11427,11 +11432,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     eff_total = get_effective_total_asset(app_mode, user_total_asset, _te)
     curr_w, targ_w = get_effective_weights(app_mode, name, ticker, user_curr_w, user_targ_w)
     buy_amount = get_effective_buy_amount(app_mode, name, ticker, eff_total, user_curr_w, user_targ_w)
-                                 
+
     price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
     weight_gap = targ_w - curr_w
     effective_bucket = get_effective_bucket(app_mode, name, ticker)
     is_core_etf = is_etf and effective_bucket == "core"
+    is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
+    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    is_leveraged_daily_drop = is_leveraged_or_inverse and day_ret <= -0.08
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
         current_dd, rsi_now, mfi_now, pct_b_now, trend,
@@ -11663,6 +11671,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
                 reasons=_sd_reasons_t,
             )
+        elif is_leveraged_daily_drop:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 급락: 신규/추매 보류", "#dc2626", "LEVERAGED_DAILY_DROP_NO_ADD",
+                reasons=(
+                    f"현재/전거래일 대비 {day_ret*100:.1f}% 급락",
+                    "레버리지/인버스 상품은 하락폭이 커질 때 복리 손실이 빨라 종가와 기초지수 회복 확인 전 매수 보류",
+                ),
+            )
         elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
             dec, col, decision_outcome = _set_decision(
                 "🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed", "BREAKOUT_52W_ENTRY",
@@ -11743,6 +11759,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 "🚨하드차단: 재무F급(처분)", "#dc2626", "HARD_BLOCK_FINANCIAL_F",
                 reasons=(f"재무점수 {fin_score}점 (기준: 2점 이상 필요)", "재무 F급 종목 — 보유 지속 시 손실 위험 높음"),
             )
+        elif is_zero_target_holding:
+            dec, col, decision_outcome = _set_decision(
+                "🛑목표비중 0%: 추매금지/정리대상", "#dc2626", "TARGET_ZERO_NO_ADD",
+                reasons=(
+                    f"목표비중 {targ_w:.1f}% / 현재비중 {curr_w:.1f}%",
+                    "목표비중이 0인 보유 종목은 눌림 신호가 있어도 추가매수 대상이 아니라 축소/정리 관리 대상",
+                ),
+            )
         elif curr_w > targ_w and targ_w > 0:
             dec, col, decision_outcome = _set_decision(
                 "🛑하드차단: 비중 초과", "#dc2626", "HARD_BLOCK_OVERWEIGHT",
@@ -11786,6 +11810,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 reasons=(
                     f"퍼펙트스톰 지수 {_fmr:.1f} (기준: 4.5 이상)",
                     "매크로 위험 최고조 — 신규 매수 전면 중단, 현금 확보 우선",
+                ),
+            )
+        elif is_leveraged_daily_drop:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 급락: 추매금지/종가 확인", "#dc2626", "LEVERAGED_DAILY_DROP_NO_ADD",
+                reasons=(
+                    f"현재/전거래일 대비 {day_ret*100:.1f}% 급락",
+                    "레버리지/인버스 상품은 큰 하루 급락 뒤 반등 실패 시 손실 속도가 빨라 추가매수보다 종가·기초지수 회복 확인이 우선",
                 ),
             )
         elif is_core_dca_allowed and current_dd <= -0.3:
@@ -12601,6 +12633,7 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     rr_stop     = c.get("rr_stop", 0)
     cur_p       = c.get("cur_p", 0)
     day_ret     = c.get("day_ret", 0.0)
+    day_ret_label = "현재/전일등락" if c.get("live_price_used") else "전일 등락"
     vol_ratio   = c.get("vol_ratio", 0.0)
     ma5         = c.get("ma5", 0)
     ma20        = c.get("ma20", 0)
@@ -12696,7 +12729,7 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     flow_parts = [f"섹터 머니플로우: <b>{sector_flow}</b>"]
     if day_ret != 0:
         dr_emoji = "🔺" if day_ret > 0 else "🔻"
-        flow_parts.append(f"전일 등락: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
+        flow_parts.append(f"{day_ret_label}: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
     if vol_ratio > 0:
         vol_desc = "거래량 급증" if vol_ratio >= 2 else ("보통" if vol_ratio >= 0.7 else "거래량 감소")
         flow_parts.append(f"거래량 20일비: <b>{vol_ratio:.1f}x</b> ({vol_desc})")
@@ -13171,6 +13204,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
         "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
         "STRUCTURE_DAMAGE_HOLDING_CHECK", "MTF_DAMAGE_NO_ADD",
+        "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD",
     }
     wait_codes = {
         "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
@@ -13186,7 +13220,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     if is_hard_blocked:
         status = "진입 보류"
         status_color = "#ef4444"
-        status_note = "추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
+        if decision_code == "TARGET_ZERO_NO_ADD":
+            status_note = "목표비중이 0%라 추가매수 계획을 만들지 않습니다. 보유분은 축소/정리 또는 별도 목표비중 재설정 후 판단합니다."
+        elif decision_code == "LEVERAGED_DAILY_DROP_NO_ADD":
+            status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
+        else:
+            status_note = "추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
     elif is_poor_rr:
         status = "현재가 보류 / 눌림 대기"
         status_color = "#d97706"
@@ -13858,6 +13897,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     rsi = clean_float(c.get("rsi"), np.nan)
     pct_b = clean_float(c.get("pct_b"), np.nan)
     dd = clean_float(c.get("dd"), 0.0)
+    day_ret = clean_float(c.get("day_ret"), 0.0)
     curr_w = clean_float(c.get("current_w"), 0.0)
     target_w = clean_float(c.get("target_w"), 0.0)
     weight_gap = target_w - curr_w
@@ -13871,7 +13911,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
         price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
 
-    hard_words = ["하드차단", "진입보류", "추격금지", "구조훼손", "추매금지", "현금 확보", "원인 점검", "실시간 급락"]
+    hard_words = ["하드차단", "진입보류", "추격금지", "구조훼손", "추매금지", "현금 확보", "원인 점검", "실시간 급락", "레버리지 급락"]
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
         add_check("시스템 타점", "차단", f"현재 판정이 '{dec}'입니다. 신호가 풀릴 때까지 신규/추매는 보수적으로 봅니다.")
@@ -13890,6 +13930,12 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("재무/상품", "주의", "재무 3점입니다. 장기보유보다는 실적 개선 지속 여부 확인이 필요합니다.")
     else:
         add_check("재무/상품", "차단", "재무점수가 낮습니다. 기술 신호가 좋아도 장기보유 후보로 보기 어렵습니다.")
+
+    is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, "")
+    if is_leveraged_product and day_ret <= -0.08:
+        add_check("레버리지", "차단", f"현재/전거래일 대비 {day_ret * 100:.1f}% 급락입니다. 레버리지 상품은 가격이 내려왔다는 이유만으로 추매하지 않고 종가·기초지수 회복을 먼저 확인합니다.")
+    elif is_leveraged_product:
+        add_check("레버리지", "주의", "레버리지/인버스 상품입니다. 일반 ETF보다 손실 속도와 복리 훼손이 커서 목표비중과 손절 기준을 더 엄격하게 봅니다.")
 
     if is_etf and bool(c.get("short_history")):
         add_check("데이터", "주의", f"가격 데이터가 {int(clean_float(c.get('history_days'), 0))}거래일 수준입니다. MA50/MA120 같은 장기 추세보다 RSI/MFI/볼린저/평단 기준 단기 관측을 우선합니다.")
@@ -13943,7 +13989,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     else:
         add_check("손익비", "주의", "R/R을 산출하지 못했습니다. 목표가/손절가 확인 전에는 분할 규모를 낮추세요.")
 
-    if target_w > 0 and curr_w >= target_w:
+    if has_pos and target_w <= 0 and curr_w > 0:
+        add_check("비중", "차단", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 목표비중이 0%라 추가매수 대상이 아닙니다.")
+    elif target_w > 0 and curr_w >= target_w:
         add_check("비중", "차단", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 목표비중을 이미 채웠습니다.")
     elif target_w > 0 and weight_gap > 0:
         add_check("비중", "통과", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 남은 여유비중 {weight_gap:.2f}%p입니다.")
@@ -25434,7 +25482,7 @@ if main_page == "precision":
             else:
                 structure_note = "주의" if c.get("structure_risk") else "정상"
                 structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
-            ret_label = "실시간등락" if c.get("live_price_used") else "전일등락"
+            ret_label = "현재/전일등락" if c.get("live_price_used") else "전일등락"
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_label}: <b>{c['day_ret']*100:.1f}%</b> | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)

@@ -257,6 +257,7 @@ def classify_decision_signal(decision_label: str) -> str:
 
 DECISION_CODE_BY_LABEL = {
     "🚨하드차단: 재무F급(처분)": "HARD_BLOCK_FINANCIAL_F",
+    "🛑목표비중 0%: 추매금지/정리대상": "TARGET_ZERO_NO_ADD",
     "🛑하드차단: 비중 초과": "HARD_BLOCK_OVERWEIGHT",
     "⏸️하드차단: 비중 충족(관망)": "HARD_BLOCK_TARGET_FILLED",
     "🛑하드차단: 퍼펙트스톰(대피)": "HARD_BLOCK_MACRO_STORM",
@@ -264,6 +265,8 @@ DECISION_CODE_BY_LABEL = {
     "💣패닉(-40%↓): 현금 투입": "PANIC_CASH_DEPLOY",
     "🚨위기(-30%↓): 코어 집중": "CRISIS_CORE_FOCUS",
     "⚠️구조훼손: 신규진입 보류": "STRUCTURE_DAMAGE_NO_ENTRY",
+    "⚡레버리지 급락: 신규/추매 보류": "LEVERAGED_DAILY_DROP_NO_ADD",
+    "⚡레버리지 급락: 추매금지/종가 확인": "LEVERAGED_DAILY_DROP_NO_ADD",
     "⚠️고점대비 -20%: 추매금지/손절기준 점검": "DRAWDOWN_20_HOLDING_STOP_CHECK",
     "⚠️고점대비 -20%: 추매금지/원인점검": "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
     "⚠️고점대비 -20%: 신규진입 보류": "DRAWDOWN_20_NO_ENTRY",
@@ -338,6 +341,8 @@ DECISION_GROUP_BY_CODE = {
     "DATA_UNAVAILABLE": "caution",
     "DATA_ERROR": "caution",
     "SAFETY_RED_NO_NEW_ENTRY": "caution",
+    "TARGET_ZERO_NO_ADD": "caution",
+    "LEVERAGED_DAILY_DROP_NO_ADD": "caution",
     "CORE_STORM_DCA": "buyish",
     "CORE_CRASH_DCA": "buyish",
     "CORE_DRAWDOWN_DCA": "buyish",
