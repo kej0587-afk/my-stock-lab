@@ -6243,6 +6243,30 @@ NEW_ETF_MANUAL_PROFILES = {
             ("LG이노텍", "011070.KS", 8.97),
         ],
     },
+    "DRAM.K": {
+        "premium_unavailable_ok": True,
+        "premium_source": "미국 상장 ETF: 네이버 괴리율 미제공",
+        "composition": [
+            ("SK하이닉스", "000660.KS", 27.41),
+            ("Micron Technology", "MU", 24.50),
+            ("삼성전자", "005930.KS", 22.00),
+            ("SanDisk", "SNDK", 6.00),
+            ("Seagate Technology", "STX", 4.00),
+            ("Western Digital", "WDC", 3.00),
+        ],
+    },
+    "DRAM": {
+        "premium_unavailable_ok": True,
+        "premium_source": "미국 상장 ETF: 네이버 괴리율 미제공",
+        "composition": [
+            ("SK하이닉스", "000660.KS", 27.41),
+            ("Micron Technology", "MU", 24.50),
+            ("삼성전자", "005930.KS", 22.00),
+            ("SanDisk", "SNDK", 6.00),
+            ("Seagate Technology", "STX", 4.00),
+            ("Western Digital", "WDC", 3.00),
+        ],
+    },
 }
 
 
@@ -6392,6 +6416,9 @@ def build_new_core_etf_verification(name, ticker, asset_class, c):
             add_row("NAV 괴리율", "주의", f"3개월 괴리율 {premium:+.2f}%{date_note}. 지정가와 괴리율 확인이 필요합니다.")
         else:
             add_row("NAV 괴리율", "차단", f"3개월 괴리율 {premium:+.2f}%{date_note}. 괴리 확대 구간은 추매를 늦춥니다.")
+    elif bool(manual_profile.get("premium_unavailable_ok")):
+        source_note = str(manual_profile.get("premium_source", "") or "괴리율 미제공")
+        add_row("NAV 괴리율", "참고", f"{source_note}. 이 항목은 차단 조건에서 제외하고 거래대금·기초흐름·호가 스프레드를 우선 확인합니다.")
     else:
         add_row("NAV 괴리율", "확인필요", "ETF 연구소 데이터에 괴리율이 없습니다. 2차 진입 전 증권사/운용사 NAV 괴리율을 수동 확인하세요.")
 
