@@ -93,3 +93,84 @@ def test_auto_market_memo_does_not_double_scale_macro_change():
 
     assert "1개월 -2.9%" in memo
     assert "-294.2%" not in memo
+
+
+def test_auto_market_memo_prioritizes_short_rotation_over_hot_semis():
+    flow_snapshot = {
+        "flow_df": [
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 iShares",
+                "Ticker": "SOXX",
+                "돈흐름점수": 64.8,
+                "3개월수익률": 0.738,
+                "가속도": 0.603,
+                "상태": "과열경보",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "기술",
+                "Ticker": "XLK",
+                "돈흐름점수": 42.0,
+                "3개월수익률": 0.42,
+                "가속도": 0.2,
+                "상태": "강세",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 VanEck",
+                "Ticker": "SMH",
+                "돈흐름점수": 45.1,
+                "3개월수익률": 0.56,
+                "가속도": 0.444,
+                "상태": "과열경보",
+            },
+        ],
+        "us_top5": [
+            {
+                "섹터": "반도체 iShares",
+                "Ticker": "SOXX",
+                "돈흐름점수": 64.8,
+                "3개월수익률": 0.738,
+                "가속도": 0.603,
+                "상태": "과열경보",
+            }
+        ],
+    }
+    index_rotation_rows = [
+        {"지수/스타일": "나스닥100", "Ticker": "QQQ", "1D": -0.012, "5D": -0.018, "3M": 0.24, "판정": "단기 이탈"},
+        {"지수/스타일": "반도체", "Ticker": "SOXX", "1D": -0.034, "5D": -0.052, "3M": 0.738, "판정": "장기주도/단기이탈"},
+        {"지수/스타일": "다우존스", "Ticker": "DIA", "1D": 0.006, "5D": 0.012, "3M": 0.08, "판정": "순환 유입"},
+        {"지수/스타일": "산업재", "Ticker": "XLI", "1D": 0.008, "5D": 0.014, "3M": 0.10, "판정": "순환 유입"},
+    ]
+    summary_rows = [
+        {"종목명": "ProShares UltraPro QQQ", "티커": "TQQQ", "🔥기술적 타점": "눌림목 탑승"},
+        {"종목명": "Microsoft", "티커": "MSFT", "🔥기술적 타점": "매수 관심"},
+    ]
+
+    memo = build_auto_market_memo(
+        flow_snapshot=flow_snapshot,
+        event_rows=[{"상태": "당일", "이벤트": "FOMC", "D-Day": "D-Day"}],
+        index_rotation_rows=index_rotation_rows,
+        summary_rows=summary_rows,
+        now=datetime(2026, 6, 17, 11, 0),
+    )
+
+    assert "중기 돈흐름은 강하지만 1D 기준 단기 이탈" in memo
+    assert "지수/스타일 로테이션" in memo
+    assert "성장주보다 다우·산업재·금융·방어가 강합니다" in memo
+    assert "레버리지 관찰 후보(추격 제외): ProShares UltraPro QQQ(TQQQ)" in memo
+    assert "FOMC 전후에는 QQQ/TQQQ/QLD/SOXL" in memo
+
+
+def test_market_memo_headline_prioritizes_rotation_and_event_caution():
+    text = """
+    • 반도체/AI는 강세 유지와 호재 수요 확대가 있지만 1D 기준 단기 이탈이 있습니다.
+    • 단기 자금은 나스닥보다 다우·산업재·방어 쪽으로 로테이션됩니다.
+    • FOMC 전후에는 TQQQ/QLD/SOXL 레버리지 추격 금지, 종가 확인 우선입니다.
+    """
+
+    result = analyze_market_memo(text, [])
+
+    assert "단기 로테이션/이벤트 확인 필요" in result["headline"]
+    assert result["action_bias"] == "레버리지 추격 금지 · 눌림/종가 확인 우선"

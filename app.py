@@ -21466,10 +21466,21 @@ def render_today_market_memo_panel(summary_df=None):
                         max_count=max_news_targets,
                     )
 
+                index_rotation_rows = pd.DataFrame()
+                try:
+                    flow_df_for_rotation = snapshot.get("flow_df") if isinstance(snapshot, dict) else pd.DataFrame()
+                    if flow_df_for_rotation is not None and not isinstance(flow_df_for_rotation, pd.DataFrame):
+                        flow_df_for_rotation = pd.DataFrame(flow_df_for_rotation)
+                    if isinstance(flow_df_for_rotation, pd.DataFrame) and not flow_df_for_rotation.empty:
+                        index_rotation_rows = _build_index_rotation_table(calculate_rotation_df(flow_df_for_rotation))
+                except Exception:
+                    index_rotation_rows = pd.DataFrame()
+
                 memo_kwargs = {
                     "flow_snapshot": snapshot,
                     "macro_data": globals().get("macro_res", {}),
                     "event_rows": event_rows,
+                    "index_rotation_rows": index_rotation_rows,
                     "market_news_rows": market_news_rows,
                     "news_rows": news_rows,
                     "summary_rows": summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
@@ -21482,6 +21493,7 @@ def render_today_market_memo_panel(summary_df=None):
                     # Retry without the new optional market_news_rows argument instead of crashing.
                     fallback_kwargs = dict(memo_kwargs)
                     fallback_kwargs.pop("market_news_rows", None)
+                    fallback_kwargs.pop("index_rotation_rows", None)
                     try:
                         generated_memo = build_auto_market_memo(**fallback_kwargs)
                         st.warning("시장 전체 RSS는 이번 생성에서 제외됐습니다. 새 파일 배포가 반영되면 다시 포함됩니다.")
