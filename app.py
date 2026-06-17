@@ -6210,6 +6210,14 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
 
 def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
     text = f"{name} {ticker} {asset_class}".lower()
+    profile = get_new_etf_manual_profile(ticker)
+    if profile.get("composition"):
+        comp_names = ", ".join([row[0] for row in profile["composition"][:5]])
+        return [
+            {"축": "실제 구성 Top5", "확인 대상": comp_names, "판단": "ETF 구성비중을 반영한 가중 기초흐름"},
+            {"축": "국내 동종 ETF", "확인 대상": "396500.KS, 139260.KS", "판단": "국내 반도체/IT ETF의 추세와 거래대금"},
+            {"축": "상품 품질", "확인 대상": "거래대금, AUM, NAV 괴리율", "판단": "신규 ETF는 유동성과 괴리율이 매수 품질을 좌우"},
+        ]
     if any(key in text for key in ["반도체", "semiconductor", "soxx", "smh", "0167a0"]):
         return [
             {"축": "국내 동종 ETF", "확인 대상": "396500.KS, 139260.KS", "판단": "국내 반도체 ETF의 3M/6M 추세와 거래대금"},
@@ -6223,8 +6231,32 @@ def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
     ]
 
 
+NEW_ETF_MANUAL_PROFILES = {
+    "0167A0.KS": {
+        "premium_discount_3m_pct": -0.17,
+        "premium_source": "Naver 최근 확인값",
+        "composition": [
+            ("삼성전기", "009150.KS", 25.75),
+            ("SK하이닉스", "000660.KS", 24.74),
+            ("삼성전자", "005930.KS", 17.49),
+            ("SK스퀘어", "402340.KS", 16.76),
+            ("LG이노텍", "011070.KS", 8.97),
+        ],
+    },
+}
+
+
+def get_new_etf_manual_profile(ticker):
+    ticker_key = str(ticker or "").strip().upper()
+    code_key = ticker_key.replace(".KS", "")
+    return NEW_ETF_MANUAL_PROFILES.get(ticker_key) or NEW_ETF_MANUAL_PROFILES.get(f"{code_key}.KS") or {}
+
+
 def infer_new_etf_proxy_tickers(name="", ticker="", asset_class=""):
     text = f"{name} {ticker} {asset_class}".lower()
+    profile = get_new_etf_manual_profile(ticker)
+    if profile.get("composition"):
+        return list(profile["composition"])
     if any(key in text for key in ["반도체", "semiconductor", "soxx", "smh", "0167a0"]):
         return [
             ("국내 반도체 ETF", "396500.KS"),
@@ -6277,18 +6309,22 @@ def load_new_etf_price_quality_snapshot(ticker):
 @st.cache_data(ttl=900, show_spinner=False)
 def load_proxy_flow_snapshot(proxy_items):
     rows = []
-    for label, proxy_ticker in tuple(proxy_items or ()):
+    for item in tuple(proxy_items or ()):
+        label = item[0] if len(item) >= 1 else ""
+        proxy_ticker = item[1] if len(item) >= 2 else ""
+        weight = clean_float(item[2], np.nan) if len(item) >= 3 else np.nan
         try:
             px = load_price_df(proxy_ticker, "6mo")
             rows.append({
                 "이름": label,
                 "티커": proxy_ticker,
+                "비중": weight,
                 "20D": calc_simple_return_from_close(px, 20),
                 "60D": calc_simple_return_from_close(px, 60),
                 "상태": "OK" if px is not None and not px.empty else "데이터 없음",
             })
         except Exception as exc:
-            rows.append({"이름": label, "티커": proxy_ticker, "20D": np.nan, "60D": np.nan, "상태": f"오류: {type(exc).__name__}"})
+            rows.append({"이름": label, "티커": proxy_ticker, "비중": weight, "20D": np.nan, "60D": np.nan, "상태": f"오류: {type(exc).__name__}"})
     return rows
 
 
@@ -6312,6 +6348,7 @@ def lookup_kr_etf_lab_row_for_verification(ticker):
 
 def build_new_core_etf_verification(name, ticker, asset_class, c):
     history_days = int(clean_float(c.get("history_days"), 0))
+    manual_profile = get_new_etf_manual_profile(ticker)
     rows = []
 
     def add_row(item, status, detail):
@@ -6343,9 +6380,12 @@ def build_new_core_etf_verification(name, ticker, asset_class, c):
     if lab_row is not None:
         premium = clean_float(lab_row.get("premium_discount_3m_pct"), np.nan)
         lab_date = str(lab_row.get("data_generated_at", "") or "")
+    if not finite_num(premium) and manual_profile:
+        premium = clean_float(manual_profile.get("premium_discount_3m_pct"), np.nan)
+        lab_date = str(manual_profile.get("premium_source", "") or "")
     if finite_num(premium):
         abs_premium = abs(float(premium))
-        date_note = f" · 기준 {lab_date[:10]}" if lab_date else ""
+        date_note = f" · 기준 {lab_date[:10]}" if lab_date and lab_date[:4].isdigit() else (f" · {lab_date}" if lab_date else "")
         if abs_premium <= 1.0:
             add_row("NAV 괴리율", "통과", f"3개월 괴리율 {premium:+.2f}%{date_note}. ETF 가격 품질은 양호합니다.")
         elif abs_premium <= 2.0:
@@ -6361,15 +6401,28 @@ def build_new_core_etf_verification(name, ticker, asset_class, c):
     positive_60d = sum(1 for r in ok_proxy if clean_float(r.get("60D"), 0.0) > 0)
     ret20_vals = [clean_float(r.get("20D"), np.nan) for r in ok_proxy if finite_num(r.get("20D"))]
     ret60_vals = [clean_float(r.get("60D"), np.nan) for r in ok_proxy if finite_num(r.get("60D"))]
-    avg_20d = float(np.mean(ret20_vals)) if ret20_vals else np.nan
-    avg_60d = float(np.mean(ret60_vals)) if ret60_vals else np.nan
+    weight_rows = [r for r in ok_proxy if finite_num(r.get("비중")) and clean_float(r.get("비중"), 0.0) > 0]
+    weight_sum = sum(clean_float(r.get("비중"), 0.0) for r in weight_rows)
+    if weight_sum > 0:
+        avg_20d = sum(clean_float(r.get("20D"), 0.0) * clean_float(r.get("비중"), 0.0) for r in weight_rows if finite_num(r.get("20D"))) / weight_sum
+        avg_60d = sum(clean_float(r.get("60D"), 0.0) * clean_float(r.get("비중"), 0.0) for r in weight_rows if finite_num(r.get("60D"))) / weight_sum
+        positive_weight = sum(clean_float(r.get("비중"), 0.0) for r in weight_rows if clean_float(r.get("60D"), 0.0) > 0)
+        positive_basis = f"구성비 {positive_weight:.1f}/{weight_sum:.1f}%"
+        proxy_pass = positive_weight / weight_sum >= 0.55 and (not finite_num(avg_20d) or avg_20d > -0.03)
+        proxy_caution = positive_weight / weight_sum >= 0.40
+    else:
+        avg_20d = float(np.mean(ret20_vals)) if ret20_vals else np.nan
+        avg_60d = float(np.mean(ret60_vals)) if ret60_vals else np.nan
+        positive_basis = f"{positive_60d}/{len(ok_proxy)}개"
+        proxy_pass = positive_60d >= max(2, int(np.ceil(len(ok_proxy) * 0.55))) and (not finite_num(avg_20d) or avg_20d > -0.03)
+        proxy_caution = positive_60d >= max(1, int(np.ceil(len(ok_proxy) * 0.40)))
     if ok_proxy:
-        if positive_60d >= max(2, int(np.ceil(len(ok_proxy) * 0.55))) and (not finite_num(avg_20d) or avg_20d > -0.03):
-            add_row("기초/프록시 흐름", "통과", f"{positive_60d}/{len(ok_proxy)}개 60D 상승. 평균 20D {avg_20d*100:+.1f}% / 60D {avg_60d*100:+.1f}%.")
-        elif positive_60d >= max(1, int(np.ceil(len(ok_proxy) * 0.40))):
-            add_row("기초/프록시 흐름", "주의", f"{positive_60d}/{len(ok_proxy)}개 60D 상승. 흐름은 살아 있으나 확산은 약합니다.")
+        if proxy_pass:
+            add_row("기초/프록시 흐름", "통과", f"{positive_basis} 60D 상승. 가중/평균 20D {avg_20d*100:+.1f}% / 60D {avg_60d*100:+.1f}%.")
+        elif proxy_caution:
+            add_row("기초/프록시 흐름", "주의", f"{positive_basis} 60D 상승. 흐름은 살아 있으나 확산은 약합니다.")
         else:
-            add_row("기초/프록시 흐름", "차단", f"{positive_60d}/{len(ok_proxy)}개만 60D 상승. 기초 흐름 회복 전 2차 확대는 보류가 맞습니다.")
+            add_row("기초/프록시 흐름", "차단", f"{positive_basis}만 60D 상승. 기초 흐름 회복 전 2차 확대는 보류가 맞습니다.")
     else:
         add_row("기초/프록시 흐름", "확인필요", "동종 ETF/구성종목 가격 데이터를 충분히 가져오지 못했습니다.")
 
@@ -6449,6 +6502,8 @@ ETF 자체 일봉보다 기초지수·동종 ETF·구성종목 흐름을 먼저 
     proxy_rows = verification.get("proxy_rows") or []
     if proxy_rows:
         proxy_df = pd.DataFrame(proxy_rows)
+        if "비중" in proxy_df.columns:
+            proxy_df["비중"] = proxy_df["비중"].apply(lambda v: "-" if not finite_num(v) else f"{float(v):.2f}%")
         for col in ["20D", "60D"]:
             if col in proxy_df.columns:
                 proxy_df[col] = proxy_df[col].apply(lambda v: "-" if not finite_num(v) else f"{float(v)*100:+.1f}%")
