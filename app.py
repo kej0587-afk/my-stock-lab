@@ -14417,16 +14417,61 @@ def is_dashboard_low_rr_caution(c: dict) -> bool:
     return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
 
 
+def is_dashboard_actionable_signal(c: dict) -> bool:
+    label = str((c or {}).get("dec", "") or "")
+    if any(word in label for word in ("금지", "차단", "보류", "대기", "관망", "정리대상")):
+        return False
+    return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
+
+
 def format_dashboard_timing_label(c: dict) -> str:
     label = str((c or {}).get("dec", "") or "")
-    if label and is_dashboard_low_rr_caution(c) and "R/R<1" not in label:
-        return f"{label} / R/R<1 정찰"
+    if not label:
+        return label
+    notes = []
+    if is_dashboard_low_rr_caution(c):
+        notes.append("R/R<1 정찰")
+    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
+        notes.append("상위과열 정찰")
+    for note in notes:
+        if note not in label:
+            label = f"{label} / {note}"
     return label
+
+
+def format_dashboard_candidate_grade(c: dict) -> str:
+    grade = str((c or {}).get("grade", "") or "")
+    label = str((c or {}).get("dec", "") or "")
+    code = str((c or {}).get("decision_code", "") or "")
+    curr_w = clean_float((c or {}).get("current_w"), 0.0)
+    target_w = clean_float((c or {}).get("target_w"), 0.0)
+    hard_codes = {
+        "TARGET_ZERO_NO_ADD",
+        "LEVERAGED_DAILY_DROP_NO_ADD",
+        "HARD_BLOCK_OVERWEIGHT",
+        "HARD_BLOCK_TARGET_FILLED",
+        "HARD_BLOCK_MACRO_STORM",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK",
+        "STRUCTURE_DAMAGE_NO_ENTRY",
+        "MTF_DAMAGE_NO_ADD",
+    }
+    if code == "TARGET_ZERO_NO_ADD" or (curr_w > 0 and target_w <= 0):
+        return "🛑후보제외(목표0%)"
+    if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "레버리지 급락")):
+        return "🛑매수금지"
+    if is_dashboard_low_rr_caution(c):
+        return "⚠️실행보류(R/R<1)"
+    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
+        return "🟡상위과열 정찰"
+    return grade
 
 
 def format_dashboard_reason(c: dict) -> str:
     reasons = tuple((c or {}).get("decision_reasons") or ())
     base = str(reasons[0]) if reasons else ""
+    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
+        mtf_note = "상위 시간대 과열: 풀비중보다 정찰/대기"
+        base = f"{base} / {mtf_note}" if base else mtf_note
     if is_dashboard_low_rr_caution(c):
         rr = clean_float((c or {}).get("rr_ratio"), np.nan)
         rr_note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
@@ -14490,6 +14535,12 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             _reserve_available=snap_reserve_available,
             live_price=_live_p,
         )
+        if is_dashboard_actionable_signal(c):
+            try:
+                mtf_pack = build_precision_multi_timeframe_pack(tkr, df)
+                c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
+            except Exception:
+                pass
     except Exception as exc:
         return build_summary_status_item(
             item,
@@ -14502,14 +14553,19 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
     dashboard_timing = format_dashboard_timing_label(c)
     dashboard_reason = format_dashboard_reason(c)
-    dashboard_group = "caution" if is_dashboard_low_rr_caution(c) else (c.get("decision_group") or classify_decision_signal(dashboard_timing))
+    dashboard_grade = format_dashboard_candidate_grade(c)
+    dashboard_group = (
+        "caution"
+        if is_dashboard_low_rr_caution(c) or "후보제외" in dashboard_grade or "매수금지" in dashboard_grade or str(c.get("mtf_bias_label", "")) == "정찰만 적합"
+        else (c.get("decision_group") or classify_decision_signal(dashboard_timing))
+    )
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
         "고점대비": f"{c['dd']*100:.1f}%",
-        "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": c["grade"], "RS": c["rs_label"],
+        "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": dashboard_grade, "RS": c["rs_label"],
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
         "기초벤치": get_benchmark_display_name(bm["underlying_bench"]) if bm["underlying_bench"] else "-",
