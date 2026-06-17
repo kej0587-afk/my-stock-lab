@@ -14414,12 +14414,18 @@ def is_dashboard_low_rr_caution(c: dict) -> bool:
     rr = clean_float((c or {}).get("rr_ratio"), np.nan)
     if not np.isfinite(rr) or rr >= 1.0:
         return False
+    if is_dashboard_block_or_wait_label(label):
+        return False
     return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
+
+
+def is_dashboard_block_or_wait_label(label: str) -> bool:
+    return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상"))
 
 
 def is_dashboard_actionable_signal(c: dict) -> bool:
     label = str((c or {}).get("dec", "") or "")
-    if any(word in label for word in ("금지", "차단", "보류", "대기", "관망", "정리대상")):
+    if is_dashboard_block_or_wait_label(label):
         return False
     return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
 
@@ -14432,7 +14438,8 @@ def format_dashboard_timing_label(c: dict) -> str:
     if is_dashboard_low_rr_caution(c):
         notes.append("R/R<1 정찰")
     if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
-        notes.append("상위과열 정찰")
+        if "상위과열" not in label and "정찰만" not in label:
+            notes.append("상위과열 정찰")
     for note in notes:
         if note not in label:
             label = f"{label} / {note}"
@@ -14459,10 +14466,13 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛑후보제외(목표0%)"
     if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "레버리지 급락")):
         return "🛑매수금지"
+    badges = []
     if is_dashboard_low_rr_caution(c):
-        return "⚠️실행보류(R/R<1)"
+        badges.append("⚠️R/R<1")
     if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
-        return "🟡상위과열 정찰"
+        badges.append("🟡정찰")
+    if badges:
+        return f"{grade} / {' · '.join(badges)}" if grade else " · ".join(badges)
     return grade
 
 
@@ -14556,7 +14566,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     dashboard_grade = format_dashboard_candidate_grade(c)
     if "후보제외" in dashboard_grade or "매수금지" in dashboard_grade:
         dashboard_group = "caution"
-    elif is_dashboard_actionable_signal(c) or "실행보류" in dashboard_grade or "상위과열 정찰" in dashboard_grade:
+    elif is_dashboard_actionable_signal(c) or "R/R<1" in dashboard_grade or "🟡정찰" in dashboard_grade:
         dashboard_group = "buyish"
     else:
         dashboard_group = c.get("decision_group") or classify_decision_signal(dashboard_timing)
