@@ -7210,6 +7210,217 @@ def _cluster_timing_axis_value(timing_state: str) -> float:
     }.get(timing_state, 0.0)
 
 
+INDEX_ROTATION_BASKET = [
+    {"시장": "미국", "지수": "다우존스", "Ticker": "DIA", "역할": "가치·산업 대형주", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "S&P500", "Ticker": "VOO", "역할": "미국 대표지수", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "나스닥100", "Ticker": "QQQ", "역할": "빅테크·성장주", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "기술", "Ticker": "XLK", "역할": "기술주 섹터", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "반도체", "Ticker": "SOXX", "역할": "반도체 섹터", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "산업재", "Ticker": "XLI", "역할": "다우 민감 섹터", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "금융", "Ticker": "XLF", "역할": "가치·금리 민감", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "필수소비재", "Ticker": "XLP", "역할": "방어주", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "유틸리티", "Ticker": "XLU", "역할": "방어·금리 민감", "구분선호": "미국 섹터"},
+    {"시장": "한국", "지수": "KOSPI200", "Ticker": "069500.KS", "역할": "한국 대형주", "구분선호": "한국 섹터"},
+    {"시장": "한국", "지수": "KOSDAQ150", "Ticker": "229200.KS", "역할": "한국 성장주", "구분선호": "한국 섹터"},
+]
+
+
+def _first_finite_value(*values, default=np.nan) -> float:
+    for value in values:
+        if finite_num(value):
+            return float(value)
+    return default
+
+
+def _format_rotation_pct(value) -> str:
+    return f"{float(value) * 100:+.1f}%" if finite_num(value) else "-"
+
+
+def _extract_rotation_close_series(price_df: pd.DataFrame) -> pd.Series:
+    if price_df is None or price_df.empty:
+        return pd.Series(dtype=float)
+    if isinstance(price_df, pd.Series):
+        close = price_df
+    elif "Close" in price_df.columns:
+        close = price_df["Close"]
+    elif "Adj Close" in price_df.columns:
+        close = price_df["Adj Close"]
+    else:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(close, errors="coerce").ffill().dropna()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_index_rotation_recent_returns(ticker: str) -> dict:
+    try:
+        price_df = load_price_df(str(ticker or "").upper(), "3mo")
+        close = _extract_rotation_close_series(price_df)
+        if close.empty:
+            return {}
+        return {
+            "현재가": float(close.iloc[-1]),
+            "1D": _period_return_from_close(close, 1),
+            "5D": _period_return_from_close(close, 5),
+            "2W": _period_return_from_close(close, 10),
+            "1M": _period_return_from_close(close, 21),
+            "3M": _period_return_from_close(close, 63),
+        }
+    except Exception:
+        return {}
+
+
+def _lookup_rotation_row(rotation_df: pd.DataFrame, ticker: str, preferred_group: str = "") -> dict:
+    if rotation_df is None or rotation_df.empty or "Ticker" not in rotation_df.columns:
+        return {}
+    ticker_key = str(ticker or "").upper()
+    matched = rotation_df[rotation_df["Ticker"].astype(str).str.upper() == ticker_key].copy()
+    if matched.empty:
+        return {}
+    if preferred_group and "구분" in matched.columns:
+        preferred = matched[matched["구분"].astype(str) == str(preferred_group)]
+        if not preferred.empty:
+            matched = preferred
+    return matched.iloc[0].to_dict()
+
+
+def _classify_index_rotation_signal(row: dict) -> str:
+    r1d = row.get("1D", np.nan)
+    r5d = row.get("5D", np.nan)
+    r2w = row.get("2W", np.nan)
+    r3m = row.get("3M", np.nan)
+    score = row.get("돈흐름점수", np.nan)
+    state = str(row.get("상태", ""))
+
+    long_hot = (
+        (finite_num(r3m) and float(r3m) >= 0.08)
+        or (finite_num(score) and float(score) >= 35)
+        or any(token in state for token in ["과열", "강세"])
+    )
+    short_weak = (
+        (finite_num(r1d) and float(r1d) <= -0.008)
+        or (finite_num(r5d) and float(r5d) <= -0.025)
+        or (finite_num(r1d) and finite_num(r5d) and float(r1d) < 0 and float(r5d) < 0)
+    )
+    short_strong = (
+        (finite_num(r1d) and float(r1d) >= 0.003 and (not finite_num(r5d) or float(r5d) >= 0))
+        or (finite_num(r5d) and float(r5d) >= 0.015)
+    )
+
+    if long_hot and short_weak:
+        return "장기주도/단기이탈"
+    if short_weak:
+        return "단기 이탈"
+    if long_hot and short_strong:
+        return "주도 지속"
+    if short_strong:
+        return "순환 유입"
+    if finite_num(r2w) and float(r2w) < 0 and long_hot:
+        return "눌림 확인"
+    if long_hot:
+        return "중기 강세"
+    return "중립"
+
+
+def _build_index_rotation_table(rotation_df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for item in INDEX_ROTATION_BASKET:
+        ticker = item["Ticker"]
+        recent = _load_index_rotation_recent_returns(ticker)
+        flow_row = _lookup_rotation_row(rotation_df, ticker, item.get("구분선호", ""))
+        row = {
+            "시장": item["시장"],
+            "지수/스타일": item["지수"],
+            "Ticker": ticker,
+            "역할": item["역할"],
+            "1D": _first_finite_value(recent.get("1D")),
+            "5D": _first_finite_value(recent.get("5D")),
+            "2W": _first_finite_value(flow_row.get("2주수익률"), recent.get("2W")),
+            "1M": _first_finite_value(flow_row.get("1개월수익률"), recent.get("1M")),
+            "3M": _first_finite_value(flow_row.get("3개월수익률"), recent.get("3M")),
+            "RS(3M)": _first_finite_value(flow_row.get("RS_3m"), flow_row.get("RS(3M)")),
+            "돈흐름점수": _first_finite_value(flow_row.get("돈흐름점수")),
+            "상태": str(flow_row.get("상태", "")) if flow_row else "",
+        }
+        row["판정"] = _classify_index_rotation_signal(row)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _labels_from_rotation_rows(df: pd.DataFrame, col: str, positive: bool = True, limit: int = 3) -> str:
+    if df is None or df.empty or col not in df.columns:
+        return ""
+    work = df[pd.to_numeric(df[col], errors="coerce").notna()].copy()
+    if work.empty:
+        return ""
+    if positive:
+        work = work[work[col] > 0].sort_values(col, ascending=False)
+    else:
+        work = work[work[col] < 0].sort_values(col, ascending=True)
+    if work.empty:
+        return ""
+    labels = [
+        f"{r['지수/스타일']}({_format_rotation_pct(r[col])})"
+        for _, r in work.head(limit).iterrows()
+    ]
+    return ", ".join(labels)
+
+
+def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
+    if index_df is None or index_df.empty:
+        return []
+    summaries = []
+    tech_tickers = {"QQQ", "XLK", "SOXX"}
+    rotation_tickers = {"DIA", "XLI", "XLF", "XLP", "XLU"}
+    tech = index_df[index_df["Ticker"].isin(tech_tickers)]
+    rotation = index_df[index_df["Ticker"].isin(rotation_tickers)]
+    tech_1d = pd.to_numeric(tech["1D"], errors="coerce").mean() if not tech.empty else np.nan
+    rot_1d = pd.to_numeric(rotation["1D"], errors="coerce").mean() if not rotation.empty else np.nan
+    tech_5d = pd.to_numeric(tech["5D"], errors="coerce").mean() if not tech.empty else np.nan
+    rot_5d = pd.to_numeric(rotation["5D"], errors="coerce").mean() if not rotation.empty else np.nan
+
+    if finite_num(tech_1d) and finite_num(rot_1d) and tech_1d < 0 <= rot_1d:
+        summaries.append(
+            f"오늘 단기 로테이션은 기술/반도체 평균 {tech_1d*100:+.1f}% vs 다우·산업재·방어 평균 {rot_1d*100:+.1f}%로, 성장주에서 가치/방어 쪽으로 일부 이동한 그림입니다."
+        )
+    elif finite_num(tech_5d) and finite_num(rot_5d) and tech_5d < rot_5d:
+        summaries.append(
+            f"최근 5거래일은 기술/반도체({tech_5d*100:+.1f}%)보다 다우·산업재·방어({rot_5d*100:+.1f}%)가 상대적으로 버티는 흐름입니다."
+        )
+
+    inflow = _labels_from_rotation_rows(index_df, "1D", positive=True, limit=3)
+    outflow = _labels_from_rotation_rows(index_df, "1D", positive=False, limit=3)
+    if inflow:
+        summaries.append(f"1D 유입 상위: {inflow}")
+    if outflow:
+        summaries.append(f"1D 이탈 상위: {outflow}")
+
+    leaders = _labels_from_rotation_rows(index_df, "3M", positive=True, limit=3)
+    if leaders:
+        summaries.append(f"중기 3M 주도권은 아직 {leaders} 쪽에 남아 있습니다. 단기 이탈과 중기 주도는 분리해서 봐야 합니다.")
+    return summaries[:4]
+
+
+def _render_index_rotation_panel(rotation_df: pd.DataFrame):
+    index_df = _build_index_rotation_table(rotation_df)
+    if index_df.empty:
+        return
+
+    st.markdown("##### 🧭 지수/스타일 단기 로테이션 — 오늘 돈이 어디로 움직였나")
+    for msg in _build_index_rotation_summary(index_df):
+        st.caption(msg)
+
+    show = index_df.copy()
+    for col in ["1D", "5D", "2W", "1M", "3M", "RS(3M)"]:
+        show[col] = show[col].apply(_format_rotation_pct)
+    show["돈흐름점수"] = show["돈흐름점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
+    columns = ["시장", "지수/스타일", "역할", "1D", "5D", "2W", "1M", "3M", "RS(3M)", "돈흐름점수", "상태", "판정"]
+    st.dataframe(show[columns], width='stretch', hide_index=True, height=360)
+    st.caption(
+        "클러스터 강도는 3M 중심이라 늦게 꺾입니다. 이 표의 1D/5D가 단기 자금 이동이고, "
+        "'장기주도/단기이탈'은 아직 주도 섹터지만 지금 추격하면 위험한 구간이라는 뜻입니다."
+    )
+
+
 def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_market: int = 3):
     """클러스터 강도와 타이밍을 2축 버블 차트로 표시."""
     rows = []
@@ -7399,6 +7610,7 @@ def render_cluster_heatmap_enhanced(
 
         st.markdown("##### 📊 클러스터 적합도 — 어디로 돈이 쏠리고(강도), 지금 들어가도 되는가(타이밍)")
         _render_cluster_fit_bubble_chart(us_list, kr_list, top_n_per_market=top_n_per_market)
+        _render_index_rotation_panel(rotation_df)
         if strong_pool:
             parts = []
             if ready_now:
@@ -7465,6 +7677,8 @@ def render_cluster_heatmap_enhanced(
         st.caption("진입검토 = 강도+단기확인+확산도 양호 &nbsp;|&nbsp; "
                    "부상감시 = 새 돈이 붙는 초입 &nbsp;|&nbsp; "
                    "주도 후 조정 = 강하지만 1개월 흐름 약화")
+
+    _render_index_rotation_panel(rotation_df)
 
     n_cols = min(len(cl_list), 3)
     n_rows = math.ceil(len(cl_list) / n_cols)

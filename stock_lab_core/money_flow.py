@@ -585,6 +585,7 @@ MONEY_FLOW_UNIVERSE = [
     # ── 미국 섹터 ──────────────────────────────────────────────────────────
     {"구분": "미국 섹터", "섹터": "나스닥",          "ticker": "QQQ",  "name": "Invesco QQQ Trust"},
     {"구분": "미국 섹터", "섹터": "S&P500",          "ticker": "VOO",  "name": "Vanguard S&P 500 ETF"},
+    {"구분": "미국 섹터", "섹터": "다우존스",        "ticker": "DIA",  "name": "SPDR Dow Jones Industrial Average ETF"},
     {"구분": "미국 섹터", "섹터": "반도체 VanEck",   "ticker": "SMH",  "name": "VanEck Semiconductor ETF"},
     {"구분": "미국 섹터", "섹터": "반도체 iShares",  "ticker": "SOXX", "name": "iShares Semiconductor ETF"},
     {"구분": "미국 섹터", "섹터": "기술",            "ticker": "XLK",  "name": "Technology Select Sector SPDR"},
@@ -670,6 +671,7 @@ MONEY_FLOW_UNIVERSE = [
     # ── 글로벌 ─────────────────────────────────────────────────────────────
     {"구분": "글로벌", "섹터": "미국 나스닥",        "ticker": "QQQ",       "name": "Invesco QQQ Trust"},
     {"구분": "글로벌", "섹터": "미국 S&P500",        "ticker": "VOO",       "name": "Vanguard S&P 500 ETF"},
+    {"구분": "글로벌", "섹터": "미국 다우존스",      "ticker": "DIA",       "name": "SPDR Dow Jones Industrial Average ETF"},
     {"구분": "글로벌", "섹터": "일본",               "ticker": "EWJ",       "name": "iShares MSCI Japan ETF"},
     {"구분": "글로벌", "섹터": "캐나다",             "ticker": "EWC",       "name": "iShares MSCI Canada ETF"},
     {"구분": "글로벌", "섹터": "한국",               "ticker": "EWY",       "name": "iShares MSCI South Korea ETF"},
