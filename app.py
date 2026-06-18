@@ -1302,7 +1302,7 @@ RS 라벨: {c['rs_label']}
 RS 기울기: {c['rs_slope_label']} ({c['rs_slope_val']:+.1f}%, Adj보정:{c['rs_slope_s']:+d})
 익절 시그널: {'⚠️발동(MFI≥80+%B>0.9+수익20%↑)' if c.get('profit_take_signal') else '없음'}
 52주 신고가 돌파: {'🚀발동' if c.get('is_52w_breakout') else '없음'}
-R/R 비율: {f"{c['rr_ratio']:.2f} (목표:{c['rr_target']:.0f} / 손절:{c['rr_stop']:.0f})" if c.get('rr_ratio') else '산출불가'}
+R/R 비율: {f"{c['rr_ratio']:.2f} (기준:{c['rr_target']:.0f} / 손절:{c['rr_stop']:.0f})" if c.get('rr_ratio') else '산출불가'}
 섹터 머니플로우: {c.get('sector_flow_state', '-')}
 RSI: {c['rsi']}
 MFI: {c['mfi']}
@@ -11500,6 +11500,8 @@ def _build_decision_result(ctx: dict) -> dict:
         "profit_take_signal": (ctx["has_pos"] and (not ctx["is_core_etf"]) and ctx["mfi_now"] >= 80 and ctx["pct_b_now"] > 0.9 and ctx["price_vs_avg"] > 0.20),
         "rr_ratio": ctx["rr_ratio"], "rr_target": ctx["rr_target_price"], "rr_stop": ctx["rr_stop_atr"], "atr": ctx["_atr"],
         "rr_target_source": ctx["rr_target_source"], "rr_stop_source": ctx["rr_stop_source"],
+        "rr_target_is_projection": ctx["rr_target_is_projection"],
+        "rr_tp1": ctx["rr_tp1_price"], "rr_tp2": ctx["rr_tp2_price"], "rr_tp3": ctx["rr_tp3_price"],
         "is_52w_breakout": ctx["is_52w_breakout"],
         "sector_flow_state": ctx["sector_flow_state"],
         "smc_insight": ctx["smc_insight"],
@@ -11679,7 +11681,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rr_stop_atr  = round(cur_p - _atr * 2.0, 4) if _atr > 0 else None   # 2ATR 손절
     rr_risk_atr  = cur_p - rr_stop_atr if rr_stop_atr else 0
 
-    # 목표가: 구조적 저항이 현재가 위에 있으면 그것을 사용, 없으면 4ATR 돌파 목표 (2:1 R/R 투영)
+    rr_target_is_projection = False
+    rr_tp1_price = round(cur_p + _atr * 1.0, 4) if _atr > 0 else None
+    rr_tp2_price = round(cur_p + _atr * 2.0, 4) if _atr > 0 else None
+    rr_tp3_price = round(cur_p + _atr * 4.0, 4) if _atr > 0 else None
+
+    # 목표가: 구조적 저항이 현재가 위에 있으면 그것을 사용.
+    # 신고가/가격발견 구간은 +4ATR을 확정 목표가가 아니라 강세 시나리오 상단으로만 쓴다.
     if levels["int_high"] > cur_p:
         rr_target_price = levels["int_high"]
         rr_target_source = "차트 구조: 최근 내부고점"
@@ -11687,8 +11695,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         rr_target_price = levels["ext_high"]
         rr_target_source = "차트 구조: 최근 외부고점"
     else:
-        rr_target_price = round(cur_p + _atr * 4.0, 4) if _atr > 0 else None  # 신고가 돌파: 4ATR 목표 투영
-        rr_target_source = "변동성 투영: 현재가 + 4ATR"
+        rr_target_price = rr_tp3_price  # 신고가 돌파: 강세 시나리오 상단
+        rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR"
+        rr_target_is_projection = True
     rr_stop_source = "변동성 손절: 현재가 - 2ATR"
 
     rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
@@ -12938,6 +12947,8 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     rr_ratio    = c.get("rr_ratio")
     rr_target   = c.get("rr_target", 0)
     rr_stop     = c.get("rr_stop", 0)
+    rr_target_is_projection = bool(c.get("rr_target_is_projection", False))
+    rr_target_source = str(c.get("rr_target_source", "") or "차트 구조 목표가")
     cur_p       = c.get("cur_p", 0)
     day_ret     = c.get("day_ret", 0.0)
     day_ret_label = c.get("day_ret_label", "전일등락")
@@ -13121,10 +13132,20 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
 
     # ── 6. R/R ───────────────────────────────────────────────
     if rr_ratio and rr_ratio > 0 and rr_target and rr_stop:
-        lines.append(
-            f"📐 <b>R/R 비율</b>: <b>{rr_ratio:.2f}</b> — "
-            f"목표가 {format_currency(rr_target, tkr)} / 손절 {format_currency(rr_stop, tkr)}"
-        )
+        if rr_target_is_projection:
+            lines.append(
+                f"📐 <b>R/R 비율</b>: <b>{rr_ratio:.2f}</b> — "
+                f"강세 시나리오 상단 {format_currency(rr_target, tkr)} / 손절 {format_currency(rr_stop, tkr)}"
+            )
+            lines.append(
+                f"    → 위 가격은 확정 목표가가 아니라 {escape_html_value(rr_target_source)}입니다. "
+                "신고가 구간은 1~2ATR 분할익절 후 잔여 추적손절이 우선입니다."
+            )
+        else:
+            lines.append(
+                f"📐 <b>R/R 비율</b>: <b>{rr_ratio:.2f}</b> — "
+                f"목표가 {format_currency(rr_target, tkr)} / 손절 {format_currency(rr_stop, tkr)}"
+            )
 
     # ── 7. 내 포지션 손익 ─────────────────────────────────────
     if has_p and my_p > 0 and cur_p > 0:
@@ -13504,6 +13525,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     pd_zone = str(c.get("pd_zone", "") or "")
     target_source = str(c.get("rr_target_source", "") or "차트 구조 목표가")
     stop_source = str(c.get("rr_stop_source", "") or "2ATR 손절")
+    target_is_projection = bool(c.get("rr_target_is_projection", False))
+    rr_tp1 = clean_float(c.get("rr_tp1"), 0.0)
+    rr_tp2 = clean_float(c.get("rr_tp2"), 0.0)
+    rr_tp3 = clean_float(c.get("rr_tp3"), 0.0)
     bucket = str(c.get("bucket", "") or "").lower()
     core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
     core_dca_amt = clean_float(c.get("core_dca_amt"), 0.0)
@@ -13574,6 +13599,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
                 "2차는 하락만 기다리는 규칙이 아니라 60거래일 이후 거래대금·괴리율·기초흐름 검증 또는 MA20/FVG 눌림 확인 때 열고, "
                 "3차는 120거래일 이상 자료가 쌓인 뒤 정상 코어로 전환할 때 검토합니다."
             )
+    elif target_is_projection:
+        status = "신고가 추적 / 분할만"
+        status_color = "#d97706"
+        status_note = "+4ATR은 확정 목표가가 아니라 가격발견 구간의 강세 상단입니다. 신규/추매는 추격보다 눌림 또는 소액 분할, 익절은 +1ATR/+2ATR와 추적손절 중심으로 봅니다."
     elif rr < 1.5:
         status = "정찰만"
         status_color = "#d97706"
@@ -13636,8 +13665,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         if abs(entry3 - entry2) <= min_gap:
             entry3 = max(stop + risk * 0.15, entry2 - risk * 0.25)
 
-    tp1 = min(target, cur + risk)
-    tp2 = target
+    if target_is_projection and atr > 0:
+        tp1 = rr_tp1 if rr_tp1 > cur else cur + atr
+        tp2 = rr_tp2 if rr_tp2 > cur else cur + atr * 2.0
+        tp3 = rr_tp3 if rr_tp3 > cur else target
+    else:
+        tp1 = min(target, cur + risk)
+        tp2 = target
+        tp3 = target
 
     if is_hard_blocked:
         tranche_weights = [0.0, 0.0, 0.0]
@@ -13745,28 +13780,62 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             "예상 R/R": rr_entry3_display,
             "조건": entry3_cond,
         },
-        {
-            "단계": "1차 익절",
-            "가격": format_currency(tp1, ticker),
-            "금액/수량": "보유분 30~50%",
-            "예상 R/R": "-",
-            "조건": "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향",
-        },
-        {
-            "단계": "최종 익절",
-            "가격": format_currency(tp2, ticker),
-            "금액/수량": "잔여분",
-            "예상 R/R": "-",
-            "조건": "구조 목표가 도달 또는 MFI/%B 과열 동반 시",
-        },
-        {
-            "단계": "손절",
-            "가격": format_currency(stop, ticker),
-            "금액/수량": "전량 또는 계획분",
-            "예상 R/R": "-",
-            "조건": "종가 기준 이탈 시 신규진입 시나리오 무효",
-        },
     ]
+    if target_is_projection:
+        rows += [
+            {
+                "단계": "1차 익절(+1ATR)",
+                "가격": format_currency(tp1, ticker),
+                "금액/수량": "보유분 20~30%",
+                "예상 R/R": "-",
+                "조건": "신고가 가격발견 구간의 첫 변동성 목표. 체결 후 잔여 손절을 본전~MA5 근처로 상향",
+            },
+            {
+                "단계": "2차 익절(+2ATR)",
+                "가격": format_currency(tp2, ticker),
+                "금액/수량": "보유분 30~40%",
+                "예상 R/R": "-",
+                "조건": "기본 변동성 목표. RSI/MFI/%B 과열이 동반되면 추가 회수",
+            },
+            {
+                "단계": "강세 상단(+4ATR)",
+                "가격": format_currency(tp3, ticker),
+                "금액/수량": "잔여 일부만",
+                "예상 R/R": "-",
+                "조건": "확정 목표가가 아니라 공격 시나리오 상단. 전량 지정가보다 일부만 열어두기",
+            },
+            {
+                "단계": "잔여 추적손절",
+                "가격": "MA5/전일저가/1ATR 이탈",
+                "금액/수량": "잔여분",
+                "예상 R/R": "-",
+                "조건": "상단 목표를 맞히기보다 추세가 꺾일 때 정리. 종가 기준 이탈 우선",
+            },
+        ]
+    else:
+        rows += [
+            {
+                "단계": "1차 익절",
+                "가격": format_currency(tp1, ticker),
+                "금액/수량": "보유분 30~50%",
+                "예상 R/R": "-",
+                "조건": "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향",
+            },
+            {
+                "단계": "최종 익절",
+                "가격": format_currency(tp2, ticker),
+                "금액/수량": "잔여분",
+                "예상 R/R": "-",
+                "조건": "구조 목표가 도달 또는 MFI/%B 과열 동반 시",
+            },
+        ]
+    rows.append({
+        "단계": "손절",
+        "가격": format_currency(stop, ticker),
+        "금액/수량": "전량 또는 계획분",
+        "예상 R/R": "-",
+        "조건": "종가 기준 이탈 시 신규진입 시나리오 무효",
+    })
 
     if buy_amt_krw <= 0 and not has_pos:
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
@@ -13781,14 +13850,18 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
     if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked:
         amount_note += " R/R이 낮아 현재 실행분은 1차 정찰만 열어둡니다."
+    if target_is_projection:
+        amount_note += " 신고가/가격발견 구간이라 +4ATR은 확정 목표가가 아니라 강세 시나리오 상단이며, 실제 익절은 +1ATR/+2ATR 분할과 추적손절 중심으로 해석하세요."
 
+    target_label = "강세 시나리오 상단" if target_is_projection else "목표가"
+    rr_label = "투영 상단 기준 R/R" if target_is_projection else "현재가 기준 R/R"
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {status_color}; line-height:1.8;'>"
         f"<b>🎯 신규진입 실행 계획</b><br>"
         f"<span class='highlight'>{status}</span> — {escape_html_value(status_note)}<br>"
-        f"목표가 {format_currency(target, ticker)} <span style='color:#94a3b8;'>({escape_html_value(target_source)})</span> / "
+        f"{target_label} {format_currency(target, ticker)} <span style='color:#94a3b8;'>({escape_html_value(target_source)})</span> / "
         f"손절 {format_currency(stop, ticker)} <span style='color:#94a3b8;'>({escape_html_value(stop_source)})</span><br>"
-        f"기준가 {format_currency(cur, ticker)} / 현재가 기준 R/R {rr_now_text} / "
+        f"기준가 {format_currency(cur, ticker)} / {rr_label} {rr_now_text} / "
         f"1차 {rr_entry1_text} · 2차 {rr_entry2_text} · 3차 {rr_entry3_text}<br>"
         f"{escape_html_value(amount_note)}<br>"
         f"<span style='color:#94a3b8;'>투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</span>"
@@ -14375,7 +14448,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("과열", "통과", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 극단 과열은 아닙니다.")
 
     if finite_num(rr_ratio):
-        if rr_ratio < 1.0:
+        if bool(c.get("rr_target_is_projection", False)):
+            add_check("손익비", "주의", f"현재가 기준 R/R {rr_ratio:.2f}. +4ATR 투영값 기준이라 확정 목표가로 보지 말고 +1ATR/+2ATR 분할익절과 추적손절을 우선하세요.")
+        elif rr_ratio < 1.0:
             add_check("손익비", "차단", f"현재가 기준 R/R {rr_ratio:.2f}. 기대수익보다 손절폭이 커서 현재가 실행은 보류가 맞습니다.")
         elif rr_ratio < 1.5:
             add_check("손익비", "주의", f"현재가 기준 R/R {rr_ratio:.2f}. 풀비중보다 1차 정찰 중심이 맞습니다.")
@@ -15820,7 +15895,7 @@ MANUAL_SECTIONS = {
         {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1", "해석": "압축 후 방향성 분출 체크"},
         {"항목": "52주 고점대비", "정의": "52주 고점 대비 현재 하락률", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이나 엄밀한 MDD가 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
         {"항목": "ADJ점수", "정의": "매크로 패널티 반영 기술점수", "코드 기준": "메인점수 + RS점수 + MFI점수 + RS기울기점수 - 매크로패널티", "해석": "높을수록 현재 타점 우호"},
-        {"항목": "R/R 비율", "정의": "2ATR 손절 기준 리스크/리워드", "코드 기준": "손절 = 현재가 - 2ATR (추가 인사이트와 동일). 목표 = 내부 피벗 고점 → 외부 피벗 고점 → 4ATR 투영 순서로 사용. R/R = (목표-현재가)/(현재가-손절)", "해석": "1.5 이상이면 타점 우호. 신고가 돌파 구간은 4ATR 목표로 투영됨"},
+        {"항목": "R/R 비율", "정의": "2ATR 손절 기준 리스크/리워드", "코드 기준": "손절 = 현재가 - 2ATR (추가 인사이트와 동일). 기준가 = 내부 피벗 고점 → 외부 피벗 고점 → 없으면 +4ATR 강세 시나리오 상단 순서로 사용. R/R = (기준가-현재가)/(현재가-손절)", "해석": "구조 목표가가 있을 때는 1.5 이상이면 타점 우호. 신고가/가격발견 구간의 +4ATR은 확정 목표가가 아니라 상단 시나리오이며, +1ATR/+2ATR 분할익절과 추적손절을 같이 봅니다."},
         {"항목": "섹터 머니플로우", "정의": "해당 종목의 섹터 ETF 자금흐름 상태", "코드 기준": "3개월·6개월 수익률 + 가속도로 신규유입/주도유지/둔화경고/소외지속/관찰 판정", "해석": "섹터 자체에 돈이 들어오고 있는지 확인"},
     ],
     "점수 계산": [
@@ -25986,10 +26061,11 @@ if main_page == "precision":
 
         st.markdown("---")
         b1, b2 = st.columns(2)
-        with b1: 
+        with b1:
             f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
             _rr_src = c.get("rr_target_source", "차트 구조")
-            _rr_str = f"{c['rr_ratio']:.2f} (목표 {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
+            _rr_label = "강세 상단" if bool(c.get("rr_target_is_projection", False)) else "목표"
+            _rr_str = f"{c['rr_ratio']:.2f} ({_rr_label} {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
             _sf_str = c.get('sector_flow_state', '-')
             _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
