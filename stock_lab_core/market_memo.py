@@ -358,9 +358,8 @@ def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     ret_3m = _fmt_auto_pct(row.get("3개월수익률"))
     accel = _fmt_auto_pct(row.get("가속도"))
     state = _norm(row.get("상태") or row.get("테마판정"))
-    action = _flow_action_phrase(row)
     state_text = f", 상태 {state}" if state else ""
-    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text} — {action}"
+    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}"
 
 
 def _row_ticker(row: dict) -> str:
@@ -610,15 +609,18 @@ def _summary_bullets(summary_rows) -> list[str]:
         label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
         code = _norm(row.get("판정코드"))
         item = f"{name or ticker}({ticker})" if ticker else (name or "-")
-        if "HARD_BLOCK" in code or "하드차단" in label:
-            hard.append(item)
+        hard_terms = ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO", "LEVERAGED_DAILY_DROP")
+        hard_label_terms = ("하드차단", "구조훼손", "추매금지", "매수금지", "목표비중 0", "비중 초과")
+        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지")
+        if any(term in code for term in hard_terms) or any(term in label for term in hard_label_terms):
+            hard.append(_hard_block_item(item, row))
+        elif any(word in label for word in wait_label_terms):
+            caution.append(item)
         elif any(word in label for word in ("매수", "진입", "DCA", "적립", "탑승", "눌림")):
             if _is_leveraged_row(row):
                 leveraged_watch.append(item)
             else:
                 buyish.append(item)
-        elif any(word in label for word in ("주의", "차단", "과열", "보류", "관망")):
-            caution.append(item)
     if buyish:
         bullets.append("매수/관심 후보: " + ", ".join(buyish[:5]))
     if leveraged_watch:
@@ -628,6 +630,33 @@ def _summary_bullets(summary_rows) -> list[str]:
     if hard:
         bullets.append("하드차단 우선 확인: " + ", ".join(hard[:5]))
     return bullets
+
+
+def _hard_block_item(item: str, row: dict) -> str:
+    code = _norm(row.get("판정코드"))
+    label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
+    reason = _norm(row.get("핵심근거") or row.get("데이터상태"))
+    code_reasons = {
+        "HARD_BLOCK_OVERWEIGHT": "비중 초과",
+        "HARD_BLOCK_TARGET_FILLED": "목표비중 충족",
+        "TARGET_ZERO_NO_ADD": "목표비중 0%",
+        "LEVERAGED_DAILY_DROP_NO_ADD": "레버리지 급락",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK": "구조훼손",
+        "STRUCTURE_DAMAGE_NO_ENTRY": "구조훼손",
+        "MTF_DAMAGE_NO_ADD": "상위 시간대 훼손",
+        "HARD_BLOCK_MACRO_STORM": "매크로 위험",
+    }
+    for key, value in code_reasons.items():
+        if key in code:
+            return f"{item} - {value}"
+    if ":" in label:
+        tail = label.split(":", 1)[1].strip()
+        if tail:
+            return f"{item} - {tail[:18]}"
+    if reason:
+        clean = reason.replace(" / ", ", ").strip()
+        return f"{item} - {clean[:18]}"
+    return item
 
 
 def _news_bullets(news_rows) -> list[str]:
@@ -646,6 +675,29 @@ def _news_bullets(news_rows) -> list[str]:
         tail = f" ({', '.join(tail_parts)})" if tail_parts else ""
         bullets.append(f"{prefix}{title}{tail}")
     return bullets
+
+
+def _rows_text(rows, limit: int = 40) -> str:
+    parts = []
+    for row in _iter_table_rows(rows, limit=limit):
+        if isinstance(row, dict):
+            parts.append(" ".join(str(v) for v in row.values() if v not in (None, "")))
+        else:
+            parts.append(str(row))
+    return " ".join(parts).lower()
+
+
+def _fed_hawkish_signal(market_news_rows=None, news_rows=None) -> bool:
+    text = _rows_text(market_news_rows, 50) + " " + _rows_text(news_rows, 30)
+    if not text:
+        return False
+    hawkish_terms = (
+        "인상 전환", "인상 가능", "인상 시사", "rate hike", "hike by year",
+        "projects hike", "possible hike", "매파", "긴축", "inflation remains elevated",
+        "price stability", "raises inflation forecast",
+    )
+    fomc_terms = ("fomc", "fed", "federal reserve", "연준", "금리", "점도표")
+    return any(term in text for term in hawkish_terms) and any(term in text for term in fomc_terms)
 
 
 def _market_news_bullets(news_rows) -> list[str]:
@@ -675,6 +727,11 @@ def _auto_insight_bullets(
     bullets: list[str] = []
     flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
+    event_records = _active_event_records(event_rows)
+    events = [row["event"] for row in event_records]
+    post_fomc = any("fomc" in _lower(row["event"]) and row["state"] == "잔여" for row in event_records)
+    pre_fomc = any("fomc" in _lower(row["event"]) and row["state"] in {"임박", "당일"} for row in event_records)
+    fed_hawkish = post_fomc and _fed_hawkish_signal(market_news_rows, news_rows)
     flow_df = flow_snapshot.get("flow_df")
     flow_rows = _iter_table_rows(flow_df, limit=250)
     semi_rows = [
@@ -756,20 +813,27 @@ def _auto_insight_bullets(
             elif name in {"환율", "10Y 금리", "VIX"} and icon == "🔺":
                 pressure.append(name)
         if relief or pressure:
-            text = []
-            if relief:
-                text.append(f"완화: {', '.join(relief[:3])}")
-            if pressure:
-                text.append(f"부담: {', '.join(pressure[:3])}")
-            bullets.append("매크로는 " + " / ".join(text) + " 흐름입니다.")
+            if fed_hawkish and pressure:
+                relief_text = f"{', '.join(relief[:3])} 완화 요인" if relief else "일부 지표 완화 요인"
+                bullets.append(
+                    f"매크로는 {relief_text}이 있지만, FOMC의 매파적 해석과 "
+                    f"{', '.join(pressure[:3])} 부담이 겹쳐 위험자산에는 혼재/부담 우위입니다."
+                )
+            elif relief and pressure:
+                bullets.append(
+                    f"매크로는 완화({', '.join(relief[:3])})와 부담({', '.join(pressure[:3])})이 엇갈린 혼재 구간입니다."
+                )
+            elif pressure:
+                bullets.append(f"매크로는 {', '.join(pressure[:3])} 부담이 우세합니다.")
+            else:
+                bullets.append(f"매크로는 {', '.join(relief[:3])} 완화 흐름입니다.")
 
-    event_records = _active_event_records(event_rows)
-    events = [row["event"] for row in event_records]
-    post_fomc = any("fomc" in _lower(row["event"]) and row["state"] == "잔여" for row in event_records)
-    pre_fomc = any("fomc" in _lower(row["event"]) and row["state"] in {"임박", "당일"} for row in event_records)
     non_post_events = [row["event"] for row in event_records if not ("fomc" in _lower(row["event"]) and row["state"] == "잔여")]
     if post_fomc:
-        bullets.append("FOMC는 금리 동결 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다.")
+        if fed_hawkish:
+            bullets.append("FOMC는 금리 동결로 불확실성 일부가 해소됐지만, 연내 인상 가능성/매파 해석을 시장이 소화하는 구간입니다.")
+        else:
+            bullets.append("FOMC는 금리 동결 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다.")
     if non_post_events:
         bullets.append("이벤트 리스크는 " + ", ".join(non_post_events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
     elif events and not post_fomc:
@@ -779,7 +843,7 @@ def _auto_insight_bullets(
 
     portfolio_lines = _summary_bullets(summary_rows)
     if portfolio_lines:
-        bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "를 먼저 확인합니다.")
+        bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
 
     news_count = len(_news_bullets(news_rows))
     if news_count:
