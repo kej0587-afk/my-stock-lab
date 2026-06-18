@@ -3618,12 +3618,21 @@ def infer_dart_financial_profile(df):
     text = get_dart_account_text(df)
     if not text:
         return "general"
-    insurance_hits = ["보험수익", "보험료수익", "보험계약", "보험영업", "책임준비금", "재보험"]
-    bank_hits = ["이자수익", "순이자수익", "대출채권", "예수부채", "신용손실", "수수료수익"]
-    securities_hits = ["순수수료수익", "당기손익공정가치", "파생상품", "금융상품평가"]
-    if any(k in text for k in insurance_hits):
+
+    def _hit_count(words):
+        return sum(1 for k in words if k in text)
+
+    # 제조/반도체 기업도 '파생상품', '금융상품평가', '당기손익공정가치' 계정을 보유할 수 있다.
+    # 그래서 금융업 판정은 일반 금융계정 단어가 아니라 사업모델을 드러내는 핵심 계정이 있을 때만 적용한다.
+    insurance_primary = ["보험수익", "보험료수익", "보험영업수익", "순보험수익"]
+    insurance_support = ["보험계약", "책임준비금", "재보험", "보험부채", "보험서비스"]
+    bank_primary = ["순이자수익", "대출채권", "예수부채", "신용손실", "예수금부채"]
+    securities_primary = ["순수수료수익", "고객예수금", "위탁매매", "투자매매", "수수료손익"]
+    financial_support = ["이자수익", "수수료수익", "당기손익공정가치", "파생상품", "금융상품평가"]
+
+    if _hit_count(insurance_primary) >= 1 and _hit_count(insurance_primary + insurance_support) >= 2:
         return "insurance"
-    if sum(1 for k in bank_hits + securities_hits if k in text) >= 2:
+    if _hit_count(bank_primary + securities_primary) >= 1 and _hit_count(bank_primary + securities_primary + financial_support) >= 2:
         return "financial"
     return "general"
 
