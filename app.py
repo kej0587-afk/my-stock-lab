@@ -22967,7 +22967,7 @@ def _flow_leadership_layer(row):
 
 
 def _flow_compact_decision(row):
-    action = _flow_action_bucket(row.get("통합판정", ""))
+    action = str(row.get("행동", "") or "") or _flow_action_bucket(row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
     price_band = str(row.get("가격위치", "") or "")
     text = " ".join(str(row.get(c, "") or "") for c in ["큰돈판정", "테마판정", "하위상태"])
@@ -22981,18 +22981,48 @@ def _flow_compact_decision(row):
     if action == "추격금지":
         return "과열 해소 전 신규 금지"
     if action == "관심등록":
+        if layer == "상위약함":
+            return "상위 약함, 반등 지속 확인"
         if layer in {"하위만", "테마+하위"}:
             return "하위테마만 강함, 확인 필요"
         return "전광판 등록 후 지속 확인"
     return "방향 불일치, 관망"
 
 
+def _adjust_flow_command_action(row):
+    action = _flow_action_bucket(row.get("통합판정", ""))
+    layer = str(row.get("주도층위", "") or "")
+    r1m = clean_float(row.get("1개월", np.nan), np.nan)
+    r2w = clean_float(row.get("2주", np.nan), np.nan)
+
+    if action not in {"정밀관측", "눌림대기"}:
+        return action
+
+    # 상위 흐름이 약하면 '눌림'이 아니라 반등 확인/관망으로 본다.
+    if layer in {"상위약함", "확인중"}:
+        if finite_num(r2w) and float(r2w) >= 0.03:
+            return "관심등록"
+        return "관망/제외"
+
+    # 하위 테마만 살아 있는 경우도 정밀/눌림 후보로 올리지 않는다.
+    if layer == "하위만":
+        return "관심등록"
+
+    # 1개월 흐름이 음수인 반등주는 눌림 후보가 아니라 회복 확인 후보로 낮춘다.
+    if finite_num(r1m) and float(r1m) < -0.03 and layer not in {"큰돈+테마+하위"}:
+        if finite_num(r2w) and float(r2w) >= 0.03:
+            return "관심등록"
+        return "관망/제외"
+
+    return action
+
+
 def _prepare_flow_command_table(unified_df):
     if unified_df is None or unified_df.empty:
         return pd.DataFrame()
     show = unified_df.copy()
-    show["행동"] = show["통합판정"].apply(_flow_action_bucket)
     show["주도층위"] = show.apply(_flow_leadership_layer, axis=1)
+    show["행동"] = show.apply(_adjust_flow_command_action, axis=1)
     show["가격위치"] = show["가격수준"].apply(_flow_price_band) if "가격수준" in show.columns else "-"
     show["흐름"] = show.apply(
         lambda r: f"1M {_fmt_flow_pct_compact(r.get('1개월', np.nan))} / 2W {_fmt_flow_pct_compact(r.get('2주', np.nan))}",
@@ -23021,7 +23051,9 @@ def _prepare_flow_command_table(unified_df):
         + show["테마점수"].apply(clean_float).fillna(0) * 0.35
         + show["하위점수"].apply(clean_float).fillna(0) * 0.20
     )
-    return show.sort_values(["_행동순서", "_가격순서", "_점수"], ascending=False)
+    show = show.sort_values(["_행동순서", "_가격순서", "_점수"], ascending=False)
+    show = show.drop_duplicates(subset=["행동", "후보군", "대표주"], keep="first")
+    return show
 
 
 def _render_flow_command_center(unified_df):
