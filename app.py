@@ -7089,19 +7089,28 @@ def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", the
     """cluster_label(강도: 주도/부상/소외/중립)과 cluster_timing(타이밍: 진입 가능/눌림 대기/과열/하락 중)을
     독립 입력으로 받아, 강도와 타이밍이 둘 다 맞을 때만 '정밀관측'으로 묶는다."""
     text = " ".join(str(x or "") for x in [cluster_label, theme_signal, sector_state, theme_state, sub_state])
+    cluster_label_text = str(cluster_label or "")
+    theme_signal_text = str(theme_signal or "")
+    timing_text = str(cluster_timing or "")
+    cluster_strong = cluster_label_text in {"주도", "부상", "진입검토", "부상감시"}
+    theme_strong = theme_signal_text in {"진입검토", "부상감시", "주도 후 조정"}
+    cluster_weak = cluster_label_text in {"소외", "약세", "중립", "소외 지속"}
+
     if "하락중 관망" in text or "소외 지속" in text or "급락" in text or str(cluster_timing) == "하락 중":
         return "🔸 관망", "단기 흐름이 꺾인 구간입니다."
     if "극단과열" in text:
         return "🚫 추격금지", "종목 타점에서 과열이 풀릴 때까지 대기합니다."
-    if "과열" in text or str(cluster_timing) in {"과열", "눌림 대기"} or (finite_num(price_level) and float(price_level) >= 0.90):
+    if "과열" in text or timing_text in {"과열", "눌림 대기"} or (finite_num(price_level) and float(price_level) >= 0.90):
         return "⏳ 눌림대기", "큰 흐름은 강하지만 가격 위치가 높습니다."
-    cluster_strong = str(cluster_label) in {"주도", "부상", "진입검토", "부상감시"}
-    theme_strong = str(theme_signal) in {"진입검토", "부상감시", "주도 후 조정"}
-    if cluster_strong and theme_strong and str(cluster_timing) in {"진입 가능", ""}:
+    if cluster_weak and theme_strong:
+        return "👀 관심등록", "상위 흐름은 약하고 하위 테마만 살아 있어 확인이 필요합니다."
+    if cluster_weak:
+        return "🔸 관망", "상위 돈흐름 강도가 약해 진입 후보로 보지 않습니다."
+    if cluster_strong and theme_strong and timing_text in {"진입 가능", ""}:
         return "✅ 정밀관측", "연결 흐름과 타이밍이 같이 맞습니다. 종목별 과열/눌림을 확인합니다."
     if cluster_strong or theme_strong:
         return "👀 관심등록", "돈은 쏠리는 중입니다. 대표주를 전광판/정밀관측소에 올려두고 타이밍을 지켜봅니다."
-    if str(cluster_label) == "주도 후 조정" or str(theme_signal) == "주도 후 조정":
+    if cluster_label_text == "주도 후 조정" or theme_signal_text == "주도 후 조정":
         return "⏳ 눌림대기", "주도 테마지만 단기 조정 확인이 필요합니다."
     return "🔸 관망", "섹터·테마·타점 중 하나 이상이 아직 약합니다."
 
@@ -22889,13 +22898,216 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
     return out.drop(columns=["_priority", "_score", "_dedupe_theme", "_dedupe_subtheme", "_dedupe_leader"])
 
 
+def _flow_action_bucket(action):
+    text = str(action or "")
+    if "정밀관측" in text:
+        return "정밀관측"
+    if "눌림" in text:
+        return "눌림대기"
+    if "추격금지" in text:
+        return "추격금지"
+    if "관심" in text:
+        return "관심등록"
+    return "관망/제외"
+
+
+def _fmt_flow_pct_compact(v):
+    num = clean_float(v, np.nan)
+    if not finite_num(num):
+        return "-"
+    # 내부 계산값은 0.12처럼 비율이고, CSV로 들어온 값은 12.0처럼 퍼센트일 수 있어 둘 다 방어한다.
+    if abs(float(num)) > 3:
+        return f"{float(num):+.1f}%"
+    return fmt_flow_pct(num)
+
+
+def _flow_price_band(price_level):
+    v = clean_float(price_level, np.nan)
+    if not finite_num(v):
+        return "-"
+    if abs(float(v)) > 3:
+        v = float(v) / 100.0
+    if v >= 0.95:
+        return "신고가권"
+    if v >= 0.85:
+        return "상단권"
+    if v >= 0.65:
+        return "중립상단"
+    if v >= 0.35:
+        return "중립"
+    return "하단/눌림"
+
+
+def _flow_leadership_layer(row):
+    strong_words = ("주도", "강세", "진입검토", "부상", "과열")
+    weak_words = ("소외", "하락", "약세", "관망", "급락")
+
+    def _has(col, words):
+        text = str(row.get(col, "") or "")
+        return any(w in text for w in words)
+
+    big_strong = _has("큰돈판정", strong_words)
+    theme_strong = _has("테마판정", strong_words)
+    sub_strong = _has("하위상태", strong_words)
+    big_weak = _has("큰돈판정", weak_words)
+
+    if big_strong and theme_strong and sub_strong:
+        return "큰돈+테마+하위"
+    if big_strong and (theme_strong or sub_strong):
+        return "큰돈+하위"
+    if theme_strong and sub_strong:
+        return "테마+하위"
+    if sub_strong:
+        return "하위만"
+    if big_strong:
+        return "큰돈만"
+    if big_weak:
+        return "상위약함"
+    return "확인중"
+
+
+def _flow_compact_decision(row):
+    action = _flow_action_bucket(row.get("통합판정", ""))
+    layer = str(row.get("주도층위", "") or "")
+    price_band = str(row.get("가격위치", "") or "")
+    text = " ".join(str(row.get(c, "") or "") for c in ["큰돈판정", "테마판정", "하위상태"])
+
+    if action == "정밀관측":
+        return "후보 압축, 종목 타점 확인"
+    if action == "눌림대기":
+        if price_band in {"신고가권", "상단권"} or "과열" in text:
+            return "강하지만 추격보다 눌림"
+        return "흐름 유지, 진입가 대기"
+    if action == "추격금지":
+        return "과열 해소 전 신규 금지"
+    if action == "관심등록":
+        if layer in {"하위만", "테마+하위"}:
+            return "하위테마만 강함, 확인 필요"
+        return "전광판 등록 후 지속 확인"
+    return "방향 불일치, 관망"
+
+
+def _prepare_flow_command_table(unified_df):
+    if unified_df is None or unified_df.empty:
+        return pd.DataFrame()
+    show = unified_df.copy()
+    show["행동"] = show["통합판정"].apply(_flow_action_bucket)
+    show["주도층위"] = show.apply(_flow_leadership_layer, axis=1)
+    show["가격위치"] = show["가격수준"].apply(_flow_price_band) if "가격수준" in show.columns else "-"
+    show["흐름"] = show.apply(
+        lambda r: f"1M {_fmt_flow_pct_compact(r.get('1개월', np.nan))} / 2W {_fmt_flow_pct_compact(r.get('2주', np.nan))}",
+        axis=1,
+    )
+    show["판단"] = show.apply(_flow_compact_decision, axis=1)
+    show["_행동순서"] = show["행동"].map({
+        "정밀관측": 5,
+        "눌림대기": 4,
+        "추격금지": 3,
+        "관심등록": 2,
+        "관망/제외": 1,
+    }).fillna(0)
+    show["_가격순서"] = show["가격위치"].map({
+        "하단/눌림": 5,
+        "중립": 4,
+        "중립상단": 3,
+        "상단권": 2,
+        "신고가권": 1,
+    }).fillna(0)
+    for col in ["적합도", "테마점수", "하위점수"]:
+        if col not in show.columns:
+            show[col] = np.nan
+    show["_점수"] = (
+        show["적합도"].apply(clean_float).fillna(0)
+        + show["테마점수"].apply(clean_float).fillna(0) * 0.35
+        + show["하위점수"].apply(clean_float).fillna(0) * 0.20
+    )
+    return show.sort_values(["_행동순서", "_가격순서", "_점수"], ascending=False)
+
+
+def _render_flow_command_center(unified_df):
+    command_df = _prepare_flow_command_table(unified_df)
+    if command_df.empty:
+        return command_df
+
+    counts = command_df["행동"].value_counts().to_dict()
+    precision_count = int(counts.get("정밀관측", 0))
+    pullback_count = int(counts.get("눌림대기", 0))
+    chase_block_count = int(counts.get("추격금지", 0))
+    interest_count = int(counts.get("관심등록", 0))
+    wait_count = int(counts.get("관망/제외", 0))
+
+    if precision_count:
+        headline = "정밀관측 후보가 있습니다. 바로 매수보다 종목별 과열·눌림·R/R을 확인하는 순서입니다."
+        border = "#22c55e"
+    elif pullback_count or chase_block_count:
+        headline = "돈은 쏠려 있지만 가격 위치가 높습니다. 오늘은 추격보다 눌림 대기와 후보 정리가 우선입니다."
+        border = "#f59e0b"
+    elif interest_count:
+        headline = "새로 볼 만한 흐름은 있지만 아직 타점 확정 전입니다. 전광판 등록 후 지속성을 확인합니다."
+        border = "#38bdf8"
+    else:
+        headline = "현재 돈흐름 압축 기준으로 바로 볼 후보는 많지 않습니다. 관망과 데이터 정리가 우선입니다."
+        border = "#64748b"
+
+    st.markdown("#### 오늘 돈흐름 결론판")
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {border}; margin-bottom:12px;'>
+<b>먼저 볼 순서</b><br>
+<span class='highlight'>{html.escape(headline)}</span><br>
+돈이 몰린 곳과 지금 진입 가능한 곳을 분리해서 봅니다. 강한 축이어도 신고가권·과열이면 `눌림대기`로 보냅니다.
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("정밀관측", f"{precision_count}개")
+    m2.metric("눌림대기", f"{pullback_count}개")
+    m3.metric("추격금지", f"{chase_block_count}개")
+    m4.metric("관심등록", f"{interest_count}개")
+    m5.metric("관망/제외", f"{wait_count}개")
+
+    cols = ["행동", "후보군", "주도층위", "대표주", "가격위치", "흐름", "판단", "다음확인"]
+    primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
+    if primary.empty:
+        primary = command_df.head(10)
+    st.dataframe(
+        primary[[c for c in cols if c in primary.columns]],
+        width='stretch',
+        hide_index=True,
+        height=min(420, 90 + len(primary) * 38),
+    )
+
+    with st.expander("행동별로 더 보기", expanded=False):
+        tabs = st.tabs(["정밀/눌림", "추격금지", "관심", "관망"])
+        tab_map = [
+            (tabs[0], ["정밀관측", "눌림대기"]),
+            (tabs[1], ["추격금지"]),
+            (tabs[2], ["관심등록"]),
+            (tabs[3], ["관망/제외"]),
+        ]
+        for tab, actions in tab_map:
+            with tab:
+                part = command_df[command_df["행동"].isin(actions)].head(12)
+                if part.empty:
+                    st.info("해당 구간 후보가 없습니다.")
+                else:
+                    st.dataframe(
+                        part[[c for c in cols if c in part.columns]],
+                        width='stretch',
+                        hide_index=True,
+                        height=min(420, 90 + len(part) * 38),
+                    )
+    return command_df
+
+
 def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df):
     unified_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
     if unified_df.empty:
         return
 
-    st.markdown("#### 돈흐름 통합 판정")
-    st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서로 한 줄에 묶었습니다. 수익률은 큰돈/테마/하위 기준을 분리해 표시합니다. `정밀관측`은 매수 신호가 아니라 종목 타점 확인 단계입니다.")
+    _render_flow_command_center(unified_df)
 
     show = unified_df.head(12).copy()
     for col in ["적합도", "테마점수", "하위점수"]:
@@ -22910,13 +23122,16 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         "핵심하위테마", "하위상태", "하위1M", "하위2W",
         "대표주", "가격수준", "다음확인",
     ]
-    st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
+    with st.expander("원천 상세표 보기", expanded=False):
+        st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서의 원천 표입니다.")
+        st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
 
     with st.expander("통합 판정 기준", expanded=False):
         st.markdown(
             "- `정밀관측`: ETF/섹터와 연결 테마가 같은 방향입니다. 정밀관측소에서 과열/눌림을 확인합니다.\n"
             "- `관심등록`: 새 돈 후보지만 아직 타점 확정 전입니다. 전광판에 올려 흐름 유지 여부를 봅니다.\n"
             "- `눌림대기`: 큰 흐름은 강하지만 가격 위치나 과열 상태가 높습니다.\n"
+            "- `추격금지`: 극단 과열 또는 가격 위치가 높아 신규 추격을 막는 구간입니다.\n"
             "- `관망`: 섹터, 테마, 하위테마 중 하나 이상이 아직 맞지 않습니다."
         )
 
