@@ -1,7 +1,12 @@
 import pandas as pd
 
 from stock_lab_core.market_memo import build_auto_market_memo
-from stock_lab_core.news import NEWS_CATEGORY_MARKET, assess_news_item
+from stock_lab_core.news import (
+    NEWS_CATEGORY_DIRECT,
+    NEWS_CATEGORY_MARKET,
+    assess_news_item,
+    dedupe_news_by_publisher_latest,
+)
 
 
 def test_auto_market_memo_keeps_today_check_block_when_summary_empty():
@@ -102,3 +107,57 @@ def test_market_news_tightening_fear_is_bad_news_not_neutral():
 
     assert result["ok"] is True
     assert result["sentiment"] == "악재"
+
+
+def test_index_news_drops_listing_compliance_and_single_company_listing_noise():
+    compliance = assess_news_item(
+        "브릿지라인 디지털, 나스닥 최소 주가 요건 재충족",
+        "테스트",
+        "379810.KS",
+        ["나스닥"],
+        [],
+        NEWS_CATEGORY_DIRECT,
+        strict=False,
+    )
+    adr = assess_news_item(
+        "SK하이닉스, 미국 나스닥 ADR 상장 임박",
+        "테스트",
+        "379810.KS",
+        ["나스닥"],
+        [],
+        NEWS_CATEGORY_DIRECT,
+        strict=False,
+    )
+    index_close = assess_news_item(
+        "[3분증시] 기술주 반등에 나스닥·S&P500 상승 마감",
+        "연합뉴스",
+        "379810.KS",
+        ["나스닥"],
+        [],
+        NEWS_CATEGORY_DIRECT,
+        strict=False,
+    )
+
+    assert compliance["ok"] is False
+    assert adr["ok"] is False
+    assert index_close["ok"] is True
+
+
+def test_news_dedupes_same_publisher_to_latest_item():
+    older = {
+        "title": "[3분증시] 기술주 반등에 나스닥·S&P500 상승 마감",
+        "publisher": "연합뉴스",
+        "_pub_dt": pd.Timestamp("2026-06-18 06:00").to_pydatetime(),
+        "quality_score": 10,
+    }
+    newer = {
+        "title": "[3분증시] 메모리주 급등…S&P500·나스닥 최고치 마감",
+        "publisher": "연합뉴스",
+        "_pub_dt": pd.Timestamp("2026-06-18 08:00").to_pydatetime(),
+        "quality_score": 5,
+    }
+
+    deduped = dedupe_news_by_publisher_latest([older, newer])
+
+    assert len(deduped) == 1
+    assert deduped[0]["title"] == newer["title"]

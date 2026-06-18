@@ -204,6 +204,28 @@ GENERAL_NOISE_WORDS = [
     "라이트급", "litecoin", "crypto", "코인", "맛집", "여행"
 ]
 
+LISTING_COMPLIANCE_NOISE_WORDS = [
+    "최소 주가 요건", "상장 요건", "상장 유지", "상장폐지 유예", "상장폐지",
+    "관리종목", "거래정지", "minimum bid", "listing requirement",
+    "listing compliance", "continued listing", "regained compliance",
+    "delisting notice", "non-compliance",
+]
+
+INDEX_NEWS_TARGET_TERMS = [
+    "나스닥", "nasdaq", "s&p", "s&p500", "sp500", "s&p 500",
+    "코스피", "코스닥", "다우", "dow", "다우존스", "kospi", "kosdaq",
+]
+
+INDEX_MARKET_CONTEXT_WORDS = [
+    "지수", "증시", "선물", "마감", "상승", "하락", "급등", "급락",
+    "강세", "약세", "반등", "조정", "랠리", "최고치", "신고가",
+    "index", "futures", "wall street", "closed", "closes", "market",
+]
+
+SINGLE_COMPANY_LISTING_WORDS = [
+    "상장", "상장 임박", "adr", "ipo", "listed on", "listing on",
+]
+
 NEWS_CATEGORY_DIRECT = "종목 직접"
 NEWS_CATEGORY_SECTOR = "섹터/테마"
 NEWS_CATEGORY_MARKET = "시장/매크로"
@@ -876,6 +898,25 @@ def keyword_in_text(text, keywords):
     lowered = str(text or "").lower()
     return any(str(k).lower() in lowered for k in keywords if str(k).strip())
 
+def _is_index_like_news_target(symbol, company_names) -> bool:
+    target_text = " ".join([str(symbol or ""), *[str(n or "") for n in company_names]]).lower()
+    return any(term in target_text for term in INDEX_NEWS_TARGET_TERMS)
+
+def _is_listing_compliance_noise(text) -> bool:
+    return keyword_in_text(text, LISTING_COMPLIANCE_NOISE_WORDS)
+
+def _is_index_listing_mismatch(text, symbol, company_names, category) -> bool:
+    if category != NEWS_CATEGORY_DIRECT:
+        return False
+    if not _is_index_like_news_target(symbol, company_names):
+        return False
+    if not keyword_in_text(text, SINGLE_COMPANY_LISTING_WORDS):
+        return False
+    # Index ETF investors need index/market movement news. Single-company
+    # listing/ADR/IPO headlines usually attach only because the word Nasdaq
+    # appears in the title, so keep them out of the ticker news panel.
+    return not keyword_in_text(text, INDEX_MARKET_CONTEXT_WORDS)
+
 def first_signal_reason(text, signals):
     lowered = str(text or "").lower()
     for keyword, reason in signals:
@@ -950,6 +991,10 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
 
     if any(noise.lower() in text_l for noise in GENERAL_NOISE_WORDS):
         return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "주식 뉴스와 무관한 키워드"}
+    if _is_listing_compliance_noise(text):
+        return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "상장요건/관리종목성 노이즈"}
+    if _is_index_listing_mismatch(text, symbol, company_names, category):
+        return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "지수보다 개별 종목 상장 이슈가 중심인 기사"}
 
     has_company = any(str(n).lower() in text_l for n in company_names if str(n).strip())
     has_symbol = symbol_appears_as_token(text, symbol)
@@ -1064,7 +1109,23 @@ def normalize_news_title_key(title, publisher=""):
     if pub and cleaned.endswith(suffix):
         cleaned = cleaned[:-len(suffix)]
     return " ".join(cleaned.split())[:160]
-    
+
+def dedupe_news_by_publisher_latest(items):
+    best_by_publisher = {}
+    for item in items or []:
+        publisher = clean_news_text(item.get("publisher", "")).lower() or "unknown"
+        old = best_by_publisher.get(publisher)
+        if old is None:
+            best_by_publisher[publisher] = item
+            continue
+        old_ts = news_sort_timestamp(old.get("_pub_dt"))
+        new_ts = news_sort_timestamp(item.get("_pub_dt"))
+        if new_ts > old_ts:
+            best_by_publisher[publisher] = item
+        elif new_ts == old_ts and float(item.get("quality_score") or 0) > float(old.get("quality_score") or 0):
+            best_by_publisher[publisher] = item
+    return list(best_by_publisher.values())
+
 @st.cache_data(ttl=600)
 def get_ticker_news(ticker, name, debug=False):
     headers = {
@@ -1220,16 +1281,15 @@ def get_ticker_news(ticker, name, debug=False):
         logs.append("최근 주식 관련 뉴스 없음")
         return [], logs
 
-    selected = sorted(
-        selected,
-        key=lambda x: (
-            NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
-            0 if is_news_within_days(x.get("_pub_dt"), NEWS_RECENT_DAYS) else 1,
-            -news_sort_timestamp(x.get("_pub_dt")),
-            0 if x.get("topic") == "실적/IR" else 1,
-            -float(x.get("quality_score") or 0),
-        )
+    sort_key = lambda x: (
+        NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
+        0 if is_news_within_days(x.get("_pub_dt"), NEWS_RECENT_DAYS) else 1,
+        -news_sort_timestamp(x.get("_pub_dt")),
+        0 if x.get("topic") == "실적/IR" else 1,
+        -float(x.get("quality_score") or 0),
     )
+
+    selected = sorted(dedupe_news_by_publisher_latest(selected), key=sort_key)
 
     limited = []
     final_counts = {}

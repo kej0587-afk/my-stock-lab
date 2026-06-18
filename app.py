@@ -21910,7 +21910,26 @@ def collect_today_auto_newspick_news(universe, summary_df=None, max_count=5):
             row["name"] = name
             row["target_reason"] = target.get("reason", "")
             news_rows.append(row)
-    return news_rows, targets
+    return dedupe_today_auto_newspick_news_rows(news_rows), targets
+
+
+def _today_newspick_news_key(row):
+    title = str((row or {}).get("title", "") or "").strip().lower()
+    publisher = str((row or {}).get("publisher", "") or "").strip().lower()
+    title = re.sub(r"\s+", " ", re.sub(r"\s+-\s+.+$", "", title))
+    return (publisher, title[:140])
+
+
+def dedupe_today_auto_newspick_news_rows(news_rows):
+    deduped = []
+    seen = set()
+    for row in news_rows or []:
+        key = _today_newspick_news_key(row)
+        if key[1] and key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 TODAY_MARKET_STORY_RSS_PLAN = [
@@ -22022,8 +22041,40 @@ def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2
     return rows
 
 
-def render_today_market_memo_panel(summary_df=None):
-    universe, status_map = build_today_market_memo_universe(summary_df)
+def resolve_today_market_memo_summary_df(summary_df=None, summary_signature=None):
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        try:
+            st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
+            if summary_signature is not None:
+                st.session_state["today_queue_summary_last_nonempty_sig"] = summary_signature
+        except Exception:
+            pass
+        return summary_df, ""
+
+    cached = st.session_state.get("today_queue_summary_df")
+    cached_sig = st.session_state.get("today_queue_summary_sig")
+    if (
+        isinstance(cached, pd.DataFrame)
+        and not cached.empty
+        and (summary_signature is None or cached_sig == summary_signature)
+    ):
+        return cached, "오늘점검 마지막 계산 결과"
+
+    last_nonempty = st.session_state.get("today_queue_summary_last_nonempty_df")
+    last_sig = st.session_state.get("today_queue_summary_last_nonempty_sig")
+    if (
+        isinstance(last_nonempty, pd.DataFrame)
+        and not last_nonempty.empty
+        and (summary_signature is None or last_sig == summary_signature)
+    ):
+        return last_nonempty, "오늘점검 마지막 정상 결과"
+
+    return pd.DataFrame(), ""
+
+
+def render_today_market_memo_panel(summary_df=None, summary_signature=None):
+    memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
+    universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown("#### 시황 메모 분석")
 
     def _clear_market_memo():
@@ -22103,7 +22154,7 @@ def render_today_market_memo_panel(summary_df=None):
                 if include_rss_news:
                     news_rows, news_targets = collect_today_auto_newspick_news(
                         universe,
-                        summary_df,
+                        memo_summary_df,
                         max_count=max_news_targets,
                     )
 
@@ -22124,7 +22175,7 @@ def render_today_market_memo_panel(summary_df=None):
                     "index_rotation_rows": index_rotation_rows,
                     "market_news_rows": market_news_rows,
                     "news_rows": news_rows,
-                    "summary_rows": summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame(),
+                    "summary_rows": memo_summary_df,
                     "now": datetime.now(timezone(timedelta(hours=9))),
                 }
                 try:
@@ -22162,9 +22213,11 @@ def render_today_market_memo_panel(summary_df=None):
                 target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
                 market_count = len(market_news_rows)
                 target_text = f" · 종목 RSS 대상: {', '.join(target_labels)}" if target_labels else ""
-                st.success(f"자동 뉴스픽을 만들었습니다. 시장뉴스 {market_count}건{target_text}")
+                source_text = f" · {memo_summary_source} 사용" if memo_summary_source else ""
+                st.success(f"자동 뉴스픽을 만들었습니다. 시장뉴스 {market_count}건{target_text}{source_text}")
             else:
-                st.success("자동 뉴스픽을 만들었습니다. 필요하면 시장/RSS 포함을 켜고 다시 생성할 수 있습니다.")
+                source_text = f" {memo_summary_source}를 사용했습니다." if memo_summary_source else ""
+                st.success(f"자동 뉴스픽을 만들었습니다.{source_text} 필요하면 시장/RSS 포함을 켜고 다시 생성할 수 있습니다.")
 
         memo_text = st.text_area(
             "시황 메모",
@@ -23707,7 +23760,7 @@ def render_today_queue_tab(mode):
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
-        render_today_market_memo_panel(pd.DataFrame())
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature="")
         render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
@@ -23750,7 +23803,7 @@ def render_today_queue_tab(mode):
 
     if not cached_summary.empty:
         if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
-            for key in [summary_key, sig_key, last_key]:
+            for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"]:
                 st.session_state.pop(key, None)
             st.rerun()
         last_run = st.session_state.get(last_key)
@@ -23790,13 +23843,16 @@ def render_today_queue_tab(mode):
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
         st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+        if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+            st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
+            st.session_state["today_queue_summary_last_nonempty_sig"] = queue_sig
     else:
         summary_df = cached_summary
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
-        render_today_market_memo_panel(pd.DataFrame())
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig)
         render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
         if run_summary:
@@ -23821,7 +23877,7 @@ def render_today_queue_tab(mode):
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask)
 
     render_today_market_guard_panel(market_guard)
-    render_today_market_memo_panel(summary_df)
+    render_today_market_memo_panel(summary_df, summary_signature=queue_sig)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("점검 종목", f"{len(summary_df)}개")
