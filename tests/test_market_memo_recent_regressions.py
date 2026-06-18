@@ -52,6 +52,43 @@ def test_auto_market_memo_uses_post_fomc_hawkish_context_and_timeline_groups():
     assert "🇺🇸 전일 미증시 요약" in memo
 
 
+def test_auto_market_memo_switches_fomc_d_day_to_result_mode_from_news():
+    market_news = pd.DataFrame(
+        [
+            {
+                "market_category": "외환/금리",
+                "title": "美 FOMC 금리 또 동결…연내 인하→인상 전환",
+                "publisher": "연합뉴스",
+                "published": "06/18 08:41",
+            }
+        ]
+    )
+    macro_data = {
+        "10Y 금리": {"val": 4.46, "chg": -0.024, "icon": "🔻"},
+        "환율": {"val": 1523.72, "chg": 0.011, "icon": "🔺", "storm": False},
+        "VIX": {"val": 18.44, "chg": 0.057, "icon": "🔺"},
+        "MOVE": {"val": 70.66, "chg": -0.133, "icon": "🔻"},
+        "유가": {"val": 75.16, "chg": -0.235, "icon": "🔻"},
+    }
+    event_rows = pd.DataFrame(
+        [{"이벤트": "FOMC", "상태": "당일", "D-Day": "D-Day", "시장": "미국 주식/달러/금리"}]
+    )
+
+    memo = build_auto_market_memo(
+        macro_data=macro_data,
+        event_rows=event_rows,
+        market_news_rows=market_news,
+        summary_rows=pd.DataFrame(),
+    )
+
+    assert "FOMC D-Day(결과 소화)" in memo
+    assert "FOMC 전에는" not in memo
+    assert "FOMC 전후에는" not in memo
+    assert "이벤트 리스크는 FOMC 일정 때문에" not in memo
+    assert "환율 부담" in memo
+    assert "혼재/부담 우위" in memo
+
+
 def test_market_news_tightening_fear_is_bad_news_not_neutral():
     result = assess_news_item(
         "긴축 공포에 코스피 빨간불…외국인 귀환 랠리 꺾이나",
