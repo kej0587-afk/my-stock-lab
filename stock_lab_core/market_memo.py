@@ -715,6 +715,45 @@ def _market_news_bullets(news_rows) -> list[str]:
     return bullets
 
 
+def _market_news_timeline_group(row: dict) -> str:
+    title = _lower(row.get("title") or row.get("제목"))
+    category = _lower(row.get("market_category") or row.get("category") or "")
+    current_terms = (
+        "fomc", "fed", "연준", "금리", "긴축", "인상", "동결", "점도표",
+        "환율", "달러", "코스피", "코스닥", "국장", "외국인", "장중",
+        "빨간불", "꺾", "공포", "금리", "yield", "treasury",
+    )
+    us_close_terms = (
+        "뉴욕증시", "nasdaq", "s&p", "dow", "다우", "마감", "closed",
+        "wall street", "기술주 반등", "상승 마감", "급등", "최고치 마감",
+    )
+    if any(term in title or term in category for term in current_terms):
+        return "🇰🇷 현재 국장/매크로"
+    if any(term in title or term in category for term in us_close_terms):
+        return "🇺🇸 전일 미증시 요약"
+    return "🌐 기타 시장 서사"
+
+
+def _market_news_grouped_bullets(news_rows) -> dict[str, list[str]]:
+    groups = {
+        "🇰🇷 현재 국장/매크로": [],
+        "🇺🇸 전일 미증시 요약": [],
+        "🌐 기타 시장 서사": [],
+    }
+    for row in _iter_table_rows(news_rows, limit=30):
+        title = _norm(row.get("title") or row.get("제목"))
+        if not title:
+            continue
+        category = _norm(row.get("market_category") or row.get("category") or "시장")
+        publisher = _norm(row.get("publisher") or row.get("source") or row.get("출처"))
+        published = _norm(row.get("published"))
+        meta = " · ".join(x for x in (publisher, published) if x)
+        tail = f" ({meta})" if meta else ""
+        group = _market_news_timeline_group(row)
+        groups.setdefault(group, []).append(f"[{category}] {title}{tail}")
+    return {key: value for key, value in groups.items() if value}
+
+
 def _auto_insight_bullets(
     flow_snapshot,
     macro_data,
@@ -957,19 +996,27 @@ def build_auto_market_memo(
             lines.append(f"• {item}")
         lines.append("")
 
-    market_news_lines = _market_news_bullets(market_news_rows)
-    if market_news_lines:
+    market_news_groups = _market_news_grouped_bullets(market_news_rows)
+    if market_news_groups:
         lines.append("📰 시장 뉴스/서사")
-        for item in market_news_lines[:15]:
-            lines.append(f"• {item}")
+        remaining = 15
+        for group, items in market_news_groups.items():
+            if remaining <= 0:
+                break
+            lines.append(f"• {group}")
+            for item in items[:remaining]:
+                lines.append(f"  - {item}")
+                remaining -= 1
         lines.append("")
 
     portfolio_lines = _summary_bullets(summary_rows)
+    lines.append("🧭 오늘점검")
     if portfolio_lines:
-        lines.append("🧭 오늘점검")
         for item in portfolio_lines:
             lines.append(f"• {item}")
-        lines.append("")
+    else:
+        lines.append("• 오늘점검 데이터가 비어 있습니다. 오늘 종목 점검 계산/새로고침 후 매수·주의·하드차단 후보를 확인하세요.")
+    lines.append("")
 
     news_lines = _news_bullets(news_rows)
     if news_lines:
