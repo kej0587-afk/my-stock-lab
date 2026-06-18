@@ -486,15 +486,31 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
         rotation_detected = (growth_avg < 0 <= rotation_avg) or ((rotation_avg - growth_avg) >= 0.012)
 
     semi_short_weak = False
+    primary_semi_seen = False
+    primary_semi_weak = False
+    leveraged_semi_weak = False
     for row in rows:
         ticker = _row_ticker(row)
         if ticker not in {"SOXX", "SMH", "SOXL", "QQQ", "XLK", "TQQQ", "QLD"}:
             continue
         judgement = _norm(row.get("판정") or row.get("상태"))
         short_value = _rotation_value(row, short_key) if short_key else None
-        if "단기 이탈" in judgement or "장기주도/단기이탈" in judgement or (short_value is not None and short_value < 0):
-            semi_short_weak = True
-            break
+        if ticker in {"SOXX", "SMH"}:
+            primary_semi_seen = True
+            if short_value is not None:
+                if short_value < -0.003:
+                    primary_semi_weak = True
+                continue
+            if "단기 이탈" in judgement or "장기주도/단기이탈" in judgement:
+                primary_semi_weak = True
+            continue
+        if short_value is not None:
+            if short_value < -0.003:
+                leveraged_semi_weak = True
+            continue
+        if "단기 이탈" in judgement or "장기주도/단기이탈" in judgement:
+            leveraged_semi_weak = True
+    semi_short_weak = primary_semi_weak if primary_semi_seen else leveraged_semi_weak
 
     return {
         "has_data": True,
@@ -517,6 +533,22 @@ def _active_event_names(event_rows) -> list[str]:
         for row in _iter_table_rows(event_rows, limit=12)
         if _norm(row.get("상태")) in {"임박", "당일", "잔여"} and _norm(row.get("이벤트"))
     ]
+
+
+def _active_event_records(event_rows) -> list[dict]:
+    records = []
+    for row in _iter_table_rows(event_rows, limit=12):
+        state = _norm(row.get("상태"))
+        event = _norm(row.get("이벤트"))
+        if state in {"임박", "당일", "잔여"} and event:
+            records.append({
+                "event": event,
+                "state": state,
+                "dday": _norm(row.get("D-Day")),
+                "market": _norm(row.get("시장")),
+                "impact": _norm(row.get("영향") or row.get("해석")),
+            })
+    return records
 
 
 def _weekday_kr(dt: datetime) -> str:
@@ -550,17 +582,18 @@ def _macro_bullets(macro_data: dict | None) -> list[str]:
 
 def _event_bullets(event_rows) -> list[str]:
     bullets = []
-    for row in _iter_table_rows(event_rows, limit=8):
-        state = _norm(row.get("상태"))
-        if state not in {"임박", "당일", "잔여"}:
-            continue
-        event = _norm(row.get("이벤트"))
-        dday = _norm(row.get("D-Day"))
-        impact = _norm(row.get("영향") or row.get("해석"))
-        market = _norm(row.get("시장"))
+    for row in _active_event_records(event_rows):
+        state = row["state"]
+        event = row["event"]
+        dday = row["dday"]
+        impact = row["impact"]
+        market = row["market"]
         if event:
+            state_label = "결과 소화" if state == "잔여" and "fomc" in _lower(event) else state
+            if state_label == "결과 소화" and "fomc" in _lower(event):
+                impact = "금리 동결 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
             suffix = f", {impact}" if impact else ""
-            bullets.append(f"{event} {dday}({state}) · {market}{suffix}")
+            bullets.append(f"{event} {dday}({state_label}) · {market}{suffix}")
     return bullets[:5]
 
 
@@ -730,11 +763,19 @@ def _auto_insight_bullets(
                 text.append(f"부담: {', '.join(pressure[:3])}")
             bullets.append("매크로는 " + " / ".join(text) + " 흐름입니다.")
 
-    events = _active_event_names(event_rows)
-    if events:
+    event_records = _active_event_records(event_rows)
+    events = [row["event"] for row in event_records]
+    post_fomc = any("fomc" in _lower(row["event"]) and row["state"] == "잔여" for row in event_records)
+    pre_fomc = any("fomc" in _lower(row["event"]) and row["state"] in {"임박", "당일"} for row in event_records)
+    non_post_events = [row["event"] for row in event_records if not ("fomc" in _lower(row["event"]) and row["state"] == "잔여")]
+    if post_fomc:
+        bullets.append("FOMC는 금리 동결 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다.")
+    if non_post_events:
+        bullets.append("이벤트 리스크는 " + ", ".join(non_post_events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
+    elif events and not post_fomc:
         bullets.append("이벤트 리스크는 " + ", ".join(events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
-        if any("fomc" in _lower(event) for event in events):
-            bullets.append("FOMC 전후에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
+    if pre_fomc:
+        bullets.append("FOMC 전에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
 
     portfolio_lines = _summary_bullets(summary_rows)
     if portfolio_lines:
