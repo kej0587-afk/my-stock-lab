@@ -22169,6 +22169,18 @@ TODAY_MARKET_STORY_RSS_PLAN = [
         "category": "정책/규제",
         "query": 'EU carbon border adjustment OR tech regulation OR banking regulation',
     },
+    {
+        "category": "금융·은행",
+        "query": 'Morgan Stanley OR CFTC OR banking regulation OR crypto trust OR financial markets',
+    },
+    {
+        "category": "암호화폐",
+        "query": 'Bitcoin OR Ethereum OR crypto ETF OR Franklin Templeton bitcoin ETF OR K33',
+    },
+    {
+        "category": "건설·인프라",
+        "query": 'Hyundai Rotem OR railway contract OR infrastructure order OR Morocco rail maintenance',
+    },
 ]
 
 
@@ -22284,7 +22296,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None):
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown("#### 시황 메모 분석")
-    memo_engine_version = "2026-06-19-semi-news-rotation-v2"
+    memo_engine_version = "2026-06-19-news-event-radar-v1"
     if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
         old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
         st.session_state["_today_market_memo_engine_version"] = memo_engine_version
@@ -22327,7 +22339,10 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None):
         selected_market_story_categories = story_cols[1].multiselect(
             "시장 뉴스 범위",
             options=market_story_categories,
-            default=["반도체·AI", "지정학", "매크로/중국", "외환/금리"],
+            default=[
+                "반도체·AI", "지정학", "매크로/중국", "외환/금리",
+                "에너지/해운", "금융·은행", "암호화폐", "건설·인프라",
+            ],
             key="today_market_memo_story_categories",
         )
         market_story_per_category = int(story_cols[2].number_input(

@@ -85,6 +85,31 @@ def test_auto_market_memo_builds_newspick_style_draft():
     assert "NVIDIA AI 수요 강세" in memo
 
 
+def test_auto_market_memo_builds_news_event_radar_from_rss_titles():
+    market_news_rows = [
+        {"market_category": "반도체·AI", "title": "Intel hires former SK hynix CEO Lee Seok-hee to lead foundry", "publisher": "Reuters"},
+        {"market_category": "반도체·AI", "title": "SK하이닉스 주가 장중 7% 상승", "publisher": "연합뉴스"},
+        {"market_category": "반도체·AI", "title": "Meta signs AI compute contract with data center firm Crusoe", "publisher": "Bloomberg"},
+        {"market_category": "건설·인프라", "title": "현대로템, 모로코 철도 유지보수 사업 7,482억 원 규모 계약 수주", "publisher": "연합뉴스"},
+        {"market_category": "암호화폐", "title": "Franklin Templeton files two Bitcoin reinvestment ETFs", "publisher": "CoinDesk"},
+    ]
+
+    memo = build_auto_market_memo(
+        market_news_rows=market_news_rows,
+        now=datetime(2026, 6, 19, 16, 0),
+    )
+
+    assert "뉴스 이벤트 레이더" in memo
+    assert "▶️ 시황" in memo
+    assert "▶️ 종목" in memo
+    assert "Intel hires former SK hynix CEO" in memo
+    assert "INTC" in memo
+    assert "SK하이닉스(000660.KS)" in memo
+    assert "Meta" in memo
+    assert "현대로템(064350.KS)" in memo
+    assert "Bitcoin(BTC)" in memo
+
+
 def test_auto_market_memo_does_not_double_scale_macro_change():
     memo = build_auto_market_memo(
         macro_data={"10Y 금리": {"val": 4.49, "chg": -2.942, "icon": "🔻", "storm": False}},

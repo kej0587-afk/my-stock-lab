@@ -69,6 +69,21 @@ MARKET_MEMO_CATEGORY_RULES: tuple[MemoCategoryRule, ...] = (
         ("금리", "채권", "달러", "환율", "tlt", "ief", "uup", "yen", "jpy"),
     ),
     MemoCategoryRule(
+        "금융·은행",
+        ("은행", "금융", "모건스탠리", "cftc", "트러스트", "거래 금지", "금융주"),
+        ("bank", "financial", "xlf", "은행", "금융"),
+    ),
+    MemoCategoryRule(
+        "암호화폐",
+        ("비트코인", "이더리움", "bitcoin", "ethereum", "crypto", "코인", "가상자산"),
+        ("bitcoin", "ethereum", "crypto", "btc", "eth", "코인", "가상자산"),
+    ),
+    MemoCategoryRule(
+        "건설·인프라",
+        ("건설", "인프라", "철도", "현대로템", "유지보수", "수주", "계약"),
+        ("construction", "infrastructure", "rail", "철도", "건설", "인프라"),
+    ),
+    MemoCategoryRule(
         "조선/해운",
         ("조선", "해운", "선주", "호르무즈", "해협", "운임"),
         ("조선", "해운", "ship", "shipping", "운임"),
@@ -101,24 +116,33 @@ TICKER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
     "TSM": ("TSM", "TSMC"),
     "ASML": ("ASML",),
     "AMAT": ("AMAT", "APPLIED MATERIALS"),
+    "INTC": ("INTC", "INTEL", "인텔"),
+    "META": ("META", "메타", "FACEBOOK"),
     "LRCX": ("LRCX", "LAM RESEARCH"),
     "KLAC": ("KLAC", "KLA"),
     "COHR": ("COHR", "COHERENT", "코히런트"),
     "LITE": ("LITE", "LUMENTUM", "루멘텀"),
     "BABA": ("BABA", "ALIBABA", "알리바바"),
+    "BTC": ("BTC", "BITCOIN", "비트코인"),
+    "ETH": ("ETH", "ETHEREUM", "이더리움"),
     "TE": ("TE", "T1 ENERGY"),
     "SPCX": ("SPCX", "SPACEX", "SPACE X", "스페이스X"),
     "0167A0.KS": ("0167A0", "SOL AI 반도체", "SOL AI 반도체 TOP2"),
     "005930.KS": ("005930", "삼성전자"),
     "000660.KS": ("000660", "SK하이닉스", "하이닉스"),
+    "064350.KS": ("064350", "현대로템", "HYUNDAI ROTEM"),
 }
 
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "TSM": "TSMC",
+    "000660.KS": "SK하이닉스",
+    "064350.KS": "현대로템",
     "069500.KS": "KODEX 200",
     "379800.KS": "S&P500",
     "379810.KS": "나스닥",
+    "BTC": "Bitcoin",
+    "ETH": "Ethereum",
 }
 
 
@@ -846,6 +870,173 @@ def _market_news_grouped_bullets(news_rows) -> dict[str, list[str]]:
     return {key: value for key, value in groups.items() if value}
 
 
+NEWS_EVENT_CATEGORY_LABELS: dict[str, str] = {
+    "반도체·AI": "🖥 반도체·AI",
+    "반도체/AI": "🖥 반도체·AI",
+    "지정학": "🌍 지정학",
+    "매크로": "📉 매크로",
+    "매크로/중국": "📉 매크로",
+    "외환/금리": "🌐 외환·금리",
+    "에너지": "⛽ 에너지",
+    "에너지/해운": "⛽ 에너지",
+    "금융·은행": "🏦 금융·은행",
+    "암호화폐": "🪙 암호화폐",
+    "건설·인프라": "🏗 건설·인프라",
+    "우주/항공": "🚀 우주·항공",
+    "정책/규제": "🏛 정책·규제",
+    "규제/정책": "🏛 정책·규제",
+}
+
+
+EVENT_IMPORTANCE_KEYWORDS = (
+    "영입", "임명", "appoint", "hires", "hire", "recruits", "ceo", "cfo",
+    "계약", "수주", "공급", "contract", "deal", "partnership", "order",
+    "상승", "급등", "soar", "jumps", "rally", "rises", "surges",
+    "제재", "금지", "ban", "sanction", "probe", "investigation",
+    "cpi", "ppi", "retail sales", "생산자물가", "소매판매", "금리", "인플레",
+    "opec", "oil", "wti", "유가", "비트코인", "bitcoin", "ethereum", "etf",
+)
+
+
+def _event_category_label(category: object) -> str:
+    raw = _norm(category) or "시장"
+    return NEWS_EVENT_CATEGORY_LABELS.get(raw, raw)
+
+
+def _clean_event_title(title: object, publisher: object = "") -> str:
+    text = re.sub(r"\s+", " ", _norm(title))
+    pub = _norm(publisher)
+    if pub:
+        text = re.sub(rf"\s+-\s+{re.escape(pub)}$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+-\s+(Reuters|Yahoo Finance|연합뉴스|머니투데이|Investing.com 한국어|네이트)$", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
+def _event_importance_score(row: dict) -> int:
+    title = _lower(row.get("title") or row.get("제목"))
+    score = 0
+    score += sum(2 for kw in EVENT_IMPORTANCE_KEYWORDS if kw.lower() in title)
+    if any(kw in title for kw in SEVERE_BEARISH_NEWS_KEYWORDS):
+        score += 3
+    if _norm(row.get("ticker") or row.get("티커")):
+        score += 2
+    if _norm(row.get("sentiment") or row.get("감성")) in {"호재", "악재"}:
+        score += 1
+    return score
+
+
+def _event_source_rows(market_news_rows=None, news_rows=None) -> list[dict]:
+    rows: list[dict] = []
+    for row in _iter_table_rows(market_news_rows, limit=80):
+        title = _clean_event_title(row.get("title") or row.get("제목"), row.get("publisher") or row.get("출처"))
+        if not title:
+            continue
+        rows.append({
+            "category": _norm(row.get("market_category") or row.get("category") or "시장"),
+            "title": title,
+            "publisher": _norm(row.get("publisher") or row.get("source") or row.get("출처")),
+            "published": _norm(row.get("published")),
+            "ticker": _norm(row.get("ticker") or row.get("티커")),
+            "name": _norm(row.get("name") or row.get("종목명")),
+            "sentiment": _norm(row.get("sentiment") or row.get("감성")),
+        })
+    for row in _iter_table_rows(news_rows, limit=80):
+        title = _clean_event_title(row.get("title") or row.get("제목"), row.get("publisher") or row.get("출처"))
+        if not title:
+            continue
+        rows.append({
+            "category": _norm(row.get("market_category") or row.get("category") or "종목"),
+            "title": title,
+            "publisher": _norm(row.get("publisher") or row.get("source") or row.get("출처")),
+            "published": _norm(row.get("published")),
+            "ticker": _norm(row.get("ticker") or row.get("티커")),
+            "name": _norm(row.get("name") or row.get("종목명")),
+            "sentiment": _norm(row.get("sentiment") or row.get("감성")),
+        })
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for row in sorted(rows, key=_event_importance_score, reverse=True):
+        key = re.sub(r"\W+", "", _lower(row.get("title")))[:90]
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _event_tickers(row: dict) -> list[str]:
+    tickers: list[str] = []
+    explicit = _norm(row.get("ticker")).upper()
+    if explicit:
+        tickers.append(explicit)
+    text = " ".join(_norm(row.get(key)) for key in ("title", "name", "category"))
+    tickers.extend(_mentioned_tickers(text))
+    for token in re.findall(r"\(([A-Z0-9.]{2,12})\)", text):
+        if token not in {"AI", "CEO", "CFO", "ETF", "PPI", "CPI"}:
+            tickers.append(token)
+    return list(dict.fromkeys(tickers))[:3]
+
+
+def _news_event_radar_lines(market_news_rows=None, news_rows=None) -> list[str]:
+    rows = _event_source_rows(market_news_rows, news_rows)
+    if not rows:
+        return []
+
+    market_groups: dict[str, list[str]] = defaultdict(list)
+    stock_groups: dict[str, list[str]] = defaultdict(list)
+    stock_seen: set[tuple[str, str]] = set()
+
+    for row in rows:
+        category = _norm(row.get("category"))
+        title = _norm(row.get("title"))
+        if not title:
+            continue
+        category_label = _event_category_label(category)
+        if len(market_groups[category_label]) < 3:
+            market_groups[category_label].append(title)
+        for ticker in _event_tickers(row):
+            key = (ticker, title[:90])
+            if key in stock_seen:
+                continue
+            stock_seen.add(key)
+            group = category_label
+            if ticker in {"BTC", "ETH"}:
+                group = "🪙 암호화폐"
+            item_label = _asset_item_label("", ticker)
+            stock_groups[group].append(f"{item_label} - {title}")
+
+    lines: list[str] = []
+    if market_groups:
+        lines.extend(["🗞 뉴스 이벤트 레이더", "▶️ 시황"])
+        remaining = 12
+        for group, items in market_groups.items():
+            if remaining <= 0:
+                break
+            lines.append("")
+            lines.append(group)
+            for item in items[: min(3, remaining)]:
+                lines.append(f"• {item}")
+                remaining -= 1
+
+    if stock_groups:
+        if not lines:
+            lines.append("🗞 뉴스 이벤트 레이더")
+        lines.extend(["", "▶️ 종목"])
+        remaining = 10
+        for group, items in stock_groups.items():
+            if remaining <= 0:
+                break
+            lines.append("")
+            lines.append(group)
+            for item in items[: min(3, remaining)]:
+                lines.append(f"• {item}")
+                remaining -= 1
+
+    if lines:
+        lines.append("")
+    return lines
+
+
 def _auto_insight_bullets(
     flow_snapshot,
     macro_data,
@@ -1110,6 +1301,10 @@ def build_auto_market_memo(
         for item in event_lines:
             lines.append(f"• {item}")
         lines.append("")
+
+    event_radar_lines = _news_event_radar_lines(market_news_rows, news_rows)
+    if event_radar_lines:
+        lines.extend(event_radar_lines)
 
     market_news_groups = _market_news_grouped_bullets(market_news_rows)
     if market_news_groups:
