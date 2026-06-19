@@ -22284,6 +22284,12 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None):
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown("#### 시황 메모 분석")
+    memo_engine_version = "2026-06-19-semi-news-rotation-v2"
+    if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
+        old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
+        st.session_state["_today_market_memo_engine_version"] = memo_engine_version
+        if "Stock Lab 자동 뉴스픽" in old_memo_text:
+            st.session_state["today_market_memo_text"] = ""
 
     def _clear_market_memo():
         st.session_state["today_market_memo_text"] = ""

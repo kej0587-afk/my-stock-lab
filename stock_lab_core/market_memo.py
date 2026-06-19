@@ -474,9 +474,7 @@ def _rotation_label(row: dict) -> str:
         or row.get("종목명")
     )
     ticker = _row_ticker(row)
-    if label and ticker:
-        return f"{label}({ticker})"
-    return label or ticker or "-"
+    return _asset_item_label(label, ticker)
 
 
 def _mean_rotation(rows: list[dict], tickers: set[str], key: str) -> tuple[float | None, int]:
@@ -1095,10 +1093,10 @@ def build_auto_market_memo(
                 f"성장주 {_fmt_auto_pct(rotation_ctx.get('growth_avg'))}, "
                 f"다우·방어 {_fmt_auto_pct(rotation_ctx.get('rotation_avg'))}"
             )
-        if rotation_ctx.get("inflow"):
-            lines.append(f"• 단기 유입: {rotation_ctx['inflow']}")
-        if rotation_ctx.get("outflow"):
-            lines.append(f"• 단기 이탈: {rotation_ctx['outflow']}")
+        inflow_text = rotation_ctx.get("inflow") or "없음 (관망 구간)"
+        outflow_text = rotation_ctx.get("outflow") or "없음"
+        lines.append(f"• 단기 유입: {inflow_text}")
+        lines.append(f"• 단기 이탈: {outflow_text}")
         if rotation_ctx.get("leaders_3m"):
             lines.append(f"• 3M 중기 주도: {rotation_ctx['leaders_3m']}")
         lines.append("")
