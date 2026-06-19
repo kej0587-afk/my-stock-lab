@@ -36,6 +36,32 @@ def test_market_memo_macro_negative_bias_is_detected():
     assert result["verification_flags"]
 
 
+def test_market_memo_contextual_scoring_does_not_overrate_macro_energy_geopolitics():
+    text = """
+    📉 매크로
+    • 영국 5월 핵심 소매판매 월간 1.2% 상승, 예측 0.3% 초과.
+    • 독일 5월 생산자물가지수(PPI) 월간 0.3% 상승, 예측 0.7% 하회.
+    • 일본 5월 CPI 1.5% 기록, 근원 CPI 1.4%로 예상과 일치, BOJ 금리인상 기조 유지.
+
+    ⛽️ 에너지
+    • 국제유가 주간 하락세 지속, WTI 배럴당 75~77달러 수준.
+    • 러시아 국영 석유기업 로스네프트, OPEC+ 조건 하 생산량 확대 발표.
+
+    🌍 지정학
+    • 미국-이란 평화 합의 후 호르무즈 해협 선박 운항 재개, 원유 공급 기대감 상승.
+    • EU, 러시아에 대한 부문별 제재 12개월 연장 발표.
+    """
+
+    result = analyze_market_memo(text, [])
+    rows = {row["카테고리"]: row for row in result["category_rows"]}
+
+    assert float(rows["매크로"]["점수"]) <= 1
+    assert rows["매크로"]["톤"] != "호재 우위"
+    assert float(rows["에너지"]["점수"]) <= 0
+    assert rows["에너지"]["톤"] != "호재 우위"
+    assert float(rows["지정학"]["점수"]) <= 0
+
+
 def test_auto_market_memo_builds_newspick_style_draft():
     flow_snapshot = {
         "flow_df": [

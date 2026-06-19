@@ -269,18 +269,60 @@ def categorize_market_memo_line(line: str, current_category: str = "") -> str:
     return current_category or "기타"
 
 
-def score_market_memo_line(line: str) -> tuple[int, list[str]]:
+CONTEXT_SENSITIVE_POSITIVES = {"상승", "초과", "유지", "확대"}
+
+
+def _contextual_score_adjustment(line: str, category: str = "") -> int:
+    low = _lower(line)
+    category = _norm(category)
+    adj = 0
+
+    if category in {"매크로", "외환/금리"}:
+        if any(term in low for term in ("ppi", "cpi", "생산자물가", "소비자물가", "인플레이션", "물가")):
+            if any(term in low for term in ("상승", "상회", "초과", "목표치 상회")):
+                adj -= 1
+            if any(term in low for term in ("하회", "둔화", "낮아", "완화")):
+                adj += 1
+        if any(term in low for term in ("boj", "연준", "fomc", "fed", "금리", "달러", "환율")):
+            if any(term in low for term in ("금리인상", "금리 인상", "인상 기조", "인상 가능", "매파", "긴축", "달러 강세", "환율 상승")):
+                adj -= 2
+            if any(term in low for term in ("인하 기대", "동결", "완화", "rate-hike expectations fade")):
+                adj += 1
+        if "소매판매" in low and any(term in low for term in ("상승", "초과", "상회")):
+            adj += 1
+
+    if category == "에너지":
+        if any(term in low for term in ("유가", "wti", "원유", "oil")) and any(term in low for term in ("하락", "하락세", "내림")):
+            adj -= 1
+        if any(term in low for term in ("생산량 확대", "생산 확대", "공급 확대", "opec+", "로스네프트")):
+            adj -= 1
+        if any(term in low for term in ("공급 차질", "감산", "제재", "호르무즈 폐쇄")):
+            adj += 1
+
+    if category == "지정학":
+        if any(term in low for term in ("평화", "휴전", "합의", "ceasefire", "risks ease")):
+            adj += 1
+        if any(term in low for term in ("제재", "전쟁", "공격", "긴장", "봉쇄", "폐쇄", "위험", "연장")):
+            adj -= 1
+
+    return adj
+
+
+def score_market_memo_line(line: str, category: str = "") -> tuple[int, list[str]]:
     low = _lower(line)
     pos = [kw for kw in POSITIVE_KEYWORDS if kw in low]
     neg = [kw for kw in NEGATIVE_KEYWORDS if kw in low]
     caution = [kw for kw in CAUTION_KEYWORDS if kw in low]
+    if category in {"매크로", "외환/금리", "에너지", "지정학"}:
+        pos = [kw for kw in pos if kw not in CONTEXT_SENSITIVE_POSITIVES]
     score = len(pos) - len(neg)
+    score += _contextual_score_adjustment(line, category)
     if caution and score > 1:
         score -= 1
     tags = []
-    if pos:
+    if pos or score > 0:
         tags.append("호재")
-    if neg:
+    if neg or score < 0:
         tags.append("악재")
     if caution:
         tags.append("과열/확인")
@@ -1417,7 +1459,7 @@ def analyze_market_memo(text: str, universe: Iterable[dict] | None = None) -> di
         category = categorize_market_memo_line(line, current_category)
         if category != "기타":
             current_category = category
-        score, tags = score_market_memo_line(line)
+        score, tags = score_market_memo_line(line, category)
         tickers = _mentioned_tickers(line, extra_aliases)
 
         line_item = {
