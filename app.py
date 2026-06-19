@@ -12034,11 +12034,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_leveraged_dca_wait_high:
             dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 DCA 대기: 고점권/눌림 필요", "#d97706", "LEVERAGED_DCA_WAIT_PULLBACK",
+                "⚡레버리지 과열패스: DCA 대기", "#d97706", "LEVERAGED_DCA_OVERHEAT_PASS",
                 reasons=(
                     f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
                     f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 ETF는 목표비중 미달이어도 현재가 추격보다 정해진 DCA 하락·눌림 가격을 우선합니다.",
+                    "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
                 ),
             )
         elif is_leveraged_dca_conditional:
@@ -12193,11 +12193,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_leveraged_dca_wait_high:
             dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 DCA 대기: 고점권/눌림 필요", "#d97706", "LEVERAGED_DCA_WAIT_PULLBACK",
+                "⚡레버리지 과열패스: DCA 대기", "#d97706", "LEVERAGED_DCA_OVERHEAT_PASS",
                 reasons=(
                     f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
                     f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 ETF는 목표비중 미달이어도 현재가 추격보다 정해진 DCA 하락·눌림 가격을 우선합니다.",
+                    "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
                 ),
             )
         elif is_leveraged_dca_conditional:
@@ -13632,7 +13632,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
-        "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK",
+        "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
@@ -13650,8 +13650,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     elif is_poor_rr:
         status = "현재가 보류 / 눌림 대기"
         status_color = "#d97706"
-        if decision_code == "LEVERAGED_DCA_WAIT_PULLBACK":
-            status_note = "레버리지 DCA 대기입니다. 목표비중이 부족해도 현재가 추격이 아니라 아래 눌림 가격과 회차별 금액 조건이 맞을 때만 사용하세요."
+        if decision_code in {"LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS"}:
+            status_note = "레버리지 과열패스/DCA 대기입니다. 목표비중이 부족해도 현재가 추격이 아니라 아래 눌림 가격과 회차별 금액 조건이 맞을 때만 사용하세요."
         elif decision_code == "LEVERAGED_DCA_CONDITIONAL":
             status_note = "레버리지 DCA 조건부 구간입니다. 아래 금액/수량은 전체 부족분이 아니라 정해둔 회차별 소액 계획으로만 해석하세요."
         else:
@@ -14950,7 +14950,57 @@ def is_dashboard_actionable_signal(c: dict) -> bool:
     return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
 
 
+def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
+    if not isinstance(c, dict):
+        return c
+    if not bool(c.get("is_leveraged_or_inverse")):
+        return c
+    code = str(c.get("decision_code", "") or "")
+    if code not in {"ETF_DCA_OK", "ETF_LARGE_GAP_DCA_OK"}:
+        return c
+
+    out = dict(c)
+    dd = clean_float(out.get("dd"), np.nan)
+    pct_b = clean_float(out.get("pct_b"), np.nan)
+    day_ret = clean_float(out.get("day_ret"), np.nan)
+    target_w = clean_float(out.get("target_w"), 0.0)
+    current_w = clean_float(out.get("current_w"), 0.0)
+    weight_gap = clean_float(out.get("weight_gap"), target_w - current_w)
+
+    high_or_chasing = (
+        (finite_num(dd) and dd > -0.10) or
+        (finite_num(pct_b) and pct_b >= 0.85) or
+        (finite_num(day_ret) and day_ret >= 0.08)
+    )
+    if high_or_chasing:
+        out.update({
+            "dec": "⚡레버리지 과열패스: DCA 대기",
+            "col": "#d97706",
+            "decision_code": "LEVERAGED_DCA_OVERHEAT_PASS",
+            "decision_group": "caution",
+            "decision_reasons": (
+                f"목표비중 {target_w:.1f}% 대비 {max(weight_gap, 0.0):.1f}%p 부족",
+                f"고점대비 {dd*100:.1f}% / %B {pct_b:.2f} / 전일등락 {day_ret*100:.1f}%",
+                "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
+            ),
+        })
+    else:
+        out.update({
+            "dec": "⚡레버리지 DCA 조건부: 단계별 소액",
+            "col": "#8b5cf6",
+            "decision_code": "LEVERAGED_DCA_CONDITIONAL",
+            "decision_group": "caution",
+            "decision_reasons": (
+                f"목표비중 {target_w:.1f}% 대비 {max(weight_gap, 0.0):.1f}%p 부족",
+                f"고점대비 {dd*100:.1f}% / %B {pct_b:.2f} / 전일등락 {day_ret*100:.1f}%",
+                "레버리지 DCA 조건부 구간입니다. 자산 현황의 레버리지 배율과 회차별 금액 안에서만 소액 접근합니다.",
+            ),
+        })
+    return out
+
+
 def format_dashboard_timing_label(c: dict) -> str:
+    c = apply_leveraged_dca_dashboard_override(c)
     label = str((c or {}).get("dec", "") or "")
     if not label:
         return label
@@ -14967,6 +15017,7 @@ def format_dashboard_timing_label(c: dict) -> str:
 
 
 def format_dashboard_candidate_grade(c: dict) -> str:
+    c = apply_leveraged_dca_dashboard_override(c)
     grade = str((c or {}).get("grade", "") or "")
     label = str((c or {}).get("dec", "") or "")
     code = str((c or {}).get("decision_code", "") or "")
@@ -14997,6 +15048,7 @@ def format_dashboard_candidate_grade(c: dict) -> str:
 
 
 def format_dashboard_reason(c: dict) -> str:
+    c = apply_leveraged_dca_dashboard_override(c)
     reasons = tuple((c or {}).get("decision_reasons") or ())
     base = str(reasons[0]) if reasons else ""
     if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
@@ -15071,6 +15123,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
                 c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
             except Exception:
                 pass
+        c = apply_leveraged_dca_dashboard_override(c)
     except Exception as exc:
         return build_summary_status_item(
             item,
@@ -15085,6 +15138,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     dashboard_reason = format_dashboard_reason(c)
     dashboard_grade = format_dashboard_candidate_grade(c)
     if "후보제외" in dashboard_grade or "매수금지" in dashboard_grade:
+        dashboard_group = "caution"
+    elif is_dashboard_block_or_wait_label(dashboard_timing):
         dashboard_group = "caution"
     elif is_dashboard_actionable_signal(c) or "R/R<1" in dashboard_grade or "🟡정찰" in dashboard_grade:
         dashboard_group = "buyish"
