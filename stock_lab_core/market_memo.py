@@ -114,14 +114,33 @@ TICKER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
 }
 
 
+DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "TSM": "TSMC",
+    "069500.KS": "KODEX 200",
+    "379800.KS": "S&P500",
+    "379810.KS": "나스닥",
+}
+
+
 POSITIVE_KEYWORDS = (
     "강세", "상승", "초과", "확보", "선점", "완료", "유지", "해소", "호재",
     "수요", "돌파", "환영", "개선", "확대", "장기 계약", "공급 계약",
 )
+
+SEVERE_BEARISH_NEWS_KEYWORDS = (
+    "party may be over", "party is over", "party over",
+    "craters", "cratered", "crater",
+    "crumbles", "crumble", "bloodbath",
+    "selloff", "sell-off", "plunges", "plunge", "tumbles", "tumble",
+    "bubble burst", "bubble pops", "bubble",
+    "거품 터지", "거품", "폭락", "붕괴", "투매",
+)
+
 NEGATIVE_KEYWORDS = (
     "하락", "감소", "미달", "약세", "사고", "조사", "비용 상승", "위험",
     "보류", "제한", "압력", "불확실", "악화", "버블", "인플레이션 고점",
     "이탈", "매도세", "급락", "추격 금지", "추격금지",
+    *SEVERE_BEARISH_NEWS_KEYWORDS,
 )
 CAUTION_KEYWORDS = (
     "밈", "콜옵션", "yolo", "야간거래", "급증", "논의", "예정", "계획",
@@ -141,6 +160,11 @@ VALUE_DEFENSIVE_ROTATION_TICKERS = {"DIA", "XLI", "XLF", "XLP", "XLU"}
 INDEX_ROTATION_TICKERS = GROWTH_ROTATION_TICKERS | VALUE_DEFENSIVE_ROTATION_TICKERS | {
     "VOO", "069500.KS", "229200.KS",
 }
+SEMI_NEWS_CONTEXT_TERMS = (
+    "반도체", "semiconductor", "ai", "hbm", "memory", "dram",
+    "soxl", "soxx", "smh", "nvda", "nvidia", "micron", "mu",
+    "tsm", "tsmc", "amd", "marvell", "mrvl", "sandisk", "sndk",
+)
 
 
 def _norm(text: object) -> str:
@@ -149,6 +173,29 @@ def _norm(text: object) -> str:
 
 def _lower(text: object) -> str:
     return _norm(text).lower()
+
+
+def _display_asset_name(name: object, ticker: object = "") -> str:
+    raw = _norm(name)
+    ticker_norm = _norm(ticker).upper()
+    if ticker_norm in DISPLAY_NAME_OVERRIDES:
+        return DISPLAY_NAME_OVERRIDES[ticker_norm]
+    low = raw.lower()
+    if "taiwan semiconductor manufactur" in low:
+        return "TSMC"
+    if low.startswith("kodex "):
+        return "KODEX " + raw[6:]
+    if low.startswith("tiger "):
+        return "TIGER " + raw[6:]
+    return raw
+
+
+def _asset_item_label(name: object, ticker: object = "") -> str:
+    ticker_text = _norm(ticker)
+    display_name = _display_asset_name(name, ticker_text)
+    if display_name and ticker_text:
+        return f"{display_name}({ticker_text})"
+    return display_name or ticker_text or "-"
 
 
 def _strip_memo_line(line: str) -> str:
@@ -289,6 +336,26 @@ def _iter_table_rows(table, limit: int = 5) -> list[dict]:
     return rows
 
 
+def _bearish_news_pressure(market_news_rows=None, news_rows=None) -> dict:
+    hits: list[str] = []
+    for rows in (market_news_rows, news_rows):
+        for row in _iter_table_rows(rows, limit=80):
+            title = _norm(row.get("title") or row.get("제목") or row.get("headline"))
+            sentiment = _norm(row.get("sentiment") or row.get("감성"))
+            category = _norm(row.get("market_category") or row.get("category") or row.get("분류"))
+            ticker = _norm(row.get("ticker") or row.get("티커"))
+            name = _norm(row.get("name") or row.get("종목명"))
+            text = _lower(" ".join(x for x in (title, sentiment, category, ticker, name) if x))
+            if not text:
+                continue
+            if (
+                any(term in text for term in SEVERE_BEARISH_NEWS_KEYWORDS)
+                and any(term in text for term in SEMI_NEWS_CONTEXT_TERMS)
+            ):
+                hits.append(title or category or "악재성 뉴스")
+    return {"count": len(hits), "sample": hits[0] if hits else ""}
+
+
 def _fmt_auto_pct(value) -> str:
     try:
         number = float(value)
@@ -331,9 +398,7 @@ def _safe_float(value, default: float | None = None) -> float | None:
 def _flow_row_label(row: dict) -> str:
     name = _norm(row.get("섹터") or row.get("테마") or row.get("하위테마") or row.get("ETF 이름") or row.get("종목명"))
     ticker = _norm(row.get("Ticker") or row.get("티커"))
-    if name and ticker:
-        return f"{name}({ticker})"
-    return name or ticker or "-"
+    return _asset_item_label(name, ticker)
 
 
 def _flow_value(row: dict, key: str, default: float = 0.0) -> float:
@@ -622,7 +687,7 @@ def _summary_bullets(summary_rows) -> list[str]:
         ticker = _norm(row.get("티커"))
         label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
         code = _norm(row.get("판정코드"))
-        item = f"{name or ticker}({ticker})" if ticker else (name or "-")
+        item = _asset_item_label(name, ticker)
         hard_terms = ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO", "LEVERAGED_DAILY_DROP")
         hard_label_terms = ("하드차단", "구조훼손", "추매금지", "매수금지", "목표비중 0", "비중 초과")
         wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지")
@@ -680,7 +745,7 @@ def _news_bullets(news_rows) -> list[str]:
         if not title:
             continue
         ticker = _norm(row.get("ticker") or row.get("티커"))
-        name = _norm(row.get("name") or row.get("종목명"))
+        name = _display_asset_name(row.get("name") or row.get("종목명"), ticker)
         sentiment = _norm(row.get("sentiment") or row.get("감성"))
         publisher = _norm(row.get("publisher") or row.get("출처"))
         subject = name or ticker
@@ -809,6 +874,7 @@ def _auto_insight_bullets(
     fed_hawkish = (fomc_result_known or post_fomc) and _fed_hawkish_signal(market_news_rows, news_rows)
     flow_df = flow_snapshot.get("flow_df")
     flow_rows = _iter_table_rows(flow_df, limit=250)
+    bearish_ctx = _bearish_news_pressure(market_news_rows, news_rows)
     semi_rows = [
         row for row in flow_rows
         if any(
@@ -823,7 +889,15 @@ def _auto_insight_bullets(
             if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
         )
         if overheated >= 2:
-            if rotation_ctx.get("semi_short_weak"):
+            if bearish_ctx.get("count"):
+                sample = _norm(bearish_ctx.get("sample"))
+                sample_text = f"({sample[:36]}) " if sample else ""
+                bullets.append(
+                    f"반도체/AI는 {_flow_row_label(top)} 중심의 중기 돈흐름이 매우 강하지만, "
+                    f"{sample_text}같은 과열·급락 경고 뉴스가 같이 잡힙니다. "
+                    "지금은 절대 추격 금지, 종가 확인과 눌림 확인이 우선입니다."
+                )
+            elif rotation_ctx.get("semi_short_weak"):
                 short_key = rotation_ctx.get("short_key") or "단기"
                 bullets.append(
                     f"반도체/AI는 {_flow_row_label(top)} 중심의 중기 돈흐름은 강하지만 {short_key} 기준 단기 이탈이 있어, 호재 우위보다 눌림/종가 확인이 우선입니다."

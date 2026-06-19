@@ -309,7 +309,34 @@ POSITIVE_NEWS_SIGNALS = [
     ("급증", "수요나 실적 모멘텀 강화 단서"),
 ]
 
+SEVERE_NEGATIVE_NEWS_SIGNALS = [
+    ("party may be over", "랠리 종료 가능성 경고는 과열 자산에 악재"),
+    ("party is over", "랠리 종료 가능성 경고는 과열 자산에 악재"),
+    ("party over", "랠리 종료 가능성 경고는 과열 자산에 악재"),
+    ("craters", "폭락/급락 표현은 단기 수급 악재"),
+    ("cratered", "폭락/급락 표현은 단기 수급 악재"),
+    ("crater", "폭락/급락 표현은 단기 수급 악재"),
+    ("crumbles", "반등 실패/붕괴 표현은 단기 수급 악재"),
+    ("crumble", "반등 실패/붕괴 표현은 단기 수급 악재"),
+    ("bloodbath", "투매/급락장 표현은 단기 수급 악재"),
+    ("selloff", "매도세 확대는 단기 수급 악재"),
+    ("sell-off", "매도세 확대는 단기 수급 악재"),
+    ("plunges", "급락 표현은 단기 투자심리 악화 단서"),
+    ("plunge", "급락 표현은 단기 투자심리 악화 단서"),
+    ("tumbles", "급락/하락 가속 표현은 단기 투자심리 악화 단서"),
+    ("tumble", "급락/하락 가속 표현은 단기 투자심리 악화 단서"),
+    ("bubble burst", "버블 붕괴 경고는 과열 자산에 악재"),
+    ("bubble pops", "버블 붕괴 경고는 과열 자산에 악재"),
+    ("bubble", "버블/거품 경고는 과열 부담"),
+    ("거품 터지", "거품 붕괴 경고는 과열 자산에 악재"),
+    ("거품", "버블/거품 경고는 과열 부담"),
+    ("폭락", "폭락 표현은 단기 투자심리 악화 단서"),
+    ("붕괴", "추세 붕괴 표현은 단기 수급 악재"),
+    ("투매", "투매 표현은 단기 수급 악재"),
+]
+
 NEGATIVE_NEWS_SIGNALS = [
+    *SEVERE_NEGATIVE_NEWS_SIGNALS,
     ("긴축 공포", "긴축 공포는 위험자산 투자심리에 악재"),
     ("빨간불", "시장 경고/빨간불 표현은 투자심리 악화 단서"),
     ("랠리 꺾", "랠리 둔화/꺾임은 수급 약화 단서"),
@@ -1050,10 +1077,13 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     else:
         relation = "무관"
 
+    severe_neg_key, severe_neg_reason = first_signal_reason(text, SEVERE_NEGATIVE_NEWS_SIGNALS)
     pos_key, pos_reason = first_signal_reason(text, POSITIVE_NEWS_SIGNALS)
     neg_key, neg_reason = first_signal_reason(text, NEGATIVE_NEWS_SIGNALS)
 
-    if pos_key and not neg_key:
+    if severe_neg_key:
+        sentiment, reason = "악재", severe_neg_reason
+    elif pos_key and not neg_key:
         sentiment, reason = "호재", pos_reason
     elif neg_key and not pos_key:
         sentiment, reason = "악재", neg_reason
