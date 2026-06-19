@@ -11774,6 +11774,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
     leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
     is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
+    is_leveraged_dca_candidate = (
+        is_etf and is_leveraged_or_inverse and has_pos and targ_w > 0 and weight_gap > 0
+    )
+    is_leveraged_dca_wait_high = (
+        is_leveraged_dca_candidate and (
+            current_dd > -0.10 or
+            pct_b_now >= 0.85 or
+            price_vs_avg > -0.03 or
+            day_ret >= 0.08
+        )
+    )
+    is_leveraged_dca_conditional = (
+        is_leveraged_dca_candidate and
+        not is_leveraged_dca_wait_high and
+        _fmr < 4.5 and
+        trend != "🌊역배열(하락)" and
+        (current_dd <= -0.10 or price_vs_avg <= -0.03 or pct_b_now < 0.75)
+    )
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
         current_dd, rsi_now, mfi_now, pct_b_now, trend,
@@ -11912,6 +11930,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
  
     is_etf_accumulation_ok = (
         is_etf and
+        not is_leveraged_or_inverse and
         has_pos and
         targ_w > 0 and
         weight_gap >= 3 and
@@ -12011,6 +12030,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 reasons=(
                     f"위험 기준 등락 {leveraged_drop_ret*100:.1f}% 급락",
                     "레버리지/인버스 상품은 하락폭이 커질 때 복리 손실이 빨라 종가와 기초지수 회복 확인 전 매수 보류",
+                ),
+            )
+        elif is_leveraged_dca_wait_high:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 DCA 대기: 고점권/눌림 필요", "#d97706", "LEVERAGED_DCA_WAIT_PULLBACK",
+                reasons=(
+                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
+                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
+                    "레버리지 ETF는 목표비중 미달이어도 현재가 추격보다 정해진 DCA 하락·눌림 가격을 우선합니다.",
+                ),
+            )
+        elif is_leveraged_dca_conditional:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 DCA 조건부: 단계별 소액", "#8b5cf6", "LEVERAGED_DCA_CONDITIONAL",
+                reasons=(
+                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
+                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
+                    "레버리지 DCA 조건 일부 충족 — 정해둔 회차·금액 안에서만 소액 접근",
                 ),
             )
         elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
@@ -12152,6 +12189,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 reasons=(
                     f"위험 기준 등락 {leveraged_drop_ret*100:.1f}% 급락",
                     "레버리지/인버스 상품은 큰 하루 급락 뒤 반등 실패 시 손실 속도가 빨라 추가매수보다 종가·기초지수 회복 확인이 우선",
+                ),
+            )
+        elif is_leveraged_dca_wait_high:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 DCA 대기: 고점권/눌림 필요", "#d97706", "LEVERAGED_DCA_WAIT_PULLBACK",
+                reasons=(
+                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
+                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
+                    "레버리지 ETF는 목표비중 미달이어도 현재가 추격보다 정해진 DCA 하락·눌림 가격을 우선합니다.",
+                ),
+            )
+        elif is_leveraged_dca_conditional:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 DCA 조건부: 단계별 소액", "#8b5cf6", "LEVERAGED_DCA_CONDITIONAL",
+                reasons=(
+                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
+                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
+                    "레버리지 DCA 조건 일부 충족 — 정해둔 회차·금액 안에서만 소액 접근",
                 ),
             )
         elif is_core_dca_allowed and current_dd <= -0.3:
@@ -13577,7 +13632,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
-        "MTF_OVERHEAT_SCOUT_ONLY",
+        "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
@@ -13595,7 +13650,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     elif is_poor_rr:
         status = "현재가 보류 / 눌림 대기"
         status_color = "#d97706"
-        status_note = "현재가 기준 R/R이 1 미만입니다. 아래 금액/수량은 목표비중 기준의 대기 계획이며, 조건 확인 후만 사용하세요."
+        if decision_code == "LEVERAGED_DCA_WAIT_PULLBACK":
+            status_note = "레버리지 DCA 대기입니다. 목표비중이 부족해도 현재가 추격이 아니라 아래 눌림 가격과 회차별 금액 조건이 맞을 때만 사용하세요."
+        elif decision_code == "LEVERAGED_DCA_CONDITIONAL":
+            status_note = "레버리지 DCA 조건부 구간입니다. 아래 금액/수량은 전체 부족분이 아니라 정해둔 회차별 소액 계획으로만 해석하세요."
+        else:
+            status_note = "현재가 기준 R/R이 1 미만입니다. 아래 금액/수량은 목표비중 기준의 대기 계획이며, 조건 확인 후만 사용하세요."
     elif is_new_core_etf:
         initial_cap_w = target_w * 0.33
         verification_code = str(new_core_verification.get("verdict_code", "wait"))
@@ -15951,7 +16011,7 @@ MANUAL_SECTIONS = {
         {"타점": "불뿜는 대장주", "조건": "재무 4점 + ADJ 4 이상 + %B 0.95~1.02 + RS 강함", "의미": "강한 종목, 단기 눌림 진입 후보"},
         {"타점": "볼린상단 이탈", "조건": "개별주 %B 0.95 이상", "의미": "단기 과열로 신규/추매 차단"},
         {"타점": "예외승인: MA5/FVG", "조건": "재무 4점 + 정배열 + RS 강함 + MACD 양호 + MA5/FVG 눌림", "의미": "우량 대장주 예외 진입"},
-        {"타점": "ETF 목표비중 미달", "조건": "ETF 보유 + 목표비중 부족 + 과열 아님", "의미": "적립식 매수 가능"},
+        {"타점": "ETF 목표비중 미달", "조건": "일반 ETF 보유 + 목표비중 부족 + 과열 아님", "의미": "적립식 매수 가능. 레버리지/인버스는 별도 DCA 규칙 우선"},
         {"타점": "코어 ETF 적립속도", "조건": "bucket core ETF + 목표비중 부족", "의미": "과열 25%, 중립 50%, 눌림 100%, 급락 150~200%로 투입 속도 조절"},
         {"타점": "신규ETF 단기관측", "조건": "ETF 가격 데이터 60거래일 미만", "의미": "장기추세는 보류하되 RSI/MFI/볼린저/평단/비중으로 과열·눌림·소액추매 판단"},
         {"타점": "상승확인: 2차 정찰 추매", "조건": "평단 대비 0~5% 상승 + 비중부족 + 추세 양호", "의미": "상승 확인 후 제한적 추매"},
@@ -16039,8 +16099,8 @@ MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심�
 **예외승인: 정찰대 진입/추매**  
 재무 4점 우량주가 정배열, RS 강함, MACD 양호 조건을 갖추고 MA5 또는 상승 FVG 근처로 눌렸을 때 제한적으로 허용하는 신호입니다.
 
-**ETF 목표비중 미달**  
-ETF는 개별 기업 리스크가 낮아 적립식 접근을 더 허용합니다. 목표비중이 부족하고 과열이 심하지 않으면 소액 적립 가능으로 봅니다.
+**ETF 목표비중 미달**
+일반 ETF는 개별 기업 리스크가 낮아 적립식 접근을 더 허용합니다. 목표비중이 부족하고 과열이 심하지 않으면 소액 적립 가능으로 봅니다. 단, 레버리지/인버스 ETF는 목표비중 미달이어도 별도 DCA 규칙과 눌림 가격을 우선합니다.
 
 **상승확인: 2차 정찰 추매 가능**  
 이미 보유 중인 개별주가 평단 대비 0~5% 위에 있고, 목표비중이 부족하며 추세가 양호할 때 뜹니다. 큰 매수보다는 제한적 추매 성격입니다.
