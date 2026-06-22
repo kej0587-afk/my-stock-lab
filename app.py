@@ -15066,6 +15066,7 @@ def format_dashboard_candidate_grade(c: dict) -> str:
     target_w = clean_float((c or {}).get("target_w"), 0.0)
     hard_codes = {
         "TARGET_ZERO_NO_ADD",
+        "HARD_BLOCK_FINANCIAL_F",
         "LEVERAGED_DAILY_DROP_NO_ADD",
         "HARD_BLOCK_OVERWEIGHT",
         "HARD_BLOCK_TARGET_FILLED",
@@ -15076,6 +15077,24 @@ def format_dashboard_candidate_grade(c: dict) -> str:
     }
     if code == "TARGET_ZERO_NO_ADD" or (curr_w > 0 and target_w <= 0):
         return "🛑후보제외(목표0%)"
+    if code == "HARD_BLOCK_FINANCIAL_F":
+        return "🛑재무위험(매수금지)"
+    if code == "HARD_BLOCK_OVERWEIGHT":
+        return "🛡️비중방어(추매금지)"
+    if code == "HARD_BLOCK_TARGET_FILLED":
+        return "⏸️비중충족(관망)"
+    if code == "HARD_BLOCK_MACRO_STORM":
+        return "🛡️시장방어(매수금지)"
+    if code == "LEVERAGED_DAILY_DROP_NO_ADD":
+        return "🛑레버리지급락(추매금지)"
+    if code == "STRUCTURE_DAMAGE_HOLDING_CHECK":
+        return "🛑구조훼손(추매금지)"
+    if code == "STRUCTURE_DAMAGE_NO_ENTRY":
+        return "🛑구조훼손(매수금지)"
+    if code == "MTF_DAMAGE_NO_ADD":
+        return "🛑상위훼손(추매금지)"
+    if code in {"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"} or "볼린상단 이탈" in label:
+        return "🚫상단과열(추격금지)"
     if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "레버리지 급락")):
         return "🛑매수금지"
     badges = []
