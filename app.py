@@ -7068,6 +7068,40 @@ FLOW_FALLBACK_REPRESENTATIVES = {
     ("소비재", "필수소비재"): "월마트 (WMT)",
 }
 
+FLOW_FALLBACK_REPRESENTATIVE_GROUPS = {
+    "AI·반도체": "SOXX·SMH / SK하이닉스·삼성전자",
+    "반도체": "SOXX·SMH / SK하이닉스·삼성전자",
+    "미국 AI·빅테크": "엔비디아·마이크로소프트 (NVDA/MSFT)",
+    "국내 AI 반도체·소부장": "SK하이닉스·삼성전자·삼성전기",
+    "PCB·기판 글로벌": "이수페타시스·삼성전기 / AMAT",
+    "포토닉스·광통신": "Lumentum·Coherent (LITE/COHR)",
+    "전자부품·MLCC": "삼성전기·Murata",
+    "리츠": "VNQ / TIGER 리츠부동산인프라(329200.KS)",
+    "방산·조선": "PLUS K방산(449450.KS) / 한화에어로·현대로템",
+    "방산·우주": "SHLD·ITA / 한화에어로·현대로템",
+    "우주항공·방산": "SHLD·ITA / 한화에어로·현대로템",
+    "전력·인프라": "GRID·PAVE·ICLN / HD현대일렉트릭",
+    "원전·우라늄": "URA·URNM / RISE 글로벌원자력(434730.KS)",
+    "원전": "URA·URNM / RISE 글로벌원자력(434730.KS)",
+    "우라늄": "URA·URNM / RISE 글로벌원자력(434730.KS)",
+    "에너지·건설": "XLE·PAVE / HD현대건설기계·두산에너빌리티",
+    "에너지": "XLE·USO / Exxon Mobil(XOM)",
+    "2차전지·EV": "LIT / TIGER 2차전지테마(305540.KS)",
+    "2차전지": "LIT / TIGER 2차전지테마(305540.KS)",
+    "K뷰티·콘텐츠": "TIGER 화장품(228790.KS) / 에이피알·아모레퍼시픽",
+    "K뷰티": "TIGER 화장품(228790.KS) / 에이피알·아모레퍼시픽",
+    "콘텐츠": "TIGER 미디어컨텐츠(228810.KS)",
+    "바이오": "LLY·AMGN / TIGER 헬스케어(143860.KS)",
+    "바이오·헬스": "LLY·AMGN / TIGER 헬스케어(143860.KS)",
+    "소프트웨어·사이버": "MSFT·CRWD·PANW",
+    "소프트웨어": "MSFT·ADBE",
+    "사이버보안": "CRWD·PANW / CIBR",
+    "금융·핀테크": "JPM·V / KB금융",
+    "금융": "KB금융(105560.KS) / JPM",
+    "산업재·원자재": "CAT·FCX / XLI",
+    "소비재": "아마존·월마트 (AMZN/WMT)",
+}
+
 FLOW_FALLBACK_SUBTHEMES = {
     "소비재": "경기/필수 소비재",
     "금융": "은행",
@@ -7090,6 +7124,13 @@ def _fallback_flow_representative(theme_name="", subtheme_name="", candidate_nam
     for key in [(theme, subtheme), (candidate, subtheme)]:
         if key in FLOW_FALLBACK_REPRESENTATIVES:
             return FLOW_FALLBACK_REPRESENTATIVES[key]
+    for value in [theme, subtheme, candidate]:
+        if value in FLOW_FALLBACK_REPRESENTATIVE_GROUPS:
+            return FLOW_FALLBACK_REPRESENTATIVE_GROUPS[value]
+    combined = " ".join([theme, subtheme, candidate])
+    for key, representative in FLOW_FALLBACK_REPRESENTATIVE_GROUPS.items():
+        if key and key in combined:
+            return representative
     return ""
 
 
