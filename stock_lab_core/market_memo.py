@@ -8,6 +8,7 @@ calling external services.
 from __future__ import annotations
 
 import re
+import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -808,6 +809,8 @@ def _news_bullets(news_rows) -> list[str]:
         title = _norm(row.get("title") or row.get("제목"))
         if not title:
             continue
+        if _is_event_radar_noise(row):
+            continue
         ticker = _norm(row.get("ticker") or row.get("티커"))
         name = _display_asset_name(row.get("name") or row.get("종목명"), ticker)
         sentiment = _norm(row.get("sentiment") or row.get("감성"))
@@ -935,8 +938,25 @@ EVENT_IMPORTANCE_KEYWORDS = (
     "계약", "수주", "공급", "contract", "deal", "partnership", "order",
     "상승", "급등", "soar", "jumps", "rally", "rises", "surges",
     "제재", "금지", "ban", "sanction", "probe", "investigation",
+    "peace deal", "ceasefire", "iran", "war", "pressures", "pressure",
     "cpi", "ppi", "retail sales", "생산자물가", "소매판매", "금리", "인플레",
     "opec", "oil", "wti", "유가", "비트코인", "bitcoin", "ethereum", "etf",
+)
+
+EVENT_RADAR_NOISE_KEYWORDS = (
+    "stock price | quotes & news", "quotes & news", "stock forum",
+    "forum and discussion", "stock chart", "technical chart",
+    "finalist speech", "monte carlo", "alcaraz", "tennis",
+    "youtube", "mshale",
+)
+
+GENERATED_MEMO_SCORE_SKIP_TERMS = (
+    "stock lab 자동 뉴스픽", "자동 생성 초안", "붙여넣은 메모",
+    "핵심 해석", "뉴스 이벤트 레이더", "종목 직접",
+    "오늘점검", "매수/관심 후보", "주의/차단 후보", "하드차단 우선 확인",
+    "오늘의 실행 카드", "오늘 돈흐름 결론판", "시장 안전벨트",
+    "시황 요약:", "돈흐름", "3m +", "가속도", "상태 과열경보",
+    "r/r", "현재가", "목표비중", "중기 돈흐름 상위 축",
 )
 
 
@@ -954,6 +974,29 @@ def _clean_event_title(title: object, publisher: object = "") -> str:
     return text.strip()
 
 
+def _short_news_title(title: object, width: int = 58) -> str:
+    return textwrap.shorten(_norm(title), width=width, placeholder="...")
+
+
+def _is_event_radar_noise(row: dict) -> bool:
+    text = _lower(" ".join(_norm(row.get(key)) for key in ("title", "publisher", "name", "category")))
+    if any(term in text for term in EVENT_RADAR_NOISE_KEYWORDS):
+        return True
+    title = _lower(row.get("title"))
+    if "mshale" in text and any(term in title for term in ("stock", "soxl", "soxx")):
+        return True
+    return False
+
+
+def _is_generated_memo_scoring_noise(line: str) -> bool:
+    low = _lower(line)
+    if any(term in low for term in GENERATED_MEMO_SCORE_SKIP_TERMS):
+        return True
+    if re.search(r"\b\d+(?:\.\d+)?%\b", low) and any(term in low for term in ("ma20", "ma50", "고점대비", "볼린저", "rsi", "mfi")):
+        return True
+    return False
+
+
 def _event_importance_score(row: dict) -> int:
     title = _lower(row.get("title") or row.get("제목"))
     score = 0
@@ -961,6 +1004,8 @@ def _event_importance_score(row: dict) -> int:
     if any(kw in title for kw in SEVERE_BEARISH_NEWS_KEYWORDS):
         score += 3
     if _norm(row.get("ticker") or row.get("티커")):
+        score += 2
+    if _mentioned_tickers(title):
         score += 2
     if _norm(row.get("sentiment") or row.get("감성")) in {"호재", "악재"}:
         score += 1
@@ -998,8 +1043,12 @@ def _event_source_rows(market_news_rows=None, news_rows=None) -> list[dict]:
     deduped: list[dict] = []
     seen: set[str] = set()
     for row in sorted(rows, key=_event_importance_score, reverse=True):
+        if _is_event_radar_noise(row):
+            continue
         key = re.sub(r"\W+", "", _lower(row.get("title")))[:90]
         if not key or key in seen:
+            continue
+        if _event_importance_score(row) < 3:
             continue
         seen.add(key)
         deduped.append(row)
@@ -1122,7 +1171,7 @@ def _auto_insight_bullets(
         if overheated >= 2:
             if bearish_ctx.get("count"):
                 sample = _norm(bearish_ctx.get("sample"))
-                sample_text = f"({sample[:36]}) " if sample else ""
+                sample_text = f"({_short_news_title(sample)}) " if sample else ""
                 bullets.append(
                     f"반도체/AI는 {_flow_row_label(top)} 중심의 중기 돈흐름이 매우 강하지만, "
                     f"{sample_text}같은 과열·급락 경고 뉴스가 같이 잡힙니다. "
@@ -1459,6 +1508,8 @@ def analyze_market_memo(text: str, universe: Iterable[dict] | None = None) -> di
         category = categorize_market_memo_line(line, current_category)
         if category != "기타":
             current_category = category
+        if _is_generated_memo_scoring_noise(line):
+            continue
         score, tags = score_market_memo_line(line, category)
         tickers = _mentioned_tickers(line, extra_aliases)
 

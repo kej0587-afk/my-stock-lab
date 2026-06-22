@@ -136,6 +136,45 @@ def test_auto_market_memo_builds_news_event_radar_from_rss_titles():
     assert "Bitcoin(BTC)" in memo
 
 
+def test_auto_market_memo_event_radar_filters_quote_forum_chart_noise():
+    news_rows = [
+        {"ticker": "SOXX", "name": "iShares PHLX SOX Semiconductor", "title": "iShares Semiconductor ETF (SOXX) Stock Price | Quotes & News", "publisher": "Moomoo"},
+        {"ticker": "SMH", "name": "VanEck Semiconductor ETF", "title": "VanEck Semiconductor ETF (SMH) Stock Forum and Discussion", "publisher": "Moomoo"},
+        {"ticker": "SOXL", "name": "Direxion Daily Semiconductor Bu", "title": "Carlos Alcaraz Finalist Speech | Monte Carlo 2026 Soxl Stock", "publisher": "Mshale"},
+        {"ticker": "MU", "name": "Micron", "title": "Micron's Stock May Be Heading For Another Post-Earnings Plunge (NASDAQ:MU)", "publisher": "Seeking Alpha", "sentiment": "악재"},
+    ]
+
+    memo = build_auto_market_memo(news_rows=news_rows, now=datetime(2026, 6, 22, 9, 0))
+
+    assert "Micron's Stock May Be Heading" in memo
+    assert "Quotes & News" not in memo
+    assert "Forum and Discussion" not in memo
+    assert "Carlos Alcaraz" not in memo
+
+
+def test_market_memo_generated_lines_do_not_dominate_category_scores():
+    text = """
+    🌇 Stock Lab 자동 뉴스픽
+    🧠 핵심 해석
+    • 반도체/AI는 Direxion Daily Semiconductor Bull 3X ETF(SOXL) 중심의 중기 돈흐름이 매우 강하지만 과열·급락 경고 뉴스가 같이 잡힙니다. 지금은 절대 추격 금지, 종가 확인과 눌림 확인이 우선입니다.
+    • 중기 돈흐름 상위 축은 반도체 iShares(SOXX), IT/기술(139260.KS)입니다.
+    🖥 반도체·AI
+    • Direxion Daily Semiconductor Bull 3X ETF(SOXL) 3M +408.2%, 가속도 +370.7%, 돈흐름 331.7점, 상태 과열경보
+    🗞 뉴스 이벤트 레이더
+    ▶️ 종목
+    종목 직접
+    • MU - Micron's Stock May Be Heading For Another Post-Earnings Plunge (NASDAQ:MU)
+    🧭 오늘점검
+    • 하드차단 우선 확인: 나스닥(379810.KS) - 비중 초과
+    """
+
+    result = analyze_market_memo(text, [])
+    semi = next(row for row in result["category_rows"] if row["카테고리"] == "반도체/AI")
+
+    assert semi["뉴스수"] <= 2
+    assert "3M +408.2%" not in semi["대표문장"]
+
+
 def test_auto_market_memo_does_not_double_scale_macro_change():
     memo = build_auto_market_memo(
         macro_data={"10Y 금리": {"val": 4.49, "chg": -2.942, "icon": "🔻", "storm": False}},

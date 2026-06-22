@@ -201,7 +201,8 @@ STOCK_NEWS_WORDS = [
 GENERAL_NOISE_WORDS = [
     "galaxy", "갤럭시", "iphone", "아이폰", "android", "안드로이드",
     "recipe", "beer", "game", "gaming", "movie", "music", "lyrics",
-    "라이트급", "litecoin", "crypto", "코인", "맛집", "여행"
+    "라이트급", "litecoin", "crypto", "코인", "맛집", "여행",
+    "finalist speech", "monte carlo", "alcaraz", "tennis", "highlight video",
 ]
 
 LISTING_COMPLIANCE_NOISE_WORDS = [
@@ -251,7 +252,8 @@ LOW_QUALITY_NEWS_WORDS = [
     "주식 움직였습니다", "핵심 원인 공개", "어떤 신호인가요", "주가 움직였습니다",
     "주식 예측", "주가 전망", "stock moved", "why it moved", "price action",
     "what signal", "stock forecast", "stock prediction", "price forecast",
-    "price prediction",
+    "price prediction", "stock price | quotes & news", "quotes & news",
+    "stock forum", "forum and discussion", "stock chart", "technical chart",
 ]
 
 EARNINGS_NEWS_WORDS = [

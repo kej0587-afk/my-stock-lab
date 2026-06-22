@@ -21845,6 +21845,12 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         elif hard_count >= 1:
             score += 1
             reasons.append(f"내 관심목록 하드차단 {hard_count}개")
+        if caution_count >= 30:
+            score += 2
+            reasons.append(f"주의/차단 후보 {caution_count}개")
+        elif caution_count >= 15:
+            score += 1
+            reasons.append(f"주의/차단 후보 {caution_count}개")
 
     flow_recovery_ok = (
         (finite_num(flow_breadth) and float(flow_breadth) >= 0.55)
