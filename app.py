@@ -181,6 +181,7 @@ from stock_lab_core.kr_etf_data import (
     save_kr_etf_lab_dataframe,
 )
 from stock_lab_core.prices import (
+    _extract_yahoo_overnight_price_from_html,
     clear_latest_price_cache,
     clear_selected_price_cache,
     enable_force_live_price_refresh,
@@ -13348,24 +13349,7 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=8) as resp:
             text = resp.read().decode("utf-8", errors="ignore")
-
-        symbol = re.escape(t)
-        match = re.search(
-            rf'\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
-            text,
-            flags=re.DOTALL,
-        )
-        if not match:
-            match = re.search(
-                rf'\\"overnightMarketPrice\\":\{{\\"raw\\":([0-9.]+).*?\\"symbol\\":\\"{symbol}\\".*?\\"overnightMarketTime\\":\{{\\"raw\\":([0-9]+)',
-                text,
-                flags=re.DOTALL,
-            )
-        if not match:
-            return 0.0
-        price = clean_float(match.group(1), 0.0)
-        ts = int(match.group(2))
-        return price if price > 0 and _is_recent_us_daymarket_epoch(ts) else 0.0
+        return _extract_yahoo_overnight_price_from_html(text, t)
     except Exception:
         return 0.0
 
