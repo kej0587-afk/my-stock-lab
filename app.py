@@ -7183,6 +7183,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     rank_bonus = float(cl.get("rank_bonus", 0.0) or 0.0)
     overheat_penalty = float(cl.get("overheat_penalty", 0.0) or 0.0)
     pullback_penalty = float(cl.get("pullback_penalty", 0.0) or 0.0)
+    core_warning = str(cl.get("core_warning", "") or "")
 
     # ── ① 강도(쏠림) 색상 — 순수 3개월 RS·확산도 기준, 단기 흐름과 무관 ──
     if flow_label == "주도":
@@ -7254,6 +7255,12 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         + (f"&nbsp;<span style='color:#fca5a5;'>({' / '.join(timing_reason_bits)})</span>" if timing_reason_bits else "")
         + "</div>"
     )
+    core_warning_html = ""
+    if core_warning:
+        core_warning_html = (
+            "<div style='font-size:0.66em;color:#fca5a5;margin-top:4px;'>"
+            f"⚠ {html.escape(core_warning)}</div>"
+        )
 
     # ── 구성 ETF 상세 (최근 확인이 강한 순 정렬) ──
     tickers = cl.get("tickers", [])
@@ -7322,6 +7329,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         f"확산 {breadth*100:.0f}% · {vol_html} · {rank_html}</div>"
         # ② 타이밍(진입 가능 여부) — ①과 분리된 별도 영역
         f"{timing_reason_html}"
+        f"{core_warning_html}"
         f"{bridge_html}"
         # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
@@ -7456,6 +7464,7 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         if not matched:
             continue
         n         = len(matched)
+        core_member = matched[0]
         avg_rs3m  = float(np.mean([m["rs3m"]  for m in matched]))
         avg_rsmom = float(np.mean([m["rsmom"] for m in matched]))
         avg_r1m   = _avg([m["r1m"] for m in matched])
@@ -7475,6 +7484,16 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         r1m_pos_frac = _positive_fraction([m["r1m"] for m in matched])
         r2w_pos_frac = _positive_fraction([m["r2w"] for m in matched])
         breadth = pos_frac * 0.45 + r1m_pos_frac * 0.35 + r2w_pos_frac * 0.20
+        core_rs3m = float(core_member.get("rs3m", np.nan))
+        core_rsmom = float(core_member.get("rsmom", np.nan))
+        core_quad = str(core_member.get("quad", ""))
+        core_is_diverged = (
+            (core_quad == "소외" and (core_rs3m < 0 or core_rsmom < 0))
+            or (core_rs3m < 0 and core_rsmom < 0)
+        )
+        core_warning = ""
+        if core_is_diverged:
+            core_warning = f"대표축 {core_member.get('name', core_member.get('ticker', ''))} 소외: 클러스터 내부 엇갈림"
 
         short_down = (
             (finite_num(avg_r1m) and avg_r1m <= -0.02
@@ -7544,9 +7563,12 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             timing_state = "눌림 대기"
         else:
             timing_state = "확인 필요"
+        if core_is_diverged and timing_state == "진입 가능":
+            timing_state = "확인 필요"
 
         # 하위 호환을 위해 fit_score/heat은 강도+타이밍 결합 점수로 유지 (정렬 등에서 참조)
-        fit_score = strength_score + short_score - overheat_penalty - pullback_penalty
+        core_divergence_penalty = 10.0 if core_is_diverged else 0.0
+        fit_score = strength_score + short_score - overheat_penalty - pullback_penalty - core_divergence_penalty
         is_surging = (
             flow_label in {"주도", "부상"}
             and timing_state == "진입 가능"
@@ -7580,6 +7602,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             "is_surging": is_surging, "heat": heat,
             "overheat_penalty": overheat_penalty,
             "pullback_penalty": pullback_penalty,
+            "core_warning": core_warning,
+            "core_divergence_penalty": core_divergence_penalty,
             "score_parts": {
                 "주도": lead_score,
                 "방향": momentum_score,
@@ -7871,6 +7895,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
                 "2W": float(r2w) if finite_num(r2w) else np.nan,
                 "RS3M": float(rs3m) if finite_num(rs3m) else np.nan,
                 "거래": float(volume) if finite_num(volume) else np.nan,
+                "주의": str(cl.get("core_warning", "") or "-"),
                 "순위": rank,
                 "라벨": f"{'🇺🇸' if market == '미국' else '🇰🇷'} {cl.get('name', '')}",
                 "크기": max(16, min(44, 16 + (float(breadth) if finite_num(breadth) else 0.0) * 34)),
@@ -7930,7 +7955,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             opacity=0.86,
             line=dict(color="#f8fafc", width=1),
         ),
-        customdata=chart_df[["시장", "타이밍", "강도라벨", "확산도", "RS3M", "1M", "2W", "거래"]],
+        customdata=chart_df[["시장", "타이밍", "강도라벨", "확산도", "RS3M", "1M", "2W", "거래", "주의"]],
         hovertemplate=(
             "<b>%{text}</b><br>"
             "시장: %{customdata[0]}<br>"
@@ -7940,7 +7965,8 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             "RS 3M: %{customdata[4]:+.1%}<br>"
             "1M: %{customdata[5]:+.1%}<br>"
             "2W: %{customdata[6]:+.1%}<br>"
-            "거래: %{customdata[7]:+.0%}<extra></extra>"
+            "거래: %{customdata[7]:+.0%}<br>"
+            "주의: %{customdata[8]}<extra></extra>"
         ),
         showlegend=False,
     ))
