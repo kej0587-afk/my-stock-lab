@@ -161,3 +161,23 @@ def test_news_dedupes_same_publisher_to_latest_item():
 
     assert len(deduped) == 1
     assert deduped[0]["title"] == newer["title"]
+
+
+def test_auto_market_memo_marks_korea_crash_before_sector_rotation():
+    index_rotation_rows = pd.DataFrame(
+        [
+            {"시장": "한국", "지수/스타일": "KOSPI", "Ticker": "^KS11", "1D": -0.0749, "5D": -0.02, "3M": 0.1},
+            {"시장": "한국", "지수/스타일": "KOSDAQ", "Ticker": "^KQ11", "1D": -0.065, "5D": -0.08, "3M": -0.1},
+            {"시장": "미국", "지수/스타일": "반도체", "Ticker": "SOXX", "1D": 0.024, "5D": 0.099, "3M": 0.9},
+            {"시장": "미국", "지수/스타일": "산업재", "Ticker": "XLI", "1D": 0.007, "5D": 0.034, "3M": 0.05},
+        ]
+    )
+
+    memo = build_auto_market_memo(
+        index_rotation_rows=index_rotation_rows,
+        summary_rows=pd.DataFrame(),
+    )
+
+    assert "한국 시장은 1D 기준 주요지수 평균 -7.0%" in memo
+    assert "섹터 주도보다 지수 안정" in memo
+    assert "한국 주요지수 1D 평균 -7.0%" in memo

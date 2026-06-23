@@ -180,10 +180,12 @@ LEVERAGED_TICKERS = {
     "TQQQ", "QLD", "SOXL", "TECL", "UPRO", "SSO", "FNGU", "BULZ",
     "NVDL", "TSLL", "USD", "423920.KS", "494310.KS",
 }
-GROWTH_ROTATION_TICKERS = {"QQQ", "XLK", "SOXX", "SMH", "SOXL", "TQQQ", "QLD"}
-VALUE_DEFENSIVE_ROTATION_TICKERS = {"DIA", "XLI", "XLF", "XLP", "XLU"}
+GROWTH_ROTATION_TICKERS = {"^IXIC", "QQQ", "XLK", "SOXX", "SMH", "SOXL", "TQQQ", "QLD"}
+VALUE_DEFENSIVE_ROTATION_TICKERS = {"^DJI", "DIA", "XLI", "XLF", "XLP", "XLU"}
+KR_MARKET_ROTATION_TICKERS = {"^KS11", "^KQ11", "069500.KS", "229200.KS"}
+US_MARKET_ROTATION_TICKERS = {"^GSPC", "^IXIC", "^DJI"}
 INDEX_ROTATION_TICKERS = GROWTH_ROTATION_TICKERS | VALUE_DEFENSIVE_ROTATION_TICKERS | {
-    "VOO", "069500.KS", "229200.KS",
+    "VOO", "^GSPC", *KR_MARKET_ROTATION_TICKERS,
 }
 SEMI_NEWS_CONTEXT_TERMS = (
     "반도체", "semiconductor", "ai", "hbm", "memory", "dram",
@@ -622,6 +624,16 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
         growth_weak = growth_avg < 0
         rotation_detected = (growth_avg < 0 <= rotation_avg) or ((rotation_avg - growth_avg) >= 0.012)
 
+    kr_market_avg = None
+    us_market_avg = None
+    kr_market_crash = False
+    us_market_crash = False
+    if short_key:
+        kr_market_avg, kr_market_count = _mean_rotation(rows, KR_MARKET_ROTATION_TICKERS, short_key)
+        us_market_avg, us_market_count = _mean_rotation(rows, US_MARKET_ROTATION_TICKERS, short_key)
+        kr_market_crash = bool(kr_market_count and kr_market_avg is not None and kr_market_avg <= -0.03)
+        us_market_crash = bool(us_market_count and us_market_avg is not None and us_market_avg <= -0.02)
+
     semi_short_weak = False
     primary_semi_seen = False
     primary_semi_weak = False
@@ -657,6 +669,10 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
         "rotation_avg": rotation_avg,
         "growth_weak": growth_weak,
         "rotation_detected": rotation_detected,
+        "kr_market_avg": kr_market_avg,
+        "us_market_avg": us_market_avg,
+        "kr_market_crash": kr_market_crash,
+        "us_market_crash": us_market_crash,
         "semi_short_weak": semi_short_weak,
         "inflow": _rotation_labels(rows, short_key, True) if short_key else "",
         "outflow": _rotation_labels(rows, short_key, False) if short_key else "",
@@ -1191,6 +1207,13 @@ def _auto_insight_bullets(
                 f"반도체/AI는 {_flow_row_label(top)} 중심으로 중기 주도 흐름이 유지됩니다. 후보는 정밀관측소 타점과 같이 봅니다."
             )
 
+    if rotation_ctx.get("kr_market_crash"):
+        short_key = rotation_ctx.get("short_key") or "단기"
+        bullets.append(
+            f"한국 시장은 {short_key} 기준 주요지수 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}로 급락/조정장 성격이 강합니다. "
+            "오늘은 섹터 주도보다 지수 안정, 현금 비중, 보유종목 손절선 확인이 먼저입니다."
+        )
+
     if rotation_ctx.get("rotation_detected"):
         short_key = rotation_ctx.get("short_key") or "단기"
         growth_avg = rotation_ctx.get("growth_avg")
@@ -1369,6 +1392,16 @@ def build_auto_market_memo(
     if rotation_rows and rotation_ctx.get("short_key"):
         short_key = rotation_ctx["short_key"]
         lines.append("🧭 지수/스타일 로테이션")
+        if rotation_ctx.get("kr_market_crash"):
+            lines.append(
+                f"• 한국 주요지수 {short_key} 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}: "
+                "섹터 이동보다 시장 전체 조정/위험회피가 우선입니다."
+            )
+        if rotation_ctx.get("us_market_crash"):
+            lines.append(
+                f"• 미국 주요지수 {short_key} 평균 {_fmt_auto_pct(rotation_ctx.get('us_market_avg'))}: "
+                "미국도 지수 안정 확인이 먼저입니다."
+            )
         if rotation_ctx.get("rotation_detected"):
             lines.append(
                 f"• {short_key} 기준 성장주보다 다우·산업재·금융·방어가 강합니다 — "

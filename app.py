@@ -7659,8 +7659,15 @@ def _cluster_timing_axis_value(timing_state: str) -> float:
 
 
 INDEX_ROTATION_BASKET = [
-    {"시장": "미국", "지수": "다우존스", "Ticker": "DIA", "역할": "가치·산업 대형주", "구분선호": "미국 섹터"},
-    {"시장": "미국", "지수": "S&P500", "Ticker": "VOO", "역할": "미국 대표지수", "구분선호": "미국 섹터"},
+    {"시장": "한국", "지수": "KOSPI", "Ticker": "^KS11", "역할": "한국 종합지수", "구분선호": ""},
+    {"시장": "한국", "지수": "KOSDAQ", "Ticker": "^KQ11", "역할": "한국 성장시장 종합지수", "구분선호": ""},
+    {"시장": "한국", "지수": "KOSPI200", "Ticker": "069500.KS", "역할": "한국 대형주 ETF", "구분선호": "한국 섹터"},
+    {"시장": "한국", "지수": "KOSDAQ150", "Ticker": "229200.KS", "역할": "한국 성장주 ETF", "구분선호": "한국 섹터"},
+    {"시장": "미국", "지수": "다우산업", "Ticker": "^DJI", "역할": "미국 산업 대표지수", "구분선호": ""},
+    {"시장": "미국", "지수": "S&P500", "Ticker": "^GSPC", "역할": "미국 대표지수", "구분선호": ""},
+    {"시장": "미국", "지수": "나스닥종합", "Ticker": "^IXIC", "역할": "미국 성장주 종합지수", "구분선호": ""},
+    {"시장": "미국", "지수": "다우존스 ETF", "Ticker": "DIA", "역할": "가치·산업 대형주 ETF", "구분선호": "미국 섹터"},
+    {"시장": "미국", "지수": "S&P500 ETF", "Ticker": "VOO", "역할": "미국 대표 ETF", "구분선호": "미국 섹터"},
     {"시장": "미국", "지수": "나스닥100", "Ticker": "QQQ", "역할": "빅테크·성장주", "구분선호": "미국 섹터"},
     {"시장": "미국", "지수": "기술", "Ticker": "XLK", "역할": "기술주 섹터", "구분선호": "미국 섹터"},
     {"시장": "미국", "지수": "반도체", "Ticker": "SOXX", "역할": "반도체 섹터", "구분선호": "미국 섹터"},
@@ -7668,8 +7675,6 @@ INDEX_ROTATION_BASKET = [
     {"시장": "미국", "지수": "금융", "Ticker": "XLF", "역할": "가치·금리 민감", "구분선호": "미국 섹터"},
     {"시장": "미국", "지수": "필수소비재", "Ticker": "XLP", "역할": "방어주", "구분선호": "미국 섹터"},
     {"시장": "미국", "지수": "유틸리티", "Ticker": "XLU", "역할": "방어·금리 민감", "구분선호": "미국 섹터"},
-    {"시장": "한국", "지수": "KOSPI200", "Ticker": "069500.KS", "역할": "한국 대형주", "구분선호": "한국 섹터"},
-    {"시장": "한국", "지수": "KOSDAQ150", "Ticker": "229200.KS", "역할": "한국 성장주", "구분선호": "한국 섹터"},
 ]
 
 
@@ -7754,6 +7759,12 @@ def _classify_index_rotation_signal(row: dict) -> str:
         or (finite_num(r5d) and float(r5d) >= 0.015)
     )
 
+    if finite_num(r1d) and float(r1d) <= -0.05:
+        return "시장 급락"
+    if finite_num(r1d) and float(r1d) <= -0.03:
+        return "시장 조정"
+    if finite_num(r1d) and float(r1d) <= -0.015:
+        return "위험회피"
     if long_hot and short_weak:
         return "장기주도/단기이탈"
     if short_weak:
@@ -7813,10 +7824,47 @@ def _labels_from_rotation_rows(df: pd.DataFrame, col: str, positive: bool = True
     return ", ".join(labels)
 
 
+def _rotation_mean_for_tickers(index_df: pd.DataFrame, tickers: set[str], col: str = "1D") -> float:
+    if index_df is None or index_df.empty or col not in index_df.columns:
+        return np.nan
+    keys = {str(t).upper() for t in tickers}
+    work = index_df[index_df["Ticker"].astype(str).str.upper().isin(keys)]
+    if work.empty:
+        return np.nan
+    return pd.to_numeric(work[col], errors="coerce").dropna().mean()
+
+
+def _rotation_market_labels(index_df: pd.DataFrame, market: str, col: str, positive: bool, limit: int = 3) -> str:
+    if index_df is None or index_df.empty or "시장" not in index_df.columns:
+        return ""
+    return _labels_from_rotation_rows(index_df[index_df["시장"].astype(str) == market], col, positive=positive, limit=limit)
+
+
 def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     if index_df is None or index_df.empty:
         return []
     summaries = []
+    kr_market_1d = _rotation_mean_for_tickers(index_df, {"^KS11", "^KQ11", "069500.KS", "229200.KS"}, "1D")
+    us_market_1d = _rotation_mean_for_tickers(index_df, {"^GSPC", "^IXIC", "^DJI"}, "1D")
+    kr_crash = finite_num(kr_market_1d) and float(kr_market_1d) <= -0.03
+    us_crash = finite_num(us_market_1d) and float(us_market_1d) <= -0.02
+
+    if kr_crash:
+        summaries.append(
+            f"한국 지수 평균 1D {kr_market_1d*100:+.1f}%로 섹터 이동보다 시장 전체 조정/위험회피가 우선입니다. "
+            "오늘 플러스 섹터는 '주도'보다 상대방어로 봅니다."
+        )
+        kr_inflow = _rotation_market_labels(index_df, "한국", "1D", positive=True, limit=3)
+        kr_outflow = _rotation_market_labels(index_df, "한국", "1D", positive=False, limit=3)
+        summaries.append(
+            f"한국 내부 1D 유입: {kr_inflow or '없음'} / 이탈: {kr_outflow or '없음'}"
+        )
+    if us_crash:
+        summaries.append(
+            f"미국 주요지수 평균 1D {us_market_1d*100:+.1f}%로 미국도 위험회피 우위입니다. "
+            "섹터 순환보다 지수 안정 확인이 먼저입니다."
+        )
+
     tech_tickers = {"QQQ", "XLK", "SOXX"}
     rotation_tickers = {"DIA", "XLI", "XLF", "XLP", "XLU"}
     tech = index_df[index_df["Ticker"].isin(tech_tickers)]
@@ -7826,11 +7874,11 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     tech_5d = pd.to_numeric(tech["5D"], errors="coerce").mean() if not tech.empty else np.nan
     rot_5d = pd.to_numeric(rotation["5D"], errors="coerce").mean() if not rotation.empty else np.nan
 
-    if finite_num(tech_1d) and finite_num(rot_1d) and tech_1d < 0 <= rot_1d:
+    if not (kr_crash or us_crash) and finite_num(tech_1d) and finite_num(rot_1d) and tech_1d < 0 <= rot_1d:
         summaries.append(
             f"오늘 단기 로테이션은 기술/반도체 평균 {tech_1d*100:+.1f}% vs 다우·산업재·방어 평균 {rot_1d*100:+.1f}%로, 성장주에서 가치/방어 쪽으로 일부 이동한 그림입니다."
         )
-    elif finite_num(tech_5d) and finite_num(rot_5d) and tech_5d < rot_5d:
+    elif not (kr_crash or us_crash) and finite_num(tech_5d) and finite_num(rot_5d) and tech_5d < rot_5d:
         summaries.append(
             f"최근 5거래일은 기술/반도체({tech_5d*100:+.1f}%)보다 다우·산업재·방어({rot_5d*100:+.1f}%)가 상대적으로 버티는 흐름입니다."
         )
@@ -7845,7 +7893,7 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     leaders = _labels_from_rotation_rows(index_df, "3M", positive=True, limit=3)
     if leaders:
         summaries.append(f"중기 3M 주도권은 아직 {leaders} 쪽에 남아 있습니다. 단기 이탈과 중기 주도는 분리해서 봐야 합니다.")
-    return summaries[:4]
+    return summaries[:5]
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
@@ -7853,7 +7901,7 @@ def _render_index_rotation_panel(rotation_df: pd.DataFrame):
     if index_df.empty:
         return
 
-    st.markdown("##### 🧭 지수/스타일 단기 로테이션 — 오늘 돈이 어디로 움직였나")
+    st.markdown("##### 🧭 지수/스타일 단기 로테이션 — 조정장인지 섹터 이동인지")
     for msg in _build_index_rotation_summary(index_df):
         st.caption(msg)
 
@@ -7865,6 +7913,7 @@ def _render_index_rotation_panel(rotation_df: pd.DataFrame):
     st.dataframe(show[columns], width='stretch', hide_index=True, height=360)
     st.caption(
         "클러스터 강도는 3M 중심이라 늦게 꺾입니다. 이 표의 1D/5D가 단기 자금 이동이고, "
+        "'시장 급락/시장 조정'은 섹터 로테이션보다 지수 리스크를 먼저 보라는 뜻입니다. "
         "'장기주도/단기이탈'은 아직 주도 섹터지만 지금 추격하면 위험한 구간이라는 뜻입니다."
     )
 
