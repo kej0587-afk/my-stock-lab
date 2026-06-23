@@ -1084,14 +1084,33 @@ def _event_tickers(row: dict) -> list[str]:
     return list(dict.fromkeys(tickers))[:3]
 
 
-def _news_event_radar_lines(market_news_rows=None, news_rows=None) -> list[str]:
+def _news_event_radar_lines(market_news_rows=None, news_rows=None, index_rotation_rows=None, flow_snapshot=None) -> list[str]:
     rows = _event_source_rows(market_news_rows, news_rows)
-    if not rows:
+    rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
+    synthetic_market_events: list[tuple[str, str]] = []
+    if rotation_ctx.get("kr_market_crash"):
+        kr_avg = rotation_ctx.get("kr_market_avg")
+        level_text = "서킷브레이커급" if kr_avg is not None and kr_avg <= -0.08 else "급락"
+        synthetic_market_events.append((
+            "📉 시장 급락",
+            f"한국 주요지수 평균 {_fmt_auto_pct(kr_avg)} {level_text} 하락 감지 — 섹터 이동보다 지수 안정과 사이드카/서킷브레이커 공시 확인 우선",
+        ))
+    if rotation_ctx.get("us_market_crash"):
+        us_avg = rotation_ctx.get("us_market_avg")
+        synthetic_market_events.append((
+            "📉 시장 급락",
+            f"미국 주요지수 평균 {_fmt_auto_pct(us_avg)} 급락 감지 — 미국장도 신규/추매보다 지수 안정 확인 우선",
+        ))
+
+    if not rows and not synthetic_market_events:
         return []
 
     market_groups: dict[str, list[str]] = defaultdict(list)
     stock_groups: dict[str, list[str]] = defaultdict(list)
     stock_seen: set[tuple[str, str]] = set()
+
+    for group, item in synthetic_market_events:
+        market_groups[group].append(item)
 
     for row in rows:
         category = _norm(row.get("category"))
@@ -1171,6 +1190,13 @@ def _auto_insight_bullets(
     flow_df = flow_snapshot.get("flow_df")
     flow_rows = _iter_table_rows(flow_df, limit=250)
     bearish_ctx = _bearish_news_pressure(market_news_rows, news_rows)
+    kr_market_crash = bool(rotation_ctx.get("kr_market_crash"))
+    if kr_market_crash:
+        short_key = rotation_ctx.get("short_key") or "단기"
+        bullets.append(
+            f"한국 시장은 {short_key} 기준 주요지수 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}로 급락/조정장 성격이 강합니다. "
+            "오늘은 섹터 주도보다 지수 안정, 현금 비중, 보유종목 손절선 확인이 먼저입니다."
+        )
     semi_rows = [
         row for row in flow_rows
         if any(
@@ -1185,7 +1211,12 @@ def _auto_insight_bullets(
             if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
         )
         if overheated >= 2:
-            if bearish_ctx.get("count"):
+            if kr_market_crash:
+                bullets.append(
+                    f"반도체/AI 중기 돈흐름은 {_flow_row_label(top)} 중심으로 아직 강하지만, "
+                    "국장 급락장에서는 이 신호를 매수 주도보다 후행/상대강도 지표로만 봅니다."
+                )
+            elif bearish_ctx.get("count"):
                 sample = _norm(bearish_ctx.get("sample"))
                 sample_text = f"({_short_news_title(sample)}) " if sample else ""
                 bullets.append(
@@ -1206,13 +1237,6 @@ def _auto_insight_bullets(
             bullets.append(
                 f"반도체/AI는 {_flow_row_label(top)} 중심으로 중기 주도 흐름이 유지됩니다. 후보는 정밀관측소 타점과 같이 봅니다."
             )
-
-    if rotation_ctx.get("kr_market_crash"):
-        short_key = rotation_ctx.get("short_key") or "단기"
-        bullets.append(
-            f"한국 시장은 {short_key} 기준 주요지수 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}로 급락/조정장 성격이 강합니다. "
-            "오늘은 섹터 주도보다 지수 안정, 현금 비중, 보유종목 손절선 확인이 먼저입니다."
-        )
 
     if rotation_ctx.get("rotation_detected"):
         short_key = rotation_ctx.get("short_key") or "단기"
@@ -1426,7 +1450,7 @@ def build_auto_market_memo(
             lines.append(f"• {item}")
         lines.append("")
 
-    event_radar_lines = _news_event_radar_lines(market_news_rows, news_rows)
+    event_radar_lines = _news_event_radar_lines(market_news_rows, news_rows, index_rotation_rows, flow_snapshot)
     if event_radar_lines:
         lines.extend(event_radar_lines)
 

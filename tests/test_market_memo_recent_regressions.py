@@ -181,3 +181,5 @@ def test_auto_market_memo_marks_korea_crash_before_sector_rotation():
     assert "한국 시장은 1D 기준 주요지수 평균 -7.0%" in memo
     assert "섹터 주도보다 지수 안정" in memo
     assert "한국 주요지수 1D 평균 -7.0%" in memo
+    assert "📉 시장 급락" in memo
+    assert "사이드카/서킷브레이커 공시 확인 우선" in memo
