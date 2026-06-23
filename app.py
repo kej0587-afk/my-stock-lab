@@ -21752,11 +21752,16 @@ def render_speed_check_tab():
 # ════════════════════════════════════════════════════════════════════════════
 
 TODAY_MARKET_GUARD_BENCHMARKS = [
-    ("SPY", "S&P500"),
-    ("QQQ", "나스닥100"),
-    ("IWM", "러셀2000"),
-    ("069500.KS", "KOSPI200"),
-    ("229200.KS", "KOSDAQ150"),
+    ("^KS11", "KOSPI"),
+    ("^KQ11", "KOSDAQ"),
+    ("069500.KS", "KOSPI200 ETF"),
+    ("229200.KS", "KOSDAQ150 ETF"),
+    ("^GSPC", "S&P500"),
+    ("^IXIC", "나스닥종합"),
+    ("^DJI", "다우산업"),
+    ("SPY", "S&P500 ETF"),
+    ("QQQ", "나스닥100 ETF"),
+    ("IWM", "러셀2000 ETF"),
 ]
 
 TODAY_MARKET_GUARD_MACRO_ORDER = ["10Y 금리", "환율", "VIX", "MOVE", "유가"]
@@ -21910,10 +21915,19 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     down3 = int(valid["연속하락"].ge(3).sum()) if not valid.empty else 0
     weak5 = int(valid["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03).sum()) if not valid.empty else 0
     sharp_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015).sum()) if not valid.empty else 0
+    panic_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.05).sum()) if not valid.empty else 0
+    circuit_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.08).sum()) if not valid.empty else 0
     rebound_count = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.015).sum()) if not valid.empty else 0
     strong_rebound_count = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.03).sum()) if not valid.empty else 0
+    worst_day_drop = clean_float(valid["1일"].min(), np.nan) if not valid.empty and "1일" in valid.columns else np.nan
     max_day_gain = clean_float(valid["1일"].max(), np.nan) if not valid.empty and "1일" in valid.columns else np.nan
 
+    if circuit_day >= 1:
+        score += 5
+        reasons.append(f"서킷브레이커급 급락 지수 {circuit_day}개")
+    elif panic_day >= 1:
+        score += 3
+        reasons.append(f"하루 -5% 이하 투매 지수 {panic_day}개")
     if below20 >= 3:
         score += 2
         reasons.append(f"주요지수 {below20}개가 MA20 아래")
@@ -22002,11 +22016,23 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     )
     tactical_rebound = (
         score >= 8
+        and circuit_day == 0
+        and panic_day == 0
         and flow_recovery_ok
         and (strong_rebound_count >= 2 or (finite_num(max_day_gain) and float(max_day_gain) >= 0.05))
     )
 
-    if score >= 8:
+    emergency_market = circuit_day >= 1 or panic_day >= 2
+
+    if emergency_market:
+        mode, level, action = "비상", "danger", "신규/추매 중단 · 손절선/현금 방어"
+        actions = [
+            "섹터 주도 판단보다 보유종목 손절선, 레버리지 노출, 현금 비중을 먼저 확인",
+            "가격이 내려왔다는 이유의 물타기 금지: 종가 안정, 거래대금 진정, 다음 봉 회복 확인 전 보류",
+            "코어 ETF도 평소 적립률이 아니라 비상 DCA 규칙과 예비자금 한도 안에서만 검토",
+            "수익권 종목이 급락 중이면 익절/본전/손절 기준을 주문 전 다시 숫자로 확인",
+        ]
+    elif score >= 8:
         if tactical_rebound:
             mode, level, action = "위험장 반등", "warning", "추격 금지 · 코어/강섹터 소액 전술 참여"
             if finite_num(max_day_gain):
@@ -22059,6 +22085,9 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "flow_accel": flow_accel,
         "rebound_count": rebound_count,
         "strong_rebound_count": strong_rebound_count,
+        "panic_day": panic_day,
+        "circuit_day": circuit_day,
+        "worst_day_drop": worst_day_drop,
         "max_day_gain": max_day_gain,
         "tactical_rebound": tactical_rebound,
         "macro_risk": macro_risk,
@@ -22761,7 +22790,9 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     hard_count = int(hard_block_mask.sum())
     market_mode = str((market_guard or {}).get("mode", ""))
 
-    if market_mode == "위험장 반등":
+    if market_mode == "비상":
+        headline = "서킷브레이커급 시장입니다. 오늘은 신규/추매보다 손절선, 레버리지, 현금 방어가 우선입니다."
+    elif market_mode == "위험장 반등":
         headline = "시장 구조는 위험하지만 강한 반등이 확인됐습니다. 전면 관망보다 정해진 후보만 소액 전술 참여하는 구간입니다."
     elif market_mode in {"위험", "방어"}:
         headline = f"시장 모드가 {market_mode}입니다. 오늘은 후보보다 방어와 현금 계획이 우선입니다."
@@ -22777,7 +22808,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         headline = "오늘은 보유 유지와 비중 점검이 우선입니다."
 
     actions = []
-    if market_mode in {"위험", "위험장 반등", "방어"}:
+    if market_mode in {"비상", "위험", "위험장 반등", "방어"}:
         actions.extend((market_guard or {}).get("actions", [])[:2])
     if leverage_blocked:
         actions.append("레버리지는 차단 신호를 유지하고, 단계별 DCA 조건이 풀릴 때까지 추가매수 보류")
