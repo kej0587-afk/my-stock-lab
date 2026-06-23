@@ -22810,16 +22810,21 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     actions = []
     if market_mode in {"비상", "위험", "위험장 반등", "방어"}:
         actions.extend((market_guard or {}).get("actions", [])[:2])
-    if leverage_blocked:
+    if market_mode == "비상":
+        if buyish_count > 0:
+            actions.append(f"매수/관심 후보 {buyish_count}개는 실행하지 말고 종가 안정 후 재점검")
+        if core_under_count > 0:
+            actions.append(f"코어 목표 미달 {core_under_count}개도 오늘은 적립 실행보다 대기")
+    elif leverage_blocked:
         actions.append("레버리지는 차단 신호를 유지하고, 단계별 DCA 조건이 풀릴 때까지 추가매수 보류")
     elif leverage_dca_ready:
         actions.append("레버리지는 평단 대비 하락 단계에 맞춘 배율만 적용")
-    if core_under_count > 0:
+    if market_mode != "비상" and core_under_count > 0:
         if core_overheat_count > 0:
             actions.append(f"코어 목표 미달 {core_under_count}개는 과열 여부를 반영해 정해둔 적립률로만 접근")
         else:
             actions.append(f"코어 목표 미달 {core_under_count}개는 우선 점검")
-    if cash_available <= 0 and buyish_count > 0:
+    if market_mode != "비상" and cash_available <= 0 and buyish_count > 0:
         actions.append("적립용 현금이 부족하므로 신규 매수보다 현금 계획 확인")
     if reserve_available > 0:
         actions.append("폭락장 예비자금은 평상시 적립이 아니라 큰 하락 구간용으로 분리 유지")
