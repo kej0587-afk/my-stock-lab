@@ -13010,7 +13010,26 @@ def get_dashboard_swing_status_maps():
     return status_map, decision_map
 
 
+def dedupe_dashboard_summary_df(summary_df):
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty or "티커" not in summary_df.columns:
+        return summary_df
+
+    out = summary_df.copy()
+    out["_ticker_key"] = out["티커"].astype(str).map(lambda x: normalize_ticker(sanitize_ticker_value(x)))
+    out["_row_order"] = range(len(out))
+    keyed = out[out["_ticker_key"] != ""].drop_duplicates("_ticker_key", keep="first")
+    unkeyed = out[out["_ticker_key"] == ""]
+    out = (
+        pd.concat([keyed, unkeyed], ignore_index=True)
+        .sort_values("_row_order")
+        .drop(columns=["_ticker_key", "_row_order"], errors="ignore")
+        .reset_index(drop=True)
+    )
+    return out
+
+
 def render_dashboard_group_summary(df, group_label):
+    df = dedupe_dashboard_summary_df(df)
     if group_label != "전체":
         view_df = df[df["전광판그룹"] == group_label].copy()
     else:
@@ -15283,15 +15302,21 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     # 메인 스레드에서 session_state 쓰기 + 원래 순서대로 rows 구성
     rows = []
+    seen_ticker_keys = set()
     for i in range(len(watchlist_items)):
         r = results_map.get(i)
         if r is None:
             continue
-        if r.get("f_score") is not None:
-            st.session_state.fin_score_map[normalize_ticker(r["tkr"])] = r["f_score"]
+        ticker_key = normalize_ticker(sanitize_ticker_value(r.get("tkr", "")))
+        if r.get("f_score") is not None and ticker_key:
+            st.session_state.fin_score_map[ticker_key] = r["f_score"]
+        if ticker_key:
+            if ticker_key in seen_ticker_keys:
+                continue
+            seen_ticker_keys.add(ticker_key)
         rows.append(r["row"])
 
-    return pd.DataFrame(rows)
+    return dedupe_dashboard_summary_df(pd.DataFrame(rows))
 
 
 SWING_TEMPLATE_MAP = {
@@ -24392,6 +24417,12 @@ def render_today_queue_tab(mode):
     else:
         summary_df = cached_summary
 
+    summary_df = dedupe_dashboard_summary_df(summary_df)
+    st.session_state[summary_key] = summary_df
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
+        st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
+        st.session_state["today_queue_summary_last_nonempty_sig"] = queue_sig
+
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
@@ -26025,6 +26056,8 @@ if main_page == "dashboard":
         st.session_state[_DASH_LAST_KEY] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
     else:
         summary_df = _dash_cached
+    summary_df = dedupe_dashboard_summary_df(summary_df)
+    st.session_state[_DASH_KEY] = summary_df
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:
