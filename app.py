@@ -7252,6 +7252,101 @@ def _kr_snapshot_status_text(snapshot: dict) -> str:
     return f"{status} · 확산 {breadth_text} · 업종 {sector_avg}"
 
 
+KR_ROTATION_SECTOR_CLUSTER_MAP = {
+    "IT/기술": "AI·반도체",
+    "반도체": "AI·반도체",
+    "전력인프라": "전력·인프라",
+    "전력기기": "전력·인프라",
+    "원자력": "원전·우라늄",
+    "원자력TOP10": "원전·우라늄",
+    "방산": "방산·조선",
+    "조선": "방산·조선",
+    "K-뷰티": "K뷰티·콘텐츠",
+    "화장품": "K뷰티·콘텐츠",
+    "K콘텐츠": "K뷰티·콘텐츠",
+    "바이오": "바이오",
+    "금융": "금융",
+    "2차전지": "2차전지",
+    "부동산": "리츠",
+    "에너지": "에너지·건설",
+    "건설/유틸": "에너지·건설",
+}
+
+
+KR_ROTATION_THEME_CLUSTER_MAP = {
+    "국내 AI 반도체·소부장": "AI·반도체",
+    "PCB·기판 글로벌": "AI·반도체",
+    "전자부품·MLCC": "AI·반도체",
+    "포토닉스·광통신": "AI·반도체",
+    "전력·에너지 인프라": "전력·인프라",
+    "글로벌 원전·SMR": "원전·우라늄",
+    "우주항공·방산": "방산·조선",
+    "조선·해양": "방산·조선",
+    "K-뷰티·소비재": "K뷰티·콘텐츠",
+    "바이오·제약": "바이오",
+    "한국 금융": "금융",
+    "2차전지 밸류체인": "2차전지",
+    "전력 인프라": "전력·인프라",
+    "국내 반도체": "AI·반도체",
+}
+
+
+def _lookup_kr_rotation_cluster(row, label_col: str = "") -> str:
+    sector = str(row.get("섹터", "") or "").strip()
+    theme = str(row.get("테마", "") or "").strip()
+    label = str(row.get(label_col, "") or "").strip() if label_col else ""
+    for value in [sector, theme, label]:
+        if value in KR_ROTATION_SECTOR_CLUSTER_MAP:
+            return KR_ROTATION_SECTOR_CLUSTER_MAP[value]
+        if value in KR_ROTATION_THEME_CLUSTER_MAP:
+            return KR_ROTATION_THEME_CLUSTER_MAP[value]
+    joined = " ".join([sector, theme, label])
+    for key, cluster in KR_ROTATION_THEME_CLUSTER_MAP.items():
+        if key and key in joined:
+            return cluster
+    return ""
+
+
+def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
+    if grp_df is None or grp_df.empty:
+        return grp_df
+    out = grp_df.copy()
+    for col, default in {
+        "진입검토": "🔸 관망",
+        "업종내부": "-",
+        "대표업종": "-",
+        "업종대표주": "-",
+        "약한대표주": "-",
+        "KOSPI내부판정": "",
+    }.items():
+        if col not in out.columns:
+            out[col] = default
+
+    snapshot_cache: dict[str, dict] = {}
+    for idx, row in out.iterrows():
+        cluster = _lookup_kr_rotation_cluster(row, label_col)
+        if not cluster:
+            continue
+        snapshot = snapshot_cache.get(cluster)
+        if snapshot is None:
+            snapshot = build_kr_cluster_snapshot(cluster)
+            snapshot_cache[cluster] = snapshot
+        if not snapshot:
+            continue
+        status_text = _kr_snapshot_status_text(snapshot)
+        out.at[idx, "업종내부"] = status_text
+        out.at[idx, "대표업종"] = _format_kr_sector_items_plain(snapshot.get("industries", []), limit=3) or "-"
+        out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(snapshot.get("leaders", []), limit=3) or "-"
+        out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(snapshot.get("laggards", []), limit=2) or "-"
+        status = str(snapshot.get("status", "") or "")
+        out.at[idx, "KOSPI내부판정"] = status
+        if status == "확산 약함" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
+            out.at[idx, "진입검토"] = "🟨 내부확인"
+        elif status == "혼조" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
+            out.at[idx, "진입검토"] = "🟨 내부혼조"
+    return out
+
+
 def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
@@ -23884,11 +23979,34 @@ def render_today_market_flow_panel(snapshot=None):
     # ── 공통: 로테이션 차트 그리기 ───────────────────────────────────
     def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률"):
         """RS(3M)/RS모멘텀 기준 사분면 차트 + 진입검토 후보 테이블 렌더링."""
-        _QUAD_COLOR  = {"주도": "#22c55e", "약화": "#f59e0b", "개선": "#60a5fa", "소외": "#ef4444"}
-        _QUAD_SYMBOL = {"주도": "circle", "약화": "diamond", "개선": "square", "소외": "x"}
+        grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col)
+        _QUAD_COLOR  = {
+            "주도": "#22c55e",
+            "약화": "#f59e0b",
+            "개선": "#60a5fa",
+            "소외": "#ef4444",
+            "업종혼조": "#fbbf24",
+            "업종확산약함": "#fb7185",
+        }
+        _QUAD_SYMBOL = {
+            "주도": "circle",
+            "약화": "diamond",
+            "개선": "square",
+            "소외": "x",
+            "업종혼조": "diamond",
+            "업종확산약함": "triangle-down",
+        }
+        grp_df["_plot_group"] = grp_df.apply(
+            lambda r: (
+                "업종확산약함" if str(r.get("KOSPI내부판정", "")) == "확산 약함"
+                else "업종혼조" if str(r.get("KOSPI내부판정", "")) == "혼조" and str(r.get("사분면", "")) in {"주도", "개선"}
+                else str(r.get("사분면", ""))
+            ),
+            axis=1,
+        )
 
         fig = go.Figure()
-        for quad, qdf in grp_df.groupby("사분면"):
+        for quad, qdf in grp_df.groupby("_plot_group"):
             color  = _QUAD_COLOR.get(quad, "#94a3b8")
             symbol = _QUAD_SYMBOL.get(quad, "circle")
             entry_mask = qdf["진입검토"] == "✅ 진입검토"
@@ -23898,6 +24016,10 @@ def render_today_market_flow_panel(snapshot=None):
                 hover_r1m = subdf[ret_col_1m] if ret_col_1m in subdf.columns else pd.Series([np.nan] * len(subdf))
                 hover_leader = subdf["대표주"] if "대표주" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
                 hover_weak = subdf["약세주"] if "약세주" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
+                hover_internal = subdf["업종내부"] if "업종내부" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_industries = subdf["대표업종"] if "대표업종" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_internal_leaders = subdf["업종대표주"] if "업종대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_internal_laggards = subdf["약한대표주"] if "약한대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 fig.add_trace(go.Scatter(
                     x=subdf["RS(3M)"] * 100,
                     y=subdf["RS모멘텀"] * 100,
@@ -23922,6 +24044,10 @@ def render_today_market_flow_panel(snapshot=None):
                         subdf["진입검토"].values,
                         hover_leader.values,
                         hover_weak.values,
+                        hover_internal.values,
+                        hover_industries.values,
+                        hover_internal_leaders.values,
+                        hover_internal_laggards.values,
                     ]),
                     hovertemplate=(
                         "<b>%{text}</b><br>"
@@ -23929,6 +24055,10 @@ def render_today_market_flow_panel(snapshot=None):
                         "1M수익률: %{customdata[2]:.1%}  상태: %{customdata[3]}<br>"
                         "대표주: %{customdata[5]}<br>"
                         "약세주: %{customdata[6]}<br>"
+                        "KOSPI 업종내부: %{customdata[7]}<br>"
+                        "대표업종: %{customdata[8]}<br>"
+                        "업종대표주: %{customdata[9]}<br>"
+                        "약한대표주: %{customdata[10]}<br>"
                         "<b>%{customdata[4]}</b><extra></extra>"
                     ),
                     showlegend=True,
@@ -23964,10 +24094,18 @@ def render_today_market_flow_panel(snapshot=None):
 
         # 진입검토 후보 테이블
         entry_df = grp_df[grp_df["진입검토"] == "✅ 진입검토"].copy()
+        internal_review_df = grp_df[grp_df["진입검토"].astype(str).str.contains("내부", na=False)].copy()
         if entry_df.empty:
-            st.info("현재 진입검토 조건(개선/주도 + 단기 상승 확인 + 비과열)을 모두 충족한 섹터가 없습니다. 이 조건은 섹터 전체 기준이며, 개별 종목 진입 신호는 위 오늘 점검 표를 참고하세요.")
+            if internal_review_df.empty:
+                st.info("현재 진입검토 조건(개선/주도 + 단기 상승 확인 + 비과열)을 모두 충족한 섹터가 없습니다. 이 조건은 섹터 전체 기준이며, 개별 종목 진입 신호는 위 오늘 점검 표를 참고하세요.")
+            else:
+                st.warning("RS 조건은 맞지만 KOSPI 업종 내부 확산이 혼조/약함이라 진입검토에서 낮춘 후보입니다.")
+                entry_df = internal_review_df.copy()
         else:
             st.markdown("**✅ 진입검토 후보**")
+            if not internal_review_df.empty:
+                st.caption(f"🟨 내부확인 {len(internal_review_df)}개는 업종 내부 확산 확인 전까지 정밀/진입 후보에서 제외했습니다.")
+        if not entry_df.empty:
             # 투자유형 컬럼 추가
             def _today_type(r):
                 rs3m  = r.get("RS(3M)",   np.nan)
@@ -23981,7 +24119,8 @@ def render_today_market_flow_panel(snapshot=None):
                     return "🌱 장기"
                 return "⚪ 관망"
             entry_df["유형"] = entry_df.apply(_today_type, axis=1)
-            show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker", "사분면",
+            show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "진입검토",
+                                       "업종내부", "대표업종", "업종대표주", "약한대표주",
                                        "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                        "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                        "테마판정", "네이버테마근거", "상태"] if c in entry_df.columns]
@@ -24016,6 +24155,7 @@ def render_today_market_flow_panel(snapshot=None):
 
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker", "사분면", "진입검토",
+                                     "업종내부", "대표업종", "업종대표주", "약한대표주",
                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                      "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                      "테마판정", "네이버테마근거", "상태"] if c in grp_df.columns]
@@ -24298,7 +24438,8 @@ def render_today_market_flow_panel(snapshot=None):
         "**X축 RS(3M)**: 벤치마크 대비 초과 수익률 &nbsp;|&nbsp; "
         "**Y축 RS모멘텀**: 가속도 초과분 &nbsp;|&nbsp; "
         "✅ 진입검토 = 개선/주도 + 단기 상승 확인(1M≥+1%) + 가속도≥0 + 비과열 &nbsp;|&nbsp; "
-        "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200"
+        "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200 &nbsp;|&nbsp; "
+        "한국/국내 테마는 KOSPI 업종내부 확산도를 반영해 🟨 내부혼조·내부확인으로 낮춰 표시합니다."
     )
 
     render_cluster_heatmap_enhanced(
