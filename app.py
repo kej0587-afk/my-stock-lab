@@ -173,6 +173,11 @@ try:
     from stock_lab_core.money_flow import get_sector_flow_state
 except ImportError:
     def get_sector_flow_state(ticker): return "-"
+try:
+    from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
+except ImportError:
+    def build_kr_cluster_snapshot(*args, **kwargs):
+        return {}
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
     build_kr_etf_lab_from_excel_files,
@@ -7166,6 +7171,64 @@ def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", the
     return "🔸 관망", "섹터·테마·타점 중 하나 이상이 아직 약합니다."
 
 
+def _fmt_kr_sector_pct(value) -> str:
+    if not finite_num(value):
+        return "-"
+    return f"{float(value):+.1f}%"
+
+
+def _format_kr_sector_items(items: list, limit: int = 3) -> str:
+    rows = []
+    for item in (items or [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        name = html.escape(str(item.get("name", "") or "").strip())
+        if not name:
+            continue
+        pct = _fmt_kr_sector_pct(item.get("change_pct", np.nan))
+        clr = "#4ade80" if str(pct).startswith("+") else ("#f87171" if str(pct).startswith("-") else "#94a3b8")
+        rows.append(f"<span style='white-space:nowrap;color:#cbd5e1;'>{name} <b style='color:{clr};'>{pct}</b></span>")
+    return " · ".join(rows) if rows else "-"
+
+
+def _render_kr_cluster_snapshot_html(snapshot: dict) -> str:
+    if not isinstance(snapshot, dict) or not snapshot:
+        return ""
+
+    status = str(snapshot.get("status", "혼조") or "혼조")
+    if status == "확산 우세":
+        status_clr = "#4ade80"
+    elif status == "확산 약함":
+        status_clr = "#f87171"
+    else:
+        status_clr = "#fbbf24"
+
+    breadth = snapshot.get("breadth", np.nan)
+    breadth_txt = f"{float(breadth) * 100:.0f}%" if finite_num(breadth) else "-"
+    sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
+    const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan))
+    industries = _format_kr_sector_items(snapshot.get("industries", []), limit=3)
+    leaders = _format_kr_sector_items(snapshot.get("leaders", []), limit=3)
+    laggards = _format_kr_sector_items(snapshot.get("laggards", []), limit=2)
+    warning = str(snapshot.get("warning", "") or "")
+    warning_html = (
+        f"<div style='font-size:0.64em;color:#fca5a5;margin-top:2px;'>{html.escape(warning)}</div>"
+        if warning else ""
+    )
+
+    return (
+        "<div style='border-top:1px dashed #334155;margin-top:6px;padding-top:5px;"
+        "font-size:0.63em;line-height:1.65;color:#94a3b8;'>"
+        f"<div><span style='color:{status_clr};font-weight:700;'>KOSPI 업종내부 · {html.escape(status)}</span>"
+        f" · 확산 {breadth_txt} · 업종 {sector_avg} · 대표주 {const_avg}</div>"
+        f"<div>대표업종: {industries}</div>"
+        f"<div>대표주: {leaders}</div>"
+        f"<div>약한 대표주: {laggards}</div>"
+        f"{warning_html}"
+        "</div>"
+    )
+
+
 def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
@@ -7273,6 +7336,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
             "<div style='font-size:0.66em;color:#bae6fd;margin-top:4px;'>"
             f"연결테마: {html.escape(str(bridge.get('label', '')))}</div>"
         )
+    kr_snapshot_html = _render_kr_cluster_snapshot_html(cl.get("kr_snapshot", {}))
     ticker_rows_html = ""
     if tickers:
         rows = []
@@ -7331,6 +7395,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         f"{timing_reason_html}"
         f"{core_warning_html}"
         f"{bridge_html}"
+        f"{kr_snapshot_html}"
         # 4분면 분포 요약
         f"<div style='font-size:0.70em;color:#64748b;'>{quad_str}&nbsp;({n}개)</div>"
         # ETF 상세
@@ -7465,6 +7530,17 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             continue
         n         = len(matched)
         core_member = matched[0]
+        is_kr_cluster = any(is_kr_listed(m.get("ticker", "")) for m in matched)
+        kr_snapshot = build_kr_cluster_snapshot(cl_name) if is_kr_cluster else {}
+        kr_breadth = clean_float(kr_snapshot.get("breadth", np.nan), np.nan) if kr_snapshot else np.nan
+        kr_sector_change = clean_float(kr_snapshot.get("sector_avg_change_pct", np.nan), np.nan) if kr_snapshot else np.nan
+        kr_internal_weak = bool(
+            kr_snapshot
+            and (
+                (finite_num(kr_breadth) and kr_breadth < 0.40)
+                or (finite_num(kr_sector_change) and kr_sector_change < 0)
+            )
+        )
         avg_rs3m  = float(np.mean([m["rs3m"]  for m in matched]))
         avg_rsmom = float(np.mean([m["rsmom"] for m in matched]))
         avg_r1m   = _avg([m["r1m"] for m in matched])
@@ -7491,9 +7567,12 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             (core_quad == "소외" and (core_rs3m < 0 or core_rsmom < 0))
             or (core_rs3m < 0 and core_rsmom < 0)
         )
-        core_warning = ""
+        warning_bits = []
         if core_is_diverged:
-            core_warning = f"대표축 {core_member.get('name', core_member.get('ticker', ''))} 소외: 클러스터 내부 엇갈림"
+            warning_bits.append(f"대표축 {core_member.get('name', core_member.get('ticker', ''))} 소외: 클러스터 내부 엇갈림")
+        if kr_snapshot.get("warning"):
+            warning_bits.append(str(kr_snapshot.get("warning")))
+        core_warning = " / ".join(warning_bits)
 
         short_down = (
             (finite_num(avg_r1m) and avg_r1m <= -0.02
@@ -7565,6 +7644,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             timing_state = "확인 필요"
         if core_is_diverged and timing_state == "진입 가능":
             timing_state = "확인 필요"
+        if kr_internal_weak and timing_state == "진입 가능":
+            timing_state = "확인 필요"
 
         # 하위 호환을 위해 fit_score/heat은 강도+타이밍 결합 점수로 유지 (정렬 등에서 참조)
         core_divergence_penalty = 10.0 if core_is_diverged else 0.0
@@ -7603,6 +7684,7 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             "overheat_penalty": overheat_penalty,
             "pullback_penalty": pullback_penalty,
             "core_warning": core_warning,
+            "kr_snapshot": kr_snapshot,
             "core_divergence_penalty": core_divergence_penalty,
             "score_parts": {
                 "주도": lead_score,
