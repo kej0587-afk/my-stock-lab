@@ -7229,6 +7229,29 @@ def _render_kr_cluster_snapshot_html(snapshot: dict) -> str:
     )
 
 
+def _format_kr_sector_items_plain(items: list, limit: int = 3) -> str:
+    rows = []
+    for item in (items or [])[:limit]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "") or "").strip()
+        if not name:
+            continue
+        pct = _fmt_kr_sector_pct(item.get("change_pct", np.nan))
+        rows.append(f"{name} {pct}")
+    return ", ".join(rows)
+
+
+def _kr_snapshot_status_text(snapshot: dict) -> str:
+    if not isinstance(snapshot, dict) or not snapshot:
+        return "-"
+    status = str(snapshot.get("status", "") or "-")
+    breadth = snapshot.get("breadth", np.nan)
+    breadth_text = f"{float(breadth) * 100:.0f}%" if finite_num(breadth) else "-"
+    sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
+    return f"{status} · 확산 {breadth_text} · 업종 {sector_avg}"
+
+
 def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     """클러스터 카드 단위 HTML 렌더링 — 하단에 구성 ETF 상세 표시."""
     rs3m   = cl["rs3m"]
@@ -23138,6 +23161,12 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
         for market, cl in sorted(cluster_items, key=lambda x: x[1].get("fit_score", -999), reverse=True):
             tickers = " ".join(str(t.get("ticker", "")) for t in cl.get("tickers", []) if isinstance(t, dict))
             bridge = resolve_flow_theme_bridge(cl.get("name", ""), tickers, market)
+            kr_snapshot = cl.get("kr_snapshot", {}) if market == "한국 섹터" else {}
+            kr_internal_status = _kr_snapshot_status_text(kr_snapshot)
+            kr_internal_weak = "확산 약함" in kr_internal_status
+            kr_industries_text = _format_kr_sector_items_plain(kr_snapshot.get("industries", []), limit=3) if kr_snapshot else "-"
+            kr_representative_text = _format_kr_sector_items_plain(kr_snapshot.get("leaders", []), limit=3) if kr_snapshot else ""
+            kr_laggards_text = _format_kr_sector_items_plain(kr_snapshot.get("laggards", []), limit=2) if kr_snapshot else "-"
             theme_row = _best_theme_row(theme_rotation_df, bridge.get("themes", []))
             theme_name = _first_flow_text(
                 theme_row.get("테마", ""),
@@ -23186,6 +23215,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
                 theme_row.get("대표주", ""),
+                kr_representative_text,
                 _fallback_flow_representative(theme_name, display_subtheme, cl.get("name", "")),
                 default="대표주 확인 필요",
             )
@@ -23196,6 +23226,9 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 next_check = "전광판 등록 후 2주·1개월 흐름 유지 확인"
             elif action == "🔸 관망":
                 next_check = "섹터와 하위테마가 같은 방향으로 맞을 때 재검토"
+            if kr_internal_weak:
+                next_check = "KOSPI 업종 내부 확산·약한 대표주 먼저 확인"
+                reason = f"{reason} / KOSPI 업종 내부 확산 약함"
 
             rows.append({
                 "출처": "ETF/섹터",
@@ -23207,6 +23240,10 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "핵심하위테마": display_subtheme,
                 "하위상태": display_sub_state,
                 "대표주": representative,
+                "업종내부": kr_internal_status,
+                "대표업종": kr_industries_text,
+                "업종대표주": kr_representative_text or "-",
+                "약한대표주": kr_laggards_text,
                 "통합판정": action,
                 "다음확인": next_check,
                 "이유": reason,
@@ -23279,6 +23316,10 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "핵심하위테마": display_subtheme,
                 "하위상태": display_sub_state,
                 "대표주": representative,
+                "업종내부": "-",
+                "대표업종": "-",
+                "업종대표주": "-",
+                "약한대표주": "-",
                 "통합판정": action,
                 "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
                 "이유": reason,
@@ -23383,8 +23424,11 @@ def _flow_compact_decision(row):
     action = str(row.get("행동", "") or "") or _flow_action_bucket(row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
     price_band = str(row.get("가격위치", "") or "")
+    internal = str(row.get("업종내부", "") or "")
     text = " ".join(str(row.get(c, "") or "") for c in ["큰돈판정", "테마판정", "하위상태"])
 
+    if "확산 약함" in internal:
+        return "ETF 강하지만 업종확산 약함"
     if action == "정밀관측":
         return "후보 압축, 종목 타점 확인"
     if action == "눌림대기":
@@ -23405,11 +23449,18 @@ def _flow_compact_decision(row):
 def _adjust_flow_command_action(row):
     action = _flow_action_bucket(row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
+    internal = str(row.get("업종내부", "") or "")
     r1m = clean_float(row.get("1개월", np.nan), np.nan)
     r2w = clean_float(row.get("2주", np.nan), np.nan)
 
     if action not in {"정밀관측", "눌림대기"}:
         return action
+
+    # 한국 ETF/섹터 프록시가 강해도 실제 KOSPI 업종 내부가 약하면 우선순위를 낮춘다.
+    if "확산 약함" in internal:
+        if finite_num(r2w) and float(r2w) >= 0.03:
+            return "관심등록"
+        return "관망/제외"
 
     # 상위 흐름이 약하면 '눌림'이 아니라 반등 확인/관망으로 본다.
     if layer in {"상위약함", "확인중"}:
@@ -23480,6 +23531,7 @@ def _render_flow_command_center(unified_df):
     chase_block_count = int(counts.get("추격금지", 0))
     interest_count = int(counts.get("관심등록", 0))
     wait_count = int(counts.get("관망/제외", 0))
+    internal_weak_count = int(command_df.get("업종내부", pd.Series(dtype=str)).astype(str).str.contains("확산 약함", na=False).sum())
 
     if precision_count:
         headline = "정밀관측 후보가 있습니다. 바로 매수보다 종목별 과열·눌림·R/R을 확인하는 순서입니다."
@@ -23495,12 +23547,17 @@ def _render_flow_command_center(unified_df):
         border = "#64748b"
 
     st.markdown("#### 오늘 돈흐름 결론판")
+    internal_note = (
+        f"<br>KOSPI 업종내부 확산 약한 후보 {internal_weak_count}개는 정밀/눌림보다 확인·관망으로 낮춰 봅니다."
+        if internal_weak_count else ""
+    )
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {border}; margin-bottom:12px;'>
 <b>먼저 볼 순서</b><br>
 <span class='highlight'>{html.escape(headline)}</span><br>
 돈이 몰린 곳과 지금 진입 가능한 곳을 분리해서 봅니다. 강한 축이어도 신고가권·과열이면 `눌림대기`로 보냅니다.
+{internal_note}
 </div>
         """,
         unsafe_allow_html=True,
@@ -23513,7 +23570,7 @@ def _render_flow_command_center(unified_df):
     m4.metric("관심등록", f"{interest_count}개")
     m5.metric("관망/제외", f"{wait_count}개")
 
-    cols = ["행동", "후보군", "주도층위", "대표주", "가격위치", "흐름", "판단", "다음확인"]
+    cols = ["행동", "후보군", "주도층위", "업종내부", "대표업종", "대표주", "가격위치", "흐름", "판단", "다음확인"]
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
     if primary.empty:
         primary = command_df.head(10)
@@ -23565,7 +23622,7 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         "통합판정", "후보군", "큰돈판정", "큰돈1M", "큰돈2W",
         "연결테마", "테마판정", "테마1M", "테마2W",
         "핵심하위테마", "하위상태", "하위1M", "하위2W",
-        "대표주", "가격수준", "다음확인",
+        "대표주", "업종내부", "대표업종", "업종대표주", "약한대표주", "가격수준", "다음확인",
     ]
     with st.expander("원천 상세표 보기", expanded=False):
         st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서의 원천 표입니다.")
@@ -23577,6 +23634,7 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
             "- `관심등록`: 새 돈 후보지만 아직 타점 확정 전입니다. 전광판에 올려 흐름 유지 여부를 봅니다.\n"
             "- `눌림대기`: 큰 흐름은 강하지만 가격 위치나 과열 상태가 높습니다.\n"
             "- `추격금지`: 극단 과열 또는 가격 위치가 높아 신규 추격을 막는 구간입니다.\n"
+            "- `업종내부`: 한국 클러스터는 KOSPI 업종/대표주 확산도를 추가 확인합니다. 확산 약함이면 정밀·눌림 후보에서 낮춰 봅니다.\n"
             "- `관망`: 섹터, 테마, 하위테마 중 하나 이상이 아직 맞지 않습니다."
         )
 
