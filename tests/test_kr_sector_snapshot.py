@@ -20,3 +20,17 @@ def test_kr_cluster_snapshot_deduplicates_representatives():
 
     assert tickers
     assert len(tickers) == len(set(tickers))
+
+
+def test_kr_cluster_snapshot_uses_detail_segments_for_overlapping_industries():
+    semi = build_kr_cluster_snapshot("AI·반도체", detail_name="반도체")
+    mlcc = build_kr_cluster_snapshot("AI·반도체", detail_name="전자부품·MLCC")
+
+    semi_segments = [item["name"] for item in semi["subsectors"]]
+    mlcc_segments = [item["name"] for item in mlcc["subsectors"]]
+
+    assert semi_segments
+    assert mlcc_segments
+    assert semi_segments != mlcc_segments
+    assert any("HBM" in name or "반도체" in name for name in semi_segments)
+    assert any("MLCC" in name or "기판" in name for name in mlcc_segments)

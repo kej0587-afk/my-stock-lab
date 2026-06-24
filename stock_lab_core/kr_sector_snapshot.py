@@ -58,6 +58,171 @@ KR_CLUSTER_REPRESENTATIVE_KEYWORDS: dict[str, list[str]] = {
 }
 
 
+KR_DETAIL_GROUP_ALIASES: dict[str, str] = {
+    "AI·반도체": "반도체/HBM",
+    "IT/기술": "반도체/HBM",
+    "반도체": "반도체/HBM",
+    "국내 반도체": "반도체/HBM",
+    "국내 AI 반도체·소부장": "반도체/HBM",
+    "PCB·기판 글로벌": "기판·MLCC",
+    "전자부품·MLCC": "기판·MLCC",
+    "포토닉스·광통신": "포토닉스/광통신",
+    "전력·인프라": "전력기기",
+    "전력인프라": "전력기기",
+    "전력기기": "전력기기",
+    "전력·에너지 인프라": "전력기기",
+    "전력 인프라": "전력기기",
+    "원전·우라늄": "원전/SMR",
+    "원자력": "원전/SMR",
+    "원자력TOP10": "원전/SMR",
+    "글로벌 원전·SMR": "원전/SMR",
+    "방산·조선": "방산",
+    "방산": "방산",
+    "우주항공·방산": "방산",
+    "조선": "조선",
+    "조선·해양": "조선",
+    "K뷰티·콘텐츠": "K뷰티",
+    "K-뷰티": "K뷰티",
+    "화장품": "K뷰티",
+    "K-뷰티·소비재": "K뷰티",
+    "K콘텐츠": "K콘텐츠",
+    "바이오": "바이오",
+    "바이오·제약": "바이오",
+    "금융": "금융",
+    "한국 금융": "금융",
+    "2차전지": "2차전지",
+    "2차전지 밸류체인": "2차전지",
+    "리츠": "리츠/부동산",
+    "부동산": "리츠/부동산",
+    "에너지·건설": "에너지",
+    "에너지": "에너지",
+    "건설/유틸": "건설/유틸",
+}
+
+
+KR_DETAIL_GROUPS: dict[str, dict[str, Any]] = {
+    "반도체/HBM": {
+        "sectors": ["전기,전자", "기계,장비"],
+        "subsegments": [
+            {"name": "HBM·메모리 대형", "keywords": ["하이닉스", "삼성전자"]},
+            {"name": "반도체 장비", "keywords": ["한미반도체", "두산", "DB하이텍"]},
+            {"name": "기판·MLCC", "keywords": ["삼성전기", "LG이노텍", "대덕전자", "삼화콘덴서", "코리아써키트"]},
+        ],
+    },
+    "기판·MLCC": {
+        "sectors": ["전기,전자", "기계,장비"],
+        "subsegments": [
+            {"name": "MLCC·수동부품", "keywords": ["삼성전기", "삼화콘덴서"]},
+            {"name": "기판·패키징", "keywords": ["LG이노텍", "대덕전자", "코리아써키트"]},
+            {"name": "반도체 장비", "keywords": ["한미반도체", "DB하이텍"]},
+        ],
+    },
+    "포토닉스/광통신": {
+        "sectors": ["전기,전자", "기계,장비"],
+        "subsegments": [
+            {"name": "광학·카메라모듈", "keywords": ["LG이노텍", "삼성전기"]},
+            {"name": "전자부품", "keywords": ["삼성전기", "삼화콘덴서"]},
+            {"name": "반도체 장비", "keywords": ["한미반도체", "DB하이텍"]},
+        ],
+    },
+    "전력기기": {
+        "sectors": ["전기,전자", "기계,장비", "전기,가스", "금속"],
+        "subsegments": [
+            {"name": "변압기·전력기기", "keywords": ["HD현대일렉트릭", "효성중공업", "LS ELECTRIC", "일진전기", "산일전기"]},
+            {"name": "전선·케이블", "keywords": ["대한전선", "대원전선", "가온전선"]},
+            {"name": "전력·발전", "keywords": ["한국전력", "두산에너빌리티"]},
+        ],
+    },
+    "원전/SMR": {
+        "sectors": ["기계,장비", "전기,가스", "건설", "금속"],
+        "subsegments": [
+            {"name": "원전·발전", "keywords": ["두산에너빌리티", "한국전력"]},
+            {"name": "EPC·건설", "keywords": ["현대건설", "대우건설", "DL이앤씨", "GS건설"]},
+            {"name": "소재·기자재", "keywords": ["금양", "부국철강", "포스코스틸리온"]},
+        ],
+    },
+    "방산": {
+        "sectors": ["운송장비,부품", "기계,장비", "금속"],
+        "subsegments": [
+            {"name": "방산 대형", "keywords": ["한화에어로스페이스", "현대로템", "한국항공우주", "LIG"]},
+            {"name": "방산·조선 혼합", "keywords": ["한화오션", "HD현대중공업"]},
+            {"name": "기계·부품", "keywords": ["두산", "한화엔진"]},
+        ],
+    },
+    "조선": {
+        "sectors": ["운송장비,부품", "기계,장비", "금속"],
+        "subsegments": [
+            {"name": "조선 대형", "keywords": ["한화오션", "HD현대중공업", "HD현대미포", "삼성중공업"]},
+            {"name": "조선 기자재", "keywords": ["한화엔진", "한국카본", "세진중공업"]},
+            {"name": "운송·부품", "keywords": ["현대모비스", "HL만도", "한온시스템"]},
+        ],
+    },
+    "K뷰티": {
+        "sectors": ["화학", "유통"],
+        "subsegments": [
+            {"name": "화장품 브랜드", "keywords": ["아모레", "LG생활건강"]},
+            {"name": "ODM·제조", "keywords": ["코스맥스", "한국콜마", "콜마"]},
+            {"name": "소비·유통", "keywords": ["신세계", "광주신세계", "더본코리아"]},
+        ],
+    },
+    "K콘텐츠": {
+        "sectors": ["오락,문화", "it서비스", "유통"],
+        "subsegments": [
+            {"name": "플랫폼", "keywords": ["NAVER", "카카오"]},
+            {"name": "엔터·콘텐츠", "keywords": ["하이브", "CJ", "제일기획"]},
+            {"name": "게임", "keywords": ["크래프톤", "엔씨소프트", "넷마블"]},
+        ],
+    },
+    "바이오": {
+        "sectors": ["제약", "의료,정밀기기"],
+        "subsegments": [
+            {"name": "바이오 대형/CDMO", "keywords": ["삼성바이오", "셀트리온"]},
+            {"name": "제약 대형", "keywords": ["유한양행", "한미약품", "한올바이오파마"]},
+            {"name": "의료기기·진단", "keywords": ["덴티움", "클래시스", "의료"]},
+        ],
+    },
+    "금융": {
+        "sectors": ["금융", "증권", "보험"],
+        "subsegments": [
+            {"name": "은행지주", "keywords": ["KB금융", "신한지주", "하나금융", "우리금융"]},
+            {"name": "보험", "keywords": ["삼성생명", "삼성화재", "DB손해보험", "한화생명"]},
+            {"name": "증권", "keywords": ["미래에셋증권", "키움증권", "NH투자증권"]},
+        ],
+    },
+    "2차전지": {
+        "sectors": ["화학", "전기,전자"],
+        "subsegments": [
+            {"name": "배터리 셀", "keywords": ["LG에너지솔루션", "삼성SDI"]},
+            {"name": "소재", "keywords": ["LG화학", "포스코퓨처엠", "SKC"]},
+            {"name": "부품·장비", "keywords": ["후성", "삼화콘덴서"]},
+        ],
+    },
+    "리츠/부동산": {
+        "sectors": ["부동산"],
+        "subsegments": [
+            {"name": "리츠", "keywords": ["리츠"]},
+            {"name": "부동산", "keywords": ["부동산"]},
+        ],
+    },
+    "에너지": {
+        "sectors": ["전기,가스", "화학", "기계,장비"],
+        "subsegments": [
+            {"name": "정유·화학", "keywords": ["SK이노베이션", "S-Oil", "GS"]},
+            {"name": "전력·가스", "keywords": ["한국전력", "한국가스공사"]},
+            {"name": "발전·에너지장비", "keywords": ["두산에너빌리티", "효성중공업"]},
+        ],
+    },
+    "건설/유틸": {
+        "sectors": ["건설", "전기,가스", "금속"],
+        "subsegments": [
+            {"name": "건설/EPC", "keywords": ["현대건설", "대우건설", "DL이앤씨", "GS건설"]},
+            {"name": "유틸리티", "keywords": ["한국전력", "한국가스공사"]},
+            {"name": "건설소재", "keywords": ["부국철강", "포스코스틸리온", "다스코"]},
+        ],
+    },
+}
+
+
 def _clean_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(
         series.astype(str).str.replace(",", "", regex=False).str.replace("%", "", regex=False),
@@ -77,9 +242,72 @@ def _keyword_filtered_rows(cluster_name: str, rows: pd.DataFrame) -> pd.DataFram
     keywords = KR_CLUSTER_REPRESENTATIVE_KEYWORDS.get(cluster_name, [])
     if not keywords or rows.empty or "name" not in rows.columns:
         return rows
+    return _keyword_filtered_rows_by_keywords(rows, keywords, fallback=rows)
+
+
+def _keyword_filtered_rows_by_keywords(
+    rows: pd.DataFrame,
+    keywords: list[str],
+    fallback: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    if not keywords or rows.empty or "name" not in rows.columns:
+        return rows
     pattern = "|".join(re.escape(str(keyword)) for keyword in keywords)
     filtered = rows[rows["name"].astype(str).str.contains(pattern, case=False, na=False, regex=True)].copy()
-    return filtered if not filtered.empty else rows
+    if not filtered.empty:
+        return filtered
+    return rows if fallback is None else fallback
+
+
+def _resolve_detail_group(detail_name: str = "", cluster_name: str = "") -> tuple[str, dict[str, Any]]:
+    candidates = [str(detail_name or "").strip(), str(cluster_name or "").strip()]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        direct = KR_DETAIL_GROUPS.get(candidate)
+        if direct:
+            return candidate, direct
+        alias = KR_DETAIL_GROUP_ALIASES.get(candidate)
+        if alias and alias in KR_DETAIL_GROUPS:
+            return alias, KR_DETAIL_GROUPS[alias]
+
+    joined = " ".join(candidate for candidate in candidates if candidate)
+    for keyword, alias in KR_DETAIL_GROUP_ALIASES.items():
+        if keyword and keyword in joined and alias in KR_DETAIL_GROUPS:
+            return alias, KR_DETAIL_GROUPS[alias]
+    return "", {}
+
+
+def _detail_keywords(detail_group: dict[str, Any]) -> list[str]:
+    keywords: list[str] = []
+    for segment in detail_group.get("subsegments", []) or []:
+        keywords.extend(str(keyword) for keyword in segment.get("keywords", []) or [])
+    return keywords
+
+
+def _subsector_records(rows: pd.DataFrame, detail_group: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
+    if rows.empty or not detail_group:
+        return []
+    records: list[dict[str, Any]] = []
+    for segment in detail_group.get("subsegments", []) or []:
+        name = str(segment.get("name", "") or "").strip()
+        keywords = [str(keyword) for keyword in segment.get("keywords", []) or [] if str(keyword).strip()]
+        if not name or not keywords:
+            continue
+        segment_rows = _keyword_filtered_rows_by_keywords(rows, keywords, fallback=pd.DataFrame())
+        valid = segment_rows.dropna(subset=["change_pct"]) if "change_pct" in segment_rows else pd.DataFrame()
+        if valid.empty:
+            continue
+        records.append(
+            {
+                "name": name,
+                "ticker": "",
+                "change_pct": float(valid["change_pct"].mean()),
+                "breadth": float((valid["change_pct"] > 0).mean()),
+                "count": int(len(valid)),
+            }
+        )
+    return records[:limit]
 
 
 def _empty_industry_df() -> pd.DataFrame:
@@ -164,14 +392,17 @@ def _records(df: pd.DataFrame, name_col: str = "name", limit: int = 3) -> list[d
     return rows
 
 
-def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3) -> dict[str, Any]:
+def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: str = "") -> dict[str, Any]:
     """Return KOSPI industry breadth/representative-stock context for a KR cluster.
 
     The main cluster score still comes from the app's ETF price-flow model. This
     snapshot is a same-day breadth guardrail so one hot ETF cannot make the whole
     Korean industry look healthy when the underlying constituents are weak.
     """
-    sectors = KR_CLUSTER_INDUSTRY_MAP.get(str(cluster_name or "").strip(), [])
+    detail_key, detail_group = _resolve_detail_group(detail_name=detail_name, cluster_name=cluster_name)
+    sectors = detail_group.get("sectors", []) if detail_group else []
+    if not sectors:
+        sectors = KR_CLUSTER_INDUSTRY_MAP.get(str(cluster_name or "").strip(), [])
     if not sectors:
         return {}
     sector_keys = {_sector_key(sector) for sector in sectors}
@@ -191,7 +422,15 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3) -> dict[str, An
         constituent_rows = _empty_constituent_df()
     if "is_fund_like" in constituent_rows.columns:
         constituent_rows = constituent_rows[~constituent_rows["is_fund_like"].fillna(False)].copy()
-    constituent_rows = _keyword_filtered_rows(cluster_name, constituent_rows)
+    if detail_group:
+        detail_rows = _keyword_filtered_rows_by_keywords(
+            constituent_rows,
+            _detail_keywords(detail_group),
+            fallback=pd.DataFrame(),
+        )
+        constituent_rows = detail_rows if not detail_rows.empty else _keyword_filtered_rows(cluster_name, constituent_rows)
+    else:
+        constituent_rows = _keyword_filtered_rows(cluster_name, constituent_rows)
     if "ticker" in constituent_rows.columns:
         sort_cols = [col for col in ["rank", "volume"] if col in constituent_rows.columns]
         if sort_cols:
@@ -211,6 +450,7 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3) -> dict[str, An
         if "change_pct" in industry_rows
         else industry_rows
     )
+    subsector_rows = _subsector_records(valid_const, detail_group, limit=top_n)
     representative_rows = (
         valid_const.sort_values(["rank", "volume"], ascending=[True, False])
         if not valid_const.empty
@@ -237,6 +477,7 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3) -> dict[str, An
 
     return {
         "cluster": cluster_name,
+        "detail": detail_key,
         "sectors": sectors,
         "sector_avg_change_pct": sector_avg,
         "constituent_avg_change_pct": const_avg,
@@ -244,6 +485,7 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3) -> dict[str, An
         "status": status,
         "warning": warning,
         "industries": _records(industry_top, name_col="sector_name", limit=top_n),
+        "subsectors": subsector_rows,
         "leaders": _records(representative_rows, limit=top_n),
         "laggards": _records(laggards, limit=top_n),
     }

@@ -7207,6 +7207,10 @@ def _render_kr_cluster_snapshot_html(snapshot: dict) -> str:
     breadth_txt = f"{float(breadth) * 100:.0f}%" if finite_num(breadth) else "-"
     sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
     const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan))
+    subsectors = _format_kr_sector_items(
+        snapshot.get("subsectors", []) or snapshot.get("industries", []),
+        limit=3,
+    )
     industries = _format_kr_sector_items(snapshot.get("industries", []), limit=3)
     leaders = _format_kr_sector_items(snapshot.get("leaders", []), limit=3)
     laggards = _format_kr_sector_items(snapshot.get("laggards", []), limit=2)
@@ -7221,7 +7225,8 @@ def _render_kr_cluster_snapshot_html(snapshot: dict) -> str:
         "font-size:0.63em;line-height:1.65;color:#94a3b8;'>"
         f"<div><span style='color:{status_clr};font-weight:700;'>KOSPI 업종내부 · {html.escape(status)}</span>"
         f" · 확산 {breadth_txt} · 업종 {sector_avg} · 대표주 {const_avg}</div>"
-        f"<div>대표업종: {industries}</div>"
+        f"<div>세부축: {subsectors}</div>"
+        f"<div>KOSPI대분류: {industries}</div>"
         f"<div>대표주: {leaders}</div>"
         f"<div>약한 대표주: {laggards}</div>"
         f"{warning_html}"
@@ -7315,6 +7320,7 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         "진입검토": "🔸 관망",
         "업종내부": "-",
         "대표업종": "-",
+        "KOSPI대분류": "-",
         "업종대표주": "-",
         "약한대표주": "-",
         "KOSPI내부판정": "",
@@ -7322,20 +7328,29 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         if col not in out.columns:
             out[col] = default
 
-    snapshot_cache: dict[str, dict] = {}
+    snapshot_cache: dict[tuple[str, str], dict] = {}
     for idx, row in out.iterrows():
         cluster = _lookup_kr_rotation_cluster(row, label_col)
         if not cluster:
             continue
-        snapshot = snapshot_cache.get(cluster)
+        sector = str(row.get("섹터", "") or "").strip()
+        theme = str(row.get("테마", "") or "").strip()
+        label = str(row.get(label_col, "") or "").strip() if label_col else ""
+        detail_label = next((value for value in [label, theme, sector] if value), cluster)
+        cache_key = (cluster, detail_label)
+        snapshot = snapshot_cache.get(cache_key)
         if snapshot is None:
-            snapshot = build_kr_cluster_snapshot(cluster)
-            snapshot_cache[cluster] = snapshot
+            snapshot = build_kr_cluster_snapshot(cluster, detail_name=detail_label)
+            snapshot_cache[cache_key] = snapshot
         if not snapshot:
             continue
         status_text = _kr_snapshot_status_text(snapshot)
         out.at[idx, "업종내부"] = status_text
-        out.at[idx, "대표업종"] = _format_kr_sector_items_plain(snapshot.get("industries", []), limit=3) or "-"
+        out.at[idx, "대표업종"] = _format_kr_sector_items_plain(
+            snapshot.get("subsectors", []) or snapshot.get("industries", []),
+            limit=3,
+        ) or "-"
+        out.at[idx, "KOSPI대분류"] = _format_kr_sector_items_plain(snapshot.get("industries", []), limit=3) or "-"
         out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(snapshot.get("leaders", []), limit=3) or "-"
         out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(snapshot.get("laggards", []), limit=2) or "-"
         status = str(snapshot.get("status", "") or "")
@@ -7426,6 +7441,21 @@ def _rotation_execution_bucket(row) -> tuple[str, str]:
     return "🔸 관망", "큰 흐름, 단기 흐름, 내부 확산 중 하나 이상이 부족합니다."
 
 
+def _rotation_entry_gate(action: str) -> str:
+    text = str(action or "")
+    if text.startswith("✅"):
+        return "✅ 진입검토"
+    if "눌림대기" in text:
+        return "⏳ 눌림대기"
+    if "반등확인" in text:
+        return "👀 확인필요"
+    if "내부" in text:
+        return "🟨 내부확인"
+    if "위험회피" in text:
+        return "🚫 제외"
+    return "🔸 관망"
+
+
 def _apply_rotation_execution_framework(grp_df: pd.DataFrame) -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
@@ -7436,7 +7466,7 @@ def _apply_rotation_execution_framework(grp_df: pd.DataFrame) -> pd.DataFrame:
     decisions = out.apply(_rotation_execution_bucket, axis=1)
     out["실행분류"] = decisions.apply(lambda x: x[0])
     out["체크포인트"] = decisions.apply(lambda x: x[1])
-    out["진입검토"] = out["실행분류"]
+    out["진입검토"] = out["실행분류"].apply(_rotation_entry_gate)
     return out
 
 
@@ -24108,6 +24138,7 @@ def render_today_market_flow_panel(snapshot=None):
                 hover_weak = subdf["약세주"] if "약세주" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
                 hover_internal = subdf["업종내부"] if "업종내부" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_industries = subdf["대표업종"] if "대표업종" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_broad_industries = subdf["KOSPI대분류"] if "KOSPI대분류" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_internal_leaders = subdf["업종대표주"] if "업종대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_internal_laggards = subdf["약한대표주"] if "약한대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_big = subdf["큰흐름"] if "큰흐름" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
@@ -24139,6 +24170,7 @@ def render_today_market_flow_panel(snapshot=None):
                         hover_weak.values,
                         hover_internal.values,
                         hover_industries.values,
+                        hover_broad_industries.values,
                         hover_internal_leaders.values,
                         hover_internal_laggards.values,
                         hover_big.values,
@@ -24149,14 +24181,15 @@ def render_today_market_flow_panel(snapshot=None):
                         "<b>%{text}</b><br>"
                         "RS(3M): %{x:.1f}%p  RS모멘텀: %{y:.2f}%p<br>"
                         "1M수익률: %{customdata[2]:.1%}  상태: %{customdata[3]}<br>"
-                        "큰흐름: %{customdata[11]} / 단기상태: %{customdata[12]}<br>"
+                        "큰흐름: %{customdata[12]} / 단기상태: %{customdata[13]}<br>"
                         "대표주: %{customdata[5]}<br>"
                         "약세주: %{customdata[6]}<br>"
                         "KOSPI 업종내부: %{customdata[7]}<br>"
-                        "대표업종: %{customdata[8]}<br>"
-                        "업종대표주: %{customdata[9]}<br>"
-                        "약한대표주: %{customdata[10]}<br>"
-                        "체크: %{customdata[13]}<br>"
+                        "세부축: %{customdata[8]}<br>"
+                        "KOSPI대분류: %{customdata[9]}<br>"
+                        "업종대표주: %{customdata[10]}<br>"
+                        "약한대표주: %{customdata[11]}<br>"
+                        "체크: %{customdata[14]}<br>"
                         "<b>%{customdata[4]}</b><extra></extra>"
                     ),
                     showlegend=True,
@@ -24220,7 +24253,7 @@ def render_today_market_flow_panel(snapshot=None):
             entry_df["유형"] = entry_df.apply(_today_type, axis=1)
             show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker",
                                        "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
-                                       "사분면", "진입검토", "업종내부", "대표업종", "업종대표주", "약한대표주",
+                                       "사분면", "진입검토", "업종내부", "대표업종", "KOSPI대분류", "업종대표주", "약한대표주",
                                        "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                        "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                        "테마판정", "네이버테마근거", "상태"] if c in entry_df.columns]
@@ -24256,7 +24289,7 @@ def render_today_market_flow_panel(snapshot=None):
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker",
                                      "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
-                                     "사분면", "진입검토", "업종내부", "대표업종", "업종대표주", "약한대표주",
+                                     "사분면", "진입검토", "업종내부", "대표업종", "KOSPI대분류", "업종대표주", "약한대표주",
                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                      "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                      "테마판정", "네이버테마근거", "상태"] if c in grp_df.columns]
@@ -24539,8 +24572,9 @@ def render_today_market_flow_panel(snapshot=None):
         "**X축 RS(3M)**: 벤치마크 대비 초과 수익률 &nbsp;|&nbsp; "
         "**Y축 RS모멘텀**: 가속도 초과분 &nbsp;|&nbsp; "
         "실행분류 = 큰흐름 + 단기상태 + 업종내부를 합친 압축판정 &nbsp;|&nbsp; "
+        "진입검토 = 정밀분석으로 넘길지 보는 간단 게이트 &nbsp;|&nbsp; "
         "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200 &nbsp;|&nbsp; "
-        "한국/국내 테마는 KOSPI 업종내부 확산도를 반영해 정밀후보·눌림대기·반등확인·내부확인·위험회피로 나눕니다."
+        "한국/국내 테마는 KOSPI 세부축과 대분류 확산도를 함께 반영합니다."
     )
 
     render_cluster_heatmap_enhanced(
