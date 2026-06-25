@@ -23,6 +23,10 @@ def test_ram_etf_app_profile_uses_dram_as_underlying(app_module):
     assert app_module.resolve_display_name_for_ticker("RAM", "Aries I") == (
         "Roundhill T-REX 2X Long DRAM Daily Target ETF"
     )
+    assert app_module.sanitize_asset_name("Aries I", "RAM") == (
+        "Roundhill T-REX 2X Long DRAM Daily Target ETF"
+    )
+    assert app_module.get_sector_benchmark_info("RAM", "us_etf_nasdaq") == ("SMH", "미국 반도체")
 
     profile = app_module.get_new_etf_manual_profile("RAM")
     assert profile["premium_unavailable_ok"] is True

@@ -11356,6 +11356,7 @@ BENCHMARK_LABELS = {
     "379800.KS": "S&P500(국내상장)",
     "QQQM": "QQQM(나스닥100)",
     "SPY": "SPY(S&P500)",
+    "DRAM": "DRAM(메모리 ETF)",
     "^KS11": "KOSPI 종합지수",
     "SMH": "SMH(반도체)",
     "XLK": "XLK(미국 기술)",
@@ -27217,6 +27218,10 @@ if main_page == "precision":
         name = sel
         tkr, is_etf, a_class = TICKER_MAP[sel]
         my_p, has_p = get_my_price(name, tkr), has_position(name, tkr)
+
+    # 정밀관측소는 자유입력/보유목록/프리셋 진입 경로가 달라서
+    # 여기서 최종 표시명을 한 번 더 통일한다. 예: RAM이 Aries I로 저장된 경우.
+    name = sanitize_asset_name(name, tkr)
 
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
 
