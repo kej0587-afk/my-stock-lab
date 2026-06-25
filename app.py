@@ -6233,8 +6233,10 @@ def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
     profile = get_new_etf_manual_profile(ticker)
     if profile.get("composition"):
         comp_names = ", ".join([row[0] for row in profile["composition"][:5]])
+        comp_axis = str(profile.get("composition_axis", "") or "실제 구성 Top5")
+        comp_judgement = str(profile.get("composition_judgement", "") or "ETF 구성비중을 반영한 가중 기초흐름")
         return [
-            {"축": "실제 구성 Top5", "확인 대상": comp_names, "판단": "ETF 구성비중을 반영한 가중 기초흐름"},
+            {"축": comp_axis, "확인 대상": comp_names, "판단": comp_judgement},
             {"축": "국내 동종 ETF", "확인 대상": "396500.KS, 139260.KS", "판단": "국내 반도체/IT ETF의 추세와 거래대금"},
             {"축": "상품 품질", "확인 대상": "거래대금, AUM, NAV 괴리율", "판단": "신규 ETF는 유동성과 괴리율이 매수 품질을 좌우"},
         ]
@@ -6278,6 +6280,20 @@ NEW_ETF_MANUAL_PROFILES = {
     "DRAM": {
         "premium_unavailable_ok": True,
         "premium_source": "미국 상장 ETF: 네이버 괴리율 미제공",
+        "composition": [
+            ("SK하이닉스", "000660.KS", 27.41),
+            ("Micron Technology", "MU", 24.50),
+            ("삼성전자", "005930.KS", 22.00),
+            ("SanDisk", "SNDK", 6.00),
+            ("Seagate Technology", "STX", 4.00),
+            ("Western Digital", "WDC", 3.00),
+        ],
+    },
+    "RAM": {
+        "premium_unavailable_ok": True,
+        "premium_source": "미국 상장 2배 ETF: 네이버 괴리율 미제공",
+        "composition_axis": "DRAM 기초/프록시 Top5",
+        "composition_judgement": "DRAM 일일 2배 목표 ETF라 DRAM·메모리 구성종목 흐름을 우선 확인",
         "composition": [
             ("SK하이닉스", "000660.KS", 27.41),
             ("Micron Technology", "MU", 24.50),
@@ -11215,6 +11231,7 @@ def get_rs_benchmark(ticker, asset_class):
         "SOXL": US_BROAD_BENCHMARK,
         "SMH": US_BROAD_BENCHMARK,
         "DRAM": US_BROAD_BENCHMARK,
+        "RAM": US_BROAD_BENCHMARK,
         "HACK": US_TECH_BENCHMARK,   # 사이버보안 ETF → QQQM 대비 RS
         "URA": US_BROAD_BENCHMARK,   # 우라늄 테마 → SPY 대비 RS
         "SPY": US_TECH_BENCHMARK,
@@ -11595,6 +11612,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "SOXL": ("SMH", "반도체"),
     "SMH": ("SMH", "반도체"),
     "DRAM": ("SMH", "메모리/반도체"),
+    "RAM": ("DRAM", "DRAM 2배"),
     "SPY": ("SPY", "S&P500"),
     "VOO": ("SPY", "S&P500"),
     "IVV": ("SPY", "S&P500"),
@@ -13311,6 +13329,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 TICKER_MAP = {
     "나스닥": ("379810.KS", True, "us_etf_nasdaq"), "QQQM": ("QQQM", True, "us_etf_nasdaq"), "QLD": ("QLD", True, "us_etf_nasdaq"), "TQQQ": ("TQQQ", True, "us_etf_nasdaq"),
     "DRAM": ("DRAM", True, "us_etf_nasdaq"),
+    "RAM": ("RAM", True, "us_etf_nasdaq"),
     "s&p500": ("379800.KS", True, "us_etf_sp"), "다우존스": ("458730.KS", True, "us_etf_sp"), "kodex 200": ("069500.KS", True, "kr_etf"),
     "MSFT": ("MSFT", False, "us_stock"), "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
     "샌디스크": ("SNDK", False, "us_stock"), "TSM": ("TSM", False, "us_stock"), "브로드컴": ("AVGO", False, "us_stock"), "MRVL": ("MRVL", False, "us_stock"),

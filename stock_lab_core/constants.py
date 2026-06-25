@@ -9,7 +9,7 @@ stock_lab_core 어디서든 순환 import 없이 안전하게 import 가능합�
 KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
 KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
 KNOWN_US_OTHER_ETFS = {
-    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM",
+    "DIA", "IWM", "SCHD", "JEPI", "JEPQ", "SMH", "SOXX", "SOXL", "DRAM", "RAM",
     "XLE", "XLF", "XLK", "XLC", "XLV", "XLI", "XLB", "XLY", "XLP", "XLU",
     "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
     "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
@@ -93,4 +93,7 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "0117V0": "TIGER 코리아AI전력기기TOP3플러스",
     "0022T0": "SOL 국제금커버드콜액티브",
     "0167A0": "SOL AI 반도체 Top2 플러스",
+    # 미국 ETF
+    "DRAM": "Roundhill Memory ETF",
+    "RAM": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
 }

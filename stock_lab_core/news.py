@@ -420,6 +420,7 @@ NEWS_THEME_TERMS_BY_SYMBOL = {
     "SOXX": ["semiconductor", "AI chip", "chip stocks", "Nvidia", "TSMC"],
     "SMH": ["semiconductor", "AI chip", "chip stocks", "Nvidia", "TSMC"],
     "DRAM": ["DRAM", "HBM", "memory chip", "semiconductor"],
+    "RAM": ["Roundhill", "T-REX", "DRAM ETF", "memory ETF", "HBM", "semiconductor"],
     "QQQ": ["Nasdaq 100", "AI stocks", "megacap tech"],
     "QQQM": ["Nasdaq 100", "AI stocks", "megacap tech"],
     "QLD": ["Nasdaq 100", "AI stocks", "megacap tech"],
@@ -502,7 +503,7 @@ def news_sort_timestamp(pub_dt):
 
 GENERIC_TICKERS = {
     "lite", "on", "now", "snap", "spot", "snow", "mu", "arm", "path", "apps",
-    "open", "ai", "u", "net", "shop", "coin", "hood", "sofi"
+    "open", "ai", "u", "net", "shop", "coin", "hood", "sofi", "ram"
 }
 
 @st.cache_data(ttl=86400, show_spinner=False)
