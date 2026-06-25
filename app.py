@@ -24569,23 +24569,54 @@ def render_today_market_flow_panel(snapshot=None):
         _tfd_short["네이버테마근거"] = _tfd_short["테마"].apply(
             lambda t: _theme_context_map.get(_flow_text(t), {}).get("네이버테마근거", "")
         )
+        _tfd_short["테마대표흐름"] = _tfd_short["네이버테마근거"]
         for _ctx_col in ["실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트"]:
             _tfd_short[_ctx_col] = _tfd_short["테마"].apply(
                 lambda t, c=_ctx_col: _theme_context_map.get(_flow_text(t), {}).get(c, "")
             )
         _tfd_short = _attach_kr_internal_context_to_rotation_df(_tfd_short, label_col="테마")
 
+        def _candidate_reason_label(value) -> str:
+            text = _flow_text(value)
+            for mark in ["✅", "⏳", "👀", "🟨", "🔸", "🚫", "❌", "🛑", "⚠️", "🎯"]:
+                text = text.replace(mark, "")
+            return re.sub(r"\s+", " ", text).strip()
+
+        def _candidate_source_summary(theme: str) -> str:
+            labels: list[str] = []
+            for source in _theme_source_map.get(theme, []):
+                source_text = _flow_text(source)
+                if "로테이션" in source_text:
+                    labels.append("로테이션")
+                elif "섹터 ETF" in source_text:
+                    labels.append("섹터ETF")
+                elif source_text.startswith("테마 "):
+                    labels.append("테마")
+            return "·".join(dict.fromkeys(labels))
+
         def _candidate_reason(row) -> str:
             theme = _flow_text(row.get("테마", ""))
-            parts = list(_theme_source_map.get(theme, []))
-            theme_signal = _flow_text(row.get("테마판정", ""))
-            naver_basis = _flow_text(row.get("네이버테마근거", ""))
-            if theme_signal and f"테마 {theme_signal}" not in parts:
-                parts.append(f"테마 {theme_signal}")
+            parts = []
+            source_summary = _candidate_source_summary(theme)
+            action = _candidate_reason_label(row.get("실행분류", ""))
+            gate = _candidate_reason_label(row.get("진입검토", ""))
+            theme_signal = _candidate_reason_label(row.get("테마판정", ""))
+            internal = _flow_text(row.get("업종내부", "")).split("·")[0].strip()
+            if source_summary:
+                parts.append(f"선정경로: {source_summary}")
+            if action:
+                if gate and gate != action:
+                    parts.append(f"실행: {action}({gate})")
+                else:
+                    parts.append(f"실행: {action}")
+            elif gate:
+                parts.append(f"확인: {gate}")
+            if theme_signal and theme_signal not in {action, gate}:
+                parts.append(f"테마판정: {theme_signal}")
             if finite_num(row.get("테마내순위", np.nan)):
                 parts.append(f"테마내 {int(float(row.get('테마내순위')))}위")
-            if naver_basis:
-                parts.append(f"네이버: {naver_basis[:28]}")
+            if internal and internal != "-":
+                parts.append(f"업종내부: {internal}")
             return " / ".join(dict.fromkeys(parts)) or "돈흐름 상위"
 
         _tfd_short["후보근거"] = _tfd_short.apply(_candidate_reason, axis=1)
@@ -24618,7 +24649,7 @@ def render_today_market_flow_panel(snapshot=None):
             "종목명", "Ticker", "테마", "하위테마", "테마내순위", "상태", "후보근거",
             "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트",
             "테마판정", "테마점수", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
-            "네이버테마근거",
+            "테마대표흐름",
         ]
 
         def _render_shortlist(cdf: pd.DataFrame, key_suffix: str, empty_msg: str = ""):
