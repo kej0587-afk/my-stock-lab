@@ -20,3 +20,13 @@ def test_us_sector_snapshot_separates_financial_subsegments():
     assert "금융서비스·핀테크" in segment_names
     assert "은행" in segment_names
     assert "보험" in segment_names
+
+
+def test_us_sector_snapshot_maps_photonics_theme_to_us_internal_segments():
+    snapshot = build_us_cluster_snapshot("포토닉스·광통신", detail_name="포토닉스·광통신")
+    segment_names = [item["name"] for item in snapshot["subsectors"]]
+
+    assert snapshot
+    assert snapshot["market"] == "US"
+    assert "광통신·통신장비" in segment_names
+    assert "반도체·장비" in segment_names

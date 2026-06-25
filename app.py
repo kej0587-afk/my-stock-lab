@@ -24573,6 +24573,7 @@ def render_today_market_flow_panel(snapshot=None):
             _tfd_short[_ctx_col] = _tfd_short["테마"].apply(
                 lambda t, c=_ctx_col: _theme_context_map.get(_flow_text(t), {}).get(c, "")
             )
+        _tfd_short = _attach_kr_internal_context_to_rotation_df(_tfd_short, label_col="테마")
 
         def _candidate_reason(row) -> str:
             theme = _flow_text(row.get("테마", ""))
