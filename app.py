@@ -178,6 +178,11 @@ try:
 except ImportError:
     def build_kr_cluster_snapshot(*args, **kwargs):
         return {}
+try:
+    from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
+except ImportError:
+    def build_us_cluster_snapshot(*args, **kwargs):
+        return {}
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
     build_kr_etf_lab_from_excel_files,
@@ -7257,6 +7262,13 @@ def _kr_snapshot_status_text(snapshot: dict) -> str:
     return f"{status} · 확산 {breadth_text} · 업종 {sector_avg}"
 
 
+def _market_snapshot_status_text(snapshot: dict, market_label: str = "") -> str:
+    base = _kr_snapshot_status_text(snapshot)
+    if not market_label or base == "-":
+        return base
+    return f"{market_label} {base}"
+
+
 KR_ROTATION_SECTOR_CLUSTER_MAP = {
     "IT/기술": "AI·반도체",
     "반도체": "AI·반도체",
@@ -7319,6 +7331,17 @@ def _is_kr_rotation_ticker(ticker: str) -> bool:
     return value.endswith((".KS", ".KQ")) or bool(re.fullmatch(r"\d{6}[A-Z0-9]*", value))
 
 
+def _is_us_rotation_context(row, label_col: str = "") -> bool:
+    ticker = str(row.get("Ticker", "") or "").strip()
+    if ticker:
+        return not _is_kr_rotation_ticker(ticker)
+    sector = str(row.get("섹터", "") or "").strip()
+    theme = str(row.get("테마", "") or "").strip()
+    label = str(row.get(label_col, "") or "").strip() if label_col else ""
+    joined = " ".join([sector, theme, label])
+    return "미국" in joined or "US" in joined.upper()
+
+
 def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
@@ -7327,44 +7350,69 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         "진입검토": "🔸 관망",
         "업종내부": "-",
         "대표업종": "-",
+        "시장대분류": "-",
         "KOSPI대분류": "-",
+        "US대분류": "-",
         "업종대표주": "-",
         "약한대표주": "-",
+        "시장내부판정": "",
         "KOSPI내부판정": "",
+        "US내부판정": "",
     }.items():
         if col not in out.columns:
             out[col] = default
 
-    snapshot_cache: dict[tuple[str, str], dict] = {}
+    snapshot_cache: dict[tuple[str, str, str], dict] = {}
     for idx, row in out.iterrows():
         ticker = str(row.get("Ticker", "") or "").strip()
-        if ticker and not _is_kr_rotation_ticker(ticker):
-            continue
-        cluster = _lookup_kr_rotation_cluster(row, label_col)
-        if not cluster:
-            continue
         sector = str(row.get("섹터", "") or "").strip()
         theme = str(row.get("테마", "") or "").strip()
         label = str(row.get(label_col, "") or "").strip() if label_col else ""
+        is_us = _is_us_rotation_context(row, label_col)
+        is_kr = (not is_us) and (not ticker or _is_kr_rotation_ticker(ticker))
+        if is_kr:
+            cluster = _lookup_kr_rotation_cluster(row, label_col)
+            if not cluster:
+                continue
+            builder = build_kr_cluster_snapshot
+            market_label = "KOSPI"
+        elif is_us:
+            cluster = next((value for value in [label, theme, sector] if value), "")
+            if not cluster:
+                continue
+            builder = build_us_cluster_snapshot
+            market_label = "US"
+        else:
+            continue
+
         detail_label = next((value for value in [label, theme, sector] if value), cluster)
-        cache_key = (cluster, detail_label)
+        cache_key = (market_label, cluster, detail_label)
         snapshot = snapshot_cache.get(cache_key)
         if snapshot is None:
-            snapshot = build_kr_cluster_snapshot(cluster, detail_name=detail_label)
+            snapshot = builder(cluster, detail_name=detail_label)
             snapshot_cache[cache_key] = snapshot
         if not snapshot:
             continue
-        status_text = _kr_snapshot_status_text(snapshot)
+        status_text = _market_snapshot_status_text(snapshot, market_label=market_label)
+        broad_text = _format_kr_sector_items_plain(snapshot.get("industries", []), limit=3) or "-"
         out.at[idx, "업종내부"] = status_text
         out.at[idx, "대표업종"] = _format_kr_sector_items_plain(
             snapshot.get("subsectors", []) or snapshot.get("industries", []),
             limit=3,
         ) or "-"
-        out.at[idx, "KOSPI대분류"] = _format_kr_sector_items_plain(snapshot.get("industries", []), limit=3) or "-"
+        out.at[idx, "시장대분류"] = broad_text
+        if market_label == "KOSPI":
+            out.at[idx, "KOSPI대분류"] = broad_text
+        elif market_label == "US":
+            out.at[idx, "US대분류"] = broad_text
         out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(snapshot.get("leaders", []), limit=3) or "-"
         out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(snapshot.get("laggards", []), limit=2) or "-"
         status = str(snapshot.get("status", "") or "")
-        out.at[idx, "KOSPI내부판정"] = status
+        out.at[idx, "시장내부판정"] = status
+        if market_label == "KOSPI":
+            out.at[idx, "KOSPI내부판정"] = status
+        elif market_label == "US":
+            out.at[idx, "US내부판정"] = status
         if status == "확산 약함" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
             out.at[idx, "진입검토"] = "🟨 내부확인"
         elif status == "혼조" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
@@ -7412,7 +7460,11 @@ def _rotation_short_state_bucket(row) -> str:
 
 
 def _rotation_internal_bucket(row) -> str:
-    internal = str(row.get("KOSPI내부판정", "") or "").strip()
+    internal = str(row.get("시장내부판정", "") or "").strip()
+    if not internal:
+        internal = str(row.get("KOSPI내부판정", "") or "").strip()
+    if not internal:
+        internal = str(row.get("US내부판정", "") or "").strip()
     if internal:
         return internal
     text = str(row.get("업종내부", "") or "")
@@ -24148,7 +24200,7 @@ def render_today_market_flow_panel(snapshot=None):
                 hover_weak = subdf["약세주"] if "약세주" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
                 hover_internal = subdf["업종내부"] if "업종내부" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_industries = subdf["대표업종"] if "대표업종" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
-                hover_broad_industries = subdf["KOSPI대분류"] if "KOSPI대분류" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_broad_industries = subdf["시장대분류"] if "시장대분류" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_internal_leaders = subdf["업종대표주"] if "업종대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_internal_laggards = subdf["약한대표주"] if "약한대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_big = subdf["큰흐름"] if "큰흐름" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
@@ -24194,9 +24246,9 @@ def render_today_market_flow_panel(snapshot=None):
                         "큰흐름: %{customdata[12]} / 단기상태: %{customdata[13]}<br>"
                         "대표주: %{customdata[5]}<br>"
                         "약세주: %{customdata[6]}<br>"
-                        "KOSPI 업종내부: %{customdata[7]}<br>"
+                        "업종내부: %{customdata[7]}<br>"
                         "세부축: %{customdata[8]}<br>"
-                        "KOSPI대분류: %{customdata[9]}<br>"
+                        "시장대분류: %{customdata[9]}<br>"
                         "업종대표주: %{customdata[10]}<br>"
                         "약한대표주: %{customdata[11]}<br>"
                         "체크: %{customdata[14]}<br>"
@@ -24263,7 +24315,8 @@ def render_today_market_flow_panel(snapshot=None):
             entry_df["유형"] = entry_df.apply(_today_type, axis=1)
             show_cols = [c for c in ["유형", "섹터", "테마", "대표주", "약세주", "Ticker",
                                        "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
-                                       "사분면", "진입검토", "업종내부", "대표업종", "KOSPI대분류", "업종대표주", "약한대표주",
+                                       "사분면", "진입검토", "업종내부", "대표업종", "시장대분류",
+                                       "KOSPI대분류", "US대분류", "업종대표주", "약한대표주",
                                        "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                        "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                        "테마판정", "네이버테마근거", "상태"] if c in entry_df.columns]
@@ -24299,7 +24352,8 @@ def render_today_market_flow_panel(snapshot=None):
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["섹터", "테마", "대표주", "약세주", "Ticker",
                                      "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
-                                     "사분면", "진입검토", "업종내부", "대표업종", "KOSPI대분류", "업종대표주", "약한대표주",
+                                     "사분면", "진입검토", "업종내부", "대표업종", "시장대분류",
+                                     "KOSPI대분류", "US대분류", "업종대표주", "약한대표주",
                                      "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
                                      "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
                                      "테마판정", "네이버테마근거", "상태"] if c in grp_df.columns]
@@ -24584,7 +24638,7 @@ def render_today_market_flow_panel(snapshot=None):
         "실행분류 = 큰흐름 + 단기상태 + 업종내부를 합친 압축판정 &nbsp;|&nbsp; "
         "진입검토 = 정밀분석으로 넘길지 보는 간단 게이트 &nbsp;|&nbsp; "
         "ETF 벤치마크: KODEX200 / VOO &nbsp;|&nbsp; 테마 벤치마크: KODEX200 &nbsp;|&nbsp; "
-        "한국/국내 테마는 KOSPI 세부축과 대분류 확산도를 함께 반영합니다."
+        "한국/미국 섹터는 각 시장의 세부축과 대분류 확산도를 함께 반영합니다."
     )
 
     render_cluster_heatmap_enhanced(
