@@ -24043,7 +24043,322 @@ def render_naver_theme_coverage_panel():
                 st.dataframe(_format_coverage_df(excluded_df.head(30)), width='stretch', hide_index=True)
 
 
-def render_today_market_flow_panel(snapshot=None):
+TODAY_FLOW_SHORTLIST_COLS = [
+    "후보군", "등록상태", "종목명", "Ticker", "테마", "하위테마", "테마내순위", "상태", "후보근거",
+    "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류",
+    "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률", "테마대표흐름",
+]
+
+
+def _today_flow_candidate_status(ticker: str) -> str:
+    ticker_norm = normalize_ticker(ticker)
+    table = globals().get("holdings_table", pd.DataFrame())
+    if isinstance(table, pd.DataFrame) and not table.empty and "티커" in table.columns:
+        for _, row in table.iterrows():
+            if normalize_ticker(row.get("티커", "")) != ticker_norm:
+                continue
+            qty = clean_float(row.get("보유량", 0.0), 0.0)
+            value = clean_float(row.get("원화환산", 0.0), 0.0)
+            if qty > 0 or value > 0:
+                return "보유"
+    return "관심" if is_in_watchlist(ticker) else "미등록"
+
+
+def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
+    snapshot = snapshot if snapshot is not None else get_cached_today_market_flow_snapshot()
+    if not snapshot:
+        return pd.DataFrame()
+
+    flow_df = snapshot.get("flow_df", pd.DataFrame())
+    theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
+    theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
+    sector_rotation_df = snapshot.get("sector_rotation_df", pd.DataFrame())
+    if flow_df is None or flow_df.empty or theme_flow_df is None or theme_flow_df.empty:
+        return pd.DataFrame()
+
+    _bench_kr = flow_df[flow_df["Ticker"].astype(str) == "069500.KS"] if "Ticker" in flow_df.columns else pd.DataFrame()
+    _b_3m_kr = float(_bench_kr.iloc[0]["3개월수익률"]) if not _bench_kr.empty and finite_num(_bench_kr.iloc[0].get("3개월수익률")) else 0.0
+    _b_accel_kr = float(_bench_kr.iloc[0]["가속도"]) if not _bench_kr.empty and finite_num(_bench_kr.iloc[0].get("가속도")) else 0.0
+
+    theme_rot_map_df = pd.DataFrame()
+    if theme_rotation_df is not None and not theme_rotation_df.empty:
+        _td = theme_rotation_df.copy()
+        _td["RS(3M)"] = _td["3개월수익률"].apply(lambda v: float(v) - _b_3m_kr if finite_num(v) else np.nan)
+        _td["RS모멘텀"] = _td["가속도"].apply(lambda v: float(v) - _b_accel_kr if finite_num(v) else np.nan)
+        _td = _td.dropna(subset=["RS(3M)", "RS모멘텀"])
+
+        def _quad(r):
+            rs, mom = r["RS(3M)"], r["RS모멘텀"]
+            if rs >= 0 and mom >= 0:
+                return "주도"
+            if rs >= 0 and mom < 0:
+                return "약화"
+            if rs < 0 and mom >= 0:
+                return "개선"
+            return "소외"
+
+        def _entry(r):
+            quad = r.get("사분면", "")
+            rs3m = r.get("RS(3M)", np.nan)
+            r1m = r.get("1개월수익률", np.nan)
+            r2w = r.get("2주수익률", np.nan)
+            accel = r.get("가속도", np.nan)
+            state = str(r.get("상태", ""))
+            ok = (
+                quad in {"개선", "주도"}
+                and finite_num(r1m) and float(r1m) >= 0.01
+                and (not finite_num(r2w) or float(r2w) >= -0.03 or (finite_num(r1m) and float(r1m) >= 0.02))
+                and finite_num(accel) and float(accel) >= 0.0
+                and state != "과열경보"
+                and (quad == "개선" or (finite_num(rs3m) and float(rs3m) >= 0.08))
+            )
+            return "✅ 진입검토" if ok else "🔸 관망"
+
+        _td["사분면"] = _td.apply(_quad, axis=1)
+        _td["진입검토"] = _td.apply(_entry, axis=1)
+        theme_rot_map_df = _attach_kr_internal_context_to_rotation_df(_td, label_col="테마")
+        theme_rot_map_df = _apply_rotation_execution_framework(theme_rot_map_df)
+
+    strong_themes: set[str] = set()
+    theme_source_map: dict[str, list[str]] = {}
+
+    def _add_candidate_theme(theme, source_label):
+        theme_text = _flow_text(theme)
+        source_text = _flow_text(source_label)
+        if not theme_text:
+            return
+        strong_themes.add(theme_text)
+        if source_text:
+            theme_source_map.setdefault(theme_text, [])
+            if source_text not in theme_source_map[theme_text]:
+                theme_source_map[theme_text].append(source_text)
+
+    if not theme_rot_map_df.empty:
+        for _, row in theme_rot_map_df[_rotation_candidate_mask(theme_rot_map_df)].iterrows():
+            _add_candidate_theme(row.get("테마", ""), _rotation_source_label(row, "로테이션"))
+
+    if ETF_TO_THEME and sector_rotation_df is not None and not sector_rotation_df.empty:
+        sector_candidate_df = _attach_kr_internal_context_to_rotation_df(sector_rotation_df, label_col="섹터")
+        sector_candidate_df = _apply_rotation_execution_framework(sector_candidate_df)
+        for _, row in sector_candidate_df[_rotation_candidate_mask(sector_candidate_df)].iterrows():
+            mapped = ETF_TO_THEME.get(str(row.get("Ticker", "") or "").upper())
+            if mapped:
+                _add_candidate_theme(mapped, _rotation_source_label(row, "섹터 ETF"))
+
+    theme_context_map: dict[str, dict] = {}
+    theme_context_source_df = theme_rot_map_df if not theme_rot_map_df.empty else theme_rotation_df
+    if theme_context_source_df is not None and not theme_context_source_df.empty and "테마" in theme_context_source_df.columns:
+        for _, row in theme_context_source_df.iterrows():
+            theme_name = _flow_text(row.get("테마", ""))
+            if not theme_name:
+                continue
+            theme_context_map[theme_name] = {
+                "테마판정": _flow_text(row.get("테마판정", "")),
+                "테마돈흐름점수": row.get("테마돈흐름점수", np.nan),
+                "네이버테마근거": _flow_text(row.get("네이버테마근거", "")),
+                "실행분류": _flow_text(row.get("실행분류", "")),
+                "진입검토": _flow_text(row.get("진입검토", "")),
+                "업종내부": _flow_text(row.get("업종내부", "")),
+                "대표업종": _flow_text(row.get("대표업종", "")),
+                "시장대분류": _flow_text(row.get("시장대분류", "")),
+                "내부확산": _flow_text(row.get("내부확산", "")),
+                "체크포인트": _flow_text(row.get("체크포인트", "")),
+            }
+            theme_signal = _flow_text(row.get("테마판정", ""))
+            theme_score = clean_float(row.get("테마돈흐름점수", np.nan))
+            if theme_signal == "진입검토":
+                _add_candidate_theme(theme_name, "테마 진입검토")
+            elif theme_signal == "부상감시" and finite_num(theme_score) and float(theme_score) >= 6:
+                _add_candidate_theme(theme_name, "테마 부상감시")
+
+    tfd_base = theme_flow_df[theme_flow_df["테마"].isin(strong_themes)].copy() if strong_themes and "테마" in theme_flow_df.columns else theme_flow_df.copy()
+    if tfd_base.empty or "Ticker" not in tfd_base.columns:
+        return pd.DataFrame()
+
+    bad_states = {"소외 지속", "급락 경보"}
+
+    def _candidate_type(row) -> str:
+        accel = row.get("가속도", None)
+        ret1m = row.get("1개월수익률", None)
+        ret3m = row.get("3개월수익률", None)
+        price_level = row.get("가격수준", None)
+        flow = row.get("돈흐름점수", None)
+        state_raw = str(row.get("상태", ""))
+        for emoji in ["🔴", "💥", "💚", "🔥", "🚀", "🟡", "⚪", "〰️", "⚡", "🟢", "⬛"]:
+            state_raw = state_raw.replace(emoji, "")
+        if state_raw.strip() in bad_states:
+            return "제외"
+        if not finite_num(accel):
+            return "관망"
+        near_high = finite_num(price_level) and float(price_level) > 0.90
+        safe_zone = finite_num(price_level) and 0.30 <= float(price_level) <= 0.90
+        accel_ok = float(accel) >= 0.05
+        ret1m_ok = finite_num(ret1m) and float(ret1m) > 0
+        ret3m_ok = finite_num(ret3m) and float(ret3m) > 0.05
+        flow_swing = finite_num(flow) and float(flow) >= 20
+        flow_long = finite_num(flow) and float(flow) >= 10
+        if near_high:
+            return "고점주의"
+        if accel_ok and ret1m_ok and flow_swing:
+            return "스윙후보"
+        if ret3m_ok and safe_zone and flow_long and float(accel) > -0.5:
+            return "장기후보"
+        return "관망"
+
+    tfd_short = (
+        tfd_base.sort_values("돈흐름점수", ascending=False, na_position="last")
+        .drop_duplicates(subset=["Ticker"], keep="first")
+        .copy()
+    )
+    tfd_short["테마내순위"] = (
+        tfd_short.groupby("테마")["돈흐름점수"].rank(method="first", ascending=False)
+        if "테마" in tfd_short.columns and "돈흐름점수" in tfd_short.columns else np.nan
+    )
+    for ctx_col in ["테마판정", "테마점수", "네이버테마근거", "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트"]:
+        if ctx_col == "테마점수":
+            tfd_short[ctx_col] = tfd_short["테마"].apply(lambda t: theme_context_map.get(_flow_text(t), {}).get("테마돈흐름점수", np.nan))
+        elif ctx_col == "네이버테마근거":
+            tfd_short[ctx_col] = tfd_short["테마"].apply(lambda t: theme_context_map.get(_flow_text(t), {}).get("네이버테마근거", ""))
+        else:
+            tfd_short[ctx_col] = tfd_short["테마"].apply(lambda t, c=ctx_col: theme_context_map.get(_flow_text(t), {}).get(c, ""))
+    tfd_short["테마대표흐름"] = tfd_short["네이버테마근거"]
+    tfd_short = _attach_kr_internal_context_to_rotation_df(tfd_short, label_col="테마")
+
+    def _reason_label(value) -> str:
+        text = _flow_text(value)
+        for mark in ["✅", "⏳", "👀", "🟨", "🔸", "🚫", "❌", "🛑", "⚠️", "🎯"]:
+            text = text.replace(mark, "")
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _source_summary(theme: str) -> str:
+        labels: list[str] = []
+        for source in theme_source_map.get(theme, []):
+            source_text = _flow_text(source)
+            if "로테이션" in source_text:
+                labels.append("로테이션")
+            elif "섹터 ETF" in source_text:
+                labels.append("섹터ETF")
+            elif source_text.startswith("테마 "):
+                labels.append("테마")
+        return "·".join(dict.fromkeys(labels))
+
+    def _candidate_reason(row) -> str:
+        theme = _flow_text(row.get("테마", ""))
+        parts: list[str] = []
+        source_summary = _source_summary(theme)
+        action = _reason_label(row.get("실행분류", ""))
+        gate = _reason_label(row.get("진입검토", ""))
+        theme_signal = _reason_label(row.get("테마판정", ""))
+        internal = _flow_text(row.get("업종내부", "")).split("·")[0].strip()
+        if source_summary:
+            parts.append(f"선정경로: {source_summary}")
+        if action:
+            parts.append(f"실행: {action}({gate})" if gate and gate != action else f"실행: {action}")
+        elif gate:
+            parts.append(f"확인: {gate}")
+        if theme_signal and theme_signal not in {action, gate}:
+            parts.append(f"테마판정: {theme_signal}")
+        if finite_num(row.get("테마내순위", np.nan)):
+            parts.append(f"테마내 {int(float(row.get('테마내순위')))}위")
+        if internal and internal != "-":
+            parts.append(f"업종내부: {internal}")
+        return " / ".join(dict.fromkeys(parts)) or "돈흐름 상위"
+
+    tfd_short["후보근거"] = tfd_short.apply(_candidate_reason, axis=1)
+    tfd_short["_st"] = tfd_short.apply(_candidate_type, axis=1)
+
+    leader = (
+        tfd_short[~tfd_short["_st"].isin(["제외"]) & tfd_short["테마내순위"].fillna(999).le(2)]
+        .sort_values(["테마점수", "돈흐름점수"], ascending=False, na_position="last")
+        .head(12)
+    )
+    swing = tfd_short[tfd_short["_st"] == "스윙후보"].sort_values("돈흐름점수", ascending=False).head(8)
+    long = tfd_short[tfd_short["_st"] == "장기후보"].sort_values("3개월수익률", ascending=False).head(8)
+    high = tfd_short[tfd_short["_st"] == "고점주의"].sort_values("돈흐름점수", ascending=False).head(8)
+
+    frames = []
+    for priority, group_name, frame in [
+        (1, "테마 주도주", leader),
+        (2, "스윙후보", swing),
+        (3, "장기후보", long),
+        (4, "고점주의", high),
+    ]:
+        if frame is None or frame.empty:
+            continue
+        tmp = frame.copy()
+        tmp["후보군"] = group_name
+        tmp["_후보우선순위"] = priority
+        frames.append(tmp)
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined["등록상태"] = combined["Ticker"].astype(str).apply(_today_flow_candidate_status)
+    combined["_ticker_key"] = combined["Ticker"].astype(str).str.upper().str.strip()
+    group_labels = combined.groupby("_ticker_key")["후보군"].apply(lambda s: " · ".join(dict.fromkeys(s.astype(str)))).to_dict()
+    combined = combined.sort_values(["_후보우선순위", "돈흐름점수"], ascending=[True, False], na_position="last")
+    combined = combined.drop_duplicates("_ticker_key", keep="first")
+    combined["후보군"] = combined["_ticker_key"].map(group_labels).fillna(combined["후보군"])
+    return combined.drop(columns=[c for c in ["_ticker_key", "_후보우선순위", "_st"] if c in combined.columns])
+
+
+def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
+    shortlist_df = shortlist_df if isinstance(shortlist_df, pd.DataFrame) else build_today_flow_shortlist_df(snapshot)
+    if show_header:
+        st.markdown("#### 🎯 돈흐름 후보")
+    st.caption("돈흐름 후보는 신규 매수 신호가 아니라 정밀관측소로 보낼 후보입니다. 중복 후보군은 한 줄로 합쳐 표시합니다.")
+    if shortlist_df is None or shortlist_df.empty:
+        st.info("현재 돈흐름 후보로 압축된 종목이 없습니다. 돈흐름 요약을 새로고침하거나 로테이션 조건을 확인하세요.")
+        return
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("후보", f"{len(shortlist_df)}개")
+    m2.metric("미등록", f"{int(shortlist_df['등록상태'].astype(str).eq('미등록').sum())}개" if "등록상태" in shortlist_df.columns else "-")
+    m3.metric("고점주의", f"{int(shortlist_df['후보군'].astype(str).str.contains('고점주의', na=False).sum())}개" if "후보군" in shortlist_df.columns else "-")
+    m4.metric("보유/관심", f"{int(shortlist_df['등록상태'].astype(str).isin(['보유', '관심']).sum())}개" if "등록상태" in shortlist_df.columns else "-")
+
+    options = ["전체", "미등록", "보유/관심", "고점주의 제외"]
+    view = st.radio("돈흐름 후보 보기", options, horizontal=True, key=f"{key_prefix}_view")
+    show = shortlist_df.copy()
+    if view == "미등록" and "등록상태" in show.columns:
+        show = show[show["등록상태"].astype(str).eq("미등록")]
+    elif view == "보유/관심" and "등록상태" in show.columns:
+        show = show[show["등록상태"].astype(str).isin(["보유", "관심"])]
+    elif view == "고점주의 제외" and "후보군" in show.columns:
+        show = show[~show["후보군"].astype(str).str.contains("고점주의", na=False)]
+
+    if show.empty:
+        st.info(f"{view} 조건에 맞는 돈흐름 후보가 없습니다.")
+        return
+
+    disp = show[[c for c in TODAY_FLOW_SHORTLIST_COLS if c in show.columns]].copy()
+    for col in ["가격수준", "1개월수익률", "3개월수익률"]:
+        if col in disp.columns:
+            disp[col] = disp[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+    for col in ["돈흐름점수", "테마점수"]:
+        if col in disp.columns:
+            disp[col] = disp[col].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
+    if "테마내순위" in disp.columns:
+        disp["테마내순위"] = disp["테마내순위"].apply(lambda v: f"{int(float(v))}위" if finite_num(v) else "-")
+    st.dataframe(disp, width='stretch', hide_index=True)
+
+    top = show.head(12).reset_index(drop=True)
+    if not top.empty:
+        st.markdown("**정밀관측소 바로가기**")
+        cols = st.columns(4)
+        precision_options, precision_map = build_precision_select_options()
+        for idx, row in top.iterrows():
+            ticker = str(row.get("Ticker", ""))
+            name = str(row.get("종목명", ticker))
+            with cols[idx % 4]:
+                if st.button(f"🔍 {name}", key=f"{key_prefix}_precision_{ticker}_{idx}", width='stretch', help=ticker):
+                    set_precision_target_ticker(ticker, precision_map)
+                    st.session_state["_pending_main_page_nav"] = "precision"
+                    st.session_state["_precision_jump_notice"] = f"'{name}' 정밀관측소로 이동했습니다."
+                    st.rerun()
+
+
+def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
 
@@ -24499,7 +24814,10 @@ def render_today_market_flow_panel(snapshot=None):
 
     # ── 오늘의 종목 후보 숏리스트 ─────────────────────────────────────
     # 흐름: 로테이션 맵 진입검토 테마 → 해당 테마 개별 종목 → 1차 필터 → 정밀관측소
-    if not theme_flow_df.empty:
+    if show_shortlist:
+        render_today_flow_shortlist_panel(snapshot, key_prefix="today_flow_panel", show_header=True)
+
+    if False and not theme_flow_df.empty:
         st.markdown("#### 🎯 오늘의 종목 후보")
 
         # 강세 테마 필터링
@@ -24934,11 +25252,11 @@ def render_today_pending_action_card(market_guard=None):
 
 
 def render_today_candidate_tools(summary_df=None, start_index=4):
-    st.markdown(f"#### {start_index}. 돈흐름 후보 압축")
-    st.caption("돈흐름은 매수 신호가 아니라, 정밀관측소로 보낼 후보를 좁히는 보조 필터입니다.")
+    st.markdown(f"#### {start_index}. 돈흐름 상세/차트")
+    st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 여기서는 로테이션 차트와 테마 상세만 확인합니다.")
 
-    with st.expander("돈흐름/테마 후보 확인", expanded=False):
-        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot())
+    with st.expander("돈흐름/테마 상세 확인", expanded=False):
+        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=False)
         if (
             flow_snapshot
             and summary_df is not None
@@ -25225,9 +25543,12 @@ def render_today_queue_tab(mode):
             hide_index=True,
         )
 
+    flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
+
     tabs = st.tabs([
         f"실행 후보 ({int(execution_mask.sum())})",
         f"관심/눌림대기 ({int(wait_mask.sum())})",
+        f"돈흐름 후보 ({len(flow_shortlist_df)})",
         f"비중초과 방어 ({int(overweight_mask.sum())})",
         f"구조훼손 ({int(structure_mask.sum())})",
         f"과열/타점대기 ({int(overheat_mask.sum())})",
@@ -25241,18 +25562,25 @@ def render_today_queue_tab(mode):
         st.caption("R/R<1, 목표가 부족, 상위과열, 정찰/대기 문구가 있어 당장 매수보다 다음 눌림을 기다리는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[wait_mask], "관심/눌림대기 종목이 없습니다.")
     with tabs[2]:
+        render_today_flow_shortlist_panel(
+            get_cached_today_market_flow_snapshot(),
+            shortlist_df=flow_shortlist_df,
+            key_prefix="today_queue_flow_shortlist",
+            show_header=False,
+        )
+    with tabs[3]:
         st.caption("비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.")
         _render_today_queue_table(summary_df.loc[overweight_mask], "비중초과 방어 대상이 없습니다.", sort_low_first=True)
-    with tabs[3]:
+    with tabs[4]:
         st.caption("고점대비 큰 하락 또는 구조훼손 신호입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
         _render_today_queue_table(summary_df.loc[structure_mask], "구조훼손으로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[4]:
+    with tabs[5]:
         st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
-    with tabs[5]:
+    with tabs[6]:
         st.caption("위 그룹에 들어가지 않은 기타 주의/데이터확인 항목입니다.")
         _render_today_queue_table(summary_df.loc[other_caution_mask | data_issue_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
-    with tabs[6]:
+    with tabs[7]:
         _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
 
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
