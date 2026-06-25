@@ -7312,6 +7312,13 @@ def _lookup_kr_rotation_cluster(row, label_col: str = "") -> str:
     return ""
 
 
+def _is_kr_rotation_ticker(ticker: str) -> bool:
+    value = str(ticker or "").strip().upper()
+    if not value or value in {"NAN", "NONE", "-"}:
+        return False
+    return value.endswith((".KS", ".KQ")) or bool(re.fullmatch(r"\d{6}[A-Z0-9]*", value))
+
+
 def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
@@ -7330,6 +7337,9 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
 
     snapshot_cache: dict[tuple[str, str], dict] = {}
     for idx, row in out.iterrows():
+        ticker = str(row.get("Ticker", "") or "").strip()
+        if ticker and not _is_kr_rotation_ticker(ticker):
+            continue
         cluster = _lookup_kr_rotation_cluster(row, label_col)
         if not cluster:
             continue
