@@ -7486,7 +7486,7 @@ def _rotation_execution_bucket(row) -> tuple[str, str]:
         return "🚫 위험회피", "중기 상대약세와 단기 이탈이 겹칩니다."
     if internal == "확산 약함":
         if big in {"중기주도", "시장상회", "회복시도"} or short in {"단기회복", "반등시도"}:
-            return "🟨 내부확인", "ETF/테마보다 KOSPI 업종 내부 확산이 약합니다."
+            return "🟨 내부확인", "ETF/테마보다 시장 업종 내부 확산이 약합니다."
         return "🔸 관망", "업종 내부 확산이 약해 우선순위를 낮춥니다."
     if short == "과열":
         if big in {"중기주도", "시장상회", "절대상승·시장열위"}:
@@ -7516,6 +7516,33 @@ def _rotation_entry_gate(action: str) -> str:
     if "위험회피" in text:
         return "🚫 제외"
     return "🔸 관망"
+
+
+ROTATION_CANDIDATE_ACTIONS = {"✅ 정밀후보", "⏳ 눌림대기", "👀 반등확인", "🟨 내부혼조", "🟨 내부확인"}
+ROTATION_CANDIDATE_GATES = {"✅ 진입검토", "⏳ 눌림대기", "👀 확인필요", "🟨 내부확인"}
+
+
+def _rotation_candidate_mask(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    mask = pd.Series(False, index=df.index)
+    if "실행분류" in df.columns:
+        mask = mask | df["실행분류"].astype(str).isin(ROTATION_CANDIDATE_ACTIONS)
+    if "진입검토" in df.columns:
+        mask = mask | df["진입검토"].astype(str).isin(ROTATION_CANDIDATE_GATES)
+    return mask
+
+
+def _rotation_source_label(row, prefix: str = "로테이션") -> str:
+    action = _flow_text(row.get("실행분류", ""))
+    gate = _flow_text(row.get("진입검토", ""))
+    if action and gate and action != gate:
+        return f"{prefix} {action}/{gate}"
+    if action:
+        return f"{prefix} {action}"
+    if gate:
+        return f"{prefix} {gate}"
+    return prefix
 
 
 def _apply_rotation_execution_framework(grp_df: pd.DataFrame) -> pd.DataFrame:
@@ -24409,6 +24436,8 @@ def render_today_market_flow_panel(snapshot=None):
         _td["사분면"]  = _td.apply(_quad, axis=1)
         _td["진입검토"] = _td.apply(_entry, axis=1)
         theme_rot_map_df = _td
+        theme_rot_map_df = _attach_kr_internal_context_to_rotation_df(theme_rot_map_df, label_col="테마")
+        theme_rot_map_df = _apply_rotation_execution_framework(theme_rot_map_df)
 
     # ── 로테이션 맵 진입검토 테마 추출 (개별 종목 후보 필터 기준) ─────
     # ① 테마종목 탭: theme_rot_map_df 진입검토 테마
@@ -24426,24 +24455,26 @@ def render_today_market_flow_panel(snapshot=None):
             if source_text not in _theme_source_map[theme_text]:
                 _theme_source_map[theme_text].append(source_text)
 
-    if not theme_rot_map_df.empty and "진입검토" in theme_rot_map_df.columns:
-        for _theme in theme_rot_map_df[theme_rot_map_df["진입검토"] == "✅ 진입검토"]["테마"].dropna().tolist():
-            _add_candidate_theme(_theme, "로테이션 진입검토")
+    if not theme_rot_map_df.empty:
+        _theme_candidate_rows = theme_rot_map_df[_rotation_candidate_mask(theme_rot_map_df)].copy()
+        for _, _theme_row in _theme_candidate_rows.iterrows():
+            _add_candidate_theme(_theme_row.get("테마", ""), _rotation_source_label(_theme_row, "로테이션"))
 
     # ② 한국/미국 섹터 탭: 진입검토 ETF 티커 → ETF_TO_THEME 으로 테마 매핑
-    if ETF_TO_THEME and not sector_rotation_df.empty and "진입검토" in sector_rotation_df.columns:
-        _strong_etfs = set(
-            sector_rotation_df[sector_rotation_df["진입검토"] == "✅ 진입검토"]["Ticker"]
-            .dropna().astype(str).str.upper().tolist()
-        )
-        for _etf in _strong_etfs:
+    if ETF_TO_THEME and not sector_rotation_df.empty:
+        _sector_candidate_df = _attach_kr_internal_context_to_rotation_df(sector_rotation_df, label_col="섹터")
+        _sector_candidate_df = _apply_rotation_execution_framework(_sector_candidate_df)
+        _sector_candidate_rows = _sector_candidate_df[_rotation_candidate_mask(_sector_candidate_df)].copy()
+        for _, _sector_row in _sector_candidate_rows.iterrows():
+            _etf = str(_sector_row.get("Ticker", "") or "").upper()
             _mapped = ETF_TO_THEME.get(_etf)
             if _mapped:
-                _add_candidate_theme(_mapped, "섹터 ETF 진입검토")
+                _add_candidate_theme(_mapped, _rotation_source_label(_sector_row, "섹터 ETF"))
 
     _theme_context_map: dict[str, dict] = {}
-    if theme_rotation_df is not None and not theme_rotation_df.empty and "테마" in theme_rotation_df.columns:
-        for _, _tr in theme_rotation_df.iterrows():
+    _theme_context_source_df = theme_rot_map_df if not theme_rot_map_df.empty else theme_rotation_df
+    if _theme_context_source_df is not None and not _theme_context_source_df.empty and "테마" in _theme_context_source_df.columns:
+        for _, _tr in _theme_context_source_df.iterrows():
             _theme_name = _flow_text(_tr.get("테마", ""))
             if not _theme_name:
                 continue
@@ -24451,6 +24482,13 @@ def render_today_market_flow_panel(snapshot=None):
                 "테마판정": _flow_text(_tr.get("테마판정", "")),
                 "테마돈흐름점수": _tr.get("테마돈흐름점수", np.nan),
                 "네이버테마근거": _flow_text(_tr.get("네이버테마근거", "")),
+                "실행분류": _flow_text(_tr.get("실행분류", "")),
+                "진입검토": _flow_text(_tr.get("진입검토", "")),
+                "업종내부": _flow_text(_tr.get("업종내부", "")),
+                "대표업종": _flow_text(_tr.get("대표업종", "")),
+                "시장대분류": _flow_text(_tr.get("시장대분류", "")),
+                "내부확산": _flow_text(_tr.get("내부확산", "")),
+                "체크포인트": _flow_text(_tr.get("체크포인트", "")),
             }
             _theme_signal = _flow_text(_tr.get("테마판정", ""))
             _theme_score = clean_float(_tr.get("테마돈흐름점수", np.nan))
@@ -24469,14 +24507,14 @@ def render_today_market_flow_panel(snapshot=None):
             _tfd_base = theme_flow_df[theme_flow_df["테마"].isin(_strong_themes)].copy()
             _theme_tags = "  ".join(f"`{t}`" for t in sorted(_strong_themes))
             st.caption(
-                f"📌 **로테이션/테마 진입검토 후보** → {_theme_tags}  \n"
+                f"📌 **로테이션/테마 우선 확인 후보** → {_theme_tags}  \n"
                 "해당 테마 소속 종목만 1차 후보로 추출합니다. "
                 "▶ **정밀관측소**에서 최종 확인 후 진입을 결정하세요."
             )
         else:
             _tfd_base = theme_flow_df.copy()
             st.caption(
-                "현재 로테이션 맵 진입검토 테마 없음 → 전체 테마에서 후보 추출.  \n"
+                "현재 로테이션 맵 우선 확인 테마 없음 → 전체 테마에서 후보 추출.  \n"
                 "▶ **정밀관측소**에서 최종 확인 후 진입을 결정하세요."
             )
 
@@ -24531,6 +24569,10 @@ def render_today_market_flow_panel(snapshot=None):
         _tfd_short["네이버테마근거"] = _tfd_short["테마"].apply(
             lambda t: _theme_context_map.get(_flow_text(t), {}).get("네이버테마근거", "")
         )
+        for _ctx_col in ["실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트"]:
+            _tfd_short[_ctx_col] = _tfd_short["테마"].apply(
+                lambda t, c=_ctx_col: _theme_context_map.get(_flow_text(t), {}).get(c, "")
+            )
 
         def _candidate_reason(row) -> str:
             theme = _flow_text(row.get("테마", ""))
@@ -24573,6 +24615,7 @@ def render_today_market_flow_panel(snapshot=None):
         # 테마 컬럼 포함: 어떤 테마 소속인지 바로 확인
         _SL_COLS = [
             "종목명", "Ticker", "테마", "하위테마", "테마내순위", "상태", "후보근거",
+            "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트",
             "테마판정", "테마점수", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
             "네이버테마근거",
         ]
@@ -24609,26 +24652,26 @@ def render_today_market_flow_panel(snapshot=None):
                         st.rerun()
 
         with _lead_tab:
-            st.caption("기준: 로테이션/테마 진입검토 후보 안에서 테마별 돈흐름 상위 1~2개. 매수 신호가 아니라 ‘어떤 종목이 주도주인지’ 빠르게 확인하는 탭입니다.")
+            st.caption("기준: 로테이션/테마 우선 확인 후보 안에서 테마별 돈흐름 상위 1~2개. 매수 신호가 아니라 ‘어떤 종목이 주도주인지’ 빠르게 확인하는 탭입니다.")
             _render_shortlist(_leader_c, "lead",
                 "현재 진입검토 후보 테마 안에서 뚜렷한 주도주 후보가 없습니다.")
         with _sc_tab:
             st.caption("기준: 돈흐름점수 ≥ 20 · 가속도 ≥ +5% · 1M 수익률 > 0 · 52주위치 < 90%")
             _render_shortlist(_swing_c, "sw",
-                "진입검토 테마 내 스윙 조건 충족 종목 없음. "
+                "우선 확인 테마 내 스윙 조건 충족 종목 없음. "
                 "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
         with _lc_tab:
             st.caption("기준: 돈흐름점수 ≥ 10 · 3M 수익률 > 5% · 52주위치 30~90%")
             _render_shortlist(_long_c, "lt",
-                "진입검토 테마 내 장기후보 조건 충족 종목 없음. "
+                "우선 확인 테마 내 장기후보 조건 충족 종목 없음. "
                 "고점주의 탭에 강세 테마 종목들이 있을 수 있습니다.")
         with _hi_tab:
             st.caption(
-                "진입검토 테마 내 강세지만 52주 고점 90% 초과 종목. "
+                "우선 확인 테마 내 강세지만 52주 고점 90% 초과 종목. "
                 "추격 매수 대신 **MA20/볼린저 중단 눌림** 구간 진입을 노리세요."
             )
             _render_shortlist(_high_c, "hi",
-                "진입검토 테마 내 고점 구간 종목도 없습니다.")
+                "우선 확인 테마 내 고점 구간 종목도 없습니다.")
 
     # ── 통합 로테이션 맵 (한국섹터 / 미국섹터 / 테마종목) ──────────────
     st.markdown("#### 🔄 로테이션 맵 — 섹터 · 테마 진입검토")
