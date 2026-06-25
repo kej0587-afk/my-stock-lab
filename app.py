@@ -23162,7 +23162,7 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
 
 
 def render_today_holdings_risk_panel(risk_df):
-    st.markdown("#### 2. 내 보유/관심 위험 TOP")
+    st.markdown("#### 3. 내 보유/관심 위험 TOP")
     if risk_df is None or risk_df.empty:
         st.success("현재 오늘점검 기준으로 우선 확인할 위험 후보는 많지 않습니다.")
         return
@@ -23224,7 +23224,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         actions.extend((market_guard or {}).get("actions", [])[:2])
     if market_mode == "비상":
         if buyish_count > 0:
-            actions.append(f"매수/관심 후보 {buyish_count}개는 실행하지 말고 종가 안정 후 재점검")
+            actions.append(f"후보권 {buyish_count}개는 실행하지 말고 종가 안정 후 재점검")
         if core_under_count > 0:
             actions.append(f"코어 목표 미달 {core_under_count}개도 오늘은 적립 실행보다 대기")
     elif leverage_blocked:
@@ -23252,7 +23252,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
 <div class='info-panel' style='border-left:5px solid #38bdf8; margin-bottom:12px;'>
 <b>오늘의 실행 카드</b><br>
 <span class='highlight'>{html.escape(headline)}</span><br>
-매수/관심 {buyish_count}개 · 주의/차단 {caution_count}개 · 하드차단 {hard_count}개<br><br>
+후보권 {buyish_count}개 · 주의/차단 {caution_count}개 · 하드차단 {hard_count}개<br><br>
 <b>우선순위</b><br>
 {action_html}
 </div>
@@ -24909,7 +24909,7 @@ def render_investor_top10_section():
 
 
 def render_today_pending_risk_panel():
-    st.markdown("#### 2. 내 보유/관심 위험 TOP")
+    st.markdown("#### 3. 내 보유/관심 위험 TOP")
     st.info(
         "오늘 종목 점검 계산/새로고침을 누르면 하드차단, 구조훼손, 과열, MDD 기준으로 "
         "먼저 확인할 종목을 보여줍니다."
@@ -24917,7 +24917,7 @@ def render_today_pending_risk_panel():
 
 
 def render_today_pending_action_card(market_guard=None):
-    st.markdown("#### 3. 오늘의 실행 카드")
+    st.markdown("#### 2. 오늘의 실행 카드")
     guard = market_guard or {}
     mode_label = guard.get("mode", "대기")
     action_label = guard.get("action", "시장 안전벨트 기준만 표시 중")
@@ -24953,6 +24953,41 @@ def render_today_candidate_tools(summary_df=None, start_index=4):
         render_investor_top10_section()
 
 
+def _today_queue_reason_bucket(row) -> str:
+    label = str(row.get("🔥기술적 타점", "") or "")
+    code = str(row.get("판정코드", "") or "")
+    data_state = str(row.get("데이터상태", "") or "")
+    text = " ".join([label, code, data_state])
+    if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
+        return "비중초과 방어"
+    if re.search(r"구조훼손|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
+        return "구조훼손"
+    if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
+        return "관심/눌림대기"
+    if re.search(r"과열|볼린|MFI|추격금지|상단", text, flags=re.IGNORECASE):
+        return "과열/타점대기"
+    if data_state and data_state.upper() not in {"OK", "NORMAL", "-", "정상"}:
+        return "데이터확인"
+    if "하드차단" in label or "HARD_BLOCK" in code:
+        return "기타 하드차단"
+    return "일반"
+
+
+def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, upside_value_map: dict[str, float] | None = None) -> pd.Series:
+    if summary_df is None or summary_df.empty:
+        return pd.Series(dtype=bool)
+    label = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+    wait_mask = (
+        label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기", regex=True, na=False)
+        | summary_df.apply(lambda row: _today_queue_reason_bucket(row) == "관심/눌림대기", axis=1)
+    )
+    if upside_value_map:
+        neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
+        wait_mask = wait_mask | neg_upside.fillna(False)
+    return buyish_mask.reindex(summary_df.index, fill_value=False) & wait_mask
+
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 20a: 오늘 점검 탭
@@ -24968,12 +25003,13 @@ def render_today_queue_tab(mode):
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature="")
-        render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
+        render_today_pending_risk_panel()
         st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=4)
+        st.divider()
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature="")
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -25066,15 +25102,16 @@ def render_today_queue_tab(mode):
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig)
-        render_today_pending_risk_panel()
         render_today_pending_action_card(market_guard)
+        render_today_pending_risk_panel()
         if run_summary:
             st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=4)
+        st.divider()
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig)
         return
 
     if "판정분류" in summary_df.columns:
@@ -25090,19 +25127,49 @@ def render_today_queue_tab(mode):
     market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask)
 
-    render_today_market_guard_panel(market_guard)
-    render_today_market_memo_panel(summary_df, summary_signature=queue_sig)
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("점검 종목", f"{len(summary_df)}개")
-    m2.metric("매수/관심 후보", f"{int(buyish_mask.sum())}개")
-    m3.metric("주의/차단", f"{int(caution_mask.sum())}개")
-    m4.metric("하드차단", f"{int(hard_block_mask.sum())}개")
-
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
 
-    render_today_holdings_risk_panel(risk_df)
+    # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
+    _upside_map: dict[str, str] = {}
+    _upside_value_map: dict[str, float] = {}
+    if buyish_mask.any() and "티커" in summary_df.columns:
+        for _t in summary_df.loc[buyish_mask, "티커"].astype(str):
+            try:
+                _snap = get_analyst_snapshot(_t)
+                _target = clean_float((_snap.get("data") or {}).get("targetMeanPrice"), 0.0) or 0.0
+                _cur = load_latest_price(_t)
+                if _target > 0 and _cur > 0:
+                    _up = (_target - _cur) / _cur * 100
+                    _upside_value_map[_t] = float(_up)
+                    _upside_map[_t] = f"+{_up:.1f}%" if _up >= 0 else f"{_up:.1f}%"
+            except Exception:
+                pass
+
+    wait_mask = _today_queue_wait_mask(summary_df, buyish_mask, _upside_value_map)
+    execution_mask = buyish_mask & ~wait_mask
+    reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
+    overweight_mask = caution_mask & reason_bucket.eq("비중초과 방어")
+    structure_mask = caution_mask & reason_bucket.eq("구조훼손")
+    overheat_mask = caution_mask & reason_bucket.eq("과열/타점대기")
+    data_issue_mask = caution_mask & reason_bucket.eq("데이터확인")
+    other_caution_mask = caution_mask & ~(overweight_mask | structure_mask | overheat_mask | data_issue_mask)
+
+    render_today_market_guard_panel(market_guard)
+
+    st.markdown("#### 2. 오늘의 실행 카드")
+    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("점검 종목", f"{len(summary_df)}개")
+    m2.metric("실행후보", f"{int(execution_mask.sum())}개")
+    m3.metric("관심/눌림", f"{int(wait_mask.sum())}개")
+    m4.metric("주의/차단", f"{int(caution_mask.sum())}개")
+    m5.metric("하드차단", f"{int(hard_block_mask.sum())}개")
+
+    cash_cols = st.columns(2)
+    cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
+    cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
 
     # ── 섹터 집중도 경고 ─────────────────────────────────────────────────
     # 매수/관심 후보가 2개 이상이면 같은 asset_class 끼리 묶어 중복 섹터를 잡아냄
@@ -25125,56 +25192,22 @@ def render_today_queue_tab(mode):
                 + "\n\n동시에 진입하면 해당 섹터 비중이 집중될 수 있습니다. 분할 우선순위를 정한 뒤 순차 접근을 권장합니다."
             )
 
-    cash_cols = st.columns(2)
-    cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
-    cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
-
-    st.markdown("#### 3. 오늘의 실행 카드")
-    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
+    render_today_holdings_risk_panel(risk_df)
 
     st.divider()
-    st.markdown("#### 상세 판정표")
-
-    # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
-    _upside_map: dict[str, str] = {}
-    if buyish_mask.any() and "티커" in summary_df.columns:
-        for _t in summary_df.loc[buyish_mask, "티커"].astype(str):
-            try:
-                _snap = get_analyst_snapshot(_t)
-                _target = clean_float((_snap.get("data") or {}).get("targetMeanPrice"), 0.0) or 0.0
-                _cur = load_latest_price(_t)
-                if _target > 0 and _cur > 0:
-                    _up = (_target - _cur) / _cur * 100
-                    _upside_map[_t] = f"+{_up:.1f}%" if _up >= 0 else f"{_up:.1f}%"
-            except Exception:
-                pass
+    st.markdown("#### 4. 상세 판정표")
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "목표Upside", "📌후보등급", "🔥기술적 타점",
         "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
-    view_mode = st.radio(
-        "보기",
-        ["매수/관심 후보", "주의/차단", "전체"],
-        horizontal=True,
-        key="today_queue_view_mode",
-    )
-    if view_mode == "매수/관심 후보":
-        view_df = summary_df.loc[buyish_mask].copy()
-        sort_ascending = False
-    elif view_mode == "주의/차단":
-        view_df = summary_df.loc[caution_mask].copy()
-        view_df["_hard_block"] = hard_block_mask.loc[view_df.index].astype(int)
-        sort_ascending = True
-    else:
-        view_df = summary_df.copy()
-        sort_ascending = False
-
-    if view_df.empty:
-        st.info(f"{view_mode}에 해당하는 종목이 없습니다.")
-    else:
-        if view_mode == "주의/차단" and "_hard_block" in view_df.columns:
+    def _render_today_queue_table(view_df: pd.DataFrame, empty_msg: str, sort_low_first: bool = False):
+        if view_df is None or view_df.empty:
+            st.info(empty_msg)
+            return
+        view_df = view_df.copy()
+        if "_hard_block" in view_df.columns:
             sort_cols = ["_hard_block"]
             ascending = [False]
             if "Adj점수" in view_df.columns:
@@ -25182,12 +25215,9 @@ def render_today_queue_tab(mode):
                 ascending.append(True)
             view_df = view_df.sort_values(sort_cols, ascending=ascending)
         elif "Adj점수" in view_df.columns:
-            view_df = view_df.sort_values("Adj점수", ascending=sort_ascending)
-
-        # upside 컬럼 주입 (없으면 "-")
+            view_df = view_df.sort_values("Adj점수", ascending=sort_low_first)
         if "티커" in view_df.columns:
             view_df["목표Upside"] = view_df["티커"].astype(str).map(_upside_map).fillna("-")
-
         st.dataframe(
             view_df[[col for col in show_cols if col in view_df.columns]],
             column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
@@ -25195,10 +25225,43 @@ def render_today_queue_tab(mode):
             hide_index=True,
         )
 
-        st.caption("매수 후보는 바로 매수하라는 뜻이 아니라, 정밀관측소에서 비중·과열·현금 조건을 한 번 더 확인할 우선순위입니다.")
+    tabs = st.tabs([
+        f"실행 후보 ({int(execution_mask.sum())})",
+        f"관심/눌림대기 ({int(wait_mask.sum())})",
+        f"비중초과 방어 ({int(overweight_mask.sum())})",
+        f"구조훼손 ({int(structure_mask.sum())})",
+        f"과열/타점대기 ({int(overheat_mask.sum())})",
+        f"기타 주의 ({int((other_caution_mask | data_issue_mask).sum())})",
+        "전체",
+    ])
+    with tabs[0]:
+        st.caption("정밀관측소에서 비중·현금·당일 변동성만 확인하면 실행 후보로 볼 수 있는 그룹입니다.")
+        _render_today_queue_table(summary_df.loc[execution_mask], "현재 바로 실행 후보로 볼 종목은 없습니다.")
+    with tabs[1]:
+        st.caption("R/R<1, 목표가 부족, 상위과열, 정찰/대기 문구가 있어 당장 매수보다 다음 눌림을 기다리는 그룹입니다.")
+        _render_today_queue_table(summary_df.loc[wait_mask], "관심/눌림대기 종목이 없습니다.")
+    with tabs[2]:
+        st.caption("비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.")
+        _render_today_queue_table(summary_df.loc[overweight_mask], "비중초과 방어 대상이 없습니다.", sort_low_first=True)
+    with tabs[3]:
+        st.caption("고점대비 큰 하락 또는 구조훼손 신호입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
+        _render_today_queue_table(summary_df.loc[structure_mask], "구조훼손으로 분류된 종목이 없습니다.", sort_low_first=True)
+    with tabs[4]:
+        st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
+        _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
+    with tabs[5]:
+        st.caption("위 그룹에 들어가지 않은 기타 주의/데이터확인 항목입니다.")
+        _render_today_queue_table(summary_df.loc[other_caution_mask | data_issue_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
+    with tabs[6]:
+        _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
+
+    st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
 
     st.divider()
-    render_today_candidate_tools(summary_df, start_index=4)
+    render_today_candidate_tools(summary_df, start_index=5)
+
+    st.divider()
+    render_today_market_memo_panel(summary_df, summary_signature=queue_sig)
 
 
 
