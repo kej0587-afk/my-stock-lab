@@ -408,6 +408,8 @@ _PYTH_PRICE_MAX_AGE_SECONDS = 180
 _PYTH_CONFIDENCE_MAX_RATIO = 0.05
 _LATEST_PRICE_CACHE_TTL_SECONDS = 15
 _US_INTRADAY_QUOTE_MAX_AGE_SECONDS = 16 * 60 * 60
+_KIS_TOKEN_CACHE = {"cache_key": "", "token": "", "expires_at": 0.0}
+_KIS_TOKEN_LOCK = threading.Lock()
 
 
 def _secret_or_env(*names: str) -> str:
@@ -697,6 +699,147 @@ def _fetch_configured_us_quote_price(ticker: str) -> float:
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())
             price = float(str(extractor(data)).replace(",", ""))
+            if price > 0:
+                return price
+        except Exception:
+            continue
+    return 0.0
+
+
+def _kis_base_url() -> str:
+    base = _secret_or_env("KIS_BASE_URL", "kis_base_url")
+    return (base or "https://openapi.koreainvestment.com:9443").rstrip("/")
+
+
+def _kis_credentials() -> tuple[str, str]:
+    app_key = _secret_or_env(
+        "KIS_APP_KEY",
+        "KIS_APPKEY",
+        "KIS_APP_KEY_REAL",
+        "kis_app_key",
+        "kis_appkey",
+    )
+    app_secret = _secret_or_env(
+        "KIS_APP_SECRET",
+        "KIS_APPSECRET",
+        "KIS_APP_SECRET_REAL",
+        "kis_app_secret",
+        "kis_appsecret",
+    )
+    return app_key, app_secret
+
+
+def _kis_access_token() -> str:
+    app_key, app_secret = _kis_credentials()
+    if not app_key or not app_secret:
+        return ""
+
+    base = _kis_base_url()
+    cache_key = f"{base}|{app_key[:8]}"
+    now = time.time()
+    with _KIS_TOKEN_LOCK:
+        if (
+            _KIS_TOKEN_CACHE.get("cache_key") == cache_key
+            and _KIS_TOKEN_CACHE.get("token")
+            and float(_KIS_TOKEN_CACHE.get("expires_at") or 0) > now + 60
+        ):
+            return str(_KIS_TOKEN_CACHE.get("token") or "")
+
+        try:
+            url = f"{base}/oauth2/tokenP"
+            body = json.dumps({
+                "grant_type": "client_credentials",
+                "appkey": app_key,
+                "appsecret": app_secret,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            token = str(data.get("access_token") or "").strip()
+            expires_in = int(float(data.get("expires_in") or 0))
+            if token:
+                _KIS_TOKEN_CACHE.update({
+                    "cache_key": cache_key,
+                    "token": token,
+                    "expires_at": now + max(expires_in - 120, 300),
+                })
+                return token
+        except Exception:
+            return ""
+    return ""
+
+
+def _kis_us_exchange_candidates(ticker: str) -> list[str]:
+    t = normalize_price_lookup_key(ticker)
+    override = _secret_or_env(f"KIS_EXCD_{t}", f"KIS_EXCHANGE_{t}", f"kis_excd_{t}", f"kis_exchange_{t}")
+    if override:
+        return [x.strip().upper() for x in re.split(r"[,;/\s]+", override) if x.strip()]
+    # NAS: Nasdaq, NYS: NYSE, AMS: NYSE American/AMEX. RAM 같은 신규 ETF는 브로커마다 상장시장 매핑이 달라 후보를 순차 조회한다.
+    return ["AMS", "NAS", "NYS"]
+
+
+def _extract_kis_quote_price(payload) -> float:
+    output = (payload or {}).get("output") if isinstance(payload, dict) else {}
+    if not isinstance(output, dict):
+        return 0.0
+
+    price_keys = (
+        "last",
+        "t_xprc",
+        "p_xprc",
+        "ovrs_nmix_prpr",
+        "stck_prpr",
+        "prpr",
+        "price",
+        "base",
+    )
+    for key in price_keys:
+        try:
+            value = str(output.get(key, "")).strip().replace(",", "")
+            if not value:
+                continue
+            price = float(value)
+            if price > 0:
+                return price
+        except Exception:
+            continue
+    return 0.0
+
+
+def _fetch_kis_us_quote_price(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+
+    app_key, app_secret = _kis_credentials()
+    token = _kis_access_token()
+    if not app_key or not app_secret or not token:
+        return 0.0
+
+    base = _kis_base_url()
+    for exchange in _kis_us_exchange_candidates(t):
+        try:
+            query = urllib.parse.urlencode({"AUTH": "", "EXCD": exchange, "SYMB": t})
+            url = f"{base}/uapi/overseas-price/v1/quotations/price?{query}"
+            headers = {
+                "Content-Type": "application/json; charset=utf-8",
+                "authorization": f"Bearer {token}",
+                "appkey": app_key,
+                "appsecret": app_secret,
+                "tr_id": "HHDFS00000300",
+                "custtype": "P",
+            }
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                payload = json.loads(resp.read())
+            if str(payload.get("rt_cd", "0")) not in {"0", ""}:
+                continue
+            price = _extract_kis_quote_price(payload)
             if price > 0:
                 return price
         except Exception:
@@ -1029,6 +1172,9 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
+        price = _fetch_kis_us_quote_price(ticker)
+        if price > 0:
+            return price
         price = _fetch_yahoo_overnight_page_price(ticker)
         if price > 0:
             return price
@@ -1168,6 +1314,13 @@ def load_latest_prices_batch(tickers) -> dict:
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
         for t in us_tickers:
+            p = _fetch_kis_us_quote_price(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
+
+        for t in us_tickers:
+            if normalize_price_lookup_key(t) in prices:
+                continue
             p = _fetch_yahoo_overnight_page_price(t)
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p

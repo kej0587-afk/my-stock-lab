@@ -54,3 +54,15 @@ def test_ram_uses_dram_2x_proxy_price(monkeypatch):
 
 def test_non_proxy_ticker_does_not_estimate_leveraged_price():
     assert prices._estimate_leveraged_target_etf_proxy_price("SOXL", underlying_live_price=90.0) == 0.0
+
+
+def test_extract_kis_quote_price_prefers_last_price():
+    payload = {"output": {"last": "25.75", "base": "28.71"}}
+
+    assert prices._extract_kis_quote_price(payload) == 25.75
+
+
+def test_extract_kis_quote_price_accepts_extended_price_field():
+    payload = {"output": {"last": "", "t_xprc": "25.80", "base": "28.71"}}
+
+    assert prices._extract_kis_quote_price(payload) == 25.80
