@@ -73,6 +73,61 @@ def _kr_code(ticker: str) -> str:
     return re.sub(r"\.(KS|KQ)$", "", str(ticker).strip().upper(), flags=re.IGNORECASE)
 
 
+LEVERAGED_TARGET_ETF_PROXIES = {
+    # RAM은 상장 초기라 일부 quote API가 법인명/가격을 안정적으로 못 맞춘다.
+    # 공식 실시간가가 안정되기 전에는 DRAM 당일 수익률의 2배를 이용해 평가용 가격을 보정한다.
+    "RAM": {"underlying": "DRAM", "leverage": 2.0},
+}
+
+
+def _latest_close_from_price_df(df: pd.DataFrame) -> float:
+    if df is None or df.empty or "Close" not in df.columns:
+        return 0.0
+    close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    if close.empty:
+        return 0.0
+    try:
+        return float(close.iloc[-1])
+    except Exception:
+        return 0.0
+
+
+def _estimate_leveraged_target_etf_proxy_price(
+    ticker: str,
+    underlying_live_price: float | None = None,
+) -> float:
+    cfg = LEVERAGED_TARGET_ETF_PROXIES.get(normalize_price_lookup_key(ticker))
+    if not cfg:
+        return 0.0
+
+    underlying = str(cfg.get("underlying", "") or "").strip()
+    leverage = float(cfg.get("leverage", 1.0) or 1.0)
+    if not underlying or leverage <= 0:
+        return 0.0
+
+    try:
+        target_close = _latest_close_from_price_df(load_price_df(ticker, "5d"))
+        underlying_close = _latest_close_from_price_df(load_price_df(underlying, "5d"))
+        if target_close <= 0 or underlying_close <= 0:
+            return 0.0
+
+        live = float(underlying_live_price or 0.0)
+        if live <= 0:
+            live = _fetch_price_uncached(underlying)
+        if live <= 0:
+            return 0.0
+
+        underlying_ret = (live / underlying_close) - 1.0
+        if abs(underlying_ret) > 0.35:
+            return 0.0
+
+        # 레버리지 ETF는 일일 목표 수익률 상품이므로 기준가 이하로 내려갈 수 없게 하한만 둔다.
+        estimate = target_close * max(0.05, 1.0 + leverage * underlying_ret)
+        return float(estimate) if estimate > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
 def _period_start_timestamp(period: str) -> pd.Timestamp:
     text = str(period or "1y").strip().lower()
     today = pd.Timestamp.today().normalize()
@@ -928,6 +983,10 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
+        proxy_price = _estimate_leveraged_target_etf_proxy_price(ticker)
+        if proxy_price > 0:
+            return proxy_price
+
         price = _fetch_yahoo_overnight_page_price(ticker)
         if price > 0:
             return price
@@ -1120,6 +1179,17 @@ def load_latest_prices_batch(tickers) -> dict:
                         prices[normalize_price_lookup_key(t)] = p
         except Exception:
             pass
+
+    for t in us_tickers:
+        key = normalize_price_lookup_key(t)
+        cfg = LEVERAGED_TARGET_ETF_PROXIES.get(key)
+        underlying_key = normalize_price_lookup_key(cfg.get("underlying", "")) if cfg else ""
+        proxy_price = _estimate_leveraged_target_etf_proxy_price(
+            t,
+            underlying_live_price=prices.get(underlying_key),
+        )
+        if proxy_price > 0:
+            prices[key] = proxy_price
 
     return prices
 

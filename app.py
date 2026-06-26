@@ -28001,6 +28001,46 @@ if main_page == "asset":
 
         signal_rows = []
         if run_asset_tech_summary:
+            def _short_history_signal_row(tkr, r, bucket, is_etf):
+                avg_price = clean_float(r.get("매입가"), 0.0)
+                cur_price = clean_float(r.get("현재가"), 0.0)
+                pnl_pct = (cur_price / avg_price - 1.0) if avg_price > 0 and cur_price > 0 else np.nan
+
+                if bucket == "leverage":
+                    if finite_num(pnl_pct) and pnl_pct <= -0.15:
+                        label = "⚡신규 레버리지 강하락: 추매금지/종가 확인"
+                    elif finite_num(pnl_pct) and pnl_pct <= -0.10:
+                        label = "⚡신규 레버리지 중하락: DCA 조건부 대기"
+                    elif finite_num(pnl_pct) and pnl_pct <= -0.05:
+                        label = "⚡신규 레버리지 약하락: 소액 DCA 관찰"
+                    elif finite_num(pnl_pct) and pnl_pct >= 0.05:
+                        label = "⚡신규 레버리지 상승: 추격금지"
+                    else:
+                        label = "⚡신규 레버리지 ETF: 데이터 축적 관찰"
+                    grade = "⚠️레버리지 관찰"
+                    rs_label = "DRAM/기초흐름 확인" if normalize_ticker(tkr) == "RAM" else "기초흐름 확인"
+                elif is_etf:
+                    label = "🆕신규 ETF: 데이터 축적 관찰"
+                    grade = "⚖️ETF 관찰"
+                    rs_label = "기초흐름 확인"
+                else:
+                    label = "🆕자료부족: 관찰"
+                    grade = "-"
+                    rs_label = "-"
+
+                return {
+                    "티커": tkr,
+                    "기술적타점": label,
+                    "ADJ점수": 0,
+                    "후보등급": grade,
+                    "추세": "🆕신규상장/자료부족",
+                    "RS": rs_label,
+                    "RSI": np.nan,
+                    "MFI": np.nan,
+                    "MACD": "-",
+                    "SQZ": "-",
+                }
+
             for _, r in dash_df.iterrows():
                 tkr = r["티커"]
                 name = r["자산명"]
@@ -28028,6 +28068,7 @@ if main_page == "asset":
                 try:
                     px = load_price_df(tkr, "1y")
                     if px.empty or len(px) < 2:
+                        signal_rows.append(_short_history_signal_row(tkr, r, bucket, is_etf))
                         continue
 
                     px = build_indicators(px)
