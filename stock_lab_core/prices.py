@@ -92,6 +92,19 @@ def _latest_close_from_price_df(df: pd.DataFrame) -> float:
         return 0.0
 
 
+def _fetch_proxy_underlying_live_price(underlying: str) -> float:
+    price = _fetch_yahoo_overnight_page_price(underlying)
+    if price > 0:
+        return price
+    price = _fetch_configured_us_quote_price(underlying)
+    if price > 0:
+        return price
+    price = _fetch_pyth_us_live_price(underlying)
+    if price > 0:
+        return price
+    return 0.0
+
+
 def _estimate_leveraged_target_etf_proxy_price(
     ticker: str,
     underlying_live_price: float | None = None,
@@ -113,7 +126,7 @@ def _estimate_leveraged_target_etf_proxy_price(
 
         live = float(underlying_live_price or 0.0)
         if live <= 0:
-            live = _fetch_price_uncached(underlying)
+            live = _fetch_proxy_underlying_live_price(underlying)
         if live <= 0:
             return 0.0
 
@@ -691,6 +704,39 @@ def _fetch_configured_us_quote_price(ticker: str) -> float:
     return 0.0
 
 
+def _fetch_cboe_book_price(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+
+    headers = dict(_YQ_HEADERS)
+    headers["Referer"] = f"https://www.cboe.com/us/equities/market_statistics/book/{urllib.parse.quote(t)}/"
+    best_time = ""
+    best_price = 0.0
+    for market in ("edgx", "bzx", "byx", "edga"):
+        try:
+            url = f"https://www.cboe.com/{market}/book/{urllib.parse.quote(t)}/data/"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read())
+            data = (payload or {}).get("data") or {}
+            trades = data.get("trades") or []
+            if trades:
+                trade = trades[0]
+                trade_time = str(trade[0] if len(trade) > 0 else "")
+                price = float(str(trade[2] if len(trade) > 2 else 0).replace(",", ""))
+                if price > 0 and trade_time >= best_time:
+                    best_time = trade_time
+                    best_price = price
+                    continue
+            price = float(str(data.get("last") or 0).replace(",", ""))
+            if price > 0 and not best_price:
+                best_price = price
+        except Exception:
+            continue
+    return best_price if best_price > 0 else 0.0
+
+
 def _fetch_robinhood_us_quote(ticker: str) -> float:
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
@@ -983,10 +1029,6 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
-        proxy_price = _estimate_leveraged_target_etf_proxy_price(ticker)
-        if proxy_price > 0:
-            return proxy_price
-
         price = _fetch_yahoo_overnight_page_price(ticker)
         if price > 0:
             return price
@@ -994,6 +1036,9 @@ def _fetch_price_uncached(ticker: str) -> float:
         if price > 0:
             return price
         price = _fetch_pyth_us_live_price(ticker)
+        if price > 0:
+            return price
+        price = _fetch_cboe_book_price(ticker)
         if price > 0:
             return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
@@ -1012,6 +1057,9 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_yf_fast_info_price(ticker)
         if price > 0:
             return price
+        proxy_price = _estimate_leveraged_target_etf_proxy_price(ticker)
+        if proxy_price > 0:
+            return proxy_price
 
     # 공통 일봉 최종 폴백 (lock + threads=False)
     try:
@@ -1127,6 +1175,12 @@ def load_latest_prices_batch(tickers) -> dict:
         us_live_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         prices.update(_fetch_pyth_us_live_prices_batch(us_live_needed))
 
+        us_cboe_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
+        for t in us_cboe_needed:
+            p = _fetch_cboe_book_price(t)
+            if p > 0:
+                prices[normalize_price_lookup_key(t)] = p
+
         # 1차: Yahoo Finance 직접 API (캔들 기반 실시간가, SQLite lock 없음)
         us_yahoo_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for t in us_yahoo_needed:
@@ -1182,12 +1236,7 @@ def load_latest_prices_batch(tickers) -> dict:
 
     for t in us_tickers:
         key = normalize_price_lookup_key(t)
-        cfg = LEVERAGED_TARGET_ETF_PROXIES.get(key)
-        underlying_key = normalize_price_lookup_key(cfg.get("underlying", "")) if cfg else ""
-        proxy_price = _estimate_leveraged_target_etf_proxy_price(
-            t,
-            underlying_live_price=prices.get(underlying_key),
-        )
+        proxy_price = _estimate_leveraged_target_etf_proxy_price(t) if key not in prices else 0.0
         if proxy_price > 0:
             prices[key] = proxy_price
 

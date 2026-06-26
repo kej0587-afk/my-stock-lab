@@ -5372,6 +5372,17 @@ def clear_financial_api_cache():
 # 2-3. 보유자산 계산
 # -------------------------------------------------
 def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
+    def _override_unstable_holding_price(ticker, cur_price):
+        if IS_PUBLIC_DEMO:
+            return cur_price
+        manual_price = clean_float(
+            st.session_state.get(f"precision_manual_live_price_{normalize_ticker(ticker)}"),
+            0.0,
+        )
+        if manual_price > 0:
+            return manual_price
+        return cur_price
+
     def get_empty_holdings():
         empty_df = pd.DataFrame(columns=[
             "자산명", "티커", "보유량", "매입가", "현재가", "평가금액", "평가손익",
@@ -5449,6 +5460,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
             cur_price = load_latest_price(ticker)
         elif cur_price <= 0:
             cur_price = avg_price
+        cur_price = _override_unstable_holding_price(ticker, cur_price)
 
         eval_amt = qty * cur_price
         pnl = qty * (cur_price - avg_price)
