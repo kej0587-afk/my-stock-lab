@@ -66,3 +66,13 @@ def test_extract_kis_quote_price_accepts_extended_price_field():
     payload = {"output": {"last": "", "t_xprc": "25.80", "base": "28.71"}}
 
     assert prices._extract_kis_quote_price(payload) == 25.80
+
+
+def test_ram_kis_exchange_candidates_try_daytime_first():
+    assert prices._kis_us_exchange_candidates("RAM")[:2] == ["BAA", "AMS"]
+
+
+def test_extract_kis_intraday_price_from_output2():
+    payload = {"output2": [{"xhms": "140101", "last": "25.75"}]}
+
+    assert prices._extract_kis_intraday_price(payload) == 25.75

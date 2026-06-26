@@ -779,8 +779,10 @@ def _kis_us_exchange_candidates(ticker: str) -> list[str]:
     override = _secret_or_env(f"KIS_EXCD_{t}", f"KIS_EXCHANGE_{t}", f"kis_excd_{t}", f"kis_exchange_{t}")
     if override:
         return [x.strip().upper() for x in re.split(r"[,;/\s]+", override) if x.strip()]
-    # NAS: Nasdaq, NYS: NYSE, AMS: NYSE American/AMEX. RAM 같은 신규 ETF는 브로커마다 상장시장 매핑이 달라 후보를 순차 조회한다.
-    return ["AMS", "NAS", "NYS"]
+    if t == "RAM":
+        return ["BAA", "AMS", "BAQ", "BAY", "NAS", "NYS"]
+    # BAQ/BAY/BAA: US daytime trading. NAS/NYS/AMS: regular US exchange quote.
+    return ["BAQ", "BAY", "BAA", "NAS", "NYS", "AMS"]
 
 
 def _extract_kis_quote_price(payload) -> float:
@@ -811,6 +813,84 @@ def _extract_kis_quote_price(payload) -> float:
     return 0.0
 
 
+def _extract_kis_intraday_price(payload) -> float:
+    if not isinstance(payload, dict):
+        return 0.0
+    rows = payload.get("output2") or payload.get("output") or payload.get("output1") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not isinstance(rows, list):
+        return 0.0
+
+    price_keys = (
+        "last",
+        "clos",
+        "close",
+        "stck_prpr",
+        "ovrs_nmix_prpr",
+        "prpr",
+        "price",
+        "t_xprc",
+        "p_xprc",
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in price_keys:
+            try:
+                value = str(row.get(key, "")).strip().replace(",", "")
+                if not value:
+                    continue
+                price = float(value)
+                if price > 0:
+                    return price
+            except Exception:
+                continue
+    return 0.0
+
+
+def _fetch_kis_us_intraday_price(ticker: str, exchange: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t) or not str(exchange).upper().startswith("BA"):
+        return 0.0
+
+    app_key, app_secret = _kis_credentials()
+    token = _kis_access_token()
+    if not app_key or not app_secret or not token:
+        return 0.0
+
+    try:
+        base = _kis_base_url()
+        params = {
+            "AUTH": "",
+            "EXCD": str(exchange).upper(),
+            "SYMB": t,
+            "NMIN": "1",
+            "PINC": "1",
+            "NEXT": "",
+            "NREC": "5",
+            "FILL": "",
+            "KEYB": "",
+        }
+        url = f"{base}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice?{urllib.parse.urlencode(params)}"
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {token}",
+            "appkey": app_key,
+            "appsecret": app_secret,
+            "tr_id": "HHDFS76950200",
+            "custtype": "P",
+        }
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read())
+        if str(payload.get("rt_cd", "0")) not in {"0", ""}:
+            return 0.0
+        return _extract_kis_intraday_price(payload)
+    except Exception:
+        return 0.0
+
+
 def _fetch_kis_us_quote_price(ticker: str) -> float:
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
@@ -824,6 +904,10 @@ def _fetch_kis_us_quote_price(ticker: str) -> float:
     base = _kis_base_url()
     for exchange in _kis_us_exchange_candidates(t):
         try:
+            if str(exchange).upper().startswith("BA"):
+                price = _fetch_kis_us_intraday_price(t, exchange)
+                if price > 0:
+                    return price
             query = urllib.parse.urlencode({"AUTH": "", "EXCD": exchange, "SYMB": t})
             url = f"{base}/uapi/overseas-price/v1/quotations/price?{query}"
             headers = {
