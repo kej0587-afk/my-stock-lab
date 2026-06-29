@@ -79,6 +79,9 @@ LEVERAGED_TARGET_ETF_PROXIES = {
     "RAM": {"underlying": "DRAM", "leverage": 2.0},
 }
 
+OHLC_LIVE_ALIGNMENT_TICKERS = {"HON"}
+OHLC_ALIGNMENT_FACTORS = (0.5, 0.25, 0.2, 0.1, 2.0, 4.0, 5.0, 10.0)
+
 
 def _latest_close_from_price_df(df: pd.DataFrame) -> float:
     if df is None or df.empty or "Close" not in df.columns:
@@ -90,6 +93,39 @@ def _latest_close_from_price_df(df: pd.DataFrame) -> float:
         return float(close.iloc[-1])
     except Exception:
         return 0.0
+
+
+def _maybe_align_ohlcv_to_live_price(ticker: str, df: pd.DataFrame) -> pd.DataFrame:
+    key = normalize_price_lookup_key(ticker)
+    if key not in OHLC_LIVE_ALIGNMENT_TICKERS:
+        return df
+    if df is None or df.empty or "Close" not in df.columns:
+        return df
+
+    hist_close = _latest_close_from_price_df(df)
+    if hist_close <= 0:
+        return df
+
+    try:
+        live_price = float(_fetch_price_uncached(ticker) or 0.0)
+    except Exception:
+        live_price = 0.0
+    if live_price <= 0:
+        return df
+
+    ratio = live_price / hist_close
+    if 0.85 <= ratio <= 1.15:
+        return df
+
+    factor = min(OHLC_ALIGNMENT_FACTORS, key=lambda candidate: abs(ratio - candidate))
+    if abs((ratio / factor) - 1.0) > 0.08:
+        return df
+
+    adjusted = df.copy()
+    for col in ("Open", "High", "Low", "Close", "Adj Close"):
+        if col in adjusted.columns:
+            adjusted[col] = pd.to_numeric(adjusted[col], errors="coerce") * factor
+    return adjusted
 
 
 def _fetch_proxy_underlying_live_price(underlying: str) -> float:
@@ -310,6 +346,7 @@ def load_price_df(ticker, period="1y"):
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         df = df.ffill().dropna()
+        df = _maybe_align_ohlcv_to_live_price(ticker, df)
     return df
 
 

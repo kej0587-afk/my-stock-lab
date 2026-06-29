@@ -76,3 +76,30 @@ def test_extract_kis_intraday_price_from_output2():
     payload = {"output2": [{"xhms": "140101", "last": "25.75"}]}
 
     assert prices._extract_kis_intraday_price(payload) == 25.75
+
+
+def test_hon_ohlc_alignment_scales_split_like_gap(monkeypatch):
+    df = pd.DataFrame({
+        "Open": [460.0],
+        "High": [468.0],
+        "Low": [452.0],
+        "Close": [464.42],
+        "Volume": [1000],
+    })
+
+    monkeypatch.setattr(prices, "_fetch_price_uncached", lambda ticker: 232.21)
+
+    fixed = prices._maybe_align_ohlcv_to_live_price("HON", df)
+
+    assert round(float(fixed["Close"].iloc[-1]), 2) == 232.21
+    assert round(float(fixed["Open"].iloc[-1]), 2) == 230.00
+
+
+def test_non_alignment_ticker_keeps_ohlc(monkeypatch):
+    df = pd.DataFrame({"Close": [464.42]})
+
+    monkeypatch.setattr(prices, "_fetch_price_uncached", lambda ticker: 232.21)
+
+    fixed = prices._maybe_align_ohlcv_to_live_price("AAPL", df)
+
+    assert float(fixed["Close"].iloc[-1]) == 464.42
