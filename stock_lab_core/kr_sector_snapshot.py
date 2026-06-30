@@ -377,6 +377,101 @@ def load_kospi_sector_constituents() -> pd.DataFrame:
     return df
 
 
+def _coerce_float_value(value: Any) -> float:
+    try:
+        text = str(value or "").strip().replace(",", "").replace("%", "")
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return float("nan")
+        return float(text)
+    except Exception:
+        return float("nan")
+
+
+def _price_lookup_key(ticker: Any) -> str:
+    return str(ticker or "").strip().upper()
+
+
+def _load_latest_prices_for_snapshot(tickers: list[str]) -> dict[str, float]:
+    try:
+        from stock_lab_core.prices import load_latest_prices_batch
+
+        return load_latest_prices_batch(tickers)
+    except Exception:
+        return {}
+
+
+def _align_live_price_scale(live_price: float, reference_price: float) -> float:
+    """Align Naver live prices to the stored KOSPI snapshot scale when needed."""
+    if not np.isfinite(live_price) or not np.isfinite(reference_price):
+        return live_price
+    if live_price <= 0 or reference_price <= 0:
+        return live_price
+
+    ratio = live_price / reference_price
+    if 0.50 <= ratio <= 1.50:
+        return live_price
+
+    candidates = [live_price]
+    for factor in (10.0, 100.0, 1000.0, 0.1, 0.01, 0.001):
+        candidates.append(live_price * factor)
+    return min(candidates, key=lambda value: abs((value / reference_price) - 1.0))
+
+
+def _infer_previous_close(row: pd.Series, current_price: float, change_pct: float) -> float:
+    if np.isfinite(current_price) and current_price > 0 and np.isfinite(change_pct) and change_pct > -99:
+        divisor = 1.0 + (change_pct / 100.0)
+        if divisor > 0:
+            return current_price / divisor
+
+    change_abs = _coerce_float_value(row.get("change_sign", np.nan))
+    if np.isfinite(current_price) and current_price > 0 and np.isfinite(change_abs):
+        previous_close = current_price - change_abs
+        if previous_close > 0:
+            return previous_close
+    return float("nan")
+
+
+def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFrame:
+    """Refresh current price/change_pct before picking KR cluster leaders/laggards."""
+    if rows.empty or "ticker" not in rows.columns or "current" not in rows.columns:
+        return rows
+
+    tickers = [str(ticker or "").strip() for ticker in rows["ticker"].tolist() if str(ticker or "").strip()]
+    latest_prices = _load_latest_prices_for_snapshot(tickers)
+    if not latest_prices:
+        return rows
+
+    refreshed = rows.copy()
+    if "change_pct" not in refreshed.columns:
+        refreshed["change_pct"] = np.nan
+
+    for idx, row in refreshed.iterrows():
+        ticker = str(row.get("ticker", "") or "").strip()
+        live_price = _coerce_float_value(latest_prices.get(_price_lookup_key(ticker), np.nan))
+        if not np.isfinite(live_price) or live_price <= 0:
+            continue
+
+        stored_current = _coerce_float_value(row.get("current", np.nan))
+        stored_pct = _coerce_float_value(row.get("change_pct", np.nan))
+        aligned_live = _align_live_price_scale(live_price, stored_current)
+        previous_close = _infer_previous_close(row, stored_current, stored_pct)
+        refreshed.at[idx, "current"] = aligned_live
+
+        if np.isfinite(previous_close) and previous_close > 0:
+            new_change_abs = aligned_live - previous_close
+            refreshed.at[idx, "change_pct"] = (aligned_live / previous_close - 1.0) * 100.0
+            if "change_sign" in refreshed.columns:
+                refreshed.at[idx, "change_sign"] = new_change_abs
+            if "change_abs" in refreshed.columns:
+                if new_change_abs > 0:
+                    refreshed.at[idx, "change_abs"] = "▲"
+                elif new_change_abs < 0:
+                    refreshed.at[idx, "change_abs"] = "▼"
+                else:
+                    refreshed.at[idx, "change_abs"] = ""
+    return refreshed
+
+
 def _records(df: pd.DataFrame, name_col: str = "name", limit: int = 3) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for _, row in df.head(limit).iterrows():
@@ -436,6 +531,7 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         if sort_cols:
             constituent_rows = constituent_rows.sort_values(sort_cols, ascending=[True] * len(sort_cols))
         constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
+    constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
 
     if industry_rows.empty and constituent_rows.empty:
         return {}
@@ -462,9 +558,10 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         else valid_const
     )
 
-    if pd.notna(breadth) and breadth >= 0.60 and (pd.isna(sector_avg) or sector_avg >= 0):
+    status_avg = const_avg if pd.notna(const_avg) else sector_avg
+    if pd.notna(breadth) and breadth >= 0.60 and (pd.isna(status_avg) or status_avg >= 0):
         status = "확산 우세"
-    elif (pd.notna(breadth) and breadth < 0.40) or (pd.notna(sector_avg) and sector_avg < 0):
+    elif (pd.notna(breadth) and breadth < 0.40) or (pd.notna(status_avg) and status_avg < 0):
         status = "확산 약함"
     else:
         status = "혼조"

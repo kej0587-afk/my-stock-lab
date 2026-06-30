@@ -318,10 +318,10 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
         # {"SERVICE_ITEM:000660":{"nv":"1847000", ...}, ...}
         prices = {}
         for code, ticker in zip(codes, kr_tickers):
-            pattern = rf'"SERVICE_ITEM:{re.escape(code)}".*?"nv"\s*:\s*"(\d+)"'
+            pattern = rf'"SERVICE_ITEM:{re.escape(code)}".*?"nv"\s*:\s*"?([\d,]+)"?'
             m = re.search(pattern, text)
             if m:
-                prices[normalize_price_lookup_key(ticker)] = float(m.group(1))
+                prices[normalize_price_lookup_key(ticker)] = float(m.group(1).replace(",", ""))
         return prices
     except Exception:
         return {}
