@@ -103,3 +103,23 @@ def test_non_alignment_ticker_keeps_ohlc(monkeypatch):
     fixed = prices._maybe_align_ohlcv_to_live_price("AAPL", df)
 
     assert float(fixed["Close"].iloc[-1]) == 464.42
+
+
+def test_parse_naver_realtime_quotes_extracts_price_and_change_pct():
+    payload = '{"SERVICE_ITEM:000660":{"nv":"301,000","cv":"4,000","cr":"1.37","rf":"2"}}'
+
+    quotes = prices._parse_naver_realtime_quotes(payload, ["000660.KS"])
+
+    assert quotes["000660.KS"]["price"] == 301000.0
+    assert quotes["000660.KS"]["change_pct"] == 1.37
+    assert quotes["000660.KS"]["change_abs"] == 4000.0
+
+
+def test_parse_naver_realtime_quotes_applies_falling_sign():
+    payload = '{"SERVICE_ITEM:000660":{"nv":"301,000","cv":"4,000","cr":"1.37","rf":"5"}}'
+
+    quotes = prices._parse_naver_realtime_quotes(payload, ["000660.KS"])
+
+    assert quotes["000660.KS"]["price"] == 301000.0
+    assert quotes["000660.KS"]["change_pct"] == -1.37
+    assert quotes["000660.KS"]["change_abs"] == -4000.0

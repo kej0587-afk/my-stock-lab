@@ -301,6 +301,145 @@ def _fetch_naver_realtime_price(ticker: str) -> float:
     return 0.0
 
 
+def _coerce_naver_number(value) -> float:
+    try:
+        text = html.unescape(str(value or "")).strip()
+        text = text.replace(",", "").replace("%", "")
+        if not text or text.lower() in {"nan", "none", "null", "-"}:
+            return 0.0
+        return float(text)
+    except Exception:
+        return 0.0
+
+
+def _naver_quote_sign(obj: dict) -> int:
+    values = [
+        obj.get("rf"),
+        obj.get("compareToPreviousClosePriceCode"),
+        obj.get("compareToPreviousPriceCode"),
+        obj.get("fluctuationsType"),
+    ]
+    joined = " ".join(str(v or "").strip().lower() for v in values)
+    if any(token in joined for token in ["5", "하락", "fall", "bear"]):
+        return -1
+    if any(token in joined for token in ["1", "2", "상승", "rise", "bull"]):
+        return 1
+    return 0
+
+
+def _extract_naver_quote_from_obj(obj: dict) -> dict:
+    if not isinstance(obj, dict):
+        return {}
+    price = 0.0
+    for field in ("nv", "closePrice", "stockEndPrice", "currentPrice", "tradePrice"):
+        price = _coerce_naver_number(obj.get(field))
+        if price > 0:
+            break
+    change_pct = 0.0
+    for field in ("cr", "fluctuationsRatio", "changeRate", "rate"):
+        change_pct = _coerce_naver_number(obj.get(field))
+        if change_pct:
+            break
+    change_abs = 0.0
+    for field in ("cv", "compareToPreviousClosePrice", "changePrice"):
+        change_abs = _coerce_naver_number(obj.get(field))
+        if change_abs:
+            break
+    sign = _naver_quote_sign(obj)
+    if sign < 0:
+        if change_pct > 0:
+            change_pct = -change_pct
+        if change_abs > 0:
+            change_abs = -change_abs
+    quote = {}
+    if price > 0:
+        quote["price"] = price
+    if change_pct:
+        quote["change_pct"] = change_pct
+    if change_abs:
+        quote["change_abs"] = change_abs
+    return quote
+
+
+def _naver_obj_code(obj: dict) -> str:
+    for field in ("cd", "itemCode", "stockCode", "symbolCode", "code"):
+        value = str(obj.get(field, "") or "").strip()
+        if re.fullmatch(r"\d{6}[A-Z0-9]*", value):
+            return value
+    return ""
+
+
+def _walk_naver_quote_objects(obj):
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            key_text = str(key or "")
+            if key_text.startswith("SERVICE_ITEM:") and isinstance(value, dict):
+                code = key_text.split("SERVICE_ITEM:", 1)[1].strip()
+                yield code, value
+        code = _naver_obj_code(obj)
+        if code and any(field in obj for field in ("nv", "closePrice", "stockEndPrice", "currentPrice")):
+            yield code, obj
+        for value in obj.values():
+            yield from _walk_naver_quote_objects(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _walk_naver_quote_objects(value)
+
+
+def _parse_naver_realtime_quotes(text: str, kr_tickers: list) -> dict:
+    code_to_key = {_kr_code(t): normalize_price_lookup_key(t) for t in kr_tickers if _kr_code(t)}
+    quotes: dict[str, dict] = {}
+    if not code_to_key:
+        return quotes
+
+    try:
+        data = json.loads(text)
+        for code, obj in _walk_naver_quote_objects(data):
+            key = code_to_key.get(str(code or "").strip())
+            if not key or key in quotes:
+                continue
+            quote = _extract_naver_quote_from_obj(obj)
+            if quote:
+                quotes[key] = quote
+    except Exception:
+        pass
+
+    for code, key in code_to_key.items():
+        if key in quotes:
+            continue
+        block_match = re.search(rf'"SERVICE_ITEM:{re.escape(code)}"\s*:\s*\{{(.*?)\}}', text, flags=re.S)
+        if not block_match:
+            continue
+        block = block_match.group(1)
+        obj = {}
+        for field in ("nv", "cv", "cr", "rf"):
+            m = re.search(rf'"{field}"\s*:\s*"?([^",}}]+)"?', block)
+            if m:
+                obj[field] = m.group(1)
+        quote = _extract_naver_quote_from_obj(obj)
+        if quote:
+            quotes[key] = quote
+    return quotes
+
+
+def _fetch_naver_quotes_bulk(kr_tickers: list) -> dict:
+    """Naver realtime quote API: {ticker: {price, change_pct, change_abs}}."""
+    if not kr_tickers:
+        return {}
+    codes = [_kr_code(t) for t in kr_tickers]
+    try:
+        query = "|".join(f"SERVICE_ITEM:{c}" for c in codes if c)
+        if not query:
+            return {}
+        url = f"https://polling.finance.naver.com/api/realtime?query={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        raw = urllib.request.urlopen(req, timeout=6).read()
+        text = raw.decode("utf-8", errors="ignore")
+        return _parse_naver_realtime_quotes(text, kr_tickers)
+    except Exception:
+        return {}
+
+
 def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
     """
     네이버 시세 bulk API: 한 번 요청으로 여러 종목 조회.
@@ -308,6 +447,13 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
     """
     if not kr_tickers:
         return {}
+    quotes = _fetch_naver_quotes_bulk(kr_tickers)
+    if quotes:
+        return {
+            key: quote.get("price", 0.0)
+            for key, quote in quotes.items()
+            if float(quote.get("price", 0.0) or 0.0) > 0
+        }
     codes = [_kr_code(t) for t in kr_tickers]
     try:
         query = "|".join(f"SERVICE_ITEM:{c}" for c in codes)
@@ -666,6 +812,13 @@ def _fetch_pyth_prices_by_feed_id(feed_ids: list[str]) -> dict:
         return out
     except Exception:
         return {}
+
+
+def load_latest_kr_quotes_batch(tickers) -> dict:
+    kr_tickers = [t for t in (tickers or []) if _is_kr_ticker(str(t))]
+    if not kr_tickers:
+        return {}
+    return _fetch_naver_quotes_bulk(kr_tickers)
 
 
 def _fetch_pyth_us_live_prices_batch(tickers: list) -> dict:

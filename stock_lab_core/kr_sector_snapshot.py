@@ -391,11 +391,23 @@ def _price_lookup_key(ticker: Any) -> str:
     return str(ticker or "").strip().upper()
 
 
-def _load_latest_prices_for_snapshot(tickers: list[str]) -> dict[str, float]:
+def _load_latest_quotes_for_snapshot(tickers: list[str]) -> dict[str, dict[str, float]]:
+    try:
+        from stock_lab_core.prices import load_latest_kr_quotes_batch
+
+        quotes = load_latest_kr_quotes_batch(tickers)
+        if quotes:
+            return quotes
+    except Exception:
+        pass
     try:
         from stock_lab_core.prices import load_latest_prices_batch
 
-        return load_latest_prices_batch(tickers)
+        prices = load_latest_prices_batch(tickers)
+        return {
+            _price_lookup_key(ticker): {"price": _coerce_float_value(price)}
+            for ticker, price in prices.items()
+        }
     except Exception:
         return {}
 
@@ -437,8 +449,8 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
         return rows
 
     tickers = [str(ticker or "").strip() for ticker in rows["ticker"].tolist() if str(ticker or "").strip()]
-    latest_prices = _load_latest_prices_for_snapshot(tickers)
-    if not latest_prices:
+    latest_quotes = _load_latest_quotes_for_snapshot(tickers)
+    if not latest_quotes:
         return rows
 
     refreshed = rows.copy()
@@ -450,7 +462,8 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
 
     for idx, row in refreshed.iterrows():
         ticker = str(row.get("ticker", "") or "").strip()
-        live_price = _coerce_float_value(latest_prices.get(_price_lookup_key(ticker), np.nan))
+        quote = latest_quotes.get(_price_lookup_key(ticker), {})
+        live_price = _coerce_float_value(quote.get("price", np.nan))
         if not np.isfinite(live_price) or live_price <= 0:
             continue
 
@@ -460,7 +473,20 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
         previous_close = _infer_previous_close(row, stored_current, stored_pct)
         refreshed.at[idx, "current"] = aligned_live
 
-        if np.isfinite(previous_close) and previous_close > 0:
+        live_change_pct = _coerce_float_value(quote.get("change_pct", np.nan))
+        live_change_abs = _coerce_float_value(quote.get("change_abs", np.nan))
+        if np.isfinite(live_change_pct) and live_change_pct != 0:
+            refreshed.at[idx, "change_pct"] = live_change_pct
+            if "change_sign" in refreshed.columns and np.isfinite(live_change_abs):
+                refreshed.at[idx, "change_sign"] = live_change_abs
+            if "change_abs" in refreshed.columns:
+                if live_change_pct > 0:
+                    refreshed.at[idx, "change_abs"] = "▲"
+                elif live_change_pct < 0:
+                    refreshed.at[idx, "change_abs"] = "▼"
+                else:
+                    refreshed.at[idx, "change_abs"] = ""
+        elif np.isfinite(previous_close) and previous_close > 0:
             new_change_abs = aligned_live - previous_close
             refreshed.at[idx, "change_pct"] = (aligned_live / previous_close - 1.0) * 100.0
             if "change_sign" in refreshed.columns:

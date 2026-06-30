@@ -7,7 +7,7 @@ from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
 
 @pytest.fixture(autouse=True)
 def disable_live_snapshot_prices(monkeypatch):
-    monkeypatch.setattr(kr_snapshot, "_load_latest_prices_for_snapshot", lambda tickers: {})
+    monkeypatch.setattr(kr_snapshot, "_load_latest_quotes_for_snapshot", lambda tickers: {})
 
 
 def test_kr_cluster_snapshot_filters_fund_like_noise_for_ai_semis():
@@ -76,8 +76,11 @@ def test_kr_cluster_snapshot_live_refresh_recomputes_representative_returns(monk
     )
     monkeypatch.setattr(
         kr_snapshot,
-        "_load_latest_prices_for_snapshot",
-        lambda tickers: {"009150.KS": 2144000.0, "011070.KS": 1062500.0},
+        "_load_latest_quotes_for_snapshot",
+        lambda tickers: {
+            "009150.KS": {"price": 2144000.0},
+            "011070.KS": {"price": 1062500.0},
+        },
     )
 
     refreshed = kr_snapshot._refresh_constituent_rows_with_live_prices(rows)
@@ -90,14 +93,45 @@ def test_kr_cluster_snapshot_live_refresh_recomputes_representative_returns(monk
     assert lg["change_abs"] == "▲"
 
 
+def test_kr_cluster_snapshot_live_refresh_prefers_direct_naver_change_pct(monkeypatch):
+    rows = pd.DataFrame(
+        [
+            {
+                "sector": "전기,전자",
+                "rank": 1,
+                "ticker": "000660.KS",
+                "name": "SK하이닉스",
+                "current": 290000,
+                "change_abs": "▲",
+                "change_sign": 10000,
+                "change_pct": 3.70,
+                "volume": 1000000,
+                "is_fund_like": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        kr_snapshot,
+        "_load_latest_quotes_for_snapshot",
+        lambda tickers: {"000660.KS": {"price": 301000.0, "change_pct": 1.37, "change_abs": 4000.0}},
+    )
+
+    refreshed = kr_snapshot._refresh_constituent_rows_with_live_prices(rows)
+
+    hynix = refreshed.iloc[0]
+    assert hynix["current"] == 301000.0
+    assert hynix["change_pct"] == 1.37
+    assert hynix["change_sign"] == 4000.0
+
+
 def test_kr_cluster_snapshot_can_skip_live_refresh_for_bulk_tables(monkeypatch):
     called = {"count": 0}
 
     def fake_loader(tickers):
         called["count"] += 1
-        return {"009150.KS": 2144000.0}
+        return {"009150.KS": {"price": 2144000.0}}
 
-    monkeypatch.setattr(kr_snapshot, "_load_latest_prices_for_snapshot", fake_loader)
+    monkeypatch.setattr(kr_snapshot, "_load_latest_quotes_for_snapshot", fake_loader)
 
     snapshot = build_kr_cluster_snapshot("AI·반도체", detail_name="전자부품·MLCC", live_prices=False)
 
