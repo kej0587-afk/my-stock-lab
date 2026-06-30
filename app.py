@@ -7332,6 +7332,7 @@ KR_ROTATION_THEME_CLUSTER_MAP = {
     "PCB·기판 글로벌": "AI·반도체",
     "전자부품·MLCC": "AI·반도체",
     "포토닉스·광통신": "AI·반도체",
+    "휴머노이드·로봇": "전력·인프라",
     "전력·에너지 인프라": "전력·인프라",
     "글로벌 원전·SMR": "원전·우라늄",
     "우주항공·방산": "방산·조선",
@@ -7342,6 +7343,19 @@ KR_ROTATION_THEME_CLUSTER_MAP = {
     "2차전지 밸류체인": "2차전지",
     "전력 인프라": "전력·인프라",
     "국내 반도체": "AI·반도체",
+}
+
+
+US_ROTATION_THEME_CLUSTER_MAP = {
+    "미국 AI·빅테크": "AI·반도체",
+    "AI 소프트웨어·사이버보안": "소프트웨어·사이버",
+    "미국 금융·핀테크": "금융·핀테크",
+    "미국 헬스케어·바이오텍": "바이오·헬스",
+    "우주·위성 RF통신": "우주·통신",
+    "글로벌 인프라·산업재": "산업재·인프라",
+    "리튬/EV밸류체인": "2차전지·EV",
+    "2차전지·EV": "2차전지·EV",
+    "소비재": "소비재",
 }
 
 
@@ -7361,6 +7375,25 @@ def _lookup_kr_rotation_cluster(row, label_col: str = "") -> str:
     return ""
 
 
+def _lookup_us_rotation_cluster(row, label_col: str = "") -> str:
+    sector = str(row.get("섹터", "") or "").strip()
+    theme = str(row.get("테마", "") or "").strip()
+    label = str(row.get(label_col, "") or "").strip() if label_col else ""
+    for value in [sector, theme, label]:
+        if value in US_ROTATION_THEME_CLUSTER_MAP:
+            return US_ROTATION_THEME_CLUSTER_MAP[value]
+        if value in SECTOR_CLUSTERS_US:
+            return value
+    joined = " ".join([sector, theme, label])
+    for key, cluster in US_ROTATION_THEME_CLUSTER_MAP.items():
+        if key and key in joined:
+            return cluster
+    for key in SECTOR_CLUSTERS_US:
+        if key and key in joined:
+            return key
+    return ""
+
+
 def _is_kr_rotation_ticker(ticker: str) -> bool:
     value = str(ticker or "").strip().upper()
     if not value or value in {"NAN", "NONE", "-"}:
@@ -7370,11 +7403,13 @@ def _is_kr_rotation_ticker(ticker: str) -> bool:
 
 def _is_us_rotation_context(row, label_col: str = "") -> bool:
     ticker = str(row.get("Ticker", "") or "").strip()
-    if ticker:
+    if ticker and ticker.upper() not in {"NAN", "NONE", "NULL", "-"}:
         return not _is_kr_rotation_ticker(ticker)
     sector = str(row.get("섹터", "") or "").strip()
     theme = str(row.get("테마", "") or "").strip()
     label = str(row.get(label_col, "") or "").strip() if label_col else ""
+    if _lookup_us_rotation_cluster(row, label_col):
+        return True
     joined = " ".join([sector, theme, label])
     return "미국" in joined or "US" in joined.upper()
 
@@ -7414,7 +7449,7 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             builder = build_kr_cluster_snapshot
             market_label = "KOSPI"
         elif is_us:
-            cluster = next((value for value in [label, theme, sector] if value), "")
+            cluster = _lookup_us_rotation_cluster(row, label_col) or next((value for value in [label, theme, sector] if value), "")
             if not cluster:
                 continue
             builder = build_us_cluster_snapshot
@@ -23519,12 +23554,13 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
         for market, cl in sorted(cluster_items, key=lambda x: x[1].get("fit_score", -999), reverse=True):
             tickers = " ".join(str(t.get("ticker", "")) for t in cl.get("tickers", []) if isinstance(t, dict))
             bridge = resolve_flow_theme_bridge(cl.get("name", ""), tickers, market)
-            kr_snapshot = cl.get("kr_snapshot", {}) if market == "한국 섹터" else {}
-            kr_internal_status = _kr_snapshot_status_text(kr_snapshot)
-            kr_internal_weak = "확산 약함" in kr_internal_status
-            kr_industries_text = _format_kr_sector_items_plain(kr_snapshot.get("industries", []), limit=3) if kr_snapshot else "-"
-            kr_representative_text = _format_kr_sector_items_plain(kr_snapshot.get("leaders", []), limit=3) if kr_snapshot else ""
-            kr_laggards_text = _format_kr_sector_items_plain(kr_snapshot.get("laggards", []), limit=2) if kr_snapshot else "-"
+            market_label = "KOSPI" if market == "한국 섹터" else "US"
+            market_snapshot = cl.get("market_snapshot", {}) or (cl.get("kr_snapshot", {}) if market == "한국 섹터" else {})
+            market_internal_status = _market_snapshot_status_text(market_snapshot, market_label=market_label)
+            market_internal_weak = "확산 약함" in market_internal_status
+            market_industries_text = _format_kr_sector_items_plain(market_snapshot.get("industries", []), limit=3) if market_snapshot else "-"
+            market_representative_text = _format_kr_sector_items_plain(market_snapshot.get("leaders", []), limit=3) if market_snapshot else ""
+            market_laggards_text = _format_kr_sector_items_plain(market_snapshot.get("laggards", []), limit=2) if market_snapshot else "-"
             theme_row = _best_theme_row(theme_rotation_df, bridge.get("themes", []))
             theme_name = _first_flow_text(
                 theme_row.get("테마", ""),
@@ -23573,7 +23609,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
                 theme_row.get("대표주", ""),
-                kr_representative_text,
+                market_representative_text,
                 _fallback_flow_representative(theme_name, display_subtheme, cl.get("name", "")),
                 default="대표주 확인 필요",
             )
@@ -23584,9 +23620,9 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 next_check = "전광판 등록 후 2주·1개월 흐름 유지 확인"
             elif action == "🔸 관망":
                 next_check = "섹터와 하위테마가 같은 방향으로 맞을 때 재검토"
-            if kr_internal_weak:
-                next_check = "KOSPI 업종 내부 확산·약한 대표주 먼저 확인"
-                reason = f"{reason} / KOSPI 업종 내부 확산 약함"
+            if market_internal_weak:
+                next_check = f"{market_label} 업종 내부 확산·약한 대표주 먼저 확인"
+                reason = f"{reason} / {market_label} 업종 내부 확산 약함"
 
             rows.append({
                 "출처": "ETF/섹터",
@@ -23598,10 +23634,13 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "핵심하위테마": display_subtheme,
                 "하위상태": display_sub_state,
                 "대표주": representative,
-                "업종내부": kr_internal_status,
-                "대표업종": kr_industries_text,
-                "업종대표주": kr_representative_text or "-",
-                "약한대표주": kr_laggards_text,
+                "업종내부": market_internal_status,
+                "대표업종": market_industries_text,
+                "시장대분류": market_industries_text,
+                "KOSPI대분류": market_industries_text if market_label == "KOSPI" else "-",
+                "US대분류": market_industries_text if market_label == "US" else "-",
+                "업종대표주": market_representative_text or "-",
+                "약한대표주": market_laggards_text,
                 "통합판정": action,
                 "다음확인": next_check,
                 "이유": reason,
@@ -23651,9 +23690,21 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
             display_1m = sub_1m if finite_num(sub_1m) else theme_1m
             display_2w = sub_2w if finite_num(sub_2w) else theme_2w
             display_price = sub_price if finite_num(sub_price) else theme_price
+            theme_context_row = theme_row
+            theme_context_df = _attach_kr_internal_context_to_rotation_df(pd.DataFrame([theme_row.to_dict()]), label_col="테마")
+            if theme_context_df is not None and not theme_context_df.empty:
+                theme_context_row = theme_context_df.iloc[0]
+            theme_internal_status = _flow_text(theme_context_row.get("업종내부", "")) or "-"
+            theme_industries_text = _flow_text(theme_context_row.get("대표업종", "")) or "-"
+            theme_market_text = _flow_text(theme_context_row.get("시장대분류", "")) or "-"
+            theme_kospi_text = _flow_text(theme_context_row.get("KOSPI대분류", "")) or "-"
+            theme_us_text = _flow_text(theme_context_row.get("US대분류", "")) or "-"
+            theme_leaders_text = _flow_text(theme_context_row.get("업종대표주", "")) or "-"
+            theme_laggards_text = _flow_text(theme_context_row.get("약한대표주", "")) or "-"
             representative = _first_flow_text(
                 sub_row.get("대표주", ""),
                 theme_row.get("대표주", ""),
+                "" if theme_leaders_text == "-" else theme_leaders_text,
                 _fallback_flow_representative(theme_name, display_subtheme, theme_name),
                 default="대표주 확인 필요",
             )
@@ -23674,10 +23725,13 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "핵심하위테마": display_subtheme,
                 "하위상태": display_sub_state,
                 "대표주": representative,
-                "업종내부": "-",
-                "대표업종": "-",
-                "업종대표주": "-",
-                "약한대표주": "-",
+                "업종내부": theme_internal_status,
+                "대표업종": theme_industries_text,
+                "시장대분류": theme_market_text,
+                "KOSPI대분류": theme_kospi_text,
+                "US대분류": theme_us_text,
+                "업종대표주": theme_leaders_text,
+                "약한대표주": theme_laggards_text,
                 "통합판정": action,
                 "다음확인": "해당 테마 종목 흐름에서 하위테마와 대표주 확인",
                 "이유": reason,
@@ -23928,7 +23982,11 @@ def _render_flow_command_center(unified_df):
     m4.metric("관심등록", f"{interest_count}개")
     m5.metric("관망/제외", f"{wait_count}개")
 
-    cols = ["행동", "후보군", "주도층위", "업종내부", "대표업종", "대표주", "가격위치", "흐름", "판단", "다음확인"]
+    cols = [
+        "행동", "후보군", "주도층위", "업종내부", "대표업종", "시장대분류",
+        "KOSPI대분류", "US대분류", "대표주", "업종대표주", "약한대표주",
+        "가격위치", "흐름", "판단", "다음확인",
+    ]
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
     if primary.empty:
         primary = command_df.head(10)
@@ -23980,7 +24038,8 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         "통합판정", "후보군", "큰돈판정", "큰돈1M", "큰돈2W",
         "연결테마", "테마판정", "테마1M", "테마2W",
         "핵심하위테마", "하위상태", "하위1M", "하위2W",
-        "대표주", "업종내부", "대표업종", "업종대표주", "약한대표주", "가격수준", "다음확인",
+        "대표주", "업종내부", "대표업종", "시장대분류", "KOSPI대분류", "US대분류",
+        "업종대표주", "약한대표주", "가격수준", "다음확인",
     ]
     with st.expander("원천 상세표 보기", expanded=False):
         st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서의 원천 표입니다.")
@@ -23992,7 +24051,7 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
             "- `관심등록`: 새 돈 후보지만 아직 타점 확정 전입니다. 전광판에 올려 흐름 유지 여부를 봅니다.\n"
             "- `눌림대기`: 큰 흐름은 강하지만 가격 위치나 과열 상태가 높습니다.\n"
             "- `추격금지`: 극단 과열 또는 가격 위치가 높아 신규 추격을 막는 구간입니다.\n"
-            "- `업종내부`: 한국 클러스터는 KOSPI 업종/대표주 확산도를 추가 확인합니다. 확산 약함이면 정밀·눌림 후보에서 낮춰 봅니다.\n"
+            "- `업종내부`: 한국/미국 클러스터 모두 내부 업종·대표주 확산도를 추가 확인합니다. 확산 약함이면 정밀·눌림 후보에서 낮춰 봅니다.\n"
             "- `관망`: 섹터, 테마, 하위테마 중 하나 이상이 아직 맞지 않습니다."
         )
 
@@ -24096,7 +24155,8 @@ def render_naver_theme_coverage_panel():
 
 TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "등록상태", "종목명", "Ticker", "테마", "하위테마", "테마내순위", "상태", "후보근거",
-    "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류",
+    "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "KOSPI대분류", "US대분류",
+    "업종대표주", "약한대표주",
     "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률", "테마대표흐름",
 ]
 
@@ -24212,6 +24272,10 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
                 "업종내부": _flow_text(row.get("업종내부", "")),
                 "대표업종": _flow_text(row.get("대표업종", "")),
                 "시장대분류": _flow_text(row.get("시장대분류", "")),
+                "KOSPI대분류": _flow_text(row.get("KOSPI대분류", "")),
+                "US대분류": _flow_text(row.get("US대분류", "")),
+                "업종대표주": _flow_text(row.get("업종대표주", "")),
+                "약한대표주": _flow_text(row.get("약한대표주", "")),
                 "내부확산": _flow_text(row.get("내부확산", "")),
                 "체크포인트": _flow_text(row.get("체크포인트", "")),
             }
@@ -24265,7 +24329,11 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
         tfd_short.groupby("테마")["돈흐름점수"].rank(method="first", ascending=False)
         if "테마" in tfd_short.columns and "돈흐름점수" in tfd_short.columns else np.nan
     )
-    for ctx_col in ["테마판정", "테마점수", "네이버테마근거", "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류", "내부확산", "체크포인트"]:
+    for ctx_col in [
+        "테마판정", "테마점수", "네이버테마근거", "실행분류", "진입검토",
+        "업종내부", "대표업종", "시장대분류", "KOSPI대분류", "US대분류",
+        "업종대표주", "약한대표주", "내부확산", "체크포인트",
+    ]:
         if ctx_col == "테마점수":
             tfd_short[ctx_col] = tfd_short["테마"].apply(lambda t: theme_context_map.get(_flow_text(t), {}).get("테마돈흐름점수", np.nan))
         elif ctx_col == "네이버테마근거":
@@ -24677,6 +24745,25 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
             font=dict(color="#94a3b8"),
         )
         st.plotly_chart(fig, width='stretch')
+
+        summary_cols = [c for c in [
+            label_col, "Ticker", "실행분류", "진입검토", "업종내부", "대표업종", "시장대분류",
+            "KOSPI대분류", "US대분류", "업종대표주", "약한대표주",
+        ] if c and c in grp_df.columns]
+        if summary_cols:
+            summary_df = grp_df[summary_cols].copy()
+            sort_cols = [c for c in ["실행분류", "RS(3M)", "RS모멘텀"] if c in grp_df.columns]
+            if sort_cols:
+                summary_df = summary_df.join(grp_df[[c for c in sort_cols if c not in summary_df.columns]])
+                ascending = [True] + [False] * (len(sort_cols) - 1) if sort_cols[0] == "실행분류" else [False] * len(sort_cols)
+                summary_df = summary_df.sort_values(sort_cols, ascending=ascending, na_position="last")
+                summary_df = summary_df[[c for c in summary_cols if c in summary_df.columns]]
+            for col in ["KOSPI대분류", "US대분류", "업종대표주", "약한대표주", "대표업종", "시장대분류"]:
+                if col in summary_df.columns:
+                    summary_df[col] = summary_df[col].replace("", "-").fillna("-")
+            st.markdown("**🔗 내부 연결 요약**")
+            st.caption("차트의 ETF·테마 라벨이 실제 어떤 세부축, 대표주, 약한 대표주로 연결되는지 확인합니다.")
+            st.dataframe(summary_df.head(18), width='stretch', hide_index=True, height=240)
 
         # 실행분류 후보 테이블
         priority_actions = {"✅ 정밀후보", "⏳ 눌림대기", "👀 반등확인", "🟨 내부혼조", "🟨 내부확인"}
