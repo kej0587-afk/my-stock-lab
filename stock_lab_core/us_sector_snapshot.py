@@ -405,16 +405,24 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         else valid_const
     )
 
-    if pd.notna(breadth) and breadth >= 0.60 and (pd.isna(sector_avg) or sector_avg >= 0):
+    if pd.notna(breadth) and breadth >= 0.60 and pd.notna(sector_avg) and sector_avg <= -1.0:
+        status = "혼조(대장주 쏠림)"
+    elif pd.notna(breadth) and breadth >= 0.60 and (pd.isna(sector_avg) or sector_avg >= 0):
         status = "확산 우세"
-    elif (pd.notna(breadth) and breadth < 0.40) or (pd.notna(sector_avg) and sector_avg <= -1.0):
+    elif pd.notna(breadth) and breadth < 0.40:
         status = "확산 약함"
+    elif pd.notna(sector_avg) and sector_avg <= -1.0:
+        status = "혼조"
     else:
         status = "혼조"
 
     warning = ""
-    if status == "확산 약함":
+    if status == "혼조(대장주 쏠림)":
+        warning = "US 대장주 쏠림: 대표주는 강하지만 대분류 업종 평균은 약함"
+    elif status == "확산 약함":
         warning = "US 업종 내부 확산 약함: ETF·대장주 쏠림 가능"
+    elif status == "혼조" and pd.notna(sector_avg) and sector_avg <= -1.0:
+        warning = "US 업종 내부 확인 필요: 대분류 업종 평균이 약함"
     elif pd.notna(breadth) and breadth < 0.50:
         warning = "US 업종 내부 확인 필요: 상승 종목 비율이 낮음"
 

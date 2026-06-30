@@ -7230,7 +7230,7 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
 
     market = str(market_label or snapshot.get("market", "") or "KOSPI").strip().upper()
     is_us = market == "US"
-    title = "US 업종내부" if is_us else "KOSPI 업종내부"
+    title = "US 단기 업종내부" if is_us else "KOSPI 단기 업종내부"
     broad_label = "US대분류" if is_us else "KOSPI대분류"
 
     status = str(snapshot.get("status", "혼조") or "혼조")
@@ -7303,7 +7303,7 @@ def _market_snapshot_status_text(snapshot: dict, market_label: str = "") -> str:
     base = _kr_snapshot_status_text(snapshot)
     if not market_label or base == "-":
         return base
-    return f"{market_label} {base}"
+    return f"{market_label} 단기 {base}"
 
 
 KR_ROTATION_SECTOR_CLUSTER_MAP = {
@@ -7488,9 +7488,9 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             out.at[idx, "KOSPI내부판정"] = status
         elif market_label == "US":
             out.at[idx, "US내부판정"] = status
-        if status == "확산 약함" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
+        if "확산 약함" in status and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
             out.at[idx, "진입검토"] = "🟨 내부확인"
-        elif status == "혼조" and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
+        elif "혼조" in status and str(out.at[idx, "진입검토"]) == "✅ 진입검토":
             out.at[idx, "진입검토"] = "🟨 내부혼조"
     return out
 
