@@ -440,6 +440,55 @@ def _fetch_naver_quotes_bulk(kr_tickers: list) -> dict:
         return {}
 
 
+def _fetch_naver_realtime_quote(ticker: str) -> dict:
+    code = _kr_code(ticker)
+    if not code:
+        return {}
+    try:
+        query = urllib.parse.quote(f"SERVICE_ITEM:{code}")
+        url = f"https://polling.finance.naver.com/api/realtime?query={query}"
+        req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        raw = urllib.request.urlopen(req, timeout=4).read()
+        text = raw.decode("utf-8", errors="ignore")
+        return _parse_naver_realtime_quotes(text, [ticker]).get(normalize_price_lookup_key(ticker), {})
+    except Exception:
+        return {}
+
+
+def _fetch_naver_basic_quote(ticker: str) -> dict:
+    code = _kr_code(ticker)
+    if not code:
+        return {}
+    try:
+        url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+        req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        raw = urllib.request.urlopen(req, timeout=5).read()
+        text = raw.decode("utf-8", errors="ignore")
+        try:
+            data = json.loads(text)
+            quote = _extract_naver_quote_from_obj(data)
+            if quote:
+                return quote
+        except Exception:
+            pass
+
+        obj = {}
+        field_map = {
+            "closePrice": "closePrice",
+            "stockEndPrice": "stockEndPrice",
+            "compareToPreviousClosePrice": "compareToPreviousClosePrice",
+            "fluctuationsRatio": "fluctuationsRatio",
+            "compareToPreviousClosePriceCode": "compareToPreviousClosePriceCode",
+        }
+        for json_field, quote_field in field_map.items():
+            m = re.search(rf'"{json_field}"\s*:\s*"([^"]+)"', text)
+            if m:
+                obj[quote_field] = m.group(1)
+        return _extract_naver_quote_from_obj(obj)
+    except Exception:
+        return {}
+
+
 def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
     """
     네이버 시세 bulk API: 한 번 요청으로 여러 종목 조회.
@@ -818,7 +867,20 @@ def load_latest_kr_quotes_batch(tickers) -> dict:
     kr_tickers = [t for t in (tickers or []) if _is_kr_ticker(str(t))]
     if not kr_tickers:
         return {}
-    return _fetch_naver_quotes_bulk(kr_tickers)
+    quotes = _fetch_naver_quotes_bulk(kr_tickers)
+    for ticker in kr_tickers:
+        key = normalize_price_lookup_key(ticker)
+        quote = quotes.get(key, {})
+        if quote.get("price", 0.0) and quote.get("change_pct", 0.0):
+            continue
+        direct = _fetch_naver_realtime_quote(ticker)
+        if not direct or not direct.get("change_pct", 0.0):
+            direct = _fetch_naver_basic_quote(ticker)
+        if direct:
+            merged = dict(quote)
+            merged.update({k: v for k, v in direct.items() if v not in ("", None, 0.0)})
+            quotes[key] = merged
+    return quotes
 
 
 def _fetch_pyth_us_live_prices_batch(tickers: list) -> dict:

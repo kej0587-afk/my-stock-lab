@@ -123,3 +123,19 @@ def test_parse_naver_realtime_quotes_applies_falling_sign():
     assert quotes["000660.KS"]["price"] == 301000.0
     assert quotes["000660.KS"]["change_pct"] == -1.37
     assert quotes["000660.KS"]["change_abs"] == -4000.0
+
+
+def test_latest_kr_quotes_falls_back_to_single_quote_when_bulk_has_no_change_pct(monkeypatch):
+    monkeypatch.setattr(prices, "_fetch_naver_quotes_bulk", lambda tickers: {"000660.KS": {"price": 301000.0}})
+    monkeypatch.setattr(prices, "_fetch_naver_realtime_quote", lambda ticker: {})
+    monkeypatch.setattr(
+        prices,
+        "_fetch_naver_basic_quote",
+        lambda ticker: {"price": 301000.0, "change_pct": 1.37, "change_abs": 4000.0},
+    )
+
+    quotes = prices.load_latest_kr_quotes_batch(["000660.KS"])
+
+    assert quotes["000660.KS"]["price"] == 301000.0
+    assert quotes["000660.KS"]["change_pct"] == 1.37
+    assert quotes["000660.KS"]["change_abs"] == 4000.0
