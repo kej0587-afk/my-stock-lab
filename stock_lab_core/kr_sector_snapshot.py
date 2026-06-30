@@ -490,7 +490,12 @@ def _records(df: pd.DataFrame, name_col: str = "name", limit: int = 3) -> list[d
     return rows
 
 
-def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: str = "") -> dict[str, Any]:
+def build_kr_cluster_snapshot(
+    cluster_name: str,
+    top_n: int = 3,
+    detail_name: str = "",
+    live_prices: bool = True,
+) -> dict[str, Any]:
     """Return KOSPI industry breadth/representative-stock context for a KR cluster.
 
     The main cluster score still comes from the app's ETF price-flow model. This
@@ -534,7 +539,8 @@ def build_kr_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         if sort_cols:
             constituent_rows = constituent_rows.sort_values(sort_cols, ascending=[True] * len(sort_cols))
         constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
-    constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
+    if live_prices:
+        constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
 
     if industry_rows.empty and constituent_rows.empty:
         return {}

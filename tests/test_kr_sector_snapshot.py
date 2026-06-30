@@ -88,3 +88,18 @@ def test_kr_cluster_snapshot_live_refresh_recomputes_representative_returns(monk
     assert lg["change_pct"] > 7.0
     assert samsung["change_abs"] == "▲"
     assert lg["change_abs"] == "▲"
+
+
+def test_kr_cluster_snapshot_can_skip_live_refresh_for_bulk_tables(monkeypatch):
+    called = {"count": 0}
+
+    def fake_loader(tickers):
+        called["count"] += 1
+        return {"009150.KS": 2144000.0}
+
+    monkeypatch.setattr(kr_snapshot, "_load_latest_prices_for_snapshot", fake_loader)
+
+    snapshot = build_kr_cluster_snapshot("AI·반도체", detail_name="전자부품·MLCC", live_prices=False)
+
+    assert snapshot
+    assert called["count"] == 0

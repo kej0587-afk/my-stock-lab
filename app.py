@@ -7417,7 +7417,10 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         cache_key = (market_label, cluster, detail_label)
         snapshot = snapshot_cache.get(cache_key)
         if snapshot is None:
-            snapshot = builder(cluster, detail_name=detail_label)
+            if market_label == "KOSPI":
+                snapshot = builder(cluster, detail_name=detail_label, live_prices=False)
+            else:
+                snapshot = builder(cluster, detail_name=detail_label)
             snapshot_cache[cache_key] = snapshot
         if not snapshot:
             continue
