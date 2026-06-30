@@ -444,6 +444,9 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
     refreshed = rows.copy()
     if "change_pct" not in refreshed.columns:
         refreshed["change_pct"] = np.nan
+    for numeric_col in ("current", "change_pct", "change_sign"):
+        if numeric_col in refreshed.columns:
+            refreshed[numeric_col] = _clean_numeric_series(refreshed[numeric_col]).astype("float64")
 
     for idx, row in refreshed.iterrows():
         ticker = str(row.get("ticker", "") or "").strip()
