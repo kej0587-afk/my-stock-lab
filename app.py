@@ -22725,7 +22725,13 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     us_stats = _today_benchmark_guard_stats(us_valid)
     all_stats = _today_benchmark_guard_stats(valid)
 
-    score = int(max(kr_stats.get("score", 0), us_stats.get("score", 0)))
+    regional_score = int(max(kr_stats.get("score", 0), us_stats.get("score", 0)))
+    score = regional_score
+    flow_score = 0
+    macro_score = 0
+    event_score = 0
+    portfolio_score = 0
+    portfolio_reasons = []
     reasons = []
 
     for prefix, stats in [("국장", kr_stats), ("미장", us_stats)]:
@@ -22758,21 +22764,20 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             if "3개월수익률" in flow_calc.columns and not flow_calc.empty:
                 flow_breadth = float((flow_calc["3개월수익률"].fillna(0) > 0).mean())
                 if flow_breadth < 0.35:
-                    score += 2
+                    flow_score += 2
                     reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
                 elif flow_breadth < 0.50:
-                    score += 1
+                    flow_score += 1
                     reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
             if "가속도" in flow_calc.columns and not flow_calc.empty:
                 flow_accel = float((flow_calc["가속도"].fillna(0) > 0).mean())
                 if flow_accel < 0.35:
-                    score += 1
+                    flow_score += 1
                     reasons.append(f"가속 ETF 비율 {flow_accel*100:.0f}%")
 
     macro_df, macro_pressure, macro_relief, macro_note = build_today_macro_guard_table()
     event_df, event_risk, event_count = build_macro_event_risk_table()
     macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
-    macro_score = 0
     if macro_pressure >= 4:
         macro_score += 2
     elif macro_pressure >= 2:
@@ -22784,12 +22789,10 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             macro_score += 1
     macro_score = min(macro_score, 3)
     if macro_score > 0:
-        score += macro_score
         risk_text = "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}"
         reasons.append(f"매크로 경고 {macro_pressure}점/리스크 {risk_text}")
     if event_risk > 0:
         event_score = 2 if event_risk >= 2.0 else 1
-        score += event_score
         reasons.append(f"이벤트 임박 {event_count}개/점수 {event_risk:.1f}")
 
     hard_count = 0
@@ -22800,17 +22803,34 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         hard_count = int((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)).sum())
         caution_count = int(label_series.str.contains("구조훼손|추매금지|진입 보류|과열|차단", regex=True, na=False).sum())
         if hard_count >= 3:
-            score += 2
-            reasons.append(f"내 관심목록 하드차단 {hard_count}개")
+            portfolio_score += 2
+            portfolio_reasons.append(f"내 관심목록 하드차단 {hard_count}개")
         elif hard_count >= 1:
-            score += 1
-            reasons.append(f"내 관심목록 하드차단 {hard_count}개")
+            portfolio_score += 1
+            portfolio_reasons.append(f"내 관심목록 하드차단 {hard_count}개")
         if caution_count >= 30:
-            score += 2
-            reasons.append(f"주의/차단 후보 {caution_count}개")
+            portfolio_score += 2
+            portfolio_reasons.append(f"주의/차단 후보 {caution_count}개")
         elif caution_count >= 15:
-            score += 1
-            reasons.append(f"주의/차단 후보 {caution_count}개")
+            portfolio_score += 1
+            portfolio_reasons.append(f"주의/차단 후보 {caution_count}개")
+
+    context_score = int(flow_score + macro_score + event_score)
+    mode_score = int(regional_score)
+    if flow_score > 0:
+        mode_score += int(flow_score)
+    if macro_score >= 2:
+        mode_score += int(macro_score)
+    elif macro_score == 1 and regional_score < 5:
+        mode_score += 1
+    if event_score >= 2:
+        mode_score += int(event_score)
+    elif event_score == 1 and regional_score < 5:
+        mode_score += 1
+    if regional_score >= 5 and (macro_score + event_score) >= 3:
+        mode_score += 1
+    score = int(mode_score)
+    total_risk_score = int(regional_score + context_score + portfolio_score)
 
     flow_recovery_ok = (
         (finite_num(flow_breadth) and float(flow_breadth) >= 0.55)
@@ -22892,8 +22912,16 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "mode": mode,
         "level": level,
         "score": int(score),
+        "regional_score": int(regional_score),
+        "context_score": int(context_score),
+        "portfolio_score": int(portfolio_score),
+        "total_risk_score": int(total_risk_score),
+        "flow_score": int(flow_score),
+        "macro_score": int(macro_score),
+        "event_score": int(event_score),
         "action": action,
         "reasons": reasons[:5],
+        "portfolio_reasons": portfolio_reasons,
         "actions": actions,
         "scope_text": _today_guard_scope_text(kr_stats, us_stats),
         "kr_stats": kr_stats,
@@ -22956,7 +22984,7 @@ def render_today_market_guard_panel(guard: dict):
     kr_stats = guard.get("kr_stats", {}) if isinstance(guard.get("kr_stats", {}), dict) else {}
     us_stats = guard.get("us_stats", {}) if isinstance(guard.get("us_stats", {}), dict) else {}
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("위험점수", f"{guard.get('score', 0)}점")
+    c1.metric("시장점수", f"{guard.get('score', 0)}점")
     c2.metric(
         "국장 모드",
         str(kr_stats.get("mode", "데이터부족")),
@@ -22971,6 +22999,13 @@ def render_today_market_guard_panel(guard: dict):
     macro_risk = guard.get("macro_risk", np.nan)
     c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+    portfolio_reasons = [str(x) for x in guard.get("portfolio_reasons", []) if str(x).strip()]
+    if portfolio_reasons:
+        st.caption(
+            "포트 점검: "
+            + " · ".join(portfolio_reasons)
+            + " / 이 값은 시장 모드를 위험으로 직접 올리지 않고 실행 카드에서만 참고합니다."
+        )
     if guard.get("tactical_rebound"):
         max_day_gain = guard.get("max_day_gain", np.nan)
         st.caption(
