@@ -7234,8 +7234,7 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
 
     market = str(market_label or snapshot.get("market", "") or "KOSPI").strip().upper()
     is_us = market == "US"
-    title = "US 단기 업종내부" if is_us else "KOSPI 단기 업종내부"
-    broad_label = "US대분류" if is_us else "KOSPI대분류"
+    title = "US 시장 내부" if is_us else "KOSPI 시장 내부"
 
     status = str(snapshot.get("status", "혼조") or "혼조")
     if status == "확산 우세":
@@ -7265,11 +7264,11 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
     return (
         "<div style='border-top:1px dashed #334155;margin-top:6px;padding-top:5px;"
         "font-size:0.63em;line-height:1.65;color:#94a3b8;'>"
-        f"<div><span style='color:{status_clr};font-weight:700;'>{title} · {html.escape(status)}</span>"
-        f" · 확산 {breadth_txt} · 업종 {sector_avg} · 대표주 {const_avg}</div>"
+        f"<div><span style='color:{status_clr};font-weight:700;'>{title}: {html.escape(status)}</span>"
+        f" · 확산 {breadth_txt} · 업종평균 {sector_avg} · 대표주평균 {const_avg}</div>"
         f"<div>세부축: {subsectors}</div>"
-        f"<div>{broad_label}: {industries}</div>"
-        f"<div>대표주: {leaders}</div>"
+        f"<div>대분류: {industries}</div>"
+        f"<div>강한 대표주: {leaders}</div>"
         f"<div>약한 대표주: {laggards}</div>"
         f"{warning_html}"
         "</div>"
@@ -7307,7 +7306,7 @@ def _market_snapshot_status_text(snapshot: dict, market_label: str = "") -> str:
     base = _kr_snapshot_status_text(snapshot)
     if not market_label or base == "-":
         return base
-    return f"{market_label} 단기 {base}"
+    return f"{market_label} 내부 {base}"
 
 
 KR_ROTATION_SECTOR_CLUSTER_MAP = {
@@ -7884,7 +7883,10 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
             f"연결테마: {html.escape(str(bridge.get('label', '')))}</div>"
         )
     market_snapshot = cl.get("market_snapshot", {}) or cl.get("kr_snapshot", {})
-    market_snapshot_html = _render_market_cluster_snapshot_html(market_snapshot)
+    market_snapshot_html = _render_market_cluster_snapshot_html(
+        market_snapshot,
+        market_label=("KOSPI" if market_hint == "한국 섹터" else "US"),
+    )
     ticker_rows_html = ""
     if tickers:
         rows = []
@@ -24372,12 +24374,9 @@ def render_naver_theme_coverage_panel():
 
 
 TODAY_FLOW_SHORTLIST_COLS = [
-    "후보군", "등록상태", "시장", "대표주★", "종목명", "Ticker",
-    "테마", "하위테마", "테마내순위", "상태", "후보근거",
-    "업종내부", "대표업종", "대분류", "업종대표주", "약한대표주",
+    "후보군", "등록상태", "시장", "판정", "타이밍", "대표주★", "Ticker",
+    "테마", "세부축", "후보근거", "시장맥락", "주의요인",
     "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
-    "실행분류", "진입검토", "시장대분류", "KOSPI대분류", "US대분류",
-    "테마대표흐름",
 ]
 
 
@@ -24393,6 +24392,107 @@ def _today_flow_candidate_status(ticker: str) -> str:
             if qty > 0 or value > 0:
                 return "보유"
     return "관심" if is_in_watchlist(ticker) else "미등록"
+
+
+def _flow_reason_label(value) -> str:
+    text = _flow_text(value)
+    for mark in ["✅", "⏳", "👀", "🟨", "🔸", "🚫", "❌", "🛑", "⚠️", "🎯"]:
+        text = text.replace(mark, "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _flow_pct_label(value) -> str:
+    return f"{float(value) * 100:+.1f}%" if finite_num(value) else "-"
+
+
+def _flow_score_label(value) -> str:
+    return f"{float(value):.1f}" if finite_num(value) else "-"
+
+
+def _flow_first_phrase(value) -> str:
+    text = _flow_text(value)
+    if not text or text == "-":
+        return ""
+    return re.split(r"\s*[·/]\s*", text, maxsplit=1)[0].strip()
+
+
+def _flow_short_verdict(row) -> str:
+    group = _flow_text(row.get("후보군", ""))
+    gate = _flow_reason_label(row.get("진입검토", ""))
+    action = _flow_reason_label(row.get("실행분류", ""))
+    if "고점주의" in group:
+        return "눌림대기"
+    if "스윙" in group:
+        return "스윙 후보"
+    if "장기" in group:
+        return "장기 후보"
+    if "진입" in gate or "진입" in action:
+        return "우선 관찰"
+    return action or gate or "관찰"
+
+
+def _flow_short_timing(row) -> str:
+    price_level = row.get("가격수준", np.nan)
+    ret1m = row.get("1개월수익률", np.nan)
+    ret2w = row.get("2주수익률", np.nan)
+    accel = row.get("가속도", np.nan)
+    state = _flow_text(row.get("상태", ""))
+    if finite_num(price_level) and float(price_level) >= 0.90:
+        return "고점권 · 눌림대기"
+    if "과열" in state:
+        return "과열 · 추격금지"
+    if finite_num(ret2w) and float(ret2w) < -0.05:
+        return "단기 이탈 · 회복확인"
+    if finite_num(ret1m) and float(ret1m) > 0 and finite_num(accel) and float(accel) > 0:
+        return "상승가속"
+    if finite_num(ret1m) and float(ret1m) < 0 and finite_num(accel) and float(accel) > 0:
+        return "반등확인"
+    return "관찰"
+
+
+def _flow_short_reason(row, source_summary: str = "") -> str:
+    parts: list[str] = []
+    if finite_num(row.get("테마내순위", np.nan)):
+        parts.append(f"테마내 {int(float(row.get('테마내순위')))}위")
+    if finite_num(row.get("돈흐름점수", np.nan)):
+        parts.append(f"돈흐름 {_flow_score_label(row.get('돈흐름점수'))}")
+    if finite_num(row.get("1개월수익률", np.nan)):
+        parts.append(f"1M {_flow_pct_label(row.get('1개월수익률'))}")
+    if finite_num(row.get("가속도", np.nan)):
+        parts.append(f"가속 {_flow_pct_label(row.get('가속도'))}")
+    theme_signal = _flow_reason_label(row.get("테마판정", ""))
+    if theme_signal:
+        parts.append(theme_signal)
+    if source_summary:
+        parts.append(f"경로 {source_summary}")
+    return " · ".join(dict.fromkeys(parts)) or "돈흐름 상위"
+
+
+def _flow_short_context(row) -> str:
+    market = _flow_text(row.get("시장", ""))
+    internal = _flow_first_phrase(row.get("업종내부", ""))
+    broad = _flow_text(row.get("대분류", "")) or _flow_text(row.get("시장대분류", ""))
+    parts = [p for p in [market, internal, broad] if p and p != "-"]
+    return " · ".join(dict.fromkeys(parts)) or "-"
+
+
+def _flow_short_risk(row) -> str:
+    risks: list[str] = []
+    price_level = row.get("가격수준", np.nan)
+    state = _flow_text(row.get("상태", ""))
+    internal = _flow_text(row.get("업종내부", ""))
+    laggards = _flow_text(row.get("약한대표주", ""))
+    if finite_num(price_level) and float(price_level) >= 0.90:
+        risks.append("고점권")
+    if "과열" in state:
+        risks.append("과열")
+    if any(word in internal for word in ["약함", "엇갈림", "소외"]):
+        risks.append("내부확산 확인")
+    if laggards and laggards != "-":
+        first_laggard = re.split(r"\s*·\s*", laggards, maxsplit=1)[0].strip()
+        if first_laggard:
+            risks.append(f"약한축 {first_laggard}")
+    return " · ".join(dict.fromkeys(risks)) or "-"
 
 
 def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
@@ -24573,12 +24673,6 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
         axis=1,
     )
 
-    def _reason_label(value) -> str:
-        text = _flow_text(value)
-        for mark in ["✅", "⏳", "👀", "🟨", "🔸", "🚫", "❌", "🛑", "⚠️", "🎯"]:
-            text = text.replace(mark, "")
-        return re.sub(r"\s+", " ", text).strip()
-
     def _source_summary(theme: str) -> str:
         labels: list[str] = []
         for source in theme_source_map.get(theme, []):
@@ -24593,25 +24687,7 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
 
     def _candidate_reason(row) -> str:
         theme = _flow_text(row.get("테마", ""))
-        parts: list[str] = []
-        source_summary = _source_summary(theme)
-        action = _reason_label(row.get("실행분류", ""))
-        gate = _reason_label(row.get("진입검토", ""))
-        theme_signal = _reason_label(row.get("테마판정", ""))
-        internal = _flow_text(row.get("업종내부", "")).split("·")[0].strip()
-        if source_summary:
-            parts.append(f"선정경로: {source_summary}")
-        if action:
-            parts.append(f"실행: {action}({gate})" if gate and gate != action else f"실행: {action}")
-        elif gate:
-            parts.append(f"확인: {gate}")
-        if theme_signal and theme_signal not in {action, gate}:
-            parts.append(f"테마판정: {theme_signal}")
-        if finite_num(row.get("테마내순위", np.nan)):
-            parts.append(f"테마내 {int(float(row.get('테마내순위')))}위")
-        if internal and internal != "-":
-            parts.append(f"업종내부: {internal}")
-        return " / ".join(dict.fromkeys(parts)) or "돈흐름 상위"
+        return _flow_short_reason(row, _source_summary(theme))
 
     tfd_short["후보근거"] = tfd_short.apply(_candidate_reason, axis=1)
     tfd_short["_st"] = tfd_short.apply(_candidate_type, axis=1)
@@ -24648,6 +24724,10 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     combined = combined.sort_values(["_후보우선순위", "돈흐름점수"], ascending=[True, False], na_position="last")
     combined = combined.drop_duplicates("_ticker_key", keep="first")
     combined["후보군"] = combined["_ticker_key"].map(group_labels).fillna(combined["후보군"])
+    combined["판정"] = combined.apply(_flow_short_verdict, axis=1)
+    combined["타이밍"] = combined.apply(_flow_short_timing, axis=1)
+    combined["시장맥락"] = combined.apply(_flow_short_context, axis=1)
+    combined["주의요인"] = combined.apply(_flow_short_risk, axis=1)
     return combined.drop(columns=[c for c in ["_ticker_key", "_후보우선순위", "_st"] if c in combined.columns])
 
 
@@ -24660,11 +24740,19 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
         st.info("현재 돈흐름 후보로 압축된 종목이 없습니다. 돈흐름 요약을 새로고침하거나 로테이션 조건을 확인하세요.")
         return
 
+    verdict_series = shortlist_df["판정"].astype(str) if "판정" in shortlist_df.columns else pd.Series(dtype=str)
+    timing_series = shortlist_df["타이밍"].astype(str) if "타이밍" in shortlist_df.columns else pd.Series(dtype=str)
+    risk_series = shortlist_df["주의요인"].astype(str) if "주의요인" in shortlist_df.columns else pd.Series(dtype=str)
+    priority_count = int(verdict_series.str.contains("스윙|장기|우선", na=False).sum()) if not verdict_series.empty else 0
+    wait_count = int(timing_series.str.contains("눌림|과열|이탈", na=False).sum()) if not timing_series.empty else 0
+    risk_count = int(risk_series.ne("-").sum()) if not risk_series.empty else 0
+
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("후보", f"{len(shortlist_df)}개")
-    m2.metric("미등록", f"{int(shortlist_df['등록상태'].astype(str).eq('미등록').sum())}개" if "등록상태" in shortlist_df.columns else "-")
-    m3.metric("고점주의", f"{int(shortlist_df['후보군'].astype(str).str.contains('고점주의', na=False).sum())}개" if "후보군" in shortlist_df.columns else "-")
-    m4.metric("보유/관심", f"{int(shortlist_df['등록상태'].astype(str).isin(['보유', '관심']).sum())}개" if "등록상태" in shortlist_df.columns else "-")
+    m1.metric("압축 후보", f"{len(shortlist_df)}개")
+    m2.metric("우선 관찰", f"{priority_count}개")
+    m3.metric("눌림/과열 대기", f"{wait_count}개")
+    m4.metric("주의요인 있음", f"{risk_count}개")
+    st.caption("먼저 `판정`과 `타이밍`을 보고, 그 다음 `후보근거`와 `주의요인`만 확인하세요. 원본 세부 컬럼은 아래 펼침에 따로 묶었습니다.")
 
     options = ["전체", "미등록", "보유/관심", "고점주의 제외"]
     view = st.radio("돈흐름 후보 보기", options, horizontal=True, key=f"{key_prefix}_view")
@@ -24690,6 +24778,24 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
     if "테마내순위" in disp.columns:
         disp["테마내순위"] = disp["테마내순위"].apply(lambda v: f"{int(float(v))}위" if finite_num(v) else "-")
     st.dataframe(disp, width='stretch', hide_index=True)
+
+    with st.expander("상세 근거 컬럼 보기", expanded=False):
+        detail_cols = [
+            "종목명", "Ticker", "후보군", "등록상태", "시장", "테마", "하위테마", "테마내순위", "상태",
+            "실행분류", "진입검토", "테마판정", "업종내부", "대표업종", "시장대분류",
+            "KOSPI대분류", "US대분류", "업종대표주", "약한대표주", "내부확산", "체크포인트",
+            "테마점수", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
+        ]
+        detail = show[[c for c in detail_cols if c in show.columns]].copy()
+        for col in ["가격수준", "1개월수익률", "3개월수익률"]:
+            if col in detail.columns:
+                detail[col] = detail[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+        for col in ["돈흐름점수", "테마점수"]:
+            if col in detail.columns:
+                detail[col] = detail[col].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
+        if "테마내순위" in detail.columns:
+            detail["테마내순위"] = detail["테마내순위"].apply(lambda v: f"{int(float(v))}위" if finite_num(v) else "-")
+        st.dataframe(detail, width='stretch', hide_index=True)
 
     top = show.head(12).reset_index(drop=True)
     if not top.empty:
