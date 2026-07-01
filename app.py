@@ -24808,7 +24808,32 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
         st.markdown("#### 🎯 돈흐름 후보")
     st.caption("돈흐름 후보는 신규 매수 신호가 아니라 정밀관측소로 보낼 후보입니다. 중복 후보군은 한 줄로 합쳐 표시합니다.")
     if shortlist_df is None or shortlist_df.empty:
-        st.info("현재 돈흐름 후보로 압축된 종목이 없습니다. 돈흐름 요약을 새로고침하거나 로테이션 조건을 확인하세요.")
+        st.info(
+            "현재 압축 후보 조건을 통과한 종목이 없습니다. 원천 돈흐름은 강해도 가격위치, 과열, 업종내부 확산, 테마-대표주 연결 조건에서 걸러질 수 있습니다."
+        )
+        if isinstance(snapshot, dict):
+            quick_rows = []
+            for label, key in [
+                ("한국 ETF 원천", "kr_top5"),
+                ("미국 ETF 원천", "us_top5"),
+                ("테마 원천", "theme_top5"),
+            ]:
+                top_df = snapshot.get(key, pd.DataFrame())
+                if isinstance(top_df, pd.DataFrame) and not top_df.empty:
+                    row = top_df.iloc[0]
+                    quick_rows.append({
+                        "원천": label,
+                        "이름": row.get("섹터", row.get("테마", "-")),
+                        "Ticker/대표": row.get("Ticker", row.get("대표주", "-")),
+                        "점수": row.get("돈흐름점수", row.get("테마돈흐름점수", np.nan)),
+                        "상태": row.get("상태", row.get("테마판정", "-")),
+                    })
+            if quick_rows:
+                quick = pd.DataFrame(quick_rows)
+                if "점수" in quick.columns:
+                    quick["점수"] = quick["점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
+                st.caption("원천 상위는 아래처럼 잡히지만, 압축 후보 조건은 아직 통과하지 못했습니다.")
+                st.dataframe(quick, width='stretch', hide_index=True)
         return
 
     verdict_series = shortlist_df["판정"].astype(str) if "판정" in shortlist_df.columns else pd.Series(dtype=str)
@@ -24951,38 +24976,40 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
     metric_cols = st.columns(4)
     if not kr_top5.empty:
         r = kr_top5.iloc[0]
-        metric_cols[0].metric("한국 섹터 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+        metric_cols[0].metric("한국 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
     else:
-        metric_cols[0].metric("한국 섹터 1위", "-", "-")
+        metric_cols[0].metric("한국 ETF 원천 1위", "-", "-")
 
     if not us_top5.empty:
         r = us_top5.iloc[0]
-        metric_cols[1].metric("미국 섹터 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+        metric_cols[1].metric("미국 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
     else:
-        metric_cols[1].metric("미국 섹터 1위", "-", "-")
+        metric_cols[1].metric("미국 ETF 원천 1위", "-", "-")
 
     if not global_top.empty:
         r = global_top.iloc[0]
-        metric_cols[2].metric("글로벌 ETF 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+        metric_cols[2].metric("글로벌 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
     elif not local_top.empty:
         r = local_top.iloc[0]
-        metric_cols[2].metric("대표 ETF 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+        metric_cols[2].metric("대표 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
     else:
-        metric_cols[2].metric("글로벌/대표 ETF 1위", "-", "-")
+        metric_cols[2].metric("글로벌/대표 ETF 원천 1위", "-", "-")
 
     if not theme_top5.empty:
         r = theme_top5.iloc[0]
         metric_cols[3].metric(
-            "테마 종목 1위",
+            "테마 원천 1위",
             str(r["테마"]),
             f"{fmt_flow_score(r['테마돈흐름점수'])} pts · {r.get('테마판정', r.get('상태', ''))}",
         )
         if "대표주" in r.index:
             metric_cols[3].caption(f"대표주: {r.get('대표주', '-')}")
     else:
-        metric_cols[3].metric("테마 종목 1위", "-", "-")
+        metric_cols[3].metric("테마 원천 1위", "-", "-")
 
-    st.caption("돈흐름점수는 2주/1개월 확인, 3개월 주도력, 확산, 거래량, 네이버 테마 보조를 함께 봅니다. `하락중 관망`은 강해 보여도 단기 하락이 이어지는 테마입니다.")
+    st.caption(
+        "위 4개 카드는 원천 데이터별 1위입니다. `돈흐름 Top20`은 ETF/섹터·테마·하위테마·대표주를 합친 통합 점수판이라 순위가 다를 수 있습니다."
+    )
 
     detail_view = st.radio(
         "시장 돈흐름 표시",
@@ -24993,10 +25020,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
     )
 
     if detail_view == "빠른 후보":
-        if show_shortlist:
-            render_today_flow_shortlist_panel(snapshot, key_prefix="today_flow_panel", show_header=True)
-        else:
-            st.caption("빠른 요약 모드입니다. 상세 차트나 매핑은 위 선택에서 열 수 있습니다.")
+        render_today_flow_shortlist_panel(snapshot, key_prefix="today_flow_panel", show_header=True)
         return snapshot
 
     if detail_view == "돈흐름 원천/매핑":
@@ -25823,9 +25847,15 @@ def render_today_pending_action_card(market_guard=None):
 
 def render_today_candidate_tools(summary_df=None, start_index=4):
     st.markdown(f"#### {start_index}. 돈흐름 상세/차트")
-    st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 여기서는 로테이션 차트와 테마 상세만 확인합니다.")
+    st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 필요할 때만 로테이션 차트와 테마 상세를 엽니다.")
 
-    with st.expander("돈흐름/테마 상세 확인", expanded=False):
+    open_flow_detail = st.checkbox(
+        "돈흐름/테마 상세 열기",
+        value=False,
+        key="today_queue_open_flow_detail",
+        help="체크할 때만 시장 돈흐름 상세 패널을 렌더링합니다. 접힌 expander도 내부 코드는 실행되므로 로딩 방지를 위해 분리했습니다.",
+    )
+    if open_flow_detail:
         flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=False)
         if (
             flow_snapshot
@@ -25834,6 +25864,8 @@ def render_today_candidate_tools(summary_df=None, start_index=4):
             and not summary_df.empty
         ):
             render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
+    else:
+        st.info("상세 차트는 필요할 때만 여세요. 압축 후보는 위 상세 판정표의 `돈흐름 후보` 탭에서 바로 확인할 수 있습니다.")
 
     st.markdown(f"#### {start_index + 1}. 수급 확인")
     st.caption("수급 TOP10은 같은 방향의 돈이 실제로 들어오는지 확인하는 보조 체크입니다.")
