@@ -22886,12 +22886,30 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
                 "현금이 부족하면 반등 매수보다 현금 확보 계획을 우선",
             ]
     elif score >= 5:
-        mode, level, action = "방어", "warning", "정찰만 · 현금 확보 우선"
-        actions = [
-            "신규매수는 목표금액의 일부만 정찰",
-            "코어 적립은 유지하되 과열/구조훼손 종목은 제외",
-            "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
-        ]
+        mode, level = "방어", "warning"
+        if kr_mode in {"방어", "위험"} and us_mode == "정상":
+            action = "국장 정찰/방어 · 미장 별도 타점"
+            actions = [
+                "국장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
+                "미장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
+                "코어 적립은 국장 과열/구조훼손 종목 제외, 미장은 종목별 과열만 확인",
+                "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
+            ]
+        elif us_mode in {"방어", "위험"} and kr_mode == "정상":
+            action = "미장 정찰/방어 · 국장 별도 타점"
+            actions = [
+                "미장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
+                "국장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
+                "코어 적립은 미장 과열/구조훼손 종목 제외, 국장은 종목별 과열만 확인",
+                "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
+            ]
+        else:
+            action = "정찰만 · 시장별 노출 확인"
+            actions = [
+                "신규매수는 목표금액의 일부만 정찰",
+                "코어 적립은 유지하되 과열/구조훼손 종목은 제외",
+                "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
+            ]
     elif score >= 2:
         mode, level, action = "주의", "caution", "분할 접근 · 후보만 선별"
         actions = [
@@ -23663,7 +23681,14 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         headline = f"{market_mode}입니다{scope_suffix}. 비상 시장은 신규/추매보다 손절선, 레버리지, 현금 방어가 우선입니다."
     elif market_mode == "위험장 반등":
         headline = "시장 구조는 위험하지만 강한 반등이 확인됐습니다. 전면 관망보다 정해진 후보만 소액 전술 참여하는 구간입니다."
-    elif market_mode in {"위험", "방어"}:
+    elif market_mode == "방어":
+        if "국장 방어" in market_scope and "미장 정상" in market_scope:
+            headline = "국장은 방어, 미장은 정상입니다. 국장 노출은 정찰/현금 중심, 미장 후보는 별도 타점으로 봅니다."
+        elif "미장 방어" in market_scope and "국장 정상" in market_scope:
+            headline = "미장은 방어, 국장은 정상입니다. 미장 노출은 정찰/현금 중심, 국장 후보는 별도 타점으로 봅니다."
+        else:
+            headline = "시장 모드가 방어입니다. 오늘은 후보를 시장별 노출로 나누고 정찰 중심으로 봅니다."
+    elif market_mode == "위험":
         headline = f"시장 모드가 {market_mode}입니다. 오늘은 후보보다 방어와 현금 계획이 우선입니다."
     elif leverage_blocked:
         headline = "오늘은 레버리지 추가매수보다 코어/대기자금 관리가 우선입니다."
