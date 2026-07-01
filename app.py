@@ -22463,16 +22463,16 @@ def render_speed_check_tab():
 # ════════════════════════════════════════════════════════════════════════════
 
 TODAY_MARKET_GUARD_BENCHMARKS = [
-    ("^KS11", "KOSPI"),
-    ("^KQ11", "KOSDAQ"),
-    ("069500.KS", "KOSPI200 ETF"),
-    ("229200.KS", "KOSDAQ150 ETF"),
-    ("^GSPC", "S&P500"),
-    ("^IXIC", "나스닥종합"),
-    ("^DJI", "다우산업"),
-    ("SPY", "S&P500 ETF"),
-    ("QQQ", "나스닥100 ETF"),
-    ("IWM", "러셀2000 ETF"),
+    ("^KS11", "KOSPI", "KR"),
+    ("^KQ11", "KOSDAQ", "KR"),
+    ("069500.KS", "KOSPI200 ETF", "KR"),
+    ("229200.KS", "KOSDAQ150 ETF", "KR"),
+    ("^GSPC", "S&P500", "US"),
+    ("^IXIC", "나스닥종합", "US"),
+    ("^DJI", "다우산업", "US"),
+    ("SPY", "S&P500 ETF", "US"),
+    ("QQQ", "나스닥100 ETF", "US"),
+    ("IWM", "러셀2000 ETF", "US"),
 ]
 
 TODAY_MARKET_GUARD_MACRO_ORDER = ["10Y 금리", "환율", "VIX", "MOVE", "유가"]
@@ -22484,8 +22484,9 @@ def _format_today_signed_pct(value, digits=1):
     return f"{float(value) * 100:+.{digits}f}%"
 
 
-def _calc_today_benchmark_guard_row(ticker: str, label: str) -> dict:
+def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "") -> dict:
     row = {
+        "지역": region or "-",
         "시장": label,
         "티커": ticker,
         "1일": np.nan,
@@ -22526,6 +22527,107 @@ def _calc_today_benchmark_guard_row(ticker: str, label: str) -> dict:
     except Exception:
         return row
     return row
+
+
+def _today_guard_level_from_score(score: int, circuit_day: int = 0, panic_day: int = 0, tactical_rebound: bool = False) -> tuple[str, str]:
+    if circuit_day >= 1 or panic_day >= 2:
+        return "비상", "danger"
+    if score >= 8:
+        return ("위험장 반등", "warning") if tactical_rebound else ("위험", "danger")
+    if score >= 5:
+        return "방어", "warning"
+    if score >= 2:
+        return "주의", "caution"
+    return "정상", "normal"
+
+
+def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
+    valid_df = valid_df.copy() if isinstance(valid_df, pd.DataFrame) else pd.DataFrame()
+    if valid_df.empty:
+        return {
+            "score": 0,
+            "reasons": [],
+            "below20": 0,
+            "below50": 0,
+            "down3": 0,
+            "weak5": 0,
+            "sharp_day": 0,
+            "panic_day": 0,
+            "circuit_day": 0,
+            "rebound_count": 0,
+            "strong_rebound_count": 0,
+            "worst_day_drop": np.nan,
+            "max_day_gain": np.nan,
+            "avg_day": np.nan,
+            "mode": "데이터부족",
+            "level": "caution",
+        }
+
+    score = 0
+    reasons = []
+    below20 = int(valid_df["MA20"].eq("하회").sum()) if "MA20" in valid_df.columns else 0
+    below50 = int(valid_df["MA50"].eq("하회").sum()) if "MA50" in valid_df.columns else 0
+    down3 = int(valid_df["연속하락"].ge(3).sum()) if "연속하락" in valid_df.columns else 0
+    weak5 = int(valid_df["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03).sum()) if "5일" in valid_df.columns else 0
+    sharp_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015).sum()) if "1일" in valid_df.columns else 0
+    panic_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.05).sum()) if "1일" in valid_df.columns else 0
+    circuit_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.08).sum()) if "1일" in valid_df.columns else 0
+    rebound_count = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.015).sum()) if "1일" in valid_df.columns else 0
+    strong_rebound_count = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.03).sum()) if "1일" in valid_df.columns else 0
+    worst_day_drop = clean_float(valid_df["1일"].min(), np.nan) if "1일" in valid_df.columns else np.nan
+    max_day_gain = clean_float(valid_df["1일"].max(), np.nan) if "1일" in valid_df.columns else np.nan
+    avg_day = clean_float(valid_df["1일"].dropna().mean(), np.nan) if "1일" in valid_df.columns else np.nan
+
+    if circuit_day >= 1:
+        score += 5
+        reasons.append(f"서킷브레이커급 급락 지수 {circuit_day}개")
+    elif panic_day >= 1:
+        score += 3
+        reasons.append(f"하루 -5% 이하 투매 지수 {panic_day}개")
+    if below20 >= 3:
+        score += 2
+        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+    elif below20 >= 2:
+        score += 1
+        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+    if below50 >= 2:
+        score += 2
+        reasons.append(f"주요지수 {below50}개가 MA50 아래")
+    if down3 >= 2:
+        score += 2
+        reasons.append(f"연속 하락 3일 이상 지수 {down3}개")
+    if weak5 >= 2:
+        score += 2
+        reasons.append(f"5거래일 -3% 이하 지수 {weak5}개")
+    if sharp_day >= 2:
+        score += 1
+        reasons.append(f"하루 -1.5% 이하 급락 지수 {sharp_day}개")
+
+    mode, level = _today_guard_level_from_score(score, circuit_day, panic_day)
+    return {
+        "score": int(score),
+        "reasons": reasons,
+        "below20": below20,
+        "below50": below50,
+        "down3": down3,
+        "weak5": weak5,
+        "sharp_day": sharp_day,
+        "panic_day": panic_day,
+        "circuit_day": circuit_day,
+        "rebound_count": rebound_count,
+        "strong_rebound_count": strong_rebound_count,
+        "worst_day_drop": worst_day_drop,
+        "max_day_gain": max_day_gain,
+        "avg_day": avg_day,
+        "mode": mode,
+        "level": level,
+    }
+
+
+def _today_guard_scope_text(kr_stats: dict, us_stats: dict) -> str:
+    kr_mode = str((kr_stats or {}).get("mode", "데이터부족"))
+    us_mode = str((us_stats or {}).get("mode", "데이터부족"))
+    return f"국장 {kr_mode} · 미장 {us_mode}"
 
 
 def build_today_macro_guard_table(macro_data=None) -> tuple[pd.DataFrame, int, int, str]:
@@ -22611,52 +22713,41 @@ def build_today_macro_guard_table(macro_data=None) -> tuple[pd.DataFrame, int, i
 
 def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     benchmark_rows = [
-        _calc_today_benchmark_guard_row(ticker, label)
-        for ticker, label in TODAY_MARKET_GUARD_BENCHMARKS
+        _calc_today_benchmark_guard_row(ticker, label, region)
+        for ticker, label, region in TODAY_MARKET_GUARD_BENCHMARKS
     ]
     bench_df = pd.DataFrame(benchmark_rows)
     valid = bench_df[bench_df["데이터"].eq("정상")].copy() if not bench_df.empty else pd.DataFrame()
 
-    score = 0
+    kr_valid = valid[valid.get("지역", pd.Series("", index=valid.index)).astype(str).eq("KR")].copy() if not valid.empty else pd.DataFrame()
+    us_valid = valid[valid.get("지역", pd.Series("", index=valid.index)).astype(str).eq("US")].copy() if not valid.empty else pd.DataFrame()
+    kr_stats = _today_benchmark_guard_stats(kr_valid)
+    us_stats = _today_benchmark_guard_stats(us_valid)
+    all_stats = _today_benchmark_guard_stats(valid)
+
+    score = int(max(kr_stats.get("score", 0), us_stats.get("score", 0)))
     reasons = []
 
-    valid_count = max(len(valid), 1)
-    below20 = int(valid["MA20"].eq("하회").sum()) if not valid.empty else 0
-    below50 = int(valid["MA50"].eq("하회").sum()) if not valid.empty else 0
-    down3 = int(valid["연속하락"].ge(3).sum()) if not valid.empty else 0
-    weak5 = int(valid["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03).sum()) if not valid.empty else 0
-    sharp_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015).sum()) if not valid.empty else 0
-    panic_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.05).sum()) if not valid.empty else 0
-    circuit_day = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.08).sum()) if not valid.empty else 0
-    rebound_count = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.015).sum()) if not valid.empty else 0
-    strong_rebound_count = int(valid["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.03).sum()) if not valid.empty else 0
-    worst_day_drop = clean_float(valid["1일"].min(), np.nan) if not valid.empty and "1일" in valid.columns else np.nan
-    max_day_gain = clean_float(valid["1일"].max(), np.nan) if not valid.empty and "1일" in valid.columns else np.nan
+    for prefix, stats in [("국장", kr_stats), ("미장", us_stats)]:
+        mode_name = str(stats.get("mode", "데이터부족"))
+        if mode_name in {"비상", "위험", "방어"}:
+            avg = stats.get("avg_day", np.nan)
+            avg_txt = "" if not finite_num(avg) else f" 평균 {float(avg)*100:+.1f}%"
+            reasons.append(f"{prefix} {mode_name}{avg_txt}")
+        for reason in stats.get("reasons", [])[:2]:
+            reasons.append(f"{prefix} {reason}")
 
-    if circuit_day >= 1:
-        score += 5
-        reasons.append(f"서킷브레이커급 급락 지수 {circuit_day}개")
-    elif panic_day >= 1:
-        score += 3
-        reasons.append(f"하루 -5% 이하 투매 지수 {panic_day}개")
-    if below20 >= 3:
-        score += 2
-        reasons.append(f"주요지수 {below20}개가 MA20 아래")
-    elif below20 >= 2:
-        score += 1
-        reasons.append(f"주요지수 {below20}개가 MA20 아래")
-    if below50 >= 2:
-        score += 2
-        reasons.append(f"주요지수 {below50}개가 MA50 아래")
-    if down3 >= 2:
-        score += 2
-        reasons.append(f"연속 하락 3일 이상 지수 {down3}개")
-    if weak5 >= 2:
-        score += 2
-        reasons.append(f"5거래일 -3% 이하 지수 {weak5}개")
-    if sharp_day >= 2:
-        score += 1
-        reasons.append(f"하루 -1.5% 이하 급락 지수 {sharp_day}개")
+    below20 = int(all_stats.get("below20", 0))
+    below50 = int(all_stats.get("below50", 0))
+    down3 = int(all_stats.get("down3", 0))
+    weak5 = int(all_stats.get("weak5", 0))
+    sharp_day = int(all_stats.get("sharp_day", 0))
+    panic_day = int(all_stats.get("panic_day", 0))
+    circuit_day = int(all_stats.get("circuit_day", 0))
+    rebound_count = int(all_stats.get("rebound_count", 0))
+    strong_rebound_count = int(all_stats.get("strong_rebound_count", 0))
+    worst_day_drop = all_stats.get("worst_day_drop", np.nan)
+    max_day_gain = all_stats.get("max_day_gain", np.nan)
 
     flow_breadth = np.nan
     flow_accel = np.nan
@@ -22733,15 +22824,28 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         and (strong_rebound_count >= 2 or (finite_num(max_day_gain) and float(max_day_gain) >= 0.05))
     )
 
-    emergency_market = circuit_day >= 1 or panic_day >= 2
+    kr_mode = str(kr_stats.get("mode", "데이터부족"))
+    us_mode = str(us_stats.get("mode", "데이터부족"))
+    kr_emergency = kr_mode == "비상"
+    us_emergency = us_mode == "비상"
+    emergency_market = kr_emergency or us_emergency
 
     if emergency_market:
-        mode, level, action = "비상", "danger", "신규/추매 중단 · 손절선/현금 방어"
+        if kr_emergency and us_emergency:
+            mode = "전시장 비상"
+            action = "국장·미장 신규/추매 중단 · 손절선/현금 방어"
+        elif kr_emergency:
+            mode = "국장 비상"
+            action = "국장 신규/추매 중단 · 미장은 별도 판정"
+        else:
+            mode = "미장 비상"
+            action = "미장 신규/추매 중단 · 국장은 별도 판정"
+        level = "danger"
         actions = [
-            "섹터 주도 판단보다 보유종목 손절선, 현금 비중, 비중초과 사유를 먼저 확인",
-            "가격이 내려왔다는 이유의 물타기 금지: 종가 안정, 거래대금 진정, 다음 봉 회복 확인 전 보류",
+            "비상으로 잡힌 시장의 신규/추매는 중단하고 손절선, 레버리지, 현금 비중부터 확인",
+            "다른 시장은 자동 매수 허용이 아니라 해당 시장 지수/환율/종가를 별도로 확인",
             "코어 ETF 비중초과는 즉시 매도 신호가 아니라 추매금지/리밸런싱 검토 신호로 해석",
-            "레버리지·전술 포지션이 작다면 코어 훼손보다 대기자금 목표와 종가 안정 확인이 우선",
+            "가격이 내려왔다는 이유의 물타기 금지: 종가 안정, 거래대금 진정, 다음 봉 회복 확인 전 보류",
         ]
     elif score >= 8:
         if tactical_rebound:
@@ -22791,6 +22895,9 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "action": action,
         "reasons": reasons[:5],
         "actions": actions,
+        "scope_text": _today_guard_scope_text(kr_stats, us_stats),
+        "kr_stats": kr_stats,
+        "us_stats": us_stats,
         "bench_df": bench_df,
         "flow_breadth": flow_breadth,
         "flow_accel": flow_accel,
@@ -22830,12 +22937,14 @@ def render_today_market_guard_panel(guard: dict):
     reason_text = " · ".join(str(x) for x in guard.get("reasons", []) if str(x).strip())
     action_text = str(guard.get("action", "-"))
     macro_note = str(guard.get("macro_note", "") or "")
+    scope_text = str(guard.get("scope_text", "") or "")
 
     st.markdown("#### 1. 시장 안전벨트")
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:10px;'>
 <b>시장 모드: <span style='color:{color};'>{html.escape(mode)}</span></b><br>
+<span style='color:#cbd5e1;'>적용범위: {html.escape(scope_text)}</span><br>
 <span class='highlight'>{html.escape(action_text)}</span><br>
 <span style='color:#94a3b8;'>근거: {html.escape(reason_text)}</span><br>
 <span style='color:#cbd5e1;'>매크로 해석: {html.escape(macro_note)}</span>
@@ -22844,14 +22953,24 @@ def render_today_market_guard_panel(guard: dict):
         unsafe_allow_html=True,
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    kr_stats = guard.get("kr_stats", {}) if isinstance(guard.get("kr_stats", {}), dict) else {}
+    us_stats = guard.get("us_stats", {}) if isinstance(guard.get("us_stats", {}), dict) else {}
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("위험점수", f"{guard.get('score', 0)}점")
+    c2.metric(
+        "국장 모드",
+        str(kr_stats.get("mode", "데이터부족")),
+        "-" if not finite_num(kr_stats.get("avg_day", np.nan)) else f"{float(kr_stats.get('avg_day'))*100:+.1f}%",
+    )
+    c3.metric(
+        "미장 모드",
+        str(us_stats.get("mode", "데이터부족")),
+        "-" if not finite_num(us_stats.get("avg_day", np.nan)) else f"{float(us_stats.get('avg_day'))*100:+.1f}%",
+    )
     flow_breadth = guard.get("flow_breadth", np.nan)
-    flow_accel = guard.get("flow_accel", np.nan)
     macro_risk = guard.get("macro_risk", np.nan)
-    c2.metric("돈흐름 상승폭", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
-    c3.metric("가속 ETF 비율", "-" if not finite_num(flow_accel) else f"{float(flow_accel)*100:.0f}%")
-    c4.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+    c4.metric("돈흐름 상승폭", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
+    c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
     if guard.get("tactical_rebound"):
         max_day_gain = guard.get("max_day_gain", np.nan)
         st.caption(
@@ -23500,9 +23619,13 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     caution_count = int(caution_mask.sum())
     hard_count = int(hard_block_mask.sum())
     market_mode = str((market_guard or {}).get("mode", ""))
+    market_scope = str((market_guard or {}).get("scope_text", "") or "")
+    market_is_emergency = "비상" in market_mode
+    market_is_defensive = market_is_emergency or market_mode in {"위험", "위험장 반등", "방어"}
 
-    if market_mode == "비상":
-        headline = "서킷브레이커급 시장입니다. 오늘은 신규/추매보다 손절선, 레버리지, 현금 방어가 우선입니다."
+    if market_is_emergency:
+        scope_suffix = f" ({market_scope})" if market_scope else ""
+        headline = f"{market_mode}입니다{scope_suffix}. 비상 시장은 신규/추매보다 손절선, 레버리지, 현금 방어가 우선입니다."
     elif market_mode == "위험장 반등":
         headline = "시장 구조는 위험하지만 강한 반등이 확인됐습니다. 전면 관망보다 정해진 후보만 소액 전술 참여하는 구간입니다."
     elif market_mode in {"위험", "방어"}:
@@ -23519,23 +23642,23 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         headline = "오늘은 보유 유지와 비중 점검이 우선입니다."
 
     actions = []
-    if market_mode in {"비상", "위험", "위험장 반등", "방어"}:
+    if market_is_defensive:
         actions.extend((market_guard or {}).get("actions", [])[:2])
-    if market_mode == "비상":
+    if market_is_emergency:
         if buyish_count > 0:
-            actions.append(f"후보권 {buyish_count}개는 실행하지 말고 종가 안정 후 재점검")
+            actions.append(f"후보권 {buyish_count}개는 비상 시장과 연동되는지 먼저 분리하고 종가 안정 후 재점검")
         if core_under_count > 0:
-            actions.append(f"코어 목표 미달 {core_under_count}개도 오늘은 적립 실행보다 대기")
+            actions.append(f"코어 목표 미달 {core_under_count}개도 비상 시장 노출이면 적립 실행보다 대기")
     elif leverage_blocked:
         actions.append("레버리지는 차단 신호를 유지하고, 단계별 DCA 조건이 풀릴 때까지 추가매수 보류")
     elif leverage_dca_ready:
         actions.append("레버리지는 평단 대비 하락 단계에 맞춘 배율만 적용")
-    if market_mode != "비상" and core_under_count > 0:
+    if not market_is_emergency and core_under_count > 0:
         if core_overheat_count > 0:
             actions.append(f"코어 목표 미달 {core_under_count}개는 과열 여부를 반영해 정해둔 적립률로만 접근")
         else:
             actions.append(f"코어 목표 미달 {core_under_count}개는 우선 점검")
-    if market_mode != "비상" and cash_available <= 0 and buyish_count > 0:
+    if not market_is_emergency and cash_available <= 0 and buyish_count > 0:
         actions.append("적립용 현금이 부족하므로 신규 매수보다 현금 계획 확인")
     if reserve_available > 0:
         actions.append("폭락장 예비자금은 평상시 적립이 아니라 큰 하락 구간용으로 분리 유지")
