@@ -22759,10 +22759,10 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
                 flow_breadth = float((flow_calc["3개월수익률"].fillna(0) > 0).mean())
                 if flow_breadth < 0.35:
                     score += 2
-                    reasons.append(f"돈흐름 3M 상승 비율 {flow_breadth*100:.0f}%")
+                    reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
                 elif flow_breadth < 0.50:
                     score += 1
-                    reasons.append(f"돈흐름 3M 상승 비율 {flow_breadth*100:.0f}%")
+                    reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
             if "가속도" in flow_calc.columns and not flow_calc.empty:
                 flow_accel = float((flow_calc["가속도"].fillna(0) > 0).mean())
                 if flow_accel < 0.35:
@@ -22969,7 +22969,7 @@ def render_today_market_guard_panel(guard: dict):
     )
     flow_breadth = guard.get("flow_breadth", np.nan)
     macro_risk = guard.get("macro_risk", np.nan)
-    c4.metric("돈흐름 상승폭", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
+    c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
     if guard.get("tactical_rebound"):
         max_day_gain = guard.get("max_day_gain", np.nan)
