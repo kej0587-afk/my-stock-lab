@@ -863,8 +863,9 @@ def _fetch_pyth_prices_by_feed_id(feed_ids: list[str]) -> dict:
         return {}
 
 
-def load_latest_kr_quotes_batch(tickers) -> dict:
-    kr_tickers = [t for t in (tickers or []) if _is_kr_ticker(str(t))]
+@st.cache_data(ttl=45, show_spinner=False)
+def _load_latest_kr_quotes_batch_cached(ticker_keys: tuple[str, ...]) -> dict:
+    kr_tickers = [t for t in ticker_keys if _is_kr_ticker(str(t))]
     if not kr_tickers:
         return {}
     quotes = _fetch_naver_quotes_bulk(kr_tickers)
@@ -881,6 +882,14 @@ def load_latest_kr_quotes_batch(tickers) -> dict:
             merged.update({k: v for k, v in direct.items() if v not in ("", None, 0.0)})
             quotes[key] = merged
     return quotes
+
+
+def load_latest_kr_quotes_batch(tickers) -> dict:
+    kr_tickers = [t for t in (tickers or []) if _is_kr_ticker(str(t))]
+    if not kr_tickers:
+        return {}
+    ticker_keys = tuple(sorted(dict.fromkeys(normalize_price_lookup_key(t) for t in kr_tickers)))
+    return _load_latest_kr_quotes_batch_cached(ticker_keys)
 
 
 def _fetch_pyth_us_live_prices_batch(tickers: list) -> dict:

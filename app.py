@@ -5696,6 +5696,7 @@ def get_cached_today_market_flow_snapshot():
 def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
     st.session_state.pop(TODAY_MARKET_FLOW_SNAPSHOT_KEY, None)
     st.session_state.pop(TODAY_MARKET_FLOW_LAST_RUN_KEY, None)
+    st.session_state.pop(MARKET_CLUSTER_CONTEXT_CACHE_KEY, None)
     if clear_data_cache:
         cache_clear(get_today_market_flow_snapshot)
         cache_clear(calculate_money_flow_df)
@@ -7553,6 +7554,63 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
     return "미국" in joined or "US" in joined.upper()
 
 
+MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
+MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
+
+
+def _get_market_cluster_snapshot_cached(
+    market_label: str,
+    cluster: str,
+    detail_label: str,
+    *,
+    live_prices: bool = True,
+) -> dict:
+    market = str(market_label or "").strip().upper()
+    cluster_key = str(cluster or "").strip()
+    detail_key = str(detail_label or "").strip()
+    if not market or not cluster_key:
+        return {}
+
+    now = pd.Timestamp.now().timestamp()
+    cache_key = (market, cluster_key, detail_key, bool(live_prices))
+    try:
+        cache = st.session_state.setdefault(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})
+        if not isinstance(cache, dict):
+            cache = {}
+            st.session_state[MARKET_CLUSTER_CONTEXT_CACHE_KEY] = cache
+
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            ts = clean_float(cached.get("ts", 0.0), 0.0)
+            if now - ts <= MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS:
+                snapshot = cached.get("snapshot", {})
+                return snapshot if isinstance(snapshot, dict) else {}
+
+        stale_keys = [
+            key for key, value in cache.items()
+            if isinstance(value, dict)
+            and now - clean_float(value.get("ts", 0.0), 0.0) > MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS * 3
+        ]
+        for key in stale_keys[:50]:
+            cache.pop(key, None)
+    except Exception:
+        pass
+
+    if market == "KOSPI":
+        snapshot = build_kr_cluster_snapshot(cluster_key, detail_name=detail_key, live_prices=live_prices)
+    else:
+        snapshot = build_us_cluster_snapshot(cluster_key, detail_name=detail_key)
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    try:
+        st.session_state.setdefault(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})[cache_key] = {
+            "ts": now,
+            "snapshot": snapshot,
+        }
+    except Exception:
+        pass
+    return snapshot
+
+
 def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
@@ -7602,10 +7660,12 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         cache_key = (market_label, cluster, detail_label)
         snapshot = snapshot_cache.get(cache_key)
         if snapshot is None:
-            if market_label == "KOSPI":
-                snapshot = builder(cluster, detail_name=detail_label, live_prices=True)
-            else:
-                snapshot = builder(cluster, detail_name=detail_label)
+            snapshot = _get_market_cluster_snapshot_cached(
+                market_label,
+                cluster,
+                detail_label,
+                live_prices=(market_label == "KOSPI"),
+            )
             snapshot_cache[cache_key] = snapshot
         if not snapshot:
             continue
@@ -8082,11 +8142,11 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         core_member = matched[0]
         is_kr_cluster = any(is_kr_listed(m.get("ticker", "")) for m in matched)
         if is_kr_cluster:
-            kr_snapshot = build_kr_cluster_snapshot(cl_name)
+            kr_snapshot = _get_market_cluster_snapshot_cached("KOSPI", cl_name, cl_name, live_prices=True)
             market_snapshot = kr_snapshot
         else:
             kr_snapshot = {}
-            market_snapshot = build_us_cluster_snapshot(cl_name, detail_name=cl_name)
+            market_snapshot = _get_market_cluster_snapshot_cached("US", cl_name, cl_name, live_prices=False)
         kr_breadth = clean_float(kr_snapshot.get("breadth", np.nan), np.nan) if kr_snapshot else np.nan
         kr_sector_change = clean_float(kr_snapshot.get("sector_avg_change_pct", np.nan), np.nan) if kr_snapshot else np.nan
         kr_internal_weak = bool(
@@ -24499,6 +24559,12 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     snapshot = snapshot if snapshot is not None else get_cached_today_market_flow_snapshot()
     if not snapshot:
         return pd.DataFrame()
+    cached_shortlist = snapshot.get("_flow_shortlist_df") if isinstance(snapshot, dict) else None
+    if isinstance(cached_shortlist, pd.DataFrame):
+        cached = cached_shortlist.copy()
+        if not cached.empty and "Ticker" in cached.columns:
+            cached["등록상태"] = cached["Ticker"].astype(str).apply(_today_flow_candidate_status)
+        return cached
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
@@ -24728,7 +24794,12 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     combined["타이밍"] = combined.apply(_flow_short_timing, axis=1)
     combined["시장맥락"] = combined.apply(_flow_short_context, axis=1)
     combined["주의요인"] = combined.apply(_flow_short_risk, axis=1)
-    return combined.drop(columns=[c for c in ["_ticker_key", "_후보우선순위", "_st"] if c in combined.columns])
+    result = combined.drop(columns=[c for c in ["_ticker_key", "_후보우선순위", "_st"] if c in combined.columns])
+    try:
+        snapshot["_flow_shortlist_df"] = result.copy()
+    except Exception:
+        pass
+    return result
 
 
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
