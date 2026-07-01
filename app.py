@@ -24984,8 +24984,25 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
 
     st.caption("돈흐름점수는 2주/1개월 확인, 3개월 주도력, 확산, 거래량, 네이버 테마 보조를 함께 봅니다. `하락중 관망`은 강해 보여도 단기 하락이 이어지는 테마입니다.")
 
-    render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df)
-    render_naver_theme_coverage_panel()
+    detail_view = st.radio(
+        "시장 돈흐름 표시",
+        ["빠른 후보", "돈흐름 원천/매핑", "로테이션 차트"],
+        horizontal=True,
+        key="today_market_flow_detail_view",
+        help="처음 열 때는 빠른 후보만 렌더링합니다. 차트와 매핑 표는 선택할 때만 계산합니다.",
+    )
+
+    if detail_view == "빠른 후보":
+        if show_shortlist:
+            render_today_flow_shortlist_panel(snapshot, key_prefix="today_flow_panel", show_header=True)
+        else:
+            st.caption("빠른 요약 모드입니다. 상세 차트나 매핑은 위 선택에서 열 수 있습니다.")
+        return snapshot
+
+    if detail_view == "돈흐름 원천/매핑":
+        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+        render_naver_theme_coverage_panel()
+        return snapshot
 
     with st.expander("전광판으로 보내기", expanded=False):
         send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
