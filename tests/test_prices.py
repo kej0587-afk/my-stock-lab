@@ -68,6 +68,12 @@ def test_extract_kis_quote_price_accepts_extended_price_field():
     assert prices._extract_kis_quote_price(payload) == 25.80
 
 
+def test_extract_kis_quote_price_can_ignore_base_reference_price():
+    payload = {"output": {"last": "", "t_xprc": "", "base": "28.71"}}
+
+    assert prices._extract_kis_quote_price(payload, allow_base=False) == 0.0
+
+
 def test_ram_kis_exchange_candidates_try_daytime_first():
     assert prices._kis_us_exchange_candidates("RAM")[:2] == ["BAA", "AMS"]
 
@@ -76,6 +82,39 @@ def test_extract_kis_intraday_price_from_output2():
     payload = {"output2": [{"xhms": "140101", "last": "25.75"}]}
 
     assert prices._extract_kis_intraday_price(payload) == 25.75
+
+
+def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
+    calls = []
+
+    def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
+        calls.append(("kis", daytime_only, regular_only))
+        if daytime_only:
+            return 0.0
+        if regular_only:
+            return 310.58
+        return 0.0
+
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", fake_kis_price)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 316.50)
+
+    assert prices._fetch_price_uncached("MRVL") == 316.50
+    assert calls == [("kis", True, False)]
+
+
+def test_ram_proxy_is_used_before_yfinance_fast_info(monkeypatch):
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_pyth_us_live_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_cboe_book_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_estimate_leveraged_target_etf_proxy_price", lambda ticker: 25.75)
+    monkeypatch.setattr(prices, "_fetch_yf_fast_info_price", lambda ticker: 28.71)
+
+    assert prices._fetch_price_uncached("RAM") == 25.75
 
 
 def test_hon_ohlc_alignment_scales_split_like_gap(monkeypatch):

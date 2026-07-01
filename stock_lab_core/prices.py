@@ -1037,12 +1037,12 @@ def _kis_us_exchange_candidates(ticker: str) -> list[str]:
     return ["BAQ", "BAY", "BAA", "NAS", "NYS", "AMS"]
 
 
-def _extract_kis_quote_price(payload) -> float:
+def _extract_kis_quote_price(payload, *, allow_base: bool = True) -> float:
     output = (payload or {}).get("output") if isinstance(payload, dict) else {}
     if not isinstance(output, dict):
         return 0.0
 
-    price_keys = (
+    price_keys = [
         "last",
         "t_xprc",
         "p_xprc",
@@ -1050,8 +1050,9 @@ def _extract_kis_quote_price(payload) -> float:
         "stck_prpr",
         "prpr",
         "price",
-        "base",
-    )
+    ]
+    if allow_base:
+        price_keys.append("base")
     for key in price_keys:
         try:
             value = str(output.get(key, "")).strip().replace(",", "")
@@ -1143,7 +1144,12 @@ def _fetch_kis_us_intraday_price(ticker: str, exchange: str) -> float:
         return 0.0
 
 
-def _fetch_kis_us_quote_price(ticker: str) -> float:
+def _fetch_kis_us_quote_price(
+    ticker: str,
+    *,
+    daytime_only: bool = False,
+    regular_only: bool = False,
+) -> float:
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
         return 0.0
@@ -1155,8 +1161,14 @@ def _fetch_kis_us_quote_price(ticker: str) -> float:
 
     base = _kis_base_url()
     for exchange in _kis_us_exchange_candidates(t):
+        exchange = str(exchange).upper()
+        is_daytime_exchange = exchange.startswith("BA")
+        if daytime_only and not is_daytime_exchange:
+            continue
+        if regular_only and is_daytime_exchange:
+            continue
         try:
-            if str(exchange).upper().startswith("BA"):
+            if is_daytime_exchange:
                 price = _fetch_kis_us_intraday_price(t, exchange)
                 if price > 0:
                     return price
@@ -1175,7 +1187,13 @@ def _fetch_kis_us_quote_price(ticker: str) -> float:
                 payload = json.loads(resp.read())
             if str(payload.get("rt_cd", "0")) not in {"0", ""}:
                 continue
-            price = _extract_kis_quote_price(payload)
+            # BA daytime endpoints and newly listed leveraged ETFs often expose
+            # `base` as a stale reference price. Treat only true live fields as
+            # current price there; regular KIS quotes remain a fallback later.
+            price = _extract_kis_quote_price(
+                payload,
+                allow_base=(not is_daytime_exchange and t not in LEVERAGED_TARGET_ETF_PROXIES),
+            )
             if price > 0:
                 return price
         except Exception:
@@ -1508,7 +1526,7 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
-        price = _fetch_kis_us_quote_price(ticker)
+        price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
         if price > 0:
             return price
         price = _fetch_yahoo_overnight_page_price(ticker)
@@ -1536,12 +1554,15 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_yf_download_price(ticker, interval="5m", prepost=True)
         if price > 0:
             return price
-        price = _fetch_yf_fast_info_price(ticker)
+        price = _fetch_kis_us_quote_price(ticker, regular_only=True)
         if price > 0:
             return price
         proxy_price = _estimate_leveraged_target_etf_proxy_price(ticker)
         if proxy_price > 0:
             return proxy_price
+        price = _fetch_yf_fast_info_price(ticker)
+        if price > 0:
+            return price
 
     # 공통 일봉 최종 폴백 (lock + threads=False)
     try:
