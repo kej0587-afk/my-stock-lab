@@ -5456,8 +5456,12 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
 
         cur_price = clean_float(latest_price_map.get(normalize_price_lookup_key(ticker)), 0.0)
+        if not IS_PUBLIC_DEMO and not is_kr_listed(ticker):
+            display_live_price = load_display_live_price(ticker)
+            if display_live_price > 0:
+                cur_price = display_live_price
         if cur_price <= 0 and not IS_PUBLIC_DEMO:
-            cur_price = load_latest_price(ticker)
+            cur_price = load_display_live_price(ticker)
         elif cur_price <= 0:
             cur_price = avg_price
         cur_price = _override_unstable_holding_price(ticker, cur_price)
@@ -12231,10 +12235,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     daily_close = source_daily_close if source_daily_close > 0 else float(df.iloc[-1]["Close"])
     cur_p = float(df.iloc[-1]["Close"])
     live_price_used = bool(live_ohlcv_applied)
-    # 프리마켓·애프터마켓 실시간가가 전달된 경우 일봉 종가 대신 사용 (day_ret·MDD·R/R 계산에 반영)
-    if live_price > 0 and abs(live_price - cur_p) / max(cur_p, 1) < 0.5:  # 50% 이상 괴리 시 오류로 간주하고 무시
+    # Use the validated live quote for display, sizing and R/R even when the
+    # chart close is stale or unadjusted after a split/provider lag.
+    if live_price > 0:
+        live_gap_ratio = abs(float(live_price) - cur_p) / max(abs(cur_p), 1.0)
         cur_p = float(live_price)
-        live_price_used = live_price_used or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
+        live_price_used = (
+            live_price_used
+            or live_gap_ratio > 0.003
+            or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
+        )
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
@@ -13947,10 +13957,13 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
 
 
 def load_display_live_price(ticker: str) -> float:
+    latest = clean_float(load_latest_price(ticker), 0.0)
+    if latest > 0:
+        return latest
     direct = fetch_yahoo_daymarket_price_direct(ticker)
     if direct > 0:
         return direct
-    return clean_float(load_latest_price(ticker), 0.0)
+    return 0.0
 
 
 def _period_return_from_close(close: pd.Series, bars: int) -> float:
@@ -15741,7 +15754,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
         my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
-        _live_p = load_latest_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
+        _live_p = load_display_live_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
 
         c = calc_scores_and_decision(
             name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
@@ -16266,7 +16279,7 @@ def build_swing_system_df(swing_df):
                 fin_score=int(fin_score),
                 is_free=False,
                 app_mode="개인모드",
-                live_price=load_latest_price(ticker),
+                live_price=load_display_live_price(ticker),
             )
 
             rows.append({
@@ -21148,7 +21161,7 @@ def fetch_yfinance_distribution_snapshot(ticker):
     latest_amount = float(divs.iloc[-1])
     annual_total = float(recent.sum())
     annual_count = int(len(recent))
-    price = clean_float(load_latest_price(ticker), 0.0)
+    price = clean_float(load_display_live_price(ticker), 0.0)
     if price <= 0:
         try:
             hist = yf.download(ticker, period="5d", interval="1d", progress=False, auto_adjust=False)
@@ -25806,7 +25819,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
         my_price = get_my_price(name, tkr)
         has_pos_value = has_position(name, tkr)
-        c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드")
+        c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드", live_price=load_display_live_price(tkr))
         st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([
             {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
@@ -28203,7 +28216,7 @@ if main_page == "asset":
                         fin_score=int(fin_score),
                         is_free=False,
                         app_mode="개인모드",
-                        live_price=load_latest_price(tkr),
+                        live_price=load_display_live_price(tkr),
                     )
 
                     signal_rows.append({
