@@ -253,6 +253,68 @@ def test_auto_market_memo_prioritizes_short_rotation_over_hot_semis():
     assert "FOMC 전후에는 QQQ/TQQQ/QLD/SOXL" in memo
 
 
+def test_auto_market_memo_treats_memory_news_shock_as_short_term_override():
+    flow_snapshot = {
+        "flow_df": [
+            {
+                "구분": "미국 섹터",
+                "섹터": "메모리/DRAM",
+                "Ticker": "DRAM",
+                "ETF 이름": "Roundhill Memory ETF",
+                "돈흐름점수": 100.0,
+                "3개월수익률": 1.37,
+                "상태": "주도 유지",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 iShares",
+                "Ticker": "SOXX",
+                "ETF 이름": "iShares Semiconductor ETF",
+                "돈흐름점수": 69.0,
+                "3개월수익률": 0.76,
+                "상태": "과열경보",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "Direxion Daily Semiconductor Bull 3X ETF",
+                "Ticker": "SOXL",
+                "ETF 이름": "SOXL",
+                "돈흐름점수": 248.0,
+                "3개월수익률": 3.12,
+                "상태": "강세 가속",
+            },
+        ],
+        "us_top5": [
+            {"섹터": "메모리/DRAM", "Ticker": "DRAM", "돈흐름점수": 100.0},
+        ],
+    }
+    index_rotation_rows = [
+        {"지수/스타일": "메모리/DRAM", "Ticker": "DRAM", "1D": -0.11, "3M": 1.37, "판정": "장기주도/단기이탈"},
+        {"지수/스타일": "DRAM 2배", "Ticker": "RAM", "1D": -0.22, "3M": 2.20, "판정": "급락"},
+        {"지수/스타일": "반도체", "Ticker": "SOXX", "1D": -0.064, "3M": 0.76, "판정": "단기 이탈"},
+        {"지수/스타일": "다우존스", "Ticker": "DIA", "1D": 0.0, "3M": 0.04, "판정": "방어"},
+        {"지수/스타일": "금융", "Ticker": "XLF", "1D": 0.022, "3M": 0.03, "판정": "유입"},
+        {"지수/스타일": "KOSPI", "Ticker": "^KS11", "1D": -0.079, "3M": 0.50, "판정": "급락"},
+        {"지수/스타일": "KODEX 200", "Ticker": "069500.KS", "1D": -0.082, "3M": 0.50, "판정": "급락"},
+        {"지수/스타일": "KOSDAQ150", "Ticker": "229200.KS", "1D": -0.069, "3M": 0.20, "판정": "급락"},
+    ]
+    market_news_rows = [
+        {"market_category": "반도체·AI", "title": "Meta plans to sell excess AI compute capacity, chip stocks fall", "publisher": "Bloomberg"},
+        {"market_category": "반도체·AI", "title": "Apple seeks access to Chinese memory chips from CXMT", "publisher": "Tom's Hardware"},
+    ]
+
+    memo = build_auto_market_memo(
+        flow_snapshot=flow_snapshot,
+        index_rotation_rows=index_rotation_rows,
+        market_news_rows=market_news_rows,
+        now=datetime(2026, 7, 2, 15, 0),
+    )
+
+    assert "1D 급락/이탈과 반도체 뉴스 충격이 우선" in memo
+    assert "후행 상대강도표" in memo
+    assert "매수 신호가 아니라 후행 강도표" in memo
+
+
 def test_market_memo_headline_prioritizes_rotation_and_event_caution():
     text = """
     • 반도체/AI는 강세 유지와 호재 수요 확대가 있지만 1D 기준 단기 이탈이 있습니다.

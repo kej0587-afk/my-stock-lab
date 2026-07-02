@@ -29,11 +29,15 @@ MARKET_MEMO_CATEGORY_RULES: tuple[MemoCategoryRule, ...] = (
             "반도체", "ai", "nvidia", "nvda", "micron", "mu", "hbm", "openai",
             "deepseek", "eml", "cw 레이저", "coherent", "marvell", "마벨",
             "soxl", "soxx", "smh", "sandisk", "sndk", "crdo", "alab",
+            "dram", "memory chip", "cxmt", "chinese memory", "ai compute",
+            "excess compute", "surplus compute", "meta compute", "cloud capacity",
+            "coreweave", "nebius",
         ),
         (
             "반도체", "ai", "semiconductor", "soxl", "soxx", "smh", "nvda",
             "mu", "mrvl", "sndk", "crdo", "alab", "tsm", "amd", "avgo",
             "asml", "amzn", "0167a0", "396500", "139260", "005930", "000660",
+            "dram", "ram", "memory", "cxmt", "meta compute", "cloud capacity",
         ),
     ),
     MemoCategoryRule(
@@ -112,6 +116,9 @@ TICKER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
     "SOXL": ("SOXL",),
     "SOXX": ("SOXX",),
     "SMH": ("SMH",),
+    "DRAM": ("DRAM", "ROUNDHILL MEMORY ETF", "메모리 ETF"),
+    "RAM": ("RAM", "ROUNDHILL T-REX", "DRAM 2배"),
+    "AAPL": ("AAPL", "APPLE", "애플"),
     "AMD": ("AMD",),
     "AVGO": ("AVGO", "BROADCOM", "브로드컴"),
     "TSM": ("TSM", "TSMC"),
@@ -158,6 +165,10 @@ SEVERE_BEARISH_NEWS_KEYWORDS = (
     "crumbles", "crumble", "bloodbath",
     "selloff", "sell-off", "plunges", "plunge", "tumbles", "tumble",
     "bubble burst", "bubble pops", "bubble",
+    "excess ai compute", "excess compute", "surplus compute", "surplus computing",
+    "surplus cloud", "offload surplus", "selling excess", "sell excess",
+    "overcapacity", "oversupply", "meta compute",
+    "blacklisted cxmt", "cxmt", "chinese memory chips", "chinese memory",
     "거품 터지", "거품", "폭락", "붕괴", "투매",
 )
 
@@ -180,7 +191,7 @@ LEVERAGED_TICKERS = {
     "TQQQ", "QLD", "SOXL", "TECL", "UPRO", "SSO", "FNGU", "BULZ",
     "NVDL", "TSLL", "USD", "423920.KS", "494310.KS",
 }
-GROWTH_ROTATION_TICKERS = {"^IXIC", "QQQ", "XLK", "SOXX", "SMH", "SOXL", "TQQQ", "QLD"}
+GROWTH_ROTATION_TICKERS = {"^IXIC", "QQQ", "XLK", "SOXX", "SMH", "SOXL", "DRAM", "RAM", "TQQQ", "QLD"}
 VALUE_DEFENSIVE_ROTATION_TICKERS = {"^DJI", "DIA", "XLI", "XLF", "XLP", "XLU"}
 KR_MARKET_ROTATION_TICKERS = {"^KS11", "^KQ11", "069500.KS", "229200.KS"}
 US_MARKET_ROTATION_TICKERS = {"^GSPC", "^IXIC", "^DJI"}
@@ -191,6 +202,8 @@ SEMI_NEWS_CONTEXT_TERMS = (
     "반도체", "semiconductor", "ai", "hbm", "memory", "dram",
     "soxl", "soxx", "smh", "nvda", "nvidia", "micron", "mu",
     "tsm", "tsmc", "amd", "marvell", "mrvl", "sandisk", "sndk",
+    "ram", "aapl", "apple", "cxmt", "meta", "meta compute",
+    "excess compute", "surplus compute", "cloud capacity", "coreweave", "nebius",
 )
 
 
@@ -640,11 +653,11 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
     leveraged_semi_weak = False
     for row in rows:
         ticker = _row_ticker(row)
-        if ticker not in {"SOXX", "SMH", "SOXL", "QQQ", "XLK", "TQQQ", "QLD"}:
+        if ticker not in {"SOXX", "SMH", "SOXL", "DRAM", "RAM", "QQQ", "XLK", "TQQQ", "QLD"}:
             continue
         judgement = _norm(row.get("판정") or row.get("상태"))
         short_value = _rotation_value(row, short_key) if short_key else None
-        if ticker in {"SOXX", "SMH"}:
+        if ticker in {"SOXX", "SMH", "DRAM"}:
             primary_semi_seen = True
             if short_value is not None:
                 if short_value < -0.003:
@@ -1191,6 +1204,9 @@ def _auto_insight_bullets(
     flow_rows = _iter_table_rows(flow_df, limit=250)
     bearish_ctx = _bearish_news_pressure(market_news_rows, news_rows)
     kr_market_crash = bool(rotation_ctx.get("kr_market_crash"))
+    semi_short_weak = bool(rotation_ctx.get("semi_short_weak"))
+    semi_news_pressure = bool(bearish_ctx.get("count"))
+    semi_shock = semi_short_weak or semi_news_pressure
     if kr_market_crash:
         short_key = rotation_ctx.get("short_key") or "단기"
         bullets.append(
@@ -1201,7 +1217,7 @@ def _auto_insight_bullets(
         row for row in flow_rows
         if any(
             key in " ".join(_lower(row.get(k, "")) for k in ("섹터", "Ticker", "ETF 이름"))
-            for key in ("반도체", "semiconductor", "soxx", "soxl", "smh", "0167a0")
+            for key in ("반도체", "semiconductor", "memory", "dram", "ram", "soxx", "soxl", "smh", "0167a0")
         )
     ]
     if semi_rows:
@@ -1211,7 +1227,16 @@ def _auto_insight_bullets(
             if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
         )
         if overheated >= 2:
-            if kr_market_crash:
+            if kr_market_crash and semi_shock:
+                sample = _norm(bearish_ctx.get("sample"))
+                sample_text = f" 뉴스 단서: {_short_news_title(sample)}." if sample else ""
+                short_key = rotation_ctx.get("short_key") or "단기"
+                bullets.append(
+                    f"반도체/AI는 {_flow_row_label(top)} 기준 3M 돈흐름이 아직 강하게 남아 있지만, "
+                    f"{short_key} 급락/이탈과 반도체 뉴스 충격이 우선입니다.{sample_text} "
+                    "이 구간에서 3M 지표는 매수 신호가 아니라 후행 상대강도표로만 봅니다."
+                )
+            elif kr_market_crash:
                 bullets.append(
                     f"반도체/AI 중기 돈흐름은 {_flow_row_label(top)} 중심으로 아직 강하지만, "
                     "국장 급락장에서는 이 신호를 매수 주도보다 후행/상대강도 지표로만 봅니다."
@@ -1272,7 +1297,10 @@ def _auto_insight_bullets(
         if rows:
             leaders.append(_flow_row_label(rows[0]))
     if leaders:
-        bullets.append("중기 돈흐름 상위 축은 " + ", ".join(dict.fromkeys(leaders[:4])) + "입니다.")
+        leader_text = "중기 돈흐름 상위 축은 " + ", ".join(dict.fromkeys(leaders[:4])) + "입니다."
+        if semi_shock or kr_market_crash:
+            leader_text += " 단, 1D/5D 급락 구간에서는 매수 신호가 아니라 후행 강도표로만 봅니다."
+        bullets.append(leader_text)
 
     if isinstance(macro_data, dict) and macro_data:
         relief = []
@@ -1385,7 +1413,7 @@ def build_auto_market_memo(
     flow_df = flow_snapshot.get("flow_df")
     for row in _iter_table_rows(flow_df, limit=200):
         joined = " ".join(_lower(row.get(k, "")) for k in ("섹터", "Ticker", "ETF 이름"))
-        if any(key in joined for key in ("반도체", "semiconductor", "soxx", "soxl", "smh", "0167a0")):
+        if any(key in joined for key in ("반도체", "semiconductor", "memory", "dram", "ram", "soxx", "soxl", "smh", "0167a0")):
             semis.append(row)
     if semis:
         lines.append("🖥 반도체·AI")

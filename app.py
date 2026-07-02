@@ -23205,7 +23205,11 @@ def dedupe_today_auto_newspick_news_rows(news_rows):
 TODAY_MARKET_STORY_RSS_PLAN = [
     {
         "category": "반도체·AI",
-        "query": 'NVIDIA OR Micron OR HBM OR "AI chip" OR semiconductor',
+        "query": 'NVIDIA OR Micron OR DRAM OR HBM OR "AI chip" OR semiconductor OR "Meta Compute" OR "excess AI compute" OR CXMT',
+    },
+    {
+        "category": "반도체·AI 리스크",
+        "query": '"Meta" "excess AI compute" OR "surplus compute" OR "Apple" CXMT OR "Chinese memory chips" OR "DRAM selloff" OR "memory stocks"',
     },
     {
         "category": "지정학",
