@@ -88,6 +88,7 @@ def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
     calls = []
 
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
 
     def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
         calls.append(("kis", daytime_only, regular_only))
@@ -102,6 +103,26 @@ def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
 
     assert prices._fetch_price_uncached("MRVL") == 316.50
     assert calls == [("kis", True, False)]
+
+
+def test_us_regular_session_prefers_regular_quote_over_daytime(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+
+    def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
+        calls.append(("kis", daytime_only, regular_only))
+        if daytime_only:
+            return 635.09
+        if regular_only:
+            return 603.04
+        return 0.0
+
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", fake_kis_price)
+
+    assert prices._fetch_price_uncached("AMAT") == 603.04
+    assert calls == [("kis", False, True)]
 
 
 def test_us_holiday_price_uses_regular_close_before_live_quotes(monkeypatch):
@@ -131,8 +152,33 @@ def test_us_batch_holiday_price_uses_regular_close(monkeypatch):
     assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 603.04
 
 
+def test_us_batch_regular_session_prefers_regular_quote(monkeypatch):
+    prices.clear_latest_price_cache()
+
+    calls = []
+
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+
+    def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
+        calls.append(("kis", daytime_only, regular_only))
+        if daytime_only:
+            return 635.09
+        if regular_only:
+            return 603.04
+        return 0.0
+
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", fake_kis_price)
+
+    result = prices.load_latest_prices_batch(["AMAT", "NVDA"])
+    assert result["AMAT"] == 603.04
+    assert result["NVDA"] == 603.04
+    assert calls == [("kis", False, True), ("kis", False, True)]
+
+
 def test_ram_proxy_is_used_before_yfinance_fast_info(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 0.0)
     monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)

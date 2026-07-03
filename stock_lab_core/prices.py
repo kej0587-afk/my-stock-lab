@@ -748,6 +748,17 @@ def _us_equity_market_closed_today() -> bool:
     return today.weekday() >= 5 or today in _us_equity_market_holidays(today.year)
 
 
+def _us_equity_regular_session_active() -> bool:
+    try:
+        now = pd.Timestamp.now(tz="America/New_York")
+    except Exception:
+        return False
+    if now.date().weekday() >= 5 or now.date() in _us_equity_market_holidays(now.year):
+        return False
+    minutes = now.hour * 60 + now.minute
+    return (9 * 60 + 30) <= minutes < (16 * 60)
+
+
 def _latest_recent_close_from_series(series, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> float:
     if isinstance(series, pd.DataFrame):
         if series.empty:
@@ -1665,12 +1676,17 @@ def _fetch_price_uncached(ticker: str) -> float:
             if price > 0:
                 return price
 
-        price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, daytime_only=True))
-        if price > 0:
-            return price
-        price = _fetch_yahoo_overnight_page_price(ticker)
-        if price > 0:
-            return price
+        if _us_equity_regular_session_active():
+            price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
+            if price > 0:
+                return price
+        else:
+            price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, daytime_only=True))
+            if price > 0:
+                return price
+            price = _fetch_yahoo_overnight_page_price(ticker)
+            if price > 0:
+                return price
         price = _accept_us_untimed_quote_price(ticker, _fetch_configured_us_quote_price(ticker))
         if price > 0:
             return price
@@ -1812,6 +1828,7 @@ def load_latest_prices_batch(tickers) -> dict:
 
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
+        regular_session_active = _us_equity_regular_session_active()
         if _us_equity_market_closed_today():
             for t in us_tickers:
                 key = normalize_price_lookup_key(t)
@@ -1823,12 +1840,19 @@ def load_latest_prices_batch(tickers) -> dict:
             key = normalize_price_lookup_key(t)
             if key in prices:
                 continue
-            p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t))
+            p = _accept_us_untimed_quote_price(
+                t,
+                _fetch_kis_us_quote_price(t, regular_only=True)
+                if regular_session_active
+                else _fetch_kis_us_quote_price(t, daytime_only=True),
+            )
             if p > 0:
                 prices[key] = p
 
         for t in us_tickers:
             if normalize_price_lookup_key(t) in prices:
+                continue
+            if regular_session_active:
                 continue
             p = _fetch_yahoo_overnight_page_price(t)
             if p > 0:
