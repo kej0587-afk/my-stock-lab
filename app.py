@@ -15960,6 +15960,10 @@ def format_dashboard_reason(c: dict) -> str:
     c = apply_leveraged_dca_dashboard_override(c)
     reasons = tuple((c or {}).get("decision_reasons") or ())
     base = str(reasons[0]) if reasons else ""
+    code = str((c or {}).get("decision_code", "") or "")
+    if code.startswith("STRUCTURE_DAMAGE") and len(reasons) > 1:
+        # 추세방어는 단순 낙폭이 아니라 MA/RS/급락봉 근거를 같이 보여줘야 헷갈리지 않는다.
+        base = " / ".join(str(x) for x in reasons[:3] if str(x).strip())
     if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
         mtf_note = "상위 시간대 과열: 풀비중보다 정찰/대기"
         base = f"{base} / {mtf_note}" if base else mtf_note
