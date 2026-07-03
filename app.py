@@ -192,6 +192,8 @@ from stock_lab_core.kr_etf_data import (
 )
 from stock_lab_core.prices import (
     _extract_yahoo_overnight_price_from_html,
+    _fetch_yahoo_regular_close_price,
+    _us_equity_market_closed_today,
     clear_latest_price_cache,
     clear_selected_price_cache,
     enable_force_live_price_refresh,
@@ -14157,9 +14159,17 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
 
 
 def load_display_live_price(ticker: str) -> float:
+    if ticker and not is_kr_listed(ticker) and _us_equity_market_closed_today():
+        regular_close = clean_float(_fetch_yahoo_regular_close_price(ticker), 0.0)
+        if regular_close > 0:
+            return regular_close
     latest = clean_float(load_latest_price(ticker), 0.0)
     if latest > 0:
         return latest
+    if ticker and not is_kr_listed(ticker) and _us_equity_market_closed_today():
+        regular_close = clean_float(_fetch_yahoo_regular_close_price(ticker), 0.0)
+        if regular_close > 0:
+            return regular_close
     direct = fetch_yahoo_daymarket_price_direct(ticker)
     if direct > 0:
         return direct
