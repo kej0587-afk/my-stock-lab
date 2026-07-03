@@ -240,7 +240,7 @@ def classify_decision_signal(decision_label: str) -> str:
     text = str(decision_label or "")
     caution_keywords = [
         "차단", "금지", "위기", "패닉", "역배열", "구조훼손", "추세훼손", "가격위험",
-        "가격방어", "추세방어", "대피",
+        "가격방어", "급락방어", "단기급락", "추세방어", "대피",
         "처분", "손절", "원인 점검", "하락추세", "추격금지", "보류",
         "극단과열", "단기과열", "과열확장", "밴드상단", "상단부근",
     ]
@@ -268,6 +268,7 @@ DECISION_CODE_BY_LABEL = {
     "⚠️구조훼손: 신규진입 보류": "STRUCTURE_DAMAGE_NO_ENTRY",
     "⚠️추세훼손: 신규진입 보류": "STRUCTURE_DAMAGE_NO_ENTRY",
     "⚠️가격위험: 신규진입 보류": "PRICE_DRAWDOWN_NO_ENTRY",
+    "⚠️단기급락: 신규진입 보류": "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
     "⚡레버리지 급락: 신규/추매 보류": "LEVERAGED_DAILY_DROP_NO_ADD",
     "⚡레버리지 급락: 추매금지/종가 확인": "LEVERAGED_DAILY_DROP_NO_ADD",
     "⚠️고점대비 -20%: 추매금지/손절기준 점검": "DRAWDOWN_20_HOLDING_STOP_CHECK",
@@ -276,6 +277,7 @@ DECISION_CODE_BY_LABEL = {
     "⚠️구조훼손: 추매금지/손절기준 점검": "STRUCTURE_DAMAGE_HOLDING_CHECK",
     "⚠️추세훼손: 추매금지/손절기준 점검": "STRUCTURE_DAMAGE_HOLDING_CHECK",
     "⚠️가격위험: 추매금지/원인점검": "PRICE_DRAWDOWN_HOLDING_CHECK",
+    "⚠️단기급락: 추매금지/종가확인": "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK",
     "🟣예외승인: 정찰대 추매(MA5/FVG)": "EXCEPTION_ADD_ON",
     "🟣예외승인: 정찰대 진입(MA5/FVG)": "EXCEPTION_ENTRY",
     "🚫하드차단: MFI 극단 과열": "HARD_BLOCK_MFI_OVERHEAT",
@@ -350,6 +352,8 @@ DECISION_GROUP_BY_CODE = {
     "LEVERAGED_DAILY_DROP_NO_ADD": "caution",
     "PRICE_DRAWDOWN_NO_ENTRY": "caution",
     "PRICE_DRAWDOWN_HOLDING_CHECK": "caution",
+    "SINGLE_DAY_BREAKDOWN_NO_ENTRY": "caution",
+    "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK": "caution",
     "STRUCTURE_DAMAGE_NO_ENTRY": "caution",
     "STRUCTURE_DAMAGE_HOLDING_CHECK": "caution",
     "CORE_STORM_DCA": "buyish",

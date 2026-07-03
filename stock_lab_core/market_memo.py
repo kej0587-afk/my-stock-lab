@@ -787,8 +787,12 @@ def _summary_bullets(summary_rows) -> list[str]:
             "하드차단", "구조훼손", "추세훼손", "추세방어",
             "추매금지", "매수금지", "목표비중 0", "비중 초과",
         )
-        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지", "가격위험", "가격방어")
-        if "PRICE_DRAWDOWN" in code or any(term in label for term in ("가격위험", "가격방어")):
+        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지", "가격위험", "가격방어", "단기급락", "급락방어")
+        if (
+            "PRICE_DRAWDOWN" in code
+            or "SINGLE_DAY_BREAKDOWN" in code
+            or any(term in label for term in ("가격위험", "가격방어", "단기급락", "급락방어"))
+        ):
             caution.append(item)
         elif any(term in code for term in hard_terms) or any(term in label for term in hard_label_terms):
             hard.append(_hard_block_item(item, row))
@@ -821,6 +825,8 @@ def _hard_block_item(item: str, row: dict) -> str:
         "LEVERAGED_DAILY_DROP_NO_ADD": "레버리지 급락",
         "PRICE_DRAWDOWN_HOLDING_CHECK": "가격방어",
         "PRICE_DRAWDOWN_NO_ENTRY": "가격방어",
+        "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK": "급락방어",
+        "SINGLE_DAY_BREAKDOWN_NO_ENTRY": "급락방어",
         "STRUCTURE_DAMAGE_HOLDING_CHECK": "추세방어",
         "STRUCTURE_DAMAGE_NO_ENTRY": "추세방어",
         "MTF_DAMAGE_NO_ADD": "상위 시간대 추세방어",
