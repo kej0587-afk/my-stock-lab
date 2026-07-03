@@ -1672,6 +1672,9 @@ def _fetch_price_uncached(ticker: str) -> float:
         return 0.0
     else:
         if _us_equity_market_closed_today():
+            price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
+            if price > 0:
+                return price
             price = _fetch_yahoo_regular_close_price(ticker)
             if price > 0:
                 return price
@@ -1832,6 +1835,10 @@ def load_latest_prices_batch(tickers) -> dict:
         if _us_equity_market_closed_today():
             for t in us_tickers:
                 key = normalize_price_lookup_key(t)
+                p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True))
+                if p > 0:
+                    prices[key] = p
+                    continue
                 p = _fetch_yahoo_regular_close_price(t)
                 if p > 0:
                     prices[key] = p
