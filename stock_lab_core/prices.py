@@ -9,6 +9,7 @@ import time
 import urllib.parse
 import urllib.request
 import html
+from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -640,6 +641,7 @@ _PYTH_PRICE_MAX_AGE_SECONDS = 180
 _PYTH_CONFIDENCE_MAX_RATIO = 0.05
 _LATEST_PRICE_CACHE_TTL_SECONDS = 15
 _US_INTRADAY_QUOTE_MAX_AGE_SECONDS = 16 * 60 * 60
+_US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION = 0.05
 _KIS_TOKEN_CACHE = {"cache_key": "", "token": "", "expires_at": 0.0}
 _KIS_TOKEN_LOCK = threading.Lock()
 
@@ -683,6 +685,67 @@ def _parse_epoch(value) -> int:
         return int(ts.timestamp())
     except Exception:
         return 0
+
+
+def _observed_us_fixed_holiday(year: int, month: int, day: int) -> date:
+    holiday = date(year, month, day)
+    if holiday.weekday() == 5:
+        return holiday - timedelta(days=1)
+    if holiday.weekday() == 6:
+        return holiday + timedelta(days=1)
+    return holiday
+
+
+def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
+    current = date(year, month, 1)
+    days_until = (weekday - current.weekday()) % 7
+    return current + timedelta(days=days_until + (nth - 1) * 7)
+
+
+def _last_weekday(year: int, month: int, weekday: int) -> date:
+    current = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
+    return current - timedelta(days=(current.weekday() - weekday) % 7)
+
+
+def _easter_date(year: int) -> date:
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def _us_equity_market_holidays(year: int) -> set[date]:
+    return {
+        _observed_us_fixed_holiday(year, 1, 1),
+        _nth_weekday(year, 1, 0, 3),   # Martin Luther King Jr. Day
+        _nth_weekday(year, 2, 0, 3),   # Presidents' Day
+        _easter_date(year) - timedelta(days=2),
+        _last_weekday(year, 5, 0),     # Memorial Day
+        _observed_us_fixed_holiday(year, 6, 19),
+        _observed_us_fixed_holiday(year, 7, 4),
+        _nth_weekday(year, 9, 0, 1),   # Labor Day
+        _nth_weekday(year, 11, 3, 4),  # Thanksgiving
+        _observed_us_fixed_holiday(year, 12, 25),
+    }
+
+
+def _us_equity_market_closed_today() -> bool:
+    try:
+        today = pd.Timestamp.now(tz="America/New_York").date()
+    except Exception:
+        today = date.today()
+    return today.weekday() >= 5 or today in _us_equity_market_holidays(today.year)
 
 
 def _latest_recent_close_from_series(series, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> float:
@@ -1389,6 +1452,68 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
     return 0.0, {}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_yahoo_regular_close_price(ticker: str) -> float:
+    t = normalize_price_lookup_key(ticker)
+    if not _looks_like_us_equity_ticker(t):
+        return 0.0
+    for host in ("query1", "query2"):
+        try:
+            url = (
+                f"https://{host}.finance.yahoo.com/v8/finance/chart/"
+                f"{urllib.parse.quote(t)}?interval=1d&range=5d&includePrePost=false"
+            )
+            req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read())
+            results = (data.get("chart") or {}).get("result") or []
+            if not results:
+                continue
+            result = results[0]
+            closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+            valid = []
+            for close in closes:
+                try:
+                    price = float(close)
+                except Exception:
+                    price = 0.0
+                if price > 0:
+                    valid.append(price)
+            if valid:
+                return float(valid[-1])
+            meta = result.get("meta", {}) or {}
+            for key in ("regularMarketPrice", "previousClose", "chartPreviousClose"):
+                try:
+                    price = float(meta.get(key) or 0)
+                except Exception:
+                    price = 0.0
+                if price > 0:
+                    return price
+        except Exception:
+            continue
+    return 0.0
+
+
+def _accept_us_untimed_quote_price(ticker: str, price: float) -> float:
+    try:
+        price = float(price or 0.0)
+    except Exception:
+        return 0.0
+    if price <= 0:
+        return 0.0
+    if not _us_equity_market_closed_today():
+        return price
+
+    regular_close = _fetch_yahoo_regular_close_price(ticker)
+    if regular_close <= 0:
+        return price
+
+    deviation = abs((price / regular_close) - 1.0)
+    if deviation <= _US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION:
+        return price
+    return 0.0
+
+
 def _meta_best_price(meta: dict) -> float:
     """meta 필드에서 timestamp 기준 가장 최근 가격을 뽑는다."""
     best_price, best_ts = 0.0, 0
@@ -1535,19 +1660,24 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
-        price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
+        if _us_equity_market_closed_today():
+            price = _fetch_yahoo_regular_close_price(ticker)
+            if price > 0:
+                return price
+
+        price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, daytime_only=True))
         if price > 0:
             return price
         price = _fetch_yahoo_overnight_page_price(ticker)
         if price > 0:
             return price
-        price = _fetch_configured_us_quote_price(ticker)
+        price = _accept_us_untimed_quote_price(ticker, _fetch_configured_us_quote_price(ticker))
         if price > 0:
             return price
-        price = _fetch_pyth_us_live_price(ticker)
+        price = _accept_us_untimed_quote_price(ticker, _fetch_pyth_us_live_price(ticker))
         if price > 0:
             return price
-        price = _fetch_cboe_book_price(ticker)
+        price = _accept_us_untimed_quote_price(ticker, _fetch_cboe_book_price(ticker))
         if price > 0:
             return price
         # Yahoo Finance 직접 API (SQLite lock 없음, 가장 신뢰성 높음)
@@ -1563,13 +1693,16 @@ def _fetch_price_uncached(ticker: str) -> float:
         price = _fetch_yf_download_price(ticker, interval="5m", prepost=True)
         if price > 0:
             return price
-        price = _fetch_kis_us_quote_price(ticker, regular_only=True)
+        price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
         if price > 0:
             return price
         proxy_price = _estimate_leveraged_target_etf_proxy_price(ticker)
         if proxy_price > 0:
             return proxy_price
-        price = _fetch_yf_fast_info_price(ticker)
+        price = _accept_us_untimed_quote_price(ticker, _fetch_yf_fast_info_price(ticker))
+        if price > 0:
+            return price
+        price = _fetch_yahoo_regular_close_price(ticker)
         if price > 0:
             return price
 
@@ -1679,10 +1812,20 @@ def load_latest_prices_batch(tickers) -> dict:
 
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
+        if _us_equity_market_closed_today():
+            for t in us_tickers:
+                key = normalize_price_lookup_key(t)
+                p = _fetch_yahoo_regular_close_price(t)
+                if p > 0:
+                    prices[key] = p
+
         for t in us_tickers:
-            p = _fetch_kis_us_quote_price(t)
+            key = normalize_price_lookup_key(t)
+            if key in prices:
+                continue
+            p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t))
             if p > 0:
-                prices[normalize_price_lookup_key(t)] = p
+                prices[key] = p
 
         for t in us_tickers:
             if normalize_price_lookup_key(t) in prices:
@@ -1692,11 +1835,14 @@ def load_latest_prices_batch(tickers) -> dict:
                 prices[normalize_price_lookup_key(t)] = p
 
         us_live_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
-        prices.update(_fetch_pyth_us_live_prices_batch(us_live_needed))
+        for key, p in _fetch_pyth_us_live_prices_batch(us_live_needed).items():
+            accepted = _accept_us_untimed_quote_price(key, p)
+            if accepted > 0:
+                prices[key] = accepted
 
         us_cboe_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for t in us_cboe_needed:
-            p = _fetch_cboe_book_price(t)
+            p = _accept_us_untimed_quote_price(t, _fetch_cboe_book_price(t))
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 
@@ -1728,7 +1874,7 @@ def load_latest_prices_batch(tickers) -> dict:
         # 3차: 여전히 없는 종목은 fast_info
         us_still_missing = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for t in us_still_missing:
-            p = _fetch_yf_fast_info_price(t)
+            p = _accept_us_untimed_quote_price(t, _fetch_yf_fast_info_price(t))
             if p > 0:
                 prices[normalize_price_lookup_key(t)] = p
 

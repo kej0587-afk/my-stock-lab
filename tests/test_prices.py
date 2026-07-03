@@ -87,6 +87,8 @@ def test_extract_kis_intraday_price_from_output2():
 def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
     calls = []
 
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+
     def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
         calls.append(("kis", daytime_only, regular_only))
         if daytime_only:
@@ -102,7 +104,35 @@ def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
     assert calls == [("kis", True, False)]
 
 
+def test_us_holiday_price_uses_regular_close_before_live_quotes(monkeypatch):
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
+
+    assert prices._fetch_price_uncached("AMAT") == 603.04
+
+
+def test_us_untimed_quote_far_from_regular_close_is_rejected(monkeypatch):
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
+
+    assert prices._accept_us_untimed_quote_price("AMAT", 635.09) == 0.0
+    assert prices._accept_us_untimed_quote_price("AMAT", 610.00) == 610.00
+
+
+def test_us_batch_holiday_price_uses_regular_close(monkeypatch):
+    if hasattr(prices.load_latest_prices_batch, "clear"):
+        prices.load_latest_prices_batch.clear()
+
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
+
+    assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 603.04
+
+
 def test_ram_proxy_is_used_before_yfinance_fast_info(monkeypatch):
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 0.0)
     monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
