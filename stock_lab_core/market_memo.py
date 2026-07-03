@@ -783,9 +783,14 @@ def _summary_bullets(summary_rows) -> list[str]:
         code = _norm(row.get("판정코드"))
         item = _asset_item_label(name, ticker)
         hard_terms = ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO", "LEVERAGED_DAILY_DROP")
-        hard_label_terms = ("하드차단", "구조훼손", "추매금지", "매수금지", "목표비중 0", "비중 초과")
-        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지")
-        if any(term in code for term in hard_terms) or any(term in label for term in hard_label_terms):
+        hard_label_terms = (
+            "하드차단", "구조훼손", "추세훼손", "추세방어",
+            "추매금지", "매수금지", "목표비중 0", "비중 초과",
+        )
+        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지", "가격위험", "가격방어")
+        if "PRICE_DRAWDOWN" in code or any(term in label for term in ("가격위험", "가격방어")):
+            caution.append(item)
+        elif any(term in code for term in hard_terms) or any(term in label for term in hard_label_terms):
             hard.append(_hard_block_item(item, row))
         elif any(word in label for word in wait_label_terms):
             caution.append(item)
@@ -814,9 +819,11 @@ def _hard_block_item(item: str, row: dict) -> str:
         "HARD_BLOCK_TARGET_FILLED": "목표비중 충족",
         "TARGET_ZERO_NO_ADD": "목표비중 0%",
         "LEVERAGED_DAILY_DROP_NO_ADD": "레버리지 급락",
-        "STRUCTURE_DAMAGE_HOLDING_CHECK": "구조훼손",
-        "STRUCTURE_DAMAGE_NO_ENTRY": "구조훼손",
-        "MTF_DAMAGE_NO_ADD": "상위 시간대 훼손",
+        "PRICE_DRAWDOWN_HOLDING_CHECK": "가격방어",
+        "PRICE_DRAWDOWN_NO_ENTRY": "가격방어",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK": "추세방어",
+        "STRUCTURE_DAMAGE_NO_ENTRY": "추세방어",
+        "MTF_DAMAGE_NO_ADD": "상위 시간대 추세방어",
         "HARD_BLOCK_MACRO_STORM": "매크로 위험",
     }
     for key, value in code_reasons.items():

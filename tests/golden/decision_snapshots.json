@@ -119,7 +119,7 @@
     "decision_group": "buyish",
     "decision_reasons": [
       "기술점수 5.0 / 추세 🚀정배열(상승) / RS 🚀강함",
-      "고점대비 -7.6% (구조훼손 없음) / 재무점수 4점",
+      "고점대비 -7.6% (추세훼손 없음) / 재무점수 4점",
       "대장주 조건 충족 — 1차 정찰 진입 가능"
     ],
     "grade": "✅A급 (분할 매수)",
@@ -169,7 +169,7 @@
     "core_dca_label": "",
     "core_dca_rate": 0.0,
     "dd": -0.09741518449393871,
-    "dec": "⚠️구조훼손: 신규진입 보류",
+    "dec": "⚠️추세훼손: 신규진입 보류",
     "decision_code": "STRUCTURE_DAMAGE_NO_ENTRY",
     "decision_group": "caution",
     "decision_reasons": [
@@ -191,16 +191,17 @@
   "leveraged_etf_dca_blocked": {
     "adj": 5.0,
     "buy_amt": 1500000.0,
-    "col": "#7f1d1d",
+    "col": "#d97706",
     "core_dca_label": "",
     "core_dca_rate": 0.0,
     "dd": -0.6883649524677464,
-    "dec": "💣패닉(-50%↓): 최종투입",
-    "decision_code": "PANIC_FINAL_DEPLOY",
-    "decision_group": "caution",
+    "dec": "⚡레버리지 과열패스: DCA 대기",
+    "decision_code": "LEVERAGED_DCA_OVERHEAT_PASS",
+    "decision_group": "neutral",
     "decision_reasons": [
-      "고점대비 -68.8% 하락 (패닉 최심 구간)",
-      "예비 현금 최종 투입 — 분할 매수 완료 단계"
+      "목표비중 20.0% 대비 15.0%p 부족",
+      "고점대비 -68.8% / 평단대비 0.0% / %B 0.15",
+      "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다."
     ],
     "grade": "✅ETF 양호",
     "is_52w_breakout": false,

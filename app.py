@@ -2793,7 +2793,7 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     """기술적타점 문자열 → 배분 배율
     버킷별 로직:
       core    : 신호없음=1.0(DCA), 매수=1.0, 과열=0.25, 차단=0.0
-      leverage: 구조훼손=0.0, 과열=0.0, 신호없음=0.5(DCA유지),
+      leverage: 가격/추세방어=0.0, 과열=0.0, 신호없음=0.5(DCA유지),
                 매수=1.5, 매수+약하락(dip1)=1.5, 매수+중하락(dip2)=1.75, 매수+강하락(dip3)=2.0
                 대기/신호없음+약하락=0.75, +중하락=1.0, +강하락=1.25
       swing   : 명시적 매수 신호 없으면 0.0
@@ -2804,12 +2804,12 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     is_empty = tap in ("-", "", "nan", "none", "None")
     is_buy   = any(k in tap for k in ["매수", "분할", "추매", "🟢", "✅", "🟣"]) or ("진입" in tap and "보류" not in tap)
     is_hot   = any(k in tap for k in ["과열", "주의", "⚠"])
-    is_hard  = any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"])
+    is_hard  = any(k in tap for k in ["하드", "차단", "구조", "추세훼손", "가격위험", "가격방어", "추세방어", "🔴", "⛔"])
     is_wait  = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
 
     # ── 레버리지 버킷 (QLD, TQQQ 등) ────────────────────────────────────────
     if bucket == "leverage":
-        if is_hard: return 0.0   # 구조 훼손 → 완전 중단
+        if is_hard: return 0.0   # 가격/추세 방어 → 완전 중단
         if is_hot:  return 0.0   # 과열 → 진입 금물
         if is_buy:
             # 매수 신호: 하락 깊이에 따라 배율 상향
@@ -3065,7 +3065,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
 
             if mult == 0:
                 if any(k in tap for k in ["하드", "차단", "구조", "🔴", "⛔"]):
-                    r["status"] = "⛔ 구조훼손" if bkt == "leverage" else "⛔ 차단"
+                    r["status"] = "⛔ 가격/추세방어" if bkt == "leverage" else "⛔ 차단"
                 elif bkt == "leverage" and any(k in tap for k in ["과열", "주의", "⚠"]):
                     r["status"] = "🌡️ 과열패스"   # 레버리지 과열은 완전 중단
                 elif any(k in tap for k in ["평단", "하락", "대기", "⏸"]):
@@ -3243,7 +3243,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                 "**레버리지 배율 기준** — "
                 "🚀 진입 ×1.5 · 📉 약하락 DCA ×0.75 · 📉📉 중하락 DCA ×1.0 · 📉📉 강하락 ×1.25 · "
                 "📉📉🚀 매수+중하락 ×1.75 · 📉📉📉🚀 매수+강하락 ×2.0 · "
-                "🌡️ 과열패스 ×0 · ⛔ 구조훼손 ×0\n\n"
+                "🌡️ 과열패스 ×0 · ⛔ 가격/추세방어 ×0\n\n"
                 "평단 대비 **-5% 이상** 하락 시 단계별 배율 상향 — "
                 "약(-5%~-10%) → 중(-10%~-15%) → 강(-15%↓)"
             )
@@ -12770,16 +12770,32 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     # Precompute structure-damage reason strings so each call site stays lean
     _sd_reasons: list[str] = []
+    _true_structure_damage_reasons: list[str] = []
+    _drawdown_only_entry_risk = False
     if is_structure_damage_entry_risk:
         if current_dd <= _dd_threshold:
             _sd_reasons.append(f"고점대비 {current_dd*100:.1f}% 하락 (임계치 {_dd_threshold*100:.0f}%)")
         if _ma50_damage:
-            _sd_reasons.append("MA50 하회 (대장주 요건 미충족)")
+            _reason = "MA50 하회 (대장주 요건 미충족)"
+            _sd_reasons.append(_reason)
+            _true_structure_damage_reasons.append(_reason)
         if below_ma20 and not _rs_strong:
-            _sd_reasons.append(f"MA20 하회 + RS {rs_label}")
+            _reason = f"MA20 하회 + RS {rs_label}"
+            _sd_reasons.append(_reason)
+            _true_structure_damage_reasons.append(_reason)
         if is_single_day_breakdown:
-            _sd_reasons.append("단일 봉 급락 감지")
+            _reason = "단일 봉 급락 감지"
+            _sd_reasons.append(_reason)
+            _true_structure_damage_reasons.append(_reason)
+        _drawdown_only_entry_risk = (
+            current_dd <= _dd_threshold
+            and not _true_structure_damage_reasons
+        )
     _sd_reasons_t = tuple(_sd_reasons)
+    _entry_risk_label = "⚠️가격위험: 신규진입 보류" if _drawdown_only_entry_risk else "⚠️추세훼손: 신규진입 보류"
+    _entry_risk_code = "PRICE_DRAWDOWN_NO_ENTRY" if _drawdown_only_entry_risk else "STRUCTURE_DAMAGE_NO_ENTRY"
+    _holding_risk_label = "⚠️가격위험: 추매금지/원인점검" if _drawdown_only_entry_risk else "⚠️추세훼손: 추매금지/손절기준 점검"
+    _holding_risk_code = "PRICE_DRAWDOWN_HOLDING_CHECK" if _drawdown_only_entry_risk else "STRUCTURE_DAMAGE_HOLDING_CHECK"
 
     def _set_decision(label, color, code=None, reasons=()):
         outcome = build_decision_outcome(label, color, code, reasons=reasons)
@@ -12847,7 +12863,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_structure_damage_entry_risk:
             dec, col, decision_outcome = _set_decision(
-                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                _entry_risk_label, "#d97706", _entry_risk_code,
                 reasons=_sd_reasons_t,
             )
         elif is_leveraged_daily_drop:
@@ -12914,7 +12930,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 "🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER",
                 reasons=(
                     f"기술점수 {adj_tech_score:.1f} / 추세 {trend} / RS {rs_label}",
-                    f"고점대비 {current_dd*100:.1f}% (구조훼손 없음) / 재무점수 {fin_score}점",
+                    f"고점대비 {current_dd*100:.1f}% (추세훼손 없음) / 재무점수 {fin_score}점",
                     "대장주 조건 충족 — 1차 정찰 진입 가능",
                 ),
             )
@@ -13087,7 +13103,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_structure_damage_entry_risk and not has_pos:
             dec, col, decision_outcome = _set_decision(
-                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                _entry_risk_label, "#d97706", _entry_risk_code,
                 reasons=_sd_reasons_t,
             )
         elif current_dd <= -0.2 and has_pos and is_structure_damage_entry_risk:
@@ -13100,7 +13116,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 "⚠️고점대비 -20%: 추매금지/원인점검", "#d97706", "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
                 reasons=(
                     f"고점대비 {current_dd*100:.1f}% 하락 (기준: -20%)",
-                    "구조훼손 신호 없음 — 하락 원인(매크로/실적) 점검 후 판단",
+                    "추세훼손 신호 없음 — 하락 원인(매크로/실적) 점검 후 판단",
                 ),
             )
         elif current_dd <= -0.2:
@@ -13123,7 +13139,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_structure_damage_entry_risk and has_pos:
             dec, col, decision_outcome = _set_decision(
-                "⚠️구조훼손: 추매금지/손절기준 점검", "#d97706", "STRUCTURE_DAMAGE_HOLDING_CHECK",
+                _holding_risk_label, "#d97706", _holding_risk_code,
                 reasons=_sd_reasons_t,
             )
         elif is_live_gap_shock:
@@ -13136,7 +13152,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif is_structure_damage_entry_risk:
             dec, col, decision_outcome = _set_decision(
-                "⚠️구조훼손: 신규진입 보류", "#d97706", "STRUCTURE_DAMAGE_NO_ENTRY",
+                _entry_risk_label, "#d97706", _entry_risk_code,
                 reasons=_sd_reasons_t,
             )
         elif live_price_used and is_exception_entry and has_pos:
@@ -13497,7 +13513,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     "🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER",
                     reasons=(
                         f"기술점수 {adj_tech_score:.1f} / 추세 {trend} / RS {rs_label}",
-                        f"고점대비 {current_dd*100:.1f}% (구조훼손 없음) / 재무점수 {fin_score}점",
+                        f"고점대비 {current_dd*100:.1f}% (추세훼손 없음) / 재무점수 {fin_score}점",
                         "대장주 조건 충족 — 1차 정찰 진입 가능",
                     ),
                 )
@@ -14461,7 +14477,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
         "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
-        "STRUCTURE_DAMAGE_HOLDING_CHECK", "MTF_DAMAGE_NO_ADD",
+        "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
         "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD",
     }
     wait_codes = {
@@ -14483,7 +14500,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         elif decision_code == "LEVERAGED_DAILY_DROP_NO_ADD":
             status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
         else:
-            status_note = "추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
+            if decision_code in {"PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY"}:
+                status_note = "고점대비 낙폭이 커서 새 돈 투입은 보류합니다. 추세가 완전히 깨졌다는 뜻은 아니며, 하락 원인과 종가 안정부터 확인합니다."
+            else:
+                status_note = "추세 조건이 부족합니다. 진입가가 내려오거나 구조가 회복될 때까지 대기합니다."
     elif is_poor_rr:
         status = "현재가 보류 / 눌림 대기"
         status_color = "#d97706"
@@ -14800,6 +14820,15 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
     trend = str(c.get("trend", ""))
     rs_label = str(c.get("rs_label", ""))
     decision = str(c.get("dec", ""))
+    decision_code = str(c.get("decision_code", ""))
+    price_defense_signal = (
+        "가격위험" in decision
+        or "가격방어" in decision
+        or "고점대비 -20%" in decision
+        or decision_code.startswith("PRICE_DRAWDOWN")
+        or decision_code.startswith("DRAWDOWN_20")
+    )
+    trend_defense_signal = structure_risk and not price_defense_signal
 
     if is_etf:
         suitability_score = 0
@@ -14826,10 +14855,13 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
 
     if not has_pos:
         position_label = "미보유"
-        position_note = "신규 매수는 구조훼손/과열 해소 후 검토"
-    elif structure_risk or dd <= -0.2:
+        position_note = "신규 매수는 가격방어·추세방어/과열 해소 후 검토"
+    elif trend_defense_signal:
         position_label = "보유 점검"
-        position_note = "추매 금지, 손절/장투 기준 재확인"
+        position_note = "추세 조건 확인 전 추매 금지, 손절/장투 기준 재확인"
+    elif price_defense_signal or dd <= -0.2:
+        position_label = "가격방어"
+        position_note = "낙폭이 커진 구간입니다. 추세훼손 확정은 아니며 하락 원인과 종가 안정 확인"
     elif clean_float(c.get("current_w"), 0.0) >= clean_float(c.get("target_w"), 0.0) > 0:
         position_label = "비중 충족"
         position_note = "추가매수보다 보유/리스크 관리 우선"
@@ -14861,8 +14893,16 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         },
         {
             "점검항목": "구조위험",
-            "상태": "주의" if structure_risk else "정상",
-            "해석": "구조훼손 구간에서는 신규/추매보다 원인 점검이 우선입니다." if structure_risk else "기술 구조상 즉시 하드 경고는 없습니다.",
+            "상태": "추세방어" if trend_defense_signal else ("가격방어" if price_defense_signal else "정상"),
+            "해석": (
+                "MA/RS/급락봉 등 추세 조건이 약해져 신규/추매보다 손절선과 회복조건 확인이 우선입니다."
+                if trend_defense_signal
+                else (
+                    "고점대비 낙폭이 큰 가격방어 구간입니다. 추세훼손 확정은 아니며 하락 원인과 종가 안정 확인이 우선입니다."
+                    if price_defense_signal
+                    else "기술 구조상 즉시 하드 경고는 없습니다."
+                )
+            ),
         },
         {
             "점검항목": "현재 시스템 신호",
@@ -15284,7 +15324,10 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
         price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
 
-    hard_words = ["하드차단", "진입보류", "추격금지", "구조훼손", "추매금지", "현금 확보", "원인 점검", "실시간 급락", "레버리지 급락"]
+    hard_words = [
+        "하드차단", "진입보류", "추격금지", "구조훼손", "추세훼손", "가격위험",
+        "가격방어", "추세방어", "추매금지", "현금 확보", "원인 점검", "실시간 급락", "레버리지 급락",
+    ]
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
         add_check("시스템 타점", "차단", f"현재 판정이 '{dec}'입니다. 신호가 풀릴 때까지 신규/추매는 보수적으로 봅니다.")
@@ -15864,6 +15907,8 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         "TARGET_ZERO_NO_ADD",
         "HARD_BLOCK_FINANCIAL_F",
         "LEVERAGED_DAILY_DROP_NO_ADD",
+        "PRICE_DRAWDOWN_HOLDING_CHECK",
+        "PRICE_DRAWDOWN_NO_ENTRY",
         "HARD_BLOCK_OVERWEIGHT",
         "HARD_BLOCK_TARGET_FILLED",
         "HARD_BLOCK_MACRO_STORM",
@@ -15883,15 +15928,23 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️시장방어(매수금지)"
     if code == "LEVERAGED_DAILY_DROP_NO_ADD":
         return "🛑레버리지급락(추매금지)"
+    if code == "PRICE_DRAWDOWN_HOLDING_CHECK":
+        return "🛡️가격방어(추매주의)"
+    if code == "PRICE_DRAWDOWN_NO_ENTRY":
+        return "🛡️가격방어(신규금지)"
     if code == "STRUCTURE_DAMAGE_HOLDING_CHECK":
-        return "🛑구조훼손(추매금지)"
+        return "🛡️추세방어(추매금지)"
     if code == "STRUCTURE_DAMAGE_NO_ENTRY":
-        return "🛑구조훼손(매수금지)"
+        return "🛡️추세방어(신규금지)"
     if code == "MTF_DAMAGE_NO_ADD":
-        return "🛑상위훼손(추매금지)"
+        return "🛡️상위추세방어(추매금지)"
+    if "가격위험" in label or "가격방어" in label:
+        return "🛡️가격방어(추매주의)" if "추매" in label else "🛡️가격방어(신규금지)"
+    if "추세훼손" in label or "추세방어" in label:
+        return "🛡️추세방어(추매금지)" if "추매" in label else "🛡️추세방어(신규금지)"
     if code in {"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"} or "볼린상단 이탈" in label:
         return "🚫상단과열(추격금지)"
-    if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "레버리지 급락")):
+    if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "추세훼손", "가격위험", "레버리지 급락")):
         return "🛑매수금지"
     badges = []
     if is_dashboard_low_rr_caution(c):
@@ -16937,8 +16990,8 @@ MANUAL_SECTIONS = {
         {"타점": "평단 -3~-7%", "조건": "평단 이하, 추세 훼손 크지 않음, MFI 80 미만", "의미": "소액 분할매수 후보"},
         {"타점": "평단 -7~-15%", "조건": "손실 확대 + 재무 3점 이상 + 매크로 위험 낮음", "의미": "조건부 분할매수"},
         {"타점": "평단 -15%↓", "조건": "평단 대비 큰 손실 또는 추세위험", "의미": "원인 점검 우선"},
-        {"타점": "고점대비 -20%", "조건": "52주 고점 대비 -20% 이하", "의미": "보유 중이면 추매 금지와 원인 점검, 미보유면 신규진입 보류"},
-        {"타점": "구조훼손: 신규진입 보류", "조건": "개별주 52주 고점대비 -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나", "의미": "점수가 좋아도 차트 구조 확인 전 신규매수 보류"},
+        {"타점": "가격위험: 신규진입 보류", "조건": "52주 고점대비 -15%~-20% 이하처럼 낙폭만 큰 경우", "의미": "추세훼손 확정은 아니지만 새 돈 투입보다 하락 원인과 종가 안정 확인"},
+        {"타점": "추세훼손: 신규진입 보류", "조건": "MA50 이탈, MA20 하회+RS 약함, 급락+거래량 등 구조 신호 동반", "의미": "점수가 좋아도 차트 구조 회복 전 신규매수 보류"},
         {"타점": "신규진입: 대장주 포착", "조건": "ADJ 4.5 이상 + RS 강함 + 정배열 + MA20 근처 이상 + 52주 고점대비 -15% 이내 + 급락 아님", "의미": "구조가 살아있는 신규 후보"},
         {"타점": "52주 신고가 돌파", "조건": "전일 52주 고점 이하 → 당일 돌파 + 거래량 1.3배↑ + RS 강함 + 양봉", "의미": "모멘텀 진입 검토 (MFI<80, %B<0.95 조건 추가)"},
         {"타점": "예외승인 차단 (RS하락중)", "조건": "예외승인 MA5/FVG 조건 충족이어도 RS 기울기가 하락 중이면 예외 불허", "의미": "RS 모멘텀이 꺾이는 구간의 추격 진입 방지"},
@@ -18157,7 +18210,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         lev_df = strategy_df[strategy_df["버킷"].astype(str).eq("leverage")].copy()
         if not lev_df.empty:
             lev_signals = lev_df["기술적타점"].fillna("").astype(str)
-            blocked_mask = lev_signals.str.contains("하드차단|구조훼손|과열패스|추매금지|비중 초과|비중 충족", regex=True)
+            blocked_mask = lev_signals.str.contains("하드차단|구조훼손|추세훼손|가격위험|가격방어|추세방어|과열패스|추매금지|비중 초과|비중 충족", regex=True)
             overweight_mask = lev_signals.str.contains("비중 초과|비중 충족", regex=True)
             buy_mask = lev_signals.str.contains("매수|DCA|진입", regex=True) & ~blocked_mask
             leverage_control = {
@@ -21238,9 +21291,9 @@ def render_signal_backtest_tab(holdings_table, watchlist_items):
 
     with st.expander("신호 정의"):
         st.markdown("""
-- **신규대장 후보**: 정배열, 벤치마크 대비 20일 상대강도 우위, MACD 양호, 과열/구조훼손 제외 조건을 모두 만족한 신호입니다.
+- **신규대장 후보**: 정배열, 벤치마크 대비 20일 상대강도 우위, MACD 양호, 과열/가격방어·추세방어 제외 조건을 모두 만족한 신호입니다.
 - **S급 눌림목**: 정배열과 상대강도 우위가 살아있고 RSI 45~58, 볼린저 %B 0.45~0.8인 신호입니다.
-- **구조훼손 경고**: 고점대비 -15% 이하, MA50 이탈, 급락+거래량, MA20 하단 이탈 중 하나가 발생한 신호입니다.
+- **구조훼손 경고**: 과거 백테스트용 명칭입니다. 현재 화면에서는 고점대비 낙폭은 가격방어, MA50 이탈·MA20 하회+RS 약함·급락+거래량은 추세방어로 나눠 표시합니다.
 - 앱의 실시간 판정 로직과 100% 동일한 백테스트는 아닙니다. 매크로, 재무점수, 목표비중, 뉴스는 제외한 가격/기술 신호 검증용입니다.
         """)
 
@@ -22808,7 +22861,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
         hard_count = int((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)).sum())
-        caution_count = int(label_series.str.contains("구조훼손|추매금지|진입 보류|과열|차단", regex=True, na=False).sum())
+        caution_count = int(label_series.str.contains("구조훼손|추세훼손|가격위험|가격방어|추세방어|추매금지|진입 보류|과열|차단", regex=True, na=False).sum())
         if hard_count >= 3:
             portfolio_score += 2
             portfolio_reasons.append(f"내 관심목록 하드차단 {hard_count}개")
@@ -22899,7 +22952,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             actions = [
                 "국장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
                 "미장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
-                "코어 적립은 국장 과열/구조훼손 종목 제외, 미장은 종목별 과열만 확인",
+                "코어 적립은 국장 과열/가격방어·추세방어 종목 제외, 미장은 종목별 과열만 확인",
                 "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
             ]
         elif us_mode in {"방어", "위험"} and kr_mode == "정상":
@@ -22907,14 +22960,14 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             actions = [
                 "미장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
                 "국장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
-                "코어 적립은 미장 과열/구조훼손 종목 제외, 국장은 종목별 과열만 확인",
+                "코어 적립은 미장 과열/가격방어·추세방어 종목 제외, 국장은 종목별 과열만 확인",
                 "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
             ]
         else:
             action = "정찰만 · 시장별 노출 확인"
             actions = [
                 "신규매수는 목표금액의 일부만 정찰",
-                "코어 적립은 유지하되 과열/구조훼손 종목은 제외",
+                "코어 적립은 유지하되 과열/가격방어·추세방어 종목은 제외",
                 "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
             ]
     elif score >= 2:
@@ -23144,7 +23197,7 @@ def select_today_auto_newspick_targets(universe, summary_df=None, max_count=5):
         score = work.get("Adj점수", pd.Series(0.0, index=work.index)).apply(clean_float)
         work["_newspick_priority"] = 6
         work.loc[label.str.contains("매수|진입|DCA|적립|눌림|탑승", regex=True, na=False), "_newspick_priority"] = 1
-        work.loc[code.str.contains("HARD_BLOCK", na=False) | label.str.contains("하드차단|구조훼손|추매금지", regex=True, na=False), "_newspick_priority"] = 2
+        work.loc[code.str.contains("HARD_BLOCK", na=False) | label.str.contains("하드차단|구조훼손|추세훼손|가격위험|추매금지", regex=True, na=False), "_newspick_priority"] = 2
         work["_newspick_score"] = score
         for _, row in work.sort_values(["_newspick_priority", "_newspick_score"], ascending=[True, False]).head(max_count * 2).iterrows():
             add_target(
@@ -23618,7 +23671,7 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
     risk_score = pd.Series(0.0, index=risk_df.index)
     risk_score += hard_block_mask.reindex(risk_df.index, fill_value=False).astype(int) * 5
     risk_score += caution_mask.reindex(risk_df.index, fill_value=False).astype(int) * 2
-    risk_score += label_series.str.contains("구조훼손|추매금지|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
+    risk_score += label_series.str.contains("구조훼손|추세훼손|가격위험|추매금지|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
     risk_score += label_series.str.contains("과열|추격금지|비중 초과|비중 충족", regex=True, na=False).astype(int) * 2
     risk_score += mdd_series.apply(lambda v: 3 if finite_num(v) and float(v) <= -20 else (2 if finite_num(v) and float(v) <= -15 else (1 if finite_num(v) and float(v) <= -10 else 0)))
     risk_score += adj_series.apply(lambda v: 1 if finite_num(v) and float(v) < 0 else 0)
@@ -23630,7 +23683,9 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
         mdd = safe_float(row.get("MDD"), np.nan)
         if "HARD_BLOCK" in code or "하드차단" in label:
             return "추가매수 금지 · 사유 확인"
-        if any(k in label for k in ["구조훼손", "추매금지", "진입 보류"]):
+        if any(k in label for k in ["추세훼손", "구조훼손"]):
+            return "추세/손절 기준 점검"
+        if any(k in label for k in ["가격위험", "추매금지", "진입 보류"]):
             return "보유/손절 기준 점검"
         if any(k in label for k in ["과열", "추격금지"]):
             return "추격 금지 · 눌림 대기"
@@ -23734,7 +23789,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     if reserve_available > 0:
         actions.append("폭락장 예비자금은 평상시 적립이 아니라 큰 하락 구간용으로 분리 유지")
     if hard_count > 0:
-        actions.append(f"하드차단 {hard_count}개는 비중초과/과열/구조훼손 사유부터 확인")
+        actions.append(f"하드차단 {hard_count}개는 비중초과/과열/가격방어·추세방어 사유부터 확인")
     if not actions:
         actions.append("후보를 늘리기보다 관심목록 정리와 목표비중 점검")
     actions = actions[:4]
@@ -26017,7 +26072,7 @@ def render_investor_top10_section():
 def render_today_pending_risk_panel():
     st.markdown("#### 3. 내 보유/관심 위험 TOP")
     st.info(
-        "오늘 종목 점검 계산/새로고침을 누르면 하드차단, 구조훼손, 과열, MDD 기준으로 "
+        "오늘 종목 점검 계산/새로고침을 누르면 하드차단, 가격방어/추세방어, 과열, MDD 기준으로 "
         "먼저 확인할 종목을 보여줍니다."
     )
 
@@ -26074,8 +26129,10 @@ def _today_queue_reason_bucket(row) -> str:
     text = " ".join([label, code, data_state])
     if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
-    if re.search(r"구조훼손|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
-        return "구조훼손"
+    if re.search(r"PRICE_DRAWDOWN|가격위험|가격방어|고점대비", text, flags=re.IGNORECASE):
+        return "가격방어"
+    if re.search(r"구조훼손|추세훼손|추세방어|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
+        return "추세방어"
     if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"과열|볼린|MFI|추격금지|상단", text, flags=re.IGNORECASE):
@@ -26264,10 +26321,11 @@ def render_today_queue_tab(mode):
     execution_mask = buyish_mask & ~wait_mask
     reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
     overweight_mask = caution_mask & reason_bucket.eq("비중초과 방어")
-    structure_mask = caution_mask & reason_bucket.eq("구조훼손")
+    price_defense_mask = caution_mask & reason_bucket.eq("가격방어")
+    structure_mask = caution_mask & reason_bucket.eq("추세방어")
     overheat_mask = caution_mask & reason_bucket.eq("과열/타점대기")
     data_issue_mask = caution_mask & reason_bucket.eq("데이터확인")
-    other_caution_mask = caution_mask & ~(overweight_mask | structure_mask | overheat_mask | data_issue_mask)
+    other_caution_mask = caution_mask & ~(overweight_mask | price_defense_mask | structure_mask | overheat_mask | data_issue_mask)
 
     render_today_market_guard_panel(market_guard)
 
@@ -26346,7 +26404,8 @@ def render_today_queue_tab(mode):
         f"관심/눌림대기 ({int(wait_mask.sum())})",
         f"돈흐름 후보 ({len(flow_shortlist_df)})",
         f"비중초과 방어 ({int(overweight_mask.sum())})",
-        f"구조훼손 ({int(structure_mask.sum())})",
+        f"가격방어 ({int(price_defense_mask.sum())})",
+        f"추세방어 ({int(structure_mask.sum())})",
         f"과열/타점대기 ({int(overheat_mask.sum())})",
         f"기타 주의 ({int((other_caution_mask | data_issue_mask).sum())})",
         "전체",
@@ -26368,15 +26427,18 @@ def render_today_queue_tab(mode):
         st.caption("비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.")
         _render_today_queue_table(summary_df.loc[overweight_mask], "비중초과 방어 대상이 없습니다.", sort_low_first=True)
     with tabs[4]:
-        st.caption("고점대비 큰 하락 또는 구조훼손 신호입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
-        _render_today_queue_table(summary_df.loc[structure_mask], "구조훼손으로 분류된 종목이 없습니다.", sort_low_first=True)
+        st.caption("고점대비 낙폭이 커진 종목입니다. 추세훼손 확정이 아니라 새 돈 투입 전 하락 원인과 종가 안정부터 보는 그룹입니다.")
+        _render_today_queue_table(summary_df.loc[price_defense_mask], "가격방어로 분류된 종목이 없습니다.", sort_low_first=True)
     with tabs[5]:
+        st.caption("MA/RS/급락봉 등 실제 추세 조건이 약해진 종목입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
+        _render_today_queue_table(summary_df.loc[structure_mask], "추세방어로 분류된 종목이 없습니다.", sort_low_first=True)
+    with tabs[6]:
         st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
-    with tabs[6]:
+    with tabs[7]:
         st.caption("위 그룹에 들어가지 않은 기타 주의/데이터확인 항목입니다.")
         _render_today_queue_table(summary_df.loc[other_caution_mask | data_issue_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
-    with tabs[7]:
+    with tabs[8]:
         _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
 
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
