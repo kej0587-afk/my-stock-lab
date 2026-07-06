@@ -1289,22 +1289,28 @@ def _fetch_kis_us_quote_price(
     return 0.0
 
 
-def _fetch_live_priority_us_price(ticker: str) -> float:
+def _fetch_us_realtime_price(ticker: str) -> float:
     """
-    Newly listed leveraged ETFs such as RAM can move far away from the last
-    regular close during daytime/overnight trading. For these tickers, prefer
-    timestamped/current sources before the regular-close safety fallback.
+    Prefer live/current US quotes before any regular-close fallback.
+
+    Trading plans are built from the displayed current price, so a stale close
+    is more harmful than a live quote that moved far away from the last close.
     """
     t = normalize_price_lookup_key(ticker)
-    if not _is_live_priority_us_ticker(t):
+    if not _looks_like_us_equity_ticker(t):
         return 0.0
 
     regular_session_active = _us_equity_regular_session_active()
-    source_calls = [
-        lambda: _fetch_kis_us_quote_price(t, regular_only=True)
-        if regular_session_active
-        else _fetch_kis_us_quote_price(t, daytime_only=True),
-        lambda: _fetch_yahoo_overnight_page_price(t),
+    source_calls = []
+    if regular_session_active:
+        source_calls.append(lambda: _fetch_kis_us_quote_price(t, regular_only=True))
+    else:
+        source_calls.extend([
+            lambda: _fetch_kis_us_quote_price(t, daytime_only=True),
+            lambda: _fetch_yahoo_overnight_page_price(t),
+        ])
+
+    source_calls.extend([
         lambda: _fetch_configured_us_quote_price(t),
         lambda: _fetch_pyth_us_live_price(t),
         lambda: _fetch_cboe_book_price(t),
@@ -1312,7 +1318,7 @@ def _fetch_live_priority_us_price(ticker: str) -> float:
         lambda: _fetch_yahoo_quote(t),
         lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
         lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
-    ]
+    ])
     for source in source_calls:
         try:
             price = float(source() or 0.0)
@@ -1321,6 +1327,13 @@ def _fetch_live_priority_us_price(ticker: str) -> float:
         if price > 0:
             return price
     return 0.0
+
+
+def _fetch_live_priority_us_price(ticker: str) -> float:
+    """Backward-compatible wrapper for RAM-style live-priority tickers."""
+    if not _is_live_priority_us_ticker(ticker):
+        return 0.0
+    return _fetch_us_realtime_price(ticker)
 
 
 def _fetch_cboe_book_price(ticker: str) -> float:
@@ -1710,12 +1723,11 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
-        if _is_live_priority_us_ticker(ticker):
-            price = _fetch_live_priority_us_price(ticker)
-            if price > 0:
-                return price
+        price = _fetch_us_realtime_price(ticker)
+        if price > 0:
+            return price
 
-        if _us_equity_market_closed_today() and not _is_live_priority_us_ticker(ticker):
+        if _us_equity_market_closed_today():
             price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
             if price > 0:
                 return price
@@ -1878,16 +1890,14 @@ def load_latest_prices_batch(tickers) -> dict:
         regular_session_active = _us_equity_regular_session_active()
         for t in us_tickers:
             key = normalize_price_lookup_key(t)
-            if not _is_live_priority_us_ticker(t):
-                continue
-            p = _fetch_live_priority_us_price(t)
+            p = _fetch_us_realtime_price(t)
             if p > 0:
                 prices[key] = p
 
         if _us_equity_market_closed_today():
             for t in us_tickers:
                 key = normalize_price_lookup_key(t)
-                if key in prices or _is_live_priority_us_ticker(t):
+                if key in prices:
                     continue
                 p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True))
                 if p > 0:
