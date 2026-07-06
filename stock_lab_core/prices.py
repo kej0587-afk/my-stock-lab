@@ -79,6 +79,7 @@ LEVERAGED_TARGET_ETF_PROXIES = {
     # 공식 실시간가가 안정되기 전에는 DRAM 당일 수익률의 2배를 이용해 평가용 가격을 보정한다.
     "RAM": {"underlying": "DRAM", "leverage": 2.0},
 }
+LIVE_PRIORITY_US_TICKERS = set(LEVERAGED_TARGET_ETF_PROXIES)
 
 OHLC_LIVE_ALIGNMENT_TICKERS = {"HON"}
 OHLC_ALIGNMENT_FACTORS = (0.5, 0.25, 0.2, 0.1, 2.0, 4.0, 5.0, 10.0)
@@ -1120,6 +1121,10 @@ def _kis_us_exchange_candidates(ticker: str) -> list[str]:
     return ["BAQ", "BAY", "BAA", "NAS", "NYS", "AMS"]
 
 
+def _is_live_priority_us_ticker(ticker: str) -> bool:
+    return normalize_price_lookup_key(ticker) in LIVE_PRIORITY_US_TICKERS
+
+
 def _extract_kis_quote_price(payload, *, allow_base: bool = True) -> float:
     output = (payload or {}).get("output") if isinstance(payload, dict) else {}
     if not isinstance(output, dict):
@@ -1281,6 +1286,40 @@ def _fetch_kis_us_quote_price(
                 return price
         except Exception:
             continue
+    return 0.0
+
+
+def _fetch_live_priority_us_price(ticker: str) -> float:
+    """
+    Newly listed leveraged ETFs such as RAM can move far away from the last
+    regular close during daytime/overnight trading. For these tickers, prefer
+    timestamped/current sources before the regular-close safety fallback.
+    """
+    t = normalize_price_lookup_key(ticker)
+    if not _is_live_priority_us_ticker(t):
+        return 0.0
+
+    regular_session_active = _us_equity_regular_session_active()
+    source_calls = [
+        lambda: _fetch_kis_us_quote_price(t, regular_only=True)
+        if regular_session_active
+        else _fetch_kis_us_quote_price(t, daytime_only=True),
+        lambda: _fetch_yahoo_overnight_page_price(t),
+        lambda: _fetch_configured_us_quote_price(t),
+        lambda: _fetch_pyth_us_live_price(t),
+        lambda: _fetch_cboe_book_price(t),
+        lambda: _fetch_robinhood_us_quote(t),
+        lambda: _fetch_yahoo_quote(t),
+        lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
+        lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
+    ]
+    for source in source_calls:
+        try:
+            price = float(source() or 0.0)
+        except Exception:
+            price = 0.0
+        if price > 0:
+            return price
     return 0.0
 
 
@@ -1671,7 +1710,12 @@ def _fetch_price_uncached(ticker: str) -> float:
             return price
         return 0.0
     else:
-        if _us_equity_market_closed_today():
+        if _is_live_priority_us_ticker(ticker):
+            price = _fetch_live_priority_us_price(ticker)
+            if price > 0:
+                return price
+
+        if _us_equity_market_closed_today() and not _is_live_priority_us_ticker(ticker):
             price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
             if price > 0:
                 return price
@@ -1832,9 +1876,19 @@ def load_latest_prices_batch(tickers) -> dict:
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
         regular_session_active = _us_equity_regular_session_active()
+        for t in us_tickers:
+            key = normalize_price_lookup_key(t)
+            if not _is_live_priority_us_ticker(t):
+                continue
+            p = _fetch_live_priority_us_price(t)
+            if p > 0:
+                prices[key] = p
+
         if _us_equity_market_closed_today():
             for t in us_tickers:
                 key = normalize_price_lookup_key(t)
+                if key in prices or _is_live_priority_us_ticker(t):
+                    continue
                 p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True))
                 if p > 0:
                     prices[key] = p
@@ -1902,6 +1956,12 @@ def load_latest_prices_batch(tickers) -> dict:
             except Exception:
                 pass
 
+        for t in us_tickers:
+            key = normalize_price_lookup_key(t)
+            proxy_price = _estimate_leveraged_target_etf_proxy_price(t) if key not in prices else 0.0
+            if proxy_price > 0:
+                prices[key] = proxy_price
+
         # 3차: 여전히 없는 종목은 fast_info
         us_still_missing = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for t in us_still_missing:
@@ -1929,12 +1989,6 @@ def load_latest_prices_batch(tickers) -> dict:
                         prices[normalize_price_lookup_key(t)] = p
         except Exception:
             pass
-
-    for t in us_tickers:
-        key = normalize_price_lookup_key(t)
-        proxy_price = _estimate_leveraged_target_etf_proxy_price(t) if key not in prices else 0.0
-        if proxy_price > 0:
-            prices[key] = proxy_price
 
     return prices
 
