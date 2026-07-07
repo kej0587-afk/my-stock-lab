@@ -46,7 +46,7 @@ def test_us_sector_snapshot_maps_photonics_theme_to_us_internal_segments():
 
 def test_us_sector_snapshot_maps_cluster_card_names():
     expected = {
-        "AI·반도체": "AI 하드웨어",
+        "AI·반도체": "반도체·장비",
         "소프트웨어·사이버": "소프트웨어·IT서비스",
         "전력·인프라": "그리드·전기장비",
         "방산·우주": "우주항공·국방",
@@ -62,6 +62,17 @@ def test_us_sector_snapshot_maps_cluster_card_names():
         assert snapshot, cluster_name
         assert snapshot["market"] == "US"
         assert expected_segment in segment_names
+
+
+def test_us_sector_snapshot_ai_semiconductor_excludes_software_media_segments():
+    snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체")
+    segment_names = [item["name"] for item in snapshot.get("subsectors", [])]
+    industry_names = [item["name"] for item in snapshot.get("industries", [])]
+
+    assert snapshot["market"] == "US"
+    assert "반도체·장비" in segment_names
+    assert "소프트웨어·IT서비스" not in segment_names
+    assert "미디어" not in industry_names
 
 
 def test_us_sector_snapshot_live_refresh_recomputes_returns_and_splits_leaders(monkeypatch):
@@ -181,3 +192,47 @@ def test_us_sector_snapshot_live_refresh_limits_representative_candidates(monkey
     assert snapshot["representative_returns_source"] == "live"
     assert len(requested) <= us_snapshot.US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT
     assert len(requested) < len(rows)
+
+
+def test_us_sector_snapshot_live_candidates_ignore_microcap_movers_when_large_reps_exist(monkeypatch):
+    rows = pd.DataFrame(
+        [
+            {
+                "sector": "Soft",
+                "ticker": "BIG1",
+                "name": "대표주1",
+                "change_pct": 0.01,
+                "volume": 1000,
+                "market_cap_thousand": 2_000_000,
+            },
+            {
+                "sector": "Soft",
+                "ticker": "BIG2",
+                "name": "대표주2",
+                "change_pct": 0.02,
+                "volume": 900,
+                "market_cap_thousand": 1_500_000,
+            },
+            {
+                "sector": "Soft",
+                "ticker": "BIG3",
+                "name": "대표주3",
+                "change_pct": -0.01,
+                "volume": 800,
+                "market_cap_thousand": 1_000_000,
+            },
+            {
+                "sector": "Soft",
+                "ticker": "MICRO",
+                "name": "작은 급등주",
+                "change_pct": 30.0,
+                "volume": 50_000,
+                "market_cap_thousand": 20_000,
+            },
+        ]
+    )
+
+    candidates = us_snapshot._select_live_representative_candidates(rows)
+
+    assert "MICRO" not in set(candidates["ticker"])
+    assert {"BIG1", "BIG2", "BIG3"}.issubset(set(candidates["ticker"]))

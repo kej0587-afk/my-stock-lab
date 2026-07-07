@@ -7278,9 +7278,27 @@ def _market_snapshot_layer_html(snapshot: dict, show_subsectors: bool = True) ->
     industries = _market_snapshot_items_plain(snapshot.get("industries", []), limit=3)
     if subsectors == "-" and industries == "-":
         return ""
-    if industries == "-" or industries == subsectors:
+    if industries == "-" or industries == subsectors or _snapshot_layer_names_overlap(snapshot):
         return f"<div>흐름축: {html.escape(subsectors)}</div>"
     return f"<div>흐름축: {html.escape(subsectors)} <span style='color:#64748b;'>/ 기준업종: {html.escape(industries)}</span></div>"
+
+
+def _snapshot_layer_name_key(value: str) -> str:
+    text = str(value or "").lower()
+    for token in ["+", "-", "%", "·", "/", ",", " ", "및"]:
+        text = text.replace(token, "")
+    text = re.sub(r"\d+(?:\.\d+)?", "", text)
+    return text
+
+
+def _snapshot_layer_names_overlap(snapshot: dict) -> bool:
+    sub_items = snapshot.get("subsectors", []) or []
+    industry_items = snapshot.get("industries", []) or []
+    if len(sub_items) != 1 or len(industry_items) != 1:
+        return False
+    sub_name = _snapshot_layer_name_key((sub_items[0] or {}).get("name", ""))
+    industry_name = _snapshot_layer_name_key((industry_items[0] or {}).get("name", ""))
+    return bool(sub_name and industry_name and (sub_name in industry_name or industry_name in sub_name))
 
 
 def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "") -> str:
@@ -7610,7 +7628,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
-MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 5
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 6
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 

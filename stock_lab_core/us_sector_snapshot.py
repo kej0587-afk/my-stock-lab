@@ -12,10 +12,11 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 US_INDUSTRY_SNAPSHOT_PATH = DATA_DIR / "us_industry_snapshot.csv"
 US_SECTOR_CONSTITUENTS_PATH = DATA_DIR / "us_sector_constituents.csv"
 US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT = 10
+US_REPRESENTATIVE_MIN_MARKET_CAP_THOUSAND = 500_000
 
 
 US_DETAIL_GROUP_ALIASES: dict[str, str] = {
-    "AI·반도체": "AI·빅테크",
+    "AI·반도체": "AI·반도체",
     "반도체": "반도체",
     "반도체 iShares": "반도체",
     "반도체 VanEck": "반도체",
@@ -97,6 +98,13 @@ US_DETAIL_GROUPS: dict[str, dict[str, Any]] = {
             {"name": "소프트웨어·클라우드", "sectors": ["소프트웨어및IT서비스"]},
             {"name": "AI 하드웨어", "sectors": ["컴퓨터및전자장비", "반도체및반도체장비"]},
             {"name": "미디어·플랫폼", "sectors": ["미디어"]},
+        ],
+    },
+    "AI·반도체": {
+        "sectors": ["반도체및반도체장비", "컴퓨터및전자장비"],
+        "subsegments": [
+            {"name": "반도체·장비", "sectors": ["반도체및반도체장비"]},
+            {"name": "AI 서버·전자장비", "sectors": ["컴퓨터및전자장비"]},
         ],
     },
     "AI·로봇": {
@@ -359,20 +367,24 @@ def _select_live_representative_candidates(rows: pd.DataFrame, limit: int = US_L
     if rows.empty:
         return rows
     limit = max(1, int(limit or US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT))
+    candidate_rows = rows.copy()
+    if "market_cap_thousand" in candidate_rows.columns:
+        market_caps = _clean_numeric_series(candidate_rows["market_cap_thousand"])
+        representative_rows = candidate_rows[market_caps >= US_REPRESENTATIVE_MIN_MARKET_CAP_THOUSAND].copy()
+        if len(representative_rows) >= min(3, len(candidate_rows)):
+            candidate_rows = representative_rows
     pool_size = max(3, min(limit, 5))
     pools: list[pd.DataFrame] = []
     sort_specs = [
         (["market_cap_thousand", "volume"], [False, False]),
         (["volume", "market_cap_thousand"], [False, False]),
-        (["change_pct", "market_cap_thousand"], [False, False]),
-        (["change_pct", "market_cap_thousand"], [True, False]),
     ]
     for columns, ascending in sort_specs:
-        sorted_rows = _sort_rows_by_existing(rows, columns, ascending)
+        sorted_rows = _sort_rows_by_existing(candidate_rows, columns, ascending)
         if not sorted_rows.empty:
             pools.append(sorted_rows.head(pool_size))
     if not pools:
-        return rows.head(limit).copy()
+        return candidate_rows.head(limit).copy()
     candidates = pd.concat(pools, axis=0)
     if "ticker" in candidates.columns:
         candidates = candidates.drop_duplicates("ticker", keep="first")
