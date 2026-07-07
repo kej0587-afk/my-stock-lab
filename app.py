@@ -7610,7 +7610,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
-MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 4
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 5
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
@@ -7655,7 +7655,7 @@ def _get_market_cluster_snapshot_cached(
     if market == "KOSPI":
         snapshot = build_kr_cluster_snapshot(cluster_key, detail_name=detail_key, live_prices=live_prices)
     else:
-        snapshot = build_us_cluster_snapshot(cluster_key, detail_name=detail_key)
+        snapshot = build_us_cluster_snapshot(cluster_key, detail_name=detail_key, live_prices=live_prices)
     snapshot = snapshot if isinstance(snapshot, dict) else {}
     try:
         st.session_state.setdefault(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})[cache_key] = {
@@ -8431,6 +8431,39 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
     return cl_list
 
 
+def _remove_cluster_warning_phrase(text: str, phrase: str) -> str:
+    bits = [bit.strip() for bit in str(text or "").split(" / ") if bit.strip()]
+    return " / ".join(bit for bit in bits if bit != phrase)
+
+
+def _refresh_visible_us_cluster_snapshots(visible: list[dict], market_label: str) -> None:
+    """Refresh only visible US cards so representative stocks are useful without slowing the whole tab."""
+    if "미국" not in str(market_label or ""):
+        return
+    for cl in visible:
+        tickers = cl.get("tickers", [])
+        ticker_codes = [str(t.get("ticker", "")).upper() for t in tickers if isinstance(t, dict)]
+        if not ticker_codes or any(is_kr_listed(ticker) for ticker in ticker_codes):
+            continue
+        cluster_name = str(cl.get("name", "") or "").strip()
+        if not cluster_name:
+            continue
+        snapshot = _get_market_cluster_snapshot_cached(
+            "US",
+            cluster_name,
+            cluster_name,
+            live_prices=True,
+        )
+        if not snapshot:
+            continue
+        cl["market_snapshot"] = snapshot
+        if _market_snapshot_representatives_verified(snapshot, market_label="US"):
+            cl["core_warning"] = _remove_cluster_warning_phrase(
+                cl.get("core_warning", ""),
+                "US 대표주 실시간 등락률 확인 필요",
+            )
+
+
 def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
                                rank_offset: int = 0, prev_scores: dict | None = None):
     """한 시장(한국/미국)의 클러스터 상위 top_n 카드 행 렌더."""
@@ -8438,6 +8471,7 @@ def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
     visible   = cl_list[:top_n]
     if not visible:
         return
+    _refresh_visible_us_cluster_snapshots(visible, market_label)
 
     # 시장 레이블 소제목
     surging_here = [c for c in visible if c["is_surging"]]

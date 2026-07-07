@@ -133,3 +133,51 @@ def test_us_sector_snapshot_live_refresh_recomputes_returns_and_splits_leaders(m
     assert leaders["AMAT"] == pytest.approx(0.96)
     assert leaders["LRCX"] == pytest.approx(5.70)
     assert set(leaders).isdisjoint(laggards)
+
+
+def test_us_sector_snapshot_live_refresh_limits_representative_candidates(monkeypatch):
+    monkeypatch.setattr(
+        us_snapshot,
+        "_resolve_detail_group",
+        lambda detail_name="", cluster_name="": (
+            "테스트",
+            {
+                "sectors": ["Semi"],
+                "subsegments": [{"name": "반도체", "sectors": ["Semi"]}],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        us_snapshot,
+        "load_us_industry_snapshot",
+        lambda: pd.DataFrame([{"industry_name": "Semi", "change_pct": 0.2}]),
+    )
+    rows = []
+    for i in range(25):
+        rows.append(
+            {
+                "sector": "Semi",
+                "ticker": f"T{i}",
+                "name": f"테스트{i}",
+                "current": 100 + i,
+                "change_pct": i - 12,
+                "volume": 1000 - i,
+                "market_cap_thousand": 5000 - i,
+            }
+        )
+    monkeypatch.setattr(us_snapshot, "load_us_sector_constituents", lambda: pd.DataFrame(rows))
+
+    requested: list[str] = []
+
+    def fake_latest_prices(tickers):
+        requested.extend(tickers)
+        return {ticker: 101.0 for ticker in tickers}
+
+    monkeypatch.setattr(us_snapshot, "_load_latest_prices_for_snapshot", fake_latest_prices)
+    monkeypatch.setattr(us_snapshot, "_latest_close_for_snapshot", lambda ticker: 100.0)
+
+    snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체", live_prices=True)
+
+    assert snapshot["representative_returns_source"] == "live"
+    assert len(requested) <= us_snapshot.US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT
+    assert len(requested) < len(rows)

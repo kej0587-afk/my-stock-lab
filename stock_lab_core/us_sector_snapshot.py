@@ -11,6 +11,7 @@ import pandas as pd
 DATA_DIR = Path(__file__).resolve().parent / "data"
 US_INDUSTRY_SNAPSHOT_PATH = DATA_DIR / "us_industry_snapshot.csv"
 US_SECTOR_CONSTITUENTS_PATH = DATA_DIR / "us_sector_constituents.csv"
+US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT = 10
 
 
 US_DETAIL_GROUP_ALIASES: dict[str, str] = {
@@ -353,6 +354,33 @@ def _sort_rows_by_existing(
     return df.sort_values(list(sort_cols), ascending=list(sort_ascending))
 
 
+def _select_live_representative_candidates(rows: pd.DataFrame, limit: int = US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT) -> pd.DataFrame:
+    """Pick a small, stable representative set for live US cluster cards."""
+    if rows.empty:
+        return rows
+    limit = max(1, int(limit or US_LIVE_REPRESENTATIVE_CANDIDATE_LIMIT))
+    pool_size = max(3, min(limit, 5))
+    pools: list[pd.DataFrame] = []
+    sort_specs = [
+        (["market_cap_thousand", "volume"], [False, False]),
+        (["volume", "market_cap_thousand"], [False, False]),
+        (["change_pct", "market_cap_thousand"], [False, False]),
+        (["change_pct", "market_cap_thousand"], [True, False]),
+    ]
+    for columns, ascending in sort_specs:
+        sorted_rows = _sort_rows_by_existing(rows, columns, ascending)
+        if not sorted_rows.empty:
+            pools.append(sorted_rows.head(pool_size))
+    if not pools:
+        return rows.head(limit).copy()
+    candidates = pd.concat(pools, axis=0)
+    if "ticker" in candidates.columns:
+        candidates = candidates.drop_duplicates("ticker", keep="first")
+    else:
+        candidates = candidates[~candidates.index.duplicated(keep="first")]
+    return candidates.head(limit).copy()
+
+
 def _empty_industry_df() -> pd.DataFrame:
     return pd.DataFrame(columns=["industry_name", "change_pct"])
 
@@ -499,7 +527,8 @@ def build_us_cluster_snapshot(
     if "ticker" in constituent_rows.columns:
         constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
         if live_prices:
-            constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
+            live_candidates = _select_live_representative_candidates(constituent_rows)
+            constituent_rows = _refresh_constituent_rows_with_live_prices(live_candidates)
         else:
             constituent_rows = constituent_rows.copy()
             constituent_rows["change_pct"] = np.nan
