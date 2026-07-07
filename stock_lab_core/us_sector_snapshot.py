@@ -473,7 +473,12 @@ def _subsector_records(
     return records[:limit]
 
 
-def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: str = "") -> dict[str, Any]:
+def build_us_cluster_snapshot(
+    cluster_name: str,
+    top_n: int = 3,
+    detail_name: str = "",
+    live_prices: bool = False,
+) -> dict[str, Any]:
     """Return US industry breadth and representative-stock context for a sector/theme."""
     detail_key, detail_group = _resolve_detail_group(detail_name=detail_name, cluster_name=cluster_name)
     if not detail_group:
@@ -493,7 +498,12 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         return {}
     if "ticker" in constituent_rows.columns:
         constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
-        constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
+        if live_prices:
+            constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
+        else:
+            constituent_rows = constituent_rows.copy()
+            constituent_rows["change_pct"] = np.nan
+            constituent_rows["_live_return"] = False
 
     sector_avg = float(industry_rows["change_pct"].mean()) if "change_pct" in industry_rows and not industry_rows.empty else float("nan")
     valid_const = constituent_rows.dropna(subset=["change_pct"]) if "change_pct" in constituent_rows else pd.DataFrame()

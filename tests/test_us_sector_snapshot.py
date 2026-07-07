@@ -123,7 +123,7 @@ def test_us_sector_snapshot_live_refresh_recomputes_returns_and_splits_leaders(m
     )
     monkeypatch.setattr(us_snapshot, "_latest_close_for_snapshot", lambda ticker: 100.0)
 
-    snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체")
+    snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체", live_prices=True)
 
     leaders = {item["ticker"]: item["change_pct"] for item in snapshot["leaders"]}
     laggards = {item["ticker"]: item["change_pct"] for item in snapshot["laggards"]}
