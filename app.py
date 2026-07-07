@@ -7231,6 +7231,51 @@ def _format_kr_sector_items(items: list, limit: int = 3) -> str:
     return " · ".join(rows) if rows else "-"
 
 
+def _dedupe_market_snapshot_items(items: list) -> list[dict]:
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "") or "").strip()
+        ticker = str(item.get("ticker", "") or "").strip().upper()
+        key = ticker or name.lower()
+        if not name or not key or key in seen:
+            continue
+        seen.add(key)
+        rows.append(item)
+    return rows
+
+
+def _split_market_snapshot_representatives(snapshot: dict) -> tuple[list[dict], list[dict]]:
+    """Display guardrail: separate positive/negative reps even when cached snapshots are stale."""
+    raw_items = []
+    if isinstance(snapshot, dict):
+        raw_items.extend(snapshot.get("leaders", []) or [])
+        raw_items.extend(snapshot.get("laggards", []) or [])
+    items = _dedupe_market_snapshot_items(raw_items)
+    positive = [item for item in items if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) > 0]
+    negative = [item for item in items if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) < 0]
+    positive.sort(key=lambda item: float(item.get("change_pct", 0.0)), reverse=True)
+    negative.sort(key=lambda item: float(item.get("change_pct", 0.0)))
+    return positive, negative
+
+
+def _market_snapshot_items_plain(items: list, limit: int = 3) -> str:
+    text = _format_kr_sector_items_plain(items, limit=limit)
+    return text or "-"
+
+
+def _market_snapshot_layer_html(snapshot: dict) -> str:
+    subsectors = _market_snapshot_items_plain(snapshot.get("subsectors", []), limit=3)
+    industries = _market_snapshot_items_plain(snapshot.get("industries", []), limit=3)
+    if subsectors == "-" and industries == "-":
+        return ""
+    if industries == "-" or industries == subsectors:
+        return f"<div>흐름축: {html.escape(subsectors)}</div>"
+    return f"<div>흐름축: {html.escape(subsectors)} <span style='color:#64748b;'>/ 기준업종: {html.escape(industries)}</span></div>"
+
+
 def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "") -> str:
     if not isinstance(snapshot, dict) or not snapshot:
         return ""
@@ -7251,29 +7296,19 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
     breadth_txt = f"{float(breadth) * 100:.0f}%" if finite_num(breadth) else "-"
     sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
     const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan))
-    subsectors = _format_kr_sector_items(
-        snapshot.get("subsectors", []) or snapshot.get("industries", []),
-        limit=3,
-    )
-    industries = _format_kr_sector_items(snapshot.get("industries", []), limit=3)
-    leaders = _format_kr_sector_items(snapshot.get("leaders", []), limit=3)
-    laggards = _format_kr_sector_items(snapshot.get("laggards", []), limit=2)
-    warning = str(snapshot.get("warning", "") or "")
-    warning_html = (
-        f"<div style='font-size:0.64em;color:#fca5a5;margin-top:2px;'>{html.escape(warning)}</div>"
-        if warning else ""
-    )
+    positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
+    leaders = _format_kr_sector_items(positive_items, limit=3)
+    laggards = _format_kr_sector_items(negative_items, limit=2)
+    layer_html = _market_snapshot_layer_html(snapshot)
 
     return (
         "<div style='border-top:1px dashed #334155;margin-top:6px;padding-top:5px;"
         "font-size:0.63em;line-height:1.65;color:#94a3b8;'>"
-        f"<div><span style='color:{status_clr};font-weight:700;'>{title}: {html.escape(status)}</span>"
-        f" · 확산 {breadth_txt} · 업종평균 {sector_avg} · 대표주평균 {const_avg}</div>"
-        f"<div>세부축: {subsectors}</div>"
-        f"<div>대분류: {industries}</div>"
-        f"<div>강한 대표주: {leaders}</div>"
-        f"<div>약한 대표주: {laggards}</div>"
-        f"{warning_html}"
+        f"<div><span style='color:{status_clr};font-weight:700;'>내부: {html.escape(status)}</span>"
+        f" · 확산 {breadth_txt} · 업종 {sector_avg} · 대표 {const_avg}</div>"
+        f"{layer_html}"
+        f"<div>뜨는 종목: {leaders}</div>"
+        f"<div>약한 종목: {laggards}</div>"
         "</div>"
     )
 
@@ -7557,6 +7592,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 3
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
@@ -7574,7 +7610,7 @@ def _get_market_cluster_snapshot_cached(
         return {}
 
     now = pd.Timestamp.now().timestamp()
-    cache_key = (market, cluster_key, detail_key, bool(live_prices))
+    cache_key = (MARKET_CLUSTER_CONTEXT_CACHE_VERSION, market, cluster_key, detail_key, bool(live_prices))
     try:
         cache = st.session_state.setdefault(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})
         if not isinstance(cache, dict):
@@ -7683,8 +7719,9 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             out.at[idx, "KOSPI대분류"] = broad_text
         elif market_label == "US":
             out.at[idx, "US대분류"] = broad_text
-        out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(snapshot.get("leaders", []), limit=3) or "-"
-        out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(snapshot.get("laggards", []), limit=2) or "-"
+        positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
+        out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(positive_items, limit=3) or "-"
+        out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(negative_items, limit=2) or "-"
         status = str(snapshot.get("status", "") or "")
         out.at[idx, "시장내부판정"] = status
         if market_label == "KOSPI":

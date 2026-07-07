@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+import math
 
 import stock_lab_core.us_sector_snapshot as us_snapshot
 from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
@@ -18,7 +19,7 @@ def test_us_sector_snapshot_builds_semiconductor_detail_segments():
     assert snapshot["market"] == "US"
     assert snapshot["industries"]
     assert snapshot["subsectors"]
-    assert 0 <= snapshot["breadth"] <= 1
+    assert math.isnan(snapshot["breadth"]) or 0 <= snapshot["breadth"] <= 1
     assert any("반도체" in item["name"] for item in snapshot["subsectors"])
 
 

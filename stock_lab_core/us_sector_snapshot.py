@@ -297,11 +297,6 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
     if rows.empty or "ticker" not in rows.columns:
         return rows
 
-    tickers = [str(ticker or "").strip().upper() for ticker in rows["ticker"].tolist() if str(ticker or "").strip()]
-    latest_prices = _load_latest_prices_for_snapshot(tickers)
-    if not latest_prices:
-        return rows
-
     refreshed = rows.copy()
     if "current" not in refreshed.columns:
         refreshed["current"] = np.nan
@@ -310,6 +305,17 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
     for col in ("current", "change_pct", "change_abs"):
         if col in refreshed.columns:
             refreshed[col] = _clean_numeric_series(refreshed[col]).astype("float64")
+
+    tickers = [str(ticker or "").strip().upper() for ticker in rows["ticker"].tolist() if str(ticker or "").strip()]
+    latest_prices = _load_latest_prices_for_snapshot(tickers)
+    if not latest_prices:
+        # Static CSV returns are often stale after splits/day-market moves. If
+        # live refresh fails, hide representative-stock returns instead of
+        # showing a precise-looking but wrong +14.8% style value.
+        refreshed["change_pct"] = np.nan
+        return refreshed
+
+    refreshed["change_pct"] = np.nan
 
     for idx, row in refreshed.iterrows():
         ticker = str(row.get("ticker", "") or "").strip().upper()
