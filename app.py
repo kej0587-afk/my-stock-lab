@@ -7850,11 +7850,15 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
     breadth = float(cl.get("breadth", cl.get("pos_frac", 0.0)) or 0.0)
     avg_r1m = cl.get("r1m", float("nan"))
     avg_r2w = cl.get("r2w", float("nan"))
+    avg_r1d = cl.get("r1d", float("nan"))
+    avg_r5d = cl.get("r5d", float("nan"))
     volume_growth = cl.get("volume_growth", float("nan"))
     rank_bonus = float(cl.get("rank_bonus", 0.0) or 0.0)
     overheat_penalty = float(cl.get("overheat_penalty", 0.0) or 0.0)
     pullback_penalty = float(cl.get("pullback_penalty", 0.0) or 0.0)
     core_warning = str(cl.get("core_warning", "") or "")
+    regime_label = str(cl.get("regime_label", "") or "👀 관찰")
+    regime_hint = str(cl.get("regime_hint", "") or "")
 
     # ── ① 강도(쏠림) 색상 — 순수 3개월 RS·확산도 기준, 단기 흐름과 무관 ──
     if flow_label == "주도":
@@ -7926,6 +7930,21 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         + (f"&nbsp;<span style='color:#fca5a5;'>({' / '.join(timing_reason_bits)})</span>" if timing_reason_bits else "")
         + "</div>"
     )
+    r1d_txt = f"1D {avg_r1d*100:+.1f}%" if finite_num(avg_r1d) else "1D -"
+    r5d_txt = f"5D {avg_r5d*100:+.1f}%" if finite_num(avg_r5d) else "5D -"
+    regime_clr = (
+        "#22c55e" if any(token in regime_label for token in ["실유입", "순환유입"])
+        else "#fbbf24" if any(token in regime_label for token in ["상대", "덜 빠짐", "중기"])
+        else "#f87171" if any(token in regime_label for token in ["이탈", "훼손", "동반"])
+        else "#94a3b8"
+    )
+    regime_html = (
+        f"<div style='font-size:0.66em;color:{regime_clr};margin-top:3px;' "
+        f"title='{html.escape(regime_hint)}'>"
+        f"🧭 국면 · {html.escape(regime_label)}"
+        f"&nbsp;<span style='color:#94a3b8;'>{r1d_txt} · {r5d_txt}</span>"
+        f"</div>"
+    )
     core_warning_html = ""
     if core_warning:
         core_warning_html = (
@@ -7959,7 +7978,9 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
             aclr = "#4ade80" if rm > 0.01 else ("#f87171" if rm < -0.01 else "#fbbf24")
             r3   = t["rs3m"] * 100
             r1   = t.get("r1m", float("nan"))
+            d1   = t.get("r1d", float("nan"))
             rclr = "#4ade80" if r3 > 2 else ("#f87171" if r3 < -2 else "#fbbf24")
+            d1_txt = f" 1D {d1*100:+.1f}%" if finite_num(d1) else ""
             r1_txt = f" 1M {r1*100:+.0f}%" if finite_num(r1) else ""
             label = t.get("name", t.get("ticker", "?"))
             rows.append(
@@ -7967,7 +7988,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
                 f"{q}&nbsp;"
                 f"<span style='color:#cbd5e1;'>{label}</span>"
                 f"&nbsp;<span style='color:{rclr};font-size:0.9em;'>{r3:+.0f}%</span>"
-                f"<span style='color:#94a3b8;font-size:0.82em;'>{r1_txt}</span>"
+                f"<span style='color:#94a3b8;font-size:0.82em;'>{d1_txt}{r1_txt}</span>"
                 f"<span style='color:{aclr};font-size:0.85em;'>{arr}</span>"
                 f"</span>"
             )
@@ -8005,6 +8026,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
         f"확산 {breadth*100:.0f}% · {vol_html} · {rank_html}</div>"
         # ② 타이밍(진입 가능 여부) — ①과 분리된 별도 영역
         f"{timing_reason_html}"
+        f"{regime_html}"
         f"{core_warning_html}"
         f"{bridge_html}"
         f"{market_snapshot_html}"
@@ -8059,7 +8081,7 @@ def _prev_cluster_strength_scores(today_key: str) -> dict:
     return history[other_days[-1]]
 
 
-def _build_cluster_list(rotation_df, clusters: dict) -> list:
+def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None = None, market_key: str = "") -> list:
     """rotation_df + clusters 로 클러스터 집계 리스트 생성 (내부 헬퍼).
 
     단순 RS 강도보다 실제 접근 가능성을 우선한다.
@@ -8109,6 +8131,9 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         quad  = str(r.get("사분면", "-"))
         r1m   = r.get("1개월수익률", np.nan)
         r2w   = r.get("2주수익률", np.nan)
+        recent = _load_index_rotation_recent_returns(t)
+        r1d   = recent.get("1D", np.nan)
+        r5d   = recent.get("5D", np.nan)
         short_accel = r.get("단기가속도", np.nan)
         volume_growth = r.get("거래량증가", np.nan)
         price_level = r.get("가격수준", np.nan)
@@ -8123,6 +8148,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
                 "quad":  quad,
                 "r1m":   _num(r1m),
                 "r2w":   _num(r2w),
+                "r1d":   _num(r1d),
+                "r5d":   _num(r5d),
                 "short_accel": _num(short_accel),
                 "volume_growth": _num(volume_growth),
                 "price_level": _num(price_level),
@@ -8162,6 +8189,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         avg_rsmom = float(np.mean([m["rsmom"] for m in matched]))
         avg_r1m   = _avg([m["r1m"] for m in matched])
         avg_r2w   = _avg([m["r2w"] for m in matched])
+        avg_r1d   = _avg([m["r1d"] for m in matched])
+        avg_r5d   = _avg([m["r5d"] for m in matched])
         avg_short_accel = _avg([m["short_accel"] for m in matched])
         avg_volume_growth = _avg([m["volume_growth"] for m in matched])
         avg_price_level = _avg([m["price_level"] for m in matched])
@@ -8263,6 +8292,14 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             timing_state = "확인 필요"
         if kr_internal_weak and timing_state == "진입 가능":
             timing_state = "확인 필요"
+        regime_label, regime_hint = _classify_cluster_market_regime(
+            market_key or ("한국" if is_kr_cluster else "미국"),
+            avg_r1d,
+            avg_r5d,
+            strength_score,
+            flow_label,
+            market_context,
+        )
 
         # 하위 호환을 위해 fit_score/heat은 강도+타이밍 결합 점수로 유지 (정렬 등에서 참조)
         core_divergence_penalty = 10.0 if core_is_diverged else 0.0
@@ -8278,6 +8315,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         tickers_detail = sorted(
             matched,
             key=lambda x: (
+                _num(x.get("r1d"), -9.0),
+                _num(x.get("r5d"), -9.0),
                 _num(x.get("r1m"), -9.0),
                 _num(x.get("r2w"), -9.0),
                 x["rsmom"],
@@ -8289,6 +8328,7 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
         cl_list.append({
             "name": cl_name, "rs3m": avg_rs3m, "rsmom": avg_rsmom,
             "r1m": avg_r1m, "r2w": avg_r2w, "qcnt": qcnt, "n": n,
+            "r1d": avg_r1d, "r5d": avg_r5d,
             "pos_frac": pos_frac, "breadth": breadth,
             "volume_growth": avg_volume_growth,
             "price_level": avg_price_level,
@@ -8301,6 +8341,8 @@ def _build_cluster_list(rotation_df, clusters: dict) -> list:
             "overheat_penalty": overheat_penalty,
             "pullback_penalty": pullback_penalty,
             "core_warning": core_warning,
+            "regime_label": regime_label,
+            "regime_hint": regime_hint,
             "kr_snapshot": kr_snapshot,
             "market_snapshot": market_snapshot,
             "core_divergence_penalty": core_divergence_penalty,
@@ -8540,10 +8582,80 @@ def _rotation_market_labels(index_df: pd.DataFrame, market: str, col: str, posit
     return _labels_from_rotation_rows(index_df[index_df["시장"].astype(str) == market], col, positive=positive, limit=limit)
 
 
+def _build_market_regime_context(index_df: pd.DataFrame) -> dict:
+    if index_df is None or index_df.empty:
+        return {}
+    kr_avg_1d = _rotation_mean_for_tickers(index_df, {"^KS11", "^KQ11", "069500.KS", "229200.KS"}, "1D")
+    us_avg_1d = _rotation_mean_for_tickers(index_df, {"^GSPC", "^IXIC", "^DJI"}, "1D")
+    growth_1d = _rotation_mean_for_tickers(index_df, {"QQQ", "XLK", "SOXX"}, "1D")
+    defense_1d = _rotation_mean_for_tickers(index_df, {"DIA", "XLI", "XLF", "XLP", "XLU"}, "1D")
+
+    def _mode(avg):
+        if not finite_num(avg):
+            return "확인 필요"
+        avg = float(avg)
+        if avg <= -0.03:
+            return "급락/위험회피"
+        if avg <= -0.015:
+            return "조정"
+        if avg < 0:
+            return "방어"
+        return "정상"
+
+    return {
+        "한국": {"avg_1d": kr_avg_1d, "mode": _mode(kr_avg_1d)},
+        "미국": {"avg_1d": us_avg_1d, "mode": _mode(us_avg_1d)},
+        "성장주_1d": growth_1d,
+        "방어가치_1d": defense_1d,
+    }
+
+
+def _classify_cluster_market_regime(
+    market: str,
+    r1d,
+    r5d,
+    strength_score,
+    flow_label: str,
+    market_context: dict | None,
+) -> tuple[str, str]:
+    market_key = "한국" if "한국" in str(market) or str(market).upper() == "KR" else "미국"
+    ctx = (market_context or {}).get(market_key, {})
+    market_1d = ctx.get("avg_1d", np.nan)
+    market_mode = str(ctx.get("mode", "확인 필요"))
+    is_mid_leader = str(flow_label) in {"주도", "부상"} or (finite_num(strength_score) and float(strength_score) >= 12)
+
+    if finite_num(market_1d) and float(market_1d) <= -0.03:
+        if finite_num(r1d) and float(r1d) > 0:
+            return "🛡 상대방어", "지수 급락 중 플러스입니다. 새 주도라기보다 급락장 안에서 덜 맞는 축으로 봅니다."
+        if finite_num(r1d) and float(r1d) >= float(market_1d) + 0.025:
+            return "🛡 덜 빠짐", "지수보다 덜 빠졌지만 시장 급락장이라 신규 주도 판단은 보류합니다."
+        return "🚨 동반이탈", "지수 급락과 함께 빠지는 중입니다. 섹터 이동보다 위험회피 국면입니다."
+
+    if finite_num(r1d) and finite_num(r5d):
+        if is_mid_leader and float(r1d) <= -0.025 and float(r5d) <= -0.06:
+            return "⚠ 주도이탈", "중기 주도였지만 1D/5D가 동시에 꺾였습니다. 반등 확인 전에는 주도 유지로 보지 않습니다."
+        if is_mid_leader and float(r1d) < 0 and float(r5d) < 0:
+            return "⚠ 단기훼손", "중기 돈흐름은 남아 있지만 단기 가격은 이탈 중입니다."
+        if float(r1d) > 0 and float(r5d) > 0 and market_mode in {"정상", "방어"}:
+            return "✅ 실유입", "1D와 5D가 함께 플러스라 단기 유입 신뢰도가 있습니다."
+
+    if finite_num(r1d) and finite_num(market_1d):
+        excess = float(r1d) - float(market_1d)
+        if excess >= 0.02 and float(r1d) > 0:
+            return "🔄 순환유입", "시장보다 뚜렷하게 강한 단기 유입입니다."
+        if excess >= 0.02:
+            return "🛡 상대강세", "절대수익률은 약하지만 시장 대비 방어력이 있습니다."
+
+    if is_mid_leader:
+        return "📌 중기주도", "3M 기준 돈흐름은 아직 남아 있습니다. 단기 가격 확인과 분리해서 봅니다."
+    return "👀 관찰", "뚜렷한 단기 섹터 이동 신호는 아직 약합니다."
+
+
 def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     if index_df is None or index_df.empty:
         return []
     summaries = []
+    regime_ctx = _build_market_regime_context(index_df)
     kr_market_1d = _rotation_mean_for_tickers(index_df, {"^KS11", "^KQ11", "069500.KS", "229200.KS"}, "1D")
     us_market_1d = _rotation_mean_for_tickers(index_df, {"^GSPC", "^IXIC", "^DJI"}, "1D")
     kr_crash = finite_num(kr_market_1d) and float(kr_market_1d) <= -0.03
@@ -8552,12 +8664,16 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     if kr_crash:
         summaries.append(
             f"한국 지수 평균 1D {kr_market_1d*100:+.1f}%로 섹터 이동보다 시장 전체 조정/위험회피가 우선입니다. "
-            "오늘 플러스 섹터는 '주도'보다 상대방어로 봅니다."
+            "오늘 플러스 섹터는 '새 주도'보다 상대방어/되돌림으로 먼저 봅니다."
         )
         kr_inflow = _rotation_market_labels(index_df, "한국", "1D", positive=True, limit=3)
         kr_outflow = _rotation_market_labels(index_df, "한국", "1D", positive=False, limit=3)
         summaries.append(
             f"한국 내부 1D 유입: {kr_inflow or '없음'} / 이탈: {kr_outflow or '없음'}"
+        )
+        summaries.append(
+            "판정 기준: 지수 평균 -3% 이하에서는 1D 플러스 업종도 시장 안정 전까지 '상대방어'로 표시합니다. "
+            "진짜 섹터 이동은 지수 하락 진정 + 5D 상대강세가 같이 필요합니다."
         )
     if us_crash:
         summaries.append(
@@ -8593,7 +8709,14 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     leaders = _labels_from_rotation_rows(index_df, "3M", positive=True, limit=3)
     if leaders:
         summaries.append(f"중기 3M 주도권은 아직 {leaders} 쪽에 남아 있습니다. 단기 이탈과 중기 주도는 분리해서 봐야 합니다.")
-    return summaries[:5]
+    growth_1d = regime_ctx.get("성장주_1d")
+    defense_1d = regime_ctx.get("방어가치_1d")
+    if finite_num(growth_1d) and finite_num(defense_1d):
+        summaries.append(
+            f"성장/반도체 1D 평균 {growth_1d*100:+.1f}% vs 다우·산업재·금융·방어 {defense_1d*100:+.1f}%: "
+            "이 격차가 플러스면 성장주 우위, 마이너스면 방어/가치 쪽 회피성 이동입니다."
+        )
+    return summaries[:7]
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
@@ -8628,6 +8751,8 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             breadth = clean_float(cl.get("breadth", np.nan), np.nan)
             r1m = clean_float(cl.get("r1m", np.nan), np.nan)
             r2w = clean_float(cl.get("r2w", np.nan), np.nan)
+            r1d = clean_float(cl.get("r1d", np.nan), np.nan)
+            r5d = clean_float(cl.get("r5d", np.nan), np.nan)
             rs3m = clean_float(cl.get("rs3m", np.nan), np.nan)
             volume = clean_float(cl.get("volume_growth", np.nan), np.nan)
             if not finite_num(strength):
@@ -8642,9 +8767,12 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
                 "확산도": float(breadth) if finite_num(breadth) else 0.0,
                 "1M": float(r1m) if finite_num(r1m) else np.nan,
                 "2W": float(r2w) if finite_num(r2w) else np.nan,
+                "1D": float(r1d) if finite_num(r1d) else np.nan,
+                "5D": float(r5d) if finite_num(r5d) else np.nan,
                 "RS3M": float(rs3m) if finite_num(rs3m) else np.nan,
                 "거래": float(volume) if finite_num(volume) else np.nan,
                 "주의": str(cl.get("core_warning", "") or "-"),
+                "국면": str(cl.get("regime_label", "👀 관찰")),
                 "순위": rank,
                 "라벨": f"{'🇺🇸' if market == '미국' else '🇰🇷'} {cl.get('name', '')}",
                 "크기": max(16, min(44, 16 + (float(breadth) if finite_num(breadth) else 0.0) * 34)),
@@ -8704,18 +8832,21 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             opacity=0.86,
             line=dict(color="#f8fafc", width=1),
         ),
-        customdata=chart_df[["시장", "타이밍", "강도라벨", "확산도", "RS3M", "1M", "2W", "거래", "주의"]],
+        customdata=chart_df[["시장", "타이밍", "강도라벨", "확산도", "RS3M", "1D", "5D", "1M", "2W", "거래", "주의", "국면"]],
         hovertemplate=(
             "<b>%{text}</b><br>"
             "시장: %{customdata[0]}<br>"
             "강도: %{y:.1f}점 (%{customdata[2]})<br>"
             "타이밍: %{customdata[1]}<br>"
+            "국면: %{customdata[11]}<br>"
             "확산도: %{customdata[3]:.0%}<br>"
             "RS 3M: %{customdata[4]:+.1%}<br>"
-            "1M: %{customdata[5]:+.1%}<br>"
-            "2W: %{customdata[6]:+.1%}<br>"
-            "거래: %{customdata[7]:+.0%}<br>"
-            "주의: %{customdata[8]}<extra></extra>"
+            "1D: %{customdata[5]:+.1%}<br>"
+            "5D: %{customdata[6]:+.1%}<br>"
+            "1M: %{customdata[7]:+.1%}<br>"
+            "2W: %{customdata[8]:+.1%}<br>"
+            "거래: %{customdata[9]:+.0%}<br>"
+            "주의: %{customdata[10]}<extra></extra>"
         ),
         showlegend=False,
     ))
@@ -8743,7 +8874,11 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
         font=dict(color="#e2e8f0"),
     )
     st.plotly_chart(fig, width='stretch')
-    st.caption("버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. '진입가능' 칸만 실제 진입 후보이고, '눌림대기/확인/과열'은 관망 또는 정찰 후보입니다.")
+    st.caption(
+        "버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. "
+        "'진입가능' 칸만 실제 진입 후보이고, '눌림대기/확인/과열'은 관망 또는 정찰 후보입니다. "
+        "국면 라벨은 1D/5D와 지수 평균을 같이 봅니다. 지수 급락장 속 플러스는 '주도'보다 '상대방어'로 먼저 해석합니다."
+    )
 
 
 def render_cluster_heatmap_enhanced(
@@ -8792,9 +8927,11 @@ def render_cluster_heatmap_enhanced(
 
         kr_df = _sub("한국 섹터")
         us_df = _sub("미국 섹터")
+        index_rotation_df = _build_index_rotation_table(rotation_df)
+        market_context = _build_market_regime_context(index_rotation_df)
 
-        kr_list = _build_cluster_list(kr_df, clusters_kr) if clusters_kr else []
-        us_list = _build_cluster_list(us_df, clusters_us) if clusters_us else []
+        kr_list = _build_cluster_list(kr_df, clusters_kr, market_context, "한국") if clusters_kr else []
+        us_list = _build_cluster_list(us_df, clusters_us, market_context, "미국") if clusters_us else []
 
         if not kr_list and not us_list:
             return
@@ -8852,7 +8989,9 @@ def render_cluster_heatmap_enhanced(
     if not clusters:
         return
 
-    cl_list = _build_cluster_list(rotation_df, clusters)
+    _index_rotation_df = _build_index_rotation_table(rotation_df)
+    _market_context = _build_market_regime_context(_index_rotation_df)
+    cl_list = _build_cluster_list(rotation_df, clusters, _market_context)
     if not cl_list:
         return
 
