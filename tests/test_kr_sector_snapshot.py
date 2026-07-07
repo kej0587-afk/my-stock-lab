@@ -137,3 +137,55 @@ def test_kr_cluster_snapshot_can_skip_live_refresh_for_bulk_tables(monkeypatch):
 
     assert snapshot
     assert called["count"] == 0
+
+
+def test_kr_cluster_snapshot_leaders_are_positive_and_do_not_overlap(monkeypatch):
+    monkeypatch.setattr(
+        kr_snapshot,
+        "load_kospi_industry_snapshot",
+        lambda: pd.DataFrame([{"sector_name": "전기,전자", "change_pct": 3.7, "volume": 1000}]),
+    )
+    monkeypatch.setattr(
+        kr_snapshot,
+        "load_kospi_sector_constituents",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "sector": "전기,전자",
+                    "rank": 1,
+                    "ticker": "000660.KS",
+                    "name": "SK하이닉스",
+                    "change_pct": -6.1,
+                    "volume": 1000,
+                    "is_fund_like": False,
+                },
+                {
+                    "sector": "전기,전자",
+                    "rank": 2,
+                    "ticker": "005930.KS",
+                    "name": "삼성전자",
+                    "change_pct": 7.7,
+                    "volume": 900,
+                    "is_fund_like": False,
+                },
+                {
+                    "sector": "전기,전자",
+                    "rank": 3,
+                    "ticker": "042700.KS",
+                    "name": "한미반도체",
+                    "change_pct": -0.6,
+                    "volume": 800,
+                    "is_fund_like": False,
+                },
+            ]
+        ),
+    )
+
+    snapshot = build_kr_cluster_snapshot("AI·반도체", detail_name="반도체", live_prices=False)
+
+    leaders = {item["ticker"]: item["change_pct"] for item in snapshot["leaders"]}
+    laggards = {item["ticker"]: item["change_pct"] for item in snapshot["laggards"]}
+    assert leaders == {"005930.KS": 7.7}
+    assert laggards["000660.KS"] == -6.1
+    assert laggards["042700.KS"] == -0.6
+    assert set(leaders).isdisjoint(laggards)

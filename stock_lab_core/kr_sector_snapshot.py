@@ -516,6 +516,20 @@ def _records(df: pd.DataFrame, name_col: str = "name", limit: int = 3) -> list[d
     return rows
 
 
+def _sort_rows_by_existing(
+    df: pd.DataFrame,
+    columns: list[str],
+    ascending: list[bool],
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    pairs = [(col, asc) for col, asc in zip(columns, ascending) if col in df.columns]
+    if not pairs:
+        return df
+    sort_cols, sort_ascending = zip(*pairs)
+    return df.sort_values(list(sort_cols), ascending=list(sort_ascending))
+
+
 def build_kr_cluster_snapshot(
     cluster_name: str,
     top_n: int = 3,
@@ -582,15 +596,17 @@ def build_kr_cluster_snapshot(
         else industry_rows
     )
     subsector_rows = _subsector_records(valid_const, detail_group, limit=top_n)
-    representative_rows = (
-        valid_const.sort_values(["rank", "volume"], ascending=[True, False])
-        if not valid_const.empty
-        else valid_const
+    positive_const = valid_const[valid_const["change_pct"] > 0].copy() if not valid_const.empty else valid_const
+    negative_const = valid_const[valid_const["change_pct"] < 0].copy() if not valid_const.empty else valid_const
+    representative_rows = _sort_rows_by_existing(
+        positive_const,
+        ["change_pct", "rank", "volume"],
+        [False, True, False],
     )
-    laggards = (
-        valid_const[valid_const["change_pct"] < 0].sort_values(["rank", "volume"], ascending=[True, False])
-        if not valid_const.empty
-        else valid_const
+    laggards = _sort_rows_by_existing(
+        negative_const,
+        ["change_pct", "rank", "volume"],
+        [True, True, False],
     )
 
     status_avg = const_avg if pd.notna(const_avg) else sector_avg

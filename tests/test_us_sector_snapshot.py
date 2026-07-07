@@ -1,4 +1,14 @@
+import pandas as pd
+import pytest
+
+import stock_lab_core.us_sector_snapshot as us_snapshot
 from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
+
+
+@pytest.fixture(autouse=True)
+def disable_live_us_snapshot_prices(monkeypatch):
+    monkeypatch.setattr(us_snapshot, "_load_latest_prices_for_snapshot", lambda tickers: {})
+    monkeypatch.setattr(us_snapshot, "_latest_close_for_snapshot", lambda ticker: float("nan"))
 
 
 def test_us_sector_snapshot_builds_semiconductor_detail_segments():
@@ -50,3 +60,73 @@ def test_us_sector_snapshot_maps_cluster_card_names():
         assert snapshot, cluster_name
         assert snapshot["market"] == "US"
         assert expected_segment in segment_names
+
+
+def test_us_sector_snapshot_live_refresh_recomputes_returns_and_splits_leaders(monkeypatch):
+    monkeypatch.setattr(
+        us_snapshot,
+        "_resolve_detail_group",
+        lambda detail_name="", cluster_name="": (
+            "테스트",
+            {
+                "sectors": ["Semi"],
+                "subsegments": [{"name": "반도체", "sectors": ["Semi"]}],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        us_snapshot,
+        "load_us_industry_snapshot",
+        lambda: pd.DataFrame([{"industry_name": "Semi", "change_pct": 0.2}]),
+    )
+    monkeypatch.setattr(
+        us_snapshot,
+        "load_us_sector_constituents",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "sector": "Semi",
+                    "ticker": "MU",
+                    "name": "마이크론 테크놀로지",
+                    "current": 1208.0,
+                    "change_pct": 14.85,
+                    "volume": 10,
+                    "market_cap_thousand": 300,
+                },
+                {
+                    "sector": "Semi",
+                    "ticker": "AMAT",
+                    "name": "어플라이드 머티어리얼즈",
+                    "current": 622.14,
+                    "change_pct": 6.19,
+                    "volume": 20,
+                    "market_cap_thousand": 200,
+                },
+                {
+                    "sector": "Semi",
+                    "ticker": "LRCX",
+                    "name": "램 리서치",
+                    "current": 392.65,
+                    "change_pct": 5.74,
+                    "volume": 30,
+                    "market_cap_thousand": 100,
+                },
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        us_snapshot,
+        "_load_latest_prices_for_snapshot",
+        lambda tickers: {"MU": 96.26, "AMAT": 100.96, "LRCX": 105.70},
+    )
+    monkeypatch.setattr(us_snapshot, "_latest_close_for_snapshot", lambda ticker: 100.0)
+
+    snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체")
+
+    leaders = {item["ticker"]: item["change_pct"] for item in snapshot["leaders"]}
+    laggards = {item["ticker"]: item["change_pct"] for item in snapshot["laggards"]}
+    assert "MU" not in leaders
+    assert laggards["MU"] == pytest.approx(-3.74)
+    assert leaders["AMAT"] == pytest.approx(0.96)
+    assert leaders["LRCX"] == pytest.approx(5.70)
+    assert set(leaders).isdisjoint(laggards)

@@ -248,6 +248,103 @@ def _sector_key(value: Any) -> str:
     return str(value or "").strip().lower().replace("/", "").replace(",", "").replace(" ", "")
 
 
+def _coerce_float_value(value: Any) -> float:
+    try:
+        text = str(value or "").strip().replace(",", "").replace("%", "")
+        if not text or text.lower() in {"nan", "none", "null"}:
+            return float("nan")
+        return float(text)
+    except Exception:
+        return float("nan")
+
+
+def _price_lookup_key(ticker: Any) -> str:
+    try:
+        from stock_lab_core.prices import normalize_price_lookup_key
+
+        return normalize_price_lookup_key(str(ticker or "").strip())
+    except Exception:
+        return str(ticker or "").strip().upper()
+
+
+def _load_latest_prices_for_snapshot(tickers: list[str]) -> dict[str, float]:
+    try:
+        from stock_lab_core.prices import load_latest_prices_batch
+
+        return load_latest_prices_batch(tickers)
+    except Exception:
+        return {}
+
+
+@lru_cache(maxsize=512)
+def _latest_close_for_snapshot(ticker: str) -> float:
+    try:
+        from stock_lab_core.prices import load_price_df
+
+        price_df = load_price_df(ticker, "5d")
+    except Exception:
+        return float("nan")
+    if price_df is None or price_df.empty or "Close" not in price_df.columns:
+        return float("nan")
+    close = pd.to_numeric(price_df["Close"], errors="coerce").dropna()
+    if close.empty:
+        return float("nan")
+    return float(close.iloc[-1])
+
+
+def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFrame:
+    """Refresh US representative returns before building cluster cards."""
+    if rows.empty or "ticker" not in rows.columns:
+        return rows
+
+    tickers = [str(ticker or "").strip().upper() for ticker in rows["ticker"].tolist() if str(ticker or "").strip()]
+    latest_prices = _load_latest_prices_for_snapshot(tickers)
+    if not latest_prices:
+        return rows
+
+    refreshed = rows.copy()
+    if "current" not in refreshed.columns:
+        refreshed["current"] = np.nan
+    if "change_pct" not in refreshed.columns:
+        refreshed["change_pct"] = np.nan
+    for col in ("current", "change_pct", "change_abs"):
+        if col in refreshed.columns:
+            refreshed[col] = _clean_numeric_series(refreshed[col]).astype("float64")
+
+    for idx, row in refreshed.iterrows():
+        ticker = str(row.get("ticker", "") or "").strip().upper()
+        if not ticker:
+            continue
+        live_price = _coerce_float_value(latest_prices.get(_price_lookup_key(ticker), np.nan))
+        if not np.isfinite(live_price) or live_price <= 0:
+            continue
+
+        refreshed.at[idx, "current"] = live_price
+        previous_close = _latest_close_for_snapshot(ticker)
+        if np.isfinite(previous_close) and previous_close > 0:
+            change_abs = live_price - previous_close
+            refreshed.at[idx, "change_pct"] = (live_price / previous_close - 1.0) * 100.0
+            if "change_abs" in refreshed.columns:
+                refreshed.at[idx, "change_abs"] = change_abs
+        else:
+            refreshed.at[idx, "change_pct"] = np.nan
+    return refreshed
+
+
+def _sort_rows_by_existing(
+    df: pd.DataFrame,
+    columns: list[str],
+    ascending: list[bool],
+) -> pd.DataFrame:
+    if df.empty:
+        return df
+    pairs = [(col, asc) for col, asc in zip(columns, ascending) if col in df.columns]
+    if not pairs:
+        return df
+    sort_cols, sort_ascending = zip(*pairs)
+    return df.sort_values(list(sort_cols), ascending=list(sort_ascending))
+
+
 def _empty_industry_df() -> pd.DataFrame:
     return pd.DataFrame(columns=["industry_name", "change_pct"])
 
@@ -386,6 +483,9 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
     constituent_rows = _filter_by_sectors(constituent_df, sectors, "sector")
     if industry_rows.empty and constituent_rows.empty:
         return {}
+    if "ticker" in constituent_rows.columns:
+        constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
+        constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
 
     sector_avg = float(industry_rows["change_pct"].mean()) if "change_pct" in industry_rows and not industry_rows.empty else float("nan")
     valid_const = constituent_rows.dropna(subset=["change_pct"]) if "change_pct" in constituent_rows else pd.DataFrame()
@@ -394,15 +494,17 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
 
     industry_top = industry_rows.sort_values("change_pct", ascending=False) if "change_pct" in industry_rows else industry_rows
     subsector_rows = _subsector_records(valid_const, industry_rows, detail_group, limit=top_n)
-    representative_rows = (
-        valid_const.sort_values(["market_cap_thousand", "volume"], ascending=[False, False])
-        if not valid_const.empty and "market_cap_thousand" in valid_const.columns
-        else valid_const
+    positive_const = valid_const[valid_const["change_pct"] > 0].copy() if not valid_const.empty else valid_const
+    negative_const = valid_const[valid_const["change_pct"] < 0].copy() if not valid_const.empty else valid_const
+    representative_rows = _sort_rows_by_existing(
+        positive_const,
+        ["change_pct", "market_cap_thousand", "volume"],
+        [False, False, False],
     )
-    laggards = (
-        valid_const[valid_const["change_pct"] < 0].sort_values(["market_cap_thousand", "volume"], ascending=[False, False])
-        if not valid_const.empty and "market_cap_thousand" in valid_const.columns
-        else valid_const
+    laggards = _sort_rows_by_existing(
+        negative_const,
+        ["change_pct", "market_cap_thousand", "volume"],
+        [True, False, False],
     )
 
     if pd.notna(breadth) and breadth >= 0.60 and pd.notna(sector_avg) and sector_avg <= -1.0:
