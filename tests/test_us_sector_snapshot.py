@@ -19,6 +19,7 @@ def test_us_sector_snapshot_builds_semiconductor_detail_segments():
     assert snapshot["market"] == "US"
     assert snapshot["industries"]
     assert snapshot["subsectors"]
+    assert snapshot["representative_returns_source"] == "unverified"
     assert math.isnan(snapshot["breadth"]) or 0 <= snapshot["breadth"] <= 1
     assert any("반도체" in item["name"] for item in snapshot["subsectors"])
 
@@ -126,6 +127,7 @@ def test_us_sector_snapshot_live_refresh_recomputes_returns_and_splits_leaders(m
 
     leaders = {item["ticker"]: item["change_pct"] for item in snapshot["leaders"]}
     laggards = {item["ticker"]: item["change_pct"] for item in snapshot["laggards"]}
+    assert snapshot["representative_returns_source"] == "live"
     assert "MU" not in leaders
     assert laggards["MU"] == pytest.approx(-3.74)
     assert leaders["AMAT"] == pytest.approx(0.96)

@@ -7261,13 +7261,20 @@ def _split_market_snapshot_representatives(snapshot: dict) -> tuple[list[dict], 
     return positive, negative
 
 
+def _market_snapshot_representatives_verified(snapshot: dict, market_label: str = "") -> bool:
+    market = str(market_label or (snapshot or {}).get("market", "") or "").strip().upper()
+    if market == "US":
+        return str((snapshot or {}).get("representative_returns_source", "") or "") == "live"
+    return True
+
+
 def _market_snapshot_items_plain(items: list, limit: int = 3) -> str:
     text = _format_kr_sector_items_plain(items, limit=limit)
     return text or "-"
 
 
-def _market_snapshot_layer_html(snapshot: dict) -> str:
-    subsectors = _market_snapshot_items_plain(snapshot.get("subsectors", []), limit=3)
+def _market_snapshot_layer_html(snapshot: dict, show_subsectors: bool = True) -> str:
+    subsectors = _market_snapshot_items_plain(snapshot.get("subsectors", []), limit=3) if show_subsectors else "-"
     industries = _market_snapshot_items_plain(snapshot.get("industries", []), limit=3)
     if subsectors == "-" and industries == "-":
         return ""
@@ -7293,13 +7300,21 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
         status_clr = "#fbbf24"
 
     breadth = snapshot.get("breadth", np.nan)
-    breadth_txt = f"{float(breadth) * 100:.0f}%" if finite_num(breadth) else "-"
+    reps_verified = _market_snapshot_representatives_verified(snapshot, market_label=market)
+    if is_us and not reps_verified:
+        status = "대표주 확인중"
+        status_clr = "#fbbf24"
+    breadth_txt = f"{float(breadth) * 100:.0f}%" if (reps_verified and finite_num(breadth)) else "-"
     sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
-    const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan))
-    positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
-    leaders = _format_kr_sector_items(positive_items, limit=3)
-    laggards = _format_kr_sector_items(negative_items, limit=2)
-    layer_html = _market_snapshot_layer_html(snapshot)
+    const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan)) if reps_verified else "확인중"
+    if reps_verified:
+        positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
+        leaders = _format_kr_sector_items(positive_items, limit=3)
+        laggards = _format_kr_sector_items(negative_items, limit=2)
+    else:
+        leaders = "실시간 확인중"
+        laggards = "-"
+    layer_html = _market_snapshot_layer_html(snapshot, show_subsectors=reps_verified or not is_us)
 
     return (
         "<div style='border-top:1px dashed #334155;margin-top:6px;padding-top:5px;"
@@ -7341,6 +7356,9 @@ def _kr_snapshot_status_text(snapshot: dict) -> str:
 
 
 def _market_snapshot_status_text(snapshot: dict, market_label: str = "") -> str:
+    if str(market_label or "").strip().upper() == "US" and not _market_snapshot_representatives_verified(snapshot, market_label):
+        sector_avg = _fmt_kr_sector_pct((snapshot or {}).get("sector_avg_change_pct", np.nan))
+        return f"US 내부 대표주 확인중 · 기준업종 {sector_avg}"
     base = _kr_snapshot_status_text(snapshot)
     if not market_label or base == "-":
         return base
@@ -7592,7 +7610,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
-MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 3
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 4
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
@@ -7719,9 +7737,13 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             out.at[idx, "KOSPI대분류"] = broad_text
         elif market_label == "US":
             out.at[idx, "US대분류"] = broad_text
-        positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
-        out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(positive_items, limit=3) or "-"
-        out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(negative_items, limit=2) or "-"
+        if _market_snapshot_representatives_verified(snapshot, market_label=market_label):
+            positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
+            out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(positive_items, limit=3) or "-"
+            out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(negative_items, limit=2) or "-"
+        else:
+            out.at[idx, "업종대표주"] = "실시간 확인중"
+            out.at[idx, "약한대표주"] = "-"
         status = str(snapshot.get("status", "") or "")
         out.at[idx, "시장내부판정"] = status
         if market_label == "KOSPI":
@@ -7929,7 +7951,7 @@ def _render_cluster_card(col, cl: dict, rank: int, delta: float | None = None):
 
     # ── 배지: 강도 라벨과 타이밍 상태를 서로 다른 배지로 분리 표시 ──
     badge = (" <span style='background:#f97316;color:#fff;font-size:0.60em;"
-             "padding:1px 5px;border-radius:3px;'>🔥쏠림+진입가능</span>") if is_sur else ""
+             "padding:1px 5px;border-radius:3px;'>🔥쏠림 관찰</span>") if is_sur else ""
     label_badge = (
         f" <span style='background:{main_clr}22;color:{main_clr};font-size:0.60em;"
         "padding:1px 5px;border-radius:3px;' title='강도: 돈이 쏠리는 정도'>"
@@ -8255,6 +8277,13 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
             warning_bits.append(f"대표축 {core_member.get('name', core_member.get('ticker', ''))} 소외: 클러스터 내부 엇갈림")
         if market_snapshot.get("warning"):
             warning_bits.append(str(market_snapshot.get("warning")))
+        us_reps_unverified = bool(
+            not is_kr_cluster
+            and market_snapshot
+            and not _market_snapshot_representatives_verified(market_snapshot, market_label="US")
+        )
+        if us_reps_unverified:
+            warning_bits.append("US 대표주 실시간 등락률 확인 필요")
         core_warning = " / ".join(warning_bits)
 
         short_down = (
@@ -8329,6 +8358,8 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
             timing_state = "확인 필요"
         if kr_internal_weak and timing_state == "진입 가능":
             timing_state = "확인 필요"
+        if us_reps_unverified and timing_state == "진입 가능":
+            timing_state = "확인 필요"
         regime_label, regime_hint = _classify_cluster_market_regime(
             market_key or ("한국" if is_kr_cluster else "미국"),
             avg_r1d,
@@ -8345,6 +8376,7 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
             flow_label in {"주도", "부상"}
             and timing_state == "진입 가능"
             and avg_rsmom >= 0.02
+            and not us_reps_unverified
         )
         heat = strength_score
 
@@ -8850,7 +8882,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
     fig.add_hline(y=0, line_dash="dash", line_color="#64748b", line_width=1)
     fig.add_vline(x=1.25, line_dash="dash", line_color="#64748b", line_width=1)
     fig.add_vline(x=0.45, line_dash="dot", line_color="rgba(100,116,139,0.70)", line_width=1)
-    fig.add_annotation(x=1.62, y=max(38, chart_df["강도"].max() * 0.92), text="<b>쏠림+진입 가능</b>", showarrow=False, font=dict(color="#86efac", size=12))
+    fig.add_annotation(x=1.62, y=max(38, chart_df["강도"].max() * 0.92), text="<b>쏠림 관찰</b>", showarrow=False, font=dict(color="#86efac", size=12))
     fig.add_annotation(x=0.84, y=max(34, chart_df["강도"].max() * 0.76), text="<b>쏠림 강함 · 눌림/확인</b>", showarrow=False, font=dict(color="#fde68a", size=12))
     fig.add_annotation(x=-0.55, y=max(30, chart_df["강도"].max() * 0.58), text="<b>대기/회피 확인</b>", showarrow=False, font=dict(color="#cbd5e1", size=12))
     fig.add_annotation(x=-0.70, y=min(-22, chart_df["강도"].min() * 0.70), text="<b>약세/회피</b>", showarrow=False, font=dict(color="#fca5a5", size=12))
@@ -8913,7 +8945,8 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
     st.plotly_chart(fig, width='stretch')
     st.caption(
         "버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. "
-        "'진입가능' 칸만 실제 진입 후보이고, '눌림대기/확인/과열'은 관망 또는 정찰 후보입니다. "
+        "이 차트의 진입가능은 주문 신호가 아니라 정밀관측 전 후보 압축 신호입니다. "
+        "'눌림대기/확인/과열'은 관망 또는 정찰 후보입니다. "
         "국면 라벨은 1D/5D와 지수 평균을 같이 봅니다. 지수 급락장 속 플러스는 '주도'보다 '상대방어'로 먼저 해석합니다."
     )
 
@@ -8938,7 +8971,7 @@ def render_cluster_heatmap_enhanced(
     v4: "어디로 돈이 쏠리는가"(strength_score, 3개월 RS·모멘텀·거래량·확산도 — 단기
     변동에 흔들리지 않음)와 "지금 들어가도 되는가"(timing_state, 1개월·2주·가격위치
     기준 진입 가능/눌림 대기/과열/하락 중)를 완전히 분리해서 계산·표시한다.
-    🔥(쏠림+진입가능) = strength 상위(주도/부상) + timing_state == '진입 가능'.
+    🔥(쏠림 관찰) = strength 상위(주도/부상) + timing_state == '진입 가능' + 내부 대표주 검증 통과.
     """
     if rotation_df is None or rotation_df.empty:
         return
@@ -8988,10 +9021,10 @@ def render_cluster_heatmap_enhanced(
             parts = []
             if ready_now:
                 names = "·".join(f"**{c['name']}**" for c in ready_now)
-                parts.append(f"🔥 쏠림+진입 가능: {names} — 강도(3M RS·확산도)도 좋고 단기 흐름(1M/2W)도 확인된 구간입니다.")
+                parts.append(f"🔥 쏠림 관찰: {names} — 강도와 단기 흐름이 같이 확인된 축입니다. 종목별 정밀관측으로 넘겨 확인하세요.")
             if wait_timing:
                 bits = "·".join(f"**{c['name']}**({c['timing_state']})" for c in wait_timing)
-                parts.append(f"⏳ 쏠림은 강하지만 타이밍 대기: {bits} — 돈은 쏠리는 중이나 아직 진입 후보가 아니라 관망/정찰 구간입니다.")
+                parts.append(f"⏳ 쏠림은 강하지만 타이밍 대기: {bits} — 돈은 쏠리는 중이나 종목별 진입 신호는 아직 확인이 필요합니다.")
             st.caption("  ".join(parts))
         else:
             st.caption(

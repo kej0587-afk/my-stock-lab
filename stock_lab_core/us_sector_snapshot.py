@@ -302,6 +302,7 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
         refreshed["current"] = np.nan
     if "change_pct" not in refreshed.columns:
         refreshed["change_pct"] = np.nan
+    refreshed["_live_return"] = False
     for col in ("current", "change_pct", "change_abs"):
         if col in refreshed.columns:
             refreshed[col] = _clean_numeric_series(refreshed[col]).astype("float64")
@@ -330,6 +331,7 @@ def _refresh_constituent_rows_with_live_prices(rows: pd.DataFrame) -> pd.DataFra
         if np.isfinite(previous_close) and previous_close > 0:
             change_abs = live_price - previous_close
             refreshed.at[idx, "change_pct"] = (live_price / previous_close - 1.0) * 100.0
+            refreshed.at[idx, "_live_return"] = True
             if "change_abs" in refreshed.columns:
                 refreshed.at[idx, "change_abs"] = change_abs
         else:
@@ -495,6 +497,10 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
 
     sector_avg = float(industry_rows["change_pct"].mean()) if "change_pct" in industry_rows and not industry_rows.empty else float("nan")
     valid_const = constituent_rows.dropna(subset=["change_pct"]) if "change_pct" in constituent_rows else pd.DataFrame()
+    live_return_verified = (
+        "_live_return" in constituent_rows.columns
+        and bool(pd.Series(constituent_rows["_live_return"]).fillna(False).astype(bool).any())
+    )
     breadth = float((valid_const["change_pct"] > 0).mean()) if not valid_const.empty else float("nan")
     const_avg = float(valid_const["change_pct"].mean()) if not valid_const.empty else float("nan")
 
@@ -544,6 +550,7 @@ def build_us_cluster_snapshot(cluster_name: str, top_n: int = 3, detail_name: st
         "breadth": breadth,
         "status": status,
         "warning": warning,
+        "representative_returns_source": "live" if live_return_verified else "unverified",
         "industries": _records(industry_top, name_col="industry_name", limit=top_n),
         "subsectors": subsector_rows,
         "leaders": _records(representative_rows, limit=top_n),
