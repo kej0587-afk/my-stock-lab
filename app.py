@@ -7254,8 +7254,16 @@ def _split_market_snapshot_representatives(snapshot: dict) -> tuple[list[dict], 
         raw_items.extend(snapshot.get("leaders", []) or [])
         raw_items.extend(snapshot.get("laggards", []) or [])
     items = _dedupe_market_snapshot_items(raw_items)
-    positive = [item for item in items if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) > 0]
-    negative = [item for item in items if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) < 0]
+    positive_threshold = 0.15
+    negative_threshold = -0.15
+    positive = [
+        item for item in items
+        if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) >= positive_threshold
+    ]
+    negative = [
+        item for item in items
+        if finite_num(item.get("change_pct", np.nan)) and float(item.get("change_pct")) <= negative_threshold
+    ]
     positive.sort(key=lambda item: float(item.get("change_pct", 0.0)), reverse=True)
     negative.sort(key=lambda item: float(item.get("change_pct", 0.0)))
     return positive, negative
@@ -7281,6 +7289,12 @@ def _market_snapshot_layer_html(snapshot: dict, show_subsectors: bool = True) ->
     if industries == "-" or industries == subsectors or _snapshot_layer_names_overlap(snapshot):
         return f"<div>흐름축: {html.escape(subsectors)}</div>"
     return f"<div>흐름축: {html.escape(subsectors)} <span style='color:#64748b;'>/ 기준업종: {html.escape(industries)}</span></div>"
+
+
+def _market_snapshot_append_live_label(layer_html: str, is_us: bool, reps_verified: bool) -> str:
+    if not (is_us and reps_verified and layer_html):
+        return layer_html
+    return layer_html.replace("기준업종:", "기준업종(지연):")
 
 
 def _snapshot_layer_name_key(value: str) -> str:
@@ -7323,23 +7337,45 @@ def _render_market_cluster_snapshot_html(snapshot: dict, market_label: str = "")
         status = "대표주 확인중"
         status_clr = "#fbbf24"
     breadth_txt = f"{float(breadth) * 100:.0f}%" if (reps_verified and finite_num(breadth)) else "-"
-    sector_avg = _fmt_kr_sector_pct(snapshot.get("sector_avg_change_pct", np.nan))
-    const_avg = _fmt_kr_sector_pct(snapshot.get("constituent_avg_change_pct", np.nan)) if reps_verified else "확인중"
+    sector_avg_value = clean_float(snapshot.get("sector_avg_change_pct", np.nan), np.nan)
+    const_avg_value = clean_float(snapshot.get("constituent_avg_change_pct", np.nan), np.nan)
+    sector_avg = _fmt_kr_sector_pct(sector_avg_value)
+    const_avg = _fmt_kr_sector_pct(const_avg_value) if reps_verified else "확인중"
     if reps_verified:
         positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
         leaders = _format_kr_sector_items(positive_items, limit=3)
         laggards = _format_kr_sector_items(negative_items, limit=2)
+        if leaders == "-":
+            leaders = "대표주 상승 없음"
+        if laggards == "-":
+            laggards = "의미 있는 약세 없음"
     else:
         leaders = "실시간 확인중"
         laggards = "-"
     layer_html = _market_snapshot_layer_html(snapshot, show_subsectors=reps_verified or not is_us)
+    layer_html = _market_snapshot_append_live_label(layer_html, is_us=is_us, reps_verified=reps_verified)
+    divergence_html = ""
+    if (
+        is_us
+        and reps_verified
+        and finite_num(sector_avg_value)
+        and finite_num(const_avg_value)
+        and float(sector_avg_value) >= 0
+        and float(const_avg_value) <= -0.20
+    ):
+        divergence_html = (
+            "<div style='color:#fca5a5;'>⚠ 기준업종 스냅샷은 양호하지만 대표주는 실시간 약세입니다. "
+            "ETF/업종과 종목 내부가 엇갈립니다.</div>"
+        )
 
     return (
         "<div style='border-top:1px dashed #334155;margin-top:6px;padding-top:5px;"
         "font-size:0.63em;line-height:1.65;color:#94a3b8;'>"
         f"<div><span style='color:{status_clr};font-weight:700;'>내부: {html.escape(status)}</span>"
-        f" · 확산 {breadth_txt} · 업종 {sector_avg} · 대표 {const_avg}</div>"
+        f" · 확산 {breadth_txt} · {'기준' if is_us and reps_verified else '업종'} {sector_avg}"
+        f" · {'대표실시간' if is_us and reps_verified else '대표'} {const_avg}</div>"
         f"{layer_html}"
+        f"{divergence_html}"
         f"<div>뜨는 종목: {leaders}</div>"
         f"<div>약한 종목: {laggards}</div>"
         "</div>"
@@ -7628,7 +7664,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
-MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 6
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 7
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
@@ -8454,6 +8490,16 @@ def _remove_cluster_warning_phrase(text: str, phrase: str) -> str:
     return " / ".join(bit for bit in bits if bit != phrase)
 
 
+def _append_cluster_warning_phrase(text: str, phrase: str) -> str:
+    phrase = str(phrase or "").strip()
+    if not phrase:
+        return str(text or "").strip()
+    bits = [bit.strip() for bit in str(text or "").split(" / ") if bit.strip()]
+    if phrase not in bits:
+        bits.append(phrase)
+    return " / ".join(bits)
+
+
 def _refresh_visible_us_cluster_snapshots(visible: list[dict], market_label: str) -> None:
     """Refresh only visible US cards so representative stocks are useful without slowing the whole tab."""
     if "미국" not in str(market_label or ""):
@@ -8480,6 +8526,21 @@ def _refresh_visible_us_cluster_snapshots(visible: list[dict], market_label: str
                 cl.get("core_warning", ""),
                 "US 대표주 실시간 등락률 확인 필요",
             )
+            if snapshot.get("warning"):
+                cl["core_warning"] = _append_cluster_warning_phrase(
+                    cl.get("core_warning", ""),
+                    str(snapshot.get("warning", "")),
+                )
+            const_avg = clean_float(snapshot.get("constituent_avg_change_pct", np.nan), np.nan)
+            if (
+                str(cl.get("flow_label", "")) in {"주도", "부상"}
+                and finite_num(const_avg)
+                and float(const_avg) <= -0.20
+            ):
+                cl["core_warning"] = _append_cluster_warning_phrase(
+                    cl.get("core_warning", ""),
+                    "ETF/로테이션은 강하지만 대표주는 실시간 약세",
+                )
 
 
 def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
