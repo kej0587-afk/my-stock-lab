@@ -1874,6 +1874,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
     high_52w    = float(px["High"].max())
     low_52w     = float(px["Low"].min())
     period_ret  = get_return_by_days(close, len(close) - 1)
+    ret_1w      = get_return_by_days(close, 5)
     ret_2w      = get_return_by_days(close, 10)
     ret_1m      = get_return_by_days(close, 21)
     ret_3m      = get_return_by_days(close, 63)
@@ -1897,7 +1898,8 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
         "현재가":      cur,
         "가격수준":    price_level,
         "기간수익률":  period_ret,
-        "2주수익률":   ret_2w,
+        "1주수익률":   ret_1w,
+            "2주수익률":   ret_2w,
         "1개월수익률": ret_1m,
         "3개월수익률": ret_3m,
         "6개월수익률": ret_6m,
@@ -1965,7 +1967,7 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
 
     _empty: dict = {
         "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
-        "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
+        "1주수익률": np.nan, "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
         "가속도": np.nan, "단기가속도": np.nan, "거래량증가": np.nan,
         "돈흐름점수": np.nan, "스윙점수": np.nan,
         "점수_1개월": np.nan, "점수_3개월": np.nan, "점수_6개월": np.nan,
@@ -2004,6 +2006,7 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (theme, subtheme), group in valid.groupby(["테마", "하위테마"], sort=False):
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
+        ret_1w        = group["1주수익률"].mean() if "1주수익률" in group.columns else np.nan
         ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
         ret_3m        = group["3개월수익률"].mean()
@@ -2027,6 +2030,7 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
             "하위테마":   subtheme,
             "종목수":     int(len(group)),
             "대표주":     f"{leader['종목명']} ({leader['Ticker']})",
+            "1주수익률":   ret_1w,
             "2주수익률":   ret_2w,
             "1개월수익률": ret_1m,
             "3개월수익률": ret_3m,
@@ -2081,6 +2085,7 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
         total_count   = int((all_rows["테마"] == theme).sum())
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
         weak          = group.sort_values("돈흐름점수", ascending=True).iloc[0]
+        ret_1w        = group["1주수익률"].mean() if "1주수익률" in group.columns else np.nan
         ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
         ret_3m        = group["3개월수익률"].mean()
@@ -2163,6 +2168,7 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             "계산종목수":    int(len(group)),
             "대표주":        f"{leader['종목명']} ({leader['Ticker']})",
             "약세주":        f"{weak['종목명']} ({weak['Ticker']})",
+            "1주수익률":     ret_1w,
             "2주수익률":     ret_2w,
             "1개월수익률":   ret_1m,
             "3개월수익률":   ret_3m,
@@ -2242,6 +2248,7 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
             if not finite_num(r3) or not finite_num(ac):
                 continue
 
+            r1w = r.get("1주수익률", np.nan)
             r2w = r.get("2주수익률", np.nan)
             r1m = r.get("1개월수익률", np.nan)
             swing_ac = r.get("단기가속도", np.nan)
@@ -2285,6 +2292,7 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 "RS모멘텀":   rs_mom,
                 "3M수익률":   float(r3),
                 "1개월수익률": float(r1m) if finite_num(r1m) else np.nan,
+                "1주수익률":  float(r1w) if finite_num(r1w) else np.nan,
                 "2주수익률":  float(r2w) if finite_num(r2w) else np.nan,
                 "단기가속도": float(swing_ac) if finite_num(swing_ac) else np.nan,
                 "거래량증가":  float(volume_growth) if finite_num(volume_growth) else np.nan,
@@ -2343,6 +2351,7 @@ def calculate_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
             r3  = row.get("3개월수익률", np.nan)
             ac  = row.get("가속도",      np.nan)
             r1  = row.get("1개월수익률", np.nan)
+            r1w = row.get("1주수익률",   np.nan)
             r2w = row.get("2주수익률",   np.nan)
             vg  = row.get("거래량증가",  np.nan)
 
@@ -2365,6 +2374,7 @@ def calculate_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 "RS모멘텀":   rs_mom,
                 "3개월수익률": r3,
                 "1개월수익률": r1,
+                "1주수익률":   r1w,
                 "2주수익률":   r2w,
                 "거래량증가":  vg,
                 "로테이션":   quad,
