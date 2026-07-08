@@ -7712,13 +7712,14 @@ def _build_internal_representative_table(grp_df: pd.DataFrame, label_col: str = 
             "섹터": sector,
             "실행분류": row.get("실행분류", ""),
             "진입검토": row.get("진입검토", ""),
-            "RS(3M)": "",
-            "RS모멘텀": "",
-            "3M수익률": "",
-            "1개월수익률": "",
-            "2주수익률": "",
-            "1주수익률": "",
-            "거래량증가": "",
+            # 내부 대표주 고유 RS가 아니라, 해당 대표주가 속한 ETF/섹터 축의 흐름 기준값입니다.
+            "RS(3M)": _format_rotation_pct_cell(row.get("RS(3M)", np.nan)),
+            "RS모멘텀": _format_rotation_pct_cell(row.get("RS모멘텀", np.nan)),
+            "3M수익률": _format_rotation_pct_cell(row.get("3M수익률", row.get("3개월수익률", np.nan))),
+            "1개월수익률": _format_rotation_pct_cell(row.get("1개월수익률", np.nan)),
+            "2주수익률": _format_rotation_pct_cell(row.get("2주수익률", np.nan)),
+            "1주수익률": _format_rotation_pct_cell(row.get("1주수익률", np.nan)),
+            "거래량증가": _format_rotation_pct_cell(row.get("거래량증가", np.nan)),
         }
         for item in _snapshot_item_rows(row.get("_내부대표주자료"))[:3]:
             name = _flow_text(item.get("name", ""))
@@ -7729,7 +7730,7 @@ def _build_internal_representative_table(grp_df: pd.DataFrame, label_col: str = 
                 **base,
                 "대표주": name,
                 "Ticker": _flow_text(item.get("ticker", "")),
-                "상태": f"상승 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "상승",
+                "상태": f"상승 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "대표주(등락률 확인 전)",
             })
         for item in _snapshot_item_rows(row.get("_약한대표주자료"))[:2]:
             name = _flow_text(item.get("name", ""))
@@ -7740,7 +7741,7 @@ def _build_internal_representative_table(grp_df: pd.DataFrame, label_col: str = 
                 **base,
                 "대표주": name,
                 "Ticker": _flow_text(item.get("ticker", "")),
-                "상태": f"약세 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "약세",
+                "상태": f"약세 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "약세(등락률 확인 전)",
             })
     return pd.DataFrame(rows)
 
@@ -7902,9 +7903,10 @@ def _attach_kr_internal_context_to_rotation_df(
             out.at[idx, "_내부대표주자료"] = positive_items
             out.at[idx, "_약한대표주자료"] = negative_items
         else:
-            out.at[idx, "업종대표주"] = "-"
+            fallback_items = _dedupe_market_snapshot_items(snapshot.get("leaders", []) or [])
+            out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(fallback_items, limit=3) or "-"
             out.at[idx, "약한대표주"] = "-"
-            out.at[idx, "_내부대표주자료"] = []
+            out.at[idx, "_내부대표주자료"] = fallback_items
             out.at[idx, "_약한대표주자료"] = []
         status = str(snapshot.get("status", "") or "")
         out.at[idx, "시장내부판정"] = status
@@ -8652,13 +8654,15 @@ def _refresh_visible_us_cluster_snapshots(visible: list[dict], market_label: str
 
 
 def _render_market_cluster_row(cl_list: list, top_n: int, market_label: str,
-                               rank_offset: int = 0, prev_scores: dict | None = None):
+                               rank_offset: int = 0, prev_scores: dict | None = None,
+                               refresh_live_us: bool = False):
     """한 시장(한국/미국)의 클러스터 상위 top_n 카드 행 렌더."""
     total_all = len(cl_list)
     visible   = cl_list[:top_n]
     if not visible:
         return
-    _refresh_visible_us_cluster_snapshots(visible, market_label)
+    if refresh_live_us:
+        _refresh_visible_us_cluster_snapshots(visible, market_label)
 
     # 시장 레이블 소제목
     surging_here = [c for c in visible if c["is_surging"]]
@@ -9180,6 +9184,7 @@ def render_cluster_heatmap_enhanced(
     clusters_kr: dict | None = None,
     clusters_us: dict | None = None,
     top_n_per_market: int = 3,
+    refresh_live_us: bool = False,
 ):
     """
     클러스터 적합도 패널 v3 — RS강도·방향·단기확인·거래강도·랭킹·확산도 통합.
@@ -9270,7 +9275,7 @@ def render_cluster_heatmap_enhanced(
 
         with st.expander("클러스터 상세 카드 보기", expanded=False):
             _render_market_cluster_row(us_list, top_n_per_market, "🇺🇸 미국 섹터",
-                                       prev_scores=_prev_scores)
+                                       prev_scores=_prev_scores, refresh_live_us=refresh_live_us)
             _render_market_cluster_row(kr_list, top_n_per_market, "🇰🇷 한국 섹터",
                                        rank_offset=top_n_per_market, prev_scores=_prev_scores)
         st.write("")
@@ -25819,9 +25824,9 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                 st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
 
     # ── 공통: 로테이션 차트 그리기 ───────────────────────────────────
-    def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률"):
+    def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률", live_us: bool = False):
         """RS(3M)/RS모멘텀 기준 사분면 차트 + 진입검토 후보 테이블 렌더링."""
-        grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col, live_us=True)
+        grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col, live_us=live_us)
         grp_df = _apply_rotation_execution_framework(grp_df)
         grp_df = _prepare_rotation_context_display_df(grp_df, label_col=label_col)
         _ACTION_COLOR  = {
@@ -26399,11 +26404,18 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
         "한국/미국 섹터는 각 시장의 세부축과 대분류 확산도를 함께 반영합니다."
     )
 
+    live_us_reps = st.checkbox(
+        "미국 내부 대표주 실시간 등락률 갱신",
+        value=False,
+        key="today_flow_live_us_reps",
+        help="기본은 빠르게 열기 위해 대표주명만 표시합니다. 체크하면 미국 대표주 현재가/전일대비를 조회하므로 로딩이 길어질 수 있습니다.",
+    )
     render_cluster_heatmap_enhanced(
         sector_rotation_df, clusters={},
         clusters_kr=SECTOR_CLUSTERS_KR,
         clusters_us=SECTOR_CLUSTERS_US,
         top_n_per_market=3,
+        refresh_live_us=live_us_reps,
     )
 
     _rot_tab_labels = ["한국섹터", "미국섹터", "테마종목"]
@@ -26422,13 +26434,13 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
         if _us_rot.empty:
             st.info("미국 섹터 데이터가 부족합니다.")
         else:
-            _render_rotation_chart_and_table(_us_rot, label_col="섹터", ret_col_1m="3M수익률")
+            _render_rotation_chart_and_table(_us_rot, label_col="섹터", ret_col_1m="3M수익률", live_us=live_us_reps)
 
     with _rot_tabs[2]:
         if theme_rot_map_df.empty:
             st.info("테마 데이터가 부족합니다 (IMAGE_THEME_FLOW 비활성).")
         else:
-            _render_rotation_chart_and_table(theme_rot_map_df, label_col="테마", ret_col_1m="1개월수익률")
+            _render_rotation_chart_and_table(theme_rot_map_df, label_col="테마", ret_col_1m="1개월수익률", live_us=live_us_reps)
 
     # ── 투자자별 순매수 TOP 10 은 render_investor_top10_section() 에서 별도 렌더링 ──
     return snapshot

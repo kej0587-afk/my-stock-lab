@@ -557,18 +557,28 @@ def build_us_cluster_snapshot(
 
     industry_top = industry_rows.sort_values("change_pct", ascending=False) if "change_pct" in industry_rows else industry_rows
     subsector_rows = _subsector_records(valid_const, industry_rows, detail_group, limit=top_n)
-    positive_const = valid_const[valid_const["change_pct"] > 0].copy() if not valid_const.empty else valid_const
-    negative_const = valid_const[valid_const["change_pct"] < 0].copy() if not valid_const.empty else valid_const
-    representative_rows = _sort_rows_by_existing(
-        positive_const,
-        ["change_pct", "market_cap_thousand", "volume"],
-        [False, False, False],
-    )
-    laggards = _sort_rows_by_existing(
-        negative_const,
-        ["change_pct", "market_cap_thousand", "volume"],
-        [True, False, False],
-    )
+    if not valid_const.empty:
+        positive_const = valid_const[valid_const["change_pct"] > 0].copy()
+        negative_const = valid_const[valid_const["change_pct"] < 0].copy()
+        representative_rows = _sort_rows_by_existing(
+            positive_const,
+            ["change_pct", "market_cap_thousand", "volume"],
+            [False, False, False],
+        )
+        laggards = _sort_rows_by_existing(
+            negative_const,
+            ["change_pct", "market_cap_thousand", "volume"],
+            [True, False, False],
+        )
+    else:
+        # 실시간 등락률을 붙이지 않는 빠른 모드에서도 대표주명은 보여준다.
+        # change_pct는 비워 두어 오래된 CSV 등락률이 정확한 값처럼 보이지 않게 한다.
+        representative_rows = _sort_rows_by_existing(
+            constituent_rows,
+            ["market_cap_thousand", "volume"],
+            [False, False],
+        )
+        laggards = constituent_rows.iloc[0:0].copy()
 
     if pd.notna(breadth) and breadth >= 0.60 and pd.notna(sector_avg) and sector_avg <= -1.0:
         status = "혼조(대장주 쏠림)"
