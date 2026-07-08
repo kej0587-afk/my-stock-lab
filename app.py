@@ -8004,19 +8004,77 @@ def _rotation_execution_bucket(row) -> tuple[str, str]:
     return "🔸 관망", "큰 흐름, 단기 흐름, 내부 확산 중 하나 이상이 부족합니다."
 
 
+
+ROTATION_DEFENSE_ACTION = "\U0001F6E1 \uBC29\uC5B4\uD655\uC778"
+ROTATION_DEFENSIVE_MARKET_MODES = {
+    "\uBC29\uC5B4", "\uC704\uD5D8", "\uBE44\uC0C1", "\uAD6D\uC7A5 \uBE44\uC0C1", "\uBBF8\uC7A5 \uBE44\uC0C1", "\uC804\uC2DC\uC7A5 \uBE44\uC0C1",
+}
+ROTATION_STRONG_FLOW_STATES = {
+    "\uAC15\uC138 \uAC00\uC18D", "\uAC15\uC138\uC9C0\uC18D", "\uAC15\uC138 \uC9C0\uC18D", "\uC2E0\uADDC \uC720\uC785", "\uC8FC\uB3C4 \uC720\uC9C0", "\uAE09\uBC18\uB4F1",
+}
+
+
 def _rotation_entry_gate(action: str) -> str:
     text = str(action or "")
-    if text.startswith("✅"):
-        return "✅ 진입검토"
-    if "눌림대기" in text:
-        return "⏳ 눌림대기"
-    if "반등확인" in text:
-        return "👀 확인필요"
-    if "내부" in text:
-        return "🟨 내부확인"
-    if "위험회피" in text:
-        return "🚫 제외"
-    return "🔸 관망"
+    if text.startswith("\u2705"):
+        return "\u2705 \uC9C4\uC785\uAC80\uD1A0"
+    if "\uB20C\uB9BC" in text:
+        return "\u23F3 \uB20C\uB9BC\uB300\uAE30"
+    if "\uBC18\uB4F1" in text:
+        return "\U0001F440 \uD655\uC778\uD544\uC694"
+    if "\uBC29\uC5B4" in text:
+        return ROTATION_DEFENSE_ACTION
+    if "\uB0B4\uBD80" in text:
+        return "\U0001F7E8 \uB0B4\uBD80\uD655\uC778"
+    if "\uC704\uD5D8" in text:
+        return "\U0001F6AB \uC81C\uC678"
+    return "\U0001F538 \uAD00\uB9DD"
+
+
+def _rotation_market_mode_for_row(row, market_guard=None, label_col: str = "") -> str:
+    if not market_guard:
+        return ""
+    code = _flow_market_code_from_row(row, label_col=label_col)
+    if code == "KR":
+        stats = market_guard.get("kr_stats", {}) if isinstance(market_guard, dict) else {}
+    elif code == "US":
+        stats = market_guard.get("us_stats", {}) if isinstance(market_guard, dict) else {}
+    else:
+        stats = {}
+    mode = str((stats or {}).get("mode", "") or "")
+    if mode:
+        return mode
+    return str((market_guard or {}).get("mode", "") or "")
+
+
+def _rotation_market_is_defensive(mode: str) -> bool:
+    text = str(mode or "")
+    return any(word in text for word in ROTATION_DEFENSIVE_MARKET_MODES)
+
+
+def _apply_market_defense_to_rotation(out: pd.DataFrame, market_guard=None, label_col: str = "") -> pd.DataFrame:
+    if out is None or out.empty or not market_guard:
+        return out
+    out = out.copy()
+    out["\uC2DC\uC7A5\uBC29\uC5B4\uBAA8\uB4DC"] = out.apply(lambda r: _rotation_market_mode_for_row(r, market_guard, label_col=label_col), axis=1)
+    defense_note = "\uC2DC\uC7A5\uC774 \uBC29\uC5B4/\uC704\uD5D8 \uAD6C\uAC04\uC785\uB2C8\uB2E4. \uC911\uAE30 \uB3C8\uD750\uB984\uC774 \uAC15\uD574\uB3C4 \uC2E0\uADDC\u00B7\uCD94\uB9E4\uBCF4\uB2E4 \uC885\uAC00 \uC548\uC815\uACFC \uB0B4\uBD80 \uD655\uC0B0 \uD655\uC778\uC774 \uC6B0\uC120\uC785\uB2C8\uB2E4."
+    candidate_like = {"\u2705 \uC815\uBC00\uD6C4\uBCF4", "\u23F3 \uB20C\uB9BC\uB300\uAE30", "\U0001F440 \uBC18\uB4F1\uD655\uC778", "\U0001F7E8 \uB0B4\uBD80\uD63C\uC870", "\U0001F7E8 \uB0B4\uBD80\uD655\uC778"}
+    strong_big = {"\uC911\uAE30\uC8FC\uB3C4", "\uC2DC\uC7A5\uC0C1\uD68C", "\uD68C\uBCF5\uC2DC\uB3C4"}
+    weak_short = {"\uC870\uC815", "\uAE09\uB77D/\uC774\uD0C8", "\uACFC\uC5F4", "\uD655\uC778\uC911", "\uBC18\uB4F1\uC2DC\uB3C4"}
+    for idx, row in out.iterrows():
+        mode = str(row.get("\uC2DC\uC7A5\uBC29\uC5B4\uBAA8\uB4DC", "") or "")
+        if not _rotation_market_is_defensive(mode):
+            continue
+        short = str(row.get("\uB2E8\uAE30\uC0C1\uD0DC", "") or "")
+        big = str(row.get("\uD070\uD750\uB984", "") or "")
+        action = str(row.get("\uC2E4\uD589\uBD84\uB958", "") or "")
+        state = str(row.get("\uC0C1\uD0DC", "") or "")
+        if state in ROTATION_STRONG_FLOW_STATES and short in {"\uC870\uC815", "\uAE09\uB77D/\uC774\uD0C8", "\uACFC\uC5F4"}:
+            out.at[idx, "\uC0C1\uD0DC"] = f"{state}(\uC2DC\uC7A5\uBC29\uC5B4)"
+        if action in candidate_like or (big in strong_big and short in weak_short):
+            out.at[idx, "\uC2E4\uD589\uBD84\uB958"] = ROTATION_DEFENSE_ACTION
+            out.at[idx, "\uCCB4\uD06C\uD3EC\uC778\uD2B8"] = defense_note
+    return out
 
 
 ROTATION_CANDIDATE_ACTIONS = {"✅ 정밀후보", "⏳ 눌림대기", "👀 반등확인", "🟨 내부혼조", "🟨 내부확인"}
@@ -8046,17 +8104,19 @@ def _rotation_source_label(row, prefix: str = "로테이션") -> str:
     return prefix
 
 
-def _apply_rotation_execution_framework(grp_df: pd.DataFrame) -> pd.DataFrame:
+
+def _apply_rotation_execution_framework(grp_df: pd.DataFrame, market_guard=None, label_col: str = "") -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
     out = grp_df.copy()
-    out["큰흐름"] = out.apply(_rotation_big_flow_bucket, axis=1)
-    out["단기상태"] = out.apply(_rotation_short_state_bucket, axis=1)
-    out["내부확산"] = out.apply(_rotation_internal_bucket, axis=1)
+    out["\uD070\uD750\uB984"] = out.apply(_rotation_big_flow_bucket, axis=1)
+    out["\uB2E8\uAE30\uC0C1\uD0DC"] = out.apply(_rotation_short_state_bucket, axis=1)
+    out["\uB0B4\uBD80\uD655\uC0B0"] = out.apply(_rotation_internal_bucket, axis=1)
     decisions = out.apply(_rotation_execution_bucket, axis=1)
-    out["실행분류"] = decisions.apply(lambda x: x[0])
-    out["체크포인트"] = decisions.apply(lambda x: x[1])
-    out["진입검토"] = out["실행분류"].apply(_rotation_entry_gate)
+    out["\uC2E4\uD589\uBD84\uB958"] = decisions.apply(lambda x: x[0])
+    out["\uCCB4\uD06C\uD3EC\uC778\uD2B8"] = decisions.apply(lambda x: x[1])
+    out = _apply_market_defense_to_rotation(out, market_guard=market_guard, label_col=label_col)
+    out["\uC9C4\uC785\uAC80\uD1A0"] = out["\uC2E4\uD589\uBD84\uB958"].apply(_rotation_entry_gate)
     return out
 
 
@@ -25662,7 +25722,7 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
                     st.rerun()
 
 
-def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
+def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
 
@@ -25827,7 +25887,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
     def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률", live_us: bool = False):
         """RS(3M)/RS모멘텀 기준 사분면 차트 + 진입검토 후보 테이블 렌더링."""
         grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col, live_us=live_us)
-        grp_df = _apply_rotation_execution_framework(grp_df)
+        grp_df = _apply_rotation_execution_framework(grp_df, market_guard=market_guard, label_col=label_col)
         grp_df = _prepare_rotation_context_display_df(grp_df, label_col=label_col)
         _ACTION_COLOR  = {
             "✅ 정밀후보": "#22c55e",
@@ -25836,6 +25896,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
             "🟨 내부혼조": "#f59e0b",
             "🟨 내부확인": "#fb7185",
             "🚫 위험회피": "#ef4444",
+            "🛡 방어확인": "#a78bfa",
             "🔸 관망": "#94a3b8",
         }
         _ACTION_SYMBOL = {
@@ -25845,6 +25906,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
             "🟨 내부혼조": "diamond",
             "🟨 내부확인": "triangle-down",
             "🚫 위험회피": "x",
+            "🛡 방어확인": "triangle-down",
             "🔸 관망": "circle",
         }
         _QUADRANT_BG_COLOR = {"주도": "#22c55e", "약화": "#f59e0b", "개선": "#60a5fa", "소외": "#ef4444"}
@@ -26628,7 +26690,7 @@ def render_today_pending_action_card(market_guard=None):
     )
 
 
-def render_today_candidate_tools(summary_df=None, start_index=4):
+def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=None):
     st.markdown(f"#### {start_index}. 돈흐름 상세/차트")
     st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 필요할 때만 로테이션 차트와 테마 상세를 엽니다.")
 
@@ -26639,7 +26701,7 @@ def render_today_candidate_tools(summary_df=None, start_index=4):
         help="체크할 때만 시장 돈흐름 상세 패널을 렌더링합니다. 접힌 expander도 내부 코드는 실행되므로 로딩 방지를 위해 분리했습니다.",
     )
     if open_flow_detail:
-        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=False)
+        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=False, market_guard=market_guard)
         if (
             flow_snapshot
             and summary_df is not None
@@ -26985,7 +27047,7 @@ def render_today_queue_tab(mode):
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
 
     st.divider()
-    render_today_candidate_tools(summary_df, start_index=5)
+    render_today_candidate_tools(summary_df, start_index=5, market_guard=market_guard)
 
     st.divider()
     render_today_market_memo_panel(summary_df, summary_signature=queue_sig)
