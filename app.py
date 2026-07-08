@@ -7666,6 +7666,85 @@ def _prepare_rotation_context_display_df(grp_df: pd.DataFrame, label_col: str = 
     return out
 
 
+def _rotation_display_type(row) -> str:
+    rs3m = row.get("RS(3M)", np.nan)
+    rsmom = row.get("RS모멘텀", np.nan)
+    r1m = row.get("1개월수익률", row.get("3M수익률", row.get("3개월수익률", np.nan)))
+    if finite_num(rsmom) and float(rsmom) >= 0.05 and finite_num(r1m) and float(r1m) > 0:
+        return "스윙"
+    if finite_num(rs3m) and float(rs3m) >= 0.10:
+        return "장기"
+    return "관망"
+
+
+def _format_rotation_pct_cell(value) -> str:
+    return f"{float(value) * 100:+.1f}%" if finite_num(value) else ""
+
+
+def _format_rotation_flow_table(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "3M수익률" not in out.columns and "3개월수익률" in out.columns:
+        out["3M수익률"] = out["3개월수익률"]
+    for col in ["RS(3M)", "RS모멘텀", "3M수익률", "3개월수익률", "1개월수익률", "2주수익률", "1주수익률", "거래량증가"]:
+        if col in out.columns:
+            out[col] = out[col].apply(_format_rotation_pct_cell)
+    if "1주수익률" not in out.columns:
+        out["1주수익률"] = ""
+    return out
+
+
+def _snapshot_item_rows(value) -> list[dict]:
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _build_internal_representative_table(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
+    if grp_df is None or grp_df.empty:
+        return pd.DataFrame()
+    rows: list[dict] = []
+    for _, row in grp_df.iterrows():
+        market = _flow_market_label_from_row(row, label_col=label_col)
+        sector = _first_flow_text(row.get(label_col, ""), row.get("섹터", ""), row.get("테마", ""), default="-")
+        base = {
+            "유형": _flow_text(row.get("유형", "")) or _rotation_display_type(row),
+            "시장": market,
+            "섹터": sector,
+            "실행분류": row.get("실행분류", ""),
+            "진입검토": row.get("진입검토", ""),
+            "RS(3M)": "",
+            "RS모멘텀": "",
+            "3M수익률": "",
+            "1개월수익률": "",
+            "2주수익률": "",
+            "1주수익률": "",
+            "거래량증가": "",
+        }
+        for item in _snapshot_item_rows(row.get("_내부대표주자료"))[:3]:
+            name = _flow_text(item.get("name", ""))
+            if not name:
+                continue
+            pct = item.get("change_pct", np.nan)
+            rows.append({
+                **base,
+                "대표주": name,
+                "Ticker": _flow_text(item.get("ticker", "")),
+                "상태": f"상승 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "상승",
+            })
+        for item in _snapshot_item_rows(row.get("_약한대표주자료"))[:2]:
+            name = _flow_text(item.get("name", ""))
+            if not name:
+                continue
+            pct = item.get("change_pct", np.nan)
+            rows.append({
+                **base,
+                "대표주": name,
+                "Ticker": _flow_text(item.get("ticker", "")),
+                "상태": f"약세 {_fmt_kr_sector_pct(pct)}" if finite_num(pct) else "약세",
+            })
+    return pd.DataFrame(rows)
+
+
 def _is_us_rotation_context(row, label_col: str = "") -> bool:
     ticker = str(row.get("Ticker", "") or "").strip()
     if not ticker:
@@ -7752,6 +7831,8 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
         "US대분류": "-",
         "업종대표주": "-",
         "약한대표주": "-",
+        "_내부대표주자료": None,
+        "_약한대표주자료": None,
         "시장내부판정": "",
         "KOSPI내부판정": "",
         "US내부판정": "",
@@ -7813,9 +7894,13 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             positive_items, negative_items = _split_market_snapshot_representatives(snapshot)
             out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(positive_items, limit=3) or "-"
             out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(negative_items, limit=2) or "-"
+            out.at[idx, "_내부대표주자료"] = positive_items
+            out.at[idx, "_약한대표주자료"] = negative_items
         else:
             out.at[idx, "업종대표주"] = "-"
             out.at[idx, "약한대표주"] = "-"
+            out.at[idx, "_내부대표주자료"] = []
+            out.at[idx, "_약한대표주자료"] = []
         status = str(snapshot.get("status", "") or "")
         out.at[idx, "시장내부판정"] = status
         if market_label == "KOSPI":
@@ -25868,24 +25953,42 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
         )
         st.plotly_chart(fig, width='stretch')
 
-        summary_cols = [c for c in [
-            "시장축", label_col, "Ticker", "실행분류", "진입검토",
-            "구분", "ETF/대표", "업종내부", "내부세부축", "기준업종", "내부대표주", "약한내부주",
-        ] if c and c in grp_df.columns]
-        if summary_cols:
-            summary_df = grp_df[summary_cols].copy()
-            sort_cols = [c for c in ["실행분류", "RS(3M)", "RS모멘텀"] if c in grp_df.columns]
+        etf_cols = [
+            "유형", "시장축", label_col, "Ticker", "구분", "실행분류", "진입검토",
+            "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "1주수익률",
+            "거래량증가", "상태",
+        ]
+        etf_cols = [c for c in etf_cols if c and (c in grp_df.columns or c in {"유형", "3M수익률", "1주수익률"})]
+        if etf_cols:
+            etf_df = grp_df.copy()
+            if "유형" not in etf_df.columns:
+                etf_df["유형"] = etf_df.apply(_rotation_display_type, axis=1)
+            sort_cols = [c for c in ["실행분류", "RS(3M)", "RS모멘텀"] if c in etf_df.columns]
             if sort_cols:
-                summary_df = summary_df.join(grp_df[[c for c in sort_cols if c not in summary_df.columns]])
                 ascending = [True] + [False] * (len(sort_cols) - 1) if sort_cols[0] == "실행분류" else [False] * len(sort_cols)
-                summary_df = summary_df.sort_values(sort_cols, ascending=ascending, na_position="last")
-                summary_df = summary_df[[c for c in summary_cols if c in summary_df.columns]]
-            for col in ["시장축", "ETF/대표", "내부세부축", "기준업종", "내부대표주", "약한내부주"]:
-                if col in summary_df.columns:
-                    summary_df[col] = summary_df[col].replace("", "-").fillna("-")
-            st.markdown("**🔗 내부 연결 요약**")
-            st.caption("ETF/대표와 내부세부축을 분리했습니다. ETF 행은 ETF 자체를 먼저 보고, 내부대표주는 실시간 검증된 경우에만 참고합니다.")
-            st.dataframe(summary_df.head(18), width='stretch', hide_index=True, height=240)
+                etf_df = etf_df.sort_values(sort_cols, ascending=ascending, na_position="last")
+            etf_df = _format_rotation_flow_table(etf_df)
+            st.markdown("**🔗 ETF/섹터 흐름**")
+            st.caption("위 표는 ETF 또는 섹터 프록시 자체의 흐름입니다. 내부 대표주는 아래 표에서 따로 봅니다.")
+            st.dataframe(
+                etf_df[[c for c in etf_cols if c in etf_df.columns]].head(18),
+                width='stretch',
+                hide_index=True,
+                height=240,
+            )
+
+        rep_df = _build_internal_representative_table(grp_df, label_col=label_col)
+        st.markdown("**🏷️ 내부 대표주 흐름**")
+        if rep_df.empty:
+            st.info("실시간 검증된 내부 대표주가 없습니다. 이 표는 비워두고 ETF/섹터 흐름만 참고하세요.")
+        else:
+            rep_cols = [
+                "유형", "시장", "섹터", "대표주", "Ticker", "실행분류", "진입검토",
+                "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "1주수익률",
+                "거래량증가", "상태",
+            ]
+            st.caption("아래 표는 ETF가 가리키는 내부 대표주/약한주입니다. RS·수익률 칸은 ETF값을 섞지 않고 비워둡니다.")
+            st.dataframe(rep_df[[c for c in rep_cols if c in rep_df.columns]].head(24), width='stretch', hide_index=True, height=260)
 
         # 실행분류 후보 테이블
         priority_actions = {"✅ 정밀후보", "⏳ 눌림대기", "👀 반등확인", "🟨 내부혼조", "🟨 내부확인"}
@@ -25902,36 +26005,31 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
             if not internal_review_df.empty:
                 st.caption(f"🟨 내부확인 {len(internal_review_df)}개는 업종 내부 확산 확인 전까지 정밀후보에서 낮춰 표시합니다.")
         if not entry_df.empty:
-            # 투자유형 컬럼 추가
-            def _today_type(r):
-                rs3m  = r.get("RS(3M)",   np.nan)
-                rsmom = r.get("RS모멘텀", np.nan)
-                r1m   = r.get("1개월수익률", r.get("3M수익률", np.nan))
-                if not (finite_num(rs3m) and finite_num(rsmom)):
-                    return "?"
-                if finite_num(rsmom) and float(rsmom) >= 0.05 and finite_num(r1m) and float(r1m) > 0:
-                    return "🚀 스윙"
-                if finite_num(rs3m) and float(rs3m) >= 0.10:
-                    return "🌱 장기"
-                return "⚪ 관망"
-            entry_df["유형"] = entry_df.apply(_today_type, axis=1)
-            show_cols = [c for c in ["유형", "시장축", "섹터", "테마", "Ticker", "구분", "ETF/대표",
-                                       "내부세부축", "기준업종", "내부대표주", "약한내부주",
-                                       "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
-                                       "사분면", "진입검토", "업종내부", "대표업종", "시장대분류",
-                                       "KOSPI대분류", "US대분류", "대표주", "약세주",
-                                       "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률",
-                                       "거래량증가", "테마돈흐름점수", "점수_랭킹보조", "네이버랭킹",
-                                       "테마판정", "네이버테마근거", "상태"] if c in entry_df.columns]
-            entry_show = entry_df[show_cols].copy()
-            for col in ["RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "거래량증가"]:
-                if col in entry_show.columns:
-                    entry_show[col] = entry_show[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
-            if "테마돈흐름점수" in entry_show.columns:
-                entry_show["테마돈흐름점수"] = entry_show["테마돈흐름점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
-            if "점수_랭킹보조" in entry_show.columns:
-                entry_show["점수_랭킹보조"] = entry_show["점수_랭킹보조"].apply(lambda v: f"+{float(v):.1f}" if finite_num(v) and float(v) else "-")
-            st.dataframe(entry_show, width='stretch', hide_index=True)
+            entry_df["유형"] = entry_df.apply(_rotation_display_type, axis=1)
+            etf_candidate_cols = [
+                "유형", "시장축", "섹터", "테마", "Ticker", "구분", "실행분류", "진입검토",
+                "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "1주수익률",
+                "거래량증가", "상태",
+            ]
+            etf_candidate = _format_rotation_flow_table(entry_df.copy())
+            st.markdown("**ETF/섹터 후보**")
+            st.dataframe(
+                etf_candidate[[c for c in etf_candidate_cols if c in etf_candidate.columns]].head(18),
+                width='stretch',
+                hide_index=True,
+            )
+
+            rep_candidate = _build_internal_representative_table(entry_df, label_col=label_col)
+            st.markdown("**내부 대표주 후보**")
+            if rep_candidate.empty:
+                st.info("이 후보군에서 실시간 검증된 내부 대표주가 없습니다.")
+            else:
+                rep_cols = [
+                    "유형", "시장", "섹터", "대표주", "Ticker", "실행분류", "진입검토",
+                    "RS(3M)", "RS모멘텀", "3M수익률", "1개월수익률", "2주수익률", "1주수익률",
+                    "거래량증가", "상태",
+                ]
+                st.dataframe(rep_candidate[[c for c in rep_cols if c in rep_candidate.columns]].head(24), width='stretch', hide_index=True)
 
             # 테마 바로가기 버튼 (ETF 티커가 있는 경우)
             if ETF_TO_THEME and IMAGE_THEME_FLOW_AVAILABLE and "Ticker" in entry_df.columns:
