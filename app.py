@@ -7412,7 +7412,7 @@ def _kr_snapshot_status_text(snapshot: dict) -> str:
 def _market_snapshot_status_text(snapshot: dict, market_label: str = "") -> str:
     if str(market_label or "").strip().upper() == "US" and not _market_snapshot_representatives_verified(snapshot, market_label):
         sector_avg = _fmt_kr_sector_pct((snapshot or {}).get("sector_avg_change_pct", np.nan))
-        return f"US 내부 대표주 확인중 · 기준업종 {sector_avg}"
+        return f"US 기준업종 {sector_avg} · 내부대표주 생략"
     base = _kr_snapshot_status_text(snapshot)
     if not market_label or base == "-":
         return base
@@ -7627,6 +7627,7 @@ def _prepare_rotation_context_display_df(grp_df: pd.DataFrame, label_col: str = 
         return grp_df
     out = grp_df.copy()
     out["시장축"] = out.apply(lambda r: _flow_market_label_from_row(r, label_col=label_col), axis=1)
+    out["구분"] = out.apply(lambda r: "ETF" if _flow_text(r.get("Ticker", "")) else "개별/업종", axis=1)
     out["세부축"] = out.apply(
         lambda r: _first_flow_text(
             r.get("세부축", ""),
@@ -7638,9 +7639,26 @@ def _prepare_rotation_context_display_df(grp_df: pd.DataFrame, label_col: str = 
         axis=1,
     )
     out["대분류"] = out.apply(lambda r: _flow_display_broad_context(r, label_col=label_col), axis=1)
+    out["내부세부축"] = out["세부축"]
+    out["기준업종"] = out["대분류"]
+    out["내부대표주"] = out.apply(
+        lambda r: "-" if _flow_text(r.get("업종대표주", "")).startswith("실시간 확인중")
+        else _first_flow_text(r.get("업종대표주", ""), default="-"),
+        axis=1,
+    )
+    out["약한내부주"] = out.apply(lambda r: _first_flow_text(r.get("약한대표주", ""), default="-"), axis=1)
+    out["ETF/대표"] = out.apply(
+        lambda r: _first_flow_text(
+            r.get("Ticker", ""),
+            r.get("대표주", ""),
+            r.get("내부대표주", ""),
+            default="-",
+        ),
+        axis=1,
+    )
     out["대표주★"] = out.apply(
         lambda r: _flow_starred_label(
-            _first_flow_text(r.get("대표주", ""), r.get("업종대표주", ""), default="-"),
+            _first_flow_text(r.get("ETF/대표", ""), r.get("대표주", ""), r.get("내부대표주", ""), default="-"),
             r,
         ),
         axis=1,
@@ -7796,7 +7814,7 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
             out.at[idx, "업종대표주"] = _format_kr_sector_items_plain(positive_items, limit=3) or "-"
             out.at[idx, "약한대표주"] = _format_kr_sector_items_plain(negative_items, limit=2) or "-"
         else:
-            out.at[idx, "업종대표주"] = "실시간 확인중"
+            out.at[idx, "업종대표주"] = "-"
             out.at[idx, "약한대표주"] = "-"
         status = str(snapshot.get("status", "") or "")
         out.at[idx, "시장내부판정"] = status
@@ -24768,6 +24786,19 @@ def _prepare_flow_command_table(unified_df):
     if "대표주★" not in show.columns:
         show["대표주★"] = show.apply(lambda r: _flow_starred_label(r.get("대표주", ""), r), axis=1)
     show["대분류"] = show.apply(lambda r: _flow_display_broad_context(r), axis=1)
+    show["구분"] = show.apply(lambda r: "ETF" if _flow_text(r.get("Ticker", "")) and not _flow_text(r.get("종목명", "")) else "개별/테마", axis=1)
+    show["ETF/대표"] = show.apply(
+        lambda r: _first_flow_text(r.get("Ticker", ""), r.get("대표주★", ""), r.get("대표주", ""), default="-"),
+        axis=1,
+    )
+    show["내부세부축"] = show["세부축"]
+    show["기준업종"] = show["대분류"]
+    show["내부대표주"] = show.apply(
+        lambda r: "-" if _flow_text(r.get("업종대표주", "")).startswith("실시간 확인중")
+        else _first_flow_text(r.get("업종대표주", ""), default="-"),
+        axis=1,
+    )
+    show["약한내부주"] = show.apply(lambda r: _first_flow_text(r.get("약한대표주", ""), default="-"), axis=1)
     show["주도층위"] = show.apply(_flow_leadership_layer, axis=1)
     show["행동"] = show.apply(_adjust_flow_command_action, axis=1)
     show["가격위치"] = show["가격수준"].apply(_flow_price_band) if "가격수준" in show.columns else "-"
@@ -24854,17 +24885,17 @@ def _render_flow_command_center(unified_df):
     m5.metric("관망/제외", f"{wait_count}개")
 
     cols = [
-        "행동", "시장축", "후보군", "세부축", "주도층위",
-        "대표주★", "가격위치", "흐름", "판단", "업종내부", "다음확인",
+        "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축", "주도층위",
+        "가격위치", "흐름", "판단", "업종내부", "다음확인",
     ]
     ranking_cols = [
-        "순위", "시장축", "후보군", "세부축", "대표주★",
+        "순위", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
         "점수", "가격위치", "흐름", "행동", "업종내부",
     ]
     detail_cols = [
-        "행동", "시장축", "후보군", "세부축", "주도층위",
+        "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축", "기준업종", "주도층위",
         "대표주★", "대표주", "업종내부", "대표업종", "대분류", "시장대분류",
-        "KOSPI대분류", "US대분류", "업종대표주", "약한대표주",
+        "KOSPI대분류", "US대분류", "내부대표주", "약한내부주", "업종대표주", "약한대표주",
         "가격위치", "흐름", "판단", "다음확인",
     ]
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
@@ -25051,8 +25082,8 @@ def render_naver_theme_coverage_panel():
 
 
 TODAY_FLOW_SHORTLIST_COLS = [
-    "후보군", "등록상태", "시장", "판정", "타이밍", "대표주★", "Ticker",
-    "테마", "세부축", "후보근거", "시장맥락", "주의요인",
+    "후보군", "등록상태", "시장", "구분", "판정", "타이밍", "대표주★", "Ticker",
+    "테마", "내부세부축", "기준업종", "후보근거", "시장맥락", "주의요인",
     "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
 ]
 
@@ -25355,6 +25386,15 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
         ),
         axis=1,
     )
+    tfd_short["구분"] = "개별주"
+    tfd_short["내부세부축"] = tfd_short["세부축"]
+    tfd_short["기준업종"] = tfd_short["대분류"]
+    tfd_short["내부대표주"] = tfd_short.apply(
+        lambda r: "-" if _flow_text(r.get("업종대표주", "")).startswith("실시간 확인중")
+        else _first_flow_text(r.get("업종대표주", ""), default="-"),
+        axis=1,
+    )
+    tfd_short["약한내부주"] = tfd_short.apply(lambda r: _first_flow_text(r.get("약한대표주", ""), default="-"), axis=1)
 
     def _source_summary(theme: str) -> str:
         labels: list[str] = []
@@ -25494,8 +25534,9 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
 
     with st.expander("상세 근거 컬럼 보기", expanded=False):
         detail_cols = [
-            "종목명", "Ticker", "후보군", "등록상태", "시장", "테마", "하위테마", "테마내순위", "상태",
-            "실행분류", "진입검토", "테마판정", "업종내부", "대표업종", "시장대분류",
+            "종목명", "Ticker", "후보군", "등록상태", "시장", "구분", "테마", "하위테마", "테마내순위", "상태",
+            "실행분류", "진입검토", "테마판정", "업종내부", "내부세부축", "기준업종",
+            "내부대표주", "약한내부주", "대표업종", "시장대분류",
             "KOSPI대분류", "US대분류", "업종대표주", "약한대표주", "내부확산", "체크포인트",
             "테마점수", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
         ]
@@ -25724,15 +25765,25 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                     continue
                 hover_r1m = subdf[ret_col_1m] if ret_col_1m in subdf.columns else pd.Series([np.nan] * len(subdf))
                 hover_market = subdf["시장축"] if "시장축" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
-                hover_leader = subdf["대표주★"] if "대표주★" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
+                hover_leader = subdf["ETF/대표"] if "ETF/대표" in subdf.columns else (
+                    subdf["대표주★"] if "대표주★" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
+                )
                 hover_weak = subdf["약한대표주"] if "약한대표주" in subdf.columns else (
                     subdf["약세주"] if "약세주" in subdf.columns else pd.Series([""] * len(subdf), index=subdf.index)
                 )
                 hover_internal = subdf["업종내부"] if "업종내부" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
-                hover_industries = subdf["세부축"] if "세부축" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
-                hover_broad_industries = subdf["대분류"] if "대분류" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
-                hover_internal_leaders = subdf["업종대표주"] if "업종대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
-                hover_internal_laggards = subdf["약한대표주"] if "약한대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                hover_industries = subdf["내부세부축"] if "내부세부축" in subdf.columns else (
+                    subdf["세부축"] if "세부축" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                )
+                hover_broad_industries = subdf["기준업종"] if "기준업종" in subdf.columns else (
+                    subdf["대분류"] if "대분류" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                )
+                hover_internal_leaders = subdf["내부대표주"] if "내부대표주" in subdf.columns else (
+                    subdf["업종대표주"] if "업종대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                )
+                hover_internal_laggards = subdf["약한내부주"] if "약한내부주" in subdf.columns else (
+                    subdf["약한대표주"] if "약한대표주" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
+                )
                 hover_big = subdf["큰흐름"] if "큰흐름" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_short = subdf["단기상태"] if "단기상태" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
                 hover_reason = subdf["체크포인트"] if "체크포인트" in subdf.columns else pd.Series(["-"] * len(subdf), index=subdf.index)
@@ -25776,13 +25827,13 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                         "RS(3M): %{x:.1f}%p  RS모멘텀: %{y:.2f}%p<br>"
                         "1M수익률: %{customdata[2]:.1%}  상태: %{customdata[3]}<br>"
                         "큰흐름: %{customdata[13]} / 단기상태: %{customdata[14]}<br>"
-                        "대표주: %{customdata[6]}<br>"
-                        "약한대표주: %{customdata[7]}<br>"
+                        "ETF/대표: %{customdata[6]}<br>"
+                        "약한 내부주: %{customdata[7]}<br>"
                         "업종내부: %{customdata[8]}<br>"
-                        "세부축: %{customdata[9]}<br>"
-                        "대분류: %{customdata[10]}<br>"
-                        "업종대표주: %{customdata[11]}<br>"
-                        "약한대표주 묶음: %{customdata[12]}<br>"
+                        "내부세부축: %{customdata[9]}<br>"
+                        "기준업종: %{customdata[10]}<br>"
+                        "내부대표주: %{customdata[11]}<br>"
+                        "약한 내부주 묶음: %{customdata[12]}<br>"
                         "체크: %{customdata[15]}<br>"
                         "<b>%{customdata[4]}</b><extra></extra>"
                     ),
@@ -25819,7 +25870,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
 
         summary_cols = [c for c in [
             "시장축", label_col, "Ticker", "실행분류", "진입검토",
-            "업종내부", "세부축", "대분류", "대표주★", "업종대표주", "약한대표주",
+            "구분", "ETF/대표", "업종내부", "내부세부축", "기준업종", "내부대표주", "약한내부주",
         ] if c and c in grp_df.columns]
         if summary_cols:
             summary_df = grp_df[summary_cols].copy()
@@ -25829,11 +25880,11 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                 ascending = [True] + [False] * (len(sort_cols) - 1) if sort_cols[0] == "실행분류" else [False] * len(sort_cols)
                 summary_df = summary_df.sort_values(sort_cols, ascending=ascending, na_position="last")
                 summary_df = summary_df[[c for c in summary_cols if c in summary_df.columns]]
-            for col in ["시장축", "세부축", "대분류", "대표주★", "업종대표주", "약한대표주"]:
+            for col in ["시장축", "ETF/대표", "내부세부축", "기준업종", "내부대표주", "약한내부주"]:
                 if col in summary_df.columns:
                     summary_df[col] = summary_df[col].replace("", "-").fillna("-")
             st.markdown("**🔗 내부 연결 요약**")
-            st.caption("차트 라벨을 시장축 → 세부축 → 대표주 순서로 다시 풀어봅니다. 한국/미국이 섞인 테마는 대표주 티커 기준으로 내부 컨텍스트를 붙입니다.")
+            st.caption("ETF/대표와 내부세부축을 분리했습니다. ETF 행은 ETF 자체를 먼저 보고, 내부대표주는 실시간 검증된 경우에만 참고합니다.")
             st.dataframe(summary_df.head(18), width='stretch', hide_index=True, height=240)
 
         # 실행분류 후보 테이블
@@ -25864,8 +25915,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                     return "🌱 장기"
                 return "⚪ 관망"
             entry_df["유형"] = entry_df.apply(_today_type, axis=1)
-            show_cols = [c for c in ["유형", "시장축", "섹터", "테마", "Ticker",
-                                       "세부축", "대분류", "대표주★", "업종대표주", "약한대표주",
+            show_cols = [c for c in ["유형", "시장축", "섹터", "테마", "Ticker", "구분", "ETF/대표",
+                                       "내부세부축", "기준업종", "내부대표주", "약한내부주",
                                        "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
                                        "사분면", "진입검토", "업종내부", "대표업종", "시장대분류",
                                        "KOSPI대분류", "US대분류", "대표주", "약세주",
@@ -25902,8 +25953,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
                             st.toast(f"돈흐름 레이더 탭에서 '{theme_name}' 선택됨 →", icon="📌")
 
         with st.expander("전체 상세 보기", expanded=False):
-            all_cols = [c for c in ["시장축", "섹터", "테마", "Ticker",
-                                     "세부축", "대분류", "대표주★", "업종대표주", "약한대표주",
+            all_cols = [c for c in ["시장축", "섹터", "테마", "Ticker", "구분", "ETF/대표",
+                                     "내부세부축", "기준업종", "내부대표주", "약한내부주",
                                      "실행분류", "큰흐름", "단기상태", "내부확산", "체크포인트",
                                      "사분면", "진입검토", "업종내부", "대표업종", "시장대분류",
                                      "KOSPI대분류", "US대분류", "대표주", "약세주",
