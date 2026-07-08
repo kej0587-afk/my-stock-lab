@@ -7761,7 +7761,7 @@ def _is_us_rotation_context(row, label_col: str = "") -> bool:
 
 
 MARKET_CLUSTER_CONTEXT_CACHE_KEY = "_market_cluster_context_snapshot_cache"
-MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 7
+MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 8
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
@@ -7818,7 +7818,12 @@ def _get_market_cluster_snapshot_cached(
     return snapshot
 
 
-def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: str = "") -> pd.DataFrame:
+def _attach_kr_internal_context_to_rotation_df(
+    grp_df: pd.DataFrame,
+    label_col: str = "",
+    *,
+    live_us: bool = False,
+) -> pd.DataFrame:
     if grp_df is None or grp_df.empty:
         return grp_df
     out = grp_df.copy()
@@ -7873,7 +7878,7 @@ def _attach_kr_internal_context_to_rotation_df(grp_df: pd.DataFrame, label_col: 
                 market_label,
                 cluster,
                 detail_label,
-                live_prices=(market_label == "KOSPI"),
+                live_prices=(market_label == "KOSPI" or (market_label == "US" and live_us)),
             )
             snapshot_cache[cache_key] = snapshot
         if not snapshot:
@@ -25816,7 +25821,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True):
     # ── 공통: 로테이션 차트 그리기 ───────────────────────────────────
     def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률"):
         """RS(3M)/RS모멘텀 기준 사분면 차트 + 진입검토 후보 테이블 렌더링."""
-        grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col)
+        grp_df = _attach_kr_internal_context_to_rotation_df(grp_df, label_col=label_col, live_us=True)
         grp_df = _apply_rotation_execution_framework(grp_df)
         grp_df = _prepare_rotation_context_display_df(grp_df, label_col=label_col)
         _ACTION_COLOR  = {
