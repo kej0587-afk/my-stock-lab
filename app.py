@@ -7589,9 +7589,23 @@ def _flow_market_code_from_row(row, label_col: str = "") -> str:
         row.get(label_col, "") if label_col else "",
     ]
     joined = " ".join(str(v or "") for v in values).upper()
-    if "한국" in joined or "KOSPI" in joined or "KOSDAQ" in joined:
+    if (
+        "한국" in joined
+        or "국내" in joined
+        or "KOSPI" in joined
+        or "KOSDAQ" in joined
+        or "KR " in f"{joined} "
+        or joined.startswith("K-")
+        or " K-" in joined
+    ):
         return "KR"
-    if "미국" in joined or " US" in f" {joined}" or "USA" in joined:
+    if (
+        "미국" in joined
+        or " US" in f" {joined}"
+        or "USA" in joined
+        or "NASDAQ" in joined
+        or "NYSE" in joined
+    ):
         return "US"
     return ""
 
