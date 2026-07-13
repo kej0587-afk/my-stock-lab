@@ -26,14 +26,30 @@ def finite_num(x) -> bool:
 # 기본 기술적 상태 판정
 # ---------------------------------------------------------------------------
 
-def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool) -> str:
-    """볼린저-켈트너 스퀴즈 상태를 반환합니다."""
+def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool, recent_sqz_on=None, release_lookback: int = 6) -> str:
+    """볼린저-켈트너 스퀴즈 상태를 반환합니다.
+
+    기존에는 현재/직전 봉이 모두 비압축이면 전부 ``해제유지``로 표시했습니다.
+    실제 최근 압축이 없었던 종목까지 해제유지로 보이면 오해가 생기므로,
+    최근 구간 안에 압축 이력이 있을 때만 해제유지로 보고 그 외에는 비압축으로 구분합니다.
+    """
     if last_sqz_on and not prev_sqz_on:
         return "⏳재압축"
-    elif last_sqz_on and prev_sqz_on:
+    if last_sqz_on and prev_sqz_on:
         return "⏳압축중"
-    elif (not last_sqz_on) and prev_sqz_on:
+    if (not last_sqz_on) and prev_sqz_on:
         return "🚀해제직후"
+
+    if recent_sqz_on is not None:
+        vals = []
+        for value in recent_sqz_on:
+            try:
+                vals.append(bool(value) and not pd.isna(value))
+            except Exception:
+                vals.append(bool(value))
+        if len(vals) >= 3:
+            prior_window = vals[max(0, len(vals) - release_lookback - 2):-2]
+            return "➡️해제유지" if any(prior_window) else "➖비압축"
     return "➡️해제유지"
 
 

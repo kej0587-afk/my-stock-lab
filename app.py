@@ -12989,7 +12989,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
     _, rs_label = get_rs_score(ticker, asset_class)
     rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
-    sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]))
+    sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]), df["SQZ_ON"].tail(10).tolist())
 
     tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
     rs_s = tech_scores["rs_s"]
