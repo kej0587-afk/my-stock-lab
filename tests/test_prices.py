@@ -102,14 +102,38 @@ def test_us_price_prefers_yahoo_overnight_before_kis_regular(monkeypatch):
     monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 316.50)
 
     assert prices._fetch_price_uncached("MRVL") == 316.50
-    assert calls == [("kis", True, False)]
+    assert calls == []
 
 
-def test_us_regular_session_prefers_regular_quote_over_daytime(monkeypatch):
+def test_us_regular_session_prefers_timestamped_yahoo_over_bad_kis(monkeypatch):
     calls = []
 
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 603.04)
+
+    def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
+        calls.append(("kis", daytime_only, regular_only))
+        if daytime_only:
+            return 635.09
+        if regular_only:
+            return 635.09
+        return 0.0
+
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", fake_kis_price)
+
+    assert prices._fetch_price_uncached("AMAT") == 603.04
+    assert calls == []
+
+
+def test_us_regular_session_uses_kis_regular_when_timestamped_sources_missing(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
 
     def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
         calls.append(("kis", daytime_only, regular_only))
@@ -125,13 +149,20 @@ def test_us_regular_session_prefers_regular_quote_over_daytime(monkeypatch):
     assert calls == [("kis", False, True)]
 
 
-def test_us_holiday_price_prefers_live_quote_before_regular_close(monkeypatch):
+def test_us_holiday_price_rejects_far_untimed_quote(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_pyth_us_live_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_cboe_book_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
 
-    assert prices._fetch_price_uncached("AMAT") == 635.09
+    assert prices._fetch_price_uncached("AMAT") == 603.04
 
 
 def test_us_holiday_price_uses_regular_close_when_no_live_quote(monkeypatch):
@@ -147,6 +178,10 @@ def test_ram_holiday_price_prefers_daymarket_before_regular_close(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 16.96)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
     monkeypatch.setattr(
         prices,
         "_fetch_kis_us_quote_price",
@@ -162,10 +197,14 @@ def test_ram_batch_holiday_price_prefers_daymarket_before_regular_close(monkeypa
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 16.96)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
     monkeypatch.setattr(
         prices,
         "_fetch_kis_us_quote_price",
-        lambda ticker, **kwargs: 20.20 if kwargs.get("daytime_only") else 16.96,
+        lambda ticker, **kwargs: 20.20 if ticker == "RAM" and kwargs.get("daytime_only") else 0.0,
     )
 
     assert prices.load_latest_prices_batch(["AMAT", "RAM"])["RAM"] == 20.20
@@ -179,15 +218,22 @@ def test_us_untimed_quote_far_from_regular_close_is_rejected(monkeypatch):
     assert prices._accept_us_untimed_quote_price("AMAT", 610.00) == 610.00
 
 
-def test_us_batch_holiday_price_prefers_live_quote(monkeypatch):
+def test_us_batch_holiday_price_rejects_far_untimed_quote(monkeypatch):
     prices.clear_latest_price_cache()
 
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
+    monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
+    monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_pyth_us_live_price", lambda ticker: 0.0)
+    monkeypatch.setattr(prices, "_fetch_cboe_book_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
 
-    assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 635.09
+    assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 603.04
 
 
 def test_us_batch_holiday_price_uses_regular_close_when_no_live_quote(monkeypatch):
@@ -201,20 +247,21 @@ def test_us_batch_holiday_price_uses_regular_close_when_no_live_quote(monkeypatc
     assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 603.04
 
 
-def test_us_batch_regular_session_prefers_regular_quote(monkeypatch):
+def test_us_batch_regular_session_prefers_timestamped_yahoo(monkeypatch):
     prices.clear_latest_price_cache()
 
     calls = []
 
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 603.04)
 
     def fake_kis_price(ticker, *, daytime_only=False, regular_only=False):
         calls.append(("kis", daytime_only, regular_only))
         if daytime_only:
             return 635.09
         if regular_only:
-            return 603.04
+            return 635.09
         return 0.0
 
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", fake_kis_price)
@@ -222,7 +269,7 @@ def test_us_batch_regular_session_prefers_regular_quote(monkeypatch):
     result = prices.load_latest_prices_batch(["AMAT", "NVDA"])
     assert result["AMAT"] == 603.04
     assert result["NVDA"] == 603.04
-    assert calls == [("kis", False, True), ("kis", False, True)]
+    assert calls == []
 
 
 def test_ram_proxy_is_used_before_yfinance_fast_info(monkeypatch):

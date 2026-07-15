@@ -1291,42 +1291,68 @@ def _fetch_kis_us_quote_price(
 
 def _fetch_us_realtime_price(ticker: str) -> float:
     """
-    Prefer live/current US quotes before any regular-close fallback.
+    Prefer timestamped US prices before untimed brokerage/reference quotes.
 
-    Trading plans are built from the displayed current price, so a stale close
-    is more harmful than a live quote that moved far away from the last close.
+    KIS/fast_info values can be stale or exchange-mapped incorrectly during
+    pre/day/holiday sessions. Yahoo chart/overnight data carries fresher
+    timestamps, so it becomes the primary source for the displayed current
+    price. Untimed sources remain fallbacks and are sanity-checked on holidays.
     """
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
         return 0.0
 
+    def _first_price(source_calls) -> float:
+        for source in source_calls:
+            try:
+                price = float(source() or 0.0)
+            except Exception:
+                price = 0.0
+            if price > 0:
+                return price
+        return 0.0
+
+    def _kis_daytime_price() -> float:
+        price = _fetch_kis_us_quote_price(t, daytime_only=True)
+        if _is_live_priority_us_ticker(t):
+            return price
+        return _accept_us_untimed_quote_price(t, price)
+
     regular_session_active = _us_equity_regular_session_active()
-    source_calls = []
     if regular_session_active:
-        source_calls.append(lambda: _fetch_kis_us_quote_price(t, regular_only=True))
-    else:
-        source_calls.extend([
-            lambda: _fetch_kis_us_quote_price(t, daytime_only=True),
-            lambda: _fetch_yahoo_overnight_page_price(t),
+        price = _first_price([
+            lambda: _fetch_yahoo_quote(t),
+            lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
+            lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
+            lambda: _fetch_robinhood_us_quote(t),
+        ])
+        if price > 0:
+            return price
+        return _first_price([
+            lambda: _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True)),
+            lambda: _accept_us_untimed_quote_price(t, _fetch_configured_us_quote_price(t)),
+            lambda: _accept_us_untimed_quote_price(t, _fetch_pyth_us_live_price(t)),
+            lambda: _accept_us_untimed_quote_price(t, _fetch_cboe_book_price(t)),
         ])
 
-    source_calls.extend([
-        lambda: _fetch_configured_us_quote_price(t),
-        lambda: _fetch_pyth_us_live_price(t),
-        lambda: _fetch_cboe_book_price(t),
-        lambda: _fetch_robinhood_us_quote(t),
+    non_regular_sources = [lambda: _fetch_yahoo_overnight_page_price(t)]
+    if _is_live_priority_us_ticker(t):
+        non_regular_sources.append(_kis_daytime_price)
+    non_regular_sources.extend([
         lambda: _fetch_yahoo_quote(t),
         lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
         lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
+        lambda: _fetch_robinhood_us_quote(t),
     ])
-    for source in source_calls:
-        try:
-            price = float(source() or 0.0)
-        except Exception:
-            price = 0.0
-        if price > 0:
-            return price
-    return 0.0
+    if not _is_live_priority_us_ticker(t):
+        non_regular_sources.append(_kis_daytime_price)
+    non_regular_sources.extend([
+        lambda: _accept_us_untimed_quote_price(t, _fetch_configured_us_quote_price(t)),
+        lambda: _accept_us_untimed_quote_price(t, _fetch_pyth_us_live_price(t)),
+        lambda: _accept_us_untimed_quote_price(t, _fetch_cboe_book_price(t)),
+        lambda: _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True)),
+    ])
+    return _first_price(non_regular_sources)
 
 
 def _fetch_live_priority_us_price(ticker: str) -> float:
@@ -1736,14 +1762,31 @@ def _fetch_price_uncached(ticker: str) -> float:
                 return price
 
         if _us_equity_regular_session_active():
+            price = _fetch_yahoo_quote(ticker)
+            if price > 0:
+                return price
+            price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
+            if price > 0:
+                return price
             price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, regular_only=True))
             if price > 0:
                 return price
         else:
-            price = _accept_us_untimed_quote_price(ticker, _fetch_kis_us_quote_price(ticker, daytime_only=True))
+            price = _fetch_yahoo_overnight_page_price(ticker)
             if price > 0:
                 return price
-            price = _fetch_yahoo_overnight_page_price(ticker)
+            if _is_live_priority_us_ticker(ticker):
+                raw_daytime_price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
+                if raw_daytime_price > 0:
+                    return raw_daytime_price
+            price = _fetch_yahoo_quote(ticker)
+            if price > 0:
+                return price
+            price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
+            if price > 0:
+                return price
+            raw_daytime_price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
+            price = raw_daytime_price if _is_live_priority_us_ticker(ticker) else _accept_us_untimed_quote_price(ticker, raw_daytime_price)
             if price > 0:
                 return price
         price = _accept_us_untimed_quote_price(ticker, _fetch_configured_us_quote_price(ticker))
@@ -1911,23 +1954,38 @@ def load_latest_prices_batch(tickers) -> dict:
             key = normalize_price_lookup_key(t)
             if key in prices:
                 continue
-            p = _accept_us_untimed_quote_price(
-                t,
-                _fetch_kis_us_quote_price(t, regular_only=True)
-                if regular_session_active
-                else _fetch_kis_us_quote_price(t, daytime_only=True),
-            )
+            if regular_session_active:
+                p = _fetch_yahoo_quote(t)
+                if p > 0:
+                    prices[key] = p
+                    continue
+                p = _fetch_yf_download_price(t, interval="1m", prepost=True)
+                if p > 0:
+                    prices[key] = p
+                    continue
+                p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True))
+            else:
+                p = _fetch_yahoo_overnight_page_price(t)
+                if p > 0:
+                    prices[key] = p
+                    continue
+                if _is_live_priority_us_ticker(t):
+                    p = _fetch_kis_us_quote_price(t, daytime_only=True)
+                    if p > 0:
+                        prices[key] = p
+                        continue
+                p = _fetch_yahoo_quote(t)
+                if p > 0:
+                    prices[key] = p
+                    continue
+                p = _fetch_yf_download_price(t, interval="1m", prepost=True)
+                if p > 0:
+                    prices[key] = p
+                    continue
+                raw_daytime_price = _fetch_kis_us_quote_price(t, daytime_only=True)
+                p = raw_daytime_price if _is_live_priority_us_ticker(t) else _accept_us_untimed_quote_price(t, raw_daytime_price)
             if p > 0:
                 prices[key] = p
-
-        for t in us_tickers:
-            if normalize_price_lookup_key(t) in prices:
-                continue
-            if regular_session_active:
-                continue
-            p = _fetch_yahoo_overnight_page_price(t)
-            if p > 0:
-                prices[normalize_price_lookup_key(t)] = p
 
         us_live_needed = [t for t in us_tickers if normalize_price_lookup_key(t) not in prices]
         for key, p in _fetch_pyth_us_live_prices_batch(us_live_needed).items():
