@@ -114,13 +114,36 @@ from stock_lab_core.news import (
     render_investor_trend_panel,
     render_investor_top10_panel,
 )
-from stock_lab_core.money_flow import (
-    calculate_money_flow_df,
-    calculate_rotation_df,
-    calculate_sector_rotation_df,
-    classify_money_flow_state,
-    download_money_flow_prices,
-)
+try:
+    from stock_lab_core.money_flow import (
+        calculate_money_flow_df,
+        calculate_rotation_df,
+        calculate_sector_rotation_df,
+        classify_money_flow_state,
+        download_money_flow_prices,
+    )
+    MONEY_FLOW_CORE_AVAILABLE = True
+    MONEY_FLOW_IMPORT_ERROR = ""
+except Exception as _money_flow_import_error:
+    MONEY_FLOW_CORE_AVAILABLE = False
+    MONEY_FLOW_IMPORT_ERROR = repr(_money_flow_import_error)
+    logging.exception("stock_lab_core.money_flow import failed")
+
+    def calculate_money_flow_df(*args, **kwargs):
+        return pd.DataFrame()
+
+    def calculate_rotation_df(*args, **kwargs):
+        return pd.DataFrame()
+
+    def calculate_sector_rotation_df(*args, **kwargs):
+        return pd.DataFrame()
+
+    def classify_money_flow_state(*args, **kwargs):
+        return "\uD655\uC778\uD544\uC694"
+
+    def download_money_flow_prices(*args, **kwargs):
+        return pd.DataFrame()
+
 from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
 try:
     from stock_lab_core.money_flow import (
@@ -135,7 +158,7 @@ try:
         ETF_TO_THEME,
     )
     IMAGE_THEME_FLOW_AVAILABLE = True
-except ImportError:
+except Exception:
     IMAGE_THEME_FLOW_AVAILABLE = False
     IMAGE_THEME_META = {}
     SECTOR_CLUSTERS = {}
@@ -146,7 +169,7 @@ except ImportError:
 try:
     from stock_lab_core.money_flow import fetch_naver_theme_coverage_snapshot
     NAVER_THEME_COVERAGE_AVAILABLE = True
-except ImportError:
+except Exception:
     NAVER_THEME_COVERAGE_AVAILABLE = False
 
     def fetch_naver_theme_coverage_snapshot(*args, **kwargs):
@@ -171,7 +194,7 @@ except ImportError:
         return pd.DataFrame()
 try:
     from stock_lab_core.money_flow import get_sector_flow_state
-except ImportError:
+except Exception:
     def get_sector_flow_state(ticker): return "-"
 try:
     from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
