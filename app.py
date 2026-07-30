@@ -16449,6 +16449,50 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
+TODAY_QUEUE_LOGIC_VERSION = "20260730_kr_price_fallback_v2"
+
+
+def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
+    """Fallback row when current price exists but historical OHLCV is unavailable."""
+    tkr = sanitize_ticker_value(item.get("ticker", ""))
+    name = sanitize_asset_name(item.get("name", ""), tkr)
+    is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
+    price = clean_float(latest_price, 0.0)
+    row = {
+        "시장": get_dashboard_market_label(tkr),
+        "유형": get_dashboard_type_label(is_etf),
+        "전광판그룹": get_dashboard_group_label(tkr, is_etf),
+        "종목명": name,
+        "티커": tkr,
+        "현재가": format_currency(price, tkr) if price > 0 else "-",
+        "MDD": "-",
+        "고점대비": "-",
+        "재무점수": "해당없음" if is_etf else "-",
+        "📌후보등급": "가격만 확인",
+        "RS": "-",
+        "시장벤치": "-",
+        "기초자산": "-",
+        "기초벤치": "-",
+        "섹터벤치": "-",
+        "섹터RS": "-",
+        "RSI": np.nan,
+        "MFI": np.nan,
+        "볼린저 %B": np.nan,
+        "🔥기술적 타점": "⚠️가격만 확인: 일봉 이력 조회 실패",
+        "핵심근거": reason,
+        "판정코드": "LIVE_ONLY_DATA",
+        "판정분류": "caution",
+        "Adj점수": np.nan,
+        "안전상태": "DATA",
+        "매크로상태": classify_macro_state(snap_final_macro_risk),
+        "데이터상태": "가격만 확인 · 일봉 이력 없음",
+        "bucket": str(item.get("bucket", "")),
+        "버킷": str(item.get("bucket", "")),
+        "비중차이": 0.0,
+    }
+    return {"tkr": tkr, "f_score": None, "row": row}
+
+
 def format_dashboard_timing_label(c: dict) -> str:
     c = apply_leveraged_dca_dashboard_override(c)
     label = str((c or {}).get("dec", "") or "")
@@ -16573,6 +16617,18 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             snap_final_macro_risk=snap_final_macro_risk,
         )
     if df.empty:
+        latest_price = 0.0
+        try:
+            latest_price = clean_float(load_display_live_price(tkr), 0.0)
+        except Exception:
+            latest_price = 0.0
+        if latest_price > 0:
+            return _build_live_only_summary_item(
+                item,
+                latest_price,
+                "현재가는 조회됐지만 일봉 이력이 비어 있어 기술판정은 보류",
+                snap_final_macro_risk=snap_final_macro_risk,
+            )
         return build_summary_status_item(
             item,
             "가격 데이터가 비어 있어 판단하지 않음",
@@ -26828,6 +26884,7 @@ def render_today_queue_tab(mode):
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
     queue_sig = json.dumps(
         {
+            "logic_version": TODAY_QUEUE_LOGIC_VERSION,
             "mode": mode,
             "watchlist": [
                 {
@@ -26876,6 +26933,9 @@ def render_today_queue_tab(mode):
     )
     if signature_changed and not run_summary:
         st.warning("관심목록, 모드, ETF/재무점수 정보가 바뀐 뒤의 이전 계산 결과입니다. 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
+        cached_summary = pd.DataFrame()
+        summary_df = cached_summary
+        st.session_state[summary_key] = cached_summary
 
     # ── 결과 만료 알림 (2시간 경과, signature 변경과 별도) ───────────────
     if not run_summary and last_run and not signature_changed:
@@ -26896,6 +26956,9 @@ def render_today_queue_tab(mode):
 
     if run_summary:
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
+            clear_latest_price_cache()
+            enable_force_live_price_refresh()
+            cache_clear(load_price_df)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
