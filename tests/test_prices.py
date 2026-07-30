@@ -350,3 +350,51 @@ def test_latest_kr_quotes_falls_back_to_single_quote_when_bulk_has_no_change_pct
     assert quotes["000660.KS"]["price"] == 301000.0
     assert quotes["000660.KS"]["change_pct"] == 1.37
     assert quotes["000660.KS"]["change_abs"] == 4000.0
+
+
+def test_kr_price_df_falls_back_to_yfinance_when_pykrx_empty(monkeypatch):
+    monkeypatch.setattr(prices, "_fetch_pykrx_ohlcv", lambda ticker, period: pd.DataFrame())
+
+    calls = []
+
+    def fake_download(ticker, period, interval, progress, threads):
+        calls.append(ticker)
+        return pd.DataFrame({
+            "Open": [1000.0],
+            "High": [1100.0],
+            "Low": [950.0],
+            "Close": [1050.0],
+            "Volume": [12345],
+        })
+
+    monkeypatch.setattr(prices.yf, "download", fake_download)
+
+    df = prices.load_price_df("000660.KS", "1y")
+
+    assert calls == ["000660.KS"]
+    assert float(df["Close"].iloc[-1]) == 1050.0
+
+
+def test_unsuffixed_kr_price_df_tries_ks_yahoo_symbol(monkeypatch):
+    monkeypatch.setattr(prices, "_fetch_pykrx_ohlcv", lambda ticker, period: pd.DataFrame())
+
+    calls = []
+
+    def fake_download(ticker, period, interval, progress, threads):
+        calls.append(ticker)
+        if ticker == "0167A0.KS":
+            return pd.DataFrame({
+                "Open": [1000.0],
+                "High": [1100.0],
+                "Low": [950.0],
+                "Close": [1050.0],
+                "Volume": [12345],
+            })
+        return pd.DataFrame()
+
+    monkeypatch.setattr(prices.yf, "download", fake_download)
+
+    df = prices.load_price_df("0167A0", "1y")
+
+    assert calls[:2] == ["0167A0", "0167A0.KS"]
+    assert float(df["Close"].iloc[-1]) == 1050.0

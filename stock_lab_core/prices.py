@@ -259,6 +259,40 @@ def _fetch_pykrx_latest_close(ticker: str) -> float:
     return get_latest_close_from_series(df["Close"])
 
 
+def _yfinance_history_candidates(ticker: str) -> list[str]:
+    """Return Yahoo symbols to try for OHLCV history."""
+    raw = str(ticker or "").strip().upper()
+    if not raw:
+        return []
+    candidates = [raw]
+    if _is_kr_ticker(raw) and not re.search(r"\.(KS|KQ)$", raw, flags=re.IGNORECASE):
+        code = _kr_code(raw)
+        candidates.extend([f"{code}.KS", f"{code}.KQ"])
+    return list(dict.fromkeys(candidates))
+
+
+def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
+    for yf_ticker in _yfinance_history_candidates(ticker):
+        try:
+            with _YF_LOCK:
+                df = yf.download(
+                    yf_ticker, period=period, interval="1d",
+                    progress=False, threads=False,
+                )
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        if "Close" not in df.columns:
+            continue
+        df = df.ffill().dropna(subset=["Close"])
+        if not df.empty:
+            return _maybe_align_ohlcv_to_live_price(yf_ticker, df)
+    return pd.DataFrame()
+
+
 def _fetch_naver_price(ticker: str) -> float:
     """
     네이버 모바일 API로 한국 주식 현재가 조회.
@@ -532,19 +566,14 @@ def load_price_df(ticker, period="1y"):
     멀티스레드 환경에서 SQLite tz-cache 충돌("database is locked") 방지.
     """
     if _is_kr_ticker(ticker):
-        return _fetch_pykrx_ohlcv(ticker, period)
+        df = _fetch_pykrx_ohlcv(ticker, period)
+        if df is not None and not df.empty:
+            return df
+        # Streamlit Cloud에서 pykrx가 비거나 일시 실패하면 한국 종목 전체가
+        # 오늘점검 판단불가로 밀리므로 Yahoo .KS/.KQ 히스토리로 보완한다.
+        return _fetch_yfinance_ohlcv(ticker, period)
 
-    with _YF_LOCK:
-        df = yf.download(
-            ticker, period=period, interval="1d",
-            progress=False, threads=False,
-        )
-    if not df.empty:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df = df.ffill().dropna()
-        df = _maybe_align_ohlcv_to_live_price(ticker, df)
-    return df
+    return _fetch_yfinance_ohlcv(ticker, period)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

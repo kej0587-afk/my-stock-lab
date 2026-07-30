@@ -16337,13 +16337,20 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
     name = sanitize_asset_name(item.get("name", ""), tkr)
     is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
     label = "⚠️데이터 없음: 가격조회 실패" if code == "DATA_UNAVAILABLE" else "⚠️판단 오류: 점검 필요"
+    display_price = "-"
+    try:
+        latest_price = clean_float(load_display_live_price(tkr), 0.0)
+        if latest_price > 0:
+            display_price = format_currency(latest_price, tkr)
+    except Exception:
+        pass
     row = {
         "시장": get_dashboard_market_label(tkr),
         "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name,
         "티커": tkr,
-        "현재가": "-",
+        "현재가": display_price,
         "MDD": "-",
         "고점대비": "-",
         "재무점수": "해당없음" if is_etf else "-",
@@ -27044,7 +27051,8 @@ def render_today_queue_tab(mode):
         f"급락방어 ({int(rapid_drop_mask.sum())})",
         f"추세방어 ({int(structure_mask.sum())})",
         f"과열/타점대기 ({int(overheat_mask.sum())})",
-        f"기타 주의 ({int((other_caution_mask | data_issue_mask).sum())})",
+        f"데이터확인 ({int(data_issue_mask.sum())})",
+        f"기타 주의 ({int(other_caution_mask.sum())})",
         "전체",
     ])
     with tabs[0]:
@@ -27076,9 +27084,12 @@ def render_today_queue_tab(mode):
         st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
     with tabs[8]:
-        st.caption("위 그룹에 들어가지 않은 기타 주의/데이터확인 항목입니다.")
-        _render_today_queue_table(summary_df.loc[other_caution_mask | data_issue_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
+        st.caption("가격 이력 또는 지표 계산을 못 불러온 항목입니다. 현재가는 보조 조회로 표시될 수 있지만, 일봉 이력이 없으면 판정은 보류합니다.")
+        _render_today_queue_table(summary_df.loc[data_issue_mask], "데이터확인 항목이 없습니다.", sort_low_first=True)
     with tabs[9]:
+        st.caption("위 방어/대기/데이터확인 그룹에 들어가지 않은 기타 주의 항목입니다.")
+        _render_today_queue_table(summary_df.loc[other_caution_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
+    with tabs[10]:
         _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
 
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
