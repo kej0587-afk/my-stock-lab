@@ -5855,6 +5855,93 @@ def _chart_pattern_line_value(points, last_pos: int) -> float:
     return float(slope * last_pos + intercept)
 
 
+def _chart_pattern_price_text(value) -> str:
+    try:
+        price = float(value)
+        if not np.isfinite(price) or price <= 0:
+            return "-"
+        return f"{price:,.2f}"
+    except Exception:
+        return "-"
+
+
+def _chart_pattern_lifecycle(pattern: dict, view: pd.DataFrame) -> dict:
+    close = float(view["Close"].iloc[-1])
+    last_pos = len(view) - 1
+    created_pos = int(pattern.get("created_pos", last_pos))
+    age = max(0, last_pos - created_pos)
+    direction = pattern.get("direction", "neutral")
+    raw_status = str(pattern.get("status", "관찰"))
+    trigger = clean_float(pattern.get("trigger_price"), 0.0)
+    invalid = clean_float(pattern.get("invalid_price"), 0.0)
+
+    lifecycle = "관찰"
+    priority = 2
+    if direction == "bullish":
+        if invalid > 0 and close < invalid:
+            lifecycle, priority = "무효", 0
+        elif raw_status in {"돌파", "상방돌파"} and (age <= 35 or trigger <= 0 or close >= trigger * 0.985):
+            lifecycle, priority = "현재유효", 4
+        elif age <= 12:
+            lifecycle, priority = "관찰", 2
+        else:
+            lifecycle, priority = "과거", 1
+    elif direction == "bearish":
+        if invalid > 0 and close > invalid:
+            lifecycle, priority = "무효", 0
+        elif raw_status in {"이탈", "하방이탈"} and (age <= 35 or trigger <= 0 or close <= trigger * 1.015):
+            lifecycle, priority = "현재유효", 4
+        elif age <= 12:
+            lifecycle, priority = "관찰", 2
+        else:
+            lifecycle, priority = "과거", 1
+    else:
+        if age <= 10:
+            lifecycle, priority = "관찰", 2
+        else:
+            lifecycle, priority = "과거", 1
+
+    pattern = pattern.copy()
+    pattern["age"] = age
+    pattern["lifecycle"] = lifecycle
+    pattern["priority"] = priority
+    prefix = "현재유효" if lifecycle == "현재유효" else ("관찰" if lifecycle == "관찰" else lifecycle)
+    pattern["display_label"] = f"{prefix}: {pattern.get('name', '패턴')}"
+    if raw_status and raw_status not in {"관찰", lifecycle}:
+        pattern["display_label"] += f" {raw_status}"
+    pattern["summary"] = (
+        f"{prefix} · {pattern.get('name', '패턴')} "
+        f"(기준 { _chart_pattern_price_text(trigger) } / 무효 { _chart_pattern_price_text(invalid) })"
+    )
+    return pattern
+
+
+def _finalize_chart_pattern_candidates(view: pd.DataFrame, patterns: list, max_patterns: int = 1) -> list:
+    enriched = [_chart_pattern_lifecycle(pattern, view) for pattern in patterns]
+    active = [p for p in enriched if p.get("lifecycle") in {"현재유효", "관찰"}]
+    if not active:
+        return []
+    active.sort(
+        key=lambda item: (
+            item.get("priority", 0),
+            -item.get("age", 999),
+            item.get("confidence", 0),
+        ),
+        reverse=True,
+    )
+    selected = []
+    seen_direction = set()
+    for pattern in active:
+        direction = pattern.get("direction", "neutral")
+        if direction in seen_direction and len(selected) >= 1:
+            continue
+        selected.append(pattern)
+        seen_direction.add(direction)
+        if len(selected) >= max_patterns:
+            break
+    return selected
+
+
 def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
     points = lows if kind == "bottom" else highs
     if len(points) < 2:
@@ -5897,7 +5984,11 @@ def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
                 "name": "쌍바닥" if kind == "bottom" else "쌍봉",
                 "label": label,
                 "direction": direction,
+                "status": status,
                 "confidence": confidence,
+                "created_pos": b["pos"],
+                "trigger_price": neckline,
+                "invalid_price": (min(a["price"], b["price"]) * 0.985) if kind == "bottom" else (max(a["price"], b["price"]) * 1.015),
                 "label_x": b["time"],
                 "label_y": label_y,
                 "line_points": [
@@ -5948,7 +6039,11 @@ def _detect_head_shoulders_pattern(view: pd.DataFrame, highs, lows, inverse: boo
             "name": "역헤드앤숄더" if inverse else "헤드앤숄더",
             "label": label,
             "direction": direction,
+            "status": status,
             "confidence": spread + (0.02 if status in {"돌파", "이탈"} else 0),
+            "created_pos": right["pos"],
+            "trigger_price": neckline,
+            "invalid_price": head["price"] * 0.985 if inverse else head["price"] * 1.015,
             "label_x": right["time"],
             "label_y": right["price"],
             "line_points": [
@@ -5995,7 +6090,11 @@ def _detect_triangle_pattern(view: pd.DataFrame, highs, lows):
         "name": "삼각수렴",
         "label": f"삼각수렴 {status}",
         "direction": direction,
+        "status": status,
         "confidence": (first_gap - last_gap) / first_gap,
+        "created_pos": last_pos,
+        "trigger_price": last_upper if direction == "bullish" else (last_lower if direction == "bearish" else (last_upper + last_lower) / 2),
+        "invalid_price": last_lower if direction == "bullish" else (last_upper if direction == "bearish" else 0.0),
         "label_x": view.index[-1],
         "label_y": close,
         "line_points": [
@@ -6025,19 +6124,29 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
     if bullish:
         if impulse_ret < 0.12 or close_slope >= slope_limit or recent_range > 0.22:
             return None
-        status = "돌파" if price > (high_slope * (len(flag) - 1) + high_intercept) * 1.005 else "관찰"
+        upper_line = high_slope * (len(flag) - 1) + high_intercept
+        lower_line = low_slope * (len(flag) - 1) + low_intercept
+        status = "돌파" if price > upper_line * 1.005 else "관찰"
         label, direction = f"상승 깃발형 {status}", "bullish"
+        trigger_price, invalid_price = upper_line, lower_line * 0.985
     else:
         if impulse_ret > -0.12 or close_slope <= -slope_limit or recent_range > 0.22:
             return None
-        status = "이탈" if price < (low_slope * (len(flag) - 1) + low_intercept) * 0.995 else "관찰"
+        upper_line = high_slope * (len(flag) - 1) + high_intercept
+        lower_line = low_slope * (len(flag) - 1) + low_intercept
+        status = "이탈" if price < lower_line * 0.995 else "관찰"
         label, direction = f"하락 깃발형 {status}", "bearish"
+        trigger_price, invalid_price = lower_line, upper_line * 1.015
     start_time, end_time = flag.index[0], flag.index[-1]
     return {
         "name": "상승 깃발형" if bullish else "하락 깃발형",
         "label": label,
         "direction": direction,
+        "status": status,
         "confidence": abs(impulse_ret) * 0.5 + (0.02 if status in {"돌파", "이탈"} else 0),
+        "created_pos": len(view) - 1,
+        "trigger_price": trigger_price,
+        "invalid_price": invalid_price,
         "label_x": end_time,
         "label_y": price,
         "line_points": [
@@ -6047,7 +6156,7 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
     }
 
 
-def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 3) -> list:
+def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 1) -> list:
     """최근 OHLC 피벗으로 차트 패턴 후보를 보수적으로 탐지합니다."""
     view = _chart_pattern_source_df(df, lookback=lookback)
     if view.empty:
@@ -6064,17 +6173,15 @@ def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_p
     ]
     patterns = [p for p in candidates if p and p.get("confidence", 0) >= 0.035]
     patterns.sort(key=lambda item: item.get("confidence", 0), reverse=True)
-    selected = []
+    unique = []
     seen = set()
     for pattern in patterns:
         name = pattern.get("name")
         if name in seen:
             continue
-        selected.append(pattern)
+        unique.append(pattern)
         seen.add(name)
-        if len(selected) >= max_patterns:
-            break
-    return selected
+    return _finalize_chart_pattern_candidates(view, unique, max_patterns=max_patterns)
 
 
 def _plotly_pattern_color(direction: str) -> str:
@@ -6085,21 +6192,36 @@ def _plotly_pattern_color(direction: str) -> str:
     return "#c084fc"
 
 
+def _chart_pattern_caption(patterns: list) -> str:
+    if not patterns:
+        return ""
+    pattern = patterns[0]
+    direction = pattern.get("direction", "neutral")
+    if direction == "bullish":
+        guide = "상방 시나리오는 기준선 위 안착, 무효선 이탈 시 폐기"
+    elif direction == "bearish":
+        guide = "하방 시나리오는 기준선 아래 이탈, 무효선 회복 시 폐기"
+    else:
+        guide = "수렴 구간은 위·아래 방향 확인 전까지 관찰"
+    return f"핵심 패턴: {pattern.get('summary', pattern.get('display_label', '패턴 후보'))} · {guide}"
+
+
 def _add_chart_pattern_overlays(fig, patterns: list):
     for pattern in patterns:
         color = _plotly_pattern_color(pattern.get("direction", "neutral"))
+        line_width = 2.6 if pattern.get("lifecycle") == "현재유효" else 1.9
         for line in pattern.get("line_points", []):
             (x0, y0), (x1, y1) = line
             fig.add_shape(
                 type="line",
                 x0=x0, y0=y0, x1=x1, y1=y1,
-                line=dict(color=color, width=1.8, dash="dot"),
+                line=dict(color=color, width=line_width, dash="dot"),
             )
         arrow_y = -44 if pattern.get("direction") == "bullish" else 44
         fig.add_annotation(
             x=pattern.get("label_x"),
             y=pattern.get("label_y"),
-            text=pattern.get("label", "패턴 후보"),
+            text=pattern.get("display_label") or pattern.get("label", "패턴 후보"),
             showarrow=True,
             arrowhead=2,
             ax=0,
@@ -6227,7 +6349,7 @@ def render_precision_candlestick_chart(
     )
     st.plotly_chart(fig, width='stretch')
     if pattern_candidates:
-        st.caption("패턴 후보: " + " · ".join(p.get("label", "패턴 후보") for p in pattern_candidates))
+        st.caption(_chart_pattern_caption(pattern_candidates))
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
