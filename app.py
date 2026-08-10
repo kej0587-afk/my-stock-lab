@@ -25339,8 +25339,9 @@ def render_naver_theme_coverage_panel():
 TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "등록상태", "시장", "구분", "판정", "타이밍", "대표주★", "Ticker",
     "테마", "내부세부축", "기준업종", "후보근거", "시장맥락", "주의요인",
-    "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
+    "돈흐름점수", "고점근접도", "1개월수익률", "3개월수익률",
 ]
+TODAY_FLOW_SHORTLIST_VERSION = "20260810_verdict_context_v2"
 
 
 def _today_flow_candidate_status(ticker: str) -> str:
@@ -25383,8 +25384,20 @@ def _flow_short_verdict(row) -> str:
     group = _flow_text(row.get("후보군", ""))
     gate = _flow_reason_label(row.get("진입검토", ""))
     action = _flow_reason_label(row.get("실행분류", ""))
+    timing = _flow_text(row.get("타이밍", "")) or _flow_short_timing(row)
+    risk = _flow_text(row.get("주의요인", "")) or _flow_short_risk(row)
+    internal = _flow_short_normalized_internal(row)
+    if "과열" in timing or "추격금지" in timing:
+        return "추격금지"
     if "고점주의" in group:
         return "눌림대기"
+    if "고점권" in timing:
+        return "눌림대기"
+    if "단기 이탈" in timing:
+        return "회복확인"
+    if "내부확산 확인" in risk or any(word in internal for word in ["확산 약함", "엇갈림", "소외"]):
+        if "진입" in gate or "진입" in action:
+            return "내부확인"
     if "스윙" in group:
         return "스윙 후보"
     if "장기" in group:
@@ -25423,18 +25436,41 @@ def _flow_short_reason(row, source_summary: str = "") -> str:
         parts.append(f"1M {_flow_pct_label(row.get('1개월수익률'))}")
     if finite_num(row.get("가속도", np.nan)):
         parts.append(f"가속 {_flow_pct_label(row.get('가속도'))}")
-    theme_signal = _flow_reason_label(row.get("테마판정", ""))
-    if theme_signal:
-        parts.append(theme_signal)
     if source_summary:
         parts.append(f"경로 {source_summary}")
     return " · ".join(dict.fromkeys(parts)) or "돈흐름 상위"
 
 
+def _flow_short_normalized_internal(row) -> str:
+    internal = _flow_text(row.get("업종내부", ""))
+    ticker = _flow_text(row.get("Ticker", "")).upper()
+    if ticker.endswith(".KQ") and internal.startswith("KOSPI 내부"):
+        return internal.replace("KOSPI 내부", "KOSDAQ/테마 내부", 1)
+    return internal
+
+
+def _flow_short_basis_context(row) -> str:
+    sub_axis = _first_flow_text(
+        row.get("세부축", ""),
+        row.get("내부세부축", ""),
+        row.get("하위테마", ""),
+        default="",
+    )
+    broad = _flow_text(row.get("대분류", "")) or _flow_text(row.get("시장대분류", ""))
+    market = _flow_text(row.get("시장", ""))
+    ticker = _flow_text(row.get("Ticker", "")).upper()
+    # 개별 종목 전광판에서는 테마 상위 대분류보다 실제로 보고 있는 세부축이 더 유용하다.
+    if sub_axis and sub_axis != "-":
+        if market == "한국" and ticker.endswith(".KQ"):
+            return f"KOSDAQ 테마 · {sub_axis}"
+        return sub_axis
+    return broad or "-"
+
+
 def _flow_short_context(row) -> str:
     market = _flow_text(row.get("시장", ""))
-    internal = _flow_first_phrase(row.get("업종내부", ""))
-    broad = _flow_text(row.get("대분류", "")) or _flow_text(row.get("시장대분류", ""))
+    internal = _flow_first_phrase(_flow_short_normalized_internal(row))
+    broad = _flow_text(row.get("기준업종", "")) or _flow_text(row.get("대분류", "")) or _flow_text(row.get("시장대분류", ""))
     parts = [p for p in [market, internal, broad] if p and p != "-"]
     return " · ".join(dict.fromkeys(parts)) or "-"
 
@@ -25443,7 +25479,7 @@ def _flow_short_risk(row) -> str:
     risks: list[str] = []
     price_level = row.get("가격수준", np.nan)
     state = _flow_text(row.get("상태", ""))
-    internal = _flow_text(row.get("업종내부", ""))
+    internal = _flow_short_normalized_internal(row)
     laggards = _flow_text(row.get("약한대표주", ""))
     if finite_num(price_level) and float(price_level) >= 0.90:
         risks.append("고점권")
@@ -25463,7 +25499,8 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     if not snapshot:
         return pd.DataFrame()
     cached_shortlist = snapshot.get("_flow_shortlist_df") if isinstance(snapshot, dict) else None
-    if isinstance(cached_shortlist, pd.DataFrame):
+    cached_version = snapshot.get("_flow_shortlist_version") if isinstance(snapshot, dict) else None
+    if isinstance(cached_shortlist, pd.DataFrame) and cached_version == TODAY_FLOW_SHORTLIST_VERSION:
         cached = cached_shortlist.copy()
         if not cached.empty and "Ticker" in cached.columns:
             cached["등록상태"] = cached["Ticker"].astype(str).apply(_today_flow_candidate_status)
@@ -25643,7 +25680,8 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     )
     tfd_short["구분"] = "개별주"
     tfd_short["내부세부축"] = tfd_short["세부축"]
-    tfd_short["기준업종"] = tfd_short["대분류"]
+    tfd_short["업종내부"] = tfd_short.apply(_flow_short_normalized_internal, axis=1)
+    tfd_short["기준업종"] = tfd_short.apply(_flow_short_basis_context, axis=1)
     tfd_short["내부대표주"] = tfd_short.apply(
         lambda r: "-" if _flow_text(r.get("업종대표주", "")).startswith("실시간 확인중")
         else _first_flow_text(r.get("업종대표주", ""), default="-"),
@@ -25702,13 +25740,15 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     combined = combined.sort_values(["_후보우선순위", "돈흐름점수"], ascending=[True, False], na_position="last")
     combined = combined.drop_duplicates("_ticker_key", keep="first")
     combined["후보군"] = combined["_ticker_key"].map(group_labels).fillna(combined["후보군"])
-    combined["판정"] = combined.apply(_flow_short_verdict, axis=1)
     combined["타이밍"] = combined.apply(_flow_short_timing, axis=1)
-    combined["시장맥락"] = combined.apply(_flow_short_context, axis=1)
     combined["주의요인"] = combined.apply(_flow_short_risk, axis=1)
+    combined["판정"] = combined.apply(_flow_short_verdict, axis=1)
+    combined["시장맥락"] = combined.apply(_flow_short_context, axis=1)
+    combined["고점근접도"] = combined["가격수준"] if "가격수준" in combined.columns else np.nan
     result = combined.drop(columns=[c for c in ["_ticker_key", "_후보우선순위", "_st"] if c in combined.columns])
     try:
         snapshot["_flow_shortlist_df"] = result.copy()
+        snapshot["_flow_shortlist_version"] = TODAY_FLOW_SHORTLIST_VERSION
     except Exception:
         pass
     return result
@@ -25777,9 +25817,12 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
         return
 
     disp = show[[c for c in TODAY_FLOW_SHORTLIST_COLS if c in show.columns]].copy()
-    for col in ["가격수준", "1개월수익률", "3개월수익률"]:
+    for col in ["가격수준", "고점근접도", "1개월수익률", "3개월수익률"]:
         if col in disp.columns:
-            disp[col] = disp[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+            if col in {"가격수준", "고점근접도"}:
+                disp[col] = disp[col].apply(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-")
+            else:
+                disp[col] = disp[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
     for col in ["돈흐름점수", "테마점수"]:
         if col in disp.columns:
             disp[col] = disp[col].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
@@ -25793,12 +25836,15 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
             "실행분류", "진입검토", "테마판정", "업종내부", "내부세부축", "기준업종",
             "내부대표주", "약한내부주", "대표업종", "시장대분류",
             "KOSPI대분류", "US대분류", "업종대표주", "약한대표주", "내부확산", "체크포인트",
-            "테마점수", "돈흐름점수", "가격수준", "1개월수익률", "3개월수익률",
+            "테마점수", "돈흐름점수", "고점근접도", "가격수준", "1개월수익률", "3개월수익률",
         ]
         detail = show[[c for c in detail_cols if c in show.columns]].copy()
-        for col in ["가격수준", "1개월수익률", "3개월수익률"]:
+        for col in ["가격수준", "고점근접도", "1개월수익률", "3개월수익률"]:
             if col in detail.columns:
-                detail[col] = detail[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
+                if col in {"가격수준", "고점근접도"}:
+                    detail[col] = detail[col].apply(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-")
+                else:
+                    detail[col] = detail[col].apply(lambda v: f"{v*100:+.1f}%" if pd.notna(v) else "-")
         for col in ["돈흐름점수", "테마점수"]:
             if col in detail.columns:
                 detail[col] = detail[col].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
