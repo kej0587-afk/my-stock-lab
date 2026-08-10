@@ -5814,6 +5814,303 @@ _LWC_CHART_OPTIONS = {
 }
 
 
+def _chart_pattern_source_df(df: pd.DataFrame, lookback: int = 140) -> pd.DataFrame:
+    required = ["Open", "High", "Low", "Close"]
+    if df is None or df.empty or any(col not in df.columns for col in required):
+        return pd.DataFrame()
+    view = df[required].copy().dropna().tail(lookback)
+    if len(view) < 24:
+        return pd.DataFrame()
+    return view
+
+
+def _chart_pattern_pivots(view: pd.DataFrame, left: int = 3, right: int = 3):
+    highs, lows = [], []
+    for i in range(left, len(view) - right):
+        high_window = view["High"].iloc[i - left:i + right + 1]
+        low_window = view["Low"].iloc[i - left:i + right + 1]
+        high = float(view["High"].iloc[i])
+        low = float(view["Low"].iloc[i])
+        if high == float(high_window.max()):
+            highs.append({"pos": i, "time": view.index[i], "price": high})
+        if low == float(low_window.min()):
+            lows.append({"pos": i, "time": view.index[i], "price": low})
+    return highs, lows
+
+
+def _chart_pattern_rel_diff(a, b) -> float:
+    try:
+        denom = (abs(float(a)) + abs(float(b))) / 2
+        return abs(float(a) - float(b)) / denom if denom else 1.0
+    except Exception:
+        return 1.0
+
+
+def _chart_pattern_line_value(points, last_pos: int) -> float:
+    x = np.array([p["pos"] for p in points], dtype=float)
+    y = np.array([p["price"] for p in points], dtype=float)
+    if len(x) < 2:
+        return float(y[-1]) if len(y) else np.nan
+    slope, intercept = np.polyfit(x, y, 1)
+    return float(slope * last_pos + intercept)
+
+
+def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
+    points = lows if kind == "bottom" else highs
+    if len(points) < 2:
+        return None
+    close = float(view["Close"].iloc[-1])
+    best = None
+    recent_points = points[-7:]
+    for left_idx in range(len(recent_points) - 1):
+        for right_idx in range(left_idx + 1, len(recent_points)):
+            a = recent_points[left_idx]
+            b = recent_points[right_idx]
+            gap = b["pos"] - a["pos"]
+            if gap < 5 or gap > 70:
+                continue
+            if _chart_pattern_rel_diff(a["price"], b["price"]) > 0.045:
+                continue
+            segment = view.iloc[a["pos"]:b["pos"] + 1]
+            if kind == "bottom":
+                neckline = float(segment["High"].max())
+                base = (a["price"] + b["price"]) / 2
+                height = (neckline - base) / base if base else 0
+                if height < 0.035 or close < base * (1 + min(height * 0.25, 0.03)):
+                    continue
+                status = "돌파" if close >= neckline * 0.997 else "관찰"
+                direction = "bullish"
+                label = f"쌍바닥 {status}"
+                label_y = b["price"]
+            else:
+                neckline = float(segment["Low"].min())
+                top = (a["price"] + b["price"]) / 2
+                height = (top - neckline) / top if top else 0
+                if height < 0.035 or close > top * (1 - min(height * 0.25, 0.03)):
+                    continue
+                status = "이탈" if close <= neckline * 1.003 else "관찰"
+                direction = "bearish"
+                label = f"쌍봉 {status}"
+                label_y = b["price"]
+            confidence = height + (0.02 if status in {"돌파", "이탈"} else 0)
+            candidate = {
+                "name": "쌍바닥" if kind == "bottom" else "쌍봉",
+                "label": label,
+                "direction": direction,
+                "confidence": confidence,
+                "label_x": b["time"],
+                "label_y": label_y,
+                "line_points": [
+                    ((a["time"], a["price"]), (b["time"], b["price"])),
+                    ((a["time"], neckline), (view.index[-1], neckline)),
+                ],
+            }
+            if best is None or candidate["confidence"] > best["confidence"]:
+                best = candidate
+    return best
+
+
+def _detect_head_shoulders_pattern(view: pd.DataFrame, highs, lows, inverse: bool = False):
+    points = lows if inverse else highs
+    opposite = highs if inverse else lows
+    if len(points) < 3 or len(opposite) < 2:
+        return None
+    close = float(view["Close"].iloc[-1])
+    best = None
+    recent = points[-7:]
+    for i in range(len(recent) - 2):
+        left, head, right = recent[i], recent[i + 1], recent[i + 2]
+        if min(head["pos"] - left["pos"], right["pos"] - head["pos"]) < 4:
+            continue
+        shoulders_ok = _chart_pattern_rel_diff(left["price"], right["price"]) <= 0.075
+        if not shoulders_ok:
+            continue
+        if inverse:
+            head_ok = head["price"] < left["price"] * 0.96 and head["price"] < right["price"] * 0.96
+        else:
+            head_ok = head["price"] > left["price"] * 1.04 and head["price"] > right["price"] * 1.04
+        if not head_ok:
+            continue
+        mids = [p for p in opposite if left["pos"] < p["pos"] < right["pos"]]
+        if len(mids) < 2:
+            continue
+        neckline = (mids[0]["price"] + mids[-1]["price"]) / 2
+        if inverse:
+            status = "돌파" if close >= neckline * 0.997 else "관찰"
+            label = f"역헤드앤숄더 {status}"
+            direction = "bullish"
+        else:
+            status = "이탈" if close <= neckline * 1.003 else "관찰"
+            label = f"헤드앤숄더 {status}"
+            direction = "bearish"
+        spread = abs(head["price"] - neckline) / abs(neckline) if neckline else 0
+        candidate = {
+            "name": "역헤드앤숄더" if inverse else "헤드앤숄더",
+            "label": label,
+            "direction": direction,
+            "confidence": spread + (0.02 if status in {"돌파", "이탈"} else 0),
+            "label_x": right["time"],
+            "label_y": right["price"],
+            "line_points": [
+                ((left["time"], left["price"]), (head["time"], head["price"])),
+                ((head["time"], head["price"]), (right["time"], right["price"])),
+                ((mids[0]["time"], neckline), (view.index[-1], neckline)),
+            ],
+        }
+        if best is None or candidate["confidence"] > best["confidence"]:
+            best = candidate
+    return best
+
+
+def _detect_triangle_pattern(view: pd.DataFrame, highs, lows):
+    if len(highs) < 3 or len(lows) < 3:
+        return None
+    recent_highs = highs[-4:]
+    recent_lows = lows[-4:]
+    price = float(view["Close"].iloc[-1])
+    last_pos = len(view) - 1
+    xh = np.array([p["pos"] for p in recent_highs], dtype=float)
+    yh = np.array([p["price"] for p in recent_highs], dtype=float)
+    xl = np.array([p["pos"] for p in recent_lows], dtype=float)
+    yl = np.array([p["price"] for p in recent_lows], dtype=float)
+    high_slope, high_intercept = np.polyfit(xh, yh, 1)
+    low_slope, low_intercept = np.polyfit(xl, yl, 1)
+    slope_floor = max(price * 0.00035, 1e-9)
+    if not (high_slope < -slope_floor and low_slope > slope_floor):
+        return None
+    first_gap = (high_slope * min(xh[0], xl[0]) + high_intercept) - (low_slope * min(xh[0], xl[0]) + low_intercept)
+    last_upper = high_slope * last_pos + high_intercept
+    last_lower = low_slope * last_pos + low_intercept
+    last_gap = last_upper - last_lower
+    if first_gap <= 0 or last_gap <= 0 or last_gap > first_gap * 0.8:
+        return None
+    close = float(view["Close"].iloc[-1])
+    if close > last_upper * 1.005:
+        status, direction = "상방돌파", "bullish"
+    elif close < last_lower * 0.995:
+        status, direction = "하방이탈", "bearish"
+    else:
+        status, direction = "수렴", "neutral"
+    return {
+        "name": "삼각수렴",
+        "label": f"삼각수렴 {status}",
+        "direction": direction,
+        "confidence": (first_gap - last_gap) / first_gap,
+        "label_x": view.index[-1],
+        "label_y": close,
+        "line_points": [
+            ((recent_highs[0]["time"], high_slope * recent_highs[0]["pos"] + high_intercept),
+             (view.index[-1], last_upper)),
+            ((recent_lows[0]["time"], low_slope * recent_lows[0]["pos"] + low_intercept),
+             (view.index[-1], last_lower)),
+        ],
+    }
+
+
+def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
+    if len(view) < 45:
+        return None
+    impulse = view.iloc[-45:-18]
+    flag = view.iloc[-18:]
+    if len(impulse) < 12 or len(flag) < 10:
+        return None
+    impulse_ret = float(impulse["Close"].iloc[-1] / impulse["Close"].iloc[0] - 1)
+    x = np.arange(len(flag), dtype=float)
+    close_slope, _ = np.polyfit(x, flag["Close"].astype(float).to_numpy(), 1)
+    high_slope, high_intercept = np.polyfit(x, flag["High"].astype(float).to_numpy(), 1)
+    low_slope, low_intercept = np.polyfit(x, flag["Low"].astype(float).to_numpy(), 1)
+    price = float(view["Close"].iloc[-1])
+    recent_range = (float(flag["High"].max()) - float(flag["Low"].min())) / price if price else 1
+    slope_limit = price * 0.004
+    if bullish:
+        if impulse_ret < 0.12 or close_slope >= slope_limit or recent_range > 0.22:
+            return None
+        status = "돌파" if price > (high_slope * (len(flag) - 1) + high_intercept) * 1.005 else "관찰"
+        label, direction = f"상승 깃발형 {status}", "bullish"
+    else:
+        if impulse_ret > -0.12 or close_slope <= -slope_limit or recent_range > 0.22:
+            return None
+        status = "이탈" if price < (low_slope * (len(flag) - 1) + low_intercept) * 0.995 else "관찰"
+        label, direction = f"하락 깃발형 {status}", "bearish"
+    start_time, end_time = flag.index[0], flag.index[-1]
+    return {
+        "name": "상승 깃발형" if bullish else "하락 깃발형",
+        "label": label,
+        "direction": direction,
+        "confidence": abs(impulse_ret) * 0.5 + (0.02 if status in {"돌파", "이탈"} else 0),
+        "label_x": end_time,
+        "label_y": price,
+        "line_points": [
+            ((start_time, high_intercept), (end_time, high_slope * (len(flag) - 1) + high_intercept)),
+            ((start_time, low_intercept), (end_time, low_slope * (len(flag) - 1) + low_intercept)),
+        ],
+    }
+
+
+def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 3) -> list:
+    """최근 OHLC 피벗으로 차트 패턴 후보를 보수적으로 탐지합니다."""
+    view = _chart_pattern_source_df(df, lookback=lookback)
+    if view.empty:
+        return []
+    highs, lows = _chart_pattern_pivots(view)
+    candidates = [
+        _detect_double_pattern(view, highs, lows, "bottom"),
+        _detect_double_pattern(view, highs, lows, "top"),
+        _detect_head_shoulders_pattern(view, highs, lows, inverse=True),
+        _detect_head_shoulders_pattern(view, highs, lows, inverse=False),
+        _detect_triangle_pattern(view, highs, lows),
+        _detect_flag_pattern(view, bullish=True),
+        _detect_flag_pattern(view, bullish=False),
+    ]
+    patterns = [p for p in candidates if p and p.get("confidence", 0) >= 0.035]
+    patterns.sort(key=lambda item: item.get("confidence", 0), reverse=True)
+    selected = []
+    seen = set()
+    for pattern in patterns:
+        name = pattern.get("name")
+        if name in seen:
+            continue
+        selected.append(pattern)
+        seen.add(name)
+        if len(selected) >= max_patterns:
+            break
+    return selected
+
+
+def _plotly_pattern_color(direction: str) -> str:
+    if direction == "bullish":
+        return "#f97316"
+    if direction == "bearish":
+        return "#38bdf8"
+    return "#c084fc"
+
+
+def _add_chart_pattern_overlays(fig, patterns: list):
+    for pattern in patterns:
+        color = _plotly_pattern_color(pattern.get("direction", "neutral"))
+        for line in pattern.get("line_points", []):
+            (x0, y0), (x1, y1) = line
+            fig.add_shape(
+                type="line",
+                x0=x0, y0=y0, x1=x1, y1=y1,
+                line=dict(color=color, width=1.8, dash="dot"),
+            )
+        arrow_y = -44 if pattern.get("direction") == "bullish" else 44
+        fig.add_annotation(
+            x=pattern.get("label_x"),
+            y=pattern.get("label_y"),
+            text=pattern.get("label", "패턴 후보"),
+            showarrow=True,
+            arrowhead=2,
+            ax=0,
+            ay=arrow_y,
+            bgcolor="rgba(15,23,42,0.85)",
+            bordercolor=color,
+            borderwidth=1,
+            font=dict(color=color, size=12),
+        )
+
+
 def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = "lwc_candle") -> bool:
     """TradingView Lightweight Charts 캔들스틱 + MA 라인 렌더링.
 
@@ -5890,11 +6187,17 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
     return True
 
 
-def render_precision_candlestick_chart(df: pd.DataFrame, avg_price: float = 0.0, key: str = "precision_candle"):
+def render_precision_candlestick_chart(
+    df: pd.DataFrame,
+    avg_price: float = 0.0,
+    key: str = "precision_candle",
+    show_patterns: bool = True,
+):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
         return
-    if render_lwc_candlestick(df, avg_price=avg_price, key=key):
+    pattern_candidates = detect_chart_pattern_candidates(df) if show_patterns else []
+    if not pattern_candidates and render_lwc_candlestick(df, avg_price=avg_price, key=key):
         return
     fig = go.Figure(data=[go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
@@ -5915,12 +6218,16 @@ def render_precision_candlestick_chart(df: pd.DataFrame, avg_price: float = 0.0,
             ))
     if avg_price and avg_price > 0:
         fig.add_hline(y=avg_price, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
+    if pattern_candidates:
+        _add_chart_pattern_overlays(fig, pattern_candidates)
     fig.update_layout(
         template="plotly_dark", height=600,
         xaxis_rangeslider_visible=False,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig, width='stretch')
+    if pattern_candidates:
+        st.caption("패턴 후보: " + " · ".join(p.get("label", "패턴 후보") for p in pattern_candidates))
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -29196,13 +29503,19 @@ if main_page == "precision":
                 or (app_mode == "개인모드" and not is_free and has_p)
             )
             avg_line = p_line if _show_avg else 0.0
+            show_chart_patterns = st.checkbox(
+                "차트 패턴 후보 표시",
+                value=True,
+                key=f"precision_chart_patterns_{tkr}",
+                help="쌍바닥, 쌍봉, 헤드앤숄더, 깃발형, 삼각수렴을 최근 피벗 기준 보조 후보로 표시합니다.",
+            )
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}")
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns)
             with week_tab:
-                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}")
+                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns)
             with month_tab:
-                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}")
+                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns)
             render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
