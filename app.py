@@ -11615,6 +11615,24 @@ def clear_price_and_chart_cache():
     cache_clear(load_price_df)
 
 
+def load_precision_price_history(ticker: str, period: str = "1y"):
+    """정밀관측소 차트 이력 로딩. 기본 기간 실패 시 짧은 기간으로 재시도."""
+    attempts = [period, "2y", "6mo", "3mo", "1mo", "5d"]
+    seen = set()
+    for attempt_period in attempts:
+        if attempt_period in seen:
+            continue
+        seen.add(attempt_period)
+        try:
+            df = load_price_df(ticker, attempt_period)
+        except Exception:
+            df = pd.DataFrame()
+        if df is not None and not df.empty:
+            note = "" if attempt_period == period else f"차트 이력은 {attempt_period} 기준으로 대체 조회했습니다."
+            return df, note
+    return pd.DataFrame(), ""
+
+
 def clear_news_report_cache():
     cache_clear(get_ticker_news)
     cache_clear(get_analyst_snapshot)
@@ -29321,7 +29339,7 @@ if main_page == "precision":
                 persist_watchlist()
                 st.rerun()
 
-    df = load_price_df(tkr, "1y")
+    df, precision_chart_load_note = load_precision_price_history(tkr, "1y")
     if not df.empty:
         df = build_indicators(df)
         # 프리마켓·애프터마켓 실시간가 선취득 → calc_scores에 live_price로 주입
@@ -29380,10 +29398,10 @@ if main_page == "precision":
             with price_refresh_col:
                 st.caption("현재가")
                 if st.button("새로고침", key=f"refresh_precision_price_{fin_key}", width='stretch', help="선택 종목의 현재가 캐시를 비우고 다시 조회합니다. 미국장은 가능하면 프리/애프터 가격을 반영합니다."):
-                    clear_selected_price_cache()
+                    clear_price_and_chart_cache()
                     enable_force_live_price_refresh()
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-                    st.toast(f"{tkr} 현재가를 다시 조회합니다.")
+                    st.toast(f"{tkr} 현재가와 차트 이력을 다시 조회합니다.")
                     st.rerun()
                 st.number_input(
                     "직접입력",
@@ -29399,6 +29417,8 @@ if main_page == "precision":
                 st.caption(price_source)
                 if price_refresh_time:
                     st.caption(f"갱신 {price_refresh_time[-8:]}")
+                if precision_chart_load_note:
+                    st.caption(precision_chart_load_note)
 
             if is_free or app_mode == "범용모드": st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
@@ -29593,7 +29613,55 @@ if main_page == "precision":
             prompt = build_ai_analysis_prompt(name, tkr, macro_res, final_macro_risk, c)
             st.info("아래 프롬프트를 복사해서 ChatGPT나 Gemini에 붙여넣으면 됩니다.")
             st.text_area("분석용 프롬프트", value=prompt, height=500, key=f"prompt_box_{normalize_ticker(tkr)}")
-    else: st.error("해당 종목의 차트 데이터를 불러올 수 없습니다. 티커를 다시 확인해 주십시오.")
+    else:
+        manual_price_key = f"precision_manual_live_price_{fin_key}"
+        manual_cur_p = clean_float(st.session_state.get(manual_price_key), 0.0)
+        auto_cur_p = load_display_live_price(tkr)
+        display_cur_p = manual_cur_p if manual_cur_p > 0 else auto_cur_p
+        st.warning(
+            "차트 이력 데이터를 아직 불러오지 못했습니다. 티커 오류라기보다 데이터 제공처 지연/빈 캐시일 수 있습니다. "
+            "현재가가 잡히면 임시 가격 확인만 표시합니다."
+        )
+        _err_c1, _err_c2 = st.columns([1, 1])
+        with _err_c1:
+            if st.button("가격·차트 다시 조회", key=f"refresh_empty_precision_chart_{fin_key}", width='stretch'):
+                clear_price_and_chart_cache()
+                enable_force_live_price_refresh()
+                st.toast(f"{tkr} 가격과 차트 이력을 다시 조회합니다.")
+                st.rerun()
+        with _err_c2:
+            st.number_input(
+                "현재가 직접입력",
+                min_value=0.0,
+                step=0.01 if not is_kr_listed(tkr) else 1.0,
+                format="%.2f" if not is_kr_listed(tkr) else "%.0f",
+                key=manual_price_key,
+                help="차트 이력이 일시적으로 비어도 현재가만 임시 확인할 수 있습니다.",
+            )
+        if display_cur_p > 0:
+            st.info(f"현재가 확인: {format_currency(display_cur_p, tkr)}")
+            fig = go.Figure()
+            now_ts = pd.Timestamp(datetime.now(KST))
+            fig.add_trace(go.Scatter(
+                x=[now_ts],
+                y=[display_cur_p],
+                mode="markers+text",
+                text=["현재가"],
+                textposition="top center",
+                marker=dict(size=12, color="#38bdf8"),
+                name="현재가",
+            ))
+            fig.update_layout(
+                template="plotly_dark",
+                height=280,
+                xaxis_title="임시 확인",
+                yaxis_title="가격",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+            )
+            st.plotly_chart(fig, width='stretch')
+        else:
+            st.error("현재가와 차트 이력을 모두 불러오지 못했습니다. 가격·차트 다시 조회를 눌러 캐시를 비운 뒤 다시 확인해 주세요.")
 
 if main_page == "asset":
     st.subheader("앱 내부 자산 관리")
