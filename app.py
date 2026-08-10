@@ -16354,7 +16354,7 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
         "MDD": "-",
         "고점대비": "-",
         "재무점수": "해당없음" if is_etf else "-",
-        "📌후보등급": "판단불가",
+        "📌후보등급": "데이터확인",
         "RS": "-",
         "시장벤치": "-",
         "기초자산": "-",
