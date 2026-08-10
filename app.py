@@ -6223,6 +6223,23 @@ def _chart_pattern_caption(patterns: list) -> str:
     return f"핵심 패턴: {plain} · {guide}"
 
 
+def _chart_pattern_annotation_text(pattern: dict) -> str:
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    name = pattern.get("name", "패턴")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    if lifecycle == "관찰" and direction == "bullish":
+        return f"{name} 후보<br>기준 {trigger} 전<br>회복 미확정"
+    if lifecycle == "현재유효" and direction == "bullish":
+        return f"{name} 유효<br>기준 {trigger} 위 유지<br>무효 {invalid}"
+    if lifecycle == "관찰" and direction == "bearish":
+        return f"{name} 후보<br>이탈 전<br>하락 미확정"
+    if lifecycle == "현재유효" and direction == "bearish":
+        return f"{name} 유효<br>기준 {trigger} 아래<br>무효 {invalid}"
+    return f"{name} 후보<br>방향 확인 전"
+
+
 def _add_chart_pattern_overlays(fig, patterns: list):
     for pattern in patterns:
         color = _plotly_pattern_color(pattern.get("direction", "neutral"))
@@ -6238,7 +6255,7 @@ def _add_chart_pattern_overlays(fig, patterns: list):
         fig.add_annotation(
             x=pattern.get("label_x"),
             y=pattern.get("label_y"),
-            text=pattern.get("display_label") or pattern.get("label", "패턴 후보"),
+            text=_chart_pattern_annotation_text(pattern),
             showarrow=True,
             arrowhead=2,
             ax=0,
