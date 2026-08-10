@@ -5906,11 +5906,15 @@ def _chart_pattern_lifecycle(pattern: dict, view: pd.DataFrame) -> dict:
     pattern["lifecycle"] = lifecycle
     pattern["priority"] = priority
     prefix = "현재유효" if lifecycle == "현재유효" else ("관찰" if lifecycle == "관찰" else lifecycle)
-    pattern["display_label"] = f"{prefix}: {pattern.get('name', '패턴')}"
+    pattern_name = pattern.get("name", "패턴")
+    if lifecycle == "관찰":
+        pattern["display_label"] = f"{prefix}: {pattern_name} 후보"
+    else:
+        pattern["display_label"] = f"{prefix}: {pattern_name}"
     if raw_status and raw_status not in {"관찰", lifecycle}:
         pattern["display_label"] += f" {raw_status}"
     pattern["summary"] = (
-        f"{prefix} · {pattern.get('name', '패턴')} "
+        f"{prefix} · {pattern_name}{' 후보' if lifecycle == '관찰' else ''} "
         f"(기준 { _chart_pattern_price_text(trigger) } / 무효 { _chart_pattern_price_text(invalid) })"
     )
     return pattern
@@ -6197,13 +6201,26 @@ def _chart_pattern_caption(patterns: list) -> str:
         return ""
     pattern = patterns[0]
     direction = pattern.get("direction", "neutral")
-    if direction == "bullish":
-        guide = "상방 시나리오는 기준선 위 안착, 무효선 이탈 시 폐기"
-    elif direction == "bearish":
-        guide = "하방 시나리오는 기준선 아래 이탈, 무효선 회복 시 폐기"
+    lifecycle = pattern.get("lifecycle", "관찰")
+    name = pattern.get("name", "패턴")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    if lifecycle == "관찰" and direction == "bullish":
+        plain = f"{name} 후보: 기준선 돌파 전, 추세 회복 미확정"
+        guide = f"기준 {trigger} 위 안착 전까지 추격보다 확인 우선 / 무효 {invalid}"
+    elif lifecycle == "현재유효" and direction == "bullish":
+        plain = f"{name}: 돌파 후 유효, 추세 회복 확인 구간"
+        guide = f"기준 {trigger} 위 유지가 핵심 / 무효 {invalid} 이탈 시 폐기"
+    elif lifecycle == "관찰" and direction == "bearish":
+        plain = f"{name} 후보: 기준선 이탈 전, 하락 확정 아님"
+        guide = f"기준 {trigger} 아래 이탈 전까지 경고만 반영 / 무효 {invalid} 회복 시 폐기"
+    elif lifecycle == "현재유효" and direction == "bearish":
+        plain = f"{name}: 이탈 후 유효, 반등 실패 확인 구간"
+        guide = f"기준 {trigger} 아래 유지가 핵심 / 무효 {invalid} 회복 시 폐기"
     else:
-        guide = "수렴 구간은 위·아래 방향 확인 전까지 관찰"
-    return f"핵심 패턴: {pattern.get('summary', pattern.get('display_label', '패턴 후보'))} · {guide}"
+        plain = f"{name} 후보: 방향 확인 전"
+        guide = f"기준 {trigger} 돌파/이탈 방향 확인 전까지 관찰"
+    return f"핵심 패턴: {plain} · {guide}"
 
 
 def _add_chart_pattern_overlays(fig, patterns: list):
