@@ -25695,13 +25695,130 @@ def _flow_leadership_layer(row):
     return "확인중"
 
 
+def _clean_flow_representative_name(label):
+    text = _flow_text(label).replace("★", " ")
+    if not text:
+        return ""
+    first = re.split(r"\s*[·,/]\s*", text, maxsplit=1)[0]
+    first = re.sub(r"\([^)]+\)", " ", first)
+    first = re.sub(r"[+-]?\d+(?:\.\d+)?%", " ", first)
+    first = re.sub(r"\b1D\b|\b5D\b|\b1M\b|\b2W\b", " ", first, flags=re.IGNORECASE)
+    first = re.sub(r"\s+", " ", first).strip(" -·,/")
+    return first.strip()
+
+
+def _resolve_flow_representative_ticker(label):
+    text = _flow_text(label)
+    if not text:
+        return "", ""
+    direct = _extract_flow_ticker(text)
+    if direct:
+        return direct, _clean_flow_representative_name(text)
+
+    name = _clean_flow_representative_name(text)
+    if not name:
+        return "", ""
+
+    candidate_names = [name]
+    for part in re.split(r"\s*[·,/]\s*", text):
+        cleaned = _clean_flow_representative_name(part)
+        if cleaned and cleaned not in candidate_names:
+            candidate_names.append(cleaned)
+
+    for candidate_name in candidate_names[:4]:
+        for raw_name, meta in TICKER_MAP.items():
+            ticker = meta[0] if isinstance(meta, (tuple, list)) and meta else ""
+            if not ticker:
+                continue
+            if raw_name == candidate_name or raw_name in candidate_name or candidate_name in raw_name:
+                return sanitize_ticker_value(ticker), raw_name
+
+        name_l = candidate_name.lower()
+        for ticker, display_name in KNOWN_TICKER_DISPLAY_NAMES.items():
+            display = str(display_name or "").strip()
+            if not display:
+                continue
+            display_l = display.lower()
+            if display_l == name_l or display_l in name_l or name_l in display_l:
+                return sanitize_ticker_value(ticker), display
+    return "", name
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _flow_representative_price_risk_snapshot(ticker, name=""):
+    ticker = sanitize_ticker_value(ticker)
+    if not ticker:
+        return {"level": "", "note": ""}
+    try:
+        df = load_price_df(ticker, period="1y")
+    except Exception:
+        return {"level": "", "note": ""}
+    if df is None or df.empty or "Close" not in df.columns:
+        return {"level": "", "note": ""}
+    close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    if close.empty:
+        return {"level": "", "note": ""}
+
+    last = clean_float(close.iloc[-1], np.nan)
+    if not finite_num(last) or float(last) <= 0:
+        return {"level": "", "note": ""}
+
+    lookback = close.tail(min(252, len(close)))
+    high_52 = clean_float(lookback.max(), np.nan)
+    drawdown = (float(last) / float(high_52) - 1.0) if finite_num(high_52) and float(high_52) > 0 else np.nan
+    ret_3m = (float(last) / float(close.iloc[-64]) - 1.0) if len(close) >= 64 and float(close.iloc[-64]) > 0 else np.nan
+    ret_1m = (float(last) / float(close.iloc[-22]) - 1.0) if len(close) >= 22 and float(close.iloc[-22]) > 0 else np.nan
+    ma50 = clean_float(close.tail(50).mean(), np.nan) if len(close) >= 50 else np.nan
+    ma120 = clean_float(close.tail(120).mean(), np.nan) if len(close) >= 120 else np.nan
+
+    display = _flow_text(name) or KNOWN_TICKER_DISPLAY_NAMES.get(ticker, ticker) or ticker
+    parts = []
+    if finite_num(drawdown):
+        parts.append(f"고점대비 {fmt_flow_pct(drawdown)}")
+    if finite_num(ret_3m):
+        parts.append(f"3M {fmt_flow_pct(ret_3m)}")
+    if finite_num(ret_1m):
+        parts.append(f"1M {fmt_flow_pct(ret_1m)}")
+    context = " · ".join(parts)
+
+    if (finite_num(drawdown) and float(drawdown) <= -0.30) or (finite_num(ret_3m) and float(ret_3m) <= -0.20):
+        return {"level": "panic", "note": f"위기/패닉: {display} {context}"}
+    if (finite_num(drawdown) and float(drawdown) <= -0.20) or (finite_num(ret_3m) and float(ret_3m) <= -0.12):
+        return {"level": "defense", "note": f"가격방어: {display} {context}"}
+    if finite_num(ma50) and finite_num(ma120) and float(last) < float(ma50) and float(last) < float(ma120):
+        return {"level": "trend", "note": f"추세방어: {display} MA50/MA120 아래"}
+    return {"level": "", "note": ""}
+
+
+def _flow_representative_risk_text(row):
+    action = _flow_action_bucket(row.get("통합판정", ""))
+    if action not in {"정밀관측", "눌림대기"}:
+        return ""
+    representative = _first_flow_text(
+        row.get("대표주", ""),
+        row.get("업종대표주", ""),
+        row.get("ETF/대표", ""),
+        default="",
+    )
+    ticker, name = _resolve_flow_representative_ticker(representative)
+    if not ticker:
+        return ""
+    snapshot = _flow_representative_price_risk_snapshot(ticker, name)
+    return _flow_text(snapshot.get("note", ""))
+
+
 def _flow_compact_decision(row):
     action = str(row.get("행동", "") or "") or _flow_action_bucket(row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
     price_band = str(row.get("가격위치", "") or "")
     internal = str(row.get("업종내부", "") or "")
+    representative_risk = str(row.get("대표주위험", "") or "")
     text = " ".join(str(row.get(c, "") or "") for c in ["큰돈판정", "테마판정", "하위상태"])
 
+    if "위기/패닉" in representative_risk:
+        return "대표주 위기/패닉, 정밀 제외"
+    if "가격방어" in representative_risk or "추세방어" in representative_risk:
+        return "대표주 방어 확인 먼저"
     if "확산 약함" in internal:
         return "ETF 강하지만 업종확산 약함"
     if action == "정밀관측":
@@ -25725,11 +25842,18 @@ def _adjust_flow_command_action(row):
     action = _flow_action_bucket(row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
     internal = str(row.get("업종내부", "") or "")
+    representative_risk = str(row.get("대표주위험", "") or "")
     r1m = clean_float(row.get("1개월", np.nan), np.nan)
     r2w = clean_float(row.get("2주", np.nan), np.nan)
 
     if action not in {"정밀관측", "눌림대기"}:
         return action
+
+    # 돈흐름이 좋아도 대표주 자체가 위기/패닉이면 정밀관측 후보에서 제외한다.
+    if "위기/패닉" in representative_risk:
+        return "관망/제외"
+    if "가격방어" in representative_risk or "추세방어" in representative_risk:
+        return "관심등록"
 
     # 한국 ETF/섹터 프록시가 강해도 실제 KOSPI 업종 내부가 약하면 우선순위를 낮춘다.
     if "확산 약함" in internal:
@@ -25781,7 +25905,11 @@ def _prepare_flow_command_table(unified_df):
     )
     show["약한내부주"] = show.apply(lambda r: _first_flow_text(r.get("약한대표주", ""), default="-"), axis=1)
     show["주도층위"] = show.apply(_flow_leadership_layer, axis=1)
+    show["대표주위험"] = show.apply(_flow_representative_risk_text, axis=1)
     show["행동"] = show.apply(_adjust_flow_command_action, axis=1)
+    risk_mask = show["대표주위험"].astype(str).str.strip().ne("")
+    if risk_mask.any():
+        show.loc[risk_mask, "다음확인"] = "대표주 위기/가격방어 해소 후 정밀관측"
     show["가격위치"] = show["가격수준"].apply(_flow_price_band) if "가격수준" in show.columns else "-"
     show["흐름"] = show.apply(
         lambda r: f"1M {_fmt_flow_pct_compact(r.get('1개월', np.nan))} / 2W {_fmt_flow_pct_compact(r.get('2주', np.nan))}",
@@ -25867,17 +25995,17 @@ def _render_flow_command_center(unified_df):
 
     cols = [
         "실행순서", "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
-        "가격위치", "흐름", "판단", "다음확인",
+        "가격위치", "흐름", "판단", "대표주위험", "다음확인",
     ]
     ranking_cols = [
         "원천순위", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
-        "점수", "가격위치", "흐름", "행동", "판단", "업종내부",
+        "점수", "가격위치", "흐름", "행동", "판단", "대표주위험", "업종내부",
     ]
     detail_cols = [
         "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축", "기준업종", "주도층위",
         "대표주★", "대표주", "업종내부", "대표업종", "대분류", "시장대분류",
         "KOSPI대분류", "US대분류", "내부대표주", "약한내부주", "업종대표주", "약한대표주",
-        "가격위치", "흐름", "판단", "다음확인",
+        "가격위치", "흐름", "판단", "대표주위험", "다음확인",
     ]
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
     if primary.empty:
