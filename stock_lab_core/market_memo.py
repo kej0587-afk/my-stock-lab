@@ -507,6 +507,31 @@ def _flow_action_phrase(row: dict) -> str:
     return "선별 관찰"
 
 
+def _flow_health_fragment(row: dict, score_col: str = "돈흐름점수") -> str:
+    parts = [f"3M {_fmt_auto_pct(row.get('3개월수익률'))}"]
+    if row.get(score_col) not in [None, ""]:
+        parts.append(f"돈흐름 {_fmt_auto_num(row.get(score_col), 1)}점")
+    state = _norm(row.get("상태") or row.get("테마판정"))
+    if state:
+        parts.append(f"상태 {state}")
+    return ", ".join(parts)
+
+
+def _is_weak_flow_leader(row: dict) -> bool:
+    state = _norm(row.get("상태") or row.get("테마판정"))
+    ret_3m = _flow_value(row, "3개월수익률")
+    score = _flow_value(row, "돈흐름점수", _flow_value(row, "테마돈흐름점수"))
+    weak_state = any(token in state for token in ("관찰", "둔화", "하락", "위험", "소외", "약세"))
+    strong_state = any(token in state for token in ("주도", "강세", "과열"))
+    if ret_3m < 0:
+        return True
+    if weak_state and not strong_state:
+        return True
+    if score <= 0:
+        return True
+    return False
+
+
 def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     label = _flow_row_label(row)
     score = _fmt_auto_num(row.get(score_col), 1) if row.get(score_col) not in [None, ""] else "-"
@@ -999,6 +1024,8 @@ GENERATED_MEMO_SCORE_SKIP_TERMS = (
     "오늘의 실행 카드", "오늘 돈흐름 결론판", "시장 안전벨트",
     "시황 요약:", "돈흐름", "3m +", "가속도", "상태 과열경보",
     "r/r", "현재가", "목표비중", "중기 돈흐름 상위 축",
+    "상대 순위 상위 축", "상대 상위", "주도 유지로 보기는 어렵",
+    "후행 상대강도표", "후행 강도표",
 )
 
 
@@ -1235,45 +1262,53 @@ def _auto_insight_bullets(
     ]
     if semi_rows:
         top = sorted(semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
+        top_label = _flow_row_label(top)
+        top_is_weak = _is_weak_flow_leader(top)
         overheated = sum(
             1 for row in semi_rows
             if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
         )
-        if overheated >= 2:
+        if top_is_weak:
+            bullets.append(
+                f"반도체/AI에서 상대 상위는 {top_label}지만 "
+                f"{_flow_health_fragment(top)}입니다. 주도 유지로 보기는 어렵고, "
+                "정밀관측소에서 하락 패턴·고점대비 낙폭·RS 회복을 먼저 확인하세요."
+            )
+        elif overheated >= 2:
             if kr_market_crash and semi_shock:
                 sample = _norm(bearish_ctx.get("sample"))
                 sample_text = f" 뉴스 단서: {_short_news_title(sample)}." if sample else ""
                 short_key = rotation_ctx.get("short_key") or "단기"
                 bullets.append(
-                    f"반도체/AI는 {_flow_row_label(top)} 기준 3M 돈흐름이 아직 강하게 남아 있지만, "
+                    f"반도체/AI는 {top_label} 기준 3M 돈흐름이 아직 강하게 남아 있지만, "
                     f"{short_key} 급락/이탈과 반도체 뉴스 충격이 우선입니다.{sample_text} "
                     "이 구간에서 3M 지표는 매수 신호가 아니라 후행 상대강도표로만 봅니다."
                 )
             elif kr_market_crash:
                 bullets.append(
-                    f"반도체/AI 중기 돈흐름은 {_flow_row_label(top)} 중심으로 아직 강하지만, "
+                    f"반도체/AI 중기 돈흐름은 {top_label} 중심으로 아직 강하지만, "
                     "국장 급락장에서는 이 신호를 매수 주도보다 후행/상대강도 지표로만 봅니다."
                 )
             elif bearish_ctx.get("count"):
                 sample = _norm(bearish_ctx.get("sample"))
                 sample_text = f"({_short_news_title(sample)}) " if sample else ""
                 bullets.append(
-                    f"반도체/AI는 {_flow_row_label(top)} 중심의 중기 돈흐름이 매우 강하지만, "
+                    f"반도체/AI는 {top_label} 중심의 중기 돈흐름이 매우 강하지만, "
                     f"{sample_text}같은 과열·급락 경고 뉴스가 같이 잡힙니다. "
                     "지금은 절대 추격 금지, 종가 확인과 눌림 확인이 우선입니다."
                 )
             elif rotation_ctx.get("semi_short_weak"):
                 short_key = rotation_ctx.get("short_key") or "단기"
                 bullets.append(
-                    f"반도체/AI는 {_flow_row_label(top)} 중심의 중기 돈흐름은 강하지만 {short_key} 기준 단기 이탈이 있어, 호재 우위보다 눌림/종가 확인이 우선입니다."
+                    f"반도체/AI는 {top_label} 중심의 중기 돈흐름은 강하지만 {short_key} 기준 단기 이탈이 있어, 호재 우위보다 눌림/종가 확인이 우선입니다."
                 )
             else:
                 bullets.append(
-                    f"반도체/AI는 {_flow_row_label(top)} 중심으로 중기 돈흐름이 강하지만 과열 표식이 많아 추격보다 눌림 확인이 우선입니다."
+                    f"반도체/AI는 {top_label} 중심으로 중기 돈흐름이 강하지만 과열 표식이 많아 추격보다 눌림 확인이 우선입니다."
                 )
         else:
             bullets.append(
-                f"반도체/AI는 {_flow_row_label(top)} 중심으로 중기 주도 흐름이 유지됩니다. 후보는 정밀관측소 타점과 같이 봅니다."
+                f"반도체/AI는 {top_label} 중심으로 중기 주도 흐름이 유지됩니다. 후보는 정밀관측소 타점과 같이 봅니다."
             )
 
     if rotation_ctx.get("rotation_detected"):
@@ -1304,13 +1339,21 @@ def _auto_insight_bullets(
         flow_snapshot.get("kr_top5"),
         flow_snapshot.get("theme_top5"),
     ]
-    leaders = []
+    leader_rows = []
     for table in top_tables:
         rows = _iter_table_rows(table, limit=1)
         if rows:
-            leaders.append(_flow_row_label(rows[0]))
+            leader_rows.append(rows[0])
+    leaders = [_flow_row_label(row) for row in leader_rows]
     if leaders:
-        leader_text = "중기 돈흐름 상위 축은 " + ", ".join(dict.fromkeys(leaders[:4])) + "입니다."
+        weak_leaders = [row for row in leader_rows if _is_weak_flow_leader(row)]
+        unique_leaders = list(dict.fromkeys(leaders[:4]))
+        if weak_leaders:
+            leader_text = "상대 순위 상위 축은 " + ", ".join(unique_leaders) + "입니다."
+            weak_text = ", ".join(dict.fromkeys(_flow_row_label(row) for row in weak_leaders[:2]))
+            leader_text += f" 약한 상위축: {weak_text}. 주도주 확정이 아니라 회복 확인 대상으로 봅니다."
+        else:
+            leader_text = "중기 돈흐름 상위 축은 " + ", ".join(unique_leaders) + "입니다."
         if semi_shock or kr_market_crash:
             leader_text += " 단, 1D/5D 급락 구간에서는 매수 신호가 아니라 후행 강도표로만 봅니다."
         bullets.append(leader_text)
@@ -1581,11 +1624,20 @@ def _headline_risk_context(lines: list[str]) -> dict:
     )
     event_caution = any(token in text for token in ("fomc", "금리 반응", "장중 변동성", "이벤트 리스크"))
     leveraged_caution = any(token in text for token in ("tqqq", "qld", "soxl", "레버리지"))
+    flow_breakdown = any(
+        token in text
+        for token in (
+            "상대 상위", "상대 순위 상위", "주도 유지로 보기는 어렵",
+            "후행 상대강도표", "후행 강도표", "하락 패턴",
+            "고점대비 낙폭", "rs 회복",
+        )
+    )
     return {
         "rotation": rotation_caution,
         "event": event_caution,
         "leverage": leveraged_caution,
-        "any": rotation_caution or event_caution or leveraged_caution,
+        "flow_breakdown": flow_breakdown,
+        "any": rotation_caution or event_caution or leveraged_caution or flow_breakdown,
     }
 
 
@@ -1749,7 +1801,10 @@ def analyze_market_memo(text: str, universe: Iterable[dict] | None = None) -> di
     hot = [row["카테고리"] for row in category_rows if float(row["점수"]) >= 2]
     weak = [row["카테고리"] for row in category_rows if float(row["점수"]) <= -2]
     risk_context = _headline_risk_context(lines)
-    if hot and risk_context["any"]:
+    if risk_context["flow_breakdown"]:
+        headline = "상대 상위축과 단기 훼손이 엇갈림"
+        action_bias = "주도 확정 전 회복/손절선 확인"
+    elif hot and risk_context["any"]:
         headline = f"{', '.join(hot[:2])} 중기 주도, 단기 로테이션/이벤트 확인 필요"
         action_bias = "레버리지 추격 금지 · 눌림/종가 확인 우선"
     elif risk_context["rotation"] and risk_context["event"]:

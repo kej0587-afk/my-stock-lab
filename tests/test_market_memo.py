@@ -315,6 +315,60 @@ def test_auto_market_memo_treats_memory_news_shock_as_short_term_override():
     assert "매수 신호가 아니라 후행 강도표" in memo
 
 
+def test_auto_market_memo_does_not_call_weak_dram_a_leader():
+    flow_snapshot = {
+        "flow_df": [
+            {
+                "구분": "미국 섹터",
+                "섹터": "메모리/DRAM",
+                "Ticker": "DRAM",
+                "ETF 이름": "Roundhill Memory ETF",
+                "돈흐름점수": 24.3,
+                "3개월수익률": -0.091,
+                "상태": "관찰",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 iShares",
+                "Ticker": "SOXX",
+                "돈흐름점수": 7.8,
+                "3개월수익률": 0.011,
+                "상태": "둔화 경고",
+            },
+        ],
+        "us_top5": [
+            {
+                "섹터": "메모리/DRAM",
+                "Ticker": "DRAM",
+                "돈흐름점수": 24.3,
+                "3개월수익률": -0.091,
+                "상태": "관찰",
+            },
+        ],
+        "kr_top5": [
+            {
+                "섹터": "화장품",
+                "Ticker": "228790.KS",
+                "돈흐름점수": 22.8,
+                "3개월수익률": 0.176,
+                "상태": "과열경보",
+            },
+        ],
+    }
+
+    memo = build_auto_market_memo(
+        flow_snapshot=flow_snapshot,
+        now=datetime(2026, 8, 12, 14, 0),
+    )
+    summary = analyze_market_memo(memo, [])
+
+    assert "중기 주도 흐름이 유지" not in memo
+    assert "상대 상위는 메모리/DRAM(DRAM)지만" in memo
+    assert "주도 유지로 보기는 어렵" in memo
+    assert "상대 순위 상위 축" in memo
+    assert summary["headline"] == "상대 상위축과 단기 훼손이 엇갈림"
+
+
 def test_market_memo_headline_prioritizes_rotation_and_event_caution():
     text = """
     • 반도체/AI는 강세 유지와 호재 수요 확대가 있지만 1D 기준 단기 이탈이 있습니다.
