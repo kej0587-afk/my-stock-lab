@@ -14995,19 +14995,19 @@ def render_dashboard_group_summary(df, group_label):
     if "ETF" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
-            "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
+            "최종읽기", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
+            "최종읽기", "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
+            "최종읽기", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], width='stretch', height=640, hide_index=True)
@@ -16969,6 +16969,7 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
         "현재가": display_price,
         "MDD": "-",
         "고점대비": "-",
+        "최종읽기": "⚪데이터확인",
         "재무점수": "해당없음" if is_etf else "-",
         "📌후보등급": "데이터확인",
         "RS": "-",
@@ -17067,7 +17068,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260812_pattern_timing_watch_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260812_final_read_v1"
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
@@ -17085,6 +17086,7 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
         "현재가": format_currency(price, tkr) if price > 0 else "-",
         "MDD": "-",
         "고점대비": "-",
+        "최종읽기": "⚪데이터확인",
         "재무점수": "해당없음" if is_etf else "-",
         "📌후보등급": "가격만 확인",
         "RS": "-",
@@ -17216,6 +17218,48 @@ def format_dashboard_reason(c: dict) -> str:
     return base
 
 
+def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_grade: str = "",
+                               pattern_timing: str = "", pattern_bucket: str = "") -> str:
+    c = apply_leveraged_dca_dashboard_override(c)
+    code = str((c or {}).get("decision_code", "") or "")
+    group = str((c or {}).get("decision_group", "") or "")
+    text = " ".join([
+        str(dashboard_timing or ""),
+        str(dashboard_grade or ""),
+        str(pattern_timing or ""),
+        code,
+    ])
+
+    if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
+        return "⚪데이터확인"
+
+    if "하락패턴 유효" in pattern_timing or code in {"LEVERAGED_DAILY_DROP_NO_ADD", "MTF_DAMAGE_NO_ADD"}:
+        return "🛡️방어우선"
+    if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
+        return "🛡️방어우선"
+    if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "HARD_BLOCK_MACRO_STORM"}:
+        return "🛡️방어우선"
+    if code.startswith("HARD_BLOCK") and not re.search(r"볼린|MFI|과열|상단", text):
+        return "🛡️방어우선"
+
+    if re.search(r"극단과열|하드차단: 볼린|볼린상단|MFI.*과열|추격금지", text):
+        return "🚫추격금지"
+    if "패턴관찰" in pattern_timing:
+        return "👀돌파대기"
+    if "패턴성공" in pattern_timing:
+        return "⏳눌림대기"
+    if "패턴유효" in pattern_timing:
+        if re.search(r"상단|과열|대기|R/R\s*<\s*1", text):
+            return "⏳눌림대기"
+        return "✅정밀확인"
+
+    if re.search(r"상단|과열|대기|R/R\s*<\s*1|정찰", text):
+        return "⏳눌림대기"
+    if group == "buyish" or is_dashboard_actionable_signal(c):
+        return "✅정밀확인"
+    return "🔍관망"
+
+
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
@@ -17336,12 +17380,20 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     )
     if pattern_bucket in {"interest", "wait"} and not defensive_pattern_block:
         dashboard_group = "buyish"
+    final_read = build_dashboard_final_read(
+        c,
+        dashboard_timing=dashboard_timing,
+        dashboard_grade=dashboard_grade,
+        pattern_timing=pattern_timing,
+        pattern_bucket=pattern_bucket,
+    )
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
         "고점대비": f"{c['dd']*100:.1f}%",
+        "최종읽기": final_read,
         "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": dashboard_grade, "RS": c["rs_label"],
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
@@ -27776,7 +27828,7 @@ def render_today_queue_tab(mode):
     st.markdown("#### 4. 상세 판정표")
 
     show_cols = [
-        "종목명", "티커", "유형", "현재가", "목표Upside", "📌후보등급", "🔥기술적 타점",
+        "종목명", "티커", "유형", "현재가", "목표Upside", "최종읽기", "📌후보등급", "🔥기술적 타점",
         "패턴타점", "패턴근거", "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
@@ -27822,7 +27874,7 @@ def render_today_queue_tab(mode):
         st.caption("정밀관측소에서 비중·현금·당일 변동성만 확인하면 실행 후보로 볼 수 있는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[execution_mask], "현재 바로 실행 후보로 볼 종목은 없습니다.")
     with tabs[1]:
-        st.caption("R/R<1, 목표가 부족, 상위과열, 정찰/대기 문구가 있어 당장 매수보다 다음 눌림을 기다리는 그룹입니다.")
+        st.caption("최종읽기 기준: `👀돌파대기`는 관심등록, `✅정밀확인`은 정밀관측소 확인, `⏳눌림대기`는 추격보다 다음 눌림 대기입니다.")
         _render_today_queue_table(summary_df.loc[wait_mask], "관심/눌림대기 종목이 없습니다.")
     with tabs[2]:
         render_today_flow_shortlist_panel(
