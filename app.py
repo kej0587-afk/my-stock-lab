@@ -10500,8 +10500,8 @@ def _build_theme_detail_reading(group_df, leader, accel_leader, weak) -> str:
 
 
 def render_money_flow_etf_section():
-    st.subheader("🌊 글로벌 자금 흐름 레이더")
-    st.caption("미국/한국 섹터, 국내상장 대표 ETF, 월배당 ETF 대표군의 가격 모멘텀과 거래량 증가를 함께 비교합니다.")
+    st.subheader("🌊 돈흐름 레이더")
+    st.caption("ETF/섹터 원천 흐름을 보는 참고판입니다. 관심등록·정밀확인은 오늘점검의 실행 후보판을 우선하세요.")
 
     if not should_run_heavy_analysis(
         "money_flow_lazy",
@@ -10547,14 +10547,14 @@ def render_money_flow_etf_section():
 
     rankable_df = view_df.dropna(subset=["돈흐름점수"]).copy()
 
-    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 TOP 3 + 거래량)
+    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 원천 TOP 3 + 거래량)
     top_cols = st.columns(4)
     top_3 = rankable_df.nlargest(3, "돈흐름점수") if not rankable_df.empty else pd.DataFrame()
 
     for i, (idx, row) in enumerate(top_3.iterrows()):
         with top_cols[i]:
             st.metric(
-                label=f"TOP {i+1}: {row['섹터']}",
+                label=f"원천 TOP {i+1}: {row['섹터']}",
                 value=f"{row['돈흐름점수']:.1f} pts",
                 delta=f"{row['1개월수익률']*100:.1f}% (1M)"
             )
@@ -10566,6 +10566,7 @@ def render_money_flow_etf_section():
         else:
             st.metric("거래량 1위", "-", "-")
 
+    st.caption("원천 TOP은 점수 순위입니다. 고점권·과열·단기 이탈이면 실행 후보에서는 눌림대기나 관망으로 내려갈 수 있습니다.")
     st.divider() # 시각적 구분을 위한 선
     render_flow_score_breakdown(
         "ETF 돈흐름 점수 분해",
@@ -10574,9 +10575,6 @@ def render_money_flow_etf_section():
         label_cols=["구분", "섹터", "Ticker", "ETF 이름", "상태"],
         top_n=10,
     )
-
-    # 5. 상세 데이터 테이블
-    st.markdown("#### 📊 섹터별 상세 지표")
 
     # 상태 이모지 배지 추가
     _state_badge = {
@@ -10627,6 +10625,36 @@ def render_money_flow_etf_section():
         return "✅ 진입가능"
 
     table_df["진입가능"] = table_df.apply(_swing_entry_label, axis=1)
+
+    st.markdown("#### 먼저 볼 ETF 후보")
+    radar_candidates = table_df[table_df["진입가능"].isin(["✅ 진입가능", "⚠️ 고점주의"])].copy()
+    if radar_candidates.empty:
+        st.info("현재 선택 범위에서는 바로 볼 ETF 후보가 없습니다. 원천 점수가 높아도 고점권·약모멘텀·가격부족이면 상세표에서만 확인하세요.")
+    else:
+        radar_candidates["_진입순서"] = radar_candidates["진입가능"].map({"✅ 진입가능": 2, "⚠️ 고점주의": 1}).fillna(0)
+        radar_sort_cols = [c for c in ["_진입순서", "스윙점수", "돈흐름점수"] if c in radar_candidates.columns]
+        radar_candidates = radar_candidates.sort_values(radar_sort_cols, ascending=False, na_position="last").head(8)
+        radar_show = radar_candidates.copy()
+        for _col in ["2주수익률", "1개월수익률", "3개월수익률"]:
+            if _col in radar_show.columns:
+                radar_show[_col] = radar_show[_col].apply(fmt_flow_pct)
+        if "가격수준" in radar_show.columns:
+            radar_show["가격수준"] = radar_show["가격수준"].apply(lambda v: f"{v*100:.1f}%" if finite_num(v) else "-")
+        for _score_col in ["돈흐름점수", "스윙점수"]:
+            if _score_col in radar_show.columns:
+                radar_show[_score_col] = radar_show[_score_col].apply(lambda v: f"{v:.1f}" if finite_num(v) else "-")
+        st.dataframe(
+            radar_show[[c for c in [
+                "진입가능", "구분", "섹터", "Ticker", "상태", "가격수준",
+                "2주수익률", "1개월수익률", "3개월수익률", "돈흐름점수", "스윙점수",
+            ] if c in radar_show.columns]],
+            width='stretch',
+            hide_index=True,
+            height=min(360, 90 + len(radar_show) * 36),
+        )
+        st.caption("이 표도 ETF 원천 후보입니다. 실제 주문 전에는 전광판/정밀관측소에서 현재가, 과열, R/R을 다시 확인하세요.")
+
+    st.markdown("#### 원천 ETF 상세표")
 
     # 현재가 포맷 결정
     first_ticker = str(view_df['Ticker'].iloc[0])
@@ -25813,7 +25841,7 @@ def _render_flow_command_center(unified_df):
         headline = "현재 돈흐름 압축 기준으로 바로 볼 후보는 많지 않습니다. 관망과 데이터 정리가 우선입니다."
         border = "#64748b"
 
-    st.markdown("#### 오늘 돈흐름 결론판")
+    st.markdown("#### 오늘 돈흐름 실행 후보판")
     internal_note = (
         f"<br>KOSPI 업종내부 확산 약한 후보 {internal_weak_count}개는 정밀/눌림보다 확인·관망으로 낮춰 봅니다."
         if internal_weak_count else ""
@@ -25821,25 +25849,25 @@ def _render_flow_command_center(unified_df):
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {border}; margin-bottom:12px;'>
-<b>먼저 볼 순서</b><br>
-<span class='highlight'>{html.escape(headline)}</span><br>
-돈이 몰린 곳과 지금 진입 가능한 곳을 분리해서 봅니다. 강한 축이어도 신고가권·과열이면 `눌림대기`로 보냅니다.
-{internal_note}
+        <b>판단 순서</b><br>
+        <span class='highlight'>{html.escape(headline)}</span><br>
+        1) 행동 2) 가격위치 3) 흐름 4) 다음확인 순서로 보세요. 원천 1위가 강해도 실행 조건이 안 맞으면 관심/관망으로 낮춥니다.
+        {internal_note}
 </div>
         """,
         unsafe_allow_html=True,
     )
 
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("정밀관측", f"{precision_count}개")
+    m1.metric("정밀확인", f"{precision_count}개")
     m2.metric("눌림대기", f"{pullback_count}개")
     m3.metric("추격금지", f"{chase_block_count}개")
     m4.metric("관심등록", f"{interest_count}개")
     m5.metric("관망/제외", f"{wait_count}개")
 
     cols = [
-        "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축", "주도층위",
-        "가격위치", "흐름", "판단", "업종내부", "다음확인",
+        "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
+        "가격위치", "흐름", "판단", "다음확인",
     ]
     ranking_cols = [
         "순위", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
@@ -25854,9 +25882,9 @@ def _render_flow_command_center(unified_df):
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
     if primary.empty:
         primary = command_df.head(10)
-    action_tab, ranking_tab = st.tabs(["실행 후보", "돈흐름 Top20"])
+    action_tab, ranking_tab = st.tabs(["1. 실행 후보", "2. 원천 강도 Top20"])
     with action_tab:
-        st.caption("시장축 → 후보군 → 세부축 → 대표주 순서로 보세요. 행동은 지금 바로 할 일이 아니라 정밀관측소로 넘길 우선순위입니다.")
+        st.caption("이 표가 먼저 볼 순서입니다. `정밀확인`은 매수 확정이 아니라 정밀관측소에서 과열·눌림·R/R을 확인하라는 뜻입니다.")
         st.dataframe(
             primary[[c for c in cols if c in primary.columns]],
             width='stretch',
@@ -25869,7 +25897,7 @@ def _render_flow_command_center(unified_df):
         ranking = ranking.sort_values("_점수", ascending=False, na_position="last").head(20)
         ranking["순위"] = range(1, len(ranking) + 1)
         ranking["점수"] = ranking["_점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
-        st.caption("점수 상위 20개입니다. 강한 돈흐름과 실제 진입 가능 여부를 분리해서 보기 위한 순위판입니다.")
+        st.caption("원천 강도 상위 20개입니다. 여기 순위가 높아도 가격위치·업종내부가 안 맞으면 실행 후보에서 내려갑니다.")
         st.dataframe(
             ranking[[c for c in ranking_cols if c in ranking.columns]],
             width='stretch',
@@ -25900,12 +25928,16 @@ def _render_flow_command_center(unified_df):
     return command_df
 
 
-def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df):
+def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=True, show_source=True):
     unified_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
     if unified_df.empty:
         return
 
-    _render_flow_command_center(unified_df)
+    if show_command:
+        _render_flow_command_center(unified_df)
+
+    if not show_source:
+        return
 
     show = unified_df.head(12).copy()
     show["대분류"] = show.apply(lambda r: _flow_display_broad_context(r), axis=1)
@@ -25923,7 +25955,7 @@ def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subth
         "업종대표주", "약한대표주", "가격수준", "다음확인",
     ]
     with st.expander("원천 상세표 보기", expanded=False):
-        st.caption("ETF/섹터 큰돈 → 연결 테마 → 핵심 하위테마 → 대표주 확인 순서의 원천 표입니다.")
+        st.caption("실행 후보를 만든 원본 연결표입니다. 평소에는 접어두고, 왜 후보가 올라왔는지 확인할 때만 보세요.")
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
 
     with st.expander("통합 판정 기준", expanded=False):
@@ -26035,11 +26067,11 @@ def render_naver_theme_coverage_panel():
 
 
 TODAY_FLOW_SHORTLIST_COLS = [
-    "후보군", "등록상태", "시장", "구분", "판정", "타이밍", "대표주★", "Ticker",
-    "테마", "내부세부축", "기준업종", "후보근거", "시장맥락", "주의요인",
-    "돈흐름점수", "고점근접도", "1개월수익률", "3개월수익률",
+    "판정", "타이밍", "등록상태", "시장", "종목명", "Ticker",
+    "후보군", "테마", "후보근거", "주의요인",
+    "돈흐름점수", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20260810_verdict_context_v2"
+TODAY_FLOW_SHORTLIST_VERSION = "20260812_readable_shortlist_v1"
 
 
 def _today_flow_candidate_status(ticker: str) -> str:
@@ -26455,8 +26487,8 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
     shortlist_df = shortlist_df if isinstance(shortlist_df, pd.DataFrame) else build_today_flow_shortlist_df(snapshot)
     if show_header:
-        st.markdown("#### 🎯 돈흐름 후보")
-    st.caption("돈흐름 후보는 신규 매수 신호가 아니라 정밀관측소로 보낼 후보입니다. 중복 후보군은 한 줄로 합쳐 표시합니다.")
+        st.markdown("#### 개별 종목 후보 압축")
+    st.caption("실행 후보판에서 걸린 흐름을 종목 단위로 압축한 표입니다. 바로 매수보다 전광판 등록 또는 정밀관측소 확인용으로 봅니다.")
     if shortlist_df is None or shortlist_df.empty:
         st.info(
             "현재 압축 후보 조건을 통과한 종목이 없습니다. 원천 돈흐름은 강해도 가격위치, 과열, 업종내부 확산, 테마-대표주 연결 조건에서 걸러질 수 있습니다."
@@ -26494,11 +26526,11 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
     risk_count = int(risk_series.ne("-").sum()) if not risk_series.empty else 0
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("압축 후보", f"{len(shortlist_df)}개")
-    m2.metric("우선 관찰", f"{priority_count}개")
-    m3.metric("눌림/과열 대기", f"{wait_count}개")
-    m4.metric("주의요인 있음", f"{risk_count}개")
-    st.caption("먼저 `판정`과 `타이밍`을 보고, 그 다음 `후보근거`와 `주의요인`만 확인하세요. 원본 세부 컬럼은 아래 펼침에 따로 묶었습니다.")
+    m1.metric("전체 후보", f"{len(shortlist_df)}개")
+    m2.metric("우선 확인", f"{priority_count}개")
+    m3.metric("눌림/회복 대기", f"{wait_count}개")
+    m4.metric("주의요인", f"{risk_count}개")
+    st.caption("읽는 순서: `판정` → `타이밍` → `후보근거` → `주의요인`. 복잡한 업종 내부 컬럼은 아래 상세 펼침에만 둡니다.")
 
     options = ["전체", "미등록", "보유/관심", "고점주의 제외"]
     view = st.radio("돈흐름 후보 보기", options, horizontal=True, key=f"{key_prefix}_view")
@@ -26568,7 +26600,7 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
 
 def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
     st.markdown("#### 시장 돈흐름 요약")
-    st.caption("글로벌 자금 흐름 레이더와 테마 종목의 상위 흐름만 오늘 점검용으로 짧게 보여줍니다.")
+    st.caption("처음에는 실행 후보판만 봅니다. 원천 1위와 차트는 후보를 고른 뒤 확인하는 참고 자료입니다.")
 
     cached_snapshot = get_cached_today_market_flow_snapshot()
     if snapshot is None:
@@ -26630,58 +26662,66 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
     subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
 
+    st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
     metric_cols = st.columns(4)
     if not kr_top5.empty:
         r = kr_top5.iloc[0]
-        metric_cols[0].metric("한국 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+        metric_cols[0].metric("한국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
     else:
-        metric_cols[0].metric("한국 ETF 원천 1위", "-", "-")
+        metric_cols[0].metric("한국 ETF 참고 1위", "-", "-")
 
     if not us_top5.empty:
         r = us_top5.iloc[0]
-        metric_cols[1].metric("미국 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+        metric_cols[1].metric("미국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
     else:
-        metric_cols[1].metric("미국 ETF 원천 1위", "-", "-")
+        metric_cols[1].metric("미국 ETF 참고 1위", "-", "-")
 
     if not global_top.empty:
         r = global_top.iloc[0]
-        metric_cols[2].metric("글로벌 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+        metric_cols[2].metric("글로벌 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
     elif not local_top.empty:
         r = local_top.iloc[0]
-        metric_cols[2].metric("대표 ETF 원천 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+        metric_cols[2].metric("대표 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
     else:
-        metric_cols[2].metric("글로벌/대표 ETF 원천 1위", "-", "-")
+        metric_cols[2].metric("글로벌/대표 ETF 참고 1위", "-", "-")
 
     if not theme_top5.empty:
         r = theme_top5.iloc[0]
         metric_cols[3].metric(
-            "테마 원천 1위",
+            "테마 참고 1위",
             str(r["테마"]),
             f"{fmt_flow_score(r['테마돈흐름점수'])} pts · {r.get('테마판정', r.get('상태', ''))}",
         )
         if "대표주" in r.index:
             metric_cols[3].caption(f"대표주: {r.get('대표주', '-')}")
     else:
-        metric_cols[3].metric("테마 원천 1위", "-", "-")
+        metric_cols[3].metric("테마 참고 1위", "-", "-")
 
     st.caption(
-        "위 4개 카드는 원천 데이터별 1위입니다. `돈흐름 Top20`은 ETF/섹터·테마·하위테마·대표주를 합친 통합 점수판이라 순위가 다를 수 있습니다."
+        "참고 1위는 원천 점수만 본 값입니다. 실제 실행 후보판은 ETF/섹터·테마·하위테마·대표주·가격위치·업종내부를 함께 걸러 순위가 다를 수 있습니다."
     )
 
+    flow_view_options = ["실행 후보판", "개별 종목 후보", "원천/매핑", "로테이션 차트"]
+    if st.session_state.get("today_market_flow_detail_view") not in flow_view_options:
+        st.session_state["today_market_flow_detail_view"] = flow_view_options[0]
     detail_view = st.radio(
         "시장 돈흐름 표시",
-        ["빠른 후보", "돈흐름 원천/매핑", "로테이션 차트"],
+        flow_view_options,
         horizontal=True,
         key="today_market_flow_detail_view",
-        help="처음 열 때는 빠른 후보만 렌더링합니다. 차트와 매핑 표는 선택할 때만 계산합니다.",
+        help="처음에는 실행 후보판만 봅니다. 개별 종목, 원천 상세, 차트는 필요할 때만 엽니다.",
     )
 
-    if detail_view == "빠른 후보":
+    if detail_view == "실행 후보판":
+        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=True, show_source=False)
+        return snapshot
+
+    if detail_view == "개별 종목 후보":
         render_today_flow_shortlist_panel(snapshot, key_prefix="today_flow_panel", show_header=True)
         return snapshot
 
-    if detail_view == "돈흐름 원천/매핑":
-        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+    if detail_view == "원천/매핑":
+        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=False, show_source=True)
         render_naver_theme_coverage_panel()
         return snapshot
 
