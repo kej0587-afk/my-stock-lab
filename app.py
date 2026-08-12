@@ -6297,6 +6297,67 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
     return None
 
 
+def summarize_chart_pattern_for_dashboard(patterns: list, c: dict | None = None) -> tuple[str, str, str]:
+    if not patterns:
+        return "-", "", ""
+    pattern = patterns[0]
+    name = pattern.get("name", "패턴")
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    c = c or {}
+
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    overheat = (
+        (finite_num(rsi) and rsi >= 70)
+        or (finite_num(mfi) and mfi >= 80)
+        or (finite_num(pct_b) and pct_b >= 0.95)
+    )
+    overheat_bits = []
+    if finite_num(rsi) and rsi >= 70:
+        overheat_bits.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi) and mfi >= 80:
+        overheat_bits.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b) and pct_b >= 0.95:
+        overheat_bits.append(f"%B {pct_b:.2f}")
+    overheat_text = " · ".join(overheat_bits) if overheat_bits else "과열 낮음"
+
+    if direction == "bullish" and lifecycle == "관찰":
+        return (
+            "👀패턴관찰: 돌파대기",
+            f"{name} 후보 · 기준 {trigger} 돌파 전 · 무효 {invalid}",
+            "interest",
+        )
+    if direction == "bullish" and lifecycle == "현재유효":
+        if overheat:
+            return (
+                "🚦패턴성공: 눌림대기",
+                f"{name} 유효 · {overheat_text} · 기준 {trigger} 재확인/첫 눌림 대기",
+                "wait",
+            )
+        return (
+            "✅패턴유효: 정밀확인",
+            f"{name} 유효 · 기준 {trigger} 위 유지 · 무효 {invalid}",
+            "interest",
+        )
+    if direction == "bearish" and lifecycle == "관찰":
+        return (
+            "⚠️하락패턴 관찰",
+            f"{name} 후보 · 기준 {trigger} 이탈 전 · 무효 {invalid}",
+            "risk",
+        )
+    if direction == "bearish" and lifecycle == "현재유효":
+        return (
+            "🛑하락패턴 유효",
+            f"{name} 유효 · 기준 {trigger} 아래 · 회복 전 보수",
+            "risk",
+        )
+    return "-", "", ""
+
+
 def _chart_pattern_annotation_text(pattern: dict) -> str:
     direction = pattern.get("direction", "neutral")
     lifecycle = pattern.get("lifecycle", "관찰")
@@ -14935,19 +14996,19 @@ def render_dashboard_group_summary(df, group_label):
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
-            "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
-            "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
             "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
-            "🔥기술적 타점", "핵심근거", "Adj점수"
+            "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], width='stretch', height=640, hide_index=True)
 
@@ -16920,6 +16981,8 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
         "MFI": np.nan,
         "볼린저 %B": np.nan,
         "🔥기술적 타점": label,
+        "패턴타점": "-",
+        "패턴근거": "",
         "핵심근거": reason,
         "판정코드": code,
         "판정분류": DECISION_GROUP_BY_CODE.get(code) or "caution",
@@ -17004,7 +17067,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260730_kr_price_fallback_v2"
+TODAY_QUEUE_LOGIC_VERSION = "20260812_pattern_timing_watch_v1"
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
@@ -17034,6 +17097,8 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
         "MFI": np.nan,
         "볼린저 %B": np.nan,
         "🔥기술적 타점": "⚠️가격만 확인: 일봉 이력 조회 실패",
+        "패턴타점": "-",
+        "패턴근거": "",
         "핵심근거": reason,
         "판정코드": "LIVE_ONLY_DATA",
         "판정분류": "caution",
@@ -17226,6 +17291,16 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             except Exception:
                 pass
         c = apply_leveraged_dca_dashboard_override(c)
+        try:
+            pattern_df = df
+            if clean_float(_live_p, 0.0) > 0:
+                pattern_df, pattern_live_applied = apply_live_price_to_ohlcv(df, _live_p, tkr)
+                if pattern_live_applied:
+                    pattern_df = build_indicators(pattern_df)
+            pattern_candidates = detect_chart_pattern_candidates(pattern_df)
+            pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(pattern_candidates, c)
+        except Exception:
+            pattern_timing, pattern_reason, pattern_bucket = "-", "", ""
     except Exception as exc:
         return build_summary_status_item(
             item,
@@ -17248,6 +17323,20 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     else:
         dashboard_group = c.get("decision_group") or classify_decision_signal(dashboard_timing)
 
+    defensive_pattern_block = (
+        str(c.get("decision_code", "") or "").startswith("HARD_BLOCK")
+        or str(c.get("decision_code", "") or "").startswith("STRUCTURE_DAMAGE")
+        or str(c.get("decision_code", "") or "").startswith("PRICE_DRAWDOWN")
+        or str(c.get("decision_code", "") or "").startswith("SINGLE_DAY_BREAKDOWN")
+        or str(c.get("decision_code", "") or "") in {
+            "TARGET_ZERO_NO_ADD",
+            "MTF_DAMAGE_NO_ADD",
+            "LEVERAGED_DAILY_DROP_NO_ADD",
+        }
+    )
+    if pattern_bucket in {"interest", "wait"} and not defensive_pattern_block:
+        dashboard_group = "buyish"
+
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
@@ -17261,6 +17350,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "섹터RS": bm["sector_rs_label"] if bm["sector_bench"] else "-",
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
         "🔥기술적 타점": dashboard_timing,
+        "패턴타점": pattern_timing,
+        "패턴근거": pattern_reason,
         "핵심근거": dashboard_reason,
         "판정코드": c.get("decision_code", ""),
         "판정분류": dashboard_group,
@@ -27423,7 +27514,9 @@ def _today_queue_reason_bucket(row) -> str:
     label = str(row.get("🔥기술적 타점", "") or "")
     code = str(row.get("판정코드", "") or "")
     data_state = str(row.get("데이터상태", "") or "")
-    text = " ".join([label, code, data_state])
+    pattern_timing = str(row.get("패턴타점", "") or "")
+    pattern_reason = str(row.get("패턴근거", "") or "")
+    text = " ".join([label, code, data_state, pattern_timing, pattern_reason])
     if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
     if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
@@ -27433,6 +27526,8 @@ def _today_queue_reason_bucket(row) -> str:
     if re.search(r"구조훼손|추세훼손|추세방어|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
         return "추세방어"
     if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
+        return "관심/눌림대기"
+    if re.search(r"패턴관찰|패턴성공|패턴유효|돌파대기|첫 눌림", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"과열|볼린|MFI|추격금지|상단", text, flags=re.IGNORECASE):
         return "과열/타점대기"
@@ -27447,15 +27542,19 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     if summary_df is None or summary_df.empty:
         return pd.Series(dtype=bool)
     label = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    pattern = summary_df.get("패턴타점", pd.Series("", index=summary_df.index)).astype(str)
     ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+    bucket_series = summary_df.apply(lambda row: _today_queue_reason_bucket(row), axis=1)
     wait_mask = (
         label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기", regex=True, na=False)
-        | summary_df.apply(lambda row: _today_queue_reason_bucket(row) == "관심/눌림대기", axis=1)
+        | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
+        | bucket_series.eq("관심/눌림대기")
     )
     if upside_value_map:
         neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
         wait_mask = wait_mask | neg_upside.fillna(False)
-    return buyish_mask.reindex(summary_df.index, fill_value=False) & wait_mask
+    pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
+    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest) & wait_mask
 
 
 
@@ -27678,7 +27777,7 @@ def render_today_queue_tab(mode):
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "목표Upside", "📌후보등급", "🔥기술적 타점",
-        "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
+        "패턴타점", "패턴근거", "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
     def _render_today_queue_table(view_df: pd.DataFrame, empty_msg: str, sort_low_first: bool = False):
@@ -29229,10 +29328,14 @@ if main_page == "dashboard":
     _DASH_LAST_KEY = "dashboard_summary_last_run"
 
     _dash_sig = json.dumps(
-        {"mode": app_mode, "tickers": sorted(
-            sanitize_ticker_value(it.get("ticker", ""))
-            for it in st.session_state.watchlist
-        )},
+        {
+            "logic_version": TODAY_QUEUE_LOGIC_VERSION,
+            "mode": app_mode,
+            "tickers": sorted(
+                sanitize_ticker_value(it.get("ticker", ""))
+                for it in st.session_state.watchlist
+            ),
+        },
         sort_keys=True, ensure_ascii=False,
     )
     _dash_cached = st.session_state.get(_DASH_KEY)
@@ -29250,7 +29353,7 @@ if main_page == "dashboard":
         if _dash_last:
             _d3.caption(f"마지막 계산: {_dash_last}")
         if st.session_state.get(_DASH_SIG_KEY) not in [None, _dash_sig] and not _run_dash:
-            st.warning("관심목록이 변경됐습니다. 새로고침을 눌러 최신 상태로 다시 계산하세요.")
+            st.warning("관심목록 또는 판정 로직이 변경됐습니다. 새로고침을 눌러 최신 상태로 다시 계산하세요.")
 
     if _run_dash or _dash_cached.empty:
         with st.spinner("전광판 계산 중..."):
