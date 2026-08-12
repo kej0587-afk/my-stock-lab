@@ -13412,6 +13412,8 @@ def _apply_safety_state_override(decision_outcome, dec, col, *, safety_state, ha
         "NEW_ENTRY_LEADER",
         "QUALITY_PULLBACK_ENTRY",
         "TREND_PULLBACK_EXPLORE",
+        "QUALITY_RECOVERY_SCOUT",
+        "QUALITY_RECOVERY_CANDIDATE",
         "EXCEPTION_ENTRY",
         "LEADER_MA5_FAST_PULLBACK_ENTRY",
         "LEADER_MA5_PULLBACK_ENTRY",
@@ -13623,8 +13625,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             or live_gap_ratio > 0.003
             or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
         )
+    p1m = df["Close"].iloc[-21] if len(df) >= 21 else df["Close"].iloc[0]
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
+    ret_1m = (cur_p / p1m) - 1
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
     regular_day_ret = (source_daily_close / source_prev_close) - 1 if source_daily_close > 0 and source_prev_close > 0 else np.nan
@@ -13669,6 +13673,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
     ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
     ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
+    ma120_now = float(last["MA120"]) if finite_num(last["MA120"]) else 0.0
     below_ma20 = ma20_now > 0 and cur_p < ma20_now * 0.98
     below_ma50 = ma50_now > 0 and cur_p < ma50_now
     is_live_gap_shock = (not is_etf) and live_price_used and live_gap_move <= -0.06
@@ -13872,6 +13877,58 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_exception_not_chasing
     )
 
+    is_macd_recovering = (
+        macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
+        or last["MACD"] > prev["MACD"]
+    )
+    is_rs_recovering = (
+        rs_label == "🚀강함"
+        or (rs_label == "➖보통" and rs_slope_label == "📈RS상승중")
+    )
+    was_quality_drawdown_or_trend_damage = (
+        current_dd <= -0.12
+        or ret_3m <= 0
+        or ret_6m <= 0
+        or trend != "🚀정배열(상승)"
+    )
+    is_quality_recovery_base = (
+        (not is_etf)
+        and (not short_history)
+        and fin_score >= 3
+        and was_quality_drawdown_or_trend_damage
+        and mfi_now < 82
+        and rsi_now < 72
+        and pct_b_now < 0.98
+        and not is_single_day_breakdown
+        and _fmr < 4.5
+    )
+    is_quality_recovery_watch = (
+        is_quality_recovery_base
+        and ma20_now > 0
+        and cur_p >= ma20_now * 0.97
+        and is_macd_recovering
+        and (is_rs_recovering or rs_label != "🐢약함")
+    )
+    is_quality_recovery_scout = (
+        is_quality_recovery_base
+        and ma20_now > 0
+        and ma50_now > 0
+        and cur_p >= ma20_now * 0.99
+        and cur_p >= ma50_now * 0.98
+        and is_macd_recovering
+        and is_rs_recovering
+        and ret_1m > -0.08
+        and day_ret > -0.04
+    )
+    is_quality_recovery_candidate = (
+        is_quality_recovery_scout
+        and rs_label == "🚀강함"
+        and cur_p >= ma20_now
+        and cur_p >= ma50_now
+        and (ma120_now <= 0 or cur_p >= ma120_now * 0.95)
+        and ret_1m >= -0.03
+    )
+
     # RS가 강하고 대장주 조건(fin4 + 정배열)이면 MA50 눌림은 구조훼손이 아닌 매수 기회
     _rs_strong = rs_label == "🚀강함"
     _is_leader_grade = (not is_etf) and fin_score == 4 and trend == "🚀정배열(상승)"
@@ -14035,6 +14092,33 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 reasons=(
                     f"%B {pct_b_now:.2f} (기준: 0.95 이상) / RSI {rsi_now:.0f}",
                     "볼린저 밴드 상단 근접 — 눌림 대기 후 진입",
+                ),
+            )
+        elif is_quality_recovery_candidate:
+            dec, col, decision_outcome = _set_decision(
+                "✅우량주 회복 후보: 분할 검토", "#22c55e", "QUALITY_RECOVERY_CANDIDATE",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 고점대비 {current_dd*100:.1f}% / 1M {ret_1m*100:.1f}%",
+                    f"MA20·MA50 회복 + RS {rs_label} + MACD 회복 — 정배열 복귀 전 회복 후보",
+                    "풀진입보다 1차 정찰 후 저점상향·MA50 지지 확인",
+                ),
+            )
+        elif is_quality_recovery_scout:
+            dec, col, decision_outcome = _set_decision(
+                "🟢우량주 회복초입: 1차 정찰", "#16a34a", "QUALITY_RECOVERY_SCOUT",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                    f"MA20·MA50 회복 시도 + RS/MACD 회복 조짐",
+                    "신저점 매수가 아니라 회복 초입 확인용 소액 정찰 구간",
+                ),
+            )
+        elif is_quality_recovery_watch:
+            dec, col, decision_outcome = _set_decision(
+                "🔎우량주 회복관찰: 바닥 확인", "#38bdf8", "QUALITY_RECOVERY_WATCH",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                    "MA20 회복과 RS/MACD 개선 조짐은 있지만 MA50·저점상향 확인 전",
+                    "매수 신호가 아니라 전광판 관심등록 후 회복 지속성 관찰",
                 ),
             )
         elif current_dd <= -0.2 and not _is_extreme_momentum:
@@ -14681,6 +14765,33 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     reasons=(
                         f"MFI {mfi_now:.0f} (기준: 80 이상) / RSI {rsi_now:.0f} / %B {pct_b_now:.2f}",
                         "단기 과열 — 신규 진입 보류, 눌림 대기",
+                    ),
+                )
+            elif is_quality_recovery_candidate:
+                dec, col, decision_outcome = _set_decision(
+                    "✅우량주 회복 후보: 분할 검토", "#22c55e", "QUALITY_RECOVERY_CANDIDATE",
+                    reasons=(
+                        f"재무점수 {fin_score}점 / 고점대비 {current_dd*100:.1f}% / 1M {ret_1m*100:.1f}%",
+                        f"MA20·MA50 회복 + RS {rs_label} + MACD 회복 — 정배열 복귀 전 회복 후보",
+                        "풀진입보다 1차 정찰 후 저점상향·MA50 지지 확인",
+                    ),
+                )
+            elif is_quality_recovery_scout:
+                dec, col, decision_outcome = _set_decision(
+                    "🟢우량주 회복초입: 1차 정찰", "#16a34a", "QUALITY_RECOVERY_SCOUT",
+                    reasons=(
+                        f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                        f"MA20·MA50 회복 시도 + RS/MACD 회복 조짐",
+                        "신저점 매수가 아니라 회복 초입 확인용 소액 정찰 구간",
+                    ),
+                )
+            elif is_quality_recovery_watch:
+                dec, col, decision_outcome = _set_decision(
+                    "🔎우량주 회복관찰: 바닥 확인", "#38bdf8", "QUALITY_RECOVERY_WATCH",
+                    reasons=(
+                        f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                        "MA20 회복과 RS/MACD 개선 조짐은 있지만 MA50·저점상향 확인 전",
+                        "매수 신호가 아니라 전광판 관심등록 후 회복 지속성 관찰",
                     ),
                 )
             elif rsi_now <= 30:
@@ -17096,7 +17207,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260812_final_read_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260812_quality_recovery_v1"
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
@@ -17208,6 +17319,12 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️추세방어(신규금지)"
     if code == "MTF_DAMAGE_NO_ADD":
         return "🛡️상위추세방어(추매금지)"
+    if code == "QUALITY_RECOVERY_WATCH":
+        return "🔎우량주 회복관찰"
+    if code == "QUALITY_RECOVERY_SCOUT":
+        return "🟢우량주 회복초입"
+    if code == "QUALITY_RECOVERY_CANDIDATE":
+        return "✅우량주 회복후보"
     if "가격위험" in label or "가격방어" in label:
         return "🛡️가격방어(추매주의)" if "추매" in label else "🛡️가격방어(신규금지)"
     if "단기급락" in label or "급락방어" in label:
@@ -17263,6 +17380,10 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
 
     if "하락패턴 유효" in pattern_timing or code in {"LEVERAGED_DAILY_DROP_NO_ADD", "MTF_DAMAGE_NO_ADD"}:
         return "🛡️방어우선"
+    if code == "QUALITY_RECOVERY_WATCH":
+        return "👀회복관찰"
+    if code in {"QUALITY_RECOVERY_SCOUT", "QUALITY_RECOVERY_CANDIDATE"}:
+        return "✅정밀확인"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
         return "🛡️방어우선"
     if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "HARD_BLOCK_MACRO_STORM"}:
@@ -27747,6 +27868,8 @@ def _today_queue_reason_bucket(row) -> str:
         return "가격방어"
     if re.search(r"구조훼손|추세훼손|추세방어|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
         return "추세방어"
+    if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
+        return "관심/눌림대기"
     if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"패턴관찰|패턴성공|패턴유효|돌파대기|첫 눌림", text, flags=re.IGNORECASE):
@@ -27768,7 +27891,7 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
     bucket_series = summary_df.apply(lambda row: _today_queue_reason_bucket(row), axis=1)
     wait_mask = (
-        label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기", regex=True, na=False)
+        label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
         | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
         | bucket_series.eq("관심/눌림대기")
     )

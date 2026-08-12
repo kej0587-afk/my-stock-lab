@@ -323,6 +323,9 @@ DECISION_CODE_BY_LABEL = {
     "🚫진입보류: 역배열 대기": "REVERSE_TREND_NO_ENTRY",
     "🚫역배열: 진입 보류": "REVERSE_TREND_NO_ENTRY",
     "🎯우량주 눌림 구간: 정찰 진입 적합": "QUALITY_PULLBACK_ENTRY",
+    "🔎우량주 회복관찰: 바닥 확인": "QUALITY_RECOVERY_WATCH",
+    "🟢우량주 회복초입: 1차 정찰": "QUALITY_RECOVERY_SCOUT",
+    "✅우량주 회복 후보: 분할 검토": "QUALITY_RECOVERY_CANDIDATE",
     "📈추세 눌림 구간: 소액 탐색 가능": "TREND_PULLBACK_EXPLORE",
     "🔍정배열 눌림: 신호 확인 후 접근": "UPTREND_PULLBACK_CONFIRM",
     "🔍S급 정배열: 눌림 구간 진입 대기": "S_UPTREND_WAIT_PULLBACK",
@@ -341,6 +344,8 @@ NEW_ENTRY_DECISION_CODES = {
     "S_PULLBACK_ENTRY",
     "BREAKOUT_52W_ENTRY",
     "QUALITY_PULLBACK_ENTRY",
+    "QUALITY_RECOVERY_SCOUT",
+    "QUALITY_RECOVERY_CANDIDATE",
 }
 
 
@@ -362,6 +367,9 @@ DECISION_GROUP_BY_CODE = {
     "CORE_PULLBACK_DCA": "buyish",
     "CORE_NEUTRAL_DCA": "buyish",
     "CORE_OVERHEAT_DCA": "caution",
+    "QUALITY_RECOVERY_WATCH": "neutral",
+    "QUALITY_RECOVERY_SCOUT": "buyish",
+    "QUALITY_RECOVERY_CANDIDATE": "buyish",
     "NEW_ETF_BELOW_COST_DCA": "buyish",
     "NEW_ETF_NEAR_COST_ADD": "buyish",
     "NEW_ETF_PULLBACK_BUY": "buyish",
