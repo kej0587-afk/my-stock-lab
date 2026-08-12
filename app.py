@@ -25866,12 +25866,12 @@ def _render_flow_command_center(unified_df):
     m5.metric("관망/제외", f"{wait_count}개")
 
     cols = [
-        "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
+        "실행순서", "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
         "가격위치", "흐름", "판단", "다음확인",
     ]
     ranking_cols = [
-        "순위", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
-        "점수", "가격위치", "흐름", "행동", "업종내부",
+        "원천순위", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
+        "점수", "가격위치", "흐름", "행동", "판단", "업종내부",
     ]
     detail_cols = [
         "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축", "기준업종", "주도층위",
@@ -25882,6 +25882,8 @@ def _render_flow_command_center(unified_df):
     primary = command_df[command_df["행동"].ne("관망/제외")].head(10)
     if primary.empty:
         primary = command_df.head(10)
+    primary = primary.copy()
+    primary["실행순서"] = range(1, len(primary) + 1)
     action_tab, ranking_tab = st.tabs(["1. 실행 후보", "2. 원천 강도 Top20"])
     with action_tab:
         st.caption("이 표가 먼저 볼 순서입니다. `정밀확인`은 매수 확정이 아니라 정밀관측소에서 과열·눌림·R/R을 확인하라는 뜻입니다.")
@@ -25895,7 +25897,7 @@ def _render_flow_command_center(unified_df):
     with ranking_tab:
         ranking = command_df.copy()
         ranking = ranking.sort_values("_점수", ascending=False, na_position="last").head(20)
-        ranking["순위"] = range(1, len(ranking) + 1)
+        ranking["원천순위"] = range(1, len(ranking) + 1)
         ranking["점수"] = ranking["_점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
         st.caption("원천 강도 상위 20개입니다. 여기 순위가 높아도 가격위치·업종내부가 안 맞으면 실행 후보에서 내려갑니다.")
         st.dataframe(
