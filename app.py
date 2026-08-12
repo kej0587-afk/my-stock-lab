@@ -6223,6 +6223,80 @@ def _chart_pattern_caption(patterns: list) -> str:
     return f"핵심 패턴: {plain} · {guide}"
 
 
+def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> dict | None:
+    if not patterns:
+        return None
+    pattern = patterns[0]
+    name = pattern.get("name", "패턴")
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    c = c or {}
+
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    overheat_flags = []
+    if finite_num(rsi) and rsi >= 70:
+        overheat_flags.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi) and mfi >= 80:
+        overheat_flags.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b) and pct_b >= 0.95:
+        overheat_flags.append(f"%B {pct_b:.2f}")
+    overheat_text = " · ".join(overheat_flags)
+
+    if direction == "bullish" and lifecycle == "관찰":
+        return {
+            "color": "#3b82f6",
+            "title": "👀 패턴 선행관찰",
+            "body": (
+                f"{name} 후보가 생겼지만 기준선 {trigger} 돌파 전입니다. "
+                "이 구간은 매수 확정이 아니라 관심 전환/알림 단계입니다. "
+                f"기준선 돌파와 거래량 확인, 또는 돌파 후 첫 눌림이 오면 1차 검토로 넘기고 무효선 {invalid} 이탈 시 폐기합니다."
+            ),
+        }
+    if direction == "bullish" and lifecycle == "현재유효":
+        if overheat_flags:
+            return {
+                "color": "#d97706",
+                "title": "🚦 패턴 성공 후 과열",
+                "body": (
+                    f"{name}는 기준선 {trigger} 위에서 유효하지만 현재가는 {overheat_text} 과열권입니다. "
+                    "그래서 앱의 '눌림 대기'는 매수 신호가 아니라 선행 타점이 지나간 뒤 추격을 막는 경고입니다. "
+                    f"기준선 재확인, MA5/MA20 눌림, FVG 지지 확인 전까지는 정찰 이상을 보류하고 무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+                ),
+            }
+        return {
+            "color": "#16a34a",
+            "title": "✅ 패턴 돌파 유효",
+            "body": (
+                f"{name}가 기준선 {trigger} 위에서 유효합니다. "
+                "다만 실제 매수 강도는 위 타점 문구, R/R, 상위 시간대 보정까지 같이 봅니다. "
+                f"무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+            ),
+        }
+    if direction == "bearish" and lifecycle == "관찰":
+        return {
+            "color": "#f59e0b",
+            "title": "⚠️ 하락 패턴 관찰",
+            "body": (
+                f"{name} 후보가 있지만 기준선 {trigger} 이탈 전이라 하락 확정은 아닙니다. "
+                f"무효선 {invalid} 회복 시 경고를 낮춥니다."
+            ),
+        }
+    if direction == "bearish" and lifecycle == "현재유효":
+        return {
+            "color": "#dc2626",
+            "title": "🛑 하락 패턴 유효",
+            "body": (
+                f"{name}가 기준선 {trigger} 아래에서 유효합니다. "
+                f"반등 매수보다 구조 회복 확인이 우선이고, 무효선 {invalid} 회복 전까지 보수적으로 봅니다."
+            ),
+        }
+    return None
+
+
 def _chart_pattern_annotation_text(pattern: dict) -> str:
     direction = pattern.get("direction", "neutral")
     lifecycle = pattern.get("lifecycle", "관찰")
@@ -29519,6 +29593,7 @@ if main_page == "precision":
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
         c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=precision_has_pos)
+        precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
 
         L, R = st.columns([1.1, 2.4])
         with L:
@@ -29662,6 +29737,14 @@ if main_page == "precision":
                             st.caption(f"• {_r}")
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+            _pattern_timing_note = build_chart_pattern_timing_note(precision_pattern_candidates, c)
+            if _pattern_timing_note:
+                st.markdown(
+                    f"<div class='info-panel' style='border-left: 5px solid {_pattern_timing_note['color']};'>"
+                    f"<b>{escape_html_value(_pattern_timing_note['title'])}</b><br>"
+                    f"{escape_html_value(_pattern_timing_note['body'])}</div>",
+                    unsafe_allow_html=True,
+                )
 
             fin_text = "해당없음" if is_etf else f"{c['fin_score']}/4"
             st.markdown(
