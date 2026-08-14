@@ -17207,7 +17207,48 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260812_quality_recovery_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260814_defense_pattern_guard_v1"
+
+
+TODAY_QUEUE_DEFENSE_CODES = {
+    "PANIC_FINAL_DEPLOY",
+    "PANIC_CASH_DEPLOY",
+    "CRISIS_CORE_FOCUS",
+    "CRISIS_PANIC_SELL_OFF",
+    "DRAWDOWN_20_HOLDING_STOP_CHECK",
+    "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
+    "DRAWDOWN_20_NO_ENTRY",
+    "DOWNTREND_NO_ENTRY",
+    "REVERSE_TREND_NO_ENTRY",
+    "STRONG_REVERSE_NO_ENTRY",
+    "COST_MINUS_15_TREND_RISK",
+    "LEVERAGED_DAILY_DROP_NO_ADD",
+    "MTF_DAMAGE_NO_ADD",
+}
+
+TODAY_QUEUE_DEFENSE_PREFIXES = (
+    "STRUCTURE_DAMAGE",
+    "PRICE_DRAWDOWN",
+    "SINGLE_DAY_BREAKDOWN",
+)
+
+TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
+    r"패닉|위기|고점대비\s*-?20|하락추세|역배열|추세위험|구조훼손|추세훼손|"
+    r"신규진입\s*보류|진입\s*보류|진입보류|추매금지|손절기준|원인점검|"
+    r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착",
+    flags=re.IGNORECASE,
+)
+
+
+def is_today_queue_defense_signal(c: dict | None, extra_text: str = "") -> bool:
+    code = str((c or {}).get("decision_code", "") or "")
+    label = str((c or {}).get("dec", "") or "")
+    text = " ".join([label, code, str(extra_text or "")])
+    if code in TODAY_QUEUE_DEFENSE_CODES:
+        return True
+    if any(code.startswith(prefix) for prefix in TODAY_QUEUE_DEFENSE_PREFIXES):
+        return True
+    return bool(TODAY_QUEUE_DEFENSE_TEXT_RE.search(text))
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
@@ -17259,6 +17300,8 @@ def format_dashboard_timing_label(c: dict) -> str:
     label = str((c or {}).get("dec", "") or "")
     if not label:
         return label
+    if is_dashboard_low_rr_caution(c) and "신규진입: 대장주 포착" in label:
+        label = "🔍대장주 포착: R/R 대기"
     notes = []
     if is_dashboard_low_rr_caution(c):
         notes.append("R/R<1 정찰")
@@ -17319,6 +17362,16 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️추세방어(신규금지)"
     if code == "MTF_DAMAGE_NO_ADD":
         return "🛡️상위추세방어(추매금지)"
+    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS", "CRISIS_PANIC_SELL_OFF"}:
+        return "🛡️위기/패닉(방어우선)"
+    if code == "DRAWDOWN_20_HOLDING_STOP_CHECK":
+        return "🛡️가격방어(손절점검)"
+    if code == "DRAWDOWN_20_HOLDING_CAUSE_CHECK":
+        return "🛡️가격방어(원인점검)"
+    if code == "DRAWDOWN_20_NO_ENTRY":
+        return "🛡️가격방어(신규금지)"
+    if code in {"DOWNTREND_NO_ENTRY", "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "COST_MINUS_15_TREND_RISK"}:
+        return "🛡️추세방어(신규금지)"
     if code == "QUALITY_RECOVERY_WATCH":
         return "🔎우량주 회복관찰"
     if code == "QUALITY_RECOVERY_SCOUT":
@@ -17329,7 +17382,7 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️가격방어(추매주의)" if "추매" in label else "🛡️가격방어(신규금지)"
     if "단기급락" in label or "급락방어" in label:
         return "🛡️급락방어(종가확인)"
-    if "추세훼손" in label or "추세방어" in label:
+    if TODAY_QUEUE_DEFENSE_TEXT_RE.search(label) or "추세훼손" in label or "추세방어" in label:
         return "🛡️추세방어(추매금지)" if "추매" in label else "🛡️추세방어(신규금지)"
     if code in {"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"} or "볼린상단 이탈" in label:
         return "🚫상단과열(추격금지)"
@@ -17378,12 +17431,12 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
         return "⚪데이터확인"
 
-    if "하락패턴 유효" in pattern_timing or code in {"LEVERAGED_DAILY_DROP_NO_ADD", "MTF_DAMAGE_NO_ADD"}:
-        return "🛡️방어우선"
     if code == "QUALITY_RECOVERY_WATCH":
         return "👀회복관찰"
     if code in {"QUALITY_RECOVERY_SCOUT", "QUALITY_RECOVERY_CANDIDATE"}:
         return "✅정밀확인"
+    if "하락패턴 유효" in pattern_timing or is_today_queue_defense_signal(c, text):
+        return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
         return "🛡️방어우선"
     if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "HARD_BLOCK_MACRO_STORM"}:
@@ -17518,14 +17571,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     defensive_pattern_block = (
         str(c.get("decision_code", "") or "").startswith("HARD_BLOCK")
-        or str(c.get("decision_code", "") or "").startswith("STRUCTURE_DAMAGE")
-        or str(c.get("decision_code", "") or "").startswith("PRICE_DRAWDOWN")
-        or str(c.get("decision_code", "") or "").startswith("SINGLE_DAY_BREAKDOWN")
-        or str(c.get("decision_code", "") or "") in {
-            "TARGET_ZERO_NO_ADD",
-            "MTF_DAMAGE_NO_ADD",
-            "LEVERAGED_DAILY_DROP_NO_ADD",
-        }
+        or str(c.get("decision_code", "") or "") == "TARGET_ZERO_NO_ADD"
+        or is_today_queue_defense_signal(c, pattern_timing)
     )
     if pattern_bucket in {"interest", "wait"} and not defensive_pattern_block:
         dashboard_group = "buyish"
@@ -27864,9 +27911,14 @@ def _today_queue_reason_bucket(row) -> str:
         return "비중초과 방어"
     if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
         return "급락방어"
-    if re.search(r"PRICE_DRAWDOWN|가격위험|가격방어|고점대비", text, flags=re.IGNORECASE):
+    if re.search(r"DRAWDOWN_20|PRICE_DRAWDOWN|가격위험|가격방어|고점대비\s*-?20", text, flags=re.IGNORECASE):
         return "가격방어"
-    if re.search(r"구조훼손|추세훼손|추세방어|위기\(|신규진입 보류|STRUCTURE", text, flags=re.IGNORECASE):
+    if re.search(
+        r"PANIC|CRISIS|DOWNTREND|REVERSE_TREND|COST_MINUS_15|구조훼손|추세훼손|추세방어|"
+        r"패닉|위기|하락추세|역배열|추세위험|신규진입 보류|진입보류|진입 보류|STRUCTURE",
+        text,
+        flags=re.IGNORECASE,
+    ):
         return "추세방어"
     if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
@@ -27899,7 +27951,8 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
         neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
         wait_mask = wait_mask | neg_upside.fillna(False)
     pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
-    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest) & wait_mask
+    defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
+    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest) & wait_mask & ~defense_bucket
 
 
 
