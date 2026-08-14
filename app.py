@@ -12725,6 +12725,34 @@ def get_rs_benchmark(ticker, asset_class):
     if ac == "us_stock": return US_TECH_BENCHMARK if symbol in US_TECH_OR_GROWTH_TICKERS else US_BROAD_BENCHMARK
     return US_BROAD_BENCHMARK
 
+def _numeric_scalar(value, default=np.nan):
+    try:
+        if isinstance(value, pd.DataFrame):
+            if value.empty:
+                return default
+            value = value.iloc[-1]
+        if isinstance(value, pd.Series):
+            nums = pd.to_numeric(value, errors="coerce").dropna()
+            return float(nums.iloc[-1]) if not nums.empty else default
+        if isinstance(value, (list, tuple, np.ndarray)):
+            nums = pd.to_numeric(pd.Series(np.ravel(value)), errors="coerce").dropna()
+            return float(nums.iloc[-1]) if not nums.empty else default
+        return safe_float(value, default)
+    except Exception:
+        return default
+
+
+def _close_scalar(df: pd.DataFrame, idx: int, default=np.nan):
+    if df is None or df.empty or "Close" not in df.columns:
+        return default
+    try:
+        close = df["Close"]
+        row_value = close.iloc[idx]
+        return _numeric_scalar(row_value, default)
+    except Exception:
+        return default
+
+
 def get_rs_score(ticker, asset_class):
     bench = get_rs_benchmark(ticker, asset_class)
     if normalize_ticker(ticker) == normalize_ticker(bench): return 1, "➖보통"
@@ -12735,11 +12763,13 @@ def get_rs_score(ticker, asset_class):
 
     if len(s_df) < need_len or len(b_df) < need_len: return 1, "➖보통"
 
-    s_now = float(s_df["Close"].iloc[-1])
-    s_then = float(s_df["Close"].iloc[-need_len])
-    b_now = float(b_df["Close"].iloc[-1])
-    b_then = float(b_df["Close"].iloc[-need_len])
+    s_now = _close_scalar(s_df, -1)
+    s_then = _close_scalar(s_df, -need_len)
+    b_now = _close_scalar(b_df, -1)
+    b_then = _close_scalar(b_df, -need_len)
 
+    if not all(finite_num(v) for v in [s_now, s_then, b_now, b_then]):
+        return 1, "➖보통"
     if s_then <= 0 or b_then <= 0 or b_now <= 0: return 1, "➖보통"
 
     rs_now = s_now / b_now
@@ -12774,7 +12804,9 @@ def get_rs_slope(ticker: str, asset_class: str) -> tuple:
         return 0.0, "⏳RS기울기부족", 0
 
     def _price(df, idx):
-        v = float(df["Close"].iloc[idx])
+        v = _close_scalar(df, idx)
+        if not finite_num(v):
+            return None
         return v if v > 0 else None
 
     s_now = _price(s_df, -1);  b_now = _price(b_df, -1)
