@@ -554,7 +554,29 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
     if not has_pos:
         st.info("보유 포지션이 없습니다. 매수 후 이 패널을 활용해 손절/장기보유를 점검하세요.")
         return
-        
+
+    leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    if leveraged_state:
+        profile = leveraged_state.get("profile", {})
+        leverage = clean_float(leveraged_state.get("leverage"), 1.0)
+        current_w = clean_float(c.get("current_w"), 0.0)
+        exposure = current_w * leverage
+        st.markdown(
+            f"<div class='info-panel' style='border-left: 6px solid #8b5cf6;'>"
+            f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+            f"<span class='highlight' style='font-size:1.2em;color:#c4b5fd;'>⚡ 레버리지 전용 관리 우선</span><br><br>"
+            f"일반 ETF 장기보유 점수보다 위의 <b>레버리지 ETF 중장기 관리</b> 패널을 우선합니다.<br>"
+            f"DCA 단계: <b>{escape_html_value(leveraged_state.get('dca_stage', '-'))}</b> "
+            f"({escape_html_value(leveraged_state.get('dca_multiple', '-'))}) · "
+            f"회복 체크: <b>{escape_html_value(leveraged_state.get('recovery_label', '-'))}</b> "
+            f"({escape_html_value(leveraged_state.get('recovery_state', '-'))}) · "
+            f"환산노출: <b>{exposure:.1f}%</b><br>"
+            f"<span style='color:#94a3b8;'>{escape_html_value(profile.get('underlying_note', ''))}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
     judgement = build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos)
     
     color_map = {
@@ -6495,8 +6517,8 @@ def render_precision_candlestick_chart(
         st.info("표시할 가격 데이터가 없습니다.")
         return
     pattern_candidates = detect_chart_pattern_candidates(df) if show_patterns else []
-    if not pattern_candidates and render_lwc_candlestick(df, avg_price=avg_price, key=key):
-        return
+    # 정밀관측소 차트는 일봉/주봉/월봉 캡처가 같은 방식으로 동작하도록
+    # 경량 차트가 아니라 Plotly 차트로 통일한다.
     fig = go.Figure(data=[go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"],
         low=df["Low"], close=df["Close"], name="Price",
@@ -15822,7 +15844,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
         "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
         "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
-        "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD",
+        "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD", "LEVERAGED_RECOVERY_DCA_BLOCK",
     }
     wait_codes = {
         "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
@@ -15842,6 +15864,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             status_note = "목표비중이 0%라 추가매수 계획을 만들지 않습니다. 보유분은 축소/정리 또는 별도 목표비중 재설정 후 판단합니다."
         elif decision_code == "LEVERAGED_DAILY_DROP_NO_ADD":
             status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
+        elif decision_code == "LEVERAGED_RECOVERY_DCA_BLOCK":
+            status_note = "SOXL/RAM 전용 회복 체크가 부족합니다. 목표비중이 부족해도 MA50, 기초축 1W, R/R 회복 전에는 DCA 회차를 열지 않습니다."
         else:
             if decision_code in {"PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY"}:
                 status_note = "고점대비 낙폭이 커서 새 돈 투입은 보류합니다. 추세가 완전히 깨졌다는 뜻은 아니며, 하락 원인과 종가 안정부터 확인합니다."
@@ -16331,33 +16355,29 @@ def _classify_leveraged_dca_stage(c, has_pos, my_price, leverage):
     return "관망", "×0", "레버리지 ETF는 기초축·추세·비중 조건이 동시에 맞을 때만 회차를 엽니다.", pnl
 
 
-def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usdkrw=1400.0):
+def build_leveraged_precision_state(name, ticker, c, has_pos, my_price):
     profile_key, profile = get_leveraged_etf_precision_profile(ticker, name)
     if not profile:
-        return
+        return {}
 
     leverage = clean_float(profile.get("leverage"), 1.0)
     cur = clean_float(c.get("cur_p"), 0.0)
     ma20 = clean_float(c.get("ma20"), 0.0)
     ma50 = clean_float(c.get("ma50"), 0.0)
     ma120 = clean_float(c.get("ma120"), 0.0)
-    rr = clean_float(c.get("rr_ratio"), np.nan)
-    current_w = clean_float(c.get("current_w"), 0.0)
-    target_w = clean_float(c.get("target_w"), 0.0)
-    buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
-    effective_exposure = current_w * leverage
-
     watch_rows_raw = build_leveraged_precision_watch_rows(profile_key)
     watch_rows = [{k: v for k, v in row.items() if not str(k).startswith("_")} for row in watch_rows_raw]
     underlying_rows = [
         row for row in watch_rows_raw
         if row.get("구분") in {"기초 ETF", "섹터 확인", "시장 환경"}
     ]
-    underlying_1w_vals = [clean_float(row.get("_1w"), np.nan) for row in underlying_rows if finite_num(row.get("_1w"))]
+    underlying_1w_vals = [
+        clean_float(row.get("_1w"), np.nan)
+        for row in underlying_rows
+        if finite_num(row.get("_1w"))
+    ]
     underlying_1w_avg = float(np.nanmean(underlying_1w_vals)) if underlying_1w_vals else np.nan
-
     dca_stage, dca_multiple, dca_note, pnl = _classify_leveraged_dca_stage(c, has_pos, my_price, leverage)
-
     recovery_checks = [
         ("MA20 위", cur > ma20 > 0, "단기 바닥 회복"),
         ("MA50 회복", cur > ma50 > 0, "중기 추세 회복"),
@@ -16367,7 +16387,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         ("기초축 1W", finite_num(underlying_1w_avg) and underlying_1w_avg >= 0, "기초 ETF/시장 동행"),
     ]
     passed = sum(1 for _, ok, _ in recovery_checks if ok)
-    recovery_label = f"{passed}/{len(recovery_checks)}"
+    total = len(recovery_checks)
     if passed >= 5:
         recovery_state = "회복 우세"
         recovery_color = "#16a34a"
@@ -16377,6 +16397,104 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     else:
         recovery_state = "방어 우선"
         recovery_color = "#ef4444"
+    return {
+        "profile_key": profile_key,
+        "profile": profile,
+        "leverage": leverage,
+        "watch_rows_raw": watch_rows_raw,
+        "watch_rows": watch_rows,
+        "underlying_1w_avg": underlying_1w_avg,
+        "dca_stage": dca_stage,
+        "dca_multiple": dca_multiple,
+        "dca_note": dca_note,
+        "pnl": pnl,
+        "recovery_checks": recovery_checks,
+        "recovery_passed": passed,
+        "recovery_total": total,
+        "recovery_label": f"{passed}/{total}",
+        "recovery_state": recovery_state,
+        "recovery_color": recovery_color,
+    }
+
+
+def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price):
+    if not isinstance(c, dict):
+        return c
+    state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    if not state:
+        return c
+
+    out = dict(c)
+    out.update({
+        "leveraged_precision_profile": state.get("profile_key", ""),
+        "leveraged_dca_stage": state.get("dca_stage", ""),
+        "leveraged_dca_multiple": state.get("dca_multiple", ""),
+        "leveraged_recovery_label": state.get("recovery_label", ""),
+        "leveraged_recovery_state": state.get("recovery_state", ""),
+        "leveraged_underlying_1w_avg": state.get("underlying_1w_avg", np.nan),
+    })
+
+    original_code = str(out.get("decision_code", "") or "")
+    if original_code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}:
+        return out
+
+    dca_stage = state.get("dca_stage", "")
+    dca_multiple = state.get("dca_multiple", "")
+    recovery_label = state.get("recovery_label", "")
+    recovery_state = state.get("recovery_state", "")
+    recovery_passed = int(state.get("recovery_passed", 0))
+    underlying_1w = clean_float(state.get("underlying_1w_avg"), np.nan)
+    underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
+    reasons = (
+        f"레버리지 전용 단계: {dca_stage} {dca_multiple}",
+        f"회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}",
+        state.get("dca_note", ""),
+        f"기존 판정: {out.get('dec', '-')}",
+    )
+
+    if dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"} or recovery_passed < 3:
+        out.update({
+            "dec": "⚡레버리지 회복 전: DCA 보류",
+            "col": "#d97706",
+            "decision_code": "LEVERAGED_RECOVERY_DCA_BLOCK",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "SOXL/RAM 전용: 목표비중 부족보다 MA50·기초축 회복 체크를 우선합니다.",
+        })
+    elif "후보" in dca_stage or dca_multiple in {"정찰", "조건부"}:
+        out.update({
+            "dec": "⚡레버리지 DCA 조건부: 회복 확인",
+            "col": "#8b5cf6",
+            "decision_code": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "SOXL/RAM 전용: 회복 체크가 유지될 때만 회차별 소액 DCA로 해석합니다.",
+        })
+    return out
+
+
+def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usdkrw=1400.0):
+    profile_key, profile = get_leveraged_etf_precision_profile(ticker, name)
+    if not profile:
+        return
+
+    state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    leverage = clean_float(state.get("leverage"), clean_float(profile.get("leverage"), 1.0))
+    rr = clean_float(c.get("rr_ratio"), np.nan)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    target_w = clean_float(c.get("target_w"), 0.0)
+    buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+    effective_exposure = current_w * leverage
+
+    watch_rows = state.get("watch_rows", [])
+    dca_stage = state.get("dca_stage", "")
+    dca_multiple = state.get("dca_multiple", "")
+    dca_note = state.get("dca_note", "")
+    pnl = clean_float(state.get("pnl"), np.nan)
+    recovery_checks = state.get("recovery_checks", [])
+    recovery_label = state.get("recovery_label", "-")
+    recovery_state = state.get("recovery_state", "확인 필요")
+    recovery_color = state.get("recovery_color", "#64748b")
 
     st.markdown("### ⚡ 레버리지 ETF 중장기 관리")
     st.markdown(
@@ -16967,6 +17085,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     hard_words = [
         "하드차단", "진입보류", "추격금지", "구조훼손", "추세훼손", "가격위험",
         "단기급락", "가격방어", "급락방어", "추세방어", "추매금지", "현금 확보", "원인 점검", "실시간 급락", "레버리지 급락",
+        "DCA 보류", "회복 전",
     ]
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
@@ -16988,7 +17107,27 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("재무/상품", "차단", "재무점수가 낮습니다. 기술 신호가 좋아도 장기보유 후보로 보기 어렵습니다.")
 
     is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, "")
-    if is_leveraged_product and day_ret <= -0.08:
+    leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    if leveraged_state:
+        dca_stage = leveraged_state.get("dca_stage", "-")
+        dca_multiple = leveraged_state.get("dca_multiple", "-")
+        recovery_label = leveraged_state.get("recovery_label", "-")
+        recovery_state = leveraged_state.get("recovery_state", "-")
+        underlying_1w = clean_float(leveraged_state.get("underlying_1w_avg"), np.nan)
+        underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
+        if dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"}:
+            lev_status = "차단"
+        elif int(leveraged_state.get("recovery_passed", 0)) < 4:
+            lev_status = "주의"
+        else:
+            lev_status = "통과"
+        add_check(
+            "레버리지 DCA",
+            lev_status,
+            f"{dca_stage} {dca_multiple}. 회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}. "
+            f"{leveraged_state.get('dca_note', '')}",
+        )
+    elif is_leveraged_product and day_ret <= -0.08:
         add_check("레버리지", "차단", f"현재/전거래일 대비 {day_ret * 100:.1f}% 급락입니다. 레버리지 상품은 가격이 내려왔다는 이유만으로 추매하지 않고 종가·기초지수 회복을 먼저 확인합니다.")
     elif is_leveraged_product:
         add_check("레버리지", "주의", "레버리지/인버스 상품입니다. 일반 ETF보다 손실 속도와 복리 훼손이 커서 목표비중과 손절 기준을 더 엄격하게 봅니다.")
@@ -17090,7 +17229,11 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     caution_count = int(status_counts.get("주의", 0))
     pass_count = int(status_counts.get("통과", 0))
 
-    if block_count >= 2:
+    if leveraged_state and leveraged_state.get("dca_multiple") == "×0":
+        final_label, final_color, action = "DCA 보류", "#d97706", "SOXL/RAM 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요."
+    elif leveraged_state and str(leveraged_state.get("dca_stage", "")).endswith("후보"):
+        final_label, final_color, action = "조건부 DCA", "#8b5cf6", "레버리지 전용 회복조건을 일부 통과했습니다. 자동 추매가 아니라 정해둔 회차별 소액만 검토하는 구간입니다."
+    elif block_count >= 2:
         final_label, final_color, action = "매수 금지", "#dc2626", "차단 항목이 2개 이상입니다. 신규/추매보다 원인 점검과 비중 관리가 우선입니다."
     elif block_count == 1:
         final_label, final_color, action = "대기", "#d97706", "차단 항목이 남아 있습니다. 해당 항목이 해소될 때까지 정찰 이상은 보류합니다."
@@ -17238,6 +17381,25 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
 
     st.markdown("### 🏛️ 보유 지속 vs 손절 종합 판단")
     st.caption("재무 방향성(좋아지고 있나 나빠지고 있나) + 기술 구조 + 내 손익을 종합합니다.")
+
+    leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    if leveraged_state:
+        h1, h2, h3, h4 = st.columns(4)
+        h1.metric("종합 판정", leveraged_state.get("dca_stage", "-"))
+        h2.metric("회복 체크", leveraged_state.get("recovery_label", "-"), leveraged_state.get("recovery_state", "-"))
+        h3.metric("평단 대비", f"{price_vs_avg*100:.1f}%" if finite_num(price_vs_avg) else "-")
+        h4.metric("관리 기준", "레버리지 ETF")
+        st.markdown(
+            f"<div class='info-panel' style='border-left:6px solid {leveraged_state.get('recovery_color', '#8b5cf6')};'>"
+            f"<b>{escape_html_value(name)} 보유 판단</b><br>"
+            f"<span class='highlight' style='color:#c4b5fd;font-size:1.15em;'>"
+            f"⚡ 일반 손절표보다 레버리지 회차 관리 우선</span><br><br>"
+            f"{escape_html_value(leveraged_state.get('dca_note', ''))}<br>"
+            f"<span style='color:#94a3b8;'>손절/축소는 단순 -%보다 목표비중 상한, 환산노출, 기초축 동행, 미리 정한 손실 허용폭으로 따로 관리하세요.</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        return
 
     # ── 점수 계산 ──────────────────────────────
     total_score = 0
@@ -17529,7 +17691,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260814_defense_pattern_execution_guard_v2"
+TODAY_QUEUE_LOGIC_VERSION = "20260814_leveraged_precision_link_v3"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -17545,6 +17707,7 @@ TODAY_QUEUE_DEFENSE_CODES = {
     "STRONG_REVERSE_NO_ENTRY",
     "COST_MINUS_15_TREND_RISK",
     "LEVERAGED_DAILY_DROP_NO_ADD",
+    "LEVERAGED_RECOVERY_DCA_BLOCK",
     "MTF_DAMAGE_NO_ADD",
 }
 
@@ -17670,6 +17833,10 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️시장방어(매수금지)"
     if code == "LEVERAGED_DAILY_DROP_NO_ADD":
         return "🛑레버리지급락(추매금지)"
+    if code == "LEVERAGED_RECOVERY_DCA_BLOCK":
+        return "🛡️레버리지DCA보류"
+    if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
+        return "⚡레버리지DCA조건부"
     if code == "PRICE_DRAWDOWN_HOLDING_CHECK":
         return "🛡️가격방어(추매주의)"
     if code == "PRICE_DRAWDOWN_NO_ENTRY":
@@ -17757,6 +17924,10 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
         return "👀회복관찰"
     if code in {"QUALITY_RECOVERY_SCOUT", "QUALITY_RECOVERY_CANDIDATE"}:
         return "✅정밀확인"
+    if code == "LEVERAGED_RECOVERY_DCA_BLOCK":
+        return "🛡️방어우선"
+    if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
+        return "⏳DCA조건부"
     if "하락패턴 유효" in pattern_timing or is_today_queue_defense_signal(c, text):
         return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
@@ -17859,6 +18030,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             except Exception:
                 pass
         c = apply_leveraged_dca_dashboard_override(c)
+        c = apply_leveraged_precision_decision_override(c, name, tkr, has_p, my_p)
         try:
             pattern_df = df
             if clean_float(_live_p, 0.0) > 0:
@@ -28672,6 +28844,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         my_price = get_my_price(name, tkr)
         has_pos_value = has_position(name, tkr)
         c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드", live_price=load_display_live_price(tkr))
+        c = apply_leveraged_precision_decision_override(c, name, tkr, has_pos_value, my_price)
         st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([
             {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
@@ -30427,6 +30600,13 @@ if main_page == "precision":
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
         c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=precision_has_pos)
+        c = apply_leveraged_precision_decision_override(
+            c,
+            name,
+            tkr,
+            precision_has_pos,
+            u_price if app_mode=="범용모드" else my_p,
+        )
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
 
         L, R = st.columns([1.1, 2.4])
