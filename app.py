@@ -16551,6 +16551,149 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         else:
             st.info("기초축 확인 데이터가 아직 없습니다.")
 
+    render_leveraged_reentry_simulator(name, ticker, c)
+
+
+def render_leveraged_reentry_simulator(name, ticker, c):
+    profile_key, profile = get_leveraged_etf_precision_profile(ticker, name)
+    if not profile:
+        return
+
+    cur = clean_float(c.get("cur_p"), 0.0)
+    is_us = not is_kr_listed(ticker)
+    price_step = 0.01 if is_us else 1.0
+    price_fmt = "%.2f" if is_us else "%.0f"
+    symbol = "$" if is_us else "₩"
+    default_qty = 100.0
+    if profile_key == "RAM":
+        default_sell = 12.0
+        default_rebuy = 10.0
+    else:
+        default_sell = round(cur, 2) if cur > 0 else 0.0
+        default_rebuy = round(cur * 0.90, 2) if cur > 0 else 0.0
+
+    with st.expander("🧮 매도 후 재진입 시뮬레이터", expanded=(profile_key == "RAM")):
+        st.caption("팔고 더 낮은 가격에 다시 사려는 계획이 실제로 수량을 늘렸는지, 놓친 가격이 얼마인지 복기합니다.")
+        i1, i2, i3, i4 = st.columns(4)
+        with i1:
+            sell_qty = st.number_input(
+                "매도 수량",
+                min_value=0.0,
+                value=default_qty,
+                step=1.0,
+                key=f"leveraged_reentry_qty_{profile_key}_{ticker}",
+            )
+        with i2:
+            sell_price = st.number_input(
+                "매도 단가",
+                min_value=0.0,
+                value=float(default_sell),
+                step=price_step,
+                format=price_fmt,
+                key=f"leveraged_reentry_sell_{profile_key}_{ticker}",
+            )
+        with i3:
+            target_rebuy = st.number_input(
+                "재매수 목표가",
+                min_value=0.0,
+                value=float(default_rebuy),
+                step=price_step,
+                format=price_fmt,
+                key=f"leveraged_reentry_target_{profile_key}_{ticker}",
+            )
+        with i4:
+            cost_rate = st.number_input(
+                "왕복 비용(%)",
+                min_value=0.0,
+                value=0.0,
+                step=0.05,
+                format="%.2f",
+                key=f"leveraged_reentry_cost_{profile_key}_{ticker}",
+                help="수수료, 스프레드, 세금 등을 단순 비용률로 넣습니다. 모르면 0으로 두고 보세요.",
+            )
+
+        if sell_qty <= 0 or sell_price <= 0 or cur <= 0:
+            st.info("매도 수량, 매도 단가, 현재가가 있어야 시뮬레이션을 계산합니다.")
+            return
+
+        cost_multiplier = max(1.0 - cost_rate / 100.0, 0.0)
+        proceeds = sell_qty * sell_price * cost_multiplier
+        target_qty = proceeds / target_rebuy if target_rebuy > 0 else np.nan
+        now_qty = proceeds / cur if cur > 0 else np.nan
+        qty_gap_now = now_qty - sell_qty if finite_num(now_qty) else np.nan
+        target_qty_gap = target_qty - sell_qty if finite_num(target_qty) else np.nan
+        cash_to_restore = max((sell_qty * cur) - proceeds, 0.0)
+        max_rebuy_for_same_qty = proceeds / sell_qty if sell_qty > 0 else np.nan
+        needed_drop_to_target = (target_rebuy / cur - 1) if target_rebuy > 0 and cur > 0 else np.nan
+        missed_move = (cur / sell_price - 1) if sell_price > 0 and cur > 0 else np.nan
+        missed_value = (cur - sell_price) * sell_qty
+
+        if target_rebuy > 0 and cur <= target_rebuy:
+            verdict, verdict_color = "목표 재진입 가능", "#16a34a"
+            verdict_note = "현재가가 재매수 목표가 이하입니다. 계획대로 재진입하면 수량 증가 여부를 확인할 수 있습니다."
+        elif cur <= max_rebuy_for_same_qty:
+            verdict, verdict_color = "원수량 회복 가능", "#22c55e"
+            verdict_note = "현재가가 매도 단가보다 낮아, 같은 현금으로 원래 수량 이상을 회복할 수 있는 구간입니다."
+        elif finite_num(missed_move) and missed_move >= 0.03:
+            verdict, verdict_color = "재진입 추격 위험", "#ef4444"
+            verdict_note = "현재가가 매도 단가보다 꽤 올라 같은 현금으로 원래 수량을 회복하기 어렵습니다."
+        else:
+            verdict, verdict_color = "재진입 판단 구간", "#d97706"
+            verdict_note = "현재가가 매도 단가 근처입니다. 원수량 회복 가능 가격과 목표가를 같이 보세요."
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("매도 후 현금", f"{symbol}{proceeds:,.2f}" if is_us else f"{proceeds:,.0f}원")
+        m2.metric("현재가 재매수 수량", "-" if not finite_num(now_qty) else f"{now_qty:,.2f}주", "-" if not finite_num(qty_gap_now) else f"{qty_gap_now:+.2f}주")
+        m3.metric("원수량 회복가", "-" if not finite_num(max_rebuy_for_same_qty) else (f"{symbol}{max_rebuy_for_same_qty:,.2f}" if is_us else f"{max_rebuy_for_same_qty:,.0f}원"))
+        m4.metric("목표가까지", "-" if not finite_num(needed_drop_to_target) else f"{needed_drop_to_target*100:.1f}%")
+
+        rows = [
+            {
+                "시나리오": "그냥 보유했을 때",
+                "가격": format_currency(cur, ticker),
+                "가능수량": f"{sell_qty:,.2f}주",
+                "원래 대비": "-",
+                "현재가 기준 가치": f"{symbol}{sell_qty * cur:,.2f}" if is_us else f"{sell_qty * cur:,.0f}원",
+                "해석": "매도하지 않았다면 현재 보유했을 가치",
+            },
+            {
+                "시나리오": "목표가 재매수 성공",
+                "가격": format_currency(target_rebuy, ticker) if target_rebuy > 0 else "-",
+                "가능수량": "-" if not finite_num(target_qty) else f"{target_qty:,.2f}주",
+                "원래 대비": "-" if not finite_num(target_qty_gap) else f"{target_qty_gap:+.2f}주",
+                "현재가 기준 가치": "-" if not finite_num(target_qty) else (f"{symbol}{target_qty * cur:,.2f}" if is_us else f"{target_qty * cur:,.0f}원"),
+                "해석": "기다린 가격이 체결됐을 때의 최선 시나리오",
+            },
+            {
+                "시나리오": "지금 재매수",
+                "가격": format_currency(cur, ticker),
+                "가능수량": "-" if not finite_num(now_qty) else f"{now_qty:,.2f}주",
+                "원래 대비": "-" if not finite_num(qty_gap_now) else f"{qty_gap_now:+.2f}주",
+                "현재가 기준 가치": f"{symbol}{proceeds:,.2f}" if is_us else f"{proceeds:,.0f}원",
+                "해석": "계획 실패 후 즉시 복귀할 때의 수량 차이",
+            },
+            {
+                "시나리오": "원래 수량 복구 추가현금",
+                "가격": format_currency(cur, ticker),
+                "가능수량": f"{sell_qty:,.2f}주",
+                "원래 대비": "0.00주",
+                "현재가 기준 가치": f"{symbol}{cash_to_restore:,.2f}" if is_us else f"{cash_to_restore:,.0f}원",
+                "해석": "현재가로 원래 수량을 되찾기 위해 추가로 필요한 금액",
+            },
+        ]
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+        missed_text = "-" if not finite_num(missed_move) else f"{missed_move*100:+.1f}%"
+        st.markdown(
+            f"<div class='info-panel' style='border-left:5px solid {verdict_color}; line-height:1.7;'>"
+            f"<b>{escape_html_value(verdict)}</b><br>"
+            f"매도 단가 대비 현재가 움직임: <b>{missed_text}</b> · "
+            f"놓친/절약한 가격차: <b>{symbol}{missed_value:,.2f}</b><br>"
+            f"{escape_html_value(verdict_note)}<br>"
+            f"<span style='color:#94a3b8;'>레버리지 ETF는 한 번 비우면 재진입 가격, 원수량 회복가, 추가현금 필요액을 같이 봐야 계획이 흔들리지 않습니다.</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 
 def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, fin_score, fin_meta, has_pos, my_price):
     st.markdown("### 🧭 개인 주식분석")
@@ -17117,7 +17260,12 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
         if dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"}:
             lev_status = "차단"
-        elif int(leveraged_state.get("recovery_passed", 0)) < 4:
+        elif (
+            int(leveraged_state.get("recovery_passed", 0)) < 5
+            or bool(c.get("short_history"))
+            or dd <= -0.30
+            or "후보" in str(dca_stage)
+        ):
             lev_status = "주의"
         else:
             lev_status = "통과"
