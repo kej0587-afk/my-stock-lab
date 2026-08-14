@@ -5710,16 +5710,21 @@ def get_today_market_flow_snapshot():
 
 
 TODAY_MARKET_FLOW_SNAPSHOT_KEY = "today_market_flow_snapshot"
+TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY = "today_market_flow_last_nonempty_snapshot"
 TODAY_MARKET_FLOW_LAST_RUN_KEY = "today_market_flow_snapshot_last_run"
 
 
 def get_cached_today_market_flow_snapshot():
     snapshot = st.session_state.get(TODAY_MARKET_FLOW_SNAPSHOT_KEY)
-    return snapshot if isinstance(snapshot, dict) else None
+    if isinstance(snapshot, dict):
+        return snapshot
+    last_snapshot = st.session_state.get(TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY)
+    return last_snapshot if isinstance(last_snapshot, dict) else None
 
 
 def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
     st.session_state.pop(TODAY_MARKET_FLOW_SNAPSHOT_KEY, None)
+    st.session_state.pop(TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY, None)
     st.session_state.pop(TODAY_MARKET_FLOW_LAST_RUN_KEY, None)
     st.session_state.pop(MARKET_CLUSTER_CONTEXT_CACHE_KEY, None)
     if clear_data_cache:
@@ -5761,6 +5766,8 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True):
         snapshot = get_today_market_flow_snapshot()
 
     st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
+    if isinstance(snapshot, dict) and snapshot:
+        st.session_state[TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY] = snapshot
     st.session_state[TODAY_MARKET_FLOW_LAST_RUN_KEY] = _kst_now
     return snapshot
 
@@ -24612,6 +24619,10 @@ def render_today_market_guard_panel(guard: dict):
     macro_risk = guard.get("macro_risk", np.nan)
     c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+    st.caption(
+        "시장점수: 주요지수 급락/MA 이탈, 돈흐름 확산 약화, 매크로·이벤트 부담을 합산한 시장 위험도입니다. "
+        "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험으로 보며, 국장/미장 비상 판정은 점수보다 우선합니다."
+    )
     portfolio_reasons = [str(x) for x in guard.get("portfolio_reasons", []) if str(x).strip()]
     if portfolio_reasons:
         st.caption(
@@ -26937,7 +26948,11 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
                 snapshot = refresh_today_market_flow_snapshot()
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
-            return None
+            snapshot = cached_snapshot
+            if snapshot:
+                st.caption("새 계산은 실패했지만 마지막 정상 돈흐름 결과를 유지해서 표시합니다.")
+            else:
+                return None
 
     if snapshot is None:
         st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 + 테마 종목 분석을 시작하세요.")
@@ -28007,6 +28022,10 @@ def render_today_queue_tab(mode):
     cached_summary = st.session_state.get(summary_key)
     if not isinstance(cached_summary, pd.DataFrame):
         cached_summary = pd.DataFrame()
+    if cached_summary.empty:
+        last_nonempty = st.session_state.get("today_queue_summary_last_nonempty_df")
+        if isinstance(last_nonempty, pd.DataFrame) and not last_nonempty.empty:
+            cached_summary = last_nonempty.copy()
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
     run_summary = c1.button(
@@ -28032,10 +28051,7 @@ def render_today_queue_tab(mode):
         and st.session_state.get(sig_key) not in [None, queue_sig]
     )
     if signature_changed and not run_summary:
-        st.warning("관심목록, 모드, ETF/재무점수 정보가 바뀐 뒤의 이전 계산 결과입니다. 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
-        cached_summary = pd.DataFrame()
-        summary_df = cached_summary
-        st.session_state[summary_key] = cached_summary
+        st.warning("관심목록, 모드, ETF/재무점수 또는 판정 로직이 바뀐 뒤의 이전 계산 결과입니다. 화면은 유지하되, 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
 
     # ── 결과 만료 알림 (2시간 경과, signature 변경과 별도) ───────────────
     if not run_summary and last_run and not signature_changed:
