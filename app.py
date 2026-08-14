@@ -17207,7 +17207,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260814_defense_pattern_guard_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260814_defense_pattern_execution_guard_v2"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -17560,7 +17560,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     dashboard_timing = format_dashboard_timing_label(c)
     dashboard_reason = format_dashboard_reason(c)
     dashboard_grade = format_dashboard_candidate_grade(c)
-    if "후보제외" in dashboard_grade or "매수금지" in dashboard_grade:
+    if any(word in dashboard_grade for word in ("후보제외", "매수금지", "방어", "신규금지", "추매금지", "손절점검", "원인점검")):
         dashboard_group = "caution"
     elif is_dashboard_block_or_wait_label(dashboard_timing):
         dashboard_group = "caution"
@@ -17583,6 +17583,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         pattern_timing=pattern_timing,
         pattern_bucket=pattern_bucket,
     )
+    if str(final_read or "").startswith(("🛡️", "🚫", "⚪")):
+        dashboard_group = "caution"
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
