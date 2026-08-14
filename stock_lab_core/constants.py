@@ -94,6 +94,7 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "0022T0": "SOL 국제금커버드콜액티브",
     "0167A0": "SOL AI 반도체 Top2 플러스",
     # 미국 ETF
+    "SOXL": "Direxion Daily Semiconductor Bull 3X Shares",
     "DRAM": "Roundhill Memory ETF",
     "RAM": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
 }

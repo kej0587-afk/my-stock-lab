@@ -16151,6 +16151,289 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
+LEVERAGED_ETF_PRECISION_PROFILES = {
+    "SOXL": {
+        "display_name": "Direxion Daily Semiconductor Bull 3X Shares",
+        "leverage": 3.0,
+        "reset_note": "미국 반도체 축을 하루 단위로 3배 추종합니다.",
+        "underlying_note": "공식 구성비 실시간 조회가 아니라 SOXX·SMH와 주요 반도체 대표축으로 기초 흐름을 확인합니다.",
+        "watch": [
+            ("SOXX", "기초 ETF", "미국 반도체 ETF"),
+            ("SMH", "기초 ETF", "미국 반도체 대형주 ETF"),
+            ("QQQ", "시장 환경", "나스닥100"),
+            ("NVDA", "대표축", "AI GPU"),
+            ("AVGO", "대표축", "AI 네트워크/ASIC"),
+            ("AMD", "대표축", "GPU/CPU"),
+            ("MU", "대표축", "메모리"),
+            ("AMAT", "대표축", "장비"),
+        ],
+    },
+    "RAM": {
+        "display_name": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+        "leverage": 2.0,
+        "reset_note": "DRAM/메모리 축을 하루 단위로 2배 추종합니다.",
+        "underlying_note": "RAM은 상장 초기라 RAM 단독 차트보다 DRAM ETF와 메모리 대표주 흐름을 같이 봅니다.",
+        "watch": [
+            ("DRAM", "기초 ETF", "Roundhill Memory ETF"),
+            ("MU", "대표축", "Micron/DRAM·HBM"),
+            ("SNDK", "대표축", "SanDisk/NAND"),
+            ("WDC", "대표축", "Western Digital"),
+            ("STX", "대표축", "Seagate"),
+            ("000660.KS", "대표축", "SK하이닉스"),
+            ("005930.KS", "대표축", "삼성전자"),
+            ("SOXX", "섹터 확인", "미국 반도체 ETF"),
+        ],
+    },
+}
+
+
+def get_leveraged_etf_precision_profile(ticker, name=""):
+    symbol = normalize_ticker(sanitize_ticker_value(ticker))
+    text = f"{symbol} {name}".upper()
+    if symbol in LEVERAGED_ETF_PRECISION_PROFILES:
+        return symbol, LEVERAGED_ETF_PRECISION_PROFILES[symbol]
+    if "ROUNDHILL T-REX" in text and "DRAM" in text:
+        return "RAM", LEVERAGED_ETF_PRECISION_PROFILES["RAM"]
+    if "DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text:
+        return "SOXL", LEVERAGED_ETF_PRECISION_PROFILES["SOXL"]
+    return "", {}
+
+
+def _leveraged_precision_pct_text(value):
+    v = clean_float(value, np.nan)
+    return "-" if not finite_num(v) else f"{v:+.1f}%"
+
+
+def _leveraged_precision_return_pct(ticker, bars, period="6mo"):
+    try:
+        hist = load_price_df(ticker, period)
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return np.nan
+        close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+        if len(close) < 2:
+            return np.nan
+        live = clean_float(load_display_live_price(ticker), 0.0)
+        end = live if live > 0 else clean_float(close.iloc[-1], np.nan)
+        if not finite_num(end) or end <= 0:
+            return np.nan
+        base_idx = -bars - 1 if len(close) > bars else 0
+        base = clean_float(close.iloc[base_idx], np.nan)
+        if not finite_num(base) or base <= 0:
+            return np.nan
+        return (end / base - 1) * 100
+    except Exception:
+        return np.nan
+
+
+def _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret):
+    d = clean_float(day_ret, np.nan)
+    w = clean_float(week_ret, np.nan)
+    m = clean_float(month_ret, np.nan)
+    if not finite_num(d):
+        return "확인 필요"
+    if d >= 1.0 and (not finite_num(w) or w >= 0):
+        return "단기 동행"
+    if d <= -1.0 and finite_num(w) and w <= 0:
+        return "동반 약세"
+    if finite_num(m) and m > 0 and finite_num(w) and w < 0:
+        return "중기 강세·단기 조정"
+    if d > 0:
+        return "하루 반등"
+    return "약세/대기"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def build_leveraged_precision_watch_rows(profile_key):
+    profile = LEVERAGED_ETF_PRECISION_PROFILES.get(profile_key, {})
+    rows = []
+    for t, role, label in profile.get("watch", []):
+        ticker = sanitize_ticker_value(t)
+        px = clean_float(load_display_live_price(ticker), 0.0)
+        try:
+            hist = load_price_df(ticker, "6mo")
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna() if hist is not None and not hist.empty and "Close" in hist.columns else pd.Series(dtype=float)
+        except Exception:
+            close = pd.Series(dtype=float)
+
+        def _ret_from_close(bars):
+            if len(close) < 2:
+                return np.nan
+            end = px if px > 0 else clean_float(close.iloc[-1], np.nan)
+            base_idx = -bars - 1 if len(close) > bars else 0
+            base = clean_float(close.iloc[base_idx], np.nan)
+            if not finite_num(end) or not finite_num(base) or end <= 0 or base <= 0:
+                return np.nan
+            return (end / base - 1) * 100
+
+        day_ret = _ret_from_close(1)
+        week_ret = _ret_from_close(5)
+        month_ret = _ret_from_close(21)
+        rows.append({
+            "구분": role,
+            "확인축": label,
+            "Ticker": ticker,
+            "현재가": format_currency(px, ticker) if px > 0 else "-",
+            "1D": _leveraged_precision_pct_text(day_ret),
+            "1W": _leveraged_precision_pct_text(week_ret),
+            "1M": _leveraged_precision_pct_text(month_ret),
+            "판정": _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret),
+            "_1d": clean_float(day_ret, np.nan),
+            "_1w": clean_float(week_ret, np.nan),
+            "_1m": clean_float(month_ret, np.nan),
+        })
+    return rows
+
+
+def _classify_leveraged_dca_stage(c, has_pos, my_price, leverage):
+    cur = clean_float(c.get("cur_p"), 0.0)
+    avg = clean_float(my_price, 0.0)
+    pnl = (cur / avg - 1) if has_pos and avg > 0 and cur > 0 else np.nan
+    dd = clean_float(c.get("dd"), 0.0)
+    ma20 = clean_float(c.get("ma20"), 0.0)
+    ma50 = clean_float(c.get("ma50"), 0.0)
+    ma120 = clean_float(c.get("ma120"), 0.0)
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    trend = str(c.get("trend", "") or "")
+    decision_code = str(c.get("decision_code", "") or "")
+
+    overheat = (
+        (finite_num(rsi) and rsi >= 70)
+        or (finite_num(mfi) and mfi >= 80)
+        or (finite_num(pct_b) and pct_b >= 0.92)
+    )
+    ma50_not_recovered = cur > 0 and ma50 > 0 and cur < ma50
+    major_trend_defense = "역배열" in trend or decision_code in {
+        "DOWNTREND_NO_ENTRY", "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY",
+        "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
+    }
+
+    if not has_pos:
+        return "미보유 관찰", "×0", "보유 전에는 기초 ETF·대표축이 같이 돌아서는지 확인합니다.", pnl
+    if overheat:
+        return "과열패스", "×0", "레버리지는 과열권에서 목표비중 미달만 보고 따라붙지 않습니다.", pnl
+    if ma50_not_recovered and major_trend_defense:
+        return "회복 전 DCA 보류", "×0", "평단 대비 하락폭보다 MA50 회복과 기초축 동행 회복을 먼저 봅니다.", pnl
+    if finite_num(pnl):
+        if pnl <= -0.35:
+            return "강하락 DCA 후보", "×1.25~2.0", "회복조건 3개 이상 통과할 때만 정해둔 마지막 회차를 검토합니다.", pnl
+        if pnl <= -0.25:
+            return "중하락 DCA 후보", "×1.0~1.75", "MA20 지지와 기초축 1W 회복이 같이 필요합니다.", pnl
+        if pnl <= -0.12:
+            return "약하락 DCA 후보", "×0.75", "소액 회차만 열고, MA50 아래에서는 확대하지 않습니다.", pnl
+        if pnl >= 0.10:
+            return "수익권 관리", "×0", "추가매수보다 익절선·추적손절·비중상한을 우선합니다.", pnl
+    if dd <= -0.50:
+        return "패닉권 관찰", "조건부", "고점대비 낙폭은 크지만 회복조건 확인 전 자동투입은 보류합니다.", pnl
+    if cur > ma20 > 0 and (ma120 <= 0 or cur > ma120):
+        return "초기 회복 관찰", "정찰", "단기 회복은 보이지만 MA50 회복 전에는 소액 중심입니다.", pnl
+    return "관망", "×0", "레버리지 ETF는 기초축·추세·비중 조건이 동시에 맞을 때만 회차를 엽니다.", pnl
+
+
+def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usdkrw=1400.0):
+    profile_key, profile = get_leveraged_etf_precision_profile(ticker, name)
+    if not profile:
+        return
+
+    leverage = clean_float(profile.get("leverage"), 1.0)
+    cur = clean_float(c.get("cur_p"), 0.0)
+    ma20 = clean_float(c.get("ma20"), 0.0)
+    ma50 = clean_float(c.get("ma50"), 0.0)
+    ma120 = clean_float(c.get("ma120"), 0.0)
+    rr = clean_float(c.get("rr_ratio"), np.nan)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    target_w = clean_float(c.get("target_w"), 0.0)
+    buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+    effective_exposure = current_w * leverage
+
+    watch_rows_raw = build_leveraged_precision_watch_rows(profile_key)
+    watch_rows = [{k: v for k, v in row.items() if not str(k).startswith("_")} for row in watch_rows_raw]
+    underlying_rows = [
+        row for row in watch_rows_raw
+        if row.get("구분") in {"기초 ETF", "섹터 확인", "시장 환경"}
+    ]
+    underlying_1w_vals = [clean_float(row.get("_1w"), np.nan) for row in underlying_rows if finite_num(row.get("_1w"))]
+    underlying_1w_avg = float(np.nanmean(underlying_1w_vals)) if underlying_1w_vals else np.nan
+
+    dca_stage, dca_multiple, dca_note, pnl = _classify_leveraged_dca_stage(c, has_pos, my_price, leverage)
+
+    recovery_checks = [
+        ("MA20 위", cur > ma20 > 0, "단기 바닥 회복"),
+        ("MA50 회복", cur > ma50 > 0, "중기 추세 회복"),
+        ("MA120 위", cur > ma120 > 0, "장기 기준선 위"),
+        ("MACD 상승", "상승" in str(c.get("macd", "")) or "상승" in str(c.get("rt_macd", "")), "반등 탄력"),
+        ("RS 기울기", "하락" not in str(c.get("rs_slope_label", "")), "상대강도 약화 멈춤"),
+        ("기초축 1W", finite_num(underlying_1w_avg) and underlying_1w_avg >= 0, "기초 ETF/시장 동행"),
+    ]
+    passed = sum(1 for _, ok, _ in recovery_checks if ok)
+    recovery_label = f"{passed}/{len(recovery_checks)}"
+    if passed >= 5:
+        recovery_state = "회복 우세"
+        recovery_color = "#16a34a"
+    elif passed >= 3:
+        recovery_state = "부분 회복"
+        recovery_color = "#d97706"
+    else:
+        recovery_state = "방어 우선"
+        recovery_color = "#ef4444"
+
+    st.markdown("### ⚡ 레버리지 ETF 중장기 관리")
+    st.markdown(
+        f"<div class='info-panel' style='border-left:5px solid #8b5cf6; line-height:1.75;'>"
+        f"<b>{escape_html_value(profile.get('display_name', name))}</b><br>"
+        f"{escape_html_value(profile.get('reset_note', '일일 레버리지 ETF입니다.'))}<br>"
+        f"<span style='color:#94a3b8;'>레버리지 ETF는 일반 ETF 장기보유 점수보다 "
+        f"회복조건, 기초축 동행, 목표비중 상한, 회차별 DCA 규칙을 먼저 봅니다.</span><br>"
+        f"<span style='color:#94a3b8;'>{escape_html_value(profile.get('underlying_note', ''))}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("DCA 단계", dca_stage, dca_multiple)
+    m2.metric("내 손익", "-" if not finite_num(pnl) else f"{pnl * 100:+.1f}%")
+    m3.metric("레버리지 환산노출", f"{effective_exposure:.1f}%", f"원금 {current_w:.1f}% × {leverage:.1f}")
+    m4.metric("회복 체크", recovery_label, recovery_state)
+
+    buy_note = ""
+    if buy_amt_krw > 0:
+        if is_kr_listed(ticker):
+            buy_note = f"목표비중 부족분은 {buy_amt_krw:,.0f}원입니다."
+        else:
+            fx = clean_float(usdkrw, 1400.0) or 1400.0
+            buy_note = f"목표비중 부족분은 약 ${buy_amt_krw / fx:,.0f}(≈{buy_amt_krw:,.0f}원)입니다."
+    st.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {recovery_color}; line-height:1.7;'>"
+        f"<b>현재 해석</b>: {escape_html_value(dca_note)}<br>"
+        f"R/R {('-' if not finite_num(rr) else f'{rr:.2f}')} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
+        f"{(' · ' + escape_html_value(buy_note)) if buy_note else ''}<br>"
+        f"<span style='color:#94a3b8;'>자동 매수 신호가 아니라, 중장기 보유용 회차 관리 체크리스트입니다.</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    check_df = pd.DataFrame([
+        {
+            "회복조건": label,
+            "상태": "통과" if ok else "대기",
+            "의미": desc,
+        }
+        for label, ok, desc in recovery_checks
+    ])
+    st.dataframe(check_df, width='stretch', hide_index=True)
+
+    with st.expander("기초축/대표 프록시 확인", expanded=True):
+        st.caption(
+            "SOXL은 공식 실시간 보유비중표가 아니라 반도체 기초 ETF와 대표축 프록시입니다. "
+            "RAM은 DRAM ETF와 메모리 대표주 흐름을 같이 봅니다."
+        )
+        if watch_rows:
+            st.dataframe(pd.DataFrame(watch_rows), width='stretch', hide_index=True)
+        else:
+            st.info("기초축 확인 데이터가 아직 없습니다.")
+
+
 def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, fin_score, fin_meta, has_pos, my_price):
     st.markdown("### 🧭 개인 주식분석")
     st.caption("스윙 신호를 장기 보유 후보로 바꿔도 되는지 점검하는 보조 패널입니다. 투자 권유가 아니라 의사결정 체크리스트입니다.")
@@ -30363,6 +30646,10 @@ if main_page == "precision":
                 ret_label = str(c.get("day_ret_label") or "전일등락")
                 ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+
+        _leveraged_panel_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
+        _leveraged_panel_avg = u_price if app_mode == "범용모드" else my_p
+        render_leveraged_etf_precision_panel(name, tkr, c, _leveraged_panel_has_pos, _leveraged_panel_avg, usdkrw=usdkrw)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
