@@ -17910,7 +17910,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260818_holdings_risk_only_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260818_holdings_auto_include_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -26005,6 +26005,7 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
     risk_score += caution_mask.reindex(risk_df.index, fill_value=False).astype(int) * 2
     risk_score += label_series.str.contains("구조훼손|추세훼손|가격위험|단기급락|추매금지|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
     risk_score += label_series.str.contains("과열|추격금지|비중 초과|비중 충족", regex=True, na=False).astype(int) * 2
+    risk_score += label_series.str.contains("레버리지|DCA|회복 전", regex=True, na=False).astype(int) * 2
     risk_score += mdd_series.apply(lambda v: 3 if finite_num(v) and float(v) <= -20 else (2 if finite_num(v) and float(v) <= -15 else (1 if finite_num(v) and float(v) <= -10 else 0)))
     risk_score += adj_series.apply(lambda v: 1 if finite_num(v) and float(v) < 0 else 0)
     risk_df["_위험점수"] = risk_score
@@ -28777,6 +28778,70 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest) & wait_mask & ~defense_bucket
 
 
+def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
+    """Merge watchlist items with actual holdings so held assets never disappear."""
+    ordered_keys: list[str] = []
+    merged: dict[str, dict] = {}
+
+    def _upsert(item, prefer_holding=False):
+        if not isinstance(item, dict):
+            return
+        clean_item = sanitize_watchlist_item(item)
+        ticker = sanitize_ticker_value(clean_item.get("ticker", ""))
+        key = normalize_ticker(ticker)
+        if not key:
+            return
+        if key not in merged:
+            ordered_keys.append(key)
+            merged[key] = clean_item
+            return
+        if prefer_holding:
+            old = merged[key]
+            next_item = {**old, **clean_item}
+            if not clean_float(next_item.get("fin_score"), 0.0) and clean_float(old.get("fin_score"), 0.0):
+                next_item["fin_score"] = old.get("fin_score")
+            merged[key] = next_item
+
+    for item in raw_watch_items or []:
+        _upsert(item, prefer_holding=False)
+
+    try:
+        if isinstance(holdings_table, pd.DataFrame) and not holdings_table.empty:
+            for _, row in holdings_table.iterrows():
+                ticker = sanitize_ticker_value(row.get("티커", ""))
+                key = normalize_ticker(ticker)
+                if not key or key in {"KRW_CASH", "USD_CASH", "CASH"}:
+                    continue
+                qty = clean_float(row.get("보유량", 0.0), 0.0)
+                current_w = clean_float(row.get("현재비중", 0.0), 0.0)
+                if qty <= 0 and current_w <= 0:
+                    continue
+                bucket = infer_bucket(ticker, row.get("bucket", "core"))
+                if is_reserve_or_cash_bucket(bucket):
+                    continue
+                name = sanitize_asset_name(row.get("자산명", ticker), ticker)
+                asset_class = str(row.get("asset_class", "") or "").strip()
+                is_etf = is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset_class, name)
+                asset_class = infer_asset_class_for_ticker(ticker, asset_class) if is_etf else asset_class
+                _upsert(
+                    {
+                        "ticker": ticker,
+                        "name": name,
+                        "qty": qty,
+                        "avg_price": clean_float(row.get("매입가", 0.0), 0.0),
+                        "target_weight": clean_float(row.get("목표비중", 0.0), 0.0),
+                        "asset_class": asset_class,
+                        "is_etf": is_etf,
+                        "bucket": bucket,
+                    },
+                    prefer_holding=True,
+                )
+    except Exception:
+        pass
+
+    return tuple(merged[key] for key in ordered_keys if key in merged)
+
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 20a: 오늘 점검 탭
@@ -28788,13 +28853,14 @@ def render_today_queue_tab(mode):
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
 
-    watch_items = tuple(st.session_state.get("watchlist", []))
+    raw_watch_items = tuple(st.session_state.get("watchlist", []))
+    watch_items = build_today_queue_items(raw_watch_items)
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
         render_today_pending_action_card(market_guard)
         render_today_pending_risk_panel()
-        st.info("관심종목이 비어 있습니다. 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
+        st.info("보유/관심 점검 대상이 비어 있습니다. 자산 현황에 보유자산을 입력하거나 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=4)
         st.divider()
@@ -28802,6 +28868,19 @@ def render_today_queue_tab(mode):
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
+    raw_watch_keys = {
+        normalize_ticker(sanitize_ticker_value(item.get("ticker", "")))
+        for item in raw_watch_items
+        if isinstance(item, dict)
+    }
+    auto_holding_keys = [
+        normalize_ticker(sanitize_ticker_value(item.get("ticker", "")))
+        for item in watch_items
+        if isinstance(item, dict)
+        and normalize_ticker(sanitize_ticker_value(item.get("ticker", ""))) not in raw_watch_keys
+    ]
+    if auto_holding_keys:
+        st.caption(f"보유자산 {len(auto_holding_keys)}개를 오늘점검에 자동 포함했습니다: {', '.join(auto_holding_keys[:6])}")
     queue_sig = json.dumps(
         {
             "logic_version": TODAY_QUEUE_LOGIC_VERSION,
