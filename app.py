@@ -26024,6 +26024,8 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
             return "보유/손절 기준 점검"
         if any(k in label for k in ["과열", "추격금지"]):
             return "추격 금지 · 눌림 대기"
+        if any(k in label for k in ["레버리지", "DCA", "회복 전"]):
+            return "레버리지 DCA 조건 확인"
         if finite_num(mdd) and float(mdd) <= -15:
             return "낙폭 원인 확인"
         return "관찰"
