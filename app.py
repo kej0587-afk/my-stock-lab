@@ -17910,7 +17910,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260814_leveraged_precision_link_v3"
+TODAY_QUEUE_LOGIC_VERSION = "20260818_holdings_risk_only_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -18324,6 +18324,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "데이터상태": "OK",
         "bucket": c.get("bucket", ""),
         "버킷": c.get("bucket", ""),
+        "현재비중": round(clean_float(c.get("current_w"), 0.0), 2),
+        "목표비중": round(clean_float(c.get("target_w"), 0.0), 2),
         "비중차이": clean_float(c.get("target_w"), 0.0) - clean_float(c.get("current_w"), 0.0),
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
@@ -25921,11 +25923,78 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None):
                 st.dataframe(show, width='stretch', hide_index=True)
 
 
-def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
+def _build_today_held_position_meta_map(watch_items=None) -> dict[str, dict]:
+    """Return ticker -> holding metadata for assets with an actual position."""
+    meta: dict[str, dict] = {}
+
+    def _put(ticker, qty=0.0, avg_price=np.nan, target_w=np.nan, current_w=np.nan, gap=np.nan):
+        key = normalize_ticker(sanitize_ticker_value(ticker))
+        qty_val = clean_float(qty, 0.0)
+        current_val = clean_float(current_w, np.nan)
+        if not key or not (qty_val > 0 or (finite_num(current_val) and current_val > 0)):
+            return
+        target_val = clean_float(target_w, np.nan)
+        if finite_num(gap):
+            gap_val = clean_float(gap, np.nan)
+        elif finite_num(target_val) and finite_num(current_val):
+            gap_val = target_val - current_val
+        else:
+            gap_val = np.nan
+        meta[key] = {
+            "보유량": qty_val,
+            "매입가": clean_float(avg_price, np.nan),
+            "현재비중": current_val,
+            "목표비중": target_val,
+            "비중차이": gap_val,
+        }
+
+    for item in watch_items or []:
+        _put(
+            item.get("ticker", ""),
+            qty=item.get("qty", item.get("보유량", 0.0)),
+            avg_price=item.get("avg_price", item.get("매입가", np.nan)),
+            target_w=item.get("target_weight", item.get("목표비중", np.nan)),
+            current_w=item.get("current_weight", item.get("현재비중", np.nan)),
+            gap=item.get("비중차이", np.nan),
+        )
+
+    try:
+        if isinstance(holdings_table, pd.DataFrame) and not holdings_table.empty:
+            for _, row in holdings_table.iterrows():
+                _put(
+                    row.get("티커", ""),
+                    qty=row.get("보유량", 0.0),
+                    avg_price=row.get("매입가", np.nan),
+                    target_w=row.get("목표비중", np.nan),
+                    current_w=row.get("현재비중", np.nan),
+                    gap=row.get("비중차이", np.nan),
+                )
+    except Exception:
+        pass
+
+    return meta
+
+
+def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items=None):
     if summary_df is None or summary_df.empty:
         return pd.DataFrame()
 
     risk_df = summary_df.copy()
+    held_meta = _build_today_held_position_meta_map(watch_items)
+    if held_meta:
+        risk_df["_보유키"] = risk_df.get("티커", pd.Series("", index=risk_df.index)).map(
+            lambda t: normalize_ticker(sanitize_ticker_value(t))
+        )
+        risk_df = risk_df[risk_df["_보유키"].isin(held_meta.keys())].copy()
+        if risk_df.empty:
+            return pd.DataFrame()
+        for col in ["보유량", "매입가", "현재비중", "목표비중", "비중차이"]:
+            risk_df[col] = risk_df["_보유키"].map(lambda t, c=col: held_meta.get(t, {}).get(c, np.nan))
+    elif "보유량" in risk_df.columns:
+        risk_df = risk_df[risk_df["보유량"].apply(lambda v: clean_float(v, 0.0) > 0)].copy()
+    else:
+        return pd.DataFrame()
+
     label_series = risk_df.get("🔥기술적 타점", pd.Series("", index=risk_df.index)).astype(str)
     code_series = risk_df.get("판정코드", pd.Series("", index=risk_df.index)).astype(str)
     mdd_series = risk_df.get("MDD", pd.Series("", index=risk_df.index)).apply(safe_float)
@@ -25964,23 +26033,40 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask):
 
 
 def render_today_holdings_risk_panel(risk_df):
-    st.markdown("#### 3. 내 보유/관심 위험 TOP")
+    st.markdown("#### 3. 내 보유 위험 TOP")
     if risk_df is None or risk_df.empty:
-        st.success("현재 오늘점검 기준으로 우선 확인할 위험 후보는 많지 않습니다.")
+        st.success("현재 보유 종목 중 우선 확인할 위험 후보는 많지 않습니다. 관심종목 위험은 아래 상세 판정표에서 확인하세요.")
         return
 
     show = risk_df.copy()
+    st.caption("보유수량 또는 현재비중이 있는 종목만 표시합니다. 관심등록만 된 종목은 상세 판정표에서 따로 봅니다.")
+    if "매입가" in show.columns:
+        show["매입가"] = show.apply(
+            lambda r: format_currency(clean_float(r.get("매입가"), 0.0), r.get("티커", "")) if clean_float(r.get("매입가"), 0.0) > 0 else "-",
+            axis=1,
+        )
+    if "보유량" in show.columns:
+        show["보유량"] = show["보유량"].apply(lambda v: f"{clean_float(v):,.4g}" if finite_num(clean_float(v, np.nan)) else "-")
+    for _col in ["현재비중", "목표비중", "비중차이"]:
+        if _col in show.columns:
+            if _col == "비중차이":
+                show[_col] = show[_col].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):+.1f}%p")
+            else:
+                show[_col] = show[_col].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
     if "_위험점수" in show.columns:
         show["_위험점수"] = show["_위험점수"].apply(lambda v: f"{float(v):.0f}" if finite_num(v) else "-")
     cols = [
-        "오늘조치", "종목명", "티커", "유형", "현재가", "고점대비", "🔥기술적 타점",
-        "핵심근거", "Adj점수", "RS", "섹터RS", "_위험점수",
+        "오늘조치", "종목명", "티커", "유형", "보유량", "매입가", "현재가",
+        "현재비중", "목표비중", "비중차이", "고점대비", "최종읽기", "📌후보등급",
+        "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거",
+        "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B",
+        "안전상태", "매크로상태", "데이터상태", "_위험점수",
     ]
     st.dataframe(
         show[[c for c in cols if c in show.columns]],
         width='stretch',
         hide_index=True,
-        height=min(360, 90 + len(show) * 38),
+        height=min(460, 110 + len(show) * 42),
     )
 
 
@@ -28584,10 +28670,10 @@ def render_investor_top10_section():
 
 
 def render_today_pending_risk_panel():
-    st.markdown("#### 3. 내 보유/관심 위험 TOP")
+    st.markdown("#### 3. 내 보유 위험 TOP")
     st.info(
-        "오늘 종목 점검 계산/새로고침을 누르면 하드차단, 가격방어/급락방어/추세방어, 과열, MDD 기준으로 "
-        "먼저 확인할 종목을 보여줍니다."
+        "오늘 종목 점검 계산/새로고침을 누르면 실제 보유 종목 중 하드차단, 가격방어/급락방어/추세방어, "
+        "과열, MDD 기준으로 먼저 확인할 종목만 보여줍니다."
     )
 
 
@@ -28727,6 +28813,10 @@ def render_today_queue_tab(mode):
                     "is_etf": bool(item.get("is_etf", False)),
                     "asset_class": str(item.get("asset_class", "")),
                     "fin_score": item.get("fin_score"),
+                    "qty": clean_float(item.get("qty"), 0.0),
+                    "avg_price": clean_float(item.get("avg_price"), 0.0),
+                    "target_weight": clean_float(item.get("target_weight"), 0.0),
+                    "bucket": str(item.get("bucket", "")),
                 }
                 for item in watch_items
             ],
@@ -28836,7 +28926,7 @@ def render_today_queue_tab(mode):
     buyish_mask = signal_group.eq("buyish") & ~hard_block_mask
     caution_mask = signal_group.eq("caution") | hard_block_mask
     market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
-    risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask)
+    risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
