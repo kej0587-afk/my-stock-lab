@@ -15848,7 +15848,7 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
             st.caption("데이터 부족: " + ", ".join(failed["티커"].astype(str).tolist()))
 
 
-def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
+def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, my_price=0.0):
     """Show a concrete entry/exit plan using the app's existing R/R logic."""
     cur = clean_float(c.get("cur_p"), 0.0)
     atr = clean_float(c.get("atr"), 0.0)
@@ -15898,6 +15898,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     is_core_dca = bucket == "core" and core_dca_rate > 0 and target_w > 0 and weight_gap > 0
     is_new_core_etf = is_core_dca and (bool(c.get("short_history")) or (np.isfinite(history_days) and history_days < 80))
     new_core_verification = build_new_core_etf_verification(name, ticker, str(c.get("asset_class", "") or ""), c) if is_new_core_etf else {}
+    leveraged_precision_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    leveraged_timing = build_leveraged_dca_timing_state(c, leveraged_precision_state) if leveraged_precision_state else {}
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
         st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
@@ -15928,7 +15930,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     is_hard_blocked = decision_code in block_codes
     is_poor_rr = rr < 1.0
 
-    if is_hard_blocked:
+    if leveraged_timing:
+        status = leveraged_timing.get("status", "레버리지 조건 확인")
+        status_color = leveraged_timing.get("color", "#8b5cf6")
+        status_note = leveraged_timing.get("status_note", "")
+    elif is_hard_blocked:
         status = "진입 보류"
         status_color = "#ef4444"
         if decision_code == "TARGET_ZERO_NO_ADD":
@@ -16018,7 +16024,10 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             unique_candidates.append((label, value))
     support_candidates = unique_candidates
 
-    if is_wait and support_candidates:
+    if leveraged_timing and not leveraged_timing.get("allow_current", False) and support_candidates:
+        entry1_label, entry1 = support_candidates[0]
+        entry1_cond = leveraged_timing.get("entry1_cond") or f"{entry1_label} 눌림 확인 후 1차"
+    elif is_wait and support_candidates:
         entry1_label, entry1 = support_candidates[0]
         entry1_cond = f"{entry1_label} 눌림 확인 후 1차"
     else:
@@ -16049,7 +16058,9 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
         tp2 = target
         tp3 = target
 
-    if is_hard_blocked:
+    if leveraged_timing:
+        tranche_weights = leveraged_timing.get("tranche_weights", [0.0, 0.0, 0.0])
+    elif is_hard_blocked:
         tranche_weights = [0.0, 0.0, 0.0]
     elif is_new_core_etf and has_pos and current_w >= (target_w * 0.33 * 0.90):
         tranche_weights = [0.0, 0.45, 0.55]
@@ -16101,7 +16112,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
     else:
         total_condition = "목표비중 기준 추가 필요 없음"
 
-    if is_new_core_etf:
+    if leveraged_timing:
+        entry2_cond = leveraged_timing.get("entry2_cond") or f"{entry2_label} 근처에서 기초축 동행 확인"
+        entry3_cond = leveraged_timing.get("entry3_cond") or f"{entry3_label} 근처, 손절가 이탈 전까지만"
+        entry2_price_text = format_currency(entry2, ticker)
+        entry3_price_text = format_currency(entry3, ticker)
+        rr_entry2_display = rr_entry2_text
+        rr_entry3_display = rr_entry3_text
+    elif is_new_core_etf:
         initial_cap_w = target_w * 0.33
         entry1_cond = f"초기 정찰 한도 {initial_cap_w:.2f}% 확인 · 현재 {current_w:.2f}%"
         entry2_cond = "60거래일+거래대금/NAV 괴리율+동종·기초흐름 우호 확인. 현재가 추격보다 종가 유지 또는 MA20/FVG 눌림 우선"
@@ -16125,6 +16143,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             "조건": total_condition,
         },
     ]
+    if leveraged_timing:
+        rows.append({
+            "단계": "레버리지 조건",
+            "가격": "-",
+            "금액/수량": "-",
+            "예상 R/R": rr_now_text,
+            "조건": leveraged_timing.get("condition_summary", "SOXL/RAM 전용 회복조건 확인"),
+        })
     if is_core_dca:
         rows.append({
             "단계": "이번 회차 적립 기준",
@@ -16219,11 +16245,17 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0):
             f"총 추가 필요: {total_order_text}. 이번 회차 적립 기준: {plan_order_text}. "
             "아래 단계별 금액은 전체 부족분이 아니라 이번 회차 적립 기준금액을 나눈 값입니다."
         )
+    elif leveraged_timing and has_pos:
+        amount_note = (
+            f"총 추가 필요: {total_order_text}. "
+            f"레버리지 회차 배율은 {leveraged_timing.get('dca_multiple', '-')}이며, "
+            "전체 부족분을 자동으로 채우는 신호가 아니라 조건을 통과한 회차만 소액으로 봅니다."
+        )
     elif has_pos:
         amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
         amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
-    if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked:
+    if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing:
         amount_note += " R/R이 낮아 현재 실행분은 1차 정찰만 열어둡니다."
     if target_is_projection:
         amount_note += " 신고가/가격발견 구간이라 +4ATR은 확정 목표가가 아니라 강세 시나리오 상단이며, 실제 익절은 +1ATR/+2ATR 분할과 추적손절 중심으로 해석하세요."
@@ -16488,6 +16520,132 @@ def build_leveraged_precision_state(name, ticker, c, has_pos, my_price):
     }
 
 
+def build_leveraged_dca_timing_state(c, state):
+    if not isinstance(c, dict) or not isinstance(state, dict) or not state:
+        return {}
+
+    cur = clean_float(c.get("cur_p"), 0.0)
+    ma20 = clean_float(c.get("ma20"), 0.0)
+    ma50 = clean_float(c.get("ma50"), 0.0)
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    rr = clean_float(c.get("rr_ratio"), np.nan)
+    day_ret = clean_float(c.get("day_ret"), np.nan)
+    target_w = clean_float(c.get("target_w"), 0.0)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    decision_code = str(c.get("decision_code", "") or "")
+    dca_stage = str(state.get("dca_stage", "") or "")
+    dca_multiple = str(state.get("dca_multiple", "") or "")
+    recovery_passed = int(state.get("recovery_passed", 0) or 0)
+    recovery_total = int(state.get("recovery_total", 0) or 0)
+    recovery_state = str(state.get("recovery_state", "") or "확인 필요")
+    underlying_1w = clean_float(state.get("underlying_1w_avg"), np.nan)
+    failed_checks = [
+        label for label, ok, _ in state.get("recovery_checks", [])
+        if not ok
+    ]
+
+    ma20_ok = cur > ma20 > 0
+    ma50_ok = cur > ma50 > 0
+    underlying_ok = (not finite_num(underlying_1w)) or underlying_1w >= 0
+    rr_wait = finite_num(rr) and rr < 0.8
+    heat_wait = (
+        (finite_num(pct_b) and pct_b >= 0.85)
+        or (finite_num(rsi) and rsi >= 70)
+        or (finite_num(mfi) and mfi >= 75)
+        or (finite_num(day_ret) and day_ret >= 0.08)
+    )
+    dca_blocked = (
+        dca_multiple == "×0"
+        or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"}
+        or recovery_passed < 3
+        or decision_code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}
+        or target_w <= 0
+        or (target_w > 0 and current_w >= target_w)
+    )
+    allow_current = (
+        not dca_blocked
+        and ma20_ok
+        and underlying_ok
+        and not heat_wait
+        and not rr_wait
+    )
+
+    failed_text = ", ".join(failed_checks[:3]) if failed_checks else "추가 핵심 미통과 없음"
+    underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
+    rr_text = "-" if not finite_num(rr) else f"{rr:.2f}"
+    condition_summary = (
+        f"{dca_stage} {dca_multiple} · 회복 {recovery_passed}/{recovery_total}({recovery_state}) · "
+        f"기초축 1W {underlying_text} · R/R {rr_text} · 비중 {current_w:.1f}/{target_w:.1f}% · 남은 확인: {failed_text}"
+    )
+
+    if dca_blocked:
+        status = "레버리지 DCA 보류"
+        color = "#ef4444" if recovery_passed < 3 else "#d97706"
+        status_note = (
+            f"{condition_summary}. 목표비중 부족분이 있어도 현재는 회차를 열지 않고 "
+            "MA20/MA50, 기초축 1W, 종가 회복을 먼저 확인합니다."
+        )
+        tranche_weights = [0.0, 0.0, 0.0]
+        entry1_cond = "회복 체크 3개 이상과 기초축 동행 전까지 신규 DCA 회차를 열지 않음"
+    elif not allow_current:
+        if heat_wait:
+            status = "레버리지 조건부 DCA: 과열 해소 대기"
+        elif rr_wait:
+            status = "레버리지 조건부 DCA: 눌림 타점 대기"
+        else:
+            status = "레버리지 조건부 DCA: 회복 확인"
+        color = "#d97706"
+        status_note = (
+            f"{condition_summary}. 조건부 후보지만 현재가 자동매수가 아니라 "
+            "눌림 가격과 기초축 동행이 맞을 때만 소액 회차를 엽니다."
+        )
+        tranche_weights = [0.20, 0.40, 0.40]
+        entry1_cond = "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
+    elif recovery_passed >= 5 and ma50_ok:
+        status = "레버리지 회복 DCA: 분할 가능"
+        color = "#16a34a"
+        status_note = (
+            f"{condition_summary}. 회복 조건이 우세하므로 정해둔 레버리지 회차 안에서만 "
+            "분할 DCA를 검토합니다."
+        )
+        tranche_weights = [0.30, 0.35, 0.35]
+        entry1_cond = "현재가 1차 가능: MA20/MA50 위 종가 유지와 기초축 1W 양수 확인"
+    else:
+        status = "레버리지 조건부 DCA: 소액 1차"
+        color = "#8b5cf6"
+        status_note = (
+            f"{condition_summary}. 회복 조건 일부 통과 구간이라 전체 부족분이 아니라 "
+            "회차별 소액만 검토합니다."
+        )
+        tranche_weights = [0.25, 0.35, 0.40]
+        entry1_cond = "소액 1차만: MA20 위 종가 유지와 기초축 1W 양수 확인"
+
+    entry2_cond = "2차는 MA20/FVG 지지 재확인 + 기초 ETF/대표축 1W 양수 유지 때만"
+    entry3_cond = "3차는 MA50 회복 또는 손절선 근처 변동성 진정 확인 전까지 예비 회차"
+    if dca_blocked:
+        entry2_cond = "회복 체크가 3개 미만이면 2차도 보류"
+        entry3_cond = "손절선 이탈 또는 기초축 동반 약세면 마지막 회차도 사용하지 않음"
+
+    return {
+        "status": status,
+        "color": color,
+        "status_note": status_note,
+        "condition_summary": condition_summary,
+        "allow_current": allow_current,
+        "tranche_weights": tranche_weights,
+        "entry1_cond": entry1_cond,
+        "entry2_cond": entry2_cond,
+        "entry3_cond": entry3_cond,
+        "dca_stage": dca_stage,
+        "dca_multiple": dca_multiple,
+        "recovery_passed": recovery_passed,
+        "recovery_total": recovery_total,
+        "recovery_state": recovery_state,
+    }
+
+
 def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_price):
     if not isinstance(c, dict):
         return c
@@ -16516,9 +16674,11 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
     recovery_passed = int(state.get("recovery_passed", 0))
     underlying_1w = clean_float(state.get("underlying_1w_avg"), np.nan)
     underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
+    timing_state = build_leveraged_dca_timing_state(out, state)
     reasons = (
         f"레버리지 전용 단계: {dca_stage} {dca_multiple}",
         f"회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}",
+        str(timing_state.get("condition_summary", "") or ""),
         state.get("dca_note", ""),
         f"기존 판정: {out.get('dec', '-')}",
     )
@@ -16533,13 +16693,14 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
             "sizing_hint": "SOXL/RAM 전용: 목표비중 부족보다 MA50·기초축 회복 체크를 우선합니다.",
         })
     elif "후보" in dca_stage or dca_multiple in {"정찰", "조건부"}:
+        timing_label = timing_state.get("status", "레버리지 DCA 조건부: 회복 확인")
         out.update({
-            "dec": "⚡레버리지 DCA 조건부: 회복 확인",
-            "col": "#8b5cf6",
+            "dec": timing_label if str(timing_label).startswith("⚡") else f"⚡{timing_label}",
+            "col": timing_state.get("color", "#8b5cf6"),
             "decision_code": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
             "decision_group": "caution",
             "decision_reasons": reasons,
-            "sizing_hint": "SOXL/RAM 전용: 회복 체크가 유지될 때만 회차별 소액 DCA로 해석합니다.",
+            "sizing_hint": "SOXL/RAM 전용: 회복 체크, 기초축 1W, 눌림 타점이 같이 맞을 때만 회차별 소액 DCA로 해석합니다.",
         })
     return out
 
@@ -16566,6 +16727,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     recovery_label = state.get("recovery_label", "-")
     recovery_state = state.get("recovery_state", "확인 필요")
     recovery_color = state.get("recovery_color", "#64748b")
+    timing_state = build_leveraged_dca_timing_state(c, state)
 
     st.markdown("### ⚡ 레버리지 ETF 중장기 관리")
     st.markdown(
@@ -16594,13 +16756,35 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
             buy_note = f"목표비중 부족분은 약 ${buy_amt_krw / fx:,.0f}(≈{buy_amt_krw:,.0f}원)입니다."
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {recovery_color}; line-height:1.7;'>"
-        f"<b>현재 해석</b>: {escape_html_value(dca_note)}<br>"
+        f"<b>현재 해석</b>: {escape_html_value(timing_state.get('status', dca_stage) or dca_stage)}<br>"
+        f"{escape_html_value(dca_note)}<br>"
+        f"<span style='color:#cbd5e1;'>{escape_html_value(timing_state.get('condition_summary', ''))}</span><br>"
         f"R/R {('-' if not finite_num(rr) else f'{rr:.2f}')} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
         f"{(' · ' + escape_html_value(buy_note)) if buy_note else ''}<br>"
         f"<span style='color:#94a3b8;'>자동 매수 신호가 아니라, 중장기 보유용 회차 관리 체크리스트입니다.</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
+
+    if timing_state:
+        timing_rows = [
+            {
+                "타점": "현재가",
+                "판정": "가능" if timing_state.get("allow_current") else "보류",
+                "확인조건": timing_state.get("entry1_cond", ""),
+            },
+            {
+                "타점": "2차",
+                "판정": "조건부",
+                "확인조건": timing_state.get("entry2_cond", ""),
+            },
+            {
+                "타점": "3차",
+                "판정": "예비",
+                "확인조건": timing_state.get("entry3_cond", ""),
+            },
+        ]
+        st.dataframe(pd.DataFrame(timing_rows), width='stretch', hide_index=True)
 
     check_df = pd.DataFrame([
         {
@@ -17910,7 +18094,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260818_holdings_auto_include_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260818_leveraged_dca_timing_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -26016,6 +26200,8 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
         mdd = safe_float(row.get("MDD"), np.nan)
         if "HARD_BLOCK" in code or "하드차단" in label:
             return "추가매수 금지 · 사유 확인"
+        if any(k in label for k in ["레버리지", "DCA", "회복 전"]):
+            return "레버리지 DCA 조건 확인"
         if any(k in label for k in ["추세훼손", "구조훼손"]):
             return "추세/손절 기준 점검"
         if any(k in label for k in ["단기급락", "급락방어"]):
@@ -26024,8 +26210,6 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
             return "보유/손절 기준 점검"
         if any(k in label for k in ["과열", "추격금지"]):
             return "추격 금지 · 눌림 대기"
-        if any(k in label for k in ["레버리지", "DCA", "회복 전"]):
-            return "레버리지 DCA 조건 확인"
         if finite_num(mdd) and float(mdd) <= -15:
             return "낙폭 원인 확인"
         return "관찰"
@@ -31205,7 +31389,8 @@ if main_page == "precision":
                 unsafe_allow_html=True,
             )
             _plan_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
-            render_entry_execution_plan(name, tkr, c, has_pos=_plan_has_pos, usdkrw=usdkrw)
+            _plan_my_price = u_price if app_mode == "범용모드" else my_p
+            render_entry_execution_plan(name, tkr, c, has_pos=_plan_has_pos, usdkrw=usdkrw, my_price=_plan_my_price)
             render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")
