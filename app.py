@@ -5751,6 +5751,40 @@ TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY = "today_market_flow_last_nonempty_snapshot"
 TODAY_MARKET_FLOW_LAST_RUN_KEY = "today_market_flow_snapshot_last_run"
 
 
+def _snapshot_has_theme_context(snapshot) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    for key in ("theme_rotation_df", "subtheme_group_df", "theme_flow_df", "theme_top5"):
+        value = snapshot.get(key)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            return True
+    return False
+
+
+def _build_theme_flow_snapshot_payload():
+    theme_flow_df = pd.DataFrame()
+    theme_rotation_df = pd.DataFrame()
+    subtheme_group_df = pd.DataFrame()
+    theme_top5 = pd.DataFrame()
+    subtheme_top = pd.DataFrame()
+    if IMAGE_THEME_FLOW_AVAILABLE:
+        theme_flow_df = calculate_image_theme_flow_df("")
+        theme_rotation_df = calculate_image_theme_rotation_df(theme_flow_df)
+        subtheme_group_df = calculate_image_theme_group_df(theme_flow_df)
+        theme_top5, subtheme_top = build_today_theme_flow_tables(
+            theme_flow_df,
+            theme_rotation_df,
+            subtheme_group_df,
+        )
+    return {
+        "theme_flow_df": theme_flow_df,
+        "theme_rotation_df": theme_rotation_df,
+        "subtheme_group_df": subtheme_group_df,
+        "theme_top5": theme_top5,
+        "subtheme_top": subtheme_top,
+    }
+
+
 def get_cached_today_market_flow_snapshot():
     snapshot = st.session_state.get(TODAY_MARKET_FLOW_SNAPSHOT_KEY)
     if isinstance(snapshot, dict):
@@ -5774,33 +5808,36 @@ def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
 
 def refresh_today_market_flow_snapshot(include_theme: bool = True):
     """ETF/섹터 데이터 + 테마종목(옵션) 계산.
-    include_theme=False이면 ETF/섹터만 빠르게 계산하고 기존 테마 결과를 유지.
+    include_theme=True도 테마 원자료 캐시는 유지해서 후보판을 살리되 반복 새로고침 부담을 낮춘다.
     """
     _kst_now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
 
-    if not include_theme:
-        # ── 빠른 모드: ETF/섹터만 재계산, 기존 스냅샷의 테마 결과 유지 ──
-        cache_clear(calculate_money_flow_df)
-        cache_clear(download_money_flow_prices)
-        flow_df = calculate_money_flow_df()
-        sector_rotation_df = calculate_sector_rotation_df(flow_df)
-        prev = get_cached_today_market_flow_snapshot() or {}
-        snapshot = {
-            **prev,  # 테마 결과는 기존 것 유지
-            "flow_df":           flow_df,
-            "us_top5":           build_today_flow_rank_table(flow_df, "미국 섹터", top_n=5),
-            "kr_top5":           build_today_flow_rank_table(flow_df, "한국 섹터", top_n=5),
-            "global_top":        build_today_flow_rank_table(flow_df, "글로벌",    top_n=1),
-            "local_top":         build_today_flow_rank_table(flow_df, "국내상장 대표 ETF", top_n=1),
-            "us_swing_top3":     build_today_flow_rank_table(flow_df, "미국 섹터", score_col="스윙점수", top_n=3),
-            "kr_swing_top3":     build_today_flow_rank_table(flow_df, "한국 섹터", score_col="스윙점수", top_n=3),
-            "global_swing_top":  build_today_flow_rank_table(flow_df, "글로벌",    score_col="스윙점수", top_n=1),
-            "sector_rotation_df": sector_rotation_df,
-        }
-    else:
-        # ── 전체 모드: ETF/섹터 + 테마종목 전부 재계산 ──
-        clear_today_market_flow_snapshot_cache(clear_data_cache=True)
-        snapshot = get_today_market_flow_snapshot()
+    # ETF/섹터 가격은 새로 보고, 테마/개별 후보는 캐시 또는 기존 결과를 재사용한다.
+    # 이전처럼 전체 캐시를 모두 지우면 네이버/테마 계산까지 매번 다시 돌아 무한 로딩처럼 보일 수 있다.
+    cache_clear(calculate_money_flow_df)
+    cache_clear(download_money_flow_prices)
+    flow_df = calculate_money_flow_df()
+    sector_rotation_df = calculate_sector_rotation_df(flow_df)
+    prev = get_cached_today_market_flow_snapshot() or {}
+    snapshot = {
+        **prev,
+        "flow_df":           flow_df,
+        "us_top5":           build_today_flow_rank_table(flow_df, "미국 섹터", top_n=5),
+        "kr_top5":           build_today_flow_rank_table(flow_df, "한국 섹터", top_n=5),
+        "global_top":        build_today_flow_rank_table(flow_df, "글로벌",    top_n=1),
+        "local_top":         build_today_flow_rank_table(flow_df, "국내상장 대표 ETF", top_n=1),
+        "us_swing_top3":     build_today_flow_rank_table(flow_df, "미국 섹터", score_col="스윙점수", top_n=3),
+        "kr_swing_top3":     build_today_flow_rank_table(flow_df, "한국 섹터", score_col="스윙점수", top_n=3),
+        "global_swing_top":  build_today_flow_rank_table(flow_df, "글로벌",    score_col="스윙점수", top_n=1),
+        "sector_rotation_df": sector_rotation_df,
+    }
+
+    if include_theme:
+        if _snapshot_has_theme_context(prev):
+            for key in ("theme_flow_df", "theme_rotation_df", "subtheme_group_df", "theme_top5", "subtheme_top"):
+                snapshot[key] = prev.get(key, pd.DataFrame())
+        else:
+            snapshot.update(_build_theme_flow_snapshot_payload())
 
     st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
     if isinstance(snapshot, dict) and snapshot:
@@ -25158,16 +25195,16 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             ]
     elif score >= 5:
         mode, level = "방어", "warning"
-        if kr_mode in {"방어", "위험"} and us_mode == "정상":
-            action = "국장 정찰/방어 · 미장 별도 타점"
+        if kr_mode in {"주의", "방어", "위험"} and us_mode == "정상":
+            action = "국장 주의/방어 · 미장 별도 타점"
             actions = [
                 "국장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
                 "미장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
                 "코어 적립은 국장 과열/가격방어·급락방어·추세방어 종목 제외, 미장은 종목별 과열만 확인",
                 "레버리지는 정해둔 DCA 배율 외 추가 판단 금지",
             ]
-        elif us_mode in {"방어", "위험"} and kr_mode == "정상":
-            action = "미장 정찰/방어 · 국장 별도 타점"
+        elif us_mode in {"주의", "방어", "위험"} and kr_mode == "정상":
+            action = "미장 주의/방어 · 국장 별도 타점"
             actions = [
                 "미장 노출 후보는 목표금액의 일부만 정찰하고 종가 안정 확인",
                 "국장 후보는 시장 모드가 정상이라 정밀 타점, R/R, 목표비중 기준으로 별도 판단",
@@ -25289,9 +25326,20 @@ def render_today_market_guard_panel(guard: dict):
     c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
     st.caption(
-        "시장점수: 주요지수 급락/MA 이탈, 돈흐름 확산 약화, 매크로·이벤트 부담을 합산한 시장 위험도입니다. "
-        "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험으로 보며, 국장/미장 비상 판정은 점수보다 우선합니다."
+        "시장점수는 국장·미장·돈흐름·매크로를 합친 전체 안전벨트입니다. "
+        "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험입니다. "
+        "실제 매수 가능 여부는 바로 위 국장 모드/미장 모드를 따로 봅니다. "
+        "예: 국장 주의·미장 정상은 미장까지 자동 차단이라는 뜻이 아닙니다."
     )
+    kr_mode_text = str(kr_stats.get("mode", ""))
+    us_mode_text = str(us_stats.get("mode", ""))
+    if kr_mode_text != us_mode_text and "정상" in {kr_mode_text, us_mode_text}:
+        normal_market = "미장" if us_mode_text == "정상" else "국장"
+        caution_market = "국장" if us_mode_text == "정상" else "미장"
+        st.caption(
+            f"시장별 해석: {caution_market} 때문에 전체 안전벨트가 올라갔지만, "
+            f"{normal_market} 후보는 정밀관측소의 타점/R/R/목표비중 기준으로 별도 판단합니다."
+        )
     portfolio_reasons = [str(x) for x in guard.get("portfolio_reasons", []) if str(x).strip()]
     if portfolio_reasons:
         st.caption(
@@ -25965,10 +26013,12 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     elif market_mode == "위험장 반등":
         headline = "시장 구조는 위험하지만 강한 반등이 확인됐습니다. 전면 관망보다 정해진 후보만 소액 전술 참여하는 구간입니다."
     elif market_mode == "방어":
-        if "국장 방어" in market_scope and "미장 정상" in market_scope:
-            headline = "국장은 방어, 미장은 정상입니다. 국장 노출은 정찰/현금 중심, 미장 후보는 별도 타점으로 봅니다."
-        elif "미장 방어" in market_scope and "국장 정상" in market_scope:
-            headline = "미장은 방어, 국장은 정상입니다. 미장 노출은 정찰/현금 중심, 국장 후보는 별도 타점으로 봅니다."
+        kr_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", ""))
+        us_mode = str(((market_guard or {}).get("us_stats", {}) or {}).get("mode", ""))
+        if us_mode == "정상" and kr_mode != "정상":
+            headline = f"전체 안전벨트는 방어지만 미장은 정상입니다 ({market_scope}). 국장 노출은 정찰/방어, 미장 후보는 별도 타점으로 봅니다."
+        elif kr_mode == "정상" and us_mode != "정상":
+            headline = f"전체 안전벨트는 방어지만 국장은 정상입니다 ({market_scope}). 미장 노출은 정찰/방어, 국장 후보는 별도 타점으로 봅니다."
         else:
             headline = "시장 모드가 방어입니다. 오늘은 후보를 시장별 노출로 나누고 정찰 중심으로 봅니다."
     elif market_mode == "위험":
@@ -27591,7 +27641,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         "🔄 돈흐름 요약 새로고침",
         key="today_market_flow_refresh_once",
         width='stretch',
-        help="무한 로딩을 막기 위해 ETF/섹터 돈흐름만 빠르게 다시 계산합니다. 기존 테마 결과는 유지합니다.",
+        help="ETF/섹터는 새로 계산하고, 테마/개별 후보는 캐시 또는 기존 결과를 재사용해 후보판을 유지합니다.",
     )
     clear_clicked = False
     if snapshot:
@@ -27613,8 +27663,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         # 강도 점수 delta 추적은 이제 파일(cache/cluster_strength_history.json)에
         # 일자별로 저장되므로 세션 간 prev/curr 스왑이 더 이상 필요 없다.
         try:
-            with st.spinner("돈흐름 계산 중 — ETF/섹터 빠른 새로고침..."):
-                snapshot = refresh_today_market_flow_snapshot(include_theme=False)
+            with st.spinner("돈흐름 계산 중 — ETF 갱신 + 후보판 복원..."):
+                snapshot = refresh_today_market_flow_snapshot(include_theme=True)
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
             snapshot = cached_snapshot
@@ -27624,7 +27674,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
                 return None
 
     if snapshot is None:
-        st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 돈흐름 분석을 시작하세요.")
+        st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 + 테마 후보 분석을 시작하세요.")
         return None
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())

@@ -1858,6 +1858,8 @@ def classify_money_flow_state(
         return "신규 유입"
     if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
         return "둔화 경고"
+    if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m <= -0.03 and ret_6m >= 0.05:
+        return "둔화 경고"
     if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
         return "소외 지속"
     return "관찰"
@@ -1890,13 +1892,27 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 
     volume_growth = get_volume_growth(px["Volume"]) if "Volume" in px.columns else np.nan
     price_level   = (cur - low_52w) / (high_52w - low_52w) if high_52w > low_52w else np.nan
+    drawdown      = (cur / high_52w - 1.0) if high_52w > 0 else np.nan
     flow_parts    = _compute_flow_score_components(ret_1m, ret_3m, ret_6m, accel, volume_growth, price_level)
+    recent_weak_penalty = 0.0
+    if finite_num(ret_3m) and ret_3m < 0:
+        recent_weak_penalty += min(20.0, abs(ret_3m) * 80.0)
+    if finite_num(ret_1m) and ret_1m < 0:
+        recent_weak_penalty += min(15.0, abs(ret_1m) * 60.0)
+    if finite_num(drawdown) and drawdown <= -0.25:
+        recent_weak_penalty += min(20.0, (abs(drawdown) - 0.25) * 50.0)
+    if finite_num(ret_3m) and ret_3m < 0 and finite_num(ret_6m) and ret_6m > 0:
+        recent_weak_penalty += 6.0
+    if recent_weak_penalty:
+        flow_parts["점수_최근약세패널티"] = -recent_weak_penalty
+        flow_parts["점수_합계"] = flow_parts["점수_합계"] - recent_weak_penalty
     flow_score    = flow_parts["점수_합계"]
     swing_score   = _compute_swing_score(ret_2w, ret_1m, swing_accel, volume_growth, price_level)
 
     return {
         "현재가":      cur,
         "가격수준":    price_level,
+        "고점대비":    drawdown,
         "기간수익률":  period_ret,
         "1주수익률":   ret_1w,
             "2주수익률":   ret_2w,
