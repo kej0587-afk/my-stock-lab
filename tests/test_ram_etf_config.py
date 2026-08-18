@@ -26,6 +26,14 @@ def test_ram_etf_app_profile_uses_dram_as_underlying(app_module):
     assert app_module.sanitize_asset_name("Aries I", "RAM") == (
         "Roundhill T-REX 2X Long DRAM Daily Target ETF"
     )
+    normalized_item = app_module.sanitize_watchlist_item(
+        {"name": "Aries I", "ticker": "RAM", "is_etf": False, "asset_class": "us_stock", "fin_score": 3}
+    )
+    assert normalized_item["ticker"] == "RAM"
+    assert normalized_item["name"] == "Roundhill T-REX 2X Long DRAM Daily Target ETF"
+    assert normalized_item["is_etf"] is True
+    assert normalized_item["asset_class"] == "us_etf_nasdaq"
+    assert normalized_item["fin_score"] == 0
     assert app_module.get_sector_benchmark_info("RAM", "us_etf_nasdaq") == ("SMH", "미국 반도체")
 
     profile = app_module.get_new_etf_manual_profile("RAM")

@@ -1184,14 +1184,29 @@ def sanitize_asset_name(name, ticker=""):
 
 # is_kr_listed → stock_lab_core/formatters.py 로 이관됨
 
+def canonicalize_watchlist_ticker(ticker, name=""):
+    raw = sanitize_ticker_value(ticker)
+    symbol = clean_symbol(raw)
+    text = f"{raw} {name or ''}".upper()
+    if symbol == "RAM" or ("ROUNDHILL T-REX" in text and "DRAM" in text):
+        return "RAM"
+    return raw
+
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
-    ticker = ensure_kr_suffix_if_code(data.get("ticker", ""))
-    return {
+    raw_name = data.get("name", "")
+    ticker = canonicalize_watchlist_ticker(ensure_kr_suffix_if_code(data.get("ticker", "")), raw_name)
+    cleaned = {
         **data,
         "ticker": ticker,
-        "name": sanitize_asset_name(data.get("name", ""), ticker),
+        "name": sanitize_asset_name(raw_name, ticker),
     }
+    if clean_symbol(ticker) == "RAM":
+        cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("RAM", "Roundhill T-REX 2X Long DRAM Daily Target ETF")
+        cleaned["is_etf"] = True
+        cleaned["asset_class"] = "us_etf_nasdaq"
+        cleaned["fin_score"] = 0
+    return cleaned
 
 def is_known_etf_ticker(ticker):
     raw = sanitize_ticker_value(ticker)
@@ -5799,7 +5814,26 @@ def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
 
     is_stock=True 이면 개별종목으로 취급(kr_stock / us_stock).
     """
-    ticker = sanitize_ticker_value(row.get("Ticker", ""))
+    def _first_row_value(*keys):
+        for key in keys:
+            value = row.get(key, "") if hasattr(row, "get") else ""
+            try:
+                if pd.isna(value):
+                    continue
+            except Exception:
+                pass
+            text = str(value or "").strip()
+            if text and text.lower() != "nan":
+                return value
+        return ""
+
+    raw_name = (
+        _first_row_value("ETF 이름", "종목명", "name", "Name", "섹터")
+    )
+    raw_ticker = (
+        _first_row_value("Ticker", "ticker", "티커", "종목코드")
+    )
+    ticker = canonicalize_watchlist_ticker(raw_ticker, raw_name)
     if not ticker:
         return False, "티커가 없어 전광판에 보낼 수 없습니다."
     if is_in_watchlist(ticker):
@@ -5807,7 +5841,7 @@ def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
 
     # ETF 이름 > 종목명 > 섹터 순으로 이름 결정
     name = sanitize_asset_name(
-        row.get("ETF 이름", "") or row.get("종목명", "") or row.get("섹터", ""),
+        raw_name,
         ticker,
     )
     if is_stock:
@@ -27557,7 +27591,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         "🔄 돈흐름 요약 새로고침",
         key="today_market_flow_refresh_once",
         width='stretch',
-        help="ETF/섹터 + 테마 종목 전체 재계산 (~60초 이상 소요).",
+        help="무한 로딩을 막기 위해 ETF/섹터 돈흐름만 빠르게 다시 계산합니다. 기존 테마 결과는 유지합니다.",
     )
     clear_clicked = False
     if snapshot:
@@ -27579,8 +27613,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         # 강도 점수 delta 추적은 이제 파일(cache/cluster_strength_history.json)에
         # 일자별로 저장되므로 세션 간 prev/curr 스왑이 더 이상 필요 없다.
         try:
-            with st.spinner("돈흐름 계산 중 — ETF/섹터 + 테마 종목 (~60초 이상)..."):
-                snapshot = refresh_today_market_flow_snapshot()
+            with st.spinner("돈흐름 계산 중 — ETF/섹터 빠른 새로고침..."):
+                snapshot = refresh_today_market_flow_snapshot(include_theme=False)
         except Exception as exc:
             st.warning(f"돈흐름 요약을 계산하지 못했습니다: {exc}")
             snapshot = cached_snapshot
@@ -27590,7 +27624,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
                 return None
 
     if snapshot is None:
-        st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 + 테마 종목 분석을 시작하세요.")
+        st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 돈흐름 분석을 시작하세요.")
         return None
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
@@ -30700,7 +30734,13 @@ if main_page == "precision":
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
 
-    current_item = {"name": sanitize_asset_name(name, tkr), "ticker": sanitize_ticker_value(tkr), "is_etf": is_etf, "asset_class": a_class, "fin_score": int(fin_score)}
+    current_item = sanitize_watchlist_item({
+        "name": sanitize_asset_name(name, tkr),
+        "ticker": sanitize_ticker_value(tkr),
+        "is_etf": is_etf,
+        "asset_class": a_class,
+        "fin_score": int(fin_score),
+    })
 
     if is_in_watchlist(tkr):
         for item in st.session_state.watchlist:
@@ -30713,7 +30753,7 @@ if main_page == "precision":
         if is_in_watchlist(tkr): st.success("이미 전광판에 등록된 종목입니다.")
         else:
             if st.button("전광판에 등록"):
-                 st.session_state.watchlist.append(current_item)
+                 st.session_state.watchlist.append(sanitize_watchlist_item(current_item))
                  persist_watchlist()
                  st.rerun()
                 
