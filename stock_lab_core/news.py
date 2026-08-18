@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 import html
 import http.cookiejar
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -42,6 +43,48 @@ from datetime import date as _date_cls, timedelta as _td_cls
 
 def finite_num(x):
     return x is not None and not pd.isna(x) and np.isfinite(float(x))
+
+
+_KRX_AUTH_BLOCKED_ENV = "STOCK_LAB_KRX_AUTH_BLOCKED"
+_KRX_AUTH_BLOCK_REASON_ENV = "STOCK_LAB_KRX_AUTH_BLOCK_REASON"
+_KRX_AUTH_BLOCKED_SESSION_KEY = "stock_lab_krx_auth_blocked"
+_KRX_AUTH_BLOCK_REASON_SESSION_KEY = "stock_lab_krx_auth_block_reason"
+
+
+def _looks_like_krx_auth_error(exc_or_text) -> bool:
+    text = str(exc_or_text or "").lower()
+    return any(
+        key in text
+        for key in [
+            "비밀번호 변경",
+            "자격 증명",
+            "로그인 실패",
+            "password",
+            "credential",
+            "authentication",
+            "login",
+        ]
+    )
+
+
+def _mark_krx_auth_blocked(reason: str):
+    reason = str(reason or "KRX 인증 실패")
+    os.environ[_KRX_AUTH_BLOCKED_ENV] = "1"
+    os.environ[_KRX_AUTH_BLOCK_REASON_ENV] = reason[:300]
+    try:
+        st.session_state[_KRX_AUTH_BLOCKED_SESSION_KEY] = True
+        st.session_state[_KRX_AUTH_BLOCK_REASON_SESSION_KEY] = reason[:300]
+    except Exception:
+        pass
+
+
+def _krx_auth_blocked() -> bool:
+    if os.getenv(_KRX_AUTH_BLOCKED_ENV) == "1":
+        return True
+    try:
+        return bool(st.session_state.get(_KRX_AUTH_BLOCKED_SESSION_KEY, False))
+    except Exception:
+        return False
 
 
 # ── Yahoo Finance 크럼(crumb) 인증 캐시 ─────────────────────────────────────
@@ -1694,7 +1737,9 @@ def _krx_auth_available() -> bool:
     KRX_ID / KRX_PW가 os.environ 또는 st.secrets에 있으면 True.
     st.secrets에 있을 경우 pykrx가 사용할 수 있도록 os.environ에 자동 복사합니다.
     """
-    import os
+    if _krx_auth_blocked():
+        return False
+
     krx_id = os.getenv("KRX_ID", "")
     krx_pw = os.getenv("KRX_PW", "")
 
@@ -1722,6 +1767,10 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
     KRX 인증(KRX_ID / KRX_PW)이 필요합니다.
     반환: {"연기금": df, "외국인": df, "기관합계": df, "개인": df}
     """
+    if _krx_auth_blocked():
+        reason = os.getenv(_KRX_AUTH_BLOCK_REASON_ENV, "KRX 인증 실패로 이번 세션에서는 네이버 수급으로 대체")
+        return {"ok": False, "reason": reason, "data": {}}
+
     try:
         from pykrx import stock as _pykrx
         from datetime import datetime as _dt, timedelta as _tdd
@@ -1754,6 +1803,9 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
                     market="KOSPI", investor="외국인",
                 )
             except Exception as _e:
+                if _looks_like_krx_auth_error(_e):
+                    _mark_krx_auth_blocked(str(_e))
+                    return {"ok": False, "reason": f"KRX 인증 실패: {_e}", "data": {}}
                 if first_exception is None:
                     first_exception = _e
                 continue  # 공휴일/네트워크 일시오류는 다음 날짜로 재시도
@@ -1766,6 +1818,8 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
 
         if date_str is None or _test is None:
             if first_exception is not None:
+                if _looks_like_krx_auth_error(first_exception):
+                    _mark_krx_auth_blocked(str(first_exception))
                 return {"ok": False, "reason": f"KRX API 오류: {first_exception}", "data": {}}
             return {"ok": False,
                     "reason": "KRX 로그인 실패 — Streamlit Cloud Secrets에 KRX_ID/KRX_PW가 올바르게 설정됐는지 확인하세요.",
@@ -1784,14 +1838,20 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
         investor_list = ["연기금", "외국인", "기관합계", "개인"]
         raw: dict[str, list] = {inv: [] for inv in investor_list}
 
-        with _TPE(max_workers=8) as ex:
+        with _TPE(max_workers=4) as ex:
             futs = {
                 ex.submit(_fetch_krx_one, inv, market): (inv, market)
                 for inv in investor_list
                 for market in ["KOSPI", "KOSDAQ"]
             }
             for fut in _ac(futs):
-                inv, market, df = fut.result()
+                try:
+                    inv, market, df = fut.result()
+                except Exception as _e:
+                    if _looks_like_krx_auth_error(_e):
+                        _mark_krx_auth_blocked(str(_e))
+                        return {"ok": False, "reason": f"KRX 인증 실패: {_e}", "data": {}}
+                    continue
                 if df is None or df.empty:
                     continue
                 net_val_col = next((c for c in df.columns if "순매수" in str(c) and "대금" in str(c)), None)
@@ -1824,6 +1884,8 @@ def fetch_investor_top10_pykrx(base_date_str: str) -> dict:
             return {"ok": False, "reason": f"{date_str} 데이터 없음", "data": {}}
         return {"ok": True, "data": results, "source": "pykrx(KRX)", "date": date_str}
     except Exception as e:
+        if _looks_like_krx_auth_error(e):
+            _mark_krx_auth_blocked(str(e))
         return {"ok": False, "reason": str(e), "data": {}}
 
 
