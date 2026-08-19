@@ -18094,7 +18094,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260819_leveraged_dca_wait_tab_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260819_wait_gate_v2"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -28958,18 +28958,27 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     code = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
     final_read = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
     grade_label = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+    core_reason = summary_df.get("핵심근거", pd.Series("", index=summary_df.index)).astype(str)
     bucket_series = summary_df.apply(lambda row: _today_queue_reason_bucket(row), axis=1)
+    wait_text = label + " " + pattern + " " + final_read + " " + grade_label + " " + core_reason
     leveraged_dca_watch = (
         code.str.contains(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
         | final_read.str.contains("DCA조건부", regex=False, na=False)
         | grade_label.str.contains("레버리지DCA조건부", regex=False, na=False)
         | label.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
     )
+    forced_wait = wait_text.str.contains(
+        r"R/R\s*[<＜]\s*1|손익비\s*1\s*미만|목표가.*부족|풀진입\s*보류|현재가\s*보류|"
+        r"눌림대기|눌림\s*대기|돌파대기|정밀확인|패턴관찰|패턴성공|패턴유효|DCA조건부",
+        regex=True,
+        na=False,
+    )
     wait_mask = (
-        label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
+        label.str.contains(r"R/R\s*[<＜]\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
         | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
         | bucket_series.eq("관심/눌림대기")
         | leveraged_dca_watch
+        | forced_wait
     )
     if upside_value_map:
         neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
