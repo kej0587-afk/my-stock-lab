@@ -18094,7 +18094,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260818_leveraged_dca_timing_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260819_leveraged_dca_wait_tab_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -28915,7 +28915,12 @@ def _today_queue_reason_bucket(row) -> str:
     data_state = str(row.get("데이터상태", "") or "")
     pattern_timing = str(row.get("패턴타점", "") or "")
     pattern_reason = str(row.get("패턴근거", "") or "")
-    text = " ".join([label, code, data_state, pattern_timing, pattern_reason])
+    final_read = str(row.get("최종읽기", "") or "")
+    grade_label = str(row.get("📌후보등급", "") or "")
+    core_reason = str(row.get("핵심근거", "") or "")
+    text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
+    if re.search(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
+        return "관심/눌림대기"
     if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
     if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
@@ -28950,18 +28955,28 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     label = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
     pattern = summary_df.get("패턴타점", pd.Series("", index=summary_df.index)).astype(str)
     ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+    code = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
+    final_read = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+    grade_label = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
     bucket_series = summary_df.apply(lambda row: _today_queue_reason_bucket(row), axis=1)
+    leveraged_dca_watch = (
+        code.str.contains(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
+        | final_read.str.contains("DCA조건부", regex=False, na=False)
+        | grade_label.str.contains("레버리지DCA조건부", regex=False, na=False)
+        | label.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
+    )
     wait_mask = (
         label.str.contains(r"R/R\s*<\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
         | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
         | bucket_series.eq("관심/눌림대기")
+        | leveraged_dca_watch
     )
     if upside_value_map:
         neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
         wait_mask = wait_mask | neg_upside.fillna(False)
     pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
     defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
-    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest) & wait_mask & ~defense_bucket
+    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest | leveraged_dca_watch) & wait_mask & ~defense_bucket
 
 
 def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
@@ -29187,9 +29202,18 @@ def render_today_queue_tab(mode):
 
     code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
     label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+    grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+    leveraged_dca_watch_mask = (
+        code_series.str.contains(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
+        | final_read_series.str.contains("DCA조건부", regex=False, na=False)
+        | grade_series.str.contains("레버리지DCA조건부", regex=False, na=False)
+        | label_series.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
+    )
     hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
-    buyish_mask = signal_group.eq("buyish") & ~hard_block_mask
-    caution_mask = signal_group.eq("caution") | hard_block_mask
+    dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
+    buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
+    caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask
     market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
@@ -29312,7 +29336,7 @@ def render_today_queue_tab(mode):
         st.caption("정밀관측소에서 비중·현금·당일 변동성만 확인하면 실행 후보로 볼 수 있는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[execution_mask], "현재 바로 실행 후보로 볼 종목은 없습니다.")
     with tabs[1]:
-        st.caption("최종읽기 기준: `👀돌파대기`는 관심등록, `✅정밀확인`은 정밀관측소 확인, `⏳눌림대기`는 추격보다 다음 눌림 대기입니다.")
+        st.caption("최종읽기 기준: `👀돌파대기`는 관심등록, `✅정밀확인`은 정밀관측소 확인, `⏳눌림대기`와 `⏳DCA조건부`는 추격보다 조건 확인/다음 눌림 대기입니다.")
         _render_today_queue_table(summary_df.loc[wait_mask], "관심/눌림대기 종목이 없습니다.")
     with tabs[2]:
         render_today_flow_shortlist_panel(
