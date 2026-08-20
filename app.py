@@ -18094,7 +18094,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260819_wait_gate_v2"
+TODAY_QUEUE_LOGIC_VERSION = "20260820_flow_news_persist_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -25713,12 +25713,20 @@ def dedupe_today_auto_newspick_news_rows(news_rows):
 
 TODAY_MARKET_STORY_RSS_PLAN = [
     {
+        "category": "국채/유동성",
+        "query": '"Treasury buyback" OR "Treasury repurchase" OR refunding OR "long-dated Treasury" OR "Treasury liquidity"',
+    },
+    {
         "category": "반도체·AI",
-        "query": 'NVIDIA OR Micron OR DRAM OR HBM OR "AI chip" OR semiconductor OR "Meta Compute" OR "excess AI compute" OR CXMT',
+        "query": 'NVIDIA OR Micron OR DRAM OR HBM OR "AI chip" OR semiconductor OR "Meta Compute" OR "excess AI compute" OR CXMT OR "SK Hynix buyback" OR "SK hynix share cancellation"',
     },
     {
         "category": "반도체·AI 리스크",
         "query": '"Meta" "excess AI compute" OR "surplus compute" OR "Apple" CXMT OR "Chinese memory chips" OR "DRAM selloff" OR "memory stocks"',
+    },
+    {
+        "category": "바이오·헬스케어",
+        "query": 'Moderna vaccine OR "skin cancer vaccine" OR melanoma vaccine OR "clinical trial" biotech',
     },
     {
         "category": "지정학",
@@ -25834,6 +25842,133 @@ def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2
             if accepted >= per_category:
                 break
     return rows
+
+
+TODAY_ACTION_NEWS_ROWS_KEY = "today_action_news_rows"
+TODAY_ACTION_NEWS_LAST_RUN_KEY = "today_action_news_last_run"
+
+
+def _today_action_news_checkpoint(title: str, category: str = "") -> str:
+    text = f"{title or ''} {category or ''}".lower()
+    if re.search(r"treasury|buyback|repurchase|refunding|국채|바이백|유동성", text):
+        return "장기금리/유동성"
+    if re.search(r"share buyback|cancellation|자사주|소각|주주환원", text):
+        return "자사주·주주환원"
+    if re.search(r"moderna|vaccine|melanoma|skin cancer|clinical|임상|백신|피부암", text):
+        return "바이오 임상/백신"
+    if re.search(r"meta|apple|cxmt|memory|dram|hbm|micron|sk hynix|semiconductor|반도체|메모리", text):
+        return "반도체·AI 재료"
+    if re.search(r"fomc|fed|rate|yield|dollar|금리|환율|달러", text):
+        return "금리·환율"
+    if re.search(r"oil|hormuz|energy|유가|호르무즈", text):
+        return "유가·지정학"
+    return "확인 필요"
+
+
+def _normalize_today_action_news_row(row: dict, source_group: str = "시장") -> dict:
+    title = str((row or {}).get("title", "") or "").strip()
+    category = str((row or {}).get("market_category", "") or (row or {}).get("category", "") or source_group)
+    publisher = str((row or {}).get("publisher", "") or (row or {}).get("source", "") or "-")
+    published = str((row or {}).get("published", "") or (row or {}).get("providerPublishTime", "") or "")
+    link = str((row or {}).get("link", "") or "")
+    ticker = str((row or {}).get("ticker", "") or "")
+    name = str((row or {}).get("name", "") or ticker)
+    return {
+        "구분": source_group,
+        "체크": _today_action_news_checkpoint(title, category),
+        "카테고리": category,
+        "종목": f"{name}({ticker})" if ticker and name else ticker,
+        "제목": title,
+        "출처": publisher,
+        "시간": published,
+        "링크": link,
+    }
+
+
+def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_stock_targets: int = 4):
+    selected_categories = (
+        "국채/유동성",
+        "반도체·AI",
+        "반도체·AI 리스크",
+        "바이오·헬스케어",
+        "외환/금리",
+        "정책/규제",
+        "에너지/해운",
+    )
+    rows = []
+    try:
+        market_rows = fetch_today_market_story_news(selected_categories, per_category=2, days=2)
+    except Exception:
+        market_rows = []
+    for row in market_rows[:max_market_rows]:
+        rows.append(_normalize_today_action_news_row(row, "시장/속보"))
+
+    try:
+        universe, _status_map = build_today_market_memo_universe(summary_df)
+        stock_rows, _targets = collect_today_auto_newspick_news(universe, summary_df, max_count=max_stock_targets)
+    except Exception:
+        stock_rows = []
+    for row in stock_rows[: max_stock_targets * 2]:
+        rows.append(_normalize_today_action_news_row(row, "내 종목"))
+
+    deduped = []
+    seen = set()
+    for row in rows:
+        title_key = re.sub(r"\s+", " ", str(row.get("제목", "")).strip().lower())
+        source_key = str(row.get("출처", "")).strip().lower()
+        key = (source_key, title_key[:150])
+        if not title_key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+
+    st.session_state[TODAY_ACTION_NEWS_ROWS_KEY] = deduped[:14]
+    st.session_state[TODAY_ACTION_NEWS_LAST_RUN_KEY] = get_kst_now().strftime("%Y-%m-%d %H:%M")
+    return deduped[:14]
+
+
+def render_today_action_news_panel(summary_df=None):
+    rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
+    if not isinstance(rows, list):
+        rows = []
+    last_run = st.session_state.get(TODAY_ACTION_NEWS_LAST_RUN_KEY, "")
+
+    with st.expander("🗞 주요 뉴스 체크", expanded=bool(rows)):
+        c1, c2, c3 = st.columns([1.25, 1.0, 3.0])
+        refresh_clicked = c1.button("주요 뉴스 확인/새로고침", key="today_action_news_refresh", width='stretch')
+        clear_clicked = c2.button("뉴스 지우기", key="today_action_news_clear", width='stretch') if rows else False
+        if last_run:
+            c3.caption(f"마지막 확인: {last_run}")
+        else:
+            c3.caption("국채/유동성, 반도체·AI, 바이오, 내 종목 뉴스를 제목 기준으로 확인합니다.")
+
+        if clear_clicked:
+            st.session_state.pop(TODAY_ACTION_NEWS_ROWS_KEY, None)
+            st.session_state.pop(TODAY_ACTION_NEWS_LAST_RUN_KEY, None)
+            st.rerun()
+
+        if refresh_clicked:
+            with st.spinner("주요 뉴스 확인 중..."):
+                rows = refresh_today_action_news(summary_df)
+
+        if not rows:
+            st.info("`주요 뉴스 확인/새로고침`을 누르면 핵심 뉴스 제목을 모아 보여줍니다. 한 번 확인한 뉴스는 앱을 완전히 끄기 전까지 유지됩니다.")
+            return
+
+        show = pd.DataFrame(rows)
+        if show.empty:
+            st.info("표시할 주요 뉴스가 없습니다.")
+            return
+        cols = ["구분", "체크", "카테고리", "종목", "제목", "출처", "시간", "링크"]
+        st.dataframe(
+            show[[c for c in cols if c in show.columns]],
+            width='stretch',
+            hide_index=True,
+            column_config={"링크": st.column_config.LinkColumn("원문")},
+        )
+        top_titles = show.head(3)["제목"].astype(str).tolist() if "제목" in show.columns else []
+        if top_titles:
+            st.caption("먼저 볼 제목: " + " / ".join(top_titles))
 
 
 def resolve_today_market_memo_summary_df(summary_df=None, summary_signature=None):
@@ -26347,6 +26482,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
         """,
         unsafe_allow_html=True,
     )
+    render_today_action_news_panel(summary_df)
 
 
 def render_today_portfolio_flow_bridge(summary_df, snapshot):
@@ -28885,14 +29021,17 @@ def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=No
     st.markdown(f"#### {start_index}. 돈흐름 상세/차트")
     st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 필요할 때만 로테이션 차트와 테마 상세를 엽니다.")
 
+    saved_flow_snapshot = get_cached_today_market_flow_snapshot()
+    has_saved_flow = isinstance(saved_flow_snapshot, dict) and bool(saved_flow_snapshot)
+    default_open = bool(st.session_state.get("today_queue_open_flow_detail", has_saved_flow))
     open_flow_detail = st.checkbox(
         "돈흐름/테마 상세 열기",
-        value=False,
+        value=default_open,
         key="today_queue_open_flow_detail",
-        help="체크할 때만 시장 돈흐름 상세 패널을 렌더링합니다. 접힌 expander도 내부 코드는 실행되므로 로딩 방지를 위해 분리했습니다.",
+        help="오늘점검 새로고침 때 계산된 돈흐름 상세/차트 결과를 세션 안에서 유지합니다. 앱을 완전히 끄기 전까지 화면 이동 후에도 다시 볼 수 있습니다.",
     )
     if open_flow_detail:
-        flow_snapshot = render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=False, market_guard=market_guard)
+        flow_snapshot = render_today_market_flow_panel(saved_flow_snapshot, show_shortlist=False, market_guard=market_guard)
         if (
             flow_snapshot
             and summary_df is not None
@@ -28901,7 +29040,11 @@ def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=No
         ):
             render_today_portfolio_flow_bridge(summary_df, flow_snapshot)
     else:
-        st.info("상세 차트는 필요할 때만 여세요. 압축 후보는 위 상세 판정표의 `돈흐름 후보` 탭에서 바로 확인할 수 있습니다.")
+        last_flow_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY, "")
+        if has_saved_flow:
+            st.info(f"저장된 돈흐름 상세/차트 결과가 있습니다{(' · 마지막 계산: ' + last_flow_run) if last_flow_run else ''}. 체크하면 화면 이동 전 상태를 다시 확인할 수 있습니다.")
+        else:
+            st.info("상세 차트는 오늘점검 새로고침 또는 돈흐름 요약 새로고침 후 확인할 수 있습니다. 압축 후보는 위 상세 판정표의 `돈흐름 후보` 탭에서 바로 확인할 수 있습니다.")
 
     st.markdown(f"#### {start_index + 1}. 수급 확인")
     st.caption("수급 TOP10은 같은 방향의 돈이 실제로 들어오는지 확인하는 보조 체크입니다.")
@@ -29174,6 +29317,12 @@ def render_today_queue_tab(mode):
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+        try:
+            with st.spinner("돈흐름 상세/차트도 같이 계산하는 중입니다..."):
+                refresh_today_market_flow_snapshot(include_theme=True)
+            st.session_state["today_queue_open_flow_detail"] = True
+        except Exception as exc:
+            st.warning(f"종목 점검은 완료됐지만 돈흐름 상세/차트 계산은 실패했습니다: {exc}")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
         st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
