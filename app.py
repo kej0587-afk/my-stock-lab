@@ -9808,12 +9808,336 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     return summaries[:7]
 
 
+def _brief_pct_text(value) -> str:
+    return _format_rotation_pct(value)
+
+
+def _brief_num(value, default=np.nan) -> float:
+    try:
+        value = clean_float(value, default)
+        return float(value) if finite_num(value) else default
+    except Exception:
+        return default
+
+
+def _brief_row_name(row, label_cols=("섹터", "테마", "지수/스타일", "name", "Ticker")) -> str:
+    name = ""
+    for col in label_cols:
+        try:
+            value = row.get(col, "")
+        except Exception:
+            value = ""
+        if str(value).strip() and str(value).strip().lower() not in {"nan", "none", "-"}:
+            name = str(value).strip()
+            break
+    ticker = str(row.get("Ticker", "") if hasattr(row, "get") else "").strip()
+    if ticker and ticker not in name and len(ticker) <= 12:
+        return f"{name}({ticker})" if name else ticker
+    return name or "-"
+
+
+def _brief_pick_short_col(df: pd.DataFrame) -> tuple[str, str]:
+    if df is None or df.empty:
+        return "", ""
+    for col, label in [
+        ("1D", "1D"),
+        ("1일수익률", "1D"),
+        ("등락률", "1D"),
+        ("1주수익률", "1W"),
+        ("5D", "5D"),
+        ("2주수익률", "2W"),
+        ("1개월수익률", "1M"),
+    ]:
+        if col in df.columns:
+            return col, label
+    return "", ""
+
+
+def _brief_top_rows(
+    df: pd.DataFrame,
+    value_col: str,
+    positive: bool = True,
+    limit: int = 3,
+    label_cols=("섹터", "테마", "지수/스타일", "Ticker"),
+    extra: dict | None = None,
+) -> list[dict]:
+    if df is None or df.empty or not value_col or value_col not in df.columns:
+        return []
+    work = df.copy()
+    work["_brief_value"] = work[value_col].apply(_brief_num)
+    work = work[pd.to_numeric(work["_brief_value"], errors="coerce").notna()]
+    if positive:
+        work = work[work["_brief_value"] > 0].sort_values("_brief_value", ascending=False)
+    else:
+        work = work[work["_brief_value"] < 0].sort_values("_brief_value", ascending=True)
+    if work.empty:
+        return []
+    rows = []
+    for _, row in work.head(limit).iterrows():
+        item = {
+            "name": _brief_row_name(row, label_cols=label_cols),
+            "value": _brief_num(row.get("_brief_value", np.nan)),
+            "state": str(row.get("상태", row.get("테마판정", row.get("판정", ""))) or ""),
+        }
+        if extra:
+            item.update(extra)
+        rows.append(item)
+    return rows
+
+
+def _brief_rows_text(rows: list[dict], empty: str = "없음") -> str:
+    if not rows:
+        return empty
+    return " · ".join(f"{r.get('name', '-')} {_brief_pct_text(r.get('value', np.nan))}" for r in rows)
+
+
+def _brief_market_avg_text(stats: dict, fallback=np.nan) -> str:
+    value = stats.get("avg_day", fallback) if isinstance(stats, dict) else fallback
+    return _brief_pct_text(value)
+
+
+def _brief_combined_flow_rows(
+    sector_rotation_df: pd.DataFrame,
+    theme_rotation_df: pd.DataFrame,
+    positive: bool,
+    limit: int = 5,
+) -> tuple[list[dict], str]:
+    frames = []
+    basis_labels = []
+    for source_name, df, label_cols in [
+        ("ETF/섹터", sector_rotation_df, ("섹터", "Ticker")),
+        ("테마", theme_rotation_df, ("테마", "섹터")),
+    ]:
+        col, label = _brief_pick_short_col(df)
+        if df is None or df.empty or not col:
+            continue
+        tmp = df.copy()
+        tmp["_brief_value"] = tmp[col].apply(_brief_num)
+        tmp["_brief_name"] = tmp.apply(lambda r: _brief_row_name(r, label_cols=label_cols), axis=1)
+        tmp["_brief_source"] = source_name
+        tmp["_brief_basis"] = label
+        frames.append(tmp[["_brief_name", "_brief_value", "_brief_source", "_brief_basis"]])
+        basis_labels.append(label)
+    if not frames:
+        return [], ""
+    work = pd.concat(frames, ignore_index=True)
+    work = work[pd.to_numeric(work["_brief_value"], errors="coerce").notna()]
+    if positive:
+        work = work[work["_brief_value"] > 0].sort_values("_brief_value", ascending=False)
+    else:
+        work = work[work["_brief_value"] < 0].sort_values("_brief_value", ascending=True)
+    rows = [
+        {
+            "name": f"{r['_brief_name']}[{r['_brief_source']}]",
+            "value": _brief_num(r["_brief_value"]),
+            "basis": r["_brief_basis"],
+        }
+        for _, r in work.head(limit).iterrows()
+    ]
+    basis = "/".join(dict.fromkeys(basis_labels))
+    return rows, basis
+
+
+def _brief_index_df_from_guard(market_guard: dict | None) -> pd.DataFrame:
+    if not isinstance(market_guard, dict):
+        return pd.DataFrame()
+    bench_df = market_guard.get("bench_df", pd.DataFrame())
+    if bench_df is None or not isinstance(bench_df, pd.DataFrame) or bench_df.empty:
+        return pd.DataFrame()
+    rows = []
+    for _, row in bench_df.iterrows():
+        region = str(row.get("지역", "") or "")
+        market = "한국" if region == "KR" else ("미국" if region == "US" else region or "-")
+        item = {
+            "시장": market,
+            "지수/스타일": str(row.get("시장", row.get("티커", "-"))),
+            "Ticker": str(row.get("티커", "")),
+            "역할": "시장 안전벨트 지수",
+            "1D": _brief_num(row.get("1일", np.nan)),
+            "5D": _brief_num(row.get("5일", np.nan)),
+            "2W": np.nan,
+            "1M": _brief_num(row.get("20일", np.nan)),
+            "3M": np.nan,
+            "RS(3M)": np.nan,
+            "돈흐름점수": np.nan,
+            "상태": str(row.get("데이터", "")),
+        }
+        item["판정"] = _classify_index_rotation_signal(item)
+        rows.append(item)
+    return pd.DataFrame(rows)
+
+
+def _brief_flow_mean_for_tickers(flow_df: pd.DataFrame, tickers: set[str]) -> tuple[float, str]:
+    if flow_df is None or flow_df.empty or "Ticker" not in flow_df.columns:
+        return np.nan, ""
+    keys = {str(t).upper() for t in tickers}
+    part = flow_df[flow_df["Ticker"].astype(str).str.upper().isin(keys)].copy()
+    if part.empty:
+        return np.nan, ""
+    for col, label in [
+        ("1주수익률", "1W"),
+        ("2주수익률", "2W"),
+        ("1개월수익률", "1M"),
+        ("3개월수익률", "3M"),
+    ]:
+        if col not in part.columns:
+            continue
+        vals = part[col].apply(_brief_num)
+        vals = pd.to_numeric(vals, errors="coerce").dropna()
+        if not vals.empty:
+            return float(vals.mean()), label
+    return np.nan, ""
+
+
+def _brief_market_phase(index_df: pd.DataFrame, market_guard: dict | None) -> dict:
+    market_guard = market_guard or {}
+    guard_mode = str(market_guard.get("mode", "") or "")
+    kr_stats = market_guard.get("kr_stats", {}) if isinstance(market_guard.get("kr_stats", {}), dict) else {}
+    us_stats = market_guard.get("us_stats", {}) if isinstance(market_guard.get("us_stats", {}), dict) else {}
+    kr_mode = str(kr_stats.get("mode", "") or "")
+    us_mode = str(us_stats.get("mode", "") or "")
+
+    ctx = _build_market_regime_context(index_df)
+    kr_avg = _brief_num(kr_stats.get("avg_day", np.nan), ctx.get("한국", {}).get("avg_1d", np.nan))
+    us_avg = _brief_num(us_stats.get("avg_day", np.nan), ctx.get("미국", {}).get("avg_1d", np.nan))
+    growth_1d = _brief_num(ctx.get("성장주_1d", np.nan))
+    defense_1d = _brief_num(ctx.get("방어가치_1d", np.nan))
+
+    kr_bad = (kr_mode in {"비상", "위험"} or (finite_num(kr_avg) and kr_avg <= -0.015))
+    us_bad = (us_mode in {"비상", "위험"} or (finite_num(us_avg) and us_avg <= -0.015))
+    if kr_bad and us_bad:
+        headline = "양시장 위험회피"
+        color = "#ef4444"
+        note = "섹터 이동보다 지수 안정과 현금/손절선 확인이 먼저입니다."
+    elif kr_bad or us_bad:
+        bad_market = "국장" if kr_bad else "미장"
+        normal_market = "미장" if kr_bad else "국장"
+        headline = f"{bad_market} 방어 · {normal_market} 별도 타점"
+        color = "#f59e0b"
+        note = "전체 시장점수보다 시장별 모드를 나눠 봅니다. 정상 시장도 종목별 과열/R/R은 따로 확인합니다."
+    elif finite_num(growth_1d) and finite_num(defense_1d) and defense_1d > growth_1d + 0.003:
+        headline = "방어·가치 쪽 상대 우위"
+        color = "#fbbf24"
+        note = "성장/반도체보다 다우·산업재·금융·방어가 버티는 회피성 이동입니다."
+    elif finite_num(growth_1d) and finite_num(defense_1d) and growth_1d > defense_1d + 0.003:
+        headline = "성장·반도체 단기 우위"
+        color = "#22c55e"
+        note = "성장주 쪽 단기 유입입니다. 중기 주도와 1D/5D가 같이 맞는지 확인합니다."
+    elif guard_mode:
+        headline = f"시장 모드 {guard_mode}"
+        color = "#38bdf8"
+        note = "뚜렷한 단일 방향보다 혼조입니다. 후보는 가격위치와 다음 봉 확인을 같이 봅니다."
+    else:
+        headline = "혼조/확인 구간"
+        color = "#38bdf8"
+        note = "방향성이 약합니다. 원천 1위보다 실행 후보판과 정밀관측소를 우선합니다."
+
+    return {
+        "headline": headline,
+        "color": color,
+        "note": note,
+        "kr_mode": kr_mode or str(ctx.get("한국", {}).get("mode", "확인 필요")),
+        "us_mode": us_mode or str(ctx.get("미국", {}).get("mode", "확인 필요")),
+        "kr_avg": kr_avg,
+        "us_avg": us_avg,
+        "growth_1d": growth_1d,
+        "defense_1d": defense_1d,
+    }
+
+
+def render_today_market_briefing_board(
+    flow_df: pd.DataFrame,
+    sector_rotation_df: pd.DataFrame,
+    theme_rotation_df: pd.DataFrame,
+    market_guard: dict | None = None,
+):
+    if flow_df is None or flow_df.empty:
+        return
+    index_df = _brief_index_df_from_guard(market_guard)
+    if index_df.empty:
+        try:
+            rotation_df = calculate_rotation_df(flow_df)
+            index_df = _build_index_rotation_table(rotation_df)
+        except Exception:
+            index_df = pd.DataFrame()
+
+    phase = _brief_market_phase(index_df, market_guard)
+    kr_rows = index_df[index_df["시장"].astype(str).eq("한국")] if not index_df.empty and "시장" in index_df.columns else pd.DataFrame()
+    us_rows = index_df[index_df["시장"].astype(str).eq("미국")] if not index_df.empty and "시장" in index_df.columns else pd.DataFrame()
+    kr_up = _brief_top_rows(kr_rows, "1D", True, limit=3, label_cols=("지수/스타일", "Ticker"))
+    kr_down = _brief_top_rows(kr_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
+    us_up = _brief_top_rows(us_rows, "1D", True, limit=3, label_cols=("지수/스타일", "Ticker"))
+    us_down = _brief_top_rows(us_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
+    flow_in, flow_basis = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=True, limit=5)
+    flow_out, _ = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=False, limit=5)
+
+    growth = phase.get("growth_1d", np.nan)
+    defense = phase.get("defense_1d", np.nan)
+    spread_basis = "1D"
+    if not (finite_num(growth) and finite_num(defense)):
+        growth, growth_basis = _brief_flow_mean_for_tickers(flow_df, {"QQQ", "XLK", "SOXX"})
+        defense, defense_basis = _brief_flow_mean_for_tickers(flow_df, {"DIA", "XLI", "XLF", "XLP", "XLU"})
+        spread_basis = growth_basis if growth_basis == defense_basis and growth_basis else "단기"
+    spread_text = "-"
+    if finite_num(growth) and finite_num(defense):
+        spread = float(growth) - float(defense)
+        spread_text = f"성장/반도체({spread_basis}) {_brief_pct_text(growth)} vs 방어/가치({spread_basis}) {_brief_pct_text(defense)} ({spread*100:+.1f}%p)"
+
+    st.markdown("##### ▶️ 시장 브리핑 통합판 — 조정장인지 섹터 이동인지")
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {phase['color']}; margin-bottom:10px;'>
+<b>핵심: <span style='color:{phase['color']};'>{html.escape(phase['headline'])}</span></b><br>
+<span class='highlight'>{html.escape(phase['note'])}</span><br>
+<span style='color:#94a3b8;'>클러스터는 3M/1M 중기 강도, 로테이션은 1D/5D 단기 이동입니다. 서로 다르면 단기 안정 전까지 추격 신호로 보지 않습니다.</span>
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**🇰🇷 한국 상태**")
+        st.caption(f"모드: {phase.get('kr_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('kr_avg', np.nan))}")
+        st.caption(f"상대 유입: {_brief_rows_text(kr_up)}")
+        st.caption(f"이탈/압박: {_brief_rows_text(kr_down)}")
+    with c2:
+        st.markdown("**🇺🇸 미국 상태**")
+        st.caption(f"모드: {phase.get('us_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('us_avg', np.nan))}")
+        st.caption(f"상대 유입: {_brief_rows_text(us_up)}")
+        st.caption(f"이탈/압박: {_brief_rows_text(us_down)}")
+
+    c3, c4 = st.columns(2)
+    with c3:
+        st.markdown("**🌊 ETF·테마 자금 이동**")
+        basis_text = f" 기준 {flow_basis}" if flow_basis else ""
+        st.caption(f"단기 유입{basis_text}: {_brief_rows_text(flow_in)}")
+        st.caption(f"단기 이탈{basis_text}: {_brief_rows_text(flow_out)}")
+        st.caption(spread_text)
+    with c4:
+        st.markdown("**🎯 다음 확인 순서**")
+        st.caption("1. 지수 1D/5D가 안정되는지 먼저 확인")
+        st.caption("2. 유입 상위가 ETF와 내부 대표주에서 같이 움직이는지 확인")
+        st.caption("3. 정밀관측소에서 과열·눌림·R/R이 실행 가능한지 확인")
+
+    with st.expander("본장/다음봉 시나리오", expanded=False):
+        s1, s2 = st.columns(2)
+        with s1:
+            st.markdown("**강세 시나리오**")
+            st.caption("지수 하락이 멈추고 1D 유입 상위가 5D까지 이어지면 섹터 이동으로 승격합니다.")
+            st.caption("중기 클러스터 상위와 단기 유입 상위가 겹치면 정밀관측 후보를 우선 확인합니다.")
+        with s2:
+            st.markdown("**약세 시나리오**")
+            st.caption("지수는 약한데 특정 섹터만 하루 반등이면 새 주도보다 상대방어/되돌림으로 봅니다.")
+            st.caption("중기 주도축이 1D·5D 동반 이탈이면 클러스터 강도는 후행값으로 낮춰 해석합니다.")
+
+
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
     index_df = _build_index_rotation_table(rotation_df)
     if index_df.empty:
         return
 
-    st.markdown("##### 🧭 지수/스타일 단기 로테이션 — 조정장인지 섹터 이동인지")
+    st.markdown("##### 🧭 지수/스타일 원자료 — 브리핑판 계산 근거")
     for msg in _build_index_rotation_summary(index_df):
         st.caption(msg)
 
@@ -10036,6 +10360,10 @@ def render_cluster_heatmap_enhanced(
         wait_timing = [c for c in strong_pool if c["timing_state"] != "진입 가능"]
 
         st.markdown("##### 📊 클러스터 적합도 — 어디로 돈이 쏠리고(강도), 지금 들어가도 되는가(타이밍)")
+        st.caption(
+            "이 영역은 중기 클러스터 강도입니다. 오늘/이번 주 방향은 위 `시장 브리핑 통합판`과 아래 `지수/스타일 원자료`를 먼저 보고, "
+            "둘이 다르면 신규 진입보다 안정 확인을 우선합니다."
+        )
         _render_cluster_fit_bubble_chart(us_list, kr_list, top_n_per_market=top_n_per_market)
         _render_index_rotation_panel(rotation_df)
         if strong_pool:
@@ -10094,6 +10422,10 @@ def render_cluster_heatmap_enhanced(
         f"<span style='font-size:0.72em;color:#64748b;font-weight:400;'>"
         f"({total_all}개 중 상위 {len(cl_list)}개 자동표시)</span>",
         unsafe_allow_html=True,
+    )
+    st.caption(
+        "클러스터는 3M/1M 누적 강도라 단기 급락·반등보다 늦게 움직입니다. "
+        "실행 여부는 지수/스타일 원자료의 1D·5D와 정밀관측소 타점을 같이 봅니다."
     )
     surging = [c for c in cl_list if c["is_surging"]]
     if surging:
@@ -28104,6 +28436,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
     theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
     subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
+
+    render_today_market_briefing_board(flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
 
     st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
     metric_cols = st.columns(4)
