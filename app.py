@@ -14114,6 +14114,27 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         day_ret = fallback_day_ret
         day_ret_label = "전일등락"
     live_gap_move = live_ref_ret if live_price_used and finite_num(live_ref_ret) else day_ret
+    is_kr_market_ticker = is_kr_listed(ticker)
+    live_rebound_label = (
+        "🟡본장 반등: 종가/거래량 확인"
+        if is_kr_market_ticker
+        else "🟡프리장 반등: 정규장 확인대기"
+    )
+    live_rebound_holding_label = (
+        "🟡본장 반등: 추매는 종가 확인"
+        if is_kr_market_ticker
+        else "🟡프리장 반등: 추매는 정규장 확인"
+    )
+    live_rebound_note = (
+        "본장 장중 반등은 종가와 거래량 확정 전까지 예외승인 보류 — MA5/FVG 지지 확인"
+        if is_kr_market_ticker
+        else "프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인"
+    )
+    live_rebound_holding_note = (
+        "본장 장중 반등은 추매보다 종가와 거래량 확정 후 MA5/FVG 지지 확인"
+        if is_kr_market_ticker
+        else "프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인"
+    )
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
@@ -14897,18 +14918,18 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif live_price_used and is_exception_entry and has_pos:
             dec, col, decision_outcome = _set_decision(
-                "🟡프리장 반등: 추매는 정규장 확인", "#d97706", "PREMARKET_REBOUND_HOLDING_WAIT",
+                live_rebound_holding_label, "#d97706", "PREMARKET_REBOUND_HOLDING_WAIT",
                 reasons=(
                     f"실시간등락 {day_ret*100:.1f}% / MA5·FVG 구간 반등",
-                    "프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인",
+                    live_rebound_holding_note,
                 ),
             )
         elif live_price_used and is_exception_entry:
             dec, col, decision_outcome = _set_decision(
-                "🟡프리장 반등: 정규장 확인대기", "#d97706", "PREMARKET_REBOUND_WAIT",
+                live_rebound_label, "#d97706", "PREMARKET_REBOUND_WAIT",
                 reasons=(
                     f"실시간등락 {day_ret*100:.1f}% / MA5·FVG 구간 반등",
-                    "프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인",
+                    live_rebound_note,
                 ),
             )
         elif (
@@ -16325,10 +16346,17 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         status_color = "#d97706"
         status_note = "일봉은 눌림이지만 주봉/월봉 가격대가 높습니다. 부족분 전체가 아니라 1차 정찰 후 추가 확인이 맞습니다."
     elif is_wait:
-        status = "정규장 확인대기" if decision_code.startswith("PREMARKET_REBOUND") else "눌림 대기"
+        if decision_code.startswith("PREMARKET_REBOUND") and "본장 반등" in decision_label:
+            status = "종가/거래량 확인대기"
+        elif decision_code.startswith("PREMARKET_REBOUND"):
+            status = "정규장 확인대기"
+        else:
+            status = "눌림 대기"
         status_color = "#8b5cf6"
         status_note = (
-            "프리/애프터 반등은 참고만 하고 정규장 초반 거래량, MA5/FVG 지지를 확인합니다."
+            "본장 장중 반등은 참고만 하고 종가, 거래량, MA5/FVG 지지를 확인합니다."
+            if decision_code.startswith("PREMARKET_REBOUND") and "본장 반등" in decision_label
+            else "프리/애프터 반등은 참고만 하고 정규장 초반 거래량, MA5/FVG 지지를 확인합니다."
             if decision_code.startswith("PREMARKET_REBOUND")
             else "추격보다 MA5/MA20/FVG 눌림 확인 후 분할 진입합니다."
         )
@@ -17820,8 +17848,13 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
         add_check("시스템 타점", "차단", f"현재 판정이 '{dec}'입니다. 신호가 풀릴 때까지 신규/추매는 보수적으로 봅니다.")
-    elif "프리장 반등" in dec:
-        add_check("시스템 타점", "주의", f"현재 판정이 '{dec}'입니다. 프리장 반등은 정규장 초반 거래량과 지지 확인 후 판단합니다.")
+    elif "프리장 반등" in dec or "본장 반등" in dec:
+        rebound_note = (
+            "본장 장중 반등은 종가, 거래량, MA5/FVG 지지 확인 후 판단합니다."
+            if "본장 반등" in dec
+            else "프리장 반등은 정규장 초반 거래량과 지지 확인 후 판단합니다."
+        )
+        add_check("시스템 타점", "주의", f"현재 판정이 '{dec}'입니다. {rebound_note}")
     elif any(word in dec for word in positive_words):
         add_check("시스템 타점", "통과", f"현재 판정이 '{dec}'입니다. 다만 비중과 과열 여부를 함께 봅니다.")
     else:
@@ -26099,6 +26132,38 @@ TODAY_MARKET_STORY_RSS_PLAN = [
 ]
 
 
+TODAY_BREAKING_STORY_RSS_PLAN = [
+    {
+        "category": "핵심 속보",
+        "query": '"SK하이닉스" "자사주" "소각"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"SK Hynix" ("share cancellation" OR buyback OR "shareholder return")',
+    },
+    {
+        "category": "핵심 속보",
+        "query": 'Moderna melanoma vaccine OR "Moderna skin cancer vaccine" OR "mRNA cancer vaccine"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"모더나" "피부암" "백신" OR "모더나" "임상"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"Nasdaq" rally catalyst OR "Nasdaq" positive catalyst OR "뉴욕증시" "나스닥" "호재"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"Treasury buyback" "long-dated" OR "장기 국채" "바이백"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"Micron" rebound OR "memory stocks" rebound OR "메모리주" "반등"',
+    },
+]
+
+
 def _market_story_title_key(title, publisher=""):
     text = re.sub(r"\s+", " ", str(title or "").strip().lower())
     text = re.sub(r"\s+-\s+[^-]{2,80}$", "", text)
@@ -26176,12 +26241,60 @@ def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2
     return rows
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_today_breaking_story_news(days=2, per_query=1):
+    days = max(1, min(int(days or 2), 7))
+    per_query = max(1, min(int(per_query or 1), 2))
+    rows = []
+    seen = set()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    for plan in TODAY_BREAKING_STORY_RSS_PLAN:
+        category = str(plan.get("category", "핵심 속보"))
+        query = f"{plan.get('query', '')} when:{days}d"
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+        accepted = 0
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
+            items = root.findall("./channel/item")
+        except Exception:
+            items = []
+
+        for item in items:
+            title = html.unescape(str(item.findtext("title", "") or "").strip())
+            link = str(item.findtext("link", "") or "").strip()
+            publisher = html.unescape(str(item.findtext("source", "구글 뉴스") or "구글 뉴스").strip())
+            key = _market_story_title_key(title, publisher)
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            pub_dt = _market_story_pub_dt(item)
+            rows.append({
+                "market_category": category,
+                "title": title,
+                "link": link,
+                "publisher": publisher,
+                "published": _format_market_story_pub_dt(pub_dt),
+                "source": "Google News RSS",
+            })
+            accepted += 1
+            if accepted >= per_query:
+                break
+    return rows
+
+
 TODAY_ACTION_NEWS_ROWS_KEY = "today_action_news_rows"
 TODAY_ACTION_NEWS_LAST_RUN_KEY = "today_action_news_last_run"
 
 
 def _today_action_news_checkpoint(title: str, category: str = "") -> str:
     text = f"{title or ''} {category or ''}".lower()
+    if re.search(r"nasdaq|s&p|s & p|뉴욕증시|미국 증시|나스닥|sp500|s&p500", text):
+        return "미국지수/나스닥"
     if re.search(r"treasury|buyback|repurchase|refunding|국채|바이백|유동성", text):
         return "장기금리/유동성"
     if re.search(r"share buyback|cancellation|자사주|소각|주주환원", text):
@@ -26229,6 +26342,13 @@ def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_st
     )
     rows = []
     try:
+        breaking_rows = fetch_today_breaking_story_news(days=2, per_query=1)
+    except Exception:
+        breaking_rows = []
+    for row in breaking_rows[:7]:
+        rows.append(_normalize_today_action_news_row(row, "핵심속보"))
+
+    try:
         market_rows = fetch_today_market_story_news(selected_categories, per_category=2, days=2)
     except Exception:
         market_rows = []
@@ -26254,9 +26374,9 @@ def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_st
         seen.add(key)
         deduped.append(row)
 
-    st.session_state[TODAY_ACTION_NEWS_ROWS_KEY] = deduped[:14]
+    st.session_state[TODAY_ACTION_NEWS_ROWS_KEY] = deduped[:18]
     st.session_state[TODAY_ACTION_NEWS_LAST_RUN_KEY] = get_kst_now().strftime("%Y-%m-%d %H:%M")
-    return deduped[:14]
+    return deduped[:18]
 
 
 def render_today_action_news_panel(summary_df=None):
@@ -26272,7 +26392,7 @@ def render_today_action_news_panel(summary_df=None):
         if last_run:
             c3.caption(f"마지막 확인: {last_run}")
         else:
-            c3.caption("국채/유동성, 반도체·AI, 바이오, 내 종목 뉴스를 제목 기준으로 확인합니다.")
+            c3.caption("핵심속보, 국채/유동성, 반도체·AI, 바이오, 내 종목 뉴스를 제목 기준으로 확인합니다.")
 
         if clear_clicked:
             st.session_state.pop(TODAY_ACTION_NEWS_ROWS_KEY, None)
