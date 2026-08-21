@@ -10136,21 +10136,21 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
     return " · ".join(parts)
 
 
-def _brief_execution_link_text(command_df: pd.DataFrame, limit: int = 4) -> str:
+def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 4) -> list[dict]:
     if command_df is None or command_df.empty:
-        return "실행 후보판 계산 전"
+        return []
     work = command_df.copy()
     if "행동" not in work.columns:
-        return "실행 후보판 확인 필요"
+        return []
     action_rank = {"정밀관측": 5, "눌림대기": 4, "관심등록": 3, "추격금지": 2, "관망/제외": 1}
     work["_brief_action_rank"] = work["행동"].map(action_rank).fillna(0)
     if "_점수" not in work.columns:
         work["_점수"] = 0
     work = work[work["행동"].astype(str).isin(["정밀관측", "눌림대기", "관심등록", "추격금지"])]
     if work.empty:
-        return "실행 후보 없음"
+        return []
     work = work.sort_values(["_brief_action_rank", "_점수"], ascending=False).head(limit)
-    parts = []
+    rows = []
     for _, row in work.iterrows():
         action = str(row.get("행동", "-") or "-")
         market = str(row.get("시장축", "") or "")
@@ -10161,12 +10161,28 @@ def _brief_execution_link_text(command_df: pd.DataFrame, limit: int = 4) -> str:
         judgement = str(row.get("판단", "") or "").strip()
         suffix = ""
         if risk:
-            suffix = " · 대표주 방어"
+            next_check = "대표주 방어"
         elif judgement:
-            suffix = f" · {judgement}"
-        label = " / ".join([v for v in [market, group, rep] if v])
-        parts.append(f"{action}: {label}{suffix}")
-    return " · ".join(parts)
+            next_check = judgement
+        else:
+            next_check = str(row.get("다음확인", "") or "-")
+        rows.append({
+            "행동": action,
+            "시장": market or "-",
+            "후보군": group or "-",
+            "대표": rep or "-",
+            "확인": next_check or "-",
+        })
+    return rows
+
+
+def _render_brief_execution_link(command_df: pd.DataFrame):
+    rows = _brief_execution_link_rows(command_df)
+    st.markdown("**🔗 주도축 → 실행 연결**")
+    if not rows:
+        st.caption("실행 후보판 계산 전입니다.")
+        return
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True, height=min(220, 42 + len(rows) * 34))
 
 
 def _brief_index_df_from_guard(market_guard: dict | None) -> pd.DataFrame:
@@ -10341,7 +10357,7 @@ def render_today_market_briefing_board(
         st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
     if not leadership.get("leaders") and (leadership.get("hot_leaders") or leadership.get("rebounds") or leadership.get("lagging")):
         st.caption("해석: 실행 가능한 주도 후보는 약하고, 과열 주도·단기 반등·후행 강도가 섞여 있습니다. 지금은 주도 확정 매수보다 눌림/R/R 검증 구간입니다.")
-    st.caption(f"실행 연결: {_brief_execution_link_text(command_df)}")
+    _render_brief_execution_link(command_df)
 
     c1, c2 = st.columns(2)
     with c1:
