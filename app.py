@@ -14833,6 +14833,22 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     f"코어 ETF 폭락 매수 타이밍 — {core_dca_context['core_dca_label']} 적립",
                 ),
             )
+        elif is_leveraged_or_inverse and current_dd <= -0.5:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 패닉권: DCA 보류", "#d97706", "LEVERAGED_RECOVERY_DCA_BLOCK",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락",
+                    "레버리지 ETF는 -50% 패닉권이어도 최종투입 대상이 아니라 MA50·기초축·회복 체크 확인 전 DCA를 보류합니다.",
+                ),
+            )
+        elif is_leveraged_or_inverse and current_dd <= -0.3:
+            dec, col, decision_outcome = _set_decision(
+                "⚡레버리지 급락권: 회복조건 확인", "#d97706", "LEVERAGED_RECOVERY_DCA_BLOCK",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락",
+                    "레버리지 ETF는 가격 하락률만 보고 현금 투입하지 않고 기초지수 동행, MA20/MA50, 회차 규칙을 먼저 확인합니다.",
+                ),
+            )
         elif current_dd <= -0.5:
             dec, col, decision_outcome = _set_decision(
                 "💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY",
@@ -18543,6 +18559,21 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     if not bool(c.get("is_leveraged_or_inverse")):
         return c
     code = str(c.get("decision_code", "") or "")
+    panic_codes = {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}
+    if code in panic_codes:
+        out = dict(c)
+        dd = clean_float(out.get("dd"), np.nan)
+        out.update({
+            "dec": "⚡레버리지 패닉권: DCA 보류" if finite_num(dd) and dd <= -0.5 else "⚡레버리지 급락권: 회복조건 확인",
+            "col": "#d97706",
+            "decision_code": "LEVERAGED_RECOVERY_DCA_BLOCK",
+            "decision_group": "caution",
+            "decision_reasons": (
+                f"고점대비 {dd*100:.1f}% 하락" if finite_num(dd) else "고점대비 급락 구간",
+                "레버리지 ETF는 일반 코어 ETF의 현금투입/최종투입 규칙을 쓰지 않고 MA20·MA50·기초축·회차별 DCA 조건을 먼저 확인합니다.",
+            ),
+        })
+        return out
     if code not in {"ETF_DCA_OK", "ETF_LARGE_GAP_DCA_OK"}:
         return c
 
