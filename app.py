@@ -10080,9 +10080,10 @@ def _brief_leadership_rows(
             frames.extend(rows)
 
     if not frames:
-        return {"leaders": [], "rebounds": [], "lagging": [], "weak": []}
+        return {"leaders": [], "hot_leaders": [], "rebounds": [], "lagging": [], "weak": []}
 
     leaders = []
+    hot_leaders = []
     rebounds = []
     lagging = []
     weak = []
@@ -10091,8 +10092,12 @@ def _brief_leadership_rows(
         r1m = row.get("r1m", np.nan)
         r3m = row.get("r3m", np.nan)
         state = str(row.get("state", ""))
+        is_hot_but_risky = any(w in state for w in ["과열", "추격", "급락"])
         if finite_num(short) and float(short) > 0 and finite_num(r1m) and float(r1m) > 0:
-            leaders.append(row)
+            if is_hot_but_risky:
+                hot_leaders.append(row)
+            else:
+                leaders.append(row)
         elif finite_num(short) and float(short) > 0:
             rebounds.append(row)
         elif finite_num(r3m) and float(r3m) > 0 and (not finite_num(short) or float(short) <= 0):
@@ -10105,6 +10110,7 @@ def _brief_leadership_rows(
 
     return {
         "leaders": _rank(leaders),
+        "hot_leaders": _rank(hot_leaders),
         "rebounds": _rank(rebounds),
         "lagging": _rank(lagging),
         "weak": _rank(weak),
@@ -10290,15 +10296,17 @@ def render_today_market_briefing_board(
     )
 
     st.markdown("**🏁 지금 주도 섹터 판별**")
-    l1, l2, l3 = st.columns(3)
+    l1, l2, l3, l4 = st.columns(4)
     with l1:
         st.caption(f"실제 주도 후보: {_brief_leadership_text(leadership.get('leaders', []))}")
     with l2:
-        st.caption(f"반등/상대방어: {_brief_leadership_text(leadership.get('rebounds', []))}")
+        st.caption(f"과열 주도(눌림확인): {_brief_leadership_text(leadership.get('hot_leaders', []))}")
     with l3:
+        st.caption(f"반등/상대방어: {_brief_leadership_text(leadership.get('rebounds', []))}")
+    with l4:
         st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
-    if not leadership.get("leaders") and (leadership.get("rebounds") or leadership.get("lagging")):
-        st.caption("해석: 단기 플러스 또는 3M 강도는 있지만 1W·1M 동시 주도는 약합니다. 지금은 주도 확정이 아니라 반등/상대방어 검증 구간입니다.")
+    if not leadership.get("leaders") and (leadership.get("hot_leaders") or leadership.get("rebounds") or leadership.get("lagging")):
+        st.caption("해석: 실행 가능한 주도 후보는 약하고, 과열 주도·단기 반등·후행 강도가 섞여 있습니다. 지금은 주도 확정 매수보다 눌림/R/R 검증 구간입니다.")
 
     c1, c2 = st.columns(2)
     with c1:
