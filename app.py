@@ -10015,6 +10015,121 @@ def _brief_combined_flow_rows(
     return rows, basis
 
 
+def _brief_first_numeric(row, columns) -> float:
+    for col in columns:
+        try:
+            value = row.get(col, np.nan)
+        except Exception:
+            value = np.nan
+        value = _brief_num(value, np.nan)
+        if finite_num(value):
+            return float(value)
+    return np.nan
+
+
+def _brief_leadership_rows(
+    sector_rotation_df: pd.DataFrame,
+    theme_rotation_df: pd.DataFrame,
+    limit: int = 4,
+) -> dict:
+    frames = []
+    configs = [
+        ("ETF/섹터", sector_rotation_df, ("섹터", "Ticker"), "돈흐름점수", "상태"),
+        ("테마", theme_rotation_df, ("테마", "섹터"), "테마돈흐름점수", "테마판정"),
+    ]
+    for source, df, label_cols, score_col, state_col in configs:
+        if df is None or df.empty:
+            continue
+        rows = []
+        for _, row in df.iterrows():
+            name = _brief_row_name(row, label_cols=label_cols)
+            if not name or name == "-":
+                continue
+            r1w = _brief_first_numeric(row, ("1주수익률", "5D", "1D"))
+            r2w = _brief_first_numeric(row, ("2주수익률", "2W"))
+            r1m = _brief_first_numeric(row, ("1개월수익률", "1M"))
+            r3m = _brief_first_numeric(row, ("3개월수익률", "3M"))
+            score = _brief_num(row.get(score_col, row.get("돈흐름점수", np.nan)), np.nan)
+            state = str(row.get(state_col, row.get("상태", "")) or "")
+            if not any(finite_num(v) for v in [r1w, r2w, r1m, r3m, score]):
+                continue
+            short = r1w if finite_num(r1w) else r2w
+            mid = r1m if finite_num(r1m) else r3m
+            lead_score = 0.0
+            if finite_num(score):
+                lead_score += min(max(float(score), -50), 80) / 80.0
+            if finite_num(short):
+                lead_score += float(short) * 8.0
+            if finite_num(r1m):
+                lead_score += float(r1m) * 5.0
+            if finite_num(r3m):
+                lead_score += float(r3m) * 2.0
+            rows.append({
+                "name": f"{name}[{source}]",
+                "source": source,
+                "state": state,
+                "score": lead_score,
+                "flow_score": score,
+                "short": short,
+                "r1w": r1w,
+                "r1m": r1m,
+                "r3m": r3m,
+                "mid": mid,
+            })
+        if rows:
+            frames.extend(rows)
+
+    if not frames:
+        return {"leaders": [], "rebounds": [], "lagging": [], "weak": []}
+
+    leaders = []
+    rebounds = []
+    lagging = []
+    weak = []
+    for row in frames:
+        short = row.get("short", np.nan)
+        r1m = row.get("r1m", np.nan)
+        r3m = row.get("r3m", np.nan)
+        state = str(row.get("state", ""))
+        if finite_num(short) and float(short) > 0 and finite_num(r1m) and float(r1m) > 0:
+            leaders.append(row)
+        elif finite_num(short) and float(short) > 0:
+            rebounds.append(row)
+        elif finite_num(r3m) and float(r3m) > 0 and (not finite_num(short) or float(short) <= 0):
+            lagging.append(row)
+        elif finite_num(short) and float(short) < 0:
+            weak.append(row)
+
+    def _rank(rows):
+        return sorted(rows, key=lambda r: _brief_num(r.get("score", np.nan), -999), reverse=True)[:limit]
+
+    return {
+        "leaders": _rank(leaders),
+        "rebounds": _rank(rebounds),
+        "lagging": _rank(lagging),
+        "weak": _rank(weak),
+    }
+
+
+def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
+    if not rows:
+        return empty
+    parts = []
+    for row in rows:
+        bits = []
+        if finite_num(row.get("short", np.nan)):
+            bits.append(f"단기 {_brief_pct_text(row.get('short'))}")
+        if finite_num(row.get("r1m", np.nan)):
+            bits.append(f"1M {_brief_pct_text(row.get('r1m'))}")
+        if finite_num(row.get("r3m", np.nan)):
+            bits.append(f"3M {_brief_pct_text(row.get('r3m'))}")
+        state = str(row.get("state", "") or "")
+        if any(w in state for w in ["과열", "추격", "급락"]):
+            bits.append("과열주의")
+        parts.append(f"{row.get('name', '-')} ({' · '.join(bits) if bits else '-'})")
+    return " · ".join(parts)
+
+
 def _brief_index_df_from_guard(market_guard: dict | None) -> pd.DataFrame:
     if not isinstance(market_guard, dict):
         return pd.DataFrame()
@@ -10151,6 +10266,7 @@ def render_today_market_briefing_board(
     us_down = _brief_top_rows(us_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
     flow_in, flow_basis = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=True, limit=5)
     flow_out, _ = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=False, limit=5)
+    leadership = _brief_leadership_rows(sector_rotation_df, theme_rotation_df, limit=3)
 
     growth = phase.get("growth_1d", np.nan)
     defense = phase.get("defense_1d", np.nan)
@@ -10172,6 +10288,17 @@ def render_today_market_briefing_board(
         """,
         unsafe_allow_html=True,
     )
+
+    st.markdown("**🏁 지금 주도 섹터 판별**")
+    l1, l2, l3 = st.columns(3)
+    with l1:
+        st.caption(f"실제 주도 후보: {_brief_leadership_text(leadership.get('leaders', []))}")
+    with l2:
+        st.caption(f"반등/상대방어: {_brief_leadership_text(leadership.get('rebounds', []))}")
+    with l3:
+        st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
+    if not leadership.get("leaders") and (leadership.get("rebounds") or leadership.get("lagging")):
+        st.caption("해석: 단기 플러스 또는 3M 강도는 있지만 1W·1M 동시 주도는 약합니다. 지금은 주도 확정이 아니라 반등/상대방어 검증 구간입니다.")
 
     c1, c2 = st.columns(2)
     with c1:
