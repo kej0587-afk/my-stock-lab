@@ -6332,7 +6332,19 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
     lifecycle = pattern.get("lifecycle", "관찰")
     trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
     invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    invalid_price = clean_float(pattern.get("invalid_price"), np.nan)
     c = c or {}
+    cur_p = clean_float(c.get("cur_p"), np.nan)
+
+    if direction == "bearish" and finite_num(cur_p) and finite_num(invalid_price) and cur_p > invalid_price:
+        return {
+            "color": "#64748b",
+            "title": "ℹ️ 하락 패턴 경고 해제 확인",
+            "body": (
+                f"현재가 {_chart_pattern_price_text(cur_p)}가 {name} 무효선 {invalid} 위에 있습니다. "
+                "직접입력/실시간가 기준으로는 하락 패턴 경고를 낮추고, 다음 봉에서 그 가격대 위에 안착하는지 확인하세요."
+            ),
+        }
 
     rsi = clean_float(c.get("rsi"), np.nan)
     mfi = clean_float(c.get("mfi"), np.nan)
@@ -16960,14 +16972,26 @@ def build_leveraged_dca_timing_state(c, state):
     ram_pullback_text = _fmt_us_price(ram_rr2_entry)
     ram_rr15_text = _fmt_us_price(ram_rr15_entry)
     ram_ma20_text = _fmt_us_price(ma20)
+    ram_rr2_met = profile_key == "RAM" and cur > 0 and finite_num(ram_rr2_entry) and cur <= ram_rr2_entry
+    ram_price_gate_text = (
+        "가격 기준 충족 · 과열/기초축 확인"
+        if ram_rr2_met
+        else f"{ram_pullback_text} 이하 눌림 우선"
+    )
     if profile_key == "RAM":
         recovery_line = clean_float(c.get("rr_target"), np.nan)
         if not finite_num(recovery_line) or recovery_line <= 0:
             recovery_line = 15.0
         pullback_low = recovery_line * 0.93
         pullback_high = recovery_line * 0.98
+        next_check_text = (
+            "현재가가 R/R 2.0 기준 아래라면 가격보다 거래량 진정, 기초축 1W, 실제 체결가 확인이 우선입니다."
+            if ram_rr2_met
+            else "현재가가 R/R 2.0 기준 위라면 가격 메리트가 부족하므로 눌림을 기다립니다."
+        )
         trade_plan_note = (
             f"RAM 자동 눌림 기준: R/R 2.0 충족가 {ram_pullback_text}, MA20 {ram_ma20_text}. "
+            f"{next_check_text} "
             f"개인 매도/재매수 계획가는 아래 시뮬레이터 입력값으로 별도 관리합니다. "
             f"${recovery_line:.2f} 부근 회복 = 추격매수가 아니라 회복 확인, "
             f"${pullback_low:.2f}~${pullback_high:.2f} 눌림 지지 시 일부 복구 후보."
@@ -16984,7 +17008,7 @@ def build_leveraged_dca_timing_state(c, state):
         entry1_cond = "회복 체크 3개 이상과 기초축 동행 전까지 신규 DCA 회차를 열지 않음"
     elif not allow_current:
         if profile_key == "RAM" and (heat_wait or rr_wait):
-            status = f"레버리지 조건부 DCA 대기: {ram_pullback_text} 이하 눌림 우선"
+            status = f"레버리지 조건부 DCA 대기: {ram_price_gate_text}"
         elif heat_wait:
             status = "레버리지 조건부 DCA: 과열 해소 대기"
         elif rr_wait:
@@ -16998,7 +17022,11 @@ def build_leveraged_dca_timing_state(c, state):
         )
         tranche_weights = [0.20, 0.40, 0.40]
         entry1_cond = (
-            f"보험성 소액만: 자동 기준은 R/R 1.5~2.0 구간({ram_rr15_text}~{ram_pullback_text}) 확인. 현재가 추격은 거래량 진정 필요"
+            (
+                f"보험성 소액만: R/R 2.0 가격 기준은 충족. 단, 과열/직접입력/실시간 급등 가능성이 있으면 거래량 진정과 기초축 동행 확인"
+                if ram_rr2_met
+                else f"보험성 소액만: 자동 기준은 R/R 1.5~2.0 구간({ram_rr15_text}~{ram_pullback_text}) 확인. 현재가 추격은 거래량 진정 필요"
+            )
             if profile_key == "RAM"
             else "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
         )
@@ -17022,7 +17050,11 @@ def build_leveraged_dca_timing_state(c, state):
         entry1_cond = "소액 1차만: MA20 위 종가 유지와 기초축 1W 양수 확인"
 
     entry2_cond = (
-        f"실행 우선: R/R 2.0 충족가 {ram_pullback_text} 이하 또는 MA20 {ram_ma20_text} 근처 + DRAM/MU/SK하이닉스 등 기초축 1W 양수 유지"
+        (
+            f"실행 우선: 가격 기준은 충족. MA20 {ram_ma20_text} 재지지, 거래량 진정, DRAM/MU/SK하이닉스 등 기초축 1W 양수 유지 확인"
+            if ram_rr2_met
+            else f"실행 우선: R/R 2.0 충족가 {ram_pullback_text} 이하 또는 MA20 {ram_ma20_text} 근처 + DRAM/MU/SK하이닉스 등 기초축 1W 양수 유지"
+        )
         if profile_key == "RAM"
         else "2차는 MA20/FVG 지지 재확인 + 기초 ETF/대표축 1W 양수 유지 때만"
     )
@@ -18080,10 +18112,19 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         if str(leveraged_state.get("profile_key", "")) == "RAM":
             rr2_entry = _leveraged_rr_entry_threshold(c, 2.0)
             ma20_line = clean_float(c.get("ma20"), np.nan)
+            cur_p = clean_float(c.get("cur_p"), np.nan)
+            rr2_met = finite_num(cur_p) and finite_num(rr2_entry) and cur_p <= rr2_entry
+            ram_action_note = (
+                f"회복조건은 일부 통과했고 현재가는 R/R 2.0 기준가 {_fmt_us_price(rr2_entry)} 아래입니다. "
+                f"가격 기준은 충족했지만 자동 추매가 아니라 MA20 {_fmt_us_price(ma20_line)} 재지지, 거래량 진정, "
+                "DRAM/MU/SK하이닉스 기초축 동행을 확인한 뒤 소액 회차만 검토합니다."
+                if rr2_met
+                else f"회복조건은 일부 통과했지만 현재가 추격 구간은 아닙니다. RAM은 R/R 2.0 충족가 {_fmt_us_price(rr2_entry)} 또는 MA20 {_fmt_us_price(ma20_line)} 같은 자동 눌림 기준, 혹은 15달러대 회복 후 첫 눌림 확인 전까지 자동 추매가 아니라 대기입니다."
+            )
             final_label, final_color, action = (
                 "조건부 DCA 대기",
                 "#d97706",
-                f"회복조건은 일부 통과했지만 현재가 추격 구간은 아닙니다. RAM은 R/R 2.0 충족가 {_fmt_us_price(rr2_entry)} 또는 MA20 {_fmt_us_price(ma20_line)} 같은 자동 눌림 기준, 혹은 15달러대 회복 후 첫 눌림 확인 전까지 자동 추매가 아니라 대기입니다.",
+                ram_action_note,
             )
         else:
             final_label, final_color, action = "조건부 DCA 대기", "#8b5cf6", "레버리지 전용 회복조건을 일부 통과했습니다. 자동 추매가 아니라 정해둔 회차별 소액만 대기·검토하는 구간입니다."
