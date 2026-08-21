@@ -9813,10 +9813,7 @@ def _build_index_rotation_summary(index_df: pd.DataFrame) -> list[str]:
     growth_1d = regime_ctx.get("성장주_1d")
     defense_1d = regime_ctx.get("방어가치_1d")
     if finite_num(growth_1d) and finite_num(defense_1d):
-        summaries.append(
-            f"성장/반도체 1D 평균 {growth_1d*100:+.1f}% vs 다우·산업재·금융·방어 {defense_1d*100:+.1f}%: "
-            "이 격차가 플러스면 성장주 우위, 마이너스면 방어/가치 쪽 회피성 이동입니다."
-        )
+        summaries.append(_brief_spread_caption(growth_1d, defense_1d, "1D"))
     return summaries[:7]
 
 
@@ -9901,6 +9898,74 @@ def _brief_rows_text(rows: list[dict], empty: str = "없음") -> str:
     if not rows:
         return empty
     return " · ".join(f"{r.get('name', '-')} {_brief_pct_text(r.get('value', np.nan))}" for r in rows)
+
+
+def _brief_relative_rows(
+    df: pd.DataFrame,
+    value_col: str,
+    market_avg,
+    limit: int = 3,
+    label_cols=("지수/스타일", "Ticker"),
+) -> list[dict]:
+    if df is None or df.empty or value_col not in df.columns:
+        return []
+    if finite_num(market_avg) and float(market_avg) < 0:
+        work = df.copy()
+        work["_brief_value"] = work[value_col].apply(_brief_num)
+        work = work[pd.to_numeric(work["_brief_value"], errors="coerce").notna()]
+        if work.empty:
+            return []
+        work["_brief_excess"] = work["_brief_value"].astype(float) - float(market_avg)
+        work = work[work["_brief_excess"] > 0].sort_values(
+            ["_brief_value", "_brief_excess"], ascending=[False, False]
+        )
+        rows = []
+        for _, row in work.head(limit).iterrows():
+            rows.append({
+                "name": _brief_row_name(row, label_cols=label_cols),
+                "value": _brief_num(row.get("_brief_value", np.nan)),
+                "state": "플러스" if _brief_num(row.get("_brief_value", np.nan)) > 0 else "덜 빠짐",
+            })
+        return rows
+    return _brief_top_rows(df, value_col, True, limit=limit, label_cols=label_cols)
+
+
+def _brief_market_flow_label(market_avg) -> str:
+    if finite_num(market_avg) and float(market_avg) < 0:
+        return "상대방어/덜 빠짐"
+    return "단기 유입"
+
+
+def _brief_market_pressure_label(market_avg) -> str:
+    if finite_num(market_avg) and float(market_avg) < 0:
+        return "하락 압박"
+    return "이탈/압박"
+
+
+def _brief_spread_caption(growth, defense, basis: str = "1D") -> str:
+    if not (finite_num(growth) and finite_num(defense)):
+        return "-"
+    growth = float(growth)
+    defense = float(defense)
+    spread = growth - defense
+    base = (
+        f"성장/반도체({basis}) {_brief_pct_text(growth)} vs "
+        f"방어/가치({basis}) {_brief_pct_text(defense)} ({spread*100:+.1f}%p)"
+    )
+    if growth < 0 and defense < 0:
+        if spread > 0.003:
+            verdict = "둘 다 약하지만 성장/반도체가 상대방어입니다. 새 주도보다 낙폭 진정 확인 구간입니다."
+        elif spread < -0.003:
+            verdict = "둘 다 약하고 방어/가치가 상대방어입니다. 위험회피 쪽 이동으로 봅니다."
+        else:
+            verdict = "둘 다 약하고 격차도 작아 뚜렷한 섹터 이동으로 보기 어렵습니다."
+    elif spread > 0.003:
+        verdict = "성장/반도체 단기 우위입니다."
+    elif spread < -0.003:
+        verdict = "방어/가치 단기 우위입니다."
+    else:
+        verdict = "격차가 작아 방향 확인이 더 필요합니다."
+    return f"{base} · {verdict}"
 
 
 def _brief_market_avg_text(stats: dict, fallback=np.nan) -> str:
@@ -10024,7 +10089,11 @@ def _brief_market_phase(index_df: pd.DataFrame, market_guard: dict | None) -> di
     elif kr_bad or us_bad:
         bad_market = "국장" if kr_bad else "미장"
         normal_market = "미장" if kr_bad else "국장"
-        headline = f"{bad_market} 방어 · {normal_market} 별도 타점"
+        bad_mode = kr_mode if kr_bad else us_mode
+        bad_avg = kr_avg if kr_bad else us_avg
+        if not bad_mode:
+            bad_mode = "조정" if finite_num(bad_avg) and float(bad_avg) <= -0.015 else "방어"
+        headline = f"{bad_market} {bad_mode} · {normal_market} 별도 타점"
         color = "#f59e0b"
         note = "전체 시장점수보다 시장별 모드를 나눠 봅니다. 정상 시장도 종목별 과열/R/R은 따로 확인합니다."
     elif finite_num(growth_1d) and finite_num(defense_1d) and defense_1d > growth_1d + 0.003:
@@ -10076,9 +10145,9 @@ def render_today_market_briefing_board(
     phase = _brief_market_phase(index_df, market_guard)
     kr_rows = index_df[index_df["시장"].astype(str).eq("한국")] if not index_df.empty and "시장" in index_df.columns else pd.DataFrame()
     us_rows = index_df[index_df["시장"].astype(str).eq("미국")] if not index_df.empty and "시장" in index_df.columns else pd.DataFrame()
-    kr_up = _brief_top_rows(kr_rows, "1D", True, limit=3, label_cols=("지수/스타일", "Ticker"))
+    kr_up = _brief_relative_rows(kr_rows, "1D", phase.get("kr_avg", np.nan), limit=3, label_cols=("지수/스타일", "Ticker"))
     kr_down = _brief_top_rows(kr_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
-    us_up = _brief_top_rows(us_rows, "1D", True, limit=3, label_cols=("지수/스타일", "Ticker"))
+    us_up = _brief_relative_rows(us_rows, "1D", phase.get("us_avg", np.nan), limit=3, label_cols=("지수/스타일", "Ticker"))
     us_down = _brief_top_rows(us_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
     flow_in, flow_basis = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=True, limit=5)
     flow_out, _ = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=False, limit=5)
@@ -10090,10 +10159,7 @@ def render_today_market_briefing_board(
         growth, growth_basis = _brief_flow_mean_for_tickers(flow_df, {"QQQ", "XLK", "SOXX"})
         defense, defense_basis = _brief_flow_mean_for_tickers(flow_df, {"DIA", "XLI", "XLF", "XLP", "XLU"})
         spread_basis = growth_basis if growth_basis == defense_basis and growth_basis else "단기"
-    spread_text = "-"
-    if finite_num(growth) and finite_num(defense):
-        spread = float(growth) - float(defense)
-        spread_text = f"성장/반도체({spread_basis}) {_brief_pct_text(growth)} vs 방어/가치({spread_basis}) {_brief_pct_text(defense)} ({spread*100:+.1f}%p)"
+    spread_text = _brief_spread_caption(growth, defense, spread_basis)
 
     st.markdown("##### ▶️ 시장 브리핑 통합판 — 조정장인지 섹터 이동인지")
     st.markdown(
@@ -10111,13 +10177,13 @@ def render_today_market_briefing_board(
     with c1:
         st.markdown("**🇰🇷 한국 상태**")
         st.caption(f"모드: {phase.get('kr_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('kr_avg', np.nan))}")
-        st.caption(f"상대 유입: {_brief_rows_text(kr_up)}")
-        st.caption(f"이탈/압박: {_brief_rows_text(kr_down)}")
+        st.caption(f"{_brief_market_flow_label(phase.get('kr_avg', np.nan))}: {_brief_rows_text(kr_up)}")
+        st.caption(f"{_brief_market_pressure_label(phase.get('kr_avg', np.nan))}: {_brief_rows_text(kr_down)}")
     with c2:
         st.markdown("**🇺🇸 미국 상태**")
         st.caption(f"모드: {phase.get('us_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('us_avg', np.nan))}")
-        st.caption(f"상대 유입: {_brief_rows_text(us_up)}")
-        st.caption(f"이탈/압박: {_brief_rows_text(us_down)}")
+        st.caption(f"{_brief_market_flow_label(phase.get('us_avg', np.nan))}: {_brief_rows_text(us_up)}")
+        st.caption(f"{_brief_market_pressure_label(phase.get('us_avg', np.nan))}: {_brief_rows_text(us_down)}")
 
     c3, c4 = st.columns(2)
     with c3:
