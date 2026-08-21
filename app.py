@@ -16895,6 +16895,7 @@ def build_leveraged_dca_timing_state(c, state):
     target_w = clean_float(c.get("target_w"), 0.0)
     current_w = clean_float(c.get("current_w"), 0.0)
     decision_code = str(c.get("decision_code", "") or "")
+    profile_key = str(state.get("profile_key", "") or "")
     dca_stage = str(state.get("dca_stage", "") or "")
     dca_multiple = str(state.get("dca_multiple", "") or "")
     recovery_passed = int(state.get("recovery_passed", 0) or 0)
@@ -16939,6 +16940,18 @@ def build_leveraged_dca_timing_state(c, state):
         f"{dca_stage} {dca_multiple} · 회복 {recovery_passed}/{recovery_total}({recovery_state}) · "
         f"기초축 1W {underlying_text} · R/R {rr_text} · 비중 {current_w:.1f}/{target_w:.1f}% · 남은 확인: {failed_text}"
     )
+    trade_plan_note = ""
+    if profile_key == "RAM":
+        recovery_line = clean_float(c.get("rr_target"), np.nan)
+        if not finite_num(recovery_line) or recovery_line <= 0:
+            recovery_line = 15.0
+        pullback_low = recovery_line * 0.93
+        pullback_high = recovery_line * 0.98
+        trade_plan_note = (
+            f"RAM 트레이딩 복구 기준: $12 이하 = 원계획 재진입, "
+            f"${recovery_line:.2f} 부근 회복 = 추격매수가 아니라 회복 확인, "
+            f"${pullback_low:.2f}~${pullback_high:.2f} 눌림 지지 시 일부 복구 후보."
+        )
 
     if dca_blocked:
         status = "레버리지 DCA 보류"
@@ -16950,7 +16963,9 @@ def build_leveraged_dca_timing_state(c, state):
         tranche_weights = [0.0, 0.0, 0.0]
         entry1_cond = "회복 체크 3개 이상과 기초축 동행 전까지 신규 DCA 회차를 열지 않음"
     elif not allow_current:
-        if heat_wait:
+        if profile_key == "RAM" and (heat_wait or rr_wait):
+            status = "레버리지 조건부 DCA 대기: $12 이하 눌림 우선"
+        elif heat_wait:
             status = "레버리지 조건부 DCA: 과열 해소 대기"
         elif rr_wait:
             status = "레버리지 조건부 DCA: 눌림 타점 대기"
@@ -16962,7 +16977,11 @@ def build_leveraged_dca_timing_state(c, state):
             "눌림 가격과 기초축 동행이 맞을 때만 소액 회차를 엽니다."
         )
         tranche_weights = [0.20, 0.40, 0.40]
-        entry1_cond = "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
+        entry1_cond = (
+            "보험성 소액만: 기본 계획은 $12 이하 재진입. $13대는 추격 위험이 커서 거래량 진정 확인"
+            if profile_key == "RAM"
+            else "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
+        )
     elif recovery_passed >= 5 and ma50_ok:
         status = "레버리지 회복 DCA: 분할 가능"
         color = "#16a34a"
@@ -16982,8 +17001,16 @@ def build_leveraged_dca_timing_state(c, state):
         tranche_weights = [0.25, 0.35, 0.40]
         entry1_cond = "소액 1차만: MA20 위 종가 유지와 기초축 1W 양수 확인"
 
-    entry2_cond = "2차는 MA20/FVG 지지 재확인 + 기초 ETF/대표축 1W 양수 유지 때만"
-    entry3_cond = "3차는 MA50 회복 또는 손절선 근처 변동성 진정 확인 전까지 예비 회차"
+    entry2_cond = (
+        "실행 우선: $12 이하 눌림 + DRAM/MU/SK하이닉스 등 기초축 1W 양수 유지 때만"
+        if profile_key == "RAM"
+        else "2차는 MA20/FVG 지지 재확인 + 기초 ETF/대표축 1W 양수 유지 때만"
+    )
+    entry3_cond = (
+        "10~11달러대는 원계획 재진입/예비 회차. 단, 손절선 이탈 또는 기초축 동반 약세면 보류"
+        if profile_key == "RAM"
+        else "3차는 MA50 회복 또는 손절선 근처 변동성 진정 확인 전까지 예비 회차"
+    )
     if dca_blocked:
         entry2_cond = "회복 체크가 3개 미만이면 2차도 보류"
         entry3_cond = "손절선 이탈 또는 기초축 동반 약세면 마지막 회차도 사용하지 않음"
@@ -16998,6 +17025,7 @@ def build_leveraged_dca_timing_state(c, state):
         "entry1_cond": entry1_cond,
         "entry2_cond": entry2_cond,
         "entry3_cond": entry3_cond,
+        "trade_plan_note": trade_plan_note,
         "dca_stage": dca_stage,
         "dca_multiple": dca_multiple,
         "recovery_passed": recovery_passed,
@@ -17114,11 +17142,17 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         else:
             fx = clean_float(usdkrw, 1400.0) or 1400.0
             buy_note = f"목표비중 부족분은 약 ${buy_amt_krw / fx:,.0f}(≈{buy_amt_krw:,.0f}원)입니다."
+    trade_plan_note = str(timing_state.get("trade_plan_note", "") or "")
+    trade_plan_html = (
+        f"<span style='color:#fde68a;'>{escape_html_value(trade_plan_note)}</span><br>"
+        if trade_plan_note else ""
+    )
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {recovery_color}; line-height:1.7;'>"
         f"<b>현재 해석</b>: {escape_html_value(timing_state.get('status', dca_stage) or dca_stage)}<br>"
         f"{escape_html_value(dca_note)}<br>"
         f"<span style='color:#cbd5e1;'>{escape_html_value(timing_state.get('condition_summary', ''))}</span><br>"
+        f"{trade_plan_html}"
         f"R/R {('-' if not finite_num(rr) else f'{rr:.2f}')} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
         f"{(' · ' + escape_html_value(buy_note)) if buy_note else ''}<br>"
         f"<span style='color:#94a3b8;'>자동 매수 신호가 아니라, 중장기 보유용 회차 관리 체크리스트입니다.</span>"
@@ -17298,6 +17332,21 @@ def render_leveraged_reentry_simulator(name, ticker, c):
         ]
         st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
         missed_text = "-" if not finite_num(missed_move) else f"{missed_move*100:+.1f}%"
+        if profile_key == "RAM":
+            recovery_line = clean_float(c.get("rr_target"), np.nan)
+            if not finite_num(recovery_line) or recovery_line <= 0:
+                recovery_line = 15.0
+            pullback_low = recovery_line * 0.93
+            pullback_high = recovery_line * 0.98
+            st.markdown(
+                f"<div class='info-panel' style='border-left:5px solid #f59e0b; line-height:1.7;'>"
+                f"<b>RAM 트레이딩 복구 기준</b><br>"
+                f"기본 계획: <b>{symbol}{max_rebuy_for_same_qty:,.2f} 이하</b>에서 원수량 회복 또는 수량 증가 재진입.<br>"
+                f"현재가가 <b>{symbol}{recovery_line:,.2f}</b> 부근까지 회복하면 추격매수 자리가 아니라 하락 패턴 무효/회복 확인선으로 봅니다.<br>"
+                f"회복 후에는 <b>{symbol}{pullback_low:,.2f}~{symbol}{pullback_high:,.2f}</b> 눌림 지지와 거래량 진정을 확인한 뒤 일부 복구를 검토합니다."
+                f"</div>",
+                unsafe_allow_html=True,
+            )
         st.markdown(
             f"<div class='info-panel' style='border-left:5px solid {verdict_color}; line-height:1.7;'>"
             f"<b>{escape_html_value(verdict)}</b><br>"
@@ -18000,7 +18049,10 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     if leveraged_state and leveraged_state.get("dca_multiple") == "×0":
         final_label, final_color, action = "DCA 보류", "#d97706", "SOXL/RAM 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요."
     elif leveraged_state and str(leveraged_state.get("dca_stage", "")).endswith("후보"):
-        final_label, final_color, action = "조건부 DCA", "#8b5cf6", "레버리지 전용 회복조건을 일부 통과했습니다. 자동 추매가 아니라 정해둔 회차별 소액만 검토하는 구간입니다."
+        if str(leveraged_state.get("profile_key", "")) == "RAM":
+            final_label, final_color, action = "조건부 DCA 대기", "#d97706", "회복조건은 일부 통과했지만 현재가 추격 구간은 아닙니다. RAM은 $12 이하 눌림 또는 15달러대 회복 후 첫 눌림 확인 전까지 자동 추매가 아니라 대기입니다."
+        else:
+            final_label, final_color, action = "조건부 DCA 대기", "#8b5cf6", "레버리지 전용 회복조건을 일부 통과했습니다. 자동 추매가 아니라 정해둔 회차별 소액만 대기·검토하는 구간입니다."
     elif block_count >= 2:
         final_label, final_color, action = "매수 금지", "#dc2626", "차단 항목이 2개 이상입니다. 신규/추매보다 원인 점검과 비중 관리가 우선입니다."
     elif block_count == 1:
