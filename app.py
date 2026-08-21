@@ -10136,6 +10136,39 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
     return " · ".join(parts)
 
 
+def _brief_execution_link_text(command_df: pd.DataFrame, limit: int = 4) -> str:
+    if command_df is None or command_df.empty:
+        return "실행 후보판 계산 전"
+    work = command_df.copy()
+    if "행동" not in work.columns:
+        return "실행 후보판 확인 필요"
+    action_rank = {"정밀관측": 5, "눌림대기": 4, "관심등록": 3, "추격금지": 2, "관망/제외": 1}
+    work["_brief_action_rank"] = work["행동"].map(action_rank).fillna(0)
+    if "_점수" not in work.columns:
+        work["_점수"] = 0
+    work = work[work["행동"].astype(str).isin(["정밀관측", "눌림대기", "관심등록", "추격금지"])]
+    if work.empty:
+        return "실행 후보 없음"
+    work = work.sort_values(["_brief_action_rank", "_점수"], ascending=False).head(limit)
+    parts = []
+    for _, row in work.iterrows():
+        action = str(row.get("행동", "-") or "-")
+        market = str(row.get("시장축", "") or "")
+        group = str(row.get("후보군", "") or "")
+        rep = str(row.get("ETF/대표", row.get("대표주", "")) or "").strip()
+        rep = rep if rep and rep != "-" else group
+        risk = str(row.get("대표주위험", "") or "").strip()
+        judgement = str(row.get("판단", "") or "").strip()
+        suffix = ""
+        if risk:
+            suffix = " · 대표주 방어"
+        elif judgement:
+            suffix = f" · {judgement}"
+        label = " / ".join([v for v in [market, group, rep] if v])
+        parts.append(f"{action}: {label}{suffix}")
+    return " · ".join(parts)
+
+
 def _brief_index_df_from_guard(market_guard: dict | None) -> pd.DataFrame:
     if not isinstance(market_guard, dict):
         return pd.DataFrame()
@@ -10251,6 +10284,7 @@ def render_today_market_briefing_board(
     flow_df: pd.DataFrame,
     sector_rotation_df: pd.DataFrame,
     theme_rotation_df: pd.DataFrame,
+    command_df: pd.DataFrame | None = None,
     market_guard: dict | None = None,
 ):
     if flow_df is None or flow_df.empty:
@@ -10307,6 +10341,7 @@ def render_today_market_briefing_board(
         st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
     if not leadership.get("leaders") and (leadership.get("hot_leaders") or leadership.get("rebounds") or leadership.get("lagging")):
         st.caption("해석: 실행 가능한 주도 후보는 약하고, 과열 주도·단기 반등·후행 강도가 섞여 있습니다. 지금은 주도 확정 매수보다 눌림/R/R 검증 구간입니다.")
+    st.caption(f"실행 연결: {_brief_execution_link_text(command_df)}")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -28063,8 +28098,8 @@ def _prepare_flow_command_table(unified_df):
     return show
 
 
-def _render_flow_command_center(unified_df):
-    command_df = _prepare_flow_command_table(unified_df)
+def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = None):
+    command_df = command_df if command_df is not None else _prepare_flow_command_table(unified_df)
     if command_df.empty:
         return command_df
 
@@ -28178,13 +28213,21 @@ def _render_flow_command_center(unified_df):
     return command_df
 
 
-def render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=True, show_source=True):
-    unified_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+def render_today_unified_flow_panel(
+    sector_rotation_df,
+    theme_rotation_df,
+    subtheme_group_df,
+    show_command=True,
+    show_source=True,
+    unified_df: pd.DataFrame | None = None,
+    command_df: pd.DataFrame | None = None,
+):
+    unified_df = unified_df if unified_df is not None else build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
     if unified_df.empty:
         return
 
     if show_command:
-        _render_flow_command_center(unified_df)
+        _render_flow_command_center(unified_df, command_df=command_df)
 
     if not show_source:
         return
@@ -28915,8 +28958,21 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
     theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
     subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
+    try:
+        unified_flow_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+        command_flow_df = _prepare_flow_command_table(unified_flow_df) if unified_flow_df is not None and not unified_flow_df.empty else pd.DataFrame()
+    except Exception as exc:
+        unified_flow_df = pd.DataFrame()
+        command_flow_df = pd.DataFrame()
+        st.caption(f"실행 후보판 연결 계산을 불러오지 못했습니다: {type(exc).__name__}")
 
-    render_today_market_briefing_board(flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
+    render_today_market_briefing_board(
+        flow_df,
+        sector_rotation_df,
+        theme_rotation_df,
+        command_df=command_flow_df,
+        market_guard=market_guard,
+    )
 
     st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
     metric_cols = st.columns(4)
@@ -28969,7 +29025,15 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     )
 
     if detail_view == "실행 후보판":
-        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=True, show_source=False)
+        render_today_unified_flow_panel(
+            sector_rotation_df,
+            theme_rotation_df,
+            subtheme_group_df,
+            show_command=True,
+            show_source=False,
+            unified_df=unified_flow_df,
+            command_df=command_flow_df,
+        )
         return snapshot
 
     if detail_view == "개별 종목 후보":
@@ -28977,7 +29041,15 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         return snapshot
 
     if detail_view == "원천/매핑":
-        render_today_unified_flow_panel(sector_rotation_df, theme_rotation_df, subtheme_group_df, show_command=False, show_source=True)
+        render_today_unified_flow_panel(
+            sector_rotation_df,
+            theme_rotation_df,
+            subtheme_group_df,
+            show_command=False,
+            show_source=True,
+            unified_df=unified_flow_df,
+            command_df=command_flow_df,
+        )
         render_naver_theme_coverage_panel()
         return snapshot
 
