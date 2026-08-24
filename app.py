@@ -1192,6 +1192,71 @@ def canonicalize_watchlist_ticker(ticker, name=""):
         return "RAM"
     return raw
 
+
+SECURITY_NAME_ALIASES = {
+    "MRNA": ("모더나", "Moderna"),
+    "161890": ("한국콜마",),
+}
+
+
+def _security_name_key(value) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"nan", "none", "-"}:
+        return ""
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[\(\)\[\]\{\},./:_\-·ㆍ|]+", "", text)
+    return text.lower()
+
+
+def _security_ticker_keys(ticker) -> set[str]:
+    raw = sanitize_ticker_value(ticker)
+    if not raw or raw.lower() in {"nan", "none", "-"}:
+        return set()
+
+    stripped = re.sub(
+        r"\.(KS|KQ|US|NYSE|NASDAQ|AMEX|ARCA|NMS|NYQ|O|PK)$",
+        "",
+        raw,
+        flags=re.I,
+    )
+    keys = {
+        raw,
+        normalize_ticker(raw).upper(),
+        clean_symbol(raw),
+        stripped,
+    }
+    return {str(k).upper() for k in keys if str(k or "").strip()}
+
+
+def _security_identity_keys(ticker="", name="") -> set[str]:
+    keys: set[str] = set()
+    ticker_keys = _security_ticker_keys(ticker)
+    for key in ticker_keys:
+        keys.add(f"T:{key}")
+        for alias in SECURITY_NAME_ALIASES.get(key, ()):
+            alias_key = _security_name_key(alias)
+            if alias_key:
+                keys.add(f"N:{alias_key}")
+
+    name_key = _security_name_key(name)
+    if name_key:
+        keys.add(f"N:{name_key}")
+
+    for key in ticker_keys:
+        known_name = KNOWN_TICKER_DISPLAY_NAMES.get(key, "")
+        known_key = _security_name_key(known_name)
+        if known_key:
+            keys.add(f"N:{known_key}")
+
+    return keys
+
+
+def _security_matches(left_ticker="", right_ticker="", left_name="", right_name="") -> bool:
+    left_keys = _security_identity_keys(left_ticker, left_name)
+    right_keys = _security_identity_keys(right_ticker, right_name)
+    return bool(left_keys and right_keys and left_keys.intersection(right_keys))
+
+
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
     raw_name = data.get("name", "")
@@ -1280,17 +1345,15 @@ def sync_watchlist_to_query():
     if current != desired:
         st.query_params["wl"] = desired
 
-def is_in_watchlist(ticker):
-    t_norm = normalize_ticker(ticker)
+def is_in_watchlist(ticker, name=""):
     for item in st.session_state.watchlist:
-        if normalize_ticker(item["ticker"]) == t_norm:
+        if _security_matches(item.get("ticker", ""), ticker, item.get("name", ""), name):
             return True
     return False
 
-def get_watchlist_item(ticker):
-    t_norm = normalize_ticker(ticker)
+def get_watchlist_item(ticker, name=""):
     for item in st.session_state.watchlist:
-        if normalize_ticker(item["ticker"]) == t_norm:
+        if _security_matches(item.get("ticker", ""), ticker, item.get("name", ""), name):
             return item
     return None
 
@@ -28383,18 +28446,32 @@ TODAY_FLOW_SHORTLIST_COLS = [
 TODAY_FLOW_SHORTLIST_VERSION = "20260812_readable_shortlist_v1"
 
 
-def _today_flow_candidate_status(ticker: str) -> str:
-    ticker_norm = normalize_ticker(ticker)
+def _flow_shortlist_ticker_key(ticker: str) -> str:
+    keys = _security_ticker_keys(ticker)
+    if not keys:
+        return str(ticker or "").strip().upper()
+    raw = sanitize_ticker_value(ticker)
+    stripped = re.sub(
+        r"\.(KS|KQ|US|NYSE|NASDAQ|AMEX|ARCA|NMS|NYQ|O|PK)$",
+        "",
+        raw,
+        flags=re.I,
+    )
+    return stripped.upper() if stripped else sorted(keys)[0]
+
+
+def _today_flow_candidate_status(ticker: str, name: str = "") -> str:
     table = globals().get("holdings_table", pd.DataFrame())
     if isinstance(table, pd.DataFrame) and not table.empty and "티커" in table.columns:
         for _, row in table.iterrows():
-            if normalize_ticker(row.get("티커", "")) != ticker_norm:
+            row_name = row.get("자산명", row.get("종목명", ""))
+            if not _security_matches(row.get("티커", ""), ticker, row_name, name):
                 continue
             qty = clean_float(row.get("보유량", 0.0), 0.0)
             value = clean_float(row.get("원화환산", 0.0), 0.0)
             if qty > 0 or value > 0:
                 return "보유"
-    return "관심" if is_in_watchlist(ticker) else "미등록"
+    return "관심" if is_in_watchlist(ticker, name) else "미등록"
 
 
 def _flow_reason_label(value) -> str:
@@ -28542,7 +28619,10 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     if isinstance(cached_shortlist, pd.DataFrame) and cached_version == TODAY_FLOW_SHORTLIST_VERSION:
         cached = cached_shortlist.copy()
         if not cached.empty and "Ticker" in cached.columns:
-            cached["등록상태"] = cached["Ticker"].astype(str).apply(_today_flow_candidate_status)
+            cached["등록상태"] = cached.apply(
+                lambda r: _today_flow_candidate_status(r.get("Ticker", ""), r.get("종목명", "")),
+                axis=1,
+            )
         return cached
 
     flow_df = snapshot.get("flow_df", pd.DataFrame())
@@ -28773,8 +28853,11 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
         return pd.DataFrame()
 
     combined = pd.concat(frames, ignore_index=True)
-    combined["등록상태"] = combined["Ticker"].astype(str).apply(_today_flow_candidate_status)
-    combined["_ticker_key"] = combined["Ticker"].astype(str).str.upper().str.strip()
+    combined["등록상태"] = combined.apply(
+        lambda r: _today_flow_candidate_status(r.get("Ticker", ""), r.get("종목명", "")),
+        axis=1,
+    )
+    combined["_ticker_key"] = combined["Ticker"].astype(str).map(_flow_shortlist_ticker_key)
     group_labels = combined.groupby("_ticker_key")["후보군"].apply(lambda s: " · ".join(dict.fromkeys(s.astype(str)))).to_dict()
     combined = combined.sort_values(["_후보우선순위", "돈흐름점수"], ascending=[True, False], na_position="last")
     combined = combined.drop_duplicates("_ticker_key", keep="first")
