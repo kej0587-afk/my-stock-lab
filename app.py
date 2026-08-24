@@ -14858,6 +14858,35 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         _holding_risk_label = "⚠️추세훼손: 추매금지/손절기준 점검"
         _holding_risk_code = "STRUCTURE_DAMAGE_HOLDING_CHECK"
 
+    _is_recovered_drawdown_zone = (
+        current_dd <= -0.20
+        and trend == "🚀정배열(상승)"
+        and ret_1m > 0
+        and ret_3m > 0
+        and rs_label in {"🚀강함", "➖보통"}
+        and rsi_now >= 45
+        and pct_b_now >= 0.45
+        and (ma20_now <= 0 or cur_p >= ma20_now)
+        and (ma50_now <= 0 or cur_p >= ma50_now * 0.98)
+    )
+    is_capitulation_selloff = (
+        current_dd <= -0.20
+        and not _is_extreme_momentum
+        and not _is_recovered_drawdown_zone
+        and (
+            current_dd <= -0.30
+            or trend != "🚀정배열(상승)"
+            or (ma20_now > 0 and cur_p < ma20_now * 0.98)
+            or (ma50_now > 0 and cur_p < ma50_now * 0.95)
+            or ret_1m <= -0.08
+            or day_ret <= -0.04
+            or pct_b_now <= 0.35
+            or rsi_now <= 35
+            or mfi_now <= 25
+            or _single_day_only_entry_risk
+        )
+    )
+
     def _set_decision(label, color, code=None, reasons=()):
         outcome = build_decision_outcome(label, color, code, reasons=reasons)
         return outcome.label, outcome.color, outcome
@@ -14933,12 +14962,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     "매수 신호가 아니라 전광판 관심등록 후 회복 지속성 관찰",
                 ),
             )
-        elif current_dd <= -0.2 and not _is_extreme_momentum:
+        elif is_capitulation_selloff:
             dec, col, decision_outcome = _set_decision(
                 "🚨위기/패닉: 투매 포착", "#dc2626", "CRISIS_PANIC_SELL_OFF",
                 reasons=(
                     f"고점대비 {current_dd*100:.1f}% 하락",
-                    "급락/투매 포착 (미보유) — 극단 분할매수 검토",
+                    "급락/투매 포착 (미보유) — 추세 회복 전까지 극단 분할매수만 검토",
                 ),
             )
         elif is_live_gap_shock:
