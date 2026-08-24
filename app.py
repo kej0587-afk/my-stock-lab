@@ -6577,6 +6577,208 @@ def _add_chart_pattern_overlays(fig, patterns: list):
         )
 
 
+def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins: int = 31) -> dict:
+    """가격대별 누적 거래량으로 현재가 위/아래 매물대를 요약합니다."""
+    empty = {"ok": False, "reason": "데이터 부족", "rows": []}
+    if df is None or df.empty:
+        return empty
+    required = {"High", "Low", "Close"}
+    if not required.issubset(set(df.columns)):
+        return empty
+
+    source_cols = ["High", "Low", "Close"] + (["Volume"] if "Volume" in df.columns else [])
+    source = df[source_cols].copy().tail(max(60, int(lookback)))
+    for col in source_cols:
+        source[col] = pd.to_numeric(source[col], errors="coerce")
+    source = source.dropna(subset=["High", "Low", "Close"])
+    if len(source) < 20:
+        return empty
+    if "Volume" not in source.columns:
+        source["Volume"] = 1.0
+    source["Volume"] = source["Volume"].fillna(0.0).clip(lower=0.0)
+    if float(source["Volume"].sum()) <= 0:
+        source["Volume"] = 1.0
+
+    high = clean_float(source["High"].max(), np.nan)
+    low = clean_float(source["Low"].min(), np.nan)
+    current = clean_float(source["Close"].iloc[-1], np.nan)
+    if not finite_num(high) or not finite_num(low) or not finite_num(current) or high <= low:
+        return empty
+
+    bins = max(12, min(60, int(bins)))
+    step = (high - low) / bins
+    if step <= 0:
+        return empty
+
+    close_arr = source["Close"].to_numpy(dtype=float)
+    volume_arr = source["Volume"].to_numpy(dtype=float)
+    rows = []
+    volumes = []
+    for i in range(bins):
+        lo = low + step * i
+        hi = lo + step
+        mid = lo + step / 2
+        mask = np.abs(close_arr - mid) < step
+        vol = float(np.nansum(volume_arr[mask]))
+        volumes.append(vol)
+        rows.append({"low": lo, "high": hi, "mid": mid, "volume": vol})
+
+    max_vol = max(volumes) if volumes else 0.0
+    total_vol = sum(volumes)
+    if max_vol <= 0 or total_vol <= 0:
+        return empty
+
+    for row in rows:
+        row["intensity"] = row["volume"] / max_vol if max_vol > 0 else 0.0
+        row["side"] = "below" if row["mid"] < current else "above"
+
+    below = [row for row in rows if row["mid"] < current]
+    above = [row for row in rows if row["mid"] >= current]
+    below_vol = sum(row["volume"] for row in below)
+    above_vol = sum(row["volume"] for row in above)
+
+    def _pick_zone(items: list, side: str) -> dict | None:
+        if not items:
+            return None
+        strong = [row for row in items if row["intensity"] >= 0.25]
+        pool = strong or items
+        if side == "below":
+            return sorted(pool, key=lambda row: (max(current - row["high"], 0.0), -row["volume"]))[0]
+        return sorted(pool, key=lambda row: (max(row["low"] - current, 0.0), -row["volume"]))[0]
+
+    support = _pick_zone(below, "below")
+    resistance = _pick_zone(above, "above")
+    poc = max(rows, key=lambda row: row["volume"])
+
+    support_gap = np.nan
+    if support:
+        support_gap = (current - support["high"]) / current if current > 0 else np.nan
+        support_gap = max(support_gap, 0.0)
+    resistance_gap = np.nan
+    if resistance:
+        resistance_gap = (resistance["low"] - current) / current if current > 0 else np.nan
+        resistance_gap = max(resistance_gap, 0.0)
+
+    below_pct = below_vol / total_vol if total_vol > 0 else 0.0
+    above_pct = above_vol / total_vol if total_vol > 0 else 0.0
+
+    if finite_num(resistance_gap) and resistance_gap <= 0.025:
+        status = "상단 매물 근접"
+        color = "#d97706"
+        action = "추격보다 돌파/눌림 확인"
+    elif finite_num(support_gap) and support_gap <= 0.025:
+        status = "하단 유동성 지지 확인"
+        color = "#22c55e"
+        action = "지지 유지 여부 확인"
+    elif below_pct >= 0.58:
+        status = "하단 유동성 우세"
+        color = "#22c55e"
+        action = "아래 지지대가 받치는지 확인"
+    elif above_pct >= 0.58:
+        status = "상단 매물 부담"
+        color = "#d97706"
+        action = "상단 매물 소화 전 추격 주의"
+    else:
+        status = "유동성 중립"
+        color = "#94a3b8"
+        action = "패턴·MA·R/R과 같이 판단"
+
+    return {
+        "ok": True,
+        "lookback": len(source),
+        "rows": rows,
+        "current": current,
+        "high": high,
+        "low": low,
+        "poc": poc,
+        "support": support,
+        "resistance": resistance,
+        "support_gap": support_gap,
+        "resistance_gap": resistance_gap,
+        "below_pct": below_pct,
+        "above_pct": above_pct,
+        "status": status,
+        "color": color,
+        "action": action,
+    }
+
+
+def _liquidity_zone_price_text(zone: dict | None, ticker: str) -> str:
+    if not zone:
+        return "-"
+    return f"{format_currency(zone.get('low'), ticker)}~{format_currency(zone.get('high'), ticker)}"
+
+
+def build_liquidity_thermal_note(profile: dict, ticker: str) -> dict | None:
+    if not profile or not profile.get("ok"):
+        return None
+    support = profile.get("support")
+    resistance = profile.get("resistance")
+    poc = profile.get("poc")
+    support_gap = clean_float(profile.get("support_gap"), np.nan)
+    resistance_gap = clean_float(profile.get("resistance_gap"), np.nan)
+    support_txt = _liquidity_zone_price_text(support, ticker)
+    resistance_txt = _liquidity_zone_price_text(resistance, ticker)
+    poc_txt = _liquidity_zone_price_text(poc, ticker)
+    support_gap_txt = "-" if not finite_num(support_gap) else f"{support_gap*100:.1f}% 아래"
+    resistance_gap_txt = "-" if not finite_num(resistance_gap) else f"{resistance_gap*100:.1f}% 위"
+    body = (
+        f"상태: {profile.get('status', '-')} · {profile.get('action', '-')}\n"
+        f"하단 지지 {support_txt} ({support_gap_txt}) / 상단 저항 {resistance_txt} ({resistance_gap_txt})\n"
+        f"최대 매물대 {poc_txt} · 하단 {profile.get('below_pct', 0)*100:.0f}% / 상단 {profile.get('above_pct', 0)*100:.0f}%"
+    )
+    return {"title": "🧊 유동성 매물대", "body": body, "color": profile.get("color", "#94a3b8")}
+
+
+def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zones: int = 7) -> dict:
+    profile = build_liquidity_thermal_profile(df)
+    if not profile.get("ok"):
+        return profile
+    rows = profile.get("rows", [])
+    current = clean_float(profile.get("current"), np.nan)
+    candidates = [
+        row for row in rows
+        if row.get("intensity", 0.0) >= 0.18
+        and not (row.get("low", 0) <= current <= row.get("high", 0))
+    ]
+    candidates = sorted(candidates, key=lambda row: row.get("volume", 0.0), reverse=True)[:max_zones]
+    for row in candidates:
+        intensity = clean_float(row.get("intensity"), 0.0)
+        alpha = max(0.05, min(0.20, 0.05 + intensity * 0.15))
+        if row.get("side") == "below":
+            fill = f"rgba(34,197,94,{alpha:.3f})"
+        else:
+            fill = f"rgba(239,68,68,{alpha:.3f})"
+        fig.add_hrect(
+            y0=row.get("low"),
+            y1=row.get("high"),
+            fillcolor=fill,
+            line_width=0,
+            layer="below",
+        )
+    support = profile.get("support")
+    resistance = profile.get("resistance")
+    if support:
+        fig.add_hline(
+            y=support.get("mid"),
+            line_dash="dot",
+            line_color="#22c55e",
+            line_width=1,
+            annotation_text="유동성 지지",
+            annotation_position="bottom right",
+        )
+    if resistance:
+        fig.add_hline(
+            y=resistance.get("mid"),
+            line_dash="dot",
+            line_color="#ef4444",
+            line_width=1,
+            annotation_text="유동성 저항",
+            annotation_position="top right",
+        )
+    return profile
+
+
 def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = "lwc_candle") -> bool:
     """TradingView Lightweight Charts 캔들스틱 + MA 라인 렌더링.
 
@@ -6658,6 +6860,8 @@ def render_precision_candlestick_chart(
     avg_price: float = 0.0,
     key: str = "precision_candle",
     show_patterns: bool = True,
+    show_liquidity: bool = True,
+    ticker: str = "",
 ):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
@@ -6684,6 +6888,9 @@ def render_precision_candlestick_chart(
             ))
     if avg_price and avg_price > 0:
         fig.add_hline(y=avg_price, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
+    liquidity_profile = None
+    if show_liquidity:
+        liquidity_profile = _add_liquidity_thermal_overlays(fig, df, ticker)
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     fig.update_layout(
@@ -6692,6 +6899,13 @@ def render_precision_candlestick_chart(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig, width='stretch')
+    if show_liquidity and liquidity_profile and liquidity_profile.get("ok"):
+        note = build_liquidity_thermal_note(liquidity_profile, ticker)
+        if note:
+            st.caption(
+                f"{note['title']}: "
+                f"{note['body'].replace(chr(10), ' · ')}"
+            )
     if pattern_candidates:
         st.caption(_chart_pattern_caption(pattern_candidates))
 
@@ -32396,6 +32610,7 @@ if main_page == "precision":
             u_price if app_mode=="범용모드" else my_p,
         )
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
+        precision_liquidity_profile = build_liquidity_thermal_profile(chart_df)
 
         L, R = st.columns([1.1, 2.4])
         with L:
@@ -32547,6 +32762,14 @@ if main_page == "precision":
                     f"{escape_html_value(_pattern_timing_note['body'])}</div>",
                     unsafe_allow_html=True,
                 )
+            _liquidity_note = build_liquidity_thermal_note(precision_liquidity_profile, tkr)
+            if _liquidity_note:
+                st.markdown(
+                    f"<div class='info-panel' style='border-left: 5px solid {_liquidity_note['color']};'>"
+                    f"<b>{escape_html_value(_liquidity_note['title'])}</b><br>"
+                    f"{escape_html_value(_liquidity_note['body']).replace(chr(10), '<br>')}</div>",
+                    unsafe_allow_html=True,
+                )
 
             fin_text = "해당없음" if is_etf else f"{c['fin_score']}/4"
             st.markdown(
@@ -32570,13 +32793,19 @@ if main_page == "precision":
                 key=f"precision_chart_patterns_{tkr}",
                 help="쌍바닥, 쌍봉, 헤드앤숄더, 깃발형, 삼각수렴을 최근 피벗 기준 보조 후보로 표시합니다.",
             )
+            show_liquidity_profile = st.checkbox(
+                "유동성 매물대 표시",
+                value=True,
+                key=f"precision_liquidity_profile_{tkr}",
+                help="최근 거래량이 많이 쌓인 가격대를 지지/저항 보조 레이어로 표시합니다. 단독 매수 신호가 아니라 눌림가와 R/R 확인용입니다.",
+            )
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns)
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
             with week_tab:
-                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns)
+                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
             with month_tab:
-                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns)
+                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
             render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
