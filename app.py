@@ -10880,6 +10880,21 @@ def _flow_stat_market_mode(market_guard, market):
     return str(stats.get("mode", "확인 필요") or "확인 필요")
 
 
+def _flow_action_caption(action):
+    text = _flow_text(action, default="-")
+    if text == "-":
+        return text
+    if "눌림" in text:
+        return f"{text} (현재가 매수 아님)"
+    if "정밀" in text or "진입" in text:
+        return f"{text} (정밀관측소 확인)"
+    if "관망" in text or "제외" in text:
+        return f"{text} (매수 후보 아님)"
+    if "방어" in text or "위험" in text:
+        return f"{text} (비중 확대 보류)"
+    return text
+
+
 def _flow_stat_candidate(command_df, market, fallback_df):
     if command_df is not None and not command_df.empty and "시장축" in command_df.columns:
         market_rows = command_df[command_df["시장축"].astype(str).str.contains(market, na=False)].copy()
@@ -10899,7 +10914,7 @@ def _flow_stat_card_from_row(row, market, source, market_guard=None):
     if ticker and source == "ETF 원천":
         title = f"{title} ({ticker})"
     elif source == "실행 후보판":
-        title = f"실행 1순위: {title}"
+        title = f"검토 1순위: {title}"
 
     action = _flow_stat_first_text(row, ["행동", "통합판정", "테마판정", "상태"], default="확인")
     internal = _flow_stat_first_text(row, ["업종내부"], default="-")
@@ -11050,6 +11065,14 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
 
     st.markdown("##### 돈흐름 능력치 카드")
     st.caption("게임 능력치처럼 압축한 보조 그래프입니다. 강도만 높고 확산·타점이 낮으면 바로 매수가 아니라 정밀관측소에서 가격위치를 다시 봅니다.")
+    st.caption("색상: 파랑=한국, 초록=미국, 주황=혼합/글로벌 · 눌림대기/진입검토는 매수 확정이 아니라 확인 신호입니다.")
+    with st.expander("능력치 읽는 법", expanded=False):
+        st.caption("강도: 3M/RS/돈흐름 점수를 압축한 중기 힘입니다. 높아도 늦게 꺾일 수 있습니다.")
+        st.caption("확산: ETF·테마·대표주가 같이 오르는 폭입니다. 낮으면 한두 종목 쏠림일 수 있습니다.")
+        st.caption("단기유입: 1D/5D/1W 기준 최근 돈이 들어오는 정도입니다.")
+        st.caption("모멘텀: 1M/3M 흐름이 가속되는지 둔화되는지입니다.")
+        st.caption("안정도: 과열, 급락, 시장모드, 가격방어 위험이 적을수록 높습니다.")
+        st.caption("타점: 지금 가격에서 실행 가능한지입니다. 낮으면 기다림, 높아도 최종 매수는 정밀관측소 R/R 확인입니다.")
     guard_caption = _flow_stat_guard_caption(market_guard)
     if guard_caption:
         st.caption(guard_caption)
@@ -11062,8 +11085,8 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
             )
             st.plotly_chart(_flow_stat_radar_figure(card), width='stretch', key=f"market_flow_stat_radar_{card['market']}")
             st.caption(f"시장 ETF 상위: {card.get('etfs', '-')}")
-            st.caption(f"대표주 2~3개: {card['representatives']}")
-            st.caption(f"실행분류: {card['action']} · 내부: {card['internal']}")
+            st.caption(f"오늘 포착종목: {card['representatives']}")
+            st.caption(f"실행분류: {_flow_action_caption(card['action'])} · 내부: {card['internal']}")
 
 
 FLOW_SECTOR_ABILITY_BUCKETS = [
@@ -11080,6 +11103,57 @@ FLOW_SECTOR_ABILITY_BUCKETS = [
     ("산업재·건설", ("산업재", "건설", "조선", "기계", "운송", "XLI")),
     ("암호화폐", ("비트코인", "이더리움", "암호화폐", "BITCOIN", "ETHEREUM", "BTC", "ETH", "BITX")),
 ]
+
+
+FLOW_SECTOR_ANCHOR_REPRESENTATIVES = {
+    ("한국", "AI·반도체"): "삼성전자 · SK하이닉스 · 한미반도체",
+    ("미국", "AI·반도체"): "엔비디아 · 마이크론 · 샌디스크",
+    ("한국", "바이오·헬스"): "삼성바이오로직스 · 셀트리온 · 한미약품",
+    ("미국", "바이오·헬스"): "모더나 · 일라이릴리 · 유나이티드헬스",
+    ("한국", "소프트웨어·사이버"): "NAVER · 카카오 · 안랩",
+    ("미국", "소프트웨어·사이버"): "마이크로소프트 · 팔로알토네트웍스 · 크라우드스트라이크",
+    ("한국", "금융·핀테크"): "KB금융 · 신한지주 · 삼성화재",
+    ("미국", "금융·핀테크"): "JP모건 · 비자 · 페이팔",
+    ("한국", "리츠·부동산"): "삼성FN리츠 · 신한서부티엔디리츠 · 미래에셋글로벌리츠",
+    ("미국", "리츠·부동산"): "리얼티인컴 · 프로로지스 · 아메리칸타워",
+    ("한국", "소비재·뷰티"): "한국콜마 · 아모레퍼시픽 · LG생활건강",
+    ("미국", "소비재·뷰티"): "테슬라 · 토요타 모터스 · 부킹 홀딩스",
+    ("한국", "방산·우주"): "한화에어로스페이스 · LIG넥스원 · 현대로템",
+    ("미국", "방산·우주"): "록히드마틴 · RTX · 노스롭그루먼",
+    ("한국", "전력·인프라"): "HD현대일렉트릭 · LS ELECTRIC · 두산에너빌리티",
+    ("미국", "전력·인프라"): "이튼 · GE 버노바 · 넥스트에라 에너지",
+    ("한국", "에너지·원자재"): "S-Oil · SK이노베이션 · 고려아연",
+    ("미국", "에너지·원자재"): "엑슨모빌 · 셰브론 · 프리포트맥모란",
+    ("한국", "2차전지·EV"): "LG에너지솔루션 · 삼성SDI · SK이노베이션",
+    ("미국", "2차전지·EV"): "테슬라 · 앨버말 · 리비안",
+    ("한국", "산업재·건설"): "현대건설 · 삼성중공업 · HD현대중공업",
+    ("미국", "산업재·건설"): "캐터필러 · 유니온퍼시픽 · 디어",
+    ("미국", "암호화폐"): "비트코인 · 이더리움 · 코인베이스",
+    ("혼합", "암호화폐"): "비트코인 · 이더리움 · 코인베이스",
+}
+
+
+def _flow_sector_anchor_representatives(market, bucket):
+    market = _flow_text(market, default="혼합")
+    bucket = _flow_text(bucket, default="")
+    return (
+        FLOW_SECTOR_ANCHOR_REPRESENTATIVES.get((market, bucket))
+        or FLOW_SECTOR_ANCHOR_REPRESENTATIVES.get(("혼합", bucket))
+        or "-"
+    )
+
+
+def _flow_sector_is_etf_label(text):
+    raw = _flow_text(text)
+    if not raw or raw == "-":
+        return False
+    upper = raw.upper()
+    etf_markers = (
+        "ETF", "ISHARES", "VANECK", "SPDR", "INVESCO", "GLOBAL X", "DIREXION",
+        "ROUNDHILL", "T-REX", "KODEX", "TIGER", "SOL ", "ACE ", "RISE ",
+        "ARIRANG", "HANARO", "KBSTAR", "TIMEFOLIO", "PLUS ",
+    )
+    return any(marker in upper for marker in etf_markers)
 
 
 def _flow_sector_ability_bucket(text):
@@ -11207,14 +11281,17 @@ def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
             bucket = _flow_sector_ability_bucket(text)
             if not bucket:
                 continue
-            rep = _flow_stat_first_text(row, ["대표주★", "대표주", "ETF/대표", "업종대표주"], default="")
-            etf = _flow_stat_first_text(row, ["ETF/대표"], default="")
+            raw_etf_or_rep = _flow_stat_first_text(row, ["ETF/대표"], default="")
+            rep = _flow_stat_first_text(row, ["대표주★", "대표주", "업종대표주"], default="")
+            if not rep:
+                rep = "" if _flow_sector_is_etf_label(raw_etf_or_rep) else raw_etf_or_rep
+            etf = raw_etf_or_rep if _flow_sector_is_etf_label(raw_etf_or_rep) else ""
             rows.append({
                 "bucket": bucket,
                 "source": "실행",
                 "market": _flow_sector_market_from_row(row),
                 "name": _flow_stat_first_text(row, ["후보군", "핵심하위테마", "연결테마"], default=bucket),
-                "etf": etf if re.search(r"\([A-Z0-9.\-]+(?:\.[A-Z]+)?\)|^[A-Z0-9.\-]+(?:\.[A-Z]+)?$", etf or "") else "",
+                "etf": etf,
                 "representative": rep,
                 "action": _flow_stat_first_text(row, ["행동", "통합판정"], default="관망/제외"),
                 "internal": _flow_stat_first_text(row, ["업종내부"], default="-"),
@@ -11386,6 +11463,7 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             "title": bucket,
             "source": "섹터 통합",
             "action": best_action,
+            "anchor_representatives": _flow_sector_anchor_representatives(market, bucket),
             "representatives": _flow_sector_unique_text([x.get("representative", "") for x in items], limit=3),
             "etfs": _flow_sector_unique_label_text([x.get("etf", "") for x in items], limit=3),
             "internal": _flow_sector_unique_text(internals, limit=2),
@@ -11407,6 +11485,7 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
 
     st.markdown("##### 섹터별 돈흐름 능력치")
     st.caption("ETF·테마·대표주를 같은 섹터로 묶어 비교합니다. 여기서는 어느 섹터로 돈이 넓게 퍼지는지 보는 용도이고, 실제 매수는 실행분류와 정밀관측소 타점으로 한 번 더 거릅니다.")
+    st.caption("기준 대표축은 섹터를 볼 때 항상 확인할 대장주 목록이고, 오늘 포착종목은 오늘 후보판에서 실제로 걸린 종목입니다.")
 
     summary_rows = []
     for rank, card in enumerate(cards, 1):
@@ -11422,8 +11501,9 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
             "모멘텀": card["values"]["모멘텀"],
             "타점": card["values"]["타점"],
             "ETF": card.get("etfs", "-"),
-            "대표주": card.get("representatives", "-"),
-            "실행분류": card.get("action", "-"),
+            "기준 대표축": card.get("anchor_representatives", "-"),
+            "오늘 포착종목": card.get("representatives", "-"),
+            "실행분류": _flow_action_caption(card.get("action", "-")),
             "근거수": card.get("item_count", 0),
         })
     st.dataframe(pd.DataFrame(summary_rows), width='stretch', hide_index=True, height=min(360, 80 + len(summary_rows) * 35))
@@ -11440,9 +11520,10 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
                     width='stretch',
                     key=f"sector_flow_ability_{re.sub(r'[^0-9A-Za-z가-힣]+', '_', card['title'])}_{idx}",
                 )
-                st.caption(f"ETF: {card.get('etfs', '-')}")
-                st.caption(f"대표주: {card.get('representatives', '-')}")
-                st.caption(f"실행분류: {card.get('action', '-')}")
+                st.caption(f"대표 ETF: {card.get('etfs', '-')}")
+                st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
+                st.caption(f"오늘 포착종목: {card.get('representatives', '-')}")
+                st.caption(f"실행분류: {_flow_action_caption(card.get('action', '-'))}")
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
