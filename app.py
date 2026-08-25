@@ -1196,8 +1196,9 @@ def canonicalize_watchlist_ticker(ticker, name=""):
 
 
 SECURITY_NAME_ALIASES = {
-    "MRNA": ("모더나", "Moderna"),
-    "161890": ("한국콜마",),
+    "MRNA": ("모더나", "Moderna", "Moderna Inc", "Moderna, Inc."),
+    "161890": ("한국콜마", "Kolmar Korea"),
+    "192820": ("코스맥스", "COSMAX", "Cosmax", "코드맥스"),
 }
 
 
@@ -1369,6 +1370,33 @@ def get_watchlist_item(ticker, name=""):
         if _security_matches(item.get("ticker", ""), ticker, item.get("name", ""), name):
             return item
     return None
+
+
+def _matches_any_registered_watch_source(ticker, name="") -> bool:
+    """돈흐름 후보의 등록 상태는 화면 이동/캐시 이후에도 현재 전광판 기준으로 다시 확인한다."""
+    candidate_ticker = sanitize_ticker_value(ticker)
+    candidate_name = str(name or "").strip()
+
+    for item in st.session_state.get("watchlist", []) or []:
+        if not isinstance(item, dict):
+            continue
+        clean_item = sanitize_watchlist_item(item)
+        if _security_matches(clean_item.get("ticker", ""), candidate_ticker, clean_item.get("name", ""), candidate_name):
+            return True
+
+    # 전광판/오늘점검 계산표가 남아 있으면 여기도 같이 본다.
+    # 등록 직후 돈흐름 후보표 캐시가 살아 있어도 "미등록"으로 남지 않게 하기 위함.
+    for state_key in ["today_queue_summary_df", "today_queue_summary_last_nonempty_df", "dashboard_summary_df"]:
+        table = st.session_state.get(state_key)
+        if not isinstance(table, pd.DataFrame) or table.empty:
+            continue
+        for _, row in table.iterrows():
+            row_ticker = row.get("티커", row.get("Ticker", ""))
+            row_name = row.get("종목명", row.get("자산명", ""))
+            if _security_matches(row_ticker, candidate_ticker, row_name, candidate_name):
+                return True
+
+    return False
 
 def build_ai_analysis_prompt(name, ticker, macro_res, final_macro_risk, c):
     macro_lines = []
@@ -29062,7 +29090,7 @@ def _today_flow_candidate_status(ticker: str, name: str = "") -> str:
             value = clean_float(row.get("원화환산", 0.0), 0.0)
             if qty > 0 or value > 0:
                 return "보유"
-    return "관심" if is_in_watchlist(ticker, name) else "미등록"
+    return "관심" if _matches_any_registered_watch_source(ticker, name) else "미등록"
 
 
 def _flow_reason_label(value) -> str:
