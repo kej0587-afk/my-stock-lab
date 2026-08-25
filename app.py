@@ -1278,6 +1278,12 @@ def sanitize_watchlist_item(item):
         cleaned["is_etf"] = True
         cleaned["asset_class"] = "us_etf_crypto"
         cleaned["fin_score"] = 0
+    if clean_symbol(ticker) == "418660":
+        cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("418660", "TIGER 미국나스닥100레버리지(합성)")
+        cleaned["is_etf"] = True
+        cleaned["asset_class"] = "us_etf_nasdaq"
+        cleaned["bucket"] = "leverage"
+        cleaned["fin_score"] = 0
     return cleaned
 
 def is_known_etf_ticker(ticker):
@@ -3113,7 +3119,7 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             ticker   = str(row.get("티커", ""))
             name     = str(row.get("자산명", ""))
             target_w = clean_float(row.get("목표비중"), 0.0)
-            bucket   = normalize_bucket(str(row.get("bucket", "core")))
+            bucket   = resolve_effective_investment_bucket(name, ticker, row.get("bucket", "core"), row.get("asset_class", ""))
             cur_p    = clean_float(row.get("현재가"), 0.0)
             avg_p    = clean_float(row.get("매입가"), 0.0)
             qty      = clean_float(row.get("보유량"), 0.0)
@@ -3155,9 +3161,11 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
 
             base_alloc = total_invest * (target_w / target_w_sum)
             multiplier = _rebcalc_signal_multiplier(tap_raw, bucket, dip_level=dip_level)
-            if ticker in always_invest_set:
+            if ticker in always_invest_set and bucket != "leverage":
                 multiplier = 1.0
                 tap_disp = f"📌 항상투자" if tap_disp in ("-", "신호없음", "ETF (신호없음)") else f"{tap_disp} → 📌무시"
+            elif ticker in always_invest_set and bucket == "leverage":
+                tap_disp = f"{tap_disp} → 항상투자 제외(레버리지)"
             eff_alloc  = base_alloc * multiplier
 
             calc_rows.append({
@@ -13693,6 +13701,7 @@ def get_rs_benchmark(ticker, asset_class):
         "QQQM": US_BROAD_BENCHMARK,
         "QLD": US_BROAD_BENCHMARK,
         "TQQQ": US_BROAD_BENCHMARK,
+        "418660": KR_US_SP_BENCHMARK,
         "BITX": US_BROAD_BENCHMARK,
         "BITU": US_BROAD_BENCHMARK,
         "SOXX": US_BROAD_BENCHMARK,
@@ -14108,6 +14117,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "QQQM": ("QQQM", "나스닥100"),
     "QLD": ("QQQM", "나스닥100"),
     "TQQQ": ("QQQM", "나스닥100"),
+    "418660": ("QQQM", "나스닥100 2배"),
     "BITX": ("BTC-USD", "비트코인"),
     "BITU": ("BTC-USD", "비트코인"),
     "379810": ("QQQM", "나스닥100"),
@@ -14366,6 +14376,15 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
         "BITX", "BITU", "2배", "비트코인2배", "2X BITCOIN", "2X BTC",
     ]
     return any(keyword in text for keyword in keywords)
+
+
+def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
+    bucket_norm = normalize_bucket(bucket)
+    if bucket_norm in {"cash", "reserve"}:
+        return bucket_norm
+    if is_leveraged_or_inverse_product(name, ticker, asset_class):
+        return "leverage"
+    return bucket_norm
 
 
 def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
@@ -16917,6 +16936,13 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
+    is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, str(c.get("asset_class", "") or ""))
+    leveraged_label_block = is_leveraged_product and any(
+        word in decision_label
+        for word in ["추매금지", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
+    )
+    if leveraged_label_block:
+        is_hard_blocked = True
     is_poor_rr = rr < 1.0
 
     if leveraged_timing:
@@ -16924,7 +16950,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         status_color = leveraged_timing.get("color", "#8b5cf6")
         status_note = leveraged_timing.get("status_note", "")
     elif is_hard_blocked:
-        status = "진입 보류"
+        status = "현재가 보류 / 레버리지 회복 대기" if leveraged_label_block else "진입 보류"
         status_color = "#ef4444"
         if decision_code == "TARGET_ZERO_NO_ADD":
             status_note = "목표비중이 0%라 추가매수 계획을 만들지 않습니다. 보유분은 축소/정리 또는 별도 목표비중 재설정 후 판단합니다."
@@ -16932,6 +16958,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
         elif decision_code == "LEVERAGED_RECOVERY_DCA_BLOCK":
             status_note = "레버리지 ETF 회복 체크가 부족합니다. 목표비중이 부족해도 MA50, 기초축 1W, R/R 회복 전에는 DCA 회차를 열지 않습니다."
+        elif leveraged_label_block:
+            status_note = "레버리지 상품은 R/R이 좋아도 추세·기초축 회복 전에는 자동 추매하지 않습니다. MA20/MA50, 기초지수 1W, 종가 안정 확인이 먼저입니다."
         else:
             if decision_code in {"PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY"}:
                 status_note = "고점대비 낙폭이 커서 새 돈 투입은 보류합니다. 추세가 완전히 깨졌다는 뜻은 아니며, 하락 원인과 종가 안정부터 확인합니다."
@@ -17323,12 +17351,60 @@ LEVERAGED_ETF_PRECISION_PROFILES = {
             ("UUP", "시장 환경", "달러 인덱스 ETF"),
         ],
     },
+    "QLD": {
+        "display_name": "ProShares Ultra QQQ",
+        "leverage": 2.0,
+        "reset_note": "나스닥100 축을 하루 단위로 2배 추종합니다.",
+        "underlying_note": "QLD는 QQQM/QQQ, 나스닥, 기술주, 반도체, 달러·금리 프록시를 함께 확인합니다.",
+        "watch": [
+            ("QQQM", "기초 ETF", "나스닥100"),
+            ("QQQ", "기초 ETF", "나스닥100 대표 ETF"),
+            ("^IXIC", "시장 환경", "나스닥종합"),
+            ("XLK", "시장 환경", "미국 기술주"),
+            ("SOXX", "성장축", "미국 반도체"),
+            ("UUP", "환율/달러", "달러 인덱스 ETF"),
+            ("TLT", "금리 프록시", "미국 장기채"),
+        ],
+    },
+    "TQQQ": {
+        "display_name": "ProShares UltraPro QQQ",
+        "leverage": 3.0,
+        "reset_note": "나스닥100 축을 하루 단위로 3배 추종합니다.",
+        "underlying_note": "TQQQ는 QQQM/QQQ, 나스닥, 기술주, 반도체, 달러·금리 프록시를 함께 확인합니다.",
+        "watch": [
+            ("QQQM", "기초 ETF", "나스닥100"),
+            ("QQQ", "기초 ETF", "나스닥100 대표 ETF"),
+            ("^IXIC", "시장 환경", "나스닥종합"),
+            ("XLK", "시장 환경", "미국 기술주"),
+            ("SOXX", "성장축", "미국 반도체"),
+            ("UUP", "환율/달러", "달러 인덱스 ETF"),
+            ("TLT", "금리 프록시", "미국 장기채"),
+        ],
+    },
+    "NASDAQ100_2X_KR": {
+        "display_name": "TIGER 미국나스닥100레버리지(합성)",
+        "leverage": 2.0,
+        "reset_note": "나스닥100 축을 하루 단위로 2배 추종하는 국내상장 레버리지 ETF입니다.",
+        "underlying_note": "국내 가격은 환율·괴리율 영향을 같이 받기 때문에 QQQM/나스닥100, 기술주, 달러, 장기채 흐름을 함께 확인합니다.",
+        "watch": [
+            ("QQQM", "기초 ETF", "나스닥100"),
+            ("QQQ", "기초 ETF", "나스닥100 대표 ETF"),
+            ("^IXIC", "시장 환경", "나스닥종합"),
+            ("XLK", "시장 환경", "미국 기술주"),
+            ("SOXX", "성장축", "미국 반도체"),
+            ("UUP", "환율/달러", "달러 인덱스 ETF"),
+            ("TLT", "금리 프록시", "미국 장기채"),
+        ],
+    },
 }
 
 
 def get_leveraged_etf_precision_profile(ticker, name=""):
-    symbol = normalize_ticker(sanitize_ticker_value(ticker))
-    text = f"{symbol} {name}".upper()
+    symbol = clean_symbol(ticker)
+    normalized = normalize_ticker(sanitize_ticker_value(ticker))
+    text = f"{symbol} {normalized} {name}".upper()
+    if symbol == "418660" or ("TIGER" in text and ("NASDAQ" in text or "나스닥" in text) and ("2X" in text or "2배" in text or "레버리지" in text)):
+        return "NASDAQ100_2X_KR", LEVERAGED_ETF_PRECISION_PROFILES["NASDAQ100_2X_KR"]
     if symbol in LEVERAGED_ETF_PRECISION_PROFILES:
         return symbol, LEVERAGED_ETF_PRECISION_PROFILES[symbol]
     if "ROUNDHILL T-REX" in text and "DRAM" in text:
@@ -31382,7 +31458,7 @@ def render_print_report_v2():
         for _, row in active_df.iterrows():
             ticker = sanitize_ticker_value(row.get("티커", ""))
             name = sanitize_asset_name(row.get("자산명", ""), ticker)
-            bucket = normalize_bucket(str(row.get("bucket", "core")))
+            bucket = resolve_effective_investment_bucket(name, ticker, row.get("bucket", "core"), row.get("asset_class", ""))
             target_w = _num(row.get("_print_target_weight"), 0.0)
             current_price = _num(row.get("현재가"), 0.0)
             avg_price = _num(row.get("매입가"), 0.0)
@@ -31493,7 +31569,7 @@ def render_print_report_v2():
             current_price = _num(row.get("현재가"), 0.0)
             qty_now = _num(row.get("보유량"), 0.0)
             target_w = _num(row.get("_print_target_weight"), 0.0)
-            bucket = normalize_bucket(str(row.get("bucket", "core")))
+            bucket = resolve_effective_investment_bucket(name, ticker, row.get("bucket", "core"), row.get("asset_class", ""))
             is_usd = bool(ticker and not is_kr_listed(ticker) and ticker not in ("KRW_CASH", "USD_CASH"))
             unit_price_krw = current_price * _num(usdkrw, 1400.0) if is_usd else current_price
             target_value = total_asset * target_w / 100 if total_asset > 0 else 0.0
