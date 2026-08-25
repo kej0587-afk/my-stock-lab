@@ -10766,10 +10766,14 @@ def _flow_stat_first_num(row, columns, default=np.nan):
         return default
     for col in columns:
         try:
-            if col in row.index:
-                num = clean_float(row.get(col), np.nan)
-            else:
+            if isinstance(row, dict):
                 num = clean_float(row.get(col, np.nan), np.nan)
+            elif hasattr(row, "index") and col in row.index:
+                num = clean_float(row.get(col), np.nan)
+            elif hasattr(row, "get"):
+                num = clean_float(row.get(col, np.nan), np.nan)
+            else:
+                num = np.nan
         except Exception:
             num = np.nan
         if finite_num(num):
@@ -10782,13 +10786,19 @@ def _flow_stat_first_text(row, columns, default="-"):
         return default
     for col in columns:
         try:
-            value = row.get(col, "")
+            value = row.get(col, "") if hasattr(row, "get") else ""
         except Exception:
             value = ""
         text = _flow_text(value)
         if text and text != "-":
             return text
     return default
+
+
+def _flow_stat_join_text(row, columns):
+    if row is None or not hasattr(row, "get"):
+        return ""
+    return " ".join(_flow_stat_first_text(row, [col], default="") for col in columns).strip()
 
 
 def _flow_stat_return_score(value, scale=35.0, center=5.0):
@@ -10840,6 +10850,28 @@ def _flow_stat_representatives(text, limit=3):
         if item and item != "-" and item not in cleaned:
             cleaned.append(item)
     return " · ".join(cleaned[:limit]) if cleaned else "-"
+
+
+def _flow_stat_top_etf_text(df, limit=2):
+    if df is None or df.empty:
+        return "-"
+    work = df.copy()
+    score_col = "돈흐름점수" if "돈흐름점수" in work.columns else ""
+    if score_col:
+        work["_stat_etf_score"] = work[score_col].apply(clean_float)
+        work = work.sort_values("_stat_etf_score", ascending=False, na_position="last")
+    out = []
+    for _, row in work.head(limit).iterrows():
+        name = _flow_stat_first_text(row, ["섹터", "종목명", "자산명"], default="")
+        ticker = _flow_stat_first_text(row, ["Ticker", "티커"], default="")
+        short = _flow_stat_first_num(row, ["1주수익률", "5D", "1D", "2주수익률"], default=np.nan)
+        label = f"{name}({ticker})" if name and ticker else (ticker or name)
+        if not label:
+            continue
+        if finite_num(short):
+            label = f"{label} {_fmt_flow_pct_compact(short)}"
+        out.append(label)
+    return " · ".join(out) if out else "-"
 
 
 def _flow_stat_market_mode(market_guard, market):
@@ -10896,7 +10928,7 @@ def _flow_stat_card_from_row(row, market, source, market_guard=None):
     safety = 7.0
     if finite_num(price_level):
         safety = 8.5 - min(max(float(price_level), 0.0), 1.2) * 5.0
-    joined = " ".join(str(row.get(c, "") or "") for c in ["행동", "통합판정", "판단", "업종내부", "대표주위험", "테마판정", "상태"])
+    joined = _flow_stat_join_text(row, ["행동", "통합판정", "판단", "업종내부", "대표주위험", "테마판정", "상태"])
     if any(word in joined for word in ["과열", "추격금지", "위기", "패닉", "추세방어", "가격방어"]):
         safety -= 1.5
     if "확산 약함" in joined or "쏠림" in joined:
@@ -10953,7 +10985,9 @@ def _flow_stat_radar_figure(card):
     values = list(card["values"].values())
     labels_closed = labels + [labels[0]]
     values_closed = values + [values[0]]
-    color = "#60a5fa" if card.get("market") == "한국" else "#22c55e"
+    market = card.get("market")
+    color = "#60a5fa" if market == "한국" else ("#22c55e" if market == "미국" else "#f59e0b")
+    fill = "rgba(96,165,250,0.28)" if market == "한국" else ("rgba(34,197,94,0.25)" if market == "미국" else "rgba(245,158,11,0.24)")
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
         r=values_closed,
@@ -10965,7 +10999,7 @@ def _flow_stat_radar_figure(card):
         hovertemplate="%{theta}: %{r:.1f}/10<extra></extra>",
         name=card.get("title", ""),
     ))
-    fig.update_traces(fillcolor="rgba(96,165,250,0.28)" if card.get("market") == "한국" else "rgba(34,197,94,0.25)")
+    fig.update_traces(fillcolor=fill)
     fig.update_layout(
         height=285,
         margin=dict(l=22, r=22, t=18, b=18),
@@ -11007,6 +11041,7 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
         row, source = _flow_stat_candidate(command_df, market, fallback)
         card = _flow_stat_card_from_row(row, market, source, market_guard=market_guard)
         if card:
+            card["etfs"] = _flow_stat_top_etf_text(fallback)
             cards.append(card)
     if not cards:
         return
@@ -11024,8 +11059,364 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
                 f"시장모드 `{card['mode']}` · 평균 {card['total']}/10 · {card['source']}"
             )
             st.plotly_chart(_flow_stat_radar_figure(card), width='stretch', key=f"market_flow_stat_radar_{card['market']}")
+            st.caption(f"ETF 후보: {card.get('etfs', '-')}")
             st.caption(f"대표주 2~3개: {card['representatives']}")
             st.caption(f"실행분류: {card['action']} · 내부: {card['internal']}")
+
+
+FLOW_SECTOR_ABILITY_BUCKETS = [
+    ("바이오·헬스", ("바이오", "헬스", "제약", "의료", "건강", "IBB", "XLV", "MRNA", "MODERNA")),
+    ("AI·반도체", ("반도체", "DRAM", "메모리", "HBM", "SOXX", "SMH", "SOXL", "RAM", "엔비디아", "NVIDIA", "마이크론", "MICRON", "AI 하드웨어")),
+    ("소프트웨어·사이버", ("소프트웨어", "사이버", "클라우드", "IT서비스", "CIBR", "IGV", "보안")),
+    ("금융·핀테크", ("금융", "핀테크", "은행", "보험", "증권", "XLF", "FINX")),
+    ("리츠·부동산", ("리츠", "부동산", "REIT", "VNQ")),
+    ("소비재·뷰티", ("소비재", "K-뷰티", "뷰티", "화장품", "유통", "필수소비재", "XLP", "자동차", "TESLA", "테슬라", "부킹")),
+    ("방산·우주", ("방산", "우주", "항공", "위성", "방위", "드론")),
+    ("전력·인프라", ("전력", "인프라", "전력기기", "전선", "원전", "SMR", "유틸리티", "XLU")),
+    ("에너지·원자재", ("에너지", "원자재", "구리", "석유", "유가", "XLE", "COPX", "금", "GOLD")),
+    ("2차전지·EV", ("2차전지", "배터리", "전기차", "EV", "리튬")),
+    ("산업재·건설", ("산업재", "건설", "조선", "기계", "운송", "XLI")),
+    ("암호화폐", ("비트코인", "이더리움", "암호화폐", "BITCOIN", "ETHEREUM", "BTC", "ETH", "BITX")),
+]
+
+
+def _flow_sector_ability_bucket(text):
+    raw = _flow_text(text)
+    if not raw.strip():
+        return ""
+    upper = raw.upper()
+    for bucket, keywords in FLOW_SECTOR_ABILITY_BUCKETS:
+        for keyword in keywords:
+            if str(keyword).upper() in upper:
+                return bucket
+    return ""
+
+
+def _flow_sector_market_from_row(row):
+    market = _flow_stat_first_text(row, ["시장축", "시장"], default="")
+    if "한국" in market or "KOSPI" in market:
+        return "한국"
+    if "미국" in market or "US" in market:
+        return "미국"
+    group = _flow_stat_first_text(row, ["구분"], default="")
+    if "한국" in group:
+        return "한국"
+    if "미국" in group:
+        return "미국"
+    ticker = sanitize_ticker_value(_flow_stat_first_text(row, ["Ticker", "티커"], default=""))
+    if ticker:
+        return "한국" if is_kr_listed(ticker) else "미국"
+    joined = _flow_stat_join_text(row, ["후보군", "연결테마", "테마", "섹터", "대표주"])
+    if "K-" in joined or "국내" in joined or "한국" in joined:
+        return "한국"
+    if "미국" in joined:
+        return "미국"
+    return "혼합"
+
+
+def _flow_sector_short_return(row):
+    return _flow_stat_first_num(row, ["1주수익률", "5D", "1D", "2주", "하위2W", "테마2W", "큰돈2W", "2주수익률"], default=np.nan)
+
+
+def _flow_sector_mid_return(row):
+    return _flow_stat_first_num(row, ["1개월", "하위1M", "테마1M", "큰돈1M", "1개월수익률", "1M"], default=np.nan)
+
+
+def _flow_sector_long_return(row):
+    return _flow_stat_first_num(row, ["3개월수익률", "3M", "RS(3M)"], default=np.nan)
+
+
+def _flow_sector_score(row):
+    return _flow_stat_first_num(row, ["_점수", "적합도", "테마점수", "하위점수", "돈흐름점수", "테마돈흐름점수"], default=np.nan)
+
+
+def _flow_sector_action_rank(action):
+    text = str(action or "")
+    if "정밀" in text:
+        return 6
+    if "눌림" in text:
+        return 5
+    if "관심" in text or "진입" in text:
+        return 4
+    if "확인" in text or "반등" in text:
+        return 3
+    if "추격금지" in text or "방어" in text:
+        return 2
+    if "위험" in text or "제외" in text:
+        return 1
+    return 0
+
+
+def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
+    rows = []
+
+    if sector_rotation_df is not None and not sector_rotation_df.empty:
+        for _, row in sector_rotation_df.iterrows():
+            text = _flow_stat_join_text(row, ["섹터", "Ticker", "구분", "상태", "판정"])
+            bucket = _flow_sector_ability_bucket(text)
+            if not bucket:
+                continue
+            name = _flow_stat_first_text(row, ["섹터"], default="")
+            ticker = _flow_stat_first_text(row, ["Ticker"], default="")
+            label = f"{name}({ticker})" if name and ticker else (ticker or name)
+            rows.append({
+                "bucket": bucket,
+                "source": "ETF",
+                "market": _flow_sector_market_from_row(row),
+                "name": label,
+                "etf": label,
+                "representative": "",
+                "action": _flow_stat_first_text(row, ["진입검토", "실행분류", "상태"], default="ETF 관찰"),
+                "internal": _flow_stat_first_text(row, ["시장내부판정", "업종내부"], default="-"),
+                "score": _flow_sector_score(row),
+                "short": _flow_sector_short_return(row),
+                "mid": _flow_sector_mid_return(row),
+                "long": _flow_sector_long_return(row),
+                "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
+            })
+
+    if theme_rotation_df is not None and not theme_rotation_df.empty:
+        for _, row in theme_rotation_df.iterrows():
+            text = _flow_stat_join_text(row, ["테마", "섹터", "하위테마", "대표주", "테마판정", "상태"])
+            bucket = _flow_sector_ability_bucket(text)
+            if not bucket:
+                continue
+            theme = _flow_stat_first_text(row, ["테마", "섹터"], default="")
+            rep = _flow_stat_first_text(row, ["대표주"], default="")
+            rows.append({
+                "bucket": bucket,
+                "source": "테마",
+                "market": _flow_sector_market_from_row(row),
+                "name": theme,
+                "etf": "",
+                "representative": rep,
+                "action": _flow_stat_first_text(row, ["테마판정", "상태"], default="테마 관찰"),
+                "internal": _flow_stat_first_text(row, ["업종내부", "시장내부판정"], default="-"),
+                "score": _flow_sector_score(row),
+                "short": _flow_sector_short_return(row),
+                "mid": _flow_sector_mid_return(row),
+                "long": _flow_sector_long_return(row),
+                "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
+            })
+
+    if command_df is not None and not command_df.empty:
+        for _, row in command_df.iterrows():
+            text = _flow_stat_join_text(row, ["후보군", "연결테마", "핵심하위테마", "세부축", "대표주", "ETF/대표", "대분류", "기준업종"])
+            bucket = _flow_sector_ability_bucket(text)
+            if not bucket:
+                continue
+            rep = _flow_stat_first_text(row, ["대표주★", "대표주", "ETF/대표", "업종대표주"], default="")
+            etf = _flow_stat_first_text(row, ["ETF/대표"], default="")
+            rows.append({
+                "bucket": bucket,
+                "source": "실행",
+                "market": _flow_sector_market_from_row(row),
+                "name": _flow_stat_first_text(row, ["후보군", "핵심하위테마", "연결테마"], default=bucket),
+                "etf": etf if re.search(r"\([A-Z0-9.\-]+(?:\.[A-Z]+)?\)|^[A-Z0-9.\-]+(?:\.[A-Z]+)?$", etf or "") else "",
+                "representative": rep,
+                "action": _flow_stat_first_text(row, ["행동", "통합판정"], default="관망/제외"),
+                "internal": _flow_stat_first_text(row, ["업종내부"], default="-"),
+                "score": _flow_sector_score(row),
+                "short": _flow_sector_short_return(row),
+                "mid": _flow_sector_mid_return(row),
+                "long": _flow_sector_long_return(row),
+                "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
+            })
+
+    return rows
+
+
+def _flow_sector_unique_text(values, limit=3):
+    out = []
+    for value in values:
+        text = _flow_stat_representatives(value, limit=limit)
+        if not text or text == "-":
+            continue
+        for part in re.split(r"\s*·\s*", text):
+            part = part.strip()
+            if part and part not in out:
+                out.append(part)
+            if len(out) >= limit:
+                return " · ".join(out)
+    return " · ".join(out) if out else "-"
+
+
+def _flow_sector_unique_label_text(values, limit=3):
+    out = []
+    for value in values:
+        raw = _flow_text(value)
+        if not raw or raw == "-" or "확인중" in raw:
+            continue
+        raw = re.sub(r"[★☆]", " ", raw)
+        for part in re.split(r"\s*(?:·|,|>|\\n)\s*", raw):
+            item = re.sub(r"\s+", " ", str(part)).strip(" -·,/")
+            if item and item != "-" and item not in out:
+                out.append(item)
+            if len(out) >= limit:
+                return " · ".join(out)
+    return " · ".join(out) if out else "-"
+
+
+def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, limit=12):
+    source_rows = _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df)
+    if not source_rows:
+        return []
+
+    grouped = {}
+    for row in source_rows:
+        grouped.setdefault(row["bucket"], []).append(row)
+
+    cards = []
+    for bucket, items in grouped.items():
+        scores = [float(x["score"]) for x in items if finite_num(x.get("score"))]
+        shorts = [float(x["short"]) for x in items if finite_num(x.get("short"))]
+        mids = [float(x["mid"]) for x in items if finite_num(x.get("mid"))]
+        longs = [float(x["long"]) for x in items if finite_num(x.get("long"))]
+        prices = [float(x["price_level"]) / 100.0 if finite_num(x.get("price_level")) and abs(float(x["price_level"])) > 3 else float(x["price_level"]) for x in items if finite_num(x.get("price_level"))]
+        internals = [str(x.get("internal", "") or "") for x in items]
+        actions = [str(x.get("action", "") or "") for x in items]
+
+        strength = _flow_stat_score_value(max(scores) if scores else np.nan)
+        if not finite_num(strength):
+            strength = _flow_stat_return_score(np.nanmean(longs) if longs else np.nan, scale=20.0)
+
+        finite_flow_flags = []
+        for x in items:
+            short = clean_float(x.get("short", np.nan), np.nan)
+            mid = clean_float(x.get("mid", np.nan), np.nan)
+            if finite_num(short) or finite_num(mid):
+                finite_flow_flags.append((finite_num(short) and float(short) > 0) or (finite_num(mid) and float(mid) > 0))
+        if finite_flow_flags:
+            breadth = _flow_stat_clamp(sum(bool(v) for v in finite_flow_flags) / len(finite_flow_flags) * 10.0)
+        else:
+            breadth_vals = [_flow_stat_extract_breadth(x) for x in internals]
+            breadth_vals = [v for v in breadth_vals if finite_num(v)]
+            breadth = float(np.nanmean(breadth_vals)) if breadth_vals else 5.0
+
+        short_flow = _flow_stat_return_score(np.nanmean(shorts) if shorts else np.nan, scale=45.0)
+        momentum = _flow_stat_return_score(np.nanmean(mids) if mids else (np.nanmean(longs) if longs else np.nan), scale=30.0)
+
+        safety = 7.0
+        if prices:
+            safety = 8.5 - min(max(float(np.nanmean(prices)), 0.0), 1.2) * 5.0
+        joined = " ".join(actions + internals)
+        if any(word in joined for word in ["과열", "추격금지", "위기", "패닉", "가격방어", "추세방어"]):
+            safety -= 1.2
+        if any("확산 약함" in t or "쏠림" in t for t in internals):
+            safety -= 0.8
+        markets = [x.get("market", "") for x in items if x.get("market")]
+        market = "혼합"
+        if markets:
+            if all(m == "한국" for m in markets):
+                market = "한국"
+            elif all(m == "미국" for m in markets):
+                market = "미국"
+        mode = _flow_stat_market_mode(market_guard, market) if market in {"한국", "미국"} else str((market_guard or {}).get("mode", "확인 필요") or "확인 필요")
+        if mode in {"비상", "위험"}:
+            safety -= 1.0
+        elif mode in {"방어", "조정", "주의"}:
+            safety -= 0.5
+        safety = _flow_stat_clamp(safety)
+
+        best_action = max(actions, key=_flow_sector_action_rank) if actions else "관망"
+        timing = {6: 8.0, 5: 6.2, 4: 5.4, 3: 4.8, 2: 2.8, 1: 1.5, 0: 3.5}.get(_flow_sector_action_rank(best_action), 3.5)
+        if prices and np.nanmean(prices) >= 0.90:
+            timing -= 1.0
+        timing = _flow_stat_clamp(timing)
+
+        values = {
+            "강도": round(float(strength), 1),
+            "확산": round(float(breadth), 1),
+            "단기유입": round(float(short_flow), 1),
+            "모멘텀": round(float(momentum), 1),
+            "안정도": round(float(safety), 1),
+            "타점": round(float(timing), 1),
+        }
+        lead_score = round(
+            values["강도"] * 0.20
+            + values["확산"] * 0.20
+            + values["단기유입"] * 0.25
+            + values["모멘텀"] * 0.20
+            + values["안정도"] * 0.05
+            + values["타점"] * 0.10,
+            1,
+        )
+
+        if values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0 and values["확산"] >= 5.5 and values["안정도"] >= 4.0:
+            verdict = "실제 주도 후보"
+        elif values["강도"] >= 7.0 and (values["안정도"] < 4.0 or "과열" in joined):
+            verdict = "과열 주도·눌림확인"
+        elif values["단기유입"] >= 5.8 and values["모멘텀"] < 5.5:
+            verdict = "반등/상대방어"
+        elif values["강도"] >= 6.0 and values["단기유입"] < 5.0:
+            verdict = "후행 강도·추격주의"
+        elif values["안정도"] < 3.0:
+            verdict = "위험회피"
+        else:
+            verdict = "관망/확인"
+
+        cards.append({
+            "market": market,
+            "mode": mode,
+            "title": bucket,
+            "source": "섹터 통합",
+            "action": best_action,
+            "representatives": _flow_sector_unique_text([x.get("representative", "") for x in items], limit=3),
+            "etfs": _flow_sector_unique_label_text([x.get("etf", "") for x in items], limit=3),
+            "internal": _flow_sector_unique_text(internals, limit=2),
+            "values": values,
+            "total": lead_score,
+            "verdict": verdict,
+            "item_count": len(items),
+            "short": np.nanmean(shorts) if shorts else np.nan,
+            "mid": np.nanmean(mids) if mids else np.nan,
+        })
+
+    return sorted(cards, key=lambda x: x.get("total", 0), reverse=True)[:limit]
+
+
+def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotation_df, market_guard=None):
+    cards = _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
+    if not cards:
+        return
+
+    st.markdown("##### 섹터별 돈흐름 능력치")
+    st.caption("ETF·테마·대표주를 같은 섹터로 묶어 비교합니다. 여기서는 어느 섹터로 돈이 넓게 퍼지는지 보는 용도이고, 실제 매수는 실행분류와 정밀관측소 타점으로 한 번 더 거릅니다.")
+
+    summary_rows = []
+    for rank, card in enumerate(cards, 1):
+        summary_rows.append({
+            "순위": rank,
+            "섹터": card["title"],
+            "판정": card["verdict"],
+            "시장": card["market"],
+            "종합": f"{card['total']:.1f}/10",
+            "강도": card["values"]["강도"],
+            "확산": card["values"]["확산"],
+            "단기": card["values"]["단기유입"],
+            "모멘텀": card["values"]["모멘텀"],
+            "타점": card["values"]["타점"],
+            "ETF": card.get("etfs", "-"),
+            "대표주": card.get("representatives", "-"),
+            "실행분류": card.get("action", "-"),
+        })
+    st.dataframe(pd.DataFrame(summary_rows), width='stretch', hide_index=True, height=min(360, 80 + len(summary_rows) * 35))
+
+    with st.expander("섹터별 능력치 그래프", expanded=True):
+        top_cards = cards[:6]
+        cols = st.columns(3 if len(top_cards) >= 3 else len(top_cards))
+        for idx, card in enumerate(top_cards):
+            with cols[idx % len(cols)]:
+                st.markdown(f"**#{idx + 1} {card['title']}**")
+                st.caption(f"{card['verdict']} · {card['market']} · 평균 {card['total']:.1f}/10")
+                st.plotly_chart(
+                    _flow_stat_radar_figure(card),
+                    width='stretch',
+                    key=f"sector_flow_ability_{re.sub(r'[^0-9A-Za-z가-힣]+', '_', card['title'])}_{idx}",
+                )
+                st.caption(f"ETF: {card.get('etfs', '-')}")
+                st.caption(f"대표주: {card.get('representatives', '-')}")
+                st.caption(f"실행분류: {card.get('action', '-')}")
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
@@ -29966,6 +30357,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         market_guard=market_guard,
     )
     render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard)
+    render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
 
     st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
     metric_cols = st.columns(4)
