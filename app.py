@@ -31485,6 +31485,7 @@ def render_print_report_v2():
         if active_df.empty:
             return pd.DataFrame()
         total_asset = _num(portfolio_summary.get("current_asset"), 0.0)
+        signal_cache = st.session_state.get("_ticker_signal_cache", {})
         rows = []
         for _, row in active_df.iterrows():
             ticker = sanitize_ticker_value(row.get("티커", ""))
@@ -31499,6 +31500,30 @@ def render_print_report_v2():
             target_shares = target_value / unit_price_krw if unit_price_krw > 0 else 0.0
             needed_shares = target_shares - qty_now
             needed_value = max(needed_shares, 0.0) * unit_price_krw
+            signal = str(signal_cache.get(ticker, row.get("기술적타점", "")) or "").strip()
+            dip_level = 0
+            if bucket == "leverage" and _num(row.get("매입가"), 0.0) > 0 and current_price > 0:
+                pct_drop = (current_price - _num(row.get("매입가"), 0.0)) / _num(row.get("매입가"), 0.0)
+                if pct_drop <= -0.15:
+                    dip_level = 3
+                elif pct_drop <= -0.10:
+                    dip_level = 2
+                elif pct_drop <= -0.05:
+                    dip_level = 1
+            try:
+                timing_multiplier = _rebcalc_signal_multiplier(signal or "-", bucket, dip_level=dip_level)
+            except Exception:
+                timing_multiplier = 1.0 if bucket == "core" else 0.0
+            if needed_shares < -0.5:
+                status = "비중 초과"
+            elif needed_shares < 0.5:
+                status = "거의 도달"
+            elif timing_multiplier <= 0:
+                status = "목표부족 · 타점대기"
+            elif bucket == "leverage" and timing_multiplier < 1.0:
+                status = "목표부족 · 소액정찰"
+            else:
+                status = "목표부족 · 매수검토"
             rows.append({
                 "자산명": name,
                 "티커": ticker,
@@ -31508,7 +31533,7 @@ def render_print_report_v2():
                 "현재 주수": qty_now,
                 "추가 필요 주수": needed_shares,
                 "추가 필요 금액": needed_value,
-                "상태": "매수 필요" if needed_shares >= 0.5 else ("비중 초과" if needed_shares < -0.5 else "거의 도달"),
+                "상태": status,
             })
         return pd.DataFrame(rows)
 
