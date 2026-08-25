@@ -17604,14 +17604,48 @@ def build_leveraged_dca_timing_state(c, state):
         )
 
     if dca_blocked:
-        status = "레버리지 DCA 보류"
-        color = "#ef4444" if recovery_passed < 3 else "#d97706"
-        status_note = (
-            f"{condition_summary}. 목표비중 부족분이 있어도 현재는 회차를 열지 않고 "
-            "MA20/MA50, 기초축 1W, 종가 회복을 먼저 확인합니다."
-        )
+        if dca_stage == "미보유 관찰":
+            if target_w <= 0:
+                status = "레버리지 미보유 관찰: 목표비중 없음"
+                status_note = (
+                    f"{condition_summary}. 회복 체크는 통과했더라도 목표비중이 0%라 DCA 회차 대상이 아닙니다. "
+                    "관심/목표비중을 먼저 설정한 뒤 신규 타점으로 따로 판단합니다."
+                )
+            else:
+                status = "레버리지 미보유: 신규 타점 확인"
+                status_note = (
+                    f"{condition_summary}. 보유 전이라 DCA가 아니라 신규 진입 타점입니다. "
+                    "회복 체크가 좋아도 현재가 추격보다 눌림·거래량 진정·기초축 동행을 확인합니다."
+                )
+            color = "#64748b"
+        elif target_w <= 0:
+            status = "레버리지 목표비중 없음: DCA 제외"
+            color = "#64748b"
+            status_note = (
+                f"{condition_summary}. 목표비중이 0%라 자동 DCA 대상이 아닙니다. "
+                "보유/관심 정책을 먼저 정한 뒤 수동으로만 검토합니다."
+            )
+        elif target_w > 0 and current_w >= target_w:
+            status = "레버리지 목표비중 충족: DCA 제외"
+            color = "#64748b"
+            status_note = (
+                f"{condition_summary}. 이미 목표비중을 채웠으므로 회복 체크가 좋아도 추가 DCA는 열지 않습니다."
+            )
+        elif dca_stage == "과열패스":
+            status = "레버리지 과열패스: DCA 대기"
+            color = "#d97706"
+            status_note = (
+                f"{condition_summary}. 회복 체크와 별개로 RSI/MFI/%B 과열권에서는 목표비중 미달만 보고 따라붙지 않습니다."
+            )
+        else:
+            status = "레버리지 회복 전: DCA 보류"
+            color = "#ef4444" if recovery_passed < 3 else "#d97706"
+            status_note = (
+                f"{condition_summary}. 목표비중 부족분이 있어도 현재는 회차를 열지 않고 "
+                "MA20/MA50, 기초축 1W, 종가 회복을 먼저 확인합니다."
+            )
         tranche_weights = [0.0, 0.0, 0.0]
-        entry1_cond = "회복 체크 3개 이상과 기초축 동행 전까지 신규 DCA 회차를 열지 않음"
+        entry1_cond = "DCA 제외/보류 사유 해소 전까지 신규 회차를 열지 않음"
     elif not allow_current:
         if profile_key == "RAM" and (heat_wait or rr_wait):
             status = f"레버리지 조건부 DCA 대기: {ram_price_gate_text}"
@@ -17670,8 +17704,18 @@ def build_leveraged_dca_timing_state(c, state):
         else "3차는 MA50 회복 또는 손절선 근처 변동성 진정 확인 전까지 예비 회차"
     )
     if dca_blocked:
-        entry2_cond = "회복 체크가 3개 미만이면 2차도 보류"
-        entry3_cond = "손절선 이탈 또는 기초축 동반 약세면 마지막 회차도 사용하지 않음"
+        if dca_stage == "미보유 관찰":
+            entry2_cond = "목표비중 설정 후 신규 타점으로 재계산"
+            entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"
+        elif target_w <= 0:
+            entry2_cond = "목표비중이 0%면 2차도 제외"
+            entry3_cond = "목표비중이 0%면 마지막 회차도 제외"
+        elif target_w > 0 and current_w >= target_w:
+            entry2_cond = "목표비중 충족 상태에서는 2차도 제외"
+            entry3_cond = "목표비중 충족 상태에서는 마지막 회차도 제외"
+        else:
+            entry2_cond = "회복 체크가 3개 미만이면 2차도 보류"
+            entry3_cond = "손절선 이탈 또는 기초축 동반 약세면 마지막 회차도 사용하지 않음"
 
     return {
         "status": status,
@@ -17718,6 +17762,8 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
     recovery_label = state.get("recovery_label", "")
     recovery_state = state.get("recovery_state", "")
     recovery_passed = int(state.get("recovery_passed", 0))
+    target_w = clean_float(out.get("target_w"), 0.0)
+    current_w = clean_float(out.get("current_w"), 0.0)
     underlying_1w = clean_float(state.get("underlying_1w_avg"), np.nan)
     underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
     timing_state = build_leveraged_dca_timing_state(out, state)
@@ -17729,7 +17775,48 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
         f"기존 판정: {out.get('dec', '-')}",
     )
 
-    if dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"} or recovery_passed < 3:
+    if dca_stage == "미보유 관찰":
+        no_position_label = (
+            "⚡레버리지 미보유 관찰: 목표비중 없음"
+            if target_w <= 0
+            else "⚡레버리지 미보유: 신규 타점 확인"
+        )
+        out.update({
+            "dec": no_position_label,
+            "col": "#64748b",
+            "decision_code": "LEVERAGED_WATCH_NO_POSITION",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "보유 전에는 DCA가 아니라 신규 타점입니다. 목표비중, 눌림 가격, 기초축 동행을 먼저 확인합니다.",
+        })
+    elif target_w <= 0:
+        out.update({
+            "dec": "⚡레버리지 목표비중 없음: DCA 제외",
+            "col": "#64748b",
+            "decision_code": "LEVERAGED_TARGET_ZERO_DCA_EXCLUDED",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "목표비중이 0%라 자동 DCA 대상이 아닙니다. 목표비중을 정한 뒤 다시 계산하세요.",
+        })
+    elif target_w > 0 and current_w >= target_w:
+        out.update({
+            "dec": "⚡레버리지 목표비중 충족: DCA 제외",
+            "col": "#64748b",
+            "decision_code": "LEVERAGED_TARGET_FILLED_DCA_EXCLUDED",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "회복 체크가 좋아도 목표비중을 채웠으면 추가 DCA를 열지 않습니다.",
+        })
+    elif dca_stage == "과열패스":
+        out.update({
+            "dec": "⚡레버리지 과열패스: DCA 대기",
+            "col": "#d97706",
+            "decision_code": "LEVERAGED_DCA_OVERHEAT_PASS",
+            "decision_group": "caution",
+            "decision_reasons": reasons,
+            "sizing_hint": "레버리지 ETF는 회복 체크가 좋아도 RSI/MFI/%B 과열권에서는 눌림을 기다립니다.",
+        })
+    elif dca_multiple == "×0" or dca_stage == "회복 전 DCA 보류" or recovery_passed < 3:
         out.update({
             "dec": "⚡레버리지 회복 전: DCA 보류",
             "col": "#d97706",
@@ -18713,7 +18800,45 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     pass_count = int(status_counts.get("통과", 0))
 
     if leveraged_state and leveraged_state.get("dca_multiple") == "×0":
-        final_label, final_color, action = "DCA 보류", "#d97706", "레버리지 ETF 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요."
+        leveraged_stage = str(leveraged_state.get("dca_stage", "") or "")
+        leveraged_recovery_passed = int(leveraged_state.get("recovery_passed", 0) or 0)
+        if leveraged_stage == "미보유 관찰":
+            if target_w <= 0:
+                final_label, final_color, action = (
+                    "관찰",
+                    "#64748b",
+                    "회복조건은 좋아도 보유 전이고 목표비중이 0%입니다. DCA 대상이 아니라 관심/목표비중 설정 후 신규 타점으로 다시 보세요.",
+                )
+            else:
+                final_label, final_color, action = (
+                    "신규 타점 확인",
+                    "#64748b",
+                    "보유 전이라 DCA가 아닙니다. 목표비중은 있어도 현재가 추격보다 눌림, 거래량 진정, 기초축 동행을 확인하세요.",
+                )
+        elif target_w <= 0:
+            final_label, final_color, action = (
+                "DCA 제외",
+                "#64748b",
+                "목표비중이 0%라 자동 DCA 대상이 아닙니다. 목표비중을 먼저 정한 뒤 다시 계산하세요.",
+            )
+        elif leveraged_stage == "과열패스":
+            final_label, final_color, action = (
+                "DCA 대기",
+                "#d97706",
+                "회복조건과 별개로 과열권입니다. 레버리지 ETF는 목표비중 미달이어도 RSI/MFI/%B 과열이 풀릴 때까지 DCA를 열지 않습니다.",
+            )
+        elif leveraged_recovery_passed < 3 or leveraged_stage == "회복 전 DCA 보류":
+            final_label, final_color, action = (
+                "DCA 보류",
+                "#d97706",
+                "레버리지 ETF 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요.",
+            )
+        else:
+            final_label, final_color, action = (
+                "DCA 보류",
+                "#d97706",
+                "레버리지 ETF는 회복조건이 좋아도 비중/목표/과열 조건이 맞지 않으면 자동 DCA를 열지 않습니다.",
+            )
     elif leveraged_state and str(leveraged_state.get("dca_stage", "")).endswith("후보"):
         if str(leveraged_state.get("profile_key", "")) == "RAM":
             rr2_entry = _leveraged_rr_entry_threshold(c, 2.0)
