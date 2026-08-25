@@ -17572,6 +17572,19 @@ def build_leveraged_dca_timing_state(c, state):
         f"{dca_stage} {dca_multiple} · 회복 {recovery_passed}/{recovery_total}({recovery_state}) · "
         f"기초축 1W {underlying_text} · R/R {rr_text} · 비중 {current_w:.1f}/{target_w:.1f}% · 남은 확인: {failed_text}"
     )
+    technical_entry_ready = (
+        recovery_passed >= 5
+        and ma20_ok
+        and underlying_ok
+        and not heat_wait
+        and not rr_wait
+    )
+    technical_entry_watch = (
+        recovery_passed >= 3
+        and ma20_ok
+        and underlying_ok
+        and not rr_wait
+    )
     trade_plan_note = ""
     ram_rr2_entry = _leveraged_rr_entry_threshold(c, 2.0)
     ram_rr15_entry = _leveraged_rr_entry_threshold(c, 1.5)
@@ -17605,47 +17618,76 @@ def build_leveraged_dca_timing_state(c, state):
 
     if dca_blocked:
         if dca_stage == "미보유 관찰":
+            if technical_entry_ready:
+                status = "레버리지 신규 1차 정찰 가능"
+                entry1_verdict = "타점가능"
+            elif heat_wait:
+                status = "레버리지 신규 추격금지: 눌림 대기"
+                entry1_verdict = "대기"
+            elif rr_wait:
+                status = "레버리지 신규 타점 대기: R/R 부족"
+                entry1_verdict = "대기"
+            elif technical_entry_watch:
+                status = "레버리지 신규 관심: 정찰 후보"
+                entry1_verdict = "조건부"
+            else:
+                status = "레버리지 미보유: 타점 관찰"
+                entry1_verdict = "관찰"
             if target_w <= 0:
-                status = "레버리지 미보유 관찰: 목표비중 없음"
+                status = f"{status} · 금액 미설정"
                 status_note = (
-                    f"{condition_summary}. 회복 체크는 통과했더라도 목표비중이 0%라 DCA 회차 대상이 아닙니다. "
-                    "관심/목표비중을 먼저 설정한 뒤 신규 타점으로 따로 판단합니다."
+                    f"{condition_summary}. 목표비중이 0%라 주문 금액/주수는 자동 계산하지 않지만, "
+                    "타점 판정은 별도로 표시합니다. 관심/목표비중을 정하면 같은 타점 기준으로 1차 금액을 계산합니다."
                 )
             else:
-                status = "레버리지 미보유: 신규 타점 확인"
                 status_note = (
                     f"{condition_summary}. 보유 전이라 DCA가 아니라 신규 진입 타점입니다. "
-                    "회복 체크가 좋아도 현재가 추격보다 눌림·거래량 진정·기초축 동행을 확인합니다."
+                    "회복 체크, 과열, R/R, 기초축 동행을 기준으로 1차 정찰 여부를 봅니다."
                 )
             color = "#64748b"
         elif target_w <= 0:
-            status = "레버리지 목표비중 없음: DCA 제외"
+            if heat_wait:
+                status = "레버리지 타점: 추격금지 · 금액 미설정"
+                entry1_verdict = "대기"
+            elif technical_entry_ready:
+                status = "레버리지 타점: 1차 정찰 가능 · 금액 미설정"
+                entry1_verdict = "타점가능"
+            else:
+                status = "레버리지 타점 관찰 · 금액 미설정"
+                entry1_verdict = "관찰"
             color = "#64748b"
             status_note = (
-                f"{condition_summary}. 목표비중이 0%라 자동 DCA 대상이 아닙니다. "
-                "보유/관심 정책을 먼저 정한 뒤 수동으로만 검토합니다."
+                f"{condition_summary}. 목표비중이 0%라 자동 DCA 금액은 제외하지만, "
+                "차트·기초축 기준의 타점 상태는 참고용으로 표시합니다."
             )
         elif target_w > 0 and current_w >= target_w:
             status = "레버리지 목표비중 충족: DCA 제외"
             color = "#64748b"
+            entry1_verdict = "제외"
             status_note = (
                 f"{condition_summary}. 이미 목표비중을 채웠으므로 회복 체크가 좋아도 추가 DCA는 열지 않습니다."
             )
         elif dca_stage == "과열패스":
             status = "레버리지 과열패스: DCA 대기"
             color = "#d97706"
+            entry1_verdict = "대기"
             status_note = (
                 f"{condition_summary}. 회복 체크와 별개로 RSI/MFI/%B 과열권에서는 목표비중 미달만 보고 따라붙지 않습니다."
             )
         else:
             status = "레버리지 회복 전: DCA 보류"
             color = "#ef4444" if recovery_passed < 3 else "#d97706"
+            entry1_verdict = "보류"
             status_note = (
                 f"{condition_summary}. 목표비중 부족분이 있어도 현재는 회차를 열지 않고 "
                 "MA20/MA50, 기초축 1W, 종가 회복을 먼저 확인합니다."
             )
         tranche_weights = [0.0, 0.0, 0.0]
-        entry1_cond = "DCA 제외/보류 사유 해소 전까지 신규 회차를 열지 않음"
+        entry1_cond = (
+            "목표비중 미설정 상태라 금액 계산은 제외. 타점은 회복·과열·R/R·기초축 기준으로 참고"
+            if target_w <= 0
+            else "DCA 제외/보류 사유 해소 전까지 신규 회차를 열지 않음"
+        )
     elif not allow_current:
         if profile_key == "RAM" and (heat_wait or rr_wait):
             status = f"레버리지 조건부 DCA 대기: {ram_price_gate_text}"
@@ -17670,6 +17712,7 @@ def build_leveraged_dca_timing_state(c, state):
             if profile_key == "RAM"
             else "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
         )
+        entry1_verdict = "대기"
     elif recovery_passed >= 5 and ma50_ok:
         status = "레버리지 회복 DCA: 분할 가능"
         color = "#16a34a"
@@ -17679,6 +17722,7 @@ def build_leveraged_dca_timing_state(c, state):
         )
         tranche_weights = [0.30, 0.35, 0.35]
         entry1_cond = "현재가 1차 가능: MA20/MA50 위 종가 유지와 기초축 1W 양수 확인"
+        entry1_verdict = "가능"
     else:
         status = "레버리지 조건부 DCA: 소액 1차"
         color = "#8b5cf6"
@@ -17688,6 +17732,7 @@ def build_leveraged_dca_timing_state(c, state):
         )
         tranche_weights = [0.25, 0.35, 0.40]
         entry1_cond = "소액 1차만: MA20 위 종가 유지와 기초축 1W 양수 확인"
+        entry1_verdict = "조건부"
 
     entry2_cond = (
         (
@@ -17705,11 +17750,11 @@ def build_leveraged_dca_timing_state(c, state):
     )
     if dca_blocked:
         if dca_stage == "미보유 관찰":
-            entry2_cond = "목표비중 설정 후 신규 타점으로 재계산"
+            entry2_cond = "목표비중 설정 후 같은 타점 기준으로 금액 재계산"
             entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"
         elif target_w <= 0:
-            entry2_cond = "목표비중이 0%면 2차도 제외"
-            entry3_cond = "목표비중이 0%면 마지막 회차도 제외"
+            entry2_cond = "목표비중이 0%라 금액 계산 제외. 타점 참고만 표시"
+            entry3_cond = "목표비중 설정 전까지 마지막 회차도 금액 계산 제외"
         elif target_w > 0 and current_w >= target_w:
             entry2_cond = "목표비중 충족 상태에서는 2차도 제외"
             entry3_cond = "목표비중 충족 상태에서는 마지막 회차도 제외"
@@ -17723,6 +17768,9 @@ def build_leveraged_dca_timing_state(c, state):
         "status_note": status_note,
         "condition_summary": condition_summary,
         "allow_current": allow_current,
+        "technical_entry_ready": technical_entry_ready,
+        "technical_entry_watch": technical_entry_watch,
+        "entry1_verdict": entry1_verdict,
         "tranche_weights": tranche_weights,
         "entry1_cond": entry1_cond,
         "entry2_cond": entry2_cond,
@@ -17776,18 +17824,15 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
     )
 
     if dca_stage == "미보유 관찰":
-        no_position_label = (
-            "⚡레버리지 미보유 관찰: 목표비중 없음"
-            if target_w <= 0
-            else "⚡레버리지 미보유: 신규 타점 확인"
-        )
+        timing_label = str(timing_state.get("status", "") or "레버리지 미보유: 타점 관찰")
+        no_position_label = timing_label if timing_label.startswith("⚡") else f"⚡{timing_label}"
         out.update({
             "dec": no_position_label,
             "col": "#64748b",
             "decision_code": "LEVERAGED_WATCH_NO_POSITION",
             "decision_group": "caution",
             "decision_reasons": reasons,
-            "sizing_hint": "보유 전에는 DCA가 아니라 신규 타점입니다. 목표비중, 눌림 가격, 기초축 동행을 먼저 확인합니다.",
+            "sizing_hint": "보유 전에는 DCA가 아니라 신규 타점입니다. 목표비중이 없어도 타점은 표시하고, 금액/주수 계산만 제외합니다.",
         })
     elif target_w <= 0:
         out.update({
@@ -17909,7 +17954,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         timing_rows = [
             {
                 "타점": "현재가",
-                "판정": "가능" if timing_state.get("allow_current") else "보류",
+                "판정": timing_state.get("entry1_verdict") or ("가능" if timing_state.get("allow_current") else "보류"),
                 "확인조건": timing_state.get("entry1_cond", ""),
             },
             {
@@ -18673,14 +18718,29 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
 
     is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, "")
     leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
+    leveraged_timing_state = {}
     if leveraged_state:
+        leveraged_timing_state = build_leveraged_dca_timing_state(c, leveraged_state)
         dca_stage = leveraged_state.get("dca_stage", "-")
         dca_multiple = leveraged_state.get("dca_multiple", "-")
         recovery_label = leveraged_state.get("recovery_label", "-")
         recovery_state = leveraged_state.get("recovery_state", "-")
         underlying_1w = clean_float(leveraged_state.get("underlying_1w_avg"), np.nan)
         underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
-        if dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스", "미보유 관찰"}:
+        timing_status = str(leveraged_timing_state.get("status", "") or "")
+        entry1_verdict = str(leveraged_timing_state.get("entry1_verdict", "") or "")
+        if dca_stage == "미보유 관찰":
+            if entry1_verdict in {"타점가능", "가능"}:
+                lev_status = "통과" if target_w > 0 else "주의"
+            elif entry1_verdict == "조건부":
+                lev_status = "주의"
+            elif "추격금지" in timing_status or entry1_verdict == "대기":
+                lev_status = "차단" if target_w > 0 else "주의"
+            else:
+                lev_status = "주의"
+        elif target_w <= 0 and dca_multiple == "×0":
+            lev_status = "주의"
+        elif dca_multiple == "×0" or dca_stage in {"회복 전 DCA 보류", "과열패스"}:
             lev_status = "차단"
         elif (
             int(leveraged_state.get("recovery_passed", 0)) < 5
@@ -18691,11 +18751,13 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
             lev_status = "주의"
         else:
             lev_status = "통과"
+        lev_check_name = "레버리지 타점" if dca_stage == "미보유 관찰" else "레버리지 DCA"
+        timing_note = f" · 타점: {timing_status}" if timing_status else ""
         add_check(
-            "레버리지 DCA",
+            lev_check_name,
             lev_status,
             f"{dca_stage} {dca_multiple}. 회복 체크 {recovery_label}({recovery_state}) · 기초축 1W 평균 {underlying_text}. "
-            f"{leveraged_state.get('dca_note', '')}",
+            f"{leveraged_state.get('dca_note', '')}{timing_note}",
         )
     elif is_leveraged_product and day_ret <= -0.08:
         add_check("레버리지", "차단", f"현재/전거래일 대비 {day_ret * 100:.1f}% 급락입니다. 레버리지 상품은 가격이 내려왔다는 이유만으로 추매하지 않고 종가·기초지수 회복을 먼저 확인합니다.")
@@ -18802,24 +18864,39 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     if leveraged_state and leveraged_state.get("dca_multiple") == "×0":
         leveraged_stage = str(leveraged_state.get("dca_stage", "") or "")
         leveraged_recovery_passed = int(leveraged_state.get("recovery_passed", 0) or 0)
+        timing_status = str(leveraged_timing_state.get("status", "") or "")
+        entry1_verdict = str(leveraged_timing_state.get("entry1_verdict", "") or "")
         if leveraged_stage == "미보유 관찰":
+            if entry1_verdict in {"타점가능", "가능"}:
+                final_label = "타점 가능" if target_w > 0 else "타점 가능(금액 미설정)"
+                final_color = "#16a34a" if target_w > 0 else "#8b5cf6"
+            elif entry1_verdict == "조건부":
+                final_label, final_color = "조건부 관심", "#8b5cf6"
+            elif "추격금지" in timing_status or entry1_verdict == "대기":
+                final_label, final_color = "타점 대기", "#d97706"
+            else:
+                final_label, final_color = "타점 관찰", "#64748b"
             if target_w <= 0:
-                final_label, final_color, action = (
-                    "관찰",
-                    "#64748b",
-                    "회복조건은 좋아도 보유 전이고 목표비중이 0%입니다. DCA 대상이 아니라 관심/목표비중 설정 후 신규 타점으로 다시 보세요.",
+                action = (
+                    f"목표비중이 없어도 타점은 '{timing_status or final_label}'로 표시합니다. "
+                    "다만 부족 매수액과 주수는 계산하지 않으니, 실행하려면 관심/목표비중을 먼저 정하세요."
                 )
             else:
-                final_label, final_color, action = (
-                    "신규 타점 확인",
-                    "#64748b",
-                    "보유 전이라 DCA가 아닙니다. 목표비중은 있어도 현재가 추격보다 눌림, 거래량 진정, 기초축 동행을 확인하세요.",
+                action = (
+                    f"보유 전이라 DCA가 아니라 신규 타점입니다. '{timing_status or final_label}' 기준으로 "
+                    "정찰/대기 여부를 판단하고, 실제 금액은 목표비중 안에서만 계산합니다."
                 )
         elif target_w <= 0:
+            if entry1_verdict in {"타점가능", "가능"} or bool(leveraged_timing_state.get("technical_entry_ready")):
+                final_label, final_color = "타점 가능(금액 미설정)", "#8b5cf6"
+            elif "추격금지" in timing_status or entry1_verdict == "대기":
+                final_label, final_color = "타점 대기", "#d97706"
+            else:
+                final_label, final_color = "타점 관찰", "#64748b"
             final_label, final_color, action = (
-                "DCA 제외",
-                "#64748b",
-                "목표비중이 0%라 자동 DCA 대상이 아닙니다. 목표비중을 먼저 정한 뒤 다시 계산하세요.",
+                final_label,
+                final_color,
+                f"목표비중이 0%라 자동 DCA 금액은 제외하지만, 타점은 '{timing_status or final_label}'로 참고합니다. 실행하려면 목표비중을 먼저 정하세요.",
             )
         elif leveraged_stage == "과열패스":
             final_label, final_color, action = (
