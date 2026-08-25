@@ -1190,6 +1190,8 @@ def canonicalize_watchlist_ticker(ticker, name=""):
     text = f"{raw} {name or ''}".upper()
     if symbol == "RAM" or ("ROUNDHILL T-REX" in text and "DRAM" in text):
         return "RAM"
+    if symbol in {"BITX", "BITU"} or (("2X" in text or "2배" in text) and ("BITCOIN" in text or "비트코인" in text or "BTC" in text)):
+        return "BITX" if symbol not in {"BITX", "BITU"} else symbol
     return raw
 
 
@@ -1270,6 +1272,11 @@ def sanitize_watchlist_item(item):
         cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("RAM", "Roundhill T-REX 2X Long DRAM Daily Target ETF")
         cleaned["is_etf"] = True
         cleaned["asset_class"] = "us_etf_nasdaq"
+        cleaned["fin_score"] = 0
+    if clean_symbol(ticker) in {"BITX", "BITU"}:
+        cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get(clean_symbol(ticker), "2x Bitcoin ETF")
+        cleaned["is_etf"] = True
+        cleaned["asset_class"] = "us_etf_crypto"
         cleaned["fin_score"] = 0
     return cleaned
 
@@ -13648,6 +13655,8 @@ def get_rs_benchmark(ticker, asset_class):
         "QQQM": US_BROAD_BENCHMARK,
         "QLD": US_BROAD_BENCHMARK,
         "TQQQ": US_BROAD_BENCHMARK,
+        "BITX": US_BROAD_BENCHMARK,
+        "BITU": US_BROAD_BENCHMARK,
         "SOXX": US_BROAD_BENCHMARK,
         "SOXL": US_BROAD_BENCHMARK,
         "SMH": US_BROAD_BENCHMARK,
@@ -14061,6 +14070,8 @@ UNDERLYING_BENCHMARK_MAP = {
     "QQQM": ("QQQM", "나스닥100"),
     "QLD": ("QQQM", "나스닥100"),
     "TQQQ": ("QQQM", "나스닥100"),
+    "BITX": ("BTC-USD", "비트코인"),
+    "BITU": ("BTC-USD", "비트코인"),
     "379810": ("QQQM", "나스닥100"),
     "SOXX": ("SMH", "반도체"),
     "SOXL": ("SMH", "반도체"),
@@ -14314,6 +14325,7 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     keywords = [
         "LEVER", "LEVERAGE", "LEVERAGED", "INVERSE", "인버스", "레버리지", "곱버스",
         "2X", "3X", "TQQQ", "SQQQ", "QLD", "SOXL", "SOXS", "SPXL", "SPXS", "UPRO", "SPXU",
+        "BITX", "BITU", "2배", "비트코인2배", "2X BITCOIN", "2X BTC",
     ]
     return any(keyword in text for keyword in keywords)
 
@@ -16881,7 +16893,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         elif decision_code == "LEVERAGED_DAILY_DROP_NO_ADD":
             status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
         elif decision_code == "LEVERAGED_RECOVERY_DCA_BLOCK":
-            status_note = "SOXL/RAM 전용 회복 체크가 부족합니다. 목표비중이 부족해도 MA50, 기초축 1W, R/R 회복 전에는 DCA 회차를 열지 않습니다."
+            status_note = "레버리지 ETF 회복 체크가 부족합니다. 목표비중이 부족해도 MA50, 기초축 1W, R/R 회복 전에는 DCA 회차를 열지 않습니다."
         else:
             if decision_code in {"PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY"}:
                 status_note = "고점대비 낙폭이 커서 새 돈 투입은 보류합니다. 추세가 완전히 깨졌다는 뜻은 아니며, 하락 원인과 종가 안정부터 확인합니다."
@@ -17095,7 +17107,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             "가격": "-",
             "금액/수량": "-",
             "예상 R/R": rr_now_text,
-            "조건": leveraged_timing.get("condition_summary", "SOXL/RAM 전용 회복조건 확인"),
+            "조건": leveraged_timing.get("condition_summary", "레버리지 ETF 전용 회복조건 확인"),
         })
     if is_core_dca:
         rows.append({
@@ -17257,6 +17269,22 @@ LEVERAGED_ETF_PRECISION_PROFILES = {
             ("SOXX", "섹터 확인", "미국 반도체 ETF"),
         ],
     },
+    "BITX": {
+        "display_name": "2x Bitcoin ETF",
+        "leverage": 2.0,
+        "reset_note": "비트코인 축을 하루 단위로 2배 추종합니다.",
+        "underlying_note": "비트코인 2배 ETF는 차트 패턴보다 BTC 현물, 비트코인 ETF, 달러·금리, 코인베이스/채굴주 같은 위험선호 프록시를 같이 확인합니다.",
+        "watch": [
+            ("BTC-USD", "기초 자산", "Bitcoin spot"),
+            ("IBIT", "기초 ETF", "iShares Bitcoin Trust"),
+            ("COIN", "대표축", "Coinbase"),
+            ("MSTR", "대표축", "MicroStrategy/Bitcoin proxy"),
+            ("MARA", "대표축", "Bitcoin mining"),
+            ("RIOT", "대표축", "Bitcoin mining"),
+            ("QQQ", "시장 환경", "나스닥100"),
+            ("UUP", "시장 환경", "달러 인덱스 ETF"),
+        ],
+    },
 }
 
 
@@ -17269,6 +17297,10 @@ def get_leveraged_etf_precision_profile(ticker, name=""):
         return "RAM", LEVERAGED_ETF_PRECISION_PROFILES["RAM"]
     if "DIREXION" in text and "SEMICONDUCTOR" in text and "3X" in text:
         return "SOXL", LEVERAGED_ETF_PRECISION_PROFILES["SOXL"]
+    if symbol == "BITU":
+        return "BITX", LEVERAGED_ETF_PRECISION_PROFILES["BITX"]
+    if ("2X" in text or "2배" in text) and ("BITCOIN" in text or "비트코인" in text or "BTC" in text):
+        return "BITX", LEVERAGED_ETF_PRECISION_PROFILES["BITX"]
     return "", {}
 
 
@@ -17704,7 +17736,7 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
             "decision_code": "LEVERAGED_RECOVERY_DCA_BLOCK",
             "decision_group": "caution",
             "decision_reasons": reasons,
-            "sizing_hint": "SOXL/RAM 전용: 목표비중 부족보다 MA50·기초축 회복 체크를 우선합니다.",
+            "sizing_hint": "레버리지 ETF 전용: 목표비중 부족보다 MA50·기초축 회복 체크를 우선합니다.",
         })
     elif "후보" in dca_stage or dca_multiple in {"정찰", "조건부"}:
         timing_label = timing_state.get("status", "레버리지 DCA 조건부: 회복 확인")
@@ -17714,7 +17746,7 @@ def apply_leveraged_precision_decision_override(c, name, ticker, has_pos, my_pri
             "decision_code": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
             "decision_group": "caution",
             "decision_reasons": reasons,
-            "sizing_hint": "SOXL/RAM 전용: 회복 체크, 기초축 1W, 눌림 타점이 같이 맞을 때만 회차별 소액 DCA로 해석합니다.",
+            "sizing_hint": "레버리지 ETF 전용: 회복 체크, 기초축 1W, 눌림 타점이 같이 맞을 때만 회차별 소액 DCA로 해석합니다.",
         })
     return out
 
@@ -17818,8 +17850,8 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
 
     with st.expander("기초축/대표 프록시 확인", expanded=True):
         st.caption(
-            "SOXL은 공식 실시간 보유비중표가 아니라 반도체 기초 ETF와 대표축 프록시입니다. "
-            "RAM은 DRAM ETF와 메모리 대표주 흐름을 같이 봅니다."
+            "공식 실시간 보유비중표가 아니라 각 상품의 기초축과 대표 프록시 흐름을 같이 봅니다. "
+            "SOXL은 반도체, RAM은 DRAM·메모리, BITX는 BTC·비트코인 ETF·위험선호 프록시를 확인합니다."
         )
         if watch_rows:
             st.dataframe(pd.DataFrame(watch_rows), width='stretch', hide_index=True)
@@ -18681,7 +18713,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     pass_count = int(status_counts.get("통과", 0))
 
     if leveraged_state and leveraged_state.get("dca_multiple") == "×0":
-        final_label, final_color, action = "DCA 보류", "#d97706", "SOXL/RAM 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요."
+        final_label, final_color, action = "DCA 보류", "#d97706", "레버리지 ETF 전용 체크상 회복조건이 부족합니다. 목표비중 부족분보다 MA50, 기초축 1W, R/R 회복을 먼저 확인하세요."
     elif leveraged_state and str(leveraged_state.get("dca_stage", "")).endswith("후보"):
         if str(leveraged_state.get("profile_key", "")) == "RAM":
             rr2_entry = _leveraged_rr_entry_threshold(c, 2.0)
@@ -20962,7 +20994,7 @@ def infer_benchmark_leverage_multiplier(ticker, asset_name=""):
     inverse = any(k in text for k in ["INVERSE", "BEAR", "인버스", "곱버스", "SQQQ", "SOXS", "SPXU", "SDOW"])
     if any(k in text for k in ["3X", "3배", "TQQQ", "SOXL", "UPRO", "SPXL", "TECL", "FNGU"]):
         return -3.0 if inverse else 3.0
-    if any(k in text for k in ["2X", "2배", "QLD", "SSO", "레버리지", "LEVERAGE", "ULTRA"]):
+    if any(k in text for k in ["2X", "2배", "BITX", "BITU", "QLD", "SSO", "레버리지", "LEVERAGE", "ULTRA"]):
         return -2.0 if inverse else 2.0
     if inverse:
         return -1.0
@@ -23700,7 +23732,7 @@ def infer_scenario_shock_multiplier(row):
     multiplier = 1.0
     if any(keyword in text for keyword in ["3X", "3배", "TQQQ", "SOXL", "SQQQ", "SOXS", "SPXL", "SPXU", "UPRO", "TECL", "FNGU", "BULZ"]):
         multiplier = 3.0
-    elif any(keyword in text for keyword in ["2X", "2배", "QLD", "SSO", "ROM", "USD", "UWM", "SDS", "QID"]):
+    elif any(keyword in text for keyword in ["2X", "2배", "BITX", "BITU", "QLD", "SSO", "ROM", "USD", "UWM", "SDS", "QID"]):
         multiplier = 2.0
     elif any(keyword in text for keyword in ["레버리지", "LEVERAGE", "LEVERAGED"]):
         multiplier = 2.0
@@ -27569,7 +27601,7 @@ def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_m
     bucket_series = summary_df.get("bucket", summary_df.get("버킷", pd.Series("", index=summary_df.index))).astype(str).str.lower()
     weight_gap = summary_df.get("비중차이", pd.Series(0.0, index=summary_df.index)).apply(clean_float)
 
-    leverage_mask = bucket_series.eq("leverage") | ticker_series.str.contains("QLD|TQQQ|SOXL|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+    leverage_mask = bucket_series.eq("leverage") | ticker_series.str.contains("QLD|TQQQ|SOXL|RAM|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
     core_mask = bucket_series.eq("core")
     leverage_blocked = bool((leverage_mask & hard_block_mask).any())
     leverage_dca_ready = bool((leverage_mask & buyish_mask & ~hard_block_mask).any())
