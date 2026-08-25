@@ -11052,14 +11052,30 @@ def _flow_stat_guard_caption(market_guard):
     return " · ".join(parts)
 
 
-def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=None):
+def _flow_market_cards_from_sector_ability(sector_cards):
     cards = []
-    for market, fallback in [("한국", kr_top5), ("미국", us_top5)]:
-        row, source = _flow_stat_candidate(command_df, market, fallback)
-        card = _flow_stat_card_from_row(row, market, source, market_guard=market_guard)
-        if card:
-            card["etfs"] = _flow_stat_top_etf_text(fallback)
-            cards.append(card)
+    if not sector_cards:
+        return cards
+    for market in ["한국", "미국"]:
+        top = next((card for card in sector_cards if card.get("market") == market), None)
+        if not top:
+            continue
+        card = dict(top)
+        card["title"] = f"통합 1순위: {card.get('title', market)}"
+        card["source"] = "섹터별 능력치"
+        cards.append(card)
+    return cards
+
+
+def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=None, sector_cards=None):
+    cards = _flow_market_cards_from_sector_ability(sector_cards)
+    if not cards:
+        for market, fallback in [("한국", kr_top5), ("미국", us_top5)]:
+            row, source = _flow_stat_candidate(command_df, market, fallback)
+            card = _flow_stat_card_from_row(row, market, source, market_guard=market_guard)
+            if card:
+                card["etfs"] = _flow_stat_top_etf_text(fallback)
+                cards.append(card)
     if not cards:
         return
 
@@ -11084,7 +11100,9 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
                 f"시장모드 `{card['mode']}` · 평균 {card['total']}/10 · {card['source']}"
             )
             st.plotly_chart(_flow_stat_radar_figure(card), width='stretch', key=f"market_flow_stat_radar_{card['market']}")
-            st.caption(f"시장 ETF 상위: {card.get('etfs', '-')}")
+            st.caption(f"대표 ETF: {card.get('etfs', '-')}")
+            if card.get("anchor_representatives"):
+                st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
             st.caption(f"오늘 포착종목: {card['representatives']}")
             st.caption(f"실행분류: {_flow_action_caption(card['action'])} · 내부: {card['internal']}")
 
@@ -11478,8 +11496,9 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
     return sorted(cards, key=lambda x: x.get("total", 0), reverse=True)[:limit]
 
 
-def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotation_df, market_guard=None):
-    cards = _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
+def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, cards=None):
+    if cards is None:
+        cards = _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     if not cards:
         return
 
@@ -30463,8 +30482,9 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         command_df=command_flow_df,
         market_guard=market_guard,
     )
-    render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard)
-    render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
+    sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
+    render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
+    render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=sector_ability_cards)
 
     st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
     metric_cols = st.columns(4)
