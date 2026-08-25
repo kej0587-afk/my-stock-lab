@@ -10898,6 +10898,8 @@ def _flow_stat_card_from_row(row, market, source, market_guard=None):
     ticker = _flow_stat_first_text(row, ["Ticker"], default="")
     if ticker and source == "ETF 원천":
         title = f"{title} ({ticker})"
+    elif source == "실행 후보판":
+        title = f"실행 1순위: {title}"
 
     action = _flow_stat_first_text(row, ["행동", "통합판정", "테마판정", "상태"], default="확인")
     internal = _flow_stat_first_text(row, ["업종내부"], default="-")
@@ -11059,7 +11061,7 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
                 f"시장모드 `{card['mode']}` · 평균 {card['total']}/10 · {card['source']}"
             )
             st.plotly_chart(_flow_stat_radar_figure(card), width='stretch', key=f"market_flow_stat_radar_{card['market']}")
-            st.caption(f"ETF 후보: {card.get('etfs', '-')}")
+            st.caption(f"시장 ETF 상위: {card.get('etfs', '-')}")
             st.caption(f"대표주 2~3개: {card['representatives']}")
             st.caption(f"실행분류: {card['action']} · 내부: {card['internal']}")
 
@@ -11257,6 +11259,21 @@ def _flow_sector_unique_label_text(values, limit=3):
     return " · ".join(out) if out else "-"
 
 
+def _flow_sector_group_key(row):
+    market = _flow_text((row or {}).get("market", "혼합"), default="혼합")
+    bucket = _flow_text((row or {}).get("bucket", ""), default="")
+    if market not in {"한국", "미국"}:
+        market = "혼합"
+    return market, bucket
+
+
+def _safe_nanmean(values, default=np.nan):
+    finite_values = [float(v) for v in values if finite_num(v)]
+    if not finite_values:
+        return default
+    return float(np.nanmean(finite_values))
+
+
 def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, limit=12):
     source_rows = _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df)
     if not source_rows:
@@ -11264,10 +11281,10 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
 
     grouped = {}
     for row in source_rows:
-        grouped.setdefault(row["bucket"], []).append(row)
+        grouped.setdefault(_flow_sector_group_key(row), []).append(row)
 
     cards = []
-    for bucket, items in grouped.items():
+    for (group_market, bucket), items in grouped.items():
         scores = [float(x["score"]) for x in items if finite_num(x.get("score"))]
         shorts = [float(x["short"]) for x in items if finite_num(x.get("short"))]
         mids = [float(x["mid"]) for x in items if finite_num(x.get("mid"))]
@@ -11276,9 +11293,10 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
         internals = [str(x.get("internal", "") or "") for x in items]
         actions = [str(x.get("action", "") or "") for x in items]
 
-        strength = _flow_stat_score_value(max(scores) if scores else np.nan)
+        top_scores = sorted(scores, reverse=True)[:3]
+        strength = _flow_stat_score_value(_safe_nanmean(top_scores))
         if not finite_num(strength):
-            strength = _flow_stat_return_score(np.nanmean(longs) if longs else np.nan, scale=20.0)
+            strength = _flow_stat_return_score(_safe_nanmean(longs), scale=20.0)
 
         finite_flow_flags = []
         for x in items:
@@ -11287,30 +11305,36 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             if finite_num(short) or finite_num(mid):
                 finite_flow_flags.append((finite_num(short) and float(short) > 0) or (finite_num(mid) and float(mid) > 0))
         if finite_flow_flags:
-            breadth = _flow_stat_clamp(sum(bool(v) for v in finite_flow_flags) / len(finite_flow_flags) * 10.0)
+            coverage = min(1.0, len(finite_flow_flags) / 3.0)
+            breadth = _flow_stat_clamp(sum(bool(v) for v in finite_flow_flags) / len(finite_flow_flags) * 10.0 * coverage)
         else:
             breadth_vals = [_flow_stat_extract_breadth(x) for x in internals]
             breadth_vals = [v for v in breadth_vals if finite_num(v)]
-            breadth = float(np.nanmean(breadth_vals)) if breadth_vals else 5.0
+            breadth = _safe_nanmean(breadth_vals, default=5.0)
 
-        short_flow = _flow_stat_return_score(np.nanmean(shorts) if shorts else np.nan, scale=45.0)
-        momentum = _flow_stat_return_score(np.nanmean(mids) if mids else (np.nanmean(longs) if longs else np.nan), scale=30.0)
+        short_flow = _flow_stat_return_score(_safe_nanmean(shorts), scale=45.0)
+        momentum_seed = _safe_nanmean(mids)
+        if not finite_num(momentum_seed):
+            momentum_seed = _safe_nanmean(longs)
+        momentum = _flow_stat_return_score(momentum_seed, scale=30.0)
 
         safety = 7.0
         if prices:
-            safety = 8.5 - min(max(float(np.nanmean(prices)), 0.0), 1.2) * 5.0
+            safety = 8.5 - min(max(float(_safe_nanmean(prices)), 0.0), 1.2) * 5.0
         joined = " ".join(actions + internals)
         if any(word in joined for word in ["과열", "추격금지", "위기", "패닉", "가격방어", "추세방어"]):
             safety -= 1.2
         if any("확산 약함" in t or "쏠림" in t for t in internals):
             safety -= 0.8
         markets = [x.get("market", "") for x in items if x.get("market")]
-        market = "혼합"
+        market = group_market
         if markets:
             if all(m == "한국" for m in markets):
                 market = "한국"
             elif all(m == "미국" for m in markets):
                 market = "미국"
+            elif market not in {"한국", "미국"}:
+                market = "혼합"
         mode = _flow_stat_market_mode(market_guard, market) if market in {"한국", "미국"} else str((market_guard or {}).get("mode", "확인 필요") or "확인 필요")
         if mode in {"비상", "위험"}:
             safety -= 1.0
@@ -11320,7 +11344,7 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
 
         best_action = max(actions, key=_flow_sector_action_rank) if actions else "관망"
         timing = {6: 8.0, 5: 6.2, 4: 5.4, 3: 4.8, 2: 2.8, 1: 1.5, 0: 3.5}.get(_flow_sector_action_rank(best_action), 3.5)
-        if prices and np.nanmean(prices) >= 0.90:
+        if prices and _safe_nanmean(prices) >= 0.90:
             timing -= 1.0
         timing = _flow_stat_clamp(timing)
 
@@ -11342,7 +11366,8 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             1,
         )
 
-        if values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0 and values["확산"] >= 5.5 and values["안정도"] >= 4.0:
+        enough_sources = len(items) >= 2
+        if enough_sources and values["강도"] >= 6.0 and values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0 and values["확산"] >= 5.5 and values["안정도"] >= 4.0:
             verdict = "실제 주도 후보"
         elif values["강도"] >= 7.0 and (values["안정도"] < 4.0 or "과열" in joined):
             verdict = "과열 주도·눌림확인"
@@ -11368,8 +11393,8 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             "total": lead_score,
             "verdict": verdict,
             "item_count": len(items),
-            "short": np.nanmean(shorts) if shorts else np.nan,
-            "mid": np.nanmean(mids) if mids else np.nan,
+            "short": _safe_nanmean(shorts),
+            "mid": _safe_nanmean(mids),
         })
 
     return sorted(cards, key=lambda x: x.get("total", 0), reverse=True)[:limit]
@@ -11399,6 +11424,7 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
             "ETF": card.get("etfs", "-"),
             "대표주": card.get("representatives", "-"),
             "실행분류": card.get("action", "-"),
+            "근거수": card.get("item_count", 0),
         })
     st.dataframe(pd.DataFrame(summary_rows), width='stretch', hide_index=True, height=min(360, 80 + len(summary_rows) * 35))
 
@@ -11408,7 +11434,7 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
         for idx, card in enumerate(top_cards):
             with cols[idx % len(cols)]:
                 st.markdown(f"**#{idx + 1} {card['title']}**")
-                st.caption(f"{card['verdict']} · {card['market']} · 평균 {card['total']:.1f}/10")
+                st.caption(f"{card['verdict']} · {card['market']} · 주도점수 {card['total']:.1f}/10 · 근거 {card.get('item_count', 0)}개")
                 st.plotly_chart(
                     _flow_stat_radar_figure(card),
                     width='stretch',
