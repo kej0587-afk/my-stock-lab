@@ -2932,21 +2932,46 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     tap = str(tap).strip()
     bucket = str(bucket).strip().lower()
     is_empty = tap in ("-", "", "nan", "none", "None")
-    is_buy   = any(k in tap for k in ["매수", "분할", "추매", "🟢", "✅", "🟣"]) or ("진입" in tap and "보류" not in tap)
-    is_hot   = any(k in tap for k in ["과열", "주의", "⚠"])
-    is_hard  = any(k in tap for k in ["하드", "차단", "구조", "추세훼손", "가격위험", "단기급락", "가격방어", "급락방어", "추세방어", "🔴", "⛔"])
-    is_wait  = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
+    no_add_words = [
+        "추매금지", "매수금지", "신규금지", "진입 보류", "진입보류", "DCA 보류",
+        "회복 전", "원인점검", "원인 점검", "종가 확인", "정규장 확인",
+    ]
+    hard_words = [
+        "하드", "차단", "구조", "추세훼손", "가격위험", "단기급락",
+        "가격방어", "급락방어", "추세방어", "비중 초과", "비중초과",
+        "비중 충족", "비중충족", "🔴", "⛔",
+    ]
+    is_no_add = any(k in tap for k in no_add_words)
+    is_hard = is_no_add or any(k in tap for k in hard_words)
+    is_hot = any(k in tap for k in ["과열", "주의", "⚠"])
+    is_wait = any(k in tap for k in ["평단", "하락", "대기", "⏸"])
+    is_buy = (
+        not is_hard
+        and (
+            any(k in tap for k in ["매수", "분할", "🟢", "✅", "🟣"])
+            or ("진입" in tap and "보류" not in tap and "금지" not in tap)
+        )
+    )
 
     # ── 레버리지 버킷 (QLD, TQQQ 등) ────────────────────────────────────────
     if bucket == "leverage":
-        if is_hard: return 0.0   # 가격/급락/추세 방어 → 완전 중단
+        leverage_block = is_hard or any(k in tap for k in ["급락:", "패닉권", "패닉", "투매"])
+        if leverage_block: return 0.0   # 가격/급락/추세 방어 → 완전 중단
         if is_hot:  return 0.0   # 과열 → 진입 금물
+        if any(k in tap for k in ["DCA 대기", "타점 대기", "눌림 대기", "추격금지"]):
+            return 0.0
+        if any(k in tap for k in ["회복 DCA", "분할 가능"]):
+            return 1.0
+        if any(k in tap for k in ["조건부 DCA", "소액 1차", "신규 1차 정찰 가능", "타점 가능"]):
+            return 0.5
         if is_buy:
             # 매수 신호: 하락 깊이에 따라 배율 상향
             if dip_level >= 3: return 2.0    # 매수 + 강하락(-15%↓) → 2배 집중
             if dip_level == 2: return 1.75   # 매수 + 중하락(-10%~-15%) → 1.75배
             return 1.5                       # 매수 + 약하락 or 정상 → 1.5배
-        if is_wait or is_empty:
+        if is_wait:
+            return 0.0
+        if is_empty:
             # 신호없음/대기: 하락 깊이에 따라 DCA 강도 조절
             if dip_level >= 3: return 1.25   # 강하락 → 1.25배 DCA
             if dip_level == 2: return 1.0    # 중하락 → 1배 DCA
@@ -2956,9 +2981,20 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     # ── 코어 버킷 ────────────────────────────────────────────────────────────
     if tap in ("-", "", "nan", "none", "None"):
         return 1.0 if bucket == "core" else 0.0
+    if is_hard: return 0.0
+    if bucket == "core":
+        if "200%" in tap:
+            return 2.0
+        if "150%" in tap:
+            return 1.5
+        if "100%" in tap:
+            return 1.0
+        if "50%" in tap:
+            return 0.5
+        if "25%" in tap:
+            return 0.25
     if is_buy:  return 1.0
     if is_hot:  return 0.25
-    if is_hard: return 0.0
     if is_wait: return 0.0
 
     # 스윙은 명시적 매수 신호 없으면 0%
@@ -3227,6 +3263,8 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     r["status"] = "〰️ 약하락 DCA"
                 else:
                     r["status"] = "〰️ 레버리지 DCA"
+            elif bkt == "core" and mult > 1.0:
+                r["status"] = f"🧱 코어 집중 {int(mult * 100)}%"
             elif mult < 1.0:
                 r["status"] = f"⚠️ {int(mult*100)}%"
             else:
@@ -31363,9 +31401,9 @@ def render_print_report_v2():
                 elif pct_drop <= -0.05:
                     dip_level = 1
             try:
-                multiplier = _rebcalc_signal_multiplier(signal, bucket, dip_level=dip_level) if signal else 1.0
+                multiplier = _rebcalc_signal_multiplier(signal or "-", bucket, dip_level=dip_level)
             except Exception:
-                multiplier = 1.0
+                multiplier = 1.0 if bucket == "core" else 0.0
 
             alloc = base_alloc * multiplier
             rows.append({
