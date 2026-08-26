@@ -2199,7 +2199,60 @@ def persist_watchlist():
     if IS_PUBLIC_DEMO:
         return False
 
-    save_watchlist_db(st.session_state.watchlist)
+    return bool(save_watchlist_db(st.session_state.watchlist))
+
+
+def invalidate_watchlist_dependent_state():
+    for key in (
+        "dashboard_summary_df",
+        "dashboard_summary_sig",
+        "dashboard_summary_last_run",
+        "today_queue_summary_df",
+        "today_queue_summary_sig",
+        "today_queue_summary_last_run",
+        "today_queue_summary_last_nonempty_df",
+        "today_queue_summary_last_nonempty_sig",
+    ):
+        st.session_state.pop(key, None)
+
+
+def add_or_update_watchlist_item(item, *, update_existing=True):
+    clean_item = sanitize_watchlist_item(item)
+    ticker = sanitize_ticker_value(clean_item.get("ticker", ""))
+    name = sanitize_asset_name(clean_item.get("name", ""), ticker)
+    if not ticker:
+        return False, "티커가 없어 전광판에 등록할 수 없습니다."
+
+    clean_item["ticker"] = canonicalize_watchlist_ticker(ticker, name)
+    clean_item["name"] = name
+
+    before = [dict(x) for x in st.session_state.get("watchlist", []) if isinstance(x, dict)]
+    watchlist = [sanitize_watchlist_item(x) for x in before]
+    matched_idx = None
+    for idx, existing in enumerate(watchlist):
+        if _security_matches(existing.get("ticker", ""), clean_item.get("ticker", ""), existing.get("name", ""), clean_item.get("name", "")):
+            matched_idx = idx
+            break
+
+    if matched_idx is not None:
+        if not update_existing:
+            return False, f"{name} ({clean_item['ticker']})는 이미 전광판에 등록되어 있습니다."
+        merged = {**watchlist[matched_idx], **clean_item}
+        watchlist[matched_idx] = sanitize_watchlist_item(merged)
+        action_msg = "전광판 등록값을 최신 정보로 갱신했습니다."
+    else:
+        watchlist.append(clean_item)
+        action_msg = "전광판에 추가했습니다."
+
+    st.session_state.watchlist = watchlist
+    ok = persist_watchlist()
+    if ok is False and not IS_PUBLIC_DEMO:
+        st.session_state.watchlist = before
+        return False, f"{name} ({clean_item['ticker']}) 전광판 저장에 실패했습니다. 중복 티커나 DB 연결을 확인해 주세요."
+
+    sync_watchlist_to_query()
+    invalidate_watchlist_dependent_state()
+    return True, f"{name} ({clean_item['ticker']}) {action_msg}"
 
 
 def get_swing_radar_create_sql():
@@ -6017,8 +6070,6 @@ def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
     ticker = canonicalize_watchlist_ticker(raw_ticker, raw_name)
     if not ticker:
         return False, "티커가 없어 전광판에 보낼 수 없습니다."
-    if is_in_watchlist(ticker):
-        return False, f"{ticker}는 이미 전광판에 등록되어 있습니다."
 
     # ETF 이름 > 종목명 > 섹터 순으로 이름 결정
     name = sanitize_asset_name(
@@ -6032,15 +6083,13 @@ def add_money_flow_row_to_watchlist(row, is_stock: bool = False):
         default_asset_class = "kr_etf" if is_kr_listed(ticker) else "us_etf_other"
         is_etf_flag = True
     asset_class = infer_asset_class_for_ticker(ticker, default_asset_class)
-    st.session_state.watchlist.append(sanitize_watchlist_item({
+    return add_or_update_watchlist_item({
         "name": name,
         "ticker": ticker,
         "is_etf": is_etf_flag,
         "asset_class": asset_class,
         "fin_score": 0,
-    }))
-    persist_watchlist()
-    return True, f"{name} ({ticker})를 전광판에 추가했습니다."
+    })
 
 
 _LWC_CHART_OPTIONS = {
@@ -6501,6 +6550,17 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
     if finite_num(pct_b) and pct_b >= 0.95:
         overheat_flags.append(f"%B {pct_b:.2f}")
     overheat_text = " · ".join(overheat_flags)
+    defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
+    if defense_priority:
+        return {
+            "color": "#d97706",
+            "title": "👀 패턴은 보조, 방어 신호 우선",
+            "body": (
+                f"{name} 패턴은 보이지만 현재 기술/가격 판정은 방어 쪽이 우선입니다. "
+                f"기준선 {trigger} 위 안착과 거래량, MA20·MA50 회복을 확인하기 전까지는 매수 신호가 아니라 관찰 신호로만 봅니다. "
+                f"무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+            ),
+        }
 
     if direction == "bullish" and lifecycle == "관찰":
         return {
@@ -6580,6 +6640,13 @@ def summarize_chart_pattern_for_dashboard(patterns: list, c: dict | None = None)
     if finite_num(pct_b) and pct_b >= 0.95:
         overheat_bits.append(f"%B {pct_b:.2f}")
     overheat_text = " · ".join(overheat_bits) if overheat_bits else "과열 낮음"
+    defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
+    if defense_priority:
+        return (
+            "👀패턴관찰(방어우선)",
+            f"{name} 패턴 감지 · 기술/가격 방어 우선 · 기준 {trigger} 안착 확인 전 관찰",
+            "risk",
+        )
 
     if direction == "bullish" and lifecycle == "관찰":
         return (
@@ -11406,6 +11473,16 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             breadth_vals = [_flow_stat_extract_breadth(x) for x in internals]
             breadth_vals = [v for v in breadth_vals if finite_num(v)]
             breadth = _safe_nanmean(breadth_vals, default=5.0)
+        internal_weak_count = sum(
+            bool(re.search(r"업종\s*확산\s*약함|업종확산\s*약함|확산\s*약함|쏠림", text))
+            for text in internals
+        )
+        internal_mixed_count = sum("혼조" in text for text in internals)
+        if internal_weak_count and finite_num(breadth):
+            weak_ratio = internal_weak_count / max(len(internals), 1)
+            breadth = min(float(breadth), 4.5 if weak_ratio >= 0.5 else 6.0)
+        elif internal_mixed_count and finite_num(breadth):
+            breadth = min(float(breadth), 7.0)
 
         short_flow = _flow_stat_return_score(_safe_nanmean(shorts), scale=45.0)
         momentum_seed = _safe_nanmean(mids)
@@ -16295,6 +16372,33 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     "레버리지 ETF는 가격 하락률만 보고 현금 투입하지 않고 기초지수 동행, MA20/MA50, 회차 규칙을 먼저 확인합니다.",
                 ),
             )
+        elif is_quality_recovery_candidate:
+            dec, col, decision_outcome = _set_decision(
+                "✅우량주 회복 후보: 분할 검토", "#22c55e", "QUALITY_RECOVERY_CANDIDATE",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 고점대비 {current_dd*100:.1f}% / 1M {ret_1m*100:.1f}%",
+                    f"MA20·MA50 회복 + RS {rs_label} + MACD 회복 — 정배열 복귀 전 회복 후보",
+                    "풀진입보다 1차 정찰 후 저점상향·MA50 지지 확인",
+                ),
+            )
+        elif is_quality_recovery_scout:
+            dec, col, decision_outcome = _set_decision(
+                "🟢우량주 회복초입: 1차 정찰", "#16a34a", "QUALITY_RECOVERY_SCOUT",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                    f"MA20·MA50 회복 시도 + RS/MACD 회복 조짐",
+                    "신저점 매수가 아니라 회복 초입 확인용 소액 정찰 구간",
+                ),
+            )
+        elif is_quality_recovery_watch:
+            dec, col, decision_outcome = _set_decision(
+                "🔎우량주 회복관찰: 바닥 확인", "#38bdf8", "QUALITY_RECOVERY_WATCH",
+                reasons=(
+                    f"재무점수 {fin_score}점 / 추세 {trend} / 고점대비 {current_dd*100:.1f}%",
+                    "MA20 회복과 RS/MACD 개선 조짐은 있지만 MA50·저점상향 확인 전",
+                    "매수 신호가 아니라 전광판 관심등록 후 회복 지속성 관찰",
+                ),
+            )
         elif current_dd <= -0.5:
             dec, col, decision_outcome = _set_decision(
                 "💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY",
@@ -16948,13 +17052,13 @@ def find_precision_select_label_by_ticker(ticker, option_map):
         if meta.get("type") != "watchlist":
             continue
         item = meta.get("item", {})
-        if normalize_ticker(item.get("ticker", "")) == target:
+        if _security_matches(item.get("ticker", ""), target, item.get("name", ""), ""):
             return label
 
     for label, meta in option_map.items():
         if meta.get("type") == "free":
             continue
-        if label in TICKER_MAP and normalize_ticker(TICKER_MAP[label][0]) == target:
+        if label in TICKER_MAP and _security_matches(TICKER_MAP[label][0], target, label, ""):
             return label
         if normalize_ticker(label) == target:
             return label
@@ -20342,7 +20446,7 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260820_flow_news_persist_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260826_watchlist_wait_flow_consistency_v1"
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -26506,16 +26610,18 @@ def render_kr_etf_lab_tab():
             if is_in_watchlist(ticker):
                 st.info("이미 전광판에 등록된 ETF입니다.")
             else:
-                st.session_state.watchlist.append({
+                ok, msg = add_or_update_watchlist_item({
                     "name": sanitize_asset_name(row.get("name", ""), ticker),
                     "ticker": ticker,
                     "is_etf": True,
                     "asset_class": "kr_etf",
                     "fin_score": 0,
                 })
-                persist_watchlist()
-                st.success("전광판 관심종목에 추가했습니다.")
-                st.rerun()
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
         input_row = pd.DataFrame([{
             "name": row.get("name", ""),
@@ -31372,17 +31478,19 @@ def render_investor_top10_section():
                     if is_in_watchlist(_tk):
                         _skipped.append(_nm)
                         continue
-                    st.session_state.watchlist.append(sanitize_watchlist_item({
+                    ok, msg = add_or_update_watchlist_item({
                         "ticker": _tk,
                         "name": _nm,
                         "is_etf": False,
                         "asset_class": "kr_stock",
                         "target_weight": 0,
                         "fin_score": 0,
-                    }))
-                    _added.append(_nm)
+                    })
+                    if ok:
+                        _added.append(_nm)
+                    else:
+                        _skipped.append(f"{_nm}({msg})")
                 if _added:
-                    persist_watchlist()
                     st.success(f"추가 완료 ({len(_added)}개): {', '.join(_added)}")
                     st.rerun()
                 if _skipped:
@@ -31459,7 +31567,10 @@ def _today_queue_reason_bucket(row) -> str:
     grade_label = str(row.get("📌후보등급", "") or "")
     core_reason = str(row.get("핵심근거", "") or "")
     text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
+    primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
     if re.search(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
+        return "관심/눌림대기"
+    if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
@@ -31524,8 +31635,18 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
         neg_upside = ticker.map(lambda t: finite_num(upside_value_map.get(str(t), np.nan)) and float(upside_value_map.get(str(t))) <= 0)
         wait_mask = wait_mask | neg_upside.fillna(False)
     pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
+    overheat_timing_watch = (
+        bucket_series.eq("과열/타점대기")
+        | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
+    )
     defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
-    return (buyish_mask.reindex(summary_df.index, fill_value=False) | pattern_interest | leveraged_dca_watch) & wait_mask & ~defense_bucket
+    hard_block = code.str.contains("HARD_BLOCK", regex=False, na=False)
+    return (
+        buyish_mask.reindex(summary_df.index, fill_value=False)
+        | pattern_interest
+        | leveraged_dca_watch
+        | overheat_timing_watch
+    ) & wait_mask & ~defense_bucket & ~hard_block
 
 
 def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
@@ -33345,9 +33466,13 @@ if main_page == "dashboard":
                         item for item in st.session_state.watchlist
                         if normalize_ticker(item["ticker"]) not in tickers_to_remove
                     ]
-                    persist_watchlist()
-                    sync_watchlist_to_query()
-                    st.rerun()
+                    ok = persist_watchlist()
+                    if ok is False and not IS_PUBLIC_DEMO:
+                        st.error("전광판 제거 저장에 실패했습니다. DB 연결을 확인해 주세요.")
+                    else:
+                        sync_watchlist_to_query()
+                        invalidate_watchlist_dependent_state()
+                        st.rerun()
             else:
                 st.button("제거", key="remove_watchlist_btn", width='stretch', disabled=True)
 
@@ -33505,14 +33630,44 @@ if main_page == "dashboard":
 
 if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
+    free_option = FREE_SEARCH_OPTION if FREE_SEARCH_OPTION in options else (options[0] if options else "")
     if st.session_state.get("precision_selected_option") not in options:
-        st.session_state["precision_selected_option"] = options[0]
+        st.session_state["precision_selected_option"] = free_option
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
         st.toast(_precision_jump_notice, icon="🔍")
     sel = st.selectbox("종목 선택", options, key="precision_selected_option")
-    selected_option = precision_option_map.get(sel, {"type": "preset"})
+    selected_option = precision_option_map.get(sel, {"type": "free" if sel == free_option else "preset"})
     is_free = (selected_option.get("type") == "free")
+
+    if not is_free and free_option:
+        with st.expander("직접 티커/종목코드로 전환", expanded=False):
+            q1, q2, q3 = st.columns([2.0, 1.1, 0.9])
+            with q1:
+                quick_ticker = sanitize_ticker_value(
+                    st.text_input(
+                        "티커/종목코드",
+                        key="precision_quick_free_ticker",
+                        placeholder="예: BE, FCX, 161890",
+                    )
+                )
+            with q2:
+                quick_market = st.selectbox(
+                    "한국 시장",
+                    ["KOSPI (.KS)", "KOSDAQ (.KQ)"],
+                    key="precision_quick_free_market",
+                )
+            with q3:
+                st.write("")
+                st.write("")
+                if st.button("적용", key="precision_quick_free_apply", width='stretch'):
+                    if not quick_ticker:
+                        st.warning("티커나 종목코드를 입력하세요.")
+                    else:
+                        st.session_state["precision_selected_option"] = free_option
+                        st.session_state[PRECISION_FREE_TICKER_KEY] = _split_precision_free_ticker(quick_ticker)[0]
+                        st.session_state[PRECISION_FREE_MARKET_KEY] = quick_market
+                        st.rerun()
 
     if is_free:
         # 오늘의 종목 후보 등에서 전달된 티커는 rerun 이후에도 유지한다.
@@ -33751,27 +33906,38 @@ if main_page == "precision":
         "fin_score": int(fin_score),
     })
 
-    if is_in_watchlist(tkr):
+    if is_in_watchlist(tkr, name):
         for item in st.session_state.watchlist:
-            if normalize_ticker(item["ticker"]) == normalize_ticker(tkr):
+            if _security_matches(item.get("ticker", ""), tkr, item.get("name", ""), name):
                 item["fin_score"] = int(fin_score)
                 break
         sync_watchlist_to_query()
 
     with a1:
-        if is_in_watchlist(tkr): st.success("이미 전광판에 등록된 종목입니다.")
+        if is_in_watchlist(tkr, name): st.success("이미 전광판에 등록된 종목입니다.")
         else:
             if st.button("전광판에 등록"):
-                 st.session_state.watchlist.append(sanitize_watchlist_item(current_item))
-                 persist_watchlist()
-                 st.rerun()
-                
+                ok, msg = add_or_update_watchlist_item(current_item)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
     with a2:
-        if is_in_watchlist(tkr):
+        if is_in_watchlist(tkr, name):
             if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
-                st.session_state.watchlist = [item for item in st.session_state.watchlist if normalize_ticker(item["ticker"]) != normalize_ticker(tkr)]
-                persist_watchlist()
-                st.rerun()
+                st.session_state.watchlist = [
+                    item for item in st.session_state.watchlist
+                    if not _security_matches(item.get("ticker", ""), tkr, item.get("name", ""), name)
+                ]
+                ok = persist_watchlist()
+                if ok is False and not IS_PUBLIC_DEMO:
+                    st.error("전광판 제거 저장에 실패했습니다. DB 연결을 확인해 주세요.")
+                else:
+                    sync_watchlist_to_query()
+                    invalidate_watchlist_dependent_state()
+                    st.rerun()
 
     df, precision_chart_load_note = load_precision_price_history(tkr, "1y")
     if not df.empty:
