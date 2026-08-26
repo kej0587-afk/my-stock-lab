@@ -20675,6 +20675,11 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
         return "⚪데이터확인"
 
+    if "하락패턴 유효" in pattern_timing:
+        if code.startswith("QUALITY_RECOVERY"):
+            return "👀회복관찰"
+        return "🛡️방어우선"
+
     if code == "QUALITY_RECOVERY_WATCH":
         return "👀회복관찰"
     if code in {"QUALITY_RECOVERY_SCOUT", "QUALITY_RECOVERY_CANDIDATE"}:
@@ -20683,7 +20688,7 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
         return "🛡️방어우선"
     if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
         return "⏳DCA조건부"
-    if "하락패턴 유효" in pattern_timing or is_today_queue_defense_signal(c, text):
+    if is_today_queue_defense_signal(c, text):
         return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
         return "🛡️방어우선"
@@ -31568,11 +31573,11 @@ def _today_queue_reason_bucket(row) -> str:
     core_reason = str(row.get("핵심근거", "") or "")
     text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
     primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
-    if re.search(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
+    if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
         return "관심/눌림대기"
-    if re.search(r"비중\s*(초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
+    if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
     if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
         return "급락방어"
@@ -31613,7 +31618,7 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     bucket_series = summary_df.apply(lambda row: _today_queue_reason_bucket(row), axis=1)
     wait_text = label + " " + pattern + " " + final_read + " " + grade_label + " " + core_reason
     leveraged_dca_watch = (
-        code.str.contains(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
+        code.str.contains(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
         | final_read.str.contains("DCA조건부", regex=False, na=False)
         | grade_label.str.contains("레버리지DCA조건부", regex=False, na=False)
         | label.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
@@ -31640,7 +31645,11 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
         | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
     )
     defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
-    hard_block = code.str.contains("HARD_BLOCK", regex=False, na=False)
+    overheat_hard_watch = (
+        code.str.contains(r"HARD_BLOCK_BOLLINGER_UPPER|HARD_BLOCK_MFI_OVERHEAT|EXTREME_OVERHEAT_NO_CHASE|OVERHEAT", regex=True, na=False)
+        | wait_text.str.contains(r"볼린상단|볼린저.*상단|MFI.*과열|극단과열|추격금지", regex=True, na=False)
+    )
+    hard_block = code.str.contains("HARD_BLOCK", regex=False, na=False) & ~overheat_hard_watch
     return (
         buyish_mask.reindex(summary_df.index, fill_value=False)
         | pattern_interest
@@ -31881,7 +31890,7 @@ def render_today_queue_tab(mode):
     final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
     grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
     leveraged_dca_watch_mask = (
-        code_series.str.contains(r"LEVERAGED_(RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
+        code_series.str.contains(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
         | final_read_series.str.contains("DCA조건부", regex=False, na=False)
         | grade_series.str.contains("레버리지DCA조건부", regex=False, na=False)
         | label_series.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)

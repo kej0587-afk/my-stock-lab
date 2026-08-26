@@ -172,3 +172,55 @@ def test_sizing_hint_no_addon_for_unrelated_code(helpers):
         is_etf=False, weight_gap=5.0, ticker="TST.KS",
     )
     assert hint == ""
+
+
+# ---------------------------------------------------------------------------
+# Today queue display helpers
+# ---------------------------------------------------------------------------
+
+def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_valid(helpers):
+    final_read = helpers.build_dashboard_final_read(
+        {"decision_code": "QUALITY_RECOVERY_CANDIDATE", "decision_group": "buyish"},
+        dashboard_timing="✅우량주 회복 후보: 분할 검토",
+        dashboard_grade="✅우량주 회복후보",
+        pattern_timing="🛑하락패턴 유효",
+    )
+    assert final_read == "👀회복관찰"
+
+
+def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch(helpers):
+    pd = helpers.pd
+    summary_df = pd.DataFrame([{
+        "종목명": "FCX",
+        "티커": "FCX",
+        "🔥기술적 타점": "🚫하드차단: 볼린상단 이탈",
+        "패턴타점": "🚦패턴성공: 눌림대기",
+        "최종읽기": "🚫추격금지",
+        "📌후보등급": "🚫상단과열(추격금지)",
+        "핵심근거": "%B 1.08 / MFI 74 / RSI 73",
+        "판정코드": "HARD_BLOCK_BOLLINGER_UPPER",
+    }])
+    buyish_mask = pd.Series([False], index=summary_df.index)
+
+    mask = helpers._today_queue_wait_mask(summary_df, buyish_mask)
+
+    assert bool(mask.iloc[0])
+
+
+def test_today_wait_mask_still_hides_non_timing_hard_blocks(helpers):
+    pd = helpers.pd
+    summary_df = pd.DataFrame([{
+        "종목명": "FILLED",
+        "티커": "FILLED",
+        "🔥기술적 타점": "🚫하드차단: 목표비중 충족",
+        "패턴타점": "🚦패턴성공: 눌림대기",
+        "최종읽기": "🛡️방어우선",
+        "📌후보등급": "⛔비중관리",
+        "핵심근거": "목표비중 충족",
+        "판정코드": "HARD_BLOCK_TARGET_FILLED",
+    }])
+    buyish_mask = pd.Series([False], index=summary_df.index)
+
+    mask = helpers._today_queue_wait_mask(summary_df, buyish_mask)
+
+    assert not bool(mask.iloc[0])
