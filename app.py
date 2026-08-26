@@ -20483,7 +20483,8 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260826_watchlist_wait_flow_consistency_v1"
+TODAY_QUEUE_LOGIC_VERSION = "20260826_flow_candidate_bridge_v1"
+TODAY_QUEUE_FLOW_AUTO_LIMIT = 6
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -30534,7 +30535,7 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
 
     top = show.head(12).reset_index(drop=True)
     if not top.empty:
-        st.markdown("**정밀관측소 바로가기**")
+        st.markdown("**정밀관측소 / 전광판 연결**")
         cols = st.columns(4)
         precision_options, precision_map = build_precision_select_options()
         for idx, row in top.iterrows():
@@ -30546,6 +30547,16 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
                     st.session_state["_pending_main_page_nav"] = "precision"
                     st.session_state["_precision_jump_notice"] = f"'{name}' 정밀관측소로 이동했습니다."
                     st.rerun()
+                status = _today_flow_candidate_status(ticker, name)
+                if status in {"보유", "관심"}:
+                    st.caption("전광판 등록됨")
+                elif st.button("전광판 추가", key=f"{key_prefix}_watch_add_{ticker}_{idx}", width='stretch'):
+                    ok, message = add_money_flow_row_to_watchlist(row, is_stock=True)
+                    if ok:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
 
 
 def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
@@ -31695,6 +31706,68 @@ def _today_queue_wait_mask(summary_df: pd.DataFrame, buyish_mask: pd.Series, ups
     ) & wait_mask & ~defense_bucket & ~hard_block
 
 
+def build_today_flow_candidate_queue_items(snapshot=None, existing_items=None, limit: int = TODAY_QUEUE_FLOW_AUTO_LIMIT) -> tuple[dict, ...]:
+    """Promote top money-flow stock candidates into Today Queue calculation."""
+    try:
+        shortlist_df = build_today_flow_shortlist_df(snapshot)
+    except Exception:
+        shortlist_df = pd.DataFrame()
+    if not isinstance(shortlist_df, pd.DataFrame) or shortlist_df.empty:
+        return tuple()
+
+    existing_keys = {
+        normalize_ticker(sanitize_ticker_value(item.get("ticker", "")))
+        for item in (existing_items or [])
+        if isinstance(item, dict)
+    }
+    picked: list[dict] = []
+    seen_keys = set(existing_keys)
+    for _, row in shortlist_df.iterrows():
+        if len(picked) >= int(limit):
+            break
+        ticker = sanitize_ticker_value(row.get("Ticker", row.get("티커", "")))
+        key = normalize_ticker(ticker)
+        if not key or key in seen_keys:
+            continue
+        verdict = _flow_text(row.get("판정", ""))
+        timing = _flow_text(row.get("타이밍", ""))
+        group = _flow_text(row.get("후보군", ""))
+        flow_text = " ".join([verdict, timing, group])
+        if re.search(r"관망|제외", verdict) and not re.search(r"눌림|추격|회복|스윙|장기|우선|주도", flow_text):
+            continue
+
+        name = sanitize_asset_name(row.get("종목명", ticker), ticker)
+        is_etf = is_fin_score_exempt_asset(ticker, False, str(row.get("asset_class", "")), name)
+        asset_class = (
+            infer_asset_class_for_ticker(ticker, str(row.get("asset_class", "")))
+            if is_etf
+            else ("kr_stock" if is_kr_listed(ticker) else "us_stock")
+        )
+        picked.append(sanitize_watchlist_item({
+            "name": name,
+            "ticker": ticker,
+            "is_etf": is_etf,
+            "asset_class": asset_class,
+            "fin_score": 0 if is_etf else UNCALCULATED_FIN_DEFAULT_SCORE,
+            "bucket": "flow_candidate",
+        }))
+        seen_keys.add(key)
+    return tuple(picked)
+
+
+def build_today_queue_items_with_flow_candidates(raw_watch_items=None, snapshot=None) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
+    base_items = build_today_queue_items(raw_watch_items)
+    flow_items = build_today_flow_candidate_queue_items(
+        snapshot,
+        existing_items=base_items,
+        limit=TODAY_QUEUE_FLOW_AUTO_LIMIT,
+    )
+    if not flow_items:
+        return base_items, tuple()
+    merged_items = build_today_queue_items(tuple(list(base_items) + list(flow_items)))
+    return merged_items, flow_items
+
+
 def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
     """Merge watchlist items with actual holdings so held assets never disappear."""
     ordered_keys: list[str] = []
@@ -31771,7 +31844,8 @@ def render_today_queue_tab(mode):
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
 
     raw_watch_items = tuple(st.session_state.get("watchlist", []))
-    watch_items = build_today_queue_items(raw_watch_items)
+    flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
+    watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_market_guard_panel(market_guard)
@@ -31795,31 +31869,39 @@ def render_today_queue_tab(mode):
         for item in watch_items
         if isinstance(item, dict)
         and normalize_ticker(sanitize_ticker_value(item.get("ticker", ""))) not in raw_watch_keys
+        and str(item.get("bucket", "")) != "flow_candidate"
     ]
     if auto_holding_keys:
         st.caption(f"보유자산 {len(auto_holding_keys)}개를 오늘점검에 자동 포함했습니다: {', '.join(auto_holding_keys[:6])}")
-    queue_sig = json.dumps(
-        {
-            "logic_version": TODAY_QUEUE_LOGIC_VERSION,
-            "mode": mode,
-            "watchlist": [
-                {
-                    "name": str(item.get("name", "")),
-                    "ticker": sanitize_ticker_value(item.get("ticker", "")),
-                    "is_etf": bool(item.get("is_etf", False)),
-                    "asset_class": str(item.get("asset_class", "")),
-                    "fin_score": item.get("fin_score"),
-                    "qty": clean_float(item.get("qty"), 0.0),
-                    "avg_price": clean_float(item.get("avg_price"), 0.0),
-                    "target_weight": clean_float(item.get("target_weight"), 0.0),
-                    "bucket": str(item.get("bucket", "")),
-                }
-                for item in watch_items
-            ],
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+    if flow_auto_items:
+        names = [f"{item.get('name', item.get('ticker', ''))}({item.get('ticker', '')})" for item in flow_auto_items[:6]]
+        st.caption(f"돈흐름 후보 상위 {len(flow_auto_items)}개를 관심/눌림대기 계산에 자동 포함했습니다: {', '.join(names)}")
+
+    def _today_queue_signature(items) -> str:
+        return json.dumps(
+            {
+                "logic_version": TODAY_QUEUE_LOGIC_VERSION,
+                "mode": mode,
+                "watchlist": [
+                    {
+                        "name": str(item.get("name", "")),
+                        "ticker": sanitize_ticker_value(item.get("ticker", "")),
+                        "is_etf": bool(item.get("is_etf", False)),
+                        "asset_class": str(item.get("asset_class", "")),
+                        "fin_score": item.get("fin_score"),
+                        "qty": clean_float(item.get("qty"), 0.0),
+                        "avg_price": clean_float(item.get("avg_price"), 0.0),
+                        "target_weight": clean_float(item.get("target_weight"), 0.0),
+                        "bucket": str(item.get("bucket", "")),
+                    }
+                    for item in items
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+    queue_sig = _today_queue_signature(watch_items)
     summary_key = "today_queue_summary_df"
     sig_key = "today_queue_summary_sig"
     last_key = "today_queue_summary_last_run"
@@ -31876,17 +31958,19 @@ def render_today_queue_tab(mode):
             pass
 
     if run_summary:
+        try:
+            with st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
+                flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True)
+            watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+            queue_sig = _today_queue_signature(watch_items)
+            st.session_state["today_queue_open_flow_detail"] = True
+        except Exception as exc:
+            st.warning(f"돈흐름 상세/차트 계산은 실패했습니다. 전광판/보유 종목만 먼저 점검합니다: {exc}")
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
             clear_latest_price_cache()
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
-        try:
-            with st.spinner("돈흐름 상세/차트도 같이 계산하는 중입니다..."):
-                refresh_today_market_flow_snapshot(include_theme=True)
-            st.session_state["today_queue_open_flow_detail"] = True
-        except Exception as exc:
-            st.warning(f"종목 점검은 완료됐지만 돈흐름 상세/차트 계산은 실패했습니다: {exc}")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
         st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
@@ -33959,6 +34043,7 @@ if main_page == "precision":
         if _security_matches(item.get("ticker", ""), tkr, item.get("name", ""), name):
             registered_watch_idx = idx
             break
+    registered_watch_confirmed = registered_watch_idx is not None
     if registered_watch_idx is not None:
         before_watchlist = [dict(x) for x in st.session_state.watchlist if isinstance(x, dict)]
         existing_item = sanitize_watchlist_item(st.session_state.watchlist[registered_watch_idx])
@@ -33972,6 +34057,7 @@ if main_page == "precision":
             persisted_ok = ok is not False and verify_watchlist_item_persisted(refreshed_item.get("ticker", ""), refreshed_item.get("name", ""))
             if not persisted_ok and not IS_PUBLIC_DEMO:
                 st.session_state.watchlist = before_watchlist
+                registered_watch_confirmed = False
                 st.warning("전광판 등록값 갱신 저장에 실패했습니다. DB 연결을 확인해 주세요.")
             else:
                 sync_watchlist_to_query()
@@ -33982,7 +34068,7 @@ if main_page == "precision":
                 invalidate_watchlist_dependent_state()
 
     with a1:
-        if registered_watch_idx is not None: st.success("이미 전광판에 등록된 종목입니다.")
+        if registered_watch_confirmed: st.success("이미 전광판에 등록된 종목입니다.")
         else:
             if st.button("전광판에 등록"):
                 ok, msg = add_or_update_watchlist_item(current_item)
@@ -33993,7 +34079,7 @@ if main_page == "precision":
                     st.error(msg)
 
     with a2:
-        if registered_watch_idx is not None:
+        if registered_watch_confirmed:
             if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
                 st.session_state.watchlist = [
                     item for item in st.session_state.watchlist
