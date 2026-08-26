@@ -1373,7 +1373,7 @@ def get_watchlist_item(ticker, name=""):
 
 
 def _matches_any_registered_watch_source(ticker, name="") -> bool:
-    """돈흐름 후보의 등록 상태는 화면 이동/캐시 이후에도 현재 전광판 기준으로 다시 확인한다."""
+    """돈흐름 후보의 등록 상태는 실제 전광판 목록 기준으로만 확인한다."""
     candidate_ticker = sanitize_ticker_value(ticker)
     candidate_name = str(name or "").strip()
 
@@ -1383,18 +1383,6 @@ def _matches_any_registered_watch_source(ticker, name="") -> bool:
         clean_item = sanitize_watchlist_item(item)
         if _security_matches(clean_item.get("ticker", ""), candidate_ticker, clean_item.get("name", ""), candidate_name):
             return True
-
-    # 전광판/오늘점검 계산표가 남아 있으면 여기도 같이 본다.
-    # 등록 직후 돈흐름 후보표 캐시가 살아 있어도 "미등록"으로 남지 않게 하기 위함.
-    for state_key in ["today_queue_summary_df", "today_queue_summary_last_nonempty_df", "dashboard_summary_df"]:
-        table = st.session_state.get(state_key)
-        if not isinstance(table, pd.DataFrame) or table.empty:
-            continue
-        for _, row in table.iterrows():
-            row_ticker = row.get("티커", row.get("Ticker", ""))
-            row_name = row.get("종목명", row.get("자산명", ""))
-            if _security_matches(row_ticker, candidate_ticker, row_name, candidate_name):
-                return True
 
     return False
 
@@ -2216,6 +2204,51 @@ def invalidate_watchlist_dependent_state():
         st.session_state.pop(key, None)
 
 
+def watchlist_dependent_cache_missing_item(ticker, name="") -> bool:
+    tkr = sanitize_ticker_value(ticker)
+    if not tkr:
+        return False
+    for state_key in ("dashboard_summary_df", "today_queue_summary_df", "today_queue_summary_last_nonempty_df"):
+        table = st.session_state.get(state_key)
+        if not isinstance(table, pd.DataFrame) or table.empty:
+            continue
+        found = False
+        for _, row in table.iterrows():
+            row_ticker = row.get("티커", row.get("Ticker", ""))
+            row_name = row.get("종목명", row.get("자산명", ""))
+            if _security_matches(row_ticker, tkr, row_name, name):
+                found = True
+                break
+        if not found:
+            return True
+    return False
+
+
+def verify_watchlist_item_persisted(ticker, name="") -> bool:
+    if IS_PUBLIC_DEMO:
+        return True
+    tkr = sanitize_ticker_value(ticker)
+    if not tkr:
+        return False
+    try:
+        res = run_supabase(
+            supabase.table("watchlist")
+            .select("name,ticker,is_etf,asset_class,sort_order,fin_score")
+            .eq("owner_email", CURRENT_USER_EMAIL)
+            .eq("ticker", tkr),
+            f"verify watchlist item {tkr}",
+            stop_on_error=False,
+        )
+    except Exception:
+        return False
+    if res is None:
+        return False
+    for row in res.data or []:
+        if _security_matches(row.get("ticker", ""), tkr, row.get("name", ""), name):
+            return True
+    return False
+
+
 def add_or_update_watchlist_item(item, *, update_existing=True):
     clean_item = sanitize_watchlist_item(item)
     ticker = sanitize_ticker_value(clean_item.get("ticker", ""))
@@ -2249,6 +2282,10 @@ def add_or_update_watchlist_item(item, *, update_existing=True):
     if ok is False and not IS_PUBLIC_DEMO:
         st.session_state.watchlist = before
         return False, f"{name} ({clean_item['ticker']}) 전광판 저장에 실패했습니다. 중복 티커나 DB 연결을 확인해 주세요."
+    if ok and not verify_watchlist_item_persisted(clean_item["ticker"], clean_item["name"]):
+        st.session_state.watchlist = before
+        load_watchlist_db_for_user.clear()
+        return False, f"{name} ({clean_item['ticker']}) 저장 후 DB에서 다시 확인되지 않았습니다. 전광판 새로고침 전에 한 번 더 등록해 주세요."
 
     sync_watchlist_to_query()
     invalidate_watchlist_dependent_state()
@@ -33915,15 +33952,37 @@ if main_page == "precision":
         "fin_score": int(fin_score),
     })
 
-    if is_in_watchlist(tkr, name):
-        for item in st.session_state.watchlist:
-            if _security_matches(item.get("ticker", ""), tkr, item.get("name", ""), name):
-                item["fin_score"] = int(fin_score)
-                break
-        sync_watchlist_to_query()
+    registered_watch_idx = None
+    for idx, item in enumerate(st.session_state.get("watchlist", []) or []):
+        if not isinstance(item, dict):
+            continue
+        if _security_matches(item.get("ticker", ""), tkr, item.get("name", ""), name):
+            registered_watch_idx = idx
+            break
+    if registered_watch_idx is not None:
+        before_watchlist = [dict(x) for x in st.session_state.watchlist if isinstance(x, dict)]
+        existing_item = sanitize_watchlist_item(st.session_state.watchlist[registered_watch_idx])
+        refreshed_item = sanitize_watchlist_item({**existing_item, **current_item})
+        persisted_before = IS_PUBLIC_DEMO or verify_watchlist_item_persisted(
+            refreshed_item.get("ticker", ""), refreshed_item.get("name", "")
+        )
+        if refreshed_item != existing_item or not persisted_before:
+            st.session_state.watchlist[registered_watch_idx] = refreshed_item
+            ok = persist_watchlist()
+            persisted_ok = ok is not False and verify_watchlist_item_persisted(refreshed_item.get("ticker", ""), refreshed_item.get("name", ""))
+            if not persisted_ok and not IS_PUBLIC_DEMO:
+                st.session_state.watchlist = before_watchlist
+                st.warning("전광판 등록값 갱신 저장에 실패했습니다. DB 연결을 확인해 주세요.")
+            else:
+                sync_watchlist_to_query()
+                invalidate_watchlist_dependent_state()
+        else:
+            sync_watchlist_to_query()
+            if watchlist_dependent_cache_missing_item(tkr, name):
+                invalidate_watchlist_dependent_state()
 
     with a1:
-        if is_in_watchlist(tkr, name): st.success("이미 전광판에 등록된 종목입니다.")
+        if registered_watch_idx is not None: st.success("이미 전광판에 등록된 종목입니다.")
         else:
             if st.button("전광판에 등록"):
                 ok, msg = add_or_update_watchlist_item(current_item)
@@ -33934,7 +33993,7 @@ if main_page == "precision":
                     st.error(msg)
 
     with a2:
-        if is_in_watchlist(tkr, name):
+        if registered_watch_idx is not None:
             if st.button("전광판에서 제거", key=f"remove_{normalize_ticker(tkr)}"):
                 st.session_state.watchlist = [
                     item for item in st.session_state.watchlist

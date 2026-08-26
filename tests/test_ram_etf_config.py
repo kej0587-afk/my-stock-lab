@@ -8,6 +8,10 @@ def test_ram_etf_has_stable_display_and_classification():
     assert KNOWN_TICKER_DISPLAY_NAMES["RAM"] == "Roundhill T-REX 2X Long DRAM Daily Target ETF"
 
 
+def test_mrna_has_stable_korean_display_name():
+    assert KNOWN_TICKER_DISPLAY_NAMES["MRNA"] == "모더나"
+
+
 def test_ram_etf_is_connected_to_money_flow_and_news_filters():
     tickers = {str(row.get("ticker", "")).upper() for row in MONEY_FLOW_UNIVERSE}
 
