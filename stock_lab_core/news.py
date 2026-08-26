@@ -1408,6 +1408,36 @@ def news_sentiment_class(sentiment):
         return "negative"
     return "neutral"
 
+def _news_display_text(value, default=""):
+    text = clean_news_text(value)
+    text = " ".join(text.split())
+    return text or default
+
+def _news_markdown_text(value, default=""):
+    text = _news_display_text(value, default)
+    for raw, escaped in [
+        ("\\", "\\\\"),
+        ("[", "\\["),
+        ("]", "\\]"),
+        ("*", "\\*"),
+        ("_", "\\_"),
+        ("`", "\\`"),
+    ]:
+        text = text.replace(raw, escaped)
+    return text
+
+def _news_external_link(value):
+    link = str(value or "").strip()
+    if not link.startswith(("http://", "https://")):
+        return ""
+    return link.replace("<", "%3C").replace(">", "%3E").replace(" ", "%20")
+
+def _stable_news_card_container():
+    try:
+        return st.container(border=True)
+    except TypeError:
+        return st.container()
+
 def render_news_cards(news_items):
     grouped = {}
     for item in news_items:
@@ -1420,40 +1450,34 @@ def render_news_cards(news_items):
 
         st.markdown(f"#### {category}")
         for item in items:
-            safe_title = escape_html_value(item.get("title", "제목 없음"))
-            safe_pub = escape_html_value(item.get("publisher", ""))
-            safe_date = escape_html_value(item.get("published", ""))
-            safe_category = escape_html_value(item.get("category", category))
-            safe_relation = escape_html_value(item.get("relation", "관련도 보통"))
-            safe_sentiment = escape_html_value(item.get("sentiment", "중립"))
-            safe_reason = escape_html_value(item.get("reason", "추가 확인 필요"))
-            safe_score = escape_html_value(item.get("quality_score", ""))
-            safe_topic = escape_html_value(item.get("topic", ""))
-            safe_freshness = escape_html_value(item.get("freshness", ""))
-            date_part = f" | {safe_date}" if safe_date else ""
-            safe_link = str(item.get("link", "#")).strip()
-            if not safe_link.startswith(("http://", "https://")):
-                safe_link = "#"
-            safe_link_attr = html.escape(safe_link, quote=True)
-            topic_chip = f"<span class='news-chip'>{safe_topic}</span>" if safe_topic else ""
-            freshness_chip = f"<span class='news-chip'>{safe_freshness}</span>" if safe_freshness else ""
+            title = _news_markdown_text(item.get("title"), "제목 없음")
+            link = _news_external_link(item.get("link"))
+            category_text = _news_display_text(item.get("category"), category)
+            relation = _news_display_text(item.get("relation"), "관련도 보통")
+            sentiment = _news_display_text(item.get("sentiment"), "중립")
+            reason = _news_display_text(item.get("reason"), "추가 확인 필요")
+            publisher = _news_display_text(item.get("publisher"))
+            published = _news_display_text(item.get("published"))
+            topic = _news_display_text(item.get("topic"))
+            freshness = _news_display_text(item.get("freshness"))
+            score = _news_display_text(item.get("quality_score"))
 
-            sentiment_class = news_sentiment_class(item.get("sentiment", "중립"))
-            st.markdown(
-                f"<div class='news-box news-{sentiment_class}'>"
-                f"<a href='{safe_link_attr}' target='_blank'>🔗 {safe_title}</a>"
-                f"<div class='news-meta-row'>"
-                f"<span class='news-chip news-chip-category'>{safe_category}</span>"
-                f"{topic_chip}"
-                f"{freshness_chip}"
-                f"<span class='news-chip news-chip-{sentiment_class}'>{safe_sentiment}</span>"
-                f"<span class='news-chip'>{safe_relation}</span>"
-                f"출처: {safe_pub}{date_part} | 품질점수: {safe_score}"
-                f"</div>"
-                f"<div class='news-reason'>{safe_reason}</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            meta_parts = [category_text]
+            meta_parts.extend([x for x in [topic, freshness, sentiment, relation] if x])
+            if publisher:
+                meta_parts.append(f"출처: {publisher}")
+            if published:
+                meta_parts.append(published)
+            if score:
+                meta_parts.append(f"품질점수: {score}")
+
+            with _stable_news_card_container():
+                if link:
+                    st.markdown(f"**[{title}](<{link}>)**")
+                else:
+                    st.markdown(f"**{title}**")
+                st.caption(" · ".join(meta_parts))
+                st.write(reason)
 
 
 _NAVER_PC_HEADERS = {
