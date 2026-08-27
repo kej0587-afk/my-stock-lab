@@ -277,7 +277,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
             with _YF_LOCK:
                 df = yf.download(
                     yf_ticker, period=period, interval="1d",
-                    progress=False, threads=False,
+                    progress=False, threads=False, auto_adjust=False,
                 )
         except Exception:
             continue

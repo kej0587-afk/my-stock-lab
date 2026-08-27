@@ -1,9 +1,11 @@
 ﻿"""News, research-report, and analyst snapshot helpers for Stock Lab."""
 
+import contextlib
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import html
 import http.cookiejar
+import io
 import json
 import os
 import threading
@@ -33,7 +35,6 @@ except ImportError:
 from stock_lab_core.formatters import (
     clean_float,
     clean_int,
-    escape_html_value,
     format_currency,
     normalize_ticker,
     strip_search_prefix,
@@ -609,8 +610,34 @@ def _select_krx_fundamental_row(df, code: str, allow_last_row: bool = False):
     return None
 
 
+_KRX_FUNDAMENTAL_COOLDOWN_SECONDS = 1800
+_KRX_FUNDAMENTAL_ERROR_THRESHOLD = 2
+_KRX_FUNDAMENTAL_COOLDOWN_UNTIL = 0.0
+_KRX_FUNDAMENTAL_ERROR_COUNT = 0
+
+
+def _krx_fundamental_in_cooldown() -> bool:
+    return time.time() < _KRX_FUNDAMENTAL_COOLDOWN_UNTIL
+
+
+def _record_krx_fundamental_success():
+    global _KRX_FUNDAMENTAL_COOLDOWN_UNTIL, _KRX_FUNDAMENTAL_ERROR_COUNT
+    _KRX_FUNDAMENTAL_COOLDOWN_UNTIL = 0.0
+    _KRX_FUNDAMENTAL_ERROR_COUNT = 0
+
+
+def _record_krx_fundamental_error():
+    global _KRX_FUNDAMENTAL_COOLDOWN_UNTIL, _KRX_FUNDAMENTAL_ERROR_COUNT
+    _KRX_FUNDAMENTAL_ERROR_COUNT += 1
+    if _KRX_FUNDAMENTAL_ERROR_COUNT >= _KRX_FUNDAMENTAL_ERROR_THRESHOLD:
+        _KRX_FUNDAMENTAL_COOLDOWN_UNTIL = time.time() + _KRX_FUNDAMENTAL_COOLDOWN_SECONDS
+
+
 def _fetch_krx_fundamental_row(pykrx_stock, date_text: str, code: str):
     """Try pykrx date-series and ticker-snapshot APIs because installed versions differ."""
+    if _krx_fundamental_in_cooldown():
+        return None
+
     candidates = []
 
     if hasattr(pykrx_stock, "get_market_fundamental_by_date"):
@@ -624,10 +651,19 @@ def _fetch_krx_fundamental_row(pykrx_stock, date_text: str, code: str):
 
     for _, getter, allow_last_row in candidates:
         try:
-            row = _select_krx_fundamental_row(getter(), code, allow_last_row=allow_last_row)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                df = getter()
+            if df is not None and not getattr(df, "empty", True):
+                cols = {str(col).upper() for col in getattr(df, "columns", [])}
+                if not {"PER", "PBR", "EPS", "BPS"} & cols:
+                    _record_krx_fundamental_error()
+                    continue
+            row = _select_krx_fundamental_row(df, code, allow_last_row=allow_last_row)
             if row is not None:
+                _record_krx_fundamental_success()
                 return row
         except Exception:
+            _record_krx_fundamental_error()
             continue
 
     return None
