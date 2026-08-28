@@ -96,6 +96,35 @@ def test_safety_red_does_not_touch_non_aggressive_code(helpers):
     assert outcome.code == "CRISIS_PANIC_SELL_OFF"
 
 
+def test_holding_position_translates_new_entry_leader_label(helpers):
+    decision_outcome = _outcome(
+        helpers, "🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER",
+    )
+
+    outcome = helpers._translate_new_entry_decision_for_holding(
+        decision_outcome, has_pos=True, weight_gap=4.02,
+    )
+
+    assert outcome.code == "HOLDING_LEADER_ADD_REVIEW"
+    assert "신규진입" not in outcome.label
+    assert "보유" in outcome.label
+    assert outcome.group == "caution"
+    assert any("4.0%p" in r for r in outcome.reasons)
+
+
+def test_non_holding_position_keeps_new_entry_leader_label(helpers):
+    decision_outcome = _outcome(
+        helpers, "🆕신규진입: 대장주 포착", "#16a34a", "NEW_ENTRY_LEADER",
+    )
+
+    outcome = helpers._translate_new_entry_decision_for_holding(
+        decision_outcome, has_pos=False, weight_gap=4.02,
+    )
+
+    assert outcome.code == "NEW_ENTRY_LEADER"
+    assert outcome.label == "🆕신규진입: 대장주 포착"
+
+
 def test_none_decision_outcome_is_normalized(helpers):
     dec, col, outcome = helpers._apply_safety_state_override(
         None, "그냥 보유", "#6b7280",

@@ -15492,6 +15492,42 @@ def _apply_safety_state_override(decision_outcome, dec, col, *, safety_state, ha
     return decision_outcome.label, decision_outcome.color, decision_outcome
 
 
+HOLDING_ENTRY_DECISION_OVERRIDES = {
+    "NEW_ENTRY_LEADER": ("📈보유대장주: 추가는 눌림 확인", "#22c55e", "HOLDING_LEADER_ADD_REVIEW"),
+    "BREAKOUT_52W_ENTRY": ("🚀보유 신고가: 추격보다 추적", "#7c3aed", "HOLDING_BREAKOUT_TRAIL"),
+    "S_PULLBACK_ENTRY": ("🎯보유 S급 눌림: 추가 검토", "#8b5cf6", "HOLDING_S_PULLBACK_ADD_REVIEW"),
+    "OVERSOLD_NEW_ENTRY": ("🔥보유 낙폭과대: 추가 검토", "#16a34a", "HOLDING_OVERSOLD_ADD_REVIEW"),
+    "EARLY_ENTRY": ("🟢보유 반전초입: 추가는 확인", "#16a34a", "HOLDING_EARLY_ADD_REVIEW"),
+    "EARLY_REVERSAL_ENTRY": ("🟢보유 반전초입: 추가는 확인", "#16a34a", "HOLDING_EARLY_REVERSAL_ADD_REVIEW"),
+    "QUALITY_PULLBACK_ENTRY": ("🎯우량 보유주 눌림: 추가 검토", "#8b5cf6", "HOLDING_QUALITY_PULLBACK_ADD_REVIEW"),
+    "QUALITY_RECOVERY_SCOUT": ("🟢보유주 회복초입: 추가는 소액", "#16a34a", "HOLDING_QUALITY_RECOVERY_SCOUT"),
+    "QUALITY_RECOVERY_CANDIDATE": ("✅보유주 회복 후보: 추가는 분할", "#22c55e", "HOLDING_QUALITY_RECOVERY_CANDIDATE"),
+    "TREND_PULLBACK_EXPLORE": ("📈보유주 추세눌림: 소액 추가 검토", "#3b82f6", "HOLDING_TREND_PULLBACK_ADD_REVIEW"),
+    "EXCEPTION_ENTRY": ("🟣보유주 예외승인: 정찰대 추가", "#7c3aed", "HOLDING_EXCEPTION_ADD_REVIEW"),
+}
+
+
+def _translate_new_entry_decision_for_holding(decision_outcome, *, has_pos, weight_gap=0.0):
+    if decision_outcome is None or not has_pos:
+        return decision_outcome
+
+    mapped = HOLDING_ENTRY_DECISION_OVERRIDES.get(str(decision_outcome.code or ""))
+    if not mapped:
+        return decision_outcome
+
+    label, color, code = mapped
+    note = "보유 종목이므로 신규진입이 아니라 보유 유지와 잔여 목표비중 추가 여부로 해석합니다."
+    try:
+        gap = float(weight_gap)
+    except (TypeError, ValueError):
+        gap = 0.0
+    if gap > 0:
+        note = f"{note} 잔여 목표비중은 {gap:.1f}%p입니다."
+
+    reasons = (note, f"기존 신규 신호: {decision_outcome.label}") + tuple(decision_outcome.reasons or ())[:3]
+    return build_decision_outcome(label, color, code, reasons=reasons)
+
+
 def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p, is_etf,
                           weight_gap, ticker):
     """Compute the position-sizing hint shown alongside the decision.
@@ -17070,6 +17106,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         safety_state=safety_state, has_pos=has_pos,
         tech_total=tech_total, main_score=main_score, adj_tech_score=adj_tech_score,
     )
+    decision_outcome = _translate_new_entry_decision_for_holding(
+        decision_outcome, has_pos=has_pos, weight_gap=weight_gap,
+    )
+    dec, col = decision_outcome.label, decision_outcome.color
     sizing_hint = _compute_sizing_hint(
         decision_outcome,
         has_pos=has_pos, targ_w=targ_w, eff_total=eff_total, cur_p=cur_p, is_etf=is_etf,
