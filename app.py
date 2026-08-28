@@ -1301,6 +1301,44 @@ def sanitize_watchlist_item(item):
         cleaned["fin_score"] = 0
     return cleaned
 
+def _watchlist_value_present(value) -> bool:
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+    return str(value or "").strip() not in {"", "nan", "None", "none", "-"}
+
+
+def dedupe_watchlist_items(watchlist):
+    ordered_keys: list[str] = []
+    merged_by_key: dict[str, dict] = {}
+    for item in watchlist or []:
+        if not isinstance(item, dict):
+            continue
+        clean_item = sanitize_watchlist_item(item)
+        ticker = sanitize_ticker_value(clean_item.get("ticker", ""))
+        key = normalize_ticker(ticker)
+        if not key:
+            continue
+        if key not in merged_by_key:
+            ordered_keys.append(key)
+            merged_by_key[key] = clean_item
+            continue
+
+        merged = dict(merged_by_key[key])
+        for field, value in clean_item.items():
+            if not _watchlist_value_present(value):
+                continue
+            if field == "fin_score":
+                old_score = clean_int(merged.get("fin_score"))
+                new_score = clean_int(value)
+                if old_score not in (None, 0) and new_score in (None, 0):
+                    continue
+            merged[field] = value
+        merged_by_key[key] = sanitize_watchlist_item(merged)
+    return [merged_by_key[key] for key in ordered_keys if key in merged_by_key]
+
 def is_known_etf_ticker(ticker):
     raw = sanitize_ticker_value(ticker)
     symbol = clean_symbol(raw)
@@ -2109,6 +2147,7 @@ def save_watchlist_db(watchlist):
     if IS_PUBLIC_DEMO:
         return False
 
+    watchlist = dedupe_watchlist_items(watchlist)
     rows = []
     row_keys = []
     for idx, item in enumerate(watchlist):
@@ -2274,7 +2313,7 @@ def add_or_update_watchlist_item(item, *, update_existing=True):
     clean_item["name"] = name
 
     before = [dict(x) for x in st.session_state.get("watchlist", []) if isinstance(x, dict)]
-    watchlist = [sanitize_watchlist_item(x) for x in before]
+    watchlist = dedupe_watchlist_items(before)
     matched_idx = None
     for idx, existing in enumerate(watchlist):
         if _security_matches(existing.get("ticker", ""), clean_item.get("ticker", ""), existing.get("name", ""), clean_item.get("name", "")):
@@ -14628,9 +14667,9 @@ def get_macro_analysis():
 
 if "fin_score_map" not in st.session_state: st.session_state.fin_score_map = {}
 if "watchlist" not in st.session_state:
-    st.session_state.watchlist = load_watchlist_persistent()
+    st.session_state.watchlist = dedupe_watchlist_items(load_watchlist_persistent())
 else:
-    st.session_state.watchlist = [sanitize_watchlist_item(item) for item in st.session_state.watchlist]
+    st.session_state.watchlist = dedupe_watchlist_items(st.session_state.watchlist)
 
 # -------------------------------------------------
 # 5. SMC 헬퍼 및 엔진 로직
@@ -17044,7 +17083,8 @@ TICKER_MAP = {
     "DRAM": ("DRAM", True, "us_etf_nasdaq"),
     "RAM": ("RAM", True, "us_etf_nasdaq"),
     "s&p500": ("379800.KS", True, "us_etf_sp"), "다우존스": ("458730.KS", True, "us_etf_sp"), "kodex 200": ("069500.KS", True, "kr_etf"),
-    "MSFT": ("MSFT", False, "us_stock"), "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
+    "MSFT": ("MSFT", False, "us_stock"), "프리포트 맥모란": ("FCX", False, "us_stock"), "FCX": ("FCX", False, "us_stock"),
+    "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
     "샌디스크": ("SNDK", False, "us_stock"), "TSM": ("TSM", False, "us_stock"), "브로드컴": ("AVGO", False, "us_stock"), "MRVL": ("MRVL", False, "us_stock"),
     "버티브홀딩스": ("VRT", False, "us_stock"), "마이크론": ("MU", False, "us_stock"), "삼성전자": ("005930.KS", False, "kr_stock"),
     "두산에너빌리티": ("034020.KS", False, "kr_stock"), "하이닉스": ("000660.KS", False, "kr_stock"), "한화에어로스페이스": ("012450.KS", False, "kr_stock"),
@@ -17832,6 +17872,7 @@ def render_peer_comparison_panel(current_ticker: str, current_name: str = "", as
 
 def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, my_price=0.0):
     """Show a concrete entry/exit plan using the app's existing R/R logic."""
+    plan_title = "보유/추가매수 관리 계획" if has_pos else "신규진입 실행 계획"
     cur = clean_float(c.get("cur_p"), 0.0)
     atr = clean_float(c.get("atr"), 0.0)
     stop = clean_float(c.get("rr_stop"), 0.0)
@@ -17884,12 +17925,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     leveraged_timing = build_leveraged_dca_timing_state(c, leveraged_precision_state) if leveraged_precision_state else {}
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
-        st.info("신규진입 실행 계획은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
+        st.info(f"{plan_title}은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
         return
 
     risk = cur - stop
     if risk <= 0:
-        st.info("손절 폭을 산출할 수 없어 신규진입 실행 계획을 만들 수 없습니다.")
+        st.info(f"손절 폭을 산출할 수 없어 {plan_title}을 만들 수 없습니다.")
         return
     rr = round((target - cur) / risk, 2) if target > cur else rr
 
@@ -17976,13 +18017,21 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         status_color = "#d97706"
         status_note = "+4ATR은 확정 목표가가 아니라 가격발견 구간의 강세 상단입니다. 신규/추매는 추격보다 눌림 또는 소액 분할, 익절은 +1ATR/+2ATR와 추적손절 중심으로 봅니다."
     elif rr < 1.5:
-        status = "정찰만"
+        status = "추가 정찰만" if has_pos else "정찰만"
         status_color = "#d97706"
-        status_note = "R/R이 1.5 미만이라 풀비중보다 1차 정찰 중심이 맞습니다."
+        status_note = (
+            "이미 보유 중이면 보유분은 유지 판단, 추가는 잔여 목표비중 안에서 소액 정찰만 봅니다."
+            if has_pos
+            else "R/R이 1.5 미만이라 풀비중보다 1차 정찰 중심이 맞습니다."
+        )
     elif decision_code == "MTF_OVERHEAT_SCOUT_ONLY":
-        status = "상위과열 / 1차 정찰만"
+        status = "상위과열 / 추가는 1차 정찰만" if has_pos else "상위과열 / 1차 정찰만"
         status_color = "#d97706"
-        status_note = "일봉은 눌림이지만 주봉/월봉 가격대가 높습니다. 부족분 전체가 아니라 1차 정찰 후 추가 확인이 맞습니다."
+        status_note = (
+            "일봉은 눌림이지만 주봉/월봉 가격대가 높습니다. 이미 1차 진입했다면 추가 추격보다 다음 눌림과 R/R 재확인이 먼저입니다."
+            if has_pos
+            else "일봉은 눌림이지만 주봉/월봉 가격대가 높습니다. 부족분 전체가 아니라 1차 정찰 후 추가 확인이 맞습니다."
+        )
     elif is_wait:
         if decision_code.startswith("PREMARKET_REBOUND") and "본장 반등" in decision_label:
             status = "종가/거래량 확인대기"
@@ -18030,7 +18079,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         entry1_cond = f"{entry1_label} 눌림 확인 후 1차"
     else:
         entry1 = cur
-        entry1_cond = "현재가 부근 1차 정찰"
+        entry1_cond = "현재 보유분 유지, 추가 1차는 현재가 부근 소액만" if has_pos else "현재가 부근 1차 정찰"
 
     if len(support_candidates) >= 2:
         entry2_label, entry2 = support_candidates[1]
@@ -18159,7 +18208,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         })
     rows += [
         {
-            "단계": tranche_label("1차 진입", tranche_weights[0]),
+            "단계": tranche_label("추가 1차" if has_pos else "1차 진입", tranche_weights[0]),
             "가격": format_currency(entry1, ticker),
             "금액/수량": order_text(plan_buy_amt_krw * tranche_weights[0], entry1),
             "예상 R/R": rr_entry1_text,
@@ -18233,7 +18282,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         "가격": format_currency(stop, ticker),
         "금액/수량": "전량 또는 계획분",
         "예상 R/R": "-",
-        "조건": "종가 기준 이탈 시 신규진입 시나리오 무효",
+        "조건": "종가 기준 이탈 시 추가매수 시나리오 무효" if has_pos else "종가 기준 이탈 시 신규진입 시나리오 무효",
     })
 
     if buy_amt_krw <= 0 and not has_pos:
@@ -18254,7 +18303,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     else:
         amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
     if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing:
-        amount_note += " R/R이 낮아 현재 실행분은 1차 정찰만 열어둡니다."
+        amount_note += (
+            " R/R이 낮아 추가 실행분은 1차 소액만 열어둡니다."
+            if has_pos
+            else " R/R이 낮아 현재 실행분은 1차 정찰만 열어둡니다."
+        )
     if target_is_projection:
         amount_note += " 신고가/가격발견 구간이라 +4ATR은 확정 목표가가 아니라 강세 시나리오 상단이며, 실제 익절은 +1ATR/+2ATR 분할과 추적손절 중심으로 해석하세요."
 
@@ -18262,7 +18315,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     rr_label = "투영 상단 기준 R/R" if target_is_projection else "현재가 기준 R/R"
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {status_color}; line-height:1.8;'>"
-        f"<b>🎯 신규진입 실행 계획</b><br>"
+        f"<b>🎯 {plan_title}</b><br>"
         f"<span class='highlight'>{status}</span> — {escape_html_value(status_note)}<br>"
         f"{target_label} {format_currency(target, ticker)} <span style='color:#94a3b8;'>({escape_html_value(target_source)})</span> / "
         f"손절 {format_currency(stop, ticker)} <span style='color:#94a3b8;'>({escape_html_value(stop_source)})</span><br>"
@@ -33856,7 +33909,17 @@ if main_page == "precision":
             a_class = "kr_stock" if is_kr_listed(tkr) else "us_stock"
 
         name = sanitize_asset_name("", tkr)
-        my_p, has_p = 0.0, False
+        holding_row = get_holding_row_by_ticker(holdings_table, tkr)
+        if holding_row is not None:
+            name = sanitize_asset_name(holding_row.get("자산명", name), tkr)
+            row_asset_class = str(holding_row.get("asset_class", a_class) or a_class).strip()
+            row_is_etf = holding_row.get("is_etf", is_etf)
+            is_etf = is_fin_score_exempt_asset(tkr, row_is_etf, row_asset_class, name)
+            a_class = infer_asset_class_for_ticker(tkr, row_asset_class) if is_etf else (row_asset_class or a_class)
+            my_p = clean_float(holding_row.get("매입가"), 0.0)
+            has_p = clean_float(holding_row.get("보유량"), 0.0) > 0
+        else:
+            my_p, has_p = 0.0, False
     elif selected_option.get("type") == "watchlist":
         watch_item = selected_option.get("item", {})
         tkr = sanitize_ticker_value(watch_item.get("ticker", ""))
@@ -34197,7 +34260,7 @@ if main_page == "precision":
                 if precision_chart_load_note:
                     st.caption(precision_chart_load_note)
 
-            if is_free or app_mode == "범용모드": st.info("💡 직접 입력 기반 분석 모드입니다.")
+            if app_mode == "범용모드" or (is_free and not has_p): st.info("💡 직접 입력 기반 분석 모드입니다.")
             else:
                 if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
                 dca_html = ""

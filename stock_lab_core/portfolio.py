@@ -1,9 +1,11 @@
 """Portfolio summary and cash/reserve calculation helpers for Stock Lab."""
 
+import re
+
 import numpy as np
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float, normalize_ticker
+from stock_lab_core.formatters import clean_float, normalize_ticker, sanitize_ticker_value
 from stock_lab_core.prices import load_price_df
 
 
@@ -132,11 +134,22 @@ def calc_reserve_summary(df, reserve_target_weight):
     }
 
 
+def _portfolio_ticker_key(ticker):
+    raw = sanitize_ticker_value(ticker)
+    if not raw:
+        return ""
+    raw = re.sub(r"^(NYSE|NASDAQ|AMEX|ARCA|BATS):", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\.(KS|KQ|US|NYSE|NASDAQ|AMEX|ARCA|NMS|NYQ|O|PK)$", "", raw, flags=re.IGNORECASE)
+    return normalize_ticker(raw)
+
+
 def get_holding_row_by_ticker(holdings_table, ticker):
     if holdings_table.empty:
         return None
-    t = normalize_ticker(ticker)
-    matched = holdings_table[holdings_table["티커"].apply(normalize_ticker) == t]
+    t = _portfolio_ticker_key(ticker)
+    if not t or "티커" not in holdings_table.columns:
+        return None
+    matched = holdings_table[holdings_table["티커"].apply(_portfolio_ticker_key) == t]
     if not matched.empty:
         return matched.iloc[0]
     return None
