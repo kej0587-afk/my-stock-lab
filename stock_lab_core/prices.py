@@ -79,7 +79,7 @@ LEVERAGED_TARGET_ETF_PROXIES = {
     # 공식 실시간가가 안정되기 전에는 DRAM 당일 수익률의 2배를 이용해 평가용 가격을 보정한다.
     "RAM": {"underlying": "DRAM", "leverage": 2.0},
 }
-LIVE_PRIORITY_US_TICKERS = set(LEVERAGED_TARGET_ETF_PROXIES)
+LIVE_PRIORITY_US_TICKERS = set(LEVERAGED_TARGET_ETF_PROXIES) | {"BITX", "BITU", "SOXL"}
 
 OHLC_LIVE_ALIGNMENT_TICKERS = {"HON"}
 OHLC_ALIGNMENT_FACTORS = (0.5, 0.25, 0.2, 0.1, 2.0, 4.0, 5.0, 10.0)
@@ -671,7 +671,8 @@ _PYTH_PRICE_MAX_AGE_SECONDS = 180
 _PYTH_CONFIDENCE_MAX_RATIO = 0.05
 _LATEST_PRICE_CACHE_TTL_SECONDS = 15
 _US_INTRADAY_QUOTE_MAX_AGE_SECONDS = 16 * 60 * 60
-_US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION = 0.05
+_US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION = 0.20
+_US_LEVERAGED_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION = 0.35
 _KIS_TOKEN_CACHE = {"cache_key": "", "token": "", "expires_at": 0.0}
 _KIS_TOKEN_LOCK = threading.Lock()
 
@@ -1309,7 +1310,7 @@ def _fetch_kis_us_quote_price(
             # current price there; regular KIS quotes remain a fallback later.
             price = _extract_kis_quote_price(
                 payload,
-                allow_base=(not is_daytime_exchange and t not in LEVERAGED_TARGET_ETF_PROXIES),
+                allow_base=(not is_daytime_exchange and not _is_live_priority_us_ticker(t)),
             )
             if price > 0:
                 return price
@@ -1343,8 +1344,6 @@ def _fetch_us_realtime_price(ticker: str) -> float:
 
     def _kis_daytime_price() -> float:
         price = _fetch_kis_us_quote_price(t, daytime_only=True)
-        if _is_live_priority_us_ticker(t):
-            return price
         return _accept_us_untimed_quote_price(t, price)
 
     regular_session_active = _us_equity_regular_session_active()
@@ -1612,6 +1611,19 @@ def _fetch_yahoo_regular_close_price(ticker: str) -> float:
     return 0.0
 
 
+def _repair_us_untimed_quote_scale(price: float, reference_price: float, allowed_deviation: float) -> float:
+    if price <= 0 or reference_price <= 0:
+        return 0.0
+    for factor in (0.1, 0.01, 10.0, 100.0):
+        adjusted = price * factor
+        if adjusted <= 0:
+            continue
+        deviation = abs((adjusted / reference_price) - 1.0)
+        if deviation <= allowed_deviation:
+            return float(adjusted)
+    return 0.0
+
+
 def _accept_us_untimed_quote_price(ticker: str, price: float) -> float:
     try:
         price = float(price or 0.0)
@@ -1619,17 +1631,23 @@ def _accept_us_untimed_quote_price(ticker: str, price: float) -> float:
         return 0.0
     if price <= 0:
         return 0.0
-    if not _us_equity_market_closed_today():
-        return price
 
     regular_close = _fetch_yahoo_regular_close_price(ticker)
     if regular_close <= 0:
+        # 기준가가 막히는 시간대에도 판정 화면은 유지되어야 한다.
+        # Yahoo/분봉/장외 가격을 먼저 시도한 뒤의 최후 폴백이므로 여기서는 값을 살린다.
         return price
 
+    allowed_deviation = (
+        _US_LEVERAGED_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION
+        if _is_live_priority_us_ticker(ticker)
+        else _US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION
+    )
     deviation = abs((price / regular_close) - 1.0)
-    if deviation <= _US_UNTIMED_QUOTE_MAX_CLOSE_DEVIATION:
+    if deviation <= allowed_deviation:
         return price
-    return 0.0
+    repaired = _repair_us_untimed_quote_scale(price, regular_close, allowed_deviation)
+    return repaired if repaired > 0 else 0.0
 
 
 def _meta_best_price(meta: dict) -> float:
@@ -1806,8 +1824,9 @@ def _fetch_price_uncached(ticker: str) -> float:
                 return price
             if _is_live_priority_us_ticker(ticker):
                 raw_daytime_price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
-                if raw_daytime_price > 0:
-                    return raw_daytime_price
+                price = _accept_us_untimed_quote_price(ticker, raw_daytime_price)
+                if price > 0:
+                    return price
             price = _fetch_yahoo_quote(ticker)
             if price > 0:
                 return price
@@ -1815,7 +1834,7 @@ def _fetch_price_uncached(ticker: str) -> float:
             if price > 0:
                 return price
             raw_daytime_price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
-            price = raw_daytime_price if _is_live_priority_us_ticker(ticker) else _accept_us_untimed_quote_price(ticker, raw_daytime_price)
+            price = _accept_us_untimed_quote_price(ticker, raw_daytime_price)
             if price > 0:
                 return price
         price = _accept_us_untimed_quote_price(ticker, _fetch_configured_us_quote_price(ticker))
@@ -1999,7 +2018,7 @@ def load_latest_prices_batch(tickers) -> dict:
                     prices[key] = p
                     continue
                 if _is_live_priority_us_ticker(t):
-                    p = _fetch_kis_us_quote_price(t, daytime_only=True)
+                    p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, daytime_only=True))
                     if p > 0:
                         prices[key] = p
                         continue
@@ -2012,7 +2031,7 @@ def load_latest_prices_batch(tickers) -> dict:
                     prices[key] = p
                     continue
                 raw_daytime_price = _fetch_kis_us_quote_price(t, daytime_only=True)
-                p = raw_daytime_price if _is_live_priority_us_ticker(t) else _accept_us_untimed_quote_price(t, raw_daytime_price)
+                p = _accept_us_untimed_quote_price(t, raw_daytime_price)
             if p > 0:
                 prices[key] = p
 

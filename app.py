@@ -1196,7 +1196,14 @@ def canonicalize_watchlist_ticker(ticker, name=""):
 
 
 SECURITY_NAME_ALIASES = {
+    "BE": ("Bloom Energy", "블룸에너지", "볼륨 에너지"),
+    "BKNG": ("부킹 홀딩스", "Booking Holdings"),
+    "FCX": ("프리포트 맥모란", "Freeport-McMoRan"),
     "MRNA": ("모더나", "Moderna", "Moderna Inc", "Moderna, Inc."),
+    "NEM": ("뉴몬트", "Newmont"),
+    "PYPL": ("페이팔", "PayPal", "PayPal Holdings"),
+    "TM": ("토요타 모터스", "토요타 모터스(ADR)", "Toyota Motor"),
+    "TSLA": ("테슬라", "Tesla"),
     "161890": ("한국콜마", "Kolmar Korea"),
     "192820": ("코스맥스", "COSMAX", "Cosmax", "코드맥스"),
 }
@@ -1206,8 +1213,12 @@ def _security_name_key(value) -> str:
     text = str(value or "").strip()
     if not text or text.lower() in {"nan", "none", "-"}:
         return ""
+    text = strip_search_prefix(text)
+    text = re.sub(r"\([^)]*\)", " ", text)
+    text = re.sub(r"\b\d{6}(?:\.(?:KS|KQ))?\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b[A-Z]{1,6}(?:\.[A-Z]{1,4})?\b", " ", text)
     text = re.sub(r"\s+", "", text)
-    text = re.sub(r"[\(\)\[\]\{\},./:_\-·ㆍ|]+", "", text)
+    text = re.sub(r"[\(\)\[\]\{\},./:_\-·ㆍ|★☆✅⚠️🔸⭐]+", "", text)
     return text.lower()
 
 
@@ -1234,6 +1245,9 @@ def _security_ticker_keys(ticker) -> set[str]:
 def _security_identity_keys(ticker="", name="") -> set[str]:
     keys: set[str] = set()
     ticker_keys = _security_ticker_keys(ticker)
+    name_text = str(name or "")
+    for embedded in re.findall(r"\b\d{6}(?:\.(?:KS|KQ))?\b|\b[A-Z]{1,6}(?:\.[A-Z]{1,4})?\b", name_text):
+        ticker_keys.update(_security_ticker_keys(embedded))
     for key in ticker_keys:
         keys.add(f"T:{key}")
         for alias in SECURITY_NAME_ALIASES.get(key, ()):
@@ -15626,12 +15640,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     # chart close is stale or unadjusted after a split/provider lag.
     if live_price > 0:
         live_gap_ratio = abs(float(live_price) - cur_p) / max(abs(cur_p), 1.0)
-        cur_p = float(live_price)
-        live_price_used = (
-            live_price_used
-            or live_gap_ratio > 0.003
-            or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
-        )
+        if live_ohlcv_applied or live_gap_ratio < 0.5:
+            cur_p = float(live_price)
+            live_price_used = (
+                live_price_used
+                or live_gap_ratio > 0.003
+                or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
+            )
     p1m = df["Close"].iloc[-21] if len(df) >= 21 else df["Close"].iloc[0]
     p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
     p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
@@ -17581,14 +17596,13 @@ def load_display_live_price(ticker: str) -> float:
     latest = clean_float(load_latest_price(ticker), 0.0)
     if latest > 0:
         return latest
-    if ticker and not is_kr_listed(ticker) and _us_equity_market_closed_today():
+    if ticker and not is_kr_listed(ticker):
+        direct = fetch_yahoo_daymarket_price_direct(ticker)
+        if direct > 0:
+            return direct
         regular_close = clean_float(_fetch_yahoo_regular_close_price(ticker), 0.0)
         if regular_close > 0:
             return regular_close
-        return 0.0
-    direct = fetch_yahoo_daymarket_price_direct(ticker)
-    if direct > 0:
-        return direct
     return 0.0
 
 
@@ -20483,8 +20497,8 @@ def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
     return out
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260826_flow_candidate_bridge_v1"
-TODAY_QUEUE_FLOW_AUTO_LIMIT = 6
+TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
+TODAY_QUEUE_FLOW_AUTO_LIMIT = 12
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -33771,7 +33785,7 @@ if main_page == "precision":
     is_free = (selected_option.get("type") == "free")
 
     if not is_free and free_option:
-        with st.expander("직접 티커/종목코드로 전환", expanded=False):
+        with st.expander("직접 티커/종목코드로 전환", expanded=True):
             q1, q2, q3 = st.columns([2.0, 1.1, 0.9])
             with q1:
                 quick_ticker = sanitize_ticker_value(

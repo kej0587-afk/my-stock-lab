@@ -131,6 +131,7 @@ def test_us_regular_session_uses_kis_regular_when_timestamped_sources_missing(mo
 
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
     monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_yf_download_price", lambda ticker, interval, prepost: 0.0)
     monkeypatch.setattr(prices, "_fetch_robinhood_us_quote", lambda ticker: 0.0)
@@ -160,7 +161,7 @@ def test_us_holiday_price_rejects_far_untimed_quote(monkeypatch):
     monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_pyth_us_live_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_cboe_book_price", lambda ticker: 0.0)
-    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 900.09)
 
     assert prices._fetch_price_uncached("AMAT") == 603.04
 
@@ -214,8 +215,31 @@ def test_us_untimed_quote_far_from_regular_close_is_rejected(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 603.04)
 
-    assert prices._accept_us_untimed_quote_price("AMAT", 635.09) == 0.0
+    assert prices._accept_us_untimed_quote_price("AMAT", 900.09) == 0.0
     assert prices._accept_us_untimed_quote_price("AMAT", 610.00) == 610.00
+
+
+def test_us_untimed_quote_repairs_decimal_shift(monkeypatch):
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 97.24)
+
+    assert prices._accept_us_untimed_quote_price("MU", 972.47) == 97.247
+
+
+def test_us_nonregular_untimed_quote_far_from_regular_close_is_rejected(monkeypatch):
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 120.00)
+
+    assert prices._accept_us_untimed_quote_price("RKLB", 199.00) == 0.0
+    assert prices._accept_us_untimed_quote_price("RKLB", 122.00) == 122.00
+
+
+def test_us_nonregular_untimed_quote_without_reference_keeps_price_available(monkeypatch):
+    monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
+    monkeypatch.setattr(prices, "_fetch_yahoo_regular_close_price", lambda ticker: 0.0)
+
+    assert prices._accept_us_untimed_quote_price("RKLB", 122.00) == 122.00
 
 
 def test_us_batch_holiday_price_rejects_far_untimed_quote(monkeypatch):
@@ -231,7 +255,7 @@ def test_us_batch_holiday_price_rejects_far_untimed_quote(monkeypatch):
     monkeypatch.setattr(prices, "_fetch_configured_us_quote_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_pyth_us_live_price", lambda ticker: 0.0)
     monkeypatch.setattr(prices, "_fetch_cboe_book_price", lambda ticker: 0.0)
-    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 635.09)
+    monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: 900.09)
 
     assert prices.load_latest_prices_batch(["AMAT"])["AMAT"] == 603.04
 

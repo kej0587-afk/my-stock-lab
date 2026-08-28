@@ -101,5 +101,12 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "RAM": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
     "BITX": "2x Bitcoin ETF",
     "BITU": "2x Bitcoin ETF",
+    "BE": "Bloom Energy",
+    "BKNG": "부킹 홀딩스",
+    "FCX": "프리포트 맥모란",
+    "NEM": "뉴몬트",
     "MRNA": "모더나",
+    "PYPL": "페이팔",
+    "TM": "토요타 모터스(ADR)",
+    "TSLA": "테슬라",
 }
