@@ -17160,6 +17160,7 @@ def find_precision_select_label_by_ticker(ticker, option_map):
 
 PRECISION_FREE_TICKER_KEY = "precision_free_ticker_input"
 PRECISION_FREE_MARKET_KEY = "precision_free_market_option"
+PRECISION_FORCE_FREE_OPTION_KEY = "_precision_force_free_option"
 
 
 def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
@@ -33828,7 +33829,10 @@ if main_page == "dashboard":
 if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     free_option = FREE_SEARCH_OPTION if FREE_SEARCH_OPTION in options else (options[0] if options else "")
-    if st.session_state.get("precision_selected_option") not in options:
+    force_free_option = bool(st.session_state.pop(PRECISION_FORCE_FREE_OPTION_KEY, False))
+    if force_free_option and free_option:
+        st.session_state["precision_selected_option"] = free_option
+    elif st.session_state.get("precision_selected_option") not in options:
         st.session_state["precision_selected_option"] = free_option
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
@@ -33861,9 +33865,9 @@ if main_page == "precision":
                     if not quick_ticker:
                         st.warning("티커나 종목코드를 입력하세요.")
                     else:
-                        st.session_state["precision_selected_option"] = free_option
                         st.session_state[PRECISION_FREE_TICKER_KEY] = _split_precision_free_ticker(quick_ticker)[0]
                         st.session_state[PRECISION_FREE_MARKET_KEY] = quick_market
+                        st.session_state[PRECISION_FORCE_FREE_OPTION_KEY] = True
                         st.rerun()
 
     if is_free:
