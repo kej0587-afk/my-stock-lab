@@ -15537,6 +15537,154 @@ def _has_down_session_pressure(*, day_ret, regular_day_ret=np.nan, live_ref_ret=
     return any(finite_num(v) and float(v) <= threshold for v in values)
 
 
+def build_sideways_quality_state(c: dict, *, is_leveraged_product=False, has_pos=False) -> dict:
+    """Translate existing timing inputs into an easy sideways/pullback quality label."""
+    if not isinstance(c, dict):
+        return {}
+
+    cur = clean_float(c.get("cur_p"), 0.0)
+    if cur <= 0:
+        return {}
+
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    ma5 = clean_float(c.get("ma5"), 0.0)
+    ma20 = clean_float(c.get("ma20"), 0.0)
+    ma50 = clean_float(c.get("ma50"), 0.0)
+    ma120 = clean_float(c.get("ma120"), 0.0)
+    rr = clean_float(c.get("rr_ratio"), np.nan)
+    dd = clean_float(c.get("dd"), 0.0)
+    day_ret = clean_float(c.get("day_ret"), np.nan)
+    regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
+    live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
+    live_gap_move = clean_float(c.get("leveraged_drop_ret", c.get("day_ret")), np.nan)
+    vol_ratio = clean_float(c.get("vol_ratio"), np.nan)
+    trend = str(c.get("trend", "") or "")
+    rs_label = str(c.get("rs_label", "") or "")
+    macd = str(c.get("macd", "") or "")
+    rt_macd = str(c.get("rt_macd", "") or "")
+    pd_zone = str(c.get("pd_zone", "") or "")
+    mtf_label = str(c.get("mtf_bias_label", "") or "")
+    bucket = str(c.get("bucket", "") or "")
+    is_core_dca = bucket == "core" and clean_float(c.get("core_dca_rate"), 0.0) > 0
+
+    ma20_gap = (cur / ma20 - 1.0) if ma20 > 0 else np.nan
+    ma5_gap = (cur / ma5 - 1.0) if ma5 > 0 else np.nan
+    above_ma20 = ma20 > 0 and cur >= ma20 * 0.98
+    near_ma20 = ma20 > 0 and 0.97 <= cur / ma20 <= 1.06
+    above_ma50 = ma50 > 0 and cur >= ma50 * 0.98
+    above_ma120 = ma120 > 0 and cur >= ma120 * 0.98
+    rr_needed = 2.0 if is_leveraged_product else 1.5
+    rr_ok = finite_num(rr) and rr >= rr_needed
+    rr_poor = finite_num(rr) and rr < 1.0 and not is_core_dca
+    heat_watch = (
+        (finite_num(rsi) and rsi >= 70)
+        or (finite_num(mfi) and mfi >= 75)
+        or (finite_num(pct_b) and pct_b >= 0.82)
+    )
+    heat_hard = (
+        (finite_num(rsi) and rsi >= 75)
+        or (finite_num(mfi) and mfi >= 82)
+        or (finite_num(pct_b) and pct_b >= 0.95)
+    )
+    price_extended = finite_num(ma20_gap) and ma20_gap >= (0.12 if is_leveraged_product else 0.15)
+    upper_zone = "Premium" in pd_zone or (finite_num(pct_b) and pct_b >= 0.78)
+    trend_bad = (
+        bool(c.get("structure_risk"))
+        or "역배열" in trend
+        or "약함" in rs_label
+        or mtf_label == "상위 시간대 경고"
+    )
+    down_pressure = _has_down_session_pressure(
+        day_ret=day_ret,
+        regular_day_ret=regular_day_ret,
+        live_ref_ret=live_ref_ret,
+        live_gap_move=live_gap_move,
+        live_price_used=bool(c.get("live_price_used")),
+        threshold=-0.03,
+    )
+    momentum_ok = (
+        "강함" in rs_label
+        or "상승" in macd
+        or "상승" in rt_macd
+    )
+    volume_ok = (not finite_num(vol_ratio)) or vol_ratio <= 1.8
+
+    reasons = []
+    if finite_num(rsi):
+        reasons.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi):
+        reasons.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b):
+        reasons.append(f"%B {pct_b:.2f}")
+    if finite_num(ma20_gap):
+        reasons.append(f"MA20 대비 {ma20_gap * 100:+.1f}%")
+    if finite_num(rr):
+        reasons.append(f"R/R {rr:.2f}")
+    if finite_num(dd):
+        reasons.append(f"고점대비 {dd * 100:.1f}%")
+
+    if is_leveraged_product and (heat_watch or price_extended or upper_zone):
+        label = "🔴위험한 횡보: 레버리지 과열 식힘 대기"
+        status = "차단"
+        note = "회복 조건이 좋아도 2배/3배 상품은 상단권 횡보에서 목표비중 미달만 보고 따라붙지 않습니다."
+    elif rr_poor:
+        label = "🔴위험한 횡보: 손익비 부족"
+        status = "차단"
+        note = "버티는 것처럼 보여도 손절폭 대비 기대수익이 작아 현재가 실행은 불리합니다."
+    elif is_core_dca and not heat_hard:
+        if trend_bad:
+            label = "🟡코어 방어 횡보: 정해진 적립률만"
+            status = "주의"
+            note = "코어 ETF는 월 적립은 가능하지만 추세가 약하므로 정해진 적립률을 넘겨 확대하지 않습니다."
+        else:
+            label = "✅코어 적립 횡보: 정해진 비율만"
+            status = "통과"
+            note = "코어 ETF는 횡보 중에도 과열이 아니면 월 적립률 안에서만 접근할 수 있습니다."
+    elif trend_bad and (not above_ma20 or not above_ma50):
+        label = "🔴위험한 횡보: 추세 아래 약한 버팀"
+        status = "차단"
+        note = "횡보가 지지 확인이 아니라 하락 중 쉬는 구간일 수 있어 추세 회복을 먼저 봅니다."
+    elif heat_hard or price_extended:
+        label = "🟡관찰 횡보: 과열 식힘 대기"
+        status = "주의"
+        note = "가격은 버티지만 과열 또는 MA20 이격이 남아 있어 눌림·시간 조정 확인이 우선입니다."
+    elif down_pressure and finite_num(ma5_gap) and ma5_gap < 0:
+        label = "🟡관찰 횡보: 종가 확인"
+        status = "주의"
+        note = "단기 하락 압력이 있어 장중/프리 가격보다 종가와 MA5 회복을 확인합니다."
+    elif heat_watch or upper_zone:
+        label = "🟡관찰 횡보: 상단권 소화 중"
+        status = "주의"
+        note = "상단 매물 또는 볼린저 상단권이라 돌파 후 지지나 MA5/MA20 눌림을 기다립니다."
+    elif near_ma20 and above_ma50 and rr_ok and momentum_ok and volume_ok:
+        label = "✅매수 가능 횡보: 지지 위 안정"
+        status = "통과"
+        note = "MA20 근처에서 버티고 손익비와 모멘텀이 같이 살아 있어 정찰/분할 후보입니다."
+    elif above_ma20 and rr_ok and not trend_bad and not is_leveraged_product:
+        label = "🟢조건부 횡보: 소액 정찰 후보"
+        status = "주의" if not has_pos else "통과"
+        note = "큰 위험 신호는 없지만 타점 완성 전이라 보유자는 관리, 신규는 소액 정찰까지만 봅니다."
+    else:
+        label = "🟡관찰 횡보: 다음 봉 확인"
+        status = "주의"
+        note = "횡보는 보이지만 지지·과열·손익비 중 하나가 애매해 다음 봉 확인이 필요합니다."
+
+    if is_leveraged_product and status == "통과" and not (above_ma50 and above_ma120):
+        label = "🟡관찰 횡보: 레버리지 상위추세 확인"
+        status = "주의"
+        note = "일봉은 안정돼도 레버리지는 MA50·MA120과 기초축 동행을 같이 확인해야 합니다."
+
+    return {
+        "label": label,
+        "status": status,
+        "note": note,
+        "reasons": reasons,
+        "reason_text": " · ".join(reasons),
+    }
+
+
 def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p, is_etf,
                           weight_gap, ticker):
     """Compute the position-sizing hint shown alongside the decision.
@@ -17368,19 +17516,19 @@ def render_dashboard_group_summary(df, group_label):
     if "ETF" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD",
-            "최종읽기", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
+            "최종읽기", "횡보품질", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "RSI", "MFI", "볼린저 %B",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     elif "개별주" in group_label:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "최종읽기", "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
+            "최종읽기", "횡보품질", "📌후보등급", "RS", "시장벤치", "섹터RS", "섹터벤치",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     else:
         show_cols = [
             "시장", "유형", "종목명", "티커", "현재가", "MDD", "재무점수",
-            "최종읽기", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
+            "최종읽기", "횡보품질", "📌후보등급", "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치",
             "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거", "Adj점수"
         ]
     st.dataframe(view_df[[c for c in show_cols if c in view_df.columns]], width='stretch', height=640, hide_index=True)
@@ -17536,6 +17684,21 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         pos_vs_ma20 = (cur_p / ma20 - 1) * 100
         flow_parts.append(f"MA5 대비 {pos_vs_ma5:+.1f}% / MA20 대비 {pos_vs_ma20:+.1f}%")
     lines.append("💸 <b>수급·가격 흐름</b>: " + " | ".join(flow_parts))
+
+    sideways_state = build_sideways_quality_state(
+        c,
+        is_leveraged_product=bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(
+            name, tkr, str(c.get("asset_class", "") or "")
+        ),
+        has_pos=has_p,
+    )
+    if sideways_state:
+        reason_text = sideways_state.get("reason_text", "")
+        reason_html = f" <span style='color:#94a3b8;'>({escape_html_value(reason_text)})</span>" if reason_text else ""
+        lines.append(
+            f"🧭 <b>횡보/눌림 품질</b>: <b>{escape_html_value(sideways_state.get('label', '-'))}</b> — "
+            f"{escape_html_value(sideways_state.get('note', ''))}{reason_html}"
+        )
 
     # ── 5. 진입 조건 (핵심: 뭐가 부족한지) ──────────────────
     entry_hint = ""
@@ -19126,6 +19289,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     recovery_state = state.get("recovery_state", "확인 필요")
     recovery_color = state.get("recovery_color", "#64748b")
     timing_state = build_leveraged_dca_timing_state(c, state)
+    sideways_state = build_sideways_quality_state(c, is_leveraged_product=True, has_pos=has_pos)
 
     st.markdown("### ⚡ 레버리지 ETF 중장기 관리")
     st.markdown(
@@ -19157,12 +19321,19 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         f"<span style='color:#fde68a;'>{escape_html_value(trade_plan_note)}</span><br>"
         if trade_plan_note else ""
     )
+    sideways_html = ""
+    if sideways_state:
+        sideways_html = (
+            f"<b>횡보/눌림 품질</b>: {escape_html_value(sideways_state.get('label', '-'))}<br>"
+            f"<span style='color:#cbd5e1;'>{escape_html_value(sideways_state.get('note', ''))}</span><br>"
+        )
     st.markdown(
         f"<div class='info-panel' style='border-left:5px solid {recovery_color}; line-height:1.7;'>"
         f"<b>현재 해석</b>: {escape_html_value(timing_state.get('status', dca_stage) or dca_stage)}<br>"
         f"{escape_html_value(dca_note)}<br>"
         f"<span style='color:#cbd5e1;'>{escape_html_value(timing_state.get('condition_summary', ''))}</span><br>"
         f"{trade_plan_html}"
+        f"{sideways_html}"
         f"R/R {('-' if not finite_num(rr) else f'{rr:.2f}')} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
         f"{(' · ' + escape_html_value(buy_note)) if buy_note else ''}<br>"
         f"<span style='color:#94a3b8;'>자동 매수 신호가 아니라, 중장기 보유용 회차 관리 체크리스트입니다.</span>"
@@ -20035,6 +20206,23 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 눌림 대기가 더 유리할 수 있습니다.")
     else:
         add_check("과열", "통과", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 극단 과열은 아닙니다.")
+
+    sideways_state = build_sideways_quality_state(
+        c,
+        is_leveraged_product=is_leveraged_product,
+        has_pos=has_pos,
+    )
+    if sideways_state:
+        sideways_status = sideways_state.get("status", "주의")
+        if sideways_status not in {"통과", "주의", "차단"}:
+            sideways_status = "주의"
+        reason_text = sideways_state.get("reason_text", "")
+        add_check(
+            "횡보/눌림 품질",
+            sideways_status,
+            f"{sideways_state.get('label', '-')}. {sideways_state.get('note', '')}"
+            f"{(' · ' + reason_text) if reason_text else ''}",
+        )
 
     if finite_num(rr_ratio):
         if bool(c.get("rr_target_is_projection", False)):
@@ -21024,12 +21212,22 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     if str(final_read or "").startswith(("🛡️", "🚫", "⚪")):
         dashboard_group = "caution"
 
+    sideways_state = build_sideways_quality_state(
+        c,
+        is_leveraged_product=bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(
+            name, tkr, str(c.get("asset_class", "") or "")
+        ),
+        has_pos=has_p,
+    )
+    sideways_label = sideways_state.get("label", "-") if sideways_state else "-"
+
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name, "티커": tkr, "현재가": format_currency(c["cur_p"], tkr), "MDD": f"{c['dd']*100:.1f}%",
         "고점대비": f"{c['dd']*100:.1f}%",
         "최종읽기": final_read,
+        "횡보품질": sideways_label,
         "재무점수": "해당없음" if is_etf else f"{f_score}/4", "📌후보등급": dashboard_grade, "RS": c["rs_label"],
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",

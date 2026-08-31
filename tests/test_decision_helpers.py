@@ -153,6 +153,105 @@ def test_holding_pullback_wait_code_is_caution(helpers):
     assert outcome.group == "caution"
 
 
+def test_sideways_quality_blocks_leveraged_overheat_even_after_recovery(helpers):
+    state = helpers.build_sideways_quality_state(
+        {
+            "cur_p": 17.58,
+            "rsi": 70.7,
+            "mfi": 63.7,
+            "pct_b": 0.81,
+            "ma5": 17.2,
+            "ma20": 14.3,
+            "ma50": 12.8,
+            "ma120": 15.4,
+            "rr_ratio": 2.0,
+            "dd": -0.738,
+            "trend": "⏳혼조세",
+            "rs_label": "🚀강함",
+            "macd": "📈추세유지(상승중)",
+            "vol_ratio": 1.0,
+        },
+        is_leveraged_product=True,
+    )
+
+    assert state["status"] == "차단"
+    assert "레버리지" in state["label"]
+
+
+def test_sideways_quality_allows_stable_ma20_support_for_normal_asset(helpers):
+    state = helpers.build_sideways_quality_state(
+        {
+            "cur_p": 102.0,
+            "rsi": 55.0,
+            "mfi": 58.0,
+            "pct_b": 0.55,
+            "ma5": 101.5,
+            "ma20": 100.0,
+            "ma50": 98.0,
+            "ma120": 90.0,
+            "rr_ratio": 2.1,
+            "dd": -0.04,
+            "trend": "🚀정배열(상승)",
+            "rs_label": "🚀강함",
+            "macd": "📈추세유지(상승중)",
+            "vol_ratio": 1.0,
+            "bucket": "swing",
+        },
+        is_leveraged_product=False,
+    )
+
+    assert state["status"] == "통과"
+    assert "매수 가능 횡보" in state["label"]
+
+
+def test_sideways_quality_blocks_poor_rr_despite_uptrend(helpers):
+    state = helpers.build_sideways_quality_state(
+        {
+            "cur_p": 135.86,
+            "rsi": 63.0,
+            "mfi": 64.0,
+            "pct_b": 0.73,
+            "ma5": 145.2,
+            "ma20": 94.93,
+            "ma50": 76.75,
+            "rr_ratio": 0.64,
+            "dd": -0.231,
+            "trend": "🚀정배열(상승)",
+            "rs_label": "🚀강함",
+            "macd": "📈추세유지(상승중)",
+            "vol_ratio": 0.8,
+        },
+        is_leveraged_product=False,
+    )
+
+    assert state["status"] == "차단"
+    assert "손익비" in state["label"]
+
+
+def test_sideways_quality_keeps_core_dca_as_rate_limited_not_blocked(helpers):
+    state = helpers.build_sideways_quality_state(
+        {
+            "cur_p": 98.0,
+            "rsi": 38.0,
+            "mfi": 43.0,
+            "pct_b": 0.30,
+            "ma5": 99.0,
+            "ma20": 100.0,
+            "ma50": 104.0,
+            "rr_ratio": 0.8,
+            "dd": -0.12,
+            "trend": "🌊역배열(하락)",
+            "rs_label": "➖보통",
+            "bucket": "core",
+            "core_dca_rate": 1.0,
+        },
+        is_leveraged_product=False,
+    )
+
+    assert state["status"] == "주의"
+    assert "코어" in state["label"]
+
+
 def test_none_decision_outcome_is_normalized(helpers):
     dec, col, outcome = helpers._apply_safety_state_override(
         None, "그냥 보유", "#6b7280",
