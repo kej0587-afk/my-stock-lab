@@ -301,6 +301,7 @@ DECISION_CODE_BY_LABEL = {
     "⚠️단기과열: 추매 보류": "SHORT_OVERHEAT_NO_ADD",
     "🔥낙폭과대: 줍줍 찬스": "OVERSOLD_ADD_ON",
     "💎S급 과매도: 강한 분할추매": "S_GRADE_OVERSOLD_BUY",
+    "🟡보유주 단기하락: 추매는 종가 확인": "HOLDING_PULLBACK_WAIT_CLOSE",
     "🎯A급: 기술적 반등": "A_GRADE_TECH_REBOUND",
     "📈정배열: -3% 이상 눌림 분할매수": "UPTREND_PULLBACK_DCA",
     "⏳평단이상: 하락대기(보유)": "ABOVE_COST_WAIT",
@@ -390,6 +391,7 @@ DECISION_GROUP_BY_CODE = {
     "HOLDING_QUALITY_RECOVERY_CANDIDATE": "buyish",
     "HOLDING_TREND_PULLBACK_ADD_REVIEW": "caution",
     "HOLDING_EXCEPTION_ADD_REVIEW": "buyish",
+    "HOLDING_PULLBACK_WAIT_CLOSE": "caution",
 }
 
 

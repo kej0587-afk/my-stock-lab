@@ -125,6 +125,34 @@ def test_non_holding_position_keeps_new_entry_leader_label(helpers):
     assert outcome.label == "🆕신규진입: 대장주 포착"
 
 
+def test_down_session_pressure_detects_regular_or_live_drop(helpers):
+    assert helpers._has_down_session_pressure(
+        day_ret=-0.025,
+        regular_day_ret=-0.025,
+        live_ref_ret=-0.007,
+        live_gap_move=-0.007,
+        live_price_used=True,
+    )
+    assert not helpers._has_down_session_pressure(
+        day_ret=-0.012,
+        regular_day_ret=-0.012,
+        live_ref_ret=-0.004,
+        live_gap_move=-0.004,
+        live_price_used=True,
+    )
+
+
+def test_holding_pullback_wait_code_is_caution(helpers):
+    outcome = _outcome(
+        helpers,
+        "🟡보유주 단기하락: 추매는 종가 확인",
+        "#d97706",
+        "HOLDING_PULLBACK_WAIT_CLOSE",
+    )
+
+    assert outcome.group == "caution"
+
+
 def test_none_decision_outcome_is_normalized(helpers):
     dec, col, outcome = helpers._apply_safety_state_override(
         None, "그냥 보유", "#6b7280",

@@ -15528,6 +15528,15 @@ def _translate_new_entry_decision_for_holding(decision_outcome, *, has_pos, weig
     return build_decision_outcome(label, color, code, reasons=reasons)
 
 
+def _has_down_session_pressure(*, day_ret, regular_day_ret=np.nan, live_ref_ret=np.nan,
+                               live_gap_move=np.nan, live_price_used=False,
+                               threshold=-0.02):
+    values = [day_ret, regular_day_ret]
+    if live_price_used:
+        values.extend([live_ref_ret, live_gap_move])
+    return any(finite_num(v) and float(v) <= threshold for v in values)
+
+
 def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p, is_etf,
                           weight_gap, ticker):
     """Compute the position-sizing hint shown alongside the decision.
@@ -15751,22 +15760,22 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     live_rebound_label = (
         "🟡본장 반등: 종가/거래량 확인"
         if is_kr_market_ticker
-        else "🟡프리장 반등: 정규장 확인대기"
+        else "🟡데이/프리 반등: 정규장 확인대기"
     )
     live_rebound_holding_label = (
         "🟡본장 반등: 추매는 종가 확인"
         if is_kr_market_ticker
-        else "🟡프리장 반등: 추매는 정규장 확인"
+        else "🟡데이/프리 반등: 추매는 정규장 확인"
     )
     live_rebound_note = (
         "본장 장중 반등은 종가와 거래량 확정 전까지 예외승인 보류 — MA5/FVG 지지 확인"
         if is_kr_market_ticker
-        else "프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인"
+        else "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인"
     )
     live_rebound_holding_note = (
         "본장 장중 반등은 추매보다 종가와 거래량 확정 후 MA5/FVG 지지 확인"
         if is_kr_market_ticker
-        else "프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인"
+        else "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인"
     )
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
@@ -15792,8 +15801,17 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
     ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
     ma120_now = float(last["MA120"]) if finite_num(last["MA120"]) else 0.0
+    ma5_now = float(last["MA5"]) if finite_num(last["MA5"]) else 0.0
+    below_ma5 = ma5_now > 0 and cur_p < ma5_now
     below_ma20 = ma20_now > 0 and cur_p < ma20_now * 0.98
     below_ma50 = ma50_now > 0 and cur_p < ma50_now
+    has_down_session_pressure = _has_down_session_pressure(
+        day_ret=day_ret,
+        regular_day_ret=regular_day_ret,
+        live_ref_ret=live_ref_ret,
+        live_gap_move=live_gap_move,
+        live_price_used=live_price_used,
+    )
     is_live_gap_shock = (not is_etf) and live_price_used and live_gap_move <= -0.06
     is_single_day_breakdown = (
         (not is_etf)
@@ -15916,6 +15934,17 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         _fmr < 4.5 and
         trend != "🌊역배열(하락)" and
         (current_dd <= -0.10 or price_vs_avg <= -0.03 or pct_b_now < 0.75)
+    )
+    is_holding_upper_pullback_wait = (
+        has_pos and
+        (not is_etf) and
+        adj_tech_score >= 4 and
+        cur_p <= my_price and
+        curr_w < targ_w and
+        has_down_session_pressure and
+        below_ma5 and
+        current_dd > -0.10 and
+        pct_b_now >= 0.60
     )
     core_dca_context = build_core_dca_context(
         app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
@@ -16849,6 +16878,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     reasons=(
                         f"RS강함 / MFI {mfi_now:.0f} (기준: 35 이하) / RSI {rsi_now:.0f}",
                         "S급 과매도 — 강한 분할추매 후보",
+                    ),
+                )
+            elif is_holding_upper_pullback_wait:
+                dec, col, decision_outcome = _set_decision(
+                    "🟡보유주 단기하락: 추매는 종가 확인", "#d97706", "HOLDING_PULLBACK_WAIT_CLOSE",
+                    reasons=(
+                        f"{day_ret_label} {day_ret*100:.1f}% / 최신가-종가 {live_ref_ret*100:.1f}%" if finite_num(live_ref_ret) else f"{day_ret_label} {day_ret*100:.1f}%",
+                        f"MA5 대비 {(cur_p/ma5_now-1)*100:.1f}% / %B {pct_b_now:.2f} / 고점대비 {current_dd*100:.1f}%",
+                        "추세와 RS는 강하지만 상단권에서 단기 하락 중이라 기술적 반등 확정보다 종가·MA5 회복 확인이 우선",
                     ),
                 )
             elif adj_tech_score >= 4 and cur_p <= my_price:
