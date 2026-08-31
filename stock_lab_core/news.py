@@ -1093,6 +1093,10 @@ def build_stock_news_queries(ticker, name):
             f'"{main}" stock underperforms outperforms',
             f'"{main}" why stock moved',
             f'"{symbol}" moved down stock',
+            f'"{main}" "{symbol}" 주식 움직였습니다',
+            f'"{main}" "{symbol}" 변동 원인',
+            f'"{main}" "{symbol}" 주가 하락 이유',
+            f'"{main}" "{symbol}" 주가 상승 이유',
             f'"{main}" stock news',
             f'"{main}" shares today',
             f'"{symbol}" stock news',
@@ -1106,6 +1110,16 @@ def build_stock_news_queries(ticker, name):
         ]
 
     return queries, company_names
+
+def google_news_locales_for_ticker(ticker):
+    if str(ticker).upper().endswith((".KS", ".KQ")):
+        return [
+            {"label": "KR", "hl": "ko", "gl": "KR", "ceid": "KR:ko"},
+        ]
+    return [
+        {"label": "US", "hl": "en-US", "gl": "US", "ceid": "US:en"},
+        {"label": "KR", "hl": "ko", "gl": "KR", "ceid": "KR:ko"},
+    ]
 
 def keyword_in_text(text, keywords):
     lowered = str(text or "").lower()
@@ -1367,15 +1381,7 @@ def get_ticker_news(ticker, name, debug=False):
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     is_kr_ticker = str(ticker).upper().endswith((".KS", ".KQ"))
-    google_locale = {
-        "hl": "ko",
-        "gl": "KR",
-        "ceid": "KR:ko",
-    } if is_kr_ticker else {
-        "hl": "en-US",
-        "gl": "US",
-        "ceid": "US:en",
-    }
+    google_locales = google_news_locales_for_ticker(ticker)
 
     query_plan, company_names, theme_terms = build_news_query_plan(ticker, name)
     logs = [
@@ -1383,6 +1389,7 @@ def get_ticker_news(ticker, name, debug=False):
         f"테마 키워드: {theme_terms if theme_terms else '없음'}",
         f"검색어 후보: {[x['query'] for x in query_plan]}",
         f"뉴스 v2: 직접/섹터/시장 분류, 관련도/호재악재 태그 적용",
+        f"구글 뉴스 권역: {[x['label'] for x in google_locales]}",
         f"최신 필터: 최근 {NEWS_RECENT_DAYS}일 우선, 없으면 {NEWS_FALLBACK_DAYS}일 fallback",
     ]
 
@@ -1485,17 +1492,20 @@ def get_ticker_news(ticker, name, debug=False):
             google_encoded = urllib.parse.quote(google_query)
             normal_encoded = urllib.parse.quote(q)
 
-            try:
-                google_url = (
-                    f"https://news.google.com/rss/search?q={google_encoded}"
-                    f"&hl={google_locale['hl']}&gl={google_locale['gl']}&ceid={google_locale['ceid']}"
-                )
-                if debug:
-                    logs.append(f"구글 URL: {google_url}")
-                total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
-                logs.append(f"구글 검색({category}/{search_label}): {google_query} / 원문 {total}건, 통과 {accepted}건")
-            except Exception as e:
-                logs.append(f"구글 뉴스 실패: {q} / {e}")
+            for google_locale in google_locales:
+                if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
+                    break
+                try:
+                    google_url = (
+                        f"https://news.google.com/rss/search?q={google_encoded}"
+                        f"&hl={google_locale['hl']}&gl={google_locale['gl']}&ceid={google_locale['ceid']}"
+                    )
+                    if debug:
+                        logs.append(f"구글 URL({google_locale['label']}): {google_url}")
+                    total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
+                    logs.append(f"구글 검색({category}/{search_label}/{google_locale['label']}): {google_query} / 원문 {total}건, 통과 {accepted}건")
+                except Exception as e:
+                    logs.append(f"구글 뉴스 실패({google_locale['label']}): {q} / {e}")
 
             if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
                 continue

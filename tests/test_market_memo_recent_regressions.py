@@ -7,7 +7,9 @@ from stock_lab_core.news import (
     NEWS_CATEGORY_DIRECT,
     NEWS_CATEGORY_MARKET,
     assess_news_item,
+    build_stock_news_queries,
     dedupe_news_by_publisher_latest,
+    google_news_locales_for_ticker,
     news_freshness_label,
     news_recency_score,
 )
@@ -190,6 +192,16 @@ def test_news_recency_score_and_label_expose_freshness():
 
     assert news_recency_score(pub_dt) == 10
     assert "시간 전" in news_freshness_label(pub_dt)
+
+
+def test_us_ticker_news_search_includes_korean_price_move_queries_and_locale():
+    queries, _names = build_stock_news_queries("NEM", "Newmont")
+    joined = " ".join(queries)
+    locales = google_news_locales_for_ticker("NEM")
+
+    assert "변동 원인" in joined
+    assert "주식 움직였습니다" in joined
+    assert [row["label"] for row in locales] == ["US", "KR"]
 
 
 def test_auto_market_memo_marks_korea_crash_before_sector_rotation():
