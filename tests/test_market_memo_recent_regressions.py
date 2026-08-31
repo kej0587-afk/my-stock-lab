@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 
 from stock_lab_core.market_memo import build_auto_market_memo
@@ -6,6 +8,8 @@ from stock_lab_core.news import (
     NEWS_CATEGORY_MARKET,
     assess_news_item,
     dedupe_news_by_publisher_latest,
+    news_freshness_label,
+    news_recency_score,
 )
 
 
@@ -161,6 +165,31 @@ def test_news_dedupes_same_publisher_to_latest_item():
 
     assert len(deduped) == 1
     assert deduped[0]["title"] == newer["title"]
+
+
+def test_price_move_news_is_kept_as_recent_catalyst_even_when_noisy():
+    result = assess_news_item(
+        "Newmont Corporation Stock Moved Down by 3.48% on Aug 28: What Investors Need To Know",
+        "TradingKey",
+        "NEM",
+        ["Newmont"],
+        [],
+        NEWS_CATEGORY_DIRECT,
+        strict=True,
+    )
+
+    assert result["ok"] is True
+    assert result["topic"] == "가격변동"
+    assert result["relation"] == "변동 원인"
+    assert result["sentiment"] == "악재"
+    assert "원인" in result["reason"]
+
+
+def test_news_recency_score_and_label_expose_freshness():
+    pub_dt = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    assert news_recency_score(pub_dt) == 10
+    assert "시간 전" in news_freshness_label(pub_dt)
 
 
 def test_auto_market_memo_marks_korea_crash_before_sector_rotation():

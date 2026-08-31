@@ -280,17 +280,27 @@ NEWS_CATEGORY_ORDER = {
     NEWS_CATEGORY_MARKET: 2,
 }
 NEWS_CATEGORY_LIMITS = {
-    NEWS_CATEGORY_DIRECT: 3,
+    NEWS_CATEGORY_DIRECT: 4,
     NEWS_CATEGORY_SECTOR: 2,
     NEWS_CATEGORY_MARKET: 1,
 }
-NEWS_MAX_ITEMS = 6
-NEWS_MAX_CANDIDATES = 30
+NEWS_MAX_ITEMS = 7
+NEWS_MAX_CANDIDATES = 40
 NEWS_CATEGORY_SEARCH_LIMITS = {
-    NEWS_CATEGORY_DIRECT: 12,
+    NEWS_CATEGORY_DIRECT: 18,
     NEWS_CATEGORY_SECTOR: 7,
     NEWS_CATEGORY_MARKET: 3,
 }
+
+PRICE_MOVE_NEWS_WORDS = [
+    "stock moved", "moved down", "moved up", "why it moved", "why stock moved",
+    "shares today", "stock today", "price action", "underperforms", "underperformed",
+    "outperforms", "outperformed", "falls", "fell", "drops", "dropped", "declines",
+    "declined", "rises", "rose", "jumps", "jumped", "surges", "surged", "pullback",
+    "profit-taking", "downward pressure", "stock slips", "shares slip",
+    "주식 움직였습니다", "주가 움직였습니다", "변동 원인", "하락 이유", "상승 이유",
+    "급락 이유", "급등 이유", "왜 올랐", "왜 내렸", "주가 하락", "주가 상승",
+]
 
 LOW_QUALITY_NEWS_WORDS = [
     "주식 움직였습니다", "핵심 원인 공개", "어떤 신호인가요", "주가 움직였습니다",
@@ -298,6 +308,13 @@ LOW_QUALITY_NEWS_WORDS = [
     "what signal", "stock forecast", "stock prediction", "price forecast",
     "price prediction", "stock price | quotes & news", "quotes & news",
     "stock forum", "forum and discussion", "stock chart", "technical chart",
+]
+
+BLOCKED_LOW_QUALITY_NEWS_WORDS = [
+    "주식 예측", "주가 전망", "stock forecast", "stock prediction",
+    "price forecast", "price prediction", "stock price | quotes & news",
+    "quotes & news", "stock forum", "forum and discussion", "stock chart",
+    "technical chart", "what signal",
 ]
 
 EARNINGS_NEWS_WORDS = [
@@ -328,6 +345,18 @@ FIELD_NEWS_WORDS = [
 ]
 
 POSITIVE_NEWS_SIGNALS = [
+    ("moved up", "최근 주가 상승 원인을 설명하는 기사"),
+    ("outperforms", "동종 종목 대비 강세는 단기 수급 우위 단서"),
+    ("outperformed", "동종 종목 대비 강세는 단기 수급 우위 단서"),
+    ("rises", "상승 마감은 단기 투자심리 개선 단서"),
+    ("rose", "상승 마감은 단기 투자심리 개선 단서"),
+    ("jumps", "급등 표현은 단기 수급 강화 단서"),
+    ("jumped", "급등 표현은 단기 수급 강화 단서"),
+    ("surges", "급등 표현은 단기 수급 강화 단서"),
+    ("surged", "급등 표현은 단기 수급 강화 단서"),
+    ("looks cheap", "밸류에이션 매력 단서"),
+    ("cheap", "밸류에이션 매력 단서"),
+    ("rally", "강한 상승 흐름 단서"),
     ("beat", "실적이 예상보다 좋다는 단서"),
     ("beats", "실적이 예상보다 좋다는 단서"),
     ("strong", "수요나 실적 흐름이 강하다는 단서"),
@@ -395,6 +424,19 @@ SEVERE_NEGATIVE_NEWS_SIGNALS = [
 
 NEGATIVE_NEWS_SIGNALS = [
     *SEVERE_NEGATIVE_NEWS_SIGNALS,
+    ("moved down", "최근 주가 하락 원인을 설명하는 기사"),
+    ("underperforms", "동종 종목 대비 약세는 단기 수급 부담 단서"),
+    ("underperformed", "동종 종목 대비 약세는 단기 수급 부담 단서"),
+    ("falls", "하락 마감은 단기 투자심리 약화 단서"),
+    ("fell", "하락 마감은 단기 투자심리 약화 단서"),
+    ("drops", "하락 표현은 단기 투자심리 약화 단서"),
+    ("dropped", "하락 표현은 단기 투자심리 약화 단서"),
+    ("declines", "하락 표현은 단기 투자심리 약화 단서"),
+    ("declined", "하락 표현은 단기 투자심리 약화 단서"),
+    ("pullback", "단기 되돌림/차익실현 가능성"),
+    ("profit-taking", "차익실현 매물 가능성"),
+    ("downward pressure", "하락 압력 원인 확인 필요"),
+    ("weaker spot gold", "금 가격 약세는 금광주 단기 실적 기대에 부담"),
     ("긴축 공포", "긴축 공포는 위험자산 투자심리에 악재"),
     ("빨간불", "시장 경고/빨간불 표현은 투자심리 악화 단서"),
     ("랠리 꺾", "랠리 둔화/꺾임은 수급 약화 단서"),
@@ -445,6 +487,8 @@ NEWS_SOURCE_QUALITY = {
     "business wire": 3,
     "globenewswire": 3,
     "pr newswire": 2,
+    "investor's business daily": 2,
+    "investors.com": 2,
     "investing.com": 1,
     "thelec": 2,
     "전자신문": 2,
@@ -556,6 +600,46 @@ def news_sort_timestamp(pub_dt):
         return float(pub_dt.timestamp()) if pub_dt is not None else 0.0
     except Exception:
         return 0.0
+
+def news_age_days(pub_dt):
+    try:
+        if pub_dt is None:
+            return None
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+        age = datetime.now(timezone.utc) - pub_dt.astimezone(timezone.utc)
+        return max(0.0, age.total_seconds() / 86400.0)
+    except Exception:
+        return None
+
+def news_recency_score(pub_dt):
+    age = news_age_days(pub_dt)
+    if age is None:
+        return 0
+    if age <= 1:
+        return 10
+    if age <= 3:
+        return 8
+    if age <= NEWS_RECENT_DAYS:
+        return 6
+    if age <= 30:
+        return 3
+    if age <= NEWS_FALLBACK_DAYS:
+        return 1
+    return 0
+
+def news_freshness_label(pub_dt):
+    age = news_age_days(pub_dt)
+    if age is None:
+        return ""
+    if age < (1 / 24):
+        return "방금"
+    if age < 1:
+        return f"{max(1, int(round(age * 24)))}시간 전"
+    days = max(1, int(np.ceil(age)))
+    if days <= NEWS_RECENT_DAYS:
+        return f"{days}일 전"
+    return f"보충 {days}일 전"
 
 GENERIC_TICKERS = {
     "lite", "on", "now", "snap", "spot", "snow", "mu", "arm", "path", "apps",
@@ -988,6 +1072,9 @@ def build_stock_news_queries(ticker, name):
     if is_kr:
         queries = [
             f'"{main}" 최신 뉴스',
+            f'"{main}" 주가 급등 급락 원인',
+            f'"{main}" 주가 하락 이유',
+            f'"{main}" 주가 상승 이유',
             f'"{main}" 주가 뉴스',
             f'"{main}" 공시 수주 계약',
             f'"{main}" 공급 투자 증설',
@@ -1001,6 +1088,11 @@ def build_stock_news_queries(ticker, name):
     else:
         queries = [
             f'"{main}" latest news {symbol}',
+            f'"{main}" {symbol} stock moved',
+            f'"{main}" {symbol} shares today',
+            f'"{main}" stock underperforms outperforms',
+            f'"{main}" why stock moved',
+            f'"{symbol}" moved down stock',
             f'"{main}" stock news',
             f'"{main}" shares today',
             f'"{symbol}" stock news',
@@ -1124,8 +1216,10 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     has_high_value_word = keyword_in_text(text, HIGH_VALUE_NEWS_WORDS)
     has_earnings_word = keyword_in_text(text, EARNINGS_NEWS_WORDS)
     has_field_word = keyword_in_text(text, FIELD_NEWS_WORDS)
+    has_price_move_word = keyword_in_text(text, PRICE_MOVE_NEWS_WORDS)
     has_market_word = keyword_in_text(text, ["nasdaq", "s&p", "fed", "yield", "rate", "inflation", "earnings", "증시", "코스피", "코스닥", "금리", "환율", "외국인"])
     is_low_quality = keyword_in_text(text, LOW_QUALITY_NEWS_WORDS)
+    is_blocked_low_quality = keyword_in_text(text, BLOCKED_LOW_QUALITY_NEWS_WORDS)
 
     score = 0
     if has_company: score += 5
@@ -1133,11 +1227,15 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     if has_theme: score += 3
     if has_high_value_word: score += 2
     if has_field_word: score += 2
+    if has_price_move_word: score += 2
     if has_earnings_word and category == NEWS_CATEGORY_DIRECT: score += 4
     elif has_earnings_word: score += 2
     if has_stock_word: score += 1
     if has_market_word and category == NEWS_CATEGORY_MARKET: score += 2
-    if is_low_quality: score -= 4
+    if is_blocked_low_quality:
+        score -= 6
+    elif is_low_quality:
+        score -= 2
 
     pub_l = str(publisher or "").lower()
     for source, adj in NEWS_SOURCE_QUALITY.items():
@@ -1149,19 +1247,27 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         score -= 4
 
     if category == NEWS_CATEGORY_DIRECT:
-        ok = (has_company or has_symbol) and (has_stock_word or has_high_value_word or has_earnings_word or has_field_word or not strict) and score >= 3
+        ok = (
+            (has_company or has_symbol)
+            and (has_stock_word or has_high_value_word or has_earnings_word or has_field_word or has_price_move_word or not strict)
+            and score >= 3
+        )
     elif category == NEWS_CATEGORY_SECTOR:
         ok = (has_company or has_symbol or has_theme) and score >= 2
     else:
         ok = has_market_word and score >= 1
 
-    if is_low_quality and category == NEWS_CATEGORY_DIRECT:
+    if is_blocked_low_quality and category == NEWS_CATEGORY_DIRECT:
+        ok = False
+    elif is_low_quality and category == NEWS_CATEGORY_DIRECT and not has_price_move_word:
         ok = False
 
     if category == NEWS_CATEGORY_DIRECT and has_earnings_word and (has_company or has_symbol):
         relation = "실적 직접"
     elif category == NEWS_CATEGORY_DIRECT and has_field_word and (has_company or has_symbol):
         relation = "현장 직접"
+    elif category == NEWS_CATEGORY_DIRECT and has_price_move_word and (has_company or has_symbol):
+        relation = "변동 원인"
     elif score >= 7:
         relation = "관련도 높음"
     elif score >= 3:
@@ -1187,6 +1293,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         sentiment, reason = "중립", "실적/가이던스 직접 뉴스입니다. 수치와 컨센서스 대비 여부를 확인하세요."
     elif category == NEWS_CATEGORY_DIRECT and has_field_word:
         sentiment, reason = "중립", "수주/공급/투자/제품 등 사업 현장성 직접 뉴스입니다. 금액과 지속성을 확인하세요."
+    elif category == NEWS_CATEGORY_DIRECT and has_price_move_word:
+        sentiment, reason = "중립", "최근 주가 변동 원인을 설명하는 기사입니다. 실제 원인은 원문에서 상품가격·금리·실적·수급을 확인하세요."
     elif category == NEWS_CATEGORY_DIRECT:
         sentiment, reason = "중립", "종목 직접 뉴스지만 방향성 단서는 제한적"
     elif category == NEWS_CATEGORY_SECTOR:
@@ -1194,7 +1302,9 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     else:
         sentiment, reason = "중립", "시장 환경 관련 뉴스로 전체 투자심리에 영향 가능"
 
-    if is_low_quality and ok:
+    if is_low_quality and ok and has_price_move_word:
+        reason = f"{reason} 반복 시세성 기사일 수 있어 출처와 원문 근거를 함께 확인하세요."
+    elif is_low_quality and ok:
         reason = "반복 시세성 기사라 우선순위를 낮춰 표시"
 
     return {
@@ -1203,7 +1313,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         "relation": relation,
         "sentiment": sentiment,
         "reason": reason,
-        "topic": "실적/IR" if has_earnings_word else ("현장/사업" if has_field_word else ""),
+        "topic": "실적/IR" if has_earnings_word else ("현장/사업" if has_field_word else ("가격변동" if has_price_move_word else "")),
     }
 
 def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
@@ -1312,12 +1422,13 @@ def get_ticker_news(ticker, name, debug=False):
             "sentiment": assessment["sentiment"],
             "reason": assessment["reason"],
             "quality_score": assessment["score"],
+            "recency_score": news_recency_score(pub_dt),
             "topic": assessment.get("topic", ""),
             "_pub_dt": pub_dt,
         }
 
         if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
-            item_data["freshness"] = f"최근 {NEWS_RECENT_DAYS}일"
+            item_data["freshness"] = news_freshness_label(pub_dt) or f"최근 {NEWS_RECENT_DAYS}일"
             seen_links.add(link)
             if title_key:
                 seen_titles.add(title_key)
@@ -1326,7 +1437,7 @@ def get_ticker_news(ticker, name, debug=False):
             return True
 
         if is_news_within_days(pub_dt, NEWS_FALLBACK_DAYS):
-            item_data["freshness"] = "보충"
+            item_data["freshness"] = news_freshness_label(pub_dt) or "보충"
             seen_links.add(link)
             if title_key:
                 seen_titles.add(title_key)
@@ -1356,48 +1467,50 @@ def get_ticker_news(ticker, name, debug=False):
 
         return len(items), accepted
 
-    for plan in query_plan:
-        q = plan["query"]
-        category = plan["category"]
-        strict = plan.get("strict", True)
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
-            continue
-        if (
-            sum(accepted_by_category.values()) >= NEWS_MAX_CANDIDATES
-            and accepted_by_category.get(NEWS_CATEGORY_MARKET, 0) > 0
-        ):
-            break
+    for search_days in [NEWS_RECENT_DAYS, NEWS_FALLBACK_DAYS]:
+        search_label = "최근" if search_days == NEWS_RECENT_DAYS else "보충"
+        for plan in query_plan:
+            q = plan["query"]
+            category = plan["category"]
+            strict = plan.get("strict", True)
+            if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
+                continue
+            if (
+                sum(accepted_by_category.values()) >= NEWS_MAX_CANDIDATES
+                and accepted_by_category.get(NEWS_CATEGORY_MARKET, 0) > 0
+            ):
+                break
 
-        google_query = f"{q} when:{NEWS_FALLBACK_DAYS}d"
-        google_encoded = urllib.parse.quote(google_query)
-        normal_encoded = urllib.parse.quote(q)
+            google_query = f"{q} when:{search_days}d"
+            google_encoded = urllib.parse.quote(google_query)
+            normal_encoded = urllib.parse.quote(q)
 
-        try:
-            google_url = (
-                f"https://news.google.com/rss/search?q={google_encoded}"
-                f"&hl={google_locale['hl']}&gl={google_locale['gl']}&ceid={google_locale['ceid']}"
-            )
-            if debug:
-                logs.append(f"구글 URL: {google_url}")
-            total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
-            logs.append(f"구글 검색({category}): {google_query} / 원문 {total}건, 통과 {accepted}건")
-        except Exception as e:
-            logs.append(f"구글 뉴스 실패: {q} / {e}")
+            try:
+                google_url = (
+                    f"https://news.google.com/rss/search?q={google_encoded}"
+                    f"&hl={google_locale['hl']}&gl={google_locale['gl']}&ceid={google_locale['ceid']}"
+                )
+                if debug:
+                    logs.append(f"구글 URL: {google_url}")
+                total, accepted = read_rss(google_url, "구글 뉴스", category=category, strict=strict)
+                logs.append(f"구글 검색({category}/{search_label}): {google_query} / 원문 {total}건, 통과 {accepted}건")
+            except Exception as e:
+                logs.append(f"구글 뉴스 실패: {q} / {e}")
 
-        if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
-            continue
+            if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
+                continue
 
-        if not is_kr_ticker:
-            continue
+            if not is_kr_ticker or search_days != NEWS_RECENT_DAYS:
+                continue
 
-        try:
-            naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={normal_encoded}&sort=1"
-            if debug:
-                logs.append(f"네이버 URL: {naver_url}")
-            total, accepted = read_rss(naver_url, "네이버 뉴스", category=category, strict=strict)
-            logs.append(f"네이버 검색({category}): {q} / 원문 {total}건, 통과 {accepted}건")
-        except Exception as e:
-            logs.append(f"네이버 뉴스 실패: {q} / {e}")
+            try:
+                naver_url = f"https://newssearch.naver.com/search.naver?where=rss&query={normal_encoded}&sort=1"
+                if debug:
+                    logs.append(f"네이버 URL: {naver_url}")
+                total, accepted = read_rss(naver_url, "네이버 뉴스", category=category, strict=strict)
+                logs.append(f"네이버 검색({category}): {q} / 원문 {total}건, 통과 {accepted}건")
+            except Exception as e:
+                logs.append(f"네이버 뉴스 실패: {q} / {e}")
 
     selected = recent_items + fallback_items
 
@@ -1409,7 +1522,7 @@ def get_ticker_news(ticker, name, debug=False):
         NEWS_CATEGORY_ORDER.get(x.get("category"), 9),
         0 if is_news_within_days(x.get("_pub_dt"), NEWS_RECENT_DAYS) else 1,
         -news_sort_timestamp(x.get("_pub_dt")),
-        0 if x.get("topic") == "실적/IR" else 1,
+        {"가격변동": 0, "실적/IR": 1, "현장/사업": 2}.get(x.get("topic"), 3),
         -float(x.get("quality_score") or 0),
     )
 
@@ -1497,6 +1610,7 @@ def render_news_cards(news_items):
             topic = _news_display_text(item.get("topic"))
             freshness = _news_display_text(item.get("freshness"))
             score = _news_display_text(item.get("quality_score"))
+            recency_score = _news_display_text(item.get("recency_score"))
 
             meta_parts = [category_text]
             meta_parts.extend([x for x in [topic, freshness, sentiment, relation] if x])
@@ -1504,7 +1618,9 @@ def render_news_cards(news_items):
                 meta_parts.append(f"출처: {publisher}")
             if published:
                 meta_parts.append(published)
-            if score:
+            if score and recency_score:
+                meta_parts.append(f"뉴스점수: 품질 {score} · 최신 {recency_score}/10")
+            elif score:
                 meta_parts.append(f"품질점수: {score}")
 
             with _stable_news_card_container():
