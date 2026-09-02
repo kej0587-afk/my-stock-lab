@@ -76,6 +76,7 @@ from stock_lab_core.formatters import (
 )
 from stock_lab_core.constants import (
     FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
+    KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
     KNOWN_KR_ETF_SYMBOLS,
     KNOWN_TICKER_DISPLAY_NAMES,
     KNOWN_US_NASDAQ_ETFS,
@@ -1274,6 +1275,17 @@ def _security_matches(left_ticker="", right_ticker="", left_name="", right_name=
     return bool(left_keys and right_keys and left_keys.intersection(right_keys))
 
 
+def is_known_individual_stock_ticker(ticker):
+    return clean_symbol(ticker) in KNOWN_INDIVIDUAL_STOCK_SYMBOLS
+
+
+def normalize_individual_stock_asset_class(ticker, current_asset_class=""):
+    current = str(current_asset_class or "").strip()
+    if current and not asset_class_marks_fin_score_exempt(current):
+        return current
+    return "kr_stock" if is_kr_listed(ticker) else "us_stock"
+
+
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
     raw_name = data.get("name", "")
@@ -1283,6 +1295,10 @@ def sanitize_watchlist_item(item):
         "ticker": ticker,
         "name": sanitize_asset_name(raw_name, ticker),
     }
+    if is_known_individual_stock_ticker(ticker):
+        cleaned["is_etf"] = False
+        cleaned["asset_class"] = normalize_individual_stock_asset_class(ticker, cleaned.get("asset_class", ""))
+        return cleaned
     if clean_symbol(ticker) == "RAM":
         cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("RAM", "Roundhill T-REX 2X Long DRAM Daily Target ETF")
         cleaned["is_etf"] = True
@@ -1342,6 +1358,8 @@ def dedupe_watchlist_items(watchlist):
 def is_known_etf_ticker(ticker):
     raw = sanitize_ticker_value(ticker)
     symbol = clean_symbol(raw)
+    if is_known_individual_stock_ticker(raw):
+        return False
     return (
         symbol in KNOWN_US_SP_ETFS
         or symbol in KNOWN_US_NASDAQ_ETFS
@@ -1355,6 +1373,8 @@ def asset_class_marks_fin_score_exempt(asset_class):
     return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
 
 def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
+    if is_known_individual_stock_ticker(ticker):
+        return False
     if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
         return True
 
@@ -1368,6 +1388,8 @@ def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
 
 def infer_asset_class_for_ticker(ticker, current_asset_class=""):
     current = str(current_asset_class or "").strip()
+    if is_known_individual_stock_ticker(ticker):
+        return normalize_individual_stock_asset_class(ticker, current)
     if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
         return current
 
@@ -15364,6 +15386,11 @@ def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
     return any(keyword in text for keyword in keywords)
 
 
+def is_tdf_or_fund_allocation_product(name, ticker="", asset_class=""):
+    text = f"{name} {ticker} {asset_class}".upper()
+    return "TDF" in text or "FUND" in text or "펀드" in text
+
+
 def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
     bucket_norm = normalize_bucket(bucket)
     if bucket_norm in {"cash", "reserve"}:
@@ -15852,6 +15879,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                              live_price: float = 0.0):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
+    ticker = sanitize_ticker_value(ticker)
+    name = sanitize_asset_name(name, ticker)
+    if is_known_individual_stock_ticker(ticker):
+        is_etf = False
+        asset_class = normalize_individual_stock_asset_class(ticker, asset_class)
 
     source_daily_close = clean_float(df["Close"].iloc[-1], 0.0) if df is not None and not df.empty and "Close" in df.columns else 0.0
     source_prev_close = clean_float(df["Close"].iloc[-2], 0.0) if df is not None and len(df) >= 2 and "Close" in df.columns else 0.0
@@ -16063,6 +16095,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_core_etf = is_etf and effective_bucket == "core"
     is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
     is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    is_tdf_or_fund = is_tdf_or_fund_allocation_product(name, ticker, asset_class)
     leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
     is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
     is_leveraged_dca_candidate = (
@@ -17012,14 +17045,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     ),
                 )
             elif rsi_now <= 30:
-                dec, col, decision_outcome = _set_decision(
-                    "🔥낙폭과대: 줍줍 찬스", "#16a34a", "OVERSOLD_ADD_ON",
-                    reasons=(
-                        f"RSI {rsi_now:.0f} (기준: 30 이하) / MFI {mfi_now:.0f} / %B {pct_b_now:.2f}",
-                        f"고점대비 {current_dd*100:.1f}% / 재무점수 {fin_score}점",
-                        "과매도 구간 — 분할 추가 매수 기회",
-                    ),
-                )
+                if is_tdf_or_fund:
+                    dec, col, decision_outcome = _set_decision(
+                        "⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토", "#d97706", "FUND_OVERSOLD_REBALANCE_REVIEW",
+                        reasons=(
+                            f"RSI {rsi_now:.0f} (기준: 30 이하) / MFI {mfi_now:.0f} / %B {pct_b_now:.2f}",
+                            f"고점대비 {current_dd*100:.1f}% / 비중차이 {weight_gap:.1f}%p",
+                            "TDF/펀드형 상품 — 줍줍 신호가 아니라 정해둔 목표비중 안에서 소액 리밸런싱만 검토",
+                        ),
+                    )
+                else:
+                    dec, col, decision_outcome = _set_decision(
+                        "🔥낙폭과대: 줍줍 찬스", "#16a34a", "OVERSOLD_ADD_ON",
+                        reasons=(
+                            f"RSI {rsi_now:.0f} (기준: 30 이하) / MFI {mfi_now:.0f} / %B {pct_b_now:.2f}",
+                            f"고점대비 {current_dd*100:.1f}% / 재무점수 {fin_score}점",
+                            "과매도 구간 — 분할 추가 매수 기회",
+                        ),
+                    )
             elif rs_label == "🚀강함" and mfi_now < 35:
                 dec, col, decision_outcome = _set_decision(
                     "💎S급 과매도: 강한 분할추매", "#16a34a", "S_GRADE_OVERSOLD_BUY",
@@ -18212,7 +18255,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
         "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
-        "HOLDING_DCA_CONDITION_MISS",
+        "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
@@ -18306,8 +18349,13 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             status = "정규장 확인대기"
         else:
             status = "눌림 대기"
+        if decision_code == "FUND_OVERSOLD_REBALANCE_REVIEW":
+            status = "소액 리밸런싱 검토"
         status_color = "#8b5cf6"
         status_note = (
+            "TDF/펀드형은 개별주처럼 낙폭과대 추매로 보지 않고, 정해둔 목표비중 안에서만 소액 리밸런싱을 검토합니다."
+            if decision_code == "FUND_OVERSOLD_REBALANCE_REVIEW"
+            else
             "본장 장중 반등은 참고만 하고 종가, 거래량, MA5/FVG 지지를 확인합니다."
             if decision_code.startswith("PREMARKET_REBOUND") and "본장 반등" in decision_label
             else "프리/애프터 반등은 참고만 하고 정규장 초반 거래량, MA5/FVG 지지를 확인합니다."
@@ -21021,6 +21069,8 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️평단/추세방어"
     if code == "COST_MINUS_15_CAUSE_CHECK":
         return "🛡️평단방어(원인점검)"
+    if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
+        return "⏳펀드리밸런싱"
     if code == "QUALITY_RECOVERY_WATCH":
         return "🔎우량주 회복관찰"
     if code == "QUALITY_RECOVERY_SCOUT":
@@ -21101,6 +21151,8 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
         return "🛡️평단방어(원인점검)"
     if code == "HOLDING_DCA_CONDITION_MISS":
         return "⏳추매대기"
+    if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
+        return "⏳리밸런싱대기"
     if is_today_queue_defense_signal(c, text):
         return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
@@ -22200,6 +22252,7 @@ MANUAL_SECTIONS = {
         {"타점": "상승확인: 2차 정찰 추매", "조건": "평단 대비 0~5% 상승 + 비중부족 + 추세 양호", "의미": "상승 확인 후 제한적 추매"},
         {"타점": "S급 눌림목", "조건": "정배열 + RS 강함 + RSI 45~58 + %B 0.45~0.8", "의미": "가장 선호하는 눌림 매수 구간"},
         {"타점": "낙폭과대", "조건": "RSI 30 이하 또는 하락추세 속 ADJ 높음", "의미": "반등 가능성은 있으나 분할 접근"},
+        {"타점": "TDF/펀드 낙폭과대", "조건": "TDF/펀드형 상품 + RSI 30 이하", "의미": "개별주 줍줍이 아니라 목표비중 안의 소액 리밸런싱 검토"},
         {"타점": "평단 -3~-7%", "조건": "평단 이하, 추세 훼손 크지 않음, MFI 80 미만", "의미": "소액 분할매수 후보"},
         {"타점": "평단 -7~-15%", "조건": "손실 확대 + 재무 3점 이상 + 매크로 위험 낮음", "의미": "조건부 분할매수"},
         {"타점": "평단 -15%↓", "조건": "평단 대비 -15% 이하 손실", "의미": "손실 원인 점검 우선"},
@@ -27155,6 +27208,8 @@ def build_data_quality_report(settings, holdings_df, holdings_table, dividends_d
             asset_class = str(row.get("asset_class", "")).strip()
             saved_is_etf = clean_bool(row.get("is_etf", False))
             fin_exempt = is_fin_score_exempt_asset(ticker, saved_is_etf, asset_class, name)
+            if saved_is_etf and is_known_individual_stock_ticker(ticker):
+                add_quality_issue(issues, "위험", "ETF/재무점수", ticker, "앱 기준 개별주인데 ETF 체크가 켜져 있습니다.", "자산 관리에서 ETF 체크를 끄고 asset_class를 주식 계열로 저장하세요.")
             if fin_exempt and not saved_is_etf:
                 add_quality_issue(issues, "주의", "ETF/재무점수", ticker, "ETF/ETN/레버리지로 보이지만 ETF 체크가 꺼져 있습니다.", "자산 관리에서 ETF/ETN/레버리지를 체크하세요.")
             if saved_is_etf and not asset_class_marks_fin_score_exempt(asset_class) and not is_known_etf_ticker(ticker):
@@ -27193,6 +27248,8 @@ def build_data_quality_report(settings, holdings_df, holdings_table, dividends_d
         asset_class = str(item.get("asset_class", "")).strip()
         saved_is_etf = clean_bool(item.get("is_etf", False))
         fin_exempt = is_fin_score_exempt_asset(ticker, saved_is_etf, asset_class, name)
+        if saved_is_etf and is_known_individual_stock_ticker(ticker):
+            add_quality_issue(issues, "위험", "관심목록", ticker, "앱 기준 개별주인데 ETF 체크가 켜져 있습니다.", "관심목록에서 ETF 체크를 끄고 asset_class를 주식 계열로 저장하세요.")
         if fin_exempt and not saved_is_etf:
             add_quality_issue(issues, "주의", "관심목록", ticker, "ETF/ETN/레버리지로 보이지만 ETF 체크가 꺼져 있습니다.", "관심목록 저장 시 ETF/ETN/레버리지로 분류하세요.")
         if fin_exempt and clean_int(item.get("fin_score"), 0) not in (0, None):

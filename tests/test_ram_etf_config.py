@@ -12,6 +12,26 @@ def test_mrna_has_stable_korean_display_name():
     assert KNOWN_TICKER_DISPLAY_NAMES["MRNA"] == "모더나"
 
 
+def test_known_stock_ignores_stale_etf_flags(app_module):
+    contaminated = {
+        "name": "Freeport-McMoRan ETF",
+        "ticker": "FCX",
+        "is_etf": True,
+        "asset_class": "us_etf_nasdaq",
+        "fin_score": 0,
+    }
+
+    normalized_item = app_module.sanitize_watchlist_item(contaminated)
+
+    assert normalized_item["ticker"] == "FCX"
+    assert normalized_item["name"] == "프리포트 맥모란"
+    assert normalized_item["is_etf"] is False
+    assert normalized_item["asset_class"] == "us_stock"
+    assert app_module.is_known_etf_ticker("FCX") is False
+    assert app_module.is_fin_score_exempt_asset("FCX", True, "us_etf_nasdaq", "프리포트 맥모란") is False
+    assert app_module.infer_asset_class_for_ticker("FCX", "us_etf_nasdaq") == "us_stock"
+
+
 def test_ram_etf_is_connected_to_money_flow_and_news_filters():
     tickers = {str(row.get("ticker", "")).upper() for row in MONEY_FLOW_UNIVERSE}
 

@@ -362,6 +362,17 @@ def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss(helpers):
     assert cost_read == "🛡️평단방어(원인점검)"
 
 
+def test_dashboard_final_read_marks_fund_oversold_as_rebalance_wait(helpers):
+    final_read = helpers.build_dashboard_final_read(
+        {"decision_code": "FUND_OVERSOLD_REBALANCE_REVIEW", "decision_group": "caution"},
+        dashboard_timing="⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토",
+        dashboard_grade="⏳펀드리밸런싱",
+        pattern_timing="-",
+    )
+
+    assert final_read == "⏳리밸런싱대기"
+
+
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch(helpers):
     pd = helpers.pd
     summary_df = pd.DataFrame([{

@@ -62,6 +62,7 @@ class TestCoreStormDcaGroupMapping:
         assert infer_decision_code("🚫평단 -15%↓: 원인 점검") == "COST_MINUS_15_CAUSE_CHECK"
         assert infer_decision_code("🚫추세위험: 원인 점검") == "TREND_RISK_CAUSE_CHECK"
         assert infer_decision_code("⏸️조건미달: 추매 보류") == "HOLDING_DCA_CONDITION_MISS"
+        assert infer_decision_code("⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토") == "FUND_OVERSOLD_REBALANCE_REVIEW"
 
 
 # ---------------------------------------------------------------------------
