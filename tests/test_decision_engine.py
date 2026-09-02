@@ -58,6 +58,11 @@ class TestCoreStormDcaGroupMapping:
         outcome = build_core_dca_outcome("코어 ETF", core_dca_rate=1.0, dca_label="미국지수 퍼펙트스톰 100% 거치 적립")
         assert infer_decision_code(outcome.label) is not None  # 추론 가능
 
+    def test_holding_loss_and_trend_risk_labels_are_split(self):
+        assert infer_decision_code("🚫평단 -15%↓: 원인 점검") == "COST_MINUS_15_CAUSE_CHECK"
+        assert infer_decision_code("🚫추세위험: 원인 점검") == "TREND_RISK_CAUSE_CHECK"
+        assert infer_decision_code("⏸️조건미달: 추매 보류") == "HOLDING_DCA_CONDITION_MISS"
+
 
 # ---------------------------------------------------------------------------
 # classify_core_etf_dca_rate — perfect storm policy

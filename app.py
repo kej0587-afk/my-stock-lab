@@ -17095,11 +17095,32 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         ),
                     )
                 else:
+                    is_cost_deep_loss = price_vs_avg <= -0.15
+                    is_reverse_trend_loss = trend == "🌊역배열(하락)"
+                    if is_cost_deep_loss and is_reverse_trend_loss:
+                        hold_label = "🚫평단 -15%↓+추세위험: 원인 점검"
+                        hold_code = "COST_MINUS_15_TREND_RISK"
+                        hold_reason = "평단 -15% 이하와 하락추세 동시 발생 — 원인 점검 필요"
+                    elif is_cost_deep_loss:
+                        hold_label = "🚫평단 -15%↓: 원인 점검"
+                        hold_code = "COST_MINUS_15_CAUSE_CHECK"
+                        hold_reason = "평단 -15% 이하 — 손실 원인 점검 필요"
+                    elif is_reverse_trend_loss:
+                        hold_label = "🚫추세위험: 원인 점검"
+                        hold_code = "TREND_RISK_CAUSE_CHECK"
+                        hold_reason = "평단 손실은 -15% 이내지만 하락추세라 추매보다 회복 확인 우선"
+                    else:
+                        hold_label = "⏸️조건미달: 추매 보류"
+                        hold_code = "HOLDING_DCA_CONDITION_MISS"
+                        hold_color = "#d97706"
+                        hold_reason = "평단 손실은 -15% 이내지만 재무·매크로·ETF 검증 조건이 부족해 추매 보류"
+                    if hold_code != "HOLDING_DCA_CONDITION_MISS":
+                        hold_color = "#dc2626"
                     dec, col, decision_outcome = _set_decision(
-                        "🚫평단 -15%↓/추세위험: 원인 점검", "#dc2626", "COST_MINUS_15_TREND_RISK",
+                        hold_label, hold_color, hold_code,
                         reasons=(
                             f"평단대비 {price_vs_avg*100:.1f}% / 추세 {trend} / 재무점수 {fin_score}점",
-                            "평단 -15% 이하 또는 추세 위험 — 원인 점검 필요",
+                            hold_reason,
                         ),
                     )
             else:
@@ -18179,6 +18200,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
         "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
+        "COST_MINUS_15_CAUSE_CHECK", "TREND_RISK_CAUSE_CHECK",
         "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
         "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
         "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
@@ -18190,6 +18212,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
         "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
         "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
+        "HOLDING_DCA_CONDITION_MISS",
     }
     is_wait = decision_code in wait_codes or (pct_b >= 0.78 and "Premium" in pd_zone)
     is_hard_blocked = decision_code in block_codes
@@ -18207,7 +18230,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         status_color = leveraged_timing.get("color", "#8b5cf6")
         status_note = leveraged_timing.get("status_note", "")
     elif is_hard_blocked:
-        status = "현재가 보류 / 레버리지 회복 대기" if leveraged_label_block else "진입 보류"
+        status = "현재가 보류 / 레버리지 회복 대기" if leveraged_label_block else "추매 보류" if has_pos else "진입 보류"
         status_color = "#ef4444"
         if decision_code == "TARGET_ZERO_NO_ADD":
             status_note = "목표비중이 0%라 추가매수 계획을 만들지 않습니다. 보유분은 축소/정리 또는 별도 목표비중 재설정 후 판단합니다."
@@ -18215,6 +18238,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             status_note = "레버리지 상품의 큰 일간 급락입니다. 가격이 내려왔다는 이유로 추매하지 않고 종가, 기초지수, 다음 봉 회복을 먼저 확인합니다."
         elif decision_code == "LEVERAGED_RECOVERY_DCA_BLOCK":
             status_note = "레버리지 ETF 회복 체크가 부족합니다. 목표비중이 부족해도 MA50, 기초축 1W, R/R 회복 전에는 DCA 회차를 열지 않습니다."
+        elif decision_code in {"TREND_RISK_CAUSE_CHECK", "COST_MINUS_15_CAUSE_CHECK", "COST_MINUS_15_TREND_RISK"}:
+            status_note = "평단 대비 손익과 추세 위험을 분리해 본 결과입니다. 보유분은 별도 원칙으로 점검하되, 추가매수는 추세 회복과 종가 안정을 먼저 확인합니다."
         elif leveraged_label_block:
             status_note = "레버리지 상품은 R/R이 좋아도 추세·기초축 회복 전에는 자동 추매하지 않습니다. MA20/MA50, 기초지수 1W, 종가 안정 확인이 먼저입니다."
         else:
@@ -20833,6 +20858,8 @@ TODAY_QUEUE_DEFENSE_CODES = {
     "REVERSE_TREND_NO_ENTRY",
     "STRONG_REVERSE_NO_ENTRY",
     "COST_MINUS_15_TREND_RISK",
+    "COST_MINUS_15_CAUSE_CHECK",
+    "TREND_RISK_CAUSE_CHECK",
     "LEVERAGED_DAILY_DROP_NO_ADD",
     "LEVERAGED_RECOVERY_DCA_BLOCK",
     "MTF_DAMAGE_NO_ADD",
@@ -20986,8 +21013,14 @@ def format_dashboard_candidate_grade(c: dict) -> str:
         return "🛡️가격방어(원인점검)"
     if code == "DRAWDOWN_20_NO_ENTRY":
         return "🛡️가격방어(신규금지)"
-    if code in {"DOWNTREND_NO_ENTRY", "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "COST_MINUS_15_TREND_RISK"}:
+    if code in {"DOWNTREND_NO_ENTRY", "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY"}:
         return "🛡️추세방어(신규금지)"
+    if code == "TREND_RISK_CAUSE_CHECK":
+        return "🛡️추세방어(추매보류)"
+    if code == "COST_MINUS_15_TREND_RISK":
+        return "🛡️평단/추세방어"
+    if code == "COST_MINUS_15_CAUSE_CHECK":
+        return "🛡️평단방어(원인점검)"
     if code == "QUALITY_RECOVERY_WATCH":
         return "🔎우량주 회복관찰"
     if code == "QUALITY_RECOVERY_SCOUT":
@@ -21060,6 +21093,14 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
         return "🛡️방어우선"
     if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
         return "⏳DCA조건부"
+    if code == "TREND_RISK_CAUSE_CHECK":
+        return "🛡️추세방어(추매보류)"
+    if code == "COST_MINUS_15_TREND_RISK":
+        return "🛡️평단/추세방어"
+    if code == "COST_MINUS_15_CAUSE_CHECK":
+        return "🛡️평단방어(원인점검)"
+    if code == "HOLDING_DCA_CONDITION_MISS":
+        return "⏳추매대기"
     if is_today_queue_defense_signal(c, text):
         return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
@@ -22161,7 +22202,9 @@ MANUAL_SECTIONS = {
         {"타점": "낙폭과대", "조건": "RSI 30 이하 또는 하락추세 속 ADJ 높음", "의미": "반등 가능성은 있으나 분할 접근"},
         {"타점": "평단 -3~-7%", "조건": "평단 이하, 추세 훼손 크지 않음, MFI 80 미만", "의미": "소액 분할매수 후보"},
         {"타점": "평단 -7~-15%", "조건": "손실 확대 + 재무 3점 이상 + 매크로 위험 낮음", "의미": "조건부 분할매수"},
-        {"타점": "평단 -15%↓", "조건": "평단 대비 큰 손실 또는 추세위험", "의미": "원인 점검 우선"},
+        {"타점": "평단 -15%↓", "조건": "평단 대비 -15% 이하 손실", "의미": "손실 원인 점검 우선"},
+        {"타점": "추세위험", "조건": "평단 손실은 -15% 이내지만 역배열/하락추세", "의미": "추매보다 회복 확인 우선"},
+        {"타점": "조건미달", "조건": "평단 아래지만 재무·매크로·ETF 검증 조건 부족", "의미": "추매 보류"},
         {"타점": "가격위험: 신규진입 보류", "조건": "52주 고점대비 -15%~-20% 이하처럼 낙폭만 큰 경우", "의미": "추세훼손 확정은 아니지만 새 돈 투입보다 하락 원인과 종가 안정 확인"},
         {"타점": "단기급락: 신규진입 보류", "조건": "하루 -6% 이하 급락 + 거래량 20일 평균 1.2배 이상", "의미": "RS가 살아 있어도 급락봉 확인 구간. 종가와 다음 봉 회복 전 신규매수 보류"},
         {"타점": "추세훼손: 신규진입 보류", "조건": "MA50 이탈, MA20 하회+RS 약함 등 구조 신호 동반", "의미": "점수가 좋아도 차트 구조 회복 전 신규매수 보류"},

@@ -344,6 +344,24 @@ def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_v
     assert final_read == "👀회복관찰"
 
 
+def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss(helpers):
+    trend_read = helpers.build_dashboard_final_read(
+        {"decision_code": "TREND_RISK_CAUSE_CHECK", "decision_group": "caution"},
+        dashboard_timing="🚫추세위험: 원인 점검",
+        dashboard_grade="⚖️ETF 보통",
+        pattern_timing="-",
+    )
+    cost_read = helpers.build_dashboard_final_read(
+        {"decision_code": "COST_MINUS_15_CAUSE_CHECK", "decision_group": "caution"},
+        dashboard_timing="🚫평단 -15%↓: 원인 점검",
+        dashboard_grade="⚖️ETF 보통",
+        pattern_timing="-",
+    )
+
+    assert trend_read == "🛡️추세방어(추매보류)"
+    assert cost_read == "🛡️평단방어(원인점검)"
+
+
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch(helpers):
     pd = helpers.pd
     summary_df = pd.DataFrame([{
