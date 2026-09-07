@@ -839,6 +839,39 @@ def _summary_bullets(summary_rows) -> list[str]:
     return bullets
 
 
+def _flow_command_bullets(flow_snapshot: dict | None) -> list[str]:
+    snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
+    rows = _iter_table_rows(snapshot.get("command_flow_df"), limit=80)
+    if not rows:
+        return []
+
+    order = ["정밀관측", "눌림대기", "추격금지", "관심등록", "관망/제외"]
+    counts = {key: 0 for key in order}
+    primary = []
+    for row in rows:
+        action = _norm(row.get("행동"))
+        if action not in counts:
+            continue
+        counts[action] += 1
+        if action == "관망/제외" or len(primary) >= 5:
+            continue
+        rep = _norm(row.get("ETF/대표") or row.get("대표주") or row.get("후보군"))
+        rep = re.sub(r"[★☆]", "", rep).strip()
+        price_pos = _norm(row.get("가격위치"))
+        flow = _norm(row.get("흐름"))
+        detail = " · ".join(x for x in [price_pos, flow] if x)
+        primary.append(f"{action} {rep}" + (f"({detail})" if detail else ""))
+
+    count_text = " · ".join(f"{key} {counts[key]}개" for key in order if counts.get(key))
+    bullets = []
+    if count_text:
+        bullets.append("돈흐름 실행 후보판: " + count_text)
+    if primary:
+        bullets.append("먼저 볼 돈흐름 후보: " + " / ".join(primary))
+    bullets.append("보유/관심 정밀 판정은 오늘 종목 점검 계산 후 R/R·손절·비중으로 확정합니다.")
+    return bullets
+
+
 def _hard_block_item(item: str, row: dict) -> str:
     code = _norm(row.get("판정코드"))
     label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
@@ -1411,6 +1444,11 @@ def _auto_insight_bullets(
     portfolio_lines = _summary_bullets(summary_rows)
     if portfolio_lines:
         bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
+    else:
+        command_lines = _flow_command_bullets(flow_snapshot)
+        if command_lines:
+            first_line = command_lines[0].replace("돈흐름 실행 후보판: ", "")
+            bullets.append(f"오늘 종목 정밀판정은 아직 대기 중이고, 돈흐름 후보판 기준으로는 {first_line}입니다.")
 
     news_count = len(_news_bullets(news_rows))
     if news_count:
@@ -1552,9 +1590,14 @@ def build_auto_market_memo(
         lines.append("")
 
     portfolio_lines = _summary_bullets(summary_rows)
+    command_lines = _flow_command_bullets(flow_snapshot)
     lines.append("🧭 오늘점검")
     if portfolio_lines:
         for item in portfolio_lines:
+            lines.append(f"• {item}")
+    elif command_lines:
+        lines.append("• 종목별 정밀 판정은 아직 계산 전입니다.")
+        for item in command_lines:
             lines.append(f"• {item}")
     else:
         lines.append("• 오늘점검 데이터가 비어 있습니다. 오늘 종목 점검 계산/새로고침 후 매수·주의·하드차단 후보를 확인하세요.")

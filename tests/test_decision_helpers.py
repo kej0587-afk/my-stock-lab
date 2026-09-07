@@ -10,6 +10,7 @@ SAFETY_RED + an aggressive new-entry code at the same time). Now that
 `_apply_safety_state_override` and `_compute_sizing_hint` are standalone
 functions, we can drive those branches directly with hand-picked inputs.
 """
+import pandas as pd
 import pytest
 
 
@@ -123,6 +124,22 @@ def test_non_holding_position_keeps_new_entry_leader_label(helpers):
 
     assert outcome.code == "NEW_ENTRY_LEADER"
     assert outcome.label == "🆕신규진입: 대장주 포착"
+
+
+def test_today_market_guard_reasons_name_triggering_indexes(helpers):
+    stats = helpers._today_benchmark_guard_stats(pd.DataFrame([
+        {"시장": "KOSPI", "티커": "^KS11", "1일": 0.046, "5일": 0.026, "20일": 0.118, "MA20": "상회", "MA50": "상회", "연속하락": 0},
+        {"시장": "KOSDAQ", "티커": "^KQ11", "1일": 0.011, "5일": -0.015, "20일": 0.029, "MA20": "하회", "MA50": "상회", "연속하락": 0},
+        {"시장": "KOSPI200 ETF", "티커": "069500.KS", "1일": 0.048, "5일": 0.030, "20일": 0.130, "MA20": "상회", "MA50": "상회", "연속하락": 0},
+        {"시장": "KOSDAQ150 ETF", "티커": "229200.KS", "1일": 0.015, "5일": -0.024, "20일": 0.031, "MA20": "하회", "MA50": "상회", "연속하락": 0},
+    ]))
+
+    reason_text = " · ".join(stats["reasons"])
+
+    assert stats["score"] == 1
+    assert "주요지수 2개" in reason_text
+    assert "KOSDAQ(^KQ11)" in reason_text
+    assert "KOSDAQ150 ETF(229200.KS)" in reason_text
 
 
 def test_down_session_pressure_detects_regular_or_live_drop(helpers):

@@ -10939,13 +10939,13 @@ def render_today_market_briefing_board(
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**🇰🇷 한국 상태**")
-        st.caption(f"모드: {phase.get('kr_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('kr_avg', np.nan))}")
+        st.markdown("**🇰🇷 한국 단기 상태**")
+        st.caption(f"안전벨트 모드: {phase.get('kr_mode', '확인 필요')} · 1D 평균 {_brief_pct_text(phase.get('kr_avg', np.nan))}")
         st.caption(f"{_brief_market_flow_label(phase.get('kr_avg', np.nan))}: {_brief_rows_text(kr_up)}")
         st.caption(f"{_brief_market_pressure_label(phase.get('kr_avg', np.nan))}: {_brief_rows_text(kr_down)}")
     with c2:
-        st.markdown("**🇺🇸 미국 상태**")
-        st.caption(f"모드: {phase.get('us_mode', '확인 필요')} · 평균 {_brief_pct_text(phase.get('us_avg', np.nan))}")
+        st.markdown("**🇺🇸 미국 단기 상태**")
+        st.caption(f"안전벨트 모드: {phase.get('us_mode', '확인 필요')} · 1D 평균 {_brief_pct_text(phase.get('us_avg', np.nan))}")
         st.caption(f"{_brief_market_flow_label(phase.get('us_avg', np.nan))}: {_brief_rows_text(us_up)}")
         st.caption(f"{_brief_market_pressure_label(phase.get('us_avg', np.nan))}: {_brief_rows_text(us_down)}")
 
@@ -27913,6 +27913,33 @@ def _today_guard_level_from_score(score: int, circuit_day: int = 0, panic_day: i
     return "정상", "normal"
 
 
+def _today_guard_reason_labels(valid_df: pd.DataFrame, mask, limit: int = 4) -> str:
+    try:
+        part = valid_df.loc[mask].copy()
+    except Exception:
+        part = pd.DataFrame()
+    if part.empty:
+        return ""
+    labels = []
+    for _, row in part.head(limit).iterrows():
+        market = str(row.get("시장", row.get("티커", "")) or "").strip()
+        ticker = str(row.get("티커", "") or "").strip()
+        if market and ticker and ticker not in market:
+            label = f"{market}({ticker})"
+        else:
+            label = market or ticker
+        if label:
+            labels.append(label)
+    if len(part) > limit:
+        labels.append(f"외 {len(part) - limit}개")
+    return ", ".join(labels)
+
+
+def _today_guard_reason_suffix(valid_df: pd.DataFrame, mask) -> str:
+    labels = _today_guard_reason_labels(valid_df, mask)
+    return f"({labels})" if labels else ""
+
+
 def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
     valid_df = valid_df.copy() if isinstance(valid_df, pd.DataFrame) else pd.DataFrame()
     if valid_df.empty:
@@ -27937,43 +27964,52 @@ def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
 
     score = 0
     reasons = []
-    below20 = int(valid_df["MA20"].eq("하회").sum()) if "MA20" in valid_df.columns else 0
-    below50 = int(valid_df["MA50"].eq("하회").sum()) if "MA50" in valid_df.columns else 0
-    down3 = int(valid_df["연속하락"].ge(3).sum()) if "연속하락" in valid_df.columns else 0
-    weak5 = int(valid_df["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03).sum()) if "5일" in valid_df.columns else 0
-    sharp_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015).sum()) if "1일" in valid_df.columns else 0
-    panic_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.05).sum()) if "1일" in valid_df.columns else 0
-    circuit_day = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.08).sum()) if "1일" in valid_df.columns else 0
-    rebound_count = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.015).sum()) if "1일" in valid_df.columns else 0
-    strong_rebound_count = int(valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.03).sum()) if "1일" in valid_df.columns else 0
+    below20_mask = valid_df["MA20"].eq("하회") if "MA20" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    below50_mask = valid_df["MA50"].eq("하회") if "MA50" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    down3_mask = valid_df["연속하락"].ge(3) if "연속하락" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    weak5_mask = valid_df["5일"].apply(lambda v: finite_num(v) and float(v) <= -0.03) if "5일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    sharp_day_mask = valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.015) if "1일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    panic_day_mask = valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.05) if "1일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    circuit_day_mask = valid_df["1일"].apply(lambda v: finite_num(v) and float(v) <= -0.08) if "1일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    rebound_mask = valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.015) if "1일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    strong_rebound_mask = valid_df["1일"].apply(lambda v: finite_num(v) and float(v) >= 0.03) if "1일" in valid_df.columns else pd.Series(False, index=valid_df.index)
+    below20 = int(below20_mask.sum())
+    below50 = int(below50_mask.sum())
+    down3 = int(down3_mask.sum())
+    weak5 = int(weak5_mask.sum())
+    sharp_day = int(sharp_day_mask.sum())
+    panic_day = int(panic_day_mask.sum())
+    circuit_day = int(circuit_day_mask.sum())
+    rebound_count = int(rebound_mask.sum())
+    strong_rebound_count = int(strong_rebound_mask.sum())
     worst_day_drop = clean_float(valid_df["1일"].min(), np.nan) if "1일" in valid_df.columns else np.nan
     max_day_gain = clean_float(valid_df["1일"].max(), np.nan) if "1일" in valid_df.columns else np.nan
     avg_day = clean_float(valid_df["1일"].dropna().mean(), np.nan) if "1일" in valid_df.columns else np.nan
 
     if circuit_day >= 1:
         score += 5
-        reasons.append(f"서킷브레이커급 급락 지수 {circuit_day}개")
+        reasons.append(f"서킷브레이커급 급락 지수 {circuit_day}개{_today_guard_reason_suffix(valid_df, circuit_day_mask)}")
     elif panic_day >= 1:
         score += 3
-        reasons.append(f"하루 -5% 이하 투매 지수 {panic_day}개")
+        reasons.append(f"하루 -5% 이하 투매 지수 {panic_day}개{_today_guard_reason_suffix(valid_df, panic_day_mask)}")
     if below20 >= 3:
         score += 2
-        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+        reasons.append(f"주요지수 {below20}개{_today_guard_reason_suffix(valid_df, below20_mask)}가 MA20 아래")
     elif below20 >= 2:
         score += 1
-        reasons.append(f"주요지수 {below20}개가 MA20 아래")
+        reasons.append(f"주요지수 {below20}개{_today_guard_reason_suffix(valid_df, below20_mask)}가 MA20 아래")
     if below50 >= 2:
         score += 2
-        reasons.append(f"주요지수 {below50}개가 MA50 아래")
+        reasons.append(f"주요지수 {below50}개{_today_guard_reason_suffix(valid_df, below50_mask)}가 MA50 아래")
     if down3 >= 2:
         score += 2
-        reasons.append(f"연속 하락 3일 이상 지수 {down3}개")
+        reasons.append(f"연속 하락 3일 이상 지수 {down3}개{_today_guard_reason_suffix(valid_df, down3_mask)}")
     if weak5 >= 2:
         score += 2
-        reasons.append(f"5거래일 -3% 이하 지수 {weak5}개")
+        reasons.append(f"5거래일 -3% 이하 지수 {weak5}개{_today_guard_reason_suffix(valid_df, weak5_mask)}")
     if sharp_day >= 2:
         score += 1
-        reasons.append(f"하루 -1.5% 이하 급락 지수 {sharp_day}개")
+        reasons.append(f"하루 -1.5% 이하 급락 지수 {sharp_day}개{_today_guard_reason_suffix(valid_df, sharp_day_mask)}")
 
     mode, level = _today_guard_level_from_score(score, circuit_day, panic_day)
     return {
@@ -28392,6 +28428,7 @@ def render_today_market_guard_panel(guard: dict):
     st.caption(
         "시장점수는 국장·미장·돈흐름·매크로를 합친 전체 안전벨트입니다. "
         "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험입니다. "
+        "국장/미장 평균과 MA 판정은 아래 세부 지표 표에 있는 정상 수집 지수 전체를 기준으로 계산합니다. "
         "실제 매수 가능 여부는 바로 위 국장 모드/미장 모드를 따로 봅니다. "
         "예: 국장 주의·미장 정상은 미장까지 자동 차단이라는 뜻이 아닙니다."
     )
@@ -31110,6 +31147,10 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     try:
         unified_flow_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
         command_flow_df = _prepare_flow_command_table(unified_flow_df) if unified_flow_df is not None and not unified_flow_df.empty else pd.DataFrame()
+        snapshot["command_flow_df"] = command_flow_df
+        st.session_state[TODAY_MARKET_FLOW_SNAPSHOT_KEY] = snapshot
+        if isinstance(command_flow_df, pd.DataFrame) and not command_flow_df.empty:
+            st.session_state[TODAY_MARKET_FLOW_LAST_SNAPSHOT_KEY] = snapshot
     except Exception as exc:
         unified_flow_df = pd.DataFrame()
         command_flow_df = pd.DataFrame()
