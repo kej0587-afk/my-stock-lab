@@ -21217,6 +21217,186 @@ def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_gr
     return "🔍관망"
 
 
+TODAY_QUEUE_EXECUTION_BLOCK_CODES = {
+    "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
+    "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
+    "COST_MINUS_15_CAUSE_CHECK", "TREND_RISK_CAUSE_CHECK",
+    "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
+    "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
+    "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
+    "TARGET_ZERO_NO_ADD", "LEVERAGED_DAILY_DROP_NO_ADD", "LEVERAGED_RECOVERY_DCA_BLOCK",
+    "HARD_BLOCK_FINANCIAL_F", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED",
+    "HARD_BLOCK_MACRO_STORM",
+}
+
+TODAY_QUEUE_EXECUTION_WAIT_CODES = {
+    "S_UPTREND_WAIT_PULLBACK", "A_UPTREND_SEARCH_ENTRY", "UPTREND_PULLBACK_CONFIRM",
+    "OVERHEAT_EXTENSION_WAIT_MA5", "LEADER_MA5_PULLBACK_ENTRY",
+    "LEADER_MA5_FAST_PULLBACK_ENTRY", "S_GRADE_OVERHEAT_WAIT",
+    "PREMARKET_REBOUND_WAIT", "PREMARKET_REBOUND_HOLDING_WAIT",
+    "MTF_OVERHEAT_SCOUT_ONLY", "LEVERAGED_DCA_WAIT_PULLBACK", "LEVERAGED_DCA_OVERHEAT_PASS",
+    "LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+    "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
+}
+
+
+def _today_queue_amount_text(amount_krw, ticker: str, usdkrw_value=1400.0) -> str:
+    amount = clean_float(amount_krw, 0.0)
+    if amount <= 0:
+        return "-"
+    if not is_kr_listed(ticker):
+        fx = clean_float(usdkrw_value, 1400.0) or 1400.0
+        return f"${amount / fx:,.0f} (≈{amount:,.0f}원)"
+    return f"{amount:,.0f}원"
+
+
+def build_today_queue_execution_snapshot(name: str, ticker: str, c: dict | None, has_pos=False, usdkrw_value=1400.0) -> dict:
+    """Build compact execution fields for Today Queue without extra network calls."""
+    c = c or {}
+    tkr = sanitize_ticker_value(ticker)
+    cur = clean_float(c.get("cur_p"), 0.0)
+    atr = clean_float(c.get("atr"), 0.0)
+    stop = clean_float(c.get("rr_stop"), 0.0)
+    target = clean_float(c.get("rr_target"), 0.0)
+    rr = clean_float(c.get("rr_ratio"), np.nan)
+    if cur > 0 and stop > 0 and target > cur and stop < cur:
+        rr = round((target - cur) / (cur - stop), 2)
+
+    target_text = "-"
+    if target > 0:
+        target_prefix = "상단 " if bool(c.get("rr_target_is_projection", False)) else ""
+        target_text = f"{target_prefix}{format_currency(target, tkr)}"
+    stop_text = format_currency(stop, tkr) if stop > 0 else "-"
+    rr_text = f"{rr:.2f}" if finite_num(rr) and rr > 0 else "-"
+
+    target_w = clean_float(c.get("target_w"), 0.0)
+    current_w = clean_float(c.get("current_w"), 0.0)
+    weight_gap = max(clean_float(c.get("weight_gap"), target_w - current_w), 0.0)
+    buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
+    effective_total_asset = clean_float(c.get("effective_total_asset"), 0.0)
+    if buy_amt_krw <= 0 and effective_total_asset > 0 and weight_gap > 0:
+        buy_amt_krw = round(effective_total_asset * weight_gap / 100.0, 0)
+    amount_text = _today_queue_amount_text(buy_amt_krw, tkr, usdkrw_value)
+
+    decision_code = str(c.get("decision_code", "") or "")
+    decision_label = str(c.get("dec", "") or "")
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    pd_zone = str(c.get("pd_zone", "") or "")
+    is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(
+        name, tkr, str(c.get("asset_class", "") or "")
+    )
+    leveraged_label_block = is_leveraged_product and any(
+        word in decision_label
+        for word in ["추매금지", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
+    )
+    is_weight_block = decision_code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}
+    is_hard_blocked = (
+        decision_code in TODAY_QUEUE_EXECUTION_BLOCK_CODES
+        or decision_code.startswith("HARD_BLOCK")
+        or leveraged_label_block
+        or any(word in decision_label for word in ["하드차단", "진입보류", "진입 보류", "추매금지", "매수금지", "원인점검", "손절기준"])
+    )
+    is_wait = (
+        decision_code in TODAY_QUEUE_EXECUTION_WAIT_CODES
+        or (finite_num(pct_b) and pct_b >= 0.78 and "Premium" in pd_zone)
+        or any(word in decision_label for word in ["대기", "관망", "추격금지"])
+    )
+    is_poor_rr = finite_num(rr) and rr < 1.0
+
+    if decision_code in {"LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL"}:
+        action = "조건부 소액 DCA"
+    elif decision_code in {"LEVERAGED_DCA_OVERHEAT_PASS", "LEVERAGED_RECOVERY_DCA_BLOCK"}:
+        action = "DCA 대기"
+    elif is_weight_block:
+        action = "추가매수 제외"
+    elif is_hard_blocked:
+        action = "방어/원인점검"
+    elif decision_code == "FUND_OVERSOLD_REBALANCE_REVIEW":
+        action = "소액 리밸런싱"
+    elif is_poor_rr:
+        action = "R/R 회복 대기"
+    elif is_wait:
+        action = "눌림/종가 확인"
+    elif finite_num(rr) and rr < 1.5:
+        action = "소액 1차만"
+    elif bool(c.get("rr_target_is_projection", False)):
+        action = "분할/추적"
+    else:
+        action = "분할 가능"
+
+    if is_weight_block or is_hard_blocked:
+        if is_weight_block:
+            entry_text = "추가매수 제외"
+            entry_cond = "목표비중 기준 추가 필요 없음"
+        else:
+            entry_text = "회복 후 재계산"
+            entry_cond = "차단 사유 해소 후 정밀관측소 확인"
+        return {
+            "R/R": rr_text,
+            "차트목표": target_text,
+            "손절가": stop_text,
+            "1차기준": entry_text,
+            "1차조건": entry_cond,
+            "부족액": amount_text,
+            "실행메모": action,
+            "RR값": rr if finite_num(rr) else np.nan,
+        }
+
+    if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
+        return {
+            "R/R": rr_text,
+            "차트목표": target_text,
+            "손절가": stop_text,
+            "1차기준": "데이터확인",
+            "1차조건": "가격/ATR 재조회 필요",
+            "부족액": amount_text,
+            "실행메모": "데이터확인",
+            "RR값": np.nan,
+        }
+
+    support_candidates = []
+    for label, value in [
+        ("MA5", clean_float(c.get("ma5"), 0.0)),
+        ("MA20", clean_float(c.get("ma20"), 0.0)),
+        ("FVG 상단", clean_float(c.get("fvg_top"), 0.0)),
+        ("FVG 하단", clean_float(c.get("fvg_bottom"), 0.0)),
+        ("0.5ATR", cur - atr * 0.5 if atr > 0 else 0.0),
+        ("1ATR", cur - atr if atr > 0 else 0.0),
+    ]:
+        if finite_num(value) and stop < value < cur:
+            support_candidates.append((label, float(value)))
+    support_candidates = sorted(support_candidates, key=lambda item: item[1], reverse=True)
+    unique_candidates = []
+    min_gap = max(cur * 0.003, 1.0)
+    for label, value in support_candidates:
+        if all(abs(value - used_value) > min_gap for _, used_value in unique_candidates):
+            unique_candidates.append((label, value))
+    support_candidates = unique_candidates
+
+    if (is_wait or is_poor_rr) and support_candidates:
+        entry_label, entry_price = support_candidates[0]
+        entry_text = format_currency(entry_price, tkr)
+        if is_poor_rr:
+            entry_cond = f"{entry_label} 눌림 후 R/R 재계산"
+        else:
+            entry_cond = f"{entry_label} 눌림 확인 후 1차"
+    else:
+        entry_price = cur
+        entry_text = format_currency(entry_price, tkr)
+        entry_cond = "현재 보유분 유지, 추가 1차는 소액만" if has_pos else "현재가 부근 1차 정찰"
+
+    return {
+        "R/R": rr_text,
+        "차트목표": target_text,
+        "손절가": stop_text,
+        "1차기준": entry_text,
+        "1차조건": entry_cond,
+        "부족액": amount_text,
+        "실행메모": action,
+        "RR값": rr if finite_num(rr) else np.nan,
+    }
+
+
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
@@ -21350,6 +21530,13 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         has_pos=has_p,
     )
     sideways_label = sideways_state.get("label", "-") if sideways_state else "-"
+    execution_snapshot = build_today_queue_execution_snapshot(
+        name,
+        tkr,
+        c,
+        has_pos=has_p,
+        usdkrw_value=clean_float(globals().get("usdkrw", 1400.0), 1400.0),
+    )
 
     row = {
         "시장": get_dashboard_market_label(tkr), "유형": get_dashboard_type_label(is_etf),
@@ -21380,6 +21567,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "현재비중": round(clean_float(c.get("current_w"), 0.0), 2),
         "목표비중": round(clean_float(c.get("target_w"), 0.0), 2),
         "비중차이": clean_float(c.get("target_w"), 0.0) - clean_float(c.get("current_w"), 0.0),
+        **execution_snapshot,
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
@@ -32618,7 +32806,8 @@ def render_today_queue_tab(mode):
     st.markdown("#### 4. 상세 판정표")
 
     show_cols = [
-        "종목명", "티커", "유형", "현재가", "목표Upside", "최종읽기", "📌후보등급", "🔥기술적 타점",
+        "종목명", "티커", "유형", "현재가", "목표Upside", "최종읽기", "실행메모", "R/R", "차트목표", "손절가",
+        "1차기준", "1차조건", "부족액", "📌후보등급", "🔥기술적 타점",
         "패턴타점", "패턴근거", "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
@@ -32640,7 +32829,16 @@ def render_today_queue_tab(mode):
             view_df["목표Upside"] = view_df["티커"].astype(str).map(_upside_map).fillna("-")
         st.dataframe(
             view_df[[col for col in show_cols if col in view_df.columns]],
-            column_config={"목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시")},
+            column_config={
+                "목표Upside": st.column_config.TextColumn("목표가Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력. 데이터 없으면 — 표시"),
+                "실행메모": st.column_config.TextColumn("실행메모", help="오늘점검 신호를 주문 전 행동으로 압축한 값입니다."),
+                "R/R": st.column_config.TextColumn("R/R", help="정밀관측소와 같은 2ATR 손절 기준의 현재가 손익비입니다."),
+                "차트목표": st.column_config.TextColumn("차트목표", help="R/R 계산에 쓰는 차트 구조 목표가 또는 강세 시나리오 상단입니다."),
+                "손절가": st.column_config.TextColumn("손절가", help="R/R 계산에 쓰는 2ATR 기준 손절선입니다."),
+                "1차기준": st.column_config.TextColumn("1차기준", help="현재가 실행이 아니면 MA5/MA20/FVG/ATR 중 가장 가까운 1차 확인 가격입니다."),
+                "1차조건": st.column_config.TextColumn("1차조건", help="1차 기준가를 어떻게 해석할지 보여줍니다. 보류 신호는 회복 후 재계산으로 표시됩니다."),
+                "부족액": st.column_config.TextColumn("부족액", help="목표비중 대비 남은 매수 필요액입니다. 실제 주문 전에는 정밀관측소에서 회차 금액을 다시 확인하세요."),
+            },
             width='stretch',
             hide_index=True,
         )
