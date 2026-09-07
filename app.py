@@ -679,6 +679,47 @@ st.markdown("""
 # -------------------------------------------------
 st.set_page_config(page_title="최종 관제실", layout="wide")
 KST = timezone(timedelta(hours=9))
+APP_NOTICE_QUEUE_KEY = "_app_notice_queue"
+
+
+def queue_app_notice(message, level="info"):
+    message = str(message or "").strip()
+    if not message:
+        return
+    level = str(level or "info").lower()
+    if level not in {"info", "success", "warning", "error"}:
+        level = "info"
+    notices = list(st.session_state.get(APP_NOTICE_QUEUE_KEY, []))
+    notices.append({"message": message, "level": level})
+    st.session_state[APP_NOTICE_QUEUE_KEY] = notices[-5:]
+
+
+def render_app_notice(message, level="info"):
+    message = str(message or "").strip()
+    if not message:
+        return
+    level = str(level or "info").lower()
+    if level == "success":
+        st.success(message)
+    elif level == "warning":
+        st.warning(message)
+    elif level == "error":
+        st.error(message)
+    else:
+        st.info(message)
+
+
+def render_queued_app_notices():
+    notices = list(st.session_state.get(APP_NOTICE_QUEUE_KEY, []))
+    if APP_NOTICE_QUEUE_KEY in st.session_state:
+        del st.session_state[APP_NOTICE_QUEUE_KEY]
+    for notice in notices:
+        render_app_notice(notice.get("message", ""), notice.get("level", "info"))
+
+
+def rerun_with_notice(message, level="info"):
+    queue_app_notice(message, level)
+    st.rerun()
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -12198,7 +12239,7 @@ def render_rotation_panel(flow_df: pd.DataFrame):
                         ):
                             st.session_state["image_theme_flow_theme"] = theme_name
                             st.session_state["_theme_jump_triggered"] = True
-                            st.toast(f"테마 종목 흐름 탭에서 '{theme_name}' 선택됨", icon="📌")
+                            render_app_notice(f"테마 종목 흐름 탭에서 '{theme_name}' 선택됨", "info")
 
 
 # ---------------------------------------------------------------------------
@@ -14059,8 +14100,7 @@ def render_refresh_control_panel():
             clear_latest_price_cache()
             enable_force_live_price_refresh()
             record_refresh_event("latest_price_refresh_time")
-            st.toast("현재가 캐시를 비웠습니다.")
-            st.rerun()
+            rerun_with_notice("현재가 캐시를 비웠습니다.", "success")
 
         if st.button("전체 차트/기술 새로고침", key="refresh_panel_chart_price", width='stretch'):
             clear_price_and_chart_cache()
@@ -14068,21 +14108,18 @@ def render_refresh_control_panel():
             # 자산관리 탭의 기술적 타점도 다음 렌더에서 재계산되도록 플래그 설정
             st.session_state["asset_management_tech_summary_lazy_ready"] = True
             st.session_state["_ticker_signal_cache"] = {}   # 이전 캐시 초기화
-            st.toast("차트/기술 캐시를 비웠습니다. 기술적 타점이 재계산됩니다.")
-            st.rerun()
+            rerun_with_notice("차트/기술 캐시를 비웠습니다. 기술적 타점이 재계산됩니다.", "success")
 
         if st.button("전체 뉴스/리포트 새로고침", key="refresh_panel_news_report", width='stretch'):
             clear_news_report_cache()
             record_refresh_event("news_report_refresh_time")
-            st.toast("뉴스/리포트 캐시를 비웠습니다.")
-            st.rerun()
+            rerun_with_notice("뉴스/리포트 캐시를 비웠습니다.", "success")
 
         if st.button("전체 재무점수/매크로 새로고침", key="refresh_panel_fin_macro", width='stretch'):
             clear_financial_api_cache()
             clear_market_context_cache()
             record_refresh_event("fin_macro_refresh_time")
-            st.toast("재무점수/매크로 캐시를 비웠습니다.")
-            st.rerun()
+            rerun_with_notice("재무점수/매크로 캐시를 비웠습니다.", "success")
 
         st.caption(f"현재가: {get_refresh_event_time('latest_price_refresh_time')}")
         st.caption(f"차트/기술: {get_refresh_event_time('chart_price_refresh_time')}")
@@ -31447,7 +31484,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
                         ):
                             st.session_state["image_theme_flow_theme"] = theme_name
                             st.session_state["_theme_jump_triggered"] = True
-                            st.toast(f"돈흐름 레이더 탭에서 '{theme_name}' 선택됨 →", icon="📌")
+                            render_app_notice(f"돈흐름 레이더 탭에서 '{theme_name}' 선택됨 →", "info")
 
         with st.expander("전체 상세 보기", expanded=False):
             all_cols = [c for c in ["시장축", "섹터", "테마", "Ticker", "구분", "ETF/대표",
@@ -33996,6 +34033,7 @@ main_page = st.sidebar.radio(
     key="main_page_nav",
 )
 st.caption(f"현재 화면: {MAIN_PAGE_OPTIONS[main_page]}")
+render_queued_app_notices()
 if main_page == "dashboard":
     st.subheader("CCTV 통합 통제실")
     render_data_basis_caption("전광판", include_fin=True)
@@ -34212,7 +34250,7 @@ if main_page == "precision":
         st.session_state["precision_selected_option"] = free_option
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
-        st.toast(_precision_jump_notice, icon="🔍")
+        render_app_notice(_precision_jump_notice, "info")
     sel = st.selectbox("종목 선택", options, key="precision_selected_option")
     selected_option = precision_option_map.get(sel, {"type": "free" if sel == free_option else "preset"})
     is_free = (selected_option.get("type") == "free")
@@ -34621,8 +34659,7 @@ if main_page == "precision":
                     clear_price_and_chart_cache()
                     enable_force_live_price_refresh()
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-                    st.toast(f"{tkr} 현재가와 차트 이력을 다시 조회합니다.")
-                    st.rerun()
+                    rerun_with_notice(f"{tkr} 현재가와 차트 이력을 다시 조회합니다.", "info")
                 st.number_input(
                     "직접입력",
                     min_value=0.0,
@@ -34842,8 +34879,7 @@ if main_page == "precision":
             ):
                 cache_clear(get_ticker_news)
                 record_refresh_event("news_report_refresh_time")
-                st.toast("뉴스 캐시를 비웠습니다.")
-                st.rerun()
+                rerun_with_notice("뉴스 캐시를 비웠습니다.", "success")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
         if news_items:
             render_news_cards(news_items)
@@ -34874,8 +34910,7 @@ if main_page == "precision":
             if st.button("가격·차트 다시 조회", key=f"refresh_empty_precision_chart_{fin_key}", width='stretch'):
                 clear_price_and_chart_cache()
                 enable_force_live_price_refresh()
-                st.toast(f"{tkr} 가격과 차트 이력을 다시 조회합니다.")
-                st.rerun()
+                rerun_with_notice(f"{tkr} 가격과 차트 이력을 다시 조회합니다.", "info")
         with _err_c2:
             st.number_input(
                 "현재가 직접입력",
@@ -35595,8 +35630,7 @@ if main_page == "asset":
                 clear_latest_price_cache()
                 enable_force_live_price_refresh()
                 st.session_state["latest_price_refresh_time"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-                st.toast("보유자산 현재가를 다시 조회합니다.")
-                st.rerun()
+                rerun_with_notice("보유자산 현재가를 다시 조회합니다.", "info")
         last_price_refresh_time = st.session_state.get("latest_price_refresh_time")
         if last_price_refresh_time:
             st.caption(f"현재가 수동 갱신: {last_price_refresh_time}")
