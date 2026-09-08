@@ -12,7 +12,6 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from stock_lab_core.decision_engine import is_finite_number
 from stock_lab_core.formatters import clean_float, format_currency, is_kr_listed, sanitize_ticker_value
 
 
@@ -72,7 +71,10 @@ TODAY_QUEUE_EXECUTION_WAIT_CODES = {
 
 
 def _finite_num(value: Any) -> bool:
-    return is_finite_number(value)
+    try:
+        return math.isfinite(float(value))
+    except Exception:
+        return False
 
 
 def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -> bool:

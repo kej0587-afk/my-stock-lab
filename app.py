@@ -105,13 +105,220 @@ from stock_lab_core.decision_engine import (
     score_main_entry,
     score_technical_components,
 )
-from stock_lab_core.today_queue import (
-    TODAY_QUEUE_DEFENSE_TEXT_RE,
-    build_today_queue_execution_snapshot,
-    is_today_queue_defense_signal,
-    today_queue_reason_bucket as _today_queue_reason_bucket,
-    today_queue_wait_mask as _today_queue_wait_mask,
-)
+try:
+    from stock_lab_core.today_queue import build_today_queue_execution_snapshot
+    TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""
+except Exception as _today_queue_snapshot_import_error:
+    TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = repr(_today_queue_snapshot_import_error)
+    logging.exception("stock_lab_core.today_queue snapshot import failed")
+
+    def build_today_queue_execution_snapshot(
+        name,
+        ticker,
+        decision,
+        *,
+        has_pos=False,
+        usdkrw_value=1400.0,
+        is_leveraged_product_fn=None,
+    ):
+        c = decision or {}
+        tkr = sanitize_ticker_value(ticker)
+        cur = clean_float(c.get("cur_p"), 0.0)
+        stop = clean_float(c.get("rr_stop"), 0.0)
+        target = clean_float(c.get("rr_target"), 0.0)
+        rr = clean_float(c.get("rr_ratio"), np.nan)
+        if cur > 0 and stop > 0 and target > cur and stop < cur:
+            rr = round((target - cur) / (cur - stop), 2)
+        target_text = format_currency(target, tkr) if target > 0 else "-"
+        stop_text = format_currency(stop, tkr) if stop > 0 else "-"
+        rr_text = f"{rr:.2f}" if finite_num(rr) and rr > 0 else "-"
+        buy_amt = clean_float(c.get("buy_amt"), 0.0)
+        if buy_amt > 0 and not is_kr_listed(tkr):
+            fx = clean_float(usdkrw_value, 1400.0) or 1400.0
+            amount_text = f"${buy_amt / fx:,.0f} (≈{buy_amt:,.0f}원)"
+        elif buy_amt > 0:
+            amount_text = f"{buy_amt:,.0f}원"
+        else:
+            amount_text = "-"
+        decision_code = str(c.get("decision_code", "") or "")
+        decision_label = str(c.get("dec", "") or "")
+        text = f"{decision_code} {decision_label}"
+        is_blocked = bool(re.search(
+            r"HARD_BLOCK|NO_ENTRY|NO_ADD|진입\s*보류|진입보류|추매금지|매수금지|원인점검|손절기준",
+            text,
+            flags=re.IGNORECASE,
+        ))
+        if is_blocked:
+            action = "방어/원인점검"
+            entry_text = "회복 후 재계산"
+            entry_cond = "차단 사유 해소 후 정밀관측소 확인"
+        elif re.search(r"WAIT|대기|관망|추격금지", text, flags=re.IGNORECASE):
+            action = "눌림/종가 확인"
+            entry_text = format_currency(cur, tkr) if cur > 0 else "데이터확인"
+            entry_cond = "종가 안정 후 재계산"
+        else:
+            action = "분할 가능"
+            entry_text = format_currency(cur, tkr) if cur > 0 else "데이터확인"
+            entry_cond = "현재가 부근 1차 정찰" if not has_pos else "현재 보유분 유지"
+        return {
+            "R/R": rr_text,
+            "차트목표": target_text,
+            "손절가": stop_text,
+            "1차기준": entry_text,
+            "1차조건": entry_cond,
+            "부족액": amount_text,
+            "실행메모": action,
+            "RR값": rr if finite_num(rr) else np.nan,
+        }
+
+try:
+    from stock_lab_core.today_queue import (
+        TODAY_QUEUE_DEFENSE_TEXT_RE,
+        is_today_queue_defense_signal,
+        today_queue_reason_bucket as _today_queue_reason_bucket,
+        today_queue_wait_mask as _today_queue_wait_mask,
+    )
+    TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = ""
+except Exception as _today_queue_classify_import_error:
+    TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = repr(_today_queue_classify_import_error)
+    logging.exception("stock_lab_core.today_queue classify import failed")
+
+    TODAY_QUEUE_DEFENSE_CODES = {
+        "PANIC_FINAL_DEPLOY",
+        "PANIC_CASH_DEPLOY",
+        "CRISIS_CORE_FOCUS",
+        "CRISIS_PANIC_SELL_OFF",
+        "DRAWDOWN_20_HOLDING_STOP_CHECK",
+        "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
+        "DRAWDOWN_20_NO_ENTRY",
+        "DOWNTREND_NO_ENTRY",
+        "REVERSE_TREND_NO_ENTRY",
+        "STRONG_REVERSE_NO_ENTRY",
+        "COST_MINUS_15_TREND_RISK",
+        "COST_MINUS_15_CAUSE_CHECK",
+        "TREND_RISK_CAUSE_CHECK",
+        "LEVERAGED_DAILY_DROP_NO_ADD",
+        "LEVERAGED_RECOVERY_DCA_BLOCK",
+        "MTF_DAMAGE_NO_ADD",
+    }
+    TODAY_QUEUE_DEFENSE_PREFIXES = (
+        "STRUCTURE_DAMAGE",
+        "PRICE_DRAWDOWN",
+        "SINGLE_DAY_BREAKDOWN",
+    )
+    TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
+        r"패닉|위기|고점대비\s*-?20|하락추세|역배열|추세위험|구조훼손|추세훼손|"
+        r"신규진입\s*보류|진입\s*보류|진입보류|추매금지|손절기준|원인점검|"
+        r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착",
+        flags=re.IGNORECASE,
+    )
+
+    def is_today_queue_defense_signal(c, extra_text=""):
+        code = str((c or {}).get("decision_code", "") or "")
+        label = str((c or {}).get("dec", "") or "")
+        text = " ".join([label, code, str(extra_text or "")])
+        if code in TODAY_QUEUE_DEFENSE_CODES:
+            return True
+        if any(code.startswith(prefix) for prefix in TODAY_QUEUE_DEFENSE_PREFIXES):
+            return True
+        return bool(TODAY_QUEUE_DEFENSE_TEXT_RE.search(text))
+
+    def _today_queue_reason_bucket(row):
+        label = str(row.get("🔥기술적 타점", "") or "")
+        code = str(row.get("판정코드", "") or "")
+        data_state = str(row.get("데이터상태", "") or "")
+        pattern_timing = str(row.get("패턴타점", "") or "")
+        pattern_reason = str(row.get("패턴근거", "") or "")
+        final_read = str(row.get("최종읽기", "") or "")
+        grade_label = str(row.get("📌후보등급", "") or "")
+        core_reason = str(row.get("핵심근거", "") or "")
+        text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
+        primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
+        if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
+            return "관심/눌림대기"
+        if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
+            return "관심/눌림대기"
+        if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
+            return "비중초과 방어"
+        if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
+            return "급락방어"
+        if re.search(r"DRAWDOWN_20|PRICE_DRAWDOWN|가격위험|가격방어|고점대비\s*-?20", text, flags=re.IGNORECASE):
+            return "가격방어"
+        if re.search(
+            r"PANIC|CRISIS|DOWNTREND|REVERSE_TREND|COST_MINUS_15|구조훼손|추세훼손|추세방어|"
+            r"패닉|위기|하락추세|역배열|추세위험|신규진입 보류|진입보류|진입 보류|STRUCTURE",
+            text,
+            flags=re.IGNORECASE,
+        ):
+            return "추세방어"
+        if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
+            return "관심/눌림대기"
+        if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
+            return "관심/눌림대기"
+        if re.search(r"패턴관찰|패턴성공|패턴유효|돌파대기|첫 눌림", text, flags=re.IGNORECASE):
+            return "관심/눌림대기"
+        if re.search(r"과열|볼린|MFI|추격금지|상단", text, flags=re.IGNORECASE):
+            return "과열/타점대기"
+        if data_state and data_state.upper() not in {"OK", "NORMAL", "-", "정상"}:
+            return "데이터확인"
+        if "하드차단" in label or "HARD_BLOCK" in code:
+            return "기타 하드차단"
+        return "일반"
+
+    def _today_queue_wait_mask(summary_df, buyish_mask, upside_value_map=None):
+        if summary_df is None or summary_df.empty:
+            return pd.Series(dtype=bool)
+        label = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+        pattern = summary_df.get("패턴타점", pd.Series("", index=summary_df.index)).astype(str)
+        ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+        code = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
+        final_read = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+        grade_label = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+        core_reason = summary_df.get("핵심근거", pd.Series("", index=summary_df.index)).astype(str)
+        bucket_series = summary_df.apply(_today_queue_reason_bucket, axis=1)
+        wait_text = label + " " + pattern + " " + final_read + " " + grade_label + " " + core_reason
+        leveraged_dca_watch = (
+            code.str.contains(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
+            | final_read.str.contains("DCA조건부", regex=False, na=False)
+            | grade_label.str.contains("레버리지DCA조건부", regex=False, na=False)
+            | label.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
+        )
+        forced_wait = wait_text.str.contains(
+            r"R/R\s*[<＜]\s*1|손익비\s*1\s*미만|목표가.*부족|풀진입\s*보류|현재가\s*보류|"
+            r"눌림대기|눌림\s*대기|돌파대기|정밀확인|패턴관찰|패턴성공|패턴유효|DCA조건부",
+            regex=True,
+            na=False,
+        )
+        wait_mask = (
+            label.str.contains(r"R/R\s*[<＜]\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
+            | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
+            | bucket_series.eq("관심/눌림대기")
+            | leveraged_dca_watch
+            | forced_wait
+        )
+        if upside_value_map:
+            neg_upside = ticker.map(
+                lambda t: finite_num(upside_value_map.get(str(t), np.nan))
+                and float(upside_value_map.get(str(t))) <= 0
+            )
+            wait_mask = wait_mask | neg_upside.fillna(False)
+        pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
+        overheat_timing_watch = (
+            bucket_series.eq("과열/타점대기")
+            | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
+        )
+        defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
+        overheat_hard_watch = (
+            code.str.contains(r"HARD_BLOCK_BOLLINGER_UPPER|HARD_BLOCK_MFI_OVERHEAT|EXTREME_OVERHEAT_NO_CHASE|OVERHEAT", regex=True, na=False)
+            | wait_text.str.contains(r"볼린상단|볼린저.*상단|MFI.*과열|극단과열|추격금지", regex=True, na=False)
+        )
+        hard_block = code.str.contains("HARD_BLOCK", regex=False, na=False) & ~overheat_hard_watch
+        return (
+            buyish_mask.reindex(summary_df.index, fill_value=False)
+            | pattern_interest
+            | leveraged_dca_watch
+            | overheat_timing_watch
+        ) & wait_mask & ~defense_bucket & ~hard_block
 from stock_lab_core.news import (
     get_analyst_snapshot,
     get_ticker_news,
