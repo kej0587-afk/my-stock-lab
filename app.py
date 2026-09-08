@@ -74,17 +74,93 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
     strip_search_prefix,
 )
-from stock_lab_core.asset_classifier import (
-    asset_class_marks_fin_score_exempt,
-    infer_asset_class_for_ticker,
-    is_fin_score_exempt_asset,
-    is_known_etf_ticker,
-    is_known_individual_stock_ticker,
-    normalize_individual_stock_asset_class,
-)
 from stock_lab_core.constants import (
     KNOWN_TICKER_DISPLAY_NAMES,
 )
+try:
+    from stock_lab_core.asset_classifier import (
+        asset_class_marks_fin_score_exempt,
+        infer_asset_class_for_ticker,
+        is_fin_score_exempt_asset,
+        is_known_etf_ticker,
+        is_known_individual_stock_ticker,
+        normalize_individual_stock_asset_class,
+    )
+    ASSET_CLASSIFIER_IMPORT_ERROR = ""
+except Exception as _asset_classifier_import_error:
+    ASSET_CLASSIFIER_IMPORT_ERROR = repr(_asset_classifier_import_error)
+    logging.exception("stock_lab_core.asset_classifier import failed")
+    try:
+        from stock_lab_core.constants import (
+            FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
+            KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
+            KNOWN_KR_ETF_SYMBOLS,
+            KNOWN_US_NASDAQ_ETFS,
+            KNOWN_US_OTHER_ETFS,
+            KNOWN_US_SP_ETFS,
+            KR_ETF_NAME_KEYWORDS,
+        )
+    except Exception:
+        FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
+        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {"FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG", "TSLA", "BE"}
+        KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240"}
+        KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
+        KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
+        KNOWN_US_OTHER_ETFS = {"DIA", "IWM", "SMH", "SOXX", "SOXL", "DRAM", "RAM", "BITX", "BITU", "TLT"}
+        KR_ETF_NAME_KEYWORDS = ("ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR", "HANARO", "액티브")
+
+    def is_known_individual_stock_ticker(ticker) -> bool:
+        return clean_symbol(ticker) in KNOWN_INDIVIDUAL_STOCK_SYMBOLS
+
+    def asset_class_marks_fin_score_exempt(asset_class) -> bool:
+        text = str(asset_class or "").strip().lower()
+        return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
+
+    def normalize_individual_stock_asset_class(ticker, current_asset_class="") -> str:
+        current = str(current_asset_class or "").strip()
+        if current and not asset_class_marks_fin_score_exempt(current):
+            return current
+        return "kr_stock" if is_kr_listed(ticker) else "us_stock"
+
+    def is_known_etf_ticker(ticker) -> bool:
+        raw = sanitize_ticker_value(ticker)
+        symbol = clean_symbol(raw)
+        if is_known_individual_stock_ticker(raw):
+            return False
+        return (
+            symbol in KNOWN_US_SP_ETFS
+            or symbol in KNOWN_US_NASDAQ_ETFS
+            or symbol in KNOWN_US_OTHER_ETFS
+            or symbol in KNOWN_KR_ETF_SYMBOLS
+            or raw.endswith("ETF")
+        )
+
+    def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name="") -> bool:
+        if is_known_individual_stock_ticker(ticker):
+            return False
+        if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
+            return True
+        name_upper = str(name or "").strip().upper()
+        return bool(is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS))
+
+    def infer_asset_class_for_ticker(ticker, current_asset_class="") -> str:
+        current = str(current_asset_class or "").strip()
+        if is_known_individual_stock_ticker(ticker):
+            return normalize_individual_stock_asset_class(ticker, current)
+        if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
+            return current
+        symbol = clean_symbol(ticker)
+        if is_kr_listed(ticker):
+            if symbol == "379810":
+                return "us_etf_nasdaq"
+            if symbol in {"379800", "458730"}:
+                return "us_etf_sp"
+            return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
+        if symbol in KNOWN_US_SP_ETFS:
+            return "us_etf_sp"
+        if asset_class_marks_fin_score_exempt(current):
+            return current
+        return "us_etf_nasdaq"
 from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
     resolve_fin_score_source,
@@ -34152,7 +34228,10 @@ if main_page == "precision":
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
         render_app_notice(_precision_jump_notice, "info")
-    sel = st.selectbox("종목 선택", options, index=selected_index, key=PRECISION_SELECTED_WIDGET_KEY)
+    precision_select_kwargs = {"key": PRECISION_SELECTED_WIDGET_KEY}
+    if reset_precision_widget or PRECISION_SELECTED_WIDGET_KEY not in st.session_state:
+        precision_select_kwargs["index"] = selected_index
+    sel = st.selectbox("종목 선택", options, **precision_select_kwargs)
     st.session_state[PRECISION_SELECTED_OPTION_KEY] = sel
     selected_option = precision_option_map.get(sel, {"type": "free" if sel == free_option else "preset"})
     is_free = (selected_option.get("type") == "free")
