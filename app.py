@@ -32007,10 +32007,10 @@ def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=No
 
     saved_flow_snapshot = get_cached_today_market_flow_snapshot()
     has_saved_flow = isinstance(saved_flow_snapshot, dict) and bool(saved_flow_snapshot)
-    default_open = bool(st.session_state.get("today_queue_open_flow_detail", has_saved_flow))
+    if "today_queue_open_flow_detail" not in st.session_state:
+        st.session_state["today_queue_open_flow_detail"] = has_saved_flow
     open_flow_detail = st.checkbox(
         "돈흐름/테마 상세 열기",
-        value=default_open,
         key="today_queue_open_flow_detail",
         help="오늘점검 새로고침 때 계산된 돈흐름 상세/차트 결과를 세션 안에서 유지합니다. 앱을 완전히 끄기 전까지 화면 이동 후에도 다시 볼 수 있습니다.",
     )
