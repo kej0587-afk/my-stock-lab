@@ -17707,9 +17707,14 @@ def find_precision_select_label_by_ticker(ticker, option_map):
     return None
 
 
+PRECISION_SELECTED_OPTION_KEY = "precision_selected_option"
+PRECISION_SELECTED_WIDGET_KEY = "_precision_selected_option_widget"
 PRECISION_FREE_TICKER_KEY = "precision_free_ticker_input"
 PRECISION_FREE_MARKET_KEY = "precision_free_market_option"
 PRECISION_FORCE_FREE_OPTION_KEY = "_precision_force_free_option"
+PRECISION_PENDING_SELECTED_OPTION_KEY = "_precision_pending_selected_option"
+PRECISION_PENDING_FREE_TICKER_KEY = "_precision_pending_free_ticker"
+PRECISION_PENDING_FREE_MARKET_KEY = "_precision_pending_free_market"
 
 
 def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
@@ -17722,8 +17727,24 @@ def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
     return upper, st.session_state.get(PRECISION_FREE_MARKET_KEY, "KOSPI (.KS)")
 
 
+def _queue_precision_selected_option(label: str) -> str:
+    label = str(label or "")
+    if label:
+        st.session_state[PRECISION_PENDING_SELECTED_OPTION_KEY] = label
+    return label
+
+
+def _queue_precision_free_target(ticker: str) -> str:
+    base_ticker, market_option = _split_precision_free_ticker(ticker)
+    _queue_precision_selected_option(FREE_SEARCH_OPTION)
+    st.session_state[PRECISION_PENDING_FREE_TICKER_KEY] = base_ticker
+    st.session_state[PRECISION_PENDING_FREE_MARKET_KEY] = market_option
+    st.session_state["_precision_prefill_ticker"] = ticker
+    return FREE_SEARCH_OPTION
+
+
 def set_precision_target_ticker(ticker: str, option_map: dict | None = None) -> str:
-    """정밀관측소 선택값을 안정적으로 세팅한다.
+    """정밀관측소 선택값을 다음 렌더링에서 안정적으로 적용한다.
 
     전광판/프리셋에 없는 종목은 자유 종목 탐색 입력값에 고정 저장한다.
     """
@@ -17734,15 +17755,9 @@ def set_precision_target_ticker(ticker: str, option_map: dict | None = None) -> 
     option_map = option_map or build_precision_select_options()[1]
     label = find_precision_select_label_by_ticker(target, option_map)
     if label:
-        st.session_state["precision_selected_option"] = label
-        return label
+        return _queue_precision_selected_option(label)
 
-    base_ticker, market_option = _split_precision_free_ticker(target)
-    st.session_state["precision_selected_option"] = FREE_SEARCH_OPTION
-    st.session_state[PRECISION_FREE_TICKER_KEY] = base_ticker
-    st.session_state[PRECISION_FREE_MARKET_KEY] = market_option
-    st.session_state["_precision_prefill_ticker"] = target
-    return FREE_SEARCH_OPTION
+    return _queue_precision_free_target(target)
 
 
 def get_saved_fin_score_fast(ticker, is_etf):
@@ -34081,7 +34096,7 @@ if main_page == "dashboard":
                     precision_options, precision_option_map_for_jump = build_precision_select_options()
                     precision_label = find_precision_select_label_by_ticker(jump_ticker, precision_option_map_for_jump)
                     if precision_label:
-                        st.session_state["precision_selected_option"] = precision_label
+                        _queue_precision_selected_option(precision_label)
                         st.success("정밀관측소 선택값을 바꿨습니다. 왼쪽 사이드바에서 정밀관측소 화면을 열어 확인하세요.")
                     else:
                         st.warning("정밀관측소 선택값으로 연결할 수 없습니다. 자유 종목 탐색에서 직접 입력해 주세요.")
@@ -34102,15 +34117,43 @@ if main_page == "dashboard":
 if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     free_option = FREE_SEARCH_OPTION if FREE_SEARCH_OPTION in options else (options[0] if options else "")
+    pending_option = str(st.session_state.pop(PRECISION_PENDING_SELECTED_OPTION_KEY, "") or "")
+    pending_free_ticker = str(st.session_state.pop(PRECISION_PENDING_FREE_TICKER_KEY, "") or "")
+    pending_free_market = str(st.session_state.pop(PRECISION_PENDING_FREE_MARKET_KEY, "") or "")
     force_free_option = bool(st.session_state.pop(PRECISION_FORCE_FREE_OPTION_KEY, False))
-    if force_free_option and free_option:
-        st.session_state["precision_selected_option"] = free_option
-    elif st.session_state.get("precision_selected_option") not in options:
-        st.session_state["precision_selected_option"] = free_option
+
+    if pending_free_ticker:
+        st.session_state[PRECISION_FREE_TICKER_KEY] = pending_free_ticker
+    if pending_free_market in ["KOSPI (.KS)", "KOSDAQ (.KQ)"]:
+        st.session_state[PRECISION_FREE_MARKET_KEY] = pending_free_market
+
+    current_precision_option = st.session_state.get(PRECISION_SELECTED_OPTION_KEY)
+    widget_precision_option = st.session_state.get(PRECISION_SELECTED_WIDGET_KEY)
+    desired_precision_option = current_precision_option if current_precision_option in options else free_option
+    reset_precision_widget = False
+
+    if pending_option in options:
+        desired_precision_option = pending_option
+        reset_precision_widget = True
+    elif force_free_option and free_option:
+        desired_precision_option = free_option
+        reset_precision_widget = True
+    elif current_precision_option not in options:
+        desired_precision_option = free_option
+        reset_precision_widget = True
+    elif widget_precision_option is not None and widget_precision_option not in options:
+        reset_precision_widget = True
+
+    st.session_state[PRECISION_SELECTED_OPTION_KEY] = desired_precision_option
+    if reset_precision_widget and PRECISION_SELECTED_WIDGET_KEY in st.session_state:
+        del st.session_state[PRECISION_SELECTED_WIDGET_KEY]
+    selected_index = options.index(desired_precision_option) if desired_precision_option in options else 0
+
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
         render_app_notice(_precision_jump_notice, "info")
-    sel = st.selectbox("종목 선택", options, key="precision_selected_option")
+    sel = st.selectbox("종목 선택", options, index=selected_index, key=PRECISION_SELECTED_WIDGET_KEY)
+    st.session_state[PRECISION_SELECTED_OPTION_KEY] = sel
     selected_option = precision_option_map.get(sel, {"type": "free" if sel == free_option else "preset"})
     is_free = (selected_option.get("type") == "free")
 
