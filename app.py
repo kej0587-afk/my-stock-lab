@@ -74,15 +74,16 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
     strip_search_prefix,
 )
+from stock_lab_core.asset_classifier import (
+    asset_class_marks_fin_score_exempt,
+    infer_asset_class_for_ticker,
+    is_fin_score_exempt_asset,
+    is_known_etf_ticker,
+    is_known_individual_stock_ticker,
+    normalize_individual_stock_asset_class,
+)
 from stock_lab_core.constants import (
-    FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
-    KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
-    KNOWN_KR_ETF_SYMBOLS,
     KNOWN_TICKER_DISPLAY_NAMES,
-    KNOWN_US_NASDAQ_ETFS,
-    KNOWN_US_OTHER_ETFS,
-    KNOWN_US_SP_ETFS,
-    KR_ETF_NAME_KEYWORDS,
 )
 from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
@@ -1600,17 +1601,6 @@ def _security_matches(left_ticker="", right_ticker="", left_name="", right_name=
     return bool(left_keys and right_keys and left_keys.intersection(right_keys))
 
 
-def is_known_individual_stock_ticker(ticker):
-    return clean_symbol(ticker) in KNOWN_INDIVIDUAL_STOCK_SYMBOLS
-
-
-def normalize_individual_stock_asset_class(ticker, current_asset_class=""):
-    current = str(current_asset_class or "").strip()
-    if current and not asset_class_marks_fin_score_exempt(current):
-        return current
-    return "kr_stock" if is_kr_listed(ticker) else "us_stock"
-
-
 def sanitize_watchlist_item(item):
     data = dict(item) if isinstance(item, dict) else {}
     raw_name = data.get("name", "")
@@ -1679,58 +1669,6 @@ def dedupe_watchlist_items(watchlist):
             merged[field] = value
         merged_by_key[key] = sanitize_watchlist_item(merged)
     return [merged_by_key[key] for key in ordered_keys if key in merged_by_key]
-
-def is_known_etf_ticker(ticker):
-    raw = sanitize_ticker_value(ticker)
-    symbol = clean_symbol(raw)
-    if is_known_individual_stock_ticker(raw):
-        return False
-    return (
-        symbol in KNOWN_US_SP_ETFS
-        or symbol in KNOWN_US_NASDAQ_ETFS
-        or symbol in KNOWN_US_OTHER_ETFS
-        or symbol in KNOWN_KR_ETF_SYMBOLS
-        or raw.endswith("ETF")
-    )
-
-def asset_class_marks_fin_score_exempt(asset_class):
-    text = str(asset_class or "").strip().lower()
-    return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
-
-def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name=""):
-    if is_known_individual_stock_ticker(ticker):
-        return False
-    if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
-        return True
-
-    # 국내 ETF/ETN은 신규 상품이 많아 티커 목록만으로는 누락될 수 있다.
-    # 이름에 ETF 브랜드/레버리지/인버스 단서가 있으면 재무점수 대상에서 제외한다.
-    name_upper = str(name or "").strip().upper()
-    if is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS):
-        return True
-
-    return False
-
-def infer_asset_class_for_ticker(ticker, current_asset_class=""):
-    current = str(current_asset_class or "").strip()
-    if is_known_individual_stock_ticker(ticker):
-        return normalize_individual_stock_asset_class(ticker, current)
-    if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
-        return current
-
-    symbol = clean_symbol(ticker)
-    if is_kr_listed(ticker):
-        if symbol == "379810":
-            return "us_etf_nasdaq"
-        if symbol in {"379800", "458730"}:
-            return "us_etf_sp"
-        return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
-
-    if symbol in KNOWN_US_SP_ETFS:
-        return "us_etf_sp"
-    if asset_class_marks_fin_score_exempt(current):
-        return current
-    return "us_etf_nasdaq"
 
 def encode_watchlist(watchlist):
     raw = json.dumps(watchlist, ensure_ascii=False)
