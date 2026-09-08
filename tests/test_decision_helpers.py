@@ -334,7 +334,6 @@ def test_sizing_hint_no_addon_when_weight_gap_small(helpers):
     )
     assert hint == ""
 
-
 def test_sizing_hint_no_addon_for_unrelated_code(helpers):
     decision_outcome = _outcome(
         helpers, "📈A급 비중여유: 소액 추가 검토", "#22c55e", "A_GRADE_ADD_ON_REVIEW",
@@ -345,46 +344,3 @@ def test_sizing_hint_no_addon_for_unrelated_code(helpers):
         is_etf=False, weight_gap=5.0, ticker="TST.KS",
     )
     assert hint == ""
-
-
-# ---------------------------------------------------------------------------
-# Today queue display helpers
-# ---------------------------------------------------------------------------
-
-def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_valid(helpers):
-    final_read = helpers.build_dashboard_final_read(
-        {"decision_code": "QUALITY_RECOVERY_CANDIDATE", "decision_group": "buyish"},
-        dashboard_timing="✅우량주 회복 후보: 분할 검토",
-        dashboard_grade="✅우량주 회복후보",
-        pattern_timing="🛑하락패턴 유효",
-    )
-    assert final_read == "👀회복관찰"
-
-
-def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss(helpers):
-    trend_read = helpers.build_dashboard_final_read(
-        {"decision_code": "TREND_RISK_CAUSE_CHECK", "decision_group": "caution"},
-        dashboard_timing="🚫추세위험: 원인 점검",
-        dashboard_grade="⚖️ETF 보통",
-        pattern_timing="-",
-    )
-    cost_read = helpers.build_dashboard_final_read(
-        {"decision_code": "COST_MINUS_15_CAUSE_CHECK", "decision_group": "caution"},
-        dashboard_timing="🚫평단 -15%↓: 원인 점검",
-        dashboard_grade="⚖️ETF 보통",
-        pattern_timing="-",
-    )
-
-    assert trend_read == "🛡️추세방어(추매보류)"
-    assert cost_read == "🛡️평단방어(원인점검)"
-
-
-def test_dashboard_final_read_marks_fund_oversold_as_rebalance_wait(helpers):
-    final_read = helpers.build_dashboard_final_read(
-        {"decision_code": "FUND_OVERSOLD_REBALANCE_REVIEW", "decision_group": "caution"},
-        dashboard_timing="⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토",
-        dashboard_grade="⏳펀드리밸런싱",
-        pattern_timing="-",
-    )
-
-    assert final_read == "⏳리밸런싱대기"

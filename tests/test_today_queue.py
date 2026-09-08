@@ -1,7 +1,11 @@
 import pandas as pd
 
 from stock_lab_core.today_queue import (
+    build_dashboard_final_read,
     build_today_queue_execution_snapshot,
+    format_dashboard_candidate_grade,
+    format_dashboard_reason,
+    format_dashboard_timing_label,
     is_today_queue_defense_signal,
     today_queue_reason_bucket,
     today_queue_wait_mask,
@@ -124,3 +128,71 @@ def test_today_wait_mask_still_hides_non_timing_hard_blocks():
     mask = today_queue_wait_mask(summary_df, buyish_mask)
 
     assert not bool(mask.iloc[0])
+
+
+def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_valid():
+    final_read = build_dashboard_final_read(
+        {"decision_code": "QUALITY_RECOVERY_CANDIDATE", "decision_group": "buyish"},
+        dashboard_timing="✅우량주 회복 후보: 분할 검토",
+        dashboard_grade="✅우량주 회복후보",
+        pattern_timing="🛑하락패턴 유효",
+    )
+
+    assert final_read == "👀회복관찰"
+
+
+def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss():
+    trend_read = build_dashboard_final_read(
+        {"decision_code": "TREND_RISK_CAUSE_CHECK", "decision_group": "caution"},
+        dashboard_timing="🚫추세위험: 원인 점검",
+        dashboard_grade="⚖️ETF 보통",
+        pattern_timing="-",
+    )
+    cost_read = build_dashboard_final_read(
+        {"decision_code": "COST_MINUS_15_CAUSE_CHECK", "decision_group": "caution"},
+        dashboard_timing="🚫평단 -15%↓: 원인 점검",
+        dashboard_grade="⚖️ETF 보통",
+        pattern_timing="-",
+    )
+
+    assert trend_read == "🛡️추세방어(추매보류)"
+    assert cost_read == "🛡️평단방어(원인점검)"
+
+
+def test_dashboard_final_read_marks_fund_oversold_as_rebalance_wait():
+    final_read = build_dashboard_final_read(
+        {"decision_code": "FUND_OVERSOLD_REBALANCE_REVIEW", "decision_group": "caution"},
+        dashboard_timing="⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토",
+        dashboard_grade="⏳펀드리밸런싱",
+        pattern_timing="-",
+    )
+
+    assert final_read == "⏳리밸런싱대기"
+
+
+def test_dashboard_read_turns_low_rr_new_leader_entry_into_wait():
+    decision = {
+        "decision_code": "NEW_ENTRY_LEADER",
+        "decision_group": "buyish",
+        "dec": "🚀신규진입: 대장주 포착",
+        "grade": "✅A급 (분할 매수)",
+        "rr_ratio": 0.64,
+    }
+
+    timing = format_dashboard_timing_label(decision)
+    grade = format_dashboard_candidate_grade(decision)
+    reason = format_dashboard_reason({
+        **decision,
+        "decision_reasons": ("RS 강함",),
+    })
+    final_read = build_dashboard_final_read(
+        decision,
+        dashboard_timing=timing,
+        dashboard_grade=grade,
+    )
+
+    assert timing.startswith("🔍대장주 포착: R/R 대기")
+    assert "신규진입" not in timing
+    assert "R/R<1" in grade
+    assert "현재가 풀진입 보류" in reason
+    assert final_read == "⏳눌림대기"

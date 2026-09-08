@@ -174,6 +174,14 @@ except Exception as _today_queue_snapshot_import_error:
 try:
     from stock_lab_core.today_queue import (
         TODAY_QUEUE_DEFENSE_TEXT_RE,
+        apply_leveraged_dca_dashboard_override,
+        build_dashboard_final_read,
+        format_dashboard_candidate_grade,
+        format_dashboard_reason,
+        format_dashboard_timing_label,
+        is_dashboard_actionable_signal,
+        is_dashboard_block_or_wait_label,
+        is_dashboard_low_rr_caution,
         is_today_queue_defense_signal,
         today_queue_reason_bucket as _today_queue_reason_bucket,
         today_queue_wait_mask as _today_queue_wait_mask,
@@ -319,6 +327,68 @@ except Exception as _today_queue_classify_import_error:
             | leveraged_dca_watch
             | overheat_timing_watch
         ) & wait_mask & ~defense_bucket & ~hard_block
+
+    def is_dashboard_block_or_wait_label(label):
+        return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상"))
+
+    def is_dashboard_low_rr_caution(c):
+        label = str((c or {}).get("dec", "") or "")
+        rr = clean_float((c or {}).get("rr_ratio"), np.nan)
+        if not finite_num(rr) or rr >= 1.0 or is_dashboard_block_or_wait_label(label):
+            return False
+        return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
+
+    def is_dashboard_actionable_signal(c):
+        label = str((c or {}).get("dec", "") or "")
+        if is_dashboard_block_or_wait_label(label):
+            return False
+        return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
+
+    def apply_leveraged_dca_dashboard_override(c):
+        return c if isinstance(c, dict) else c
+
+    def format_dashboard_timing_label(c):
+        label = str((c or {}).get("dec", "") or "")
+        if is_dashboard_low_rr_caution(c) and "신규진입: 대장주 포착" in label:
+            label = "🔍대장주 포착: R/R 대기"
+        if is_dashboard_low_rr_caution(c) and "R/R<1 정찰" not in label:
+            label = f"{label} / R/R<1 정찰" if label else "R/R<1 정찰"
+        return label
+
+    def format_dashboard_candidate_grade(c):
+        label = str((c or {}).get("dec", "") or "")
+        code = str((c or {}).get("decision_code", "") or "")
+        if is_today_queue_defense_signal(c):
+            return "🛡️방어우선"
+        if code.startswith("HARD_BLOCK") or any(word in label for word in ("하드차단", "매수금지", "추매금지")):
+            return "🛑매수금지"
+        grade = str((c or {}).get("grade", "") or "")
+        return f"{grade} / ⚠️R/R<1" if grade and is_dashboard_low_rr_caution(c) else grade
+
+    def format_dashboard_reason(c):
+        reasons = tuple((c or {}).get("decision_reasons") or ())
+        base = str(reasons[0]) if reasons else ""
+        if is_dashboard_low_rr_caution(c):
+            rr = clean_float((c or {}).get("rr_ratio"), np.nan)
+            note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
+            return f"{base} / {note}" if base else note
+        return base
+
+    def build_dashboard_final_read(c, dashboard_timing="", dashboard_grade="", pattern_timing="", pattern_bucket=""):
+        code = str((c or {}).get("decision_code", "") or "")
+        group = str((c or {}).get("decision_group", "") or "")
+        text = " ".join([str(dashboard_timing or ""), str(dashboard_grade or ""), str(pattern_timing or ""), code])
+        if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
+            return "⚪데이터확인"
+        if is_today_queue_defense_signal(c, text):
+            return "🛡️방어우선"
+        if re.search(r"추격금지|과열|상단", text):
+            return "🚫추격금지"
+        if re.search(r"대기|R/R\s*<\s*1|정찰|패턴성공|패턴유효", text):
+            return "⏳눌림대기"
+        if group == "buyish" or is_dashboard_actionable_signal(c):
+            return "✅정밀확인"
+        return "🔍관망"
 from stock_lab_core.news import (
     get_analyst_snapshot,
     get_ticker_news,
@@ -21056,91 +21126,6 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
     return {"tkr": tkr, "f_score": None, "row": row}
 
 
-def is_dashboard_low_rr_caution(c: dict) -> bool:
-    label = str((c or {}).get("dec", "") or "")
-    rr = clean_float((c or {}).get("rr_ratio"), np.nan)
-    if not np.isfinite(rr) or rr >= 1.0:
-        return False
-    if is_dashboard_block_or_wait_label(label):
-        return False
-    return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
-
-
-def is_dashboard_block_or_wait_label(label: str) -> bool:
-    return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상"))
-
-
-def is_dashboard_actionable_signal(c: dict) -> bool:
-    label = str((c or {}).get("dec", "") or "")
-    if is_dashboard_block_or_wait_label(label):
-        return False
-    return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
-
-
-def apply_leveraged_dca_dashboard_override(c: dict) -> dict:
-    if not isinstance(c, dict):
-        return c
-    if not bool(c.get("is_leveraged_or_inverse")):
-        return c
-    code = str(c.get("decision_code", "") or "")
-    panic_codes = {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}
-    if code in panic_codes:
-        out = dict(c)
-        dd = clean_float(out.get("dd"), np.nan)
-        out.update({
-            "dec": "⚡레버리지 패닉권: DCA 보류" if finite_num(dd) and dd <= -0.5 else "⚡레버리지 급락권: 회복조건 확인",
-            "col": "#d97706",
-            "decision_code": "LEVERAGED_RECOVERY_DCA_BLOCK",
-            "decision_group": "caution",
-            "decision_reasons": (
-                f"고점대비 {dd*100:.1f}% 하락" if finite_num(dd) else "고점대비 급락 구간",
-                "레버리지 ETF는 일반 코어 ETF의 현금투입/최종투입 규칙을 쓰지 않고 MA20·MA50·기초축·회차별 DCA 조건을 먼저 확인합니다.",
-            ),
-        })
-        return out
-    if code not in {"ETF_DCA_OK", "ETF_LARGE_GAP_DCA_OK"}:
-        return c
-
-    out = dict(c)
-    dd = clean_float(out.get("dd"), np.nan)
-    pct_b = clean_float(out.get("pct_b"), np.nan)
-    day_ret = clean_float(out.get("day_ret"), np.nan)
-    target_w = clean_float(out.get("target_w"), 0.0)
-    current_w = clean_float(out.get("current_w"), 0.0)
-    weight_gap = clean_float(out.get("weight_gap"), target_w - current_w)
-
-    high_or_chasing = (
-        (finite_num(dd) and dd > -0.10) or
-        (finite_num(pct_b) and pct_b >= 0.85) or
-        (finite_num(day_ret) and day_ret >= 0.08)
-    )
-    if high_or_chasing:
-        out.update({
-            "dec": "⚡레버리지 과열패스: DCA 대기",
-            "col": "#d97706",
-            "decision_code": "LEVERAGED_DCA_OVERHEAT_PASS",
-            "decision_group": "caution",
-            "decision_reasons": (
-                f"목표비중 {target_w:.1f}% 대비 {max(weight_gap, 0.0):.1f}%p 부족",
-                f"고점대비 {dd*100:.1f}% / %B {pct_b:.2f} / 전일등락 {day_ret*100:.1f}%",
-                "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
-            ),
-        })
-    else:
-        out.update({
-            "dec": "⚡레버리지 DCA 조건부: 단계별 소액",
-            "col": "#8b5cf6",
-            "decision_code": "LEVERAGED_DCA_CONDITIONAL",
-            "decision_group": "caution",
-            "decision_reasons": (
-                f"목표비중 {target_w:.1f}% 대비 {max(weight_gap, 0.0):.1f}%p 부족",
-                f"고점대비 {dd*100:.1f}% / %B {pct_b:.2f} / 전일등락 {day_ret*100:.1f}%",
-                "레버리지 DCA 조건부 구간입니다. 자산 현황의 레버리지 배율과 회차별 금액 안에서만 소액 접근합니다.",
-            ),
-        })
-    return out
-
-
 TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
 TODAY_QUEUE_FLOW_AUTO_LIMIT = 12
 
@@ -21187,204 +21172,6 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
         "비중차이": 0.0,
     }
     return {"tkr": tkr, "f_score": None, "row": row}
-
-
-def format_dashboard_timing_label(c: dict) -> str:
-    c = apply_leveraged_dca_dashboard_override(c)
-    label = str((c or {}).get("dec", "") or "")
-    if not label:
-        return label
-    if is_dashboard_low_rr_caution(c) and "신규진입: 대장주 포착" in label:
-        label = "🔍대장주 포착: R/R 대기"
-    notes = []
-    if is_dashboard_low_rr_caution(c):
-        notes.append("R/R<1 정찰")
-    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
-        if "상위과열" not in label and "정찰만" not in label:
-            notes.append("상위과열 정찰")
-    for note in notes:
-        if note not in label:
-            label = f"{label} / {note}"
-    return label
-
-
-def format_dashboard_candidate_grade(c: dict) -> str:
-    c = apply_leveraged_dca_dashboard_override(c)
-    grade = str((c or {}).get("grade", "") or "")
-    label = str((c or {}).get("dec", "") or "")
-    code = str((c or {}).get("decision_code", "") or "")
-    curr_w = clean_float((c or {}).get("current_w"), 0.0)
-    target_w = clean_float((c or {}).get("target_w"), 0.0)
-    hard_codes = {
-        "TARGET_ZERO_NO_ADD",
-        "HARD_BLOCK_FINANCIAL_F",
-        "LEVERAGED_DAILY_DROP_NO_ADD",
-        "PRICE_DRAWDOWN_HOLDING_CHECK",
-        "PRICE_DRAWDOWN_NO_ENTRY",
-        "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK",
-        "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
-        "HARD_BLOCK_OVERWEIGHT",
-        "HARD_BLOCK_TARGET_FILLED",
-        "HARD_BLOCK_MACRO_STORM",
-        "STRUCTURE_DAMAGE_HOLDING_CHECK",
-        "STRUCTURE_DAMAGE_NO_ENTRY",
-        "MTF_DAMAGE_NO_ADD",
-    }
-    if code == "TARGET_ZERO_NO_ADD" or (curr_w > 0 and target_w <= 0):
-        return "🛑후보제외(목표0%)"
-    if code == "HARD_BLOCK_FINANCIAL_F":
-        return "🛑재무위험(매수금지)"
-    if code == "HARD_BLOCK_OVERWEIGHT":
-        return "🛡️비중방어(추매금지)"
-    if code == "HARD_BLOCK_TARGET_FILLED":
-        return "⏸️비중충족(관망)"
-    if code == "HARD_BLOCK_MACRO_STORM":
-        return "🛡️시장방어(매수금지)"
-    if code == "LEVERAGED_DAILY_DROP_NO_ADD":
-        return "🛑레버리지급락(추매금지)"
-    if code == "LEVERAGED_RECOVERY_DCA_BLOCK":
-        return "🛡️레버리지DCA보류"
-    if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
-        return "⚡레버리지DCA조건부"
-    if code == "PRICE_DRAWDOWN_HOLDING_CHECK":
-        return "🛡️가격방어(추매주의)"
-    if code == "PRICE_DRAWDOWN_NO_ENTRY":
-        return "🛡️가격방어(신규금지)"
-    if code == "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK":
-        return "🛡️급락방어(종가확인)"
-    if code == "SINGLE_DAY_BREAKDOWN_NO_ENTRY":
-        return "🛡️급락방어(신규금지)"
-    if code == "STRUCTURE_DAMAGE_HOLDING_CHECK":
-        return "🛡️추세방어(추매금지)"
-    if code == "STRUCTURE_DAMAGE_NO_ENTRY":
-        return "🛡️추세방어(신규금지)"
-    if code == "MTF_DAMAGE_NO_ADD":
-        return "🛡️상위추세방어(추매금지)"
-    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS", "CRISIS_PANIC_SELL_OFF"}:
-        return "🛡️위기/패닉(방어우선)"
-    if code == "DRAWDOWN_20_HOLDING_STOP_CHECK":
-        return "🛡️가격방어(손절점검)"
-    if code == "DRAWDOWN_20_HOLDING_CAUSE_CHECK":
-        return "🛡️가격방어(원인점검)"
-    if code == "DRAWDOWN_20_NO_ENTRY":
-        return "🛡️가격방어(신규금지)"
-    if code in {"DOWNTREND_NO_ENTRY", "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY"}:
-        return "🛡️추세방어(신규금지)"
-    if code == "TREND_RISK_CAUSE_CHECK":
-        return "🛡️추세방어(추매보류)"
-    if code == "COST_MINUS_15_TREND_RISK":
-        return "🛡️평단/추세방어"
-    if code == "COST_MINUS_15_CAUSE_CHECK":
-        return "🛡️평단방어(원인점검)"
-    if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
-        return "⏳펀드리밸런싱"
-    if code == "QUALITY_RECOVERY_WATCH":
-        return "🔎우량주 회복관찰"
-    if code == "QUALITY_RECOVERY_SCOUT":
-        return "🟢우량주 회복초입"
-    if code == "QUALITY_RECOVERY_CANDIDATE":
-        return "✅우량주 회복후보"
-    if "가격위험" in label or "가격방어" in label:
-        return "🛡️가격방어(추매주의)" if "추매" in label else "🛡️가격방어(신규금지)"
-    if "단기급락" in label or "급락방어" in label:
-        return "🛡️급락방어(종가확인)"
-    if TODAY_QUEUE_DEFENSE_TEXT_RE.search(label) or "추세훼손" in label or "추세방어" in label:
-        return "🛡️추세방어(추매금지)" if "추매" in label else "🛡️추세방어(신규금지)"
-    if code in {"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"} or "볼린상단 이탈" in label:
-        return "🚫상단과열(추격금지)"
-    if code in hard_codes or any(word in label for word in ("추매금지", "하드차단", "구조훼손", "추세훼손", "가격위험", "레버리지 급락")):
-        return "🛑매수금지"
-    badges = []
-    if is_dashboard_low_rr_caution(c):
-        badges.append("⚠️R/R<1")
-    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
-        badges.append("🟡정찰")
-    if badges:
-        return f"{grade} / {' · '.join(badges)}" if grade else " · ".join(badges)
-    return grade
-
-
-def format_dashboard_reason(c: dict) -> str:
-    c = apply_leveraged_dca_dashboard_override(c)
-    reasons = tuple((c or {}).get("decision_reasons") or ())
-    base = str(reasons[0]) if reasons else ""
-    code = str((c or {}).get("decision_code", "") or "")
-    if (code.startswith("STRUCTURE_DAMAGE") or code.startswith("SINGLE_DAY_BREAKDOWN")) and len(reasons) > 1:
-        # 방어 신호는 단순 낙폭만 보여주면 헷갈리므로 MA/RS/급락봉 근거를 같이 보여준다.
-        base = " / ".join(str(x) for x in reasons[:3] if str(x).strip())
-    if is_dashboard_actionable_signal(c) and str((c or {}).get("mtf_bias_label", "")) == "정찰만 적합":
-        mtf_note = "상위 시간대 과열: 풀비중보다 정찰/대기"
-        base = f"{base} / {mtf_note}" if base else mtf_note
-    if is_dashboard_low_rr_caution(c):
-        rr = clean_float((c or {}).get("rr_ratio"), np.nan)
-        rr_note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
-        return f"{base} / {rr_note}" if base else rr_note
-    return base
-
-
-def build_dashboard_final_read(c: dict, dashboard_timing: str = "", dashboard_grade: str = "",
-                               pattern_timing: str = "", pattern_bucket: str = "") -> str:
-    c = apply_leveraged_dca_dashboard_override(c)
-    code = str((c or {}).get("decision_code", "") or "")
-    group = str((c or {}).get("decision_group", "") or "")
-    text = " ".join([
-        str(dashboard_timing or ""),
-        str(dashboard_grade or ""),
-        str(pattern_timing or ""),
-        code,
-    ])
-
-    if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
-        return "⚪데이터확인"
-
-    if "하락패턴 유효" in pattern_timing:
-        if code.startswith("QUALITY_RECOVERY"):
-            return "👀회복관찰"
-        return "🛡️방어우선"
-
-    if code == "QUALITY_RECOVERY_WATCH":
-        return "👀회복관찰"
-    if code in {"QUALITY_RECOVERY_SCOUT", "QUALITY_RECOVERY_CANDIDATE"}:
-        return "✅정밀확인"
-    if code == "LEVERAGED_RECOVERY_DCA_BLOCK":
-        return "🛡️방어우선"
-    if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
-        return "⏳DCA조건부"
-    if code == "TREND_RISK_CAUSE_CHECK":
-        return "🛡️추세방어(추매보류)"
-    if code == "COST_MINUS_15_TREND_RISK":
-        return "🛡️평단/추세방어"
-    if code == "COST_MINUS_15_CAUSE_CHECK":
-        return "🛡️평단방어(원인점검)"
-    if code == "HOLDING_DCA_CONDITION_MISS":
-        return "⏳추매대기"
-    if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
-        return "⏳리밸런싱대기"
-    if is_today_queue_defense_signal(c, text):
-        return "🛡️방어우선"
-    if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
-        return "🛡️방어우선"
-    if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "HARD_BLOCK_MACRO_STORM"}:
-        return "🛡️방어우선"
-    if code.startswith("HARD_BLOCK") and not re.search(r"볼린|MFI|과열|상단", text):
-        return "🛡️방어우선"
-
-    if re.search(r"극단과열|하드차단: 볼린|볼린상단|MFI.*과열|추격금지", text):
-        return "🚫추격금지"
-    if "패턴관찰" in pattern_timing:
-        return "👀돌파대기"
-    if "패턴성공" in pattern_timing:
-        return "⏳눌림대기"
-    if "패턴유효" in pattern_timing:
-        if re.search(r"상단|과열|대기|R/R\s*<\s*1", text):
-            return "⏳눌림대기"
-        return "✅정밀확인"
-
-    if re.search(r"상단|과열|대기|R/R\s*<\s*1|정찰", text):
-        return "⏳눌림대기"
-    if group == "buyish" or is_dashboard_actionable_signal(c):
-        return "✅정밀확인"
-    return "🔍관망"
 
 
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
