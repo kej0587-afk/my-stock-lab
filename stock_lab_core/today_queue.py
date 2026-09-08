@@ -14,11 +14,18 @@ import pandas as pd
 
 from stock_lab_core.formatters import (
     clean_float,
-    finite_num as _finite_num,
     format_currency,
     is_kr_listed,
     sanitize_ticker_value,
 )
+try:
+    from stock_lab_core.formatters import finite_num as _finite_num
+except Exception:
+    def _finite_num(value) -> bool:
+        try:
+            return math.isfinite(float(value))
+        except Exception:
+            return False
 
 
 TODAY_QUEUE_DEFENSE_CODES = {

@@ -35,11 +35,18 @@ except ImportError:
 from stock_lab_core.formatters import (
     clean_float,
     clean_int,
-    finite_num,
     format_currency,
     normalize_ticker,
     strip_search_prefix,
 )
+try:
+    from stock_lab_core.formatters import finite_num
+except Exception:
+    def finite_num(value) -> bool:
+        try:
+            return value is not None and not pd.isna(value) and np.isfinite(float(value))
+        except Exception:
+            return False
 from datetime import date as _date_cls, timedelta as _td_cls
 
 

@@ -64,7 +64,6 @@ from stock_lab_core.formatters import (
     dataframe_from_rows,
     ensure_kr_suffix_if_code,
     escape_html_value,
-    finite_num,
     format_currency,
     is_kr_listed,
     is_ticker_like_text,
@@ -75,6 +74,20 @@ from stock_lab_core.formatters import (
     sanitize_ticker_value,
     strip_search_prefix,
 )
+try:
+    from stock_lab_core.formatters import finite_num
+    FORMATTERS_FINITE_NUM_IMPORT_ERROR = ""
+except Exception as _formatters_finite_num_import_error:
+    FORMATTERS_FINITE_NUM_IMPORT_ERROR = repr(_formatters_finite_num_import_error)
+    logging.exception("stock_lab_core.formatters.finite_num import failed")
+
+    def finite_num(value) -> bool:
+        try:
+            if value is None or pd.isna(value):
+                return False
+            return math.isfinite(float(value))
+        except (TypeError, ValueError):
+            return False
 from stock_lab_core.constants import (
     KNOWN_TICKER_DISPLAY_NAMES,
 )

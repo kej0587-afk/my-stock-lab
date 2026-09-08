@@ -42,7 +42,14 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from stock_lab_core.formatters import finite_num
+try:
+    from stock_lab_core.formatters import finite_num
+except Exception:
+    def finite_num(value) -> bool:
+        try:
+            return value is not None and not pd.isna(value) and np.isfinite(float(value))
+        except Exception:
+            return False
 
 try:
     import FinanceDataReader as fdr

@@ -5,8 +5,17 @@ import re
 import numpy as np
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float, finite_num, normalize_ticker, sanitize_ticker_value
+from stock_lab_core.formatters import clean_float, normalize_ticker, sanitize_ticker_value
 from stock_lab_core.prices import load_price_df
+
+try:
+    from stock_lab_core.formatters import finite_num
+except Exception:
+    def finite_num(value) -> bool:
+        try:
+            return value is not None and not pd.isna(value) and np.isfinite(float(value))
+        except Exception:
+            return False
 
 
 def _normalize_bucket(value):
