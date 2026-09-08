@@ -5,6 +5,7 @@ Streamlit, Supabase, yfinance, or scoring code.
 """
 
 import html
+import math
 import re
 
 import pandas as pd
@@ -52,6 +53,16 @@ def parse_num(v):
         return 0.0
     s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
     return pd.to_numeric(s, errors="coerce") if s != "" else 0.0
+
+
+def finite_num(value) -> bool:
+    """Return True when value can be treated as a finite numeric scalar."""
+    try:
+        if value is None or pd.isna(value):
+            return False
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
 
 
 def clean_float(value, default=0.0):

@@ -6,13 +6,12 @@ keeps small judgement rules testable and independent from session state.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float
+from stock_lab_core.formatters import clean_float, finite_num
 
 
 @dataclass(frozen=True)
@@ -31,10 +30,7 @@ class DecisionOutcome:
 
 
 def is_finite_number(value: Any) -> bool:
-    try:
-        return math.isfinite(float(value))
-    except Exception:
-        return False
+    return finite_num(value)
 
 
 def ensure_min_price_rows_for_decision(df: pd.DataFrame) -> pd.DataFrame:

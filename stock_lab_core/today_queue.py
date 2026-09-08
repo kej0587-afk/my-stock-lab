@@ -12,7 +12,13 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float, format_currency, is_kr_listed, sanitize_ticker_value
+from stock_lab_core.formatters import (
+    clean_float,
+    finite_num as _finite_num,
+    format_currency,
+    is_kr_listed,
+    sanitize_ticker_value,
+)
 
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -68,13 +74,6 @@ TODAY_QUEUE_EXECUTION_WAIT_CODES = {
     "LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
     "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
 }
-
-
-def _finite_num(value: Any) -> bool:
-    try:
-        return math.isfinite(float(value))
-    except Exception:
-        return False
 
 
 def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -> bool:

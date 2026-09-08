@@ -35,15 +35,12 @@ except ImportError:
 from stock_lab_core.formatters import (
     clean_float,
     clean_int,
+    finite_num,
     format_currency,
     normalize_ticker,
     strip_search_prefix,
 )
 from datetime import date as _date_cls, timedelta as _td_cls
-
-
-def finite_num(x):
-    return x is not None and not pd.isna(x) and np.isfinite(float(x))
 
 
 _KRX_AUTH_BLOCKED_ENV = "STOCK_LAB_KRX_AUTH_BLOCKED"

@@ -64,6 +64,7 @@ from stock_lab_core.formatters import (
     dataframe_from_rows,
     ensure_kr_suffix_if_code,
     escape_html_value,
+    finite_num,
     format_currency,
     is_kr_listed,
     is_ticker_like_text,
@@ -4287,9 +4288,6 @@ def safe_float(x, default=np.nan):
         return float(s)
     except Exception:
         return default
-
-def finite_num(x):
-    return x is not None and not pd.isna(x) and np.isfinite(float(x))
 
 def pct_change(new, old):
     if not finite_num(new) or not finite_num(old) or float(old) == 0:

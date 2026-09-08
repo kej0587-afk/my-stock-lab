@@ -42,6 +42,8 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from stock_lab_core.formatters import finite_num
+
 try:
     import FinanceDataReader as fdr
     _FDR_AVAILABLE = True
@@ -96,15 +98,6 @@ _NAVER_US_ETF_RANKINGS = [
     ("미국 거래량", "quantTop", 2.0),
     ("미국 시총", "marketValue", 1.5),
 ]
-
-
-# ---------------------------------------------------------------------------
-# 유틸리티
-# ---------------------------------------------------------------------------
-
-def finite_num(x) -> bool:
-    """NaN / Inf / None 아닌 유효 숫자인지 확인."""
-    return x is not None and not pd.isna(x) and np.isfinite(float(x))
 
 
 def _to_float(value, default=np.nan) -> float:

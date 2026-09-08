@@ -9,18 +9,12 @@ import numpy as np
 import pandas as pd
 import ta
 
+from stock_lab_core.formatters import finite_num
+
 
 # ---------------------------------------------------------------------------
 # 공통 유틸
 # ---------------------------------------------------------------------------
-
-def finite_num(x) -> bool:
-    """NaN / inf / None이 아닌 유한 수치인지 확인합니다."""
-    try:
-        return x is not None and not pd.isna(x) and np.isfinite(float(x))
-    except (TypeError, ValueError):
-        return False
-
 
 # ---------------------------------------------------------------------------
 # 기본 기술적 상태 판정
