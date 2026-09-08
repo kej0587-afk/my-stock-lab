@@ -79,7 +79,10 @@ try:
     FORMATTERS_FINITE_NUM_IMPORT_ERROR = ""
 except Exception as _formatters_finite_num_import_error:
     FORMATTERS_FINITE_NUM_IMPORT_ERROR = repr(_formatters_finite_num_import_error)
-    logging.exception("stock_lab_core.formatters.finite_num import failed")
+    logging.warning(
+        "stock_lab_core.formatters.finite_num unavailable; using local fallback: %s",
+        FORMATTERS_FINITE_NUM_IMPORT_ERROR,
+    )
 
     def finite_num(value) -> bool:
         try:
@@ -103,7 +106,10 @@ try:
     ASSET_CLASSIFIER_IMPORT_ERROR = ""
 except Exception as _asset_classifier_import_error:
     ASSET_CLASSIFIER_IMPORT_ERROR = repr(_asset_classifier_import_error)
-    logging.exception("stock_lab_core.asset_classifier import failed")
+    logging.warning(
+        "stock_lab_core.asset_classifier unavailable; using local fallback: %s",
+        ASSET_CLASSIFIER_IMPORT_ERROR,
+    )
     try:
         from stock_lab_core.constants import (
             FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
@@ -201,7 +207,10 @@ try:
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""
 except Exception as _today_queue_snapshot_import_error:
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = repr(_today_queue_snapshot_import_error)
-    logging.exception("stock_lab_core.today_queue snapshot import failed")
+    logging.warning(
+        "stock_lab_core.today_queue snapshot unavailable; using local fallback: %s",
+        TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR,
+    )
 
     def build_today_queue_execution_snapshot(
         name,
@@ -280,7 +289,10 @@ try:
     TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = ""
 except Exception as _today_queue_classify_import_error:
     TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = repr(_today_queue_classify_import_error)
-    logging.exception("stock_lab_core.today_queue classify import failed")
+    logging.warning(
+        "stock_lab_core.today_queue classify unavailable; using local fallback: %s",
+        TODAY_QUEUE_CLASSIFY_IMPORT_ERROR,
+    )
 
     TODAY_QUEUE_DEFENSE_CODES = {
         "PANIC_FINAL_DEPLOY",
@@ -503,7 +515,10 @@ try:
 except Exception as _money_flow_import_error:
     MONEY_FLOW_CORE_AVAILABLE = False
     MONEY_FLOW_IMPORT_ERROR = repr(_money_flow_import_error)
-    logging.exception("stock_lab_core.money_flow import failed")
+    logging.warning(
+        "stock_lab_core.money_flow unavailable; using empty fallback: %s",
+        MONEY_FLOW_IMPORT_ERROR,
+    )
 
     def calculate_money_flow_df(*args, **kwargs):
         return pd.DataFrame()
