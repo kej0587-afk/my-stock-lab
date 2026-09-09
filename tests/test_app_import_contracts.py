@@ -131,3 +131,38 @@ def test_swing_radar_exports_used_by_app():
             "set_swing_row_status",
         ],
     )
+
+
+def test_portfolio_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.portfolio",
+        [
+            "add_portfolio_risk_note",
+            "annualize_period_return",
+            "append_cash_rows",
+            "apply_holdings_weight_columns",
+            "build_asset_label_map",
+            "build_benchmark_return_df",
+            "build_correlation_pair_summary",
+            "build_risk_contribution_df",
+            "calc_downside_volatility",
+            "calc_drawdown_details",
+            "calc_portfolio_leverage_summary",
+            "calc_portfolio_summary",
+            "calc_reserve_summary",
+            "calc_rolling_metrics",
+            "calc_series_mdd",
+            "calc_var_cvar",
+            "classify_corr_value",
+            "classify_portfolio_risk",
+            "get_active_portfolio_rows",
+            "get_holding_row_by_ticker",
+            "get_portfolio_analysis_start_date",
+            "infer_scenario_shock_multiplier",
+            "make_cash_rows",
+            "normalize_datetime_index_no_tz",
+            "parse_month_end_date",
+            "prepare_monthly_performance_df",
+            "ratio_or_nan",
+        ],
+    )
