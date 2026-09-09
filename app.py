@@ -227,24 +227,288 @@ from stock_lab_core.financial_score import (
 )
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
-    apply_safety_state_override as _apply_safety_state_override,
-    build_sideways_quality_state,
     build_core_dca_outcome,
     build_decision_outcome,
     build_limited_history_etf_outcome,
     build_core_dca_context_values,
+    build_position_sizing_hint,
     classify_candidate_grade,
     classify_decision_signal,
     classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
     classify_safety_state,
     classify_macro_state,
-    compute_sizing_hint as _compute_sizing_hint,
     ensure_min_price_rows_for_decision,
-    has_down_session_pressure as _has_down_session_pressure,
+    is_new_entry_decision_code,
     score_main_entry,
     score_technical_components,
-    translate_new_entry_decision_for_holding as _translate_new_entry_decision_for_holding,
 )
+try:
+    from stock_lab_core.decision_engine import (
+        apply_safety_state_override as _apply_safety_state_override,
+        build_sideways_quality_state,
+        compute_sizing_hint as _compute_sizing_hint,
+        has_down_session_pressure as _has_down_session_pressure,
+        translate_new_entry_decision_for_holding as _translate_new_entry_decision_for_holding,
+    )
+    DECISION_HELPERS_IMPORT_ERROR = ""
+except Exception as _decision_helpers_import_error:
+    DECISION_HELPERS_IMPORT_ERROR = repr(_decision_helpers_import_error)
+    logging.warning(
+        "stock_lab_core.decision_engine extracted helpers unavailable; using local fallback: %s",
+        DECISION_HELPERS_IMPORT_ERROR,
+    )
+
+    def _apply_safety_state_override(decision_outcome, dec, col, *, safety_state, has_pos,
+                                      tech_total, main_score, adj_tech_score):
+        if decision_outcome is None:
+            decision_outcome = build_decision_outcome(dec, col)
+
+        aggressive_new_entry_codes = {
+            "BREAKOUT_52W_ENTRY",
+            "S_PULLBACK_ENTRY",
+            "OVERSOLD_NEW_ENTRY",
+            "EARLY_ENTRY",
+            "EARLY_REVERSAL_ENTRY",
+            "NEW_ENTRY_LEADER",
+            "QUALITY_PULLBACK_ENTRY",
+            "TREND_PULLBACK_EXPLORE",
+            "QUALITY_RECOVERY_SCOUT",
+            "QUALITY_RECOVERY_CANDIDATE",
+            "EXCEPTION_ENTRY",
+            "LEADER_MA5_FAST_PULLBACK_ENTRY",
+            "LEADER_MA5_PULLBACK_ENTRY",
+        }
+        if safety_state == "RED" and (not has_pos) and decision_outcome.code in aggressive_new_entry_codes:
+            decision_outcome = build_decision_outcome(
+                "🧯안전관리자 RED: 신규진입 보류",
+                "#d97706",
+                "SAFETY_RED_NO_NEW_ENTRY",
+                reasons=(
+                    f"안전상태 RED / 기존 신호 {decision_outcome.label}",
+                    f"tech_total {tech_total:.1f} / main_score {main_score:.1f} / Adj {adj_tech_score:.1f}",
+                    "코어 ETF 적립과 보유종목 분할매수는 별도 정책으로 판단하고, 공격적 신규진입만 보류",
+                ),
+            )
+        return decision_outcome.label, decision_outcome.color, decision_outcome
+
+    _HOLDING_ENTRY_DECISION_OVERRIDES = {
+        "NEW_ENTRY_LEADER": ("📈보유대장주: 추가는 눌림 확인", "#22c55e", "HOLDING_LEADER_ADD_REVIEW"),
+        "BREAKOUT_52W_ENTRY": ("🚀보유 신고가: 추격보다 추적", "#7c3aed", "HOLDING_BREAKOUT_TRAIL"),
+        "S_PULLBACK_ENTRY": ("🎯보유 S급 눌림: 추가 검토", "#8b5cf6", "HOLDING_S_PULLBACK_ADD_REVIEW"),
+        "OVERSOLD_NEW_ENTRY": ("🔥보유 낙폭과대: 추가 검토", "#16a34a", "HOLDING_OVERSOLD_ADD_REVIEW"),
+        "EARLY_ENTRY": ("🟢보유 반전초입: 추가는 확인", "#16a34a", "HOLDING_EARLY_ADD_REVIEW"),
+        "EARLY_REVERSAL_ENTRY": ("🟢보유 반전초입: 추가는 확인", "#16a34a", "HOLDING_EARLY_REVERSAL_ADD_REVIEW"),
+        "QUALITY_PULLBACK_ENTRY": ("🎯우량 보유주 눌림: 추가 검토", "#8b5cf6", "HOLDING_QUALITY_PULLBACK_ADD_REVIEW"),
+        "QUALITY_RECOVERY_SCOUT": ("🟢보유주 회복초입: 추가는 소액", "#16a34a", "HOLDING_QUALITY_RECOVERY_SCOUT"),
+        "QUALITY_RECOVERY_CANDIDATE": ("✅보유주 회복 후보: 추가는 분할", "#22c55e", "HOLDING_QUALITY_RECOVERY_CANDIDATE"),
+        "TREND_PULLBACK_EXPLORE": ("📈보유주 추세눌림: 소액 추가 검토", "#3b82f6", "HOLDING_TREND_PULLBACK_ADD_REVIEW"),
+        "EXCEPTION_ENTRY": ("🟣보유주 예외승인: 정찰대 추가", "#7c3aed", "HOLDING_EXCEPTION_ADD_REVIEW"),
+    }
+
+    def _translate_new_entry_decision_for_holding(decision_outcome, *, has_pos, weight_gap=0.0):
+        if decision_outcome is None or not has_pos:
+            return decision_outcome
+
+        mapped = _HOLDING_ENTRY_DECISION_OVERRIDES.get(str(decision_outcome.code or ""))
+        if not mapped:
+            return decision_outcome
+
+        label, color, code = mapped
+        note = "보유 종목이므로 신규진입이 아니라 보유 유지와 잔여 목표비중 추가 여부로 해석합니다."
+        try:
+            gap = float(weight_gap)
+        except (TypeError, ValueError):
+            gap = 0.0
+        if gap > 0:
+            note = f"{note} 잔여 목표비중은 {gap:.1f}%p입니다."
+
+        reasons = (note, f"기존 신규 신호: {decision_outcome.label}") + tuple(decision_outcome.reasons or ())[:3]
+        return build_decision_outcome(label, color, code, reasons=reasons)
+
+    def _has_down_session_pressure(*, day_ret, regular_day_ret=np.nan, live_ref_ret=np.nan,
+                                   live_gap_move=np.nan, live_price_used=False,
+                                   threshold=-0.02):
+        values = [day_ret, regular_day_ret]
+        if live_price_used:
+            values.extend([live_ref_ret, live_gap_move])
+        return any(finite_num(v) and float(v) <= threshold for v in values)
+
+    def build_sideways_quality_state(c: dict, *, is_leveraged_product=False, has_pos=False) -> dict:
+        if not isinstance(c, dict):
+            return {}
+
+        cur = clean_float(c.get("cur_p"), 0.0)
+        if cur <= 0:
+            return {}
+
+        rsi = clean_float(c.get("rsi"), np.nan)
+        mfi = clean_float(c.get("mfi"), np.nan)
+        pct_b = clean_float(c.get("pct_b"), np.nan)
+        ma5 = clean_float(c.get("ma5"), 0.0)
+        ma20 = clean_float(c.get("ma20"), 0.0)
+        ma50 = clean_float(c.get("ma50"), 0.0)
+        ma120 = clean_float(c.get("ma120"), 0.0)
+        rr = clean_float(c.get("rr_ratio"), np.nan)
+        dd = clean_float(c.get("dd"), 0.0)
+        day_ret = clean_float(c.get("day_ret"), np.nan)
+        regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
+        live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
+        live_gap_move = clean_float(c.get("leveraged_drop_ret", c.get("day_ret")), np.nan)
+        vol_ratio = clean_float(c.get("vol_ratio"), np.nan)
+        trend = str(c.get("trend", "") or "")
+        rs_label = str(c.get("rs_label", "") or "")
+        macd = str(c.get("macd", "") or "")
+        rt_macd = str(c.get("rt_macd", "") or "")
+        pd_zone = str(c.get("pd_zone", "") or "")
+        mtf_label = str(c.get("mtf_bias_label", "") or "")
+        bucket = str(c.get("bucket", "") or "")
+        is_core_dca = bucket == "core" and clean_float(c.get("core_dca_rate"), 0.0) > 0
+
+        ma20_gap = (cur / ma20 - 1.0) if ma20 > 0 else np.nan
+        ma5_gap = (cur / ma5 - 1.0) if ma5 > 0 else np.nan
+        above_ma20 = ma20 > 0 and cur >= ma20 * 0.98
+        near_ma20 = ma20 > 0 and 0.97 <= cur / ma20 <= 1.06
+        above_ma50 = ma50 > 0 and cur >= ma50 * 0.98
+        above_ma120 = ma120 > 0 and cur >= ma120 * 0.98
+        rr_needed = 2.0 if is_leveraged_product else 1.5
+        rr_ok = finite_num(rr) and rr >= rr_needed
+        rr_poor = finite_num(rr) and rr < 1.0 and not is_core_dca
+        heat_watch = (
+            (finite_num(rsi) and rsi >= 70)
+            or (finite_num(mfi) and mfi >= 75)
+            or (finite_num(pct_b) and pct_b >= 0.82)
+        )
+        heat_hard = (
+            (finite_num(rsi) and rsi >= 75)
+            or (finite_num(mfi) and mfi >= 82)
+            or (finite_num(pct_b) and pct_b >= 0.95)
+        )
+        price_extended = finite_num(ma20_gap) and ma20_gap >= (0.12 if is_leveraged_product else 0.15)
+        upper_zone = "Premium" in pd_zone or (finite_num(pct_b) and pct_b >= 0.78)
+        trend_bad = (
+            bool(c.get("structure_risk"))
+            or "역배열" in trend
+            or "약함" in rs_label
+            or mtf_label == "상위 시간대 경고"
+        )
+        down_pressure = _has_down_session_pressure(
+            day_ret=day_ret,
+            regular_day_ret=regular_day_ret,
+            live_ref_ret=live_ref_ret,
+            live_gap_move=live_gap_move,
+            live_price_used=bool(c.get("live_price_used")),
+            threshold=-0.03,
+        )
+        momentum_ok = "강함" in rs_label or "상승" in macd or "상승" in rt_macd
+        volume_ok = (not finite_num(vol_ratio)) or vol_ratio <= 1.8
+
+        reasons = []
+        if finite_num(rsi):
+            reasons.append(f"RSI {rsi:.0f}")
+        if finite_num(mfi):
+            reasons.append(f"MFI {mfi:.0f}")
+        if finite_num(pct_b):
+            reasons.append(f"%B {pct_b:.2f}")
+        if finite_num(ma20_gap):
+            reasons.append(f"MA20 대비 {ma20_gap * 100:+.1f}%")
+        if finite_num(rr):
+            reasons.append(f"R/R {rr:.2f}")
+        if finite_num(dd):
+            reasons.append(f"고점대비 {dd * 100:.1f}%")
+
+        if is_leveraged_product and (heat_watch or price_extended or upper_zone):
+            label = "🔴위험한 횡보: 레버리지 과열 식힘 대기"
+            status = "차단"
+            note = "회복 조건이 좋아도 2배/3배 상품은 상단권 횡보에서 목표비중 미달만 보고 따라붙지 않습니다."
+        elif rr_poor:
+            label = "🔴위험한 횡보: 손익비 부족"
+            status = "차단"
+            note = "버티는 것처럼 보여도 손절폭 대비 기대수익이 작아 현재가 실행은 불리합니다."
+        elif is_core_dca and not heat_hard:
+            if trend_bad:
+                label = "🟡코어 방어 횡보: 정해진 적립률만"
+                status = "주의"
+                note = "코어 ETF는 월 적립은 가능하지만 추세가 약하므로 정해진 적립률을 넘겨 확대하지 않습니다."
+            else:
+                label = "✅코어 적립 횡보: 정해진 비율만"
+                status = "통과"
+                note = "코어 ETF는 횡보 중에도 과열이 아니면 월 적립률 안에서만 접근할 수 있습니다."
+        elif trend_bad and (not above_ma20 or not above_ma50):
+            label = "🔴위험한 횡보: 추세 아래 약한 버팀"
+            status = "차단"
+            note = "횡보가 지지 확인이 아니라 하락 중 쉬는 구간일 수 있어 추세 회복을 먼저 봅니다."
+        elif heat_hard or price_extended:
+            label = "🟡관찰 횡보: 과열 식힘 대기"
+            status = "주의"
+            note = "가격은 버티지만 과열 또는 MA20 이격이 남아 있어 눌림·시간 조정 확인이 우선입니다."
+        elif down_pressure and finite_num(ma5_gap) and ma5_gap < 0:
+            label = "🟡관찰 횡보: 종가 확인"
+            status = "주의"
+            note = "단기 하락 압력이 있어 장중/프리 가격보다 종가와 MA5 회복을 확인합니다."
+        elif heat_watch or upper_zone:
+            label = "🟡관찰 횡보: 상단권 소화 중"
+            status = "주의"
+            note = "상단 매물 또는 볼린저 상단권이라 돌파 후 지지나 MA5/MA20 눌림을 기다립니다."
+        elif near_ma20 and above_ma50 and rr_ok and momentum_ok and volume_ok:
+            label = "✅매수 가능 횡보: 지지 위 안정"
+            status = "통과"
+            note = "MA20 근처에서 버티고 손익비와 모멘텀이 같이 살아 있어 정찰/분할 후보입니다."
+        elif above_ma20 and rr_ok and not trend_bad and not is_leveraged_product:
+            label = "🟢조건부 횡보: 소액 정찰 후보"
+            status = "주의" if not has_pos else "통과"
+            note = "큰 위험 신호는 없지만 타점 완성 전이라 보유자는 관리, 신규는 소액 정찰까지만 봅니다."
+        else:
+            label = "🟡관찰 횡보: 다음 봉 확인"
+            status = "주의"
+            note = "횡보는 보이지만 지지·과열·손익비 중 하나가 애매해 다음 봉 확인이 필요합니다."
+
+        if is_leveraged_product and status == "통과" and not (above_ma50 and above_ma120):
+            label = "🟡관찰 횡보: 레버리지 상위추세 확인"
+            status = "주의"
+            note = "일봉은 안정돼도 레버리지는 MA50·MA120과 기초축 동행을 같이 확인해야 합니다."
+
+        return {
+            "label": label,
+            "status": status,
+            "note": note,
+            "reasons": reasons,
+            "reason_text": " · ".join(reasons),
+        }
+
+    def _compute_sizing_hint(decision_outcome, *, has_pos, targ_w, eff_total, cur_p, is_etf,
+                              weight_gap, ticker):
+        is_new_entry_signal = (not has_pos) and is_new_entry_decision_code(decision_outcome.code)
+        sizing_hint = build_position_sizing_hint(is_new_entry_signal, targ_w, eff_total, cur_p, is_etf)
+        if (
+            not sizing_hint and
+            has_pos and
+            targ_w > 0 and
+            weight_gap >= 1.0 and
+            decision_outcome.code in ("LEADER_MA5_PULLBACK_ENTRY", "LEADER_MA5_FAST_PULLBACK_ENTRY",
+                                      "OVERHEAT_EXTENSION_WAIT_MA5", "S_GRADE_OVERHEAT_WAIT")
+        ):
+            add_weight = round(weight_gap * 0.40, 2)
+            add_amount = round(eff_total * add_weight / 100, 0)
+            add_price = cur_p if cur_p > 0 else 1
+            if add_amount > 0:
+                if not is_kr_listed(ticker):
+                    add_usd = add_amount / 1400.0
+                    add_shares = add_usd / add_price if add_price > 0 else 0
+                    sizing_hint = (
+                        f"MA5 눌림 확인 시 1차 추가 기준 — "
+                        f"부족분({weight_gap:.1f}%p)의 40%: "
+                        f"≈${add_usd:,.0f} / 약 {add_shares:.2f}주 "
+                        f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                    )
+                else:
+                    add_shares = add_amount / add_price if add_price > 0 else 0
+                    sizing_hint = (
+                        f"MA5 눌림 확인 시 1차 추가 기준 — "
+                        f"부족분({weight_gap:.1f}%p)의 40%: "
+                        f"≈{add_amount:,.0f}원 / 약 {add_shares:.1f}주 "
+                        f"(잔여 비중 부족: {weight_gap:.1f}%p)"
+                    )
+        return sizing_hint
 try:
     from stock_lab_core.today_queue import build_today_queue_execution_snapshot
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""

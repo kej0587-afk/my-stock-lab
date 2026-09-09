@@ -12,7 +12,24 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float, is_kr_listed
+try:
+    from stock_lab_core.formatters import clean_float
+except Exception:
+    def clean_float(value, default=0.0):
+        try:
+            if value is None or pd.isna(value) or str(value).strip() == "":
+                return float(default)
+            return float(str(value).replace(",", ""))
+        except Exception:
+            return float(default)
+
+try:
+    from stock_lab_core.formatters import is_kr_listed
+except Exception:
+    def is_kr_listed(ticker: str) -> bool:
+        text = str(ticker or "").strip().upper().replace(" ", "")
+        symbol = text.replace(".KS", "").replace(".KQ", "")
+        return text.endswith((".KS", ".KQ")) or (len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum())
 
 try:
     from stock_lab_core.formatters import finite_num
