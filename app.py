@@ -91,6 +91,46 @@ except Exception as _formatters_finite_num_import_error:
             return math.isfinite(float(value))
         except (TypeError, ValueError):
             return False
+try:
+    from stock_lab_core.formatters import (
+        format_report_money,
+        format_report_pct,
+        format_report_price,
+        format_report_ratio,
+        report_num,
+    )
+    FORMATTERS_REPORT_IMPORT_ERROR = ""
+except Exception as _formatters_report_import_error:
+    FORMATTERS_REPORT_IMPORT_ERROR = repr(_formatters_report_import_error)
+    logging.warning(
+        "stock_lab_core.formatters report helpers unavailable; using local fallback: %s",
+        FORMATTERS_REPORT_IMPORT_ERROR,
+    )
+
+    def report_num(value, default=0.0):
+        try:
+            return clean_float(value, default)
+        except (TypeError, ValueError, OverflowError):
+            try:
+                return float(value)
+            except (TypeError, ValueError, OverflowError):
+                return default
+
+    def format_report_money(value):
+        value = report_num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:,.0f}원"
+
+    def format_report_pct(value, digits=2):
+        value = report_num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:.{digits}f}%"
+
+    def format_report_ratio(value, digits=2):
+        value = report_num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:.{digits}f}"
+
+    def format_report_price(value):
+        value = report_num(value, np.nan)
+        return "-" if not np.isfinite(value) else f"{value:,.2f}"
 from stock_lab_core.constants import (
     KNOWN_TICKER_DISPLAY_NAMES,
 )
@@ -32836,26 +32876,10 @@ total_eval = portfolio_summary["current_asset"]
 
 
 def render_print_report_v2():
-    def _num(value, default=0.0):
-        try:
-            return clean_float(value, default)
-        except Exception:
-            try:
-                return float(value)
-            except Exception:
-                return default
-
-    def _fmt_money(value):
-        value = _num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:,.0f}원"
-
-    def _fmt_pct(value, digits=2):
-        value = _num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:.{digits}f}%"
-
-    def _fmt_ratio(value, digits=2):
-        value = _num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:.{digits}f}"
+    _num = report_num
+    _fmt_money = format_report_money
+    _fmt_pct = format_report_pct
+    _fmt_ratio = format_report_ratio
 
     def _make_report_asset_df():
         base_df = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
@@ -33551,26 +33575,10 @@ def render_full_print_report():
     """자산 현황 요약 및 포트폴리오 상세 인쇄 전용 리포트."""
 
     # ── 공통 포매터 ───────────────────────────────────────────────────────
-    def _num(value, default=0.0):
-        try:
-            return clean_float(value, default)
-        except Exception:
-            try:
-                return float(value)
-            except Exception:
-                return default
-
-    def _fmt_money(value):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:,.0f}원"
-
-    def _fmt_pct(value, digits=2):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:.{digits}f}%"
-
-    def _fmt_price(value):
-        v = _num(value, np.nan)
-        return "-" if not np.isfinite(v) else f"{v:,.2f}"
+    _num = report_num
+    _fmt_money = format_report_money
+    _fmt_pct = format_report_pct
+    _fmt_price = format_report_price
 
     # ── 보유 자산 DataFrame 구성 ──────────────────────────────────────────
     def _make_report_df():

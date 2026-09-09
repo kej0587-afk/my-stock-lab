@@ -65,6 +65,37 @@ def finite_num(value) -> bool:
         return False
 
 
+def report_num(value, default=0.0):
+    """Parse a scalar for report rendering, preserving the app's legacy fallback."""
+    try:
+        return clean_float(value, default)
+    except (TypeError, ValueError, OverflowError):
+        try:
+            return float(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+
+def format_report_money(value):
+    number = report_num(value, math.nan)
+    return "-" if not math.isfinite(number) else f"{number:,.0f}원"
+
+
+def format_report_pct(value, digits=2):
+    number = report_num(value, math.nan)
+    return "-" if not math.isfinite(number) else f"{number:.{digits}f}%"
+
+
+def format_report_ratio(value, digits=2):
+    number = report_num(value, math.nan)
+    return "-" if not math.isfinite(number) else f"{number:.{digits}f}"
+
+
+def format_report_price(value):
+    number = report_num(value, math.nan)
+    return "-" if not math.isfinite(number) else f"{number:,.2f}"
+
+
 def clean_float(value, default=0.0):
     try:
         if value is None or pd.isna(value) or str(value).strip() == "":
