@@ -5,13 +5,29 @@ import re
 import numpy as np
 import pandas as pd
 
-from stock_lab_core.formatters import clean_bool, clean_float, normalize_ticker, sanitize_ticker_value
+from stock_lab_core.formatters import (
+    clean_bool,
+    clean_float,
+    is_kr_listed,
+    normalize_bucket,
+    normalize_ticker,
+    sanitize_ticker_value,
+)
 
 try:
     from stock_lab_core.prices import load_price_df
 except ImportError:
     def load_price_df(*args, **kwargs):
         return pd.DataFrame()
+
+
+US_TECH_OR_GROWTH_TICKERS = {
+    "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
+    "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "TSM",
+    "NBIS", "SNDK", "ADBE", "CRM", "ORCL", "NOW", "SNOW", "PLTR",
+    "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI",
+    "LITE", "PANW", "HACK", "NFLX", "UBER", "ABNB",
+}
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -335,6 +351,135 @@ def build_benchmark_return_df(perf_df, benchmark_spec=None):
     return pd.DataFrame(rows)
 
 
+def infer_benchmark_leverage_multiplier(ticker, asset_name=""):
+    text = f"{str(ticker or '').upper()} {str(asset_name or '').upper()}".replace(" ", "")
+
+    inverse = any(k in text for k in ["INVERSE", "BEAR", "인버스", "곱버스", "SQQQ", "SOXS", "SPXU", "SDOW"])
+    if any(k in text for k in ["3X", "3배", "TQQQ", "SQQQ", "SOXL", "SOXS", "UPRO", "SPXL", "SPXU", "SDOW", "TECL", "FNGU"]):
+        return -3.0 if inverse else 3.0
+    if any(k in text for k in ["2X", "2배", "BITX", "BITU", "QLD", "SSO", "레버리지", "LEVERAGE", "ULTRA"]):
+        return -2.0 if inverse else 2.0
+    if inverse:
+        return -1.0
+    return 1.0
+
+
+def infer_blended_benchmark_proxy(ticker, asset_name="", asset_class="", bucket=""):
+    symbol = normalize_ticker(ticker)
+    text = f"{symbol} {asset_name or ''} {asset_class or ''} {bucket or ''}".upper()
+    compact = text.replace(" ", "").replace("-", "")
+
+    if not symbol or "CASH" in symbol or normalize_bucket(bucket) in {"cash", "reserve"}:
+        return None
+
+    if any(k in compact for k in ["NASDAQ100", "NASDAQ", "나스닥100", "나스닥", "QQQ", "QQQM", "QLD", "TQQQ", "SOXX", "SOXL", "SMH", "DRAM", "RAM", "TECL", "FNGU", "379810"]):
+        return {"label": "나스닥100", "ticker": "379810.KS"}
+    if any(k in compact for k in ["S&P500", "SP500", "SNP500", "에스앤피", "SPY", "VOO", "IVV", "SPLG", "379800"]):
+        return {"label": "S&P500", "ticker": "379800.KS"}
+    if any(k in compact for k in ["KOSPI", "코스피", "KODEX200", "KODEX 200", "069500", "KODEX200"]):
+        return {"label": "코스피", "ticker": "069500.KS"}
+
+    clean_symbol_only = symbol.split(".")[0].upper()
+    if is_kr_listed(symbol):
+        return {"label": "코스피", "ticker": "069500.KS"}
+    if clean_symbol_only in US_TECH_OR_GROWTH_TICKERS:
+        return {"label": "나스닥100", "ticker": "379810.KS"}
+    return {"label": "S&P500", "ticker": "379800.KS"}
+
+
+def build_portfolio_blended_benchmark_spec(holdings_df):
+    if holdings_df is None or getattr(holdings_df, "empty", True):
+        return {}
+
+    df = holdings_df.copy()
+    if "티커" not in df.columns:
+        return {}
+
+    for col in ["목표비중", "현재비중", "전체비중", "원화환산"]:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    if "bucket" not in df.columns:
+        df["bucket"] = "core"
+    if "자산명" not in df.columns:
+        df["자산명"] = df["티커"]
+
+    df["티커"] = df["티커"].astype(str).str.strip()
+    df = df[df["티커"].ne("")]
+    df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+    df = df[~df["bucket"].apply(lambda value: normalize_bucket(value) in {"cash", "reserve"})]
+    if "운용대상" in df.columns:
+        df = df[df["운용대상"].apply(clean_bool)]
+
+    if df.empty:
+        return {}
+
+    target_sum = float(df["목표비중"].apply(clean_float).clip(lower=0).sum())
+    current_sum = float(df["현재비중"].apply(clean_float).clip(lower=0).sum())
+    total_value = float(df["원화환산"].apply(clean_float).clip(lower=0).sum())
+
+    if target_sum > 0:
+        weight_col = "목표비중"
+        basis = "목표비중"
+    elif current_sum > 0:
+        weight_col = "현재비중"
+        basis = "현재비중"
+    elif total_value > 0:
+        weight_col = "원화환산"
+        basis = "현재금액"
+    else:
+        return {}
+
+    merged = {}
+    order = []
+    for _, row in df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        name = str(row.get("자산명", "") or ticker).strip()
+        bucket = str(row.get("bucket", "core") or "core").strip()
+        asset_class = str(row.get("asset_class", "") or row.get("자산군", "") or "").strip()
+
+        raw_weight = clean_float(row.get(weight_col), 0.0)
+        if weight_col == "원화환산" and total_value > 0:
+            weight = raw_weight / total_value * 100
+        else:
+            weight = raw_weight
+        if weight <= 0:
+            continue
+
+        proxy = infer_blended_benchmark_proxy(ticker, name, asset_class, bucket)
+        if not proxy:
+            continue
+        multiplier = infer_benchmark_leverage_multiplier(ticker, name)
+        key = (proxy["label"], proxy["ticker"], float(multiplier))
+        if key not in merged:
+            merged[key] = {
+                "label": proxy["label"],
+                "ticker": proxy["ticker"],
+                "weight": 0.0,
+                "multiplier": float(multiplier),
+            }
+            order.append(key)
+        merged[key]["weight"] += float(weight)
+
+    components = [merged[key] for key in order if merged[key]["weight"] > 0]
+    total_weight = sum(comp["weight"] for comp in components)
+    if not components or total_weight <= 0:
+        return {}
+
+    parts = []
+    for comp in components:
+        multiplier = clean_float(comp.get("multiplier"), 1.0)
+        mult_txt = f"x{multiplier:g}" if abs(multiplier) != 1 else ""
+        parts.append(f"{comp['label']}{mult_txt} {comp['weight']:.1f}%")
+
+    return {
+        "label": "내 목표비중 벤치",
+        "basis": basis,
+        "components": components,
+        "description": f"{basis} 기준: " + " + ".join(parts),
+    }
+
+
 def calc_series_mdd(series):
     series = pd.Series(series).dropna()
     if series.empty:
@@ -435,6 +580,144 @@ def ratio_or_nan(numer, denom):
     if not finite_num(numer) or not finite_num(denom) or float(denom) == 0:
         return np.nan
     return float(numer) / float(denom)
+
+
+def calc_benchmark_metrics_from_returns(portfolio_returns, benchmark_returns, label="", benchmark_ticker="", rf_rate=0.035):
+    if portfolio_returns is None or portfolio_returns.empty or benchmark_returns is None or benchmark_returns.empty:
+        return {}
+
+    try:
+        br_all = pd.Series(benchmark_returns).replace([np.inf, -np.inf], np.nan).dropna()
+        br_all.index = normalize_datetime_index_no_tz(br_all.index)
+        common = portfolio_returns.index.intersection(br_all.index)
+        if len(common) < 20:
+            return {}
+
+        pr = pd.Series(portfolio_returns.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        br = pd.Series(br_all.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        bm_var = float(br.var())
+        if bm_var <= 0:
+            return {}
+
+        beta = float(np.cov(pr.values, br.values)[0, 1] / bm_var)
+        bm_period_ret = float((1 + br).prod() - 1)
+        bm_annual = annualize_period_return(bm_period_ret, len(br)) if np.isfinite(bm_period_ret) else np.nan
+        port_annual = annualize_period_return(float((1 + pr).prod() - 1), len(pr))
+
+        alpha = np.nan
+        if np.isfinite(bm_annual) and np.isfinite(port_annual):
+            alpha = (port_annual - (rf_rate + beta * (bm_annual - rf_rate))) * 100
+
+        active_ret = pr - br
+        tracking_error = float(active_ret.std() * np.sqrt(252) * 100)
+        info_ratio = ratio_or_nan(float(active_ret.mean() * 252 * 100), tracking_error)
+
+        return {
+            "beta": round(beta, 2),
+            "alpha": round(alpha, 2) if np.isfinite(alpha) else np.nan,
+            "tracking_error": round(tracking_error, 1),
+            "info_ratio": round(info_ratio, 2) if np.isfinite(info_ratio) else np.nan,
+            "bm_annual_return": round(bm_annual * 100, 1) if np.isfinite(bm_annual) else np.nan,
+            "bm_period_return": round(bm_period_ret * 100, 1) if np.isfinite(bm_period_ret) else np.nan,
+            "benchmark_ticker": benchmark_ticker,
+            "benchmark_label": label,
+            "n_common_days": len(common),
+        }
+    except Exception:
+        return {}
+
+
+def build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=None):
+    if not benchmark_spec:
+        return pd.Series(dtype=float)
+
+    components = benchmark_spec.get("components", []) if isinstance(benchmark_spec, dict) else []
+    if not components:
+        return pd.Series(dtype=float)
+
+    series_list = []
+    weight_map = {}
+    for idx, comp in enumerate(components):
+        try:
+            ticker = str(comp.get("ticker", "")).strip()
+            weight = clean_float(comp.get("weight"), 0.0)
+            multiplier = clean_float(comp.get("multiplier"), 1.0)
+            if not ticker or weight <= 0:
+                continue
+
+            px_df = load_price_df(ticker, period)
+            if px_df is None or px_df.empty or "Close" not in px_df.columns:
+                continue
+            close = pd.Series(px_df["Close"]).dropna()
+            close.index = normalize_datetime_index_no_tz(close.index)
+            if analysis_start_date is not None:
+                close = close[close.index >= analysis_start_date]
+            if len(close) < 20:
+                continue
+
+            key = f"bench_{idx}"
+            ret = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna() * multiplier
+            if ret.empty:
+                continue
+            series_list.append(ret.rename(key))
+            weight_map[key] = weight
+        except Exception:
+            continue
+
+    if not series_list or not weight_map:
+        return pd.Series(dtype=float)
+
+    returns_df = pd.concat(series_list, axis=1).sort_index().ffill(limit=3).dropna(how="all").fillna(0.0)
+    weights = pd.Series(weight_map, dtype=float)
+    usable = [col for col in returns_df.columns if col in weights.index]
+    if not usable:
+        return pd.Series(dtype=float)
+
+    weights = weights[usable]
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0:
+        return pd.Series(dtype=float)
+
+    return returns_df[usable].mul(weights / weight_sum, axis=1).sum(axis=1).dropna()
+
+
+def calc_blended_benchmark_comparison(portfolio_returns, benchmark_spec, period, rf_rate=0.035, analysis_start_date=None):
+    benchmark_returns = build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=analysis_start_date)
+    result = calc_benchmark_metrics_from_returns(
+        portfolio_returns,
+        benchmark_returns,
+        label=benchmark_spec.get("label", "내 목표비중 벤치") if benchmark_spec else "",
+        benchmark_ticker="BLENDED",
+        rf_rate=rf_rate,
+    )
+    if result and benchmark_spec:
+        result["benchmark_description"] = benchmark_spec.get("description", "")
+    return result
+
+
+def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
+    """Return beta, alpha, tracking error, and information ratio."""
+    if portfolio_returns is None or portfolio_returns.empty:
+        return {}
+    try:
+        bm_df = load_price_df(benchmark_ticker, period)
+        if bm_df is None or bm_df.empty or "Close" not in bm_df.columns:
+            return {}
+        bm_close = pd.Series(bm_df["Close"]).dropna()
+        bm_close.index = normalize_datetime_index_no_tz(bm_close.index)
+        if analysis_start_date is not None:
+            bm_close = bm_close[bm_close.index >= analysis_start_date]
+        bm_returns = bm_close.pct_change().dropna()
+        return calc_benchmark_metrics_from_returns(
+            portfolio_returns,
+            bm_returns,
+            label=benchmark_ticker,
+            benchmark_ticker=benchmark_ticker,
+            rf_rate=rf_rate,
+        )
+    except Exception:
+        return {}
 
 
 def calc_rolling_metrics(portfolio_returns, window=63, rf_rate=0.035):

@@ -1,14 +1,18 @@
 import pandas as pd
 
 from stock_lab_core.portfolio import (
+    build_portfolio_blended_benchmark_spec,
     build_correlation_pair_summary,
     build_risk_contribution_df,
+    calc_benchmark_metrics_from_returns,
     calc_drawdown_details,
     calc_portfolio_leverage_summary,
     calc_series_mdd,
     get_active_portfolio_rows,
     get_holding_row_by_ticker,
     get_portfolio_analysis_start_date,
+    infer_benchmark_leverage_multiplier,
+    infer_blended_benchmark_proxy,
     infer_scenario_shock_multiplier,
 )
 
@@ -114,3 +118,54 @@ def test_portfolio_analysis_start_date_uses_first_month_record():
     )
 
     assert get_portfolio_analysis_start_date(monthly_logs) == pd.Timestamp("2026-01-01")
+
+
+def test_blended_benchmark_spec_groups_core_and_leveraged_assets():
+    holdings = pd.DataFrame(
+        [
+            {"티커": "VOO", "자산명": "S&P500", "목표비중": 38.0, "현재비중": 37.0, "원화환산": 3800, "bucket": "core", "운용대상": True},
+            {"티커": "QQQ", "자산명": "나스닥100", "목표비중": 23.0, "현재비중": 22.0, "원화환산": 2300, "bucket": "core", "운용대상": True},
+            {"티커": "SOXL", "자산명": "반도체 3X", "목표비중": 2.6, "현재비중": 2.0, "원화환산": 260, "bucket": "leverage", "운용대상": True},
+            {"티커": "KRW_CASH", "자산명": "원화예수금", "목표비중": 0.0, "현재비중": 15.0, "원화환산": 1500, "bucket": "cash", "운용대상": False},
+        ]
+    )
+
+    spec = build_portfolio_blended_benchmark_spec(holdings)
+    components = {(item["label"], item["multiplier"]): item["weight"] for item in spec["components"]}
+
+    assert spec["basis"] == "목표비중"
+    assert round(components[("S&P500", 1.0)], 1) == 38.0
+    assert round(components[("나스닥100", 1.0)], 1) == 23.0
+    assert round(components[("나스닥100", 3.0)], 1) == 2.6
+    assert "KRW_CASH" not in spec["description"]
+
+
+def test_benchmark_proxy_and_leverage_multiplier_classification():
+    assert infer_blended_benchmark_proxy("MSFT") == {"label": "나스닥100", "ticker": "379810.KS"}
+    assert infer_blended_benchmark_proxy("FCX") == {"label": "S&P500", "ticker": "379800.KS"}
+    assert infer_blended_benchmark_proxy("005930.KS") == {"label": "코스피", "ticker": "069500.KS"}
+    assert infer_blended_benchmark_proxy("KRW_CASH", bucket="cash") is None
+    assert infer_benchmark_leverage_multiplier("SOXL") == 3.0
+    assert infer_benchmark_leverage_multiplier("SQQQ") == -3.0
+    assert infer_benchmark_leverage_multiplier("BITX") == 2.0
+
+
+def test_benchmark_metrics_from_returns_uses_common_dates():
+    index = pd.date_range("2026-01-01", periods=30, freq="B")
+    benchmark_returns = pd.Series(
+        [0.001, 0.002, -0.001, 0.003, -0.002] * 6,
+        index=index,
+    )
+    portfolio_returns = benchmark_returns * 1.5
+
+    metrics = calc_benchmark_metrics_from_returns(
+        portfolio_returns,
+        benchmark_returns,
+        label="테스트 벤치",
+        benchmark_ticker="TEST",
+    )
+
+    assert metrics["benchmark_label"] == "테스트 벤치"
+    assert metrics["benchmark_ticker"] == "TEST"
+    assert metrics["n_common_days"] == 30
+    assert 1.4 < metrics["beta"] < 1.6

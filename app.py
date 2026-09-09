@@ -1044,34 +1044,180 @@ except ImportError:
         except Exception:
             return 0.0
 from stock_lab_core.portfolio import (
-    add_portfolio_risk_note,
-    annualize_period_return,
     append_cash_rows,
     apply_holdings_weight_columns,
-    build_asset_label_map,
     build_benchmark_return_df,
-    build_correlation_pair_summary,
-    build_risk_contribution_df,
-    calc_downside_volatility,
-    calc_drawdown_details,
-    calc_portfolio_leverage_summary,
     calc_portfolio_summary,
     calc_reserve_summary,
-    calc_rolling_metrics,
-    calc_series_mdd,
-    calc_var_cvar,
-    classify_corr_value,
-    classify_portfolio_risk,
-    get_active_portfolio_rows,
     get_holding_row_by_ticker,
-    get_portfolio_analysis_start_date,
-    infer_scenario_shock_multiplier,
     make_cash_rows,
-    normalize_datetime_index_no_tz,
     parse_month_end_date,
     prepare_monthly_performance_df,
-    ratio_or_nan,
 )
+try:
+    from stock_lab_core.portfolio import (
+        add_portfolio_risk_note,
+        annualize_period_return,
+        build_asset_label_map,
+        build_correlation_pair_summary,
+        build_portfolio_blended_benchmark_spec,
+        build_risk_contribution_df,
+        calc_benchmark_comparison,
+        calc_blended_benchmark_comparison,
+        calc_downside_volatility,
+        calc_drawdown_details,
+        calc_portfolio_leverage_summary,
+        calc_rolling_metrics,
+        calc_series_mdd,
+        calc_var_cvar,
+        classify_corr_value,
+        classify_portfolio_risk,
+        get_active_portfolio_rows,
+        get_portfolio_analysis_start_date,
+        infer_scenario_shock_multiplier,
+        normalize_datetime_index_no_tz,
+        ratio_or_nan,
+    )
+    PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR = ""
+except Exception as _portfolio_analysis_helpers_import_error:
+    PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR = repr(_portfolio_analysis_helpers_import_error)
+    logging.warning(
+        "stock_lab_core.portfolio analysis helpers unavailable; using limited local fallback: %s",
+        PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR,
+    )
+
+    def calc_series_mdd(series):
+        series = pd.Series(series).dropna()
+        if series.empty:
+            return 0.0
+        return float((series / series.cummax() - 1).min())
+
+    def calc_drawdown_details(portfolio_curve):
+        series = pd.Series(portfolio_curve).dropna()
+        if len(series) < 2:
+            return {}
+        drawdown = series / series.cummax() - 1
+        return {
+            "underwater": drawdown * 100,
+            "avg_drawdown": float(drawdown[drawdown < -0.001].mean() * 100) if (drawdown < -0.001).any() else 0.0,
+            "mdd_duration_days": int((drawdown < -0.001).sum()),
+            "mdd_recovery_days": np.nan,
+            "n_drawdown_periods": int((drawdown < -0.001).any()),
+        }
+
+    def normalize_datetime_index_no_tz(index):
+        idx = pd.to_datetime(index)
+        return idx.tz_convert(None) if getattr(idx, "tz", None) is not None else idx
+
+    def annualize_period_return(period_return_decimal, observation_count):
+        if not finite_num(period_return_decimal) or observation_count <= 0:
+            return np.nan
+        growth = 1 + float(period_return_decimal)
+        return -1.0 if growth <= 0 else float(growth ** (252 / observation_count) - 1)
+
+    def calc_downside_volatility(returns, target=0.0):
+        returns = pd.Series(returns).dropna()
+        downside = returns[returns < target] - target
+        return np.nan if returns.empty else (0.0 if downside.empty else float(downside.std() * np.sqrt(252)))
+
+    def calc_var_cvar(returns, confidence=0.95):
+        returns = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
+        if len(returns) < 20:
+            return np.nan, np.nan
+        tail_cut = float(returns.quantile(1 - confidence))
+        tail = returns[returns <= tail_cut]
+        return tail_cut * 100, (float(tail.mean()) if not tail.empty else tail_cut) * 100
+
+    def ratio_or_nan(numer, denom):
+        return np.nan if not finite_num(numer) or not finite_num(denom) or float(denom) == 0 else float(numer) / float(denom)
+
+    def calc_rolling_metrics(portfolio_returns, window=63, rf_rate=0.035):
+        return pd.DataFrame()
+
+    def get_active_portfolio_rows(holdings_table):
+        if holdings_table is None or holdings_table.empty:
+            return pd.DataFrame()
+        df = holdings_table.copy()
+        if "원화환산" not in df.columns or "티커" not in df.columns:
+            return pd.DataFrame()
+        df["원화환산"] = df["원화환산"].apply(clean_float)
+        df = df[df["원화환산"] > 0].copy()
+        if "bucket" in df.columns:
+            df = df[~df["bucket"].apply(lambda value: normalize_bucket(value) in ["reserve", "cash"])]
+        if "운용대상" in df.columns:
+            df = df[df["운용대상"].apply(clean_bool)]
+        df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+        return df.reset_index(drop=True)
+
+    def add_portfolio_risk_note(notes, level, area, detail, suggestion):
+        notes.append({"등급": level, "영역": area, "내용": detail, "확인/조치": suggestion})
+
+    def classify_portfolio_risk(risk_index):
+        if risk_index >= 70:
+            return "공격/위험", "#dc2626"
+        if risk_index >= 50:
+            return "주의", "#f59e0b"
+        if risk_index >= 30:
+            return "균형", "#10b981"
+        return "방어", "#3b82f6"
+
+    def classify_corr_value(value):
+        if value >= 0.8:
+            return "매우 높음", "거의 같은 방향으로 움직입니다. 분산 효과가 낮습니다."
+        if value >= 0.5:
+            return "높음", "비슷한 방향으로 움직이는 편입니다."
+        if value > 0.3:
+            return "보통", "어느 정도 같은 방향성이 있습니다."
+        if value >= -0.3:
+            return "낮음", "서로 크게 묶여 움직이지 않습니다."
+        return "반대", "반대로 움직이는 경향이 있어 변동성 완충에 도움이 될 수 있습니다."
+
+    def build_asset_label_map(asset_df):
+        if asset_df is None or asset_df.empty or "티커" not in asset_df.columns:
+            return {}
+        return {
+            str(row.get("티커", "")).strip(): str(row.get("자산명", "") or row.get("티커", "")).strip()
+            for _, row in asset_df.iterrows()
+            if str(row.get("티커", "")).strip()
+        }
+
+    def build_correlation_pair_summary(corr_df):
+        return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
+
+    def build_risk_contribution_df(asset_df, aligned_returns, weights):
+        return pd.DataFrame(columns=["자산명", "티커", "운용비중", "연환산변동성", "리스크기여도", "비중대비리스크"])
+
+    def infer_scenario_shock_multiplier(row):
+        text = f"{row.get('티커', row.get('ticker', ''))} {row.get('자산명', row.get('name', ''))}".upper()
+        inverse = any(keyword in text for keyword in ["INVERSE", "인버스", "곱버스", "BEAR", "SHORT", "SQQQ", "SOXS", "SPXU"])
+        multiplier = 3.0 if any(keyword in text for keyword in ["3X", "3배", "TQQQ", "SQQQ", "SOXL", "SOXS", "SPXL", "SPXU"]) else 2.0 if any(keyword in text for keyword in ["2X", "2배", "BITX", "QLD", "SSO", "레버리지"]) else 1.0
+        return -multiplier if inverse else multiplier
+
+    def calc_portfolio_leverage_summary(asset_df):
+        columns = ["자산명", "티커", "전체비중", "운용비중", "충격배수", "레버리지환산노출", "추가노출"]
+        return {
+            "leveraged_principal_pct": 0.0,
+            "effective_exposure_pct": 0.0,
+            "extra_exposure_pct": 0.0,
+            "active_effective_exposure_pct": 0.0,
+            "max_multiplier": 1.0,
+        }, pd.DataFrame(columns=columns)
+
+    def get_portfolio_analysis_start_date(monthly_logs_df):
+        perf_df = prepare_monthly_performance_df(monthly_logs_df)
+        if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
+            return None
+        month_end = pd.to_datetime(perf_df["month_end"], errors="coerce").dropna()
+        return None if month_end.empty else pd.Timestamp(month_end.min()).replace(day=1).normalize()
+
+    def build_portfolio_blended_benchmark_spec(holdings_df):
+        return {}
+
+    def calc_blended_benchmark_comparison(portfolio_returns, benchmark_spec, period, rf_rate=0.035, analysis_start_date=None):
+        return {}
+
+    def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
+        return {}
 # ==========================================
 # [신규 추가] 유틸리티 및 안전 장치
 # ==========================================
@@ -15396,7 +15542,7 @@ else:
 # → stock_lab_core/ta_engine.py 로 이동됨 (상단 import 블록 참조)
 
 def get_rs_benchmark(ticker, asset_class):
-    symbol = clean_symbol(ticker)
+    symbol = clean_symbol(ticker).upper()
     ac = str(asset_class).strip().lower()
 
     etf_market_benchmark_map = {
@@ -22530,276 +22676,9 @@ ETF가 목표비중보다 부족하고 과열이 심하지 않을 때 적립식 
 # MDD, 샤프, 상관관계, 드로다운, 10년 플랜
 # ════════════════════════════════════════════════════════════════════════════
 
-def infer_benchmark_leverage_multiplier(ticker, asset_name=""):
-    text = f"{str(ticker or '').upper()} {str(asset_name or '').upper()}".replace(" ", "")
-
-    inverse = any(k in text for k in ["INVERSE", "BEAR", "인버스", "곱버스", "SQQQ", "SOXS", "SPXU", "SDOW"])
-    if any(k in text for k in ["3X", "3배", "TQQQ", "SOXL", "UPRO", "SPXL", "TECL", "FNGU"]):
-        return -3.0 if inverse else 3.0
-    if any(k in text for k in ["2X", "2배", "BITX", "BITU", "QLD", "SSO", "레버리지", "LEVERAGE", "ULTRA"]):
-        return -2.0 if inverse else 2.0
-    if inverse:
-        return -1.0
-    return 1.0
-
-
-def infer_blended_benchmark_proxy(ticker, asset_name="", asset_class="", bucket=""):
-    symbol = normalize_ticker(ticker)
-    text = f"{symbol} {asset_name or ''} {asset_class or ''} {bucket or ''}".upper()
-    compact = text.replace(" ", "").replace("-", "")
-
-    if not symbol or "CASH" in symbol or normalize_bucket(bucket) in {"cash", "reserve"}:
-        return None
-
-    if any(k in compact for k in ["NASDAQ100", "NASDAQ", "나스닥100", "나스닥", "QQQ", "QQQM", "QLD", "TQQQ", "379810"]):
-        return {"label": "나스닥100", "ticker": "379810.KS"}
-    if any(k in compact for k in ["S&P500", "SP500", "SNP500", "에스앤피", "SPY", "VOO", "IVV", "SPLG", "379800"]):
-        return {"label": "S&P500", "ticker": "379800.KS"}
-    if any(k in compact for k in ["KOSPI", "코스피", "KODEX200", "KODEX 200", "069500", "KODEX200"]):
-        return {"label": "코스피", "ticker": "069500.KS"}
-
-    clean_symbol_only = symbol.split(".")[0]
-    if is_kr_listed(symbol):
-        return {"label": "코스피", "ticker": "069500.KS"}
-    if clean_symbol_only in US_TECH_OR_GROWTH_TICKERS:
-        return {"label": "나스닥100", "ticker": "379810.KS"}
-    return {"label": "S&P500", "ticker": "379800.KS"}
-
-
-def build_portfolio_blended_benchmark_spec(holdings_df):
-    if holdings_df is None or getattr(holdings_df, "empty", True):
-        return {}
-
-    df = holdings_df.copy()
-    if "티커" not in df.columns:
-        return {}
-
-    for col in ["목표비중", "현재비중", "전체비중", "원화환산"]:
-        if col not in df.columns:
-            df[col] = 0.0
-
-    if "bucket" not in df.columns:
-        df["bucket"] = "core"
-    if "자산명" not in df.columns:
-        df["자산명"] = df["티커"]
-
-    df["티커"] = df["티커"].astype(str).str.strip()
-    df = df[df["티커"].ne("")]
-    df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
-    df = df[~df["bucket"].apply(lambda v: normalize_bucket(v) in {"cash", "reserve"})]
-    if "운용대상" in df.columns:
-        df = df[df["운용대상"].apply(clean_bool)]
-
-    if df.empty:
-        return {}
-
-    target_sum = float(df["목표비중"].apply(clean_float).clip(lower=0).sum())
-    current_sum = float(df["현재비중"].apply(clean_float).clip(lower=0).sum())
-    total_value = float(df["원화환산"].apply(clean_float).clip(lower=0).sum())
-
-    if target_sum > 0:
-        weight_col = "목표비중"
-        basis = "목표비중"
-    elif current_sum > 0:
-        weight_col = "현재비중"
-        basis = "현재비중"
-    elif total_value > 0:
-        weight_col = "원화환산"
-        basis = "현재금액"
-    else:
-        return {}
-
-    merged = {}
-    order = []
-    for _, row in df.iterrows():
-        ticker = str(row.get("티커", "")).strip()
-        name = str(row.get("자산명", "") or ticker).strip()
-        bucket = str(row.get("bucket", "core") or "core").strip()
-        asset_class = str(row.get("asset_class", "") or row.get("자산군", "") or "").strip()
-
-        raw_weight = clean_float(row.get(weight_col), 0.0)
-        if weight_col == "원화환산" and total_value > 0:
-            weight = raw_weight / total_value * 100
-        else:
-            weight = raw_weight
-        if weight <= 0:
-            continue
-
-        proxy = infer_blended_benchmark_proxy(ticker, name, asset_class, bucket)
-        if not proxy:
-            continue
-        multiplier = infer_benchmark_leverage_multiplier(ticker, name)
-        key = (proxy["label"], proxy["ticker"], float(multiplier))
-        if key not in merged:
-            merged[key] = {
-                "label": proxy["label"],
-                "ticker": proxy["ticker"],
-                "weight": 0.0,
-                "multiplier": float(multiplier),
-            }
-            order.append(key)
-        merged[key]["weight"] += float(weight)
-
-    components = [merged[key] for key in order if merged[key]["weight"] > 0]
-    total_weight = sum(comp["weight"] for comp in components)
-    if not components or total_weight <= 0:
-        return {}
-
-    parts = []
-    for comp in components:
-        multiplier = clean_float(comp.get("multiplier"), 1.0)
-        mult_txt = f"x{multiplier:g}" if abs(multiplier) != 1 else ""
-        parts.append(f"{comp['label']}{mult_txt} {comp['weight']:.1f}%")
-
-    return {
-        "label": "내 목표비중 벤치",
-        "basis": basis,
-        "components": components,
-        "description": f"{basis} 기준: " + " + ".join(parts),
-    }
-
-
 def get_current_blended_benchmark_spec():
     try:
         return build_portfolio_blended_benchmark_spec(globals().get("holdings_table", pd.DataFrame()))
-    except Exception:
-        return {}
-
-
-def calc_benchmark_metrics_from_returns(portfolio_returns, benchmark_returns, label="", benchmark_ticker="", rf_rate=0.035):
-    if portfolio_returns is None or portfolio_returns.empty or benchmark_returns is None or benchmark_returns.empty:
-        return {}
-
-    try:
-        br_all = pd.Series(benchmark_returns).replace([np.inf, -np.inf], np.nan).dropna()
-        br_all.index = normalize_datetime_index_no_tz(br_all.index)
-        common = portfolio_returns.index.intersection(br_all.index)
-        if len(common) < 20:
-            return {}
-
-        pr = pd.Series(portfolio_returns.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        br = pd.Series(br_all.loc[common]).replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-        bm_var = float(br.var())
-        if bm_var <= 0:
-            return {}
-
-        beta = float(np.cov(pr.values, br.values)[0, 1] / bm_var)
-        bm_period_ret = float((1 + br).prod() - 1)
-        bm_annual = annualize_period_return(bm_period_ret, len(br)) if np.isfinite(bm_period_ret) else np.nan
-        port_annual = annualize_period_return(float((1 + pr).prod() - 1), len(pr))
-
-        alpha = np.nan
-        if np.isfinite(bm_annual) and np.isfinite(port_annual):
-            alpha = (port_annual - (rf_rate + beta * (bm_annual - rf_rate))) * 100
-
-        active_ret = pr - br
-        tracking_error = float(active_ret.std() * np.sqrt(252) * 100)
-        info_ratio = ratio_or_nan(float(active_ret.mean() * 252 * 100), tracking_error)
-
-        return {
-            "beta": round(beta, 2),
-            "alpha": round(alpha, 2) if np.isfinite(alpha) else np.nan,
-            "tracking_error": round(tracking_error, 1),
-            "info_ratio": round(info_ratio, 2) if np.isfinite(info_ratio) else np.nan,
-            "bm_annual_return": round(bm_annual * 100, 1) if np.isfinite(bm_annual) else np.nan,
-            "bm_period_return": round(bm_period_ret * 100, 1) if np.isfinite(bm_period_ret) else np.nan,
-            "benchmark_ticker": benchmark_ticker,
-            "benchmark_label": label,
-            "n_common_days": len(common),
-        }
-    except Exception:
-        return {}
-
-
-def build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=None):
-    if not benchmark_spec:
-        return pd.Series(dtype=float)
-
-    components = benchmark_spec.get("components", []) if isinstance(benchmark_spec, dict) else []
-    if not components:
-        return pd.Series(dtype=float)
-
-    series_list = []
-    weight_map = {}
-    for idx, comp in enumerate(components):
-        try:
-            ticker = str(comp.get("ticker", "")).strip()
-            weight = clean_float(comp.get("weight"), 0.0)
-            multiplier = clean_float(comp.get("multiplier"), 1.0)
-            if not ticker or weight <= 0:
-                continue
-
-            px_df = load_price_df(ticker, period)
-            if px_df is None or px_df.empty or "Close" not in px_df.columns:
-                continue
-            close = pd.Series(px_df["Close"]).dropna()
-            close.index = normalize_datetime_index_no_tz(close.index)
-            if analysis_start_date is not None:
-                close = close[close.index >= analysis_start_date]
-            if len(close) < 20:
-                continue
-
-            key = f"bench_{idx}"
-            ret = close.pct_change().replace([np.inf, -np.inf], np.nan).dropna() * multiplier
-            if ret.empty:
-                continue
-            series_list.append(ret.rename(key))
-            weight_map[key] = weight
-        except Exception:
-            continue
-
-    if not series_list or not weight_map:
-        return pd.Series(dtype=float)
-
-    returns_df = pd.concat(series_list, axis=1).sort_index().ffill(limit=3).dropna(how="all").fillna(0.0)
-    weights = pd.Series(weight_map, dtype=float)
-    usable = [col for col in returns_df.columns if col in weights.index]
-    if not usable:
-        return pd.Series(dtype=float)
-
-    weights = weights[usable]
-    weight_sum = float(weights.sum())
-    if weight_sum <= 0:
-        return pd.Series(dtype=float)
-
-    return returns_df[usable].mul(weights / weight_sum, axis=1).sum(axis=1).dropna()
-
-
-def calc_blended_benchmark_comparison(portfolio_returns, benchmark_spec, period, rf_rate=0.035, analysis_start_date=None):
-    benchmark_returns = build_blended_benchmark_returns(benchmark_spec, period, analysis_start_date=analysis_start_date)
-    result = calc_benchmark_metrics_from_returns(
-        portfolio_returns,
-        benchmark_returns,
-        label=benchmark_spec.get("label", "내 목표비중 벤치") if benchmark_spec else "",
-        benchmark_ticker="BLENDED",
-        rf_rate=rf_rate,
-    )
-    if result and benchmark_spec:
-        result["benchmark_description"] = benchmark_spec.get("description", "")
-    return result
-
-
-def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
-    """벤치마크 대비 Beta, Alpha(Jensen), Tracking Error, Information Ratio."""
-    if portfolio_returns is None or portfolio_returns.empty:
-        return {}
-    try:
-        bm_df = load_price_df(benchmark_ticker, period)
-        if bm_df is None or bm_df.empty or "Close" not in bm_df.columns:
-            return {}
-        bm_close = pd.Series(bm_df["Close"]).dropna()
-        bm_close.index = normalize_datetime_index_no_tz(bm_close.index)
-        if analysis_start_date is not None:
-            bm_close = bm_close[bm_close.index >= analysis_start_date]
-        bm_returns = bm_close.pct_change().dropna()
-        return calc_benchmark_metrics_from_returns(
-            portfolio_returns,
-            bm_returns,
-            label=benchmark_ticker,
-            benchmark_ticker=benchmark_ticker,
-            rf_rate=rf_rate,
-        )
     except Exception:
         return {}
 
