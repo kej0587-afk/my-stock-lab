@@ -114,3 +114,20 @@ def test_today_queue_exports_used_by_app():
             "today_queue_wait_mask",
         ],
     )
+
+
+def test_swing_radar_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.swing_radar",
+        [
+            "build_swing_radar_df",
+            "fill_empty_swing_templates",
+            "get_swing_editor_base_key",
+            "is_swing_candidate_allowed",
+            "is_swing_excluded_ticker",
+            "make_swing_candidate_row",
+            "merge_swing_editor_with_saved",
+            "remove_swing_row",
+            "set_swing_row_status",
+        ],
+    )
