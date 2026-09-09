@@ -57,6 +57,16 @@ def test_asset_classifier_exports_used_by_app():
     )
 
 
+def test_db_schema_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.db_schema",
+        [
+            "get_feedback_create_sql",
+            "get_swing_radar_create_sql",
+        ],
+    )
+
+
 def test_decision_engine_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.decision_engine",
