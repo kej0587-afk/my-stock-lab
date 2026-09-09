@@ -42,6 +42,8 @@ TODAY_QUEUE_DEFENSE_CODES = {
     "COST_MINUS_15_TREND_RISK",
     "COST_MINUS_15_CAUSE_CHECK",
     "TREND_RISK_CAUSE_CHECK",
+    "MACRO_STORM_HOLDING_CAUTION",
+    "HARD_BLOCK_MACRO_STORM",
     "LEVERAGED_DAILY_DROP_NO_ADD",
     "LEVERAGED_RECOVERY_DCA_BLOCK",
     "MTF_DAMAGE_NO_ADD",
@@ -56,7 +58,7 @@ TODAY_QUEUE_DEFENSE_PREFIXES = (
 TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
     r"패닉|위기|고점대비\s*-?20|하락추세|역배열|추세위험|구조훼손|추세훼손|"
     r"신규진입\s*보류|진입\s*보류|진입보류|추매금지|손절기준|원인점검|"
-    r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착",
+    r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착|시장위험|추매중단|보유점검",
     flags=re.IGNORECASE,
 )
 
@@ -64,6 +66,7 @@ TODAY_QUEUE_EXECUTION_BLOCK_CODES = {
     "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
     "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
     "COST_MINUS_15_CAUSE_CHECK", "TREND_RISK_CAUSE_CHECK",
+    "MACRO_STORM_HOLDING_CAUTION",
     "PRICE_DRAWDOWN_HOLDING_CHECK", "PRICE_DRAWDOWN_NO_ENTRY",
     "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK", "SINGLE_DAY_BREAKDOWN_NO_ENTRY",
     "STRUCTURE_DAMAGE_HOLDING_CHECK", "STRUCTURE_DAMAGE_NO_ENTRY", "MTF_DAMAGE_NO_ADD",
@@ -113,6 +116,8 @@ def today_queue_reason_bucket(row: Any) -> str:
         return "관심/눌림대기"
     if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
+    if re.search(r"MACRO_STORM|퍼펙트스톰|시장위험|추매중단|보유점검", text, flags=re.IGNORECASE):
+        return "시장방어"
     if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
         return "급락방어"
     if re.search(r"DRAWDOWN_20|PRICE_DRAWDOWN|가격위험|가격방어|고점대비\s*-?20", text, flags=re.IGNORECASE):
@@ -183,7 +188,7 @@ def today_queue_wait_mask(
         bucket_series.eq("과열/타점대기")
         | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
     )
-    defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
+    defense_bucket = bucket_series.isin(["비중초과 방어", "시장방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
     overheat_hard_watch = (
         code.str.contains(r"HARD_BLOCK_BOLLINGER_UPPER|HARD_BLOCK_MFI_OVERHEAT|EXTREME_OVERHEAT_NO_CHASE|OVERHEAT", regex=True, na=False)
         | wait_text.str.contains(r"볼린상단|볼린저.*상단|MFI.*과열|극단과열|추격금지", regex=True, na=False)
@@ -199,7 +204,7 @@ def today_queue_wait_mask(
 
 def is_dashboard_block_or_wait_label(label: str) -> bool:
     """Return True when a label already says no-action or wait."""
-    return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상"))
+    return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상", "시장위험", "추매중단", "보유점검"))
 
 
 def is_dashboard_low_rr_caution(decision: dict) -> bool:
@@ -339,6 +344,8 @@ def format_dashboard_candidate_grade(decision: dict) -> str:
         return "⏸️비중충족(관망)"
     if code == "HARD_BLOCK_MACRO_STORM":
         return "🛡️시장방어(매수금지)"
+    if code == "MACRO_STORM_HOLDING_CAUTION":
+        return "🛡️시장방어(추매중단)"
     if code == "LEVERAGED_DAILY_DROP_NO_ADD":
         return "🛑레버리지급락(추매금지)"
     if code == "LEVERAGED_RECOVERY_DCA_BLOCK":
@@ -383,6 +390,8 @@ def format_dashboard_candidate_grade(decision: dict) -> str:
         return "🟢우량주 회복초입"
     if code == "QUALITY_RECOVERY_CANDIDATE":
         return "✅우량주 회복후보"
+    if "시장위험" in label or "퍼펙트스톰" in label or "추매중단" in label or "보유점검" in label:
+        return "🛡️시장방어(추매중단)" if "추매" in label or "보유" in label else "🛡️시장방어(매수금지)"
     if "가격위험" in label or "가격방어" in label:
         return "🛡️가격방어(추매주의)" if "추매" in label else "🛡️가격방어(신규금지)"
     if "단기급락" in label or "급락방어" in label:
@@ -465,11 +474,15 @@ def build_dashboard_final_read(
         return "⏳추매대기"
     if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
         return "⏳리밸런싱대기"
+    if code == "MACRO_STORM_HOLDING_CAUTION":
+        return "🛡️시장방어(추매중단)"
+    if code == "HARD_BLOCK_MACRO_STORM":
+        return "🛡️시장방어(매수금지)"
     if is_today_queue_defense_signal(decision, text):
         return "🛡️방어우선"
     if code.startswith("STRUCTURE_DAMAGE") or code.startswith("PRICE_DRAWDOWN") or code.startswith("SINGLE_DAY_BREAKDOWN"):
         return "🛡️방어우선"
-    if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED", "HARD_BLOCK_MACRO_STORM"}:
+    if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}:
         return "🛡️방어우선"
     if code.startswith("HARD_BLOCK") and not re.search(r"볼린|MFI|과열|상단", text):
         return "🛡️방어우선"
@@ -614,14 +627,14 @@ def build_today_queue_execution_snapshot(
     )
     leveraged_label_block = is_leveraged_product and any(
         word in decision_label
-        for word in ["추매금지", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
+        for word in ["추매금지", "추매중단", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
     )
     is_weight_block = decision_code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}
     is_hard_blocked = (
         decision_code in TODAY_QUEUE_EXECUTION_BLOCK_CODES
         or decision_code.startswith("HARD_BLOCK")
         or leveraged_label_block
-        or any(word in decision_label for word in ["하드차단", "진입보류", "진입 보류", "추매금지", "매수금지", "원인점검", "손절기준"])
+        or any(word in decision_label for word in ["하드차단", "진입보류", "진입 보류", "추매금지", "추매중단", "시장위험", "보유점검", "매수금지", "원인점검", "손절기준"])
     )
     is_wait = (
         decision_code in TODAY_QUEUE_EXECUTION_WAIT_CODES

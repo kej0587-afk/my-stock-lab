@@ -64,6 +64,15 @@ class TestCoreStormDcaGroupMapping:
         assert infer_decision_code("⏸️조건미달: 추매 보류") == "HOLDING_DCA_CONDITION_MISS"
         assert infer_decision_code("⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토") == "FUND_OVERSOLD_REBALANCE_REVIEW"
 
+    def test_holding_macro_storm_is_caution_not_buyish(self):
+        label = "🛡️시장위험: 추매중단/보유점검"
+
+        assert infer_decision_code(label) == "MACRO_STORM_HOLDING_CAUTION"
+        assert classify_decision_signal(label) == "caution"
+
+        outcome = build_decision_outcome(label, "#d97706", "MACRO_STORM_HOLDING_CAUTION")
+        assert outcome.group == "caution"
+
 
 # ---------------------------------------------------------------------------
 # classify_core_etf_dca_rate — perfect storm policy

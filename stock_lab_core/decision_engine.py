@@ -266,6 +266,7 @@ def classify_decision_signal(decision_label: str) -> str:
         "가격방어", "급락방어", "단기급락", "추세방어", "대피",
         "처분", "손절", "원인 점검", "하락추세", "추격금지", "보류",
         "극단과열", "단기과열", "과열확장", "밴드상단", "상단부근",
+        "시장위험", "추매중단", "보유점검",
     ]
     if any(keyword in text for keyword in caution_keywords):
         return "caution"
@@ -285,6 +286,7 @@ DECISION_CODE_BY_LABEL = {
     "🛑하드차단: 비중 초과": "HARD_BLOCK_OVERWEIGHT",
     "⏸️하드차단: 비중 충족(관망)": "HARD_BLOCK_TARGET_FILLED",
     "🛑하드차단: 퍼펙트스톰(대피)": "HARD_BLOCK_MACRO_STORM",
+    "🛡️시장위험: 추매중단/보유점검": "MACRO_STORM_HOLDING_CAUTION",
     "💣패닉(-50%↓): 최종투입": "PANIC_FINAL_DEPLOY",
     "💣패닉(-40%↓): 현금 투입": "PANIC_CASH_DEPLOY",
     "🚨위기(-30%↓): 코어 집중": "CRISIS_CORE_FOCUS",
@@ -394,6 +396,7 @@ DECISION_GROUP_BY_CODE = {
     "COST_MINUS_15_CAUSE_CHECK": "caution",
     "TREND_RISK_CAUSE_CHECK": "caution",
     "HOLDING_DCA_CONDITION_MISS": "caution",
+    "MACRO_STORM_HOLDING_CAUTION": "caution",
     "CORE_STORM_DCA": "buyish",
     "CORE_CRASH_DCA": "buyish",
     "CORE_DRAWDOWN_DCA": "buyish",

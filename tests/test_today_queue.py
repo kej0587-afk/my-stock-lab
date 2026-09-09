@@ -94,6 +94,43 @@ def test_today_queue_reason_bucket_marks_price_drawdown_as_defense():
     assert today_queue_reason_bucket(row) == "가격방어"
 
 
+def test_today_queue_marks_holding_macro_storm_as_market_defense():
+    decision = {
+        "decision_code": "MACRO_STORM_HOLDING_CAUTION",
+        "decision_group": "caution",
+        "dec": "🛡️시장위험: 추매중단/보유점검",
+    }
+    row = pd.Series({
+        "🔥기술적 타점": decision["dec"],
+        "패턴타점": "-",
+        "최종읽기": "🛡️시장방어(추매중단)",
+        "📌후보등급": "🛡️시장방어(추매중단)",
+        "핵심근거": "퍼펙트스톰 지수 4.8",
+        "판정코드": decision["decision_code"],
+    })
+
+    assert today_queue_reason_bucket(row) == "시장방어"
+    assert is_today_queue_defense_signal(decision)
+    assert format_dashboard_candidate_grade(decision) == "🛡️시장방어(추매중단)"
+    assert build_dashboard_final_read(
+        decision,
+        dashboard_timing=decision["dec"],
+        dashboard_grade="🛡️시장방어(추매중단)",
+    ) == "🛡️시장방어(추매중단)"
+
+
+def test_today_queue_marks_new_macro_storm_as_market_buy_block():
+    decision = {
+        "decision_code": "HARD_BLOCK_MACRO_STORM",
+        "decision_group": "caution",
+        "dec": "🛑하드차단: 퍼펙트스톰(대피)",
+    }
+
+    assert is_today_queue_defense_signal(decision)
+    assert format_dashboard_candidate_grade(decision) == "🛡️시장방어(매수금지)"
+    assert build_dashboard_final_read(decision) == "🛡️시장방어(매수금지)"
+
+
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch():
     summary_df = pd.DataFrame([{
         "종목명": "FCX",

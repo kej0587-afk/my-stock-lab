@@ -654,7 +654,7 @@ except Exception as _today_queue_snapshot_import_error:
         decision_label = str(c.get("dec", "") or "")
         text = f"{decision_code} {decision_label}"
         is_blocked = bool(re.search(
-            r"HARD_BLOCK|NO_ENTRY|NO_ADD|진입\s*보류|진입보류|추매금지|매수금지|원인점검|손절기준",
+            r"HARD_BLOCK|NO_ENTRY|NO_ADD|MACRO_STORM_HOLDING_CAUTION|진입\s*보류|진입보류|추매금지|추매중단|시장위험|보유점검|매수금지|원인점검|손절기준",
             text,
             flags=re.IGNORECASE,
         ))
@@ -718,6 +718,8 @@ except Exception as _today_queue_classify_import_error:
         "COST_MINUS_15_TREND_RISK",
         "COST_MINUS_15_CAUSE_CHECK",
         "TREND_RISK_CAUSE_CHECK",
+        "MACRO_STORM_HOLDING_CAUTION",
+        "HARD_BLOCK_MACRO_STORM",
         "LEVERAGED_DAILY_DROP_NO_ADD",
         "LEVERAGED_RECOVERY_DCA_BLOCK",
         "MTF_DAMAGE_NO_ADD",
@@ -730,7 +732,7 @@ except Exception as _today_queue_classify_import_error:
     TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
         r"패닉|위기|고점대비\s*-?20|하락추세|역배열|추세위험|구조훼손|추세훼손|"
         r"신규진입\s*보류|진입\s*보류|진입보류|추매금지|손절기준|원인점검|"
-        r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착",
+        r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착|시장위험|추매중단|보유점검",
         flags=re.IGNORECASE,
     )
 
@@ -761,6 +763,8 @@ except Exception as _today_queue_classify_import_error:
             return "관심/눌림대기"
         if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
             return "비중초과 방어"
+        if re.search(r"MACRO_STORM|퍼펙트스톰|시장위험|추매중단|보유점검", text, flags=re.IGNORECASE):
+            return "시장방어"
         if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
             return "급락방어"
         if re.search(r"DRAWDOWN_20|PRICE_DRAWDOWN|가격위험|가격방어|고점대비\s*-?20", text, flags=re.IGNORECASE):
@@ -828,7 +832,7 @@ except Exception as _today_queue_classify_import_error:
             bucket_series.eq("과열/타점대기")
             | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
         )
-        defense_bucket = bucket_series.isin(["비중초과 방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
+        defense_bucket = bucket_series.isin(["비중초과 방어", "시장방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
         overheat_hard_watch = (
             code.str.contains(r"HARD_BLOCK_BOLLINGER_UPPER|HARD_BLOCK_MFI_OVERHEAT|EXTREME_OVERHEAT_NO_CHASE|OVERHEAT", regex=True, na=False)
             | wait_text.str.contains(r"볼린상단|볼린저.*상단|MFI.*과열|극단과열|추격금지", regex=True, na=False)
@@ -842,7 +846,7 @@ except Exception as _today_queue_classify_import_error:
         ) & wait_mask & ~defense_bucket & ~hard_block
 
     def is_dashboard_block_or_wait_label(label):
-        return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상"))
+        return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상", "시장위험", "추매중단", "보유점검"))
 
     def is_dashboard_low_rr_caution(c):
         label = str((c or {}).get("dec", "") or "")
@@ -871,9 +875,15 @@ except Exception as _today_queue_classify_import_error:
     def format_dashboard_candidate_grade(c):
         label = str((c or {}).get("dec", "") or "")
         code = str((c or {}).get("decision_code", "") or "")
+        if code == "MACRO_STORM_HOLDING_CAUTION":
+            return "🛡️시장방어(추매중단)"
+        if code == "HARD_BLOCK_MACRO_STORM":
+            return "🛡️시장방어(매수금지)"
+        if any(word in label for word in ("시장위험", "퍼펙트스톰", "추매중단", "보유점검")):
+            return "🛡️시장방어(매수금지)" if "하드차단" in label or "대피" in label else "🛡️시장방어(추매중단)"
         if is_today_queue_defense_signal(c):
             return "🛡️방어우선"
-        if code.startswith("HARD_BLOCK") or any(word in label for word in ("하드차단", "매수금지", "추매금지")):
+        if code.startswith("HARD_BLOCK") or code == "MACRO_STORM_HOLDING_CAUTION" or any(word in label for word in ("하드차단", "매수금지", "추매금지", "추매중단", "시장위험", "보유점검")):
             return "🛑매수금지"
         grade = str((c or {}).get("grade", "") or "")
         return f"{grade} / ⚠️R/R<1" if grade and is_dashboard_low_rr_caution(c) else grade
@@ -893,6 +903,10 @@ except Exception as _today_queue_classify_import_error:
         text = " ".join([str(dashboard_timing or ""), str(dashboard_grade or ""), str(pattern_timing or ""), code])
         if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
             return "⚪데이터확인"
+        if code == "MACRO_STORM_HOLDING_CAUTION":
+            return "🛡️시장방어(추매중단)"
+        if code == "HARD_BLOCK_MACRO_STORM":
+            return "🛡️시장방어(매수금지)"
         if is_today_queue_defense_signal(c, text):
             return "🛡️방어우선"
         if re.search(r"추격금지|과열|상단", text):
@@ -3980,13 +3994,13 @@ def _rebcalc_signal_multiplier(tap: str, bucket: str, dip_level: int = 0) -> flo
     bucket = str(bucket).strip().lower()
     is_empty = tap in ("-", "", "nan", "none", "None")
     no_add_words = [
-        "추매금지", "매수금지", "신규금지", "진입 보류", "진입보류", "DCA 보류",
+        "추매금지", "추매중단", "매수금지", "신규금지", "진입 보류", "진입보류", "DCA 보류",
         "회복 전", "원인점검", "원인 점검", "종가 확인", "정규장 확인",
     ]
     hard_words = [
         "하드", "차단", "구조", "추세훼손", "가격위험", "단기급락",
         "가격방어", "급락방어", "추세방어", "비중 초과", "비중초과",
-        "비중 충족", "비중충족", "🔴", "⛔",
+        "비중 충족", "비중충족", "시장위험", "보유점검", "🔴", "⛔",
     ]
     is_no_add = any(k in tap for k in no_add_words)
     is_hard = is_no_add or any(k in tap for k in hard_words)
@@ -17217,10 +17231,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif _fmr >= 4.5:
             dec, col, decision_outcome = _set_decision(
-                "🛑하드차단: 퍼펙트스톰(대피)", "#dc2626", "HARD_BLOCK_MACRO_STORM",
+                "🛡️시장위험: 추매중단/보유점검", "#d97706", "MACRO_STORM_HOLDING_CAUTION",
                 reasons=(
                     f"퍼펙트스톰 지수 {_fmr:.1f} (기준: 4.5 이상)",
-                    "매크로 위험 최고조 — 신규 매수 전면 중단, 현금 확보 우선",
+                    "보유 종목 전량 매도 신호가 아니라 신규/추매를 멈추고 손절선·비중·하락 원인을 점검하는 구간",
                 ),
             )
         elif is_leveraged_daily_drop:
@@ -17961,12 +17975,14 @@ def build_precision_select_options():
     options = [FREE_SEARCH_OPTION]
     option_map = {FREE_SEARCH_OPTION: {"type": "free"}}
     seen_labels = set(options)
+    seen_ticker_keys = set()
 
     for item in st.session_state.get("watchlist", []):
         item = sanitize_watchlist_item(item)
         ticker = item.get("ticker", "")
         if not ticker:
             continue
+        seen_ticker_keys.add(normalize_ticker(ticker))
 
         name = sanitize_asset_name(item.get("name", ticker), ticker)
         label = f"⭐ {name} ({ticker})"
@@ -17979,6 +17995,33 @@ def build_precision_select_options():
         options.append(label)
         seen_labels.add(label)
         option_map[label] = {"type": "watchlist", "item": dict(item)}
+
+    precision_holdings_table = globals().get("holdings_table", pd.DataFrame())
+    if isinstance(precision_holdings_table, pd.DataFrame) and not precision_holdings_table.empty:
+        for _, row in precision_holdings_table.iterrows():
+            ticker = sanitize_ticker_value(row.get("티커", row.get("ticker", "")))
+            ticker_key = normalize_ticker(ticker)
+            if not ticker or ticker_key in seen_ticker_keys:
+                continue
+
+            name = sanitize_asset_name(row.get("자산명", row.get("name", ticker)), ticker)
+            label = f"📦 {name} ({ticker})"
+            base_label = label
+            suffix = 2
+            while label in seen_labels:
+                label = f"{base_label} #{suffix}"
+                suffix += 1
+
+            item = {
+                "ticker": ticker,
+                "name": name,
+                "is_etf": clean_bool(row.get("is_etf", False)),
+                "asset_class": str(row.get("asset_class", "") or ""),
+            }
+            options.append(label)
+            seen_labels.add(label)
+            seen_ticker_keys.add(ticker_key)
+            option_map[label] = {"type": "watchlist", "item": item}
 
     for label in TICKER_MAP.keys():
         if label in seen_labels:
@@ -18021,6 +18064,15 @@ PRECISION_FORCE_FREE_OPTION_KEY = "_precision_force_free_option"
 PRECISION_PENDING_SELECTED_OPTION_KEY = "_precision_pending_selected_option"
 PRECISION_PENDING_FREE_TICKER_KEY = "_precision_pending_free_ticker"
 PRECISION_PENDING_FREE_MARKET_KEY = "_precision_pending_free_market"
+PRECISION_US_MARKET_OPTION = "미국/기타 (접미사 없음)"
+PRECISION_KR_MARKET_OPTIONS = ["KOSPI (.KS)", "KOSDAQ (.KQ)"]
+PRECISION_FREE_MARKET_OPTIONS = [PRECISION_US_MARKET_OPTION] + PRECISION_KR_MARKET_OPTIONS
+
+
+def _is_precision_kr_code_like(ticker: str) -> bool:
+    symbol = sanitize_ticker_value(ticker).upper()
+    symbol = re.sub(r"\.(KS|KQ)$", "", symbol)
+    return len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum()
 
 
 def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
@@ -18030,7 +18082,12 @@ def _split_precision_free_ticker(ticker: str) -> tuple[str, str]:
         return upper[:-3], "KOSDAQ (.KQ)"
     if upper.endswith(".KS"):
         return upper[:-3], "KOSPI (.KS)"
-    return upper, st.session_state.get(PRECISION_FREE_MARKET_KEY, "KOSPI (.KS)")
+    if _is_precision_kr_code_like(upper):
+        current_market = st.session_state.get(PRECISION_FREE_MARKET_KEY, "KOSPI (.KS)")
+        if current_market not in PRECISION_KR_MARKET_OPTIONS:
+            current_market = "KOSPI (.KS)"
+        return upper, current_market
+    return upper, PRECISION_US_MARKET_OPTION
 
 
 def _queue_precision_selected_option(label: str) -> str:
@@ -18842,7 +18899,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     is_leveraged_product = bool(c.get("is_leveraged_or_inverse")) or is_leveraged_or_inverse_product(name, ticker, str(c.get("asset_class", "") or ""))
     leveraged_label_block = is_leveraged_product and any(
         word in decision_label
-        for word in ["추매금지", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
+        for word in ["추매금지", "추매중단", "매수금지", "매수 금지", "DCA 보류", "회복 전", "원인점검", "원인 점검", "추격금지"]
     )
     if leveraged_label_block:
         is_hard_blocked = True
@@ -20734,7 +20791,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     hard_words = [
         "하드차단", "진입보류", "추격금지", "구조훼손", "추세훼손", "가격위험",
         "단기급락", "가격방어", "급락방어", "추세방어", "추매금지", "현금 확보", "원인 점검", "실시간 급락", "레버리지 급락",
-        "DCA 보류", "회복 전",
+        "DCA 보류", "회복 전", "시장위험", "추매중단", "보유점검",
     ]
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     if any(word in dec for word in hard_words):
@@ -20899,7 +20956,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("비중", "주의", "목표비중이 없거나 부족 매수액 계산이 약합니다. 먼저 목표비중을 정하는 편이 좋습니다.")
 
     if finite_num(macro_risk) and macro_risk >= 4.5:
-        add_check("매크로", "차단", f"매크로 리스크 {macro_risk:.1f}. 시장 환경상 대피/관망 우선입니다.")
+        add_check("매크로", "차단", f"매크로 리스크 {macro_risk:.1f}. 신규/추매는 막고, 기존 보유는 손절선·비중·하락 원인 중심으로 점검합니다.")
     elif finite_num(macro_risk) and macro_risk >= 2.5:
         add_check("매크로", "주의", f"매크로 리스크 {macro_risk:.1f}. 분할 접근이 적합합니다.")
     else:
@@ -21236,7 +21293,7 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
     macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", 0), 0.0)
     if macro_risk >= 4.5:
         total_score -= 2
-        cut_reasons.append("퍼펙트스톰: 전체 리스크 상승")
+        cut_reasons.append("퍼펙트스톰: 신규/추매 중단, 보유 비중·손절선 점검")
     elif macro_risk >= 2.5:
         total_score -= 1
         cut_reasons.append(f"매크로 리스크 {macro_risk:.1f}: 보수적 접근")
@@ -22264,7 +22321,7 @@ MANUAL_SECTIONS = {
         {"타점": "하드차단: 재무F급", "조건": "개별주 재무점수 1 이하", "의미": "기술 신호와 무관하게 매수 차단"},
         {"타점": "하드차단: 비중 초과", "조건": "현재비중 > 목표비중", "의미": "추가매수 금지"},
         {"타점": "하드차단: 비중 충족", "조건": "현재비중 >= 목표비중", "의미": "목표 도달, 관망"},
-        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "시장 위험 우선 회피. 단, 목표비중 미달 코어 ETF는 기초자산별 예외 적용"},
+        {"타점": "퍼펙트스톰", "조건": "매크로 리스크 4.5 이상", "의미": "신규/추매 우선 차단. 보유 종목은 전량 매도 신호가 아니라 비중·손절선·하락 원인 점검"},
         {"타점": "MFI 극단 과열", "조건": "MFI 85 이상", "의미": "추격매수 금지"},
         {"타점": "과열확장", "조건": "재무 4점 + ADJ 4 이상 + %B 1.02 초과 + RS 강함", "의미": "대장주지만 MA5 눌림 대기"},
         {"타점": "불뿜는 대장주", "조건": "재무 4점 + ADJ 4 이상 + %B 0.95~1.02 + RS 강함", "의미": "강한 종목, 단기 눌림 진입 후보"},
@@ -22342,7 +22399,7 @@ def render_manual_tab():
 현재비중이 목표비중에 도달했을 때 뜹니다. 목표를 채웠으니 더 사기보다 관망하라는 뜻입니다.
 
 **하드차단: 퍼펙트스톰**  
-매크로 리스크가 4.5 이상일 때 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선입니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다.
+매크로 리스크가 4.5 이상일 때 신규 매수 후보에 뜹니다. 이때는 개별 종목보다 시장 전체 위험이 우선이라 새 진입을 막습니다. 단, 목표비중이 부족한 `bucket=core` ETF는 전면 차단 대신 기초자산별 예외가 적용됩니다. S&P500/나스닥100 코어는 100% 거치 적립, 국내 주식형 코어 ETF는 25~50% 방어 적립으로 표시될 수 있습니다. 이미 보유한 종목은 `시장위험: 추매중단/보유점검`으로 표시해 전량 매도가 아니라 비중·손절선 점검 신호로 구분합니다.
 
 **하드차단: MFI 극단 과열**  
 MFI가 85 이상일 때 뜹니다. 거래량을 동반한 단기 과열이 심해서 추격매수를 막습니다.
@@ -22899,7 +22956,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         lev_df = strategy_df[strategy_df["버킷"].astype(str).eq("leverage")].copy()
         if not lev_df.empty:
             lev_signals = lev_df["기술적타점"].fillna("").astype(str)
-            blocked_mask = lev_signals.str.contains("하드차단|구조훼손|추세훼손|가격위험|단기급락|가격방어|급락방어|추세방어|과열패스|추매금지|비중 초과|비중 충족", regex=True)
+            blocked_mask = lev_signals.str.contains("하드차단|구조훼손|추세훼손|가격위험|단기급락|가격방어|급락방어|추세방어|과열패스|추매금지|추매중단|시장위험|보유점검|비중 초과|비중 충족", regex=True)
             overweight_mask = lev_signals.str.contains("비중 초과|비중 충족", regex=True)
             buy_mask = lev_signals.str.contains("매수|DCA|진입", regex=True) & ~blocked_mask
             leverage_control = {
@@ -27571,7 +27628,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
         hard_count = int((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)).sum())
-        caution_count = int(label_series.str.contains("구조훼손|추세훼손|가격위험|단기급락|가격방어|급락방어|추세방어|추매금지|진입 보류|과열|차단", regex=True, na=False).sum())
+        caution_count = int(label_series.str.contains("구조훼손|추세훼손|가격위험|단기급락|가격방어|급락방어|추세방어|추매금지|추매중단|시장위험|보유점검|진입 보류|과열|차단", regex=True, na=False).sum())
         if hard_count >= 3:
             portfolio_score += 2
             portfolio_reasons.append(f"내 관심목록 하드차단 {hard_count}개")
@@ -27923,7 +27980,7 @@ def select_today_auto_newspick_targets(universe, summary_df=None, max_count=5):
         score = work.get("Adj점수", pd.Series(0.0, index=work.index)).apply(clean_float)
         work["_newspick_priority"] = 6
         work.loc[label.str.contains("매수|진입|DCA|적립|눌림|탑승", regex=True, na=False), "_newspick_priority"] = 1
-        work.loc[code.str.contains("HARD_BLOCK", na=False) | label.str.contains("하드차단|구조훼손|추세훼손|가격위험|단기급락|추매금지", regex=True, na=False), "_newspick_priority"] = 2
+        work.loc[code.str.contains("HARD_BLOCK|MACRO_STORM_HOLDING_CAUTION", regex=True, na=False) | label.str.contains("하드차단|구조훼손|추세훼손|가격위험|단기급락|추매금지|추매중단|시장위험|보유점검", regex=True, na=False), "_newspick_priority"] = 2
         work["_newspick_score"] = score
         for _, row in work.sort_values(["_newspick_priority", "_newspick_score"], ascending=[True, False]).head(max_count * 2).iterrows():
             add_target(
@@ -28686,7 +28743,7 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
     risk_score = pd.Series(0.0, index=risk_df.index)
     risk_score += hard_block_mask.reindex(risk_df.index, fill_value=False).astype(int) * 5
     risk_score += caution_mask.reindex(risk_df.index, fill_value=False).astype(int) * 2
-    risk_score += label_series.str.contains("구조훼손|추세훼손|가격위험|단기급락|추매금지|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
+    risk_score += label_series.str.contains("구조훼손|추세훼손|가격위험|단기급락|추매금지|추매중단|시장위험|보유점검|진입 보류|하드차단", regex=True, na=False).astype(int) * 3
     risk_score += label_series.str.contains("과열|추격금지|비중 초과|비중 충족", regex=True, na=False).astype(int) * 2
     risk_score += label_series.str.contains("레버리지|DCA|회복 전", regex=True, na=False).astype(int) * 2
     risk_score += mdd_series.apply(lambda v: 3 if finite_num(v) and float(v) <= -20 else (2 if finite_num(v) and float(v) <= -15 else (1 if finite_num(v) and float(v) <= -10 else 0)))
@@ -28705,7 +28762,7 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
             return "추세/손절 기준 점검"
         if any(k in label for k in ["단기급락", "급락방어"]):
             return "종가/거래량 확인"
-        if any(k in label for k in ["가격위험", "추매금지", "진입 보류"]):
+        if any(k in label for k in ["가격위험", "추매금지", "추매중단", "시장위험", "보유점검", "진입 보류"]):
             return "보유/손절 기준 점검"
         if any(k in label for k in ["과열", "추격금지"]):
             return "추격 금지 · 눌림 대기"
@@ -31834,12 +31891,13 @@ def render_today_queue_tab(mode):
     execution_mask = buyish_mask & ~wait_mask
     reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
     overweight_mask = caution_mask & reason_bucket.eq("비중초과 방어")
+    market_defense_mask = caution_mask & reason_bucket.eq("시장방어")
     price_defense_mask = caution_mask & reason_bucket.eq("가격방어")
     rapid_drop_mask = caution_mask & reason_bucket.eq("급락방어")
     structure_mask = caution_mask & reason_bucket.eq("추세방어")
     overheat_mask = caution_mask & reason_bucket.eq("과열/타점대기")
     data_issue_mask = caution_mask & reason_bucket.eq("데이터확인")
-    other_caution_mask = caution_mask & ~(overweight_mask | price_defense_mask | rapid_drop_mask | structure_mask | overheat_mask | data_issue_mask)
+    other_caution_mask = caution_mask & ~(overweight_mask | market_defense_mask | price_defense_mask | rapid_drop_mask | structure_mask | overheat_mask | data_issue_mask)
 
     render_today_market_guard_panel(market_guard)
 
@@ -31928,6 +31986,7 @@ def render_today_queue_tab(mode):
         f"관심/눌림대기 ({int(wait_mask.sum())})",
         f"돈흐름 후보 ({len(flow_shortlist_df)})",
         f"비중초과 방어 ({int(overweight_mask.sum())})",
+        f"시장방어 ({int(market_defense_mask.sum())})",
         f"가격방어 ({int(price_defense_mask.sum())})",
         f"급락방어 ({int(rapid_drop_mask.sum())})",
         f"추세방어 ({int(structure_mask.sum())})",
@@ -31953,24 +32012,27 @@ def render_today_queue_tab(mode):
         st.caption("비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.")
         _render_today_queue_table(summary_df.loc[overweight_mask], "비중초과 방어 대상이 없습니다.", sort_low_first=True)
     with tabs[4]:
+        st.caption("시장 전체 위험 때문에 신규/추매를 멈추는 그룹입니다. 기존 보유 전량 매도 신호가 아니라 비중·손절선·하락 원인 점검 신호입니다.")
+        _render_today_queue_table(summary_df.loc[market_defense_mask], "시장방어로 분류된 종목이 없습니다.", sort_low_first=True)
+    with tabs[5]:
         st.caption("고점대비 낙폭이 커진 종목입니다. 추세훼손 확정이 아니라 새 돈 투입 전 하락 원인과 종가 안정부터 보는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[price_defense_mask], "가격방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[5]:
+    with tabs[6]:
         st.caption("RS가 살아 있어도 하루 급락봉과 거래량이 잡힌 종목입니다. 신규/추매보다 종가와 다음 봉 회복을 먼저 봅니다.")
         _render_today_queue_table(summary_df.loc[rapid_drop_mask], "급락방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[6]:
+    with tabs[7]:
         st.caption("MA50 이탈, MA20 하회+RS 약함 등 실제 추세 조건이 약해진 종목입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
         _render_today_queue_table(summary_df.loc[structure_mask], "추세방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[7]:
+    with tabs[8]:
         st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
         _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
-    with tabs[8]:
+    with tabs[9]:
         st.caption("가격 이력 또는 지표 계산을 못 불러온 항목입니다. 현재가는 보조 조회로 표시될 수 있지만, 일봉 이력이 없으면 판정은 보류합니다.")
         _render_today_queue_table(summary_df.loc[data_issue_mask], "데이터확인 항목이 없습니다.", sort_low_first=True)
-    with tabs[9]:
+    with tabs[10]:
         st.caption("위 방어/대기/데이터확인 그룹에 들어가지 않은 기타 주의 항목입니다.")
         _render_today_queue_table(summary_df.loc[other_caution_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
-    with tabs[10]:
+    with tabs[11]:
         _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
 
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
@@ -33505,12 +33567,15 @@ if main_page == "dashboard":
                     st.warning("먼저 종목을 선택하세요.")
                 else:
                     precision_options, precision_option_map_for_jump = build_precision_select_options()
-                    precision_label = find_precision_select_label_by_ticker(jump_ticker, precision_option_map_for_jump)
-                    if precision_label:
-                        _queue_precision_selected_option(precision_label)
+                    precision_label = set_precision_target_ticker(jump_ticker, precision_option_map_for_jump)
+                    if precision_label == FREE_SEARCH_OPTION:
+                        st.session_state["_precision_jump_notice"] = f"{jump_ticker}는 자유 종목 탐색으로 연결했습니다."
+                        st.success("정밀관측소 자유 종목 탐색에 연결했습니다. 왼쪽 사이드바에서 정밀관측소 화면을 열어 확인하세요.")
+                    elif precision_label:
+                        st.session_state["_precision_jump_notice"] = f"{jump_ticker} 선택값을 적용했습니다."
                         st.success("정밀관측소 선택값을 바꿨습니다. 왼쪽 사이드바에서 정밀관측소 화면을 열어 확인하세요.")
                     else:
-                        st.warning("정밀관측소 선택값으로 연결할 수 없습니다. 자유 종목 탐색에서 직접 입력해 주세요.")
+                        st.warning("정밀관측소로 보낼 티커를 확인할 수 없습니다.")
         with quick_jump_cols[2]:
             st.caption("전광판에서 종목을 고른 뒤 적용하면 정밀관측소의 종목 선택이 그 종목으로 맞춰집니다.")
 
@@ -33535,7 +33600,7 @@ if main_page == "precision":
 
     if pending_free_ticker:
         st.session_state[PRECISION_FREE_TICKER_KEY] = pending_free_ticker
-    if pending_free_market in ["KOSPI (.KS)", "KOSDAQ (.KQ)"]:
+    if pending_free_market in PRECISION_FREE_MARKET_OPTIONS:
         st.session_state[PRECISION_FREE_MARKET_KEY] = pending_free_market
 
     current_precision_option = st.session_state.get(PRECISION_SELECTED_OPTION_KEY)
@@ -33584,8 +33649,8 @@ if main_page == "precision":
                 )
             with q2:
                 quick_market = st.selectbox(
-                    "한국 시장",
-                    ["KOSPI (.KS)", "KOSDAQ (.KQ)"],
+                    "시장",
+                    PRECISION_FREE_MARKET_OPTIONS,
                     key="precision_quick_free_market",
                 )
             with q3:
@@ -33595,8 +33660,11 @@ if main_page == "precision":
                     if not quick_ticker:
                         st.warning("티커나 종목코드를 입력하세요.")
                     else:
-                        st.session_state[PRECISION_FREE_TICKER_KEY] = _split_precision_free_ticker(quick_ticker)[0]
-                        st.session_state[PRECISION_FREE_MARKET_KEY] = quick_market
+                        quick_base_ticker, quick_inferred_market = _split_precision_free_ticker(quick_ticker)
+                        if quick_market in PRECISION_KR_MARKET_OPTIONS and quick_inferred_market != PRECISION_US_MARKET_OPTION and "." not in quick_ticker.upper():
+                            quick_inferred_market = quick_market
+                        st.session_state[PRECISION_FREE_TICKER_KEY] = quick_base_ticker
+                        st.session_state[PRECISION_FREE_MARKET_KEY] = quick_inferred_market
                         st.session_state[PRECISION_FORCE_FREE_OPTION_KEY] = True
                         st.rerun()
 
@@ -33611,7 +33679,16 @@ if main_page == "precision":
                 st.session_state[PRECISION_FREE_MARKET_KEY] = _market_option
         if PRECISION_FREE_TICKER_KEY not in st.session_state:
             st.session_state[PRECISION_FREE_TICKER_KEY] = "GOOGL"
-        if st.session_state.get(PRECISION_FREE_MARKET_KEY) not in ["KOSPI (.KS)", "KOSDAQ (.KQ)"]:
+            st.session_state[PRECISION_FREE_MARKET_KEY] = PRECISION_US_MARKET_OPTION
+        if st.session_state.get(PRECISION_FREE_MARKET_KEY) not in PRECISION_FREE_MARKET_OPTIONS:
+            default_free_ticker = st.session_state.get(PRECISION_FREE_TICKER_KEY, "")
+            st.session_state[PRECISION_FREE_MARKET_KEY] = (
+                "KOSPI (.KS)" if _is_precision_kr_code_like(default_free_ticker) else PRECISION_US_MARKET_OPTION
+            )
+        elif (
+            st.session_state.get(PRECISION_FREE_MARKET_KEY) == PRECISION_US_MARKET_OPTION
+            and _is_precision_kr_code_like(st.session_state.get(PRECISION_FREE_TICKER_KEY, ""))
+        ):
             st.session_state[PRECISION_FREE_MARKET_KEY] = "KOSPI (.KS)"
 
         c1, c2 = st.columns([2, 1])
@@ -33624,12 +33701,15 @@ if main_page == "precision":
             )
         with c2:
             mkt_opt = st.selectbox(
-                "시장 (한국주식 시)",
-                ["KOSPI (.KS)", "KOSDAQ (.KQ)"],
+                "시장",
+                PRECISION_FREE_MARKET_OPTIONS,
                 key=PRECISION_FREE_MARKET_KEY,
             )
 
-        tkr = ensure_kr_suffix_if_code(user_tkr_raw, ".KS" if "KOSPI" in mkt_opt else ".KQ")
+        if mkt_opt == PRECISION_US_MARKET_OPTION and not _is_precision_kr_code_like(user_tkr_raw):
+            tkr = user_tkr_raw
+        else:
+            tkr = ensure_kr_suffix_if_code(user_tkr_raw, ".KQ" if "KOSDAQ" in mkt_opt else ".KS")
         tkr = sanitize_ticker_value(tkr)
 
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
