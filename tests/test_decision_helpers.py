@@ -1,22 +1,33 @@
-"""Focused unit tests for the small helper functions extracted from
-`calc_scores_and_decision` in step 3 of the guard -> policy -> signal ->
-sizing decomposition.
+"""Focused unit tests for decision helpers extracted from app.py.
 
-These complement the golden-snapshot tests
-(tests/test_decision_golden_snapshot.py). The golden snapshots freeze
-whatever the synthetic price scenarios happen to produce end-to-end, but
-synthetic price data struggles to land on some specific branches (e.g.
-SAFETY_RED + an aggressive new-entry code at the same time). Now that
-`_apply_safety_state_override` and `_compute_sizing_hint` are standalone
-functions, we can drive those branches directly with hand-picked inputs.
+Most helpers now live in stock_lab_core.decision_engine so they can be
+tested without importing the full Streamlit app. A small app-level fixture is
+kept only for helpers that still belong to app.py.
 """
 import pandas as pd
 import pytest
 
+from stock_lab_core.decision_engine import (
+    apply_safety_state_override,
+    build_decision_outcome,
+    build_sideways_quality_state,
+    compute_sizing_hint,
+    has_down_session_pressure,
+    translate_new_entry_decision_for_holding,
+)
+
+class _DecisionHelperAdapter:
+    build_decision_outcome = staticmethod(build_decision_outcome)
+    _apply_safety_state_override = staticmethod(apply_safety_state_override)
+    _translate_new_entry_decision_for_holding = staticmethod(translate_new_entry_decision_for_holding)
+    _has_down_session_pressure = staticmethod(has_down_session_pressure)
+    build_sideways_quality_state = staticmethod(build_sideways_quality_state)
+    _compute_sizing_hint = staticmethod(compute_sizing_hint)
+
 
 @pytest.fixture(scope="module")
-def helpers(app_module):
-    return app_module
+def helpers():
+    return _DecisionHelperAdapter
 
 
 def _outcome(app_module, label, color, code):
@@ -126,8 +137,8 @@ def test_non_holding_position_keeps_new_entry_leader_label(helpers):
     assert outcome.label == "🆕신규진입: 대장주 포착"
 
 
-def test_today_market_guard_reasons_name_triggering_indexes(helpers):
-    stats = helpers._today_benchmark_guard_stats(pd.DataFrame([
+def test_today_market_guard_reasons_name_triggering_indexes(app_module):
+    stats = app_module._today_benchmark_guard_stats(pd.DataFrame([
         {"시장": "KOSPI", "티커": "^KS11", "1일": 0.046, "5일": 0.026, "20일": 0.118, "MA20": "상회", "MA50": "상회", "연속하락": 0},
         {"시장": "KOSDAQ", "티커": "^KQ11", "1일": 0.011, "5일": -0.015, "20일": 0.029, "MA20": "하회", "MA50": "상회", "연속하락": 0},
         {"시장": "KOSPI200 ETF", "티커": "069500.KS", "1일": 0.048, "5일": 0.030, "20일": 0.130, "MA20": "상회", "MA50": "상회", "연속하락": 0},
