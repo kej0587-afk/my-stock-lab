@@ -12080,6 +12080,15 @@ def _flow_stat_radar_figure(card):
     return fig
 
 
+def _flow_stat_values_line(card):
+    values = card.get("values", {}) if isinstance(card, dict) else {}
+    parts = []
+    for label in ["강도", "확산", "단기유입", "모멘텀", "안정도", "타점"]:
+        value = clean_float(values.get(label, np.nan), np.nan)
+        parts.append(f"{label} {float(value):.1f}/10" if finite_num(value) else f"{label} -")
+    return " · ".join(parts)
+
+
 def _flow_stat_guard_caption(market_guard):
     if not market_guard:
         return ""
@@ -12140,6 +12149,12 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
     guard_caption = _flow_stat_guard_caption(market_guard)
     if guard_caption:
         st.caption(guard_caption)
+    show_radars = st.toggle(
+        "돈흐름 능력치 그래프 보기",
+        value=False,
+        key="market_flow_stat_show_radar",
+        help="기본은 빠른 요약만 표시합니다. 그래프는 필요할 때만 켜서 확인하세요.",
+    )
     cols = st.columns(len(cards))
     for idx, card in enumerate(cards):
         with cols[idx]:
@@ -12147,7 +12162,15 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
                 f"**{card['market']} · {card['title']}**  \n"
                 f"시장모드 `{card['mode']}` · 평균 {card['total']}/10 · {card['source']}"
             )
-            st.plotly_chart(_flow_stat_radar_figure(card), width='stretch', key=f"market_flow_stat_radar_{card['market']}")
+            if show_radars:
+                st.plotly_chart(
+                    _flow_stat_radar_figure(card),
+                    width='stretch',
+                    key=f"market_flow_stat_radar_{idx}_{card['market']}",
+                    config={"displayModeBar": False, "responsive": True},
+                )
+            else:
+                st.caption(_flow_stat_values_line(card))
             st.caption(f"대표 ETF: {card.get('etfs', '-')}")
             if card.get("anchor_representatives"):
                 st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
@@ -12585,6 +12608,15 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
         })
     st.dataframe(pd.DataFrame(summary_rows), width='stretch', hide_index=True, height=min(360, 80 + len(summary_rows) * 35))
 
+    show_sector_radars = st.toggle(
+        "섹터별 능력치 그래프 보기",
+        value=False,
+        key="sector_flow_ability_show_radar",
+        help="기본은 표로만 봅니다. 그래프는 필요할 때만 켜면 화면 전환이 가벼워집니다.",
+    )
+    if not show_sector_radars:
+        return
+
     with st.expander("섹터별 능력치 그래프", expanded=True):
         top_cards = cards[:6]
         cols = st.columns(3 if len(top_cards) >= 3 else len(top_cards))
@@ -12595,7 +12627,8 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
                 st.plotly_chart(
                     _flow_stat_radar_figure(card),
                     width='stretch',
-                    key=f"sector_flow_ability_{re.sub(r'[^0-9A-Za-z가-힣]+', '_', card['title'])}_{idx}",
+                    key=f"sector_flow_ability_radar_{idx}",
+                    config={"displayModeBar": False, "responsive": True},
                 )
                 st.caption(f"대표 ETF: {card.get('etfs', '-')}")
                 st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
