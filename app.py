@@ -810,7 +810,7 @@ except Exception as _today_queue_classify_import_error:
         )
         forced_wait = wait_text.str.contains(
             r"R/R\s*[<＜]\s*1|손익비\s*1\s*미만|목표가.*부족|풀진입\s*보류|현재가\s*보류|"
-            r"눌림대기|눌림\s*대기|돌파대기|정밀확인|패턴관찰|패턴성공|패턴유효|DCA조건부",
+            r"눌림대기|눌림\s*대기|돌파대기|패턴관찰|패턴성공|패턴유효|DCA조건부",
             regex=True,
             na=False,
         )
@@ -31855,6 +31855,24 @@ def render_today_queue_tab(mode):
     label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
     final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
     grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+    action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
+    reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
+    defense_reason_mask = reason_bucket.isin([
+        "비중초과 방어",
+        "시장방어",
+        "급락방어",
+        "가격방어",
+        "추세방어",
+        "데이터확인",
+        "기타 하드차단",
+    ])
+    visible_wait_or_defense_mask = (
+        final_read_series.str.contains(r"눌림대기|돌파대기|DCA조건부|방어|추격금지|데이터확인|관망", regex=True, na=False)
+        | label_series.str.contains(r"R/R\s*[<＜]\s*1|R/R<1|대기|관망|보류|추격금지|시장위험|추매중단|보유점검", regex=True, na=False)
+        | grade_series.str.contains(r"R/R\s*[<＜]\s*1|R/R<1|시장방어|방어|추격금지|DCA조건부", regex=True, na=False)
+        | action_series.str.contains(r"R/R 회복 대기|눌림/종가 확인|DCA 대기|방어/원인점검|추가매수 제외", regex=True, na=False)
+        | defense_reason_mask
+    )
     leveraged_dca_watch_mask = (
         code_series.str.contains(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
         | final_read_series.str.contains("DCA조건부", regex=False, na=False)
@@ -31864,7 +31882,7 @@ def render_today_queue_tab(mode):
     hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
     dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
     buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
-    caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask
+    caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask
     market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
@@ -31874,8 +31892,9 @@ def render_today_queue_tab(mode):
     # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
     _upside_map: dict[str, str] = {}
     _upside_value_map: dict[str, float] = {}
-    if buyish_mask.any() and "티커" in summary_df.columns:
-        for _t in summary_df.loc[buyish_mask, "티커"].astype(str):
+    upside_lookup_mask = buyish_mask & ~defense_reason_mask
+    if upside_lookup_mask.any() and "티커" in summary_df.columns:
+        for _t in summary_df.loc[upside_lookup_mask, "티커"].astype(str):
             try:
                 _snap = get_analyst_snapshot(_t)
                 _target = clean_float((_snap.get("data") or {}).get("targetMeanPrice"), 0.0) or 0.0
@@ -31888,8 +31907,11 @@ def render_today_queue_tab(mode):
                 pass
 
     wait_mask = _today_queue_wait_mask(summary_df, buyish_mask, _upside_value_map)
-    execution_mask = buyish_mask & ~wait_mask
-    reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
+    if "최종읽기" in summary_df.columns:
+        final_actionable_mask = final_read_series.str.contains("정밀확인", regex=False, na=False)
+    else:
+        final_actionable_mask = pd.Series(True, index=summary_df.index)
+    execution_mask = buyish_mask & final_actionable_mask & ~wait_mask & ~visible_wait_or_defense_mask & ~caution_mask
     overweight_mask = caution_mask & reason_bucket.eq("비중초과 방어")
     market_defense_mask = caution_mask & reason_bucket.eq("시장방어")
     price_defense_mask = caution_mask & reason_bucket.eq("가격방어")
@@ -31902,7 +31924,8 @@ def render_today_queue_tab(mode):
     render_today_market_guard_panel(market_guard)
 
     st.markdown("#### 2. 오늘의 실행 카드")
-    render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
+    candidate_focus_mask = execution_mask | wait_mask
+    render_today_action_card(summary_df, candidate_focus_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
 
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("점검 종목", f"{len(summary_df)}개")
@@ -31917,13 +31940,13 @@ def render_today_queue_tab(mode):
 
     # ── 섹터 집중도 경고 ─────────────────────────────────────────────────
     # 매수/관심 후보가 2개 이상이면 같은 asset_class 끼리 묶어 중복 섹터를 잡아냄
-    if buyish_mask.sum() >= 2 and "티커" in summary_df.columns:
+    if candidate_focus_mask.sum() >= 2 and "티커" in summary_df.columns:
         _ticker_to_class = {
             str(it.get("ticker", "")).strip().upper(): str(it.get("asset_class", "")).strip()
             for it in watch_items
         }
         _class_buckets: dict[str, list[str]] = {}
-        for _tkr in summary_df.loc[buyish_mask, "티커"].astype(str).str.upper():
+        for _tkr in summary_df.loc[candidate_focus_mask, "티커"].astype(str).str.upper():
             _cls = _ticker_to_class.get(_tkr, "")
             if _cls:
                 _class_buckets.setdefault(_cls, []).append(_tkr)

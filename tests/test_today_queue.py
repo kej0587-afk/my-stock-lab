@@ -167,6 +167,24 @@ def test_today_wait_mask_still_hides_non_timing_hard_blocks():
     assert not bool(mask.iloc[0])
 
 
+def test_today_wait_mask_keeps_plain_precision_check_executable():
+    summary_df = pd.DataFrame([{
+        "종목명": "Leader",
+        "티커": "LEAD",
+        "🔥기술적 타점": "🚀신규진입: 대장주 포착",
+        "패턴타점": "-",
+        "최종읽기": "✅정밀확인",
+        "📌후보등급": "✅A급",
+        "핵심근거": "RS 강함",
+        "판정코드": "NEW_ENTRY_LEADER",
+    }])
+    buyish_mask = pd.Series([True], index=summary_df.index)
+
+    mask = today_queue_wait_mask(summary_df, buyish_mask)
+
+    assert not bool(mask.iloc[0])
+
+
 def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_valid():
     final_read = build_dashboard_final_read(
         {"decision_code": "QUALITY_RECOVERY_CANDIDATE", "decision_group": "buyish"},

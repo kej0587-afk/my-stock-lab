@@ -169,7 +169,7 @@ def today_queue_wait_mask(
     )
     forced_wait = wait_text.str.contains(
         r"R/R\s*[<＜]\s*1|손익비\s*1\s*미만|목표가.*부족|풀진입\s*보류|현재가\s*보류|"
-        r"눌림대기|눌림\s*대기|돌파대기|정밀확인|패턴관찰|패턴성공|패턴유효|DCA조건부",
+        r"눌림대기|눌림\s*대기|돌파대기|패턴관찰|패턴성공|패턴유효|DCA조건부",
         regex=True,
         na=False,
     )
