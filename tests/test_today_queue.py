@@ -131,6 +131,22 @@ def test_today_queue_marks_new_macro_storm_as_market_buy_block():
     assert build_dashboard_final_read(decision) == "🛡️시장방어(매수금지)"
 
 
+def test_today_queue_routes_storm_leverage_wait_to_market_defense():
+    row = pd.Series({
+        "종목명": "2x Bitcoin ETF",
+        "티커": "BITX",
+        "유형": "ETF",
+        "매크로상태": "STORM",
+        "🔥기술적 타점": "⚡레버리지 신규 타점 대기: R/R 부족",
+        "패턴타점": "-",
+        "최종읽기": "⏳눌림대기",
+        "📌후보등급": "✅ETF 양호",
+        "핵심근거": "레버리지 전용 단계: 미보유 관찰 ×0",
+    })
+
+    assert today_queue_reason_bucket(row) == "시장방어"
+
+
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch():
     summary_df = pd.DataFrame([{
         "종목명": "FCX",

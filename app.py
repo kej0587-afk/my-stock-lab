@@ -747,16 +747,26 @@ except Exception as _today_queue_classify_import_error:
         return bool(TODAY_QUEUE_DEFENSE_TEXT_RE.search(text))
 
     def _today_queue_reason_bucket(row):
+        ticker = str(row.get("티커", "") or "").upper()
+        type_label = str(row.get("유형", "") or "")
         label = str(row.get("🔥기술적 타점", "") or "")
         code = str(row.get("판정코드", "") or "")
         data_state = str(row.get("데이터상태", "") or "")
+        macro_state = str(row.get("매크로상태", "") or "")
         pattern_timing = str(row.get("패턴타점", "") or "")
         pattern_reason = str(row.get("패턴근거", "") or "")
         final_read = str(row.get("최종읽기", "") or "")
         grade_label = str(row.get("📌후보등급", "") or "")
         core_reason = str(row.get("핵심근거", "") or "")
-        text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
+        text = " ".join([ticker, type_label, label, code, data_state, macro_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
         primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
+        leveraged_text = re.search(
+            r"레버리지|인버스|2X|3X|ULTRA|DAILY\s+TARGET|QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if macro_state.upper() == "STORM" and leveraged_text:
+            return "시장방어"
         if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
             return "관심/눌림대기"
         if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
@@ -31846,17 +31856,24 @@ def render_today_queue_tab(mode):
         render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig)
         return
 
+    summary_df = summary_df.copy()
     if "판정분류" in summary_df.columns:
         signal_group = summary_df["판정분류"].astype(str)
     else:
         signal_group = summary_df["🔥기술적 타점"].astype(str).map(classify_decision_signal)
 
+    ticker_series = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+    type_series = summary_df.get("유형", pd.Series("", index=summary_df.index)).astype(str)
     code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
     label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
     final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
     grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
     action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
     reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
+    leveraged_display_mask = (
+        label_series.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
+        | ticker_series.str.upper().str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+    )
     defense_reason_mask = reason_bucket.isin([
         "비중초과 방어",
         "시장방어",
@@ -31866,6 +31883,35 @@ def render_today_queue_tab(mode):
         "데이터확인",
         "기타 하드차단",
     ])
+    market_reason_mask = reason_bucket.eq("시장방어")
+    core_storm_mask = market_reason_mask & label_series.str.contains(r"코어\s*방어|코어\s*ETF|거치\s*적립|감속\s*적립", regex=True, na=False)
+    defense_final_label = pd.Series("🛡️방어우선", index=summary_df.index)
+    defense_final_label.loc[market_reason_mask] = "🛡️시장방어(추매중단)"
+    defense_final_label.loc[market_reason_mask & leveraged_display_mask] = "🛡️레버리지시장방어"
+    defense_final_label.loc[core_storm_mask] = "🧱코어방어(적립확인)"
+    defense_final_label.loc[reason_bucket.eq("비중초과 방어")] = "🛡️비중방어"
+    defense_final_label.loc[reason_bucket.eq("급락방어")] = "🛡️급락방어(종가확인)"
+    defense_final_label.loc[reason_bucket.eq("가격방어")] = "🛡️가격방어(원인점검)"
+    defense_final_label.loc[reason_bucket.eq("추세방어")] = "🛡️추세방어(추매보류)"
+    defense_final_label.loc[reason_bucket.eq("데이터확인")] = "⚪데이터확인"
+    defense_final_override_mask = (
+        defense_reason_mask
+        & (
+            final_read_series.str.contains(r"정밀확인|눌림대기|돌파대기|관망", regex=True, na=False)
+            | (market_reason_mask & ~final_read_series.str.contains(r"시장방어|레버리지시장방어|코어방어", regex=True, na=False))
+        )
+    )
+    if defense_final_override_mask.any():
+        summary_df.loc[defense_final_override_mask, "최종읽기"] = defense_final_label.loc[defense_final_override_mask]
+
+    market_action_label = pd.Series("시장방어 점검", index=summary_df.index)
+    market_action_label.loc[action_series.str.contains(r"R/R 회복 대기", regex=True, na=False)] = "시장방어/RR대기"
+    market_action_label.loc[leveraged_display_mask] = "레버리지 신규대기"
+    market_action_label.loc[core_storm_mask] = "코어 적립확인"
+    if market_reason_mask.any():
+        summary_df.loc[market_reason_mask, "실행메모"] = market_action_label.loc[market_reason_mask]
+        final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+        action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
     visible_wait_or_defense_mask = (
         final_read_series.str.contains(r"눌림대기|돌파대기|DCA조건부|방어|추격금지|데이터확인|관망", regex=True, na=False)
         | label_series.str.contains(r"R/R\s*[<＜]\s*1|R/R<1|대기|관망|보류|추격금지|시장위험|추매중단|보유점검", regex=True, na=False)
@@ -31889,12 +31935,21 @@ def render_today_queue_tab(mode):
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
 
-    # ── 목표가 Upside (매수/관심 후보만 조회, analyst snapshot 6h 캐시 활용) ─
+    # ── 목표가 Upside (방어 탭도 정보 표시는 필요하므로 개별주는 함께 조회) ─
     _upside_map: dict[str, str] = {}
     _upside_value_map: dict[str, float] = {}
-    upside_lookup_mask = buyish_mask & ~defense_reason_mask
+    has_lookup_ticker_mask = ticker_series.str.strip().ne("") & ~ticker_series.str.strip().str.lower().isin(["-", "nan", "none"])
+    upside_lookup_mask = has_lookup_ticker_mask & ~type_series.str.contains(r"ETF|펀드", regex=True, na=False)
     if upside_lookup_mask.any() and "티커" in summary_df.columns:
-        for _t in summary_df.loc[upside_lookup_mask, "티커"].astype(str):
+        _seen_upside_tickers: set[str] = set()
+        for _raw_t in summary_df.loc[upside_lookup_mask, "티커"].astype(str):
+            _t = sanitize_ticker_value(_raw_t)
+            if not _t:
+                continue
+            _seen_key = _t.upper()
+            if _seen_key in _seen_upside_tickers:
+                continue
+            _seen_upside_tickers.add(_seen_key)
             try:
                 _snap = get_analyst_snapshot(_t)
                 _target = clean_float((_snap.get("data") or {}).get("targetMeanPrice"), 0.0) or 0.0
@@ -31902,7 +31957,9 @@ def render_today_queue_tab(mode):
                 if _target > 0 and _cur > 0:
                     _up = (_target - _cur) / _cur * 100
                     _upside_value_map[_t] = float(_up)
+                    _upside_value_map[str(_raw_t).strip()] = float(_up)
                     _upside_map[_t] = f"+{_up:.1f}%" if _up >= 0 else f"{_up:.1f}%"
+                    _upside_map[str(_raw_t).strip()] = _upside_map[_t]
             except Exception:
                 pass
 

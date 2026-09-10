@@ -100,16 +100,26 @@ def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -
 
 def today_queue_reason_bucket(row: Any) -> str:
     """Classify a Today Queue row into the display bucket used by the tabs."""
+    ticker = str(row.get("티커", "") or "").upper()
+    type_label = str(row.get("유형", "") or "")
     label = str(row.get("🔥기술적 타점", "") or "")
     code = str(row.get("판정코드", "") or "")
     data_state = str(row.get("데이터상태", "") or "")
+    macro_state = str(row.get("매크로상태", "") or "")
     pattern_timing = str(row.get("패턴타점", "") or "")
     pattern_reason = str(row.get("패턴근거", "") or "")
     final_read = str(row.get("최종읽기", "") or "")
     grade_label = str(row.get("📌후보등급", "") or "")
     core_reason = str(row.get("핵심근거", "") or "")
-    text = " ".join([label, code, data_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
+    text = " ".join([ticker, type_label, label, code, data_state, macro_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
     primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
+    leveraged_text = re.search(
+        r"레버리지|인버스|2X|3X|ULTRA|DAILY\s+TARGET|QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if macro_state.upper() == "STORM" and leveraged_text:
+        return "시장방어"
     if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
