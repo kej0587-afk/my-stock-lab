@@ -1951,7 +1951,7 @@ with st.sidebar:
             if not tmp_df.empty and "account_type" in tmp_df.columns:
                 db_accounts = tmp_df["account_type"].dropna().unique().tolist()
                 base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
-        except:
+        except Exception:
             pass
 
         # 2. 스트림릿 고질적 버그(StreamlitAPIException) 완벽 우회
@@ -2100,7 +2100,7 @@ def lookup_yfinance_info(ticker):
     try:
         info = yf.Ticker(ticker).info
         if not info or not isinstance(info, dict): return {}
-    except:
+    except Exception:
         return {}
 
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
@@ -2111,7 +2111,7 @@ def lookup_yfinance_info(ticker):
             try:
                 # yfinance latin-1 버그 복구
                 val = val.encode('latin-1').decode('utf-8')
-            except:
+            except UnicodeError:
                 pass
         result[key] = val
     return result
@@ -2126,7 +2126,7 @@ def lookup_yfinance_display_name(ticker):
         try:
             # latin-1으로 잘못 읽힌 것을 utf-8으로 재해석
             return text.encode('latin-1').decode('utf-8')
-        except:
+        except UnicodeError:
             return text
 
     for field in ["shortName", "longName", "displayName"]:
@@ -30539,6 +30539,106 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
                         st.error(message)
 
 
+def _render_today_market_flow_reference_metrics(kr_top5, us_top5, global_top, local_top, theme_top5):
+    st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
+    metric_cols = st.columns(4)
+    if not kr_top5.empty:
+        r = kr_top5.iloc[0]
+        metric_cols[0].metric("한국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+    else:
+        metric_cols[0].metric("한국 ETF 참고 1위", "-", "-")
+
+    if not us_top5.empty:
+        r = us_top5.iloc[0]
+        metric_cols[1].metric("미국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
+    else:
+        metric_cols[1].metric("미국 ETF 참고 1위", "-", "-")
+
+    if not global_top.empty:
+        r = global_top.iloc[0]
+        metric_cols[2].metric("글로벌 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+    elif not local_top.empty:
+        r = local_top.iloc[0]
+        metric_cols[2].metric("대표 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
+    else:
+        metric_cols[2].metric("글로벌/대표 ETF 참고 1위", "-", "-")
+
+    if not theme_top5.empty:
+        r = theme_top5.iloc[0]
+        metric_cols[3].metric(
+            "테마 참고 1위",
+            str(r["테마"]),
+            f"{fmt_flow_score(r['테마돈흐름점수'])} pts · {r.get('테마판정', r.get('상태', ''))}",
+        )
+        if "대표주" in r.index:
+            metric_cols[3].caption(f"대표주: {r.get('대표주', '-')}")
+    else:
+        metric_cols[3].metric("테마 참고 1위", "-", "-")
+
+    st.caption(
+        "참고 1위는 원천 점수만 본 값입니다. 실제 실행 후보판은 ETF/섹터·테마·하위테마·대표주·가격위치·업종내부를 함께 걸러 순위가 다를 수 있습니다."
+    )
+
+
+def _select_today_market_flow_detail_view():
+    flow_view_options = ["실행 후보판", "개별 종목 후보", "원천/매핑", "로테이션 차트"]
+    if st.session_state.get("today_market_flow_detail_view") not in flow_view_options:
+        st.session_state["today_market_flow_detail_view"] = flow_view_options[0]
+    return st.radio(
+        "시장 돈흐름 표시",
+        flow_view_options,
+        horizontal=True,
+        key="today_market_flow_detail_view",
+        help="처음에는 실행 후보판만 봅니다. 개별 종목, 원천 상세, 차트는 필요할 때만 엽니다.",
+    )
+
+
+def _render_today_market_flow_send_to_watchlist(flow_df):
+    with st.expander("전광판으로 보내기", expanded=False):
+        send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
+        available_groups = [g for g in send_groups if g in set(flow_df["구분"].astype(str))]
+        if not available_groups:
+            st.info("전광판으로 보낼 ETF 후보가 없습니다.")
+            return
+
+        group_col, select_col, action_col = st.columns([1.15, 2.4, 1.0])
+        with group_col:
+            send_group = st.selectbox("그룹", available_groups, key="today_flow_send_group")
+        send_df = (
+            flow_df[flow_df["구분"].astype(str).eq(send_group)]
+            .dropna(subset=["돈흐름점수"])
+            .sort_values("돈흐름점수", ascending=False)
+            .copy()
+        )
+        if send_df.empty:
+            st.info("선택한 그룹에 계산 가능한 ETF가 없습니다.")
+            return
+
+        option_rows = send_df.reset_index(drop=True)
+        option_labels = [
+            f"{idx + 1}. {row['섹터']} | {row['Ticker']} | {fmt_flow_score(row['돈흐름점수'])} pts"
+            for idx, row in option_rows.iterrows()
+        ]
+        with select_col:
+            selected_label = st.selectbox("보낼 섹터/ETF", option_labels, key="today_flow_send_target")
+        selected_idx = option_labels.index(selected_label)
+        selected_row = option_rows.iloc[selected_idx]
+        already_added = is_in_watchlist(selected_row["Ticker"])
+        with action_col:
+            st.write("")
+            st.write("")
+            if already_added:
+                st.caption("이미 등록됨")
+            elif st.button("전광판 추가", key="today_flow_send_add", width='stretch'):
+                ok, message = add_money_flow_row_to_watchlist(selected_row)
+                if ok:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.info(message)
+        st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
+
+
 def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("처음에는 실행 후보판만 봅니다. 원천 1위와 차트는 후보를 고른 뒤 확인하는 참고 자료입니다.")
@@ -30629,55 +30729,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
     render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=sector_ability_cards)
 
-    st.caption("아래 4개 카드는 원천 데이터별 참고 1위입니다. 매수/관심 판단은 바로 아래 `실행 후보판`을 우선하세요.")
-    metric_cols = st.columns(4)
-    if not kr_top5.empty:
-        r = kr_top5.iloc[0]
-        metric_cols[0].metric("한국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
-    else:
-        metric_cols[0].metric("한국 ETF 참고 1위", "-", "-")
-
-    if not us_top5.empty:
-        r = us_top5.iloc[0]
-        metric_cols[1].metric("미국 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", f"{fmt_flow_score(r['돈흐름점수'])} pts")
-    else:
-        metric_cols[1].metric("미국 ETF 참고 1위", "-", "-")
-
-    if not global_top.empty:
-        r = global_top.iloc[0]
-        metric_cols[2].metric("글로벌 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
-    elif not local_top.empty:
-        r = local_top.iloc[0]
-        metric_cols[2].metric("대표 ETF 참고 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["3개월수익률"]))
-    else:
-        metric_cols[2].metric("글로벌/대표 ETF 참고 1위", "-", "-")
-
-    if not theme_top5.empty:
-        r = theme_top5.iloc[0]
-        metric_cols[3].metric(
-            "테마 참고 1위",
-            str(r["테마"]),
-            f"{fmt_flow_score(r['테마돈흐름점수'])} pts · {r.get('테마판정', r.get('상태', ''))}",
-        )
-        if "대표주" in r.index:
-            metric_cols[3].caption(f"대표주: {r.get('대표주', '-')}")
-    else:
-        metric_cols[3].metric("테마 참고 1위", "-", "-")
-
-    st.caption(
-        "참고 1위는 원천 점수만 본 값입니다. 실제 실행 후보판은 ETF/섹터·테마·하위테마·대표주·가격위치·업종내부를 함께 걸러 순위가 다를 수 있습니다."
-    )
-
-    flow_view_options = ["실행 후보판", "개별 종목 후보", "원천/매핑", "로테이션 차트"]
-    if st.session_state.get("today_market_flow_detail_view") not in flow_view_options:
-        st.session_state["today_market_flow_detail_view"] = flow_view_options[0]
-    detail_view = st.radio(
-        "시장 돈흐름 표시",
-        flow_view_options,
-        horizontal=True,
-        key="today_market_flow_detail_view",
-        help="처음에는 실행 후보판만 봅니다. 개별 종목, 원천 상세, 차트는 필요할 때만 엽니다.",
-    )
+    _render_today_market_flow_reference_metrics(kr_top5, us_top5, global_top, local_top, theme_top5)
+    detail_view = _select_today_market_flow_detail_view()
 
     if detail_view == "실행 후보판":
         render_today_unified_flow_panel(
@@ -30708,47 +30761,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         render_naver_theme_coverage_panel()
         return snapshot
 
-    with st.expander("전광판으로 보내기", expanded=False):
-        send_groups = ["한국 섹터", "미국 섹터", "글로벌", "국내상장 대표 ETF", "월배당 ETF"]
-        available_groups = [g for g in send_groups if g in set(flow_df["구분"].astype(str))]
-        if not available_groups:
-            st.info("전광판으로 보낼 ETF 후보가 없습니다.")
-        else:
-            group_col, select_col, action_col = st.columns([1.15, 2.4, 1.0])
-            with group_col:
-                send_group = st.selectbox("그룹", available_groups, key="today_flow_send_group")
-            send_df = (
-                flow_df[flow_df["구분"].astype(str).eq(send_group)]
-                .dropna(subset=["돈흐름점수"])
-                .sort_values("돈흐름점수", ascending=False)
-                .copy()
-            )
-            if send_df.empty:
-                st.info("선택한 그룹에 계산 가능한 ETF가 없습니다.")
-            else:
-                option_rows = send_df.reset_index(drop=True)
-                option_labels = [
-                    f"{idx + 1}. {row['섹터']} | {row['Ticker']} | {fmt_flow_score(row['돈흐름점수'])} pts"
-                    for idx, row in option_rows.iterrows()
-                ]
-                with select_col:
-                    selected_label = st.selectbox("보낼 섹터/ETF", option_labels, key="today_flow_send_target")
-                selected_idx = option_labels.index(selected_label)
-                selected_row = option_rows.iloc[selected_idx]
-                already_added = is_in_watchlist(selected_row["Ticker"])
-                with action_col:
-                    st.write("")
-                    st.write("")
-                    if already_added:
-                        st.caption("이미 등록됨")
-                    elif st.button("전광판 추가", key="today_flow_send_add", width='stretch'):
-                        ok, message = add_money_flow_row_to_watchlist(selected_row)
-                        if ok:
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.info(message)
-                st.caption("추가하면 관심목록에 저장되어 전광판에서 가격/판정 신호를 볼 수 있습니다.")
+    _render_today_market_flow_send_to_watchlist(flow_df)
 
     # ── 공통: 로테이션 차트 그리기 ───────────────────────────────────
     def _render_rotation_chart_and_table(grp_df: pd.DataFrame, label_col: str, ret_col_1m: str = "1개월수익률", live_us: bool = False):
