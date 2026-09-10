@@ -32089,59 +32089,125 @@ def render_today_queue_tab(mode):
 
     flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
 
-    tabs = st.tabs([
-        f"실행 후보 ({int(execution_mask.sum())})",
-        f"관심/눌림대기 ({int(wait_mask.sum())})",
-        f"돈흐름 후보 ({len(flow_shortlist_df)})",
-        f"비중초과 방어 ({int(overweight_mask.sum())})",
-        f"시장방어 ({int(market_defense_mask.sum())})",
-        f"가격방어 ({int(price_defense_mask.sum())})",
-        f"급락방어 ({int(rapid_drop_mask.sum())})",
-        f"추세방어 ({int(structure_mask.sum())})",
-        f"과열/타점대기 ({int(overheat_mask.sum())})",
-        f"데이터확인 ({int(data_issue_mask.sum())})",
-        f"기타 주의 ({int(other_caution_mask.sum())})",
-        "전체",
-    ])
-    with tabs[0]:
-        st.caption("정밀관측소에서 비중·현금·당일 변동성만 확인하면 실행 후보로 볼 수 있는 그룹입니다.")
-        _render_today_queue_table(summary_df.loc[execution_mask], "현재 바로 실행 후보로 볼 종목은 없습니다.")
-    with tabs[1]:
-        st.caption("최종읽기 기준: `👀돌파대기`는 관심등록, `✅정밀확인`은 정밀관측소 확인, `⏳눌림대기`와 `⏳DCA조건부`는 추격보다 조건 확인/다음 눌림 대기입니다.")
-        _render_today_queue_table(summary_df.loc[wait_mask], "관심/눌림대기 종목이 없습니다.")
-    with tabs[2]:
+    queue_views = {
+        "execution": {
+            "label": "실행 후보",
+            "count": int(execution_mask.sum()),
+            "caption": "정밀관측소에서 비중·현금·당일 변동성만 확인하면 실행 후보로 볼 수 있는 그룹입니다.",
+            "df": summary_df.loc[execution_mask],
+            "empty": "현재 바로 실행 후보로 볼 종목은 없습니다.",
+        },
+        "wait": {
+            "label": "관심/눌림대기",
+            "count": int(wait_mask.sum()),
+            "caption": "최종읽기 기준: `👀돌파대기`는 관심등록, `✅정밀확인`은 정밀관측소 확인, `⏳눌림대기`와 `⏳DCA조건부`는 추격보다 조건 확인/다음 눌림 대기입니다.",
+            "df": summary_df.loc[wait_mask],
+            "empty": "관심/눌림대기 종목이 없습니다.",
+        },
+        "flow": {
+            "label": "돈흐름 후보",
+            "count": len(flow_shortlist_df),
+            "caption": "오늘 돈흐름에서 먼저 볼 후보입니다.",
+            "df": None,
+            "empty": "",
+        },
+        "overweight": {
+            "label": "비중초과 방어",
+            "count": int(overweight_mask.sum()),
+            "caption": "비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.",
+            "df": summary_df.loc[overweight_mask],
+            "empty": "비중초과 방어 대상이 없습니다.",
+            "sort_low_first": True,
+        },
+        "market": {
+            "label": "시장방어",
+            "count": int(market_defense_mask.sum()),
+            "caption": "시장 전체 위험 때문에 신규/추매를 멈추는 그룹입니다. 기존 보유 전량 매도 신호가 아니라 비중·손절선·하락 원인 점검 신호입니다.",
+            "df": summary_df.loc[market_defense_mask],
+            "empty": "시장방어로 분류된 종목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "price": {
+            "label": "가격방어",
+            "count": int(price_defense_mask.sum()),
+            "caption": "고점대비 낙폭이 커진 종목입니다. 추세훼손 확정이 아니라 새 돈 투입 전 하락 원인과 종가 안정부터 보는 그룹입니다.",
+            "df": summary_df.loc[price_defense_mask],
+            "empty": "가격방어로 분류된 종목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "rapid": {
+            "label": "급락방어",
+            "count": int(rapid_drop_mask.sum()),
+            "caption": "RS가 살아 있어도 하루 급락봉과 거래량이 잡힌 종목입니다. 신규/추매보다 종가와 다음 봉 회복을 먼저 봅니다.",
+            "df": summary_df.loc[rapid_drop_mask],
+            "empty": "급락방어로 분류된 종목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "structure": {
+            "label": "추세방어",
+            "count": int(structure_mask.sum()),
+            "caption": "MA50 이탈, MA20 하회+RS 약함 등 실제 추세 조건이 약해진 종목입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.",
+            "df": summary_df.loc[structure_mask],
+            "empty": "추세방어로 분류된 종목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "overheat": {
+            "label": "과열/타점대기",
+            "count": int(overheat_mask.sum()),
+            "caption": "볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.",
+            "df": summary_df.loc[overheat_mask],
+            "empty": "과열/타점대기 종목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "data": {
+            "label": "데이터확인",
+            "count": int(data_issue_mask.sum()),
+            "caption": "가격 이력 또는 지표 계산을 못 불러온 항목입니다. 현재가는 보조 조회로 표시될 수 있지만, 일봉 이력이 없으면 판정은 보류합니다.",
+            "df": summary_df.loc[data_issue_mask],
+            "empty": "데이터확인 항목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "other": {
+            "label": "기타 주의",
+            "count": int(other_caution_mask.sum()),
+            "caption": "위 방어/대기/데이터확인 그룹에 들어가지 않은 기타 주의 항목입니다.",
+            "df": summary_df.loc[other_caution_mask],
+            "empty": "기타 주의 항목이 없습니다.",
+            "sort_low_first": True,
+        },
+        "all": {
+            "label": "전체",
+            "count": len(summary_df),
+            "caption": "전체 점검 종목입니다.",
+            "df": summary_df,
+            "empty": "전체 점검 종목이 없습니다.",
+        },
+    }
+    queue_view_order = [
+        "execution", "wait", "flow", "overweight", "market", "price",
+        "rapid", "structure", "overheat", "data", "other", "all",
+    ]
+    selected_view_key = st.selectbox(
+        "상세 분류",
+        queue_view_order,
+        format_func=lambda key: f"{queue_views[key]['label']} ({queue_views[key]['count']})",
+        key="today_queue_detail_view",
+    )
+    selected_view = queue_views[selected_view_key]
+    st.caption(str(selected_view["caption"]))
+    if selected_view_key == "flow":
         render_today_flow_shortlist_panel(
             get_cached_today_market_flow_snapshot(),
             shortlist_df=flow_shortlist_df,
             key_prefix="today_queue_flow_shortlist",
             show_header=False,
         )
-    with tabs[3]:
-        st.caption("비중초과/목표비중 충족은 시장이 나빠서가 아니라 추가매수 금지와 리밸런싱 점검 신호입니다.")
-        _render_today_queue_table(summary_df.loc[overweight_mask], "비중초과 방어 대상이 없습니다.", sort_low_first=True)
-    with tabs[4]:
-        st.caption("시장 전체 위험 때문에 신규/추매를 멈추는 그룹입니다. 기존 보유 전량 매도 신호가 아니라 비중·손절선·하락 원인 점검 신호입니다.")
-        _render_today_queue_table(summary_df.loc[market_defense_mask], "시장방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[5]:
-        st.caption("고점대비 낙폭이 커진 종목입니다. 추세훼손 확정이 아니라 새 돈 투입 전 하락 원인과 종가 안정부터 보는 그룹입니다.")
-        _render_today_queue_table(summary_df.loc[price_defense_mask], "가격방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[6]:
-        st.caption("RS가 살아 있어도 하루 급락봉과 거래량이 잡힌 종목입니다. 신규/추매보다 종가와 다음 봉 회복을 먼저 봅니다.")
-        _render_today_queue_table(summary_df.loc[rapid_drop_mask], "급락방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[7]:
-        st.caption("MA50 이탈, MA20 하회+RS 약함 등 실제 추세 조건이 약해진 종목입니다. 신규매수보다 손절선·보유근거·회복조건을 먼저 봅니다.")
-        _render_today_queue_table(summary_df.loc[structure_mask], "추세방어로 분류된 종목이 없습니다.", sort_low_first=True)
-    with tabs[8]:
-        st.caption("볼린저 상단, 과열, 추격금지, MFI 과열 등 가격 위치 때문에 대기하는 그룹입니다.")
-        _render_today_queue_table(summary_df.loc[overheat_mask], "과열/타점대기 종목이 없습니다.", sort_low_first=True)
-    with tabs[9]:
-        st.caption("가격 이력 또는 지표 계산을 못 불러온 항목입니다. 현재가는 보조 조회로 표시될 수 있지만, 일봉 이력이 없으면 판정은 보류합니다.")
-        _render_today_queue_table(summary_df.loc[data_issue_mask], "데이터확인 항목이 없습니다.", sort_low_first=True)
-    with tabs[10]:
-        st.caption("위 방어/대기/데이터확인 그룹에 들어가지 않은 기타 주의 항목입니다.")
-        _render_today_queue_table(summary_df.loc[other_caution_mask], "기타 주의 항목이 없습니다.", sort_low_first=True)
-    with tabs[11]:
-        _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
+    else:
+        _render_today_queue_table(
+            selected_view["df"],
+            str(selected_view["empty"]),
+            sort_low_first=bool(selected_view.get("sort_low_first", False)),
+        )
 
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
 
