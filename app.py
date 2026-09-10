@@ -31862,6 +31862,7 @@ def render_today_queue_tab(mode):
     else:
         signal_group = summary_df["🔥기술적 타점"].astype(str).map(classify_decision_signal)
 
+    market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     ticker_series = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
     type_series = summary_df.get("유형", pd.Series("", index=summary_df.index)).astype(str)
     code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
@@ -31874,6 +31875,34 @@ def render_today_queue_tab(mode):
         label_series.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
         | ticker_series.str.upper().str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
     )
+    macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
+    kr_market_mask = ticker_series.map(lambda t: is_kr_listed(sanitize_ticker_value(t)))
+    us_market_mask = ~kr_market_mask
+    kr_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", "") or "")
+    us_mode = str(((market_guard or {}).get("us_stats", {}) or {}).get("mode", "") or "")
+    market_mode = str((market_guard or {}).get("mode", "") or "")
+    market_macro_risk = clean_float((market_guard or {}).get("macro_risk", globals().get("final_macro_risk", np.nan)), np.nan)
+    defensive_modes = {"비상", "위험", "방어"}
+    market_macro_storm = bool(finite_num(market_macro_risk) and float(market_macro_risk) >= 4.5)
+    leveraged_market_defense_mask = leveraged_display_mask & (
+        macro_state_series.eq("STORM") | market_macro_storm
+    )
+    if kr_mode in defensive_modes:
+        leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & kr_market_mask)
+    if us_mode in defensive_modes:
+        leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & us_market_mask)
+    if market_mode in {"전시장 비상", "국장 비상", "미장 비상", "위험", "방어", "위험장 반등"}:
+        if market_mode in {"전시장 비상", "위험", "방어", "위험장 반등"}:
+            leveraged_market_defense_mask = leveraged_market_defense_mask | leveraged_display_mask
+        elif market_mode == "국장 비상":
+            leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & kr_market_mask)
+        elif market_mode == "미장 비상":
+            leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & us_market_mask)
+    if leveraged_market_defense_mask.any():
+        reason_bucket.loc[leveraged_market_defense_mask] = "시장방어"
+        needs_market_label = leveraged_market_defense_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
+        summary_df.loc[needs_market_label, "🔥기술적 타점"] = "🛡️레버리지 시장위험: 신규/DCA 대기"
+        label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
     defense_reason_mask = reason_bucket.isin([
         "비중초과 방어",
         "시장방어",
@@ -31929,7 +31958,6 @@ def render_today_queue_tab(mode):
     dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
     buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
     caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask
-    market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
