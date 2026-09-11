@@ -28122,6 +28122,14 @@ TODAY_MARKET_STORY_RSS_PLAN = [
         "query": 'oil prices OR Hormuz shipping OR tanker OR PEMEX OR energy market',
     },
     {
+        "category": "원자재/금속",
+        "query": '"gold prices" OR "copper prices" OR "lithium carbonate" OR 금값 OR 구리 OR 탄산리튬',
+    },
+    {
+        "category": "실적/대장주",
+        "query": 'TSMC revenue OR Oracle earnings OR Adobe earnings OR "AI demand" OR "earnings beat" OR "earnings miss"',
+    },
+    {
         "category": "우주/항공",
         "query": 'SpaceX OR Starlink OR satellite OR aerospace',
     },
@@ -28145,6 +28153,22 @@ TODAY_MARKET_STORY_RSS_PLAN = [
 
 
 TODAY_BREAKING_STORY_RSS_PLAN = [
+    {
+        "category": "핵심 속보",
+        "query": '"무역수지" OR "반도체 수출" OR "exports" semiconductor Korea',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"호르무즈" OR "Hormuz" OR "Iran" oil shipping',
+    },
+    {
+        "category": "핵심 속보",
+        "query": '"CPI" OR "FOMC" OR "Federal Reserve" OR "ECB" OR "BOJ"',
+    },
+    {
+        "category": "핵심 속보",
+        "query": 'TSMC revenue OR Oracle earnings OR Adobe earnings OR "AI demand"',
+    },
     {
         "category": "핵심 속보",
         "query": '"SK하이닉스" "자사주" "소각"',
@@ -28322,6 +28346,187 @@ def _today_action_news_checkpoint(title: str, category: str = "") -> str:
     return "확인 필요"
 
 
+TODAY_ACTION_NEWS_SOURCE_SCORES = {
+    "reuters": 10,
+    "로이터": 10,
+    "연합인포맥스": 9,
+    "연합뉴스": 8,
+    "서울경제": 8,
+    "매일경제": 8,
+    "한국경제": 8,
+    "머니투데이": 7,
+    "아시아경제": 7,
+    "nvidia": 7,
+    "yahoo finance": 6,
+    "benzinga": 6,
+    "벤징가": 6,
+    "벤장가": 6,
+    "barchart": 6,
+    "the motley fool": 5,
+    "글로벌이코노믹": 5,
+    "경향신문": 5,
+}
+
+TODAY_ACTION_NEWS_LOW_QUALITY_SOURCES = (
+    "99bitcoins",
+    "tokenpost",
+    "tmgm",
+    "stock traders daily",
+    "키즈맘",
+    "news.sbs.co.kr",
+)
+
+TODAY_ACTION_NEWS_NOISE_WORDS = (
+    "알바생",
+    "식당 안내문",
+    "1인당 30만",
+    "줬다 빼앗",
+    "커버드콜 etf, 함께 담으면",
+    "yearly dividends",
+    "rule-based strategy",
+    "price-driven insight",
+)
+
+TODAY_ACTION_NEWS_RELEVANCE_TERMS = {
+    "국채/유동성": ("treasury", "yield", "bond", "국채", "채권", "금리", "유동성", "바이백", "buyback", "refunding"),
+    "외환/금리": ("fomc", "fed", "ecb", "boj", "rate", "yield", "dollar", "환율", "금리", "달러", "엔화", "cpi"),
+    "반도체·AI": ("nvidia", "tsmc", "micron", "hynix", "dram", "hbm", "semiconductor", "ai", "반도체", "하이닉스", "마이크론"),
+    "반도체·AI 리스크": ("nvidia", "tsmc", "micron", "hynix", "dram", "hbm", "cxmt", "semiconductor", "반도체", "메모리"),
+    "바이오·헬스케어": ("moderna", "vaccine", "clinical", "trial", "fda", "바이오", "임상", "백신", "헬스케어"),
+    "에너지/해운": ("oil", "wti", "brent", "hormuz", "shipping", "tanker", "유가", "원유", "호르무즈", "해운"),
+    "원자재/금속": ("gold", "copper", "lithium", "commodity", "금", "금값", "구리", "리튬", "탄산리튬", "원자재"),
+    "실적/대장주": ("earnings", "revenue", "sales", "guidance", "profit", "실적", "매출", "영업이익", "가이던스"),
+}
+
+
+def _today_action_news_source_score(source: str) -> int:
+    source_l = str(source or "").strip().lower()
+    for key, score in TODAY_ACTION_NEWS_SOURCE_SCORES.items():
+        if key in source_l:
+            return int(score)
+    if any(key in source_l for key in TODAY_ACTION_NEWS_LOW_QUALITY_SOURCES):
+        return 1
+    return 4
+
+
+def _today_action_news_reading_bucket(title: str, category: str, checkpoint: str, source_group: str = "") -> str:
+    text = f"{title or ''} {category or ''} {checkpoint or ''} {source_group or ''}".lower()
+    if re.search(r"cpi|fomc|fed|ecb|boj|rate|yield|dollar|환율|금리|달러|엔화|국채", text):
+        return "환율/금리"
+    if re.search(r"oil|wti|brent|hormuz|iran|shipping|유가|원유|호르무즈|이란", text):
+        return "원자재/지정학"
+    if re.search(r"gold|copper|lithium|commodity|금값|구리|리튬|탄산리튬|원자재", text):
+        return "원자재/금속"
+    if re.search(r"tsmc|oracle|adobe|earnings|revenue|실적|매출|영업이익", text):
+        return "실적"
+    if re.search(r"export|trade balance|무역수지|수출|세수|국채통합|재정", text):
+        return "경제"
+    if re.search(r"kospi|kosdaq|s&p|nasdaq|증시|코스피|코스닥|나스닥|s&p500", text):
+        return "시황"
+    if re.search(r"nvidia|micron|hynix|dram|hbm|semiconductor|ai|반도체|하이닉스|마이크론", text):
+        return "반도체/AI"
+    if source_group == "내 종목":
+        return "내 종목"
+    return "기타"
+
+
+def _today_action_news_beginner_summary(row: dict) -> str:
+    bucket = str(row.get("읽기분류", "") or "")
+    checkpoint = str(row.get("체크", "") or "")
+    title = str(row.get("제목", "") or "")
+    if bucket == "환율/금리":
+        return "금리·달러 방향을 보는 뉴스입니다. 성장주와 레버리지에는 부담/완화 신호로 읽습니다."
+    if bucket == "원자재/지정학":
+        return "유가·전쟁/해운 리스크 뉴스입니다. 인플레, 운송비, 원자재 관련주에 영향을 봅니다."
+    if bucket == "원자재/금속":
+        return "금·구리·리튬 가격 뉴스입니다. FCX/NEM 같은 원자재 종목의 배경 흐름으로 봅니다."
+    if bucket == "실적":
+        return "기업 실적 뉴스입니다. 같은 업종의 수요가 좋은지 나쁜지 확인합니다."
+    if bucket == "경제":
+        return "경기 체력 뉴스입니다. 수출·세수·무역수지가 좋아지면 시장 하방을 줄이는 재료입니다."
+    if bucket == "시황":
+        return "시장 분위기 뉴스입니다. 매수 판단보다 오늘 위험선호가 강한지 약한지 확인합니다."
+    if bucket == "반도체/AI":
+        return "AI·반도체 수요/공급 뉴스입니다. 내 반도체 비중이 크면 가장 먼저 확인합니다."
+    if checkpoint == "확인 필요" or "확인 필요" in title:
+        return "제목만으로 방향성이 약합니다. 원문 확인 전에는 매수 재료로 쓰지 않습니다."
+    return "제목과 출처를 확인한 뒤 내 종목·섹터와 연결되는지만 봅니다."
+
+
+def _score_today_action_news_row(row: dict) -> dict:
+    out = dict(row or {})
+    title = str(out.get("제목", "") or "")
+    source = str(out.get("출처", "") or "")
+    category = str(out.get("카테고리", "") or "")
+    checkpoint = str(out.get("체크", "") or "")
+    source_group = str(out.get("구분", "") or "")
+    text_l = f"{title} {category} {checkpoint}".lower()
+    source_l = source.lower()
+
+    score = 3 + min(_today_action_news_source_score(source), 10) * 0.45
+    if source_group == "핵심속보":
+        score += 0.8
+    if source_group == "내 종목":
+        score += 0.4
+    if any(word.lower() in text_l for word in TODAY_ACTION_NEWS_NOISE_WORDS):
+        score -= 4.0
+    if any(key in source_l for key in TODAY_ACTION_NEWS_LOW_QUALITY_SOURCES):
+        score -= 2.0
+    if checkpoint == "확인 필요":
+        score -= 1.0
+
+    for cat_key, terms in TODAY_ACTION_NEWS_RELEVANCE_TERMS.items():
+        if cat_key in category:
+            if any(term.lower() in text_l for term in terms):
+                score += 1.2
+            else:
+                score -= 3.0
+            break
+
+    if re.search(r"속보|전망|인상|하락|급등|폭등|수출|실적|매출|영업이익|cpi|fomc|rate|yield|oil|revenue|earnings", text_l):
+        score += 1.0
+
+    bucket = _today_action_news_reading_bucket(title, category, checkpoint, source_group)
+    score = max(0.0, min(10.0, score))
+    out["읽기분류"] = bucket
+    out["중요도"] = round(score, 1)
+    out["초보요약"] = _today_action_news_beginner_summary(out)
+    return out
+
+
+def _rank_today_action_news_rows(rows: list[dict], limit: int = 18) -> list[dict]:
+    scored = [_score_today_action_news_row(row) for row in rows or []]
+    filtered = [row for row in scored if float(row.get("중요도") or 0) >= 4.0]
+    if not filtered:
+        filtered = scored
+    filtered.sort(
+        key=lambda row: (
+            -float(row.get("중요도") or 0),
+            0 if row.get("구분") == "핵심속보" else (1 if row.get("구분") == "시장/속보" else 2),
+            str(row.get("시간", "")),
+        )
+    )
+    return filtered[:limit]
+
+
+def _build_today_action_news_brief(rows: list[dict]) -> list[str]:
+    if not rows:
+        return []
+    buckets = {str(row.get("읽기분류", "") or "") for row in rows}
+    lines = []
+    if {"환율/금리", "원자재/지정학"} & buckets:
+        lines.append("오늘은 금리·유가·지정학을 먼저 봅니다. 성장주/레버리지는 이 조합이 부담이면 추격보다 대기가 맞습니다.")
+    if "원자재/금속" in buckets:
+        lines.append("금·구리·리튬 뉴스는 FCX/NEM 같은 원자재 종목의 배경입니다. 가격 방향과 달러/금리를 같이 봅니다.")
+    if "반도체/AI" in buckets or "실적" in buckets:
+        lines.append("반도체·AI는 수요와 실적 확인 뉴스가 핵심입니다. 단순 제목보다 TSMC·오라클·엔비디아 같은 대장축을 우선 봅니다.")
+    if "경제" in buckets:
+        lines.append("수출·무역수지·세수 뉴스는 시장 체력 확인용입니다. 단기 매수 신호보다 시장 하방 완충 재료로 봅니다.")
+    if not lines:
+        lines.append("오늘 뉴스는 방향성이 약합니다. 제목만 보고 매수하지 말고 정밀관측소 가격위치와 함께 확인하세요.")
+    return lines[:3]
+
+
 def _normalize_today_action_news_row(row: dict, source_group: str = "시장") -> dict:
     title = str((row or {}).get("title", "") or "").strip()
     category = str((row or {}).get("market_category", "") or (row or {}).get("category", "") or source_group)
@@ -28351,20 +28556,22 @@ def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_st
         "외환/금리",
         "정책/규제",
         "에너지/해운",
+        "원자재/금속",
+        "실적/대장주",
     )
     rows = []
     try:
-        breaking_rows = fetch_today_breaking_story_news(days=2, per_query=1)
+        breaking_rows = fetch_today_breaking_story_news(days=2, per_query=2)
     except Exception:
         breaking_rows = []
-    for row in breaking_rows[:7]:
+    for row in breaking_rows[:10]:
         rows.append(_normalize_today_action_news_row(row, "핵심속보"))
 
     try:
-        market_rows = fetch_today_market_story_news(selected_categories, per_category=2, days=2)
+        market_rows = fetch_today_market_story_news(selected_categories, per_category=4, days=2)
     except Exception:
         market_rows = []
-    for row in market_rows[:max_market_rows]:
+    for row in market_rows[: max_market_rows * 3]:
         rows.append(_normalize_today_action_news_row(row, "시장/속보"))
 
     try:
@@ -28386,9 +28593,10 @@ def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_st
         seen.add(key)
         deduped.append(row)
 
-    st.session_state[TODAY_ACTION_NEWS_ROWS_KEY] = deduped[:18]
+    ranked = _rank_today_action_news_rows(deduped, limit=18)
+    st.session_state[TODAY_ACTION_NEWS_ROWS_KEY] = ranked
     st.session_state[TODAY_ACTION_NEWS_LAST_RUN_KEY] = get_kst_now().strftime("%Y-%m-%d %H:%M")
-    return deduped[:18]
+    return ranked
 
 
 def render_today_action_news_panel(summary_df=None):
@@ -28423,14 +28631,25 @@ def render_today_action_news_panel(summary_df=None):
         if show.empty:
             st.info("표시할 주요 뉴스가 없습니다.")
             return
-        cols = ["구분", "체크", "카테고리", "종목", "제목", "출처", "시간", "링크"]
+
+        brief_lines = _build_today_action_news_brief(rows)
+        if brief_lines:
+            st.markdown("**오늘 뉴스 읽는 순서**")
+            for line in brief_lines:
+                st.caption(f"- {line}")
+
+        cols = ["구분", "읽기분류", "중요도", "체크", "카테고리", "종목", "제목", "초보요약", "출처", "시간", "링크"]
         st.dataframe(
             show[[c for c in cols if c in show.columns]],
             width='stretch',
             hide_index=True,
             column_config={"링크": st.column_config.LinkColumn("원문")},
         )
-        top_titles = show.head(3)["제목"].astype(str).tolist() if "제목" in show.columns else []
+        if "중요도" in show.columns:
+            show_for_titles = show.sort_values("중요도", ascending=False)
+        else:
+            show_for_titles = show
+        top_titles = show_for_titles.head(3)["제목"].astype(str).tolist() if "제목" in show_for_titles.columns else []
         if top_titles:
             st.caption("먼저 볼 제목: " + " / ".join(top_titles))
 
