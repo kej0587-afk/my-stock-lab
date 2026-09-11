@@ -116,6 +116,19 @@ def test_today_queue_exports_used_by_app():
     )
 
 
+def test_today_news_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.today_news",
+        [
+            "TODAY_BREAKING_STORY_RSS_PLAN",
+            "TODAY_MARKET_STORY_RSS_PLAN",
+            "build_today_action_news_brief",
+            "normalize_today_action_news_row",
+            "rank_today_action_news_rows",
+        ],
+    )
+
+
 def test_swing_radar_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.swing_radar",
