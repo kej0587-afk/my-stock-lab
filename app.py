@@ -5,7 +5,6 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 from datetime import datetime, timezone, timedelta
-from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 import hmac
 import io
@@ -940,6 +939,8 @@ from stock_lab_core.today_news import (
     TODAY_BREAKING_STORY_RSS_PLAN,
     TODAY_MARKET_STORY_RSS_PLAN,
     build_today_action_news_brief as _build_today_action_news_brief,
+    fetch_today_breaking_story_news as _fetch_today_breaking_story_news_core,
+    fetch_today_market_story_news as _fetch_today_market_story_news_core,
     normalize_today_action_news_row as _normalize_today_action_news_row,
     rank_today_action_news_rows as _rank_today_action_news_rows,
 )
@@ -28095,127 +28096,14 @@ def dedupe_today_auto_newspick_news_rows(news_rows):
     return deduped
 
 
-def _market_story_title_key(title, publisher=""):
-    text = re.sub(r"\s+", " ", str(title or "").strip().lower())
-    text = re.sub(r"\s+-\s+[^-]{2,80}$", "", text)
-    pub = re.sub(r"\s+", " ", str(publisher or "").strip().lower())
-    return f"{text}|{pub}"
-
-
-def _market_story_pub_dt(item):
-    raw = item.findtext("pubDate", "") or item.findtext("published", "")
-    try:
-        return parsedate_to_datetime(raw)
-    except Exception:
-        return None
-
-
-def _format_market_story_pub_dt(dt):
-    if dt is None:
-        return ""
-    try:
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        kst_dt = dt.astimezone(timezone(timedelta(hours=9)))
-        return kst_dt.strftime("%m/%d %H:%M")
-    except Exception:
-        return ""
-
-
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2):
-    selected = set(selected_categories or [])
-    per_category = max(1, min(int(per_category or 2), 4))
-    days = max(1, min(int(days or 2), 7))
-    rows = []
-    seen = set()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    for plan in TODAY_MARKET_STORY_RSS_PLAN:
-        category = str(plan.get("category", "시장"))
-        if selected and category not in selected:
-            continue
-        query = f"{plan.get('query', '')} when:{days}d"
-        encoded = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-        accepted = 0
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
-            items = root.findall("./channel/item")
-        except Exception:
-            items = []
-
-        for item in items:
-            title = html.unescape(str(item.findtext("title", "") or "").strip())
-            link = str(item.findtext("link", "") or "").strip()
-            publisher = html.unescape(str(item.findtext("source", "구글 뉴스") or "구글 뉴스").strip())
-            key = _market_story_title_key(title, publisher)
-            if not title or key in seen:
-                continue
-            seen.add(key)
-            pub_dt = _market_story_pub_dt(item)
-            rows.append({
-                "market_category": category,
-                "title": title,
-                "link": link,
-                "publisher": publisher,
-                "published": _format_market_story_pub_dt(pub_dt),
-                "source": "Google News RSS",
-            })
-            accepted += 1
-            if accepted >= per_category:
-                break
-    return rows
+    return _fetch_today_market_story_news_core(selected_categories, per_category=per_category, days=days)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_today_breaking_story_news(days=2, per_query=1):
-    days = max(1, min(int(days or 2), 7))
-    per_query = max(1, min(int(per_query or 1), 2))
-    rows = []
-    seen = set()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    for plan in TODAY_BREAKING_STORY_RSS_PLAN:
-        category = str(plan.get("category", "핵심 속보"))
-        query = f"{plan.get('query', '')} when:{days}d"
-        encoded = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
-        accepted = 0
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
-            items = root.findall("./channel/item")
-        except Exception:
-            items = []
-
-        for item in items:
-            title = html.unescape(str(item.findtext("title", "") or "").strip())
-            link = str(item.findtext("link", "") or "").strip()
-            publisher = html.unescape(str(item.findtext("source", "구글 뉴스") or "구글 뉴스").strip())
-            key = _market_story_title_key(title, publisher)
-            if not title or key in seen:
-                continue
-            seen.add(key)
-            pub_dt = _market_story_pub_dt(item)
-            rows.append({
-                "market_category": category,
-                "title": title,
-                "link": link,
-                "publisher": publisher,
-                "published": _format_market_story_pub_dt(pub_dt),
-                "source": "Google News RSS",
-            })
-            accepted += 1
-            if accepted >= per_query:
-                break
-    return rows
+    return _fetch_today_breaking_story_news_core(days=days, per_query=per_query)
 
 
 TODAY_ACTION_NEWS_ROWS_KEY = "today_action_news_rows"

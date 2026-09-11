@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import timezone, timedelta
+from email.utils import parsedate_to_datetime
+import html
 import re
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 
 
 TODAY_MARKET_STORY_RSS_PLAN = [
@@ -115,6 +121,102 @@ TODAY_BREAKING_STORY_RSS_PLAN = [
         "query": '"Micron" rebound OR "memory stocks" rebound OR "메모리주" "반등"',
     },
 ]
+
+
+def market_story_title_key(title, publisher="") -> str:
+    text = re.sub(r"\s+", " ", str(title or "").strip().lower())
+    text = re.sub(r"\s+-\s+[^-]{2,80}$", "", text)
+    pub = re.sub(r"\s+", " ", str(publisher or "").strip().lower())
+    return f"{text}|{pub}"
+
+
+def market_story_pub_dt(item):
+    raw = item.findtext("pubDate", "") or item.findtext("published", "")
+    try:
+        return parsedate_to_datetime(raw)
+    except Exception:
+        return None
+
+
+def format_market_story_pub_dt(dt) -> str:
+    if dt is None:
+        return ""
+    try:
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        kst_dt = dt.astimezone(timezone(timedelta(hours=9)))
+        return kst_dt.strftime("%m/%d %H:%M")
+    except Exception:
+        return ""
+
+
+def _fetch_google_news_rss_rows(plans, selected_categories=(), per_plan=2, days=2, default_category="시장") -> list[dict]:
+    selected = set(selected_categories or [])
+    per_plan = max(1, min(int(per_plan or 2), 4))
+    days = max(1, min(int(days or 2), 7))
+    rows = []
+    seen = set()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    for plan in plans:
+        category = str(plan.get("category", default_category))
+        if selected and category not in selected:
+            continue
+        query = f"{plan.get('query', '')} when:{days}d"
+        encoded = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko"
+        accepted = 0
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            root = ET.fromstring(urllib.request.urlopen(req, timeout=5).read())
+            items = root.findall("./channel/item")
+        except Exception:
+            items = []
+
+        for item in items:
+            title = html.unescape(str(item.findtext("title", "") or "").strip())
+            link = str(item.findtext("link", "") or "").strip()
+            publisher = html.unescape(str(item.findtext("source", "구글 뉴스") or "구글 뉴스").strip())
+            key = market_story_title_key(title, publisher)
+            if not title or key in seen:
+                continue
+            seen.add(key)
+            pub_dt = market_story_pub_dt(item)
+            rows.append({
+                "market_category": category,
+                "title": title,
+                "link": link,
+                "publisher": publisher,
+                "published": format_market_story_pub_dt(pub_dt),
+                "source": "Google News RSS",
+            })
+            accepted += 1
+            if accepted >= per_plan:
+                break
+    return rows
+
+
+def fetch_today_market_story_news(selected_categories=(), per_category=2, days=2) -> list[dict]:
+    return _fetch_google_news_rss_rows(
+        TODAY_MARKET_STORY_RSS_PLAN,
+        selected_categories=selected_categories,
+        per_plan=per_category,
+        days=days,
+        default_category="시장",
+    )
+
+
+def fetch_today_breaking_story_news(days=2, per_query=1) -> list[dict]:
+    return _fetch_google_news_rss_rows(
+        TODAY_BREAKING_STORY_RSS_PLAN,
+        selected_categories=(),
+        per_plan=per_query,
+        days=days,
+        default_category="핵심 속보",
+    )
 
 
 TODAY_ACTION_NEWS_SOURCE_SCORES = {

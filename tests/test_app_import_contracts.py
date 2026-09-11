@@ -123,6 +123,8 @@ def test_today_news_exports_used_by_app():
             "TODAY_BREAKING_STORY_RSS_PLAN",
             "TODAY_MARKET_STORY_RSS_PLAN",
             "build_today_action_news_brief",
+            "fetch_today_breaking_story_news",
+            "fetch_today_market_story_news",
             "normalize_today_action_news_row",
             "rank_today_action_news_rows",
         ],
