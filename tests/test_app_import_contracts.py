@@ -131,6 +131,16 @@ def test_today_news_exports_used_by_app():
     )
 
 
+def test_data_quality_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.data_quality",
+        [
+            "add_quality_issue",
+            "build_asset_quick_quality_report",
+        ],
+    )
+
+
 def test_swing_radar_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.swing_radar",
