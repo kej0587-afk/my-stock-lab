@@ -173,6 +173,7 @@ def test_portfolio_exports_used_by_app():
             "build_cash_buffer_scenario",
             "build_correlation_pair_summary",
             "build_market_scenario_summary",
+            "build_monthly_record_status",
             "build_portfolio_blended_benchmark_spec",
             "build_risk_contribution_df",
             "build_scenario_context",

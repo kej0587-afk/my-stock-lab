@@ -428,6 +428,51 @@ def prepare_monthly_performance_df(monthly_df):
     return df
 
 
+def build_monthly_record_status(monthly_logs_df, portfolio_summary, today=None):
+    perf_df = prepare_monthly_performance_df(monthly_logs_df)
+    today_ts = pd.Timestamp(today) if today is not None else pd.Timestamp.today()
+    current_month = today_ts.strftime("%Y-%m")
+    previous_month = (today_ts.replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+
+    empty_status = {
+        "is_empty": True,
+        "status": "기록 없음",
+        "latest_month": "-",
+        "record_count": 0,
+        "latest_asset": 0.0,
+        "latest_return": 0.0,
+        "current_asset": clean_float((portfolio_summary or {}).get("current_asset"), 0.0),
+        "asset_gap": 0.0,
+    }
+    if perf_df is None or perf_df.empty:
+        return empty_status
+
+    latest = perf_df.iloc[-1]
+    latest_month = pd.Timestamp(latest["month_end"]).strftime("%Y-%m")
+    latest_asset = clean_float(latest.get("evaluated_value"), 0.0)
+    latest_return = clean_float(latest.get("cum_return_pct"), 0.0)
+    current_asset = clean_float((portfolio_summary or {}).get("current_asset"), 0.0)
+    asset_gap = current_asset - latest_asset
+
+    if latest_month == current_month:
+        status = "이번 달 기록 있음"
+    elif latest_month == previous_month:
+        status = "최근 월 기록 완료"
+    else:
+        status = "업데이트 필요"
+
+    return {
+        "is_empty": False,
+        "status": status,
+        "latest_month": latest_month,
+        "record_count": int(len(perf_df)),
+        "latest_asset": latest_asset,
+        "latest_return": latest_return,
+        "current_asset": current_asset,
+        "asset_gap": asset_gap,
+    }
+
+
 def _month_end_price_points(close, month_ends):
     close = pd.Series(close).dropna().copy()
     if close.empty:

@@ -4,6 +4,7 @@ from stock_lab_core.portfolio import (
     build_asset_overview_kpis,
     build_cash_buffer_scenario,
     build_market_scenario_summary,
+    build_monthly_record_status,
     build_portfolio_blended_benchmark_spec,
     build_correlation_pair_summary,
     build_risk_contribution_df,
@@ -215,6 +216,40 @@ def test_portfolio_analysis_start_date_uses_first_month_record():
     )
 
     assert get_portfolio_analysis_start_date(monthly_logs) == pd.Timestamp("2026-01-01")
+
+
+def test_monthly_record_status_classifies_current_previous_and_stale_records():
+    summary = {"current_asset": 1_200_000}
+    current = build_monthly_record_status(
+        pd.DataFrame([
+            {"month": "2026-08", "total_invested": 1_000_000, "evaluated_value": 1_100_000, "dividend": 10_000},
+            {"month": "2026-09", "total_invested": 1_000_000, "evaluated_value": 1_150_000, "dividend": 0},
+        ]),
+        summary,
+        today="2026-09-14",
+    )
+    previous = build_monthly_record_status(
+        pd.DataFrame([
+            {"month": "2026-08", "total_invested": 1_000_000, "evaluated_value": 1_100_000, "dividend": 0},
+        ]),
+        summary,
+        today="2026-09-14",
+    )
+    stale = build_monthly_record_status(
+        pd.DataFrame([
+            {"month": "2026-07", "total_invested": 1_000_000, "evaluated_value": 1_050_000, "dividend": 0},
+        ]),
+        summary,
+        today="2026-09-14",
+    )
+    empty = build_monthly_record_status(pd.DataFrame(), summary, today="2026-09-14")
+
+    assert current["status"] == "이번 달 기록 있음"
+    assert current["record_count"] == 2
+    assert current["asset_gap"] == 50_000
+    assert previous["status"] == "최근 월 기록 완료"
+    assert stale["status"] == "업데이트 필요"
+    assert empty["is_empty"] is True
 
 
 def test_blended_benchmark_spec_groups_core_and_leveraged_assets():

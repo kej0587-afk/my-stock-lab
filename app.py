@@ -56,7 +56,6 @@ from stock_lab_core.config import (
     WATCHLIST_COLUMNS,
 )
 from stock_lab_core.data_quality import (
-    add_quality_issue,
     build_asset_quick_quality_report,
     build_data_quality_report_from_frames,
 )
@@ -1087,6 +1086,7 @@ from stock_lab_core.portfolio import (
     build_benchmark_return_df,
     build_cash_buffer_scenario,
     build_market_scenario_summary,
+    build_monthly_record_status,
     build_scenario_context,
     calc_asset_shock_table,
     calc_portfolio_summary,
@@ -26657,11 +26657,9 @@ def render_asset_quick_quality_summary(settings, holdings_df, dividends_df, mont
 
 
 def render_monthly_record_status(monthly_logs_df, portfolio_summary):
-    perf_df = prepare_monthly_performance_df(monthly_logs_df)
-    current_month = get_kst_now().strftime("%Y-%m")
-    previous_month = (pd.Timestamp(get_kst_now().date()).replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+    status_data = build_monthly_record_status(monthly_logs_df, portfolio_summary, get_kst_now().date())
 
-    if perf_df is None or perf_df.empty:
+    if status_data["is_empty"]:
         st.markdown("### 월별 기록 상태")
         cols = st.columns(4)
         cols[0].metric("기록 상태", "기록 없음")
@@ -26671,24 +26669,16 @@ def render_monthly_record_status(monthly_logs_df, portfolio_summary):
         st.info("월별 로그를 입력하면 자산 변화, 누적손익, 배당금, 벤치마크 비교 차트가 표시됩니다.")
         return
 
-    latest = perf_df.iloc[-1]
-    latest_month = pd.Timestamp(latest["month_end"]).strftime("%Y-%m")
-    latest_asset = clean_float(latest.get("evaluated_value"), 0.0)
-    latest_return = clean_float(latest.get("cum_return_pct"), 0.0)
-    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
-    asset_gap = current_asset - latest_asset
-
-    if latest_month == current_month:
-        status = "이번 달 기록 있음"
-    elif latest_month == previous_month:
-        status = "최근 월 기록 완료"
-    else:
-        status = "업데이트 필요"
+    status = status_data["status"]
+    latest_month = status_data["latest_month"]
+    latest_asset = status_data["latest_asset"]
+    latest_return = status_data["latest_return"]
+    asset_gap = status_data["asset_gap"]
 
     st.markdown("### 월별 기록 상태")
     cols = st.columns(4)
     cols[0].metric("기록 상태", status)
-    cols[1].metric("최신 기록월", latest_month, f"{len(perf_df)}개월")
+    cols[1].metric("최신 기록월", latest_month, f"{status_data['record_count']}개월")
     cols[2].metric("기록 평가자산", f"{latest_asset:,.0f}원", f"현재와 {asset_gap:+,.0f}원")
     cols[3].metric("기록 누적수익률", f"{latest_return:.2f}%")
 
