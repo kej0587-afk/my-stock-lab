@@ -1931,28 +1931,14 @@ st.markdown("""
 
 with st.sidebar:
     st.header("🛠️ 관제탑 세팅")
-    APP_MODE_LABELS = {
-        "개인모드": "내 자산 연동",
-        "범용모드": "직접 입력 분석",
-    }
+    app_mode = "개인모드"
     if IS_PUBLIC_DEMO:
-        app_mode = "범용모드"
         app_mode_label = "체험모드"
         st.info("체험모드입니다. 로그인 없이 볼 수 있고, 저장/복구/수정 내용은 서버에 반영되지 않습니다.")
-        st.caption("정밀관측소의 직접 입력값과 샘플 포트폴리오로 기능을 체험합니다.")
+        st.caption("샘플 포트폴리오와 전광판 기준으로 기능을 체험합니다.")
     else:
-        app_mode = st.radio(
-            "분석 기준",
-            ["개인모드", "범용모드"],
-            index=0,
-            format_func=lambda mode: APP_MODE_LABELS.get(mode, mode),
-            help="내 자산 연동은 저장된 보유자산/평단/목표비중을 사용합니다. 직접 입력 분석은 정밀관측소에서 임의 값을 넣어 한 종목을 가정 분석합니다.",
-        )
-        app_mode_label = APP_MODE_LABELS.get(app_mode, app_mode)
-        if app_mode == "개인모드":
-            st.caption("저장된 내 보유자산, 평단가, 현재비중, 목표비중을 기준으로 판정합니다.")
-        else:
-            st.caption("공개 접속 모드가 아닙니다. 로그인한 상태에서 총자산, 평단가, 현재/목표비중을 직접 넣어 가정 분석합니다.")
+        app_mode_label = "내 자산 연동"
+        st.caption("저장된 내 보유자산, 평단가, 현재비중, 목표비중을 기준으로 판정합니다.")
     news_debug = st.checkbox("뉴스 디버그 보기", value=False)
     if IS_PUBLIC_DEMO:
         st.caption("Signed in: public demo (저장 안 됨)")
@@ -7535,7 +7521,7 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
             "title": "ℹ️ 하락 패턴 경고 해제 확인",
             "body": (
                 f"현재가 {_chart_pattern_price_text(cur_p)}가 {name} 무효선 {invalid} 위에 있습니다. "
-                "직접입력/실시간가 기준으로는 하락 패턴 경고를 낮추고, 다음 봉에서 그 가격대 위에 안착하는지 확인하세요."
+                "수동보정/실시간가 기준으로는 하락 패턴 경고를 낮추고, 다음 봉에서 그 가격대 위에 안착하는지 확인하세요."
             ),
         }
 
@@ -19860,7 +19846,7 @@ def build_leveraged_dca_timing_state(c, state):
         tranche_weights = [0.20, 0.40, 0.40]
         entry1_cond = (
             (
-                f"보험성 소액만: R/R 2.0 가격 기준은 충족. 단, 과열/직접입력/실시간 급등 가능성이 있으면 거래량 진정과 기초축 동행 확인"
+                f"보험성 소액만: R/R 2.0 가격 기준은 충족. 단, 과열/수동보정/실시간 급등 가능성이 있으면 거래량 진정과 기초축 동행 확인"
                 if ram_rr2_met
                 else f"보험성 소액만: 자동 기준은 R/R 1.5~2.0 구간({ram_rr15_text}~{ram_pullback_text}) 확인. 현재가 추격은 거래량 진정 필요"
             )
@@ -32896,15 +32882,6 @@ if main_page == "precision":
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
 
     u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
-    if app_mode == "범용모드":
-        st.markdown("### 🧩 범용 입력값")
-        in1, in2 = st.columns(2)
-        with in1:
-            u_asset = st.number_input("총 자산(원)", min_value=0.0, value=10000000.0, step=100000.0)
-            u_price = st.number_input("내 평단가", min_value=0.0, value=0.0, step=1.0)
-        with in2:
-            u_curr_w = st.number_input("현재비중(%)", min_value=0.0, value=0.0, step=0.1)
-            u_targ_w = st.number_input("목표비중(%)", min_value=0.0, value=0.0, step=0.1)
 
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
@@ -33143,8 +33120,8 @@ if main_page == "precision":
                 chart_df = df
         else:
             chart_df = df
-        precision_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode=="범용모드" else has_p
-        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, u_price if app_mode=="범용모드" else my_p,
+        precision_has_pos = has_p
+        c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, is_free,
                                      app_mode, u_asset, u_curr_w, u_targ_w,
                                      live_price=display_cur_p)
@@ -33156,7 +33133,7 @@ if main_page == "precision":
             name,
             tkr,
             precision_has_pos,
-            u_price if app_mode=="범용모드" else my_p,
+            my_p,
         )
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
         precision_liquidity_profile = build_liquidity_thermal_profile(chart_df)
@@ -33181,7 +33158,7 @@ if main_page == "precision":
             )
 
             if manual_cur_p > 0:
-                price_source = "직접입력"
+                price_source = "수동보정"
 
             price_info_col, price_refresh_col = st.columns([2.2, 1])
             with price_info_col:
@@ -33200,7 +33177,7 @@ if main_page == "precision":
                     st.session_state[price_refresh_key] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     rerun_with_notice(f"{tkr} 현재가와 차트 이력을 다시 조회합니다.", "info")
                 st.number_input(
-                    "직접입력",
+                    "현재가 보정",
                     min_value=0.0,
                     step=0.01 if not is_kr_listed(tkr) else 1.0,
                     format="%.2f" if not is_kr_listed(tkr) else "%.0f",
@@ -33216,7 +33193,8 @@ if main_page == "precision":
                 if precision_chart_load_note:
                     st.caption(precision_chart_load_note)
 
-            if app_mode == "범용모드" or (is_free and not has_p): st.info("💡 직접 입력 기반 분석 모드입니다.")
+            if is_free and not has_p:
+                st.info("💡 전광판/보유자산에 없는 미보유 관찰 종목입니다.")
             else:
                 if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
                 dca_html = ""
@@ -33264,43 +33242,6 @@ if main_page == "precision":
                         for _r in _reasons:
                             st.caption(f"• {_r}")
 
-            if app_mode == "범용모드":
-                dca_html = ""
-                if clean_float(c.get("core_dca_rate"), 0.0) > 0:
-                    dca_html = (
-                        "<hr style='margin:8px 0; border-color:#334155;'>"
-                        f"코어 적립안: <b>{escape_html_value(c.get('core_dca_label', ''))}</b><br>"
-                        f"참고금액: <b>{clean_float(c.get('core_dca_amt'), 0.0):,.0f}원</b>"
-                    )
-                # ── 달러 표시 + 매수 주수 계산 ──────────────────────────
-                _buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
-                _cur_p = clean_float(display_cur_p, 0.0)
-                _fx = clean_float(usdkrw, 1400.0)
-                _is_us = not is_kr_listed(tkr)
-                if _is_us:
-                    _buy_usd = _buy_amt_krw / _fx if _fx > 0 else 0.0
-                    _buy_display = f"${_buy_usd:,.0f} (≈{_buy_amt_krw:,.0f}원)"
-                    _shares = _buy_usd / _cur_p if _cur_p > 0 else 0.0
-                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
-                else:
-                    _buy_display = f"{_buy_amt_krw:,.0f}원"
-                    _shares = _buy_amt_krw / _cur_p if _cur_p > 0 else 0.0
-                    _shares_txt = f"약 {_shares:.2f}주" if _shares > 0 else "-"
-                st.markdown(
-                    f"<div class='info-panel'><b>입력 기준</b><br>"
-                    f"총 자산: {u_asset:,.0f}원 | 평단가: {format_currency(u_price, tkr)}<br>"
-                    f"목표: {c['target_w']:.2f}% | 현재: {c['current_w']:.2f}%<br>"
-                    f"부족 매수액: <b>{_buy_display}</b><br>"
-                    f"현재가({format_currency(_cur_p, tkr)}) 기준 <b>{_shares_txt}</b>"
-                    f"{dca_html}</div>",
-                    unsafe_allow_html=True,
-                )
-                _reasons = c.get("decision_reasons", ())
-                if _reasons:
-                    with st.expander("🔍 판단근거 보기", expanded=False):
-                        for _r in _reasons:
-                            st.caption(f"• {_r}")
-
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
             _pattern_timing_note = build_chart_pattern_timing_note(precision_pattern_candidates, c)
             if _pattern_timing_note:
@@ -33329,11 +33270,8 @@ if main_page == "precision":
             st.caption("후보 등급은 종목의 우선순위입니다. 실제 매수 강도는 위 타점 문구, 목표비중, 포지션 사이징, 주봉·월봉 보정을 같이 봅니다.")
 
         with R:
-            p_line = u_price if app_mode == "범용모드" else my_p
-            _show_avg = p_line > 0 and (
-                (app_mode == "범용모드" and c['current_w'] > 0)
-                or (app_mode == "개인모드" and not is_free and has_p)
-            )
+            p_line = my_p
+            _show_avg = p_line > 0 and not is_free and has_p
             avg_line = p_line if _show_avg else 0.0
             show_chart_patterns = st.checkbox(
                 "차트 패턴 후보 표시",
@@ -33360,9 +33298,7 @@ if main_page == "precision":
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,
             )
-            _plan_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
-            _plan_my_price = u_price if app_mode == "범용모드" else my_p
-            render_entry_execution_plan(name, tkr, c, has_pos=_plan_has_pos, usdkrw=usdkrw, my_price=_plan_my_price)
+            render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)
             render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")
@@ -33393,9 +33329,7 @@ if main_page == "precision":
                 ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
             st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
-        _leveraged_panel_has_pos = (u_price > 0 or u_curr_w > 0) if app_mode == "범용모드" else has_p
-        _leveraged_panel_avg = u_price if app_mode == "범용모드" else my_p
-        render_leveraged_etf_precision_panel(name, tkr, c, _leveraged_panel_has_pos, _leveraged_panel_avg, usdkrw=usdkrw)
+        render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
@@ -33452,7 +33386,7 @@ if main_page == "precision":
                 rerun_with_notice(f"{tkr} 가격과 차트 이력을 다시 조회합니다.", "info")
         with _err_c2:
             st.number_input(
-                "현재가 직접입력",
+                "현재가 보정",
                 min_value=0.0,
                 step=0.01 if not is_kr_listed(tkr) else 1.0,
                 format="%.2f" if not is_kr_listed(tkr) else "%.0f",
