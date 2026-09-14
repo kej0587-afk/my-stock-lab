@@ -137,6 +137,7 @@ def test_data_quality_exports_used_by_app():
         [
             "add_quality_issue",
             "build_asset_quick_quality_report",
+            "build_data_quality_report_from_frames",
         ],
     )
 
