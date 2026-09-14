@@ -887,7 +887,7 @@ def build_core_dca_context_values(
         pool_label = "예수금+파킹자산" if current_dd <= -0.20 else "예수금"
     else:
         pool = max(clean_float(buy_amount), 0.0)
-        pool_label = "직접입력 부족분"
+        pool_label = "목표비중 부족분"
 
     amount = 0.0
     if rate > 0:

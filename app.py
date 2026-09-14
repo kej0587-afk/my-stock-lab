@@ -7913,6 +7913,13 @@ def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zone
     return profile
 
 
+def format_lwc_time(idx):
+    try:
+        return idx.strftime("%Y-%m-%d")
+    except Exception:
+        return str(idx)[:10]
+
+
 def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = "lwc_candle") -> bool:
     """TradingView Lightweight Charts 캔들스틱 + MA 라인 렌더링.
 
@@ -7922,14 +7929,8 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
     if not _LWC_AVAILABLE or df is None or df.empty:
         return False
 
-    def _to_lwc_time(idx):
-        try:
-            return idx.strftime("%Y-%m-%d")
-        except Exception:
-            return str(idx)[:10]
-
     candle_data = [
-        {"time": _to_lwc_time(t), "open": float(o), "high": float(h),
+        {"time": format_lwc_time(t), "open": float(o), "high": float(h),
          "low": float(l), "close": float(c)}
         for t, o, h, l, c in zip(
             df.index, df["Open"], df["High"], df["Low"], df["Close"]
@@ -7943,7 +7944,7 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
         if col_name not in df.columns:
             return None
         data = [
-            {"time": _to_lwc_time(t), "value": float(v)}
+            {"time": format_lwc_time(t), "value": float(v)}
             for t, v in zip(df.index, df[col_name])
             if pd.notna(v)
         ]
@@ -8915,12 +8916,6 @@ def render_lwc_baseline(
 
     bench_ret = _load_benchmark_returns(bench_ticker)
 
-    def _to_lwc_time(idx):
-        try:
-            return idx.strftime("%Y-%m-%d")
-        except Exception:
-            return str(idx)[:10]
-
     data = []
     for t, c in zip(df.index, df["Close"]):
         if not pd.notna(c):
@@ -8929,7 +8924,7 @@ def render_lwc_baseline(
         t_norm  = pd.Timestamp(t).normalize()
         b_ret   = float(bench_ret.get(t_norm, 0.0)) if not bench_ret.empty else 0.0
         excess  = round(etf_ret - b_ret, 3)
-        data.append({"time": _to_lwc_time(t), "value": excess})
+        data.append({"time": format_lwc_time(t), "value": excess})
 
     if not data:
         return False
@@ -16219,7 +16214,7 @@ def prefetch_benchmark_info_parallel(watchlist_items: list, max_workers: int = 6
 # build_indicators, get_trend → stock_lab_core/ta_engine.py 로 이동됨 (상단 import 블록 참조)
 
 # -------------------------------------------------
-# 6. 범용화 인터페이스 함수
+# 6. 포트폴리오 기준 조회 함수
 # -------------------------------------------------
 def get_sheet_current_weight(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
@@ -16241,38 +16236,37 @@ def has_position(name, ticker):
     if row is None: return False
     return float(row.get("보유량", 0.0) or 0.0) > 0
 
-def get_effective_total_asset(mode, user_asset, sheet_eval):
-    return sheet_eval if mode == "개인모드" else (float(user_asset) if user_asset > 0 else 0.0)
+def get_effective_total_asset(sheet_eval, fallback_asset=0.0):
+    sheet_eval = clean_float(sheet_eval, 0.0)
+    if sheet_eval > 0:
+        return sheet_eval
+    return clean_float(fallback_asset, 0.0)
 
-def get_effective_weights(mode, name, ticker, u_curr_w, u_targ_w):
-    if mode == "개인모드":
-        cw = get_sheet_current_weight(name, ticker)
-        tw = get_target_weight_from_sheet(name, ticker)
-        return cw, tw
-    return float(u_curr_w), float(u_targ_w)
+def get_effective_weights(name, ticker, fallback_current_w=0.0, fallback_target_w=0.0):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is None:
+        return clean_float(fallback_current_w, 0.0), clean_float(fallback_target_w, 0.0)
+    cw = clean_float(row.get("현재비중", 0.0), 0.0)
+    tw = clean_float(row.get("목표비중", 0.0), 0.0)
+    return cw, tw
 
-def get_effective_buy_amount(mode, name, ticker, eff_total, u_curr_w, u_targ_w):
-    cw, tw = get_effective_weights(mode, name, ticker, u_curr_w, u_targ_w)
+def get_effective_buy_amount(name, ticker, eff_total, fallback_current_w=0.0, fallback_target_w=0.0):
+    cw, tw = get_effective_weights(name, ticker, fallback_current_w, fallback_target_w)
     return round(eff_total * (max(tw - cw, 0) / 100), 0)
 
-def get_effective_bucket(mode, name, ticker):
-    if mode == "개인모드":
-        row = get_holding_row_by_ticker(holdings_table, ticker)
-        if row is not None:
-            return infer_bucket(ticker, row.get("bucket", "core"))
+def get_effective_bucket(name, ticker):
+    row = get_holding_row_by_ticker(holdings_table, ticker)
+    if row is not None:
+        return infer_bucket(ticker, row.get("bucket", "core"))
     return infer_bucket(ticker, "")
 
 def get_cash_available_for_dca(mode):
-    if mode != "개인모드":
-        return 0.0
     # globals() 대신 session_state 사용 (안전한 참조)
     return clean_float(st.session_state.get("_app_krw_cash"), 0.0) + (
         clean_float(st.session_state.get("_app_usd_cash"), 0.0) * clean_float(st.session_state.get("_app_usdkrw", 1400.0), 1400.0)
     )
 
 def get_reserve_available_for_crash_buy(mode):
-    if mode != "개인모드":
-        return 0.0
     table = st.session_state.get("_app_holdings_table")
     if table is None or table.empty or "bucket" not in table.columns or "원화환산" not in table.columns:
         return 0.0
@@ -16712,13 +16706,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     elif trend == "🌊역배열(하락)": smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
     else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 방향성 확정 대기."
 
-    eff_total = get_effective_total_asset(app_mode, user_total_asset, _te)
-    curr_w, targ_w = get_effective_weights(app_mode, name, ticker, user_curr_w, user_targ_w)
-    buy_amount = get_effective_buy_amount(app_mode, name, ticker, eff_total, user_curr_w, user_targ_w)
+    eff_total = get_effective_total_asset(_te, user_total_asset)
+    curr_w, targ_w = get_effective_weights(name, ticker, user_curr_w, user_targ_w)
+    buy_amount = get_effective_buy_amount(name, ticker, eff_total, user_curr_w, user_targ_w)
 
     price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
     weight_gap = targ_w - curr_w
-    effective_bucket = get_effective_bucket(app_mode, name, ticker)
+    effective_bucket = get_effective_bucket(name, ticker)
     is_core_etf = is_etf and effective_bucket == "core"
     is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
     is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
@@ -18876,7 +18870,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     effective_total_asset = clean_float(c.get("effective_total_asset"), 0.0)
     if buy_amt_krw <= 0 and effective_total_asset > 0 and weight_gap > 0:
         buy_amt_krw = round(effective_total_asset * weight_gap / 100.0, 0)
-    if buy_amt_krw <= 0 and str(c.get("app_mode", "")) != "범용모드":
+    if buy_amt_krw <= 0:
         try:
             sheet_target_w = clean_float(get_target_weight_from_sheet(name, ticker), 0.0)
             sheet_current_w = clean_float(get_sheet_current_weight(name, ticker), 0.0)
@@ -32881,8 +32875,6 @@ if main_page == "precision":
 
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
 
-    u_asset, u_price, u_curr_w, u_targ_w = 0.0, my_p, 0.0, 0.0
-
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
 
@@ -33123,7 +33115,7 @@ if main_page == "precision":
         precision_has_pos = has_p
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, is_free,
-                                     app_mode, u_asset, u_curr_w, u_targ_w,
+                                     app_mode, 0.0, 0.0, 0.0,
                                      live_price=display_cur_p)
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
