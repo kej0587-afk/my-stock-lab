@@ -264,6 +264,100 @@ def build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary
     return kpis, alerts
 
 
+def build_scenario_context(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    total_asset = (
+        float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
+    ) + clean_float(krw_cash) + clean_float(usd_cash) * clean_float(usdkrw, 1400.0)
+    full_df = append_cash_rows(
+        holdings_table.copy() if holdings_table is not None else pd.DataFrame(),
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        total_asset,
+    )
+    active_df = get_active_portfolio_rows(full_df)
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+    label_map = build_asset_label_map(active_df)
+
+    return {
+        "total_asset": total_asset,
+        "full_df": full_df,
+        "active_df": active_df,
+        "reserve_summary": reserve_summary,
+        "label_map": label_map,
+    }
+
+
+def calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier=True):
+    if active_df is None or active_df.empty:
+        return pd.DataFrame(columns=["자산", "티커", "현재금액", "현재비중", "적용충격", "예상손익", "충격후금액", "충격배수"])
+
+    label_map = build_asset_label_map(active_df)
+    rows = []
+    for _, row in active_df.iterrows():
+        ticker = str(row.get("티커", "")).strip()
+        value = clean_float(row.get("원화환산"), 0.0)
+        multiplier = infer_scenario_shock_multiplier(row) if use_multiplier else 1.0
+        applied_shock = clean_float(shock_pct, 0.0) * multiplier
+        pnl = value * applied_shock / 100
+        rows.append({
+            "자산": label_map.get(ticker, str(row.get("자산명", "")).strip() or ticker),
+            "티커": ticker,
+            "현재금액": value,
+            "현재비중": value / total_asset * 100 if total_asset > 0 else 0.0,
+            "적용충격": applied_shock,
+            "예상손익": pnl,
+            "충격후금액": max(value + pnl, 0.0),
+            "충격배수": multiplier,
+        })
+
+    return pd.DataFrame(rows).sort_values("예상손익").reset_index(drop=True)
+
+
+def build_market_scenario_summary(active_df, total_asset, shock_values, use_multiplier=True):
+    rows = []
+    for shock_pct in shock_values:
+        detail_df = calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier)
+        total_pnl = float(detail_df["예상손익"].sum()) if not detail_df.empty else 0.0
+        after_asset = total_asset + total_pnl
+        rows.append({
+            "시나리오": f"운용자산 {shock_pct:+.0f}%",
+            "기본충격": shock_pct,
+            "예상손익": total_pnl,
+            "충격후자산": after_asset,
+            "총자산변화율": total_pnl / total_asset * 100 if total_asset > 0 else 0.0,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def build_cash_buffer_scenario(active_df, total_asset, reserve_summary, target_waiting_pct, shock_pct, use_multiplier=True):
+    active_value = float(active_df["원화환산"].sum()) if active_df is not None and not active_df.empty else 0.0
+    current_waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_waiting_pct = clean_float(target_waiting_pct, current_waiting_pct)
+    additional_waiting = max(total_asset * (target_waiting_pct - current_waiting_pct) / 100, 0.0)
+
+    current_detail = calc_asset_shock_table(active_df, total_asset, shock_pct, use_multiplier)
+    current_loss = float(current_detail["예상손익"].sum()) if not current_detail.empty else 0.0
+
+    if active_value <= 0:
+        rebalanced_loss = current_loss
+    else:
+        exposure_ratio = max((active_value - additional_waiting) / active_value, 0.0)
+        rebalanced_loss = current_loss * exposure_ratio
+
+    return {
+        "current_waiting_pct": current_waiting_pct,
+        "target_waiting_pct": target_waiting_pct,
+        "additional_waiting": additional_waiting,
+        "current_loss": current_loss,
+        "rebalanced_loss": rebalanced_loss,
+        "loss_reduction": rebalanced_loss - current_loss,
+        "current_after_asset": total_asset + current_loss,
+        "rebalanced_after_asset": total_asset + rebalanced_loss,
+    }
+
+
 def _portfolio_ticker_key(ticker):
     raw = sanitize_ticker_value(ticker)
     if not raw:

@@ -2,9 +2,13 @@ import pandas as pd
 
 from stock_lab_core.portfolio import (
     build_asset_overview_kpis,
+    build_cash_buffer_scenario,
+    build_market_scenario_summary,
     build_portfolio_blended_benchmark_spec,
     build_correlation_pair_summary,
     build_risk_contribution_df,
+    build_scenario_context,
+    calc_asset_shock_table,
     calc_benchmark_metrics_from_returns,
     calc_drawdown_details,
     calc_portfolio_leverage_summary,
@@ -116,6 +120,49 @@ def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     assert by_title["데이터"]["value"] == "1개"
     assert any("대기자금" in alert for alert in alerts)
     assert any("최대 비중" in alert for alert in alerts)
+
+
+def test_scenario_helpers_apply_leverage_and_cash_buffer():
+    holdings = pd.DataFrame(
+        [
+            {
+                "티커": "VOO",
+                "자산명": "S&P500",
+                "원화환산": 6_000_000,
+                "bucket": "core",
+                "운용대상": True,
+            },
+            {
+                "티커": "SOXL",
+                "자산명": "반도체 3X",
+                "원화환산": 1_000_000,
+                "bucket": "leverage",
+                "운용대상": True,
+            },
+        ]
+    )
+
+    context = build_scenario_context(
+        holdings,
+        krw_cash=2_000_000,
+        usd_cash=0,
+        usdkrw=1400,
+        reserve_target_weight=20.0,
+    )
+    active = context["active_df"]
+    total_asset = context["total_asset"]
+
+    detail = calc_asset_shock_table(active, total_asset, -10, use_multiplier=True)
+    soxl = detail[detail["티커"].eq("SOXL")].iloc[0]
+    summary = build_market_scenario_summary(active, total_asset, [-10], use_multiplier=True)
+    buffer = build_cash_buffer_scenario(active, total_asset, context["reserve_summary"], 30.0, -10, use_multiplier=True)
+
+    assert total_asset == 9_000_000
+    assert soxl["적용충격"] == -30.0
+    assert soxl["예상손익"] == -300_000
+    assert summary.iloc[0]["예상손익"] == -900_000
+    assert buffer["additional_waiting"] == 700_000
+    assert buffer["rebalanced_loss"] > buffer["current_loss"]
 
 
 def test_leverage_summary_uses_ticker_and_name_multiplier_hints():
