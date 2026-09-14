@@ -1,6 +1,7 @@
 import pandas as pd
 
 from stock_lab_core.portfolio import (
+    build_asset_overview_dashboard_state,
     build_asset_overview_kpis,
     build_cash_buffer_scenario,
     build_market_scenario_summary,
@@ -121,6 +122,51 @@ def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     assert by_title["데이터"]["value"] == "1개"
     assert any("대기자금" in alert for alert in alerts)
     assert any("최대 비중" in alert for alert in alerts)
+
+
+def test_asset_overview_dashboard_state_prepares_metrics_and_kpis():
+    holdings = pd.DataFrame(
+        [
+            {
+                "티커": "VOO",
+                "자산명": "S&P500",
+                "원화환산": 7_000_000,
+                "현재비중": 70.0,
+                "리밸런싱목표비중": 60.0,
+                "비중차이": -10.0,
+                "현재가": 100.0,
+                "bucket": "core",
+                "is_etf": True,
+                "운용대상": True,
+            },
+        ]
+    )
+
+    state = build_asset_overview_dashboard_state(
+        holdings,
+        {
+            "current_asset": 10_000_000,
+            "stock_value": 7_000_000,
+            "cash_value": 3_000_000,
+            "total_dividend": 50_000,
+            "cum_profit": -100_000,
+            "cum_return": -1.0,
+        },
+        krw_cash=2_000_000,
+        usd_cash=1_000,
+        usdkrw=1000,
+        reserve_target_weight=25.0,
+    )
+
+    metrics = state["metrics"]
+    assert metrics["profit_label"] == "손실"
+    assert metrics["waiting_value"] == 3_000_000
+    assert metrics["waiting_pct"] == 30.0
+    assert metrics["waiting_delta"] == "+5.00%p vs 목표"
+    assert metrics["invest_pct"] == 70.0
+    assert metrics["deployable_value"] == 500_000
+    assert state["full_df"]["티커"].tolist() == ["VOO", "KRW_CASH", "USD_CASH"]
+    assert {item["title"] for item in state["kpis"]} >= {"운용 상태", "대기자금", "집중도"}
 
 
 def test_scenario_helpers_apply_leverage_and_cash_buffer():

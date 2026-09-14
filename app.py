@@ -1082,7 +1082,7 @@ except ImportError:
 from stock_lab_core.portfolio import (
     append_cash_rows,
     apply_holdings_weight_columns,
-    build_asset_overview_kpis,
+    build_asset_overview_dashboard_state,
     build_benchmark_return_df,
     build_cash_buffer_scenario,
     build_market_scenario_summary,
@@ -26737,56 +26737,37 @@ def render_kpi_summary_panel(kpis, alerts):
 
 
 def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
-    full_df = append_cash_rows(
-        holdings_table.copy(),
+    state = build_asset_overview_dashboard_state(
+        holdings_table,
+        portfolio_summary,
         krw_cash,
         usd_cash,
         usdkrw,
-        portfolio_summary["current_asset"]
+        reserve_target_weight,
     )
-    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
-
-    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
-    stock_value = clean_float(portfolio_summary.get("stock_value"), 0.0)
-    cash_value = clean_float(portfolio_summary.get("cash_value"), 0.0)
-    total_dividend = clean_float(portfolio_summary.get("total_dividend"), 0.0)
-    cum_profit = clean_float(portfolio_summary.get("cum_profit"), 0.0)
-    cum_return = clean_float(portfolio_summary.get("cum_return"), 0.0)
-    invest_value = clean_float(reserve_summary.get("invest_value"), 0.0)
-    waiting_value = clean_float(reserve_summary.get("waiting_value"), 0.0)
-    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
-    target_pct = clean_float(reserve_summary.get("target_pct"), 0.0)
-    excess_pct = clean_float(reserve_summary.get("excess_pct"), 0.0)
-
-    profit_label = "수익" if cum_profit >= 0 else "손실"
-    profit_delta = f"{cum_return:.2f}%"
-    waiting_gap = waiting_pct - target_pct
-    waiting_delta = f"{waiting_gap:+.2f}%p vs 목표"
-    invest_pct = (invest_value / current_asset * 100) if current_asset > 0 else 0.0
-
-    kpis, alerts = build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary)
-    render_kpi_summary_panel(kpis, alerts)
+    m = state["metrics"]
+    render_kpi_summary_panel(state["kpis"], state["alerts"])
 
     st.markdown("### 자산 현황 요약")
     top_cols = st.columns(4)
-    top_cols[0].metric("총자산", f"{current_asset:,.0f}원", f"투자자산 {stock_value:,.0f}원")
-    top_cols[1].metric(f"누적{profit_label}", f"{cum_profit:,.0f}원", profit_delta)
-    top_cols[2].metric("누적수익률", f"{cum_return:.2f}%", f"누적배당 {total_dividend:,.0f}원")
-    top_cols[3].metric("대기자금", f"{waiting_value:,.0f}원", waiting_delta)
+    top_cols[0].metric("총자산", f"{m['current_asset']:,.0f}원", f"투자자산 {m['stock_value']:,.0f}원")
+    top_cols[1].metric(f"누적{m['profit_label']}", f"{m['cum_profit']:,.0f}원", m["profit_delta"])
+    top_cols[2].metric("누적수익률", f"{m['cum_return']:.2f}%", f"누적배당 {m['total_dividend']:,.0f}원")
+    top_cols[3].metric("대기자금", f"{m['waiting_value']:,.0f}원", m["waiting_delta"])
 
     detail_cols = st.columns(4)
-    detail_cols[0].metric("투자자산", f"{invest_value:,.0f}원", f"{invest_pct:.2f}%")
-    detail_cols[1].metric("현금/예수금", f"{cash_value:,.0f}원")
-    detail_cols[2].metric("대기자금 목표", f"{target_pct:.2f}%")
-    detail_cols[3].metric("초과 대기자금", f"{clean_float(reserve_summary.get('deployable_value'), 0.0):,.0f}원", f"{excess_pct:.2f}%p")
+    detail_cols[0].metric("투자자산", f"{m['invest_value']:,.0f}원", f"{m['invest_pct']:.2f}%")
+    detail_cols[1].metric("현금/예수금", f"{m['cash_value']:,.0f}원")
+    detail_cols[2].metric("대기자금 목표", f"{m['target_pct']:.2f}%")
+    detail_cols[3].metric("초과 대기자금", f"{m['deployable_value']:,.0f}원", f"{m['excess_pct']:.2f}%p")
 
     gauge_cols = st.columns([2, 2, 1.2])
     with gauge_cols[0]:
-        st.caption(f"투자자산 비중 {invest_pct:.2f}%")
-        st.progress(min(max(invest_pct / 100, 0.0), 1.0))
+        st.caption(f"투자자산 비중 {m['invest_pct']:.2f}%")
+        st.progress(min(max(m["invest_pct"] / 100, 0.0), 1.0))
     with gauge_cols[1]:
-        st.caption(f"대기자금 비중 {waiting_pct:.2f}% / 목표 {target_pct:.2f}%")
-        st.progress(min(max(waiting_pct / 100, 0.0), 1.0))
+        st.caption(f"대기자금 비중 {m['waiting_pct']:.2f}% / 목표 {m['target_pct']:.2f}%")
+        st.progress(min(max(m["waiting_pct"] / 100, 0.0), 1.0))
     with gauge_cols[2]:
         last_price_refresh_time = st.session_state.get("latest_price_refresh_time", "-")
         st.caption("현재가 갱신")

@@ -167,6 +167,7 @@ def test_portfolio_exports_used_by_app():
             "annualize_period_return",
             "append_cash_rows",
             "apply_holdings_weight_columns",
+            "build_asset_overview_dashboard_state",
             "build_asset_overview_kpis",
             "build_asset_label_map",
             "build_benchmark_return_df",

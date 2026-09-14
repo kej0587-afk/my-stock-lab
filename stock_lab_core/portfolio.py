@@ -264,6 +264,56 @@ def build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary
     return kpis, alerts
 
 
+def build_asset_overview_dashboard_state(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    portfolio_summary = portfolio_summary or {}
+    holdings = holdings_table.copy() if holdings_table is not None else pd.DataFrame()
+    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
+    full_df = append_cash_rows(holdings, krw_cash, usd_cash, usdkrw, current_asset)
+    reserve_summary = calc_reserve_summary(full_df, reserve_target_weight)
+
+    stock_value = clean_float(portfolio_summary.get("stock_value"), 0.0)
+    cash_value = clean_float(portfolio_summary.get("cash_value"), 0.0)
+    total_dividend = clean_float(portfolio_summary.get("total_dividend"), 0.0)
+    cum_profit = clean_float(portfolio_summary.get("cum_profit"), 0.0)
+    cum_return = clean_float(portfolio_summary.get("cum_return"), 0.0)
+    invest_value = clean_float(reserve_summary.get("invest_value"), 0.0)
+    waiting_value = clean_float(reserve_summary.get("waiting_value"), 0.0)
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_pct = clean_float(reserve_summary.get("target_pct"), 0.0)
+    excess_pct = clean_float(reserve_summary.get("excess_pct"), 0.0)
+    deployable_value = clean_float(reserve_summary.get("deployable_value"), 0.0)
+    waiting_gap = waiting_pct - target_pct
+    invest_pct = (invest_value / current_asset * 100) if current_asset > 0 else 0.0
+
+    kpis, alerts = build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary)
+
+    return {
+        "full_df": full_df,
+        "reserve_summary": reserve_summary,
+        "kpis": kpis,
+        "alerts": alerts,
+        "metrics": {
+            "current_asset": current_asset,
+            "stock_value": stock_value,
+            "cash_value": cash_value,
+            "total_dividend": total_dividend,
+            "cum_profit": cum_profit,
+            "cum_return": cum_return,
+            "invest_value": invest_value,
+            "waiting_value": waiting_value,
+            "waiting_pct": waiting_pct,
+            "target_pct": target_pct,
+            "excess_pct": excess_pct,
+            "deployable_value": deployable_value,
+            "profit_label": "수익" if cum_profit >= 0 else "손실",
+            "profit_delta": f"{cum_return:.2f}%",
+            "waiting_gap": waiting_gap,
+            "waiting_delta": f"{waiting_gap:+.2f}%p vs 목표",
+            "invest_pct": invest_pct,
+        },
+    }
+
+
 def build_scenario_context(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     total_asset = (
         float(holdings_table["원화환산"].sum()) if holdings_table is not None and not holdings_table.empty and "원화환산" in holdings_table.columns else 0.0
