@@ -160,6 +160,110 @@ def calc_reserve_summary(df, reserve_target_weight):
     }
 
 
+def build_asset_overview_kpis(holdings_table, portfolio_summary, reserve_summary):
+    df = holdings_table.copy() if holdings_table is not None else pd.DataFrame()
+    current_asset = clean_float(portfolio_summary.get("current_asset"), 0.0)
+    cum_return = clean_float(portfolio_summary.get("cum_return"), 0.0)
+    waiting_pct = clean_float(reserve_summary.get("waiting_pct"), 0.0)
+    target_pct = clean_float(reserve_summary.get("target_pct"), 0.0)
+    waiting_gap = waiting_pct - target_pct
+
+    active_df = pd.DataFrame()
+    if not df.empty and "운용대상" in df.columns:
+        active_df = df[df["운용대상"].apply(clean_bool)].copy()
+    elif not df.empty:
+        active_df = df.copy()
+
+    if not active_df.empty and "티커" in active_df.columns:
+        active_df = active_df[~active_df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
+
+    top_name = "-"
+    top_weight = 0.0
+    target_sum = 0.0
+    rebalance_count = 0
+    stale_price_count = 0
+    etf_weight = 0.0
+
+    if not active_df.empty:
+        if "현재비중" in active_df.columns:
+            weight_series = active_df["현재비중"].apply(clean_float)
+            top_idx = weight_series.idxmax()
+            top_weight = float(weight_series.loc[top_idx])
+            top_name = str(active_df.loc[top_idx].get("자산명", active_df.loc[top_idx].get("티커", "-")) or "-")
+            if "is_etf" in active_df.columns:
+                etf_weight = float(active_df.loc[active_df["is_etf"].apply(clean_bool), "현재비중"].apply(clean_float).sum())
+
+        if "리밸런싱목표비중" in active_df.columns:
+            target_sum = float(active_df["리밸런싱목표비중"].apply(clean_float).sum())
+        elif "목표비중" in active_df.columns:
+            target_sum = float(active_df["목표비중"].apply(clean_float).sum())
+
+        if "비중차이" in active_df.columns:
+            rebalance_count = int((active_df["비중차이"].apply(clean_float).abs() >= 3.0).sum())
+
+        if "현재가" in active_df.columns:
+            stale_price_count = int((active_df["현재가"].apply(clean_float) <= 0).sum())
+
+    if waiting_gap < -5:
+        cash_status, cash_level = "부족", "주의"
+    elif waiting_gap > 10:
+        cash_status, cash_level = "여유", "양호"
+    else:
+        cash_status, cash_level = "정상", "양호"
+
+    if top_weight >= 50:
+        concentration_status, concentration_level = "집중위험", "위험"
+    elif top_weight >= 35:
+        concentration_status, concentration_level = "집중주의", "주의"
+    else:
+        concentration_status, concentration_level = "분산양호", "양호"
+
+    if target_sum > 100.5:
+        target_status, target_level = "초과", "위험"
+    elif target_sum < 50 and len(active_df) > 0:
+        target_status, target_level = "낮음", "참고"
+    else:
+        target_status, target_level = "정상", "양호"
+
+    if stale_price_count > 0:
+        data_status, data_level = "확인필요", "주의"
+    else:
+        data_status, data_level = "정상", "양호"
+
+    if cum_return < -15:
+        return_status, return_level = "손실확대", "주의"
+    elif cum_return < 0:
+        return_status, return_level = "손실권", "참고"
+    else:
+        return_status, return_level = "수익권", "양호"
+
+    alerts = []
+    if cash_level == "주의":
+        alerts.append(f"대기자금이 목표보다 {abs(waiting_gap):.1f}%p 낮습니다.")
+    elif waiting_gap > 10:
+        alerts.append(f"대기자금이 목표보다 {waiting_gap:.1f}%p 높습니다. 투입 대기 자금인지 확인하세요.")
+    if concentration_level in ["주의", "위험"]:
+        alerts.append(f"최대 비중 자산은 {top_name} {top_weight:.1f}%입니다.")
+    if target_level == "위험":
+        alerts.append(f"운용대상 목표비중 합계가 {target_sum:.1f}%입니다.")
+    if rebalance_count > 0:
+        alerts.append(f"목표비중과 3%p 이상 차이나는 자산이 {rebalance_count}개 있습니다.")
+    if stale_price_count > 0:
+        alerts.append(f"현재가가 0이거나 누락된 운용자산이 {stale_price_count}개 있습니다.")
+
+    kpis = [
+        {"title": "운용 상태", "status": "점검" if alerts else "정상", "level": "주의" if alerts else "양호", "value": f"{len(alerts)}건", "detail": "확인 필요" if alerts else "큰 이상 없음"},
+        {"title": "대기자금", "status": cash_status, "level": cash_level, "value": f"{waiting_pct:.1f}%", "detail": f"목표 {target_pct:.1f}% / {waiting_gap:+.1f}%p"},
+        {"title": "집중도", "status": concentration_status, "level": concentration_level, "value": f"{top_weight:.1f}%", "detail": top_name},
+        {"title": "목표비중", "status": target_status, "level": target_level, "value": f"{target_sum:.1f}%", "detail": f"리밸런싱 {rebalance_count}개"},
+        {"title": "성과 상태", "status": return_status, "level": return_level, "value": f"{cum_return:.2f}%", "detail": f"총자산 {current_asset:,.0f}원"},
+        {"title": "ETF 비중", "status": "참고", "level": "참고", "value": f"{etf_weight:.1f}%", "detail": "운용자산 내 ETF"},
+        {"title": "데이터", "status": data_status, "level": data_level, "value": f"{stale_price_count}개", "detail": "현재가 누락"},
+    ]
+
+    return kpis, alerts
+
+
 def _portfolio_ticker_key(ticker):
     raw = sanitize_ticker_value(ticker)
     if not raw:

@@ -1,6 +1,7 @@
 import pandas as pd
 
 from stock_lab_core.portfolio import (
+    build_asset_overview_kpis,
     build_portfolio_blended_benchmark_spec,
     build_correlation_pair_summary,
     build_risk_contribution_df,
@@ -66,6 +67,55 @@ def test_active_portfolio_rows_filter_cash_reserve_and_inactive_rows():
     active = get_active_portfolio_rows(holdings)
 
     assert active["티커"].tolist() == ["VOO"]
+
+
+def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
+    holdings = pd.DataFrame(
+        [
+            {
+                "티커": "VOO",
+                "자산명": "S&P500",
+                "원화환산": 7_000_000,
+                "현재비중": 55.0,
+                "리밸런싱목표비중": 40.0,
+                "비중차이": -15.0,
+                "현재가": 100.0,
+                "is_etf": True,
+                "운용대상": True,
+            },
+            {
+                "티커": "FCX",
+                "자산명": "프리포트",
+                "원화환산": 2_000_000,
+                "현재비중": 15.0,
+                "리밸런싱목표비중": 10.0,
+                "비중차이": -5.0,
+                "현재가": 0.0,
+                "is_etf": False,
+                "운용대상": True,
+            },
+            {
+                "티커": "KRW_CASH",
+                "자산명": "현금",
+                "원화환산": 1_000_000,
+                "현재비중": 10.0,
+                "운용대상": False,
+            },
+        ]
+    )
+
+    kpis, alerts = build_asset_overview_kpis(
+        holdings,
+        {"current_asset": 10_000_000, "cum_return": -3.2},
+        {"waiting_pct": 8.0, "target_pct": 15.0},
+    )
+
+    by_title = {item["title"]: item for item in kpis}
+    assert by_title["대기자금"]["status"] == "부족"
+    assert by_title["집중도"]["status"] == "집중위험"
+    assert by_title["데이터"]["value"] == "1개"
+    assert any("대기자금" in alert for alert in alerts)
+    assert any("최대 비중" in alert for alert in alerts)
 
 
 def test_leverage_summary_uses_ticker_and_name_multiplier_hints():
