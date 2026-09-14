@@ -59,6 +59,7 @@ from stock_lab_core.data_quality import (
     build_asset_quick_quality_report,
     build_data_quality_report_from_frames,
 )
+from stock_lab_core.runtime_status import build_speed_check_snapshot
 try:
     from stock_lab_core.db_schema import get_feedback_create_sql, get_swing_radar_create_sql
     DB_SCHEMA_IMPORT_ERROR = ""
@@ -26786,50 +26787,26 @@ def render_speed_check_tab():
     st.subheader("속도 점검")
     st.caption("로딩이 느릴 때 어느 데이터를 다시 불러오는지 구분하기 위한 읽기 전용 점검판입니다.")
 
-    rows = [
+    snapshot = build_speed_check_snapshot(
         {
-            "구분": "현재가",
-            "체감속도": "빠름",
-            "캐시": "60초",
-            "마지막 수동갱신": get_refresh_event_time("latest_price_refresh_time"),
-            "사용 위치": "보유자산 평가금액, 정밀관측소 현재가",
-            "버튼": "전체 현재가 새로고침",
+            "latest_price_refresh_time": get_refresh_event_time("latest_price_refresh_time"),
+            "chart_price_refresh_time": get_refresh_event_time("chart_price_refresh_time"),
+            "news_report_refresh_time": get_refresh_event_time("news_report_refresh_time"),
+            "fin_macro_refresh_time": get_refresh_event_time("fin_macro_refresh_time"),
         },
-        {
-            "구분": "차트/기술",
-            "체감속도": "중간",
-            "캐시": "5분",
-            "마지막 수동갱신": get_refresh_event_time("chart_price_refresh_time"),
-            "사용 위치": "전광판, 정밀관측소 차트/기술점수, 단기 흐름",
-            "버튼": "전체 차트/기술 새로고침",
-        },
-        {
-            "구분": "뉴스/리포트",
-            "체감속도": "중간",
-            "캐시": "뉴스 10분 / 목표가 6시간",
-            "마지막 수동갱신": get_refresh_event_time("news_report_refresh_time"),
-            "사용 위치": "정밀관측소 뉴스, 증권사/애널리스트 링크",
-            "버튼": "전체 뉴스/리포트 새로고침",
-        },
-        {
-            "구분": "재무점수/매크로",
-            "체감속도": "무거움",
-            "캐시": "재무 6시간 / 매크로 5분",
-            "마지막 수동갱신": get_refresh_event_time("fin_macro_refresh_time"),
-            "사용 위치": "재무점수, 후보등급, 매크로 패널티",
-            "버튼": "전체 재무점수/매크로 새로고침",
-        },
-    ]
+        holdings_count=len(holdings_df),
+        watchlist_count=len(st.session_state.get("watchlist", [])),
+        current_asset=portfolio_summary.get("current_asset", 0.0),
+        generated_at=get_kst_now().strftime("%H:%M:%S"),
+    )
 
-    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+    st.dataframe(pd.DataFrame(snapshot["rows"]), width='stretch', hide_index=True)
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("보유종목", f"{len(holdings_df)}개")
-    m2.metric("전광판", f"{len(st.session_state.get('watchlist', []))}개")
-    m3.metric("현금 포함 자산", f"{portfolio_summary['current_asset']:,.0f}원")
-    m4.metric("화면 생성", get_kst_now().strftime("%H:%M:%S"))
+    for col, item in zip((m1, m2, m3, m4), snapshot["metrics"]):
+        col.metric(item["label"], item["value"])
 
-    st.info("평소에는 현재가만 새로고침하면 충분합니다. 차트/기술, 뉴스/리포트, 재무점수는 필요할 때만 눌러야 덜 버벅입니다.")
+    st.info(snapshot["info"])
     render_data_basis_caption("속도점검", include_news=True, include_fin=True)
 
 

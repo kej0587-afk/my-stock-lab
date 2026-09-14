@@ -142,6 +142,16 @@ def test_data_quality_exports_used_by_app():
     )
 
 
+def test_runtime_status_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.runtime_status",
+        [
+            "build_speed_check_snapshot",
+            "build_speed_check_rows",
+        ],
+    )
+
+
 def test_swing_radar_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.swing_radar",
