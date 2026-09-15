@@ -210,6 +210,51 @@ def get_source_close_values(df: pd.DataFrame) -> tuple[float, float]:
     return source_daily_close, source_prev_close
 
 
+def build_day_return_context(
+    *,
+    cur_p,
+    daily_close,
+    prev_close,
+    source_daily_close,
+    source_prev_close,
+    live_price_used=False,
+) -> dict:
+    """Build day-return values after optional live-price adjustment."""
+    cur = clean_float(cur_p, 0.0)
+    daily = clean_float(daily_close, 0.0)
+    prev = clean_float(prev_close, 0.0)
+    source_daily = clean_float(source_daily_close, 0.0)
+    source_prev = clean_float(source_prev_close, 0.0)
+
+    regular_day_ret = (source_daily / source_prev) - 1 if source_daily > 0 and source_prev > 0 else math.nan
+    live_ref_ret = (cur / daily) - 1 if live_price_used and daily > 0 else math.nan
+    fallback_day_ret = (cur / prev) - 1 if prev > 0 else 0.0
+
+    if live_price_used and finite_num(regular_day_ret) and finite_num(live_ref_ret):
+        if abs(regular_day_ret) >= abs(live_ref_ret):
+            day_ret = regular_day_ret
+            day_ret_label = "정규장 전일등락"
+        else:
+            day_ret = live_ref_ret
+            day_ret_label = "최신가/직전종가"
+    elif finite_num(regular_day_ret):
+        day_ret = regular_day_ret
+        day_ret_label = "전일등락"
+    else:
+        day_ret = fallback_day_ret
+        day_ret_label = "전일등락"
+
+    live_gap_move = live_ref_ret if live_price_used and finite_num(live_ref_ret) else day_ret
+    return {
+        "regular_day_ret": regular_day_ret,
+        "live_ref_ret": live_ref_ret,
+        "fallback_day_ret": fallback_day_ret,
+        "day_ret": day_ret,
+        "day_ret_label": day_ret_label,
+        "live_gap_move": live_gap_move,
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,

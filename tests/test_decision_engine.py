@@ -6,6 +6,7 @@ import pandas as pd
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     apply_live_price_to_ohlcv,
+    build_day_return_context,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -87,6 +88,56 @@ def test_get_source_close_values_handles_short_or_missing_data():
     assert get_source_close_values(one_row) == (100.0, 0.0)
     assert get_source_close_values(no_close) == (0.0, 0.0)
     assert get_source_close_values(None) == (0.0, 0.0)
+
+
+def test_build_day_return_context_prefers_larger_regular_session_move():
+    context = build_day_return_context(
+        cur_p=84.0,
+        daily_close=83.0,
+        prev_close=83.0,
+        source_daily_close=83.0,
+        source_prev_close=100.0,
+        live_price_used=True,
+    )
+
+    assert round(context["regular_day_ret"], 4) == -0.17
+    assert round(context["live_ref_ret"], 4) == 0.012
+    assert context["day_ret"] == context["regular_day_ret"]
+    assert context["day_ret_label"] == "정규장 전일등락"
+    assert context["live_gap_move"] == context["live_ref_ret"]
+
+
+def test_build_day_return_context_prefers_larger_live_move():
+    context = build_day_return_context(
+        cur_p=94.0,
+        daily_close=100.0,
+        prev_close=100.0,
+        source_daily_close=100.0,
+        source_prev_close=99.0,
+        live_price_used=True,
+    )
+
+    assert round(context["regular_day_ret"], 4) == 0.0101
+    assert round(context["live_ref_ret"], 4) == -0.06
+    assert context["day_ret"] == context["live_ref_ret"]
+    assert context["day_ret_label"] == "최신가/직전종가"
+    assert context["live_gap_move"] == context["live_ref_ret"]
+
+
+def test_build_day_return_context_falls_back_to_previous_close():
+    context = build_day_return_context(
+        cur_p=99.0,
+        daily_close=0.0,
+        prev_close=90.0,
+        source_daily_close=0.0,
+        source_prev_close=0.0,
+        live_price_used=False,
+    )
+
+    assert round(context["fallback_day_ret"], 4) == 0.1
+    assert context["day_ret"] == context["fallback_day_ret"]
+    assert context["day_ret_label"] == "전일등락"
+    assert context["live_gap_move"] == context["day_ret"]
 
 
 # ---------------------------------------------------------------------------

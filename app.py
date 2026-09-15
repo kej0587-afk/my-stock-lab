@@ -458,11 +458,13 @@ except Exception as _decision_result_import_error:
 try:
     from stock_lab_core.decision_engine import (
         apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv,
+        build_day_return_context as _core_build_day_return_context,
         get_source_close_values as _core_get_source_close_values,
     )
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
 except Exception as _live_price_helper_import_error:
     _core_apply_live_price_to_ohlcv = None
+    _core_build_day_return_context = None
     _core_get_source_close_values = None
     LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
     logging.warning(
@@ -16391,6 +16393,55 @@ def get_source_close_values(df: pd.DataFrame) -> tuple[float, float]:
     return source_daily_close, source_prev_close
 
 
+def build_day_return_context(
+    *,
+    cur_p,
+    daily_close,
+    prev_close,
+    source_daily_close,
+    source_prev_close,
+    live_price_used=False,
+) -> dict:
+    if _core_build_day_return_context is not None:
+        try:
+            return _core_build_day_return_context(
+                cur_p=cur_p,
+                daily_close=daily_close,
+                prev_close=prev_close,
+                source_daily_close=source_daily_close,
+                source_prev_close=source_prev_close,
+                live_price_used=live_price_used,
+            )
+        except Exception as exc:
+            logging.warning("core day return helper failed; using local fallback: %s", exc)
+
+    regular_day_ret = (source_daily_close / source_prev_close) - 1 if source_daily_close > 0 and source_prev_close > 0 else np.nan
+    live_ref_ret = (cur_p / daily_close) - 1 if live_price_used and daily_close > 0 else np.nan
+    fallback_day_ret = (cur_p / prev_close) - 1 if prev_close > 0 else 0.0
+    if live_price_used and finite_num(regular_day_ret) and finite_num(live_ref_ret):
+        if abs(regular_day_ret) >= abs(live_ref_ret):
+            day_ret = regular_day_ret
+            day_ret_label = "정규장 전일등락"
+        else:
+            day_ret = live_ref_ret
+            day_ret_label = "최신가/직전종가"
+    elif finite_num(regular_day_ret):
+        day_ret = regular_day_ret
+        day_ret_label = "전일등락"
+    else:
+        day_ret = fallback_day_ret
+        day_ret_label = "전일등락"
+    live_gap_move = live_ref_ret if live_price_used and finite_num(live_ref_ret) else day_ret
+    return {
+        "regular_day_ret": regular_day_ret,
+        "live_ref_ret": live_ref_ret,
+        "fallback_day_ret": fallback_day_ret,
+        "day_ret": day_ret,
+        "day_ret_label": day_ret_label,
+        "live_gap_move": live_gap_move,
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16435,25 +16486,20 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     ret_1m = (cur_p / p1m) - 1
     ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
-    regular_day_ret = (source_daily_close / source_prev_close) - 1 if source_daily_close > 0 and source_prev_close > 0 else np.nan
-    live_ref_ret = (cur_p / daily_close) - 1 if live_price_used and daily_close > 0 else np.nan
-    fallback_day_ret = (cur_p / prev_close) - 1 if prev_close > 0 else 0.0
-    # 라이브 행이 붙으면 prev가 "방금 끝난 정규장 종가"가 되어 정규장 -17%가 +0.8%처럼 보일 수 있다.
-    # 그래서 정규장 전일등락과 최신가-종가 등락을 분리하고, 더 큰 위험 신호를 대표 day_ret로 쓴다.
-    if live_price_used and finite_num(regular_day_ret) and finite_num(live_ref_ret):
-        if abs(regular_day_ret) >= abs(live_ref_ret):
-            day_ret = regular_day_ret
-            day_ret_label = "정규장 전일등락"
-        else:
-            day_ret = live_ref_ret
-            day_ret_label = "최신가/직전종가"
-    elif finite_num(regular_day_ret):
-        day_ret = regular_day_ret
-        day_ret_label = "전일등락"
-    else:
-        day_ret = fallback_day_ret
-        day_ret_label = "전일등락"
-    live_gap_move = live_ref_ret if live_price_used and finite_num(live_ref_ret) else day_ret
+    day_return_context = build_day_return_context(
+        cur_p=cur_p,
+        daily_close=daily_close,
+        prev_close=prev_close,
+        source_daily_close=source_daily_close,
+        source_prev_close=source_prev_close,
+        live_price_used=live_price_used,
+    )
+    regular_day_ret = day_return_context["regular_day_ret"]
+    live_ref_ret = day_return_context["live_ref_ret"]
+    fallback_day_ret = day_return_context["fallback_day_ret"]
+    day_ret = day_return_context["day_ret"]
+    day_ret_label = day_return_context["day_ret_label"]
+    live_gap_move = day_return_context["live_gap_move"]
     is_kr_market_ticker = is_kr_listed(ticker)
     live_rebound_label = (
         "🟡본장 반등: 종가/거래량 확인"
