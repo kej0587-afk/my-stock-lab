@@ -458,6 +458,7 @@ except Exception as _decision_result_import_error:
 try:
     from stock_lab_core.decision_engine import (
         apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv,
+        build_breakdown_risk_flags as _core_build_breakdown_risk_flags,
         build_day_return_context as _core_build_day_return_context,
         build_live_rebound_context as _core_build_live_rebound_context,
         build_price_history_context as _core_build_price_history_context,
@@ -467,6 +468,7 @@ try:
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
 except Exception as _live_price_helper_import_error:
     _core_apply_live_price_to_ohlcv = None
+    _core_build_breakdown_risk_flags = None
     _core_build_day_return_context = None
     _core_build_live_rebound_context = None
     _core_build_price_history_context = None
@@ -16513,6 +16515,37 @@ def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
     }
 
 
+def build_breakdown_risk_flags(
+    *,
+    is_etf,
+    live_price_used,
+    live_gap_move,
+    day_ret,
+    vol_ratio,
+) -> dict:
+    if _core_build_breakdown_risk_flags is not None:
+        try:
+            return _core_build_breakdown_risk_flags(
+                is_etf=is_etf,
+                live_price_used=live_price_used,
+                live_gap_move=live_gap_move,
+                day_ret=day_ret,
+                vol_ratio=vol_ratio,
+            )
+        except Exception as exc:
+            logging.warning("core breakdown risk helper failed; using local fallback: %s", exc)
+
+    return {
+        "is_live_gap_shock": (not is_etf) and live_price_used and live_gap_move <= -0.06,
+        "is_single_day_breakdown": (
+            (not is_etf)
+            and (not live_price_used)
+            and day_ret <= -0.06
+            and vol_ratio >= 1.2
+        ),
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16612,13 +16645,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         live_gap_move=live_gap_move,
         live_price_used=live_price_used,
     )
-    is_live_gap_shock = (not is_etf) and live_price_used and live_gap_move <= -0.06
-    is_single_day_breakdown = (
-        (not is_etf)
-        and (not live_price_used)
-        and day_ret <= -0.06
-        and vol_ratio >= 1.2
+    breakdown_risk_flags = build_breakdown_risk_flags(
+        is_etf=is_etf,
+        live_price_used=live_price_used,
+        live_gap_move=live_gap_move,
+        day_ret=day_ret,
+        vol_ratio=vol_ratio,
     )
+    is_live_gap_shock = breakdown_risk_flags["is_live_gap_shock"]
+    is_single_day_breakdown = breakdown_risk_flags["is_single_day_breakdown"]
 
     main_score = score_main_entry(trend, macd_state, rsi_now, day_ret, vol_ratio)
     # rs_slope_s(±1)는 adj_tech_score에만 반영 — grade 임계값 안정성 유지

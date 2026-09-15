@@ -6,6 +6,7 @@ import pandas as pd
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     apply_live_price_to_ohlcv,
+    build_breakdown_risk_flags,
     build_day_return_context,
     build_live_rebound_context,
     build_price_history_context,
@@ -233,6 +234,48 @@ def test_build_tactical_price_context_handles_invalid_ma_and_zero_volume_mean():
     assert context["below_ma5"] is False
     assert context["below_ma20"] is False
     assert context["below_ma50"] is False
+
+
+def test_build_breakdown_risk_flags_detects_live_gap_shock_only_for_stocks():
+    stock_flags = build_breakdown_risk_flags(
+        is_etf=False,
+        live_price_used=True,
+        live_gap_move=-0.061,
+        day_ret=-0.02,
+        vol_ratio=1.0,
+    )
+    etf_flags = build_breakdown_risk_flags(
+        is_etf=True,
+        live_price_used=True,
+        live_gap_move=-0.061,
+        day_ret=-0.02,
+        vol_ratio=1.0,
+    )
+
+    assert stock_flags["is_live_gap_shock"] is True
+    assert stock_flags["is_single_day_breakdown"] is False
+    assert etf_flags["is_live_gap_shock"] is False
+
+
+def test_build_breakdown_risk_flags_detects_single_day_breakdown():
+    flags = build_breakdown_risk_flags(
+        is_etf=False,
+        live_price_used=False,
+        live_gap_move=-0.01,
+        day_ret=-0.061,
+        vol_ratio=1.2,
+    )
+    low_volume_flags = build_breakdown_risk_flags(
+        is_etf=False,
+        live_price_used=False,
+        live_gap_move=-0.01,
+        day_ret=-0.061,
+        vol_ratio=1.19,
+    )
+
+    assert flags["is_live_gap_shock"] is False
+    assert flags["is_single_day_breakdown"] is True
+    assert low_volume_flags["is_single_day_breakdown"] is False
 
 
 # ---------------------------------------------------------------------------

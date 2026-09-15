@@ -309,6 +309,31 @@ def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
     }
 
 
+def build_breakdown_risk_flags(
+    *,
+    is_etf,
+    live_price_used,
+    live_gap_move,
+    day_ret,
+    vol_ratio,
+) -> dict:
+    """Build intraday/live gap and single-session breakdown risk flags."""
+    product_is_etf = bool(is_etf)
+    live_used = bool(live_price_used)
+    live_move = clean_float(live_gap_move, math.nan)
+    day_move = clean_float(day_ret, 0.0)
+    volume_ratio = clean_float(vol_ratio, 0.0)
+    return {
+        "is_live_gap_shock": (not product_is_etf) and live_used and live_move <= -0.06,
+        "is_single_day_breakdown": (
+            (not product_is_etf)
+            and (not live_used)
+            and day_move <= -0.06
+            and volume_ratio >= 1.2
+        ),
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,
