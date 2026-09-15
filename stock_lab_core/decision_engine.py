@@ -56,6 +56,19 @@ class DecisionOutcome:
     reasons: tuple = ()   # 판단근거 목록 — 기본값 빈 튜플 (기존 호출부 영향 없음)
 
 
+def normalize_decision_runtime_inputs(
+    macro_penalty_value=None,
+    final_macro_risk_value=None,
+    total_eval_value=None,
+) -> tuple[float, float, float]:
+    """Normalize runtime values passed into decision calculations."""
+    return (
+        clean_float(macro_penalty_value, 0.0),
+        clean_float(final_macro_risk_value, math.nan),
+        clean_float(total_eval_value, 0.0),
+    )
+
+
 def build_decision_result(ctx: dict) -> dict:
     """Assemble calc_scores_and_decision's return dict from its local context."""
     decision_outcome = ctx["decision_outcome"]

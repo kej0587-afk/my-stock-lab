@@ -389,6 +389,7 @@ from stock_lab_core.decision_engine import (
     classify_macro_state,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
+    normalize_decision_runtime_inputs,
     score_main_entry,
     score_technical_components,
 )
@@ -16168,11 +16169,7 @@ def resolve_decision_runtime_inputs(macro_penalty_value=None, final_macro_risk_v
     mp = globals().get("macro_penalty", 0.0) if macro_penalty_value is None else macro_penalty_value
     fmr = globals().get("final_macro_risk", np.nan) if final_macro_risk_value is None else final_macro_risk_value
     te = globals().get("total_eval", 0.0) if total_eval_value is None else total_eval_value
-    return (
-        clean_float(mp, 0.0),
-        clean_float(fmr, np.nan),
-        clean_float(te, 0.0),
-    )
+    return normalize_decision_runtime_inputs(mp, fmr, te)
 
 
 def classify_core_etf_dca_rate(

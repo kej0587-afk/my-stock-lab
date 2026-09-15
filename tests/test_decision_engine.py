@@ -1,4 +1,6 @@
 """Tests for stock_lab_core.decision_engine critical judgment paths."""
+import math
+
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     build_core_dca_outcome,
@@ -11,7 +13,24 @@ from stock_lab_core.decision_engine import (
     classify_candidate_grade,
     classify_safety_state,
     classify_macro_state,
+    normalize_decision_runtime_inputs,
 )
+
+
+def test_normalize_decision_runtime_inputs_coerces_numeric_values():
+    macro_penalty, macro_risk, total_eval = normalize_decision_runtime_inputs("1.5", "4.5", "10,000")
+
+    assert macro_penalty == 1.5
+    assert macro_risk == 4.5
+    assert total_eval == 10000.0
+
+
+def test_normalize_decision_runtime_inputs_uses_safe_defaults():
+    macro_penalty, macro_risk, total_eval = normalize_decision_runtime_inputs("", "bad", None)
+
+    assert macro_penalty == 0.0
+    assert math.isnan(macro_risk)
+    assert total_eval == 0.0
 
 
 # ---------------------------------------------------------------------------
