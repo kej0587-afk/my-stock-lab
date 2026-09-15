@@ -284,6 +284,31 @@ def build_price_history_context(df: pd.DataFrame, last, cur_p) -> dict:
     }
 
 
+def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
+    """Build volume, moving-average, and below-MA flags for decision rules."""
+    vol_mean = df["Volume"].rolling(20).mean().iloc[-1]
+    vol_ma20 = float(vol_mean) if pd.notna(vol_mean) else 1.0
+    vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0.0
+
+    ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
+    ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
+    ma120_now = float(last["MA120"]) if finite_num(last["MA120"]) else 0.0
+    ma5_now = float(last["MA5"]) if finite_num(last["MA5"]) else 0.0
+    price = clean_float(cur_p, 0.0)
+
+    return {
+        "vol_ma20": vol_ma20,
+        "vol_ratio": vol_ratio,
+        "ma5_now": ma5_now,
+        "ma20_now": ma20_now,
+        "ma50_now": ma50_now,
+        "ma120_now": ma120_now,
+        "below_ma5": ma5_now > 0 and price < ma5_now,
+        "below_ma20": ma20_now > 0 and price < ma20_now * 0.98,
+        "below_ma50": ma50_now > 0 and price < ma50_now,
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,

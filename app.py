@@ -461,6 +461,7 @@ try:
         build_day_return_context as _core_build_day_return_context,
         build_live_rebound_context as _core_build_live_rebound_context,
         build_price_history_context as _core_build_price_history_context,
+        build_tactical_price_context as _core_build_tactical_price_context,
         get_source_close_values as _core_get_source_close_values,
     )
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
@@ -469,6 +470,7 @@ except Exception as _live_price_helper_import_error:
     _core_build_day_return_context = None
     _core_build_live_rebound_context = None
     _core_build_price_history_context = None
+    _core_build_tactical_price_context = None
     _core_get_source_close_values = None
     LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
     logging.warning(
@@ -16485,6 +16487,32 @@ def build_price_history_context(df: pd.DataFrame, last, cur_p) -> dict:
     }
 
 
+def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
+    if _core_build_tactical_price_context is not None:
+        try:
+            return _core_build_tactical_price_context(df, last, cur_p)
+        except Exception as exc:
+            logging.warning("core tactical price helper failed; using local fallback: %s", exc)
+
+    vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
+    vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
+    ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
+    ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
+    ma120_now = float(last["MA120"]) if finite_num(last["MA120"]) else 0.0
+    ma5_now = float(last["MA5"]) if finite_num(last["MA5"]) else 0.0
+    return {
+        "vol_ma20": vol_ma20,
+        "vol_ratio": vol_ratio,
+        "ma5_now": ma5_now,
+        "ma20_now": ma20_now,
+        "ma50_now": ma50_now,
+        "ma120_now": ma120_now,
+        "below_ma5": ma5_now > 0 and cur_p < ma5_now,
+        "below_ma20": ma20_now > 0 and cur_p < ma20_now * 0.98,
+        "below_ma50": ma50_now > 0 and cur_p < ma50_now,
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16567,15 +16595,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     macd_s = tech_scores["macd_s"]
     sqz_s = tech_scores["sqz_s"]
     tech_total = tech_scores["tech_total"]
-    vol_ma20 = float(df["Volume"].rolling(20).mean().iloc[-1]) if pd.notna(df["Volume"].rolling(20).mean().iloc[-1]) else 1
-    vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0
-    ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
-    ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
-    ma120_now = float(last["MA120"]) if finite_num(last["MA120"]) else 0.0
-    ma5_now = float(last["MA5"]) if finite_num(last["MA5"]) else 0.0
-    below_ma5 = ma5_now > 0 and cur_p < ma5_now
-    below_ma20 = ma20_now > 0 and cur_p < ma20_now * 0.98
-    below_ma50 = ma50_now > 0 and cur_p < ma50_now
+    tactical_price_context = build_tactical_price_context(df, last, cur_p)
+    vol_ma20 = tactical_price_context["vol_ma20"]
+    vol_ratio = tactical_price_context["vol_ratio"]
+    ma5_now = tactical_price_context["ma5_now"]
+    ma20_now = tactical_price_context["ma20_now"]
+    ma50_now = tactical_price_context["ma50_now"]
+    ma120_now = tactical_price_context["ma120_now"]
+    below_ma5 = tactical_price_context["below_ma5"]
+    below_ma20 = tactical_price_context["below_ma20"]
+    below_ma50 = tactical_price_context["below_ma50"]
     has_down_session_pressure = _has_down_session_pressure(
         day_ret=day_ret,
         regular_day_ret=regular_day_ret,

@@ -9,6 +9,7 @@ from stock_lab_core.decision_engine import (
     build_day_return_context,
     build_live_rebound_context,
     build_price_history_context,
+    build_tactical_price_context,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -188,6 +189,50 @@ def test_build_price_history_context_flags_short_or_missing_ma_history():
 
     assert build_price_history_context(short_df, short_df.iloc[-1], 95.0)["short_history"] is True
     assert build_price_history_context(missing_ma_df, missing_ma_df.iloc[-1], 95.0)["short_history"] is True
+
+
+def test_build_tactical_price_context_calculates_volume_and_ma_flags():
+    df = pd.DataFrame({
+        "Volume": [100.0] * 19 + [200.0],
+        "MA5": [102.0] * 20,
+        "MA20": [100.0] * 20,
+        "MA50": [95.0] * 20,
+        "MA120": [90.0] * 20,
+    })
+
+    context = build_tactical_price_context(df, df.iloc[-1], 97.0)
+
+    assert round(context["vol_ma20"], 2) == 105.0
+    assert round(context["vol_ratio"], 4) == round(200.0 / 105.0, 4)
+    assert context["ma5_now"] == 102.0
+    assert context["ma20_now"] == 100.0
+    assert context["ma50_now"] == 95.0
+    assert context["ma120_now"] == 90.0
+    assert context["below_ma5"] is True
+    assert context["below_ma20"] is True
+    assert context["below_ma50"] is False
+
+
+def test_build_tactical_price_context_handles_invalid_ma_and_zero_volume_mean():
+    df = pd.DataFrame({
+        "Volume": [0.0] * 20,
+        "MA5": [float("nan")] * 20,
+        "MA20": [float("nan")] * 20,
+        "MA50": [float("nan")] * 20,
+        "MA120": [float("nan")] * 20,
+    })
+
+    context = build_tactical_price_context(df, df.iloc[-1], 97.0)
+
+    assert context["vol_ma20"] == 0.0
+    assert context["vol_ratio"] == 0.0
+    assert context["ma5_now"] == 0.0
+    assert context["ma20_now"] == 0.0
+    assert context["ma50_now"] == 0.0
+    assert context["ma120_now"] == 0.0
+    assert context["below_ma5"] is False
+    assert context["below_ma20"] is False
+    assert context["below_ma50"] is False
 
 
 # ---------------------------------------------------------------------------
