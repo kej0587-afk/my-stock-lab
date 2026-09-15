@@ -163,10 +163,15 @@ try:
     from stock_lab_core.asset_classifier import (
         asset_class_marks_fin_score_exempt,
         infer_asset_class_for_ticker,
+        is_domestic_kr_core_etf,
         is_fin_score_exempt_asset,
         is_known_etf_ticker,
         is_known_individual_stock_ticker,
+        is_leveraged_or_inverse_product,
+        is_tdf_or_fund_allocation_product,
+        is_us_broad_index_core_etf,
         normalize_individual_stock_asset_class,
+        resolve_effective_investment_bucket,
     )
     ASSET_CLASSIFIER_IMPORT_ERROR = ""
 except Exception as _asset_classifier_import_error:
@@ -246,6 +251,37 @@ except Exception as _asset_classifier_import_error:
         if asset_class_marks_fin_score_exempt(current):
             return current
         return "us_etf_nasdaq"
+
+    def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
+        text = f"{name} {ticker} {asset_class}".upper()
+        keywords = [
+            "LEVER", "LEVERAGE", "LEVERAGED", "INVERSE", "인버스", "레버리지", "곱버스",
+            "2X", "3X", "TQQQ", "SQQQ", "QLD", "SOXL", "SOXS", "SPXL", "SPXS", "UPRO", "SPXU",
+            "BITX", "BITU", "2배", "비트코인2배", "2X BITCOIN", "2X BTC",
+        ]
+        return any(keyword in text for keyword in keywords)
+
+    def is_tdf_or_fund_allocation_product(name, ticker="", asset_class=""):
+        text = f"{name} {ticker} {asset_class}".upper()
+        return "TDF" in text or "FUND" in text or "펀드" in text
+
+    def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
+        bucket_norm = normalize_bucket(bucket)
+        if bucket_norm in {"cash", "reserve"}:
+            return bucket_norm
+        if is_leveraged_or_inverse_product(name, ticker, asset_class):
+            return "leverage"
+        return bucket_norm
+
+    def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
+        ac = str(asset_class or "").strip().lower()
+        if ac in {"us_etf_sp", "us_etf_nasdaq"}:
+            return True
+        text = f"{ticker} {name} {asset_class}".upper()
+        return any(keyword in text for keyword in ["S&P500", "S&P 500", "SP500", "나스닥100", "NASDAQ100", "NASDAQ 100"])
+
+    def is_domestic_kr_core_etf(ticker, asset_class="", name=""):
+        return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
 try:
     from stock_lab_core.swing_radar import (
         build_swing_radar_df as _build_swing_radar_df_core,
@@ -16126,42 +16162,6 @@ def get_reserve_available_for_crash_buy(mode):
         return 0.0
     reserve_rows = table[table["bucket"].apply(lambda v: normalize_bucket(v) == "reserve")]
     return float(reserve_rows["원화환산"].apply(clean_float).sum()) if not reserve_rows.empty else 0.0
-
-def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
-    text = f"{name} {ticker} {asset_class}".upper()
-    keywords = [
-        "LEVER", "LEVERAGE", "LEVERAGED", "INVERSE", "인버스", "레버리지", "곱버스",
-        "2X", "3X", "TQQQ", "SQQQ", "QLD", "SOXL", "SOXS", "SPXL", "SPXS", "UPRO", "SPXU",
-        "BITX", "BITU", "2배", "비트코인2배", "2X BITCOIN", "2X BTC",
-    ]
-    return any(keyword in text for keyword in keywords)
-
-
-def is_tdf_or_fund_allocation_product(name, ticker="", asset_class=""):
-    text = f"{name} {ticker} {asset_class}".upper()
-    return "TDF" in text or "FUND" in text or "펀드" in text
-
-
-def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
-    bucket_norm = normalize_bucket(bucket)
-    if bucket_norm in {"cash", "reserve"}:
-        return bucket_norm
-    if is_leveraged_or_inverse_product(name, ticker, asset_class):
-        return "leverage"
-    return bucket_norm
-
-
-def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
-    ac = str(asset_class or "").strip().lower()
-    if ac in {"us_etf_sp", "us_etf_nasdaq"}:
-        return True
-    text = f"{ticker} {name} {asset_class}".upper()
-    return any(keyword in text for keyword in ["S&P500", "S&P 500", "SP500", "나스닥100", "NASDAQ100", "NASDAQ 100"])
-
-
-def is_domestic_kr_core_etf(ticker, asset_class="", name=""):
-    return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
-
 
 def resolve_decision_runtime_inputs(macro_penalty_value=None, final_macro_risk_value=None, total_eval_value=None):
     """Resolve decision inputs without raising if app globals are not ready yet."""

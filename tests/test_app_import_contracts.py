@@ -49,10 +49,15 @@ def test_asset_classifier_exports_used_by_app():
         [
             "asset_class_marks_fin_score_exempt",
             "infer_asset_class_for_ticker",
+            "is_domestic_kr_core_etf",
             "is_fin_score_exempt_asset",
             "is_known_etf_ticker",
             "is_known_individual_stock_ticker",
+            "is_leveraged_or_inverse_product",
+            "is_tdf_or_fund_allocation_product",
+            "is_us_broad_index_core_etf",
             "normalize_individual_stock_asset_class",
+            "resolve_effective_investment_bucket",
         ],
     )
 

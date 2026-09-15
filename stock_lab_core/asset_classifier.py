@@ -16,7 +16,35 @@ from stock_lab_core.constants import (
     KNOWN_US_SP_ETFS,
     KR_ETF_NAME_KEYWORDS,
 )
-from stock_lab_core.formatters import clean_bool, clean_symbol, is_kr_listed, sanitize_ticker_value
+from stock_lab_core.formatters import clean_bool, clean_symbol, is_kr_listed, normalize_bucket, sanitize_ticker_value
+
+
+LEVERAGED_OR_INVERSE_KEYWORDS = (
+    "LEVER",
+    "LEVERAGE",
+    "LEVERAGED",
+    "INVERSE",
+    "인버스",
+    "레버리지",
+    "곱버스",
+    "2X",
+    "3X",
+    "TQQQ",
+    "SQQQ",
+    "QLD",
+    "SOXL",
+    "SOXS",
+    "SPXL",
+    "SPXS",
+    "UPRO",
+    "SPXU",
+    "BITX",
+    "BITU",
+    "2배",
+    "비트코인2배",
+    "2X BITCOIN",
+    "2X BTC",
+)
 
 
 def is_known_individual_stock_ticker(ticker) -> bool:
@@ -88,3 +116,39 @@ def infer_asset_class_for_ticker(ticker, current_asset_class="") -> str:
     if asset_class_marks_fin_score_exempt(current):
         return current
     return "us_etf_nasdaq"
+
+
+def is_leveraged_or_inverse_product(name, ticker, asset_class="") -> bool:
+    """Return True for leveraged or inverse products based on name/ticker/class."""
+    text = f"{name} {ticker} {asset_class}".upper()
+    return any(keyword in text for keyword in LEVERAGED_OR_INVERSE_KEYWORDS)
+
+
+def is_tdf_or_fund_allocation_product(name, ticker="", asset_class="") -> bool:
+    """Return True for TDF/fund-like allocation products."""
+    text = f"{name} {ticker} {asset_class}".upper()
+    return "TDF" in text or "FUND" in text or "펀드" in text
+
+
+def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class="") -> str:
+    """Return the effective bucket after leverage/cash/reserve overrides."""
+    bucket_norm = normalize_bucket(bucket)
+    if bucket_norm in {"cash", "reserve"}:
+        return bucket_norm
+    if is_leveraged_or_inverse_product(name, ticker, asset_class):
+        return "leverage"
+    return bucket_norm
+
+
+def is_us_broad_index_core_etf(ticker, asset_class="", name="") -> bool:
+    """Return True for S&P500/Nasdaq100 core ETF exposure."""
+    ac = str(asset_class or "").strip().lower()
+    if ac in {"us_etf_sp", "us_etf_nasdaq"}:
+        return True
+    text = f"{ticker} {name} {asset_class}".upper()
+    return any(keyword in text for keyword in ["S&P500", "S&P 500", "SP500", "나스닥100", "NASDAQ100", "NASDAQ 100"])
+
+
+def is_domestic_kr_core_etf(ticker, asset_class="", name="") -> bool:
+    """Return True for Korean-listed core ETFs outside the US broad-index bucket."""
+    return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
