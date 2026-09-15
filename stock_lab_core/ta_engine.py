@@ -7,7 +7,11 @@ app.py 전역 상태에 의존하지 않는 순수 함수만 포함하므로 독
 
 import numpy as np
 import pandas as pd
-import ta
+
+try:
+    import ta
+except Exception:
+    ta = None
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -71,6 +75,8 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig) -> str:
 
 def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """OHLCV DataFrame에 기술적 지표 컬럼을 추가하고 반환합니다."""
+    if ta is None:
+        raise RuntimeError("build_indicators requires the optional 'ta' package")
     df = df.copy()
     df["MA5"]   = df["Close"].rolling(5).mean()
     df["MA20"]  = df["Close"].rolling(20).mean()
@@ -186,6 +192,45 @@ def detect_recent_fvg(df: pd.DataFrame) -> dict:
             return {"type": "Bearish FVG", "top": l2, "bottom": h0,
                     "active": float(df["High"].iloc[-1]) < l2}
     return {"type": "없음", "top": None, "bottom": None, "active": False}
+
+
+def detect_smc_features(df: pd.DataFrame) -> dict:
+    """최근 캔들 기준 FVG와 단기 지지선을 요약합니다."""
+    if len(df) < 5:
+        return {"fvg_label": "데이터 부족", "ob_label": "데이터 부족"}
+
+    recent_df = df.tail(20).copy()
+    bullish_fvgs = []
+    bearish_fvgs = []
+
+    for i in range(2, len(recent_df)):
+        c1_high = float(recent_df["High"].iloc[i - 2])
+        c1_low = float(recent_df["Low"].iloc[i - 2])
+        c3_high = float(recent_df["High"].iloc[i])
+        c3_low = float(recent_df["Low"].iloc[i])
+
+        if c1_high < c3_low:
+            bullish_fvgs.append((c1_high, c3_low))
+        if c1_low > c3_high:
+            bearish_fvgs.append((c3_high, c1_low))
+
+    fvg_label = "FVG 갭 없음 (균형 상태)"
+    if bullish_fvgs:
+        latest_bull = bullish_fvgs[-1]
+        fvg_label = f"🔼 지지 갭(FVG): {latest_bull[0]:.2f} ~ {latest_bull[1]:.2f}"
+    elif bearish_fvgs:
+        latest_bear = bearish_fvgs[-1]
+        fvg_label = f"🔽 저항 갭(FVG): {latest_bear[0]:.2f} ~ {latest_bear[1]:.2f}"
+
+    min_idx = recent_df["Low"].idxmin()
+    ob_low = float(recent_df.loc[min_idx, "Low"])
+    ob_high = float(recent_df.loc[min_idx, "High"])
+    ob_label = f"🛡️ 단기 지지선: {ob_low:.2f} ~ {ob_high:.2f}"
+
+    return {
+        "fvg_label": fvg_label,
+        "ob_label": ob_label,
+    }
 
 
 def get_pd_zone(df: pd.DataFrame) -> str:

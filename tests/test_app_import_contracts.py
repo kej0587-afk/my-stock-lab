@@ -95,6 +95,26 @@ def test_decision_engine_exports_used_by_app():
     )
 
 
+def test_ta_engine_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.ta_engine",
+        [
+            "build_indicators",
+            "detect_liquidity_grab",
+            "detect_recent_fvg",
+            "detect_smc_features",
+            "detect_structure_event",
+            "get_macd_state",
+            "get_pd_zone",
+            "get_pivot_highs_lows",
+            "get_recent_levels",
+            "get_sqz_status",
+            "get_trend",
+            "summarize_smc_action",
+        ],
+    )
+
+
 def test_today_queue_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.today_queue",
@@ -148,6 +168,17 @@ def test_runtime_status_exports_used_by_app():
         [
             "build_speed_check_snapshot",
             "build_speed_check_rows",
+        ],
+    )
+
+
+def test_hold_judgement_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.hold_judgement",
+        [
+            "HoldDecision",
+            "HoldJudgement",
+            "build_hold_decision",
         ],
     )
 
