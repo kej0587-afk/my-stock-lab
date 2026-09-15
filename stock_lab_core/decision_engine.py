@@ -255,6 +255,23 @@ def build_day_return_context(
     }
 
 
+def build_live_rebound_context(is_kr_market_ticker: bool) -> dict:
+    """Return labels and notes for live-price rebound wait decisions."""
+    if is_kr_market_ticker:
+        return {
+            "live_rebound_label": "🟡본장 반등: 종가/거래량 확인",
+            "live_rebound_holding_label": "🟡본장 반등: 추매는 종가 확인",
+            "live_rebound_note": "본장 장중 반등은 종가와 거래량 확정 전까지 예외승인 보류 — MA5/FVG 지지 확인",
+            "live_rebound_holding_note": "본장 장중 반등은 추매보다 종가와 거래량 확정 후 MA5/FVG 지지 확인",
+        }
+    return {
+        "live_rebound_label": "🟡데이/프리 반등: 정규장 확인대기",
+        "live_rebound_holding_label": "🟡데이/프리 반등: 추매는 정규장 확인",
+        "live_rebound_note": "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인",
+        "live_rebound_holding_note": "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인",
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,

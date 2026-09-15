@@ -7,6 +7,7 @@ from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     apply_live_price_to_ohlcv,
     build_day_return_context,
+    build_live_rebound_context,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -138,6 +139,24 @@ def test_build_day_return_context_falls_back_to_previous_close():
     assert context["day_ret"] == context["fallback_day_ret"]
     assert context["day_ret_label"] == "전일등락"
     assert context["live_gap_move"] == context["day_ret"]
+
+
+def test_build_live_rebound_context_uses_kr_session_wording():
+    context = build_live_rebound_context(True)
+
+    assert "본장 반등" in context["live_rebound_label"]
+    assert "종가" in context["live_rebound_holding_label"]
+    assert "종가와 거래량" in context["live_rebound_note"]
+    assert "추매보다" in context["live_rebound_holding_note"]
+
+
+def test_build_live_rebound_context_uses_us_pre_session_wording():
+    context = build_live_rebound_context(False)
+
+    assert "데이/프리 반등" in context["live_rebound_label"]
+    assert "정규장 확인" in context["live_rebound_holding_label"]
+    assert "데이/프리/애프터" in context["live_rebound_note"]
+    assert "정규장 거래량" in context["live_rebound_holding_note"]
 
 
 # ---------------------------------------------------------------------------

@@ -459,12 +459,14 @@ try:
     from stock_lab_core.decision_engine import (
         apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv,
         build_day_return_context as _core_build_day_return_context,
+        build_live_rebound_context as _core_build_live_rebound_context,
         get_source_close_values as _core_get_source_close_values,
     )
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
 except Exception as _live_price_helper_import_error:
     _core_apply_live_price_to_ohlcv = None
     _core_build_day_return_context = None
+    _core_build_live_rebound_context = None
     _core_get_source_close_values = None
     LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
     logging.warning(
@@ -16442,6 +16444,28 @@ def build_day_return_context(
     }
 
 
+def build_live_rebound_context(is_kr_market_ticker: bool) -> dict:
+    if _core_build_live_rebound_context is not None:
+        try:
+            return _core_build_live_rebound_context(is_kr_market_ticker)
+        except Exception as exc:
+            logging.warning("core live rebound helper failed; using local fallback: %s", exc)
+
+    if is_kr_market_ticker:
+        return {
+            "live_rebound_label": "🟡본장 반등: 종가/거래량 확인",
+            "live_rebound_holding_label": "🟡본장 반등: 추매는 종가 확인",
+            "live_rebound_note": "본장 장중 반등은 종가와 거래량 확정 전까지 예외승인 보류 — MA5/FVG 지지 확인",
+            "live_rebound_holding_note": "본장 장중 반등은 추매보다 종가와 거래량 확정 후 MA5/FVG 지지 확인",
+        }
+    return {
+        "live_rebound_label": "🟡데이/프리 반등: 정규장 확인대기",
+        "live_rebound_holding_label": "🟡데이/프리 반등: 추매는 정규장 확인",
+        "live_rebound_note": "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인",
+        "live_rebound_holding_note": "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인",
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16500,27 +16524,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     day_ret = day_return_context["day_ret"]
     day_ret_label = day_return_context["day_ret_label"]
     live_gap_move = day_return_context["live_gap_move"]
-    is_kr_market_ticker = is_kr_listed(ticker)
-    live_rebound_label = (
-        "🟡본장 반등: 종가/거래량 확인"
-        if is_kr_market_ticker
-        else "🟡데이/프리 반등: 정규장 확인대기"
-    )
-    live_rebound_holding_label = (
-        "🟡본장 반등: 추매는 종가 확인"
-        if is_kr_market_ticker
-        else "🟡데이/프리 반등: 추매는 정규장 확인"
-    )
-    live_rebound_note = (
-        "본장 장중 반등은 종가와 거래량 확정 전까지 예외승인 보류 — MA5/FVG 지지 확인"
-        if is_kr_market_ticker
-        else "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 초반 변동과 거래량 확인"
-    )
-    live_rebound_holding_note = (
-        "본장 장중 반등은 추매보다 종가와 거래량 확정 후 MA5/FVG 지지 확인"
-        if is_kr_market_ticker
-        else "데이/프리/애프터 가격만으로 예외승인은 보류 — 정규장 거래량과 MA5/FVG 지지 확인"
-    )
+    live_rebound_context = build_live_rebound_context(is_kr_listed(ticker))
+    live_rebound_label = live_rebound_context["live_rebound_label"]
+    live_rebound_holding_label = live_rebound_context["live_rebound_holding_label"]
+    live_rebound_note = live_rebound_context["live_rebound_note"]
+    live_rebound_holding_note = live_rebound_context["live_rebound_holding_note"]
     high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
     current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
 
