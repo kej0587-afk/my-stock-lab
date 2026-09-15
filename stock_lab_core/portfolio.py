@@ -135,6 +135,14 @@ def append_cash_rows(df, krw_cash, usd_cash, usdkrw, total_asset):
     return df
 
 
+def calc_pnl_krw_from_row(row, usdkrw):
+    ticker = str(row.get("티커", "")).upper()
+    pnl = clean_float(row.get("평가손익"), 0.0)
+    if is_kr_listed(ticker) or "CASH" in ticker:
+        return pnl
+    return pnl * clean_float(usdkrw, 1400.0)
+
+
 def calc_reserve_summary(df, reserve_target_weight):
     total = float(df["원화환산"].sum()) if not df.empty else 0.0
     bucket = df["bucket"].apply(_normalize_bucket) if not df.empty else pd.Series(dtype=str)

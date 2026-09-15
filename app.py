@@ -1090,6 +1090,7 @@ from stock_lab_core.portfolio import (
     build_monthly_record_status,
     build_scenario_context,
     calc_asset_shock_table,
+    calc_pnl_krw_from_row,
     calc_portfolio_summary,
     calc_reserve_summary,
     get_holding_row_by_ticker,
@@ -16193,7 +16194,7 @@ def prefetch_benchmark_info_parallel(watchlist_items: list, max_workers: int = 6
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def _fetch(item):
+    def _fetch_benchmark_info(item):
         tkr  = sanitize_ticker_value(item.get("ticker", ""))
         name = sanitize_asset_name(item.get("name", ""), tkr)
         if not tkr:
@@ -16206,7 +16207,7 @@ def prefetch_benchmark_info_parallel(watchlist_items: list, max_workers: int = 6
             pass
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_fetch, item) for item in watchlist_items]
+        futures = [executor.submit(_fetch_benchmark_info, item) for item in watchlist_items]
         for f in as_completed(futures):
             f.result()
 
@@ -21422,13 +21423,13 @@ def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers:
     from concurrent.futures import ThreadPoolExecutor, as_completed
     if not tickers:
         return
-    def _fetch(tkr):
+    def _fetch_price_df(tkr):
         try:
             return load_price_df(tkr, period)
         except Exception:
             return None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_fetch, tkr): tkr for tkr in tickers}
+        futures = {executor.submit(_fetch_price_df, tkr): tkr for tkr in tickers}
         for future in as_completed(futures):
             future.result()  # 예외가 있으면 무시하고 계속
 
@@ -31387,14 +31388,7 @@ def render_print_report_v2():
 
         if "평가손익_원화" not in report_df.columns:
             if "평가손익" in report_df.columns:
-                def _pnl_krw(row):
-                    ticker = str(row.get("티커", "")).upper()
-                    pnl = _num(row.get("평가손익"), 0.0)
-                    is_kr = is_kr_listed(ticker) or "CASH" in ticker
-                    if is_kr:
-                        return pnl
-                    return pnl * _num(usdkrw, 1400.0)
-                report_df["평가손익_원화"] = report_df.apply(_pnl_krw, axis=1)
+                report_df["평가손익_원화"] = report_df.apply(lambda row: calc_pnl_krw_from_row(row, usdkrw), axis=1)
             else:
                 report_df["평가손익_원화"] = 0.0
 
@@ -32079,12 +32073,7 @@ def render_full_print_report():
         # 평가손익 원화 환산
         if "평가손익_원화" not in rdf.columns:
             if "평가손익" in rdf.columns:
-                def _pnl_krw(row):
-                    ticker = str(row.get("티커", "")).upper()
-                    pnl = _num(row.get("평가손익"), 0.0)
-                    is_kr = is_kr_listed(ticker) or "CASH" in ticker
-                    return pnl if is_kr else pnl * _num(usdkrw, 1400.0)
-                rdf["평가손익_원화"] = rdf.apply(_pnl_krw, axis=1)
+                rdf["평가손익_원화"] = rdf.apply(lambda row: calc_pnl_krw_from_row(row, usdkrw), axis=1)
             else:
                 rdf["평가손익_원화"] = 0.0
         # 수익률 % 컬럼

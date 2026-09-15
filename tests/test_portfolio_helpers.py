@@ -13,6 +13,7 @@ from stock_lab_core.portfolio import (
     calc_asset_shock_table,
     calc_benchmark_metrics_from_returns,
     calc_drawdown_details,
+    calc_pnl_krw_from_row,
     calc_portfolio_leverage_summary,
     calc_series_mdd,
     get_active_portfolio_rows,
@@ -73,6 +74,12 @@ def test_active_portfolio_rows_filter_cash_reserve_and_inactive_rows():
     active = get_active_portfolio_rows(holdings)
 
     assert active["티커"].tolist() == ["VOO"]
+
+
+def test_calc_pnl_krw_from_row_converts_foreign_pnl_only():
+    assert calc_pnl_krw_from_row({"티커": "005930.KS", "평가손익": 10_000}, 1400) == 10_000
+    assert calc_pnl_krw_from_row({"티커": "KRW_CASH", "평가손익": 0}, 1400) == 0
+    assert calc_pnl_krw_from_row({"티커": "FCX", "평가손익": 10}, 1400) == 14_000
 
 
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
