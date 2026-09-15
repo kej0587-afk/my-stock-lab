@@ -75,6 +75,7 @@ def test_decision_engine_exports_used_by_app():
             "apply_safety_state_override",
             "build_core_dca_context_values",
             "build_core_dca_outcome",
+            "build_decision_result",
             "build_decision_outcome",
             "build_limited_history_etf_outcome",
             "build_position_sizing_hint",

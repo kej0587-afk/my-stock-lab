@@ -9,6 +9,7 @@ import pytest
 
 from stock_lab_core.decision_engine import (
     apply_safety_state_override,
+    build_decision_result,
     build_decision_outcome,
     build_sideways_quality_state,
     compute_sizing_hint,
@@ -32,6 +33,94 @@ def helpers():
 
 def _outcome(app_module, label, color, code):
     return app_module.build_decision_outcome(label, color, code)
+
+
+def test_build_decision_result_preserves_core_output_fields():
+    outcome = build_decision_outcome("테스트 판정", "#123456", "TEST_CODE")
+    ctx = {
+        "decision_outcome": outcome,
+        "last": {"MA5": 101, "MA20": 100, "MA50": 95, "MA120": 90},
+        "fvg_info": {"type": "Bullish FVG", "active": True, "top": 110, "bottom": 105},
+        "core_dca_context": {"core_dca_rate": 0.5, "core_dca_label": "정기 적립"},
+        "df": [1, 2, 3],
+        "cur_p": 100.0,
+        "rsi_now": 55.0,
+        "mfi_now": 60.0,
+        "pct_b_now": 0.45,
+        "rs_label": "➖보통",
+        "adj_tech_score": 1.0,
+        "grade": "⚖️B급",
+        "t_score": 5,
+        "tech_total": 3,
+        "fin_score": 2,
+        "current_dd": -0.1,
+        "ret_3m": 0.2,
+        "ret_6m": 0.3,
+        "targ_w": 10.0,
+        "curr_w": 6.0,
+        "buy_amount": 100000,
+        "eff_total": 1000000,
+        "weight_gap": 4.0,
+        "app_mode": "개인모드",
+        "effective_bucket": "성장",
+        "short_history": False,
+        "is_leveraged_or_inverse": False,
+        "day_ret": -0.01,
+        "vol_ratio": 1.1,
+        "is_structure_damage_entry_risk": False,
+        "live_price_used": False,
+        "daily_close": 100,
+        "is_live_gap_shock": False,
+        "sizing_hint": {"rate": 0.5},
+        "ext_structure": "Neutral",
+        "int_structure": "Bullish",
+        "pd_zone": "Neutral",
+        "smc_action": "관망",
+        "sqz_status": "➖비압축",
+        "macd_state": "📈추세유지(상승중)",
+        "rt_macd_label": "📈추세유지(상승중)",
+        "trend": "⏳혼조세",
+        "liq_state": "없음",
+        "int_event": "None",
+        "ext_event": "None",
+        "main_score": 2,
+        "rs_s": 1,
+        "mfi_s": 0,
+        "trend_s": 0,
+        "macd_s": 1,
+        "sqz_s": 0,
+        "rs_slope_s": 0,
+        "rs_slope_label": "횡보",
+        "rs_slope_val": 0.0,
+        "has_pos": False,
+        "is_core_etf": False,
+        "price_vs_avg": 0.0,
+        "rr_ratio": 1.8,
+        "rr_target_price": 115,
+        "rr_stop_atr": 92,
+        "_atr": 4,
+        "rr_target_source": "테스트 목표",
+        "rr_stop_source": "테스트 손절",
+        "rr_target_is_projection": False,
+        "rr_tp1_price": 105,
+        "rr_tp2_price": 110,
+        "rr_tp3_price": 115,
+        "is_52w_breakout": False,
+        "sector_flow_state": "중립",
+        "smc_insight": "테스트",
+        "safety_state": "GREEN",
+        "macro_state": "NORMAL",
+    }
+
+    result = build_decision_result(ctx)
+
+    assert result["dec"] == "테스트 판정"
+    assert result["decision_code"] == "TEST_CODE"
+    assert result["history_days"] == 3
+    assert result["ma20"] == 100
+    assert result["fvg_type"] == "Bullish FVG"
+    assert result["core_dca_rate"] == 0.5
+    assert result["profit_take_signal"] is False
 
 
 # ---------------------------------------------------------------------------
