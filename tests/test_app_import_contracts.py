@@ -81,6 +81,7 @@ def test_decision_engine_exports_used_by_app():
             "apply_live_price_to_ohlcv",
             "build_day_return_context",
             "build_live_rebound_context",
+            "build_price_history_context",
             "build_core_dca_context_values",
             "build_core_dca_outcome",
             "build_decision_result",

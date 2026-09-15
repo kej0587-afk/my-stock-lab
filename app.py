@@ -460,6 +460,7 @@ try:
         apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv,
         build_day_return_context as _core_build_day_return_context,
         build_live_rebound_context as _core_build_live_rebound_context,
+        build_price_history_context as _core_build_price_history_context,
         get_source_close_values as _core_get_source_close_values,
     )
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
@@ -467,6 +468,7 @@ except Exception as _live_price_helper_import_error:
     _core_apply_live_price_to_ohlcv = None
     _core_build_day_return_context = None
     _core_build_live_rebound_context = None
+    _core_build_price_history_context = None
     _core_get_source_close_values = None
     LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
     logging.warning(
@@ -16466,6 +16468,23 @@ def build_live_rebound_context(is_kr_market_ticker: bool) -> dict:
     }
 
 
+def build_price_history_context(df: pd.DataFrame, last, cur_p) -> dict:
+    if _core_build_price_history_context is not None:
+        try:
+            return _core_build_price_history_context(df, last, cur_p)
+        except Exception as exc:
+            logging.warning("core price history helper failed; using local fallback: %s", exc)
+
+    high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
+    current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
+    short_history = len(df) < 60 or not finite_num(last["MA50"]) or not finite_num(last["MA120"])
+    return {
+        "high_52w": high_52w,
+        "current_dd": current_dd,
+        "short_history": short_history,
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16529,10 +16548,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     live_rebound_holding_label = live_rebound_context["live_rebound_holding_label"]
     live_rebound_note = live_rebound_context["live_rebound_note"]
     live_rebound_holding_note = live_rebound_context["live_rebound_holding_note"]
-    high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
-    current_dd = (cur_p / high_52w) - 1 if high_52w > 0 else 0.0
-
-    short_history = len(df) < 60 or not finite_num(last["MA50"]) or not finite_num(last["MA120"])
+    price_history_context = build_price_history_context(df, last, cur_p)
+    high_52w = price_history_context["high_52w"]
+    current_dd = price_history_context["current_dd"]
+    short_history = price_history_context["short_history"]
     trend = get_trend(last)
     macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
     rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")

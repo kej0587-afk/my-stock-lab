@@ -8,6 +8,7 @@ from stock_lab_core.decision_engine import (
     apply_live_price_to_ohlcv,
     build_day_return_context,
     build_live_rebound_context,
+    build_price_history_context,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -157,6 +158,36 @@ def test_build_live_rebound_context_uses_us_pre_session_wording():
     assert "정규장 확인" in context["live_rebound_holding_label"]
     assert "데이/프리/애프터" in context["live_rebound_note"]
     assert "정규장 거래량" in context["live_rebound_holding_note"]
+
+
+def test_build_price_history_context_calculates_drawdown_and_full_history():
+    df = pd.DataFrame({
+        "High": [100.0] * 59 + [120.0],
+        "MA50": [90.0] * 60,
+        "MA120": [80.0] * 60,
+    })
+
+    context = build_price_history_context(df, df.iloc[-1], 90.0)
+
+    assert context["high_52w"] == 120.0
+    assert round(context["current_dd"], 4) == -0.25
+    assert context["short_history"] is False
+
+
+def test_build_price_history_context_flags_short_or_missing_ma_history():
+    short_df = pd.DataFrame({
+        "High": [100.0] * 10,
+        "MA50": [90.0] * 10,
+        "MA120": [80.0] * 10,
+    })
+    missing_ma_df = pd.DataFrame({
+        "High": [100.0] * 60,
+        "MA50": [90.0] * 60,
+        "MA120": [float("nan")] * 60,
+    })
+
+    assert build_price_history_context(short_df, short_df.iloc[-1], 95.0)["short_history"] is True
+    assert build_price_history_context(missing_ma_df, missing_ma_df.iloc[-1], 95.0)["short_history"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -272,6 +272,18 @@ def build_live_rebound_context(is_kr_market_ticker: bool) -> dict:
     }
 
 
+def build_price_history_context(df: pd.DataFrame, last, cur_p) -> dict:
+    """Build drawdown and short-history flags used by the decision engine."""
+    high_52w = df["High"].rolling(252).max().iloc[-1] if len(df) >= 252 else df["High"].max()
+    current_dd = (clean_float(cur_p, 0.0) / high_52w) - 1 if high_52w > 0 else 0.0
+    short_history = len(df) < 60 or not finite_num(last["MA50"]) or not finite_num(last["MA120"])
+    return {
+        "high_52w": high_52w,
+        "current_dd": current_dd,
+        "short_history": short_history,
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,
