@@ -78,6 +78,7 @@ def test_decision_engine_exports_used_by_app():
         [
             "DECISION_GROUP_BY_CODE",
             "apply_safety_state_override",
+            "apply_live_price_to_ohlcv",
             "build_core_dca_context_values",
             "build_core_dca_outcome",
             "build_decision_result",

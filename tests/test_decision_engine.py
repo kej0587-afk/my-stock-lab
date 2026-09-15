@@ -1,8 +1,11 @@
 """Tests for stock_lab_core.decision_engine critical judgment paths."""
 import math
 
+import pandas as pd
+
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
+    apply_live_price_to_ohlcv,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -31,6 +34,40 @@ def test_normalize_decision_runtime_inputs_uses_safe_defaults():
     assert macro_penalty == 0.0
     assert math.isnan(macro_risk)
     assert total_eval == 0.0
+
+
+def test_apply_live_price_to_ohlcv_updates_latest_row():
+    today = pd.Timestamp.today().normalize()
+    df = pd.DataFrame(
+        {
+            "Open": [100.0],
+            "High": [101.0],
+            "Low": [99.0],
+            "Close": [100.0],
+            "Volume": [1000],
+        },
+        index=[today],
+    )
+
+    out, applied = apply_live_price_to_ohlcv(df, 102.0, "SPY")
+
+    assert applied
+    assert out["Close"].iloc[-1] == 102.0
+    assert out["High"].iloc[-1] == 102.0
+    assert out["Low"].iloc[-1] == 99.0
+
+
+def test_apply_live_price_to_ohlcv_ignores_tiny_or_extreme_gap():
+    today = pd.Timestamp.today().normalize()
+    df = pd.DataFrame({"Close": [100.0]}, index=[today])
+
+    tiny_out, tiny_applied = apply_live_price_to_ohlcv(df, 100.1, "SPY")
+    extreme_out, extreme_applied = apply_live_price_to_ohlcv(df, 180.0, "SPY")
+
+    assert not tiny_applied
+    assert tiny_out["Close"].iloc[-1] == 100.0
+    assert not extreme_applied
+    assert extreme_out["Close"].iloc[-1] == 100.0
 
 
 # ---------------------------------------------------------------------------

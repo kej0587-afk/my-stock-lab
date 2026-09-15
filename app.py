@@ -456,6 +456,16 @@ except Exception as _decision_result_import_error:
             "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
         }
 try:
+    from stock_lab_core.decision_engine import apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv
+    LIVE_PRICE_HELPER_IMPORT_ERROR = ""
+except Exception as _live_price_helper_import_error:
+    _core_apply_live_price_to_ohlcv = None
+    LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
+    logging.warning(
+        "stock_lab_core.decision_engine live price helper unavailable; using local fallback: %s",
+        LIVE_PRICE_HELPER_IMPORT_ERROR,
+    )
+try:
     from stock_lab_core.decision_engine import (
         apply_safety_state_override as _apply_safety_state_override,
         build_sideways_quality_state,
@@ -16306,6 +16316,18 @@ def apply_live_price_to_ohlcv(
     min_gap: float = 0.003,
     max_gap: float = 0.5,
 ):
+    if _core_apply_live_price_to_ohlcv is not None:
+        try:
+            return _core_apply_live_price_to_ohlcv(
+                df,
+                live_price,
+                ticker,
+                min_gap=min_gap,
+                max_gap=max_gap,
+            )
+        except Exception as exc:
+            logging.warning("core live price OHLCV helper failed; using local fallback: %s", exc)
+
     live = clean_float(live_price, 0.0)
     if df is None or df.empty or live <= 0 or "Close" not in df.columns:
         return df, False

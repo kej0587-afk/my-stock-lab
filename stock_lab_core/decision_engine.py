@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -123,6 +125,74 @@ def ensure_min_price_rows_for_decision(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) >= 2:
         return df
     return pd.concat([df, df.tail(1)], ignore_index=False)
+
+
+def _get_live_price_row_date(ticker: str):
+    try:
+        is_us = not is_kr_listed(ticker)
+        zone = ZoneInfo("America/New_York") if is_us else ZoneInfo("Asia/Seoul")
+        now = datetime.now(zone)
+        if now.weekday() >= 5:
+            return None
+        return pd.Timestamp(now.date())
+    except Exception:
+        return None
+
+
+def apply_live_price_to_ohlcv(
+    df: pd.DataFrame,
+    live_price: float,
+    ticker: str = "",
+    *,
+    min_gap: float = 0.003,
+    max_gap: float = 0.5,
+):
+    """Apply a validated live price to the latest OHLCV row."""
+    live = clean_float(live_price, 0.0)
+    if df is None or df.empty or live <= 0 or "Close" not in df.columns:
+        return df, False
+
+    out = df.copy()
+    last_close = clean_float(out["Close"].iloc[-1], 0.0)
+    if last_close <= 0:
+        return out, False
+
+    gap = abs(live - last_close) / max(abs(last_close), 1.0)
+    if gap <= min_gap or gap >= max_gap:
+        return out, False
+
+    for col in ("Open", "High", "Low", "Volume"):
+        if col not in out.columns:
+            out[col] = out["Close"] if col != "Volume" else 0.0
+
+    live_date = _get_live_price_row_date(ticker)
+    try:
+        last_date = pd.Timestamp(out.index[-1]).tz_localize(None).normalize()
+    except Exception:
+        last_date = pd.Timestamp.today().normalize()
+
+    if live_date is not None and last_date < live_date:
+        row = out.iloc[-1].copy()
+        row["Open"] = last_close
+        row["High"] = max(last_close, live)
+        row["Low"] = min(last_close, live)
+        row["Close"] = live
+        row["Volume"] = clean_float(row.get("Volume"), 0.0)
+        if row["Volume"] <= 0:
+            row["Volume"] = clean_float(out["Volume"].tail(20).mean(), 0.0)
+        out.loc[live_date] = row
+        out = out.sort_index()
+    else:
+        idx = out.index[-1]
+        high = clean_float(out.at[idx, "High"], last_close)
+        low = clean_float(out.at[idx, "Low"], last_close)
+        if clean_float(out.at[idx, "Open"], 0.0) <= 0:
+            out.at[idx, "Open"] = last_close
+        out.at[idx, "High"] = max(high, live)
+        out.at[idx, "Low"] = min(low, live)
+        out.at[idx, "Close"] = live
+
+    return out, True
 
 
 def score_technical_components(
