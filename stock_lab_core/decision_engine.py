@@ -195,6 +195,21 @@ def apply_live_price_to_ohlcv(
     return out, True
 
 
+def get_source_close_values(df: pd.DataFrame) -> tuple[float, float]:
+    """Return the latest and previous source close values before live-price edits."""
+    source_daily_close = (
+        clean_float(df["Close"].iloc[-1], 0.0)
+        if df is not None and not df.empty and "Close" in df.columns
+        else 0.0
+    )
+    source_prev_close = (
+        clean_float(df["Close"].iloc[-2], 0.0)
+        if df is not None and len(df) >= 2 and "Close" in df.columns
+        else 0.0
+    )
+    return source_daily_close, source_prev_close
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,

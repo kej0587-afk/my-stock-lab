@@ -93,6 +93,7 @@ def test_decision_engine_exports_used_by_app():
             "classify_safety_state",
             "compute_sizing_hint",
             "ensure_min_price_rows_for_decision",
+            "get_source_close_values",
             "has_down_session_pressure",
             "is_new_entry_decision_code",
             "normalize_decision_runtime_inputs",

@@ -456,13 +456,17 @@ except Exception as _decision_result_import_error:
             "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
         }
 try:
-    from stock_lab_core.decision_engine import apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv
+    from stock_lab_core.decision_engine import (
+        apply_live_price_to_ohlcv as _core_apply_live_price_to_ohlcv,
+        get_source_close_values as _core_get_source_close_values,
+    )
     LIVE_PRICE_HELPER_IMPORT_ERROR = ""
 except Exception as _live_price_helper_import_error:
     _core_apply_live_price_to_ohlcv = None
+    _core_get_source_close_values = None
     LIVE_PRICE_HELPER_IMPORT_ERROR = repr(_live_price_helper_import_error)
     logging.warning(
-        "stock_lab_core.decision_engine live price helper unavailable; using local fallback: %s",
+        "stock_lab_core.decision_engine price helpers unavailable; using local fallback: %s",
         LIVE_PRICE_HELPER_IMPORT_ERROR,
     )
 try:
@@ -16375,6 +16379,18 @@ def apply_live_price_to_ohlcv(
     return out, True
 
 
+def get_source_close_values(df: pd.DataFrame) -> tuple[float, float]:
+    if _core_get_source_close_values is not None:
+        try:
+            return _core_get_source_close_values(df)
+        except Exception as exc:
+            logging.warning("core source close helper failed; using local fallback: %s", exc)
+
+    source_daily_close = clean_float(df["Close"].iloc[-1], 0.0) if df is not None and not df.empty and "Close" in df.columns else 0.0
+    source_prev_close = clean_float(df["Close"].iloc[-2], 0.0) if df is not None and len(df) >= 2 and "Close" in df.columns else 0.0
+    return source_daily_close, source_prev_close
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -16388,8 +16404,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_etf = False
         asset_class = normalize_individual_stock_asset_class(ticker, asset_class)
 
-    source_daily_close = clean_float(df["Close"].iloc[-1], 0.0) if df is not None and not df.empty and "Close" in df.columns else 0.0
-    source_prev_close = clean_float(df["Close"].iloc[-2], 0.0) if df is not None and len(df) >= 2 and "Close" in df.columns else 0.0
+    source_daily_close, source_prev_close = get_source_close_values(df)
     df, live_ohlcv_applied = apply_live_price_to_ohlcv(df, live_price, ticker)
     if live_ohlcv_applied:
         try:

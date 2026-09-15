@@ -11,6 +11,7 @@ from stock_lab_core.decision_engine import (
     classify_core_etf_dca_rate,
     classify_decision_signal,
     infer_decision_code,
+    get_source_close_values,
     score_technical_components,
     score_main_entry,
     classify_candidate_grade,
@@ -68,6 +69,24 @@ def test_apply_live_price_to_ohlcv_ignores_tiny_or_extreme_gap():
     assert tiny_out["Close"].iloc[-1] == 100.0
     assert not extreme_applied
     assert extreme_out["Close"].iloc[-1] == 100.0
+
+
+def test_get_source_close_values_returns_latest_and_previous_close():
+    df = pd.DataFrame({"Close": [98.0, 100.0, 103.0]})
+
+    latest, previous = get_source_close_values(df)
+
+    assert latest == 103.0
+    assert previous == 100.0
+
+
+def test_get_source_close_values_handles_short_or_missing_data():
+    one_row = pd.DataFrame({"Close": [100.0]})
+    no_close = pd.DataFrame({"Open": [100.0, 101.0]})
+
+    assert get_source_close_values(one_row) == (100.0, 0.0)
+    assert get_source_close_values(no_close) == (0.0, 0.0)
+    assert get_source_close_values(None) == (0.0, 0.0)
 
 
 # ---------------------------------------------------------------------------
