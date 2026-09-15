@@ -377,7 +377,6 @@ from stock_lab_core.financial_score import (
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     build_core_dca_outcome,
-    build_decision_result,
     build_decision_outcome,
     build_limited_history_etf_outcome,
     build_core_dca_context_values,
@@ -389,10 +388,73 @@ from stock_lab_core.decision_engine import (
     classify_macro_state,
     ensure_min_price_rows_for_decision,
     is_new_entry_decision_code,
-    normalize_decision_runtime_inputs,
     score_main_entry,
     score_technical_components,
 )
+try:
+    from stock_lab_core.decision_engine import (
+        build_decision_result,
+        normalize_decision_runtime_inputs,
+    )
+    DECISION_RESULT_IMPORT_ERROR = ""
+except Exception as _decision_result_import_error:
+    DECISION_RESULT_IMPORT_ERROR = repr(_decision_result_import_error)
+    logging.warning(
+        "stock_lab_core.decision_engine result helpers unavailable; using local fallback: %s",
+        DECISION_RESULT_IMPORT_ERROR,
+    )
+
+    def normalize_decision_runtime_inputs(
+        macro_penalty_value=None,
+        final_macro_risk_value=None,
+        total_eval_value=None,
+    ):
+        return (
+            clean_float(macro_penalty_value, 0.0),
+            clean_float(final_macro_risk_value, np.nan),
+            clean_float(total_eval_value, 0.0),
+        )
+
+    def build_decision_result(ctx: dict) -> dict:
+        decision_outcome = ctx["decision_outcome"]
+        last = ctx["last"]
+        fvg_info = ctx["fvg_info"]
+        core_dca_context = ctx["core_dca_context"]
+        df = ctx["df"]
+        return {
+            "cur_p": ctx["cur_p"], "rsi": ctx["rsi_now"], "mfi": ctx["mfi_now"], "pct_b": ctx["pct_b_now"], "rs_label": ctx["rs_label"], "adj": ctx["adj_tech_score"],
+            "dec": decision_outcome.label, "col": decision_outcome.color,
+            "decision_code": decision_outcome.code, "decision_group": decision_outcome.group,
+            "decision_reasons": decision_outcome.reasons,
+            "grade": ctx["grade"], "t_score": ctx["t_score"], "tech_total": ctx["tech_total"], "fin_score": ctx["fin_score"],
+            "dd": ctx["current_dd"], "ret_3m": ctx["ret_3m"], "ret_6m": ctx["ret_6m"], "target_w": ctx["targ_w"], "current_w": ctx["curr_w"], "buy_amt": ctx["buy_amount"],
+            "effective_total_asset": ctx["eff_total"], "weight_gap": ctx["weight_gap"], "app_mode": ctx["app_mode"],
+            "bucket": ctx["effective_bucket"], "asset_class": ctx.get("asset_class", ""),
+            "short_history": ctx["short_history"], "history_days": len(df),
+            "is_leveraged_or_inverse": ctx["is_leveraged_or_inverse"], **core_dca_context,
+            "day_ret": ctx["day_ret"], "day_ret_label": ctx.get("day_ret_label", "전일등락"),
+            "regular_day_ret": ctx.get("regular_day_ret", np.nan), "live_ref_ret": ctx.get("live_ref_ret", np.nan),
+            "leveraged_drop_ret": ctx.get("leveraged_drop_ret", ctx["day_ret"]),
+            "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
+            "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
+            "sizing_hint": ctx["sizing_hint"],
+            "ext_structure": ctx["ext_structure"], "int_structure": ctx["int_structure"], "pd_zone": ctx["pd_zone"], "smc_action": ctx["smc_action"],
+            "ma5": last["MA5"], "ma20": last["MA20"], "ma50": last["MA50"], "ma120": last["MA120"], "sqz": ctx["sqz_status"], "macd": ctx["macd_state"], "rt_macd": ctx["rt_macd_label"],
+            "trend": ctx["trend"], "fvg_type": fvg_info["type"], "fvg_active": fvg_info["active"], "fvg_top": fvg_info["top"], "fvg_bottom": fvg_info["bottom"],
+            "liq_state": ctx["liq_state"], "int_event": ctx["int_event"], "ext_event": ctx["ext_event"],
+            "main_s": ctx["main_score"], "rs_s": ctx["rs_s"], "mfi_s": ctx["mfi_s"],
+            "trend_s": ctx["trend_s"], "macd_s": ctx["macd_s"], "sqz_s": ctx["sqz_s"],
+            "rs_slope_s": ctx["rs_slope_s"], "rs_slope_label": ctx["rs_slope_label"], "rs_slope_val": ctx["rs_slope_val"],
+            "profit_take_signal": (ctx["has_pos"] and (not ctx["is_core_etf"]) and ctx["mfi_now"] >= 80 and ctx["pct_b_now"] > 0.9 and ctx["price_vs_avg"] > 0.20),
+            "rr_ratio": ctx["rr_ratio"], "rr_target": ctx["rr_target_price"], "rr_stop": ctx["rr_stop_atr"], "atr": ctx["_atr"],
+            "rr_target_source": ctx["rr_target_source"], "rr_stop_source": ctx["rr_stop_source"],
+            "rr_target_is_projection": ctx["rr_target_is_projection"],
+            "rr_tp1": ctx["rr_tp1_price"], "rr_tp2": ctx["rr_tp2_price"], "rr_tp3": ctx["rr_tp3_price"],
+            "is_52w_breakout": ctx["is_52w_breakout"],
+            "sector_flow_state": ctx["sector_flow_state"],
+            "smc_insight": ctx["smc_insight"],
+            "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
+        }
 try:
     from stock_lab_core.decision_engine import (
         apply_safety_state_override as _apply_safety_state_override,
