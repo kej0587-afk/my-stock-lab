@@ -231,6 +231,25 @@ def test_stock_is_up_headline_is_not_misread_as_bad_news():
     assert result["sentiment"] == "호재"
 
 
+def test_target_new_high_overrides_broad_market_down_words():
+    result = assess_news_item(
+        (
+            "U.S. stock market close | The three major indices fell for the second consecutive session; "
+            "the Clarity Act was rejected, sending Circle and Coinbase down more than 10%; "
+            "cybersecurity-themed CRWD continued to hit a new high"
+        ),
+        "富途牛牛",
+        "CRWD",
+        ["CrowdStrike"],
+        ["cybersecurity"],
+        NEWS_CATEGORY_DIRECT,
+        strict=True,
+    )
+
+    assert result["ok"] is True
+    assert result["sentiment"] == "호재"
+
+
 def test_news_recency_score_and_label_expose_freshness():
     pub_dt = datetime.now(timezone.utc) - timedelta(hours=2)
 

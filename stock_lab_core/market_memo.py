@@ -272,10 +272,10 @@ def _headline_sentiment_override(title: object, current: object = "") -> str:
     severe_negative = any(term in text for term in SEVERE_BEARISH_NEWS_KEYWORDS)
     positive_move = (
         re.search(
-            r"(?<![a-z0-9])(stock is up|is up today|moved up|rises|rose|jumps|jumped|surges|surged|gains|gained|up\s+\d+(?:\.\d+)?%)",
+            r"(?<![a-z0-9])(stock is up|is up today|moved up|hit a new high|hits a new high|new high|record high|52-week high|all-time high|rises|rose|jumps|jumped|surges|surged|gains|gained|up\s+\d+(?:\.\d+)?%)",
             text,
         )
-        or any(term in text for term in ("주가 상승", "상승 이유", "급등 이유", "강세", "급등", "올랐"))
+        or any(term in text for term in ("신고가", "주가 상승", "상승 이유", "급등 이유", "강세", "급등", "올랐"))
     )
     negative_move = (
         re.search(
@@ -1370,6 +1370,7 @@ def _news_event_radar_lines(
     market_groups: dict[str, list[str]] = defaultdict(list)
     stock_groups: dict[str, list[str]] = defaultdict(list)
     stock_seen: set[tuple[str, str]] = set()
+    local_seen_news_keys: set[str] = set()
 
     for group, item in synthetic_market_events:
         market_groups[group].append(item)
@@ -1379,12 +1380,22 @@ def _news_event_radar_lines(
         title = _norm(row.get("title"))
         if not title:
             continue
+        row_key = _row_news_key(row)
         category_label = _event_category_label(category)
-        if row.get("source_kind") != "stock" and len(market_groups[category_label]) < 3:
+        tickers = _event_tickers(row)
+        if (
+            row.get("source_kind") != "stock"
+            and row_key not in local_seen_news_keys
+            and not tickers
+            and len(market_groups[category_label]) < 3
+        ):
             market_groups[category_label].append(title)
+            local_seen_news_keys.add(row_key)
             if seen_news_keys is not None:
-                seen_news_keys.add(_row_news_key(row))
-        for ticker in _event_tickers(row):
+                seen_news_keys.add(row_key)
+        for ticker in tickers:
+            if row_key in local_seen_news_keys:
+                continue
             key = (ticker, title[:90])
             if key in stock_seen:
                 continue
@@ -1394,8 +1405,9 @@ def _news_event_radar_lines(
                 group = "🪙 암호화폐"
             item_label = _asset_item_label("", ticker)
             stock_groups[group].append(f"{item_label} - {title}")
+            local_seen_news_keys.add(row_key)
             if seen_news_keys is not None:
-                seen_news_keys.add(_row_news_key(row))
+                seen_news_keys.add(row_key)
 
     lines: list[str] = []
     if market_groups:

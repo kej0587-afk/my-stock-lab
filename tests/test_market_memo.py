@@ -164,7 +164,6 @@ def test_auto_market_memo_builds_news_event_radar_from_rss_titles():
     )
 
     assert "뉴스 이벤트 레이더" in memo
-    assert "▶️ 시황" in memo
     assert "▶️ 종목" in memo
     assert "Intel hires former SK hynix CEO" in memo
     assert "INTC" in memo
@@ -192,6 +191,10 @@ def test_auto_market_memo_event_radar_filters_quote_forum_chart_noise():
 
 def test_auto_market_memo_dedupes_news_and_cleans_stock_labels():
     duplicate_title = "Why CrowdStrike (CRWD) Stock Is Up Today"
+    mixed_title = (
+        "U.S. stock market close | The three major indices fell for the second consecutive session; "
+        "cybersecurity-themed CRWD continued to hit a new high"
+    )
     market_news_rows = [
         {
             "market_category": "종목 직접",
@@ -201,6 +204,13 @@ def test_auto_market_memo_dedupes_news_and_cleans_stock_labels():
         }
     ]
     news_rows = [
+        {
+            "ticker": "CRWD",
+            "name": "CrowdStrike Holdings Inc",
+            "title": mixed_title,
+            "publisher": "富途牛牛",
+            "sentiment": "악재",
+        },
         {
             "ticker": "CRWD",
             "name": "CrowdStrike Holdings Inc",
@@ -231,11 +241,14 @@ def test_auto_market_memo_dedupes_news_and_cleans_stock_labels():
     )
 
     assert memo.count(duplicate_title) == 1
+    assert memo.count(mixed_title) == 1
     assert "크라우드스트라이크: " not in memo
     assert "First Trust NASDAQ Cybersecurit" not in memo
     assert "Palo Alto Networks,:" not in memo
     assert "사이버보안 ETF(CIBR)" in memo
     assert "팔로알토 네트웍스: Palo Alto Networks" in memo
+    assert "악재, StockStory" not in memo
+    assert "악재, 富途牛牛" not in memo
 
 
 def test_market_memo_generated_lines_do_not_dominate_category_scores():

@@ -300,6 +300,8 @@ NEWS_CATEGORY_SEARCH_LIMITS = {
 PRICE_MOVE_NEWS_WORDS = [
     "stock moved", "moved down", "moved up", "why it moved", "why stock moved",
     "stock is up", "is up today", "up today",
+    "hit a new high", "hits a new high", "new high", "record high",
+    "52-week high", "all-time high",
     "shares today", "stock today", "price action", "underperforms", "underperformed",
     "outperforms", "outperformed", "falls", "fell", "drops", "dropped", "declines",
     "declined", "rises", "rose", "jumps", "jumped", "surges", "surged", "pullback",
@@ -354,6 +356,12 @@ POSITIVE_NEWS_SIGNALS = [
     ("moved up", "최근 주가 상승 원인을 설명하는 기사"),
     ("stock is up", "최근 주가 상승 원인을 설명하는 기사"),
     ("is up today", "최근 주가 상승 원인을 설명하는 기사"),
+    ("hit a new high", "신고가 경신은 해당 종목의 수급 강세 단서"),
+    ("hits a new high", "신고가 경신은 해당 종목의 수급 강세 단서"),
+    ("new high", "신고가 경신은 해당 종목의 수급 강세 단서"),
+    ("record high", "신고가/사상 최고가 경신은 수급 강세 단서"),
+    ("52-week high", "52주 신고가 경신은 수급 강세 단서"),
+    ("all-time high", "사상 최고가 경신은 수급 강세 단서"),
     ("outperforms", "동종 종목 대비 강세는 단기 수급 우위 단서"),
     ("outperformed", "동종 종목 대비 강세는 단기 수급 우위 단서"),
     ("rises", "상승 마감은 단기 투자심리 개선 단서"),
@@ -1167,6 +1175,101 @@ def first_signal_reason(text, signals):
             return keyword, reason
     return "", ""
 
+
+TARGET_POSITIVE_PRICE_SIGNALS = (
+    ("stock is up", "해당 종목 주가 상승 원인 기사"),
+    ("is up today", "해당 종목 주가 상승 원인 기사"),
+    ("moved up", "해당 종목 주가 상승 원인 기사"),
+    ("hit a new high", "해당 종목 신고가 경신 기사"),
+    ("hits a new high", "해당 종목 신고가 경신 기사"),
+    ("new high", "해당 종목 신고가 경신 기사"),
+    ("record high", "해당 종목 신고가 경신 기사"),
+    ("52-week high", "해당 종목 신고가 경신 기사"),
+    ("all-time high", "해당 종목 신고가 경신 기사"),
+    ("rises", "해당 종목 상승 기사"),
+    ("rose", "해당 종목 상승 기사"),
+    ("jumps", "해당 종목 급등 기사"),
+    ("jumped", "해당 종목 급등 기사"),
+    ("surges", "해당 종목 급등 기사"),
+    ("surged", "해당 종목 급등 기사"),
+    ("gains", "해당 종목 상승 기사"),
+    ("gained", "해당 종목 상승 기사"),
+    ("신고가", "해당 종목 신고가 경신 기사"),
+    ("주가 상승", "해당 종목 주가 상승 기사"),
+    ("상승 이유", "해당 종목 주가 상승 원인 기사"),
+    ("급등 이유", "해당 종목 주가 급등 원인 기사"),
+    ("강세", "해당 종목 강세 기사"),
+    ("급등", "해당 종목 급등 기사"),
+)
+
+TARGET_NEGATIVE_PRICE_SIGNALS = (
+    ("moved down", "해당 종목 주가 하락 원인 기사"),
+    ("falls", "해당 종목 하락 기사"),
+    ("fell", "해당 종목 하락 기사"),
+    ("drops", "해당 종목 하락 기사"),
+    ("dropped", "해당 종목 하락 기사"),
+    ("declines", "해당 종목 하락 기사"),
+    ("declined", "해당 종목 하락 기사"),
+    ("plunges", "해당 종목 급락 기사"),
+    ("plunged", "해당 종목 급락 기사"),
+    ("tumbles", "해당 종목 급락 기사"),
+    ("tumbled", "해당 종목 급락 기사"),
+    ("주가 하락", "해당 종목 주가 하락 기사"),
+    ("하락 이유", "해당 종목 주가 하락 원인 기사"),
+    ("급락 이유", "해당 종목 주가 급락 원인 기사"),
+    ("약세", "해당 종목 약세 기사"),
+    ("급락", "해당 종목 급락 기사"),
+)
+
+
+def _target_news_aliases(symbol, company_names):
+    aliases = []
+    for raw in [symbol, *(company_names or [])]:
+        text = str(raw or "").strip().lower()
+        if not text:
+            continue
+        aliases.append(text)
+        aliases.append(text.replace(".", " "))
+        aliases.append(text.replace("-", " "))
+        base = re.sub(r"\.(ks|kq)$", "", text)
+        if base != text:
+            aliases.append(base)
+    blocked = {"inc", "corp", "corporation", "co", "ltd", "stock", "etf", "nasdaq", "s&p", "the"}
+    clean_aliases = []
+    for alias in aliases:
+        alias = re.sub(r"\s+", " ", alias).strip()
+        if len(alias) < 2 or alias in blocked:
+            continue
+        clean_aliases.append(alias)
+    return tuple(dict.fromkeys(clean_aliases))
+
+
+def _target_clause_signal_reason(text, symbol, company_names, signals):
+    aliases = _target_news_aliases(symbol, company_names)
+    if not aliases:
+        return "", ""
+    lowered = str(text or "").lower()
+    clauses = [
+        part.strip()
+        for part in re.split(r"[;|。.!?…]+|\s+[—–-]\s+|\s+·\s+", lowered)
+        if part.strip()
+    ]
+    if not clauses:
+        clauses = [lowered]
+    for clause in clauses:
+        if not any(alias in clause for alias in aliases):
+            continue
+        key, reason = first_signal_reason(clause, signals)
+        if key:
+            return key, reason
+        pct_match = re.search(r"(?<![a-z0-9])up\s+\d+(?:\.\d+)?%(?![a-z0-9])", clause)
+        if pct_match:
+            return pct_match.group(0), "해당 종목 주가 상승 기사"
+        pct_match = re.search(r"(?<![a-z0-9])down\s+\d+(?:\.\d+)?%(?![a-z0-9])", clause)
+        if pct_match:
+            return pct_match.group(0), "해당 종목 주가 하락 기사"
+    return "", ""
+
 def get_news_theme_terms(ticker, name):
     symbol = normalize_news_token(ticker).upper()
     key = normalize_ticker(ticker).upper()
@@ -1310,8 +1413,26 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     severe_neg_key, severe_neg_reason = first_signal_reason(text, SEVERE_NEGATIVE_NEWS_SIGNALS)
     pos_key, pos_reason = first_signal_reason(text, POSITIVE_NEWS_SIGNALS)
     neg_key, neg_reason = first_signal_reason(text, NEGATIVE_NEWS_SIGNALS)
+    target_pos_key, target_pos_reason = _target_clause_signal_reason(
+        text,
+        symbol,
+        company_names,
+        TARGET_POSITIVE_PRICE_SIGNALS,
+    )
+    target_neg_key, target_neg_reason = _target_clause_signal_reason(
+        text,
+        symbol,
+        company_names,
+        TARGET_NEGATIVE_PRICE_SIGNALS,
+    )
 
-    if severe_neg_key:
+    if target_neg_key and not target_pos_key:
+        sentiment, reason = "악재", target_neg_reason
+    elif target_pos_key and not target_neg_key:
+        sentiment, reason = "호재", target_pos_reason
+    elif target_pos_key and target_neg_key:
+        sentiment, reason = "중립", "해당 종목 상승/하락 단서가 함께 있어 원문 확인 필요"
+    elif severe_neg_key:
         sentiment, reason = "악재", severe_neg_reason
     elif pos_key and not neg_key:
         sentiment, reason = "호재", pos_reason
