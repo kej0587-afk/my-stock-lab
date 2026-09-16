@@ -8,6 +8,7 @@ import http.cookiejar
 import io
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -298,6 +299,7 @@ NEWS_CATEGORY_SEARCH_LIMITS = {
 
 PRICE_MOVE_NEWS_WORDS = [
     "stock moved", "moved down", "moved up", "why it moved", "why stock moved",
+    "stock is up", "is up today", "up today",
     "shares today", "stock today", "price action", "underperforms", "underperformed",
     "outperforms", "outperformed", "falls", "fell", "drops", "dropped", "declines",
     "declined", "rises", "rose", "jumps", "jumped", "surges", "surged", "pullback",
@@ -350,6 +352,8 @@ FIELD_NEWS_WORDS = [
 
 POSITIVE_NEWS_SIGNALS = [
     ("moved up", "최근 주가 상승 원인을 설명하는 기사"),
+    ("stock is up", "최근 주가 상승 원인을 설명하는 기사"),
+    ("is up today", "최근 주가 상승 원인을 설명하는 기사"),
     ("outperforms", "동종 종목 대비 강세는 단기 수급 우위 단서"),
     ("outperformed", "동종 종목 대비 강세는 단기 수급 우위 단서"),
     ("rises", "상승 마감은 단기 투자심리 개선 단서"),
@@ -1151,7 +1155,15 @@ def _is_index_listing_mismatch(text, symbol, company_names, category) -> bool:
 def first_signal_reason(text, signals):
     lowered = str(text or "").lower()
     for keyword, reason in signals:
-        if str(keyword).lower() in lowered:
+        key = str(keyword or "").lower().strip()
+        if not key:
+            continue
+        if re.fullmatch(r"[a-z0-9][a-z0-9\s'./&+-]*", key):
+            pattern = r"(?<![a-z0-9])" + re.escape(key).replace(r"\ ", r"\s+") + r"(?![a-z0-9])"
+            if re.search(pattern, lowered):
+                return keyword, reason
+            continue
+        if key in lowered:
             return keyword, reason
     return "", ""
 

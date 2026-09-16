@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pandas as pd
+
 from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
 
 
@@ -111,6 +113,42 @@ def test_auto_market_memo_builds_newspick_style_draft():
     assert "NVIDIA AI 수요 강세" in memo
 
 
+def test_auto_market_memo_adds_action_flag_and_macro_stress_summary():
+    macro_data = {
+        "10Y 금리": {"val": 5.0, "chg": 0.062, "icon": "🔺", "storm": True},
+        "VIX": {"val": 17.2, "chg": 0.086, "icon": "🔺"},
+        "MOVE": {"val": 83.71, "chg": 0.116, "icon": "🔺"},
+        "유가": {"val": 104.83, "chg": 0.234, "icon": "🔺"},
+    }
+    summary_rows = pd.DataFrame(
+        [
+            {
+                "종목명": "ProShares Ultra QQQ",
+                "티커": "QLD",
+                "🔥기술적 타점": "하드차단 : 비중 초과",
+                "판정코드": "HARD_BLOCK_OVERWEIGHT",
+            },
+            {
+                "종목명": "S&P500",
+                "티커": "379800.KS",
+                "🔥기술적 타점": "ETF 목표비중 미달 : 적립식 매수 가능",
+                "판정코드": "ETF_DCA_OK",
+            },
+        ]
+    )
+
+    memo = build_auto_market_memo(
+        macro_data=macro_data,
+        summary_rows=summary_rows,
+        now=datetime(2026, 9, 16, 9, 0),
+    )
+
+    assert "🎯 오늘의 전략" in memo
+    assert "레버리지 신규매수 금지" in memo
+    assert "S&P500(379800.KS) 적립/관심 유지" in memo
+    assert "매크로 스트레스" in memo
+
+
 def test_auto_market_memo_builds_news_event_radar_from_rss_titles():
     market_news_rows = [
         {"market_category": "반도체·AI", "title": "Intel hires former SK hynix CEO Lee Seok-hee to lead foundry", "publisher": "Reuters"},
@@ -150,6 +188,54 @@ def test_auto_market_memo_event_radar_filters_quote_forum_chart_noise():
     assert "Quotes & News" not in memo
     assert "Forum and Discussion" not in memo
     assert "Carlos Alcaraz" not in memo
+
+
+def test_auto_market_memo_dedupes_news_and_cleans_stock_labels():
+    duplicate_title = "Why CrowdStrike (CRWD) Stock Is Up Today"
+    market_news_rows = [
+        {
+            "market_category": "종목 직접",
+            "title": duplicate_title,
+            "publisher": "StockStory",
+            "published": "09/16 09:00",
+        }
+    ]
+    news_rows = [
+        {
+            "ticker": "CRWD",
+            "name": "CrowdStrike Holdings Inc",
+            "title": duplicate_title,
+            "publisher": "StockStory",
+            "sentiment": "악재",
+        },
+        {
+            "ticker": "CIBR",
+            "name": "First Trust NASDAQ Cybersecurit",
+            "title": "Precision Trading with First Trust Nasdaq Cea Cybersecurity Etf (CIBR) Risk Zones",
+            "publisher": "news.stocktradersdaily.com",
+            "sentiment": "중립",
+        },
+        {
+            "ticker": "PANW",
+            "name": "Palo Alto Networks,",
+            "title": "Palo Alto Networks (PANW) trustee to sell 500 shares",
+            "publisher": "Stock Titan",
+            "sentiment": "중립",
+        },
+    ]
+
+    memo = build_auto_market_memo(
+        market_news_rows=market_news_rows,
+        news_rows=news_rows,
+        now=datetime(2026, 9, 16, 9, 0),
+    )
+
+    assert memo.count(duplicate_title) == 1
+    assert "크라우드스트라이크: " not in memo
+    assert "First Trust NASDAQ Cybersecurit" not in memo
+    assert "Palo Alto Networks,:" not in memo
+    assert "사이버보안 ETF(CIBR)" in memo
+    assert "팔로알토 네트웍스: Palo Alto Networks" in memo
 
 
 def test_market_memo_generated_lines_do_not_dominate_category_scores():

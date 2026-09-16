@@ -216,6 +216,21 @@ def test_price_move_news_is_kept_as_recent_catalyst_even_when_noisy():
     assert "원인" in result["reason"]
 
 
+def test_stock_is_up_headline_is_not_misread_as_bad_news():
+    result = assess_news_item(
+        "Why CrowdStrike (CRWD) Stock Is Up Today",
+        "StockStory",
+        "CRWD",
+        ["CrowdStrike"],
+        ["cybersecurity"],
+        NEWS_CATEGORY_DIRECT,
+        strict=True,
+    )
+
+    assert result["ok"] is True
+    assert result["sentiment"] == "호재"
+
+
 def test_news_recency_score_and_label_expose_freshness():
     pub_dt = datetime.now(timezone.utc) - timedelta(hours=2)
 

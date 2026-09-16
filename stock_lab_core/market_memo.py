@@ -143,6 +143,9 @@ TICKER_ALIAS_MAP: dict[str, tuple[str, ...]] = {
 
 
 DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "CIBR": "사이버보안 ETF",
+    "CRWD": "크라우드스트라이크",
+    "PANW": "팔로알토 네트웍스",
     "TSM": "TSMC",
     "000660.KS": "SK하이닉스",
     "064350.KS": "현대로템",
@@ -220,6 +223,9 @@ def _display_asset_name(name: object, ticker: object = "") -> str:
     ticker_norm = _norm(ticker).upper()
     if ticker_norm in DISPLAY_NAME_OVERRIDES:
         return DISPLAY_NAME_OVERRIDES[ticker_norm]
+    raw = re.sub(r"\s+", " ", raw).strip(" \t\r\n-–—:;,，、")
+    raw = re.sub(r"\b(Co\.,?\s*Ltd\.?|Corporation|Corp\.?|Inc\.?|Incorporated|Limited|PLC|LLC)\b\.?", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"\s+", " ", raw).strip(" \t\r\n-–—:;,，、")
     low = raw.lower()
     if "taiwan semiconductor manufactur" in low:
         return "TSMC"
@@ -236,6 +242,53 @@ def _asset_item_label(name: object, ticker: object = "") -> str:
     if display_name and ticker_text:
         return f"{display_name}({ticker_text})"
     return display_name or ticker_text or "-"
+
+
+def _memo_news_key(title: object, publisher: object = "", link: object = "") -> str:
+    link_key = re.sub(r"[#?].*$", "", _lower(link))
+    if link_key and link_key not in {"#", "nan", "none"}:
+        return "link:" + link_key[:180]
+    text = re.sub(r"\s+", " ", _norm(title))
+    pub = _norm(publisher)
+    if pub:
+        text = re.sub(rf"\s+-\s+{re.escape(pub)}$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+-\s+[^-]{2,80}$", "", text)
+    return "title:" + re.sub(r"\W+", "", text.lower())[:160]
+
+
+def _row_news_key(row: dict) -> str:
+    return _memo_news_key(
+        row.get("title") or row.get("제목"),
+        row.get("publisher") or row.get("source") or row.get("출처"),
+        row.get("link") or row.get("링크"),
+    )
+
+
+def _headline_sentiment_override(title: object, current: object = "") -> str:
+    sentiment = _norm(current)
+    text = _lower(title)
+    if not text:
+        return sentiment
+    severe_negative = any(term in text for term in SEVERE_BEARISH_NEWS_KEYWORDS)
+    positive_move = (
+        re.search(
+            r"(?<![a-z0-9])(stock is up|is up today|moved up|rises|rose|jumps|jumped|surges|surged|gains|gained|up\s+\d+(?:\.\d+)?%)",
+            text,
+        )
+        or any(term in text for term in ("주가 상승", "상승 이유", "급등 이유", "강세", "급등", "올랐"))
+    )
+    negative_move = (
+        re.search(
+            r"(?<![a-z0-9])(moved down|falls|fell|drops|dropped|declines|declined|plunges|plunged|down\s+\d+(?:\.\d+)?%)",
+            text,
+        )
+        or any(term in text for term in ("주가 하락", "하락 이유", "급락 이유", "약세", "급락", "내렸"))
+    )
+    if positive_move and not severe_negative:
+        return "호재"
+    if negative_move and not positive_move:
+        return "악재"
+    return sentiment
 
 
 def _strip_memo_line(line: str) -> str:
@@ -771,6 +824,111 @@ def _macro_bullets(macro_data: dict | None) -> list[str]:
     return bullets
 
 
+def _macro_stress_line(macro_data: dict | None) -> str:
+    if not isinstance(macro_data, dict):
+        return ""
+    weights = {
+        "10Y 금리": 24,
+        "VIX": 22,
+        "MOVE": 18,
+        "유가": 18,
+        "환율": 18,
+    }
+    score = 18
+    drivers: list[str] = []
+    relief: list[str] = []
+    for name, weight in weights.items():
+        info = macro_data.get(name)
+        if not isinstance(info, dict):
+            continue
+        icon = _norm(info.get("icon"))
+        storm = bool(info.get("storm", False))
+        val = _safe_float(info.get("val"))
+        chg = _safe_float(info.get("chg"))
+        pressure = False
+        if storm:
+            pressure = True
+        elif name in {"10Y 금리", "VIX", "MOVE", "유가", "환율"} and icon == "🔺":
+            pressure = True
+        if name == "10Y 금리" and val is not None and val >= 4.8:
+            pressure = True
+        if name == "VIX" and val is not None and val >= 20:
+            pressure = True
+        if name == "유가" and chg is not None and chg >= 0.1:
+            pressure = True
+        if pressure:
+            score += weight
+            drivers.append(name)
+        elif icon == "🔻":
+            score -= min(8, weight // 2)
+            relief.append(name)
+    score = max(0, min(100, score))
+    if score >= 75:
+        label = "위험"
+    elif score >= 55:
+        label = "경고"
+    elif score >= 35:
+        label = "주의"
+    else:
+        label = "안정"
+    parts = []
+    if drivers:
+        parts.append("부담: " + ", ".join(drivers[:3]))
+    if relief and score < 75:
+        parts.append("완화: " + ", ".join(relief[:2]))
+    detail = " · ".join(parts) if parts else "큰 스트레스 신호 제한"
+    return f"매크로 스트레스 {score}/100({label}) · {detail}"
+
+
+def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str:
+    rows = _iter_table_rows(summary_rows, limit=80)
+    if not rows:
+        stress = _macro_stress_line(macro_data)
+        return f"오늘의 전략: {stress}" if stress else ""
+
+    leveraged_block = False
+    hard_count = 0
+    buyish: list[str] = []
+    caution: list[str] = []
+    for row in rows:
+        name = _norm(row.get("종목명") or row.get("자산명"))
+        ticker = _norm(row.get("티커"))
+        label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
+        code = _norm(row.get("판정코드"))
+        item = _asset_item_label(name, ticker)
+        is_hard = any(term in code for term in ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO")) or any(
+            term in label for term in ("하드차단", "매수금지", "비중 초과", "추매금지", "구조훼손", "추세훼손")
+        )
+        if is_hard:
+            hard_count += 1
+            if _is_leveraged_row(row):
+                leveraged_block = True
+            continue
+        if any(term in label for term in ("주의", "보류", "관망", "대기", "과열", "가격위험", "가격방어")):
+            caution.append(item)
+        elif any(term in label for term in ("매수", "진입", "DCA", "적립", "눌림")) and not _is_leveraged_row(row):
+            buyish.append(item)
+
+    actions: list[str] = []
+    if leveraged_block:
+        actions.append("레버리지 신규매수 금지")
+    elif hard_count:
+        actions.append("하드차단 종목 먼저 원인 확인")
+    if buyish:
+        actions.append(f"{buyish[0]} 적립/관심 유지")
+    elif caution:
+        actions.append("신규매수보다 가격 안정 확인")
+
+    stress = _macro_stress_line(macro_data)
+    if stress:
+        stress_label = re.search(r"\(([^)]+)\)", stress)
+        if stress_label and stress_label.group(1) in {"위험", "경고"}:
+            actions.append("금리·변동성 관망")
+    if not actions:
+        return ""
+    return "오늘의 전략: " + " / ".join(list(dict.fromkeys(actions))[:4])
+
+
 def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[str]:
     bullets = []
     fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
@@ -903,7 +1061,7 @@ def _hard_block_item(item: str, row: dict) -> str:
     return item
 
 
-def _news_bullets(news_rows) -> list[str]:
+def _news_bullets(news_rows, seen_news_keys: set[str] | None = None) -> list[str]:
     bullets = []
     for row in _iter_table_rows(news_rows, limit=20):
         title = _norm(row.get("title") or row.get("제목"))
@@ -911,15 +1069,20 @@ def _news_bullets(news_rows) -> list[str]:
             continue
         if _is_event_radar_noise(row):
             continue
+        key = _row_news_key(row)
+        if seen_news_keys is not None and key in seen_news_keys:
+            continue
         ticker = _norm(row.get("ticker") or row.get("티커"))
         name = _display_asset_name(row.get("name") or row.get("종목명"), ticker)
-        sentiment = _norm(row.get("sentiment") or row.get("감성"))
+        sentiment = _headline_sentiment_override(title, row.get("sentiment") or row.get("감성"))
         publisher = _norm(row.get("publisher") or row.get("출처"))
         subject = name or ticker
         prefix = f"{subject}: " if subject else ""
         tail_parts = [x for x in (sentiment, publisher) if x]
         tail = f" ({', '.join(tail_parts)})" if tail_parts else ""
         bullets.append(f"{prefix}{title}{tail}")
+        if seen_news_keys is not None:
+            seen_news_keys.add(key)
     return bullets
 
 
@@ -995,7 +1158,7 @@ def _market_news_timeline_group(row: dict) -> str:
     return "🌐 기타 시장 서사"
 
 
-def _market_news_grouped_bullets(news_rows) -> dict[str, list[str]]:
+def _market_news_grouped_bullets(news_rows, seen_news_keys: set[str] | None = None) -> dict[str, list[str]]:
     groups = {
         "🇰🇷 현재 국장/매크로": [],
         "🇺🇸 전일 미증시 요약": [],
@@ -1005,6 +1168,9 @@ def _market_news_grouped_bullets(news_rows) -> dict[str, list[str]]:
         title = _norm(row.get("title") or row.get("제목"))
         if not title:
             continue
+        key = _row_news_key(row)
+        if seen_news_keys is not None and key in seen_news_keys:
+            continue
         category = _norm(row.get("market_category") or row.get("category") or "시장")
         publisher = _norm(row.get("publisher") or row.get("source") or row.get("출처"))
         published = _norm(row.get("published"))
@@ -1012,6 +1178,8 @@ def _market_news_grouped_bullets(news_rows) -> dict[str, list[str]]:
         tail = f" ({meta})" if meta else ""
         group = _market_news_timeline_group(row)
         groups.setdefault(group, []).append(f"[{category}] {title}{tail}")
+        if seen_news_keys is not None:
+            seen_news_keys.add(key)
     return {key: value for key, value in groups.items() if value}
 
 
@@ -1127,7 +1295,8 @@ def _event_source_rows(market_news_rows=None, news_rows=None) -> list[dict]:
             "published": _norm(row.get("published")),
             "ticker": _norm(row.get("ticker") or row.get("티커")),
             "name": _norm(row.get("name") or row.get("종목명")),
-            "sentiment": _norm(row.get("sentiment") or row.get("감성")),
+            "sentiment": _headline_sentiment_override(title, row.get("sentiment") or row.get("감성")),
+            "source_kind": "market",
         })
     for row in _iter_table_rows(news_rows, limit=80):
         title = _clean_event_title(row.get("title") or row.get("제목"), row.get("publisher") or row.get("출처"))
@@ -1140,7 +1309,8 @@ def _event_source_rows(market_news_rows=None, news_rows=None) -> list[dict]:
             "published": _norm(row.get("published")),
             "ticker": _norm(row.get("ticker") or row.get("티커")),
             "name": _norm(row.get("name") or row.get("종목명")),
-            "sentiment": _norm(row.get("sentiment") or row.get("감성")),
+            "sentiment": _headline_sentiment_override(title, row.get("sentiment") or row.get("감성")),
+            "source_kind": "stock",
         })
     deduped: list[dict] = []
     seen: set[str] = set()
@@ -1170,7 +1340,13 @@ def _event_tickers(row: dict) -> list[str]:
     return list(dict.fromkeys(tickers))[:3]
 
 
-def _news_event_radar_lines(market_news_rows=None, news_rows=None, index_rotation_rows=None, flow_snapshot=None) -> list[str]:
+def _news_event_radar_lines(
+    market_news_rows=None,
+    news_rows=None,
+    index_rotation_rows=None,
+    flow_snapshot=None,
+    seen_news_keys: set[str] | None = None,
+) -> list[str]:
     rows = _event_source_rows(market_news_rows, news_rows)
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
     synthetic_market_events: list[tuple[str, str]] = []
@@ -1204,8 +1380,10 @@ def _news_event_radar_lines(market_news_rows=None, news_rows=None, index_rotatio
         if not title:
             continue
         category_label = _event_category_label(category)
-        if len(market_groups[category_label]) < 3:
+        if row.get("source_kind") != "stock" and len(market_groups[category_label]) < 3:
             market_groups[category_label].append(title)
+            if seen_news_keys is not None:
+                seen_news_keys.add(_row_news_key(row))
         for ticker in _event_tickers(row):
             key = (ticker, title[:90])
             if key in stock_seen:
@@ -1216,6 +1394,8 @@ def _news_event_radar_lines(market_news_rows=None, news_rows=None, index_rotatio
                 group = "🪙 암호화폐"
             item_label = _asset_item_label("", ticker)
             stock_groups[group].append(f"{item_label} - {title}")
+            if seen_news_keys is not None:
+                seen_news_keys.add(_row_news_key(row))
 
     lines: list[str] = []
     if market_groups:
@@ -1488,6 +1668,12 @@ def build_auto_market_memo(
         "",
     ]
 
+    action_flag = _today_action_flag_line(summary_rows, macro_data)
+    if action_flag:
+        lines.append("🎯 오늘의 전략")
+        lines.append(f"• {action_flag}")
+        lines.append("")
+
     insight_lines = _auto_insight_bullets(
         flow_snapshot,
         macro_data,
@@ -1566,17 +1752,27 @@ def build_auto_market_memo(
     event_lines = _event_bullets(event_rows, market_news_rows, news_rows)
     if macro_lines or event_lines:
         lines.append("📉 매크로·이벤트")
+        stress_line = _macro_stress_line(macro_data)
+        if stress_line:
+            lines.append(f"• {stress_line}")
         for item in macro_lines[:5]:
             lines.append(f"• {item}")
         for item in event_lines:
             lines.append(f"• {item}")
         lines.append("")
 
-    event_radar_lines = _news_event_radar_lines(market_news_rows, news_rows, index_rotation_rows, flow_snapshot)
+    memo_news_seen: set[str] = set()
+    event_radar_lines = _news_event_radar_lines(
+        market_news_rows,
+        news_rows,
+        index_rotation_rows,
+        flow_snapshot,
+        memo_news_seen,
+    )
     if event_radar_lines:
         lines.extend(event_radar_lines)
 
-    market_news_groups = _market_news_grouped_bullets(market_news_rows)
+    market_news_groups = _market_news_grouped_bullets(market_news_rows, memo_news_seen)
     if market_news_groups:
         lines.append("📰 시장 뉴스/서사")
         remaining = 15
@@ -1603,7 +1799,7 @@ def build_auto_market_memo(
         lines.append("• 오늘점검 데이터가 비어 있습니다. 오늘 종목 점검 계산/새로고침 후 매수·주의·하드차단 후보를 확인하세요.")
     lines.append("")
 
-    news_lines = _news_bullets(news_rows)
+    news_lines = _news_bullets(news_rows, memo_news_seen)
     if news_lines:
         lines.append("━━━━━━━━━━━━")
         lines.append("🎯  종 목")

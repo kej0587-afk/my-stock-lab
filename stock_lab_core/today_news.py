@@ -271,6 +271,30 @@ TODAY_ACTION_NEWS_RELEVANCE_TERMS = {
     "실적/대장주": ("earnings", "revenue", "sales", "guidance", "profit", "실적", "매출", "영업이익", "가이던스"),
 }
 
+TODAY_ACTION_NEWS_NAME_OVERRIDES = {
+    "CIBR": "사이버보안 ETF",
+    "CRWD": "크라우드스트라이크",
+    "PANW": "팔로알토 네트웍스",
+    "379800.KS": "S&P500",
+    "379810.KS": "나스닥",
+}
+
+
+def clean_today_action_news_asset_name(name: object, ticker: object = "") -> str:
+    ticker_text = str(ticker or "").strip().upper()
+    if ticker_text in TODAY_ACTION_NEWS_NAME_OVERRIDES:
+        return TODAY_ACTION_NEWS_NAME_OVERRIDES[ticker_text]
+    text = html.unescape(str(name or "").strip())
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n-–—:;,，、")
+    text = re.sub(
+        r"\b(Co\.,?\s*Ltd\.?|Corporation|Corp\.?|Inc\.?|Incorporated|Limited|PLC|LLC)\b\.?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s+", " ", text).strip(" \t\r\n-–—:;,，、")
+    return text
+
 
 def today_action_news_checkpoint(title: str, category: str = "") -> str:
     text = f"{title or ''} {category or ''}".lower()
@@ -426,7 +450,7 @@ def normalize_today_action_news_row(row: dict, source_group: str = "시장") -> 
     published = str((row or {}).get("published", "") or (row or {}).get("providerPublishTime", "") or "")
     link = str((row or {}).get("link", "") or "")
     ticker = str((row or {}).get("ticker", "") or "")
-    name = str((row or {}).get("name", "") or ticker)
+    name = clean_today_action_news_asset_name((row or {}).get("name", "") or ticker, ticker)
     return {
         "구분": source_group,
         "체크": today_action_news_checkpoint(title, category),

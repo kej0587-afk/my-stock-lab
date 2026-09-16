@@ -1,5 +1,6 @@
 from stock_lab_core.today_news import (
     build_today_action_news_brief,
+    clean_today_action_news_asset_name,
     normalize_today_action_news_row,
     rank_today_action_news_rows,
 )
@@ -58,3 +59,18 @@ def test_today_news_brief_explains_priority_for_beginners():
 
     assert any("금" in line and "구리" in line for line in brief)
     assert any("반도체" in line or "실적" in line for line in brief)
+
+
+def test_today_news_cleans_long_or_punctuated_stock_names():
+    cibr = normalize_today_action_news_row(
+        {
+            "ticker": "CIBR",
+            "name": "First Trust NASDAQ Cybersecurit",
+            "title": "Precision Trading with First Trust Nasdaq Cea Cybersecurity Etf (CIBR) Risk Zones",
+            "publisher": "news.stocktradersdaily.com",
+        },
+        "내 종목",
+    )
+
+    assert cibr["종목"] == "사이버보안 ETF(CIBR)"
+    assert clean_today_action_news_asset_name("Palo Alto Networks,", "PANW") == "팔로알토 네트웍스"
