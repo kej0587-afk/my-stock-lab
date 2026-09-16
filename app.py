@@ -28303,6 +28303,7 @@ def render_today_unified_briefing_panel(
             code = str(row.get("판정코드", "") or "")
             item = watch_meta.get(ticker, {})
             bucket = str(item.get("bucket", row.get("bucket", row.get("버킷", ""))) or "").lower()
+            asset_class = str(item.get("asset_class", row.get("유형", "")) or "").lower()
             ticker_upper = ticker.upper()
             name_key = name.lower()
             current_price = safe_float(row.get("현재가", np.nan), np.nan)
@@ -28330,10 +28331,19 @@ def render_today_unified_briefing_panel(
                 bucket == "leverage"
                 or bool(re.search(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|2X|3X|레버리지|Ultra", ticker_upper + " " + name, re.I))
             )
+            is_sector_or_tactical = bool(re.search(
+                r"반도체|Top2|DRAM|Bitcoin|비트코인|원자재|구리|FCX|Freeport|프리포트|TDF|2045|섹터|테마",
+                ticker_upper + " " + name + " " + asset_class,
+                re.I,
+            ))
             is_core = (
-                bucket == "core"
-                or ticker_upper in {"379800", "379810", "VOO", "SPY", "IVV", "QQQ", "QQQM"}
-                or any(k in name_key for k in ["s&p500", "s&p 500", "sp500", "나스닥100", "nasdaq100", "nasdaq 100"])
+                (bucket == "core" or ticker_upper in {"379800", "379810", "VOO", "SPY", "IVV", "QQQ", "QQQM"})
+                and not is_leverage
+                and not is_sector_or_tactical
+            ) or (
+                not is_leverage
+                and not is_sector_or_tactical
+                and any(k in name_key for k in ["s&p500", "s&p 500", "sp500", "나스닥100", "nasdaq100", "nasdaq 100"])
             )
             damaged_label = any(k in (label + final_read) for k in [
                 "구조훼손", "추세훼손", "시장방어", "가격방어", "급락방어", "추세방어",
