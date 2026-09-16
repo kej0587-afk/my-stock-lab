@@ -28165,6 +28165,63 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
     )
 
 
+def _generate_today_briefing_market_memo(summary_df=None) -> str:
+    memo_summary_df, _memo_summary_source = resolve_today_market_memo_summary_df(summary_df, None)
+    snapshot = get_cached_today_market_flow_snapshot()
+    if snapshot is None:
+        snapshot = {}
+
+    event_rows = globals().get("macro_event_df", pd.DataFrame())
+    if not isinstance(event_rows, pd.DataFrame) or event_rows.empty:
+        try:
+            event_rows, _, _ = build_macro_event_risk_table()
+        except Exception:
+            event_rows = pd.DataFrame()
+
+    index_rotation_rows = pd.DataFrame()
+    try:
+        flow_df_for_rotation = snapshot.get("flow_df") if isinstance(snapshot, dict) else pd.DataFrame()
+        if flow_df_for_rotation is not None and not isinstance(flow_df_for_rotation, pd.DataFrame):
+            flow_df_for_rotation = pd.DataFrame(flow_df_for_rotation)
+        if isinstance(flow_df_for_rotation, pd.DataFrame) and not flow_df_for_rotation.empty:
+            index_rotation_rows = _build_index_rotation_table(calculate_rotation_df(flow_df_for_rotation))
+    except Exception:
+        index_rotation_rows = pd.DataFrame()
+
+    news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
+    if not isinstance(news_rows, list):
+        news_rows = []
+
+    memo_kwargs = {
+        "flow_snapshot": snapshot,
+        "macro_data": globals().get("macro_res", {}),
+        "event_rows": event_rows,
+        "index_rotation_rows": index_rotation_rows,
+        "market_news_rows": news_rows,
+        "news_rows": news_rows,
+        "summary_rows": memo_summary_df,
+        "now": datetime.now(timezone(timedelta(hours=9))),
+    }
+    try:
+        return build_auto_market_memo(**memo_kwargs)
+    except TypeError:
+        memo_kwargs.pop("market_news_rows", None)
+        memo_kwargs.pop("index_rotation_rows", None)
+        try:
+            return build_auto_market_memo(**memo_kwargs)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return (
+        "🌇 Stock Lab 자동 브리핑\n"
+        f"{datetime.now(timezone(timedelta(hours=9))).strftime('%m/%d · %H:%M')}\n"
+        "━━━━━━━━━━━━\n"
+        "• 자동 시황 생성 중 일부 데이터 형식이 맞지 않아 초안 생성을 보류했습니다.\n"
+        "• 주요 뉴스 새로고침 후 다시 생성하거나, 외부 시황 메모를 직접 붙여넣어 분석하세요."
+    )
+
+
 def render_today_unified_briefing_panel(
     summary_df=None,
     market_guard=None,
@@ -28178,7 +28235,7 @@ def render_today_unified_briefing_panel(
     watch_items=None,
     pending: bool = False,
 ):
-    """Render the Today Queue top briefing that combines market, action, news, and portfolio checks."""
+    """Render one Today Queue briefing that replaces the separate guard/action/news/memo panels."""
     guard = market_guard or {}
     df = summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
     mode = str(guard.get("mode", "대기") or "대기")
@@ -28218,9 +28275,16 @@ def render_today_unified_briefing_panel(
     news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
     news_count = len(news_rows) if isinstance(news_rows, list) else 0
     risk_count = 0 if risk_df is None or not isinstance(risk_df, pd.DataFrame) else len(risk_df)
+    market_defensive = level in {"warning", "danger"} or any(k in mode for k in ["비상", "위험", "방어"])
 
     held_meta = _build_today_held_position_meta_map(watch_items)
+    watch_meta = {
+        normalize_ticker(sanitize_ticker_value(item.get("ticker", ""))): item
+        for item in (watch_items or [])
+        if isinstance(item, dict)
+    }
     review_lines: list[str] = []
+    core_hold_lines: list[str] = []
     keep_lines: list[str] = []
     no_add_lines: list[str] = []
     unknown_lines: list[str] = []
@@ -28237,6 +28301,10 @@ def render_today_unified_briefing_panel(
             label = str(row.get("🔥기술적 타점", "") or "")
             final_read = str(row.get("최종읽기", "") or "")
             code = str(row.get("판정코드", "") or "")
+            item = watch_meta.get(ticker, {})
+            bucket = str(item.get("bucket", row.get("bucket", row.get("버킷", ""))) or "").lower()
+            ticker_upper = ticker.upper()
+            name_key = name.lower()
             current_price = safe_float(row.get("현재가", np.nan), np.nan)
             avg_price = clean_float(meta.get("매입가"), np.nan)
             pnl = np.nan
@@ -28258,6 +28326,15 @@ def render_today_unified_briefing_panel(
             is_caution = _mask_at(caution_mask, idx)
             is_overweight = finite_num(gap_w) and float(gap_w) < -0.2
             is_underweight = finite_num(gap_w) and float(gap_w) > 0.2
+            is_leverage = (
+                bucket == "leverage"
+                or bool(re.search(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|2X|3X|레버리지|Ultra", ticker_upper + " " + name, re.I))
+            )
+            is_core = (
+                bucket == "core"
+                or ticker_upper in {"379800", "379810", "VOO", "SPY", "IVV", "QQQ", "QQQM"}
+                or any(k in name_key for k in ["s&p500", "s&p 500", "sp500", "나스닥100", "nasdaq100", "nasdaq 100"])
+            )
             damaged_label = any(k in (label + final_read) for k in [
                 "구조훼손", "추세훼손", "시장방어", "가격방어", "급락방어", "추세방어",
                 "추매금지", "추매중단", "비중 초과", "하드차단", "보유점검",
@@ -28270,8 +28347,19 @@ def render_today_unified_briefing_panel(
                 weight_text = f" · 비중 {cw}/{tw}"
             base_line = f"{name}({ticker}) 손익 {pnl_text}{weight_text}"
 
-            if is_hard or (damaged_label and finite_num(pnl) and float(pnl) <= -10):
+            if is_core:
+                if is_overweight:
+                    core_hold_lines.append(base_line + " → 장기코어 유지, 목표초과라 신규매수 중단/리밸런싱")
+                elif market_defensive or is_caution or damaged_label:
+                    core_hold_lines.append(base_line + " → 장기코어 교체 아님, 시장 안정 후 정해진 적립 재개")
+                elif is_underweight:
+                    keep_lines.append(base_line + " → 장기코어 목표비중 안에서 분할 적립 가능")
+                else:
+                    core_hold_lines.append(base_line + " → 장기코어 보유 유지")
+            elif is_leverage and (is_hard or damaged_label or (finite_num(pnl) and float(pnl) <= -10)):
                 review_lines.append(base_line + " → 비중대로 밀기보다 원인점검/교체 후보 검토")
+            elif is_hard or (damaged_label and finite_num(pnl) and float(pnl) <= -15):
+                review_lines.append(base_line + " → 위성/개별 비중 축소 또는 대체 후보 검토")
             elif is_caution or damaged_label or is_overweight:
                 no_add_lines.append(base_line + " → 추가매수 제외, 회복 조건 확인")
             elif is_underweight and not is_caution:
@@ -28281,11 +28369,47 @@ def render_today_unified_briefing_panel(
             else:
                 unknown_lines.append(base_line + " → 평단/현재가 확인 필요")
 
-    market_defensive = level in {"warning", "danger"} or any(k in mode for k in ["비상", "위험", "방어"])
+    def _row_name_list(mask, limit=3) -> list[str]:
+        if df.empty:
+            return []
+        names = []
+        try:
+            view = df.loc[mask.reindex(df.index, fill_value=False)] if isinstance(mask, pd.Series) else pd.DataFrame()
+        except Exception:
+            view = pd.DataFrame()
+        for _, row in view.head(limit).iterrows():
+            nm = str(row.get("종목명", row.get("자산명", "")) or "").strip()
+            tk = normalize_ticker(sanitize_ticker_value(row.get("티커", "")))
+            if nm and tk:
+                names.append(f"{nm}({tk})")
+            elif nm or tk:
+                names.append(nm or tk)
+        return names
+
+    execution_names = _row_name_list(buyish_mask)
+    wait_names = _row_name_list(wait_mask)
+    recommendation_lines: list[str] = []
+    if market_defensive:
+        recommendation_lines.append("신규 추천은 보수적으로 봅니다. 현금 유지, 손절선 확인, 레버리지 추가매수 중단이 우선입니다.")
+    if core_hold_lines:
+        recommendation_lines.append("S&P500/나스닥 같은 장기코어는 교체보다 유지·적립속도 조절로 분리합니다.")
+    if review_lines:
+        recommendation_lines.append("레버리지/위성 손실 종목은 물타기보다 회복 시 축소·대체 후보 검토가 우선입니다.")
+    if execution_names and not market_defensive:
+        recommendation_lines.append("정밀확인 우선 후보: " + " / ".join(execution_names))
+    elif wait_names:
+        recommendation_lines.append("관심만 유지할 후보: " + " / ".join(wait_names))
+    if reserve_available > 0:
+        recommendation_lines.append("폭락장 예비자금은 평상시 매수 재원이 아니라 급락 전용으로 분리 유지합니다.")
+    if not recommendation_lines:
+        recommendation_lines.append("오늘은 종목을 바꾸기보다 관심목록 정리와 목표비중 점검이 중심입니다.")
+
     if pending:
-        headline = "종목 계산 전입니다. 먼저 시장 안전벨트와 뉴스만 보고, 새로고침 후 보유/비중 판단을 채우세요."
+        headline = "종목 계산 전입니다. 시장·뉴스·시황만 먼저 보고, 새로고침 후 내 포트 판단을 채우세요."
+    elif market_defensive and core_hold_lines and review_lines:
+        headline = "장기코어는 교체가 아니라 유지/속도조절, 레버리지·위성은 추가매수 중단과 회복 시 축소 검토가 우선입니다."
     elif review_lines:
-        headline = "오늘은 목표비중대로 더 사기보다 손실 원인과 종목 교체 후보를 먼저 점검하는 쪽이 우선입니다."
+        headline = "오늘은 목표비중대로 더 사기보다 레버리지/위성 손실 원인과 대체 후보를 먼저 점검하는 구간입니다."
     elif market_defensive:
         headline = "시장 안전벨트가 방어 쪽입니다. 신규/추매는 줄이고 보유 위험과 현금 계획을 먼저 보세요."
     elif keep_lines and cash_available > 0:
@@ -28305,7 +28429,7 @@ def render_today_unified_briefing_panel(
 <span style='color:#cbd5e1;'>{html.escape(action_text)}</span><br>
 <span style='color:#94a3b8;'>{html.escape(macro_note or reason_text)}</span><br><br>
 <b>실행</b> · 실행후보 {buyish_count}개 / 눌림대기 {wait_count}개 / 주의·차단 {caution_count}개 / 하드차단 {hard_count}개<br>
-<b>내 포트</b> · 원인점검 {len(review_lines)}개 / 추가제외 {len(no_add_lines)}개 / 비중대로 가능 {len(keep_lines)}개 / 보유위험표 {risk_count}개<br>
+<b>내 포트</b> · 장기코어 유지 {len(core_hold_lines)}개 / 교체·축소검토 {len(review_lines)}개 / 추가제외 {len(no_add_lines)}개 / 비중대로 가능 {len(keep_lines)}개 / 보유위험표 {risk_count}개<br>
 <b>뉴스</b> · 주요 뉴스 {news_count}건 저장됨
 </div>
         """,
@@ -28319,8 +28443,14 @@ def render_today_unified_briefing_panel(
     m4.metric("적립용 현금", f"{clean_float(cash_available, 0.0):,.0f}원")
     m5.metric("예비자금", f"{clean_float(reserve_available, 0.0):,.0f}원")
 
-    if review_lines or no_add_lines or keep_lines or unknown_lines:
+    st.markdown("**종합 추천**")
+    for line in recommendation_lines[:5]:
+        st.caption(f"- {line}")
+
+    if review_lines or core_hold_lines or no_add_lines or keep_lines or unknown_lines:
         st.markdown("**내 자산 기준 해석**")
+        if core_hold_lines:
+            st.success("장기코어 유지/속도조절: " + " / ".join(core_hold_lines[:4]))
         if review_lines:
             st.warning("종목변경/비중축소 검토: " + " / ".join(review_lines[:3]))
         if no_add_lines:
@@ -28332,10 +28462,111 @@ def render_today_unified_briefing_panel(
     else:
         st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
 
-    st.caption(
-        "통합 브리핑은 시장 안전벨트, 실행 카드, 주요 뉴스, 보유 손익/목표비중을 한 번에 묶은 요약입니다. "
-        "아래 세부 근거에서 각 항목의 원자료를 확인하세요."
+    st.markdown("**시장 안전벨트 세부지표**")
+    kr_stats = guard.get("kr_stats", {}) if isinstance(guard.get("kr_stats", {}), dict) else {}
+    us_stats = guard.get("us_stats", {}) if isinstance(guard.get("us_stats", {}), dict) else {}
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("시장점수", f"{guard.get('score', 0)}점")
+    d2.metric("국장", str(kr_stats.get("mode", "데이터부족")))
+    d3.metric("미장", str(us_stats.get("mode", "데이터부족")))
+    flow_breadth = guard.get("flow_breadth", np.nan)
+    macro_risk = guard.get("macro_risk", np.nan)
+    d4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
+    d5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+
+    bench_df = guard.get("bench_df", pd.DataFrame())
+    macro_df = guard.get("macro_df", pd.DataFrame())
+    event_df = guard.get("event_df", pd.DataFrame())
+    market_cols = st.columns([1.35, 1.0])
+    with market_cols[0]:
+        if isinstance(bench_df, pd.DataFrame) and not bench_df.empty:
+            show = bench_df.copy()
+            for col in ["1일", "5일", "20일", "20일고점대비"]:
+                if col in show.columns:
+                    show[col] = show[col].apply(_format_today_signed_pct)
+            st.dataframe(show.head(10), width='stretch', hide_index=True, height=min(360, 90 + len(show.head(10)) * 36))
+        else:
+            st.info("시장 지표 데이터가 부족합니다.")
+    with market_cols[1]:
+        if isinstance(macro_df, pd.DataFrame) and not macro_df.empty:
+            st.caption("매크로 경고등")
+            st.dataframe(macro_df.head(6), width='stretch', hide_index=True, height=min(260, 90 + len(macro_df.head(6)) * 36))
+        if isinstance(event_df, pd.DataFrame) and not event_df.empty:
+            st.caption("이벤트")
+            st.dataframe(event_df.head(5), width='stretch', hide_index=True, height=min(240, 90 + len(event_df.head(5)) * 36))
+
+    st.markdown("**주요 뉴스 체크**")
+    news_cols = st.columns([1.1, 0.8, 2.4])
+    if news_cols[0].button("주요 뉴스 새로고침", key="today_unified_action_news_refresh", width='stretch'):
+        with st.spinner("주요 뉴스 확인 중..."):
+            news_rows = refresh_today_action_news(df)
+            news_count = len(news_rows)
+        st.rerun()
+    if news_rows and news_cols[1].button("뉴스 지우기", key="today_unified_action_news_clear", width='stretch'):
+        st.session_state.pop(TODAY_ACTION_NEWS_ROWS_KEY, None)
+        st.session_state.pop(TODAY_ACTION_NEWS_LAST_RUN_KEY, None)
+        st.rerun()
+    last_run = st.session_state.get(TODAY_ACTION_NEWS_LAST_RUN_KEY, "")
+    news_cols[2].caption(f"마지막 확인: {last_run}" if last_run else "핵심속보, 시장/속보, 내 종목 뉴스를 한 번에 확인합니다.")
+    if news_rows:
+        brief_lines = _build_today_action_news_brief(news_rows)
+        for line in brief_lines[:4]:
+            st.caption(f"- {line}")
+        news_show = pd.DataFrame(news_rows)
+        cols = ["구분", "읽기분류", "중요도", "체크", "카테고리", "종목", "제목", "초보요약", "출처", "시간", "링크"]
+        if not news_show.empty:
+            st.dataframe(
+                news_show[[c for c in cols if c in news_show.columns]].head(8),
+                width='stretch',
+                hide_index=True,
+                column_config={"링크": st.column_config.LinkColumn("원문")},
+                height=min(420, 110 + len(news_show.head(8)) * 42),
+            )
+    else:
+        st.info("뉴스 새로고침을 누르면 핵심속보/시장/내 종목 뉴스를 브리핑 안에 바로 표시합니다.")
+
+    st.markdown("**시황 메모 분석**")
+    memo_cols = st.columns([1.0, 0.85, 2.25])
+    if memo_cols[0].button("자동 시황 생성", key="today_unified_market_memo_generate", width='stretch'):
+        with st.spinner("자동 시황 브리핑 생성 중..."):
+            st.session_state["today_market_memo_text"] = _generate_today_briefing_market_memo(df)
+        st.rerun()
+    if memo_cols[1].button("시황 지우기", key="today_unified_market_memo_clear", width='stretch'):
+        st.session_state["today_market_memo_text"] = ""
+        st.rerun()
+    memo_cols[2].caption("자동 생성하거나 직접 붙여넣으면 아래에서 초보용 요약과 확인 필요 항목을 보여줍니다.")
+    memo_text = st.text_area(
+        "시황/뉴스 메모",
+        key="today_market_memo_text",
+        height=150,
+        placeholder="자동 시황 생성 또는 외부 시황/뉴스 메모를 붙여넣으세요.",
     )
+    if str(memo_text or "").strip():
+        memo_summary_df, _memo_source = resolve_today_market_memo_summary_df(df, None)
+        universe, _status_map = build_today_market_memo_universe(memo_summary_df)
+        try:
+            result = analyze_market_memo(memo_text, universe)
+        except Exception:
+            result = {}
+        if result.get("has_content"):
+            st.markdown(
+                f"""
+<div class='info-panel' style='border-left:5px solid #38bdf8; line-height:1.7;'>
+<b>시황 요약: {html.escape(str(result.get("headline", "")))}</b><br>
+<span class='highlight'>{html.escape(str(result.get("action_bias", "")))}</span>
+</div>
+                """,
+                unsafe_allow_html=True,
+            )
+            linked = result.get("linked_assets", [])
+            verify_df = pd.DataFrame(result.get("verification_rows", []))
+            if linked:
+                st.caption("내 종목 연결: " + " / ".join(str(x) for x in linked[:5]))
+            if isinstance(verify_df, pd.DataFrame) and not verify_df.empty:
+                st.caption("확인 필요 문장")
+                st.dataframe(verify_df.head(5), width='stretch', hide_index=True)
+    else:
+        st.info("시황 메모가 아직 없습니다. 자동 시황 생성 버튼을 누르면 돈흐름·시장·뉴스·오늘점검을 묶어 초안을 만듭니다.")
 
 
 def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard=None):
@@ -30935,14 +31166,9 @@ def render_today_queue_tab(mode):
             reserve_available=clean_float(get_reserve_available_for_crash_buy(mode), 0.0),
             pending=True,
         )
-        render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
-        render_today_pending_action_card(market_guard)
-        render_today_pending_risk_panel()
         st.info("보유/관심 점검 대상이 비어 있습니다. 자산 현황에 보유자산을 입력하거나 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=0)
-        st.divider()
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature="", title="#### 세부 근거: 시황 메모 분석")
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -31083,17 +31309,12 @@ def render_today_queue_tab(mode):
             watch_items=watch_items,
             pending=True,
         )
-        render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
-        render_today_pending_action_card(market_guard)
-        render_today_pending_risk_panel()
         if run_summary:
             st.warning("오늘 점검에 표시할 종목이 없습니다. 가격 데이터를 불러오지 못했거나 관심종목이 비어 있을 수 있습니다.")
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
         render_today_candidate_tools(pd.DataFrame(), start_index=0)
-        st.divider()
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig, title="#### 세부 근거: 시황 메모 분석")
         return
 
     summary_df = summary_df.copy()
@@ -31260,22 +31481,6 @@ def render_today_queue_tab(mode):
         watch_items=watch_items,
     )
 
-    render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
-
-    st.markdown("#### 세부 근거: 실행 카드/뉴스")
-    render_today_action_card(summary_df, candidate_focus_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("점검 종목", f"{len(summary_df)}개")
-    m2.metric("실행후보", f"{int(execution_mask.sum())}개")
-    m3.metric("관심/눌림", f"{int(wait_mask.sum())}개")
-    m4.metric("주의/차단", f"{int(caution_mask.sum())}개")
-    m5.metric("하드차단", f"{int(hard_block_mask.sum())}개")
-
-    cash_cols = st.columns(2)
-    cash_cols[0].metric("적립용 현금", f"{cash_available:,.0f}원")
-    cash_cols[1].metric("폭락장 예비자금", f"{reserve_available:,.0f}원")
-
     # ── 섹터 집중도 경고 ─────────────────────────────────────────────────
     # 매수/관심 후보가 2개 이상이면 같은 asset_class 끼리 묶어 중복 섹터를 잡아냄
     if candidate_focus_mask.sum() >= 2 and "티커" in summary_df.columns:
@@ -31296,8 +31501,6 @@ def render_today_queue_tab(mode):
                 + " / ".join(_warn_parts)
                 + "\n\n동시에 진입하면 해당 섹터 비중이 집중될 수 있습니다. 분할 우선순위를 정한 뒤 순차 접근을 권장합니다."
             )
-
-    render_today_holdings_risk_panel(risk_df)
 
     st.divider()
     st.markdown("#### 세부 근거: 상세 판정표")
@@ -31400,9 +31603,6 @@ def render_today_queue_tab(mode):
 
     st.divider()
     render_today_candidate_tools(summary_df, start_index=0, market_guard=market_guard)
-
-    st.divider()
-    render_today_market_memo_panel(summary_df, summary_signature=queue_sig, title="#### 세부 근거: 시황 메모 분석")
 
 
 
