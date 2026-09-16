@@ -27371,7 +27371,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     }
 
 
-def render_today_market_guard_panel(guard: dict):
+def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 안전벨트"):
     if not guard:
         return
 
@@ -27389,7 +27389,8 @@ def render_today_market_guard_panel(guard: dict):
     macro_note = str(guard.get("macro_note", "") or "")
     scope_text = str(guard.get("scope_text", "") or "")
 
-    st.markdown("#### 1. 시장 안전벨트")
+    if title:
+        st.markdown(title)
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:10px;'>
@@ -27774,10 +27775,10 @@ def resolve_today_market_memo_summary_df(summary_df=None, summary_signature=None
     return pd.DataFrame(), ""
 
 
-def render_today_market_memo_panel(summary_df=None, summary_signature=None):
+def render_today_market_memo_panel(summary_df=None, summary_signature=None, title: str = "#### 시황 메모 분석"):
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
-    st.markdown("#### 시황 메모 분석")
+    st.markdown(title)
     memo_engine_version = "2026-06-19-news-event-radar-v1"
     if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
         old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
@@ -28126,8 +28127,8 @@ def build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, w
     return risk_df.head(10)
 
 
-def render_today_holdings_risk_panel(risk_df):
-    st.markdown("#### 3. 내 보유 위험 TOP")
+def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 내 보유 위험 TOP"):
+    st.markdown(title)
     if risk_df is None or risk_df.empty:
         st.success("현재 보유 종목 중 우선 확인할 위험 후보는 많지 않습니다. 관심종목 위험은 아래 상세 판정표에서 확인하세요.")
         return
@@ -28161,6 +28162,179 @@ def render_today_holdings_risk_panel(risk_df):
         width='stretch',
         hide_index=True,
         height=min(460, 110 + len(show) * 42),
+    )
+
+
+def render_today_unified_briefing_panel(
+    summary_df=None,
+    market_guard=None,
+    buyish_mask=None,
+    wait_mask=None,
+    caution_mask=None,
+    hard_block_mask=None,
+    risk_df=None,
+    cash_available=0.0,
+    reserve_available=0.0,
+    watch_items=None,
+    pending: bool = False,
+):
+    """Render the Today Queue top briefing that combines market, action, news, and portfolio checks."""
+    guard = market_guard or {}
+    df = summary_df if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
+    mode = str(guard.get("mode", "대기") or "대기")
+    level = str(guard.get("level", "caution") or "caution")
+    action_text = str(guard.get("action", "시장 안전벨트 기준 확인") or "시장 안전벨트 기준 확인")
+    scope_text = str(guard.get("scope_text", "") or "")
+    macro_note = str(guard.get("macro_note", "") or "")
+    reason_text = " · ".join(str(x) for x in guard.get("reasons", []) if str(x).strip())
+    color_map = {
+        "normal": "#22c55e",
+        "caution": "#f59e0b",
+        "warning": "#fb923c",
+        "danger": "#ef4444",
+    }
+    color = color_map.get(level, "#f59e0b")
+
+    def _mask_count(mask) -> int:
+        try:
+            if isinstance(mask, pd.Series):
+                return int(mask.fillna(False).astype(bool).sum())
+            return int(pd.Series(mask).fillna(False).astype(bool).sum())
+        except Exception:
+            return 0
+
+    def _mask_at(mask, idx) -> bool:
+        try:
+            if isinstance(mask, pd.Series):
+                return bool(mask.reindex(df.index, fill_value=False).loc[idx])
+        except Exception:
+            return False
+        return False
+
+    buyish_count = _mask_count(buyish_mask)
+    wait_count = _mask_count(wait_mask)
+    caution_count = _mask_count(caution_mask)
+    hard_count = _mask_count(hard_block_mask)
+    news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
+    news_count = len(news_rows) if isinstance(news_rows, list) else 0
+    risk_count = 0 if risk_df is None or not isinstance(risk_df, pd.DataFrame) else len(risk_df)
+
+    held_meta = _build_today_held_position_meta_map(watch_items)
+    review_lines: list[str] = []
+    keep_lines: list[str] = []
+    no_add_lines: list[str] = []
+    unknown_lines: list[str] = []
+
+    if not df.empty and held_meta:
+        ticker_source = df.get("티커", pd.Series("", index=df.index))
+        for idx, row in df.iterrows():
+            ticker = normalize_ticker(sanitize_ticker_value(ticker_source.loc[idx] if idx in ticker_source.index else row.get("티커", "")))
+            meta = held_meta.get(ticker)
+            if not meta:
+                continue
+
+            name = str(row.get("종목명", row.get("자산명", ticker)) or ticker).strip()
+            label = str(row.get("🔥기술적 타점", "") or "")
+            final_read = str(row.get("최종읽기", "") or "")
+            code = str(row.get("판정코드", "") or "")
+            current_price = safe_float(row.get("현재가", np.nan), np.nan)
+            avg_price = clean_float(meta.get("매입가"), np.nan)
+            pnl = np.nan
+            for pnl_col in ["내손익률", "손익률", "평단대비", "수익률"]:
+                if pnl_col in row.index:
+                    pnl = safe_float(row.get(pnl_col), np.nan)
+                    if finite_num(pnl):
+                        break
+            if not finite_num(pnl) and finite_num(current_price) and finite_num(avg_price) and avg_price > 0:
+                pnl = (float(current_price) / float(avg_price) - 1.0) * 100.0
+
+            current_w = clean_float(meta.get("현재비중"), np.nan)
+            target_w = clean_float(meta.get("목표비중"), np.nan)
+            gap_w = clean_float(meta.get("비중차이"), np.nan)
+            if not finite_num(gap_w) and finite_num(current_w) and finite_num(target_w):
+                gap_w = target_w - current_w
+
+            is_hard = _mask_at(hard_block_mask, idx) or "HARD_BLOCK" in code or "하드차단" in label
+            is_caution = _mask_at(caution_mask, idx)
+            is_overweight = finite_num(gap_w) and float(gap_w) < -0.2
+            is_underweight = finite_num(gap_w) and float(gap_w) > 0.2
+            damaged_label = any(k in (label + final_read) for k in [
+                "구조훼손", "추세훼손", "시장방어", "가격방어", "급락방어", "추세방어",
+                "추매금지", "추매중단", "비중 초과", "하드차단", "보유점검",
+            ])
+            pnl_text = "-" if not finite_num(pnl) else f"{float(pnl):+.1f}%"
+            weight_text = ""
+            if finite_num(current_w) or finite_num(target_w):
+                cw = "-" if not finite_num(current_w) else f"{float(current_w):.1f}%"
+                tw = "-" if not finite_num(target_w) else f"{float(target_w):.1f}%"
+                weight_text = f" · 비중 {cw}/{tw}"
+            base_line = f"{name}({ticker}) 손익 {pnl_text}{weight_text}"
+
+            if is_hard or (damaged_label and finite_num(pnl) and float(pnl) <= -10):
+                review_lines.append(base_line + " → 비중대로 밀기보다 원인점검/교체 후보 검토")
+            elif is_caution or damaged_label or is_overweight:
+                no_add_lines.append(base_line + " → 추가매수 제외, 회복 조건 확인")
+            elif is_underweight and not is_caution:
+                keep_lines.append(base_line + " → 목표비중 안에서 분할 적립 가능")
+            elif finite_num(pnl):
+                keep_lines.append(base_line + " → 보유 유지 중심")
+            else:
+                unknown_lines.append(base_line + " → 평단/현재가 확인 필요")
+
+    market_defensive = level in {"warning", "danger"} or any(k in mode for k in ["비상", "위험", "방어"])
+    if pending:
+        headline = "종목 계산 전입니다. 먼저 시장 안전벨트와 뉴스만 보고, 새로고침 후 보유/비중 판단을 채우세요."
+    elif review_lines:
+        headline = "오늘은 목표비중대로 더 사기보다 손실 원인과 종목 교체 후보를 먼저 점검하는 쪽이 우선입니다."
+    elif market_defensive:
+        headline = "시장 안전벨트가 방어 쪽입니다. 신규/추매는 줄이고 보유 위험과 현금 계획을 먼저 보세요."
+    elif keep_lines and cash_available > 0:
+        headline = "비중 미달 종목은 있지만, 정해둔 목표비중 안에서만 천천히 분할 접근하는 구간입니다."
+    elif buyish_count > 0:
+        headline = "후보는 있으나 현금·과열·비중 조건을 함께 확인한 뒤 실행하세요."
+    else:
+        headline = "오늘은 보유 유지, 관심 후보 정리, 뉴스 확인이 중심입니다."
+
+    st.markdown("#### 1. 오늘 브리핑 통합판")
+    st.markdown(
+        f"""
+<div class='info-panel' style='border-left:5px solid {color}; margin-bottom:12px;'>
+<b>오늘 한 줄</b><br>
+<span class='highlight'>{html.escape(headline)}</span><br><br>
+<b>시장</b> · <span style='color:{color};'>{html.escape(mode)}</span>{html.escape(' · ' + scope_text if scope_text else '')}<br>
+<span style='color:#cbd5e1;'>{html.escape(action_text)}</span><br>
+<span style='color:#94a3b8;'>{html.escape(macro_note or reason_text)}</span><br><br>
+<b>실행</b> · 실행후보 {buyish_count}개 / 눌림대기 {wait_count}개 / 주의·차단 {caution_count}개 / 하드차단 {hard_count}개<br>
+<b>내 포트</b> · 원인점검 {len(review_lines)}개 / 추가제외 {len(no_add_lines)}개 / 비중대로 가능 {len(keep_lines)}개 / 보유위험표 {risk_count}개<br>
+<b>뉴스</b> · 주요 뉴스 {news_count}건 저장됨
+</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("시장모드", mode)
+    m2.metric("실행후보", f"{buyish_count}개")
+    m3.metric("주의/차단", f"{caution_count}개")
+    m4.metric("적립용 현금", f"{clean_float(cash_available, 0.0):,.0f}원")
+    m5.metric("예비자금", f"{clean_float(reserve_available, 0.0):,.0f}원")
+
+    if review_lines or no_add_lines or keep_lines or unknown_lines:
+        st.markdown("**내 자산 기준 해석**")
+        if review_lines:
+            st.warning("종목변경/비중축소 검토: " + " / ".join(review_lines[:3]))
+        if no_add_lines:
+            st.info("추가매수 제외/조건 확인: " + " / ".join(no_add_lines[:3]))
+        if keep_lines:
+            st.success("비중대로 가능 또는 보유 유지: " + " / ".join(keep_lines[:3]))
+        if unknown_lines:
+            st.caption("데이터 확인 필요: " + " / ".join(unknown_lines[:3]))
+    else:
+        st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
+
+    st.caption(
+        "통합 브리핑은 시장 안전벨트, 실행 카드, 주요 뉴스, 보유 손익/목표비중을 한 번에 묶은 요약입니다. "
+        "아래 세부 근거에서 각 항목의 원자료를 확인하세요."
     )
 
 
@@ -30550,16 +30724,16 @@ def render_investor_top10_section():
                     st.info(f"이미 등록됨: {', '.join(_skipped)}")
 
 
-def render_today_pending_risk_panel():
-    st.markdown("#### 3. 내 보유 위험 TOP")
+def render_today_pending_risk_panel(title: str = "#### 세부 근거: 내 보유 위험 TOP"):
+    st.markdown(title)
     st.info(
         "오늘 종목 점검 계산/새로고침을 누르면 실제 보유 종목 중 하드차단, 가격방어/급락방어/추세방어, "
         "과열, MDD 기준으로 먼저 확인할 종목만 보여줍니다."
     )
 
 
-def render_today_pending_action_card(market_guard=None):
-    st.markdown("#### 2. 오늘의 실행 카드")
+def render_today_pending_action_card(market_guard=None, title: str = "#### 세부 근거: 오늘의 실행 카드"):
+    st.markdown(title)
     guard = market_guard or {}
     mode_label = guard.get("mode", "대기")
     action_label = guard.get("action", "시장 안전벨트 기준만 표시 중")
@@ -30576,7 +30750,8 @@ def render_today_pending_action_card(market_guard=None):
 
 
 def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=None):
-    st.markdown(f"#### {start_index}. 돈흐름 상세/차트")
+    prefix = f"{start_index}. " if start_index else ""
+    st.markdown(f"#### {prefix}돈흐름 상세/차트")
     st.caption("상세 판정표의 돈흐름 후보 탭에서 압축 후보를 먼저 보고, 필요할 때만 로테이션 차트와 테마 상세를 엽니다.")
 
     saved_flow_snapshot = get_cached_today_market_flow_snapshot()
@@ -30604,7 +30779,8 @@ def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=No
         else:
             st.info("상세 차트는 오늘점검 새로고침 또는 돈흐름 요약 새로고침 후 확인할 수 있습니다. 압축 후보는 위 상세 판정표의 `돈흐름 후보` 탭에서 바로 확인할 수 있습니다.")
 
-    st.markdown(f"#### {start_index + 1}. 수급 확인")
+    flow_prefix = f"{start_index + 1}. " if start_index else ""
+    st.markdown(f"#### {flow_prefix}수급 확인")
     st.caption("수급 TOP10은 같은 방향의 돈이 실제로 들어오는지 확인하는 보조 체크입니다.")
     with st.expander("수급 TOP10 확인", expanded=False):
         render_investor_top10_section()
@@ -30752,14 +30928,21 @@ def render_today_queue_tab(mode):
     watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
-        render_today_market_guard_panel(market_guard)
+        render_today_unified_briefing_panel(
+            pd.DataFrame(),
+            market_guard,
+            cash_available=clean_float(get_cash_available_for_dca(mode), 0.0),
+            reserve_available=clean_float(get_reserve_available_for_crash_buy(mode), 0.0),
+            pending=True,
+        )
+        render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
         render_today_pending_action_card(market_guard)
         render_today_pending_risk_panel()
         st.info("보유/관심 점검 대상이 비어 있습니다. 자산 현황에 보유자산을 입력하거나 정밀관측소에서 종목을 추가하면 오늘 점검에 자동으로 올라옵니다.")
         st.divider()
-        render_today_candidate_tools(pd.DataFrame(), start_index=4)
+        render_today_candidate_tools(pd.DataFrame(), start_index=0)
         st.divider()
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature="")
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature="", title="#### 세부 근거: 시황 메모 분석")
         return
 
     st.metric("관심/보유 점검 대상", f"{len(watch_items)}개")
@@ -30892,7 +31075,15 @@ def render_today_queue_tab(mode):
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
-        render_today_market_guard_panel(market_guard)
+        render_today_unified_briefing_panel(
+            pd.DataFrame(),
+            market_guard,
+            cash_available=clean_float(get_cash_available_for_dca(mode), 0.0),
+            reserve_available=clean_float(get_reserve_available_for_crash_buy(mode), 0.0),
+            watch_items=watch_items,
+            pending=True,
+        )
+        render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
         render_today_pending_action_card(market_guard)
         render_today_pending_risk_panel()
         if run_summary:
@@ -30900,9 +31091,9 @@ def render_today_queue_tab(mode):
         else:
             st.info("첫 로딩 속도를 위해 아직 종목 신호를 계산하지 않았습니다. 버튼을 누르면 관심/보유 종목의 가격과 벤치마크를 조회해 마지막 결과로 저장합니다.")
         st.divider()
-        render_today_candidate_tools(pd.DataFrame(), start_index=4)
+        render_today_candidate_tools(pd.DataFrame(), start_index=0)
         st.divider()
-        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig)
+        render_today_market_memo_panel(pd.DataFrame(), summary_signature=queue_sig, title="#### 세부 근거: 시황 메모 분석")
         return
 
     summary_df = summary_df.copy()
@@ -31055,10 +31246,23 @@ def render_today_queue_tab(mode):
     data_issue_mask = caution_mask & reason_bucket.eq("데이터확인")
     other_caution_mask = caution_mask & ~(overweight_mask | market_defense_mask | price_defense_mask | rapid_drop_mask | structure_mask | overheat_mask | data_issue_mask)
 
-    render_today_market_guard_panel(market_guard)
-
-    st.markdown("#### 2. 오늘의 실행 카드")
     candidate_focus_mask = execution_mask | wait_mask
+    render_today_unified_briefing_panel(
+        summary_df,
+        market_guard,
+        buyish_mask=execution_mask,
+        wait_mask=wait_mask,
+        caution_mask=caution_mask,
+        hard_block_mask=hard_block_mask,
+        risk_df=risk_df,
+        cash_available=cash_available,
+        reserve_available=reserve_available,
+        watch_items=watch_items,
+    )
+
+    render_today_market_guard_panel(market_guard, title="#### 세부 근거: 시장 안전벨트")
+
+    st.markdown("#### 세부 근거: 실행 카드/뉴스")
     render_today_action_card(summary_df, candidate_focus_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard)
 
     m1, m2, m3, m4, m5 = st.columns(5)
@@ -31096,7 +31300,7 @@ def render_today_queue_tab(mode):
     render_today_holdings_risk_panel(risk_df)
 
     st.divider()
-    st.markdown("#### 4. 상세 판정표")
+    st.markdown("#### 세부 근거: 상세 판정표")
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "목표Upside", "최종읽기", "실행메모", "R/R", "차트목표", "손절가",
@@ -31195,10 +31399,10 @@ def render_today_queue_tab(mode):
     st.caption("후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. R/R<1·목표가 부족·상위과열은 실행 후보가 아니라 관심/눌림대기로 분리합니다.")
 
     st.divider()
-    render_today_candidate_tools(summary_df, start_index=5, market_guard=market_guard)
+    render_today_candidate_tools(summary_df, start_index=0, market_guard=market_guard)
 
     st.divider()
-    render_today_market_memo_panel(summary_df, summary_signature=queue_sig)
+    render_today_market_memo_panel(summary_df, summary_signature=queue_sig, title="#### 세부 근거: 시황 메모 분석")
 
 
 
