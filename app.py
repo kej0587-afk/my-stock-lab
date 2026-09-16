@@ -1067,6 +1067,8 @@ from stock_lab_core.news import (
     render_research_report_panel,
     fetch_naver_kr_snapshot,
     fetch_investor_trend,
+    fetch_investor_top10_naver,
+    fetch_investor_top10_pykrx,
     render_investor_trend_panel,
     render_investor_top10_panel,
 )
@@ -28222,6 +28224,157 @@ def _generate_today_briefing_market_memo(summary_df=None) -> str:
     )
 
 
+TODAY_BRIEFING_INVESTOR_FLOW_KEY = "today_briefing_investor_flow"
+TODAY_BRIEFING_INVESTOR_FLOW_LAST_RUN_KEY = "today_briefing_investor_flow_last_run"
+
+
+def _today_briefing_kr_tickers(summary_df=None, watch_items=None) -> tuple[str, ...]:
+    tickers: list[str] = []
+
+    def _add(raw):
+        t = sanitize_ticker_value(raw)
+        if not t:
+            return
+        if is_kr_listed(t):
+            full = t.upper()
+            if "." not in full:
+                full = f"{full}.KS"
+            if full not in tickers:
+                tickers.append(full)
+
+    if isinstance(summary_df, pd.DataFrame) and "티커" in summary_df.columns:
+        for raw in summary_df["티커"].astype(str).head(120):
+            _add(raw)
+    for item in watch_items or []:
+        if isinstance(item, dict):
+            _add(item.get("ticker", ""))
+    return tuple(tickers)
+
+
+def refresh_today_briefing_investor_flow(summary_df=None, watch_items=None) -> dict:
+    """Fetch investor flow for the briefing, preferring market-wide KRX data and falling back to tracked KR names."""
+    now_kst = datetime.now(timezone(timedelta(hours=9)))
+    today_str = now_kst.strftime("%Y%m%d")
+    result = None
+    try:
+        result = fetch_investor_top10_pykrx(today_str)
+    except Exception as exc:
+        result = {"ok": False, "reason": str(exc), "data": {}}
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        kr_tickers = _today_briefing_kr_tickers(summary_df, watch_items)
+        try:
+            result = fetch_investor_top10_naver(kr_tickers)
+            if isinstance(result, dict):
+                result["scope"] = f"내 한국 보유/관심 {len(kr_tickers)}개"
+        except Exception as exc:
+            result = {"ok": False, "reason": str(exc), "data": {}, "scope": "내 한국 보유/관심"}
+    else:
+        result["scope"] = "KRX 전체 시장"
+
+    st.session_state[TODAY_BRIEFING_INVESTOR_FLOW_KEY] = result
+    st.session_state[TODAY_BRIEFING_INVESTOR_FLOW_LAST_RUN_KEY] = now_kst.strftime("%Y-%m-%d %H:%M")
+    return result
+
+
+def _format_today_investor_value(value) -> str:
+    v = clean_float(value, 0.0)
+    if abs(v) < 1e-9:
+        return "-"
+    return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
+
+
+def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
+    snapshot = get_cached_today_market_flow_snapshot()
+    if not isinstance(snapshot, dict):
+        return pd.DataFrame()
+    frames = []
+    for key, source_name in [("flow_df", "ETF/섹터"), ("theme_flow_df", "테마")]:
+        raw = snapshot.get(key, pd.DataFrame())
+        if raw is None:
+            continue
+        if not isinstance(raw, pd.DataFrame):
+            try:
+                raw = pd.DataFrame(raw)
+            except Exception:
+                continue
+        if raw.empty or "거래량증가" not in raw.columns:
+            continue
+        tmp = raw.copy()
+        label_col = next((c for c in ["섹터", "테마", "하위테마", "ETF 이름", "종목명", "Ticker"] if c in tmp.columns), None)
+        if not label_col:
+            continue
+        tmp["분류"] = source_name
+        tmp["이름"] = tmp[label_col].astype(str)
+        tmp["거래량증가"] = pd.to_numeric(tmp["거래량증가"], errors="coerce")
+        if "돈흐름점수" in tmp.columns:
+            tmp["돈흐름점수"] = pd.to_numeric(tmp["돈흐름점수"], errors="coerce")
+        else:
+            tmp["돈흐름점수"] = np.nan
+        frames.append(tmp[["분류", "이름", "거래량증가", "돈흐름점수"]])
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames, ignore_index=True)
+    out = out.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(limit).copy()
+    if out.empty:
+        return out
+    out["거래량증가"] = out["거래량증가"].apply(lambda v: f"{float(v)*100:+.1f}%" if finite_num(v) else "-")
+    out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: "-" if not finite_num(v) else f"{float(v):.1f}")
+    return out
+
+
+def render_today_briefing_investor_flow(summary_df=None, watch_items=None):
+    st.markdown("**수급·거래량 확인**")
+    cols = st.columns([1.0, 1.0, 2.4])
+    if cols[0].button("수급 새로고침", key="today_briefing_investor_flow_refresh", width='stretch'):
+        with st.spinner("외국인·기관 수급 확인 중..."):
+            refresh_today_briefing_investor_flow(summary_df, watch_items)
+        st.rerun()
+    if st.session_state.get(TODAY_BRIEFING_INVESTOR_FLOW_KEY) and cols[1].button("수급 지우기", key="today_briefing_investor_flow_clear", width='stretch'):
+        st.session_state.pop(TODAY_BRIEFING_INVESTOR_FLOW_KEY, None)
+        st.session_state.pop(TODAY_BRIEFING_INVESTOR_FLOW_LAST_RUN_KEY, None)
+        st.rerun()
+    last_run = st.session_state.get(TODAY_BRIEFING_INVESTOR_FLOW_LAST_RUN_KEY, "")
+    cols[2].caption(f"마지막 확인: {last_run}" if last_run else "KRX 전체 시장 수급을 우선 조회하고, 실패하면 내 한국 보유/관심 종목 기준으로 봅니다.")
+
+    result = st.session_state.get(TODAY_BRIEFING_INVESTOR_FLOW_KEY)
+    if isinstance(result, dict) and result.get("ok"):
+        scope = str(result.get("scope", result.get("source", "")) or "")
+        source = str(result.get("source", "") or "")
+        date_label = str(result.get("date", "") or "")
+        if len(date_label) == 8:
+            date_label = f"{date_label[:4]}.{date_label[4:6]}.{date_label[6:]}"
+        st.caption("수급 기준: " + " · ".join([x for x in [scope, source, date_label] if x]))
+        data = result.get("data", {})
+        investors = [name for name in ["연기금", "외국인", "기관합계", "개인"] if isinstance(data.get(name), pd.DataFrame)]
+        if investors:
+            inv_cols = st.columns(min(len(investors), 4))
+            for col, inv_name in zip(inv_cols, investors[:4]):
+                df_top = data.get(inv_name)
+                with col:
+                    st.markdown(f"**{inv_name} 순매수 상위**")
+                    if df_top is None or df_top.empty:
+                        st.caption("데이터 없음")
+                        continue
+                    value_col = "순매수(백만원)" if "순매수(백만원)" in df_top.columns else "순매수(주)"
+                    show = df_top[["종목명", value_col]].head(5).copy()
+                    show[value_col] = show[value_col].apply(_format_today_investor_value)
+                    st.dataframe(show, width='stretch', hide_index=True, height=min(260, 90 + len(show) * 34))
+        else:
+            st.info("표시할 투자자별 수급 데이터가 없습니다.")
+    elif isinstance(result, dict):
+        st.info(f"수급 데이터는 아직 표시하지 못했습니다: {result.get('reason', '데이터 없음')}")
+    else:
+        st.info("수급 새로고침을 누르면 외국인·기관·개인 흐름을 브리핑 안에 표시합니다.")
+
+    volume_df = _build_today_volume_brief_rows(limit=6)
+    if isinstance(volume_df, pd.DataFrame) and not volume_df.empty:
+        st.caption("거래량 확인: 돈흐름 점수에 이미 거래량 가중치가 포함되어 있지만, 아래는 거래량 증가만 따로 뽑은 참고입니다.")
+        st.dataframe(volume_df, width='stretch', hide_index=True, height=min(320, 90 + len(volume_df) * 36))
+    else:
+        st.caption("거래량 확인: 돈흐름 상세 계산 후 거래량 증가 상위 축이 표시됩니다.")
+
+
 def render_today_unified_briefing_panel(
     summary_df=None,
     market_guard=None,
@@ -28504,6 +28657,8 @@ def render_today_unified_briefing_panel(
         if isinstance(event_df, pd.DataFrame) and not event_df.empty:
             st.caption("이벤트")
             st.dataframe(event_df.head(5), width='stretch', hide_index=True, height=min(240, 90 + len(event_df.head(5)) * 36))
+
+    render_today_briefing_investor_flow(df, watch_items)
 
     st.markdown("**주요 뉴스 체크**")
     news_cols = st.columns([1.1, 0.8, 2.4])
