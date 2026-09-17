@@ -498,6 +498,28 @@ def test_auto_market_memo_uses_fomc_hike_result_instead_of_hardcoded_hold():
     assert "금리 동결 이후" not in memo
 
 
+def test_auto_market_memo_detects_korean_fomc_quarter_point_hike_headline():
+    memo = build_auto_market_memo(
+        event_rows=[{"상태": "잔여", "이벤트": "FOMC", "D-Day": "D+1", "시장": "미국 주식/달러/금리"}],
+        market_news_rows=[
+            {
+                "market_category": "시장",
+                "title": "美 FOMC, 기준금리 0.25%P 인상…중동 전쟁에 관세 등 인플레 영향 분석",
+                "publisher": "아주경제",
+            },
+            {
+                "market_category": "시장",
+                "title": "9월 FOMC 성명, 직전 회의와 달라진 점",
+                "publisher": "연합인포맥스",
+            },
+        ],
+        now=datetime(2026, 9, 17, 14, 0),
+    )
+
+    assert "FOMC는 금리 인상 이후 결과 소화 구간" in memo
+    assert "금리 동결" not in memo
+
+
 def test_auto_market_memo_separates_inverse_semiconductor_etf_from_leaders():
     flow_snapshot = {
         "flow_df": [
@@ -568,3 +590,18 @@ def test_auto_market_memo_softens_buy_candidates_when_macro_stress_is_high():
 
     assert "관심/회복확인 후보: S&P500(379800.KS)" in memo
     assert "매수/관심 후보: S&P500(379800.KS)" not in memo
+
+
+def test_auto_market_memo_filters_non_market_social_noise_from_market_news():
+    noisy_title = "구리경찰서에 지역 잡음 기사…청사 이리저리 누비며 소동"
+    useful_title = "구리 가격 상승에 원자재 ETF 강세"
+    memo = build_auto_market_memo(
+        market_news_rows=[
+            {"market_category": "시장", "title": noisy_title, "publisher": "연합뉴스"},
+            {"market_category": "시장", "title": useful_title, "publisher": "연합인포맥스"},
+        ],
+        now=datetime(2026, 9, 17, 14, 0),
+    )
+
+    assert noisy_title not in memo
+    assert useful_title in memo

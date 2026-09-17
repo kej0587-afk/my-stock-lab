@@ -1139,25 +1139,35 @@ def _fomc_result_type(market_news_rows=None, news_rows=None) -> str:
     if not any(term in text for term in fomc_terms):
         return ""
 
+    direct_cut = re.search(r"(?:기준금리|금리)\s*(?:\d+(?:\.\d+)?\s*%p|\d+(?:\.\d+)?\s*bp)\s*(?:인하|내렸|하향)", text)
+    direct_hike = re.search(r"(?:기준금리|금리)\s*(?:\d+(?:\.\d+)?\s*%p|\d+(?:\.\d+)?\s*bp)\s*(?:인상|올렸|상향)", text)
+    direct_hold = re.search(r"(?:기준금리|금리)\s*(?:동결|유지)", text)
+    if direct_cut:
+        return "인하"
+    if direct_hike:
+        return "인상"
+    if direct_hold:
+        return "동결"
+
     cut_terms = (
         "금리 인하", "기준금리 인하", "25bp 인하", "25 bp 인하",
         "cut rates", "cuts rates", "rate cut", "lowered rates", "fed cuts",
+    )
+    hike_terms = (
+        "금리 인상", "금리인상", "기준금리 인상", "기준금리인상", "25bp 인상", "25 bp 인상",
+        "raised rates", "raises rates", "hiked rates", "hikes rates",
+        "fed raises", "fed hikes",
     )
     hold_terms = (
         "금리 동결", "기준금리 동결", "동결", "holds rates", "hold rates",
         "keeps rates", "left rates unchanged", "unchanged", "rates steady",
     )
-    hike_terms = (
-        "금리 인상", "기준금리 인상", "25bp 인상", "25 bp 인상",
-        "raised rates", "raises rates", "hiked rates", "hikes rates",
-        "fed raises", "fed hikes",
-    )
     if any(term in text for term in cut_terms):
         return "인하"
-    if any(term in text for term in hold_terms):
-        return "동결"
     if any(term in text for term in hike_terms):
         return "인상"
+    if any(term in text for term in hold_terms):
+        return "동결"
     return "결과" if _fomc_result_signal(market_news_rows, news_rows) else ""
 
 
@@ -1210,6 +1220,8 @@ def _market_news_bullets(news_rows) -> list[str]:
         title = _norm(row.get("title") or row.get("제목"))
         if not title:
             continue
+        if _is_market_news_noise(row):
+            continue
         category = _norm(row.get("market_category") or row.get("category") or "시장")
         publisher = _norm(row.get("publisher") or row.get("source") or row.get("출처"))
         published = _norm(row.get("published"))
@@ -1247,6 +1259,8 @@ def _market_news_grouped_bullets(news_rows, seen_news_keys: set[str] | None = No
     for row in _iter_table_rows(news_rows, limit=30):
         title = _norm(row.get("title") or row.get("제목"))
         if not title:
+            continue
+        if _is_market_news_noise(row):
             continue
         key = _row_news_key(row)
         if seen_news_keys is not None and key in seen_news_keys:
@@ -1298,6 +1312,19 @@ EVENT_RADAR_NOISE_KEYWORDS = (
     "youtube", "mshale",
 )
 
+MARKET_NEWS_SOCIAL_NOISE_KEYWORDS = (
+    "경찰서", "구리경찰서", "구리 경찰서", "청사", "소동", "출몰",
+    "연예", "맛집", "날씨", "복권", "로또", "스포츠",
+)
+
+MARKET_NEWS_RELEVANCE_KEYWORDS = (
+    "증시", "시장", "주가", "주식", "코스피", "코스닥", "나스닥", "s&p",
+    "금리", "환율", "달러", "국채", "유가", "원유", "lng", "천연가스",
+    "반도체", "hbm", "ai", "수출", "실적", "매출", "가이던스", "공급",
+    "수주", "계약", "관세", "인플레", "fomc", "fed", "연준", "boj", "ecb",
+    "구리 가격", "구리가격", "copper", "원자재",
+)
+
 GENERATED_MEMO_SCORE_SKIP_TERMS = (
     "stock lab 자동 뉴스픽", "자동 생성 초안", "붙여넣은 메모",
     "핵심 해석", "뉴스 이벤트 레이더", "종목 직접",
@@ -1335,6 +1362,17 @@ def _is_event_radar_noise(row: dict) -> bool:
     title = _lower(row.get("title"))
     if "mshale" in text and any(term in title for term in ("stock", "soxl", "soxx")):
         return True
+    return False
+
+
+def _is_market_news_noise(row: dict) -> bool:
+    text = _lower(" ".join(_norm(row.get(key)) for key in ("title", "publisher", "name", "category")))
+    if _is_event_radar_noise(row):
+        return True
+    if "구리경찰서" in text or "구리 경찰서" in text:
+        return True
+    if any(term in text for term in MARKET_NEWS_SOCIAL_NOISE_KEYWORDS):
+        return not any(term in text for term in MARKET_NEWS_RELEVANCE_KEYWORDS)
     return False
 
 
@@ -1395,7 +1433,7 @@ def _event_source_rows(market_news_rows=None, news_rows=None) -> list[dict]:
     deduped: list[dict] = []
     seen: set[str] = set()
     for row in sorted(rows, key=_event_importance_score, reverse=True):
-        if _is_event_radar_noise(row):
+        if _is_market_news_noise(row):
             continue
         key = re.sub(r"\W+", "", _lower(row.get("title")))[:90]
         if not key or key in seen:
@@ -1573,7 +1611,7 @@ def _auto_insight_bullets(
             inverse_top = sorted(inverse_semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
             bullets.append(
                 f"반도체/AI 인버스 강세 신호는 {_flow_row_label(inverse_top)}입니다. "
-                f"{_flow_health_fragment(inverse_top)}로 보이지만, 이는 주도 섹터가 아니라 반도체 하락 압력/헤지 수요로 해석합니다."
+                f"수치상 {_flow_health_fragment(inverse_top)}입니다. 이는 주도 섹터가 아니라 반도체 하락 압력/헤지 수요로 해석합니다."
             )
         if not long_semi_rows:
             long_semi_rows = []
