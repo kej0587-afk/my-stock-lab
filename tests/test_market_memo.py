@@ -145,9 +145,42 @@ def test_auto_market_memo_adds_action_flag_and_macro_stress_summary():
 
     assert "🎯 오늘의 전략" in memo
     assert "레버리지 신규매수 금지" in memo
-    assert "S&P500(379800.KS) 적립/관심 유지" in memo
+    assert "S&P500(379800.KS) 회복확인 대기" in memo
     assert "매크로 스트레스" in memo
     assert "하드차단 해제 기준" in memo
+
+
+def test_auto_market_memo_action_flag_prefers_core_candidate_in_defensive_market():
+    macro_data = {
+        "10Y 금리": {"val": 5.0, "chg": 0.062, "icon": "🔺", "storm": True},
+        "VIX": {"val": 17.2, "chg": 0.086, "icon": "🔺"},
+    }
+    summary_rows = pd.DataFrame(
+        [
+            {
+                "종목명": "Microsoft",
+                "티커": "MSFT",
+                "🔥기술적 타점": "매수 관심",
+                "판정코드": "BUY_WATCH",
+            },
+            {
+                "종목명": "S&P500",
+                "티커": "379800.KS",
+                "🔥기술적 타점": "ETF 목표비중 미달 : 적립식 매수 가능",
+                "판정코드": "ETF_DCA_OK",
+            },
+        ]
+    )
+
+    memo = build_auto_market_memo(
+        macro_data=macro_data,
+        summary_rows=summary_rows,
+        now=datetime(2026, 9, 17, 17, 0),
+    )
+
+    assert "오늘의 전략: S&P500(379800.KS) 회복확인 대기" in memo
+    assert "관심/회복확인 후보: S&P500(379800.KS), Microsoft(MSFT)" in memo
+    assert "오늘의 전략: Microsoft(MSFT) 적립/관심 유지" not in memo
 
 
 def test_auto_market_memo_builds_news_event_radar_from_rss_titles():

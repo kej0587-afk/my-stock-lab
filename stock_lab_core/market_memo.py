@@ -947,6 +947,25 @@ def _macro_stress_is_defensive(macro_data: dict | None) -> bool:
     return "(위험)" in stress or "(경고)" in stress
 
 
+def _preferred_core_candidate(items: list[str]) -> str:
+    core_terms = (
+        "S&P500", "S&P 500", "379800", "VOO", "SPY",
+        "KODEX 200", "069500", "나스닥100", "QQQ",
+    )
+    for item in items:
+        upper = item.upper()
+        if any(term.upper() in upper for term in core_terms):
+            return item
+    return items[0] if items else ""
+
+
+def _core_prioritized_candidates(items: list[str]) -> list[str]:
+    preferred = _preferred_core_candidate(items)
+    if not preferred:
+        return items
+    return [preferred] + [item for item in items if item != preferred]
+
+
 def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str:
     rows = _iter_table_rows(summary_rows, limit=80)
     if not rows:
@@ -981,8 +1000,13 @@ def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str
         actions.append("레버리지 신규매수 금지")
     elif hard_count:
         actions.append("하드차단 종목 먼저 원인 확인")
+    defensive = _macro_stress_is_defensive(macro_data)
     if buyish:
-        actions.append(f"{buyish[0]} 적립/관심 유지")
+        primary = _preferred_core_candidate(buyish)
+        if defensive:
+            actions.append(f"{primary} 회복확인 대기")
+        else:
+            actions.append(f"{primary} 적립/관심 유지")
     elif caution:
         actions.append("신규매수보다 가격 안정 확인")
 
@@ -1055,7 +1079,8 @@ def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
         defensive = _macro_stress_is_defensive(macro_data)
         candidate_label = "관심/회복확인 후보" if defensive else "매수/관심 후보"
         trigger = " — 실행조건: 10Y/VIX 안정 + 종가·RS 회복 + 정밀관측소 R/R 확인" if defensive else ""
-        bullets.append(candidate_label + ": " + ", ".join(buyish[:5]) + trigger)
+        display_buyish = _core_prioritized_candidates(buyish) if defensive else buyish
+        bullets.append(candidate_label + ": " + ", ".join(display_buyish[:5]) + trigger)
     if leveraged_watch:
         bullets.append("레버리지 관찰 후보(추격 제외): " + ", ".join(leveraged_watch[:5]))
     if caution:
