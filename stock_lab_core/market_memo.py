@@ -1366,13 +1366,17 @@ def _is_event_radar_noise(row: dict) -> bool:
 
 
 def _is_market_news_noise(row: dict) -> bool:
-    text = _lower(" ".join(_norm(row.get(key)) for key in ("title", "publisher", "name", "category")))
+    title = _lower(row.get("title") or row.get("제목"))
+    publisher = _lower(row.get("publisher") or row.get("source") or row.get("출처"))
+    name = _lower(row.get("name") or row.get("종목명"))
+    text = " ".join(x for x in (title, publisher, name) if x)
     if _is_event_radar_noise(row):
         return True
     if "구리경찰서" in text or "구리 경찰서" in text:
         return True
-    if any(term in text for term in MARKET_NEWS_SOCIAL_NOISE_KEYWORDS):
-        return not any(term in text for term in MARKET_NEWS_RELEVANCE_KEYWORDS)
+    title_has_market_relevance = any(term in title for term in MARKET_NEWS_RELEVANCE_KEYWORDS)
+    if any(term in title for term in MARKET_NEWS_SOCIAL_NOISE_KEYWORDS):
+        return not title_has_market_relevance
     return False
 
 

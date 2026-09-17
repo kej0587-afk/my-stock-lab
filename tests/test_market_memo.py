@@ -593,15 +593,18 @@ def test_auto_market_memo_softens_buy_candidates_when_macro_stress_is_high():
 
 
 def test_auto_market_memo_filters_non_market_social_noise_from_market_news():
-    noisy_title = "구리경찰서에 지역 잡음 기사…청사 이리저리 누비며 소동"
+    noisy_title = "구리경찰서에 너구리 출몰…청사 이리저리 누비며 소동"
+    noisy_title_2 = "구리 경찰서에 너구리 ’어슬렁’...한바탕 소동의 결말은"
     useful_title = "구리 가격 상승에 원자재 ETF 강세"
     memo = build_auto_market_memo(
         market_news_rows=[
             {"market_category": "시장", "title": noisy_title, "publisher": "연합뉴스"},
+            {"market_category": "시장", "title": noisy_title_2, "publisher": "연합뉴스TV"},
             {"market_category": "시장", "title": useful_title, "publisher": "연합인포맥스"},
         ],
         now=datetime(2026, 9, 17, 14, 0),
     )
 
     assert noisy_title not in memo
+    assert noisy_title_2 not in memo
     assert useful_title in memo
