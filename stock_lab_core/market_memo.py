@@ -194,6 +194,10 @@ LEVERAGED_TICKERS = {
     "TQQQ", "QLD", "SOXL", "TECL", "UPRO", "SSO", "FNGU", "BULZ",
     "NVDL", "TSLL", "USD", "423920.KS", "494310.KS",
 }
+INVERSE_TICKERS = {
+    "SOXS", "SQQQ", "SPXU", "SH", "PSQ", "DOG", "SDOW", "TECS",
+    "SARK", "BITI", "SBIT", "KOLD", "DRV", "FAZ", "LABD",
+}
 GROWTH_ROTATION_TICKERS = {"^IXIC", "QQQ", "XLK", "SOXX", "SMH", "SOXL", "DRAM", "RAM", "TQQQ", "QLD"}
 VALUE_DEFENSIVE_ROTATION_TICKERS = {"^DJI", "DIA", "XLI", "XLF", "XLP", "XLU"}
 KR_MARKET_ROTATION_TICKERS = {"^KS11", "^KQ11", "069500.KS", "229200.KS"}
@@ -613,6 +617,20 @@ def _is_leveraged_row(row: dict) -> bool:
     )
 
 
+def _is_inverse_or_short_row(row: dict) -> bool:
+    ticker = _row_ticker(row)
+    text = " ".join(
+        _lower(row.get(key, ""))
+        for key in ("종목명", "자산명", "name", "섹터", "ETF 이름", "asset_class", "source", "type")
+    )
+    if ticker in INVERSE_TICKERS:
+        return True
+    return any(
+        token in text
+        for token in ("inverse", "bear 3x", "bear 2x", "bearish", "short qqq", "short s&p", "인버스", "곱버스")
+    )
+
+
 def _rotation_value(row: dict, *keys: str, default: float | None = None) -> float | None:
     for key in keys:
         if key in row and row.get(key) not in (None, ""):
@@ -880,6 +898,11 @@ def _macro_stress_line(macro_data: dict | None) -> str:
     return f"매크로 스트레스 {score}/100({label}) · {detail}"
 
 
+def _macro_stress_is_defensive(macro_data: dict | None) -> bool:
+    stress = _macro_stress_line(macro_data)
+    return "(위험)" in stress or "(경고)" in stress
+
+
 def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str:
     rows = _iter_table_rows(summary_rows, limit=80)
     if not rows:
@@ -932,6 +955,7 @@ def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str
 def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[str]:
     bullets = []
     fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
+    fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
     fed_hawkish = _fed_hawkish_signal(market_news_rows, news_rows)
     for row in _active_event_records(event_rows):
         state = row["state"]
@@ -943,16 +967,13 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
             is_fomc = "fomc" in _lower(event)
             state_label = "결과 소화" if is_fomc and (state == "잔여" or fomc_result_known) else state
             if state_label == "결과 소화" and is_fomc:
-                if fed_hawkish:
-                    impact = "금리 동결 이후에도 매파적 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
-                else:
-                    impact = "금리 동결 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+                impact = _fomc_result_impact_text(fomc_result_type, fed_hawkish)
             suffix = f", {impact}" if impact else ""
             bullets.append(f"{event} {dday}({state_label}) · {market}{suffix}")
     return bullets[:5]
 
 
-def _summary_bullets(summary_rows) -> list[str]:
+def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
     bullets = []
     rows = _iter_table_rows(summary_rows, limit=80)
     buyish = []
@@ -987,7 +1008,8 @@ def _summary_bullets(summary_rows) -> list[str]:
             else:
                 buyish.append(item)
     if buyish:
-        bullets.append("매수/관심 후보: " + ", ".join(buyish[:5]))
+        candidate_label = "관심/회복확인 후보" if _macro_stress_is_defensive(macro_data) else "매수/관심 후보"
+        bullets.append(candidate_label + ": " + ", ".join(buyish[:5]))
     if leveraged_watch:
         bullets.append("레버리지 관찰 후보(추격 제외): " + ", ".join(leveraged_watch[:5]))
     if caution:
@@ -1109,6 +1131,64 @@ def _fed_hawkish_signal(market_news_rows=None, news_rows=None) -> bool:
     return any(term in text for term in hawkish_terms) and any(term in text for term in fomc_terms)
 
 
+def _fomc_result_type(market_news_rows=None, news_rows=None) -> str:
+    text = _rows_text(market_news_rows, 50) + " " + _rows_text(news_rows, 30)
+    if not text:
+        return ""
+    fomc_terms = ("fomc", "fed", "federal reserve", "연준", "금리", "점도표")
+    if not any(term in text for term in fomc_terms):
+        return ""
+
+    cut_terms = (
+        "금리 인하", "기준금리 인하", "25bp 인하", "25 bp 인하",
+        "cut rates", "cuts rates", "rate cut", "lowered rates", "fed cuts",
+    )
+    hold_terms = (
+        "금리 동결", "기준금리 동결", "동결", "holds rates", "hold rates",
+        "keeps rates", "left rates unchanged", "unchanged", "rates steady",
+    )
+    hike_terms = (
+        "금리 인상", "기준금리 인상", "25bp 인상", "25 bp 인상",
+        "raised rates", "raises rates", "hiked rates", "hikes rates",
+        "fed raises", "fed hikes",
+    )
+    if any(term in text for term in cut_terms):
+        return "인하"
+    if any(term in text for term in hold_terms):
+        return "동결"
+    if any(term in text for term in hike_terms):
+        return "인상"
+    return "결과" if _fomc_result_signal(market_news_rows, news_rows) else ""
+
+
+def _fomc_result_impact_text(result_type: str, fed_hawkish: bool = False) -> str:
+    if result_type == "인상":
+        return "금리 인상 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+    if result_type == "인하":
+        return "금리 인하 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+    if result_type == "동결":
+        if fed_hawkish:
+            return "금리 동결 이후에도 매파적 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+        return "금리 동결 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+    if fed_hawkish:
+        return "FOMC 결과 이후에도 매파적 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+    return "FOMC 결과 이후 점도표·기자회견 해석을 소화하는 구간. 10Y 금리·달러·성장주 종가 반응 확인"
+
+
+def _fomc_result_summary_text(result_type: str, fed_hawkish: bool = False) -> str:
+    if result_type == "인상":
+        return "FOMC는 금리 인상 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+    if result_type == "인하":
+        return "FOMC는 금리 인하 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+    if result_type == "동결":
+        if fed_hawkish:
+            return "FOMC는 금리 동결로 불확실성 일부가 해소됐지만, 연내 인상 가능성/매파 해석을 시장이 소화하는 구간입니다."
+        return "FOMC는 금리 동결 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+    if fed_hawkish:
+        return "FOMC 결과는 확인됐지만 매파적 해석을 시장이 소화하는 구간입니다. 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+    return "FOMC 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+
+
 def _fomc_result_signal(market_news_rows=None, news_rows=None) -> bool:
     text = _rows_text(market_news_rows, 50) + " " + _rows_text(news_rows, 30)
     if not text:
@@ -1221,7 +1301,7 @@ EVENT_RADAR_NOISE_KEYWORDS = (
 GENERATED_MEMO_SCORE_SKIP_TERMS = (
     "stock lab 자동 뉴스픽", "자동 생성 초안", "붙여넣은 메모",
     "핵심 해석", "뉴스 이벤트 레이더", "종목 직접",
-    "오늘점검", "매수/관심 후보", "주의/차단 후보", "하드차단 우선 확인",
+    "오늘점검", "매수/관심 후보", "관심/회복확인 후보", "주의/차단 후보", "하드차단 우선 확인",
     "오늘의 실행 카드", "오늘 돈흐름 결론판", "시장 안전벨트",
     "시황 요약:", "돈흐름", "3m +", "가속도", "상태 과열경보",
     "r/r", "현재가", "목표비중", "중기 돈흐름 상위 축",
@@ -1456,6 +1536,7 @@ def _auto_insight_bullets(
     event_records = _active_event_records(event_rows)
     events = [row["event"] for row in event_records]
     fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
+    fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
     post_fomc = fomc_result_known or any(
         "fomc" in _lower(row["event"]) and row["state"] == "잔여"
         for row in event_records
@@ -1486,11 +1567,22 @@ def _auto_insight_bullets(
         )
     ]
     if semi_rows:
-        top = sorted(semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
+        inverse_semi_rows = [row for row in semi_rows if _is_inverse_or_short_row(row)]
+        long_semi_rows = [row for row in semi_rows if not _is_inverse_or_short_row(row)]
+        if inverse_semi_rows:
+            inverse_top = sorted(inverse_semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
+            bullets.append(
+                f"반도체/AI 인버스 강세 신호는 {_flow_row_label(inverse_top)}입니다. "
+                f"{_flow_health_fragment(inverse_top)}로 보이지만, 이는 주도 섹터가 아니라 반도체 하락 압력/헤지 수요로 해석합니다."
+            )
+        if not long_semi_rows:
+            long_semi_rows = []
+    if semi_rows and long_semi_rows:
+        top = sorted(long_semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
         top_label = _flow_row_label(top)
         top_is_weak = _is_weak_flow_leader(top)
         overheated = sum(
-            1 for row in semi_rows
+            1 for row in long_semi_rows
             if "과열" in _norm(row.get("상태")) or _flow_value(row, "3개월수익률") >= 0.45
         )
         if top_is_weak:
@@ -1622,10 +1714,7 @@ def _auto_insight_bullets(
         if not ("fomc" in _lower(row["event"]) and (row["state"] == "잔여" or fomc_result_known))
     ]
     if post_fomc:
-        if fed_hawkish:
-            bullets.append("FOMC는 금리 동결로 불확실성 일부가 해소됐지만, 연내 인상 가능성/매파 해석을 시장이 소화하는 구간입니다.")
-        else:
-            bullets.append("FOMC는 금리 동결 이후 결과 소화 구간입니다. 이제 일정 자체보다 10Y 금리, 달러, 성장주 종가 반응이 더 중요합니다.")
+        bullets.append(_fomc_result_summary_text(fomc_result_type, fed_hawkish))
     if non_post_events:
         bullets.append("이벤트 리스크는 " + ", ".join(non_post_events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
     elif events and not post_fomc:
@@ -1633,7 +1722,7 @@ def _auto_insight_bullets(
     if pre_fomc:
         bullets.append("FOMC 전후에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
 
-    portfolio_lines = _summary_bullets(summary_rows)
+    portfolio_lines = _summary_bullets(summary_rows, macro_data)
     if portfolio_lines:
         bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
     else:
@@ -1709,8 +1798,13 @@ def build_auto_market_memo(
             semis.append(row)
     if semis:
         lines.append("🖥 반도체·AI")
-        for row in sorted(semis, key=lambda r: _flow_value(r, "돈흐름점수", -999.0), reverse=True)[:3]:
+        semi_longs = [row for row in semis if not _is_inverse_or_short_row(row)]
+        semi_inverse = [row for row in semis if _is_inverse_or_short_row(row)]
+        for row in sorted(semi_longs, key=lambda r: _flow_value(r, "돈흐름점수", -999.0), reverse=True)[:3]:
             lines.append(f"• {_flow_bullet(row)}")
+        if semi_inverse:
+            inverse_top = sorted(semi_inverse, key=lambda r: _flow_value(r, "돈흐름점수", -999.0), reverse=True)[0]
+            lines.append(f"• 인버스/헤지 신호: {_flow_bullet(inverse_top)}")
         lines.append("")
 
     flow_sections = [
@@ -1797,7 +1891,7 @@ def build_auto_market_memo(
                 remaining -= 1
         lines.append("")
 
-    portfolio_lines = _summary_bullets(summary_rows)
+    portfolio_lines = _summary_bullets(summary_rows, macro_data)
     command_lines = _flow_command_bullets(flow_snapshot)
     lines.append("🧭 오늘점검")
     if portfolio_lines:

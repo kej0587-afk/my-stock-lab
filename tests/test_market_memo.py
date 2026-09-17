@@ -479,3 +479,92 @@ def test_market_memo_headline_prioritizes_rotation_and_event_caution():
 
     assert "단기 로테이션/이벤트 확인 필요" in result["headline"]
     assert result["action_bias"] == "레버리지 추격 금지 · 눌림/종가 확인 우선"
+
+
+def test_auto_market_memo_uses_fomc_hike_result_instead_of_hardcoded_hold():
+    memo = build_auto_market_memo(
+        event_rows=[{"상태": "잔여", "이벤트": "FOMC", "D-Day": "D+1", "시장": "미국 주식/달러/금리"}],
+        market_news_rows=[
+            {
+                "market_category": "외환/금리",
+                "title": "Fed raises rates by 25bp and investors parse the dot plot",
+                "publisher": "Reuters",
+            }
+        ],
+        now=datetime(2026, 9, 17, 11, 0),
+    )
+
+    assert "금리 인상 이후" in memo
+    assert "금리 동결 이후" not in memo
+
+
+def test_auto_market_memo_separates_inverse_semiconductor_etf_from_leaders():
+    flow_snapshot = {
+        "flow_df": [
+            {
+                "구분": "미국 섹터",
+                "섹터": "Direxion Daily Semiconductor Bear 3X ETF",
+                "Ticker": "SOXS",
+                "ETF 이름": "SOXS",
+                "돈흐름점수": 80.0,
+                "3개월수익률": 0.396,
+                "상태": "강세 가속",
+            },
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 VanEck",
+                "Ticker": "SMH",
+                "ETF 이름": "VanEck Semiconductor ETF",
+                "돈흐름점수": -34.7,
+                "3개월수익률": -0.173,
+                "상태": "급락 경보",
+            },
+        ],
+        "us_top5": [
+            {
+                "섹터": "사이버보안 ETF",
+                "Ticker": "CIBR",
+                "돈흐름점수": 15.8,
+                "3개월수익률": 0.195,
+                "상태": "과열경보",
+            }
+        ],
+    }
+
+    memo = build_auto_market_memo(
+        flow_snapshot=flow_snapshot,
+        now=datetime(2026, 9, 17, 11, 0),
+    )
+
+    assert "인버스 강세 신호" in memo
+    assert "반도체 하락 압력/헤지 수요" in memo
+    assert "인버스/헤지 신호" in memo
+    assert "상대 상위는 Direxion Daily Semiconductor Bear 3X ETF(SOXS)" not in memo
+
+
+def test_auto_market_memo_softens_buy_candidates_when_macro_stress_is_high():
+    macro_data = {
+        "10Y 금리": {"val": 5.01, "chg": 0.076, "icon": "🔺", "storm": True},
+        "VIX": {"val": 17.71, "chg": 0.189, "icon": "🔺"},
+        "MOVE": {"val": 80.73, "chg": 0.133, "icon": "🔺"},
+        "유가": {"val": 102.06, "chg": 0.189, "icon": "🔺"},
+    }
+    summary_rows = pd.DataFrame(
+        [
+            {
+                "종목명": "S&P500",
+                "티커": "379800.KS",
+                "🔥기술적 타점": "ETF 목표비중 미달 : 적립식 매수 가능",
+                "판정코드": "ETF_DCA_OK",
+            }
+        ]
+    )
+
+    memo = build_auto_market_memo(
+        macro_data=macro_data,
+        summary_rows=summary_rows,
+        now=datetime(2026, 9, 17, 11, 0),
+    )
+
+    assert "관심/회복확인 후보: S&P500(379800.KS)" in memo
+    assert "매수/관심 후보: S&P500(379800.KS)" not in memo
