@@ -147,6 +147,7 @@ def test_auto_market_memo_adds_action_flag_and_macro_stress_summary():
     assert "레버리지 신규매수 금지" in memo
     assert "S&P500(379800.KS) 적립/관심 유지" in memo
     assert "매크로 스트레스" in memo
+    assert "하드차단 해제 기준" in memo
 
 
 def test_auto_market_memo_builds_news_event_radar_from_rss_titles():
@@ -528,7 +529,7 @@ def test_auto_market_memo_separates_inverse_semiconductor_etf_from_leaders():
                 "섹터": "Direxion Daily Semiconductor Bear 3X ETF",
                 "Ticker": "SOXS",
                 "ETF 이름": "SOXS",
-                "돈흐름점수": 80.0,
+                "돈흐름점수": -13.9,
                 "3개월수익률": 0.396,
                 "상태": "강세 가속",
             },
@@ -561,6 +562,8 @@ def test_auto_market_memo_separates_inverse_semiconductor_etf_from_leaders():
     assert "인버스 강세 신호" in memo
     assert "반도체 하락 압력/헤지 수요" in memo
     assert "인버스/헤지 신호" in memo
+    assert "상태 강세 가속(3M+·가속+)" in memo
+    assert "다이버전스 가격↑·돈흐름↓" in memo
     assert "상대 상위는 Direxion Daily Semiconductor Bear 3X ETF(SOXS)" not in memo
 
 
@@ -589,6 +592,7 @@ def test_auto_market_memo_softens_buy_candidates_when_macro_stress_is_high():
     )
 
     assert "관심/회복확인 후보: S&P500(379800.KS)" in memo
+    assert "실행조건: 10Y/VIX 안정" in memo
     assert "매수/관심 후보: S&P500(379800.KS)" not in memo
 
 

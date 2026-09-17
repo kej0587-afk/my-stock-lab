@@ -548,6 +548,40 @@ def _flow_value(row: dict, key: str, default: float = 0.0) -> float:
     return value if value == value else default
 
 
+def _flow_score_value(row: dict, score_col: str = "돈흐름점수") -> float:
+    return _flow_value(row, score_col, _flow_value(row, "돈흐름점수", _flow_value(row, "테마돈흐름점수")))
+
+
+def _flow_state_hint(state: str) -> str:
+    if "과열" in state:
+        return "상단권/추격위험"
+    if "강세 가속" in state:
+        return "3M+·가속+"
+    if "주도 유지" in state:
+        return "3M·6M 동반+"
+    if "신규 유입" in state:
+        return "3M+·가속+"
+    if "둔화" in state:
+        return "중기 둔화"
+    if "급락" in state:
+        return "3M-·가속-"
+    if "소외" in state:
+        return "3M·6M 동반-"
+    if "급반등" in state:
+        return "저점권 반등"
+    return ""
+
+
+def _flow_divergence_note(row: dict, score_col: str = "돈흐름점수") -> str:
+    ret_3m = _flow_value(row, "3개월수익률")
+    score = _flow_score_value(row, score_col)
+    if ret_3m >= 0.05 and score <= 0:
+        return "다이버전스 가격↑·돈흐름↓"
+    if ret_3m <= -0.03 and score > 0:
+        return "다이버전스 가격↓·돈흐름+"
+    return ""
+
+
 def _flow_action_phrase(row: dict) -> str:
     state = _norm(row.get("상태") or row.get("테마판정"))
     ret_3m = _flow_value(row, "3개월수익률")
@@ -570,7 +604,11 @@ def _flow_health_fragment(row: dict, score_col: str = "돈흐름점수") -> str:
         parts.append(f"돈흐름 {_fmt_auto_num(row.get(score_col), 1)}점")
     state = _norm(row.get("상태") or row.get("테마판정"))
     if state:
-        parts.append(f"상태 {state}")
+        hint = _flow_state_hint(state)
+        parts.append(f"상태 {state}" + (f"({hint})" if hint else ""))
+    div_note = _flow_divergence_note(row, score_col)
+    if div_note:
+        parts.append(div_note)
     return ", ".join(parts)
 
 
@@ -595,8 +633,14 @@ def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     ret_3m = _fmt_auto_pct(row.get("3개월수익률"))
     accel = _fmt_auto_pct(row.get("가속도"))
     state = _norm(row.get("상태") or row.get("테마판정"))
-    state_text = f", 상태 {state}" if state else ""
-    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}"
+    if state:
+        hint = _flow_state_hint(state)
+        state_text = f", 상태 {state}" + (f"({hint})" if hint else "")
+    else:
+        state_text = ""
+    div_note = _flow_divergence_note(row, score_col)
+    div_text = f", {div_note}" if div_note else ""
+    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}{div_text}"
 
 
 def _row_ticker(row: dict) -> str:
@@ -1008,14 +1052,17 @@ def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
             else:
                 buyish.append(item)
     if buyish:
-        candidate_label = "관심/회복확인 후보" if _macro_stress_is_defensive(macro_data) else "매수/관심 후보"
-        bullets.append(candidate_label + ": " + ", ".join(buyish[:5]))
+        defensive = _macro_stress_is_defensive(macro_data)
+        candidate_label = "관심/회복확인 후보" if defensive else "매수/관심 후보"
+        trigger = " — 실행조건: 10Y/VIX 안정 + 종가·RS 회복 + 정밀관측소 R/R 확인" if defensive else ""
+        bullets.append(candidate_label + ": " + ", ".join(buyish[:5]) + trigger)
     if leveraged_watch:
         bullets.append("레버리지 관찰 후보(추격 제외): " + ", ".join(leveraged_watch[:5]))
     if caution:
         bullets.append("주의/차단 후보: " + ", ".join(caution[:5]))
     if hard:
         bullets.append("하드차단 우선 확인: " + ", ".join(hard[:5]))
+        bullets.append("하드차단 해제 기준: 비중초과=목표비중 이하, 추세방어=일봉·주봉 회복, 매크로위험=스트레스 경고 이하")
     return bullets
 
 
@@ -1692,6 +1739,20 @@ def _auto_insight_bullets(
         bullets.append(
             f"{short_key} 기준 성장주/반도체가 약해진 구간입니다. 중기 주도 섹터라도 신규 추격보다 지지 확인이 우선입니다."
         )
+    if post_fomc and rotation_ctx.get("short_key"):
+        growth_avg = rotation_ctx.get("growth_avg")
+        rotation_avg = rotation_ctx.get("rotation_avg")
+        if growth_avg is not None and rotation_avg is not None:
+            if growth_avg < rotation_avg - 0.002:
+                reaction_text = "성장주가 상대 약하면 NVDA/TSM 같은 후보도 실행보다 회복확인으로 봅니다."
+            elif growth_avg > rotation_avg + 0.002:
+                reaction_text = "성장/반도체가 상대방어라도 매크로 위험이 높으면 후보는 실행보다 회복확인으로 둡니다."
+            else:
+                reaction_text = "양쪽이 비슷하면 방향 확정보다 다음 종가 확인을 우선합니다."
+            bullets.append(
+                f"FOMC 이후 {rotation_ctx.get('short_key')} 종가 반응은 성장/반도체 {_fmt_auto_pct(growth_avg)}, "
+                f"방어/가치 {_fmt_auto_pct(rotation_avg)}입니다. {reaction_text}"
+            )
 
     top_tables = [
         flow_snapshot.get("us_top5"),
@@ -1865,6 +1926,9 @@ def build_auto_market_memo(
             used_header.add(header)
         for row in rows:
             lines.append(f"• {_flow_bullet(row, score_col=score_col)}")
+        lines.append("")
+    if used_header:
+        lines.append("※ 상태 기준: 과열=52주 상단권/급변동, 강세가속=3M 상승+가속, 둔화=중기 흐름 약화, 급락=3M 하락+가속. 가격과 돈흐름이 반대면 다이버전스로 별도 표시합니다.")
         lines.append("")
 
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
