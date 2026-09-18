@@ -21078,11 +21078,24 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         sideways_status = sideways_state.get("status", "주의")
         if sideways_status not in {"통과", "주의", "차단"}:
             sideways_status = "주의"
+        sideways_label = str(sideways_state.get("label", "-") or "-")
+        sideways_note = str(sideways_state.get("note", "") or "")
+        if (
+            sideways_status == "차단"
+            and finite_num(rr_ratio)
+            and rr_ratio < 1.0
+            and "손익비" in sideways_label
+        ):
+            sideways_status = "주의"
+            sideways_label = "🟡관찰 횡보: 손익비 별도 확인"
+            sideways_note = (
+                "횡보 자체보다 R/R 약점이 핵심입니다. 실제 현재가 실행 차단 여부는 아래 손익비 항목에서 한 번만 판단합니다."
+            )
         reason_text = sideways_state.get("reason_text", "")
         add_check(
             "횡보/눌림 품질",
             sideways_status,
-            f"{sideways_state.get('label', '-')}. {sideways_state.get('note', '')}"
+            f"{sideways_label}. {sideways_note}"
             f"{(' · ' + reason_text) if reason_text else ''}",
         )
 
