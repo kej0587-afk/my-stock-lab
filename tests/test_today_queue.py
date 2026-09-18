@@ -7,6 +7,7 @@ from stock_lab_core.today_queue import (
     format_dashboard_reason,
     format_dashboard_timing_label,
     is_today_queue_defense_signal,
+    sort_today_queue_detail_table,
     today_queue_reason_bucket,
     today_queue_wait_mask,
 )
@@ -210,6 +211,82 @@ def test_dashboard_final_read_downgrades_quality_recovery_when_bearish_pattern_v
     )
 
     assert final_read == "👀회복관찰"
+
+
+def test_today_queue_detail_sort_prefers_adj_score_over_rr():
+    df = pd.DataFrame([
+        {
+            "종목명": "Credo",
+            "티커": "CRDO",
+            "최종읽기": "🛡️방어우선",
+            "📌후보등급": "🛡️위기/패닉(방어우선)",
+            "🔥기술적 타점": "💣패닉(-40%↓): 현금 투입",
+            "안전상태": "RED",
+            "Adj점수": -1.5,
+            "R/R": "2.94",
+        },
+        {
+            "종목명": "지엔씨에너지",
+            "티커": "119850.KQ",
+            "최종읽기": "⏳눌림대기",
+            "📌후보등급": "💎S급 (최우선 후보) / 🟡정찰",
+            "🔥기술적 타점": "🟡상위과열 눌림: 1차 정찰만",
+            "안전상태": "GREEN",
+            "Adj점수": 5.5,
+            "R/R": "0.24",
+        },
+    ])
+
+    sorted_df = sort_today_queue_detail_table(df)
+
+    assert sorted_df.iloc[0]["종목명"] == "지엔씨에너지"
+
+
+def test_today_queue_detail_sort_risk_first_for_defense_tabs():
+    df = pd.DataFrame([
+        {
+            "종목명": "우량대기",
+            "티커": "GOOD",
+            "최종읽기": "⏳눌림대기",
+            "📌후보등급": "✅A급",
+            "🔥기술적 타점": "눌림대기",
+            "안전상태": "GREEN",
+            "Adj점수": 3.5,
+            "R/R": "0.60",
+        },
+        {
+            "종목명": "위험방어",
+            "티커": "RISK",
+            "최종읽기": "🛡️방어우선",
+            "📌후보등급": "🛡️추세방어(신규금지)",
+            "🔥기술적 타점": "⚠️추세훼손: 신규진입 보류",
+            "안전상태": "RED",
+            "Adj점수": -1.5,
+            "R/R": "2.50",
+        },
+    ])
+
+    sorted_df = sort_today_queue_detail_table(df, risk_first=True)
+
+    assert sorted_df.iloc[0]["종목명"] == "위험방어"
+
+
+def test_panic_deploy_label_is_distinct_from_avoidance_defense():
+    deploy = {
+        "decision_code": "PANIC_CASH_DEPLOY",
+        "decision_group": "caution",
+        "dec": "💣패닉(-40%↓): 현금 투입",
+    }
+    avoid = {
+        "decision_code": "CRISIS_PANIC_SELL_OFF",
+        "decision_group": "caution",
+        "dec": "🚨위기: 투매 위험",
+    }
+
+    assert format_dashboard_candidate_grade(deploy) == "🛡️패닉진입대기(계획확인)"
+    assert build_dashboard_final_read(deploy, pattern_timing="🛑하락패턴 유효") == "🛡️패닉진입대기"
+    assert format_dashboard_candidate_grade(avoid) == "🛡️위기방어(회피)"
+    assert build_dashboard_final_read(avoid, pattern_timing="🛑하락패턴 유효") == "🛡️위기방어(회피)"
 
 
 def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss():

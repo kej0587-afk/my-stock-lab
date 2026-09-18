@@ -376,8 +376,10 @@ def format_dashboard_candidate_grade(decision: dict) -> str:
         return "🛡️추세방어(신규금지)"
     if code == "MTF_DAMAGE_NO_ADD":
         return "🛡️상위추세방어(추매금지)"
-    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS", "CRISIS_PANIC_SELL_OFF"}:
-        return "🛡️위기/패닉(방어우선)"
+    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+        return "🛡️패닉진입대기(계획확인)"
+    if code == "CRISIS_PANIC_SELL_OFF":
+        return "🛡️위기방어(회피)"
     if code == "DRAWDOWN_20_HOLDING_STOP_CHECK":
         return "🛡️가격방어(손절점검)"
     if code == "DRAWDOWN_20_HOLDING_CAUSE_CHECK":
@@ -464,6 +466,10 @@ def build_dashboard_final_read(
     if "하락패턴 유효" in pattern_timing:
         if code.startswith("QUALITY_RECOVERY"):
             return "👀회복관찰"
+        if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+            return "🛡️패닉진입대기"
+        if code == "CRISIS_PANIC_SELL_OFF":
+            return "🛡️위기방어(회피)"
         return "🛡️방어우선"
 
     if code == "QUALITY_RECOVERY_WATCH":
@@ -484,6 +490,10 @@ def build_dashboard_final_read(
         return "⏳추매대기"
     if code == "FUND_OVERSOLD_REBALANCE_REVIEW":
         return "⏳리밸런싱대기"
+    if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
+        return "🛡️패닉진입대기"
+    if code == "CRISIS_PANIC_SELL_OFF":
+        return "🛡️위기방어(회피)"
     if code == "MACRO_STORM_HOLDING_CAUTION":
         return "🛡️시장방어(추매중단)"
     if code == "HARD_BLOCK_MACRO_STORM":
@@ -513,6 +523,70 @@ def build_dashboard_final_read(
     if group == "buyish" or is_dashboard_actionable_signal(decision):
         return "✅정밀확인"
     return "🔍관망"
+
+
+def _today_queue_sort_num(series: pd.Series) -> pd.Series:
+    """Coerce display strings such as '상단 $132.05' or '-' into sort numbers."""
+    if series is None:
+        return pd.Series(dtype=float)
+    text = series.astype(str).str.replace(",", "", regex=False)
+    text = text.str.replace(r"[^0-9.\-]", "", regex=True)
+    return pd.to_numeric(text.replace("", math.nan), errors="coerce")
+
+
+def sort_today_queue_detail_table(view_df: pd.DataFrame, *, risk_first: bool = False) -> pd.DataFrame:
+    """Sort detail rows by decision quality first and R/R only as a secondary key.
+
+    R/R can become high for deeply damaged names because the stop distance is wide.
+    The queue should therefore use Adj score and safety/action labels first, then R/R.
+    """
+    if view_df is None or view_df.empty:
+        return view_df
+
+    work = view_df.copy()
+    idx = work.index
+    final_read = work.get("최종읽기", pd.Series("", index=idx)).astype(str)
+    timing = work.get("🔥기술적 타점", pd.Series("", index=idx)).astype(str)
+    grade = work.get("📌후보등급", pd.Series("", index=idx)).astype(str)
+    code = work.get("판정코드", pd.Series("", index=idx)).astype(str)
+    safety = work.get("안전상태", pd.Series("", index=idx)).astype(str).str.upper()
+
+    action_text = final_read + " " + timing + " " + grade
+    action_rank = pd.Series(5, index=idx)
+    action_rank.loc[action_text.str.contains("정밀확인", regex=False, na=False)] = 0
+    action_rank.loc[action_text.str.contains(r"눌림대기|DCA조건부|돌파대기|회복관찰", regex=True, na=False)] = 1
+    action_rank.loc[action_text.str.contains(r"패닉진입대기|리밸런싱대기", regex=True, na=False)] = 2
+    action_rank.loc[action_text.str.contains(r"관망|데이터확인", regex=True, na=False)] = 4
+    action_rank.loc[action_text.str.contains(r"방어|추격금지|매수금지|신규금지|추매금지", regex=True, na=False)] = 6
+
+    safety_rank = safety.map({"GREEN": 0, "YELLOW": 1, "RED": 2, "DATA": 3}).fillna(1)
+    adj = _today_queue_sort_num(work.get("Adj점수", pd.Series(math.nan, index=idx)))
+    rr = _today_queue_sort_num(work.get("RR값", work.get("R/R", pd.Series(math.nan, index=idx))))
+    hard_block = (
+        code.str.contains("HARD_BLOCK", regex=False, na=False)
+        | timing.str.contains("하드차단", regex=False, na=False)
+        | grade.str.contains("매수금지|신규금지|추매금지", regex=True, na=False)
+    ).astype(int)
+
+    work["_sort_action"] = action_rank
+    work["_sort_safety"] = safety_rank
+    work["_sort_adj"] = adj
+    work["_sort_rr"] = rr
+    work["_sort_hard"] = hard_block
+
+    if risk_first:
+        sorted_df = work.sort_values(
+            ["_sort_hard", "_sort_safety", "_sort_adj", "_sort_rr"],
+            ascending=[False, False, True, False],
+            na_position="last",
+        )
+    else:
+        sorted_df = work.sort_values(
+            ["_sort_adj", "_sort_action", "_sort_safety", "_sort_rr"],
+            ascending=[False, True, True, False],
+            na_position="last",
+        )
+    return sorted_df.drop(columns=["_sort_action", "_sort_safety", "_sort_adj", "_sort_rr", "_sort_hard"], errors="ignore")
 
 
 def _amount_text(amount_krw: Any, ticker: str, usdkrw_value: Any = 1400.0) -> str:
