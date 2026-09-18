@@ -345,6 +345,23 @@ def test_panic_deploy_text_overrides_generic_defense_label():
     ) == "🛡️패닉진입대기"
 
 
+def test_core_pullback_accumulation_is_not_generic_defense():
+    decision = {
+        "decision_code": "PRICE_DRAWDOWN_HOLDING_CHECK",
+        "decision_group": "caution",
+        "dec": "🧱코어 눌림: 눌림 100% 적립",
+        "grade": "⚖️ETF 보통",
+    }
+
+    final_read = build_dashboard_final_read(
+        decision,
+        dashboard_timing="🧱코어 눌림: 눌림 100% 적립",
+        dashboard_grade="⚖️ETF 보통",
+    )
+
+    assert final_read == "🧱코어적립확인"
+
+
 def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss():
     trend_read = build_dashboard_final_read(
         {"decision_code": "TREND_RISK_CAUSE_CHECK", "decision_group": "caution"},

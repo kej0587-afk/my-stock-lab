@@ -1057,6 +1057,8 @@ except Exception as _today_queue_classify_import_error:
         text = " ".join([str(dashboard_timing or ""), str(dashboard_grade or ""), str(pattern_timing or ""), code])
         if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
             return "⚪데이터확인"
+        if re.search(r"코어\s*눌림.*(?:적립|매수)|눌림\s*100%\s*적립|코어.*적립", text, flags=re.IGNORECASE):
+            return "🧱코어적립확인"
         if re.search(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", text, flags=re.IGNORECASE):
             return "🛡️패닉진입대기"
         if re.search(r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선", text, flags=re.IGNORECASE):
@@ -31896,6 +31898,16 @@ def render_today_queue_tab(mode):
         final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
         grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
 
+    core_accumulation_mask = (
+        summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str).str.contains("방어우선", regex=False, na=False)
+        & (
+            label_series + " " + grade_series + " " + action_series + " " + code_series
+        ).str.contains(r"코어\s*눌림.*(?:적립|매수)|눌림\s*100%\s*적립|코어.*적립", regex=True, case=False, na=False)
+    )
+    if core_accumulation_mask.any():
+        summary_df.loc[core_accumulation_mask, "최종읽기"] = "🧱코어적립확인"
+        final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+
     market_action_label = pd.Series("시장방어 점검", index=summary_df.index)
     market_action_label.loc[action_series.str.contains(r"R/R 회복 대기", regex=True, na=False)] = "시장방어/RR대기"
     market_action_label.loc[leveraged_display_mask] = "레버리지 신규대기"
@@ -32048,6 +32060,14 @@ def render_today_queue_tab(mode):
             width='stretch',
             hide_index=True,
         )
+        st.download_button(
+            "현재 표 CSV 다운로드 (앱 정렬 고정)",
+            data=dataframe_to_csv_bytes(view_df[display_cols]),
+            file_name=f"today_queue_detail_{datetime.now(timezone(timedelta(hours=9))).strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv",
+            key=f"download_today_queue_detail_{abs(hash(empty_msg))}_{sort_low_first}_{len(view_df)}",
+            width='stretch',
+        )
 
     flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
 
@@ -32108,6 +32128,7 @@ def render_today_queue_tab(mode):
     st.caption(
         "후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. "
         "일반 표 정렬은 Adj점수 → R/R → 최종읽기 순서이고, 방어 탭은 위험 큰 순으로 따로 봅니다. "
+        "고정된 우선순위 CSV는 표 아래 다운로드 버튼을 사용하세요. "
         "애널목표Upside는 애널리스트 목표가, 차트목표는 R/R 계산용 가격이라 서로 다를 수 있습니다."
     )
 

@@ -72,6 +72,11 @@ TODAY_QUEUE_PANIC_AVOID_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+TODAY_QUEUE_CORE_ACCUMULATION_RE = re.compile(
+    r"코어\s*눌림.*(?:적립|매수)|눌림\s*100%\s*적립|코어.*적립",
+    flags=re.IGNORECASE,
+)
+
 TODAY_QUEUE_EXECUTION_BLOCK_CODES = {
     "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
     "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
@@ -478,6 +483,8 @@ def build_dashboard_final_read(
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
         return "⚪데이터확인"
 
+    if TODAY_QUEUE_CORE_ACCUMULATION_RE.search(text):
+        return "🧱코어적립확인"
     if TODAY_QUEUE_PLANNED_ENTRY_RE.search(text):
         return "🛡️패닉진입대기"
     if TODAY_QUEUE_PANIC_AVOID_RE.search(text):
