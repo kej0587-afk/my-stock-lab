@@ -242,6 +242,35 @@ def test_today_queue_detail_sort_prefers_adj_score_over_rr():
     assert sorted_df.iloc[0]["종목명"] == "지엔씨에너지"
 
 
+def test_today_queue_detail_sort_uses_rr_as_adj_tiebreaker():
+    df = pd.DataFrame([
+        {
+            "종목명": "낮은RR",
+            "티커": "LOW",
+            "최종읽기": "✅정밀확인",
+            "📌후보등급": "✅A급",
+            "🔥기술적 타점": "눌림/종가 확인",
+            "안전상태": "GREEN",
+            "Adj점수": 3.5,
+            "R/R": "0.55",
+        },
+        {
+            "종목명": "높은RR",
+            "티커": "HIGH",
+            "최종읽기": "🛡️방어우선",
+            "📌후보등급": "🛡️가격방어(신규금지)",
+            "🔥기술적 타점": "⚠️가격위험: 신규진입 보류",
+            "안전상태": "GREEN",
+            "Adj점수": 3.5,
+            "R/R": "1.43",
+        },
+    ])
+
+    sorted_df = sort_today_queue_detail_table(df)
+
+    assert list(sorted_df["종목명"]) == ["높은RR", "낮은RR"]
+
+
 def test_today_queue_detail_sort_risk_first_for_defense_tabs():
     df = pd.DataFrame([
         {
@@ -287,6 +316,33 @@ def test_panic_deploy_label_is_distinct_from_avoidance_defense():
     assert build_dashboard_final_read(deploy, pattern_timing="🛑하락패턴 유효") == "🛡️패닉진입대기"
     assert format_dashboard_candidate_grade(avoid) == "🛡️위기방어(회피)"
     assert build_dashboard_final_read(avoid, pattern_timing="🛑하락패턴 유효") == "🛡️위기방어(회피)"
+
+
+def test_panic_deploy_text_overrides_generic_defense_label():
+    deploy_text = {
+        "decision_code": "PRICE_DRAWDOWN_HOLDING_CHECK",
+        "decision_group": "caution",
+        "dec": "💣패닉(-50%↓): 최종투입",
+        "grade": "🛡️위기/패닉(방어우선)",
+    }
+    core_focus_text = {
+        "decision_code": "PRICE_DRAWDOWN_HOLDING_CHECK",
+        "decision_group": "caution",
+        "dec": "🚨위기(-30%↓): 코어 집중",
+        "grade": "🛡️위기/패닉(방어우선)",
+    }
+
+    assert format_dashboard_candidate_grade(deploy_text) == "🛡️패닉진입대기(계획확인)"
+    assert build_dashboard_final_read(
+        deploy_text,
+        dashboard_timing="💣패닉(-50%↓): 최종투입",
+        dashboard_grade="🛡️위기/패닉(방어우선)",
+    ) == "🛡️패닉진입대기"
+    assert build_dashboard_final_read(
+        core_focus_text,
+        dashboard_timing="🚨위기(-30%↓): 코어 집중",
+        dashboard_grade="🛡️위기/패닉(방어우선)",
+    ) == "🛡️패닉진입대기"
 
 
 def test_dashboard_final_read_distinguishes_trend_risk_from_cost_loss():

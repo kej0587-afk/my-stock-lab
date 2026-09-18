@@ -1020,6 +1020,8 @@ except Exception as _today_queue_classify_import_error:
     def format_dashboard_candidate_grade(c):
         label = str((c or {}).get("dec", "") or "")
         code = str((c or {}).get("decision_code", "") or "")
+        grade = str((c or {}).get("grade", "") or "")
+        grade_text = " ".join([label, grade, code])
         if code == "MACRO_STORM_HOLDING_CAUTION":
             return "🛡️시장방어(추매중단)"
         if code == "HARD_BLOCK_MACRO_STORM":
@@ -1030,11 +1032,14 @@ except Exception as _today_queue_classify_import_error:
             return "🛡️패닉진입대기(계획확인)"
         if code == "CRISIS_PANIC_SELL_OFF":
             return "🛡️위기방어(회피)"
+        if re.search(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", grade_text, flags=re.IGNORECASE):
+            return "🛡️패닉진입대기(계획확인)"
+        if re.search(r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선", grade_text, flags=re.IGNORECASE):
+            return "🛡️위기방어(회피)"
         if is_today_queue_defense_signal(c):
             return "🛡️방어우선"
         if code.startswith("HARD_BLOCK") or code == "MACRO_STORM_HOLDING_CAUTION" or any(word in label for word in ("하드차단", "매수금지", "추매금지", "추매중단", "시장위험", "보유점검")):
             return "🛑매수금지"
-        grade = str((c or {}).get("grade", "") or "")
         return f"{grade} / ⚠️R/R<1" if grade and is_dashboard_low_rr_caution(c) else grade
 
     def format_dashboard_reason(c):
@@ -1052,6 +1057,10 @@ except Exception as _today_queue_classify_import_error:
         text = " ".join([str(dashboard_timing or ""), str(dashboard_grade or ""), str(pattern_timing or ""), code])
         if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
             return "⚪데이터확인"
+        if re.search(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", text, flags=re.IGNORECASE):
+            return "🛡️패닉진입대기"
+        if re.search(r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선", text, flags=re.IGNORECASE):
+            return "🛡️위기방어(회피)"
         if "하락패턴 유효" in pattern_timing:
             if code.startswith("QUALITY_RECOVERY"):
                 return "👀회복관찰"
@@ -1118,8 +1127,8 @@ except Exception as _today_queue_classify_import_error:
             )
         else:
             sorted_df = work.sort_values(
-                ["_sort_adj", "_sort_action", "_sort_safety", "_sort_rr"],
-                ascending=[False, True, True, False],
+                ["_sort_adj", "_sort_rr", "_sort_action", "_sort_safety"],
+                ascending=[False, False, True, True],
                 na_position="last",
             )
         return sorted_df.drop(columns=["_sort_action", "_sort_safety", "_sort_adj", "_sort_rr", "_sort_hard"], errors="ignore")
@@ -31870,6 +31879,23 @@ def render_today_queue_tab(mode):
     if defense_final_override_mask.any():
         summary_df.loc[defense_final_override_mask, "최종읽기"] = defense_final_label.loc[defense_final_override_mask]
 
+    planned_entry_mask = (
+        summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str).str.contains("방어우선", regex=False, na=False)
+        & (
+            label_series + " " + grade_series + " " + action_series + " " + code_series
+        ).str.contains(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", regex=True, case=False, na=False)
+    )
+    if planned_entry_mask.any():
+        summary_df.loc[planned_entry_mask, "최종읽기"] = "🛡️패닉진입대기"
+        if "📌후보등급" in summary_df.columns:
+            summary_df.loc[
+                planned_entry_mask
+                & grade_series.str.contains(r"위기/패닉|방어우선", regex=True, na=False),
+                "📌후보등급",
+            ] = "🛡️패닉진입대기(계획확인)"
+        final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+        grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+
     market_action_label = pd.Series("시장방어 점검", index=summary_df.index)
     market_action_label.loc[action_series.str.contains(r"R/R 회복 대기", regex=True, na=False)] = "시장방어/RR대기"
     market_action_label.loc[leveraged_display_mask] = "레버리지 신규대기"
@@ -32001,12 +32027,18 @@ def render_today_queue_tab(mode):
                 state_value = str(view_df[state_col].astype(str).iloc[0])
                 st.caption(f"{state_col}: {state_value} (현재 표 전 종목 동일)")
                 display_cols.remove(state_col)
+        if "애널목표Upside" in display_cols:
+            missing_analyst_targets = view_df["애널목표Upside"].astype(str).str.strip().isin(["", "-", "—", "nan", "None"]).sum()
+            if missing_analyst_targets:
+                st.caption(
+                    f"애널목표Upside 없음 {int(missing_analyst_targets)}개: 국내 중소형/우선주/ETF는 목표가 소스가 비어 있을 수 있어 차트목표와 R/R을 우선 참고합니다."
+                )
         st.dataframe(
             view_df[display_cols],
             column_config={
                 "애널목표Upside": st.column_config.TextColumn("애널목표Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력입니다. R/R용 차트목표와 다른 값입니다. 데이터 없으면 — 표시"),
                 "실행메모": st.column_config.TextColumn("실행메모", help="오늘점검 신호를 주문 전 행동으로 압축한 값입니다."),
-                "R/R": st.column_config.TextColumn("R/R", help="정밀관측소와 같은 2ATR 손절 기준의 현재가 손익비입니다. 정렬의 주 기준이 아니라 보조 기준입니다."),
+                "R/R": st.column_config.TextColumn("R/R", help="정밀관측소와 같은 2ATR 손절 기준의 현재가 손익비입니다. 일반 표에서는 Adj점수 다음 정렬 기준입니다."),
                 "차트목표": st.column_config.TextColumn("차트목표", help="R/R 계산에 쓰는 차트 구조 목표가 또는 강세 시나리오 상단입니다. 애널리스트 목표가와 다를 수 있습니다."),
                 "손절가": st.column_config.TextColumn("손절가", help="R/R 계산에 쓰는 2ATR 기준 손절선입니다."),
                 "1차기준": st.column_config.TextColumn("1차기준", help="현재가 실행이 아니면 MA5/MA20/FVG/ATR 중 가장 가까운 1차 확인 가격입니다."),
@@ -32075,7 +32107,7 @@ def render_today_queue_tab(mode):
 
     st.caption(
         "후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. "
-        "정렬은 최종읽기와 Adj점수를 먼저 보고 R/R은 보조로만 씁니다. "
+        "일반 표 정렬은 Adj점수 → R/R → 최종읽기 순서이고, 방어 탭은 위험 큰 순으로 따로 봅니다. "
         "애널목표Upside는 애널리스트 목표가, 차트목표는 R/R 계산용 가격이라 서로 다를 수 있습니다."
     )
 

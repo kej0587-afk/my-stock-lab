@@ -62,6 +62,16 @@ TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+TODAY_QUEUE_PLANNED_ENTRY_RE = re.compile(
+    r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어",
+    flags=re.IGNORECASE,
+)
+
+TODAY_QUEUE_PANIC_AVOID_RE = re.compile(
+    r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선",
+    flags=re.IGNORECASE,
+)
+
 TODAY_QUEUE_EXECUTION_BLOCK_CODES = {
     "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
     "SHORT_OVERHEAT_NO_ENTRY", "NEAR_UPPER_WAIT", "COST_MINUS_15_TREND_RISK",
@@ -362,6 +372,11 @@ def format_dashboard_candidate_grade(decision: dict) -> str:
         return "🛡️레버리지DCA보류"
     if code == "LEVERAGED_RECOVERY_DCA_CONDITIONAL":
         return "⚡레버리지DCA조건부"
+    grade_text = " ".join([label, grade, code])
+    if TODAY_QUEUE_PLANNED_ENTRY_RE.search(grade_text):
+        return "🛡️패닉진입대기(계획확인)"
+    if TODAY_QUEUE_PANIC_AVOID_RE.search(grade_text):
+        return "🛡️위기방어(회피)"
     if code == "PRICE_DRAWDOWN_HOLDING_CHECK":
         return "🛡️가격방어(추매주의)"
     if code == "PRICE_DRAWDOWN_NO_ENTRY":
@@ -463,6 +478,11 @@ def build_dashboard_final_read(
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
         return "⚪데이터확인"
 
+    if TODAY_QUEUE_PLANNED_ENTRY_RE.search(text):
+        return "🛡️패닉진입대기"
+    if TODAY_QUEUE_PANIC_AVOID_RE.search(text):
+        return "🛡️위기방어(회피)"
+
     if "하락패턴 유효" in pattern_timing:
         if code.startswith("QUALITY_RECOVERY"):
             return "👀회복관찰"
@@ -535,10 +555,10 @@ def _today_queue_sort_num(series: pd.Series) -> pd.Series:
 
 
 def sort_today_queue_detail_table(view_df: pd.DataFrame, *, risk_first: bool = False) -> pd.DataFrame:
-    """Sort detail rows by decision quality first and R/R only as a secondary key.
+    """Sort detail rows by decision quality first and R/R as the explicit tiebreaker.
 
     R/R can become high for deeply damaged names because the stop distance is wide.
-    The queue should therefore use Adj score and safety/action labels first, then R/R.
+    The queue should therefore use Adj score first, then R/R, then action/safety labels.
     """
     if view_df is None or view_df.empty:
         return view_df
@@ -582,8 +602,8 @@ def sort_today_queue_detail_table(view_df: pd.DataFrame, *, risk_first: bool = F
         )
     else:
         sorted_df = work.sort_values(
-            ["_sort_adj", "_sort_action", "_sort_safety", "_sort_rr"],
-            ascending=[False, True, True, False],
+            ["_sort_adj", "_sort_rr", "_sort_action", "_sort_safety"],
+            ascending=[False, False, True, True],
             na_position="last",
         )
     return sorted_df.drop(columns=["_sort_action", "_sort_safety", "_sort_adj", "_sort_rr", "_sort_hard"], errors="ignore")
