@@ -8378,6 +8378,225 @@ def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_feat
     )
 
 
+def _chart_latest_close(df: pd.DataFrame) -> float:
+    if df is None or df.empty or "Close" not in df.columns:
+        return np.nan
+    return clean_float(df["Close"].iloc[-1], np.nan)
+
+
+def _chart_volume_ratio(df: pd.DataFrame, lookback: int = 20) -> float:
+    if df is None or df.empty or "Volume" not in df.columns:
+        return np.nan
+    vol = pd.to_numeric(df["Volume"], errors="coerce").dropna()
+    if vol.empty:
+        return np.nan
+    current = clean_float(vol.iloc[-1], np.nan)
+    avg = clean_float(vol.tail(max(3, lookback)).mean(), np.nan)
+    if not finite_num(current) or not finite_num(avg) or avg <= 0:
+        return np.nan
+    return current / avg
+
+
+def _chart_zone_distance_state(close: float, low: float, high: float) -> tuple[str, str]:
+    if not finite_num(close) or close <= 0 or not finite_num(low) or not finite_num(high):
+        return "확인필요", "가격대 산출이 불완전합니다."
+    zone_low, zone_high = sorted([float(low), float(high)])
+    if zone_low <= close <= zone_high:
+        return "확인필요", "지지 후보 가격대 안입니다. 여기서 하락이 멈추고 양봉·거래량이 붙는지 봅니다."
+    if close > zone_high:
+        gap = (close / zone_high - 1.0) * 100
+        if gap <= 3.0:
+            return "확인필요", f"지지 후보 위 {gap:.1f}%입니다. 가까운 눌림이라 반응 확인 구간입니다."
+        return "대기", f"지지 후보가 현재가보다 {gap:.1f}% 아래라, 지금은 눌림 확인보다 돌파 확인이 먼저입니다."
+    gap = (zone_low / close - 1.0) * 100
+    return "주의", f"지지 후보를 {gap:.1f}%가량 밑돌고 있어 지지 실패 여부를 확인해야 합니다."
+
+
+def _chart_pick_support_zone(
+    trendline_guides: list,
+    smc_features: dict | None,
+    liquidity_profile: dict | None,
+    ticker: str,
+) -> dict:
+    smc_features = smc_features or {}
+    fvg = smc_features.get("visible_fvg") or {}
+    if fvg.get("type") == "Bullish FVG" and finite_num(fvg.get("bottom")) and finite_num(fvg.get("top")):
+        return {
+            "label": "FVG 지지",
+            "low": clean_float(fvg.get("bottom"), np.nan),
+            "high": clean_float(fvg.get("top"), np.nan),
+            "text": _smc_zone_price_text(fvg.get("bottom"), fvg.get("top"), ticker),
+        }
+    for zone in smc_features.get("visible_order_blocks") or []:
+        if zone.get("direction") == "support" and finite_num(zone.get("low")) and finite_num(zone.get("high")):
+            return {
+                "label": "OB 지지",
+                "low": clean_float(zone.get("low"), np.nan),
+                "high": clean_float(zone.get("high"), np.nan),
+                "text": _smc_zone_price_text(zone.get("low"), zone.get("high"), ticker),
+            }
+    if liquidity_profile and liquidity_profile.get("ok") and liquidity_profile.get("support"):
+        zone = liquidity_profile.get("support")
+        if finite_num(zone.get("low")) and finite_num(zone.get("high")):
+            return {
+                "label": "유동성 지지",
+                "low": clean_float(zone.get("low"), np.nan),
+                "high": clean_float(zone.get("high"), np.nan),
+                "text": _liquidity_zone_price_text(zone, ticker),
+            }
+    support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
+    if support_guide and finite_num(support_guide.get("y1")):
+        y = clean_float(support_guide.get("y1"), np.nan)
+        return {
+            "label": "상승 저점선",
+            "low": y,
+            "high": y,
+            "text": format_currency(y, ticker),
+        }
+    return {}
+
+
+def build_chart_execution_check_rows(
+    df: pd.DataFrame,
+    patterns: list,
+    trendline_guides: list,
+    smc_features: dict | None,
+    liquidity_profile: dict | None,
+    ticker: str,
+    decision_context: dict | None = None,
+) -> list[dict]:
+    """차트 보조 신호를 실행 전 체크리스트로 압축합니다."""
+    close = _chart_latest_close(df)
+    pattern = patterns[0] if patterns else {}
+    direction = str(pattern.get("direction") or "")
+    trigger = clean_float(pattern.get("trigger_price"), np.nan)
+    invalid = clean_float(pattern.get("invalid_price"), np.nan)
+    support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
+    resistance_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "resistance"), None)
+    rows = []
+
+    def add_row(condition: str, state: str, standard: str, meaning: str, action: str):
+        rows.append({
+            "조건": condition,
+            "상태": state,
+            "기준": standard,
+            "해석": meaning,
+            "다음 행동": action,
+        })
+
+    if direction == "bullish" and finite_num(trigger) and trigger > 0:
+        passed = finite_num(close) and close >= trigger * 0.997
+        add_row(
+            "기준선 돌파",
+            "통과" if passed else "대기",
+            f"{format_currency(trigger, ticker)} 위 종가",
+            "쌍바닥/회복 패턴이 실행 단계로 넘어가는 가격입니다.",
+            "1차 정찰 가능" if passed else "이 가격 위에서 마감하는지 먼저 확인",
+        )
+    elif direction == "bearish" and finite_num(trigger) and trigger > 0:
+        add_row(
+            "하락 패턴",
+            "주의",
+            f"{format_currency(trigger, ticker)} 이탈 여부",
+            "상승 진입보다 방어 기준을 먼저 볼 패턴입니다.",
+            "신규 매수보다 이탈 여부 확인",
+        )
+
+    if resistance_guide and finite_num(resistance_guide.get("y1")):
+        resistance = clean_float(resistance_guide.get("y1"), np.nan)
+        passed = finite_num(close) and close >= resistance * 1.003
+        add_row(
+            "고점선/저항 돌파",
+            "통과" if passed else "대기",
+            f"{format_currency(resistance, ticker)} 위 유지",
+            "내려오는 고점선을 넘으면 매도 압력이 약해졌다는 뜻입니다.",
+            "돌파 후 눌림 확인" if passed else "저항선 아래 추격매수 보류",
+        )
+
+    support_zone = _chart_pick_support_zone(trendline_guides, smc_features, liquidity_profile, ticker)
+    if support_zone:
+        state, meaning = _chart_zone_distance_state(close, support_zone.get("low"), support_zone.get("high"))
+        add_row(
+            "눌림 지지 확인",
+            state,
+            f"{support_zone.get('label')} {support_zone.get('text')}",
+            meaning,
+            "양봉 전환·거래량 회복 확인" if state == "확인필요" else ("현재가 추격보다 눌림 대기" if state == "대기" else "지지 실패 시 후보 낮추기"),
+        )
+
+    vol_ratio = _chart_volume_ratio(df)
+    if finite_num(vol_ratio):
+        if vol_ratio >= 1.2:
+            vol_state = "통과"
+            vol_action = "돌파 신뢰도 보강"
+        elif vol_ratio >= 0.8:
+            vol_state = "보통"
+            vol_action = "가격 조건과 함께 확인"
+        else:
+            vol_state = "부족"
+            vol_action = "거래량 없이 오른 회복은 신뢰도 낮춤"
+        add_row(
+            "거래량 확인",
+            vol_state,
+            f"20봉 평균 대비 {vol_ratio:.1f}배",
+            "돌파·지지 신호는 거래량이 붙을수록 신뢰도가 올라갑니다.",
+            vol_action,
+        )
+
+    rr = clean_float((decision_context or {}).get("rr_ratio"), np.nan)
+    rr_target = clean_float((decision_context or {}).get("rr_target"), np.nan)
+    rr_stop = clean_float((decision_context or {}).get("rr_stop"), np.nan)
+    if finite_num(rr):
+        if rr < 1.0:
+            rr_state = "차단"
+            rr_action = "현재가 풀진입 보류"
+        elif rr < 1.5:
+            rr_state = "주의"
+            rr_action = "소액 정찰만 검토"
+        else:
+            rr_state = "통과"
+            rr_action = "다른 조건 통과 시 분할 검토"
+        rr_basis = f"R/R {rr:.2f}"
+        if finite_num(rr_target) and finite_num(rr_stop):
+            rr_basis += f" · 목표 {format_currency(rr_target, ticker)} / 손절 {format_currency(rr_stop, ticker)}"
+        add_row(
+            "손익비 확인",
+            rr_state,
+            rr_basis,
+            "현재가에서 기대수익이 손절폭보다 충분한지 보는 최종 안전장치입니다.",
+            rr_action,
+        )
+    else:
+        add_row(
+            "손익비 확인",
+            "확인필요",
+            "R/R 산출 없음",
+            "목표가와 손절가가 잡히지 않으면 매수 강도를 낮춰야 합니다.",
+            "정밀관측소 R/R 재계산",
+        )
+
+    invalid_bits = []
+    if finite_num(invalid) and invalid > 0:
+        invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)}")
+    if support_guide and finite_num(support_guide.get("y1")):
+        invalid_bits.append(f"저점선 {format_currency(support_guide.get('y1'), ticker)}")
+    if invalid_bits:
+        invalid_ok = True
+        if finite_num(invalid) and invalid > 0 and finite_num(close) and close < invalid:
+            invalid_ok = False
+        if support_guide and finite_num(support_guide.get("y1")) and finite_num(close) and close < clean_float(support_guide.get("y1"), np.nan):
+            invalid_ok = False
+        add_row(
+            "무효선 방어",
+            "통과" if invalid_ok else "차단",
+            " / ".join(invalid_bits[:2]),
+            "이 선을 깨면 회복 시나리오가 약해진 것으로 봅니다.",
+            "보유만 속도조절" if invalid_ok else "후보 폐기 또는 비중축소 검토",
+        )
+
+    return rows
+
+
 def format_lwc_time(idx):
     try:
         return idx.strftime("%Y-%m-%d")
@@ -8463,6 +8682,7 @@ def render_precision_candlestick_chart(
     show_liquidity: bool = True,
     show_smc: bool = True,
     ticker: str = "",
+    decision_context: dict | None = None,
 ):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
@@ -8506,11 +8726,28 @@ def render_precision_candlestick_chart(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig, width='stretch')
-    if pattern_candidates or trendline_guides or (show_smc and smc_features):
+    if pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok")):
         st.markdown(
             build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker),
             unsafe_allow_html=True,
         )
+        check_rows = build_chart_execution_check_rows(
+            df,
+            pattern_candidates,
+            trendline_guides,
+            smc_features,
+            liquidity_profile,
+            ticker,
+            decision_context,
+        )
+        if check_rows:
+            st.markdown("##### 실행조건 체크표")
+            st.dataframe(
+                pd.DataFrame(check_rows),
+                width='stretch',
+                hide_index=True,
+                height=min(360, 52 + len(check_rows) * 36),
+            )
     if show_liquidity and liquidity_profile and liquidity_profile.get("ok"):
         note = build_liquidity_thermal_note(liquidity_profile, ticker)
         if note:
@@ -34727,11 +34964,11 @@ if main_page == "precision":
             )
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c)
             with week_tab:
-                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c)
             with month_tab:
-                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c)
             render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
