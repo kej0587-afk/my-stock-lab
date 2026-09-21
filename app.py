@@ -8364,10 +8364,10 @@ def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_feat
 
     invalid_bits = []
     if finite_num(invalid) and invalid > 0:
-        invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)}")
+        invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)} 이탈 시 후보 폐기")
     if support_guide and finite_num(support_guide.get("y1")):
-        invalid_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)}")
-    invalid_text = " 또는 ".join(invalid_bits[:2]) + " 이탈 시 후보 폐기" if invalid_bits else "지지선 이탈 시 후보 폐기"
+        invalid_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)} 아래는 추가매수 중단·다음 봉 회복 확인")
+    invalid_text = " / ".join(invalid_bits[:2]) if invalid_bits else "지지선 이탈 시 추가매수 중단·다음 봉 회복 확인"
 
     rows = [
         ("현재 의미", structure_text),
@@ -8444,7 +8444,9 @@ def _chart_pick_support_zone(
             elif current > zone_high and zone_high > 0:
                 distance = current / zone_high - 1.0
             else:
-                distance = zone_low / current - 1.0
+                # 이미 위로 깨진 지지선은 눌림 매수 지지 후보가 아니라
+                # 별도 방어 체크에서 다뤄야 하므로 후보 선택 우선순위를 낮춘다.
+                distance = 10.0 + (zone_low / current - 1.0)
         else:
             distance = priority
         candidates.append({
@@ -8524,13 +8526,20 @@ def build_chart_execution_check_rows(
 
     if resistance_guide and finite_num(resistance_guide.get("y1")):
         resistance = clean_float(resistance_guide.get("y1"), np.nan)
+        resistance_dir = str(resistance_guide.get("direction") or "")
         passed = finite_num(close) and close >= resistance * 1.003
+        if resistance_dir == "하락":
+            resistance_meaning = "내려오는 고점선을 넘으면 매도 압력이 약해졌다는 뜻입니다."
+        elif resistance_dir == "상승":
+            resistance_meaning = "위쪽 상승 추세선은 다음 목표·저항입니다. 여기까지는 눌림과 손익비를 먼저 봅니다."
+        else:
+            resistance_meaning = "상단 저항을 넘으면 가격 회복 신뢰도가 올라갑니다."
         add_row(
             "고점선/저항 돌파",
             "통과" if passed else "대기",
             f"{format_currency(resistance, ticker)} 위 유지",
-            "내려오는 고점선을 넘으면 매도 압력이 약해졌다는 뜻입니다.",
-            "돌파 후 눌림 확인" if passed else "저항선 아래 추격매수 보류",
+            resistance_meaning,
+            "돌파 후 눌림 확인" if passed else "상단 저항 전 추격매수 보류",
         )
 
     support_zone = _chart_pick_support_zone(trendline_guides, smc_features, liquidity_profile, ticker, close)
@@ -8601,17 +8610,26 @@ def build_chart_execution_check_rows(
     if support_guide and finite_num(support_guide.get("y1")):
         invalid_bits.append(f"저점선 {format_currency(support_guide.get('y1'), ticker)}")
     if invalid_bits:
-        invalid_ok = True
-        if finite_num(invalid) and invalid > 0 and finite_num(close) and close < invalid:
-            invalid_ok = False
-        if support_guide and finite_num(support_guide.get("y1")) and finite_num(close) and close < clean_float(support_guide.get("y1"), np.nan):
-            invalid_ok = False
+        pattern_broken = finite_num(invalid) and invalid > 0 and finite_num(close) and close < invalid
+        support_broken = support_guide and finite_num(support_guide.get("y1")) and finite_num(close) and close < clean_float(support_guide.get("y1"), np.nan)
+        if pattern_broken:
+            invalid_state = "차단"
+            invalid_meaning = "패턴 무효선까지 깨져 회복 시나리오가 훼손된 상태입니다."
+            invalid_action = "후보 폐기 또는 비중축소 검토"
+        elif support_broken:
+            invalid_state = "주의"
+            invalid_meaning = "단기 저점선은 이탈했지만 패턴 무효선은 아직 남아 있습니다. 추가매수보다 회복 확인이 먼저입니다."
+            invalid_action = "추가매수 중단·다음 봉 회복 확인"
+        else:
+            invalid_state = "통과"
+            invalid_meaning = "주요 방어선 위에 있어 회복 시나리오는 유지됩니다."
+            invalid_action = "보유만 속도조절"
         add_row(
             "무효선 방어",
-            "통과" if invalid_ok else "차단",
+            invalid_state,
             " / ".join(invalid_bits[:2]),
-            "이 선을 깨면 회복 시나리오가 약해진 것으로 봅니다.",
-            "보유만 속도조절" if invalid_ok else "후보 폐기 또는 비중축소 검토",
+            invalid_meaning,
+            invalid_action,
         )
 
     return rows
