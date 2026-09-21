@@ -8018,18 +8018,47 @@ def describe_fvg_plain(fvg_type: str, active: bool, bottom, top, ticker: str) ->
     return fvg_type, f"{zone} 구간을 보조 가격대로만 참고합니다."
 
 
+def _smc_gap_to_current(low, high, current) -> float:
+    low = clean_float(low, np.nan)
+    high = clean_float(high, np.nan)
+    current = clean_float(current, np.nan)
+    if not finite_num(low) or not finite_num(high) or not finite_num(current) or current <= 0 or high <= low:
+        return np.nan
+    if low <= current <= high:
+        return 0.0
+    if current < low:
+        return (low - current) / current
+    return (current - high) / current
+
+
+def _smc_zone_is_near_current(low, high, current, max_gap: float = 0.35) -> bool:
+    gap = _smc_gap_to_current(low, high, current)
+    return finite_num(gap) and gap <= max_gap
+
+
 def _add_smc_structure_overlays(fig, df: pd.DataFrame, ticker: str) -> dict:
     features = build_smc_overlay_features(df)
+    current = np.nan
+    if df is not None and not df.empty and "Close" in df.columns:
+        current = clean_float(df["Close"].iloc[-1], np.nan)
     fvg = features.get("fvg") or {}
     fvg_type = str(fvg.get("type") or "없음")
     fvg_bottom = clean_float(fvg.get("bottom"), np.nan)
     fvg_top = clean_float(fvg.get("top"), np.nan)
     fvg_active = bool(fvg.get("active"))
-    if fvg_type != "없음" and finite_num(fvg_bottom) and finite_num(fvg_top) and fvg_top > fvg_bottom:
+    visible_fvg = {}
+    if (
+        fvg_type != "없음"
+        and fvg_active
+        and finite_num(fvg_bottom)
+        and finite_num(fvg_top)
+        and fvg_top > fvg_bottom
+        and _smc_zone_is_near_current(fvg_bottom, fvg_top, current, max_gap=0.28)
+    ):
         is_bull = fvg_type == "Bullish FVG"
-        fill = "rgba(34,197,94,0.12)" if is_bull else "rgba(239,68,68,0.12)"
+        fill = "rgba(34,197,94,0.08)" if is_bull else "rgba(239,68,68,0.08)"
         line = "#22c55e" if is_bull else "#ef4444"
-        label, _ = describe_fvg_plain(fvg_type, fvg_active, fvg_bottom, fvg_top, ticker)
+        label = "FVG 지지" if is_bull else "FVG 저항"
         fig.add_hrect(
             y0=fvg_bottom,
             y1=fvg_top,
@@ -8041,16 +8070,36 @@ def _add_smc_structure_overlays(fig, df: pd.DataFrame, ticker: str) -> dict:
             annotation_text=label,
             annotation_position="top left",
         )
+        visible_fvg = fvg
 
-    for zone in features.get("order_blocks", [])[-2:]:
+    best_zones = {}
+    for zone in features.get("order_blocks", []):
         low = clean_float(zone.get("low"), np.nan)
         high = clean_float(zone.get("high"), np.nan)
-        if not finite_num(low) or not finite_num(high) or high <= low:
+        if (
+            not bool(zone.get("active", True))
+            or not finite_num(low)
+            or not finite_num(high)
+            or high <= low
+            or not _smc_zone_is_near_current(low, high, current, max_gap=0.35)
+        ):
             continue
+        direction = str(zone.get("direction") or "")
+        gap = _smc_gap_to_current(low, high, current)
+        if direction not in best_zones or gap < best_zones[direction][0]:
+            best_zones[direction] = (gap, zone)
+
+    visible_order_blocks = [
+        item[1] for item in sorted(best_zones.values(), key=lambda pair: pair[0])
+    ][:2]
+
+    for zone in visible_order_blocks:
+        low = clean_float(zone.get("low"), np.nan)
+        high = clean_float(zone.get("high"), np.nan)
         is_support = zone.get("direction") == "support"
-        fill = "rgba(59,130,246,0.10)" if is_support else "rgba(245,158,11,0.10)"
+        fill = "rgba(59,130,246,0.08)" if is_support else "rgba(245,158,11,0.08)"
         line = "#60a5fa" if is_support else "#f59e0b"
-        label = "간이 OB 지지" if is_support else "간이 OB 저항"
+        label = "OB 지지" if is_support else "OB 저항"
         fig.add_hrect(
             y0=low,
             y1=high,
@@ -8063,9 +8112,10 @@ def _add_smc_structure_overlays(fig, df: pd.DataFrame, ticker: str) -> dict:
             annotation_position="bottom left" if is_support else "top left",
         )
 
+    visible_equal_levels = []
     for level in features.get("equal_levels", []):
         y = clean_float(level.get("level"), np.nan)
-        if not finite_num(y):
+        if not finite_num(y) or not _smc_zone_is_near_current(y, y * 1.0001, current, max_gap=0.16):
             continue
         is_support = level.get("direction") == "support"
         fig.add_hline(
@@ -8073,9 +8123,13 @@ def _add_smc_structure_overlays(fig, df: pd.DataFrame, ticker: str) -> dict:
             line_dash="longdash",
             line_color="#22c55e" if is_support else "#ef4444",
             line_width=1,
-            annotation_text="EQL 유동성" if is_support else "EQH 유동성",
+            annotation_text="EQL" if is_support else "EQH",
             annotation_position="bottom right" if is_support else "top right",
         )
+        visible_equal_levels.append(level)
+    features["visible_fvg"] = visible_fvg
+    features["visible_order_blocks"] = visible_order_blocks
+    features["visible_equal_levels"] = visible_equal_levels
     return features
 
 
@@ -8083,7 +8137,7 @@ def build_smc_overlay_caption(features: dict, ticker: str) -> str:
     if not isinstance(features, dict):
         return ""
     bits = []
-    fvg = features.get("fvg") or {}
+    fvg = features.get("visible_fvg") or {}
     if fvg.get("type") and fvg.get("type") != "없음":
         label, _ = describe_fvg_plain(
             str(fvg.get("type")),
@@ -8093,8 +8147,8 @@ def build_smc_overlay_caption(features: dict, ticker: str) -> str:
             ticker,
         )
         bits.append(label)
-    ob_count = len(features.get("order_blocks") or [])
-    eq_count = len(features.get("equal_levels") or [])
+    ob_count = len(features.get("visible_order_blocks") or [])
+    eq_count = len(features.get("visible_equal_levels") or [])
     if ob_count:
         bits.append(f"간이 OB {ob_count}개")
     if eq_count:
