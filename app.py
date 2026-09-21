@@ -8301,6 +8301,83 @@ def build_smc_overlay_caption(features: dict, ticker: str) -> str:
     return "SMC 보조 레이어: " + " · ".join(bits) + " · 단독 매수 신호가 아니라 확인할 가격대입니다."
 
 
+def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_features: dict | None,
+                                liquidity_profile: dict | None, ticker: str) -> str:
+    """차트 보조 신호를 실행 기준 문장으로 번역합니다."""
+    pattern = patterns[0] if patterns else {}
+    direction = str(pattern.get("direction") or "")
+    lifecycle = str(pattern.get("lifecycle") or "")
+    trigger = clean_float(pattern.get("trigger_price"), np.nan)
+    invalid = clean_float(pattern.get("invalid_price"), np.nan)
+
+    support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
+    resistance_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "resistance"), None)
+    support_dir = str((support_guide or {}).get("direction") or "")
+    resistance_dir = str((resistance_guide or {}).get("direction") or "")
+
+    if support_dir == "상승" and resistance_dir == "하락":
+        structure_text = "저점은 올라오고 고점은 내려오는 수렴입니다. 어느 쪽으로 돌파되는지 확인하는 구간입니다."
+    elif support_dir == "상승":
+        structure_text = "아래 저점선이 올라오는 회복 시도입니다. 단, 위 저항 돌파 전에는 확인 단계입니다."
+    elif resistance_dir == "하락":
+        structure_text = "위 고점선이 내려와 누르는 구간입니다. 저항선 돌파 전 추격은 불리합니다."
+    else:
+        structure_text = "명확한 한 방향보다 지지·저항 확인이 우선인 구간입니다."
+
+    breakout_bits = []
+    if direction == "bullish" and finite_num(trigger) and trigger > 0:
+        verb = "돌파 후 유지" if lifecycle == "현재유효" else "위 종가 안착"
+        breakout_bits.append(f"쌍바닥/패턴 기준선 {format_currency(trigger, ticker)} {verb}")
+    if resistance_guide and finite_num(resistance_guide.get("y1")):
+        breakout_bits.append(f"고점선 저항 {format_currency(resistance_guide.get('y1'), ticker)} 위 유지")
+    if breakout_bits:
+        breakout_text = " / ".join(breakout_bits) + " + 거래량 증가가 확인될 때만 1차 정찰·분할 검토"
+    else:
+        breakout_text = "상단 저항을 종가로 넘기 전까지는 돌파 매수보다 관찰 우선"
+
+    support_bits = []
+    smc_features = smc_features or {}
+    fvg = smc_features.get("visible_fvg") or {}
+    if fvg.get("type") == "Bullish FVG":
+        support_bits.append(f"FVG 지지 { _smc_zone_price_text(fvg.get('bottom'), fvg.get('top'), ticker) }")
+    for zone in smc_features.get("visible_order_blocks") or []:
+        if zone.get("direction") == "support":
+            support_bits.append(f"OB 지지 { _smc_zone_price_text(zone.get('low'), zone.get('high'), ticker) }")
+            break
+    if liquidity_profile and liquidity_profile.get("ok") and liquidity_profile.get("support"):
+        support_bits.append(f"유동성 지지 { _liquidity_zone_price_text(liquidity_profile.get('support'), ticker) }")
+    if support_guide and finite_num(support_guide.get("y1")):
+        support_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)} 부근")
+    if support_bits:
+        pullback_text = " / ".join(support_bits[:3]) + "에서 하락 멈춤·양봉 전환·거래량 회복이 보이면 눌림 정찰 후보"
+    else:
+        pullback_text = "가까운 지지대가 명확하지 않으면 눌림 매수보다 돌파 확인을 우선"
+
+    invalid_bits = []
+    if finite_num(invalid) and invalid > 0:
+        invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)}")
+    if support_guide and finite_num(support_guide.get("y1")):
+        invalid_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)}")
+    invalid_text = " 또는 ".join(invalid_bits[:2]) + " 이탈 시 후보 폐기" if invalid_bits else "지지선 이탈 시 후보 폐기"
+
+    rows = [
+        ("현재 의미", structure_text),
+        ("돌파 기준", breakout_text),
+        ("눌림 기준", pullback_text),
+        ("폐기 기준", invalid_text),
+    ]
+    body = "<br>".join(
+        f"<b>{escape_html_value(title)}</b>: {escape_html_value(text)}"
+        for title, text in rows
+    )
+    return (
+        "<div class='info-panel' style='border-left: 5px solid #38bdf8; line-height:1.9;'>"
+        "<b>🧭 차트 실행 기준</b><br>"
+        f"{body}"
+        "</div>"
+    )
+
+
 def format_lwc_time(idx):
     try:
         return idx.strftime("%Y-%m-%d")
@@ -8429,6 +8506,11 @@ def render_precision_candlestick_chart(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig, width='stretch')
+    if pattern_candidates or trendline_guides or (show_smc and smc_features):
+        st.markdown(
+            build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker),
+            unsafe_allow_html=True,
+        )
     if show_liquidity and liquidity_profile and liquidity_profile.get("ok"):
         note = build_liquidity_thermal_note(liquidity_profile, ticker)
         if note:
