@@ -8302,20 +8302,26 @@ def build_smc_overlay_caption(features: dict, ticker: str) -> str:
 
 
 def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_features: dict | None,
-                                liquidity_profile: dict | None, ticker: str) -> str:
+                                liquidity_profile: dict | None, ticker: str, current_price=None) -> str:
     """차트 보조 신호를 실행 기준 문장으로 번역합니다."""
     pattern = patterns[0] if patterns else {}
+    pattern_name = str(pattern.get("name") or "패턴")
     direction = str(pattern.get("direction") or "")
     lifecycle = str(pattern.get("lifecycle") or "")
     trigger = clean_float(pattern.get("trigger_price"), np.nan)
     invalid = clean_float(pattern.get("invalid_price"), np.nan)
+    current = clean_float(current_price, np.nan)
 
     support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
     resistance_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "resistance"), None)
     support_dir = str((support_guide or {}).get("direction") or "")
     resistance_dir = str((resistance_guide or {}).get("direction") or "")
+    resistance_y = clean_float((resistance_guide or {}).get("y1"), np.nan)
+    resistance_passed = finite_num(current) and finite_num(resistance_y) and current >= resistance_y * 1.003
 
-    if support_dir == "상승" and resistance_dir == "하락":
+    if support_dir == "상승" and resistance_dir == "하락" and resistance_passed:
+        structure_text = "저점은 올라왔고 내려오던 고점선은 이미 넘었습니다. 지금은 추격보다 돌파 후 눌림과 손익비를 확인하는 구간입니다."
+    elif support_dir == "상승" and resistance_dir == "하락":
         structure_text = "저점은 올라오고 고점은 내려오는 수렴입니다. 어느 쪽으로 돌파되는지 확인하는 구간입니다."
     elif support_dir == "상승":
         structure_text = "아래 저점선이 올라오는 회복 시도입니다. 단, 위 저항 돌파 전에는 확인 단계입니다."
@@ -8327,9 +8333,12 @@ def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_feat
     breakout_bits = []
     if direction == "bullish" and finite_num(trigger) and trigger > 0:
         verb = "돌파 후 유지" if lifecycle == "현재유효" else "위 종가 안착"
-        breakout_bits.append(f"쌍바닥/패턴 기준선 {format_currency(trigger, ticker)} {verb}")
-    if resistance_guide and finite_num(resistance_guide.get("y1")):
-        breakout_bits.append(f"고점선 저항 {format_currency(resistance_guide.get('y1'), ticker)} 위 유지")
+        breakout_bits.append(f"{pattern_name} 기준선 {format_currency(trigger, ticker)} {verb}")
+    if resistance_guide and finite_num(resistance_y):
+        if resistance_passed:
+            breakout_bits.append(f"고점선 돌파 완료: {format_currency(resistance_y, ticker)} 위 유지")
+        else:
+            breakout_bits.append(f"고점선 저항 {format_currency(resistance_y, ticker)} 위 돌파")
     if breakout_bits:
         breakout_text = " / ".join(breakout_bits) + " + 거래량 증가가 확인될 때만 1차 정찰·분할 검토"
     else:
@@ -8417,43 +8426,54 @@ def _chart_pick_support_zone(
     smc_features: dict | None,
     liquidity_profile: dict | None,
     ticker: str,
+    close=None,
 ) -> dict:
     smc_features = smc_features or {}
+    current = clean_float(close, np.nan)
+    candidates = []
+
+    def add_candidate(label: str, low, high, text: str, priority: int):
+        low_v = clean_float(low, np.nan)
+        high_v = clean_float(high, np.nan)
+        if not finite_num(low_v) or not finite_num(high_v):
+            return
+        zone_low, zone_high = sorted([low_v, high_v])
+        if finite_num(current) and current > 0:
+            if zone_low <= current <= zone_high:
+                distance = 0.0
+            elif current > zone_high and zone_high > 0:
+                distance = current / zone_high - 1.0
+            else:
+                distance = zone_low / current - 1.0
+        else:
+            distance = priority
+        candidates.append({
+            "label": label,
+            "low": zone_low,
+            "high": zone_high,
+            "text": text,
+            "_distance": distance,
+            "_priority": priority,
+        })
+
     fvg = smc_features.get("visible_fvg") or {}
     if fvg.get("type") == "Bullish FVG" and finite_num(fvg.get("bottom")) and finite_num(fvg.get("top")):
-        return {
-            "label": "FVG 지지",
-            "low": clean_float(fvg.get("bottom"), np.nan),
-            "high": clean_float(fvg.get("top"), np.nan),
-            "text": _smc_zone_price_text(fvg.get("bottom"), fvg.get("top"), ticker),
-        }
+        add_candidate("FVG 지지", fvg.get("bottom"), fvg.get("top"), _smc_zone_price_text(fvg.get("bottom"), fvg.get("top"), ticker), 1)
     for zone in smc_features.get("visible_order_blocks") or []:
         if zone.get("direction") == "support" and finite_num(zone.get("low")) and finite_num(zone.get("high")):
-            return {
-                "label": "OB 지지",
-                "low": clean_float(zone.get("low"), np.nan),
-                "high": clean_float(zone.get("high"), np.nan),
-                "text": _smc_zone_price_text(zone.get("low"), zone.get("high"), ticker),
-            }
+            add_candidate("OB 지지", zone.get("low"), zone.get("high"), _smc_zone_price_text(zone.get("low"), zone.get("high"), ticker), 2)
+            break
     if liquidity_profile and liquidity_profile.get("ok") and liquidity_profile.get("support"):
         zone = liquidity_profile.get("support")
         if finite_num(zone.get("low")) and finite_num(zone.get("high")):
-            return {
-                "label": "유동성 지지",
-                "low": clean_float(zone.get("low"), np.nan),
-                "high": clean_float(zone.get("high"), np.nan),
-                "text": _liquidity_zone_price_text(zone, ticker),
-            }
+            add_candidate("유동성 지지", zone.get("low"), zone.get("high"), _liquidity_zone_price_text(zone, ticker), 3)
     support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
     if support_guide and finite_num(support_guide.get("y1")):
         y = clean_float(support_guide.get("y1"), np.nan)
-        return {
-            "label": "상승 저점선",
-            "low": y,
-            "high": y,
-            "text": format_currency(y, ticker),
-        }
-    return {}
+        add_candidate("상승 저점선", y, y, format_currency(y, ticker), 4)
+    if not candidates:
+        return {}
+    return sorted(candidates, key=lambda item: (abs(clean_float(item.get("_distance"), 999.0)), item.get("_priority", 99)))[0]
 
 
 def build_chart_execution_check_rows(
@@ -8490,7 +8510,7 @@ def build_chart_execution_check_rows(
             "기준선 돌파",
             "통과" if passed else "대기",
             f"{format_currency(trigger, ticker)} 위 종가",
-            "쌍바닥/회복 패턴이 실행 단계로 넘어가는 가격입니다.",
+            f"{str(pattern.get('name') or '회복 패턴')}이 실행 단계로 넘어가는 가격입니다.",
             "1차 정찰 가능" if passed else "이 가격 위에서 마감하는지 먼저 확인",
         )
     elif direction == "bearish" and finite_num(trigger) and trigger > 0:
@@ -8513,7 +8533,7 @@ def build_chart_execution_check_rows(
             "돌파 후 눌림 확인" if passed else "저항선 아래 추격매수 보류",
         )
 
-    support_zone = _chart_pick_support_zone(trendline_guides, smc_features, liquidity_profile, ticker)
+    support_zone = _chart_pick_support_zone(trendline_guides, smc_features, liquidity_profile, ticker, close)
     if support_zone:
         state, meaning = _chart_zone_distance_state(close, support_zone.get("low"), support_zone.get("high"))
         add_row(
@@ -8728,7 +8748,7 @@ def render_precision_candlestick_chart(
     st.plotly_chart(fig, width='stretch')
     if pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok")):
         st.markdown(
-            build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker),
+            build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker, _chart_latest_close(df)),
             unsafe_allow_html=True,
         )
         check_rows = build_chart_execution_check_rows(
