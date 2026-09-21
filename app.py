@@ -8331,12 +8331,20 @@ def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_feat
         structure_text = "명확한 한 방향보다 지지·저항 확인이 우선인 구간입니다."
 
     breakout_bits = []
+    upper_target_text = ""
     if direction == "bullish" and finite_num(trigger) and trigger > 0:
         verb = "돌파 후 유지" if lifecycle == "현재유효" else "위 종가 안착"
         breakout_bits.append(f"{pattern_name} 기준선 {format_currency(trigger, ticker)} {verb}")
     if resistance_guide and finite_num(resistance_y):
+        resistance_gap = (resistance_y / current - 1.0) if finite_num(current) and current > 0 else np.nan
+        far_upper_resistance = finite_num(resistance_gap) and resistance_gap >= 0.08
         if resistance_passed:
             breakout_bits.append(f"고점선 돌파 완료: {format_currency(resistance_y, ticker)} 위 유지")
+        elif far_upper_resistance:
+            upper_target_text = (
+                f"{format_currency(resistance_y, ticker)}는 1차 매수 조건이 아니라 "
+                "상단 목표·큰 저항입니다. 그 근처에서는 추격보다 분할익절/재평가를 먼저 봅니다."
+            )
         else:
             breakout_bits.append(f"고점선 저항 {format_currency(resistance_y, ticker)} 위 돌파")
     if breakout_bits:
@@ -8375,6 +8383,8 @@ def build_chart_execution_guide(patterns: list, trendline_guides: list, smc_feat
         ("눌림 기준", pullback_text),
         ("폐기 기준", invalid_text),
     ]
+    if upper_target_text:
+        rows.insert(3, ("상단 목표", upper_target_text))
     body = "<br>".join(
         f"<b>{escape_html_value(title)}</b>: {escape_html_value(text)}"
         for title, text in rows
@@ -8528,19 +8538,30 @@ def build_chart_execution_check_rows(
         resistance = clean_float(resistance_guide.get("y1"), np.nan)
         resistance_dir = str(resistance_guide.get("direction") or "")
         passed = finite_num(close) and close >= resistance * 1.003
+        resistance_gap = (resistance / close - 1.0) if finite_num(close) and close > 0 else np.nan
+        far_upper_resistance = finite_num(resistance_gap) and resistance_gap >= 0.08
         if resistance_dir == "하락":
             resistance_meaning = "내려오는 고점선을 넘으면 매도 압력이 약해졌다는 뜻입니다."
         elif resistance_dir == "상승":
             resistance_meaning = "위쪽 상승 추세선은 다음 목표·저항입니다. 여기까지는 눌림과 손익비를 먼저 봅니다."
         else:
             resistance_meaning = "상단 저항을 넘으면 가격 회복 신뢰도가 올라갑니다."
-        add_row(
-            "고점선/저항 돌파",
-            "통과" if passed else "대기",
-            f"{format_currency(resistance, ticker)} 위 유지",
-            resistance_meaning,
-            "돌파 후 눌림 확인" if passed else "상단 저항 전 추격매수 보류",
-        )
+        if not passed and far_upper_resistance:
+            add_row(
+                "상단 목표/큰 저항",
+                "참고",
+                f"{format_currency(resistance, ticker)} 부근",
+                "현재가와 거리가 있어 1차 매수 조건이 아니라 목표·재평가 가격입니다.",
+                "도달 전에는 지지·손익비 우선",
+            )
+        else:
+            add_row(
+                "고점선/저항 돌파",
+                "통과" if passed else "대기",
+                f"{format_currency(resistance, ticker)} 위 유지",
+                resistance_meaning,
+                "돌파 후 눌림 확인" if passed else "상단 저항 전 추격매수 보류",
+            )
 
     support_zone = _chart_pick_support_zone(trendline_guides, smc_features, liquidity_profile, ticker, close)
     if support_zone:
