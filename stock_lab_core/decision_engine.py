@@ -984,9 +984,9 @@ def build_sideways_quality_state(c: dict, *, is_leveraged_product=False, has_pos
         status = "차단"
         note = "회복 조건이 좋아도 2배/3배 상품은 상단권 횡보에서 목표비중 미달만 보고 따라붙지 않습니다."
     elif rr_poor:
-        label = "🔴위험한 횡보: 손익비 부족"
+        label = "🟡관찰 눌림: 현재가 손익비 불리"
         status = "차단"
-        note = "버티는 것처럼 보여도 손절폭 대비 기대수익이 작아 현재가 실행은 불리합니다."
+        note = "종목 회복 후보와 별개로 지금 가격은 목표 대비 손절폭이 커서 바로 실행은 보류합니다. 돌파 후 눌림이나 더 가까운 손절 기준을 기다립니다."
     elif is_core_dca and not heat_hard:
         if trend_bad:
             label = "🟡코어 방어 횡보: 정해진 적립률만"

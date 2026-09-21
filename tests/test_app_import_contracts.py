@@ -114,7 +114,10 @@ def test_ta_engine_exports_used_by_app():
         "stock_lab_core.ta_engine",
         [
             "build_indicators",
+            "build_smc_overlay_features",
+            "detect_equal_highs_lows",
             "detect_liquidity_grab",
+            "detect_order_block_zones",
             "detect_recent_fvg",
             "detect_smc_features",
             "detect_structure_event",

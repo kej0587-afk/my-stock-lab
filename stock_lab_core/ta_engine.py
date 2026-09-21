@@ -194,6 +194,145 @@ def detect_recent_fvg(df: pd.DataFrame) -> dict:
     return {"type": "없음", "top": None, "bottom": None, "active": False}
 
 
+def _smc_ohlc_source(df: pd.DataFrame, lookback: int = 160) -> pd.DataFrame:
+    """SMC 보조 탐지용 OHLC 소스를 정리합니다."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    required = ["High", "Low", "Close"]
+    if any(col not in df.columns for col in required):
+        return pd.DataFrame()
+    cols = ["Open", "High", "Low", "Close"]
+    source = df.copy()
+    if "Open" not in source.columns:
+        source["Open"] = source["Close"]
+    source = source[cols].tail(max(30, int(lookback))).copy()
+    for col in cols:
+        source[col] = pd.to_numeric(source[col], errors="coerce")
+    return source.dropna(subset=cols)
+
+
+def detect_equal_highs_lows(
+    df: pd.DataFrame,
+    lookback: int = 160,
+    tolerance: float = 0.003,
+) -> list:
+    """최근 유사 고점/저점(EQH/EQL) 후보를 반환합니다.
+
+    TradingView SMC류 지표의 개념을 앱에서 읽기 쉽게 쓰기 위한 독립 구현입니다.
+    반환값은 확정 매수·매도 신호가 아니라 유동성이 몰릴 수 있는 레벨 후보입니다.
+    """
+    source = _smc_ohlc_source(df, lookback=lookback)
+    if len(source) < 20:
+        return []
+    highs, lows = get_pivot_highs_lows(source, 3, 3)
+    results = []
+
+    def _find_equal_level(points, label, direction):
+        recent = points[-8:]
+        for idx in range(len(recent) - 1, 0, -1):
+            pos, price = recent[idx]
+            for prev_pos, prev_price in reversed(recent[:idx]):
+                denom = max((abs(price) + abs(prev_price)) / 2, 1e-9)
+                if abs(price - prev_price) / denom <= tolerance:
+                    level = (price + prev_price) / 2
+                    return {
+                        "type": label,
+                        "direction": direction,
+                        "level": float(level),
+                        "first_index": source.index[prev_pos],
+                        "last_index": source.index[pos],
+                        "touches": 2,
+                    }
+        return None
+
+    eqh = _find_equal_level(highs, "EQH", "resistance")
+    eql = _find_equal_level(lows, "EQL", "support")
+    if eqh:
+        results.append(eqh)
+    if eql:
+        results.append(eql)
+    return results
+
+
+def detect_order_block_zones(df: pd.DataFrame, lookback: int = 160) -> list:
+    """최근 구조 돌파 전 캔들을 간이 Order Block 후보로 반환합니다.
+
+    원본 Pine 로직을 복제하지 않고, 최근 박스권 돌파/이탈 직전 반대색 캔들을
+    지지·저항 후보로 표시하는 보수적 보조 로직입니다.
+    """
+    source = _smc_ohlc_source(df, lookback=lookback)
+    if len(source) < 25:
+        return []
+
+    latest_close = float(source["Close"].iloc[-1])
+    latest_low = float(source["Low"].iloc[-1])
+    latest_high = float(source["High"].iloc[-1])
+    candidates = []
+
+    for i in range(12, len(source)):
+        prev = source.iloc[i - 12:i]
+        breakout_high = float(prev["High"].max())
+        breakdown_low = float(prev["Low"].min())
+        close_i = float(source["Close"].iloc[i])
+
+        if close_i > breakout_high:
+            impulse = source.iloc[max(0, i - 8):i]
+            bearish = impulse[impulse["Close"] < impulse["Open"]]
+            if not bearish.empty:
+                ob = bearish.iloc[-1]
+                zone_low = float(ob["Low"])
+                zone_high = float(max(ob["Open"], ob["Close"]))
+                if zone_high > zone_low:
+                    candidates.append({
+                        "type": "Bullish OB",
+                        "direction": "support",
+                        "low": zone_low,
+                        "high": zone_high,
+                        "index": bearish.index[-1],
+                        "active": latest_close >= zone_low and latest_low >= zone_low * 0.995,
+                    })
+
+        if close_i < breakdown_low:
+            impulse = source.iloc[max(0, i - 8):i]
+            bullish = impulse[impulse["Close"] > impulse["Open"]]
+            if not bullish.empty:
+                ob = bullish.iloc[-1]
+                zone_low = float(min(ob["Open"], ob["Close"]))
+                zone_high = float(ob["High"])
+                if zone_high > zone_low:
+                    candidates.append({
+                        "type": "Bearish OB",
+                        "direction": "resistance",
+                        "low": zone_low,
+                        "high": zone_high,
+                        "index": bullish.index[-1],
+                        "active": latest_close <= zone_high and latest_high <= zone_high * 1.005,
+                    })
+
+    unique = []
+    seen = set()
+    for zone in reversed(candidates):
+        key = (zone["type"], round(zone["low"], 4), round(zone["high"], 4))
+        if key in seen:
+            continue
+        unique.append(zone)
+        seen.add(key)
+        if len(unique) >= 3:
+            break
+    return list(reversed(unique))
+
+
+def build_smc_overlay_features(df: pd.DataFrame) -> dict:
+    """차트에 표시할 SMC 보조 레이어를 묶어서 반환합니다."""
+    has_ohlc = df is not None and (not df.empty) and all(col in df.columns for col in ["High", "Low", "Close"])
+    fvg = detect_recent_fvg(df) if has_ohlc else {"type": "없음", "active": False}
+    return {
+        "fvg": fvg,
+        "order_blocks": detect_order_block_zones(df),
+        "equal_levels": detect_equal_highs_lows(df),
+    }
+
+
 def detect_smc_features(df: pd.DataFrame) -> dict:
     """최근 캔들 기준 FVG와 단기 지지선을 요약합니다."""
     if len(df) < 5:

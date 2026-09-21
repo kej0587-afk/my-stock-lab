@@ -658,9 +658,9 @@ except Exception as _decision_helpers_import_error:
             status = "차단"
             note = "회복 조건이 좋아도 2배/3배 상품은 상단권 횡보에서 목표비중 미달만 보고 따라붙지 않습니다."
         elif rr_poor:
-            label = "🔴위험한 횡보: 손익비 부족"
+            label = "🟡관찰 눌림: 현재가 손익비 불리"
             status = "차단"
-            note = "버티는 것처럼 보여도 손절폭 대비 기대수익이 작아 현재가 실행은 불리합니다."
+            note = "종목 회복 후보와 별개로 지금 가격은 목표 대비 손절폭이 커서 바로 실행은 보류합니다. 돌파 후 눌림이나 더 가까운 손절 기준을 기다립니다."
         elif is_core_dca and not heat_hard:
             if trend_bad:
                 label = "🟡코어 방어 횡보: 정해진 적립률만"
@@ -2054,7 +2054,8 @@ from stock_lab_core.ta_engine import (
     build_indicators, get_trend,
     get_pivot_highs_lows, get_recent_levels,
     detect_structure_event, detect_liquidity_grab,
-    detect_recent_fvg, detect_smc_features, get_pd_zone, summarize_smc_action,
+    detect_recent_fvg, detect_smc_features, build_smc_overlay_features,
+    get_pd_zone, summarize_smc_action,
 )
 
 def get_fin_label_map():
@@ -7966,6 +7967,126 @@ def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zone
     return profile
 
 
+def _smc_zone_price_text(low, high, ticker: str) -> str:
+    if not finite_num(low) or not finite_num(high):
+        return "-"
+    return f"{format_currency(low, ticker)}~{format_currency(high, ticker)}"
+
+
+def describe_fvg_plain(fvg_type: str, active: bool, bottom, top, ticker: str) -> tuple[str, str]:
+    """FVG를 사용자용 문장으로 번역합니다."""
+    if not fvg_type or fvg_type == "없음":
+        return "FVG 없음", "최근 눈에 띄는 빈 가격대가 없어 FVG는 매수·매도 근거로 쓰지 않습니다."
+    zone = _smc_zone_price_text(bottom, top, ticker)
+    if fvg_type == "Bullish FVG":
+        if active:
+            return (
+                "상승 FVG: 아래 지지 후보 남음",
+                f"{zone} 구간이 아직 완전히 메워지지 않았습니다. 아래에서 받쳐줄 수 있는 지지 후보라는 뜻이지, 그 자체가 매수 확정 신호는 아닙니다.",
+            )
+        return (
+            "상승 FVG: 이미 확인/소화",
+            f"{zone} 구간을 이미 터치했습니다. 지지로 버티는지, 깨지는지를 추가로 확인합니다.",
+        )
+    if fvg_type == "Bearish FVG":
+        if active:
+            return (
+                "하락 FVG: 위 저항 후보 남음",
+                f"{zone} 구간이 아직 완전히 메워지지 않았습니다. 위에서 막힐 수 있는 저항 후보라는 뜻입니다.",
+            )
+        return (
+            "하락 FVG: 이미 확인/소화",
+            f"{zone} 구간을 이미 터치했습니다. 저항으로 남는지, 돌파하는지를 추가로 확인합니다.",
+        )
+    return fvg_type, f"{zone} 구간을 보조 가격대로만 참고합니다."
+
+
+def _add_smc_structure_overlays(fig, df: pd.DataFrame, ticker: str) -> dict:
+    features = build_smc_overlay_features(df)
+    fvg = features.get("fvg") or {}
+    fvg_type = str(fvg.get("type") or "없음")
+    fvg_bottom = clean_float(fvg.get("bottom"), np.nan)
+    fvg_top = clean_float(fvg.get("top"), np.nan)
+    fvg_active = bool(fvg.get("active"))
+    if fvg_type != "없음" and finite_num(fvg_bottom) and finite_num(fvg_top) and fvg_top > fvg_bottom:
+        is_bull = fvg_type == "Bullish FVG"
+        fill = "rgba(34,197,94,0.12)" if is_bull else "rgba(239,68,68,0.12)"
+        line = "#22c55e" if is_bull else "#ef4444"
+        label, _ = describe_fvg_plain(fvg_type, fvg_active, fvg_bottom, fvg_top, ticker)
+        fig.add_hrect(
+            y0=fvg_bottom,
+            y1=fvg_top,
+            fillcolor=fill,
+            line_width=1,
+            line_dash="dot",
+            line_color=line,
+            layer="below",
+            annotation_text=label,
+            annotation_position="top left",
+        )
+
+    for zone in features.get("order_blocks", [])[-2:]:
+        low = clean_float(zone.get("low"), np.nan)
+        high = clean_float(zone.get("high"), np.nan)
+        if not finite_num(low) or not finite_num(high) or high <= low:
+            continue
+        is_support = zone.get("direction") == "support"
+        fill = "rgba(59,130,246,0.10)" if is_support else "rgba(245,158,11,0.10)"
+        line = "#60a5fa" if is_support else "#f59e0b"
+        label = "간이 OB 지지" if is_support else "간이 OB 저항"
+        fig.add_hrect(
+            y0=low,
+            y1=high,
+            fillcolor=fill,
+            line_width=1,
+            line_dash="dash",
+            line_color=line,
+            layer="below",
+            annotation_text=label,
+            annotation_position="bottom left" if is_support else "top left",
+        )
+
+    for level in features.get("equal_levels", []):
+        y = clean_float(level.get("level"), np.nan)
+        if not finite_num(y):
+            continue
+        is_support = level.get("direction") == "support"
+        fig.add_hline(
+            y=y,
+            line_dash="longdash",
+            line_color="#22c55e" if is_support else "#ef4444",
+            line_width=1,
+            annotation_text="EQL 유동성" if is_support else "EQH 유동성",
+            annotation_position="bottom right" if is_support else "top right",
+        )
+    return features
+
+
+def build_smc_overlay_caption(features: dict, ticker: str) -> str:
+    if not isinstance(features, dict):
+        return ""
+    bits = []
+    fvg = features.get("fvg") or {}
+    if fvg.get("type") and fvg.get("type") != "없음":
+        label, _ = describe_fvg_plain(
+            str(fvg.get("type")),
+            bool(fvg.get("active")),
+            fvg.get("bottom"),
+            fvg.get("top"),
+            ticker,
+        )
+        bits.append(label)
+    ob_count = len(features.get("order_blocks") or [])
+    eq_count = len(features.get("equal_levels") or [])
+    if ob_count:
+        bits.append(f"간이 OB {ob_count}개")
+    if eq_count:
+        bits.append(f"EQH/EQL {eq_count}개")
+    if not bits:
+        return ""
+    return "SMC 보조 레이어: " + " · ".join(bits) + " · 단독 매수 신호가 아니라 확인할 가격대입니다."
+
+
 def format_lwc_time(idx):
     try:
         return idx.strftime("%Y-%m-%d")
@@ -8049,6 +8170,7 @@ def render_precision_candlestick_chart(
     key: str = "precision_candle",
     show_patterns: bool = True,
     show_liquidity: bool = True,
+    show_smc: bool = True,
     ticker: str = "",
 ):
     if df is None or df.empty:
@@ -8079,6 +8201,9 @@ def render_precision_candlestick_chart(
     liquidity_profile = None
     if show_liquidity:
         liquidity_profile = _add_liquidity_thermal_overlays(fig, df, ticker)
+    smc_features = None
+    if show_smc:
+        smc_features = _add_smc_structure_overlays(fig, df, ticker)
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     fig.update_layout(
@@ -8096,6 +8221,10 @@ def render_precision_candlestick_chart(
             )
     if pattern_candidates:
         st.caption(_chart_pattern_caption(pattern_candidates))
+    if show_smc and smc_features:
+        caption = build_smc_overlay_caption(smc_features, ticker)
+        if caption:
+            st.caption(caption)
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -18431,8 +18560,33 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     ma5         = c.get("ma5", 0)
     ma20        = c.get("ma20", 0)
     decision_code = c.get("decision_code", "")
+    fvg_plain_label, fvg_plain_note = describe_fvg_plain(fvg_type, bool(fvg_active), fvg_bottom, fvg_top, tkr)
+    rr_poor = finite_num(clean_float(rr_ratio, np.nan)) and clean_float(rr_ratio, np.nan) < 1.0
+    is_recovery_or_buyish = any(
+        word in str(dec or "")
+        for word in ("회복", "눌림", "분할", "진입", "매수", "적립", "홀드")
+    )
 
     lines = []
+
+    # ── 0. 오늘 결론: 서로 다른 신호를 먼저 한 문장으로 정리 ────────────
+    if is_recovery_or_buyish and rr_poor:
+        lines.append(
+            "<b>오늘 결론</b>: 종목의 회복/품질 신호는 살아 있지만, <b>현재가 기준 손익비가 낮아 바로 풀진입할 자리는 아닙니다.</b> "
+            "보유자는 유지·속도조절, 신규/추매는 돌파 후 눌림이나 손절 기준이 가까워지는 구간을 기다립니다."
+        )
+    elif is_recovery_or_buyish:
+        lines.append(
+            "<b>오늘 결론</b>: 회복 후보로 볼 수 있지만, 실제 매수 강도는 가격위치·손익비·거래량 확인 뒤 정합니다."
+        )
+    elif "보류" in str(dec or "") or "차단" in str(dec or "") or "방어" in str(dec or ""):
+        lines.append(
+            "<b>오늘 결론</b>: 지금은 매수보다 원인 점검과 회복 조건 확인이 우선입니다."
+        )
+    else:
+        lines.append(
+            "<b>오늘 결론</b>: 방향이 완전히 정리되지 않았으므로 보조 신호보다 다음 봉 확인을 우선합니다."
+        )
 
     # ── 1. 현재 판정 한 줄 ──────────────────────────────────
     fin_labels = {4: "💎완성형 우량(4/4)", 3: "✅양호(3/4)", 2: "🔶보통(2/4)", 1: "⚠️주의(1/4)", 0: "🚨위험(0/4)"}
@@ -18504,15 +18658,16 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     if ext_event and ext_event not in ("None", "없음", ""):
         smc_parts.append(f"외부 이벤트: <b>{ext_event}</b>")
     if fvg_type != "없음" and fvg_type:
-        fvg_status = "미충족(지지대 유효)" if fvg_active else "이미 터치됨"
         fvg_range = ""
         if fvg_bottom and fvg_top and fvg_bottom > 0:
             fvg_range = f" ({format_currency(fvg_bottom, tkr)}~{format_currency(fvg_top, tkr)})"
-        smc_parts.append(f"FVG: <b>{fvg_type}</b> {fvg_status}{fvg_range}")
+        smc_parts.append(f"FVG: <b>{escape_html_value(fvg_plain_label)}</b>{fvg_range}")
     smc_parts.append(f"현재 가격대: <b>{pd_zone}</b>")
     if is_52w:
         smc_parts.append("🚀 <b>52주 신고가 돌파</b>")
     lines.append("🛡️ <b>SMC 구조</b>: " + " | ".join(smc_parts))
+    if fvg_type != "없음" and fvg_type:
+        lines.append(f"&nbsp;&nbsp;&nbsp;&nbsp;→ FVG 해석: {escape_html_value(fvg_plain_note)}")
     if smc_insight:
         lines.append(f"&nbsp;&nbsp;&nbsp;&nbsp;→ {smc_insight}")
     if smc_action:
@@ -18552,6 +18707,20 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
             f"🧭 <b>횡보/눌림 품질</b>: <b>{escape_html_value(sideways_state.get('label', '-'))}</b> — "
             f"{escape_html_value(sideways_state.get('note', ''))}{reason_html}"
         )
+
+    signal_roles = []
+    if is_recovery_or_buyish:
+        signal_roles.append("회복 후보 = 종목의 품질·상대강도·추세 회복을 좋게 본다는 뜻")
+    if rr_poor:
+        signal_roles.append("손익비 불리 = 현재가에서 목표 대비 손절폭이 커서 실행 강도를 낮추라는 뜻")
+    if fvg_type == "Bullish FVG" and fvg_active:
+        signal_roles.append("상승 FVG = 아래 지지 후보가 남아 있다는 뜻, 지지 확인 전에는 보조 근거")
+    elif fvg_type == "Bearish FVG" and fvg_active:
+        signal_roles.append("하락 FVG = 위 저항 후보가 남아 있다는 뜻, 돌파 확인 전에는 부담 요인")
+    if smc_action and "관망" in smc_action:
+        signal_roles.append("SMC 관망 = 구조가 아직 한 방향으로 확정되지 않았다는 뜻")
+    if signal_roles:
+        lines.append("🧩 <b>신호 정리</b>: " + " / ".join(signal_roles))
 
     # ── 5. 진입 조건 (핵심: 뭐가 부족한지) ──────────────────
     entry_hint = ""
@@ -20540,51 +20709,52 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
     # ==========================================
     # [신규 추가] UI 렌더링: 신규 분석 기능 표출
     # ==========================================
-    st.markdown("### 🔍 추가 인사이트 (독립 모듈)")
-    
-    # 1. 안전하게 주가 데이터 로드 (캐시되어 있어 매우 빠름)
-    local_df = load_price_df(ticker, "1y")
+    with st.expander("🔍 세부 인사이트 원문 (보조 지표)", expanded=False):
+        st.caption("종합 해설과 최종체크에 반영된 보조 지표입니다. 기본 판단은 위 결론을 우선 보세요.")
 
-    # 2. 3단 컬럼으로 정보 표시
-    col_ins1, col_ins2, col_ins3, col_ins4 = st.columns(4)
-    
-    with col_ins1:
-        if not local_df.empty:
-            breakout_data = detect_52w_breakout(local_df)
-            st.info(f"**수급/추세:**\n{breakout_data['label']}")
-        else:
-            st.info("**수급/추세:**\n데이터 없음")
+        # 1. 안전하게 주가 데이터 로드 (캐시되어 있어 매우 빠름)
+        local_df = load_price_df(ticker, "1y")
 
-    with col_ins2:
-        earnings_data = fetch_earnings_date(ticker)
-        if earnings_data.get("high_risk"):
-            st.warning(f"**이벤트 리스크:**\n{earnings_data['label']}")
-        else:
-            st.success(f"**이벤트 리스크:**\n{earnings_data['label']}")
+        # 2. 3단 컬럼으로 정보 표시
+        col_ins1, col_ins2, col_ins3, col_ins4 = st.columns(4)
 
-    with col_ins3:
-        if not local_df.empty:
-            current_price = clean_float(c.get("cur_p"), 0.0) or float(local_df['Close'].iloc[-1])
-            atr_val = clean_float(c.get("atr"), 0.0) or calc_atr(local_df)
-            stop_price = clean_float(c.get("rr_stop"), 0.0)
-            # 기존 c 딕셔너리에서 값 안전하게 빼오기
-            target_w = clean_float(c.get("target_w"), 0.0)
-            curr_w = clean_float(c.get("current_w"), 0.0)
+        with col_ins1:
+            if not local_df.empty:
+                breakout_data = detect_52w_breakout(local_df)
+                st.info(f"**수급/추세:**\n{breakout_data['label']}")
+            else:
+                st.info("**수급/추세:**\n데이터 없음")
 
-            # 총자산은 임시로 1억 세팅 (이후 필요시 portfolio_summary와 연동)
-            size_data = calc_position_size(100000000, target_w, curr_w, current_price, atr_val)
-            if stop_price <= 0:
-                stop_price = clean_float(size_data.get("stop_price"), 0.0)
-            st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {stop_price:,.0f}\n정밀관측소 R/R과 동일 기준")
-        else:
-            st.info("**진입/손절 가이드:**\n데이터 없음")
+        with col_ins2:
+            earnings_data = fetch_earnings_date(ticker)
+            if earnings_data.get("high_risk"):
+                st.warning(f"**이벤트 리스크:**\n{earnings_data['label']}")
+            else:
+                st.success(f"**이벤트 리스크:**\n{earnings_data['label']}")
 
-    with col_ins4:
-        if not local_df.empty:
-            smc_data = detect_smc_features(local_df)
-            st.info(f"**스마트머니(SMC):**\n{smc_data['fvg_label']}\n{smc_data['ob_label']}")
-        else:
-            st.info("**스마트머니(SMC):**\n데이터 없음")
+        with col_ins3:
+            if not local_df.empty:
+                current_price = clean_float(c.get("cur_p"), 0.0) or float(local_df['Close'].iloc[-1])
+                atr_val = clean_float(c.get("atr"), 0.0) or calc_atr(local_df)
+                stop_price = clean_float(c.get("rr_stop"), 0.0)
+                # 기존 c 딕셔너리에서 값 안전하게 빼오기
+                target_w = clean_float(c.get("target_w"), 0.0)
+                curr_w = clean_float(c.get("current_w"), 0.0)
+
+                # 총자산은 임시로 1억 세팅 (이후 필요시 portfolio_summary와 연동)
+                size_data = calc_position_size(100000000, target_w, curr_w, current_price, atr_val)
+                if stop_price <= 0:
+                    stop_price = clean_float(size_data.get("stop_price"), 0.0)
+                st.info(f"**손절 가이드 (2 ATR):**\n권장 손절가: {stop_price:,.0f}\n정밀관측소 R/R과 동일 기준")
+            else:
+                st.info("**진입/손절 가이드:**\n데이터 없음")
+
+        with col_ins4:
+            if not local_df.empty:
+                smc_data = detect_smc_features(local_df)
+                st.info(f"**스마트머니(SMC):**\n{smc_data['fvg_label']}\n{smc_data['ob_label']}")
+            else:
+                st.info("**스마트머니(SMC):**\n데이터 없음")
 
     # ── 한국 종목 전용: 외국인/기관 수급 + 재무 트렌드 + 공시 ────────────────────
     if is_kr_listed(ticker):
@@ -34247,13 +34417,19 @@ if main_page == "precision":
                 key=f"precision_liquidity_profile_{tkr}",
                 help="최근 거래량이 많이 쌓인 가격대를 지지/저항 보조 레이어로 표시합니다. 단독 매수 신호가 아니라 눌림가와 R/R 확인용입니다.",
             )
+            show_smc_overlay = st.checkbox(
+                "SMC 지지/저항 보조 표시",
+                value=True,
+                key=f"precision_smc_overlay_{tkr}",
+                help="FVG, 간이 Order Block, EQH/EQL을 확인할 가격대로 표시합니다. 단독 매수 신호가 아니라 지지/저항 후보입니다.",
+            )
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
             with week_tab:
-                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
             with month_tab:
-                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, ticker=tkr)
+                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr)
             render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
@@ -34264,32 +34440,35 @@ if main_page == "precision":
             render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")
-        b1, b2 = st.columns(2)
-        with b1:
-            f_txt = f"{c['fvg_type']} | {'미충족' if c['fvg_active'] else '터치됨'}" if c['fvg_type'] != "없음" else "없음"
-            _rr_src = c.get("rr_target_source", "차트 구조")
-            _rr_label = "강세 상단" if bool(c.get("rr_target_is_projection", False)) else "목표"
-            _rr_str = f"{c['rr_ratio']:.2f} ({_rr_label} {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
-            _sf_str = c.get('sector_flow_state', '-')
-            _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{f_txt}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
-        with b2:
-            if c.get("live_gap_shock"):
-                structure_note = "실시간 급락"
-                structure_color = "#f59e0b"
-            else:
-                structure_note = "주의" if c.get("structure_risk") else "정상"
-                structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
-            _regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
-            _live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
-            if c.get("live_price_used") and finite_num(_regular_day_ret):
-                ret_html = f"정규장전일등락: <b>{_regular_day_ret*100:.1f}%</b>"
-                if finite_num(_live_ref_ret) and abs(_live_ref_ret) > 0.003:
-                    ret_html += f" | 최신가-종가: <b>{_live_ref_ret*100:.1f}%</b>"
-            else:
-                ret_label = str(c.get("day_ret_label") or "전일등락")
-                ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
-            st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+        with st.expander("세부 지표 원문 보기 (SMC/전술 지표)", expanded=False):
+            st.caption("위 종합 해설에 이미 반영된 원문 지표입니다. 헷갈리면 종합 해설과 매수전 최종체크를 우선 보세요.")
+            b1, b2 = st.columns(2)
+            with b1:
+                _fvg_label, _ = describe_fvg_plain(c.get("fvg_type", "없음"), bool(c.get("fvg_active")), c.get("fvg_bottom"), c.get("fvg_top"), tkr)
+                f_txt = _fvg_label if c['fvg_type'] != "없음" else "없음"
+                _rr_src = c.get("rr_target_source", "차트 구조")
+                _rr_label = "강세 상단" if bool(c.get("rr_target_is_projection", False)) else "목표"
+                _rr_str = f"{c['rr_ratio']:.2f} ({_rr_label} {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
+                _sf_str = c.get('sector_flow_state', '-')
+                _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
+                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{escape_html_value(f_txt)}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)
+            with b2:
+                if c.get("live_gap_shock"):
+                    structure_note = "실시간 급락"
+                    structure_color = "#f59e0b"
+                else:
+                    structure_note = "주의" if c.get("structure_risk") else "정상"
+                    structure_color = "#fbbf24" if c.get("structure_risk") else "#10b981"
+                _regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
+                _live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
+                if c.get("live_price_used") and finite_num(_regular_day_ret):
+                    ret_html = f"정규장전일등락: <b>{_regular_day_ret*100:.1f}%</b>"
+                    if finite_num(_live_ref_ret) and abs(_live_ref_ret) > 0.003:
+                        ret_html += f" | 최신가-종가: <b>{_live_ref_ret*100:.1f}%</b>"
+                else:
+                    ret_label = str(c.get("day_ret_label") or "전일등락")
+                    ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
+                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 
