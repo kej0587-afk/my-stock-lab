@@ -2054,9 +2054,26 @@ from stock_lab_core.ta_engine import (
     build_indicators, get_trend,
     get_pivot_highs_lows, get_recent_levels,
     detect_structure_event, detect_liquidity_grab,
-    detect_recent_fvg, detect_smc_features, build_smc_overlay_features,
+    detect_recent_fvg, detect_smc_features,
     get_pd_zone, summarize_smc_action,
 )
+try:
+    from stock_lab_core.ta_engine import build_smc_overlay_features
+    SMC_OVERLAY_IMPORT_ERROR = ""
+except Exception as _smc_overlay_import_error:
+    SMC_OVERLAY_IMPORT_ERROR = repr(_smc_overlay_import_error)
+    logging.warning(
+        "stock_lab_core.ta_engine.build_smc_overlay_features unavailable; using FVG-only fallback: %s",
+        SMC_OVERLAY_IMPORT_ERROR,
+    )
+
+    def build_smc_overlay_features(df):
+        has_ohlc = df is not None and (not df.empty) and all(col in df.columns for col in ["High", "Low", "Close"])
+        return {
+            "fvg": detect_recent_fvg(df) if has_ohlc else {"type": "없음", "active": False},
+            "order_blocks": [],
+            "equal_levels": [],
+        }
 
 def get_fin_label_map():
     return {
