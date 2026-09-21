@@ -6,6 +6,8 @@ import numpy as np
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float, finite_num
+from stock_lab_core.today_queue import is_today_queue_defense_signal
+
 
 def _chart_pattern_source_df(df: pd.DataFrame, lookback: int = 140) -> pd.DataFrame:
     required = ["Open", "High", "Low", "Close"]
@@ -56,6 +58,213 @@ def _chart_pattern_price_text(value) -> str:
         return f"{price:,.2f}"
     except Exception:
         return "-"
+
+
+def chart_pattern_caption(patterns: list) -> str:
+    if not patterns:
+        return ""
+    pattern = patterns[0]
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    name = pattern.get("name", "패턴")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    if lifecycle == "관찰" and direction == "bullish":
+        plain = f"{name} 후보: 기준선 돌파 전, 추세 회복 미확정"
+        guide = f"기준 {trigger} 위 안착 전까지 추격보다 확인 우선 / 무효 {invalid}"
+    elif lifecycle == "현재유효" and direction == "bullish":
+        plain = f"{name}: 돌파 후 유효, 추세 회복 확인 구간"
+        guide = f"기준 {trigger} 위 유지가 핵심 / 무효 {invalid} 이탈 시 폐기"
+    elif lifecycle == "관찰" and direction == "bearish":
+        plain = f"{name} 후보: 기준선 이탈 전, 하락 확정 아님"
+        guide = f"기준 {trigger} 아래 이탈 전까지 경고만 반영 / 무효 {invalid} 회복 시 폐기"
+    elif lifecycle == "현재유효" and direction == "bearish":
+        plain = f"{name}: 이탈 후 유효, 반등 실패 확인 구간"
+        guide = f"기준 {trigger} 아래 유지가 핵심 / 무효 {invalid} 회복 시 폐기"
+    else:
+        plain = f"{name} 후보: 방향 확인 전"
+        guide = f"기준 {trigger} 돌파/이탈 방향 확인 전까지 관찰"
+    return f"핵심 패턴: {plain} · {guide}"
+
+
+def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> dict | None:
+    if not patterns:
+        return None
+    pattern = patterns[0]
+    name = pattern.get("name", "패턴")
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    invalid_price = clean_float(pattern.get("invalid_price"), np.nan)
+    c = c or {}
+    cur_p = clean_float(c.get("cur_p"), np.nan)
+
+    if direction == "bearish" and finite_num(cur_p) and finite_num(invalid_price) and cur_p > invalid_price:
+        return {
+            "color": "#64748b",
+            "title": "ℹ️ 하락 패턴 경고 해제 확인",
+            "body": (
+                f"현재가 {_chart_pattern_price_text(cur_p)}가 {name} 무효선 {invalid} 위에 있습니다. "
+                "수동보정/실시간가 기준으로는 하락 패턴 경고를 낮추고, 다음 봉에서 그 가격대 위에 안착하는지 확인하세요."
+            ),
+        }
+
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    overheat_flags = []
+    if finite_num(rsi) and rsi >= 70:
+        overheat_flags.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi) and mfi >= 80:
+        overheat_flags.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b) and pct_b >= 0.95:
+        overheat_flags.append(f"%B {pct_b:.2f}")
+    overheat_text = " · ".join(overheat_flags)
+    defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
+    if defense_priority:
+        return {
+            "color": "#d97706",
+            "title": "👀 패턴은 보조, 방어 신호 우선",
+            "body": (
+                f"{name} 패턴은 보이지만 현재 기술/가격 판정은 방어 쪽이 우선입니다. "
+                f"기준선 {trigger} 위 안착과 거래량, MA20·MA50 회복을 확인하기 전까지는 매수 신호가 아니라 관찰 신호로만 봅니다. "
+                f"무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+            ),
+        }
+
+    if direction == "bullish" and lifecycle == "관찰":
+        return {
+            "color": "#3b82f6",
+            "title": "👀 패턴 선행관찰",
+            "body": (
+                f"{name} 후보가 생겼지만 기준선 {trigger} 돌파 전입니다. "
+                "이 구간은 매수 확정이 아니라 관심 전환/알림 단계입니다. "
+                f"기준선 돌파와 거래량 확인, 또는 돌파 후 첫 눌림이 오면 1차 검토로 넘기고 무효선 {invalid} 이탈 시 폐기합니다."
+            ),
+        }
+    if direction == "bullish" and lifecycle == "현재유효":
+        if overheat_flags:
+            return {
+                "color": "#d97706",
+                "title": "🚦 패턴 성공 후 과열",
+                "body": (
+                    f"{name}는 기준선 {trigger} 위에서 유효하지만 현재가는 {overheat_text} 과열권입니다. "
+                    "그래서 앱의 '눌림 대기'는 매수 신호가 아니라 선행 타점이 지나간 뒤 추격을 막는 경고입니다. "
+                    f"기준선 재확인, MA5/MA20 눌림, FVG 지지 확인 전까지는 정찰 이상을 보류하고 무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+                ),
+            }
+        return {
+            "color": "#16a34a",
+            "title": "✅ 패턴 돌파 유효",
+            "body": (
+                f"{name}가 기준선 {trigger} 위에서 유효합니다. "
+                "다만 실제 매수 강도는 위 타점 문구, R/R, 상위 시간대 보정까지 같이 봅니다. "
+                f"무효선 {invalid} 이탈 시 패턴을 폐기합니다."
+            ),
+        }
+    if direction == "bearish" and lifecycle == "관찰":
+        return {
+            "color": "#f59e0b",
+            "title": "⚠️ 하락 패턴 관찰",
+            "body": (
+                f"{name} 후보가 있지만 기준선 {trigger} 이탈 전이라 하락 확정은 아닙니다. "
+                f"무효선 {invalid} 회복 시 경고를 낮춥니다."
+            ),
+        }
+    if direction == "bearish" and lifecycle == "현재유효":
+        return {
+            "color": "#dc2626",
+            "title": "🛑 하락 패턴 유효",
+            "body": (
+                f"{name}가 기준선 {trigger} 아래에서 유효합니다. "
+                f"반등 매수보다 구조 회복 확인이 우선이고, 무효선 {invalid} 회복 전까지 보수적으로 봅니다."
+            ),
+        }
+    return None
+
+
+def summarize_chart_pattern_for_dashboard(patterns: list, c: dict | None = None) -> tuple[str, str, str]:
+    if not patterns:
+        return "-", "", ""
+    pattern = patterns[0]
+    name = pattern.get("name", "패턴")
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
+    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
+    c = c or {}
+
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    overheat = (
+        (finite_num(rsi) and rsi >= 70)
+        or (finite_num(mfi) and mfi >= 80)
+        or (finite_num(pct_b) and pct_b >= 0.95)
+    )
+    overheat_bits = []
+    if finite_num(rsi) and rsi >= 70:
+        overheat_bits.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi) and mfi >= 80:
+        overheat_bits.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b) and pct_b >= 0.95:
+        overheat_bits.append(f"%B {pct_b:.2f}")
+    overheat_text = " · ".join(overheat_bits) if overheat_bits else "과열 낮음"
+    defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
+    if defense_priority:
+        return (
+            "👀패턴관찰(방어우선)",
+            f"{name} 패턴 감지 · 기술/가격 방어 우선 · 기준 {trigger} 안착 확인 전 관찰",
+            "risk",
+        )
+
+    if direction == "bullish" and lifecycle == "관찰":
+        return (
+            "👀패턴관찰: 돌파대기",
+            f"{name} 후보 · 기준 {trigger} 돌파 전 · 무효 {invalid}",
+            "interest",
+        )
+    if direction == "bullish" and lifecycle == "현재유효":
+        if overheat:
+            return (
+                "🚦패턴성공: 눌림대기",
+                f"{name} 유효 · {overheat_text} · 기준 {trigger} 재확인/첫 눌림 대기",
+                "wait",
+            )
+        return (
+            "✅패턴유효: 정밀확인",
+            f"{name} 유효 · 기준 {trigger} 위 유지 · 무효 {invalid}",
+            "interest",
+        )
+    if direction == "bearish" and lifecycle == "관찰":
+        return (
+            "⚠️하락패턴 관찰",
+            f"{name} 후보 · 기준 {trigger} 이탈 전 · 무효 {invalid}",
+            "risk",
+        )
+    if direction == "bearish" and lifecycle == "현재유효":
+        return (
+            "🛑하락패턴 유효",
+            f"{name} 유효 · 기준 {trigger} 아래 · 회복 전 보수",
+            "risk",
+        )
+    return "-", "", ""
+
+
+def chart_pattern_annotation_text(pattern: dict) -> str:
+    direction = pattern.get("direction", "neutral")
+    lifecycle = pattern.get("lifecycle", "관찰")
+    name = pattern.get("name", "패턴")
+    if lifecycle == "관찰" and direction == "bullish":
+        return f"{name} 후보"
+    if lifecycle == "현재유효" and direction == "bullish":
+        return f"{name} 유효"
+    if lifecycle == "관찰" and direction == "bearish":
+        return f"{name} 후보"
+    if lifecycle == "현재유효" and direction == "bearish":
+        return f"{name} 유효"
+    return f"{name} 후보<br>방향 확인 전"
 
 
 def _chart_pattern_timeframe_profile(view: pd.DataFrame) -> dict:
@@ -486,6 +695,17 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
     if support:
         guides.append(support)
     return guides
+
+
+def trendline_guides_caption(guides: list) -> str:
+    if not guides:
+        return ""
+    parts = []
+    for guide in guides:
+        side = "저항" if guide.get("kind") == "resistance" else "지지"
+        parts.append(f"{side} {guide.get('direction', '-')}")
+    return "추세선: " + " · ".join(parts) + " · 가격이 두 선 사이에서 위/아래 어느 쪽을 돌파하는지 봅니다."
+
 
 chart_pattern_price_text = _chart_pattern_price_text
 build_recent_trendline_guides = _build_recent_trendline_guides
