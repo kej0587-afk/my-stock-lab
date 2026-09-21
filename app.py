@@ -7215,6 +7215,38 @@ def _chart_pattern_price_text(value) -> str:
         return "-"
 
 
+def _chart_pattern_timeframe_profile(view: pd.DataFrame) -> dict:
+    """일/주/月 봉마다 패턴 유효 기간과 과도 이격 기준을 다르게 둡니다."""
+    profile = {
+        "valid_age": 35,
+        "watch_age": 12,
+        "max_trigger_extension": 0.32,
+        "max_trigger_breakdown": 0.32,
+    }
+    if view is None or len(view.index) < 3:
+        return profile
+    try:
+        idx = pd.to_datetime(view.index)
+        median_days = pd.Series(idx).diff().dt.days.dropna().median()
+    except Exception:
+        median_days = np.nan
+    if finite_num(median_days) and median_days >= 20:
+        return {
+            "valid_age": 8,
+            "watch_age": 4,
+            "max_trigger_extension": 0.45,
+            "max_trigger_breakdown": 0.45,
+        }
+    if finite_num(median_days) and median_days >= 5:
+        return {
+            "valid_age": 16,
+            "watch_age": 7,
+            "max_trigger_extension": 0.38,
+            "max_trigger_breakdown": 0.38,
+        }
+    return profile
+
+
 def _chart_pattern_lifecycle(pattern: dict, view: pd.DataFrame) -> dict:
     close = float(view["Close"].iloc[-1])
     last_pos = len(view) - 1
@@ -7224,29 +7256,48 @@ def _chart_pattern_lifecycle(pattern: dict, view: pd.DataFrame) -> dict:
     raw_status = str(pattern.get("status", "관찰"))
     trigger = clean_float(pattern.get("trigger_price"), 0.0)
     invalid = clean_float(pattern.get("invalid_price"), 0.0)
+    profile = _chart_pattern_timeframe_profile(view)
+    valid_age = int(profile.get("valid_age", 35))
+    watch_age = int(profile.get("watch_age", 12))
+    bullish_trigger_extension = (close / trigger - 1.0) if trigger > 0 else 0.0
+    bearish_trigger_breakdown = (trigger / close - 1.0) if trigger > 0 and close > 0 else 0.0
+    bullish_still_near_trigger = (
+        trigger <= 0
+        or (
+            close >= trigger * 0.985
+            and bullish_trigger_extension <= clean_float(profile.get("max_trigger_extension"), 0.32)
+        )
+    )
+    bearish_still_near_trigger = (
+        trigger <= 0
+        or (
+            close <= trigger * 1.015
+            and bearish_trigger_breakdown <= clean_float(profile.get("max_trigger_breakdown"), 0.32)
+        )
+    )
 
     lifecycle = "관찰"
     priority = 2
     if direction == "bullish":
         if invalid > 0 and close < invalid:
             lifecycle, priority = "무효", 0
-        elif raw_status in {"돌파", "상방돌파"} and (age <= 35 or trigger <= 0 or close >= trigger * 0.985):
+        elif raw_status in {"돌파", "상방돌파"} and age <= valid_age and bullish_still_near_trigger:
             lifecycle, priority = "현재유효", 4
-        elif age <= 12:
+        elif age <= watch_age:
             lifecycle, priority = "관찰", 2
         else:
             lifecycle, priority = "과거", 1
     elif direction == "bearish":
         if invalid > 0 and close > invalid:
             lifecycle, priority = "무효", 0
-        elif raw_status in {"이탈", "하방이탈"} and (age <= 35 or trigger <= 0 or close <= trigger * 1.015):
+        elif raw_status in {"이탈", "하방이탈"} and age <= valid_age and bearish_still_near_trigger:
             lifecycle, priority = "현재유효", 4
-        elif age <= 12:
+        elif age <= watch_age:
             lifecycle, priority = "관찰", 2
         else:
             lifecycle, priority = "과거", 1
     else:
-        if age <= 10:
+        if age <= max(3, watch_age - 2):
             lifecycle, priority = "관찰", 2
         else:
             lifecycle, priority = "과거", 1
@@ -7782,6 +7833,98 @@ def _add_chart_pattern_overlays(fig, patterns: list):
         )
 
 
+def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> list:
+    view = _chart_pattern_source_df(df, lookback=lookback)
+    if view.empty:
+        return []
+    highs, lows = _chart_pattern_pivots(view)
+    last_pos = len(view) - 1
+    current = clean_float(view["Close"].iloc[-1], np.nan)
+    if not finite_num(current) or current <= 0:
+        return []
+
+    def _fit_line(points, label, color, kind):
+        recent = [p for p in points if p["pos"] >= max(0, last_pos - 90)][-5:]
+        if len(recent) < 2:
+            recent = points[-3:]
+        if len(recent) < 2:
+            return None
+        x = np.array([p["pos"] for p in recent], dtype=float)
+        y = np.array([p["price"] for p in recent], dtype=float)
+        try:
+            slope, intercept = np.polyfit(x, y, 1)
+        except Exception:
+            return None
+        y0 = float(slope * x[0] + intercept)
+        y1 = float(slope * last_pos + intercept)
+        if not finite_num(y0) or not finite_num(y1) or y0 <= 0 or y1 <= 0:
+            return None
+        if abs(y1 / current - 1.0) > 0.55:
+            return None
+        slope_pct = (y1 / y0 - 1.0) if y0 > 0 else 0.0
+        if abs(slope_pct) < 0.015:
+            direction = "횡보"
+        elif slope_pct > 0:
+            direction = "상승"
+        else:
+            direction = "하락"
+        return {
+            "label": f"{label} {direction}",
+            "kind": kind,
+            "color": color,
+            "x0": view.index[int(x[0])],
+            "x1": view.index[-1],
+            "y0": y0,
+            "y1": y1,
+            "direction": direction,
+        }
+
+    guides = []
+    resistance = _fit_line(highs, "고점선", "#ef4444", "resistance")
+    support = _fit_line(lows, "저점선", "#22c55e", "support")
+    if resistance:
+        guides.append(resistance)
+    if support:
+        guides.append(support)
+    return guides
+
+
+def _add_recent_trendline_guides(fig, df: pd.DataFrame) -> list:
+    guides = _build_recent_trendline_guides(df)
+    for guide in guides:
+        fig.add_shape(
+            type="line",
+            x0=guide["x0"],
+            y0=guide["y0"],
+            x1=guide["x1"],
+            y1=guide["y1"],
+            line=dict(color=guide["color"], width=1.6, dash="dash"),
+        )
+        fig.add_annotation(
+            x=guide["x1"],
+            y=guide["y1"],
+            text=guide["label"],
+            showarrow=False,
+            xanchor="right",
+            yanchor="bottom" if guide["kind"] == "support" else "top",
+            bgcolor="rgba(15,23,42,0.78)",
+            bordercolor=guide["color"],
+            borderwidth=1,
+            font=dict(color=guide["color"], size=11),
+        )
+    return guides
+
+
+def _trendline_guides_caption(guides: list) -> str:
+    if not guides:
+        return ""
+    parts = []
+    for guide in guides:
+        side = "저항" if guide.get("kind") == "resistance" else "지지"
+        parts.append(f"{side} {guide.get('direction', '-')}")
+    return "추세선: " + " · ".join(parts) + " · 가격이 두 선 사이에서 위/아래 어느 쪽을 돌파하는지 봅니다."
+
+
 def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins: int = 31) -> dict:
     """가격대별 누적 거래량으로 현재가 위/아래 매물대를 요약합니다."""
     empty = {"ok": False, "reason": "데이터 부족", "rows": []}
@@ -8275,6 +8418,9 @@ def render_precision_candlestick_chart(
     smc_features = None
     if show_smc:
         smc_features = _add_smc_structure_overlays(fig, df, ticker)
+    trendline_guides = []
+    if show_patterns:
+        trendline_guides = _add_recent_trendline_guides(fig, df)
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     fig.update_layout(
@@ -8292,6 +8438,9 @@ def render_precision_candlestick_chart(
             )
     if pattern_candidates:
         st.caption(_chart_pattern_caption(pattern_candidates))
+    trend_caption = _trendline_guides_caption(trendline_guides)
+    if trend_caption:
+        st.caption(trend_caption)
     if show_smc and smc_features:
         caption = build_smc_overlay_caption(smc_features, ticker)
         if caption:
@@ -34477,10 +34626,10 @@ if main_page == "precision":
             _show_avg = p_line > 0 and not is_free and has_p
             avg_line = p_line if _show_avg else 0.0
             show_chart_patterns = st.checkbox(
-                "차트 패턴 후보 표시",
+                "차트 패턴/추세선 표시",
                 value=True,
                 key=f"precision_chart_patterns_{tkr}",
-                help="쌍바닥, 쌍봉, 헤드앤숄더, 깃발형, 삼각수렴을 최근 피벗 기준 보조 후보로 표시합니다.",
+                help="쌍바닥, 쌍봉, 헤드앤숄더, 깃발형, 삼각수렴과 최근 고점/저점 추세선을 표시합니다. 오래 지나 현재가와 동떨어진 패턴은 숨깁니다.",
             )
             show_liquidity_profile = st.checkbox(
                 "유동성 매물대 표시",
