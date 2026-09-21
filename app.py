@@ -7793,16 +7793,14 @@ def _chart_pattern_annotation_text(pattern: dict) -> str:
     direction = pattern.get("direction", "neutral")
     lifecycle = pattern.get("lifecycle", "관찰")
     name = pattern.get("name", "패턴")
-    trigger = _chart_pattern_price_text(pattern.get("trigger_price"))
-    invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
     if lifecycle == "관찰" and direction == "bullish":
-        return f"{name} 후보<br>기준 {trigger} 전<br>회복 미확정"
+        return f"{name} 후보"
     if lifecycle == "현재유효" and direction == "bullish":
-        return f"{name} 유효<br>기준 {trigger} 위 유지<br>무효 {invalid}"
+        return f"{name} 유효"
     if lifecycle == "관찰" and direction == "bearish":
-        return f"{name} 후보<br>이탈 전<br>하락 미확정"
+        return f"{name} 후보"
     if lifecycle == "현재유효" and direction == "bearish":
-        return f"{name} 유효<br>기준 {trigger} 아래<br>무효 {invalid}"
+        return f"{name} 유효"
     return f"{name} 후보<br>방향 확인 전"
 
 
@@ -7817,19 +7815,21 @@ def _add_chart_pattern_overlays(fig, patterns: list):
                 x0=x0, y0=y0, x1=x1, y1=y1,
                 line=dict(color=color, width=line_width, dash="dot"),
             )
-        arrow_y = -44 if pattern.get("direction") == "bullish" else 44
+        direction = pattern.get("direction", "neutral")
+        label_y = 0.96 if direction != "bullish" else 0.90
         fig.add_annotation(
-            x=pattern.get("label_x"),
-            y=pattern.get("label_y"),
+            x=0.02,
+            y=label_y,
+            xref="paper",
+            yref="paper",
             text=_chart_pattern_annotation_text(pattern),
-            showarrow=True,
-            arrowhead=2,
-            ax=0,
-            ay=arrow_y,
-            bgcolor="rgba(15,23,42,0.85)",
+            showarrow=False,
+            xanchor="left",
+            yanchor="top",
+            bgcolor="rgba(15,23,42,0.72)",
             bordercolor=color,
             borderwidth=1,
-            font=dict(color=color, size=12),
+            font=dict(color=color, size=11),
         )
 
 
