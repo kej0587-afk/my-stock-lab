@@ -7,6 +7,8 @@ from stock_lab_core.today_queue import (
     format_dashboard_reason,
     format_dashboard_timing_label,
     is_today_queue_defense_signal,
+    leveraged_market_defense_mask,
+    leveraged_recovery_tracking_mask,
     sort_today_queue_detail_table,
     today_queue_reason_bucket,
     today_queue_wait_mask,
@@ -146,6 +148,72 @@ def test_today_queue_routes_storm_leverage_wait_to_market_defense():
     })
 
     assert today_queue_reason_bucket(row) == "시장방어"
+
+
+def test_leveraged_recovery_tracking_survives_broad_market_defense():
+    summary_df = pd.DataFrame([{
+        "종목명": "2x Bitcoin ETF",
+        "티커": "BITX",
+        "유형": "ETF",
+        "매크로상태": "CAUTION",
+        "🔥기술적 타점": "⚡레버리지 신규 추격금지: 눌림 대기",
+        "패턴타점": "-",
+        "최종읽기": "⏳눌림대기",
+        "📌후보등급": "✅ETF 양호",
+        "핵심근거": "미보유 관찰 ×0 · 회복 6/6(회복 우세) · 기초축 1W +4.7%",
+        "R/R": "2.00",
+        "Adj점수": 6.5,
+        "현재비중": 0.0,
+        "목표비중": 2.0,
+    }])
+    leveraged_mask = pd.Series([True], index=summary_df.index)
+    kr_mask = pd.Series([False], index=summary_df.index)
+    us_mask = pd.Series([True], index=summary_df.index)
+    market_guard = {"mode": "위험", "macro_risk": 4.5, "us_stats": {"mode": "위험"}}
+
+    assert bool(leveraged_recovery_tracking_mask(summary_df, leveraged_mask).iloc[0])
+    assert not bool(leveraged_market_defense_mask(summary_df, leveraged_mask, kr_mask, us_mask, market_guard).iloc[0])
+
+
+def test_leveraged_recovery_tracking_recovers_cached_market_label():
+    summary_df = pd.DataFrame([{
+        "종목명": "2x Bitcoin ETF",
+        "티커": "BITX",
+        "유형": "ETF",
+        "매크로상태": "CAUTION",
+        "🔥기술적 타점": "🛡️레버리지 시장위험: 신규/DCA 대기",
+        "최종읽기": "🛡️레버리지시장방어",
+        "📌후보등급": "✅ETF 양호",
+        "핵심근거": "레버리지 전용 단계: 미보유 관찰 ×0",
+        "R/R": "2.00",
+        "Adj점수": 6.5,
+        "현재비중": 0.0,
+        "목표비중": 2.0,
+    }])
+
+    assert bool(leveraged_recovery_tracking_mask(summary_df).iloc[0])
+
+
+def test_leveraged_storm_still_forces_market_defense():
+    summary_df = pd.DataFrame([{
+        "종목명": "2x Bitcoin ETF",
+        "티커": "BITX",
+        "유형": "ETF",
+        "매크로상태": "STORM",
+        "🔥기술적 타점": "⚡레버리지 신규 추격금지: 눌림 대기",
+        "최종읽기": "⏳눌림대기",
+        "📌후보등급": "✅ETF 양호",
+        "핵심근거": "미보유 관찰 ×0 · 회복 6/6(회복 우세)",
+        "R/R": "2.00",
+        "Adj점수": 6.5,
+        "현재비중": 0.0,
+        "목표비중": 2.0,
+    }])
+    leveraged_mask = pd.Series([True], index=summary_df.index)
+    kr_mask = pd.Series([False], index=summary_df.index)
+    us_mask = pd.Series([True], index=summary_df.index)
+
+    assert bool(leveraged_market_defense_mask(summary_df, leveraged_mask, kr_mask, us_mask, {"mode": "위험"}).iloc[0])
 
 
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch():

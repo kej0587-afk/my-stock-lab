@@ -137,7 +137,7 @@ def today_queue_reason_bucket(row: Any) -> str:
         return "시장방어"
     if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
-    if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
+    if re.search(r"회복추적|회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
         return "비중초과 방어"
@@ -154,7 +154,7 @@ def today_queue_reason_bucket(row: Any) -> str:
         flags=re.IGNORECASE,
     ):
         return "추세방어"
-    if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
+    if re.search(r"회복추적|회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
     if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
         return "관심/눌림대기"
@@ -199,7 +199,7 @@ def today_queue_wait_mask(
         na=False,
     )
     wait_mask = (
-        label.str.contains(r"R/R\s*[<＜]\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
+        label.str.contains(r"R/R\s*[<＜]\s*1|상위과열|과열확장|추격금지|대기|회복추적|회복관찰|회복초입|회복 후보", regex=True, na=False)
         | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
         | bucket_series.eq("관심/눌림대기")
         | leveraged_dca_watch
@@ -225,6 +225,126 @@ def today_queue_wait_mask(
         | leveraged_dca_watch
         | overheat_timing_watch
     ) & wait_mask & ~defense_bucket & ~hard_block
+
+
+def _today_queue_numeric_series(df: pd.DataFrame, column: str, default: float = math.nan) -> pd.Series:
+    if df is None or column not in df.columns:
+        return pd.Series(default, index=getattr(df, "index", []), dtype="float64")
+    return df[column].map(lambda value: clean_float(value, default))
+
+
+def _today_queue_text_series(df: pd.DataFrame, column: str) -> pd.Series:
+    idx = getattr(df, "index", [])
+    if df is None or column not in df.columns:
+        return pd.Series("", index=idx, dtype="object")
+    return df[column].fillna("").astype(str)
+
+
+def leveraged_recovery_tracking_mask(
+    summary_df: pd.DataFrame,
+    leveraged_display_mask: pd.Series | None = None,
+) -> pd.Series:
+    """Return leveraged rows that should stay visible as recovery/watch candidates.
+
+    A broad market-risk overlay should still block true storm or hard-block rows,
+    but it should not hide a leveraged product whose own checklist says recovery,
+    R/R, and underlying-axis confirmation are all improving.
+    """
+    if summary_df is None or summary_df.empty:
+        return pd.Series(dtype=bool)
+
+    idx = summary_df.index
+    if leveraged_display_mask is None:
+        ticker = _today_queue_text_series(summary_df, "티커").str.upper()
+        label = _today_queue_text_series(summary_df, "🔥기술적 타점")
+        leveraged_display_mask = (
+            label.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
+            | ticker.str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+        )
+    else:
+        leveraged_display_mask = leveraged_display_mask.reindex(idx, fill_value=False)
+
+    label = _today_queue_text_series(summary_df, "🔥기술적 타점")
+    code = _today_queue_text_series(summary_df, "판정코드")
+    final_read = _today_queue_text_series(summary_df, "최종읽기")
+    grade = _today_queue_text_series(summary_df, "📌후보등급")
+    action = _today_queue_text_series(summary_df, "실행메모")
+    reason = _today_queue_text_series(summary_df, "핵심근거")
+    pattern = _today_queue_text_series(summary_df, "패턴타점")
+    pattern_reason = _today_queue_text_series(summary_df, "패턴근거")
+    macro_state = _today_queue_text_series(summary_df, "매크로상태").str.upper()
+    text = label + " " + code + " " + final_read + " " + grade + " " + action + " " + reason + " " + pattern + " " + pattern_reason
+
+    rr = _today_queue_numeric_series(summary_df, "RR값")
+    if rr.isna().all():
+        rr = _today_queue_numeric_series(summary_df, "R/R")
+    adj = _today_queue_numeric_series(summary_df, "Adj점수")
+    current_w = _today_queue_numeric_series(summary_df, "현재비중", 0.0)
+    target_w = _today_queue_numeric_series(summary_df, "목표비중", 0.0)
+
+    strong_recovery_text = text.str.contains(
+        r"회복\s*\d+\s*/\s*\d+|회복\s*우세|기초축\s*1W\s*\+|"
+        r"고점선\s*돌파\s*완료|돌파\s*후\s*유효|패턴성공|패턴유효|"
+        r"신규\s*추격금지:\s*눌림\s*대기|레버리지.*눌림\s*대기|DCA조건부|미보유\s*관찰",
+        regex=True,
+        case=False,
+        na=False,
+    )
+    rr_or_quality_ok = (rr >= 1.2) | (adj >= 4.0)
+    weight_not_over = (target_w <= 0) | (current_w <= target_w + 0.05)
+    hard_block = (
+        code.str.contains(r"HARD_BLOCK|TARGET_FILLED|OVERWEIGHT|LEVERAGED_DAILY_DROP_NO_ADD|LEVERAGED_RECOVERY_DCA_BLOCK", regex=True, na=False)
+        | label.str.contains(r"하드차단|비중\s*초과|비중\s*충족|레버리지\s*급락|DCA\s*보류", regex=True, na=False)
+        | grade.str.contains(r"비중방어|추매금지|후보제외", regex=True, na=False)
+    )
+
+    return leveraged_display_mask & strong_recovery_text & rr_or_quality_ok & weight_not_over & ~hard_block & ~macro_state.eq("STORM")
+
+
+def leveraged_market_defense_mask(
+    summary_df: pd.DataFrame,
+    leveraged_display_mask: pd.Series,
+    kr_market_mask: pd.Series,
+    us_market_mask: pd.Series,
+    market_guard: dict | None,
+) -> pd.Series:
+    """Return leveraged rows that should be force-routed to market defense.
+
+    Strong recovery/watch rows are excluded from broad market overlays so they
+    remain visible as watch candidates. Explicit per-row STORM still wins.
+    """
+    if summary_df is None or summary_df.empty:
+        return pd.Series(dtype=bool)
+    idx = summary_df.index
+    leveraged_display_mask = leveraged_display_mask.reindex(idx, fill_value=False)
+    kr_market_mask = kr_market_mask.reindex(idx, fill_value=False)
+    us_market_mask = us_market_mask.reindex(idx, fill_value=False)
+
+    macro_state_series = _today_queue_text_series(summary_df, "매크로상태").str.upper()
+    market_guard = market_guard or {}
+    kr_mode = str(((market_guard.get("kr_stats", {}) or {}).get("mode", "")) or "")
+    us_mode = str(((market_guard.get("us_stats", {}) or {}).get("mode", "")) or "")
+    market_mode = str(market_guard.get("mode", "") or "")
+    market_macro_risk = clean_float(market_guard.get("macro_risk"), math.nan)
+    defensive_modes = {"비상", "위험", "방어"}
+    market_macro_storm = bool(_finite_num(market_macro_risk) and float(market_macro_risk) >= 4.5)
+
+    explicit_storm = leveraged_display_mask & macro_state_series.eq("STORM")
+    broad_defense = leveraged_display_mask & market_macro_storm
+    if kr_mode in defensive_modes:
+        broad_defense = broad_defense | (leveraged_display_mask & kr_market_mask)
+    if us_mode in defensive_modes:
+        broad_defense = broad_defense | (leveraged_display_mask & us_market_mask)
+    if market_mode in {"전시장 비상", "국장 비상", "미장 비상", "위험", "방어", "위험장 반등"}:
+        if market_mode in {"전시장 비상", "위험", "방어", "위험장 반등"}:
+            broad_defense = broad_defense | leveraged_display_mask
+        elif market_mode == "국장 비상":
+            broad_defense = broad_defense | (leveraged_display_mask & kr_market_mask)
+        elif market_mode == "미장 비상":
+            broad_defense = broad_defense | (leveraged_display_mask & us_market_mask)
+
+    recovery_watch = leveraged_recovery_tracking_mask(summary_df, leveraged_display_mask)
+    return explicit_storm | (broad_defense & ~recovery_watch)
 
 
 def is_dashboard_block_or_wait_label(label: str) -> bool:

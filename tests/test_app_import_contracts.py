@@ -147,6 +147,8 @@ def test_today_queue_exports_used_by_app():
             "is_dashboard_block_or_wait_label",
             "is_dashboard_low_rr_caution",
             "is_today_queue_defense_signal",
+            "leveraged_market_defense_mask",
+            "leveraged_recovery_tracking_mask",
             "today_queue_reason_bucket",
             "today_queue_wait_mask",
         ],

@@ -842,6 +842,8 @@ try:
         is_dashboard_block_or_wait_label,
         is_dashboard_low_rr_caution,
         is_today_queue_defense_signal,
+        leveraged_market_defense_mask as _leveraged_market_defense_mask,
+        leveraged_recovery_tracking_mask as _leveraged_recovery_tracking_mask,
         sort_today_queue_detail_table,
         today_queue_reason_bucket as _today_queue_reason_bucket,
         today_queue_wait_mask as _today_queue_wait_mask,
@@ -1004,6 +1006,35 @@ except Exception as _today_queue_classify_import_error:
             | leveraged_dca_watch
             | overheat_timing_watch
         ) & wait_mask & ~defense_bucket & ~hard_block
+
+    def _leveraged_market_defense_mask(summary_df, leveraged_display_mask, kr_market_mask, us_market_mask, market_guard):
+        if summary_df is None or summary_df.empty:
+            return pd.Series(dtype=bool)
+        macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
+        kr_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", "") or "")
+        us_mode = str(((market_guard or {}).get("us_stats", {}) or {}).get("mode", "") or "")
+        market_mode = str((market_guard or {}).get("mode", "") or "")
+        market_macro_risk = clean_float((market_guard or {}).get("macro_risk", globals().get("final_macro_risk", np.nan)), np.nan)
+        defensive_modes = {"비상", "위험", "방어"}
+        market_macro_storm = bool(finite_num(market_macro_risk) and float(market_macro_risk) >= 4.5)
+        out = leveraged_display_mask & (macro_state_series.eq("STORM") | market_macro_storm)
+        if kr_mode in defensive_modes:
+            out = out | (leveraged_display_mask & kr_market_mask)
+        if us_mode in defensive_modes:
+            out = out | (leveraged_display_mask & us_market_mask)
+        if market_mode in {"전시장 비상", "국장 비상", "미장 비상", "위험", "방어", "위험장 반등"}:
+            if market_mode in {"전시장 비상", "위험", "방어", "위험장 반등"}:
+                out = out | leveraged_display_mask
+            elif market_mode == "국장 비상":
+                out = out | (leveraged_display_mask & kr_market_mask)
+            elif market_mode == "미장 비상":
+                out = out | (leveraged_display_mask & us_market_mask)
+        return out
+
+    def _leveraged_recovery_tracking_mask(summary_df, leveraged_display_mask=None):
+        if summary_df is None or summary_df.empty:
+            return pd.Series(dtype=bool)
+        return pd.Series(False, index=summary_df.index)
 
     def is_dashboard_block_or_wait_label(label):
         return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상", "시장위험", "추매중단", "보유점검"))
@@ -31569,26 +31600,19 @@ def render_today_queue_tab(mode):
     macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
     kr_market_mask = ticker_series.map(lambda t: is_kr_listed(sanitize_ticker_value(t)))
     us_market_mask = ~kr_market_mask
-    kr_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", "") or "")
-    us_mode = str(((market_guard or {}).get("us_stats", {}) or {}).get("mode", "") or "")
-    market_mode = str((market_guard or {}).get("mode", "") or "")
-    market_macro_risk = clean_float((market_guard or {}).get("macro_risk", globals().get("final_macro_risk", np.nan)), np.nan)
-    defensive_modes = {"비상", "위험", "방어"}
-    market_macro_storm = bool(finite_num(market_macro_risk) and float(market_macro_risk) >= 4.5)
-    leveraged_market_defense_mask = leveraged_display_mask & (
-        macro_state_series.eq("STORM") | market_macro_storm
+    leveraged_recovery_watch_mask = _leveraged_recovery_tracking_mask(summary_df, leveraged_display_mask)
+    if leveraged_recovery_watch_mask.any():
+        reason_bucket.loc[leveraged_recovery_watch_mask & reason_bucket.eq("시장방어")] = "관심/눌림대기"
+        needs_recovery_label = leveraged_recovery_watch_mask & label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
+        summary_df.loc[needs_recovery_label, "🔥기술적 타점"] = "⚡레버리지 회복추적: 눌림대기"
+        label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    leveraged_market_defense_mask = _leveraged_market_defense_mask(
+        summary_df,
+        leveraged_display_mask,
+        kr_market_mask,
+        us_market_mask,
+        market_guard,
     )
-    if kr_mode in defensive_modes:
-        leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & kr_market_mask)
-    if us_mode in defensive_modes:
-        leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & us_market_mask)
-    if market_mode in {"전시장 비상", "국장 비상", "미장 비상", "위험", "방어", "위험장 반등"}:
-        if market_mode in {"전시장 비상", "위험", "방어", "위험장 반등"}:
-            leveraged_market_defense_mask = leveraged_market_defense_mask | leveraged_display_mask
-        elif market_mode == "국장 비상":
-            leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & kr_market_mask)
-        elif market_mode == "미장 비상":
-            leveraged_market_defense_mask = leveraged_market_defense_mask | (leveraged_display_mask & us_market_mask)
     if leveraged_market_defense_mask.any():
         reason_bucket.loc[leveraged_market_defense_mask] = "시장방어"
         needs_market_label = leveraged_market_defense_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
