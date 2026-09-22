@@ -6,8 +6,12 @@ them into the few execution fields that belong in the queue table.
 
 from __future__ import annotations
 
+import io
+import json
 import math
 import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
@@ -27,6 +31,9 @@ except Exception:
         except Exception:
             return False
 
+
+TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
+TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
 
 TODAY_QUEUE_DEFENSE_CODES = {
     "PANIC_FINAL_DEPLOY",
@@ -99,6 +106,58 @@ TODAY_QUEUE_EXECUTION_WAIT_CODES = {
     "LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
     "HOLDING_DCA_CONDITION_MISS", "FUND_OVERSOLD_REBALANCE_REVIEW",
 }
+
+
+def save_today_queue_summary_snapshot(
+    summary_df: pd.DataFrame,
+    signature: str = "",
+    last_run: str = "",
+    *,
+    path: Path | str | None = None,
+) -> None:
+    """Persist the last manual today-queue run so another browser session can reuse it."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return
+    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
+    try:
+        payload = {
+            "version": TODAY_QUEUE_LOGIC_VERSION,
+            "signature": str(signature or ""),
+            "last_run": str(last_run or ""),
+            "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+            "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
+        }
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def load_today_queue_summary_snapshot(path: Path | str | None = None):
+    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
+    try:
+        if not snapshot_path.exists():
+            return pd.DataFrame(), "", ""
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if payload.get("version") != TODAY_QUEUE_LOGIC_VERSION:
+            return pd.DataFrame(), "", ""
+        raw_data = payload.get("data", "")
+        if not raw_data:
+            return pd.DataFrame(), "", ""
+        summary_df = pd.read_json(io.StringIO(raw_data), orient="split")
+        if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+            return pd.DataFrame(), "", ""
+        return summary_df, str(payload.get("signature", "")), str(payload.get("last_run", ""))
+    except Exception:
+        return pd.DataFrame(), "", ""
+
+
+def clear_today_queue_summary_snapshot(path: Path | str | None = None) -> None:
+    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
+    try:
+        snapshot_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -> bool:

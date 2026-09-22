@@ -3,12 +3,15 @@ import pandas as pd
 from stock_lab_core.today_queue import (
     build_dashboard_final_read,
     build_today_queue_execution_snapshot,
+    clear_today_queue_summary_snapshot,
     format_dashboard_candidate_grade,
     format_dashboard_reason,
     format_dashboard_timing_label,
     is_today_queue_defense_signal,
     leveraged_market_defense_mask,
     leveraged_recovery_tracking_mask,
+    load_today_queue_summary_snapshot,
+    save_today_queue_summary_snapshot,
     sort_today_queue_detail_table,
     today_queue_reason_bucket,
     today_queue_wait_mask,
@@ -48,6 +51,28 @@ def test_today_queue_execution_snapshot_uses_nearest_support_for_wait_signal():
     assert "MA5" in snap["1차조건"]
     assert snap["실행메모"] == "눌림/종가 확인"
     assert snap["부족액"].startswith("$400")
+
+
+def test_today_queue_summary_snapshot_roundtrips(tmp_path):
+    path = tmp_path / "today_queue_summary_snapshot.json"
+    source = pd.DataFrame({
+        "ticker": ["AMD"],
+        "price": ["USD122.50"],
+        "Adj점수": [3.5],
+    })
+
+    save_today_queue_summary_snapshot(source, "sig-1", "2026-09-22 11:00", path=path)
+    loaded, signature, last_run = load_today_queue_summary_snapshot(path=path)
+
+    assert list(loaded["ticker"]) == ["AMD"]
+    assert list(loaded["price"]) == ["USD122.50"]
+    assert float(loaded["Adj점수"].iloc[0]) == 3.5
+    assert signature == "sig-1"
+    assert last_run == "2026-09-22 11:00"
+
+    clear_today_queue_summary_snapshot(path=path)
+    reloaded, _, _ = load_today_queue_summary_snapshot(path=path)
+    assert reloaded.empty
 
 
 def test_today_queue_execution_snapshot_hides_entry_price_for_weight_block():

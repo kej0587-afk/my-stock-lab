@@ -762,14 +762,30 @@ except Exception as _decision_helpers_import_error:
                     )
         return sizing_hint
 try:
-    from stock_lab_core.today_queue import build_today_queue_execution_snapshot
+    from stock_lab_core.today_queue import (
+        TODAY_QUEUE_LOGIC_VERSION,
+        build_today_queue_execution_snapshot,
+        clear_today_queue_summary_snapshot,
+        load_today_queue_summary_snapshot,
+        save_today_queue_summary_snapshot,
+    )
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""
 except Exception as _today_queue_snapshot_import_error:
+    TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = repr(_today_queue_snapshot_import_error)
     logging.warning(
         "stock_lab_core.today_queue snapshot unavailable; using local fallback: %s",
         TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR,
     )
+
+    def save_today_queue_summary_snapshot(summary_df, signature: str = "", last_run: str = "") -> None:
+        return None
+
+    def load_today_queue_summary_snapshot():
+        return pd.DataFrame(), "", ""
+
+    def clear_today_queue_summary_snapshot() -> None:
+        return None
 
     def build_today_queue_execution_snapshot(
         name,
@@ -21369,55 +21385,7 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
     return {"tkr": tkr, "f_score": None, "row": row}
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
 TODAY_QUEUE_FLOW_AUTO_LIMIT = 12
-TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).parent / "cache" / "today_queue_summary_snapshot.json"
-
-
-def save_today_queue_summary_snapshot(summary_df, signature: str = "", last_run: str = "") -> None:
-    """Persist the last manual today-queue run so another browser session can reuse it."""
-    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
-        return
-    try:
-        payload = {
-            "version": TODAY_QUEUE_LOGIC_VERSION,
-            "signature": str(signature or ""),
-            "last_run": str(last_run or ""),
-            "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
-            "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
-        }
-        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.write_text(
-            json.dumps(payload, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
-
-def load_today_queue_summary_snapshot():
-    try:
-        if not TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.exists():
-            return pd.DataFrame(), "", ""
-        payload = json.loads(TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.read_text(encoding="utf-8"))
-        if payload.get("version") != TODAY_QUEUE_LOGIC_VERSION:
-            return pd.DataFrame(), "", ""
-        raw_data = payload.get("data", "")
-        if not raw_data:
-            return pd.DataFrame(), "", ""
-        summary_df = pd.read_json(io.StringIO(raw_data), orient="split")
-        if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
-            return pd.DataFrame(), "", ""
-        return summary_df, str(payload.get("signature", "")), str(payload.get("last_run", ""))
-    except Exception:
-        return pd.DataFrame(), "", ""
-
-
-def clear_today_queue_summary_snapshot() -> None:
-    try:
-        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.unlink(missing_ok=True)
-    except Exception:
-        pass
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
