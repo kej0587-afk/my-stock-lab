@@ -790,6 +790,17 @@ def _us_equity_regular_session_active() -> bool:
     return (9 * 60 + 30) <= minutes < (16 * 60)
 
 
+def _us_equity_after_hours_active() -> bool:
+    try:
+        now = pd.Timestamp.now(tz="America/New_York")
+    except Exception:
+        return False
+    if now.date().weekday() >= 5 or now.date() in _us_equity_market_holidays(now.year):
+        return False
+    minutes = now.hour * 60 + now.minute
+    return (16 * 60) <= minutes < (20 * 60)
+
+
 def _latest_recent_close_from_series(series, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> float:
     if isinstance(series, pd.DataFrame):
         if series.empty:
@@ -1347,6 +1358,7 @@ def _fetch_us_realtime_price(ticker: str) -> float:
         return _accept_us_untimed_quote_price(t, price)
 
     regular_session_active = _us_equity_regular_session_active()
+    after_hours_active = _us_equity_after_hours_active()
     if regular_session_active:
         price = _first_price([
             lambda: _fetch_yahoo_quote(t),
@@ -1363,15 +1375,25 @@ def _fetch_us_realtime_price(ticker: str) -> float:
             lambda: _accept_us_untimed_quote_price(t, _fetch_cboe_book_price(t)),
         ])
 
-    non_regular_sources = [lambda: _fetch_yahoo_overnight_page_price(t)]
+    if after_hours_active:
+        non_regular_sources = [
+            lambda: _fetch_yahoo_quote(t),
+            lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
+            lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
+            lambda: _fetch_robinhood_us_quote(t),
+            lambda: _fetch_yahoo_overnight_page_price(t),
+        ]
+    else:
+        non_regular_sources = [lambda: _fetch_yahoo_overnight_page_price(t)]
     if _is_live_priority_us_ticker(t):
         non_regular_sources.append(_kis_daytime_price)
-    non_regular_sources.extend([
-        lambda: _fetch_yahoo_quote(t),
-        lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
-        lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
-        lambda: _fetch_robinhood_us_quote(t),
-    ])
+    if not after_hours_active:
+        non_regular_sources.extend([
+            lambda: _fetch_yahoo_quote(t),
+            lambda: _fetch_yf_download_price(t, interval="1m", prepost=True),
+            lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
+            lambda: _fetch_robinhood_us_quote(t),
+        ])
     if not _is_live_priority_us_ticker(t):
         non_regular_sources.append(_kis_daytime_price)
     non_regular_sources.extend([
@@ -1819,6 +1841,14 @@ def _fetch_price_uncached(ticker: str) -> float:
             if price > 0:
                 return price
         else:
+            after_hours_active = _us_equity_after_hours_active()
+            if after_hours_active:
+                price = _fetch_yahoo_quote(ticker)
+                if price > 0:
+                    return price
+                price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
+                if price > 0:
+                    return price
             price = _fetch_yahoo_overnight_page_price(ticker)
             if price > 0:
                 return price
@@ -1827,12 +1857,13 @@ def _fetch_price_uncached(ticker: str) -> float:
                 price = _accept_us_untimed_quote_price(ticker, raw_daytime_price)
                 if price > 0:
                     return price
-            price = _fetch_yahoo_quote(ticker)
-            if price > 0:
-                return price
-            price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
-            if price > 0:
-                return price
+            if not after_hours_active:
+                price = _fetch_yahoo_quote(ticker)
+                if price > 0:
+                    return price
+                price = _fetch_yf_download_price(ticker, interval="1m", prepost=True)
+                if price > 0:
+                    return price
             raw_daytime_price = _fetch_kis_us_quote_price(ticker, daytime_only=True)
             price = _accept_us_untimed_quote_price(ticker, raw_daytime_price)
             if price > 0:
@@ -1979,6 +2010,7 @@ def load_latest_prices_batch(tickers) -> dict:
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
         regular_session_active = _us_equity_regular_session_active()
+        after_hours_active = _us_equity_after_hours_active()
         for t in us_tickers:
             key = normalize_price_lookup_key(t)
             p = _fetch_us_realtime_price(t)
@@ -2013,6 +2045,15 @@ def load_latest_prices_batch(tickers) -> dict:
                     continue
                 p = _accept_us_untimed_quote_price(t, _fetch_kis_us_quote_price(t, regular_only=True))
             else:
+                if after_hours_active:
+                    p = _fetch_yahoo_quote(t)
+                    if p > 0:
+                        prices[key] = p
+                        continue
+                    p = _fetch_yf_download_price(t, interval="1m", prepost=True)
+                    if p > 0:
+                        prices[key] = p
+                        continue
                 p = _fetch_yahoo_overnight_page_price(t)
                 if p > 0:
                     prices[key] = p
@@ -2022,14 +2063,15 @@ def load_latest_prices_batch(tickers) -> dict:
                     if p > 0:
                         prices[key] = p
                         continue
-                p = _fetch_yahoo_quote(t)
-                if p > 0:
-                    prices[key] = p
-                    continue
-                p = _fetch_yf_download_price(t, interval="1m", prepost=True)
-                if p > 0:
-                    prices[key] = p
-                    continue
+                if not after_hours_active:
+                    p = _fetch_yahoo_quote(t)
+                    if p > 0:
+                        prices[key] = p
+                        continue
+                    p = _fetch_yf_download_price(t, interval="1m", prepost=True)
+                    if p > 0:
+                        prices[key] = p
+                        continue
                 raw_daytime_price = _fetch_kis_us_quote_price(t, daytime_only=True)
                 p = _accept_us_untimed_quote_price(t, raw_daytime_price)
             if p > 0:

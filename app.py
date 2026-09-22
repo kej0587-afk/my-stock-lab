@@ -21371,6 +21371,53 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
 
 TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
 TODAY_QUEUE_FLOW_AUTO_LIMIT = 12
+TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).parent / "cache" / "today_queue_summary_snapshot.json"
+
+
+def save_today_queue_summary_snapshot(summary_df, signature: str = "", last_run: str = "") -> None:
+    """Persist the last manual today-queue run so another browser session can reuse it."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return
+    try:
+        payload = {
+            "version": TODAY_QUEUE_LOGIC_VERSION,
+            "signature": str(signature or ""),
+            "last_run": str(last_run or ""),
+            "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+            "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
+        }
+        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def load_today_queue_summary_snapshot():
+    try:
+        if not TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.exists():
+            return pd.DataFrame(), "", ""
+        payload = json.loads(TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        if payload.get("version") != TODAY_QUEUE_LOGIC_VERSION:
+            return pd.DataFrame(), "", ""
+        raw_data = payload.get("data", "")
+        if not raw_data:
+            return pd.DataFrame(), "", ""
+        summary_df = pd.read_json(io.StringIO(raw_data), orient="split")
+        if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+            return pd.DataFrame(), "", ""
+        return summary_df, str(payload.get("signature", "")), str(payload.get("last_run", ""))
+    except Exception:
+        return pd.DataFrame(), "", ""
+
+
+def clear_today_queue_summary_snapshot() -> None:
+    try:
+        TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_risk=np.nan):
@@ -31487,6 +31534,16 @@ def render_today_queue_tab(mode):
         last_nonempty = st.session_state.get("today_queue_summary_last_nonempty_df")
         if isinstance(last_nonempty, pd.DataFrame) and not last_nonempty.empty:
             cached_summary = last_nonempty.copy()
+    if cached_summary.empty:
+        disk_summary, disk_sig, disk_last_run = load_today_queue_summary_snapshot()
+        if isinstance(disk_summary, pd.DataFrame) and not disk_summary.empty:
+            cached_summary = disk_summary.copy()
+            st.session_state[summary_key] = cached_summary
+            st.session_state[sig_key] = disk_sig
+            if disk_last_run:
+                st.session_state[last_key] = disk_last_run
+            st.session_state["today_queue_summary_last_nonempty_df"] = cached_summary.copy()
+            st.session_state["today_queue_summary_last_nonempty_sig"] = disk_sig
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
     run_summary = c1.button(
@@ -31499,6 +31556,7 @@ def render_today_queue_tab(mode):
         if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
             for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"]:
                 st.session_state.pop(key, None)
+            clear_today_queue_summary_snapshot()
             st.rerun()
         last_run = st.session_state.get(last_key)
         if last_run:
@@ -31545,9 +31603,10 @@ def render_today_queue_tab(mode):
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+        last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
-        st.session_state[last_key] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+        st.session_state[last_key] = last_run_text
         if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
             st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
             st.session_state["today_queue_summary_last_nonempty_sig"] = queue_sig
@@ -31559,6 +31618,8 @@ def render_today_queue_tab(mode):
     if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
         st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
         st.session_state["today_queue_summary_last_nonempty_sig"] = queue_sig
+        if run_summary:
+            save_today_queue_summary_snapshot(summary_df, queue_sig, st.session_state.get(last_key, ""))
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
