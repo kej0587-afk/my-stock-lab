@@ -160,6 +160,55 @@ def clear_today_queue_summary_snapshot(path: Path | str | None = None) -> None:
         pass
 
 
+def _json_safe_scalar(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        if _finite_num(value):
+            return float(value)
+    except Exception:
+        pass
+    return str(value)
+
+
+def build_today_queue_signature(
+    items,
+    mode: str = "",
+    *,
+    logic_version: str = TODAY_QUEUE_LOGIC_VERSION,
+) -> str:
+    """Build the cache signature that decides whether a saved today-queue run is stale."""
+    watchlist = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        watchlist.append({
+            "name": str(item.get("name", "")),
+            "ticker": sanitize_ticker_value(item.get("ticker", "")),
+            "is_etf": bool(item.get("is_etf", False)),
+            "asset_class": str(item.get("asset_class", "")),
+            "fin_score": _json_safe_scalar(item.get("fin_score")),
+            "qty": clean_float(item.get("qty"), 0.0),
+            "avg_price": clean_float(item.get("avg_price"), 0.0),
+            "target_weight": clean_float(item.get("target_weight"), 0.0),
+            "bucket": str(item.get("bucket", "")),
+        })
+    return json.dumps(
+        {
+            "logic_version": str(logic_version or ""),
+            "mode": str(mode or ""),
+            "watchlist": watchlist,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
 def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -> bool:
     """Return True when a decision belongs in the defensive queue buckets."""
     code = str((decision or {}).get("decision_code", "") or "")

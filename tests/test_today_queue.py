@@ -3,6 +3,7 @@ import pandas as pd
 from stock_lab_core.today_queue import (
     build_dashboard_final_read,
     build_today_queue_execution_snapshot,
+    build_today_queue_signature,
     clear_today_queue_summary_snapshot,
     format_dashboard_candidate_grade,
     format_dashboard_reason,
@@ -73,6 +74,28 @@ def test_today_queue_summary_snapshot_roundtrips(tmp_path):
     clear_today_queue_summary_snapshot(path=path)
     reloaded, _, _ = load_today_queue_summary_snapshot(path=path)
     assert reloaded.empty
+
+
+def test_today_queue_signature_normalizes_inputs_and_tracks_mode():
+    items = [{
+        "name": "Advanced Micro Devices",
+        "ticker": " amd ",
+        "is_etf": False,
+        "asset_class": "us_stock",
+        "fin_score": 3,
+        "qty": "1,200",
+        "avg_price": "70.5",
+        "target_weight": "6.0",
+        "bucket": "manual",
+    }]
+
+    personal_sig = build_today_queue_signature(items, "개인모드", logic_version="test-version")
+    public_sig = build_today_queue_signature(items, "공개모드", logic_version="test-version")
+
+    assert '"logic_version": "test-version"' in personal_sig
+    assert '"ticker": "AMD"' in personal_sig
+    assert '"qty": 1200.0' in personal_sig
+    assert personal_sig != public_sig
 
 
 def test_today_queue_execution_snapshot_hides_entry_price_for_weight_block():

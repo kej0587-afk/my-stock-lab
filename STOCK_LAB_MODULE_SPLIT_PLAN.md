@@ -57,4 +57,5 @@
 - 9차 분리로 월별 투자기록/기간수익률/벤치마크 수익률 계산 helper를 `stock_lab_core.portfolio`로 옮겼습니다.
 - 10차 분리 준비로 `build_holdings_table()`의 비중/운용대상/리밸런싱목표비중 후처리를 `apply_holdings_weight_columns()`로 분리했습니다.
 - 11차 분리로 오늘점검 계산 결과 스냅샷 저장/복원 helper를 `stock_lab_core.today_queue`로 옮겼습니다.
+- 12차 분리로 오늘점검 계산 결과 stale 여부를 판단하는 signature 생성 helper를 `stock_lab_core.today_queue`로 옮겼습니다.
 - DB, 인증, 점수계산, 저장 로직은 변경하지 않았습니다.

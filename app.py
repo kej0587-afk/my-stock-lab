@@ -765,6 +765,7 @@ try:
     from stock_lab_core.today_queue import (
         TODAY_QUEUE_LOGIC_VERSION,
         build_today_queue_execution_snapshot,
+        build_today_queue_signature,
         clear_today_queue_summary_snapshot,
         load_today_queue_summary_snapshot,
         save_today_queue_summary_snapshot,
@@ -786,6 +787,31 @@ except Exception as _today_queue_snapshot_import_error:
 
     def clear_today_queue_summary_snapshot() -> None:
         return None
+
+    def build_today_queue_signature(items, mode: str = "", *, logic_version: str = TODAY_QUEUE_LOGIC_VERSION) -> str:
+        return json.dumps(
+            {
+                "logic_version": str(logic_version or ""),
+                "mode": str(mode or ""),
+                "watchlist": [
+                    {
+                        "name": str(item.get("name", "")),
+                        "ticker": sanitize_ticker_value(item.get("ticker", "")),
+                        "is_etf": bool(item.get("is_etf", False)),
+                        "asset_class": str(item.get("asset_class", "")),
+                        "fin_score": item.get("fin_score"),
+                        "qty": clean_float(item.get("qty"), 0.0),
+                        "avg_price": clean_float(item.get("avg_price"), 0.0),
+                        "target_weight": clean_float(item.get("target_weight"), 0.0),
+                        "bucket": str(item.get("bucket", "")),
+                    }
+                    for item in items or []
+                    if isinstance(item, dict)
+                ],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
 
     def build_today_queue_execution_snapshot(
         name,
@@ -31466,31 +31492,7 @@ def render_today_queue_tab(mode):
         names = [f"{item.get('name', item.get('ticker', ''))}({item.get('ticker', '')})" for item in flow_auto_items[:6]]
         st.caption(f"돈흐름 후보 상위 {len(flow_auto_items)}개를 관심/눌림대기 계산에 자동 포함했습니다: {', '.join(names)}")
 
-    def _today_queue_signature(items) -> str:
-        return json.dumps(
-            {
-                "logic_version": TODAY_QUEUE_LOGIC_VERSION,
-                "mode": mode,
-                "watchlist": [
-                    {
-                        "name": str(item.get("name", "")),
-                        "ticker": sanitize_ticker_value(item.get("ticker", "")),
-                        "is_etf": bool(item.get("is_etf", False)),
-                        "asset_class": str(item.get("asset_class", "")),
-                        "fin_score": item.get("fin_score"),
-                        "qty": clean_float(item.get("qty"), 0.0),
-                        "avg_price": clean_float(item.get("avg_price"), 0.0),
-                        "target_weight": clean_float(item.get("target_weight"), 0.0),
-                        "bucket": str(item.get("bucket", "")),
-                    }
-                    for item in items
-                ],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-
-    queue_sig = _today_queue_signature(watch_items)
+    queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
     summary_key = "today_queue_summary_df"
     sig_key = "today_queue_summary_sig"
     last_key = "today_queue_summary_last_run"
@@ -31562,7 +31564,7 @@ def render_today_queue_tab(mode):
             with st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
                 flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True)
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
-            queue_sig = _today_queue_signature(watch_items)
+            queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
             st.session_state["today_queue_open_flow_detail"] = True
         except Exception as exc:
             st.warning(f"돈흐름 상세/차트 계산은 실패했습니다. 전광판/보유 종목만 먼저 점검합니다: {exc}")
