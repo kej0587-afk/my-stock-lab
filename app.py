@@ -1170,6 +1170,7 @@ from stock_lab_core.today_news import (
     normalize_today_action_news_row as _normalize_today_action_news_row,
     rank_today_action_news_rows as _rank_today_action_news_rows,
 )
+from stock_lab_core.today_flow_candidates import classify_flow_candidate_type
 try:
     from stock_lab_core.money_flow import (
         calculate_money_flow_df,
@@ -29923,9 +29924,9 @@ def render_naver_theme_coverage_panel():
 TODAY_FLOW_SHORTLIST_COLS = [
     "판정", "타이밍", "등록상태", "시장", "종목명", "Ticker",
     "후보군", "테마", "후보근거", "주의요인",
-    "돈흐름점수", "1개월수익률", "3개월수익률",
+    "돈흐름점수", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20260812_readable_shortlist_v1"
+TODAY_FLOW_SHORTLIST_VERSION = "20260922_recovery_tracking_v1"
 
 
 def _flow_shortlist_ticker_key(ticker: str) -> str:
@@ -29993,6 +29994,8 @@ def _flow_short_verdict(row) -> str:
         return "눌림대기"
     if "단기 이탈" in timing:
         return "회복확인"
+    if "회복" in group:
+        return "회복확인"
     if "내부확산 확인" in risk or any(word in internal for word in ["확산 약함", "엇갈림", "소외"]):
         if "진입" in gate or "진입" in action:
             return "내부확인"
@@ -30007,16 +30010,29 @@ def _flow_short_verdict(row) -> str:
 
 def _flow_short_timing(row) -> str:
     price_level = row.get("가격수준", np.nan)
+    ret1d = row.get("1일수익률", row.get("1D", np.nan))
+    ret1w = row.get("1주수익률", row.get("1W", np.nan))
     ret1m = row.get("1개월수익률", np.nan)
     ret2w = row.get("2주수익률", np.nan)
     accel = row.get("가속도", np.nan)
     state = _flow_text(row.get("상태", ""))
+    recent_hot = (
+        (finite_num(ret1d) and float(ret1d) >= 0.04)
+        or (finite_num(ret1w) and float(ret1w) >= 0.06)
+        or (finite_num(ret2w) and float(ret2w) >= 0.08)
+    )
     if finite_num(price_level) and float(price_level) >= 0.90:
+        if recent_hot:
+            return "급등 후 고점권 · 눌림대기"
         return "고점권 · 눌림대기"
     if "과열" in state:
         return "과열 · 추격금지"
     if finite_num(ret2w) and float(ret2w) < -0.05:
         return "단기 이탈 · 회복확인"
+    if recent_hot and finite_num(ret1m) and float(ret1m) < 0:
+        return "급락 후 반등확인"
+    if recent_hot:
+        return "급등 포착"
     if finite_num(ret1m) and float(ret1m) > 0 and finite_num(accel) and float(accel) > 0:
         return "상승가속"
     if finite_num(ret1m) and float(ret1m) < 0 and finite_num(accel) and float(accel) > 0:
@@ -30076,11 +30092,20 @@ def _flow_short_context(row) -> str:
 def _flow_short_risk(row) -> str:
     risks: list[str] = []
     price_level = row.get("가격수준", np.nan)
+    ret1d = row.get("1일수익률", row.get("1D", np.nan))
+    ret1w = row.get("1주수익률", row.get("1W", np.nan))
+    ret2w = row.get("2주수익률", row.get("2W", np.nan))
     state = _flow_text(row.get("상태", ""))
     internal = _flow_short_normalized_internal(row)
     laggards = _flow_text(row.get("약한대표주", ""))
     if finite_num(price_level) and float(price_level) >= 0.90:
         risks.append("고점권")
+    if (
+        (finite_num(ret1d) and float(ret1d) >= 0.04)
+        or (finite_num(ret1w) and float(ret1w) >= 0.06)
+        or (finite_num(ret2w) and float(ret2w) >= 0.08)
+    ):
+        risks.append("급등 후 변동성")
     if "과열" in state:
         risks.append("과열")
     if any(word in internal for word in ["약함", "엇갈림", "소외"]):
@@ -30176,35 +30201,8 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     if tfd_base.empty or "Ticker" not in tfd_base.columns:
         return pd.DataFrame()
 
-    bad_states = {"소외 지속", "급락 경보"}
-
     def _candidate_type(row) -> str:
-        accel = row.get("가속도", None)
-        ret1m = row.get("1개월수익률", None)
-        ret3m = row.get("3개월수익률", None)
-        price_level = row.get("가격수준", None)
-        flow = row.get("돈흐름점수", None)
-        state_raw = str(row.get("상태", ""))
-        for emoji in ["🔴", "💥", "💚", "🔥", "🚀", "🟡", "⚪", "〰️", "⚡", "🟢", "⬛"]:
-            state_raw = state_raw.replace(emoji, "")
-        if state_raw.strip() in bad_states:
-            return "제외"
-        if not finite_num(accel):
-            return "관망"
-        near_high = finite_num(price_level) and float(price_level) > 0.90
-        safe_zone = finite_num(price_level) and 0.30 <= float(price_level) <= 0.90
-        accel_ok = float(accel) >= 0.05
-        ret1m_ok = finite_num(ret1m) and float(ret1m) > 0
-        ret3m_ok = finite_num(ret3m) and float(ret3m) > 0.05
-        flow_swing = finite_num(flow) and float(flow) >= 20
-        flow_long = finite_num(flow) and float(flow) >= 10
-        if near_high:
-            return "고점주의"
-        if accel_ok and ret1m_ok and flow_swing:
-            return "스윙후보"
-        if ret3m_ok and safe_zone and flow_long and float(accel) > -0.5:
-            return "장기후보"
-        return "관망"
+        return classify_flow_candidate_type(row)
 
     tfd_short = (
         tfd_base.sort_values("돈흐름점수", ascending=False, na_position="last")
@@ -30275,6 +30273,7 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     )
     swing = tfd_short[tfd_short["_st"] == "스윙후보"].sort_values("돈흐름점수", ascending=False).head(8)
     long = tfd_short[tfd_short["_st"] == "장기후보"].sort_values("3개월수익률", ascending=False).head(8)
+    recovery = tfd_short[tfd_short["_st"] == "회복추적"].sort_values("돈흐름점수", ascending=False).head(8)
     high = tfd_short[tfd_short["_st"] == "고점주의"].sort_values("돈흐름점수", ascending=False).head(8)
 
     frames = []
@@ -30282,7 +30281,8 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
         (1, "테마 주도주", leader),
         (2, "스윙후보", swing),
         (3, "장기후보", long),
-        (4, "고점주의", high),
+        (4, "회복추적", recovery),
+        (5, "고점주의", high),
     ]:
         if frame is None or frame.empty:
             continue
@@ -30380,7 +30380,7 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
         return
 
     disp = show[[c for c in TODAY_FLOW_SHORTLIST_COLS if c in show.columns]].copy()
-    for col in ["가격수준", "고점근접도", "1개월수익률", "3개월수익률"]:
+    for col in ["가격수준", "고점근접도", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률"]:
         if col in disp.columns:
             if col in {"가격수준", "고점근접도"}:
                 disp[col] = disp[col].apply(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-")
@@ -30399,10 +30399,10 @@ def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame 
             "실행분류", "진입검토", "테마판정", "업종내부", "내부세부축", "기준업종",
             "내부대표주", "약한내부주", "대표업종", "시장대분류",
             "KOSPI대분류", "US대분류", "업종대표주", "약한대표주", "내부확산", "체크포인트",
-            "테마점수", "돈흐름점수", "고점근접도", "가격수준", "1개월수익률", "3개월수익률",
+            "테마점수", "돈흐름점수", "고점근접도", "가격수준", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
         ]
         detail = show[[c for c in detail_cols if c in show.columns]].copy()
-        for col in ["가격수준", "고점근접도", "1개월수익률", "3개월수익률"]:
+        for col in ["가격수준", "고점근접도", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률"]:
             if col in detail.columns:
                 if col in {"가격수준", "고점근접도"}:
                     detail[col] = detail[col].apply(lambda v: f"{v*100:.1f}%" if pd.notna(v) else "-")

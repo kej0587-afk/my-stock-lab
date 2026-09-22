@@ -168,6 +168,16 @@ def test_today_news_exports_used_by_app():
     )
 
 
+def test_today_flow_candidates_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.today_flow_candidates",
+        [
+            "classify_flow_candidate_type",
+            "normalize_money_flow_state",
+        ],
+    )
+
+
 def test_data_quality_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.data_quality",
