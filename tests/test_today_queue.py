@@ -1,6 +1,7 @@
 import pandas as pd
 
 from stock_lab_core.today_queue import (
+    apply_leveraged_dca_dashboard_override,
     build_dashboard_final_read,
     build_today_queue_execution_snapshot,
     build_today_queue_signature,
@@ -11,6 +12,7 @@ from stock_lab_core.today_queue import (
     is_today_queue_defense_signal,
     leveraged_market_defense_mask,
     leveraged_recovery_tracking_mask,
+    leveraged_scout_execution_mask,
     load_today_queue_summary_snapshot,
     save_today_queue_summary_snapshot,
     sort_today_queue_detail_table,
@@ -262,6 +264,89 @@ def test_leveraged_storm_still_forces_market_defense():
     us_mask = pd.Series([True], index=summary_df.index)
 
     assert bool(leveraged_market_defense_mask(summary_df, leveraged_mask, kr_mask, us_mask, {"mode": "위험"}).iloc[0])
+
+
+def test_leveraged_scout_execution_promotes_recovery_dca_candidate():
+    summary_df = pd.DataFrame([{
+        "종목명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+        "티커": "RAM",
+        "유형": "ETF",
+        "매크로상태": "CAUTION",
+        "🔥기술적 타점": "⚡레버리지 DCA 조건부: 단계별 소액",
+        "패턴타점": "패턴유효",
+        "최종읽기": "⏳DCA조건부",
+        "📌후보등급": "⚡레버리지DCA조건부",
+        "실행메모": "조건부 소액 DCA",
+        "핵심근거": "레버리지 전용 단계: 중하락 DCA 후보 · 회복 4/6(부분 회복) · 기초축 1W +6.0%",
+        "판정코드": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+        "R/R": "1.15",
+        "Adj점수": 4.2,
+        "현재비중": 0.5,
+        "목표비중": 2.0,
+        "RSI": 64,
+        "MFI": 72,
+        "%B": 0.82,
+    }])
+
+    mask = leveraged_scout_execution_mask(summary_df)
+
+    assert bool(mask.iloc[0])
+
+
+def test_leveraged_scout_execution_rejects_extreme_heat():
+    summary_df = pd.DataFrame([{
+        "종목명": "Direxion Daily Semiconductor Bull 3X Shares",
+        "티커": "SOXL",
+        "유형": "ETF",
+        "매크로상태": "CAUTION",
+        "🔥기술적 타점": "⚡레버리지 DCA 조건부: 단계별 소액",
+        "최종읽기": "⏳DCA조건부",
+        "📌후보등급": "⚡레버리지DCA조건부",
+        "실행메모": "조건부 소액 DCA",
+        "핵심근거": "회복 5/6(회복 우세) · 기초축 1W +8.0%",
+        "판정코드": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+        "R/R": "1.40",
+        "Adj점수": 5.0,
+        "현재비중": 0.5,
+        "목표비중": 3.0,
+        "RSI": 80,
+        "MFI": 90,
+        "%B": 1.08,
+    }])
+
+    mask = leveraged_scout_execution_mask(summary_df)
+
+    assert not bool(mask.iloc[0])
+
+
+def test_leveraged_dashboard_dca_allows_moderate_recovery_heat():
+    decision = apply_leveraged_dca_dashboard_override({
+        "is_leveraged_or_inverse": True,
+        "decision_code": "ETF_DCA_OK",
+        "dd": -0.25,
+        "pct_b": 0.90,
+        "day_ret": 0.09,
+        "target_w": 3.0,
+        "current_w": 1.0,
+        "weight_gap": 2.0,
+    })
+
+    assert decision["decision_code"] == "LEVERAGED_DCA_CONDITIONAL"
+
+
+def test_leveraged_dashboard_dca_still_blocks_upper_band_chasing():
+    decision = apply_leveraged_dca_dashboard_override({
+        "is_leveraged_or_inverse": True,
+        "decision_code": "ETF_DCA_OK",
+        "dd": -0.25,
+        "pct_b": 0.96,
+        "day_ret": 0.09,
+        "target_w": 3.0,
+        "current_w": 1.0,
+        "weight_gap": 2.0,
+    })
+
+    assert decision["decision_code"] == "LEVERAGED_DCA_OVERHEAT_PASS"
 
 
 def test_today_wait_mask_keeps_overheat_hard_block_visible_as_wait_watch():

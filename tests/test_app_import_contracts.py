@@ -149,6 +149,7 @@ def test_today_queue_exports_used_by_app():
             "is_today_queue_defense_signal",
             "leveraged_market_defense_mask",
             "leveraged_recovery_tracking_mask",
+            "leveraged_scout_execution_mask",
             "today_queue_reason_bucket",
             "today_queue_wait_mask",
         ],

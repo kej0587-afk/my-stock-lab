@@ -409,6 +409,90 @@ def leveraged_recovery_tracking_mask(
     return leveraged_display_mask & strong_recovery_text & rr_or_quality_ok & weight_not_over & ~hard_block & ~macro_state.eq("STORM")
 
 
+def leveraged_scout_execution_mask(
+    summary_df: pd.DataFrame,
+    leveraged_display_mask: pd.Series | None = None,
+) -> pd.Series:
+    """Return leveraged recovery rows that deserve a small first scout slot.
+
+    This is intentionally narrower than ordinary buy signals. It does not turn
+    leveraged ETFs into full DCA candidates; it only prevents improving
+    recovery setups from being buried under generic wait/defense labels.
+    """
+    if summary_df is None or summary_df.empty:
+        return pd.Series(dtype=bool)
+
+    idx = summary_df.index
+    if leveraged_display_mask is None:
+        ticker = _today_queue_text_series(summary_df, "티커").str.upper()
+        label = _today_queue_text_series(summary_df, "🔥기술적 타점")
+        leveraged_display_mask = (
+            label.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
+            | ticker.str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|RAM", regex=True, na=False)
+        )
+    else:
+        leveraged_display_mask = leveraged_display_mask.reindex(idx, fill_value=False)
+
+    label = _today_queue_text_series(summary_df, "🔥기술적 타점")
+    code = _today_queue_text_series(summary_df, "판정코드")
+    final_read = _today_queue_text_series(summary_df, "최종읽기")
+    grade = _today_queue_text_series(summary_df, "📌후보등급")
+    action = _today_queue_text_series(summary_df, "실행메모")
+    reason = _today_queue_text_series(summary_df, "핵심근거")
+    pattern = _today_queue_text_series(summary_df, "패턴타점")
+    pattern_reason = _today_queue_text_series(summary_df, "패턴근거")
+    macro_state = _today_queue_text_series(summary_df, "매크로상태").str.upper()
+    text = label + " " + code + " " + final_read + " " + grade + " " + action + " " + reason + " " + pattern + " " + pattern_reason
+
+    rr = _today_queue_numeric_series(summary_df, "RR값")
+    if rr.isna().all():
+        rr = _today_queue_numeric_series(summary_df, "R/R")
+    adj = _today_queue_numeric_series(summary_df, "Adj점수")
+    current_w = _today_queue_numeric_series(summary_df, "현재비중", 0.0)
+    target_w = _today_queue_numeric_series(summary_df, "목표비중", 0.0)
+    rsi = _today_queue_numeric_series(summary_df, "RSI")
+    mfi = _today_queue_numeric_series(summary_df, "MFI")
+    pct_b = _today_queue_numeric_series(summary_df, "%B")
+    if pct_b.isna().all():
+        pct_b = _today_queue_numeric_series(summary_df, "볼린저 %B")
+
+    conditional_or_recovery = text.str.contains(
+        r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|조건부\s*DCA|소액\s*1차|"
+        r"보험성\s*소액|레버리지.*회복|회복\s*\d+\s*/\s*\d+|회복\s*우세|부분\s*회복|"
+        r"기초축\s*1W\s*\+|눌림\s*정찰|신규\s*1차\s*정찰",
+        regex=True,
+        case=False,
+        na=False,
+    )
+    quality_ok = (rr >= 1.0) | (adj >= 4.0)
+    weight_room = (target_w > 0) & (current_w < target_w - 0.05)
+    extreme_heat = (
+        (rsi >= 78.0)
+        | (mfi >= 88.0)
+        | (pct_b >= 1.05)
+        | text.str.contains(r"극단과열|상한가|급등\s*추격|추격금지", regex=True, na=False)
+    )
+    hard_block = (
+        code.str.contains(
+            r"HARD_BLOCK|TARGET_FILLED|OVERWEIGHT|LEVERAGED_DAILY_DROP_NO_ADD|LEVERAGED_RECOVERY_DCA_BLOCK|LEVERAGED_DCA_OVERHEAT_PASS",
+            regex=True,
+            na=False,
+        )
+        | label.str.contains(r"하드차단|비중\s*초과|비중\s*충족|레버리지\s*급락|DCA\s*보류|과열패스", regex=True, na=False)
+        | grade.str.contains(r"비중방어|추매금지|후보제외", regex=True, na=False)
+    )
+
+    return (
+        leveraged_display_mask
+        & conditional_or_recovery
+        & quality_ok
+        & weight_room
+        & ~extreme_heat
+        & ~hard_block
+        & ~macro_state.eq("STORM")
+    )
+
+
 def leveraged_market_defense_mask(
     summary_df: pd.DataFrame,
     leveraged_display_mask: pd.Series,
@@ -514,8 +598,8 @@ def apply_leveraged_dca_dashboard_override(decision: dict) -> dict:
 
     high_or_chasing = (
         (_finite_num(dd) and dd > -0.10)
-        or (_finite_num(pct_b) and pct_b >= 0.85)
-        or (_finite_num(day_ret) and day_ret >= 0.08)
+        or (_finite_num(pct_b) and pct_b >= 0.95)
+        or (_finite_num(day_ret) and day_ret >= 0.12)
     )
     if high_or_chasing:
         out.update({

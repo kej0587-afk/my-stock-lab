@@ -886,6 +886,7 @@ try:
         is_today_queue_defense_signal,
         leveraged_market_defense_mask as _leveraged_market_defense_mask,
         leveraged_recovery_tracking_mask as _leveraged_recovery_tracking_mask,
+        leveraged_scout_execution_mask as _leveraged_scout_execution_mask,
         sort_today_queue_detail_table,
         today_queue_reason_bucket as _today_queue_reason_bucket,
         today_queue_wait_mask as _today_queue_wait_mask,
@@ -1074,6 +1075,11 @@ except Exception as _today_queue_classify_import_error:
         return out
 
     def _leveraged_recovery_tracking_mask(summary_df, leveraged_display_mask=None):
+        if summary_df is None or summary_df.empty:
+            return pd.Series(dtype=bool)
+        return pd.Series(False, index=summary_df.index)
+
+    def _leveraged_scout_execution_mask(summary_df, leveraged_display_mask=None):
         if summary_df is None or summary_df.empty:
             return pd.Series(dtype=bool)
         return pd.Series(False, index=summary_df.index)
@@ -31626,7 +31632,7 @@ def render_today_queue_tab(mode):
     reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
     leveraged_display_mask = (
         label_series.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
-        | ticker_series.str.upper().str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+        | ticker_series.str.upper().str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|RAM", regex=True, na=False)
     )
     macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
     kr_market_mask = ticker_series.map(lambda t: is_kr_listed(sanitize_ticker_value(t)))
@@ -31649,6 +31655,19 @@ def render_today_queue_tab(mode):
         needs_market_label = leveraged_market_defense_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
         summary_df.loc[needs_market_label, "🔥기술적 타점"] = "🛡️레버리지 시장위험: 신규/DCA 대기"
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    leveraged_scout_mask = _leveraged_scout_execution_mask(summary_df, leveraged_display_mask)
+    if leveraged_scout_mask.any():
+        reason_bucket.loc[leveraged_scout_mask] = "일반"
+        summary_df.loc[leveraged_scout_mask, "최종읽기"] = "✅레버리지정찰"
+        summary_df.loc[leveraged_scout_mask, "실행메모"] = "보험성 1차 정찰"
+        if "📌후보등급" in summary_df.columns:
+            summary_df.loc[leveraged_scout_mask, "📌후보등급"] = "⚡조건부 1차"
+        needs_scout_label = leveraged_scout_mask & label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검|DCA\s*대기", regex=True, na=False)
+        summary_df.loc[needs_scout_label, "🔥기술적 타점"] = "⚡레버리지 회복정찰: 보험성 1차"
+        label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+        final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+        grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+        action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
     defense_reason_mask = reason_bucket.isin([
         "비중초과 방어",
         "시장방어",
@@ -31729,8 +31748,8 @@ def render_today_queue_tab(mode):
     )
     hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
     dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
-    buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
-    caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask
+    buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask | leveraged_scout_mask) & ~hard_block_mask
+    caution_mask = ((signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask) & ~leveraged_scout_mask
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
@@ -31766,9 +31785,11 @@ def render_today_queue_tab(mode):
 
     wait_mask = _today_queue_wait_mask(summary_df, buyish_mask, _upside_value_map)
     if "최종읽기" in summary_df.columns:
-        final_actionable_mask = final_read_series.str.contains("정밀확인", regex=False, na=False)
+        final_actionable_mask = final_read_series.str.contains("정밀확인", regex=False, na=False) | leveraged_scout_mask
     else:
         final_actionable_mask = pd.Series(True, index=summary_df.index)
+    wait_mask = wait_mask & ~leveraged_scout_mask
+    visible_wait_or_defense_mask = visible_wait_or_defense_mask & ~leveraged_scout_mask
     execution_mask = buyish_mask & final_actionable_mask & ~wait_mask & ~visible_wait_or_defense_mask & ~caution_mask
     overweight_mask = caution_mask & reason_bucket.eq("비중초과 방어")
     market_defense_mask = caution_mask & reason_bucket.eq("시장방어")
