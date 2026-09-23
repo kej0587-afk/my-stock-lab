@@ -178,6 +178,7 @@ try:
     from stock_lab_core.asset_classifier import (
         asset_class_marks_fin_score_exempt,
         infer_asset_class_for_ticker,
+        is_concentrated_non_core_etf,
         is_domestic_kr_core_etf,
         is_fin_score_exempt_asset,
         is_known_etf_ticker,
@@ -197,6 +198,7 @@ except Exception as _asset_classifier_import_error:
     )
     try:
         from stock_lab_core.constants import (
+            CONCENTRATED_NON_CORE_ETFS,
             FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
             KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
             KNOWN_KR_ETF_SYMBOLS,
@@ -211,7 +213,8 @@ except Exception as _asset_classifier_import_error:
         KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240"}
         KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
         KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
-        KNOWN_US_OTHER_ETFS = {"DIA", "IWM", "SMH", "SOXX", "SOXL", "DRAM", "RAM", "BITX", "BITU", "TLT"}
+        KNOWN_US_OTHER_ETFS = {"DIA", "IWM", "SMH", "SOXX", "SOXL", "DRAM", "RAM", "BITX", "BITU", "TLT", "MAGS"}
+        CONCENTRATED_NON_CORE_ETFS = {"MAGS"}
         KR_ETF_NAME_KEYWORDS = ("ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR", "HANARO", "액티브")
 
     def is_known_individual_stock_ticker(ticker) -> bool:
@@ -280,15 +283,26 @@ except Exception as _asset_classifier_import_error:
         text = f"{name} {ticker} {asset_class}".upper()
         return "TDF" in text or "FUND" in text or "펀드" in text
 
+    def is_concentrated_non_core_etf(name="", ticker="", asset_class=""):
+        symbol = clean_symbol(ticker)
+        if symbol in CONCENTRATED_NON_CORE_ETFS:
+            return True
+        text = f"{name} {ticker} {asset_class}".upper()
+        return any(symbol in text for symbol in CONCENTRATED_NON_CORE_ETFS)
+
     def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
         bucket_norm = normalize_bucket(bucket)
         if bucket_norm in {"cash", "reserve"}:
             return bucket_norm
         if is_leveraged_or_inverse_product(name, ticker, asset_class):
             return "leverage"
+        if bucket_norm == "core" and is_concentrated_non_core_etf(name, ticker, asset_class):
+            return "swing"
         return bucket_norm
 
     def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
+        if is_concentrated_non_core_etf(name, ticker, asset_class):
+            return False
         ac = str(asset_class or "").strip().lower()
         if ac in {"us_etf_sp", "us_etf_nasdaq"}:
             return True
@@ -11255,6 +11269,38 @@ def _brief_first_numeric(row, columns) -> float:
     return np.nan
 
 
+def _brief_representative_text(row, source: str = "", name: str = "", max_items: int = 3) -> str:
+    cols = [
+        "대표주",
+        "대표주★",
+        "구성종목",
+        "ETF/대표",
+        "ETF 이름",
+        "종목명",
+        "Ticker",
+    ]
+    values: list[str] = []
+    for col in cols:
+        try:
+            raw = row.get(col, "")
+        except Exception:
+            raw = ""
+        text = str(raw or "").strip()
+        if not text or text == "-":
+            continue
+        for part in re.split(r"[,/·|]+", text):
+            item = part.strip()
+            if item and item != "-" and item not in values:
+                values.append(item)
+    if not values:
+        return ""
+    name_text = str(name or "")
+    filtered = [item for item in values if item not in name_text][:max_items]
+    if source == "ETF/섹터":
+        filtered = filtered[:1]
+    return " · ".join(filtered)
+
+
 def _brief_leadership_rows(
     sector_rotation_df: pd.DataFrame,
     theme_rotation_df: pd.DataFrame,
@@ -11292,10 +11338,12 @@ def _brief_leadership_rows(
                 lead_score += float(r1m) * 5.0
             if finite_num(r3m):
                 lead_score += float(r3m) * 2.0
+            representatives = _brief_representative_text(row, source=source, name=name)
             rows.append({
                 "name": f"{name}[{source}]",
                 "source": source,
                 "state": state,
+                "representatives": representatives,
                 "score": lead_score,
                 "flow_score": score,
                 "short": short,
@@ -11360,11 +11408,14 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
         state = str(row.get("state", "") or "")
         if any(w in state for w in ["과열", "추격", "급락"]):
             bits.append("과열주의")
+        reps = str(row.get("representatives", "") or "").strip()
+        if reps:
+            bits.append(f"대표 {reps}")
         parts.append(f"{row.get('name', '-')} ({' · '.join(bits) if bits else '-'})")
     return " · ".join(parts)
 
 
-def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 4) -> list[dict]:
+def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 6) -> list[dict]:
     if command_df is None or command_df.empty:
         return []
     work = command_df.copy()
@@ -16079,8 +16130,8 @@ def get_effective_buy_amount(name, ticker, eff_total, fallback_current_w=0.0, fa
 def get_effective_bucket(name, ticker):
     row = get_holding_row_by_ticker(holdings_table, ticker)
     if row is not None:
-        return infer_bucket(ticker, row.get("bucket", "core"))
-    return infer_bucket(ticker, "")
+        return resolve_effective_investment_bucket(name, ticker, row.get("bucket", "core"), row.get("asset_class", ""))
+    return resolve_effective_investment_bucket(name, ticker, "", "")
 
 def get_cash_available_for_dca(mode):
     # globals() 대신 session_state 사용 (안전한 참조)
@@ -28428,6 +28479,53 @@ def _format_today_investor_value(value) -> str:
     return f"+{v:,.0f}" if v > 0 else f"{v:,.0f}"
 
 
+GLOBAL_COUNTRY_FLOW_TICKERS = {
+    "CORO", "ACWX", "EFA", "IEFA", "EEM", "IEMG", "VEA", "VWO", "VXUS", "VT", "URTH",
+    "EWZ", "EWY", "EWJ", "EWG", "EWU", "INDA", "MCHI", "FXI", "KWEB",
+}
+
+
+def _brief_volume_clean_ticker(row) -> str:
+    for col in ["Ticker", "티커", "ticker"]:
+        try:
+            value = row.get(col, "")
+        except Exception:
+            value = ""
+        text = str(value or "").strip()
+        if text and text != "-":
+            return clean_symbol(text)
+    return ""
+
+
+def _brief_volume_is_global_country_row(row) -> bool:
+    ticker = _brief_volume_clean_ticker(row)
+    text = " ".join(str(row.get(col, "") or "") for col in ["섹터", "ETF 이름", "종목명", "테마", "하위테마", "Ticker"]).upper()
+    if ticker in GLOBAL_COUNTRY_FLOW_TICKERS:
+        return True
+    keywords = [
+        "COUNTRY ROTATION",
+        "ACWI EX US",
+        "ALL COUNTRY",
+        "MSCI ACWI",
+        "INTERNATIONAL COUNTRY",
+        "브라질",
+        "한국",
+        "일본",
+        "중국",
+        "인도",
+        "글로벌/국가",
+    ]
+    return any(keyword in text for keyword in keywords)
+
+
+def _brief_volume_display_name(row, label_col: str, source_name: str) -> str:
+    raw_name = str(row.get(label_col, "") or "").strip()
+    ticker = _brief_volume_clean_ticker(row)
+    if source_name == "ETF/섹터" and ticker and ticker not in raw_name:
+        return f"{raw_name} ({ticker})" if raw_name and raw_name != "-" else ticker
+    return raw_name
+
+
 def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
     snapshot = get_cached_today_market_flow_snapshot()
     if not isinstance(snapshot, dict):
@@ -28448,23 +28546,33 @@ def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
         label_col = next((c for c in ["섹터", "테마", "하위테마", "ETF 이름", "종목명", "Ticker"] if c in tmp.columns), None)
         if not label_col:
             continue
-        tmp["분류"] = source_name
-        tmp["이름"] = tmp[label_col].astype(str)
+        global_country_mask = tmp.apply(
+            lambda row: source_name == "ETF/섹터" and _brief_volume_is_global_country_row(row),
+            axis=1,
+        )
+        tmp["분류"] = np.where(global_country_mask, "글로벌/국가 ETF", source_name)
+        tmp["이름"] = tmp.apply(lambda row: _brief_volume_display_name(row, label_col, source_name), axis=1)
+        tmp["_수급표우선순위"] = np.where(global_country_mask, 1, 0)
         tmp["거래량증가"] = pd.to_numeric(tmp["거래량증가"], errors="coerce")
         if "돈흐름점수" in tmp.columns:
             tmp["돈흐름점수"] = pd.to_numeric(tmp["돈흐름점수"], errors="coerce")
         else:
             tmp["돈흐름점수"] = np.nan
-        frames.append(tmp[["분류", "이름", "거래량증가", "돈흐름점수"]])
+        frames.append(tmp[["분류", "이름", "거래량증가", "돈흐름점수", "_수급표우선순위"]])
     if not frames:
         return pd.DataFrame()
     out = pd.concat(frames, ignore_index=True)
-    out = out.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(limit).copy()
+    out = (
+        out.dropna(subset=["거래량증가"])
+        .sort_values(["_수급표우선순위", "거래량증가"], ascending=[True, False])
+        .head(limit)
+        .copy()
+    )
     if out.empty:
         return out
     out["거래량증가"] = out["거래량증가"].apply(lambda v: f"{float(v)*100:+.1f}%" if finite_num(v) else "-")
     out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: "-" if not finite_num(v) else f"{float(v):.1f}")
-    return out
+    return out.drop(columns=["_수급표우선순위"], errors="ignore")
 
 
 def render_today_briefing_investor_flow(summary_df=None, watch_items=None):

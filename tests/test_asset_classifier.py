@@ -5,6 +5,7 @@ from stock_lab_core.asset_classifier import (
     is_known_etf_ticker,
     is_known_individual_stock_ticker,
     is_leveraged_or_inverse_product,
+    is_concentrated_non_core_etf,
     is_tdf_or_fund_allocation_product,
     is_us_broad_index_core_etf,
     normalize_individual_stock_asset_class,
@@ -54,3 +55,15 @@ def test_tdf_and_core_index_classifiers():
     assert is_us_broad_index_core_etf("SPY", "us_etf_sp", "S&P500")
     assert is_us_broad_index_core_etf("379810.KS", "us_etf_nasdaq", "TIGER 미국나스닥100")
     assert is_domestic_kr_core_etf("069500.KS", "kr_etf", "KOSPI200 ETF")
+
+
+def test_concentrated_etf_does_not_receive_core_dca_bucket():
+    assert is_known_etf_ticker("MAGS")
+    assert is_concentrated_non_core_etf("Roundhill Magnificent Seven ETF", "MAGS", "us_etf_nasdaq")
+    assert not is_us_broad_index_core_etf("MAGS", "us_etf_nasdaq", "Roundhill Magnificent Seven ETF")
+    assert resolve_effective_investment_bucket(
+        "Roundhill Magnificent Seven ETF",
+        "MAGS",
+        "core",
+        "us_etf_nasdaq",
+    ) == "swing"

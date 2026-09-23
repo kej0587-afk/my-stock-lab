@@ -54,6 +54,7 @@ def test_asset_classifier_exports_used_by_app():
             "is_known_etf_ticker",
             "is_known_individual_stock_ticker",
             "is_leveraged_or_inverse_product",
+            "is_concentrated_non_core_etf",
             "is_tdf_or_fund_allocation_product",
             "is_us_broad_index_core_etf",
             "normalize_individual_stock_asset_class",

@@ -64,6 +64,52 @@ def test_us_sector_snapshot_maps_cluster_card_names():
         assert expected_segment in segment_names
 
 
+def test_us_sector_snapshot_energy_excludes_utility_representatives(monkeypatch):
+    monkeypatch.setattr(
+        us_snapshot,
+        "load_us_industry_snapshot",
+        lambda: pd.DataFrame(
+            [
+                {"industry_name": "에너지및관련서비스", "change_pct": 1.2},
+                {"industry_name": "전기", "change_pct": 2.4},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        us_snapshot,
+        "load_us_sector_constituents",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "sector": "에너지및관련서비스",
+                    "ticker": "XOM",
+                    "name": "엑슨 모빌",
+                    "change_pct": 1.0,
+                    "volume": 1000,
+                    "market_cap_thousand": 5_000_000,
+                },
+                {
+                    "sector": "전기",
+                    "ticker": "XEL",
+                    "name": "엑셀 에너지",
+                    "change_pct": 5.0,
+                    "volume": 900,
+                    "market_cap_thousand": 1_000_000,
+                },
+            ]
+        ),
+    )
+
+    snapshot = build_us_cluster_snapshot("에너지", detail_name="에너지")
+    leader_tickers = {item["ticker"] for item in snapshot.get("leaders", [])}
+    segment_names = [item["name"] for item in snapshot.get("subsectors", [])]
+
+    assert "XOM" in leader_tickers
+    assert "XEL" not in leader_tickers
+    assert "에너지 서비스" in segment_names
+    assert "전력 유틸" not in segment_names
+
+
 def test_us_sector_snapshot_ai_semiconductor_excludes_software_media_segments():
     snapshot = build_us_cluster_snapshot("AI·반도체", detail_name="AI·반도체")
     segment_names = [item["name"] for item in snapshot.get("subsectors", [])]

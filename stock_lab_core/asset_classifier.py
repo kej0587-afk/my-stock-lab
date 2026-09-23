@@ -8,6 +8,7 @@ portfolio rows, watchlist rows, and Today Queue can share the same rules.
 from __future__ import annotations
 
 from stock_lab_core.constants import (
+    CONCENTRATED_NON_CORE_ETFS,
     FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
     KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
     KNOWN_KR_ETF_SYMBOLS,
@@ -130,6 +131,15 @@ def is_tdf_or_fund_allocation_product(name, ticker="", asset_class="") -> bool:
     return "TDF" in text or "FUND" in text or "펀드" in text
 
 
+def is_concentrated_non_core_etf(name="", ticker="", asset_class="") -> bool:
+    """Return True for narrow ETF products that should not receive core DCA treatment."""
+    symbol = clean_symbol(ticker)
+    if symbol in CONCENTRATED_NON_CORE_ETFS:
+        return True
+    text = f"{name} {ticker} {asset_class}".upper()
+    return any(symbol in text for symbol in CONCENTRATED_NON_CORE_ETFS)
+
+
 def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class="") -> str:
     """Return the effective bucket after leverage/cash/reserve overrides."""
     bucket_norm = normalize_bucket(bucket)
@@ -137,11 +147,15 @@ def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset
         return bucket_norm
     if is_leveraged_or_inverse_product(name, ticker, asset_class):
         return "leverage"
+    if bucket_norm == "core" and is_concentrated_non_core_etf(name, ticker, asset_class):
+        return "swing"
     return bucket_norm
 
 
 def is_us_broad_index_core_etf(ticker, asset_class="", name="") -> bool:
     """Return True for S&P500/Nasdaq100 core ETF exposure."""
+    if is_concentrated_non_core_etf(name, ticker, asset_class):
+        return False
     ac = str(asset_class or "").strip().lower()
     if ac in {"us_etf_sp", "us_etf_nasdaq"}:
         return True

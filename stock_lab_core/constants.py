@@ -14,8 +14,12 @@ KNOWN_US_OTHER_ETFS = {
     "VNQ", "IBB", "ICLN", "SHLD", "PAVE", "ITA", "IGV", "URA", "IAU", "TLT",
     "IYW", "SSO", "UPRO", "SPXL", "SPXS", "SH", "SDS", "SQQQ", "QID", "PSQ",
     "TECL", "TECS", "SOXS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD",
-    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ",
+    "NVDL", "NVDU", "NVDQ", "TSLL", "TSLQ", "MAGS",
     "HACK", "CIBR", "BUG",  # 사이버보안 ETF
+}
+
+CONCENTRATED_NON_CORE_ETFS = {
+    "MAGS",  # Magnificent Seven 집중 ETF: 대표지수 코어 DCA 예외 대상 아님
 }
 
 # ─── KR ETF 심볼 ─────────────────────────────────────────────────────────────
