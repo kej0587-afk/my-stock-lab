@@ -6,6 +6,7 @@ from stock_lab_core.constants import (
 )
 from stock_lab_core.money_flow import ETF_TO_THEME, MONEY_FLOW_UNIVERSE
 from stock_lab_core.news import GENERIC_TICKERS, NEWS_THEME_TERMS_BY_SYMBOL
+from stock_lab_core.decision_engine import DECISION_CODE_BY_LABEL, classify_decision_signal
 
 
 def test_ram_etf_has_stable_display_and_classification():
@@ -86,7 +87,9 @@ def test_ai_bigtech_etf_profiles_are_concentrated_satellites(app_module):
     assert app_module.TICKER_MAP["MAGS"] == ("MAGS", True, "us_etf_nasdaq")
     assert app_module.TICKER_MAP["0227L0"] == ("0227L0.KS", True, "us_etf_nasdaq")
     assert app_module.resolve_display_name_for_ticker("0227L0.KS", "0227L0") == "HANARO 미국에이전틱AI TOP2+"
+    assert app_module.resolve_display_name_for_ticker("0227LO.KS", "0227LO") == "HANARO 미국에이전틱AI TOP2+"
     assert app_module.sanitize_asset_name("0227L0", "0227L0.KS") == "HANARO 미국에이전틱AI TOP2+"
+    assert app_module.sanitize_asset_name("0227LO.KS", "0227LO.KS") == "HANARO 미국에이전틱AI TOP2+"
 
     mags_item = app_module.sanitize_watchlist_item(
         {"name": "MAGS", "ticker": "MAGS", "is_etf": False, "asset_class": "us_stock", "fin_score": 3}
@@ -116,5 +119,16 @@ def test_ai_bigtech_etf_profiles_are_concentrated_satellites(app_module):
     assert any(row[1] == "META" for row in mags_profile["composition"])
 
     agentic_profile = app_module.get_new_etf_manual_profile("0227L0.KS")
-    assert agentic_profile["composition_axis"] == "Agentic AI 기초/프록시 Top5"
+    assert agentic_profile["composition_axis"] == "Agentic AI 실제 구성 Top10"
+    assert dict((ticker, weight) for _, ticker, weight in agentic_profile["composition"])["MSFT"] > 20
+    assert dict((ticker, weight) for _, ticker, weight in agentic_profile["composition"])["GOOGL"] > 20
     assert any(row[1] == "DELL" for row in agentic_profile["composition"])
+    assert any(row[1] == "CRWD" for row in agentic_profile["composition"])
+    assert any(row[1] == "DDOG" for row in agentic_profile["composition"])
+
+
+def test_concentrated_etf_upper_wait_is_caution():
+    label = "🟡집중 ETF 상단권: 눌림대기"
+
+    assert DECISION_CODE_BY_LABEL[label] == "CONCENTRATED_ETF_UPPER_WAIT"
+    assert classify_decision_signal(label) == "caution"

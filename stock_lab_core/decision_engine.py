@@ -530,7 +530,7 @@ def classify_decision_signal(decision_label: str) -> str:
         "차단", "금지", "위기", "패닉", "역배열", "구조훼손", "추세훼손", "가격위험",
         "가격방어", "급락방어", "단기급락", "추세방어", "대피",
         "처분", "손절", "원인 점검", "하락추세", "추격금지", "보류",
-        "극단과열", "단기과열", "과열확장", "밴드상단", "상단부근",
+        "극단과열", "단기과열", "과열확장", "밴드상단", "상단부근", "상단권",
         "시장위험", "추매중단", "보유점검",
     ]
     if any(keyword in text for keyword in caution_keywords):
@@ -593,6 +593,7 @@ DECISION_CODE_BY_LABEL = {
     "⏳TDF/펀드 낙폭과대: 소액 리밸런싱 검토": "FUND_OVERSOLD_REBALANCE_REVIEW",
     "💎S급 과매도: 강한 분할추매": "S_GRADE_OVERSOLD_BUY",
     "🟡보유주 단기하락: 추매는 종가 확인": "HOLDING_PULLBACK_WAIT_CLOSE",
+    "🟡집중 ETF 상단권: 눌림대기": "CONCENTRATED_ETF_UPPER_WAIT",
     "🎯A급: 기술적 반등": "A_GRADE_TECH_REBOUND",
     "📈정배열: -3% 이상 눌림 분할매수": "UPTREND_PULLBACK_DCA",
     "⏳평단이상: 하락대기(보유)": "ABOVE_COST_WAIT",

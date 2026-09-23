@@ -46,6 +46,7 @@ KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {
     "TSLA", "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "DELL", "TSM",
     "NBIS", "SNDK", "ADBE", "CRM", "ORCL", "NOW", "SNOW", "PLTR", "ASML",
     "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI", "LITE", "PANW",
+    "CRWD", "DDOG",
     "NFLX", "UBER", "ABNB", "BE", "BKNG", "FCX", "NEM", "MRNA", "PYPL",
     "TM",
 }
@@ -134,5 +135,10 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "PYPL": "페이팔",
     "TM": "토요타 모터스(ADR)",
     "TSLA": "테슬라",
+    "ANET": "Arista Networks",
     "DELL": "Dell Technologies",
+    "SNOW": "Snowflake",
+    "PANW": "Palo Alto Networks",
+    "CRWD": "크라우드스트라이크",
+    "DDOG": "Datadog",
 }

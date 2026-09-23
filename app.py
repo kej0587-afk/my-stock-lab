@@ -209,7 +209,10 @@ except Exception as _asset_classifier_import_error:
         )
     except Exception:
         FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
-        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {"FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG", "TSLA", "DELL", "BE"}
+        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {
+            "FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG",
+            "TSLA", "DELL", "BE", "ANET", "SNOW", "PANW", "CRWD", "DDOG",
+        }
         KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240", "0227L0"}
         KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
         KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
@@ -2200,8 +2203,15 @@ def get_fin_label_map():
 
 # is_ticker_like_text, clean_symbol → stock_lab_core/formatters.py 로 이관됨
 
+def normalize_known_symbol_alias(symbol):
+    symbol = clean_symbol(symbol)
+    if symbol == "0227LO":
+        return "0227L0"
+    return symbol
+
+
 def get_known_display_name(ticker, fallback=""):
-    symbol = clean_symbol(ticker)
+    symbol = normalize_known_symbol_alias(ticker)
     return KNOWN_TICKER_DISPLAY_NAMES.get(symbol, str(fallback or sanitize_ticker_value(ticker)).strip())
 
 
@@ -2327,7 +2337,9 @@ def lookup_yfinance_display_name(ticker):
 
 def resolve_display_name_for_ticker(ticker, fallback=""):
     ticker_clean = sanitize_ticker_value(ticker)
-    symbol = clean_symbol(ticker_clean)
+    symbol = normalize_known_symbol_alias(ticker_clean)
+    if symbol == "0227L0":
+        ticker_clean = "0227L0.KS"
     if not ticker_clean:
         return str(fallback or "").strip()
 
@@ -2375,7 +2387,9 @@ def _is_garbled_kr_name(name: str, ticker: str) -> bool:
 
 def sanitize_asset_name(name, ticker=""):
     ticker_clean = sanitize_ticker_value(ticker)
-    symbol = clean_symbol(ticker_clean)
+    symbol = normalize_known_symbol_alias(ticker_clean)
+    if symbol == "0227L0":
+        ticker_clean = "0227L0.KS"
     raw_name = str(name or "").strip()
     cleaned_name = strip_search_prefix(raw_name).strip()
     known_name = KNOWN_TICKER_DISPLAY_NAMES.get(symbol, "")
@@ -8340,18 +8354,23 @@ NEW_ETF_MANUAL_PROFILES = {
     },
     "0227L0.KS": {
         "premium_source": "신규상장 ETF: 운용사/거래소 괴리율 수동 확인 필요",
-        "composition_axis": "Agentic AI 기초/프록시 Top5",
-        "composition_judgement": "ETF 자체 이력이 짧으므로 구성축인 AI 플랫폼·클라우드·서버 기업의 흐름을 우선 봅니다.",
+        "composition_axis": "Agentic AI 실제 구성 Top10",
+        "composition_judgement": "MSFT/GOOGL 합산 비중이 높아 두 대형 플랫폼의 방향성이 핵심입니다. 나머지 AI 인프라·소프트웨어 구성주까지 같이 오를 때 추가매수 신뢰도가 올라갑니다.",
         "peer_axis": "비교 ETF/벤치",
         "peer_targets": "QQQM, XLK, MAGS, 490090.KS, 493810.KS",
         "peer_judgement": "나스닥100·미국 기술·Mag7·국내 AI빅테크 ETF 대비 상대강도",
         "quality_judgement": "상장 초기라 20일 거래대금, 호가 스프레드, NAV 괴리율 안정 전에는 소액 정찰만 적합",
         "composition": [
-            ("Microsoft", "MSFT", 0.0),
-            ("Alphabet", "GOOGL", 0.0),
-            ("Meta Platforms", "META", 0.0),
-            ("Amazon.com", "AMZN", 0.0),
-            ("Dell Technologies", "DELL", 0.0),
+            ("Microsoft", "MSFT", 24.76),
+            ("Alphabet", "GOOGL", 23.63),
+            ("Meta Platforms", "META", 10.97),
+            ("Amazon.com", "AMZN", 9.42),
+            ("Dell Technologies", "DELL", 6.47),
+            ("Arista Networks", "ANET", 5.18),
+            ("Snowflake", "SNOW", 5.17),
+            ("CrowdStrike", "CRWD", 4.98),
+            ("Datadog", "DDOG", 4.82),
+            ("Palo Alto Networks", "PANW", 4.59),
         ],
     },
 }
@@ -16707,6 +16726,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_core_etf = is_etf and effective_bucket == "core"
     is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
     is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    is_concentrated_etf = is_etf and is_concentrated_non_core_etf(name, ticker, asset_class)
+    is_concentrated_upper_wait = (
+        is_concentrated_etf and (
+            current_dd > -0.03
+            or pct_b_now >= 0.95
+            or rsi_now >= 68
+            or (ma20_now > 0 and (cur_p / ma20_now - 1) >= 0.04)
+        )
+    )
     is_tdf_or_fund = is_tdf_or_fund_allocation_product(name, ticker, asset_class)
     leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
     is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
@@ -17692,6 +17720,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                         "추세와 RS는 강하지만 상단권에서 단기 하락 중이라 기술적 반등 확정보다 종가·MA5 회복 확인이 우선",
                     ),
                 )
+            elif is_concentrated_upper_wait and adj_tech_score >= 4 and cur_p <= my_price:
+                dec, col, decision_outcome = _set_decision(
+                    "🟡집중 ETF 상단권: 눌림대기", "#d97706", "CONCENTRATED_ETF_UPPER_WAIT",
+                    reasons=(
+                        f"고점대비 {current_dd*100:.1f}% / RSI {rsi_now:.0f} / %B {pct_b_now:.2f}",
+                        f"MA20 대비 {(cur_p/ma20_now-1)*100:.1f}%" if ma20_now > 0 else "MA20 기준 확인 불가",
+                        "품질·기술점수는 양호하지만 집중 ETF가 상단권이라 A급 반등 매수보다 눌림·재돌파 확인이 우선",
+                    ),
+                )
             elif adj_tech_score >= 4 and cur_p <= my_price:
                 dec, col, decision_outcome = _set_decision(
                     "🎯A급: 기술적 반등", "#16a34a", "A_GRADE_TECH_REBOUND",
@@ -17787,7 +17824,16 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                     ),
                 )
         else:
-            if 0.85 <= pct_b_now < 0.95:
+            if is_concentrated_upper_wait:
+                dec, col, decision_outcome = _set_decision(
+                    "🟡집중 ETF 상단권: 눌림대기", "#d97706", "CONCENTRATED_ETF_UPPER_WAIT",
+                    reasons=(
+                        f"고점대비 {current_dd*100:.1f}% / RSI {rsi_now:.0f} / %B {pct_b_now:.2f}",
+                        f"MA20 대비 {(cur_p/ma20_now-1)*100:.1f}%" if ma20_now > 0 else "MA20 기준 확인 불가",
+                        "집중 ETF가 상단권이라 신규 진입은 돌파 유지나 MA5/FVG 눌림 확인 후 소액 정찰",
+                    ),
+                )
+            elif 0.85 <= pct_b_now < 0.95:
                 dec, col, decision_outcome = _set_decision(
                     "⚠️상단부근: 눌림 대기", "#d97706", "NEAR_UPPER_WAIT",
                     reasons=(
