@@ -67,3 +67,14 @@ def test_concentrated_etf_does_not_receive_core_dca_bucket():
         "core",
         "us_etf_nasdaq",
     ) == "swing"
+
+    assert is_known_etf_ticker("0227L0.KS")
+    assert infer_asset_class_for_ticker("0227L0.KS", "kr_etf") == "us_etf_nasdaq"
+    assert is_concentrated_non_core_etf("HANARO 미국에이전틱AI TOP2+", "0227L0.KS", "us_etf_nasdaq")
+    assert not is_us_broad_index_core_etf("0227L0.KS", "us_etf_nasdaq", "HANARO 미국에이전틱AI TOP2+")
+    assert resolve_effective_investment_bucket(
+        "HANARO 미국에이전틱AI TOP2+",
+        "0227L0.KS",
+        "core",
+        "us_etf_nasdaq",
+    ) == "swing"

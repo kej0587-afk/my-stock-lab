@@ -20,6 +20,7 @@ KNOWN_US_OTHER_ETFS = {
 
 CONCENTRATED_NON_CORE_ETFS = {
     "MAGS",  # Magnificent Seven 집중 ETF: 대표지수 코어 DCA 예외 대상 아님
+    "0227L0",  # HANARO 미국에이전틱AI TOP2+: 신규 AI 빅테크 집중 ETF
 }
 
 # ─── KR ETF 심볼 ─────────────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ KNOWN_KR_ETF_SYMBOLS = {
     "479850", "139250", "139270", "244580", "329200", "139220", "491010",
     "418660",
     "487230", "0167A0",
+    "0227L0",
 }
 
 # 앱이 직접 알고 있는 개별주. 저장 DB의 is_etf/asset_class가 오염돼도
@@ -41,7 +43,7 @@ KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {
     "064350", "079550", "278470", "090430", "161890", "192820", "012330",
     "307950", "373220", "006400", "051910", "003670", "247540", "086520",
     "066970", "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN",
-    "TSLA", "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "TSM",
+    "TSLA", "AMD", "AVGO", "MU", "MRVL", "ANET", "CIEN", "VRT", "DELL", "TSM",
     "NBIS", "SNDK", "ADBE", "CRM", "ORCL", "NOW", "SNOW", "PLTR", "ASML",
     "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI", "LITE", "PANW",
     "NFLX", "UBER", "ABNB", "BE", "BKNG", "FCX", "NEM", "MRNA", "PYPL",
@@ -115,8 +117,10 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "0117V0": "TIGER 코리아AI전력기기TOP3플러스",
     "0022T0": "SOL 국제금커버드콜액티브",
     "0167A0": "SOL AI 반도체 Top2 플러스",
+    "0227L0": "HANARO 미국에이전틱AI TOP2+",
     "418660": "TIGER 미국나스닥100레버리지(합성)",
     # 미국 ETF
+    "MAGS": "Roundhill Magnificent Seven ETF",
     "SOXL": "Direxion Daily Semiconductor Bull 3X Shares",
     "DRAM": "Roundhill Memory ETF",
     "RAM": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
@@ -130,4 +134,5 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "PYPL": "페이팔",
     "TM": "토요타 모터스(ADR)",
     "TSLA": "테슬라",
+    "DELL": "Dell Technologies",
 }

@@ -106,7 +106,7 @@ def infer_asset_class_for_ticker(ticker, current_asset_class="") -> str:
 
     symbol = clean_symbol(ticker)
     if is_kr_listed(ticker):
-        if symbol == "379810":
+        if symbol in {"379810", "0227L0"}:
             return "us_etf_nasdaq"
         if symbol in {"379800", "458730"}:
             return "us_etf_sp"
@@ -137,7 +137,7 @@ def is_concentrated_non_core_etf(name="", ticker="", asset_class="") -> bool:
     if symbol in CONCENTRATED_NON_CORE_ETFS:
         return True
     text = f"{name} {ticker} {asset_class}".upper()
-    return any(symbol in text for symbol in CONCENTRATED_NON_CORE_ETFS)
+    return any(code in text for code in CONCENTRATED_NON_CORE_ETFS)
 
 
 def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class="") -> str:

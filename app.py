@@ -209,12 +209,12 @@ except Exception as _asset_classifier_import_error:
         )
     except Exception:
         FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
-        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {"FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG", "TSLA", "BE"}
-        KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240"}
+        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {"FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG", "TSLA", "DELL", "BE"}
+        KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240", "0227L0"}
         KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
         KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
         KNOWN_US_OTHER_ETFS = {"DIA", "IWM", "SMH", "SOXX", "SOXL", "DRAM", "RAM", "BITX", "BITU", "TLT", "MAGS"}
-        CONCENTRATED_NON_CORE_ETFS = {"MAGS"}
+        CONCENTRATED_NON_CORE_ETFS = {"MAGS", "0227L0"}
         KR_ETF_NAME_KEYWORDS = ("ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR", "HANARO", "액티브")
 
     def is_known_individual_stock_ticker(ticker) -> bool:
@@ -259,7 +259,7 @@ except Exception as _asset_classifier_import_error:
             return current
         symbol = clean_symbol(ticker)
         if is_kr_listed(ticker):
-            if symbol == "379810":
+            if symbol in {"379810", "0227L0"}:
                 return "us_etf_nasdaq"
             if symbol in {"379800", "458730"}:
                 return "us_etf_sp"
@@ -288,7 +288,7 @@ except Exception as _asset_classifier_import_error:
         if symbol in CONCENTRATED_NON_CORE_ETFS:
             return True
         text = f"{name} {ticker} {asset_class}".upper()
-        return any(symbol in text for symbol in CONCENTRATED_NON_CORE_ETFS)
+        return any(code in text for code in CONCENTRATED_NON_CORE_ETFS)
 
     def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
         bucket_norm = normalize_bucket(bucket)
@@ -2405,6 +2405,8 @@ def canonicalize_watchlist_ticker(ticker, name=""):
     text = f"{raw} {name or ''}".upper()
     if symbol == "RAM" or ("ROUNDHILL T-REX" in text and "DRAM" in text):
         return "RAM"
+    if symbol in {"0227L0", "0227LO"} or "에이전틱AI" in text or "AGENTIC AI" in text:
+        return "0227L0.KS"
     if symbol in {"BITX", "BITU"} or (("2X" in text or "2배" in text) and ("BITCOIN" in text or "비트코인" in text or "BTC" in text)):
         return "BITX" if symbol not in {"BITX", "BITU"} else symbol
     return raw
@@ -2504,6 +2506,16 @@ def sanitize_watchlist_item(item):
         return cleaned
     if clean_symbol(ticker) == "RAM":
         cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("RAM", "Roundhill T-REX 2X Long DRAM Daily Target ETF")
+        cleaned["is_etf"] = True
+        cleaned["asset_class"] = "us_etf_nasdaq"
+        cleaned["fin_score"] = 0
+    if clean_symbol(ticker) == "MAGS":
+        cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("MAGS", "Roundhill Magnificent Seven ETF")
+        cleaned["is_etf"] = True
+        cleaned["asset_class"] = "us_etf_nasdaq"
+        cleaned["fin_score"] = 0
+    if clean_symbol(ticker) == "0227L0":
+        cleaned["name"] = KNOWN_TICKER_DISPLAY_NAMES.get("0227L0", "HANARO 미국에이전틱AI TOP2+")
         cleaned["is_etf"] = True
         cleaned["asset_class"] = "us_etf_nasdaq"
         cleaned["fin_score"] = 0
@@ -8235,10 +8247,14 @@ def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
         comp_names = ", ".join([row[0] for row in profile["composition"][:5]])
         comp_axis = str(profile.get("composition_axis", "") or "실제 구성 Top5")
         comp_judgement = str(profile.get("composition_judgement", "") or "ETF 구성비중을 반영한 가중 기초흐름")
+        peer_axis = str(profile.get("peer_axis", "") or "동종/비교 ETF")
+        peer_targets = str(profile.get("peer_targets", "") or "상장 6개월 이상 유사 ETF")
+        peer_judgement = str(profile.get("peer_judgement", "") or "충분한 가격 이력이 있는 대체 차트로 추세 확인")
+        quality_judgement = str(profile.get("quality_judgement", "") or "신규 ETF는 유동성과 괴리율이 매수 품질을 좌우")
         return [
             {"축": comp_axis, "확인 대상": comp_names, "판단": comp_judgement},
-            {"축": "국내 동종 ETF", "확인 대상": "396500.KS, 139260.KS", "판단": "국내 반도체/IT ETF의 추세와 거래대금"},
-            {"축": "상품 품질", "확인 대상": "거래대금, AUM, NAV 괴리율", "판단": "신규 ETF는 유동성과 괴리율이 매수 품질을 좌우"},
+            {"축": peer_axis, "확인 대상": peer_targets, "판단": peer_judgement},
+            {"축": "상품 품질", "확인 대상": "거래대금, AUM, NAV 괴리율", "판단": quality_judgement},
         ]
     if any(key in text for key in ["반도체", "semiconductor", "soxx", "smh", "0167a0"]):
         return [
@@ -8301,6 +8317,41 @@ NEW_ETF_MANUAL_PROFILES = {
             ("SanDisk", "SNDK", 6.00),
             ("Seagate Technology", "STX", 4.00),
             ("Western Digital", "WDC", 3.00),
+        ],
+    },
+    "MAGS": {
+        "premium_unavailable_ok": True,
+        "premium_source": "미국 상장 ETF: 네이버 괴리율 미제공",
+        "composition_axis": "Magnificent 7 동일가중 Top7",
+        "composition_judgement": "7개 빅테크가 넓게 같이 오르는지 확인합니다. 한두 종목만 끌면 집중 ETF 추가매수 강도는 낮춥니다.",
+        "peer_axis": "비교 ETF/벤치",
+        "peer_targets": "QQQM, XLK, SPY, 0227L0.KS",
+        "peer_judgement": "나스닥100·미국 기술·S&P500 대비 초과강도와 AI 집중 ETF 동조 여부",
+        "quality_judgement": "미국 ETF라 NAV 괴리율보다 거래대금·호가 스프레드·구성주 확산을 우선 확인",
+        "composition": [
+            ("Apple", "AAPL", 14.29),
+            ("Microsoft", "MSFT", 14.29),
+            ("Alphabet", "GOOGL", 14.29),
+            ("Amazon.com", "AMZN", 14.29),
+            ("Meta Platforms", "META", 14.29),
+            ("NVIDIA", "NVDA", 14.29),
+            ("Tesla", "TSLA", 14.29),
+        ],
+    },
+    "0227L0.KS": {
+        "premium_source": "신규상장 ETF: 운용사/거래소 괴리율 수동 확인 필요",
+        "composition_axis": "Agentic AI 기초/프록시 Top5",
+        "composition_judgement": "ETF 자체 이력이 짧으므로 구성축인 AI 플랫폼·클라우드·서버 기업의 흐름을 우선 봅니다.",
+        "peer_axis": "비교 ETF/벤치",
+        "peer_targets": "QQQM, XLK, MAGS, 490090.KS, 493810.KS",
+        "peer_judgement": "나스닥100·미국 기술·Mag7·국내 AI빅테크 ETF 대비 상대강도",
+        "quality_judgement": "상장 초기라 20일 거래대금, 호가 스프레드, NAV 괴리율 안정 전에는 소액 정찰만 적합",
+        "composition": [
+            ("Microsoft", "MSFT", 0.0),
+            ("Alphabet", "GOOGL", 0.0),
+            ("Meta Platforms", "META", 0.0),
+            ("Amazon.com", "AMZN", 0.0),
+            ("Dell Technologies", "DELL", 0.0),
         ],
     },
 }
@@ -12053,6 +12104,7 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
 
 FLOW_SECTOR_ABILITY_BUCKETS = [
     ("바이오·헬스", ("바이오", "헬스", "제약", "의료", "건강", "IBB", "XLV", "MRNA", "MODERNA")),
+    ("AI·빅테크", ("에이전틱", "AGENTIC", "MAGS", "MAGNIFICENT", "MAG7", "빅테크", "TOP7", "TOP10", "MSFT", "MICROSOFT", "GOOGL", "ALPHABET", "META", "AMZN", "AMAZON", "DELL")),
     ("AI·반도체", ("반도체", "DRAM", "메모리", "HBM", "SOXX", "SMH", "SOXL", "RAM", "엔비디아", "NVIDIA", "마이크론", "MICRON", "AI 하드웨어")),
     ("소프트웨어·사이버", ("소프트웨어", "사이버", "클라우드", "IT서비스", "CIBR", "IGV", "보안")),
     ("금융·핀테크", ("금융", "핀테크", "은행", "보험", "증권", "XLF", "FINX")),
@@ -12068,6 +12120,8 @@ FLOW_SECTOR_ABILITY_BUCKETS = [
 
 
 FLOW_SECTOR_ANCHOR_REPRESENTATIVES = {
+    ("한국", "AI·빅테크"): "HANARO 미국에이전틱AI TOP2+ · TIGER 미국AI빅테크10 · ACE 미국빅테크TOP7 Plus",
+    ("미국", "AI·빅테크"): "마이크로소프트 · 알파벳 · 메타 · 아마존 · 엔비디아",
     ("한국", "AI·반도체"): "삼성전자 · SK하이닉스 · 한미반도체",
     ("미국", "AI·반도체"): "엔비디아 · 마이크론 · 샌디스크",
     ("한국", "바이오·헬스"): "삼성바이오로직스 · 셀트리온 · 한미약품",
@@ -15488,6 +15542,7 @@ def get_rs_benchmark(ticker, asset_class):
         "SMH": US_BROAD_BENCHMARK,
         "DRAM": US_BROAD_BENCHMARK,
         "RAM": US_BROAD_BENCHMARK,
+        "MAGS": US_BROAD_BENCHMARK,
         "HACK": US_TECH_BENCHMARK,   # 사이버보안 ETF → QQQM 대비 RS
         "URA": US_BROAD_BENCHMARK,   # 우라늄 테마 → SPY 대비 RS
         "SPY": US_TECH_BENCHMARK,
@@ -15497,6 +15552,7 @@ def get_rs_benchmark(ticker, asset_class):
         "SPYM": US_TECH_BENCHMARK,
         "VTI": US_TECH_BENCHMARK,
         "379810": KR_US_SP_BENCHMARK,
+        "0227L0": KR_US_SP_BENCHMARK,
         "379800": KR_US_NASDAQ_BENCHMARK,
         "069500": "^KS11",
     }
@@ -15645,6 +15701,8 @@ BENCHMARK_LABELS = {
     "QQQM": "QQQM(나스닥100)",
     "SPY": "SPY(S&P500)",
     "DRAM": "DRAM(메모리 ETF)",
+    "MAGS": "MAGS(Magnificent 7)",
+    "0227L0.KS": "HANARO 미국에이전틱AI TOP2+",
     "^KS11": "KOSPI 종합지수",
     "SMH": "SMH(반도체)",
     "XLK": "XLK(미국 기술)",
@@ -15715,6 +15773,7 @@ SECTOR_BENCHMARK_SOURCE_ETFS = {
 }
 
 SECTOR_BENCHMARK_KEYWORD_RULES = [
+    (("에이전틱", "Agentic", "MAGS", "MAG7", "Magnificent", "빅테크", "TOP7", "TOP10", "Microsoft", "마이크로소프트", "Alphabet", "알파벳", "Meta", "메타", "Amazon", "아마존"), ("QQQM", "미국 AI·빅테크")),
     (("전력인프라", "전력기기", "전력설비", "변압", "전선", "송배전", "ELECTRIC", "일렉트릭", "효성중공업", "일진전기", "제룡전기", "대한전선"), ("487240.KS", "전력인프라")),
     (("반도체", "HBM", "DRAM", "하이닉스", "한미반도체", "HPSP", "리노공업", "이오테크닉스", "ISC", "DB하이텍"), ("396500.KS", "반도체")),
     (("2차전지", "이차전지", "배터리", "에너지솔루션", "삼성SDI", "LG화학", "포스코퓨처엠", "에코프로", "엘앤에프"), ("305540.KS", "2차전지")),
@@ -15905,6 +15964,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "SMH": ("SMH", "반도체"),
     "DRAM": ("SMH", "메모리/반도체"),
     "RAM": ("DRAM", "DRAM 2배"),
+    "MAGS": ("QQQM", "Magnificent 7/나스닥100"),
     "SPY": ("SPY", "S&P500"),
     "VOO": ("SPY", "S&P500"),
     "IVV": ("SPY", "S&P500"),
@@ -15912,6 +15972,7 @@ UNDERLYING_BENCHMARK_MAP = {
     "SPYM": ("SPY", "S&P500"),
     "VTI": ("SPY", "미국 전체시장"),
     "379800": ("SPY", "S&P500"),
+    "0227L0": ("QQQM", "미국 에이전틱 AI"),
     "069500": ("069500.KS", "KOSPI200"),
     "102110": ("069500.KS", "KOSPI200"),   # TIGER 200
     "229200": ("069500.KS", "KOSPI200"),   # KODEX 코스닥150
@@ -17923,6 +17984,12 @@ TICKER_MAP = {
     "나스닥": ("379810.KS", True, "us_etf_nasdaq"), "QQQM": ("QQQM", True, "us_etf_nasdaq"), "QLD": ("QLD", True, "us_etf_nasdaq"), "TQQQ": ("TQQQ", True, "us_etf_nasdaq"),
     "DRAM": ("DRAM", True, "us_etf_nasdaq"),
     "RAM": ("RAM", True, "us_etf_nasdaq"),
+    "MAGS": ("MAGS", True, "us_etf_nasdaq"),
+    "HANARO 미국에이전틱AI TOP2+": ("0227L0.KS", True, "us_etf_nasdaq"),
+    "0227L0": ("0227L0.KS", True, "us_etf_nasdaq"),
+    "0227L0.KS": ("0227L0.KS", True, "us_etf_nasdaq"),
+    "0227LO": ("0227L0.KS", True, "us_etf_nasdaq"),
+    "미국에이전틱AI": ("0227L0.KS", True, "us_etf_nasdaq"),
     "s&p500": ("379800.KS", True, "us_etf_sp"), "다우존스": ("458730.KS", True, "us_etf_sp"), "kodex 200": ("069500.KS", True, "kr_etf"),
     "MSFT": ("MSFT", False, "us_stock"), "프리포트 맥모란": ("FCX", False, "us_stock"), "FCX": ("FCX", False, "us_stock"),
     "네비우스": ("NBIS", False, "us_stock"), "시에나": ("CIEN", False, "us_stock"), "아리스타 네트웍스": ("ANET", False, "us_stock"),
