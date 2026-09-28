@@ -11485,7 +11485,74 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
     return " · ".join(parts)
 
 
-def _brief_theme_outlook_rows(leadership: dict, limit: int = 6) -> list[dict]:
+def _brief_axis_news_terms(row: dict) -> list[str]:
+    base_text = " ".join(
+        str(row.get(key, "") or "")
+        for key in ("name", "source", "state", "representatives")
+    )
+    base_text = re.sub(r"\[[^\]]+\]", " ", base_text)
+    raw_terms = [part.strip() for part in re.split(r"[,/·|()\s]+", base_text) if part.strip()]
+    terms = [t for t in raw_terms if len(t) >= 2 and t not in {"ETF", "테마", "섹터", "대표"}]
+    lower = base_text.lower()
+    expansions = {
+        "반도체": ["반도체", "ai", "hbm", "dram", "메모리", "nvidia", "amd", "soxx", "soxl", "smh", "ram"],
+        "소부장": ["소부장", "반도체", "hbm", "패키징", "기판", "pcb"],
+        "pcb": ["pcb", "기판", "패키징", "substrate"],
+        "전력": ["전력", "전력망", "전선", "grid", "data center", "데이터센터"],
+        "에너지": ["에너지", "유가", "oil", "전력", "grid"],
+        "사이버": ["사이버", "보안", "cyber", "security"],
+        "바이오": ["바이오", "헬스케어", "healthcare", "biotech"],
+        "우주": ["우주", "위성", "space", "satellite", "rocket"],
+        "로봇": ["로봇", "휴머노이드", "robot", "humanoid"],
+        "뷰티": ["뷰티", "화장품", "cosmetic"],
+    }
+    for key, extra_terms in expansions.items():
+        if key in lower:
+            terms.extend(extra_terms)
+    out = []
+    seen = set()
+    for term in terms:
+        norm = term.strip().lower()
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(term)
+    return out[:14]
+
+
+def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 2) -> str:
+    if not news_rows:
+        return "-"
+    terms = _brief_axis_news_terms(row)
+    if not terms:
+        return "-"
+    matches = []
+    seen = set()
+    for news in news_rows:
+        if not isinstance(news, dict):
+            continue
+        text = " ".join(
+            str(news.get(key, "") or "")
+            for key in ("읽기분류", "카테고리", "종목", "제목", "초보요약", "체크")
+        )
+        text_l = text.lower()
+        if not any(str(term).lower() in text_l for term in terms):
+            continue
+        title = str(news.get("제목", "") or "").strip()
+        if not title:
+            continue
+        key = re.sub(r"\s+", " ", title.lower())[:140]
+        if key in seen:
+            continue
+        seen.add(key)
+        category = str(news.get("읽기분류", news.get("카테고리", "")) or "").strip()
+        matches.append(f"{category}: {title}" if category else title)
+        if len(matches) >= limit:
+            break
+    return " / ".join(matches) if matches else "-"
+
+
+def _brief_theme_outlook_rows(leadership: dict, news_rows: list[dict] | None = None, limit: int = 6) -> list[dict]:
     if not isinstance(leadership, dict):
         return []
 
@@ -11542,6 +11609,7 @@ def _brief_theme_outlook_rows(leadership: dict, limit: int = 6) -> list[dict]:
                 "축": name,
                 "전망": bucket,
                 "데이터": " · ".join(trend_bits) or "-",
+                "뉴스/재료": _brief_axis_news_text(row, news_rows),
                 "해석": view,
                 "확인조건": confirm,
                 "실행": action,
@@ -11552,8 +11620,8 @@ def _brief_theme_outlook_rows(leadership: dict, limit: int = 6) -> list[dict]:
     return rows
 
 
-def _render_brief_theme_outlook(leadership: dict):
-    rows = _brief_theme_outlook_rows(leadership)
+def _render_brief_theme_outlook(leadership: dict, news_rows: list[dict] | None = None):
+    rows = _brief_theme_outlook_rows(leadership, news_rows=news_rows)
     st.markdown("**🧭 전망형 주도맵**")
     if not rows:
         st.caption("주도축 전망을 만들 만큼 유의미한 테마/섹터 데이터가 아직 없습니다.")
@@ -11572,6 +11640,7 @@ def _render_brief_theme_outlook(leadership: dict):
             "축": st.column_config.TextColumn("테마/섹터"),
             "전망": st.column_config.TextColumn("전망"),
             "데이터": st.column_config.TextColumn("핵심 데이터"),
+            "뉴스/재료": st.column_config.TextColumn("뉴스/재료"),
             "해석": st.column_config.TextColumn("방향 해석"),
             "확인조건": st.column_config.TextColumn("다음 확인"),
             "실행": st.column_config.TextColumn("앱 행동"),
@@ -11747,6 +11816,7 @@ def render_today_market_briefing_board(
     theme_rotation_df: pd.DataFrame,
     command_df: pd.DataFrame | None = None,
     market_guard: dict | None = None,
+    news_rows: list[dict] | None = None,
 ):
     if flow_df is None or flow_df.empty:
         return
@@ -11802,7 +11872,7 @@ def render_today_market_briefing_board(
         st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
     if not leadership.get("leaders") and (leadership.get("hot_leaders") or leadership.get("rebounds") or leadership.get("lagging")):
         st.caption("해석: 실행 가능한 주도 후보는 약하고, 과열 주도·단기 반등·후행 강도가 섞여 있습니다. 지금은 주도 확정 매수보다 눌림/R/R 검증 구간입니다.")
-    _render_brief_theme_outlook(leadership)
+    _render_brief_theme_outlook(leadership, news_rows=news_rows)
     _render_brief_execution_link(command_df)
 
     c1, c2 = st.columns(2)
@@ -31359,6 +31429,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         theme_rotation_df,
         command_df=command_flow_df,
         market_guard=market_guard,
+        news_rows=st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, []),
     )
     sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
