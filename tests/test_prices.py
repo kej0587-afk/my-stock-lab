@@ -1,9 +1,16 @@
 import time
 
 import pandas as pd
+import pytest
 
 from stock_lab_core import prices
 from stock_lab_core.prices import _extract_yahoo_overnight_price_from_html
+
+
+@pytest.fixture(autouse=True)
+def clear_price_caches_between_tests():
+    prices.clear_latest_price_cache()
+    prices.clear_price_history_cache()
 
 
 def test_extract_yahoo_overnight_price_from_plain_json_html():
@@ -422,7 +429,7 @@ def test_kr_price_df_falls_back_to_yfinance_when_pykrx_empty(monkeypatch):
 
     calls = []
 
-    def fake_download(ticker, period, interval, progress, threads):
+    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False):
         calls.append(ticker)
         return pd.DataFrame({
             "Open": [1000.0],
@@ -445,7 +452,7 @@ def test_unsuffixed_kr_price_df_tries_ks_yahoo_symbol(monkeypatch):
 
     calls = []
 
-    def fake_download(ticker, period, interval, progress, threads):
+    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False):
         calls.append(ticker)
         if ticker == "0167A0.KS":
             return pd.DataFrame({

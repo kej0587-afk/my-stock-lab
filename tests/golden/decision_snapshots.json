@@ -28,17 +28,17 @@
   },
   "core_us_etf_perfect_storm_dca": {
     "adj": 3.0,
-    "buy_amt": 1500000.0,
-    "col": "#16a34a",
-    "core_dca_label": "미국지수 퍼펙트스톰 100% 거치 적립",
-    "core_dca_rate": 1.0,
+    "buy_amt": 0.0,
+    "col": "#dc2626",
+    "core_dca_label": "",
+    "core_dca_rate": 0.0,
     "dd": -0.0476991776605602,
-    "dec": "🧱코어 방어: 미국지수 퍼펙트스톰 100% 거치 적립",
-    "decision_code": "CORE_STORM_DCA",
-    "decision_group": "buyish",
+    "dec": "🛑하드차단: 비중 초과",
+    "decision_code": "HARD_BLOCK_OVERWEIGHT",
+    "decision_group": "caution",
     "decision_reasons": [
-      "퍼펙트스톰 구간이지만 미국 대표지수 코어 ETF 목표비중 미달 - 거치식 원칙 유지",
-      "적립 비율 100% 적용 - 장기 우상향 코어는 매크로 타이밍보다 시장 노출 우선"
+      "현재비중 22.4% > 목표비중 22.0% (+0.4%p 초과)",
+      "비중 초과 상태 — 신규 매수 불가, 리밸런싱 또는 익절 검토"
     ],
     "grade": "✅ETF 양호",
     "is_52w_breakout": false,
@@ -65,7 +65,7 @@
     "decision_group": "caution",
     "decision_reasons": [
       "고점대비 -54.0% 하락",
-      "급락/투매 포착 (미보유) — 극단 분할매수 검토"
+      "급락/투매 포착 (미보유) — 추세 회복 전까지 극단 분할매수만 검토"
     ],
     "grade": "⏳C급 (주의/대기)",
     "is_52w_breakout": false,
@@ -92,7 +92,7 @@
     "decision_group": "caution",
     "decision_reasons": [
       "고점대비 -37.2% 하락",
-      "급락/투매 포착 (미보유) — 극단 분할매수 검토"
+      "급락/투매 포착 (미보유) — 추세 회복 전까지 극단 분할매수만 검토"
     ],
     "grade": "⏳C급 (주의/대기)",
     "is_52w_breakout": false,
@@ -165,15 +165,17 @@
   "free_stock_uptrend_new_entry": {
     "adj": 3.0,
     "buy_amt": 1000000.0,
-    "col": "#d97706",
+    "col": "#38bdf8",
     "core_dca_label": "",
     "core_dca_rate": 0.0,
     "dd": -0.09741518449393871,
-    "dec": "⚠️추세훼손: 신규진입 보류",
-    "decision_code": "STRUCTURE_DAMAGE_NO_ENTRY",
-    "decision_group": "caution",
+    "dec": "🔎우량주 회복관찰: 바닥 확인",
+    "decision_code": "QUALITY_RECOVERY_WATCH",
+    "decision_group": "neutral",
     "decision_reasons": [
-      "MA50 하회 (대장주 요건 미충족)"
+      "재무점수 4점 / 추세 🌊역배열(하락) / 고점대비 -9.7%",
+      "MA20 회복과 RS/MACD 개선 조짐은 있지만 MA50·저점상향 확인 전",
+      "매수 신호가 아니라 전광판 관심등록 후 회복 지속성 관찰"
     ],
     "grade": "✅A급 (분할 매수)",
     "is_52w_breakout": false,

@@ -1642,7 +1642,7 @@ def _repair_us_untimed_quote_scale(price: float, reference_price: float, allowed
             continue
         deviation = abs((adjusted / reference_price) - 1.0)
         if deviation <= allowed_deviation:
-            return float(adjusted)
+            return round(float(adjusted), 6)
     return 0.0
 
 
@@ -2157,5 +2157,12 @@ def clear_latest_price_cache():
             fn.clear()
 
 
+def clear_price_history_cache():
+    for fn in [load_price_df, _fetch_pykrx_ohlcv]:
+        if hasattr(fn, "clear"):
+            fn.clear()
+
+
 def clear_selected_price_cache():
     clear_latest_price_cache()
+    clear_price_history_cache()
