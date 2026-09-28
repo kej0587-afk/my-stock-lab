@@ -11687,7 +11687,7 @@ def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 6) -> list
             "시장": market or "-",
             "후보군": group or "-",
             "대표": rep or "-",
-            "확인": next_check or "-",
+            "최종읽기": next_check or "-",
         })
     return rows
 
@@ -12053,6 +12053,104 @@ def _flow_action_caption(action):
     if "방어" in text or "위험" in text:
         return f"{text} (비중 확대 보류)"
     return text
+
+
+def _flow_sector_common_reading(card):
+    values = card.get("values", {}) if isinstance(card, dict) else {}
+    title = str(card.get("title", "이 섹터") or "이 섹터")
+    action = _flow_text(card.get("action", ""), default="")
+    verdict = _flow_text(card.get("verdict", ""), default="")
+    strength = clean_float(values.get("강도", np.nan), np.nan)
+    breadth = clean_float(values.get("확산", np.nan), np.nan)
+    short_flow = clean_float(values.get("단기유입", np.nan), np.nan)
+    momentum = clean_float(values.get("모멘텀", np.nan), np.nan)
+    safety = clean_float(values.get("안정도", np.nan), np.nan)
+    timing = clean_float(values.get("타점", np.nan), np.nan)
+
+    strong_bits = []
+    if finite_num(breadth) and float(breadth) >= 6.0:
+        strong_bits.append("확산")
+    if finite_num(short_flow) and float(short_flow) >= 6.0:
+        strong_bits.append("단기유입")
+    if finite_num(momentum) and float(momentum) >= 6.0:
+        strong_bits.append("모멘텀")
+    weak_bits = []
+    if finite_num(strength) and float(strength) < 5.5:
+        weak_bits.append("강도")
+    if finite_num(timing) and float(timing) < 5.0:
+        weak_bits.append("타점")
+    if finite_num(safety) and float(safety) < 4.0:
+        weak_bits.append("안정도")
+
+    action_rank = _flow_sector_action_rank(action)
+    strong_text = "·".join(strong_bits) if strong_bits else "흐름"
+    weak_text = "·".join(weak_bits) if weak_bits else "가격 위치"
+
+    if action_rank <= 1:
+        if len(strong_bits) >= 2:
+            return {
+                "label": "확산 강함 · 실행보류",
+                "line": f"{title}는 {strong_text}은 좋지만 후보판은 실행 보류입니다. {weak_text} 확인 전에는 매수 후보로 보지 않습니다.",
+                "next": f"{weak_text} 개선과 대표주 회복 확인",
+            }
+        return {
+            "label": "관망 · 조건 부족",
+            "line": f"{title}는 아직 실행 조건이 부족합니다. 강도·타점·대표주 동행 여부를 같이 확인합니다.",
+            "next": "단기 유입 지속과 대표주 동행 확인",
+        }
+
+    if "추격금지" in action or "위험" in verdict:
+        return {
+            "label": "추격금지 · 위험관리",
+            "line": f"{title}는 가격 부담이나 위험 신호가 먼저입니다. 신규 비중 확대보다 방어 기준을 확인합니다.",
+            "next": "과열 해소와 지지선 회복 확인",
+        }
+
+    if "눌림" in action or "후보권" in verdict:
+        if weak_bits:
+            return {
+                "label": "후보권 · 눌림대기",
+                "line": f"{title}는 후보권에는 들어왔지만 {weak_text}이 아직 애매합니다. 현재가 추격보다 눌림 위치를 기다립니다.",
+                "next": "눌림 지지와 거래량 재유입 확인",
+            }
+        return {
+            "label": "후보권 · 눌림대기",
+            "line": f"{title}는 흐름이 유지되는 후보권입니다. 다만 현재가 매수보다 눌림 확인 후 접근합니다.",
+            "next": "눌림 후 양봉 전환과 거래량 확인",
+        }
+
+    if "정밀" in action or "진입" in action:
+        if weak_bits:
+            return {
+                "label": "진입검토 · 확인필요",
+                "line": f"{title}는 정밀관측으로 넘길 만하지만 {weak_text} 확인이 남아 있습니다. 바로 실행보다 손익비와 대장주 동행을 먼저 봅니다.",
+                "next": f"{weak_text} 개선과 정밀관측소 R/R 확인",
+            }
+        return {
+            "label": "정밀관측 후보",
+            "line": f"{title}는 강도와 타점이 같이 맞는 후보입니다. 정밀관측소에서 종목별 손익비를 확인합니다.",
+            "next": "정밀관측소 손익비와 차트 기준 확인",
+        }
+
+    if "관심" in action or "반등" in verdict:
+        return {
+            "label": "관심등록 · 지속확인",
+            "line": f"{title}는 관심 등록 후 지속성을 보는 단계입니다. 하루 반등인지 주도 전환인지 5D 흐름을 확인합니다.",
+            "next": "5D 지속성과 내부 대표주 동행 확인",
+        }
+
+    if "후행" in verdict:
+        return {
+            "label": "후행 강도 · 추격주의",
+            "line": f"{title}는 과거 강도는 남아 있지만 단기 유입이 약합니다. 새 매수보다 보유/관찰 쪽입니다.",
+            "next": "단기 하락 멈춤과 재유입 확인",
+        }
+
+    return {
+        "label": "관망 · 조건 확인",
+        "line": f"{title}는 아직 실행 조건이 부족합니다. 강도·타점·대표주 동행 여부를 같이 확인합니다.",
+        "next": "강도·타점·대표주 동행 확인",
+    }
 
 
 def _flow_stat_candidate(command_df, market, fallback_df):
@@ -12712,10 +12810,12 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
 
     summary_rows = []
     for rank, card in enumerate(cards, 1):
+        reading = _flow_sector_common_reading(card)
         summary_rows.append({
             "순위": rank,
             "섹터": card["title"],
-            "판정": card["verdict"],
+            "최종읽기": reading.get("label", card["verdict"]),
+            "판정근거": card["verdict"],
             "시장": card["market"],
             "종합": f"{card['total']:.1f}/10",
             "강도": card["values"]["강도"],
@@ -12774,44 +12874,7 @@ def _sector_research_card_news_text(card, news_rows):
 
 
 def _sector_research_card_takeaway(card):
-    values = card.get("values", {}) if isinstance(card, dict) else {}
-    verdict = str(card.get("verdict", "") or "")
-    title = str(card.get("title", "이 섹터") or "이 섹터")
-    strength = clean_float(values.get("강도", np.nan), np.nan)
-    breadth = clean_float(values.get("확산", np.nan), np.nan)
-    short_flow = clean_float(values.get("단기유입", np.nan), np.nan)
-    momentum = clean_float(values.get("모멘텀", np.nan), np.nan)
-    timing = clean_float(values.get("타점", np.nan), np.nan)
-
-    if "실제 주도" in verdict:
-        return f"{title}는 강도와 단기 유입이 같이 살아난 축입니다. 대표주가 같이 버티면 정밀관측 우선 후보입니다."
-    if "확산 강함" in verdict:
-        return f"{title}는 확산·단기유입·모멘텀은 좋지만 후보판은 실행 보류입니다. 강도나 타점이 낮아 지금 매수 후보가 아니라 대표주 회복을 먼저 봅니다."
-    if "진입검토" in verdict:
-        return f"{title}는 단기 유입과 모멘텀이 강해 정밀관측으로 넘길 만합니다. 다만 강도 점수가 낮아 대장주 동행과 손익비 확인이 먼저입니다."
-    if "후보권" in verdict:
-        return f"{title}는 후보권에는 들어왔지만 현재가 매수 자리는 아닙니다. 눌림 위치와 거래량 재유입이 확인될 때만 봅니다."
-    if "과열" in verdict:
-        return f"{title}는 주도성은 보이지만 가격 위치가 높습니다. 추격보다 눌림 품질과 거래량 재유입을 봅니다."
-    if "반등" in verdict:
-        return f"{title}는 반등 신호는 있지만 확산이나 중기 힘이 아직 덜 붙었습니다. 다음 봉 지속성이 핵심입니다."
-    if "후행" in verdict:
-        return f"{title}는 과거 강도는 남아 있지만 단기 유입이 약합니다. 새 매수보다 보유/관찰 쪽입니다."
-    if "위험" in verdict:
-        return f"{title}는 방어가 먼저인 축입니다. 가격 회복 전까지 비중 확대는 보류합니다."
-
-    weak_bits = []
-    if finite_num(short_flow) and float(short_flow) < 5.0:
-        weak_bits.append("단기 유입")
-    if finite_num(momentum) and float(momentum) < 5.0:
-        weak_bits.append("모멘텀")
-    if finite_num(breadth) and float(breadth) < 5.0:
-        weak_bits.append("확산")
-    if weak_bits:
-        return f"{title}는 {'·'.join(weak_bits)} 확인이 더 필요합니다. 주도 확정 전 관찰 축입니다."
-    if finite_num(strength) and finite_num(timing) and float(strength) >= 6.0 and float(timing) >= 5.5:
-        return f"{title}는 후보권에 들어왔습니다. 정밀관측소에서 손익비와 눌림 위치를 확인합니다."
-    return f"{title}는 아직 실행 조건이 부족합니다. 강도·타점·대표주 동행 여부를 같이 확인합니다."
+    return _flow_sector_common_reading(card).get("line", "")
 
 
 def render_sector_research_cards(cards, news_rows=None, limit=4):
@@ -12838,11 +12901,13 @@ def render_sector_research_cards(cards, news_rows=None, limit=4):
 
     for idx, card in enumerate(top_cards):
         with st.container():
+            reading = _flow_sector_common_reading(card)
             score = clean_float(card.get("total", np.nan), np.nan)
             score_text = f"{float(score):.1f}/10" if finite_num(score) else "-/10"
             st.markdown(f"**#{idx + 1} {card.get('market', '-')} · {card.get('title', '-')}**")
-            st.caption(f"상태: {card.get('verdict', '-')} · 실행: {_flow_action_caption(card.get('action', '-'))} · 점수 {score_text}")
+            st.caption(f"최종읽기: {reading.get('label', card.get('verdict', '-'))} · 실행: {_flow_action_caption(card.get('action', '-'))} · 점수 {score_text}")
             st.caption(f"한 줄 결론: {_sector_research_card_takeaway(card)}")
+            st.caption(f"다음 확인: {reading.get('next', '-')}")
             st.caption(f"능력치: {_flow_stat_values_line(card)}")
             news_text = _sector_research_card_news_text(card, news_rows)
             if news_text and news_text != "-":
