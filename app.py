@@ -11497,11 +11497,20 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
     lower = base_text.lower()
     expansions = {
         "반도체": ["반도체", "ai", "hbm", "dram", "메모리", "nvidia", "amd", "soxx", "soxl", "smh", "ram"],
-        "ai": ["ai", "인공지능", "agentic", "에이전틱", "nvidia", "amd", "msft", "google", "meta", "dell", "hbm"],
+        "ai": ["ai", "인공지능", "agentic", "에이전틱", "nvidia", "amd", "msft", "google", "meta", "dell", "hbm", "데이터센터"],
+        "빅테크": ["빅테크", "mags", "magnificent", "msft", "google", "meta", "amazon", "nvidia", "ai"],
         "소부장": ["소부장", "반도체", "hbm", "패키징", "기판", "pcb"],
         "pcb": ["pcb", "기판", "패키징", "substrate"],
         "전력": ["전력", "전력망", "전선", "grid", "data center", "데이터센터"],
         "에너지": ["에너지", "유가", "oil", "전력", "grid"],
+        "금융": ["금융", "은행", "보험", "증권", "핀테크", "금리", "yield", "bank"],
+        "핀테크": ["핀테크", "금융", "결제", "payment", "은행", "금리"],
+        "리츠": ["리츠", "부동산", "reit", "금리", "배당"],
+        "2차전지": ["2차전지", "배터리", "battery", "ev", "전기차", "리튬"],
+        "ev": ["ev", "전기차", "2차전지", "배터리", "tesla", "테슬라"],
+        "산업재": ["산업재", "건설", "조선", "인프라", "기계", "수주"],
+        "건설": ["건설", "인프라", "주택", "부동산", "금리"],
+        "조선": ["조선", "해운", "선박", "수주", "lng"],
         "사이버": ["사이버", "보안", "cyber", "security"],
         "바이오": ["바이오", "헬스케어", "healthcare", "biotech"],
         "우주": ["우주", "위성", "space", "satellite", "rocket"],
@@ -11522,11 +11531,41 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
     return out[:14]
 
 
+def _brief_axis_news_categories(row: dict) -> list[str]:
+    base_text = " ".join(
+        str(row.get(key, "") or "")
+        for key in ("name", "source", "state", "representatives")
+    ).lower()
+    profiles = [
+        (("반도체", "소부장", "hbm", "dram", "pcb", "기판", "ai", "빅테크", "mags", "데이터센터"), ["반도체·AI", "반도체", "AI"]),
+        (("바이오", "헬스", "health", "biotech"), ["바이오·헬스케어", "바이오", "헬스케어"]),
+        (("금융", "핀테크", "은행", "보험", "증권", "리츠", "부동산"), ["외환/금리", "국채/유동성", "금융"]),
+        (("에너지", "원자재", "금속", "구리", "유가", "oil"), ["에너지/해운", "원자재/금속"]),
+        (("전력", "인프라", "전선", "전력망", "원전", "건설", "산업재", "조선"), ["에너지/해운", "정책/규제"]),
+        (("2차전지", "배터리", "전기차", "ev", "리튬"), ["정책/규제", "원자재/금속"]),
+        (("사이버", "보안", "software", "소프트웨어"), ["정책/규제"]),
+        (("우주", "방산", "로봇", "휴머노이드"), ["정책/규제"]),
+    ]
+    out = []
+    seen = set()
+    for needles, categories in profiles:
+        if not any(needle in base_text for needle in needles):
+            continue
+        for category in categories:
+            norm = category.lower()
+            if norm in seen:
+                continue
+            seen.add(norm)
+            out.append(category)
+    return out[:6]
+
+
 def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 2) -> str:
     if not news_rows:
         return "-"
     terms = _brief_axis_news_terms(row)
-    if not terms:
+    categories = _brief_axis_news_categories(row)
+    if not terms and not categories:
         return "-"
     matches = []
     seen = set()
@@ -11538,7 +11577,10 @@ def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 
             for key in ("읽기분류", "카테고리", "종목", "제목", "초보요약", "체크")
         )
         text_l = text.lower()
-        if not any(str(term).lower() in text_l for term in terms):
+        direct_hit = any(str(term).lower() in text_l for term in terms)
+        category_text = " ".join(str(news.get(key, "") or "") for key in ("읽기분류", "카테고리", "체크")).lower()
+        category_hit = any(str(category).lower() in category_text for category in categories)
+        if not direct_hit and not category_hit:
             continue
         title = str(news.get("제목", "") or "").strip()
         if not title:
@@ -11548,10 +11590,12 @@ def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 
             continue
         seen.add(key)
         category = str(news.get("읽기분류", news.get("카테고리", "")) or "").strip()
-        matches.append(f"{category}: {title}" if category else title)
+        score = 2 if direct_hit else 1
+        matches.append((score, f"{category}: {title}" if category else title))
         if len(matches) >= limit:
-            break
-    return " / ".join(matches) if matches else "-"
+            continue
+    matches = sorted(matches, key=lambda item: item[0], reverse=True)[:limit]
+    return " / ".join(text for _score, text in matches) if matches else "-"
 
 
 def _brief_theme_outlook_rows(leadership: dict, news_rows: list[dict] | None = None, limit: int = 6) -> list[dict]:
@@ -28324,9 +28368,12 @@ def refresh_today_action_news(summary_df=None, max_market_rows: int = 10, max_st
         "반도체·AI 리스크",
         "바이오·헬스케어",
         "외환/금리",
+        "금융/핀테크",
         "정책/규제",
         "에너지/해운",
         "원자재/금속",
+        "2차전지/전기차",
+        "산업재/인프라",
         "실적/대장주",
     )
     rows = []
@@ -28382,7 +28429,7 @@ def render_today_action_news_panel(summary_df=None):
         if last_run:
             c3.caption(f"마지막 확인: {last_run}")
         else:
-            c3.caption("핵심속보, 국채/유동성, 반도체·AI, 바이오, 내 종목 뉴스를 제목 기준으로 확인합니다.")
+            c3.caption("핵심속보, 금리, 반도체·AI, 바이오, 금융, 2차전지, 산업재, 내 종목 뉴스를 제목 기준으로 확인합니다.")
 
         if clear_clicked:
             st.session_state.pop(TODAY_ACTION_NEWS_ROWS_KEY, None)
