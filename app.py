@@ -12809,7 +12809,7 @@ def render_sector_research_cards(cards, news_rows=None, limit=4):
     st.caption("섹터별 돈흐름 능력치, 대표축, 뉴스재료, 실행분류를 한 장으로 묶어 봅니다.")
     show_graph = st.toggle(
         "리서치 카드 그래프 보기",
-        value=True,
+        value=False,
         key="sector_research_cards_show_graph",
         help="상위 섹터의 강도·확산·단기유입·모멘텀·안정도·타점을 한 번에 봅니다.",
     )
@@ -12828,15 +12828,21 @@ def render_sector_research_cards(cards, news_rows=None, limit=4):
                 st.caption(f"뉴스/재료: {news_text}")
             else:
                 st.caption("뉴스/재료: 주도맵 뉴스재료 새로고침 후 연결")
-            if show_graph:
-                st.plotly_chart(
-                    _flow_stat_radar_figure(card),
-                    width='stretch',
-                    key=f"sector_research_card_radar_{idx}",
-                    config={"displayModeBar": False, "responsive": True},
-                )
             st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
             st.caption(f"오늘 포착종목: {card.get('representatives', '-')}")
+
+    if show_graph:
+        with st.expander("리서치 카드 그래프", expanded=True):
+            graph_cols = st.columns(2 if len(top_cards) > 1 else 1)
+            for idx, card in enumerate(top_cards):
+                with graph_cols[idx % len(graph_cols)]:
+                    st.caption(f"{card.get('market', '-')} · {card.get('title', '-')}")
+                    st.plotly_chart(
+                        _flow_stat_radar_figure(card),
+                        width='stretch',
+                        key=f"sector_research_card_radar_{idx}",
+                        config={"displayModeBar": False, "responsive": True},
+                    )
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
