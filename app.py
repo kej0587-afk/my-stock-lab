@@ -11492,10 +11492,12 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
     )
     base_text = re.sub(r"\[[^\]]+\]", " ", base_text)
     raw_terms = [part.strip() for part in re.split(r"[,/·|()\s]+", base_text) if part.strip()]
-    terms = [t for t in raw_terms if len(t) >= 2 and t not in {"ETF", "테마", "섹터", "대표"}]
+    stop_terms = {"ETF", "테마", "섹터", "대표", "국내", "미국", "글로벌", "iShares", "VanEck"}
+    terms = [t for t in raw_terms if len(t) >= 2 and t not in stop_terms]
     lower = base_text.lower()
     expansions = {
         "반도체": ["반도체", "ai", "hbm", "dram", "메모리", "nvidia", "amd", "soxx", "soxl", "smh", "ram"],
+        "ai": ["ai", "인공지능", "agentic", "에이전틱", "nvidia", "amd", "msft", "google", "meta", "dell", "hbm"],
         "소부장": ["소부장", "반도체", "hbm", "패키징", "기판", "pcb"],
         "pcb": ["pcb", "기판", "패키징", "substrate"],
         "전력": ["전력", "전력망", "전선", "grid", "data center", "데이터센터"],
@@ -12747,6 +12749,94 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
                 st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
                 st.caption(f"오늘 포착종목: {card.get('representatives', '-')}")
                 st.caption(f"실행분류: {_flow_action_caption(card.get('action', '-'))}")
+
+
+def _sector_research_card_news_text(card, news_rows):
+    row = {
+        "name": f"{card.get('title', '')} {card.get('market', '')}",
+        "source": "섹터 리서치",
+        "state": f"{card.get('verdict', '')} {card.get('action', '')}",
+        "representatives": " ".join([
+            str(card.get("anchor_representatives", "") or ""),
+            str(card.get("representatives", "") or ""),
+            str(card.get("etfs", "") or ""),
+        ]),
+    }
+    return _brief_axis_news_text(row, news_rows, limit=2)
+
+
+def _sector_research_card_takeaway(card):
+    values = card.get("values", {}) if isinstance(card, dict) else {}
+    verdict = str(card.get("verdict", "") or "")
+    title = str(card.get("title", "이 섹터") or "이 섹터")
+    strength = clean_float(values.get("강도", np.nan), np.nan)
+    breadth = clean_float(values.get("확산", np.nan), np.nan)
+    short_flow = clean_float(values.get("단기유입", np.nan), np.nan)
+    momentum = clean_float(values.get("모멘텀", np.nan), np.nan)
+    timing = clean_float(values.get("타점", np.nan), np.nan)
+
+    if "실제 주도" in verdict:
+        return f"{title}는 강도와 단기 유입이 같이 살아난 축입니다. 대표주가 같이 버티면 정밀관측 우선 후보입니다."
+    if "과열" in verdict:
+        return f"{title}는 주도성은 보이지만 가격 위치가 높습니다. 추격보다 눌림 품질과 거래량 재유입을 봅니다."
+    if "반등" in verdict:
+        return f"{title}는 반등 신호는 있지만 확산이나 중기 힘이 아직 덜 붙었습니다. 다음 봉 지속성이 핵심입니다."
+    if "후행" in verdict:
+        return f"{title}는 과거 강도는 남아 있지만 단기 유입이 약합니다. 새 매수보다 보유/관찰 쪽입니다."
+    if "위험" in verdict:
+        return f"{title}는 방어가 먼저인 축입니다. 가격 회복 전까지 비중 확대는 보류합니다."
+
+    weak_bits = []
+    if finite_num(short_flow) and float(short_flow) < 5.0:
+        weak_bits.append("단기 유입")
+    if finite_num(momentum) and float(momentum) < 5.0:
+        weak_bits.append("모멘텀")
+    if finite_num(breadth) and float(breadth) < 5.0:
+        weak_bits.append("확산")
+    if weak_bits:
+        return f"{title}는 {'·'.join(weak_bits)} 확인이 더 필요합니다. 주도 확정 전 관찰 축입니다."
+    if finite_num(strength) and finite_num(timing) and float(strength) >= 6.0 and float(timing) >= 5.5:
+        return f"{title}는 후보권에 들어왔습니다. 정밀관측소에서 손익비와 눌림 위치를 확인합니다."
+    return f"{title}는 아직 방향 확정 전입니다. 뉴스 재료와 대표주 동행 여부를 같이 확인합니다."
+
+
+def render_sector_research_cards(cards, news_rows=None, limit=4):
+    if not cards:
+        return
+
+    top_cards = cards[: max(1, int(limit))]
+    st.markdown("##### 짧은 리서치 카드")
+    st.caption("섹터별 돈흐름 능력치, 대표축, 뉴스재료, 실행분류를 한 장으로 묶어 봅니다.")
+    show_graph = st.toggle(
+        "리서치 카드 그래프 보기",
+        value=True,
+        key="sector_research_cards_show_graph",
+        help="상위 섹터의 강도·확산·단기유입·모멘텀·안정도·타점을 한 번에 봅니다.",
+    )
+
+    cols = st.columns(2 if len(top_cards) > 1 else 1)
+    for idx, card in enumerate(top_cards):
+        with cols[idx % len(cols)]:
+            score = clean_float(card.get("total", np.nan), np.nan)
+            score_text = f"{float(score):.1f}/10" if finite_num(score) else "-/10"
+            st.markdown(f"**#{idx + 1} {card.get('market', '-')} · {card.get('title', '-')}**")
+            st.caption(f"{card.get('verdict', '-')} · 주도점수 {score_text} · {_flow_action_caption(card.get('action', '-'))}")
+            st.caption(f"한 줄 결론: {_sector_research_card_takeaway(card)}")
+            st.caption(f"능력치: {_flow_stat_values_line(card)}")
+            news_text = _sector_research_card_news_text(card, news_rows)
+            if news_text and news_text != "-":
+                st.caption(f"뉴스/재료: {news_text}")
+            else:
+                st.caption("뉴스/재료: 주도맵 뉴스재료 새로고침 후 연결")
+            if show_graph:
+                st.plotly_chart(
+                    _flow_stat_radar_figure(card),
+                    width='stretch',
+                    key=f"sector_research_card_radar_{idx}",
+                    config={"displayModeBar": False, "responsive": True},
+                )
+            st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
+            st.caption(f"오늘 포착종목: {card.get('representatives', '-')}")
 
 
 def _render_index_rotation_panel(rotation_df: pd.DataFrame):
@@ -31423,17 +31513,32 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         command_flow_df = pd.DataFrame()
         st.caption(f"실행 후보판 연결 계산을 불러오지 못했습니다: {type(exc).__name__}")
 
+    brief_news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
+    if not isinstance(brief_news_rows, list):
+        brief_news_rows = []
+    news_cols = st.columns([1.2, 3.0])
+    if news_cols[0].button("주도맵 뉴스재료 새로고침", key="market_flow_axis_news_refresh", width='stretch'):
+        with st.spinner("주도맵 뉴스재료 확인 중..."):
+            brief_news_rows = refresh_today_action_news(None)
+    last_news_run = st.session_state.get(TODAY_ACTION_NEWS_LAST_RUN_KEY, "")
+    if brief_news_rows:
+        suffix = f" · 마지막 확인 {last_news_run}" if last_news_run else ""
+        news_cols[1].caption(f"뉴스재료 {len(brief_news_rows)}건 연결 준비됨{suffix}")
+    else:
+        news_cols[1].caption("뉴스재료를 붙이려면 새로고침을 한 번 눌러주세요. 수집된 뉴스는 주요 뉴스 탭과 주도맵에서 함께 씁니다.")
+
     render_today_market_briefing_board(
         flow_df,
         sector_rotation_df,
         theme_rotation_df,
         command_df=command_flow_df,
         market_guard=market_guard,
-        news_rows=st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, []),
+        news_rows=brief_news_rows,
     )
     sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
     render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=sector_ability_cards)
+    render_sector_research_cards(sector_ability_cards, news_rows=brief_news_rows)
 
     _render_today_market_flow_reference_metrics(kr_top5, us_top5, global_top, local_top, theme_top5)
     detail_view = _select_today_market_flow_detail_view()
