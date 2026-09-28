@@ -1383,6 +1383,8 @@ EVENT_RADAR_NOISE_KEYWORDS = (
     "finalist speech", "monte carlo", "alcaraz", "tennis",
     "youtube", "mshale", "roughnecks", "롤 통계사이트", "게임 용어",
     "robinhood token", "convert 1", "to usd", "bybit",
+    "구리문화재단", "재단 신임", "대표이사에", "시장 상위 20개 기업",
+    "spherical insights",
 )
 
 MARKET_NEWS_SOCIAL_NOISE_KEYWORDS = (
@@ -1390,6 +1392,8 @@ MARKET_NEWS_SOCIAL_NOISE_KEYWORDS = (
     "연예", "맛집", "날씨", "복권", "로또", "스포츠",
     "roughnecks", "롤 통계사이트", "게임 용어",
     "robinhood token", "convert 1", "to usd", "bybit",
+    "구리문화재단", "재단 신임", "대표이사에", "시장 상위 20개 기업",
+    "spherical insights",
 )
 
 MARKET_NEWS_RELEVANCE_KEYWORDS = (
@@ -1956,7 +1960,7 @@ def build_auto_market_memo(
             lines.append(f"• {_flow_bullet(row, score_col=score_col)}")
         lines.append("")
     if used_header:
-        lines.append("※ 상태 기준: 과열=52주 상단권/급변동, 강세가속=3M 상승+가속, 둔화=중기 흐름 약화, 급락=3M 하락+가속. 가격과 돈흐름이 반대면 다이버전스로 별도 표시합니다.")
+        lines.append("※ 상태 기준: 과열=52주 상단권/급변동, 강세가속=3M 상승+가속, 둔화=상승 흐름의 감속, 약세전환=3M 음수 전환, 급락=3M 하락+가속. 가격과 돈흐름이 반대면 다이버전스로 별도 표시합니다.")
         lines.append("")
 
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)

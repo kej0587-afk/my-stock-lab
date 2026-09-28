@@ -13185,7 +13185,7 @@ def _build_global_flow_reading(flow_df, rankable_df, leader, accel_leader, weak)
         sc = rankable_df["상태"].value_counts()
         n_pos   = sum(sc.get(s, 0) for s in ["강세 가속", "신규 유입", "주도 유지", "급반등"])
         n_warn  = sum(sc.get(s, 0) for s in ["과열경보", "둔화 경고"])
-        n_neg   = sum(sc.get(s, 0) for s in ["소외 지속", "급락 경보", "고변동"])
+        n_neg   = sum(sc.get(s, 0) for s in ["약세 전환", "소외 지속", "급락 경보", "고변동"])
         n_hot   = sc.get("과열경보", 0)
         n_crash = sc.get("급락 경보", 0)
 
@@ -13470,6 +13470,7 @@ def render_money_flow_etf_section():
         "신규 유입": "🟢 신규 유입",
         "주도 유지": "💚 주도 유지",
         "둔화 경고": "🟡 둔화 경고",
+        "약세 전환": "🟠 약세 전환",
         "소외 지속": "🔴 소외 지속",
         "상대 약세": "🟠 상대 약세",
         "관찰":     "⚪ 관찰",
@@ -13485,7 +13486,7 @@ def render_money_flow_etf_section():
     #   ⚠️ 고점주의  : 스윙점수 ≥ 5  AND  52주위치 ≥ 85%  (모멘텀 있지만 고점 추격 위험)
     #   💤 약모멘텀  : 0 < 스윙점수 < 5  (양수지만 유의미한 모멘텀 부족)
     #   ❌ 비추      : 스윙점수 ≤ 0  OR  상태가 "소외 지속" · "급락 경보"
-    _BAD_STATES = {"소외 지속", "급락 경보"}
+    _BAD_STATES = {"약세 전환", "소외 지속", "급락 경보"}
     _SWING_MIN  = 5.0
 
     def _swing_entry_label(row) -> str:
@@ -13912,7 +13913,7 @@ def render_money_flow_etf_section():
     st.caption(f"{_bw_label}{_acc_note}")
 
     # 상태 분포 바 차트
-    _state_order = ["과열경보", "강세 가속", "급반등", "고변동", "신규 유입", "주도 유지", "둔화 경고", "관찰", "소외 지속", "급락 경보", "가격부족"]
+    _state_order = ["과열경보", "강세 가속", "급반등", "고변동", "신규 유입", "주도 유지", "둔화 경고", "약세 전환", "관찰", "소외 지속", "급락 경보", "가격부족"]
     _state_colors = {
         "과열경보":  "#f97316",
         "강세 가속": "#22c55e",
@@ -13921,6 +13922,7 @@ def render_money_flow_etf_section():
         "신규 유입": "#4ade80",
         "주도 유지": "#16a34a",
         "둔화 경고": "#facc15",
+        "약세 전환": "#fb923c",
         "관찰":      "#64748b",
         "소외 지속": "#ef4444",
         "급락 경보": "#dc2626",
@@ -14374,7 +14376,7 @@ def render_image_theme_flow_section():
     _state_badge_map = {
         "과열경보": "🔥", "강세 가속": "🚀", "급락 경보": "💥", "급반등": "⚡",
         "고변동": "〰️", "신규 유입": "🟢", "주도 유지": "💚",
-        "둔화 경고": "🟡", "소외 지속": "🔴", "관찰": "⚪",
+        "둔화 경고": "🟡", "약세 전환": "🟠", "소외 지속": "🔴", "관찰": "⚪",
     }
     _state_icon = _state_badge_map.get(_th_state, "")
 
@@ -14414,6 +14416,7 @@ def render_image_theme_flow_section():
         "신규 유입": "🟢 신규 유입",
         "주도 유지": "💚 주도 유지",
         "둔화 경고": "🟡 둔화 경고",
+        "약세 전환": "🟠 약세 전환",
         "소외 지속": "🔴 소외 지속",
         "상대 약세": "🟠 상대 약세",
         "관찰":     "⚪ 관찰",
@@ -27736,7 +27739,7 @@ def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 �
     flow_breadth = guard.get("flow_breadth", np.nan)
     macro_risk = guard.get("macro_risk", np.nan)
     c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
-    c5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+    c5.metric("매크로 지수", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}pt")
     st.caption(
         "시장점수는 국장·미장·돈흐름·매크로를 합친 전체 안전벨트입니다. "
         "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험입니다. "
@@ -27775,6 +27778,15 @@ def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 �
             st.info("시장 지표 데이터가 부족합니다.")
         else:
             show = bench_df.copy()
+            if "지역" in show.columns and "1일" in show.columns:
+                us_status_label = get_market_status_label("SPY")
+                kr_status_label = get_market_status_label("069500.KS")
+                show["1일 기준"] = show["지역"].astype(str).map(
+                    lambda region: "전 거래일" if (
+                        (region.upper() == "US" and "휴장" in us_status_label)
+                        or (region.upper() == "KR" and "휴장" in kr_status_label)
+                    ) else "실시간/최근"
+                )
             for col in ["1일", "5일", "20일", "20일고점대비"]:
                 if col in show.columns:
                     show[col] = show[col].apply(_format_today_signed_pct)
@@ -28692,6 +28704,7 @@ def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
         return out
     out["거래량증가"] = out["거래량증가"].apply(lambda v: f"{float(v)*100:+.1f}%" if finite_num(v) else "-")
     out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: "-" if not finite_num(v) else f"{float(v):.1f}")
+    out = out.rename(columns={"돈흐름점수": "거래량가중점수"})
     return out.drop(columns=["_수급표우선순위", "_이름키"], errors="ignore")
 
 
@@ -28741,7 +28754,7 @@ def render_today_briefing_investor_flow(summary_df=None, watch_items=None):
 
     volume_df = _build_today_volume_brief_rows(limit=6)
     if isinstance(volume_df, pd.DataFrame) and not volume_df.empty:
-        st.caption("거래량 확인: 돈흐름 점수에 이미 거래량 가중치가 포함되어 있지만, 아래는 거래량 증가만 따로 뽑은 참고입니다.")
+        st.caption("거래량 확인: 아래 점수는 거래량 증가가 크게 반영된 참고값입니다. 본문 섹터 카드의 중기 돈흐름점수와는 산식이 다릅니다.")
         st.dataframe(volume_df, width='stretch', hide_index=True, height=min(320, 90 + len(volume_df) * 36))
     else:
         st.caption("거래량 확인: 돈흐름 상세 계산 후 거래량 증가 상위 축이 표시됩니다.")
@@ -28978,6 +28991,11 @@ def render_today_unified_briefing_panel(
     m4.metric("적립용 현금", f"{clean_float(cash_available, 0.0):,.0f}원")
     m5.metric("예비자금", f"{clean_float(reserve_available, 0.0):,.0f}원")
 
+    if not pending and buyish_count == 0:
+        st.info(
+            "오늘 실행후보 0개: 신규 주문보다 현금 비중, 손절선, 이벤트 D-Day, 관심 후보 알림 조건을 먼저 점검합니다."
+        )
+
     st.markdown("**종합 추천**")
     for line in recommendation_lines[:5]:
         st.caption(f"- {line}")
@@ -29007,7 +29025,7 @@ def render_today_unified_briefing_panel(
     flow_breadth = guard.get("flow_breadth", np.nan)
     macro_risk = guard.get("macro_risk", np.nan)
     d4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
-    d5.metric("매크로 리스크", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}")
+    d5.metric("매크로 지수", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}pt")
 
     bench_df = guard.get("bench_df", pd.DataFrame())
     macro_df = guard.get("macro_df", pd.DataFrame())
@@ -29016,6 +29034,15 @@ def render_today_unified_briefing_panel(
     with market_cols[0]:
         if isinstance(bench_df, pd.DataFrame) and not bench_df.empty:
             show = bench_df.copy()
+            if "지역" in show.columns and "1일" in show.columns:
+                us_status_label = get_market_status_label("SPY")
+                kr_status_label = get_market_status_label("069500.KS")
+                show["1일 기준"] = show["지역"].astype(str).map(
+                    lambda region: "전 거래일" if (
+                        (region.upper() == "US" and "휴장" in us_status_label)
+                        or (region.upper() == "KR" and "휴장" in kr_status_label)
+                    ) else "실시간/최근"
+                )
             for col in ["1일", "5일", "20일", "20일고점대비"]:
                 if col in show.columns:
                     show[col] = show[col].apply(_format_today_signed_pct)
@@ -32057,11 +32084,18 @@ def render_today_queue_tab(mode):
         _concentrated = {cls: tks for cls, tks in _class_buckets.items() if len(tks) >= 2}
         if _concentrated:
             _warn_parts = [f"**{cls}** ({', '.join(tks)})" for cls, tks in _concentrated.items()]
-            st.warning(
-                "⚠️ **섹터 집중 주의** — 같은 섹터에 매수/관심 후보가 2개 이상입니다: "
-                + " / ".join(_warn_parts)
-                + "\n\n동시에 진입하면 해당 섹터 비중이 집중될 수 있습니다. 분할 우선순위를 정한 뒤 순차 접근을 권장합니다."
-            )
+            _concentration_text = " / ".join(_warn_parts)
+            if int(execution_mask.sum()) >= 1:
+                st.warning(
+                    "⚠️ **섹터 집중 주의** — 같은 섹터에 실행/관심 후보가 2개 이상입니다: "
+                    + _concentration_text
+                    + "\n\n동시에 진입하면 해당 섹터 비중이 집중될 수 있습니다. 분할 우선순위를 정한 뒤 순차 접근을 권장합니다."
+                )
+            else:
+                st.caption(
+                    "섹터 집중 참고: 현재 실행 후보는 0개라 경고가 아니라 관찰용입니다. "
+                    + _concentration_text
+                )
 
     st.divider()
     st.markdown("#### 세부 근거: 상세 판정표")
@@ -32117,6 +32151,14 @@ def render_today_queue_tab(mode):
         )
 
     flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
+    unique_detail_count = (
+        int(summary_df["티커"].astype(str).map(normalize_ticker).nunique())
+        if "티커" in summary_df.columns else int(len(summary_df))
+    )
+    st.caption(
+        f"탭 숫자는 한 종목이 여러 사유에 걸리면 중복 포함됩니다. "
+        f"고유 상세판정 {unique_detail_count}개, 돈흐름 후보 {len(flow_shortlist_df)}개는 별도 참고 목록입니다."
+    )
 
     tabs = st.tabs([
         f"실행 후보 ({int(execution_mask.sum())})",
@@ -32337,7 +32379,7 @@ macro_event_df, macro_event_risk, macro_event_count = build_macro_event_risk_tab
 # globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
 st.session_state["_app_final_macro_risk"] = final_macro_risk
 st.session_state["_app_macro_event_risk"] = macro_event_risk
-st.caption(f"모드: {app_mode_label} | 매크로 리스크: {final_macro_risk:.1f} | 이벤트 리스크: {macro_event_risk:.1f} | 매크로 패널티: -{macro_penalty}")
+st.caption(f"모드: {app_mode_label} | 매크로 지수: {final_macro_risk:.1f}pt | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: -{macro_penalty}")
 if IS_PUBLIC_DEMO:
     st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
 

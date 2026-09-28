@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 
-BAD_FLOW_STATES = {"소외 지속", "급락 경보"}
+BAD_FLOW_STATES = {"약세 전환", "소외 지속", "급락 경보"}
 
 
 def _row_get(row: Any, key: str, default=None):

@@ -265,6 +265,11 @@ TODAY_ACTION_NEWS_NOISE_WORDS = (
     "roughnecks",
     "롤 통계사이트",
     "게임 용어",
+    "구리문화재단",
+    "재단 신임",
+    "대표이사에",
+    "시장 상위 20개 기업",
+    "spherical insights",
 )
 
 TODAY_ACTION_NEWS_RELEVANCE_TERMS = {

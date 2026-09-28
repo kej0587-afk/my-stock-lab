@@ -31,6 +31,21 @@ def test_flow_candidate_still_excludes_crash_without_recent_turn():
     assert classify_flow_candidate_type(row) == "제외"
 
 
+def test_flow_candidate_excludes_weak_turn_without_recent_turn():
+    row = {
+        "상태": "약세 전환",
+        "1주수익률": -0.02,
+        "2주수익률": -0.05,
+        "1개월수익률": -0.12,
+        "가속도": -0.16,
+        "단기가속도": -0.03,
+        "가격수준": 0.58,
+        "돈흐름점수": 2,
+    }
+
+    assert classify_flow_candidate_type(row) == "제외"
+
+
 def test_flow_candidate_marks_high_price_as_high_watch():
     row = {
         "상태": "강세 가속",

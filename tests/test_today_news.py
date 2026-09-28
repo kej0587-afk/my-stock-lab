@@ -34,6 +34,32 @@ def test_today_news_ranking_filters_low_quality_noise():
     assert ranked[0]["중요도"] >= 8
 
 
+def test_today_news_ranking_filters_market_name_noise():
+    rows = [
+        normalize_today_action_news_row(
+            {
+                "title": "구리문화재단 신임 대표이사에 송영한 씨 취임",
+                "market_category": "원자재/금속",
+                "publisher": "연합뉴스",
+            },
+            "시장/속보",
+        ),
+        normalize_today_action_news_row(
+            {
+                "title": "Semiconductor ETFs SMH, SOXX, SOXL Top Weekly Fund Flows",
+                "market_category": "반도체/AI",
+                "publisher": "Stocktwits",
+            },
+            "핵심속보",
+        ),
+    ]
+
+    ranked = rank_today_action_news_rows(rows)
+
+    assert len(ranked) == 1
+    assert ranked[0]["읽기분류"] == "반도체/AI"
+
+
 def test_today_news_brief_explains_priority_for_beginners():
     rows = [
         normalize_today_action_news_row(

@@ -1828,7 +1828,8 @@ def classify_money_flow_state(
     [일반 계열]
     신규 유입: ret_3m≥5% + accel≥3%
     주도 유지: ret_3m·6m 모두 ≥5% + accel 유지
-    둔화 경고: ret_6m≥5% but accel≤-5%
+    둔화 경고: ret_3m은 아직 +, ret_6m≥5% but accel≤-5%
+    약세 전환: 3m이 -로 꺾였지만 6m 추세는 아직 남아 있음
     소외 지속: ret_3m·6m 모두 <0
     관찰     : 나머지
     """
@@ -1861,12 +1862,16 @@ def classify_money_flow_state(
     # 신규 유입: 3m은 강하나 6m 미확인 또는 accel이 강한 초기 유입 신호
     if finite_num(ret_3m) and finite_num(accel) and ret_3m >= 0.05 and accel >= 0.03:
         return "신규 유입"
-    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05:
+    if finite_num(ret_6m) and finite_num(accel) and ret_6m >= 0.05 and accel <= -0.05 and (
+        not finite_num(ret_3m) or ret_3m >= 0
+    ):
         return "둔화 경고"
     if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m <= -0.03 and ret_6m >= 0.05:
-        return "둔화 경고"
+        return "약세 전환"
     if finite_num(ret_3m) and finite_num(ret_6m) and ret_3m < 0 and ret_6m < 0:
         return "소외 지속"
+    if finite_num(ret_3m) and ret_3m <= -0.12:
+        return "약세 전환"
     return "관찰"
 
 

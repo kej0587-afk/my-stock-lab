@@ -254,6 +254,8 @@ GENERAL_NOISE_WORDS = [
     "finalist speech", "monte carlo", "alcaraz", "tennis", "highlight video",
     "roughnecks", "롤 통계사이트", "게임 용어", "robinhood token",
     "convert 1", "to usd", "bybit",
+    "구리문화재단", "재단 신임", "대표이사에", "시장 상위 20개 기업",
+    "spherical insights",
 ]
 
 LISTING_COMPLIANCE_NOISE_WORDS = [
@@ -326,6 +328,8 @@ BLOCKED_LOW_QUALITY_NEWS_WORDS = [
     "quotes & news", "stock forum", "forum and discussion", "stock chart",
     "technical chart", "what signal", "robinhood token", "convert 1",
     "to usd", "bybit", "roughnecks", "롤 통계사이트", "게임 용어",
+    "구리문화재단", "재단 신임", "대표이사에", "시장 상위 20개 기업",
+    "spherical insights",
 ]
 
 EARNINGS_NEWS_WORDS = [
