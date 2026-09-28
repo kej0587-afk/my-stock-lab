@@ -11,6 +11,7 @@ from stock_lab_core.decision_engine import (
     build_live_rebound_context,
     build_price_history_context,
     build_tactical_price_context,
+    build_core_dca_context,
     build_core_dca_outcome,
     build_decision_outcome,
     classify_core_etf_dca_rate,
@@ -446,6 +447,48 @@ class TestClassifyCoreEtfDcaRateNormal:
             rsi_now=76, mfi_now=50, pct_b_now=0.5, trend="🚀정배열(상승)",
         )
         assert rate == 0.25
+
+
+class TestBuildCoreDcaContext:
+    def test_builds_storm_context_with_target_gap_pool(self):
+        ctx = build_core_dca_context(
+            mode="자유모드",
+            is_core_etf=True,
+            weight_gap=10.0,
+            buy_amount=1_500_000,
+            current_dd=-0.05,
+            rsi_now=60,
+            mfi_now=60,
+            pct_b_now=0.5,
+            trend="🚀정배열(상승)",
+            is_us_broad_index_core_etf=True,
+            final_macro_risk=5.0,
+        )
+
+        assert ctx["core_dca_rate"] == 1.0
+        assert ctx["core_dca_amt"] == 1_500_000
+        assert ctx["core_dca_pool_label"] == "목표비중 부족분"
+        assert "100%" in ctx["core_dca_label"]
+
+    def test_personal_mode_uses_cash_and_reserve_only_on_deep_drawdown(self):
+        ctx = build_core_dca_context(
+            mode="개인모드",
+            is_core_etf=True,
+            weight_gap=10.0,
+            buy_amount=1_000_000,
+            current_dd=-0.25,
+            rsi_now=40,
+            mfi_now=40,
+            pct_b_now=0.3,
+            trend="🌊역배열(하락)",
+            cash_available=300_000,
+            reserve_available=500_000,
+        )
+
+        assert ctx["core_dca_rate"] == 1.5
+        assert ctx["core_dca_pool"] == 800_000
+        assert ctx["core_dca_amt"] == 800_000
+        assert ctx["core_dca_pool_label"] == "예수금+파킹자산"
 
 
 # ---------------------------------------------------------------------------

@@ -411,11 +411,11 @@ from stock_lab_core.decision_engine import (
     build_core_dca_outcome,
     build_decision_outcome,
     build_limited_history_etf_outcome,
+    build_core_dca_context as build_core_dca_context_rule,
     build_core_dca_context_values,
     build_position_sizing_hint,
     classify_candidate_grade,
     classify_decision_signal,
-    classify_core_etf_dca_rate as classify_core_etf_dca_rate_rule,
     classify_safety_state,
     classify_macro_state,
     ensure_min_price_rows_for_decision,
@@ -16634,36 +16634,12 @@ def resolve_decision_runtime_inputs(macro_penalty_value=None, final_macro_risk_v
     return normalize_decision_runtime_inputs(mp, fmr, te)
 
 
-def classify_core_etf_dca_rate(
-    is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
-    rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value=None,
-):
-    _, macro_risk_value, _ = resolve_decision_runtime_inputs(final_macro_risk_value=final_macro_risk_value)
-    return classify_core_etf_dca_rate_rule(
-        is_core_etf=is_core_etf,
-        weight_gap=weight_gap,
-        current_dd=current_dd,
-        rsi_now=rsi_now,
-        mfi_now=mfi_now,
-        pct_b_now=pct_b_now,
-        trend=trend,
-        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
-        is_us_broad_index_core_etf=is_us_broad_index_core_etf(ticker, asset_class, name),
-        is_kr_listed_core_etf=is_domestic_kr_core_etf(ticker, asset_class, name),
-        final_macro_risk=macro_risk_value,
-    )
-
-
 def build_core_dca_context(
     mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
     current_dd, rsi_now, mfi_now, pct_b_now, trend,
     cash_available_snapshot=None, reserve_available_snapshot=None,
     final_macro_risk_value=None,
 ):
-    rate, label = classify_core_etf_dca_rate(
-        is_core_etf, name, ticker, asset_class, weight_gap, current_dd,
-        rsi_now, mfi_now, pct_b_now, trend, final_macro_risk_value
-    )
     cash_available = (
         get_cash_available_for_dca(mode)
         if cash_available_snapshot is None
@@ -16676,14 +16652,23 @@ def build_core_dca_context(
     )
 
 
-    return build_core_dca_context_values(
+    _, macro_risk_value, _ = resolve_decision_runtime_inputs(final_macro_risk_value=final_macro_risk_value)
+    return build_core_dca_context_rule(
         mode=mode,
-        rate=rate,
-        label=label,
+        is_core_etf=is_core_etf,
+        weight_gap=weight_gap,
         buy_amount=buy_amount,
         current_dd=current_dd,
+        rsi_now=rsi_now,
+        mfi_now=mfi_now,
+        pct_b_now=pct_b_now,
+        trend=trend,
         cash_available=cash_available,
         reserve_available=reserve_available,
+        is_leveraged_or_inverse=is_leveraged_or_inverse_product(name, ticker, asset_class),
+        is_us_broad_index_core_etf=is_us_broad_index_core_etf(ticker, asset_class, name),
+        is_kr_listed_core_etf=is_domestic_kr_core_etf(ticker, asset_class, name),
+        final_macro_risk=macro_risk_value,
     )
 
 def _get_live_price_row_date(ticker: str):

@@ -1171,6 +1171,48 @@ def build_core_dca_context_values(
     }
 
 
+def build_core_dca_context(
+    *,
+    mode: str,
+    is_core_etf: bool,
+    weight_gap: float,
+    buy_amount: float,
+    current_dd: float,
+    rsi_now: float,
+    mfi_now: float,
+    pct_b_now: float,
+    trend: str,
+    cash_available: float = 0.0,
+    reserve_available: float = 0.0,
+    is_leveraged_or_inverse: bool = False,
+    is_us_broad_index_core_etf: bool = False,
+    is_kr_listed_core_etf: bool = False,
+    final_macro_risk: float = 0.0,
+) -> dict:
+    rate, label = classify_core_etf_dca_rate(
+        is_core_etf=is_core_etf,
+        weight_gap=weight_gap,
+        current_dd=current_dd,
+        rsi_now=rsi_now,
+        mfi_now=mfi_now,
+        pct_b_now=pct_b_now,
+        trend=trend,
+        is_leveraged_or_inverse=is_leveraged_or_inverse,
+        is_us_broad_index_core_etf=is_us_broad_index_core_etf,
+        is_kr_listed_core_etf=is_kr_listed_core_etf,
+        final_macro_risk=final_macro_risk,
+    )
+    return build_core_dca_context_values(
+        mode=mode,
+        rate=rate,
+        label=label,
+        buy_amount=buy_amount,
+        current_dd=current_dd,
+        cash_available=cash_available,
+        reserve_available=reserve_available,
+    )
+
+
 def classify_limited_history_etf_signal(
     history_days: int,
     has_pos: bool,
