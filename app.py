@@ -16995,11 +16995,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
     _, rs_label = get_rs_score(ticker, asset_class)
     rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
+    last_sqz_near_raw = last.get("SQZ_NEAR", False)
+    prev_sqz_near_raw = prev.get("SQZ_NEAR", False)
+    last_sqz_near = bool(last_sqz_near_raw) if pd.notna(last_sqz_near_raw) else False
+    prev_sqz_near = bool(prev_sqz_near_raw) if pd.notna(prev_sqz_near_raw) else False
+    recent_sqz_near = df["SQZ_NEAR"].tail(30).tolist() if "SQZ_NEAR" in df.columns else None
     sqz_status = get_sqz_status(
         bool(last["SQZ_ON"]),
         bool(prev["SQZ_ON"]),
         df["SQZ_ON"].tail(30).tolist(),
         release_lookback=20,
+        last_sqz_near=last_sqz_near,
+        prev_sqz_near=prev_sqz_near,
+        recent_sqz_near=recent_sqz_near,
     )
 
     tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
@@ -22829,7 +22837,7 @@ MANUAL_SECTIONS = {
         {"항목": "MFI", "정의": "거래량 포함 자금흐름", "코드 기준": "30 미만 +2점, 80 초과 -1점, 85 이상 하드차단", "해석": "자금 유입/과열 판단"},
         {"항목": "볼린저 %B", "정의": "볼린저밴드 내 현재 위치", "코드 기준": "0.95 이상 상단권, 1.02 초과 과열확장", "해석": "상단권은 눌림 대기 우선"},
         {"항목": "MACD", "정의": "추세 전환/유지", "코드 기준": "골든크로스 +2, 상승유지 +1, 데드크로스 -2", "해석": "매수 타점의 핵심 모멘텀"},
-        {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1", "해석": "압축 후 방향성 분출 체크"},
+        {"항목": "SQZ", "정의": "변동성 압축/해제", "코드 기준": "해제직후 + MACD 양호 시 +1. 압축근접/압축대기는 관찰 신호", "해석": "압축 후 방향성 분출과 직전 대기 구간 체크"},
         {"항목": "52주 고점대비", "정의": "52주 고점 대비 현재 하락률", "코드 기준": "-20%는 추매금지/원인점검, -30% 이하는 위기 단계", "해석": "내 손익률이나 엄밀한 MDD가 아니라 최근 고점 대비 구조 훼손 정도를 보는 보조 지표"},
         {"항목": "ADJ점수", "정의": "매크로 패널티 반영 기술점수", "코드 기준": "메인점수 + RS점수 + MFI점수 + RS기울기점수 - 매크로패널티", "해석": "높을수록 현재 타점 우호"},
         {"항목": "R/R 비율", "정의": "2ATR 손절 기준 리스크/리워드", "코드 기준": "손절 = 현재가 - 2ATR (추가 인사이트와 동일). 기준가 = 내부 피벗 고점 → 외부 피벗 고점 → 없으면 +4ATR 강세 시나리오 상단 순서로 사용. R/R = (기준가-현재가)/(현재가-손절)", "해석": "구조 목표가가 있을 때는 1.5 이상이면 타점 우호. 신고가/가격발견 구간의 +4ATR은 확정 목표가가 아니라 상단 시나리오이며, +1ATR/+2ATR 분할익절과 추적손절을 같이 봅니다."},
@@ -22840,7 +22848,7 @@ MANUAL_SECTIONS = {
         {"항목": "MFI 점수", "계산": "30 미만 +2, 80 초과 -1, 그 외 0", "용도": "자금흐름 반영"},
         {"항목": "추세 점수", "계산": "MA20 > MA50 > MA120 정배열이면 +2", "용도": "중기 추세 반영"},
         {"항목": "MACD 점수", "계산": "골든크로스 +2, 상승유지 +1, 데드크로스 -2", "용도": "모멘텀 반영"},
-        {"항목": "SQZ 점수", "계산": "SQZ 해제직후 + MACD 양호하면 +1", "용도": "변동성 발산 초입 반영"},
+        {"항목": "SQZ 점수", "계산": "SQZ 해제직후 + MACD 양호하면 +1. 압축근접/압축대기는 점수 0", "용도": "변동성 발산 초입만 점수 반영"},
         {"항목": "거래량 방향 점수", "계산": "양봉 + 거래량 1.2배↑ → +1 / 음봉(-2%↓) + 거래량 1.5배↑ → -1", "용도": "main_score 반영"},
         {"항목": "기술점수", "계산": "RS + MFI + 추세 + MACD + SQZ", "용도": "후보등급 계산 (거래량 방향은 main_score 경유)"},
         {"항목": "ADJ점수", "계산": "main_score + RS점수 + MFI점수 + RS기울기점수(±1) - 매크로패널티", "용도": "타점 판정 기준 점수"},
@@ -22989,7 +22997,7 @@ RSI 30 이하이거나 하락 추세 속 ADJ가 높을 때 뜹니다. 반등 가
 - MFI 30 미만 +2, 80 초과 -1
 - MA20 > MA50 > MA120 정배열 +2
 - MACD 골든크로스 +2, 상승유지 +1, 데드크로스 -2
-- SQZ 해제직후 + MACD 양호 +1
+- SQZ 해제직후 + MACD 양호 +1. 압축근접/압축대기는 점수보다 관찰 문구로 봅니다.
 
 **ADJ점수**  
 현재 타점 점수에서 매크로 패널티를 뺀 값입니다. 매크로 리스크가 높을수록 같은 종목도 점수가 낮아집니다.

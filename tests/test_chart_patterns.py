@@ -67,6 +67,34 @@ def test_recent_trendline_prefers_post_peak_resistance_after_spike():
     assert resistance["direction"] == "하락"
 
 
+def test_recent_trendline_ignores_fresh_breakout_wick_for_resistance():
+    idx = pd.date_range("2026-01-01", periods=120, freq="D")
+    base = np.linspace(120, 136, 120)
+    high = base + 1
+    low = base - 1
+    close = base.copy()
+    for pos, price in [(70, 150), (85, 145), (100, 140), (114, 170)]:
+        high[pos] = price
+        close[pos] = min(price - 8, base[pos])
+        low[pos] = close[pos] - 2
+        for offset in (-2, -1, 1, 2):
+            p = pos + offset
+            if 0 <= p < len(high):
+                high[p] = min(high[p], price - 12)
+                close[p] = min(close[p], price - 14)
+    df = pd.DataFrame(
+        {"Open": close - 0.5, "High": high, "Low": low, "Close": close},
+        index=idx,
+    )
+
+    guides = build_recent_trendline_guides(df)
+    resistance = next((g for g in guides if g.get("kind") == "resistance"), None)
+
+    assert resistance is not None
+    assert resistance["direction"] == "하락"
+    assert resistance["x0"] <= idx[100]
+
+
 def test_chart_pattern_summary_marks_overheated_valid_pattern_as_wait():
     pattern = {
         "name": "역헤드앤숄더",

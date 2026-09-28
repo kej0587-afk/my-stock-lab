@@ -31,7 +31,28 @@ except Exception:
 # 기본 기술적 상태 판정
 # ---------------------------------------------------------------------------
 
-def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool, recent_sqz_on=None, release_lookback: int = 20) -> str:
+def _series_bool_values(values) -> list[bool]:
+    """판다스/넘파이 값이 섞여도 안전하게 bool 리스트로 바꿉니다."""
+    result = []
+    if values is None:
+        return result
+    for value in values:
+        try:
+            result.append(bool(value) and not pd.isna(value))
+        except Exception:
+            result.append(bool(value))
+    return result
+
+
+def get_sqz_status(
+    last_sqz_on: bool,
+    prev_sqz_on: bool,
+    recent_sqz_on=None,
+    release_lookback: int = 20,
+    last_sqz_near: bool = False,
+    prev_sqz_near: bool = False,
+    recent_sqz_near=None,
+) -> str:
     """볼린저-켈트너 스퀴즈 상태를 반환합니다.
 
     기존에는 현재/직전 봉이 모두 비압축이면 전부 ``해제유지``로 표시했습니다.
@@ -46,17 +67,25 @@ def get_sqz_status(last_sqz_on: bool, prev_sqz_on: bool, recent_sqz_on=None, rel
     if (not last_sqz_on) and prev_sqz_on:
         return "🚀해제직후"
 
+    if last_sqz_near and not prev_sqz_near:
+        return "🟡압축근접"
+    if last_sqz_near and prev_sqz_near:
+        return "🟡압축대기"
+
     if recent_sqz_on is not None:
-        vals = []
-        for value in recent_sqz_on:
-            try:
-                vals.append(bool(value) and not pd.isna(value))
-            except Exception:
-                vals.append(bool(value))
+        vals = _series_bool_values(recent_sqz_on)
         if len(vals) >= 3:
             prior_window = vals[max(0, len(vals) - release_lookback - 2):-2]
-            return "➡️해제유지" if any(prior_window) else "➖비압축"
+            if any(prior_window):
+                return "➡️해제유지"
+            near_vals = _series_bool_values(recent_sqz_near)
+            near_window = near_vals[-release_lookback:] if near_vals else []
+            return "🟡압축관찰" if any(near_window) else "➖비압축"
         return "➖비압축"
+    if recent_sqz_near is not None:
+        near_vals = _series_bool_values(recent_sqz_near)
+        if any(near_vals[-release_lookback:]):
+            return "🟡압축관찰"
     return "➡️해제유지"
 
 
@@ -92,10 +121,15 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     bb          = ta.volatility.BollingerBands(df["Close"], 20, 2)
     df["%B"]    = (df["Close"] - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband())
     kc          = ta.volatility.KeltnerChannel(df["High"], df["Low"], df["Close"], 20, 20, 1.5)
-    df["SQZ_ON"] = (
-        (bb.bollinger_hband() < kc.keltner_channel_hband()) &
-        (bb.bollinger_lband() > kc.keltner_channel_lband())
-    )
+    bb_high = bb.bollinger_hband()
+    bb_low = bb.bollinger_lband()
+    kc_high = kc.keltner_channel_hband()
+    kc_low = kc.keltner_channel_lband()
+    bb_width = bb_high - bb_low
+    kc_width = (kc_high - kc_low).replace(0, np.nan)
+    df["SQZ_RATIO"] = bb_width / kc_width
+    df["SQZ_ON"] = (bb_high < kc_high) & (bb_low > kc_low)
+    df["SQZ_NEAR"] = (df["SQZ_RATIO"] <= 1.15) & (~df["SQZ_ON"])
     return df
 
 

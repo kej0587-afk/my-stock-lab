@@ -652,9 +652,24 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
         return []
 
     def _trend_points(points, kind):
-        recent = [p for p in points if p["pos"] >= max(0, last_pos - 110)]
+        structure_window = max(45, int(len(view) * 0.45))
+        recent = [p for p in points if p["pos"] >= max(0, last_pos - structure_window)]
+        if len(recent) < 2:
+            recent = [p for p in points if p["pos"] >= max(0, last_pos - 110)]
         if len(recent) < 2:
             recent = points[-5:]
+        if len(recent) < 2:
+            return []
+
+        breakout_window = max(6, int(len(view) * 0.08))
+        if len(recent) >= 3:
+            last_pivot = recent[-1]
+            prev_pivot = recent[-2]
+            is_fresh = (last_pos - last_pivot["pos"]) <= breakout_window
+            if kind == "resistance" and is_fresh and last_pivot["price"] > prev_pivot["price"] * 1.04:
+                recent = recent[:-1]
+            elif kind == "support" and is_fresh and last_pivot["price"] < prev_pivot["price"] * 0.96:
+                recent = recent[:-1]
         if len(recent) < 2:
             return []
 

@@ -13,6 +13,41 @@ def test_sqz_status_distinguishes_no_recent_squeeze():
     assert get_sqz_status(False, False, [False] * 10) == "➖비압축"
 
 
+def test_sqz_status_reports_near_squeeze():
+    assert (
+        get_sqz_status(
+            False,
+            False,
+            [False] * 10,
+            last_sqz_near=True,
+            prev_sqz_near=False,
+        )
+        == "🟡압축근접"
+    )
+    assert (
+        get_sqz_status(
+            False,
+            False,
+            [False] * 10,
+            last_sqz_near=True,
+            prev_sqz_near=True,
+        )
+        == "🟡압축대기"
+    )
+
+
+def test_sqz_status_keeps_recent_near_squeeze_visible():
+    assert (
+        get_sqz_status(
+            False,
+            False,
+            [False] * 10,
+            recent_sqz_near=[False, False, True, False],
+        )
+        == "🟡압축관찰"
+    )
+
+
 def test_sqz_status_keeps_release_only_after_recent_squeeze():
     assert get_sqz_status(False, False, [False, False, True, True, False, False]) == "➡️해제유지"
 
