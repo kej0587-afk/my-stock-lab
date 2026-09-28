@@ -40,6 +40,33 @@ def test_build_recent_trendline_guides_returns_stable_list():
     assert all({"kind", "direction", "y1"}.issubset(guide.keys()) for guide in guides)
 
 
+def test_recent_trendline_prefers_post_peak_resistance_after_spike():
+    idx = pd.date_range("2026-01-01", periods=100, freq="D")
+    base = np.linspace(100, 150, 100)
+    high = base + 1
+    low = base - 1
+    close = base.copy()
+    for pos, price in [(54, 171), (66, 162), (78, 155), (90, 151)]:
+        high[pos] = price
+        close[pos] = price - 3
+        low[pos] = price - 8
+        for offset in (-2, -1, 1, 2):
+            p = pos + offset
+            if 0 <= p < len(high):
+                high[p] = min(high[p], price - 12)
+                close[p] = min(close[p], price - 14)
+    df = pd.DataFrame(
+        {"Open": close - 0.5, "High": high, "Low": low, "Close": close},
+        index=idx,
+    )
+
+    guides = build_recent_trendline_guides(df)
+    resistance = next((g for g in guides if g.get("kind") == "resistance"), None)
+
+    assert resistance is not None
+    assert resistance["direction"] == "하락"
+
+
 def test_chart_pattern_summary_marks_overheated_valid_pattern_as_wait():
     pattern = {
         "name": "역헤드앤숄더",

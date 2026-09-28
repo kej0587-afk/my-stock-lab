@@ -651,10 +651,27 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
     if not finite_num(current) or current <= 0:
         return []
 
-    def _fit_line(points, label, color, kind):
-        recent = [p for p in points if p["pos"] >= max(0, last_pos - 90)][-5:]
+    def _trend_points(points, kind):
+        recent = [p for p in points if p["pos"] >= max(0, last_pos - 110)]
         if len(recent) < 2:
-            recent = points[-3:]
+            recent = points[-5:]
+        if len(recent) < 2:
+            return []
+
+        if kind == "resistance":
+            extreme_idx = max(range(len(recent)), key=lambda idx: recent[idx]["price"])
+        else:
+            extreme_idx = min(range(len(recent)), key=lambda idx: recent[idx]["price"])
+
+        # 급등/급락 뒤에는 전체 회귀선보다 최근 극점 이후의 전환선이 사람이 보는 선에 가깝다.
+        post_extreme = recent[extreme_idx:]
+        min_span = max(6, int(len(view) * 0.04))
+        if len(post_extreme) >= 2 and (post_extreme[-1]["pos"] - post_extreme[0]["pos"]) >= min_span:
+            return post_extreme[-4:]
+        return recent[-4:]
+
+    def _fit_line(points, label, color, kind):
+        recent = _trend_points(points, kind)
         if len(recent) < 2:
             return None
         x = np.array([p["pos"] for p in recent], dtype=float)
@@ -668,6 +685,10 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
         if not finite_num(y0) or not finite_num(y1) or y0 <= 0 or y1 <= 0:
             return None
         if abs(y1 / current - 1.0) > 0.55:
+            return None
+        if kind == "support" and y1 > current * 1.06:
+            return None
+        if kind == "resistance" and y1 < current * 0.94:
             return None
         slope_pct = (y1 / y0 - 1.0) if y0 > 0 else 0.0
         if abs(slope_pct) < 0.015:

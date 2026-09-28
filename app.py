@@ -11485,6 +11485,102 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
     return " · ".join(parts)
 
 
+def _brief_theme_outlook_rows(leadership: dict, limit: int = 6) -> list[dict]:
+    if not isinstance(leadership, dict):
+        return []
+
+    buckets = [
+        ("주도 후보", leadership.get("leaders", []), "정밀관측", "단기와 1M이 같이 살아 있어 주도 전환 후보입니다."),
+        ("과열 주도", leadership.get("hot_leaders", []), "눌림대기", "흐름은 강하지만 상단권이면 추격보다 눌림 품질을 봅니다."),
+        ("반등 후보", leadership.get("rebounds", []), "관심등록", "단기 반등은 보이지만 1M·3M 확산 확인이 더 필요합니다."),
+        ("후행/추격주의", leadership.get("lagging", []), "추격금지", "중기 성과는 남아 있지만 단기 힘이 둔해진 구간입니다."),
+    ]
+    rows = []
+    seen = set()
+    for bucket, items, action, default_view in buckets:
+        for row in items or []:
+            name = str(row.get("name", "-") or "-")
+            if name in seen or name == "-":
+                continue
+            seen.add(name)
+            short = row.get("short", np.nan)
+            r1m = row.get("r1m", np.nan)
+            r3m = row.get("r3m", np.nan)
+            flow_score = row.get("flow_score", np.nan)
+            reps = str(row.get("representatives", "") or "").strip()
+            state = str(row.get("state", "") or "").strip()
+
+            trend_bits = []
+            if finite_num(short):
+                trend_bits.append(f"단기 {_brief_pct_text(short)}")
+            if finite_num(r1m):
+                trend_bits.append(f"1M {_brief_pct_text(r1m)}")
+            if finite_num(r3m):
+                trend_bits.append(f"3M {_brief_pct_text(r3m)}")
+            if finite_num(flow_score):
+                trend_bits.append(f"점수 {float(flow_score):.1f}")
+
+            if bucket == "주도 후보":
+                confirm = "ETF/테마와 대표주가 5D까지 같이 양수인지 확인"
+                if finite_num(r3m) and float(r3m) < 0:
+                    view = "단기 회복은 강하지만 3M은 아직 음수라 새 주도보다 회복 초입으로 봅니다."
+                else:
+                    view = default_view
+            elif bucket == "과열 주도":
+                confirm = "상단 추격 금지. MA20/FVG/전고점 눌림에서 거래량 재유입 확인"
+                view = default_view
+            elif bucket == "반등 후보":
+                confirm = "1D 반등이 5D·1M으로 이어지고 내부 대표주가 동반 상승하는지 확인"
+                view = default_view
+            else:
+                confirm = "단기 하락이 멈추기 전까지 신규 진입보다 보유/관찰"
+                view = default_view
+
+            if reps:
+                confirm = f"대표 {reps} 확인 · {confirm}"
+            rows.append({
+                "축": name,
+                "전망": bucket,
+                "데이터": " · ".join(trend_bits) or "-",
+                "해석": view,
+                "확인조건": confirm,
+                "실행": action,
+                "상태": state or "-",
+            })
+            if len(rows) >= limit:
+                return rows
+    return rows
+
+
+def _render_brief_theme_outlook(leadership: dict):
+    rows = _brief_theme_outlook_rows(leadership)
+    st.markdown("**🧭 전망형 주도맵**")
+    if not rows:
+        st.caption("주도축 전망을 만들 만큼 유의미한 테마/섹터 데이터가 아직 없습니다.")
+        return
+    top = rows[0]
+    st.caption(
+        f"오늘 가장 먼저 볼 축은 **{top['축']}**입니다. "
+        f"{top['해석']} 다음 확인은 `{top['확인조건']}`입니다."
+    )
+    st.dataframe(
+        pd.DataFrame(rows),
+        width='stretch',
+        hide_index=True,
+        height=min(320, 72 + len(rows) * 38),
+        column_config={
+            "축": st.column_config.TextColumn("테마/섹터"),
+            "전망": st.column_config.TextColumn("전망"),
+            "데이터": st.column_config.TextColumn("핵심 데이터"),
+            "해석": st.column_config.TextColumn("방향 해석"),
+            "확인조건": st.column_config.TextColumn("다음 확인"),
+            "실행": st.column_config.TextColumn("앱 행동"),
+            "상태": st.column_config.TextColumn("원천 상태"),
+        },
+    )
+    st.caption("뉴스는 제목만으로 매수 판단하지 않고, 위 주도축과 같은 방향의 수요·실적·정책 재료인지 주요 뉴스 탭에서 확인합니다.")
+
+
 def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 6) -> list[dict]:
     if command_df is None or command_df.empty:
         return []
@@ -11706,6 +11802,7 @@ def render_today_market_briefing_board(
         st.caption(f"후행 강도(추격주의): {_brief_leadership_text(leadership.get('lagging', []))}")
     if not leadership.get("leaders") and (leadership.get("hot_leaders") or leadership.get("rebounds") or leadership.get("lagging")):
         st.caption("해석: 실행 가능한 주도 후보는 약하고, 과열 주도·단기 반등·후행 강도가 섞여 있습니다. 지금은 주도 확정 매수보다 눌림/R/R 검증 구간입니다.")
+    _render_brief_theme_outlook(leadership)
     _render_brief_execution_link(command_df)
 
     c1, c2 = st.columns(2)
