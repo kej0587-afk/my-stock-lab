@@ -789,7 +789,7 @@ try:
     )
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""
 except Exception as _today_queue_snapshot_import_error:
-    TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
+    TODAY_QUEUE_LOGIC_VERSION = "20260928_leverage_recovery_bridge_v1"
     TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = repr(_today_queue_snapshot_import_error)
     logging.warning(
         "stock_lab_core.today_queue snapshot unavailable; using local fallback: %s",
@@ -16595,7 +16595,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
     _, rs_label = get_rs_score(ticker, asset_class)
     rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
-    sqz_status = get_sqz_status(bool(last["SQZ_ON"]), bool(prev["SQZ_ON"]), df["SQZ_ON"].tail(10).tolist())
+    sqz_status = get_sqz_status(
+        bool(last["SQZ_ON"]),
+        bool(prev["SQZ_ON"]),
+        df["SQZ_ON"].tail(30).tolist(),
+        release_lookback=20,
+    )
 
     tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
     rs_s = tech_scores["rs_s"]
@@ -28677,7 +28682,9 @@ def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
     out = pd.concat(frames, ignore_index=True)
     out = (
         out.dropna(subset=["거래량증가"])
-        .sort_values(["_수급표우선순위", "거래량증가"], ascending=[True, False])
+        .assign(_이름키=lambda df: df["이름"].astype(str).str.replace(r"\s+", " ", regex=True).str.strip().str.lower())
+        .sort_values(["_수급표우선순위", "거래량증가", "돈흐름점수"], ascending=[True, False, False])
+        .drop_duplicates(subset=["_이름키"], keep="first")
         .head(limit)
         .copy()
     )
@@ -28685,7 +28692,7 @@ def _build_today_volume_brief_rows(limit: int = 5) -> pd.DataFrame:
         return out
     out["거래량증가"] = out["거래량증가"].apply(lambda v: f"{float(v)*100:+.1f}%" if finite_num(v) else "-")
     out["돈흐름점수"] = out["돈흐름점수"].apply(lambda v: "-" if not finite_num(v) else f"{float(v):.1f}")
-    return out.drop(columns=["_수급표우선순위"], errors="ignore")
+    return out.drop(columns=["_수급표우선순위", "_이름키"], errors="ignore")
 
 
 def render_today_briefing_investor_flow(summary_df=None, watch_items=None):

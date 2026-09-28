@@ -1381,12 +1381,15 @@ EVENT_RADAR_NOISE_KEYWORDS = (
     "stock price | quotes & news", "quotes & news", "stock forum",
     "forum and discussion", "stock chart", "technical chart",
     "finalist speech", "monte carlo", "alcaraz", "tennis",
-    "youtube", "mshale",
+    "youtube", "mshale", "roughnecks", "롤 통계사이트", "게임 용어",
+    "robinhood token", "convert 1", "to usd", "bybit",
 )
 
 MARKET_NEWS_SOCIAL_NOISE_KEYWORDS = (
     "경찰서", "구리경찰서", "구리 경찰서", "청사", "소동", "출몰",
     "연예", "맛집", "날씨", "복권", "로또", "스포츠",
+    "roughnecks", "롤 통계사이트", "게임 용어",
+    "robinhood token", "convert 1", "to usd", "bybit",
 )
 
 MARKET_NEWS_RELEVANCE_KEYWORDS = (

@@ -258,6 +258,13 @@ TODAY_ACTION_NEWS_NOISE_WORDS = (
     "yearly dividends",
     "rule-based strategy",
     "price-driven insight",
+    "robinhood token",
+    "convert 1",
+    "to usd",
+    "bybit",
+    "roughnecks",
+    "롤 통계사이트",
+    "게임 용어",
 )
 
 TODAY_ACTION_NEWS_RELEVANCE_TERMS = {

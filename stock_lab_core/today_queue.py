@@ -32,7 +32,7 @@ except Exception:
             return False
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20260828_price_watchlist_bridge_v2"
+TODAY_QUEUE_LOGIC_VERSION = "20260928_leverage_recovery_bridge_v1"
 TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
 
 TODAY_QUEUE_DEFENSE_CODES = {
@@ -348,6 +348,43 @@ def _today_queue_text_series(df: pd.DataFrame, column: str) -> pd.Series:
     return df[column].fillna("").astype(str)
 
 
+def _leveraged_recovery_setup_ok(
+    *,
+    rr: pd.Series,
+    adj: pd.Series,
+    current_w: pd.Series,
+    target_w: pd.Series,
+    rsi: pd.Series,
+    mfi: pd.Series,
+    pct_b: pd.Series,
+    text: pd.Series,
+    quality_rr_threshold: float,
+) -> pd.Series:
+    """Return True for leveraged rows that deserve visibility as recovery setups.
+
+    Ordinary execution candidates still need decent R/R or Adj score. A separate
+    narrow lane is allowed for under-target leveraged products that are deep in a
+    planned DCA/recovery checklist, but only while heat is moderate.
+    """
+    quality_ok = (rr >= quality_rr_threshold) | (adj >= 4.0)
+    weight_room = (target_w > 0) & (current_w < target_w - 0.05)
+    moderate_heat = (
+        (rsi.isna() | (rsi <= 72.0))
+        & (mfi.isna() | (mfi <= 82.0))
+        & (pct_b.isna() | (pct_b <= 0.90))
+    )
+    planned_recovery_text = text.str.contains(
+        r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|조건부\s*DCA|"
+        r"단계별\s*소액|소액\s*1차|회복\s*\d+\s*/\s*\d+|부분\s*회복|회복\s*우세|"
+        r"기초축\s*1W\s*\+|패닉권|강하락|중하락|약하락|레버리지\s*전용\s*단계",
+        regex=True,
+        case=False,
+        na=False,
+    )
+    planned_small_dca_ok = weight_room & moderate_heat & planned_recovery_text
+    return quality_ok | planned_small_dca_ok
+
+
 def leveraged_recovery_tracking_mask(
     summary_df: pd.DataFrame,
     leveraged_display_mask: pd.Series | None = None,
@@ -367,7 +404,7 @@ def leveraged_recovery_tracking_mask(
         label = _today_queue_text_series(summary_df, "🔥기술적 타점")
         leveraged_display_mask = (
             label.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
-            | ticker.str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU", regex=True, na=False)
+            | ticker.str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|RAM", regex=True, na=False)
         )
     else:
         leveraged_display_mask = leveraged_display_mask.reindex(idx, fill_value=False)
@@ -389,16 +426,31 @@ def leveraged_recovery_tracking_mask(
     adj = _today_queue_numeric_series(summary_df, "Adj점수")
     current_w = _today_queue_numeric_series(summary_df, "현재비중", 0.0)
     target_w = _today_queue_numeric_series(summary_df, "목표비중", 0.0)
+    rsi = _today_queue_numeric_series(summary_df, "RSI")
+    mfi = _today_queue_numeric_series(summary_df, "MFI")
+    pct_b = _today_queue_numeric_series(summary_df, "%B")
+    if pct_b.isna().all():
+        pct_b = _today_queue_numeric_series(summary_df, "볼린저 %B")
 
     strong_recovery_text = text.str.contains(
-        r"회복\s*\d+\s*/\s*\d+|회복\s*우세|기초축\s*1W\s*\+|"
+        r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|회복\s*\d+\s*/\s*\d+|회복\s*우세|기초축\s*1W\s*\+|"
         r"고점선\s*돌파\s*완료|돌파\s*후\s*유효|패턴성공|패턴유효|"
-        r"신규\s*추격금지:\s*눌림\s*대기|레버리지.*눌림\s*대기|DCA조건부|미보유\s*관찰",
+        r"신규\s*추격금지:\s*눌림\s*대기|레버리지.*눌림\s*대기|DCA조건부|조건부\s*DCA|레버리지.*조건부|미보유\s*관찰",
         regex=True,
         case=False,
         na=False,
     )
-    rr_or_quality_ok = (rr >= 1.2) | (adj >= 4.0)
+    recovery_setup_ok = _leveraged_recovery_setup_ok(
+        rr=rr,
+        adj=adj,
+        current_w=current_w,
+        target_w=target_w,
+        rsi=rsi,
+        mfi=mfi,
+        pct_b=pct_b,
+        text=text,
+        quality_rr_threshold=1.2,
+    )
     weight_not_over = (target_w <= 0) | (current_w <= target_w + 0.05)
     hard_block = (
         code.str.contains(r"HARD_BLOCK|TARGET_FILLED|OVERWEIGHT|LEVERAGED_DAILY_DROP_NO_ADD|LEVERAGED_RECOVERY_DCA_BLOCK", regex=True, na=False)
@@ -406,7 +458,7 @@ def leveraged_recovery_tracking_mask(
         | grade.str.contains(r"비중방어|추매금지|후보제외", regex=True, na=False)
     )
 
-    return leveraged_display_mask & strong_recovery_text & rr_or_quality_ok & weight_not_over & ~hard_block & ~macro_state.eq("STORM")
+    return leveraged_display_mask & strong_recovery_text & recovery_setup_ok & weight_not_over & ~hard_block & ~macro_state.eq("STORM")
 
 
 def leveraged_scout_execution_mask(
@@ -464,7 +516,17 @@ def leveraged_scout_execution_mask(
         case=False,
         na=False,
     )
-    quality_ok = (rr >= 1.0) | (adj >= 4.0)
+    setup_ok = _leveraged_recovery_setup_ok(
+        rr=rr,
+        adj=adj,
+        current_w=current_w,
+        target_w=target_w,
+        rsi=rsi,
+        mfi=mfi,
+        pct_b=pct_b,
+        text=text,
+        quality_rr_threshold=1.0,
+    )
     weight_room = (target_w > 0) & (current_w < target_w - 0.05)
     extreme_heat = (
         (rsi >= 78.0)
@@ -485,7 +547,7 @@ def leveraged_scout_execution_mask(
     return (
         leveraged_display_mask
         & conditional_or_recovery
-        & quality_ok
+        & setup_ok
         & weight_room
         & ~extreme_heat
         & ~hard_block

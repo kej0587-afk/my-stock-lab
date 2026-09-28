@@ -17,6 +17,10 @@ def test_sqz_status_keeps_release_only_after_recent_squeeze():
     assert get_sqz_status(False, False, [False, False, True, True, False, False]) == "➡️해제유지"
 
 
+def test_sqz_status_keeps_release_window_beyond_ten_bars():
+    assert get_sqz_status(False, False, [False, True] + [False] * 18) == "➡️해제유지"
+
+
 def test_sqz_status_core_transitions():
     assert get_sqz_status(True, False, [False, False, True]) == "⏳재압축"
     assert get_sqz_status(True, True, [True, True, True]) == "⏳압축중"

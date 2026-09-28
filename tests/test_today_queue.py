@@ -293,6 +293,37 @@ def test_leveraged_scout_execution_promotes_recovery_dca_candidate():
     assert bool(mask.iloc[0])
 
 
+def test_leveraged_low_rr_ram_recovery_stays_visible_under_market_defense():
+    summary_df = pd.DataFrame([{
+        "종목명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+        "티커": "RAM",
+        "유형": "ETF",
+        "매크로상태": "CAUTION",
+        "🔥기술적 타점": "🛡️레버리지 시장위험: 신규/DCA 대기",
+        "패턴타점": "-",
+        "최종읽기": "🛡️레버리지시장방어",
+        "📌후보등급": "⚡레버리지DCA조건부",
+        "실행메모": "레버리지 신규대기",
+        "핵심근거": "레버리지 전용 단계: 패닉권 관찰 조건부 · 회복 4/6(부분 회복) · 기초축 1W +8.0%",
+        "판정코드": "LEVERAGED_DCA_CONDITIONAL",
+        "R/R": "0.42",
+        "Adj점수": 2.5,
+        "현재비중": 7.87,
+        "목표비중": 10.0,
+        "RSI": 56,
+        "MFI": 71,
+        "%B": 0.79,
+    }])
+    leveraged_mask = pd.Series([True], index=summary_df.index)
+    kr_mask = pd.Series([False], index=summary_df.index)
+    us_mask = pd.Series([True], index=summary_df.index)
+    market_guard = {"mode": "방어", "macro_risk": 4.5, "us_stats": {"mode": "방어"}}
+
+    assert bool(leveraged_recovery_tracking_mask(summary_df, leveraged_mask).iloc[0])
+    assert bool(leveraged_scout_execution_mask(summary_df, leveraged_mask).iloc[0])
+    assert not bool(leveraged_market_defense_mask(summary_df, leveraged_mask, kr_mask, us_mask, market_guard).iloc[0])
+
+
 def test_leveraged_scout_execution_rejects_extreme_heat():
     summary_df = pd.DataFrame([{
         "종목명": "Direxion Daily Semiconductor Bull 3X Shares",

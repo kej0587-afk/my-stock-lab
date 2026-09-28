@@ -252,6 +252,8 @@ GENERAL_NOISE_WORDS = [
     "recipe", "beer", "game", "gaming", "movie", "music", "lyrics",
     "라이트급", "litecoin", "crypto", "코인", "맛집", "여행",
     "finalist speech", "monte carlo", "alcaraz", "tennis", "highlight video",
+    "roughnecks", "롤 통계사이트", "게임 용어", "robinhood token",
+    "convert 1", "to usd", "bybit",
 ]
 
 LISTING_COMPLIANCE_NOISE_WORDS = [
@@ -322,7 +324,8 @@ BLOCKED_LOW_QUALITY_NEWS_WORDS = [
     "주식 예측", "주가 전망", "stock forecast", "stock prediction",
     "price forecast", "price prediction", "stock price | quotes & news",
     "quotes & news", "stock forum", "forum and discussion", "stock chart",
-    "technical chart", "what signal",
+    "technical chart", "what signal", "robinhood token", "convert 1",
+    "to usd", "bybit", "roughnecks", "롤 통계사이트", "게임 용어",
 ]
 
 EARNINGS_NEWS_WORDS = [
