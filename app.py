@@ -12634,7 +12634,8 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
         safety = _flow_stat_clamp(safety)
 
         best_action = max(actions, key=_flow_sector_action_rank) if actions else "관망"
-        timing = {6: 8.0, 5: 6.2, 4: 5.4, 3: 4.8, 2: 2.8, 1: 1.5, 0: 3.5}.get(_flow_sector_action_rank(best_action), 3.5)
+        action_rank_value = _flow_sector_action_rank(best_action)
+        timing = {6: 8.0, 5: 6.2, 4: 5.4, 3: 4.8, 2: 2.8, 1: 1.5, 0: 3.5}.get(action_rank_value, 3.5)
         if prices and _safe_nanmean(prices) >= 0.90:
             timing -= 1.0
         timing = _flow_stat_clamp(timing)
@@ -12658,7 +12659,14 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
         )
 
         enough_sources = len(items) >= 2
-        if enough_sources and values["강도"] >= 6.0 and values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0 and values["확산"] >= 5.5 and values["안정도"] >= 4.0:
+        broad_flow = values["확산"] >= 6.0 and values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0
+        if action_rank_value <= 1 and broad_flow:
+            verdict = "확산 강함·실행보류"
+        elif action_rank_value >= 5 and lead_score >= 6.0:
+            verdict = "후보권·눌림대기"
+        elif action_rank_value >= 4 and broad_flow and values["강도"] < 5.5:
+            verdict = "진입검토·강도확인"
+        elif enough_sources and values["강도"] >= 6.0 and values["단기유입"] >= 6.0 and values["모멘텀"] >= 6.0 and values["확산"] >= 5.5 and values["안정도"] >= 4.0:
             verdict = "실제 주도 후보"
         elif values["강도"] >= 7.0 and (values["안정도"] < 4.0 or "과열" in joined):
             verdict = "과열 주도·눌림확인"
@@ -12777,6 +12785,12 @@ def _sector_research_card_takeaway(card):
 
     if "실제 주도" in verdict:
         return f"{title}는 강도와 단기 유입이 같이 살아난 축입니다. 대표주가 같이 버티면 정밀관측 우선 후보입니다."
+    if "확산 강함" in verdict:
+        return f"{title}는 확산·단기유입·모멘텀은 좋지만 후보판은 실행 보류입니다. 강도나 타점이 낮아 지금 매수 후보가 아니라 대표주 회복을 먼저 봅니다."
+    if "진입검토" in verdict:
+        return f"{title}는 단기 유입과 모멘텀이 강해 정밀관측으로 넘길 만합니다. 다만 강도 점수가 낮아 대장주 동행과 손익비 확인이 먼저입니다."
+    if "후보권" in verdict:
+        return f"{title}는 후보권에는 들어왔지만 현재가 매수 자리는 아닙니다. 눌림 위치와 거래량 재유입이 확인될 때만 봅니다."
     if "과열" in verdict:
         return f"{title}는 주도성은 보이지만 가격 위치가 높습니다. 추격보다 눌림 품질과 거래량 재유입을 봅니다."
     if "반등" in verdict:
@@ -12797,16 +12811,24 @@ def _sector_research_card_takeaway(card):
         return f"{title}는 {'·'.join(weak_bits)} 확인이 더 필요합니다. 주도 확정 전 관찰 축입니다."
     if finite_num(strength) and finite_num(timing) and float(strength) >= 6.0 and float(timing) >= 5.5:
         return f"{title}는 후보권에 들어왔습니다. 정밀관측소에서 손익비와 눌림 위치를 확인합니다."
-    return f"{title}는 아직 방향 확정 전입니다. 뉴스 재료와 대표주 동행 여부를 같이 확인합니다."
+    return f"{title}는 아직 실행 조건이 부족합니다. 강도·타점·대표주 동행 여부를 같이 확인합니다."
 
 
 def render_sector_research_cards(cards, news_rows=None, limit=4):
     if not cards:
         return
 
+    if not isinstance(news_rows, list):
+        news_rows = []
     top_cards = cards[: max(1, int(limit))]
     st.markdown("##### 짧은 리서치 카드")
-    st.caption("섹터별 돈흐름 능력치, 대표축, 뉴스재료, 실행분류를 한 장으로 묶어 봅니다.")
+    st.caption("주도맵은 시장 전체의 주도축이고, 이 카드는 실행 후보판을 섹터별로 다시 묶은 값입니다. 그래서 최종 행동은 항상 이 카드의 실행 문구와 정밀관측소 타점으로 한 번 더 거릅니다.")
+    if not news_rows:
+        news_cols = st.columns([1.2, 3.0])
+        if news_cols[0].button("리서치 카드 뉴스재료 새로고침", key="sector_research_news_refresh", width='stretch'):
+            with st.spinner("리서치 카드 뉴스재료 확인 중..."):
+                news_rows = refresh_today_action_news(None)
+        news_cols[1].caption("뉴스가 아직 수집되지 않았습니다. 새로고침 후 관련 뉴스가 있는 섹터만 카드에 붙습니다.")
     show_graph = st.toggle(
         "리서치 카드 그래프 보기",
         value=False,
@@ -12814,22 +12836,25 @@ def render_sector_research_cards(cards, news_rows=None, limit=4):
         help="상위 섹터의 강도·확산·단기유입·모멘텀·안정도·타점을 한 번에 봅니다.",
     )
 
-    cols = st.columns(2 if len(top_cards) > 1 else 1)
     for idx, card in enumerate(top_cards):
-        with cols[idx % len(cols)]:
+        with st.container():
             score = clean_float(card.get("total", np.nan), np.nan)
             score_text = f"{float(score):.1f}/10" if finite_num(score) else "-/10"
             st.markdown(f"**#{idx + 1} {card.get('market', '-')} · {card.get('title', '-')}**")
-            st.caption(f"{card.get('verdict', '-')} · 주도점수 {score_text} · {_flow_action_caption(card.get('action', '-'))}")
+            st.caption(f"상태: {card.get('verdict', '-')} · 실행: {_flow_action_caption(card.get('action', '-'))} · 점수 {score_text}")
             st.caption(f"한 줄 결론: {_sector_research_card_takeaway(card)}")
             st.caption(f"능력치: {_flow_stat_values_line(card)}")
             news_text = _sector_research_card_news_text(card, news_rows)
             if news_text and news_text != "-":
                 st.caption(f"뉴스/재료: {news_text}")
+            elif news_rows:
+                st.caption("뉴스/재료: 수집된 뉴스 중 직접 연결되는 재료 없음")
             else:
-                st.caption("뉴스/재료: 주도맵 뉴스재료 새로고침 후 연결")
+                st.caption("뉴스/재료: 아직 뉴스 미수집")
             st.caption(f"기준 대표축: {card.get('anchor_representatives', '-')}")
             st.caption(f"오늘 포착종목: {card.get('representatives', '-')}")
+            if idx < len(top_cards) - 1:
+                st.markdown("---")
 
     if show_graph:
         with st.expander("리서치 카드 그래프", expanded=True):
