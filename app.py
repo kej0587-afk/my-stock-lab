@@ -25322,6 +25322,7 @@ def _portfolio_playbook_budget_multiplier(action, risk_index):
         "계획적 적립": 0.50,
         "눌림 시 분할": 0.45,
         "조건부 소액": 0.25,
+        "별도 소액": 0.12,
         "관찰 후 소액": 0.15,
         "직접흐름 확인": 0.10,
     }.get(action, 0.0)
@@ -25343,6 +25344,8 @@ def _portfolio_playbook_condition(row):
         return "장기 기준축은 시장 안정과 목표비중 안에서 정해진 금액만 적립"
     if action == "조건부 소액":
         return "레버리지 회차 규칙 고정, 손절·기초축 회복 확인"
+    if action == "별도 소액":
+        return "주식 주도맵과 분리해 전용 기준 충족 때만 소액"
     if action == "눌림 시 분할":
         return "눌림 지지·양봉 전환·거래량 회복 확인"
     if action in {"관찰 후 소액", "직접흐름 확인"}:
@@ -25360,7 +25363,47 @@ def _portfolio_playbook_condition(row):
     return "다음 리밸런싱 때 목표비중만 확인"
 
 
-def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0):
+def _portfolio_action_decision_lookup(action_df):
+    if not isinstance(action_df, pd.DataFrame) or action_df.empty or "티커" not in action_df.columns:
+        return {}
+    lookup = {}
+    for _, row in action_df.iterrows():
+        key = _portfolio_flow_ticker_key(row.get("티커", ""))
+        if key:
+            lookup[key] = row
+    return lookup
+
+
+def _enrich_portfolio_alignment_with_action_df(align_df, action_df):
+    if not isinstance(align_df, pd.DataFrame) or align_df.empty:
+        return align_df
+    lookup = _portfolio_action_decision_lookup(action_df)
+    if not lookup:
+        return align_df
+    work = align_df.copy()
+    for col in ["자산현황판정", "자산현황실행", "재개/해제 조건"]:
+        if col not in work.columns:
+            work[col] = ""
+    for idx, row in work.iterrows():
+        decision_row = lookup.get(_portfolio_flow_ticker_key(row.get("티커", "")))
+        if decision_row is None:
+            continue
+        work.at[idx, "자산현황판정"] = str(decision_row.get("판정", "") or "")
+        work.at[idx, "자산현황실행"] = str(decision_row.get("실행", "") or "")
+        work.at[idx, "재개/해제 조건"] = str(decision_row.get("재개/해제 조건", "") or "")
+        decision_text = " ".join([
+            str(decision_row.get("판정", "") or ""),
+            str(decision_row.get("실행", "") or ""),
+        ])
+        port_action = str(row.get("포트판정", "") or "")
+        gap = clean_float(row.get("비중차이"), 0.0)
+        if port_action == "별도관리" and gap > 0.3 and any(token in decision_text for token in ["조건부 소액", "조건부 적립"]):
+            work.at[idx, "포트판정"] = "별도 소액"
+            work.at[idx, "근거"] = "주식 주도맵과는 별도지만 자산현황 실행판에서 조건부 소액 후보로 잡혔습니다."
+    return work
+
+
+def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0, action_df=None):
     if not isinstance(align_df, pd.DataFrame) or align_df.empty:
         return pd.DataFrame()
     metrics = metrics if isinstance(metrics, dict) else {}
@@ -25372,11 +25415,11 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
     reserve_budget = reserve_deployable if risk_index < 55 else (reserve_deployable * 0.5 if risk_index < 70 else 0.0)
     total_budget = monthly_budget + reserve_budget
 
-    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
+    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
     stop_actions = {"신규중단", "유지·추격금지", "유지·신규중단", "보유점검", "별도관리", "관망"}
     trim_actions = {"축소/교체 후보"}
 
-    work = align_df.copy()
+    work = _enrich_portfolio_alignment_with_action_df(align_df, action_df).copy()
     for col in ["현재비중", "목표비중", "비중차이", "점수"]:
         if col in work.columns:
             work[col] = work[col].apply(lambda v: clean_float(v, 0.0))
@@ -25388,6 +25431,7 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
             "계획적 적립": 4,
             "눌림 시 분할": 4,
             "조건부 소액": 3,
+            "별도 소액": 2,
             "관찰 후 소액": 2,
             "직접흐름 확인": 1,
         }).fillna(0)
@@ -25413,6 +25457,9 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
             "제안금액": amount,
             "조건": _portfolio_playbook_condition(row),
             "근거": row.get("근거", ""),
+            "자산현황판정": row.get("자산현황판정", ""),
+            "자산현황실행": row.get("자산현황실행", ""),
+            "재개/해제 조건": row.get("재개/해제 조건", ""),
         })
 
     stop_df = work[work["포트판정"].astype(str).isin(stop_actions | trim_actions)].copy()
@@ -25442,6 +25489,9 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
             "제안금액": 0.0,
             "조건": _portfolio_playbook_condition(row),
             "근거": row.get("근거", ""),
+            "자산현황판정": row.get("자산현황판정", ""),
+            "자산현황실행": row.get("자산현황실행", ""),
+            "재개/해제 조건": row.get("재개/해제 조건", ""),
         })
 
     result = pd.DataFrame(rows)
@@ -25454,7 +25504,7 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
     return result
 
 
-def render_portfolio_rebalance_playbook_panel(align_df, metrics):
+def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None):
     if not isinstance(align_df, pd.DataFrame) or align_df.empty:
         return
     default_monthly = int(max(clean_float(st.session_state.get("rebcalc_monthly"), 0.0), 0.0))
@@ -25468,7 +25518,7 @@ def render_portfolio_rebalance_playbook_panel(align_df, metrics):
             key="portfolio_alignment_monthly_budget",
             help="자산현황의 월 적립 계산기 금액을 기본값으로 가져옵니다. 필요하면 여기서만 임시 조정하세요.",
         )
-        playbook = build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=monthly_budget)
+        playbook = build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=monthly_budget, action_df=action_df)
         if playbook.empty:
             st.info("이번 달 관리안으로 묶을 후보가 없습니다.")
             return
@@ -25486,7 +25536,10 @@ def render_portfolio_rebalance_playbook_panel(align_df, metrics):
         show = playbook.copy()
         for col in ["목표미달액", "제안금액"]:
             show[col] = show[col].apply(format_metric_money)
-        cols = ["구분", "자산", "티커", "포트판정", "시장판정", "현재/목표", "목표미달액", "제안금액", "조건", "근거"]
+        cols = [
+            "구분", "자산", "티커", "포트판정", "시장판정", "자산현황판정", "자산현황실행",
+            "현재/목표", "목표미달액", "제안금액", "조건", "재개/해제 조건", "근거",
+        ]
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
 
@@ -25577,7 +25630,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     ]
     st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
-    render_portfolio_rebalance_playbook_panel(align_df, metrics)
+    action_df = build_portfolio_action_decision_df(metrics, asset_df)
+    render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=action_df)
 
     with st.expander("매칭 근거 자세히 보기", expanded=False):
         st.dataframe(show, width='stretch', hide_index=True)

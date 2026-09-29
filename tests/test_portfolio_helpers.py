@@ -391,6 +391,49 @@ def test_portfolio_rebalance_playbook_allocates_leaders_and_separates_trim_candi
     assert old["제안금액"] == 0
 
 
+def test_portfolio_rebalance_playbook_uses_action_decision_for_separate_conditional_assets(app_module):
+    align_df = pd.DataFrame([
+        {
+            "자산": "2x Bitcoin ETF",
+            "티커": "BITX",
+            "구분": "leverage",
+            "현재비중": 1.1,
+            "목표비중": 4.0,
+            "비중차이": 2.9,
+            "포트판정": "별도관리",
+            "시장판정": "별도관리",
+            "점수": 0.0,
+            "근거": "주식 주도맵과 별도 흐름이라 전용 기준과 목표비중으로 관리합니다.",
+        }
+    ])
+    action_df = pd.DataFrame([
+        {
+            "티커": "BITX",
+            "판정": "조건부 소액",
+            "실행": "정해둔 회차와 금액만, 추격 금지",
+            "재개/해제 조건": "시장 위험 완화 + 손절선 확인",
+        }
+    ])
+    metrics = {
+        "total_asset": 10_000_000,
+        "risk_index": 35,
+        "reserve_summary": {"deployable_value": 0},
+    }
+
+    playbook = app_module.build_portfolio_rebalance_playbook_df(
+        align_df,
+        metrics,
+        monthly_budget=100_000,
+        action_df=action_df,
+    )
+
+    bitx = playbook[playbook["티커"].eq("BITX")].iloc[0]
+    assert bitx["포트판정"] == "별도 소액"
+    assert bitx["자산현황판정"] == "조건부 소액"
+    assert bitx["제안금액"] == 34_800
+    assert "전용 기준" in bitx["조건"]
+
+
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(
         [
