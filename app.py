@@ -24201,7 +24201,7 @@ def render_portfolio_action_decision_panel(metrics, asset_df=None):
     if summary_lines:
         st.info(" · ".join(summary_lines))
 
-    show_cols = ["자산", "티커", "구분", "손익", "평가손익", "현재/목표", "판정", "실행", "근거", "재개/해제 조건"]
+    show_cols = ["자산", "티커", "구분", "손익", "평가손익", "판정", "실행", "근거", "재개/해제 조건"]
     st.dataframe(decision_df[show_cols], width='stretch', hide_index=True)
 
 
@@ -25247,6 +25247,7 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
     result["_판정순서"] = result["포트판정"].map({
         "비중확대 후보": 7,
         "조건부 소액": 6,
+        "별도 소액": 5,
         "눌림 시 분할": 5,
         "계획적 적립": 5,
         "유지": 4,
@@ -25282,7 +25283,7 @@ def build_portfolio_market_alignment_brief(align_df):
         return {}
     work = align_df.copy()
     work["현재비중"] = work.get("현재비중", pd.Series(0.0, index=work.index)).apply(lambda v: clean_float(v, 0.0))
-    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
+    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
     caution_actions = {"보유점검", "관망", "신규중단", "유지·추격금지", "유지·신규중단", "축소/교체 후보"}
     separate_actions = {"별도관리"}
     add_df = work[work["포트판정"].astype(str).isin(add_actions)].sort_values("현재비중", ascending=False)
@@ -25504,6 +25505,179 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0,
     return result
 
 
+def _portfolio_next_check_news_text(row, news_rows):
+    if not news_rows:
+        return "뉴스 미연결"
+    probe = {
+        "name": _first_flow_text(row.get("주도축", ""), row.get("자산", ""), row.get("티커", ""), default=""),
+        "source": _first_flow_text(row.get("세부축", ""), row.get("구분", ""), default=""),
+        "state": _first_flow_text(row.get("시장판정", ""), row.get("포트판정", ""), default=""),
+        "representatives": _first_flow_text(row.get("대표/ETF", ""), row.get("자산", ""), row.get("티커", ""), default=""),
+    }
+    text = _brief_axis_news_text(probe, news_rows, limit=2)
+    return text if text and text != "-" else "관련 뉴스 미포착"
+
+
+def _portfolio_next_check_type(row):
+    port_action = str(row.get("포트판정", "") or "")
+    decision = str(row.get("자산현황판정", "") or "")
+    joined = f"{port_action} {decision}"
+    if any(token in joined for token in ["축소", "교체", "신규중단", "추격금지"]):
+        return "축소/중단 점검"
+    if port_action == "계획적 적립" or "장기코어" in decision:
+        return "장기코어 적립 후보"
+    if port_action == "비중확대 후보":
+        return "비중 보강 후보"
+    if port_action == "눌림 시 분할":
+        return "눌림 분할 후보"
+    if port_action == "별도 소액":
+        return "별도 소액 후보"
+    if port_action == "조건부 소액" or "조건부 소액" in decision:
+        return "조건부 소액 후보"
+    if "조건부 적립" in decision:
+        return "조건부 적립 후보"
+    if port_action in {"직접흐름 확인", "관찰 후 소액"}:
+        return "직접흐름 확인 후보"
+    if port_action == "보유점검":
+        return "보유 사유 점검"
+    return "관망/확인"
+
+
+def _portfolio_next_check_condition(row):
+    port_action = str(row.get("포트판정", "") or "")
+    decision = str(row.get("자산현황판정", "") or "")
+    release = str(row.get("재개/해제 조건", "") or "").strip()
+    base = str(row.get("판단", "") or row.get("근거", "") or "").strip()
+    if release:
+        return release
+    if any(token in f"{port_action} {decision}" for token in ["축소", "교체", "신규중단", "추격금지"]):
+        return "추가매수보다 보유 사유가 남아 있는지 먼저 확인"
+    if port_action == "계획적 적립":
+        return "시장 위험 완화와 목표비중 안에서 정해진 적립만 진행"
+    if port_action == "비중확대 후보":
+        return "정밀관측소 R/R, 과열, 눌림 위치가 동시에 맞는지 확인"
+    if port_action in {"조건부 소액", "별도 소액"}:
+        return "회차 금액 고정, 손절선과 기초축 회복을 먼저 확인"
+    if port_action == "눌림 시 분할":
+        return "지지 구간에서 하락 멈춤, 양봉 전환, 거래량 회복 확인"
+    if port_action in {"직접흐름 확인", "관찰 후 소액"}:
+        return "뉴스 재료, 대표주, ETF 흐름이 5D까지 같이 유지되는지 확인"
+    return base or "다음 봉과 주도축 재계산 결과를 확인"
+
+
+def _portfolio_next_check_weight_state(row):
+    gap = clean_float(row.get("비중차이"), 0.0)
+    if gap > 0.3:
+        return f"목표 {gap:.1f}% 미달"
+    if gap < -0.3:
+        return f"목표 {abs(gap):.1f}% 초과"
+    return "목표 근접"
+
+
+def _portfolio_next_check_score(row, news_text=""):
+    port_action = str(row.get("포트판정", "") or "")
+    market_action = str(row.get("시장판정", "") or "")
+    decision = str(row.get("자산현황판정", "") or "")
+    score = {
+        "비중확대 후보": 72,
+        "계획적 적립": 68,
+        "눌림 시 분할": 64,
+        "직접흐름 확인": 58,
+        "관찰 후 소액": 56,
+        "조건부 소액": 55,
+        "별도 소액": 50,
+        "유지": 42,
+        "보유점검": 34,
+        "관망": 24,
+        "축소/교체 후보": 22,
+        "신규중단": 18,
+        "유지·추격금지": 18,
+        "유지·신규중단": 18,
+        "별도관리": 16,
+    }.get(port_action, 30)
+    if "정밀관측" in market_action:
+        score += 8
+    elif "직접흐름" in market_action:
+        score += 5
+    elif "기준축" in market_action:
+        score += 4
+    elif "관심등록" in market_action:
+        score += 3
+    elif "관망/제외" in market_action:
+        score -= 6
+
+    gap = clean_float(row.get("비중차이"), 0.0)
+    if gap > 0:
+        score += min(gap, 5.0) * 1.5
+    elif gap < 0:
+        score -= min(abs(gap), 5.0) * 1.2
+
+    flow_score = clean_float(row.get("점수"), np.nan)
+    if finite_num(flow_score):
+        score += max(min(flow_score, 10.0), -10.0) * 0.8
+
+    if "조건부 적립" in decision or "조건부 소액" in decision:
+        score += 6
+    if "장기코어" in decision:
+        score += 4
+    if any(token in decision for token in ["축소", "교체", "신규중단", "원인점검"]):
+        score -= 12
+    if news_text and news_text not in {"뉴스 미연결", "관련 뉴스 미포착"}:
+        score += 3
+    return max(0.0, min(100.0, float(score)))
+
+
+def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows=None, limit=6):
+    if not isinstance(align_df, pd.DataFrame) or align_df.empty:
+        return pd.DataFrame()
+    work = _enrich_portfolio_alignment_with_action_df(align_df, action_df).copy()
+    rows = []
+    for _, row in work.iterrows():
+        news_text = _portfolio_next_check_news_text(row, news_rows)
+        priority_score = _portfolio_next_check_score(row, news_text=news_text)
+        rows.append({
+            "후보": row.get("자산", row.get("티커", "")),
+            "티커": row.get("티커", ""),
+            "점검유형": _portfolio_next_check_type(row),
+            "우선점수": priority_score,
+            "비중상태": _portfolio_next_check_weight_state(row),
+            "손익": row.get("손익", ""),
+            "주도축": row.get("주도축", ""),
+            "시장/추세": " · ".join([part for part in [
+                str(row.get("시장판정", "") or ""),
+                str(row.get("포트판정", "") or ""),
+            ] if part]),
+            "자산판정": row.get("자산현황판정", row.get("포트판정", "")),
+            "뉴스/재료": news_text,
+            "다음 확인": _portfolio_next_check_condition(row),
+            "근거": row.get("근거", ""),
+        })
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    result = result.sort_values(["우선점수", "티커"], ascending=[False, True]).head(max(int(limit), 1)).reset_index(drop=True)
+    result.insert(0, "우선", range(1, len(result) + 1))
+    return result
+
+
+def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_rows=None):
+    candidates = build_portfolio_next_check_candidates_df(align_df, action_df=action_df, news_rows=news_rows, limit=6)
+    if candidates.empty:
+        return
+    with st.expander("오늘점검 기반 다음 점검 후보", expanded=True):
+        st.caption(
+            "오늘점검 주도축, 자산현황 실행판, 목표비중 미달, 뉴스 재료를 함께 본 점검 우선순위입니다. "
+            "매수 확정이 아니라 정밀관측소에서 먼저 열어볼 후보입니다."
+        )
+        show = candidates.copy()
+        show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
+        cols = [
+            "우선", "점검유형", "후보", "티커", "우선점수", "비중상태", "손익",
+            "주도축", "시장/추세", "자산판정", "뉴스/재료", "다음 확인",
+        ]
+        st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
+
+
 def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None):
     if not isinstance(align_df, pd.DataFrame) or align_df.empty:
         return
@@ -25553,6 +25727,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     if align_df.empty:
         st.info("현재 포트폴리오와 오늘 주도맵을 직접 연결할 수 있는 데이터가 없습니다. 오늘점검 돈흐름 상세를 새로고침한 뒤 다시 확인하세요.")
         return
+    action_df = build_portfolio_action_decision_df(metrics, asset_df)
+    align_df = _enrich_portfolio_alignment_with_action_df(align_df, action_df)
 
     st.markdown("#### 포트폴리오 주도축 매칭")
     st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
@@ -25568,7 +25744,7 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
         )
 
     connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
-    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"])
+    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"])
     caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지", "관망", "별도관리"])
     connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
     add_count = int(add_mask.sum())
@@ -25591,6 +25767,7 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
             "비중확대 후보": "#22c55e",
             "계획적 적립": "#14b8a6",
             "조건부 소액": "#84cc16",
+            "별도 소액": "#84cc16",
             "눌림 시 분할": "#eab308",
             "직접흐름 확인": "#c084fc",
             "유지": "#38bdf8",
@@ -25630,7 +25807,9 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     ]
     st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
-    action_df = build_portfolio_action_decision_df(metrics, asset_df)
+    news_key = globals().get("TODAY_ACTION_NEWS_ROWS_KEY", "today_action_news_rows")
+    news_rows = st.session_state.get(news_key, [])
+    render_portfolio_next_check_candidates_panel(align_df, action_df=action_df, news_rows=news_rows)
     render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=action_df)
 
     with st.expander("매칭 근거 자세히 보기", expanded=False):

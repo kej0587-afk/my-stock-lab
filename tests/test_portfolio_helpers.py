@@ -434,6 +434,111 @@ def test_portfolio_rebalance_playbook_uses_action_decision_for_separate_conditio
     assert "전용 기준" in bitx["조건"]
 
 
+def test_portfolio_next_check_candidates_combine_action_news_and_alignment(app_module):
+    align_df = pd.DataFrame([
+        {
+            "자산": "S&P500",
+            "티커": "379800.KS",
+            "구분": "core",
+            "현재비중": 18.0,
+            "목표비중": 35.0,
+            "비중차이": 17.0,
+            "손익": "+2.0%",
+            "주도축": "S&P500",
+            "세부축": "미국 대형주",
+            "시장판정": "기준축",
+            "포트판정": "계획적 적립",
+            "판단": "장기 기준축입니다.",
+            "대표/ETF": "VOO",
+            "점수": 3.0,
+            "근거": "장기 기준축이라 정해둔 적립률 안에서 봅니다.",
+        },
+        {
+            "자산": "Roundhill Magnificent Seven ETF",
+            "티커": "MAGS",
+            "구분": "core",
+            "현재비중": 0.8,
+            "목표비중": 8.0,
+            "비중차이": 7.2,
+            "손익": "+1.0%",
+            "주도축": "미국 AI·반도체",
+            "세부축": "빅테크 AI",
+            "시장판정": "직접흐름",
+            "포트판정": "직접흐름 확인",
+            "판단": "대표주 동행 확인이 필요합니다.",
+            "대표/ETF": "Microsoft Meta Amazon Nvidia",
+            "점수": 7.0,
+            "근거": "개별 돈흐름은 잡혔지만 상위 주도축 확인이 더 필요합니다.",
+        },
+        {
+            "자산": "2x Bitcoin ETF",
+            "티커": "BITX",
+            "구분": "leverage",
+            "현재비중": 1.1,
+            "목표비중": 4.0,
+            "비중차이": 2.9,
+            "손익": "+5.0%",
+            "주도축": "비트코인",
+            "세부축": "디지털자산",
+            "시장판정": "별도관리",
+            "포트판정": "별도관리",
+            "판단": "전용 기준으로 관리합니다.",
+            "대표/ETF": "Bitcoin",
+            "점수": 0.0,
+            "근거": "주식 주도맵과 별도 흐름이라 전용 기준과 목표비중으로 관리합니다.",
+        },
+        {
+            "자산": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "구분": "leverage",
+            "현재비중": 8.0,
+            "목표비중": 4.0,
+            "비중차이": -4.0,
+            "손익": "-12.0%",
+            "주도축": "미국 AI·반도체",
+            "세부축": "DRAM",
+            "시장판정": "관망/제외",
+            "포트판정": "축소/교체 후보",
+            "판단": "대체 후보와 비교합니다.",
+            "대표/ETF": "Micron",
+            "점수": -1.0,
+            "근거": "현재 주도축과 맞지 않고 목표보다 많아 대체 후보와 비교합니다.",
+        },
+    ])
+    action_df = pd.DataFrame([
+        {"티커": "MAGS", "판정": "조건부 적립", "실행": "정해둔 금액만", "재개/해제 조건": "뉴스와 대표주 동행 유지"},
+        {"티커": "BITX", "판정": "조건부 소액", "실행": "회차 금액만", "재개/해제 조건": "시장 위험 완화 + 손절선 확인"},
+        {"티커": "RAM", "판정": "축소/교체 검토", "실행": "추가매수 중단", "재개/해제 조건": "하락 패턴 해소"},
+    ])
+    news_rows = [
+        {
+            "읽기분류": "핵심속보",
+            "카테고리": "반도체·AI",
+            "종목": "MSFT",
+            "제목": "Microsoft Meta Nvidia AI 데이터센터 투자 확대",
+            "초보요약": "AI 반도체와 빅테크 투자 뉴스입니다.",
+            "체크": "반도체·AI 재료",
+        }
+    ]
+
+    candidates = app_module.build_portfolio_next_check_candidates_df(
+        align_df,
+        action_df=action_df,
+        news_rows=news_rows,
+        limit=4,
+    )
+
+    mags = candidates[candidates["티커"].eq("MAGS")].iloc[0]
+    bitx = candidates[candidates["티커"].eq("BITX")].iloc[0]
+    ram = candidates[candidates["티커"].eq("RAM")].iloc[0]
+    assert mags["자산판정"] == "조건부 적립"
+    assert "Microsoft" in mags["뉴스/재료"]
+    assert bitx["점검유형"] == "별도 소액 후보"
+    assert bitx["다음 확인"] == "시장 위험 완화 + 손절선 확인"
+    assert ram["점검유형"] == "축소/중단 점검"
+    assert candidates.index[candidates["티커"].eq("RAM")][0] > candidates.index[candidates["티커"].eq("MAGS")][0]
+
+
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(
         [
