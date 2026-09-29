@@ -1052,6 +1052,59 @@ def get_active_portfolio_rows(holdings_table):
     return df.reset_index(drop=True)
 
 
+PORTFOLIO_SIGNAL_COLUMNS = [
+    "기술적타점",
+    "ADJ점수",
+    "후보등급",
+    "추세",
+    "RS",
+    "RSI",
+    "MFI",
+    "MACD",
+    "SQZ",
+    "판정코드",
+    "실행메모",
+    "핵심근거",
+]
+
+
+def _portfolio_signal_key(ticker):
+    text = sanitize_ticker_value(ticker)
+    if ":" in text:
+        text = text.split(":")[-1]
+    for suffix in (".US", ".KS", ".KQ"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
+def merge_portfolio_signal_details(holdings_table, signal_df):
+    """Attach cached today-check/precision signal columns to portfolio holdings."""
+    holdings = holdings_table.copy() if isinstance(holdings_table, pd.DataFrame) else pd.DataFrame()
+    if holdings.empty or "티커" not in holdings.columns:
+        return holdings
+    if not isinstance(signal_df, pd.DataFrame) or signal_df.empty or "티커" not in signal_df.columns:
+        return holdings
+
+    usable_cols = [col for col in PORTFOLIO_SIGNAL_COLUMNS if col in signal_df.columns]
+    if not usable_cols:
+        return holdings
+
+    left = holdings.copy()
+    right = signal_df[["티커", *usable_cols]].copy()
+    left["_signal_key"] = left["티커"].apply(_portfolio_signal_key)
+    right["_signal_key"] = right["티커"].apply(_portfolio_signal_key)
+    right = right[right["_signal_key"].astype(str).str.len() > 0].drop_duplicates("_signal_key", keep="last")
+
+    for col in usable_cols:
+        if col in left.columns:
+            left = left.drop(columns=[col])
+
+    merged = left.merge(right.drop(columns=["티커"]), on="_signal_key", how="left")
+    return merged.drop(columns=["_signal_key"])
+
+
 def add_portfolio_risk_note(notes, level, area, detail, suggestion):
     notes.append({
         "등급": level,

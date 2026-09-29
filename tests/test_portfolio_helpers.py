@@ -22,6 +22,7 @@ from stock_lab_core.portfolio import (
     infer_benchmark_leverage_multiplier,
     infer_blended_benchmark_proxy,
     infer_scenario_shock_multiplier,
+    merge_portfolio_signal_details,
 )
 
 
@@ -80,6 +81,26 @@ def test_calc_pnl_krw_from_row_converts_foreign_pnl_only():
     assert calc_pnl_krw_from_row({"티커": "005930.KS", "평가손익": 10_000}, 1400) == 10_000
     assert calc_pnl_krw_from_row({"티커": "KRW_CASH", "평가손익": 0}, 1400) == 0
     assert calc_pnl_krw_from_row({"티커": "FCX", "평가손익": 10}, 1400) == 14_000
+
+
+def test_merge_portfolio_signal_details_matches_ticker_variants():
+    holdings = pd.DataFrame([
+        {"티커": "NYSE:FCX", "자산명": "프리포트", "원화환산": 1000, "기술적타점": "이전값"},
+        {"티커": "379800.KS", "자산명": "S&P500", "원화환산": 2000},
+    ])
+    signals = pd.DataFrame([
+        {"티커": "FCX", "기술적타점": "추세방어", "후보등급": "B급", "RSI": 51},
+        {"티커": "379800", "기술적타점": "장기코어 유지", "후보등급": "코어", "RSI": 48},
+    ])
+
+    merged = merge_portfolio_signal_details(holdings, signals)
+
+    fcx = merged[merged["티커"].eq("NYSE:FCX")].iloc[0]
+    core = merged[merged["티커"].eq("379800.KS")].iloc[0]
+    assert fcx["기술적타점"] == "추세방어"
+    assert fcx["후보등급"] == "B급"
+    assert fcx["RSI"] == 51
+    assert core["기술적타점"] == "장기코어 유지"
 
 
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():

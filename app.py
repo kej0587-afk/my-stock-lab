@@ -1413,6 +1413,7 @@ from stock_lab_core.portfolio import (
     calc_reserve_summary,
     get_holding_row_by_ticker,
     make_cash_rows,
+    merge_portfolio_signal_details,
     parse_month_end_date,
     prepare_monthly_performance_df,
 )
@@ -24892,6 +24893,43 @@ def render_long_term_goal_simulator(metrics):
 # render_portfolio_analysis_tab()
 # ════════════════════════════════════════════════════════════════════════════
 
+def get_cached_portfolio_signal_details():
+    """Return the richest cached per-ticker signal table available in this session."""
+    candidate_keys = [
+        "_ticker_signal_detail_df",
+        "today_queue_summary_df",
+        "today_queue_summary_last_nonempty_df",
+    ]
+    rename_map = {
+        "🔥기술적 타점": "기술적타점",
+        "📌후보등급": "후보등급",
+        "RR값": "R/R",
+    }
+    wanted_cols = [
+        "티커", "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI",
+        "MACD", "SQZ", "판정코드", "실행메모", "핵심근거",
+    ]
+    for key in candidate_keys:
+        df = st.session_state.get(key)
+        if not isinstance(df, pd.DataFrame) or df.empty or "티커" not in df.columns:
+            continue
+        work = df.copy()
+        for src, dst in rename_map.items():
+            if src in work.columns and dst not in work.columns:
+                work[dst] = work[src]
+        cols = [col for col in wanted_cols if col in work.columns]
+        if "티커" in cols and len(cols) > 1:
+            return work[cols].copy()
+
+    cached_signal_map = st.session_state.get("_ticker_signal_cache")
+    if isinstance(cached_signal_map, dict) and cached_signal_map:
+        return pd.DataFrame([
+            {"티커": ticker, "기술적타점": signal}
+            for ticker, signal in cached_signal_map.items()
+        ])
+    return pd.DataFrame()
+
+
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
     st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
@@ -24913,8 +24951,15 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     if analysis_start_date is not None:
         st.caption(f"월별 로그 시작월({analysis_start_date.strftime('%Y-%m')}) 이후 가격 흐름만 분석합니다.")
 
+    analysis_holdings_table = holdings_table
+    cached_signal_df = get_cached_portfolio_signal_details()
+    if isinstance(cached_signal_df, pd.DataFrame) and not cached_signal_df.empty:
+        analysis_holdings_table = merge_portfolio_signal_details(holdings_table, cached_signal_df)
+    else:
+        st.caption("자산현황에서 분석 실행 후 다시 열면 보유종목별 기술 신호까지 붙여 포트폴리오 관리판을 보여줍니다.")
+
     metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
-        holdings_table,
+        analysis_holdings_table,
         krw_cash,
         usd_cash,
         usdkrw,
@@ -35342,6 +35387,7 @@ if main_page == "asset":
                 str(row["티커"]): str(row["기술적타점"])
                 for _, row in signal_df.iterrows()
             }
+            st.session_state["_ticker_signal_detail_df"] = signal_df.copy()
             dash_df = dash_df.merge(signal_df, on="티커", how="left")
 
         defaults = {
