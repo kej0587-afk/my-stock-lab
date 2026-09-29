@@ -132,6 +132,85 @@ def test_portfolio_action_decision_formats_pnl_from_holding_columns(app_module):
     assert "손익 -15.0%" in row["근거"]
 
 
+def test_portfolio_market_alignment_maps_leveraged_ai_to_conditional_small(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.4,
+            "목표비중": 10.0,
+            "비중차이": 1.6,
+            "수익률_pct": -15.0,
+            "기술적타점": "⚡레버리지 조건부 DCA: 회복 확인",
+        }
+    ])
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "정밀관측",
+                "후보군": "미국 AI·반도체",
+                "연결테마": "미국 AI·빅테크",
+                "내부세부축": "메모리·CPU",
+                "ETF/대표": "마이크론 (MU)",
+                "판단": "후보 압축, 종목 타점 확인",
+                "_점수": 8.5,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["티커"] == "RAM"
+    assert row["시장판정"] == "정밀관측"
+    assert row["포트판정"] == "조건부 소액"
+    assert row["주도축"] == "미국 AI·반도체"
+
+
+def test_portfolio_market_alignment_marks_underweight_core_leader_as_add_candidate(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill Magnificent Seven ETF",
+            "티커": "MAGS",
+            "버킷": "core",
+            "현재비중": 2.0,
+            "목표비중": 5.0,
+            "비중차이": 3.0,
+            "수익률_pct": 4.2,
+            "기술적타점": "분할 매수",
+        }
+    ])
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "정밀관측",
+                "후보군": "미국 AI·빅테크",
+                "연결테마": "미국 AI·빅테크",
+                "내부세부축": "클라우드·AI 플랫폼",
+                "ETF/대표": "마이크로소프트 (MSFT)",
+                "판단": "후보 압축, 종목 타점 확인",
+                "_점수": 9.0,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["티커"] == "MAGS"
+    assert row["포트판정"] == "비중확대 후보"
+    assert "목표비중 미달" in row["근거"]
+
+
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(
         [

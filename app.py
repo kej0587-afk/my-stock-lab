@@ -9038,9 +9038,10 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 
 FLOW_THEME_BRIDGE_RULES = [
+    {"market": "미국 섹터", "keys": ["MAGS", "MAG7", "0227L0", "0227LO", "MSFT", "META", "GOOGL", "GOOG", "AMZN", "NVDA", "마이크로소프트", "메타", "구글", "아마존", "에이전틱AI"], "themes": ["미국 AI·빅테크"], "subthemes": ["클라우드·AI 플랫폼", "AI 데이터·분석", "AI 소프트웨어·사이버보안"], "label": "미국 AI·빅테크 > 클라우드·AI 플랫폼"},
     {"market": "미국 섹터", "keys": ["소프트웨어·사이버", "소프트웨어", "사이버보안", "IGV", "CIBR", "XLC"], "themes": ["미국 AI·빅테크"], "subthemes": ["AI 소프트웨어·사이버보안", "클라우드·AI 플랫폼", "AI 데이터·분석"], "label": "미국 AI·빅테크 > AI 소프트웨어·사이버보안"},
-    {"market": "미국 섹터", "keys": ["AI·반도체", "반도체", "SOXX", "SMH", "QQQ", "XLK", "QTUM"], "themes": ["미국 AI·빅테크", "PCB·기판 글로벌", "포토닉스·광통신"], "subthemes": ["메모리·CPU", "AI 반도체 코어", "파운드리·인터커넥트", "서버·네트워크 인프라"], "label": "미국 AI·빅테크 > 반도체·서버"},
-    {"market": "한국 섹터", "keys": ["AI·반도체", "반도체", "396500.KS", "139260.KS", "381180.KS", "456600.KS"], "themes": ["국내 AI 반도체·소부장", "PCB·기판 글로벌", "전자부품·MLCC"], "subthemes": ["HBM/메모리", "기판/PCB", "검사/테스트", "MLCC·콘덴서"], "label": "국내 AI 반도체·소부장 > HBM·기판·MLCC"},
+    {"market": "미국 섹터", "keys": ["AI·반도체", "반도체", "SOXX", "SMH", "SOXL", "RAM", "DRAM", "QQQ", "XLK", "QTUM", "AMD", "MU", "LRCX", "AMAT", "TSM", "ASML", "0167A0"], "themes": ["미국 AI·빅테크", "PCB·기판 글로벌", "포토닉스·광통신"], "subthemes": ["메모리·CPU", "AI 반도체 코어", "파운드리·인터커넥트", "서버·네트워크 인프라"], "label": "미국 AI·빅테크 > 반도체·서버"},
+    {"market": "한국 섹터", "keys": ["AI·반도체", "반도체", "396500.KS", "139260.KS", "381180.KS", "456600.KS", "0167A0.KS", "삼성전자", "SK하이닉스", "한미반도체"], "themes": ["국내 AI 반도체·소부장", "PCB·기판 글로벌", "전자부품·MLCC"], "subthemes": ["HBM/메모리", "기판/PCB", "검사/테스트", "MLCC·콘덴서"], "label": "국내 AI 반도체·소부장 > HBM·기판·MLCC"},
     {"market": "미국 섹터", "keys": ["방산·우주", "우주/위성통신", "방산", "UFO", "SHLD", "ITA"], "themes": ["우주·위성 RF통신", "우주항공·방산"], "subthemes": ["위성 서비스·발사 (성장형)", "미국 방산 프라임", "RF GaN 반도체 부품"], "label": "우주·위성 RF통신 / 우주항공·방산"},
     {"market": "한국 섹터", "keys": ["방산·조선", "방산", "조선", "449450.KS", "494670.KS"], "themes": ["우주항공·방산", "조선·해양"], "subthemes": ["한국 항공엔진/기체", "조선 대형 3사", "엔진·추진"], "label": "우주항공·방산 / 조선·해양"},
     {"market": "미국 섹터", "keys": ["전력·인프라", "GRID", "PAVE", "ICLN", "XLU"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["전력기기 (글로벌)", "DC 전력·냉각", "전력 유틸리티"], "label": "전력·에너지 인프라 / 글로벌 원전·SMR"},
@@ -24927,6 +24928,324 @@ def render_long_term_goal_simulator(metrics):
 # render_portfolio_analysis_tab()
 # ════════════════════════════════════════════════════════════════════════════
 
+def _portfolio_market_action_rank(action):
+    return {
+        "정밀관측": 5,
+        "눌림대기": 4,
+        "추격금지": 3,
+        "관심등록": 2,
+        "관망/제외": 1,
+    }.get(str(action or ""), 0)
+
+
+def _portfolio_market_flow_score(row):
+    for col in ["_점수", "점수", "테마점수", "하위점수", "돈흐름점수", "스윙점수"]:
+        value = clean_float(row.get(col), np.nan) if isinstance(row, (pd.Series, dict)) else np.nan
+        if finite_num(value):
+            return float(value)
+    return np.nan
+
+
+def _portfolio_flow_ticker_key(ticker):
+    text = sanitize_ticker_value(ticker)
+    if ":" in text:
+        text = text.split(":")[-1]
+    for suffix in (".US", ".KS", ".KQ"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)]
+            break
+    return text
+
+
+def _portfolio_snapshot_command_df(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot:
+        return pd.DataFrame()
+    command_df = snapshot.get("command_flow_df")
+    if isinstance(command_df, pd.DataFrame) and not command_df.empty:
+        return command_df.copy()
+
+    sector_rotation_df = snapshot.get("sector_rotation_df", pd.DataFrame())
+    theme_rotation_df = snapshot.get("theme_rotation_df", pd.DataFrame())
+    subtheme_group_df = snapshot.get("subtheme_group_df", pd.DataFrame())
+    if all((not isinstance(df, pd.DataFrame) or df.empty) for df in [sector_rotation_df, theme_rotation_df, subtheme_group_df]):
+        return pd.DataFrame()
+    try:
+        unified_df = build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, subtheme_group_df)
+        return _prepare_flow_command_table(unified_df) if unified_df is not None and not unified_df.empty else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _portfolio_snapshot_direct_flow_df(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot:
+        return pd.DataFrame()
+    frames = []
+    flow_df = snapshot.get("flow_df", pd.DataFrame())
+    if isinstance(flow_df, pd.DataFrame) and not flow_df.empty and "Ticker" in flow_df.columns:
+        tmp = flow_df.copy()
+        tmp["돈흐름출처"] = tmp.get("구분", "ETF/섹터")
+        tmp["흐름명"] = tmp.get("섹터", tmp.get("ETF 이름", tmp.get("Ticker", "")))
+        tmp["연결테마"] = tmp.get("섹터", "")
+        tmp["세부축"] = tmp.get("섹터", "")
+        frames.append(tmp)
+
+    theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
+    if isinstance(theme_flow_df, pd.DataFrame) and not theme_flow_df.empty and "Ticker" in theme_flow_df.columns:
+        tmp = theme_flow_df.copy()
+        tmp["돈흐름출처"] = "테마 종목"
+        tmp["흐름명"] = tmp.get("하위테마", tmp.get("종목명", tmp.get("Ticker", "")))
+        tmp["연결테마"] = tmp.get("테마", "")
+        tmp["세부축"] = tmp.get("하위테마", "")
+        frames.append(tmp)
+
+    if not frames:
+        return pd.DataFrame()
+    flow_all = pd.concat(frames, ignore_index=True, sort=False)
+    flow_all["_ticker_key"] = flow_all["Ticker"].apply(_portfolio_flow_ticker_key)
+    flow_all["_flow_score"] = flow_all.apply(_portfolio_market_flow_score, axis=1)
+    return flow_all.sort_values("_flow_score", ascending=False, na_position="last")
+
+
+def _portfolio_best_direct_flow(row, direct_df):
+    if not isinstance(direct_df, pd.DataFrame) or direct_df.empty:
+        return pd.Series(dtype=object)
+    key = _portfolio_flow_ticker_key(row.get("티커", ""))
+    if not key:
+        return pd.Series(dtype=object)
+    matched = direct_df[direct_df["_ticker_key"].astype(str).eq(key)].copy()
+    if matched.empty:
+        return pd.Series(dtype=object)
+    return matched.iloc[0]
+
+
+def _portfolio_bridge_tokens(name, ticker):
+    bridge = resolve_flow_theme_bridge(name, ticker)
+    tokens = []
+    for key in ["themes", "subthemes", "keys"]:
+        values = bridge.get(key, []) if isinstance(bridge, dict) else []
+        tokens.extend([str(v).strip() for v in values if str(v).strip()])
+    label = str((bridge or {}).get("label", "") or "").strip() if isinstance(bridge, dict) else ""
+    if label:
+        tokens.extend([part.strip() for part in re.split(r"[>/·]", label) if part.strip()])
+    raw = " ".join([str(name or ""), str(ticker or "")]).strip()
+    if raw:
+        tokens.append(raw)
+    return list(dict.fromkeys([token for token in tokens if len(token) >= 2]))
+
+
+def _portfolio_best_command_flow(row, command_df):
+    if not isinstance(command_df, pd.DataFrame) or command_df.empty:
+        return pd.Series(dtype=object)
+    tokens = _portfolio_bridge_tokens(row.get("자산명", ""), row.get("티커", ""))
+    if not tokens:
+        return pd.Series(dtype=object)
+    search_cols = [
+        "후보군", "연결테마", "핵심하위테마", "세부축", "내부세부축",
+        "ETF/대표", "대표주", "시장축", "시장", "대분류",
+    ]
+    hay = command_df[[c for c in search_cols if c in command_df.columns]].fillna("").astype(str).agg(" ".join, axis=1)
+    upper_tokens = [token.upper() for token in tokens]
+    mask = hay.str.upper().apply(lambda text: any(token in text for token in upper_tokens))
+    matched = command_df[mask].copy()
+    if matched.empty:
+        return pd.Series(dtype=object)
+    matched["_portfolio_action_rank"] = matched.get("행동", pd.Series("", index=matched.index)).apply(_portfolio_market_action_rank)
+    matched["_portfolio_flow_score"] = matched.apply(_portfolio_market_flow_score, axis=1)
+    return matched.sort_values(
+        ["_portfolio_action_rank", "_portfolio_flow_score"],
+        ascending=False,
+        na_position="last",
+    ).iloc[0]
+
+
+def _portfolio_market_action(row, command_row, direct_row):
+    action = _flow_text(command_row.get("행동", ""))
+    judgement = _flow_text(command_row.get("판단", ""))
+    timing = str(row.get("기술적타점", "") or "")
+    bucket = normalize_bucket(row.get("버킷", row.get("bucket", "")))
+    gap = clean_float(row.get("비중차이"), 0.0)
+    direct_score = _portfolio_market_flow_score(direct_row)
+    has_direct = finite_num(direct_score)
+    blocked = _portfolio_text_contains(timing, ["하드차단", "추세위험", "추세방어", "추매중단", "시장방어"])
+
+    if blocked:
+        return "보유점검", "내 기술 신호가 방어라서 시장 흐름보다 회복 조건을 먼저 봅니다."
+    if action == "정밀관측":
+        if gap > 0.3:
+            if bucket == "leverage":
+                return "조건부 소액", "주도축은 맞지만 레버리지는 정해둔 회차와 금액만 봅니다."
+            return "비중확대 후보", "주도축과 내 목표비중 미달이 같이 맞습니다."
+        if gap < -0.3:
+            return "유지·신규중단", "주도축은 맞지만 목표보다 많아 새 매수는 멈춥니다."
+        return "유지", "주도축과 연결되어 있어 교체보다 보유 유지가 우선입니다."
+    if action == "눌림대기":
+        return ("눌림 시 분할", "흐름은 있으나 현재가 추격보다 눌림 확인이 우선입니다.") if gap > 0.3 else ("유지·추격금지", "보유는 가능하나 신규 추격은 낮춥니다.")
+    if action == "추격금지":
+        return "신규중단", "시장 주도축이 과열권이라 새 매수는 멈춥니다."
+    if action == "관심등록":
+        return ("관찰 후 소액", "주도축 초입 후보라 비중확대 전 지속 확인이 필요합니다.") if gap > 0.3 else ("관찰", "흐름은 감지되지만 아직 주도 확정 전입니다.")
+    if action == "관망/제외":
+        return ("축소/교체 후보", "현재 주도축과 맞지 않고 목표보다 많아 대체 후보와 비교합니다.") if gap < -0.3 else ("관망", "시장 주도축과 아직 맞지 않습니다.")
+    if has_direct and direct_score > 0:
+        return ("직접흐름 확인", "개별 돈흐름은 잡혔지만 상위 주도축 확인이 더 필요합니다.")
+    return "미연결", "오늘 주도맵과 직접 연결되지 않았습니다."
+
+
+def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
+    strategy_df = metrics.get("strategy_df") if isinstance(metrics, dict) else pd.DataFrame()
+    source_df = strategy_df if isinstance(strategy_df, pd.DataFrame) and not strategy_df.empty else asset_df
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        return pd.DataFrame()
+
+    command_df = _portfolio_snapshot_command_df(snapshot)
+    direct_df = _portfolio_snapshot_direct_flow_df(snapshot)
+    if command_df.empty and direct_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in source_df.iterrows():
+        if normalize_bucket(row.get("버킷", row.get("bucket", ""))) in {"cash", "reserve"}:
+            continue
+        direct_row = _portfolio_best_direct_flow(row, direct_df)
+        command_row = _portfolio_best_command_flow(row, command_df)
+        port_action, reason = _portfolio_market_action(row, command_row, direct_row)
+        market_action = _flow_text(command_row.get("행동", ""), default="미연결")
+        flow_score = _portfolio_market_flow_score(command_row)
+        if not finite_num(flow_score):
+            flow_score = _portfolio_market_flow_score(direct_row)
+        current_w = clean_float(row.get("현재비중", row.get("전체비중")), 0.0)
+        target_w = clean_float(row.get("목표비중"), 0.0)
+        gap = clean_float(row.get("비중차이"), target_w - current_w)
+        rows.append({
+            "자산": _first_flow_text(row.get("자산명", ""), row.get("티커", ""), default="-"),
+            "티커": str(row.get("티커", "") or "").strip(),
+            "구분": normalize_bucket(row.get("버킷", row.get("bucket", ""))),
+            "현재비중": current_w,
+            "목표비중": target_w,
+            "비중차이": gap,
+            "손익": _format_portfolio_pnl(_portfolio_pnl_pct_from_row(row)),
+            "주도축": _first_flow_text(
+                command_row.get("후보군", ""),
+                command_row.get("연결테마", ""),
+                direct_row.get("흐름명", ""),
+                default="미연결",
+            ),
+            "세부축": _first_flow_text(
+                command_row.get("내부세부축", ""),
+                command_row.get("세부축", ""),
+                direct_row.get("세부축", ""),
+                default="-",
+            ),
+            "시장판정": market_action,
+            "포트판정": port_action,
+            "판단": _first_flow_text(command_row.get("판단", ""), command_row.get("다음확인", ""), reason, default=reason),
+            "근거": reason,
+            "대표/ETF": _first_flow_text(
+                command_row.get("ETF/대표", ""),
+                command_row.get("대표주", ""),
+                direct_row.get("흐름명", ""),
+                default="-",
+            ),
+            "점수": flow_score,
+            "기술신호": str(row.get("기술적타점", "") or "").strip(),
+        })
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    result["_판정순서"] = result["포트판정"].map({
+        "비중확대 후보": 7,
+        "조건부 소액": 6,
+        "눌림 시 분할": 5,
+        "유지": 4,
+        "유지·신규중단": 3,
+        "직접흐름 확인": 3,
+        "관찰 후 소액": 3,
+        "유지·추격금지": 2,
+        "신규중단": 2,
+        "보유점검": 1,
+        "축소/교체 후보": 1,
+    }).fillna(0)
+    result["_점수정렬"] = result["점수"].apply(lambda v: clean_float(v, -999.0))
+    return result.sort_values(["_판정순서", "_점수정렬", "현재비중"], ascending=False).drop(columns=["_판정순서", "_점수정렬"]).reset_index(drop=True)
+
+
+def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
+    snapshot = snapshot if isinstance(snapshot, dict) and snapshot else get_cached_today_market_flow_snapshot()
+    if not isinstance(snapshot, dict) or not snapshot:
+        st.info("오늘점검의 돈흐름/주도맵을 한 번 계산하면, 여기서 내 보유 종목과 주도축의 연결 여부를 같이 보여줍니다.")
+        return
+
+    align_df = build_portfolio_market_alignment_df(metrics, asset_df, snapshot)
+    if align_df.empty:
+        st.info("현재 포트폴리오와 오늘 주도맵을 직접 연결할 수 있는 데이터가 없습니다. 오늘점검 돈흐름 상세를 새로고침한 뒤 다시 확인하세요.")
+        return
+
+    st.markdown("#### 포트폴리오 주도축 매칭")
+    st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
+
+    connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
+    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "조건부 소액", "눌림 시 분할", "관찰 후 소액"])
+    caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지"])
+    connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
+    add_count = int(add_mask.sum())
+    caution_count = int(caution_mask.sum())
+    unlinked_weight = float(align_df.loc[~connected_mask, "현재비중"].apply(clean_float).sum())
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("주도축 연결 비중", f"{connected_weight:.1f}%")
+    c2.metric("확대/분할 후보", f"{add_count}개")
+    c3.metric("점검/축소 후보", f"{caution_count}개")
+    c4.metric("미연결 비중", f"{unlinked_weight:.1f}%")
+
+    group_df = (
+        align_df.groupby("포트판정", as_index=False)["현재비중"]
+        .sum()
+        .sort_values("현재비중", ascending=True)
+    )
+    if not group_df.empty:
+        color_map = {
+            "비중확대 후보": "#22c55e",
+            "조건부 소액": "#84cc16",
+            "눌림 시 분할": "#eab308",
+            "유지": "#38bdf8",
+            "유지·신규중단": "#60a5fa",
+            "보유점검": "#f97316",
+            "축소/교체 후보": "#ef4444",
+            "신규중단": "#f97316",
+            "미연결": "#64748b",
+        }
+        fig = go.Figure(go.Bar(
+            x=group_df["현재비중"],
+            y=group_df["포트판정"],
+            orientation="h",
+            marker_color=[color_map.get(str(v), "#94a3b8") for v in group_df["포트판정"]],
+            hovertemplate="%{y}<br>현재비중 %{x:.1f}%<extra></extra>",
+        ))
+        fig.update_layout(
+            template="plotly_dark",
+            height=max(260, 90 + len(group_df) * 34),
+            xaxis_title="현재비중(%)",
+            yaxis_title="",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=120, r=30, t=20, b=50),
+        )
+        st.plotly_chart(fig, width='stretch')
+
+    show = align_df.copy()
+    for col in ["현재비중", "목표비중", "비중차이"]:
+        show[col] = show[col].apply(lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%")
+    show["점수"] = show["점수"].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}")
+    cols = [
+        "자산", "티커", "구분", "손익", "현재비중", "목표비중", "비중차이",
+        "주도축", "세부축", "시장판정", "포트판정", "판단", "대표/ETF", "점수",
+    ]
+    st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
+
+    with st.expander("매칭 근거 자세히 보기", expanded=False):
+        st.dataframe(show, width='stretch', hide_index=True)
+
+
 def get_cached_portfolio_signal_details():
     """Return the richest cached per-ticker signal table available in this session."""
     candidate_keys = [
@@ -25017,6 +25336,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     st.markdown("### 핵심 요약")
     render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
     render_portfolio_action_decision_panel(metrics, asset_df)
+    render_portfolio_market_alignment_panel(metrics, asset_df)
 
     ten_year_report = None
     with st.expander("10년 작전 적합도", expanded=True):
