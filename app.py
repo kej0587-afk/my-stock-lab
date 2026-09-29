@@ -25552,6 +25552,15 @@ def _portfolio_next_check_type(row):
     return "관망/확인"
 
 
+def _portfolio_next_check_group(check_type):
+    check_type = str(check_type or "")
+    if "축소/중단" in check_type:
+        return "줄이기/중단 점검"
+    if any(token in check_type for token in ["적립", "보강", "분할", "소액", "직접흐름"]):
+        return "늘리기/적립 확인"
+    return "보유/대기 점검"
+
+
 def _portfolio_next_check_condition(row):
     port_action = str(row.get("포트판정", "") or "")
     decision = str(row.get("자산현황판정", "") or "")
@@ -25673,10 +25682,12 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     for _, row in work.iterrows():
         news_text = _portfolio_next_check_news_text(row, news_rows)
         priority_score = _portfolio_next_check_score(row, news_text=news_text)
+        check_type = _portfolio_next_check_type(row)
         rows.append({
             "후보": row.get("자산", row.get("티커", "")),
             "티커": row.get("티커", ""),
-            "점검유형": _portfolio_next_check_type(row),
+            "점검그룹": _portfolio_next_check_group(check_type),
+            "점검유형": check_type,
             "우선점수": priority_score,
             "비중상태": _portfolio_next_check_weight_state(row),
             "손익": row.get("손익", ""),
@@ -25693,7 +25704,26 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     result = pd.DataFrame(rows)
     if result.empty:
         return result
-    result = result.sort_values(["우선점수", "티커"], ascending=[False, True]).head(max(int(limit), 1)).reset_index(drop=True)
+    result = result.sort_values(["우선점수", "티커"], ascending=[False, True]).reset_index(drop=True)
+    limit = max(int(limit), 1)
+    risk_df = result[result["점검그룹"].eq("줄이기/중단 점검")]
+    add_df = result[result["점검그룹"].eq("늘리기/적립 확인")]
+    wait_df = result[~result["점검그룹"].isin(["줄이기/중단 점검", "늘리기/적립 확인"])]
+    if len(result) > limit and not risk_df.empty and not add_df.empty:
+        add_min = min(2, len(add_df), limit)
+        risk_quota = min(3, len(risk_df), max(limit - add_min, 0))
+        add_quota = min(3, len(add_df), max(limit - risk_quota, 0))
+        wait_quota = max(limit - risk_quota - add_quota, 0)
+        result = pd.concat([
+            risk_df.head(risk_quota),
+            add_df.head(add_quota),
+            wait_df.head(wait_quota),
+        ], ignore_index=True)
+    else:
+        result = result.head(limit).copy()
+    group_order = {"줄이기/중단 점검": 0, "늘리기/적립 확인": 1, "보유/대기 점검": 2}
+    result["_group_order"] = result["점검그룹"].map(group_order).fillna(9)
+    result = result.sort_values(["_group_order", "우선점수", "티커"], ascending=[True, False, True]).drop(columns=["_group_order"]).reset_index(drop=True)
     result.insert(0, "우선", range(1, len(result) + 1))
     return result
 
@@ -25710,7 +25740,7 @@ def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_
         show = candidates.copy()
         show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
         cols = [
-            "우선", "점검유형", "후보", "티커", "우선점수", "비중상태", "손익",
+            "우선", "점검그룹", "점검유형", "후보", "티커", "우선점수", "비중상태", "손익",
             "주도축", "시장/추세", "자산판정", "뉴스/재료", "다음 확인",
         ]
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
