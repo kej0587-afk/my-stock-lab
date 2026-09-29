@@ -24061,11 +24061,21 @@ def _portfolio_action_from_row(row, metrics):
     priority = 60
 
     if is_leverage:
-        if is_overweight or severe_loss or is_blocked:
+        if is_overweight or is_blocked:
             decision = "축소/교체 검토"
             action = "추가매수 중단 · 반등 시 목표 이하로 축소"
             condition = "목표비중 이하 + 하드차단 해제 전까지 재매수 금지"
             priority = 10
+        elif severe_loss and is_underweight:
+            decision = "레버리지 DCA 대기"
+            action = "추가매수 중단 · 가격/기초축 회복 조건 대기"
+            condition = "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"
+            priority = 18
+        elif severe_loss:
+            decision = "레버리지 회복확인"
+            action = "추가매수 중단 · 반등 강도 확인"
+            condition = "손실 구간 회복 + 하락 패턴 해소"
+            priority = 22
         elif is_underweight and _portfolio_text_contains(timing, ["DCA", "소액", "조건부"]):
             decision = "조건부 소액"
             action = "정해둔 회차와 금액만, 추격 금지"
@@ -25533,6 +25543,8 @@ def _portfolio_next_check_type(row):
     joined = f"{port_action} {decision}"
     if any(token in joined for token in ["축소", "교체", "신규중단", "추격금지"]):
         return "축소/중단 점검"
+    if "DCA 대기" in joined or "레버리지 회복확인" in joined:
+        return "회복/DCA 대기"
     if port_action == "계획적 적립" or "장기코어" in decision:
         return "장기코어 적립 후보"
     if port_action == "비중확대 후보":
@@ -25556,6 +25568,8 @@ def _portfolio_next_check_group(check_type):
     check_type = str(check_type or "")
     if "축소/중단" in check_type:
         return "줄이기/중단 점검"
+    if "회복/DCA" in check_type:
+        return "회복/DCA 대기"
     if any(token in check_type for token in ["적립", "보강", "분할", "소액", "직접흐름"]):
         return "늘리기/적립 확인"
     return "보유/대기 점검"
@@ -25570,6 +25584,8 @@ def _portfolio_next_check_condition(row):
         return release
     if any(token in f"{port_action} {decision}" for token in ["축소", "교체", "신규중단", "추격금지"]):
         return "추가매수보다 보유 사유가 남아 있는지 먼저 확인"
+    if "DCA 대기" in f"{port_action} {decision}" or "레버리지 회복확인" in f"{port_action} {decision}":
+        return "가격 조건, 기초축 회복, 시장 위험 완화가 같이 맞는지 확인"
     if port_action == "계획적 적립":
         return "시장 위험 완화와 목표비중 안에서 정해진 적립만 진행"
     if port_action == "비중확대 후보":
@@ -25606,9 +25622,12 @@ def _portfolio_next_check_score(row, news_text=""):
     decision = str(row.get("자산현황판정", "") or "")
     joined = f"{port_action} {decision}"
     is_stop_review = any(token in joined for token in ["축소", "교체", "신규중단", "추격금지"])
+    is_dca_wait = "DCA 대기" in joined or "레버리지 회복확인" in joined
     is_wait_review = any(token in joined for token in ["대기", "원인점검", "보유점검"])
     if is_stop_review:
         score = 74.0
+    elif is_dca_wait:
+        score = 70.0
     elif is_wait_review:
         score = 50.0
     else:
@@ -25646,6 +25665,9 @@ def _portfolio_next_check_score(row, news_text=""):
             score += min(abs(gap), 5.0) * 1.8
         elif gap > 0:
             score += min(gap, 3.0) * 0.3
+    elif is_dca_wait:
+        if gap > 0:
+            score += min(gap, 5.0) * 1.0
     elif gap > 0:
         score += min(gap, 5.0) * 1.5
     elif gap < 0:
@@ -25660,7 +25682,7 @@ def _portfolio_next_check_score(row, news_text=""):
             score += clipped_flow * 0.8
 
     pnl_pct = _portfolio_next_check_pct_value(row.get("손익", ""))
-    if is_stop_review and finite_num(pnl_pct) and pnl_pct < 0:
+    if (is_stop_review or is_dca_wait) and finite_num(pnl_pct) and pnl_pct < 0:
         score += min(abs(pnl_pct), 30.0) * 0.35
 
     if "조건부 적립" in decision or "조건부 소액" in decision:
@@ -25707,21 +25729,27 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     result = result.sort_values(["우선점수", "티커"], ascending=[False, True]).reset_index(drop=True)
     limit = max(int(limit), 1)
     risk_df = result[result["점검그룹"].eq("줄이기/중단 점검")]
+    dca_df = result[result["점검그룹"].eq("회복/DCA 대기")]
     add_df = result[result["점검그룹"].eq("늘리기/적립 확인")]
-    wait_df = result[~result["점검그룹"].isin(["줄이기/중단 점검", "늘리기/적립 확인"])]
-    if len(result) > limit and not risk_df.empty and not add_df.empty:
-        add_min = min(2, len(add_df), limit)
-        risk_quota = min(3, len(risk_df), max(limit - add_min, 0))
-        add_quota = min(3, len(add_df), max(limit - risk_quota, 0))
-        wait_quota = max(limit - risk_quota - add_quota, 0)
+    wait_df = result[~result["점검그룹"].isin(["줄이기/중단 점검", "회복/DCA 대기", "늘리기/적립 확인"])]
+    if len(result) > limit and (not risk_df.empty or not dca_df.empty) and not add_df.empty:
+        remaining = limit
+        risk_quota = min(2 if not dca_df.empty else 3, len(risk_df), remaining)
+        remaining -= risk_quota
+        dca_quota = min(1, len(dca_df), remaining)
+        remaining -= dca_quota
+        add_quota = min(len(add_df), remaining)
+        remaining -= add_quota
+        wait_quota = max(remaining, 0)
         result = pd.concat([
             risk_df.head(risk_quota),
+            dca_df.head(dca_quota),
             add_df.head(add_quota),
             wait_df.head(wait_quota),
         ], ignore_index=True)
     else:
         result = result.head(limit).copy()
-    group_order = {"줄이기/중단 점검": 0, "늘리기/적립 확인": 1, "보유/대기 점검": 2}
+    group_order = {"줄이기/중단 점검": 0, "회복/DCA 대기": 1, "늘리기/적립 확인": 2, "보유/대기 점검": 3}
     result["_group_order"] = result["점검그룹"].map(group_order).fillna(9)
     result = result.sort_values(["_group_order", "우선점수", "티커"], ascending=[True, False, True]).drop(columns=["_group_order"]).reset_index(drop=True)
     result.insert(0, "우선", range(1, len(result) + 1))

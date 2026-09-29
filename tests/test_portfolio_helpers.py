@@ -133,6 +133,35 @@ def test_portfolio_action_decision_formats_pnl_from_holding_columns(app_module):
     assert "손익 -15.0%" in row["근거"]
 
 
+def test_portfolio_action_decision_marks_underweight_leverage_loss_as_dca_wait(app_module):
+    metrics = {
+        "risk_index": 35,
+        "reserve_gap": 0,
+        "usdkrw": 1400,
+    }
+    asset_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.6,
+            "목표비중": 10.0,
+            "비중차이": 1.4,
+            "평가손익_원화": -558_304,
+            "수익률_pct": -21.7,
+            "기술적타점": "⚡레버리지 조건부 DCA 대기: $12.96 이하 눌림 우선",
+            "RS": "RS 강함",
+        }
+    ])
+
+    decision_df = app_module.build_portfolio_action_decision_df(metrics, asset_df)
+
+    row = decision_df.iloc[0]
+    assert row["판정"] == "레버리지 DCA 대기"
+    assert row["실행"] == "추가매수 중단 · 가격/기초축 회복 조건 대기"
+    assert row["재개/해제 조건"] == "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"
+
+
 def test_portfolio_market_alignment_maps_leveraged_ai_to_conditional_small(app_module):
     strategy_df = pd.DataFrame([
         {
@@ -776,7 +805,7 @@ def test_portfolio_next_check_candidates_balance_reduce_and_add_groups(app_modul
     action_df = pd.DataFrame([
         {"티커": "0167A0.KS", "판정": "위성/집중 축소 검토", "실행": "추가매수 중단", "재개/해제 조건": "반도체 돈흐름 회복"},
         {"티커": "SOXL", "판정": "축소/교체 검토", "실행": "추가매수 중단", "재개/해제 조건": "목표비중 이하"},
-        {"티커": "RAM", "판정": "축소/교체 검토", "실행": "추가매수 중단", "재개/해제 조건": "목표비중 이하"},
+        {"티커": "RAM", "판정": "레버리지 DCA 대기", "실행": "추가매수 중단", "재개/해제 조건": "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"},
         {"티커": "379810.KS", "판정": "장기코어 유지·신규중단", "실행": "추가매수 중단", "재개/해제 조건": "목표비중 이하"},
         {"티커": "379800.KS", "판정": "장기코어 유지·회복확인", "실행": "분할 적립", "재개/해제 조건": "10Y/VIX 안정"},
         {"티커": "MAGS", "판정": "조건부 적립", "실행": "분할", "재개/해제 조건": "시장 위험 완화"},
@@ -792,8 +821,10 @@ def test_portfolio_next_check_candidates_balance_reduce_and_add_groups(app_modul
 
     tickers = candidates["티커"].tolist()
     groups = candidates["점검그룹"].tolist()
-    assert sum(group == "줄이기/중단 점검" for group in groups) == 3
+    assert sum(group == "줄이기/중단 점검" for group in groups) == 2
+    assert sum(group == "회복/DCA 대기" for group in groups) == 1
     assert sum(group == "늘리기/적립 확인" for group in groups) == 3
+    assert "RAM" in tickers
     assert "MAGS" in tickers
     assert "BITX" in tickers
     assert "379800.KS" in tickers
