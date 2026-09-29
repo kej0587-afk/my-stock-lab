@@ -829,6 +829,13 @@ def test_portfolio_next_check_candidates_balance_reduce_and_add_groups(app_modul
     assert "BITX" in tickers
     assert "379800.KS" in tickers
 
+    summary = app_module.build_portfolio_next_check_summary(candidates)
+    assert "줄이기/중단 2개" in summary
+    assert "회복/DCA 대기 1개" in summary
+    assert "늘리기/적립 3개" in summary
+    assert "RAM" in summary
+    assert "남는 예산" in summary
+
 
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(

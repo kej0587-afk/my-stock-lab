@@ -25756,6 +25756,34 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     return result
 
 
+def build_portfolio_next_check_summary(candidates):
+    if not isinstance(candidates, pd.DataFrame) or candidates.empty:
+        return ""
+
+    labels = [
+        ("줄이기/중단 점검", "줄이기/중단"),
+        ("회복/DCA 대기", "회복/DCA 대기"),
+        ("늘리기/적립 확인", "늘리기/적립"),
+        ("보유/대기 점검", "보유/대기"),
+    ]
+    parts = []
+    for group, label in labels:
+        group_df = candidates[candidates.get("점검그룹", "").eq(group)] if "점검그룹" in candidates.columns else pd.DataFrame()
+        if group_df.empty:
+            continue
+        names = []
+        for _, row in group_df.head(2).iterrows():
+            name = _first_flow_text(row.get("후보", ""), row.get("티커", ""), default="")
+            if name:
+                names.append(name)
+        suffix = f": {', '.join(names)}" if names else ""
+        parts.append(f"{label} {len(group_df)}개{suffix}")
+
+    if not parts:
+        return ""
+    return "오늘 점검 순서: " + " · ".join(parts) + ". 줄일 것부터 위험을 잠그고, DCA는 조건을 기다린 뒤, 남는 예산만 늘릴 후보로 봅니다."
+
+
 def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_rows=None):
     candidates = build_portfolio_next_check_candidates_df(align_df, action_df=action_df, news_rows=news_rows, limit=6)
     if candidates.empty:
@@ -25765,6 +25793,9 @@ def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_
             "오늘점검 주도축, 자산현황 실행판, 목표비중 미달, 뉴스 재료를 함께 본 점검 우선순위입니다. "
             "매수 확정이 아니라 정밀관측소에서 먼저 열어볼 후보입니다."
         )
+        summary = build_portfolio_next_check_summary(candidates)
+        if summary:
+            st.info(summary)
         show = candidates.copy()
         show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
         cols = [
