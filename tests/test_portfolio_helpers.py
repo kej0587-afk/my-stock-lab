@@ -211,6 +211,67 @@ def test_portfolio_market_alignment_marks_underweight_core_leader_as_add_candida
     assert "목표비중 미달" in row["근거"]
 
 
+def test_portfolio_rebalance_playbook_allocates_leaders_and_separates_trim_candidates(app_module):
+    align_df = pd.DataFrame([
+        {
+            "자산": "Roundhill Magnificent Seven ETF",
+            "티커": "MAGS",
+            "구분": "core",
+            "현재비중": 2.0,
+            "목표비중": 5.0,
+            "비중차이": 3.0,
+            "포트판정": "비중확대 후보",
+            "시장판정": "정밀관측",
+            "점수": 9.0,
+            "근거": "주도축과 내 목표비중 미달이 같이 맞습니다.",
+        },
+        {
+            "자산": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "구분": "leverage",
+            "현재비중": 8.4,
+            "목표비중": 10.0,
+            "비중차이": 1.6,
+            "포트판정": "조건부 소액",
+            "시장판정": "정밀관측",
+            "점수": 8.5,
+            "근거": "주도축은 맞지만 레버리지는 정해둔 회차와 금액만 봅니다.",
+        },
+        {
+            "자산": "Old Satellite",
+            "티커": "OLD",
+            "구분": "swing",
+            "현재비중": 6.0,
+            "목표비중": 3.0,
+            "비중차이": -3.0,
+            "포트판정": "축소/교체 후보",
+            "시장판정": "관망/제외",
+            "점수": 1.0,
+            "근거": "현재 주도축과 맞지 않고 목표보다 많아 대체 후보와 비교합니다.",
+        },
+    ])
+    metrics = {
+        "total_asset": 10_000_000,
+        "risk_index": 35,
+        "reserve_summary": {"deployable_value": 500_000},
+    }
+
+    playbook = app_module.build_portfolio_rebalance_playbook_df(
+        align_df,
+        metrics,
+        monthly_budget=1_000_000,
+    )
+
+    mags = playbook[playbook["티커"].eq("MAGS")].iloc[0]
+    ram = playbook[playbook["티커"].eq("RAM")].iloc[0]
+    old = playbook[playbook["티커"].eq("OLD")].iloc[0]
+    assert playbook.attrs["total_budget"] == 1_500_000
+    assert mags["제안금액"] == 300_000
+    assert ram["제안금액"] == 40_000
+    assert old["구분"] == "축소/중단 후보"
+    assert old["제안금액"] == 0
+
+
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(
         [
