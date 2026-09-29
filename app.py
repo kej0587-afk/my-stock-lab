@@ -20159,6 +20159,7 @@ def build_leveraged_dca_timing_state(c, state):
     ma50_ok = cur > ma50 > 0
     underlying_ok = (not finite_num(underlying_1w)) or underlying_1w >= 0
     rr_wait = finite_num(rr) and rr < 0.8
+    rr_scout_only = finite_num(rr) and rr < 1.5
     heat_wait = (
         (finite_num(pct_b) and pct_b >= 0.85)
         or (finite_num(rsi) and rsi >= 70)
@@ -20193,7 +20194,7 @@ def build_leveraged_dca_timing_state(c, state):
         and ma20_ok
         and underlying_ok
         and not heat_wait
-        and not rr_wait
+        and not rr_scout_only
     )
     technical_entry_watch = (
         recovery_passed >= 3
@@ -20329,6 +20330,20 @@ def build_leveraged_dca_timing_state(c, state):
             else "현재가 추격 금지: MA5/MA20/FVG/0.5ATR 눌림에서 양봉 또는 거래량 진정 확인"
         )
         entry1_verdict = "대기"
+    elif recovery_passed >= 5 and ma50_ok and rr_scout_only:
+        status = "레버리지 회복 DCA: 1차 소액만"
+        color = "#8b5cf6"
+        status_note = (
+            f"{condition_summary}. 회복 조건은 우세하지만 현재가 손익비가 낮아 "
+            "부족분 전체를 채우는 구간은 아닙니다. 장기 보유 관점의 회차는 열어두되 "
+            "현재가는 1차 소액만, 본 DCA는 눌림 또는 R/R 회복 확인 뒤로 나눕니다."
+        )
+        tranche_weights = [0.25, 0.35, 0.40]
+        entry1_cond = (
+            "현재가 1차 소액만: 회복 체크 유지 + MA20/MA50 위 종가 + 거래량 진정 확인. "
+            "R/R 1.5 미만이면 부족분 전체를 한 번에 채우지 않음"
+        )
+        entry1_verdict = "조건부"
     elif recovery_passed >= 5 and ma50_ok:
         status = "레버리지 회복 DCA: 분할 가능"
         color = "#16a34a"
@@ -21577,18 +21592,34 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
             ma20_line = clean_float(c.get("ma20"), np.nan)
             cur_p = clean_float(c.get("cur_p"), np.nan)
             rr2_met = finite_num(cur_p) and finite_num(rr2_entry) and cur_p <= rr2_entry
-            ram_action_note = (
-                f"회복조건은 일부 통과했고 현재가는 R/R 2.0 기준가 {_fmt_us_price(rr2_entry)} 아래입니다. "
-                f"가격 기준은 충족했지만 자동 추매가 아니라 MA20 {_fmt_us_price(ma20_line)} 재지지, 거래량 진정, "
-                "DRAM/MU/SK하이닉스 기초축 동행을 확인한 뒤 소액 회차만 검토합니다."
-                if rr2_met
-                else f"회복조건은 일부 통과했지만 현재가 추격 구간은 아닙니다. RAM은 R/R 2.0 충족가 {_fmt_us_price(rr2_entry)} 또는 MA20 {_fmt_us_price(ma20_line)} 같은 자동 눌림 기준, 혹은 15달러대 회복 후 첫 눌림 확인 전까지 자동 추매가 아니라 대기입니다."
-            )
-            final_label, final_color, action = (
-                "조건부 DCA 대기",
-                "#d97706",
-                ram_action_note,
-            )
+            timing_status = str(leveraged_timing_state.get("status", "") or "")
+            entry1_verdict = str(leveraged_timing_state.get("entry1_verdict", "") or "")
+            first_tranche_only = "1차 소액" in timing_status or entry1_verdict == "조건부"
+            if first_tranche_only and not rr2_met:
+                final_label, final_color, action = (
+                    "1차 소액만",
+                    "#8b5cf6",
+                    f"회복조건은 우세하지만 현재가 추격 구간은 아닙니다. 장기 보유/DCA 관점은 유지하되 "
+                    f"현재가는 부족분 전체가 아니라 1차 소액만 검토합니다. 본 DCA는 R/R 2.0 충족가 "
+                    f"{_fmt_us_price(rr2_entry)} 또는 MA20 {_fmt_us_price(ma20_line)} 같은 눌림 기준, "
+                    "혹은 15달러대 회복 후 첫 눌림 지지까지 나눠서 봅니다.",
+                )
+            elif rr2_met:
+                final_label, final_color, action = (
+                    "조건부 DCA 소액",
+                    "#8b5cf6",
+                    f"회복조건은 일부 통과했고 현재가는 R/R 2.0 기준가 {_fmt_us_price(rr2_entry)} 아래입니다. "
+                    f"가격 기준은 충족했지만 자동 추매가 아니라 MA20 {_fmt_us_price(ma20_line)} 재지지, 거래량 진정, "
+                    "DRAM/MU/SK하이닉스 기초축 동행을 확인한 뒤 소액 회차만 검토합니다.",
+                )
+            else:
+                final_label, final_color, action = (
+                    "조건부 DCA 대기",
+                    "#d97706",
+                    f"회복조건은 일부 통과했지만 현재가 추격 구간은 아닙니다. RAM은 R/R 2.0 충족가 "
+                    f"{_fmt_us_price(rr2_entry)} 또는 MA20 {_fmt_us_price(ma20_line)} 같은 자동 눌림 기준, "
+                    "혹은 15달러대 회복 후 첫 눌림 확인 전까지 자동 추매가 아니라 대기입니다.",
+                )
         else:
             final_label, final_color, action = "조건부 DCA 대기", "#8b5cf6", "레버리지 전용 회복조건을 일부 통과했습니다. 자동 추매가 아니라 정해둔 회차별 소액만 대기·검토하는 구간입니다."
     elif block_count >= 2:

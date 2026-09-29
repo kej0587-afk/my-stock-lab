@@ -83,6 +83,81 @@ def test_ram_etf_app_profile_uses_dram_as_underlying(app_module):
     assert any(row[1] == "MU" for row in profile["composition"])
 
 
+def test_ram_recovery_dca_low_rr_is_first_tranche_only(app_module):
+    state = {
+        "profile_key": "RAM",
+        "dca_stage": "중하락 DCA 후보",
+        "dca_multiple": "×1.0~1.75",
+        "recovery_passed": 5,
+        "recovery_total": 6,
+        "recovery_state": "회복 우세",
+        "underlying_1w_avg": 2.8,
+        "recovery_checks": [
+            ("MA120 위", False, ""),
+            ("기초축 1W", True, ""),
+        ],
+    }
+    context = {
+        "cur_p": 13.56,
+        "ma20": 13.28,
+        "ma50": 12.90,
+        "rsi": 51.0,
+        "mfi": 65.0,
+        "pct_b": 0.56,
+        "rr_ratio": 0.90,
+        "day_ret": 0.037,
+        "target_w": 10.0,
+        "current_w": 7.56,
+        "decision_code": "LEVERAGED_DCA_CONDITIONAL",
+        "rr_target": 15.44,
+        "rr_stop": 11.47,
+    }
+
+    timing = app_module.build_leveraged_dca_timing_state(context, state)
+
+    assert timing["allow_current"] is True
+    assert timing["status"] == "레버리지 회복 DCA: 1차 소액만"
+    assert timing["entry1_verdict"] == "조건부"
+    assert timing["tranche_weights"][0] == 0.25
+    assert "부족분 전체" in timing["status_note"]
+
+
+def test_ram_recovery_dca_green_requires_better_rr(app_module):
+    state = {
+        "profile_key": "RAM",
+        "dca_stage": "중하락 DCA 후보",
+        "dca_multiple": "×1.0~1.75",
+        "recovery_passed": 5,
+        "recovery_total": 6,
+        "recovery_state": "회복 우세",
+        "underlying_1w_avg": 2.8,
+        "recovery_checks": [
+            ("MA120 위", False, ""),
+            ("기초축 1W", True, ""),
+        ],
+    }
+    context = {
+        "cur_p": 13.56,
+        "ma20": 13.28,
+        "ma50": 12.90,
+        "rsi": 51.0,
+        "mfi": 65.0,
+        "pct_b": 0.56,
+        "rr_ratio": 1.55,
+        "day_ret": 0.037,
+        "target_w": 10.0,
+        "current_w": 7.56,
+        "decision_code": "LEVERAGED_DCA_CONDITIONAL",
+        "rr_target": 15.44,
+        "rr_stop": 11.47,
+    }
+
+    timing = app_module.build_leveraged_dca_timing_state(context, state)
+
+    assert timing["status"] == "레버리지 회복 DCA: 분할 가능"
+    assert timing["entry1_verdict"] == "가능"
+
+
 def test_ai_bigtech_etf_profiles_are_concentrated_satellites(app_module):
     assert app_module.TICKER_MAP["MAGS"] == ("MAGS", True, "us_etf_nasdaq")
     assert app_module.TICKER_MAP["0227L0"] == ("0227L0.KS", True, "us_etf_nasdaq")
