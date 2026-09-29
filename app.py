@@ -25743,7 +25743,10 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     wait_df = result[~result["점검그룹"].isin(["줄이기/중단 점검", "회복/DCA 대기", "늘리기/적립 확인"])]
     if len(result) > limit and (not risk_df.empty or not dca_df.empty) and not add_df.empty:
         remaining = limit
-        risk_quota = min(2 if not dca_df.empty else 3, len(risk_df), remaining)
+        max_risk_quota = 3 if len(risk_df) >= 3 else 2
+        if dca_df.empty:
+            max_risk_quota = max(max_risk_quota, 3)
+        risk_quota = min(max_risk_quota, len(risk_df), remaining)
         remaining -= risk_quota
         dca_quota = min(1, len(dca_df), remaining)
         remaining -= dca_quota

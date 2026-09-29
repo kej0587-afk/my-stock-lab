@@ -870,18 +870,18 @@ def test_portfolio_next_check_candidates_balance_reduce_and_add_groups(app_modul
 
     tickers = candidates["티커"].tolist()
     groups = candidates["점검그룹"].tolist()
-    assert sum(group == "줄이기/중단 점검" for group in groups) == 2
+    assert sum(group == "줄이기/중단 점검" for group in groups) == 3
     assert sum(group == "회복/DCA 대기" for group in groups) == 1
-    assert sum(group == "늘리기/적립 확인" for group in groups) == 3
+    assert sum(group == "늘리기/적립 확인" for group in groups) == 2
     assert "RAM" in tickers
     assert "MAGS" in tickers
-    assert "BITX" in tickers
+    assert "379810.KS" in tickers
     assert "379800.KS" in tickers
 
     summary = app_module.build_portfolio_next_check_summary(candidates)
-    assert "줄이기/중단 2개" in summary
+    assert "줄이기/중단 3개" in summary
     assert "회복/DCA 대기 1개" in summary
-    assert "늘리기/적립 3개" in summary
+    assert "늘리기/적립 2개" in summary
     assert "RAM" in summary
     assert "남는 예산" in summary
 
