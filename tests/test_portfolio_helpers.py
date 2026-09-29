@@ -211,6 +211,73 @@ def test_portfolio_market_alignment_marks_underweight_core_leader_as_add_candida
     assert "목표비중 미달" in row["근거"]
 
 
+def test_portfolio_market_alignment_does_not_attach_semiconductor_to_cyber_representative(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.5,
+            "목표비중": 10.0,
+            "비중차이": 1.5,
+            "수익률_pct": -23.2,
+            "기술적타점": "레버리지 회복 대기",
+        }
+    ])
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "눌림대기",
+                "후보군": "소프트웨어·사이버",
+                "연결테마": "미국 AI·빅테크",
+                "내부세부축": "AI 소프트웨어·사이버보안",
+                "ETF/대표": "크라우드스트라이크 (CRWD)",
+                "판단": "흐름 유지, 진입가 대기",
+                "_점수": 3.3,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "연결대기"
+    assert row["포트판정"] == "보유점검"
+    assert "반도체" in row["주도축"]
+    assert "CRWD" not in row["대표/ETF"]
+
+
+def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "S&P500",
+            "티커": "379800.KS",
+            "버킷": "core",
+            "현재비중": 20.0,
+            "목표비중": 30.0,
+            "비중차이": 10.0,
+            "수익률_pct": 1.0,
+            "기술적타점": "",
+        }
+    ])
+    snapshot = {"command_flow_df": pd.DataFrame()}
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "기준축"
+    assert row["포트판정"] == "계획적 적립"
+    assert row["주도축"] != "미연결"
+
+
 def test_portfolio_rebalance_playbook_allocates_leaders_and_separates_trim_candidates(app_module):
     align_df = pd.DataFrame([
         {

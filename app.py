@@ -9038,10 +9038,14 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 
 FLOW_THEME_BRIDGE_RULES = [
-    {"market": "미국 섹터", "keys": ["MAGS", "MAG7", "0227L0", "0227LO", "MSFT", "META", "GOOGL", "GOOG", "AMZN", "NVDA", "마이크로소프트", "메타", "구글", "아마존", "에이전틱AI"], "themes": ["미국 AI·빅테크"], "subthemes": ["클라우드·AI 플랫폼", "AI 데이터·분석", "AI 소프트웨어·사이버보안"], "label": "미국 AI·빅테크 > 클라우드·AI 플랫폼"},
+    {"market": "한국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "379800", "379800.KS", "나스닥", "나스닥100", "NASDAQ", "379810", "379810.KS", "418660", "418660.KS"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500", "NASDAQ100"], "label": "미국 지수·코어 > S&P500·NASDAQ100", "representative": "SPY/VOO·QQQ", "fallback_action": "기준축"},
+    {"market": "미국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "VOO", "SPY", "IVV", "QQQ", "TQQQ", "QLD", "NASDAQ", "NASDAQ100", "나스닥"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500", "NASDAQ100"], "label": "미국 지수·코어 > S&P500·NASDAQ100", "representative": "SPY/VOO·QQQ", "fallback_action": "기준축"},
+    {"market": "미국 섹터", "keys": ["BITX", "BTC", "BITO", "IBIT", "FBTC", "Bitcoin", "비트코인"], "themes": ["디지털자산"], "subthemes": ["Bitcoin"], "label": "디지털자산 > Bitcoin", "representative": "BTC/BITX", "fallback_action": "별도관리"},
+    {"market": "한국 섹터", "keys": ["TDF", "2045", "0025N0", "0025N0.KS", "타겟데이트"], "themes": ["연금·멀티에셋"], "subthemes": ["TDF"], "label": "연금·멀티에셋 > TDF", "representative": "TDF", "fallback_action": "별도관리"},
+    {"market": "미국 섹터", "keys": ["MAGS", "MAG7", "0227L0", "0227LO", "MSFT", "META", "GOOGL", "GOOG", "AMZN", "NVDA", "마이크로소프트", "메타", "구글", "아마존", "에이전틱AI"], "themes": ["미국 AI·빅테크"], "subthemes": ["클라우드·AI 플랫폼", "AI 데이터·분석"], "label": "미국 AI·빅테크 > 클라우드·AI 플랫폼", "representative": "MSFT·META·GOOGL·AMZN", "fallback_action": "연결대기"},
     {"market": "미국 섹터", "keys": ["소프트웨어·사이버", "소프트웨어", "사이버보안", "IGV", "CIBR", "XLC"], "themes": ["미국 AI·빅테크"], "subthemes": ["AI 소프트웨어·사이버보안", "클라우드·AI 플랫폼", "AI 데이터·분석"], "label": "미국 AI·빅테크 > AI 소프트웨어·사이버보안"},
-    {"market": "미국 섹터", "keys": ["AI·반도체", "반도체", "SOXX", "SMH", "SOXL", "RAM", "DRAM", "QQQ", "XLK", "QTUM", "AMD", "MU", "LRCX", "AMAT", "TSM", "ASML", "0167A0"], "themes": ["미국 AI·빅테크", "PCB·기판 글로벌", "포토닉스·광통신"], "subthemes": ["메모리·CPU", "AI 반도체 코어", "파운드리·인터커넥트", "서버·네트워크 인프라"], "label": "미국 AI·빅테크 > 반도체·서버"},
-    {"market": "한국 섹터", "keys": ["AI·반도체", "반도체", "396500.KS", "139260.KS", "381180.KS", "456600.KS", "0167A0.KS", "삼성전자", "SK하이닉스", "한미반도체"], "themes": ["국내 AI 반도체·소부장", "PCB·기판 글로벌", "전자부품·MLCC"], "subthemes": ["HBM/메모리", "기판/PCB", "검사/테스트", "MLCC·콘덴서"], "label": "국내 AI 반도체·소부장 > HBM·기판·MLCC"},
+    {"market": "미국 섹터", "keys": ["AI·반도체", "반도체", "SOXX", "SMH", "SOXL", "RAM", "DRAM", "QQQ", "XLK", "QTUM", "AMD", "MU", "LRCX", "AMAT", "TSM", "ASML"], "themes": ["미국 AI·빅테크", "PCB·기판 글로벌", "포토닉스·광통신"], "subthemes": ["메모리·CPU", "AI 반도체 코어", "파운드리·인터커넥트", "서버·네트워크 인프라"], "label": "미국 AI·빅테크 > 반도체·서버", "representative": "MU·AMD·NVDA·SOXX/SMH", "fallback_action": "연결대기"},
+    {"market": "한국 섹터", "keys": ["AI·반도체", "반도체", "396500.KS", "139260.KS", "381180.KS", "456600.KS", "0167A0", "0167A0.KS", "삼성전자", "SK하이닉스", "한미반도체"], "themes": ["국내 AI 반도체·소부장", "PCB·기판 글로벌", "전자부품·MLCC"], "subthemes": ["HBM/메모리", "기판/PCB", "검사/테스트", "MLCC·콘덴서"], "label": "국내 AI 반도체·소부장 > HBM·기판·MLCC", "representative": "삼성전자·SK하이닉스·한미반도체", "fallback_action": "연결대기"},
     {"market": "미국 섹터", "keys": ["방산·우주", "우주/위성통신", "방산", "UFO", "SHLD", "ITA"], "themes": ["우주·위성 RF통신", "우주항공·방산"], "subthemes": ["위성 서비스·발사 (성장형)", "미국 방산 프라임", "RF GaN 반도체 부품"], "label": "우주·위성 RF통신 / 우주항공·방산"},
     {"market": "한국 섹터", "keys": ["방산·조선", "방산", "조선", "449450.KS", "494670.KS"], "themes": ["우주항공·방산", "조선·해양"], "subthemes": ["한국 항공엔진/기체", "조선 대형 3사", "엔진·추진"], "label": "우주항공·방산 / 조선·해양"},
     {"market": "미국 섹터", "keys": ["전력·인프라", "GRID", "PAVE", "ICLN", "XLU"], "themes": ["전력·에너지 인프라", "글로벌 원전·SMR"], "subthemes": ["전력기기 (글로벌)", "DC 전력·냉각", "전력 유틸리티"], "label": "전력·에너지 인프라 / 글로벌 원전·SMR"},
@@ -24933,7 +24937,10 @@ def _portfolio_market_action_rank(action):
         "정밀관측": 5,
         "눌림대기": 4,
         "추격금지": 3,
+        "기준축": 3,
         "관심등록": 2,
+        "연결대기": 1,
+        "별도관리": 1,
         "관망/제외": 1,
     }.get(str(action or ""), 0)
 
@@ -24955,6 +24962,81 @@ def _portfolio_flow_ticker_key(ticker):
             text = text[: -len(suffix)]
             break
     return text
+
+
+PORTFOLIO_BROAD_BRIDGE_TOKENS = {
+    "AI",
+    "미국 AI",
+    "빅테크",
+    "미국 AI·빅테크",
+}
+
+
+def _portfolio_bridge_market_hint(name="", ticker=""):
+    ticker_text = str(ticker or "").upper()
+    name_text = str(name or "")
+    if is_kr_listed(ticker_text) or ticker_text.endswith((".KS", ".KQ")) or re.fullmatch(r"\d{6}\.K[QS]", ticker_text):
+        return "한국 섹터"
+    if any(token in name_text for token in ["TIGER", "KODEX", "SOL ", "ACE ", "HANARO", "나스닥", "미국"]):
+        if re.search(r"\d{6}|[A-Z0-9]{5,6}\.K[QS]", ticker_text):
+            return "한국 섹터"
+    return "미국 섹터"
+
+
+def _portfolio_bridge_token_weights(name, ticker):
+    bridge = resolve_flow_theme_bridge(name, ticker, _portfolio_bridge_market_hint(name, ticker))
+    if not isinstance(bridge, dict):
+        return {}, {}
+    weights = {}
+
+    def add_tokens(values, weight):
+        for value in values or []:
+            token = str(value or "").strip()
+            if len(token) < 2:
+                continue
+            if token in PORTFOLIO_BROAD_BRIDGE_TOKENS:
+                continue
+            weights[token] = max(weights.get(token, 0), weight)
+
+    add_tokens(bridge.get("keys", []), 6)
+    add_tokens(bridge.get("subthemes", []), 5)
+    add_tokens(bridge.get("themes", []), 3)
+    label = str(bridge.get("label", "") or "").strip()
+    if label:
+        add_tokens([label], 4)
+        add_tokens([part.strip() for part in re.split(r"[>/·]", label) if part.strip()], 3)
+    return bridge, weights
+
+
+def _portfolio_bridge_fallback_row(row):
+    name = row.get("자산명", row.get("자산", ""))
+    ticker = row.get("티커", "")
+    bridge, weights = _portfolio_bridge_token_weights(name, ticker)
+    label = str((bridge or {}).get("label", "") or "").strip() if isinstance(bridge, dict) else ""
+    if not label and not weights:
+        return pd.Series(dtype=object)
+    themes = bridge.get("themes", []) if isinstance(bridge, dict) else []
+    subthemes = bridge.get("subthemes", []) if isinstance(bridge, dict) else []
+    fallback_action = str(bridge.get("fallback_action", "연결대기") or "연결대기")
+    representative = str(bridge.get("representative", "") or "").strip()
+    if fallback_action not in {"기준축", "연결대기", "별도관리"}:
+        fallback_action = "연결대기"
+    if fallback_action == "기준축":
+        judgement = "오늘 주도 후보가 아니라 장기 기준축입니다. 적립 계획과 기술 신호로 관리합니다."
+    elif fallback_action == "별도관리":
+        judgement = "주식 주도맵과 별도로 관리하는 자산입니다. 전용 차트와 목표비중을 따로 봅니다."
+    else:
+        judgement = "테마 분류는 되지만 오늘 실행 후보에는 직접 올라오지 않았습니다."
+    return pd.Series({
+        "행동": fallback_action,
+        "후보군": label or _first_flow_text(*(themes[:1]), default="분류대기"),
+        "연결테마": _first_flow_text(label, *(themes[:1]), default="분류대기"),
+        "내부세부축": _first_flow_text(*(subthemes[:1]), default="-"),
+        "세부축": _first_flow_text(*(subthemes[:1]), default="-"),
+        "ETF/대표": _first_flow_text(representative, label, default="-"),
+        "판단": judgement,
+        "_점수": np.nan,
+    })
 
 
 def _portfolio_snapshot_command_df(snapshot):
@@ -25018,41 +25100,30 @@ def _portfolio_best_direct_flow(row, direct_df):
     return matched.iloc[0]
 
 
-def _portfolio_bridge_tokens(name, ticker):
-    bridge = resolve_flow_theme_bridge(name, ticker)
-    tokens = []
-    for key in ["themes", "subthemes", "keys"]:
-        values = bridge.get(key, []) if isinstance(bridge, dict) else []
-        tokens.extend([str(v).strip() for v in values if str(v).strip()])
-    label = str((bridge or {}).get("label", "") or "").strip() if isinstance(bridge, dict) else ""
-    if label:
-        tokens.extend([part.strip() for part in re.split(r"[>/·]", label) if part.strip()])
-    raw = " ".join([str(name or ""), str(ticker or "")]).strip()
-    if raw:
-        tokens.append(raw)
-    return list(dict.fromkeys([token for token in tokens if len(token) >= 2]))
-
-
 def _portfolio_best_command_flow(row, command_df):
     if not isinstance(command_df, pd.DataFrame) or command_df.empty:
         return pd.Series(dtype=object)
-    tokens = _portfolio_bridge_tokens(row.get("자산명", ""), row.get("티커", ""))
-    if not tokens:
+    _, token_weights = _portfolio_bridge_token_weights(row.get("자산명", ""), row.get("티커", ""))
+    if not token_weights:
         return pd.Series(dtype=object)
     search_cols = [
         "후보군", "연결테마", "핵심하위테마", "세부축", "내부세부축",
         "ETF/대표", "대표주", "시장축", "시장", "대분류",
     ]
     hay = command_df[[c for c in search_cols if c in command_df.columns]].fillna("").astype(str).agg(" ".join, axis=1)
-    upper_tokens = [token.upper() for token in tokens]
-    mask = hay.str.upper().apply(lambda text: any(token in text for token in upper_tokens))
+    upper_weights = {str(token).upper(): weight for token, weight in token_weights.items()}
+    match_scores = hay.str.upper().apply(
+        lambda text: sum(weight for token, weight in upper_weights.items() if token in text)
+    )
+    mask = match_scores.ge(4)
     matched = command_df[mask].copy()
     if matched.empty:
         return pd.Series(dtype=object)
+    matched["_portfolio_match_score"] = match_scores.loc[matched.index]
     matched["_portfolio_action_rank"] = matched.get("행동", pd.Series("", index=matched.index)).apply(_portfolio_market_action_rank)
     matched["_portfolio_flow_score"] = matched.apply(_portfolio_market_flow_score, axis=1)
     return matched.sort_values(
-        ["_portfolio_action_rank", "_portfolio_flow_score"],
+        ["_portfolio_match_score", "_portfolio_action_rank", "_portfolio_flow_score"],
         ascending=False,
         na_position="last",
     ).iloc[0]
@@ -25069,6 +25140,18 @@ def _portfolio_market_action(row, command_row, direct_row):
 
     if blocked:
         return "보유점검", "내 기술 신호가 방어라서 시장 흐름보다 회복 조건을 먼저 봅니다."
+    if action == "기준축":
+        if gap > 0.3:
+            return "계획적 적립", "오늘 주도 후보가 아니라 장기 기준축이라 정해둔 적립률 안에서만 봅니다."
+        if gap < -0.3:
+            return "유지·신규중단", "기준축이지만 목표보다 많아 새 매수는 멈추고 비중만 관리합니다."
+        return "유지", "기준축은 교체보다 장기 계획과 비중 유지가 우선입니다."
+    if action == "별도관리":
+        return "별도관리", "주식 주도맵과 별도 흐름이라 전용 기준과 목표비중으로 관리합니다."
+    if action == "연결대기":
+        if bucket == "leverage":
+            return "보유점검", "분류 축은 있지만 오늘 실행 후보가 아니라 레버리지 추가는 정밀관측소 확인이 먼저입니다."
+        return "관망", "분류 축은 있지만 오늘 실행 후보에는 직접 올라오지 않았습니다."
     if action == "정밀관측":
         if gap > 0.3:
             if bucket == "leverage":
@@ -25098,8 +25181,6 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
 
     command_df = _portfolio_snapshot_command_df(snapshot)
     direct_df = _portfolio_snapshot_direct_flow_df(snapshot)
-    if command_df.empty and direct_df.empty:
-        return pd.DataFrame()
 
     rows = []
     for _, row in source_df.iterrows():
@@ -25107,6 +25188,8 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
             continue
         direct_row = _portfolio_best_direct_flow(row, direct_df)
         command_row = _portfolio_best_command_flow(row, command_df)
+        if command_row.empty and direct_row.empty:
+            command_row = _portfolio_bridge_fallback_row(row)
         port_action, reason = _portfolio_market_action(row, command_row, direct_row)
         market_action = _flow_text(command_row.get("행동", ""), default="미연결")
         flow_score = _portfolio_market_flow_score(command_row)
@@ -25155,13 +25238,16 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
         "비중확대 후보": 7,
         "조건부 소액": 6,
         "눌림 시 분할": 5,
+        "계획적 적립": 5,
         "유지": 4,
         "유지·신규중단": 3,
         "직접흐름 확인": 3,
         "관찰 후 소액": 3,
         "유지·추격금지": 2,
         "신규중단": 2,
+        "관망": 1,
         "보유점검": 1,
+        "별도관리": 1,
         "축소/교체 후보": 1,
     }).fillna(0)
     result["_점수정렬"] = result["점수"].apply(lambda v: clean_float(v, -999.0))
@@ -25172,6 +25258,7 @@ def _portfolio_playbook_budget_multiplier(action, risk_index):
     action = str(action or "")
     base = {
         "비중확대 후보": 1.0,
+        "계획적 적립": 0.50,
         "눌림 시 분할": 0.45,
         "조건부 소액": 0.25,
         "관찰 후 소액": 0.15,
@@ -25191,6 +25278,8 @@ def _portfolio_playbook_condition(row):
     tech = str(row.get("기술신호", "") or "")
     if action == "비중확대 후보":
         return "정밀관측소에서 과열·R/R 확인 후 목표비중 안에서 분할"
+    if action == "계획적 적립":
+        return "장기 기준축은 시장 안정과 목표비중 안에서 정해진 금액만 적립"
     if action == "조건부 소액":
         return "레버리지 회차 규칙 고정, 손절·기초축 회복 확인"
     if action == "눌림 시 분할":
@@ -25201,6 +25290,8 @@ def _portfolio_playbook_condition(row):
         return "같은 주도축 후보가 더 명확하면 목표초과분부터 교체 검토"
     if action in {"신규중단", "유지·추격금지", "유지·신규중단"}:
         return "보유는 유지하되 새 매수는 다음 확인까지 중단"
+    if action == "별도관리":
+        return "주식 주도맵과 분리해 전용 차트·목표비중으로 점검"
     if action == "보유점검" or "방어" in tech:
         return "기술 방어 신호 해소 전 추가매수 보류"
     if market_action == "미연결":
@@ -25220,8 +25311,8 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
     reserve_budget = reserve_deployable if risk_index < 55 else (reserve_deployable * 0.5 if risk_index < 70 else 0.0)
     total_budget = monthly_budget + reserve_budget
 
-    add_actions = {"비중확대 후보", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
-    stop_actions = {"신규중단", "유지·추격금지", "유지·신규중단", "보유점검"}
+    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
+    stop_actions = {"신규중단", "유지·추격금지", "유지·신규중단", "보유점검", "별도관리", "관망"}
     trim_actions = {"축소/교체 후보"}
 
     work = align_df.copy()
@@ -25233,6 +25324,7 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
     if not candidates.empty:
         candidates["_action_rank"] = candidates["포트판정"].map({
             "비중확대 후보": 5,
+            "계획적 적립": 4,
             "눌림 시 분할": 4,
             "조건부 소액": 3,
             "관찰 후 소액": 2,
@@ -25270,6 +25362,8 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0)
             "신규중단": 3,
             "유지·추격금지": 2,
             "유지·신규중단": 1,
+            "관망": 1,
+            "별도관리": 1,
         }).fillna(0)
         stop_df = stop_df.sort_values(["_stop_rank", "현재비중"], ascending=False)
     for _, row in stop_df.head(10).iterrows():
@@ -25350,8 +25444,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
 
     connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
-    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "조건부 소액", "눌림 시 분할", "관찰 후 소액"])
-    caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지"])
+    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액"])
+    caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지", "관망", "별도관리"])
     connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
     add_count = int(add_mask.sum())
     caution_count = int(caution_mask.sum())
@@ -25371,10 +25465,13 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     if not group_df.empty:
         color_map = {
             "비중확대 후보": "#22c55e",
+            "계획적 적립": "#14b8a6",
             "조건부 소액": "#84cc16",
             "눌림 시 분할": "#eab308",
             "유지": "#38bdf8",
             "유지·신규중단": "#60a5fa",
+            "관망": "#94a3b8",
+            "별도관리": "#a78bfa",
             "보유점검": "#f97316",
             "축소/교체 후보": "#ef4444",
             "신규중단": "#f97316",
