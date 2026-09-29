@@ -23442,6 +23442,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         target_weight = clean_float(row.get("목표비중"), 0.0)
         bucket = normalize_bucket(row.get("bucket", "core"))
         timing_text = str(row.get("기술적타점", "") or "").strip()
+        pnl_krw = _portfolio_pnl_krw_from_row(row, usdkrw)
+        pnl_pct = _portfolio_pnl_pct_from_row(row)
         row_info = {
             "자산명": name,
             "티커": ticker,
@@ -23451,6 +23453,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
             "목표비중": target_weight,
             "비중차이": target_weight - weight_total,
             "운용비중": weight_active,
+            "평가손익_원화": pnl_krw,
+            "수익률_pct": pnl_pct,
             "기간수익률": np.nan,
             "연환산변동성": np.nan,
             "MDD": np.nan,
@@ -23464,8 +23468,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
             "현재비중": weight_total,
             "목표비중": target_weight,
             "비중차이": target_weight - weight_total,
-            "평가손익_원화": clean_float(row.get("평가손익_원화"), np.nan),
-            "수익률_pct": clean_float(row.get("수익률_pct"), np.nan),
+            "평가손익_원화": pnl_krw,
+            "수익률_pct": pnl_pct,
             "후보등급": str(row.get("후보등급", "") or "").strip(),
             "추세": str(row.get("추세", "") or "").strip(),
             "RS": str(row.get("RS", "") or "").strip(),
@@ -23500,7 +23504,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         asset_rows.append(row_info)
 
     asset_df = pd.DataFrame(asset_rows, columns=[
-        "자산명", "티커", "버킷", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "기간수익률", "연환산변동성", "MDD", "데이터"
+        "자산명", "티커", "버킷", "원화환산", "전체비중", "목표비중", "비중차이", "운용비중", "평가손익_원화", "수익률_pct", "기간수익률", "연환산변동성", "MDD", "데이터"
     ])
 
     if not asset_df.empty:
@@ -23768,6 +23772,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         "hhi": hhi,
         "active_value": active_value,
         "total_asset": total_asset,
+        "usdkrw": usdkrw,
         "reserve_summary": reserve_summary,
         "leverage_summary": leverage_summary,
         "leverage_df": leverage_df,
@@ -23963,11 +23968,38 @@ def _format_portfolio_weight_pair(current_weight, target_weight):
     return f"{current_weight:.1f}% / {target_weight:.1f}%"
 
 
+def _portfolio_pnl_pct_from_row(row):
+    pnl_pct = clean_float(row.get("수익률_pct"), np.nan)
+    if np.isfinite(pnl_pct):
+        return pnl_pct
+    raw_return = clean_float(row.get("수익률"), np.nan)
+    if not np.isfinite(raw_return):
+        return np.nan
+    return raw_return * 100
+
+
+def _portfolio_pnl_krw_from_row(row, usdkrw=1400.0):
+    pnl_krw = clean_float(row.get("평가손익_원화"), np.nan)
+    if np.isfinite(pnl_krw):
+        return pnl_krw
+    raw_pnl = clean_float(row.get("평가손익"), np.nan)
+    if not np.isfinite(raw_pnl):
+        return np.nan
+    return calc_pnl_krw_from_row(row, usdkrw)
+
+
 def _format_portfolio_pnl(pnl_pct):
     pnl_pct = clean_float(pnl_pct, np.nan)
     if not np.isfinite(pnl_pct):
         return "-"
     return f"{pnl_pct:+.1f}%"
+
+
+def _format_portfolio_krw_pnl(pnl_krw):
+    pnl_krw = clean_float(pnl_krw, np.nan)
+    if not np.isfinite(pnl_krw):
+        return "-"
+    return f"{pnl_krw:+,.0f}원"
 
 
 def _join_reasons(reasons):
@@ -23986,7 +24018,8 @@ def _portfolio_action_from_row(row, metrics):
     current_weight = clean_float(row.get("현재비중", row.get("전체비중")), 0.0)
     target_weight = clean_float(row.get("목표비중"), 0.0)
     gap = clean_float(row.get("비중차이"), target_weight - current_weight)
-    pnl_pct = clean_float(row.get("수익률_pct"), np.nan)
+    pnl_pct = _portfolio_pnl_pct_from_row(row)
+    pnl_krw = _portfolio_pnl_krw_from_row(row, clean_float(metrics.get("usdkrw"), 1400.0))
     risk_index = clean_float(metrics.get("risk_index"), 0.0)
     reserve_gap = clean_float(metrics.get("reserve_gap"), 0.0)
 
@@ -24097,6 +24130,7 @@ def _portfolio_action_from_row(row, metrics):
         "티커": ticker,
         "구분": bucket or "-",
         "손익": _format_portfolio_pnl(pnl_pct),
+        "평가손익": _format_portfolio_krw_pnl(pnl_krw),
         "현재/목표": _format_portfolio_weight_pair(current_weight, target_weight),
         "판정": decision,
         "실행": action,
@@ -24162,7 +24196,7 @@ def render_portfolio_action_decision_panel(metrics, asset_df=None):
     if summary_lines:
         st.info(" · ".join(summary_lines))
 
-    show_cols = ["자산", "티커", "구분", "손익", "현재/목표", "판정", "실행", "근거", "재개/해제 조건"]
+    show_cols = ["자산", "티커", "구분", "손익", "평가손익", "현재/목표", "판정", "실행", "근거", "재개/해제 조건"]
     st.dataframe(decision_df[show_cols], width='stretch', hide_index=True)
 
 

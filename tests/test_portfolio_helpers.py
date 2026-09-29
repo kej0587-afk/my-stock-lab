@@ -103,6 +103,35 @@ def test_merge_portfolio_signal_details_matches_ticker_variants():
     assert core["기술적타점"] == "장기코어 유지"
 
 
+def test_portfolio_action_decision_formats_pnl_from_holding_columns(app_module):
+    metrics = {
+        "risk_index": 35,
+        "reserve_gap": 0,
+        "usdkrw": 1400,
+    }
+    asset_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.4,
+            "목표비중": 10.0,
+            "비중차이": 1.6,
+            "평가손익": -10.5,
+            "수익률": -0.15,
+            "기술적타점": "⚡레버리지 조건부 DCA: 회복 확인",
+            "RS": "RS 강함",
+        }
+    ])
+
+    decision_df = app_module.build_portfolio_action_decision_df(metrics, asset_df)
+
+    row = decision_df.iloc[0]
+    assert row["손익"] == "-15.0%"
+    assert row["평가손익"] == "-14,700원"
+    assert "손익 -15.0%" in row["근거"]
+
+
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():
     holdings = pd.DataFrame(
         [
