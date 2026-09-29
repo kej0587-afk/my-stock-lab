@@ -417,6 +417,55 @@ def test_magnificent_news_terms_match_big_tech_news(app_module):
     assert "Microsoft" in text
 
 
+def test_strict_portfolio_news_ignores_generic_semiconductor_category_for_mags(app_module):
+    text = app_module._brief_axis_news_text(
+        {"name": "Magnificent 7", "representatives": "Magnificent 7"},
+        [
+            {
+                "읽기분류": "반도체/AI",
+                "카테고리": "반도체·AI",
+                "종목": "",
+                "제목": "LPDDR6는 같은 선상, 메모리 업체 경쟁 심화",
+                "초보요약": "메모리 반도체 뉴스입니다.",
+                "체크": "반도체·AI 재료",
+            }
+        ],
+        require_direct=True,
+    )
+
+    assert text == "-"
+
+
+def test_strict_portfolio_news_matches_dram_memory_terms(app_module):
+    text = app_module._brief_axis_news_text(
+        {"name": "DRAM 2배", "representatives": "DRAM 2배"},
+        [
+            {
+                "읽기분류": "반도체/AI",
+                "카테고리": "반도체·AI",
+                "종목": "",
+                "제목": "LPDDR6 경쟁 심화, 메모리 업황 회복 기대",
+                "초보요약": "DRAM과 메모리 업체 흐름입니다.",
+                "체크": "반도체·AI 재료",
+            }
+        ],
+        require_direct=True,
+    )
+
+    assert "LPDDR6" in text
+
+
+def test_portfolio_bridge_fallback_splits_nasdaq_from_sp500(app_module):
+    row = app_module._portfolio_bridge_fallback_row({
+        "자산명": "TIGER 미국나스닥100레버리지(합성)",
+        "티커": "418660.KS",
+    })
+
+    assert row["세부축"] == "NASDAQ100"
+    assert row["ETF/대표"] == "QQQ"
+    assert "S&P500" not in row["연결테마"]
+
+
 def test_portfolio_market_alignment_labels_direct_flow_without_command_as_direct(app_module):
     strategy_df = pd.DataFrame([
         {

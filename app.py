@@ -9038,8 +9038,10 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
 
 FLOW_THEME_BRIDGE_RULES = [
-    {"market": "한국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "379800", "379800.KS", "나스닥", "나스닥100", "NASDAQ", "379810", "379810.KS", "418660", "418660.KS"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500", "NASDAQ100"], "label": "미국 지수·코어 > S&P500·NASDAQ100", "representative": "SPY/VOO·QQQ", "fallback_action": "기준축"},
-    {"market": "미국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "VOO", "SPY", "IVV", "QQQ", "TQQQ", "QLD", "NASDAQ", "NASDAQ100", "나스닥"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500", "NASDAQ100"], "label": "미국 지수·코어 > S&P500·NASDAQ100", "representative": "SPY/VOO·QQQ", "fallback_action": "기준축"},
+    {"market": "한국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "379800", "379800.KS"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500"], "label": "미국 지수·코어 > S&P500", "representative": "SPY/VOO", "fallback_action": "기준축"},
+    {"market": "한국 섹터", "keys": ["나스닥", "나스닥100", "NASDAQ", "NASDAQ100", "379810", "379810.KS", "418660", "418660.KS"], "themes": ["미국 지수·코어"], "subthemes": ["NASDAQ100"], "label": "미국 지수·코어 > NASDAQ100", "representative": "QQQ", "fallback_action": "기준축"},
+    {"market": "미국 섹터", "keys": ["S&P500", "S&P 500", "SP500", "VOO", "SPY", "IVV"], "themes": ["미국 지수·코어"], "subthemes": ["S&P500"], "label": "미국 지수·코어 > S&P500", "representative": "SPY/VOO", "fallback_action": "기준축"},
+    {"market": "미국 섹터", "keys": ["QQQ", "TQQQ", "QLD", "NASDAQ", "NASDAQ100", "나스닥"], "themes": ["미국 지수·코어"], "subthemes": ["NASDAQ100"], "label": "미국 지수·코어 > NASDAQ100", "representative": "QQQ", "fallback_action": "기준축"},
     {"market": "미국 섹터", "keys": ["BITX", "BTC", "BITO", "IBIT", "FBTC", "Bitcoin", "비트코인"], "themes": ["디지털자산"], "subthemes": ["Bitcoin"], "label": "디지털자산 > Bitcoin", "representative": "BTC/BITX", "fallback_action": "별도관리"},
     {"market": "한국 섹터", "keys": ["TDF", "2045", "0025N0", "0025N0.KS", "타겟데이트"], "themes": ["연금·멀티에셋"], "subthemes": ["TDF"], "label": "연금·멀티에셋 > TDF", "representative": "TDF", "fallback_action": "별도관리"},
     {"market": "미국 섹터", "keys": ["MAGS", "MAG7", "0227L0", "0227LO", "MSFT", "META", "GOOGL", "GOOG", "AMZN", "NVDA", "마이크로소프트", "메타", "구글", "아마존", "에이전틱AI"], "themes": ["미국 AI·빅테크"], "subthemes": ["클라우드·AI 플랫폼", "AI 데이터·분석"], "label": "미국 AI·빅테크 > 클라우드·AI 플랫폼", "representative": "MSFT·META·GOOGL·AMZN", "fallback_action": "연결대기"},
@@ -11499,14 +11501,15 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
     base_text = re.sub(r"\[[^\]]+\]", " ", base_text)
     raw_terms = [part.strip() for part in re.split(r"[,/·|()\s]+", base_text) if part.strip()]
     stop_terms = {"ETF", "테마", "섹터", "대표", "국내", "미국", "글로벌", "iShares", "VanEck"}
-    terms = [t for t in raw_terms if len(t) >= 2 and t not in stop_terms]
+    terms = [t for t in raw_terms if len(t) >= 2 and t not in stop_terms and not str(t).isdigit()]
     lower = base_text.lower()
     expansions = {
         "반도체": ["반도체", "ai", "hbm", "dram", "메모리", "nvidia", "amd", "soxx", "soxl", "smh", "ram"],
+        "dram": ["dram", "ddr", "lpddr", "hbm", "nand", "memory", "메모리", "마이크론", "micron", "mu", "sk하이닉스", "하이닉스"],
         "ai": ["ai", "인공지능", "agentic", "에이전틱", "nvidia", "amd", "msft", "google", "meta", "dell", "hbm", "데이터센터"],
-        "빅테크": ["빅테크", "mags", "magnificent", "mag7", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
-        "magnificent": ["magnificent", "mag7", "mags", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
-        "mag7": ["magnificent", "mag7", "mags", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
+        "빅테크": ["빅테크", "mags", "magnificent", "mag7", "msft", "microsoft", "마이크로소프트", "google", "alphabet", "구글", "meta", "메타", "amazon", "아마존", "nvidia", "엔비디아", "apple", "애플", "tesla", "테슬라"],
+        "magnificent": ["magnificent", "mag7", "mags", "msft", "microsoft", "마이크로소프트", "google", "alphabet", "구글", "meta", "메타", "amazon", "아마존", "nvidia", "엔비디아", "apple", "애플", "tesla", "테슬라"],
+        "mag7": ["magnificent", "mag7", "mags", "msft", "microsoft", "마이크로소프트", "google", "alphabet", "구글", "meta", "메타", "amazon", "아마존", "nvidia", "엔비디아", "apple", "애플", "tesla", "테슬라"],
         "소부장": ["소부장", "반도체", "hbm", "패키징", "기판", "pcb"],
         "pcb": ["pcb", "기판", "패키징", "substrate"],
         "전력": ["전력", "전력망", "전선", "grid", "data center", "데이터센터"],
@@ -11568,7 +11571,7 @@ def _brief_axis_news_categories(row: dict) -> list[str]:
     return out[:6]
 
 
-def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 2) -> str:
+def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 2, require_direct: bool = False) -> str:
     if not news_rows:
         return "-"
     terms = _brief_axis_news_terms(row)
@@ -11580,14 +11583,20 @@ def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 
     for news in news_rows:
         if not isinstance(news, dict):
             continue
+        direct_text = " ".join(
+            str(news.get(key, "") or "")
+            for key in ("종목", "제목", "초보요약")
+        )
         text = " ".join(
             str(news.get(key, "") or "")
             for key in ("읽기분류", "카테고리", "종목", "제목", "초보요약", "체크")
         )
-        text_l = text.lower()
-        direct_hit = any(str(term).lower() in text_l for term in terms)
+        direct_text_l = direct_text.lower()
+        direct_hit = any(str(term).lower() in direct_text_l for term in terms)
         category_text = " ".join(str(news.get(key, "") or "") for key in ("읽기분류", "카테고리", "체크")).lower()
         category_hit = any(str(category).lower() in category_text for category in categories)
+        if require_direct and not direct_hit:
+            continue
         if not direct_hit and not category_hit:
             continue
         title = str(news.get("제목", "") or "").strip()
@@ -25533,7 +25542,7 @@ def _portfolio_next_check_news_text(row, news_rows):
         "state": _first_flow_text(row.get("시장판정", ""), row.get("포트판정", ""), default=""),
         "representatives": _first_flow_text(row.get("대표/ETF", ""), row.get("자산", ""), row.get("티커", ""), default=""),
     }
-    text = _brief_axis_news_text(probe, news_rows, limit=2)
+    text = _brief_axis_news_text(probe, news_rows, limit=2, require_direct=True)
     return text if text and text != "-" else "관련 뉴스 미포착"
 
 
