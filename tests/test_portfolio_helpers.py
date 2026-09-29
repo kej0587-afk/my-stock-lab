@@ -251,6 +251,46 @@ def test_portfolio_market_alignment_does_not_attach_semiconductor_to_cyber_repre
     assert "CRWD" not in row["대표/ETF"]
 
 
+def test_portfolio_market_alignment_does_not_attach_ram_to_generic_domestic_semi_subtheme(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.5,
+            "목표비중": 10.0,
+            "비중차이": 1.5,
+            "수익률_pct": -23.2,
+            "기술적타점": "레버리지 회복 대기",
+        }
+    ])
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "관심등록",
+                "후보군": "AI·반도체",
+                "연결테마": "국내 AI 반도체·소부장",
+                "내부세부축": "검사/테스트",
+                "ETF/대표": "마이크로컨텍솔 (098120.KQ) ★",
+                "판단": "하위테마만 강함, 확인 필요",
+                "_점수": -12.7,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "연결대기"
+    assert row["포트판정"] == "보유점검"
+    assert "반도체" in row["주도축"]
+    assert "마이크로컨텍솔" not in row["대표/ETF"]
+
+
 def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(app_module):
     strategy_df = pd.DataFrame([
         {
@@ -264,7 +304,19 @@ def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(
             "기술적타점": "",
         }
     ])
-    snapshot = {"command_flow_df": pd.DataFrame()}
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "관망/제외",
+                "후보군": "AI·반도체",
+                "연결테마": "AI·반도체",
+                "내부세부축": "S&P500",
+                "ETF/대표": "마이크론 테크놀로지 -, 어플라이드 머티리얼즈 -, 램 리서치 -",
+                "판단": "방향 불일치, 관망",
+                "_점수": -21.9,
+            }
+        ])
+    }
 
     aligned = app_module.build_portfolio_market_alignment_df(
         {"strategy_df": strategy_df},
@@ -276,6 +328,26 @@ def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(
     assert row["시장판정"] == "기준축"
     assert row["포트판정"] == "계획적 적립"
     assert row["주도축"] != "미연결"
+    assert "AI·반도체" not in row["주도축"]
+    assert "마이크론" not in row["대표/ETF"]
+
+
+def test_magnificent_news_terms_match_big_tech_news(app_module):
+    text = app_module._brief_axis_news_text(
+        {"name": "Magnificent 7", "representatives": "Magnificent 7"},
+        [
+            {
+                "읽기분류": "핵심속보",
+                "카테고리": "반도체·AI",
+                "종목": "MSFT",
+                "제목": "Microsoft Meta Nvidia AI 데이터센터 투자 확대",
+                "초보요약": "빅테크 AI 투자 뉴스입니다.",
+                "체크": "AI 재료",
+            }
+        ],
+    )
+
+    assert "Microsoft" in text
 
 
 def test_portfolio_market_alignment_labels_direct_flow_without_command_as_direct(app_module):

@@ -11504,7 +11504,9 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
     expansions = {
         "반도체": ["반도체", "ai", "hbm", "dram", "메모리", "nvidia", "amd", "soxx", "soxl", "smh", "ram"],
         "ai": ["ai", "인공지능", "agentic", "에이전틱", "nvidia", "amd", "msft", "google", "meta", "dell", "hbm", "데이터센터"],
-        "빅테크": ["빅테크", "mags", "magnificent", "msft", "google", "meta", "amazon", "nvidia", "ai"],
+        "빅테크": ["빅테크", "mags", "magnificent", "mag7", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
+        "magnificent": ["magnificent", "mag7", "mags", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
+        "mag7": ["magnificent", "mag7", "mags", "msft", "microsoft", "google", "alphabet", "meta", "amazon", "nvidia", "apple", "tesla", "ai"],
         "소부장": ["소부장", "반도체", "hbm", "패키징", "기판", "pcb"],
         "pcb": ["pcb", "기판", "패키징", "substrate"],
         "전력": ["전력", "전력망", "전선", "grid", "data center", "데이터센터"],
@@ -24967,6 +24969,8 @@ def _portfolio_flow_ticker_key(ticker):
 PORTFOLIO_BROAD_BRIDGE_TOKENS = {
     "AI",
     "미국 AI",
+    "AI·반도체",
+    "반도체",
     "빅테크",
     "미국 AI·빅테크",
 }
@@ -25103,7 +25107,10 @@ def _portfolio_best_direct_flow(row, direct_df):
 def _portfolio_best_command_flow(row, command_df):
     if not isinstance(command_df, pd.DataFrame) or command_df.empty:
         return pd.Series(dtype=object)
-    _, token_weights = _portfolio_bridge_token_weights(row.get("자산명", ""), row.get("티커", ""))
+    bridge, token_weights = _portfolio_bridge_token_weights(row.get("자산명", ""), row.get("티커", ""))
+    fallback_action = str((bridge or {}).get("fallback_action", "") or "") if isinstance(bridge, dict) else ""
+    if fallback_action in {"기준축", "별도관리"}:
+        return pd.Series(dtype=object)
     if not token_weights:
         return pd.Series(dtype=object)
     search_cols = [
