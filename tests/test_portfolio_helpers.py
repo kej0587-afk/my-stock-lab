@@ -291,6 +291,43 @@ def test_portfolio_market_alignment_does_not_attach_ram_to_generic_domestic_semi
     assert "마이크로컨텍솔" not in row["대표/ETF"]
 
 
+def test_portfolio_market_alignment_marks_direct_weak_flow_as_hold_check(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.6,
+            "목표비중": 10.0,
+            "비중차이": 1.4,
+            "수익률_pct": -22.2,
+            "기술적타점": "",
+        }
+    ])
+    snapshot = {
+        "flow_df": pd.DataFrame([
+            {
+                "Ticker": "RAM",
+                "구분": "미국 섹터",
+                "섹터": "DRAM 2배",
+                "name": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+                "돈흐름점수": -64.7,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "직접흐름 약세"
+    assert row["포트판정"] == "보유점검"
+    assert row["판단"] == "개별 돈흐름이 약세라 추가매수보다 회복 조건 확인이 먼저입니다."
+
+
 def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(app_module):
     strategy_df = pd.DataFrame([
         {
@@ -608,7 +645,7 @@ def test_portfolio_next_check_candidates_combine_action_news_and_alignment(app_m
     assert bitx["점검유형"] == "별도 소액 후보"
     assert bitx["다음 확인"] == "시장 위험 완화 + 손절선 확인"
     assert ram["점검유형"] == "축소/중단 점검"
-    assert candidates.index[candidates["티커"].eq("RAM")][0] > candidates.index[candidates["티커"].eq("MAGS")][0]
+    assert ram["우선점수"] >= 70
 
 
 def test_asset_overview_kpis_detects_cash_concentration_and_stale_prices():

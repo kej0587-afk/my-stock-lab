@@ -25177,6 +25177,8 @@ def _portfolio_market_action(row, command_row, direct_row):
         return ("축소/교체 후보", "현재 주도축과 맞지 않고 목표보다 많아 대체 후보와 비교합니다.") if gap < -0.3 else ("관망", "시장 주도축과 아직 맞지 않습니다.")
     if has_direct and direct_score > 0:
         return ("직접흐름 확인", "개별 돈흐름은 잡혔지만 상위 주도축 확인이 더 필요합니다.")
+    if has_direct and direct_score <= 0:
+        return ("보유점검", "개별 돈흐름이 약세라 추가매수보다 회복 조건 확인이 먼저입니다.")
     return "미연결", "오늘 주도맵과 직접 연결되지 않았습니다."
 
 
@@ -25581,53 +25583,82 @@ def _portfolio_next_check_weight_state(row):
     return "목표 근접"
 
 
+def _portfolio_next_check_pct_value(value):
+    text = str(value or "").replace(",", "")
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+    if not match:
+        return np.nan
+    return clean_float(match.group(0), np.nan)
+
+
 def _portfolio_next_check_score(row, news_text=""):
     port_action = str(row.get("포트판정", "") or "")
     market_action = str(row.get("시장판정", "") or "")
     decision = str(row.get("자산현황판정", "") or "")
-    score = {
-        "비중확대 후보": 72,
-        "계획적 적립": 68,
-        "눌림 시 분할": 64,
-        "직접흐름 확인": 58,
-        "관찰 후 소액": 56,
-        "조건부 소액": 55,
-        "별도 소액": 50,
-        "유지": 42,
-        "보유점검": 34,
-        "관망": 24,
-        "축소/교체 후보": 22,
-        "신규중단": 18,
-        "유지·추격금지": 18,
-        "유지·신규중단": 18,
-        "별도관리": 16,
-    }.get(port_action, 30)
+    joined = f"{port_action} {decision}"
+    is_stop_review = any(token in joined for token in ["축소", "교체", "신규중단", "추격금지"])
+    is_wait_review = any(token in joined for token in ["대기", "원인점검", "보유점검"])
+    if is_stop_review:
+        score = 74.0
+    elif is_wait_review:
+        score = 50.0
+    else:
+        score = {
+            "비중확대 후보": 72,
+            "계획적 적립": 68,
+            "눌림 시 분할": 64,
+            "직접흐름 확인": 58,
+            "관찰 후 소액": 56,
+            "조건부 소액": 55,
+            "별도 소액": 50,
+            "유지": 42,
+            "보유점검": 40,
+            "관망": 24,
+            "축소/교체 후보": 74,
+            "신규중단": 62,
+            "유지·추격금지": 58,
+            "유지·신규중단": 56,
+            "별도관리": 16,
+        }.get(port_action, 30)
     if "정밀관측" in market_action:
         score += 8
     elif "직접흐름" in market_action:
-        score += 5
+        score += 4
     elif "기준축" in market_action:
         score += 4
     elif "관심등록" in market_action:
         score += 3
     elif "관망/제외" in market_action:
-        score -= 6
+        score += 4 if is_stop_review else -6
 
     gap = clean_float(row.get("비중차이"), 0.0)
-    if gap > 0:
+    if is_stop_review:
+        if gap < 0:
+            score += min(abs(gap), 5.0) * 1.8
+        elif gap > 0:
+            score += min(gap, 3.0) * 0.3
+    elif gap > 0:
         score += min(gap, 5.0) * 1.5
     elif gap < 0:
         score -= min(abs(gap), 5.0) * 1.2
 
     flow_score = clean_float(row.get("점수"), np.nan)
     if finite_num(flow_score):
-        score += max(min(flow_score, 10.0), -10.0) * 0.8
+        clipped_flow = max(min(flow_score, 10.0), -10.0)
+        if is_stop_review and clipped_flow < 0:
+            score += abs(clipped_flow) * 0.8
+        else:
+            score += clipped_flow * 0.8
+
+    pnl_pct = _portfolio_next_check_pct_value(row.get("손익", ""))
+    if is_stop_review and finite_num(pnl_pct) and pnl_pct < 0:
+        score += min(abs(pnl_pct), 30.0) * 0.35
 
     if "조건부 적립" in decision or "조건부 소액" in decision:
         score += 6
     if "장기코어" in decision:
         score += 4
-    if any(token in decision for token in ["축소", "교체", "신규중단", "원인점검"]):
+    if not is_stop_review and any(token in decision for token in ["축소", "교체", "신규중단", "원인점검"]):
         score -= 12
     if news_text and news_text not in {"뉴스 미연결", "관련 뉴스 미포착"}:
         score += 3
