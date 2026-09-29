@@ -278,6 +278,58 @@ def test_portfolio_market_alignment_marks_broad_index_as_core_axis_not_unlinked(
     assert row["주도축"] != "미연결"
 
 
+def test_portfolio_market_alignment_labels_direct_flow_without_command_as_direct(app_module):
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill Magnificent Seven ETF",
+            "티커": "MAGS",
+            "버킷": "core",
+            "현재비중": 0.8,
+            "목표비중": 6.0,
+            "비중차이": 5.2,
+            "수익률_pct": -2.1,
+            "기술적타점": "",
+        }
+    ])
+    snapshot = {
+        "theme_flow_df": pd.DataFrame([
+            {
+                "Ticker": "MAGS",
+                "테마": "미국 AI·빅테크",
+                "하위테마": "Magnificent 7",
+                "돈흐름점수": 5.8,
+            }
+        ])
+    }
+
+    aligned = app_module.build_portfolio_market_alignment_df(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        snapshot,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "직접흐름"
+    assert row["포트판정"] == "직접흐름 확인"
+    assert row["주도축"] == "Magnificent 7"
+
+
+def test_portfolio_market_alignment_brief_separates_add_and_caution_groups(app_module):
+    align_df = pd.DataFrame([
+        {"티커": "379800.KS", "포트판정": "계획적 적립", "시장판정": "기준축", "현재비중": 31.9},
+        {"티커": "MAGS", "포트판정": "직접흐름 확인", "시장판정": "직접흐름", "현재비중": 0.8},
+        {"티커": "RAM", "포트판정": "관망", "시장판정": "관망/제외", "현재비중": 8.5},
+        {"티커": "BITX", "포트판정": "별도관리", "시장판정": "별도관리", "현재비중": 1.1},
+    ])
+
+    brief = app_module.build_portfolio_market_alignment_brief(align_df)
+
+    assert "379800.KS" in brief["add_names"]
+    assert "MAGS" in brief["direct_names"]
+    assert "RAM" in brief["caution_names"]
+    assert "BITX" in brief["separate_names"]
+
+
 def test_portfolio_rebalance_playbook_allocates_leaders_and_separates_trim_candidates(app_module):
     align_df = pd.DataFrame([
         {

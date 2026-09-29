@@ -25173,6 +25173,16 @@ def _portfolio_market_action(row, command_row, direct_row):
     return "미연결", "오늘 주도맵과 직접 연결되지 않았습니다."
 
 
+def _portfolio_market_action_label(command_row, direct_row):
+    action = _flow_text(command_row.get("행동", ""))
+    if action:
+        return action
+    direct_score = _portfolio_market_flow_score(direct_row)
+    if finite_num(direct_score):
+        return "직접흐름" if direct_score > 0 else "직접흐름 약세"
+    return "미연결"
+
+
 def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
     strategy_df = metrics.get("strategy_df") if isinstance(metrics, dict) else pd.DataFrame()
     source_df = strategy_df if isinstance(strategy_df, pd.DataFrame) and not strategy_df.empty else asset_df
@@ -25191,7 +25201,7 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
         if command_row.empty and direct_row.empty:
             command_row = _portfolio_bridge_fallback_row(row)
         port_action, reason = _portfolio_market_action(row, command_row, direct_row)
-        market_action = _flow_text(command_row.get("행동", ""), default="미연결")
+        market_action = _portfolio_market_action_label(command_row, direct_row)
         flow_score = _portfolio_market_flow_score(command_row)
         if not finite_num(flow_score):
             flow_score = _portfolio_market_flow_score(direct_row)
@@ -25252,6 +25262,57 @@ def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
     }).fillna(0)
     result["_점수정렬"] = result["점수"].apply(lambda v: clean_float(v, -999.0))
     return result.sort_values(["_판정순서", "_점수정렬", "현재비중"], ascending=False).drop(columns=["_판정순서", "_점수정렬"]).reset_index(drop=True)
+
+
+def _portfolio_alignment_names(df, limit=3):
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return "-"
+    names = []
+    for _, row in df.head(limit).iterrows():
+        ticker = str(row.get("티커", "") or "").strip()
+        asset = str(row.get("자산", "") or "").strip()
+        label = ticker or asset
+        if label and label not in names:
+            names.append(label)
+    return ", ".join(names) if names else "-"
+
+
+def build_portfolio_market_alignment_brief(align_df):
+    if not isinstance(align_df, pd.DataFrame) or align_df.empty:
+        return {}
+    work = align_df.copy()
+    work["현재비중"] = work.get("현재비중", pd.Series(0.0, index=work.index)).apply(lambda v: clean_float(v, 0.0))
+    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
+    caution_actions = {"보유점검", "관망", "신규중단", "유지·추격금지", "유지·신규중단", "축소/교체 후보"}
+    separate_actions = {"별도관리"}
+    add_df = work[work["포트판정"].astype(str).isin(add_actions)].sort_values("현재비중", ascending=False)
+    caution_df = work[work["포트판정"].astype(str).isin(caution_actions)].sort_values("현재비중", ascending=False)
+    separate_df = work[work["포트판정"].astype(str).isin(separate_actions)].sort_values("현재비중", ascending=False)
+    direct_df = work[work["시장판정"].astype(str).str.contains("직접흐름", na=False)].sort_values("현재비중", ascending=False)
+
+    add_weight = float(add_df["현재비중"].sum()) if not add_df.empty else 0.0
+    caution_weight = float(caution_df["현재비중"].sum()) if not caution_df.empty else 0.0
+    separate_weight = float(separate_df["현재비중"].sum()) if not separate_df.empty else 0.0
+    direct_weight = float(direct_df["현재비중"].sum()) if not direct_df.empty else 0.0
+
+    if add_weight > caution_weight:
+        headline = "새 돈은 계획적 적립·직접흐름 확인 후보 중심으로 보고, 점검 자산은 추가매수를 멈추는 구도입니다."
+    elif caution_weight > 0:
+        headline = "현재 포트는 신규 확대보다 점검·대기가 더 큰 구도입니다. 새 돈은 기준축이나 확인된 흐름에만 제한합니다."
+    else:
+        headline = "포트 전체가 큰 충돌 없이 정리되어 있습니다. 목표비중과 정해진 적립률 위주로 관리합니다."
+
+    return {
+        "headline": headline,
+        "add_names": _portfolio_alignment_names(add_df),
+        "caution_names": _portfolio_alignment_names(caution_df),
+        "separate_names": _portfolio_alignment_names(separate_df),
+        "direct_names": _portfolio_alignment_names(direct_df),
+        "add_weight": add_weight,
+        "caution_weight": caution_weight,
+        "separate_weight": separate_weight,
+        "direct_weight": direct_weight,
+    }
 
 
 def _portfolio_playbook_budget_multiplier(action, risk_index):
@@ -25443,8 +25504,18 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     st.markdown("#### 포트폴리오 주도축 매칭")
     st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
 
+    brief = build_portfolio_market_alignment_brief(align_df)
+    if brief:
+        st.info(
+            f"{brief.get('headline', '')}\n\n"
+            f"늘릴/적립 후보: {brief.get('add_names', '-')} ({brief.get('add_weight', 0.0):.1f}%) · "
+            f"직접흐름 확인: {brief.get('direct_names', '-')} ({brief.get('direct_weight', 0.0):.1f}%) · "
+            f"점검/대기: {brief.get('caution_names', '-')} ({brief.get('caution_weight', 0.0):.1f}%) · "
+            f"별도관리: {brief.get('separate_names', '-')} ({brief.get('separate_weight', 0.0):.1f}%)"
+        )
+
     connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
-    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액"])
+    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"])
     caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지", "관망", "별도관리"])
     connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
     add_count = int(add_mask.sum())
@@ -25468,6 +25539,7 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
             "계획적 적립": "#14b8a6",
             "조건부 소액": "#84cc16",
             "눌림 시 분할": "#eab308",
+            "직접흐름 확인": "#c084fc",
             "유지": "#38bdf8",
             "유지·신규중단": "#60a5fa",
             "관망": "#94a3b8",
