@@ -622,6 +622,96 @@ def test_portfolio_rebalance_playbook_uses_action_decision_for_separate_conditio
     assert "전용 기준" in bitx["조건"]
 
 
+def test_portfolio_recommendation_df_combines_owned_market_and_funding_candidates(app_module):
+    align_df = pd.DataFrame([
+        {
+            "자산": "Roundhill Magnificent Seven ETF",
+            "티커": "MAGS",
+            "구분": "core",
+            "현재비중": 0.8,
+            "목표비중": 6.0,
+            "비중차이": 5.2,
+            "손익": "-2.0%",
+            "주도축": "Magnificent 7",
+            "세부축": "Magnificent 7",
+            "시장판정": "직접흐름",
+            "포트판정": "직접흐름 확인",
+            "판단": "개별 돈흐름은 잡혔지만 상위 주도축 확인이 더 필요합니다.",
+            "대표/ETF": "Magnificent 7",
+            "점수": 6.8,
+            "근거": "개별 돈흐름 확인",
+        },
+        {
+            "자산": "SOXL",
+            "티커": "SOXL",
+            "구분": "leverage",
+            "현재비중": 5.0,
+            "목표비중": 3.0,
+            "비중차이": -2.0,
+            "손익": "-14.0%",
+            "주도축": "Semiconductor Bull 3X",
+            "세부축": "Semiconductor Bull 3X",
+            "시장판정": "직접흐름 약세",
+            "포트판정": "보유점검",
+            "판단": "회복 조건 확인",
+            "대표/ETF": "SOXL",
+            "점수": -46.0,
+            "근거": "비중초과와 회복 조건 확인",
+        },
+    ])
+    action_df = pd.DataFrame([
+        {"티커": "MAGS", "판정": "조건부 적립", "실행": "분할", "재개/해제 조건": "시장 위험 완화"},
+        {"티커": "SOXL", "판정": "축소/교체 검토", "실행": "추가매수 중단", "재개/해제 조건": "목표비중 이하"},
+    ])
+    snapshot = {
+        "command_flow_df": pd.DataFrame([
+            {
+                "행동": "정밀관측",
+                "후보군": "AI 서버·보안",
+                "연결테마": "미국 AI·빅테크",
+                "세부축": "서버·보안",
+                "ETF/대표": "DELL · CRWD",
+                "판단": "서버와 보안 대표주 동행 확인",
+                "다음확인": "정밀관측소 R/R 확인",
+                "_점수": 8.5,
+            },
+            {
+                "행동": "추격금지",
+                "후보군": "과열 테마",
+                "ETF/대표": "HOT",
+                "_점수": 9.9,
+            },
+        ])
+    }
+    news_rows = [
+        {
+            "읽기분류": "핵심속보",
+            "카테고리": "반도체·AI",
+            "종목": "DELL",
+            "제목": "Dell AI 서버 수요 증가",
+            "초보요약": "AI 서버 투자 뉴스입니다.",
+            "체크": "AI 재료",
+        }
+    ]
+
+    rec_df = app_module.build_portfolio_recommendation_df(
+        align_df,
+        metrics={"risk_index": 45},
+        snapshot=snapshot,
+        action_df=action_df,
+        news_rows=news_rows,
+        limit=8,
+    )
+
+    groups = set(rec_df["추천구분"])
+    assert "조건부 보강" in groups
+    assert "신규 정밀관측" in groups
+    assert "교체 재원" in groups
+    assert rec_df[rec_df["후보"].eq("AI 서버·보안")]["티커/대표"].iloc[0] == "DELL · CRWD"
+    assert "HOT" not in " ".join(rec_df["티커/대표"].astype(str))
+    assert rec_df[rec_df["티커/대표"].eq("SOXL")]["실행강도"].iloc[0] == "재원 점검"
+
+
 def test_portfolio_next_check_candidates_combine_action_news_and_alignment(app_module):
     align_df = pd.DataFrame([
         {

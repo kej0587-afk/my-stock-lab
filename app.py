@@ -25533,6 +25533,176 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0,
     return result
 
 
+def _portfolio_recommendation_news_text(name, source, representatives, news_rows, require_direct=False):
+    if not news_rows:
+        return "뉴스 미연결"
+    text = _brief_axis_news_text(
+        {
+            "name": name,
+            "source": source,
+            "state": "",
+            "representatives": representatives,
+        },
+        news_rows,
+        limit=1,
+        require_direct=require_direct,
+    )
+    return text if text and text != "-" else "관련 뉴스 미포착"
+
+
+def _portfolio_recommendation_strength(port_action, decision, bucket=""):
+    joined = f"{port_action} {decision}"
+    if any(token in joined for token in ["축소", "교체", "신규중단", "추격금지"]):
+        return "재원 점검"
+    if "DCA 대기" in joined or "회복확인" in joined:
+        return "조건 대기"
+    if "비중확대" in joined:
+        return "보강 우선"
+    if "계획적 적립" in joined or "장기코어" in joined:
+        return "정해진 적립"
+    if "조건부" in joined or str(bucket) == "leverage":
+        return "소액 조건부"
+    if "직접흐름" in joined or "눌림" in joined:
+        return "정밀 확인"
+    return "관찰"
+
+
+def _portfolio_recommendation_market_action(action):
+    action = str(action or "")
+    if action == "정밀관측":
+        return "정밀관측소 확인"
+    if action == "눌림대기":
+        return "눌림 위치 대기"
+    if action == "관심등록":
+        return "관심 등록"
+    return "확인"
+
+
+def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, action_df=None, news_rows=None, limit=8):
+    if not isinstance(align_df, pd.DataFrame) or align_df.empty:
+        return pd.DataFrame()
+    metrics = metrics if isinstance(metrics, dict) else {}
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    news_rows = news_rows if isinstance(news_rows, list) else []
+    work = _enrich_portfolio_alignment_with_action_df(align_df, action_df).copy()
+
+    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
+    stop_tokens = ["축소", "교체", "신규중단", "추격금지"]
+    rows = []
+    seen = set()
+
+    def add_row(row):
+        key = "|".join([str(row.get("추천구분", "")), str(row.get("후보", "")), str(row.get("티커/대표", ""))]).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        rows.append(row)
+
+    for _, row in work.iterrows():
+        port_action = str(row.get("포트판정", "") or "")
+        decision = str(row.get("자산현황판정", "") or "")
+        decision_text = f"{port_action} {decision}"
+        bucket = str(row.get("구분", "") or "")
+        candidate = _first_flow_text(row.get("자산", ""), row.get("티커", ""), default="-")
+        ticker = str(row.get("티커", "") or "").strip()
+        score = 0.0
+        flow_score = clean_float(row.get("점수"), np.nan)
+        if finite_num(flow_score):
+            score += max(min(flow_score, 10.0), -10.0)
+        gap = clean_float(row.get("비중차이"), 0.0)
+        pnl_pct = _portfolio_next_check_pct_value(row.get("손익", ""))
+        news_text = _portfolio_next_check_news_text(row, news_rows)
+
+        if port_action in add_actions:
+            group = "보유 보강"
+            base = 76.0
+            if "조건부" in decision_text or bucket == "leverage":
+                group = "조건부 보강"
+                base = 66.0
+            if port_action == "계획적 적립":
+                base = 72.0
+            priority = base + min(max(gap, 0.0), 6.0) * 1.8 + score * 0.7
+            if news_text not in {"뉴스 미연결", "관련 뉴스 미포착"}:
+                priority += 2.0
+            add_row({
+                "추천구분": group,
+                "후보": candidate,
+                "티커/대표": ticker,
+                "우선점수": max(0.0, min(100.0, priority)),
+                "실행강도": _portfolio_recommendation_strength(port_action, decision, bucket),
+                "근거": _first_flow_text(row.get("근거", ""), row.get("판단", ""), default="목표비중과 주도축이 같이 맞는지 확인합니다."),
+                "다음 행동": _portfolio_next_check_condition(row),
+                "주의/조건": _first_flow_text(row.get("재개/해제 조건", ""), default="정밀관측소에서 가격위치와 R/R 확인"),
+                "뉴스/재료": news_text,
+            })
+            continue
+
+        if any(token in decision_text for token in stop_tokens):
+            priority = 54.0 + min(abs(min(gap, 0.0)), 5.0) * 3.0
+            if finite_num(pnl_pct) and pnl_pct < 0:
+                priority += min(abs(pnl_pct), 30.0) * 0.4
+            add_row({
+                "추천구분": "교체 재원",
+                "후보": candidate,
+                "티커/대표": ticker,
+                "우선점수": max(0.0, min(100.0, priority)),
+                "실행강도": _portfolio_recommendation_strength(port_action, decision, bucket),
+                "근거": _first_flow_text(row.get("근거", ""), row.get("판단", ""), default="새 매수보다 비중 관리가 먼저입니다."),
+                "다음 행동": _portfolio_next_check_condition(row),
+                "주의/조건": _first_flow_text(row.get("재개/해제 조건", ""), default="회복 조건 전 신규매수 중단"),
+                "뉴스/재료": news_text,
+            })
+
+    command_df = _portfolio_snapshot_command_df(snapshot)
+    if isinstance(command_df, pd.DataFrame) and not command_df.empty and "행동" in command_df.columns:
+        command_work = command_df[command_df["행동"].astype(str).isin(["정밀관측", "눌림대기", "관심등록"])].copy()
+        if not command_work.empty:
+            command_work["_portfolio_rec_rank"] = command_work["행동"].astype(str).map({"정밀관측": 3, "눌림대기": 2, "관심등록": 1}).fillna(0)
+            command_work["_portfolio_rec_score"] = command_work.apply(_portfolio_market_flow_score, axis=1)
+            command_work = command_work.sort_values(["_portfolio_rec_rank", "_portfolio_rec_score"], ascending=False, na_position="last")
+            for _, row in command_work.head(8).iterrows():
+                action = str(row.get("행동", "") or "")
+                candidate = _first_flow_text(row.get("후보군", ""), row.get("연결테마", ""), row.get("핵심하위테마", ""), row.get("세부축", ""), default="-")
+                representative = _first_flow_text(row.get("ETF/대표", ""), row.get("대표주", ""), row.get("Ticker", ""), default="-")
+                source = _first_flow_text(row.get("핵심하위테마", ""), row.get("세부축", ""), row.get("연결테마", ""), default="-")
+                flow_score = _portfolio_market_flow_score(row)
+                priority = {"정밀관측": 76.0, "눌림대기": 66.0, "관심등록": 58.0}.get(action, 50.0)
+                if finite_num(flow_score):
+                    priority += max(min(flow_score, 10.0), -10.0) * 1.2
+                news_text = _portfolio_recommendation_news_text(candidate, source, representative, news_rows, require_direct=False)
+                if news_text not in {"뉴스 미연결", "관련 뉴스 미포착"}:
+                    priority += 2.0
+                add_row({
+                    "추천구분": "신규 정밀관측" if action == "정밀관측" else "신규 관찰",
+                    "후보": candidate,
+                    "티커/대표": representative,
+                    "우선점수": max(0.0, min(100.0, priority)),
+                    "실행강도": _portfolio_recommendation_market_action(action),
+                    "근거": _first_flow_text(row.get("판단", ""), row.get("다음확인", ""), default="오늘점검 실행 후보판에서 포착된 축입니다."),
+                    "다음 행동": _first_flow_text(row.get("다음확인", ""), default="정밀관측소에서 대표주 가격위치와 R/R 확인"),
+                    "주의/조건": "보유 종목 교체 전 대표주 동행과 뉴스 재료 확인",
+                    "뉴스/재료": news_text,
+                })
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    group_order = {"보유 보강": 0, "조건부 보강": 1, "신규 정밀관측": 2, "신규 관찰": 3, "교체 재원": 4}
+    result["_group_order"] = result["추천구분"].map(group_order).fillna(9)
+    result = result.sort_values(["_group_order", "우선점수", "후보"], ascending=[True, False, True]).reset_index(drop=True)
+    limit = max(int(limit), 1)
+    if len(result) > limit:
+        source_df = result[result["추천구분"].eq("교체 재원")]
+        idea_df = result[~result["추천구분"].eq("교체 재원")]
+        source_quota = min(2, len(source_df), limit)
+        idea_quota = max(limit - source_quota, 0)
+        result = pd.concat([idea_df.head(idea_quota), source_df.head(source_quota)], ignore_index=True)
+        result = result.sort_values(["_group_order", "우선점수", "후보"], ascending=[True, False, True]).reset_index(drop=True)
+    result = result.drop(columns=["_group_order"], errors="ignore")
+    result.insert(0, "우선", range(1, len(result) + 1))
+    return result
+
+
 def _portfolio_next_check_news_text(row, news_rows):
     if not news_rows:
         return "뉴스 미연결"
@@ -25817,6 +25987,40 @@ def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
 
+def render_portfolio_recommendation_panel(align_df, metrics, snapshot=None, action_df=None, news_rows=None):
+    rec_df = build_portfolio_recommendation_df(
+        align_df,
+        metrics=metrics,
+        snapshot=snapshot,
+        action_df=action_df,
+        news_rows=news_rows,
+        limit=8,
+    )
+    if rec_df.empty:
+        return
+    with st.expander("오늘점검 기반 추천/교체 후보", expanded=True):
+        st.caption(
+            "오늘점검 주도축, 뉴스 재료, 내 보유 비중, 자산현황 실행판을 합쳐 만든 검토 순서입니다. "
+            "주문 신호가 아니라 정밀관측소로 먼저 보낼 후보판입니다."
+        )
+        idea_df = rec_df[~rec_df["추천구분"].eq("교체 재원")]
+        source_df = rec_df[rec_df["추천구분"].eq("교체 재원")]
+        idea_names = _portfolio_alignment_names(idea_df.rename(columns={"후보": "자산", "티커/대표": "티커"}), limit=3)
+        source_names = _portfolio_alignment_names(source_df.rename(columns={"후보": "자산", "티커/대표": "티커"}), limit=2)
+        st.info(
+            f"먼저 볼 후보: {idea_names}. "
+            f"재원/중단 점검: {source_names}. "
+            "보강 후보는 가격·R/R 확인 후, 교체 재원은 목표비중과 회복 조건을 먼저 봅니다."
+        )
+        show = rec_df.copy()
+        show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
+        cols = [
+            "우선", "추천구분", "후보", "티커/대표", "우선점수", "실행강도",
+            "근거", "다음 행동", "주의/조건", "뉴스/재료",
+        ]
+        st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
+
+
 def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None):
     if not isinstance(align_df, pd.DataFrame) or align_df.empty:
         return
@@ -25868,6 +26072,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
         return
     action_df = build_portfolio_action_decision_df(metrics, asset_df)
     align_df = _enrich_portfolio_alignment_with_action_df(align_df, action_df)
+    news_key = globals().get("TODAY_ACTION_NEWS_ROWS_KEY", "today_action_news_rows")
+    news_rows = st.session_state.get(news_key, [])
 
     st.markdown("#### 포트폴리오 주도축 매칭")
     st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
@@ -25895,6 +26101,7 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     c2.metric("확대/분할 후보", f"{add_count}개")
     c3.metric("점검/축소 후보", f"{caution_count}개")
     c4.metric("미연결 비중", f"{unlinked_weight:.1f}%")
+    render_portfolio_recommendation_panel(align_df, metrics, snapshot=snapshot, action_df=action_df, news_rows=news_rows)
 
     group_df = (
         align_df.groupby("포트판정", as_index=False)["현재비중"]
@@ -25946,8 +26153,6 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     ]
     st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
-    news_key = globals().get("TODAY_ACTION_NEWS_ROWS_KEY", "today_action_news_rows")
-    news_rows = st.session_state.get(news_key, [])
     render_portfolio_next_check_candidates_panel(align_df, action_df=action_df, news_rows=news_rows)
     render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=action_df)
 
