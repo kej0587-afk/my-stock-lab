@@ -304,6 +304,98 @@ def test_build_position_management_context_marks_core_dca_allowed(app_module, mo
     assert context["is_leveraged_dca_candidate"] is False
 
 
+def _entry_signal_kwargs(**overrides):
+    kwargs = dict(
+        is_etf=False,
+        has_pos=False,
+        my_price=0.0,
+        cur_p=101.5,
+        targ_w=10.0,
+        weight_gap=5.0,
+        price_vs_avg=0.0,
+        trend="🚀정배열(상승)",
+        rs_label="🚀강함",
+        rs_slope_label="📈RS상승중",
+        macd_state="🔥매수신호(골든크로스)",
+        last_macd=1.2,
+        prev_macd=1.0,
+        fin_score=4,
+        adj_tech_score=4.5,
+        mfi_now=55.0,
+        rsi_now=58.0,
+        pct_b_now=0.70,
+        vol_ratio=1.2,
+        macro_risk_value=1.5,
+        current_dd=-0.05,
+        ret_1m=0.04,
+        ret_3m=0.08,
+        ret_6m=0.12,
+        short_history=False,
+        is_single_day_breakdown=False,
+        ma20_now=98.0,
+        ma50_now=95.0,
+        ma120_now=90.0,
+        ma5_raw=100.0,
+        low_now=100.5,
+        below_ma20=False,
+        below_ma50=False,
+        day_ret=0.01,
+        fvg_info={"type": "None", "bottom": None, "top": None},
+        is_leveraged_or_inverse=False,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_build_entry_signal_context_flags_exception_ma5_pullback(app_module):
+    context = app_module.build_entry_signal_context(**_entry_signal_kwargs())
+
+    assert context["is_leader_base"] is True
+    assert context["is_ma5_pullback"] is True
+    assert context["is_exception_not_chasing"] is True
+    assert context["is_exception_entry"] is True
+    assert context["is_clean_leader_entry"] is True
+
+
+def test_build_entry_signal_context_extreme_momentum_raises_drawdown_threshold(app_module):
+    context = app_module.build_entry_signal_context(**_entry_signal_kwargs(
+        fin_score=3,
+        cur_p=130.0,
+        low_now=128.0,
+        ma5_raw=125.0,
+        ma20_now=100.0,
+        ma50_now=95.0,
+        current_dd=-0.25,
+        pct_b_now=0.90,
+    ))
+
+    assert context["_is_extreme_momentum"] is True
+    assert context["_dd_threshold"] == -0.35
+    assert context["is_structure_damage_entry_risk"] is False
+
+
+def test_build_entry_signal_context_flags_plain_etf_accumulation(app_module):
+    context = app_module.build_entry_signal_context(**_entry_signal_kwargs(
+        is_etf=True,
+        has_pos=True,
+        fin_score=0,
+        trend="⏳혼조세",
+        rs_label="➖보통",
+        rs_slope_label="➖RS중립",
+        macd_state="⏳추세관망",
+        targ_w=20.0,
+        weight_gap=4.0,
+        pct_b_now=0.60,
+        rsi_now=55.0,
+        mfi_now=60.0,
+        is_leveraged_or_inverse=False,
+    ))
+
+    assert context["is_etf_accumulation_ok"] is True
+    assert context["is_breakout_normal"] is False
+    assert context["is_exception_entry"] is False
+
+
 # ---------------------------------------------------------------------------
 # _apply_safety_state_override
 # ---------------------------------------------------------------------------
