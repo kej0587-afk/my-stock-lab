@@ -204,6 +204,106 @@ def test_build_smc_insight_preserves_existing_message_priority(app_module, kwarg
     assert app_module.build_smc_insight(**kwargs) == expected
 
 
+def test_build_position_management_context_flags_leveraged_dca_conditional(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "get_effective_total_asset", lambda total_eval, fallback: 100000)
+    monkeypatch.setattr(app_module, "get_effective_weights", lambda name, ticker, current_w, target_w: (7.0, 10.0))
+    monkeypatch.setattr(app_module, "get_effective_buy_amount", lambda name, ticker, total, current_w, target_w: 3000)
+    monkeypatch.setattr(app_module, "get_effective_bucket", lambda name, ticker: "satellite")
+    monkeypatch.setattr(app_module, "is_leveraged_or_inverse_product", lambda name, ticker, asset_class: True)
+    monkeypatch.setattr(app_module, "is_concentrated_non_core_etf", lambda name, ticker, asset_class: False)
+    monkeypatch.setattr(app_module, "is_tdf_or_fund_allocation_product", lambda name, ticker, asset_class: False)
+    monkeypatch.setattr(
+        app_module,
+        "build_core_dca_context",
+        lambda *args, **kwargs: {"core_dca_rate": 0.0, "core_dca_label": ""},
+    )
+
+    context = app_module.build_position_management_context(
+        name="RAM",
+        ticker="RAM",
+        asset_class="us_etf_nasdaq",
+        is_etf=True,
+        has_pos=True,
+        my_price=100.0,
+        cur_p=90.0,
+        total_eval_value=100000,
+        user_total_asset=0.0,
+        user_curr_w=7.0,
+        user_targ_w=10.0,
+        current_dd=-0.25,
+        pct_b_now=0.50,
+        rsi_now=48.0,
+        mfi_now=52.0,
+        ma20_now=92.0,
+        day_ret=-0.02,
+        live_gap_move=-0.01,
+        trend="⏳혼조세",
+        app_mode="개인모드",
+        macro_risk_value=1.5,
+        adj_tech_score=2.0,
+        has_down_session_pressure=False,
+        below_ma5=False,
+    )
+
+    assert context["eff_total"] == 100000
+    assert context["buy_amount"] == 3000
+    assert context["price_vs_avg"] == pytest.approx(-0.10)
+    assert context["weight_gap"] == 3.0
+    assert context["is_leveraged_or_inverse"] is True
+    assert context["is_leveraged_dca_candidate"] is True
+    assert context["is_leveraged_dca_wait_high"] is False
+    assert context["is_leveraged_dca_conditional"] is True
+    assert context["is_core_dca_allowed"] is False
+
+
+def test_build_position_management_context_marks_core_dca_allowed(app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "get_effective_total_asset", lambda total_eval, fallback: 200000)
+    monkeypatch.setattr(app_module, "get_effective_weights", lambda name, ticker, current_w, target_w: (40.0, 50.0))
+    monkeypatch.setattr(app_module, "get_effective_buy_amount", lambda name, ticker, total, current_w, target_w: 20000)
+    monkeypatch.setattr(app_module, "get_effective_bucket", lambda name, ticker: "core")
+    monkeypatch.setattr(app_module, "is_leveraged_or_inverse_product", lambda name, ticker, asset_class: False)
+    monkeypatch.setattr(app_module, "is_concentrated_non_core_etf", lambda name, ticker, asset_class: False)
+    monkeypatch.setattr(app_module, "is_tdf_or_fund_allocation_product", lambda name, ticker, asset_class: False)
+    monkeypatch.setattr(
+        app_module,
+        "build_core_dca_context",
+        lambda *args, **kwargs: {"core_dca_rate": 0.5, "core_dca_label": "코어 50% 적립"},
+    )
+
+    context = app_module.build_position_management_context(
+        name="S&P500",
+        ticker="379800.KS",
+        asset_class="us_etf_sp",
+        is_etf=True,
+        has_pos=True,
+        my_price=100.0,
+        cur_p=95.0,
+        total_eval_value=200000,
+        user_total_asset=0.0,
+        user_curr_w=40.0,
+        user_targ_w=50.0,
+        current_dd=-0.08,
+        pct_b_now=0.55,
+        rsi_now=50.0,
+        mfi_now=50.0,
+        ma20_now=94.0,
+        day_ret=0.01,
+        live_gap_move=0.01,
+        trend="⏳혼조세",
+        app_mode="개인모드",
+        macro_risk_value=2.0,
+        adj_tech_score=2.0,
+        has_down_session_pressure=False,
+        below_ma5=False,
+    )
+
+    assert context["effective_bucket"] == "core"
+    assert context["is_core_etf"] is True
+    assert context["core_dca_rate"] == 0.5
+    assert context["is_core_dca_allowed"] is True
+    assert context["is_leveraged_dca_candidate"] is False
+
+
 # ---------------------------------------------------------------------------
 # _apply_safety_state_override
 # ---------------------------------------------------------------------------

@@ -17104,6 +17104,123 @@ def build_breakdown_risk_flags(
     }
 
 
+def build_position_management_context(
+    *,
+    name: str,
+    ticker: str,
+    asset_class: str,
+    is_etf: bool,
+    has_pos: bool,
+    my_price: float,
+    cur_p: float,
+    total_eval_value: float,
+    user_total_asset: float,
+    user_curr_w: float,
+    user_targ_w: float,
+    current_dd: float,
+    pct_b_now: float,
+    rsi_now: float,
+    mfi_now: float,
+    ma20_now: float,
+    day_ret: float,
+    live_gap_move: float,
+    trend: str,
+    app_mode: str,
+    macro_risk_value: float,
+    adj_tech_score: float,
+    has_down_session_pressure: bool,
+    below_ma5: bool,
+    cash_available_snapshot=None,
+    reserve_available_snapshot=None,
+) -> dict:
+    """보유/비중/DCA 관련 상태를 한 곳에서 계산한다."""
+    eff_total = get_effective_total_asset(total_eval_value, user_total_asset)
+    curr_w, targ_w = get_effective_weights(name, ticker, user_curr_w, user_targ_w)
+    buy_amount = get_effective_buy_amount(name, ticker, eff_total, user_curr_w, user_targ_w)
+
+    price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
+    weight_gap = targ_w - curr_w
+    effective_bucket = get_effective_bucket(name, ticker)
+    is_core_etf = is_etf and effective_bucket == "core"
+    is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
+    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    is_concentrated_etf = is_etf and is_concentrated_non_core_etf(name, ticker, asset_class)
+    is_concentrated_upper_wait = (
+        is_concentrated_etf and (
+            current_dd > -0.03
+            or pct_b_now >= 0.95
+            or rsi_now >= 68
+            or (ma20_now > 0 and (cur_p / ma20_now - 1) >= 0.04)
+        )
+    )
+    is_tdf_or_fund = is_tdf_or_fund_allocation_product(name, ticker, asset_class)
+    leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
+    is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
+    is_leveraged_dca_candidate = (
+        is_etf and is_leveraged_or_inverse and has_pos and targ_w > 0 and weight_gap > 0
+    )
+    is_leveraged_dca_wait_high = (
+        is_leveraged_dca_candidate and (
+            current_dd > -0.10
+            or pct_b_now >= 0.85
+            or price_vs_avg > -0.03
+            or day_ret >= 0.08
+        )
+    )
+    is_leveraged_dca_conditional = (
+        is_leveraged_dca_candidate
+        and not is_leveraged_dca_wait_high
+        and macro_risk_value < 4.5
+        and trend != "🌊역배열(하락)"
+        and (current_dd <= -0.10 or price_vs_avg <= -0.03 or pct_b_now < 0.75)
+    )
+    is_holding_upper_pullback_wait = (
+        has_pos
+        and (not is_etf)
+        and adj_tech_score >= 4
+        and cur_p <= my_price
+        and curr_w < targ_w
+        and has_down_session_pressure
+        and below_ma5
+        and current_dd > -0.10
+        and pct_b_now >= 0.60
+    )
+    core_dca_context = build_core_dca_context(
+        app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
+        current_dd, rsi_now, mfi_now, pct_b_now, trend,
+        cash_available_snapshot=cash_available_snapshot,
+        reserve_available_snapshot=reserve_available_snapshot,
+        final_macro_risk_value=macro_risk_value,
+    )
+    core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
+    is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
+
+    return {
+        "eff_total": eff_total,
+        "curr_w": curr_w,
+        "targ_w": targ_w,
+        "buy_amount": buy_amount,
+        "price_vs_avg": price_vs_avg,
+        "weight_gap": weight_gap,
+        "effective_bucket": effective_bucket,
+        "is_core_etf": is_core_etf,
+        "is_zero_target_holding": is_zero_target_holding,
+        "is_leveraged_or_inverse": is_leveraged_or_inverse,
+        "is_concentrated_etf": is_concentrated_etf,
+        "is_concentrated_upper_wait": is_concentrated_upper_wait,
+        "is_tdf_or_fund": is_tdf_or_fund,
+        "leveraged_drop_ret": leveraged_drop_ret,
+        "is_leveraged_daily_drop": is_leveraged_daily_drop,
+        "is_leveraged_dca_candidate": is_leveraged_dca_candidate,
+        "is_leveraged_dca_wait_high": is_leveraged_dca_wait_high,
+        "is_leveraged_dca_conditional": is_leveraged_dca_conditional,
+        "is_holding_upper_pullback_wait": is_holding_upper_pullback_wait,
+        "core_dca_context": core_dca_context,
+        "core_dca_rate": core_dca_rate,
+        "is_core_dca_allowed": is_core_dca_allowed,
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -17286,66 +17403,56 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         rsi_now, mfi_now, pct_b_now, sqz_status, trend, rs_label, rs_slope_label
     )
 
-    eff_total = get_effective_total_asset(_te, user_total_asset)
-    curr_w, targ_w = get_effective_weights(name, ticker, user_curr_w, user_targ_w)
-    buy_amount = get_effective_buy_amount(name, ticker, eff_total, user_curr_w, user_targ_w)
-
-    price_vs_avg = ((cur_p / my_price) - 1) if my_price > 0 else 0.0
-    weight_gap = targ_w - curr_w
-    effective_bucket = get_effective_bucket(name, ticker)
-    is_core_etf = is_etf and effective_bucket == "core"
-    is_zero_target_holding = has_pos and curr_w > 0 and targ_w <= 0
-    is_leveraged_or_inverse = is_leveraged_or_inverse_product(name, ticker, asset_class)
-    is_concentrated_etf = is_etf and is_concentrated_non_core_etf(name, ticker, asset_class)
-    is_concentrated_upper_wait = (
-        is_concentrated_etf and (
-            current_dd > -0.03
-            or pct_b_now >= 0.95
-            or rsi_now >= 68
-            or (ma20_now > 0 and (cur_p / ma20_now - 1) >= 0.04)
-        )
-    )
-    is_tdf_or_fund = is_tdf_or_fund_allocation_product(name, ticker, asset_class)
-    leveraged_drop_ret = min(day_ret, live_gap_move) if finite_num(live_gap_move) else day_ret
-    is_leveraged_daily_drop = is_leveraged_or_inverse and leveraged_drop_ret <= -0.08
-    is_leveraged_dca_candidate = (
-        is_etf and is_leveraged_or_inverse and has_pos and targ_w > 0 and weight_gap > 0
-    )
-    is_leveraged_dca_wait_high = (
-        is_leveraged_dca_candidate and (
-            current_dd > -0.10 or
-            pct_b_now >= 0.85 or
-            price_vs_avg > -0.03 or
-            day_ret >= 0.08
-        )
-    )
-    is_leveraged_dca_conditional = (
-        is_leveraged_dca_candidate and
-        not is_leveraged_dca_wait_high and
-        _fmr < 4.5 and
-        trend != "🌊역배열(하락)" and
-        (current_dd <= -0.10 or price_vs_avg <= -0.03 or pct_b_now < 0.75)
-    )
-    is_holding_upper_pullback_wait = (
-        has_pos and
-        (not is_etf) and
-        adj_tech_score >= 4 and
-        cur_p <= my_price and
-        curr_w < targ_w and
-        has_down_session_pressure and
-        below_ma5 and
-        current_dd > -0.10 and
-        pct_b_now >= 0.60
-    )
-    core_dca_context = build_core_dca_context(
-        app_mode, is_core_etf, name, ticker, asset_class, weight_gap, buy_amount,
-        current_dd, rsi_now, mfi_now, pct_b_now, trend,
+    position_context = build_position_management_context(
+        name=name,
+        ticker=ticker,
+        asset_class=asset_class,
+        is_etf=is_etf,
+        has_pos=has_pos,
+        my_price=my_price,
+        cur_p=cur_p,
+        total_eval_value=_te,
+        user_total_asset=user_total_asset,
+        user_curr_w=user_curr_w,
+        user_targ_w=user_targ_w,
+        current_dd=current_dd,
+        pct_b_now=pct_b_now,
+        rsi_now=rsi_now,
+        mfi_now=mfi_now,
+        ma20_now=ma20_now,
+        day_ret=day_ret,
+        live_gap_move=live_gap_move,
+        trend=trend,
+        app_mode=app_mode,
+        macro_risk_value=_fmr,
+        adj_tech_score=adj_tech_score,
+        has_down_session_pressure=has_down_session_pressure,
+        below_ma5=below_ma5,
         cash_available_snapshot=_cash_available,
         reserve_available_snapshot=_reserve_available,
-        final_macro_risk_value=_fmr,
     )
-    core_dca_rate = clean_float(core_dca_context.get("core_dca_rate"), 0.0)
-    is_core_dca_allowed = core_dca_rate > 0 and targ_w > 0 and weight_gap > 0
+    eff_total = position_context["eff_total"]
+    curr_w = position_context["curr_w"]
+    targ_w = position_context["targ_w"]
+    buy_amount = position_context["buy_amount"]
+    price_vs_avg = position_context["price_vs_avg"]
+    weight_gap = position_context["weight_gap"]
+    effective_bucket = position_context["effective_bucket"]
+    is_core_etf = position_context["is_core_etf"]
+    is_zero_target_holding = position_context["is_zero_target_holding"]
+    is_leveraged_or_inverse = position_context["is_leveraged_or_inverse"]
+    is_concentrated_etf = position_context["is_concentrated_etf"]
+    is_concentrated_upper_wait = position_context["is_concentrated_upper_wait"]
+    is_tdf_or_fund = position_context["is_tdf_or_fund"]
+    leveraged_drop_ret = position_context["leveraged_drop_ret"]
+    is_leveraged_daily_drop = position_context["is_leveraged_daily_drop"]
+    is_leveraged_dca_candidate = position_context["is_leveraged_dca_candidate"]
+    is_leveraged_dca_wait_high = position_context["is_leveraged_dca_wait_high"]
+    is_leveraged_dca_conditional = position_context["is_leveraged_dca_conditional"]
+    is_holding_upper_pullback_wait = position_context["is_holding_upper_pullback_wait"]
+    core_dca_context = position_context["core_dca_context"]
+    core_dca_rate = position_context["core_dca_rate"]
+    is_core_dca_allowed = position_context["is_core_dca_allowed"]
 
 
     is_stock_add_on_strength = (
