@@ -3659,7 +3659,13 @@ def load_swing_radar_db_safe():
         return dataframe_from_rows([], SWING_RADAR_COLUMNS), None
 
     try:
-        res = supabase.table("swing_radar").select(",".join(SWING_RADAR_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL).execute()
+        res = run_supabase(
+            supabase.table("swing_radar").select(",".join(SWING_RADAR_COLUMNS)).eq("owner_email", CURRENT_USER_EMAIL),
+            "load swing radar",
+            stop_on_error=False,
+        )
+        if res is None:
+            return dataframe_from_rows([], SWING_RADAR_COLUMNS), "스윙 레이더를 불러오지 못했습니다."
         return dataframe_from_rows(res.data, SWING_RADAR_COLUMNS), None
     except Exception as e:
         return dataframe_from_rows([], SWING_RADAR_COLUMNS), str(e)
@@ -3693,35 +3699,39 @@ def save_swing_radar_db_safe(df):
         if duplicate_keys:
             return False, f"스윙 레이더에 같은 티커가 여러 줄 있습니다: {', '.join(duplicate_keys)}"
 
-        existing_res = (
-            supabase.table("swing_radar")
-            .select("ticker")
-            .eq("owner_email", CURRENT_USER_EMAIL)
-            .execute()
+        existing_res = run_supabase(
+            supabase.table("swing_radar").select("ticker").eq("owner_email", CURRENT_USER_EMAIL),
+            "load existing swing radar before save",
+            stop_on_error=False,
         )
+        if existing_res is None:
+            return False, "기존 스윙 후보를 불러오지 못했습니다. DB 연결을 확인한 뒤 다시 저장해 주세요."
+
         existing_tickers = [
             sanitize_ticker_value(row.get("ticker", ""))
             for row in (existing_res.data or [])
             if sanitize_ticker_value(row.get("ticker", ""))
         ]
 
-        supabase.table("swing_radar").upsert(rows, on_conflict="owner_email,ticker").execute()
+        upsert_res = run_supabase(
+            supabase.table("swing_radar").upsert(rows, on_conflict="owner_email,ticker"),
+            "upsert swing radar",
+            stop_on_error=False,
+        )
+        if upsert_res is None:
+            return False, "스윙 후보 저장에 실패했습니다. DB 연결을 확인한 뒤 다시 저장해 주세요."
 
         new_keys = {normalize_ticker(row["ticker"]) for row in rows}
-        failed_deletes = []
-        for ticker in existing_tickers:
-            if normalize_ticker(ticker) in new_keys:
-                continue
-            try:
-                (
-                    supabase.table("swing_radar")
-                    .delete()
-                    .eq("owner_email", CURRENT_USER_EMAIL)
-                    .eq("ticker", ticker)
-                    .execute()
-                )
-            except Exception:
-                failed_deletes.append(ticker)
+        failed_deletes = delete_removed_supabase_rows(
+            existing_tickers,
+            new_keys,
+            key_fn=lambda item: normalize_ticker(item),
+            delete_query_fn=lambda item: supabase.table("swing_radar").delete()
+            .eq("owner_email", CURRENT_USER_EMAIL)
+            .eq("ticker", item),
+            action_fn=lambda item: f"delete removed swing radar item {item}",
+            label_fn=lambda item: item,
+        )
 
         if failed_deletes:
             st.error(

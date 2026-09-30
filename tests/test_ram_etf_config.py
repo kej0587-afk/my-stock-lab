@@ -285,6 +285,79 @@ def test_save_watchlist_returns_false_when_removed_row_delete_fails(app_module, 
     assert result is False
 
 
+def test_save_swing_radar_returns_false_when_removed_row_delete_fails(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+        def upsert(self, *args, **kwargs):
+            return self
+
+        def delete(self, *args, **kwargs):
+            return self
+
+    class _FakeSupabase:
+        def table(self, *args, **kwargs):
+            return _FakeQuery()
+
+    class _FakeResult:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    def fake_run_supabase(query, action="Supabase operation", stop_on_error=True):
+        assert stop_on_error is False
+        if action == "load existing swing radar before save":
+            return _FakeResult([{"ticker": "KEEP"}, {"ticker": "OLD"}])
+        if action == "upsert swing radar":
+            return _FakeResult([])
+        if action.startswith("delete removed swing radar item"):
+            return None
+        return _FakeResult([])
+
+    monkeypatch.setattr(app_module, "IS_PUBLIC_DEMO", False)
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "tester@example.com")
+    monkeypatch.setattr(app_module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(app_module, "run_supabase", fake_run_supabase)
+    monkeypatch.setattr(app_module.st, "error", lambda *args, **kwargs: None)
+
+    result, message = app_module.save_swing_radar_db_safe(pd.DataFrame([
+        {
+            "ticker": "KEEP",
+            "name": "Keep",
+            "status": "진행",
+        }
+    ]))
+
+    assert result is False
+    assert "OLD" in message
+
+
+def test_load_swing_radar_returns_message_when_soft_load_fails(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+    class _FakeSupabase:
+        def table(self, *args, **kwargs):
+            return _FakeQuery()
+
+    monkeypatch.setattr(app_module, "IS_PUBLIC_DEMO", False)
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "tester@example.com")
+    monkeypatch.setattr(app_module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(app_module, "run_supabase", lambda *args, **kwargs: None)
+
+    df, message = app_module.load_swing_radar_db_safe()
+
+    assert df.empty
+    assert message == "스윙 레이더를 불러오지 못했습니다."
+
+
 def test_ram_recovery_dca_low_rr_is_first_tranche_only(app_module):
     state = {
         "profile_key": "RAM",
