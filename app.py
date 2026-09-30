@@ -1399,18 +1399,11 @@ except ImportError:
         except Exception:
             return 0.0
 from stock_lab_core.portfolio import (
-    PORTFOLIO_ADD_ACTIONS,
-    PORTFOLIO_CAUTION_ACTIONS,
     append_cash_rows,
     apply_holdings_weight_columns,
     build_asset_overview_dashboard_state,
     build_benchmark_return_df,
     build_cash_buffer_scenario,
-    build_portfolio_market_alignment_brief,
-    build_portfolio_next_check_candidates_df_from_inputs,
-    build_portfolio_next_check_summary,
-    build_portfolio_rebalance_playbook_df,
-    build_portfolio_recommendation_df_from_inputs,
     build_market_scenario_summary,
     build_monthly_record_status,
     build_scenario_context,
@@ -1422,10 +1415,89 @@ from stock_lab_core.portfolio import (
     make_cash_rows,
     merge_portfolio_signal_details,
     parse_month_end_date,
-    _enrich_portfolio_alignment_with_action_df,
-    _portfolio_alignment_names,
     prepare_monthly_performance_df,
 )
+try:
+    from stock_lab_core.portfolio import (
+        PORTFOLIO_ADD_ACTIONS,
+        PORTFOLIO_CAUTION_ACTIONS,
+        build_portfolio_market_alignment_brief,
+        build_portfolio_next_check_candidates_df_from_inputs,
+        build_portfolio_next_check_summary,
+        build_portfolio_rebalance_playbook_df,
+        build_portfolio_recommendation_df_from_inputs,
+        _enrich_portfolio_alignment_with_action_df,
+        _portfolio_alignment_names,
+    )
+    PORTFOLIO_ALIGNMENT_IMPORT_ERROR = ""
+except Exception as _portfolio_alignment_import_error:
+    PORTFOLIO_ALIGNMENT_IMPORT_ERROR = repr(_portfolio_alignment_import_error)
+    logging.warning(
+        "portfolio alignment helpers unavailable; using limited local fallback: %s",
+        PORTFOLIO_ALIGNMENT_IMPORT_ERROR,
+    )
+    PORTFOLIO_ADD_ACTIONS = frozenset({
+        "비중확대 후보",
+        "계획적 적립",
+        "조건부 소액",
+        "별도 소액",
+        "눌림 시 분할",
+        "관찰 후 소액",
+        "직접흐름 확인",
+    })
+    PORTFOLIO_CAUTION_ACTIONS = frozenset({
+        "신규중단",
+        "유지·추격금지",
+        "유지·신규중단",
+        "보유점검",
+        "별도관리",
+        "관망",
+        "축소/교체 후보",
+    })
+
+    def _portfolio_alignment_names(df, limit=3):
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return "-"
+        names = []
+        for _, row in df.head(limit).iterrows():
+            label = str(row.get("티커", "") or row.get("자산", "") or "").strip()
+            if label and label not in names:
+                names.append(label)
+        return ", ".join(names) if names else "-"
+
+    def _enrich_portfolio_alignment_with_action_df(align_df, action_df):
+        return align_df
+
+    def build_portfolio_market_alignment_brief(align_df):
+        if not isinstance(align_df, pd.DataFrame) or align_df.empty:
+            return {}
+        work = align_df.copy()
+        weights = work.get("현재비중", pd.Series(0.0, index=work.index)).apply(lambda v: clean_float(v, 0.0))
+        add_mask = work.get("포트판정", pd.Series("", index=work.index)).astype(str).isin(PORTFOLIO_ADD_ACTIONS)
+        caution_mask = work.get("포트판정", pd.Series("", index=work.index)).astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)
+        return {
+            "headline": "포트폴리오 매칭 계산 helper를 불러오지 못해 기본 요약만 표시합니다.",
+            "add_names": _portfolio_alignment_names(work[add_mask]),
+            "caution_names": _portfolio_alignment_names(work[caution_mask]),
+            "separate_names": "-",
+            "direct_names": "-",
+            "add_weight": float(weights[add_mask].sum()) if len(weights) else 0.0,
+            "caution_weight": float(weights[caution_mask].sum()) if len(weights) else 0.0,
+            "separate_weight": 0.0,
+            "direct_weight": 0.0,
+        }
+
+    def build_portfolio_rebalance_playbook_df(*_args, **_kwargs):
+        return pd.DataFrame()
+
+    def build_portfolio_recommendation_df_from_inputs(*_args, **_kwargs):
+        return pd.DataFrame()
+
+    def build_portfolio_next_check_candidates_df_from_inputs(*_args, **_kwargs):
+        return pd.DataFrame()
+
+    def build_portfolio_next_check_summary(_candidates):
+        return ""
 try:
     from stock_lab_core.portfolio import (
         add_portfolio_risk_note,
