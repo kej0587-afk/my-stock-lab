@@ -164,6 +164,28 @@ def test_save_holdings_returns_false_when_removed_row_delete_fails(app_module, m
     assert result is False
 
 
+def test_delete_removed_supabase_rows_collects_failed_items(app_module, monkeypatch):
+    class _FakeQuery:
+        pass
+
+    def fake_run_supabase(query, action="Supabase operation", stop_on_error=True):
+        assert stop_on_error is False
+        return None if query == "delete:B" else object()
+
+    monkeypatch.setattr(app_module, "run_supabase", fake_run_supabase)
+
+    failed = app_module.delete_removed_supabase_rows(
+        ["A", "B", "C"],
+        {"A"},
+        key_fn=lambda item: item,
+        delete_query_fn=lambda item: f"delete:{item}",
+        action_fn=lambda item: f"delete {item}",
+        label_fn=lambda item: item,
+    )
+
+    assert failed == ["B"]
+
+
 def test_save_monthly_logs_returns_false_when_removed_row_delete_fails(app_module, monkeypatch):
     class _FakeQuery:
         def select(self, *args, **kwargs):

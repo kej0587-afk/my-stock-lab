@@ -3033,6 +3033,29 @@ def init_db():
         )
 
 
+def delete_removed_supabase_rows(existing_items, kept_keys, key_fn, delete_query_fn, action_fn, label_fn):
+    failed = []
+    for item in existing_items:
+        if key_fn(item) in kept_keys:
+            continue
+        res = run_supabase(
+            delete_query_fn(item),
+            action_fn(item),
+            stop_on_error=False,
+        )
+        if res is None:
+            failed.append(str(label_fn(item)))
+    return failed
+
+
+def fail_save_on_delete_errors(failed_deletes, message, clear_cache_fn):
+    if not failed_deletes:
+        return False
+    st.error(f"{message}{', '.join(str(x) for x in failed_deletes)}")
+    clear_cache_fn.clear()
+    return True
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def load_settings_db_for_user(owner_email):
     if IS_PUBLIC_DEMO:
@@ -3192,27 +3215,18 @@ def save_holdings_db(df):
         f"{normalize_ticker(row['ticker'])}|{normalize_text(row.get('account_type', '일반'))}"
         for row in rows
     }
-    removed_holdings = [
-        (ticker, account_type)
-        for ticker, account_type in existing_holdings
-        if f"{normalize_ticker(ticker)}|{normalize_text(account_type)}" not in new_keys
-    ]
-    failed_deletes = []
-    for ticker, account_type in removed_holdings:
-        res = run_supabase(
-            supabase.table("holdings").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker).eq("account_type", account_type),
-            f"delete removed holding {ticker}/{account_type}",
-            stop_on_error=False,
-        )
-        if res is None:
-            failed_deletes.append(f"{ticker}({account_type})")
-
-    if failed_deletes:
-        st.error(
-            "일부 삭제된 보유자산 행을 지우지 못했습니다. 표를 확인한 뒤 다시 저장해 주세요: "
-            f"{', '.join(failed_deletes)}"
-        )
-        load_holdings_db_for_user.clear()
+    failed_deletes = delete_removed_supabase_rows(
+        existing_holdings,
+        new_keys,
+        key_fn=lambda item: f"{normalize_ticker(item[0])}|{normalize_text(item[1])}",
+        delete_query_fn=lambda item: supabase.table("holdings").delete()
+        .eq("owner_email", CURRENT_USER_EMAIL)
+        .eq("ticker", item[0])
+        .eq("account_type", item[1]),
+        action_fn=lambda item: f"delete removed holding {item[0]}/{item[1]}",
+        label_fn=lambda item: f"{item[0]}({item[1]})",
+    )
+    if fail_save_on_delete_errors(failed_deletes, "일부 삭제된 보유자산 행을 지우지 못했습니다. 표를 확인한 뒤 다시 저장해 주세요: ", load_holdings_db_for_user):
         return False
 
     load_holdings_db_for_user.clear()
@@ -3294,25 +3308,18 @@ def save_dividends_db(df):
     if rows_to_insert:
         run_supabase(supabase.table("dividends").insert(rows_to_insert), "insert new dividends")
 
-    failed_deletes = []
     kept_ids = set(kept_existing_ids)
-    for row_id in existing_ids:
-        if row_id in kept_ids:
-            continue
-        res = run_supabase(
-            supabase.table("dividends").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("id", row_id),
-            f"delete removed dividend {row_id}",
-            stop_on_error=False,
-        )
-        if res is None:
-            failed_deletes.append(row_id)
-
-    if failed_deletes:
-        st.error(
-            "일부 삭제된 배당 내역을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
-            f"{', '.join(str(x) for x in failed_deletes)}"
-        )
-        load_dividends_db_for_user.clear()
+    failed_deletes = delete_removed_supabase_rows(
+        existing_ids,
+        kept_ids,
+        key_fn=lambda item: item,
+        delete_query_fn=lambda item: supabase.table("dividends").delete()
+        .eq("owner_email", CURRENT_USER_EMAIL)
+        .eq("id", item),
+        action_fn=lambda item: f"delete removed dividend {item}",
+        label_fn=lambda item: item,
+    )
+    if fail_save_on_delete_errors(failed_deletes, "일부 삭제된 배당 내역을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. ", load_dividends_db_for_user):
         return False
 
     load_dividends_db_for_user.clear()
@@ -3383,24 +3390,17 @@ def save_monthly_logs_db(df):
     )
 
     new_months = {row["month"] for row in rows}
-    failed_deletes = []
-    for month in existing_months:
-        if month in new_months:
-            continue
-        res = run_supabase(
-            supabase.table("monthly_logs").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("month", month),
-            f"delete removed monthly log {month}",
-            stop_on_error=False,
-        )
-        if res is None:
-            failed_deletes.append(month)
-
-    if failed_deletes:
-        st.error(
-            "일부 삭제된 월별 로그를 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
-            f"{', '.join(failed_deletes)}"
-        )
-        load_monthly_logs_db_for_user.clear()
+    failed_deletes = delete_removed_supabase_rows(
+        existing_months,
+        new_months,
+        key_fn=lambda item: item,
+        delete_query_fn=lambda item: supabase.table("monthly_logs").delete()
+        .eq("owner_email", CURRENT_USER_EMAIL)
+        .eq("month", item),
+        action_fn=lambda item: f"delete removed monthly log {item}",
+        label_fn=lambda item: item,
+    )
+    if fail_save_on_delete_errors(failed_deletes, "일부 삭제된 월별 로그를 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. ", load_monthly_logs_db_for_user):
         return False
 
     load_monthly_logs_db_for_user.clear()
@@ -3515,24 +3515,17 @@ def save_watchlist_db(watchlist):
     )
 
     new_keys = {normalize_ticker(row["ticker"]) for row in rows}
-    failed_deletes = []
-    for ticker in existing_tickers:
-        if normalize_ticker(ticker) in new_keys:
-            continue
-        res = run_supabase(
-            supabase.table("watchlist").delete().eq("owner_email", CURRENT_USER_EMAIL).eq("ticker", ticker),
-            f"delete removed watchlist item {ticker}",
-            stop_on_error=False,
-        )
-        if res is None:
-            failed_deletes.append(ticker)
-
-    if failed_deletes:
-        st.error(
-            "일부 제거된 관심종목을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요: "
-            f"{', '.join(failed_deletes)}"
-        )
-        load_watchlist_db_for_user.clear()
+    failed_deletes = delete_removed_supabase_rows(
+        existing_tickers,
+        new_keys,
+        key_fn=lambda item: normalize_ticker(item),
+        delete_query_fn=lambda item: supabase.table("watchlist").delete()
+        .eq("owner_email", CURRENT_USER_EMAIL)
+        .eq("ticker", item),
+        action_fn=lambda item: f"delete removed watchlist item {item}",
+        label_fn=lambda item: item,
+    )
+    if fail_save_on_delete_errors(failed_deletes, "일부 제거된 관심종목을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요: ", load_watchlist_db_for_user):
         return False
 
     load_watchlist_db_for_user.clear()
