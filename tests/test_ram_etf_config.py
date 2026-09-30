@@ -1,3 +1,5 @@
+import pandas as pd
+
 from stock_lab_core.constants import (
     CONCENTRATED_NON_CORE_ETFS,
     KNOWN_KR_ETF_SYMBOLS,
@@ -103,6 +105,162 @@ def test_lwc_baseline_benchmark_resolves_region_specific_duplicate_sector_names(
 def test_news_category_order_is_imported_for_macro_event_sort(app_module):
     assert app_module.NEWS_CATEGORY_ORDER
     assert "NEWS_CATEGORY_ORDER" in app_module.__dict__
+
+
+def test_save_holdings_returns_false_when_removed_row_delete_fails(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+        def upsert(self, *args, **kwargs):
+            return self
+
+        def delete(self, *args, **kwargs):
+            return self
+
+    class _FakeSupabase:
+        def table(self, *args, **kwargs):
+            return _FakeQuery()
+
+    class _FakeResult:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    def fake_run_supabase(query, action="Supabase operation", stop_on_error=True):
+        if action == "load existing holdings before save":
+            return _FakeResult([
+                {"ticker": "KEEP", "account_type": "일반"},
+                {"ticker": "OLD", "account_type": "일반"},
+            ])
+        if action == "upsert holdings":
+            return _FakeResult([])
+        if action.startswith("delete removed holding"):
+            return None
+        return _FakeResult([])
+
+    monkeypatch.setattr(app_module, "IS_PUBLIC_DEMO", False)
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "tester@example.com")
+    monkeypatch.setattr(app_module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(app_module, "run_supabase", fake_run_supabase)
+    monkeypatch.setattr(app_module.st, "error", lambda *args, **kwargs: None)
+
+    result = app_module.save_holdings_db(pd.DataFrame([
+        {
+            "ticker": "KEEP",
+            "name": "Keep",
+            "qty": 1,
+            "avg_price": 10,
+            "target_weight": 5,
+            "asset_class": "us_stock",
+            "is_etf": False,
+            "bucket": "core",
+            "account_type": "일반",
+        }
+    ]))
+
+    assert result is False
+
+
+def test_save_monthly_logs_returns_false_when_removed_row_delete_fails(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+        def upsert(self, *args, **kwargs):
+            return self
+
+        def delete(self, *args, **kwargs):
+            return self
+
+    class _FakeSupabase:
+        def table(self, *args, **kwargs):
+            return _FakeQuery()
+
+    class _FakeResult:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    def fake_run_supabase(query, action="Supabase operation", stop_on_error=True):
+        if action == "load existing monthly logs before save":
+            return _FakeResult([{"month": "2026-08"}, {"month": "2026-09"}])
+        if action == "upsert monthly logs":
+            return _FakeResult([])
+        if action.startswith("delete removed monthly log"):
+            return None
+        return _FakeResult([])
+
+    monkeypatch.setattr(app_module, "IS_PUBLIC_DEMO", False)
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "tester@example.com")
+    monkeypatch.setattr(app_module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(app_module, "run_supabase", fake_run_supabase)
+    monkeypatch.setattr(app_module.st, "error", lambda *args, **kwargs: None)
+
+    result = app_module.save_monthly_logs_db(pd.DataFrame([
+        {
+            "month": "2026-09",
+            "total_invested": 100,
+            "evaluated_value": 120,
+            "dividend": 1,
+        }
+    ]))
+
+    assert result is False
+
+
+def test_save_watchlist_returns_false_when_removed_row_delete_fails(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+        def upsert(self, *args, **kwargs):
+            return self
+
+        def delete(self, *args, **kwargs):
+            return self
+
+    class _FakeSupabase:
+        def table(self, *args, **kwargs):
+            return _FakeQuery()
+
+    class _FakeResult:
+        def __init__(self, data=None):
+            self.data = data or []
+
+    def fake_run_supabase(query, action="Supabase operation", stop_on_error=True):
+        if action == "load existing watchlist before save":
+            return _FakeResult([{"ticker": "KEEP"}, {"ticker": "OLD"}])
+        if action == "upsert watchlist":
+            return _FakeResult([])
+        if action.startswith("delete removed watchlist item"):
+            return None
+        return _FakeResult([])
+
+    monkeypatch.setattr(app_module, "IS_PUBLIC_DEMO", False)
+    monkeypatch.setattr(app_module, "CURRENT_USER_EMAIL", "tester@example.com")
+    monkeypatch.setattr(app_module, "supabase", _FakeSupabase())
+    monkeypatch.setattr(app_module, "run_supabase", fake_run_supabase)
+    monkeypatch.setattr(app_module.st, "error", lambda *args, **kwargs: None)
+
+    result = app_module.save_watchlist_db([
+        {
+            "ticker": "KEEP",
+            "name": "Keep",
+            "is_etf": False,
+            "asset_class": "us_stock",
+            "fin_score": 3,
+        }
+    ])
+
+    assert result is False
 
 
 def test_ram_recovery_dca_low_rr_is_first_tranche_only(app_module):

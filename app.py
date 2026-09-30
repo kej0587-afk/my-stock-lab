@@ -3208,10 +3208,12 @@ def save_holdings_db(df):
             failed_deletes.append(f"{ticker}({account_type})")
 
     if failed_deletes:
-        st.warning(
+        st.error(
             "일부 삭제된 보유자산 행을 지우지 못했습니다. 표를 확인한 뒤 다시 저장해 주세요: "
             f"{', '.join(failed_deletes)}"
         )
+        load_holdings_db_for_user.clear()
+        return False
 
     load_holdings_db_for_user.clear()
     return True
@@ -3306,10 +3308,12 @@ def save_dividends_db(df):
             failed_deletes.append(row_id)
 
     if failed_deletes:
-        st.warning(
+        st.error(
             "일부 삭제된 배당 내역을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
             f"{', '.join(str(x) for x in failed_deletes)}"
         )
+        load_dividends_db_for_user.clear()
+        return False
 
     load_dividends_db_for_user.clear()
     return True
@@ -3392,10 +3396,12 @@ def save_monthly_logs_db(df):
             failed_deletes.append(month)
 
     if failed_deletes:
-        st.warning(
+        st.error(
             "일부 삭제된 월별 로그를 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요. "
             f"{', '.join(failed_deletes)}"
         )
+        load_monthly_logs_db_for_user.clear()
+        return False
 
     load_monthly_logs_db_for_user.clear()
     return True
@@ -3522,10 +3528,12 @@ def save_watchlist_db(watchlist):
             failed_deletes.append(ticker)
 
     if failed_deletes:
-        st.warning(
+        st.error(
             "일부 제거된 관심종목을 지우지 못했습니다. 목록을 확인한 뒤 다시 저장해 주세요: "
             f"{', '.join(failed_deletes)}"
         )
+        load_watchlist_db_for_user.clear()
+        return False
 
     load_watchlist_db_for_user.clear()
     return True
@@ -3723,11 +3731,11 @@ def save_swing_radar_db_safe(df):
                 failed_deletes.append(ticker)
 
         if failed_deletes:
-            st.warning(
+            st.error(
                 "일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요. "
                 f"{', '.join(failed_deletes)}"
             )
-            return True, f"일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요: {', '.join(failed_deletes)}"
+            return False, f"일부 삭제된 스윙 후보를 지우지 못했습니다. 다시 저장해 주세요: {', '.join(failed_deletes)}"
 
         return True, ""
     except Exception as e:
