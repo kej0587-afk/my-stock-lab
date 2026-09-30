@@ -142,9 +142,12 @@ def test_today_queue_exports_used_by_app():
         "stock_lab_core.today_queue",
         [
             "TODAY_QUEUE_DEFENSE_TEXT_RE",
+            "TODAY_QUEUE_LOGIC_VERSION",
             "apply_leveraged_dca_dashboard_override",
             "build_dashboard_final_read",
             "build_today_queue_execution_snapshot",
+            "build_today_queue_signature",
+            "clear_today_queue_summary_snapshot",
             "format_dashboard_candidate_grade",
             "format_dashboard_reason",
             "format_dashboard_timing_label",
@@ -155,6 +158,9 @@ def test_today_queue_exports_used_by_app():
             "leveraged_market_defense_mask",
             "leveraged_recovery_tracking_mask",
             "leveraged_scout_execution_mask",
+            "load_today_queue_summary_snapshot",
+            "save_today_queue_summary_snapshot",
+            "sort_today_queue_detail_table",
             "today_queue_reason_bucket",
             "today_queue_wait_mask",
         ],
@@ -182,6 +188,54 @@ def test_today_flow_candidates_exports_used_by_app():
         [
             "classify_flow_candidate_type",
             "normalize_money_flow_state",
+        ],
+    )
+
+
+def test_money_flow_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.money_flow",
+        [
+            "ETF_TO_THEME",
+            "IMAGE_THEME_META",
+            "SECTOR_CLUSTERS",
+            "SECTOR_CLUSTERS_KR",
+            "SECTOR_CLUSTERS_US",
+            "calculate_image_theme_flow_df",
+            "calculate_image_theme_group_df",
+            "calculate_image_theme_rotation_df",
+            "calculate_money_flow_df",
+            "calculate_rotation_df",
+            "calculate_sector_rotation_df",
+            "classify_money_flow_state",
+            "download_money_flow_prices",
+            "fetch_naver_theme_coverage_snapshot",
+            "get_image_theme_names",
+            "get_sector_flow_state",
+        ],
+    )
+
+
+def test_sector_snapshot_exports_used_by_app():
+    _assert_exports("stock_lab_core.kr_sector_snapshot", ["build_kr_cluster_snapshot"])
+    _assert_exports("stock_lab_core.us_sector_snapshot", ["build_us_cluster_snapshot"])
+
+
+def test_prices_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.prices",
+        [
+            "_extract_yahoo_overnight_price_from_html",
+            "_fetch_yahoo_regular_close_price",
+            "_us_equity_market_closed_today",
+            "clear_latest_price_cache",
+            "clear_selected_price_cache",
+            "enable_force_live_price_refresh",
+            "load_latest_price",
+            "load_latest_prices_batch",
+            "load_price_df",
+            "load_usdkrw_rate",
+            "normalize_price_lookup_key",
         ],
     )
 

@@ -120,94 +120,17 @@ from stock_lab_core.asset_classifier import (
     normalize_individual_stock_asset_class,
     resolve_effective_investment_bucket,
 )
-try:
-    from stock_lab_core.swing_radar import (
-        build_swing_radar_df as _build_swing_radar_df_core,
-        fill_empty_swing_templates,
-        get_swing_editor_base_key,
-        is_swing_candidate_allowed,
-        is_swing_excluded_ticker,
-        make_swing_candidate_row,
-        merge_swing_editor_with_saved,
-        remove_swing_row,
-        set_swing_row_status,
-    )
-    SWING_RADAR_HELPERS_IMPORT_ERROR = ""
-except Exception as _swing_radar_helpers_import_error:
-    SWING_RADAR_HELPERS_IMPORT_ERROR = repr(_swing_radar_helpers_import_error)
-    logging.warning(
-        "stock_lab_core.swing_radar unavailable; using limited local fallback: %s",
-        SWING_RADAR_HELPERS_IMPORT_ERROR,
-    )
-
-    def make_swing_candidate_row(name, ticker, asset_class="", is_etf=False):
-        row = {col: "" for col in SWING_RADAR_COLUMNS}
-        row.update({
-            "ticker": str(ticker).strip(),
-            "name": str(name or ticker).strip(),
-            "asset_class": str(asset_class or "").strip(),
-            "status": "진행",
-            "decision": "관망",
-            "importance": "중",
-            "last_checked": pd.Timestamp.today().strftime("%Y-%m-%d"),
-        })
-        return row
-
-    def fill_empty_swing_templates(df):
-        return dataframe_from_rows(df, SWING_RADAR_COLUMNS) if df is not None else dataframe_from_rows([], SWING_RADAR_COLUMNS)
-
-    def set_swing_row_status(df, ticker, status):
-        work = dataframe_from_rows(df, SWING_RADAR_COLUMNS).copy()
-        key = normalize_ticker(ticker)
-        if not work.empty:
-            mask = work["ticker"].apply(normalize_ticker) == key
-            work.loc[mask, "status"] = status
-            work.loc[mask, "last_checked"] = pd.Timestamp.today().strftime("%Y-%m-%d")
-        return dataframe_from_rows(work, SWING_RADAR_COLUMNS)
-
-    def remove_swing_row(df, ticker):
-        work = dataframe_from_rows(df, SWING_RADAR_COLUMNS).copy()
-        key = normalize_ticker(ticker)
-        if not work.empty:
-            work = work[work["ticker"].apply(normalize_ticker) != key]
-        return dataframe_from_rows(work, SWING_RADAR_COLUMNS)
-
-    def is_swing_excluded_ticker(ticker):
-        key = normalize_ticker(ticker)
-        return (not key) or key in RESERVE_TICKERS or key in {"krw_cash", "usd_cash", "cash"}
-
-    def is_swing_candidate_allowed(ticker, is_etf=False, bucket="", asset_class="", include_etf=False):
-        if is_swing_excluded_ticker(ticker):
-            return False
-        if normalize_bucket(infer_bucket(ticker, bucket)) in RESERVE_BUCKETS:
-            return False
-        asset_class_text = str(asset_class or "").strip().lower()
-        if asset_class_text in ["cash", "reserve", "krw_cash", "usd_cash"]:
-            return False
-        if (not include_etf) and is_fin_score_exempt_asset(ticker, is_etf, asset_class_text):
-            return False
-        return True
-
-    def _build_swing_radar_df_core(saved_df, *, auto_candidates=None, include_hidden=False, include_auto=True):
-        rows = []
-        if saved_df is not None and not saved_df.empty:
-            rows.extend(saved_df.to_dict("records"))
-        if include_auto:
-            known = {normalize_ticker(row.get("ticker", "")) for row in rows}
-            for key, item in (auto_candidates or {}).items():
-                if key not in known:
-                    rows.append(make_swing_candidate_row(item.get("name"), item.get("ticker"), item.get("asset_class", ""), item.get("is_etf", False)))
-        df = dataframe_from_rows(rows, SWING_RADAR_COLUMNS)
-        if not include_hidden and not df.empty:
-            df = df[df["status"].astype(str).str.strip() != "숨김"]
-        return dataframe_from_rows(df, SWING_RADAR_COLUMNS)
-
-    def merge_swing_editor_with_saved(saved_df, edited_df, visible_df):
-        return dataframe_from_rows(edited_df if edited_df is not None else saved_df, SWING_RADAR_COLUMNS)
-
-    def get_swing_editor_base_key(df, show_hidden, include_auto, include_etf):
-        ticker_part = "empty" if df is None or df.empty else "|".join(df["ticker"].astype(str).apply(normalize_ticker).fillna("").tolist())
-        return f"{show_hidden}|{include_auto}|{include_etf}|{ticker_part}"
+from stock_lab_core.swing_radar import (
+    build_swing_radar_df as _build_swing_radar_df_core,
+    fill_empty_swing_templates,
+    get_swing_editor_base_key,
+    is_swing_candidate_allowed,
+    is_swing_excluded_ticker,
+    make_swing_candidate_row,
+    merge_swing_editor_with_saved,
+    remove_swing_row,
+    set_swing_row_status,
+)
 from stock_lab_core.financial_score import (
     estimate_kr_fin_score_from_naver_snapshot,
     resolve_fin_score_source,
@@ -247,473 +170,30 @@ from stock_lab_core.decision_engine import (
     score_technical_components,
     translate_new_entry_decision_for_holding as _translate_new_entry_decision_for_holding,
 )
-try:
-    from stock_lab_core.today_queue import (
-        TODAY_QUEUE_LOGIC_VERSION,
-        build_today_queue_execution_snapshot,
-        build_today_queue_signature,
-        clear_today_queue_summary_snapshot,
-        load_today_queue_summary_snapshot,
-        save_today_queue_summary_snapshot,
-    )
-    TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = ""
-except Exception as _today_queue_snapshot_import_error:
-    TODAY_QUEUE_LOGIC_VERSION = "20260928_leverage_recovery_bridge_v1"
-    TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR = repr(_today_queue_snapshot_import_error)
-    logging.warning(
-        "stock_lab_core.today_queue snapshot unavailable; using local fallback: %s",
-        TODAY_QUEUE_SNAPSHOT_IMPORT_ERROR,
-    )
-
-    def save_today_queue_summary_snapshot(summary_df, signature: str = "", last_run: str = "") -> None:
-        return None
-
-    def load_today_queue_summary_snapshot():
-        return pd.DataFrame(), "", ""
-
-    def clear_today_queue_summary_snapshot() -> None:
-        return None
-
-    def build_today_queue_signature(items, mode: str = "", *, logic_version: str = TODAY_QUEUE_LOGIC_VERSION) -> str:
-        return json.dumps(
-            {
-                "logic_version": str(logic_version or ""),
-                "mode": str(mode or ""),
-                "watchlist": [
-                    {
-                        "name": str(item.get("name", "")),
-                        "ticker": sanitize_ticker_value(item.get("ticker", "")),
-                        "is_etf": bool(item.get("is_etf", False)),
-                        "asset_class": str(item.get("asset_class", "")),
-                        "fin_score": item.get("fin_score"),
-                        "qty": clean_float(item.get("qty"), 0.0),
-                        "avg_price": clean_float(item.get("avg_price"), 0.0),
-                        "target_weight": clean_float(item.get("target_weight"), 0.0),
-                        "bucket": str(item.get("bucket", "")),
-                    }
-                    for item in items or []
-                    if isinstance(item, dict)
-                ],
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-
-    def build_today_queue_execution_snapshot(
-        name,
-        ticker,
-        decision,
-        *,
-        has_pos=False,
-        usdkrw_value=1400.0,
-        is_leveraged_product_fn=None,
-    ):
-        c = decision or {}
-        tkr = sanitize_ticker_value(ticker)
-        cur = clean_float(c.get("cur_p"), 0.0)
-        stop = clean_float(c.get("rr_stop"), 0.0)
-        target = clean_float(c.get("rr_target"), 0.0)
-        rr = clean_float(c.get("rr_ratio"), np.nan)
-        if cur > 0 and stop > 0 and target > cur and stop < cur:
-            rr = round((target - cur) / (cur - stop), 2)
-        target_text = format_currency(target, tkr) if target > 0 else "-"
-        stop_text = format_currency(stop, tkr) if stop > 0 else "-"
-        rr_text = f"{rr:.2f}" if finite_num(rr) and rr > 0 else "-"
-        buy_amt = clean_float(c.get("buy_amt"), 0.0)
-        if buy_amt > 0 and not is_kr_listed(tkr):
-            fx = clean_float(usdkrw_value, 1400.0) or 1400.0
-            amount_text = f"${buy_amt / fx:,.0f} (≈{buy_amt:,.0f}원)"
-        elif buy_amt > 0:
-            amount_text = f"{buy_amt:,.0f}원"
-        else:
-            amount_text = "-"
-        decision_code = str(c.get("decision_code", "") or "")
-        decision_label = str(c.get("dec", "") or "")
-        text = f"{decision_code} {decision_label}"
-        is_blocked = bool(re.search(
-            r"HARD_BLOCK|NO_ENTRY|NO_ADD|MACRO_STORM_HOLDING_CAUTION|진입\s*보류|진입보류|추매금지|추매중단|시장위험|보유점검|매수금지|원인점검|손절기준",
-            text,
-            flags=re.IGNORECASE,
-        ))
-        if is_blocked:
-            action = "방어/원인점검"
-            entry_text = "회복 후 재계산"
-            entry_cond = "차단 사유 해소 후 정밀관측소 확인"
-        elif re.search(r"WAIT|대기|관망|추격금지", text, flags=re.IGNORECASE):
-            action = "눌림/종가 확인"
-            entry_text = format_currency(cur, tkr) if cur > 0 else "데이터확인"
-            entry_cond = "종가 안정 후 재계산"
-        else:
-            action = "분할 가능"
-            entry_text = format_currency(cur, tkr) if cur > 0 else "데이터확인"
-            entry_cond = "현재가 부근 1차 정찰" if not has_pos else "현재 보유분 유지"
-        return {
-            "R/R": rr_text,
-            "차트목표": target_text,
-            "손절가": stop_text,
-            "1차기준": entry_text,
-            "1차조건": entry_cond,
-            "부족액": amount_text,
-            "실행메모": action,
-            "RR값": rr if finite_num(rr) else np.nan,
-        }
-
-try:
-    from stock_lab_core.today_queue import (
-        TODAY_QUEUE_DEFENSE_TEXT_RE,
-        apply_leveraged_dca_dashboard_override,
-        build_dashboard_final_read,
-        format_dashboard_candidate_grade,
-        format_dashboard_reason,
-        format_dashboard_timing_label,
-        is_dashboard_actionable_signal,
-        is_dashboard_block_or_wait_label,
-        is_dashboard_low_rr_caution,
-        is_today_queue_defense_signal,
-        leveraged_market_defense_mask as _leveraged_market_defense_mask,
-        leveraged_recovery_tracking_mask as _leveraged_recovery_tracking_mask,
-        leveraged_scout_execution_mask as _leveraged_scout_execution_mask,
-        sort_today_queue_detail_table,
-        today_queue_reason_bucket as _today_queue_reason_bucket,
-        today_queue_wait_mask as _today_queue_wait_mask,
-    )
-    TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = ""
-except Exception as _today_queue_classify_import_error:
-    TODAY_QUEUE_CLASSIFY_IMPORT_ERROR = repr(_today_queue_classify_import_error)
-    logging.warning(
-        "stock_lab_core.today_queue classify unavailable; using local fallback: %s",
-        TODAY_QUEUE_CLASSIFY_IMPORT_ERROR,
-    )
-
-    TODAY_QUEUE_DEFENSE_CODES = {
-        "PANIC_FINAL_DEPLOY",
-        "PANIC_CASH_DEPLOY",
-        "CRISIS_CORE_FOCUS",
-        "CRISIS_PANIC_SELL_OFF",
-        "DRAWDOWN_20_HOLDING_STOP_CHECK",
-        "DRAWDOWN_20_HOLDING_CAUSE_CHECK",
-        "DRAWDOWN_20_NO_ENTRY",
-        "DOWNTREND_NO_ENTRY",
-        "REVERSE_TREND_NO_ENTRY",
-        "STRONG_REVERSE_NO_ENTRY",
-        "COST_MINUS_15_TREND_RISK",
-        "COST_MINUS_15_CAUSE_CHECK",
-        "TREND_RISK_CAUSE_CHECK",
-        "MACRO_STORM_HOLDING_CAUTION",
-        "HARD_BLOCK_MACRO_STORM",
-        "LEVERAGED_DAILY_DROP_NO_ADD",
-        "LEVERAGED_RECOVERY_DCA_BLOCK",
-        "MTF_DAMAGE_NO_ADD",
-    }
-    TODAY_QUEUE_DEFENSE_PREFIXES = (
-        "STRUCTURE_DAMAGE",
-        "PRICE_DRAWDOWN",
-        "SINGLE_DAY_BREAKDOWN",
-    )
-    TODAY_QUEUE_DEFENSE_TEXT_RE = re.compile(
-        r"패닉|위기|고점대비\s*-?20|하락추세|역배열|추세위험|구조훼손|추세훼손|"
-        r"신규진입\s*보류|진입\s*보류|진입보류|추매금지|손절기준|원인점검|"
-        r"코어\s*집중|현금\s*투입|최종투입|투매\s*포착|시장위험|추매중단|보유점검",
-        flags=re.IGNORECASE,
-    )
-
-    def is_today_queue_defense_signal(c, extra_text=""):
-        code = str((c or {}).get("decision_code", "") or "")
-        label = str((c or {}).get("dec", "") or "")
-        text = " ".join([label, code, str(extra_text or "")])
-        if code in TODAY_QUEUE_DEFENSE_CODES:
-            return True
-        if any(code.startswith(prefix) for prefix in TODAY_QUEUE_DEFENSE_PREFIXES):
-            return True
-        return bool(TODAY_QUEUE_DEFENSE_TEXT_RE.search(text))
-
-    def _today_queue_reason_bucket(row):
-        ticker = str(row.get("티커", "") or "").upper()
-        type_label = str(row.get("유형", "") or "")
-        label = str(row.get("🔥기술적 타점", "") or "")
-        code = str(row.get("판정코드", "") or "")
-        data_state = str(row.get("데이터상태", "") or "")
-        macro_state = str(row.get("매크로상태", "") or "")
-        pattern_timing = str(row.get("패턴타점", "") or "")
-        pattern_reason = str(row.get("패턴근거", "") or "")
-        final_read = str(row.get("최종읽기", "") or "")
-        grade_label = str(row.get("📌후보등급", "") or "")
-        core_reason = str(row.get("핵심근거", "") or "")
-        text = " ".join([ticker, type_label, label, code, data_state, macro_state, pattern_timing, pattern_reason, final_read, grade_label, core_reason])
-        primary_text = " ".join([label, code, pattern_timing, final_read, grade_label])
-        leveraged_text = re.search(
-            r"레버리지|인버스|2X|3X|ULTRA|DAILY\s+TARGET|QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if macro_state.upper() == "STORM" and leveraged_text:
-            return "시장방어"
-        if re.search(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL|DCA조건부|레버리지\s*DCA\s*조건부|레버리지.*조건부\s*DCA", text, flags=re.IGNORECASE):
-            return "관심/눌림대기"
-        if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", primary_text, flags=re.IGNORECASE):
-            return "관심/눌림대기"
-        if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED", text, flags=re.IGNORECASE):
-            return "비중초과 방어"
-        if re.search(r"MACRO_STORM|퍼펙트스톰|시장위험|추매중단|보유점검", text, flags=re.IGNORECASE):
-            return "시장방어"
-        if re.search(r"SINGLE_DAY_BREAKDOWN|단기급락|급락방어|단일 봉 급락", text, flags=re.IGNORECASE):
-            return "급락방어"
-        if re.search(r"DRAWDOWN_20|PRICE_DRAWDOWN|가격위험|가격방어|고점대비\s*-?20", text, flags=re.IGNORECASE):
-            return "가격방어"
-        if re.search(
-            r"PANIC|CRISIS|DOWNTREND|REVERSE_TREND|COST_MINUS_15|구조훼손|추세훼손|추세방어|"
-            r"패닉|위기|하락추세|역배열|추세위험|신규진입 보류|진입보류|진입 보류|STRUCTURE",
-            text,
-            flags=re.IGNORECASE,
-        ):
-            return "추세방어"
-        if re.search(r"회복관찰|회복초입|회복 후보|QUALITY_RECOVERY", text, flags=re.IGNORECASE):
-            return "관심/눌림대기"
-        if re.search(r"R/R\s*<\s*1|손익비\s*1\s*미만|목표가.*부족", text, flags=re.IGNORECASE):
-            return "관심/눌림대기"
-        if re.search(r"패턴관찰|패턴성공|패턴유효|돌파대기|첫 눌림", text, flags=re.IGNORECASE):
-            return "관심/눌림대기"
-        if re.search(r"과열|볼린|MFI|추격금지|상단", text, flags=re.IGNORECASE):
-            return "과열/타점대기"
-        if data_state and data_state.upper() not in {"OK", "NORMAL", "-", "정상"}:
-            return "데이터확인"
-        if "하드차단" in label or "HARD_BLOCK" in code:
-            return "기타 하드차단"
-        return "일반"
-
-    def _today_queue_wait_mask(summary_df, buyish_mask, upside_value_map=None):
-        if summary_df is None or summary_df.empty:
-            return pd.Series(dtype=bool)
-        label = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
-        pattern = summary_df.get("패턴타점", pd.Series("", index=summary_df.index)).astype(str)
-        ticker = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
-        code = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
-        final_read = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
-        grade_label = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
-        core_reason = summary_df.get("핵심근거", pd.Series("", index=summary_df.index)).astype(str)
-        bucket_series = summary_df.apply(_today_queue_reason_bucket, axis=1)
-        wait_text = label + " " + pattern + " " + final_read + " " + grade_label + " " + core_reason
-        leveraged_dca_watch = (
-            code.str.contains(r"LEVERAGED_(?:RECOVERY_)?DCA_CONDITIONAL", regex=True, na=False)
-            | final_read.str.contains("DCA조건부", regex=False, na=False)
-            | grade_label.str.contains("레버리지DCA조건부", regex=False, na=False)
-            | label.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
-        )
-        forced_wait = wait_text.str.contains(
-            r"R/R\s*[<＜]\s*1|손익비\s*1\s*미만|목표가.*부족|풀진입\s*보류|현재가\s*보류|"
-            r"눌림대기|눌림\s*대기|돌파대기|패턴관찰|패턴성공|패턴유효|DCA조건부",
-            regex=True,
-            na=False,
-        )
-        wait_mask = (
-            label.str.contains(r"R/R\s*[<＜]\s*1|상위과열|과열확장|추격금지|대기|회복관찰|회복초입|회복 후보", regex=True, na=False)
-            | pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False)
-            | bucket_series.eq("관심/눌림대기")
-            | leveraged_dca_watch
-            | forced_wait
-        )
-        if upside_value_map:
-            neg_upside = ticker.map(
-                lambda t: finite_num(upside_value_map.get(str(t), np.nan))
-                and float(upside_value_map.get(str(t))) <= 0
-            )
-            wait_mask = wait_mask | neg_upside.fillna(False)
-        pattern_interest = pattern.str.contains(r"패턴관찰|패턴성공|패턴유효", regex=True, na=False) & bucket_series.eq("관심/눌림대기")
-        overheat_timing_watch = (
-            bucket_series.eq("과열/타점대기")
-            | wait_text.str.contains(r"추격금지|과열|밴드상단|볼린저.*상단|MFI.*과열|상단부근", regex=True, na=False)
-        )
-        defense_bucket = bucket_series.isin(["비중초과 방어", "시장방어", "급락방어", "가격방어", "추세방어", "기타 하드차단"])
-        overheat_hard_watch = (
-            code.str.contains(r"HARD_BLOCK_BOLLINGER_UPPER|HARD_BLOCK_MFI_OVERHEAT|EXTREME_OVERHEAT_NO_CHASE|OVERHEAT", regex=True, na=False)
-            | wait_text.str.contains(r"볼린상단|볼린저.*상단|MFI.*과열|극단과열|추격금지", regex=True, na=False)
-        )
-        hard_block = code.str.contains("HARD_BLOCK", regex=False, na=False) & ~overheat_hard_watch
-        return (
-            buyish_mask.reindex(summary_df.index, fill_value=False)
-            | pattern_interest
-            | leveraged_dca_watch
-            | overheat_timing_watch
-        ) & wait_mask & ~defense_bucket & ~hard_block
-
-    def _leveraged_market_defense_mask(summary_df, leveraged_display_mask, kr_market_mask, us_market_mask, market_guard):
-        if summary_df is None or summary_df.empty:
-            return pd.Series(dtype=bool)
-        macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
-        kr_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", "") or "")
-        us_mode = str(((market_guard or {}).get("us_stats", {}) or {}).get("mode", "") or "")
-        market_mode = str((market_guard or {}).get("mode", "") or "")
-        market_macro_risk = clean_float((market_guard or {}).get("macro_risk", globals().get("final_macro_risk", np.nan)), np.nan)
-        defensive_modes = {"비상", "위험", "방어"}
-        market_macro_storm = bool(finite_num(market_macro_risk) and float(market_macro_risk) >= 4.5)
-        out = leveraged_display_mask & (macro_state_series.eq("STORM") | market_macro_storm)
-        if kr_mode in defensive_modes:
-            out = out | (leveraged_display_mask & kr_market_mask)
-        if us_mode in defensive_modes:
-            out = out | (leveraged_display_mask & us_market_mask)
-        if market_mode in {"전시장 비상", "국장 비상", "미장 비상", "위험", "방어", "위험장 반등"}:
-            if market_mode in {"전시장 비상", "위험", "방어", "위험장 반등"}:
-                out = out | leveraged_display_mask
-            elif market_mode == "국장 비상":
-                out = out | (leveraged_display_mask & kr_market_mask)
-            elif market_mode == "미장 비상":
-                out = out | (leveraged_display_mask & us_market_mask)
-        return out
-
-    def _leveraged_recovery_tracking_mask(summary_df, leveraged_display_mask=None):
-        if summary_df is None or summary_df.empty:
-            return pd.Series(dtype=bool)
-        return pd.Series(False, index=summary_df.index)
-
-    def _leveraged_scout_execution_mask(summary_df, leveraged_display_mask=None):
-        if summary_df is None or summary_df.empty:
-            return pd.Series(dtype=bool)
-        return pd.Series(False, index=summary_df.index)
-
-    def is_dashboard_block_or_wait_label(label):
-        return any(word in str(label or "") for word in ("금지", "차단", "보류", "대기", "관망", "정리대상", "시장위험", "추매중단", "보유점검"))
-
-    def is_dashboard_low_rr_caution(c):
-        label = str((c or {}).get("dec", "") or "")
-        rr = clean_float((c or {}).get("rr_ratio"), np.nan)
-        if not finite_num(rr) or rr >= 1.0 or is_dashboard_block_or_wait_label(label):
-            return False
-        return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할"))
-
-    def is_dashboard_actionable_signal(c):
-        label = str((c or {}).get("dec", "") or "")
-        if is_dashboard_block_or_wait_label(label):
-            return False
-        return any(word in label for word in ("매수", "진입", "추매", "탑승", "분할", "눌림", "정찰", "적립"))
-
-    def apply_leveraged_dca_dashboard_override(c):
-        return c if isinstance(c, dict) else c
-
-    def format_dashboard_timing_label(c):
-        label = str((c or {}).get("dec", "") or "")
-        if is_dashboard_low_rr_caution(c) and "신규진입: 대장주 포착" in label:
-            label = "🔍대장주 포착: R/R 대기"
-        if is_dashboard_low_rr_caution(c) and "R/R<1 정찰" not in label:
-            label = f"{label} / R/R<1 정찰" if label else "R/R<1 정찰"
-        return label
-
-    def format_dashboard_candidate_grade(c):
-        label = str((c or {}).get("dec", "") or "")
-        code = str((c or {}).get("decision_code", "") or "")
-        grade = str((c or {}).get("grade", "") or "")
-        grade_text = " ".join([label, grade, code])
-        if code == "MACRO_STORM_HOLDING_CAUTION":
-            return "🛡️시장방어(추매중단)"
-        if code == "HARD_BLOCK_MACRO_STORM":
-            return "🛡️시장방어(매수금지)"
-        if any(word in label for word in ("시장위험", "퍼펙트스톰", "추매중단", "보유점검")):
-            return "🛡️시장방어(매수금지)" if "하드차단" in label or "대피" in label else "🛡️시장방어(추매중단)"
-        if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
-            return "🛡️패닉진입대기(계획확인)"
-        if code == "CRISIS_PANIC_SELL_OFF":
-            return "🛡️위기방어(회피)"
-        if re.search(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", grade_text, flags=re.IGNORECASE):
-            return "🛡️패닉진입대기(계획확인)"
-        if re.search(r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선", grade_text, flags=re.IGNORECASE):
-            return "🛡️위기방어(회피)"
-        if is_today_queue_defense_signal(c):
-            return "🛡️방어우선"
-        if code.startswith("HARD_BLOCK") or code == "MACRO_STORM_HOLDING_CAUTION" or any(word in label for word in ("하드차단", "매수금지", "추매금지", "추매중단", "시장위험", "보유점검")):
-            return "🛑매수금지"
-        return f"{grade} / ⚠️R/R<1" if grade and is_dashboard_low_rr_caution(c) else grade
-
-    def format_dashboard_reason(c):
-        reasons = tuple((c or {}).get("decision_reasons") or ())
-        base = str(reasons[0]) if reasons else ""
-        if is_dashboard_low_rr_caution(c):
-            rr = clean_float((c or {}).get("rr_ratio"), np.nan)
-            note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
-            return f"{base} / {note}" if base else note
-        return base
-
-    def build_dashboard_final_read(c, dashboard_timing="", dashboard_grade="", pattern_timing="", pattern_bucket=""):
-        code = str((c or {}).get("decision_code", "") or "")
-        group = str((c or {}).get("decision_group", "") or "")
-        text = " ".join([str(dashboard_timing or ""), str(dashboard_grade or ""), str(pattern_timing or ""), code])
-        if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터" in text:
-            return "⚪데이터확인"
-        if re.search(r"코어\s*눌림.*(?:적립|매수)|눌림\s*100%\s*적립|코어.*적립", text, flags=re.IGNORECASE):
-            return "🧱코어적립확인"
-        if re.search(r"최종\s*투입|현금\s*투입|코어\s*집중|패닉.*투입|위기.*코어", text, flags=re.IGNORECASE):
-            return "🛡️패닉진입대기"
-        if re.search(r"투매\s*포착|투매\s*위험|강제\s*회피|회피\s*우선", text, flags=re.IGNORECASE):
-            return "🛡️위기방어(회피)"
-        if "하락패턴 유효" in pattern_timing:
-            if code.startswith("QUALITY_RECOVERY"):
-                return "👀회복관찰"
-            if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
-                return "🛡️패닉진입대기"
-            if code == "CRISIS_PANIC_SELL_OFF":
-                return "🛡️위기방어(회피)"
-            return "🛡️방어우선"
-        if code in {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}:
-            return "🛡️패닉진입대기"
-        if code == "CRISIS_PANIC_SELL_OFF":
-            return "🛡️위기방어(회피)"
-        if code == "MACRO_STORM_HOLDING_CAUTION":
-            return "🛡️시장방어(추매중단)"
-        if code == "HARD_BLOCK_MACRO_STORM":
-            return "🛡️시장방어(매수금지)"
-        if is_today_queue_defense_signal(c, text):
-            return "🛡️방어우선"
-        if re.search(r"추격금지|과열|상단", text):
-            return "🚫추격금지"
-        if re.search(r"대기|R/R\s*<\s*1|정찰|패턴성공|패턴유효", text):
-            return "⏳눌림대기"
-        if group == "buyish" or is_dashboard_actionable_signal(c):
-            return "✅정밀확인"
-        return "🔍관망"
-
-    def sort_today_queue_detail_table(view_df, *, risk_first=False):
-        if view_df is None or view_df.empty:
-            return view_df
-        work = view_df.copy()
-        idx = work.index
-
-        def _sort_num(series):
-            text = series.astype(str).str.replace(",", "", regex=False)
-            text = text.str.replace(r"[^0-9.\-]", "", regex=True)
-            return pd.to_numeric(text.replace("", np.nan), errors="coerce")
-
-        final_read = work.get("최종읽기", pd.Series("", index=idx)).astype(str)
-        timing = work.get("🔥기술적 타점", pd.Series("", index=idx)).astype(str)
-        grade = work.get("📌후보등급", pd.Series("", index=idx)).astype(str)
-        code = work.get("판정코드", pd.Series("", index=idx)).astype(str)
-        safety = work.get("안전상태", pd.Series("", index=idx)).astype(str).str.upper()
-        action_text = final_read + " " + timing + " " + grade
-        action_rank = pd.Series(5, index=idx)
-        action_rank.loc[action_text.str.contains("정밀확인", regex=False, na=False)] = 0
-        action_rank.loc[action_text.str.contains(r"눌림대기|DCA조건부|돌파대기|회복관찰", regex=True, na=False)] = 1
-        action_rank.loc[action_text.str.contains(r"패닉진입대기|리밸런싱대기", regex=True, na=False)] = 2
-        action_rank.loc[action_text.str.contains(r"관망|데이터확인", regex=True, na=False)] = 4
-        action_rank.loc[action_text.str.contains(r"방어|추격금지|매수금지|신규금지|추매금지", regex=True, na=False)] = 6
-        work["_sort_action"] = action_rank
-        work["_sort_safety"] = safety.map({"GREEN": 0, "YELLOW": 1, "RED": 2, "DATA": 3}).fillna(1)
-        work["_sort_adj"] = _sort_num(work.get("Adj점수", pd.Series(np.nan, index=idx)))
-        work["_sort_rr"] = _sort_num(work.get("RR값", work.get("R/R", pd.Series(np.nan, index=idx))))
-        work["_sort_hard"] = (
-            code.str.contains("HARD_BLOCK", regex=False, na=False)
-            | timing.str.contains("하드차단", regex=False, na=False)
-            | grade.str.contains("매수금지|신규금지|추매금지", regex=True, na=False)
-        ).astype(int)
-        if risk_first:
-            sorted_df = work.sort_values(
-                ["_sort_hard", "_sort_safety", "_sort_adj", "_sort_rr"],
-                ascending=[False, False, True, False],
-                na_position="last",
-            )
-        else:
-            sorted_df = work.sort_values(
-                ["_sort_adj", "_sort_rr", "_sort_action", "_sort_safety"],
-                ascending=[False, False, True, True],
-                na_position="last",
-            )
-        return sorted_df.drop(columns=["_sort_action", "_sort_safety", "_sort_adj", "_sort_rr", "_sort_hard"], errors="ignore")
+from stock_lab_core.today_queue import (
+    TODAY_QUEUE_DEFENSE_TEXT_RE,
+    TODAY_QUEUE_LOGIC_VERSION,
+    apply_leveraged_dca_dashboard_override,
+    build_dashboard_final_read,
+    build_today_queue_execution_snapshot,
+    build_today_queue_signature,
+    clear_today_queue_summary_snapshot,
+    format_dashboard_candidate_grade,
+    format_dashboard_reason,
+    format_dashboard_timing_label,
+    is_dashboard_actionable_signal,
+    is_dashboard_block_or_wait_label,
+    is_dashboard_low_rr_caution,
+    is_today_queue_defense_signal,
+    leveraged_market_defense_mask as _leveraged_market_defense_mask,
+    leveraged_recovery_tracking_mask as _leveraged_recovery_tracking_mask,
+    leveraged_scout_execution_mask as _leveraged_scout_execution_mask,
+    load_today_queue_summary_snapshot,
+    save_today_queue_summary_snapshot,
+    sort_today_queue_detail_table,
+    today_queue_reason_bucket as _today_queue_reason_bucket,
+    today_queue_wait_mask as _today_queue_wait_mask,
+)
 from stock_lab_core.news import (
     NEWS_CATEGORY_ORDER,
     get_analyst_snapshot,
@@ -737,81 +217,29 @@ from stock_lab_core.today_news import (
     rank_today_action_news_rows as _rank_today_action_news_rows,
 )
 from stock_lab_core.today_flow_candidates import classify_flow_candidate_type
-try:
-    from stock_lab_core.money_flow import (
-        calculate_money_flow_df,
-        calculate_rotation_df,
-        calculate_sector_rotation_df,
-        classify_money_flow_state,
-        download_money_flow_prices,
-    )
-    MONEY_FLOW_CORE_AVAILABLE = True
-    MONEY_FLOW_IMPORT_ERROR = ""
-except Exception as _money_flow_import_error:
-    MONEY_FLOW_CORE_AVAILABLE = False
-    MONEY_FLOW_IMPORT_ERROR = repr(_money_flow_import_error)
-    logging.warning(
-        "stock_lab_core.money_flow unavailable; using empty fallback: %s",
-        MONEY_FLOW_IMPORT_ERROR,
-    )
-
-    def calculate_money_flow_df(*args, **kwargs):
-        return pd.DataFrame()
-
-    def calculate_rotation_df(*args, **kwargs):
-        return pd.DataFrame()
-
-    def calculate_sector_rotation_df(*args, **kwargs):
-        return pd.DataFrame()
-
-    def classify_money_flow_state(*args, **kwargs):
-        return "\uD655\uC778\uD544\uC694"
-
-    def download_money_flow_prices(*args, **kwargs):
-        return pd.DataFrame()
-
+from stock_lab_core.money_flow import (
+    ETF_TO_THEME,
+    IMAGE_THEME_META,
+    SECTOR_CLUSTERS,
+    SECTOR_CLUSTERS_KR,
+    SECTOR_CLUSTERS_US,
+    calculate_image_theme_flow_df,
+    calculate_image_theme_group_df,
+    calculate_image_theme_rotation_df,
+    calculate_money_flow_df,
+    calculate_rotation_df,
+    calculate_sector_rotation_df,
+    classify_money_flow_state,
+    download_money_flow_prices,
+    fetch_naver_theme_coverage_snapshot,
+    get_image_theme_names,
+    get_sector_flow_state,
+)
+MONEY_FLOW_CORE_AVAILABLE = True
+MONEY_FLOW_IMPORT_ERROR = ""
+IMAGE_THEME_FLOW_AVAILABLE = True
+NAVER_THEME_COVERAGE_AVAILABLE = True
 from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
-try:
-    from stock_lab_core.money_flow import (
-        calculate_image_theme_flow_df,
-        calculate_image_theme_group_df,
-        calculate_image_theme_rotation_df,
-        get_image_theme_names,
-        IMAGE_THEME_META,
-        SECTOR_CLUSTERS,
-        SECTOR_CLUSTERS_KR,
-        SECTOR_CLUSTERS_US,
-        ETF_TO_THEME,
-    )
-    IMAGE_THEME_FLOW_AVAILABLE = True
-except Exception:
-    IMAGE_THEME_FLOW_AVAILABLE = False
-    IMAGE_THEME_META = {}
-    SECTOR_CLUSTERS = {}
-    SECTOR_CLUSTERS_KR = {}
-    SECTOR_CLUSTERS_US = {}
-    ETF_TO_THEME = {}
-
-    def get_image_theme_names():
-        return []
-
-    def calculate_image_theme_flow_df(theme):
-        return pd.DataFrame()
-
-    def calculate_image_theme_group_df(theme_flow_df):
-        return pd.DataFrame()
-
-    def calculate_image_theme_rotation_df(theme_flow_df):
-        return pd.DataFrame()
-
-try:
-    from stock_lab_core.money_flow import fetch_naver_theme_coverage_snapshot
-    NAVER_THEME_COVERAGE_AVAILABLE = True
-except Exception:
-    NAVER_THEME_COVERAGE_AVAILABLE = False
-
-    def fetch_naver_theme_coverage_snapshot(*args, **kwargs):
-        return {}
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -821,20 +249,8 @@ except ImportError:
 
     def renderLightweightCharts(*args, **kwargs):
         return None
-try:
-    from stock_lab_core.money_flow import get_sector_flow_state
-except Exception:
-    def get_sector_flow_state(ticker): return "-"
-try:
-    from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
-except ImportError:
-    def build_kr_cluster_snapshot(*args, **kwargs):
-        return {}
-try:
-    from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
-except ImportError:
-    def build_us_cluster_snapshot(*args, **kwargs):
-        return {}
+from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
+from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
     build_kr_etf_lab_from_excel_files,
@@ -853,293 +269,58 @@ from stock_lab_core.prices import (
     load_latest_prices_batch,
     load_price_df,
     normalize_price_lookup_key,
+    load_usdkrw_rate,
 )
-try:
-    from stock_lab_core.prices import load_usdkrw_rate
-except ImportError:
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def load_usdkrw_rate():
-        try:
-            df = yf.download("USDKRW=X", period="5d", interval="1d", progress=False, auto_adjust=False)
-            if df is None or df.empty:
-                return 0.0
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            df = df.ffill().dropna()
-            if df.empty or "Close" not in df.columns:
-                return 0.0
-            return float(df["Close"].iloc[-1])
-        except Exception:
-            return 0.0
 from stock_lab_core.portfolio import (
+    PORTFOLIO_ADD_ACTIONS,
+    PORTFOLIO_CAUTION_ACTIONS,
+    _enrich_portfolio_alignment_with_action_df,
+    _portfolio_alignment_names,
+    add_portfolio_risk_note,
     append_cash_rows,
     apply_holdings_weight_columns,
     build_asset_overview_dashboard_state,
+    build_asset_label_map,
     build_benchmark_return_df,
     build_cash_buffer_scenario,
+    build_correlation_pair_summary,
     build_market_scenario_summary,
     build_monthly_record_status,
+    build_portfolio_action_decision_df_from_inputs,
+    build_portfolio_blended_benchmark_spec,
+    build_portfolio_market_alignment_brief,
+    build_portfolio_market_alignment_df_from_inputs,
+    build_portfolio_next_check_candidates_df_from_inputs,
+    build_portfolio_next_check_summary,
+    build_portfolio_rebalance_playbook_df,
+    build_portfolio_recommendation_df_from_inputs,
+    build_risk_contribution_df,
     build_scenario_context,
+    calc_benchmark_comparison,
+    calc_blended_benchmark_comparison,
+    calc_downside_volatility,
+    calc_drawdown_details,
     calc_asset_shock_table,
+    calc_portfolio_leverage_summary,
     calc_pnl_krw_from_row,
     calc_portfolio_summary,
     calc_reserve_summary,
+    calc_rolling_metrics,
+    calc_series_mdd,
+    calc_var_cvar,
+    classify_corr_value,
+    classify_portfolio_risk,
+    get_active_portfolio_rows,
     get_holding_row_by_ticker,
+    get_portfolio_analysis_start_date,
+    infer_scenario_shock_multiplier,
     make_cash_rows,
     merge_portfolio_signal_details,
+    normalize_datetime_index_no_tz,
     parse_month_end_date,
     prepare_monthly_performance_df,
+    ratio_or_nan,
 )
-try:
-    from stock_lab_core.portfolio import (
-        PORTFOLIO_ADD_ACTIONS,
-        PORTFOLIO_CAUTION_ACTIONS,
-        build_portfolio_market_alignment_brief,
-        build_portfolio_action_decision_df_from_inputs,
-        build_portfolio_market_alignment_df_from_inputs,
-        build_portfolio_next_check_candidates_df_from_inputs,
-        build_portfolio_next_check_summary,
-        build_portfolio_rebalance_playbook_df,
-        build_portfolio_recommendation_df_from_inputs,
-        _enrich_portfolio_alignment_with_action_df,
-        _portfolio_alignment_names,
-    )
-    PORTFOLIO_ALIGNMENT_IMPORT_ERROR = ""
-except Exception as _portfolio_alignment_import_error:
-    PORTFOLIO_ALIGNMENT_IMPORT_ERROR = repr(_portfolio_alignment_import_error)
-    logging.warning(
-        "portfolio alignment helpers unavailable; using limited local fallback: %s",
-        PORTFOLIO_ALIGNMENT_IMPORT_ERROR,
-    )
-    PORTFOLIO_ADD_ACTIONS = frozenset({
-        "비중확대 후보",
-        "계획적 적립",
-        "조건부 소액",
-        "별도 소액",
-        "눌림 시 분할",
-        "관찰 후 소액",
-        "직접흐름 확인",
-    })
-    PORTFOLIO_CAUTION_ACTIONS = frozenset({
-        "신규중단",
-        "유지·추격금지",
-        "유지·신규중단",
-        "보유점검",
-        "별도관리",
-        "관망",
-        "축소/교체 후보",
-    })
-
-    def _portfolio_alignment_names(df, limit=3):
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            return "-"
-        names = []
-        for _, row in df.head(limit).iterrows():
-            label = str(row.get("티커", "") or row.get("자산", "") or "").strip()
-            if label and label not in names:
-                names.append(label)
-        return ", ".join(names) if names else "-"
-
-    def _enrich_portfolio_alignment_with_action_df(align_df, action_df):
-        return align_df
-
-    def build_portfolio_market_alignment_brief(align_df):
-        if not isinstance(align_df, pd.DataFrame) or align_df.empty:
-            return {}
-        work = align_df.copy()
-        weights = work.get("현재비중", pd.Series(0.0, index=work.index)).apply(lambda v: clean_float(v, 0.0))
-        add_mask = work.get("포트판정", pd.Series("", index=work.index)).astype(str).isin(PORTFOLIO_ADD_ACTIONS)
-        caution_mask = work.get("포트판정", pd.Series("", index=work.index)).astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)
-        return {
-            "headline": "포트폴리오 매칭 계산 helper를 불러오지 못해 기본 요약만 표시합니다.",
-            "add_names": _portfolio_alignment_names(work[add_mask]),
-            "caution_names": _portfolio_alignment_names(work[caution_mask]),
-            "separate_names": "-",
-            "direct_names": "-",
-            "add_weight": float(weights[add_mask].sum()) if len(weights) else 0.0,
-            "caution_weight": float(weights[caution_mask].sum()) if len(weights) else 0.0,
-            "separate_weight": 0.0,
-            "direct_weight": 0.0,
-        }
-
-    def build_portfolio_rebalance_playbook_df(*_args, **_kwargs):
-        return pd.DataFrame()
-
-    build_portfolio_action_decision_df_from_inputs = None
-    build_portfolio_market_alignment_df_from_inputs = None
-
-    def build_portfolio_recommendation_df_from_inputs(*_args, **_kwargs):
-        return pd.DataFrame()
-
-    def build_portfolio_next_check_candidates_df_from_inputs(*_args, **_kwargs):
-        return pd.DataFrame()
-
-    def build_portfolio_next_check_summary(_candidates):
-        return ""
-try:
-    from stock_lab_core.portfolio import (
-        add_portfolio_risk_note,
-        annualize_period_return,
-        build_asset_label_map,
-        build_correlation_pair_summary,
-        build_portfolio_blended_benchmark_spec,
-        build_risk_contribution_df,
-        calc_benchmark_comparison,
-        calc_blended_benchmark_comparison,
-        calc_downside_volatility,
-        calc_drawdown_details,
-        calc_portfolio_leverage_summary,
-        calc_rolling_metrics,
-        calc_series_mdd,
-        calc_var_cvar,
-        classify_corr_value,
-        classify_portfolio_risk,
-        get_active_portfolio_rows,
-        get_portfolio_analysis_start_date,
-        infer_scenario_shock_multiplier,
-        normalize_datetime_index_no_tz,
-        ratio_or_nan,
-    )
-    PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR = ""
-except Exception as _portfolio_analysis_helpers_import_error:
-    PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR = repr(_portfolio_analysis_helpers_import_error)
-    logging.warning(
-        "stock_lab_core.portfolio analysis helpers unavailable; using limited local fallback: %s",
-        PORTFOLIO_ANALYSIS_HELPERS_IMPORT_ERROR,
-    )
-
-    def calc_series_mdd(series):
-        series = pd.Series(series).dropna()
-        if series.empty:
-            return 0.0
-        return float((series / series.cummax() - 1).min())
-
-    def calc_drawdown_details(portfolio_curve):
-        series = pd.Series(portfolio_curve).dropna()
-        if len(series) < 2:
-            return {}
-        drawdown = series / series.cummax() - 1
-        return {
-            "underwater": drawdown * 100,
-            "avg_drawdown": float(drawdown[drawdown < -0.001].mean() * 100) if (drawdown < -0.001).any() else 0.0,
-            "mdd_duration_days": int((drawdown < -0.001).sum()),
-            "mdd_recovery_days": np.nan,
-            "n_drawdown_periods": int((drawdown < -0.001).any()),
-        }
-
-    def normalize_datetime_index_no_tz(index):
-        idx = pd.to_datetime(index)
-        return idx.tz_convert(None) if getattr(idx, "tz", None) is not None else idx
-
-    def annualize_period_return(period_return_decimal, observation_count):
-        if not finite_num(period_return_decimal) or observation_count <= 0:
-            return np.nan
-        growth = 1 + float(period_return_decimal)
-        return -1.0 if growth <= 0 else float(growth ** (252 / observation_count) - 1)
-
-    def calc_downside_volatility(returns, target=0.0):
-        returns = pd.Series(returns).dropna()
-        downside = returns[returns < target] - target
-        return np.nan if returns.empty else (0.0 if downside.empty else float(downside.std() * np.sqrt(252)))
-
-    def calc_var_cvar(returns, confidence=0.95):
-        returns = pd.Series(returns).replace([np.inf, -np.inf], np.nan).dropna()
-        if len(returns) < 20:
-            return np.nan, np.nan
-        tail_cut = float(returns.quantile(1 - confidence))
-        tail = returns[returns <= tail_cut]
-        return tail_cut * 100, (float(tail.mean()) if not tail.empty else tail_cut) * 100
-
-    def ratio_or_nan(numer, denom):
-        return np.nan if not finite_num(numer) or not finite_num(denom) or float(denom) == 0 else float(numer) / float(denom)
-
-    def calc_rolling_metrics(portfolio_returns, window=63, rf_rate=0.035):
-        return pd.DataFrame()
-
-    def get_active_portfolio_rows(holdings_table):
-        if holdings_table is None or holdings_table.empty:
-            return pd.DataFrame()
-        df = holdings_table.copy()
-        if "원화환산" not in df.columns or "티커" not in df.columns:
-            return pd.DataFrame()
-        df["원화환산"] = df["원화환산"].apply(clean_float)
-        df = df[df["원화환산"] > 0].copy()
-        if "bucket" in df.columns:
-            df = df[~df["bucket"].apply(lambda value: normalize_bucket(value) in ["reserve", "cash"])]
-        if "운용대상" in df.columns:
-            df = df[df["운용대상"].apply(clean_bool)]
-        df = df[~df["티커"].astype(str).str.upper().isin(["KRW_CASH", "USD_CASH"])]
-        return df.reset_index(drop=True)
-
-    def add_portfolio_risk_note(notes, level, area, detail, suggestion):
-        notes.append({"등급": level, "영역": area, "내용": detail, "확인/조치": suggestion})
-
-    def classify_portfolio_risk(risk_index):
-        if risk_index >= 70:
-            return "공격/위험", "#dc2626"
-        if risk_index >= 50:
-            return "주의", "#f59e0b"
-        if risk_index >= 30:
-            return "균형", "#10b981"
-        return "방어", "#3b82f6"
-
-    def classify_corr_value(value):
-        if value >= 0.8:
-            return "매우 높음", "거의 같은 방향으로 움직입니다. 분산 효과가 낮습니다."
-        if value >= 0.5:
-            return "높음", "비슷한 방향으로 움직이는 편입니다."
-        if value > 0.3:
-            return "보통", "어느 정도 같은 방향성이 있습니다."
-        if value >= -0.3:
-            return "낮음", "서로 크게 묶여 움직이지 않습니다."
-        return "반대", "반대로 움직이는 경향이 있어 변동성 완충에 도움이 될 수 있습니다."
-
-    def build_asset_label_map(asset_df):
-        if asset_df is None or asset_df.empty or "티커" not in asset_df.columns:
-            return {}
-        return {
-            str(row.get("티커", "")).strip(): str(row.get("자산명", "") or row.get("티커", "")).strip()
-            for _, row in asset_df.iterrows()
-            if str(row.get("티커", "")).strip()
-        }
-
-    def build_correlation_pair_summary(corr_df):
-        return pd.DataFrame(columns=["자산 A", "자산 B", "상관계수", "구분", "해석"])
-
-    def build_risk_contribution_df(asset_df, aligned_returns, weights):
-        return pd.DataFrame(columns=["자산명", "티커", "운용비중", "연환산변동성", "리스크기여도", "비중대비리스크"])
-
-    def infer_scenario_shock_multiplier(row):
-        text = f"{row.get('티커', row.get('ticker', ''))} {row.get('자산명', row.get('name', ''))}".upper()
-        inverse = any(keyword in text for keyword in ["INVERSE", "인버스", "곱버스", "BEAR", "SHORT", "SQQQ", "SOXS", "SPXU"])
-        multiplier = 3.0 if any(keyword in text for keyword in ["3X", "3배", "TQQQ", "SQQQ", "SOXL", "SOXS", "SPXL", "SPXU"]) else 2.0 if any(keyword in text for keyword in ["2X", "2배", "BITX", "QLD", "SSO", "레버리지"]) else 1.0
-        return -multiplier if inverse else multiplier
-
-    def calc_portfolio_leverage_summary(asset_df):
-        columns = ["자산명", "티커", "전체비중", "운용비중", "충격배수", "레버리지환산노출", "추가노출"]
-        return {
-            "leveraged_principal_pct": 0.0,
-            "effective_exposure_pct": 0.0,
-            "extra_exposure_pct": 0.0,
-            "active_effective_exposure_pct": 0.0,
-            "max_multiplier": 1.0,
-        }, pd.DataFrame(columns=columns)
-
-    def get_portfolio_analysis_start_date(monthly_logs_df):
-        perf_df = prepare_monthly_performance_df(monthly_logs_df)
-        if perf_df is None or perf_df.empty or "month_end" not in perf_df.columns:
-            return None
-        month_end = pd.to_datetime(perf_df["month_end"], errors="coerce").dropna()
-        return None if month_end.empty else pd.Timestamp(month_end.min()).replace(day=1).normalize()
-
-    def build_portfolio_blended_benchmark_spec(holdings_df):
-        return {}
-
-    def calc_blended_benchmark_comparison(portfolio_returns, benchmark_spec, period, rf_rate=0.035, analysis_start_date=None):
-        return {}
-
-    def calc_benchmark_comparison(portfolio_returns, benchmark_ticker, period, rf_rate=0.035, analysis_start_date=None):
-        return {}
 # ==========================================
 # [신규 추가] 유틸리티 및 안전 장치
 # ==========================================
@@ -1734,25 +915,9 @@ from stock_lab_core.ta_engine import (
     get_pivot_highs_lows, get_recent_levels,
     detect_structure_event, detect_liquidity_grab,
     detect_recent_fvg, detect_smc_features,
+    build_smc_overlay_features,
     get_pd_zone, summarize_smc_action,
 )
-try:
-    from stock_lab_core.ta_engine import build_smc_overlay_features
-    SMC_OVERLAY_IMPORT_ERROR = ""
-except Exception as _smc_overlay_import_error:
-    SMC_OVERLAY_IMPORT_ERROR = repr(_smc_overlay_import_error)
-    logging.warning(
-        "stock_lab_core.ta_engine.build_smc_overlay_features unavailable; using FVG-only fallback: %s",
-        SMC_OVERLAY_IMPORT_ERROR,
-    )
-
-    def build_smc_overlay_features(df):
-        has_ohlc = df is not None and (not df.empty) and all(col in df.columns for col in ["High", "Low", "Close"])
-        return {
-            "fvg": detect_recent_fvg(df) if has_ohlc else {"type": "없음", "active": False},
-            "order_blocks": [],
-            "equal_levels": [],
-        }
 
 def get_fin_label_map():
     return {
