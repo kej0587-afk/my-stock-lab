@@ -63,21 +63,7 @@ from stock_lab_core.hold_judgement import (
     build_hold_decision,
 )
 from stock_lab_core.runtime_status import build_speed_check_snapshot
-try:
-    from stock_lab_core.db_schema import get_feedback_create_sql, get_swing_radar_create_sql
-    DB_SCHEMA_IMPORT_ERROR = ""
-except Exception as _db_schema_import_error:
-    DB_SCHEMA_IMPORT_ERROR = repr(_db_schema_import_error)
-    logging.warning(
-        "stock_lab_core.db_schema unavailable; setup SQL display will use fallback: %s",
-        DB_SCHEMA_IMPORT_ERROR,
-    )
-
-    def get_swing_radar_create_sql():
-        return "-- stock_lab_core.db_schema import failed. Redeploy the latest code, then open this setup SQL again."
-
-    def get_feedback_create_sql():
-        return "-- stock_lab_core.db_schema import failed. Redeploy the latest code, then open this setup SQL again."
+from stock_lab_core.db_schema import get_feedback_create_sql, get_swing_radar_create_sql
 from stock_lab_core.formatters import (
     clean_bool,
     clean_float,
@@ -86,13 +72,19 @@ from stock_lab_core.formatters import (
     dataframe_from_rows,
     ensure_kr_suffix_if_code,
     escape_html_value,
+    finite_num,
     format_currency,
+    format_report_money,
+    format_report_pct,
+    format_report_price,
+    format_report_ratio,
     is_kr_listed,
     is_ticker_like_text,
     normalize_bucket,
     normalize_text,
     normalize_ticker,
     parse_num,
+    report_num,
     sanitize_ticker_value,
     strip_search_prefix,
 )
@@ -111,206 +103,23 @@ from stock_lab_core.chart_patterns import (
     summarize_chart_pattern_for_dashboard,
     trendline_guides_caption as _trendline_guides_caption,
 )
-try:
-    from stock_lab_core.formatters import finite_num
-    FORMATTERS_FINITE_NUM_IMPORT_ERROR = ""
-except Exception as _formatters_finite_num_import_error:
-    FORMATTERS_FINITE_NUM_IMPORT_ERROR = repr(_formatters_finite_num_import_error)
-    logging.warning(
-        "stock_lab_core.formatters.finite_num unavailable; using local fallback: %s",
-        FORMATTERS_FINITE_NUM_IMPORT_ERROR,
-    )
-
-    def finite_num(value) -> bool:
-        try:
-            if value is None or pd.isna(value):
-                return False
-            return math.isfinite(float(value))
-        except (TypeError, ValueError):
-            return False
-try:
-    from stock_lab_core.formatters import (
-        format_report_money,
-        format_report_pct,
-        format_report_price,
-        format_report_ratio,
-        report_num,
-    )
-    FORMATTERS_REPORT_IMPORT_ERROR = ""
-except Exception as _formatters_report_import_error:
-    FORMATTERS_REPORT_IMPORT_ERROR = repr(_formatters_report_import_error)
-    logging.warning(
-        "stock_lab_core.formatters report helpers unavailable; using local fallback: %s",
-        FORMATTERS_REPORT_IMPORT_ERROR,
-    )
-
-    def report_num(value, default=0.0):
-        try:
-            return clean_float(value, default)
-        except (TypeError, ValueError, OverflowError):
-            try:
-                return float(value)
-            except (TypeError, ValueError, OverflowError):
-                return default
-
-    def format_report_money(value):
-        value = report_num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:,.0f}원"
-
-    def format_report_pct(value, digits=2):
-        value = report_num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:.{digits}f}%"
-
-    def format_report_ratio(value, digits=2):
-        value = report_num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:.{digits}f}"
-
-    def format_report_price(value):
-        value = report_num(value, np.nan)
-        return "-" if not np.isfinite(value) else f"{value:,.2f}"
 from stock_lab_core.constants import (
     KNOWN_TICKER_DISPLAY_NAMES,
 )
-try:
-    from stock_lab_core.asset_classifier import (
-        asset_class_marks_fin_score_exempt,
-        infer_asset_class_for_ticker,
-        is_concentrated_non_core_etf,
-        is_domestic_kr_core_etf,
-        is_fin_score_exempt_asset,
-        is_known_etf_ticker,
-        is_known_individual_stock_ticker,
-        is_leveraged_or_inverse_product,
-        is_tdf_or_fund_allocation_product,
-        is_us_broad_index_core_etf,
-        normalize_individual_stock_asset_class,
-        resolve_effective_investment_bucket,
-    )
-    ASSET_CLASSIFIER_IMPORT_ERROR = ""
-except Exception as _asset_classifier_import_error:
-    ASSET_CLASSIFIER_IMPORT_ERROR = repr(_asset_classifier_import_error)
-    logging.warning(
-        "stock_lab_core.asset_classifier unavailable; using local fallback: %s",
-        ASSET_CLASSIFIER_IMPORT_ERROR,
-    )
-    try:
-        from stock_lab_core.constants import (
-            CONCENTRATED_NON_CORE_ETFS,
-            FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
-            KNOWN_INDIVIDUAL_STOCK_SYMBOLS,
-            KNOWN_KR_ETF_SYMBOLS,
-            KNOWN_US_NASDAQ_ETFS,
-            KNOWN_US_OTHER_ETFS,
-            KNOWN_US_SP_ETFS,
-            KR_ETF_NAME_KEYWORDS,
-        )
-    except Exception:
-        FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS = ("etf", "etn", "fund", "lever", "inverse", "인버스", "레버리지")
-        KNOWN_INDIVIDUAL_STOCK_SYMBOLS = {
-            "FCX", "NEM", "MRNA", "MSFT", "NVDA", "AAPL", "GOOGL", "GOOG",
-            "TSLA", "DELL", "BE", "ANET", "SNOW", "PANW", "CRWD", "DDOG",
-        }
-        KNOWN_KR_ETF_SYMBOLS = {"379810", "379800", "458730", "069500", "229200", "396500", "305540", "487240", "0227L0"}
-        KNOWN_US_NASDAQ_ETFS = {"QQQ", "QQQM", "QLD", "TQQQ"}
-        KNOWN_US_SP_ETFS = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "VTI"}
-        KNOWN_US_OTHER_ETFS = {"DIA", "IWM", "SMH", "SOXX", "SOXL", "DRAM", "RAM", "BITX", "BITU", "TLT", "MAGS"}
-        CONCENTRATED_NON_CORE_ETFS = {"MAGS", "0227L0"}
-        KR_ETF_NAME_KEYWORDS = ("ETF", "ETN", "KODEX", "TIGER", "ACE", "SOL", "RISE", "KBSTAR", "HANARO", "액티브")
-
-    def is_known_individual_stock_ticker(ticker) -> bool:
-        return clean_symbol(ticker) in KNOWN_INDIVIDUAL_STOCK_SYMBOLS
-
-    def asset_class_marks_fin_score_exempt(asset_class) -> bool:
-        text = str(asset_class or "").strip().lower()
-        return any(keyword in text for keyword in FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS)
-
-    def normalize_individual_stock_asset_class(ticker, current_asset_class="") -> str:
-        current = str(current_asset_class or "").strip()
-        if current and not asset_class_marks_fin_score_exempt(current):
-            return current
-        return "kr_stock" if is_kr_listed(ticker) else "us_stock"
-
-    def is_known_etf_ticker(ticker) -> bool:
-        raw = sanitize_ticker_value(ticker)
-        symbol = clean_symbol(raw)
-        if is_known_individual_stock_ticker(raw):
-            return False
-        return (
-            symbol in KNOWN_US_SP_ETFS
-            or symbol in KNOWN_US_NASDAQ_ETFS
-            or symbol in KNOWN_US_OTHER_ETFS
-            or symbol in KNOWN_KR_ETF_SYMBOLS
-            or raw.endswith("ETF")
-        )
-
-    def is_fin_score_exempt_asset(ticker, is_etf=False, asset_class="", name="") -> bool:
-        if is_known_individual_stock_ticker(ticker):
-            return False
-        if clean_bool(is_etf) or is_known_etf_ticker(ticker) or asset_class_marks_fin_score_exempt(asset_class):
-            return True
-        name_upper = str(name or "").strip().upper()
-        return bool(is_kr_listed(ticker) and any(keyword in name_upper for keyword in KR_ETF_NAME_KEYWORDS))
-
-    def infer_asset_class_for_ticker(ticker, current_asset_class="") -> str:
-        current = str(current_asset_class or "").strip()
-        if is_known_individual_stock_ticker(ticker):
-            return normalize_individual_stock_asset_class(ticker, current)
-        if not is_known_etf_ticker(ticker) and not asset_class_marks_fin_score_exempt(current):
-            return current
-        symbol = clean_symbol(ticker)
-        if is_kr_listed(ticker):
-            if symbol in {"379810", "0227L0"}:
-                return "us_etf_nasdaq"
-            if symbol in {"379800", "458730"}:
-                return "us_etf_sp"
-            return current if asset_class_marks_fin_score_exempt(current) else "kr_etf"
-        if symbol in KNOWN_US_SP_ETFS:
-            return "us_etf_sp"
-        if asset_class_marks_fin_score_exempt(current):
-            return current
-        return "us_etf_nasdaq"
-
-    def is_leveraged_or_inverse_product(name, ticker, asset_class=""):
-        text = f"{name} {ticker} {asset_class}".upper()
-        keywords = [
-            "LEVER", "LEVERAGE", "LEVERAGED", "INVERSE", "인버스", "레버리지", "곱버스",
-            "2X", "3X", "TQQQ", "SQQQ", "QLD", "SOXL", "SOXS", "SPXL", "SPXS", "UPRO", "SPXU",
-            "BITX", "BITU", "2배", "비트코인2배", "2X BITCOIN", "2X BTC",
-        ]
-        return any(keyword in text for keyword in keywords)
-
-    def is_tdf_or_fund_allocation_product(name, ticker="", asset_class=""):
-        text = f"{name} {ticker} {asset_class}".upper()
-        return "TDF" in text or "FUND" in text or "펀드" in text
-
-    def is_concentrated_non_core_etf(name="", ticker="", asset_class=""):
-        symbol = clean_symbol(ticker)
-        if symbol in CONCENTRATED_NON_CORE_ETFS:
-            return True
-        text = f"{name} {ticker} {asset_class}".upper()
-        return any(code in text for code in CONCENTRATED_NON_CORE_ETFS)
-
-    def resolve_effective_investment_bucket(name="", ticker="", bucket="core", asset_class=""):
-        bucket_norm = normalize_bucket(bucket)
-        if bucket_norm in {"cash", "reserve"}:
-            return bucket_norm
-        if is_leveraged_or_inverse_product(name, ticker, asset_class):
-            return "leverage"
-        if bucket_norm == "core" and is_concentrated_non_core_etf(name, ticker, asset_class):
-            return "swing"
-        return bucket_norm
-
-    def is_us_broad_index_core_etf(ticker, asset_class="", name=""):
-        if is_concentrated_non_core_etf(name, ticker, asset_class):
-            return False
-        ac = str(asset_class or "").strip().lower()
-        if ac in {"us_etf_sp", "us_etf_nasdaq"}:
-            return True
-        text = f"{ticker} {name} {asset_class}".upper()
-        return any(keyword in text for keyword in ["S&P500", "S&P 500", "SP500", "나스닥100", "NASDAQ100", "NASDAQ 100"])
-
-    def is_domestic_kr_core_etf(ticker, asset_class="", name=""):
-        return is_kr_listed(ticker) and not is_us_broad_index_core_etf(ticker, asset_class, name)
+from stock_lab_core.asset_classifier import (
+    asset_class_marks_fin_score_exempt,
+    infer_asset_class_for_ticker,
+    is_concentrated_non_core_etf,
+    is_domestic_kr_core_etf,
+    is_fin_score_exempt_asset,
+    is_known_etf_ticker,
+    is_known_individual_stock_ticker,
+    is_leveraged_or_inverse_product,
+    is_tdf_or_fund_allocation_product,
+    is_us_broad_index_core_etf,
+    normalize_individual_stock_asset_class,
+    resolve_effective_investment_bucket,
+)
 try:
     from stock_lab_core.swing_radar import (
         build_swing_radar_df as _build_swing_radar_df_core,
