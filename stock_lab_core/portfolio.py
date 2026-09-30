@@ -8,18 +8,13 @@ import pandas as pd
 from stock_lab_core.formatters import (
     clean_bool,
     clean_float,
+    finite_num,
     is_kr_listed,
     normalize_bucket,
     normalize_ticker,
     sanitize_ticker_value,
 )
-
-try:
-    from stock_lab_core.prices import load_price_df
-except ImportError:
-    def load_price_df(*args, **kwargs):
-        return pd.DataFrame()
-
+from stock_lab_core.prices import load_price_df
 
 US_TECH_OR_GROWTH_TICKERS = {
     "MSFT", "AAPL", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA",
@@ -28,15 +23,6 @@ US_TECH_OR_GROWTH_TICKERS = {
     "ASML", "LRCX", "KLAC", "AMAT", "INTC", "QCOM", "ARM", "SMCI",
     "LITE", "PANW", "HACK", "NFLX", "UBER", "ABNB",
 }
-
-try:
-    from stock_lab_core.formatters import finite_num
-except Exception:
-    def finite_num(value) -> bool:
-        try:
-            return value is not None and not pd.isna(value) and np.isfinite(float(value))
-        except Exception:
-            return False
 
 
 PORTFOLIO_ADD_ACTIONS = frozenset({

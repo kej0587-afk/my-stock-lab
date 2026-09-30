@@ -12,12 +12,14 @@ from stock_lab_core.decision_engine import (
     build_entry_signal_context,
     build_decision_result,
     build_decision_outcome,
+    build_return_window_context,
     build_rr_context,
     build_smc_insight,
     build_sideways_quality_state,
     build_structure_damage_context,
     compute_sizing_hint,
     has_down_session_pressure,
+    resolve_current_price_for_decision,
     translate_new_entry_decision_for_holding,
 )
 
@@ -125,6 +127,47 @@ def test_build_decision_result_preserves_core_output_fields():
     assert result["fvg_type"] == "Bullish FVG"
     assert result["core_dca_rate"] == 0.5
     assert result["profit_take_signal"] is False
+
+
+def test_resolve_current_price_for_decision_accepts_reasonable_live_price():
+    df = pd.DataFrame({"Close": [100.0, 101.0]})
+
+    cur_p, live_used = resolve_current_price_for_decision(
+        df,
+        live_price=102.0,
+        source_daily_close=101.0,
+        live_ohlcv_applied=False,
+    )
+
+    assert cur_p == 102.0
+    assert live_used is True
+
+
+def test_resolve_current_price_for_decision_rejects_unapplied_extreme_gap():
+    df = pd.DataFrame({"Close": [100.0, 101.0]})
+
+    cur_p, live_used = resolve_current_price_for_decision(
+        df,
+        live_price=250.0,
+        source_daily_close=101.0,
+        live_ohlcv_applied=False,
+    )
+
+    assert cur_p == 101.0
+    assert live_used is False
+
+
+def test_build_return_window_context_uses_available_history_windows():
+    df = pd.DataFrame({"Close": list(range(1, 122))})
+
+    ctx = build_return_window_context(df, cur_p=121.0)
+
+    assert ctx["p1m"] == 101
+    assert ctx["p3m"] == 61
+    assert ctx["p6m"] == 1
+    assert ctx["ret_1m"] == pytest.approx(121 / 101 - 1)
+    assert ctx["ret_3m"] == pytest.approx(121 / 61 - 1)
+    assert ctx["ret_6m"] == pytest.approx(120.0)
 
 
 def _flat_ohlc(rows=15, close=10.0, high=11.0, low=9.0):

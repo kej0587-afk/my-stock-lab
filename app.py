@@ -147,6 +147,7 @@ from stock_lab_core.decision_engine import (
     build_decision_outcome,
     build_limited_history_etf_outcome,
     build_live_rebound_context,
+    build_return_window_context,
     build_core_dca_context as build_core_dca_context_rule,
     build_core_dca_context_values,
     build_price_history_context,
@@ -166,6 +167,7 @@ from stock_lab_core.decision_engine import (
     has_down_session_pressure as _has_down_session_pressure,
     is_new_entry_decision_code,
     normalize_decision_runtime_inputs,
+    resolve_current_price_for_decision,
     score_main_entry,
     score_technical_components,
     translate_new_entry_decision_for_holding as _translate_new_entry_decision_for_holding,
@@ -15574,24 +15576,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     last, prev = df.iloc[-1], df.iloc[-2]
     daily_close = source_daily_close if source_daily_close > 0 else float(df.iloc[-1]["Close"])
-    cur_p = float(df.iloc[-1]["Close"])
-    live_price_used = bool(live_ohlcv_applied)
-    # Use the validated live quote for display, sizing and R/R even when the
-    # chart close is stale or unadjusted after a split/provider lag.
-    if live_price > 0:
-        live_gap_ratio = abs(float(live_price) - cur_p) / max(abs(cur_p), 1.0)
-        if live_ohlcv_applied or live_gap_ratio < 0.5:
-            cur_p = float(live_price)
-            live_price_used = (
-                live_price_used
-                or live_gap_ratio > 0.003
-                or abs(cur_p - daily_close) / max(daily_close, 1) > 0.003
-            )
-    p1m = df["Close"].iloc[-21] if len(df) >= 21 else df["Close"].iloc[0]
-    p3m = df["Close"].iloc[-61] if len(df) >= 61 else df["Close"].iloc[0]
-    p6m = df["Close"].iloc[-121] if len(df) >= 121 else df["Close"].iloc[0]
-    ret_1m = (cur_p / p1m) - 1
-    ret_3m, ret_6m = (cur_p / p3m) - 1, (cur_p / p6m) - 1
+    cur_p, live_price_used = resolve_current_price_for_decision(
+        df,
+        live_price=live_price,
+        source_daily_close=daily_close,
+        live_ohlcv_applied=live_ohlcv_applied,
+    )
+    return_window_context = build_return_window_context(df, cur_p)
+    p1m = return_window_context["p1m"]
+    p3m = return_window_context["p3m"]
+    p6m = return_window_context["p6m"]
+    ret_1m = return_window_context["ret_1m"]
+    ret_3m = return_window_context["ret_3m"]
+    ret_6m = return_window_context["ret_6m"]
     prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
     day_return_context = build_day_return_context(
         cur_p=cur_p,

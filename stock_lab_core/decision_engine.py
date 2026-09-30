@@ -14,33 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-try:
-    from stock_lab_core.formatters import clean_float
-except Exception:
-    def clean_float(value, default=0.0):
-        try:
-            if value is None or pd.isna(value) or str(value).strip() == "":
-                return float(default)
-            return float(str(value).replace(",", ""))
-        except Exception:
-            return float(default)
-
-try:
-    from stock_lab_core.formatters import is_kr_listed
-except Exception:
-    def is_kr_listed(ticker: str) -> bool:
-        text = str(ticker or "").strip().upper().replace(" ", "")
-        symbol = text.replace(".KS", "").replace(".KQ", "")
-        return text.endswith((".KS", ".KQ")) or (len(symbol) == 6 and symbol[0].isdigit() and symbol.isalnum())
-
-try:
-    from stock_lab_core.formatters import finite_num
-except Exception:
-    def finite_num(value) -> bool:
-        try:
-            return math.isfinite(float(value))
-        except Exception:
-            return False
+from stock_lab_core.formatters import clean_float, finite_num, is_kr_listed
 
 
 @dataclass(frozen=True)
@@ -125,6 +99,60 @@ def ensure_min_price_rows_for_decision(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) >= 2:
         return df
     return pd.concat([df, df.tail(1)], ignore_index=False)
+
+
+def resolve_current_price_for_decision(
+    df: pd.DataFrame,
+    *,
+    live_price: float = 0.0,
+    source_daily_close: float = 0.0,
+    live_ohlcv_applied: bool = False,
+) -> tuple[float, bool]:
+    """Return the price used by decision rules and whether live price affected it."""
+    if df is None or df.empty or "Close" not in df.columns:
+        return 0.0, False
+
+    cur_p = clean_float(df["Close"].iloc[-1], 0.0)
+    live_used = bool(live_ohlcv_applied)
+    live = clean_float(live_price, 0.0)
+    if live <= 0 or cur_p <= 0:
+        return cur_p, live_used
+
+    live_gap_ratio = abs(live - cur_p) / max(abs(cur_p), 1.0)
+    if live_ohlcv_applied or live_gap_ratio < 0.5:
+        cur_p = live
+        daily_close = clean_float(source_daily_close, 0.0)
+        live_used = (
+            live_used
+            or live_gap_ratio > 0.003
+            or (daily_close > 0 and abs(cur_p - daily_close) / max(daily_close, 1.0) > 0.003)
+        )
+    return cur_p, live_used
+
+
+def build_return_window_context(df: pd.DataFrame, cur_p: float) -> dict:
+    """Compute 1M/3M/6M return values using the same fallback windows as app.py."""
+    if df is None or df.empty or "Close" not in df.columns:
+        return {"p1m": 0.0, "p3m": 0.0, "p6m": 0.0, "ret_1m": 0.0, "ret_3m": 0.0, "ret_6m": 0.0}
+
+    price = clean_float(cur_p, 0.0)
+    first_close = clean_float(df["Close"].iloc[0], 0.0)
+    p1m = clean_float(df["Close"].iloc[-21], first_close) if len(df) >= 21 else first_close
+    p3m = clean_float(df["Close"].iloc[-61], first_close) if len(df) >= 61 else first_close
+    p6m = clean_float(df["Close"].iloc[-121], first_close) if len(df) >= 121 else first_close
+
+    def _ret(base):
+        base = clean_float(base, 0.0)
+        return (price / base) - 1 if base > 0 else 0.0
+
+    return {
+        "p1m": p1m,
+        "p3m": p3m,
+        "p6m": p6m,
+        "ret_1m": _ret(p1m),
+        "ret_3m": _ret(p3m),
+        "ret_6m": _ret(p6m),
+    }
 
 
 def _get_live_price_row_date(ticker: str):
