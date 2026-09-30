@@ -9,9 +9,13 @@ import pytest
 
 from stock_lab_core.decision_engine import (
     apply_safety_state_override,
+    build_entry_signal_context,
     build_decision_result,
     build_decision_outcome,
+    build_rr_context,
+    build_smc_insight,
     build_sideways_quality_state,
+    build_structure_damage_context,
     compute_sizing_hint,
     has_down_session_pressure,
     translate_new_entry_decision_for_holding,
@@ -131,8 +135,8 @@ def _flat_ohlc(rows=15, close=10.0, high=11.0, low=9.0):
     })
 
 
-def test_build_rr_context_uses_internal_high_before_atr_projection(app_module):
-    context = app_module.build_rr_context(
+def test_build_rr_context_uses_internal_high_before_atr_projection():
+    context = build_rr_context(
         _flat_ohlc(),
         cur_p=10.0,
         levels={"int_high": 15.0, "ext_high": 20.0},
@@ -149,8 +153,8 @@ def test_build_rr_context_uses_internal_high_before_atr_projection(app_module):
     assert context["rr_ratio"] == 1.25
 
 
-def test_build_rr_context_uses_external_high_when_internal_high_is_below_price(app_module):
-    context = app_module.build_rr_context(
+def test_build_rr_context_uses_external_high_when_internal_high_is_below_price():
+    context = build_rr_context(
         _flat_ohlc(),
         cur_p=10.0,
         levels={"int_high": 9.0, "ext_high": 16.0},
@@ -162,8 +166,8 @@ def test_build_rr_context_uses_external_high_when_internal_high_is_below_price(a
     assert context["rr_ratio"] == 1.5
 
 
-def test_build_rr_context_marks_atr_projection_when_no_structure_target_above_price(app_module):
-    context = app_module.build_rr_context(
+def test_build_rr_context_marks_atr_projection_when_no_structure_target_above_price():
+    context = build_rr_context(
         _flat_ohlc(),
         cur_p=10.0,
         levels={"int_high": 9.0, "ext_high": 9.5},
@@ -200,8 +204,8 @@ def test_build_rr_context_marks_atr_projection_when_no_structure_target_above_pr
         ),
     ],
 )
-def test_build_smc_insight_preserves_existing_message_priority(app_module, kwargs, expected):
-    assert app_module.build_smc_insight(**kwargs) == expected
+def test_build_smc_insight_preserves_existing_message_priority(kwargs, expected):
+    assert build_smc_insight(**kwargs) == expected
 
 
 def test_build_position_management_context_flags_leveraged_dca_conditional(app_module, monkeypatch):
@@ -347,8 +351,8 @@ def _entry_signal_kwargs(**overrides):
     return kwargs
 
 
-def test_build_entry_signal_context_flags_exception_ma5_pullback(app_module):
-    context = app_module.build_entry_signal_context(**_entry_signal_kwargs())
+def test_build_entry_signal_context_flags_exception_ma5_pullback():
+    context = build_entry_signal_context(**_entry_signal_kwargs())
 
     assert context["is_leader_base"] is True
     assert context["is_ma5_pullback"] is True
@@ -357,8 +361,8 @@ def test_build_entry_signal_context_flags_exception_ma5_pullback(app_module):
     assert context["is_clean_leader_entry"] is True
 
 
-def test_build_entry_signal_context_extreme_momentum_raises_drawdown_threshold(app_module):
-    context = app_module.build_entry_signal_context(**_entry_signal_kwargs(
+def test_build_entry_signal_context_extreme_momentum_raises_drawdown_threshold():
+    context = build_entry_signal_context(**_entry_signal_kwargs(
         fin_score=3,
         cur_p=130.0,
         low_now=128.0,
@@ -374,8 +378,8 @@ def test_build_entry_signal_context_extreme_momentum_raises_drawdown_threshold(a
     assert context["is_structure_damage_entry_risk"] is False
 
 
-def test_build_entry_signal_context_flags_plain_etf_accumulation(app_module):
-    context = app_module.build_entry_signal_context(**_entry_signal_kwargs(
+def test_build_entry_signal_context_flags_plain_etf_accumulation():
+    context = build_entry_signal_context(**_entry_signal_kwargs(
         is_etf=True,
         has_pos=True,
         fin_score=0,
@@ -422,8 +426,8 @@ def _structure_damage_kwargs(**overrides):
     return kwargs
 
 
-def test_build_structure_damage_context_labels_drawdown_only_price_risk(app_module):
-    context = app_module.build_structure_damage_context(**_structure_damage_kwargs())
+def test_build_structure_damage_context_labels_drawdown_only_price_risk():
+    context = build_structure_damage_context(**_structure_damage_kwargs())
 
     assert context["_drawdown_only_entry_risk"] is True
     assert context["_single_day_only_entry_risk"] is False
@@ -432,8 +436,8 @@ def test_build_structure_damage_context_labels_drawdown_only_price_risk(app_modu
     assert context["_sd_reasons_t"] == ("고점대비 -18.0% 하락 (임계치 -15%)",)
 
 
-def test_build_structure_damage_context_labels_single_day_breakdown(app_module):
-    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+def test_build_structure_damage_context_labels_single_day_breakdown():
+    context = build_structure_damage_context(**_structure_damage_kwargs(
         current_dd=-0.05,
         is_single_day_breakdown=True,
     ))
@@ -445,8 +449,8 @@ def test_build_structure_damage_context_labels_single_day_breakdown(app_module):
     assert context["is_capitulation_selloff"] is False
 
 
-def test_build_structure_damage_context_labels_true_structure_damage(app_module):
-    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+def test_build_structure_damage_context_labels_true_structure_damage():
+    context = build_structure_damage_context(**_structure_damage_kwargs(
         current_dd=-0.10,
         ma50_damage=True,
         below_ma20=True,
@@ -462,8 +466,8 @@ def test_build_structure_damage_context_labels_true_structure_damage(app_module)
     assert "MA20 하회 + RS 🐢약함" in context["_sd_reasons_t"]
 
 
-def test_build_structure_damage_context_keeps_recovered_drawdown_out_of_capitulation(app_module):
-    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+def test_build_structure_damage_context_keeps_recovered_drawdown_out_of_capitulation():
+    context = build_structure_damage_context(**_structure_damage_kwargs(
         current_dd=-0.24,
         dd_threshold=-0.35,
         is_structure_damage_entry_risk=False,

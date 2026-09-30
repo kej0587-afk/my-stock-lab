@@ -334,6 +334,466 @@ def build_breakdown_risk_flags(
     }
 
 
+def calc_atr_for_decision(df: pd.DataFrame, period: int = 14) -> float:
+    """Calculate ATR for decision helpers."""
+    if df is None or len(df) < period + 1:
+        return 0.0
+    tr = pd.concat([
+        df["High"] - df["Low"],
+        (df["High"] - df["Close"].shift(1)).abs(),
+        (df["Low"] - df["Close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean().iloc[-1]
+    return float(atr) if finite_num(atr) else 0.0
+
+
+def build_rr_context(df: pd.DataFrame, cur_p: float, levels: dict) -> dict:
+    """Build risk/reward context from current price, ATR, and structure levels."""
+    atr = calc_atr_for_decision(df)
+    rr_stop_atr = round(cur_p - atr * 2.0, 4) if atr > 0 else None
+    rr_risk_atr = cur_p - rr_stop_atr if rr_stop_atr else 0
+
+    rr_tp1_price = round(cur_p + atr * 1.0, 4) if atr > 0 else None
+    rr_tp2_price = round(cur_p + atr * 2.0, 4) if atr > 0 else None
+    rr_tp3_price = round(cur_p + atr * 4.0, 4) if atr > 0 else None
+
+    rr_target_is_projection = False
+    if levels["int_high"] > cur_p:
+        rr_target_price = levels["int_high"]
+        rr_target_source = "차트 구조: 최근 내부고점"
+    elif levels["ext_high"] > cur_p:
+        rr_target_price = levels["ext_high"]
+        rr_target_source = "차트 구조: 최근 외부고점"
+    else:
+        rr_target_price = rr_tp3_price
+        rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR"
+        rr_target_is_projection = True
+
+    rr_stop_source = "변동성 손절: 현재가 - 2ATR"
+    rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
+    rr_ratio = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
+
+    return {
+        "_atr": atr,
+        "rr_stop_atr": rr_stop_atr,
+        "rr_risk_atr": rr_risk_atr,
+        "rr_tp1_price": rr_tp1_price,
+        "rr_tp2_price": rr_tp2_price,
+        "rr_tp3_price": rr_tp3_price,
+        "rr_target_price": rr_target_price,
+        "rr_target_source": rr_target_source,
+        "rr_target_is_projection": rr_target_is_projection,
+        "rr_stop_source": rr_stop_source,
+        "rr_reward": rr_reward,
+        "rr_ratio": rr_ratio,
+    }
+
+
+def build_smc_insight(
+    rsi_now: float,
+    mfi_now: float,
+    pct_b_now: float,
+    sqz_status: str,
+    trend: str,
+    rs_label: str,
+    rs_slope_label: str,
+) -> str:
+    """Build the compact SMC/momentum interpretation text."""
+    if rsi_now <= 30:
+        return "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰."
+    if mfi_now >= 80:
+        return "스마트머니 익절 가능성이 높은 단기 과열 구간."
+    if trend == "🆕신규상장/자료부족":
+        return "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
+    if 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후":
+        return "응축 후 발산 초기. 모멘텀 실리는 타점 구간."
+    if trend == "🚀정배열(상승)" and rs_label == "🚀강함":
+        if rs_slope_label == "📉RS하락중":
+            return "구조적 상승(BoS) 유지 중이나 RS 기울기 하락 — 상대강도 약화 초기 신호, 추격 자제."
+        if rs_slope_label == "📈RS상승중":
+            return "RS 모멘텀 가속 중 (상승+강함+기울기 상승). 구조적 추세 확장 구간."
+        return "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
+    if rs_label == "🐢약함" and rs_slope_label == "📈RS상승중":
+        return "RS 반전 초입 — 상대강도 회복 중. 추세 전환 확인 후 접근."
+    if trend == "🌊역배열(하락)":
+        return "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
+    return "주요 매물대(FVG/Order Block) 소화 중. 방향성 확정 대기."
+
+
+def build_entry_signal_context(
+    *,
+    is_etf: bool,
+    has_pos: bool,
+    my_price: float,
+    cur_p: float,
+    targ_w: float,
+    weight_gap: float,
+    price_vs_avg: float,
+    trend: str,
+    rs_label: str,
+    rs_slope_label: str,
+    macd_state: str,
+    last_macd: float,
+    prev_macd: float,
+    fin_score: int,
+    adj_tech_score: float,
+    mfi_now: float,
+    rsi_now: float,
+    pct_b_now: float,
+    vol_ratio: float,
+    macro_risk_value: float,
+    current_dd: float,
+    ret_1m: float,
+    ret_3m: float,
+    ret_6m: float,
+    short_history: bool,
+    is_single_day_breakdown: bool,
+    ma20_now: float,
+    ma50_now: float,
+    ma120_now: float,
+    ma5_raw: float,
+    low_now: float,
+    below_ma20: bool,
+    below_ma50: bool,
+    day_ret: float,
+    fvg_info: dict,
+    is_leveraged_or_inverse: bool,
+) -> dict:
+    """Build entry, recovery, and structure-risk signal flags."""
+    is_stock_add_on_strength = (
+        (not is_etf)
+        and has_pos
+        and my_price > 0
+        and targ_w > 0
+        and weight_gap >= 2
+        and 0.00 < price_vs_avg <= 0.05
+        and trend in ["🚀정배열(상승)", "⏳혼조세"]
+        and rs_label in ["🚀강함"]
+        and last_macd > prev_macd
+        and mfi_now < 80
+        and rsi_now < 70
+        and pct_b_now < 1.00
+        and vol_ratio < 2.5
+        and macro_risk_value < 4.5
+    )
+
+    is_early_entry = (
+        trend == "🚀정배열(상승)"
+        and rs_label == "🚀강함"
+        and last_macd > prev_macd
+        and macd_state in ["📉하락주의(데드크로스)", "⏳추세관망"]
+        and mfi_now < 80
+        and pct_b_now < 0.85
+        and 50 <= rsi_now <= 65
+        and adj_tech_score >= 4.0
+    )
+    is_breakout_extreme = (
+        (not is_etf)
+        and fin_score == 4
+        and adj_tech_score >= 4.0
+        and pct_b_now > 1.02
+        and rs_label == "🚀강함"
+    )
+    is_breakout_normal = (
+        (not is_etf)
+        and fin_score == 4
+        and adj_tech_score >= 4.0
+        and 0.95 <= pct_b_now <= 1.02
+        and rs_label == "🚀강함"
+    )
+
+    ma5_now = clean_float(ma5_raw, 0.0) if finite_num(ma5_raw) else 0.0
+    is_leader_base = (
+        (not is_etf)
+        and fin_score == 4
+        and trend == "🚀정배열(상승)"
+        and rs_label == "🚀강함"
+        and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
+        and adj_tech_score >= 4.0
+    )
+    ma5_gap = ((cur_p - ma5_now) / ma5_now) if ma5_now > 0 else math.nan
+    is_ma5_pullback = (
+        ma5_now > 0
+        and low_now <= ma5_now * 1.01
+        and cur_p <= ma5_now * 1.025
+        and (not finite_num(ma5_gap) or ma5_gap >= -0.02)
+    )
+    is_bullish_fvg_pullback = (
+        fvg_info["type"] == "Bullish FVG"
+        and fvg_info["bottom"] is not None
+        and fvg_info["top"] is not None
+        and float(fvg_info["bottom"]) * 0.995 <= cur_p <= float(fvg_info["top"]) * 1.01
+    )
+    is_exception_not_chasing = mfi_now < 82 and pct_b_now < 1.00 and rsi_now < 70 and vol_ratio < 2.5
+    is_exception_entry = (
+        is_leader_base
+        and rs_slope_label != "📉RS하락중"
+        and (is_ma5_pullback or is_bullish_fvg_pullback)
+        and is_exception_not_chasing
+    )
+
+    is_macd_recovering = (
+        macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
+        or last_macd > prev_macd
+    )
+    is_rs_recovering = (
+        rs_label == "🚀강함"
+        or (rs_label == "➖보통" and rs_slope_label == "📈RS상승중")
+    )
+    was_quality_drawdown_or_trend_damage = (
+        current_dd <= -0.12
+        or ret_3m <= 0
+        or ret_6m <= 0
+        or trend != "🚀정배열(상승)"
+    )
+    is_quality_recovery_base = (
+        (not is_etf)
+        and (not short_history)
+        and fin_score >= 3
+        and was_quality_drawdown_or_trend_damage
+        and mfi_now < 82
+        and rsi_now < 72
+        and pct_b_now < 0.98
+        and not is_single_day_breakdown
+        and macro_risk_value < 4.5
+    )
+    is_quality_recovery_watch = (
+        is_quality_recovery_base
+        and ma20_now > 0
+        and cur_p >= ma20_now * 0.97
+        and is_macd_recovering
+        and (is_rs_recovering or rs_label != "🐢약함")
+    )
+    is_quality_recovery_scout = (
+        is_quality_recovery_base
+        and ma20_now > 0
+        and ma50_now > 0
+        and cur_p >= ma20_now * 0.99
+        and cur_p >= ma50_now * 0.98
+        and is_macd_recovering
+        and is_rs_recovering
+        and ret_1m > -0.08
+        and day_ret > -0.04
+    )
+    is_quality_recovery_candidate = (
+        is_quality_recovery_scout
+        and rs_label == "🚀강함"
+        and cur_p >= ma20_now
+        and cur_p >= ma50_now
+        and (ma120_now <= 0 or cur_p >= ma120_now * 0.95)
+        and ret_1m >= -0.03
+    )
+
+    rs_strong = rs_label == "🚀강함"
+    is_leader_grade = (not is_etf) and fin_score == 4 and trend == "🚀정배열(상승)"
+    is_momentum_leader = (
+        (not is_etf)
+        and fin_score >= 3
+        and trend == "🚀정배열(상승)"
+        and rs_strong
+        and ma20_now > 0
+        and cur_p > ma20_now * 1.05
+    )
+    ma50_damage = below_ma50 and not (rs_strong and (is_leader_grade or is_momentum_leader))
+    is_extreme_momentum = (
+        (not is_etf)
+        and fin_score >= 3
+        and trend == "🚀정배열(상승)"
+        and rs_strong
+        and ma20_now > 0
+        and cur_p > ma20_now * 1.20
+    )
+    if is_extreme_momentum:
+        dd_threshold = -0.35
+    elif (is_leader_grade or is_momentum_leader) and rs_strong:
+        dd_threshold = -0.20
+    else:
+        dd_threshold = -0.15
+
+    is_recovering_from_drop = (
+        trend == "🚀정배열(상승)"
+        and day_ret > 0.0
+        and ma20_now > 0
+        and cur_p > ma20_now * 0.93
+    )
+    is_structure_damage_entry_risk = (
+        (not is_etf)
+        and (not short_history)
+        and (
+            current_dd <= dd_threshold
+            or ma50_damage
+            or (below_ma20 and not rs_strong and not is_recovering_from_drop)
+            or is_single_day_breakdown
+        )
+    )
+    is_clean_leader_entry = (
+        (not is_etf)
+        and adj_tech_score >= 4.5
+        and rs_label == "🚀강함"
+        and trend == "🚀정배열(상승)"
+        and day_ret > -0.04
+        and current_dd > -0.15
+        and (ma20_now <= 0 or cur_p >= ma20_now * 0.98)
+        and not is_structure_damage_entry_risk
+    )
+    is_etf_accumulation_ok = (
+        is_etf
+        and not is_leveraged_or_inverse
+        and has_pos
+        and targ_w > 0
+        and weight_gap >= 3
+        and (trend != "🌊역배열(하락)" or weight_gap >= 10)
+        and mfi_now < 85
+        and rsi_now < 75
+        and pct_b_now < 1.03
+        and macro_risk_value < 4.5
+    )
+
+    return {
+        "is_stock_add_on_strength": is_stock_add_on_strength,
+        "is_early_entry": is_early_entry,
+        "is_breakout_extreme": is_breakout_extreme,
+        "is_breakout_normal": is_breakout_normal,
+        "ma5_now": ma5_now,
+        "low_now": low_now,
+        "is_leader_base": is_leader_base,
+        "ma5_gap": ma5_gap,
+        "is_ma5_pullback": is_ma5_pullback,
+        "is_bullish_fvg_pullback": is_bullish_fvg_pullback,
+        "is_exception_not_chasing": is_exception_not_chasing,
+        "is_exception_entry": is_exception_entry,
+        "is_macd_recovering": is_macd_recovering,
+        "is_rs_recovering": is_rs_recovering,
+        "was_quality_drawdown_or_trend_damage": was_quality_drawdown_or_trend_damage,
+        "is_quality_recovery_base": is_quality_recovery_base,
+        "is_quality_recovery_watch": is_quality_recovery_watch,
+        "is_quality_recovery_scout": is_quality_recovery_scout,
+        "is_quality_recovery_candidate": is_quality_recovery_candidate,
+        "_rs_strong": rs_strong,
+        "_is_leader_grade": is_leader_grade,
+        "_is_momentum_leader": is_momentum_leader,
+        "_ma50_damage": ma50_damage,
+        "_is_extreme_momentum": is_extreme_momentum,
+        "_dd_threshold": dd_threshold,
+        "_is_recovering_from_drop": is_recovering_from_drop,
+        "is_structure_damage_entry_risk": is_structure_damage_entry_risk,
+        "is_clean_leader_entry": is_clean_leader_entry,
+        "is_etf_accumulation_ok": is_etf_accumulation_ok,
+    }
+
+
+def build_structure_damage_context(
+    *,
+    is_structure_damage_entry_risk: bool,
+    current_dd: float,
+    dd_threshold: float,
+    ma50_damage: bool,
+    below_ma20: bool,
+    rs_strong: bool,
+    rs_label: str,
+    is_single_day_breakdown: bool,
+    is_extreme_momentum: bool,
+    trend: str,
+    ret_1m: float,
+    ret_3m: float,
+    rsi_now: float,
+    pct_b_now: float,
+    ma20_now: float,
+    cur_p: float,
+    ma50_now: float,
+    day_ret: float,
+    mfi_now: float,
+) -> dict:
+    """Build structure-damage reasons, labels, and capitulation flags."""
+    sd_reasons = []
+    true_structure_damage_reasons = []
+    drawdown_only_entry_risk = False
+    single_day_only_entry_risk = False
+
+    if is_structure_damage_entry_risk:
+        if current_dd <= dd_threshold:
+            sd_reasons.append(f"고점대비 {current_dd*100:.1f}% 하락 (임계치 {dd_threshold*100:.0f}%)")
+        if ma50_damage:
+            reason = "MA50 하회 (대장주 요건 미충족)"
+            sd_reasons.append(reason)
+            true_structure_damage_reasons.append(reason)
+        if below_ma20 and not rs_strong:
+            reason = f"MA20 하회 + RS {rs_label}"
+            sd_reasons.append(reason)
+            true_structure_damage_reasons.append(reason)
+        if is_single_day_breakdown:
+            sd_reasons.append("단일 봉 급락 감지")
+
+        single_day_only_entry_risk = (
+            is_single_day_breakdown
+            and not true_structure_damage_reasons
+        )
+        drawdown_only_entry_risk = (
+            current_dd <= dd_threshold
+            and not true_structure_damage_reasons
+            and not single_day_only_entry_risk
+        )
+
+    if single_day_only_entry_risk:
+        entry_risk_label = "⚠️단기급락: 신규진입 보류"
+        entry_risk_code = "SINGLE_DAY_BREAKDOWN_NO_ENTRY"
+        holding_risk_label = "⚠️단기급락: 추매금지/종가확인"
+        holding_risk_code = "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK"
+    elif drawdown_only_entry_risk:
+        entry_risk_label = "⚠️가격위험: 신규진입 보류"
+        entry_risk_code = "PRICE_DRAWDOWN_NO_ENTRY"
+        holding_risk_label = "⚠️가격위험: 추매금지/원인점검"
+        holding_risk_code = "PRICE_DRAWDOWN_HOLDING_CHECK"
+    else:
+        entry_risk_label = "⚠️추세훼손: 신규진입 보류"
+        entry_risk_code = "STRUCTURE_DAMAGE_NO_ENTRY"
+        holding_risk_label = "⚠️추세훼손: 추매금지/손절기준 점검"
+        holding_risk_code = "STRUCTURE_DAMAGE_HOLDING_CHECK"
+
+    is_recovered_drawdown_zone = (
+        current_dd <= -0.20
+        and trend == "🚀정배열(상승)"
+        and ret_1m > 0
+        and ret_3m > 0
+        and rs_label in {"🚀강함", "➖보통"}
+        and rsi_now >= 45
+        and pct_b_now >= 0.45
+        and (ma20_now <= 0 or cur_p >= ma20_now)
+        and (ma50_now <= 0 or cur_p >= ma50_now * 0.98)
+    )
+    is_capitulation_selloff = (
+        current_dd <= -0.20
+        and not is_extreme_momentum
+        and not is_recovered_drawdown_zone
+        and (
+            current_dd <= -0.30
+            or trend != "🚀정배열(상승)"
+            or (ma20_now > 0 and cur_p < ma20_now * 0.98)
+            or (ma50_now > 0 and cur_p < ma50_now * 0.95)
+            or ret_1m <= -0.08
+            or day_ret <= -0.04
+            or pct_b_now <= 0.35
+            or rsi_now <= 35
+            or mfi_now <= 25
+            or single_day_only_entry_risk
+        )
+    )
+
+    return {
+        "_sd_reasons": sd_reasons,
+        "_true_structure_damage_reasons": true_structure_damage_reasons,
+        "_drawdown_only_entry_risk": drawdown_only_entry_risk,
+        "_single_day_only_entry_risk": single_day_only_entry_risk,
+        "_sd_reasons_t": tuple(sd_reasons),
+        "_entry_risk_label": entry_risk_label,
+        "_entry_risk_code": entry_risk_code,
+        "_holding_risk_label": holding_risk_label,
+        "_holding_risk_code": holding_risk_code,
+        "_is_recovered_drawdown_zone": is_recovered_drawdown_zone,
+        "is_capitulation_selloff": is_capitulation_selloff,
+    }
+
+
 def score_technical_components(
     rs_label: str,
     mfi_now: float,
