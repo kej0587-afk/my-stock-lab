@@ -123,6 +123,87 @@ def test_build_decision_result_preserves_core_output_fields():
     assert result["profit_take_signal"] is False
 
 
+def _flat_ohlc(rows=15, close=10.0, high=11.0, low=9.0):
+    return pd.DataFrame({
+        "High": [high] * rows,
+        "Low": [low] * rows,
+        "Close": [close] * rows,
+    })
+
+
+def test_build_rr_context_uses_internal_high_before_atr_projection(app_module):
+    context = app_module.build_rr_context(
+        _flat_ohlc(),
+        cur_p=10.0,
+        levels={"int_high": 15.0, "ext_high": 20.0},
+    )
+
+    assert context["_atr"] == pytest.approx(2.0)
+    assert context["rr_stop_atr"] == 6.0
+    assert context["rr_tp1_price"] == 12.0
+    assert context["rr_tp2_price"] == 14.0
+    assert context["rr_tp3_price"] == 18.0
+    assert context["rr_target_price"] == 15.0
+    assert context["rr_target_source"] == "차트 구조: 최근 내부고점"
+    assert context["rr_target_is_projection"] is False
+    assert context["rr_ratio"] == 1.25
+
+
+def test_build_rr_context_uses_external_high_when_internal_high_is_below_price(app_module):
+    context = app_module.build_rr_context(
+        _flat_ohlc(),
+        cur_p=10.0,
+        levels={"int_high": 9.0, "ext_high": 16.0},
+    )
+
+    assert context["rr_target_price"] == 16.0
+    assert context["rr_target_source"] == "차트 구조: 최근 외부고점"
+    assert context["rr_target_is_projection"] is False
+    assert context["rr_ratio"] == 1.5
+
+
+def test_build_rr_context_marks_atr_projection_when_no_structure_target_above_price(app_module):
+    context = app_module.build_rr_context(
+        _flat_ohlc(),
+        cur_p=10.0,
+        levels={"int_high": 9.0, "ext_high": 9.5},
+    )
+
+    assert context["rr_target_price"] == 18.0
+    assert context["rr_target_source"] == "강세 시나리오 상단: 현재가 + 4ATR"
+    assert context["rr_target_is_projection"] is True
+    assert context["rr_ratio"] == 2.0
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        (
+            dict(rsi_now=29, mfi_now=85, pct_b_now=0.5, sqz_status="➖비압축", trend="⏳혼조세", rs_label="➖보통", rs_slope_label="➖RS중립"),
+            "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰.",
+        ),
+        (
+            dict(rsi_now=55, mfi_now=82, pct_b_now=0.5, sqz_status="➖비압축", trend="⏳혼조세", rs_label="➖보통", rs_slope_label="➖RS중립"),
+            "스마트머니 익절 가능성이 높은 단기 과열 구간.",
+        ),
+        (
+            dict(rsi_now=55, mfi_now=55, pct_b_now=0.6, sqz_status="🚀해제직후", trend="⏳혼조세", rs_label="➖보통", rs_slope_label="➖RS중립"),
+            "응축 후 발산 초기. 모멘텀 실리는 타점 구간.",
+        ),
+        (
+            dict(rsi_now=55, mfi_now=55, pct_b_now=0.9, sqz_status="➖비압축", trend="🚀정배열(상승)", rs_label="🚀강함", rs_slope_label="📉RS하락중"),
+            "구조적 상승(BoS) 유지 중이나 RS 기울기 하락 — 상대강도 약화 초기 신호, 추격 자제.",
+        ),
+        (
+            dict(rsi_now=55, mfi_now=55, pct_b_now=0.9, sqz_status="➖비압축", trend="🌊역배열(하락)", rs_label="➖보통", rs_slope_label="➖RS중립"),
+            "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장.",
+        ),
+    ],
+)
+def test_build_smc_insight_preserves_existing_message_priority(app_module, kwargs, expected):
+    assert app_module.build_smc_insight(**kwargs) == expected
+
+
 # ---------------------------------------------------------------------------
 # _apply_safety_state_override
 # ---------------------------------------------------------------------------

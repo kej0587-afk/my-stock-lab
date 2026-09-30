@@ -1773,6 +1773,80 @@ def calc_atr(df: pd.DataFrame, period: int = 14) -> float:
     ], axis=1).max(axis=1)
     return float(tr.rolling(period).mean().iloc[-1])
 
+
+def build_rr_context(df: pd.DataFrame, cur_p: float, levels: dict) -> dict:
+    """현재가, ATR, 구조적 저항 기준으로 R/R 계산값을 만든다."""
+    atr = calc_atr(df)
+    rr_stop_atr = round(cur_p - atr * 2.0, 4) if atr > 0 else None
+    rr_risk_atr = cur_p - rr_stop_atr if rr_stop_atr else 0
+
+    rr_tp1_price = round(cur_p + atr * 1.0, 4) if atr > 0 else None
+    rr_tp2_price = round(cur_p + atr * 2.0, 4) if atr > 0 else None
+    rr_tp3_price = round(cur_p + atr * 4.0, 4) if atr > 0 else None
+
+    rr_target_is_projection = False
+    if levels["int_high"] > cur_p:
+        rr_target_price = levels["int_high"]
+        rr_target_source = "차트 구조: 최근 내부고점"
+    elif levels["ext_high"] > cur_p:
+        rr_target_price = levels["ext_high"]
+        rr_target_source = "차트 구조: 최근 외부고점"
+    else:
+        rr_target_price = rr_tp3_price
+        rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR"
+        rr_target_is_projection = True
+
+    rr_stop_source = "변동성 손절: 현재가 - 2ATR"
+    rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
+    rr_ratio = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
+
+    return {
+        "_atr": atr,
+        "rr_stop_atr": rr_stop_atr,
+        "rr_risk_atr": rr_risk_atr,
+        "rr_tp1_price": rr_tp1_price,
+        "rr_tp2_price": rr_tp2_price,
+        "rr_tp3_price": rr_tp3_price,
+        "rr_target_price": rr_target_price,
+        "rr_target_source": rr_target_source,
+        "rr_target_is_projection": rr_target_is_projection,
+        "rr_stop_source": rr_stop_source,
+        "rr_reward": rr_reward,
+        "rr_ratio": rr_ratio,
+    }
+
+
+def build_smc_insight(
+    rsi_now: float,
+    mfi_now: float,
+    pct_b_now: float,
+    sqz_status: str,
+    trend: str,
+    rs_label: str,
+    rs_slope_label: str,
+) -> str:
+    """SMC/모멘텀 보조 해석 문구를 만든다."""
+    if rsi_now <= 30:
+        return "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰."
+    if mfi_now >= 80:
+        return "스마트머니 익절 가능성이 높은 단기 과열 구간."
+    if trend == "🆕신규상장/자료부족":
+        return "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
+    if 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후":
+        return "응축 후 발산 초기. 모멘텀 실리는 타점 구간."
+    if trend == "🚀정배열(상승)" and rs_label == "🚀강함":
+        if rs_slope_label == "📉RS하락중":
+            return "구조적 상승(BoS) 유지 중이나 RS 기울기 하락 — 상대강도 약화 초기 신호, 추격 자제."
+        if rs_slope_label == "📈RS상승중":
+            return "RS 모멘텀 가속 중 (상승+강함+기울기 상승). 구조적 추세 확장 구간."
+        return "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
+    if rs_label == "🐢약함" and rs_slope_label == "📈RS상승중":
+        return "RS 반전 초입 — 상대강도 회복 중. 추세 전환 확인 후 접근."
+    if trend == "🌊역배열(하락)":
+        return "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
+    return "주요 매물대(FVG/Order Block) 소화 중. 방향성 확정 대기."
+
+
 def calc_position_size(total_asset: float, target_weight_pct: float, current_weight_pct: float, current_price: float, atr: float) -> dict:
     """비중 및 ATR 기반 매수/손절 가이드 계산"""
     weight_gap = max(target_weight_pct - current_weight_pct, 0.0)
@@ -17169,32 +17243,19 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
 
     levels = get_recent_levels(df)
 
-    # Feature ②: R/R 비율 — 추가 인사이트와 동일한 2ATR 손절 기준 사용
-    _atr = calc_atr(df)  # 추가 인사이트(독립 모듈) 손절 계산과 동일한 함수
-    rr_stop_atr  = round(cur_p - _atr * 2.0, 4) if _atr > 0 else None   # 2ATR 손절
-    rr_risk_atr  = cur_p - rr_stop_atr if rr_stop_atr else 0
-
-    rr_target_is_projection = False
-    rr_tp1_price = round(cur_p + _atr * 1.0, 4) if _atr > 0 else None
-    rr_tp2_price = round(cur_p + _atr * 2.0, 4) if _atr > 0 else None
-    rr_tp3_price = round(cur_p + _atr * 4.0, 4) if _atr > 0 else None
-
-    # 목표가: 구조적 저항이 현재가 위에 있으면 그것을 사용.
-    # 신고가/가격발견 구간은 +4ATR을 확정 목표가가 아니라 강세 시나리오 상단으로만 쓴다.
-    if levels["int_high"] > cur_p:
-        rr_target_price = levels["int_high"]
-        rr_target_source = "차트 구조: 최근 내부고점"
-    elif levels["ext_high"] > cur_p:
-        rr_target_price = levels["ext_high"]
-        rr_target_source = "차트 구조: 최근 외부고점"
-    else:
-        rr_target_price = rr_tp3_price  # 신고가 돌파: 강세 시나리오 상단
-        rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR"
-        rr_target_is_projection = True
-    rr_stop_source = "변동성 손절: 현재가 - 2ATR"
-
-    rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
-    rr_ratio  = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
+    rr_context = build_rr_context(df, cur_p, levels)
+    _atr = rr_context["_atr"]
+    rr_stop_atr = rr_context["rr_stop_atr"]
+    rr_risk_atr = rr_context["rr_risk_atr"]
+    rr_tp1_price = rr_context["rr_tp1_price"]
+    rr_tp2_price = rr_context["rr_tp2_price"]
+    rr_tp3_price = rr_context["rr_tp3_price"]
+    rr_target_price = rr_context["rr_target_price"]
+    rr_target_source = rr_context["rr_target_source"]
+    rr_target_is_projection = rr_context["rr_target_is_projection"]
+    rr_stop_source = rr_context["rr_stop_source"]
+    rr_reward = rr_context["rr_reward"]
+    rr_ratio = rr_context["rr_ratio"]
 
     # Feature ④: 52주 신고가 돌파 감지 — near_high 제외, 실제 돌파만 인정
     _bk_info = detect_52w_breakout(df)
@@ -17221,21 +17282,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     pd_zone = get_pd_zone(df)
     smc_action = summarize_smc_action(ext_structure, int_structure, int_event, ext_event, liq_state, fvg_info, pd_zone)
 
-    if rsi_now <= 30: smc_insight = "과매도 극단. 유동성 청산 후 구조적 반등(CHoCH) 여부 관찰."
-    elif mfi_now >= 80: smc_insight = "스마트머니 익절 가능성이 높은 단기 과열 구간."
-    elif trend == "🆕신규상장/자료부족": smc_insight = "상장 초기라 MA50/MA120 기반 추세 판정은 보류. 단기 흐름과 거래량만 참고."
-    elif 0.45 < pct_b_now < 0.8 and sqz_status == "🚀해제직후": smc_insight = "응축 후 발산 초기. 모멘텀 실리는 타점 구간."
-    elif trend == "🚀정배열(상승)" and rs_label == "🚀강함":
-        if rs_slope_label == "📉RS하락중":
-            smc_insight = "구조적 상승(BoS) 유지 중이나 RS 기울기 하락 — 상대강도 약화 초기 신호, 추격 자제."
-        elif rs_slope_label == "📈RS상승중":
-            smc_insight = "RS 모멘텀 가속 중 (상승+강함+기울기 상승). 구조적 추세 확장 구간."
-        else:
-            smc_insight = "구조적 상승(BoS) 진행 중. MA20 눌림 여부 확인 필요."
-    elif rs_label == "🐢약함" and rs_slope_label == "📈RS상승중":
-        smc_insight = "RS 반전 초입 — 상대강도 회복 중. 추세 전환 확인 후 접근."
-    elif trend == "🌊역배열(하락)": smc_insight = "하락 구조 우세. 추세 전환 전까지 보수적 접근 권장."
-    else: smc_insight = "주요 매물대(FVG/Order Block) 소화 중. 방향성 확정 대기."
+    smc_insight = build_smc_insight(
+        rsi_now, mfi_now, pct_b_now, sqz_status, trend, rs_label, rs_slope_label
+    )
 
     eff_total = get_effective_total_asset(_te, user_total_asset)
     curr_w, targ_w = get_effective_weights(name, ticker, user_curr_w, user_targ_w)
