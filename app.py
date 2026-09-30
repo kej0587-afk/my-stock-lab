@@ -1422,6 +1422,7 @@ try:
         PORTFOLIO_ADD_ACTIONS,
         PORTFOLIO_CAUTION_ACTIONS,
         build_portfolio_market_alignment_brief,
+        build_portfolio_action_decision_df_from_inputs,
         build_portfolio_next_check_candidates_df_from_inputs,
         build_portfolio_next_check_summary,
         build_portfolio_rebalance_playbook_df,
@@ -1489,6 +1490,8 @@ except Exception as _portfolio_alignment_import_error:
 
     def build_portfolio_rebalance_playbook_df(*_args, **_kwargs):
         return pd.DataFrame()
+
+    build_portfolio_action_decision_df_from_inputs = None
 
     def build_portfolio_recommendation_df_from_inputs(*_args, **_kwargs):
         return pd.DataFrame()
@@ -24247,6 +24250,9 @@ def _portfolio_action_from_row(row, metrics):
 
 
 def build_portfolio_action_decision_df(metrics, asset_df=None):
+    if callable(build_portfolio_action_decision_df_from_inputs):
+        return build_portfolio_action_decision_df_from_inputs(metrics, asset_df)
+
     source_df = metrics.get("strategy_df")
     if not isinstance(source_df, pd.DataFrame) or source_df.empty:
         source_df = asset_df if isinstance(asset_df, pd.DataFrame) else pd.DataFrame()

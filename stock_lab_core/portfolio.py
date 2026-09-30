@@ -174,6 +174,241 @@ def _format_portfolio_weight_pair(current_weight, target_weight):
     return f"{current_weight:.1f}% / {target_weight:.1f}%"
 
 
+def _portfolio_text_contains(text, patterns):
+    text = str(text or "").lower()
+    return any(str(pattern).lower() in text for pattern in patterns)
+
+
+def _is_broad_core_asset(name, ticker):
+    text = f"{name} {ticker}".lower()
+    if any(key in text for key in ["s&p500", "s&p 500", "sp500", "voo", "spy", "379800"]):
+        return True
+    if any(key in text for key in ["나스닥", "nasdaq", "qqq", "379810"]) and not any(
+        key in text for key in ["레버리지", "2x", "3x", "tqqq", "qld"]
+    ):
+        return True
+    return False
+
+
+def _is_semiconductor_tilt_asset(name, ticker):
+    text = f"{name} {ticker}".lower()
+    return any(key in text for key in ["반도체", "semiconductor", "soxl", "soxx", "smh", "dram", "ram", "0167a0"])
+
+
+def _is_leverage_asset(row):
+    name = str(row.get("자산명", "") or "")
+    ticker = str(row.get("티커", "") or "")
+    bucket = normalize_bucket(row.get("버킷", row.get("bucket", "")))
+    text = f"{name} {ticker} {bucket}".lower()
+    return bucket == "leverage" or any(
+        key in text for key in ["레버리지", "leveraged", "2x", "3x", "tqqq", "qld", "soxl", "bitx", "ram"]
+    )
+
+
+def _portfolio_pnl_pct_from_row(row):
+    pnl_pct = clean_float(row.get("수익률_pct"), np.nan)
+    if np.isfinite(pnl_pct):
+        return pnl_pct
+    raw_return = clean_float(row.get("수익률"), np.nan)
+    if not np.isfinite(raw_return):
+        return np.nan
+    return raw_return * 100
+
+
+def _portfolio_pnl_krw_from_row(row, usdkrw=1400.0):
+    pnl_krw = clean_float(row.get("평가손익_원화"), np.nan)
+    if np.isfinite(pnl_krw):
+        return pnl_krw
+    raw_pnl = clean_float(row.get("평가손익"), np.nan)
+    if not np.isfinite(raw_pnl):
+        return np.nan
+    return calc_pnl_krw_from_row(row, usdkrw)
+
+
+def _format_portfolio_pnl(pnl_pct):
+    pnl_pct = clean_float(pnl_pct, np.nan)
+    if not np.isfinite(pnl_pct):
+        return "-"
+    return f"{pnl_pct:+.1f}%"
+
+
+def _format_portfolio_krw_pnl(pnl_krw):
+    pnl_krw = clean_float(pnl_krw, np.nan)
+    if not np.isfinite(pnl_krw):
+        return "-"
+    return f"{pnl_krw:+,.0f}원"
+
+
+def _join_reasons(reasons):
+    reasons = [str(reason).strip() for reason in reasons if str(reason).strip()]
+    return " · ".join(reasons) if reasons else "특이 신호 없음"
+
+
+def _portfolio_action_from_row(row, metrics):
+    name = str(row.get("자산명", "") or row.get("티커", "") or "").strip()
+    ticker = str(row.get("티커", "") or "").strip()
+    bucket = normalize_bucket(row.get("버킷", row.get("bucket", "")))
+    timing = str(row.get("기술적타점", "") or "").strip()
+    trend = str(row.get("추세", "") or "").strip()
+    rs = str(row.get("RS", "") or "").strip()
+    macd = str(row.get("MACD", "") or "").strip()
+    current_weight = clean_float(row.get("현재비중", row.get("전체비중")), 0.0)
+    target_weight = clean_float(row.get("목표비중"), 0.0)
+    gap = clean_float(row.get("비중차이"), target_weight - current_weight)
+    pnl_pct = _portfolio_pnl_pct_from_row(row)
+    pnl_krw = _portfolio_pnl_krw_from_row(row, clean_float(metrics.get("usdkrw"), 1400.0))
+    risk_index = clean_float(metrics.get("risk_index"), 0.0)
+    reserve_gap = clean_float(metrics.get("reserve_gap"), 0.0)
+
+    is_high_risk_market = risk_index >= 60
+    cash_short = reserve_gap > 0.5
+    is_leverage = _is_leverage_asset(row)
+    is_broad_core = _is_broad_core_asset(name, ticker)
+    is_semiconductor_tilt = _is_semiconductor_tilt_asset(name, ticker)
+    is_blocked = _portfolio_text_contains(timing, ["하드차단", "차단", "추세방어", "추세위험", "급락방어", "가격방어"])
+    is_overweight = gap <= -0.3 or _portfolio_text_contains(timing, ["비중 초과", "비중충족", "비중 충족"])
+    is_underweight = gap >= 0.3
+    severe_loss = np.isfinite(pnl_pct) and pnl_pct <= -20
+    moderate_loss = np.isfinite(pnl_pct) and pnl_pct <= -8
+    trend_weak = _portfolio_text_contains(f"{timing} {trend} {macd}", ["역배열", "하락", "데드크로스", "추세위험", "추세방어"])
+    strong_rs = _portfolio_text_contains(rs, ["강함", "strong"])
+
+    reasons = []
+    if np.isfinite(pnl_pct):
+        reasons.append(f"손익 {_format_portfolio_pnl(pnl_pct)}")
+    if target_weight > 0:
+        reasons.append(f"비중 {_format_portfolio_weight_pair(current_weight, target_weight)}")
+    if timing:
+        reasons.append(timing)
+    if trend_weak:
+        reasons.append("추세 약함")
+    elif strong_rs:
+        reasons.append("RS 강함")
+
+    decision = "보유 유지"
+    action = "현재 비중 유지"
+    condition = "다음 리밸런싱 때 목표비중만 확인"
+    priority = 60
+
+    if is_leverage:
+        if is_overweight or is_blocked:
+            decision = "축소/교체 검토"
+            action = "추가매수 중단 · 반등 시 목표 이하로 축소"
+            condition = "목표비중 이하 + 하드차단 해제 전까지 재매수 금지"
+            priority = 10
+        elif severe_loss and is_underweight:
+            decision = "레버리지 DCA 대기"
+            action = "추가매수 중단 · 가격/기초축 회복 조건 대기"
+            condition = "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"
+            priority = 18
+        elif severe_loss:
+            decision = "레버리지 회복확인"
+            action = "추가매수 중단 · 반등 강도 확인"
+            condition = "손실 구간 회복 + 하락 패턴 해소"
+            priority = 22
+        elif is_underweight and _portfolio_text_contains(timing, ["DCA", "소액", "조건부"]):
+            decision = "조건부 소액"
+            action = "정해둔 회차와 금액만, 추격 금지"
+            condition = "시장 위험 완화 + 손절선 확인"
+            priority = 35
+        else:
+            decision = "레버리지 관찰"
+            action = "신규매수 보류"
+            condition = "시장 안전벨트가 경고 이하로 내려갈 때 재검토"
+            priority = 40
+    elif is_broad_core:
+        if is_overweight:
+            decision = "장기코어 유지·신규중단"
+            action = "팔기보다 추가매수 중단, 신규 자금은 부족 코어/현금으로"
+            condition = "목표비중 이하로 내려오면 적립 재개"
+            priority = 20
+        elif is_underweight:
+            decision = "장기코어 유지·회복확인"
+            if is_high_risk_market or cash_short or trend_weak:
+                action = "오늘 추격보다 안정 확인 후 분할 적립"
+                condition = "10Y/VIX 안정 + 종가/RS 회복 + 대기자금 목표 근접"
+            else:
+                action = "정해둔 적립금으로 분할 매수"
+                condition = "월 적립 규칙 유지"
+            priority = 25
+        else:
+            decision = "장기코어 유지"
+            action = "교체보다 보유, 속도만 조절"
+            condition = "목표비중 이탈 시 리밸런싱"
+            priority = 30
+    elif is_semiconductor_tilt and (severe_loss or is_overweight or is_blocked):
+        decision = "위성/집중 축소 검토"
+        action = "추가매수 중단 · 회복 시 코어보다 낮은 비중으로 정리"
+        condition = "반도체 돈흐름 회복 + 목표비중 이하 + 추세 회복"
+        priority = 15
+    elif _portfolio_text_contains(timing, ["추세위험", "원인 점검", "스윙대기"]):
+        decision = "대기/원인점검"
+        action = "비중 확대 보류"
+        condition = "추세 회복 또는 대체 후보가 더 명확할 때"
+        priority = 45
+    elif is_underweight and _portfolio_text_contains(timing, ["S급", "과매도", "분할"]):
+        decision = "관심/분할대기"
+        if is_high_risk_market or cash_short:
+            action = "현금 목표와 시장 안정 확인 후 1차 소액"
+            condition = "대기자금 15% 근접 + 가격 지지 확인"
+        else:
+            action = "목표비중 안에서 천천히 분할"
+            condition = "손절선과 분할 횟수 고정"
+        priority = 32
+    elif is_underweight:
+        decision = "조건부 적립"
+        action = "목표비중 미달분을 한 번에 채우지 말고 분할"
+        condition = "시장 위험 완화 + 개별 추세 확인"
+        priority = 38
+    elif is_overweight:
+        decision = "비중초과 관리"
+        action = "신규매수 중단, 자연 조정 또는 일부 트리밍"
+        condition = "목표비중 이하"
+        priority = 28
+    elif moderate_loss and trend_weak:
+        decision = "손실 원인점검"
+        action = "추가매수보다 회복 조건 확인"
+        condition = "추세 회복 실패 시 대체 후보 검토"
+        priority = 42
+
+    return {
+        "우선": priority,
+        "자산": name or ticker,
+        "티커": ticker,
+        "구분": bucket or "-",
+        "손익": _format_portfolio_pnl(pnl_pct),
+        "평가손익": _format_portfolio_krw_pnl(pnl_krw),
+        "현재/목표": _format_portfolio_weight_pair(current_weight, target_weight),
+        "판정": decision,
+        "실행": action,
+        "근거": _join_reasons(reasons),
+        "재개/해제 조건": condition,
+    }
+
+
+def build_portfolio_action_decision_df_from_inputs(metrics, asset_df=None):
+    source_df = metrics.get("strategy_df") if isinstance(metrics, dict) else None
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        source_df = asset_df if isinstance(asset_df, pd.DataFrame) else pd.DataFrame()
+    if source_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in source_df.iterrows():
+        name = str(row.get("자산명", "") or row.get("티커", "") or "").strip()
+        if not name:
+            continue
+        if normalize_bucket(row.get("버킷", row.get("bucket", ""))) in {"cash", "reserve"}:
+            continue
+        rows.append(_portfolio_action_from_row(row, metrics if isinstance(metrics, dict) else {}))
+
+    if not rows:
+        return pd.DataFrame()
+
+    decision_df = pd.DataFrame(rows)
+    return decision_df.sort_values(["우선", "자산"]).reset_index(drop=True)
+
+
 def _portfolio_playbook_budget_multiplier(action, risk_index):
     action = str(action or "")
     base = {

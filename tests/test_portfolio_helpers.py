@@ -7,6 +7,7 @@ from stock_lab_core.portfolio import (
     build_cash_buffer_scenario,
     build_market_scenario_summary,
     build_monthly_record_status,
+    build_portfolio_action_decision_df_from_inputs,
     build_portfolio_blended_benchmark_spec,
     build_correlation_pair_summary,
     build_risk_contribution_df,
@@ -82,6 +83,35 @@ def test_calc_pnl_krw_from_row_converts_foreign_pnl_only():
     assert calc_pnl_krw_from_row({"티커": "005930.KS", "평가손익": 10_000}, 1400) == 10_000
     assert calc_pnl_krw_from_row({"티커": "KRW_CASH", "평가손익": 0}, 1400) == 0
     assert calc_pnl_krw_from_row({"티커": "FCX", "평가손익": 10}, 1400) == 14_000
+
+
+def test_core_portfolio_action_decision_marks_underweight_leverage_loss_as_dca_wait():
+    metrics = {
+        "risk_index": 35,
+        "reserve_gap": 0,
+        "usdkrw": 1400,
+    }
+    asset_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.6,
+            "목표비중": 10.0,
+            "비중차이": 1.4,
+            "평가손익_원화": -558_304,
+            "수익률_pct": -21.7,
+            "기술적타점": "⚡레버리지 조건부 DCA 대기: $12.96 이하 눌림 우선",
+            "RS": "RS 강함",
+        }
+    ])
+
+    decision_df = build_portfolio_action_decision_df_from_inputs(metrics, asset_df)
+
+    row = decision_df.iloc[0]
+    assert row["판정"] == "레버리지 DCA 대기"
+    assert row["실행"] == "추가매수 중단 · 가격/기초축 회복 조건 대기"
+    assert row["재개/해제 조건"] == "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"
 
 
 def test_merge_portfolio_signal_details_matches_ticker_variants():
