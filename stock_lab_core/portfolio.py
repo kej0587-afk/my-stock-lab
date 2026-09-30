@@ -409,6 +409,206 @@ def build_portfolio_action_decision_df_from_inputs(metrics, asset_df=None):
     return decision_df.sort_values(["우선", "자산"]).reset_index(drop=True)
 
 
+def portfolio_market_flow_score_from_row(row):
+    for col in ["_점수", "점수", "테마점수", "하위점수", "돈흐름점수", "스윙점수"]:
+        value = clean_float(row.get(col), np.nan) if isinstance(row, (pd.Series, dict)) else np.nan
+        if finite_num(value):
+            return float(value)
+    return np.nan
+
+
+def _first_portfolio_flow_text(*values, default=""):
+    for value in values:
+        try:
+            if pd.isna(value):
+                continue
+        except Exception:
+            pass
+        text = str(value or "").strip()
+        if text and text.lower() not in ["nan", "none", "null"]:
+            return text
+    return default
+
+
+def _portfolio_best_direct_flow(row, direct_df):
+    if not isinstance(direct_df, pd.DataFrame) or direct_df.empty:
+        return pd.Series(dtype=object)
+    work = direct_df
+    if "_ticker_key" not in work.columns and "Ticker" in work.columns:
+        work = work.copy()
+        work["_ticker_key"] = work["Ticker"].apply(portfolio_flow_ticker_key)
+    key = portfolio_flow_ticker_key(row.get("티커", ""))
+    if not key or "_ticker_key" not in work.columns:
+        return pd.Series(dtype=object)
+    matched = work[work["_ticker_key"].astype(str).eq(key)].copy()
+    if matched.empty:
+        return pd.Series(dtype=object)
+    if "_flow_score" not in matched.columns:
+        matched["_flow_score"] = matched.apply(portfolio_market_flow_score_from_row, axis=1)
+    return matched.sort_values("_flow_score", ascending=False, na_position="last").iloc[0]
+
+
+def _portfolio_market_action_from_rows(row, command_row, direct_row):
+    action = str(command_row.get("행동", "") or "").strip()
+    timing = str(row.get("기술적타점", "") or "")
+    bucket = normalize_bucket(row.get("버킷", row.get("bucket", "")))
+    gap = clean_float(row.get("비중차이"), 0.0)
+    direct_score = portfolio_market_flow_score_from_row(direct_row)
+    has_direct = finite_num(direct_score)
+    blocked = _portfolio_text_contains(timing, ["하드차단", "추세위험", "추세방어", "추매중단", "시장방어"])
+
+    if blocked:
+        return "보유점검", "내 기술 신호가 방어라서 시장 흐름보다 회복 조건을 먼저 봅니다."
+    if action == "기준축":
+        if gap > 0.3:
+            return "계획적 적립", "오늘 주도 후보가 아니라 장기 기준축이라 정해둔 적립률 안에서만 봅니다."
+        if gap < -0.3:
+            return "유지·신규중단", "기준축이지만 목표보다 많아 새 매수는 멈추고 비중만 관리합니다."
+        return "유지", "기준축은 교체보다 장기 계획과 비중 유지가 우선입니다."
+    if action == "별도관리":
+        return "별도관리", "주식 주도맵과 별도 흐름이라 전용 기준과 목표비중으로 관리합니다."
+    if action == "연결대기":
+        if bucket == "leverage":
+            return "보유점검", "분류 축은 있지만 오늘 실행 후보가 아니라 레버리지 추가는 정밀관측소 확인이 먼저입니다."
+        return "관망", "분류 축은 있지만 오늘 실행 후보에는 직접 올라오지 않았습니다."
+    if action == "정밀관측":
+        if gap > 0.3:
+            if bucket == "leverage":
+                return "조건부 소액", "주도축은 맞지만 레버리지는 정해둔 회차와 금액만 봅니다."
+            return "비중확대 후보", "주도축과 내 목표비중 미달이 같이 맞습니다."
+        if gap < -0.3:
+            return "유지·신규중단", "주도축은 맞지만 목표보다 많아 새 매수는 멈춥니다."
+        return "유지", "주도축과 연결되어 있어 교체보다 보유 유지가 우선입니다."
+    if action == "눌림대기":
+        if gap > 0.3:
+            return "눌림 시 분할", "흐름은 있으나 현재가 추격보다 눌림 확인이 우선입니다."
+        return "유지·추격금지", "보유는 가능하나 신규 추격은 낮춥니다."
+    if action == "추격금지":
+        return "신규중단", "시장 주도축이 과열권이라 새 매수는 멈춥니다."
+    if action == "관심등록":
+        if gap > 0.3:
+            return "관찰 후 소액", "주도축 초입 후보라 비중확대 전 지속 확인이 필요합니다."
+        return "관찰", "흐름은 감지되지만 아직 주도 확정 전입니다."
+    if action == "관망/제외":
+        if gap < -0.3:
+            return "축소/교체 후보", "현재 주도축과 맞지 않고 목표보다 많아 대체 후보와 비교합니다."
+        return "관망", "시장 주도축과 아직 맞지 않습니다."
+    if has_direct and direct_score > 0:
+        return "직접흐름 확인", "개별 돈흐름은 잡혔지만 상위 주도축 확인이 더 필요합니다."
+    if has_direct and direct_score <= 0:
+        return "보유점검", "개별 돈흐름이 약세라 추가매수보다 회복 조건 확인이 먼저입니다."
+    return "미연결", "오늘 주도맵과 직접 연결되지 않았습니다."
+
+
+def _portfolio_market_action_label_from_rows(command_row, direct_row):
+    action = str(command_row.get("행동", "") or "").strip()
+    if action:
+        return action
+    direct_score = portfolio_market_flow_score_from_row(direct_row)
+    if finite_num(direct_score):
+        return "직접흐름" if direct_score > 0 else "직접흐름 약세"
+    return "미연결"
+
+
+def build_portfolio_market_alignment_df_from_inputs(
+    metrics,
+    asset_df,
+    command_df=None,
+    direct_df=None,
+    best_command_flow_fn=None,
+    fallback_row_fn=None,
+):
+    strategy_df = metrics.get("strategy_df") if isinstance(metrics, dict) else pd.DataFrame()
+    source_df = strategy_df if isinstance(strategy_df, pd.DataFrame) and not strategy_df.empty else asset_df
+    if not isinstance(source_df, pd.DataFrame) or source_df.empty:
+        return pd.DataFrame()
+
+    command_df = command_df if isinstance(command_df, pd.DataFrame) else pd.DataFrame()
+    direct_df = direct_df if isinstance(direct_df, pd.DataFrame) else pd.DataFrame()
+
+    rows = []
+    for _, row in source_df.iterrows():
+        if normalize_bucket(row.get("버킷", row.get("bucket", ""))) in {"cash", "reserve"}:
+            continue
+        direct_row = _portfolio_best_direct_flow(row, direct_df)
+        command_row = (
+            best_command_flow_fn(row, command_df)
+            if callable(best_command_flow_fn)
+            else pd.Series(dtype=object)
+        )
+        if not isinstance(command_row, pd.Series):
+            command_row = pd.Series(dtype=object)
+        if command_row.empty and direct_row.empty and callable(fallback_row_fn):
+            command_row = fallback_row_fn(row)
+            if not isinstance(command_row, pd.Series):
+                command_row = pd.Series(dtype=object)
+        port_action, reason = _portfolio_market_action_from_rows(row, command_row, direct_row)
+        market_action = _portfolio_market_action_label_from_rows(command_row, direct_row)
+        flow_score = portfolio_market_flow_score_from_row(command_row)
+        if not finite_num(flow_score):
+            flow_score = portfolio_market_flow_score_from_row(direct_row)
+        current_w = clean_float(row.get("현재비중", row.get("전체비중")), 0.0)
+        target_w = clean_float(row.get("목표비중"), 0.0)
+        gap = clean_float(row.get("비중차이"), target_w - current_w)
+        rows.append({
+            "자산": _first_portfolio_flow_text(row.get("자산명", ""), row.get("티커", ""), default="-"),
+            "티커": str(row.get("티커", "") or "").strip(),
+            "구분": normalize_bucket(row.get("버킷", row.get("bucket", ""))),
+            "현재비중": current_w,
+            "목표비중": target_w,
+            "비중차이": gap,
+            "손익": _format_portfolio_pnl(_portfolio_pnl_pct_from_row(row)),
+            "주도축": _first_portfolio_flow_text(
+                command_row.get("후보군", ""),
+                command_row.get("연결테마", ""),
+                direct_row.get("흐름명", ""),
+                default="미연결",
+            ),
+            "세부축": _first_portfolio_flow_text(
+                command_row.get("내부세부축", ""),
+                command_row.get("세부축", ""),
+                direct_row.get("세부축", ""),
+                default="-",
+            ),
+            "시장판정": market_action,
+            "포트판정": port_action,
+            "판단": _first_portfolio_flow_text(command_row.get("판단", ""), command_row.get("다음확인", ""), reason, default=reason),
+            "근거": reason,
+            "대표/ETF": _first_portfolio_flow_text(
+                command_row.get("ETF/대표", ""),
+                command_row.get("대표주", ""),
+                direct_row.get("흐름명", ""),
+                default="-",
+            ),
+            "점수": flow_score,
+            "기술신호": str(row.get("기술적타점", "") or "").strip(),
+        })
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    result["_판정순서"] = result["포트판정"].map({
+        "비중확대 후보": 7,
+        "조건부 소액": 6,
+        "별도 소액": 5,
+        "눌림 시 분할": 5,
+        "계획적 적립": 5,
+        "유지": 4,
+        "유지·신규중단": 3,
+        "직접흐름 확인": 3,
+        "관찰 후 소액": 3,
+        "유지·추격금지": 2,
+        "신규중단": 2,
+        "관망": 1,
+        "보유점검": 1,
+        "별도관리": 1,
+        "축소/교체 후보": 1,
+    }).fillna(0)
+    result["_점수정렬"] = result["점수"].apply(lambda v: clean_float(v, -999.0))
+    return result.sort_values(["_판정순서", "_점수정렬", "현재비중"], ascending=False).drop(
+        columns=["_판정순서", "_점수정렬"]
+    ).reset_index(drop=True)
+
+
 def _portfolio_playbook_budget_multiplier(action, risk_index):
     action = str(action or "")
     base = {

@@ -1423,6 +1423,7 @@ try:
         PORTFOLIO_CAUTION_ACTIONS,
         build_portfolio_market_alignment_brief,
         build_portfolio_action_decision_df_from_inputs,
+        build_portfolio_market_alignment_df_from_inputs,
         build_portfolio_next_check_candidates_df_from_inputs,
         build_portfolio_next_check_summary,
         build_portfolio_rebalance_playbook_df,
@@ -1492,6 +1493,7 @@ except Exception as _portfolio_alignment_import_error:
         return pd.DataFrame()
 
     build_portfolio_action_decision_df_from_inputs = None
+    build_portfolio_market_alignment_df_from_inputs = None
 
     def build_portfolio_recommendation_df_from_inputs(*_args, **_kwargs):
         return pd.DataFrame()
@@ -25298,6 +25300,16 @@ def _portfolio_market_action_label(command_row, direct_row):
 
 
 def build_portfolio_market_alignment_df(metrics, asset_df, snapshot):
+    if callable(build_portfolio_market_alignment_df_from_inputs):
+        return build_portfolio_market_alignment_df_from_inputs(
+            metrics,
+            asset_df,
+            command_df=_portfolio_snapshot_command_df(snapshot),
+            direct_df=_portfolio_snapshot_direct_flow_df(snapshot),
+            best_command_flow_fn=_portfolio_best_command_flow,
+            fallback_row_fn=_portfolio_bridge_fallback_row,
+        )
+
     strategy_df = metrics.get("strategy_df") if isinstance(metrics, dict) else pd.DataFrame()
     source_df = strategy_df if isinstance(strategy_df, pd.DataFrame) and not strategy_df.empty else asset_df
     if not isinstance(source_df, pd.DataFrame) or source_df.empty:

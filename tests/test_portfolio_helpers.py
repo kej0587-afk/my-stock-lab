@@ -9,6 +9,7 @@ from stock_lab_core.portfolio import (
     build_monthly_record_status,
     build_portfolio_action_decision_df_from_inputs,
     build_portfolio_blended_benchmark_spec,
+    build_portfolio_market_alignment_df_from_inputs,
     build_correlation_pair_summary,
     build_risk_contribution_df,
     build_scenario_context,
@@ -112,6 +113,41 @@ def test_core_portfolio_action_decision_marks_underweight_leverage_loss_as_dca_w
     assert row["판정"] == "레버리지 DCA 대기"
     assert row["실행"] == "추가매수 중단 · 가격/기초축 회복 조건 대기"
     assert row["재개/해제 조건"] == "DCA 가격조건 + 기초축 회복 + 시장 위험 완화"
+
+
+def test_core_portfolio_market_alignment_marks_direct_weak_flow_as_hold_check():
+    strategy_df = pd.DataFrame([
+        {
+            "자산명": "Roundhill T-REX 2X Long DRAM Daily Target ETF",
+            "티커": "RAM",
+            "버킷": "leverage",
+            "현재비중": 8.6,
+            "목표비중": 10.0,
+            "비중차이": 1.4,
+            "수익률_pct": -22.2,
+            "기술적타점": "",
+        }
+    ])
+    direct_df = pd.DataFrame([
+        {
+            "Ticker": "RAM",
+            "구분": "미국 섹터",
+            "섹터": "DRAM 2배",
+            "흐름명": "DRAM 2배",
+            "돈흐름점수": -64.7,
+        }
+    ])
+
+    aligned = build_portfolio_market_alignment_df_from_inputs(
+        {"strategy_df": strategy_df},
+        pd.DataFrame(),
+        direct_df=direct_df,
+    )
+
+    row = aligned.iloc[0]
+    assert row["시장판정"] == "직접흐름 약세"
+    assert row["포트판정"] == "보유점검"
+    assert row["판단"] == "개별 돈흐름이 약세라 추가매수보다 회복 조건 확인이 먼저입니다."
 
 
 def test_merge_portfolio_signal_details_matches_ticker_variants():
