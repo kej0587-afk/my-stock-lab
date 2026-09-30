@@ -155,6 +155,58 @@ def build_return_window_context(df: pd.DataFrame, cur_p: float) -> dict:
     }
 
 
+def build_squeeze_status_context(
+    df: pd.DataFrame,
+    last,
+    prev,
+    sqz_status_fn,
+    *,
+    release_lookback: int = 20,
+) -> dict:
+    """Normalize SQZ flags before delegating to the supplied status function."""
+    def _bool_not_na(value, default=False):
+        try:
+            return bool(value) if pd.notna(value) else default
+        except Exception:
+            return default
+
+    last_sqz_near = _bool_not_na(last.get("SQZ_NEAR", False))
+    prev_sqz_near = _bool_not_na(prev.get("SQZ_NEAR", False))
+    recent_sqz_near = df["SQZ_NEAR"].tail(30).tolist() if df is not None and "SQZ_NEAR" in df.columns else None
+    recent_sqz_on = df["SQZ_ON"].tail(30).tolist() if df is not None and "SQZ_ON" in df.columns else []
+    last_sqz_on = _bool_not_na(last.get("SQZ_ON", False))
+    prev_sqz_on = _bool_not_na(prev.get("SQZ_ON", False))
+    sqz_status = sqz_status_fn(
+        last_sqz_on,
+        prev_sqz_on,
+        recent_sqz_on,
+        release_lookback=release_lookback,
+        last_sqz_near=last_sqz_near,
+        prev_sqz_near=prev_sqz_near,
+        recent_sqz_near=recent_sqz_near,
+    )
+    return {
+        "last_sqz_near": last_sqz_near,
+        "prev_sqz_near": prev_sqz_near,
+        "recent_sqz_near": recent_sqz_near,
+        "sqz_status": sqz_status,
+    }
+
+
+def build_smc_structure_labels(trend: str, rs_label: str, macd_state: str) -> dict:
+    """Build the external/internal structure labels used by SMC summaries."""
+    ext_structure = (
+        "Bullish" if trend == "🚀정배열(상승)"
+        else ("Bearish" if trend == "🌊역배열(하락)" else "Neutral")
+    )
+    int_structure = (
+        "Bullish"
+        if rs_label == "🚀강함" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
+        else ("Bearish" if trend == "🌊역배열(하락)" or rs_label == "🐢약함" else "Mixed")
+    )
+    return {"ext_structure": ext_structure, "int_structure": int_structure}
+
+
 def _get_live_price_row_date(ticker: str):
     try:
         is_us = not is_kr_listed(ticker)

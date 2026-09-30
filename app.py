@@ -154,7 +154,9 @@ from stock_lab_core.decision_engine import (
     build_position_sizing_hint,
     build_rr_context,
     build_smc_insight,
+    build_smc_structure_labels,
     build_sideways_quality_state,
+    build_squeeze_status_context,
     build_structure_damage_context,
     build_tactical_price_context,
     classify_candidate_grade,
@@ -15619,20 +15621,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
     _, rs_label = get_rs_score(ticker, asset_class)
     rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
-    last_sqz_near_raw = last.get("SQZ_NEAR", False)
-    prev_sqz_near_raw = prev.get("SQZ_NEAR", False)
-    last_sqz_near = bool(last_sqz_near_raw) if pd.notna(last_sqz_near_raw) else False
-    prev_sqz_near = bool(prev_sqz_near_raw) if pd.notna(prev_sqz_near_raw) else False
-    recent_sqz_near = df["SQZ_NEAR"].tail(30).tolist() if "SQZ_NEAR" in df.columns else None
-    sqz_status = get_sqz_status(
-        bool(last["SQZ_ON"]),
-        bool(prev["SQZ_ON"]),
-        df["SQZ_ON"].tail(30).tolist(),
-        release_lookback=20,
-        last_sqz_near=last_sqz_near,
-        prev_sqz_near=prev_sqz_near,
-        recent_sqz_near=recent_sqz_near,
-    )
+    squeeze_status_context = build_squeeze_status_context(df, last, prev, get_sqz_status, release_lookback=20)
+    last_sqz_near = squeeze_status_context["last_sqz_near"]
+    prev_sqz_near = squeeze_status_context["prev_sqz_near"]
+    recent_sqz_near = squeeze_status_context["recent_sqz_near"]
+    sqz_status = squeeze_status_context["sqz_status"]
 
     tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
     rs_s = tech_scores["rs_s"]
@@ -15711,12 +15704,9 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     _bench_info = get_auto_benchmark_info(ticker, name, asset_class, is_etf)
     sector_flow_state = get_sector_flow_state(_bench_info.get("sector_bench", ""))
 
-    ext_structure = "Bullish" if trend == "🚀정배열(상승)" else ("Bearish" if trend == "🌊역배열(하락)" else "Neutral")
-
-    int_structure = (
-        "Bullish" if rs_label == "🚀강함" and macd_state in ["🔥매수신호(골든크로스)", "📈추세유지(상승중)"]
-        else ("Bearish" if trend == "🌊역배열(하락)" or rs_label == "🐢약함" else "Mixed")
-    )
+    smc_structure_labels = build_smc_structure_labels(trend, rs_label, macd_state)
+    ext_structure = smc_structure_labels["ext_structure"]
+    int_structure = smc_structure_labels["int_structure"]
 
     int_event, ext_event = detect_structure_event(df, levels)
     liq_state = detect_liquidity_grab(df, levels)

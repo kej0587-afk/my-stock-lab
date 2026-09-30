@@ -15,7 +15,9 @@ from stock_lab_core.decision_engine import (
     build_return_window_context,
     build_rr_context,
     build_smc_insight,
+    build_smc_structure_labels,
     build_sideways_quality_state,
+    build_squeeze_status_context,
     build_structure_damage_context,
     compute_sizing_hint,
     has_down_session_pressure,
@@ -168,6 +170,43 @@ def test_build_return_window_context_uses_available_history_windows():
     assert ctx["ret_1m"] == pytest.approx(121 / 101 - 1)
     assert ctx["ret_3m"] == pytest.approx(121 / 61 - 1)
     assert ctx["ret_6m"] == pytest.approx(120.0)
+
+
+def test_build_squeeze_status_context_normalizes_near_flags():
+    calls = {}
+
+    def fake_sqz_status(last_on, prev_on, recent_on, **kwargs):
+        calls["last_on"] = last_on
+        calls["prev_on"] = prev_on
+        calls["recent_on"] = recent_on
+        calls["kwargs"] = kwargs
+        return "테스트 SQZ"
+
+    df = pd.DataFrame(
+        {
+            "SQZ_ON": [False, True, True],
+            "SQZ_NEAR": [False, None, True],
+        }
+    )
+
+    ctx = build_squeeze_status_context(df, df.iloc[-1], df.iloc[-2], fake_sqz_status)
+
+    assert ctx["sqz_status"] == "테스트 SQZ"
+    assert ctx["last_sqz_near"] is True
+    assert ctx["prev_sqz_near"] is False
+    assert calls["last_on"] is True
+    assert calls["prev_on"] is True
+    assert calls["kwargs"]["recent_sqz_near"] == [False, None, True]
+
+
+def test_build_smc_structure_labels_maps_external_and_internal_states():
+    bullish = build_smc_structure_labels("🚀정배열(상승)", "🚀강함", "🔥매수신호(골든크로스)")
+    bearish = build_smc_structure_labels("🌊역배열(하락)", "➖보통", "⏳추세관망")
+    mixed = build_smc_structure_labels("⏳혼조세", "➖보통", "⏳추세관망")
+
+    assert bullish == {"ext_structure": "Bullish", "int_structure": "Bullish"}
+    assert bearish == {"ext_structure": "Bearish", "int_structure": "Bearish"}
+    assert mixed == {"ext_structure": "Neutral", "int_structure": "Mixed"}
 
 
 def _flat_ohlc(rows=15, close=10.0, high=11.0, low=9.0):
