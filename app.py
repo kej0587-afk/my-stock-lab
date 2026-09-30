@@ -24994,6 +24994,35 @@ PORTFOLIO_BROAD_BRIDGE_TOKENS = {
     "미국 AI·빅테크",
 }
 
+PORTFOLIO_ADD_ACTIONS = frozenset({
+    "비중확대 후보",
+    "계획적 적립",
+    "조건부 소액",
+    "별도 소액",
+    "눌림 시 분할",
+    "관찰 후 소액",
+    "직접흐름 확인",
+})
+PORTFOLIO_SEPARATE_ACTIONS = frozenset({"별도관리"})
+PORTFOLIO_TRIM_ACTIONS = frozenset({"축소/교체 후보"})
+PORTFOLIO_STOP_ACTIONS = frozenset({
+    "신규중단",
+    "유지·추격금지",
+    "유지·신규중단",
+    "보유점검",
+    "별도관리",
+    "관망",
+})
+PORTFOLIO_CAUTION_ACTIONS = PORTFOLIO_STOP_ACTIONS | PORTFOLIO_TRIM_ACTIONS
+PORTFOLIO_RECOMMEND_STOP_TOKENS = ("축소", "교체", "신규중단", "추격금지")
+PORTFOLIO_RECOMMEND_GROUP_ORDER = {
+    "보유 보강": 0,
+    "조건부 보강": 1,
+    "신규 정밀관측": 2,
+    "신규 관찰": 3,
+    "교체 재원": 4,
+}
+
 
 def _portfolio_bridge_market_hint(name="", ticker=""):
     ticker_text = str(ticker or "").upper()
@@ -25311,12 +25340,9 @@ def build_portfolio_market_alignment_brief(align_df):
         return {}
     work = align_df.copy()
     work["현재비중"] = work.get("현재비중", pd.Series(0.0, index=work.index)).apply(lambda v: clean_float(v, 0.0))
-    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
-    caution_actions = {"보유점검", "관망", "신규중단", "유지·추격금지", "유지·신규중단", "축소/교체 후보"}
-    separate_actions = {"별도관리"}
-    add_df = work[work["포트판정"].astype(str).isin(add_actions)].sort_values("현재비중", ascending=False)
-    caution_df = work[work["포트판정"].astype(str).isin(caution_actions)].sort_values("현재비중", ascending=False)
-    separate_df = work[work["포트판정"].astype(str).isin(separate_actions)].sort_values("현재비중", ascending=False)
+    add_df = work[work["포트판정"].astype(str).isin(PORTFOLIO_ADD_ACTIONS)].sort_values("현재비중", ascending=False)
+    caution_df = work[work["포트판정"].astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)].sort_values("현재비중", ascending=False)
+    separate_df = work[work["포트판정"].astype(str).isin(PORTFOLIO_SEPARATE_ACTIONS)].sort_values("현재비중", ascending=False)
     direct_df = work[work["시장판정"].astype(str).str.contains("직접흐름", na=False)].sort_values("현재비중", ascending=False)
 
     add_weight = float(add_df["현재비중"].sum()) if not add_df.empty else 0.0
@@ -25368,7 +25394,7 @@ def _portfolio_playbook_condition(row):
     market_action = str(row.get("시장판정", "") or "")
     tech = str(row.get("기술신호", "") or "")
     if action == "비중확대 후보":
-        return "정밀관측소에서 과열·R/R 확인 후 목표비중 안에서 분할"
+        return "과열·R/R 확인 후 목표비중 안에서 분할"
     if action == "계획적 적립":
         return "장기 기준축은 시장 안정과 목표비중 안에서 정해진 금액만 적립"
     if action == "조건부 소액":
@@ -25444,16 +25470,12 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0,
     reserve_budget = reserve_deployable if risk_index < 55 else (reserve_deployable * 0.5 if risk_index < 70 else 0.0)
     total_budget = monthly_budget + reserve_budget
 
-    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
-    stop_actions = {"신규중단", "유지·추격금지", "유지·신규중단", "보유점검", "별도관리", "관망"}
-    trim_actions = {"축소/교체 후보"}
-
     work = _enrich_portfolio_alignment_with_action_df(align_df, action_df).copy()
     for col in ["현재비중", "목표비중", "비중차이", "점수"]:
         if col in work.columns:
             work[col] = work[col].apply(lambda v: clean_float(v, 0.0))
 
-    candidates = work[work["포트판정"].astype(str).isin(add_actions)].copy()
+    candidates = work[work["포트판정"].astype(str).isin(PORTFOLIO_ADD_ACTIONS)].copy()
     if not candidates.empty:
         candidates["_action_rank"] = candidates["포트판정"].map({
             "비중확대 후보": 5,
@@ -25491,7 +25513,7 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0,
             "재개/해제 조건": row.get("재개/해제 조건", ""),
         })
 
-    stop_df = work[work["포트판정"].astype(str).isin(stop_actions | trim_actions)].copy()
+    stop_df = work[work["포트판정"].astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)].copy()
     if not stop_df.empty:
         stop_df["_stop_rank"] = stop_df["포트판정"].map({
             "축소/교체 후보": 5,
@@ -25505,7 +25527,7 @@ def build_portfolio_rebalance_playbook_df(align_df, metrics, monthly_budget=0.0,
         stop_df = stop_df.sort_values(["_stop_rank", "현재비중"], ascending=False)
     for _, row in stop_df.head(10).iterrows():
         over_krw = max(total_asset * abs(min(clean_float(row.get("비중차이"), 0.0), 0.0)) / 100.0, 0.0)
-        is_trim = str(row.get("포트판정", "")) in trim_actions
+        is_trim = str(row.get("포트판정", "")) in PORTFOLIO_TRIM_ACTIONS
         rows.append({
             "우선": len(rows) + 1,
             "구분": "축소/중단 후보" if is_trim else "신규중단/점검",
@@ -25570,7 +25592,7 @@ def _portfolio_recommendation_strength(port_action, decision, bucket=""):
 def _portfolio_recommendation_market_action(action):
     action = str(action or "")
     if action == "정밀관측":
-        return "정밀관측소 확인"
+        return "가격/RR 확인"
     if action == "눌림대기":
         return "눌림 위치 대기"
     if action == "관심등록":
@@ -25586,8 +25608,6 @@ def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, act
     news_rows = news_rows if isinstance(news_rows, list) else []
     work = _enrich_portfolio_alignment_with_action_df(align_df, action_df).copy()
 
-    add_actions = {"비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"}
-    stop_tokens = ["축소", "교체", "신규중단", "추격금지"]
     rows = []
     seen = set()
 
@@ -25613,7 +25633,7 @@ def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, act
         pnl_pct = _portfolio_next_check_pct_value(row.get("손익", ""))
         news_text = _portfolio_next_check_news_text(row, news_rows)
 
-        if port_action in add_actions:
+        if port_action in PORTFOLIO_ADD_ACTIONS:
             group = "보유 보강"
             base = 76.0
             if "조건부" in decision_text or bucket == "leverage":
@@ -25632,12 +25652,12 @@ def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, act
                 "실행강도": _portfolio_recommendation_strength(port_action, decision, bucket),
                 "근거": _first_flow_text(row.get("근거", ""), row.get("판단", ""), default="목표비중과 주도축이 같이 맞는지 확인합니다."),
                 "다음 행동": _portfolio_next_check_condition(row),
-                "주의/조건": _first_flow_text(row.get("재개/해제 조건", ""), default="정밀관측소에서 가격위치와 R/R 확인"),
+                "주의/조건": _first_flow_text(row.get("재개/해제 조건", ""), default="가격위치와 R/R 확인"),
                 "뉴스/재료": news_text,
             })
             continue
 
-        if any(token in decision_text for token in stop_tokens):
+        if any(token in decision_text for token in PORTFOLIO_RECOMMEND_STOP_TOKENS):
             priority = 54.0 + min(abs(min(gap, 0.0)), 5.0) * 3.0
             if finite_num(pnl_pct) and pnl_pct < 0:
                 priority += min(abs(pnl_pct), 30.0) * 0.4
@@ -25679,7 +25699,7 @@ def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, act
                     "우선점수": max(0.0, min(100.0, priority)),
                     "실행강도": _portfolio_recommendation_market_action(action),
                     "근거": _first_flow_text(row.get("판단", ""), row.get("다음확인", ""), default="오늘점검 실행 후보판에서 포착된 축입니다."),
-                    "다음 행동": _first_flow_text(row.get("다음확인", ""), default="정밀관측소에서 대표주 가격위치와 R/R 확인"),
+                    "다음 행동": _first_flow_text(row.get("다음확인", ""), default="대표주 가격위치와 R/R 확인"),
                     "주의/조건": "보유 종목 교체 전 대표주 동행과 뉴스 재료 확인",
                     "뉴스/재료": news_text,
                 })
@@ -25687,8 +25707,7 @@ def build_portfolio_recommendation_df(align_df, metrics=None, snapshot=None, act
     result = pd.DataFrame(rows)
     if result.empty:
         return result
-    group_order = {"보유 보강": 0, "조건부 보강": 1, "신규 정밀관측": 2, "신규 관찰": 3, "교체 재원": 4}
-    result["_group_order"] = result["추천구분"].map(group_order).fillna(9)
+    result["_group_order"] = result["추천구분"].map(PORTFOLIO_RECOMMEND_GROUP_ORDER).fillna(9)
     result = result.sort_values(["_group_order", "우선점수", "후보"], ascending=[True, False, True]).reset_index(drop=True)
     limit = max(int(limit), 1)
     if len(result) > limit:
@@ -25768,7 +25787,7 @@ def _portfolio_next_check_condition(row):
     if port_action == "계획적 적립":
         return "시장 위험 완화와 목표비중 안에서 정해진 적립만 진행"
     if port_action == "비중확대 후보":
-        return "정밀관측소 R/R, 과열, 눌림 위치가 동시에 맞는지 확인"
+        return "R/R, 과열, 눌림 위치가 동시에 맞는지 확인"
     if port_action in {"조건부 소액", "별도 소액"}:
         return "회차 금액 고정, 손절선과 기초축 회복을 먼저 확인"
     if port_action == "눌림 시 분할":
@@ -25973,7 +25992,7 @@ def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_
     with st.expander("오늘점검 기반 다음 점검 후보", expanded=True):
         st.caption(
             "오늘점검 주도축, 자산현황 실행판, 목표비중 미달, 뉴스 재료를 함께 본 점검 우선순위입니다. "
-            "매수 확정이 아니라 정밀관측소에서 먼저 열어볼 후보입니다."
+            "매수 확정이 아니라 가격위치, R/R, 뉴스 재료를 먼저 확인할 후보입니다."
         )
         summary = build_portfolio_next_check_summary(candidates)
         if summary:
@@ -26001,7 +26020,7 @@ def render_portfolio_recommendation_panel(align_df, metrics, snapshot=None, acti
     with st.expander("오늘점검 기반 추천/교체 후보", expanded=True):
         st.caption(
             "오늘점검 주도축, 뉴스 재료, 내 보유 비중, 자산현황 실행판을 합쳐 만든 검토 순서입니다. "
-            "주문 신호가 아니라 정밀관측소로 먼저 보낼 후보판입니다."
+            "주문 신호가 아니라 가격위치, R/R, 뉴스 재료를 확인할 후보판입니다."
         )
         idea_df = rec_df[~rec_df["추천구분"].eq("교체 재원")]
         source_df = rec_df[rec_df["추천구분"].eq("교체 재원")]
@@ -26089,8 +26108,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
         )
 
     connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
-    add_mask = align_df["포트판정"].astype(str).isin(["비중확대 후보", "계획적 적립", "조건부 소액", "별도 소액", "눌림 시 분할", "관찰 후 소액", "직접흐름 확인"])
-    caution_mask = align_df["포트판정"].astype(str).isin(["보유점검", "축소/교체 후보", "신규중단", "유지·추격금지", "관망", "별도관리"])
+    add_mask = align_df["포트판정"].astype(str).isin(PORTFOLIO_ADD_ACTIONS)
+    caution_mask = align_df["포트판정"].astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)
     connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
     add_count = int(add_mask.sum())
     caution_count = int(caution_mask.sum())
