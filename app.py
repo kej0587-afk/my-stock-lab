@@ -1246,6 +1246,7 @@ except Exception as _today_queue_classify_import_error:
             )
         return sorted_df.drop(columns=["_sort_action", "_sort_safety", "_sort_adj", "_sort_rr", "_sort_hard"], errors="ignore")
 from stock_lab_core.news import (
+    NEWS_CATEGORY_ORDER,
     get_analyst_snapshot,
     get_ticker_news,
     render_news_cards,
@@ -1322,6 +1323,18 @@ except Exception:
     SECTOR_CLUSTERS_US = {}
     ETF_TO_THEME = {}
 
+    def get_image_theme_names():
+        return []
+
+    def calculate_image_theme_flow_df(theme):
+        return pd.DataFrame()
+
+    def calculate_image_theme_group_df(theme_flow_df):
+        return pd.DataFrame()
+
+    def calculate_image_theme_rotation_df(theme_flow_df):
+        return pd.DataFrame()
+
 try:
     from stock_lab_core.money_flow import fetch_naver_theme_coverage_snapshot
     NAVER_THEME_COVERAGE_AVAILABLE = True
@@ -1337,17 +1350,8 @@ try:
 except ImportError:
     _LWC_AVAILABLE = False
 
-    def get_image_theme_names():
-        return []
-
-    def calculate_image_theme_flow_df(theme):
-        return pd.DataFrame()
-
-    def calculate_image_theme_group_df(theme_flow_df):
-        return pd.DataFrame()
-
-    def calculate_image_theme_rotation_df(theme_flow_df):
-        return pd.DataFrame()
+    def renderLightweightCharts(*args, **kwargs):
+        return None
 try:
     from stock_lab_core.money_flow import get_sector_flow_state
 except Exception:
@@ -2154,6 +2158,31 @@ CURRENT_USER_EMAIL = require_login()
 IS_PUBLIC_DEMO = is_public_demo_mode()
 
 
+DEFAULT_ACCOUNT_TYPES = ["일반", "ISA", "연금저축", "IRP"]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_account_types_for_sidebar(owner_email):
+    accounts = list(DEFAULT_ACCOUNT_TYPES)
+    if is_public_demo_mode():
+        return accounts
+
+    try:
+        url = get_secret_value("SUPABASE_URL")
+        key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
+        if not url or not key:
+            return accounts
+        client = create_client(url, key)
+        res = client.table("holdings").select("account_type").eq("owner_email", owner_email).execute()
+        for row in getattr(res, "data", []) or []:
+            account = str(row.get("account_type") or "").strip()
+            if account and account not in accounts:
+                accounts.append(account)
+    except Exception as exc:
+        logging.warning("account type sidebar preload failed: %s", exc)
+    return accounts
+
+
 st.markdown("""
 <style>
     .stApp { background-color: #0b0f19; }
@@ -2202,14 +2231,7 @@ with st.sidebar:
         st.subheader("📂 계좌 필터링")
         
         # 1. DB에서 계좌 목록 불러오기
-        base_accounts = ["일반", "ISA", "연금저축", "IRP"]
-        try:
-            tmp_df = load_holdings_db()
-            if not tmp_df.empty and "account_type" in tmp_df.columns:
-                db_accounts = tmp_df["account_type"].dropna().unique().tolist()
-                base_accounts = list(dict.fromkeys(base_accounts + db_accounts))
-        except Exception:
-            pass
+        base_accounts = load_account_types_for_sidebar(CURRENT_USER_EMAIL)
 
         # 2. 스트림릿 고질적 버그(StreamlitAPIException) 완벽 우회
         # key를 직접 multiselect에 주지 않고 변수로 받아서 세션에 수동 저장합니다.
@@ -8792,17 +8814,17 @@ _SECTOR_BENCH_MAP: dict[str, tuple[str, str] | None] = {
     "핀테크":         ("QQQ", "나스닥100(QQQ)"),
     "경기소비재":     ("SPY", "S&P500(SPY)"),
     "필수소비재":     ("SPY", "S&P500(SPY)"),
-    "헬스케어":       ("XLV", "헬스케어(XLV)"),
-    "바이오":         ("XLV", "헬스케어(XLV)"),
+    "US:헬스케어":    ("XLV", "헬스케어(XLV)"),
+    "US:바이오":      ("XLV", "헬스케어(XLV)"),
     "금융":           ("XLF", "금융(XLF)"),
-    "에너지":         ("XLE", "에너지(XLE)"),
+    "US:에너지":      ("XLE", "에너지(XLE)"),
     "유틸리티":       ("XLU", "유틸리티(XLU)"),
-    "부동산":         ("VNQ", "리츠(VNQ)"),
+    "US:부동산":      ("VNQ", "리츠(VNQ)"),
     "산업재":         ("XLI", "산업재(XLI)"),
     "소재":           ("XLB", "소재(XLB)"),
     "커뮤니케이션":   ("SPY", "S&P500(SPY)"),
     "항공방산":       ("SPY", "S&P500(SPY)"),
-    "방산":           ("SPY", "S&P500(SPY)"),
+    "US:방산":        ("SPY", "S&P500(SPY)"),
     "주택건설":       ("SPY", "S&P500(SPY)"),
     "인프라":         ("SPY", "S&P500(SPY)"),
     "신재생":         ("SPY", "S&P500(SPY)"),
@@ -8833,20 +8855,20 @@ _SECTOR_BENCH_MAP: dict[str, tuple[str, str] | None] = {
     "전력인프라":   ("069500.KS", "KODEX200"),
     "전력기기":     ("069500.KS", "KODEX200"),
     "2차전지":      ("069500.KS", "KODEX200"),
-    "바이오":       ("069500.KS", "KODEX200"),
+    "KR:바이오":    ("069500.KS", "KODEX200"),
     "건설/유틸":    ("069500.KS", "KODEX200"),
     "조선":         ("069500.KS", "KODEX200"),
-    "방산":         ("069500.KS", "KODEX200"),
+    "KR:방산":      ("069500.KS", "KODEX200"),
     "화장품":       ("069500.KS", "KODEX200"),
     "K-뷰티":       ("069500.KS", "KODEX200"),
     "웹툰&게임":    ("229200.KS", "KODEX코스닥150"),
     "IT/기술":      ("069500.KS", "KODEX200"),
-    "에너지":       ("069500.KS", "KODEX200"),
+    "KR:에너지":    ("069500.KS", "KODEX200"),
     "원자력TOP10":  ("069500.KS", "KODEX200"),
     "원자력":       ("069500.KS", "KODEX200"),
-    "부동산":       ("069500.KS", "KODEX200"),
+    "KR:부동산":    ("069500.KS", "KODEX200"),
     "KOSPI200 대형":("069500.KS", "KODEX200"),
-    "헬스케어":     ("069500.KS", "KODEX200"),
+    "KR:헬스케어":  ("069500.KS", "KODEX200"),
     "인도 Nifty50": ("EEM",       "신흥국(EEM)"),
     "일본 Nikkei225":("EWJ",      "일본주식(EWJ)"),
     "중국 CSI300":  ("MCHI",      "중국주식(MCHI)"),
@@ -8857,15 +8879,19 @@ _SECTOR_BENCH_MAP: dict[str, tuple[str, str] | None] = {
 def _resolve_benchmark(ticker: str, sector: str = "", group: str = "") -> tuple[str | None, str]:
     """섹터/구분/티커 suffix 기반으로 (bench_ticker, bench_label) 결정."""
     # 1) 섹터명 직접 매칭
+    _upper = ticker.upper()
+    market_prefix = "KR" if (_upper.endswith(".KS") or _upper.endswith(".KQ")) else "US"
     for key in [sector, group]:
-        if key and key in _SECTOR_BENCH_MAP:
-            result = _SECTOR_BENCH_MAP[key]
-            if result is None:
-                return None, ""          # 비교 불가
-            return result
+        if not key:
+            continue
+        for lookup_key in [f"{market_prefix}:{key}", key]:
+            if lookup_key in _SECTOR_BENCH_MAP:
+                result = _SECTOR_BENCH_MAP[lookup_key]
+                if result is None:
+                    return None, ""          # 비교 불가
+                return result
 
     # 2) suffix 기반 기본값
-    _upper = ticker.upper()
     if _upper.endswith(".KS") or _upper.endswith(".KQ"):
         return "069500.KS", "KODEX200"
     return "SPY", "S&P500(SPY)"
@@ -15912,7 +15938,7 @@ def build_macro_event_candidates(today):
         deduped,
         key=lambda x: (
             parse_macro_event_date(x.get("date")) or datetime.max.date(),
-            NEWS_CATEGORY_ORDER.get(x.get("category", ""), 9) if "NEWS_CATEGORY_ORDER" in globals() else 0,
+            NEWS_CATEGORY_ORDER.get(x.get("category", ""), 9),
             str(x.get("event", "")),
         ),
     )

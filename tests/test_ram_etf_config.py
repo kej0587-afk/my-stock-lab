@@ -83,6 +83,28 @@ def test_ram_etf_app_profile_uses_dram_as_underlying(app_module):
     assert any(row[1] == "MU" for row in profile["composition"])
 
 
+def test_image_theme_helpers_are_not_overridden_by_lwc_fallback(app_module):
+    if app_module.IMAGE_THEME_FLOW_AVAILABLE:
+        assert app_module.get_image_theme_names.__module__ == "stock_lab_core.money_flow"
+        assert app_module.calculate_image_theme_flow_df.__module__ == "stock_lab_core.money_flow"
+
+
+def test_sidebar_account_loader_is_available_before_holdings_loader(app_module):
+    assert app_module.load_account_types_for_sidebar("public_demo@stocklab.local") == app_module.DEFAULT_ACCOUNT_TYPES
+
+
+def test_lwc_baseline_benchmark_resolves_region_specific_duplicate_sector_names(app_module):
+    assert app_module._resolve_benchmark("LLY", sector="헬스케어") == ("XLV", "헬스케어(XLV)")
+    assert app_module._resolve_benchmark("244580.KS", sector="헬스케어") == ("069500.KS", "KODEX200")
+    assert app_module._resolve_benchmark("XOM", sector="에너지") == ("XLE", "에너지(XLE)")
+    assert app_module._resolve_benchmark("139250.KS", sector="에너지") == ("069500.KS", "KODEX200")
+
+
+def test_news_category_order_is_imported_for_macro_event_sort(app_module):
+    assert app_module.NEWS_CATEGORY_ORDER
+    assert "NEWS_CATEGORY_ORDER" in app_module.__dict__
+
+
 def test_ram_recovery_dca_low_rr_is_first_tranche_only(app_module):
     state = {
         "profile_key": "RAM",
