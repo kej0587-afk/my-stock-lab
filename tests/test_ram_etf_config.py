@@ -95,11 +95,46 @@ def test_sidebar_account_loader_is_available_before_holdings_loader(app_module):
     assert app_module.load_account_types_for_sidebar("public_demo@stocklab.local") == app_module.DEFAULT_ACCOUNT_TYPES
 
 
+def test_sidebar_account_loader_uses_cached_supabase_client(app_module, monkeypatch):
+    class _FakeQuery:
+        def select(self, *args, **kwargs):
+            return self
+
+        def eq(self, *args, **kwargs):
+            return self
+
+        def execute(self):
+            class _FakeResult:
+                data = [{"account_type": "해외"}, {"account_type": "ISA"}]
+
+            return _FakeResult()
+
+    class _FakeSupabase:
+        def table(self, name):
+            assert name == "holdings"
+            return _FakeQuery()
+
+    monkeypatch.setattr(app_module, "is_public_demo_mode", lambda: False)
+    monkeypatch.setattr(app_module, "get_supabase_client_cached", lambda: _FakeSupabase())
+    app_module.load_account_types_for_sidebar.clear()
+
+    accounts = app_module.load_account_types_for_sidebar("tester@example.com")
+
+    assert accounts == ["일반", "ISA", "연금저축", "IRP", "해외"]
+
+
 def test_lwc_baseline_benchmark_resolves_region_specific_duplicate_sector_names(app_module):
     assert app_module._resolve_benchmark("LLY", sector="헬스케어") == ("XLV", "헬스케어(XLV)")
     assert app_module._resolve_benchmark("244580.KS", sector="헬스케어") == ("069500.KS", "KODEX200")
     assert app_module._resolve_benchmark("XOM", sector="에너지") == ("XLE", "에너지(XLE)")
     assert app_module._resolve_benchmark("139250.KS", sector="에너지") == ("069500.KS", "KODEX200")
+
+
+def test_lwc_baseline_benchmark_blocks_unprefixed_region_fallback_for_scoped_names(app_module, monkeypatch):
+    monkeypatch.setitem(app_module._SECTOR_BENCH_MAP, "바이오", ("BAD", "BAD"))
+
+    assert app_module._resolve_benchmark("MRNA", sector="바이오") == ("XLV", "헬스케어(XLV)")
+    assert app_module._resolve_benchmark("207940.KS", sector="바이오") == ("069500.KS", "KODEX200")
 
 
 def test_news_category_order_is_imported_for_macro_event_sort(app_module):

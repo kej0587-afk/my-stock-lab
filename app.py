@@ -5,8 +5,6 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass
-from typing import Optional
 from zoneinfo import ZoneInfo
 import hmac
 import io
@@ -24,7 +22,6 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import ta
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -1676,31 +1673,12 @@ except Exception as _portfolio_analysis_helpers_import_error:
 # ==========================================
 # numpy는 파일 상단에서 이미 import됨 (중복 제거)
 
-# 1. Supabase 안전 조회 래퍼
-@dataclass
-
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 02: Supabase 기초 & 데이터 모델
-# DbResult, safe_supabase_query, parse_holding_row, detect_52w_breakout
+# parse_holding_row, detect_52w_breakout
 # ════════════════════════════════════════════════════════════════════════════
 
-class DbResult:
-    data: list
-    error: Optional[str] = None
-    
-    @property
-    def ok(self) -> bool:
-        return self.error is None
-
-def safe_supabase_query(query, action: str = "") -> DbResult:
-    """Supabase 쿼리를 실행하고 결과를 안전하게 반환합니다."""
-    try:
-        res = query.execute()
-        return DbResult(data=res.data or [])
-    except Exception as e:
-        return DbResult(data=[], error=f"{action}: {e}")
-
-# 2. 보유종목 행 파싱 헬퍼 (타입 에러 방지)
+# 보유종목 행 파싱 헬퍼 (타입 에러 방지)
 def parse_holding_row(row: dict) -> dict:
     """보유종목 행에서 타입 안전한 값을 추출합니다."""
     return {
@@ -2161,6 +2139,17 @@ IS_PUBLIC_DEMO = is_public_demo_mode()
 DEFAULT_ACCOUNT_TYPES = ["일반", "ISA", "연금저축", "IRP"]
 
 
+@st.cache_resource
+def get_supabase_client_cached():
+    url = get_secret_value("SUPABASE_URL")
+    key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
+
+    if not url or not key:
+        raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Streamlit Secrets.")
+
+    return create_client(url, key)
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def load_account_types_for_sidebar(owner_email):
     accounts = list(DEFAULT_ACCOUNT_TYPES)
@@ -2168,11 +2157,7 @@ def load_account_types_for_sidebar(owner_email):
         return accounts
 
     try:
-        url = get_secret_value("SUPABASE_URL")
-        key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
-        if not url or not key:
-            return accounts
-        client = create_client(url, key)
+        client = get_supabase_client_cached()
         res = client.table("holdings").select("account_type").eq("owner_email", owner_email).execute()
         for row in getattr(res, "data", []) or []:
             account = str(row.get("account_type") or "").strip()
@@ -2958,21 +2943,13 @@ def get_public_demo_macro_analysis():
 # -------------------------------------------------
 # 2-1. Supabase persistent storage
 # -------------------------------------------------
-@st.cache_resource
-
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 05: 데이터베이스 (Supabase DB 로드/저장)
 # load/save: holdings, dividends, monthly_logs, fin_scores, watchlist, feedback
 # ════════════════════════════════════════════════════════════════════════════
 
 def get_supabase_client():
-    url = get_secret_value("SUPABASE_URL")
-    key = get_secret_value("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY")
-
-    if not url or not key:
-        raise RuntimeError("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Streamlit Secrets.")
-
-    return create_client(url, key)
+    return get_supabase_client_cached()
 
 
 def get_supabase():
@@ -8887,6 +8864,9 @@ _SECTOR_BENCH_MAP: dict[str, tuple[str, str] | None] = {
 }
 
 
+_REGION_SCOPED_SECTOR_BENCH_KEYS = {"헬스케어", "바이오", "에너지", "부동산", "방산"}
+
+
 def _resolve_benchmark(ticker: str, sector: str = "", group: str = "") -> tuple[str | None, str]:
     """섹터/구분/티커 suffix 기반으로 (bench_ticker, bench_label) 결정."""
     # 1) 섹터명 직접 매칭
@@ -8895,7 +8875,10 @@ def _resolve_benchmark(ticker: str, sector: str = "", group: str = "") -> tuple[
     for key in [sector, group]:
         if not key:
             continue
-        for lookup_key in [f"{market_prefix}:{key}", key]:
+        lookup_keys = [f"{market_prefix}:{key}"]
+        if key not in _REGION_SCOPED_SECTOR_BENCH_KEYS:
+            lookup_keys.append(key)
+        for lookup_key in lookup_keys:
             if lookup_key in _SECTOR_BENCH_MAP:
                 result = _SECTOR_BENCH_MAP[lookup_key]
                 if result is None:
@@ -36501,7 +36484,7 @@ if main_page == "asset":
         # --- 1. 메인 대시보드 엑셀 다운로드 버튼 추가 ---
         # (io는 파일 상단에서 이미 import됨 - 중복 제거)
         output = io.BytesIO()
-        # xlsxwriter 엔진을 사용하여 한글 깨짐을 원천 봉쇄합니다.
+        # openpyxl 엔진을 사용하여 엑셀 다운로드 파일을 생성합니다.
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             dash_df.to_excel(writer, index=False, sheet_name='Main_Dashboard')
         
