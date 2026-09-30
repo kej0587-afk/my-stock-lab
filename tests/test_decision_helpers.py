@@ -396,6 +396,88 @@ def test_build_entry_signal_context_flags_plain_etf_accumulation(app_module):
     assert context["is_exception_entry"] is False
 
 
+def _structure_damage_kwargs(**overrides):
+    kwargs = dict(
+        is_structure_damage_entry_risk=True,
+        current_dd=-0.18,
+        dd_threshold=-0.15,
+        ma50_damage=False,
+        below_ma20=False,
+        rs_strong=True,
+        rs_label="🚀강함",
+        is_single_day_breakdown=False,
+        is_extreme_momentum=False,
+        trend="🚀정배열(상승)",
+        ret_1m=0.02,
+        ret_3m=0.04,
+        rsi_now=50.0,
+        pct_b_now=0.55,
+        ma20_now=100.0,
+        cur_p=102.0,
+        ma50_now=98.0,
+        day_ret=0.01,
+        mfi_now=50.0,
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_build_structure_damage_context_labels_drawdown_only_price_risk(app_module):
+    context = app_module.build_structure_damage_context(**_structure_damage_kwargs())
+
+    assert context["_drawdown_only_entry_risk"] is True
+    assert context["_single_day_only_entry_risk"] is False
+    assert context["_entry_risk_label"] == "⚠️가격위험: 신규진입 보류"
+    assert context["_holding_risk_code"] == "PRICE_DRAWDOWN_HOLDING_CHECK"
+    assert context["_sd_reasons_t"] == ("고점대비 -18.0% 하락 (임계치 -15%)",)
+
+
+def test_build_structure_damage_context_labels_single_day_breakdown(app_module):
+    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+        current_dd=-0.05,
+        is_single_day_breakdown=True,
+    ))
+
+    assert context["_single_day_only_entry_risk"] is True
+    assert context["_drawdown_only_entry_risk"] is False
+    assert context["_entry_risk_code"] == "SINGLE_DAY_BREAKDOWN_NO_ENTRY"
+    assert context["_holding_risk_label"] == "⚠️단기급락: 추매금지/종가확인"
+    assert context["is_capitulation_selloff"] is False
+
+
+def test_build_structure_damage_context_labels_true_structure_damage(app_module):
+    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+        current_dd=-0.10,
+        ma50_damage=True,
+        below_ma20=True,
+        rs_strong=False,
+        rs_label="🐢약함",
+        cur_p=94.0,
+    ))
+
+    assert context["_drawdown_only_entry_risk"] is False
+    assert context["_single_day_only_entry_risk"] is False
+    assert context["_entry_risk_code"] == "STRUCTURE_DAMAGE_NO_ENTRY"
+    assert "MA50 하회 (대장주 요건 미충족)" in context["_sd_reasons_t"]
+    assert "MA20 하회 + RS 🐢약함" in context["_sd_reasons_t"]
+
+
+def test_build_structure_damage_context_keeps_recovered_drawdown_out_of_capitulation(app_module):
+    context = app_module.build_structure_damage_context(**_structure_damage_kwargs(
+        current_dd=-0.24,
+        dd_threshold=-0.35,
+        is_structure_damage_entry_risk=False,
+        ret_1m=0.05,
+        ret_3m=0.10,
+        cur_p=105.0,
+        ma20_now=100.0,
+        ma50_now=103.0,
+    ))
+
+    assert context["_is_recovered_drawdown_zone"] is True
+    assert context["is_capitulation_selloff"] is False
+
+
 # ---------------------------------------------------------------------------
 # _apply_safety_state_override
 # ---------------------------------------------------------------------------

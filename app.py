@@ -17483,6 +17483,118 @@ def build_entry_signal_context(
     }
 
 
+def build_structure_damage_context(
+    *,
+    is_structure_damage_entry_risk: bool,
+    current_dd: float,
+    dd_threshold: float,
+    ma50_damage: bool,
+    below_ma20: bool,
+    rs_strong: bool,
+    rs_label: str,
+    is_single_day_breakdown: bool,
+    is_extreme_momentum: bool,
+    trend: str,
+    ret_1m: float,
+    ret_3m: float,
+    rsi_now: float,
+    pct_b_now: float,
+    ma20_now: float,
+    cur_p: float,
+    ma50_now: float,
+    day_ret: float,
+    mfi_now: float,
+) -> dict:
+    """추세훼손 사유, 라벨, 투매 여부를 계산한다."""
+    sd_reasons = []
+    true_structure_damage_reasons = []
+    drawdown_only_entry_risk = False
+    single_day_only_entry_risk = False
+
+    if is_structure_damage_entry_risk:
+        if current_dd <= dd_threshold:
+            sd_reasons.append(f"고점대비 {current_dd*100:.1f}% 하락 (임계치 {dd_threshold*100:.0f}%)")
+        if ma50_damage:
+            reason = "MA50 하회 (대장주 요건 미충족)"
+            sd_reasons.append(reason)
+            true_structure_damage_reasons.append(reason)
+        if below_ma20 and not rs_strong:
+            reason = f"MA20 하회 + RS {rs_label}"
+            sd_reasons.append(reason)
+            true_structure_damage_reasons.append(reason)
+        if is_single_day_breakdown:
+            sd_reasons.append("단일 봉 급락 감지")
+
+        single_day_only_entry_risk = (
+            is_single_day_breakdown
+            and not true_structure_damage_reasons
+        )
+        drawdown_only_entry_risk = (
+            current_dd <= dd_threshold
+            and not true_structure_damage_reasons
+            and not single_day_only_entry_risk
+        )
+
+    if single_day_only_entry_risk:
+        entry_risk_label = "⚠️단기급락: 신규진입 보류"
+        entry_risk_code = "SINGLE_DAY_BREAKDOWN_NO_ENTRY"
+        holding_risk_label = "⚠️단기급락: 추매금지/종가확인"
+        holding_risk_code = "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK"
+    elif drawdown_only_entry_risk:
+        entry_risk_label = "⚠️가격위험: 신규진입 보류"
+        entry_risk_code = "PRICE_DRAWDOWN_NO_ENTRY"
+        holding_risk_label = "⚠️가격위험: 추매금지/원인점검"
+        holding_risk_code = "PRICE_DRAWDOWN_HOLDING_CHECK"
+    else:
+        entry_risk_label = "⚠️추세훼손: 신규진입 보류"
+        entry_risk_code = "STRUCTURE_DAMAGE_NO_ENTRY"
+        holding_risk_label = "⚠️추세훼손: 추매금지/손절기준 점검"
+        holding_risk_code = "STRUCTURE_DAMAGE_HOLDING_CHECK"
+
+    is_recovered_drawdown_zone = (
+        current_dd <= -0.20
+        and trend == "🚀정배열(상승)"
+        and ret_1m > 0
+        and ret_3m > 0
+        and rs_label in {"🚀강함", "➖보통"}
+        and rsi_now >= 45
+        and pct_b_now >= 0.45
+        and (ma20_now <= 0 or cur_p >= ma20_now)
+        and (ma50_now <= 0 or cur_p >= ma50_now * 0.98)
+    )
+    is_capitulation_selloff = (
+        current_dd <= -0.20
+        and not is_extreme_momentum
+        and not is_recovered_drawdown_zone
+        and (
+            current_dd <= -0.30
+            or trend != "🚀정배열(상승)"
+            or (ma20_now > 0 and cur_p < ma20_now * 0.98)
+            or (ma50_now > 0 and cur_p < ma50_now * 0.95)
+            or ret_1m <= -0.08
+            or day_ret <= -0.04
+            or pct_b_now <= 0.35
+            or rsi_now <= 35
+            or mfi_now <= 25
+            or single_day_only_entry_risk
+        )
+    )
+
+    return {
+        "_sd_reasons": sd_reasons,
+        "_true_structure_damage_reasons": true_structure_damage_reasons,
+        "_drawdown_only_entry_risk": drawdown_only_entry_risk,
+        "_single_day_only_entry_risk": single_day_only_entry_risk,
+        "_sd_reasons_t": tuple(sd_reasons),
+        "_entry_risk_label": entry_risk_label,
+        "_entry_risk_code": entry_risk_code,
+        "_holding_risk_label": holding_risk_label,
+        "_holding_risk_code": holding_risk_code,
+        "_is_recovered_drawdown_zone": is_recovered_drawdown_zone,
+        "is_capitulation_selloff": is_capitulation_selloff,
+    }
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -17785,79 +17897,38 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     is_etf_accumulation_ok = entry_signal_context["is_etf_accumulation_ok"]
     decision_outcome = None
 
-    # Precompute structure-damage reason strings so each call site stays lean
-    _sd_reasons: list[str] = []
-    _true_structure_damage_reasons: list[str] = []
-    _drawdown_only_entry_risk = False
-    _single_day_only_entry_risk = False
-    if is_structure_damage_entry_risk:
-        if current_dd <= _dd_threshold:
-            _sd_reasons.append(f"고점대비 {current_dd*100:.1f}% 하락 (임계치 {_dd_threshold*100:.0f}%)")
-        if _ma50_damage:
-            _reason = "MA50 하회 (대장주 요건 미충족)"
-            _sd_reasons.append(_reason)
-            _true_structure_damage_reasons.append(_reason)
-        if below_ma20 and not _rs_strong:
-            _reason = f"MA20 하회 + RS {rs_label}"
-            _sd_reasons.append(_reason)
-            _true_structure_damage_reasons.append(_reason)
-        if is_single_day_breakdown:
-            _reason = "단일 봉 급락 감지"
-            _sd_reasons.append(_reason)
-        _single_day_only_entry_risk = (
-            is_single_day_breakdown
-            and not _true_structure_damage_reasons
-        )
-        _drawdown_only_entry_risk = (
-            current_dd <= _dd_threshold
-            and not _true_structure_damage_reasons
-            and not _single_day_only_entry_risk
-        )
-    _sd_reasons_t = tuple(_sd_reasons)
-    if _single_day_only_entry_risk:
-        _entry_risk_label = "⚠️단기급락: 신규진입 보류"
-        _entry_risk_code = "SINGLE_DAY_BREAKDOWN_NO_ENTRY"
-        _holding_risk_label = "⚠️단기급락: 추매금지/종가확인"
-        _holding_risk_code = "SINGLE_DAY_BREAKDOWN_HOLDING_CHECK"
-    elif _drawdown_only_entry_risk:
-        _entry_risk_label = "⚠️가격위험: 신규진입 보류"
-        _entry_risk_code = "PRICE_DRAWDOWN_NO_ENTRY"
-        _holding_risk_label = "⚠️가격위험: 추매금지/원인점검"
-        _holding_risk_code = "PRICE_DRAWDOWN_HOLDING_CHECK"
-    else:
-        _entry_risk_label = "⚠️추세훼손: 신규진입 보류"
-        _entry_risk_code = "STRUCTURE_DAMAGE_NO_ENTRY"
-        _holding_risk_label = "⚠️추세훼손: 추매금지/손절기준 점검"
-        _holding_risk_code = "STRUCTURE_DAMAGE_HOLDING_CHECK"
-
-    _is_recovered_drawdown_zone = (
-        current_dd <= -0.20
-        and trend == "🚀정배열(상승)"
-        and ret_1m > 0
-        and ret_3m > 0
-        and rs_label in {"🚀강함", "➖보통"}
-        and rsi_now >= 45
-        and pct_b_now >= 0.45
-        and (ma20_now <= 0 or cur_p >= ma20_now)
-        and (ma50_now <= 0 or cur_p >= ma50_now * 0.98)
+    structure_damage_context = build_structure_damage_context(
+        is_structure_damage_entry_risk=is_structure_damage_entry_risk,
+        current_dd=current_dd,
+        dd_threshold=_dd_threshold,
+        ma50_damage=_ma50_damage,
+        below_ma20=below_ma20,
+        rs_strong=_rs_strong,
+        rs_label=rs_label,
+        is_single_day_breakdown=is_single_day_breakdown,
+        is_extreme_momentum=_is_extreme_momentum,
+        trend=trend,
+        ret_1m=ret_1m,
+        ret_3m=ret_3m,
+        rsi_now=rsi_now,
+        pct_b_now=pct_b_now,
+        ma20_now=ma20_now,
+        cur_p=cur_p,
+        ma50_now=ma50_now,
+        day_ret=day_ret,
+        mfi_now=mfi_now,
     )
-    is_capitulation_selloff = (
-        current_dd <= -0.20
-        and not _is_extreme_momentum
-        and not _is_recovered_drawdown_zone
-        and (
-            current_dd <= -0.30
-            or trend != "🚀정배열(상승)"
-            or (ma20_now > 0 and cur_p < ma20_now * 0.98)
-            or (ma50_now > 0 and cur_p < ma50_now * 0.95)
-            or ret_1m <= -0.08
-            or day_ret <= -0.04
-            or pct_b_now <= 0.35
-            or rsi_now <= 35
-            or mfi_now <= 25
-            or _single_day_only_entry_risk
-        )
-    )
+    _sd_reasons = structure_damage_context["_sd_reasons"]
+    _true_structure_damage_reasons = structure_damage_context["_true_structure_damage_reasons"]
+    _drawdown_only_entry_risk = structure_damage_context["_drawdown_only_entry_risk"]
+    _single_day_only_entry_risk = structure_damage_context["_single_day_only_entry_risk"]
+    _sd_reasons_t = structure_damage_context["_sd_reasons_t"]
+    _entry_risk_label = structure_damage_context["_entry_risk_label"]
+    _entry_risk_code = structure_damage_context["_entry_risk_code"]
+    _holding_risk_label = structure_damage_context["_holding_risk_label"]
+    _holding_risk_code = structure_damage_context["_holding_risk_code"]
+    _is_recovered_drawdown_zone = structure_damage_context["_is_recovered_drawdown_zone"]
+    is_capitulation_selloff = structure_damage_context["is_capitulation_selloff"]
 
     def _set_decision(label, color, code=None, reasons=()):
         outcome = build_decision_outcome(label, color, code, reasons=reasons)
