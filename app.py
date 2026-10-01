@@ -6361,7 +6361,9 @@ def render_flow_score_breakdown(title, df, score_col="돈흐름점수", label_co
 
     with st.expander(title, expanded=False):
         st.caption(
-            "점수 구성요소를 분해한 표입니다. 양수는 점수를 올린 요인, 음수는 과열/쏠림처럼 점수를 깎은 요인입니다."
+            "돈흐름점수는 1M·3M·6M 수익률, 중기가속도, 거래량, 외부 랭킹 보조값에서 가점을 주고 과열/쏠림은 감점합니다. "
+            "양수는 점수를 올린 요인, 음수는 과열/쏠림처럼 점수를 깎은 요인입니다. "
+            "이 점수는 '어디에 돈이 몰렸나'를 보는 원천 점수라서, 실제 매수 가능 여부는 후보판정·오늘점검 R/R에서 다시 걸러집니다."
         )
         st.dataframe(show, width='stretch', hide_index=True)
 
@@ -8312,6 +8314,104 @@ def get_kr_etf_composition(ticker):
     return pd.DataFrame(rows), row
 
 
+US_ETF_COMPOSITION_FALLBACKS = {
+    "CIBR": {
+        "name": "First Trust NASDAQ Cybersecurity ETF",
+        "source": "First Trust holdings",
+        "as_of": "2026-09-29",
+        "rows": [
+            ("CrowdStrike Holdings, Inc. (Class A)", "CRWD", 8.91),
+            ("Fortinet, Inc.", "FTNT", 8.07),
+            ("Palo Alto Networks, Inc.", "PANW", 7.97),
+            ("Cisco Systems, Inc.", "CSCO", 7.59),
+            ("Broadcom Inc.", "AVGO", 7.51),
+        ],
+    },
+    "SMH": {
+        "name": "VanEck Semiconductor ETF",
+        "source": "VanEck holdings",
+        "as_of": "2026-09-29",
+        "rows": [
+            ("Nvidia Corp", "NVDA", 19.30),
+            ("Taiwan Semiconductor Manufacturing Co", "TSM", 9.28),
+            ("Advanced Micro Devices Inc", "AMD", 5.54),
+            ("Broadcom Inc", "AVGO", 5.26),
+            ("Micron Technology Inc", "MU", 4.92),
+        ],
+    },
+}
+
+US_ETF_HOLDINGS_URLS = {
+    "CIBR": "https://www.ftportfolios.com/Retail/Etf/EtfHoldings.aspx?Ticker=CIBR",
+    "SMH": "https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/?audience=retail&country=us",
+}
+
+
+def _composition_fallback_frame(ticker):
+    key = str(ticker or "").strip().upper()
+    meta = US_ETF_COMPOSITION_FALLBACKS.get(key)
+    if not meta:
+        return pd.DataFrame(), None
+    rows = [
+        {"순위": idx, "구성종목": name, "티커": symbol, "비중(%)": weight}
+        for idx, (name, symbol, weight) in enumerate(meta["rows"], 1)
+    ]
+    return pd.DataFrame(rows), {
+        "name": meta["name"],
+        "source": meta["source"],
+        "as_of": meta["as_of"],
+        "fallback": True,
+    }
+
+
+def _normalize_us_holding_weight(value):
+    text = str(value or "").replace("%", "").replace(",", "").strip()
+    return clean_float(text, np.nan)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_us_etf_composition(ticker):
+    key = str(ticker or "").strip().upper()
+    url = US_ETF_HOLDINGS_URLS.get(key)
+    if not url:
+        return _composition_fallback_frame(key)
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 StockLab/1.0"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(resp.text)
+        for table in tables:
+            cols = [str(c).strip() for c in table.columns]
+            lower = {c.lower(): c for c in cols}
+            if key == "CIBR" and {"security name", "identifier", "weighting"}.issubset(lower):
+                name_col = lower["security name"]
+                ticker_col = lower["identifier"]
+                weight_col = lower["weighting"]
+            elif key == "SMH" and {"ticker", "holding name", "% of net assets"}.issubset(lower):
+                name_col = lower["holding name"]
+                ticker_col = lower["ticker"]
+                weight_col = lower["% of net assets"]
+            else:
+                continue
+            out = table[[name_col, ticker_col, weight_col]].head(5).copy()
+            out.columns = ["구성종목", "티커", "비중(%)"]
+            out["비중(%)"] = out["비중(%)"].apply(_normalize_us_holding_weight)
+            out.insert(0, "순위", range(1, len(out) + 1))
+            meta = US_ETF_COMPOSITION_FALLBACKS.get(key, {})
+            return out, {
+                "name": meta.get("name", key),
+                "source": meta.get("source", "issuer holdings"),
+                "as_of": "issuer latest",
+                "fallback": False,
+            }
+    except Exception as exc:
+        logging.info("US ETF holdings fetch failed for %s: %s", key, exc)
+    return _composition_fallback_frame(key)
+
+
 def render_money_flow_composition_panel(view_df, selected_ticker=""):
     if view_df is None or view_df.empty:
         return
@@ -8368,7 +8468,21 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
 
     st.markdown("#### ETF 구성종목")
     if etf_row is None:
-        st.info(f"{flow_name} ({ticker})는 국내 ETF 1020 데이터에 없어 구성종목 TOP5를 표시할 수 없습니다.")
+        comp_df, us_meta = fetch_us_etf_composition(ticker)
+        if comp_df.empty:
+            st.info(f"{flow_name} ({ticker})는 국내 ETF 1020 데이터에 없고, 해외 ETF 구성종목 fallback도 아직 등록되어 있지 않습니다.")
+            return
+        c1, c2, c3 = st.columns(3)
+        c1.metric("ETF", str((us_meta or {}).get("name", flow_name))[:22])
+        c2.metric("출처", str((us_meta or {}).get("source", "issuer holdings"))[:18])
+        c3.metric("기준일", str((us_meta or {}).get("as_of", "-")))
+        show_comp = comp_df.copy()
+        show_comp["비중(%)"] = show_comp["비중(%)"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}")
+        st.dataframe(show_comp, width='stretch', hide_index=True)
+        if (us_meta or {}).get("fallback"):
+            st.caption("운용사 실시간 조회가 실패하거나 막힌 경우를 대비해 앱에 등록된 최근 확인 기준 TOP5를 표시합니다. 실제 비중은 운용사 원문에서 다시 확인하세요.")
+        else:
+            st.caption("해외 ETF 운용사 페이지에서 조회한 TOP5입니다. 운용사 데이터는 장중/일자별로 바뀔 수 있습니다.")
         return
 
     c1, c2, c3, c4 = st.columns(4)
@@ -10091,8 +10205,18 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
             "tickers": tickers_detail,
         })
 
-    # "어디로 쏠리는가" 랭킹은 단기 변동에 흔들리지 않는 strength_score 기준으로 정렬한다.
-    cl_list.sort(key=lambda x: x["strength_score"], reverse=True)
+    # 상세 카드는 사용자가 "지금 볼 축"으로 읽기 때문에 중기 강도만으로 정렬하지 않는다.
+    # 강도는 남기되, 단기 타이밍이 하락 중인 축은 뒤로 보내 오늘점검의 주도 후보와 어긋나 보이는 문제를 줄인다.
+    timing_rank = {"진입 가능": 4, "눌림 대기": 3, "확인 필요": 2, "과열": 1, "하락 중": 0}
+    cl_list.sort(
+        key=lambda x: (
+            bool(x.get("is_surging")),
+            timing_rank.get(str(x.get("timing_state", "")), 1),
+            clean_float(x.get("fit_score"), -999),
+            clean_float(x.get("strength_score"), -999),
+        ),
+        reverse=True,
+    )
     return cl_list
 
 
@@ -13215,36 +13339,55 @@ def render_money_flow_etf_section():
         st.info("선택한 범위에 표시할 데이터가 없습니다.")
         return
 
+    if "_후보범위" not in view_df.columns:
+        view_df = view_df.copy()
+        view_df["_후보범위"] = view_df.apply(classify_money_flow_candidate_scope, axis=1)
     rankable_df = view_df.dropna(subset=["돈흐름점수"]).copy()
+    investable_rankable_df = rankable_df[rankable_df["_후보범위"].astype(str).eq("후보")].copy()
+    context_rankable_df = rankable_df[~rankable_df["_후보범위"].astype(str).eq("후보")].copy()
 
-    # 3. 상단 메트릭 카드 (필터링된 view_df 기준 원천 TOP 3 + 거래량)
+    # 3. 상단 메트릭 카드: 투자 후보와 매크로/현금성 게이지를 분리
     top_cols = st.columns(4)
-    top_3 = rankable_df.nlargest(3, "돈흐름점수") if not rankable_df.empty else pd.DataFrame()
+    top_source_df = investable_rankable_df if not investable_rankable_df.empty else rankable_df
+    top_3 = top_source_df.nlargest(3, "돈흐름점수") if not top_source_df.empty else pd.DataFrame()
 
     for i, (idx, row) in enumerate(top_3.iterrows()):
         with top_cols[i]:
             st.metric(
-                label=f"원천 TOP {i+1}: {row['섹터']}",
+                label=f"후보 TOP {i+1}: {row['섹터']}",
                 value=f"{row['돈흐름점수']:.1f} pts",
                 delta=f"{row['1개월수익률']*100:.1f}% (1M)"
             )
-    vol_rank = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
     with top_cols[3]:
-        if not vol_rank.empty:
-            r = vol_rank.iloc[0]
-            st.metric("거래량 1위", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
+        if not context_rankable_df.empty and selected_group == "전체":
+            r = context_rankable_df.nlargest(1, "돈흐름점수").iloc[0]
+            st.metric("매크로/대체 1위", f"{r['섹터']} ({r['Ticker']})", f"{r['돈흐름점수']:.1f} pts")
         else:
-            st.metric("거래량 1위", "-", "-")
+            vol_source_df = investable_rankable_df if not investable_rankable_df.empty else view_df
+            vol_rank = vol_source_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(1)
+            if not vol_rank.empty:
+                r = vol_rank.iloc[0]
+                st.metric("거래량 급증 참고", f"{r['섹터']} ({r['Ticker']})", fmt_flow_pct(r["거래량증가"]))
+            else:
+                st.metric("거래량 급증 참고", "-", "-")
 
-    st.caption("원천 TOP은 점수 순위입니다. 고점권·과열·단기 이탈이면 실행 후보에서는 눌림대기나 관망으로 내려갈 수 있습니다.")
+    st.caption("후보 TOP은 매크로·현금성 게이지를 제외한 ETF/섹터 후보 점수입니다. 원유·비트코인·금리·VIX 같은 흐름은 오른쪽 매크로/대체 게이지로 따로 봅니다.")
     st.divider() # 시각적 구분을 위한 선
     render_flow_score_breakdown(
-        "ETF 돈흐름 점수 분해",
-        rankable_df,
+        "ETF/섹터 후보 돈흐름 점수 분해",
+        investable_rankable_df if not investable_rankable_df.empty else rankable_df,
         score_col="돈흐름점수",
         label_cols=["구분", "섹터", "Ticker", "ETF 이름", "상태"],
         top_n=10,
     )
+    if selected_group == "전체" and not context_rankable_df.empty:
+        render_flow_score_breakdown(
+            "매크로/대체자산 게이지 점수 분해",
+            context_rankable_df,
+            score_col="돈흐름점수",
+            label_cols=["구분", "섹터", "Ticker", "ETF 이름", "상태"],
+            top_n=6,
+        )
 
     # 상태 이모지 배지 추가
     _state_badge = {
@@ -13580,7 +13723,10 @@ def render_money_flow_etf_section():
 
     b1, b2, b3 = st.columns(3)
     with b1:
-        top_3m = view_df.sort_values("3개월수익률", ascending=False).head(12)
+        chart_rank_df = view_df if selected_group != "전체" else view_df[view_df["_후보범위"].astype(str).eq("후보")]
+        if chart_rank_df.empty:
+            chart_rank_df = view_df
+        top_3m = chart_rank_df.sort_values("3개월수익률", ascending=False).head(12)
         fig_3m = go.Figure(go.Bar(
             y=top_3m["섹터"] + " (" + top_3m["Ticker"] + ")",
             x=top_3m["3개월수익률"] * 100,
@@ -13588,11 +13734,11 @@ def render_money_flow_etf_section():
             marker_color="#22d3ee",
             hovertemplate="%{y}<br>3개월: %{x:.1f}%<extra></extra>"
         ))
-        fig_3m.update_layout(template="plotly_dark", height=430, title="3개월 수익률 랭킹", yaxis=dict(autorange="reversed"))
+        fig_3m.update_layout(template="plotly_dark", height=430, title="후보군 3개월 수익률 참고", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_3m, width='stretch')
 
     with b2:
-        top_accel_df = view_df.sort_values("가속도", ascending=False).head(12)
+        top_accel_df = chart_rank_df.sort_values("가속도", ascending=False).head(12)
         accel_colors = np.where(top_accel_df["가속도"] >= 0, "#16a34a", "#dc2626")
         fig_accel = go.Figure(go.Bar(
             y=top_accel_df["섹터"] + " (" + top_accel_df["Ticker"] + ")",
@@ -13602,11 +13748,11 @@ def render_money_flow_etf_section():
             hovertemplate="%{y}<br>가속도: %{x:.1f}%p<extra></extra>"
         ))
         fig_accel.add_vline(x=0, line_color="#94a3b8")
-        fig_accel.update_layout(template="plotly_dark", height=430, title="가속도 랭킹", yaxis=dict(autorange="reversed"))
+        fig_accel.update_layout(template="plotly_dark", height=430, title="후보군 가속도 참고", yaxis=dict(autorange="reversed"))
         st.plotly_chart(fig_accel, width='stretch')
 
     with b3:
-        top_volume_df = view_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(12)
+        top_volume_df = chart_rank_df.dropna(subset=["거래량증가"]).sort_values("거래량증가", ascending=False).head(12)
         if top_volume_df.empty:
             st.info("거래량 랭킹을 계산할 데이터가 부족합니다.")
         else:
@@ -13619,8 +13765,9 @@ def render_money_flow_etf_section():
                 hovertemplate="%{y}<br>거래량증가: %{x:.1f}%<extra></extra>"
             ))
             fig_volume.add_vline(x=0, line_color="#94a3b8")
-            fig_volume.update_layout(template="plotly_dark", height=430, title="거래량 증가 랭킹", yaxis=dict(autorange="reversed"))
+            fig_volume.update_layout(template="plotly_dark", height=430, title="후보군 거래량 증가 참고", yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_volume, width='stretch')
+    st.caption("아래 3개 차트는 원인 분해용 참고입니다. 3개월 수익률·가속도·거래량 중 하나만 높다고 매수 후보가 되지는 않고, 후보판정·오늘점검 R/R·가격위치를 같이 봅니다.")
 
     # ── 섹터 로테이션 맵 ──────────────────────────────────────────────
     render_rotation_panel(flow_df)
