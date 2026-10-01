@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from stock_lab_core.portfolio import (
+    annualize_period_return,
     build_asset_overview_dashboard_state,
     build_asset_overview_kpis,
     build_cash_buffer_scenario,
@@ -27,6 +28,74 @@ from stock_lab_core.portfolio import (
     infer_scenario_shock_multiplier,
     merge_portfolio_signal_details,
 )
+
+
+def test_app_portfolio_report_imports_annualized_return_helper(app_module):
+    assert app_module.annualize_period_return(0.10, 252) == annualize_period_return(0.10, 252)
+
+
+def _signal_backtest_price_frame(rows=180, high_value=None):
+    dates = pd.date_range("2024-01-01", periods=rows, freq="B")
+    close = pd.Series(np.linspace(100, 130, rows), index=dates)
+    high = pd.Series(high_value if high_value is not None else close, index=dates)
+    return pd.DataFrame(
+        {
+            "Open": close * 0.995,
+            "High": high,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": 100_000,
+            "MA20": close * 0.99,
+            "MA50": close * 0.98,
+            "MA120": close * 0.95,
+            "RSI": 50,
+            "MFI": 50,
+            "%B": 0.50,
+            "MACD": np.linspace(0, 1, rows),
+            "MACD_Sig": np.linspace(-0.1, 0.8, rows),
+        },
+        index=dates,
+    )
+
+
+def test_signal_backtest_supports_current_app_breakout_signal(app_module, monkeypatch):
+    df = _signal_backtest_price_frame()
+    monkeypatch.setattr(app_module, "load_price_df", lambda ticker, period: df)
+    monkeypatch.setattr(app_module, "build_indicators", lambda price_df: price_df)
+    monkeypatch.setattr(app_module, "get_rs_benchmark", lambda ticker, asset_class: "")
+
+    events_df, _, message = app_module.build_signal_backtest(
+        "TEST",
+        "테스트",
+        "us_stock",
+        "52주 신고가 돌파",
+        period="2y",
+        min_gap=20,
+    )
+
+    assert message == ""
+    assert not events_df.empty
+    assert set(["5일후", "20일후", "60일후"]).issubset(events_df.columns)
+
+
+def test_signal_backtest_supports_leveraged_dca_signal(app_module, monkeypatch):
+    df = _signal_backtest_price_frame(high_value=200.0)
+    monkeypatch.setattr(app_module, "load_price_df", lambda ticker, period: df)
+    monkeypatch.setattr(app_module, "build_indicators", lambda price_df: price_df)
+    monkeypatch.setattr(app_module, "get_rs_benchmark", lambda ticker, asset_class: "")
+
+    events_df, _, message = app_module.build_signal_backtest(
+        "RAM",
+        "RAM",
+        "us_etf_nasdaq",
+        "레버리지 DCA 조건부",
+        period="2y",
+        min_gap=20,
+    )
+
+    assert message == ""
+    assert not events_df.empty
+    assert "레버리지 DCA 조건부" in app_module.SIGNAL_BACKTEST_TYPES
 
 
 def test_holding_lookup_matches_us_suffix_variants():

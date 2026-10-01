@@ -282,6 +282,7 @@ from stock_lab_core.portfolio import (
     _enrich_portfolio_alignment_with_action_df,
     _portfolio_alignment_names,
     add_portfolio_risk_note,
+    annualize_period_return,
     append_cash_rows,
     apply_holdings_weight_columns,
     build_asset_overview_dashboard_state,
@@ -25056,6 +25057,7 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
     df["DAY_RET"] = close.pct_change() * 100
     df["VOL_RATIO"] = df["Volume"] / df["Volume"].rolling(20).mean()
     df["ROLL_HIGH"] = df["High"].rolling(252, min_periods=60).max()
+    df["PRIOR_ROLL_HIGH"] = df["High"].rolling(252, min_periods=60).max().shift(1)
     df["MDD_52W"] = df["Close"] / df["ROLL_HIGH"] - 1
     df["MACD_RISING"] = df["MACD"] > df["MACD"].shift(1)
 
@@ -25081,6 +25083,29 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
     macd_ok = (df["MACD"] > df["MACD_Sig"]) & df["MACD_RISING"]
     not_hot = (df["MFI"] < 85) & (df["RSI"] < 70) & (df["%B"] < 1.05)
     structure_ok = (df["MDD_52W"] > -0.15) & (df["DAY_RET"] > -4) & (df["Close"] >= df["MA20"] * 0.98)
+    quality_recovery = (
+        df["MDD_52W"].between(-0.45, -0.08, inclusive="both") &
+        (df["Close"] >= df["MA20"]) &
+        (df["Close"] >= df["MA50"] * 0.98) &
+        (df["MA20"] >= df["MA20"].shift(10)) &
+        (df["RSI"].between(40, 68, inclusive="both")) &
+        (df["MFI"] < 85) &
+        (macd_ok | df["MACD_RISING"])
+    )
+    breakout_52w = (
+        df["PRIOR_ROLL_HIGH"].notna() &
+        (df["Close"] > df["PRIOR_ROLL_HIGH"]) &
+        (df["DAY_RET"] > 0) &
+        (df["MFI"] < 80) &
+        (df["%B"] < 0.95)
+    )
+    leveraged_dca_conditional = (
+        df["MDD_52W"].between(-0.65, -0.18, inclusive="both") &
+        (df["RSI"].between(35, 65, inclusive="both")) &
+        (df["MFI"] < 75) &
+        (df["%B"].between(0.15, 0.80, inclusive="both")) &
+        ((df["Close"] >= df["MA20"] * 0.95) | df["MACD_RISING"])
+    )
     structure_damage = (
         (df["MDD_52W"] <= -0.15) |
         (df["Close"] < df["MA50"]) |
@@ -25092,6 +25117,12 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
         signal_mask = trend_up & rs_strong & macd_ok & not_hot & structure_ok
     elif signal_type == "S급 눌림목":
         signal_mask = trend_up & rs_strong & df["RSI"].between(45, 58, inclusive="both") & df["%B"].between(0.45, 0.8, inclusive="both")
+    elif signal_type == "우량주 회복 후보":
+        signal_mask = quality_recovery
+    elif signal_type == "52주 신고가 돌파":
+        signal_mask = breakout_52w
+    elif signal_type == "레버리지 DCA 조건부":
+        signal_mask = leveraged_dca_conditional
     elif signal_type == "구조훼손 경고":
         signal_mask = structure_damage
     else:
@@ -25155,7 +25186,7 @@ def format_backtest_percent(value):
     return f"{number:.1f}%"
 
 
-SIGNAL_BACKTEST_TYPES = ["신규대장 후보", "S급 눌림목", "구조훼손 경고"]
+SIGNAL_BACKTEST_TYPES = ["신규대장 후보", "S급 눌림목", "우량주 회복 후보", "52주 신고가 돌파", "레버리지 DCA 조건부", "구조훼손 경고"]
 SIGNAL_BACKTEST_RETURN_COLS = ["5일후", "20일후", "60일후"]
 SIGNAL_BACKTEST_DD_COLS = ["20일최대낙폭", "60일최대낙폭"]
 SIGNAL_BACKTEST_NUMERIC_COLS = SIGNAL_BACKTEST_RETURN_COLS + SIGNAL_BACKTEST_DD_COLS + ["RSI", "MFI", "RS우위20일", "MDD"]
@@ -25515,6 +25546,9 @@ def render_signal_backtest_tab(holdings_table, watchlist_items):
         st.markdown("""
 - **신규대장 후보**: 정배열, 벤치마크 대비 20일 상대강도 우위, MACD 양호, 과열/가격방어·추세방어 제외 조건을 모두 만족한 신호입니다.
 - **S급 눌림목**: 정배열과 상대강도 우위가 살아있고 RSI 45~58, 볼린저 %B 0.45~0.8인 신호입니다.
+- **우량주 회복 후보**: 고점대비 하락 후 MA20·MA50 회복, MACD/RSI 개선이 같이 보이는 회복 초입 신호입니다.
+- **52주 신고가 돌파**: 직전 52주 고점 돌파가 나오되 MFI·%B가 극단 과열은 아닌 모멘텀 신호입니다.
+- **레버리지 DCA 조건부**: 고점대비 큰 하락 후 RSI/MFI/%B가 과열이 아니고 MA20 또는 MACD 회복 단서가 있는 소액 분할 후보 신호입니다.
 - **구조훼손 경고**: 과거 백테스트용 명칭입니다. 현재 화면에서는 고점대비 낙폭은 가격방어, MA50 이탈·MA20 하회+RS 약함·급락+거래량은 추세방어로 나눠 표시합니다.
 - 앱의 실시간 판정 로직과 100% 동일한 백테스트는 아닙니다. 매크로, 재무점수, 목표비중, 뉴스는 제외한 가격/기술 신호 검증용입니다.
         """)
