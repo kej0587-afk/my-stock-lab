@@ -35,12 +35,69 @@ from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
     add_recovery_issue,
     build_portfolio_backup_zip,
-    build_review_export_zip,
     collect_recovery_frames,
     count_valid_rows,
     dataframe_to_csv_bytes,
     get_duplicate_recovery_values,
 )
+try:
+    from stock_lab_core.backup import build_review_export_zip
+except ImportError:
+    # Streamlit Cloud can briefly deploy app.py before helper modules refresh.
+    def _clean_review_export_frame_fallback(df):
+        if df is None:
+            return pd.DataFrame()
+        out = pd.DataFrame(df).copy()
+        if out.empty:
+            return out
+        out = out.dropna(how="all").dropna(axis=1, how="all")
+        return out.reset_index(drop=True)
+
+    def _safe_review_export_filename_fallback(name):
+        text = str(name or "review").strip().replace("\\", "/").split("/")[-1]
+        if not text:
+            text = "review"
+        safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in text).strip()
+        if not safe.lower().endswith(".csv"):
+            safe = f"{safe}.csv"
+        return safe
+
+    def build_review_export_zip(frames, notes=None):
+        frames = frames or {}
+        notes = notes or []
+        buffer = io.BytesIO()
+        manifest_rows = []
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            used_names = set()
+            for raw_name, df in frames.items():
+                filename = _safe_review_export_filename_fallback(raw_name)
+                base_name = filename[:-4] if filename.lower().endswith(".csv") else filename
+                counter = 2
+                while filename in used_names:
+                    filename = f"{base_name}_{counter}.csv"
+                    counter += 1
+                used_names.add(filename)
+                clean_df = _clean_review_export_frame_fallback(df)
+                zf.writestr(filename, dataframe_to_csv_bytes(clean_df))
+                manifest_rows.append({
+                    "file": filename,
+                    "rows": len(clean_df),
+                    "columns": len(clean_df.columns),
+                    "column_list": ", ".join(map(str, clean_df.columns[:40])),
+                })
+            if notes:
+                notes_df = pd.DataFrame(notes)
+                zf.writestr("_notes.csv", dataframe_to_csv_bytes(notes_df))
+                manifest_rows.append({
+                    "file": "_notes.csv",
+                    "rows": len(notes_df),
+                    "columns": len(notes_df.columns),
+                    "column_list": ", ".join(map(str, notes_df.columns)),
+                })
+            manifest_df = pd.DataFrame(manifest_rows, columns=["file", "rows", "columns", "column_list"])
+            zf.writestr("_manifest.csv", dataframe_to_csv_bytes(manifest_df))
+        buffer.seek(0)
+        return buffer.getvalue()
 from stock_lab_core.config import (
     DEFAULT_WATCHLIST,
     DIVIDENDS_COLUMNS,
