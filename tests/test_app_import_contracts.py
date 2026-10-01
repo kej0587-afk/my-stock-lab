@@ -90,6 +90,7 @@ def test_decision_engine_exports_used_by_app():
             "build_decision_result",
             "build_decision_outcome",
             "build_entry_signal_context",
+            "build_leveraged_dca_outcome",
             "build_limited_history_etf_outcome",
             "build_position_sizing_hint",
             "build_return_window_context",

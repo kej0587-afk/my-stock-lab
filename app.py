@@ -145,6 +145,7 @@ from stock_lab_core.decision_engine import (
     build_core_dca_outcome,
     build_decision_result,
     build_decision_outcome,
+    build_leveraged_dca_outcome,
     build_limited_history_etf_outcome,
     build_live_rebound_context,
     build_return_window_context,
@@ -15976,23 +15977,25 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 ),
             )
         elif is_leveraged_dca_wait_high:
-            dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 과열패스: DCA 대기", "#d97706", "LEVERAGED_DCA_OVERHEAT_PASS",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
-                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
-                ),
+            decision_outcome = build_leveraged_dca_outcome(
+                wait_high=True,
+                target_weight=targ_w,
+                weight_gap=weight_gap,
+                current_dd=current_dd,
+                price_vs_avg=price_vs_avg,
+                pct_b_now=pct_b_now,
             )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_leveraged_dca_conditional:
-            dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 DCA 조건부: 단계별 소액", "#8b5cf6", "LEVERAGED_DCA_CONDITIONAL",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
-                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 DCA 조건 일부 충족 — 정해둔 회차·금액 안에서만 소액 접근",
-                ),
+            decision_outcome = build_leveraged_dca_outcome(
+                wait_high=False,
+                target_weight=targ_w,
+                weight_gap=weight_gap,
+                current_dd=current_dd,
+                price_vs_avg=price_vs_avg,
+                pct_b_now=pct_b_now,
             )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_52w_breakout and mfi_now < 80 and pct_b_now < 0.95:
             dec, col, decision_outcome = _set_decision(
                 "🚀52주 신고가 돌파: 모멘텀 진입 검토", "#7c3aed", "BREAKOUT_52W_ENTRY",
@@ -16135,23 +16138,25 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 ),
             )
         elif is_leveraged_dca_wait_high:
-            dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 과열패스: DCA 대기", "#d97706", "LEVERAGED_DCA_OVERHEAT_PASS",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
-                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
-                ),
+            decision_outcome = build_leveraged_dca_outcome(
+                wait_high=True,
+                target_weight=targ_w,
+                weight_gap=weight_gap,
+                current_dd=current_dd,
+                price_vs_avg=price_vs_avg,
+                pct_b_now=pct_b_now,
             )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_leveraged_dca_conditional:
-            dec, col, decision_outcome = _set_decision(
-                "⚡레버리지 DCA 조건부: 단계별 소액", "#8b5cf6", "LEVERAGED_DCA_CONDITIONAL",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
-                    f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
-                    "레버리지 DCA 조건 일부 충족 — 정해둔 회차·금액 안에서만 소액 접근",
-                ),
+            decision_outcome = build_leveraged_dca_outcome(
+                wait_high=False,
+                target_weight=targ_w,
+                weight_gap=weight_gap,
+                current_dd=current_dd,
+                price_vs_avg=price_vs_avg,
+                pct_b_now=pct_b_now,
             )
+            dec, col = decision_outcome.label, decision_outcome.color
         elif is_core_dca_allowed and current_dd <= -0.3:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col, decision_outcome = _set_decision(

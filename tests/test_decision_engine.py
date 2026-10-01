@@ -14,6 +14,7 @@ from stock_lab_core.decision_engine import (
     build_core_dca_context,
     build_core_dca_outcome,
     build_decision_outcome,
+    build_leveraged_dca_outcome,
     classify_core_etf_dca_rate,
     classify_decision_signal,
     infer_decision_code,
@@ -41,6 +42,38 @@ def test_normalize_decision_runtime_inputs_uses_safe_defaults():
     assert macro_penalty == 0.0
     assert math.isnan(macro_risk)
     assert total_eval == 0.0
+
+
+def test_build_leveraged_dca_outcome_wait_high_blocks_overheat_dca():
+    outcome = build_leveraged_dca_outcome(
+        wait_high=True,
+        target_weight=6.0,
+        weight_gap=2.5,
+        current_dd=-0.18,
+        price_vs_avg=0.12,
+        pct_b_now=0.91,
+    )
+
+    assert outcome.code == "LEVERAGED_DCA_OVERHEAT_PASS"
+    assert outcome.color == "#d97706"
+    assert outcome.group == "caution"
+    assert "목표비중 6.0%" in outcome.reasons[0]
+
+
+def test_build_leveraged_dca_outcome_conditional_allows_small_steps():
+    outcome = build_leveraged_dca_outcome(
+        wait_high=False,
+        target_weight=6.0,
+        weight_gap=2.5,
+        current_dd=-0.28,
+        price_vs_avg=-0.08,
+        pct_b_now=0.42,
+    )
+
+    assert outcome.code == "LEVERAGED_DCA_CONDITIONAL"
+    assert outcome.color == "#8b5cf6"
+    assert outcome.group == "buyish"
+    assert "단계별 소액" in outcome.label
 
 
 def test_apply_live_price_to_ohlcv_updates_latest_row():

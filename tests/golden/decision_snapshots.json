@@ -199,7 +199,7 @@
     "dd": -0.6883649524677464,
     "dec": "⚡레버리지 과열패스: DCA 대기",
     "decision_code": "LEVERAGED_DCA_OVERHEAT_PASS",
-    "decision_group": "neutral",
+    "decision_group": "caution",
     "decision_reasons": [
       "목표비중 20.0% 대비 15.0%p 부족",
       "고점대비 -68.8% / 평단대비 0.0% / %B 0.15",

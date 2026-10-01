@@ -1059,6 +1059,39 @@ def build_core_dca_outcome(prefix: str, core_dca_rate: float, dca_label: str) ->
     return build_decision_outcome(label, color, code, reasons=reasons)
 
 
+def build_leveraged_dca_outcome(
+    *,
+    wait_high: bool,
+    target_weight: float,
+    weight_gap: float,
+    current_dd: float,
+    price_vs_avg: float,
+    pct_b_now: float,
+) -> DecisionOutcome:
+    """Build the repeated leveraged DCA outcomes used by entry/holding flows."""
+    reasons = (
+        f"목표비중 {target_weight:.1f}% 대비 {weight_gap:.1f}%p 부족",
+        f"고점대비 {current_dd*100:.1f}% / 평단대비 {price_vs_avg*100:.1f}% / %B {pct_b_now:.2f}",
+    )
+    if wait_high:
+        return build_decision_outcome(
+            "⚡레버리지 과열패스: DCA 대기",
+            "#d97706",
+            "LEVERAGED_DCA_OVERHEAT_PASS",
+            reasons=reasons + (
+                "레버리지 ETF는 목표비중 미달이어도 고점권·과열권에서는 월 적립 DCA를 패스하고 눌림 가격을 기다립니다.",
+            ),
+        )
+    return build_decision_outcome(
+        "⚡레버리지 DCA 조건부: 단계별 소액",
+        "#8b5cf6",
+        "LEVERAGED_DCA_CONDITIONAL",
+        reasons=reasons + (
+            "레버리지 DCA 조건 일부 충족 — 정해둔 회차·금액 안에서만 소액 접근",
+        ),
+    )
+
+
 def classify_decision_signal(decision_label: str) -> str:
     """Classify a visible decision label for dashboard counts.
 
@@ -1209,6 +1242,8 @@ DECISION_GROUP_BY_CODE = {
     "CORE_PULLBACK_DCA": "buyish",
     "CORE_NEUTRAL_DCA": "buyish",
     "CORE_OVERHEAT_DCA": "caution",
+    "LEVERAGED_DCA_CONDITIONAL": "buyish",
+    "LEVERAGED_DCA_OVERHEAT_PASS": "caution",
     "QUALITY_RECOVERY_WATCH": "neutral",
     "QUALITY_RECOVERY_SCOUT": "buyish",
     "QUALITY_RECOVERY_CANDIDATE": "buyish",
