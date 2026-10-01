@@ -102,7 +102,14 @@ def test_signal_validation_infers_backtest_types_from_current_decisions(app_modu
     assert app_module.infer_signal_backtest_types_from_decision(
         "LEVERAGED_DCA_CONDITIONAL",
         "⚡레버리지 DCA 조건부: 단계별 소액",
+        is_leveraged_product=True,
     ) == ["레버리지 DCA 조건부"]
+
+    assert app_module.infer_signal_backtest_types_from_decision(
+        "LEVERAGED_DCA_CONDITIONAL",
+        "⚡레버리지 DCA 조건부: 단계별 소액",
+        is_leveraged_product=False,
+    ) == []
 
     assert app_module.infer_signal_backtest_types_from_decision(
         "QUALITY_RECOVERY_CANDIDATE",
@@ -143,6 +150,7 @@ def test_build_signal_validation_summary_aggregates_backtest_rows(app_module, mo
     assert len(combined_events) == 2
     assert summary_df.iloc[0]["검증신호"] == "52주 신고가 돌파"
     assert summary_df.iloc[0]["표본"] == 2
+    assert summary_df.iloc[0]["검증적중률"] == 50.0
     assert summary_df.iloc[0]["20일승률"] == 50.0
     assert summary_df.iloc[0]["20일평균"] == 1.5
 

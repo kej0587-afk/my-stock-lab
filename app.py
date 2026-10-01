@@ -25439,6 +25439,7 @@ def infer_signal_backtest_types_from_decision(
     decision_label="",
     final_read="",
     pattern_timing="",
+    is_leveraged_product=False,
 ) -> list[str]:
     """Map current app decisions to the closest historical validation signal types."""
     code = str(decision_code or "").strip().upper()
@@ -25459,8 +25460,11 @@ def infer_signal_backtest_types_from_decision(
     ):
         _add("우량주 회복 후보")
     if (
-        code in {"LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL"}
-        or ("레버리지" in text and ("DCA" in text or "정찰" in text or "회복" in text))
+        is_leveraged_product
+        and (
+            code in {"LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL"}
+            or ("레버리지" in text and ("DCA" in text or "정찰" in text or "회복" in text))
+        )
     ):
         _add("레버리지 DCA 조건부")
     if code in {"S_PULLBACK_ENTRY", "S_PULLBACK_ADD_ON"} or "S급 눌림" in text:
@@ -25513,6 +25517,7 @@ def build_signal_validation_summary(ticker, name, asset_class, signal_types, per
             rows.append({
                 "검증신호": signal_type,
                 "표본": int(len(events_df)),
+                "검증적중률": win20,
                 "20일승률": win20,
                 "20일평균": avg20,
                 "60일평균": avg60,
@@ -25523,6 +25528,7 @@ def build_signal_validation_summary(ticker, name, asset_class, signal_types, per
             rows.append({
                 "검증신호": signal_type,
                 "표본": 0,
+                "검증적중률": np.nan,
                 "20일승률": np.nan,
                 "20일평균": np.nan,
                 "60일평균": np.nan,
@@ -25539,7 +25545,7 @@ def format_signal_validation_summary_for_display(summary_df):
     if summary_df is None or summary_df.empty:
         return pd.DataFrame()
     out = summary_df.copy()
-    for col in ["20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
+    for col in ["검증적중률", "20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
         if col in out.columns:
             out[col] = out[col].apply(format_backtest_percent)
     return out
@@ -25562,7 +25568,14 @@ def render_signal_validation_controls(
         st.info("검증할 티커가 없습니다.")
         return
 
-    inferred = infer_signal_backtest_types_from_decision(decision_code, decision_label, final_read, pattern_timing)
+    is_leveraged_product = is_leveraged_or_inverse_product(name, ticker, asset_class)
+    inferred = infer_signal_backtest_types_from_decision(
+        decision_code,
+        decision_label,
+        final_read,
+        pattern_timing,
+        is_leveraged_product=is_leveraged_product,
+    )
     options = inferred + [x for x in SIGNAL_BACKTEST_TYPES if x not in inferred]
     default = inferred[:2] if inferred else options[:1]
     st.caption(
@@ -25609,6 +25622,11 @@ def render_signal_validation_controls(
     st.dataframe(format_signal_validation_summary_for_display(summary_df), width="stretch", hide_index=True)
     if not events_df.empty:
         st.markdown("##### 신호 발생 내역")
+        st.caption(
+            "날짜는 실제로 앱을 돌린 기록이 아니라, 현재 보유한 과거 가격 데이터에 같은 조건을 다시 적용해 재계산한 값입니다. "
+            "중복간격 때문에 가까운 날짜는 묶이고, 5/20/60일 뒤 성과 계산이 불가능한 최근 구간은 제외됩니다. "
+            "더 촘촘히 보려면 중복간격을 1로 낮추세요."
+        )
         st.dataframe(format_signal_events_for_display(events_df), width="stretch", hide_index=True)
     else:
         st.info("선택한 조건에 해당하는 과거 신호 표본이 없습니다. 기간을 늘리거나 중복간격을 줄여보세요.")
