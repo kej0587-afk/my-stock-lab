@@ -38,6 +38,71 @@ def dataframe_to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
+def clean_review_export_frame(df):
+    """Return a compact CSV-ready frame for review exports."""
+    if df is None:
+        return pd.DataFrame()
+    out = pd.DataFrame(df).copy()
+    if out.empty:
+        return out
+    out = out.dropna(how="all").dropna(axis=1, how="all")
+    return out.reset_index(drop=True)
+
+
+def safe_review_export_filename(name):
+    text = str(name or "review").strip().replace("\\", "/").split("/")[-1]
+    if not text:
+        text = "review"
+    safe = "".join(ch if ch.isalnum() or ch in "._- " else "_" for ch in text).strip()
+    if not safe.lower().endswith(".csv"):
+        safe = f"{safe}.csv"
+    return safe
+
+
+def build_review_export_zip(frames, notes=None):
+    """Build a ZIP of normalized CSVs plus a manifest for one-shot reviews."""
+    frames = frames or {}
+    notes = notes or []
+    buffer = io.BytesIO()
+    manifest_rows = []
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        used_names = set()
+        for raw_name, df in frames.items():
+            filename = safe_review_export_filename(raw_name)
+            base_name = filename[:-4] if filename.lower().endswith(".csv") else filename
+            counter = 2
+            while filename in used_names:
+                filename = f"{base_name}_{counter}.csv"
+                counter += 1
+            used_names.add(filename)
+
+            clean_df = clean_review_export_frame(df)
+            zf.writestr(filename, dataframe_to_csv_bytes(clean_df))
+            manifest_rows.append({
+                "file": filename,
+                "rows": len(clean_df),
+                "columns": len(clean_df.columns),
+                "column_list": ", ".join(map(str, clean_df.columns[:40])),
+            })
+
+        if notes:
+            notes_df = pd.DataFrame(notes)
+            zf.writestr("_notes.csv", dataframe_to_csv_bytes(notes_df))
+            manifest_rows.append({
+                "file": "_notes.csv",
+                "rows": len(notes_df),
+                "columns": len(notes_df.columns),
+                "column_list": ", ".join(map(str, notes_df.columns)),
+            })
+
+        manifest_df = pd.DataFrame(manifest_rows, columns=["file", "rows", "columns", "column_list"])
+        zf.writestr("_manifest.csv", dataframe_to_csv_bytes(manifest_df))
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def build_portfolio_backup_zip(settings, holdings_df, dividends_df, monthly_logs_df, watchlist_items, dashboard_df, fin_scores_df, swing_radar_df=None):
     settings_df = pd.DataFrame([settings or {}])
     watchlist_df = pd.DataFrame(watchlist_items or [])

@@ -35,6 +35,7 @@ from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
     add_recovery_issue,
     build_portfolio_backup_zip,
+    build_review_export_zip,
     collect_recovery_frames,
     count_valid_rows,
     dataframe_to_csv_bytes,
@@ -31827,6 +31828,283 @@ def build_today_queue_items(raw_watch_items=None) -> tuple[dict, ...]:
 # render_today_queue_tab()
 # ════════════════════════════════════════════════════════════════════════════
 
+TODAY_REVIEW_BUYISH_RE = r"매수|진입|정밀확인|적립|DCA|분할|정찰|실행"
+TODAY_REVIEW_DEFENSE_RE = r"하드차단|비중방어|비중\s*초과|목표비중\s*충족|추격금지|추매중단|방어|데이터확인|추가매수\s*제외|매수금지"
+TODAY_REVIEW_LEVERAGE_ASSET_RE = r"레버리지|인버스|2X|3X|2배|3배|Ultra|Daily|Bull|Bear|T-REX|Direxion|SOXL|TQQQ|QLD|BITX|BITU|UPRO|SSO|TECL|FNGU|RAM"
+
+
+def _today_review_ticker_key(value) -> str:
+    return normalize_ticker(sanitize_ticker_value(value))
+
+
+def build_today_review_master_df(summary_df, holdings_df=None, flow_shortlist_df=None):
+    """Build one ticker-level table for external review."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return pd.DataFrame()
+
+    master = summary_df.copy()
+    if "티커" not in master.columns:
+        master["티커"] = ""
+    master["_검토키"] = master["티커"].astype(str).map(_today_review_ticker_key)
+    master = master.drop_duplicates("_검토키", keep="first").reset_index(drop=True)
+
+    if isinstance(holdings_df, pd.DataFrame) and not holdings_df.empty and "티커" in holdings_df.columns:
+        hdf = holdings_df.copy()
+        hdf["_검토키"] = hdf["티커"].astype(str).map(_today_review_ticker_key)
+        hdf = hdf[hdf["_검토키"].astype(str).str.len() > 0]
+        hdf = hdf.drop_duplicates("_검토키", keep="first")
+        holding_cols = [
+            "자산명", "티커", "현재가", "평가손익_원화", "수익률_pct", "원화환산",
+            "현재비중", "목표비중", "비중차이", "기술적타점", "후보등급",
+            "bucket", "asset_class", "운용대상", "리밸런싱목표비중",
+        ]
+        hdf = hdf[[col for col in holding_cols + ["_검토키"] if col in hdf.columns]].copy()
+        hdf = hdf.rename(columns={col: f"보유_{col}" for col in hdf.columns if col != "_검토키"})
+        master = master.merge(hdf, on="_검토키", how="left")
+
+    if isinstance(flow_shortlist_df, pd.DataFrame) and not flow_shortlist_df.empty and "Ticker" in flow_shortlist_df.columns:
+        fdf = flow_shortlist_df.copy()
+        fdf["_검토키"] = fdf["Ticker"].astype(str).map(_today_review_ticker_key)
+        fdf = fdf[fdf["_검토키"].astype(str).str.len() > 0]
+        fdf = fdf.drop_duplicates("_검토키", keep="first")
+        flow_cols = [
+            "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
+            "테마", "세부축", "돈흐름점수", "테마점수", "등록상태", "후보근거",
+        ]
+        fdf = fdf[[col for col in flow_cols + ["_검토키"] if col in fdf.columns]].copy()
+        fdf = fdf.rename(columns={col: f"돈흐름_{col}" for col in fdf.columns if col != "_검토키"})
+        master = master.merge(fdf, on="_검토키", how="left")
+
+    master.insert(0, "검토키", master.pop("_검토키"))
+    return master
+
+
+def _append_today_review_flag(rows, severity, ticker, name, issue, basis, suggestion):
+    rows.append({
+        "등급": severity,
+        "티커": str(ticker or "").strip(),
+        "종목명": str(name or "").strip(),
+        "문제": issue,
+        "근거": basis,
+        "확인/조치": suggestion,
+    })
+
+
+def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=None):
+    """Detect duplicate or conflicting review signals across today/flow/portfolio tables."""
+    rows: list[dict] = []
+
+    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
+        work = summary_df.copy()
+        work["_검토키"] = work["티커"].astype(str).map(_today_review_ticker_key)
+        dup_counts = work[work["_검토키"].astype(str).str.len() > 0]["_검토키"].value_counts()
+        for key, count in dup_counts[dup_counts > 1].items():
+            sample = work[work["_검토키"] == key].iloc[0]
+            _append_today_review_flag(
+                rows,
+                "주의",
+                sample.get("티커", key),
+                sample.get("종목명", ""),
+                "오늘점검 중복 종목",
+                f"같은 검토키가 {int(count)}회 표시됨",
+                "마스터표는 첫 행만 남깁니다. 중복 원인이 관심목록/보유 자동포함/돈흐름 자동포함 중 어디인지 확인하세요.",
+            )
+
+        for _, row in work.iterrows():
+            ticker = row.get("티커", "")
+            name = row.get("종목명", "")
+            text = " ".join(
+                str(row.get(col, "") or "")
+                for col in ["최종읽기", "실행메모", "🔥기술적 타점", "📌후보등급", "패턴타점", "판정코드", "핵심근거"]
+                if col in work.columns
+            )
+            buyish = bool(re.search(TODAY_REVIEW_BUYISH_RE, text, flags=re.IGNORECASE))
+            defensive = bool(re.search(TODAY_REVIEW_DEFENSE_RE, text, flags=re.IGNORECASE))
+            if buyish and defensive:
+                _append_today_review_flag(
+                    rows,
+                    "검토",
+                    ticker,
+                    name,
+                    "매수형 문구와 방어/차단 문구 동시 존재",
+                    text[:240],
+                    "조건부 적립인지 실제 실행후보인지 탭 분류와 최종읽기를 같이 확인하세요.",
+                )
+
+            current_w = clean_float(row.get("현재비중", np.nan), np.nan)
+            target_w = clean_float(row.get("목표비중", np.nan), np.nan)
+            if np.isfinite(current_w) and np.isfinite(target_w) and target_w >= 0 and current_w > target_w + 0.1 and buyish:
+                _append_today_review_flag(
+                    rows,
+                    "주의",
+                    ticker,
+                    name,
+                    "비중초과와 매수형 문구 동시 존재",
+                    f"현재비중 {current_w:.2f}% / 목표비중 {target_w:.2f}% · {text[:160]}",
+                    "추가매수 문구보다 목표비중 차단을 우선하는지 확인하세요.",
+                )
+
+            decision_leverage = bool(re.search(r"레버리지|LEVERAGED|인버스", text, flags=re.IGNORECASE))
+            asset_text = " ".join(str(row.get(col, "") or "") for col in ["종목명", "티커", "유형"])
+            asset_leverage = bool(re.search(TODAY_REVIEW_LEVERAGE_ASSET_RE, asset_text, flags=re.IGNORECASE))
+            if decision_leverage and not asset_leverage:
+                _append_today_review_flag(
+                    rows,
+                    "주의",
+                    ticker,
+                    name,
+                    "비레버리지 후보에 레버리지/DCA 문구",
+                    f"자산: {asset_text} · 신호: {text[:180]}",
+                    "레버리지 전용 판정 조건이 일반 ETF/개별주에 번졌는지 확인하세요.",
+                )
+
+    if isinstance(holdings_df, pd.DataFrame) and not holdings_df.empty and "티커" in holdings_df.columns:
+        hdf = holdings_df.copy()
+        hdf["_검토키"] = hdf["티커"].astype(str).map(_today_review_ticker_key)
+        dup_counts = hdf[hdf["_검토키"].astype(str).str.len() > 0]["_검토키"].value_counts()
+        for key, count in dup_counts[dup_counts > 1].items():
+            sample = hdf[hdf["_검토키"] == key].iloc[0]
+            _append_today_review_flag(
+                rows,
+                "검토",
+                sample.get("티커", key),
+                sample.get("자산명", sample.get("종목명", "")),
+                "보유자산 중복 티커",
+                f"보유 테이블에 같은 검토키가 {int(count)}회 존재",
+                "계좌별 분리 보유가 의도인지, 아니면 중복 입력인지 확인하세요.",
+            )
+
+        if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
+            today_keys = set(summary_df["티커"].astype(str).map(_today_review_ticker_key))
+            for _, row in hdf[hdf["_검토키"].astype(str).str.len() > 0].iterrows():
+                if row["_검토키"] not in today_keys:
+                    _append_today_review_flag(
+                        rows,
+                        "검토",
+                        row.get("티커", ""),
+                        row.get("자산명", row.get("종목명", "")),
+                        "보유자산이 오늘점검에 없음",
+                        "보유 테이블에는 있으나 오늘점검 마스터표에 매칭되지 않음",
+                        "관심/보유 자동 포함 로직과 티커 표기를 확인하세요.",
+                    )
+
+    if isinstance(flow_shortlist_df, pd.DataFrame) and not flow_shortlist_df.empty and "Ticker" in flow_shortlist_df.columns:
+        flow = flow_shortlist_df.copy()
+        flow["_검토키"] = flow["Ticker"].astype(str).map(_today_review_ticker_key)
+        today_keys = set()
+        if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
+            today_keys = set(summary_df["티커"].astype(str).map(_today_review_ticker_key))
+        for _, row in flow[flow["_검토키"].astype(str).str.len() > 0].iterrows():
+            verdict = str(row.get("판정", "") or "")
+            group = str(row.get("후보군", "") or "")
+            if row["_검토키"] not in today_keys:
+                _append_today_review_flag(
+                    rows,
+                    "참고",
+                    row.get("Ticker", ""),
+                    row.get("종목명", ""),
+                    "돈흐름 후보가 오늘점검에 없음",
+                    f"{group} · {verdict}",
+                    "전광판/관심 등록 대상인지 확인하세요. 이미 제외 조건이면 등록하지 않아도 됩니다.",
+                )
+
+    if not rows:
+        rows.append({
+            "등급": "정상",
+            "티커": "",
+            "종목명": "",
+            "문제": "자동 감지된 중복/충돌 없음",
+            "근거": "",
+            "확인/조치": "검토용 마스터표를 기준으로 상세 확인하세요.",
+        })
+    return pd.DataFrame(rows)
+
+
+def _today_review_frame(df, mask=None):
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    if mask is None:
+        return df.copy()
+    try:
+        return df.loc[mask].copy()
+    except Exception:
+        return pd.DataFrame()
+
+
+def render_today_review_export_download(summary_df, flow_shortlist_df=None, holdings_df=None, masks=None, market_guard=None):
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return
+
+    masks = masks or {}
+    master_df = build_today_review_master_df(summary_df, holdings_df, flow_shortlist_df)
+    flags_df = build_today_review_flags_df(summary_df, holdings_df, flow_shortlist_df)
+    guard_df = pd.DataFrame([market_guard or {}])
+    notes = [
+        {
+            "항목": "기준",
+            "내용": "00_review_master.csv가 고유 티커 기준 최종 검토표입니다. 화면 복사본이 아니라 앱 내부 계산 결과를 바로 묶습니다.",
+        },
+        {
+            "항목": "중복/충돌",
+            "내용": "99_review_flags.csv는 오늘점검, 내 보유, 돈흐름 후보 사이의 중복·상충 문구를 자동으로 모은 점검표입니다.",
+        },
+        {
+            "항목": "판정",
+            "내용": "돈흐름은 테마/수급 후보, 오늘점검은 보유비중·가격위치·리스크까지 반영한 실행 우선순위입니다. 서로 다르면 flags 표에서 원인을 먼저 봅니다.",
+        },
+    ]
+
+    frames = {
+        "00_review_master.csv": master_df,
+        "01_today_all_unique.csv": summary_df.drop_duplicates(
+            subset=["티커"], keep="first"
+        ) if "티커" in summary_df.columns else summary_df,
+        "02_today_execution.csv": _today_review_frame(summary_df, masks.get("execution")),
+        "03_today_wait_or_dca.csv": _today_review_frame(summary_df, masks.get("wait")),
+        "04_today_overweight_defense.csv": _today_review_frame(summary_df, masks.get("overweight")),
+        "05_today_market_defense.csv": _today_review_frame(summary_df, masks.get("market_defense")),
+        "06_today_price_or_trend_defense.csv": pd.concat(
+            [
+                _today_review_frame(summary_df, masks.get("price_defense")),
+                _today_review_frame(summary_df, masks.get("rapid_drop")),
+                _today_review_frame(summary_df, masks.get("structure")),
+            ],
+            ignore_index=True,
+        ),
+        "07_today_overheat_or_data_issue.csv": pd.concat(
+            [
+                _today_review_frame(summary_df, masks.get("overheat")),
+                _today_review_frame(summary_df, masks.get("data_issue")),
+                _today_review_frame(summary_df, masks.get("other_caution")),
+            ],
+            ignore_index=True,
+        ),
+        "08_money_flow_shortlist.csv": flow_shortlist_df if isinstance(flow_shortlist_df, pd.DataFrame) else pd.DataFrame(),
+        "09_portfolio_holdings.csv": holdings_df if isinstance(holdings_df, pd.DataFrame) else pd.DataFrame(),
+        "10_market_guard.csv": guard_df,
+        "99_review_flags.csv": flags_df,
+    }
+
+    export_bytes = build_review_export_zip(frames, notes=notes)
+    now_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M")
+    flag_count = int((flags_df.get("등급", pd.Series(dtype=str)).astype(str) != "정상").sum()) if not flags_df.empty else 0
+    st.download_button(
+        "검토용 통합 CSV ZIP 다운로드",
+        data=export_bytes,
+        file_name=f"stock_lab_review_export_{now_text}.zip",
+        mime="application/zip",
+        key=f"download_today_review_export_{now_text}_{len(master_df)}_{flag_count}",
+        width='stretch',
+    )
+    st.caption(
+        f"검토용 ZIP: 고유 종목 {len(master_df)}개, 돈흐름 후보 {len(flow_shortlist_df) if isinstance(flow_shortlist_df, pd.DataFrame) else 0}개, "
+        f"중복/충돌 점검 {flag_count}건. 화면 복붙 대신 이 파일을 기준으로 보면 앞뒤가 덜 섞입니다."
+    )
+    if flag_count:
+        with st.expander("중복/충돌 점검 미리보기", expanded=False):
+            st.dataframe(flags_df, width='stretch', hide_index=True)
+
+
 def render_today_queue_tab(mode):
     st.subheader("오늘 점검")
     render_data_basis_caption("오늘점검", include_fin=True)
@@ -32273,6 +32551,24 @@ def render_today_queue_tab(mode):
     st.caption(
         f"탭 숫자는 한 종목이 여러 사유에 걸리면 중복 포함됩니다. "
         f"고유 상세판정 {unique_detail_count}개, 돈흐름 후보 {len(flow_shortlist_df)}개는 별도 참고 목록입니다."
+    )
+    render_today_review_export_download(
+        summary_df,
+        flow_shortlist_df=flow_shortlist_df,
+        holdings_df=globals().get("holdings_table"),
+        masks={
+            "execution": execution_mask,
+            "wait": wait_mask,
+            "overweight": overweight_mask,
+            "market_defense": market_defense_mask,
+            "price_defense": price_defense_mask,
+            "rapid_drop": rapid_drop_mask,
+            "structure": structure_mask,
+            "overheat": overheat_mask,
+            "data_issue": data_issue_mask,
+            "other_caution": other_caution_mask,
+        },
+        market_guard=market_guard,
     )
 
     tabs = st.tabs([

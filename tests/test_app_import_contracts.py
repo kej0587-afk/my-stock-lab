@@ -74,6 +74,17 @@ def test_db_schema_exports_used_by_app():
     )
 
 
+def test_backup_exports_used_by_app():
+    _assert_exports(
+        "stock_lab_core.backup",
+        [
+            "build_portfolio_backup_zip",
+            "build_review_export_zip",
+            "dataframe_to_csv_bytes",
+        ],
+    )
+
+
 def test_decision_engine_exports_used_by_app():
     _assert_exports(
         "stock_lab_core.decision_engine",
