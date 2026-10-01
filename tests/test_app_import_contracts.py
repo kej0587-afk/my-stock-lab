@@ -68,6 +68,7 @@ def test_db_schema_exports_used_by_app():
         "stock_lab_core.db_schema",
         [
             "get_feedback_create_sql",
+            "get_signal_journal_create_sql",
             "get_swing_radar_create_sql",
         ],
     )

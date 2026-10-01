@@ -155,6 +155,83 @@ def test_build_signal_validation_summary_aggregates_backtest_rows(app_module, mo
     assert summary_df.iloc[0]["20일평균"] == 1.5
 
 
+def test_signal_journal_row_captures_current_context(app_module):
+    row = {
+        "종목명": "마이크로소프트",
+        "티커": "MSFT",
+        "🔥기술적 타점": "⛔추격금지",
+        "판정코드": "OVERHEAT_NO_CHASE",
+        "최종읽기": "과열대기",
+        "현재가": "$510.25",
+        "목표비중": "12.5%",
+        "현재비중": "9.0%",
+        "매크로상태": "주의",
+    }
+
+    out = app_module.make_signal_journal_row_from_summary(row, source="unit", signal_date="2026-01-15")
+
+    assert out["ticker"] == "MSFT"
+    assert out["source"] == "unit"
+    assert out["signal_side"] == "avoid"
+    assert out["price"] == 510.25
+    assert out["target_weight"] == 12.5
+    assert out["current_weight"] == 9.0
+    assert out["macro_state"] == "주의"
+    assert out["snapshot"]["현재가"] == "$510.25"
+
+
+def test_score_signal_journal_rows_scores_buy_and_avoid_signals(app_module):
+    dates = pd.date_range("2024-01-02", periods=80, freq="B")
+
+    def fake_loader(ticker, period):
+        if ticker == "DOWN":
+            close = np.linspace(100, 80, len(dates))
+        else:
+            close = np.linspace(100, 130, len(dates))
+        return pd.DataFrame({"Close": close}, index=dates)
+
+    journal = pd.DataFrame([
+        {
+            "signal_date": "2024-01-02",
+            "source": "unit",
+            "ticker": "UP",
+            "name": "상승",
+            "decision_label": "S급 눌림목",
+            "final_read": "진입검토",
+            "signal_side": "buy",
+            "price": 100.0,
+        },
+        {
+            "signal_date": "2024-01-02",
+            "source": "unit",
+            "ticker": "UP",
+            "name": "상승 회피",
+            "decision_label": "추격금지",
+            "final_read": "과열대기",
+            "signal_side": "avoid",
+            "price": 100.0,
+        },
+        {
+            "signal_date": "2024-01-02",
+            "source": "unit",
+            "ticker": "DOWN",
+            "name": "하락 회피",
+            "decision_label": "구조훼손",
+            "final_read": "방어",
+            "signal_side": "avoid",
+            "price": 100.0,
+        },
+    ])
+
+    scored = app_module.score_signal_journal_rows(journal, price_loader=fake_loader)
+    result_by_name = dict(zip(scored["종목명"], scored["검증결과"]))
+
+    assert result_by_name["상승"] == "적중"
+    assert result_by_name["상승 회피"] == "미스"
+    assert result_by_name["하락 회피"] == "적중"
+    assert app_module.summarize_scored_signal_journal(scored)["hit_rate"] == 2 / 3 * 100
+
+
 def test_holding_lookup_matches_us_suffix_variants():
     holdings = pd.DataFrame([
         {"티커": "FCX.US", "자산명": "프리포트 맥모란", "보유량": 2, "매입가": 78.5},

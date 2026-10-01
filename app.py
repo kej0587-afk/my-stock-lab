@@ -63,7 +63,11 @@ from stock_lab_core.hold_judgement import (
     build_hold_decision,
 )
 from stock_lab_core.runtime_status import build_speed_check_snapshot
-from stock_lab_core.db_schema import get_feedback_create_sql, get_swing_radar_create_sql
+from stock_lab_core.db_schema import (
+    get_feedback_create_sql,
+    get_signal_journal_create_sql,
+    get_swing_radar_create_sql,
+)
 from stock_lab_core.formatters import (
     clean_bool,
     clean_float,
@@ -2418,6 +2422,470 @@ def save_feedback_db_safe(category, title, body, priority):
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+SIGNAL_JOURNAL_COLUMNS = [
+    "id",
+    "owner_email",
+    "signal_date",
+    "created_at",
+    "source",
+    "ticker",
+    "name",
+    "asset_class",
+    "decision_label",
+    "decision_code",
+    "decision_group",
+    "final_read",
+    "signal_side",
+    "price",
+    "macro_state",
+    "safety_state",
+    "fin_score",
+    "target_weight",
+    "current_weight",
+    "weight_gap",
+    "rr_ratio",
+    "rsi",
+    "mfi",
+    "pct_b",
+    "snapshot",
+]
+
+SIGNAL_JOURNAL_PUBLIC_SESSION_KEY = "_signal_journal_public_demo_df"
+
+
+def _clean_journal_float(value, default=np.nan):
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except Exception:
+        pass
+    text = str(value).strip()
+    if not text or text in {"-", "nan", "None", "none"}:
+        return default
+    text = re.sub(r"[₩$,%xX배\s]", "", text.replace(",", ""))
+    if not text:
+        return default
+    try:
+        return float(text)
+    except Exception:
+        return default
+
+
+def _journal_jsonable_snapshot(row, max_items=80):
+    if row is None:
+        return {}
+    raw = dict(row) if isinstance(row, dict) else dict(row.to_dict())
+    snapshot = {}
+    for idx, (key, value) in enumerate(raw.items()):
+        if idx >= max_items:
+            break
+        snapshot[str(key)] = to_jsonable(value)
+    return snapshot
+
+
+def classify_signal_journal_side(decision_code="", decision_label="", final_read="", extra_text=""):
+    code = str(decision_code or "").upper()
+    text = normalize_text(" ".join(str(x or "") for x in [decision_label, final_read, extra_text]))
+
+    avoid_words = [
+        "추격금지",
+        "구조훼손",
+        "차단",
+        "폐기",
+        "손절",
+        "축소",
+        "익절",
+        "매도",
+        "과열대기",
+        "시장방어",
+        "가격방어",
+        "급락방어",
+        "추세방어",
+        "비중초과",
+        "하락대기",
+    ]
+    buy_words = [
+        "s급",
+        "눌림목",
+        "진입",
+        "매수",
+        "분할",
+        "정찰",
+        "dca",
+        "적립",
+        "회복",
+        "돌파",
+        "신규대장",
+        "후보",
+    ]
+
+    if (
+        code.startswith("STRUCTURE_DAMAGE")
+        or code.startswith("PRICE_DRAWDOWN")
+        or code.startswith("SINGLE_DAY_BREAKDOWN")
+        or any(word in text for word in avoid_words)
+    ):
+        return "avoid"
+    if (
+        "ENTRY" in code
+        or "BUY" in code
+        or "DCA" in code
+        or "RECOVERY" in code
+        or any(word in text for word in buy_words)
+    ):
+        return "buy"
+    return "neutral"
+
+
+def make_signal_journal_row_from_summary(row, source="today_check", signal_date=None):
+    row_dict = dict(row) if isinstance(row, dict) else dict(row.to_dict())
+    ticker = sanitize_ticker_value(row_dict.get("티커", row_dict.get("ticker", "")))
+    name = sanitize_asset_name(row_dict.get("종목명", row_dict.get("자산명", row_dict.get("name", ""))), ticker)
+    raw_type = str(row_dict.get("유형", "") or row_dict.get("asset_class", "") or "")
+    asset_class = str(row_dict.get("asset_class", "") or "").strip()
+    if not asset_class:
+        asset_class = infer_asset_class_for_ticker(ticker, "us_etf_nasdaq" if "ETF" in raw_type.upper() else "")
+
+    decision_label = str(row_dict.get("🔥기술적 타점", row_dict.get("시스템판정", row_dict.get("판정", ""))) or "")
+    decision_code = str(row_dict.get("판정코드", "") or "")
+    decision_group = str(row_dict.get("판정분류", row_dict.get("전광판그룹", "")) or "")
+    final_read = str(row_dict.get("최종읽기", row_dict.get("final_read", "")) or "")
+    extra_text = " ".join(
+        str(row_dict.get(col, "") or "")
+        for col in ["패턴타점", "오늘결론", "요약", "뉴스재료", "상세판정"]
+        if col in row_dict
+    )
+    side = classify_signal_journal_side(decision_code, decision_label, final_read, extra_text)
+    signal_date = signal_date or datetime.now(KST).date()
+
+    return {
+        "owner_email": PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+        "signal_date": str(signal_date),
+        "source": str(source or "today_check"),
+        "ticker": ticker,
+        "name": name,
+        "asset_class": asset_class,
+        "decision_label": decision_label,
+        "decision_code": decision_code,
+        "decision_group": decision_group,
+        "final_read": final_read,
+        "signal_side": side,
+        "price": _clean_journal_float(row_dict.get("현재가", row_dict.get("price", np.nan))),
+        "macro_state": str(row_dict.get("매크로상태", row_dict.get("macro_state", "")) or ""),
+        "safety_state": str(row_dict.get("안전상태", row_dict.get("safety_state", "")) or ""),
+        "fin_score": _clean_journal_float(row_dict.get("재무점수", row_dict.get("fin_score", np.nan))),
+        "target_weight": _clean_journal_float(row_dict.get("목표비중", row_dict.get("target_weight", np.nan))),
+        "current_weight": _clean_journal_float(row_dict.get("현재비중", row_dict.get("current_weight", np.nan))),
+        "weight_gap": _clean_journal_float(row_dict.get("비중차이", row_dict.get("weight_gap", np.nan))),
+        "rr_ratio": _clean_journal_float(row_dict.get("R/R", row_dict.get("R/R비율", row_dict.get("rr_ratio", np.nan)))),
+        "rsi": _clean_journal_float(row_dict.get("RSI", row_dict.get("rsi", np.nan))),
+        "mfi": _clean_journal_float(row_dict.get("MFI", row_dict.get("mfi", np.nan))),
+        "pct_b": _clean_journal_float(row_dict.get("%B", row_dict.get("pct_b", np.nan))),
+        "snapshot": _journal_jsonable_snapshot(row_dict),
+    }
+
+
+def _clean_signal_journal_payload(row):
+    payload = {}
+    for key, value in row.items():
+        if key == "snapshot":
+            payload[key] = value if isinstance(value, dict) else {}
+            continue
+        if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            payload[key] = None
+            continue
+        try:
+            is_missing = False if isinstance(value, (dict, list, tuple)) else pd.isna(value)
+            if isinstance(is_missing, (pd.Series, np.ndarray, list, tuple)):
+                is_missing = False
+        except Exception:
+            is_missing = False
+        if is_missing:
+            payload[key] = None
+        else:
+            payload[key] = to_jsonable(value)
+    return payload
+
+
+def make_signal_journal_rows_from_summary(summary_df, source="today_check"):
+    if summary_df is None or summary_df.empty:
+        return []
+    rows = []
+    for _, row in summary_df.iterrows():
+        item = make_signal_journal_row_from_summary(row, source=source)
+        if item.get("ticker"):
+            rows.append(item)
+    return rows
+
+
+def load_signal_journal_db_safe(limit=500):
+    if IS_PUBLIC_DEMO:
+        df = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
+        return dataframe_from_rows([] if df is None else df.to_dict("records"), SIGNAL_JOURNAL_COLUMNS), None
+
+    try:
+        query = (
+            supabase.table("signal_journal")
+            .select(",".join(SIGNAL_JOURNAL_COLUMNS))
+            .eq("owner_email", CURRENT_USER_EMAIL)
+            .order("signal_date", desc=True)
+            .order("created_at", desc=True)
+            .limit(int(limit))
+        )
+        res = query.execute()
+        return dataframe_from_rows(res.data, SIGNAL_JOURNAL_COLUMNS), None
+    except Exception as e:
+        return dataframe_from_rows([], SIGNAL_JOURNAL_COLUMNS), str(e)
+
+
+def save_signal_journal_rows_safe(rows):
+    rows = [_clean_signal_journal_payload(row) for row in (rows or []) if sanitize_ticker_value(row.get("ticker", ""))]
+    if not rows:
+        return False, "저장할 신호가 없습니다."
+
+    if IS_PUBLIC_DEMO:
+        existing = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
+        existing_df = existing.copy() if isinstance(existing, pd.DataFrame) else pd.DataFrame(columns=SIGNAL_JOURNAL_COLUMNS)
+        add_df = dataframe_from_rows(rows, SIGNAL_JOURNAL_COLUMNS)
+        combined = pd.concat([existing_df, add_df], ignore_index=True)
+        dedup_keys = ["owner_email", "signal_date", "source", "ticker", "decision_code", "final_read"]
+        combined = combined.drop_duplicates(subset=[c for c in dedup_keys if c in combined.columns], keep="last")
+        st.session_state[SIGNAL_JOURNAL_PUBLIC_SESSION_KEY] = combined[SIGNAL_JOURNAL_COLUMNS].copy()
+        return True, ""
+
+    try:
+        supabase.table("signal_journal").upsert(
+            rows,
+            on_conflict="owner_email,signal_date,source,ticker,decision_code,final_read",
+        ).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def _normalize_price_index(index):
+    dt_index = pd.to_datetime(index, errors="coerce")
+    try:
+        return dt_index.tz_localize(None)
+    except TypeError:
+        try:
+            return dt_index.tz_convert(None)
+        except Exception:
+            return dt_index
+    except Exception:
+        return dt_index
+
+
+def score_signal_journal_rows(journal_df, price_loader=load_price_df, horizons=(5, 20, 60)):
+    if journal_df is None or journal_df.empty:
+        return pd.DataFrame()
+
+    scored_rows = []
+    price_cache = {}
+    for _, raw_row in journal_df.iterrows():
+        row = dict(raw_row)
+        ticker = sanitize_ticker_value(row.get("ticker", ""))
+        signal_date = pd.to_datetime(row.get("signal_date"), errors="coerce")
+        side = str(row.get("signal_side", "") or "").strip() or classify_signal_journal_side(
+            row.get("decision_code", ""),
+            row.get("decision_label", ""),
+            row.get("final_read", ""),
+        )
+        out = {
+            "신호일": "" if pd.isna(signal_date) else signal_date.strftime("%Y-%m-%d"),
+            "출처": row.get("source", ""),
+            "종목명": row.get("name", ""),
+            "티커": ticker,
+            "판정": row.get("decision_label", "") or row.get("final_read", ""),
+            "최종읽기": row.get("final_read", ""),
+            "판정방향": {"buy": "매수형", "avoid": "회피형", "neutral": "중립"}.get(side, "중립"),
+            "신호가": _clean_journal_float(row.get("price"), np.nan),
+            "현재까지": np.nan,
+            "검증결과": "검증대기",
+            "평가기준": "",
+        }
+        for horizon in horizons:
+            out[f"{horizon}일후"] = np.nan
+
+        if not ticker or pd.isna(signal_date):
+            out["검증결과"] = "데이터부족"
+            out["평가기준"] = "티커/신호일 누락"
+            scored_rows.append(out)
+            continue
+
+        cache_key = normalize_ticker(ticker)
+        if cache_key not in price_cache:
+            try:
+                price_cache[cache_key] = price_loader(ticker, "5y")
+            except Exception:
+                price_cache[cache_key] = pd.DataFrame()
+        price_df = price_cache.get(cache_key)
+        if price_df is None or price_df.empty or "Close" not in price_df.columns:
+            out["검증결과"] = "데이터부족"
+            out["평가기준"] = "가격 데이터 없음"
+            scored_rows.append(out)
+            continue
+
+        close = pd.Series(price_df["Close"]).dropna().astype(float)
+        if close.empty:
+            out["검증결과"] = "데이터부족"
+            out["평가기준"] = "종가 데이터 없음"
+            scored_rows.append(out)
+            continue
+
+        close.index = _normalize_price_index(close.index)
+        close = close[~pd.isna(close.index)].sort_index()
+        date_mask = close.index.normalize() >= signal_date.normalize()
+        if not bool(date_mask.any()):
+            out["평가기준"] = "신호일 이후 가격 대기"
+            scored_rows.append(out)
+            continue
+
+        entry_idx = int(np.flatnonzero(np.asarray(date_mask))[0])
+        entry_price = out["신호가"]
+        if not finite_num(entry_price) or entry_price <= 0:
+            entry_price = clean_float(close.iloc[entry_idx], np.nan)
+            out["신호가"] = entry_price
+        if not finite_num(entry_price) or entry_price <= 0:
+            out["검증결과"] = "데이터부족"
+            out["평가기준"] = "신호가 산출 불가"
+            scored_rows.append(out)
+            continue
+
+        latest_price = clean_float(close.iloc[-1], np.nan)
+        if finite_num(latest_price):
+            out["현재까지"] = (latest_price / entry_price - 1) * 100
+
+        for horizon in horizons:
+            target_idx = entry_idx + int(horizon)
+            if target_idx < len(close):
+                out[f"{horizon}일후"] = (clean_float(close.iloc[target_idx], np.nan) / entry_price - 1) * 100
+
+        ret20 = out.get("20일후", np.nan)
+        if side == "neutral":
+            out["검증결과"] = "검증제외"
+            out["평가기준"] = "방향성 없는 신호"
+        elif not finite_num(ret20):
+            out["검증결과"] = "검증대기"
+            out["평가기준"] = "20거래일 미경과"
+        elif side == "avoid":
+            out["검증결과"] = "적중" if ret20 <= 0 else "미스"
+            out["평가기준"] = "회피형: 20일후 수익률이 0% 이하이면 적중"
+        else:
+            out["검증결과"] = "적중" if ret20 > 0 else "미스"
+            out["평가기준"] = "매수형: 20일후 수익률이 0% 초과이면 적중"
+        scored_rows.append(out)
+
+    return pd.DataFrame(scored_rows)
+
+
+def summarize_scored_signal_journal(scored_df):
+    if scored_df is None or scored_df.empty:
+        return {"total": 0, "scored": 0, "hit_rate": np.nan, "pending": 0, "miss": 0, "hit": 0}
+    result = scored_df.get("검증결과", pd.Series(dtype=str)).astype(str)
+    scored_mask = result.isin(["적중", "미스"])
+    hit = int((result == "적중").sum())
+    miss = int((result == "미스").sum())
+    scored = int(scored_mask.sum())
+    pending = int(result.isin(["검증대기", "데이터부족"]).sum())
+    return {
+        "total": int(len(scored_df)),
+        "scored": scored,
+        "hit_rate": np.nan if scored <= 0 else float(hit / scored * 100),
+        "pending": pending,
+        "miss": miss,
+        "hit": hit,
+    }
+
+
+def format_signal_journal_score_for_display(scored_df):
+    if scored_df is None or scored_df.empty:
+        return pd.DataFrame()
+    out = scored_df.copy()
+    if "신호가" in out.columns:
+        out["신호가"] = out["신호가"].apply(lambda v: "" if not finite_num(v) else f"{clean_float(v):,.2f}")
+    for col in ["현재까지", "5일후", "20일후", "60일후"]:
+        if col in out.columns:
+            out[col] = out[col].apply(format_backtest_percent)
+    preferred = [
+        "신호일",
+        "출처",
+        "종목명",
+        "티커",
+        "판정방향",
+        "판정",
+        "최종읽기",
+        "신호가",
+        "5일후",
+        "20일후",
+        "60일후",
+        "현재까지",
+        "검증결과",
+        "평가기준",
+    ]
+    return out[[col for col in preferred if col in out.columns]]
+
+
+def render_signal_journal_panel(summary_df=None, *, key_prefix, source, current_row=None):
+    st.markdown("##### 실전 신호 로그")
+    st.caption(
+        "이 영역은 현재 규칙을 과거에 다시 대입하는 검증이 아니라, 앱이 오늘 실제로 보여준 신호를 저장했다가 "
+        "5/20/60거래일 뒤 결과를 채점하는 기록장입니다. 저장하지 않은 과거 신호는 정확히 복원할 수 없습니다."
+    )
+
+    save_cols = st.columns([1, 1, 2])
+    with save_cols[0]:
+        if st.button("선택 신호 저장", key=f"{key_prefix}_save_one", width="stretch"):
+            row_source = current_row
+            if row_source is None and summary_df is not None and not summary_df.empty:
+                row_source = summary_df.iloc[0]
+            rows = [make_signal_journal_row_from_summary(row_source, source=source)] if row_source is not None else []
+            ok, message = save_signal_journal_rows_safe(rows)
+            if ok:
+                st.success("선택 신호를 실전 로그에 저장했습니다.")
+            else:
+                st.error(f"실전 로그 저장 실패: {message}")
+                st.code(get_signal_journal_create_sql(), language="sql")
+    with save_cols[1]:
+        save_all_disabled = summary_df is None or summary_df.empty
+        if st.button("현재 표 전체 저장", key=f"{key_prefix}_save_all", width="stretch", disabled=save_all_disabled):
+            rows = make_signal_journal_rows_from_summary(summary_df, source=source)
+            ok, message = save_signal_journal_rows_safe(rows)
+            if ok:
+                st.success(f"{len(rows)}개 신호를 실전 로그에 저장했습니다.")
+            else:
+                st.error(f"실전 로그 저장 실패: {message}")
+                st.code(get_signal_journal_create_sql(), language="sql")
+    with save_cols[2]:
+        st.caption("중복 키는 같은 날짜·출처·티커·판정 기준으로 덮어씁니다. 장중 재계산 후 저장하면 최신 스냅샷이 남습니다.")
+
+    if st.button("저장 로그 적중률 계산", key=f"{key_prefix}_score", width="stretch"):
+        st.session_state[f"{key_prefix}_score_ready"] = True
+    if not st.session_state.get(f"{key_prefix}_score_ready", False):
+        return
+
+    journal_df, load_error = load_signal_journal_db_safe(limit=500)
+    if load_error:
+        st.warning("실전 신호 로그 테이블이 아직 없거나 접근할 수 없습니다. 아래 SQL을 Supabase SQL Editor에서 한 번만 실행하면 저장/검증됩니다.")
+        st.code(get_signal_journal_create_sql(), language="sql")
+        return
+    if journal_df.empty:
+        st.info("아직 저장된 실전 신호 로그가 없습니다.")
+        return
+
+    with st.spinner("저장된 실전 신호를 가격 데이터로 채점 중..."):
+        scored_df = score_signal_journal_rows(journal_df)
+    summary = summarize_scored_signal_journal(scored_df)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("저장 신호", f"{summary['total']}건")
+    m2.metric("채점 완료", f"{summary['scored']}건")
+    m3.metric("실전 적중률", "-" if not finite_num(summary["hit_rate"]) else f"{summary['hit_rate']:.1f}%")
+    m4.metric("대기/데이터부족", f"{summary['pending']}건")
+    st.dataframe(format_signal_journal_score_for_display(scored_df), width="stretch", hide_index=True)
 
 
 def build_recovery_preflight_report(frames, unknown_files=None, read_errors=None):
@@ -21287,6 +21755,10 @@ def render_feedback_tab():
         st.caption("이 SQL은 Supabase 프로젝트에서 한 번만 실행하면 됩니다. 같은 프로젝트를 쓰는 모든 사용자에게 적용됩니다.")
         st.code(get_feedback_create_sql(), language="sql")
 
+    with st.expander("관리자용: 실전 신호 로그 테이블 생성 SQL"):
+        st.caption("오늘점검/전광판/정밀관측소 신호를 저장하고 나중에 적중률을 채점하려면 한 번만 실행합니다.")
+        st.code(get_signal_journal_create_sql(), language="sql")
+
 
 # -------------------------------------------------
 # 7-1. 판정 매뉴얼 데이터 + 렌더러
@@ -25654,6 +26126,21 @@ def render_inline_signal_validation_panel(
             pattern_timing=pattern_timing,
             key_prefix=key_prefix,
         )
+        single_row = {
+            "종목명": name,
+            "티커": ticker,
+            "asset_class": asset_class,
+            "판정코드": decision_code,
+            "🔥기술적 타점": decision_label,
+            "최종읽기": final_read,
+            "패턴타점": pattern_timing,
+        }
+        render_signal_journal_panel(
+            pd.DataFrame([single_row]),
+            key_prefix=f"{key_prefix}_journal",
+            source="precision",
+            current_row=single_row,
+        )
 
 
 def _summary_validation_asset_class(row):
@@ -25698,6 +26185,12 @@ def render_summary_signal_validation_panel(summary_df, *, key_prefix, title="�
             final_read=row.get("최종읽기", ""),
             pattern_timing=row.get("패턴타점", ""),
             key_prefix=f"{key_prefix}_{normalize_ticker(ticker)}",
+        )
+        render_signal_journal_panel(
+            base,
+            key_prefix=f"{key_prefix}_journal",
+            source=key_prefix,
+            current_row=row,
         )
 
 
