@@ -8,6 +8,9 @@ from typing import Any
 
 
 BAD_FLOW_STATES = {"약세 전환", "소외 지속", "급락 경보"}
+NON_ACTIONABLE_FLOW_GROUPS = {"매크로"}
+NON_TRADABLE_FLOW_TICKERS = {"^VIX", "VIX", "^MOVE", "MOVE"}
+CASHLIKE_FLOW_SCOPE_RE = re.compile(r"(금리|단기채|머니마켓|CD\s*금리|CD금리|현금|파킹|SHV)", re.I)
 
 
 def _row_get(row: Any, key: str, default=None):
@@ -38,6 +41,52 @@ def normalize_money_flow_state(value) -> str:
     for mark in ["🔴", "💥", "💚", "🔥", "🚀", "🟡", "⚪", "〰️", "⚡", "🟢", "⬛"]:
         text = text.replace(mark, "")
     return re.sub(r"\s+", " ", text).strip()
+
+
+def classify_money_flow_candidate_scope(row: Any) -> str:
+    """Return whether a money-flow row can become a stock/ETF candidate.
+
+    Macro gauges and cash-like instruments are useful context, but they should
+    not appear as "buyable candidates" beside sector/theme ideas.
+    """
+    ticker = str(_row_get(row, "Ticker", _row_get(row, "ticker", "")) or "").strip().upper()
+    group = str(_row_get(row, "구분", "") or "").strip()
+    sector = str(_row_get(row, "섹터", "") or "").strip()
+    name = str(_row_get(row, "ETF 이름", _row_get(row, "name", "")) or "").strip()
+    scope_text = " ".join([ticker, group, sector, name])
+
+    if group in NON_ACTIONABLE_FLOW_GROUPS or ticker in NON_TRADABLE_FLOW_TICKERS:
+        return "매크로게이지"
+    if CASHLIKE_FLOW_SCOPE_RE.search(scope_text):
+        return "현금성게이지"
+    return "후보"
+
+
+def classify_money_flow_radar_label(row: Any, swing_min: float = 5.0) -> str:
+    """Compact label for money-flow radar rows.
+
+    This deliberately avoids order-like wording. The radar is a source finder;
+    final action is decided later by Today Queue with market mode, R/R, weight,
+    and hard-block rules.
+    """
+    scope = classify_money_flow_candidate_scope(row)
+    if scope == "매크로게이지":
+        return "📍 매크로게이지"
+    if scope == "현금성게이지":
+        return "💵 현금성게이지"
+
+    swing = _first_num(row, ("스윙점수",))
+    price_level = _first_num(row, ("가격수준",), default=1.0)
+    state = normalize_money_flow_state(_row_get(row, "상태", ""))
+    if not math.isfinite(swing):
+        return "-"
+    if swing <= 0 or state in BAD_FLOW_STATES:
+        return "❌ 제외"
+    if swing < swing_min:
+        return "💤 약모멘텀"
+    if price_level >= 0.85:
+        return "⚠️ 고점관찰"
+    return "👀 관심후보"
 
 
 def classify_flow_candidate_type(row: Any) -> str:

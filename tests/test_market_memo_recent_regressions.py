@@ -46,7 +46,7 @@ def test_auto_market_memo_uses_flow_command_board_when_summary_waiting():
     memo = build_auto_market_memo(flow_snapshot=flow_snapshot, summary_rows=pd.DataFrame())
 
     assert "종목별 정밀 판정은 아직 계산 전입니다" in memo
-    assert "돈흐름 실행 후보판: 정밀관측 1개 · 눌림대기 1개 · 관망/제외 1개" in memo
+    assert "돈흐름 후보판: 정밀관측 1개 · 눌림대기 1개 · 관망/제외 1개" in memo
     assert "현대해상 (001450.KS)" in memo
     assert "오늘점검 데이터가 비어 있습니다" not in memo
 

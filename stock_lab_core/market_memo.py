@@ -1117,7 +1117,7 @@ def _flow_command_bullets(flow_snapshot: dict | None) -> list[str]:
     count_text = " · ".join(f"{key} {counts[key]}개" for key in order if counts.get(key))
     bullets = []
     if count_text:
-        bullets.append("돈흐름 실행 후보판: " + count_text)
+        bullets.append("돈흐름 후보판: " + count_text)
     if primary:
         bullets.append("먼저 볼 돈흐름 후보: " + " / ".join(primary))
     bullets.append("보유/관심 정밀 판정은 오늘 종목 점검 계산 후 R/R·손절·비중으로 확정합니다.")
@@ -1863,7 +1863,7 @@ def _auto_insight_bullets(
     else:
         command_lines = _flow_command_bullets(flow_snapshot)
         if command_lines:
-            first_line = command_lines[0].replace("돈흐름 실행 후보판: ", "")
+            first_line = command_lines[0].replace("돈흐름 후보판: ", "")
             bullets.append(f"오늘 종목 정밀판정은 아직 대기 중이고, 돈흐름 후보판 기준으로는 {first_line}입니다.")
 
     news_count = len(_news_bullets(news_rows))

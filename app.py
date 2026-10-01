@@ -345,7 +345,11 @@ from stock_lab_core.today_news import (
     normalize_today_action_news_row as _normalize_today_action_news_row,
     rank_today_action_news_rows as _rank_today_action_news_rows,
 )
-from stock_lab_core.today_flow_candidates import classify_flow_candidate_type
+from stock_lab_core.today_flow_candidates import (
+    classify_flow_candidate_type,
+    classify_money_flow_candidate_scope,
+    classify_money_flow_radar_label,
+)
 from stock_lab_core.money_flow import (
     ETF_TO_THEME,
     IMAGE_THEME_META,
@@ -12509,7 +12513,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
             range=[-1.85, 2.05],
             tickmode="array",
             tickvals=[-1.4, -0.7, 0.2, 0.8, 1.6],
-            ticktext=["하락 중", "과열", "확인", "눌림대기", "진입가능"],
+            ticktext=["하락 중", "과열", "확인", "눌림대기", "관심후보"],
             gridcolor="rgba(148,163,184,0.15)",
             zeroline=False,
         ),
@@ -12523,7 +12527,7 @@ def _render_cluster_fit_bubble_chart(us_list: list, kr_list: list, top_n_per_mar
     st.plotly_chart(fig, width='stretch')
     st.caption(
         "버블 크기 = 내부 확산도, 색 = 타이밍 상태, 원 = 미국 섹터, 마름모 = 한국 섹터입니다. "
-        "이 차트의 진입가능은 주문 신호가 아니라 정밀관측 전 후보 압축 신호입니다. "
+        "이 차트의 관심후보는 주문 신호가 아니라 정밀관측 전 후보 압축 신호입니다. "
         "'눌림대기/확인/과열'은 관망 또는 정찰 후보입니다. "
         "국면 라벨은 1D/5D와 지수 평균을 같이 봅니다. 지수 급락장 속 플러스는 '주도'보다 '상대방어'로 먼저 해석합니다."
     )
@@ -12617,7 +12621,7 @@ def render_cluster_heatmap_enhanced(
             )
         with st.expander("그래프 읽는 법", expanded=False):
             st.caption(
-                "X축은 타이밍입니다. '진입가능'만 실제 클러스터 진입 후보이고, '눌림대기'는 강한 테마라도 관망/정찰 구간입니다. "
+                "X축은 타이밍입니다. '관심후보'는 정밀관측 전 후보 압축이고, '눌림대기'는 강한 테마라도 관망/정찰 구간입니다. "
                 "Y축은 강도입니다. 위쪽일수록 3개월 RS·확산도·거래가 강합니다. "
                 "버블 크기는 내부 확산도라서, 같은 강도라도 버블이 클수록 구성 ETF가 넓게 같이 움직입니다."
             )
@@ -13264,42 +13268,19 @@ def render_money_flow_etf_section():
     if "상태" in table_df.columns:
         table_df["상태"] = table_df["상태"].map(lambda s: _state_badge.get(str(s), str(s)))
 
-    # ── 스윙 진입가능 여부 (포맷 전 원본 수치로 계산) ─────────────────
-    # 조건:
-    #   ✅ 진입가능  : 스윙점수 ≥ 5  AND  52주위치 < 85%  AND  상태 비소외·비급락
-    #   ⚠️ 고점주의  : 스윙점수 ≥ 5  AND  52주위치 ≥ 85%  (모멘텀 있지만 고점 추격 위험)
-    #   💤 약모멘텀  : 0 < 스윙점수 < 5  (양수지만 유의미한 모멘텀 부족)
-    #   ❌ 비추      : 스윙점수 ≤ 0  OR  상태가 "소외 지속" · "급락 경보"
-    _BAD_STATES = {"약세 전환", "소외 지속", "급락 경보"}
-    _SWING_MIN  = 5.0
+    table_df["후보범위"] = table_df.apply(classify_money_flow_candidate_scope, axis=1)
+    table_df["후보판정"] = table_df.apply(classify_money_flow_radar_label, axis=1)
 
-    def _swing_entry_label(row) -> str:
-        sw    = row.get("스윙점수",  None)
-        pl    = row.get("가격수준", None)
-        state = str(row.get("상태",  ""))
-        # 상태 배지 이모지 제거 후 원본 텍스트 추출
-        state_clean = state.replace("🔴","").replace("💥","").replace("💚","").replace("🔥","").replace("🚀","").replace("🟡","").replace("⚪","").replace("〰️","").replace("⚡","").replace("🟢","").replace("⬛","").strip()
-        if not finite_num(sw):
-            return "-"
-        sw_v  = float(sw)
-        pl_v  = float(pl) if finite_num(pl) else 1.0
-        if sw_v <= 0 or state_clean in _BAD_STATES:
-            return "❌ 비추"
-        if sw_v < _SWING_MIN:
-            return "💤 약모멘텀"   # 양수지만 너무 약함
-        if pl_v >= 0.85:
-            return "⚠️ 고점주의"   # 모멘텀 충분하나 52주 고점 85% 초과
-        return "✅ 진입가능"
-
-    table_df["진입가능"] = table_df.apply(_swing_entry_label, axis=1)
-
-    st.markdown("#### 먼저 볼 ETF 후보")
-    radar_candidates = table_df[table_df["진입가능"].isin(["✅ 진입가능", "⚠️ 고점주의"])].copy()
+    st.markdown("#### 먼저 볼 돈흐름 관심후보")
+    radar_candidates = table_df[
+        table_df["후보범위"].eq("후보")
+        & table_df["후보판정"].isin(["👀 관심후보", "⚠️ 고점관찰"])
+    ].copy()
     if radar_candidates.empty:
-        st.info("현재 선택 범위에서는 바로 볼 ETF 후보가 없습니다. 원천 점수가 높아도 고점권·약모멘텀·가격부족이면 상세표에서만 확인하세요.")
+        st.info("현재 선택 범위에서는 먼저 볼 ETF/테마 후보가 없습니다. 원천 점수가 높아도 매크로·현금성·고점권·약모멘텀이면 상세표에서만 확인하세요.")
     else:
-        radar_candidates["_진입순서"] = radar_candidates["진입가능"].map({"✅ 진입가능": 2, "⚠️ 고점주의": 1}).fillna(0)
-        radar_sort_cols = [c for c in ["_진입순서", "스윙점수", "돈흐름점수"] if c in radar_candidates.columns]
+        radar_candidates["_후보순서"] = radar_candidates["후보판정"].map({"👀 관심후보": 2, "⚠️ 고점관찰": 1}).fillna(0)
+        radar_sort_cols = [c for c in ["_후보순서", "스윙점수", "돈흐름점수"] if c in radar_candidates.columns]
         radar_candidates = radar_candidates.sort_values(radar_sort_cols, ascending=False, na_position="last").head(8)
         radar_show = radar_candidates.copy()
         for _col in ["2주수익률", "1개월수익률", "3개월수익률"]:
@@ -13312,14 +13293,14 @@ def render_money_flow_etf_section():
                 radar_show[_score_col] = radar_show[_score_col].apply(lambda v: f"{v:.1f}" if finite_num(v) else "-")
         st.dataframe(
             radar_show[[c for c in [
-                "진입가능", "구분", "섹터", "Ticker", "상태", "가격수준",
+                "후보판정", "구분", "섹터", "Ticker", "상태", "가격수준",
                 "2주수익률", "1개월수익률", "3개월수익률", "돈흐름점수", "스윙점수",
             ] if c in radar_show.columns]],
             width='stretch',
             hide_index=True,
             height=min(360, 90 + len(radar_show) * 36),
         )
-        st.caption("이 표도 ETF 원천 후보입니다. 실제 주문 전에는 전광판/정밀관측소에서 현재가, 과열, R/R을 다시 확인하세요.")
+        st.caption("이 표는 돈흐름 원천 후보입니다. 실제 행동은 오늘점검에서 시장모드·비중·R/R·하드차단까지 합쳐 확정합니다.")
 
     st.markdown("#### 원천 ETF 상세표")
 
@@ -13358,7 +13339,7 @@ def render_money_flow_etf_section():
     # 표시할 컬럼 순서 지정 (내부 컬럼 제외)
     _show_cols = [c for c in [
         "구분", "섹터", "Ticker", "ETF 이름", "현재가",
-        "상태", "가격수준", "돈흐름점수", "스윙점수", "점수_랭킹보조", "진입가능",
+        "상태", "가격수준", "돈흐름점수", "스윙점수", "점수_랭킹보조", "후보판정",
         "네이버랭킹",
         "2주수익률", "1개월수익률", "3개월수익률", "6개월수익률",
         "단기가속도", "가속도", "거래량증가",
@@ -13371,7 +13352,7 @@ def render_money_flow_etf_section():
             "돈흐름점수":  st.column_config.TextColumn("스코어",    help="1M 12% + 3M 33% + 6M 25% + 중기가속도 15% + 거래량 15% — 장기 모멘텀"),
             "스윙점수":    st.column_config.TextColumn("스윙",      help="2W 25% + 1M 35% + 단기가속도 25% + 거래량 15% — 최근 방향 전환에 민감"),
             "점수_랭킹보조": st.column_config.TextColumn("랭킹+",    help="네이버 ETF 거래대금·거래량·수익률 상위권 포착 보조점수"),
-            "진입가능":    st.column_config.TextColumn("스윙진입",  help="✅ 진입가능: 스윙점수>0 + 52주위치<85%  ⚠️ 고점주의: 스윙점수>0이나 52주고점 85% 초과  ❌ 비추: 스윙점수≤0"),
+            "후보판정":    st.column_config.TextColumn("후보판정",  help="👀 관심후보: 돈흐름 레이더 후보. 실제 행동은 오늘점검에서 R/R·비중·시장모드까지 확인"),
             "네이버랭킹":  st.column_config.TextColumn("네이버 랭킹", help="네이버 국내/미국 ETF 랭킹에서 포착된 위치"),
             "2주수익률":   st.column_config.TextColumn("2W"),
             "1개월수익률": st.column_config.TextColumn("1M"),
@@ -30146,8 +30127,25 @@ def _prepare_flow_command_table(unified_df):
         + show["하위점수"].apply(clean_float).fillna(0) * 0.20
     )
     show = show.sort_values(["_행동순서", "_가격순서", "_점수"], ascending=False)
+    def _flow_command_dedupe_key(row):
+        representative = _first_flow_text(
+            row.get("ETF/대표", ""),
+            row.get("대표주", ""),
+            row.get("대표주★", ""),
+            default="",
+        )
+        representative = re.sub(r"[★☆]", "", str(representative or "")).strip().lower()
+        representative = re.sub(r"\s+", " ", representative)
+        if not representative or representative == "-":
+            representative = _first_flow_text(row.get("후보군", ""), row.get("연결테마", ""), default="-")
+        market = _first_flow_text(row.get("시장축", ""), row.get("시장", ""), default="")
+        detail = _first_flow_text(row.get("내부세부축", ""), row.get("세부축", ""), default="")
+        return "|".join([str(market).lower(), str(representative).lower(), str(detail).lower()])
+
+    show["_후보중복키"] = show.apply(_flow_command_dedupe_key, axis=1)
+    show = show.drop_duplicates(subset=["_후보중복키"], keep="first")
     show = show.drop_duplicates(subset=["행동", "후보군", "대표주"], keep="first")
-    return show
+    return show.drop(columns=["_후보중복키"], errors="ignore")
 
 
 def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = None):
@@ -30176,7 +30174,7 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
         headline = "현재 돈흐름 압축 기준으로 바로 볼 후보는 많지 않습니다. 관망과 데이터 정리가 우선입니다."
         border = "#64748b"
 
-    st.markdown("#### 오늘 돈흐름 실행 후보판")
+    st.markdown("#### 오늘 돈흐름 후보판")
     internal_note = (
         f"<br>KOSPI 업종내부 확산 약한 후보 {internal_weak_count}개는 정밀/눌림보다 확인·관망으로 낮춰 봅니다."
         if internal_weak_count else ""
@@ -30186,7 +30184,7 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
 <div class='info-panel' style='border-left:5px solid {border}; margin-bottom:12px;'>
         <b>판단 순서</b><br>
         <span class='highlight'>{html.escape(headline)}</span><br>
-        1) 행동 2) 가격위치 3) 흐름 4) 다음확인 순서로 보세요. 원천 1위가 강해도 실행 조건이 안 맞으면 관심/관망으로 낮춥니다.
+        1) 행동 2) 가격위치 3) 흐름 4) 다음확인 순서로 보세요. 이 표는 후보 압축판이고, 최종 매수/대기 판단은 오늘점검의 시장모드·비중·R/R까지 합쳐 확정합니다.
         {internal_note}
 </div>
         """,
@@ -30194,14 +30192,14 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
     )
 
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("정밀확인", f"{precision_count}개")
+    m1.metric("정밀관측", f"{precision_count}개")
     m2.metric("눌림대기", f"{pullback_count}개")
     m3.metric("추격금지", f"{chase_block_count}개")
     m4.metric("관심등록", f"{interest_count}개")
     m5.metric("관망/제외", f"{wait_count}개")
 
     cols = [
-        "실행순서", "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
+        "확인순서", "행동", "시장축", "후보군", "구분", "ETF/대표", "내부세부축",
         "가격위치", "흐름", "판단", "대표주위험", "다음확인",
     ]
     ranking_cols = [
@@ -30218,10 +30216,10 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
     if primary.empty:
         primary = command_df.head(10)
     primary = primary.copy()
-    primary["실행순서"] = range(1, len(primary) + 1)
-    action_tab, ranking_tab = st.tabs(["1. 실행 후보", "2. 원천 강도 Top20"])
+    primary["확인순서"] = range(1, len(primary) + 1)
+    action_tab, ranking_tab = st.tabs(["1. 후보 압축", "2. 원천 강도 Top20"])
     with action_tab:
-        st.caption("이 표가 먼저 볼 순서입니다. `정밀확인`은 매수 확정이 아니라 정밀관측소에서 과열·눌림·R/R을 확인하라는 뜻입니다.")
+        st.caption("이 표가 먼저 볼 순서입니다. `정밀관측`은 매수 확정이 아니라 정밀관측소에서 과열·눌림·R/R을 확인하라는 뜻입니다.")
         st.dataframe(
             primary[[c for c in cols if c in primary.columns]],
             width='stretch',
@@ -30234,7 +30232,7 @@ def _render_flow_command_center(unified_df, command_df: pd.DataFrame | None = No
         ranking = ranking.sort_values("_점수", ascending=False, na_position="last").head(20)
         ranking["원천순위"] = range(1, len(ranking) + 1)
         ranking["점수"] = ranking["_점수"].apply(lambda v: f"{float(v):.1f}" if finite_num(v) else "-")
-        st.caption("원천 강도 상위 20개입니다. 여기 순위가 높아도 가격위치·업종내부가 안 맞으면 실행 후보에서 내려갑니다.")
+        st.caption("원천 강도 상위 20개입니다. 여기 순위가 높아도 가격위치·업종내부가 안 맞으면 후보판에서 낮아집니다.")
         st.dataframe(
             ranking[[c for c in ranking_cols if c in ranking.columns]],
             width='stretch',
@@ -30300,7 +30298,7 @@ def render_today_unified_flow_panel(
         "업종대표주", "약한대표주", "가격수준", "다음확인",
     ]
     with st.expander("원천 상세표 보기", expanded=False):
-        st.caption("실행 후보를 만든 원본 연결표입니다. 평소에는 접어두고, 왜 후보가 올라왔는지 확인할 때만 보세요.")
+        st.caption("후보 압축판을 만든 원본 연결표입니다. 평소에는 접어두고, 왜 후보가 올라왔는지 확인할 때만 보세요.")
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True, height=360)
 
     with st.expander("통합 판정 기준", expanded=False):
@@ -32360,7 +32358,10 @@ def render_today_queue_tab(mode):
         needs_market_label = leveraged_market_defense_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
         summary_df.loc[needs_market_label, "🔥기술적 타점"] = "🛡️레버리지 시장위험: 신규/DCA 대기"
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
-    leveraged_scout_mask = _leveraged_scout_execution_mask(summary_df, leveraged_display_mask)
+    leveraged_scout_mask = (
+        _leveraged_scout_execution_mask(summary_df, leveraged_display_mask)
+        & ~leveraged_market_defense_mask
+    )
     if leveraged_scout_mask.any():
         reason_bucket.loc[leveraged_scout_mask] = "일반"
         summary_df.loc[leveraged_scout_mask, "최종읽기"] = "✅레버리지정찰"

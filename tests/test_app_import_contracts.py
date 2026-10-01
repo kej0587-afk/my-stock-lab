@@ -204,6 +204,8 @@ def test_today_flow_candidates_exports_used_by_app():
         "stock_lab_core.today_flow_candidates",
         [
             "classify_flow_candidate_type",
+            "classify_money_flow_candidate_scope",
+            "classify_money_flow_radar_label",
             "normalize_money_flow_state",
         ],
     )

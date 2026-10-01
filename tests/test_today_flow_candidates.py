@@ -1,4 +1,8 @@
-from stock_lab_core.today_flow_candidates import classify_flow_candidate_type
+from stock_lab_core.today_flow_candidates import (
+    classify_flow_candidate_type,
+    classify_money_flow_candidate_scope,
+    classify_money_flow_radar_label,
+)
 
 
 def test_flow_candidate_keeps_hot_rebound_from_crash_state():
@@ -57,3 +61,57 @@ def test_flow_candidate_marks_high_price_as_high_watch():
     }
 
     assert classify_flow_candidate_type(row) == "고점주의"
+
+
+def test_radar_label_keeps_macro_gauges_out_of_candidates():
+    row = {
+        "구분": "매크로",
+        "Ticker": "^VIX",
+        "상태": "강세 가속",
+        "스윙점수": 9,
+        "가격수준": 0.42,
+    }
+
+    assert classify_money_flow_candidate_scope(row) == "매크로게이지"
+    assert classify_money_flow_radar_label(row) == "📍 매크로게이지"
+
+
+def test_radar_label_keeps_cashlike_assets_out_of_candidates():
+    row = {
+        "구분": "월배당 ETF",
+        "섹터": "CD금리",
+        "Ticker": "459580.KS",
+        "상태": "관찰",
+        "스윙점수": 8,
+        "가격수준": 0.35,
+    }
+
+    assert classify_money_flow_candidate_scope(row) == "현금성게이지"
+    assert classify_money_flow_radar_label(row) == "💵 현금성게이지"
+
+
+def test_radar_label_uses_interest_candidate_not_entry_wording():
+    row = {
+        "구분": "ETF/섹터",
+        "섹터": "반도체",
+        "Ticker": "SOXX",
+        "상태": "신규 유입",
+        "스윙점수": 7,
+        "가격수준": 0.62,
+    }
+
+    assert classify_money_flow_candidate_scope(row) == "후보"
+    assert classify_money_flow_radar_label(row) == "👀 관심후보"
+
+
+def test_radar_label_marks_high_price_as_watch_not_entry():
+    row = {
+        "구분": "ETF/섹터",
+        "섹터": "반도체",
+        "Ticker": "SOXX",
+        "상태": "강세 가속",
+        "스윙점수": 7,
+        "가격수준": 0.91,
+    }
+
+    assert classify_money_flow_radar_label(row) == "⚠️ 고점관찰"
