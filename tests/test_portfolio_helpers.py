@@ -98,6 +98,55 @@ def test_signal_backtest_supports_leveraged_dca_signal(app_module, monkeypatch):
     assert "레버리지 DCA 조건부" in app_module.SIGNAL_BACKTEST_TYPES
 
 
+def test_signal_validation_infers_backtest_types_from_current_decisions(app_module):
+    assert app_module.infer_signal_backtest_types_from_decision(
+        "LEVERAGED_DCA_CONDITIONAL",
+        "⚡레버리지 DCA 조건부: 단계별 소액",
+    ) == ["레버리지 DCA 조건부"]
+
+    assert app_module.infer_signal_backtest_types_from_decision(
+        "QUALITY_RECOVERY_CANDIDATE",
+        "✅우량주 회복 후보: 분할 검토",
+    ) == ["우량주 회복 후보"]
+
+    assert app_module.infer_signal_backtest_types_from_decision(
+        "STRUCTURE_DAMAGE_NO_ENTRY",
+        "⚠️추세방어",
+    ) == ["구조훼손 경고"]
+
+
+def test_build_signal_validation_summary_aggregates_backtest_rows(app_module, monkeypatch):
+    events = pd.DataFrame(
+        {
+            "날짜": ["2024-01-01", "2024-02-01"],
+            "종목명": ["테스트", "테스트"],
+            "티커": ["TEST", "TEST"],
+            "신호": ["52주 신고가 돌파", "52주 신고가 돌파"],
+            "신호가": [100.0, 110.0],
+            "5일후": [1.0, -1.0],
+            "20일후": [5.0, -2.0],
+            "60일후": [8.0, 1.0],
+            "20일최대낙폭": [-2.0, -6.0],
+            "60일최대낙폭": [-4.0, -8.0],
+        }
+    )
+    monkeypatch.setattr(app_module, "build_signal_backtest", lambda **kwargs: (events, pd.DataFrame(), ""))
+
+    summary_df, combined_events, messages = app_module.build_signal_validation_summary(
+        "TEST",
+        "테스트",
+        "us_stock",
+        ["52주 신고가 돌파"],
+    )
+
+    assert messages == []
+    assert len(combined_events) == 2
+    assert summary_df.iloc[0]["검증신호"] == "52주 신고가 돌파"
+    assert summary_df.iloc[0]["표본"] == 2
+    assert summary_df.iloc[0]["20일승률"] == 50.0
+    assert summary_df.iloc[0]["20일평균"] == 1.5
+
+
 def test_holding_lookup_matches_us_suffix_variants():
     holdings = pd.DataFrame([
         {"티커": "FCX.US", "자산명": "프리포트 맥모란", "보유량": 2, "매입가": 78.5},

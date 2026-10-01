@@ -19349,6 +19349,16 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         },
     ]
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+    render_inline_signal_validation_panel(
+        name,
+        ticker,
+        asset_class,
+        decision_code=decision_code,
+        decision_label=decision,
+        final_read=str(c.get("final_read", "") or ""),
+        pattern_timing=str(c.get("pattern_timing", "") or ""),
+        key_prefix=f"precision_signal_validation_{normalize_ticker(ticker)}",
+    )
 
     with st.expander("장기 전환 체크리스트", expanded=False):
         checklist_rows = [
@@ -25424,6 +25434,255 @@ def render_signal_backtest_chart_v2(chart_df, events_df, selected_name, signal_t
     st.plotly_chart(fig, width='stretch')
 
 
+def infer_signal_backtest_types_from_decision(
+    decision_code="",
+    decision_label="",
+    final_read="",
+    pattern_timing="",
+) -> list[str]:
+    """Map current app decisions to the closest historical validation signal types."""
+    code = str(decision_code or "").strip().upper()
+    text = " ".join(str(x or "") for x in [decision_label, final_read, pattern_timing])
+    signal_types: list[str] = []
+
+    def _add(signal_type: str):
+        if signal_type in SIGNAL_BACKTEST_TYPES and signal_type not in signal_types:
+            signal_types.append(signal_type)
+
+    if code == "BREAKOUT_52W_ENTRY" or "52주 신고가" in text:
+        _add("52주 신고가 돌파")
+    if (
+        code.startswith("QUALITY_RECOVERY")
+        or "우량주 회복" in text
+        or "회복초입" in text
+        or "회복 후보" in text
+    ):
+        _add("우량주 회복 후보")
+    if (
+        code in {"LEVERAGED_DCA_CONDITIONAL", "LEVERAGED_RECOVERY_DCA_CONDITIONAL"}
+        or ("레버리지" in text and ("DCA" in text or "정찰" in text or "회복" in text))
+    ):
+        _add("레버리지 DCA 조건부")
+    if code in {"S_PULLBACK_ENTRY", "S_PULLBACK_ADD_ON"} or "S급 눌림" in text:
+        _add("S급 눌림목")
+    if (
+        code in {"NEW_ENTRY_LEADER", "LEADER_MA5_FAST_PULLBACK_ENTRY", "LEADER_MA5_PULLBACK_ENTRY"}
+        or "대장주" in text
+        or "불뿜" in text
+    ):
+        _add("신규대장 후보")
+    if (
+        code.startswith("STRUCTURE_DAMAGE")
+        or code.startswith("PRICE_DRAWDOWN")
+        or code.startswith("SINGLE_DAY_BREAKDOWN")
+        or code.startswith("DRAWDOWN_20")
+        or "구조훼손" in text
+        or "추세방어" in text
+        or "가격방어" in text
+        or "급락방어" in text
+        or "하락추세" in text
+    ):
+        _add("구조훼손 경고")
+    return signal_types
+
+
+def build_signal_validation_summary(ticker, name, asset_class, signal_types, period="2y", min_gap=10):
+    rows = []
+    messages = []
+    event_frames = []
+    for signal_type in signal_types or []:
+        events_df, _chart_df, message = build_signal_backtest(
+            ticker=ticker,
+            name=name,
+            asset_class=asset_class,
+            signal_type=signal_type,
+            period=period,
+            min_gap=min_gap,
+        )
+        if message:
+            messages.append(f"{signal_type}: {message}")
+        if events_df is not None and not events_df.empty:
+            event_frames.append(events_df)
+            ret20 = pd.to_numeric(events_df.get("20일후"), errors="coerce").dropna()
+            ret60 = pd.to_numeric(events_df.get("60일후"), errors="coerce").dropna()
+            dd20 = pd.to_numeric(events_df.get("20일최대낙폭"), errors="coerce").dropna()
+            win20 = np.nan if ret20.empty else float((ret20 > 0).mean() * 100)
+            avg20 = np.nan if ret20.empty else float(ret20.mean())
+            avg60 = np.nan if ret60.empty else float(ret60.mean())
+            avg_dd20 = np.nan if dd20.empty else float(dd20.mean())
+            rows.append({
+                "검증신호": signal_type,
+                "표본": int(len(events_df)),
+                "20일승률": win20,
+                "20일평균": avg20,
+                "60일평균": avg60,
+                "20일평균낙폭": avg_dd20,
+                "자동해석": interpret_signal_backtest_result(len(ret20), win20, avg20, avg60, avg_dd20),
+            })
+        else:
+            rows.append({
+                "검증신호": signal_type,
+                "표본": 0,
+                "20일승률": np.nan,
+                "20일평균": np.nan,
+                "60일평균": np.nan,
+                "20일평균낙폭": np.nan,
+                "자동해석": "해석 불가: 검증 표본이 부족합니다.",
+            })
+
+    summary_df = pd.DataFrame(rows)
+    combined_events = pd.concat(event_frames, ignore_index=True) if event_frames else pd.DataFrame()
+    return summary_df, combined_events, messages
+
+
+def format_signal_validation_summary_for_display(summary_df):
+    if summary_df is None or summary_df.empty:
+        return pd.DataFrame()
+    out = summary_df.copy()
+    for col in ["20일승률", "20일평균", "60일평균", "20일평균낙폭"]:
+        if col in out.columns:
+            out[col] = out[col].apply(format_backtest_percent)
+    return out
+
+
+def render_signal_validation_controls(
+    *,
+    name,
+    ticker,
+    asset_class,
+    decision_code="",
+    decision_label="",
+    final_read="",
+    pattern_timing="",
+    key_prefix="signal_validation",
+):
+    ticker = sanitize_ticker_value(ticker)
+    name = sanitize_asset_name(name, ticker)
+    if not ticker:
+        st.info("검증할 티커가 없습니다.")
+        return
+
+    inferred = infer_signal_backtest_types_from_decision(decision_code, decision_label, final_read, pattern_timing)
+    options = inferred + [x for x in SIGNAL_BACKTEST_TYPES if x not in inferred]
+    default = inferred[:2] if inferred else options[:1]
+    st.caption(
+        "현재 판정과 가장 가까운 과거 신호를 자동 추천합니다. "
+        "매크로, 뉴스, 목표비중, 체결가는 제외한 가격/기술 기준 검증입니다."
+    )
+    c1, c2, c3 = st.columns([2.0, 0.9, 0.9])
+    with c1:
+        selected_signals = st.multiselect(
+            "검증 신호",
+            options,
+            default=default,
+            key=f"{key_prefix}_signals",
+        )
+    with c2:
+        period = st.selectbox("기간", ["1y", "2y", "5y"], index=1, key=f"{key_prefix}_period")
+    with c3:
+        min_gap = st.slider("중복간격", 1, 30, 10, key=f"{key_prefix}_gap")
+
+    ready_key = f"{key_prefix}_ready"
+    if st.button("이 신호 검증", key=f"{key_prefix}_run", width="stretch"):
+        st.session_state[ready_key] = True
+    if not st.session_state.get(ready_key, False):
+        return
+
+    if not selected_signals:
+        st.info("검증할 신호를 1개 이상 선택하세요.")
+        return
+
+    with st.spinner("과거 신호 검증 중..."):
+        summary_df, events_df, messages = build_signal_validation_summary(
+            ticker,
+            name,
+            asset_class,
+            selected_signals,
+            period=period,
+            min_gap=min_gap,
+        )
+    if messages:
+        st.caption("검증 제외/주의 메시지: " + " / ".join(str(msg) for msg in messages[:5]))
+    if summary_df.empty:
+        st.info("검증 결과가 없습니다.")
+        return
+    st.dataframe(format_signal_validation_summary_for_display(summary_df), width="stretch", hide_index=True)
+    if not events_df.empty:
+        st.markdown("##### 신호 발생 내역")
+        st.dataframe(format_signal_events_for_display(events_df), width="stretch", hide_index=True)
+    else:
+        st.info("선택한 조건에 해당하는 과거 신호 표본이 없습니다. 기간을 늘리거나 중복간격을 줄여보세요.")
+
+
+def render_inline_signal_validation_panel(
+    name,
+    ticker,
+    asset_class,
+    decision_code="",
+    decision_label="",
+    final_read="",
+    pattern_timing="",
+    key_prefix="inline_signal_validation",
+    expanded=False,
+):
+    with st.expander("🧪 이 신호 과거 검증", expanded=expanded):
+        render_signal_validation_controls(
+            name=name,
+            ticker=ticker,
+            asset_class=asset_class,
+            decision_code=decision_code,
+            decision_label=decision_label,
+            final_read=final_read,
+            pattern_timing=pattern_timing,
+            key_prefix=key_prefix,
+        )
+
+
+def _summary_validation_asset_class(row):
+    ticker = sanitize_ticker_value(row.get("티커", ""))
+    raw_type = str(row.get("유형", "") or "")
+    is_etf = "ETF" in raw_type
+    return infer_asset_class_for_ticker(ticker, "us_etf_nasdaq" if is_etf else "")
+
+
+def render_summary_signal_validation_panel(summary_df, *, key_prefix, title="🧪 현재 표 신호 검증"):
+    if summary_df is None or summary_df.empty or "티커" not in summary_df.columns:
+        return
+    base = summary_df.copy()
+    base["티커"] = base["티커"].astype(str).map(sanitize_ticker_value)
+    base = base[base["티커"].astype(str).str.len() > 0].copy()
+    if base.empty:
+        return
+
+    with st.expander(title, expanded=False):
+        st.caption("오늘점검/전광판에서 나온 현재 판정을 선택해 과거 유사 신호 성과를 바로 확인합니다.")
+        labels = []
+        for idx, row in base.iterrows():
+            ticker = sanitize_ticker_value(row.get("티커", ""))
+            name = sanitize_asset_name(row.get("종목명", ""), ticker)
+            final_read = str(row.get("최종읽기", "") or row.get("🔥기술적 타점", "") or "")
+            labels.append((f"{name} | {ticker} | {final_read}", idx))
+        label_map = dict(labels)
+        selected_label = st.selectbox(
+            "검증할 현재 신호",
+            list(label_map.keys()),
+            key=f"{key_prefix}_target",
+        )
+        row = base.loc[label_map[selected_label]]
+        ticker = sanitize_ticker_value(row.get("티커", ""))
+        name = sanitize_asset_name(row.get("종목명", ""), ticker)
+        render_signal_validation_controls(
+            name=name,
+            ticker=ticker,
+            asset_class=_summary_validation_asset_class(row),
+            decision_code=row.get("판정코드", ""),
+            decision_label=row.get("🔥기술적 타점", ""),
+            final_read=row.get("최종읽기", ""),
+            pattern_timing=row.get("패턴타점", ""),
+            key_prefix=f"{key_prefix}_{normalize_ticker(ticker)}",
+        )
+
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # SECTION 16: 백테스트 탭
@@ -31465,6 +31724,12 @@ def render_today_queue_tab(mode):
     with tabs[11]:
         _render_today_queue_table(summary_df, "전체 점검 종목이 없습니다.")
 
+    render_summary_signal_validation_panel(
+        summary_df,
+        key_prefix="today_queue_signal_validation",
+        title="🧪 오늘점검 신호 과거 검증",
+    )
+
     st.caption(
         "후보표는 매수 지시가 아니라 정밀관측소로 보낼 우선순위입니다. "
         "일반 표 정렬은 Adj점수 → R/R → 최종읽기 순서이고, 방어 탭은 위험 큰 순으로 따로 봅니다. "
@@ -33009,6 +33274,11 @@ if main_page == "dashboard":
         for group_tab, group_label in zip(group_tabs, group_order):
             with group_tab:
                 render_dashboard_group_summary(summary_df, group_label)
+        render_summary_signal_validation_panel(
+            summary_df,
+            key_prefix="dashboard_signal_validation",
+            title="🧪 전광판 신호 과거 검증",
+        )
 
 if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
