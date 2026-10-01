@@ -2684,6 +2684,26 @@ def make_signal_journal_rows_from_summary(summary_df, source="today_check"):
     return rows
 
 
+def _signal_journal_table_missing_message(message):
+    text = str(message or "").lower()
+    return "signal_journal" in text and (
+        "could not find the table" in text
+        or "pgrst205" in text
+        or "schema cache" in text
+        or "does not exist" in text
+    )
+
+
+def store_signal_journal_rows_in_session(rows):
+    existing = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
+    existing_df = existing.copy() if isinstance(existing, pd.DataFrame) else pd.DataFrame(columns=SIGNAL_JOURNAL_COLUMNS)
+    add_df = dataframe_from_rows(rows, SIGNAL_JOURNAL_COLUMNS)
+    combined = pd.concat([existing_df, add_df], ignore_index=True)
+    dedup_keys = ["owner_email", "signal_date", "source", "ticker", "decision_code", "final_read"]
+    combined = combined.drop_duplicates(subset=[c for c in dedup_keys if c in combined.columns], keep="last")
+    st.session_state[SIGNAL_JOURNAL_PUBLIC_SESSION_KEY] = combined[SIGNAL_JOURNAL_COLUMNS].copy()
+
+
 def load_signal_journal_db_safe(limit=500):
     if IS_PUBLIC_DEMO:
         df = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
@@ -2701,6 +2721,9 @@ def load_signal_journal_db_safe(limit=500):
         res = query.execute()
         return dataframe_from_rows(res.data, SIGNAL_JOURNAL_COLUMNS), None
     except Exception as e:
+        if _signal_journal_table_missing_message(e):
+            df = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
+            return dataframe_from_rows([] if df is None else df.to_dict("records"), SIGNAL_JOURNAL_COLUMNS), str(e)
         return dataframe_from_rows([], SIGNAL_JOURNAL_COLUMNS), str(e)
 
 
@@ -2710,13 +2733,7 @@ def save_signal_journal_rows_safe(rows):
         return False, "저장할 신호가 없습니다."
 
     if IS_PUBLIC_DEMO:
-        existing = st.session_state.get(SIGNAL_JOURNAL_PUBLIC_SESSION_KEY)
-        existing_df = existing.copy() if isinstance(existing, pd.DataFrame) else pd.DataFrame(columns=SIGNAL_JOURNAL_COLUMNS)
-        add_df = dataframe_from_rows(rows, SIGNAL_JOURNAL_COLUMNS)
-        combined = pd.concat([existing_df, add_df], ignore_index=True)
-        dedup_keys = ["owner_email", "signal_date", "source", "ticker", "decision_code", "final_read"]
-        combined = combined.drop_duplicates(subset=[c for c in dedup_keys if c in combined.columns], keep="last")
-        st.session_state[SIGNAL_JOURNAL_PUBLIC_SESSION_KEY] = combined[SIGNAL_JOURNAL_COLUMNS].copy()
+        store_signal_journal_rows_in_session(rows)
         return True, ""
 
     try:
@@ -2726,6 +2743,9 @@ def save_signal_journal_rows_safe(rows):
         ).execute()
         return True, ""
     except Exception as e:
+        if _signal_journal_table_missing_message(e):
+            store_signal_journal_rows_in_session(rows)
+            return True, "signal_journal 테이블이 아직 없어 현재 세션에만 임시 저장했습니다. 영구 저장은 아래 SQL을 Supabase SQL Editor에서 한 번 실행한 뒤 앱을 새로고침하면 됩니다."
         return False, str(e)
 
 
@@ -2908,7 +2928,11 @@ def render_signal_journal_panel(summary_df=None, *, key_prefix, source, current_
             rows = [make_signal_journal_row_from_summary(row_source, source=source)] if row_source is not None else []
             ok, message = save_signal_journal_rows_safe(rows)
             if ok:
-                st.success("선택 신호를 실전 로그에 저장했습니다.")
+                if message:
+                    st.warning(message)
+                    st.code(get_signal_journal_create_sql(), language="sql")
+                else:
+                    st.success("선택 신호를 실전 로그에 저장했습니다.")
             else:
                 st.error(f"실전 로그 저장 실패: {message}")
                 st.code(get_signal_journal_create_sql(), language="sql")
@@ -2918,7 +2942,11 @@ def render_signal_journal_panel(summary_df=None, *, key_prefix, source, current_
             rows = make_signal_journal_rows_from_summary(summary_df, source=source)
             ok, message = save_signal_journal_rows_safe(rows)
             if ok:
-                st.success(f"{len(rows)}개 신호를 실전 로그에 저장했습니다.")
+                if message:
+                    st.warning(f"{len(rows)}개 신호를 임시 저장했습니다. {message}")
+                    st.code(get_signal_journal_create_sql(), language="sql")
+                else:
+                    st.success(f"{len(rows)}개 신호를 실전 로그에 저장했습니다.")
             else:
                 st.error(f"실전 로그 저장 실패: {message}")
                 st.code(get_signal_journal_create_sql(), language="sql")
@@ -2932,9 +2960,13 @@ def render_signal_journal_panel(summary_df=None, *, key_prefix, source, current_
 
     journal_df, load_error = load_signal_journal_db_safe(limit=500)
     if load_error:
-        st.warning("실전 신호 로그 테이블이 아직 없거나 접근할 수 없습니다. 아래 SQL을 Supabase SQL Editor에서 한 번만 실행하면 저장/검증됩니다.")
+        if journal_df is not None and not journal_df.empty and _signal_journal_table_missing_message(load_error):
+            st.warning("Supabase 테이블은 아직 없지만, 현재 세션에 임시 저장된 신호로 적중률을 계산합니다. 영구 저장은 아래 SQL을 한 번 실행해 주세요.")
+        else:
+            st.warning("실전 신호 로그 테이블이 아직 없거나 접근할 수 없습니다. 아래 SQL을 Supabase SQL Editor에서 한 번만 실행하면 저장/검증됩니다.")
+            st.code(get_signal_journal_create_sql(), language="sql")
+            return
         st.code(get_signal_journal_create_sql(), language="sql")
-        return
     if journal_df.empty:
         st.info("아직 저장된 실전 신호 로그가 없습니다.")
         return
