@@ -11285,8 +11285,8 @@ def _brief_execution_link_rows(command_df: pd.DataFrame, limit: int = 6) -> list
     work = command_df.copy()
     if "행동" not in work.columns:
         return []
-    action_rank = {"정밀관측": 5, "눌림대기": 4, "관심등록": 3, "추격금지": 2, "관망/제외": 1}
-    work["_brief_action_rank"] = work["행동"].map(action_rank).fillna(0)
+    work["행동"] = work["행동"].map(normalize_flow_action_label)
+    work["_brief_action_rank"] = work["행동"].map(FLOW_ACTION_ORDER).fillna(0)
     if "_점수" not in work.columns:
         work["_점수"] = 0
     work = work[work["행동"].astype(str).isin(["정밀관측", "눌림대기", "관심등록", "추격금지"])]
@@ -11674,25 +11674,54 @@ def _flow_stat_market_mode(market_guard, market):
     return str(stats.get("mode", "확인 필요") or "확인 필요")
 
 
+FLOW_ACTION_ORDER = {
+    "정밀관측": 5,
+    "눌림대기": 4,
+    "추격금지": 3,
+    "관심등록": 2,
+    "관망/제외": 1,
+}
+
+
+def normalize_flow_action_label(action, default: str = "관망/제외") -> str:
+    text = _flow_text(action, default="")
+    if not text:
+        return default
+    compact = re.sub(r"\s+", "", text)
+    if any(word in compact for word in ("정밀관측", "정밀후보", "진입검토", "진입가능")):
+        return "정밀관측"
+    if any(word in compact for word in ("눌림대기", "눌림", "타점대기")):
+        return "눌림대기"
+    if any(word in compact for word in ("추격금지", "과열", "고점주의", "상단권")):
+        return "추격금지"
+    if any(word in compact for word in ("관심등록", "관심후보", "반등확인", "확인필요", "내부확인")):
+        return "관심등록"
+    if any(word in compact for word in ("위험", "제외", "관망", "방어", "소외", "하락")):
+        return "관망/제외"
+    return default
+
+
 def _flow_action_caption(action):
-    text = _flow_text(action, default="-")
+    text = normalize_flow_action_label(action, default="-")
     if text == "-":
         return text
-    if "눌림" in text:
-        return f"{text} (현재가 매수 아님)"
-    if "정밀" in text or "진입" in text:
-        return f"{text} (정밀관측소 확인)"
-    if "관망" in text or "제외" in text:
-        return f"{text} (매수 후보 아님)"
-    if "방어" in text or "위험" in text:
-        return f"{text} (비중 확대 보류)"
+    if text == "눌림대기":
+        return "눌림대기 (현재가 매수 아님)"
+    if text == "정밀관측":
+        return "정밀관측 (정밀관측소 확인)"
+    if text == "추격금지":
+        return "추격금지 (신규 확대 금지)"
+    if text == "관심등록":
+        return "관심등록 (지속성 확인)"
+    if text == "관망/제외":
+        return "관망/제외 (매수 후보 아님)"
     return text
 
 
 def _flow_sector_common_reading(card):
     values = card.get("values", {}) if isinstance(card, dict) else {}
     title = str(card.get("title", "이 섹터") or "이 섹터")
-    action = _flow_text(card.get("action", ""), default="")
+    action = normalize_flow_action_label(card.get("action", ""), default="")
     verdict = _flow_text(card.get("verdict", ""), default="")
     strength = clean_float(values.get("강도", np.nan), np.nan)
     breadth = clean_float(values.get("확산", np.nan), np.nan)
@@ -11808,7 +11837,10 @@ def _flow_stat_card_from_row(row, market, source, market_guard=None):
     elif source == "실행 후보판":
         title = f"검토 1순위: {title}"
 
-    action = _flow_stat_first_text(row, ["행동", "통합판정", "테마판정", "상태"], default="확인")
+    action = normalize_flow_action_label(
+        _flow_stat_first_text(row, ["행동", "통합판정", "테마판정", "상태"], default=""),
+        default="관망/제외",
+    )
     internal = _flow_stat_first_text(row, ["업종내부"], default="-")
     rep_text = _flow_stat_first_text(row, ["ETF/대표", "대표주★", "대표주", "업종대표주"], default="-")
     representatives = _flow_stat_representatives(rep_text)
@@ -12143,20 +12175,18 @@ def _flow_sector_score(row):
 
 
 def _flow_sector_action_rank(action):
-    text = str(action or "")
-    if "정밀" in text:
-        return 6
-    if "눌림" in text:
-        return 5
-    if "관심" in text or "진입" in text:
-        return 4
-    if "확인" in text or "반등" in text:
-        return 3
-    if "추격금지" in text or "방어" in text:
-        return 2
-    if "위험" in text or "제외" in text:
-        return 1
-    return 0
+    return FLOW_ACTION_ORDER.get(normalize_flow_action_label(action, default=""), 0)
+
+
+def _flow_sector_action_timing_score(action):
+    normalized = normalize_flow_action_label(action, default="")
+    return {
+        "정밀관측": 8.0,
+        "눌림대기": 6.2,
+        "관심등록": 5.4,
+        "추격금지": 2.8,
+        "관망/제외": 1.5,
+    }.get(normalized, 3.5)
 
 
 def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
@@ -12365,9 +12395,9 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             safety -= 0.5
         safety = _flow_stat_clamp(safety)
 
-        best_action = max(actions, key=_flow_sector_action_rank) if actions else "관망"
+        best_action = normalize_flow_action_label(max(actions, key=_flow_sector_action_rank) if actions else "")
         action_rank_value = _flow_sector_action_rank(best_action)
-        timing = {6: 8.0, 5: 6.2, 4: 5.4, 3: 4.8, 2: 2.8, 1: 1.5, 0: 3.5}.get(action_rank_value, 3.5)
+        timing = _flow_sector_action_timing_score(best_action)
         if prices and _safe_nanmean(prices) >= 0.90:
             timing -= 1.0
         timing = _flow_stat_clamp(timing)
@@ -30025,8 +30055,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
     out = pd.DataFrame(rows)
     if out.empty:
         return out
-    priority = {"✅ 정밀관측": 4, "👀 관심등록": 3, "⏳ 눌림대기": 2, "🚫 추격금지": 1, "🔸 관망": 0}
-    out["_priority"] = out["통합판정"].map(priority).fillna(0)
+    out["_priority"] = out["통합판정"].map(normalize_flow_action_label).map(FLOW_ACTION_ORDER).fillna(0)
     out["_score"] = out["적합도"].apply(clean_float).fillna(0) + out["테마점수"].apply(clean_float).fillna(0) * 0.35 + out["하위점수"].apply(clean_float).fillna(0) * 0.20
     out = out.sort_values(["_priority", "_score"], ascending=False)
     # 같은 테마/하위테마/대표주가 ETF·섹터와 테마 단독에서 중복 생성되면 가장 강한 행만 유지한다.
@@ -30038,16 +30067,7 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
 
 
 def _flow_action_bucket(action):
-    text = str(action or "")
-    if "정밀관측" in text:
-        return "정밀관측"
-    if "눌림" in text:
-        return "눌림대기"
-    if "추격금지" in text:
-        return "추격금지"
-    if "관심" in text:
-        return "관심등록"
-    return "관망/제외"
+    return normalize_flow_action_label(action)
 
 
 def _fmt_flow_pct_compact(v):
@@ -30218,7 +30238,7 @@ def _flow_representative_risk_text(row):
 
 
 def _flow_compact_decision(row):
-    action = str(row.get("행동", "") or "") or _flow_action_bucket(row.get("통합판정", ""))
+    action = normalize_flow_action_label(row.get("행동", "") or row.get("통합판정", ""))
     layer = str(row.get("주도층위", "") or "")
     price_band = str(row.get("가격위치", "") or "")
     internal = str(row.get("업종내부", "") or "")
@@ -30316,7 +30336,7 @@ def _prepare_flow_command_table(unified_df):
     show["약한내부주"] = show.apply(lambda r: _first_flow_text(r.get("약한대표주", ""), default="-"), axis=1)
     show["주도층위"] = show.apply(_flow_leadership_layer, axis=1)
     show["대표주위험"] = show.apply(_flow_representative_risk_text, axis=1)
-    show["행동"] = show.apply(_adjust_flow_command_action, axis=1)
+    show["행동"] = show.apply(_adjust_flow_command_action, axis=1).map(normalize_flow_action_label)
     risk_mask = show["대표주위험"].astype(str).str.strip().ne("")
     if risk_mask.any():
         show.loc[risk_mask, "다음확인"] = "대표주 위기/가격방어 해소 후 정밀관측"
@@ -30326,13 +30346,7 @@ def _prepare_flow_command_table(unified_df):
         axis=1,
     )
     show["판단"] = show.apply(_flow_compact_decision, axis=1)
-    show["_행동순서"] = show["행동"].map({
-        "정밀관측": 5,
-        "눌림대기": 4,
-        "추격금지": 3,
-        "관심등록": 2,
-        "관망/제외": 1,
-    }).fillna(0)
+    show["_행동순서"] = show["행동"].map(FLOW_ACTION_ORDER).fillna(0)
     show["_가격순서"] = show["가격위치"].map({
         "하단/눌림": 5,
         "중립": 4,

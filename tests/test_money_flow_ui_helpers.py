@@ -85,3 +85,16 @@ def test_brief_leadership_uses_sector_ability_verdict_buckets(app_module):
     assert leadership["leaders"][0]["reading_label"].startswith("진입검토")
     assert leadership["lagging"][0]["name"].startswith("K뷰티")
     assert all(not row["name"].startswith("K뷰티") for row in leadership["leaders"])
+
+
+def test_flow_action_normalizer_unifies_icon_and_text_labels(app_module):
+    assert app_module.normalize_flow_action_label("✅ 진입검토") == "정밀관측"
+    assert app_module.normalize_flow_action_label("✅ 정밀후보") == "정밀관측"
+    assert app_module.normalize_flow_action_label("⏳ 눌림대기") == "눌림대기"
+    assert app_module.normalize_flow_action_label("🚫 과열 추격금지") == "추격금지"
+    assert app_module.normalize_flow_action_label("👀 반등확인") == "관심등록"
+    assert app_module.normalize_flow_action_label("🔸 관망") == "관망/제외"
+
+    assert app_module._flow_action_bucket("✅ 진입검토") == "정밀관측"
+    assert app_module._flow_sector_action_rank("✅ 진입검토") == app_module.FLOW_ACTION_ORDER["정밀관측"]
+    assert app_module._flow_sector_action_timing_score("✅ 진입검토") == 8.0
