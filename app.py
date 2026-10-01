@@ -10969,6 +10969,71 @@ def _brief_leadership_rows(
     }
 
 
+def _brief_leadership_rows_from_sector_cards(cards: list[dict] | None, limit: int = 3) -> dict:
+    buckets = {"leaders": [], "hot_leaders": [], "rebounds": [], "lagging": [], "weak": []}
+    if not cards:
+        return buckets
+
+    def _pick_text(card: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            text = str(card.get(key, "") or "").strip()
+            if text and text != "-":
+                return text
+        return ""
+
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        title = str(card.get("title", "") or "").strip()
+        if not title:
+            continue
+        market = str(card.get("market", "") or "").strip()
+        verdict = str(card.get("verdict", "") or "").strip()
+        action = str(card.get("action", "") or "").strip()
+        try:
+            reading = _flow_sector_common_reading(card)
+        except Exception:
+            reading = {}
+        reading_label = str(reading.get("label", "") or "").strip()
+        reps = _pick_text(card, ("representatives", "anchor_representatives", "etfs"))
+        short = clean_float(card.get("short", np.nan), np.nan)
+        mid = clean_float(card.get("mid", np.nan), np.nan)
+        total = clean_float(card.get("total", np.nan), np.nan)
+        name = f"{title}[{market or '섹터'}]"
+        row = {
+            "name": name,
+            "source": "섹터별 능력치",
+            "state": reading_label or verdict,
+            "representatives": reps,
+            "score": total if finite_num(total) else np.nan,
+            "flow_score": total if finite_num(total) else np.nan,
+            "short": short,
+            "r1w": short,
+            "r1m": mid,
+            "r3m": np.nan,
+            "mid": mid,
+            "verdict": verdict,
+            "reading_label": reading_label,
+            "action": action,
+        }
+        combined = f"{verdict} {reading_label} {action}"
+        if "실제 주도" in combined or "진입검토" in combined or "정밀관측 후보" in combined:
+            buckets["leaders"].append(row)
+        elif "과열" in combined or "후보권" in combined or "눌림" in combined:
+            buckets["hot_leaders"].append(row)
+        elif "반등" in combined or "확산 강함" in combined or "관심등록" in combined:
+            buckets["rebounds"].append(row)
+        elif "후행" in combined or "추격" in combined:
+            buckets["lagging"].append(row)
+        elif "위험" in combined or "관망" in combined:
+            buckets["weak"].append(row)
+
+    def _rank(rows):
+        return sorted(rows, key=lambda r: _brief_num(r.get("score", np.nan), -999), reverse=True)[:limit]
+
+    return {key: _rank(value) for key, value in buckets.items()}
+
+
 def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
     if not rows:
         return empty
@@ -10982,7 +11047,10 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
         if finite_num(row.get("r3m", np.nan)):
             bits.append(f"3M {_brief_pct_text(row.get('r3m'))}")
         state = str(row.get("state", "") or "")
-        if any(w in state for w in ["과열", "추격", "급락"]):
+        reading_label = str(row.get("reading_label", "") or "").strip()
+        if reading_label:
+            bits.append(reading_label)
+        elif any(w in state for w in ["과열", "추격", "급락"]):
             bits.append("과열주의")
         reps = str(row.get("representatives", "") or "").strip()
         if reps:
@@ -11378,6 +11446,7 @@ def render_today_market_briefing_board(
     command_df: pd.DataFrame | None = None,
     market_guard: dict | None = None,
     news_rows: list[dict] | None = None,
+    sector_ability_cards: list[dict] | None = None,
 ):
     if flow_df is None or flow_df.empty:
         return
@@ -11398,7 +11467,12 @@ def render_today_market_briefing_board(
     us_down = _brief_top_rows(us_rows, "1D", False, limit=3, label_cols=("지수/스타일", "Ticker"))
     flow_in, flow_basis = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=True, limit=5)
     flow_out, _ = _brief_combined_flow_rows(sector_rotation_df, theme_rotation_df, positive=False, limit=5)
-    leadership = _brief_leadership_rows(sector_rotation_df, theme_rotation_df, limit=3)
+    if sector_ability_cards:
+        leadership = _brief_leadership_rows_from_sector_cards(sector_ability_cards, limit=3)
+        leadership_basis = "섹터별 돈흐름 능력치"
+    else:
+        leadership = _brief_leadership_rows(sector_rotation_df, theme_rotation_df, limit=3)
+        leadership_basis = "ETF/테마 원천 흐름"
 
     growth = phase.get("growth_1d", np.nan)
     defense = phase.get("defense_1d", np.nan)
@@ -11422,11 +11496,12 @@ def render_today_market_briefing_board(
     )
 
     st.markdown("**🏁 지금 주도 섹터 판별**")
+    st.caption(f"판정 기준: {leadership_basis}. 같은 섹터별 능력치 카드에서 실제 주도·눌림·후행을 나눠 읽습니다.")
     l1, l2, l3, l4 = st.columns(4)
     with l1:
         st.caption(f"실제 주도 후보: {_brief_leadership_text(leadership.get('leaders', []))}")
     with l2:
-        st.caption(f"과열 주도(눌림확인): {_brief_leadership_text(leadership.get('hot_leaders', []))}")
+        st.caption(f"눌림/과열 주도: {_brief_leadership_text(leadership.get('hot_leaders', []))}")
     with l3:
         st.caption(f"반등/상대방어: {_brief_leadership_text(leadership.get('rebounds', []))}")
     with l4:
@@ -31572,6 +31647,7 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     else:
         news_cols[1].caption("뉴스재료를 붙이려면 새로고침을 한 번 눌러주세요. 수집된 뉴스는 주요 뉴스 탭과 주도맵에서 함께 씁니다.")
 
+    sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     render_today_market_briefing_board(
         flow_df,
         sector_rotation_df,
@@ -31579,8 +31655,8 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         command_df=command_flow_df,
         market_guard=market_guard,
         news_rows=brief_news_rows,
+        sector_ability_cards=sector_ability_cards,
     )
-    sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
     render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
     render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=sector_ability_cards)
     render_sector_research_cards(sector_ability_cards, news_rows=brief_news_rows)

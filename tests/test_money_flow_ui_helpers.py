@@ -51,3 +51,37 @@ def test_cluster_list_prioritizes_current_timing_over_stale_strength(app_module,
     assert result[0]["name"] == "지금확인"
     assert result[0]["timing_state"] == "진입 가능"
     assert result[1]["timing_state"] == "하락 중"
+
+
+def test_brief_leadership_uses_sector_ability_verdict_buckets(app_module):
+    cards = [
+        {
+            "market": "한국",
+            "title": "국내 AI 반도체·소부장",
+            "action": "진입검토",
+            "verdict": "진입검토·강도확인",
+            "representatives": "마이크로컨텍솔",
+            "values": {"강도": 4.8, "확산": 6.4, "단기유입": 8.0, "모멘텀": 8.2, "안정도": 5.2, "타점": 5.5},
+            "total": 6.7,
+            "short": 0.053,
+            "mid": 0.206,
+        },
+        {
+            "market": "한국",
+            "title": "K뷰티·콘텐츠",
+            "action": "추격금지",
+            "verdict": "후행 강도·추격주의",
+            "representatives": "코스맥스",
+            "values": {"강도": 8.0, "확산": 4.5, "단기유입": 3.2, "모멘텀": 4.0, "안정도": 4.5, "타점": 2.8},
+            "total": 7.3,
+            "short": -0.011,
+            "mid": -0.13,
+        },
+    ]
+
+    leadership = app_module._brief_leadership_rows_from_sector_cards(cards, limit=3)
+
+    assert leadership["leaders"][0]["name"].startswith("국내 AI 반도체")
+    assert leadership["leaders"][0]["reading_label"].startswith("진입검토")
+    assert leadership["lagging"][0]["name"].startswith("K뷰티")
+    assert all(not row["name"].startswith("K뷰티") for row in leadership["leaders"])
