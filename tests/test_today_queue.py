@@ -50,10 +50,35 @@ def test_today_queue_execution_snapshot_uses_nearest_support_for_wait_signal():
     )
 
     assert snap["R/R"] == "1.50"
+    assert snap["R/R성격"] == "차트구조"
     assert "98" in snap["1차기준"]
     assert "MA5" in snap["1차조건"]
     assert snap["실행메모"] == "눌림/종가 확인"
     assert snap["부족액"].startswith("$400")
+
+
+def test_today_queue_execution_snapshot_marks_projected_rr_source():
+    snap = build_today_queue_execution_snapshot(
+        "NVIDIA",
+        "NVDA",
+        {
+            "cur_p": 100.0,
+            "rr_target": 120.0,
+            "rr_stop": 90.0,
+            "rr_ratio": 2.0,
+            "rr_target_is_projection": True,
+            "rr_target_source": "강세 시나리오 상단: 현재가 + 4ATR",
+            "atr": 5.0,
+            "target_w": 5.0,
+            "current_w": 0.0,
+            "decision_code": "SEARCH_NEW_ENTRY",
+            "dec": "진입 검토",
+        },
+    )
+
+    assert snap["R/R"] == "2.00"
+    assert snap["R/R성격"] == "투영상단"
+    assert "4ATR" in snap["R/R출처"]
 
 
 def test_today_queue_summary_snapshot_roundtrips(tmp_path):

@@ -1248,6 +1248,17 @@ def apply_holdings_weight_columns(df, krw_cash, usd_cash, usdkrw):
         lambda r: 0.0 if _is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]) - float(r["현재비중"]),
         axis=1,
     )
+    def _weight_state(row):
+        if _is_reserve_or_cash_bucket(row.get("bucket")):
+            return "비운용/대기"
+        gap = clean_float(row.get("비중차이"), 0.0)
+        if gap > 0.1:
+            return f"{gap:.1f}%p 미달"
+        if gap < -0.1:
+            return f"{abs(gap):.1f}%p 초과"
+        return "목표권"
+
+    df["비중상태"] = df.apply(_weight_state, axis=1)
     df["리밸런싱목표비중"] = df.apply(
         lambda r: float(r["현재비중"]) if _is_reserve_or_cash_bucket(r.get("bucket")) else float(r["목표비중"]),
         axis=1,
@@ -1292,6 +1303,7 @@ def make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset):
             "수익률": 0.0, "원화환산": krw_cash, "현재비중": cur_w,
             "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
             "asset_class": "cash", "bucket": "cash", "운용대상": False,
+            "비중상태": "비운용/대기",
             "리밸런싱목표비중": cur_w,
         })
 
@@ -1304,6 +1316,7 @@ def make_cash_rows(krw_cash, usd_cash, usdkrw, total_asset):
             "수익률": 0.0, "원화환산": usd_cash_krw, "현재비중": cur_w,
             "목표비중": 0.0, "비중차이": 0.0, "is_etf": True,
             "asset_class": "cash", "bucket": "cash", "운용대상": False,
+            "비중상태": "비운용/대기",
             "리밸런싱목표비중": cur_w,
         })
 

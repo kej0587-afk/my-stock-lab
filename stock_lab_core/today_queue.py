@@ -1086,12 +1086,16 @@ def build_today_queue_execution_snapshot(
         rr = round((target - cur) / (cur - stop), 2)
 
     target_is_projection = bool(c.get("rr_target_is_projection", False))
+    rr_target_source = str(c.get("rr_target_source", "") or "").strip()
     target_text = "-"
     if target > 0:
         target_prefix = "상단 " if target_is_projection else ""
         target_text = f"{target_prefix}{format_currency(target, tkr)}"
     stop_text = format_currency(stop, tkr) if stop > 0 else "-"
     rr_text = f"{rr:.2f}" if _finite_num(rr) and rr > 0 else "-"
+    rr_kind = "투영상단" if target_is_projection else "차트구조"
+    if not rr_target_source:
+        rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR" if target_is_projection else "차트 구조 목표가"
 
     target_w = clean_float(c.get("target_w"), 0.0)
     current_w = clean_float(c.get("current_w"), 0.0)
@@ -1153,6 +1157,8 @@ def build_today_queue_execution_snapshot(
             "1차조건": entry_cond,
             "부족액": amount_text,
             "실행메모": action,
+            "R/R성격": rr_kind,
+            "R/R출처": rr_target_source,
             "RR값": rr if _finite_num(rr) else math.nan,
         }
 
@@ -1165,6 +1171,8 @@ def build_today_queue_execution_snapshot(
             "1차조건": "가격/ATR 재조회 필요",
             "부족액": amount_text,
             "실행메모": "데이터확인",
+            "R/R성격": rr_kind,
+            "R/R출처": rr_target_source,
             "RR값": math.nan,
         }
 
@@ -1185,5 +1193,7 @@ def build_today_queue_execution_snapshot(
         "1차조건": entry_cond,
         "부족액": amount_text,
         "실행메모": action,
+        "R/R성격": rr_kind,
+        "R/R출처": rr_target_source,
         "RR값": rr if _finite_num(rr) else math.nan,
     }

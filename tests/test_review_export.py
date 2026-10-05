@@ -83,3 +83,47 @@ def test_today_review_flags_detects_conflicting_weight_and_leverage_text(app_mod
 
     assert "비중초과와 매수형 문구" in problems
     assert "비레버리지 후보에 레버리지/DCA 문구" in problems
+
+
+def test_today_review_flags_ignores_plain_defense_no_add_text(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "NVIDIA",
+            "티커": "NVDA",
+            "유형": "주식",
+            "최종읽기": "🚫추격금지",
+            "실행메모": "추가매수 제외",
+            "🔥기술적 타점": "🚫하드차단: 볼린상단 이탈",
+            "📌후보등급": "🚫상단과열(추격금지)",
+            "판정분류": "caution",
+            "판정코드": "HARD_BLOCK_BOLLINGER_UPPER",
+            "현재비중": 1.0,
+            "목표비중": 5.0,
+        }
+    ])
+
+    flags = app_module.build_today_review_flags_df(summary)
+    problems = " ".join(flags["문제"].astype(str).tolist())
+
+    assert "매수형 문구와 방어/차단 문구" not in problems
+
+
+def test_today_review_flags_detects_low_rr_actionable_signal(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Recovery",
+            "티커": "RCV",
+            "유형": "주식",
+            "최종읽기": "✅정밀확인",
+            "실행메모": "분할 가능",
+            "🔥기술적 타점": "✅우량주 회복 후보: 분할 검토",
+            "📌후보등급": "✅우량주 회복후보",
+            "판정분류": "buyish",
+            "R/R": "0.42",
+        }
+    ])
+
+    flags = app_module.build_today_review_flags_df(summary)
+    problems = " ".join(flags["문제"].astype(str).tolist())
+
+    assert "R/R 1 미만" in problems
