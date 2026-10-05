@@ -244,6 +244,12 @@ def build_chart_execution_check_rows(
             "다음 행동": action,
         })
 
+    workflow = (decision_context or {}).get("execution_workflow", {})
+    if workflow:
+        gate = workflow.get("게이트상태", "관망")
+        state = {"실행가능": "통과", "방어우선": "차단", "데이터확인": "확인필요"}.get(gate, "대기")
+        add_row("종합 실행", state, gate, workflow.get("게이트근거", ""), workflow.get("게이트근거", ""))
+
     if direction == "bullish" and finite_num(trigger) and trigger > 0:
         passed = finite_num(close) and close >= trigger * 0.997
         add_row(
@@ -381,4 +387,8 @@ def build_chart_execution_check_rows(
             invalid_action,
         )
 
+    if workflow and workflow.get("게이트상태") != "실행가능":
+        for row in rows:
+            if row["다음 행동"] in {"1차 정찰 가능", "소액 정찰만 검토", "다른 조건 통과 시 분할 검토"}:
+                row["다음 행동"] = workflow.get("게이트근거") or "조건 확인 대기"
     return rows

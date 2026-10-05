@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float
+from stock_lab_core.today_queue import TODAY_QUEUE_EXECUTION_WAIT_CODES
 
 
 GATE_EXECUTABLE = "실행가능"
@@ -54,11 +55,15 @@ def _first_number(row: Any, *keys: str) -> float:
     return math.nan
 
 
-def classify_sector_rs_state(value: Any, *, flow_context: str = "") -> str:
+def classify_sector_rs_state(value: Any, *, flow_context: str = "", is_etf: bool = False) -> str:
     """Return a compact data-quality label for sector RS."""
     text = _text(value)
     if not _has_value(text):
-        return "돈흐름맥락 확인" if _has_value(flow_context) else "미매핑"
+        if is_etf:
+            return "ETF/광역 제외"
+        return "벤치확인 필요" if _has_value(flow_context) else "미매핑"
+    if "이력부족" in text or "가격없음" in text or "기준일차이" in text:
+        return "가격이력 확인"
     if "강함" in text:
         return "강함"
     if "약함" in text:
@@ -74,7 +79,7 @@ def classify_upside_state(value: Any, *, is_etf: bool = False) -> str:
         return "ETF제외"
     if not _has_value(value):
         return "결측/수동확인"
-    up = clean_float(value, math.nan)
+    up = clean_float(_text(value).removesuffix("%"), math.nan)
     if not math.isfinite(up):
         return "결측/수동확인"
     if up > 0:
@@ -84,40 +89,45 @@ def classify_upside_state(value: Any, *, is_etf: bool = False) -> str:
     return "중립"
 
 
-def build_execution_gate(row: Any, *, target_upside: float = math.nan) -> dict[str, str]:
+def build_execution_gate(row: Any) -> dict[str, str]:
     """Classify a row into an execution gate without changing decision wording."""
     code = _text(_row_get(row, "판정코드", "")).upper()
     group = _text(_row_get(row, "판정분류", ""))
     rr = _first_number(row, "RR값", "R/R", "rr_ratio")
-    sector_rs = _text(_row_get(row, "섹터RS", ""))
     rr_kind = _text(_row_get(row, "R/R성격", ""))
     data_state = _text(_row_get(row, "데이터상태", ""))
     final_read = _text(_row_get(row, "최종읽기", ""))
     flow_verdict = _text(_row_get(row, "돈흐름_판정", _row_get(row, "돈흐름판정", "")))
     flow_group = _text(_row_get(row, "돈흐름_후보군", _row_get(row, "돈흐름후보군", "")))
+    market_execution = _text(_row_get(row, "시장실행상태", ""))
+    mtf_state = _text(_row_get(row, "상위시간대상태", ""))
 
+    # Candidate quality and explanatory prose do not confirm an entry trigger.
     text = _row_text(
         row,
         "최종읽기",
         "실행메모",
         "🔥기술적 타점",
-        "📌후보등급",
         "패턴타점",
-        "패턴근거",
-        "핵심근거",
         "판정코드",
     )
+    conditions = _row_text(row, "1차조건")
     flow_text = " ".join([flow_verdict, flow_group])
 
     reasons: list[str] = []
 
-    if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or (
+    if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터확인" in text or (
         _has_value(data_state) and data_state.upper() not in {"OK", "NORMAL", "정상"}
     ):
         return {"게이트상태": GATE_DATA_CHECK, "게이트근거": data_state or "가격/지표 데이터 확인"}
 
     if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED|TARGET_ZERO", text, flags=re.I):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "목표비중/비중초과 우선"}
+
+    if "시장방어" in market_execution:
+        return {"게이트상태": GATE_DEFENSE, "게이트근거": market_execution}
+    if mtf_state == "상위 시간대 경고":
+        return {"게이트상태": GATE_DEFENSE, "게이트근거": "상위 시간대 추세훼손"}
 
     if re.search(
         r"MACRO_STORM|시장위험|추매중단|보유점검|패닉|위기|DRAWDOWN|PRICE_DRAWDOWN|"
@@ -136,19 +146,16 @@ def build_execution_gate(row: Any, *, target_upside: float = math.nan) -> dict[s
     if "투영상단" in rr_kind:
         reasons.append("R/R 목표가가 투영상단")
 
-    if re.search(r"하락패턴|저항|무효선\s*미회복", text):
+    if re.search(r"하락패턴|하락\s*패턴|저항\s*(?:미돌파|대기)|무효선\s*미회복", text):
         reasons.append("하락/저항 패턴 확인 필요")
 
-    if "약함" in sector_rs and (group == "buyish" or "정밀확인" in final_read):
-        reasons.append("섹터RS 약함")
-
-    if math.isfinite(target_upside) and target_upside <= 0:
-        reasons.append(f"애널목표Upside {target_upside:.1f}%")
-
-    if re.search(r"추격금지|과열|볼린|MFI|상단|고점권", text, flags=re.I):
+    if re.search(r"추격금지|과열|볼린상단|고점권", text, flags=re.I):
         reasons.append("과열/추격금지")
 
-    if re.search(r"눌림대기|돌파대기|DCA조건부|회복관찰|회복확인|관망", text):
+    if code in TODAY_QUEUE_EXECUTION_WAIT_CODES or code == "QUALITY_RECOVERY_WATCH" or re.search(
+        r"대기|보류|관망|타점\s*탐색|탐색\s*중|눌림\s*/\s*종가\s*확인|회복\s*(?:확인|관찰)|DCA\s*조건부",
+        text,
+    ) or re.search(r"(?:눌림|종가)\s*확인\s*후|회복\s*후\s*재계산", conditions):
         reasons.append("조건 확인 대기")
 
     if re.search(r"추격금지|눌림대기|회복확인|내부확인", flow_text):
@@ -158,6 +165,8 @@ def build_execution_gate(row: Any, *, target_upside: float = math.nan) -> dict[s
         return {"게이트상태": GATE_WAIT, "게이트근거": " · ".join(dict.fromkeys(reasons))}
 
     if group == "buyish" or re.search(r"정밀확인|레버리지정찰", final_read):
+        if not math.isfinite(rr) or rr <= 0:
+            return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "현재가 R/R 확인 필요"}
         return {"게이트상태": GATE_EXECUTABLE, "게이트근거": "R/R·패턴·방어 게이트 통과"}
 
     return {"게이트상태": GATE_WATCH_ONLY, "게이트근거": "실행 신호 아님"}
@@ -177,23 +186,40 @@ def apply_execution_gate_columns(
     gate_rows: list[dict[str, str]] = []
     upside_states: list[str] = []
     sector_states: list[str] = []
+    candidate_notes: list[str] = []
 
     for _, row in out.iterrows():
         ticker = _text(row.get("티커", ""))
         upside = upside_value_map.get(ticker, math.nan)
         if not math.isfinite(clean_float(upside, math.nan)):
             upside = upside_value_map.get(ticker.upper(), math.nan)
-        gate_rows.append(build_execution_gate(row, target_upside=clean_float(upside, math.nan)))
+        if not math.isfinite(clean_float(upside, math.nan)):
+            upside = clean_float(_text(row.get("애널목표Upside", "")).removesuffix("%"), math.nan)
+        gate_rows.append(build_execution_gate(row))
+        notes = []
+        if "약함" in _text(row.get("섹터RS", "")):
+            notes.append("섹터RS 약함")
+        if math.isfinite(clean_float(upside, math.nan)) and upside <= 0:
+            notes.append(f"애널목표Upside {upside:.1f}%")
+        candidate_notes.append(" · ".join(notes))
         type_text = _text(row.get("유형", ""))
         is_etf = "ETF" in type_text or "펀드" in type_text
         display_upside = row.get("애널목표Upside", "")
-        upside_states.append(classify_upside_state(display_upside, is_etf=is_etf))
+        upside_state = classify_upside_state(display_upside, is_etf=is_etf)
+        missing_states = {
+            "etf_excluded": "ETF제외", "lookup_error": "조회실패", "invalid_snapshot": "조회실패",
+            "no_target": "목표가 미제공", "no_price": "현재가 확인", "invalid_ticker": "티커 확인",
+        }
+        if upside_state == "결측/수동확인":
+            upside_state = missing_states.get(_text(row.get("애널목표상태", "")), upside_state)
+        upside_states.append(upside_state)
         flow_context = _row_text(row, "돈흐름_시장맥락", "돈흐름시장맥락", "돈흐름_기준업종", "돈흐름_테마")
-        sector_states.append(classify_sector_rs_state(row.get("섹터RS", ""), flow_context=flow_context))
+        sector_states.append(classify_sector_rs_state(row.get("섹터RS", ""), flow_context=flow_context, is_etf=is_etf))
 
     gate_df = pd.DataFrame(gate_rows, index=out.index)
     for col in ["게이트상태", "게이트근거"]:
         out[col] = gate_df[col] if col in gate_df.columns else ""
     out["업사이드상태"] = upside_states
     out["섹터RS상태"] = sector_states
+    out["후보검토사항"] = candidate_notes
     return out

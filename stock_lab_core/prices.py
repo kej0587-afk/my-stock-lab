@@ -15,6 +15,8 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
 # SQLite tz 캐시에 동시 쓰기 → "database is locked" 오류 발생.
@@ -278,6 +280,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
                 df = yf.download(
                     yf_ticker, period=period, interval="1d",
                     progress=False, threads=False, auto_adjust=False,
+                    **yahoo_session_kwargs(),
                 )
         except Exception:
             continue
@@ -583,6 +586,7 @@ def load_usdkrw_rate():
             df = yf.download(
                 "USDKRW=X", period="5d", interval="1d",
                 progress=False, auto_adjust=False, threads=False,
+                **yahoo_session_kwargs(),
             )
         if df is None or df.empty:
             return 0.0
@@ -1753,7 +1757,7 @@ def _fetch_yf_fast_info_price(ticker: str) -> float:
     """
     try:
         with _YF_LOCK:
-            fi = yf.Ticker(ticker).fast_info
+            fi = yf.Ticker(ticker, **yahoo_session_kwargs()).fast_info
         # fast_info에는 timestamp가 없어 세션 판정이 불안정하다. 최종 폴백용.
         for attr in ("last_price", "post_market_price", "pre_market_price", "regular_market_price"):
             try:
@@ -1775,6 +1779,7 @@ def _fetch_yf_download_price(ticker: str, interval: str = "5m", prepost: bool = 
                 ticker, period="1d", interval=interval,
                 progress=False, prepost=prepost, auto_adjust=False,
                 threads=False,
+                **yahoo_session_kwargs(),
             )
         price = _latest_recent_close_from_series(extract_download_close_series(df, ticker))
         return price if price > 0 else 0.0
@@ -1909,6 +1914,7 @@ def _fetch_price_uncached(ticker: str) -> float:
             df = yf.download(
                 ticker, period="5d", interval="1d",
                 progress=False, auto_adjust=False, threads=False,
+                **yahoo_session_kwargs(),
             )
         if df.empty:
             return 0.0
@@ -1991,6 +1997,7 @@ def load_latest_prices_batch(tickers) -> dict:
                         kr_still_missing if len(kr_still_missing) > 1 else kr_still_missing[0],
                         period="1d", interval="1m", prepost=True,
                         progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                        **yahoo_session_kwargs(),
                     )
                 if data is not None and not data.empty:
                     for t in kr_still_missing:
@@ -2105,6 +2112,7 @@ def load_latest_prices_batch(tickers) -> dict:
                         us_yf_needed if len(us_yf_needed) > 1 else us_yf_needed[0],
                         period="1d", interval="5m", prepost=True,
                         progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                        **yahoo_session_kwargs(),
                     )
                 if data is not None and not data.empty:
                     for t in us_yf_needed:
@@ -2139,6 +2147,7 @@ def load_latest_prices_batch(tickers) -> dict:
                     all_missing if len(all_missing) > 1 else all_missing[0],
                     period="5d", interval="1d",
                     progress=False, group_by="ticker", threads=False, auto_adjust=False,
+                    **yahoo_session_kwargs(),
                 )
             if fallback is not None and not fallback.empty:
                 for t in all_missing:

@@ -42,6 +42,8 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+
 try:
     from stock_lab_core.formatters import finite_num
 except Exception:
@@ -1613,6 +1615,7 @@ def download_money_flow_prices(tickers) -> pd.DataFrame:
         group_by="ticker",
         threads=min(4, max(1, len(yf_tickers))),
         auto_adjust=False,
+        **yahoo_session_kwargs(),
     )
 
 

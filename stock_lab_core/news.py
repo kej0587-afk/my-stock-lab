@@ -21,6 +21,8 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
+from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+
 try:
     import requests as _requests
     _HAS_REQUESTS = True
@@ -36,10 +38,13 @@ except ImportError:
 from stock_lab_core.formatters import (
     clean_float,
     clean_int,
+    ensure_kr_suffix_if_code,
     format_currency,
     normalize_ticker,
+    sanitize_ticker_value,
     strip_search_prefix,
 )
+from stock_lab_core.asset_classifier import is_known_etf_ticker
 try:
     from stock_lab_core.formatters import finite_num
 except Exception:
@@ -676,7 +681,7 @@ def get_yfinance_company_names(ticker):
     names = []
     seen_lower: set = set()
     try:
-        info = yf.Ticker(ticker).get_info()
+        info = yf.Ticker(ticker, **yahoo_session_kwargs()).get_info()
         for key in ["longName", "shortName", "displayName"]:
             value = str(info.get(key, "") or "").strip()
             if value and value.lower() not in seen_lower:
@@ -791,10 +796,10 @@ _NAVER_MOBILE_HEADERS = {
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_naver_kr_snapshot(ticker: str) -> dict:
     """
-    네이버 증권 모바일 API에서 한국 종목 밸류/애널리스트 데이터를 가져옵니다.
+    네이버 증권 모바일 API에서 한국 종목 밸류 데이터를 가져옵니다.
     yfinance 키 규약과 동일한 data 딕셔너리를 반환합니다:
       trailingPE, priceToBook, returnOnEquity, profitMargins, operatingMargins,
-      revenueGrowth, targetMeanPrice, numberOfAnalystOpinions, recommendationKey
+      revenueGrowth
     실패하거나 데이터가 없으면 ok=False 반환 (기존 동작 유지).
     """
     if not _HAS_REQUESTS:
@@ -915,7 +920,7 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
 
     # ── 3. Analyst consensus ──────────────────────────────────────────────────
     # Naver mobile analytics/consensus/opinion endpoints all return 404.
-    # Consensus data is sourced from yfinance in get_analyst_snapshot() instead.
+    # get_analyst_snapshot() uses Yahoo and the public FnGuide consensus table.
 
     has_any = bool(result)
     return {
@@ -925,59 +930,196 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
     }
 
 
+def _analyst_positive(value):
+    number = clean_float(value, 0.0)
+    return finite_num(number) and number > 0
+
+
+def _has_consensus_target(data):
+    return any(_analyst_positive(data.get(key)) for key in ("targetMeanPrice", "targetMedianPrice"))
+
+
+def _consensus_cell_number(value):
+    text = str(value or "").strip().replace(",", "")
+    if not re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return None
+    number = clean_float(text, 0.0)
+    return number if finite_num(number) else None
+
+
+def _parse_fnguide_kr_consensus(html_content, code):
+    """Read the displayed aggregate table, not broker reports or price extremes."""
+    from lxml import html as lxml_html
+
+    root = lxml_html.fromstring(html_content)
+    identities = root.xpath("//input[@id='cmp_cd']/@value")
+    identities += root.xpath("//*[@id='giName']/following-sibling::h2[1]/text()")
+    if not identities or any(str(value).strip() != code for value in identities):
+        return {"ok": False, "data": {}, "reason": "FnGuide 종목코드 불일치"}
+
+    for heading in root.xpath("//h2"):
+        if re.sub(r"\s+", "", heading.text_content()) != "투자의견컨센서스":
+            continue
+        section = next((node for node in heading.iterancestors() if node.tag in {"div", "section"} and node.xpath(".//table")), None)
+        if section is None:
+            continue
+        for table in section.xpath(".//table"):
+            headers = [re.sub(r"\s+", "", node.text_content()) for node in table.xpath("./thead/tr/th")]
+            if "목표주가" not in headers or "투자의견" not in headers:
+                continue
+            body_rows = table.xpath("./tbody/tr")
+            # A consensus snapshot is one aggregate row. Broker lists are not it.
+            if len(body_rows) != 1:
+                continue
+            cells = body_rows[0].xpath("./td")
+            if len(cells) != len(headers):
+                continue
+            values = {header: cell.text_content().strip() for header, cell in zip(headers, cells)}
+            target = _consensus_cell_number(values["목표주가"])
+            count = _consensus_cell_number(values.get("추정기관수"))
+            if not _analyst_positive(target) or count == 0:
+                continue
+            data = {"targetMeanPrice": target}
+            if count is not None and count > 0 and count.is_integer():
+                data["numberOfAnalystOpinions"] = int(count)
+            asof = ""
+            dates = heading.getparent().xpath("./span[contains(concat(' ', normalize-space(@class), ' '), ' date ')]")
+            if dates:
+                match = re.search(r"(\d{4})[./-](\d{2})[./-](\d{2})", dates[0].text_content())
+                if match:
+                    try:
+                        asof = datetime(*map(int, match.groups())).date().isoformat()
+                    except ValueError:
+                        pass
+            return {"ok": True, "data": data, "asof": asof, "reason": ""}
+    return {"ok": False, "data": {}, "reason": "FnGuide 공개 컨센서스 목표가 없음"}
+
+
+def fetch_fnguide_kr_consensus(ticker):
+    """Fetch FnGuide's public, current consensus snapshot without authentication."""
+    symbol = ensure_kr_suffix_if_code(sanitize_ticker_value(ticker))
+    code = re.sub(r"\.(KS|KQ)$", "", symbol)
+    url = f"https://wcomp.fnguide.com/CompanyInfo/Snapshot?cmp_cd={urllib.parse.quote(code)}"
+    result = {"ok": False, "data": {}, "source": "FnGuide", "source_url": url, "asof": "", "reason": ""}
+    if not symbol.endswith((".KS", ".KQ")) or not re.fullmatch(r"\d{6}", code):
+        result["reason"] = "한국 개별주 코드 아님"
+        return result
+    if is_known_etf_ticker(symbol):
+        result["reason"] = "ETF/ETN 목표가 제외"
+        return result
+    if not _HAS_REQUESTS:
+        result["reason"] = "requests 라이브러리 없음"
+        return result
+    try:
+        response = _requests.get(url, headers={"User-Agent": _YF_UA, "Accept": "text/html"}, timeout=8)
+        response.raise_for_status()
+        parsed_url = urllib.parse.urlparse(response.url)
+        if parsed_url.hostname != "wcomp.fnguide.com" or parsed_url.path.rstrip("/") != "/CompanyInfo/Snapshot":
+            result["reason"] = "FnGuide 공개 Snapshot 이외 페이지로 이동"
+            return result
+        result.update(_parse_fnguide_kr_consensus(response.content, code))
+    except Exception as exc:
+        result["reason"] = f"FnGuide 조회 실패: {type(exc).__name__}: {exc}"[:300]
+    return result
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def get_analyst_snapshot(ticker):
     keys = [
         "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
         "numberOfAnalystOpinions", "recommendationMean", "recommendationKey",
-        "currentPrice", "regularMarketPrice",
+        "currentPrice", "regularMarketPrice", "quoteType", "currency",
     ]
     data = {key: None for key in keys}
+    ticker = ensure_kr_suffix_if_code(sanitize_ticker_value(ticker))
+    is_kr = ticker.endswith((".KS", ".KQ"))
+    yahoo_url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(ticker)}/analysis/"
+    field_sources = {}
+    attempts = []
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    if is_known_etf_ticker(ticker):
+        return {"ok": False, "data": data, "reason": "ETF/ETN 목표가 제외", "status": "etf_excluded", "source": "", "source_url": "", "asof": "", "fetched_at": fetched_at, "field_sources": {}, "provider_attempts": []}
 
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+    def merge_provider(provider_data, source, source_url, asof=""):
+        if not isinstance(provider_data, dict):
+            return
+        for key in keys:
+            value = provider_data.get(key)
+            if key.startswith("target") or key in {"currentPrice", "regularMarketPrice"}:
+                if _analyst_positive(data.get(key)) or not _analyst_positive(value):
+                    continue
+            elif key == "numberOfAnalystOpinions":
+                if _analyst_positive(data.get(key)) or not _analyst_positive(value):
+                    continue
+            elif data.get(key) not in (None, "") or value in (None, ""):
+                continue
+            data[key] = value
+            field_sources[key] = {"source": source, "source_url": source_url, "asof": asof}
 
-    # ── 1차: Yahoo Finance v10 직접 API (SQLite lock 없음, Streamlit Cloud 안전) ──
+    # Yahoo's direct API is the primary US provider.
     if not is_kr:
-        direct = _fetch_yahoo_analyst_data(ticker)
-        if direct:
-            for key in keys:
-                if direct.get(key) not in (None, ""):
-                    data[key] = direct[key]
-
-    # ── 2차: yfinance get_info() 폴백 ────────────────────────────────────────
-    #  직접 API에서 목표가를 못 받았거나 한국 종목이면 yfinance 시도
-    has_target = any(
-        finite_num(data.get(k)) and clean_float(data.get(k), 0) > 0
-        for k in ["targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice"]
-    )
-    if not has_target:
         try:
-            info = yf.Ticker(ticker).get_info() or {}
-            if isinstance(info, dict):
-                for key in keys:
-                    if data.get(key) in (None, "") and info.get(key) not in (None, ""):
-                        data[key] = info[key]
-        except Exception:
-            pass
+            direct = _fetch_yahoo_analyst_data(ticker)
+            merge_provider(direct, "Yahoo Finance financialData", yahoo_url)
+            attempts.append({"source": "Yahoo Finance financialData", "status": "available" if _has_consensus_target(data) else "no_target"})
+        except Exception as exc:
+            attempts.append({"source": "Yahoo Finance financialData", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
 
-    # ── 3차: 한국 종목은 네이버로 보완 ──────────────────────────────────────
-    has_target2 = any(
-        finite_num(data.get(k)) and clean_float(data.get(k), 0) > 0
-        for k in ["targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice"]
-    )
-    has_opinion = (clean_int(data.get("numberOfAnalystOpinions"), 0) or 0) > 0 or bool(
-        str(data.get("recommendationKey") or "").strip()
-    )
-    if is_kr and (not has_target2 or not has_opinion):
-        naver = fetch_naver_kr_snapshot(ticker)
-        if naver.get("ok"):
-            nd = naver.get("data", {})
-            for key in keys:
-                if data.get(key) in (None, "") and nd.get(key) not in (None, ""):
-                    data[key] = nd[key]
+    yf_ticker = None
+    if not _has_consensus_target(data):
+        try:
+            yf_ticker = yf.Ticker(ticker, **yahoo_session_kwargs())
+            merge_provider(yf_ticker.get_info() or {}, "yfinance.get_info", yahoo_url)
+            attempts.append({"source": "yfinance.get_info", "status": "available" if _has_consensus_target(data) else "no_target"})
+        except Exception as exc:
+            attempts.append({"source": "yfinance.get_info", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+
+    # Official yfinance API uses current/low/high/mean/median keys.
+    if not _has_consensus_target(data) and str(data.get("quoteType") or "").upper() not in {"ETF", "ETN", "MUTUALFUND"}:
+        try:
+            if yf_ticker is None:
+                yf_ticker = yf.Ticker(ticker, **yahoo_session_kwargs())
+            targets = yf_ticker.get_analyst_price_targets() or {}
+            target_keys = {"current": "currentPrice", "low": "targetLowPrice", "high": "targetHighPrice", "mean": "targetMeanPrice", "median": "targetMedianPrice"}
+            converted = {dest: targets.get(source) for source, dest in target_keys.items()} if isinstance(targets, dict) else {}
+            merge_provider(converted, "yfinance.get_analyst_price_targets", yahoo_url)
+            attempts.append({"source": "yfinance.get_analyst_price_targets", "status": "available" if _has_consensus_target(data) else "no_target"})
+        except Exception as exc:
+            attempts.append({"source": "yfinance.get_analyst_price_targets", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+
+    is_fund = str(data.get("quoteType") or "").upper() in {"ETF", "ETN", "MUTUALFUND"}
+    if is_kr and not _has_consensus_target(data) and not is_fund:
+        supplemental = fetch_fnguide_kr_consensus(ticker)
+        if supplemental.get("ok"):
+            # Opinion counts must belong to the target's provider, not Yahoo.
+            data["numberOfAnalystOpinions"] = None
+            field_sources.pop("numberOfAnalystOpinions", None)
+            merge_provider(supplemental.get("data", {}), supplemental.get("source", "FnGuide"), supplemental.get("source_url", ""), supplemental.get("asof", ""))
+        attempts.append({"source": "FnGuide", "status": "available" if supplemental.get("ok") else "no_target", "source_url": supplemental.get("source_url", ""), "reason": supplemental.get("reason", "")})
 
     has_any = any(data.get(key) not in (None, "") for key in keys)
-    return {"ok": has_any, "data": data, "reason": "" if has_any else "목표가/투자의견 데이터 없음"}
+    has_target = _has_consensus_target(data)
+    target_key = next((key for key in ("targetMeanPrice", "targetMedianPrice") if _analyst_positive(data.get(key))), "")
+    provenance = field_sources.get(target_key, {})
+    if is_fund:
+        for key in keys:
+            if key.startswith("target"):
+                data[key] = None
+                field_sources.pop(key, None)
+        has_target = False
+        provenance = {}
+    return {
+        "ok": has_any and not is_fund,
+        "data": data,
+        "reason": "ETF/ETN 목표가 제외" if is_fund else ("" if has_target else "평균/중앙 목표가 데이터 없음"),
+        "status": "etf_excluded" if is_fund else ("available" if has_target else "no_target"),
+        "source": provenance.get("source", ""),
+        "source_url": provenance.get("source_url", ""),
+        "asof": provenance.get("asof", ""),
+        "fetched_at": fetched_at,
+        "field_sources": field_sources,
+        "provider_attempts": attempts,
+    }
 
 
 def build_research_report_links(ticker, name):
@@ -1050,9 +1192,9 @@ def render_research_report_panel(name, ticker, current_price, is_etf=False):
 
     is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
     if is_kr:
-        st.caption("목표가와 투자의견: yfinance → 네이버 증권 순서로 자동 보완합니다. 그래도 데이터가 없으면 리포트 검색 링크를 이용하세요.")
+        st.caption("목표가는 Yahoo/yfinance → FnGuide 공개 컨센서스 순서로 보완합니다. 기준일은 공급자 표시일이며, 데이터가 없으면 리포트 검색 링크를 이용하세요.")
     else:
-        st.caption("목표가와 투자의견은 yfinance 제공 데이터 기준입니다. 한국 종목은 제공되지 않는 경우가 많아 리포트 검색 링크를 함께 제공합니다.")
+        st.caption("목표가와 투자의견은 Yahoo Finance 직접 조회와 yfinance API 제공 데이터 기준입니다.")
 
 
 def normalize_news_token(text):

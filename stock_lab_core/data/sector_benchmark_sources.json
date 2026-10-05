@@ -1,0 +1,250 @@
+{
+  "VIAV": {
+    "benchmark": "XLK",
+    "sector": "미국 기술/통신장비",
+    "source_url": "https://assets.viavisolutions.com/flipbook/esg-report-2024/files/esg-report-2024-br-crp-ae_FLIPBOOK_v2.pdf",
+    "source_name": "VIAVI Solutions 2024 ESG Report - Company Overview",
+    "verified_on": "2026-10-06",
+    "proxy_note": "공식 사업은 네트워크 시험·모니터링·검증 및 광학 기술이다. 통신서비스 사업자와 구분해 미국 상장 기술 ETF XLK를 사용한다. 광통신 시험장비 전용 지수가 아니며 소프트웨어·반도체도 포함한다. 사업 확인용 2024 보고서이며 현재 매출비중을 뜻하지 않는다. 벤치마크 공식 근거: https://www.ssga.com/us/en/individual/etfs/state-street-technology-select-sector-spdr-etf-xlk"
+  },
+  "DDOG": {
+    "benchmark": "IGV",
+    "sector": "미국 소프트웨어",
+    "source_url": "https://www.datadoghq.com/about/leadership/",
+    "source_name": "Datadog - Integrated Monitoring and Security Platform",
+    "verified_on": "2026-10-06",
+    "proxy_note": "클라우드 인프라·애플리케이션 관측 및 보안 소프트웨어 플랫폼이므로 기존 앱의 IGV를 사용한다. 북미 소프트웨어와 일부 인터랙티브 미디어를 포함해 순수 관측 SaaS 지수와는 다르다. 벤치마크 공식 근거: https://www.ishares.com/us/products/239771/ishares-north-american-techsoftware-etf"
+  },
+  "GFS": {
+    "benchmark": "SMH",
+    "sector": "미국 반도체",
+    "source_url": "https://gf.com/about-gf/",
+    "source_name": "GlobalFoundries - About GF",
+    "verified_on": "2026-10-06",
+    "proxy_note": "공식 소개에서 반도체 제조와 Nasdaq GFS 상장을 확인했다. 미국 상장 반도체 생산·장비 ETF SMH로 비교한다. 파운드리 단독 지수가 아니며 미국 상장 해외 기업과 대형 설계업체도 포함한다. 벤치마크 공식 근거: https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/"
+  },
+  "AMAT": {
+    "benchmark": "SMH",
+    "sector": "미국 반도체",
+    "source_url": "https://www.appliedmaterials.com/us/en/about.html",
+    "source_name": "Applied Materials - Semiconductor and Display Equipment Company",
+    "verified_on": "2026-10-06",
+    "proxy_note": "반도체·디스플레이 제조장비 회사이며 반도체 생산과 장비를 함께 포괄하는 SMH가 적합하다. 장비 발주 사이클과 디스플레이 사업을 순수하게 분리하지 못하며 대형 반도체 제조·설계 기업의 영향을 받는다. 벤치마크 공식 근거: https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/"
+  },
+  "STLD": {
+    "benchmark": "XLB",
+    "sector": "미국 소재/철강",
+    "source_url": "https://butler.steeldynamics.com/about-us/",
+    "source_name": "Steel Dynamics Butler Division - About Us",
+    "verified_on": "2026-10-06",
+    "proxy_note": "철강 생산 기업으로 확인되어 금속·광업을 포함하는 미국 소재 ETF XLB를 사용한다. 철강 전용 지수가 아니며 화학·포장·건설소재도 포함하므로 철강 가격·전기로 원가 사이클을 직접 추적하지 않는다. 벤치마크 공식 근거: https://www.ssga.com/us/en/individual/etfs/state-street-materials-select-sector-spdr-etf-xlb"
+  },
+  "FCX": {
+    "benchmark": "COPX",
+    "sector": "구리광산",
+    "source_url": "https://www.fcx.com/about",
+    "source_name": "Freeport-McMoRan - Overview",
+    "verified_on": "2026-10-06",
+    "proxy_note": "공식 사업은 구리 중심의 금·몰리브덴 광산이다. 미국 상장 USD ETF COPX의 구리 광산 기업군을 테마 비교 대상으로 사용한다. COPX의 기초 노출은 글로벌이므로 미국 기업만의 업종 지수가 아니며, 실물 구리 가격 지수도 아니다. 기업의 비용·생산·국가위험과 FCX의 금·몰리브덴 노출이 남는다. 벤치마크 공식 근거: https://www.globalxetfs.com/funds/copx"
+  },
+  "001450": {
+    "benchmark": "139270.KS",
+    "sector": "금융/보험",
+    "source_url": "https://www.hi.co.kr/serviceAction.do?menuId=101510",
+    "source_name": "현대해상 - 신뢰를 주는 기업 현대해상",
+    "verified_on": "2026-10-06",
+    "proxy_note": "현대해상은 해상·화재·자동차·장기보험 등을 영위하는 손해보험사다. 국내 금융 비교에는 기존 앱의 TIGER 200 금융을 사용한다. 은행·증권도 포함하므로 보험 전용 지수와 다르며 손해율과 보험회계 변화를 분리하지 못한다. 상품 정의 확인용 2023 팩트시트이며 당시 비중을 현재 비중으로 사용하지 않는다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20231011041111006108.pdf"
+  },
+  "DELL": {
+    "benchmark": "XLK",
+    "sector": "미국 기술/서버",
+    "source_url": "https://www.dell.com/en-us/dt/corporate/newsroom/announcements/detailpage.press-releases~usa~2026~05~dell-technologies-reimagines-the-modern-data-center-for-the-ai-era.htm",
+    "source_name": "Dell Technologies - Modern Data Center for the AI Era (2026-05-19)",
+    "verified_on": "2026-10-06",
+    "proxy_note": "공식 발표는 DELL의 서버·스토리지·컴퓨팅 제품을 확인한다. 미국 기술 ETF XLK를 사용한다. 반도체 제조사가 아니므로 서버 수요만으로 SMH에 넣지 않는다. XLK는 서버 전용 지수가 아니며 Dell의 PC 사업과 하드웨어 수익성을 분리하지 못한다. 벤치마크 공식 근거: https://www.ssga.com/us/en/individual/etfs/state-street-technology-select-sector-spdr-etf-xlk"
+  },
+  "BE": {
+    "benchmark": "XLI",
+    "sector": "미국 산업재/발전설비",
+    "source_url": "https://www.bloomenergy.com/resource/bloom-energy-server/",
+    "source_name": "Bloom Energy - Energy Server Data Sheet",
+    "verified_on": "2026-10-06",
+    "proxy_note": "고체산화물 연료전지 기반 현장 발전설비를 공급하므로 전기장비를 포함하는 미국 산업재 ETF XLI를 넓은 대체 비교로 사용한다. 전력 유틸리티 또는 석유 생산 기업으로 분류하지 않는다. XLI는 연료전지 전용 지수가 아니며 BE의 편입을 주장하는 것도 아니다. 대안 ICLN은 글로벌 청정에너지 테마로 해외 기업·발전사업자 등 다른 노출을 포함한다. BE 제품은 천연가스·바이오가스·수소 등으로 발전하므로 재생에너지 단일 테마보다 미국 설비업종 맥락을 우선했다. 이는 비교 대상 선택이며 공식 GICS 분류를 확정한 것은 아니다. 기술 상용화·고객 집중·연료비 위험은 남는다. XLI 공식 근거: https://www.ssga.com/us/en/individual/etfs/state-street-industrial-select-sector-spdr-etf-xli . ICLN 공식 근거: https://www.ishares.com/us/products/239738/ishares-global-clean-energy-etf/"
+  },
+  "098120": {
+    "benchmark": "396500.KS",
+    "sector": "반도체",
+    "source_url": "https://kind.krx.co.kr/corpgeneral/corpList.do?beginIndex=&comAbbrv=&comAbbrvTmp=&currentPageSize=1500&fiscalYearEnd=all&industry=&isurCd=&location=all&marketType=kosdaqMkt&method=searchCorpList&orderMode=3&orderStat=D&pageIndex=1&repIsuSrtCd=&searchCodeType=&searchType=13",
+    "source_name": "한국거래소 KIND - 마이크로컨텍솔 상장법인 주요제품",
+    "verified_on": "2026-10-06",
+    "proxy_note": "KRX가 BGA IC Burn-In Socket·DRAM Module Socket을 주요제품으로 제시한다. 회사 사이트는 접근이 제한되어 거래소 자료로 검증했다. 098120과 마이크로컨텍솔루션의 식별 근거: https://kind.krx.co.kr/external/2026/02/10/000294/20260210000902/00637.htm . TIGER Fn반도체TOP10은 국내 반도체 대체 비교이며 검사소켓 단독 지수는 아니다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250611092636007445.pdf"
+  },
+  "MRNA": {
+    "benchmark": "IBB",
+    "sector": "미국 바이오",
+    "source_url": "https://www.modernatx.com/en-US/power-of-mrna/modernas-mrna-platform",
+    "source_name": "Moderna - mRNA Platform",
+    "verified_on": "2026-10-06",
+    "proxy_note": "mRNA 백신·치료제를 연구·개발하는 바이오 기업이다. 기존 앱의 미국 상장 바이오 ETF IBB를 사용한다. 바이오 업종의 비교일 뿐 mRNA 전용 지수가 아니며 임상 결과·허가·백신 수요 등 개별 사건 위험은 남는다. 벤치마크 공식 근거: https://www.ishares.com/us/products/239699/ishares-biotechnology-etf"
+  },
+  "CRWD": {
+    "benchmark": "CIBR",
+    "sector": "미국 사이버보안",
+    "source_url": "https://ir.crowdstrike.com/",
+    "source_name": "CrowdStrike Investor Relations - Falcon SaaS Security Platform",
+    "verified_on": "2026-10-06",
+    "proxy_note": "Falcon SaaS의 엔드포인트·클라우드·신원 보안 사업을 공식 IR로 확인했다. 기존 앱의 미국 상장 사이버보안 ETF CIBR를 사용한다. 글로벌 거래소 적격 보안 기업도 포함하며 순수 엔드포인트 지수가 아니다. 벤치마크 공식 근거: https://www.ftportfolios.com/retail/etf/etfsummary.aspx?ticker=cibr"
+  },
+  "HPE": {
+    "benchmark": "XLK",
+    "sector": "미국 기술/서버",
+    "source_url": "https://www.hpe.com/us/en/about/enterprise-technology-us.html",
+    "source_name": "HPE - Enterprise Technology in the United States",
+    "verified_on": "2026-10-06",
+    "proxy_note": "HPE는 네트워킹·하이브리드 클라우드·AI·컴퓨팅·스토리지 기업이며 HP Inc.와 다른 회사다. 미국 기술 ETF XLK를 사용한다. 서버·네트워크 전용 지수는 아니며 소프트웨어·반도체 대형주 비중의 영향을 받는다. 벤치마크 공식 근거: https://www.ssga.com/us/en/individual/etfs/state-street-technology-select-sector-spdr-etf-xlk"
+  },
+  "000500": {
+    "benchmark": "487240.KS",
+    "sector": "전력인프라",
+    "source_url": "https://gaoncable.com/",
+    "source_name": "가온전선 - 전력·통신 케이블 제품 소개",
+    "verified_on": "2026-10-06",
+    "proxy_note": "000500의 실제 회사는 가온전선이다. 회사코드 확인: https://kind.krx.co.kr/external/2026/03/20/000484/20260319004284/99602.htm . 전력·배전·초고압 케이블이 핵심이므로 국내 변압기·케이블 테마인 KODEX AI전력핵심설비를 사용한다. 케이블 단독 지수는 아니며 변압기 집중과 가온전선의 통신 케이블 사업 차이가 있다. 벤치마크 공식 근거: https://m.samsungfund.com/upload/kodex/newsroom/20260325170636388.pdf"
+  },
+  "096770": {
+    "benchmark": "139250.KS",
+    "sector": "에너지화학",
+    "source_url": "https://www.skinnovation.com/esg/env-rnd",
+    "source_name": "SK Innovation - Refining, Chemicals and Battery R&D",
+    "verified_on": "2026-10-06",
+    "proxy_note": "정유·화학과 배터리 등을 함께 영위해 국내 에너지·화학 ETF TIGER 200 에너지화학으로 비교한다. 단일 배터리 회사로 취급하지 않는다. 배터리·LNG·전력 등 복합 사업의 비중 변화와 지주 성격을 모두 설명하는 지수는 아니다. 벤치마크 공식 근거: https://investments.miraeasset.com/tigeretf/upload/etf/20250804095126009393.pdf"
+  },
+  "003160": {
+    "benchmark": "396500.KS",
+    "sector": "반도체",
+    "source_url": "https://kind.krx.co.kr/corpdetail/totalinfo.do?isurCd=00316&kisComCd=360392&method=searchTotalInfo&repIsuCd=KR7003160009",
+    "source_name": "한국거래소 KIND - 디아이(003160) 회사개요·주요사업",
+    "verified_on": "2026-10-06",
+    "proxy_note": "003160은 디아이이며 반도체 Burn-In Tester·Wafer Tester 사업이 확인된다. TIGER Fn반도체TOP10으로 국내 반도체 사이클을 비교한다. 검사장비 전용 지수가 아니며 대형 메모리주 집중, 전자부품·2차전지 장비 등 다른 사업의 차이가 남는다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250611092636007445.pdf"
+  },
+  "AEHR": {
+    "benchmark": "SMH",
+    "sector": "미국 반도체",
+    "source_url": "https://www.aehr.com/",
+    "source_name": "Aehr Test Systems - Semiconductor Test and Burn-in",
+    "verified_on": "2026-10-06",
+    "proxy_note": "반도체 웨이퍼·패키지의 검사 및 번인 장비 기업이다. 미국 상장 반도체 생산·장비 ETF SMH를 사용한다. 소형 검사장비와 SiC·광통신·AI 고객 발주 변동을 대형 반도체 중심 지수가 정확히 대변하지는 못한다. 벤치마크 공식 근거: https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/"
+  },
+  "222800": {
+    "benchmark": "396500.KS",
+    "sector": "반도체/기판",
+    "source_url": "https://eng.simmtech.com/about/about.aspx",
+    "source_name": "SIMMTECH (KOSDAQ 222800) - Overview",
+    "verified_on": "2026-10-06",
+    "proxy_note": "심텍은 반도체 메모리 모듈 PCB 및 패키지 기판 제조사다. 한국 종목에는 국내 반도체 ETF TIGER Fn반도체TOP10을 사용한다. PCB·기판 전용 지수가 아니며 대형 메모리주 중심이므로 기판 원가·가동률 차이가 남는다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250611092636007445.pdf"
+  },
+  "001820": {
+    "benchmark": "139260.KS",
+    "sector": "전자부품/IT",
+    "source_url": "https://samwha.co.kr/capacitor/",
+    "source_name": "삼화콘덴서 - MLCC 및 콘덴서 제품 소개",
+    "verified_on": "2026-10-06",
+    "proxy_note": "MLCC·세라믹·전력 콘덴서 등 전자부품 제조를 확인했다. 기존 국내 전자부품 테마 비교인 TIGER 200 IT를 넓은 대체 지수로 사용한다. KOSPI200 대형 IT 기업 중심이며 콘덴서·MLCC 전용 지수가 아니다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250804095126005319.pdf"
+  },
+  "108490": {
+    "benchmark": "445290.KS",
+    "sector": "로봇/자동화",
+    "source_url": "https://www.robotis.com/en/",
+    "source_name": "ROBOTIS - DYNAMIXEL Actuators and Physical AI Robots",
+    "verified_on": "2026-10-06",
+    "proxy_note": "로보티즈는 DYNAMIXEL 구동기와 로봇 플랫폼 기업이다. 기존 국내 ETF 카탈로그에 있는 KODEX 로봇액티브를 사용한다. 액티브 운용이며 삼성전자·자동차 등 관련 대기업도 포함해 순수 구동기 지수는 아니다. 운용사 자료의 과거 편입비중을 현재 비중으로 단정하지 않는다. 벤치마크 공식 근거: https://m.samsungfund.com/sheet/20260511/2ETFH5_20260430.pdf"
+  },
+  "126730": {
+    "benchmark": "139260.KS",
+    "sector": "전자부품/IT",
+    "source_url": "https://www.korchip.com/kor/",
+    "source_name": "코칩 - CHIPCELL 및 Samsung MLCC 제품 소개",
+    "verified_on": "2026-10-06",
+    "proxy_note": "칩셀카본 슈퍼커패시터·칩셀리튬 소형 전지와 MLCC 유통을 확인했다. 국내 전자부품 맥락의 TIGER 200 IT를 넓은 대체 비교로 사용한다. 코칩은 단순 MLCC 제조사나 EV 대형 전지 회사가 아니며, 대형 IT 중심 ETF는 소형 에너지 저장부품의 수요·원가를 직접 대변하지 못한다. 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250804095126005319.pdf"
+  },
+  "056190": {
+    "benchmark": "445290.KS",
+    "sector": "로봇/자동화",
+    "source_url": "https://www.sfa.co.kr/company03",
+    "source_name": "에스에프에이 - 사업부 소개",
+    "verified_on": "2026-10-06",
+    "proxy_note": "056190은 에스에프에이로, 물류자동화·스마트팩토리·2차전지·OLED 공정장비를 함께 영위한다. 회사코드 확인: https://kind.krx.co.kr/external/2026/07/23/000587/20260723001321/00637.htm . 국내 자동화 테마의 대체 비교로 KODEX 로봇액티브를 사용한다. 순수 로봇 회사 분류가 아니며 배터리·디스플레이 장비와 연결 반도체 사업은 별도 노출이다. 벤치마크 공식 근거: https://m.samsungfund.com/sheet/20260511/2ETFH5_20260430.pdf"
+  },
+  "059120": {
+    "benchmark": "445290.KS",
+    "sector": "로봇/자동화",
+    "source_url": "https://kind.krx.co.kr/external/2023/03/24/001177/20230324002967/11011.htm",
+    "source_name": "아진엑스텍 - 사업보고서(KIND) 모션제어 사업",
+    "verified_on": "2026-10-06",
+    "proxy_note": "공시에서 모션제어 칩·모듈·시스템·로봇제어기를 자체 개발·제조하는 기업으로 확인했다. 국내 로봇·자동화 테마의 KODEX 로봇액티브를 사용한다. 반도체 설계기술을 쓴다는 이유만으로 순수 반도체 제조사로 분류하지 않는다. ETF는 모션제어 전용 지수가 아니며 이 공시는 사업 정의 확인용 과거 자료다. 벤치마크 공식 근거: https://m.samsungfund.com/sheet/20260511/2ETFH5_20260430.pdf"
+  },
+  "030530": {
+    "benchmark": "396500.KS",
+    "sector": "반도체",
+    "source_url": "https://www.wonikholdings.kr/intro_05.do",
+    "source_name": "원익홀딩스 - 사업장·Gas Cabinet, Purifier, Scrubber 소개",
+    "verified_on": "2026-10-06",
+    "proxy_note": "030530은 원익홀딩스다. 회사코드 확인: https://kind.krx.co.kr/external/2025/12/30/000796/20251230001809/00636.htm . 반도체·디스플레이 공정용 TGS 및 투자사업을 가진 회사로 국내 반도체 ETF TIGER Fn반도체TOP10을 사용한다. 산업가스 가격 또는 원익IPS 단일 회사의 비교가 아니며 지주 할인·계열사·다각화 위험이 남는다. TGS 사업 공시 근거: https://kind.krx.co.kr/external/2024/03/21/002740/20240321010997/11011.htm . 벤치마크 공식 근거: https://www.tigeretf.com/upload/etf/20250611092636007445.pdf"
+  },
+  "QRVO": {
+    "benchmark": "SMH",
+    "sector": "미국 반도체",
+    "source_url": "https://www.qorvo.com/about",
+    "source_name": "Qorvo - RF Semiconductor Technologies",
+    "verified_on": "2026-10-06",
+    "proxy_note": "RF 칩·프런트엔드·GaAs/GaN 등 반도체 기술을 공식 회사 소개에서 확인했다. 미국 상장 반도체 ETF SMH를 사용한다. RF·스마트폰 수요 전용 지수가 아니며 AI·메모리 중심 대형주와 실적 사이클이 다를 수 있다. 벤치마크 공식 근거: https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/"
+  },
+  "379810": {
+    "benchmark": "",
+    "sector": "광역지수/나스닥100",
+    "source_url": "https://m.samsungfund.com/sheet/20260106/2ETFE3_20251230.pdf",
+    "source_name": "삼성자산운용 - KODEX 미국나스닥100(379810) 팩트시트",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. 미국 나스닥100 광역 성장지수 ETF로 여러 업종을 포함하므로 XLK 등을 단일 섹터로 강제하지 않는다. 한국 상장이지만 기초 노출은 미국이다. 기존 기초자산 QQQM 비교를 사용하며 원화 환율·분배금·거래시간 차이를 구분한다. sector_map의 빈 벤치마크는 데이터 누락이 아니다."
+  },
+  "379800": {
+    "benchmark": "",
+    "sector": "광역지수/S&P500",
+    "source_url": "https://m.samsungfund.com/sheet/20260305/2ETFE4_20260228.pdf",
+    "source_name": "삼성자산운용 - KODEX 미국S&P500(379800) 팩트시트",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. S&P500 Index(KRW)를 추적하는 여러 업종의 미국 대표지수 ETF다. 한국 상장이라는 이유로 한국 섹터를 부여하지 않는다. 기존 기초자산 SPY 비교를 사용하며 원화 환율·분배금·거래시간 차이는 별도 한계다. sector_map의 빈 벤치마크는 데이터 누락이 아니다."
+  },
+  "069500": {
+    "benchmark": "",
+    "sector": "광역지수/KOSPI200",
+    "source_url": "https://m.samsungfund.com/sheet/20160602/2ETF01_20160531.pdf",
+    "source_name": "삼성자산운용 - KODEX 200(069500) KOSPI200 추적 상품 정의",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. KOSPI200 광역 시장 ETF이자 앱의 한국 시장 비교 기준이다. 069500.KS로 자기비교하면 섹터RS가 인위적으로 중립이 되므로 빈 벤치마크로 이름 추론을 차단한다. 출처는 추적 대상 확인용 과거 자료이며 현재 편입비중 자료로 사용하지 않는다. 시장·기초자산 비교의 기존 자기비교 정책은 이번 섹터 맵 범위 밖이다."
+  },
+  "0025N0": {
+    "benchmark": "",
+    "sector": "TDF/혼합자산",
+    "source_url": "https://www.tigeretf.com/upload/etf/20250611092527001871.pdf",
+    "source_name": "미래에셋자산운용 - TIGER TDF2045(0025N0) 주식혼합 ETF 팩트시트(2025-05-30)",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. 0025N0는 개별주가 아니라 주식·채권을 혼합하고 생애주기에 따라 배분하는 TDF ETF다. 과거 공식 팩트시트로 상품 성격을 확인했으며 현재 적격 명칭·최신 자산비중을 검증했다는 뜻은 아니다. 단일 주식 섹터나 S&P500만을 전체 자산 비교로 강제하지 않는다. 정확한 비교에는 TDF의 현재 복합 기초지수와 배분 비중이 필요하다."
+  },
+  "487240": {
+    "benchmark": "",
+    "sector": "전력인프라 ETF",
+    "source_url": "https://m.samsungfund.com/upload/kodex/newsroom/20260325170636388.pdf",
+    "source_name": "삼성자산운용 - KODEX AI전력핵심설비(487240) 상품 안내",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. 국내 변압기·케이블 테마 ETF이며 iSelect AI전력핵심설비 지수를 추적한다. 이 ETF는 다른 전력 종목의 비교 대상이므로 자신을 섹터 벤치마크로 부여하지 않는다. 기존 한국 시장 비교로 테마의 상대 흐름을 확인한다. 지원 대상의 글로벌 AI전력 ETF는 국가·환율 노출이 달라 정확한 국내 동종 비교로 사용하지 않는다."
+  },
+  "160580": {
+    "benchmark": "",
+    "sector": "실물 구리",
+    "source_url": "https://www.tigeretf.com/upload/etf/20250304090236006608.pdf",
+    "source_name": "미래에셋자산운용 - TIGER 구리실물 간이투자설명서(2025-02-21)",
+    "verified_on": "2026-10-06",
+    "proxy_note": "의도적 섹터 비교 제외. 160580은 주식 섹터 ETF가 아니라 구리 창고증권 등 실물 노출을 갖는 특별자산 ETF다. 공식 팩트시트의 비교 지수는 S&P GSCI Cash Copper Index: https://www.tigeretf.com/upload/etf/20241007063735008127.pdf . COPX는 구리 광산 주식으로 기업 비용·생산·국가위험이 추가되어 실물의 섹터 지수로 사용하지 않는다. 정확한 비교에는 구리 현물과 환율·보관비 반영이 필요하며 한국 주식 시장RS는 참고 맥락만 제공한다."
+  }
+}

@@ -61,3 +61,17 @@ def test_nearest_valid_support_zone_wins_over_far_fvg():
     zone = pick_support_zone(trendlines, smc, liquidity, "FCX", 71.89)
 
     assert zone["label"] == "유동성 지지"
+
+
+def test_chart_trigger_pass_does_not_override_common_waiting_gate():
+    rows = build_chart_execution_check_rows(
+        _sample_price_df(),
+        [{"name": "회복", "direction": "bullish", "trigger_price": 69.0}],
+        [], {}, {}, "FCX",
+        {"rr_ratio": 1.6, "execution_workflow": {"게이트상태": "대기/관찰", "게이트근거": "조건 확인 대기"}},
+    )
+    trigger = next(row for row in rows if row["조건"] == "기준선 돌파")
+    assert trigger["상태"] == "통과"
+    assert trigger["다음 행동"] == "조건 확인 대기"
+    assert rows[0]["조건"] == "종합 실행"
+    assert rows[0]["상태"] == "대기"
