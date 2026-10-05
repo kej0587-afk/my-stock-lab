@@ -350,6 +350,15 @@ from stock_lab_core.today_flow_candidates import (
     classify_money_flow_candidate_scope,
     classify_money_flow_radar_label,
 )
+from stock_lab_core.execution_gate import (
+    GATE_DATA_CHECK,
+    GATE_DEFENSE,
+    GATE_EXECUTABLE,
+    GATE_WAIT,
+    GATE_WATCH_ONLY,
+    apply_execution_gate_columns,
+    classify_sector_rs_state,
+)
 from stock_lab_core.money_flow import (
     ETF_TO_THEME,
     IMAGE_THEME_META,
@@ -21456,6 +21465,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
+    sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
+    sector_rs_state = classify_sector_rs_state(sector_rs_label)
     dashboard_timing = format_dashboard_timing_label(c)
     dashboard_reason = format_dashboard_reason(c)
     dashboard_grade = format_dashboard_candidate_grade(c)
@@ -21526,7 +21537,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
         "기초벤치": get_benchmark_display_name(bm["underlying_bench"]) if bm["underlying_bench"] else "-",
         "섹터벤치": get_benchmark_display_name(bm["sector_bench"]) if bm["sector_bench"] else "-",
-        "섹터RS": bm["sector_rs_label"] if bm["sector_bench"] else "-",
+        "섹터RS": sector_rs_label,
+        "섹터RS상태": sector_rs_state,
         "RSI": round(c["rsi"], 1), "MFI": round(c["mfi"], 1), "볼린저 %B": round(c["pct_b"], 2),
         "🔥기술적 타점": dashboard_timing,
         "패턴타점": pattern_timing,
@@ -31066,6 +31078,37 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     return result
 
 
+def attach_today_flow_context(summary_df: pd.DataFrame, flow_shortlist_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Attach compact money-flow context to Today Queue rows."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return summary_df.copy() if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
+    if not isinstance(flow_shortlist_df, pd.DataFrame) or flow_shortlist_df.empty or "Ticker" not in flow_shortlist_df.columns:
+        return summary_df.copy()
+
+    out = summary_df.copy()
+    out["_검토키"] = out.get("티커", pd.Series("", index=out.index)).astype(str).map(_today_review_ticker_key)
+    flow = flow_shortlist_df.copy()
+    flow["_검토키"] = flow["Ticker"].astype(str).map(_today_review_ticker_key)
+    flow = flow[flow["_검토키"].astype(str).str.len() > 0]
+    if flow.empty:
+        out = out.drop(columns=["_검토키"], errors="ignore")
+        return out
+
+    flow_cols = [
+        "Ticker", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
+        "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
+    ]
+    flow = flow[[col for col in flow_cols + ["_검토키"] if col in flow.columns]].copy()
+    flow = flow.drop_duplicates("_검토키", keep="first")
+    flow = flow.rename(columns={col: f"돈흐름_{col}" for col in flow.columns if col != "_검토키"})
+
+    for col in [c for c in flow.columns if c != "_검토키" and c in out.columns]:
+        out = out.drop(columns=[col])
+    out = out.merge(flow, on="_검토키", how="left")
+    out = out.drop(columns=["_검토키"], errors="ignore")
+    return out
+
+
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
     shortlist_df = shortlist_df if isinstance(shortlist_df, pd.DataFrame) else build_today_flow_shortlist_df(snapshot)
     if show_header:
@@ -32210,6 +32253,9 @@ TODAY_REVIEW_LEVERAGE_ASSET_RE = r"레버리지|인버스|2X|3X|2배|3배|Ultra|
 
 
 def _today_review_has_actionable_buyish(row, text: str) -> bool:
+    gate_state = str(row.get("게이트상태", "") or "")
+    if gate_state and gate_state != GATE_EXECUTABLE:
+        return False
     group = str(row.get("판정분류", "") or "")
     final_read = str(row.get("최종읽기", "") or "")
     action = str(row.get("실행메모", "") or "")
@@ -32262,7 +32308,7 @@ def build_today_review_master_df(summary_df, holdings_df=None, flow_shortlist_df
         fdf = fdf.drop_duplicates("_검토키", keep="first")
         flow_cols = [
             "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
-            "테마", "세부축", "돈흐름점수", "테마점수", "등록상태", "후보근거",
+            "기준업종", "테마", "세부축", "돈흐름점수", "테마점수", "등록상태", "후보근거",
         ]
         fdf = fdf[[col for col in flow_cols + ["_검토키"] if col in fdf.columns]].copy()
         fdf = fdf.rename(columns={col: f"돈흐름_{col}" for col in fdf.columns if col != "_검토키"})
@@ -32306,11 +32352,24 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
         for _, row in work.iterrows():
             ticker = row.get("티커", "")
             name = row.get("종목명", "")
+            gate_state = str(row.get("게이트상태", "") or "")
+            gate_reason = str(row.get("게이트근거", "") or "")
             text = " ".join(
                 str(row.get(col, "") or "")
                 for col in ["최종읽기", "실행메모", "🔥기술적 타점", "📌후보등급", "패턴타점", "판정코드", "핵심근거"]
                 if col in work.columns
             )
+            if str(row.get("판정분류", "") or "") == "buyish" and gate_state in {GATE_WAIT, GATE_DEFENSE, GATE_DATA_CHECK, GATE_WATCH_ONLY}:
+                _append_today_review_flag(
+                    rows,
+                    "참고",
+                    ticker,
+                    name,
+                    "buyish 원판정이 실행 게이트에서 낮아짐",
+                    f"{gate_state} · {gate_reason}",
+                    "판정문구는 유지하고, 실제 탭 배치는 게이트상태와 게이트근거를 우선 확인하세요.",
+                )
+
             buyish = _today_review_has_actionable_buyish(row, text)
             defensive = bool(re.search(TODAY_REVIEW_DEFENSE_RE, text, flags=re.IGNORECASE))
             if buyish and defensive:
@@ -32876,14 +32935,50 @@ def render_today_queue_tab(mode):
             except Exception:
                 pass
 
-    wait_mask = _today_queue_wait_mask(summary_df, buyish_mask, _upside_value_map)
+    if "티커" in summary_df.columns:
+        summary_df["애널목표Upside"] = summary_df["티커"].astype(str).map(_upside_map).fillna("-")
+
+    flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
+    summary_df = attach_today_flow_context(summary_df, flow_shortlist_df)
+    summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_value_map)
+
+    reason_bucket = reason_bucket.reindex(summary_df.index).fillna("일반")
+    leveraged_scout_mask = leveraged_scout_mask.reindex(summary_df.index, fill_value=False)
+    leveraged_market_defense_mask = leveraged_market_defense_mask.reindex(summary_df.index, fill_value=False)
+    leveraged_scout_market_block = leveraged_scout_market_block.reindex(summary_df.index, fill_value=False)
+    blocked_leveraged_scout_mask = blocked_leveraged_scout_mask.reindex(summary_df.index, fill_value=False)
+    hard_block_mask = hard_block_mask.reindex(summary_df.index, fill_value=False)
+    visible_wait_or_defense_mask = visible_wait_or_defense_mask.reindex(summary_df.index, fill_value=False)
+
+    ticker_series = summary_df.get("티커", pd.Series("", index=summary_df.index)).astype(str)
+    type_series = summary_df.get("유형", pd.Series("", index=summary_df.index)).astype(str)
+    code_series = summary_df.get("판정코드", pd.Series("", index=summary_df.index)).astype(str)
+    label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
+    final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
+    grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
+    action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
+    gate_state = summary_df.get("게이트상태", pd.Series(GATE_WATCH_ONLY, index=summary_df.index)).astype(str)
+    gate_defense_mask = gate_state.eq(GATE_DEFENSE)
+    gate_data_mask = gate_state.eq(GATE_DATA_CHECK)
+    gate_wait_mask = gate_state.eq(GATE_WAIT)
+    buyish_mask = buyish_mask.reindex(summary_df.index, fill_value=False) & ~gate_state.isin([GATE_DEFENSE, GATE_DATA_CHECK, GATE_WATCH_ONLY])
+    caution_mask = caution_mask.reindex(summary_df.index, fill_value=False) | gate_defense_mask | gate_data_mask
+
+    wait_mask = _today_queue_wait_mask(summary_df, buyish_mask, _upside_value_map) | gate_wait_mask
     if "최종읽기" in summary_df.columns:
         final_actionable_mask = final_read_series.str.contains("정밀확인", regex=False, na=False) | leveraged_scout_mask
     else:
         final_actionable_mask = pd.Series(True, index=summary_df.index)
     wait_mask_raw = wait_mask & ~leveraged_scout_mask
     visible_wait_or_defense_mask = visible_wait_or_defense_mask & ~leveraged_scout_mask
-    execution_raw_mask = buyish_mask & final_actionable_mask & ~wait_mask_raw & ~visible_wait_or_defense_mask & ~caution_mask
+    execution_raw_mask = (
+        gate_state.eq(GATE_EXECUTABLE)
+        & buyish_mask
+        & final_actionable_mask
+        & ~wait_mask_raw
+        & ~visible_wait_or_defense_mask
+        & ~caution_mask
+    )
     assigned_mask = pd.Series(False, index=summary_df.index)
 
     execution_mask = execution_raw_mask & ~assigned_mask
@@ -32900,7 +32995,7 @@ def render_today_queue_tab(mode):
     assigned_mask = assigned_mask | structure_mask
     overheat_mask = (caution_mask & reason_bucket.eq("과열/타점대기")) & ~assigned_mask
     assigned_mask = assigned_mask | overheat_mask
-    data_issue_mask = (caution_mask & reason_bucket.eq("데이터확인")) & ~assigned_mask
+    data_issue_mask = ((caution_mask & reason_bucket.eq("데이터확인")) | gate_data_mask) & ~assigned_mask
     assigned_mask = assigned_mask | data_issue_mask
     wait_mask = wait_mask_raw & ~assigned_mask
     assigned_mask = assigned_mask | wait_mask
@@ -32952,9 +33047,11 @@ def render_today_queue_tab(mode):
     st.markdown("#### 세부 근거: 상세 판정표")
 
     show_cols = [
-        "종목명", "티커", "유형", "현재가", "애널목표Upside", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
+        "종목명", "티커", "유형", "현재가", "게이트상태", "게이트근거",
+        "애널목표Upside", "업사이드상태", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
         "1차기준", "1차조건", "부족액", "📌후보등급", "🔥기술적 타점",
-        "패턴타점", "패턴근거", "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "RSI", "MFI", "볼린저 %B", "고점대비",
+        "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
+        "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "섹터RS상태", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
 
     def _render_today_queue_table(view_df: pd.DataFrame, empty_msg: str, sort_low_first: bool = False):
@@ -32981,10 +33078,16 @@ def render_today_queue_tab(mode):
             view_df[display_cols],
             column_config={
                 "애널목표Upside": st.column_config.TextColumn("애널목표Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력입니다. R/R용 차트목표와 다른 값입니다. 데이터 없으면 — 표시"),
+                "업사이드상태": st.column_config.TextColumn("업사이드상태", help="애널 목표가 업사이드 데이터의 사용 가능 상태입니다."),
+                "게이트상태": st.column_config.TextColumn("게이트상태", help="기존 판정문구를 바꾸지 않고 오늘 실행 가능 여부만 분류한 값입니다."),
+                "게이트근거": st.column_config.TextColumn("게이트근거", help="실행 후보에서 대기/방어로 내려간 직접 사유입니다."),
                 "실행메모": st.column_config.TextColumn("실행메모", help="오늘점검 신호를 주문 전 행동으로 압축한 값입니다."),
                 "R/R": st.column_config.TextColumn("R/R", help="정밀관측소와 같은 2ATR 손절 기준의 현재가 손익비입니다. 일반 표에서는 Adj점수 다음 정렬 기준입니다."),
                 "R/R성격": st.column_config.TextColumn("R/R성격", help="차트 구조 고점 기준인지, 현재가+4ATR 투영 상단인지 구분합니다."),
                 "R/R출처": st.column_config.TextColumn("R/R출처", help="R/R 목표값을 산출한 기준입니다. 투영상단은 확정 목표가가 아닙니다."),
+                "섹터RS상태": st.column_config.TextColumn("섹터RS상태", help="섹터 RS가 강함/보통/약함인지, 또는 섹터 벤치 미매핑인지 보여줍니다."),
+                "돈흐름_판정": st.column_config.TextColumn("돈흐름_판정", help="돈흐름 후보판에서 같은 종목을 어떻게 보고 있는지입니다."),
+                "돈흐름_주의요인": st.column_config.TextColumn("돈흐름_주의요인", help="돈흐름 후보판의 과열, 내부확산, 약한축 등 주의 사유입니다."),
                 "차트목표": st.column_config.TextColumn("차트목표", help="R/R 계산에 쓰는 차트 구조 목표가 또는 강세 시나리오 상단입니다. 애널리스트 목표가와 다를 수 있습니다."),
                 "손절가": st.column_config.TextColumn("손절가", help="R/R 계산에 쓰는 2ATR 기준 손절선입니다."),
                 "1차기준": st.column_config.TextColumn("1차기준", help="현재가 실행이 아니면 MA5/MA20/FVG/ATR 중 가장 가까운 1차 확인 가격입니다."),
@@ -33003,7 +33106,6 @@ def render_today_queue_tab(mode):
             width='stretch',
         )
 
-    flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
     unique_detail_count = (
         int(summary_df["티커"].astype(str).map(normalize_ticker).nunique())
         if "티커" in summary_df.columns else int(len(summary_df))

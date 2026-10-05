@@ -63,6 +63,33 @@ def test_today_review_master_joins_holdings_and_money_flow(app_module):
     assert result.loc[0, "돈흐름_판정"] == "진입검토"
 
 
+def test_attach_today_flow_context_adds_money_flow_columns(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Lumentum",
+            "티커": "LITE",
+            "최종읽기": "✅정밀확인",
+        }
+    ])
+    flow = pd.DataFrame([
+        {
+            "Ticker": "LITE",
+            "종목명": "Lumentum",
+            "후보군": "테마 주도주",
+            "판정": "눌림대기",
+            "시장맥락": "미국 · 포토닉스",
+            "기준업종": "레이저/광원",
+            "주의요인": "고점권",
+        }
+    ])
+
+    result = app_module.attach_today_flow_context(summary, flow)
+
+    assert result.loc[0, "돈흐름_후보군"] == "테마 주도주"
+    assert result.loc[0, "돈흐름_판정"] == "눌림대기"
+    assert result.loc[0, "돈흐름_기준업종"] == "레이저/광원"
+
+
 def test_today_review_flags_detects_conflicting_weight_and_leverage_text(app_module):
     summary = pd.DataFrame([
         {
@@ -127,3 +154,26 @@ def test_today_review_flags_detects_low_rr_actionable_signal(app_module):
     problems = " ".join(flags["문제"].astype(str).tolist())
 
     assert "R/R 1 미만" in problems
+
+
+def test_today_review_flags_use_gate_state_to_reduce_noisy_buyish_conflicts(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Weak RS Buyish",
+            "티커": "WRB",
+            "유형": "주식",
+            "최종읽기": "✅정밀확인",
+            "실행메모": "분할 가능",
+            "🔥기술적 타점": "✅우량주 회복 후보: 분할 검토",
+            "📌후보등급": "✅우량주 회복후보",
+            "판정분류": "buyish",
+            "게이트상태": "대기/관찰",
+            "게이트근거": "섹터RS 약함",
+        }
+    ])
+
+    flags = app_module.build_today_review_flags_df(summary)
+    problems = " ".join(flags["문제"].astype(str).tolist())
+
+    assert "buyish 원판정이 실행 게이트에서 낮아짐" in problems
+    assert "매수형 문구와 방어/차단 문구" not in problems
