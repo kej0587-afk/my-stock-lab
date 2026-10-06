@@ -90,6 +90,87 @@ def test_attach_today_flow_context_adds_money_flow_columns(app_module):
     assert result.loc[0, "돈흐름_기준업종"] == "레이저/광원"
 
 
+def test_attach_today_flow_context_uses_theme_raw_context_when_not_shortlisted(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Marvell Technology",
+            "티커": "MRVL",
+            "최종읽기": "✅정밀확인",
+        }
+    ])
+    snapshot = {
+        "theme_flow_df": pd.DataFrame([
+            {
+                "Ticker": "MRVL",
+                "종목명": "마벨",
+                "시장": "미국",
+                "테마": "포토닉스·광통신",
+                "하위테마": "데이터센터 연결",
+                "돈흐름점수": 12.4,
+                "1개월수익률": 0.08,
+                "가속도": 0.05,
+                "가격수준": 0.72,
+                "상태": "신규 유입",
+            }
+        ])
+    }
+
+    result = app_module.attach_today_flow_context(summary, pd.DataFrame(), snapshot=snapshot)
+
+    assert result.loc[0, "돈흐름_후보군"] == "레이더 관찰"
+    assert result.loc[0, "돈흐름_테마"] == "포토닉스·광통신"
+    assert "돈흐름 12.4" in result.loc[0, "돈흐름_후보근거"]
+    assert result.loc[0, "돈흐름_시장맥락"] != ""
+
+
+def test_attach_today_flow_context_uses_etf_radar_context(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "iShares Semiconductor ETF",
+            "티커": "SOXX",
+            "최종읽기": "⏳눌림대기",
+        }
+    ])
+    snapshot = {
+        "flow_df": pd.DataFrame([
+            {
+                "구분": "미국 섹터",
+                "섹터": "반도체 iShares",
+                "Ticker": "SOXX",
+                "ETF 이름": "iShares Semiconductor ETF",
+                "돈흐름점수": -5.0,
+                "스윙점수": 4.0,
+                "1개월수익률": 0.13,
+                "가속도": -0.1,
+                "가격수준": 0.78,
+                "상태": "둔화 경고",
+            }
+        ])
+    }
+
+    result = app_module.attach_today_flow_context(summary, pd.DataFrame(), snapshot=snapshot)
+
+    assert result.loc[0, "돈흐름_후보군"] == "ETF/섹터 레이더"
+    assert "반도체" in result.loc[0, "돈흐름_시장맥락"]
+    assert result.loc[0, "돈흐름_판정"] != ""
+
+
+def test_today_analyst_target_summary_hides_noisy_internal_source(app_module):
+    row = pd.Series({
+        "유형": "주식",
+        "애널목표가표시": "$293.88",
+        "애널목표Upside": "+8.0%",
+        "애널참여수": 43,
+        "애널목표출처": "get_analyst_snapshot",
+        "애널목표출처URL": "",
+        "애널목표조회시각": "2026-10-06 04:34",
+    })
+
+    label = app_module.build_today_analyst_target_summary(row)
+
+    assert label == "목표 $293.88 · Upside +8.0% · 43명"
+
+
 def test_today_review_flags_detects_conflicting_weight_and_leverage_text(app_module):
     summary = pd.DataFrame([
         {

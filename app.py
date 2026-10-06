@@ -6590,6 +6590,9 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_r
     # 오늘점검 수동 계산은 force_theme_refresh=True로 이전 후보와 섞이지 않게 한다.
     cache_clear(calculate_money_flow_df)
     cache_clear(download_money_flow_prices)
+    cache_clear(get_auto_benchmark_info)
+    cache_clear(get_sector_benchmark_holdings_name_map)
+    cache_clear(lookup_yfinance_info)
     if force_theme_refresh and IMAGE_THEME_FLOW_AVAILABLE:
         cache_clear(calculate_image_theme_flow_df)
     flow_df = calculate_money_flow_df()
@@ -15767,6 +15770,12 @@ BENCHMARK_LABELS = {
     "0227L0.KS": "HANARO 미국에이전틱AI TOP2+",
     "^KS11": "KOSPI 종합지수",
     "SMH": "SMH(반도체)",
+    "SOXX": "SOXX(반도체)",
+    "CIBR": "CIBR(사이버보안)",
+    "IGV": "IGV(소프트웨어)",
+    "IBB": "IBB(바이오)",
+    "COPX": "COPX(구리광산)",
+    "BTC-USD": "BTC(비트코인)",
     "XLK": "XLK(미국 기술)",
     "XLI": "XLI(미국 산업재)",
     "XLC": "XLC(미국 커뮤니케이션)",
@@ -21397,7 +21406,15 @@ def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_cla
         **benchmark.get("sector_provenance", {}),
     })
     snapshot = get_cached_today_market_flow_snapshot()
-    context = attach_today_flow_context(pd.DataFrame([workflow]), build_today_flow_shortlist_df(snapshot))
+    flow_shortlist = build_today_flow_shortlist_df(snapshot)
+    try:
+        import inspect
+        if "snapshot" in inspect.signature(attach_today_flow_context).parameters:
+            context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist, snapshot=snapshot)
+        else:
+            context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist)
+    except (TypeError, ValueError):
+        context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist)
     context = attach_market_execution_context(context, build_today_market_guard(snapshot, None))
     context = attach_today_analyst_context(context, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
     context = apply_execution_gate_columns(context, upside_value_map=build_today_analyst_upside_map(context))
@@ -30704,7 +30721,7 @@ TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "테마", "후보근거", "주의요인",
     "돈흐름점수", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20261006_candidate_timing_v3"
+TODAY_FLOW_SHORTLIST_VERSION = "20261006_sector_flow_context_v4"
 
 
 def _flow_shortlist_ticker_key(ticker: str) -> str:
@@ -31095,27 +31112,138 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     return result
 
 
-def attach_today_flow_context(summary_df: pd.DataFrame, flow_shortlist_df: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Attach compact money-flow context to Today Queue rows."""
-    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
-        return summary_df.copy() if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
-    if not isinstance(flow_shortlist_df, pd.DataFrame) or flow_shortlist_df.empty or "Ticker" not in flow_shortlist_df.columns:
-        return summary_df.copy()
+def _normalize_today_flow_context_frame(df: pd.DataFrame, priority: int, default_group: str) -> pd.DataFrame:
+    """Normalize money-flow rows so Today Queue can attach context broadly."""
+    if not isinstance(df, pd.DataFrame) or df.empty or "Ticker" not in df.columns:
+        return pd.DataFrame()
+    work = df.copy()
+    if "종목명" not in work.columns:
+        work["종목명"] = work.get("ETF 이름", work.get("섹터", work.get("Ticker", "")))
+    if "후보군" not in work.columns:
+        work["후보군"] = default_group
+    if "시장" not in work.columns:
+        work["시장"] = work.get("구분", "").apply(lambda v: _flow_text(v, default="-")) if "구분" in work.columns else "-"
+    if "세부축" not in work.columns:
+        work["세부축"] = work.get("하위테마", work.get("섹터", ""))
+    if "테마" not in work.columns:
+        work["테마"] = work.get("섹터", "")
+    if "대분류" not in work.columns:
+        try:
+            work["대분류"] = work.apply(
+                lambda r: _flow_display_broad_context(r, label_col="테마") if "테마" in work.columns else _flow_text(r.get("섹터", "")),
+                axis=1,
+            )
+        except Exception:
+            work["대분류"] = work.get("섹터", "")
+    if "기준업종" not in work.columns:
+        work["기준업종"] = work.apply(_flow_short_basis_context, axis=1)
+    if "타이밍" not in work.columns:
+        work["타이밍"] = work.apply(_flow_short_timing, axis=1)
+    if "주의요인" not in work.columns:
+        work["주의요인"] = work.apply(_flow_short_risk, axis=1)
+    if "판정" not in work.columns:
+        work["판정"] = work.apply(_flow_short_verdict, axis=1)
+    if "시장맥락" not in work.columns:
+        work["시장맥락"] = work.apply(_flow_short_context, axis=1)
+    if "등록상태" not in work.columns:
+        work["등록상태"] = work.apply(
+            lambda r: _today_flow_candidate_status(r.get("Ticker", ""), r.get("종목명", "")),
+            axis=1,
+        )
+    if "후보근거" not in work.columns:
+        work["후보근거"] = work.apply(lambda r: _flow_short_reason(r, default_group), axis=1)
+    work["_flow_context_priority"] = priority
+    work["_검토키"] = work["Ticker"].astype(str).map(_today_review_ticker_key)
+    work = work[work["_검토키"].astype(str).str.len() > 0]
+    return work
 
-    out = summary_df.copy()
-    out["_검토키"] = out.get("티커", pd.Series("", index=out.index)).astype(str).map(_today_review_ticker_key)
-    flow = flow_shortlist_df.copy()
-    flow["_검토키"] = flow["Ticker"].astype(str).map(_today_review_ticker_key)
-    flow = flow[flow["_검토키"].astype(str).str.len() > 0]
-    if flow.empty:
-        out = out.drop(columns=["_검토키"], errors="ignore")
-        return out
 
+def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Build ticker-level money-flow context from shortlist first, then raw radar rows."""
+    frames: list[pd.DataFrame] = []
+    if isinstance(flow_shortlist_df, pd.DataFrame) and not flow_shortlist_df.empty:
+        frames.append(_normalize_today_flow_context_frame(flow_shortlist_df, 1, "압축 후보"))
+
+    snapshot = snapshot if snapshot is not None else get_cached_today_market_flow_snapshot()
+    if isinstance(snapshot, dict):
+        theme_flow_df = snapshot.get("theme_flow_df", pd.DataFrame())
+        if isinstance(theme_flow_df, pd.DataFrame) and not theme_flow_df.empty and "Ticker" in theme_flow_df.columns:
+            theme_work = theme_flow_df.copy()
+            try:
+                theme_work = _attach_kr_internal_context_to_rotation_df(theme_work, label_col="테마")
+            except Exception:
+                pass
+            theme_work["후보군"] = "레이더 관찰"
+            frames.append(_normalize_today_flow_context_frame(theme_work, 20, "테마 원자료"))
+
+        flow_df = snapshot.get("flow_df", pd.DataFrame())
+        if isinstance(flow_df, pd.DataFrame) and not flow_df.empty and "Ticker" in flow_df.columns:
+            etf_work = flow_df.copy()
+            etf_work["종목명"] = etf_work.get("ETF 이름", etf_work.get("섹터", etf_work.get("Ticker", "")))
+            etf_work["테마"] = etf_work.get("섹터", "")
+            etf_work["세부축"] = etf_work.get("구분", "")
+            etf_work["시장"] = etf_work.get("구분", "")
+            etf_work["대분류"] = etf_work.get("섹터", "")
+            etf_work["기준업종"] = etf_work.get("섹터", "")
+            etf_work["후보군"] = etf_work.apply(
+                lambda r: "ETF/섹터 레이더"
+                if classify_money_flow_candidate_scope(r) == "후보"
+                else classify_money_flow_candidate_scope(r),
+                axis=1,
+            )
+            etf_work["판정"] = etf_work.apply(classify_money_flow_radar_label, axis=1)
+            etf_work["타이밍"] = etf_work.apply(_flow_short_timing, axis=1)
+            etf_work["주의요인"] = etf_work.apply(_flow_short_risk, axis=1)
+            etf_work["시장맥락"] = etf_work.apply(
+                lambda r: " · ".join(
+                    p for p in [
+                        _flow_text(r.get("구분", "")),
+                        _flow_text(r.get("섹터", "")),
+                        _flow_text(r.get("상태", "")),
+                    ]
+                    if p and p != "-"
+                ) or "-",
+                axis=1,
+            )
+            etf_work["후보근거"] = etf_work.apply(lambda r: _flow_short_reason(r, "ETF/섹터 원자료"), axis=1)
+            frames.append(_normalize_today_flow_context_frame(etf_work, 30, "ETF/섹터 원자료"))
+
+    frames = [frame for frame in frames if isinstance(frame, pd.DataFrame) and not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    if "돈흐름점수" not in combined.columns:
+        combined["돈흐름점수"] = np.nan
+    combined = combined.sort_values(
+        ["_flow_context_priority", "돈흐름점수"],
+        ascending=[True, False],
+        na_position="last",
+    )
+    combined = combined.drop_duplicates("_검토키", keep="first")
     flow_cols = [
         "Ticker", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
         "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
     ]
-    flow = flow[[col for col in flow_cols + ["_검토키"] if col in flow.columns]].copy()
+    return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
+
+
+def attach_today_flow_context(
+    summary_df: pd.DataFrame,
+    flow_shortlist_df: pd.DataFrame | None = None,
+    snapshot=None,
+) -> pd.DataFrame:
+    """Attach compact money-flow context to Today Queue rows."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return summary_df.copy() if isinstance(summary_df, pd.DataFrame) else pd.DataFrame()
+
+    out = summary_df.copy()
+    out["_검토키"] = out.get("티커", pd.Series("", index=out.index)).astype(str).map(_today_review_ticker_key)
+    flow = build_today_flow_context_df(snapshot=snapshot, flow_shortlist_df=flow_shortlist_df)
+    if flow.empty:
+        out = out.drop(columns=["_검토키"], errors="ignore")
+        return out
+
     flow = flow.drop_duplicates("_검토키", keep="first")
     flow = flow.rename(columns={col: f"돈흐름_{col}" for col in flow.columns if col != "_검토키"})
 
@@ -31124,6 +31252,40 @@ def attach_today_flow_context(summary_df: pd.DataFrame, flow_shortlist_df: pd.Da
     out = out.merge(flow, on="_검토키", how="left")
     out = out.drop(columns=["_검토키"], errors="ignore")
     return out
+
+
+def build_today_analyst_target_summary(row) -> str:
+    """Compact analyst target columns into one useful display label."""
+    type_text = _flow_text(row.get("유형", ""))
+    is_etf = "ETF" in type_text or "펀드" in type_text
+    target = _flow_text(row.get("애널목표가표시", ""))
+    upside = _flow_text(row.get("애널목표Upside", ""))
+    participants = clean_float(row.get("애널참여수", np.nan), np.nan)
+    source = _flow_text(row.get("애널목표출처", ""))
+    state = _flow_text(row.get("업사이드상태", row.get("애널목표상태", "")))
+    reason = _flow_text(row.get("애널목표사유", ""))
+
+    if target in {"-", "—"}:
+        target = ""
+    if upside in {"-", "—"}:
+        upside = ""
+    if not target and not upside:
+        if is_etf:
+            return "ETF 제외"
+        if reason and "없음" in reason:
+            return "목표가 미제공"
+        return state or "목표가 확인 필요"
+
+    parts: list[str] = []
+    if target:
+        parts.append(f"목표 {target}")
+    if upside:
+        parts.append(f"Upside {upside}")
+    if finite_num(participants) and float(participants) > 0:
+        parts.append(f"{int(float(participants))}명")
+    if source and source not in {"get_analyst_snapshot", "-"}:
+        parts.append(source)
+    return " · ".join(parts)
 
 
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
@@ -32930,10 +33092,12 @@ def render_today_queue_tab(mode):
     summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
     _upside_value_map = build_today_analyst_upside_map(summary_df)
 
-    flow_shortlist_df = build_today_flow_shortlist_df(get_cached_today_market_flow_snapshot())
-    summary_df = attach_today_flow_context(summary_df, flow_shortlist_df)
+    flow_snapshot_for_context = get_cached_today_market_flow_snapshot()
+    flow_shortlist_df = build_today_flow_shortlist_df(flow_snapshot_for_context)
+    summary_df = attach_today_flow_context(summary_df, flow_shortlist_df, snapshot=flow_snapshot_for_context)
     summary_df = attach_market_execution_context(summary_df, market_guard)
     summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_value_map)
+    summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
 
     reason_bucket = reason_bucket.reindex(summary_df.index).fillna("일반")
     hard_block_mask = hard_block_mask.reindex(summary_df.index, fill_value=False)
@@ -33003,7 +33167,7 @@ def render_today_queue_tab(mode):
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거",
-        "애널목표Upside", "업사이드상태", "애널목표가표시", "애널참여수", "애널목표출처", "애널목표출처URL", "애널목표기준일", "애널목표조회시각", "애널목표사유", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
+        "목표가요약", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
         "1차기준", "1차조건", "부족액", "📌후보등급", "🔥기술적 타점",
         "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
         "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "섹터RS상태", "섹터벤치", "섹터RS변화", "섹터RS기준일", "섹터분류근거", "섹터분류출처", "섹터검증일", "RSI", "MFI", "볼린저 %B", "고점대비",
@@ -33031,6 +33195,7 @@ def render_today_queue_tab(mode):
             view_df[display_cols],
             column_config={
                 "애널목표Upside": st.column_config.TextColumn("애널목표Upside", help="애널리스트 평균 목표가 기준 현재가 대비 상승여력입니다. R/R용 차트목표와 다른 값입니다. 데이터 없으면 — 표시"),
+                "목표가요약": st.column_config.TextColumn("목표가요약", help="애널 목표가, 상승여력, 참여수만 압축 표시합니다. 출처 URL/조회시각은 기본표에서 숨깁니다."),
                 "애널목표출처": st.column_config.TextColumn("애널목표출처", help="목표가를 제공한 데이터 소스입니다."),
                 "애널목표출처URL": st.column_config.LinkColumn("애널목표출처URL", display_text="원자료"),
                 "애널목표기준일": st.column_config.TextColumn("애널목표기준일", help="제공처가 명시한 목표가 기준일입니다. 기준일을 제공하지 않으면 비워 둡니다."),
