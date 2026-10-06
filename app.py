@@ -6579,19 +6579,22 @@ def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
             cache_clear(calculate_image_theme_flow_df)
 
 
-def refresh_today_market_flow_snapshot(include_theme: bool = True):
+def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_refresh: bool = False):
     """ETF/섹터 데이터 + 테마종목(옵션) 계산.
-    include_theme=True도 테마 원자료 캐시는 유지해서 후보판을 살리되 반복 새로고침 부담을 낮춘다.
+    include_theme=True도 기본 화면 새로고침은 테마 원자료 캐시를 유지한다.
+    오늘점검 판정용 수동 계산은 force_theme_refresh=True로 후보 원자료까지 새로 본다.
     """
     _kst_now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
 
-    # ETF/섹터 가격은 새로 보고, 테마/개별 후보는 캐시 또는 기존 결과를 재사용한다.
-    # 이전처럼 전체 캐시를 모두 지우면 네이버/테마 계산까지 매번 다시 돌아 무한 로딩처럼 보일 수 있다.
+    # ETF/섹터 가격은 새로 본다. 일반 돈흐름 화면은 테마 후보를 재사용해 속도를 지키고,
+    # 오늘점검 수동 계산은 force_theme_refresh=True로 이전 후보와 섞이지 않게 한다.
     cache_clear(calculate_money_flow_df)
     cache_clear(download_money_flow_prices)
+    if force_theme_refresh and IMAGE_THEME_FLOW_AVAILABLE:
+        cache_clear(calculate_image_theme_flow_df)
     flow_df = calculate_money_flow_df()
     sector_rotation_df = calculate_sector_rotation_df(flow_df)
-    prev = get_cached_today_market_flow_snapshot() or {}
+    prev = {} if force_theme_refresh else (get_cached_today_market_flow_snapshot() or {})
     snapshot = {
         **prev,
         "flow_df":           flow_df,
@@ -6606,7 +6609,7 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True):
     }
 
     if include_theme:
-        if _snapshot_has_theme_context(prev):
+        if (not force_theme_refresh) and _snapshot_has_theme_context(prev):
             for key in ("theme_flow_df", "theme_rotation_df", "subtheme_group_df", "theme_top5", "subtheme_top"):
                 snapshot[key] = prev.get(key, pd.DataFrame())
         else:
@@ -21401,6 +21404,29 @@ def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_cla
     return context.iloc[0].to_dict()
 
 
+EXECUTION_WORKFLOW_DISPLAY_COLUMNS = ["후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거"]
+
+
+def _safe_execution_workflow_row(workflow):
+    """Normalize old/partial precision workflow snapshots for display."""
+    row = dict(workflow) if isinstance(workflow, dict) else {}
+    defaults = {
+        "후보품질": row.get("후보품질") or row.get("📌후보등급") or row.get("grade") or "",
+        "후보점수": row.get("후보점수") if row.get("후보점수") not in [None, ""] else row.get("t_score", ""),
+        "후보검토사항": row.get("후보검토사항") or "",
+        "게이트상태": row.get("게이트상태") or GATE_WATCH_ONLY,
+        "게이트근거": row.get("게이트근거") or "실행 게이트 재확인 필요",
+    }
+    for key, value in defaults.items():
+        row.setdefault(key, value)
+    return row
+
+
+def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
+    row = _safe_execution_workflow_row(workflow)
+    return pd.DataFrame([row]).reindex(columns=EXECUTION_WORKFLOW_DISPLAY_COLUMNS, fill_value="")
+
+
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
     """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
@@ -30678,7 +30704,7 @@ TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "테마", "후보근거", "주의요인",
     "돈흐름점수", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20260922_recovery_tracking_v1"
+TODAY_FLOW_SHORTLIST_VERSION = "20261006_candidate_timing_v3"
 
 
 def _flow_shortlist_ticker_key(ticker: str) -> str:
@@ -32252,11 +32278,19 @@ def _today_review_has_actionable_buyish(row, text: str) -> bool:
     action = str(row.get("실행메모", "") or "")
     timing = str(row.get("🔥기술적 타점", "") or "")
     grade = str(row.get("📌후보등급", "") or "")
+    asset_text = " ".join(str(row.get(col, "") or "") for col in ["종목명", "티커", "유형"])
+    asset_leverage = bool(re.search(TODAY_REVIEW_LEVERAGE_ASSET_RE, asset_text, flags=re.I))
+    if asset_leverage and re.search(
+        r"레버리지정찰|DCA조건부|레버리지.*조건부|보험성|조건부\s*소액",
+        text,
+        flags=re.I,
+    ):
+        return False
     if group == "buyish":
         return True
-    if re.search(r"정밀확인|레버리지정찰", final_read):
+    if re.search(r"정밀확인", final_read):
         return True
-    if re.search(r"분할 가능|소액 1차만|조건부 소액 DCA|보험성 1차 정찰|현재가 부근 1차 정찰", action):
+    if re.search(r"분할 가능|소액 1차만|현재가 부근 1차 정찰", action):
         return True
     if re.search(r"매수 가능|진입 적합|분할 검토|조건부 DCA|정찰", timing + " " + grade):
         return not re.search(r"매수금지|신규금지|추매금지|추매중단|추가매수 제외|DCA 대기|방어", text)
@@ -32688,7 +32722,7 @@ def render_today_queue_tab(mode):
     if run_summary:
         try:
             with st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
-                flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True)
+                flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True, force_theme_refresh=True)
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
             queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
             st.session_state["today_queue_open_flow_detail"] = True
@@ -32802,13 +32836,13 @@ def render_today_queue_tab(mode):
         summary_df.loc[blocked_leveraged_scout_mask, "실행메모"] = "레버리지 시장대기"
         action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
     if leveraged_scout_mask.any():
-        reason_bucket.loc[leveraged_scout_mask] = "일반"
-        summary_df.loc[leveraged_scout_mask, "최종읽기"] = "✅레버리지정찰"
-        summary_df.loc[leveraged_scout_mask, "실행메모"] = "보험성 1차 정찰"
+        reason_bucket.loc[leveraged_scout_mask] = "관심/눌림대기"
+        summary_df.loc[leveraged_scout_mask, "최종읽기"] = "⏳DCA조건부"
+        summary_df.loc[leveraged_scout_mask, "실행메모"] = "조건부 소액 관찰"
         if "📌후보등급" in summary_df.columns:
-            summary_df.loc[leveraged_scout_mask, "📌후보등급"] = "⚡조건부 1차"
+            summary_df.loc[leveraged_scout_mask, "📌후보등급"] = "⚡레버리지DCA조건부"
         needs_scout_label = leveraged_scout_mask & label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검|DCA\s*대기", regex=True, na=False)
-        summary_df.loc[needs_scout_label, "🔥기술적 타점"] = "⚡레버리지 회복정찰: 보험성 1차"
+        summary_df.loc[needs_scout_label, "🔥기술적 타점"] = "⚡레버리지 회복관찰: 조건부 1차 대기"
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
         final_read_series = summary_df.get("최종읽기", pd.Series("", index=summary_df.index)).astype(str)
         grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
@@ -32886,8 +32920,8 @@ def render_today_queue_tab(mode):
     )
     hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
     dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
-    buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask | leveraged_scout_mask) & ~hard_block_mask
-    caution_mask = ((signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask) & ~leveraged_scout_mask
+    buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
+    caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask
     risk_df = build_today_holdings_risk_table(summary_df, hard_block_mask, caution_mask, watch_items)
 
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
@@ -33218,7 +33252,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             name, tkr, c, is_etf, asset_class, has_pos_value,
             pattern_timing, pattern_bucket, pattern_reason,
         )
-        external = c["execution_workflow"]
+        external = _safe_execution_workflow_row(c.get("execution_workflow"))
         st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([
             {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
@@ -35216,11 +35250,11 @@ if main_page == "precision":
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
             st.dataframe(
-                pd.DataFrame([c["execution_workflow"]])[["후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거"]],
+                build_execution_workflow_display_df(c.get("execution_workflow")),
                 width='stretch', hide_index=True,
             )
             with st.expander("외부자료 확인"):
-                external = c["execution_workflow"]
+                external = _safe_execution_workflow_row(c.get("execution_workflow"))
                 st.dataframe(pd.DataFrame([
                     {"항목": "섹터RS", "값": external.get("섹터RS", "-"), "비교/제공처": external.get("섹터벤치", "-"), "기준일": external.get("섹터RS기준일", ""), "출처": external.get("섹터분류출처", "")},
                     {"항목": "애널 목표가", "값": external.get("애널목표가표시", "-"), "비교/제공처": external.get("애널목표출처", ""), "기준일": external.get("애널목표기준일", ""), "출처": external.get("애널목표출처URL", "")},

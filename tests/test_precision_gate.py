@@ -71,6 +71,20 @@ def test_precision_rendering_does_not_reference_removed_local_context():
     assert not any(isinstance(node, ast.Name) and node.id == "precision_context" for node in ast.walk(tree))
 
 
+def test_precision_workflow_display_tolerates_partial_cached_workflow(precision_app):
+    frame = precision_app.build_execution_workflow_display_df({"게이트상태": GATE_WAIT})
+
+    assert list(frame.columns) == ["후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거"]
+    assert frame.loc[0, "게이트상태"] == GATE_WAIT
+    assert frame.loc[0, "게이트근거"] == "실행 게이트 재확인 필요"
+
+
+def test_precision_rendering_uses_safe_workflow_display_helper():
+    source = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig")
+
+    assert 'pd.DataFrame([c["execution_workflow"]])[["후보품질"' not in source
+
+
 @pytest.mark.parametrize("overrides,flow_verdict,expected", [
     ({}, "", GATE_EXECUTABLE),
     ({"decision_code": "A_UPTREND_SEARCH_ENTRY", "dec": "🔍A급 정배열: 타점 탐색 중"}, "", GATE_WAIT),

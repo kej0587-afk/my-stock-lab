@@ -69,6 +69,23 @@ def test_execution_gate_allows_clean_buyish_row():
     assert gate["게이트상태"] == GATE_EXECUTABLE
 
 
+def test_leveraged_scout_label_is_wait_not_executable():
+    row = {
+        "티커": "RAM",
+        "판정분류": "buyish",
+        "최종읽기": "✅레버리지정찰",
+        "실행메모": "보험성 1차 정찰",
+        "🔥기술적 타점": "⚡레버리지 회복정찰: 보험성 1차",
+        "판정코드": "LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+        "R/R": "1.20",
+    }
+
+    gate = build_execution_gate(row)
+
+    assert gate["게이트상태"] == GATE_WAIT
+    assert "레버리지 조건부 확인 대기" in gate["게이트근거"]
+
+
 def test_apply_execution_gate_columns_adds_quality_states():
     df = pd.DataFrame([
         {

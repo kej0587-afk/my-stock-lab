@@ -36,6 +36,25 @@ def test_partition_is_exhaustive_disjoint_and_gate_matches_execution():
     assert masks["overweight"].loc[5]
 
 
+def test_leveraged_dca_conditional_routes_to_wait_not_execution():
+    frame = pd.DataFrame([{
+        "티커": "BITX",
+        "유형": "ETF",
+        "판정분류": "buyish",
+        "최종읽기": "⏳DCA조건부",
+        "실행메모": "조건부 소액 관찰",
+        "🔥기술적 타점": "⚡레버리지 회복관찰: 조건부 1차 대기",
+        "판정코드": "LEVERAGED_DCA_CONDITIONAL",
+        "R/R": "1.30",
+    }])
+    frame = apply_execution_gate_columns(frame)
+    masks = partition_today_queue(frame, pd.Series(["관심/눌림대기"], index=frame.index))
+
+    assert frame.loc[0, "게이트상태"] == GATE_WAIT
+    assert not bool(masks["execution"].iloc[0])
+    assert bool(masks["wait"].iloc[0])
+
+
 def test_regional_leverage_guard_and_mtf_damage_share_defensive_routing():
     row = build_decision_workflow("SOXL", "SOXL", _candidate(
         dec="신규진입: 대장주 포착", decision_code="NEW_ENTRY_LEADER", decision_group="buyish",

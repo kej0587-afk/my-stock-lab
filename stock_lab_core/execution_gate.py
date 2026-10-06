@@ -161,10 +161,13 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if re.search(r"추격금지|눌림대기|회복확인|내부확인", flow_text):
         reasons.append(f"돈흐름 {flow_verdict or flow_group}")
 
+    if re.search(r"레버리지정찰|레버리지.*조건부|DCA\s*조건부", text, flags=re.I):
+        reasons.append("레버리지 조건부 확인 대기")
+
     if reasons:
         return {"게이트상태": GATE_WAIT, "게이트근거": " · ".join(dict.fromkeys(reasons))}
 
-    if group == "buyish" or re.search(r"정밀확인|레버리지정찰", final_read):
+    if group == "buyish" or re.search(r"정밀확인", final_read):
         if not math.isfinite(rr) or rr <= 0:
             return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "현재가 R/R 확인 필요"}
         return {"게이트상태": GATE_EXECUTABLE, "게이트근거": "R/R·패턴·방어 게이트 통과"}
