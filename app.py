@@ -336,15 +336,50 @@ from stock_lab_core.news import (
     render_investor_trend_panel,
     render_investor_top10_panel,
 )
-from stock_lab_core.today_news import (
-    TODAY_BREAKING_STORY_RSS_PLAN,
-    TODAY_MARKET_STORY_RSS_PLAN,
-    build_today_action_news_brief as _build_today_action_news_brief,
-    fetch_today_breaking_story_news as _fetch_today_breaking_story_news_core,
-    fetch_today_market_story_news as _fetch_today_market_story_news_core,
-    normalize_today_action_news_row as _normalize_today_action_news_row,
-    rank_today_action_news_rows as _rank_today_action_news_rows,
-)
+try:
+    from stock_lab_core.today_news import (
+        TODAY_BREAKING_STORY_RSS_PLAN,
+        TODAY_MARKET_STORY_RSS_PLAN,
+        build_today_action_news_brief as _build_today_action_news_brief,
+        fetch_today_breaking_story_news as _fetch_today_breaking_story_news_core,
+        fetch_today_market_story_news as _fetch_today_market_story_news_core,
+        normalize_today_action_news_row as _normalize_today_action_news_row,
+        rank_today_action_news_rows as _rank_today_action_news_rows,
+    )
+    TODAY_NEWS_IMPORT_ERROR = ""
+except (ImportError, KeyError) as e:
+    # Streamlit Cloud can briefly serve mixed module caches during deploy.
+    TODAY_NEWS_IMPORT_ERROR = str(e)
+    TODAY_BREAKING_STORY_RSS_PLAN = []
+    TODAY_MARKET_STORY_RSS_PLAN = []
+
+    def _fetch_today_breaking_story_news_core(days=2, per_query=1):
+        return []
+
+    def _fetch_today_market_story_news_core(selected_categories=(), per_category=2, days=2):
+        return []
+
+    def _normalize_today_action_news_row(row, source_group="시장"):
+        row = row or {}
+        return {
+            "구분": source_group,
+            "읽기분류": "확인 필요",
+            "중요도": 0,
+            "체크": "뉴스 모듈 로드 실패",
+            "카테고리": str(row.get("category", "") or source_group),
+            "종목": str(row.get("ticker", "") or row.get("name", "") or ""),
+            "제목": str(row.get("title", "") or ""),
+            "초보요약": "앱 업데이트 직후 뉴스 모듈을 다시 불러오지 못했습니다. 새로고침 후 다시 확인하세요.",
+            "출처": str(row.get("publisher", "") or row.get("source", "") or "-"),
+            "시간": str(row.get("published", "") or ""),
+            "링크": str(row.get("link", "") or row.get("url", "") or ""),
+        }
+
+    def _rank_today_action_news_rows(rows, limit=18):
+        return list(rows or [])[: int(limit or 18)]
+
+    def _build_today_action_news_brief(rows):
+        return [] if rows else []
 from stock_lab_core.today_flow_candidates import (
     classify_flow_candidate_type,
     classify_money_flow_candidate_scope,
@@ -8406,7 +8441,7 @@ def fetch_us_etf_composition(ticker):
             timeout=8,
         )
         resp.raise_for_status()
-        tables = pd.read_html(resp.text)
+        tables = pd.read_html(io.StringIO(resp.text))
         for table in tables:
             cols = [str(c).strip() for c in table.columns]
             lower = {c.lower(): c for c in cols}
@@ -17912,6 +17947,14 @@ def set_precision_target_ticker(ticker: str, option_map: dict | None = None) -> 
         return _queue_precision_selected_option(label)
 
     return _queue_precision_free_target(target)
+
+
+def preserve_precision_target_for_next_rerun(ticker: str, option_map: dict | None = None) -> str:
+    """Keep the currently analyzed precision ticker sticky across button reruns."""
+    label = set_precision_target_ticker(ticker, option_map)
+    if label:
+        st.session_state[PRECISION_SELECTED_OPTION_KEY] = label
+    return label
 
 
 def get_saved_fin_score_fast(ticker, is_etf):
@@ -35049,6 +35092,8 @@ if main_page == "precision":
                         st.session_state[PRECISION_FREE_TICKER_KEY] = quick_base_ticker
                         st.session_state[PRECISION_FREE_MARKET_KEY] = quick_inferred_market
                         st.session_state[PRECISION_FORCE_FREE_OPTION_KEY] = True
+                        st.session_state[PRECISION_SELECTED_OPTION_KEY] = FREE_SEARCH_OPTION
+                        _queue_precision_selected_option(FREE_SEARCH_OPTION)
                         st.rerun()
 
     if is_free:
@@ -35182,6 +35227,7 @@ if main_page == "precision":
                     new_score, _ = get_final_fin_score(tkr, is_etf, a_class)
                     st.session_state.fin_score_map[fin_key] = int(new_score)
                 st.success("자동 재무점수 계산 완료")
+                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
                 st.rerun()
 
         annual_judgements = notes.get("annual_judgements", {})
@@ -35266,6 +35312,7 @@ if main_page == "precision":
         if had_manual and not manual_override:
             reset_manual_fin_score(tkr)
             st.session_state.fin_score_map.pop(fin_key, None)
+            preserve_precision_target_for_next_rerun(tkr, precision_option_map)
             st.rerun()
 
         if manual_override:
@@ -35279,6 +35326,7 @@ if main_page == "precision":
             if current_manual != int(manual_score):
                 set_manual_fin_score(tkr, manual_score)
                 st.session_state.fin_score_map[fin_key] = int(manual_score)
+                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
                 st.rerun()
 
             fin_score = int(manual_score)
@@ -35286,6 +35334,7 @@ if main_page == "precision":
             if st.button("자동 재무점수로 되돌리기", key=f"reset_manual_{fin_key}"):
                 reset_manual_fin_score(tkr)
                 st.session_state.fin_score_map.pop(fin_key, None)
+                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
                 st.rerun()
 
     st.markdown("### ⭐ 관심종목 관리")

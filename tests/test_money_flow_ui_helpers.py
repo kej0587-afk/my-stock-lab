@@ -9,6 +9,34 @@ def test_us_etf_composition_fallback_has_cibr_top5(app_module):
     assert comp_df["비중(%)"].iloc[0] == 8.91
 
 
+def test_us_etf_composition_reads_html_response(app_module, monkeypatch):
+    class FakeResponse:
+        text = """
+        <table>
+            <thead>
+                <tr><th>Security Name</th><th>Identifier</th><th>Weighting</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>CrowdStrike Holdings</td><td>CRWD</td><td>8.91%</td></tr>
+                <tr><td>Fortinet</td><td>FTNT</td><td>8.07%</td></tr>
+            </tbody>
+        </table>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    if hasattr(app_module.fetch_us_etf_composition, "clear"):
+        app_module.fetch_us_etf_composition.clear()
+    monkeypatch.setattr(app_module.requests, "get", lambda *args, **kwargs: FakeResponse())
+
+    comp_df, meta = app_module.fetch_us_etf_composition("CIBR")
+
+    assert meta["fallback"] is False
+    assert comp_df["티커"].tolist() == ["CRWD", "FTNT"]
+    assert comp_df["비중(%)"].iloc[0] == 8.91
+
+
 def test_cluster_list_prioritizes_current_timing_over_stale_strength(app_module, monkeypatch):
     monkeypatch.setattr(app_module, "_load_index_rotation_recent_returns", lambda ticker: {"1D": 0.0, "5D": 0.0})
     monkeypatch.setattr(
