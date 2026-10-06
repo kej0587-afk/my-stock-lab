@@ -32,7 +32,7 @@ except Exception:
             return False
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20261006_sector_flow_context_v4"
+TODAY_QUEUE_LOGIC_VERSION = "20261006_signal_audit_flow_capture_v5"
 TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
 
 TODAY_QUEUE_DEFENSE_CODES = {

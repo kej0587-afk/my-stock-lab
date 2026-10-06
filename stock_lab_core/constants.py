@@ -79,6 +79,10 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "200710": "에이디테크놀러지",
     "042700": "한미반도체",
     "403870": "HPSP",
+    "098120": "마이크로컨텍솔",
+    "030530": "원익홀딩스",
+    "000500": "가온전선",
+    "096770": "SK이노베이션",
     "039030": "이오테크닉스",
     "058470": "리노공업",
     "095340": "ISC",
@@ -148,4 +152,5 @@ KNOWN_TICKER_DISPLAY_NAMES: dict[str, str] = {
     "PANW": "Palo Alto Networks",
     "CRWD": "크라우드스트라이크",
     "DDOG": "Datadog",
+    "AEHR": "Aehr Test Systems",
 }

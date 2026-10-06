@@ -63,6 +63,39 @@ def test_today_review_master_joins_holdings_and_money_flow(app_module):
     assert result.loc[0, "돈흐름_판정"] == "진입검토"
 
 
+def test_today_review_master_does_not_duplicate_existing_money_flow_context(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Marvell Technology",
+            "티커": "MRVL",
+            "최종읽기": "⏳눌림대기",
+            "돈흐름_후보군": "레이더 관찰",
+            "돈흐름_판정": "관찰",
+        }
+    ])
+    flow = pd.DataFrame([
+        {
+            "Ticker": "MRVL",
+            "종목명": "마벨",
+            "후보군": "스윙후보",
+            "판정": "스윙 후보",
+        }
+    ])
+
+    result = app_module.build_today_review_master_df(summary, pd.DataFrame(), flow)
+
+    assert "돈흐름_후보군_x" not in result.columns
+    assert "돈흐름_후보군_y" not in result.columns
+    assert result.loc[0, "돈흐름_후보군"] == "레이더 관찰"
+
+
+def test_sanitize_asset_name_recovers_new_money_flow_names(app_module):
+    assert app_module.sanitize_asset_name("098120.KQ", "098120.KQ") == "마이크로컨텍솔"
+    assert app_module.sanitize_asset_name("000500.KS", "000500.KS") == "가온전선"
+    assert app_module.sanitize_asset_name("096770.KS", "096770.KS") == "SK이노베이션"
+    assert app_module.sanitize_asset_name("AEHR", "AEHR") == "Aehr Test Systems"
+
+
 def test_attach_today_flow_context_adds_money_flow_columns(app_module):
     summary = pd.DataFrame([
         {
@@ -169,6 +202,72 @@ def test_today_analyst_target_summary_hides_noisy_internal_source(app_module):
     label = app_module.build_today_analyst_target_summary(row)
 
     assert label == "목표 $293.88 · Upside +8.0% · 43명"
+
+
+def test_today_current_signal_audit_includes_every_signal(app_module):
+    summary = pd.DataFrame([
+        {
+            "종목명": "Microsoft",
+            "티커": "MSFT",
+            "유형": "주식",
+            "현재가": "$526.50",
+            "최종읽기": "🚫추격금지",
+            "🔥기술적 타점": "🚫하드차단: 볼린상단 이탈",
+            "판정코드": "HARD_BLOCK_BOLLINGER_UPPER",
+            "판정분류": "caution",
+            "게이트상태": "대기/관찰",
+            "돈흐름_판정": "추격금지",
+        },
+        {
+            "종목명": "원익홀딩스",
+            "티커": "030530.KQ",
+            "유형": "주식",
+            "현재가": "₩7,120",
+            "최종읽기": "⏳눌림대기",
+            "🔥기술적 타점": "✅스윙 후보: 정밀확인",
+            "판정코드": "SWING_WATCH",
+            "판정분류": "buyish",
+            "게이트상태": "대기/관찰",
+            "돈흐름_판정": "스윙 후보",
+        },
+    ])
+
+    audit = app_module.build_today_current_signal_audit_df(summary)
+
+    assert set(audit["티커"]) == {"MSFT", "030530.KQ"}
+    assert "검증방향" in audit.columns
+    assert "검증대상" in audit.columns
+    assert audit.loc[audit["티커"] == "MSFT", "검증방향"].iloc[0] == "avoid"
+    assert audit.loc[audit["티커"] == "030530.KQ", "검증방향"].iloc[0] == "buy"
+
+
+def test_flow_auto_queue_prioritizes_swing_capture_before_high_chase(app_module, monkeypatch):
+    flow = pd.DataFrame([
+        {
+            "Ticker": "HOT1.KQ",
+            "종목명": "고점주1",
+            "후보군": "테마 주도주 · 고점주의",
+            "판정": "눌림대기",
+            "타이밍": "급등 후 고점권 · 눌림대기",
+            "돈흐름점수": 120.0,
+            "등록상태": "미등록",
+        },
+        {
+            "Ticker": "030530.KQ",
+            "종목명": "원익홀딩스",
+            "후보군": "스윙후보",
+            "판정": "스윙 후보",
+            "타이밍": "급등 포착",
+            "돈흐름점수": 58.0,
+            "등록상태": "미등록",
+        },
+    ])
+    monkeypatch.setattr(app_module, "build_today_flow_shortlist_df", lambda snapshot=None: flow)
+
+    items = app_module.build_today_flow_candidate_queue_items(snapshot={}, existing_items=(), limit=1)
+
+    assert len(items) == 1
+    assert items[0]["ticker"] == "030530.KQ"
 
 
 def test_today_review_flags_detects_conflicting_weight_and_leverage_text(app_module):

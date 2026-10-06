@@ -6592,7 +6592,6 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_r
     cache_clear(download_money_flow_prices)
     cache_clear(get_auto_benchmark_info)
     cache_clear(get_sector_benchmark_holdings_name_map)
-    cache_clear(lookup_yfinance_info)
     if force_theme_refresh and IMAGE_THEME_FLOW_AVAILABLE:
         cache_clear(calculate_image_theme_flow_df)
     flow_df = calculate_money_flow_df()
@@ -30721,7 +30720,7 @@ TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "테마", "후보근거", "주의요인",
     "돈흐름점수", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20261006_sector_flow_context_v4"
+TODAY_FLOW_SHORTLIST_VERSION = "20261006_signal_audit_flow_capture_v5"
 
 
 def _flow_shortlist_ticker_key(ticker: str) -> str:
@@ -32310,7 +32309,34 @@ def build_today_flow_candidate_queue_items(snapshot=None, existing_items=None, l
     }
     picked: list[dict] = []
     seen_keys = set(existing_keys)
-    for _, row in shortlist_df.iterrows():
+
+    def _auto_queue_priority(row) -> int:
+        registered = _flow_text(row.get("등록상태", ""))
+        group = _flow_text(row.get("후보군", ""))
+        verdict = _flow_text(row.get("판정", ""))
+        timing = _flow_text(row.get("타이밍", ""))
+        joined = " ".join([group, verdict, timing])
+        if registered and registered != "미등록":
+            return 0
+        if "스윙" in joined or "급등 포착" in joined:
+            return 1
+        if "회복" in joined:
+            return 2
+        if "고점주의" in group or "고점권" in timing or "추격금지" in verdict:
+            return 4
+        return 3
+
+    work = shortlist_df.copy()
+    work["_auto_queue_priority"] = work.apply(_auto_queue_priority, axis=1)
+    if "돈흐름점수" not in work.columns:
+        work["돈흐름점수"] = np.nan
+    work = work.sort_values(
+        ["_auto_queue_priority", "돈흐름점수"],
+        ascending=[True, False],
+        na_position="last",
+    )
+
+    for _, row in work.iterrows():
         if len(picked) >= int(limit):
             break
         ticker = sanitize_ticker_value(row.get("Ticker", row.get("티커", "")))
@@ -32488,7 +32514,13 @@ def build_today_review_master_df(summary_df, holdings_df=None, flow_shortlist_df
         hdf = hdf.rename(columns={col: f"보유_{col}" for col in hdf.columns if col != "_검토키"})
         master = master.merge(hdf, on="_검토키", how="left")
 
-    if isinstance(flow_shortlist_df, pd.DataFrame) and not flow_shortlist_df.empty and "Ticker" in flow_shortlist_df.columns:
+    has_existing_flow_context = any(str(col).startswith("돈흐름_") for col in master.columns)
+    if (
+        not has_existing_flow_context
+        and isinstance(flow_shortlist_df, pd.DataFrame)
+        and not flow_shortlist_df.empty
+        and "Ticker" in flow_shortlist_df.columns
+    ):
         fdf = flow_shortlist_df.copy()
         fdf["_검토키"] = fdf["Ticker"].astype(str).map(_today_review_ticker_key)
         fdf = fdf[fdf["_검토키"].astype(str).str.len() > 0]
@@ -32503,6 +32535,54 @@ def build_today_review_master_df(summary_df, holdings_df=None, flow_shortlist_df
 
     master.insert(0, "검토키", master.pop("_검토키"))
     return master
+
+
+def build_today_current_signal_audit_df(summary_df, source: str = "today_check"):
+    """Export every current Today Queue signal, not only conflict rows."""
+    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
+        return pd.DataFrame()
+
+    work = summary_df.copy()
+    if "티커" not in work.columns:
+        work["티커"] = ""
+    work["_검토키"] = work["티커"].astype(str).map(_today_review_ticker_key)
+    work = work[work["_검토키"].astype(str).str.len() > 0]
+    if work.empty:
+        return pd.DataFrame()
+    work = work.drop_duplicates("_검토키", keep="first").copy()
+
+    def _audit_side(row) -> str:
+        decision_label = str(row.get("🔥기술적 타점", row.get("시스템판정", row.get("판정", ""))) or "")
+        decision_code = str(row.get("판정코드", "") or "")
+        final_read = str(row.get("최종읽기", "") or "")
+        extra_text = " ".join(
+            str(row.get(col, "") or "")
+            for col in ["패턴타점", "오늘결론", "요약", "뉴스재료", "상세판정", "게이트근거", "실행메모"]
+            if col in work.columns
+        )
+        return classify_signal_journal_side(decision_code, decision_label, final_read, extra_text)
+
+    work["검증방향"] = work.apply(_audit_side, axis=1)
+    work["검증대상"] = work["검증방향"].map({
+        "buy": "매수형 성과검증",
+        "avoid": "회피/방어 성과검증",
+        "neutral": "관찰 기록",
+    }).fillna("관찰 기록")
+    work["검증출처"] = str(source or "today_check")
+    work["검증일"] = datetime.now(KST).date().isoformat()
+
+    audit_cols = [
+        "검증일", "검증출처", "티커", "종목명", "유형", "검증방향", "검증대상",
+        "현재가", "현재비중", "목표비중", "비중차이",
+        "🔥기술적 타점", "최종읽기", "판정코드", "판정분류",
+        "게이트상태", "게이트근거", "실행메모",
+        "R/R", "RR값", "RSI", "MFI", "볼린저 %B",
+        "섹터벤치", "섹터RS", "섹터RS상태", "섹터RS변화", "섹터RS기준일",
+        "돈흐름_후보군", "돈흐름_판정", "돈흐름_타이밍", "돈흐름_주의요인",
+        "돈흐름_시장맥락", "돈흐름_돈흐름점수", "돈흐름_후보근거",
+        "목표가요약", "후보검토사항", "핵심근거",
+    ]
+    return work[[col for col in audit_cols if col in work.columns]].reset_index(drop=True)
 
 
 def _append_today_review_flag(rows, severity, ticker, name, issue, basis, suggestion):
@@ -32700,6 +32780,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 
     masks = masks or {}
     master_df = build_today_review_master_df(summary_df, holdings_df, flow_shortlist_df)
+    signal_audit_df = build_today_current_signal_audit_df(summary_df)
     flags_df = build_today_review_flags_df(summary_df, holdings_df, flow_shortlist_df)
     guard_df = pd.DataFrame([market_guard or {}])
     notes = [
@@ -32710,6 +32791,10 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         {
             "항목": "중복/충돌",
             "내용": "99_review_flags.csv는 오늘점검, 내 보유, 돈흐름 후보 사이의 중복·상충 문구를 자동으로 모은 점검표입니다.",
+        },
+        {
+            "항목": "검증신호",
+            "내용": "98_current_signal_audit.csv는 현재 오늘점검의 전체 신호 목록입니다. 99는 문제 행만 모으므로 정상 신호는 98에서 확인합니다.",
         },
         {
             "항목": "판정",
@@ -32749,6 +32834,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         "08_money_flow_shortlist.csv": flow_shortlist_df if isinstance(flow_shortlist_df, pd.DataFrame) else pd.DataFrame(),
         "09_portfolio_holdings.csv": holdings_df if isinstance(holdings_df, pd.DataFrame) else pd.DataFrame(),
         "10_market_guard.csv": guard_df,
+        "98_current_signal_audit.csv": signal_audit_df,
         "99_review_flags.csv": flags_df,
     }
 
@@ -32765,7 +32851,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
     )
     st.caption(
         f"검토용 ZIP: 고유 종목 {len(master_df)}개, 돈흐름 후보 {len(flow_shortlist_df) if isinstance(flow_shortlist_df, pd.DataFrame) else 0}개, "
-        f"중복/충돌 점검 {flag_count}건. 화면 복붙 대신 이 파일을 기준으로 보면 앞뒤가 덜 섞입니다."
+        f"현재 신호 검증 {len(signal_audit_df)}개, 중복/충돌 점검 {flag_count}건. 화면 복붙 대신 이 파일을 기준으로 보면 앞뒤가 덜 섞입니다."
     )
     if flag_count:
         with st.expander("중복/충돌 점검 미리보기", expanded=False):
