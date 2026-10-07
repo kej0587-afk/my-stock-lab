@@ -41,13 +41,27 @@ def _chart_pattern_rel_diff(a, b) -> float:
         return 1.0
 
 
+def _safe_polyfit(x, y, deg: int = 1):
+    try:
+        coeffs = np.polyfit(x, y, deg)
+    except Exception:
+        return None
+    if not np.all(np.isfinite(coeffs)):
+        return None
+    return coeffs
+
+
 def _chart_pattern_line_value(points, last_pos: int) -> float:
     x = np.array([p["pos"] for p in points], dtype=float)
     y = np.array([p["price"] for p in points], dtype=float)
     if len(x) < 2:
         return float(y[-1]) if len(y) else np.nan
-    slope, intercept = np.polyfit(x, y, 1)
-    return float(slope * last_pos + intercept)
+    coeffs = _safe_polyfit(x, y, 1)
+    if coeffs is None:
+        return float(y[-1]) if len(y) and np.isfinite(y[-1]) else np.nan
+    slope, intercept = coeffs
+    value = float(slope * last_pos + intercept)
+    return value if np.isfinite(value) else np.nan
 
 
 def _chart_pattern_price_text(value) -> str:
@@ -58,6 +72,21 @@ def _chart_pattern_price_text(value) -> str:
         return f"{price:,.2f}"
     except Exception:
         return "-"
+
+
+def _chart_pattern_overheat_bits(c: dict | None = None) -> list[str]:
+    c = c or {}
+    rsi = clean_float(c.get("rsi"), np.nan)
+    mfi = clean_float(c.get("mfi"), np.nan)
+    pct_b = clean_float(c.get("pct_b"), np.nan)
+    bits: list[str] = []
+    if finite_num(rsi) and rsi >= 70:
+        bits.append(f"RSI {rsi:.0f}")
+    if finite_num(mfi) and mfi >= 80:
+        bits.append(f"MFI {mfi:.0f}")
+    if finite_num(pct_b) and pct_b >= 0.95:
+        bits.append(f"%B {pct_b:.2f}")
+    return bits
 
 
 def chart_pattern_caption(patterns: list) -> str:
@@ -110,16 +139,7 @@ def build_chart_pattern_timing_note(patterns: list, c: dict | None = None) -> di
             ),
         }
 
-    rsi = clean_float(c.get("rsi"), np.nan)
-    mfi = clean_float(c.get("mfi"), np.nan)
-    pct_b = clean_float(c.get("pct_b"), np.nan)
-    overheat_flags = []
-    if finite_num(rsi) and rsi >= 70:
-        overheat_flags.append(f"RSI {rsi:.0f}")
-    if finite_num(mfi) and mfi >= 80:
-        overheat_flags.append(f"MFI {mfi:.0f}")
-    if finite_num(pct_b) and pct_b >= 0.95:
-        overheat_flags.append(f"%B {pct_b:.2f}")
+    overheat_flags = _chart_pattern_overheat_bits(c)
     overheat_text = " · ".join(overheat_flags)
     defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
     if defense_priority:
@@ -195,21 +215,8 @@ def summarize_chart_pattern_for_dashboard(patterns: list, c: dict | None = None)
     invalid = _chart_pattern_price_text(pattern.get("invalid_price"))
     c = c or {}
 
-    rsi = clean_float(c.get("rsi"), np.nan)
-    mfi = clean_float(c.get("mfi"), np.nan)
-    pct_b = clean_float(c.get("pct_b"), np.nan)
-    overheat = (
-        (finite_num(rsi) and rsi >= 70)
-        or (finite_num(mfi) and mfi >= 80)
-        or (finite_num(pct_b) and pct_b >= 0.95)
-    )
-    overheat_bits = []
-    if finite_num(rsi) and rsi >= 70:
-        overheat_bits.append(f"RSI {rsi:.0f}")
-    if finite_num(mfi) and mfi >= 80:
-        overheat_bits.append(f"MFI {mfi:.0f}")
-    if finite_num(pct_b) and pct_b >= 0.95:
-        overheat_bits.append(f"%B {pct_b:.2f}")
+    overheat_bits = _chart_pattern_overheat_bits(c)
+    overheat = bool(overheat_bits)
     overheat_text = " · ".join(overheat_bits) if overheat_bits else "과열 낮음"
     defense_priority = direction == "bullish" and is_today_queue_defense_signal(c)
     if defense_priority:
@@ -278,8 +285,10 @@ def _chart_pattern_timeframe_profile(view: pd.DataFrame) -> dict:
     if view is None or len(view.index) < 3:
         return profile
     try:
-        idx = pd.to_datetime(view.index)
-        median_days = pd.Series(idx).diff().dt.days.dropna().median()
+        idx = pd.Series(pd.to_datetime(view.index, errors="coerce")).dropna()
+        if len(idx) < 3:
+            return profile
+        median_days = idx.diff().dt.days.dropna().median()
     except Exception:
         median_days = np.nan
     if finite_num(median_days) and median_days >= 20:
@@ -525,8 +534,12 @@ def _detect_triangle_pattern(view: pd.DataFrame, highs, lows):
     yh = np.array([p["price"] for p in recent_highs], dtype=float)
     xl = np.array([p["pos"] for p in recent_lows], dtype=float)
     yl = np.array([p["price"] for p in recent_lows], dtype=float)
-    high_slope, high_intercept = np.polyfit(xh, yh, 1)
-    low_slope, low_intercept = np.polyfit(xl, yl, 1)
+    high_fit = _safe_polyfit(xh, yh, 1)
+    low_fit = _safe_polyfit(xl, yl, 1)
+    if high_fit is None or low_fit is None:
+        return None
+    high_slope, high_intercept = high_fit
+    low_slope, low_intercept = low_fit
     slope_floor = max(price * 0.00035, 1e-9)
     if not (high_slope < -slope_floor and low_slope > slope_floor):
         return None
@@ -572,9 +585,14 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
         return None
     impulse_ret = float(impulse["Close"].iloc[-1] / impulse["Close"].iloc[0] - 1)
     x = np.arange(len(flag), dtype=float)
-    close_slope, _ = np.polyfit(x, flag["Close"].astype(float).to_numpy(), 1)
-    high_slope, high_intercept = np.polyfit(x, flag["High"].astype(float).to_numpy(), 1)
-    low_slope, low_intercept = np.polyfit(x, flag["Low"].astype(float).to_numpy(), 1)
+    close_fit = _safe_polyfit(x, flag["Close"].astype(float).to_numpy(), 1)
+    high_fit = _safe_polyfit(x, flag["High"].astype(float).to_numpy(), 1)
+    low_fit = _safe_polyfit(x, flag["Low"].astype(float).to_numpy(), 1)
+    if close_fit is None or high_fit is None or low_fit is None:
+        return None
+    close_slope, _ = close_fit
+    high_slope, high_intercept = high_fit
+    low_slope, low_intercept = low_fit
     price = float(view["Close"].iloc[-1])
     recent_range = (float(flag["High"].max()) - float(flag["Low"].min())) / price if price else 1
     slope_limit = price * 0.004

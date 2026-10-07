@@ -64,3 +64,23 @@ def test_hold_decision_etf_gets_fundamental_floor():
 
     assert judgement.fundamental_score == 2
     assert any("ETF" in reason for reason in judgement.reasons_hold)
+
+
+def test_hold_decision_ignores_nan_average_price():
+    judgement = build_hold_decision(
+        ticker="VOO",
+        name="S&P500",
+        is_etf=True,
+        fin_score=0,
+        c={
+            "cur_p": 100,
+            "dd": -0.08,
+            "trend": "혼조세",
+            "rs_label": "➖보통",
+            "rs_slope_label": "➡️RS횡보",
+        },
+        my_price=float("nan"),
+        has_pos=True,
+    )
+
+    assert judgement.risk_score == 0

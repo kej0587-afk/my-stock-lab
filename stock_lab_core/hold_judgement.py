@@ -40,7 +40,8 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     rs_label = str(c.get("rs_label", ""))
     structure_risk = bool(c.get("structure_risk"))
     live_gap_shock = bool(c.get("live_gap_shock"))
-    price_vs_avg = (cur_p / my_price - 1) if has_pos and my_price > 0 else math.nan
+    avg_price = clean_float(my_price, math.nan)
+    price_vs_avg = (cur_p / avg_price - 1) if has_pos and finite_num(avg_price) and avg_price > 0 else math.nan
 
     fund_score = 0
     if is_etf:

@@ -49,10 +49,16 @@ def normalize_ticker(t):
 
 
 def parse_num(v):
-    if pd.isna(v):
-        return 0.0
+    try:
+        if v is None or pd.isna(v):
+            return 0.0
+    except (TypeError, ValueError):
+        pass
     s = str(v).replace(",", "").replace("%", "").replace("₩", "").replace("$", "").strip()
-    return pd.to_numeric(s, errors="coerce") if s != "" else 0.0
+    if s == "":
+        return 0.0
+    parsed = pd.to_numeric(s, errors="coerce")
+    return 0.0 if pd.isna(parsed) else parsed
 
 
 def finite_num(value) -> bool:

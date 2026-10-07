@@ -12,6 +12,20 @@ from stock_lab_core.chart_patterns import (
 )
 
 
+def _sample_ohlc(periods=90):
+    idx = pd.date_range("2026-01-01", periods=periods, freq="D")
+    base = np.linspace(100, 130, periods) + np.sin(np.arange(periods) / 4) * 3
+    return pd.DataFrame(
+        {
+            "Open": base - 0.4,
+            "High": base + 1.2,
+            "Low": base - 1.2,
+            "Close": base,
+        },
+        index=idx,
+    )
+
+
 def test_chart_pattern_price_text_formats_positive_number():
     assert chart_pattern_price_text(1234.567) == "1,234.57"
     assert chart_pattern_price_text(0) == "-"
@@ -19,6 +33,17 @@ def test_chart_pattern_price_text_formats_positive_number():
 
 def test_detect_chart_pattern_candidates_returns_empty_for_missing_ohlc():
     assert detect_chart_pattern_candidates(pd.DataFrame({"Close": [1, 2, 3]})) == []
+
+
+def test_detect_chart_pattern_candidates_survives_polyfit_failure(monkeypatch):
+    import stock_lab_core.chart_patterns as chart_patterns
+
+    def _raise(*args, **kwargs):
+        raise np.linalg.LinAlgError("synthetic fit failure")
+
+    monkeypatch.setattr(chart_patterns.np, "polyfit", _raise)
+
+    assert detect_chart_pattern_candidates(_sample_ohlc()) == []
 
 
 def test_build_recent_trendline_guides_returns_stable_list():

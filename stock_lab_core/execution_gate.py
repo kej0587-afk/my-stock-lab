@@ -24,6 +24,21 @@ GATE_WATCH_ONLY = "관망"
 
 
 _EMPTY_TEXT = {"", "-", "—", "nan", "none", "None", "NaN"}
+_RE_WEIGHT_BLOCK = re.compile(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED|TARGET_ZERO", re.I)
+_RE_DEFENSE_BLOCK = re.compile(
+    r"MACRO_STORM|시장위험|추매중단|보유점검|패닉|위기|DRAWDOWN|PRICE_DRAWDOWN|"
+    r"SINGLE_DAY_BREAKDOWN|STRUCTURE_DAMAGE|DOWNTREND|REVERSE_TREND|추세방어|가격방어|급락방어|방어우선",
+    re.I,
+)
+_RE_HARD_BLOCK_OVERHEAT = re.compile(r"OVERHEAT|BOLLINGER|MFI|상단|과열", re.I)
+_RE_RESISTANCE_WAIT = re.compile(r"하락패턴|하락\s*패턴|저항\s*(?:미돌파|대기)|무효선\s*미회복")
+_RE_OVERHEAT_WAIT = re.compile(r"추격금지|과열|볼린상단|고점권", re.I)
+_RE_GENERAL_WAIT = re.compile(r"대기|보류|관망|타점\s*탐색|탐색\s*중|눌림\s*/\s*종가\s*확인|회복\s*(?:확인|관찰)|DCA\s*조건부")
+_RE_CONDITION_WAIT = re.compile(r"(?:눌림|종가)\s*확인\s*후|회복\s*후\s*재계산")
+_RE_FLOW_WAIT = re.compile(r"추격금지|눌림대기|회복확인|내부확인")
+_RE_FLOW_WEAK = re.compile(r"관망|제외|관찰|약모멘텀|둔화")
+_RE_LEVERAGE_WAIT = re.compile(r"레버리지정찰|레버리지.*조건부|DCA\s*조건부", re.I)
+_RE_PRECISION_CONFIRM = re.compile(r"정밀확인")
 
 
 def _text(value: Any) -> str:
@@ -122,7 +137,7 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     ):
         return {"게이트상태": GATE_DATA_CHECK, "게이트근거": data_state or "가격/지표 데이터 확인"}
 
-    if re.search(r"비중\s*(?:초과|충족)|OVERWEIGHT|TARGET_FILLED|TARGET_ZERO", text, flags=re.I):
+    if _RE_WEIGHT_BLOCK.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "목표비중/비중초과 우선"}
 
     if "시장방어" in market_execution:
@@ -130,15 +145,10 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if mtf_state == "상위 시간대 경고":
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "상위 시간대 추세훼손"}
 
-    if re.search(
-        r"MACRO_STORM|시장위험|추매중단|보유점검|패닉|위기|DRAWDOWN|PRICE_DRAWDOWN|"
-        r"SINGLE_DAY_BREAKDOWN|STRUCTURE_DAMAGE|DOWNTREND|REVERSE_TREND|추세방어|가격방어|급락방어|방어우선",
-        text,
-        flags=re.I,
-    ):
+    if _RE_DEFENSE_BLOCK.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "시장/가격/추세 방어 신호 우선"}
 
-    if re.search(r"HARD_BLOCK", code, flags=re.I) and not re.search(r"OVERHEAT|BOLLINGER|MFI|상단|과열", text, flags=re.I):
+    if "HARD_BLOCK" in code and not _RE_HARD_BLOCK_OVERHEAT.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "하드차단 우선"}
 
     if math.isfinite(rr) and rr < 1.0:
@@ -147,31 +157,28 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if "투영상단" in rr_kind:
         reasons.append("R/R 목표가가 투영상단")
 
-    if re.search(r"하락패턴|하락\s*패턴|저항\s*(?:미돌파|대기)|무효선\s*미회복", text):
+    if _RE_RESISTANCE_WAIT.search(text):
         reasons.append("하락/저항 패턴 확인 필요")
 
-    if re.search(r"추격금지|과열|볼린상단|고점권", text, flags=re.I):
+    if _RE_OVERHEAT_WAIT.search(text):
         reasons.append("과열/추격금지")
 
-    if code in TODAY_QUEUE_EXECUTION_WAIT_CODES or code == "QUALITY_RECOVERY_WATCH" or re.search(
-        r"대기|보류|관망|타점\s*탐색|탐색\s*중|눌림\s*/\s*종가\s*확인|회복\s*(?:확인|관찰)|DCA\s*조건부",
-        text,
-    ) or re.search(r"(?:눌림|종가)\s*확인\s*후|회복\s*후\s*재계산", conditions):
+    if code in TODAY_QUEUE_EXECUTION_WAIT_CODES or code == "QUALITY_RECOVERY_WATCH" or _RE_GENERAL_WAIT.search(text) or _RE_CONDITION_WAIT.search(conditions):
         reasons.append("조건 확인 대기")
 
-    if re.search(r"추격금지|눌림대기|회복확인|내부확인", flow_text):
+    if _RE_FLOW_WAIT.search(flow_text):
         reasons.append(f"돈흐름 {flow_verdict or flow_group}")
 
-    if math.isfinite(flow_score) and flow_score <= -10 and re.search(r"관망|제외|관찰|약모멘텀|둔화", flow_text):
+    if math.isfinite(flow_score) and flow_score <= -10 and _RE_FLOW_WEAK.search(flow_text):
         reasons.append(f"돈흐름 약함 {flow_score:.1f}")
 
-    if re.search(r"레버리지정찰|레버리지.*조건부|DCA\s*조건부", text, flags=re.I):
+    if _RE_LEVERAGE_WAIT.search(text):
         reasons.append("레버리지 조건부 확인 대기")
 
     if reasons:
         return {"게이트상태": GATE_WAIT, "게이트근거": " · ".join(dict.fromkeys(reasons))}
 
-    if group == "buyish" or re.search(r"정밀확인", final_read):
+    if group == "buyish" or _RE_PRECISION_CONFIRM.search(final_read):
         if not math.isfinite(rr) or rr <= 0:
             return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "현재가 R/R 확인 필요"}
         return {"게이트상태": GATE_EXECUTABLE, "게이트근거": "R/R·패턴·방어 게이트 통과"}
@@ -190,6 +197,7 @@ def apply_execution_gate_columns(
 
     out = df.copy()
     upside_value_map = upside_value_map or {}
+    upper_upside_value_map = {str(key).upper(): value for key, value in upside_value_map.items()}
     gate_rows: list[dict[str, str]] = []
     upside_states: list[str] = []
     sector_states: list[str] = []
@@ -199,7 +207,7 @@ def apply_execution_gate_columns(
         ticker = _text(row.get("티커", ""))
         upside = upside_value_map.get(ticker, math.nan)
         if not math.isfinite(clean_float(upside, math.nan)):
-            upside = upside_value_map.get(ticker.upper(), math.nan)
+            upside = upper_upside_value_map.get(ticker.upper(), math.nan)
         if not math.isfinite(clean_float(upside, math.nan)):
             upside = clean_float(_text(row.get("애널목표Upside", "")).removesuffix("%"), math.nan)
         gate_rows.append(build_execution_gate(row))

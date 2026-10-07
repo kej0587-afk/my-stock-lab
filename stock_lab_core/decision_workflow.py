@@ -63,7 +63,7 @@ def build_decision_workflow(
     if str(final_read).startswith(("🛡️", "🚫", "⚪")):
         group = "caution"
     rr = clean_float(c.get("rr_ratio"), math.nan)
-    if (finite_num(rr) and rr < 1.0 or pattern_bucket == "risk") and group == "buyish":
+    if ((finite_num(rr) and rr < 1.0) or pattern_bucket == "risk") and group == "buyish":
         group = "caution"
 
     row = {

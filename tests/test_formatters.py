@@ -8,6 +8,7 @@ from stock_lab_core.formatters import (
     format_currency,
     is_kr_code_like,
     is_kr_listed,
+    parse_num,
     report_num,
 )
 
@@ -46,6 +47,12 @@ def test_report_num_preserves_legacy_report_parsing():
     assert report_num("1,234") == 1234.0
     assert report_num("", 7.0) == 7.0
     assert report_num("N/A", -1.0) == -1.0
+
+
+def test_parse_num_handles_non_scalar_values_without_crashing():
+    parsed = parse_num(["1,234"])
+
+    assert float(parsed) == 0.0
 
 
 def test_report_formatters_match_print_report_display_rules():
