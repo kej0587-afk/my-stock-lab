@@ -15203,6 +15203,126 @@ def macro_event_impact_text(event_name):
     return "고영향 일정 전후에는 포지션 확대보다 발표 결과와 시장 반응을 먼저 확인합니다."
 
 
+def _macro_event_value(event, *keys):
+    for key in keys:
+        value = str((event or {}).get(key, "") or "").strip()
+        if value and value.lower() not in {"none", "nan", "n/a", "-"}:
+            return value
+    return ""
+
+
+def _macro_event_numeric_value(value):
+    text = str(value or "").strip().replace(",", "")
+    if not text:
+        return np.nan
+    multiplier = 1.0
+    if text.endswith("%"):
+        text = text[:-1]
+    elif text.upper().endswith("K"):
+        multiplier = 1_000.0
+        text = text[:-1]
+    elif text.upper().endswith("M"):
+        multiplier = 1_000_000.0
+        text = text[:-1]
+    try:
+        return float(text) * multiplier
+    except Exception:
+        return np.nan
+
+
+def macro_event_result_text(event, state="", timing=""):
+    name = canonical_macro_event_name((event or {}).get("event", ""))
+    actual = _macro_event_value(event, "actual", "실제", "result", "결과")
+    forecast = _macro_event_value(event, "forecast", "예상", "consensus", "컨센서스")
+    previous = _macro_event_value(event, "previous", "이전")
+    parts = []
+    if actual:
+        parts.append(f"실제 {actual}")
+    if forecast:
+        parts.append(f"예상 {forecast}")
+    if previous:
+        parts.append(f"이전 {previous}")
+    if parts:
+        return " / ".join(parts)
+
+    state = str(state or "").strip()
+    timing = str(timing or "").strip()
+    suffix = f"({timing})" if timing else ""
+    if "KOSPI 200" in name:
+        if state in {"대기", "임박"}:
+            return f"만기 전 수급 이벤트 {suffix}".strip()
+        if state == "당일":
+            return "만기일 장중·종가 수급 확인"
+        if state == "잔여":
+            return "만기 후 수급 정상화 확인"
+    if name == "FOMC":
+        if state in {"대기", "임박"}:
+            return f"의사록/회의 결과 발표 전 {suffix}".strip()
+        if state == "당일":
+            return "오늘 의사록·점도표·기자회견 확인"
+        if state == "잔여":
+            return "FOMC 결과 소화 구간"
+    if name in {"BOJ 금융정책결정회의", "ECB 통화정책"}:
+        if state in {"대기", "임박"}:
+            return f"정책 발표 전 {suffix}".strip()
+        if state == "당일":
+            return "정책 발표·총재 발언 확인"
+        if state == "잔여":
+            return "정책 결과 소화 구간"
+    if state == "대기":
+        return f"발표 전 {suffix}".strip()
+    if state == "임박":
+        return f"발표 임박 {suffix}".strip()
+    if state == "당일":
+        return "오늘 발표 예정 또는 결과 확인 전"
+    if state == "잔여":
+        return "발표 후 시장 반응 확인 중"
+    if state == "종료":
+        return "종료"
+    return "결과 미수집"
+
+
+def macro_event_market_interpretation(event, state=""):
+    name = canonical_macro_event_name((event or {}).get("event", ""))
+    actual = _macro_event_numeric_value(_macro_event_value(event, "actual", "실제", "result", "결과"))
+    forecast = _macro_event_numeric_value(_macro_event_value(event, "forecast", "예상", "consensus", "컨센서스"))
+    state = str(state or "").strip()
+
+    if finite_num(actual) and finite_num(forecast):
+        diff = float(actual) - float(forecast)
+        inline = abs(diff) <= max(abs(float(forecast)) * 0.02, 0.01)
+        if name in {"미국 CPI 발표", "미국 PPI 발표"}:
+            if inline:
+                return "물가가 예상과 크게 다르지 않습니다. 주식시장은 10Y 금리와 달러 반응으로 방향을 확인합니다."
+            if diff > 0:
+                return "물가가 예상보다 높습니다. 금리와 달러 상승 압력이 커져 성장주, 반도체, 레버리지에는 부담입니다."
+            return "물가가 예상보다 낮습니다. 금리 부담이 줄면 성장주, 반도체, 레버리지에는 단기 우호 재료입니다."
+        if name == "미국 고용지표":
+            if inline:
+                return "고용이 예상권입니다. 금리와 지수 종가 반응이 최종 판단 기준입니다."
+            if diff > 0:
+                return "고용이 예상보다 강합니다. 경기 방어 신호이지만 금리 인하 기대가 밀리면 성장주에는 부담입니다."
+            return "고용이 예상보다 약합니다. 금리 하락은 우호적일 수 있지만 경기 둔화 우려도 함께 봅니다."
+
+    if "KOSPI 200" in name:
+        if state in {"대기", "임박", "당일"}:
+            return "파생 만기 수급이 장중과 종가를 흔들 수 있습니다. 국내 대형주는 만기 전후 추격보다 종가 수급을 확인합니다."
+        return "만기 이벤트는 지났습니다. 이후에는 외국인 선물, 대형주 종가, KOSPI200 회복 여부를 봅니다."
+    if name == "FOMC":
+        if state in {"대기", "임박", "당일"}:
+            return "FOMC 전후에는 금리 경로 해석이 주식 방향을 좌우합니다. 10Y 금리, 달러, 나스닥 종가 반응이 확인 기준입니다."
+        return "FOMC 결과를 시장이 소화하는 구간입니다. 일정 자체보다 금리, 달러, 성장주 종가 반응이 더 중요합니다."
+    if name in {"BOJ 금융정책결정회의", "ECB 통화정책"}:
+        if state in {"대기", "임박", "당일"}:
+            return "정책 톤이 글로벌 금리와 환율을 움직일 수 있습니다. 매파적이면 성장주 부담, 완화적이면 위험자산 심리 개선입니다."
+        return "정책 결과를 시장이 소화하는 구간입니다. 환율, 글로벌 금리, 기술주 반응을 확인합니다."
+    if state in {"대기", "임박", "당일"}:
+        return "결과가 나오기 전입니다. 발표값과 10Y 금리, 달러, VIX, 나스닥 종가 반응을 본 뒤 추격 여부를 판단합니다."
+    if state == "잔여":
+        return "일정은 지났고 시장이 결과를 소화하는 구간입니다. 일정 자체보다 금리, 달러, 지수 종가 반응이 더 중요합니다."
+    return macro_event_impact_text(name)
+
+
 def macro_event_context_note(event):
     name = canonical_macro_event_name(event.get("event", ""))
     source = str(event.get("source", ""))
@@ -15384,6 +15504,10 @@ def fetch_forexfactory_major_events():
             continue
         event["date"] = event_date.isoformat()
         event["end_date"] = event["date"]
+        for tag, key in [("actual", "actual"), ("forecast", "forecast"), ("previous", "previous")]:
+            value = str(node.findtext(tag) or "").strip()
+            if value:
+                event[key] = value
         events.append(event)
     return events
 
@@ -15543,8 +15667,9 @@ def build_macro_event_risk_table(today=None):
             "상태": state,
             "D-Day": timing,
             "점수": round(applied, 2),
-            "영향": macro_event_impact_text(event.get("event", "-")),
-            "해석": macro_event_context_note(event),
+            "결과": macro_event_result_text(event, state, timing),
+            "주식시장 해석": macro_event_market_interpretation(event, state),
+            "확인포인트": macro_event_context_note(event),
             "출처": event.get("source", "수동"),
         })
 
@@ -29329,6 +29454,7 @@ def render_today_unified_briefing_panel(
     keep_lines: list[str] = []
     no_add_lines: list[str] = []
     unknown_lines: list[str] = []
+    asset_interpretation_rows: list[dict] = []
 
     if not df.empty and held_meta:
         ticker_source = df.get("티커", pd.Series("", index=df.index))
@@ -29398,27 +29524,44 @@ def render_today_unified_briefing_panel(
                 weight_text = f" · 비중 {cw}/{tw}"
             base_line = f"{name}({ticker}) 손익 {pnl_text}{weight_text}"
 
+            def _weight_cell(value):
+                return "-" if not finite_num(value) else f"{float(value):.1f}%"
+
+            def _add_asset_interpretation(bucket_label: str, action: str, target_lines: list[str]):
+                target_lines.append(base_line + " → " + action)
+                asset_interpretation_rows.append({
+                    "구분": bucket_label,
+                    "자산": name,
+                    "티커": ticker,
+                    "손익": pnl_text,
+                    "현재비중": _weight_cell(current_w),
+                    "목표비중": _weight_cell(target_w),
+                    "비중차이": _weight_cell(gap_w),
+                    "판정": label or final_read or "-",
+                    "관리 해석": action,
+                })
+
             if is_core:
                 if is_overweight:
-                    core_hold_lines.append(base_line + " → 장기코어 유지, 목표초과라 신규매수 중단/리밸런싱")
+                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 유지, 목표초과라 신규매수 중단/리밸런싱", core_hold_lines)
                 elif market_defensive or is_caution or damaged_label:
-                    core_hold_lines.append(base_line + " → 장기코어 교체 아님, 시장 안정 후 정해진 적립 재개")
+                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 교체 아님, 시장 안정 후 정해진 적립 재개", core_hold_lines)
                 elif is_underweight:
-                    keep_lines.append(base_line + " → 장기코어 목표비중 안에서 분할 적립 가능")
+                    _add_asset_interpretation("비중대로 가능 또는 보유 유지", "장기코어 목표비중 안에서 분할 적립 가능", keep_lines)
                 else:
-                    core_hold_lines.append(base_line + " → 장기코어 보유 유지")
+                    _add_asset_interpretation("장기코어 유지/속도조절", "장기코어 보유 유지", core_hold_lines)
             elif is_leverage and (is_hard or damaged_label or (finite_num(pnl) and float(pnl) <= -10)):
-                review_lines.append(base_line + " → 비중대로 밀기보다 원인점검/교체 후보 검토")
+                _add_asset_interpretation("종목변경/비중축소 검토", "비중대로 밀기보다 원인점검/교체 후보 검토", review_lines)
             elif is_hard or (damaged_label and finite_num(pnl) and float(pnl) <= -15):
-                review_lines.append(base_line + " → 위성/개별 비중 축소 또는 대체 후보 검토")
+                _add_asset_interpretation("종목변경/비중축소 검토", "위성/개별 비중 축소 또는 대체 후보 검토", review_lines)
             elif is_caution or damaged_label or is_overweight:
-                no_add_lines.append(base_line + " → 추가매수 제외, 회복 조건 확인")
+                _add_asset_interpretation("추가매수 제외/조건 확인", "추가매수 제외, 회복 조건 확인", no_add_lines)
             elif is_underweight and not is_caution:
-                keep_lines.append(base_line + " → 목표비중 안에서 분할 적립 가능")
+                _add_asset_interpretation("비중대로 가능 또는 보유 유지", "목표비중 안에서 분할 적립 가능", keep_lines)
             elif finite_num(pnl):
-                keep_lines.append(base_line + " → 보유 유지 중심")
+                _add_asset_interpretation("비중대로 가능 또는 보유 유지", "보유 유지 중심", keep_lines)
             else:
-                unknown_lines.append(base_line + " → 평단/현재가 확인 필요")
+                _add_asset_interpretation("데이터 확인 필요", "평단/현재가 확인 필요", unknown_lines)
 
     def _row_name_list(mask, limit=3) -> list[str]:
         if df.empty:
@@ -29505,16 +29648,19 @@ def render_today_unified_briefing_panel(
 
     if review_lines or core_hold_lines or no_add_lines or keep_lines or unknown_lines:
         st.markdown("**내 자산 기준 해석**")
-        if core_hold_lines:
-            st.success("장기코어 유지/속도조절: " + " / ".join(core_hold_lines[:4]))
-        if review_lines:
-            st.warning("종목변경/비중축소 검토: " + " / ".join(review_lines[:3]))
-        if no_add_lines:
-            st.info("추가매수 제외/조건 확인: " + " / ".join(no_add_lines[:3]))
-        if keep_lines:
-            st.success("비중대로 가능 또는 보유 유지: " + " / ".join(keep_lines[:3]))
-        if unknown_lines:
-            st.caption("데이터 확인 필요: " + " / ".join(unknown_lines[:3]))
+        asset_table = pd.DataFrame(asset_interpretation_rows)
+        if not asset_table.empty:
+            st.dataframe(
+                asset_table,
+                width='stretch',
+                hide_index=True,
+                height=min(520, 90 + len(asset_table) * 36),
+                column_config={
+                    "관리 해석": st.column_config.TextColumn("관리 해석", width="large"),
+                    "판정": st.column_config.TextColumn("오늘점검 판정", width="medium"),
+                },
+            )
+            st.caption("장기코어는 교체 여부와 적립 속도를 분리하고, 레버리지·위성은 손익보다 회복 조건과 목표비중 초과 여부를 먼저 봅니다.")
     else:
         st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
 

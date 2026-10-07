@@ -852,7 +852,12 @@ def _active_event_records(event_rows) -> list[dict]:
                 "state": state,
                 "dday": _norm(row.get("D-Day")),
                 "market": _norm(row.get("시장")),
-                "impact": _norm(row.get("영향") or row.get("해석")),
+                "impact": _norm(
+                    row.get("주식시장 해석")
+                    or row.get("결과")
+                    or row.get("영향")
+                    or row.get("해석")
+                ),
             })
     return records
 
