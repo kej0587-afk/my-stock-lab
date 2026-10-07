@@ -118,14 +118,23 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     macd        = ta.trend.MACD(df["Close"])
     df["MACD"]  = macd.macd()
     df["MACD_Sig"] = macd.macd_signal()
-    bb          = ta.volatility.BollingerBands(df["Close"], 20, 2)
-    df["%B"]    = (df["Close"] - bb.bollinger_lband()) / (bb.bollinger_hband() - bb.bollinger_lband())
-    kc          = ta.volatility.KeltnerChannel(df["High"], df["Low"], df["Close"], 20, 20, 1.5)
+    bb          = ta.volatility.BollingerBands(df["Close"], window=20, window_dev=2)
     bb_high = bb.bollinger_hband()
     bb_low = bb.bollinger_lband()
+    bb_width = (bb_high - bb_low).replace(0, np.nan)
+    df["%B"]    = (df["Close"] - bb_low) / bb_width
+    kc          = ta.volatility.KeltnerChannel(
+        df["High"],
+        df["Low"],
+        df["Close"],
+        window=20,
+        window_atr=20,
+        multiplier=1.5,
+        original_version=False,
+        fillna=False,
+    )
     kc_high = kc.keltner_channel_hband()
     kc_low = kc.keltner_channel_lband()
-    bb_width = bb_high - bb_low
     kc_width = (kc_high - kc_low).replace(0, np.nan)
     df["SQZ_RATIO"] = bb_width / kc_width
     df["SQZ_ON"] = (bb_high < kc_high) & (bb_low > kc_low)
@@ -142,9 +151,11 @@ def get_trend(last) -> str:
         return "🆕신규상장/자료부족"
     if ma20 > ma50 > ma120:
         return "🚀정배열(상승)"
+    if ma20 < ma50 < ma120:
+        return "🌊역배열(하락)"
     if ma20 > ma50:
         return "⏳혼조세"
-    return "🌊역배열(하락)"
+    return "⏬눌림(중기 MA50>MA120 유지)"
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +177,12 @@ def get_recent_levels(df: pd.DataFrame) -> dict:
     """내부/외부 고점·저점을 담은 레벨 딕셔너리를 반환합니다."""
     ih, il = get_pivot_highs_lows(df, 3, 3)
     eh, el = get_pivot_highs_lows(df, 10, 10)
+    prior = df.iloc[:-1] if len(df) > 1 else df
     return {
-        "int_high": ih[-1][1] if ih else df["High"].tail(20).max(),
-        "int_low":  il[-1][1] if il else df["Low"].tail(20).min(),
-        "ext_high": eh[-1][1] if eh else df["High"].tail(120).max(),
-        "ext_low":  el[-1][1] if el else df["Low"].tail(120).min(),
+        "int_high": ih[-1][1] if ih else float(prior["High"].tail(20).max()),
+        "int_low":  il[-1][1] if il else float(prior["Low"].tail(20).min()),
+        "ext_high": eh[-1][1] if eh else float(prior["High"].tail(120).max()),
+        "ext_low":  el[-1][1] if el else float(prior["Low"].tail(120).min()),
     }
 
 
@@ -214,20 +226,31 @@ def detect_liquidity_grab(df: pd.DataFrame, levels: dict, tol: float = 0.002) ->
     return "없음"
 
 
-def detect_recent_fvg(df: pd.DataFrame) -> dict:
+def detect_recent_fvg(df: pd.DataFrame, min_gap_pct: float = 0.0) -> dict:
     """최근 FVG(공정가치갭)를 탐지합니다."""
+    empty = {"type": "없음", "top": None, "bottom": None, "active": False, "filled_pct": None}
+    if df is None or len(df) < 3:
+        return empty
     for i in range(len(df) - 1, 1, -1):
         h2 = float(df["High"].iloc[i - 2])
         l2 = float(df["Low"].iloc[i - 2])
         h0 = float(df["High"].iloc[i])
         l0 = float(df["Low"].iloc[i])
-        if l0 > h2:
+        if l0 > h2 and (l0 - h2) / max(abs(h2), 1e-9) >= min_gap_pct:
+            after_low = float(df["Low"].iloc[i + 1:].min()) if i + 1 < len(df) else l0
+            filled_pct = 0.0
+            if l0 > h2 and after_low < l0:
+                filled_pct = float(np.clip((l0 - after_low) / (l0 - h2), 0, 1))
             return {"type": "Bullish FVG", "top": l0, "bottom": h2,
-                    "active": float(df["Low"].iloc[-1]) > h2}
-        if h0 < l2:
+                    "active": after_low > h2, "filled_pct": filled_pct}
+        if h0 < l2 and (l2 - h0) / max(abs(l2), 1e-9) >= min_gap_pct:
+            after_high = float(df["High"].iloc[i + 1:].max()) if i + 1 < len(df) else h0
+            filled_pct = 0.0
+            if l2 > h0 and after_high > h0:
+                filled_pct = float(np.clip((after_high - h0) / (l2 - h0), 0, 1))
             return {"type": "Bearish FVG", "top": l2, "bottom": h0,
-                    "active": float(df["High"].iloc[-1]) < l2}
-    return {"type": "없음", "top": None, "bottom": None, "active": False}
+                    "active": after_high < l2, "filled_pct": filled_pct}
+    return empty
 
 
 def _smc_ohlc_source(df: pd.DataFrame, lookback: int = 160) -> pd.DataFrame:
@@ -319,13 +342,15 @@ def detect_order_block_zones(df: pd.DataFrame, lookback: int = 160) -> list:
                 zone_low = float(ob["Low"])
                 zone_high = float(max(ob["Open"], ob["Close"]))
                 if zone_high > zone_low:
+                    post_close = source.loc[bearish.index[-1]:, "Close"].iloc[1:]
+                    alive = bool(post_close.empty or (post_close >= zone_low).all())
                     candidates.append({
                         "type": "Bullish OB",
                         "direction": "support",
                         "low": zone_low,
                         "high": zone_high,
                         "index": bearish.index[-1],
-                        "active": latest_close >= zone_low and latest_low >= zone_low * 0.995,
+                        "active": alive and latest_close >= zone_low and latest_low >= zone_low * 0.995,
                     })
 
         if close_i < breakdown_low:
@@ -336,13 +361,15 @@ def detect_order_block_zones(df: pd.DataFrame, lookback: int = 160) -> list:
                 zone_low = float(min(ob["Open"], ob["Close"]))
                 zone_high = float(ob["High"])
                 if zone_high > zone_low:
+                    post_close = source.loc[bullish.index[-1]:, "Close"].iloc[1:]
+                    alive = bool(post_close.empty or (post_close <= zone_high).all())
                     candidates.append({
                         "type": "Bearish OB",
                         "direction": "resistance",
                         "low": zone_low,
                         "high": zone_high,
                         "index": bullish.index[-1],
-                        "active": latest_close <= zone_high and latest_high <= zone_high * 1.005,
+                        "active": alive and latest_close <= zone_high and latest_high <= zone_high * 1.005,
                     })
 
     unique = []
@@ -375,8 +402,7 @@ def detect_smc_features(df: pd.DataFrame) -> dict:
         return {"fvg_label": "데이터 부족", "ob_label": "데이터 부족"}
 
     recent_df = df.tail(20).copy()
-    bullish_fvgs = []
-    bearish_fvgs = []
+    latest_fvg = None
 
     for i in range(2, len(recent_df)):
         c1_high = float(recent_df["High"].iloc[i - 2])
@@ -385,17 +411,15 @@ def detect_smc_features(df: pd.DataFrame) -> dict:
         c3_low = float(recent_df["Low"].iloc[i])
 
         if c1_high < c3_low:
-            bullish_fvgs.append((c1_high, c3_low))
+            latest_fvg = ("bullish", c1_high, c3_low)
         if c1_low > c3_high:
-            bearish_fvgs.append((c3_high, c1_low))
+            latest_fvg = ("bearish", c3_high, c1_low)
 
     fvg_label = "FVG 갭 없음 (균형 상태)"
-    if bullish_fvgs:
-        latest_bull = bullish_fvgs[-1]
-        fvg_label = f"🔼 지지 갭(FVG): {latest_bull[0]:.2f} ~ {latest_bull[1]:.2f}"
-    elif bearish_fvgs:
-        latest_bear = bearish_fvgs[-1]
-        fvg_label = f"🔽 저항 갭(FVG): {latest_bear[0]:.2f} ~ {latest_bear[1]:.2f}"
+    if latest_fvg and latest_fvg[0] == "bullish":
+        fvg_label = f"🔼 지지 갭(FVG): {latest_fvg[1]:.2f} ~ {latest_fvg[2]:.2f}"
+    elif latest_fvg and latest_fvg[0] == "bearish":
+        fvg_label = f"🔽 저항 갭(FVG): {latest_fvg[1]:.2f} ~ {latest_fvg[2]:.2f}"
 
     min_idx = recent_df["Low"].idxmin()
     ob_low = float(recent_df.loc[min_idx, "Low"])

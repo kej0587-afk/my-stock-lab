@@ -1,12 +1,32 @@
 import pandas as pd
+import numpy as np
+import pytest
 
+import stock_lab_core.ta_engine as ta_engine
 from stock_lab_core.ta_engine import (
+    build_indicators,
     build_smc_overlay_features,
     detect_equal_highs_lows,
     detect_order_block_zones,
+    detect_recent_fvg,
     detect_smc_features,
+    get_recent_levels,
     get_sqz_status,
+    get_trend,
 )
+
+
+def _sample_ohlcv(rows: int = 80, close_start: float = 100.0) -> pd.DataFrame:
+    close = pd.Series([close_start + i * 0.2 for i in range(rows)], dtype="float64")
+    return pd.DataFrame(
+        {
+            "Open": close - 0.1,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": [1000 + i for i in range(rows)],
+        }
+    )
 
 
 def test_sqz_status_distinguishes_no_recent_squeeze():
@@ -60,6 +80,131 @@ def test_sqz_status_core_transitions():
     assert get_sqz_status(True, False, [False, False, True]) == "⏳재압축"
     assert get_sqz_status(True, True, [True, True, True]) == "⏳압축중"
     assert get_sqz_status(False, True, [True, True, False]) == "🚀해제직후"
+
+
+def test_build_indicators_uses_explicit_keltner_multiplier(monkeypatch):
+    if ta_engine.ta is None:
+        pytest.skip("optional ta package is not installed")
+
+    calls = {}
+
+    class FakeKeltnerChannel:
+        def __init__(self, *args, **kwargs):
+            calls["args"] = args
+            calls["kwargs"] = kwargs
+            self.close = args[2]
+
+        def keltner_channel_hband(self):
+            return self.close + 10
+
+        def keltner_channel_lband(self):
+            return self.close - 10
+
+    monkeypatch.setattr(ta_engine.ta.volatility, "KeltnerChannel", FakeKeltnerChannel)
+
+    out = build_indicators(_sample_ohlcv())
+
+    assert len(calls["args"]) == 3
+    assert calls["kwargs"]["window"] == 20
+    assert calls["kwargs"]["window_atr"] == 20
+    assert calls["kwargs"]["multiplier"] == 1.5
+    assert calls["kwargs"]["original_version"] is False
+    assert calls["kwargs"]["fillna"] is False
+    assert "SQZ_RATIO" in out.columns
+
+
+def test_build_indicators_keeps_flat_percent_b_from_inf():
+    if ta_engine.ta is None:
+        pytest.skip("optional ta package is not installed")
+
+    df = pd.DataFrame(
+        {
+            "Open": [100.0] * 80,
+            "High": [100.0] * 80,
+            "Low": [100.0] * 80,
+            "Close": [100.0] * 80,
+            "Volume": [1000] * 80,
+        }
+    )
+
+    out = build_indicators(df)
+
+    assert not np.isinf(out["%B"].to_numpy(dtype="float64", na_value=np.nan)).any()
+
+
+def test_get_trend_treats_ma50_above_ma120_pullback_as_pullback():
+    trend = get_trend({"MA20": 95.0, "MA50": 100.0, "MA120": 90.0})
+
+    assert "눌림" in trend
+    assert "역배열" not in trend
+
+
+def test_recent_level_fallback_uses_prior_bar_not_today_high():
+    df = pd.DataFrame(
+        {
+            "High": [10, 11, 12, 13, 999],
+            "Low": [8, 8, 8, 8, 7],
+            "Close": [9, 10, 11, 12, 998],
+        }
+    )
+
+    levels = get_recent_levels(df)
+
+    assert levels["int_high"] == 13
+    assert levels["ext_high"] == 13
+
+
+def test_detect_recent_fvg_marks_filled_gap_inactive():
+    df = pd.DataFrame(
+        {
+            "High": [10.0, 10.5, 13.0, 12.0, 13.0],
+            "Low": [8.0, 8.5, 11.0, 9.5, 11.5],
+            "Close": [9.0, 9.5, 12.0, 10.0, 12.0],
+        }
+    )
+
+    fvg = detect_recent_fvg(df)
+
+    assert fvg["type"] == "Bullish FVG"
+    assert fvg["active"] is False
+    assert fvg["filled_pct"] == 1.0
+
+
+def test_detect_smc_features_prefers_latest_fvg_direction():
+    df = pd.DataFrame(
+        {
+            "High": [10.0, 10.0, 13.0, 12.0, 9.0],
+            "Low": [8.0, 8.0, 11.0, 10.0, 7.0],
+            "Close": [9.0, 9.0, 12.0, 11.0, 8.0],
+        }
+    )
+
+    result = detect_smc_features(df)
+
+    assert "저항 갭(FVG)" in result["fvg_label"]
+
+
+def test_detect_order_block_zones_marks_broken_support_inactive():
+    rows = []
+    for _ in range(11):
+        rows.append({"Open": 9.6, "High": 10.0, "Low": 9.0, "Close": 9.8})
+    rows.append({"Open": 10.0, "High": 10.2, "Low": 9.2, "Close": 9.5})
+    rows.append({"Open": 9.8, "High": 11.2, "Low": 9.6, "Close": 11.0})
+    for _ in range(7):
+        rows.append({"Open": 10.8, "High": 11.2, "Low": 10.2, "Close": 10.7})
+    rows.append({"Open": 9.4, "High": 9.6, "Low": 8.7, "Close": 8.8})
+    for _ in range(8):
+        rows.append({"Open": 10.0, "High": 10.8, "Low": 9.6, "Close": 10.4})
+    df = pd.DataFrame(rows)
+
+    zones = detect_order_block_zones(df)
+
+    assert any(
+        zone["type"] == "Bullish OB"
+        and zone["direction"] == "support"
+        and zone["active"] is False
+        for zone in zones
+    )
 
 
 def test_detect_smc_features_reports_bullish_fvg_and_support_zone():
