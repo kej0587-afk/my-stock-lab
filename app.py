@@ -20532,6 +20532,9 @@ VALUATION_INFO_KEYS = [
     "netIncome",
     "sharesOutstanding",
     "ebitda",
+    "annualRevenue",
+    "annualOperatingIncome",
+    "annualNetIncome",
 ]
 
 
@@ -20595,6 +20598,41 @@ def _derive_valuation_fields(data, current_price=np.nan):
     return data
 
 
+def build_valuation_fields_from_fin_meta(fin_meta):
+    notes, metrics, _ = get_fin_meta_parts(fin_meta)
+    if not isinstance(metrics, dict) or not metrics:
+        return {}
+
+    annual = get_fin_latest_record(metrics, "annual_latest", "annual_records")
+    quarter = get_fin_latest_record(metrics, "quarter_latest", "quarter_records")
+    derived = metrics.get("derived", {}) if isinstance(metrics.get("derived", {}), dict) else {}
+
+    data = {}
+    if isinstance(annual, dict):
+        data = _merge_missing_valuation_fields(data, {
+            "totalRevenue": annual.get("revenue"),
+            "annualRevenue": annual.get("revenue"),
+            "annualOperatingIncome": annual.get("op_income"),
+            "netIncomeToCommon": annual.get("net_income"),
+            "annualNetIncome": annual.get("net_income"),
+            "profitMargins": annual.get("net_margin"),
+            "operatingMargins": annual.get("op_margin"),
+            "returnOnEquity": annual.get("roe"),
+        })
+    if isinstance(quarter, dict):
+        data = _merge_missing_valuation_fields(data, {
+            "quarterRevenue": quarter.get("revenue"),
+            "quarterOperatingIncome": quarter.get("op_income"),
+            "quarterNetIncome": quarter.get("net_income"),
+        })
+    if isinstance(derived, dict):
+        data = _merge_missing_valuation_fields(data, {
+            "revenueGrowth": derived.get("rev_growth"),
+            "earningsGrowth": derived.get("net_growth"),
+        })
+    return data
+
+
 def _fmp_number(row, *keys):
     if not isinstance(row, dict):
         return np.nan
@@ -20617,6 +20655,22 @@ def fmp_stable_request(endpoint, ticker, api_key, **params):
     return [payload] if isinstance(payload, dict) else []
 
 
+def fmp_legacy_request(endpoint, ticker, api_key, **params):
+    symbol = urllib.parse.quote(str(ticker or "").strip().upper())
+    url = f"https://financialmodelingprep.com/api/v3/{endpoint}/{symbol}"
+    req_params = {"apikey": api_key, **{k: v for k, v in params.items() if v not in [None, ""]}}
+    try:
+        res = requests.get(url, params=req_params, timeout=12)
+        if res.status_code != 200:
+            return []
+        payload = res.json()
+    except Exception:
+        return []
+    if isinstance(payload, list):
+        return payload
+    return [payload] if isinstance(payload, dict) else []
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_fmp_valuation_snapshot(ticker):
     ticker = sanitize_ticker_value(ticker)
@@ -20628,7 +20682,7 @@ def fetch_fmp_valuation_snapshot(ticker):
 
     symbol = ticker.replace(".US", "").upper()
     data = {}
-    profile = fmp_stable_request("profile", symbol, api_key, limit=1)
+    profile = fmp_stable_request("profile", symbol, api_key, limit=1) or fmp_legacy_request("profile", symbol, api_key)
     if profile:
         row = profile[0]
         data = _merge_missing_valuation_fields(data, {
@@ -20638,7 +20692,7 @@ def fetch_fmp_valuation_snapshot(ticker):
             "sharesOutstanding": _fmp_number(row, "sharesOutstanding"),
         })
 
-    ratios = fmp_stable_request("ratios-ttm", symbol, api_key, limit=1)
+    ratios = fmp_stable_request("ratios-ttm", symbol, api_key, limit=1) or fmp_legacy_request("ratios-ttm", symbol, api_key)
     if ratios:
         row = ratios[0]
         data = _merge_missing_valuation_fields(data, {
@@ -20653,7 +20707,7 @@ def fetch_fmp_valuation_snapshot(ticker):
             "debtToEquity": _fmp_number(row, "debtEquityRatioTTM"),
         })
 
-    metrics = fmp_stable_request("key-metrics-ttm", symbol, api_key, limit=1)
+    metrics = fmp_stable_request("key-metrics-ttm", symbol, api_key, limit=1) or fmp_legacy_request("key-metrics-ttm", symbol, api_key)
     if metrics:
         row = metrics[0]
         data = _merge_missing_valuation_fields(data, {
@@ -20662,7 +20716,7 @@ def fetch_fmp_valuation_snapshot(ticker):
             "enterpriseToEbitda": _fmp_number(row, "enterpriseValueOverEBITDATTM", "evToEBITDATTM"),
         })
 
-    income = fmp_stable_request("income-statement", symbol, api_key, period="annual", limit=1)
+    income = fmp_stable_request("income-statement", symbol, api_key, period="annual", limit=1) or fmp_legacy_request("income-statement", symbol, api_key, period="annual", limit=1)
     if income:
         row = income[0]
         data = _merge_missing_valuation_fields(data, {
@@ -20671,7 +20725,7 @@ def fetch_fmp_valuation_snapshot(ticker):
             "ebitda": _fmp_number(row, "ebitda", "EBITDA"),
         })
 
-    growth = fmp_stable_request("financial-growth", symbol, api_key, period="annual", limit=1)
+    growth = fmp_stable_request("financial-growth", symbol, api_key, period="annual", limit=1) or fmp_legacy_request("financial-growth", symbol, api_key, period="annual", limit=1)
     if growth:
         row = growth[0]
         data = _merge_missing_valuation_fields(data, {
@@ -20739,6 +20793,9 @@ def valuation_factor_label(kind, value):
     number = clean_float(value, np.nan)
     if not finite_num(number):
         return "데이터 없음", 0
+
+    if kind == "reference":
+        return "참고", 0
 
     if kind == "target_upside":
         if number >= 20:
@@ -20814,7 +20871,9 @@ def valuation_factor_label(kind, value):
     return "중립", 0
 
 
-def build_valuation_interpretation(data, current_price, ticker):
+def build_valuation_interpretation(data, current_price, ticker, fin_meta=None):
+    fin_meta_fields = build_valuation_fields_from_fin_meta(fin_meta)
+    data = _merge_missing_valuation_fields(data, fin_meta_fields)
     data = _derive_valuation_fields(data, current_price)
     cur = clean_float(current_price, np.nan)
     if not finite_num(cur):
@@ -20834,6 +20893,9 @@ def build_valuation_interpretation(data, current_price, ticker):
     earnings_growth = clean_float(data.get("earningsGrowth"), np.nan)
     profit_margin = clean_float(data.get("profitMargins"), np.nan)
     operating_margin = clean_float(data.get("operatingMargins"), np.nan)
+    annual_revenue = _first_finite_valuation(data.get("annualRevenue"), data.get("totalRevenue"), data.get("revenue"))
+    annual_op_income = _first_finite_valuation(data.get("annualOperatingIncome"))
+    annual_net_income = _first_finite_valuation(data.get("annualNetIncome"), data.get("netIncomeToCommon"), data.get("netIncome"))
 
     factors = [
         ("목표가 업사이드", "target_upside", target_upside, format_backtest_percent(target_upside)),
@@ -20841,6 +20903,9 @@ def build_valuation_interpretation(data, current_price, ticker):
         ("PBR", "pbr", pbr, fmt_multiple(pbr)),
         ("PSR", "ps", ps, fmt_multiple(ps)),
         ("PEG", "peg", peg, fmt_multiple(peg)),
+        ("연매출", "reference", annual_revenue, fmt_num(annual_revenue)),
+        ("영업이익", "reference", annual_op_income, fmt_num(annual_op_income)),
+        ("순이익", "reference", annual_net_income, fmt_num(annual_net_income)),
         ("매출 성장", "growth", revenue_growth, fmt_growth_pct(revenue_growth)),
         ("이익 성장", "growth", earnings_growth, fmt_growth_pct(earnings_growth)),
         ("순이익률", "margin", profit_margin, fmt_growth_pct(profit_margin)),
@@ -20854,21 +20919,25 @@ def build_valuation_interpretation(data, current_price, ticker):
     valuation_data_count = 0
     valuation_bad_count = 0
     quality_data_count = 0
+    reference_data_count = 0
     for title, kind, value, display_value in factors:
         label, score = valuation_factor_label(kind, value)
         if finite_num(value):
-            data_count += 1
+            if kind == "reference":
+                reference_data_count += 1
+            else:
+                data_count += 1
             if kind in ["target_upside", "pe", "pbr", "ps", "peg"]:
                 valuation_data_count += 1
                 if score < 0:
                     valuation_bad_count += 1
                 valuation_score += score
-            else:
+            elif kind in ["growth", "margin"]:
                 quality_data_count += 1
                 quality_score += score
         rows.append({"항목": title, "값": display_value or "-", "판정": label})
 
-    if data_count == 0:
+    if data_count == 0 and reference_data_count == 0:
         headline = "밸류 데이터 부족"
         color = "#64748b"
         is_kr = is_kr_listed(ticker)
@@ -20878,6 +20947,10 @@ def build_valuation_interpretation(data, current_price, ticker):
             if is_kr else
             "yfinance에서 현재 종목의 밸류/성장 지표를 충분히 제공하지 않았습니다."
         )
+    elif data_count == 0:
+        headline = "밸류 확인부족"
+        color = "#64748b"
+        note = "재무 원자료는 확보됐지만 목표가·시총 기반 멀티플이 부족합니다. 재무체력과 가격매력은 분리해서 봅니다."
     elif valuation_data_count <= 1 and finite_num(target_upside) and target_upside < 3:
         headline = "업사이드 제한"
         color = "#d97706"
@@ -20930,10 +21003,11 @@ def build_valuation_interpretation(data, current_price, ticker):
         "data_count": data_count,
         "valuation_data_count": valuation_data_count,
         "quality_data_count": quality_data_count,
+        "reference_data_count": reference_data_count,
     }
 
 
-def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
+def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=None):
     st.markdown("### 💎 밸류 / 가격매력 점검")
 
     if is_etf:
@@ -20952,7 +21026,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
             data[key] = analyst_data.get(key)
 
     cur_p = clean_float(c.get("cur_p"), np.nan)
-    valuation = build_valuation_interpretation(data, cur_p, ticker)
+    valuation = build_valuation_interpretation(data, cur_p, ticker, fin_meta=fin_meta)
 
     v1, v2, v3, v4 = st.columns(4)
     v1.metric("밸류 판정", valuation["headline"])
@@ -20981,7 +21055,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
         st.caption("밸류 데이터 참고: 목표가 또는 일부 지표만 확보되어 PER/PSR 등 세부 지표 보강 후 판단합니다.")
 
 
-def get_valuation_headline_for_final_check(ticker, is_etf, current_price):
+def get_valuation_headline_for_final_check(ticker, is_etf, current_price, fin_meta=None):
     if is_etf:
         return "ETF 별도판단", "ETF는 밸류보다 추세/돈흐름/괴리율 중심으로 봅니다.", np.nan
 
@@ -20993,7 +21067,7 @@ def get_valuation_headline_for_final_check(ticker, is_etf, current_price):
         if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
             data[key] = analyst_data.get(key)
 
-    valuation = build_valuation_interpretation(data, current_price, ticker)
+    valuation = build_valuation_interpretation(data, current_price, ticker, fin_meta=fin_meta)
     return valuation["headline"], valuation["note"], valuation["target_upside"]
 
 
@@ -21007,7 +21081,7 @@ def final_check_status_style(status):
     return "#64748b"
 
 
-def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price):
+def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=None):
     rows = []
 
     def add_check(category, status, detail):
@@ -21132,7 +21206,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         else:
             add_check("신규ETF 2차검증", "차단", f"{verification.get('verdict')}: {verification.get('detail')}")
 
-    valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"))
+    valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"), fin_meta=fin_meta)
     if valuation_headline in ["가격매력 우수", "조건부 적정", "ETF 별도판단"]:
         val_status = "통과"
     elif valuation_headline in ["성장 프리미엄", "중립", "밸류 데이터 부족", "밸류 확인부족", "업사이드 제한"]:
@@ -21363,9 +21437,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     }
 
 
-def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price):
+def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=None):
     st.markdown("### ✅ 매수 전 최종 체크")
-    rows, summary = build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price)
+    rows, summary = build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=fin_meta)
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("최종 판정", summary["final_label"])
@@ -36038,9 +36112,9 @@ if main_page == "precision":
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
-        render_valuation_price_panel(name, tkr, is_etf, c, fin_score)
+        render_valuation_price_panel(name, tkr, is_etf, c, fin_score, fin_meta=fin_meta)
 
-        render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p)
+        render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
         render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
            
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)

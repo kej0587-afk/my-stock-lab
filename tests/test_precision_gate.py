@@ -22,7 +22,7 @@ def precision_app(app_module, monkeypatch):
     monkeypatch.setattr(app_module.st, "session_state", {"_app_final_macro_risk": 0.0})
     monkeypatch.setattr(
         app_module, "get_valuation_headline_for_final_check",
-        lambda *args: ("가격매력 우수", "", 20.0),
+        lambda *args, **kwargs: ("가격매력 우수", "", 20.0),
     )
     monkeypatch.setattr(app_module, "is_leveraged_or_inverse_product", lambda *args: False)
     monkeypatch.setattr(app_module, "build_leveraged_precision_state", lambda *args: {})
@@ -215,11 +215,42 @@ def test_valuation_derives_psr_and_pe_from_market_cap(app_module):
     assert rows["PSR"]["값"] == "10.0x"
 
 
+def test_valuation_reuses_fin_score_financial_records(app_module):
+    fin_meta = {
+        "metrics": {
+            "annual_latest": {
+                "revenue": 200_000_000,
+                "op_income": 40_000_000,
+                "net_income": 24_000_000,
+                "op_margin": 20.0,
+                "net_margin": 12.0,
+                "roe": 18.0,
+            },
+            "derived": {"rev_growth": 35.0, "net_growth": 42.0},
+        }
+    }
+    valuation = app_module.build_valuation_interpretation(
+        {"targetMeanPrice": 100.5, "marketCap": 1_000_000_000},
+        100.0,
+        "ALAB",
+        fin_meta=fin_meta,
+    )
+    rows = {row["항목"]: row for row in valuation["rows"]}
+
+    assert rows["연매출"]["값"] == "2.0억"
+    assert rows["영업이익"]["값"] == "40.0백만"
+    assert rows["순이익"]["값"] == "24.0백만"
+    assert rows["매출 성장"]["값"] == "35.0%"
+    assert rows["순이익률"]["값"] == "12.0%"
+    assert rows["PSR"]["값"] == "5.0x"
+    assert valuation["headline"] != "밸류 데이터 부족"
+
+
 def test_upside_limited_valuation_is_caution_not_hard_block(precision_app, monkeypatch):
     monkeypatch.setattr(
         precision_app,
         "get_valuation_headline_for_final_check",
-        lambda *args: (
+        lambda *args, **kwargs: (
             "업사이드 제한",
             "목표가 기준 상승여력은 작지만 세부 밸류 데이터가 부족합니다.",
             0.9,
