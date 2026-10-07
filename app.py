@@ -20522,8 +20522,166 @@ VALUATION_INFO_KEYS = [
     "recommendationKey",
     "recommendationMean",
     "trailingEps",
+    "forwardEps",
     "bookValue",
+    "marketCap",
+    "enterpriseValue",
+    "totalRevenue",
+    "revenue",
+    "netIncomeToCommon",
+    "netIncome",
+    "sharesOutstanding",
+    "ebitda",
 ]
+
+
+def _valuation_missing(value):
+    if value in [None, ""]:
+        return True
+    number = clean_float(value, np.nan)
+    return not finite_num(number)
+
+
+def _first_finite_valuation(*values):
+    for value in values:
+        number = clean_float(value, np.nan)
+        if finite_num(number):
+            return number
+    return np.nan
+
+
+def _merge_missing_valuation_fields(base, extra):
+    merged = dict(base or {})
+    if not isinstance(extra, dict):
+        return merged
+    for key, value in extra.items():
+        if _valuation_missing(merged.get(key)) and not _valuation_missing(value):
+            merged[key] = value
+    return merged
+
+
+def _derive_valuation_fields(data, current_price=np.nan):
+    data = dict(data or {})
+    cur = _first_finite_valuation(current_price, data.get("currentPrice"), data.get("regularMarketPrice"))
+    if finite_num(cur):
+        if _valuation_missing(data.get("currentPrice")):
+            data["currentPrice"] = cur
+        if _valuation_missing(data.get("regularMarketPrice")):
+            data["regularMarketPrice"] = cur
+
+    target_mean = _first_finite_valuation(data.get("targetMeanPrice"), data.get("targetMedianPrice"))
+    if finite_num(target_mean) and _valuation_missing(data.get("targetMeanPrice")):
+        data["targetMeanPrice"] = target_mean
+
+    market_cap = _first_finite_valuation(data.get("marketCap"))
+    total_revenue = _first_finite_valuation(data.get("totalRevenue"), data.get("revenue"))
+    net_income = _first_finite_valuation(data.get("netIncomeToCommon"), data.get("netIncome"))
+    book_value = _first_finite_valuation(data.get("bookValue"))
+    ebitda = _first_finite_valuation(data.get("ebitda"))
+    enterprise_value = _first_finite_valuation(data.get("enterpriseValue"))
+
+    if _valuation_missing(data.get("priceToSalesTrailing12Months")) and market_cap > 0 and total_revenue > 0:
+        data["priceToSalesTrailing12Months"] = market_cap / total_revenue
+        data["_derived_priceToSalesTrailing12Months"] = True
+    if _valuation_missing(data.get("trailingPE")) and market_cap > 0 and net_income > 0:
+        data["trailingPE"] = market_cap / net_income
+        data["_derived_trailingPE"] = True
+    if _valuation_missing(data.get("priceToBook")) and finite_num(cur) and cur > 0 and book_value > 0:
+        data["priceToBook"] = cur / book_value
+        data["_derived_priceToBook"] = True
+    if _valuation_missing(data.get("enterpriseToEbitda")) and enterprise_value > 0 and ebitda > 0:
+        data["enterpriseToEbitda"] = enterprise_value / ebitda
+        data["_derived_enterpriseToEbitda"] = True
+    return data
+
+
+def _fmp_number(row, *keys):
+    if not isinstance(row, dict):
+        return np.nan
+    return _first_finite_valuation(*(row.get(key) for key in keys))
+
+
+def fmp_stable_request(endpoint, ticker, api_key, **params):
+    url = f"https://financialmodelingprep.com/stable/{endpoint}"
+    req_params = {"symbol": ticker, **{k: v for k, v in params.items() if v not in [None, ""]}}
+    headers = {"apikey": api_key}
+    try:
+        res = requests.get(url, params=req_params, headers=headers, timeout=12)
+        if res.status_code != 200:
+            return []
+        payload = res.json()
+    except Exception:
+        return []
+    if isinstance(payload, list):
+        return payload
+    return [payload] if isinstance(payload, dict) else []
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_fmp_valuation_snapshot(ticker):
+    ticker = sanitize_ticker_value(ticker)
+    if not ticker or is_kr_listed(ticker):
+        return {"ok": False, "reason": "FMP 보강 대상 아님", "data": {}}
+    api_key = get_secret_value("fmp_api_key") or get_secret_value("FMP_API_KEY")
+    if not api_key:
+        return {"ok": False, "reason": "FMP API 키 없음", "data": {}}
+
+    symbol = ticker.replace(".US", "").upper()
+    data = {}
+    profile = fmp_stable_request("profile", symbol, api_key, limit=1)
+    if profile:
+        row = profile[0]
+        data = _merge_missing_valuation_fields(data, {
+            "currentPrice": _fmp_number(row, "price", "currentPrice"),
+            "regularMarketPrice": _fmp_number(row, "price", "currentPrice"),
+            "marketCap": _fmp_number(row, "mktCap", "marketCap"),
+            "sharesOutstanding": _fmp_number(row, "sharesOutstanding"),
+        })
+
+    ratios = fmp_stable_request("ratios-ttm", symbol, api_key, limit=1)
+    if ratios:
+        row = ratios[0]
+        data = _merge_missing_valuation_fields(data, {
+            "trailingPE": _fmp_number(row, "peRatioTTM", "priceEarningsRatioTTM"),
+            "priceToBook": _fmp_number(row, "priceToBookRatioTTM", "pbRatioTTM"),
+            "priceToSalesTrailing12Months": _fmp_number(row, "priceToSalesRatioTTM", "psRatioTTM"),
+            "pegRatio": _fmp_number(row, "pegRatioTTM"),
+            "enterpriseToRevenue": _fmp_number(row, "enterpriseValueMultipleTTM", "evToSalesTTM"),
+            "profitMargins": _fmp_number(row, "netProfitMarginTTM", "netIncomePerRevenueTTM"),
+            "operatingMargins": _fmp_number(row, "operatingProfitMarginTTM"),
+            "returnOnEquity": _fmp_number(row, "returnOnEquityTTM"),
+            "debtToEquity": _fmp_number(row, "debtEquityRatioTTM"),
+        })
+
+    metrics = fmp_stable_request("key-metrics-ttm", symbol, api_key, limit=1)
+    if metrics:
+        row = metrics[0]
+        data = _merge_missing_valuation_fields(data, {
+            "marketCap": _fmp_number(row, "marketCapTTM", "marketCap"),
+            "enterpriseValue": _fmp_number(row, "enterpriseValueTTM", "enterpriseValue"),
+            "enterpriseToEbitda": _fmp_number(row, "enterpriseValueOverEBITDATTM", "evToEBITDATTM"),
+        })
+
+    income = fmp_stable_request("income-statement", symbol, api_key, period="annual", limit=1)
+    if income:
+        row = income[0]
+        data = _merge_missing_valuation_fields(data, {
+            "totalRevenue": _fmp_number(row, "revenue", "totalRevenue"),
+            "netIncomeToCommon": _fmp_number(row, "netIncome", "netIncomeToCommon"),
+            "ebitda": _fmp_number(row, "ebitda", "EBITDA"),
+        })
+
+    growth = fmp_stable_request("financial-growth", symbol, api_key, period="annual", limit=1)
+    if growth:
+        row = growth[0]
+        data = _merge_missing_valuation_fields(data, {
+            "revenueGrowth": _fmp_number(row, "revenueGrowth", "growthRevenue"),
+            "earningsGrowth": _fmp_number(row, "netIncomeGrowth", "epsgrowth", "epsGrowth"),
+        })
+
+    data = _derive_valuation_fields(data)
+    has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+    return {"ok": bool(has_any), "reason": "" if has_any else "FMP 밸류 데이터 없음", "data": data}
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -20539,22 +20697,26 @@ def fetch_valuation_snapshot(ticker):
         info = {}
 
     data = {key: info.get(key) for key in VALUATION_INFO_KEYS}
-    has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
+    has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
 
     # ── 한국 종목: yfinance에 데이터가 없으면 네이버 증권으로 보완 ──────────────
     if is_kr_listed(ticker):
         naver = fetch_naver_kr_snapshot(ticker)
         if naver.get("ok"):
             nd = naver.get("data", {})
-            for key in VALUATION_INFO_KEYS:
-                if data.get(key) in [None, ""] and nd.get(key) not in [None, ""]:
-                    data[key] = nd[key]
-            has_any = any(data.get(k) not in [None, ""] for k in VALUATION_INFO_KEYS)
+            data = _merge_missing_valuation_fields(data, {key: nd.get(key) for key in VALUATION_INFO_KEYS})
+            has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+
+    if not is_kr_listed(ticker):
+        fmp_snapshot = fetch_fmp_valuation_snapshot(ticker)
+        if fmp_snapshot.get("ok"):
+            data = _merge_missing_valuation_fields(data, fmp_snapshot.get("data", {}))
+            has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
 
     if not has_any:
-        reason = "yfinance/네이버 밸류 데이터 없음" if is_kr_listed(ticker) else "yfinance 밸류 데이터 없음"
+        reason = "yfinance/네이버 밸류 데이터 없음" if is_kr_listed(ticker) else "yfinance/FMP 밸류 데이터 없음"
         return {"ok": False, "reason": reason, "data": data}
-    return {"ok": True, "reason": "", "data": data}
+    return {"ok": True, "reason": "", "data": _derive_valuation_fields(data)}
 
 
 def fmt_multiple(value, digits=1):
@@ -20583,8 +20745,10 @@ def valuation_factor_label(kind, value):
             return "매력", 2
         if number >= 8:
             return "양호", 1
-        if number >= -5:
+        if number >= 3:
             return "중립", 0
+        if number >= -5:
+            return "제한", 0
         return "부담", -1
 
     if kind == "pe":
@@ -20651,7 +20815,10 @@ def valuation_factor_label(kind, value):
 
 
 def build_valuation_interpretation(data, current_price, ticker):
+    data = _derive_valuation_fields(data, current_price)
     cur = clean_float(current_price, np.nan)
+    if not finite_num(cur):
+        cur = _first_finite_valuation(data.get("currentPrice"), data.get("regularMarketPrice"))
     target_mean = clean_float(data.get("targetMeanPrice"), np.nan)
     target_upside = np.nan
     if finite_num(target_mean) and finite_num(cur) and cur > 0:
@@ -20684,13 +20851,20 @@ def build_valuation_interpretation(data, current_price, ticker):
     valuation_score = 0
     quality_score = 0
     data_count = 0
+    valuation_data_count = 0
+    valuation_bad_count = 0
+    quality_data_count = 0
     for title, kind, value, display_value in factors:
         label, score = valuation_factor_label(kind, value)
         if finite_num(value):
             data_count += 1
             if kind in ["target_upside", "pe", "pbr", "ps", "peg"]:
+                valuation_data_count += 1
+                if score < 0:
+                    valuation_bad_count += 1
                 valuation_score += score
             else:
+                quality_data_count += 1
                 quality_score += score
         rows.append({"항목": title, "값": display_value or "-", "판정": label})
 
@@ -20704,6 +20878,17 @@ def build_valuation_interpretation(data, current_price, ticker):
             if is_kr else
             "yfinance에서 현재 종목의 밸류/성장 지표를 충분히 제공하지 않았습니다."
         )
+    elif valuation_data_count <= 1 and finite_num(target_upside) and target_upside < 3:
+        headline = "업사이드 제한"
+        color = "#d97706"
+        note = (
+            "현재 확보된 목표가 기준 상승여력은 작습니다. 다만 PER/PSR 같은 세부 밸류 데이터가 부족하므로 "
+            "이 값 하나만으로 고평가 차단으로 단정하지 않고 추격주의로 봅니다."
+        )
+    elif valuation_data_count <= 1:
+        headline = "밸류 확인부족"
+        color = "#64748b"
+        note = "목표가 또는 일부 지표만 확보되어 가격 매력을 확정하기 어렵습니다. 추가 자료 확인 후 분할 여부를 판단합니다."
     elif valuation_score >= 4 and quality_score >= 3:
         headline = "가격매력 우수"
         color = "#16a34a"
@@ -20716,10 +20901,14 @@ def build_valuation_interpretation(data, current_price, ticker):
         headline = "성장 프리미엄"
         color = "#d97706"
         note = "좋은 회사일 수 있지만 가격에는 기대가 많이 반영된 구간입니다."
-    elif valuation_score <= 0:
+    elif valuation_score <= 0 and valuation_bad_count >= 2:
         headline = "밸류 부담"
         color = "#dc2626"
         note = "재무점수가 좋아도 현재 가격 매력은 약할 수 있어 추격매수는 보수적으로 봅니다."
+    elif valuation_score <= 0:
+        headline = "중립"
+        color = "#64748b"
+        note = "일부 가격 부담 신호가 있으나 데이터가 충분히 나쁘게 모이지 않아 기술 신호와 실적 뉴스를 함께 봅니다."
     else:
         headline = "중립"
         color = "#64748b"
@@ -20738,6 +20927,9 @@ def build_valuation_interpretation(data, current_price, ticker):
         "peg": peg,
         "revenue_growth": revenue_growth,
         "profit_margin": profit_margin,
+        "data_count": data_count,
+        "valuation_data_count": valuation_data_count,
+        "quality_data_count": quality_data_count,
     }
 
 
@@ -20756,7 +20948,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
     analyst_snapshot = get_analyst_snapshot(ticker)
     analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
     for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
-        if data.get(key) in [None, ""] and analyst_data.get(key) not in [None, ""]:
+        if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
             data[key] = analyst_data.get(key)
 
     cur_p = clean_float(c.get("cur_p"), np.nan)
@@ -20774,7 +20966,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
         f"<b>{escape_html_value(name)} 가격매력 해석</b><br>"
         f"<span class='highlight' style='font-size:1.05em;'>{valuation['headline']}</span><br>"
         f"{escape_html_value(valuation['note'])}<br>"
-        f"<span style='color:#cbd5e1;'>재무점수 {fin_score}/4 종목이라도, 밸류 부담이 높으면 분할/대기가 더 유리할 수 있습니다.</span>"
+        f"<span style='color:#cbd5e1;'>재무점수 {fin_score}/4 종목이라도, 밸류·추세·손익비가 함께 맞을 때만 비중 확대가 유리합니다.</span>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -20785,6 +20977,8 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score):
             st.dataframe(pd.DataFrame(show_rows), width='stretch', hide_index=True)
     if not snapshot.get("ok"):
         st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
+    elif int(valuation.get("valuation_data_count", 0)) <= 1:
+        st.caption("밸류 데이터 참고: 목표가 또는 일부 지표만 확보되어 PER/PSR 등 세부 지표 보강 후 판단합니다.")
 
 
 def get_valuation_headline_for_final_check(ticker, is_etf, current_price):
@@ -20796,7 +20990,7 @@ def get_valuation_headline_for_final_check(ticker, is_etf, current_price):
     analyst_snapshot = get_analyst_snapshot(ticker)
     analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
     for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
-        if data.get(key) in [None, ""] and analyst_data.get(key) not in [None, ""]:
+        if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
             data[key] = analyst_data.get(key)
 
     valuation = build_valuation_interpretation(data, current_price, ticker)
@@ -20941,7 +21135,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     valuation_headline, valuation_note, target_upside = get_valuation_headline_for_final_check(ticker, is_etf, c.get("cur_p"))
     if valuation_headline in ["가격매력 우수", "조건부 적정", "ETF 별도판단"]:
         val_status = "통과"
-    elif valuation_headline in ["성장 프리미엄", "중립", "밸류 데이터 부족"]:
+    elif valuation_headline in ["성장 프리미엄", "중립", "밸류 데이터 부족", "밸류 확인부족", "업사이드 제한"]:
         val_status = "주의"
     else:
         val_status = "차단"

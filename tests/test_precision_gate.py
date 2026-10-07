@@ -183,6 +183,55 @@ def test_confirmed_entry_remains_actionable(precision_app):
     assert summary["final_label"] == "분할 가능"
 
 
+def test_low_target_only_is_upside_limited_not_valuation_burden(app_module):
+    valuation = app_module.build_valuation_interpretation(
+        {"targetMeanPrice": 100.9},
+        100.0,
+        "ALAB",
+    )
+
+    assert valuation["headline"] == "업사이드 제한"
+    assert valuation["valuation_data_count"] == 1
+    assert valuation["target_upside"] == pytest.approx(0.9)
+
+
+def test_valuation_derives_psr_and_pe_from_market_cap(app_module):
+    valuation = app_module.build_valuation_interpretation(
+        {
+            "marketCap": 1_000_000_000,
+            "totalRevenue": 100_000_000,
+            "netIncomeToCommon": 50_000_000,
+            "targetMedianPrice": 130.0,
+        },
+        100.0,
+        "TEST",
+    )
+    rows = {row["항목"]: row for row in valuation["rows"]}
+
+    assert valuation["target_mean"] == pytest.approx(130.0)
+    assert valuation["trailing_pe"] == pytest.approx(20.0)
+    assert valuation["ps"] == pytest.approx(10.0)
+    assert rows["PER"]["값"] == "20.0x"
+    assert rows["PSR"]["값"] == "10.0x"
+
+
+def test_upside_limited_valuation_is_caution_not_hard_block(precision_app, monkeypatch):
+    monkeypatch.setattr(
+        precision_app,
+        "get_valuation_headline_for_final_check",
+        lambda *args: (
+            "업사이드 제한",
+            "목표가 기준 상승여력은 작지만 세부 밸류 데이터가 부족합니다.",
+            0.9,
+        ),
+    )
+
+    rows, summary = _checks(precision_app, _decision())
+
+    assert _check(rows, "밸류/가격")["상태"] == "주의"
+    assert summary["final_label"] != "매수 금지"
+
+
 def test_held_mtf_damage_still_blocks_final_addition(precision_app):
     decision = _decision(current_w=1.0)
     decision = precision_app.apply_precision_mtf_decision_guard(
