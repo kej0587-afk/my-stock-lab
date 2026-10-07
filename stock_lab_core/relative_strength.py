@@ -23,7 +23,7 @@ def _dated_closes(frame: pd.DataFrame) -> pd.Series:
 
 def compute_relative_strength(stock: pd.DataFrame, benchmark: pd.DataFrame, lookback: int) -> dict:
     """Compare returns on the same sessions without treating missing data as neutral."""
-    result = {"score": 1, "label": "가격없음", "change_pct": None, "asof": "", "sessions": 0}
+    result = {"score": 0, "label": "가격없음", "change_pct": None, "asof": "", "sessions": 0}
     asset = _dated_closes(stock)
     base = _dated_closes(benchmark)
     if asset.empty or base.empty:

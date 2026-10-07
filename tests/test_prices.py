@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from stock_lab_core import prices
-from stock_lab_core.prices import _extract_yahoo_overnight_price_from_html
+from stock_lab_core.prices import _clean_ohlcv_frame, _extract_yahoo_overnight_price_from_html
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +22,43 @@ def test_extract_yahoo_overnight_price_from_plain_json_html():
     )
 
     assert _extract_yahoo_overnight_price_from_html(html, "MRVL") == 316.50
+
+
+def test_clean_ohlcv_frame_drops_missing_close_before_fill():
+    df = pd.DataFrame(
+        {
+            "Open": [100.0, None],
+            "High": [101.0, None],
+            "Low": [99.0, None],
+            "Close": [100.0, None],
+            "Volume": [1000.0, None],
+        },
+        index=pd.to_datetime(["2026-10-01", "2026-10-02"]),
+    )
+
+    out = _clean_ohlcv_frame(df)
+
+    assert list(out.index.strftime("%Y-%m-%d")) == ["2026-10-01"]
+
+
+def test_clean_ohlcv_frame_repairs_zero_ohl_with_same_bar_close():
+    df = pd.DataFrame(
+        {
+            "Open": [0.0],
+            "High": [0.0],
+            "Low": [0.0],
+            "Close": [100.0],
+            "Volume": [None],
+        },
+        index=pd.to_datetime(["2026-10-01"]),
+    )
+
+    out = _clean_ohlcv_frame(df)
+
+    assert out.iloc[0]["Open"] == 100.0
+    assert out.iloc[0]["High"] == 100.0
+    assert out.iloc[0]["Low"] == 100.0
+    assert out.iloc[0]["Volume"] == 0.0
 
 
 def test_extract_yahoo_overnight_price_from_escaped_json_html():

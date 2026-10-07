@@ -170,6 +170,21 @@ def test_build_return_window_context_uses_available_history_windows():
     assert ctx["ret_1m"] == pytest.approx(121 / 101 - 1)
     assert ctx["ret_3m"] == pytest.approx(121 / 61 - 1)
     assert ctx["ret_6m"] == pytest.approx(120.0)
+    assert ctx["ok_1m"] is True
+    assert ctx["ok_3m"] is True
+    assert ctx["ok_6m"] is True
+
+
+def test_build_return_window_context_marks_missing_windows_as_unavailable():
+    df = pd.DataFrame({"Close": list(range(100, 130))})
+
+    ctx = build_return_window_context(df, cur_p=129.0)
+
+    assert ctx["ok_1m"] is True
+    assert ctx["ok_3m"] is False
+    assert ctx["ok_6m"] is False
+    assert pd.isna(ctx["ret_3m"])
+    assert pd.isna(ctx["ret_6m"])
 
 
 def test_build_squeeze_status_context_normalizes_near_flags():

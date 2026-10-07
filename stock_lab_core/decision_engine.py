@@ -131,27 +131,38 @@ def resolve_current_price_for_decision(
 
 
 def build_return_window_context(df: pd.DataFrame, cur_p: float) -> dict:
-    """Compute 1M/3M/6M return values using the same fallback windows as app.py."""
+    """Compute 1M/3M/6M returns only when each window has enough history."""
     if df is None or df.empty or "Close" not in df.columns:
-        return {"p1m": 0.0, "p3m": 0.0, "p6m": 0.0, "ret_1m": 0.0, "ret_3m": 0.0, "ret_6m": 0.0}
+        return {
+            "p1m": math.nan, "p3m": math.nan, "p6m": math.nan,
+            "ret_1m": math.nan, "ret_3m": math.nan, "ret_6m": math.nan,
+            "ok_1m": False, "ok_3m": False, "ok_6m": False,
+        }
 
     price = clean_float(cur_p, 0.0)
-    first_close = clean_float(df["Close"].iloc[0], 0.0)
-    p1m = clean_float(df["Close"].iloc[-21], first_close) if len(df) >= 21 else first_close
-    p3m = clean_float(df["Close"].iloc[-61], first_close) if len(df) >= 61 else first_close
-    p6m = clean_float(df["Close"].iloc[-121], first_close) if len(df) >= 121 else first_close
+    closes = pd.to_numeric(df["Close"], errors="coerce")
 
-    def _ret(base):
-        base = clean_float(base, 0.0)
-        return (price / base) - 1 if base > 0 else 0.0
+    def _window(offset: int):
+        if len(closes) < offset:
+            return math.nan, math.nan, False
+        base = clean_float(closes.iloc[-offset], 0.0)
+        ok = base > 0 and price > 0
+        return base if ok else math.nan, ((price / base) - 1) if ok else math.nan, ok
+
+    p1m, ret_1m, ok_1m = _window(21)
+    p3m, ret_3m, ok_3m = _window(61)
+    p6m, ret_6m, ok_6m = _window(121)
 
     return {
         "p1m": p1m,
         "p3m": p3m,
         "p6m": p6m,
-        "ret_1m": _ret(p1m),
-        "ret_3m": _ret(p3m),
-        "ret_6m": _ret(p6m),
+        "ret_1m": ret_1m,
+        "ret_3m": ret_3m,
+        "ret_6m": ret_6m,
+        "ok_1m": ok_1m,
+        "ok_3m": ok_3m,
+        "ok_6m": ok_6m,
     }
 
 
@@ -366,9 +377,14 @@ def build_price_history_context(df: pd.DataFrame, last, cur_p) -> dict:
 
 def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
     """Build volume, moving-average, and below-MA flags for decision rules."""
-    vol_mean = df["Volume"].rolling(20).mean().iloc[-1]
-    vol_ma20 = float(vol_mean) if pd.notna(vol_mean) else 1.0
-    vol_ratio = float(last["Volume"]) / vol_ma20 if vol_ma20 > 0 else 0.0
+    vol_ma20 = math.nan
+    vol_ratio = math.nan
+    if df is not None and "Volume" in df.columns and len(df) >= 21:
+        vol_mean = pd.to_numeric(df["Volume"], errors="coerce").shift(1).rolling(20).mean().iloc[-1]
+        last_volume = clean_float(last.get("Volume"), math.nan)
+        if finite_num(vol_mean) and vol_mean > 0 and finite_num(last_volume):
+            vol_ma20 = float(vol_mean)
+            vol_ratio = float(last_volume / vol_ma20)
 
     ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
     ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
@@ -620,9 +636,14 @@ def build_entry_signal_context(
         rs_label == "🚀강함"
         or (rs_label == "➖보통" and rs_slope_label == "📈RS상승중")
     )
+    ret_1m_ok = finite_num(ret_1m)
+    ret_3m_ok = finite_num(ret_3m)
+    ret_6m_ok = finite_num(ret_6m)
     was_quality_drawdown_or_trend_damage = (
         current_dd <= -0.12
+        or (not ret_3m_ok)
         or ret_3m <= 0
+        or (not ret_6m_ok)
         or ret_6m <= 0
         or trend != "🚀정배열(상승)"
     )
@@ -652,6 +673,7 @@ def build_entry_signal_context(
         and cur_p >= ma50_now * 0.98
         and is_macd_recovering
         and is_rs_recovering
+        and ret_1m_ok
         and ret_1m > -0.08
         and day_ret > -0.04
     )
@@ -661,6 +683,7 @@ def build_entry_signal_context(
         and cur_p >= ma20_now
         and cur_p >= ma50_now
         and (ma120_now <= 0 or cur_p >= ma120_now * 0.95)
+        and ret_1m_ok
         and ret_1m >= -0.03
     )
 
@@ -833,6 +856,8 @@ def build_structure_damage_context(
     is_recovered_drawdown_zone = (
         current_dd <= -0.20
         and trend == "🚀정배열(상승)"
+        and finite_num(ret_1m)
+        and finite_num(ret_3m)
         and ret_1m > 0
         and ret_3m > 0
         and rs_label in {"🚀강함", "➖보통"}

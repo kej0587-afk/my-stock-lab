@@ -15844,25 +15844,8 @@ def get_rs_score(ticker, asset_class):
 
     s_df = load_price_df(ticker, "3mo")
     b_df = load_price_df(bench, "3mo")
-    need_len = RS_LOOKBACK_DAYS + 1
-
-    if len(s_df) < need_len or len(b_df) < need_len: return 1, "➖보통"
-
-    s_now = _close_scalar(s_df, -1)
-    s_then = _close_scalar(s_df, -need_len)
-    b_now = _close_scalar(b_df, -1)
-    b_then = _close_scalar(b_df, -need_len)
-
-    if not all(finite_num(v) for v in [s_now, s_then, b_now, b_then]):
-        return 1, "➖보통"
-    if s_then <= 0 or b_then <= 0 or b_now <= 0: return 1, "➖보통"
-
-    rs_now = s_now / b_now
-    rs_then = s_then / b_then
-
-    if rs_now > rs_then * 1.03: return 2, "🚀강함"
-    elif rs_now < rs_then * 0.97: return 0, "🐢약함"
-    return 1, "➖보통"
+    result = compute_relative_strength(s_df, b_df, RS_LOOKBACK_DAYS)
+    return int(result.get("score", 0) or 0), str(result.get("label", "가격없음") or "가격없음")
 
 
 def get_rs_slope(ticker: str, asset_class: str) -> tuple:
@@ -35598,8 +35581,12 @@ if main_page == "precision":
         with L:
             st.markdown(f"<h2>📊 {escape_html_value(name)}</h2>", unsafe_allow_html=True)
             dd_c = "#dc2626" if c['dd'] <= -0.2 else ("#d97706" if c['dd'] <= -0.1 else "#2ecc71")
-            ret3_color = "#2ecc71" if c["ret_3m"] > 0 else "#dc2626"
-            ret6_color = "#2ecc71" if c["ret_6m"] > 0 else "#dc2626"
+            _ret3 = clean_float(c.get("ret_3m"), np.nan)
+            _ret6 = clean_float(c.get("ret_6m"), np.nan)
+            ret3_color = "#2ecc71" if finite_num(_ret3) and _ret3 > 0 else ("#dc2626" if finite_num(_ret3) else "#94a3b8")
+            ret6_color = "#2ecc71" if finite_num(_ret6) and _ret6 > 0 else ("#dc2626" if finite_num(_ret6) else "#94a3b8")
+            ret3_text = f"{_ret3*100:.1f}%" if finite_num(_ret3) else "데이터 부족"
+            ret6_text = f"{_ret6*100:.1f}%" if finite_num(_ret6) else "데이터 부족"
             if display_cur_p <= 0:
                 display_cur_p = c["cur_p"]
             price_refresh_key = f"precision_price_refresh_time_{fin_key}"
@@ -35620,8 +35607,8 @@ if main_page == "precision":
             with price_info_col:
                 st.markdown(
                     f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(display_cur_p, tkr)}</span><br>"
-                    f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{c['ret_3m']*100:.1f}%</span><br>"
-                    f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{c['ret_6m']*100:.1f}%</span><br>"
+                    f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{ret3_text}</span><br>"
+                    f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{ret6_text}</span><br>"
                     f"52주 고점대비: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
                     unsafe_allow_html=True
                 )
@@ -35807,7 +35794,9 @@ if main_page == "precision":
                 else:
                     ret_label = str(c.get("day_ret_label") or "전일등락")
                     ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
-                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{c['vol_ratio']:.1f}x</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+                _vol_ratio = clean_float(c.get("vol_ratio"), np.nan)
+                _vol_ratio_text = f"{_vol_ratio:.1f}x" if finite_num(_vol_ratio) else "데이터 부족"
+                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 

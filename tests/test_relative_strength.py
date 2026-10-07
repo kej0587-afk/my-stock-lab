@@ -18,7 +18,13 @@ def test_rs_compares_identical_sessions_despite_different_holidays():
 
 def test_missing_short_or_stale_history_is_not_reported_as_neutral():
     valid = _prices(["2026-09-01", "2026-09-02"], [100, 110])
-    assert compute_relative_strength(valid, pd.DataFrame(), 1)["label"] == "가격없음"
-    assert compute_relative_strength(valid, valid, 3)["label"] == "이력부족"
+    missing = compute_relative_strength(valid, pd.DataFrame(), 1)
+    short = compute_relative_strength(valid, valid, 3)
+    assert missing["label"] == "가격없음"
+    assert missing["score"] == 0
+    assert short["label"] == "이력부족"
+    assert short["score"] == 0
     newer = _prices(["2026-09-01", "2026-09-02", "2026-09-20"], [100, 110, 115])
-    assert compute_relative_strength(newer, valid, 1)["label"] == "기준일차이"
+    stale = compute_relative_strength(newer, valid, 1)
+    assert stale["label"] == "기준일차이"
+    assert stale["score"] == 0

@@ -200,6 +200,42 @@ def _period_start_timestamp(period: str) -> pd.Timestamp:
     return today - pd.DateOffset(years=1)
 
 
+def _clean_ohlcv_frame(df: pd.DataFrame, *, keep_adj_close: bool = False) -> pd.DataFrame:
+    """Normalize OHLCV without carrying prior candles into missing closes."""
+    if df is None or df.empty or "Close" not in df.columns:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    out.index = pd.to_datetime(out.index, errors="coerce")
+    out = out[~out.index.isna()]
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+
+    # Close가 없는 행을 먼저 제거해야 전일 OHLC가 당일 봉처럼 복사되지 않습니다.
+    out = out.dropna(subset=["Close"])
+    out = out[out["Close"] > 0]
+    if out.empty:
+        return pd.DataFrame()
+
+    for col in ("Open", "High", "Low"):
+        if col not in out.columns:
+            out[col] = out["Close"]
+        out.loc[~(out[col] > 0), col] = pd.NA
+        out[col] = out[col].fillna(out["Close"])
+    out["High"] = out[["High", "Open", "Close"]].max(axis=1)
+    out["Low"] = out[["Low", "Open", "Close"]].min(axis=1)
+    if "Volume" not in out.columns:
+        out["Volume"] = 0.0
+    else:
+        out["Volume"] = out["Volume"].fillna(0.0)
+
+    cols = ["Open", "High", "Low", "Close", "Volume"]
+    if keep_adj_close and "Adj Close" in out.columns:
+        cols.append("Adj Close")
+    return out[cols]
+
+
 def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -219,9 +255,7 @@ def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
         out["Volume"] = 0
     cols = ["Open", "High", "Low", "Close", "Volume"]
     out = out[cols].apply(pd.to_numeric, errors="coerce")
-    out.index = pd.to_datetime(out.index, errors="coerce")
-    out = out[~out.index.isna()].sort_index().ffill()
-    return out.dropna(subset=["Close", "High", "Low"])
+    return _clean_ohlcv_frame(out)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -290,7 +324,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
             df.columns = df.columns.get_level_values(0)
         if "Close" not in df.columns:
             continue
-        df = df.ffill().dropna(subset=["Close"])
+        df = _clean_ohlcv_frame(df, keep_adj_close=True)
         if not df.empty:
             return _maybe_align_ohlcv_to_live_price(yf_ticker, df)
     return pd.DataFrame()
