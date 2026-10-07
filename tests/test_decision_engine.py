@@ -2,6 +2,7 @@
 import math
 
 import pandas as pd
+import pytest
 
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
@@ -268,6 +269,44 @@ def test_build_tactical_price_context_handles_invalid_ma_and_zero_volume_mean():
     assert context["below_ma5"] is False
     assert context["below_ma20"] is False
     assert context["below_ma50"] is False
+
+
+def test_build_tactical_price_context_uses_short_valid_volume_history():
+    volumes = [
+        76_799, 39_955, 64_598, 59_795, 64_287,
+        26_435, 22_489, 125_292, 30_871, 56_061, 16_594,
+    ]
+    df = pd.DataFrame({
+        "Volume": volumes,
+        "MA5": [102.0] * len(volumes),
+        "MA20": [100.0] * len(volumes),
+        "MA50": [float("nan")] * len(volumes),
+        "MA120": [float("nan")] * len(volumes),
+    })
+
+    context = build_tactical_price_context(df, df.iloc[-1], 100.0)
+
+    assert context["last_volume"] == 16_594
+    assert context["vol_valid_count"] == 10
+    assert context["vol_ma20"] == pytest.approx(56_658.2)
+    assert context["vol_ratio"] == pytest.approx(0.292866, rel=1e-4)
+
+
+def test_build_tactical_price_context_does_not_compare_against_zero_filled_history():
+    df = pd.DataFrame({
+        "Volume": [0.0] * 10 + [16_594.0],
+        "MA5": [102.0] * 11,
+        "MA20": [100.0] * 11,
+        "MA50": [float("nan")] * 11,
+        "MA120": [float("nan")] * 11,
+    })
+
+    context = build_tactical_price_context(df, df.iloc[-1], 100.0)
+
+    assert context["last_volume"] == 16_594
+    assert context["vol_valid_count"] == 0
+    assert pd.isna(context["vol_ma20"])
+    assert pd.isna(context["vol_ratio"])
 
 
 def test_build_breakdown_risk_flags_detects_live_gap_shock_only_for_stocks():

@@ -66,7 +66,9 @@ def build_decision_result(ctx: dict) -> dict:
         "day_ret": ctx["day_ret"], "day_ret_label": ctx.get("day_ret_label", "전일등락"),
         "regular_day_ret": ctx.get("regular_day_ret", math.nan), "live_ref_ret": ctx.get("live_ref_ret", math.nan),
         "leveraged_drop_ret": ctx.get("leveraged_drop_ret", ctx["day_ret"]),
-        "vol_ratio": ctx["vol_ratio"], "structure_risk": ctx["is_structure_damage_entry_risk"],
+        "vol_ratio": ctx["vol_ratio"], "vol_ma20": ctx.get("vol_ma20", math.nan),
+        "last_volume": ctx.get("last_volume", math.nan), "vol_valid_count": ctx.get("vol_valid_count", 0),
+        "structure_risk": ctx["is_structure_damage_entry_risk"],
         "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
         "sizing_hint": ctx["sizing_hint"],
         "ext_structure": ctx["ext_structure"], "int_structure": ctx["int_structure"], "pd_zone": ctx["pd_zone"], "smc_action": ctx["smc_action"],
@@ -379,12 +381,19 @@ def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
     """Build volume, moving-average, and below-MA flags for decision rules."""
     vol_ma20 = math.nan
     vol_ratio = math.nan
-    if df is not None and "Volume" in df.columns and len(df) >= 21:
-        vol_mean = pd.to_numeric(df["Volume"], errors="coerce").shift(1).rolling(20).mean().iloc[-1]
+    vol_valid_count = 0
+    last_volume = math.nan
+    if df is not None and "Volume" in df.columns and len(df) >= 2:
+        volume = pd.to_numeric(df["Volume"], errors="coerce")
+        volume = volume.where(volume > 0)
+        history = volume.iloc[:-1].dropna().tail(20)
         last_volume = clean_float(last.get("Volume"), math.nan)
-        if finite_num(vol_mean) and vol_mean > 0 and finite_num(last_volume):
-            vol_ma20 = float(vol_mean)
-            vol_ratio = float(last_volume / vol_ma20)
+        if finite_num(last_volume) and last_volume > 0 and len(history) >= 5:
+            vol_mean = history.mean()
+            if finite_num(vol_mean) and vol_mean > 0:
+                vol_valid_count = int(len(history))
+                vol_ma20 = float(vol_mean)
+                vol_ratio = float(last_volume / vol_ma20)
 
     ma20_now = float(last["MA20"]) if finite_num(last["MA20"]) else 0.0
     ma50_now = float(last["MA50"]) if finite_num(last["MA50"]) else 0.0
@@ -395,6 +404,8 @@ def build_tactical_price_context(df: pd.DataFrame, last, cur_p) -> dict:
     return {
         "vol_ma20": vol_ma20,
         "vol_ratio": vol_ratio,
+        "last_volume": last_volume,
+        "vol_valid_count": vol_valid_count,
         "ma5_now": ma5_now,
         "ma20_now": ma20_now,
         "ma50_now": ma50_now,

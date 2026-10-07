@@ -16700,6 +16700,8 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     tactical_price_context = build_tactical_price_context(df, last, cur_p)
     vol_ma20 = tactical_price_context["vol_ma20"]
     vol_ratio = tactical_price_context["vol_ratio"]
+    last_volume = tactical_price_context.get("last_volume", np.nan)
+    vol_valid_count = tactical_price_context.get("vol_valid_count", 0)
     ma5_now = tactical_price_context["ma5_now"]
     ma20_now = tactical_price_context["ma20_now"]
     ma50_now = tactical_price_context["ma50_now"]
@@ -18263,7 +18265,10 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     day_ret_label = c.get("day_ret_label", "전일등락")
     regular_day_ret = clean_float(c.get("regular_day_ret"), np.nan)
     live_ref_ret = clean_float(c.get("live_ref_ret"), np.nan)
-    vol_ratio   = c.get("vol_ratio", 0.0)
+    vol_ratio   = clean_float(c.get("vol_ratio"), np.nan)
+    vol_ma20    = clean_float(c.get("vol_ma20"), np.nan)
+    last_volume = clean_float(c.get("last_volume"), np.nan)
+    vol_valid_count = int(clean_float(c.get("vol_valid_count"), 0))
     ma5         = c.get("ma5", 0)
     ma20        = c.get("ma20", 0)
     decision_code = c.get("decision_code", "")
@@ -18391,9 +18396,16 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
     elif day_ret != 0:
         dr_emoji = "🔺" if day_ret > 0 else "🔻"
         flow_parts.append(f"{day_ret_label}: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
-    if vol_ratio > 0:
+    if finite_num(vol_ratio) and vol_ratio > 0:
         vol_desc = "거래량 급증" if vol_ratio >= 2 else ("보통" if vol_ratio >= 0.7 else "거래량 감소")
-        flow_parts.append(f"거래량 20일비: <b>{vol_ratio:.1f}x</b> ({vol_desc})")
+        volume_detail = ""
+        if finite_num(last_volume) and finite_num(vol_ma20) and vol_ma20 > 0:
+            volume_detail = f" · {last_volume:,.0f}주 vs 기준 {vol_ma20:,.0f}주"
+            if vol_valid_count and vol_valid_count < 20:
+                volume_detail += f"({vol_valid_count}일)"
+        flow_parts.append(f"거래량 기준비: <b>{vol_ratio:.1f}x</b> ({vol_desc}{volume_detail})")
+    elif finite_num(last_volume) and last_volume > 0:
+        flow_parts.append(f"거래량: <b>{last_volume:,.0f}주</b> (비교 기준 부족)")
     if ma5 > 0 and ma20 > 0 and cur_p > 0:
         pos_vs_ma5 = (cur_p / ma5 - 1) * 100
         pos_vs_ma20 = (cur_p / ma20 - 1) * 100
@@ -36105,8 +36117,17 @@ if main_page == "precision":
                     ret_label = str(c.get("day_ret_label") or "전일등락")
                     ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
                 _vol_ratio = clean_float(c.get("vol_ratio"), np.nan)
-                _vol_ratio_text = f"{_vol_ratio:.1f}x" if finite_num(_vol_ratio) else "데이터 부족"
-                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량20일비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
+                _vol_ma20 = clean_float(c.get("vol_ma20"), np.nan)
+                _last_volume = clean_float(c.get("last_volume"), np.nan)
+                if finite_num(_vol_ratio):
+                    _vol_ratio_text = f"{_vol_ratio:.1f}x"
+                    if finite_num(_last_volume) and finite_num(_vol_ma20) and _vol_ma20 > 0:
+                        _vol_ratio_text += f" ({_last_volume:,.0f}주/기준 {_vol_ma20:,.0f}주)"
+                elif finite_num(_last_volume):
+                    _vol_ratio_text = f"{_last_volume:,.0f}주 · 기준 부족"
+                else:
+                    _vol_ratio_text = "데이터 부족"
+                st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량 기준비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
         render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 
