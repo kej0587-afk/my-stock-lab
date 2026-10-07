@@ -545,10 +545,12 @@ class MacroRiskLevel:
 def detect_52w_breakout(df: pd.DataFrame) -> dict:
     """52주 신고가 돌파 여부와 강도를 분석합니다."""
     if len(df) < 20:
-        return {"breakout": False, "label": "데이터부족"}
+        return {"breakout": False, "near_high": False, "label": "데이터부족"}
     
-    # 252거래일(약 1년) 최고가 계산
-    high_52w = df["High"].rolling(252, min_periods=60).max().iloc[-1]
+    # 오늘 봉의 고가를 기준선에 포함하면 돌파 당일 신호가 자기참조로 사라진다.
+    high_52w = df["High"].shift(1).rolling(252, min_periods=60).max().iloc[-1]
+    if pd.isna(high_52w) or high_52w <= 0:
+        return {"breakout": False, "near_high": False, "label": "데이터부족"}
     cur = float(df["Close"].iloc[-1])
     prev = float(df["Close"].iloc[-2])
     
@@ -15696,7 +15698,9 @@ def get_macro_analysis():
         data = pd.DataFrame()
 
     if data.empty:
-        return results, 0, 0, 0
+        _, event_risk, _ = build_macro_event_risk_table()
+        final_macro_risk = max(1.5, event_risk)
+        return results, final_macro_risk, 0.5, np.nan
 
     for name, tkr in tickers.items():
         try:
@@ -15729,8 +15733,8 @@ def get_macro_analysis():
         is_storm = ((name == "VIX" and cur > 30) or (name == "환율" and cur > 1400) or (name == "10Y 금리" and cur > 4.7))
         if is_storm: storm_count += 1
         results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg}
-    move_val = results.get("MOVE", {"val": 0})["val"]
-    move_score = 1.5 if move_val >= 120 else (0.5 if move_val >= 100 else 0)
+    move_val = results.get("MOVE", {}).get("val", np.nan)
+    move_score = 1.5 if move_val >= 120 else (0.5 if not finite_num(move_val) or move_val >= 100 else 0)
     _, event_risk, _ = build_macro_event_risk_table()
     final_macro_risk = storm_count + macro_trend + move_score + event_risk
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))

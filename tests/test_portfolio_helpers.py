@@ -78,6 +78,28 @@ def test_signal_backtest_supports_current_app_breakout_signal(app_module, monkey
     assert set(["5일후", "20일후", "60일후"]).issubset(events_df.columns)
 
 
+def test_detect_52w_breakout_uses_prior_high_not_today_high(app_module):
+    dates = pd.date_range("2026-01-01", periods=80, freq="B")
+    close = pd.Series(95.0, index=dates)
+    high = pd.Series(100.0, index=dates)
+    volume = pd.Series(100_000.0, index=dates)
+    close.iloc[-2] = 99.0
+    close.iloc[-1] = 105.0
+    high.iloc[-1] = 110.0
+    volume.iloc[-1] = 250_000.0
+    df = pd.DataFrame({
+        "High": high,
+        "Low": close * 0.98,
+        "Close": close,
+        "Volume": volume,
+    })
+
+    result = app_module.detect_52w_breakout(df)
+
+    assert result["breakout"] is True
+    assert "52주 신고가 돌파" in result["label"]
+
+
 def test_signal_backtest_supports_leveraged_dca_signal(app_module, monkeypatch):
     df = _signal_backtest_price_frame(high_value=200.0)
     monkeypatch.setattr(app_module, "load_price_df", lambda ticker, period: df)
