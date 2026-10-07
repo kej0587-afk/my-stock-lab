@@ -544,19 +544,30 @@ class MacroRiskLevel:
 
 def detect_52w_breakout(df: pd.DataFrame) -> dict:
     """52주 신고가 돌파 여부와 강도를 분석합니다."""
-    if len(df) < 20:
+    required = ["High", "Close", "Volume"]
+    if df is None or len(df) < 20 or any(col not in df.columns for col in required):
+        return {"breakout": False, "near_high": False, "label": "데이터부족"}
+
+    work = pd.DataFrame({
+        "High": pd.to_numeric(df["High"], errors="coerce"),
+        "Close": pd.to_numeric(df["Close"], errors="coerce"),
+        "Volume": pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0),
+    }).dropna(subset=["High", "Close"])
+    if len(work) < 20:
         return {"breakout": False, "near_high": False, "label": "데이터부족"}
     
     # 오늘 봉의 고가를 기준선에 포함하면 돌파 당일 신호가 자기참조로 사라진다.
-    high_52w = df["High"].shift(1).rolling(252, min_periods=60).max().iloc[-1]
+    high_52w = work["High"].shift(1).rolling(252, min_periods=60).max().iloc[-1]
     if pd.isna(high_52w) or high_52w <= 0:
         return {"breakout": False, "near_high": False, "label": "데이터부족"}
-    cur = float(df["Close"].iloc[-1])
-    prev = float(df["Close"].iloc[-2])
+    cur = float(work["Close"].iloc[-1])
+    prev = float(work["Close"].iloc[-2])
+    if not math.isfinite(cur) or not math.isfinite(prev):
+        return {"breakout": False, "near_high": False, "label": "데이터부족"}
     
     # 거래량 분석
-    vol_mean_20 = df["Volume"].rolling(20).mean().iloc[-1]
-    vol_ratio = float(df["Volume"].iloc[-1]) / float(vol_mean_20) if (not pd.isna(vol_mean_20) and vol_mean_20 > 0) else 1.0
+    vol_mean_20 = work["Volume"].rolling(20, min_periods=1).mean().iloc[-1]
+    vol_ratio = float(work["Volume"].iloc[-1]) / float(vol_mean_20) if (not pd.isna(vol_mean_20) and vol_mean_20 > 0) else 1.0
     
     is_breakout = (prev < high_52w) and (cur >= high_52w) and (vol_ratio >= 1.3)
     near_high = (cur >= high_52w * 0.97) and not is_breakout
@@ -581,11 +592,14 @@ def fetch_earnings_date(ticker: str) -> dict:
         earnings_date = None
         # yfinance 버전에 따라 calendar 형태가 다를 수 있음
         if isinstance(cal, dict) and "Earnings Date" in cal:
-            earnings_date = cal["Earnings Date"][0]
+            earnings_date = cal["Earnings Date"]
         elif isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.index:
             earnings_date = cal.loc["Earnings Date"].iloc[0]
-            
-        if not earnings_date or pd.isna(earnings_date):
+
+        if isinstance(earnings_date, (list, tuple, pd.Series, np.ndarray, pd.DatetimeIndex)):
+            earnings_date = earnings_date[0] if len(earnings_date) else None
+
+        if earnings_date is None or pd.isna(earnings_date):
             return {"ok": False, "label": "실적발표일 미확인"}
         
         # 날짜 비교 (timezone 제거 후 계산)
@@ -601,18 +615,29 @@ def fetch_earnings_date(ticker: str) -> dict:
             risk_label = f"📅 실적 {days_until}일 후"
             
         return {"ok": True, "label": risk_label, "high_risk": 0 <= days_until <= 7}
-    except Exception:
+    except Exception as exc:
+        logging.warning("Failed to fetch earnings date for %s: %s", ticker, exc, exc_info=True)
         return {"ok": False, "label": "조회 불가"}
 
 def calc_atr(df: pd.DataFrame, period: int = 14) -> float:
     """Average True Range 계산 (변동성 지표)"""
-    if len(df) < period + 1: return 0.0
-    tr = pd.concat([
-        df["High"] - df["Low"],
-        (df["High"] - df["Close"].shift(1)).abs(),
-        (df["Low"] - df["Close"].shift(1)).abs()
-    ], axis=1).max(axis=1)
-    return float(tr.rolling(period).mean().iloc[-1])
+    required = ["High", "Low", "Close"]
+    if df is None or period <= 0 or len(df) < period + 1 or any(col not in df.columns for col in required):
+        return 0.0
+    try:
+        high = pd.to_numeric(df["High"], errors="coerce")
+        low = pd.to_numeric(df["Low"], errors="coerce")
+        close = pd.to_numeric(df["Close"], errors="coerce")
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low - close.shift(1)).abs()
+        ], axis=1).max(axis=1)
+        value = tr.rolling(period).mean().iloc[-1]
+        return float(value) if pd.notna(value) and math.isfinite(float(value)) else 0.0
+    except Exception as exc:
+        logging.warning("ATR calculation failed: %s", exc, exc_info=True)
+        return 0.0
 
 
 def calc_position_size(total_asset: float, target_weight_pct: float, current_weight_pct: float, current_price: float, atr: float) -> dict:
@@ -1166,7 +1191,8 @@ def lookup_naver_stock_name(symbol):
             page = raw.decode("utf-8")
         except UnicodeDecodeError:
             page = raw.decode("euc-kr", errors="ignore")
-    except Exception:
+    except Exception as exc:
+        logging.warning("Naver stock name lookup failed for %s: %s", symbol, exc, exc_info=True)
         return ""
 
     patterns = [
@@ -1215,7 +1241,8 @@ def lookup_yfinance_info(ticker):
     try:
         info = yf.Ticker(ticker, **yahoo_session_kwargs()).info
         if not info or not isinstance(info, dict): return {}
-    except Exception:
+    except Exception as exc:
+        logging.warning("YFinance info lookup failed for %s: %s", ticker, exc, exc_info=True)
         return {}
 
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
@@ -1950,9 +1977,13 @@ def save_holdings_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("보유 종목 저장")
 
+    if df is None or df.empty:
+        st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
+        return False
+
     rows = []
-    row_keys = []
-    for _, row in df.iterrows():
+    row_key_counts = {}
+    for row in df.to_dict(orient="records"):
         ticker_value = sanitize_ticker_value(row.get("ticker", ""))
         ticker_value = _normalize_kr_ticker_suffix(ticker_value)
         if not ticker_value:
@@ -1981,13 +2012,14 @@ def save_holdings_db(df):
             "bucket": infer_bucket(ticker_value, row.get("bucket", "core")),
             "account_type": str(row.get("account_type", "일반")).strip() or "일반",
         })
-        row_keys.append(f"{normalize_ticker(ticker_value)}|{normalize_text(rows[-1].get('account_type', '일반'))}")
+        row_key = f"{normalize_ticker(ticker_value)}|{normalize_text(rows[-1].get('account_type', '일반'))}"
+        row_key_counts[row_key] = row_key_counts.get(row_key, 0) + 1
 
     if not rows:
         st.warning("No holdings rows to save. Existing holdings were kept unchanged.")
         return False
 
-    duplicate_keys = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    duplicate_keys = sorted(key for key, count in row_key_counts.items() if count > 1)
     if duplicate_keys:
         duplicate_labels = [key.replace("|", " / ") for key in duplicate_keys]
         st.error(
@@ -2057,6 +2089,10 @@ def save_dividends_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("배당 내역 저장")
 
+    if df is None or df.empty:
+        st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
+        return False
+
     existing_res = run_supabase(
         supabase.table("dividends").select("id").eq("owner_email", CURRENT_USER_EMAIL),
         "load existing dividends before save",
@@ -2070,7 +2106,8 @@ def save_dividends_db(df):
     rows_to_upsert = []
     rows_to_insert = []
     kept_existing_ids = []
-    for _, row in df.iterrows():
+    kept_id_counts = {}
+    for row in df.to_dict(orient="records"):
         if not str(row.get("date", "")).strip() and not str(row.get("ticker", "")).strip():
             continue
 
@@ -2087,6 +2124,7 @@ def save_dividends_db(df):
             item["id"] = row_id
             rows_to_upsert.append(item)
             kept_existing_ids.append(row_id)
+            kept_id_counts[row_id] = kept_id_counts.get(row_id, 0) + 1
         else:
             rows_to_insert.append(item)
 
@@ -2094,7 +2132,7 @@ def save_dividends_db(df):
         st.warning("No dividend rows to save. Existing dividends were kept unchanged.")
         return False
 
-    duplicate_ids = sorted({row_id for row_id in kept_existing_ids if kept_existing_ids.count(row_id) > 1})
+    duplicate_ids = sorted(row_id for row_id, count in kept_id_counts.items() if count > 1)
     if duplicate_ids:
         st.error(
             "배당 내역에 같은 id가 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "
@@ -2150,9 +2188,13 @@ def save_monthly_logs_db(df):
     if IS_PUBLIC_DEMO:
         return public_demo_write_blocked("월별 로그 저장")
 
+    if df is None or df.empty:
+        st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
+        return False
+
     rows = []
-    row_keys = []
-    for _, row in df.iterrows():
+    row_key_counts = {}
+    for row in df.to_dict(orient="records"):
         month = str(row.get("month", "")).strip()
         if not month:
             continue
@@ -2163,13 +2205,13 @@ def save_monthly_logs_db(df):
             "evaluated_value": clean_float(row.get("evaluated_value")),
             "dividend": clean_float(row.get("dividend")),
         })
-        row_keys.append(month)
+        row_key_counts[month] = row_key_counts.get(month, 0) + 1
 
     if not rows:
         st.warning("No monthly log rows to save. Existing monthly logs were kept unchanged.")
         return False
 
-    duplicate_months = sorted({key for key in row_keys if row_keys.count(key) > 1})
+    duplicate_months = sorted(key for key, count in row_key_counts.items() if count > 1)
     if duplicate_months:
         st.error(
             "월별 로그에 같은 월이 여러 줄 있습니다. 기존 데이터 보호를 위해 저장하지 않았습니다. "

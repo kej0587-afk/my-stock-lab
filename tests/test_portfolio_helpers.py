@@ -100,6 +100,33 @@ def test_detect_52w_breakout_uses_prior_high_not_today_high(app_module):
     assert "52주 신고가 돌파" in result["label"]
 
 
+def test_detect_52w_breakout_handles_missing_or_sparse_inputs(app_module):
+    assert app_module.detect_52w_breakout(None)["label"] == "데이터부족"
+    assert app_module.detect_52w_breakout(pd.DataFrame({"Close": [1, 2, 3]}))["label"] == "데이터부족"
+
+    dates = pd.date_range("2026-01-01", periods=80, freq="B")
+    df = pd.DataFrame(
+        {
+            "High": [np.nan] * 30 + [100.0] * 50,
+            "Close": [np.nan] * 30 + [95.0] * 50,
+            "Volume": [100_000.0] * 80,
+        },
+        index=dates,
+    )
+
+    assert app_module.detect_52w_breakout(df)["breakout"] is False
+
+
+def test_calc_atr_returns_zero_for_bad_inputs(app_module):
+    assert app_module.calc_atr(None) == 0.0
+    assert app_module.calc_atr(pd.DataFrame({"Close": [1, 2, 3]})) == 0.0
+
+    dates = pd.date_range("2026-01-01", periods=20, freq="B")
+    bad_df = pd.DataFrame({"High": np.nan, "Low": np.nan, "Close": np.nan}, index=dates)
+
+    assert app_module.calc_atr(bad_df) == 0.0
+
+
 def test_signal_backtest_supports_leveraged_dca_signal(app_module, monkeypatch):
     df = _signal_backtest_price_frame(high_value=200.0)
     monkeypatch.setattr(app_module, "load_price_df", lambda ticker, period: df)
