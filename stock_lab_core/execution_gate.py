@@ -99,6 +99,7 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     final_read = _text(_row_get(row, "최종읽기", ""))
     flow_verdict = _text(_row_get(row, "돈흐름_판정", _row_get(row, "돈흐름판정", "")))
     flow_group = _text(_row_get(row, "돈흐름_후보군", _row_get(row, "돈흐름후보군", "")))
+    flow_score = _first_number(row, "돈흐름_돈흐름점수", "돈흐름점수", "테마돈흐름점수")
     market_execution = _text(_row_get(row, "시장실행상태", ""))
     mtf_state = _text(_row_get(row, "상위시간대상태", ""))
 
@@ -160,6 +161,9 @@ def build_execution_gate(row: Any) -> dict[str, str]:
 
     if re.search(r"추격금지|눌림대기|회복확인|내부확인", flow_text):
         reasons.append(f"돈흐름 {flow_verdict or flow_group}")
+
+    if math.isfinite(flow_score) and flow_score <= -10 and re.search(r"관망|제외|관찰|약모멘텀|둔화", flow_text):
+        reasons.append(f"돈흐름 약함 {flow_score:.1f}")
 
     if re.search(r"레버리지정찰|레버리지.*조건부|DCA\s*조건부", text, flags=re.I):
         reasons.append("레버리지 조건부 확인 대기")

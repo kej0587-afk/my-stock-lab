@@ -129,6 +129,40 @@ def test_auto_market_memo_switches_fomc_d_day_to_result_mode_from_news():
     assert "혼재/부담 우위" in memo
 
 
+def test_auto_market_memo_summarizes_boj_news_result_and_market_impact():
+    market_news = pd.DataFrame(
+        [
+            {
+                "market_category": "외환/금리",
+                "title": 'BOJ 총재 "금융 여건에 따라 정책금리 지속적으로 인상"',
+                "publisher": "연합인포맥스",
+                "published": "10/07 08:20",
+            },
+            {
+                "market_category": "외환/금리",
+                "title": "日 8월 실질임금 1.5%↑…8개월 연속 증가로 BOJ 인상론 탄력",
+                "publisher": "KB Think",
+                "published": "10/07 07:30",
+            },
+        ]
+    )
+    event_rows = pd.DataFrame(
+        [{"이벤트": "BOJ 금융정책결정회의", "상태": "잔여", "D-Day": "D+1", "시장": "엔/금리/글로벌 수급"}]
+    )
+
+    memo = build_auto_market_memo(
+        event_rows=event_rows,
+        market_news_rows=market_news,
+        summary_rows=pd.DataFrame(),
+    )
+
+    assert "BOJ 뉴스 확인" in memo
+    assert "인상 기조 확인" in memo
+    assert "임금 지표가 인상 명분 보강" in memo
+    assert "BOJ 금융정책결정회의 D+1(뉴스 확인)" in memo
+    assert "이벤트 리스크는 BOJ 금융정책결정회의 일정 때문에" not in memo
+
+
 def test_market_news_tightening_fear_is_bad_news_not_neutral():
     result = assess_news_item(
         "긴축 공포에 코스피 빨간불…외국인 귀환 랠리 꺾이나",

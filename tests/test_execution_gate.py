@@ -69,6 +69,23 @@ def test_execution_gate_allows_clean_buyish_row():
     assert gate["게이트상태"] == GATE_EXECUTABLE
 
 
+def test_execution_gate_waits_when_money_flow_is_negative_watch():
+    row = {
+        "티커": "AMAT",
+        "판정분류": "buyish",
+        "최종읽기": "✅정밀확인",
+        "R/R": "1.10",
+        "돈흐름_판정": "관망",
+        "돈흐름_후보군": "레이더 관찰",
+        "돈흐름_돈흐름점수": "-23.5",
+    }
+
+    gate = build_execution_gate(row)
+
+    assert gate["게이트상태"] == GATE_WAIT
+    assert "돈흐름 약함 -23.5" in gate["게이트근거"]
+
+
 def test_leveraged_scout_label_is_wait_not_executable():
     row = {
         "티커": "RAM",

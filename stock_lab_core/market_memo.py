@@ -1030,6 +1030,7 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
     fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
     fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
     fed_hawkish = _fed_hawkish_signal(market_news_rows, news_rows)
+    resolved_events = _resolved_event_summary_map(market_news_rows, news_rows)
     for row in _active_event_records(event_rows):
         state = row["state"]
         event = row["event"]
@@ -1038,9 +1039,13 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
         market = row["market"]
         if event:
             is_fomc = "fomc" in _lower(event)
+            is_boj = any(token in _lower(event) for token in ("boj", "일본", "일은", "금융정책결정회의"))
             state_label = "결과 소화" if is_fomc and (state == "잔여" or fomc_result_known) else state
             if state_label == "결과 소화" and is_fomc:
                 impact = _fomc_result_impact_text(fomc_result_type, fed_hawkish)
+            elif is_boj and resolved_events.get("boj"):
+                state_label = "뉴스 확인"
+                impact = resolved_events["boj"]
             suffix = f", {impact}" if impact else ""
             bullets.append(f"{event} {dday}({state_label}) · {market}{suffix}")
     return bullets[:5]
@@ -1289,6 +1294,54 @@ def _fomc_result_signal(market_news_rows=None, news_rows=None) -> bool:
         "projects hike",
     )
     return any(term in text for term in fomc_terms) and any(term in text for term in result_terms)
+
+
+def _boj_result_summary_text(market_news_rows=None, news_rows=None) -> str:
+    text = _rows_text(market_news_rows, 80) + " " + _rows_text(news_rows, 40)
+    if not text:
+        return ""
+    lower_text = _lower(text)
+    boj_terms = (
+        "boj", "bank of japan", "日銀", "日本銀行", "일본은행", "植田", "ueda",
+        "우에다", "boj gov ueda", "금융정책결정회의",
+    )
+    if not any(term.lower() in lower_text for term in boj_terms):
+        return ""
+
+    rate_hike_terms = (
+        "금리 지속적으로 인상", "인상론 탄력", "利上げ継続", "利上げ", "rate hike",
+        "keep raising rates", "raise the policy interest rate", "정책금리",
+    )
+    jgb_terms = ("국채매입", "국채 매입", "jgb", "government bond purchase", "outright purchases")
+    yen_terms = ("엔화 급등", "yen jumps", "yen surge", "엔 급등", "yen repricing")
+    wage_terms = ("실질임금", "real wages", "wages")
+
+    parts = []
+    if any(term.lower() in lower_text for term in rate_hike_terms):
+        parts.append("인상 기조 확인")
+    if any(term.lower() in lower_text for term in jgb_terms):
+        parts.append("국채매입/수급 확인")
+    if any(term.lower() in lower_text for term in yen_terms):
+        parts.append("엔화 급변 확인")
+    if any(term.lower() in lower_text for term in wage_terms):
+        parts.append("임금 지표가 인상 명분 보강")
+
+    if not parts:
+        return "BOJ 관련 일정은 확인됐지만 새 정책 결과 단서는 제한적입니다. 엔화와 일본 금리 반응을 함께 봅니다."
+
+    return (
+        "BOJ 뉴스 확인: "
+        + " · ".join(dict.fromkeys(parts))
+        + ". 일본 금리 상승은 글로벌 장기금리 부담, 엔화 급변은 위험자산 변동성 요인입니다."
+    )
+
+
+def _resolved_event_summary_map(market_news_rows=None, news_rows=None) -> dict[str, str]:
+    summaries: dict[str, str] = {}
+    boj_summary = _boj_result_summary_text(market_news_rows, news_rows)
+    if boj_summary:
+        summaries["boj"] = boj_summary
+    return summaries
 
 
 def _market_news_bullets(news_rows) -> list[str]:
@@ -1663,6 +1716,7 @@ def _auto_insight_bullets(
     events = [row["event"] for row in event_records]
     fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
     fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
+    resolved_events = _resolved_event_summary_map(market_news_rows, news_rows)
     post_fomc = fomc_result_known or any(
         "fomc" in _lower(row["event"]) and row["state"] == "잔여"
         for row in event_records
@@ -1849,15 +1903,19 @@ def _auto_insight_bullets(
             else:
                 bullets.append(f"매크로는 {', '.join(relief[:3])} 완화 흐름입니다.")
 
+    for summary in resolved_events.values():
+        bullets.append(summary)
+
     non_post_events = [
         row["event"] for row in event_records
         if not ("fomc" in _lower(row["event"]) and (row["state"] == "잔여" or fomc_result_known))
+        and not (resolved_events.get("boj") and any(token in _lower(row["event"]) for token in ("boj", "일본", "일은", "금융정책결정회의")))
     ]
     if post_fomc:
         bullets.append(_fomc_result_summary_text(fomc_result_type, fed_hawkish))
     if non_post_events:
         bullets.append("이벤트 리스크는 " + ", ".join(non_post_events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
-    elif events and not post_fomc:
+    elif events and not post_fomc and not resolved_events:
         bullets.append("이벤트 리스크는 " + ", ".join(events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
     if pre_fomc:
         bullets.append("FOMC 전후에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
