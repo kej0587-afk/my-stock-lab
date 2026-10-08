@@ -77,7 +77,7 @@ def classify_sector_rs_state(value: Any, *, flow_context: str = "", is_etf: bool
         if is_etf:
             return "ETF/광역 제외"
         return "벤치확인 필요" if _has_value(flow_context) else "미매핑"
-    if "이력부족" in text or "가격없음" in text or "기준일차이" in text:
+    if "이력부족" in text or "가격없음" in text or "기준일차이" in text or "공통거래일없음" in text:
         return "가격이력 확인"
     if "강함" in text:
         return "강함"
@@ -177,6 +177,9 @@ def build_execution_gate(row: Any) -> dict[str, str]:
 
     if reasons:
         return {"게이트상태": GATE_WAIT, "게이트근거": " · ".join(dict.fromkeys(reasons))}
+
+    if group == "caution":
+        return {"게이트상태": GATE_WAIT, "게이트근거": "주의 판정은 실행 전 조건 확인"}
 
     if group == "buyish" or _RE_PRECISION_CONFIRM.search(final_read):
         if not math.isfinite(rr) or rr <= 0:

@@ -129,6 +129,7 @@ def test_quality_state_helpers():
     assert classify_upside_state("-", is_etf=True) == "ETF제외"
     assert classify_sector_rs_state("-", flow_context="KOSDAQ 테마") == "벤치확인 필요"
     assert classify_sector_rs_state("-", is_etf=True) == "ETF/광역 제외"
+    assert classify_sector_rs_state("공통거래일없음") == "가격이력 확인"
 
 
 def test_panw_quality_candidate_waits_for_actual_entry_confirmation():
@@ -160,3 +161,17 @@ def test_missing_rr_cannot_be_executable_and_display_upside_is_parsed():
     assert out.iloc[0]["업사이드상태"] == "음수"
     assert out.iloc[0]["게이트상태"] == GATE_EXECUTABLE
     assert "-5.2%" in out.iloc[0]["후보검토사항"]
+
+
+def test_caution_precision_confirm_does_not_become_executable():
+    row = {
+        "티커": "MSFT",
+        "판정분류": "caution",
+        "최종읽기": "✅정밀확인",
+        "R/R": "1.80",
+    }
+
+    gate = build_execution_gate(row)
+
+    assert gate["게이트상태"] == GATE_WAIT
+    assert "주의 판정" in gate["게이트근거"]

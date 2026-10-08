@@ -45,7 +45,7 @@ def sanitize_ticker_value(t):
 
 
 def normalize_ticker(t):
-    return sanitize_ticker_value(t).lower().replace(".ks", "").replace(".kq", "")
+    return re.sub(r"\.(ks|kq)$", "", sanitize_ticker_value(t).lower())
 
 
 def parse_num(v):
@@ -106,7 +106,8 @@ def clean_float(value, default=0.0):
     try:
         if value is None or pd.isna(value) or str(value).strip() == "":
             return float(default)
-        return float(str(value).replace(",", ""))
+        parsed = float(str(value).replace(",", ""))
+        return parsed if math.isfinite(parsed) else float(default)
     except Exception:
         return float(default)
 
@@ -144,7 +145,7 @@ def dataframe_from_rows(rows, columns):
 
 def clean_symbol(ticker: str) -> str:
     """티커에서 .KS / .KQ 접미사를 제거하고 대문자로 반환. '005930.KS' → '005930'"""
-    return sanitize_ticker_value(ticker).replace(".KS", "").replace(".KQ", "")
+    return re.sub(r"\.(KS|KQ)$", "", sanitize_ticker_value(ticker), flags=re.IGNORECASE)
 
 
 def is_kr_code_like(ticker: str) -> bool:

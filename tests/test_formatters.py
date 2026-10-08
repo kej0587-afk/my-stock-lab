@@ -1,4 +1,6 @@
 from stock_lab_core.formatters import (
+    clean_float,
+    clean_symbol,
     ensure_kr_suffix_if_code,
     finite_num,
     format_report_money,
@@ -8,6 +10,7 @@ from stock_lab_core.formatters import (
     format_currency,
     is_kr_code_like,
     is_kr_listed,
+    normalize_ticker,
     parse_num,
     report_num,
 )
@@ -41,6 +44,17 @@ def test_finite_num_rejects_missing_infinite_and_non_numeric_values():
     assert not finite_num(float("nan"))
     assert not finite_num(float("inf"))
     assert not finite_num("N/A")
+
+
+def test_clean_float_rejects_non_finite_strings():
+    assert clean_float("nan", 7.0) == 7.0
+    assert clean_float("inf", 7.0) == 7.0
+
+
+def test_normalize_ticker_removes_kr_suffix_only_at_end():
+    assert normalize_ticker("005930.KS") == "005930"
+    assert clean_symbol("005930.KQ") == "005930"
+    assert normalize_ticker("abc.ksx") == "abc.ksx"
 
 
 def test_report_num_preserves_legacy_report_parsing():

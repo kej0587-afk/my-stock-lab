@@ -54,6 +54,25 @@ def test_rs_prefers_adjusted_close_when_available():
     assert result["price_basis"] == "Adj Close / Adj Close"
 
 
+def test_rs_uses_common_price_basis_when_only_one_side_has_adjusted_close():
+    stock = pd.DataFrame(
+        {
+            "Close": [100, 100],
+            "Adj Close": [100, 120],
+        },
+        index=pd.to_datetime(["2026-09-01", "2026-09-02"]),
+    )
+    base = pd.DataFrame(
+        {"Close": [100, 100]},
+        index=pd.to_datetime(["2026-09-01", "2026-09-02"]),
+    )
+
+    result = compute_relative_strength(stock, base, 1)
+
+    assert result["label"] == "➖보통"
+    assert result["price_basis"] == "Close / Close"
+
+
 def test_rs_can_use_close_when_adjusted_close_is_disabled():
     stock = pd.DataFrame(
         {

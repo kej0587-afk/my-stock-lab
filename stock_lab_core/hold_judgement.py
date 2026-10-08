@@ -30,36 +30,60 @@ class HoldJudgement:
     action_plan: str = ""
 
 
+def _is_leveraged_or_inverse_etf(ticker, name) -> bool:
+    text = f"{ticker or ''} {name or ''}".upper()
+    markers = (
+        "2X", "3X", "LEVERAGE", "LEVERAGED", "ULTRA", "ULTRAPRO",
+        "BULL 2X", "BULL 3X", "BEAR 2X", "BEAR 3X", "INVERSE",
+        "TQQQ", "SOXL", "SOXS", "BITX", "RAM", "QLD", "SQQQ",
+        "레버리지", "인버스",
+    )
+    return any(marker in text for marker in markers)
+
+
 def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -> HoldJudgement:
     score = 0
     r_hold, r_caution, r_exit = [], [], []
 
     cur_p = clean_float(c.get("cur_p"), 0.0)
-    dd = clean_float(c.get("dd"), 0.0)
+    dd = clean_float(c.get("dd"), math.nan)
     trend = str(c.get("trend", ""))
     rs_label = str(c.get("rs_label", ""))
     structure_risk = bool(c.get("structure_risk"))
     live_gap_shock = bool(c.get("live_gap_shock"))
     avg_price = clean_float(my_price, math.nan)
     price_vs_avg = (cur_p / avg_price - 1) if has_pos and finite_num(avg_price) and avg_price > 0 else math.nan
+    fin = clean_float(fin_score, math.nan)
+    fin_valid = finite_num(fin)
+    leveraged_etf = bool(is_etf and _is_leveraged_or_inverse_etf(ticker, name))
 
     fund_score = 0
     if is_etf:
-        fund_score = 2
-        r_hold.append("ETF: 개별기업 부도 리스크 없음")
+        if leveraged_etf:
+            fund_score = 0
+            r_caution.append("레버리지/인버스 ETF: 장기보유 판정은 별도 관리")
+        else:
+            fund_score = 2
+            r_hold.append("ETF: 개별기업 부도 리스크 없음")
     else:
-        if fin_score >= 4:
+        if not fin_valid:
+            fund_score = 0
+            r_caution.append("재무 데이터 확인 필요")
+        elif fin >= 4:
             fund_score = 4
             r_hold.append("재무 4점: 펀더멘털 우수")
-        elif fin_score == 3:
+        elif fin == 3:
             fund_score = 1
             r_hold.append("재무 3점: 펀더멘털 양호")
-        elif fin_score == 2:
+        elif fin == 2:
             fund_score = -2
             r_caution.append("재무 2점: 재무 훼손 주의")
-        else:
+        elif fin <= 0:
             fund_score = -4
-            r_exit.append("재무 1점: 펀더멘털 위험 수준 (처분 검토)")
+            r_exit.append("재무 0점: 펀더멘털 위험 수준 (처분 검토)")
+        else:
+            fund_score = -2
+            r_caution.append("재무 1점: 펀더멘털 위험 수준")
     score += fund_score
 
     tech_score = 0
@@ -86,10 +110,10 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
             tech_score -= 2
             r_caution.append("시장/섹터 대비 약한 상대강도")
 
-    if dd <= -0.30:
+    if finite_num(dd) and dd <= -0.30:
         tech_score -= 3
         r_exit.append(f"고점대비 {dd*100:.1f}% 하락 (구조적 손상)")
-    elif dd <= -0.20:
+    elif finite_num(dd) and dd <= -0.20:
         tech_score -= 1
         r_caution.append(f"고점대비 {dd*100:.1f}% 하락")
 
@@ -115,8 +139,8 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     score += thesis_score
 
     hard_exit = (
-        (not is_etf and fin_score <= 1) or
-        (has_pos and finite_num(price_vs_avg) and price_vs_avg <= -0.25 and dd <= -0.25)
+        (not is_etf and fin_valid and fin <= 0) or
+        (has_pos and finite_num(price_vs_avg) and price_vs_avg <= -0.25 and finite_num(dd) and dd <= -0.25)
     )
 
     if hard_exit:
@@ -131,6 +155,8 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
         decision = HoldDecision.REDUCE
     else:
         decision = HoldDecision.STOP_LOSS
+    if leveraged_etf and decision == HoldDecision.STRONG_HOLD:
+        decision = HoldDecision.CONDITIONAL_HOLD
 
     action_plan = (
         "즉시 비중 대폭 축소 또는 매도 검토"
@@ -139,6 +165,8 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     )
     if decision == HoldDecision.STRONG_HOLD:
         action_plan = "장기 보유 유효 (목표 비중까지 분할 매수 가능)"
+    elif leveraged_etf and decision in [HoldDecision.CONDITIONAL_HOLD, HoldDecision.WATCH]:
+        action_plan = "레버리지/인버스 ETF는 장기 코어가 아니라 회복 조건과 비중 한도 안에서만 관리"
 
     return HoldJudgement(
         decision,

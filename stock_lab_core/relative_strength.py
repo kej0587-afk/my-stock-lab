@@ -35,6 +35,13 @@ def _select_price_column(frame: pd.DataFrame, prefer_adjusted: bool) -> str:
     return ""
 
 
+def _has_positive_price_column(frame: pd.DataFrame, column: str) -> bool:
+    if frame is None or frame.empty or column not in frame.columns:
+        return False
+    values = pd.to_numeric(frame[column], errors="coerce")
+    return bool(values.gt(0).any())
+
+
 def _dated_closes(frame: pd.DataFrame, *, prefer_adjusted: bool = True) -> pd.Series:
     if frame is None or frame.empty:
         return pd.Series(dtype=float)
@@ -79,8 +86,13 @@ def compute_relative_strength(
         result["label"] = "이력부족"
         return result
 
-    asset = _dated_closes(stock, prefer_adjusted=prefer_adjusted)
-    base = _dated_closes(benchmark, prefer_adjusted=prefer_adjusted)
+    use_adjusted = (
+        prefer_adjusted
+        and _has_positive_price_column(stock, "Adj Close")
+        and _has_positive_price_column(benchmark, "Adj Close")
+    )
+    asset = _dated_closes(stock, prefer_adjusted=use_adjusted)
+    base = _dated_closes(benchmark, prefer_adjusted=use_adjusted)
     if asset.empty or base.empty:
         return result
     result["asset_asof"] = asset.index[-1].strftime("%Y-%m-%d")

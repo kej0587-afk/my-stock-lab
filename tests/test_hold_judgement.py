@@ -45,6 +45,27 @@ def test_hold_decision_emergency_exit_for_damaged_low_quality_stock():
     assert judgement.reasons_exit
 
 
+def test_hold_decision_fin_score_one_alone_is_not_emergency_exit():
+    judgement = build_hold_decision(
+        ticker="LOWQ",
+        name="Low Quality",
+        is_etf=False,
+        fin_score=1,
+        c={
+            "cur_p": 100,
+            "dd": -0.05,
+            "trend": "혼조세",
+            "rs_label": "➖보통",
+            "rs_slope_label": "➡️RS횡보",
+        },
+        my_price=100,
+        has_pos=True,
+    )
+
+    assert judgement.decision != HoldDecision.EMERGENCY_EXIT
+    assert any("재무 1점" in reason for reason in judgement.reasons_caution)
+
+
 def test_hold_decision_etf_gets_fundamental_floor():
     judgement = build_hold_decision(
         ticker="VOO",
@@ -64,6 +85,28 @@ def test_hold_decision_etf_gets_fundamental_floor():
 
     assert judgement.fundamental_score == 2
     assert any("ETF" in reason for reason in judgement.reasons_hold)
+
+
+def test_leveraged_etf_does_not_receive_core_etf_strong_hold_plan():
+    judgement = build_hold_decision(
+        ticker="SOXL",
+        name="Direxion Daily Semiconductor Bull 3X Shares",
+        is_etf=True,
+        fin_score=0,
+        c={
+            "cur_p": 130,
+            "dd": -0.05,
+            "trend": "🚀정배열(상승)",
+            "rs_label": "🚀강함",
+            "rs_slope_label": "📈RS상승중",
+        },
+        my_price=100,
+        has_pos=True,
+    )
+
+    assert judgement.decision != HoldDecision.STRONG_HOLD
+    assert judgement.fundamental_score == 0
+    assert "목표 비중까지 분할 매수 가능" not in judgement.action_plan
 
 
 def test_hold_decision_ignores_nan_average_price():

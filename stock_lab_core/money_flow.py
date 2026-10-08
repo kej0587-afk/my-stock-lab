@@ -1682,11 +1682,17 @@ def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
 def get_return_by_days(close: pd.Series, days: int) -> float:
     """최근 `days` 거래일 수익률."""
-    if close is None or len(close) < 2:
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
         return np.nan
-    idx = -days if len(close) > days else 0
-    old = float(close.iloc[idx])
-    new = float(close.iloc[-1])
+    if close is None or days < 1:
+        return np.nan
+    series = pd.to_numeric(pd.Series(close), errors="coerce").dropna()
+    if len(series) < days + 1:
+        return np.nan
+    old = float(series.iloc[-(days + 1)])
+    new = float(series.iloc[-1])
     return (new / old) - 1 if old > 0 else np.nan
 
 
@@ -1699,12 +1705,20 @@ def get_return_by_days_offset(close: pd.Series, days: int, offset: int = 0) -> f
     accel = ret_3m - get_return_by_days_offset(close, 63, offset=63) 으로
     독립 구간 비교 기반의 진짜 가속도를 계산할 수 있음.
     """
-    if close is None or len(close) < days + offset + 2:
+    try:
+        days = int(days)
+        offset = int(offset)
+    except (TypeError, ValueError):
+        return np.nan
+    if close is None or days < 1 or offset < 0:
+        return np.nan
+    series = pd.to_numeric(pd.Series(close), errors="coerce").dropna()
+    if len(series) < days + offset + 1:
         return np.nan
     new_pos = -(1 + offset)
     old_pos = -(1 + offset + days)
-    old = float(close.iloc[old_pos])
-    new = float(close.iloc[new_pos])
+    old = float(series.iloc[old_pos])
+    new = float(series.iloc[new_pos])
     return (new / old) - 1 if old > 0 else np.nan
 
 
