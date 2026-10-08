@@ -249,7 +249,8 @@ STOCK_NEWS_WORDS = [
     "upgrade", "downgrade", "buy", "sell", "hold", "dividend", "etf",
     "주가", "증시", "주식", "실적", "매출", "영업이익", "순이익", "목표가",
     "투자의견", "상향", "하향", "매수", "매도", "보유", "배당", "ETF",
-    "코스피", "코스닥", "나스닥", "뉴욕증시"
+    "코스피", "코스닥", "나스닥", "뉴욕증시",
+    "공시", "수주", "계약", "공급", "납품", "증설", "투자", "양산", "수출",
 ]
 
 GENERAL_NOISE_WORDS = [
@@ -1504,6 +1505,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     has_market_word = keyword_in_text(text, ["nasdaq", "s&p", "fed", "yield", "rate", "inflation", "earnings", "증시", "코스피", "코스닥", "금리", "환율", "외국인"])
     is_low_quality = keyword_in_text(text, LOW_QUALITY_NEWS_WORDS)
     is_blocked_low_quality = keyword_in_text(text, BLOCKED_LOW_QUALITY_NEWS_WORDS)
+    has_named_company = has_company or has_symbol
+    has_direct_material = has_high_value_word or has_earnings_word or has_field_word or has_price_move_word
 
     score = 0
     if has_company: score += 5
@@ -1532,8 +1535,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
 
     if category == NEWS_CATEGORY_DIRECT:
         ok = (
-            (has_company or has_symbol)
-            and (has_stock_word or has_high_value_word or has_earnings_word or has_field_word or has_price_move_word or not strict)
+            has_named_company
+            and (has_stock_word or has_direct_material or not strict)
             and score >= 3
         )
     elif category == NEWS_CATEGORY_SECTOR:
@@ -1543,7 +1546,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
 
     if is_blocked_low_quality and category == NEWS_CATEGORY_DIRECT:
         ok = False
-    elif is_low_quality and category == NEWS_CATEGORY_DIRECT and not has_price_move_word:
+    elif is_low_quality and category == NEWS_CATEGORY_DIRECT and not (has_price_move_word and has_named_company):
         ok = False
 
     if category == NEWS_CATEGORY_DIRECT and has_earnings_word and (has_company or has_symbol):

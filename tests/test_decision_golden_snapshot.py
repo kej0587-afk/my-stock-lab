@@ -274,6 +274,43 @@ def _save_snapshots(data):
     )
 
 
+def test_non_core_individual_deep_drawdown_is_cause_check_not_final_deploy(app_module, monkeypatch):
+    df = make_price_df(daily_drift=0.0002, daily_vol=0.012, seed=33, tail_shock=-0.70, tail_shock_days=20)
+    monkeypatch.setattr(app_module, "get_rs_score", lambda ticker, asset_class: (0, "🐢약함"))
+    monkeypatch.setattr(app_module, "get_rs_slope", lambda ticker, asset_class: (-4.0, "📉RS하락중", -1))
+    monkeypatch.setattr(
+        app_module,
+        "get_auto_benchmark_info",
+        lambda ticker, name, asset_class, is_etf: _bench_info(),
+    )
+
+    result = app_module.calc_scores_and_decision(
+        name="HD현대일렉트릭",
+        ticker="267260.KS",
+        is_etf=False,
+        asset_class="kr_stock",
+        df=df,
+        my_price=0.0,
+        has_pos=False,
+        fin_score=4,
+        is_free=False,
+        app_mode="자유모드",
+        user_total_asset=10_000_000,
+        user_curr_w=0.0,
+        user_targ_w=0.0,
+        _macro_penalty=0.0,
+        _final_macro_risk=1.0,
+        _total_eval=10_000_000,
+        _cash_available=0.0,
+        _reserve_available=0.0,
+    )
+
+    assert result["dd"] <= -0.5
+    assert result["decision_code"] == "STOCK_PANIC_CAUSE_CHECK"
+    assert "최종투입" not in result["dec"]
+    assert "코어 ETF 전용" in " ".join(result["decision_reasons"])
+
+
 @pytest.mark.parametrize(
     "scenario_id, price_kwargs, rs_score, rs_slope, calc_kwargs",
     SCENARIOS,

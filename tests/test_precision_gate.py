@@ -246,6 +246,37 @@ def test_valuation_reuses_fin_score_financial_records(app_module):
     assert valuation["headline"] != "밸류 데이터 부족"
 
 
+def test_valuation_fetches_fin_meta_when_saved_meta_has_no_metrics(app_module, monkeypatch):
+    fallback_metrics = {
+        "annual_latest": {
+            "revenue": 300_000_000,
+            "op_income": 60_000_000,
+            "net_income": 30_000_000,
+        },
+        "derived": {"rev_growth": 18.0},
+    }
+
+    monkeypatch.setattr(
+        app_module,
+        "fetch_fin_meta_for_valuation_fallback",
+        lambda ticker, is_etf=False: {"metrics": fallback_metrics, "notes": {"metrics": fallback_metrics}},
+    )
+
+    fin_meta = app_module.ensure_fin_meta_for_valuation("ALAB", False, {"metrics": {}})
+    valuation = app_module.build_valuation_interpretation(
+        {"marketCap": 1_200_000_000},
+        100.0,
+        "ALAB",
+        fin_meta=fin_meta,
+    )
+    rows = {row["항목"]: row for row in valuation["rows"]}
+
+    assert rows["연매출"]["값"] == "3.0억"
+    assert rows["영업이익"]["값"] == "60.0백만"
+    assert rows["매출 성장"]["값"] == "18.0%"
+    assert rows["PSR"]["값"] == "4.0x"
+
+
 def test_upside_limited_valuation_is_caution_not_hard_block(precision_app, monkeypatch):
     monkeypatch.setattr(
         precision_app,

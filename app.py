@@ -17221,6 +17221,24 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 pct_b_now=pct_b_now,
             )
             dec, col = decision_outcome.label, decision_outcome.color
+        elif is_core_dca_allowed and current_dd <= -0.5:
+            dec, col, decision_outcome = _set_decision(
+                "💣코어 패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (코어 ETF 패닉 최심 구간)",
+                    f"예비 현금 최종투입 — {core_dca_context['core_dca_label']} 기준으로 분할 매수 완료 단계",
+                    "이 규칙은 목표비중이 부족한 코어 ETF에만 적용합니다.",
+                ),
+            )
+        elif is_core_dca_allowed and current_dd <= -0.4:
+            dec, col, decision_outcome = _set_decision(
+                "💣코어 패닉(-40%↓): 현금 투입", "#991b1b", "PANIC_CASH_DEPLOY",
+                reasons=(
+                    f"고점대비 {current_dd*100:.1f}% 하락 (코어 ETF 패닉 구간)",
+                    f"현금 비중 투입 타이밍 — {core_dca_context['core_dca_label']} 기준 분할 매수 2~3회차",
+                    "이 규칙은 목표비중이 부족한 코어 ETF에만 적용합니다.",
+                ),
+            )
         elif is_core_dca_allowed and current_dd <= -0.3:
             prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
             dec, col, decision_outcome = _set_decision(
@@ -17274,27 +17292,34 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 ),
             )
         elif current_dd <= -0.5:
+            panic_label = "🚫비코어 ETF 패닉: 원인점검" if is_etf else "🚫개별주 패닉: 원인점검"
+            panic_code = "NON_CORE_ETF_PANIC_CAUSE_CHECK" if is_etf else "STOCK_PANIC_CAUSE_CHECK"
             dec, col, decision_outcome = _set_decision(
-                "💣패닉(-50%↓): 최종투입", "#7f1d1d", "PANIC_FINAL_DEPLOY",
+                panic_label, "#dc2626", panic_code,
                 reasons=(
                     f"고점대비 {current_dd*100:.1f}% 하락 (패닉 최심 구간)",
-                    "예비 현금 최종 투입 — 분할 매수 완료 단계",
+                    "예비 현금 최종투입은 목표비중이 부족한 코어 ETF 전용 규칙입니다.",
+                    "개별주/비코어 상품은 재무·뉴스·섹터 수급·일봉/주봉 회복 확인 전 신규/추매를 보류합니다.",
                 ),
             )
         elif current_dd <= -0.4:
+            panic_label = "🚫비코어 ETF 급락: 원인점검" if is_etf else "🚫개별주 급락: 원인점검"
+            panic_code = "NON_CORE_ETF_DRAWDOWN_CAUSE_CHECK" if is_etf else "STOCK_DRAWDOWN_CAUSE_CHECK"
             dec, col, decision_outcome = _set_decision(
-                "💣패닉(-40%↓): 현금 투입", "#991b1b", "PANIC_CASH_DEPLOY",
+                panic_label, "#d97706", panic_code,
                 reasons=(
-                    f"고점대비 {current_dd*100:.1f}% 하락 (패닉 구간)",
-                    "현금 비중 투입 타이밍 — 분할 매수 2~3회차",
+                    f"고점대비 {current_dd*100:.1f}% 하락 (급락 구간)",
+                    "코어 ETF가 아니므로 현금 투입 문구를 쓰지 않고 하락 원인과 회복 조건을 먼저 확인합니다.",
                 ),
             )
         elif current_dd <= -0.3:
+            panic_label = "🚫비코어 ETF 위기: 원인점검" if is_etf else "🚫개별주 위기: 원인점검"
+            panic_code = "NON_CORE_ETF_CRISIS_CAUSE_CHECK" if is_etf else "STOCK_CRISIS_CAUSE_CHECK"
             dec, col, decision_outcome = _set_decision(
-                "🚨위기(-30%↓): 코어 집중", "#b91c1c", "CRISIS_CORE_FOCUS",
+                panic_label, "#b91c1c", panic_code,
                 reasons=(
                     f"고점대비 {current_dd*100:.1f}% 하락 (위기 구간)",
-                    "코어 ETF 중심 분할 매수 집중 — 스윙 신규 진입 보류",
+                    "코어 ETF 중심 분할매수 규칙을 개별주/비코어 상품에 적용하지 않습니다.",
                 ),
             )
         elif is_core_dca_allowed and current_dd <= -0.2:
@@ -20645,6 +20670,58 @@ def build_valuation_fields_from_fin_meta(fin_meta):
     return data
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_fin_meta_for_valuation_fallback(ticker, is_etf=False):
+    ticker = sanitize_ticker_value(ticker)
+    if is_etf or not ticker:
+        return {}
+    try:
+        auto_score, _fin_auto, fin_notes, fin_metrics = get_auto_fin_score_for_ticker(ticker, False)
+    except Exception as exc:
+        return {
+            "source": "valuation_fin_fetch_failed",
+            "metrics": {},
+            "notes": {
+                "messages": [f"밸류 보강용 재무 원자료 조회 실패: {exc}"],
+                "annual_judgements": {},
+                "quarter_judgements": {},
+                "weighted_scores": {},
+            },
+        }
+
+    if not isinstance(fin_metrics, dict) or not fin_metrics:
+        return {}
+    notes = dict(fin_notes) if isinstance(fin_notes, dict) else {"messages": fin_notes if isinstance(fin_notes, list) else [str(fin_notes)]}
+    notes["metrics"] = fin_metrics
+    return {
+        "auto_score": int(clean_float(auto_score, 0)),
+        "manual_score": None,
+        "final_score": int(clean_float(auto_score, 0)),
+        "source": notes.get("source", "valuation_fin_fallback"),
+        "mode": notes.get("mode", "valuation_fin_fallback"),
+        "notes": notes,
+        "metrics": fin_metrics,
+    }
+
+
+def ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta):
+    if is_etf:
+        return fin_meta
+    if build_valuation_fields_from_fin_meta(fin_meta):
+        return fin_meta
+
+    fallback_meta = fetch_fin_meta_for_valuation_fallback(ticker, is_etf)
+    if build_valuation_fields_from_fin_meta(fallback_meta):
+        merged = dict(fin_meta) if isinstance(fin_meta, dict) else {}
+        for key, value in fallback_meta.items():
+            if key not in merged or merged.get(key) in [None, "", {}, []]:
+                merged[key] = value
+        merged["metrics"] = fallback_meta.get("metrics", {})
+        merged["notes"] = fallback_meta.get("notes", merged.get("notes", {}))
+        return merged
+    return fin_meta
+
+
 def _fmp_number(row, *keys):
     if not isinstance(row, dict):
         return np.nan
@@ -21037,6 +21114,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
             data[key] = analyst_data.get(key)
 
+    fin_meta = ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta)
     cur_p = clean_float(c.get("cur_p"), np.nan)
     valuation = build_valuation_interpretation(data, cur_p, ticker, fin_meta=fin_meta)
 
@@ -21079,6 +21157,7 @@ def get_valuation_headline_for_final_check(ticker, is_etf, current_price, fin_me
         if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
             data[key] = analyst_data.get(key)
 
+    fin_meta = ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta)
     valuation = build_valuation_interpretation(data, current_price, ticker, fin_meta=fin_meta)
     return valuation["headline"], valuation["note"], valuation["target_upside"]
 

@@ -306,12 +306,12 @@
     "core_dca_label": "",
     "core_dca_rate": 0.0,
     "dd": -0.3229400263139304,
-    "dec": "🚨위기(-30%↓): 코어 집중",
-    "decision_code": "CRISIS_CORE_FOCUS",
+    "dec": "🚫개별주 위기: 원인점검",
+    "decision_code": "STOCK_CRISIS_CAUSE_CHECK",
     "decision_group": "caution",
     "decision_reasons": [
       "고점대비 -32.3% 하락 (위기 구간)",
-      "코어 ETF 중심 분할 매수 집중 — 스윙 신규 진입 보류"
+      "코어 ETF 중심 분할매수 규칙을 개별주/비코어 상품에 적용하지 않습니다."
     ],
     "grade": "⚖️B급 (신중/관망)",
     "is_52w_breakout": false,

@@ -265,6 +265,22 @@ def test_stock_is_up_headline_is_not_misread_as_bad_news():
     assert result["sentiment"] == "호재"
 
 
+def test_named_kr_company_contract_news_passes_without_stock_word():
+    result = assess_news_item(
+        "HD현대일렉트릭, 북미 전력기기 공급 계약 체결",
+        "연합뉴스",
+        "267260.KS",
+        ["HD현대일렉트릭"],
+        ["전력인프라", "변압기"],
+        NEWS_CATEGORY_DIRECT,
+        strict=True,
+    )
+
+    assert result["ok"] is True
+    assert result["relation"] == "현장 직접"
+    assert result["sentiment"] == "호재"
+
+
 def test_target_new_high_overrides_broad_market_down_words():
     result = assess_news_item(
         (
