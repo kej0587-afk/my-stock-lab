@@ -16616,6 +16616,87 @@ def build_position_management_context(
     }
 
 
+_CORE_PANIC_DEPLOY_CODES = {"PANIC_FINAL_DEPLOY", "PANIC_CASH_DEPLOY", "CRISIS_CORE_FOCUS"}
+
+
+def _non_core_panic_outcome(is_etf, current_dd):
+    """Convert legacy panic-deploy signals into cause-check signals for non-core assets."""
+    dd = clean_float(current_dd, 0.0)
+    if dd <= -0.5:
+        label = "🚫비코어 ETF 패닉: 원인점검" if is_etf else "🚫개별주 패닉: 원인점검"
+        code = "NON_CORE_ETF_PANIC_CAUSE_CHECK" if is_etf else "STOCK_PANIC_CAUSE_CHECK"
+        color = "#dc2626"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (패닉 최심 구간)",
+            "예비 현금 최종투입은 목표비중이 부족한 코어 ETF 전용 규칙입니다.",
+            "개별주/비코어 상품은 재무·뉴스·섹터 수급·일봉/주봉 회복 확인 전 신규/추매를 보류합니다.",
+        )
+    elif dd <= -0.4:
+        label = "🚫비코어 ETF 급락: 원인점검" if is_etf else "🚫개별주 급락: 원인점검"
+        code = "NON_CORE_ETF_DRAWDOWN_CAUSE_CHECK" if is_etf else "STOCK_DRAWDOWN_CAUSE_CHECK"
+        color = "#d97706"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (급락 구간)",
+            "코어 ETF가 아니므로 현금 투입 문구를 쓰지 않고 하락 원인과 회복 조건을 먼저 확인합니다.",
+        )
+    else:
+        label = "🚫비코어 ETF 위기: 원인점검" if is_etf else "🚫개별주 위기: 원인점검"
+        code = "NON_CORE_ETF_CRISIS_CAUSE_CHECK" if is_etf else "STOCK_CRISIS_CAUSE_CHECK"
+        color = "#b91c1c"
+        reasons = (
+            f"고점대비 {dd*100:.1f}% 하락 (위기 구간)",
+            "코어 ETF 중심 분할매수 규칙을 개별주/비코어 상품에 적용하지 않습니다.",
+        )
+    return build_decision_outcome(label, color, code, reasons=reasons)
+
+
+def enforce_non_core_panic_scope(decision_outcome, *, is_core_dca_allowed, is_etf, current_dd):
+    """Final guard: panic cash-deploy labels must never leak to individual/non-core assets."""
+    if decision_outcome is None or is_core_dca_allowed:
+        return decision_outcome
+    label = str(getattr(decision_outcome, "label", "") or "")
+    code = str(getattr(decision_outcome, "code", "") or "")
+    legacy_panic = (
+        code in _CORE_PANIC_DEPLOY_CODES
+        or "최종투입" in label
+        or "현금 투입" in label
+        or "코어 집중" in label
+    )
+    if not legacy_panic:
+        return decision_outcome
+    return _non_core_panic_outcome(is_etf, current_dd)
+
+
+def enforce_non_core_panic_scope_on_result(c, *, is_core_dca_allowed=False, is_etf=False):
+    """Display-time guard for cached/stale precision results produced by older decision logic."""
+    if not isinstance(c, dict) or is_core_dca_allowed:
+        return c
+    label = str(c.get("dec", "") or "")
+    code = str(c.get("decision_code", "") or "")
+    legacy_panic = (
+        code in _CORE_PANIC_DEPLOY_CODES
+        or "최종투입" in label
+        or "현금 투입" in label
+        or "코어 집중" in label
+    )
+    if not legacy_panic:
+        return c
+
+    outcome = _non_core_panic_outcome(is_etf, clean_float(c.get("dd"), 0.0))
+    out = dict(c)
+    out.update({
+        "dec": outcome.label,
+        "col": outcome.color,
+        "decision_code": outcome.code,
+        "decision_group": outcome.group,
+        "decision_reasons": outcome.reasons,
+        "core_dca_rate": 0.0,
+        "core_dca_label": "",
+        "core_dca_amt": 0.0,
+    })
+    return out
+
+
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -17938,6 +18019,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     )
     decision_outcome = _translate_new_entry_decision_for_holding(
         decision_outcome, has_pos=has_pos, weight_gap=weight_gap,
+    )
+    decision_outcome = enforce_non_core_panic_scope(
+        decision_outcome,
+        is_core_dca_allowed=is_core_dca_allowed,
+        is_etf=is_etf,
+        current_dd=current_dd,
     )
     dec, col = decision_outcome.label, decision_outcome.color
     sizing_hint = _compute_sizing_hint(
@@ -35969,6 +36056,11 @@ if main_page == "precision":
             tkr,
             precision_has_pos,
             my_p,
+        )
+        c = enforce_non_core_panic_scope_on_result(
+            c,
+            is_core_dca_allowed=clean_float(c.get("core_dca_rate"), 0.0) > 0,
+            is_etf=is_etf,
         )
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
         precision_liquidity_profile = build_liquidity_thermal_profile(chart_df)

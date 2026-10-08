@@ -311,6 +311,30 @@ def test_non_core_individual_deep_drawdown_is_cause_check_not_final_deploy(app_m
     assert "코어 ETF 전용" in " ".join(result["decision_reasons"])
 
 
+def test_stale_precision_panic_label_is_sanitized_for_non_core_stock(app_module):
+    stale = {
+        "dec": "💣패닉(-50%↓): 최종투입",
+        "col": "#7f1d1d",
+        "decision_code": "PANIC_FINAL_DEPLOY",
+        "decision_group": "buyish",
+        "decision_reasons": ("고점대비 -57.8% 하락 (패닉 최심 구간)",),
+        "dd": -0.578,
+        "core_dca_rate": 0.0,
+        "core_dca_label": "",
+    }
+
+    fixed = app_module.enforce_non_core_panic_scope_on_result(
+        stale,
+        is_core_dca_allowed=False,
+        is_etf=False,
+    )
+
+    assert fixed["decision_code"] == "STOCK_PANIC_CAUSE_CHECK"
+    assert fixed["decision_group"] == "caution"
+    assert "최종투입" not in fixed["dec"]
+    assert "코어 ETF 전용" in " ".join(fixed["decision_reasons"])
+
+
 @pytest.mark.parametrize(
     "scenario_id, price_kwargs, rs_score, rs_slope, calc_kwargs",
     SCENARIOS,
