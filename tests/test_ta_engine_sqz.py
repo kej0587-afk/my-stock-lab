@@ -132,6 +132,19 @@ def test_build_indicators_keeps_flat_percent_b_from_inf():
     assert not np.isinf(out["%B"].to_numpy(dtype="float64", na_value=np.nan)).any()
 
 
+def test_build_indicators_handles_short_history_without_keltner_error():
+    if ta_engine.ta is None:
+        pytest.skip("optional ta package is not installed")
+
+    out = build_indicators(_sample_ohlcv(rows=12))
+
+    assert len(out) == 12
+    assert "SQZ_RATIO" in out.columns
+    assert out["SQZ_RATIO"].isna().all()
+    assert out["SQZ_ON"].eq(False).all()
+    assert out["SQZ_NEAR"].eq(False).all()
+
+
 def test_get_trend_treats_ma50_above_ma120_pullback_as_pullback():
     trend = get_trend({"MA20": 95.0, "MA50": 100.0, "MA120": 90.0})
 

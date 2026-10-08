@@ -109,6 +109,13 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if ta is None:
         raise RuntimeError("build_indicators requires the optional 'ta' package")
     df = df.copy()
+    if df.empty:
+        for col in ["MA5", "MA20", "MA50", "MA120", "RSI", "MFI", "MACD", "MACD_Sig", "%B", "SQZ_RATIO"]:
+            df[col] = pd.Series(dtype="float64")
+        df["SQZ_ON"] = pd.Series(dtype="bool")
+        df["SQZ_NEAR"] = pd.Series(dtype="bool")
+        return df
+
     df["MA5"]   = df["Close"].rolling(5).mean()
     df["MA20"]  = df["Close"].rolling(20).mean()
     df["MA50"]  = df["Close"].rolling(50).mean()
@@ -123,6 +130,12 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     bb_low = bb.bollinger_lband()
     bb_width = (bb_high - bb_low).replace(0, np.nan)
     df["%B"]    = (df["Close"] - bb_low) / bb_width
+    if len(df) < 20:
+        df["SQZ_RATIO"] = np.nan
+        df["SQZ_ON"] = False
+        df["SQZ_NEAR"] = False
+        return df
+
     kc          = ta.volatility.KeltnerChannel(
         df["High"],
         df["Low"],
