@@ -7,6 +7,7 @@ keeps small judgement rules testable and independent from session state.
 from __future__ import annotations
 
 import math
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
@@ -87,6 +88,7 @@ def build_decision_result(ctx: dict) -> dict:
         "sector_flow_state": ctx["sector_flow_state"],
         "smc_insight": ctx["smc_insight"],
         "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
+        "data_state": ctx.get("indicator_data_issue") or "OK",
     }
 
 
@@ -286,6 +288,23 @@ def apply_live_price_to_ohlcv(
         out.at[idx, "Close"] = live
 
     return out, True
+
+
+def apply_live_price_with_indicators(df, live_price, ticker, indicator_builder):
+    """Commit the live bar only when its matching indicators rebuild successfully."""
+    try:
+        updated, applied = apply_live_price_to_ohlcv(df, live_price, ticker)
+        if not applied:
+            return df, False, ""
+        rebuilt = indicator_builder(updated)
+        required = {"Close", "MA20", "MA50", "MA120", "RSI", "MFI", "MACD", "MACD_Sig", "%B", "SQZ_ON"}
+        if not isinstance(rebuilt, pd.DataFrame) or rebuilt.empty or not required.issubset(rebuilt.columns):
+            raise ValueError("Incomplete indicator result")
+        return rebuilt, True, ""
+    except Exception as exc:
+        # Third-party indicator failures must not mix a new quote with old indicators.
+        logging.getLogger(__name__).warning("Live indicator rebuild failed for %s (%s)", ticker, type(exc).__name__)
+        return df, False, "실시간 지표 재계산 실패: 종가 기준 확인 필요"
 
 
 def get_source_close_values(df: pd.DataFrame) -> tuple[float, float]:

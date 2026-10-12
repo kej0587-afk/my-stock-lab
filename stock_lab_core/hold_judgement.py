@@ -5,6 +5,7 @@ from enum import Enum
 import math
 
 from stock_lab_core.formatters import clean_float, finite_num
+from stock_lab_core.asset_classifier import is_leveraged_or_inverse_product
 
 
 class HoldDecision(Enum):
@@ -30,17 +31,6 @@ class HoldJudgement:
     action_plan: str = ""
 
 
-def _is_leveraged_or_inverse_etf(ticker, name) -> bool:
-    text = f"{ticker or ''} {name or ''}".upper()
-    markers = (
-        "2X", "3X", "LEVERAGE", "LEVERAGED", "ULTRA", "ULTRAPRO",
-        "BULL 2X", "BULL 3X", "BEAR 2X", "BEAR 3X", "INVERSE",
-        "TQQQ", "SOXL", "SOXS", "BITX", "RAM", "QLD", "SQQQ",
-        "레버리지", "인버스",
-    )
-    return any(marker in text for marker in markers)
-
-
 def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -> HoldJudgement:
     score = 0
     r_hold, r_caution, r_exit = [], [], []
@@ -55,7 +45,7 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     price_vs_avg = (cur_p / avg_price - 1) if has_pos and finite_num(avg_price) and avg_price > 0 else math.nan
     fin = clean_float(fin_score, math.nan)
     fin_valid = finite_num(fin)
-    leveraged_etf = bool(is_etf and _is_leveraged_or_inverse_etf(ticker, name))
+    leveraged_etf = bool(is_etf and is_leveraged_or_inverse_product(name, ticker, c.get("asset_class", "")))
 
     fund_score = 0
     if is_etf:

@@ -13,7 +13,10 @@ from typing import Any
 import pandas as pd
 
 from stock_lab_core.formatters import clean_float
-from stock_lab_core.today_queue import TODAY_QUEUE_EXECUTION_WAIT_CODES
+from stock_lab_core.today_queue import (
+    TODAY_QUEUE_EXECUTION_WAIT_CODES,
+    TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES,
+)
 
 
 GATE_EXECUTABLE = "실행가능"
@@ -30,7 +33,6 @@ _RE_DEFENSE_BLOCK = re.compile(
     r"SINGLE_DAY_BREAKDOWN|STRUCTURE_DAMAGE|DOWNTREND|REVERSE_TREND|추세방어|가격방어|급락방어|방어우선",
     re.I,
 )
-_RE_HARD_BLOCK_OVERHEAT = re.compile(r"OVERHEAT|BOLLINGER|MFI|상단|과열", re.I)
 _RE_RESISTANCE_WAIT = re.compile(r"하락패턴|하락\s*패턴|저항\s*(?:미돌파|대기)|무효선\s*미회복")
 _RE_OVERHEAT_WAIT = re.compile(r"추격금지|과열|볼린상단|고점권", re.I)
 _RE_GENERAL_WAIT = re.compile(r"대기|보류|관망|타점\s*탐색|탐색\s*중|눌림\s*/\s*종가\s*확인|회복\s*(?:확인|관찰)|DCA\s*조건부")
@@ -77,7 +79,7 @@ def classify_sector_rs_state(value: Any, *, flow_context: str = "", is_etf: bool
         if is_etf:
             return "ETF/광역 제외"
         return "벤치확인 필요" if _has_value(flow_context) else "미매핑"
-    if "이력부족" in text or "가격없음" in text or "기준일차이" in text or "공통거래일없음" in text:
+    if any(label in text for label in ("이력부족", "가격없음", "기준일차이", "공통거래일없음", "가격기준불일치")):
         return "가격이력 확인"
     if "강함" in text:
         return "강함"
@@ -148,7 +150,8 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if _RE_DEFENSE_BLOCK.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "시장/가격/추세 방어 신호 우선"}
 
-    if "HARD_BLOCK" in code and not _RE_HARD_BLOCK_OVERHEAT.search(text):
+    # Only explicit overheat codes use the wait policy; prose cannot relax a block.
+    if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "하드차단 우선"}
 
     if math.isfinite(rr) and rr < 1.0:
@@ -160,7 +163,7 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if _RE_RESISTANCE_WAIT.search(text):
         reasons.append("하락/저항 패턴 확인 필요")
 
-    if _RE_OVERHEAT_WAIT.search(text):
+    if code in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES or _RE_OVERHEAT_WAIT.search(text):
         reasons.append("과열/추격금지")
 
     if code in TODAY_QUEUE_EXECUTION_WAIT_CODES or code == "QUALITY_RECOVERY_WATCH" or _RE_GENERAL_WAIT.search(text) or _RE_CONDITION_WAIT.search(conditions):

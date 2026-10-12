@@ -29,7 +29,7 @@ def _select_price_column(frame: pd.DataFrame, prefer_adjusted: bool) -> str:
     for column in columns:
         if column not in frame.columns:
             continue
-        values = pd.to_numeric(frame[column], errors="coerce")
+        values = pd.to_numeric(frame[column], errors="coerce").replace([float("inf"), float("-inf")], float("nan"))
         if values.gt(0).any():
             return column
     return ""
@@ -38,7 +38,7 @@ def _select_price_column(frame: pd.DataFrame, prefer_adjusted: bool) -> str:
 def _has_positive_price_column(frame: pd.DataFrame, column: str) -> bool:
     if frame is None or frame.empty or column not in frame.columns:
         return False
-    values = pd.to_numeric(frame[column], errors="coerce")
+    values = pd.to_numeric(frame[column], errors="coerce").replace([float("inf"), float("-inf")], float("nan"))
     return bool(values.gt(0).any())
 
 
@@ -48,7 +48,7 @@ def _dated_closes(frame: pd.DataFrame, *, prefer_adjusted: bool = True) -> pd.Se
     price_column = _select_price_column(frame, prefer_adjusted)
     if not price_column:
         return pd.Series(dtype=float)
-    close = pd.to_numeric(frame[price_column], errors="coerce").copy()
+    close = pd.to_numeric(frame[price_column], errors="coerce").replace([float("inf"), float("-inf")], float("nan")).copy()
     close.index = _normalize_daily_index(frame.index)
     close = close[close.index.notna() & close.gt(0)]
     close = close.groupby(level=0).last().sort_index()
@@ -86,13 +86,20 @@ def compute_relative_strength(
         result["label"] = "이력부족"
         return result
 
-    use_adjusted = (
-        prefer_adjusted
-        and _has_positive_price_column(stock, "Adj Close")
-        and _has_positive_price_column(benchmark, "Adj Close")
+    columns = ("Adj Close", "Close") if prefer_adjusted else ("Close", "Adj Close")
+    common_column = next(
+        (column for column in columns
+         if _has_positive_price_column(stock, column) and _has_positive_price_column(benchmark, column)),
+        "",
     )
-    asset = _dated_closes(stock, prefer_adjusted=use_adjusted)
-    base = _dated_closes(benchmark, prefer_adjusted=use_adjusted)
+    if not common_column:
+        if (any(_has_positive_price_column(stock, col) for col in columns)
+                and any(_has_positive_price_column(benchmark, col) for col in columns)):
+            result["label"] = "가격기준불일치"
+        return result
+    # Restrict both frames to one shared column so fallback cannot mix price bases.
+    asset = _dated_closes(stock[[common_column]])
+    base = _dated_closes(benchmark[[common_column]])
     if asset.empty or base.empty:
         return result
     result["asset_asof"] = asset.index[-1].strftime("%Y-%m-%d")

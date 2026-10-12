@@ -177,13 +177,22 @@ def get_trend(last) -> str:
 
 def get_pivot_highs_lows(df: pd.DataFrame, l: int = 3, r: int = 3):
     """피벗 고점/저점 좌표 목록을 반환합니다."""
-    highs, lows = [], []
-    for i in range(l, len(df) - r):
-        if df["High"].iloc[i] == df["High"].iloc[i - l: i + r + 1].max():
-            highs.append((i, float(df["High"].iloc[i])))
-        if df["Low"].iloc[i] == df["Low"].iloc[i - l: i + r + 1].min():
-            lows.append((i, float(df["Low"].iloc[i])))
-    return highs, lows
+    if l < 0 or r < 0:
+        raise ValueError("Pivot confirmation windows must be non-negative")
+    if len(df) < l + r + 1:
+        return [], []
+    window = l + r + 1
+    positions = np.arange(len(df))
+    confirmed = (positions >= l) & (positions < len(df) - r)
+    # Match the old skip-NaN window extrema, and exclude unconfirmed right-edge bars.
+    high_window = df["High"].rolling(window, min_periods=1).max().shift(-r)
+    low_window = df["Low"].rolling(window, min_periods=1).min().shift(-r)
+    highs = np.flatnonzero(confirmed & df["High"].eq(high_window).fillna(False).to_numpy(dtype=bool))
+    lows = np.flatnonzero(confirmed & df["Low"].eq(low_window).fillna(False).to_numpy(dtype=bool))
+    return (
+        [(int(i), float(df["High"].iloc[i])) for i in highs],
+        [(int(i), float(df["Low"].iloc[i])) for i in lows],
+    )
 
 
 def get_recent_levels(df: pd.DataFrame) -> dict:

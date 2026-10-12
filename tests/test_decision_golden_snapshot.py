@@ -335,6 +335,38 @@ def test_stale_precision_panic_label_is_sanitized_for_non_core_stock(app_module)
     assert "코어 ETF 전용" in " ".join(fixed["decision_reasons"])
 
 
+def test_live_indicator_failure_cannot_produce_execution_candidate(app_module, monkeypatch):
+    from stock_lab_core import decision_engine
+    from stock_lab_core.decision_workflow import build_decision_workflow
+    from stock_lab_core.execution_gate import GATE_DATA_CHECK
+    import pandas as pd
+
+    frame = make_price_df(seed=21)
+    original = frame.copy(deep=True)
+    monkeypatch.setattr(decision_engine, "_get_live_price_row_date", lambda ticker: frame.index[-1])
+    monkeypatch.setattr(app_module, "get_rs_score", lambda *args: (2, "🚀강함"))
+    monkeypatch.setattr(app_module, "get_rs_slope", lambda *args: (5.0, "📈RS상승중", 1))
+    monkeypatch.setattr(app_module, "get_auto_benchmark_info", lambda *args: _bench_info())
+
+    def fail_indicators(updated):
+        raise IndexError("ATR warmup")
+
+    monkeypatch.setattr(app_module, "build_indicators", fail_indicators)
+    result = app_module.calc_scores_and_decision(
+        "TEST", "TEST", False, "us_stock", frame, 0.0, False, 4,
+        is_free=True, app_mode="자유모드", user_total_asset=1000000, user_targ_w=10,
+        _macro_penalty=0, _final_macro_risk=1, _total_eval=1000000,
+        _cash_available=0, _reserve_available=0,
+        live_price=float(frame["Close"].iloc[-1]) * 1.05,
+    )
+    pd.testing.assert_frame_equal(frame, original)
+    assert result["decision_code"] == "DATA_ERROR"
+    assert result["cur_p"] == frame["Close"].iloc[-1]
+    assert result["live_price_used"] is False
+    assert result["buy_amt"] == 0
+    assert build_decision_workflow("TEST", "TEST", result)["게이트상태"] == GATE_DATA_CHECK
+
+
 @pytest.mark.parametrize(
     "scenario_id, price_kwargs, rs_score, rs_slope, calc_kwargs",
     SCENARIOS,

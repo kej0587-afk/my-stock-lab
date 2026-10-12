@@ -69,3 +69,20 @@ def test_regional_leverage_guard_and_mtf_damage_share_defensive_routing():
         mtf_bias_label="상위 시간대 경고",
     ), has_pos=True)
     assert mtf["게이트상태"] == GATE_DEFENSE
+
+
+def test_valid_pattern_does_not_restore_an_excluded_candidate():
+    row = build_decision_workflow("Test", "TEST", _candidate(
+        grade="🛑후보제외", dec="추세 확인", decision_code="WATCH", decision_group="watch",
+    ), pattern_timing="패턴유효", pattern_bucket="interest")
+    assert row["판정분류"] == "caution"
+    assert row["게이트상태"] != GATE_EXECUTABLE
+    assert row["최종읽기"] != "✅정밀확인"
+
+
+def test_explicit_caution_survives_an_action_label_and_valid_pattern():
+    row = build_decision_workflow("Test", "TEST", _candidate(
+        dec="분할 진입", decision_code="CUSTOM_CAUTION", decision_group="caution",
+    ), pattern_timing="패턴유효", pattern_bucket="interest")
+    assert row["판정분류"] == "caution"
+    assert row["게이트상태"] != GATE_EXECUTABLE

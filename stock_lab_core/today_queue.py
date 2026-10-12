@@ -6,12 +6,10 @@ them into the few execution fields that belong in the queue table.
 
 from __future__ import annotations
 
-import io
+import hashlib
 import json
 import math
 import re
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
@@ -22,18 +20,18 @@ from stock_lab_core.formatters import (
     is_kr_listed,
     sanitize_ticker_value,
 )
-try:
-    from stock_lab_core.formatters import finite_num as _finite_num
-except Exception:
-    def _finite_num(value) -> bool:
-        try:
-            return math.isfinite(float(value))
-        except Exception:
-            return False
+from stock_lab_core.formatters import finite_num as _finite_num
+from stock_lab_core.today_snapshot import (
+    TODAY_QUEUE_LOGIC_VERSION,
+    TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH,
+    clear_today_queue_summary_snapshot,
+    load_today_queue_summary_snapshot,
+    save_today_queue_summary_snapshot,
+)
 
-
-TODAY_QUEUE_LOGIC_VERSION = "20261006_signal_audit_flow_capture_v5"
-TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
+TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES = frozenset({
+    "HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT",
+})
 
 TODAY_QUEUE_DEFENSE_CODES = {
     "PANIC_FINAL_DEPLOY",
@@ -108,58 +106,6 @@ TODAY_QUEUE_EXECUTION_WAIT_CODES = {
 }
 
 
-def save_today_queue_summary_snapshot(
-    summary_df: pd.DataFrame,
-    signature: str = "",
-    last_run: str = "",
-    *,
-    path: Path | str | None = None,
-) -> None:
-    """Persist the last manual today-queue run so another browser session can reuse it."""
-    if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
-        return
-    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
-    try:
-        payload = {
-            "version": TODAY_QUEUE_LOGIC_VERSION,
-            "signature": str(signature or ""),
-            "last_run": str(last_run or ""),
-            "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
-            "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
-        }
-        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-        snapshot_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def load_today_queue_summary_snapshot(path: Path | str | None = None):
-    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
-    try:
-        if not snapshot_path.exists():
-            return pd.DataFrame(), "", ""
-        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        if payload.get("version") != TODAY_QUEUE_LOGIC_VERSION:
-            return pd.DataFrame(), "", ""
-        raw_data = payload.get("data", "")
-        if not raw_data:
-            return pd.DataFrame(), "", ""
-        summary_df = pd.read_json(io.StringIO(raw_data), orient="split")
-        if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
-            return pd.DataFrame(), "", ""
-        return summary_df, str(payload.get("signature", "")), str(payload.get("last_run", ""))
-    except Exception:
-        return pd.DataFrame(), "", ""
-
-
-def clear_today_queue_summary_snapshot(path: Path | str | None = None) -> None:
-    snapshot_path = Path(path) if path is not None else TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH
-    try:
-        snapshot_path.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
 def _json_safe_scalar(value):
     try:
         if value is None or pd.isna(value):
@@ -198,7 +144,7 @@ def build_today_queue_signature(
             "target_weight": clean_float(item.get("target_weight"), 0.0),
             "bucket": str(item.get("bucket", "")),
         })
-    return json.dumps(
+    payload = json.dumps(
         {
             "logic_version": str(logic_version or ""),
             "mode": str(mode or ""),
@@ -207,6 +153,7 @@ def build_today_queue_signature(
         ensure_ascii=False,
         sort_keys=True,
     )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -> bool:
@@ -214,6 +161,8 @@ def is_today_queue_defense_signal(decision: dict | None, extra_text: str = "") -
     code = str((decision or {}).get("decision_code", "") or "")
     label = str((decision or {}).get("dec", "") or "")
     text = " ".join([label, code, str(extra_text or "")])
+    if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
+        return True
     if code in TODAY_QUEUE_DEFENSE_CODES:
         return True
     if any(code.startswith(prefix) for prefix in TODAY_QUEUE_DEFENSE_PREFIXES):
@@ -905,7 +854,7 @@ def build_dashboard_final_read(
         return "🛡️방어우선"
     if code in {"TARGET_ZERO_NO_ADD", "HARD_BLOCK_OVERWEIGHT", "HARD_BLOCK_TARGET_FILLED"}:
         return "🛡️방어우선"
-    if code.startswith("HARD_BLOCK") and not re.search(r"볼린|MFI|과열|상단", text):
+    if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
         return "🛡️방어우선"
 
     if re.search(r"극단과열|하드차단: 볼린|볼린상단|MFI.*과열|추격금지", text):

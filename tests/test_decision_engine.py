@@ -7,6 +7,7 @@ import pytest
 from stock_lab_core.decision_engine import (
     DECISION_GROUP_BY_CODE,
     apply_live_price_to_ohlcv,
+    apply_live_price_with_indicators,
     build_breakdown_risk_flags,
     build_day_return_context,
     build_live_rebound_context,
@@ -27,6 +28,39 @@ from stock_lab_core.decision_engine import (
     classify_macro_state,
     normalize_decision_runtime_inputs,
 )
+
+
+def test_failed_live_indicator_rebuild_restores_source_frame(monkeypatch):
+    from stock_lab_core import decision_engine
+    frame = pd.DataFrame({
+        "Open": [99.0, 100.0], "High": [101.0, 102.0], "Low": [98.0, 99.0],
+        "Close": [100.0, 101.0], "Volume": [500.0, 600.0], "RSI": [55.0, 56.0],
+    }, index=pd.date_range("2026-01-05", periods=2))
+    original = frame.copy(deep=True)
+    monkeypatch.setattr(decision_engine, "_get_live_price_row_date", lambda ticker: frame.index[-1])
+
+    def fail_after_mutation(updated):
+        updated["RSI"] = 99.0
+        raise IndexError("ATR warmup")
+
+    restored, applied, issue = apply_live_price_with_indicators(frame, 105.0, "TEST", fail_after_mutation)
+    pd.testing.assert_frame_equal(frame, original)
+    pd.testing.assert_frame_equal(restored, original)
+    assert not applied
+    assert "재계산 실패" in issue
+
+
+def test_live_indicator_rebuild_commits_matching_price_and_indicators(monkeypatch):
+    from stock_lab_core import decision_engine
+    from stock_lab_core.ta_engine import build_indicators
+    from tests.fixtures_price import make_price_df
+    frame = make_price_df(seed=18)
+    monkeypatch.setattr(decision_engine, "_get_live_price_row_date", lambda ticker: frame.index[-1])
+    quote = float(frame["Close"].iloc[-1]) * 1.02
+    updated, applied, issue = apply_live_price_with_indicators(frame, quote, "TEST", build_indicators)
+    assert applied and not issue
+    assert updated["Close"].iloc[-1] == quote
+    assert updated["MA20"].iloc[-1] == pytest.approx(updated["Close"].tail(20).mean())
 
 
 def test_normalize_decision_runtime_inputs_coerces_numeric_values():

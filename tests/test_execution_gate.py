@@ -3,6 +3,7 @@ import pandas as pd
 from stock_lab_core.execution_gate import (
     GATE_EXECUTABLE,
     GATE_DATA_CHECK,
+    GATE_DEFENSE,
     GATE_WAIT,
     apply_execution_gate_columns,
     build_execution_gate,
@@ -175,3 +176,17 @@ def test_caution_precision_confirm_does_not_become_executable():
 
     assert gate["게이트상태"] == GATE_WAIT
     assert "주의 판정" in gate["게이트근거"]
+
+
+def test_hard_block_cannot_be_downgraded_by_mfi_comment():
+    row = {
+        "판정코드": "HARD_BLOCK_FINANCIAL_F", "판정분류": "buyish",
+        "최종읽기": "✅정밀확인", "실행메모": "MFI 정상, 상단 목표 참고", "R/R": 2.0,
+    }
+    assert build_execution_gate(row)["게이트상태"] == GATE_DEFENSE
+
+
+def test_overheat_block_code_waits_even_without_display_wording():
+    for code in ("HARD_BLOCK_MFI_OVERHEAT", "HARD_BLOCK_BOLLINGER_UPPER"):
+        row = {"판정코드": code, "판정분류": "buyish", "R/R": 2.0}
+        assert build_execution_gate(row)["게이트상태"] == GATE_WAIT

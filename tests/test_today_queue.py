@@ -1,4 +1,10 @@
+import json
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
+import pytest
+
+from stock_lab_core import today_snapshot
 
 from stock_lab_core.today_queue import (
     apply_leveraged_dca_dashboard_override,
@@ -119,10 +125,98 @@ def test_today_queue_signature_normalizes_inputs_and_tracks_mode():
     personal_sig = build_today_queue_signature(items, "개인모드", logic_version="test-version")
     public_sig = build_today_queue_signature(items, "공개모드", logic_version="test-version")
 
-    assert '"logic_version": "test-version"' in personal_sig
-    assert '"ticker": "AMD"' in personal_sig
-    assert '"qty": 1200.0' in personal_sig
+    assert len(personal_sig) == 64
+    assert "1200.0" not in personal_sig
+    normalized = [{**items[0], "ticker": "AMD", "qty": 1200, "avg_price": 70.5, "target_weight": 6}]
+    assert personal_sig == build_today_queue_signature(normalized, "개인모드", logic_version="test-version")
     assert personal_sig != public_sig
+    assert personal_sig != build_today_queue_signature(items, "개인모드", logic_version="new-version")
+    changed = [{**items[0], "qty": 1201}]
+    assert personal_sig != build_today_queue_signature(changed, "개인모드", logic_version="test-version")
+
+
+def test_snapshot_owner_isolation_and_clear(tmp_path, monkeypatch):
+    path = tmp_path / "summary.json"
+    monkeypatch.setattr(today_snapshot, "TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH", path)
+    for owner, ticker in (("alice@example.test", "005930"), ("bob@example.test", "MSFT")):
+        save_today_queue_summary_snapshot(pd.DataFrame({"ticker": [ticker]}), "same", owner_scope=owner)
+    a, _, _ = load_today_queue_summary_snapshot(owner_scope="alice@example.test", expected_signature="same")
+    b, _, _ = load_today_queue_summary_snapshot(owner_scope="bob@example.test", expected_signature="same")
+    assert a["ticker"].tolist() == ["005930"]
+    assert b["ticker"].tolist() == ["MSFT"]
+    assert load_today_queue_summary_snapshot(owner_scope="charlie@example.test")[0].empty
+    assert load_today_queue_summary_snapshot(owner_scope="alice@example.test", expected_signature="changed")[0].empty
+    clear_today_queue_summary_snapshot(owner_scope="alice@example.test")
+    assert load_today_queue_summary_snapshot(owner_scope="alice@example.test")[0].empty
+    assert not load_today_queue_summary_snapshot(owner_scope="bob@example.test")[0].empty
+    assert all("@" not in file.name for file in tmp_path.iterdir())
+
+
+def test_default_snapshot_without_owner_cannot_reuse_legacy_data(tmp_path, monkeypatch):
+    path = tmp_path / "summary.json"
+    monkeypatch.setattr(today_snapshot, "TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH", path)
+    frame = pd.DataFrame({"ticker": ["PRIVATE"]})
+    save_today_queue_summary_snapshot(frame, "sig", path=path)
+    assert load_today_queue_summary_snapshot()[0].empty
+    save_today_queue_summary_snapshot(pd.DataFrame({"ticker": ["GUEST"]}), "sig")
+    clear_today_queue_summary_snapshot()
+    assert load_today_queue_summary_snapshot(path=path)[0]["ticker"].tolist() == ["PRIVATE"]
+
+
+def test_atomic_snapshot_failure_preserves_previous_file(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "summary.json"
+    save_today_queue_summary_snapshot(pd.DataFrame({"ticker": ["OLD"]}), "old", path=path)
+
+    def fail_replace(*args):
+        raise OSError("write interrupted")
+
+    monkeypatch.setattr(today_snapshot.os, "replace", fail_replace)
+    save_today_queue_summary_snapshot(pd.DataFrame({"ticker": ["NEW"]}), "new", path=path)
+    frame, signature, _ = load_today_queue_summary_snapshot(path=path)
+    assert frame["ticker"].tolist() == ["OLD"]
+    assert signature == "old"
+    assert list(tmp_path.iterdir()) == [path]
+    assert "snapshot save failed" in caplog.text
+
+
+def test_concurrent_snapshots_leave_one_complete_result(tmp_path):
+    path = tmp_path / "summary.json"
+
+    def save(value):
+        save_today_queue_summary_snapshot(pd.DataFrame({"value": [value] * 100}), str(value), path=path)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(save, range(12)))
+    frame, signature, _ = load_today_queue_summary_snapshot(path=path)
+    assert len(frame) == 100
+    assert frame["value"].eq(int(signature)).all()
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_corrupt_or_misowned_snapshot_is_not_restored(tmp_path):
+    path = tmp_path / "summary.json"
+    save_today_queue_summary_snapshot(pd.DataFrame({"ticker": ["AMD"]}), path=path, owner_scope="alice")
+    actual = next(tmp_path.glob("*.json"))
+    payload = json.loads(actual.read_text(encoding="utf-8"))
+    payload["owner_hash"] = "another_owner"
+    actual.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_today_queue_summary_snapshot(path=path, owner_scope="alice")[0].empty
+    actual.write_text("{", encoding="utf-8")
+    assert load_today_queue_summary_snapshot(path=path, owner_scope="alice")[0].empty
+
+
+@pytest.mark.parametrize("raw_data", [
+    "[]", "null", '"text"', "{}",
+    '{"columns":["x"],"index":[0],"data":[]}',
+    '{"columns":["x"],"index":[0],"data":[[1,2]]}',
+])
+def test_snapshot_rejects_malformed_frame_payload(tmp_path, raw_data):
+    path = tmp_path / "summary.json"
+    save_today_queue_summary_snapshot(pd.DataFrame({"x": [1]}), path=path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["data"] = raw_data
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert load_today_queue_summary_snapshot(path=path)[0].empty
 
 
 def test_today_queue_execution_snapshot_hides_entry_price_for_weight_block():

@@ -1,6 +1,14 @@
 from stock_lab_core.hold_judgement import HoldDecision, build_hold_decision
 
 
+def test_dram_hold_classification_does_not_match_ram_substring():
+    context = {"cur_p": 100, "dd": -0.05, "trend": "혼조세", "rs_label": "➖보통"}
+    plain = build_hold_decision("DRAM", "Roundhill Memory ETF", True, 0, context, 100, True)
+    leveraged = build_hold_decision("RAM", "RAM", True, 0, context, 100, True)
+    assert plain.fundamental_score == 2
+    assert leveraged.fundamental_score == 0
+
+
 def test_hold_decision_strong_hold_for_profitable_quality_stock():
     judgement = build_hold_decision(
         ticker="MSFT",

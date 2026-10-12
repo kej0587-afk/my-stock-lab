@@ -45,6 +45,13 @@ def test_leveraged_products_route_to_leverage_bucket():
     assert resolve_effective_investment_bucket("2x Bitcoin ETF", "BITX", "swing", "us_etf_nasdaq") == "leverage"
 
 
+def test_leverage_symbols_do_not_match_substrings():
+    assert is_leveraged_or_inverse_product("RAM", "RAM", "us_etf_nasdaq")
+    assert not is_leveraged_or_inverse_product("Roundhill Memory ETF", "DRAM", "us_etf_nasdaq")
+    assert not is_leveraged_or_inverse_product("Unilever", "UL", "us_stock")
+    assert is_leveraged_or_inverse_product("2X Long DRAM Daily Target ETF", "RAM", "us_etf_nasdaq")
+
+
 def test_individual_copper_stock_does_not_become_leverage_or_etf():
     assert not is_leveraged_or_inverse_product("프리포트 맥모란", "FCX", "us_stock")
     assert resolve_effective_investment_bucket("프리포트 맥모란", "FCX", "swing", "us_stock") == "swing"

@@ -46,7 +46,10 @@ def build_decision_workflow(
     c = decision
     timing = format_dashboard_timing_label(c)
     grade = format_dashboard_candidate_grade(c)
-    if any(word in grade for word in ("후보제외", "매수금지", "방어", "신규금지", "추매금지", "손절점검", "원인점검")):
+    candidate_restricted = any(
+        word in grade for word in ("후보제외", "매수금지", "방어", "신규금지", "추매금지", "손절점검", "원인점검")
+    ) or c.get("decision_group") == "caution"
+    if candidate_restricted:
         group = "caution"
     elif is_dashboard_block_or_wait_label(timing):
         group = "caution"
@@ -57,9 +60,12 @@ def build_decision_workflow(
 
     code = str(c.get("decision_code", "") or "")
     defensive_pattern = code.startswith("HARD_BLOCK") or code == "TARGET_ZERO_NO_ADD" or is_today_queue_defense_signal(c, pattern_timing)
-    if pattern_bucket in {"interest", "wait"} and not defensive_pattern:
+    # A chart pattern can nominate a watch candidate, but cannot erase a restriction.
+    if pattern_bucket in {"interest", "wait"} and not defensive_pattern and not candidate_restricted:
         group = "buyish"
     final_read = build_dashboard_final_read(c, timing, grade, pattern_timing, pattern_bucket)
+    if candidate_restricted and final_read == "✅정밀확인":
+        final_read = "🔍관망"
     if str(final_read).startswith(("🛡️", "🚫", "⚪")):
         group = "caution"
     rr = clean_float(c.get("rr_ratio"), math.nan)
@@ -82,7 +88,7 @@ def build_decision_workflow(
         "섹터RS": sector_rs,
         "매크로상태": c.get("macro_state", ""),
         "상위시간대상태": c.get("mtf_bias_label", ""),
-        "데이터상태": "OK",
+        "데이터상태": c.get("data_state", "OK"),
         **build_today_queue_execution_snapshot(
             name, ticker, c, has_pos=has_pos, usdkrw_value=usdkrw_value,
             is_leveraged_product_fn=is_leveraged_product_fn,

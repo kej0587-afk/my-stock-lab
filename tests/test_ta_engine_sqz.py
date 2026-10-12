@@ -10,10 +10,29 @@ from stock_lab_core.ta_engine import (
     detect_order_block_zones,
     detect_recent_fvg,
     detect_smc_features,
+    get_pivot_highs_lows,
     get_recent_levels,
     get_sqz_status,
     get_trend,
 )
+
+
+@pytest.mark.parametrize("left,right", [(3, 3), (10, 10), (2, 5), (0, 0)])
+def test_vectorized_pivots_match_original_windows_including_ties_and_nan(left, right):
+    rng = np.random.default_rng(49)
+    for length in (0, 3, 31, 150):
+        values = rng.integers(10, 30, size=(length, 2)).astype(float)
+        frame = pd.DataFrame(values, columns=["High", "Low"])
+        if length > 20:
+            frame.loc[7:11, "High"] = np.nan
+            frame.loc[15:20, "Low"] = np.nan
+        expected_highs, expected_lows = [], []
+        for i in range(left, length - right):
+            if frame["High"].iloc[i] == frame["High"].iloc[i-left:i+right+1].max():
+                expected_highs.append((i, float(frame["High"].iloc[i])))
+            if frame["Low"].iloc[i] == frame["Low"].iloc[i-left:i+right+1].min():
+                expected_lows.append((i, float(frame["Low"].iloc[i])))
+        assert get_pivot_highs_lows(frame, left, right) == (expected_highs, expected_lows)
 
 
 def _sample_ohlcv(rows: int = 80, close_start: float = 100.0) -> pd.DataFrame:

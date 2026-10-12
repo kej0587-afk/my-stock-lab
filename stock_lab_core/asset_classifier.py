@@ -7,6 +7,7 @@ portfolio rows, watchlist rows, and Today Queue can share the same rules.
 
 from __future__ import annotations
 
+import re
 from stock_lab_core.constants import (
     CONCENTRATED_NON_CORE_ETFS,
     FIN_SCORE_EXEMPT_ASSET_CLASS_KEYWORDS,
@@ -121,8 +122,14 @@ def infer_asset_class_for_ticker(ticker, current_asset_class="") -> str:
 
 def is_leveraged_or_inverse_product(name, ticker, asset_class="") -> bool:
     """Return True for leveraged or inverse products based on name/ticker/class."""
+    if clean_symbol(ticker) == "RAM":
+        return True
     text = f"{name} {ticker} {asset_class}".upper()
-    return any(keyword in text for keyword in LEVERAGED_OR_INVERSE_KEYWORDS)
+    # English symbols/words must not match substrings such as RAM inside DRAM.
+    return any(
+        (keyword in text if not keyword.isascii() else re.search(rf"(?<![A-Z0-9]){re.escape(keyword)}(?![A-Z0-9])", text))
+        for keyword in LEVERAGED_OR_INVERSE_KEYWORDS
+    )
 
 
 def is_tdf_or_fund_allocation_product(name, ticker="", asset_class="") -> bool:

@@ -4,6 +4,24 @@ import pytest
 from stock_lab_core.relative_strength import compute_relative_strength
 
 
+def test_rs_refuses_disjoint_price_bases():
+    dates = pd.date_range("2026-01-01", periods=25)
+    stock = pd.DataFrame({"Adj Close": range(100, 125)}, index=dates)
+    bench = pd.DataFrame({"Close": range(200, 225)}, index=dates)
+    result = compute_relative_strength(stock, bench, 20)
+    assert result["label"] == "가격기준불일치"
+    assert result["change_pct"] is None
+
+
+def test_rs_filters_infinite_price_observations():
+    dates = pd.date_range("2026-01-01", periods=25)
+    stock = pd.DataFrame({"Close": [100.0] * 24 + [float("inf")]}, index=dates)
+    bench = pd.DataFrame({"Close": [100.0] * 25}, index=dates)
+    result = compute_relative_strength(stock, bench, 20)
+    assert result["change_pct"] == 0.0
+    assert result["asof"] == "2026-01-24"
+
+
 def _prices(dates, values):
     return pd.DataFrame({"Close": values}, index=pd.to_datetime(dates))
 

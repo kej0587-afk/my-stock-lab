@@ -5,6 +5,31 @@ startup ImportError failures.
 """
 
 import importlib
+import ast
+from pathlib import Path
+
+
+def test_all_internal_imports_resolve_without_manual_export_lists():
+    """Catch new missing core exports in every entrypoint and core module."""
+    root = Path(__file__).resolve().parents[1]
+    paths = [root / name for name in ("app.py", "app_sam.py", "demo_app.py")]
+    paths.extend((root / "stock_lab_core").glob("*.py"))
+    checked = set()
+    missing = []
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not (node.module or "").startswith("stock_lab_core."):
+                continue
+            module = importlib.import_module(node.module)
+            for name in node.names:
+                key = (node.module, name.name)
+                if name.name == "*" or key in checked:
+                    continue
+                checked.add(key)
+                if not hasattr(module, name.name):
+                    missing.append(f"{path.name}:{node.lineno} {node.module}.{name.name}")
+    assert not missing, "Missing internal exports: " + "; ".join(missing)
 
 
 def _assert_exports(module_name, names):

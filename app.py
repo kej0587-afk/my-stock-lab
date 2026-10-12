@@ -260,6 +260,7 @@ from stock_lab_core.financial_score import (
     resolve_fin_score_source,
 )
 from stock_lab_core.decision_engine import (
+    apply_live_price_with_indicators,
     DECISION_GROUP_BY_CODE,
     apply_safety_state_override as _apply_safety_state_override,
     apply_live_price_to_ohlcv,
@@ -16711,12 +16712,11 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         asset_class = normalize_individual_stock_asset_class(ticker, asset_class)
 
     source_daily_close, source_prev_close = get_source_close_values(df)
-    df, live_ohlcv_applied = apply_live_price_to_ohlcv(df, live_price, ticker)
-    if live_ohlcv_applied:
-        try:
-            df = build_indicators(df)
-        except Exception:
-            pass
+    df, live_ohlcv_applied, indicator_data_issue = apply_live_price_with_indicators(
+        df, live_price, ticker, build_indicators,
+    )
+    if indicator_data_issue:
+        live_price = 0.0
 
     df = ensure_min_price_rows_for_decision(df)
 
@@ -18026,6 +18026,12 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_etf=is_etf,
         current_dd=current_dd,
     )
+    if indicator_data_issue:
+        decision_outcome = build_decision_outcome(
+            "⚪데이터확인: 실시간 지표 재계산 필요", "#64748b", "DATA_ERROR",
+            reasons=(indicator_data_issue, "새 가격과 이전 지표가 섞이지 않도록 직전 가격 이력으로 복원했습니다."),
+        )
+        buy_amount = 0.0
     dec, col = decision_outcome.label, decision_outcome.color
     sizing_hint = _compute_sizing_hint(
         decision_outcome,
@@ -33567,6 +33573,12 @@ def render_today_queue_tab(mode):
     summary_key = "today_queue_summary_df"
     sig_key = "today_queue_summary_sig"
     last_key = "today_queue_summary_last_run"
+    snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
+    previous_owner = st.session_state.get("today_queue_summary_owner")
+    if previous_owner is not None and previous_owner != snapshot_owner:
+        for key in (summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"):
+            st.session_state.pop(key, None)
+    st.session_state["today_queue_summary_owner"] = snapshot_owner
 
     cached_summary = st.session_state.get(summary_key)
     if not isinstance(cached_summary, pd.DataFrame):
@@ -33577,7 +33589,9 @@ def render_today_queue_tab(mode):
             cached_summary = last_nonempty.copy()
             st.session_state[sig_key] = st.session_state.get("today_queue_summary_last_nonempty_sig", "")
     if cached_summary.empty:
-        disk_summary, disk_sig, disk_last_run = load_today_queue_summary_snapshot()
+        disk_summary, disk_sig, disk_last_run = load_today_queue_summary_snapshot(
+            owner_scope=snapshot_owner, expected_signature=queue_sig,
+        )
         if isinstance(disk_summary, pd.DataFrame) and not disk_summary.empty:
             cached_summary = disk_summary.copy()
             st.session_state[summary_key] = cached_summary
@@ -33598,7 +33612,7 @@ def render_today_queue_tab(mode):
         if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
             for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"]:
                 st.session_state.pop(key, None)
-            clear_today_queue_summary_snapshot()
+            clear_today_queue_summary_snapshot(owner_scope=snapshot_owner)
             st.rerun()
         last_run = st.session_state.get(last_key)
         if last_run:
@@ -33662,7 +33676,9 @@ def render_today_queue_tab(mode):
         st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
         st.session_state["today_queue_summary_last_nonempty_sig"] = st.session_state.get(sig_key, "")
         if run_summary:
-            save_today_queue_summary_snapshot(summary_df, queue_sig, st.session_state.get(last_key, ""))
+            save_today_queue_summary_snapshot(
+                summary_df, queue_sig, st.session_state.get(last_key, ""), owner_scope=snapshot_owner,
+            )
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
