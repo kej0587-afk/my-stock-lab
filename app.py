@@ -28826,12 +28826,18 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     if not reasons:
         reasons.append("주요 위험 신호 제한적")
 
-    # Macro observations must not publish a second, contradictory trade instruction.
-    macro_observation = " · ".join([
-        "부담: " + (", ".join(macro_pressure) or "뚜렷하지 않음"),
-        "완화: " + (", ".join(macro_relief) or "뚜렷하지 않음"),
-        "통합 시장판정: " + mode,
-    ])
+    # Counts stay numeric for scoring; display names come from the same table.
+    pressure_names = macro_df.loc[macro_df["상태"].isin(["경고", "주의"]), "지표"].tolist()
+    relief_names = macro_df.loc[macro_df["상태"].eq("완화"), "지표"].tolist()
+    missing_names = macro_df.loc[macro_df["상태"].eq("미수집"), "지표"].tolist()
+    macro_observations = [
+        "부담: " + (", ".join(pressure_names) or "확인된 항목 없음"),
+        "완화: " + (", ".join(relief_names) or "확인된 항목 없음"),
+    ]
+    if missing_names:
+        macro_observations.append("미수집: " + ", ".join(missing_names))
+    macro_observations.append("통합 시장판정: " + mode)
+    macro_observation = " · ".join(macro_observations)
     return {
         "mode": mode,
         "level": level,
