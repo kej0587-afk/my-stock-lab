@@ -453,6 +453,7 @@ from stock_lab_core.prices import (
     clear_latest_price_cache,
     clear_selected_price_cache,
     enable_force_live_price_refresh,
+    fetch_yahoo_display_metadata,
     load_latest_price,
     load_latest_prices_batch,
     load_price_df,
@@ -1249,9 +1250,15 @@ def lookup_yfinance_info(ticker):
 
     try:
         info = yf.Ticker(ticker, **yahoo_session_kwargs()).info
-        if not info or not isinstance(info, dict): return {}
     except Exception as exc:
-        logging.warning("YFinance info lookup failed for %s: %s", ticker, exc, exc_info=True)
+        logging.warning("YFinance info unavailable for %s (%s); trying chart metadata", ticker, type(exc).__name__)
+        info = {}
+    if not isinstance(info, dict) or not info:
+        try:
+            info = fetch_yahoo_display_metadata(ticker)
+        except Exception:
+            info = {}
+    if not isinstance(info, dict) or not info:
         return {}
 
     keys = ["shortName", "longName", "displayName", "quoteType", "sector", "industry", "category"]
@@ -1265,7 +1272,7 @@ def lookup_yfinance_info(ticker):
             except UnicodeError:
                 pass
         result[key] = val
-    return result
+    return result if any(result.values()) else {}
 
 def lookup_yfinance_display_name(ticker):
     info = lookup_yfinance_info(ticker)
@@ -1280,7 +1287,7 @@ def lookup_yfinance_display_name(ticker):
         except UnicodeError:
             return text
 
-    for field in ["shortName", "longName", "displayName"]:
+    for field in ["longName", "shortName", "displayName"]:
         raw_name = info.get(field, "")
         if raw_name:
             # 여기서 복구 로직 실행
@@ -11190,7 +11197,7 @@ def _brief_leadership_text(rows: list[dict], empty: str = "없음") -> str:
 def _brief_axis_news_terms(row: dict) -> list[str]:
     base_text = " ".join(
         str(row.get(key, "") or "")
-        for key in ("name", "source", "state", "representatives")
+        for key in ("name", "representatives")
     )
     base_text = re.sub(r"\[[^\]]+\]", " ", base_text)
     raw_terms = [part.strip() for part in re.split(r"[,/·|()\s]+", base_text) if part.strip()]
@@ -11217,13 +11224,13 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
         "건설": ["건설", "인프라", "주택", "부동산", "금리"],
         "조선": ["조선", "해운", "선박", "수주", "lng"],
         "사이버": ["사이버", "보안", "cyber", "security"],
-        "바이오": ["바이오", "헬스케어", "healthcare", "biotech"],
+        "바이오": ["바이오", "헬스케어", "healthcare", "biotech", "moderna", "vaccine", "clinical", "fda", "임상", "백신"],
         "우주": ["우주", "위성", "space", "satellite", "rocket"],
         "로봇": ["로봇", "휴머노이드", "robot", "humanoid"],
         "뷰티": ["뷰티", "화장품", "cosmetic"],
     }
     for key, extra_terms in expansions.items():
-        if key in lower:
+        if _news_term_matches(lower, key):
             terms.extend(extra_terms)
     out = []
     seen = set()
@@ -11239,7 +11246,7 @@ def _brief_axis_news_terms(row: dict) -> list[str]:
 def _brief_axis_news_categories(row: dict) -> list[str]:
     base_text = " ".join(
         str(row.get(key, "") or "")
-        for key in ("name", "source", "state", "representatives")
+        for key in ("name", "representatives")
     ).lower()
     profiles = [
         (("반도체", "소부장", "hbm", "dram", "pcb", "기판", "ai", "빅테크", "mags", "데이터센터"), ["반도체·AI", "반도체", "AI"]),
@@ -11254,7 +11261,7 @@ def _brief_axis_news_categories(row: dict) -> list[str]:
     out = []
     seen = set()
     for needles, categories in profiles:
-        if not any(needle in base_text for needle in needles):
+        if not any(_news_term_matches(base_text, needle) for needle in needles):
             continue
         for category in categories:
             norm = category.lower()
@@ -11263,6 +11270,15 @@ def _brief_axis_news_categories(row: dict) -> list[str]:
             seen.add(norm)
             out.append(category)
     return out[:6]
+
+
+def _news_term_matches(text: str, term: str) -> bool:
+    term = str(term).strip().lower()
+    if not term:
+        return False
+    if term.isascii():
+        return bool(re.search(r"(?<![a-z0-9_])" + re.escape(term) + r"(?![a-z0-9_])", str(text).lower()))
+    return term in str(text).lower()
 
 
 def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 2, require_direct: bool = False) -> str:
@@ -11279,16 +11295,16 @@ def _brief_axis_news_text(row: dict, news_rows: list[dict] | None, limit: int = 
             continue
         direct_text = " ".join(
             str(news.get(key, "") or "")
-            for key in ("종목", "제목", "초보요약")
+            for key in ("종목", "제목")
         )
         text = " ".join(
             str(news.get(key, "") or "")
             for key in ("읽기분류", "카테고리", "종목", "제목", "초보요약", "체크")
         )
         direct_text_l = direct_text.lower()
-        direct_hit = any(str(term).lower() in direct_text_l for term in terms)
+        direct_hit = any(_news_term_matches(direct_text_l, term) for term in terms)
         category_text = " ".join(str(news.get(key, "") or "") for key in ("읽기분류", "카테고리", "체크")).lower()
-        category_hit = any(str(category).lower() in category_text for category in categories)
+        category_hit = any(_news_term_matches(category_text, category) for category in categories)
         if require_direct and not direct_hit:
             continue
         if not direct_hit and not category_hit:
@@ -12662,7 +12678,7 @@ def _sector_research_card_news_text(card, news_rows):
             str(card.get("etfs", "") or ""),
         ]),
     }
-    return _brief_axis_news_text(row, news_rows, limit=2)
+    return _brief_axis_news_text(row, news_rows, limit=2, require_direct=True)
 
 
 def _sector_research_card_takeaway(card):

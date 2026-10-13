@@ -83,3 +83,34 @@ def test_errors_are_sanitized_and_not_retried(response, status):
 def test_secrets_require_explicit_boolean_enable():
     assert kiwoom_client_from_secrets({}).status == "disabled"
     assert kiwoom_client_from_secrets({"kiwoom": {"enabled": "true"}}).status == "invalid_configuration"
+
+
+def test_user_secret_aliases_preserve_mock_environment_without_network():
+    client = kiwoom_client_from_secrets({"kiwoom": {
+        "enabled": True, "app_key": "TEST_KEY", "app_secret": "TEST_SECRET", "use_mock": True,
+    }})
+    assert client.status == "ready"
+    session = Session([
+        Response({"return_code": 0, "token": "TEST_TOKEN", "token_type": "bearer", "expires_dt": "20991013090000"}),
+        Response({"return_code": 0, "stk_cd": "005930", "per": "12"}),
+    ])
+    client._session = session
+    result = client.get_domestic_snapshot("005930")
+    assert result["is_mock"]
+    assert all(url.startswith("https://mockapi.kiwoom.com/") for url, _ in session.calls)
+    assert session.calls[0][1]["json"]["appkey"] == "TEST_KEY"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"environment": "real"}, {"use_mock": "true"}, {"appkey": "OTHER_KEY"}, {"secretkey": "OTHER_SECRET"},
+])
+def test_conflicting_or_malformed_aliases_fail_closed(overrides):
+    settings = {"enabled": True, "app_key": "TEST_KEY", "app_secret": "TEST_SECRET", "use_mock": True, **overrides}
+    client = kiwoom_client_from_secrets({"kiwoom": settings})
+    assert client.status == "invalid_configuration"
+    assert client.get_domestic_snapshot("005930")["status"] == "invalid_configuration"
+
+
+def test_blank_user_keys_remain_missing_not_ready():
+    client = kiwoom_client_from_secrets({"kiwoom": {"enabled": True, "app_key": "", "app_secret": "", "use_mock": True}})
+    assert client.status == "missing_configuration"

@@ -107,13 +107,26 @@ def kiwoom_client_from_secrets(secrets: Mapping | None = None) -> KiwoomDataClie
         elif section.get("enabled", False) is False:
             config = KiwoomConfig()
         else:
+            values = dict(section)
+            for canonical, alias in (("appkey", "app_key"), ("secretkey", "app_secret")):
+                if canonical in values and alias in values and values[canonical] != values[alias]:
+                    raise ValueError("Conflicting Kiwoom key settings")
+                if canonical not in values and alias in values:
+                    values[canonical] = values[alias]
+            if "use_mock" in values:
+                if type(values["use_mock"]) is not bool:
+                    raise ValueError("use_mock must be a TOML boolean")
+                environment = "mock" if values["use_mock"] else "real"
+                if "environment" in values and values["environment"] != environment:
+                    raise ValueError("Conflicting Kiwoom environment settings")
+                values["environment"] = environment
             config = KiwoomConfig(
-                enabled=section.get("enabled"),
-                appkey=section.get("appkey", ""),
-                secretkey=section.get("secretkey", ""),
-                environment=section.get("environment", "real"),
-                connect_timeout=section.get("connect_timeout", 3.05),
-                read_timeout=section.get("read_timeout", 10.0),
+                enabled=values.get("enabled"),
+                appkey=values.get("appkey", ""),
+                secretkey=values.get("secretkey", ""),
+                environment=values.get("environment", "real"),
+                connect_timeout=values.get("connect_timeout", 3.05),
+                read_timeout=values.get("read_timeout", 10.0),
             )
     except (FileNotFoundError, KeyError):
         config = KiwoomConfig()

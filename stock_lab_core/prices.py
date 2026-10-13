@@ -1627,6 +1627,19 @@ def _last_candle_close(result: dict) -> float:
     return 0.0
 
 
+def fetch_yahoo_display_metadata(ticker: str) -> dict:
+    """Fall back to chart identity fields, without inventing sector/industry data."""
+    ticker = normalize_price_lookup_key(ticker)
+    if not ticker:
+        return {}
+    _, meta = _fetch_yahoo_chart(ticker, "1d", "5d")
+    if not isinstance(meta, dict) or normalize_price_lookup_key(meta.get("symbol")) != ticker:
+        return {}
+    fields = {key: meta.get(key, "") for key in ("shortName", "longName", "displayName")}
+    fields["quoteType"] = meta.get("instrumentType", "")
+    return {key: value for key, value in fields.items() if isinstance(value, str) and value.strip()}
+
+
 def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, dict]:
     """
     Yahoo v8 chart API 단일 호출 — (캔들 마지막 Close, meta 딕셔너리) 반환.
