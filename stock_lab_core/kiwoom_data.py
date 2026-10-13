@@ -240,6 +240,13 @@ class KiwoomDataClient:
     def status(self) -> str:
         return self._config.status
 
+    @property
+    def connection_info(self) -> dict:
+        environment = self._config.environment
+        if not isinstance(environment, str) or environment not in _BASE_URLS:
+            environment = ""
+        return {"status": self.status, "environment": environment}
+
     def _post(self, path: str, api_id: str, body: dict, *, token: str = "") -> dict:
         allowed = {(_TOKEN_PATH, "au10001"), (_INFO_PATH, "ka10001")} | {(v[0], v[1]) for v in MARKET_REQUESTS.values()}
         if (path, api_id) not in allowed:

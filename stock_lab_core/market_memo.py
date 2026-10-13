@@ -198,12 +198,12 @@ INVERSE_TICKERS = {
     "SOXS", "SQQQ", "SPXU", "SH", "PSQ", "DOG", "SDOW", "TECS",
     "SARK", "BITI", "SBIT", "KOLD", "DRV", "FAZ", "LABD",
 }
-GROWTH_ROTATION_TICKERS = {"^IXIC", "QQQ", "XLK", "SOXX", "SMH", "SOXL", "DRAM", "RAM", "TQQQ", "QLD"}
+GROWTH_ROTATION_TICKERS = {"^IXIC", "^NDX", "QQQ", "QQQM", "XLK", "SOXX", "SMH", "SOXL", "DRAM", "RAM", "TQQQ", "QLD"}
 VALUE_DEFENSIVE_ROTATION_TICKERS = {"^DJI", "DIA", "XLI", "XLF", "XLP", "XLU"}
 KR_MARKET_ROTATION_TICKERS = {"^KS11", "^KQ11", "069500.KS", "229200.KS"}
-US_MARKET_ROTATION_TICKERS = {"^GSPC", "^IXIC", "^DJI"}
+US_MARKET_ROTATION_TICKERS = {"^GSPC", "^IXIC", "^NDX", "^DJI", "SPY", "VOO", "IVV", "QQQ", "QQQM", "DIA"}
 INDEX_ROTATION_TICKERS = GROWTH_ROTATION_TICKERS | VALUE_DEFENSIVE_ROTATION_TICKERS | {
-    "VOO", "^GSPC", *KR_MARKET_ROTATION_TICKERS,
+    *US_MARKET_ROTATION_TICKERS, *KR_MARKET_ROTATION_TICKERS,
 }
 SEMI_NEWS_CONTEXT_TERMS = (
     "반도체", "semiconductor", "ai", "hbm", "memory", "dram",
@@ -454,14 +454,15 @@ def _source_check_reason(line: str) -> str:
     return " · ".join(dict.fromkeys(reasons)) or "출처 확인 필요"
 
 
-def _iter_table_rows(table, limit: int = 5) -> list[dict]:
+def _iter_table_rows(table, limit: int | None = 5) -> list[dict]:
     if table is None:
         return []
     try:
         if hasattr(table, "empty") and table.empty:
             return []
         if hasattr(table, "head") and hasattr(table, "iterrows"):
-            return [row.to_dict() for _, row in table.head(limit).iterrows()]
+            selected = table if limit is None else table.head(limit)
+            return [row.to_dict() for _, row in selected.iterrows()]
     except Exception:
         return []
     if isinstance(table, dict):
@@ -640,7 +641,12 @@ def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
         state_text = ""
     div_note = _flow_divergence_note(row, score_col)
     div_text = f", {div_note}" if div_note else ""
-    return f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}{div_text}"
+    result = f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}{div_text}"
+    if _is_inverse_or_short_row(row):
+        result += ", 인버스 가격 지표(섹터 강세 아님), 1D/5D "
+        result += f"{_fmt_auto_pct(_rotation_value(row, '1D'))}/{_fmt_auto_pct(_rotation_value(row, '5D'))}"
+        result += " 별도 확인, 실제 헤지 수요 미확인"
+    return result
 
 
 def _row_ticker(row: dict) -> str:
@@ -699,19 +705,40 @@ def _rotation_label(row: dict) -> str:
     return _asset_item_label(label, ticker)
 
 
+INDEX_EXPOSURES = (
+    ("^GSPC", "SPY", "VOO", "IVV"),
+    ("^IXIC", "^NDX", "QQQ", "QQQM"),
+    ("^DJI", "DIA"),
+    ("^KS11", "069500.KS"),
+    ("^KQ11", "229200.KS"),
+)
+
+
+def _rotation_members(rows: list[dict], tickers: set[str], key: str) -> list[dict]:
+    candidates = [row for row in rows if _row_ticker(row) in tickers
+                  and _rotation_value(row, key) is not None]
+    # Prefer an available index value for this period, then a stable proxy order.
+    priorities = {ticker: (group[0], rank) for group in INDEX_EXPOSURES
+                  for rank, ticker in enumerate(group)}
+    selected = {}
+    for row in sorted(candidates, key=lambda r: (
+        priorities.get(_row_ticker(r), (_row_ticker(r), 0)),
+        _row_ticker(r), _rotation_value(r, key), _rotation_label(r),
+    )):
+        exposure = priorities.get(_row_ticker(row), (_row_ticker(row), 0))[0]
+        selected.setdefault(exposure, row)
+    return list(selected.values())
+
+
 def _mean_rotation(rows: list[dict], tickers: set[str], key: str) -> tuple[float | None, int]:
-    values = [
-        _rotation_value(row, key)
-        for row in rows
-        if _row_ticker(row) in tickers and _rotation_value(row, key) is not None
-    ]
+    values = [_rotation_value(row, key) for row in _rotation_members(rows, tickers, key)]
     if not values:
         return None, 0
     return sum(float(v) for v in values) / len(values), len(values)
 
 
 def _collect_rotation_rows(index_rotation_rows=None, flow_snapshot: dict | None = None) -> list[dict]:
-    rows = _iter_table_rows(index_rotation_rows, limit=80)
+    rows = _iter_table_rows(index_rotation_rows, limit=None)
     if rows:
         return rows
 
@@ -728,6 +755,8 @@ def _collect_rotation_rows(index_rotation_rows=None, flow_snapshot: dict | None 
                 "시장": _norm(row.get("구분")),
                 "지수/스타일": _norm(row.get("섹터") or row.get("ETF 이름")),
                 "Ticker": ticker,
+                "1D": _rotation_value(row, "1D", "1일수익률"),
+                "5D": _rotation_value(row, "5D", "5일수익률"),
                 "2W": _rotation_value(row, "2주수익률"),
                 "1M": _rotation_value(row, "1개월수익률"),
                 "3M": _rotation_value(row, "3개월수익률"),
@@ -754,6 +783,20 @@ def _rotation_labels(rows: list[dict], key: str, positive: bool, limit: int = 3)
     return ", ".join(f"{label}({_fmt_auto_pct(value)})" for value, label in ranked[:limit])
 
 
+def _rotation_market(row: dict) -> str:
+    ticker = _row_ticker(row)
+    market = _lower(row.get("시장") or row.get("구분"))
+    if market in {"nan", "none", "<na>"}:
+        market = ""
+    if ticker.endswith((".KS", ".KQ")) or ticker in {"^KS11", "^KQ11"}:
+        return "kr"
+    if any(term in market for term in ("한국", "국내", "korea", "kr")):
+        return "kr"
+    if market and not any(term in market for term in ("미국", "us", "america")):
+        return "other"
+    return "us"
+
+
 def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None = None) -> dict:
     rows = _collect_rotation_rows(index_rotation_rows, flow_snapshot)
     if not rows:
@@ -762,9 +805,10 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
     short_key = ""
     growth_avg = None
     rotation_avg = None
+    us_rows = [row for row in rows if _rotation_market(row) == "us"]
     for key in ("1D", "5D", "2W", "1M"):
-        growth, growth_count = _mean_rotation(rows, GROWTH_ROTATION_TICKERS, key)
-        rotation, rotation_count = _mean_rotation(rows, VALUE_DEFENSIVE_ROTATION_TICKERS, key)
+        growth, growth_count = _mean_rotation(us_rows, GROWTH_ROTATION_TICKERS, key)
+        rotation, rotation_count = _mean_rotation(us_rows, VALUE_DEFENSIVE_ROTATION_TICKERS, key)
         if growth_count and rotation_count:
             short_key = key
             growth_avg = growth
@@ -777,15 +821,31 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
         growth_weak = growth_avg < 0
         rotation_detected = (growth_avg < 0 <= rotation_avg) or ((rotation_avg - growth_avg) >= 0.012)
 
-    kr_market_avg = None
-    us_market_avg = None
-    kr_market_crash = False
-    us_market_crash = False
-    if short_key:
-        kr_market_avg, kr_market_count = _mean_rotation(rows, KR_MARKET_ROTATION_TICKERS, short_key)
-        us_market_avg, us_market_count = _mean_rotation(rows, US_MARKET_ROTATION_TICKERS, short_key)
-        kr_market_crash = bool(kr_market_count and kr_market_avg is not None and kr_market_avg <= -0.03)
-        us_market_crash = bool(us_market_count and us_market_avg is not None and us_market_avg <= -0.02)
+    market_context = {}
+    for market, tickers, threshold in (
+        ("kr", KR_MARKET_ROTATION_TICKERS, -0.03),
+        ("us", US_MARKET_ROTATION_TICKERS, -0.02),
+    ):
+        market_rows = [row for row in rows if _rotation_market(row) == market]
+        index_rows = [row for row in market_rows if _row_ticker(row) in tickers]
+        period = next((key for key in ("1D", "5D", "2W", "1M")
+                       if any(_rotation_value(row, key) is not None for row in (index_rows or market_rows))), "")
+        members = _rotation_members(market_rows, tickers, period)
+        avg, count = _mean_rotation(market_rows, tickers, period)
+        market_context.update({
+            f"{market}_short_key": period,
+            f"{market}_market_avg": avg,
+            f"{market}_market_crash": bool(count and avg <= threshold),
+            f"{market}_denominator": [_row_ticker(row) for row in members],
+            f"{market}_rising": _rotation_labels(market_rows, period, True),
+            f"{market}_falling": _rotation_labels(market_rows, period, False),
+            f"{market}_leaders_3m": _rotation_labels(
+                [row for row in market_rows if not _is_inverse_or_short_row(row)], "3M", True),
+        })
+    kr_market_crash = market_context["kr_market_crash"]
+    us_market_crash = market_context["us_market_crash"]
+    if not short_key:
+        short_key = market_context["us_short_key"]
 
     semi_short_weak = False
     primary_semi_seen = False
@@ -822,14 +882,14 @@ def _build_rotation_context(index_rotation_rows=None, flow_snapshot: dict | None
         "rotation_avg": rotation_avg,
         "growth_weak": growth_weak,
         "rotation_detected": rotation_detected,
-        "kr_market_avg": kr_market_avg,
-        "us_market_avg": us_market_avg,
+        **market_context,
+        "growth_denominator": [_row_ticker(r) for r in _rotation_members(us_rows, GROWTH_ROTATION_TICKERS, short_key)],
+        "rotation_denominator": [_row_ticker(r) for r in _rotation_members(us_rows, VALUE_DEFENSIVE_ROTATION_TICKERS, short_key)],
         "kr_market_crash": kr_market_crash,
         "us_market_crash": us_market_crash,
         "semi_short_weak": semi_short_weak,
-        "inflow": _rotation_labels(rows, short_key, True) if short_key else "",
-        "outflow": _rotation_labels(rows, short_key, False) if short_key else "",
-        "leaders_3m": _rotation_labels(rows, "3M", True),
+        "inflow": _rotation_labels(us_rows, short_key, True) if short_key else "",
+        "outflow": _rotation_labels(us_rows, short_key, False) if short_key else "",
     }
 
 
@@ -884,11 +944,25 @@ def _macro_bullets(macro_data: dict | None) -> list[str]:
             continue
         val = _fmt_auto_num(info.get("val"), 2)
         chg = _fmt_macro_chg_pct(info.get("chg"))
-        icon = _norm(info.get("icon"))
-        storm = bool(info.get("storm", False))
-        note = "경고권" if storm else ("상승" if icon == "🔺" else ("하락" if icon == "🔻" else "중립"))
-        bullets.append(f"{name} {val}, 1개월 {chg}, 방향 {note}")
+        note = _macro_direction(info)
+        level = "경고권" if _macro_level_pressure(name, info) else "경고 신호 없음"
+        bullets.append(f"{name} {val}, 1개월 {chg}, 방향 {note}, 수준 {level}")
     return bullets
+
+
+def _macro_direction(info: dict) -> str:
+    chg = _safe_float(info.get("chg"))
+    if chg is not None:
+        return "상승" if chg > 0 else ("하락" if chg < 0 else "중립")
+    return {"🔺": "상승", "🔻": "하락"}.get(_norm(info.get("icon")), "미확인")
+
+
+def _macro_level_pressure(name: str, info: dict) -> bool:
+    val = _safe_float(info.get("val"))
+    thresholds = {"10Y 금리": 4.8, "VIX": 20, "환율": 1500, "유가": 100}
+    return bool(info.get("storm", False)) or (
+        name in thresholds and val is not None and val >= thresholds[name]
+    )
 
 
 def _macro_stress_line(macro_data: dict | None) -> str:
@@ -908,25 +982,19 @@ def _macro_stress_line(macro_data: dict | None) -> str:
         info = macro_data.get(name)
         if not isinstance(info, dict):
             continue
-        icon = _norm(info.get("icon"))
-        storm = bool(info.get("storm", False))
-        val = _safe_float(info.get("val"))
         chg = _safe_float(info.get("chg"))
         pressure = False
-        if storm:
+        direction = _macro_direction(info)
+        if _macro_level_pressure(name, info):
             pressure = True
-        elif name in {"10Y 금리", "VIX", "MOVE", "유가", "환율"} and icon == "🔺":
-            pressure = True
-        if name == "10Y 금리" and val is not None and val >= 4.8:
-            pressure = True
-        if name == "VIX" and val is not None and val >= 20:
+        elif direction == "상승":
             pressure = True
         if name == "유가" and chg is not None and chg >= 0.1:
             pressure = True
         if pressure:
             score += weight
-            drivers.append(name)
-        elif icon == "🔻":
+            drivers.append(name + ("(고수준 부담·하락 중)" if direction == "하락" else ""))
+        elif direction == "하락":
             score -= min(8, weight // 2)
             relief.append(name)
     score = max(0, min(100, score))
@@ -971,8 +1039,51 @@ def _core_prioritized_candidates(items: list[str]) -> list[str]:
     return [preferred] + [item for item in items if item != preferred]
 
 
+def _summary_risk_kind(row: dict) -> str:
+    label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
+    code = _norm(row.get("판정코드"))
+    gate = _norm(row.get("게이트상태") or row.get("gate_state"))
+    if gate.lower() in {"nan", "none", "<na>"}:
+        gate = ""
+    current = _rotation_value(row, "current_w", "현재비중", "current_weight")
+    target = _rotation_value(row, "target_w", "목표비중", "target_weight")
+    if current is not None and target is not None and current > target:
+        return "hard"
+    if any(term in code for term in (
+        "HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO", "LEVERAGED_DAILY_DROP", "OVERWEIGHT",
+    )) or any(term in label for term in (
+        "하드차단", "구조훼손", "추세훼손", "추세방어", "추매금지", "매수금지", "목표비중 0", "비중 초과",
+    )):
+        return "hard"
+    if gate and gate not in {"실행가능", "EXECUTABLE"}:
+        return "caution"
+    if any(term in code for term in ("PRICE_DRAWDOWN", "SINGLE_DAY_BREAKDOWN")) or any(term in label for term in (
+        "주의", "차단", "과열", "보류", "관망", "대기", "금지", "가격위험", "가격방어", "단기급락", "급락방어",
+    )):
+        return "caution"
+    return ""
+
+
+def _summary_holding(row: dict) -> bool | None:
+    for key in ("qty", "보유량", "보유수량"):
+        value = _safe_float(row.get(key))
+        if value is not None:
+            return value > 0
+    for key in ("has_pos", "has_position", "holding", "holding_flag", "is_holding", "is_held", "보유여부"):
+        value = str(row.get(key)).strip().lower()
+        if value in {"true", "1", "1.0", "yes", "보유"}:
+            return True
+        if value in {"false", "0", "0.0", "no", "미보유", "관심"}:
+            return False
+    for key in ("current_w", "현재비중", "current_weight"):
+        value = _safe_float(row.get(key))
+        if value is not None:
+            return value > 0
+    return None
+
+
 def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str:
-    rows = _iter_table_rows(summary_rows, limit=80)
+    rows = _iter_table_rows(summary_rows, limit=None)
     if not rows:
         stress = _macro_stress_line(macro_data)
         return f"오늘의 전략: {stress}" if stress else ""
@@ -985,17 +1096,14 @@ def _today_action_flag_line(summary_rows, macro_data: dict | None = None) -> str
         name = _norm(row.get("종목명") or row.get("자산명"))
         ticker = _norm(row.get("티커"))
         label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
-        code = _norm(row.get("판정코드"))
         item = _asset_item_label(name, ticker)
-        is_hard = any(term in code for term in ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO")) or any(
-            term in label for term in ("하드차단", "매수금지", "비중 초과", "추매금지", "구조훼손", "추세훼손")
-        )
-        if is_hard:
+        risk = _summary_risk_kind(row)
+        if risk == "hard":
             hard_count += 1
             if _is_leveraged_row(row):
                 leveraged_block = True
             continue
-        if any(term in label for term in ("주의", "보류", "관망", "대기", "과열", "가격위험", "가격방어")):
+        if risk == "caution":
             caution.append(item)
         elif any(term in label for term in ("매수", "진입", "DCA", "적립", "눌림")) and not _is_leveraged_row(row):
             buyish.append(item)
@@ -1053,32 +1161,25 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
 
 def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
     bullets = []
-    rows = _iter_table_rows(summary_rows, limit=80)
+    rows = _iter_table_rows(summary_rows, limit=None)
     buyish = []
     leveraged_watch = []
     caution = []
     hard = []
+    holdings = {True: [], False: [], None: []}
     for row in rows:
         name = _norm(row.get("종목명") or row.get("자산명"))
         ticker = _norm(row.get("티커"))
         label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
-        code = _norm(row.get("판정코드"))
         item = _asset_item_label(name, ticker)
-        hard_terms = ("HARD_BLOCK", "STRUCTURE_DAMAGE", "MTF_DAMAGE", "TARGET_ZERO", "LEVERAGED_DAILY_DROP")
-        hard_label_terms = (
-            "하드차단", "구조훼손", "추세훼손", "추세방어",
-            "추매금지", "매수금지", "목표비중 0", "비중 초과",
-        )
-        wait_label_terms = ("주의", "차단", "과열", "보류", "관망", "대기", "금지", "가격위험", "가격방어", "단기급락", "급락방어")
-        if (
-            "PRICE_DRAWDOWN" in code
-            or "SINGLE_DAY_BREAKDOWN" in code
-            or any(term in label for term in ("가격위험", "가격방어", "단기급락", "급락방어"))
-        ):
-            caution.append(item)
-        elif any(term in code for term in hard_terms) or any(term in label for term in hard_label_terms):
+        held = _summary_holding(row)
+        holdings[held].append(item)
+        if held is not None:
+            item += " [보유]" if held else " [관심/미보유]"
+        risk = _summary_risk_kind(row)
+        if risk == "hard":
             hard.append(_hard_block_item(item, row))
-        elif any(word in label for word in wait_label_terms):
+        elif risk == "caution":
             caution.append(item)
         elif any(word in label for word in ("매수", "진입", "DCA", "적립", "탑승", "눌림")):
             if _is_leveraged_row(row):
@@ -1094,10 +1195,13 @@ def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
     if leveraged_watch:
         bullets.append("레버리지 관찰 후보(추격 제외): " + ", ".join(leveraged_watch[:5]))
     if caution:
-        bullets.append("주의/차단 후보: " + ", ".join(caution[:5]))
+        bullets.append("주의/차단 후보: " + ", ".join(caution))
     if hard:
-        bullets.append("하드차단 우선 확인: " + ", ".join(hard[:5]))
+        bullets.append("하드차단 우선 확인: " + ", ".join(hard))
         bullets.append("하드차단 해제 기준: 비중초과=목표비중 이하, 추세방어=일봉·주봉 회복, 매크로위험=스트레스 경고 이하")
+    for held, heading in ((True, "실제 보유"), (False, "관심/미보유"), (None, "보유 여부 미확인")):
+        if holdings[held]:
+            bullets.append(heading + ": " + ", ".join(holdings[held]))
     return bullets
 
 
@@ -1138,6 +1242,10 @@ def _hard_block_item(item: str, row: dict) -> str:
     code = _norm(row.get("판정코드"))
     label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
     reason = _norm(row.get("핵심근거") or row.get("데이터상태"))
+    current = _rotation_value(row, "current_w", "현재비중", "current_weight")
+    target = _rotation_value(row, "target_w", "목표비중", "target_weight")
+    if current is not None and target is not None and current > target:
+        return f"{item} - 비중 초과"
     code_reasons = {
         "HARD_BLOCK_OVERWEIGHT": "비중 초과",
         "HARD_BLOCK_TARGET_FILLED": "목표비중 충족",
@@ -1611,16 +1719,17 @@ def _news_event_radar_lines(
     synthetic_market_events: list[tuple[str, str]] = []
     if rotation_ctx.get("kr_market_crash"):
         kr_avg = rotation_ctx.get("kr_market_avg")
-        level_text = "서킷브레이커급" if kr_avg is not None and kr_avg <= -0.08 else "급락"
         synthetic_market_events.append((
             "📉 시장 급락",
-            f"한국 주요지수 평균 {_fmt_auto_pct(kr_avg)} {level_text} 하락 감지 — 섹터 이동보다 지수 안정과 사이드카/서킷브레이커 공시 확인 우선",
+            f"한국 주요지수 {rotation_ctx['kr_short_key']} 평균 {_fmt_auto_pct(kr_avg)} 급락 감지 — "
+            "섹터 이동보다 지수 안정과 사이드카/서킷브레이커 공시 확인 우선. "
+            "실제 발동 여부·외국인 순매매는 미확인입니다.",
         ))
     if rotation_ctx.get("us_market_crash"):
         us_avg = rotation_ctx.get("us_market_avg")
         synthetic_market_events.append((
             "📉 시장 급락",
-            f"미국 주요지수 평균 {_fmt_auto_pct(us_avg)} 급락 감지 — 미국장도 신규/추매보다 지수 안정 확인 우선",
+            f"미국 주요지수 {rotation_ctx['us_short_key']} 평균 {_fmt_auto_pct(us_avg)} 급락 감지 — 미국장도 신규/추매보다 지수 안정 확인 우선",
         ))
 
     if not rows and not synthetic_market_events:
@@ -1734,7 +1843,7 @@ def _auto_insight_bullets(
     semi_news_pressure = bool(bearish_ctx.get("count"))
     semi_shock = semi_short_weak or semi_news_pressure
     if kr_market_crash:
-        short_key = rotation_ctx.get("short_key") or "단기"
+        short_key = rotation_ctx.get("kr_short_key") or "단기"
         bullets.append(
             f"한국 시장은 {short_key} 기준 주요지수 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}로 급락/조정장 성격이 강합니다. "
             "오늘은 섹터 주도보다 지수 안정, 현금 비중, 보유종목 손절선 확인이 먼저입니다."
@@ -1752,8 +1861,9 @@ def _auto_insight_bullets(
         if inverse_semi_rows:
             inverse_top = sorted(inverse_semi_rows, key=lambda r: _flow_value(r, "돈흐름점수"), reverse=True)[0]
             bullets.append(
-                f"반도체/AI 인버스 강세 신호는 {_flow_row_label(inverse_top)}입니다. "
-                f"수치상 {_flow_health_fragment(inverse_top)}입니다. 이는 주도 섹터가 아니라 반도체 하락 압력/헤지 수요로 해석합니다."
+                f"반도체/AI 인버스 가격 지표는 {_flow_row_label(inverse_top)}입니다. "
+                f"수치상 {_flow_health_fragment(inverse_top)}입니다. "
+                "3M 가격·가속도와 1D/5D 방향은 별도입니다. 기초자산과 역방향 노출이며, 실제 헤지 수요는 미확인입니다.",
             )
         if not long_semi_rows:
             long_semi_rows = []
@@ -1817,12 +1927,12 @@ def _auto_insight_bullets(
             spread_text = f" 성장주 {_fmt_auto_pct(growth_avg)} vs 다우·산업재·방어 {_fmt_auto_pct(rotation_avg)}."
         flow_text = []
         if rotation_ctx.get("inflow"):
-            flow_text.append(f"유입: {rotation_ctx['inflow']}")
+            flow_text.append(f"미국 가격 상승: {rotation_ctx['inflow']}")
         if rotation_ctx.get("outflow"):
-            flow_text.append(f"이탈: {rotation_ctx['outflow']}")
+            flow_text.append(f"미국 가격 하락: {rotation_ctx['outflow']}")
         suffix = " / ".join(flow_text)
         bullets.append(
-            f"{short_key} 기준 단기 자금은 나스닥·기술·반도체보다 다우·산업재·금융·방어 쪽이 상대적으로 강합니다.{spread_text}"
+            f"미국 {short_key} 가격수익률은 나스닥·기술·반도체보다 다우·산업재·금융·방어 쪽이 상대적으로 강합니다.{spread_text}"
             + (f" {suffix}" if suffix else "")
         )
     elif rotation_ctx.get("growth_weak"):
@@ -1853,7 +1963,7 @@ def _auto_insight_bullets(
     leader_rows = []
     for table in top_tables:
         rows = _iter_table_rows(table, limit=1)
-        if rows:
+        if rows and not _is_inverse_or_short_row(rows[0]):
             leader_rows.append(rows[0])
     leaders = [_flow_row_label(row) for row in leader_rows]
     if leaders:
@@ -1875,16 +1985,12 @@ def _auto_insight_bullets(
         for name, info in macro_data.items():
             if not isinstance(info, dict):
                 continue
-            icon = _norm(info.get("icon"))
-            storm = bool(info.get("storm", False))
-            val = _safe_float(info.get("val"))
-            if name == "환율" and val is not None and val >= 1500:
-                pressure.append(name)
-            elif storm:
-                pressure.append(name)
-            elif name in {"10Y 금리", "VIX", "MOVE", "유가"} and icon == "🔻":
+            direction = _macro_direction(info)
+            if _macro_level_pressure(name, info):
+                pressure.append(name + ("(고수준 부담·하락 중)" if direction == "하락" else ""))
+            elif name in {"10Y 금리", "VIX", "MOVE", "유가"} and direction == "하락":
                 relief.append(name)
-            elif name in {"환율", "10Y 금리", "VIX"} and icon == "🔺":
+            elif name in {"환율", "10Y 금리", "VIX", "MOVE", "유가"} and direction == "상승":
                 pressure.append(name)
         if relief or pressure:
             if fed_hawkish:
@@ -1922,7 +2028,7 @@ def _auto_insight_bullets(
 
     portfolio_lines = _summary_bullets(summary_rows, macro_data)
     if portfolio_lines:
-        bullets.append("내 포트 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
+        bullets.append("오늘점검 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
     else:
         command_lines = _flow_command_bullets(flow_snapshot)
         if command_lines:
@@ -2002,7 +2108,7 @@ def build_auto_market_memo(
             lines.append(f"• {_flow_bullet(row)}")
         if semi_inverse:
             inverse_top = sorted(semi_inverse, key=lambda r: _flow_value(r, "돈흐름점수", -999.0), reverse=True)[0]
-            lines.append(f"• 인버스/헤지 신호: {_flow_bullet(inverse_top)}")
+            lines.append(f"• 인버스 가격 지표: {_flow_bullet(inverse_top)}")
         lines.append("")
 
     flow_sections = [
@@ -2028,18 +2134,28 @@ def build_auto_market_memo(
 
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
     rotation_rows = rotation_ctx.get("rows", [])
-    if rotation_rows and rotation_ctx.get("short_key"):
-        short_key = rotation_ctx["short_key"]
+    if rotation_rows:
+        short_key = rotation_ctx.get("short_key")
         lines.append("🧭 지수/스타일 로테이션")
-        if rotation_ctx.get("kr_market_crash"):
+        for market, name in (("kr", "한국"), ("us", "미국")):
+            period = rotation_ctx.get(f"{market}_short_key")
+            members = rotation_ctx.get(f"{market}_denominator", [])
+            if members:
+                lines.append(
+                    f"• {name} 주요지수 {period} 평균 {_fmt_auto_pct(rotation_ctx[f'{market}_market_avg'])}: "
+                    f"분모 {len(members)}개 [{', '.join(members)}]"
+                )
+            if rotation_ctx.get(f"{market}_market_crash"):
+                lines.append(f"• {name} 시장 전체 조정/위험회피: 섹터 이동보다 지수 안정 확인이 우선입니다.")
+            if period:
+                lines.append(f"• {name} 세션 {period} 가격 상승: {rotation_ctx[f'{market}_rising'] or '없음'}")
+                lines.append(f"• {name} 세션 {period} 가격 하락: {rotation_ctx[f'{market}_falling'] or '없음'}")
+            if rotation_ctx.get(f"{market}_leaders_3m"):
+                lines.append(f"• {name} 3M 중기 가격 상위: {rotation_ctx[f'{market}_leaders_3m']}")
+        if short_key and rotation_ctx.get("growth_avg") is not None:
             lines.append(
-                f"• 한국 주요지수 {short_key} 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}: "
-                "섹터 이동보다 시장 전체 조정/위험회피가 우선입니다."
-            )
-        if rotation_ctx.get("us_market_crash"):
-            lines.append(
-                f"• 미국 주요지수 {short_key} 평균 {_fmt_auto_pct(rotation_ctx.get('us_market_avg'))}: "
-                "미국도 지수 안정 확인이 먼저입니다."
+                f"• 미국 스타일 {short_key} 평균 분모: 성장 [{', '.join(rotation_ctx['growth_denominator'])}], "
+                f"다우·방어 [{', '.join(rotation_ctx['rotation_denominator'])}]"
             )
         if rotation_ctx.get("rotation_detected"):
             lines.append(
@@ -2047,12 +2163,7 @@ def build_auto_market_memo(
                 f"성장주 {_fmt_auto_pct(rotation_ctx.get('growth_avg'))}, "
                 f"다우·방어 {_fmt_auto_pct(rotation_ctx.get('rotation_avg'))}"
             )
-        inflow_text = rotation_ctx.get("inflow") or "없음 (관망 구간)"
-        outflow_text = rotation_ctx.get("outflow") or "없음"
-        lines.append(f"• 단기 유입: {inflow_text}")
-        lines.append(f"• 단기 이탈: {outflow_text}")
-        if rotation_ctx.get("leaders_3m"):
-            lines.append(f"• 3M 중기 주도: {rotation_ctx['leaders_3m']}")
+        lines.append("※ 시장별 세션의 가격수익률 비교입니다. 실제 자금 유입/유출·외국인 순매매는 미확인입니다.")
         lines.append("")
 
     macro_lines = _macro_bullets(macro_data)

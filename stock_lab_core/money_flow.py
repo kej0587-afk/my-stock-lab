@@ -626,6 +626,7 @@ MONEY_FLOW_UNIVERSE = [
     {"구분": "한국 섹터", "섹터": "코스피",       "ticker": "069500.KS", "name": "KODEX 200"},
     {"구분": "한국 섹터", "섹터": "코스닥",       "ticker": "229200.KS", "name": "KODEX 코스닥150"},
     {"구분": "한국 섹터", "섹터": "반도체",       "ticker": "396500.KS", "name": "TIGER 반도체TOP10"},
+    {"구분": "한국 섹터", "섹터": "AI 반도체 소부장", "ticker": "455850.KS", "name": "SOL AI반도체소부장"},
     {"구분": "한국 섹터", "섹터": "IT/기술",      "ticker": "139260.KS", "name": "TIGER 200 IT"},
     {"구분": "한국 섹터", "섹터": "2차전지",      "ticker": "305540.KS", "name": "TIGER 2차전지테마"},
     {"구분": "한국 섹터", "섹터": "전력인프라",   "ticker": "487240.KS", "name": "KODEX AI전력핵심설비"},
@@ -1343,7 +1344,7 @@ IMAGE_THEME_META: dict[str, dict] = {
 # ── 한국 섹터 클러스터 (KOSPI200 대비 RS) ───────────────────────────────
 SECTOR_CLUSTERS_KR: dict[str, list[str]] = {
     # 069500.KS(KODEX200)는 KOSPI200 벤치마크 자체 → RS≈0%이므로 제외
-    "AI·반도체":     ["396500.KS", "139260.KS", "381180.KS", "456600.KS"],
+    "AI·반도체":     ["396500.KS", "139260.KS", "381180.KS", "455850.KS"],
     "전력·인프라":   ["487240.KS", "0117V0.KS", "487230.KS", "491010.KS"],
     "원전·우라늄":   ["434730.KS", "433500.KS"],
     "방산·조선":     ["449450.KS", "494670.KS"],
@@ -1396,6 +1397,7 @@ ETF_TO_THEME: dict[str, str] = {
     "URA":       "글로벌 원전·SMR",
     "IBB":       "미국 헬스케어·바이오텍",
     "396500.KS": "국내 AI 반도체·소부장",
+    "455850.KS": "국내 AI 반도체·소부장",
     "139260.KS": "국내 AI 반도체·소부장",
     "0227L0.KS": "미국 AI·빅테크",
     "0227L0":    "미국 AI·빅테크",
@@ -1903,6 +1905,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
     high_52w    = float(px["High"].max())
     low_52w     = float(px["Low"].min())
     period_ret  = get_return_by_days(close, len(close) - 1)
+    ret_1d      = get_return_by_days(close, 1)
     ret_1w      = get_return_by_days(close, 5)
     ret_2w      = get_return_by_days(close, 10)
     ret_1m      = get_return_by_days(close, 21)
@@ -1941,8 +1944,10 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
         "가격수준":    price_level,
         "고점대비":    drawdown,
         "기간수익률":  period_ret,
+        "1일수익률":   ret_1d,
+        "5일수익률":   ret_1w,
         "1주수익률":   ret_1w,
-            "2주수익률":   ret_2w,
+        "2주수익률":   ret_2w,
         "1개월수익률": ret_1m,
         "3개월수익률": ret_3m,
         "6개월수익률": ret_6m,
@@ -2010,6 +2015,7 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
 
     _empty: dict = {
         "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
+        "1일수익률": np.nan, "5일수익률": np.nan,
         "1주수익률": np.nan, "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
         "가속도": np.nan, "단기가속도": np.nan, "거래량증가": np.nan,
         "돈흐름점수": np.nan, "스윙점수": np.nan,
@@ -2049,6 +2055,7 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (theme, subtheme), group in valid.groupby(["테마", "하위테마"], sort=False):
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
+        ret_1d        = group["1일수익률"].mean() if "1일수익률" in group.columns else np.nan
         ret_1w        = group["1주수익률"].mean() if "1주수익률" in group.columns else np.nan
         ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
@@ -2072,6 +2079,8 @@ def calculate_image_theme_group_df(theme_flow_df: pd.DataFrame) -> pd.DataFrame:
             "테마":       theme,
             "하위테마":   subtheme,
             "종목수":     int(len(group)),
+            "1일수익률":   ret_1d,
+            "5일수익률":   ret_1w,
             "대표주":     f"{leader['종목명']} ({leader['Ticker']})",
             "1주수익률":   ret_1w,
             "2주수익률":   ret_2w,
@@ -2128,6 +2137,7 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
         total_count   = int((all_rows["테마"] == theme).sum())
         leader        = group.sort_values("돈흐름점수", ascending=False).iloc[0]
         weak          = group.sort_values("돈흐름점수", ascending=True).iloc[0]
+        ret_1d        = group["1일수익률"].mean() if "1일수익률" in group.columns else np.nan
         ret_1w        = group["1주수익률"].mean() if "1주수익률" in group.columns else np.nan
         ret_2w        = group["2주수익률"].mean() if "2주수익률" in group.columns else np.nan
         ret_1m        = group["1개월수익률"].mean()
@@ -2192,7 +2202,9 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             + score_downtrend
         )
 
-        if (ret_1m if finite_num(ret_1m) else 0.0) <= -0.02 and (ret_2w if finite_num(ret_2w) else 0.0) < 0:
+        if finite_num(ret_1w) and ret_1w < 0:
+            theme_signal = "주도 후 조정" if finite_num(ret_3m) and ret_3m >= 0.08 else "하락중 관망"
+        elif (ret_1m if finite_num(ret_1m) else 0.0) <= -0.02 and (ret_2w if finite_num(ret_2w) else 0.0) < 0:
             theme_signal = "하락중 관망"
         elif finite_num(price_level) and price_level >= 0.90 and (ret_3m if finite_num(ret_3m) else 0.0) >= 0.10:
             theme_signal = "강하지만 과열"
@@ -2211,6 +2223,8 @@ def calculate_image_theme_rotation_df(theme_flow_df: pd.DataFrame) -> pd.DataFra
             "계산종목수":    int(len(group)),
             "대표주":        f"{leader['종목명']} ({leader['Ticker']})",
             "약세주":        f"{weak['종목명']} ({weak['Ticker']})",
+            "1일수익률":     ret_1d,
+            "5일수익률":     ret_1w,
             "1주수익률":     ret_1w,
             "2주수익률":     ret_2w,
             "1개월수익률":   ret_1m,
@@ -2292,6 +2306,7 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 continue
 
             r1w = r.get("1주수익률", np.nan)
+            r1d = r.get("1일수익률", np.nan)
             r2w = r.get("2주수익률", np.nan)
             r1m = r.get("1개월수익률", np.nan)
             swing_ac = r.get("단기가속도", np.nan)
@@ -2321,6 +2336,7 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 and finite_num(r2w) and float(r2w) >= 0.01
                 and finite_num(swing_ac) and float(swing_ac) >= 0.0
                 and state != "과열경보"
+                and (not finite_num(r1w) or float(r1w) >= 0)
                 # 주도 사분면은 RS가 실질적인 리더십(8% 이상)일 때만 진입검토
                 # 개선 사분면은 RS < 0 → 역전 모멘텀이므로 임계값 불필요
                 and (quad == "개선" or float(rs_3m) >= 0.08)
@@ -2336,6 +2352,8 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 "3M수익률":   float(r3),
                 "1개월수익률": float(r1m) if finite_num(r1m) else np.nan,
                 "1주수익률":  float(r1w) if finite_num(r1w) else np.nan,
+                "1일수익률":  float(r1d) if finite_num(r1d) else np.nan,
+                "5일수익률":  float(r1w) if finite_num(r1w) else np.nan,
                 "2주수익률":  float(r2w) if finite_num(r2w) else np.nan,
                 "단기가속도": float(swing_ac) if finite_num(swing_ac) else np.nan,
                 "거래량증가":  float(volume_growth) if finite_num(volume_growth) else np.nan,

@@ -592,9 +592,9 @@ def test_auto_market_memo_separates_inverse_semiconductor_etf_from_leaders():
         now=datetime(2026, 9, 17, 11, 0),
     )
 
-    assert "인버스 강세 신호" in memo
-    assert "반도체 하락 압력/헤지 수요" in memo
-    assert "인버스/헤지 신호" in memo
+    assert "인버스 가격 지표" in memo
+    assert "실제 헤지 수요는 미확인" in memo
+    assert "반도체 하락 압력/헤지 수요로 해석" not in memo
     assert "상태 강세 가속(3M+·가속+)" in memo
     assert "다이버전스 가격↑·돈흐름↓" in memo
     assert "상대 상위는 Direxion Daily Semiconductor Bear 3X ETF(SOXS)" not in memo

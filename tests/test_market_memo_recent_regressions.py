@@ -337,3 +337,128 @@ def test_auto_market_memo_marks_korea_crash_before_sector_rotation():
     assert "한국 주요지수 1D 평균 -7.0%" in memo
     assert "📉 시장 급락" in memo
     assert "사이드카/서킷브레이커 공시 확인 우선" in memo
+
+
+def test_rotation_keeps_market_sessions_and_periods_separate_without_style_pair():
+    memo = build_auto_market_memo(index_rotation_rows=[
+        {"Ticker": "^KS11", "1D": -0.08, "3M": 0.4},
+        {"Ticker": "^KQ11", "1D": -0.06, "3M": 0.2},
+        {"Ticker": "^GSPC", "5D": 0.02, "3M": 0.1},
+    ])
+    assert "한국 주요지수 1D 평균 -7.0%" in memo
+    assert "미국 주요지수 5D 평균 +2.0%" in memo
+    kr_line = next(line for line in memo.splitlines() if "한국 세션 1D 가격 하락:" in line)
+    us_line = next(line for line in memo.splitlines() if "미국 세션 5D 가격 상승:" in line)
+    assert "^GSPC" not in kr_line
+    assert "^KS11" not in us_line
+    assert "단기 유입:" not in memo
+    assert "단기 이탈:" not in memo
+    assert "실제 발동 여부·외국인 순매매는 미확인" in memo
+
+
+def test_rotation_dedupes_indices_per_available_period_and_publishes_denominator():
+    from stock_lab_core.market_memo import _mean_rotation
+
+    rows = [
+        {"Ticker": "069500.KS", "1D": -0.09, "5D": 0.06},
+        {"Ticker": "^KS11", "1D": -0.03},
+        {"Ticker": "^KQ11", "1D": -0.01, "5D": 0.02},
+        {"Ticker": "229200.KS", "1D": -0.10, "5D": 0.10},
+    ]
+    tickers = {row["Ticker"] for row in rows}
+    for ordered in (rows, list(reversed(rows))):
+        assert _mean_rotation(ordered, tickers, "1D") == (-0.02, 2)
+        assert _mean_rotation(ordered, tickers, "5D") == (0.04, 2)
+        memo = build_auto_market_memo(index_rotation_rows=ordered)
+        line = next(line for line in memo.splitlines() if "한국 주요지수 1D 평균" in line)
+        assert "분모 2개 [^KQ11, ^KS11]" in line
+        assert "069500" not in line
+
+
+def test_us_headline_and_style_averages_dedupe_index_proxies():
+    memo = build_auto_market_memo(index_rotation_rows=[
+        {"Ticker": "^GSPC", "1D": -0.01},
+        {"Ticker": "SPY", "1D": -0.08},
+        {"Ticker": "VOO", "1D": -0.09},
+        {"Ticker": "^IXIC", "1D": -0.02},
+        {"Ticker": "QQQ", "1D": -0.10},
+        {"Ticker": "^DJI", "1D": 0.0},
+        {"Ticker": "DIA", "1D": 0.02},
+    ])
+    assert "미국 주요지수 1D 평균 -1.0%: 분모 3개" in memo
+    assert "미국 스타일 1D 평균 분모: 성장 [^IXIC], 다우·방어 [^DJI]" in memo
+    assert "성장주 -2.0%, 다우·방어 +0.0%" in memo
+
+
+def test_inverse_price_and_acceleration_do_not_claim_demand_or_sector_leadership():
+    for ticker in ("SOXS", "SQQQ"):
+        row = {"Ticker": ticker, "섹터": "반도체" if ticker == "SOXS" else "나스닥",
+               "3개월수익률": 0.4, "가속도": 0.2, "돈흐름점수": 80,
+               "상태": "강세 가속", "1D": -0.03, "5D": -0.06}
+        memo = build_auto_market_memo(flow_snapshot={"flow_df": [row], "us_top5": [row]},
+                                      index_rotation_rows=[{"Ticker": ticker, "1D": -0.03, "3M": 0.4}])
+        assert "인버스 가격 지표(섹터 강세 아님)" in memo
+        assert "1D/5D -3.0%/-6.0% 별도 확인" in memo
+        assert "실제 헤지 수요 미확인" in memo
+        assert "중기 돈흐름 상위 축은" not in memo
+        assert f"3M 중기 가격 상위: {ticker}" not in memo
+
+
+def test_summary_risks_after_row_80_and_fifth_holding_are_all_listed():
+    rows = [{"티커": f"WATCH{i}", "qty": 0, "🔥기술적 타점": "관망"} for i in range(81)]
+    rows += [{"티커": f"HELD{i}", "qty": 1, "🔥기술적 타점": "매수 관심",
+              "판정코드": "HARD_BLOCK_OVERWEIGHT"} for i in range(8)]
+    memo = build_auto_market_memo(summary_rows=pd.DataFrame(rows))
+    hard_line = next(line for line in memo.splitlines() if "하드차단 우선 확인:" in line)
+    for i in range(8):
+        assert f"HELD{i} [보유] - 비중 초과" in hard_line
+    assert "하드차단 종목 먼저 원인 확인" in memo
+    assert "매수/관심 후보:" not in memo
+    assert "실제 보유: HELD0" in memo
+    assert "관심/미보유: WATCH0" in memo
+
+
+def test_summary_explicit_holding_evidence_and_gate_override_buy_words():
+    from stock_lab_core.market_memo import _summary_holding
+
+    assert _summary_holding({"qty": 0, "has_pos": True}) is False
+    assert _summary_holding({"has_pos": "False"}) is False
+    assert _summary_holding({"current_w": 2}) is True
+    assert _summary_holding({"holding_flag": "true"}) is True
+    assert _summary_holding({"종목명": "보유라는 이름"}) is None
+    for gate in ("대기/관찰", "방어우선", "데이터확인", "관망"):
+        memo = build_auto_market_memo(summary_rows=[
+            {"티커": "MSFT", "has_pos": False, "게이트상태": gate, "🔥기술적 타점": "매수 관심"},
+            {"티커": "AAPL", "has_pos": True, "current_w": 12, "target_w": 10,
+             "🔥기술적 타점": "적립식 매수 가능"},
+        ])
+        assert "매수/관심 후보:" not in memo
+        assert "적립/관심 유지" not in memo
+        assert "주의/차단 후보: MSFT [관심/미보유]" in memo
+        assert "AAPL [보유] - 비중 초과" in memo
+
+
+def test_high_oil_declining_keeps_level_burden_and_direction_coherent():
+    memo = build_auto_market_memo(macro_data={
+        "유가": {"val": 104, "chg": -3.0, "icon": "🔺", "storm": False},
+    })
+    assert "유가 104.00, 1개월 -3.0%, 방향 하락, 수준 경고권" in memo
+    assert "유가(고수준 부담·하락 중)" in memo
+    assert "완화: 유가" not in memo
+    assert "유가 완화 흐름" not in memo
+
+
+def test_dataframe_missing_market_and_gate_do_not_hide_valid_us_or_buy_rows():
+    memo = build_auto_market_memo(
+        index_rotation_rows=pd.DataFrame([
+            {"시장": "한국", "Ticker": "^KS11", "1D": -0.05},
+            {"Ticker": "^GSPC", "1D": 0.01},
+        ]),
+        summary_rows=pd.DataFrame([
+            {"티커": "MSFT", "has_pos": False, "게이트상태": "관망", "🔥기술적 타점": "매수 관심"},
+            {"티커": "AAPL", "qty": 1, "🔥기술적 타점": "매수 관심"},
+        ]),
+    )
+    assert "미국 주요지수 1D 평균 +1.0%" in memo
+    assert "매수/관심 후보: AAPL [보유]" in memo
+    assert "주의/차단 후보: MSFT [관심/미보유]" in memo

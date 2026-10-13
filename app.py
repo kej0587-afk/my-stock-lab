@@ -453,13 +453,23 @@ from stock_lab_core.prices import (
     clear_latest_price_cache,
     clear_selected_price_cache,
     enable_force_live_price_refresh,
-    fetch_yahoo_display_metadata,
     load_latest_price,
     load_latest_prices_batch,
     load_price_df,
     normalize_price_lookup_key,
     load_usdkrw_rate,
 )
+try:
+    from stock_lab_core.prices import fetch_yahoo_display_metadata
+except ImportError:
+    # Keep older deployed helper versions usable during an app update.
+    def fetch_yahoo_display_metadata(ticker):
+        from stock_lab_core.prices import _fetch_yahoo_chart
+        _, meta = _fetch_yahoo_chart(str(ticker or "").strip().upper(), "1d", "5d")
+        if not isinstance(meta, dict) or str(meta.get("symbol", "")).upper() != str(ticker or "").strip().upper():
+            return {}
+        return {key: meta.get(key, "") for key in ("longName", "shortName", "displayName")}
+
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
 from stock_lab_core.research_links import (
     build_research_home_link_groups,
@@ -8865,13 +8875,15 @@ def _unified_flow_action(cluster_label="", theme_signal="", sector_state="", the
     theme_signal_text = str(theme_signal or "")
     timing_text = str(cluster_timing or "")
     cluster_strong = cluster_label_text in {"주도", "부상", "진입검토", "부상감시"}
-    theme_strong = theme_signal_text in {"진입검토", "부상감시", "주도 후 조정"}
+    theme_strong = theme_signal_text in {"진입검토", "부상감시"}
     cluster_weak = cluster_label_text in {"소외", "약세", "중립", "소외 지속"}
 
     if "하락중 관망" in text or "소외 지속" in text or "급락" in text or str(cluster_timing) == "하락 중":
         return "🔸 관망", "단기 흐름이 꺾인 구간입니다."
     if "극단과열" in text:
         return "🚫 추격금지", "종목 타점에서 과열이 풀릴 때까지 대기합니다."
+    if cluster_label_text == "주도 후 조정" or theme_signal_text == "주도 후 조정":
+        return "⏳ 눌림대기", "주도 테마지만 단기 조정 확인이 필요합니다."
     if "과열" in text or timing_text in {"과열", "눌림 대기"} or (finite_num(price_level) and float(price_level) >= 0.90):
         return "⏳ 눌림대기", "큰 흐름은 강하지만 가격 위치가 높습니다."
     if cluster_weak and theme_strong:
@@ -10104,9 +10116,12 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
         quad  = str(r.get("사분면", "-"))
         r1m   = r.get("1개월수익률", np.nan)
         r2w   = r.get("2주수익률", np.nan)
-        recent = _load_index_rotation_recent_returns(t)
-        r1d   = recent.get("1D", np.nan)
-        r5d   = recent.get("5D", np.nan)
+        r1d = _flow_stat_first_num(r, ["1일수익률", "1D"], default=np.nan)
+        r5d = _flow_stat_first_num(r, ["5일수익률", "1주수익률", "5D"], default=np.nan)
+        if not finite_num(r1d) or not finite_num(r5d):
+            recent = _load_index_rotation_recent_returns(t)
+            r1d = r1d if finite_num(r1d) else recent.get("1D", np.nan)
+            r5d = r5d if finite_num(r5d) else recent.get("5D", np.nan)
         short_accel = r.get("단기가속도", np.nan)
         volume_growth = r.get("거래량증가", np.nan)
         price_level = r.get("가격수준", np.nan)
@@ -10200,13 +10215,15 @@ def _build_cluster_list(rotation_df, clusters: dict, market_context: dict | None
             warning_bits.append("US 대표주 실시간 등락률 확인 필요")
         core_warning = " / ".join(warning_bits)
 
-        short_down = (
+        short_down = (finite_num(avg_r5d) and avg_r5d < 0) or (
             (finite_num(avg_r1m) and avg_r1m <= -0.02
              and (not finite_num(avg_r2w) or avg_r2w < 0))
             or (finite_num(avg_r2w) and avg_r2w <= -0.03
                 and (not finite_num(avg_r1m) or avg_r1m <= 0))
         )
         short_confirm = (
+            (not finite_num(avg_r5d) or avg_r5d >= 0)
+            and
             finite_num(avg_r1m) and avg_r1m >= 0
             and (not finite_num(avg_r2w) or avg_r2w >= 0)
         )
@@ -12126,6 +12143,8 @@ def _flow_stat_guard_caption(market_guard):
         if mode:
             suffix = f" {float(avg)*100:+.1f}%" if finite_num(avg) else ""
             parts.append(f"{label} {mode}{suffix}")
+            if stats.get("avg_day_tickers"):
+                parts.append(f"{label} 평균대상: {', '.join(stats['avg_day_tickers'])}")
     return " · ".join(parts)
 
 
@@ -12162,7 +12181,7 @@ def render_market_flow_stat_cards(command_df, kr_top5, us_top5, market_guard=Non
     with st.expander("능력치 읽는 법", expanded=False):
         st.caption("강도: 3M/RS/돈흐름 점수를 압축한 중기 힘입니다. 높아도 늦게 꺾일 수 있습니다.")
         st.caption("확산: ETF·테마·대표주가 같이 오르는 폭입니다. 낮으면 한두 종목 쏠림일 수 있습니다.")
-        st.caption("단기유입: 1D/5D/1W 기준 최근 돈이 들어오는 정도입니다.")
+        st.caption("단기유입: 가격수익률 기반의 단기 강도입니다. 실제 자금 유입은 별도 수급 자료로 확인합니다.")
         st.caption("모멘텀: 1M/3M 흐름이 가속되는지 둔화되는지입니다.")
         st.caption("안정도: 과열, 급락, 시장모드, 가격방어 위험이 적을수록 높습니다.")
         st.caption("타점: 지금 가격에서 실행 가능한지입니다. 낮으면 기다림, 높아도 최종 매수는 정밀관측소 R/R 확인입니다.")
@@ -12275,7 +12294,7 @@ def _flow_sector_ability_bucket(text):
     upper = raw.upper()
     for bucket, keywords in FLOW_SECTOR_ABILITY_BUCKETS:
         for keyword in keywords:
-            if str(keyword).upper() in upper:
+            if _news_term_matches(raw, str(keyword)):
                 return bucket
     return ""
 
@@ -12303,7 +12322,7 @@ def _flow_sector_market_from_row(row):
 
 
 def _flow_sector_short_return(row):
-    return _flow_stat_first_num(row, ["1주수익률", "5D", "1D", "2주", "하위2W", "테마2W", "큰돈2W", "2주수익률"], default=np.nan)
+    return _flow_stat_first_num(row, ["2주", "하위2W", "테마2W", "큰돈2W", "2주수익률", "2W"], default=np.nan)
 
 
 def _flow_sector_mid_return(row):
@@ -12356,6 +12375,8 @@ def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
                 "internal": _flow_stat_first_text(row, ["시장내부판정", "업종내부"], default="-"),
                 "score": _flow_sector_score(row),
                 "short": _flow_sector_short_return(row),
+                "r1d": _flow_stat_first_num(row, ["1일수익률", "1D"], default=np.nan),
+                "r5d": _flow_stat_first_num(row, ["5일수익률", "1주수익률", "5D"], default=np.nan),
                 "mid": _flow_sector_mid_return(row),
                 "long": _flow_sector_long_return(row),
                 "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
@@ -12380,6 +12401,8 @@ def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
                 "internal": _flow_stat_first_text(row, ["업종내부", "시장내부판정"], default="-"),
                 "score": _flow_sector_score(row),
                 "short": _flow_sector_short_return(row),
+                "r1d": _flow_stat_first_num(row, ["1일수익률", "1D"], default=np.nan),
+                "r5d": _flow_stat_first_num(row, ["5일수익률", "1주수익률", "5D"], default=np.nan),
                 "mid": _flow_sector_mid_return(row),
                 "long": _flow_sector_long_return(row),
                 "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
@@ -12407,6 +12430,8 @@ def _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df):
                 "internal": _flow_stat_first_text(row, ["업종내부"], default="-"),
                 "score": _flow_sector_score(row),
                 "short": _flow_sector_short_return(row),
+                "r1d": _flow_stat_first_num(row, ["1일수익률", "1D"], default=np.nan),
+                "r5d": _flow_stat_first_num(row, ["5일수익률", "1주수익률", "5D"], default=np.nan),
                 "mid": _flow_sector_mid_return(row),
                 "long": _flow_sector_long_return(row),
                 "price_level": _flow_stat_first_num(row, ["가격수준", "고점근접도"], default=np.nan),
@@ -12461,7 +12486,7 @@ def _safe_nanmean(values, default=np.nan):
     return float(np.nanmean(finite_values))
 
 
-def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, limit=12):
+def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, limit=30):
     source_rows = _flow_sector_source_rows(command_df, sector_rotation_df, theme_rotation_df)
     if not source_rows:
         return []
@@ -12473,7 +12498,10 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
     cards = []
     for (group_market, bucket), items in grouped.items():
         scores = [float(x["score"]) for x in items if finite_num(x.get("score"))]
-        shorts = [float(x["short"]) for x in items if finite_num(x.get("short"))]
+        short_basis, short_field = next(((basis, field) for basis, field in [("5D", "r5d"), ("2W", "short"), ("1D", "r1d")] if any(finite_num(x.get(field)) for x in items)), ("미산출", "short"))
+        shorts = [float(x[short_field]) for x in items if finite_num(x.get(short_field))]
+        r1d = _safe_nanmean([x.get("r1d") for x in items])
+        r5d = _safe_nanmean([x.get("r5d") for x in items])
         mids = [float(x["mid"]) for x in items if finite_num(x.get("mid"))]
         longs = [float(x["long"]) for x in items if finite_num(x.get("long"))]
         prices = [float(x["price_level"]) / 100.0 if finite_num(x.get("price_level")) and abs(float(x["price_level"])) > 3 else float(x["price_level"]) for x in items if finite_num(x.get("price_level"))]
@@ -12487,10 +12515,10 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
 
         finite_flow_flags = []
         for x in items:
-            short = clean_float(x.get("short", np.nan), np.nan)
+            short = clean_float(x.get(short_field, np.nan), np.nan)
             mid = clean_float(x.get("mid", np.nan), np.nan)
             if finite_num(short) or finite_num(mid):
-                finite_flow_flags.append((finite_num(short) and float(short) > 0) or (finite_num(mid) and float(mid) > 0))
+                finite_flow_flags.append(float(short) > 0 if finite_num(short) else float(mid) > 0)
         if finite_flow_flags:
             coverage = min(1.0, len(finite_flow_flags) / 3.0)
             breadth = _flow_stat_clamp(sum(bool(v) for v in finite_flow_flags) / len(finite_flow_flags) * 10.0 * coverage)
@@ -12540,6 +12568,8 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
         safety = _flow_stat_clamp(safety)
 
         best_action = normalize_flow_action_label(max(actions, key=_flow_sector_action_rank) if actions else "")
+        if finite_num(r5d) and r5d < 0:
+            best_action = "관망/제외"
         action_rank_value = _flow_sector_action_rank(best_action)
         timing = _flow_sector_action_timing_score(best_action)
         if prices and _safe_nanmean(prices) >= 0.90:
@@ -12588,7 +12618,7 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
         cards.append({
             "market": market,
             "mode": mode,
-            "title": bucket,
+            "title": "소비재·자동차·여행" if market == "미국" and bucket == "소비재·뷰티" else bucket,
             "source": "섹터 통합",
             "action": best_action,
             "anchor_representatives": _flow_sector_anchor_representatives(market, bucket),
@@ -12600,10 +12630,18 @@ def _flow_sector_ability_cards(command_df, sector_rotation_df, theme_rotation_df
             "verdict": verdict,
             "item_count": len(items),
             "short": _safe_nanmean(shorts),
+            "short_basis": short_basis,
+            "r1d": r1d,
+            "r5d": r5d,
             "mid": _safe_nanmean(mids),
         })
 
-    return sorted(cards, key=lambda x: x.get("total", 0), reverse=True)[:limit]
+    cards.sort(key=lambda x: (-x.get("total", 0), x["market"], x["title"]))
+    ranks = {}
+    for card in cards:
+        ranks[card["market"]] = ranks.get(card["market"], 0) + 1
+        card["rank"] = ranks[card["market"]]
+    return cards[:limit]
 
 
 def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotation_df, market_guard=None, cards=None):
@@ -12613,14 +12651,14 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
         return
 
     st.markdown("##### 섹터별 돈흐름 능력치")
-    st.caption("ETF·테마·대표주를 같은 섹터로 묶어 비교합니다. 여기서는 어느 섹터로 돈이 넓게 퍼지는지 보는 용도이고, 실제 매수는 실행분류와 정밀관측소 타점으로 한 번 더 거릅니다.")
+    st.caption("ETF·테마·대표주의 가격·거래량을 비교합니다. 실제 자금 유입 통계와 구분하며, 매수는 실행분류와 정밀관측소 타점으로 확인합니다.")
     st.caption("기준 대표축은 섹터를 볼 때 항상 확인할 대장주 목록이고, 오늘 포착종목은 오늘 후보판에서 실제로 걸린 종목입니다.")
 
     summary_rows = []
     for rank, card in enumerate(cards, 1):
         reading = _flow_sector_common_reading(card)
         summary_rows.append({
-            "순위": rank,
+            "순위": card.get("rank", rank),
             "섹터": card["title"],
             "최종읽기": reading.get("label", card["verdict"]),
             "판정근거": card["verdict"],
@@ -12629,6 +12667,9 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
             "강도": card["values"]["강도"],
             "확산": card["values"]["확산"],
             "단기": card["values"]["단기유입"],
+            "단기 기준": card.get("short_basis", "미산출"),
+            "1D": _brief_pct_text(card.get("r1d", np.nan)),
+            "5D": _brief_pct_text(card.get("r5d", np.nan)),
             "모멘텀": card["values"]["모멘텀"],
             "타점": card["values"]["타점"],
             "ETF": card.get("etfs", "-"),
@@ -12653,7 +12694,7 @@ def render_sector_flow_ability_board(command_df, sector_rotation_df, theme_rotat
         cols = st.columns(3 if len(top_cards) >= 3 else len(top_cards))
         for idx, card in enumerate(top_cards):
             with cols[idx % len(cols)]:
-                st.markdown(f"**#{idx + 1} {card['title']}**")
+                st.markdown(f"**#{card.get('rank', idx + 1)} {card['title']}**")
                 st.caption(f"{card['verdict']} · {card['market']} · 주도점수 {card['total']:.1f}/10 · 근거 {card.get('item_count', 0)}개")
                 st.plotly_chart(
                     _flow_stat_radar_figure(card),
@@ -12712,7 +12753,7 @@ def render_sector_research_cards(cards, news_rows=None, limit=4):
             reading = _flow_sector_common_reading(card)
             score = clean_float(card.get("total", np.nan), np.nan)
             score_text = f"{float(score):.1f}/10" if finite_num(score) else "-/10"
-            st.markdown(f"**#{idx + 1} {card.get('market', '-')} · {card.get('title', '-')}**")
+            st.markdown(f"**#{card.get('rank', idx + 1)} {card.get('market', '-')} · {card.get('title', '-')}**")
             st.caption(f"최종읽기: {reading.get('label', card.get('verdict', '-'))} · 실행: {_flow_action_caption(card.get('action', '-'))} · 점수 {score_text}")
             st.caption(f"한 줄 결론: {_sector_research_card_takeaway(card)}")
             st.caption(f"다음 확인: {reading.get('next', '-')}")
@@ -14942,12 +14983,14 @@ def render_image_theme_flow_section():
 # ════════════════════════════════════════════════════════════════════════════
 
 def render_money_flow_tab():
-    etf_tab, image_theme_tab, kiwoom_tab = st.tabs(["ETF/섹터 돈흐름", "테마 종목 흐름", "키움 시장근거"])
-    with etf_tab:
+    view = st.segmented_control("돈흐름 보기", ["통합 현황", "ETF 원자료", "테마 원자료", "키움 시장근거"], default="통합 현황", key="money_flow_workspace_view") or "통합 현황"
+    if view == "통합 현황":
+        render_today_market_flow_panel(get_cached_today_market_flow_snapshot(), show_shortlist=True)
+    elif view == "ETF 원자료":
         render_money_flow_etf_section()
-    with image_theme_tab:
+    elif view == "테마 원자료":
         render_image_theme_flow_section()
-    with kiwoom_tab:
+    else:
         render_kiwoom_market_evidence("radar_kiwoom")
 
 # -------------------------------------------------
@@ -20985,8 +21028,21 @@ def fetch_kiwoom_market_snapshot(kind, theme_code=""):
 
 
 def render_kiwoom_market_evidence(key_prefix):
+    if IS_PUBLIC_DEMO:
+        st.info("체험모드에서는 키움 비밀키를 읽거나 인증하지 않습니다. 실제 앱에서 연결 설정을 확인하세요.")
+        return
+    client = get_kiwoom_data_client()
+    if st.button("연결 설정 다시 확인", key=key_prefix + "_recheck"):
+        cache_clear(get_kiwoom_data_client)
+        cache_clear(fetch_kiwoom_market_snapshot)
+        cache_clear(fetch_kiwoom_valuation_snapshot)
+        st.rerun()
+    info = getattr(client, "connection_info", {})
+    environment = info.get("environment", "")
+    mode = {"real": "실전", "mock": "모의"}.get(environment, "미확인")
+    st.caption(f"설정 상태: {client.status} · 설정 환경: {mode}")
     render_market_evidence_panel(
-        st, status=get_kiwoom_data_client().status,
+        st, status=client.status,
         fetch_snapshot=fetch_kiwoom_market_snapshot,
         get_news=get_ticker_news, render_news=render_news_cards, key_prefix=key_prefix,
     )
@@ -28505,6 +28561,16 @@ def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
     worst_day_drop = clean_float(valid_df["1일"].min(), np.nan) if "1일" in valid_df.columns else np.nan
     max_day_gain = clean_float(valid_df["1일"].max(), np.nan) if "1일" in valid_df.columns else np.nan
     avg_day = clean_float(valid_df["1일"].dropna().mean(), np.nan) if "1일" in valid_df.columns else np.nan
+    avg_day_tickers = []
+    if "1일" in valid_df.columns and "티커" in valid_df.columns:
+        try:
+            from stock_lab_core.market_memo import _rotation_members
+            records = [{"Ticker": row["티커"], "1D": row["1일"]} for _, row in valid_df.iterrows()]
+            members = _rotation_members(records, {str(row["Ticker"]) for row in records}, "1D")
+            avg_day = _safe_nanmean([row["1D"] for row in members])
+            avg_day_tickers = [row["Ticker"] for row in members]
+        except ImportError:
+            avg_day_tickers = valid_df["티커"].astype(str).tolist()
 
     if circuit_day >= 1:
         score += 5
@@ -28547,6 +28613,7 @@ def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
         "worst_day_drop": worst_day_drop,
         "max_day_gain": max_day_gain,
         "avg_day": avg_day,
+        "avg_day_tickers": avg_day_tickers,
         "mode": mode,
         "level": level,
     }
@@ -29338,7 +29405,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
-    memo_engine_version = "2026-06-19-news-event-radar-v1"
+    memo_engine_version = "2026-10-13-consistent-market-v2"
     if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
         old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
         st.session_state["_today_market_memo_engine_version"] = memo_engine_version
@@ -30238,8 +30305,19 @@ def render_today_unified_briefing_panel(
     m1.metric("시장모드", mode)
     m2.metric("실행후보", f"{buyish_count}개")
     m3.metric("주의/차단", f"{caution_count}개")
-    m4.metric("적립용 현금", f"{clean_float(cash_available, 0.0):,.0f}원")
-    m5.metric("예비자금", f"{clean_float(reserve_available, 0.0):,.0f}원")
+    m4.metric("적립 현금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help=f"{clean_float(cash_available, 0.0):,.0f}원")
+    m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
+
+    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
+    if detail == "뉴스":
+        render_today_action_news_panel(df)
+        return
+    if detail == "시황":
+        render_today_market_memo_panel(df)
+        return
+    if detail == "키움":
+        render_kiwoom_market_evidence("today_kiwoom")
+        return
 
     if not pending and buyish_count == 0:
         st.info(
@@ -30250,7 +30328,7 @@ def render_today_unified_briefing_panel(
     for line in recommendation_lines[:5]:
         st.caption(f"- {line}")
 
-    if review_lines or core_hold_lines or no_add_lines or keep_lines or unknown_lines:
+    if detail == "보유관리" and (review_lines or core_hold_lines or no_add_lines or keep_lines or unknown_lines):
         st.markdown("**내 자산 기준 해석**")
         asset_table = pd.DataFrame(asset_interpretation_rows)
         if not asset_table.empty:
@@ -30265,8 +30343,11 @@ def render_today_unified_briefing_panel(
                 },
             )
             st.caption("장기코어는 교체 여부와 적립 속도를 분리하고, 레버리지·위성은 손익보다 회복 조건과 목표비중 초과 여부를 먼저 봅니다.")
-    else:
+    elif detail == "보유관리":
         st.caption("내 자산 기준 해석은 오늘 종목 점검 계산 후 보유수량·평단·목표비중이 연결되면 표시됩니다.")
+
+    if detail == "보유관리":
+        return
 
     st.markdown("**시장 안전벨트 세부지표**")
     kr_stats = guard.get("kr_stats", {}) if isinstance(guard.get("kr_stats", {}), dict) else {}
@@ -30312,81 +30393,6 @@ def render_today_unified_briefing_panel(
 
     render_today_briefing_investor_flow(df, watch_items)
 
-    st.markdown("**주요 뉴스 체크**")
-    news_cols = st.columns([1.1, 0.8, 2.4])
-    if news_cols[0].button("주요 뉴스 새로고침", key="today_unified_action_news_refresh", width='stretch'):
-        with st.spinner("주요 뉴스 확인 중..."):
-            news_rows = refresh_today_action_news(df)
-            news_count = len(news_rows)
-        st.rerun()
-    if news_rows and news_cols[1].button("뉴스 지우기", key="today_unified_action_news_clear", width='stretch'):
-        st.session_state.pop(TODAY_ACTION_NEWS_ROWS_KEY, None)
-        st.session_state.pop(TODAY_ACTION_NEWS_LAST_RUN_KEY, None)
-        st.rerun()
-    last_run = st.session_state.get(TODAY_ACTION_NEWS_LAST_RUN_KEY, "")
-    news_cols[2].caption(f"마지막 확인: {last_run}" if last_run else "핵심속보, 시장/속보, 내 종목 뉴스를 한 번에 확인합니다.")
-    if news_rows:
-        brief_lines = _build_today_action_news_brief(news_rows)
-        for line in brief_lines[:4]:
-            st.caption(f"- {line}")
-        news_show = pd.DataFrame(news_rows)
-        cols = ["구분", "읽기분류", "중요도", "체크", "카테고리", "종목", "제목", "초보요약", "출처", "시간", "링크"]
-        if not news_show.empty:
-            st.dataframe(
-                news_show[[c for c in cols if c in news_show.columns]].head(8),
-                width='stretch',
-                hide_index=True,
-                column_config={"링크": st.column_config.LinkColumn("원문")},
-                height=min(420, 110 + len(news_show.head(8)) * 42),
-            )
-    else:
-        st.info("뉴스 새로고침을 누르면 핵심속보/시장/내 종목 뉴스를 브리핑 안에 바로 표시합니다.")
-
-    with st.expander("키움 거래대금·테마·업종 수급"):
-        render_kiwoom_market_evidence("today_kiwoom")
-
-    st.markdown("**시황 메모 분석**")
-    memo_cols = st.columns([1.0, 0.85, 2.25])
-    if memo_cols[0].button("자동 시황 생성", key="today_unified_market_memo_generate", width='stretch'):
-        with st.spinner("자동 시황 브리핑 생성 중..."):
-            st.session_state["today_market_memo_text"] = _generate_today_briefing_market_memo(df)
-        st.rerun()
-    if memo_cols[1].button("시황 지우기", key="today_unified_market_memo_clear", width='stretch'):
-        st.session_state["today_market_memo_text"] = ""
-        st.rerun()
-    memo_cols[2].caption("자동 생성하거나 직접 붙여넣으면 아래에서 초보용 요약과 확인 필요 항목을 보여줍니다.")
-    memo_text = st.text_area(
-        "시황/뉴스 메모",
-        key="today_market_memo_text",
-        height=150,
-        placeholder="자동 시황 생성 또는 외부 시황/뉴스 메모를 붙여넣으세요.",
-    )
-    if str(memo_text or "").strip():
-        memo_summary_df, _memo_source = resolve_today_market_memo_summary_df(df, None)
-        universe, _status_map = build_today_market_memo_universe(memo_summary_df)
-        try:
-            result = analyze_market_memo(memo_text, universe)
-        except Exception:
-            result = {}
-        if result.get("has_content"):
-            st.markdown(
-                f"""
-<div class='info-panel' style='border-left:5px solid #38bdf8; line-height:1.7;'>
-<b>시황 요약: {html.escape(str(result.get("headline", "")))}</b><br>
-<span class='highlight'>{html.escape(str(result.get("action_bias", "")))}</span>
-</div>
-                """,
-                unsafe_allow_html=True,
-            )
-            linked = result.get("linked_assets", [])
-            verify_df = pd.DataFrame(result.get("verification_rows", []))
-            if linked:
-                st.caption("내 종목 연결: " + " / ".join(str(x) for x in linked[:5]))
-            if isinstance(verify_df, pd.DataFrame) and not verify_df.empty:
-                st.caption("확인 필요 문장")
-                st.dataframe(verify_df.head(5), width='stretch', hide_index=True)
-    else:
-        st.info("시황 메모가 아직 없습니다. 자동 시황 생성 버튼을 누르면 돈흐름·시장·뉴스·오늘점검을 묶어 초안을 만듭니다.")
 
 
 def render_today_action_card(summary_df, buyish_mask, caution_mask, hard_block_mask, cash_available, reserve_available, market_guard=None):
@@ -30800,6 +30806,10 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "적합도": cl.get("fit_score", np.nan),
                 "테마점수": theme_row.get("테마돈흐름점수", np.nan),
                 "하위점수": sub_row.get("돈흐름점수", np.nan),
+                "1D": _flow_stat_first_num(sub_row, ["1일수익률", "1D"], default=_flow_stat_first_num(theme_row, ["1일수익률", "1D"], default=cl.get("r1d", np.nan))),
+                "5D": _flow_stat_first_num(sub_row, ["5일수익률", "1주수익률", "5D"], default=_flow_stat_first_num(theme_row, ["5일수익률", "1주수익률", "5D"], default=cl.get("r5d", np.nan))),
+                "테마5D": _flow_stat_first_num(theme_row, ["5일수익률", "1주수익률", "5D"], default=np.nan),
+                "큰돈5D": cl.get("r5d", np.nan),
                 "큰돈1M": cluster_1m,
                 "큰돈2W": cluster_2w,
                 "테마1M": theme_1m,
@@ -30908,6 +30918,9 @@ def build_today_unified_flow_candidates(sector_rotation_df, theme_rotation_df, s
                 "테마점수": theme_row.get("테마돈흐름점수", np.nan),
                 "하위점수": sub_row.get("돈흐름점수", np.nan),
                 "큰돈1M": np.nan,
+                "1D": _flow_stat_first_num(sub_row, ["1일수익률", "1D"], default=_flow_stat_first_num(theme_row, ["1일수익률", "1D"], default=np.nan)),
+                "5D": _flow_stat_first_num(sub_row, ["5일수익률", "1주수익률", "5D"], default=_flow_stat_first_num(theme_row, ["5일수익률", "1주수익률", "5D"], default=np.nan)),
+                "테마5D": _flow_stat_first_num(theme_row, ["5일수익률", "1주수익률", "5D"], default=np.nan),
                 "큰돈2W": np.nan,
                 "테마1M": theme_1m,
                 "테마2W": theme_2w,
@@ -31136,6 +31149,8 @@ def _flow_compact_decision(row):
 
 def _adjust_flow_command_action(row):
     action = _flow_action_bucket(row.get("통합판정", ""))
+    if any(finite_num(row.get(key)) and float(row[key]) < 0 for key in ("5D", "테마5D", "큰돈5D")):
+        return "관망/제외"
     layer = str(row.get("주도층위", "") or "")
     internal = str(row.get("업종내부", "") or "")
     representative_risk = str(row.get("대표주위험", "") or "")
@@ -31208,7 +31223,7 @@ def _prepare_flow_command_table(unified_df):
         show.loc[risk_mask, "다음확인"] = "대표주 위기/가격방어 해소 후 정밀관측"
     show["가격위치"] = show["가격수준"].apply(_flow_price_band) if "가격수준" in show.columns else "-"
     show["흐름"] = show.apply(
-        lambda r: f"1M {_fmt_flow_pct_compact(r.get('1개월', np.nan))} / 2W {_fmt_flow_pct_compact(r.get('2주', np.nan))}",
+        lambda r: f"1D {_fmt_flow_pct_compact(r.get('1D', np.nan))} / 5D {_fmt_flow_pct_compact(r.get('5D', np.nan))} / 1M {_fmt_flow_pct_compact(r.get('1개월', np.nan))} / 2W {_fmt_flow_pct_compact(r.get('2주', np.nan))}",
         axis=1,
     )
     show["판단"] = show.apply(_flow_compact_decision, axis=1)
@@ -32249,7 +32264,7 @@ def _render_today_market_flow_reference_metrics(kr_top5, us_top5, global_top, lo
 
 
 def _select_today_market_flow_detail_view():
-    flow_view_options = ["실행 후보판", "개별 종목 후보", "원천/매핑", "로테이션 차트"]
+    flow_view_options = ["주도 섹터", "실행 후보판", "개별 종목 후보", "원천/매핑", "로테이션 차트"]
     if st.session_state.get("today_market_flow_detail_view") not in flow_view_options:
         st.session_state["today_market_flow_detail_view"] = flow_view_options[0]
     return st.radio(
@@ -32704,21 +32719,18 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         news_cols[1].caption("뉴스재료를 붙이려면 새로고침을 한 번 눌러주세요. 수집된 뉴스는 주요 뉴스 탭과 주도맵에서 함께 씁니다.")
 
     sector_ability_cards = _flow_sector_ability_cards(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard)
-    render_today_market_briefing_board(
-        flow_df,
-        sector_rotation_df,
-        theme_rotation_df,
-        command_df=command_flow_df,
-        market_guard=market_guard,
-        news_rows=brief_news_rows,
-        sector_ability_cards=sector_ability_cards,
-    )
-    render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
-    render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=sector_ability_cards)
-    render_sector_research_cards(sector_ability_cards, news_rows=brief_news_rows)
-
-    _render_today_market_flow_reference_metrics(kr_top5, us_top5, global_top, local_top, theme_top5)
+    snapshot["sector_ability_cards"] = sector_ability_cards
     detail_view = _select_today_market_flow_detail_view()
+
+    if detail_view == "주도 섹터":
+        region = st.segmented_control("시장", ["전체", "한국", "미국"], default="전체", key="flow_sector_region") or "전체"
+        visible = [card for card in sector_ability_cards if region == "전체" or card["market"] == region]
+        render_sector_flow_ability_board(command_flow_df, sector_rotation_df, theme_rotation_df, market_guard=market_guard, cards=visible)
+        render_sector_research_cards(visible, news_rows=brief_news_rows, limit=3)
+        with st.expander("시장 브리핑 및 그래프"):
+            render_today_market_briefing_board(flow_df, sector_rotation_df, theme_rotation_df, command_df=command_flow_df, market_guard=market_guard, news_rows=brief_news_rows, sector_ability_cards=sector_ability_cards)
+            render_market_flow_stat_cards(command_flow_df, kr_top5, us_top5, market_guard=market_guard, sector_cards=sector_ability_cards)
+        return snapshot
 
     if detail_view == "실행 후보판":
         render_today_unified_flow_panel(
