@@ -69,6 +69,7 @@ def build_decision_result(ctx: dict) -> dict:
         "leveraged_drop_ret": ctx.get("leveraged_drop_ret", ctx["day_ret"]),
         "vol_ratio": ctx["vol_ratio"], "vol_ma20": ctx.get("vol_ma20", math.nan),
         "last_volume": ctx.get("last_volume", math.nan), "vol_valid_count": ctx.get("vol_valid_count", 0),
+        "live_quote": dict(getattr(df, "attrs", {}).get("live_quote") or {}),
         "structure_risk": ctx["is_structure_damage_entry_risk"],
         "live_price_used": ctx["live_price_used"], "daily_close": ctx["daily_close"], "live_gap_shock": ctx["is_live_gap_shock"],
         "sizing_hint": ctx["sizing_hint"],
@@ -87,7 +88,7 @@ def build_decision_result(ctx: dict) -> dict:
         "is_52w_breakout": ctx["is_52w_breakout"],
         "sector_flow_state": ctx["sector_flow_state"],
         "smc_insight": ctx["smc_insight"],
-        "safety_state": ctx["safety_state"], "macro_state": ctx["macro_state"],
+        "safety_state": "DATA" if decision_outcome.code in {"DATA_ERROR", "NEW_ETF_MIN_DATA_WATCH", "DATA_UNAVAILABLE"} else ctx["safety_state"], "macro_state": ctx["macro_state"],
         "data_state": ctx.get("indicator_data_issue") or "OK",
     }
 
@@ -223,6 +224,7 @@ def build_smc_structure_labels(trend: str, rs_label: str, macd_state: str) -> di
 
 
 def _get_live_price_row_date(ticker: str):
+    """Return a local weekday, not a verified exchange session or quote time."""
     try:
         is_us = not is_kr_listed(ticker)
         zone = ZoneInfo("America/New_York") if is_us else ZoneInfo("Asia/Seoul")
@@ -234,6 +236,34 @@ def _get_live_price_row_date(ticker: str):
         return None
 
 
+def _quote_only_rows(df: pd.DataFrame) -> pd.Series:
+    return df.get("LiveQuoteOnly", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+
+
+def _prior_valid_mfi(df: pd.DataFrame) -> tuple[float, Optional[str]]:
+    """Find source MFI backed by a complete 14-row money-flow window."""
+    prior = df.attrs.get("live_quote", {})
+    if _quote_only_rows(df).iloc[-1] and prior.get("mfi_status") == "prior_valid":
+        value = clean_float(prior.get("mfi_value"), math.nan)
+        if finite_num(value) and 0 <= value <= 100 and prior.get("mfi_asof"):
+            return value, prior["mfi_asof"]
+    if not {"High", "Low", "Close", "Volume", "MFI"}.issubset(df.columns):
+        return math.nan, None
+
+    prices = df[["High", "Low", "Close"]].apply(pd.to_numeric, errors="coerce")
+    price_valid = (prices.gt(0) & prices.lt(math.inf)).all(axis=1)
+    volume = pd.to_numeric(df["Volume"], errors="coerce")
+    valid = price_valid & volume.gt(0) & volume.lt(math.inf) & ~_quote_only_rows(df)
+    # MFI also needs the preceding typical price to determine flow direction.
+    valid &= price_valid.shift(1, fill_value=False)
+    valid = valid.rolling(14).sum().eq(14)
+    mfi = pd.to_numeric(df["MFI"], errors="coerce")
+    candidates = mfi.where(valid & mfi.between(0, 100)).dropna()
+    if candidates.empty:
+        return math.nan, None
+    return float(candidates.iloc[-1]), str(candidates.index[-1])
+
+
 def apply_live_price_to_ohlcv(
     df: pd.DataFrame,
     live_price: float,
@@ -242,7 +272,13 @@ def apply_live_price_to_ohlcv(
     min_gap: float = 0.003,
     max_gap: float = 0.5,
 ):
-    """Apply a validated live price to the latest OHLCV row."""
+    """Return a quote-only price overlay without inventing session volume.
+
+    Historical source rows are untouched on append; same-day overlays invalidate
+    their unmatched volume. The input is never mutated. ``LiveQuoteOnly`` marks
+    overlays and ``attrs['live_quote']`` records missing volume, unverified date,
+    and any prior valid MFI (including its source index), never live money flow.
+    """
     live = clean_float(live_price, 0.0)
     if df is None or df.empty or live <= 0 or "Close" not in df.columns:
         return df, False
@@ -256,27 +292,31 @@ def apply_live_price_to_ohlcv(
     if gap <= min_gap or gap >= max_gap:
         return out, False
 
+    live_date = _get_live_price_row_date(ticker)
+    if (
+        live_date is None
+        or not isinstance(out.index, pd.DatetimeIndex)
+        or out.index.hasnans
+        or not out.index.is_unique
+        or not out.index.is_monotonic_increasing
+    ):
+        return out, False
+    last_date = out.index[-1].tz_localize(None).normalize()
+    live_date = pd.Timestamp(live_date).tz_localize(None).normalize()
+    if pd.isna(live_date) or last_date > live_date:
+        return out, False
+
+    mfi_value, mfi_asof = _prior_valid_mfi(df)
     for col in ("Open", "High", "Low", "Volume"):
         if col not in out.columns:
-            out[col] = out["Close"] if col != "Volume" else 0.0
+            out[col] = math.nan
+    out["LiveQuoteOnly"] = _quote_only_rows(out)
 
-    live_date = _get_live_price_row_date(ticker)
-    try:
-        last_date = pd.Timestamp(out.index[-1]).tz_localize(None).normalize()
-    except Exception:
-        last_date = pd.Timestamp.today().normalize()
-
-    if live_date is not None and last_date < live_date:
-        row = out.iloc[-1].copy()
-        row["Open"] = last_close
-        row["High"] = max(last_close, live)
-        row["Low"] = min(last_close, live)
-        row["Close"] = live
-        row["Volume"] = clean_float(row.get("Volume"), 0.0)
-        if row["Volume"] <= 0:
-            row["Volume"] = clean_float(out["Volume"].tail(20).mean(), 0.0)
-        out.loc[live_date] = row
-        out = out.sort_index()
+    if last_date < live_date:
+        idx = live_date.tz_localize(out.index.tz) if out.index.tz is not None else live_date
+        row = {col: math.nan for col in out.columns}
+        row.update(Open=live, High=live, Low=live, Close=live, LiveQuoteOnly=True)
+        out.loc[idx] = row
     else:
         idx = out.index[-1]
         high = clean_float(out.at[idx, "High"], last_close)
@@ -287,19 +327,51 @@ def apply_live_price_to_ohlcv(
         out.at[idx, "Low"] = min(low, live)
         out.at[idx, "Close"] = live
 
+    out.at[idx, "Volume"] = math.nan
+    out.at[idx, "LiveQuoteOnly"] = True
+    if "MFI" in out.columns:
+        out.at[idx, "MFI"] = mfi_value
+    out.attrs["live_quote"] = {
+        "volume_status": "missing_live_volume",
+        "quote_date_status": "calendar_unverified",
+        "mfi_status": "prior_valid" if mfi_asof is not None else "unavailable",
+        "mfi_asof": mfi_asof,
+        "mfi_value": mfi_value,
+    }
     return out, True
 
 
 def apply_live_price_with_indicators(df, live_price, ticker, indicator_builder):
-    """Commit the live bar only when its matching indicators rebuild successfully."""
+    """Rebuild price indicators, retaining only explicitly dated source MFI.
+
+    The third return value remains a rebuild error, not a missing-volume warning;
+    consumers can inspect ``attrs['live_quote']`` without discarding the quote.
+    """
     try:
         updated, applied = apply_live_price_to_ohlcv(df, live_price, ticker)
         if not applied:
             return df, False, ""
-        rebuilt = indicator_builder(updated)
+        metadata = dict(updated.attrs["live_quote"])
+        if "MFI" not in df.columns and {"Open", "High", "Low", "Close", "Volume"}.issubset(df.columns):
+            source = indicator_builder(df.copy(deep=True))
+            mfi_value, mfi_asof = _prior_valid_mfi(source)
+            metadata.update(
+                mfi_value=mfi_value, mfi_asof=mfi_asof,
+                mfi_status="prior_valid" if mfi_asof is not None else "unavailable",
+            )
+        rebuilt = indicator_builder(updated.copy(deep=True))
         required = {"Close", "MA20", "MA50", "MA120", "RSI", "MFI", "MACD", "MACD_Sig", "%B", "SQZ_ON"}
         if not isinstance(rebuilt, pd.DataFrame) or rebuilt.empty or not required.issubset(rebuilt.columns):
             raise ValueError("Incomplete indicator result")
+        ohlcv = ["Open", "High", "Low", "Close", "Volume"]
+        if not rebuilt.index.equals(updated.index) or not rebuilt[ohlcv].equals(updated[ohlcv]):
+            raise ValueError("Indicator result changed source OHLCV")
+        rebuilt = rebuilt.copy(deep=True)
+        rebuilt["LiveQuoteOnly"] = updated["LiveQuoteOnly"]
+        # A library may emit finite MFI even with missing volume. Never use it.
+        rebuilt.loc[_quote_only_rows(updated), "MFI"] = updated.get("MFI", math.nan)
+        rebuilt.at[rebuilt.index[-1], "MFI"] = metadata["mfi_value"]
+        rebuilt.attrs["live_quote"] = metadata
         return rebuilt, True, ""
     except Exception as exc:
         # Third-party indicator failures must not mix a new quote with old indicators.

@@ -89,6 +89,7 @@ def build_decision_workflow(
         "매크로상태": c.get("macro_state", ""),
         "상위시간대상태": c.get("mtf_bias_label", ""),
         "데이터상태": c.get("data_state", "OK"),
+        "수급기준": ("최신 거래량 미확인 · MFI " + str(c.get("live_quote", {}).get("mfi_asof") or "미확인")[:10]) if c.get("live_quote", {}).get("volume_status") else "가격·거래량 원자료",
         **build_today_queue_execution_snapshot(
             name, ticker, c, has_pos=has_pos, usdkrw_value=usdkrw_value,
             is_leveraged_product_fn=is_leveraged_product_fn,

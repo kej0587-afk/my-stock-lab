@@ -111,8 +111,10 @@ def test_build_leveraged_dca_outcome_conditional_allows_small_steps():
     assert "단계별 소액" in outcome.label
 
 
-def test_apply_live_price_to_ohlcv_updates_latest_row():
-    today = pd.Timestamp.today().normalize()
+def test_apply_live_price_to_ohlcv_updates_latest_row(monkeypatch):
+    from stock_lab_core import decision_engine
+    today = pd.Timestamp("2026-10-12")
+    monkeypatch.setattr(decision_engine, "_get_live_price_row_date", lambda ticker: today)
     df = pd.DataFrame(
         {
             "Open": [100.0],
@@ -130,6 +132,17 @@ def test_apply_live_price_to_ohlcv_updates_latest_row():
     assert out["Close"].iloc[-1] == 102.0
     assert out["High"].iloc[-1] == 102.0
     assert out["Low"].iloc[-1] == 99.0
+
+
+def test_apply_live_price_rejects_future_bar_in_market_timezone(monkeypatch):
+    from stock_lab_core import decision_engine
+    frame = pd.DataFrame({"Close": [100.0]}, index=[pd.Timestamp("2026-10-13")])
+    monkeypatch.setattr(decision_engine, "_get_live_price_row_date", lambda ticker: pd.Timestamp("2026-10-12"))
+
+    out, applied = apply_live_price_to_ohlcv(frame, 102.0, "SPY")
+
+    assert not applied
+    pd.testing.assert_frame_equal(out, frame)
 
 
 def test_apply_live_price_to_ohlcv_ignores_tiny_or_extreme_gap():

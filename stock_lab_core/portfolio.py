@@ -1256,6 +1256,10 @@ def apply_holdings_weight_columns(df, krw_cash, usd_cash, usdkrw):
             return f"{gap:.1f}%p 미달"
         if gap < -0.1:
             return f"{abs(gap):.1f}%p 초과"
+        if gap < 0:
+            return f"목표 근접 ({abs(gap):.2f}%p 초과 · 추가매수 중단)"
+        if gap > 0:
+            return f"목표 근접 ({gap:.2f}%p 미달)"
         return "목표권"
 
     df["비중상태"] = df.apply(_weight_state, axis=1)

@@ -237,8 +237,9 @@ def test_today_current_signal_audit_includes_every_signal(app_module):
     assert set(audit["티커"]) == {"MSFT", "030530.KQ"}
     assert "검증방향" in audit.columns
     assert "검증대상" in audit.columns
-    assert audit.loc[audit["티커"] == "MSFT", "검증방향"].iloc[0] == "avoid"
-    assert audit.loc[audit["티커"] == "030530.KQ", "검증방향"].iloc[0] == "buy"
+    # Overheat waits and unexecuted candidates are not directional buy/avoid calls.
+    assert audit.loc[audit["티커"] == "MSFT", "검증방향"].iloc[0] == "neutral"
+    assert audit.loc[audit["티커"] == "030530.KQ", "검증방향"].iloc[0] == "neutral"
 
 
 def test_flow_auto_queue_prioritizes_swing_capture_before_high_chase(app_module, monkeypatch):

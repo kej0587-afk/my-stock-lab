@@ -31,6 +31,10 @@ from supabase import create_client
 
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
+from stock_lab_core.result_cache import cache_result
+from stock_lab_core.kiwoom_data import kiwoom_client_from_secrets
+from stock_lab_core.review_audit import cross_view_flags
+from stock_lab_core.signal_evaluation import next_open_outcomes
 from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
     add_recovery_issue,
@@ -1233,7 +1237,7 @@ def lookup_kr_etf_display_name(symbol):
     return clean_resolved_display_name(matched.iloc[0].get("name", ""), symbol)
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@cache_result(ttl=86400, is_success=lambda result: bool(result))
 def lookup_yfinance_info(ticker):
     """yfinance 정보를 가져오고 한글 깨짐을 즉시 복구"""
     ticker = sanitize_ticker_value(ticker)
@@ -2712,6 +2716,12 @@ def classify_signal_journal_side(decision_code="", decision_label="", final_read
     code = str(decision_code or "").upper()
     text = normalize_text(" ".join(str(x or "") for x in [decision_label, final_read, extra_text]))
 
+    # Timing/portfolio restrictions are not predictions that price will fall.
+    if code in {"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT", "NEW_ETF_MIN_DATA_WATCH", "DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or any(
+        word in code for word in ("OVERWEIGHT", "TARGET_FILLED", "TARGET_ZERO")
+    ):
+        return "neutral"
+
     avoid_words = [
         "추격금지",
         "구조훼손",
@@ -2762,6 +2772,17 @@ def classify_signal_journal_side(decision_code="", decision_label="", final_read
     return "neutral"
 
 
+def classify_summary_journal_side(row):
+    side = classify_signal_journal_side(
+        row.get("판정코드", ""), row.get("🔥기술적 타점", ""), row.get("최종읽기", ""),
+        " ".join(str(row.get(col, "") or "") for col in ["패턴타점", "오늘결론", "요약", "뉴스재료", "상세판정"]),
+    )
+    gate = str(row.get("게이트상태", "") or "")
+    if gate in {GATE_WAIT, GATE_DATA_CHECK, GATE_WATCH_ONLY} or (gate == GATE_DEFENSE and side == "buy"):
+        return "neutral"
+    return side
+
+
 def make_signal_journal_row_from_summary(row, source="today_check", signal_date=None):
     row_dict = dict(row) if isinstance(row, dict) else dict(row.to_dict())
     ticker = sanitize_ticker_value(row_dict.get("티커", row_dict.get("ticker", "")))
@@ -2775,12 +2796,7 @@ def make_signal_journal_row_from_summary(row, source="today_check", signal_date=
     decision_code = str(row_dict.get("판정코드", "") or "")
     decision_group = str(row_dict.get("판정분류", row_dict.get("전광판그룹", "")) or "")
     final_read = str(row_dict.get("최종읽기", row_dict.get("final_read", "")) or "")
-    extra_text = " ".join(
-        str(row_dict.get(col, "") or "")
-        for col in ["패턴타점", "오늘결론", "요약", "뉴스재료", "상세판정"]
-        if col in row_dict
-    )
-    side = classify_signal_journal_side(decision_code, decision_label, final_read, extra_text)
+    side = classify_summary_journal_side({**row_dict, "🔥기술적 타점": decision_label, "최종읽기": final_read})
     signal_date = signal_date or datetime.now(KST).date()
 
     return {
@@ -2805,7 +2821,7 @@ def make_signal_journal_row_from_summary(row, source="today_check", signal_date=
         "rr_ratio": _clean_journal_float(row_dict.get("R/R", row_dict.get("R/R비율", row_dict.get("rr_ratio", np.nan)))),
         "rsi": _clean_journal_float(row_dict.get("RSI", row_dict.get("rsi", np.nan))),
         "mfi": _clean_journal_float(row_dict.get("MFI", row_dict.get("mfi", np.nan))),
-        "pct_b": _clean_journal_float(row_dict.get("%B", row_dict.get("pct_b", np.nan))),
+        "pct_b": _clean_journal_float(row_dict.get("볼린저 %B", row_dict.get("%B", row_dict.get("pct_b", np.nan)))),
         "snapshot": _journal_jsonable_snapshot(row_dict),
     }
 
@@ -4434,7 +4450,7 @@ def _render_dart_disclosure_single(ticker: str, name: str):
                 )
 
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS, is_success=lambda result: isinstance(result, pd.DataFrame) and not result.empty)
 def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
     api_key = get_dart_api_key()
     if not api_key:
@@ -4703,7 +4719,7 @@ def make_dart_single_quarter_record(current_cum, previous_cum=None, fiscal_quart
 
     return enrich_fin_record(rec)
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_kr_financials_auto(ticker: str):
     stock_code = normalize_stock_code(ticker)
     current_year = pd.Timestamp.today().year
@@ -5019,7 +5035,7 @@ def get_krx_row_value(row, keys, default=""):
             return value
     return default
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_krx_stock_snapshot(ticker: str):
     """pykrx 기반 KRX 종목 기본 정보 조회 (API 키 불필요)."""
     stock_code = normalize_stock_code(ticker)
@@ -5249,7 +5265,7 @@ def build_sec_quarter_records(company_facts):
             records.append(record)
     return records[-4:]
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_us_financials_sec(ticker: str):
     symbol = str(ticker).strip().upper()
     try:
@@ -5280,7 +5296,7 @@ def fetch_us_financials_sec(ticker: str):
     except Exception as exc:
         return {"ok": False, "source": "sec_edgar", "reason": f"SEC error: {exc}"}
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_us_financials_fmp(ticker: str):
     api_key = get_secret_value("fmp_api_key")
     if not api_key: return {"ok": False, "source": "fmp", "reason": "FMP API 키 없음"}
@@ -5328,7 +5344,7 @@ def fetch_us_financials_fmp(ticker: str):
     except Exception as e:
         return {"ok": False, "source": "fmp", "reason": f"FMP 오류: {e}"}
 
-@st.cache_data(ttl=FIN_DATA_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_us_financials_auto(ticker: str):
     fmp_result = fetch_us_financials_fmp(ticker)
     if fmp_result.get("ok", False):
@@ -6273,6 +6289,10 @@ def clear_financial_api_cache():
         "fetch_kr_financials_auto",
         "fetch_dart_finstate_all_raw",
         "fetch_krx_stock_snapshot",
+        "fetch_valuation_snapshot",
+        "fetch_fmp_valuation_snapshot",
+        "fetch_kiwoom_valuation_snapshot",
+        "lookup_yfinance_info",
     ]:
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "clear"):
@@ -17551,10 +17571,10 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             )
         elif (not is_etf) and pct_b_now >= 0.95:
             dec, col, decision_outcome = _set_decision(
-                "🚫하드차단: 볼린상단 이탈", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER",
+                "⏳볼린저 상단 초과: 추격대기" if pct_b_now > 1 else "⏳볼린저 상단권: 추격대기", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER",
                 reasons=(
-                    f"%B {pct_b_now:.2f} (기준: 0.95 초과) / MFI {mfi_now:.0f} / RSI {rsi_now:.0f}",
-                    "볼린저 밴드 상단 이탈 — 과매수 구간, 눌림 대기",
+                    f"%B {pct_b_now:.2f} (기준: 0.95 이상) / MFI {mfi_now:.0f} / RSI {rsi_now:.0f}",
+                    "볼린저 상단권: 신규 추격은 대기, 하락 예측이나 매도 확정 아님",
                 ),
             )
         elif is_etf_accumulation_ok and weight_gap >= 10:
@@ -18449,7 +18469,9 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         rsi_interp = f"RSI <b>{rsi:.0f}</b> — 극단적 과매도"
 
     # %B
-    if pct_b > 0.82:
+    if not finite_num(pct_b):
+        pb_interp = "%B 산출불가 — 볼린저 이력 확인 필요"
+    elif pct_b > 1:
         pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 상단 초과, 단기 과열"
     elif pct_b >= 0.75:
         pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 상단 근접"
@@ -18459,7 +18481,9 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         pb_interp = f"%B <b>{pct_b:.2f}</b> — 볼린저 하단 근접, 과매도 구간"
 
     # MFI
-    if mfi >= 80:
+    if not finite_num(mfi):
+        mfi_interp = "MFI 산출불가 — 거래량 이력 확인 필요"
+    elif mfi >= 80:
         mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유입 과열(익절 주의)"
     elif mfi >= 55:
         mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유입 우세"
@@ -18467,6 +18491,10 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p):
         mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 중립"
     else:
         mfi_interp = f"MFI <b>{mfi:.0f}</b> — 자금 유출 우세"
+    quote_meta = c.get("live_quote", {})
+    if quote_meta.get("volume_status") == "missing_live_volume":
+        asof = str(quote_meta.get("mfi_asof") or "")[:10]
+        mfi_interp += f" (가격만 갱신 · MFI 기준 {asof or '자료없음'} · 최신 수급 확인 불가)"
 
     # RS slope
     slope_desc = ""
@@ -20853,7 +20881,7 @@ def fmp_legacy_request(endpoint, ticker, api_key, **params):
     return [payload] if isinstance(payload, dict) else []
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@cache_result(ttl=21600)
 def fetch_fmp_valuation_snapshot(ticker):
     ticker = sanitize_ticker_value(ticker)
     if not ticker or is_kr_listed(ticker):
@@ -20920,39 +20948,73 @@ def fetch_fmp_valuation_snapshot(ticker):
     return {"ok": bool(has_any), "reason": "" if has_any else "FMP 밸류 데이터 없음", "data": data}
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
+@st.cache_resource(show_spinner=False)
+def get_kiwoom_data_client():
+    # Demo never reads broker secrets. This client has no account/order methods.
+    return kiwoom_client_from_secrets(None if IS_PUBLIC_DEMO else st.secrets)
+
+
+@cache_result(ttl=900)
+def fetch_kiwoom_valuation_snapshot(ticker):
+    client = get_kiwoom_data_client()
+    result = client.get_domestic_snapshot(ticker)
+    if not result.get("ok") or result.get("is_mock"):
+        return {"ok": False, "data": {}, "reason": result.get("status", "unavailable")}
+    raw = result.get("data", {})
+    # No TTM income is inferred from ka10001's unspecified statement period.
+    data = {target: raw.get(source) for target, source in {
+        "trailingPE": "per", "priceToBook": "pbr", "trailingEps": "eps", "bookValue": "bps",
+    }.items()}
+    return {"ok": any(not _valuation_missing(v) for v in data.values()), "data": data,
+            "reason": "키움 제공 PER/PBR/EPS/BPS (결산 기준일 미제공)", "source": "Kiwoom REST ka10001"}
+
+
+@cache_result(ttl=21600)
 def fetch_valuation_snapshot(ticker):
     ticker = sanitize_ticker_value(ticker)
     if not ticker:
         return {"ok": False, "reason": "티커 없음", "data": {}}
+    issues = []
+    sources = []
     try:
         info = yf.Ticker(ticker, **yahoo_session_kwargs()).get_info()
-    except Exception as _e:
-        return {"ok": False, "reason": f"yfinance 오류: {_e}", "data": {}}
+    except Exception as exc:
+        info = {}
+        issues.append(f"Yahoo 조회 실패: {type(exc).__name__}")
     if not isinstance(info, dict):
         info = {}
 
     data = {key: info.get(key) for key in VALUATION_INFO_KEYS}
     has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+    if has_any:
+        sources.append("Yahoo")
 
     # ── 한국 종목: yfinance에 데이터가 없으면 네이버 증권으로 보완 ──────────────
     if is_kr_listed(ticker):
+        broker = fetch_kiwoom_valuation_snapshot(ticker)
+        if broker.get("ok"):
+            data = _merge_missing_valuation_fields(data, broker["data"])
+            sources.append(broker["source"])
+            issues.append(broker["reason"])
         naver = fetch_naver_kr_snapshot(ticker)
         if naver.get("ok"):
             nd = naver.get("data", {})
             data = _merge_missing_valuation_fields(data, {key: nd.get(key) for key in VALUATION_INFO_KEYS})
             has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+            sources.append("Naver/KRX")
 
     if not is_kr_listed(ticker):
         fmp_snapshot = fetch_fmp_valuation_snapshot(ticker)
         if fmp_snapshot.get("ok"):
             data = _merge_missing_valuation_fields(data, fmp_snapshot.get("data", {}))
             has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+            sources.append("FMP")
 
+    has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
     if not has_any:
         reason = "yfinance/네이버 밸류 데이터 없음" if is_kr_listed(ticker) else "yfinance/FMP 밸류 데이터 없음"
-        return {"ok": False, "reason": reason, "data": data}
-    return {"ok": True, "reason": "", "data": _derive_valuation_fields(data)}
+        return {"ok": False, "reason": " · ".join(issues + [reason]), "data": data, "sources": sources}
+    return {"ok": True, "reason": " · ".join(issues), "data": _derive_valuation_fields(data), "sources": sources}
 
 
 def fmt_multiple(value, digits=1):
@@ -21983,7 +22045,9 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
         "데이터상태": reason,
         "bucket": str(item.get("bucket", "")),
         "버킷": str(item.get("bucket", "")),
-        "비중차이": 0.0,
+        "현재비중": np.nan,
+        "목표비중": np.nan,
+        "비중차이": np.nan,
     }
     return {"tkr": tkr, "f_score": None, "row": row}
 
@@ -22030,7 +22094,9 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
         "데이터상태": "가격만 확인 · 일봉 이력 없음",
         "bucket": str(item.get("bucket", "")),
         "버킷": str(item.get("bucket", "")),
-        "비중차이": 0.0,
+        "현재비중": np.nan,
+        "목표비중": np.nan,
+        "비중차이": np.nan,
     }
     return {"tkr": tkr, "f_score": None, "row": row}
 
@@ -22094,7 +22160,7 @@ def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
 
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available):
-    """워커 함수: CPU 계산만 담당. session_state 쓰기 없음 (스레드 안전).
+    """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
     tkr = sanitize_ticker_value(item.get("ticker", ""))
     name = sanitize_asset_name(item.get("name", ""), tkr)
@@ -22106,6 +22172,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     try:
         df = load_price_df(tkr, "1y")
     except Exception as exc:
+        logging.exception("Today queue failed: ticker=%s stage=price", tkr)
         return build_summary_status_item(
             item,
             f"가격 데이터 조회 예외: {type(exc).__name__}",
@@ -22135,6 +22202,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     try:
         df = build_indicators(df.tail(300))
     except Exception as exc:
+        logging.exception("Today queue failed: ticker=%s stage=indicators", tkr)
         return build_summary_status_item(
             item,
             f"지표 계산 예외: {type(exc).__name__}",
@@ -22142,6 +22210,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             snap_final_macro_risk=snap_final_macro_risk,
         )
 
+    stage = "financial_score"
     try:
         final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
         f_score = int(final_fin_score)
@@ -22150,6 +22219,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         has_p = has_position(name, tkr)
         _live_p = load_display_live_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
 
+        stage = "decision"
         c = calc_scores_and_decision(
             name=name, ticker=tkr, is_etf=is_etf, asset_class=a_class, df=df,
             my_price=my_p, has_pos=has_p, fin_score=f_score, is_free=False, app_mode=mode,
@@ -22160,16 +22230,16 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             _reserve_available=snap_reserve_available,
             live_price=_live_p,
         )
-        pattern_df = df
-        if clean_float(_live_p, 0.0) > 0:
-            pattern_df, pattern_live_applied = apply_live_price_to_ohlcv(df, _live_p, tkr)
-            if pattern_live_applied:
-                pattern_df = build_indicators(pattern_df)
+        stage = "pattern_indicators"
+        pattern_df, _, pattern_issue = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
+        if pattern_issue:
+            logging.warning("Today queue pattern overlay rejected: ticker=%s", tkr)
         try:
             mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df)
             c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
         except Exception:
             c["mtf_bias_label"] = "자료부족"
+        stage = "leverage_policy"
         c = apply_leveraged_dca_dashboard_override(c)
         c = apply_leveraged_precision_decision_override(c, name, tkr, has_p, my_p)
         try:
@@ -22178,9 +22248,10 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         except Exception:
             pattern_timing, pattern_reason, pattern_bucket = "-", "", ""
     except Exception as exc:
+        logging.exception("Today queue failed: ticker=%s stage=%s", tkr, stage)
         return build_summary_status_item(
             item,
-            f"판단 계산 예외: {type(exc).__name__}",
+            f"판단 계산 예외: {type(exc).__name__} ({stage})",
             code="DATA_ERROR",
             snap_final_macro_risk=snap_final_macro_risk,
         )
@@ -22234,9 +22305,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "데이터상태": "OK",
         "bucket": c.get("bucket", ""),
         "버킷": c.get("bucket", ""),
-        "현재비중": round(clean_float(c.get("current_w"), 0.0), 2),
-        "목표비중": round(clean_float(c.get("target_w"), 0.0), 2),
-        "비중차이": clean_float(c.get("target_w"), 0.0) - clean_float(c.get("current_w"), 0.0),
+        "현재비중": round(clean_float(c.get("current_w"), np.nan), 2),
+        "목표비중": round(clean_float(c.get("target_w"), np.nan), 2),
+        "비중차이": clean_float(c.get("target_w"), np.nan) - clean_float(c.get("current_w"), np.nan),
         **workflow,
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
@@ -22275,8 +22346,10 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
             idx = futures[future]
             try:
                 result = future.result()
-            except Exception:
-                result = None
+            except Exception as exc:
+                item = watchlist_items[idx]
+                logging.exception("Today queue worker failed: ticker=%s", item.get("ticker", ""))
+                result = build_summary_status_item(item, f"계산 완료 실패: {type(exc).__name__}", code="DATA_ERROR", snap_final_macro_risk=snap_fmr)
             if result is not None:
                 results_map[idx] = result
 
@@ -26632,7 +26705,8 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
     close = pd.Series(df["Close"]).astype(float)
     df["RET20"] = close.pct_change(20) * 100
     df["DAY_RET"] = close.pct_change() * 100
-    df["VOL_RATIO"] = df["Volume"] / df["Volume"].rolling(20).mean()
+    prior_volume = df["Volume"].where(df["Volume"] > 0).shift(1).rolling(20).mean()
+    df["VOL_RATIO"] = df["Volume"] / prior_volume
     df["ROLL_HIGH"] = df["High"].rolling(252, min_periods=60).max()
     df["PRIOR_ROLL_HIGH"] = df["High"].rolling(252, min_periods=60).max().shift(1)
     df["MDD_52W"] = df["Close"] / df["ROLL_HIGH"] - 1
@@ -26645,15 +26719,15 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
             if bench_df is not None and not bench_df.empty:
                 if isinstance(bench_df.columns, pd.MultiIndex):
                     bench_df.columns = bench_df.columns.get_level_values(0)
-                bench_close = bench_df["Close"].reindex(df.index).ffill()
-                df["BENCH_RET20"] = bench_close.pct_change(20) * 100
+                bench_close = bench_df["Close"].reindex(df.index)
+                df["BENCH_RET20"] = bench_close.pct_change(20, fill_method=None) * 100
                 df["RS_EDGE20"] = df["RET20"] - df["BENCH_RET20"]
             else:
-                df["RS_EDGE20"] = df["RET20"]
+                df["RS_EDGE20"] = np.nan
         except Exception:
-            df["RS_EDGE20"] = df["RET20"]
+            df["RS_EDGE20"] = np.nan
     else:
-        df["RS_EDGE20"] = df["RET20"]
+        df["RS_EDGE20"] = 0.0 if bench else np.nan
 
     trend_up = (df["MA20"] > df["MA50"]) & (df["MA50"] > df["MA120"])
     rs_strong = df["RS_EDGE20"] > 3
@@ -26723,11 +26797,8 @@ def build_signal_backtest(ticker, name, asset_class, signal_type, period="2y", m
             "티커": ticker,
             "신호": signal_type,
             "신호가": clean_float(row.get("Close"), np.nan),
-            "5일후": calc_forward_return(close, idx, 5),
-            "20일후": calc_forward_return(close, idx, 20),
-            "60일후": calc_forward_return(close, idx, max_horizon),
-            "20일최대낙폭": calc_forward_drawdown(close, idx, 20),
-            "60일최대낙폭": calc_forward_drawdown(close, idx, max_horizon),
+            **next_open_outcomes(df, idx),
+            "표본중첩": "가능" if int(min_gap) < max_horizon else "없음 (최대 60봉)",
             "RSI": clean_float(row.get("RSI"), np.nan),
             "MFI": clean_float(row.get("MFI"), np.nan),
             "RS우위20일": clean_float(row.get("RS_EDGE20"), np.nan),
@@ -27147,7 +27218,7 @@ def render_signal_validation_controls(
     default = inferred[:2] if inferred else options[:1]
     st.caption(
         "현재 판정과 가장 가까운 과거 신호를 자동 추천합니다. "
-        "매크로, 뉴스, 목표비중, 체결가는 제외한 가격/기술 기준 검증입니다."
+        "다음 봉 시가 진입을 가정한 가격조건 사건연구입니다. 당시 매크로·뉴스·비중을 포함한 실전판정 검증은 저장된 실전 로그를 사용합니다."
     )
     c1, c2, c3 = st.columns([2.0, 0.9, 0.9])
     with c1:
@@ -27160,7 +27231,7 @@ def render_signal_validation_controls(
     with c2:
         period = st.selectbox("기간", ["1y", "2y", "5y"], index=1, key=f"{key_prefix}_period")
     with c3:
-        min_gap = st.slider("중복간격", 1, 30, 10, key=f"{key_prefix}_gap")
+        min_gap = st.slider("중복간격", 1, 120, 60, key=f"{key_prefix}_gap")
 
     ready_key = f"{key_prefix}_ready"
     if st.button("이 신호 검증", key=f"{key_prefix}_run", width="stretch"):
@@ -27297,7 +27368,7 @@ def render_summary_signal_validation_panel(summary_df, *, key_prefix, title="�
 
 def render_signal_backtest_tab(holdings_table, watchlist_items):
     st.subheader("신호 검증")
-    st.caption("현재의 신호가 과거에 나온 뒤 5/20/60거래일 성과를 확인합니다. 수수료, 세금, 체결가, 매크로 패널티는 반영하지 않은 참고용 검증입니다.")
+    st.caption("과거 가격조건 충족 후 다음 봉 시가 진입 가정의 5/20/60거래일 수익률입니다. 실전판정 재현이나 매매 수익률은 아니며 비용·뉴스·매크로·비중은 미반영입니다. 간격 60봉 미만에서는 표본이 겹칩니다.")
 
     universe_df = build_signal_backtest_universe_v2(holdings_table, watchlist_items)
     if universe_df.empty:
@@ -27336,7 +27407,7 @@ def render_signal_backtest_tab(holdings_table, watchlist_items):
 
     g1, g2 = st.columns([1.2, 1.2])
     with g1:
-        min_gap = st.slider("중복 신호 간격(거래일)", min_value=1, max_value=30, value=10, step=1, key="signal_backtest_gap")
+        min_gap = st.slider("중복 신호 간격(거래일)", min_value=1, max_value=120, value=60, step=1, key="signal_backtest_gap")
     with g2:
         max_tickers = st.slider("묶음 최대 종목 수", min_value=3, max_value=25, value=min(12, max(3, len(universe_df))), step=1, key="signal_backtest_max_tickers")
 
@@ -28623,7 +28694,8 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
         group_series = summary_df.get("판정분류", pd.Series("", index=summary_df.index)).astype(str)
         guard_text = label_series + " " + final_series + " " + grade_series + " " + code_series
-        hard_count = int((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)).sum())
+        soft_overheat = code_series.isin({"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"})
+        hard_count = int(((code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)) & ~soft_overheat).sum())
         caution_terms = (
             r"PANIC|CRISIS|DRAWDOWN|DOWNTREND|REVERSE_TREND|STRUCTURE|PRICE_DRAWDOWN|"
             r"구조훼손|추세훼손|가격위험|가격방어|급락방어|추세방어|패닉|위기|"
@@ -28754,6 +28826,12 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     if not reasons:
         reasons.append("주요 위험 신호 제한적")
 
+    # Macro observations must not publish a second, contradictory trade instruction.
+    macro_observation = " · ".join([
+        "부담: " + (", ".join(macro_pressure) or "뚜렷하지 않음"),
+        "완화: " + (", ".join(macro_relief) or "뚜렷하지 않음"),
+        "통합 시장판정: " + mode,
+    ])
     return {
         "mode": mode,
         "level": level,
@@ -28789,7 +28867,8 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "event_count": event_count,
         "macro_pressure": macro_pressure,
         "macro_relief": macro_relief,
-        "macro_note": macro_note,
+        "macro_note": macro_observation,
+        "macro_independent_note": macro_note,
         "hard_count": hard_count,
         "caution_count": caution_count,
     }
@@ -33221,18 +33300,7 @@ def build_today_current_signal_audit_df(summary_df, source: str = "today_check")
         return pd.DataFrame()
     work = work.drop_duplicates("_검토키", keep="first").copy()
 
-    def _audit_side(row) -> str:
-        decision_label = str(row.get("🔥기술적 타점", row.get("시스템판정", row.get("판정", ""))) or "")
-        decision_code = str(row.get("판정코드", "") or "")
-        final_read = str(row.get("최종읽기", "") or "")
-        extra_text = " ".join(
-            str(row.get(col, "") or "")
-            for col in ["패턴타점", "오늘결론", "요약", "뉴스재료", "상세판정", "게이트근거", "실행메모"]
-            if col in work.columns
-        )
-        return classify_signal_journal_side(decision_code, decision_label, final_read, extra_text)
-
-    work["검증방향"] = work.apply(_audit_side, axis=1)
+    work["검증방향"] = work.apply(classify_summary_journal_side, axis=1)
     work["검증대상"] = work["검증방향"].map({
         "buy": "매수형 성과검증",
         "avoid": "회피/방어 성과검증",
@@ -33268,7 +33336,7 @@ def _append_today_review_flag(rows, severity, ticker, name, issue, basis, sugges
 
 def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=None):
     """Detect duplicate or conflicting review signals across today/flow/portfolio tables."""
-    rows: list[dict] = []
+    rows: list[dict] = cross_view_flags(summary_df, flow_shortlist_df, excluded_ticker=is_swing_excluded_ticker)
 
     if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
         work = summary_df.copy()
@@ -33408,6 +33476,8 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
         if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
             today_keys = set(summary_df["티커"].astype(str).map(_today_review_ticker_key))
         for _, row in flow[flow["_검토키"].astype(str).str.len() > 0].iterrows():
+            if is_swing_excluded_ticker(row.get("Ticker", "")):
+                continue
             verdict = str(row.get("판정", "") or "")
             group = str(row.get("후보군", "") or "")
             if row["_검토키"] not in today_keys:
@@ -33713,10 +33783,10 @@ def render_today_queue_tab(mode):
     grade_series = summary_df.get("📌후보등급", pd.Series("", index=summary_df.index)).astype(str)
     action_series = summary_df.get("실행메모", pd.Series("", index=summary_df.index)).astype(str)
     reason_bucket = summary_df.apply(_today_queue_reason_bucket, axis=1)
-    leveraged_display_mask = (
-        label_series.str.contains(r"레버리지|인버스|2X|3X|Ultra|Daily Target", regex=True, case=False, na=False)
-        | ticker_series.str.upper().str.contains(r"QLD|TQQQ|SOXL|BITX|BITU|UPRO|SSO|TECL|FNGU|RAM", regex=True, na=False)
+    leveraged_display_mask = summary_df.apply(
+        lambda row: is_leveraged_or_inverse_product(row.get("종목명", ""), row.get("티커", ""), row.get("asset_class", "")), axis=1,
     )
+    data_error_mask = code_series.isin({"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA", "NEW_ETF_MIN_DATA_WATCH"})
     macro_state_series = summary_df.get("매크로상태", pd.Series("", index=summary_df.index)).astype(str).str.upper()
     kr_market_mask = ticker_series.map(lambda t: is_kr_listed(sanitize_ticker_value(t)))
     us_market_mask = ~kr_market_mask
@@ -33735,7 +33805,7 @@ def render_today_queue_tab(mode):
     )
     if leveraged_market_defense_mask.any():
         reason_bucket.loc[leveraged_market_defense_mask] = "시장방어"
-        needs_market_label = leveraged_market_defense_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
+        needs_market_label = leveraged_market_defense_mask & ~data_error_mask & ~label_series.str.contains(r"시장위험|시장방어|추매중단|보유점검", regex=True, na=False)
         summary_df.loc[needs_market_label, "🔥기술적 타점"] = "🛡️레버리지 시장위험: 신규/DCA 대기"
         label_series = summary_df.get("🔥기술적 타점", pd.Series("", index=summary_df.index)).astype(str)
     kr_guard_mode = str(((market_guard or {}).get("kr_stats", {}) or {}).get("mode", ""))
@@ -33846,7 +33916,7 @@ def render_today_queue_tab(mode):
         | grade_series.str.contains("레버리지DCA조건부", regex=False, na=False)
         | label_series.str.contains(r"레버리지.*DCA.*조건부|레버리지.*조건부.*DCA", regex=True, na=False)
     )
-    hard_block_mask = code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)
+    hard_block_mask = (code_series.str.contains("HARD_BLOCK", na=False) | label_series.str.contains("하드차단", na=False)) & ~code_series.isin({"HARD_BLOCK_BOLLINGER_UPPER", "HARD_BLOCK_MFI_OVERHEAT"})
     dca_watch_override_mask = leveraged_dca_watch_mask & ~hard_block_mask
     buyish_mask = (signal_group.eq("buyish") | dca_watch_override_mask) & ~hard_block_mask
     caution_mask = (signal_group.eq("caution") & ~dca_watch_override_mask) | hard_block_mask | defense_reason_mask

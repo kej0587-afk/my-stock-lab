@@ -108,6 +108,9 @@ def classify_upside_state(value: Any, *, is_etf: bool = False) -> str:
 
 def build_execution_gate(row: Any) -> dict[str, str]:
     """Classify a row into an execution gate without changing decision wording."""
+    if _has_value(_row_get(row, "원천최종읽기", "")):
+        row = dict(row)
+        row["최종읽기"] = row["원천최종읽기"]
     code = _text(_row_get(row, "판정코드", "")).upper()
     group = _text(_row_get(row, "판정분류", ""))
     rr = _first_number(row, "RR값", "R/R", "rr_ratio")
@@ -134,10 +137,13 @@ def build_execution_gate(row: Any) -> dict[str, str]:
 
     reasons: list[str] = []
 
+    if code == "NEW_ETF_MIN_DATA_WATCH":
+        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "신규 ETF 가격 이력 부족: 최소 20봉 확인 필요"}
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터확인" in text or (
         _has_value(data_state) and data_state.upper() not in {"OK", "NORMAL", "정상"}
     ):
-        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": data_state or "가격/지표 데이터 확인"}
+        reason = data_state if data_state.upper() not in {"", "OK", "NORMAL", "정상"} else "가격/지표 데이터 확인 필요"
+        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": reason}
 
     if _RE_WEIGHT_BLOCK.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "목표비중/비중초과 우선"}
@@ -240,6 +246,19 @@ def apply_execution_gate_columns(
     gate_df = pd.DataFrame(gate_rows, index=out.index)
     for col in ["게이트상태", "게이트근거"]:
         out[col] = gate_df[col] if col in gate_df.columns else ""
+    if "최종읽기" in out:
+        # Preserve diagnostics without allowing old action text to overrule a gate.
+        if "원천최종읽기" not in out:
+            out["원천최종읽기"] = out["최종읽기"]
+        else:
+            out["원천최종읽기"] = out["원천최종읽기"].fillna(out["최종읽기"])
+        out["최종읽기"] = out["게이트상태"].map({
+            GATE_EXECUTABLE: "실행가능: 정밀확인",
+            GATE_WAIT: "대기/관찰: 실행조건 미충족",
+            GATE_DEFENSE: "방어우선: 추가매수 보류",
+            GATE_DATA_CHECK: "데이터확인: 판단 보류",
+            GATE_WATCH_ONLY: "관망: 실행 신호 없음",
+        })
     out["업사이드상태"] = upside_states
     out["섹터RS상태"] = sector_states
     out["후보검토사항"] = candidate_notes
