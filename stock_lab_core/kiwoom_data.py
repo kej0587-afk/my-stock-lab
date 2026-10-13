@@ -1,6 +1,6 @@
 """Opt-in Kiwoom domestic market data; no accounts, holdings, orders or news.
 
-Only au10001 and ka10001 are allowed. Callers supply a secrets mapping; this
+Only token, basic stock data and allowlisted market endpoints are allowed. Callers supply a secrets mapping; this
 module never imports Streamlit or reads credentials from disk/environment.
 See docs/maintenance/20261012_kiwoom_setup.md for the verified API contract.
 """
@@ -17,6 +17,7 @@ import time
 from typing import Any
 
 import requests
+from stock_lab_core.kiwoom_market import MARKET_REQUESTS, normalize_market_rows
 
 
 _BASE_URLS = {"real": "https://api.kiwoom.com", "mock": "https://mockapi.kiwoom.com"}
@@ -202,7 +203,7 @@ class _KiwoomError(Exception):
 class KiwoomDataClient:
     """Thread-safe, single-process client with no automatic retries.
 
-    One snapshot costs at most one token issuance and one ka10001 request.
+    One snapshot costs at most one token issuance and one data request.
     ``session`` and ``now`` are dependency-injection hooks for offline tests.
     Do not expose this object, its config or HTTP internals in the UI/logs.
     """
@@ -227,8 +228,9 @@ class KiwoomDataClient:
         return self._config.status
 
     def _post(self, path: str, api_id: str, body: dict, *, token: str = "") -> dict:
-        if (path, api_id) not in {(_TOKEN_PATH, "au10001"), (_INFO_PATH, "ka10001")}:
-            raise _KiwoomError("unsupported_endpoint", "Only token and domestic basic data are allowed.")
+        allowed = {(_TOKEN_PATH, "au10001"), (_INFO_PATH, "ka10001")} | {(v[0], v[1]) for v in MARKET_REQUESTS.values()}
+        if (path, api_id) not in allowed:
+            raise _KiwoomError("unsupported_endpoint", "Only allowlisted read-only data endpoints are allowed.")
         headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": api_id}
         if token:
             headers["authorization"] = f"Bearer {token}"
@@ -257,6 +259,8 @@ class KiwoomDataClient:
             if code != 0:
                 label = "rate_limited" if code == 1700 else "auth_error" if 8000 <= code < 8100 else "api_error"
                 raise _KiwoomError(label, "Kiwoom rejected the API request.", http_status=status, provider_code=code)
+            payload = dict(payload)
+            payload["_has_more"] = str(getattr(response, "headers", {}).get("cont-yn", "N")).upper() == "Y"
             return payload
         finally:
             response.close()
@@ -317,3 +321,33 @@ class KiwoomDataClient:
         finally:
             self._lock.release()
         return snapshot
+
+    def get_market_snapshot(self, kind: str, theme_code: str = "") -> dict:
+        """Bounded first-page observation; never fetch accounts/orders or infer time."""
+        result = {"ok": False, "status": self.status, "rows": [], "source": "Kiwoom REST",
+                  "fetched_at": "", "asof": "", "has_more": False, "is_mock": self._config.environment == "mock"}
+        if self.status != "ready":
+            return result
+        if kind not in MARKET_REQUESTS:
+            return {**result, "status": "unsupported_endpoint"}
+        path, api_id, body = MARKET_REQUESTS[kind]
+        body = dict(body)
+        if kind == "theme_members":
+            if not isinstance(theme_code, str) or not re.fullmatch(r"[0-9]{1,6}", theme_code):
+                return {**result, "status": "invalid_theme"}
+            body["thema_grp_cd"] = theme_code
+        result["source"] += " " + api_id
+        if not self._lock.acquire(timeout=self._config.connect_timeout + self._config.read_timeout + 1):
+            return {**result, "status": "busy"}
+        try:
+            payload = self._post(path, api_id, body, token=self._access_token())
+            result.update(normalize_market_rows(payload, kind))
+            result["fetched_at"] = datetime.fromtimestamp(self._now(), timezone.utc).isoformat()
+            result["has_more"] = bool(payload.get("_has_more"))
+        except _KiwoomError as exc:
+            if exc.status == "auth_error":
+                self._token, self._expires_at = "", 0.0
+            result.update(status=exc.status)
+        finally:
+            self._lock.release()
+        return result

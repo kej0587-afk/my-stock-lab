@@ -200,11 +200,40 @@ def _period_start_timestamp(period: str) -> pd.Timestamp:
     return today - pd.DateOffset(years=1)
 
 
+def _select_download_ohlcv(df, ticker: str) -> pd.DataFrame:
+    """Select the requested instrument before discarding Yahoo column levels."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+    out = df.copy(deep=True)
+    if isinstance(out.columns, pd.MultiIndex):
+        for level in range(out.columns.nlevels):
+            matches = [value for value in out.columns.get_level_values(level).unique()
+                       if str(value).strip().upper() == str(ticker).strip().upper()]
+            if matches:
+                out = out.xs(matches[0], axis=1, level=level).copy()
+                break
+        else:
+            logging.warning("Yahoo OHLCV rejected: requested symbol absent (%s)", ticker)
+            return pd.DataFrame()
+        if isinstance(out.columns, pd.MultiIndex):
+            return pd.DataFrame()
+    return out
+
+
 def _clean_ohlcv_frame(df: pd.DataFrame, *, keep_adj_close: bool = False) -> pd.DataFrame:
     """Normalize OHLCV without carrying prior candles into missing closes."""
     if df is None or df.empty or "Close" not in df.columns:
         return pd.DataFrame()
     out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        return pd.DataFrame()
+    if out.columns.has_duplicates:
+        for col in out.columns[out.columns.duplicated()].unique():
+            duplicates = out.loc[:, col]
+            if not all(duplicates.iloc[:, 0].equals(duplicates.iloc[:, i]) for i in range(1, duplicates.shape[1])):
+                logging.warning("OHLCV rejected: conflicting duplicate column %s", col)
+                return pd.DataFrame()
+        out = out.loc[:, ~out.columns.duplicated()].copy()
     for col in ("Open", "High", "Low", "Close", "Adj Close", "Volume"):
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -320,8 +349,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
             continue
         if df is None or df.empty:
             continue
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        df = _select_download_ohlcv(df, yf_ticker)
         if "Close" not in df.columns:
             continue
         df = _clean_ohlcv_frame(df, keep_adj_close=True)
@@ -595,7 +623,7 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
         return {}
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_price_df(ticker, period="1y"):
     """
     일봉 OHLCV 다운로드 (TTL=5분).

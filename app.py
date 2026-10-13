@@ -32,7 +32,10 @@ from supabase import create_client
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.browser_safety import install_translation_guard
 from stock_lab_core.kiwoom_data import kiwoom_client_from_secrets
+from stock_lab_core.market_evidence_panel import render_market_evidence_panel
+from stock_lab_core.news_evidence import render_price_news_evidence
 from stock_lab_core.review_audit import cross_view_flags
 from stock_lab_core.signal_evaluation import next_open_outcomes
 from stock_lab_core.backup import (
@@ -791,6 +794,7 @@ st.markdown("""
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
 st.set_page_config(page_title="최종 관제실", layout="wide")
+install_translation_guard(st)
 KST = timezone(timedelta(hours=9))
 APP_NOTICE_QUEUE_KEY = "_app_notice_queue"
 
@@ -14922,11 +14926,13 @@ def render_image_theme_flow_section():
 # ════════════════════════════════════════════════════════════════════════════
 
 def render_money_flow_tab():
-    etf_tab, image_theme_tab = st.tabs(["ETF/섹터 돈흐름", "테마 종목 흐름"])
+    etf_tab, image_theme_tab, kiwoom_tab = st.tabs(["ETF/섹터 돈흐름", "테마 종목 흐름", "키움 시장근거"])
     with etf_tab:
         render_money_flow_etf_section()
     with image_theme_tab:
         render_image_theme_flow_section()
+    with kiwoom_tab:
+        render_kiwoom_market_evidence("radar_kiwoom")
 
 # -------------------------------------------------
 # 3. 뉴스/리포트 로직은 stock_lab_core.news 모듈로 분리
@@ -20952,6 +20958,22 @@ def fetch_fmp_valuation_snapshot(ticker):
 def get_kiwoom_data_client():
     # Demo never reads broker secrets. This client has no account/order methods.
     return kiwoom_client_from_secrets(None if IS_PUBLIC_DEMO else st.secrets)
+
+
+@cache_result(ttl=180)
+def fetch_kiwoom_market_snapshot(kind, theme_code=""):
+    result = get_kiwoom_data_client().get_market_snapshot(kind, theme_code)
+    if result.get("is_mock"):
+        return {**result, "ok": False, "status": "mock_data", "rows": []}
+    return result
+
+
+def render_kiwoom_market_evidence(key_prefix):
+    render_market_evidence_panel(
+        st, status=get_kiwoom_data_client().status,
+        fetch_snapshot=fetch_kiwoom_market_snapshot,
+        get_news=get_ticker_news, render_news=render_news_cards, key_prefix=key_prefix,
+    )
 
 
 @cache_result(ttl=900)
@@ -30304,6 +30326,9 @@ def render_today_unified_briefing_panel(
     else:
         st.info("뉴스 새로고침을 누르면 핵심속보/시장/내 종목 뉴스를 브리핑 안에 바로 표시합니다.")
 
+    with st.expander("키움 거래대금·테마·업종 수급"):
+        render_kiwoom_market_evidence("today_kiwoom")
+
     st.markdown("**시황 메모 분석**")
     memo_cols = st.columns([1.0, 0.85, 2.25])
     if memo_cols[0].button("자동 시황 생성", key="today_unified_market_memo_generate", width='stretch'):
@@ -36417,6 +36442,8 @@ if main_page == "precision":
                 record_refresh_event("news_report_refresh_time")
                 rerun_with_notice("뉴스 캐시를 비웠습니다.", "success")
         news_items, news_logs = get_ticker_news(tkr, name, news_debug)
+        news_change = c.get("day_ret")
+        render_price_news_evidence(st, news_items, float(news_change) * 100 if finite_num(news_change) else None)
         if news_items:
             render_news_cards(news_items)
 

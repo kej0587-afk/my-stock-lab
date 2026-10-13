@@ -13,6 +13,48 @@ def clear_price_caches_between_tests():
     prices.clear_price_history_cache()
 
 
+@pytest.mark.parametrize("ticker_first", [False, True])
+def test_yahoo_download_isolates_bitx_from_other_symbols(monkeypatch, ticker_first):
+    fields = ["Open", "High", "Low", "Close", "Volume"]
+    frame = pd.DataFrame([[10, 100] * 5], columns=pd.MultiIndex.from_product([fields, ["BITX", "SPY"]]),
+                         index=pd.to_datetime(["2026-10-12"]))
+    if ticker_first:
+        frame.columns = frame.columns.swaplevel()
+    original = frame.copy(deep=True)
+    monkeypatch.setattr(prices.yf, "download", lambda *args, **kwargs: frame)
+    result = prices._fetch_yfinance_ohlcv("BITX")
+    assert result.iloc[0]["Close"] == 10
+    assert result.columns.is_unique
+    pd.testing.assert_frame_equal(frame, original)
+
+
+def test_yahoo_missing_requested_symbol_is_rejected(monkeypatch):
+    frame = pd.DataFrame([[100]], columns=pd.MultiIndex.from_tuples([("Close", "SPY")]))
+    monkeypatch.setattr(prices.yf, "download", lambda *args, **kwargs: frame)
+    assert prices._fetch_yfinance_ohlcv("BITX").empty
+
+
+@pytest.mark.parametrize("other,empty", [(10, False), (100, True)])
+def test_duplicate_ohlcv_columns_do_not_raise_or_merge_assets(other, empty):
+    frame = pd.DataFrame([[10, other]], columns=["Close", "Close"], index=pd.to_datetime(["2026-10-12"]))
+    result = _clean_ohlcv_frame(frame)
+    assert result.empty == empty
+    if not empty:
+        assert result.iloc[0]["Close"] == 10
+
+
+def test_price_cache_worker_never_opens_streamlit_spinner(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import streamlit
+
+    monkeypatch.setattr(streamlit, "spinner", lambda *args, **kwargs: pytest.fail("worker UI call"))
+    frame = pd.DataFrame({"Close": [10]}, index=pd.to_datetime(["2026-10-12"]))
+    monkeypatch.setattr(prices, "_fetch_yfinance_ohlcv", lambda *args, **kwargs: frame)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(prices.load_price_df, "BITX", "1y").result()
+    assert result.iloc[0]["Close"] == 10
+
+
 def test_extract_yahoo_overnight_price_from_plain_json_html():
     ts = int(time.time())
     html = (

@@ -40,6 +40,7 @@ from stock_lab_core.formatters import (
     clean_int,
     ensure_kr_suffix_if_code,
     format_currency,
+    is_kr_listed,
     normalize_ticker,
     sanitize_ticker_value,
     strip_search_prefix,
@@ -617,9 +618,10 @@ def parse_rss_pub_dt(item):
         return None
 
 def is_news_within_days(pub_dt, days):
-    if pub_dt is None:
+    if not isinstance(pub_dt, datetime) or pub_dt.tzinfo is None:
         return False
-    return pub_dt >= datetime.now(timezone.utc) - timedelta(days=days)
+    now = datetime.now(timezone.utc)
+    return now - timedelta(days=days) <= pub_dt <= now + timedelta(minutes=5)
 
 def format_news_pub_date(pub_dt):
     if pub_dt is None:
@@ -1211,11 +1213,13 @@ def get_news_company_names(ticker, name):
     names = []
     names_lower: set = set()
 
-    if display_name and display_name.upper() != symbol:
+    if display_name and normalize_news_token(display_name).upper() != symbol:
         names.append(display_name)
         names_lower.add(display_name.lower())
 
-    for n in get_yfinance_company_names(ticker):
+    # A known Korean display name is a better search key than a Yahoo lookup.
+    provider_names = [] if is_kr_listed(ticker) and names else get_yfinance_company_names(ticker)
+    for n in provider_names:
         if n and n.lower() not in names_lower:
             names_lower.add(n.lower())
             names.append(n)
@@ -1233,7 +1237,7 @@ def get_news_company_names(ticker, name):
 def build_stock_news_queries(ticker, name):
     symbol = normalize_news_token(ticker).upper()
     company_names = get_news_company_names(ticker, name)
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+    is_kr = is_kr_listed(ticker)
 
     main = company_names[0] if company_names else symbol
 
@@ -1280,7 +1284,7 @@ def build_stock_news_queries(ticker, name):
     return queries, company_names
 
 def google_news_locales_for_ticker(ticker):
-    if str(ticker).upper().endswith((".KS", ".KQ")):
+    if is_kr_listed(ticker):
         return [
             {"label": "KR", "hl": "ko", "gl": "KR", "ceid": "KR:ko"},
         ]
@@ -1439,7 +1443,7 @@ def get_news_theme_terms(ticker, name):
 def build_news_query_plan(ticker, name):
     direct_queries, company_names = build_stock_news_queries(ticker, name)
     symbol = normalize_news_token(ticker).upper()
-    is_kr = str(ticker).upper().endswith((".KS", ".KQ"))
+    is_kr = is_kr_listed(ticker)
     main = company_names[0] if company_names else symbol
     theme_terms = get_news_theme_terms(ticker, name)
     first_theme = theme_terms[0] if theme_terms else ""
@@ -1665,13 +1669,13 @@ def dedupe_news_by_publisher_latest(items):
             best_by_publisher[publisher] = item
     return list(best_by_publisher.values())
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_ticker_news(ticker, name, debug=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    is_kr_ticker = str(ticker).upper().endswith((".KS", ".KQ"))
+    is_kr_ticker = is_kr_listed(ticker)
     google_locales = google_news_locales_for_ticker(ticker)
 
     query_plan, company_names, theme_terms = build_news_query_plan(ticker, name)
