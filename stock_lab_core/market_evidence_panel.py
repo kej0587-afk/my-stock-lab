@@ -23,6 +23,7 @@ STATUS_TEXT = {
     "no_data": "이번 조회에 제공된 자료가 없습니다.",
     "busy": "다른 키움 조회가 진행 중입니다.",
     "invalid_us_symbol": "미국 티커와 거래소를 확인하세요. 예: NVDA/NASDAQ, DELL/NYSE",
+    "client_version_mismatch": "키움 미국 조회 모듈의 버전이 맞지 않습니다. app.py와 stock_lab_core 폴더를 함께 배포한 뒤 Manage app에서 Reboot app을 실행하세요.",
 }
 
 

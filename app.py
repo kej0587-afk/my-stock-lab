@@ -7,6 +7,7 @@
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 import hmac
+import inspect
 import io
 import logging
 import math
@@ -21023,9 +21024,18 @@ def fetch_fmp_valuation_snapshot(ticker):
 
 
 @st.cache_resource(show_spinner=False)
-def get_kiwoom_data_client():
+def _cached_kiwoom_data_client(contract_revision, public_demo):
     # Demo never reads broker secrets. This client has no account/order methods.
-    return kiwoom_client_from_secrets(None if IS_PUBLIC_DEMO else st.secrets)
+    return kiwoom_client_from_secrets(None if public_demo else st.secrets)
+
+
+def get_kiwoom_data_client():
+    # Imported client changes do not invalidate an unchanged cache_resource factory.
+    # Bump this key whenever the client calling contract changes.
+    return _cached_kiwoom_data_client("20261014-us-snapshot-v1", IS_PUBLIC_DEMO)
+
+
+get_kiwoom_data_client.clear = _cached_kiwoom_data_client.clear
 
 
 @cache_result(ttl=180)
@@ -21037,7 +21047,20 @@ def fetch_kiwoom_market_snapshot(kind, theme_code=""):
 
 @cache_result(ttl=180)
 def fetch_kiwoom_us_snapshot(kind, ticker="", exchange="ND"):
-    return get_kiwoom_data_client().get_market_snapshot(kind, ticker=ticker, exchange=exchange)
+    for attempt in range(2):
+        client = get_kiwoom_data_client()
+        method = getattr(client, "get_market_snapshot", None)
+        try:
+            inspect.signature(method).bind(kind, ticker=ticker, exchange=exchange)
+        except (TypeError, ValueError):
+            if attempt == 0:
+                cache_clear(get_kiwoom_data_client)
+                continue
+            # A partial deployment still has the old module after cache eviction.
+            return {"ok": False, "status": "client_version_mismatch", "rows": [],
+                    "source": "Kiwoom REST", "fetched_at": "", "asof": "", "has_more": False}
+        # Do not mistake a TypeError inside the provider implementation for a stale client.
+        return method(kind, ticker=ticker, exchange=exchange)
 
 
 def render_kiwoom_market_evidence(key_prefix):

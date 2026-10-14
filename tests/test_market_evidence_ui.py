@@ -70,3 +70,19 @@ def test_news_failure_is_visible_and_button_actually_retries():
     assert not app.exception and app.session_state["news_requests"] == 2
     assert any("관련 뉴스 1건" in item.value for item in app.caption)
     assert any("테스트 종목 실적 발표" in item.value for item in app.markdown)
+
+
+def test_partial_deployment_shows_reboot_notice_not_traceback():
+    app = AppTest.from_string('''
+import streamlit as st
+from stock_lab_core.market_evidence_panel import render_market_evidence_panel
+def fetch(*args):
+    return {"ok": False, "status": "client_version_mismatch", "rows": []}
+fetch.clear = lambda *args: None
+render_market_evidence_panel(st, status="ready", fetch_snapshot=fetch, fetch_us=fetch,
+    get_news=lambda *args: ([], []), render_news=lambda items: None, key_prefix="upgrade")
+''').run()
+    app.radio(key="upgrade_region").set_value("미국").run()
+    app.button(key="upgrade_us_refresh").click().run()
+    assert not app.exception and len(app.dataframe) == 0
+    assert any("Reboot app" in item.value for item in app.info)
