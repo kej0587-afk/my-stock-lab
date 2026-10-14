@@ -1,0 +1,7 @@
+{
+  "select_free_mode_decision": "5e603ff1f01062c2f58890b1ecec626ded1fc78998ad4d95aab533383887faa0",
+  "select_holding_decision": "9d9d58948b6c5a2db4faa23d7cee8017278ee15fba65dd8883c3b4e1c6ded3a1",
+  "select_new_entry_decision": "f52ee456400676571296f8fafc2502af0ce66a761d5b21f534c634ee2f482026",
+  "select_portfolio_guard_decision": "e4592fb5f4ac6e6276611a3a2cb79190bf0784d771a61e99a4eb2ef11b75a872",
+  "select_profitable_holding_decision": "e777a22b3fa9216f8e77b01f8ac07d3aeb36371f0187fd2ee36d88fed29e60e9"
+}
