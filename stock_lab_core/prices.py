@@ -9,6 +9,8 @@ import time
 import urllib.parse
 import urllib.request
 import html
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, timedelta
 
 import pandas as pd
@@ -17,6 +19,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.performance import timed_call
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -30,6 +33,37 @@ _YAHOO_BLOCK_UNTIL = 0.0
 _YAHOO_BLOCK_LOCK = threading.Lock()
 _YAHOO_BLOCK_SECONDS = 180
 _FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
+_PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
+
+
+@contextmanager
+def price_frame_scope(frames, period):
+    """Reuse exact-period public histories only for this calculation run."""
+    prepared = {
+        (str(ticker).strip().upper(), period): frame
+        for ticker, frame in (frames or {}).items()
+        if isinstance(frame, pd.DataFrame) and not frame.empty
+    }
+    token = _PREFETCHED_HISTORY.set(prepared)
+    try:
+        yield
+    finally:
+        _PREFETCHED_HISTORY.reset(token)
+
+
+def _reuse_prefetched_history(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(ticker, period="1y"):
+        frames = _PREFETCHED_HISTORY.get()
+        key = (str(ticker).strip().upper(), period)
+        if frames is not None and key in frames:
+            return frames[key].copy(deep=True)
+        return fn(ticker, period)
+
+    wrapped.__wrapped__ = getattr(fn, "__wrapped__", fn)
+    return wrapped
 
 
 def enable_force_live_price_refresh(seconds: int = 45) -> None:
@@ -359,6 +393,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     return pd.DataFrame()
 
 
+@timed_call("prices")
 @cache_result(ttl=300, failure_ttl=15, is_success=bool)
 def load_price_frames_batch(tickers, period="1y") -> dict:
     """Batch overseas histories; omit missing symbols for individual fallback."""
@@ -656,6 +691,8 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
         return {}
 
 
+@timed_call("prices")
+@_reuse_prefetched_history
 @cache_result(ttl=300, failure_ttl=15, is_success=lambda frame: frame is not None and not frame.empty)
 def load_price_df(ticker, period="1y"):
     """
@@ -2042,6 +2079,7 @@ def _load_latest_price_cached(ticker: str) -> float:
     return _fetch_price_uncached(ticker)
 
 
+@timed_call("prices")
 def load_latest_price(ticker: str) -> float:
     """
     단일 종목 현재가 조회 (공개 API, 짧은 TTL).
@@ -2050,6 +2088,7 @@ def load_latest_price(ticker: str) -> float:
     return _load_latest_price_cached(ticker)
 
 
+@timed_call("prices")
 @st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
 def load_latest_prices_batch(tickers) -> dict:
     """

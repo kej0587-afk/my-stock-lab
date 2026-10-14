@@ -5,6 +5,9 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 from datetime import datetime, timezone, timedelta
+from time import perf_counter
+
+SCRIPT_RUN_STARTED = perf_counter()
 from zoneinfo import ZoneInfo
 import hmac
 import inspect
@@ -33,6 +36,16 @@ from supabase import create_client
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.performance import PerformanceTrace, measure, submit_with_context, timed_call
+try:
+    from stock_lab_core.prices import price_frame_scope
+    RS_SCOPED_PREFETCH_AVAILABLE = True
+except ImportError:
+    from contextlib import nullcontext
+    RS_SCOPED_PREFETCH_AVAILABLE = False
+
+    def price_frame_scope(frames, period):
+        return nullcontext()
 from stock_lab_core.earnings_calendar import earnings_calendar_reader
 from stock_lab_core.market_basis import daily_close, align_market_closes
 from stock_lab_core.browser_safety import install_translation_guard
@@ -1277,6 +1290,7 @@ def lookup_kr_etf_display_name(symbol):
     return clean_resolved_display_name(matched.iloc[0].get("name", ""), symbol)
 
 
+@timed_call("external_data")
 @cache_result(ttl=86400, is_success=lambda result: bool(result) and result.get("_source_status") != "stale")
 def lookup_yfinance_info(ticker):
     """yfinance 정보를 가져오고 한글 깨짐을 즉시 복구"""
@@ -1313,6 +1327,7 @@ def lookup_yfinance_info(ticker):
     result["_source_fetched_at"] = snapshot["fetched_at"]
     return result
 
+@timed_call("external_data")
 @cache_result(ttl=86400, is_success=bool)
 def lookup_yfinance_display_name(ticker):
     # Chart identity is enough for a full display name; sector/analyst panels
@@ -6065,6 +6080,7 @@ def parse_notes_json(value):
     except Exception:
         return {"messages": ["notes_json 파싱 실패"]}
 
+@timed_call("external_data")
 def load_fin_score_meta_fast(ticker, is_etf):
     key = normalize_ticker(ticker)
 
@@ -6741,6 +6757,7 @@ def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
             cache_clear(calculate_image_theme_flow_df)
 
 
+@timed_call("external_data")
 def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_refresh: bool = False):
     """ETF/섹터 데이터 + 테마종목(옵션) 계산.
     include_theme=True도 기본 화면 새로고침은 테마 원자료 캐시를 유지한다.
@@ -7535,7 +7552,7 @@ def get_precision_timeframe_trend(label: str, tf_df: pd.DataFrame, last) -> str:
     return get_trend(last)
 
 
-def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
+def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicators_ready=False) -> dict:
     if df is None or df.empty or len(df) < 3:
         return {
             "label": label,
@@ -7545,7 +7562,7 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
         }
 
     try:
-        tf_df = build_indicators(df.copy())
+        tf_df = df.copy() if _indicators_ready else build_indicators(df.copy())
     except Exception:
         tf_df = df.copy()
     if tf_df is None or tf_df.empty or len(tf_df) < 3:
@@ -7633,6 +7650,7 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     }
 
 
+@timed_call("indicators")
 def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None) -> dict:
     raw_long = pd.DataFrame()
     for period in ("10y", "max", "5y", "2y"):
@@ -7654,8 +7672,8 @@ def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *,
 
     return {
         "일봉": {"df": daily_df, "snapshot": build_precision_timeframe_snapshot("일봉", daily_df)},
-        "주봉": {"df": weekly_df, "snapshot": build_precision_timeframe_snapshot("주봉", weekly_df)},
-        "월봉": {"df": monthly_df, "snapshot": build_precision_timeframe_snapshot("월봉", monthly_df)},
+        "주봉": {"df": weekly_df, "snapshot": build_precision_timeframe_snapshot("주봉", weekly_df, _indicators_ready=True)},
+        "월봉": {"df": monthly_df, "snapshot": build_precision_timeframe_snapshot("월봉", monthly_df, _indicators_ready=True)},
     }
 
 
@@ -16443,6 +16461,7 @@ def get_rs_score_against_benchmark(ticker, benchmark):
     result = compute_relative_strength(s_df, b_df, RS_LOOKBACK_DAYS)
     return result["score"], result["label"]
 
+@timed_call("external_data")
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_auto_benchmark_info(ticker: str, name: str, asset_class: str, is_etf: bool) -> dict:
     """
@@ -16516,7 +16535,7 @@ def prefetch_benchmark_info_parallel(watchlist_items: list, max_workers: int = 6
             pass
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(_fetch_benchmark_info, item) for item in watchlist_items]
+        futures = [submit_with_context(executor, _fetch_benchmark_info, item) for item in watchlist_items]
         for f in as_completed(futures):
             f.result()
 
@@ -16826,6 +16845,7 @@ def enforce_non_core_panic_scope_on_result(c, *, is_core_dca_allowed=False, is_e
     return out
 
 
+@timed_call("decision")
 def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, has_pos, fin_score,
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
@@ -18325,6 +18345,7 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
         return 0.0
 
 
+@timed_call("prices")
 def load_display_live_price(ticker: str) -> float:
     latest = clean_float(load_latest_price(ticker), 0.0)
     if latest > 0:
@@ -21622,7 +21643,7 @@ def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers:
         except Exception:
             return None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_fetch_price_df, tkr): tkr for tkr in unique if tkr not in frames}
+        futures = {submit_with_context(executor, _fetch_price_df, tkr): tkr for tkr in unique if tkr not in frames}
         for future in as_completed(futures):
             frames[futures[future]] = future.result()
     return frames
@@ -21787,6 +21808,7 @@ def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
     return pd.DataFrame([row]).reindex(columns=EXECUTION_WORKFLOW_DISPLAY_COLUMNS, fill_value="")
 
 
+@timed_call("decision")
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
                           snap_cash_available, snap_reserve_available, *, _price_df=None, _long_price_df=None):
     """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
@@ -21944,6 +21966,43 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
 
+def prefetch_rs_price_frames(watchlist_items):
+    if not RS_SCOPED_PREFETCH_AVAILABLE:
+        return {}
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def collect_benchmarks(item):
+        ticker = sanitize_ticker_value(item.get("ticker", ""))
+        if not ticker:
+            return set()
+        name = sanitize_asset_name(item.get("name", ""), ticker)
+        is_etf = is_fin_score_exempt_asset(ticker, item.get("is_etf", False), item.get("asset_class", ""), name)
+        asset_class = infer_asset_class_for_ticker(ticker, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
+        # A classification failure still follows the existing per-row error path.
+        try:
+            market = get_rs_benchmark(ticker, asset_class)
+            sector_result = get_sector_benchmark_info(ticker, asset_class, name)
+            sector = sector_result[0] if isinstance(sector_result, tuple) and len(sector_result) == 2 else ""
+        except Exception:
+            return set()
+        tickers = set()
+        for benchmark in (market, sector):
+            if benchmark and normalize_ticker(ticker) != normalize_ticker(benchmark):
+                tickers.update((ticker, benchmark))
+        return tickers
+
+    tickers = set()
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [submit_with_context(executor, collect_benchmarks, item) for item in watchlist_items]
+        for future in as_completed(futures):
+            try:
+                tickers.update(future.result())
+            except Exception:
+                pass
+    return prefetch_price_data_parallel(sorted(tickers), "3mo")
+
+
+@timed_call("phase", "summary")
 def get_all_summary(fin_score_map_items, mode, watchlist_items):
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -21953,13 +22012,18 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         for item in watchlist_items
         if sanitize_ticker_value(item.get("ticker", ""))
     ]
-    price_frames = prefetch_price_data_parallel(all_tickers, "1y")
+    with measure("phase", "price_history_1y"):
+        price_frames = prefetch_price_data_parallel(all_tickers, "1y")
     long_tickers = [ticker for ticker in all_tickers
                     if isinstance((price_frames or {}).get(ticker), pd.DataFrame)
                     and not price_frames[ticker].empty]
-    long_price_frames = prefetch_price_data_parallel(long_tickers, "10y")
-    # [속도 개선] 벤치마크 정보 병렬 선제 캐싱 (이후 get_auto_benchmark_info 는 캐시 히트)
-    prefetch_benchmark_info_parallel(watchlist_items)
+    with measure("phase", "price_history_10y"):
+        long_price_frames = prefetch_price_data_parallel(long_tickers, "10y")
+    # RS keeps its original 3mo source, instead of slicing 1y histories.
+    with measure("phase", "rs_price_history_3mo"):
+        rs_frames = prefetch_rs_price_frames(watchlist_items)
+    with price_frame_scope(rs_frames, "3mo"), measure("phase", "benchmarks"):
+        prefetch_benchmark_info_parallel(watchlist_items)
 
     # 매크로 전역값을 워커 진입 전에 스냅샷 — 스레드 간 일관성 보장
     snap_mp, snap_fmr, snap_te = resolve_decision_runtime_inputs()
@@ -21968,9 +22032,9 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
-            executor.submit(
+            submit_with_context(executor,
                 _compute_summary_item,
                 item, mode, snap_mp, snap_fmr, snap_te,
                 snap_cash_available, snap_reserve_available,
@@ -33227,6 +33291,54 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 
 
 def render_today_queue_tab(mode):
+    before_today_seconds = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
+    with PerformanceTrace() as trace:
+        _render_today_queue_tab(mode)
+    report = trace.report()
+    if any(entry["name"] == "summary" for entry in report["functions"]):
+        report["before_today_seconds"] = before_today_seconds
+        report["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
+        st.session_state["today_queue_performance"] = report
+        logger = logging.getLogger("stock_lab.performance")
+        logger.setLevel(logging.INFO)
+        logger.info("Today queue performance: %s", json.dumps(report))
+    else:
+        report = st.session_state.get("today_queue_performance", {})
+    if report:
+        with st.expander("계산 시간 상세", expanded=False):
+            c1, c2, c3 = st.columns(3)
+            c1.metric("오늘점검 경과시간", f"{report['elapsed_seconds']:.1f}초")
+            c2.metric("점검 진입 전", f"{report.get('before_today_seconds', 0):.1f}초")
+            c3.metric("실행 누적시간", f"{report.get('script_elapsed_seconds', report['elapsed_seconds']):.1f}초")
+            labels = {
+                "prices": "시세 조회·대기", "indicators": "지표·패턴 계산",
+                "external_data": "외부자료·돈흐름", "decision": "판정·결과 정리",
+            }
+            st.dataframe(pd.DataFrame([
+                {"구간": labels.get(category, category), "누적 작업시간(초)": round(seconds, 3)}
+                for category, seconds in report["categories_work_seconds"].items()
+            ]), hide_index=True, width="stretch")
+            st.caption("누적 작업시간은 병렬 작업을 합산한 값이므로 전체 경과시간과 다릅니다.")
+            phase_labels = {
+                "flow_refresh": "돈흐름 수집·분석", "price_history_1y": "일봉 이력",
+                "price_history_10y": "장기 이력", "rs_price_history_3mo": "RS 이력",
+                "benchmarks": "벤치마크 계산", "summary": "종목 점검 전체",
+                "analyst_enrichment": "애널 자료 연결", "today_queue_render": "오늘점검 화면 전체",
+            }
+            phase_rows = [
+                {"단계": phase_labels.get(row["name"], row["name"]), "경과시간(초)": round(row["total_seconds"], 3)}
+                for row in report["functions"] if row["category"] == "phase"
+            ]
+            st.dataframe(pd.DataFrame(phase_rows), hide_index=True, width="stretch")
+            function_rows = [row for row in report["functions"] if row["category"] != "phase"][:10]
+            st.dataframe(pd.DataFrame(function_rows).rename(columns={
+                "category": "구간", "name": "함수", "calls": "호출수", "total_seconds": "누적시간(초)",
+                "self_seconds": "자체시간(초)", "max_seconds": "최장호출(초)", "failures": "예외수",
+            }), hide_index=True, width="stretch")
+
+
+@timed_call("phase", "today_queue_render")
+def _render_today_queue_tab(mode):
     st.subheader("오늘 점검")
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
@@ -33345,7 +33457,7 @@ def render_today_queue_tab(mode):
 
     if run_summary:
         try:
-            with st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
+            with measure("phase", "flow_refresh"), st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
                 flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True, force_theme_refresh=True)
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
             queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
@@ -33554,7 +33666,8 @@ def render_today_queue_tab(mode):
     cash_available = clean_float(get_cash_available_for_dca(mode), 0.0)
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
 
-    summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
+    with measure("phase", "analyst_enrichment"):
+        summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
     _upside_value_map = build_today_analyst_upside_map(summary_df)
 
     flow_snapshot_for_context = get_cached_today_market_flow_snapshot()

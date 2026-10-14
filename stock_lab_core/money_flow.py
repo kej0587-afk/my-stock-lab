@@ -43,6 +43,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
+from stock_lab_core.performance import timed_call
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -1598,6 +1599,7 @@ def _fetch_pykrx_ohlc(ticker: str) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+@timed_call("prices")
 @st.cache_data(ttl=900, show_spinner=False)
 def download_money_flow_prices(tickers) -> pd.DataFrame:
     tickers = sorted({normalize_money_flow_ticker(t) for t in tickers if str(t).strip()})
@@ -1644,6 +1646,7 @@ def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     return out[cols].ffill().dropna(subset=["Close", "High", "Low"])
 
 
+@timed_call("prices")
 def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """yfinance 결과에서 OHLCV 추출. 실패 시 폴백 순서대로 시도.
 
@@ -1895,6 +1898,7 @@ def classify_money_flow_state(
     return "관찰"
 
 
+@timed_call("indicators")
 def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
     """단일 티커 OHLCV → 공통 메트릭 딕셔너리.
 
@@ -1968,6 +1972,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 # 메인 계산 함수
 # ---------------------------------------------------------------------------
 
+@timed_call("external_data")
 @st.cache_data(ttl=900, show_spinner=False)
 def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
@@ -1978,11 +1983,15 @@ def calculate_money_flow_df() -> pd.DataFrame:
     data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
     rows = []
+    metrics_by_ticker = {}
     for item in universe:
-        px = get_money_flow_ohlc(data, item["ticker"])
-        if px.empty or len(px) < 20:
+        ticker = item["ticker"]
+        if ticker not in metrics_by_ticker:
+            px = get_money_flow_ohlc(data, ticker)
+            metrics_by_ticker[ticker] = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else None
+        if metrics_by_ticker[ticker] is None:
             continue
-        metrics = _compute_ticker_metrics(px)
+        metrics = metrics_by_ticker[ticker].copy()
         rank_bonus = float(item.get("랭킹보조점수", 0.0) or 0.0)
         if rank_bonus:
             metrics["돈흐름점수"] = float(metrics.get("돈흐름점수", 0.0)) + rank_bonus
@@ -2003,6 +2012,7 @@ def calculate_money_flow_df() -> pd.DataFrame:
     return df.sort_values("돈흐름점수", ascending=False)
 
 
+@timed_call("external_data")
 @st.cache_data(ttl=900, show_spinner=False)
 def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산."""
@@ -2027,9 +2037,13 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     }
 
     rows = []
+    metrics_by_ticker = {}
     for item in universe:
-        px = get_money_flow_ohlc(data, item["ticker"])
-        metrics = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else _empty.copy()
+        ticker = item["ticker"]
+        if ticker not in metrics_by_ticker:
+            px = get_money_flow_ohlc(data, ticker)
+            metrics_by_ticker[ticker] = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else _empty.copy()
+        metrics = metrics_by_ticker[ticker].copy()
         rows.append({
             "테마":     item["테마"],
             "하위테마": item["하위테마"],

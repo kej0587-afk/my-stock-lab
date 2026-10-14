@@ -7,6 +7,7 @@ app.py 전역 상태에 의존하지 않는 순수 함수만 포함하므로 독
 
 import numpy as np
 import pandas as pd
+from stock_lab_core.performance import timed_call
 
 try:
     import ta
@@ -104,6 +105,7 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig) -> str:
 # 지표 계산
 # ---------------------------------------------------------------------------
 
+@timed_call("indicators")
 def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """OHLCV DataFrame에 기술적 지표 컬럼을 추가하고 반환합니다."""
     if ta is None:

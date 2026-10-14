@@ -23,6 +23,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.performance import timed_call
 from stock_lab_core.yahoo_metadata import is_rate_limit_error, yahoo_metadata_reader
 
 try:
@@ -1162,6 +1163,7 @@ def _get_analyst_snapshot_cached(ticker):
     }
 
 
+@timed_call("external_data")
 def get_analyst_snapshot(ticker):
     snapshot = _get_analyst_snapshot_cached(ticker)
     if snapshot.get("status") == "available":

@@ -7,6 +7,7 @@ import pandas as pd
 
 from stock_lab_core.formatters import clean_float, finite_num
 from stock_lab_core.today_queue import is_today_queue_defense_signal
+from stock_lab_core.performance import timed_call
 
 
 def _chart_pattern_source_df(df: pd.DataFrame, lookback: int = 140) -> pd.DataFrame:
@@ -631,6 +632,7 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
     }
 
 
+@timed_call("indicators")
 def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 1) -> list:
     """최근 OHLC 피벗으로 차트 패턴 후보를 보수적으로 탐지합니다."""
     view = _chart_pattern_source_df(df, lookback=lookback)
