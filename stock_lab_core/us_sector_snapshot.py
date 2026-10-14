@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from stock_lab_core.performance import timed_call
 
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -526,6 +527,7 @@ def _subsector_records(
     return records[:limit]
 
 
+@timed_call("external_data")
 def build_us_cluster_snapshot(
     cluster_name: str,
     top_n: int = 3,

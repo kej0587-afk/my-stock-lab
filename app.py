@@ -9527,6 +9527,7 @@ MARKET_CLUSTER_CONTEXT_CACHE_VERSION = 8
 MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS = 90
 
 
+@timed_call("external_data")
 def _get_market_cluster_snapshot_cached(
     market_label: str,
     cluster: str,
@@ -27017,6 +27018,7 @@ def _summary_validation_asset_class(row):
     return infer_asset_class_for_ticker(ticker, "us_etf_nasdaq" if is_etf else "")
 
 
+@timed_call("phase", "signal_validation_render")
 def render_summary_signal_validation_panel(summary_df, *, key_prefix, title="🧪 현재 표 신호 검증"):
     if summary_df is None or summary_df.empty or "티커" not in summary_df.columns:
         return
@@ -28335,6 +28337,7 @@ def build_today_macro_guard_table(macro_data=None) -> tuple[pd.DataFrame, int, i
     return pd.DataFrame(rows), int(pressure_count), int(relief_count), note
 
 
+@timed_call("phase", "market_guard")
 def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     benchmark_rows = _build_today_benchmark_guard_rows()
     bench_df = pd.DataFrame(benchmark_rows)
@@ -29677,6 +29680,7 @@ def render_today_briefing_investor_flow(summary_df=None, watch_items=None):
         st.caption("거래량 확인: 돈흐름 상세 계산 후 거래량 증가 상위 축이 표시됩니다.")
 
 
+@timed_call("phase", "briefing_render")
 def render_today_unified_briefing_panel(
     summary_df=None,
     market_guard=None,
@@ -31332,6 +31336,7 @@ def _flow_short_risk(row) -> str:
     return " · ".join(dict.fromkeys(risks)) or "-"
 
 
+@timed_call("phase", "flow_shortlist_build")
 def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     snapshot = snapshot if snapshot is not None else get_cached_today_market_flow_snapshot()
     if not snapshot:
@@ -31648,6 +31653,7 @@ def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame |
     return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
 
 
+@timed_call("phase", "flow_context")
 def attach_today_flow_context(
     summary_df: pd.DataFrame,
     flow_shortlist_df: pd.DataFrame | None = None,
@@ -31708,6 +31714,7 @@ def build_today_analyst_target_summary(row) -> str:
     return " · ".join(parts)
 
 
+@timed_call("phase", "flow_shortlist_render")
 def render_today_flow_shortlist_panel(snapshot=None, shortlist_df: pd.DataFrame | None = None, key_prefix: str = "today_flow_shortlist", show_header: bool = True):
     shortlist_df = shortlist_df if isinstance(shortlist_df, pd.DataFrame) else build_today_flow_shortlist_df(snapshot)
     if show_header:
@@ -32240,6 +32247,7 @@ def _render_rotation_chart_and_table(
         st.dataframe(all_show.sort_values(["사분면", "RS(3M)"], ascending=[True, False]), width='stretch', hide_index=True)
 
 
+@timed_call("phase", "flow_detail_render")
 def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_guard=None):
     st.markdown("#### 시장 돈흐름 요약")
     st.caption("처음에는 실행 후보판만 봅니다. 원천 1위와 차트는 후보를 고른 뒤 확인하는 참고 자료입니다.")
@@ -32615,6 +32623,7 @@ def render_today_pending_action_card(market_guard=None, title: str = "#### 세�
     )
 
 
+@timed_call("phase", "candidate_tools")
 def render_today_candidate_tools(summary_df=None, start_index=4, market_guard=None):
     prefix = f"{start_index}. " if start_index else ""
     st.markdown(f"#### {prefix}돈흐름 상세/차트")
@@ -33197,6 +33206,7 @@ def _today_review_frame(df, mask=None):
         return pd.DataFrame()
 
 
+@timed_call("phase", "review_export")
 def render_today_review_export_download(summary_df, flow_shortlist_df=None, holdings_df=None, masks=None, market_guard=None):
     if not isinstance(summary_df, pd.DataFrame) or summary_df.empty:
         return
@@ -33295,6 +33305,9 @@ def render_today_queue_tab(mode):
     with PerformanceTrace() as trace:
         _render_today_queue_tab(mode)
     report = trace.report()
+    root_timing = next((row for row in report["functions"] if row["name"] == "today_queue_render"), None)
+    if root_timing:
+        report["unclassified_render_seconds"] = root_timing["self_seconds"]
     if any(entry["name"] == "summary" for entry in report["functions"]):
         report["before_today_seconds"] = before_today_seconds
         report["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
@@ -33324,17 +33337,32 @@ def render_today_queue_tab(mode):
                 "price_history_10y": "장기 이력", "rs_price_history_3mo": "RS 이력",
                 "benchmarks": "벤치마크 계산", "summary": "종목 점검 전체",
                 "analyst_enrichment": "애널 자료 연결", "today_queue_render": "오늘점검 화면 전체",
+                "watchlist_prepare": "점검 대상·후보 준비", "flow_candidates_after_refresh": "돈흐름 후보 연결",
+                "market_guard": "시장 가드", "briefing_render": "브리핑 표시",
+                "flow_shortlist_build": "돈흐름 압축 후보 생성", "flow_context": "돈흐름 정합성 연결",
+                "review_export": "검토 파일 생성", "signal_validation_render": "신호 검증 표시",
+                "flow_shortlist_render": "돈흐름 후보표 표시", "candidate_tools": "후보 도구·차트 전체",
+                "flow_detail_render": "돈흐름 상세 화면",
+                "kr_quote_fallback_wait": "국내 시세 보완 대기",
             }
             phase_rows = [
                 {"단계": phase_labels.get(row["name"], row["name"]), "경과시간(초)": round(row["total_seconds"], 3)}
                 for row in report["functions"] if row["category"] == "phase"
             ]
+            if "unclassified_render_seconds" in report:
+                phase_rows.append({"단계": "미분류 화면·후처리", "경과시간(초)": round(report["unclassified_render_seconds"], 3)})
             st.dataframe(pd.DataFrame(phase_rows), hide_index=True, width="stretch")
+            st.caption("상위 단계에는 하위 단계가 포함되며, 반복 호출은 합산됩니다. 단계 시간을 모두 더하지 않습니다.")
             function_rows = [row for row in report["functions"] if row["category"] != "phase"][:10]
             st.dataframe(pd.DataFrame(function_rows).rename(columns={
                 "category": "구간", "name": "함수", "calls": "호출수", "total_seconds": "누적시간(초)",
                 "self_seconds": "자체시간(초)", "max_seconds": "최장호출(초)", "failures": "예외수",
             }), hide_index=True, width="stretch")
+            st.download_button(
+                "시간 진단 JSON", data=json.dumps(report, ensure_ascii=False, indent=2),
+                file_name="today_queue_performance.json", mime="application/json",
+                icon=":material/download:", on_click="ignore", key="today_queue_performance_download",
+            )
 
 
 @timed_call("phase", "today_queue_render")
@@ -33343,9 +33371,10 @@ def _render_today_queue_tab(mode):
     render_data_basis_caption("오늘점검", include_fin=True)
     st.caption("스윙 일지 대신 관심/보유 종목을 자동으로 훑어서 매수 후보, 차단/주의, 확인 필요 종목만 모아봅니다.")
 
-    raw_watch_items = tuple(st.session_state.get("watchlist", []))
-    flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
-    watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+    with measure("phase", "watchlist_prepare"):
+        raw_watch_items = tuple(st.session_state.get("watchlist", []))
+        flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
+        watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_unified_briefing_panel(
@@ -33459,7 +33488,8 @@ def _render_today_queue_tab(mode):
         try:
             with measure("phase", "flow_refresh"), st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
                 flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True, force_theme_refresh=True)
-            watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+            with measure("phase", "flow_candidates_after_refresh"):
+                watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
             queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
             st.session_state["today_queue_open_flow_detail"] = True
         except Exception as exc:

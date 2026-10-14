@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from stock_lab_core.performance import timed_call
 
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
@@ -530,6 +531,7 @@ def _sort_rows_by_existing(
     return df.sort_values(list(sort_cols), ascending=list(sort_ascending))
 
 
+@timed_call("external_data")
 def build_kr_cluster_snapshot(
     cluster_name: str,
     top_n: int = 3,

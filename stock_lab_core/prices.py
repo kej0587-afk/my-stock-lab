@@ -19,7 +19,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
-from stock_lab_core.performance import timed_call
+from stock_lab_core.performance import measure, submit_with_context, timed_call
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -34,6 +34,7 @@ _YAHOO_BLOCK_LOCK = threading.Lock()
 _YAHOO_BLOCK_SECONDS = 180
 _FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
 _PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
+_NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
 
 
 @contextmanager
@@ -609,6 +610,7 @@ def _fetch_naver_quotes_bulk(kr_tickers: list) -> dict:
         return {}
 
 
+@timed_call("prices")
 def _fetch_naver_realtime_quote(ticker: str) -> dict:
     code = _kr_code(ticker)
     if not code:
@@ -624,6 +626,7 @@ def _fetch_naver_realtime_quote(ticker: str) -> dict:
         return {}
 
 
+@timed_call("prices")
 def _fetch_naver_basic_quote(ticker: str) -> dict:
     code = _kr_code(ticker)
     if not code:
@@ -1121,21 +1124,39 @@ def _load_latest_kr_quotes_batch_cached(ticker_keys: tuple[str, ...]) -> dict:
     if not kr_tickers:
         return {}
     quotes = _fetch_naver_quotes_bulk(kr_tickers)
-    for ticker in kr_tickers:
-        key = normalize_price_lookup_key(ticker)
-        quote = quotes.get(key, {})
-        if quote.get("price", 0.0) and quote.get("change_pct", 0.0):
-            continue
-        direct = _fetch_naver_realtime_quote(ticker)
-        if not direct or not direct.get("change_pct", 0.0):
-            direct = _fetch_naver_basic_quote(ticker)
+    missing = [ticker for ticker in kr_tickers if not (
+        quotes.get(normalize_price_lookup_key(ticker), {}).get("price", 0.0)
+        and quotes.get(normalize_price_lookup_key(ticker), {}).get("change_pct", 0.0)
+    )]
+
+    @timed_call("prices", "kr_quote_fallback")
+    def fallback(ticker):
+        # The shared cap also bounds simultaneous sessions; providers are unchanged.
+        with _NAVER_QUOTE_FALLBACK_SLOTS:
+            direct = _fetch_naver_realtime_quote(ticker)
+            if not direct or not direct.get("change_pct", 0.0):
+                direct = _fetch_naver_basic_quote(ticker)
+        return direct
+
+    with measure("phase", "kr_quote_fallback_wait"):
+        if len(missing) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=min(4, len(missing))) as executor:
+                futures = [submit_with_context(executor, fallback, ticker) for ticker in missing]
+                direct_quotes = [future.result() for future in futures]
+        else:
+            direct_quotes = [fallback(ticker) for ticker in missing]
+    for ticker, direct in zip(missing, direct_quotes):
         if direct:
+            key = normalize_price_lookup_key(ticker)
+            quote = quotes.get(key, {})
             merged = dict(quote)
             merged.update({k: v for k, v in direct.items() if v not in ("", None, 0.0)})
             quotes[key] = merged
     return quotes
 
 
+@timed_call("prices")
 def load_latest_kr_quotes_batch(tickers) -> dict:
     kr_tickers = [t for t in (tickers or []) if _is_kr_ticker(str(t))]
     if not kr_tickers:
