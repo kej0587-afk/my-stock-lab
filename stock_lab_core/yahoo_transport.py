@@ -9,6 +9,7 @@ import threading
 
 
 _SESSION_LOCK = threading.Lock()
+YAHOO_HISTORY_LOCK = threading.RLock()
 
 
 def _is_windows():

@@ -463,6 +463,11 @@ from stock_lab_core.prices import (
     load_usdkrw_rate,
 )
 try:
+    from stock_lab_core.prices import load_price_frames_batch
+except ImportError:
+    def load_price_frames_batch(tickers, period="1y"):
+        return {}
+try:
     from stock_lab_core.prices import fetch_yahoo_display_metadata
 except ImportError:
     # Keep older deployed helper versions usable during an app update.
@@ -474,6 +479,10 @@ except ImportError:
         return {key: meta.get(key, "") for key in ("longName", "shortName", "displayName")}
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+try:
+    from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK
+except ImportError:
+    from stock_lab_core.prices import _YF_LOCK as YAHOO_HISTORY_LOCK
 from stock_lab_core.yahoo_metadata import yahoo_metadata_reader
 from stock_lab_core.research_links import (
     build_research_home_link_groups,
@@ -7617,11 +7626,11 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame) -> dict:
     }
 
 
-def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame) -> dict:
+def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None) -> dict:
     raw_long = pd.DataFrame()
     for period in ("10y", "max", "5y", "2y"):
         try:
-            candidate = load_price_df(ticker, period)
+            candidate = _long_price_df if period == "10y" and _long_price_df is not None else load_price_df(ticker, period)
         except Exception:
             candidate = pd.DataFrame()
         if candidate is not None and not candidate.empty and len(candidate) > len(raw_long):
@@ -15048,6 +15057,7 @@ def get_refresh_event_time(key):
 def clear_price_and_chart_cache():
     clear_latest_price_cache()
     cache_clear(load_price_df)
+    cache_clear(load_price_frames_batch)
 
 
 def load_precision_price_history(ticker: str, period: str = "1y"):
@@ -15837,16 +15847,17 @@ def get_macro_analysis():
     results = {}; macro_trend = 0; storm_count = 0
 
     try:
-        data = yf.download(
-            list(tickers.values()),
-            period="2mo",
-            interval="1d",
-            progress=False,
-            group_by="ticker",
-            threads=False,
-            auto_adjust=False,
-            **yahoo_session_kwargs(),
-        )
+        with YAHOO_HISTORY_LOCK:
+            data = yf.download(
+                list(tickers.values()),
+                period="2mo",
+                interval="1d",
+                progress=False,
+                group_by="ticker",
+                threads=False,
+                auto_adjust=False,
+                **yahoo_session_kwargs(),
+            )
     except Exception:
         data = pd.DataFrame()
 
@@ -16812,7 +16823,7 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                              is_free=False, app_mode="개인모드", user_total_asset=0.0, user_curr_w=0.0, user_targ_w=0.0,
                              _macro_penalty=None, _final_macro_risk=None, _total_eval=None,
                              _cash_available=None, _reserve_available=None,
-                             live_price: float = 0.0):
+                             live_price: float = 0.0, _live_indicator_context=None):
     # 글로벌 매크로 값을 명시적 파라미터로 주입 가능 (미전달 시 모듈 전역 변수 사용)
     _mp, _fmr, _te = resolve_decision_runtime_inputs(_macro_penalty, _final_macro_risk, _total_eval)
     ticker = sanitize_ticker_value(ticker)
@@ -16822,9 +16833,13 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         asset_class = normalize_individual_stock_asset_class(ticker, asset_class)
 
     source_daily_close, source_prev_close = get_source_close_values(df)
-    df, live_ohlcv_applied, indicator_data_issue = apply_live_price_with_indicators(
-        df, live_price, ticker, build_indicators,
-    )
+    if _live_indicator_context is None:
+        df, live_ohlcv_applied, indicator_data_issue = apply_live_price_with_indicators(
+            df, live_price, ticker, build_indicators,
+        )
+    else:
+        prepared_df, live_ohlcv_applied, indicator_data_issue = _live_indicator_context
+        df = prepared_df.copy(deep=True)
     if indicator_data_issue:
         live_price = 0.0
 
@@ -22131,21 +22146,27 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
 def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers: int = 8):
     """
     [속도 개선] 여러 티커의 가격 데이터를 ThreadPoolExecutor로 병렬 선제 로딩합니다.
-    load_price_df가 @st.cache_data를 사용하므로 병렬 호출 후 캐시에 저장됩니다.
-    이후 순차 호출 시 캐시 히트로 즉시 반환됩니다.
+    해외 종목은 제한된 일괄 조회, 국내/누락 종목은 기존 로더로 보완합니다.
+    읽은 프레임을 반환해 계산 워커가 캐시를 다시 읽지 않도록 합니다.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     if not tickers:
-        return
+        return {}
+    unique = list(dict.fromkeys(sanitize_ticker_value(t) for t in tickers if sanitize_ticker_value(t)))
+    try:
+        frames = dict(load_price_frames_batch(tuple(sorted(unique)), period))
+    except Exception:
+        frames = {}
     def _fetch_price_df(tkr):
         try:
             return load_price_df(tkr, period)
         except Exception:
             return None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_fetch_price_df, tkr): tkr for tkr in tickers}
+        futures = {executor.submit(_fetch_price_df, tkr): tkr for tkr in unique if tkr not in frames}
         for future in as_completed(futures):
-            future.result()  # 예외가 있으면 무시하고 계속
+            frames[futures[future]] = future.result()
+    return frames
 
 
 def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_macro_risk=np.nan):
@@ -22308,7 +22329,7 @@ def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
 
 
 def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk, snap_total_eval,
-                          snap_cash_available, snap_reserve_available):
+                          snap_cash_available, snap_reserve_available, *, _price_df=None, _long_price_df=None):
     """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
     tkr = sanitize_ticker_value(item.get("ticker", ""))
@@ -22319,7 +22340,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
     try:
-        df = load_price_df(tkr, "1y")
+        df = _price_df if _price_df is not None else load_price_df(tkr, "1y")
     except Exception as exc:
         logging.exception("Today queue failed: ticker=%s stage=price", tkr)
         return build_summary_status_item(
@@ -22367,6 +22388,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         my_p = get_my_price(name, tkr)
         has_p = has_position(name, tkr)
         _live_p = load_display_live_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
+        live_context = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
 
         stage = "decision"
         c = calc_scores_and_decision(
@@ -22378,13 +22400,14 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             _cash_available=snap_cash_available,
             _reserve_available=snap_reserve_available,
             live_price=_live_p,
+            _live_indicator_context=live_context,
         )
         stage = "pattern_indicators"
-        pattern_df, _, pattern_issue = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
+        pattern_df, _, pattern_issue = live_context
         if pattern_issue:
             logging.warning("Today queue pattern overlay rejected: ticker=%s", tkr)
         try:
-            mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df)
+            mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df, _long_price_df=_long_price_df)
             c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
         except Exception:
             c["mtf_bias_label"] = "자료부족"
@@ -22471,7 +22494,11 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
         for item in watchlist_items
         if sanitize_ticker_value(item.get("ticker", ""))
     ]
-    prefetch_price_data_parallel(all_tickers, "1y")
+    price_frames = prefetch_price_data_parallel(all_tickers, "1y")
+    long_tickers = [ticker for ticker in all_tickers
+                    if isinstance((price_frames or {}).get(ticker), pd.DataFrame)
+                    and not price_frames[ticker].empty]
+    long_price_frames = prefetch_price_data_parallel(long_tickers, "10y")
     # [속도 개선] 벤치마크 정보 병렬 선제 캐싱 (이후 get_auto_benchmark_info 는 캐시 히트)
     prefetch_benchmark_info_parallel(watchlist_items)
 
@@ -22488,6 +22515,8 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
                 _compute_summary_item,
                 item, mode, snap_mp, snap_fmr, snap_te,
                 snap_cash_available, snap_reserve_available,
+                _price_df=(price_frames or {}).get(sanitize_ticker_value(item.get("ticker", ""))),
+                _long_price_df=(long_price_frames or {}).get(sanitize_ticker_value(item.get("ticker", ""))),
             ): i
             for i, item in enumerate(watchlist_items)
         }
@@ -33869,6 +33898,7 @@ def render_today_queue_tab(mode):
             cache_clear(get_analyst_snapshot)
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
+            cache_clear(load_price_frames_batch)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
         last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.session_state[summary_key] = summary_df

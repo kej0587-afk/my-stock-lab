@@ -42,7 +42,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -1609,16 +1609,17 @@ def download_money_flow_prices(tickers) -> pd.DataFrame:
     ]
     if not yf_tickers:
         return pd.DataFrame()
-    return yf.download(
-        yf_tickers,
-        period="1y",
-        interval="1d",
-        progress=False,
-        group_by="ticker",
-        threads=min(4, max(1, len(yf_tickers))),
-        auto_adjust=False,
-        **yahoo_session_kwargs(),
-    )
+    with YAHOO_HISTORY_LOCK:
+        return yf.download(
+            yf_tickers,
+            period="1y",
+            interval="1d",
+            progress=False,
+            group_by="ticker",
+            threads=min(4, max(1, len(yf_tickers))),
+            auto_adjust=False,
+            **yahoo_session_kwargs(),
+        )
 
 
 def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:

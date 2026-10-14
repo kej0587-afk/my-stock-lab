@@ -15,14 +15,14 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
 # SQLite tz 캐시에 동시 쓰기 → "database is locked" 오류 발생.
 # 모듈 레벨 Lock으로 yfinance 호출을 직렬화해 방지.
-_YF_LOCK = threading.Lock()
+_YF_LOCK = YAHOO_HISTORY_LOCK
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 
@@ -205,20 +205,20 @@ def _select_download_ohlcv(df, ticker: str) -> pd.DataFrame:
     """Select the requested instrument before discarding Yahoo column levels."""
     if not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
-    out = df.copy(deep=True)
-    if isinstance(out.columns, pd.MultiIndex):
-        for level in range(out.columns.nlevels):
-            matches = [value for value in out.columns.get_level_values(level).unique()
+    if isinstance(df.columns, pd.MultiIndex):
+        for level in range(df.columns.nlevels):
+            matches = [value for value in df.columns.get_level_values(level).unique()
                        if str(value).strip().upper() == str(ticker).strip().upper()]
             if matches:
-                out = out.xs(matches[0], axis=1, level=level).copy()
+                out = df.xs(matches[0], axis=1, level=level).copy(deep=True)
                 break
         else:
             logging.warning("Yahoo OHLCV rejected: requested symbol absent (%s)", ticker)
             return pd.DataFrame()
         if isinstance(out.columns, pd.MultiIndex):
             return pd.DataFrame()
-    return out
+        return out
+    return df.copy(deep=True)
 
 
 def _clean_ohlcv_frame(df: pd.DataFrame, *, keep_adj_close: bool = False) -> pd.DataFrame:
@@ -357,6 +357,38 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
         if not df.empty:
             return _maybe_align_ohlcv_to_live_price(yf_ticker, df)
     return pd.DataFrame()
+
+
+@cache_result(ttl=300, failure_ttl=15, is_success=bool)
+def load_price_frames_batch(tickers, period="1y") -> dict:
+    """Batch overseas histories; omit missing symbols for individual fallback."""
+    symbols = sorted({normalize_price_lookup_key(t) for t in tickers
+                      if str(t or "").strip() and not _is_kr_ticker(t)})
+    if not symbols:
+        return {}
+    try:
+        with _YF_LOCK:
+            data = yf.download(
+                symbols, period=period, interval="1d", group_by="ticker",
+                progress=False, threads=min(4, len(symbols)), auto_adjust=False,
+                **yahoo_session_kwargs(),
+            )
+    except Exception:
+        return {}
+    if data is None or data.empty:
+        return {}
+    if len(symbols) > 1 and not isinstance(data.columns, pd.MultiIndex):
+        return {}
+    frames = {}
+    for symbol in symbols:
+        try:
+            frame = _select_download_ohlcv(data, symbol)
+            frame = _clean_ohlcv_frame(frame, keep_adj_close=True)
+            if not frame.empty:
+                frames[symbol] = _maybe_align_ohlcv_to_live_price(symbol, frame)
+        except Exception:
+            continue
+    return frames
 
 
 def _fetch_naver_price(ticker: str) -> float:
@@ -2238,7 +2270,7 @@ def clear_latest_price_cache():
 
 
 def clear_price_history_cache():
-    for fn in [load_price_df, _fetch_pykrx_ohlcv]:
+    for fn in [load_price_df, load_price_frames_batch, _fetch_pykrx_ohlcv]:
         if hasattr(fn, "clear"):
             fn.clear()
 
