@@ -1,34 +1,22 @@
 """Bound earnings-calendar retries after provider-wide throttling."""
 
-import logging
-import threading
 import time
 
-from yfinance.exceptions import YFRateLimitError
+from stock_lab_core.yahoo_metadata import YahooMetadataReader, yahoo_metadata_reader
 
 
 class EarningsCalendarReader:
-    def __init__(self, *, clock=time.monotonic, cooldown=180):
-        self._clock = clock
-        self._cooldown = cooldown
-        self._retry_after = 0.0
-        self._lock = threading.Lock()
+    def __init__(self, *, clock=time.monotonic, cooldown=180, reader=None):
+        self._reader = reader or YahooMetadataReader(clock=clock, cooldown=cooldown, min_interval=0)
 
     def read(self, ticker, fetch):
-        # Serialize the first probe so a batch does not hammer an already
-        # throttled provider. The injected fetch must set its own HTTP timeout.
-        with self._lock:
-            if self._clock() < self._retry_after:
-                return {"ok": False, "status": "rate_limited", "label": "실적일 조회 제한 · 잠시 후 재시도"}
-            try:
-                return {"ok": True, "calendar": fetch(ticker)}
-            except YFRateLimitError:
-                self._retry_after = self._clock() + self._cooldown
-                logging.warning("Yahoo earnings calendar rate limited; pausing calendar requests for %ss", self._cooldown)
-                return {"ok": False, "status": "rate_limited", "label": "실적일 조회 제한 · 잠시 후 재시도"}
-            except Exception as exc:
-                logging.warning("Earnings calendar unavailable for %s (%s)", ticker, type(exc).__name__)
-                return {"ok": False, "status": "lookup_error", "label": "실적발표일 조회 실패"}
+        result = self._reader.read("calendar", ticker, fetch, ttl=0,
+                                   is_success=lambda value: value is not None, allow_stale=False)
+        if result["ok"]:
+            return {"ok": True, "calendar": result["data"]}
+        if result["status"] == "rate_limited":
+            return {"ok": False, "status": "rate_limited", "label": "실적일 조회 제한 · 잠시 후 재시도"}
+        return {"ok": False, "status": "lookup_error", "label": "실적발표일 조회 실패"}
 
 
-earnings_calendar_reader = EarningsCalendarReader()
+earnings_calendar_reader = EarningsCalendarReader(reader=yahoo_metadata_reader)

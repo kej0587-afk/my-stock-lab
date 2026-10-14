@@ -204,7 +204,9 @@ def attach_today_analyst_context(
                     record["애널목표종류"] = key
                     break
         if not math.isfinite(target):
-            record.update({"애널목표상태": "no_target", "애널목표사유": _text(snapshot.get("reason")) or "No positive mean/median consensus target"})
+            status = snapshot.get("status")
+            status = status if status in {"stale", "rate_limited", "lookup_error"} else "no_target"
+            record.update({"애널목표상태": status, "애널목표사유": _text(snapshot.get("reason")) or "No positive mean/median consensus target"})
             continue
         record["애널목표가"] = target
         record["애널목표가표시"] = format_currency(target, ticker)

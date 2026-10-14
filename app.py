@@ -474,6 +474,7 @@ except ImportError:
         return {key: meta.get(key, "") for key in ("longName", "shortName", "displayName")}
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+from stock_lab_core.yahoo_metadata import yahoo_metadata_reader
 from stock_lab_core.research_links import (
     build_research_home_link_groups,
     build_research_links_for_ticker,
@@ -1260,18 +1261,18 @@ def lookup_kr_etf_display_name(symbol):
     return clean_resolved_display_name(matched.iloc[0].get("name", ""), symbol)
 
 
-@cache_result(ttl=86400, is_success=lambda result: bool(result))
+@cache_result(ttl=86400, is_success=lambda result: bool(result) and result.get("_source_status") != "stale")
 def lookup_yfinance_info(ticker):
     """yfinance 정보를 가져오고 한글 깨짐을 즉시 복구"""
     ticker = sanitize_ticker_value(ticker)
     if not ticker: return {}
 
-    try:
-        info = yf.Ticker(ticker, **yahoo_session_kwargs()).info
-    except Exception as exc:
-        logging.warning("YFinance info unavailable for %s (%s); trying chart metadata", ticker, type(exc).__name__)
-        info = {}
-    if not isinstance(info, dict) or not info:
+    snapshot = yahoo_metadata_reader.read(
+        "info", ticker, lambda symbol: yf.Ticker(symbol, **yahoo_session_kwargs()).info,
+        is_success=lambda value: isinstance(value, dict) and bool(value),
+    )
+    info = snapshot["data"]
+    if (not isinstance(info, dict) or not info) and snapshot["status"] != "rate_limited":
         try:
             info = fetch_yahoo_display_metadata(ticker)
         except Exception:
@@ -1290,9 +1291,23 @@ def lookup_yfinance_info(ticker):
             except UnicodeError:
                 pass
         result[key] = val
-    return result if any(result.values()) else {}
+    if not any(result.values()):
+        return {}
+    result["_source_status"] = snapshot["status"]
+    result["_source_fetched_at"] = snapshot["fetched_at"]
+    return result
 
+@cache_result(ttl=86400, is_success=bool)
 def lookup_yfinance_display_name(ticker):
+    # Chart identity is enough for a full display name; sector/analyst panels
+    # still use the shared info snapshot, not these identity-only fields.
+    try:
+        metadata = fetch_yahoo_display_metadata(ticker)
+    except Exception:
+        metadata = {}
+    full_name = clean_resolved_display_name(metadata.get("longName", ""), ticker) if isinstance(metadata, dict) else ""
+    if full_name and full_name.upper() not in {"EQUITY", "ETF", "MUTUALFUND"}:
+        return full_name
     info = lookup_yfinance_info(ticker)
     if not info:
         return ""
@@ -6309,6 +6324,7 @@ def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
         st.caption("자동 재무점수는 투자 추천이 아니라 재무제표 기반 체크리스트입니다. 데이터 공백이나 최근 이벤트는 별도 확인이 필요합니다.")
 
 def clear_financial_api_cache():
+    yahoo_metadata_reader.clear_cache()
     for fn_name in [
         "fetch_us_financials_auto",
         "fetch_us_financials_fmp",
@@ -6322,6 +6338,7 @@ def clear_financial_api_cache():
         "fetch_fmp_valuation_snapshot",
         "fetch_kiwoom_valuation_snapshot",
         "lookup_yfinance_info",
+        "lookup_yfinance_display_name",
     ]:
         fn = globals().get(fn_name)
         if fn is not None and hasattr(fn, "clear"):

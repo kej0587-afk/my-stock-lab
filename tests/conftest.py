@@ -27,3 +27,16 @@ if str(ROOT) not in sys.path:
 def app_module():
     import app  # noqa: WPS433 (intentional late import, see module docstring)
     return app
+
+
+@pytest.fixture(autouse=True)
+def isolate_yahoo_metadata_cache(monkeypatch):
+    from stock_lab_core.yahoo_metadata import yahoo_metadata_reader as reader
+
+    reader.clear_cache()
+    monkeypatch.setattr(reader, "_retry_after", 0.0)
+    monkeypatch.setattr(reader, "_rate_limit_streak", 0)
+    monkeypatch.setattr(reader, "_last_started", float("-inf"))
+    monkeypatch.setattr(reader, "_min_interval", 0)
+    yield
+    reader.clear_cache()

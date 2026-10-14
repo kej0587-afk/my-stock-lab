@@ -23,6 +23,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.yahoo_metadata import is_rate_limit_error, yahoo_metadata_reader
 
 try:
     import requests as _requests
@@ -136,8 +137,9 @@ def _refresh_yahoo_crumb() -> str:
                 urllib.request.Request("https://fc.yahoo.com", headers={"User-Agent": _YF_UA}),
                 timeout=4,
             )
-        except Exception:
-            pass  # 쿠키 없어도 크럼 시도
+        except Exception as exc:
+            if is_rate_limit_error(exc):
+                raise
         # Step 2: crumb 획득
         with _yf_opener.open(
             urllib.request.Request(
@@ -151,8 +153,9 @@ def _refresh_yahoo_crumb() -> str:
             _yf_crumb = crumb
             _yf_crumb_ts = time.time()
             return crumb
-    except Exception:
-        pass
+    except Exception as exc:
+        if is_rate_limit_error(exc):
+            raise
     return _yf_crumb  # 갱신 실패 시 기존 크럼 재사용
 
 
@@ -204,6 +207,8 @@ def _try_one_host(host: str, ticker: str, crumb: str) -> dict | None:
         out = _parse_fd_to_dict(results[0].get("financialData", {}))
         return out if any(v not in (None, "") for v in out.values()) else {}
     except urllib.error.HTTPError as e:
+        if e.code == 429:
+            raise
         if e.code == 401:
             return None  # 크럼 만료 신호
         return {}
@@ -221,6 +226,7 @@ def _fetch_yahoo_analyst_data(ticker: str) -> dict:
       3) 그래도 401 또는 빈 결과 → query2 시도
       4) 모두 실패 → {} 반환 (yfinance 폴백으로 이어짐)
     """
+    global _yf_crumb_ts
     crumb = _get_yahoo_crumb()
 
     # ── 1차 시도: query1 ─────────────────────────────────────────────────────
@@ -231,11 +237,9 @@ def _fetch_yahoo_analyst_data(ticker: str) -> dict:
         with _yf_crumb_lock:
             _yf_crumb_ts = 0.0
         crumb = _get_yahoo_crumb()  # 새 크럼 획득
-
-    # ── 2차 시도: query1 (갱신된 크럼) ─────────────────────────────────────
-    result = _try_one_host("query1", ticker, crumb)
-    if result:
-        return result
+        result = _try_one_host("query1", ticker, crumb)
+        if result:
+            return result
 
     # ── 3차 시도: query2 ────────────────────────────────────────────────────
     result = _try_one_host("query2", ticker, crumb)
@@ -680,12 +684,16 @@ GENERIC_TICKERS = {
     "open", "ai", "u", "net", "shop", "coin", "hood", "sofi", "ram"
 }
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@cache_result(ttl=86400, is_success=bool)
 def get_yfinance_company_names(ticker):
     names = []
     seen_lower: set = set()
     try:
-        info = yf.Ticker(ticker, **yahoo_session_kwargs()).get_info()
+        snapshot = yahoo_metadata_reader.read(
+            "info", ticker, lambda symbol: yf.Ticker(symbol, **yahoo_session_kwargs()).get_info(),
+            is_success=lambda value: isinstance(value, dict) and bool(value), allow_stale=False,
+        )
+        info = snapshot["data"]
         for key in ["longName", "shortName", "displayName"]:
             value = str(info.get(key, "") or "").strip()
             if value and value.lower() not in seen_lower:
@@ -1027,8 +1035,8 @@ def fetch_fnguide_kr_consensus(ticker):
     return result
 
 
-@st.cache_data(ttl=21600, show_spinner=False)
-def get_analyst_snapshot(ticker):
+@cache_result(ttl=21600, is_success=lambda result: result.get("status") == "available")
+def _get_analyst_snapshot_cached(ticker):
     keys = [
         "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
         "numberOfAnalystOpinions", "recommendationMean", "recommendationKey",
@@ -1040,11 +1048,12 @@ def get_analyst_snapshot(ticker):
     yahoo_url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(ticker)}/analysis/"
     field_sources = {}
     attempts = []
+    stale_sources = []
     fetched_at = datetime.now(timezone.utc).isoformat()
     if is_known_etf_ticker(ticker):
         return {"ok": False, "data": data, "reason": "ETF/ETN 목표가 제외", "status": "etf_excluded", "source": "", "source_url": "", "asof": "", "fetched_at": fetched_at, "field_sources": {}, "provider_attempts": []}
 
-    def merge_provider(provider_data, source, source_url, asof=""):
+    def merge_provider(provider_data, source, source_url, asof="", provider_fetched_at=""):
         if not isinstance(provider_data, dict):
             return
         for key in keys:
@@ -1058,38 +1067,44 @@ def get_analyst_snapshot(ticker):
             elif data.get(key) not in (None, "") or value in (None, ""):
                 continue
             data[key] = value
-            field_sources[key] = {"source": source, "source_url": source_url, "asof": asof}
+            field_sources[key] = {"source": source, "source_url": source_url, "asof": asof,
+                                  "fetched_at": provider_fetched_at}
+
+    def read_provider(operation, fetch, source, *, is_success=bool, ttl=86400):
+        snapshot = yahoo_metadata_reader.read(operation, ticker, fetch, ttl=ttl, is_success=is_success)
+        if snapshot["ok"]:
+            merge_provider(snapshot["data"], source, yahoo_url, provider_fetched_at=snapshot["fetched_at"])
+            attempts.append({"source": source, "status": "available" if _has_consensus_target(data) else "no_target"})
+        else:
+            attempts.append({"source": source, "status": snapshot["status"]})
+            if snapshot["stale"]:
+                stale_sources.append((snapshot, source))
 
     # Yahoo's direct API is the primary US provider.
     if not is_kr:
-        try:
-            direct = _fetch_yahoo_analyst_data(ticker)
-            merge_provider(direct, "Yahoo Finance financialData", yahoo_url)
-            attempts.append({"source": "Yahoo Finance financialData", "status": "available" if _has_consensus_target(data) else "no_target"})
-        except Exception as exc:
-            attempts.append({"source": "Yahoo Finance financialData", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+        read_provider("analyst_direct", _fetch_yahoo_analyst_data, "Yahoo Finance financialData",
+                      is_success=_has_consensus_target, ttl=21600)
 
     yf_ticker = None
     if not _has_consensus_target(data):
-        try:
-            yf_ticker = yf.Ticker(ticker, **yahoo_session_kwargs())
-            merge_provider(yf_ticker.get_info() or {}, "yfinance.get_info", yahoo_url)
-            attempts.append({"source": "yfinance.get_info", "status": "available" if _has_consensus_target(data) else "no_target"})
-        except Exception as exc:
-            attempts.append({"source": "yfinance.get_info", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+        def fetch_info(symbol):
+            nonlocal yf_ticker
+            yf_ticker = yf.Ticker(symbol, **yahoo_session_kwargs())
+            return yf_ticker.get_info() or {}
+        read_provider("info", fetch_info, "yfinance.get_info", ttl=21600)
 
     # Official yfinance API uses current/low/high/mean/median keys.
     if not _has_consensus_target(data) and str(data.get("quoteType") or "").upper() not in {"ETF", "ETN", "MUTUALFUND"}:
-        try:
+        def fetch_targets(symbol):
+            nonlocal yf_ticker
             if yf_ticker is None:
-                yf_ticker = yf.Ticker(ticker, **yahoo_session_kwargs())
+                yf_ticker = yf.Ticker(symbol, **yahoo_session_kwargs())
             targets = yf_ticker.get_analyst_price_targets() or {}
             target_keys = {"current": "currentPrice", "low": "targetLowPrice", "high": "targetHighPrice", "mean": "targetMeanPrice", "median": "targetMedianPrice"}
             converted = {dest: targets.get(source) for source, dest in target_keys.items()} if isinstance(targets, dict) else {}
-            merge_provider(converted, "yfinance.get_analyst_price_targets", yahoo_url)
-            attempts.append({"source": "yfinance.get_analyst_price_targets", "status": "available" if _has_consensus_target(data) else "no_target"})
-        except Exception as exc:
-            attempts.append({"source": "yfinance.get_analyst_price_targets", "status": "error", "reason": f"{type(exc).__name__}: {exc}"[:300]})
+            return converted
+        read_provider("analyst_targets", fetch_targets, "yfinance.get_analyst_price_targets",
+                      is_success=_has_consensus_target, ttl=21600)
 
     is_fund = str(data.get("quoteType") or "").upper() in {"ETF", "ETN", "MUTUALFUND"}
     if is_kr and not _has_consensus_target(data) and not is_fund:
@@ -1101,7 +1116,13 @@ def get_analyst_snapshot(ticker):
             merge_provider(supplemental.get("data", {}), supplemental.get("source", "FnGuide"), supplemental.get("source_url", ""), supplemental.get("asof", ""))
         attempts.append({"source": "FnGuide", "status": "available" if supplemental.get("ok") else "no_target", "source_url": supplemental.get("source_url", ""), "reason": supplemental.get("reason", "")})
 
-    has_any = any(data.get(key) not in (None, "") for key in keys)
+    stale = False
+    if not _has_consensus_target(data):
+        for snapshot, source in stale_sources:
+            if isinstance(snapshot["data"], dict) and _has_consensus_target(snapshot["data"]):
+                merge_provider(snapshot["data"], source, yahoo_url, provider_fetched_at=snapshot["fetched_at"])
+                fetched_at, stale = snapshot["fetched_at"], True
+                break
     has_target = _has_consensus_target(data)
     target_key = next((key for key in ("targetMeanPrice", "targetMedianPrice") if _analyst_positive(data.get(key))), "")
     provenance = field_sources.get(target_key, {})
@@ -1112,18 +1133,52 @@ def get_analyst_snapshot(ticker):
                 field_sources.pop(key, None)
         has_target = False
         provenance = {}
+    limited = any(attempt["status"] == "rate_limited" for attempt in attempts)
+    failed = any(attempt["status"] == "error" for attempt in attempts)
+    if is_fund:
+        status, reason = "etf_excluded", "ETF/ETN 목표가 제외"
+    elif stale:
+        status, reason = "stale", "낡은 목표가 · 재조회 필요"
+    elif has_target:
+        status, reason = "available", ""
+    elif limited:
+        status, reason = "rate_limited", "Yahoo 조회 제한 · 잠시 후 재시도"
+    elif failed:
+        status, reason = "lookup_error", "목표가 조회 실패"
+    else:
+        status, reason = "no_target", "평균/중앙 목표가 데이터 없음"
     return {
-        "ok": has_any and not is_fund,
+        "ok": has_target and not is_fund and not stale,
         "data": data,
-        "reason": "ETF/ETN 목표가 제외" if is_fund else ("" if has_target else "평균/중앙 목표가 데이터 없음"),
-        "status": "etf_excluded" if is_fund else ("available" if has_target else "no_target"),
+        "reason": reason,
+        "status": status,
+        "stale": stale,
         "source": provenance.get("source", ""),
         "source_url": provenance.get("source_url", ""),
         "asof": provenance.get("asof", ""),
-        "fetched_at": fetched_at,
+        "fetched_at": provenance.get("fetched_at") or fetched_at,
         "field_sources": field_sources,
         "provider_attempts": attempts,
     }
+
+
+def get_analyst_snapshot(ticker):
+    snapshot = _get_analyst_snapshot_cached(ticker)
+    if snapshot.get("status") == "available":
+        try:
+            fetched_at = datetime.fromisoformat(snapshot["fetched_at"])
+            expired = (datetime.now(timezone.utc) - fetched_at).total_seconds() >= 21600
+        except (KeyError, TypeError, ValueError):
+            expired = True
+        # A cache hit must not give a six-hour-old target another six hours.
+        if expired:
+            _get_analyst_snapshot_cached.clear(ticker)
+            return _get_analyst_snapshot_cached(ticker)
+    return snapshot
+
+
+get_analyst_snapshot.clear = _get_analyst_snapshot_cached.clear
+get_analyst_snapshot.__wrapped__ = _get_analyst_snapshot_cached.__wrapped__
 
 
 def build_research_report_links(ticker, name):

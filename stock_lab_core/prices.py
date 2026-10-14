@@ -16,6 +16,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+from stock_lab_core.result_cache import cache_result
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -623,7 +624,7 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
         return {}
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@cache_result(ttl=300, failure_ttl=15, is_success=lambda frame: frame is not None and not frame.empty)
 def load_price_df(ticker, period="1y"):
     """
     일봉 OHLCV 다운로드 (TTL=5분).
@@ -641,7 +642,7 @@ def load_price_df(ticker, period="1y"):
     return _fetch_yfinance_ohlcv(ticker, period)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@cache_result(ttl=3600, failure_ttl=15, is_success=lambda value: value > 0)
 def load_usdkrw_rate():
     try:
         with _YF_LOCK:
@@ -2003,7 +2004,7 @@ def _fetch_price_uncached(ticker: str) -> float:
         return 0.0
 
 
-@st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
+@cache_result(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, failure_ttl=5, is_success=lambda value: value > 0)
 def _load_latest_price_cached(ticker: str) -> float:
     """Short TTL cache wrapper. Only successful prices (>0) are cached."""
     return _fetch_price_uncached(ticker)
@@ -2012,14 +2013,9 @@ def _load_latest_price_cached(ticker: str) -> float:
 def load_latest_price(ticker: str) -> float:
     """
     단일 종목 현재가 조회 (공개 API, 짧은 TTL).
-    캐시 결과가 0(조회 실패)이면 캐시를 거치지 않고 즉시 재시도.
-    → '실패 결과 캐싱' 문제 방지.
+    실패는 5초만 재시도를 억제하고 정상 가격 캐시와 분리한다.
     """
-    price = _load_latest_price_cached(ticker)
-    if price > 0:
-        return price
-    # 캐시된 0: 이 티커만 우회하고 바로 재시도 (다른 티커 캐시 보존)
-    return _fetch_price_uncached(ticker)
+    return _load_latest_price_cached(ticker)
 
 
 @st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
