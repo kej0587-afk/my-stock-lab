@@ -21035,6 +21035,11 @@ def fetch_kiwoom_market_snapshot(kind, theme_code=""):
     return get_kiwoom_data_client().get_market_snapshot(kind, theme_code)
 
 
+@cache_result(ttl=180)
+def fetch_kiwoom_us_snapshot(kind, ticker="", exchange="ND"):
+    return get_kiwoom_data_client().get_market_snapshot(kind, ticker=ticker, exchange=exchange)
+
+
 def render_kiwoom_market_evidence(key_prefix):
     if IS_PUBLIC_DEMO:
         st.info("체험모드에서는 키움 비밀키를 읽거나 인증하지 않습니다. 실제 앱에서 연결 설정을 확인하세요.")
@@ -21043,6 +21048,7 @@ def render_kiwoom_market_evidence(key_prefix):
     if st.button("연결 설정 다시 확인", key=key_prefix + "_recheck"):
         cache_clear(get_kiwoom_data_client)
         cache_clear(fetch_kiwoom_market_snapshot)
+        cache_clear(fetch_kiwoom_us_snapshot)
         cache_clear(fetch_kiwoom_valuation_snapshot)
         st.rerun()
     info = getattr(client, "connection_info", {})
@@ -21052,6 +21058,7 @@ def render_kiwoom_market_evidence(key_prefix):
     render_market_evidence_panel(
         st, status=client.status,
         fetch_snapshot=fetch_kiwoom_market_snapshot,
+        fetch_us=fetch_kiwoom_us_snapshot,
         get_news=get_ticker_news, render_news=render_news_cards, key_prefix=key_prefix,
     )
 

@@ -18,6 +18,7 @@ from typing import Any
 
 import requests
 from stock_lab_core.kiwoom_market import MARKET_REQUESTS, normalize_market_rows
+from stock_lab_core.kiwoom_us import US_EXCHANGES, US_MARKET_REQUESTS, normalize_us_market_rows, us_symbol
 
 
 _BASE_URLS = {"real": "https://api.kiwoom.com", "mock": "https://mockapi.kiwoom.com"}
@@ -248,7 +249,9 @@ class KiwoomDataClient:
         return {"status": self.status, "environment": environment}
 
     def _post(self, path: str, api_id: str, body: dict, *, token: str = "") -> dict:
-        allowed = {(_TOKEN_PATH, "au10001"), (_INFO_PATH, "ka10001")} | {(v[0], v[1]) for v in MARKET_REQUESTS.values()}
+        allowed = {(_TOKEN_PATH, "au10001"), (_INFO_PATH, "ka10001")} | {
+            (v[0], v[1]) for v in (*MARKET_REQUESTS.values(), *US_MARKET_REQUESTS.values())
+        }
         if (path, api_id) not in allowed:
             raise _KiwoomError("unsupported_endpoint", "Only allowlisted read-only data endpoints are allowed.")
         headers = {"Content-Type": "application/json;charset=UTF-8", "api-id": api_id}
@@ -342,16 +345,22 @@ class KiwoomDataClient:
             self._lock.release()
         return snapshot
 
-    def get_market_snapshot(self, kind: str, theme_code: str = "") -> dict:
+    def get_market_snapshot(self, kind: str, theme_code: str = "", *, ticker: str = "", exchange: str = "ND") -> dict:
         """Bounded first-page observation; never fetch accounts/orders or infer time."""
         result = {"ok": False, "status": self.status, "rows": [], "source": "Kiwoom REST",
                   "fetched_at": "", "asof": "", "has_more": False, "is_mock": self._config.environment == "mock"}
         if self.status != "ready":
             return result
-        if kind not in MARKET_REQUESTS:
+        requests_by_kind = {**MARKET_REQUESTS, **US_MARKET_REQUESTS}
+        if kind not in requests_by_kind:
             return {**result, "status": "unsupported_endpoint"}
-        path, api_id, body = MARKET_REQUESTS[kind]
+        path, api_id, body = requests_by_kind[kind]
         body = dict(body)
+        if kind == "us_quote":
+            ticker = us_symbol(ticker)
+            if not ticker or not isinstance(exchange, str) or exchange not in US_EXCHANGES:
+                return {**result, "status": "invalid_us_symbol"}
+            body.update(stk_cd=ticker, stex_tp=exchange)
         if kind == "theme_members":
             if not isinstance(theme_code, str) or not re.fullmatch(r"[0-9]{1,6}", theme_code):
                 return {**result, "status": "invalid_theme"}
@@ -361,13 +370,16 @@ class KiwoomDataClient:
             return {**result, "status": "busy"}
         try:
             payload = self._post(path, api_id, body, token=self._access_token())
-            result.update(normalize_market_rows(payload, kind))
+            if kind in US_MARKET_REQUESTS:
+                result.update(normalize_us_market_rows(payload, kind, ticker=ticker, exchange=exchange))
+            else:
+                result.update(normalize_market_rows(payload, kind))
             result["fetched_at"] = datetime.fromtimestamp(self._now(), timezone.utc).isoformat()
             result["has_more"] = bool(payload.get("_has_more"))
         except _KiwoomError as exc:
             if exc.status == "auth_error":
                 self._token, self._expires_at = "", 0.0
-            result.update(status=exc.status)
+            result.update(status=exc.status, provider_code=exc.provider_code, http_status=exc.http_status)
         finally:
             self._lock.release()
         return result

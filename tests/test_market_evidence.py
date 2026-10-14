@@ -134,7 +134,7 @@ def test_korean_news_search_does_not_need_yahoo_when_name_known(monkeypatch):
     monkeypatch.setattr(news, "get_yfinance_company_names", lambda _: pytest.fail("unnecessary Yahoo call"))
     queries, names = news.build_stock_news_queries("098120", "마이크로컨텍솔")
     assert names == ["마이크로컨텍솔"]
-    assert "최신 뉴스" in queries[0]
+    assert queries[0] == '"마이크로컨텍솔"'
     assert [item["label"] for item in news.google_news_locales_for_ticker("098120")] == ["KR"]
 
 
@@ -167,3 +167,83 @@ def test_mock_market_reads_remain_visible_with_environment(app_module, monkeypat
     assert result["ok"] and result["rows"] == [{"종목명": "FAKE"}]
     assert result["is_mock"] is True
     app_module.fetch_kiwoom_market_snapshot.clear()
+
+
+@pytest.mark.parametrize("kind,expected_path,expected_body", [
+    ("us_quote", "/api/us/mrkcond", {"stk_cd": "NVDA", "stex_tp": "ND"}),
+    ("us_sectors", "/api/us/sect", {"stex_tp": "0", "inds_cd": "0"}),
+    ("us_turnover", "/api/us/rkinfo", {"stex_tp": "0", "inds_cd": "000", "stk_tp": "1",
+        "trde_qty_tp": "0", "stk_cnd": "0", "pric_cnd": "0", "trde_prica_cnd": "0"}),
+])
+def test_us_contracts_and_token_reuse(kind, expected_path, expected_body):
+    from stock_lab_core.kiwoom_us import US_MARKET_REQUESTS
+
+    client, session = client_with([Response({"return_code": 0}), Response({"return_code": 0})])
+    for _ in range(2):
+        result = client.get_market_snapshot(kind, ticker=" nvda ", exchange="ND")
+        assert result["asof"] == ""  # retrieval time is not a quote timestamp
+        assert result["fetched_at"]
+    assert len(session.calls) == 3
+    url, request = session.calls[-1]
+    assert url.endswith(expected_path)
+    assert request["json"] == expected_body
+    assert request["headers"]["api-id"] == US_MARKET_REQUESTS[kind][1]
+    assert request["allow_redirects"] is False
+
+
+def test_us_quote_identity_units_and_missing_values():
+    from stock_lab_core.kiwoom_us import normalize_us_market_rows
+
+    raw = {"stk_cd": "NVDA", "stex_tp": "ND", "stk_nm": "엔비디아", "stk_enm": "NVIDIA CORP",
+           "cur_prc": "-123.4500", "flu_rt": "-2.12", "acc_trde_qty": "16,594", "curr_unit": "USD"}
+    row = normalize_us_market_rows(raw, "us_quote", ticker="NVDA")["rows"][0]
+    assert row["현재가(USD)"] == 123.45
+    assert row["등락률(%)"] == -2.12
+    assert row["거래량(주)"] == 16594
+    assert row["전일종가(USD)"] is None
+    for changed in ({"stk_cd": "AAPL"}, {"stex_tp": "NY"}, {"curr_unit": "KRW"}, {"cur_prc": "nan"}):
+        assert not normalize_us_market_rows({**raw, **changed}, "us_quote", ticker="NVDA")["ok"]
+    ranked = normalize_us_market_rows({"result_list": [raw, raw, {**raw, "stex_tp": []}]}, "us_turnover")
+    assert len(ranked["rows"]) == 1
+    assert ranked["rows"][0]["거래대금(천USD)"] is None
+
+
+def test_us_sector_returns_preserve_negative_and_missing():
+    from stock_lab_core.kiwoom_us import normalize_us_market_rows
+
+    result = normalize_us_market_rows({"result_list": [{"inds_cd": "10", "inds_nm": "에너지",
+        "perf_1d": "-1.11", "perf_5d": "-1.72", "perf_1m": "", "perf_3m": "0.0"}]}, "us_sectors")
+    row = result["rows"][0]
+    assert row["1D 수익률(%)"] == -1.11
+    assert row["5D 수익률(%)"] == -1.72
+    assert row["1M 수익률(%)"] is None
+    assert row["3M 수익률(%)"] == 0.0
+
+
+@pytest.mark.parametrize("ticker,exchange", [("../NVDA", "ND"), ("005930", "ND"), ("NVDA", "0"), ("", "NY")])
+def test_invalid_us_requests_do_not_authenticate(ticker, exchange):
+    client, session = client_with([])
+    assert client.get_market_snapshot("us_quote", ticker=ticker, exchange=exchange)["status"] == "invalid_us_symbol"
+    assert not session.calls
+
+
+def test_us_mock_and_api_error_are_visible_without_private_details():
+    config = KiwoomConfig(enabled=True, appkey="TEST", secretkey="TEST", environment="mock")
+    session = Session([Response({"return_code": 0, "token": "TEST", "token_type": "bearer", "expires_dt": "20991014090000"}),
+                       Response({"return_code": 42, "return_msg": "PRIVATE_PROVIDER_MESSAGE"})])
+    result = KiwoomDataClient(config, session=session).get_market_snapshot("us_turnover")
+    assert result["is_mock"] and result["status"] == "api_error" and result["provider_code"] == 42
+    assert "PRIVATE_PROVIDER_MESSAGE" not in str(result)
+    assert all(url.startswith("https://mockapi.kiwoom.com/") for url, _ in session.calls)
+
+
+def test_us_wrapper_preserves_arguments(app_module, monkeypatch):
+    class Client:
+        def get_market_snapshot(self, kind, **kwargs):
+            assert kind == "us_quote" and kwargs == {"ticker": "DELL", "exchange": "NY"}
+            return {"ok": True, "rows": [{"코드": "DELL"}]}
+
+    app_module.fetch_kiwoom_us_snapshot.clear()
+    monkeypatch.setattr(app_module, "get_kiwoom_data_client", lambda: Client())
+    assert app_module.fetch_kiwoom_us_snapshot("us_quote", "DELL", "NY")["ok"]
+    app_module.fetch_kiwoom_us_snapshot.clear()

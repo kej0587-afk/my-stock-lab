@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 from stock_lab_core.kiwoom_market import market_evidence_summary
+from stock_lab_core.kiwoom_us import US_EXCHANGES, us_symbol
 from stock_lab_core.news_evidence import render_price_news_evidence
 
 
@@ -21,6 +22,7 @@ STATUS_TEXT = {
     "invalid_response": "키움 응답 형식이 맞지 않아 수치 해석을 보류했습니다.",
     "no_data": "이번 조회에 제공된 자료가 없습니다.",
     "busy": "다른 키움 조회가 진행 중입니다.",
+    "invalid_us_symbol": "미국 티커와 거래소를 확인하세요. 예: NVDA/NASDAQ, DELL/NYSE",
 }
 
 
@@ -28,6 +30,8 @@ def render_snapshot(st, snapshot, *, limit=30):
     if not snapshot.get("ok"):
         status = snapshot.get("status")
         st.info(STATUS_TEXT.get(status, "키움 자료를 확인하지 못했습니다."))
+        if snapshot.get("provider_code") is not None:
+            st.caption(f"{snapshot.get('source', 'Kiwoom REST')} · 응답 코드 {snapshot['provider_code']}")
         return []
     rows = snapshot.get("rows", [])
     if not rows:
@@ -42,7 +46,7 @@ def render_snapshot(st, snapshot, *, limit=30):
     coverage = "후속 페이지 있음" if snapshot.get("has_more") else "후속 페이지 없음"
     st.caption(f"{snapshot.get('source', 'Kiwoom REST')} · 조회 {timestamp} · 시세 기준시각 미제공 · 첫 페이지 {len(rows)}행 중 {min(limit, len(rows))}행 표시, {coverage}")
     frame = pd.DataFrame(rows[:limit])
-    text_columns = {"코드", "종목명", "업종", "테마", "주요종목(키움)", "구분"}
+    text_columns = {"코드", "종목명", "업종", "테마", "주요종목(키움)", "구분", "거래소", "영문명"}
     for column in frame.columns:
         if column not in text_columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
@@ -50,11 +54,77 @@ def render_snapshot(st, snapshot, *, limit=30):
     return rows
 
 
-def render_market_evidence_panel(st, *, status, fetch_snapshot, get_news, render_news, key_prefix):
-    st.markdown("**키움 시장근거 · 국내 KRX**")
+def render_stock_news(st, stocks, *, get_news, render_news, key_prefix):
+    if not stocks:
+        return
+    code = st.selectbox("관련 뉴스 종목", list(stocks),
+                        format_func=lambda value: f"{stocks[value]['종목명']} ({value})", key=key_prefix + "_stock")
+    row = stocks[code]
+    name = row.get("영문명") or row["종목명"]
+    identity = (code, name)
+    result_key = key_prefix + "_news_result"
+    if st.button("종목 관련 뉴스 조회", key=key_prefix + "_news"):
+        clear = getattr(get_news, "clear", None)
+        if callable(clear):
+            clear(code, name, False)
+        with st.spinner("관련 기사 조회 중"):
+            items, logs = get_news(code, name, False)
+        st.session_state[result_key] = (identity, items, logs)
+    saved = st.session_state.get(result_key)
+    if not saved or saved[0] != identity:
+        return
+    _, items, logs = saved
+    st.caption(f"공개 RSS 관련 뉴스 {len(items)}건 · 키움 뉴스 API가 아닌 별도 검색")
+    if not items:
+        failed = any("실패" in line for line in logs)
+        message = "뉴스 수집 중 연결 실패가 발생했습니다." if failed else "조회된 기사 중 기간·종목 관련성 기준을 통과한 뉴스가 없습니다."
+        st.info(message + " 종목 관련 뉴스 조회로 다시 확인할 수 있습니다.")
+    render_price_news_evidence(st, items, row.get("등락률(%)"))
+    if items:
+        render_news(items)
+    if logs:
+        with st.expander("뉴스 조회 내역"):
+            st.text("\n".join(logs))
+
+
+def render_us_market_evidence(st, *, fetch_snapshot, get_news, render_news, key_prefix):
+    st.markdown("**키움 시장근거 · 미국**")
+    stock_rows = []
+    if st.button("미국 시장자료 조회/갱신", key=key_prefix + "_refresh"):
+        fetch_snapshot.clear()
+        st.session_state[key_prefix + "_loaded"] = True
+    if st.session_state.get(key_prefix + "_loaded"):
+        st.markdown("**거래대금 상위 · 주식**")
+        stock_rows = render_snapshot(st, fetch_snapshot("us_turnover"))
+        st.markdown("**업종별 기간 수익률**")
+        render_snapshot(st, fetch_snapshot("us_sectors"), limit=100)
+        st.caption("가격 수익률·거래대금 자료이며 순유입이나 매수 승인이 아닙니다.")
+    ticker = us_symbol(st.text_input("미국 티커", value="NVDA", key=key_prefix + "_ticker"))
+    exchange = st.selectbox("거래소", list(US_EXCHANGES), format_func=US_EXCHANGES.get, key=key_prefix + "_exchange")
+    identity = (ticker, exchange)
+    if st.button("미국 종목 조회/갱신", key=key_prefix + "_quote"):
+        fetch_snapshot.clear("us_quote", ticker, exchange)
+        st.session_state[key_prefix + "_quote_identity"] = identity
+    if st.session_state.get(key_prefix + "_quote_identity") == identity:
+        quoted = render_snapshot(st, fetch_snapshot("us_quote", ticker, exchange))
+        stock_rows = [*quoted, *stock_rows]
+    stocks = {}
+    for row in stock_rows:
+        stocks.setdefault(row["코드"], row)
+    render_stock_news(st, stocks, get_news=get_news, render_news=render_news, key_prefix=key_prefix)
+
+
+def render_market_evidence_panel(st, *, status, fetch_snapshot, get_news, render_news, key_prefix, fetch_us=None):
     if status != "ready":
         st.info(STATUS_TEXT.get(status, "키움 연결 설정을 확인하세요."))
         return
+    if fetch_us is not None:
+        region = st.radio("조회 시장", ["국내", "미국"], horizontal=True, key=key_prefix + "_region")
+        if region == "미국":
+            render_us_market_evidence(st, fetch_snapshot=fetch_us, get_news=get_news,
+                                      render_news=render_news, key_prefix=key_prefix + "_us")
+            return
+    st.markdown("**키움 시장근거 · 국내 KRX**")
     state_key = key_prefix + "_loaded"
     if st.button("키움 시장자료 조회/갱신", key=key_prefix + "_refresh"):
         fetch_snapshot.clear()
@@ -87,14 +157,4 @@ def render_market_evidence_panel(st, *, status, fetch_snapshot, get_news, render
     if st.session_state.get(key_prefix + "_loaded_market") == market:
         render_snapshot(st, fetch_snapshot("sector_" + market.lower()))
     stocks = {row["코드"]: row for row in stock_rows}
-    if stocks:
-        code = st.selectbox("관련 뉴스 종목", list(stocks),
-                            format_func=lambda value: f"{stocks[value]['종목명']} ({value})", key=key_prefix + "_stock")
-        if st.button("종목 관련 뉴스 조회", key=key_prefix + "_news"):
-            st.session_state[key_prefix + "_news_code"] = code
-        if st.session_state.get(key_prefix + "_news_code") == code:
-            row = stocks[code]
-            items, _ = get_news(code, row["종목명"], False)
-            render_price_news_evidence(st, items, row.get("등락률(%)"))
-            if items:
-                render_news(items)
+    render_stock_news(st, stocks, get_news=get_news, render_news=render_news, key_prefix=key_prefix)

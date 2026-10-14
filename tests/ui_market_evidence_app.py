@@ -9,6 +9,7 @@ import streamlit as st
 
 from stock_lab_core.browser_safety import install_translation_guard
 from stock_lab_core.kiwoom_market import normalize_market_rows
+from stock_lab_core.kiwoom_us import normalize_us_market_rows
 from stock_lab_core.market_evidence_panel import render_market_evidence_panel
 
 
@@ -16,6 +17,7 @@ st.set_page_config(page_title="Market evidence test", layout="wide")
 install_translation_guard(st)
 st.caption("OFFLINE TEST DATA")
 fail = st.checkbox("조회 실패 테스트")
+news_ok = st.checkbox("뉴스 성공 테스트")
 
 
 def fetch(kind, theme_code=""):
@@ -37,6 +39,32 @@ def fetch(kind, theme_code=""):
             "source": "OFFLINE FIXTURE", "has_more": True}
 
 
-fetch.clear = lambda: None
-render_market_evidence_panel(st, status="ready", fetch_snapshot=fetch, get_news=lambda *args: ([], []),
-                             render_news=lambda items: None, key_prefix="test")
+def fetch_us(kind, ticker="", exchange="ND"):
+    st.session_state["us_requests"] = st.session_state.get("us_requests", 0) + 1
+    quote = {"stk_cd": ticker or "NVDA", "stex_tp": exchange, "stk_nm": "미국 테스트종목",
+             "stk_enm": "TEST CORP", "cur_prc": "-123.45", "flu_rt": "-1.2", "acc_trde_qty": "1200"}
+    payload = {"result_list": [quote]}
+    if kind == "us_quote":
+        payload = quote
+    elif kind == "us_sectors":
+        payload = {"result_list": [{"inds_cd": "10", "inds_nm": "에너지", "perf_1d": "-2.1"}]}
+    return {**normalize_us_market_rows(payload, kind, ticker=ticker, exchange=exchange),
+            "fetched_at": "2026-10-14T02:00:00+00:00", "source": "OFFLINE FIXTURE", "is_mock": True}
+
+
+def get_news(*args):
+    st.session_state["news_requests"] = st.session_state.get("news_requests", 0) + 1
+    if news_ok:
+        return [{"title": "테스트 종목 실적 발표", "category": "종목 직접"}], ["정상 RSS 응답"]
+    return [], ["뉴스 수집 실패: 테스트 연결 오류"]
+
+
+def clear_news(*args):
+    st.session_state["news_clear_args"] = args
+
+
+get_news.clear = clear_news
+fetch.clear = lambda *args: None
+fetch_us.clear = lambda *args: None
+render_market_evidence_panel(st, status="ready", fetch_snapshot=fetch, fetch_us=fetch_us, get_news=get_news,
+                             render_news=lambda items: st.write(items[0]["title"]), key_prefix="test")

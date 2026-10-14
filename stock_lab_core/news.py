@@ -22,6 +22,7 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
+from stock_lab_core.result_cache import cache_result
 
 try:
     import requests as _requests
@@ -1217,8 +1218,9 @@ def get_news_company_names(ticker, name):
         names.append(display_name)
         names_lower.add(display_name.lower())
 
-    # A known Korean display name is a better search key than a Yahoo lookup.
-    provider_names = [] if is_kr_listed(ticker) and names else get_yfinance_company_names(ticker)
+    # Broker-supplied English names also avoid an unnecessary Yahoo dependency.
+    known_name = names and (is_kr_listed(ticker) or re.search(r"[A-Za-z]{3}", display_name))
+    provider_names = [] if known_name else get_yfinance_company_names(ticker)
     for n in provider_names:
         if n and n.lower() not in names_lower:
             names_lower.add(n.lower())
@@ -1228,6 +1230,7 @@ def get_news_company_names(ticker, name):
     cleaned_lower: set = set()
     for n in names:
         n = n.replace("Inc.", "").replace("Corporation", "").replace("Corp.", "").replace("Co., Ltd.", "").strip()
+        n = re.sub(r"(?i)(?:[\s,]+(?:incorporated|corporation|corp\.?|inc\.?|ltd\.?|plc))+$", "", n).strip()
         if len(n) >= 2 and n.lower() not in cleaned_lower:
             cleaned_lower.add(n.lower())
             cleaned.append(n)
@@ -1243,6 +1246,7 @@ def build_stock_news_queries(ticker, name):
 
     if is_kr:
         queries = [
+            f'"{main}"',
             f'"{main}" 최신 뉴스',
             f'"{main}" 주가 급등 급락 원인',
             f'"{main}" 주가 하락 이유',
@@ -1259,6 +1263,8 @@ def build_stock_news_queries(ticker, name):
         ]
     else:
         queries = [
+            f'"{main}"',
+            f'"{symbol}" stock',
             f'"{main}" latest news {symbol}',
             f'"{main}" {symbol} stock moved',
             f'"{main}" {symbol} shares today',
@@ -1669,7 +1675,7 @@ def dedupe_news_by_publisher_latest(items):
             best_by_publisher[publisher] = item
     return list(best_by_publisher.values())
 
-@st.cache_data(ttl=600, show_spinner=False)
+@cache_result(ttl=600, failure_ttl=60, is_success=lambda result: bool(result[0]))
 def get_ticker_news(ticker, name, debug=False):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -1679,6 +1685,10 @@ def get_ticker_news(ticker, name, debug=False):
     google_locales = google_news_locales_for_ticker(ticker)
 
     query_plan, company_names, theme_terms = build_news_query_plan(ticker, name)
+    # Give each category a turn before spending the request budget on aliases.
+    groups = [[p for p in query_plan if p["category"] == category][:3]
+              for category in (NEWS_CATEGORY_DIRECT, NEWS_CATEGORY_SECTOR, NEWS_CATEGORY_MARKET)]
+    query_plan = [group[i] for i in range(3) for group in groups if i < len(group)]
     logs = [
         f"회사명 후보: {company_names if company_names else '없음'}",
         f"테마 키워드: {theme_terms if theme_terms else '없음'}",
@@ -1693,6 +1703,13 @@ def get_ticker_news(ticker, name, debug=False):
     seen_links = set()
     seen_titles = set()
     accepted_by_category = {key: 0 for key in NEWS_CATEGORY_LIMITS}
+    started = time.monotonic()
+    request_count = 0
+    successful_reads = 0
+    raw_count = 0
+
+    def budget_exhausted():
+        return request_count >= 16 or time.monotonic() - started >= 20
 
     def add_item(title, link, publisher, pub_dt, category, strict=True):
         if not link or link in seen_links:
@@ -1750,9 +1767,14 @@ def get_ticker_news(ticker, name, debug=False):
         return False
 
     def read_rss(url, publisher_fallback, category, strict=True):
+        nonlocal request_count, successful_reads, raw_count
+        request_count += 1
         req = urllib.request.Request(url, headers=headers)
-        root = ET.fromstring(urllib.request.urlopen(req, timeout=4).read())
+        with contextlib.closing(urllib.request.urlopen(req, timeout=4)) as response:
+            root = ET.fromstring(response.read())
         items = root.findall("./channel/item")
+        successful_reads += 1
+        raw_count += len(items)
 
         accepted = 0
         for item in items:
@@ -1772,6 +1794,8 @@ def get_ticker_news(ticker, name, debug=False):
     for search_days in [NEWS_RECENT_DAYS, NEWS_FALLBACK_DAYS]:
         search_label = "최근" if search_days == NEWS_RECENT_DAYS else "보충"
         for plan in query_plan:
+            if budget_exhausted():
+                break
             q = plan["query"]
             category = plan["category"]
             strict = plan.get("strict", True)
@@ -1788,6 +1812,8 @@ def get_ticker_news(ticker, name, debug=False):
             normal_encoded = urllib.parse.quote(q)
 
             for google_locale in google_locales:
+                if budget_exhausted():
+                    break
                 if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
                     break
                 try:
@@ -1805,7 +1831,7 @@ def get_ticker_news(ticker, name, debug=False):
             if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
                 continue
 
-            if not is_kr_ticker or search_days != NEWS_RECENT_DAYS:
+            if not is_kr_ticker or search_days != NEWS_RECENT_DAYS or budget_exhausted():
                 continue
 
             try:
@@ -1818,9 +1844,12 @@ def get_ticker_news(ticker, name, debug=False):
                 logs.append(f"네이버 뉴스 실패: {q} / {e}")
 
     selected = recent_items + fallback_items
+    logs.append(f"조회 결과: 요청 {request_count}회 · 응답 {successful_reads}회 · 원문 {raw_count}건 · 관련성/기간 통과 {len(selected)}건")
+    if budget_exhausted():
+        logs.append("뉴스 조회 시간/횟수 제한에 도달해 일부 검색을 생략했습니다.")
 
     if not selected:
-        logs.append("최근 주식 관련 뉴스 없음")
+        logs.append("뉴스 수집 실패: 정상 RSS 응답 없음" if not successful_reads else "기간·종목 관련성 필터 통과 기사 없음")
         return [], logs
 
     sort_key = lambda x: (

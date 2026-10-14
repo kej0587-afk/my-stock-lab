@@ -34,3 +34,39 @@ def test_panel_empty_loaded_failure_and_changed_selection():
     assert not app.exception
     assert any("응답 시간이 초과" in item.value for item in app.info)
     assert len(app.dataframe) == 1  # themes still available after turnover failure
+
+
+def test_us_panel_is_demand_loaded_and_does_not_reuse_other_symbol():
+    app = AppTest.from_file(str(Path(__file__).with_name("ui_market_evidence_app.py"))).run()
+    app.radio(key="test_region").set_value("미국").run()
+    assert not app.exception and len(app.dataframe) == 0
+    assert "us_requests" not in app.session_state
+    app.button(key="test_us_quote").click().run()
+    assert not app.exception and len(app.dataframe) == 1
+    assert app.dataframe[0].value.iloc[0]["코드"] == "NVDA"
+    assert app.dataframe[0].value.iloc[0]["거래소"] == "NASDAQ"
+    assert app.dataframe[0].value.iloc[0]["현재가(USD)"] == 123.45
+    app.text_input(key="test_us_ticker").set_value("DELL").run()
+    assert len(app.dataframe) == 0
+    app.selectbox(key="test_us_exchange").select("NY").run()
+    app.button(key="test_us_quote").click().run()
+    assert app.dataframe[0].value.iloc[0]["코드"] == "DELL"
+    assert app.dataframe[0].value.iloc[0]["거래소"] == "NYSE"
+    app.button(key="test_us_refresh").click().run()
+    assert not app.exception and len(app.dataframe) == 3
+
+
+def test_news_failure_is_visible_and_button_actually_retries():
+    app = AppTest.from_file(str(Path(__file__).with_name("ui_market_evidence_app.py"))).run()
+    app.button(key="test_refresh").click().run()
+    app.button(key="test_news").click().run()
+    assert not app.exception
+    assert any("뉴스 수집 중 연결 실패" in item.value for item in app.info)
+    assert app.session_state["news_requests"] == 1
+    assert app.session_state["news_clear_args"] == ("005930", "삼성전자", False)
+    app.checkbox[1].check().run()
+    assert app.session_state["news_requests"] == 1  # reruns don't re-fetch
+    app.button(key="test_news").click().run()
+    assert not app.exception and app.session_state["news_requests"] == 2
+    assert any("관련 뉴스 1건" in item.value for item in app.caption)
+    assert any("테스트 종목 실적 발표" in item.value for item in app.markdown)
