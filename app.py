@@ -32,6 +32,8 @@ from supabase import create_client
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.earnings_calendar import earnings_calendar_reader
+from stock_lab_core.market_basis import daily_close, align_market_closes
 from stock_lab_core.browser_safety import install_translation_guard
 from stock_lab_core.kiwoom_data import kiwoom_client_from_secrets
 from stock_lab_core.market_evidence_panel import render_market_evidence_panel
@@ -600,11 +602,16 @@ def detect_52w_breakout(df: pd.DataFrame) -> dict:
     
     return {"breakout": is_breakout, "near_high": near_high, "label": label}
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@cache_result(ttl=86400, failure_ttl=60)
 def fetch_earnings_date(ticker: str) -> dict:
     """다음 실적 발표일과 이벤트 리스크를 반환합니다."""
     try:
-        cal = yf.Ticker(ticker, **yahoo_session_kwargs()).calendar
+        response = earnings_calendar_reader.read(
+            ticker, lambda symbol: yf.Ticker(symbol, **yahoo_session_kwargs()).calendar,
+        )
+        if not response["ok"]:
+            return response
+        cal = response["calendar"]
         if cal is None or (isinstance(cal, pd.DataFrame) and cal.empty):
             return {"ok": False, "label": "실적발표일 미확인"}
         
@@ -20682,7 +20689,9 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
 
         with col_ins2:
             earnings_data = fetch_earnings_date(ticker)
-            if earnings_data.get("high_risk"):
+            if not earnings_data.get("ok"):
+                st.info(f"**이벤트 리스크:**\n{earnings_data['label']} · 위험 없음으로 판단하지 않습니다.")
+            elif earnings_data.get("high_risk"):
                 st.warning(f"**이벤트 리스크:**\n{earnings_data['label']}")
             else:
                 st.success(f"**이벤트 리스크:**\n{earnings_data['label']}")
@@ -21021,10 +21030,9 @@ def get_kiwoom_data_client():
 
 @cache_result(ttl=180)
 def fetch_kiwoom_market_snapshot(kind, theme_code=""):
-    result = get_kiwoom_data_client().get_market_snapshot(kind, theme_code)
-    if result.get("is_mock"):
-        return {**result, "ok": False, "status": "mock_data", "rows": []}
-    return result
+    # These allowlisted endpoints are market reads, not simulated fills/balances.
+    # Preserve environment and actual API errors for the observation-only panel.
+    return get_kiwoom_data_client().get_market_snapshot(kind, theme_code)
 
 
 def render_kiwoom_market_evidence(key_prefix):
@@ -28432,7 +28440,7 @@ def _format_today_signed_pct(value, digits=1):
     return f"{float(value) * 100:+.{digits}f}%"
 
 
-def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "") -> dict:
+def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "", *, close=None) -> dict:
     row = {
         "지역": region or "-",
         "시장": label,
@@ -28445,14 +28453,16 @@ def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "") -
         "MA50": "-",
         "연속하락": 0,
         "데이터": "부족",
+        "기준일": "",
+        "1일 기준": "기준일 미확인",
     }
     try:
-        df = load_price_df(ticker, "3mo")
-        if df is None or df.empty or "Close" not in df.columns:
-            return row
-        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if close is None:
+            close = daily_close(load_price_df(ticker, "3mo"))
         if len(close) < 25:
             return row
+        row["기준일"] = close.index[-1].strftime("%Y-%m-%d")
+        row["1일 기준"] = f"{close.index[-2]:%Y-%m-%d} → {close.index[-1]:%Y-%m-%d} 일봉"
         last = float(close.iloc[-1])
         row["1일"] = (last / float(close.iloc[-2]) - 1) if len(close) >= 2 and close.iloc[-2] else np.nan
         row["5일"] = (last / float(close.iloc[-6]) - 1) if len(close) >= 6 and close.iloc[-6] else np.nan
@@ -28475,6 +28485,26 @@ def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "") -
     except Exception:
         return row
     return row
+
+
+def _build_today_benchmark_guard_rows():
+    closes = {}
+    regions = {}
+    for ticker, _, region in TODAY_MARKET_GUARD_BENCHMARKS:
+        regions[ticker] = region
+        try:
+            closes[ticker] = daily_close(load_price_df(ticker, "3mo"))
+        except Exception as exc:
+            logging.warning("Market guard history unavailable for %s (%s)", ticker, type(exc).__name__)
+            closes[ticker] = pd.Series(dtype=float)
+    aligned, notes = align_market_closes(closes, regions)
+    rows = []
+    for ticker, label, region in TODAY_MARKET_GUARD_BENCHMARKS:
+        row = _calc_today_benchmark_guard_row(ticker, label, region, close=aligned[ticker])
+        row["최근수신봉"] = closes[ticker].index[-1].strftime("%Y-%m-%d") if not closes[ticker].empty else ""
+        row["기준정렬"] = notes.get(ticker, "이력 부족")
+        rows.append(row)
+    return rows
 
 
 def _today_guard_level_from_score(score: int, circuit_day: int = 0, panic_day: int = 0, tactical_rebound: bool = False) -> tuple[str, str]:
@@ -28707,10 +28737,7 @@ def build_today_macro_guard_table(macro_data=None) -> tuple[pd.DataFrame, int, i
 
 
 def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
-    benchmark_rows = [
-        _calc_today_benchmark_guard_row(ticker, label, region)
-        for ticker, label, region in TODAY_MARKET_GUARD_BENCHMARKS
-    ]
+    benchmark_rows = _build_today_benchmark_guard_rows()
     bench_df = pd.DataFrame(benchmark_rows)
     valid = bench_df[bench_df["데이터"].eq("정상")].copy() if not bench_df.empty else pd.DataFrame()
 
@@ -29074,15 +29101,7 @@ def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 �
             st.info("시장 지표 데이터가 부족합니다.")
         else:
             show = bench_df.copy()
-            if "지역" in show.columns and "1일" in show.columns:
-                us_status_label = get_market_status_label("SPY")
-                kr_status_label = get_market_status_label("069500.KS")
-                show["1일 기준"] = show["지역"].astype(str).map(
-                    lambda region: "전 거래일" if (
-                        (region.upper() == "US" and "휴장" in us_status_label)
-                        or (region.upper() == "KR" and "휴장" in kr_status_label)
-                    ) else "실시간/최근"
-                )
+            st.caption("같은 시장의 공통 일봉 날짜 기준 · 당일 봉은 장중 변동 가능 · 최근수신봉과 기준일이 다르면 과거 공통일 비교입니다.")
             for col in ["1일", "5일", "20일", "20일고점대비"]:
                 if col in show.columns:
                     show[col] = show[col].apply(_format_today_signed_pct)
@@ -30368,15 +30387,7 @@ def render_today_unified_briefing_panel(
     with market_cols[0]:
         if isinstance(bench_df, pd.DataFrame) and not bench_df.empty:
             show = bench_df.copy()
-            if "지역" in show.columns and "1일" in show.columns:
-                us_status_label = get_market_status_label("SPY")
-                kr_status_label = get_market_status_label("069500.KS")
-                show["1일 기준"] = show["지역"].astype(str).map(
-                    lambda region: "전 거래일" if (
-                        (region.upper() == "US" and "휴장" in us_status_label)
-                        or (region.upper() == "KR" and "휴장" in kr_status_label)
-                    ) else "실시간/최근"
-                )
+            st.caption("같은 시장의 공통 일봉 날짜 기준 · 당일 봉은 장중 변동 가능 · 최근수신봉과 기준일이 다르면 과거 공통일 비교입니다.")
             for col in ["1일", "5일", "20일", "20일고점대비"]:
                 if col in show.columns:
                     show[col] = show[col].apply(_format_today_signed_pct)
@@ -33516,7 +33527,21 @@ def build_today_review_flags_df(summary_df, holdings_df=None, flow_shortlist_df=
 
         if isinstance(summary_df, pd.DataFrame) and not summary_df.empty and "티커" in summary_df.columns:
             today_keys = set(summary_df["티커"].astype(str).map(_today_review_ticker_key))
+            today_by_key = summary_df.assign(
+                _검토키=summary_df["티커"].astype(str).map(_today_review_ticker_key)
+            ).drop_duplicates("_검토키").set_index("_검토키")
             for _, row in hdf[hdf["_검토키"].astype(str).str.len() > 0].iterrows():
+                if row["_검토키"] in today_keys and dup_counts.get(row["_검토키"], 0) == 1:
+                    calculated = today_by_key.loc[row["_검토키"]]
+                    old_target = clean_float(calculated.get("목표비중"), np.nan)
+                    new_target = clean_float(row.get("목표비중"), np.nan)
+                    if finite_num(old_target) and finite_num(new_target) and abs(old_target - new_target) > 0.005:
+                        _append_today_review_flag(
+                            rows, "재계산", row.get("티커", ""), row.get("자산명", ""),
+                            "계산 당시와 현재 목표비중 다름",
+                            f"오늘점검 {old_target:g}% / 현재 자산 {new_target:g}%",
+                            "입력 변경 후 이전 결과일 수 있습니다. 오늘점검을 다시 계산하세요. 기존 신호의 비중만 덮어쓰지 않습니다.",
+                        )
                 if row["_검토키"] not in today_keys:
                     _append_today_review_flag(
                         rows,
@@ -33596,6 +33621,14 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
             "내용": "98_current_signal_audit.csv는 현재 오늘점검의 전체 신호 목록입니다. 99는 문제 행만 모으므로 정상 신호는 98에서 확인합니다.",
         },
         {
+            "항목": "계산 당시와 현재 자산",
+            "내용": "01/98은 오늘점검 계산 당시, 09는 현재 자산현황입니다. 입력 수정 후 차이는 99에서 목표비중 변경으로 표시합니다. 값을 억지로 일치시키지 말고 재계산하세요.",
+        },
+        {
+            "항목": "시장 기준일",
+            "내용": "11_market_benchmarks.csv는 시장별 공통 일봉 기준입니다. 최근수신봉과 기준일이 다르면 과거 공통일로 비교하며 장중 동시시세를 뜻하지 않습니다.",
+        },
+        {
             "항목": "판정",
             "내용": "돈흐름은 테마/수급 후보, 오늘점검은 보유비중·가격위치·리스크까지 반영한 실행 우선순위입니다. 서로 다르면 flags 표에서 원인을 먼저 봅니다.",
         },
@@ -33633,6 +33666,7 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
         "08_money_flow_shortlist.csv": flow_shortlist_df if isinstance(flow_shortlist_df, pd.DataFrame) else pd.DataFrame(),
         "09_portfolio_holdings.csv": holdings_df if isinstance(holdings_df, pd.DataFrame) else pd.DataFrame(),
         "10_market_guard.csv": guard_df,
+        "11_market_benchmarks.csv": (market_guard or {}).get("bench_df", pd.DataFrame()),
         "98_current_signal_audit.csv": signal_audit_df,
         "99_review_flags.csv": flags_df,
     }
@@ -33755,7 +33789,7 @@ def render_today_queue_tab(mode):
         and st.session_state.get(sig_key) not in [None, queue_sig]
     )
     if signature_changed and not run_summary:
-        st.warning("관심목록, 모드, ETF/재무점수 또는 판정 로직이 바뀐 뒤의 이전 계산 결과입니다. 화면은 유지하되, 최신 상태는 새로고침 버튼을 눌러 다시 계산하세요.")
+        st.warning("보유수량·목표비중·관심목록 또는 판정 설정이 변경되어 이전 계산 결과를 보고 있습니다. 현재 자산현황과 계산 당시 비중이 다를 수 있습니다. 오늘 종목 점검을 다시 계산하세요.")
 
     # ── 결과 만료 알림 (2시간 경과, signature 변경과 별도) ───────────────
     if not run_summary and last_run and not signature_changed:

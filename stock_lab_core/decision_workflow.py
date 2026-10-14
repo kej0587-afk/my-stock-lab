@@ -139,6 +139,17 @@ def attach_market_execution_context(df: pd.DataFrame, market_guard: dict | None)
         leveraged = is_leveraged_or_inverse_product(str(row.get("종목명", "")), ticker, str(row.get("asset_class", "")))
         timing = str(row.get("🔥기술적 타점", ""))
         leveraged = leveraged or "레버리지" in timing or "인버스" in timing
-        states.append("레버리지 시장방어" if leveraged and (local in defensive or relevant_whole) else "정상")
+        # A portfolio-wide stop applies to ordinary stocks too. Regional
+        # emergencies remain local unless the guard explicitly stops all buys.
+        stop_all = "신규매수 중단" in str(guard.get("action", ""))
+        stop_local = local in {"비상", "위험"} or whole == (
+            "국장 비상" if region == "kr_stats" else "미장 비상"
+        ) or whole in {"전시장 비상", "비상", "위험"}
+        if stop_all or stop_local:
+            states.append("시장방어: 신규매수 중단")
+        elif leveraged and (local in defensive or relevant_whole):
+            states.append("레버리지 시장방어")
+        else:
+            states.append("정상")
     out["시장실행상태"] = states
     return out

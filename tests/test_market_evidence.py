@@ -156,7 +156,7 @@ def test_ticker_display_name_still_resolves_company(monkeypatch):
     assert news.get_news_company_names("005930.KS", "005930.KS") == ["Samsung Electronics"]
 
 
-def test_mock_market_data_never_used_in_app(app_module, monkeypatch):
+def test_mock_market_reads_remain_visible_with_environment(app_module, monkeypatch):
     class Client:
         def get_market_snapshot(self, *args):
             return {"ok": True, "is_mock": True, "rows": [{"종목명": "FAKE"}]}
@@ -164,5 +164,6 @@ def test_mock_market_data_never_used_in_app(app_module, monkeypatch):
     app_module.fetch_kiwoom_market_snapshot.clear()
     monkeypatch.setattr(app_module, "get_kiwoom_data_client", lambda: Client())
     result = app_module.fetch_kiwoom_market_snapshot("turnover")
-    assert not result["ok"] and result["rows"] == []
+    assert result["ok"] and result["rows"] == [{"종목명": "FAKE"}]
+    assert result["is_mock"] is True
     app_module.fetch_kiwoom_market_snapshot.clear()

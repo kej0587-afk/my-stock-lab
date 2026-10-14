@@ -21,19 +21,20 @@ STATUS_TEXT = {
     "invalid_response": "키움 응답 형식이 맞지 않아 수치 해석을 보류했습니다.",
     "no_data": "이번 조회에 제공된 자료가 없습니다.",
     "busy": "다른 키움 조회가 진행 중입니다.",
-    "mock_data": "모의투자 자료는 실전 시장 근거에 포함하지 않습니다.",
 }
 
 
 def render_snapshot(st, snapshot, *, limit=30):
-    if not snapshot.get("ok") or snapshot.get("is_mock"):
-        status = "mock_data" if snapshot.get("is_mock") else snapshot.get("status")
+    if not snapshot.get("ok"):
+        status = snapshot.get("status")
         st.info(STATUS_TEXT.get(status, "키움 자료를 확인하지 못했습니다."))
         return []
     rows = snapshot.get("rows", [])
     if not rows:
         st.info(STATUS_TEXT["no_data"])
         return []
+    if snapshot.get("is_mock"):
+        st.caption("키움 모의환경 시세 조회 · 주문/계좌 자료 아님 · 실행판정 자동 반영 없음")
     try:
         timestamp = datetime.fromisoformat(snapshot["fetched_at"]).astimezone(timezone(timedelta(hours=9))).strftime("%m/%d %H:%M:%S KST")
     except (KeyError, ValueError, TypeError):

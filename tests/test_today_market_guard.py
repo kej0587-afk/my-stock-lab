@@ -15,7 +15,10 @@ def guard_app(app_module, monkeypatch):
             "20일고점대비": -0.01, "MA20": "상회", "MA50": "상회", "연속하락": 0,
         }
 
-    monkeypatch.setattr(app, "_calc_today_benchmark_guard_row", benchmark_row)
+    monkeypatch.setattr(app, "_build_today_benchmark_guard_rows", lambda: [
+        benchmark_row(ticker, label, region)
+        for ticker, label, region in app.TODAY_MARKET_GUARD_BENCHMARKS
+    ])
     monkeypatch.setattr(app, "build_macro_event_risk_table", lambda: (pd.DataFrame(), 0.0, 0))
     monkeypatch.setattr(app, "final_macro_risk", 1.5)
     return app
