@@ -450,7 +450,8 @@ MONEY_FLOW_CORE_AVAILABLE = True
 MONEY_FLOW_IMPORT_ERROR = ""
 IMAGE_THEME_FLOW_AVAILABLE = True
 NAVER_THEME_COVERAGE_AVAILABLE = True
-from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
+from stock_lab_core.market_memo import MARKET_MEMO_VERSION, analyze_market_memo, build_auto_market_memo, current_memo_text
+from stock_lab_core.macro_event_report import REPORT_ONLY_EVENTS, event_observations, merge_event_observations, release_market_meaning
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -15334,6 +15335,12 @@ def macro_event_in_window(event, today):
 def canonical_macro_event_name(name):
     text = str(name or "").strip()
     low = text.lower()
+    if "pce" in low or "personal consumption expenditures" in low:
+        return "미국 PCE 발표"
+    if "jolts" in low or "job openings" in low:
+        return "미국 JOLTS 발표"
+    if (re.search(r"\bgdp\b", low) or "gross domestic product" in low) and "price" not in low:
+        return "미국 GDP 발표"
     if "consumer price index" in low or "core cpi" in low or re.search(r"\bcpi\b", low):
         return "미국 CPI 발표"
     if "producer price index" in low or re.search(r"\bppi\b", low):
@@ -15363,6 +15370,9 @@ def macro_event_market_for_country(country):
 
 
 def macro_event_default_weight(event_name):
+    # Newly covered releases enrich reports without altering market gate scores.
+    if event_name in REPORT_ONLY_EVENTS:
+        return 0.0
     low = str(event_name or "").lower()
     if "fomc" in low:
         return 1.2
@@ -15478,6 +15488,13 @@ def macro_event_market_interpretation(event, state=""):
     actual = _macro_event_numeric_value(_macro_event_value(event, "actual", "실제", "result", "결과"))
     forecast = _macro_event_numeric_value(_macro_event_value(event, "forecast", "예상", "consensus", "컨센서스"))
     state = str(state or "").strip()
+
+    if name in REPORT_ONLY_EVENTS and finite_num(actual):
+        return release_market_meaning(
+            str(event.get("raw_title") or name),
+            _macro_event_value(event, "actual", "실제", "result", "결과"),
+            _macro_event_value(event, "forecast", "예상", "consensus", "컨센서스"),
+        )
 
     if finite_num(actual) and finite_num(forecast):
         diff = float(actual) - float(forecast)
@@ -15763,6 +15780,7 @@ def merge_macro_events(left, right):
     primary_source = str(primary.get("source", "") or "").strip()
     secondary_source = str(secondary.get("source", "") or "").strip()
     merged["source"] = combine_macro_event_sources(primary_source, secondary_source)
+    merged["release_observations"] = merge_event_observations(primary, secondary)
     return merged
 
 
@@ -15862,6 +15880,8 @@ def build_macro_event_risk_table(today=None):
             "주식시장 해석": macro_event_market_interpretation(event, state),
             "확인포인트": macro_event_context_note(event),
             "출처": event.get("source", "수동"),
+            "발표일": start.isoformat(),
+            "발표항목": event_observations(event),
         })
 
     return pd.DataFrame(rows), round(min(total_risk, 3.0), 2), active_count
@@ -28718,7 +28738,7 @@ def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 �
         if event_df is not None and not event_df.empty:
             st.markdown("##### 이벤트 캘린더")
             st.caption("수동 등록 일정에 Fed 공식 일정, 국내 만기 규칙, ForexFactory 주간 고영향 일정을 6시간 캐시로 자동 보강합니다.")
-            st.dataframe(event_df, width='stretch', hide_index=True)
+            st.dataframe(event_df.drop(columns=["발표항목"], errors="ignore"), width='stretch', hide_index=True)
 
 
 def build_today_market_memo_universe(summary_df=None):
@@ -29026,12 +29046,14 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
-    memo_engine_version = "2026-10-13-consistent-market-v2"
+    memo_engine_version = MARKET_MEMO_VERSION
     if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
         old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
+        updated_text = current_memo_text(old_memo_text, st.session_state.get("_today_market_memo_engine_version"))
         st.session_state["_today_market_memo_engine_version"] = memo_engine_version
-        if "Stock Lab 자동 뉴스픽" in old_memo_text:
-            st.session_state["today_market_memo_text"] = ""
+        st.session_state["today_market_memo_text"] = updated_text
+        if old_memo_text and not updated_text:
+            st.info("이전 버전의 자동 시황을 비웠습니다. 자동 뉴스픽 생성으로 새 보고서를 만들어 주세요.")
 
     def _clear_market_memo():
         st.session_state["today_market_memo_text"] = ""
@@ -30003,7 +30025,7 @@ def render_today_unified_briefing_panel(
             st.dataframe(macro_df.head(6), width='stretch', hide_index=True, height=min(260, 90 + len(macro_df.head(6)) * 36))
         if isinstance(event_df, pd.DataFrame) and not event_df.empty:
             st.caption("이벤트")
-            st.dataframe(event_df.head(5), width='stretch', hide_index=True, height=min(240, 90 + len(event_df.head(5)) * 36))
+            st.dataframe(event_df.head(5).drop(columns=["발표항목"], errors="ignore"), width='stretch', hide_index=True, height=min(240, 90 + len(event_df.head(5)) * 36))
 
     render_today_briefing_investor_flow(df, watch_items)
 

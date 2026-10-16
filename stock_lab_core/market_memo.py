@@ -15,6 +15,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
+from stock_lab_core.macro_event_report import event_release_summary, event_value
+
+
+MARKET_MEMO_VERSION = "2026-10-16-results-v1"
+
+
+def current_memo_text(text, version):
+    """Invalidate generated drafts only; never discard a user's own memo."""
+    text = str(text or "")
+    if version != MARKET_MEMO_VERSION and "Stock Lab 자동 뉴스픽" in text:
+        return ""
+    return text
+
 
 @dataclass(frozen=True)
 class MemoCategoryRule:
@@ -917,13 +930,18 @@ def _active_event_names(event_rows) -> list[str]:
 
 def _active_event_records(event_rows) -> list[dict]:
     records = []
-    for row in _iter_table_rows(event_rows, limit=12):
+    for row in _iter_table_rows(event_rows, limit=None):
         state = _norm(row.get("상태"))
         event = _norm(row.get("이벤트"))
-        if state in {"임박", "당일", "잔여"} and event:
+        result = event_release_summary(row)
+        upcoming = re.fullmatch(r"D-(\d+)", event_value(row, "D-Day"))
+        near_fomc = "fomc" in event.lower() and upcoming and int(upcoming[1]) <= 14
+        if event and (state in {"임박", "당일", "잔여"} or (state == "종료" and result) or near_fomc):
             records.append({
                 "event": event,
                 "state": state,
+                "result": result,
+                "date": event_value(row, "발표일", "일정"),
                 "dday": _norm(row.get("D-Day")),
                 "market": _norm(row.get("시장")),
                 "impact": _norm(
@@ -1153,12 +1171,21 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
     fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
     fed_hawkish = _fed_hawkish_signal(market_news_rows, news_rows)
     resolved_events = _resolved_event_summary_map(market_news_rows, news_rows)
-    for row in _active_event_records(event_rows):
+    records = _active_event_records(event_rows)
+    # Latest reported results first, with one slot reserved for the next FOMC.
+    releases = sorted([row for row in records if row["result"]], key=lambda row: row["date"], reverse=True)
+    pending = [row for row in records if not row["result"]]
+    pending.sort(key=lambda row: "fomc" not in row["event"].lower())
+    for row in releases[:4] + pending:
         state = row["state"]
         event = row["event"]
         dday = row["dday"]
         impact = row["impact"]
         market = row["market"]
+        if row["result"]:
+            date_text = f"{row['date']} · " if row["date"] else ""
+            bullets.append(f"{date_text}{row['result']}")
+            continue
         if event:
             is_fomc = "fomc" in _lower(event)
             is_boj = any(token in _lower(event) for token in ("boj", "일본", "일은", "금융정책결정회의"))
@@ -1214,6 +1241,9 @@ def _summary_overview(summary_rows) -> str:
                   ("실행가능", "대기/관찰", "방어우선", "데이터확인", "관망", "게이트미확인")}
         detail = " / ".join(f"{gate} {count}" for gate, count in counts.items() if count)
         sections.append(f"{heading} {len(selected)}개: {detail}")
+    market_blocks = sum(item["gate"] == "방어우선" and "시장방어" in _summary_text(item["row"], "게이트근거") for item in rows)
+    if market_blocks:
+        sections.append(f"시장방어 게이트 {market_blocks}개: 시장 진입 제한이며 개별 종목 부실 판정과는 별개")
     return "오늘점검 " + " · ".join(sections)
 
 
@@ -1890,8 +1920,9 @@ def _auto_insight_bullets(
     flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
     rotation_ctx = _build_rotation_context(index_rotation_rows, flow_snapshot)
     event_records = _active_event_records(event_rows)
-    events = [row["event"] for row in event_records]
-    fomc_result_known = _fomc_result_signal(market_news_rows, news_rows)
+    fomc_result_known = _fomc_result_signal(market_news_rows, news_rows) or any(
+        "fomc" in row["event"].lower() and row["result"] for row in event_records
+    )
     fomc_result_type = _fomc_result_type(market_news_rows, news_rows)
     resolved_events = _resolved_event_summary_map(market_news_rows, news_rows)
     post_fomc = fomc_result_known or any(
@@ -2090,15 +2121,14 @@ def _auto_insight_bullets(
 
     non_post_events = [
         row["event"] for row in event_records
-        if not ("fomc" in _lower(row["event"]) and (row["state"] == "잔여" or fomc_result_known))
+        if row["state"] in {"대기", "임박", "당일"} and not row["result"]
+        and not ("fomc" in _lower(row["event"]) and fomc_result_known)
         and not (resolved_events.get("boj") and any(token in _lower(row["event"]) for token in ("boj", "일본", "일은", "금융정책결정회의")))
     ]
     if post_fomc:
         bullets.append(_fomc_result_summary_text(fomc_result_type, fed_hawkish))
     if non_post_events:
-        bullets.append("이벤트 리스크는 " + ", ".join(non_post_events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
-    elif events and not post_fomc and not resolved_events:
-        bullets.append("이벤트 리스크는 " + ", ".join(events[:3]) + " 일정 때문에 장중 변동성을 키울 수 있습니다.")
+        bullets.append("다음 확인 일정: " + ", ".join(non_post_events[:3]) + ". 발표 결과와 금리·지수 반응은 구분해서 봅니다.")
     if pre_fomc:
         bullets.append("FOMC 전후에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
 
@@ -2150,6 +2180,12 @@ def build_auto_market_memo(
     if action_flag:
         lines.append("🎯 오늘의 전략")
         lines.append(f"• {action_flag}")
+        lines.append("")
+
+    event_lines = _event_bullets(event_rows, market_news_rows, news_rows)
+    if event_lines:
+        lines.append("발표 결과·다음 일정")
+        lines.extend(f"• {item}" for item in event_lines)
         lines.append("")
 
     insight_lines = _auto_insight_bullets(
@@ -2246,15 +2282,12 @@ def build_auto_market_memo(
         lines.append("")
 
     macro_lines = _macro_bullets(macro_data)
-    event_lines = _event_bullets(event_rows, market_news_rows, news_rows)
-    if macro_lines or event_lines:
+    if macro_lines:
         lines.append("📉 매크로·이벤트")
         stress_line = _macro_stress_line(macro_data)
         if stress_line:
             lines.append(f"• {stress_line}")
         for item in macro_lines[:5]:
-            lines.append(f"• {item}")
-        for item in event_lines:
             lines.append(f"• {item}")
         lines.append("")
 
@@ -2307,6 +2340,7 @@ def build_auto_market_memo(
         lines.append("")
 
     lines.append("※ 자동 생성 초안입니다. RSS/시장 데이터 수집 시점과 원문 출처를 확인한 뒤 판단하세요.")
+    lines.append(f"보고서 버전: {MARKET_MEMO_VERSION}")
     return "\n".join(lines).strip()
 
 
