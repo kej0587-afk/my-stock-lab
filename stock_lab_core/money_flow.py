@@ -36,6 +36,8 @@ import logging
 import os
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from threading import BoundedSemaphore
 
 import numpy as np
 import pandas as pd
@@ -43,7 +45,10 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
-from stock_lab_core.performance import timed_call
+from stock_lab_core.performance import submit_with_context, timed_call
+
+
+_KR_FLOW_HISTORY_SLOTS = BoundedSemaphore(4)
 
 try:
     from stock_lab_core.formatters import finite_num
@@ -1972,6 +1977,40 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 # 메인 계산 함수
 # ---------------------------------------------------------------------------
 
+@timed_call("phase", "flow_history_and_metrics")
+def _load_universe_metrics(data, universe):
+    """Load each ticker once; preserve ordered, single-threaded scoring.
+
+    Only KRX history I/O is parallel. US/international fallback providers keep
+    their existing serial path, including quota-limited Alpha Vantage calls.
+    The semaphore bounds KRX work across simultaneous sessions in this process.
+    """
+    tickers = list(dict.fromkeys(item["ticker"] for item in universe))
+    kr_tickers = [ticker for ticker in tickers if _is_krx_money_flow_ticker(ticker)]
+
+    def load_kr(ticker):
+        with _KR_FLOW_HISTORY_SLOTS:
+            return get_money_flow_ohlc(data, ticker)
+
+    def collect(futures):
+        metrics = {}
+        for ticker in tickers:
+            if ticker in futures:
+                px = futures[ticker].result()
+            elif ticker in kr_tickers:
+                px = load_kr(ticker)
+            else:
+                px = get_money_flow_ohlc(data, ticker)
+            metrics[ticker] = _compute_ticker_metrics(px) if not px.empty and len(px) >= 20 else None
+        return metrics
+
+    if len(kr_tickers) < 2:
+        return collect({})
+    with ThreadPoolExecutor(max_workers=min(4, len(kr_tickers))) as executor:
+        futures = {ticker: submit_with_context(executor, load_kr, ticker) for ticker in kr_tickers}
+        return collect(futures)
+
+
 @timed_call("external_data")
 @st.cache_data(ttl=900, show_spinner=False)
 def calculate_money_flow_df() -> pd.DataFrame:
@@ -1983,12 +2022,9 @@ def calculate_money_flow_df() -> pd.DataFrame:
     data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
     rows = []
-    metrics_by_ticker = {}
+    metrics_by_ticker = _load_universe_metrics(data, universe)
     for item in universe:
         ticker = item["ticker"]
-        if ticker not in metrics_by_ticker:
-            px = get_money_flow_ohlc(data, ticker)
-            metrics_by_ticker[ticker] = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else None
         if metrics_by_ticker[ticker] is None:
             continue
         metrics = metrics_by_ticker[ticker].copy()
@@ -2037,13 +2073,10 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     }
 
     rows = []
-    metrics_by_ticker = {}
+    metrics_by_ticker = _load_universe_metrics(data, universe)
     for item in universe:
         ticker = item["ticker"]
-        if ticker not in metrics_by_ticker:
-            px = get_money_flow_ohlc(data, ticker)
-            metrics_by_ticker[ticker] = _compute_ticker_metrics(px) if (not px.empty and len(px) >= 20) else _empty.copy()
-        metrics = metrics_by_ticker[ticker].copy()
+        metrics = (metrics_by_ticker[ticker] if metrics_by_ticker[ticker] is not None else _empty).copy()
         rows.append({
             "테마":     item["테마"],
             "하위테마": item["하위테마"],

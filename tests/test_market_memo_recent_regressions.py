@@ -407,15 +407,17 @@ def test_inverse_price_and_acceleration_do_not_claim_demand_or_sector_leadership
 def test_summary_risks_after_row_80_and_fifth_holding_are_all_listed():
     rows = [{"티커": f"WATCH{i}", "qty": 0, "🔥기술적 타점": "관망"} for i in range(81)]
     rows += [{"티커": f"HELD{i}", "qty": 1, "🔥기술적 타점": "매수 관심",
-              "판정코드": "HARD_BLOCK_OVERWEIGHT"} for i in range(8)]
+              "판정코드": "HARD_BLOCK_OVERWEIGHT", "게이트상태": "방어우선"} for i in range(8)]
     memo = build_auto_market_memo(summary_rows=pd.DataFrame(rows))
-    hard_line = next(line for line in memo.splitlines() if "하드차단 우선 확인:" in line)
     for i in range(8):
-        assert f"HELD{i} [보유] - 비중 초과" in hard_line
+        line = next(line for line in memo.splitlines() if f"HELD{i} |" in line)
+        assert "보유 리스크 · 비중 초과" in line
+        assert memo.count(f"HELD{i} |") == 1
     assert "하드차단 종목 먼저 원인 확인" in memo
     assert "매수/관심 후보:" not in memo
-    assert "실제 보유: HELD0" in memo
-    assert "관심/미보유: WATCH0" in memo
+    assert "보유 종목 8개" in memo
+    assert "관심 81개: 게이트미확인 81" in memo
+    assert "관심 나머지 81개" in memo
 
 
 def test_summary_explicit_holding_evidence_and_gate_override_buy_words():
@@ -434,8 +436,9 @@ def test_summary_explicit_holding_evidence_and_gate_override_buy_words():
         ])
         assert "매수/관심 후보:" not in memo
         assert "적립/관심 유지" not in memo
-        assert "주의/차단 후보: MSFT [관심/미보유]" in memo
-        assert "AAPL [보유] - 비중 초과" in memo
+        assert f"관심 1개: {gate} 1" in memo
+        assert "AAPL | 판정: 적립식 매수 가능 | 게이트: 게이트미확인 | 비중 초과" in memo
+        assert "관심 나머지 1개" in memo
 
 
 def test_high_oil_declining_keeps_level_burden_and_direction_coherent():
@@ -460,5 +463,6 @@ def test_dataframe_missing_market_and_gate_do_not_hide_valid_us_or_buy_rows():
         ]),
     )
     assert "미국 주요지수 1D 평균 +1.0%" in memo
-    assert "매수/관심 후보: AAPL [보유]" in memo
-    assert "주의/차단 후보: MSFT [관심/미보유]" in memo
+    assert "AAPL | 판정: 매수 관심 | 게이트: 게이트미확인" in memo
+    assert "관심 1개: 관망 1" in memo
+    assert "매수/관심 후보:" not in memo

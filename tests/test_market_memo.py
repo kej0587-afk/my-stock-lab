@@ -179,7 +179,9 @@ def test_auto_market_memo_action_flag_prefers_core_candidate_in_defensive_market
     )
 
     assert "오늘의 전략: S&P500(379800.KS) 회복확인 대기" in memo
-    assert "관심/회복확인 후보: S&P500(379800.KS), Microsoft(MSFT)" in memo
+    assert "보유여부 미확인 2개: 게이트미확인 2" in memo
+    assert "S&P500(379800.KS) | 판정:" in memo
+    assert "Microsoft(MSFT) | 판정:" in memo
     assert "오늘의 전략: Microsoft(MSFT) 적립/관심 유지" not in memo
 
 
@@ -382,7 +384,7 @@ def test_auto_market_memo_prioritizes_short_rotation_over_hot_semis():
     assert "중기 돈흐름은 강하지만 1D 기준 단기 이탈" in memo
     assert "지수/스타일 로테이션" in memo
     assert "성장주보다 다우·산업재·금융·방어가 강합니다" in memo
-    assert "레버리지 관찰 후보(추격 제외): ProShares UltraPro QQQ(TQQQ)" in memo
+    assert "ProShares UltraPro QQQ(TQQQ) | 판정: 눌림목 탑승 | 게이트: 게이트미확인" in memo
     assert "FOMC 전후에는 QQQ/TQQQ/QLD/SOXL" in memo
 
 
@@ -418,7 +420,7 @@ def test_auto_market_memo_treats_memory_news_shock_as_short_term_override():
             },
         ],
         "us_top5": [
-            {"섹터": "메모리/DRAM", "Ticker": "DRAM", "돈흐름점수": 100.0},
+            {"섹터": "메모리/DRAM", "Ticker": "DRAM", "돈흐름점수": 100.0, "3개월수익률": 1.37},
         ],
     }
     index_rotation_rows = [
@@ -624,8 +626,9 @@ def test_auto_market_memo_softens_buy_candidates_when_macro_stress_is_high():
         now=datetime(2026, 9, 17, 11, 0),
     )
 
-    assert "관심/회복확인 후보: S&P500(379800.KS)" in memo
-    assert "실행조건: 10Y/VIX 안정" in memo
+    assert "오늘의 전략: S&P500(379800.KS) 회복확인 대기" in memo
+    assert "S&P500(379800.KS) | 판정:" in memo
+    assert "게이트: 게이트미확인" in memo
     assert "매수/관심 후보: S&P500(379800.KS)" not in memo
 
 

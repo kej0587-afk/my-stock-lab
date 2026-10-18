@@ -8,6 +8,7 @@ calling external services.
 from __future__ import annotations
 
 import re
+import math
 import textwrap
 from collections import defaultdict
 from dataclasses import dataclass
@@ -557,6 +558,17 @@ def _flow_score_value(row: dict, score_col: str = "돈흐름점수") -> float:
     return _flow_value(row, score_col, _flow_value(row, "돈흐름점수", _flow_value(row, "테마돈흐름점수")))
 
 
+def _rankable_flow_rows(table, score_col="돈흐름점수") -> tuple[list[dict], int]:
+    """Filter only the memo's medium-term ranking, never trading calculations."""
+    rows = _iter_table_rows(table, limit=None)
+    valid = []
+    for row in rows:
+        values = [_safe_float(row.get(key)) for key in (score_col, "3개월수익률")]
+        if all(value is not None and math.isfinite(value) for value in values):
+            valid.append(row)
+    return valid, len(rows) - len(valid)
+
+
 def _flow_state_hint(state: str) -> str:
     if "과열" in state:
         return "상단권/추격위험"
@@ -634,6 +646,8 @@ def _is_weak_flow_leader(row: dict) -> bool:
 
 def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     label = _flow_row_label(row)
+    if not _rankable_flow_rows([row], score_col)[0]:
+        return f"{label} 데이터 없음/이력 부족 (3M·돈흐름 비교 제외)"
     score = _fmt_auto_num(row.get(score_col), 1) if row.get(score_col) not in [None, ""] else "-"
     ret_3m = _fmt_auto_pct(row.get("3개월수익률"))
     accel = _fmt_auto_pct(row.get("가속도"))
@@ -1116,49 +1130,103 @@ def _event_bullets(event_rows, market_news_rows=None, news_rows=None) -> list[st
     return bullets[:5]
 
 
+def _summary_text(row, *keys) -> str:
+    for key in keys:
+        value = row.get(key)
+        text = "" if value is None else str(value).strip()
+        if text.lower() not in {"", "-", "nan", "none", "<na>", "nat"}:
+            return text
+    return ""
+
+
+def _summary_display_rows(summary_rows) -> list[dict]:
+    """Read existing gates; do not infer permission to buy from old buy labels."""
+    result, seen = [], set()
+    gates = {"실행가능", "대기/관찰", "방어우선", "데이터확인", "관망"}
+    for row in _iter_table_rows(summary_rows, limit=None):
+        ticker = _summary_text(row, "티커", "Ticker", "ticker").upper()
+        key = re.sub(r"\.(KS|KQ)$", "", ticker)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        gate = _summary_text(row, "게이트상태", "gate_state")
+        gate = "실행가능" if gate == "EXECUTABLE" else gate
+        if gate not in gates:
+            gate = "게이트미확인"
+        result.append({"row": row, "gate": gate, "held": _summary_holding(row)})
+    return result
+
+
+def _summary_overview(summary_rows) -> str:
+    rows = _summary_display_rows(summary_rows)
+    if not rows:
+        return ""
+    sections = []
+    for held, heading in ((True, "보유"), (False, "관심"), (None, "보유여부 미확인")):
+        selected = [item for item in rows if item["held"] is held]
+        if not selected:
+            continue
+        counts = {gate: sum(item["gate"] == gate for item in selected) for gate in
+                  ("실행가능", "대기/관찰", "방어우선", "데이터확인", "관망", "게이트미확인")}
+        detail = " / ".join(f"{gate} {count}" for gate, count in counts.items() if count)
+        sections.append(f"{heading} {len(selected)}개: {detail}")
+    return "오늘점검 " + " · ".join(sections)
+
+
+def _summary_detail_line(item: dict) -> str:
+    row, gate, held = item["row"], item["gate"], item["held"]
+    label = _asset_item_label(_summary_text(row, "종목명", "자산명"), _summary_text(row, "티커", "Ticker", "ticker").upper())
+    decision = _summary_text(row, "최종읽기", "🔥기술적 타점", "판정분류") or "판정 미확인"
+    reason = _summary_text(row, "게이트근거", "핵심근거")
+    if not reason:
+        reason = _hard_block_item("", row).removeprefix(" - ").strip() or "근거 미확인"
+    prefix = ""
+    if gate == "방어우선":
+        prefix = "보유 리스크 · " if held is True else "미보유 진입보류 · " if held is False else "방어 확인 · "
+    # Keep original decisions intact; only the supporting explanation is abbreviated.
+    reason = " ".join(reason.split())
+    return f"{label} | 판정: {decision} | 게이트: {gate} | {prefix}{reason[:90]}" + ("…" if len(reason) > 90 else "")
+
+
 def _summary_bullets(summary_rows, macro_data: dict | None = None) -> list[str]:
+    rows = _summary_display_rows(summary_rows)
+    if not rows:
+        return []
     bullets = []
-    rows = _iter_table_rows(summary_rows, limit=None)
-    buyish = []
-    leveraged_watch = []
-    caution = []
-    hard = []
-    holdings = {True: [], False: [], None: []}
-    for row in rows:
-        name = _norm(row.get("종목명") or row.get("자산명"))
-        ticker = _norm(row.get("티커"))
-        label = _norm(row.get("🔥기술적 타점") or row.get("판정분류"))
-        item = _asset_item_label(name, ticker)
-        held = _summary_holding(row)
-        holdings[held].append(item)
-        if held is not None:
-            item += " [보유]" if held else " [관심/미보유]"
-        risk = _summary_risk_kind(row)
-        if risk == "hard":
-            hard.append(_hard_block_item(item, row))
-        elif risk == "caution":
-            caution.append(item)
-        elif any(word in label for word in ("매수", "진입", "DCA", "적립", "탑승", "눌림")):
-            if _is_leveraged_row(row):
-                leveraged_watch.append(item)
-            else:
-                buyish.append(item)
-    if buyish:
-        defensive = _macro_stress_is_defensive(macro_data)
-        candidate_label = "관심/회복확인 후보" if defensive else "매수/관심 후보"
-        trigger = " — 실행조건: 10Y/VIX 안정 + 종가·RS 회복 + 정밀관측소 R/R 확인" if defensive else ""
-        display_buyish = _core_prioritized_candidates(buyish) if defensive else buyish
-        bullets.append(candidate_label + ": " + ", ".join(display_buyish[:5]) + trigger)
-    if leveraged_watch:
-        bullets.append("레버리지 관찰 후보(추격 제외): " + ", ".join(leveraged_watch[:5]))
-    if caution:
-        bullets.append("주의/차단 후보: " + ", ".join(caution))
-    if hard:
-        bullets.append("하드차단 우선 확인: " + ", ".join(hard))
+    held = [item for item in rows if item["held"] is True]
+    watch = [item for item in rows if item["held"] is False]
+    unknown = [item for item in rows if item["held"] is None]
+    if held:
+        bullets.append(f"보유 종목 {len(held)}개")
+        bullets.extend(_summary_detail_line(item) for item in held)
+
+    # No previous-day snapshot is passed to this renderer. Do not fabricate changes.
+    selected = []
+    for position, item in enumerate(watch):
+        row = item["row"]
+        score = _safe_float(row.get("돈흐름_돈흐름점수", row.get("돈흐름점수")))
+        group = _summary_text(row, "돈흐름_후보군", "돈흐름후보군")
+        flow_match = score is not None and math.isfinite(score) and score > 0 and group and not any(
+            term in group for term in ("관찰", "제외", "약모멘텀")
+        )
+        if item["gate"] == "실행가능" or flow_match:
+            selected.append((item["gate"] != "실행가능", -(score or 0) if flow_match else 0, position, item))
+    selected.sort(key=lambda value: value[:3])
+    shown = [value[3] for value in selected[:10]]
+    if watch:
+        bullets.append(f"관심/미보유 주요 확인 {len(shown)}개: 실행가능 또는 돈흐름 후보 상위, 매수 승인과는 별개")
+        bullets.extend(_summary_detail_line(item) for item in shown)
+        bullets.append(f"관심 나머지 {len(watch) - len(shown)}개는 검토용 통합 CSV의 01/98에서 확인. 전일 비교자료 미연결: 판정 변경·신규 차단 여부는 미확인")
+    if unknown:
+        bullets.append(f"보유여부 미확인 {len(unknown)}개 (최대 10개 표시)")
+        bullets.extend(_summary_detail_line(item) for item in unknown[:10])
+    if all(item["gate"] in {"방어우선", "대기/관찰", "데이터확인"} for item in rows):
+        bullets.append("분류 포화: 실행가능·관망 0개. 시장 진입 제한과 개별 종목 위험을 구분해서 확인하세요.")
+    if any(item["gate"] == "게이트미확인" for item in rows):
+        bullets.append("게이트 미연결 항목은 실행 여부를 추정하지 않습니다. 오늘점검 재계산 후 확인하세요.")
+    if any(item["gate"] == "방어우선" or _summary_risk_kind(item["row"]) == "hard" for item in rows):
         bullets.append("하드차단 해제 기준: 비중초과=목표비중 이하, 추세방어=일봉·주봉 회복, 매크로위험=스트레스 경고 이하")
-    for held, heading in ((True, "실제 보유"), (False, "관심/미보유"), (None, "보유 여부 미확인")):
-        if holdings[held]:
-            bullets.append(heading + ": " + ", ".join(holdings[held]))
     return bullets
 
 
@@ -1793,7 +1861,7 @@ def _auto_insight_bullets(
     )
     fed_hawkish = (fomc_result_known or post_fomc) and _fed_hawkish_signal(market_news_rows, news_rows)
     flow_df = flow_snapshot.get("flow_df")
-    flow_rows = _iter_table_rows(flow_df, limit=250)
+    flow_rows = _rankable_flow_rows(flow_df)[0][:250]
     bearish_ctx = _bearish_news_pressure(market_news_rows, news_rows)
     kr_market_crash = bool(rotation_ctx.get("kr_market_crash"))
     semi_short_weak = bool(rotation_ctx.get("semi_short_weak"))
@@ -1804,6 +1872,13 @@ def _auto_insight_bullets(
         bullets.append(
             f"한국 시장은 {short_key} 기준 주요지수 평균 {_fmt_auto_pct(rotation_ctx.get('kr_market_avg'))}로 급락/조정장 성격이 강합니다. "
             "오늘은 섹터 주도보다 지수 안정, 현금 비중, 보유종목 손절선 확인이 먼저입니다."
+        )
+    elif rotation_ctx.get("kr_market_avg") is not None:
+        bullets.append(
+            f"한국 주요지수 {rotation_ctx.get('kr_short_key') or '단기'} 평균 "
+            f"{_fmt_auto_pct(rotation_ctx['kr_market_avg'])}: "
+            f"분모 {len(rotation_ctx.get('kr_denominator', []))}개 [{', '.join(rotation_ctx.get('kr_denominator', []))}]. "
+            "가격 반등·하락과 기존 매수 게이트는 별개입니다. 시세 기준시각은 원자료에서 확인해야 하며 리포트 생성시각과 같다고 가정하지 않습니다."
         )
     semi_rows = [
         row for row in flow_rows
@@ -1918,18 +1993,19 @@ def _auto_insight_bullets(
         flow_snapshot.get("theme_top5"),
     ]
     leader_rows = []
-    for table in top_tables:
-        rows = _iter_table_rows(table, limit=1)
+    for index, table in enumerate(top_tables):
+        score_col = "테마돈흐름점수" if index == 2 else "돈흐름점수"
+        rows = _rankable_flow_rows(table, score_col)[0][:1]
         if rows and not _is_inverse_or_short_row(rows[0]):
             leader_rows.append(rows[0])
     leaders = [_flow_row_label(row) for row in leader_rows]
     if leaders:
         weak_leaders = [row for row in leader_rows if _is_weak_flow_leader(row)]
-        unique_leaders = list(dict.fromkeys(leaders[:4]))
+        unique_leaders = list(dict.fromkeys(_flow_row_label(row) for row in leader_rows if not _is_weak_flow_leader(row)))
         if weak_leaders:
-            leader_text = "상대 순위 상위 축은 " + ", ".join(unique_leaders) + "입니다."
+            leader_text = ("상대 순위 상위 축은 " + ", ".join(unique_leaders) + "입니다.") if unique_leaders else "중기 주도 유지로 읽을 상위축은 제한적입니다."
             weak_text = ", ".join(dict.fromkeys(_flow_row_label(row) for row in weak_leaders[:2]))
-            leader_text += f" 약한 상위축: {weak_text}. 주도주 확정이 아니라 회복 확인 대상으로 봅니다."
+            leader_text += f" 별도 회복 확인 대상(약한 상위축): {weak_text}. 주도주 확정이 아니라 회복 확인 대상으로 봅니다."
         else:
             leader_text = "중기 돈흐름 상위 축은 " + ", ".join(unique_leaders) + "입니다."
         if semi_shock or kr_market_crash:
@@ -1983,10 +2059,7 @@ def _auto_insight_bullets(
     if pre_fomc:
         bullets.append("FOMC 전후에는 QQQ/TQQQ/QLD/SOXL 같은 성장주·레버리지 추격보다 금리 반응과 종가 확인이 우선입니다.")
 
-    portfolio_lines = _summary_bullets(summary_rows, macro_data)
-    if portfolio_lines:
-        bullets.append("오늘점검 기준으로는 " + " / ".join(portfolio_lines[:2]) + "부터 확인합니다.")
-    else:
+    if not _summary_overview(summary_rows):
         command_lines = _flow_command_bullets(flow_snapshot)
         if command_lines:
             first_line = command_lines[0].replace("돈흐름 후보판: ", "")
@@ -2058,7 +2131,14 @@ def build_auto_market_memo(
         market_news_rows,
         index_rotation_rows,
     )
+<<<<<<< HEAD
     if insight_lines and report_context is None:
+=======
+    overview = _summary_overview(summary_rows)
+    if overview:
+        insight_lines = [overview, *insight_lines[:7]]
+    if insight_lines:
+>>>>>>> ae7702748c6317ef842d1b1d3905bc58709bbab7
         lines.append("🧠 핵심 해석")
         for item in insight_lines:
             lines.append(f"• {item}")
@@ -2066,7 +2146,7 @@ def build_auto_market_memo(
 
     semis = []
     flow_df = flow_snapshot.get("flow_df")
-    for row in _iter_table_rows(flow_df, limit=200):
+    for row in _rankable_flow_rows(flow_df)[0][:200]:
         joined = " ".join(_lower(row.get(k, "")) for k in ("섹터", "Ticker", "ETF 이름"))
         if any(key in joined for key in ("반도체", "semiconductor", "memory", "dram", "ram", "soxx", "soxl", "smh", "0167a0")):
             semis.append(row)
@@ -2089,14 +2169,17 @@ def build_auto_market_memo(
     ]
     used_header = set()
     for header, _, table, score_col, limit in flow_sections:
-        rows = _iter_table_rows(table, limit=limit)
-        if not rows:
+        rows, missing_count = _rankable_flow_rows(table, score_col)
+        rows = rows[:limit]
+        if not rows and not missing_count:
             continue
         if header not in used_header:
             lines.append(header)
             used_header.add(header)
         for row in rows:
             lines.append(f"• {_flow_bullet(row, score_col=score_col)}")
+        if missing_count:
+            lines.append(f"• 데이터 없음/이력 부족 {missing_count}개는 3M·돈흐름 순위에서 제외")
         lines.append("")
     if used_header:
         lines.append("※ 상태 기준: 과열=52주 상단권/급변동, 강세가속=3M 상승+가속, 둔화=상승 흐름의 감속, 약세전환=3M 음수 전환, 급락=3M 하락+가속. 가격과 돈흐름이 반대면 다이버전스로 별도 표시합니다.")
