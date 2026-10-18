@@ -18,6 +18,22 @@ def test_nested_timings_do_not_double_count_categories():
     assert report["elapsed_seconds"] == 4
     assert report["categories_work_seconds"] == {"decision": 2, "prices": 2}
     assert report["functions"][0]["total_seconds"] == 4
+    assert report["categories_active_wall_seconds"] == {"decision": 2, "prices": 2}
+    assert report["measured_active_wall_seconds"] == 4
+    assert report["concurrent_overlap_work_seconds"] == 0
+
+
+def test_parallel_intervals_separate_work_sum_from_wall_union():
+    trace = PerformanceTrace(clock=lambda: 0)
+    trace.record("prices", "fetch", 4, 0, False, started=0, ended=4, child_intervals=[])
+    trace.record("prices", "fetch", 4, 0, False, started=1, ended=5, child_intervals=[])
+    trace.record("indicators", "calculate", 2, 0, False, started=3, ended=5, child_intervals=[])
+    report = trace.report()
+    assert report["categories_work_seconds"] == {"prices": 8, "indicators": 2}
+    assert report["categories_active_wall_seconds"] == {"prices": 5, "indicators": 2}
+    assert report["measured_active_wall_seconds"] == 5
+    assert report["concurrent_overlap_work_seconds"] == 5
+    assert next(row for row in report["functions"] if row["name"] == "fetch")["active_wall_seconds"] == 5
 
 
 def test_decorator_preserves_clear_unwrapped_output_and_exceptions():

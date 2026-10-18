@@ -33381,10 +33381,13 @@ def render_today_queue_tab(mode):
                 "external_data": "외부자료·돈흐름", "decision": "판정·결과 정리",
             }
             st.dataframe(pd.DataFrame([
-                {"구간": labels.get(category, category), "누적 작업시간(초)": round(seconds, 3)}
+                {"구간": labels.get(category, category), "누적 작업시간(초)": round(seconds, 3),
+                 "중첩 제외 활성시간(초)": round(report.get("categories_active_wall_seconds", {}).get(category, np.nan), 3)}
                 for category, seconds in report["categories_work_seconds"].items()
             ]), hide_index=True, width="stretch")
             st.caption("누적 작업시간은 병렬 작업을 합산한 값이므로 전체 경과시간과 다릅니다.")
+            if "measured_active_wall_seconds" in report:
+                st.caption(f"측정된 작업의 합집합 {report['measured_active_wall_seconds']:.1f}초 · 병렬 중복 누적분 {report['concurrent_overlap_work_seconds']:.1f}초. 분류별 활성시간도 서로 겹칠 수 있어 합산하지 않습니다.")
             phase_labels = {
                 "flow_refresh": "돈흐름 수집·분석", "price_history_1y": "일봉 이력",
                 "price_history_10y": "장기 이력", "rs_price_history_3mo": "RS 이력",
@@ -33410,6 +33413,7 @@ def render_today_queue_tab(mode):
             st.dataframe(pd.DataFrame(function_rows).rename(columns={
                 "category": "구간", "name": "함수", "calls": "호출수", "total_seconds": "누적시간(초)",
                 "self_seconds": "자체시간(초)", "max_seconds": "최장호출(초)", "failures": "예외수",
+                "active_wall_seconds": "중첩 제외 활성시간(초)",
             }), hide_index=True, width="stretch")
             st.download_button(
                 "시간 진단 JSON", data=json.dumps(report, ensure_ascii=False, indent=2),

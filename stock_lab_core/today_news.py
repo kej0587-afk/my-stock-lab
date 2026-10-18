@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import timezone, timedelta
+from collections import Counter
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, time, timezone, timedelta
 from email.utils import parsedate_to_datetime
 import html
 import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from zoneinfo import ZoneInfo
 
 
 TODAY_MARKET_STORY_RSS_PLAN = [
@@ -226,6 +230,275 @@ def fetch_today_breaking_story_news(days=2, per_query=1) -> list[dict]:
         days=days,
         default_category="핵심 속보",
     )
+
+
+_NEWS_KST = timezone(timedelta(hours=9))
+_SESSION_MARKETS = {
+    "US": {
+        "timezone": "America/New_York", "close": time(16),
+        "query": '("U.S. stocks" OR "Wall Street" OR Nasdaq OR "S&P 500")',
+        "wrap": '("stocks close" OR "Wall Street closes" OR "market wrap" OR "closing bell")',
+        "locale": "hl=en-US&gl=US&ceid=US:en",
+    },
+    "KR": {
+        "timezone": "Asia/Seoul", "close": time(15, 30),
+        "query": '(코스피 OR 코스닥 OR "한국 증시" OR "국내 증시")',
+        "wrap": '("증시 마감" OR "코스피 마감" OR "코스닥 마감" OR "마감 시황")',
+        "locale": "hl=ko&gl=KR&ceid=KR:ko",
+    },
+}
+_SESSION_QUERY_LIMIT = 16
+_SESSION_RSS_TIMEOUT = 5
+_SESSION_RSS_MAX_BYTES = 512 * 1024
+_SESSION_ROW_LIMIT = 60
+_CLOSE_WRAP = re.compile(
+    r"(?:증시|코스피|코스닥).{0,60}마감|마감.{0,20}(?:시황|증시|코스피|코스닥)|"
+    r"\b(?:stocks?|markets?|wall street|nasdaq|s&p).{0,80}\bclos(?:e[sd]?|ing)\b|"
+    r"\bmarket wrap\b|\bclosing bell\b", re.I,
+)
+
+
+def _news_timestamp(value):
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value or "").strip()
+        # A date alone or a UI label such as 10/17 04:00 cannot locate an event.
+        if not re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", raw):
+            return None
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return dt.replace(tzinfo=_NEWS_KST) if dt.tzinfo is None else dt
+
+
+def _news_now(now):
+    if now is None:
+        return datetime.now(_NEWS_KST)
+    dt = _news_timestamp(now)
+    if dt is None:
+        raise ValueError("now must be an ISO timestamp or datetime")
+    return dt
+
+
+def _session_news_windows(sessions, now):
+    windows, missing = [], []
+    if not isinstance(sessions, Mapping) or not sessions:
+        return windows, ["시장별 기준 거래일과 이전 거래일 미제공"]
+    for market, session in sessions.items():
+        if market not in _SESSION_MARKETS:
+            missing.append("지원하지 않는 시장의 뉴스 시간창 제외")
+            continue
+        if not isinstance(session, Mapping):
+            missing.append(f"{market}: date/previous_date가 있는 세션 정보 필요")
+            continue
+        try:
+            current = date.fromisoformat(str(session.get("date", "")))
+            previous = date.fromisoformat(str(session.get("previous_date", "")))
+            if previous >= current or current.weekday() >= 5 or previous.weekday() >= 5:
+                raise ValueError
+        except (ValueError, TypeError):
+            missing.append(f"{market}: 기준일/이전 거래일 누락 또는 유효하지 않은 거래일 순서")
+            continue
+        spec = _SESSION_MARKETS[market]
+        zone = ZoneInfo(spec["timezone"])
+        start = datetime.combine(previous, spec["close"], zone)
+        close = datetime.combine(current, spec["close"], zone)
+        if close > now:
+            missing.append(f"{market}: 기준 거래일 정규장 미마감")
+            continue
+        # Capture the full following calendar day, not the next trading day.
+        capture_end = datetime.combine(current + timedelta(days=2), time(), zone)
+        windows.append({
+            "market": market, "date": current.isoformat(), "previous_date": previous.isoformat(),
+            "timezone": spec["timezone"], "start": start.isoformat(), "end": close.isoformat(),
+            "capture_end": capture_end.isoformat(), "next_session_end": now.astimezone(zone).isoformat(),
+        })
+    return windows, missing
+
+
+def _news_sort_key(row):
+    prefer_wrap = row["news_bucket"] == "session_news" and row["is_close_wrap"]
+    return (not prefer_wrap, -_news_timestamp(row["published_at"]).timestamp())
+
+
+def partition_session_market_news(rows, sessions, *, now=None) -> dict:
+    """Pure time partition; callers curate sources/events separately.
+
+    ``sessions`` maps KR/US to ISO ``date`` and actual ``previous_date``.
+    Windows use regular close times in each exchange timezone (including US DST).
+    ``start`` is exclusive and ``end`` (the reference close) inclusive.
+    ``capture_end`` is exclusive midnight after the following calendar day; it
+    controls historical retrieval, never attribution. All post-close articles,
+    including closing wraps, belong to ``next_session_news`` through ``now``.
+    Only explicit ``market``/``region`` metadata is used; language is not a market.
+    ISO timestamps without an offset use KST, matching report_evidence.curate_news.
+    """
+    now = _news_now(now)
+    windows, missing = _session_news_windows(sessions, now)
+    by_market = {window["market"]: window for window in windows}
+    result = {"session_news": [], "next_session_news": [], "windows": windows, "missing": missing}
+    rejected = Counter()
+    if hasattr(rows, "to_dict"):
+        rows = rows.to_dict("records")
+    for raw in rows if rows is not None else ():
+        if not isinstance(raw, Mapping):
+            rejected["뉴스 행 형식 오류"] += 1
+            continue
+        market = str(raw.get("market") or raw.get("region") or "").strip().upper()
+        region = str(raw.get("region") or "").strip().upper()
+        if market not in by_market or (region and region != market):
+            rejected["명시된 시장 또는 해당 시장의 유효한 세션 없음"] += 1
+            continue
+        published = _news_timestamp(raw.get("published_at") or raw.get("published") or raw.get("시간"))
+        if published is None:
+            rejected["뉴스 발행시각 누락/해석 불가"] += 1
+            continue
+        window = by_market[market]
+        start = datetime.fromisoformat(window["start"])
+        close = datetime.fromisoformat(window["end"])
+        if published <= start or published > now:
+            rejected["뉴스 시간창 밖 또는 미래 발행시각"] += 1
+            continue
+        bucket = "session_news" if published <= close else "next_session_news"
+        row = dict(raw, market=market, published_at=published.isoformat(),
+                   session_date=window["date"], news_bucket=bucket,
+                   is_close_wrap=bool(_CLOSE_WRAP.search(str(raw.get("title") or raw.get("제목") or ""))))
+        result[bucket].append(row)
+    for bucket in ("session_news", "next_session_news"):
+        result[bucket].sort(key=_news_sort_key)
+        for market in by_market:
+            if not any(row["market"] == market for row in result[bucket]):
+                missing.append(f"{market}: {'기준 세션' if bucket == 'session_news' else '종가 이후'} 뉴스 없음")
+    missing.extend(f"{reason}: {count}건 제외" for reason, count in rejected.items())
+    return result
+
+
+def _session_query_specs(windows, categories, now):
+    requested = tuple(dict.fromkeys(categories or ()))
+    available = {plan["category"]: plan["query"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
+    selected = [(category, available[category]) for category in requested if category in available][:3]
+    plans = [("마감 시황", None)] + (selected if requested else [("시장", "")])
+    specs = []
+    for window in windows:
+        market = window["market"]
+        market_spec = _SESSION_MARKETS[market]
+        start = datetime.fromisoformat(window["start"])
+        capture_end = datetime.fromisoformat(window["capture_end"])
+        ranges = [(start, min(capture_end, now))]
+        if now > capture_end:
+            ranges.append((capture_end, now))
+        for lower, upper in ranges:
+            if lower >= upper:
+                continue
+            for category, query in plans:
+                terms = market_spec["wrap"] if query is None else query
+                # Google date predicates have calendar precision. Pad boundaries
+                # and apply exact timestamps after retrieval, including midnight.
+                after = (lower.astimezone(ZoneInfo(window["timezone"])).date() - timedelta(days=1)).isoformat()
+                before = (upper.astimezone(ZoneInfo(window["timezone"])).date() + timedelta(days=1)).isoformat()
+                query_text = f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
+                query_text += f" after:{after} before:{before}"
+                url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query_text})
+                specs.append({"market": market, "category": category,
+                              "url": url + "&" + market_spec["locale"]})
+    return specs[:_SESSION_QUERY_LIMIT]
+
+
+def _fetch_session_rss(spec):
+    rows = []
+    try:
+        request = urllib.request.Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 StockLab"})
+        with urllib.request.urlopen(request, timeout=_SESSION_RSS_TIMEOUT) as response:
+            data = response.read(_SESSION_RSS_MAX_BYTES + 1)
+        if len(data) > _SESSION_RSS_MAX_BYTES:
+            raise ValueError("RSS response too large")
+        root = ET.fromstring(data)
+        if root.tag != "rss" or root.find("channel") is None:
+            raise ValueError("not an RSS response")
+        for item in root.findall("./channel/item")[:80]:
+            pub_dt = market_story_pub_dt(item)
+            source = item.find("source")
+            rows.append({
+                "title": html.unescape(str(item.findtext("title", "") or "").strip()),
+                "link": str(item.findtext("link", "") or "").strip(),
+                "publisher": html.unescape(str(item.findtext("source", "") or "").strip()),
+                "publisher_url": source.attrib.get("url", "") if source is not None else "",
+                "published_at": pub_dt.isoformat() if pub_dt else "",
+                "published": format_market_story_pub_dt(pub_dt),
+                "source": "Google News RSS", "market_category": spec["category"],
+                "market": spec["market"],
+            })
+        return rows, ""
+    except Exception:
+        return [], f"{spec['market']}: RSS 수집 실패"
+
+
+def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3) -> dict:
+    """Bounded market-specific RSS retrieval plus source/event curation.
+
+    Returns the same payload as partition_session_market_news. Queries include
+    absolute after/before dates, with separate historical and latest retrieval.
+    At most 16 requests run with four workers, five-second socket timeouts and
+    512 KiB responses. At most three requested categories supplement close wraps.
+    An article returned by both market queries has ambiguous market provenance
+    and is excluded rather than assigned to both sessions. No sending/storage.
+    """
+    from stock_lab_core.report_evidence import curate_news
+
+    now = _news_now(now)
+    windows, _ = _session_news_windows(sessions, now)
+    specs = _session_query_specs(windows, categories, now)
+    try:
+        per_category = max(1, min(int(per_category), 5))
+    except (TypeError, ValueError):
+        per_category = 3
+    rows, failures = [], Counter()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for candidates, error in executor.map(_fetch_session_rss, specs):
+            rows.extend(candidates)
+            if error:
+                failures[error] += 1
+    origins = {}
+    for row in rows:
+        for key in (row["link"], market_story_title_key(row["title"])):
+            if key:
+                origins.setdefault(key, set()).add(row["market"])
+    for row in rows:
+        if any(len(origins.get(key, ())) > 1 for key in (row["link"], market_story_title_key(row["title"]))):
+            row.pop("market", None)
+    result = partition_session_market_news(rows, sessions, now=now)
+    for bucket in ("session_news", "next_session_news"):
+        accepted, seen, seen_links, counts = [], set(), set(), Counter()
+        for row in result[bucket]:
+            # Exact time filtering already ran. Validate each source with the
+            # existing curator even for holiday windows longer than seven days.
+            checked = curate_news([row], now=_news_timestamp(row["published_at"]), limit=1)
+            if not checked or not checked[0].get("link"):
+                continue
+            clean = checked[0]
+            event = (clean["market"], clean["event_key"])
+            category = (clean["market"], clean["category"])
+            link_key = (clean["market"], clean["link"])
+            if event in seen or link_key in seen_links or counts[category] >= per_category or len(accepted) >= _SESSION_ROW_LIMIT:
+                continue
+            seen.add(event)
+            seen_links.add(link_key)
+            counts[category] += 1
+            accepted.append(clean)
+        result[bucket] = accepted
+        for window in windows:
+            market = window["market"]
+            if not any(row["market"] == market for row in accepted):
+                result["missing"].append(f"{market}: {bucket} 출처·날짜·중복 검증 후 채택 뉴스 없음")
+    result["missing"].extend(f"{reason}: {count}개 쿼리" for reason, count in failures.items())
+    available = {plan["category"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
+    if any(category not in available for category in categories or ()):
+        result["missing"].append("알 수 없는 뉴스 카테고리 제외")
+    if len(set(categories or ()) & available) > 3:
+        result["missing"].append("수집 한도로 요청 카테고리 중 앞의 3개만 조회")
+    return result
 
 
 TODAY_ACTION_NEWS_SOURCE_SCORES = {

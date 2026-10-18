@@ -7,6 +7,7 @@ import pytest
 import requests
 
 from stock_lab_core import economic_releases as releases
+from stock_lab_core import release_calendar
 
 
 NOW = datetime(2026, 10, 18, 3, tzinfo=timezone.utc)
@@ -72,6 +73,10 @@ def providers(monkeypatch):
             response = Response(state["census"])
         elif url in releases._SCHEDULE_URLS.values():
             response = Response(text=state["schedule"], status=state["schedule_status"])
+        elif url == release_calendar.FOMC_URL:
+            response = Response(text='''<h4>2026 FOMC Meetings</h4><div class="fomc-meeting">
+                <div class="fomc-meeting__month">October</div>
+                <div class="fomc-meeting__date">27-28</div></div>''')
         elif url == releases.FRED_URL:
             response = Response({"observations": [
                 {"date": "2026-10-17", "value": "."},
@@ -117,7 +122,7 @@ def test_keyless_bls_units_basis_previous_and_real_release_date(providers):
     assert _find(rows, "US_UNEMPLOYMENT", "level")["actual"] == 4.2
     assert _find(rows, "US_PPI", "YoY")["actual"] == 3.0
     assert len([c for c in providers["calls"] if c[0] == "POST"]) == 1
-    assert len(providers["calls"]) == 5
+    assert len(providers["calls"]) == 6
     assert all(response.closed for response in providers["responses"])
 
 
@@ -261,7 +266,7 @@ def test_missing_keys_kr_and_fed_explicit_and_no_fred_request(providers):
         row = next(row for row in rows if row["indicator"] == indicator)
         assert row["status"] == "unavailable"
         assert row["actual"] is None
-        assert "ECOS_or_KOSIS_API_KEY_missing" in row["missing_reason"]
+        assert "ECOS_API_KEY_missing" in row["missing_reason"]
     row = next(row for row in rows if row["indicator"] == "US_FED_TARGET_UPPER")
     assert "FRED_API_KEY_missing" in row["missing_reason"]
     assert all(call[1] != releases.FRED_URL for call in providers["calls"])
@@ -283,7 +288,7 @@ def test_cache_success_only_and_return_values_are_isolated(providers):
     first[0]["actual"] = 999
     second = releases.load_economic_releases(now=NOW)
     assert _find(second)["actual"] == 1.0
-    assert len(providers["calls"]) == 5
+    assert len(providers["calls"]) == 6
     assert second == releases.load_economic_releases(now=NOW)
 
 
@@ -293,7 +298,7 @@ def test_cache_expires(providers, monkeypatch):
     releases.load_economic_releases(now=NOW)
     tick[0] += releases.CACHE_TTL + 1
     releases.load_economic_releases(now=NOW)
-    assert len(providers["calls"]) == 10
+    assert len(providers["calls"]) == 12
 
 
 def test_request_failure_retried_without_secret_or_exception_text(providers):
@@ -376,3 +381,153 @@ def test_dataframe_contract_and_event_bound(providers):
     events = ({"indicator": "KR_CPI", "period": "2026-10", "basis": "unknown", "date": "2026-11-01"}
               for _ in range(releases.MAX_EVENT_ROWS + 100))
     assert len(releases.load_economic_releases(events, now=NOW)) <= 12 + releases.MAX_EVENT_ROWS
+
+
+def test_monthly_history_is_rates_and_changes_not_raw_levels(providers):
+    levels = {releases._shift("2024-01", index): 100 + index for index in range(33)}
+    for entry in providers["bls"]["Results"]["series"]:
+        entry["data"] = _observations(levels)
+    rows = releases.load_economic_releases(now=NOW)
+    for row in rows[:8]:
+        assert len(row["history"]) >= 12
+        assert row["history"] == sorted(row["history"], key=lambda entry: entry["period"])
+        assert row["history"][-1] == {"period": row["period"], "value": row["actual"]}
+        assert row["previous3mean"] == pytest.approx(
+            sum(entry["value"] for entry in row["history"][-4:-1]) / 3, abs=1e-6)
+    yearly = _find(rows, basis="YoY")
+    assert yearly["history"][0] == {"period": "2025-01", "value": 12.0}
+    assert _find(rows, "US_NONFARM_PAYROLLS")["history"][-1]["value"] == 1.0
+    assert _find(rows, "US_UNEMPLOYMENT", "level")["history"][-1]["value"] == 132.0
+    yearly["history"][0]["value"] = 999
+    assert _find(releases.load_economic_releases(now=NOW), basis="YoY")["history"][0]["value"] == 12.0
+
+
+def test_three_month_mean_requires_consecutive_prior_months_and_excludes_actual(providers):
+    values = {"2026-05": 100, "2026-06": 101, "2026-07": 102, "2026-09": 200}
+    entry = next(entry for entry in providers["bls"]["Results"]["series"] if entry["seriesID"] == "LNS14000000")
+    entry["data"] = _observations(values)
+    row = _find(releases.load_economic_releases(now=NOW), "US_UNEMPLOYMENT", "level")
+    assert row["previous3mean"] is None
+    assert row["previous3mean_reason"] == "three_consecutive_prior_months_unavailable"
+    assert len(row["history"]) == 4
+    releases.clear_economic_releases_cache()
+    entry["data"] = _observations({**values, "2026-08": 103})
+    row = _find(releases.load_economic_releases(now=NOW), "US_UNEMPLOYMENT", "level")
+    assert row["previous3mean"] == 102.0
+    assert row["previous3mean_reason"] == ""
+
+
+def test_census_monthly_history_is_same_unit_direct_published_changes(providers):
+    providers["census"] = [providers["census"][0]] + [
+        [str(index / 10), releases._shift("2025-01", index) + "-01", "44X72", "MPCSM", "yes", "no"]
+        for index in range(21)]
+    row = _find(releases.load_economic_releases(now=NOW), "US_RETAIL_SALES")
+    assert len(row["history"]) == 21
+    assert row["history"][-1]["value"] == 2.0
+    assert row["previous3mean"] == 1.8
+
+
+def test_future_scheduled_actual_not_exposed_in_history(providers):
+    providers["schedule"] = providers["schedule"].replace("Oct. 14, 2026", "Oct. 30, 2026")
+    row = _find(releases.load_economic_releases(now=NOW))
+    assert row["actual"] is None
+    assert row["status"] == "pending"
+    assert all(entry["period"] < "2026-09" for entry in row["history"])
+
+
+@pytest.mark.parametrize("location", ["environment", "flat", "economic"])
+def test_key_configuration_supports_environment_and_both_secret_layouts(monkeypatch, location):
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("ECOS_API_KEY", raising=False)
+    secrets = {}
+    if location == "environment":
+        monkeypatch.setenv("ECOS_API_KEY", "  example-key  ")
+        secrets["ECOS_API_KEY"] = "lower-priority"
+    elif location == "flat":
+        secrets = {"ECOS_API_KEY": "example-key", "economic": {"ECOS_API_KEY": "lower-priority"}}
+    else:
+        secrets = {"economic": {"ECOS_API_KEY": "example-key"}}
+    monkeypatch.setitem(sys.modules, "streamlit", SimpleNamespace(secrets=secrets))
+    assert releases._api_key("ECOS_API_KEY") == "example-key"
+
+
+@pytest.fixture
+def ecos_provider(monkeypatch):
+    releases.clear_economic_releases_cache()
+    state = {"calls": [], "reject": False, "bad_unit": False, "bad_mapping": False, "missing_baseline": False}
+
+    def request(url, **kwargs):
+        state["calls"].append(url)
+        assert kwargs["timeout"] == 4
+        assert kwargs["allow_redirects"] is False
+        stat = "901Y009" if "901Y009" in url else "901Y118"
+        indicator = "KR_CPI" if stat == "901Y009" else "KR_EXPORTS"
+        _, item, title, item_name = releases._ECOS_SERIES[indicator]
+        unit = "2020=100" if indicator == "KR_CPI" else "천불"
+        if state["reject"]:
+            return Response({"RESULT": {"CODE": "INFO-200", "MESSAGE": "do not echo"}})
+        if "StatisticItemList" in url:
+            return Response({"StatisticItemList": {"row": [
+                {"STAT_CODE": stat, "STAT_NAME": title, "GRP_CODE": "Group1", "CYCLE": "M",
+                 "ITEM_CODE": "wrong" if state["bad_mapping"] else item,
+                 "ITEM_NAME": item_name, "UNIT_NAME": unit}]}})
+        rows = []
+        for index in range(33):
+            if state["missing_baseline"] and index == 20:
+                continue
+            period = releases._shift("2024-01", index)
+            rows.append({"STAT_CODE": stat, "ITEM_CODE1": item, "ITEM_NAME1": item_name,
+                         "TIME": period.replace("-", ""), "DATA_VALUE": str(100 + index),
+                         "UNIT_NAME": "wrong" if state["bad_unit"] else unit})
+        return Response({"StatisticSearch": {"row": rows}})
+
+    monkeypatch.setattr(releases.requests, "get", request)
+    yield state
+    releases.clear_economic_releases_cache()
+
+
+@pytest.mark.parametrize("indicator", ["KR_CPI", "KR_EXPORTS"])
+def test_verified_ecos_monthly_levels_become_yoy_rates(ecos_provider, indicator):
+    row = releases._ecos(NOW, "FixtureECOSKey", indicator)
+    assert row["status"] == "released"
+    assert row["actual"] == 10.0  # 132 / 120 - 1, not an index or a monthly change.
+    assert row["previous"] == 10.1
+    assert row["unit"] == "%" and row["basis"] == "YoY"
+    assert row["release_at"] is None
+    assert len(row["history"]) == 21
+    assert row["history"][0] == {"period": "2025-01", "value": 12.0}
+    assert row["previous3mean"] == 10.166667
+    assert "FixtureECOSKey" not in str(row)
+    assert len(ecos_provider["calls"]) == 2
+    releases._ecos(NOW, "FixtureECOSKey", indicator)
+    assert len(ecos_provider["calls"]) == 2
+
+
+@pytest.mark.parametrize("failure,reason", [("reject", "ecos_metadata_rejected"),
+                                            ("bad_mapping", "ecos_series_mapping_unverified"),
+                                            ("bad_unit", "ecos_observation_series_or_unit_mismatch")])
+def test_ecos_rejects_unverified_mapping_and_units_and_retries(ecos_provider, failure, reason):
+    ecos_provider[failure] = True
+    row = releases._ecos(NOW, "FixtureECOSKey", "KR_CPI")
+    assert row["actual"] is None and row["history"] == []
+    assert reason in row["missing_reason"]
+    ecos_provider[failure] = False
+    assert releases._ecos(NOW, "FixtureECOSKey", "KR_CPI")["actual"] == 10.0
+
+
+def test_ecos_does_not_substitute_a_nearby_month_for_yoy_baseline(ecos_provider):
+    ecos_provider["missing_baseline"] = True
+    row = releases._ecos(NOW, "FixtureECOSKey", "KR_EXPORTS")
+    assert row["actual"] is None
+    assert row["previous"] == 10.1
+    assert "comparison_period_unavailable" in row["missing_reason"]
+    assert all(entry["period"] != "2026-09" for entry in row["history"])
+
+
+def test_daily_fred_does_not_fabricate_monthly_history(providers, monkeypatch):
+    monkeypatch.setattr(releases, "_api_key", lambda name: "fixture-secret" if name == "FRED_API_KEY" else "")
+    row = next(row for row in releases.load_economic_releases(now=NOW) if row["indicator"] == "US_FED_TARGET_UPPER")
+    assert row["history"] == [] and row["previous3mean"] is None
+    assert row["history_frequency"] == "daily"

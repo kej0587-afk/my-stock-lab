@@ -11,11 +11,42 @@ _trace = ContextVar("stock_lab_performance_trace", default=None)
 _span = ContextVar("stock_lab_performance_span", default=None)
 
 
+def _merged_intervals(intervals):
+    merged = []
+    for start, end in sorted(intervals):
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _exclusive_intervals(start, end, children):
+    cursor = start
+    result = []
+    for left, right in _merged_intervals(children):
+        left, right = max(start, left), min(end, right)
+        if left > cursor:
+            result.append((cursor, left))
+        cursor = max(cursor, right)
+    if cursor < end:
+        result.append((cursor, end))
+    return result
+
+
+def _interval_seconds(intervals):
+    return sum(end - start for start, end in _merged_intervals(intervals))
+
+
 class PerformanceTrace:
     def __init__(self, *, clock=perf_counter):
         self.clock = clock
         self._lock = Lock()
         self._entries = {}
+        self._function_intervals = {}
+        self._category_intervals = {}
         self.elapsed_seconds = 0.0
 
     def __enter__(self):
@@ -29,7 +60,8 @@ class PerformanceTrace:
         _span.reset(self._span_token)
         _trace.reset(self._token)
 
-    def record(self, category, name, elapsed, children, failed):
+    def record(self, category, name, elapsed, children, failed, *, started, ended, child_intervals):
+        exclusive = _exclusive_intervals(started, ended, child_intervals)
         with self._lock:
             entry = self._entries.setdefault((category, name), {
                 "category": category, "name": name, "calls": 0,
@@ -41,20 +73,33 @@ class PerformanceTrace:
             entry["self_seconds"] += max(0.0, elapsed - children)
             entry["max_seconds"] = max(entry["max_seconds"], elapsed)
             entry["failures"] += int(failed)
+            self._function_intervals.setdefault((category, name), []).append((started, ended))
+            if category != "phase":
+                self._category_intervals.setdefault(category, []).extend(exclusive)
 
     def report(self):
         with self._lock:
             entries = [dict(entry) for entry in self._entries.values()]
+            function_intervals = {key: list(value) for key, value in self._function_intervals.items()}
+            category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
+        for entry in entries:
+            entry["active_wall_seconds"] = _interval_seconds(function_intervals[(entry["category"], entry["name"])])
         entries.sort(key=lambda entry: entry["total_seconds"], reverse=True)
         categories = {}
         for entry in entries:
             if entry["category"] != "phase":
                 categories[entry["category"]] = categories.get(entry["category"], 0.0) + entry["self_seconds"]
+        active_wall = _interval_seconds([interval for values in category_intervals.values() for interval in values])
         return {
             "elapsed_seconds": self.elapsed_seconds,
             "categories_work_seconds": categories,
             "functions": entries,
             "work_totals_are_concurrent": True,
+            "timing_schema_version": 2,
+            "categories_active_wall_seconds": {key: _interval_seconds(value) for key, value in category_intervals.items()},
+            "measured_active_wall_seconds": active_wall,
+            "concurrent_overlap_work_seconds": max(0.0, sum(categories.values()) - active_wall),
+            "active_wall_categories_can_overlap": True,
         }
 
 
@@ -65,7 +110,7 @@ def measure(category, name):
         yield
         return
     parent = _span.get()
-    current = {"children": 0.0}
+    current = {"children": 0.0, "intervals": []}
     token = _span.set(current)
     started = trace.clock()
     failed = False
@@ -75,11 +120,14 @@ def measure(category, name):
         failed = True
         raise
     finally:
-        elapsed = max(0.0, trace.clock() - started)
+        ended = trace.clock()
+        elapsed = max(0.0, ended - started)
         _span.reset(token)
         if parent is not None:
             parent["children"] += elapsed
-        trace.record(category, name, elapsed, current["children"], failed)
+            parent["intervals"].append((started, ended))
+        trace.record(category, name, elapsed, current["children"], failed,
+                     started=started, ended=ended, child_intervals=current["intervals"])
 
 
 def timed_call(category, name=None):

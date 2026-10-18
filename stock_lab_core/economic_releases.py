@@ -8,12 +8,13 @@ payrolls are monthly changes in thousands. Previous values use the latest
 revised vintage, not the values originally announced. This is not a historical
 point-in-time database; ``now`` sets the report clock, not a data vintage.
 
-Optional FRED_API_KEY / CENSUS_API_KEY come from the environment or same-named
-Streamlit secrets. FRED supplies the *daily upper target limit*, not an FOMC
+Optional FRED_API_KEY / CENSUS_API_KEY / ECOS_API_KEY come from the environment
+or flat / [economic] Streamlit secrets. FRED supplies the *daily upper target limit*, not an FOMC
 decision or the effective federal funds rate. Census's MARTS API now requires
 a key in production; a keyless attempt is still supported if the API allows it.
-KR CPI/exports are explicitly unavailable: ECOS/KOSIS need credentials and a
-verified series mapping, neither of which is invented here.
+KR CPI/exports use ECOS monthly levels, with the mapping verified against ECOS
+item metadata before collection. Missing keys remain explicitly unavailable.
+Monthly history contains the row's units/basis, never raw index/amount levels.
 
 Events accept dict rows, an iterable of dicts, or a DataFrame. Existing app
 fields event/raw_title/date/end_date/source/actual/forecast/previous are read,
@@ -39,30 +40,35 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
-from html.parser import HTMLParser
 from itertools import islice
 import math
 import os
 import re
 import threading
 import time
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+
+from stock_lab_core.release_calendar import (
+    SCHEDULE_URLS as _SCHEDULE_URLS,
+    clear_release_calendar_cache,
+    load_release_calendar,
+)
 
 
 BLS_URL = "https://api.bls.gov/publicAPI/v1/timeseries/data/"
 CENSUS_URL = "https://api.census.gov/data/timeseries/eits/marts"
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
+ECOS_URL = "https://ecos.bok.or.kr/api/"
 REQUEST_TIMEOUT = 4.0
 CACHE_TTL = 900
 MAX_EVENT_ROWS = 64
 _CACHE_LIMIT = 16
 _CACHE = OrderedDict()
 _CACHE_LOCK = threading.Lock()
-_SCHEDULE_URLS = {
-    group: f"https://www.bls.gov/schedule/news_release/{group}.htm"
-    for group in ("cpi", "ppi", "empsit")
+_ECOS_SERIES = {
+    "KR_CPI": ("901Y009", "0", "소비자물가지수", "총지수"),
+    "KR_EXPORTS": ("901Y118", "T002", "수출입 총괄", "수출금액"),
 }
 
 
@@ -96,6 +102,7 @@ def clear_economic_releases_cache():
     """Clear this collector's process-local, successful-response cache."""
     with _CACHE_LOCK:
         _CACHE.clear()
+    clear_release_calendar_cache()
 
 
 class _Unavailable(ValueError):
@@ -140,6 +147,8 @@ def _request(url, *, params=None, payload=None, text=False):
     try:
         if response.status_code != 200:
             raise _Unavailable(f"http_{response.status_code}")
+        if url.startswith(ECOS_URL):
+            response.encoding = "utf-8"
         return response.text if text else response.json()
     finally:
         response.close()
@@ -151,6 +160,8 @@ def _api_key(name):
         try:
             import streamlit as st
             value = st.secrets.get(name, "")
+            if not value:
+                value = st.secrets.get("economic", {}).get(name, "")
         except (FileNotFoundError, KeyError, RuntimeError):
             value = ""
     return value.strip() if isinstance(value, str) else ""
@@ -207,6 +218,8 @@ def _row(indicator, unit, basis, source, source_url, now, **values):
         "previous_period": "", "actual_minus_forecast": None,
         "actual_minus_previous": None, "difference_unit": "pp" if unit == "%" else unit,
         "value_kind": "official_observation", "data_vintage": "latest_revised",
+        "history": [], "history_frequency": "monthly", "previous3mean": None,
+        "previous3mean_reason": "monthly_history_unavailable",
         "missing_reason": "",
     }
     row.update(values)
@@ -216,6 +229,20 @@ def _row(indicator, unit, basis, source, source_url, now, **values):
 def _reason(row, *reasons):
     parts = row["missing_reason"].split(";") if row["missing_reason"] else []
     row["missing_reason"] = ";".join(dict.fromkeys(parts + [s for s in reasons if s]))
+
+
+def _monthly_history(row, values):
+    """Only same-unit monthly measures; require three consecutive prior months."""
+    period = row["period"]
+    normalized = {month: value for month, value in values.items()
+                  if _month(month) == month and month <= period and _number(value) is not None}
+    row["history"] = [{"period": month, "value": normalized[month]}
+                      for month in sorted(normalized)[-36:]]
+    prior = [normalized.get(_shift(period, -offset)) for offset in (1, 2, 3)]
+    if all(value is not None for value in prior):
+        row.update(previous3mean=round(sum(prior) / 3, 6), previous3mean_reason="")
+    else:
+        row["previous3mean_reason"] = "three_consecutive_prior_months_unavailable"
 
 
 def _bls(now):
@@ -272,61 +299,12 @@ def _bls(now):
                        previous_period=previous_period, previous_source="BLS (latest revised)",
                        previous_unit=row["unit"], previous_basis=spec.basis,
                        value_kind="official_observation" if spec.mode == "level" else "calculated_from_official_levels")
+            _monthly_history(row, {month: measure(month) for month in observations})
             row["status"] = "released" if row["actual"] is not None else "unavailable"
             if row["actual"] is None:
                 _reason(row, "comparison_period_unavailable")
         rows.append(row)
     return rows
-
-
-class _ScheduleTable(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.rows = []
-        self.cells = None
-        self.cell = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tr":
-            self.cells = []
-        elif tag in {"th", "td"} and self.cells is not None:
-            self.cell = []
-
-    def handle_data(self, data):
-        if self.cell is not None:
-            self.cell.append(data)
-
-    def handle_endtag(self, tag):
-        if tag in {"th", "td"} and self.cell is not None:
-            self.cells.append(" ".join("".join(self.cell).split()))
-            self.cell = None
-        elif tag == "tr" and self.cells is not None:
-            self.rows.append(self.cells)
-            self.cells = None
-
-
-def _schedule(group, now):
-    def fetch():
-        parser = _ScheduleTable()
-        parser.feed(_request(_SCHEDULE_URLS[group], text=True))
-        records = {}
-        for cells in parser.rows:
-            if len(cells) != 3:
-                continue
-            try:
-                period = datetime.strptime(cells[0], "%B %Y").strftime("%Y-%m")
-                day = datetime.strptime(cells[1].replace("Sept.", "Sep").replace(".", ""), "%b %d, %Y")
-                clock = datetime.strptime(cells[2], "%I:%M %p").time()
-                try:
-                    at = datetime.combine(day.date(), clock, ZoneInfo("America/New_York"))
-                    records[period] = at.isoformat()
-                except ZoneInfoNotFoundError:
-                    records[period] = day.date().isoformat()
-            except ValueError:
-                continue
-        return records
-
-    return _cached(("schedule", group, now.year), fetch, now)
 
 
 def _retail(now, api_key):
@@ -366,6 +344,7 @@ def _retail(now, api_key):
         row.update(period=period, actual=data[period], previous=data.get(_shift(period, -1)),
                    previous_period=_shift(period, -1), previous_source=row["source"],
                    previous_unit="%", previous_basis="MoM", status="released")
+        _monthly_history(row, data)
     else:
         _reason(row, error)
     return row
@@ -373,7 +352,8 @@ def _retail(now, api_key):
 
 def _fed(now, api_key):
     row = _row("US_FED_TARGET_UPPER", "%", "level", "Federal Reserve via FRED",
-               "https://fred.stlouisfed.org/series/DFEDTARU", now, seasonal_adjustment="NSA")
+               "https://fred.stlouisfed.org/series/DFEDTARU", now, seasonal_adjustment="NSA",
+               history_frequency="daily", previous3mean_reason="daily_series_not_monthly")
     if not api_key:
         _reason(row, "FRED_API_KEY_missing")
         return row
@@ -404,6 +384,82 @@ def _fed(now, api_key):
                    previous_unit="%", previous_basis="level")
     else:
         _reason(row, error)
+    return row
+
+
+def _ecos(now, api_key, indicator):
+    stat, item, stat_name, item_name = _ECOS_SERIES[indicator]
+    row = _row(indicator, "%", "YoY", "Bank of Korea ECOS", ECOS_URL, now,
+               seasonal_adjustment="NSA", series_id=f"{stat}/{item}",
+               value_kind="calculated_from_official_levels")
+    if not api_key:
+        _reason(row, "ECOS_API_KEY_missing")
+        return row
+    if not re.fullmatch(r"[A-Za-z0-9]+", api_key):
+        _reason(row, "ECOS_API_KEY_invalid_format")
+        return row
+    credential_id = hashlib.sha256(api_key.encode()).hexdigest()
+
+    def metadata():
+        payload = _request(f"{ECOS_URL}StatisticItemList/{api_key}/json/kr/1/10/{stat}")
+        if "RESULT" in payload:
+            raise _Unavailable("ecos_metadata_rejected")
+        matches = [entry for entry in payload.get("StatisticItemList", {}).get("row", [])
+                   if entry.get("STAT_CODE") == stat and entry.get("ITEM_CODE") == item
+                   and entry.get("GRP_CODE") == "Group1" and entry.get("CYCLE") == "M"
+                   and stat_name in str(entry.get("STAT_NAME", ""))
+                   and entry.get("ITEM_NAME") == item_name]
+        if len(matches) != 1:
+            raise _Unavailable("ecos_series_mapping_unverified")
+        unit = matches[0].get("UNIT_NAME", "")
+        if not (re.fullmatch(r"\d{4}=100", unit) if indicator == "KR_CPI" else unit == "천불"):
+            raise _Unavailable("ecos_series_unit_mismatch")
+        return {"unit": unit}
+
+    meta, error, _ = _cached(("ecos_metadata", indicator, credential_id), metadata, now)
+    if not meta:
+        _reason(row, error)
+        return row
+
+    def fetch():
+        payload = _request(f"{ECOS_URL}StatisticSearch/{api_key}/json/kr/1/100/{stat}/M/"
+                           f"{now.year - 3}01/{now:%Y%m}/{item}")
+        if "RESULT" in payload:
+            raise _Unavailable("ecos_observations_rejected")
+        values = {}
+        for entry in payload.get("StatisticSearch", {}).get("row", []):
+            if (entry.get("STAT_CODE") != stat or entry.get("ITEM_CODE1") != item
+                    or entry.get("ITEM_NAME1") != item_name
+                    or any(entry.get(f"ITEM_CODE{index}") for index in (2, 3, 4))
+                    or entry.get("UNIT_NAME") != meta["unit"]):
+                raise _Unavailable("ecos_observation_series_or_unit_mismatch")
+            raw_period = str(entry.get("TIME", ""))
+            if not re.fullmatch(r"\d{6}", raw_period):
+                continue
+            period = _month(raw_period[:4] + "-" + raw_period[4:])
+            value = _number(entry.get("DATA_VALUE"))
+            if period and period <= now.strftime("%Y-%m") and value is not None:
+                if period in values and values[period] != value:
+                    raise _Unavailable("ecos_conflicting_observations")
+                values[period] = value
+        return values
+
+    data, error, retrieved = _cached(("ecos", indicator, now.strftime("%Y-%m"), credential_id), fetch, now)
+    row["retrieved_at"] = retrieved
+    if not data:
+        _reason(row, error)
+        return row
+    rates = {period: round((value / data[_shift(period, -12)] - 1) * 100, 1)
+             for period, value in data.items()
+             if data.get(_shift(period, -12), 0) > 0}
+    period = max(data)
+    row.update(period=period, actual=rates.get(period), previous=rates.get(_shift(period, -1)),
+               previous_period=_shift(period, -1), previous_source=row["source"] + " (latest revised)",
+               previous_unit="%", previous_basis="YoY", raw_unit=meta["unit"])
+    row["status"] = "released" if row["actual"] is not None else "unavailable"
+    if row["actual"] is None:
+        _reason(row, "comparison_period_unavailable")
+    _monthly_history(row, rates)
     return row
 
 
@@ -626,35 +682,39 @@ def _finish(row):
 def load_economic_releases(event_rows=None, now=None):
     """Return normalized list[dict]; no UI, writes, retries, or LLM calls.
 
-    At most six HTTP requests run in four workers, each with a 4-second timeout.
+    Requests have 4-second timeouts. One BLS batch, one Census query, up to one
+    FRED query, four calendar pages, and up to four ECOS metadata/data queries.
     Provider errors become explicit unavailable rows and are never cached.
     Supplied events are bounded to 64 rows. Dates without a time/value remain
     pending throughout that UTC date; timezone-less timestamps are not guessed.
     """
     now = _clock(now)
-    census_key, fred_key = _api_key("CENSUS_API_KEY"), _api_key("FRED_API_KEY")
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    census_key, fred_key, ecos_key = (_api_key(name) for name in ("CENSUS_API_KEY", "FRED_API_KEY", "ECOS_API_KEY"))
+    with ThreadPoolExecutor(max_workers=6) as executor:
         bls = executor.submit(_bls, now)
         retail = executor.submit(_retail, now, census_key)
         fed = executor.submit(_fed, now, fred_key)
-        schedules = {group: executor.submit(_schedule, group, now) for group in _SCHEDULE_URLS}
-        rows = bls.result() + [retail.result(), fed.result()]
+        calendar = executor.submit(load_release_calendar, now=now)
+        korea = [executor.submit(_ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
+        rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
+        calendar = calendar.result()
+        primary = {"cpi": "US_CPI", "ppi": "US_PPI", "empsit": "US_NONFARM_PAYROLLS"}
         for row, spec in zip(rows, _BLS_SERIES):
-            schedule, error, _ = schedules[spec.group].result()
-            at = (schedule or {}).get(row["period"])
-            if at:
+            matches = [event for event in calendar["events"]
+                       if event["indicator"] == primary[spec.group] and event.get("period") == row["period"]]
+            if len(matches) == 1:
+                event, = matches
+                at = event["release_at"]
                 row.update(release_at=at, release_precision="datetime" if "T" in at else "date",
-                           release_source="BLS schedule", release_source_url=_SCHEDULE_URLS[spec.group])
+                           release_source="BLS schedule", release_source_url=event["source_url"])
                 if _future(row, now):
                     row.update(actual=None, status="pending")
+                    row["history"] = [entry for entry in row["history"] if entry["period"] < row["period"]]
                     _reason(row, "scheduled_release_not_yet_due")
-            elif error:
-                _reason(row, "release_schedule_" + error)
-    for indicator in ("KR_CPI", "KR_EXPORTS"):
-        row = _row(indicator, "%", "YoY", "ECOS/KOSIS", "https://ecos.bok.or.kr/api/", now)
-        has_key = bool(_api_key("ECOS_API_KEY") or _api_key("KOSIS_API_KEY"))
-        _reason(row, "kr_series_mapping_not_configured" if has_key else "ECOS_or_KOSIS_API_KEY_missing")
-        rows.append(row)
+            else:
+                name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
+                failure = next((source["reason"] for source in calendar["sources"] if source["name"] == name), "")
+                _reason(row, "release_schedule_" + (failure or "period_unavailable"))
     _merge_events(rows, event_rows, now)
     for row in rows:
         _finish(row)
