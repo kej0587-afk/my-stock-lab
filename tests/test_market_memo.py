@@ -143,7 +143,7 @@ def test_auto_market_memo_adds_action_flag_and_macro_stress_summary():
         now=datetime(2026, 9, 16, 9, 0),
     )
 
-    assert "🎯 오늘의 전략" in memo
+    assert "🎯 실행 점검" in memo
     assert "레버리지 신규매수 금지" in memo
     assert "S&P500(379800.KS) 회복확인 대기" in memo
     assert "매크로 스트레스" in memo

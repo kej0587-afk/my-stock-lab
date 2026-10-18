@@ -442,7 +442,7 @@ def test_high_oil_declining_keeps_level_burden_and_direction_coherent():
     memo = build_auto_market_memo(macro_data={
         "유가": {"val": 104, "chg": -3.0, "icon": "🔺", "storm": False},
     })
-    assert "유가 104.00, 1개월 -3.0%, 방향 하락, 수준 경고권" in memo
+    assert "WTI 선물(CL=F) 104.00, 1개월 -3.0%, 방향 하락, 수준 경고" in memo
     assert "유가(고수준 부담·하락 중)" in memo
     assert "완화: 유가" not in memo
     assert "유가 완화 흐름" not in memo

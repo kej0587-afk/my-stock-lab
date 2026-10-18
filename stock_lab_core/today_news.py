@@ -185,14 +185,23 @@ def _fetch_google_news_rss_rows(plans, selected_categories=(), per_plan=2, days=
                 continue
             seen.add(key)
             pub_dt = market_story_pub_dt(item)
-            rows.append({
+            source_node = item.find("source")
+            candidate = {
                 "market_category": category,
                 "title": title,
                 "link": link,
                 "publisher": publisher,
                 "published": format_market_story_pub_dt(pub_dt),
+                "published_at": pub_dt.isoformat() if pub_dt else "",
+                "publisher_url": source_node.attrib.get("url", "") if source_node is not None else "",
                 "source": "Google News RSS",
-            })
+            }
+            from stock_lab_core.report_evidence import curate_news
+            checked = curate_news([candidate], limit=1)
+            if not checked:
+                continue
+            candidate["market_category"] = checked[0]["category"]
+            rows.append(candidate)
             accepted += 1
             if accepted >= per_plan:
                 break

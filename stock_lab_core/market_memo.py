@@ -14,6 +14,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
+from stock_lab_core.report_evidence import (
+    curate_news, macro_components, macro_stress, report_sections,
+)
+
 
 @dataclass(frozen=True)
 class MemoCategoryRule:
@@ -642,6 +646,8 @@ def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     div_note = _flow_divergence_note(row, score_col)
     div_text = f", {div_note}" if div_note else ""
     result = f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}{div_text}"
+    if _safe_float(row.get("3개월수익률"), 0) < 0:
+        result += ", 상대 상위이나 절대 약세"
     if _is_inverse_or_short_row(row):
         result += ", 인버스 가격 지표(섹터 강세 아님), 1D/5D "
         result += f"{_fmt_auto_pct(_rotation_value(row, '1D'))}/{_fmt_auto_pct(_rotation_value(row, '5D'))}"
@@ -935,19 +941,13 @@ def _format_auto_memo_time(now: datetime | None = None) -> str:
 
 
 def _macro_bullets(macro_data: dict | None) -> list[str]:
-    bullets = []
-    if not isinstance(macro_data, dict):
-        return bullets
-    for name in ("10Y 금리", "환율", "VIX", "MOVE", "유가"):
-        info = macro_data.get(name)
-        if not isinstance(info, dict):
-            continue
-        val = _fmt_auto_num(info.get("val"), 2)
-        chg = _fmt_macro_chg_pct(info.get("chg"))
-        note = _macro_direction(info)
-        level = "경고권" if _macro_level_pressure(name, info) else "경고 신호 없음"
-        bullets.append(f"{name} {val}, 1개월 {chg}, 방향 {note}, 수준 {level}")
-    return bullets
+    return [
+        f"{row['label']} {row['value']:.2f}, 1개월 "
+        + (f"{row['change']:+.1f}%" if row['change'] is not None else "미수집")
+        + f", 방향 {row['direction']}, {row['state']} · 스트레스 기여 {row['contribution']:+d}"
+        + f" [{row['source']} · {row['as_of'] or '기준일 미제공'}]"
+        for row in macro_components(macro_data)
+    ]
 
 
 def _macro_direction(info: dict) -> str:
@@ -966,53 +966,10 @@ def _macro_level_pressure(name: str, info: dict) -> bool:
 
 
 def _macro_stress_line(macro_data: dict | None) -> str:
-    if not isinstance(macro_data, dict):
+    result = macro_stress(macro_data)
+    if result['score'] is None:
         return ""
-    weights = {
-        "10Y 금리": 24,
-        "VIX": 22,
-        "MOVE": 18,
-        "유가": 18,
-        "환율": 18,
-    }
-    score = 18
-    drivers: list[str] = []
-    relief: list[str] = []
-    for name, weight in weights.items():
-        info = macro_data.get(name)
-        if not isinstance(info, dict):
-            continue
-        chg = _safe_float(info.get("chg"))
-        pressure = False
-        direction = _macro_direction(info)
-        if _macro_level_pressure(name, info):
-            pressure = True
-        elif direction == "상승":
-            pressure = True
-        if name == "유가" and chg is not None and chg >= 0.1:
-            pressure = True
-        if pressure:
-            score += weight
-            drivers.append(name + ("(고수준 부담·하락 중)" if direction == "하락" else ""))
-        elif direction == "하락":
-            score -= min(8, weight // 2)
-            relief.append(name)
-    score = max(0, min(100, score))
-    if score >= 75:
-        label = "위험"
-    elif score >= 55:
-        label = "경고"
-    elif score >= 35:
-        label = "주의"
-    else:
-        label = "안정"
-    parts = []
-    if drivers:
-        parts.append("부담: " + ", ".join(drivers[:3]))
-    if relief and score < 75:
-        parts.append("완화: " + ", ".join(relief[:2]))
-    detail = " · ".join(parts) if parts else "큰 스트레스 신호 제한"
-    return f"매크로 스트레스 {score}/100({label}) · {detail}"
+    return f"매크로 스트레스 {result['score']}/100({result['label']}) · {result['explanation']} · 보고서용 지표(매매 게이트와 별개)"
 
 
 def _macro_stress_is_defensive(macro_data: dict | None) -> bool:
@@ -2057,6 +2014,7 @@ def build_auto_market_memo(
     news_rows=None,
     summary_rows=None,
     now: datetime | None = None,
+    report_context: dict | None = None,
 ) -> str:
     """Build a paste-ready market memo from existing app data.
 
@@ -2064,6 +2022,16 @@ def build_auto_market_memo(
     beyond the data already collected by the app.
     """
     flow_snapshot = flow_snapshot if isinstance(flow_snapshot, dict) else {}
+    # Strict curation is used for the publishable report. Legacy diagnostics remain
+    # optional for older saved inputs that do not yet include source metadata.
+    from stock_lab_core.report_evidence import KST, records
+    dt = now or datetime.now(KST)
+    dt = dt.replace(tzinfo=KST) if dt.tzinfo is None else dt.astimezone(KST)
+    curated = curate_news(records(market_news_rows) + records(news_rows), now=dt)
+    front, missing = report_sections(
+        context=report_context, news=curated, flow_rows=flow_snapshot.get('flow_df'),
+        event_rows=event_rows, summary_rows=summary_rows, now=dt,
+    )
     lines = [
         "🌇 Stock Lab 자동 뉴스픽",
         _format_auto_memo_time(now),
@@ -2072,10 +2040,12 @@ def build_auto_market_memo(
         "━━━━━━━━━━━━",
         "",
     ]
+    lines.extend(front)
+    lines.extend(["", "━━━━━━━━━━━━", "기존 점검 · 수치 근거", "━━━━━━━━━━━━", ""])
 
     action_flag = _today_action_flag_line(summary_rows, macro_data)
     if action_flag:
-        lines.append("🎯 오늘의 전략")
+        lines.append("🎯 실행 점검")
         lines.append(f"• {action_flag}")
         lines.append("")
 
@@ -2088,7 +2058,7 @@ def build_auto_market_memo(
         market_news_rows,
         index_rotation_rows,
     )
-    if insight_lines:
+    if insight_lines and report_context is None:
         lines.append("🧠 핵심 해석")
         for item in insight_lines:
             lines.append(f"• {item}")
@@ -2167,7 +2137,7 @@ def build_auto_market_memo(
         lines.append("")
 
     macro_lines = _macro_bullets(macro_data)
-    event_lines = _event_bullets(event_rows, market_news_rows, news_rows)
+    event_lines = _event_bullets(event_rows, market_news_rows, news_rows) if report_context is None else []
     if macro_lines or event_lines:
         lines.append("📉 매크로·이벤트")
         stress_line = _macro_stress_line(macro_data)
@@ -2187,11 +2157,11 @@ def build_auto_market_memo(
         flow_snapshot,
         memo_news_seen,
     )
-    if event_radar_lines:
+    if event_radar_lines and report_context is None:
         lines.extend(event_radar_lines)
 
     market_news_groups = _market_news_grouped_bullets(market_news_rows, memo_news_seen)
-    if market_news_groups:
+    if market_news_groups and report_context is None:
         lines.append("📰 시장 뉴스/서사")
         remaining = 15
         for group, items in market_news_groups.items():
@@ -2218,7 +2188,7 @@ def build_auto_market_memo(
     lines.append("")
 
     news_lines = _news_bullets(news_rows, memo_news_seen)
-    if news_lines:
+    if news_lines and report_context is None:
         lines.append("━━━━━━━━━━━━")
         lines.append("🎯  종 목")
         lines.append("━━━━━━━━━━━━")
@@ -2227,7 +2197,8 @@ def build_auto_market_memo(
             lines.append(f"• {item}")
         lines.append("")
 
-    lines.append("※ 자동 생성 초안입니다. RSS/시장 데이터 수집 시점과 원문 출처를 확인한 뒤 판단하세요.")
+    if missing:
+        lines.append("※ 데이터 누락이 있는 자동 생성 초안: " + " / ".join(missing))
     return "\n".join(lines).strip()
 
 

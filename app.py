@@ -6933,7 +6933,8 @@ def _add_recent_trendline_guides(fig, df: pd.DataFrame) -> list:
 
 
 def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins: int = 31) -> dict:
-    """가격대별 누적 거래량으로 현재가 위/아래 매물대를 요약합니다."""
+    """일봉 범위에 거래량을 배분한 추정 매물대. 실제 호가가 아닙니다."""
+    from stock_lab_core.chart_enrichment import build_volume_at_price_profile
     empty = {"ok": False, "reason": "데이터 부족", "rows": []}
     if df is None or df.empty:
         return empty
@@ -6948,11 +6949,9 @@ def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins:
     source = source.dropna(subset=["High", "Low", "Close"])
     if len(source) < 20:
         return empty
-    if "Volume" not in source.columns:
-        source["Volume"] = 1.0
-    source["Volume"] = source["Volume"].fillna(0.0).clip(lower=0.0)
-    if float(source["Volume"].sum()) <= 0:
-        source["Volume"] = 1.0
+    profile = build_volume_at_price_profile(source, bins=max(12, min(60, int(bins))), lookback=max(60, int(lookback)))
+    if not profile.get("ok"):
+        return empty
 
     high = clean_float(source["High"].max(), np.nan)
     low = clean_float(source["Low"].min(), np.nan)
@@ -6960,31 +6959,10 @@ def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins:
     if not finite_num(high) or not finite_num(low) or not finite_num(current) or high <= low:
         return empty
 
-    bins = max(12, min(60, int(bins)))
-    step = (high - low) / bins
-    if step <= 0:
-        return empty
-
-    close_arr = source["Close"].to_numpy(dtype=float)
-    volume_arr = source["Volume"].to_numpy(dtype=float)
-    rows = []
-    volumes = []
-    for i in range(bins):
-        lo = low + step * i
-        hi = lo + step
-        mid = lo + step / 2
-        mask = np.abs(close_arr - mid) < step
-        vol = float(np.nansum(volume_arr[mask]))
-        volumes.append(vol)
-        rows.append({"low": lo, "high": hi, "mid": mid, "volume": vol})
-
-    max_vol = max(volumes) if volumes else 0.0
-    total_vol = sum(volumes)
-    if max_vol <= 0 or total_vol <= 0:
-        return empty
+    rows = profile["rows"]
+    total_vol = profile["total_volume"]
 
     for row in rows:
-        row["intensity"] = row["volume"] / max_vol if max_vol > 0 else 0.0
         row["side"] = "below" if row["mid"] < current else "above"
 
     below = [row for row in rows if row["mid"] < current]
@@ -7046,6 +7024,9 @@ def build_liquidity_thermal_profile(df: pd.DataFrame, lookback: int = 300, bins:
         "high": high,
         "low": low,
         "poc": poc,
+        "value_area_low": profile["value_area_low"],
+        "value_area_high": profile["value_area_high"],
+        "value_area_fraction": profile["value_area_fraction"],
         "support": support,
         "resistance": resistance,
         "support_gap": support_gap,
@@ -7082,10 +7063,11 @@ def build_liquidity_thermal_note(profile: dict, ticker: str) -> dict | None:
         f"하단 지지 {support_txt} ({support_gap_txt}) / 상단 저항 {resistance_txt} ({resistance_gap_txt})\n"
         f"최대 매물대 {poc_txt} · 하단 {profile.get('below_pct', 0)*100:.0f}% / 상단 {profile.get('above_pct', 0)*100:.0f}%"
     )
-    return {"title": "🧊 유동성 매물대", "body": body, "color": profile.get("color", "#94a3b8")}
+    body += "\n일봉 고가~저가에 거래량을 균등 배분한 추정치이며 실제 호가·체결분포가 아닙니다."
+    return {"title": "🧊 추정 매물대", "body": body, "color": profile.get("color", "#94a3b8")}
 
 
-def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zones: int = 7) -> dict:
+def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zones: int = 3) -> dict:
     profile = build_liquidity_thermal_profile(df)
     if not profile.get("ok"):
         return profile
@@ -7131,6 +7113,8 @@ def _add_liquidity_thermal_overlays(fig, df: pd.DataFrame, ticker: str, max_zone
             annotation_text="유동성 저항",
             annotation_position="top right",
         )
+    if profile.get("poc"):
+        fig.add_hline(y=profile["poc"]["mid"], line_dash="dash", line_color="#fbbf24", line_width=1)
     return profile
 
 
@@ -7431,12 +7415,30 @@ def render_precision_candlestick_chart(
         trendline_guides = _add_recent_trendline_guides(fig, df)
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
+    from stock_lab_core.chart_enrichment import build_volume_signal_series
+    timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
+    volume_signals = build_volume_signal_series(df, timeframe=timeframe)
+    if not volume_signals.empty and volume_signals["volume"].notna().any():
+        fig.add_trace(go.Bar(
+            x=df.index, y=volume_signals["volume"], marker_color=volume_signals["color"],
+            yaxis="y2", name="거래량 신호", customdata=volume_signals[["signal", "rvol"]].to_numpy(),
+            hovertemplate="%{x}<br>거래량 %{y:,.0f}<br>%{customdata[0]} · RVOL %{customdata[1]:.2f}x<extra></extra>",
+        ))
+        fig.add_trace(go.Scatter(x=df.index, y=volume_signals["volume_ma"], yaxis="y2",
+                                 name="거래량 MA", line=dict(color="#fbbf24", width=1)))
+        fig.update_layout(yaxis=dict(domain=[0.25, 1]),
+                          yaxis2=dict(domain=[0, 0.17], title="거래량", anchor="x"),
+                          legend=dict(orientation="h"))
     fig.update_layout(
         template="plotly_dark", height=600,
         xaxis_rangeslider_visible=False,
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
     st.plotly_chart(fig, width='stretch')
+    if not volume_signals.empty:
+        latest_volume = volume_signals.iloc[-1]
+        rvol_text = f"{latest_volume['rvol']:.2f}x" if pd.notna(latest_volume['rvol']) else "이력 부족"
+        st.caption(f"거래량 {latest_volume['signal']} · RVOL {rvol_text} · MA {'10' if timeframe == 'weekly' else '50'}봉 · 장중 봉은 미확정")
     if pattern_candidates or trendline_guides or (show_smc and smc_features) or (show_liquidity and liquidity_profile and liquidity_profile.get("ok")):
         st.markdown(
             build_chart_execution_guide(pattern_candidates, trendline_guides, smc_features, liquidity_profile, ticker, chart_latest_close(df)),
@@ -15922,7 +15924,8 @@ def get_macro_analysis():
             elif icon == "🔻": macro_trend -= 0.5
         is_storm = ((name == "VIX" and cur > 30) or (name == "환율" and cur > 1400) or (name == "10Y 금리" and cur > 4.7))
         if is_storm: storm_count += 1
-        results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg}
+        results[name] = {"val": cur, "icon": icon, "storm": is_storm, "chg": chg,
+                         "symbol": tkr, "source": "Yahoo Finance daily", "as_of": str(close.index[-1].date())}
     move_val = results.get("MOVE", {}).get("val", np.nan)
     move_score = 1.5 if move_val >= 120 else (0.5 if not finite_num(move_val) or move_val >= 100 else 0)
     _, event_risk, _ = build_macro_event_risk_table()
@@ -29026,7 +29029,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
-    memo_engine_version = "2026-10-13-consistent-market-v2"
+    memo_engine_version = "2026-10-18-evidence-report-v3"
     if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
         old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
         st.session_state["_today_market_memo_engine_version"] = memo_engine_version
@@ -29035,6 +29038,13 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
 
     def _clear_market_memo():
         st.session_state["today_market_memo_text"] = ""
+
+    saved_report = str(st.session_state.get("today_market_memo_text", "") or "")
+    if "## 기준일" in saved_report:
+        st.markdown(saved_report)
+        st.download_button("리포트 다운로드", saved_report.encode("utf-8"),
+                           file_name="stock_lab_market_report.md", mime="text/markdown",
+                           key="today_market_report_download", icon=":material/download:")
 
     with st.expander("뉴스픽/시황 붙여넣기", expanded=False):
         auto_cols = st.columns([1.15, 1.25, 0.9])
@@ -29136,6 +29146,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                     "news_rows": news_rows,
                     "summary_rows": memo_summary_df,
                     "now": datetime.now(timezone(timedelta(hours=9))),
+                    "report_context": _collect_today_report_context(memo_summary_df, event_rows),
                 }
                 try:
                     generated_memo = build_auto_market_memo(**memo_kwargs)
@@ -29167,6 +29178,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                             )
                             st.warning("자동 뉴스픽 일부 모듈이 맞지 않아 안전 안내 초안으로 대체했습니다.")
                 st.session_state["today_market_memo_text"] = generated_memo
+                st.rerun()
 
             if include_market_rss or include_rss_news:
                 target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
@@ -29412,6 +29424,29 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
     )
 
 
+def _collect_today_report_context(summary_df, event_rows):
+    from stock_lab_core.report_context import collect_report_context
+    from stock_lab_core.today_snapshot import load_previous_today_summary
+
+    calendar_events = build_macro_event_candidates(datetime.now(KST).date())
+    for item in calendar_events:
+        if item.get("source") == "자동: Fed":
+            item["source_url"] = FED_FOMC_CALENDAR_URL
+        elif item.get("source") == "자동: FF":
+            item["source_url"] = FOREX_FACTORY_WEEKLY_CALENDAR_URL
+    try:
+        context = collect_report_context(summary_df, calendar_events or event_rows)
+    except Exception as exc:
+        logging.warning("Report context unavailable (%s)", type(exc).__name__)
+        context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
+    context["calendar_events"] = calendar_events
+    owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
+    previous, previous_date = load_previous_today_summary(owner_scope=owner)
+    context.update(previous_summary=previous, previous_date=previous_date,
+                   summary_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10])
+    return context
+
+
 def _generate_today_briefing_market_memo(summary_df=None) -> str:
     memo_summary_df, _memo_summary_source = resolve_today_market_memo_summary_df(summary_df, None)
     snapshot = get_cached_today_market_flow_snapshot()
@@ -29448,6 +29483,7 @@ def _generate_today_briefing_market_memo(summary_df=None) -> str:
         "news_rows": news_rows,
         "summary_rows": memo_summary_df,
         "now": datetime.now(timezone(timedelta(hours=9))),
+        "report_context": _collect_today_report_context(memo_summary_df, event_rows),
     }
     try:
         return build_auto_market_memo(**memo_kwargs)
@@ -29821,6 +29857,10 @@ def render_today_unified_briefing_panel(
                 return "-" if not finite_num(value) else f"{float(value):.1f}%"
 
             def _add_asset_interpretation(bucket_label: str, action: str, target_lines: list[str]):
+                from stock_lab_core.report_evidence import holding_reasons
+                reasons = holding_reasons(dict(row, 현재비중=current_w, 목표비중=target_w))
+                if is_leveraged_or_inverse_product(name, ticker, asset_class):
+                    reasons.append("레버리지 보유")
                 target_lines.append(base_line + " → " + action)
                 asset_interpretation_rows.append({
                     "구분": bucket_label,
@@ -29831,6 +29871,7 @@ def render_today_unified_briefing_panel(
                     "목표비중": _weight_cell(target_w),
                     "비중차이": _weight_cell(gap_w),
                     "판정": label or final_read or "-",
+                    "보유 점검 사유": ", ".join(reasons),
                     "관리 해석": action,
                 })
 
@@ -29907,6 +29948,14 @@ def render_today_unified_briefing_panel(
         headline = "오늘은 보유 유지, 관심 후보 정리, 뉴스 확인이 중심입니다."
 
     st.markdown("#### 1. 오늘 브리핑 통합판")
+    if not df.empty:
+        from stock_lab_core.report_evidence import comparison_lines
+        from stock_lab_core.today_snapshot import load_previous_today_summary
+        previous_df, previous_date = load_previous_today_summary(
+            owner_scope="" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower())
+        for change in comparison_lines(df, previous_df, previous_date=previous_date,
+                                       current_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10]):
+            st.caption(change)
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:12px;'>
@@ -29940,6 +29989,10 @@ def render_today_unified_briefing_panel(
     if detail == "키움":
         render_kiwoom_market_evidence("today_kiwoom")
         return
+    if detail == "시장":
+        from stock_lab_core.market_board import render_market_board
+        render_market_board(st, key="today_market_board")
+        st.divider()
 
     if not pending and buyish_count == 0:
         st.info(
@@ -33948,7 +34001,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
     st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
     demo_page = st.radio(
         "체험 화면",
-        ["자산 현황", "오늘 점검", "전광판", "정밀관측소", "시나리오", "단기 흐름", "신호 검증", "돈흐름", "월배당 ETF", "피드백", "가이드"],
+        ["자산 현황", "오늘 점검", "시장판", "전광판", "정밀관측소", "시나리오", "단기 흐름", "신호 검증", "돈흐름", "월배당 ETF", "피드백", "가이드"],
         horizontal=True,
         key="public_demo_fast_page",
     )
@@ -33959,6 +34012,11 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight)
         render_asset_quick_quality_summary(settings, holdings_df, dividends_df, monthly_logs_df)
         render_monthly_record_status(monthly_logs_df, portfolio_summary)
+        return
+
+    if demo_page == "시장판":
+        from stock_lab_core.market_board import render_market_board
+        render_market_board(st, key="public_demo_market_board")
         return
 
     if demo_page == "오늘 점검":
@@ -34041,6 +34099,11 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "애널목표출처", "값": external.get("애널목표출처", "")},
             {"항목": "애널목표기준일", "값": external.get("애널목표기준일", "")},
         ]), width='stretch', hide_index=True)
+        render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
+                                           ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
+        from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
+        render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
+                            is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"demo_review_{tkr}")
         render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
         return
 
@@ -36107,6 +36170,9 @@ if main_page == "precision":
                 render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c)
             with month_tab:
                 render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c)
+            from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
+            render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
+                                is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"precision_review_{tkr}")
             render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(

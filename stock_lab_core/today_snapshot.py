@@ -42,6 +42,18 @@ def save_today_queue_summary_snapshot(
         return
     temporary_path = None
     try:
+        previous = {}
+        try:
+            old = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if old.get("owner_hash") == owner_hash and old.get("version") == TODAY_QUEUE_LOGIC_VERSION:
+                old_date = str(old.get("last_run", ""))[:10]
+                new_date = str(last_run or "")[:10]
+                if old_date and new_date and old_date < new_date:
+                    previous = {"data": old.get("data"), "date": old_date}
+                else:
+                    previous = old.get("previous", {})
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         payload = {
             "version": TODAY_QUEUE_LOGIC_VERSION,
             "owner_hash": owner_hash,
@@ -49,6 +61,7 @@ def save_today_queue_summary_snapshot(
             "last_run": str(last_run or ""),
             "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
             "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
+            "previous": previous,
         }
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         # A failed or concurrent write must leave readers a complete previous/new file.
@@ -112,6 +125,23 @@ def load_today_queue_summary_snapshot(
     except (OSError, ValueError, TypeError, KeyError) as exc:
         _LOG.warning("Today Queue snapshot load failed (%s)", type(exc).__name__)
         return empty
+
+
+def load_previous_today_summary(*, owner_scope="", path=None):
+    """Last earlier-date snapshot for this account, never another user's data."""
+    snapshot_path, owner_hash = _snapshot_location(path, owner_scope)
+    if snapshot_path is None:
+        return pd.DataFrame(), ""
+    try:
+        payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if payload.get("owner_hash") != owner_hash or payload.get("version") != TODAY_QUEUE_LOGIC_VERSION:
+            return pd.DataFrame(), ""
+        previous = payload.get("previous", {})
+        if not previous.get("data") or not previous.get("date"):
+            return pd.DataFrame(), ""
+        return pd.read_json(io.StringIO(previous["data"]), orient="split", dtype=False), str(previous["date"])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return pd.DataFrame(), ""
 
 
 def clear_today_queue_summary_snapshot(path: Path | str | None = None, *, owner_scope: str = "") -> None:
