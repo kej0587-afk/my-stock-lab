@@ -40,11 +40,12 @@ _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
 @contextmanager
 def price_frame_scope(frames, period):
     """Reuse exact-period public histories only for this calculation run."""
-    prepared = {
+    prepared = dict(_PREFETCHED_HISTORY.get() or {})
+    prepared.update({
         (str(ticker).strip().upper(), period): frame
         for ticker, frame in (frames or {}).items()
         if isinstance(frame, pd.DataFrame) and not frame.empty
-    }
+    })
     token = _PREFETCHED_HISTORY.set(prepared)
     try:
         yield

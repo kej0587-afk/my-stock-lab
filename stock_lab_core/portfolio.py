@@ -2441,6 +2441,10 @@ def build_correlation_pair_summary(corr_df):
 
 def infer_scenario_shock_multiplier(row):
     ticker = str(row.get("티커", row.get("ticker", ""))).strip().upper()
+    explicit = {"418660": 2.0, "RAM": 2.0, "BITX": 2.0, "BITU": 2.0, "QLD": 2.0,
+                "SOXL": 3.0, "TQQQ": 3.0, "SOXS": -3.0, "SQQQ": -3.0}
+    if ticker.split(".")[0] in explicit:
+        return explicit[ticker.split(".")[0]]
     name = str(row.get("자산명", row.get("name", ""))).strip().upper()
     asset_class = str(row.get("asset_class", "")).strip().upper()
     text = f"{ticker} {name} {asset_class}"

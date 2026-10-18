@@ -31,14 +31,14 @@ def test_close_boundaries_exclude_previous_close_and_include_reference_close():
     assert all(r["session_date"] == "2026-10-16" for r in result["next_session_news"])
 
 
-def test_post_close_wrap_is_next_session_even_within_capture_window():
+def test_post_close_wrap_is_labeled_retrospective_not_a_preclose_cause():
     result = partition_session_market_news([
         article("Wall Street stocks close lower due to chip stocks", "2026-10-16T16:05:00-04:00"),
         article("뉴욕증시 마감: 반도체 하락", "2026-10-17T06:00:00+09:00"),
     ], SESSIONS, now=NOW)
-    assert not result["session_news"]
-    assert len(result["next_session_news"]) == 2
-    assert all(r["is_close_wrap"] for r in result["next_session_news"])
+    assert not result["next_session_news"]
+    assert len(result["session_news"]) == 2
+    assert all(r["retrospective_close_wrap"] for r in result["session_news"])
     window = next(w for w in result["windows"] if w["market"] == "US")
     assert window["capture_end"] == "2026-10-18T00:00:00-04:00"
     assert datetime.fromisoformat(window["capture_end"]) < NOW

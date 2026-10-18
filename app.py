@@ -20284,6 +20284,8 @@ VALUATION_INFO_KEYS = [
     "annualRevenue",
     "annualOperatingIncome",
     "annualNetIncome",
+    "returnOnAssets", "currentRatio", "quickRatio", "operatingCashflow", "freeCashflow",
+    "trailingAnnualDividendYield", "payoutRatio", "currency", "financialCurrency",
 ]
 
 
@@ -20380,6 +20382,17 @@ def build_valuation_fields_from_fin_meta(fin_meta):
             "earningsGrowth": derived.get("net_growth"),
         })
     return data
+
+
+def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
+    from stock_lab_core.chart_review import saved_financial_chart_info
+    from stock_lab_core.chart_scorecard import render_chart_scorecard
+    fallback = saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta))
+    # The valuation panel below uses this same cached snapshot; no second provider path.
+    snapshot = fetch_valuation_snapshot(ticker) if not is_etf else {}
+    data = _merge_missing_valuation_fields(snapshot.get("data", {}), fallback)
+    render_chart_scorecard(st, frame, ticker=ticker, info=data, is_etf=is_etf,
+                          source=str(fin_meta.get("source") or ", ".join(snapshot.get("sources", []))))
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -22036,7 +22049,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
-    with price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
+    with price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             submit_with_context(executor,
                 _compute_summary_item,
@@ -29114,12 +29127,8 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                 news_rows = []
                 news_targets = []
                 market_news_rows = []
-                if include_market_rss:
-                    market_news_rows = fetch_today_market_story_news(
-                        tuple(selected_market_story_categories),
-                        per_category=market_story_per_category,
-                        days=2,
-                    )
+                report_context = _collect_today_report_context(memo_summary_df, event_rows, include_news=include_market_rss)
+                market_news_rows = report_context.get("session_news", []) + report_context.get("next_session_news", [])
                 if include_rss_news:
                     news_rows, news_targets = collect_today_auto_newspick_news(
                         universe,
@@ -29146,7 +29155,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                     "news_rows": news_rows,
                     "summary_rows": memo_summary_df,
                     "now": datetime.now(timezone(timedelta(hours=9))),
-                    "report_context": _collect_today_report_context(memo_summary_df, event_rows),
+                    "report_context": report_context,
                 }
                 try:
                     generated_memo = build_auto_market_memo(**memo_kwargs)
@@ -29424,26 +29433,16 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
     )
 
 
-def _collect_today_report_context(summary_df, event_rows):
+def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     from stock_lab_core.report_context import collect_report_context
-    from stock_lab_core.today_snapshot import load_previous_today_summary
-
-    calendar_events = build_macro_event_candidates(datetime.now(KST).date())
-    for item in calendar_events:
-        if item.get("source") == "자동: Fed":
-            item["source_url"] = FED_FOMC_CALENDAR_URL
-        elif item.get("source") == "자동: FF":
-            item["source_url"] = FOREX_FACTORY_WEEKLY_CALENDAR_URL
+    from stock_lab_core.report_history import update_report_history
     try:
-        context = collect_report_context(summary_df, calendar_events or event_rows)
+        context = collect_report_context(summary_df, event_rows, include_news=include_news)
     except Exception as exc:
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
-    context["calendar_events"] = calendar_events
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
-    previous, previous_date = load_previous_today_summary(owner_scope=owner)
-    context.update(previous_summary=previous, previous_date=previous_date,
-                   summary_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10])
+    context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner))
     return context
 
 
@@ -34103,6 +34102,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "애널목표출처", "값": external.get("애널목표출처", "")},
             {"항목": "애널목표기준일", "값": external.get("애널목표기준일", "")},
         ]), width='stretch', hide_index=True)
+        render_precision_scorecard(df, tkr, fin_meta, is_etf)
         render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
         from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
@@ -36146,6 +36146,7 @@ if main_page == "precision":
             st.caption("후보 등급은 종목의 우선순위입니다. 실제 매수 강도는 위 타점 문구, 목표비중, 포지션 사이징, 주봉·월봉 보정을 같이 봅니다.")
 
         with R:
+            render_precision_scorecard(df, tkr, fin_meta, is_etf)
             p_line = my_p
             _show_avg = p_line > 0 and not is_free and has_p
             avg_line = p_line if _show_avg else 0.0

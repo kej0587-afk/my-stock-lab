@@ -27,6 +27,8 @@ def saved_financial_chart_info(fields):
 
 
 def render_chart_review(st, frame, *, ticker="", info=None, is_etf=False, source="", key="chart_review"):
+    from stock_lab_core.chart_scorecard import render_volume_review
+    render_volume_review(st, frame, ticker)
     profile = build_volume_at_price_profile(frame, lookback=300, bins=31)
     with st.expander("매물 분포 · 재무 스냅샷", expanded=False):
         if profile["ok"]:

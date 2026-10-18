@@ -1,0 +1,10 @@
+{
+  "verified_at": "2026-10-18",
+  "events": [
+    {"indicator": "US_CPI", "period": "2026-09", "release_at": "2026-10-14T08:30:00-04:00", "source_url": "https://www.bls.gov/news.release/archives/cpi_10142026.htm"},
+    {"indicator": "US_CORE_CPI", "period": "2026-09", "release_at": "2026-10-14T08:30:00-04:00", "source_url": "https://www.bls.gov/news.release/archives/cpi_10142026.htm"},
+    {"indicator": "US_PPI", "period": "2026-09", "release_at": "2026-10-15T08:30:00-04:00", "source_url": "https://www.bls.gov/news.release/archives/ppi_10152026.htm", "verified_yoy": 6.3},
+    {"indicator": "US_NONFARM_PAYROLLS", "period": "2026-09", "release_at": "2026-10-02T08:30:00-04:00", "source_url": "https://www.bls.gov/news.release/archives/empsit_10022026.htm"},
+    {"indicator": "US_UNEMPLOYMENT", "period": "2026-09", "release_at": "2026-10-02T08:30:00-04:00", "source_url": "https://www.bls.gov/news.release/archives/empsit_10022026.htm"}
+  ]
+}

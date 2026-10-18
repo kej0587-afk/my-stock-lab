@@ -661,7 +661,7 @@ def _flow_bullet(row: dict, score_col: str = "돈흐름점수") -> str:
     div_text = f", {div_note}" if div_note else ""
     result = f"{label} 3M {ret_3m}, 가속도 {accel}, 돈흐름 {score}점{state_text}{div_text}"
     if _safe_float(row.get("3개월수익률"), 0) < 0:
-        result += ", 상대 상위이나 절대 약세"
+        result += ", 3M 절대 약세"
     if _is_inverse_or_short_row(row):
         result += ", 인버스 가격 지표(섹터 강세 아님), 1D/5D "
         result += f"{_fmt_auto_pct(_rotation_value(row, '1D'))}/{_fmt_auto_pct(_rotation_value(row, '5D'))}"
@@ -2101,9 +2101,61 @@ def build_auto_market_memo(
     dt = now or datetime.now(KST)
     dt = dt.replace(tzinfo=KST) if dt.tzinfo is None else dt.astimezone(KST)
     curated = curate_news(records(market_news_rows) + records(news_rows), now=dt)
+    if report_context is not None:
+        from stock_lab_core.report_evidence import macro_stress, is_held, first, text, _cell
+        from stock_lab_core.today_news import partition_session_market_news
+        context = dict(report_context)
+        # No live macro fallback: missing session data must stay missing.
+        macro_data = context.get("macro_data", {})
+        if "session_news" not in context:
+            context.update(partition_session_market_news(curated, context.get("news_sessions", {}), now=dt))
+        curated = curate_news(context.get("session_news", []), now=dt)
+        front, missing = report_sections(context=context, news=curated,
+            flow_rows=flow_snapshot.get("flow_df"), event_rows=event_rows, summary_rows=summary_rows, now=dt)
+        rows = records(summary_rows)
+        held_count = sum(is_held(row) for row in rows)
+        executable = sum(text(first(row, "게이트상태", "gate_state")) in {"실행가능", "EXECUTABLE"} for row in rows)
+        unknown_gates = sum(not text(first(row, "게이트상태", "gate_state")) for row in rows)
+        stress = macro_stress(macro_data)
+        status = f"신규매수 허용 {executable}개 / 보유 {held_count}, 관심 {len(rows) - held_count}"
+        status += f" / 사유: 매크로 스트레스 {stress['score']} {stress['label']}" if stress["score"] is not None else " / 매크로 미수집"
+        if unknown_gates:
+            status += f" · 게이트 미제공 {unknown_gates}개(허용으로 추정하지 않음)"
+        lines = ["# Stock Lab 자동 뉴스픽", "", status, "", *front]
+        lines.extend(["", "## 다음 세션 재료"])
+        late = curate_news(context.get("next_session_news", []), now=dt)
+        from stock_lab_core.report_evidence import citation
+        for row in late:
+            lines.append(f"- {row['reading_ko']} · {row['published']} {citation(dict(row, title='원문'))}")
+        if not late:
+            lines.append("- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
+        lines.extend(["", "## 매크로 수치 근거", stress["explanation"], "",
+                      "지표 | 수준 | 1개월 변화 | 비교 기준일 → 종가 기준일 | 상태 | 스트레스 기여",
+                      "--- | --- | --- | --- | --- | ---"])
+        for item in stress["rows"]:
+            original = macro_data[item["name"]]
+            change = item["change"]
+            lines.append(" | ".join(_cell(value) for value in (item["label"], f"{item['value']:,.2f}",
+                f"{change:+.2f}%" if change is not None else "미수집", f"{original.get('base_date', '미수집')} → {item['as_of']}",
+                item["state"], f"{item['contribution']:+d}")))
+        lines.extend(["", "유가 90~100달러 하락 구간의 +0: 고수준 부담은 유지하며 하락 완화점수(-8)를 주지 않습니다. 기존 +18 수준 경고는 100달러부터입니다. 산식·매매 임계값은 바꾸지 않았습니다."])
+        missing_macro = set(("10Y 금리", "VIX", "MOVE", "유가", "환율")) - macro_data.keys()
+        if missing_macro:
+            missing.append("거래일 정렬 매크로: " + ", ".join(sorted(missing_macro)))
+        rotation = _build_rotation_context(index_rotation_rows, flow_snapshot)
+        if rotation.get("rows"):
+            growth, defensive = rotation.get("growth_denominator", []), rotation.get("rotation_denominator", [])
+            lines.extend(["", "## 스타일 비교", f"성장 [{', '.join(growth)}] / 방어 [{', '.join(defensive)}]"])
+            if min(len(growth), len(defensive)) < 2:
+                lines.append("각 스타일 독립 노출 최소 2개 미충족: 스타일 우열 판단 보류")
+            else:
+                lines.append(f"{rotation.get('short_key')} 평균: 성장 {_fmt_auto_pct(rotation.get('growth_avg'))}, 방어 {_fmt_auto_pct(rotation.get('rotation_avg'))}. 가격 비교이며 실제 자금 유입은 아님.")
+        if missing:
+            lines.extend(["", "데이터 누락:", *["- " + reason for reason in missing]])
+        return "\n".join(lines).strip()
     front, missing = report_sections(
         context=report_context, news=curated, flow_rows=flow_snapshot.get('flow_df'),
-        event_rows=event_rows, summary_rows=summary_rows, now=dt,
+        event_rows=event_rows, summary_rows=None, now=dt,
     )
     lines = [
         "🌇 Stock Lab 자동 뉴스픽",

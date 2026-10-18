@@ -329,9 +329,9 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     ``sessions`` maps KR/US to ISO ``date`` and actual ``previous_date``.
     Windows use regular close times in each exchange timezone (including US DST).
     ``start`` is exclusive and ``end`` (the reference close) inclusive.
-    ``capture_end`` is exclusive midnight after the following calendar day; it
-    controls historical retrieval, never attribution. All post-close articles,
-    including closing wraps, belong to ``next_session_news`` through ``now``.
+    ``capture_end`` is exclusive midnight after the following calendar day.
+    Same-date closing wraps within two hours of close are retrospective session
+    reporting, not pre-close causes. Other post-close news is next-session material.
     Only explicit ``market``/``region`` metadata is used; language is not a market.
     ISO timestamps without an offset use KST, matching report_evidence.curate_news.
     """
@@ -361,10 +361,19 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
         if published <= start or published > now:
             rejected["뉴스 시간창 밖 또는 미래 발행시각"] += 1
             continue
-        bucket = "session_news" if published <= close else "next_session_news"
+        wrap = bool(_CLOSE_WRAP.search(str(raw.get("title") or raw.get("제목") or "")))
+        title = str(raw.get("title") or raw.get("제목") or "")
+        if re.search(r"post.close|after.hours|시간외|장후|마감 후", title, re.I):
+            wrap = False
+        same_date = published.astimezone(ZoneInfo(window["timezone"])).date().isoformat() == window["date"]
+        if wrap and published <= close and not same_date:
+            rejected["이전 거래일 마감 회고"] += 1
+            continue
+        retrospective = wrap and same_date and close < published <= close + timedelta(hours=2)
+        bucket = "session_news" if published <= close or retrospective else "next_session_news"
         row = dict(raw, market=market, published_at=published.isoformat(),
                    session_date=window["date"], news_bucket=bucket,
-                   is_close_wrap=bool(_CLOSE_WRAP.search(str(raw.get("title") or raw.get("제목") or ""))))
+                   is_close_wrap=wrap, retrospective_close_wrap=retrospective)
         result[bucket].append(row)
     for bucket in ("session_news", "next_session_news"):
         result[bucket].sort(key=_news_sort_key)
@@ -392,17 +401,23 @@ def _session_query_specs(windows, categories, now):
         for lower, upper in ranges:
             if lower >= upper:
                 continue
-            for category, query in plans:
+            market_plans = plans
+            if market == "KR":
+                market_plans = [("마감 시황", "코스피 마감"), ("바이오/화장품", "(바이오 OR 화장품) (급등 OR 강세)"), *plans[1:]]
+            else:
+                market_plans = [("마감 시황", "미국증시 마감"), *plans]
+            for category, query in market_plans:
                 terms = market_spec["wrap"] if query is None else query
                 # Google date predicates have calendar precision. Pad boundaries
                 # and apply exact timestamps after retrieval, including midnight.
                 after = (lower.astimezone(ZoneInfo(window["timezone"])).date() - timedelta(days=1)).isoformat()
                 before = (upper.astimezone(ZoneInfo(window["timezone"])).date() + timedelta(days=1)).isoformat()
-                query_text = f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
+                korean_wrap = terms in {"코스피 마감", "미국증시 마감"}
+                query_text = terms if korean_wrap else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
                 query_text += f" after:{after} before:{before}"
                 url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query_text})
-                specs.append({"market": market, "category": category,
-                              "url": url + "&" + market_spec["locale"]})
+                locale = "hl=ko&gl=KR&ceid=KR:ko" if korean_wrap else market_spec["locale"]
+                specs.append({"market": market, "category": category, "url": url + "&" + locale})
     return specs[:_SESSION_QUERY_LIMIT]
 
 
@@ -478,7 +493,8 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             if not checked or not checked[0].get("link"):
                 continue
             clean = checked[0]
-            event = (clean["market"], clean["event_key"])
+            event_key = "close-wrap:" + clean["session_date"] if clean.get("is_close_wrap") else clean["event_key"]
+            event = (clean["market"], event_key)
             category = (clean["market"], clean["category"])
             link_key = (clean["market"], clean["link"])
             if event in seen or link_key in seen_links or counts[category] >= per_category or len(accepted) >= _SESSION_ROW_LIMIT:

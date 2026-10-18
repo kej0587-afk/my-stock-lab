@@ -86,13 +86,14 @@ def test_report_front_order_missing_reasons_and_leverage_not_double_multiplied()
     memo = build_auto_market_memo(report_context=context, now=NOW,
                                   market_news_rows=[article("CXMT 반도체 매출 증가")],
                                   summary_rows=[{"티커": "SOXL", "보유량": 1, "현재비중": 6, "목표비중": 5}])
-    assert memo.index("## 오늘의 시장 스토리") < memo.index("## 경제지표") < memo.index("## 내 보유 종목 영향") < memo.index("🧭 오늘점검")
+    assert memo.index("## 오늘의 시장 스토리") < memo.index("## 경제지표") < memo.index("## 내 보유 종목 영향")
+    assert "🧭 오늘점검" not in memo
     assert "전년비" in memo and "예상대비 +0.20 %p" in memo
     assert "× 3 = -12.00%" in memo and "-36.00%" not in memo
     assert "비중초과, 레버리지 보유" in memo
     assert memo.count("CXMT 반도체 매출 증가") < 6
     assert "원자료" not in memo
-    assert "향후 7일 확정 일정" in memo
+    assert "일정 미연결" in memo
     assert memo.count("오늘의 전략:") <= 1
 
 
@@ -116,11 +117,12 @@ def test_saved_financial_percentage_points_are_not_multiplied_again():
 
 def test_korean_leverage_and_us_proxy_same_date_are_not_the_same_session():
     memo = build_auto_market_memo(now=NOW, summary_rows=[{"티커": "418660.KS", "보유량": 1}],
-                                  report_context={"prices": {
+                                  report_context={"sessions": {"US": "2026-10-16"}, "prices": {
                                       "418660.KS": {"date": "2026-10-16", "return": .03},
                                       "QQQ": {"date": "2026-10-16", "return": -.02}}})
-    assert "추정 보류" in memo
-    assert "× 2 =" not in memo
+    assert "월요일 갭 예상 영향(추정)" in memo
+    assert "× 2 = -4.00%" in memo
+    assert "+3.00% (2026-10-16)" in memo
 
 
 def test_unparseable_and_missing_news_dates_do_not_bypass_recency():

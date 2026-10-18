@@ -498,7 +498,7 @@ def test_verified_ecos_monthly_levels_become_yoy_rates(ecos_provider, indicator)
     assert row["release_at"] is None
     assert len(row["history"]) == 21
     assert row["history"][0] == {"period": "2025-01", "value": 12.0}
-    assert row["previous3mean"] == 10.166667
+    assert row["previous3mean"] == 10.2  # Prior three YoY values: 10.1, 10.2, 10.3.
     assert "FixtureECOSKey" not in str(row)
     assert len(ecos_provider["calls"]) == 2
     releases._ecos(NOW, "FixtureECOSKey", indicator)
