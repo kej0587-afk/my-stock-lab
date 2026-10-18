@@ -2131,14 +2131,10 @@ def build_auto_market_memo(
         market_news_rows,
         index_rotation_rows,
     )
-<<<<<<< HEAD
-    if insight_lines and report_context is None:
-=======
     overview = _summary_overview(summary_rows)
     if overview:
         insight_lines = [overview, *insight_lines[:7]]
-    if insight_lines:
->>>>>>> ae7702748c6317ef842d1b1d3905bc58709bbab7
+    if insight_lines and report_context is None:
         lines.append("🧠 핵심 해석")
         for item in insight_lines:
             lines.append(f"• {item}")

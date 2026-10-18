@@ -9,6 +9,19 @@ import ast
 from pathlib import Path
 
 
+def test_runtime_python_sources_compile_without_merge_conflicts():
+    root = Path(__file__).resolve().parents[1]
+    paths = [root / name for name in ("app.py", "app_sam.py", "demo_app.py")]
+    paths.extend((root / "stock_lab_core").rglob("*.py"))
+    paths.extend((root / "scripts").rglob("*.py"))
+    for path in paths:
+        source = path.read_text(encoding="utf-8-sig")
+        conflicts = [line for line, value in enumerate(source.splitlines(), 1)
+                     if value.startswith(("<<<<<<< ", ">>>>>>> "))]
+        assert not conflicts, f"Unresolved merge conflict in {path}: {conflicts}"
+        compile(source, str(path), "exec")
+
+
 def test_all_internal_imports_resolve_without_manual_export_lists():
     """Catch new missing core exports in every entrypoint and core module."""
     root = Path(__file__).resolve().parents[1]
