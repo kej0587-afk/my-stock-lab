@@ -7,6 +7,9 @@ import math
 import re
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 KST = timezone(timedelta(hours=9))
 SOURCE_NAMES = (
@@ -322,8 +325,9 @@ def is_held(row):
     return (number(first(row, "현재비중", "current_w")) or 0) > 0
 
 
-def comparison_lines(current, previous, *, previous_date="", current_date=""):
-    if not previous_date or not current_date or previous_date >= current_date:
+def comparison_lines(current, previous, *, previous_date="", current_date="", same_session=False, previous_run_at=""):
+    valid = previous_date == current_date if same_session else previous_date < current_date
+    if not previous_date or not current_date or not valid:
         return ["전일 비교 없음: 이전 거래일의 저장된 점검이 없습니다."]
     old = {text(first(row, "티커", "ticker")): row for row in records(previous) if text(first(row, "티커", "ticker"))}
     current_rows = records(current)
@@ -351,7 +355,32 @@ def comparison_lines(current, previous, *, previous_date="", current_date=""):
         details.append("신규: " + ", ".join(sorted(keys - old.keys())))
     if old.keys() - keys:
         details.append("목록 제외: " + ", ".join(sorted(old.keys() - keys)))
-    return [f"이전 점검({previous_date}) 대비: " + " / ".join(details)]
+    label = f"같은 거래일 직전 생성({previous_run_at or '시각 미확보'})" if same_session else f"이전 점검({previous_date})"
+    return [label + " 대비: " + " / ".join(details)]
+
+
+def participant_news_lines(news, session_date, *, limit=3):
+    """Group source-attributed titles, without asserting verified net flows."""
+    selected, seen_titles, seen_links = [], set(), set()
+    for row in news:
+        title = text(row.get("title"))
+        if row.get("market") != "KR" or row.get("session_date") != session_date:
+            continue
+        if not re.search(r"외국인|외인|기관|연기금|개인", title) or not re.search(r"매수|매도|수급", title):
+            continue
+        key = re.sub(r"\W+", "", title).casefold()
+        link = text(first(row, "link", "url"))
+        if key in seen_titles or (link and link in seen_links):
+            continue
+        seen_titles.add(key)
+        if link:
+            seen_links.add(link)
+        selected.append(row)
+    if not selected:
+        return []
+    return [f"- 수급 주체 보도 {len(selected)}건(제목 기준·기사 주장, 순매수액 미검증): "
+            + " / ".join(citation(row) for row in selected[:limit])
+            + (f" · 나머지 {len(selected) - limit}건 생략" if len(selected) > limit else "")]
 
 
 def _pct(value):
@@ -385,10 +414,17 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.append("- 시차: 한국장은 같은 날짜 미국장보다 먼저 마감합니다. 한국 마감 후 미국 뉴스·가격은 다음 거래일 갭 리스크입니다.")
     if kr and us:
         lines.append(f"  비교하는 거래일: 한국 {kr} / 미국 {us}. 동시 거래 결과가 아닙니다.")
-    lines.extend(["", "## 어제 대비 바뀐 것"])
+    lines.extend(["", "## 판정 이력 비교"])
     lines.extend(comparison_lines(summary_rows, context.get("previous_summary"),
                                   previous_date=context.get("previous_date", ""),
                                   current_date=context.get("summary_date", "")))
+    if context.get("previous_run_summary"):
+        lines.extend(comparison_lines(summary_rows, context["previous_run_summary"],
+                     previous_date=context.get("previous_run_date", ""),
+                     current_date=context.get("summary_date", ""), same_session=True,
+                     previous_run_at=context.get("previous_run_at", "")))
+    elif not context.get("previous_summary"):
+        lines.append("같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.")
     if context.get("history_status"):
         lines.append(context["history_status"] + " · 서버 재배포로 로컬 파일이 소실되면 비교 이력도 사라집니다.")
     index_rows = [(ticker, observations[ticker]) for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")
@@ -441,6 +477,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(["- 미국: " + (" · ".join(sector_facts) or "업종 종가 미연결"),
                   "- 한국: " + kr_summary,
                   "- 지표: " + (" / ".join(economic_summary) or "비교 가능한 주요 발표치 미연결")])
+    lines.extend(participant_news_lines(news, kr))
     held_tickers = {text(first(row, "티커", "ticker")) for row in records(summary_rows) if is_held(row)}
     if held_tickers & {"SOXL", "RAM", "SOXX", "SMH", "DRAM", "0167A0.KS"}:
         semis = [(ticker, observations.get(ticker, {})) for ticker in ("SOXX", "DRAM", "XLK", "SOXL", "RAM")]

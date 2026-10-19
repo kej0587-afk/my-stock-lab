@@ -52,8 +52,10 @@ def test_timezones_and_markets_never_infer_from_korean_language():
         article("미국 증시", instant, ""),
         article("코스피", instant, "US,KR"),
     ], SESSIONS, now=NOW)
-    assert [r["title"] for r in result["session_news"]] == ["한국어 미국 증시 기사"]
-    assert [r["title"] for r in result["next_session_news"]] == ["Korean stock market"]
+    assert {r["title"] for r in result["session_news"]} == {"한국어 미국 증시 기사", "Korean stock market"}
+    assert not result["next_session_news"]
+    kr = next(r for r in result["session_news"] if r["market"] == "KR")
+    assert kr["post_close_context"] and not kr["retrospective_close_wrap"]
     assert any("명시된 시장" in reason for reason in result["missing"])
 
 

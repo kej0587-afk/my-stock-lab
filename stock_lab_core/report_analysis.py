@@ -1,6 +1,9 @@
 """Evidence-based story selection and explicitly conditional economic readings."""
 
 from statistics import median
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 from datetime import datetime
 import re
 

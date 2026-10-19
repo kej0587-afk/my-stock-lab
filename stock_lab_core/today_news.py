@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 
 TODAY_MARKET_STORY_RSS_PLAN = [
@@ -347,8 +350,9 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     Windows use regular close times in each exchange timezone (including US DST).
     ``start`` is exclusive and ``end`` (the reference close) inclusive.
     ``capture_end`` is exclusive midnight after the following calendar day.
-    Same-date closing wraps within two hours of close are retrospective session
-    reporting, not pre-close causes. Other post-close news is next-session material.
+    KR same-date post-close publications are current-session context regardless
+    of title. They are not automatically evidence of a pre-close cause.
+    US closing wraps retain their separate retrospective window.
     Only explicit ``market``/``region`` metadata is used; language is not a market.
     ISO timestamps without an offset use KST, matching report_evidence.curate_news.
     """
@@ -391,10 +395,12 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
             rejected["이전 거래일 마감 회고"] += 1
             continue
         retrospective = us_recap or (wrap and same_date and close < published <= close + timedelta(hours=2))
-        bucket = "session_news" if published <= close or retrospective else "next_session_news"
+        kr_after_close = market == "KR" and same_date and published >= close
+        bucket = "session_news" if published <= close or retrospective or kr_after_close else "next_session_news"
         row = dict(raw, market=market, published_at=published.isoformat(),
                    session_date=window["date"], news_bucket=bucket,
-                   is_close_wrap=wrap or us_recap, retrospective_close_wrap=retrospective)
+                   is_close_wrap=wrap or us_recap, retrospective_close_wrap=retrospective,
+                   post_close_context=kr_after_close)
         local = published.astimezone(ZoneInfo(window["timezone"]))
         minute = local.hour * 60 + local.minute
         opening, closing = (540, 930) if market == "KR" else (570, 960)

@@ -4,6 +4,10 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from datetime import datetime, timezone
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import first, holding_reasons, records, text
 from stock_lab_core.today_snapshot import _snapshot_location
@@ -18,7 +22,7 @@ def normalized_decisions(rows):
              "저장사유": holding_reasons(row)} for row in records(rows)]
 
 
-def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None):
+def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None):
     # A KR/US pair avoids comparing mismatched cross-market report sessions.
     dates = {key: text(sessions.get(key)) for key in ("KR", "US")}
     result = {"summary_date": dates["US"] + "/" + dates["KR"], "previous_summary": [], "previous_date": ""}
@@ -45,13 +49,18 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
             last = max(candidates, key=lambda value: (value["dates"]["US"], value["dates"]["KR"])) if candidates else None
         if last and last.get("macro_data"):
             result["previous_macro_data"] = last["macro_data"]
+        if last and last.get("dates") == dates:
+            result.update(previous_run_summary=last["rows"],
+                          previous_run_at=last.get("generated_at", "저장 시각 미확보"),
+                          previous_run_date=key)
         earlier = [value for value in saved.values() if
                    all(value["dates"][m] <= dates[m] for m in dates) and
                    any(value["dates"][m] < dates[m] for m in dates)]
         if earlier:
             previous = max(earlier, key=lambda value: (value["dates"]["US"], value["dates"]["KR"]))
             result.update(previous_summary=previous["rows"], previous_date=previous["dates"]["US"] + "/" + previous["dates"]["KR"], previous_sessions=previous["dates"])
-        saved[key] = {"dates": dates, "rows": normalized_decisions(rows)}
+        saved[key] = {"dates": dates, "rows": normalized_decisions(rows),
+                      "generated_at": generated_at or datetime.now(timezone.utc).isoformat()}
         if macro_data:
             saved[key]["macro_data"] = macro_data
         payload["sessions"] = {key: saved[key] for key in sorted(saved)[-40:]}

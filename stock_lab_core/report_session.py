@@ -1,6 +1,9 @@
 """Report time-of-day policy, independent of execution/market-risk gates."""
 
 from zoneinfo import ZoneInfo
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 KST = ZoneInfo("Asia/Seoul")
 MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 후", "holiday": "휴장일"}

@@ -1,6 +1,9 @@
 """Session-aligned report prices and same-day comparisons, not causal claims."""
 
 import math
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 import pandas as pd
 from stock_lab_core.report_evidence import closed_daily_frame
 from stock_lab_core.result_cache import cache_result

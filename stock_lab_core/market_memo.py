@@ -14,6 +14,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
+from stock_lab_core.report_build import register_loaded_source, report_footer
+
+register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import (
     curate_news, macro_components, macro_stress, report_sections,
@@ -2179,6 +2182,8 @@ def build_auto_market_memo(
         lines.append("해제 기준: 비중은 목표 범위 복귀, 시장방어는 해당 시장 게이트 해제, 추세는 일봉·주봉 훼손 해소 후 재계산. 가격·손익비·과열 조건도 함께 통과해야 합니다.")
         if missing:
             lines.extend(["", "데이터 누락:", *["- " + reason for reason in dict.fromkeys(missing)]])
+        lines.extend(["", "---", report_footer(entrypoint=context.get("entrypoint"),
+                                               queue_measurement=context.get("queue_measurement"))])
         return "\n".join(lines).strip()
     front, missing = report_sections(
         context=report_context, news=curated, flow_rows=flow_snapshot.get('flow_df'),
@@ -2357,6 +2362,7 @@ def build_auto_market_memo(
 
     if missing:
         lines.append("※ 데이터 누락이 있는 자동 생성 초안: " + " / ".join(missing))
+    lines.extend(["", "---", report_footer()])
     return "\n".join(lines).strip()
 
 

@@ -1,6 +1,9 @@
 """Report estimates reuse portfolio exposure multipliers; never trade signals."""
 
 from stock_lab_core.portfolio import infer_scenario_shock_multiplier
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 from stock_lab_core.report_evidence import first, number, text
 
 UNDERLYINGS = {

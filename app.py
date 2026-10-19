@@ -456,6 +456,9 @@ MONEY_FLOW_IMPORT_ERROR = ""
 IMAGE_THEME_FLOW_AVAILABLE = True
 NAVER_THEME_COVERAGE_AVAILABLE = True
 from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
+from stock_lab_core.report_build import get_report_build_info, invalidate_saved_report, register_loaded_source
+
+register_loaded_source("stock_lab.app_entry", __file__)
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -29045,12 +29048,11 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
-    memo_engine_version = "2026-10-18-evidence-report-v3"
-    if st.session_state.get("_today_market_memo_engine_version") != memo_engine_version:
-        old_memo_text = str(st.session_state.get("today_market_memo_text", "") or "")
-        st.session_state["_today_market_memo_engine_version"] = memo_engine_version
-        if "Stock Lab 자동 뉴스픽" in old_memo_text:
-            st.session_state["today_market_memo_text"] = ""
+    report_build = get_report_build_info(__file__)
+    if invalidate_saved_report(st.session_state, report_build["loaded_source_sha256"]):
+        st.info("보고서 코드가 변경되어 이전 자동 뉴스픽을 비웠습니다. 새로 생성해 주세요.")
+    if report_build["restart_required"]:
+        st.warning("디스크 파일과 실행 중인 보고서 코드가 다릅니다. 앱을 재시작한 뒤 생성해 주세요.")
 
     def _clear_market_memo():
         st.session_state["today_market_memo_text"] = ""
@@ -29067,6 +29069,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
         auto_generate = auto_cols[0].button(
             "자동 뉴스픽 생성",
             key="today_market_memo_auto_generate",
+            disabled=report_build["restart_required"],
             width='stretch',
             help="현재 앱의 돈흐름, 매크로, 이벤트, 오늘점검 결과를 묶어 시황 메모 초안을 만듭니다.",
         )
@@ -29439,6 +29442,7 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
 def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_history import update_report_history
+    from stock_lab_core.performance import queue_measurement_reference
     try:
         context = collect_report_context(summary_df, event_rows, include_news=include_news)
     except Exception as exc:
@@ -29447,10 +29451,14 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data")))
+    context["entrypoint"] = __file__
+    context["queue_measurement"] = queue_measurement_reference(st.session_state.get("today_queue_performance"))
     return context
 
 
 def _generate_today_briefing_market_memo(summary_df=None) -> str:
+    if get_report_build_info(__file__)["restart_required"]:
+        return "보고서 코드 변경이 감지됐습니다. 앱을 재시작한 뒤 다시 생성해 주세요."
     memo_summary_df, _memo_summary_source = resolve_today_market_memo_summary_df(summary_df, None)
     snapshot = get_cached_today_market_flow_snapshot()
     if snapshot is None:
@@ -33358,13 +33366,14 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 
 def render_today_queue_tab(mode):
     before_today_seconds = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
-    with PerformanceTrace() as trace:
+    with PerformanceTrace(scope="today_queue_render_with_calculation") as trace:
         _render_today_queue_tab(mode)
     report = trace.report()
     root_timing = next((row for row in report["functions"] if row["name"] == "today_queue_render"), None)
     if root_timing:
         report["unclassified_render_seconds"] = root_timing["self_seconds"]
     if any(entry["name"] == "summary" for entry in report["functions"]):
+        report["build"] = get_report_build_info(__file__)
         report["before_today_seconds"] = before_today_seconds
         report["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
         st.session_state["today_queue_performance"] = report
@@ -33372,9 +33381,14 @@ def render_today_queue_tab(mode):
         logger.setLevel(logging.INFO)
         logger.info("Today queue performance: %s", json.dumps(report))
     else:
-        report = st.session_state.get("today_queue_performance", {})
+        saved_measurement = st.session_state.get("today_queue_performance", {})
+        report = dict(saved_measurement, measurement_reused=True) if saved_measurement else {}
     if report:
         with st.expander("계산 시간 상세", expanded=False):
+            st.caption(
+                ("이전 계산의 측정값입니다. 이번 화면 갱신에서는 재계산하지 않았습니다. " if report.get("measurement_reused") else "이번 오늘점검 계산 측정값입니다. ")
+                + f"측정 완료: {report.get('measurement_finished_at') or '기존 파일: 시각 미기록'} · 측정ID: {report.get('measurement_id') or '미기록'}"
+            )
             c1, c2, c3 = st.columns(3)
             c1.metric("오늘점검 경과시간", f"{report['elapsed_seconds']:.1f}초")
             c2.metric("점검 진입 전", f"{report.get('before_today_seconds', 0):.1f}초")

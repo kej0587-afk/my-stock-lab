@@ -3,6 +3,9 @@
 from datetime import datetime
 import json
 from pathlib import Path
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import KST, first, is_held, price_observation, intraday_observation, records, text
 from stock_lab_core.report_holdings import UNDERLYINGS

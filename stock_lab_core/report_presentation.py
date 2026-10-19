@@ -1,6 +1,9 @@
 """Display-only report checks; no score, threshold or execution overrides."""
 
 import re
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import KST, first, macro_stress, number, stamp, text
 

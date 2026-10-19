@@ -5,6 +5,8 @@ from contextvars import ContextVar, copy_context
 from functools import wraps
 from threading import Lock
 from time import perf_counter
+from datetime import datetime, timezone
+from uuid import uuid4
 
 
 _trace = ContextVar("stock_lab_performance_trace", default=None)
@@ -41,8 +43,12 @@ def _interval_seconds(intervals):
 
 
 class PerformanceTrace:
-    def __init__(self, *, clock=perf_counter):
+    def __init__(self, *, clock=perf_counter, scope="instrumented_run"):
         self.clock = clock
+        self.scope = scope
+        self.measurement_id = None
+        self.measurement_started_at = None
+        self.measurement_finished_at = None
         self._lock = Lock()
         self._entries = {}
         self._function_intervals = {}
@@ -50,6 +56,9 @@ class PerformanceTrace:
         self.elapsed_seconds = 0.0
 
     def __enter__(self):
+        self.measurement_id = uuid4().hex
+        self.measurement_started_at = datetime.now(timezone.utc).isoformat()
+        self.measurement_finished_at = None
         self._started = self.clock()
         self._token = _trace.set(self)
         self._span_token = _span.set(None)
@@ -57,6 +66,7 @@ class PerformanceTrace:
 
     def __exit__(self, *exc):
         self.elapsed_seconds = max(0.0, self.clock() - self._started)
+        self.measurement_finished_at = datetime.now(timezone.utc).isoformat()
         _span.reset(self._span_token)
         _trace.reset(self._token)
 
@@ -91,6 +101,11 @@ class PerformanceTrace:
                 categories[entry["category"]] = categories.get(entry["category"], 0.0) + entry["self_seconds"]
         active_wall = _interval_seconds([interval for values in category_intervals.values() for interval in values])
         return {
+            "measurement_id": self.measurement_id,
+            "measurement_started_at": self.measurement_started_at,
+            "measurement_finished_at": self.measurement_finished_at,
+            "measurement_scope": self.scope,
+            "measurement_reused": False,
             "elapsed_seconds": self.elapsed_seconds,
             "categories_work_seconds": categories,
             "functions": entries,
@@ -101,6 +116,18 @@ class PerformanceTrace:
             "concurrent_overlap_work_seconds": max(0.0, sum(categories.values()) - active_wall),
             "active_wall_categories_can_overlap": True,
         }
+
+
+def queue_measurement_reference(previous=None):
+    trace = _trace.get()
+    if trace is not None:
+        with trace._lock:
+            calculated = ("phase", "summary") in trace._entries
+        if calculated:
+            return {key: value for key, value in trace.report().items()
+                    if key.startswith("measurement_")}
+    return {key: value for key, value in (previous or {}).items()
+            if key.startswith("measurement_")}
 
 
 @contextmanager
