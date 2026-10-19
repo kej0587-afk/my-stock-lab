@@ -343,6 +343,34 @@ def _us_close_recap(title, published, window):
     return close < published < next_open
 
 
+_HEADLINE_MARKETS = {
+    "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)", re.I),
+    "US": re.compile(r"(?:미국|뉴욕|美)\s*증시|나스닥|\bNasdaq\b|\bWall Street\b|"
+                     r"S&P\s*500|\bU\.?S\.?\s+(?:stocks?|equities|stock market)\b", re.I),
+}
+
+
+def _resolve_query_news_market(raw, windows):
+    """A search region is provenance, not the subject of a returned article."""
+    row = dict(raw)
+    query_market = str(row.get("query_market") or "").strip().upper()
+    if not query_market and row.get("source") != "Google News RSS":
+        return row
+    row["query_market"] = query_market or str(row.get("market") or "")
+    title = str(row.get("title") or row.get("제목") or "")
+    published = _news_timestamp(row.get("published_at") or row.get("published"))
+    markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
+    if published and _us_close_recap(title, published, windows.get("US")):
+        row.update(market="US", market_basis="explicit_us_recap")
+    elif len(markets) == 1:
+        row.update(market=markets[0], market_basis="explicit_headline_market")
+    elif len(markets) > 1:
+        row.update(market="", market_basis="ambiguous_headline_markets")
+    else:
+        row.setdefault("market_basis", "search_query_only")
+    return row
+
+
 def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     """Pure time partition; callers curate sources/events separately.
 
@@ -353,7 +381,8 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     KR same-date post-close publications are current-session context regardless
     of title. They are not automatically evidence of a pre-close cause.
     US closing wraps retain their separate retrospective window.
-    Only explicit ``market``/``region`` metadata is used; language is not a market.
+    Query-derived market tags are corrected by explicit index/market mentions.
+    Language and publisher alone never identify the market.
     ISO timestamps without an offset use KST, matching report_evidence.curate_news.
     """
     now = _news_now(now)
@@ -367,6 +396,7 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
         if not isinstance(raw, Mapping):
             rejected["뉴스 행 형식 오류"] += 1
             continue
+        raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
         if market not in by_market or (region and region != market):
@@ -478,6 +508,7 @@ def _fetch_session_rss(spec):
                 "published": format_market_story_pub_dt(pub_dt),
                 "source": "Google News RSS", "market_category": spec["category"],
                 "market": spec["market"],
+                "query_market": spec["market"], "market_basis": "search_query_only",
             })
         return rows, ""
     except Exception:
@@ -491,8 +522,8 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     absolute after/before dates, with separate historical and latest retrieval.
     At most 16 requests run with four workers, five-second socket timeouts and
     512 KiB responses. At most three requested categories supplement close wraps.
-    An article returned by both market queries has ambiguous market provenance
-    and is excluded rather than assigned to both sessions. No sending/storage.
+    Explicit market headlines correct query tags before cross-query deduplication.
+    Ambiguous cross-market results remain excluded. No sending/storage.
     """
     from stock_lab_core.report_evidence import curate_news
 
@@ -509,6 +540,8 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             rows.extend(candidates)
             if error:
                 failures[error] += 1
+    by_market = {window["market"]: window for window in windows}
+    rows = [_resolve_query_news_market(row, by_market) for row in rows]
     origins = {}
     for row in rows:
         for key in (row["link"], market_story_title_key(row["title"])):
@@ -527,7 +560,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             if not checked or not checked[0].get("link"):
                 continue
             clean = checked[0]
-            event_key = "close-wrap:" + clean["session_date"] if clean.get("is_close_wrap") else clean["event_key"]
+            # Different closing stories may name different participants/causes.
+            # Deduplicate the article, not every closing story for the session.
+            event_key = market_story_title_key(clean["title"]) if clean.get("is_close_wrap") else clean["event_key"]
             event = (clean["market"], event_key)
             category = (clean["market"], clean["category"])
             link_key = (clean["market"], clean["link"])

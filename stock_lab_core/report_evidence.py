@@ -126,7 +126,7 @@ def korean_headline_reading(row):
 def curate_news(rows, *, now=None, limit=5):
     now = now or datetime.now(KST)
     now = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
-    accepted, seen = [], set()
+    accepted, seen, seen_links = [], set(), set()
     for raw in records(rows):
         title = text(first(raw, "title", "제목"))
         publisher = text(first(raw, "publisher", "출처", "source"))
@@ -148,9 +148,11 @@ def curate_news(rows, *, now=None, limit=5):
         clean = re.sub(r"\s+[-|]\s+" + re.escape(publisher) + r"$", "", title, flags=re.I).strip() if publisher else title
         key = next((key for key, words in EVENT_CLUSTERS if any(w in clean.lower() for w in words)),
                    re.sub(r"[\W_]+", "", clean.lower()))
-        if key in seen:
+        if key in seen or (link and link in seen_links):
             continue
         seen.add(key)
+        if link:
+            seen_links.add(link)
         row = dict(raw, title=clean, publisher=publisher, link=link, published=dt.isoformat() if dt else published,
                    category=news_category(clean, text(first(raw, "market_category", "카테고리")) or "시장"),
                    event_key=key)
@@ -166,6 +168,15 @@ def citation(row):
     label = label.replace("[", "(").replace("]", ")")
     link = safe_link(first(row, "link", "source_url", "링크"))
     return f"[{label}]({link})" if link else f"[{label} · 원문 URL 미제공]"
+
+
+def story_news_citation(row):
+    timing = text(row.get("news_timing"))
+    published = stamp(first(row, "published", "published_at"))
+    parts = ([f"[{timing}]"] if timing else []) + [citation(row)]
+    if published:
+        parts.append(published.astimezone(KST).strftime("%m/%d %H:%M KST"))
+    return " ".join(parts)
 
 
 def reported_cause(row, sessions):
@@ -189,7 +200,7 @@ def reported_cause(row, sessions):
     explicit = re.search(r"(?:때문|여파|우려로|충격에|추격에|부담에|영향으로|에 힘입어|에 급락|에 하락|because|due to)", title, re.I)
     if not explicit:
         return ""
-    return f"기사 제목은 ‘{title}’라고 배경을 설명합니다(보도 해석이며 인과 확정 아님). {citation(row)}"
+    return f"기사 제목은 ‘{title}’라고 배경을 설명합니다(보도 해석이며 인과 확정 아님). {story_news_citation(dict(row, title='원문'))}"
 
 
 def closed_daily_frame(frame, ticker, now=None):
@@ -359,8 +370,12 @@ def comparison_lines(current, previous, *, previous_date="", current_date="", sa
     return [label + " 대비: " + " / ".join(details)]
 
 
-def participant_news_lines(news, session_date, *, limit=3):
-    """Group source-attributed titles, without asserting verified net flows."""
+def news_article_key(row):
+    return safe_link(first(row, "link", "url")) or re.sub(r"\W+", "", text(row.get("title"))).casefold()
+
+
+def participant_news_rows(news, session_date):
+    """Keep distinct participant stories; do not infer net flows from titles."""
     selected, seen_titles, seen_links = [], set(), set()
     for row in news:
         title = text(row.get("title"))
@@ -376,10 +391,15 @@ def participant_news_lines(news, session_date, *, limit=3):
         if link:
             seen_links.add(link)
         selected.append(row)
+    return selected
+
+
+def participant_news_lines(news, session_date, *, limit=3):
+    selected = participant_news_rows(news, session_date)
     if not selected:
         return []
     return [f"- 수급 주체 보도 {len(selected)}건(제목 기준·기사 주장, 순매수액 미검증): "
-            + " / ".join(citation(row) for row in selected[:limit])
+            + " / ".join(story_news_citation(row) for row in selected[:limit])
             + (f" · 나머지 {len(selected) - limit}건 생략" if len(selected) > limit else "")]
 
 
@@ -462,8 +482,11 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         kr_summary = f"{period_label} 코스피 {_pct(kr_close['return'])}, 5D {_pct(kr_close.get('return_5d'))}"
     reversal = next((row for row in news if row.get("market") == "KR" and row.get("session_date") == kr
                      and re.search(r"반전|반등 성공|급락 출발", text(row.get("title")))), None)
-    if reversal:
-        kr_summary += f" · 제목 기준(기사 주장): {citation(reversal)}"
+    participant_rows = participant_news_rows(news, kr)
+    used_story_news = {news_article_key(row) for row in participant_rows[:3]}
+    if reversal and news_article_key(reversal) not in used_story_news:
+        kr_summary += f" · 제목 기준(기사 주장): {story_news_citation(reversal)}"
+        used_story_news.add(news_article_key(reversal))
     releases = records(context.get("economic_releases"))
     economic_summary = []
     for indicator, name in (("US_PPI", "미국 PPI"), ("KR_EXPORTS", "한국 수출")):
@@ -507,7 +530,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                    for t in ("^KS11", "^KQ11") if live.get(t, {}).get("date") == now.date().isoformat()
                    and number(live[t].get("return")) is not None]
         lines.append("- 개장 후 당일 등락: " + (" / ".join(actuals) or "미수집. 위 과거 종가 등락을 오늘의 움직임으로 해석하지 않습니다."))
-    cause = next((reported_cause(row, sessions) for row in news if reported_cause(row, sessions)), "")
+    unused_news = [row for row in news if news_article_key(row) not in used_story_news]
+    cause_row = next((row for row in unused_news if reported_cause(row, sessions)), None)
+    cause = reported_cause(cause_row, sessions) if cause_row else ""
     releases = records(context.get("economic_releases"))
     selected = economic_story_lines(releases, limit=3)
     if selected:
@@ -517,15 +542,18 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append("- 공식 발표치와 출처 기준을 통과한 최근 시장 보도가 부족합니다.")
     if cause:
         lines.append("- 사실(보도 내용): " + cause)
-    elif news:
-        lines.append(f"- 제목 기준 보도(기사 주장): {news[0]['title']}. 수급 수치와 인과 기여도는 별도 확인 필요. {citation(news[0])}")
-    else:
+        used_story_news.add(news_article_key(cause_row))
+    elif unused_news:
+        lines.append("- 제목 기준 보도(기사 주장): " + story_news_citation(unused_news[0]))
+        used_story_news.add(news_article_key(unused_news[0]))
+    elif not news:
         lines.append("- 미확인: 가격 움직임의 원인 자료가 없습니다. 확인되지 않은 원인을 채우지 않습니다.")
         missing.append("허용 출처 핵심 뉴스")
-    kr_context = next((row for row in sorted(news, key=lambda row: not bool(re.search(r"전날|직전|거래일 만", row["title"]))) if row.get("market") == "KR" and
+    kr_context = next((row for row in sorted(news, key=lambda row: not bool(re.search(r"전날|직전|거래일 만", row["title"]))) if news_article_key(row) not in used_story_news and row.get("market") == "KR" and
                        re.search(r"전날|직전|거래일 만|순매수 전환", row["title"])), None)
     if kr_context:
-        lines.append(f"- 한국 맥락 보도(기사 주장): {kr_context['title']}. {citation(kr_context)}")
+        lines.append("- 한국 맥락 보도(기사 주장): " + story_news_citation(kr_context))
+        used_story_news.add(news_article_key(kr_context))
     lines.append("- 다음 체크: " + next_check(mode))
     lines.extend(["", "## 경제지표", "지표 | 발표치 | 예상/대체 비교 | 이전 | 시장 반응(금리·달러·지수)", "--- | --- | --- | --- | ---"])
     if not releases:
@@ -720,17 +748,20 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             missing.append(f"공식 일정: {source['name']} · {source.get('reason', '응답 없음')}")
             if source.get("fallback_reason"):
                 lines.append(f"- FRED 일정 보완 실패: {source['name']} · {source['fallback_reason']}")
-    lines.extend(["", "## 핵심 뉴스 5건"])
+    additional_news = [row for row in news if news_article_key(row) not in used_story_news]
+    lines.extend(["", "## 추가 핵심 뉴스"])
     lines.append("기준 거래일 마감시황 우선. 이전 거래일의 마감 회고는 제외하며, 마감 후 회고는 사후보도로 표시합니다.")
-    if len(news) < 5:
-        lines.append(f"출처·중복 제거 기준 통과 {len(news)}건. 부족한 {5 - len(news)}건은 무관한 기사로 채우지 않았습니다.")
-    for index, row in enumerate(news[:5], 1):
+    lines.append(f"출처·중복 제거 기준 통과 {len(news)}건 · 스토리에서 다룬 {len(news) - len(additional_news)}건은 재출력하지 않습니다. 추가 {min(len(additional_news), 5)}건 표시.")
+    for index, row in enumerate(additional_news[:5], 1):
         timing = " · 마감 후 회고(인과 확정 아님)" if row.get("retrospective_close_wrap") else ""
-        category = row.get("news_timing", "") if row['category'] == "마감 시황" else row['category']
-        lines.append(f"{index}. [{category or row['category']}] {row['title']} · {kst_time(row['published'])}{timing} {citation(dict(row, title='원문'))}")
-        lines.append("   " + row["reading_ko"])
+        labels = list(dict.fromkeys(label for label in (row.get("news_timing"), row["category"]) if label))
+        lines.append(f"{index}. [{' · '.join(labels)}] {row['title']} · {kst_time(row['published'])}{timing} {citation(dict(row, title='원문'))}")
+        if not row["reading_ko"].startswith("제목 기준:"):
+            lines.append("   " + row["reading_ko"])
     if not news:
         lines.append("허용 출처·중복 제거 기준을 통과한 뉴스 없음.")
+    elif not additional_news:
+        lines.append("추가 기사 없음. 채택 기사는 위 스토리에 모두 표시했습니다.")
     lines.extend(["", "가격·거래량 흐름은 실제 자금 유입액이 아닙니다. 가속도는 최근 3개월 수익률과 직전 3개월 수익률 차이(%p), 다이버전스는 가격과 흐름 지표 방향이 엇갈리는 상태입니다."])
     # Move the single holdings section, without duplicating it in the story.
     lines = lines[:story_start] + lines[holding_start:holding_end] + lines[story_start:holding_start] + lines[holding_end:]

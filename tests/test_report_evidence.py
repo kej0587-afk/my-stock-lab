@@ -13,8 +13,8 @@ from stock_lab_core.today_snapshot import save_today_queue_summary_snapshot, loa
 NOW = datetime(2026, 10, 18, 18, tzinfo=KST)
 
 
-def article(title, **kwargs):
-    return dict(title=title, publisher="Reuters", link="https://www.reuters.com/markets/example/",
+def article(title, *, link="https://www.reuters.com/markets/example/", **kwargs):
+    return dict(title=title, publisher="Reuters", link=link,
                 published="2026-10-18 12:00", **kwargs)
 
 
@@ -31,7 +31,8 @@ def test_calendar_fallback_reports_primary_failure_and_date_only():
 
 def test_news_clusters_cxmt_and_excludes_promotional_price_and_irrelevant():
     rows = [article("CXMT 기술 추격에 반도체 주가 급락"), article("CXMT 반도체 매출 7배 증가"),
-            article("Ethereum ETF outflows rise as oil declines", market_category="에너지"),
+            article("Ethereum ETF outflows rise as oil declines", market_category="에너지",
+                    link="https://www.reuters.com/markets/ethereum/"),
             dict(title="RWUSD price today to USD", publisher="CoinMarketCap"),
             dict(title="NVIDIA announces new GPU", publisher="NVIDIA"),
             article("구리경찰서에 소동"), dict(title="유가 소식", publisher="TMGM")]

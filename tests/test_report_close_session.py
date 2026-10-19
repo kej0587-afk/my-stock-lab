@@ -92,7 +92,8 @@ def test_close_report_acceptance_and_immutable_inputs():
     assert "최신 종가 기준 계좌 추정" in conclusion and "99.9%" in conclusion
     assert "코스피 당일 종가 +1.76%" in conclusion
     assert "당일 코스피 +1.76%" in report and "직전 거래일 +2.05%" in report
-    assert REVERSAL_TITLE in report.split("## 경제지표")[0] and KR_TITLE in report
+    assert REVERSAL_TITLE in report.split("## 경제지표")[0]
+    assert KR_TITLE.replace("[", "(").replace("]", ")") in report
     assert "한국 수출 2026-09 전년비 83.7% · 이전 대비 +14.80%p" in report
     assert "만료 2026-11-03" in report
     assert "시나리오 -2.50% vs 당일 종가 -1.19%" in report and "+1.31%p" in report
