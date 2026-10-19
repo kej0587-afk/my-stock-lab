@@ -1,4 +1,4 @@
-"""Best-effort translation opt-out; never replace React nodes or DOM methods."""
+"""Best-effort translation opt-out; cannot repair already translated React nodes."""
 
 TRANSLATION_GUARD_HTML = """
 <script>
@@ -7,6 +7,12 @@ TRANSLATION_GUARD_HTML = """
   root.lang = 'ko';
   root.setAttribute('translate', 'no');
   root.classList.add('notranslate');
+  for (const container of [document.body, document.getElementById('root')]) {
+    if (container) {
+      container.setAttribute('translate', 'no');
+      container.classList.add('notranslate');
+    }
+  }
   let meta = document.head.querySelector('meta[name="google"]');
   if (!meta) {
     meta = document.createElement('meta');

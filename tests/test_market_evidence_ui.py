@@ -1,15 +1,43 @@
+import ast
 from pathlib import Path
+from unittest.mock import Mock
 
 from streamlit.testing.v1 import AppTest
 
-from stock_lab_core.browser_safety import TRANSLATION_GUARD_HTML
+from stock_lab_core.browser_safety import TRANSLATION_GUARD_HTML, install_translation_guard
 
 
 def test_translation_guard_does_not_modify_react_owned_children():
     assert "root.setAttribute('translate', 'no')" in TRANSLATION_GUARD_HTML
     assert "notranslate" in TRANSLATION_GUARD_HTML
+    assert "document.body" in TRANSLATION_GUARD_HTML
+    assert "document.getElementById('root')" in TRANSLATION_GUARD_HTML
     for unsafe in ["removeChild", "innerHTML", "outerHTML", "MutationObserver", "Node.prototype"]:
         assert unsafe not in TRANSLATION_GUARD_HTML
+
+
+def test_translation_guard_is_early_and_not_skipped_on_rerun():
+    root = Path(__file__).resolve().parents[1]
+    tree = ast.parse((root / "app.py").read_text(encoding="utf-8-sig"))
+    guard = [node for node in tree.body if isinstance(node, ast.Expr)
+             and isinstance(node.value, ast.Call)
+             and isinstance(node.value.func, ast.Name)
+             and node.value.func.id == "install_translation_guard"]
+    configs = [node for node in tree.body if isinstance(node, ast.Expr)
+               and isinstance(node.value, ast.Call)
+               and ast.unparse(node.value.func) == "st.set_page_config"]
+    assert len(guard) == len(configs) == 1
+    assert configs[0].lineno < guard[0].lineno
+    for node in tree.body:
+        if isinstance(node, ast.Import) and any(alias.name == "yfinance" for alias in node.names):
+            assert guard[0].lineno < node.lineno
+        if isinstance(node, ast.ImportFrom) and node.module == "stock_lab_core.result_cache":
+            assert guard[0].lineno < node.lineno
+    st = Mock()
+    install_translation_guard(st)
+    install_translation_guard(st)
+    assert st.html.call_count == 2
+    st.html.assert_called_with(TRANSLATION_GUARD_HTML, unsafe_allow_javascript=True)
 
 
 def test_panel_empty_loaded_failure_and_changed_selection():

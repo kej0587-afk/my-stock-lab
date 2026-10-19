@@ -8,6 +8,13 @@ from datetime import datetime, timezone, timedelta
 from time import perf_counter
 
 SCRIPT_RUN_STARTED = perf_counter()
+import streamlit as st
+from stock_lab_core.browser_safety import install_translation_guard
+
+# Send browser opt-out before slow imports or any translated UI can be rendered.
+st.set_page_config(page_title="최종 관제실", layout="wide")
+install_translation_guard(st)
+
 from zoneinfo import ZoneInfo
 import hmac
 import inspect
@@ -21,7 +28,6 @@ import base64
 import os
 from pathlib import Path
 import numpy as np
-import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
@@ -48,7 +54,6 @@ except ImportError:
         return nullcontext()
 from stock_lab_core.earnings_calendar import earnings_calendar_reader
 from stock_lab_core.market_basis import daily_close, align_market_closes
-from stock_lab_core.browser_safety import install_translation_guard
 from stock_lab_core.kiwoom_data import kiwoom_client_from_secrets
 from stock_lab_core.market_evidence_panel import render_market_evidence_panel
 from stock_lab_core.news_evidence import render_price_news_evidence
@@ -842,8 +847,6 @@ st.markdown("""
 # -------------------------------------------------
 # 1. 기본 설정 및 CSS
 # -------------------------------------------------
-st.set_page_config(page_title="최종 관제실", layout="wide")
-install_translation_guard(st)
 KST = timezone(timedelta(hours=9))
 APP_NOTICE_QUEUE_KEY = "_app_notice_queue"
 
