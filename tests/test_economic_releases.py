@@ -39,7 +39,7 @@ def providers(monkeypatch):
     releases.clear_economic_releases_cache()
     monkeypatch.setattr(releases, "_api_key", lambda name: "")
     state = {"calls": [], "responses": [], "bls_error": None, "schedule_status": 200,
-             "census_error": None}
+             "census_error": None, "census_status": 200}
     series = []
     for spec in releases._BLS_SERIES:
         values = {"2025-08": 100, "2025-09": 100, "2026-07": 101,
@@ -70,13 +70,15 @@ def providers(monkeypatch):
         elif url == releases.CENSUS_URL:
             if state["census_error"]:
                 raise state["census_error"]
-            response = Response(state["census"])
+            response = Response(state["census"], status=state["census_status"])
         elif url in releases._SCHEDULE_URLS.values():
             response = Response(text=state["schedule"], status=state["schedule_status"])
         elif url == release_calendar.FOMC_URL:
             response = Response(text='''<h4>2026 FOMC Meetings</h4><div class="fomc-meeting">
                 <div class="fomc-meeting__month">October</div>
                 <div class="fomc-meeting__date">27-28</div></div>''')
+        elif url == release_calendar.META_IR_URL:
+            response = Response(status=403)
         elif url == releases.FRED_URL:
             response = Response({"observations": [
                 {"date": "2026-10-17", "value": "."},
@@ -126,7 +128,7 @@ def test_keyless_bls_units_basis_previous_and_real_release_date(providers):
     assert _find(rows, "US_UNEMPLOYMENT", "level")["actual"] == 4.2
     assert _find(rows, "US_PPI", "YoY")["actual"] == 3.0
     assert len([c for c in providers["calls"] if c[0] == "POST"]) == 1
-    assert len(providers["calls"]) == 6
+    assert len(providers["calls"]) == 7
     assert all(response.closed for response in providers["responses"])
 
 
@@ -147,7 +149,53 @@ def test_fred_calendar_fallback_does_not_assign_an_observation_month(providers, 
     assert row["actual"] == 1.0 and row["period"] == "2026-09"
     assert row["release_at"] is None
     assert "release_schedule_period_unavailable" in row["missing_reason"]
+    assert row["fallback_connected"] and row["release_calendar_status"]["provider"] == "FRED"
     assert sum(url == release_calendar.FRED_DATES_URL for _, url, _ in providers["calls"]) == 3
+
+
+def test_census_diagnostics_and_logs_never_include_credentials(providers, monkeypatch, caplog):
+    monkeypatch.setattr(releases, "_api_key", lambda name: "private-census-token" if name == "CENSUS_API_KEY" else "")
+    with caplog.at_level("INFO", logger=releases.__name__):
+        row = _find(releases.load_economic_releases(now=NOW), "US_RETAIL_SALES")
+    assert row["publication_status"] == "available"
+    assert row["request_metadata"]["http_status"] == 200
+    assert row["request_metadata"]["parameters"]["category_code"] == "44X72"
+    assert row["request_metadata"]["parameters"]["time"] == "from 2025-01 to 2026-10"
+    assert "Census HTTP=200" in caplog.text and "publication_status=available" in caplog.text
+    assert "private-census-token" not in str(row) + caplog.text
+    _, url, kwargs = next(call for call in providers["calls"] if call[1] == releases.CENSUS_URL)
+    assert "key" not in url and kwargs["params"]["key"] == "private-census-token"
+    cached = _find(releases.load_economic_releases(now=NOW), "US_RETAIL_SALES")
+    assert cached["request_metadata"]["from_cache"] and cached["request_metadata"]["http_status"] == 200
+
+
+@pytest.mark.parametrize("status", [204, 400, 403, 429, 500])
+def test_census_http_failures_remain_http_failures_and_do_not_imply_pending(providers, status, caplog):
+    providers["census_status"] = status
+    with caplog.at_level("INFO", logger=releases.__name__):
+        row = _find(releases.load_economic_releases(now=NOW), "US_RETAIL_SALES", period="")
+    assert f"http_{status}" in row["missing_reason"]
+    assert "API_KEY_required" not in row["missing_reason"]
+    assert row["request_metadata"]["http_status"] == status and row["publication_status"] == "unconfirmed"
+    assert f"Census HTTP={status}" in caplog.text and "publication_status=pending" not in caplog.text
+
+
+def test_census_transport_exceptions_are_sanitized(providers, caplog):
+    providers["census_error"] = requests.Timeout("https://census.example?key=private-token")
+    with caplog.at_level("INFO", logger=releases.__name__):
+        row = _find(releases.load_economic_releases(now=NOW), "US_RETAIL_SALES", period="")
+    assert row["request_metadata"]["transport_error"] == "Timeout"
+    assert "private-token" not in str(row) + caplog.text
+
+
+def test_census_pending_requires_explicit_future_event(providers, caplog):
+    event = {"indicator": "US_RETAIL_SALES", "period": "2026-10", "basis": "MoM", "unit": "%",
+             "release_at": "2026-11-17T08:30:00-05:00", "source": "supplied calendar"}
+    with caplog.at_level("INFO", logger=releases.__name__):
+        rows = releases.load_economic_releases([event], now=NOW)
+    assert _find(rows, "US_RETAIL_SALES")["publication_status"] == "available"
+    assert _find(rows, "US_RETAIL_SALES", period="2026-10")["publication_status"] == "pending"
+    assert "publication_status=available" in caplog.text and "publication_status=pending" in caplog.text
 
 
 def test_missing_month_is_not_a_previous_observation(providers):
@@ -302,7 +350,7 @@ def test_cache_success_only_and_return_values_are_isolated(providers):
     first[0]["actual"] = 999
     second = releases.load_economic_releases(now=NOW)
     assert _find(second)["actual"] == 1.0
-    assert len(providers["calls"]) == 6
+    assert len(providers["calls"]) == 8  # Failed Meta page is retried; observations stay cached.
     assert second == releases.load_economic_releases(now=NOW)
 
 
@@ -312,7 +360,7 @@ def test_cache_expires(providers, monkeypatch):
     releases.load_economic_releases(now=NOW)
     tick[0] += releases.CACHE_TTL + 1
     releases.load_economic_releases(now=NOW)
-    assert len(providers["calls"]) == 12
+    assert len(providers["calls"]) == 14
 
 
 def test_request_failure_retried_without_secret_or_exception_text(providers):

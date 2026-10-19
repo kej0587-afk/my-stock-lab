@@ -14,7 +14,7 @@ _LOADED = {}
 _RENDER_MODULES = (
     "market_memo", "report_evidence", "report_analysis", "report_presentation",
     "report_holdings", "report_session", "today_news",
-    "report_history", "report_prices", "report_context",
+    "report_history", "report_prices", "report_context", "report_live", "report_history_store",
 )
 
 

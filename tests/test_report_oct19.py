@@ -66,7 +66,8 @@ def test_report_acceptance_and_input_immutability():
     assert "전날 7%대 급락" in story and "계좌 일간 기여 합계" not in story
     assert report.index("## 내 보유 종목 영향") < report.index("## 오늘의 시장 스토리")
     assert "개장 후 당일 등락: 미수집" in report and "다음 개장 갭" not in report
-    assert "FOMC · D-9" in report and "공식 일정: BLS CPI · http_403" in report
+    assert "FOMC · D-9" in report and "일부 다음 확정 발표일 미연결" in report
+    assert "BLS CPI · http_403" not in report
     assert (context, rows) == before
 
 

@@ -18,13 +18,13 @@ def article(title, *, link="https://www.reuters.com/markets/example/", **kwargs)
                 published="2026-10-18 12:00", **kwargs)
 
 
-def test_calendar_fallback_reports_primary_failure_and_date_only():
+def test_calendar_fallback_hides_redundant_primary_failure_and_keeps_source():
     context = {"calendar_events": [{"event": "Consumer Price Index", "date": "2026-10-20",
                 "source": "FRED release calendar", "source_url": "https://fred.stlouisfed.org/release?rid=10"}],
                "calendar_sources": [{"name": "BLS CPI", "status": "connected", "provider": "FRED",
                 "reason": "", "primary_reason": "http_403"}]}
     memo = build_auto_market_memo(report_context=context, now=NOW)
-    assert "FRED 공식 발표일로 보완" in memo and "http_403" in memo
+    assert "FRED release calendar" in memo and "http_403" not in memo
     assert "2026-10-20 (발표 시각 미제공)" in memo
     assert "일정 미연결: BLS CPI" not in memo
 
@@ -134,7 +134,7 @@ def test_korean_leverage_and_us_proxy_same_date_are_not_the_same_session():
                                       "QQQ": {"date": "2026-10-16", "return": -.02}}})
     assert "월요일 갭 예상 영향(추정)" in memo
     assert "× 2 = -4.00%" in memo
-    assert "+3.00% (2026-10-16)" in memo
+    assert "+3.00% (2026-10-16 확정 종가)" in memo
 
 
 def test_unparseable_and_missing_news_dates_do_not_bypass_recency():

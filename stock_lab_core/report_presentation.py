@@ -126,13 +126,46 @@ def account_headline(metrics, sessions, mode):
     metrics = metrics or {}
     if not metrics or metrics.get("error"):
         return "계좌 추정 보류: " + metrics.get("error", "보유자료 미연결")
-    if mode in {"closed", "holiday"} or metrics["replacement_coverage"] < 90:
-        if metrics["coverage"] < 90:
-            return f"계좌 추정 보류: 종가 연결 비중 {metrics['coverage']:.1f}%로 90% 미만"
-        return (f"최신 종가 기준 계좌 추정 {metrics['daily']:+.2f}%p(연결 비중 {metrics['coverage']:.1f}%; "
-                f"미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')})")
-    return (f"미국 {sessions.get('US', '미확인')} 종가 반영 계좌 추정 {metrics['replacement']:+.2f}%p"
-            f"(연결 비중 {metrics['replacement_coverage']:.1f}%, 한국 미국지수 ETF는 갭 시나리오 치환)")
+    if metrics["coverage"] < 90:
+        return f"계좌 추정 보류: 종가 연결 비중 {metrics['coverage']:.1f}%로 90% 미만"
+    return (f"최신 종가 기준 계좌 추정 {metrics['daily']:+.2f}%p(연결 비중 {metrics['coverage']:.1f}%; "
+            f"미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')})")
+
+
+def account_live_estimate(held, live):
+    """Separate a live US contribution from the closed-price account headline."""
+    from stock_lab_core.portfolio import infer_scenario_shock_multiplier
+    from stock_lab_core.report_holdings import UNDERLYINGS
+
+    us, gap, us_weight, gap_weight = 0.0, 0.0, 0.0, 0.0
+    dates, times = set(), []
+    for row in held:
+        ticker = text(first(row, "티커", "ticker")).upper()
+        weight = number(first(row, "현재비중", "current_w"))
+        if weight is None or not 0 <= weight <= 100:
+            continue
+        domestic = ticker.split(".")[0] in {"379800", "379810", "418660"}
+        bases = UNDERLYINGS.get(ticker.split(".")[0], ()) if domestic else (ticker,)
+        for base in bases:
+            obs = live.get(base, {})
+            move = number(obs.get("return"))
+            if move is None or not obs.get("date"):
+                continue
+            dates.add(obs["date"])
+            times.append(kst_time(obs.get("as_of", obs.get("retrieved_at"))))
+            if domestic:
+                mult = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
+                gap += weight * move * mult
+                gap_weight += weight
+            elif not ticker.endswith((".KS", ".KQ")):
+                us += weight * move
+                us_weight += weight
+            break
+    if not dates:
+        return ""
+    return (f"미국 {', '.join(sorted(dates))} 장중 별도 추정(확정 아님): 미국 보유분 기여 {us:+.2f}%p(비중 {us_weight:.1f}%), "
+            f"다음 한국장 미국지수 ETF 갭 시나리오 기여 {gap:+.2f}%p(비중 {gap_weight:.1f}%). "
+            f"시세 {min(times)}~{max(times)} · 종가 계좌 추정과 합산 금지, 환율·선물·추적오차 미반영.")
 
 
 def account_estimate(held, observations, sessions, *, mode="preopen"):
@@ -163,8 +196,14 @@ def sector_related_news(ticker, session, news):
     if not pattern:
         return []
     matched = []
+    common = []
+    common_ai = re.compile(r"(?:AI|인공지능).{0,25}(?:투자|차입|부채|수익|bubble|debt|spending).{0,20}(?:불안|우려|걱정|concern|fear)|(?:AI|인공지능).{0,12}(?:불안|우려)", re.I)
     for item in news:
         title = text(item.get("title"))
+        if ticker in {"SOXX", "IGV", "XLK"} and common_ai.search(title):
+            common.append(dict(item, ticker=ticker, market_context_only=True, common_theme=True))
+        if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)", title, re.I):
+            continue
         if item.get("market") != "US" or item.get("session_date") != session:
             continue
         if not re.search(pattern, title, re.I):
@@ -180,4 +219,7 @@ def sector_related_news(ticker, session, news):
         if indirect and not recap:
             continue
         matched.append(dict(item, ticker=ticker, market_context_only=indirect))
+    if len(common) >= 2:
+        keys = {text(first(item, "link", "title")) for item in matched}
+        matched.extend(item for item in common if text(first(item, "link", "title")) not in keys)
     return sorted(matched, key=lambda item: not bool(re.search(r"AI\s*(?:차입|부채)\s*우려", text(item.get("title")), re.I)))

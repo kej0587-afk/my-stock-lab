@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
+from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import numpy as np
@@ -13,6 +17,94 @@ from stock_lab_core.performance import timed_call
 DATA_DIR = Path(__file__).resolve().parent / "data"
 KOSPI_INDUSTRY_SNAPSHOT_PATH = DATA_DIR / "kr_kospi_industry_snapshot.csv"
 KOSPI_SECTOR_CONSTITUENTS_PATH = DATA_DIR / "kr_kospi_sector_constituents.csv"
+_KR_CLUSTER_RUN = ContextVar("stock_lab_kr_cluster_run", default=None)
+
+
+class _KrClusterRun:
+    def __init__(self, owner_scope: str):
+        self.owner_scope = owner_scope
+        self.lock = RLock()
+        self.rows = {}
+        self.snapshots = {}
+        self.quotes = {}
+        self.quote_attempted = set()
+        self.fallback_quotes = {}
+        self.fallback_attempted = set()
+
+    def select_rows(self, cluster_name, detail_name):
+        key = (cluster_name, detail_name)
+        if key not in self.rows:
+            self.rows[key] = _select_cluster_rows(cluster_name, detail_name)
+        return self.rows[key]
+
+    def preload_quotes(self, tickers):
+        keys = list(dict.fromkeys(_price_lookup_key(ticker) for ticker in tickers if str(ticker or "").strip()))
+        missing = [key for key in keys if key not in self.quote_attempted]
+        if missing:
+            self.quotes.update(deepcopy(_fetch_latest_kr_quotes_for_snapshot(missing)))
+            # An omitted quote is a completed attempt, not a cache miss.
+            self.quote_attempted.update(missing)
+
+    def preload(self, requests):
+        with self.lock:
+            tickers = []
+            for cluster_name, detail_name in requests:
+                rows = self.select_rows(cluster_name, detail_name)[-1]
+                if not rows.empty and "ticker" in rows and "current" in rows:
+                    tickers.extend(rows["ticker"].tolist())
+            self.preload_quotes(tickers)
+
+    def load_quotes(self, tickers):
+        with self.lock:
+            keys = list(dict.fromkeys(_price_lookup_key(ticker) for ticker in tickers))
+            self.preload_quotes(keys)
+            quotes = {key: self.quotes[key] for key in keys if key in self.quotes}
+            if quotes:
+                return deepcopy(quotes)
+            # Preserve the original all-empty-subset price fallback after a
+            # partial union response, without retrying failed overlapping rows.
+            missing = [key for key in keys if key not in self.fallback_attempted]
+            if missing:
+                self.fallback_quotes.update(_fetch_latest_prices_for_snapshot(missing))
+                self.fallback_attempted.update(missing)
+            return deepcopy({key: self.fallback_quotes[key] for key in keys if key in self.fallback_quotes})
+
+    def build(self, cluster_name, top_n, detail_name, live_prices):
+        key = (cluster_name, top_n, detail_name, bool(live_prices))
+        with self.lock:
+            if key not in self.snapshots:
+                self.snapshots[key] = _build_kr_cluster_snapshot(cluster_name, top_n, detail_name, live_prices)
+            return deepcopy(self.snapshots[key])
+
+
+@contextmanager
+def kr_cluster_snapshot_scope(requests=(), *, owner_scope: str):
+    """Freeze public KR context for one owner's calculation run only.
+
+    ``requests`` contains (cluster_name, detail_name) pairs. Their exact selected
+    constituents are fetched in one batch, then built in memory. Additional
+    tables can call ``preload_kr_cluster_snapshots`` before their row loop.
+    Fresh nested scopes never inherit another owner's memo. Existing provider
+    TTLs still apply at fetch time; this memo is discarded on scope exit. Use
+    ``submit_with_context`` for workers, as with ``price_frame_scope``.
+    """
+    owner = str(owner_scope or "").strip()
+    if not owner:
+        raise ValueError("owner_scope must identify the calculation owner")
+    run = _KrClusterRun(owner)
+    token = _KR_CLUSTER_RUN.set(run)
+    try:
+        run.preload(requests)
+        yield run
+    finally:
+        _KR_CLUSTER_RUN.reset(token)
+
+
+def preload_kr_cluster_snapshots(requests) -> None:
+    """Preload (cluster, detail) pairs together; do nothing outside a run."""
+    run = _KR_CLUSTER_RUN.get()
+    if run is not None:
+        run.preload(requests)
 
 
 KR_CLUSTER_INDUSTRY_MAP: dict[str, list[str]] = {
@@ -393,14 +485,24 @@ def _price_lookup_key(ticker: Any) -> str:
 
 
 def _load_latest_quotes_for_snapshot(tickers: list[str]) -> dict[str, dict[str, float]]:
+    run = _KR_CLUSTER_RUN.get()
+    if run is not None:
+        return run.load_quotes(tickers)
+    quotes = _fetch_latest_kr_quotes_for_snapshot(tickers)
+    return quotes if quotes else _fetch_latest_prices_for_snapshot(tickers)
+
+
+def _fetch_latest_kr_quotes_for_snapshot(tickers: list[str]) -> dict:
     try:
         from stock_lab_core.prices import load_latest_kr_quotes_batch
 
         quotes = load_latest_kr_quotes_batch(tickers)
-        if quotes:
-            return quotes
+        return quotes if isinstance(quotes, dict) else {}
     except Exception:
-        pass
+        return {}
+
+
+def _fetch_latest_prices_for_snapshot(tickers: list[str]) -> dict:
     try:
         from stock_lab_core.prices import load_latest_prices_batch
 
@@ -531,31 +633,19 @@ def _sort_rows_by_existing(
     return df.sort_values(list(sort_cols), ascending=list(sort_ascending))
 
 
-@timed_call("external_data")
-def build_kr_cluster_snapshot(
-    cluster_name: str,
-    top_n: int = 3,
-    detail_name: str = "",
-    live_prices: bool = True,
-) -> dict[str, Any]:
-    """Return KOSPI industry breadth/representative-stock context for a KR cluster.
-
-    The main cluster score still comes from the app's ETF price-flow model. This
-    snapshot is a same-day breadth guardrail so one hot ETF cannot make the whole
-    Korean industry look healthy when the underlying constituents are weak.
-    """
+def _select_cluster_rows(cluster_name: str, detail_name: str):
     detail_key, detail_group = _resolve_detail_group(detail_name=detail_name, cluster_name=cluster_name)
     sectors = detail_group.get("sectors", []) if detail_group else []
     if not sectors:
         sectors = KR_CLUSTER_INDUSTRY_MAP.get(str(cluster_name or "").strip(), [])
     if not sectors:
-        return {}
+        return detail_key, detail_group, sectors, _empty_industry_df(), _empty_constituent_df()
     sector_keys = {_sector_key(sector) for sector in sectors}
 
     industry_df = load_kospi_industry_snapshot()
     constituent_df = load_kospi_sector_constituents()
     if industry_df.empty and constituent_df.empty:
-        return {}
+        return detail_key, detail_group, sectors, industry_df, constituent_df
 
     if "sector_name" in industry_df.columns:
         industry_rows = industry_df[industry_df["sector_name"].map(_sector_key).isin(sector_keys)].copy()
@@ -581,6 +671,34 @@ def build_kr_cluster_snapshot(
         if sort_cols:
             constituent_rows = constituent_rows.sort_values(sort_cols, ascending=[True] * len(sort_cols))
         constituent_rows = constituent_rows.drop_duplicates("ticker", keep="first").copy()
+    return detail_key, detail_group, sectors, industry_rows, constituent_rows
+
+
+@timed_call("external_data")
+def build_kr_cluster_snapshot(
+    cluster_name: str,
+    top_n: int = 3,
+    detail_name: str = "",
+    live_prices: bool = True,
+) -> dict[str, Any]:
+    """Return KOSPI industry breadth/representative-stock context for a KR cluster.
+
+    The main cluster score still comes from the app's ETF price-flow model. This
+    snapshot is a same-day breadth guardrail so one hot ETF cannot make the whole
+    Korean industry look healthy when the underlying constituents are weak.
+    """
+    run = _KR_CLUSTER_RUN.get()
+    if run is not None:
+        return run.build(cluster_name, top_n, detail_name, live_prices)
+    return _build_kr_cluster_snapshot(cluster_name, top_n, detail_name, live_prices)
+
+
+def _build_kr_cluster_snapshot(cluster_name, top_n, detail_name, live_prices):
+    run = _KR_CLUSTER_RUN.get()
+    selected = run.select_rows(cluster_name, detail_name) if run is not None else _select_cluster_rows(cluster_name, detail_name)
+    detail_key, detail_group, sectors, industry_rows, constituent_rows = selected
+    if not sectors:
+        return {}
     if live_prices:
         constituent_rows = _refresh_constituent_rows_with_live_prices(constituent_rows)
 

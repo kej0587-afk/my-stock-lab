@@ -160,6 +160,7 @@ def sector_evidence(row, macro_data, news):
     ticker = text(first(row, "Ticker", "ticker", "티커"))
     ret = number(first(row, "1일수익률", "1D"))
     date = text(first(row, "기준일", "date", "as_of")) or "기준일 미제공"
+    kind = text(row.get("수치종류")) or ("확정 종가" if date != "기준일 미제공" else "종가/장중 미확인")
     fact = f"{ticker} 일간 {ret * 100:+.2f}% · {date}" if ret is not None else f"{ticker} 일간 자료 미수집"
     for keys, label in ((("3개월수익률", "3M"), "3M"), (("가속도",), "가속도")):
         value = number(first(row, *keys))
@@ -198,6 +199,9 @@ def sector_evidence(row, macro_data, news):
         scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
         reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
                     + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
-    return {"fact": "사실: " + fact + " [공급처 일봉 종가]",
+        if any(r.get("common_theme") for r in related):
+            dates = sorted({text(r.get("published", r.get("published_at", "")))[:10] for r in related})
+            reading += " · 공통 테마 보도일 " + ", ".join(dates) + "(업종 기준일과 다를 수 있음; 해당 종가 원인으로 소급하지 않음)"
+    return {"fact": "사실: " + fact + f" [{kind}]",
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

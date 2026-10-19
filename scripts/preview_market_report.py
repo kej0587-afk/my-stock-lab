@@ -16,7 +16,7 @@ from stock_lab_core.chart_scorecard import render_chart_scorecard, render_volume
 st.set_page_config(page_title="Stock Lab 리포트 미리보기", layout="wide")
 report_tab, chart_tab = st.tabs(["리포트", "차트 지표 예시"])
 with report_tab:
-    st.markdown((ROOT / "docs/samples/market_report_20261018_v3.md").read_text(encoding="utf-8"))
+    st.markdown((ROOT / "docs/samples/market_report_20261020_v7.md").read_text(encoding="utf-8"))
 with chart_tab:
     st.caption("화면 확인용 합성 가격·재무 데이터. 실제 종목/매매 판단 자료가 아닙니다.")
     close = 100 + np.arange(300) * .1 + np.sin(np.arange(300) / 8) * 3

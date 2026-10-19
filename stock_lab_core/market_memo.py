@@ -2112,20 +2112,31 @@ def build_auto_market_memo(
         # No live macro fallback: missing session data must stay missing.
         macro_data = context.get("macro_data", {})
         if context.get("news_sessions"):
-            raw_news = (context.get("session_news", []) + context.get("next_session_news", [])
+            raw_news = (context.get("session_news", []) + context.get("next_session_news", []) + context.get("current_session_news", [])
                         if "session_news" in context else records(market_news_rows) + records(news_rows))
-            partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt)
+            partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt,
+                                                      current_sessions=context.get("current_news_sessions"))
             # Source-fetch failures remain visible; old empty-bucket diagnostics
             # must not survive a fresh partition that has accepted articles.
             prior_missing = [item for item in context.get("missing", [])
                              if not re.search(r"^(KR|US):.*(?:뉴스 없음|채택 뉴스 없음)$", str(item))]
             partition["missing"] = list(dict.fromkeys(prior_missing + partition["missing"]))
+            diagnostics = [item for item in partition["missing"] if re.search(r"건 제외$|종가 이후 뉴스 없음$|next_session_news.*채택 뉴스 없음$", str(item))]
+            partition["news_diagnostics"] = list(dict.fromkeys(context.get("news_diagnostics", []) + diagnostics))
+            partition["missing"] = [item for item in partition["missing"] if item not in diagnostics]
             context.update(partition)
         elif "session_news" not in context:
             context.update(partition_session_market_news(curated, {}, now=dt))
-        curated = curate_news(context.get("session_news", []), now=dt, limit=40)
+        curated = curate_news(context.get("session_news", []) + context.get("current_session_news", []), now=dt, limit=50, session_scoped=True)
+        report_flow = {**flow_snapshot}
+        if "closed_flow_rows" in context:
+            aligned = {text(first(row, "Ticker", "티커")): row for row in records(context["closed_flow_rows"])}
+            report_flow["flow_df"] = list(aligned.values())
+            for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
+                report_flow[key] = [dict(row, **aligned[text(first(row, "Ticker", "티커"))])
+                                    for row in records(flow_snapshot.get(key)) if text(first(row, "Ticker", "티커")) in aligned]
         front, missing = report_sections(context=context, news=curated,
-            flow_rows=flow_snapshot.get("flow_df"), event_rows=event_rows, summary_rows=summary_rows, now=dt)
+            flow_rows=report_flow.get("flow_df"), event_rows=event_rows, summary_rows=summary_rows, now=dt)
         rows = records(summary_rows)
         held_count = sum(is_held(row) for row in rows)
         executable = sum(text(first(row, "게이트상태", "gate_state")) in {"실행가능", "EXECUTABLE"} for row in rows)
@@ -2156,10 +2167,13 @@ def build_auto_market_memo(
         missing_macro = set(("10Y 금리", "VIX", "MOVE", "유가", "환율")) - macro_data.keys()
         if missing_macro:
             missing.append("거래일 정렬 매크로: " + ", ".join(sorted(missing_macro)))
-        rotation = _build_rotation_context(index_rotation_rows, flow_snapshot)
+        rotation = _build_rotation_context(context.get("rotation_rows", index_rotation_rows), report_flow)
         if rotation.get("rows"):
             growth, defensive = rotation.get("growth_denominator", []), rotation.get("rotation_denominator", [])
             lines.extend(["", "## 스타일 비교", f"성장 [{', '.join(growth)}] / 방어 [{', '.join(defensive)}]"])
+            rotation_dates = sorted({str(row.get("기준일", "")) for row in rotation["rows"] if _rotation_market(row) == "us"})
+            lines.append("미국 기준일 " + (", ".join(d for d in rotation_dates if d) or "미제공") +
+                         (" · 확정 종가(장중 제외)" if "rotation_rows" in context else " · 종가/장중 구분 미확인(기존 저장 자료)"))
             if min(len(growth), len(defensive)) < 2:
                 lines.append("각 스타일 독립 노출 최소 2개 미충족: 스타일 우열 판단 보류")
             else:
@@ -2170,15 +2184,15 @@ def build_auto_market_memo(
                                       ("국내 섹터", "kr_top5", "돈흐름점수"),
                                       ("글로벌 ETF", "global_top", "돈흐름점수"),
                                       ("테마", "theme_top5", "테마돈흐름점수")):
-            eligible, excluded = _rankable_flow_rows(flow_snapshot.get(key), score_key)
+            eligible, excluded = _rankable_flow_rows(report_flow.get(key), score_key)
             if eligible:
-                lines.append(f"- {label}: " + " / ".join(_flow_bullet(row, score_key) for row in eligible[:2]))
+                lines.append(f"- {label}: " + " / ".join(_flow_bullet(row, score_key) + f" [{row.get('기준일', '기준일 미제공')} · {row.get('수치종류', '종가/장중 미확인')}]" for row in eligible[:2]))
             else:
                 lines.append(f"- {label}: 비교 가능한 중기 자료 미연결")
-        semis = [row for row in _rankable_flow_rows(flow_snapshot.get("flow_df"))[0]
+        semis = [row for row in _rankable_flow_rows(report_flow.get("flow_df"))[0]
                  if _row_ticker(row) in {"SOXX", "SMH", "DRAM"}]
         if semis:
-            lines.append("- 반도체·AI: " + " / ".join(_flow_bullet(row) for row in semis[:3]))
+            lines.append("- 반도체·AI: " + " / ".join(_flow_bullet(row) + f" [{row.get('기준일', '기준일 미제공')} · {row.get('수치종류', '종가/장중 미확인')}]" for row in semis[:3]))
         lines.append("해제 기준: 비중은 목표 범위 복귀, 시장방어는 해당 시장 게이트 해제, 추세는 일봉·주봉 훼손 해소 후 재계산. 가격·손익비·과열 조건도 함께 통과해야 합니다.")
         if missing:
             lines.extend(["", "데이터 누락:", *["- " + reason for reason in dict.fromkeys(missing)]])

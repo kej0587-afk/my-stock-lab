@@ -59,7 +59,7 @@ def close_case():
                                            period="2026-09", unit="%", basis="YoY", status="verified_snapshot",
                                            source="관세청 수출입 현황", source_url="https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do?bbsId=1362&mi=2891&nttSn=10179763",
                                            verified_at="2026-10-19", expires_at="2026-11-03")])
-    flow = [dict(Ticker="305540.KS", **{"3개월수익률": .235, "가속도": .502, "상태": "강세 가속"})]
+    flow = [dict(Ticker="305540.KS", 기준일="2026-10-19", **{"3개월수익률": .235, "가속도": .502, "상태": "강세 가속"})]
     return context, rows, flow
 
 
@@ -79,7 +79,7 @@ def test_reported_aggregates_choose_full_close_not_partial_replacement():
     assert "미국 2026-10-16 / 한국 2026-10-19" in line
     assert "보류" in account_headline(dict(metrics, coverage=89.9), sessions, "closed")
     assert "보류" in account_headline(None, sessions, "closed")
-    assert "-2.29%p" in account_headline(dict(metrics, replacement_coverage=95), sessions, "preopen")
+    assert "-3.00%p" in account_headline(dict(metrics, replacement_coverage=95), sessions, "preopen")
 
 
 def test_close_report_acceptance_and_immutable_inputs():

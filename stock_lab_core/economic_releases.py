@@ -136,7 +136,7 @@ def _cached(key, loader, now):
     return value, "", now.isoformat()
 
 
-def _request(url, *, params=None, payload=None, text=False):
+def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
     method = requests.post if payload is not None else requests.get
     kwargs = {"timeout": REQUEST_TIMEOUT, "allow_redirects": False,
               "headers": {"User-Agent": "StockLab-Economic-Releases/1.0"}}
@@ -151,10 +151,14 @@ def _request(url, *, params=None, payload=None, text=False):
         response = method(url, **kwargs)
     except requests.RequestException as exc:
         if census:
+            if diagnostics is not None:
+                diagnostics["transport_error"] = type(exc).__name__
             logging.getLogger(__name__).warning("Census transport=%s params=%s", type(exc).__name__, safe_params)
         raise
     try:
         if census:
+            if diagnostics is not None:
+                diagnostics["http_status"] = response.status_code
             log = logging.getLogger(__name__)
             (log.info if response.status_code == 200 else log.warning)(
                 "Census HTTP=%s params=%s", response.status_code, safe_params)
@@ -326,15 +330,20 @@ def _bls(now):
 
 
 def _retail(now, api_key):
+    params = {"get": "cell_value,time_slot_date,category_code,data_type_code,seasonally_adj,error_data",
+              "time": f"from {now.year - 1}-01 to {now:%Y-%m}",
+              "category_code": "44X72", "data_type_code": "MPCSM",
+              "seasonally_adj": "yes", "error_data": "no"}
+    diagnostics = {"endpoint": CENSUS_URL, "parameters": dict(params), "http_status": None}
+
     def fetch():
-        params = {"get": "cell_value,time_slot_date,category_code,data_type_code,seasonally_adj,error_data",
-                  "time": f"from {now.year - 1}-01 to {now:%Y-%m}",
-                  "category_code": "44X72", "data_type_code": "MPCSM",
-                  "seasonally_adj": "yes", "error_data": "no"}
+        request_params = dict(params)
         if api_key:
-            params["key"] = api_key
+            request_params["key"] = api_key
         try:
-            payload = _request(CENSUS_URL, params=params)
+            payload = _request(CENSUS_URL, params=request_params, diagnostics=diagnostics)
+        except _Unavailable:
+            raise
         except ValueError as exc:
             if not api_key:
                 raise _Unavailable("CENSUS_API_KEY_required_or_invalid_response") from None
@@ -356,19 +365,26 @@ def _retail(now, api_key):
             logging.getLogger(__name__).info("Census observations=%s latest_period=%s", len(values), max(values))
         else:
             logging.getLogger(__name__).warning("Census no_valid_observations; publication_status=unconfirmed")
-        return values
+            raise _Unavailable("census_no_valid_observations")
+        return {"observations": values, "request": dict(diagnostics)}
 
     data, error, retrieved = _cached(("retail", now.strftime("%Y-%m"), hashlib.sha256(api_key.encode()).hexdigest()), fetch, now)
     row = _row("US_RETAIL_SALES", "%", "MoM", "US Census Bureau (MARTS)", CENSUS_URL, now,
                seasonal_adjustment="SA", retrieved_at=retrieved, api_key_configured=bool(api_key))
     if data:
-        period = max(data)
-        row.update(period=period, actual=data[period], previous=data.get(_shift(period, -1)),
+        values = data["observations"]
+        period = max(values)
+        row.update(period=period, actual=values[period], previous=values.get(_shift(period, -1)),
                    previous_period=_shift(period, -1), previous_source=row["source"],
                    previous_unit="%", previous_basis="MoM", status="released")
-        _monthly_history(row, data)
+        _monthly_history(row, values)
     else:
         _reason(row, error)
+    row["request_metadata"] = dict(data["request"] if data else diagnostics)
+    row["request_metadata"]["from_cache"] = bool(data and diagnostics["http_status"] is None)
+    row["publication_status"] = "available" if data else "unconfirmed"
+    logging.getLogger(__name__).info("Census publication_status=%s latest_period=%s reason=%s",
+                                    row["publication_status"], row["period"] or "unavailable", error or "none")
     return row
 
 
@@ -618,6 +634,11 @@ def _event(item, now):
                previous_basis=_basis(item.get("previous_basis")) if item.get("previous_basis") else basis,
                seasonal_adjustment=str(item.get("seasonal_adjustment") or "unknown"),
                value_kind="supplied_event", data_vintage="supplied_event")
+    for key in ("schedule_rule", "schedule_rule_source", "schedule_rule_source_url", "release_time_confirmed"):
+        if key in item:
+            row[key] = item[key]
+    if item.get("release_precision") == "schedule_rule" and precision == "datetime":
+        row["release_precision"] = "schedule_rule"
     if actual is not None and actual_unit != resolved_unit:
         row["actual"] = None
         _reason(row, "actual_unit_mismatch")
@@ -707,7 +728,7 @@ def load_economic_releases(event_rows=None, now=None):
     """Return normalized rows; persist validated public monthly observations only.
 
     Requests have 4-second timeouts. One BLS batch, one Census query, up to one
-    FRED query, four calendar pages, and up to four ECOS metadata/data queries.
+    FRED query, five calendar pages, and up to four ECOS metadata/data queries.
     Provider errors are not cached as success. Last verified monthly values are
     retained separately and explicitly marked stale if collection fails.
     Supplied events are bounded to 64 rows. Dates without a time/value remain
@@ -725,6 +746,10 @@ def load_economic_releases(event_rows=None, now=None):
         calendar = calendar.result()
         primary = {"cpi": "US_CPI", "ppi": "US_PPI", "empsit": "US_NONFARM_PAYROLLS"}
         for row, spec in zip(rows, _BLS_SERIES):
+            name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
+            source = next((source for source in calendar["sources"] if source["name"] == name), {})
+            row["release_calendar_status"] = dict(source)
+            row["fallback_connected"] = bool(source.get("fallback_connected"))
             matches = [event for event in calendar["events"]
                        if event["indicator"] == primary[spec.group] and event.get("period") == row["period"]]
             if len(matches) == 1:
@@ -737,7 +762,6 @@ def load_economic_releases(event_rows=None, now=None):
                     row["history"] = [entry for entry in row["history"] if entry["period"] < row["period"]]
                     _reason(row, "scheduled_release_not_yet_due")
             else:
-                name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
                 failure = next((source["reason"] for source in calendar["sources"] if source["name"] == name), "")
                 _reason(row, "release_schedule_" + (failure or "period_unavailable"))
     from stock_lab_core.economic_cache import retain_successful_observations
@@ -745,6 +769,10 @@ def load_economic_releases(event_rows=None, now=None):
     _merge_events(rows, event_rows, now)
     for row in rows:
         _finish(row)
+        if row["indicator"] == "US_RETAIL_SALES" and row["status"] == "pending":
+            row["publication_status"] = "pending"
+            logging.getLogger(__name__).info("Census publication_status=pending period=%s release_at=%s",
+                                            row["period"] or "unavailable", row["release_at"] or "unavailable")
     return rows
 
 

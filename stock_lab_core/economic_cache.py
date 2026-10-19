@@ -12,18 +12,30 @@ import threading
 CACHE_PATH = Path(__file__).resolve().parents[1] / "cache" / "economic_last_success.json"
 _LOCK = threading.Lock()
 _SERIES = {"KR_CPI", "KR_EXPORTS", "US_RETAIL_SALES"}
+_BLS = {"US_CPI", "US_CORE_CPI", "US_PPI", "US_NONFARM_PAYROLLS", "US_UNEMPLOYMENT"}
 _FIELDS = {"indicator", "period", "actual", "previous", "unit", "basis", "source", "source_url",
            "seasonal_adjustment", "retrieved_at", "previous_period", "previous_source", "previous_unit",
            "previous_basis", "series_id", "value_kind", "raw_unit", "raw_actual", "raw_year_ago",
-           "raw_year_ago_period", "history", "history_frequency", "data_vintage"}
+           "raw_year_ago_period", "history", "history_frequency", "data_vintage", "previous3mean", "previous3mean_reason"}
+
+
+def _key(row):
+    indicator = row.get("indicator")
+    return "|".join(str(row.get(k, "")) for k in ("indicator", "basis", "unit", "series_id")) if indicator in _BLS else indicator
 
 
 def _valid(row, now):
     try:
         at = datetime.fromisoformat(row["retrieved_at"]).astimezone(timezone.utc)
         period = datetime.strptime(row["period"], "%Y-%m").replace(tzinfo=timezone.utc)
-        return (row.get("indicator") in _SERIES and row.get("unit") == "%"
-                and row.get("basis") == ("MoM" if row["indicator"] == "US_RETAIL_SALES" else "YoY")
+        valid_measure = (row.get("indicator") in _SERIES and row.get("unit") == "%"
+                         and row.get("basis") == ("MoM" if row["indicator"] == "US_RETAIL_SALES" else "YoY"))
+        if row.get("indicator") in _BLS:
+            from stock_lab_core.economic_releases import _BLS_SERIES
+            valid_measure = row.get("source") == "BLS" and any(
+                row.get("indicator") == spec.indicator and row.get("series_id") == spec.series and row.get("basis") == spec.basis
+                and row.get("unit") == ("thousand persons" if spec.mode == "change" else "%") for spec in _BLS_SERIES)
+        return (valid_measure
                 and not isinstance(row["actual"], bool) and math.isfinite(float(row["actual"]))
                 and now - timedelta(days=120) <= at <= now and period <= now
                 and now - period < timedelta(days=180))
@@ -48,15 +60,16 @@ def retain_successful_observations(rows, now):
         changed = False
         for row in output:
             indicator = row.get("indicator")
-            if indicator not in _SERIES:
+            if indicator not in _SERIES | _BLS:
                 continue
+            key = _key(row)
             if row.get("status") == "released" and _valid(row, now):
-                saved[indicator] = {key: row[key] for key in _FIELDS if key in row}
+                saved[key] = {field: row[field] for field in _FIELDS if field in row}
                 changed = True
-            elif row.get("actual") is None and _valid(saved.get(indicator, {}), now):
+            elif row.get("actual") is None and _valid(saved.get(key, {}), now):
                 reason = row.get("missing_reason", "collection_failed")
-                row.update(deepcopy(saved[indicator]), status="stale", collection_error=reason,
-                           last_success_at=saved[indicator]["retrieved_at"], as_of=now.isoformat())
+                row.update(deepcopy(saved[key]), status="stale", collection_error=reason,
+                           last_success_at=saved[key]["retrieved_at"], as_of=now.isoformat())
         if changed:
             try:
                 CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -67,7 +80,7 @@ def retain_successful_observations(rows, now):
                 os.replace(temporary, CACHE_PATH)
             except (OSError, ValueError, TypeError):
                 for row in output:
-                    if row.get("indicator") in _SERIES:
+                    if row.get("indicator") in _SERIES | _BLS:
                         row["cache_warning"] = "last_success_write_failed"
             finally:
                 if temporary:

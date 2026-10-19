@@ -38,7 +38,7 @@ def completed_scenario_comparison(row, observations, sessions, now):
     return "비교 보류: 직전 한국 거래일과 미국 기초자산 기준일 일치 미확인"
 
 
-def holding_estimate(row, observations, sessions, now):
+def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):
     ticker = text(first(row, "티커", "ticker")).upper()
     name = text(first(row, "종목명", "자산명", "name"))
     multiplier = infer_scenario_shock_multiplier({"티커": ticker, "자산명": name})
@@ -48,11 +48,23 @@ def holding_estimate(row, observations, sessions, now):
     expected = sessions.get("US")
     own = observations.get(ticker, {})
     domestic = ticker.split(".")[0] in {"379800", "379810", "418660"}
+    if domestic and intraday_prices:
+        for base in bases:
+            current = intraday_prices.get(base, {})
+            value = number(current.get("return"))
+            if value is None or not current.get("date") or current["date"] < own.get("date", ""):
+                continue
+            from stock_lab_core.report_presentation import kst_time
+            return (f"다음 한국장 갭 예상 영향(추정): {base} {value * 100:+.2f}% × {multiplier:g} = "
+                    f"{value * multiplier * 100:+.2f}% · 미국 {current['date']} 장중 진행·확정 아님 · "
+                    f"{kst_time(current.get('as_of', current.get('retrieved_at')))} · 환율·선물·추적오차 미반영"), abs(multiplier) > 1
     for base in bases:
         obs = observations.get(base, {})
         value = number(obs.get("return"))
         if value is None or not expected or obs.get("date") != expected:
             continue
+        if domestic and own.get("date", "") > expected:
+            return f"미국 {expected} 종가 영향은 한국 {own['date']}에 이미 반영 · 다음 세션 자료 대기(중복 계상 안 함)", abs(multiplier) > 1
         if not domestic and own.get("date") and obs.get("date") != own["date"]:
             continue
         label = "BTC(미국장 마감→마감)" if base == "BTC-US-CLOSE" else base

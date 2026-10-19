@@ -137,3 +137,99 @@ def test_close_wrap_priority_survives_a_more_recent_intraday_story():
     ], SESSIONS, now=NOW)
     assert result["session_news"][0]["is_close_wrap"]
 
+
+LIVE_NOW = "2026-10-20T00:36:00+09:00"
+LIVE_US = {"US": {"date": "2026-10-19", "previous_date": "2026-10-16"}}
+CLOSED_KR = {"KR": {"date": "2026-10-19", "previous_date": "2026-10-16"}}
+
+
+def test_live_us_and_closed_kr_are_distinct_and_keep_publication_timezones():
+    result = partition_session_market_news([
+        article("Wall Street chips rise", "2026-10-19T11:35:00-04:00"),
+        article("CXMT memory report", "2026-10-19T15:16:00+09:00", "KR"),
+        article("future", "2026-10-19T11:36:01-04:00"),
+    ], CLOSED_KR, current_sessions=LIVE_US, now=LIVE_NOW)
+    live, = result["current_session_news"]
+    assert live["session_date"] == "2026-10-19" and not live["is_closed"]
+    assert live["session_status"] == "in_progress" and live["news_timing"] == "장중 보도"
+    closed, = result["session_news"]
+    assert closed["market"] == "KR" and closed["is_closed"]
+    assert closed["news_timing"] == closed["kr_news_timing"] == "장중 보도"
+    assert closed["news_timing_timezone"] == "Asia/Seoul"
+    assert closed["published_at_kst"] == "2026-10-19T15:16:00+09:00"
+    assert {window["market"] for window in result["windows"]} == {"KR"}
+    window, = result["current_windows"]
+    assert window["scheduled_close"] == "2026-10-19T16:00:00-04:00"
+    assert window["end"] == "2026-10-19T11:36:00-04:00"
+
+
+def test_active_flag_in_news_sessions_matches_optional_current_sessions_and_is_pure():
+    us = dict(LIVE_US["US"], is_active=True)
+    sessions = dict(CLOSED_KR, US=us)
+    rows = [article("Wall Street chips rise", "2026-10-19T11:35:00-04:00")]
+    expected = partition_session_market_news(rows, CLOSED_KR, current_sessions=LIVE_US, now=LIVE_NOW)
+    result = partition_session_market_news(rows, sessions, now=LIVE_NOW)
+    assert result == expected
+    assert sessions["US"] == us and sessions["US"]["is_active"] is True
+
+
+def test_closed_us_and_live_us_can_coexist_without_duplicating_live_news():
+    result = partition_session_market_news([
+        article("Stocks closed Friday", "2026-10-16T16:05:00-04:00"),
+        article("Sunday chips news", "2026-10-18T17:00:00-04:00"),
+        article("Monday chip stocks rise", "2026-10-19T11:00:00-04:00"),
+    ], {"US": SESSIONS["US"]}, current_sessions=LIVE_US, now=LIVE_NOW)
+    assert [row["title"] for row in result["session_news"]] == ["Stocks closed Friday"]
+    assert {row["title"] for row in result["current_session_news"]} == {"Sunday chips news", "Monday chip stocks rise"}
+    assert not result["next_session_news"]
+
+
+@pytest.mark.parametrize("now", ["2026-10-19T09:29:59-04:00", "2026-10-19T16:00:00-04:00"])
+def test_explicit_active_session_must_currently_be_open(now):
+    result = partition_session_market_news([], {}, current_sessions=LIVE_US, now=now)
+    assert not result["current_windows"] and not result["current_session_news"]
+    assert result["missing"]
+
+
+def test_live_us_respects_explicit_early_close_and_dst():
+    active = {"US": {"date": "2026-11-27", "previous_date": "2026-11-25",
+                     "close_at": "2026-11-27T13:00:00-05:00"}}
+    row = article("Wall Street chips rise", "2026-11-27T12:59:00-05:00")
+    result = partition_session_market_news([row], {}, current_sessions=active, now="2026-11-27T12:59:00-05:00")
+    assert len(result["current_session_news"]) == 1
+    assert result["current_windows"][0]["scheduled_close"] == active["US"]["close_at"]
+    assert not partition_session_market_news([row], {}, current_sessions=active,
+                                           now="2026-11-27T13:00:00-05:00")["current_windows"]
+
+
+def test_fetch_accepts_active_flag_and_curates_live_and_closed_rows(monkeypatch):
+    from stock_lab_core import today_news
+    calls = []
+
+    def fetch(spec):
+        calls.append(spec)
+        us = spec["market"] == "US"
+        return [dict(title="Wall Street semiconductor stocks rise" if us else "코스피 반도체 강세",
+                     published_at="2026-10-19T11:35:00-04:00" if us else "2026-10-19T15:16:00+09:00",
+                     market=spec["market"], link="https://www.reuters.com/us" if us else "https://www.reuters.com/kr",
+                     publisher="Reuters", publisher_url="https://www.reuters.com")], ""
+
+    monkeypatch.setattr(today_news, "_fetch_session_rss", fetch)
+    result = today_news.fetch_session_market_news(dict(CLOSED_KR, US=dict(LIVE_US["US"], is_active=True)),
+                                                 now=LIVE_NOW, categories=("반도체·AI",))
+    assert 0 < len(calls) <= 16 and {spec["market"] for spec in calls} == {"US", "KR"}
+    assert len(result["current_session_news"]) == len(result["session_news"]) == 1
+    assert result["current_session_news"][0]["is_closed"] is False
+    assert result["session_news"][0]["kr_news_timing"] == "장중 보도"
+
+
+def test_query_budget_covers_live_and_closed_windows_in_both_markets():
+    from stock_lab_core import today_news
+    now = today_news._news_now(LIVE_NOW)
+    closed, _ = today_news._session_news_windows(dict(CLOSED_KR, US=SESSIONS["US"]), now)
+    live, _ = today_news._current_news_windows(LIVE_US, now)
+    categories = [plan["category"] for plan in today_news.TODAY_MARKET_STORY_RSS_PLAN][:3]
+    specs = today_news._session_query_specs(live + closed, categories, now)
+    assert len(specs) == 16
+    assert [spec["market"] for spec in specs[:3]] == ["US", "KR", "US"]
+

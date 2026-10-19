@@ -15,9 +15,10 @@ from stock_lab_core.report_evidence import KST
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=ROOT / "docs/samples/market_report_20261018_v3.md")
+    parser.add_argument("--output", type=Path, default=ROOT / "docs/samples/market_report_20261020_v7.md")
+    parser.add_argument("--as-of", help="Optional ISO timestamp; live bars later than this instant are excluded")
     args = parser.parse_args()
-    now = datetime.now(KST)
+    now = datetime.fromisoformat(args.as_of) if args.as_of else datetime.now(KST)
     # These are demonstration positions, not an assertion about the user's account.
     holdings = [
         {"종목명": "나스닥100 코어(예시)", "티커": "379810.KS", "보유량": 1,
@@ -32,6 +33,10 @@ def main():
          "현재비중": 6, "목표비중": 5, "판정코드": "HARD_BLOCK_OVERWEIGHT"},
         {"종목명": "비트코인 2배(예시)", "티커": "BITX", "보유량": 1,
          "현재비중": 2, "목표비중": 3, "게이트상태": "조건대기"},
+        {"종목명": "사이버보안(예시)", "티커": "CIBR", "보유량": 1, "현재비중": 6, "목표비중": 6},
+        {"종목명": "빅테크(예시)", "티커": "MAGS", "보유량": 1, "현재비중": 3, "목표비중": 3},
+        {"종목명": "한국 반도체 ETF(예시)", "티커": "0167A0.KS", "보유량": 1, "현재비중": 10, "목표비중": 10},
+        {"종목명": "TDF(예시)", "티커": "0025N0.KS", "보유량": 1, "현재비중": 4.9, "목표비중": 5},
     ]
     context = collect_report_context(holdings, now=now, include_news=True)
     context.update(summary_date=context.get("sessions", {}).get("US", ""),
@@ -41,7 +46,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(report, encoding="utf-8")
     print(f"Report saved: {args.output}")
-    print(f"Market sessions: {context['sessions']}; session news: {len(context.get('session_news', []))}; next: {len(context.get('next_session_news', []))}")
+    print(f"Market sessions: {context['sessions']}; session news: {len(context.get('session_news', []))}; live: {len(context.get('current_session_news', []))}; next: {len(context.get('next_session_news', []))}")
     for row in context["economic_releases"]:
         print(row["indicator"], row["basis"], row["period"], row["actual"], row["status"])
 

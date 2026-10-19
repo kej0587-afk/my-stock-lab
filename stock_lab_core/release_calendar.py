@@ -1,4 +1,4 @@
-"""Confirmed BLS releases and FOMC meeting end dates, without app imports.
+"""Official release dates and source-stamped policy/earnings schedules.
 
 All published reference months are retained for observation matching. Consumers
 filter events to their own horizon. A connected source with no events in that
@@ -9,7 +9,7 @@ the calendar does not publish a release time, so none is manufactured.
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from hashlib import sha256
 from html.parser import HTMLParser
 import re
@@ -31,6 +31,14 @@ SCHEDULE_URLS = {
     for group in ("cpi", "ppi", "empsit")
 }
 FOMC_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+BOK_URL = "https://www.bok.or.kr/portal/bbs/B0000502/view.do?nttId=10094300&menuNo=201265"
+META_IR_URL = ("https://investor.atmeta.com/investor-news/press-release-details/"
+               "2026/Meta-to-Announce-Third-Quarter-2026-Results/default.aspx")
+# The BOK page delegates its calendar to an attachment which blocks automated
+# retrieval. These are policy decisions, excluding general/stability meetings.
+_BOK_2026_DATES = ("2026-01-15", "2026-02-26", "2026-04-10", "2026-05-28",
+                   "2026-07-16", "2026-08-27", "2026-10-22", "2026-11-26")
+_VERIFIED_ON = "2026-10-20"
 _GROUPS = {
     "cpi": ("Consumer Price Index", "US_CPI", "BLS CPI"),
     "ppi": ("Producer Price Index", "US_PPI", "BLS PPI"),
@@ -238,12 +246,101 @@ def _fred_events(payload, group, now):
             dates.add(raw_date)
     if not dates:
         raise _InvalidCalendar("calendar_rows_unrecognized")
-    # FRED supplies dates, not publication times or the observation month.
-    return [{"event": _GROUPS[group][0], "indicator": _GROUPS[group][1],
-             "release_at": day, "date": day, "release_precision": "date",
-             "market": "US", "source": "FRED release calendar",
-             "source_url": f"https://fred.stlouisfed.org/release?rid={release_id}"}
-            for day in sorted(dates)]
+    # FRED confirms the day only. The usual BLS clock is a rule, not evidence
+    # that an exceptional/delayed announcement occurred at that instant.
+    events = []
+    for day in sorted(dates):
+        try:
+            at = datetime.combine(date.fromisoformat(day), datetime_time(8, 30),
+                                  ZoneInfo("America/New_York")).isoformat()
+        except ZoneInfoNotFoundError:
+            at = day
+        events.append({"event": _GROUPS[group][0], "indicator": _GROUPS[group][1],
+                       "release_at": at, "date": day,
+                       "release_precision": "schedule_rule" if "T" in at else "date",
+                       "release_time_confirmed": False, "date_precision": "date",
+                       "schedule_rule": "08:30 America/New_York",
+                       "schedule_rule_source": "BLS standard release schedule; exceptions unconfirmed",
+                       "schedule_rule_source_url": SCHEDULE_URLS[group],
+                       "market": "US", "source": "FRED release calendar",
+                       "source_url": f"https://fred.stlouisfed.org/release?rid={release_id}"})
+    return events
+
+
+def _bok_source(now):
+    name = "Bank of Korea MPC"
+    if now.year != 2026 or now.date() < date(2025, 10, 30):
+        return [], {"name": name, "status": "unavailable", "reason": "verified_year_unavailable"}
+    events = [{"event": "한국은행 금융통화위원회 통화정책방향 결정회의",
+               "indicator": "KR_BOK_RATE_DECISION", "market": "KR", "date": day,
+               "release_at": day, "release_precision": "date", "timezone": "Asia/Seoul",
+               "source": name, "source_url": BOK_URL, "source_published_at": "2025-10-30",
+               "source_verified_at": _VERIFIED_ON, "source_kind": "verified_fixture"}
+              for day in _BOK_2026_DATES]
+    return events, {"name": name, "status": "connected", "reason": "",
+                    "provider": "verified_fixture", "coverage_year": 2026,
+                    "source_url": BOK_URL, "source_verified_at": _VERIFIED_ON}
+
+
+class _PageText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+def _meta_events(html, url):
+    parser = _PageText()
+    parser.feed(html)
+    text = " ".join(" ".join(parser.parts).split())
+    match = re.search(
+        r"(?:company['\u2019]s )?(first|second|third|fourth) quarter (20\d{2}) financial results "
+        r"will be released after market close on (?:\w+,? )?"
+        r"([A-Z][a-z]+) (\d{1,2})(?:st|nd|rd|th)?,? (20\d{2})", text, re.I)
+    if not match or match[1].lower() != "third" or match[2] != "2026" or match[2] != match[5]:
+        raise _InvalidCalendar("calendar_rows_unrecognized")
+    try:
+        day = datetime.strptime(f"{match[3]} {match[4]} {match[5]}", "%B %d %Y").date().isoformat()
+    except ValueError:
+        raise _InvalidCalendar("calendar_rows_unrecognized") from None
+    event = {"event": "Meta earnings", "indicator": "US_META_EARNINGS", "ticker": "META",
+             "market": "US", "date": day, "release_at": day, "release_precision": "date",
+             "timezone": "America/New_York", "session_timing": "after_market_close",
+             "release_time_confirmed": False, "source": "Meta Investor Relations",
+             "source_url": url}
+    call = re.search(r"conference call.{0,100}?at.{0,60}?/\s*(\d{1,2}):(\d{2})\s*p\.m\.\s*ET the same day", text, re.I)
+    if call:
+        try:
+            clock = datetime_time(int(call[1]) % 12 + 12, int(call[2]))
+            event["conference_call_at"] = datetime.combine(date.fromisoformat(day), clock,
+                                                            ZoneInfo("America/New_York")).isoformat()
+        except (ValueError, ZoneInfoNotFoundError):
+            pass
+    return [event]
+
+
+def _meta_source(now):
+    # This announced quarter has verified fallback coverage; no dates for other
+    # quarters are extrapolated from previous earnings or third-party calendars.
+    name = "Meta Investor Relations"
+    if not date(2026, 10, 12) <= now.date() <= date(2026, 12, 31):
+        return [], {"name": name, "status": "unavailable", "reason": "verified_quarter_unavailable"}
+    events, source = _load_source(name, META_IR_URL, lambda html: _meta_events(html, META_IR_URL), now)
+    if source["status"] == "connected":
+        return events, source
+    event = {"event": "Meta earnings", "indicator": "US_META_EARNINGS", "ticker": "META",
+             "market": "US", "date": "2026-10-21", "release_at": "2026-10-21",
+             "release_precision": "date", "timezone": "America/New_York",
+             "session_timing": "after_market_close", "release_time_confirmed": False,
+             "source": name, "source_url": META_IR_URL, "source_published_at": "2026-10-12",
+             "source_verified_at": _VERIFIED_ON, "source_kind": "verified_fixture",
+             "conference_call_at": "2026-10-21T16:30:00-04:00"}
+    return [event], {"name": name, "status": "connected", "reason": "",
+                     "provider": "verified_fixture", "fallback_connected": True,
+                     "primary_reason": source["reason"], "source_url": META_IR_URL,
+                     "source_verified_at": _VERIFIED_ON}
 
 
 def _load_source(name, url, parser, now, *, fetch=None, cache_scope=""):
@@ -282,7 +379,8 @@ def _load_bls_source(group, url, now, fred_api_key):
         fetch=lambda: _fred_dates(group, now, fred_api_key), cache_scope=scope,
     )
     if fallback_source["status"] == "connected":
-        fallback_source.update(provider="FRED", primary_reason=source["reason"])
+        fallback_source.update(provider="FRED", primary_reason=source["reason"],
+                               fallback_connected=True, primary_status="unavailable")
         return fallback, fallback_source
     source["fallback_reason"] = fallback_source["reason"]
     return [], source
@@ -292,8 +390,10 @@ def load_release_calendar(now=None, *, fred_api_key=""):
     """Return {events, sources, connected}; connected means at least one source.
 
     Four workers, 4-second request timeouts; failed BLS pages may use FRED dates.
+    BOK 2026 and Meta Q3 2026 fixtures carry official publication/verification
+    dates and finite coverage. Meta after-close timing has no guessed minute.
     Successful parsed pages alone are cached; failures are retried next call.
-    No weekday rules, inferred release months, FOMC times, or forecast values.
+    No guessed dates, inferred release months, FOMC times, or forecast values.
     """
     now = _clock(now)
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -301,7 +401,9 @@ def load_release_calendar(now=None, *, fred_api_key=""):
                    for group, url in SCHEDULE_URLS.items()]
         futures.append(executor.submit(_load_source, "Federal Reserve FOMC", FOMC_URL,
                                        lambda html: _fomc_events(html, now), now))
+        futures.append(executor.submit(_meta_source, now))
         results = [future.result() for future in futures]
+    results.append(_bok_source(now))
     events = [event for rows, _ in results for event in rows]
     sources = [source for _, source in results]
     events.sort(key=lambda event: (event["date"], event["indicator"]))

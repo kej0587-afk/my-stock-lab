@@ -238,13 +238,13 @@ def fetch_today_breaking_story_news(days=2, per_query=1) -> list[dict]:
 _NEWS_KST = timezone(timedelta(hours=9))
 _SESSION_MARKETS = {
     "US": {
-        "timezone": "America/New_York", "close": time(16),
+        "timezone": "America/New_York", "open": time(9, 30), "close": time(16),
         "query": '("U.S. stocks" OR "Wall Street" OR Nasdaq OR "S&P 500")',
         "wrap": '("stocks close" OR "Wall Street closes" OR "market wrap" OR "closing bell")',
         "locale": "hl=en-US&gl=US&ceid=US:en",
     },
     "KR": {
-        "timezone": "Asia/Seoul", "close": time(15, 30),
+        "timezone": "Asia/Seoul", "open": time(9), "close": time(15, 30),
         "query": '(코스피 OR 코스닥 OR "한국 증시" OR "국내 증시")',
         "wrap": '("증시 마감" OR "코스피 마감" OR "코스닥 마감" OR "마감 시황")',
         "locale": "hl=ko&gl=KR&ceid=KR:ko",
@@ -286,6 +286,21 @@ def _news_now(now):
     return dt
 
 
+def _split_news_sessions(sessions, current_sessions):
+    if not isinstance(sessions, Mapping):
+        return sessions, current_sessions
+    closed = dict(sessions)
+    active = {}
+    for market, session in sessions.items():
+        if isinstance(session, Mapping) and session.get("is_active") is True:
+            active[market] = session
+            closed.pop(market)
+    if current_sessions is not None and not isinstance(current_sessions, Mapping):
+        return closed, current_sessions
+    active.update(current_sessions or {})
+    return closed, active or None
+
+
 def _session_news_windows(sessions, now):
     windows, missing = [], []
     if not isinstance(sessions, Mapping) or not sessions:
@@ -320,6 +335,56 @@ def _session_news_windows(sessions, now):
             "capture_end": capture_end.isoformat(), "next_session_end": now.astimezone(zone).isoformat(),
         })
     return windows, missing
+
+
+def _current_news_windows(sessions, now):
+    windows, missing = [], []
+    if sessions is None:
+        return windows, missing
+    if not isinstance(sessions, Mapping):
+        return windows, ["진행 세션은 시장별 date/previous_date 정보 필요"]
+    for market, session in sessions.items():
+        try:
+            spec = _SESSION_MARKETS[market]
+            current = date.fromisoformat(str(session["date"]))
+            previous = date.fromisoformat(str(session["previous_date"]))
+            if previous >= current or current.weekday() >= 5 or previous.weekday() >= 5:
+                raise ValueError
+            zone = ZoneInfo(spec["timezone"])
+            start = datetime.combine(previous, spec["close"], zone)
+            opening = (_news_timestamp(session["open_at"]) if session.get("open_at")
+                       else datetime.combine(current, spec["open"], zone))
+            close = (_news_timestamp(session["close_at"]) if session.get("close_at")
+                     else datetime.combine(current, spec["close"], zone))
+            if (opening is None or close is None or not start < opening <= now < close
+                    or opening.astimezone(zone).date() != current or close.astimezone(zone).date() != current):
+                raise ValueError
+        except (ValueError, TypeError, KeyError):
+            missing.append(f"{market}: 유효한 진행 중 거래일/이전 거래일/개폐장 시각 필요")
+            continue
+        windows.append({"market": market, "date": current.isoformat(),
+                        "previous_date": previous.isoformat(), "timezone": spec["timezone"],
+                        "start": start.isoformat(), "open_at": opening.isoformat(),
+                        "scheduled_close": close.isoformat(), "end": now.astimezone(zone).isoformat(),
+                        "capture_end": now.astimezone(zone).isoformat(),
+                        "session_status": "in_progress", "is_closed": False})
+    return windows, missing
+
+
+def _publication_timing(row, published, market):
+    zone = _SESSION_MARKETS[market]["timezone"]
+    local = published.astimezone(ZoneInfo(zone))
+    minute = local.hour * 60 + local.minute
+    opening, closing = (540, 930) if market == "KR" else (570, 960)
+    row.update(published_at_kst=published.astimezone(_NEWS_KST).isoformat(),
+               market_local_published_at=local.isoformat(), news_timing_market=market,
+               news_timing_timezone=zone,
+               news_timing="장전 보도" if minute < opening else "장중 보도" if minute < closing else "마감 후 보도")
+    # Display layers may explicitly discuss the Korean session even when a
+    # semiconductor article concerns US issuers. Keep both clocks available.
+    kst = published.astimezone(_NEWS_KST)
+    kr_minute = kst.hour * 60 + kst.minute
+    row["kr_news_timing"] = "장전 보도" if kr_minute < 540 else "장중 보도" if kr_minute < 930 else "마감 후 보도"
 
 
 def _news_sort_key(row):
@@ -371,7 +436,7 @@ def _resolve_query_news_market(raw, windows):
     return row
 
 
-def partition_session_market_news(rows, sessions, *, now=None) -> dict:
+def partition_session_market_news(rows, sessions, *, now=None, current_sessions=None) -> dict:
     """Pure time partition; callers curate sources/events separately.
 
     ``sessions`` maps KR/US to ISO ``date`` and actual ``previous_date``.
@@ -384,11 +449,23 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     Query-derived market tags are corrected by explicit index/market mentions.
     Language and publisher alone never identify the market.
     ISO timestamps without an offset use KST, matching report_evidence.curate_news.
+    Optional ``current_sessions`` supplies explicit live date/previous_date pairs
+    (and optional open_at/close_at). Live rows are returned in current_session_news,
+    with session_status=in_progress and is_closed=False. No live date is inferred.
+    A sessions entry with is_active=True is equivalent to current_sessions.
     """
     now = _news_now(now)
+    sessions, current_sessions = _split_news_sessions(sessions, current_sessions)
     windows, missing = _session_news_windows(sessions, now)
+    current_windows, current_missing = _current_news_windows(current_sessions, now)
+    if current_windows and not sessions:
+        missing = []
+    missing.extend(current_missing)
     by_market = {window["market"]: window for window in windows}
-    result = {"session_news": [], "next_session_news": [], "windows": windows, "missing": missing}
+    current_by_market = {window["market"]: window for window in current_windows}
+    all_markets = by_market.keys() | current_by_market.keys()
+    result = {"session_news": [], "next_session_news": [], "current_session_news": [],
+              "windows": windows, "current_windows": current_windows, "missing": missing}
     rejected = Counter()
     if hasattr(rows, "to_dict"):
         rows = rows.to_dict("records")
@@ -399,12 +476,34 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
-        if market not in by_market or (region and region != market):
+        if market not in all_markets or (region and region != market):
             rejected["명시된 시장 또는 해당 시장의 유효한 세션 없음"] += 1
             continue
         published = _news_timestamp(raw.get("published_at") or raw.get("published") or raw.get("시간"))
         if published is None:
             rejected["뉴스 발행시각 누락/해석 불가"] += 1
+            continue
+        live = current_by_market.get(market)
+        if live and datetime.fromisoformat(live["start"]) < published <= now:
+            title = str(raw.get("title") or raw.get("제목") or "")
+            if (market == "US" and raw.get("market_basis") == "search_query_only"
+                    and not re.search(r"\b(?:AI|chip|tech|semiconductor)\s+(?:stocks|shares)|반도체|AI.{0,8}(?:주|투자)", title, re.I)):
+                rejected["미국 진행 세션과 직접 관련 없는 검색 결과"] += 1
+                continue
+            # A Friday recap retrieved during Monday's live session still
+            # belongs to Friday, when that closed session was supplied.
+            prior_wrap = bool(_CLOSE_WRAP.search(title)) and published < datetime.fromisoformat(live["open_at"])
+            if not prior_wrap:
+                row = dict(raw, market=market, published_at=published.isoformat(),
+                           session_date=live["date"], news_bucket="current_session_news",
+                           session_status="in_progress", is_closed=False,
+                           is_close_wrap=False, retrospective_close_wrap=False, post_close_context=False)
+                _publication_timing(row, published, market)
+                row["news_timing"] = "장중 보도" if published >= datetime.fromisoformat(live["open_at"]) else "장전 보도"
+                result["current_session_news"].append(row)
+                continue
+        if market not in by_market:
+            rejected["뉴스 시간창 밖 또는 이전 거래일 마감 회고"] += 1
             continue
         window = by_market[market]
         title = str(raw.get("title") or raw.get("제목") or "")
@@ -430,12 +529,10 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
         row = dict(raw, market=market, published_at=published.isoformat(),
                    session_date=window["date"], news_bucket=bucket,
                    is_close_wrap=wrap or us_recap, retrospective_close_wrap=retrospective,
-                   post_close_context=kr_after_close)
-        local = published.astimezone(ZoneInfo(window["timezone"]))
-        minute = local.hour * 60 + local.minute
-        opening, closing = (540, 930) if market == "KR" else (570, 960)
-        row["news_timing"] = ("미국장 마감 회고 · 기사 주장" if us_recap else
-                              "장전 보도" if minute < opening else "장중 보도" if minute < closing else "마감 후 보도")
+                   post_close_context=kr_after_close, session_status="closed", is_closed=True)
+        _publication_timing(row, published, market)
+        if us_recap:
+            row["news_timing"] = "미국장 마감 회고 · 기사 주장"
         if us_recap and region:
             row["region"] = "US"
         result[bucket].append(row)
@@ -445,6 +542,10 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
             if not any(row["market"] == market for row in result[bucket]):
                 missing.append(f"{market}: {'기준 세션' if bucket == 'session_news' else '종가 이후'} 뉴스 없음")
     missing.extend(f"{reason}: {count}건 제외" for reason, count in rejected.items())
+    result["current_session_news"].sort(key=_news_sort_key)
+    for market in current_by_market:
+        if not any(row["market"] == market for row in result["current_session_news"]):
+            missing.append(f"{market}: 진행 세션 뉴스 없음")
     return result
 
 
@@ -453,13 +554,19 @@ def _session_query_specs(windows, categories, now):
     available = {plan["category"]: plan["query"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     selected = [(category, available[category]) for category in requested if category in available][:3]
     plans = [("마감 시황", None)] + (selected if requested else [("시장", "")])
-    specs = []
+    groups = []
     for window in windows:
+        specs = []
         market = window["market"]
         market_spec = _SESSION_MARKETS[market]
         start = datetime.fromisoformat(window["start"])
         capture_end = datetime.fromisoformat(window["capture_end"])
         ranges = [(start, min(capture_end, now))]
+        if window.get("is_closed") is False:
+            # A broad Friday-to-Monday search can fill all 80 RSS slots with
+            # Friday selloff recaps. Give the active exchange day its own query.
+            local_midnight = now.astimezone(ZoneInfo(window["timezone"])).replace(hour=0, minute=0, second=0, microsecond=0)
+            ranges = [(max(start, local_midnight), now)]
         if now > capture_end:
             ranges.append((capture_end, now))
         for lower, upper in ranges:
@@ -470,6 +577,10 @@ def _session_query_specs(windows, categories, now):
                 market_plans = [("마감 시황", "코스피 마감"), ("바이오/화장품", "(바이오 OR 화장품) (급등 OR 강세)"), *plans[1:]]
             else:
                 market_plans = [("마감 시황", "미국증시 마감"), *plans]
+                if window.get("is_closed") is False:
+                    market_plans = [("장중 시황", "Wall Street stocks"),
+                                    ("반도체·AI", "AI stocks"),
+                                    ("반도체·AI", "semiconductor stocks"), *market_plans]
             for category, query in market_plans:
                 terms = market_spec["wrap"] if query is None else query
                 # Google date predicates have calendar precision. Pad boundaries
@@ -477,12 +588,17 @@ def _session_query_specs(windows, categories, now):
                 after = (lower.astimezone(ZoneInfo(window["timezone"])).date() - timedelta(days=1)).isoformat()
                 before = (upper.astimezone(ZoneInfo(window["timezone"])).date() + timedelta(days=1)).isoformat()
                 korean_wrap = terms in {"코스피 마감", "미국증시 마감"}
-                query_text = terms if korean_wrap else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
+                active_direct = window.get("is_closed") is False and terms in {"Wall Street stocks", "AI stocks", "semiconductor stocks"}
+                query_text = terms if korean_wrap or active_direct else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
                 query_text += f" after:{after} before:{before}"
                 url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query_text})
                 locale = "hl=ko&gl=KR&ceid=KR:ko" if korean_wrap else market_spec["locale"]
                 specs.append({"market": market, "category": category, "url": url + "&" + locale})
-    return specs[:_SESSION_QUERY_LIMIT]
+        groups.append(specs)
+    # Give every explicit window a turn before spending the remaining budget
+    # on extra categories or the historical/latest split for one market.
+    return [group[index] for index in range(max((len(group) for group in groups), default=0))
+            for group in groups if index < len(group)][:_SESSION_QUERY_LIMIT]
 
 
 def _fetch_session_rss(spec):
@@ -515,7 +631,8 @@ def _fetch_session_rss(spec):
         return [], f"{spec['market']}: RSS 수집 실패"
 
 
-def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3) -> dict:
+def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
+                              current_sessions=None) -> dict:
     """Bounded market-specific RSS retrieval plus source/event curation.
 
     Returns the same payload as partition_session_market_news. Queries include
@@ -524,12 +641,16 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     512 KiB responses. At most three requested categories supplement close wraps.
     Explicit market headlines correct query tags before cross-query deduplication.
     Ambiguous cross-market results remain excluded. No sending/storage.
+    current_sessions is optional and has the same contract as the pure partitioner.
     """
     from stock_lab_core.report_evidence import curate_news
 
     now = _news_now(now)
+    sessions, current_sessions = _split_news_sessions(sessions, current_sessions)
     windows, _ = _session_news_windows(sessions, now)
-    specs = _session_query_specs(windows, categories, now)
+    current_windows, _ = _current_news_windows(current_sessions, now)
+    query_windows = current_windows + windows
+    specs = _session_query_specs(query_windows, categories, now)
     try:
         per_category = max(1, min(int(per_category), 5))
     except (TypeError, ValueError):
@@ -550,8 +671,8 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     for row in rows:
         if any(len(origins.get(key, ())) > 1 for key in (row["link"], market_story_title_key(row["title"]))):
             row.pop("market", None)
-    result = partition_session_market_news(rows, sessions, now=now)
-    for bucket in ("session_news", "next_session_news"):
+    result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
+    for bucket in ("session_news", "next_session_news", "current_session_news"):
         accepted, seen, seen_links, counts = [], set(), set(), Counter()
         for row in result[bucket]:
             # Exact time filtering already ran. Validate each source with the
@@ -573,7 +694,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             counts[category] += 1
             accepted.append(clean)
         result[bucket] = accepted
-        for window in windows:
+        for window in current_windows if bucket == "current_session_news" else windows:
             market = window["market"]
             if not any(row["market"] == market for row in accepted):
                 result["missing"].append(f"{market}: {bucket} 출처·날짜·중복 검증 후 채택 뉴스 없음")

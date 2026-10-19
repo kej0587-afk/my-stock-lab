@@ -468,7 +468,7 @@ except ImportError:
 
     def renderLightweightCharts(*args, **kwargs):
         return None
-from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
+from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot, kr_cluster_snapshot_scope, preload_kr_cluster_snapshots
 from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
@@ -9616,6 +9616,23 @@ def _attach_kr_internal_context_to_rotation_df(
         if col not in out.columns:
             out[col] = default
 
+    preload_requests = []
+    cached_context = st.session_state.get(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})
+    now = pd.Timestamp.now().timestamp()
+    for _, row in out.iterrows():
+        ticker = str(row.get("Ticker", "") or "").strip() or _extract_flow_ticker(row.get("대표주", ""))
+        if _is_us_rotation_context(row, label_col) or (ticker and not _is_kr_rotation_ticker(ticker)):
+            continue
+        cluster = _lookup_kr_rotation_cluster(row, label_col)
+        if not cluster:
+            continue
+        labels = [str(row.get(key, "") or "").strip() for key in (label_col, "테마", "섹터") if key]
+        detail = next((value for value in labels if value), cluster)
+        key = (MARKET_CLUSTER_CONTEXT_CACHE_VERSION, "KOSPI", cluster, detail, True)
+        cached = cached_context.get(key, {}) if isinstance(cached_context, dict) else {}
+        if not isinstance(cached, dict) or now - clean_float(cached.get("ts", 0.0), 0.0) > MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS:
+            preload_requests.append((cluster, detail))
+    preload_kr_cluster_snapshots(preload_requests)
     snapshot_cache: dict[tuple[str, str, str], dict] = {}
     for idx, row in out.iterrows():
         ticker = str(row.get("Ticker", "") or "").strip()
@@ -29443,14 +29460,17 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_history import update_report_history
     from stock_lab_core.performance import queue_measurement_reference
+    from stock_lab_core.report_history_store import SupabaseReportHistoryStore
     try:
-        context = collect_report_context(summary_df, event_rows, include_news=include_news)
+        context = collect_report_context(summary_df, event_rows, include_news=include_news,
+                                         flow_snapshot=get_cached_today_market_flow_snapshot())
     except Exception as exc:
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
+    store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
-                                         macro_data=context.get("macro_data")))
+                                         macro_data=context.get("macro_data"), store=store))
     context["entrypoint"] = __file__
     context["queue_measurement"] = queue_measurement_reference(st.session_state.get("today_queue_performance"))
     return context
@@ -33367,7 +33387,9 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 def render_today_queue_tab(mode):
     before_today_seconds = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
     with PerformanceTrace(scope="today_queue_render_with_calculation") as trace:
-        _render_today_queue_tab(mode)
+        scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"
+        with kr_cluster_snapshot_scope(owner_scope=scope_owner):
+            _render_today_queue_tab(mode)
     report = trace.report()
     root_timing = next((row for row in report["functions"] if row["name"] == "today_queue_render"), None)
     if root_timing:
@@ -33570,7 +33592,6 @@ def _render_today_queue_tab(mode):
             st.warning(f"돈흐름 상세/차트 계산은 실패했습니다. 전광판/보유 종목만 먼저 점검합니다: {exc}")
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
             clear_latest_price_cache()
-            cache_clear(get_analyst_snapshot)
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             cache_clear(load_price_frames_batch)

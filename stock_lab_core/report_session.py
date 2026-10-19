@@ -6,7 +6,33 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 
 KST = ZoneInfo("Asia/Seoul")
+NEW_YORK = ZoneInfo("America/New_York")
 MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 후", "holiday": "휴장일"}
+
+
+def kst_now(now):
+    return now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
+
+
+def market_session_states(now, sessions=None):
+    """One reporting clock, independent exchange-local regular sessions."""
+    from stock_lab_core.prices import _us_equity_market_holidays
+
+    now = kst_now(now)
+    result = {}
+    for market, zone, opening, closing in (("KR", KST, 540, 930), ("US", NEW_YORK, 570, 960)):
+        local = now.astimezone(zone)
+        minute = local.hour * 60 + local.minute
+        holiday = local.weekday() >= 5 or (market == "US" and local.date() in _us_equity_market_holidays(local.year))
+        phase = "holiday" if holiday else "preopen" if minute < opening else "intraday" if minute < closing else "closed"
+        label = MODE_LABELS[phase]
+        if market == "KR" and phase == "preopen" and (sessions or {}).get("KR"):
+            label = "마감 후·다음 개장 전"
+        result[market] = {"phase": phase, "label": label, "last_close": (sessions or {}).get(market, ""),
+                          "active_date": local.date().isoformat() if phase == "intraday" else "",
+                          "local_date": local.date().isoformat(), "as_of": now.isoformat(),
+                          "calendar_note": "정규장 시간 기준; 특별 휴장·단축장 별도 확인"}
+    return result
 
 
 def report_mode(now, *, is_trading_day=None):
