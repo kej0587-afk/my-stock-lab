@@ -115,6 +115,14 @@ def economic_story_lines(rows, limit=3):
         if checked["flag"]:
             line += f" · {checked['status']} [분포 점검]({OUTLIER_SOURCE})"
         lines.append(line + ". " + citation(row))
+        delta = metrics["delta"]
+        if row.get("indicator") in {"US_CPI", "US_CORE_CPI", "US_PPI"} and row.get("basis") == "MoM" and row.get("unit") == "%":
+            direction = "물가 압력 재확대 가능성, 금리 인하 기대에는 부담" if delta > 0 else "물가 상승 속도 둔화 가능성" if delta < 0 else "전월과 같은 물가 상승 속도"
+            lines.append(f"해석(추정): {direction}. 예상치 미확보 시 시장 기대 대비 충격은 판단하지 않습니다.")
+        elif row.get("indicator") == "US_NONFARM_PAYROLLS":
+            lines.append("해석(추정): " + ("고용 증가 둔화는 금리 부담 완화 기대와 경기 둔화 우려가 공존합니다." if delta < 0 else "고용 증가 확대는 경기 지지와 금리 인하 지연 가능성이 공존합니다."))
+        if row.get("reaction_source") and row.get("reaction"):
+            lines.append("동일 발표일 관측: " + row["reaction"])
     return lines
 
 
@@ -155,7 +163,9 @@ def sector_evidence(row, macro_data, news):
                    "; 에너지 가격 경로를 점검하되 선물·주식 수익률만으로 업종 이익 기여를 확정하지 않습니다")
     elif ticker in {"XLU", "XLK", "XLC"} and rate_bp is not None and rate.get("as_of") == date and ret is not None:
         reading = f"동일일 10Y {rate_bp:+.2f}bp와 업종 {ret * 100:+.2f}%"
-        if rate_bp > 0 and ret < 0:
+        if abs(rate_bp) < 5:
+            reading += "; 5bp 미만의 작은 변화로 업종 급등락의 금리 원인을 단정하지 않음"
+        elif rate_bp > 0 and ret < 0:
             reading += "; 금리 상승에 따른 할인율 부담 가능성"
         elif rate_bp < 0 and ret > 0:
             reading += "; 금리 하락에 따른 할인율 부담 완화 가능성"
@@ -165,7 +175,7 @@ def sector_evidence(row, macro_data, news):
     related = [item for item in news if text(item.get("ticker")).upper() == ticker]
     unconfirmed = "해당 업종 움직임의 개별 원인·기여도는 확정 자료 없음"
     if related:
-        unconfirmed += " · 관련 보도(인과 아님): " + citation(related[0])
+        reading += " · 보도 요약(기사 주장, 인과 미확정): " + text(related[0].get("title")) + " " + citation(related[0])
     return {"fact": "사실: " + fact + " [공급처 일봉 종가]",
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

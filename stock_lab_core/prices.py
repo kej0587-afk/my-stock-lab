@@ -612,6 +612,7 @@ def _fetch_naver_quotes_bulk(kr_tickers: list) -> dict:
 
 
 @timed_call("prices")
+@cache_result(ttl=15, failure_ttl=3, is_success=lambda quote: bool(quote) and quote.get("price", 0) > 0)
 def _fetch_naver_realtime_quote(ticker: str) -> dict:
     code = _kr_code(ticker)
     if not code:
@@ -628,6 +629,7 @@ def _fetch_naver_realtime_quote(ticker: str) -> dict:
 
 
 @timed_call("prices")
+@cache_result(ttl=15, failure_ttl=3, is_success=lambda quote: bool(quote) and quote.get("price", 0) > 0)
 def _fetch_naver_basic_quote(ticker: str) -> dict:
     code = _kr_code(ticker)
     if not code:
@@ -2325,7 +2327,8 @@ def load_latest_prices_batch(tickers) -> dict:
 
 
 def clear_latest_price_cache():
-    for fn in [_load_latest_price_cached, load_latest_prices_batch]:
+    for fn in [_load_latest_price_cached, load_latest_prices_batch,
+               _load_latest_kr_quotes_batch_cached, _fetch_naver_realtime_quote, _fetch_naver_basic_quote]:
         if hasattr(fn, "clear"):
             fn.clear()
 

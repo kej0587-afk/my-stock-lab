@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from stock_lab_core.report_evidence import KST, first, is_held, price_observation, records, text
+from stock_lab_core.report_evidence import KST, first, is_held, price_observation, intraday_observation, records, text
 from stock_lab_core.report_holdings import UNDERLYINGS
 from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 
@@ -64,10 +64,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = load_release_calendar(now=now) if calendar is None else calendar
-    sectors = [{"Ticker": ticker, "섹터": name, "구분": "미국 섹터", "기준일": obs["date"],
+    sectors = [{"Ticker": ticker, "섹터": name, "구분": "한국 섹터" if ticker.endswith((".KS", ".KQ")) else "미국 섹터", "기준일": obs["date"],
                 "1일수익률": obs["return"]} for ticker, name in SECTORS.items()
-               if (obs := observations[ticker])["date"] == sessions.get("US") and obs["return"] is not None]
+               if (obs := observations[ticker])["date"] == sessions.get("KR" if ticker.endswith((".KS", ".KQ")) else "US") and obs["return"] is not None]
     result = {"prices": observations, "sessions": sessions, "news_sessions": news_sessions,
+              "intraday_prices": {ticker: intraday_observation(frames.get(ticker), ticker, now) for ticker in tickers},
               "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
     if include_news:

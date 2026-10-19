@@ -20,7 +20,8 @@ def test_stories_include_ppi_and_jobs_with_incompatible_units_not_raw_ranked():
             {"indicator": "US_NONFARM_PAYROLLS", "period": "2026-09", "basis": "MoM", "unit": "thousand persons", "actual": 29, "previous": 133},
             {"indicator": "US_CPI", "period": "2026-09", "basis": "MoM", "unit": "%", "actual": .6, "previous": .4}]
     lines = economic_story_lines(rows)
-    assert "PPI" in lines[0] and "비농업고용" in lines[1]
+    facts = [line for line in lines if line.startswith("사실:")]
+    assert "PPI" in facts[0] and "비농업고용" in facts[1]
     assert "컨센서스 서프라이즈 아님" in lines[0]
     row = dict(rows[0], history=[{"period": f"2025-{i:02d}", "value": .2} for i in range(1, 13)])
     assert outlier_check(row)["flag"]
@@ -102,7 +103,7 @@ def test_report_has_only_one_holdings_table_and_three_sector_labels():
     assert report.count("종목 | 일간 등락 | 레버리지 환산 | 상태/사유") == 1
     assert "🧭 오늘점검" not in report and "시장방어" not in report
     assert "사실:" in report and "해석(추정):" in report and "미확인:" in report
-    assert "일정 없음(연결된 공식 일정" in report
+    assert "항목 미수집(일정 없음으로 단정하지 않음)" in report
     assert "월요일 갭 예상 영향" in report
 
 

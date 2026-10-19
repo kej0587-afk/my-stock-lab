@@ -1,4 +1,4 @@
-"""A bounded, daily-close market board, independent of the main app.
+"""A bounded market board with explicit live-bar and completed-close modes.
 
 Integration: ``ticker = render_market_board(st, key="today_market", frames=frames)``.
 ``frames`` is an authoritative flat {provider_symbol: OHLC DataFrame} mapping;
@@ -146,7 +146,7 @@ def _as_utc(now=None) -> pd.Timestamp:
     return stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
 
 
-def completed_close_series(frame, market: str, *, now=None) -> tuple[pd.Series, int]:
+def completed_close_series(frame, market: str, *, now=None, include_current=False) -> tuple[pd.Series, int]:
     """Retain null candles and provider session-date labels; never forward-fill.
 
     Today's stock candle is conservatively excluded until normal close + 15 min
@@ -180,10 +180,13 @@ def completed_close_series(frame, market: str, *, now=None) -> tuple[pd.Series, 
         close_minute = 15 * 60 + 45 if market == "KR" else 16 * 60 + 15
         cutoff = today if local.hour * 60 + local.minute >= close_minute else today - pd.Timedelta(days=1)
         completed = (close.index <= cutoff) & (close.index.dayofweek < 5)
-    return close.loc[completed], int((~completed).sum())
+    eligible = close.index <= today if include_current else completed
+    if market != "CRYPTO":
+        eligible &= close.index.dayofweek < 5
+    return close.loc[eligible], int((~eligible).sum())
 
 
-def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None) -> pd.DataFrame:
+def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None, include_current=False) -> pd.DataFrame:
     """Compute percent returns from raw Close, with explicit actual comparison dates.
 
     1D uses the preceding supplied session. 1W/1M/3M use the last supplied close
@@ -195,7 +198,7 @@ def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None
     now = _as_utc(now)
     rows = []
     for item in MARKET_UNIVERSES[market]:
-        close, excluded = completed_close_series(frames.get(item.ticker), market, now=now)
+        close, excluded = completed_close_series(frames.get(item.ticker), market, now=now, include_current=include_current)
         row = dict(ticker=item.ticker, name=item.name, sector=item.sector, group=item.group,
                    kind=item.kind, close=float("nan"), return_pct=float("nan"),
                    close_date=None, base_date=None, base_close=float("nan"),
@@ -221,6 +224,10 @@ def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None
                     else:
                         change = (float(close.iloc[-1]) / float(base.iloc[-1]) - 1.0) * 100.0
                         row.update(return_pct=change if math.isfinite(change) else float("nan"), status="완료 일봉")
+                        if include_current:
+                            completed, _ = completed_close_series(frames.get(item.ticker), market, now=now)
+                            if end not in completed.index:
+                                row["status"] = "진행 중 일봉 · 공급처 지연 가능"
             if excluded:
                 row["status"] += " · 미완료 봉 제외"
         elif excluded:
@@ -233,6 +240,12 @@ def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None
         lagging = result["close_date"].notna() & (result["close_date"] < latest)
         result.loc[lagging, "return_pct"] = float("nan")
         result.loc[lagging, "status"] = "기준일 지연"
+    local = now.tz_convert(_TIMEZONES[market])
+    open_minute = 540 if market == "KR" else 570
+    if include_current and market != "CRYPTO" and local.weekday() < 5 and local.hour * 60 + local.minute >= open_minute:
+        stale = result["close_date"].notna() & result["close_date"].lt(local.date().isoformat())
+        result.loc[stale, "return_pct"] = float("nan")
+        result.loc[stale, "status"] = "오늘자 일봉 미수집 · 과거 등락 표시 보류"
     return result
 
 
@@ -342,11 +355,19 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
         market = st.radio("시장", tuple(MARKET_LABELS), format_func=MARKET_LABELS.get,
                           horizontal=True, key=f"{key}_market")
         period = st.radio("기간", PERIODS, horizontal=True, key=f"{key}_period")
+        basis = st.radio("가격 기준", ("장중 포함", "완료 일봉"), horizontal=True, key=f"{key}_basis")
     supplied = load_market_frames(market) if frames is None else frames
     if not isinstance(supplied, Mapping):
         supplied = {}
-    snapshot = build_market_snapshot(market, supplied, period)
-    st.caption("대표 지수·ETF 및 고정 대표 바스켓 · 배당 제외 일봉 종가 수익률")
+    snapshot = build_market_snapshot(market, supplied, period, include_current=basis == "장중 포함")
+    st.caption(f"대표 지수·ETF 및 고정 대표 바스켓 · 배당 제외 · {basis} · 공급처 조회 최대 5분 캐시")
+    local = _as_utc().tz_convert(_TIMEZONES[market])
+    if basis == "장중 포함" and market != "CRYPTO" and local.weekday() < 5 and local.hour * 60 + local.minute >= (540 if market == "KR" else 570):
+        old = snapshot["close_date"].fillna("").lt(local.date().isoformat()).sum()
+        if old:
+            st.info(f"오늘자 일봉 미수집 {old}개: 과거 상승률을 오늘 값으로 표시하지 않습니다. 직전 마감은 완료 일봉에서 확인할 수 있습니다.")
+    elif basis == "완료 일봉":
+        st.info("완료 일봉 기준입니다. 장중에는 직전 마감일 등락을 표시합니다.")
     indices = snapshot.loc[snapshot["kind"] == "index"]
     headlines = indices if not indices.empty else snapshot.iloc[:4]
     with st.container(horizontal=True, gap="medium"):
@@ -357,10 +378,10 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
                           help=f"{row['ticker']} · {row['status']} · 비교일 {row['base_date'] or '미제공'}")
                 st.caption(f"종가일 {row['close_date'] or '미제공'}")
     if market == "CRYPTO":
-        st.caption("UTC 일봉 · 진행 중인 당일 봉 제외 · 1D 전일봉 / 1W 7일 / 1M·3M 달력 기준")
+        st.caption(f"UTC 일봉 · {basis} · 1D 이전 일봉 대비 / 1W 7일 / 1M·3M 달력 기준")
     else:
         timing = "15:45 KST" if market == "KR" else "16:15 ET (서머타임 자동 반영)"
-        st.caption(f"당일 봉은 {timing} 이후 포함 · 조기폐장도 같은 기준 · 1D 이전 거래봉 / 1W 7일 / 1M·3M 달력 기준")
+        st.caption(f"완료 판단 {timing} · 1D 이전 거래봉 대비 / 1W 7일 / 1M·3M 달력 기준 · 진행 중 일봉은 변동 가능")
     basket = snapshot.loc[snapshot["kind"] == "basket"]
     group = st.selectbox("섹터 그룹", ["전체", *dict.fromkeys(basket["group"])], key=f"{key}_{market}_group")
     view = basket if group == "전체" else basket.loc[basket["group"] == group]

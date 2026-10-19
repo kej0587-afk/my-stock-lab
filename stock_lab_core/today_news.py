@@ -323,6 +323,22 @@ def _news_sort_key(row):
     return (not prefer_wrap, -_news_timestamp(row["published_at"]).timestamp())
 
 
+def _us_close_recap(title, published, window):
+    """Allow an explicit US recap until the next weekday open, not new causes."""
+    if not window or not re.search(r"美|미국|뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I):
+        return False
+    if not re.search(r"마감|급락 쇼크|\bclos(?:e[sd]?|ing)\b|market wrap", title, re.I):
+        return False
+    if re.search(r"시간외|장후|after.hours|post.close|선물", title, re.I):
+        return False
+    close = datetime.fromisoformat(window["end"])
+    next_day = close.date() + timedelta(days=1)
+    while next_day.weekday() >= 5:
+        next_day += timedelta(days=1)
+    next_open = datetime.combine(next_day, time(9, 30), ZoneInfo("America/New_York"))
+    return close < published < next_open
+
+
 def partition_session_market_news(rows, sessions, *, now=None) -> dict:
     """Pure time partition; callers curate sources/events separately.
 
@@ -356,6 +372,10 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
             rejected["뉴스 발행시각 누락/해석 불가"] += 1
             continue
         window = by_market[market]
+        title = str(raw.get("title") or raw.get("제목") or "")
+        us_recap = _us_close_recap(title, published, by_market.get("US"))
+        if us_recap:
+            market, window = "US", by_market["US"]
         start = datetime.fromisoformat(window["start"])
         close = datetime.fromisoformat(window["end"])
         if published <= start or published > now:
@@ -369,11 +389,18 @@ def partition_session_market_news(rows, sessions, *, now=None) -> dict:
         if wrap and published <= close and not same_date:
             rejected["이전 거래일 마감 회고"] += 1
             continue
-        retrospective = wrap and same_date and close < published <= close + timedelta(hours=2)
+        retrospective = us_recap or (wrap and same_date and close < published <= close + timedelta(hours=2))
         bucket = "session_news" if published <= close or retrospective else "next_session_news"
         row = dict(raw, market=market, published_at=published.isoformat(),
                    session_date=window["date"], news_bucket=bucket,
-                   is_close_wrap=wrap, retrospective_close_wrap=retrospective)
+                   is_close_wrap=wrap or us_recap, retrospective_close_wrap=retrospective)
+        local = published.astimezone(ZoneInfo(window["timezone"]))
+        minute = local.hour * 60 + local.minute
+        opening, closing = (540, 930) if market == "KR" else (570, 960)
+        row["news_timing"] = ("미국장 마감 회고 · 기사 주장" if us_recap else
+                              "장전 보도" if minute < opening else "장중 보도" if minute < closing else "마감 후 보도")
+        if us_recap and region:
+            row["region"] = "US"
         result[bucket].append(row)
     for bucket in ("session_news", "next_session_news"):
         result[bucket].sort(key=_news_sort_key)

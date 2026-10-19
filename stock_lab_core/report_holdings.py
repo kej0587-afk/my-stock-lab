@@ -29,6 +29,8 @@ def holding_estimate(row, observations, sessions, now):
             continue
         label = "BTC(미국장 마감→마감)" if base == "BTC-US-CLOSE" else base
         prefix = ("월요일 갭 예상 영향(추정)" if now.weekday() == 6 else "다음 한국장 갭 예상 영향(추정)") if domestic else "일간 배수 환산(추정)"
+        if domestic and now.weekday() < 5 and now.hour >= 9:
+            prefix = "개장 전 기준 갭 시나리오(추정, 실제 등락 아님)"
         note = "환율·선물·추적오차 미반영, 확정 갭/가격 예측 아님" if domestic else "대용 기초자산, 보수·선물 베이시스·추적오차 미반영"
         return (f"{prefix}: {label} {value * 100:+.2f}% × {multiplier:g} = "
                 f"{value * multiplier * 100:+.2f}% · {expected} · {note}"), abs(multiplier) > 1

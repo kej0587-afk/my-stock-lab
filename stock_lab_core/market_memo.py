@@ -2103,13 +2103,20 @@ def build_auto_market_memo(
     curated = curate_news(records(market_news_rows) + records(news_rows), now=dt)
     if report_context is not None:
         from stock_lab_core.report_evidence import macro_stress, is_held, first, text, _cell
+        from stock_lab_core.report_presentation import oil_explanation, macro_change, kst_time
         from stock_lab_core.today_news import partition_session_market_news
         context = dict(report_context)
         # No live macro fallback: missing session data must stay missing.
         macro_data = context.get("macro_data", {})
-        if "session_news" not in context:
-            context.update(partition_session_market_news(curated, context.get("news_sessions", {}), now=dt))
-        curated = curate_news(context.get("session_news", []), now=dt)
+        if context.get("news_sessions"):
+            raw_news = (context.get("session_news", []) + context.get("next_session_news", [])
+                        if "session_news" in context else records(market_news_rows) + records(news_rows))
+            partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt)
+            partition["missing"] = list(dict.fromkeys(context.get("missing", []) + partition["missing"]))
+            context.update(partition)
+        elif "session_news" not in context:
+            context.update(partition_session_market_news(curated, {}, now=dt))
+        curated = curate_news(context.get("session_news", []), now=dt, limit=40)
         front, missing = report_sections(context=context, news=curated,
             flow_rows=flow_snapshot.get("flow_df"), event_rows=event_rows, summary_rows=summary_rows, now=dt)
         rows = records(summary_rows)
@@ -2118,15 +2125,15 @@ def build_auto_market_memo(
         unknown_gates = sum(not text(first(row, "게이트상태", "gate_state")) for row in rows)
         stress = macro_stress(macro_data)
         status = f"신규매수 허용 {executable}개 / 보유 {held_count}, 관심 {len(rows) - held_count}"
-        status += f" / 사유: 매크로 스트레스 {stress['score']} {stress['label']}" if stress["score"] is not None else " / 매크로 미수집"
+        status += f" / 보고서 매크로 스트레스 {stress['score']} {stress['label']}(실행 여부는 종목별 게이트)" if stress["score"] is not None else " / 매크로 미수집"
         if unknown_gates:
             status += f" · 게이트 미제공 {unknown_gates}개(허용으로 추정하지 않음)"
-        lines = ["# Stock Lab 자동 뉴스픽", "", status, "", *front]
+        lines = [f"# Stock Lab 자동 뉴스픽 · {dt:%Y-%m-%d %H:%M} KST", "", status, "", *front]
         lines.extend(["", "## 다음 세션 재료"])
         late = curate_news(context.get("next_session_news", []), now=dt)
         from stock_lab_core.report_evidence import citation
         for row in late:
-            lines.append(f"- {row['reading_ko']} · {row['published']} {citation(dict(row, title='원문'))}")
+            lines.append(f"- {row['reading_ko']} · {kst_time(row['published'])} {citation(dict(row, title='원문'))}")
         if not late:
             lines.append("- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
         lines.extend(["", "## 매크로 수치 근거", stress["explanation"], "",
@@ -2138,7 +2145,7 @@ def build_auto_market_memo(
             lines.append(" | ".join(_cell(value) for value in (item["label"], f"{item['value']:,.2f}",
                 f"{change:+.2f}%" if change is not None else "미수집", f"{original.get('base_date', '미수집')} → {item['as_of']}",
                 item["state"], f"{item['contribution']:+d}")))
-        lines.extend(["", "유가 90~100달러 하락 구간의 +0: 고수준 부담은 유지하며 하락 완화점수(-8)를 주지 않습니다. 기존 +18 수준 경고는 100달러부터입니다. 산식·매매 임계값은 바꾸지 않았습니다."])
+        lines.extend(["", oil_explanation(macro_data), macro_change(context.get("previous_macro_data"), macro_data)])
         missing_macro = set(("10Y 금리", "VIX", "MOVE", "유가", "환율")) - macro_data.keys()
         if missing_macro:
             missing.append("거래일 정렬 매크로: " + ", ".join(sorted(missing_macro)))

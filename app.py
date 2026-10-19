@@ -29442,7 +29442,8 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
-    context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner))
+    context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
+                                         macro_data=context.get("macro_data")))
     return context
 
 

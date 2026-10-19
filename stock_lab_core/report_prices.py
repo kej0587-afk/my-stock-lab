@@ -6,7 +6,7 @@ from stock_lab_core.report_evidence import closed_daily_frame
 from stock_lab_core.result_cache import cache_result
 
 MACRO_SYMBOLS = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
-SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리"}
+SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지"}
 
 
 def btc_at_us_close(frame, current_date, previous_date):
@@ -56,6 +56,7 @@ def aligned_macro(frames, reference_date, now):
             continue
         close = frame["Close"].astype(float)
         result[name] = {"val": float(close.iloc[-1]), "as_of": reference_date,
+                        "symbol": ticker, "retrieved_at": now.isoformat(),
                         "source": "Yahoo Finance daily (거래일 정렬)",
                         "chg": float(close.iloc[-1] / close.iloc[-22] - 1) * 100 if len(close) >= 22 else None,
                         "base_date": str(close.index[-22].date()) if len(close) >= 22 else "",
