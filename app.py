@@ -468,7 +468,23 @@ except ImportError:
 
     def renderLightweightCharts(*args, **kwargs):
         return None
-from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot, kr_cluster_snapshot_scope, preload_kr_cluster_snapshots
+from stock_lab_core.kr_sector_snapshot import build_kr_cluster_snapshot
+
+KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE = True
+try:
+    from stock_lab_core.kr_sector_snapshot import kr_cluster_snapshot_scope, preload_kr_cluster_snapshots
+except ImportError:
+    from contextlib import nullcontext
+
+    KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE = False
+
+    def kr_cluster_snapshot_scope(requests=(), *, owner_scope):
+        return nullcontext()
+
+    def preload_kr_cluster_snapshots(requests):
+        return None
+
+    logging.warning("KR cluster batching unavailable: update helper modules and reboot the app; using existing snapshot queries")
 from stock_lab_core.us_sector_snapshot import build_us_cluster_snapshot
 from stock_lab_core.kr_etf_data import (
     KR_ETF_DATA_PATH,
@@ -33385,6 +33401,8 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
 
 
 def render_today_queue_tab(mode):
+    if not KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE:
+        st.warning("클러스터 성능 모듈이 이전 버전입니다. 기존 조회 방식으로 실행합니다. 최신 코드 전체 반영 후 앱 서버를 재시작해 주세요.")
     before_today_seconds = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
     with PerformanceTrace(scope="today_queue_render_with_calculation") as trace:
         scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"

@@ -274,7 +274,9 @@ def test_money_flow_exports_used_by_app():
 
 
 def test_sector_snapshot_exports_used_by_app():
-    _assert_exports("stock_lab_core.kr_sector_snapshot", ["build_kr_cluster_snapshot"])
+    _assert_exports("stock_lab_core.kr_sector_snapshot", [
+        "build_kr_cluster_snapshot", "kr_cluster_snapshot_scope", "preload_kr_cluster_snapshots",
+    ])
     _assert_exports("stock_lab_core.us_sector_snapshot", ["build_us_cluster_snapshot"])
 
 
