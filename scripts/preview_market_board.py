@@ -25,5 +25,4 @@ if mode == "화면 검증(합성)":
                 values = 100 + np.arange(len(dates)) * .04
                 values[-1] = values[-2] * (1 + move)
                 frames[item.ticker] = pd.DataFrame({"Close": values}, index=dates)
-st.session_state.setdefault("preview_scope", "대표 종목")
 render_market_board(st, key="preview", frames=frames)

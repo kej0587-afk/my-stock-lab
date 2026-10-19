@@ -126,7 +126,7 @@ def economic_story_lines(rows, limit=3):
         if row.get("reaction_source") and row.get("reaction"):
             lines.append("동일 발표일 관측: " + row["reaction"])
             rate = re.search(r"10Y\s+([+-]?\d+(?:\.\d+)?)bp", row["reaction"])
-            if row.get("indicator") in {"US_CPI", "US_CORE_CPI", "US_PPI"} and delta > 0 and rate and float(rate.group(1)) < 0:
+            if row.get("indicator") in {"US_CPI", "US_CORE_CPI", "US_PPI"} and delta > 0 and rate and float(rate.group(1)) <= -5:
                 lines.append("동일일 움직임이 단순 해석과 어긋남: 물가 상승 속도는 높아졌지만 10Y는 하락. 기대 선반영·다른 재료의 기여는 미확인입니다.")
     return lines
 
@@ -158,6 +158,12 @@ def sector_evidence(row, macro_data, news):
     ret = number(first(row, "1일수익률", "1D"))
     date = text(first(row, "기준일", "date", "as_of")) or "기준일 미제공"
     fact = f"{ticker} 일간 {ret * 100:+.2f}% · {date}" if ret is not None else f"{ticker} 일간 자료 미수집"
+    for keys, label in ((("3개월수익률", "3M"), "3M"), (("가속도",), "가속도")):
+        value = number(first(row, *keys))
+        if value is not None:
+            fact += f" · {label} {value * 100:+.1f}" + ("%p" if label == "가속도" else "%")
+    if text(row.get("상태")):
+        fact += " · 중기 상태 " + text(row["상태"])
     rate = (macro_data or {}).get("10Y 금리", {})
     rate_bp = number(rate.get("day_change_bp"))
     oil = (macro_data or {}).get("유가", {})
@@ -184,10 +190,11 @@ def sector_evidence(row, macro_data, news):
         item = related[0]
         if reading == "직접 원인 자료 미연결":
             reading = ""
-        topic = "AI 관련 시장 움직임" if any(re.search(r"AI|인공지능", text(r.get("title")), re.I) for r in related) else "해당 업종 움직임"
+        topic = ("AI 차입 우려(기사 주장)" if re.search(r"AI\s*(?:차입|부채)\s*우려", text(item.get("title")), re.I) else
+                 "AI 관련 시장 움직임" if any(re.search(r"AI|인공지능", text(r.get("title")), re.I) for r in related) else "해당 업종 움직임")
         scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
         reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
-                    + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(item))
+                    + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
     return {"fact": "사실: " + fact + " [공급처 일봉 종가]",
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

@@ -10,6 +10,31 @@ UNDERLYINGS = {
 }
 
 
+def completed_scenario_comparison(row, observations, sessions, now):
+    """Compare a prior-US-close scenario to KR daily close, not the opening gap."""
+    ticker = text(first(row, "티커", "ticker")).upper()
+    code = ticker.split(".")[0]
+    own = observations.get(ticker, {})
+    actual = number(own.get("return"))
+    if code not in {"379800", "379810", "418660", "0167A0", "0227L0"}:
+        return None
+    if actual is None or own.get("date") != now.date().isoformat():
+        return "당일 종가 미수집: 시나리오와 실제 비교 보류"
+    if code not in UNDERLYINGS:
+        return f"당일 종가 {actual * 100:+.2f}% · 구성종목 기반 수치 시나리오 미제공, 갭 위험 문구로 실제 결과를 대체하지 않음"
+    for base in UNDERLYINGS[code]:
+        proxy = observations.get(base, {})
+        change = number(proxy.get("return"))
+        if change is None or proxy.get("date") != sessions.get("US") or own.get("previous_date") != proxy.get("date"):
+            continue
+        mult = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
+        scenario = change * mult
+        return (f"시나리오 {scenario * 100:+.2f}% vs 당일 종가 {actual * 100:+.2f}% · "
+                f"차이(실제−시나리오) {(actual - scenario) * 100:+.2f}%p · {base} {proxy['date']} 기준. "
+                "시가 갭 오차가 아닌 종가 등락과의 비교, 환율·선물 미반영")
+    return "비교 보류: 직전 한국 거래일과 미국 기초자산 기준일 일치 미확인"
+
+
 def holding_estimate(row, observations, sessions, now):
     ticker = text(first(row, "티커", "ticker")).upper()
     name = text(first(row, "종목명", "자산명", "name"))

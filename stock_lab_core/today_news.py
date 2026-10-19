@@ -253,6 +253,7 @@ _SESSION_RSS_MAX_BYTES = 512 * 1024
 _SESSION_ROW_LIMIT = 60
 _CLOSE_WRAP = re.compile(
     r"(?:증시|코스피|코스닥).{0,60}마감|마감.{0,20}(?:시황|증시|코스피|코스닥)|"
+    r"\[마켓뷰\].{0,100}(?:코스피|코스닥).{0,30}(?:반등 성공|하락 종료)|"
     r"\b(?:stocks?|markets?|wall street|nasdaq|s&p).{0,80}\bclos(?:e[sd]?|ing)\b|"
     r"\bmarket wrap\b|\bclosing bell\b", re.I,
 )
@@ -327,9 +328,9 @@ def _us_close_recap(title, published, window):
     """Allow an explicit US recap until the next weekday open, not new causes."""
     if not window or not re.search(r"美|미국|뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I):
         return False
-    if not re.search(r"마감|급락 쇼크|\bclos(?:e[sd]?|ing)\b|market wrap", title, re.I):
+    if not re.search(r"마감|급락 쇼크|\bclos(?:e[sd]?|ing)\b|market wrap|(?:美|미국|뉴욕)\s*증시\s*덮친.{0,25}AI\s*차입\s*우려", title, re.I):
         return False
-    if re.search(r"시간외|장후|after.hours|post.close|선물", title, re.I):
+    if re.search(r"시간외|장후|after.hours|post.close|선물|예정|다음주", title, re.I):
         return False
     close = datetime.fromisoformat(window["end"])
     next_day = close.date() + timedelta(days=1)

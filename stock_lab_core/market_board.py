@@ -370,7 +370,7 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
         basis = st.radio("가격 기준", ("장중 포함", "완료 일봉"), horizontal=True, key=f"{key}_basis")
     scope = "basket"
     if market != "CRYPTO":
-        view_type = st.radio("표시 대상", ("섹터 ETF", "대표 종목"), horizontal=True, key=f"{key}_scope")
+        view_type = st.radio("표시 대상", ("대표 종목", "섹터 ETF"), horizontal=True, key=f"{key}_scope")
         scope = "stocks" if view_type == "대표 종목" else "basket"
     supplied = (load_market_frames(market) if scope == "basket" else load_market_frames(market, scope)) if frames is None else frames
     if not isinstance(supplied, Mapping):
@@ -408,7 +408,7 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
     if counts["missing"] == len(view):
         st.info("선택한 대표 바스켓의 비교 가능한 완료 일봉이 없습니다.")
     if market == "KR" and basket["close"].isna().any():
-        st.caption(f"한국 ETF 종가 미제공 {int(basket['close'].isna().sum())}개")
+        st.caption(f"한국 {'대표 종목' if scope == 'stocks' else 'ETF'} 종가 미제공 {int(basket['close'].isna().sum())}개")
     chart_key = f"{namespace}_{period}_{group}_tree"
     event = st.plotly_chart(build_treemap(view, period), width="stretch", key=chart_key,
                             on_select="rerun", selection_mode="points",

@@ -119,14 +119,30 @@ def account_metrics(held, observations, sessions):
                 concentration=concentration)
 
 
-def account_estimate(held, observations, sessions):
+def account_headline(metrics, sessions, mode):
+    metrics = metrics or {}
+    if not metrics or metrics.get("error"):
+        return "계좌 추정 보류: " + metrics.get("error", "보유자료 미연결")
+    if mode in {"closed", "holiday"} or metrics["replacement_coverage"] < 90:
+        if metrics["coverage"] < 90:
+            return f"계좌 추정 보류: 종가 연결 비중 {metrics['coverage']:.1f}%로 90% 미만"
+        return (f"최신 종가 기준 계좌 추정 {metrics['daily']:+.2f}%p(연결 비중 {metrics['coverage']:.1f}%; "
+                f"미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')})")
+    return (f"미국 {sessions.get('US', '미확인')} 종가 반영 계좌 추정 {metrics['replacement']:+.2f}%p"
+            f"(연결 비중 {metrics['replacement_coverage']:.1f}%, 한국 미국지수 ETF는 갭 시나리오 치환)")
+
+
+def account_estimate(held, observations, sessions, *, mode="preopen"):
     metrics = account_metrics(held, observations, sessions)
     if metrics.get("error"):
         return "계좌 합계(추정) 보류: " + metrics["error"] + "."
     daily, gap = metrics["daily"], metrics["gap"]
     coverage, gap_coverage = metrics["coverage"], metrics["gap_coverage"]
-    main = (f"미국 {sessions.get('US', '기준일 미확인')} 종가 반영 계좌 추정: {metrics['replacement']:+.2f}%p"
-            f" · 계산 연결 비중 {metrics['replacement_coverage']:.1f}% · 한국 상장 미국지수 ETF는 종가 등락 대신 갭 시나리오로 치환. ")
+    main = account_headline(metrics, sessions, mode) + ". "
+    if metrics["replacement_coverage"] < 90:
+        main += (f"장전 대체 합산은 연결 비중 {metrics['replacement_coverage']:.1f}%로 헤드라인 제외. "
+                 + ("한국 최신 종가가 미국 기준일보다 뒤여서 이미 반영된 국내 미국지수 ETF를 장전 값으로 다시 치환하지 않음. "
+                    if sessions.get("KR", "") > sessions.get("US", "") else "기초자산·갭 수치 미연결분 제외. "))
     note = f"계좌 일간 기여 합계(추정): {daily:+.2f}%p · 연결 비중 {coverage:.1f}%"
     if gap_coverage:
         note += f" / 한국 상장 미국자산 ETF 개장 전 갭 시나리오 기여(추정): {gap:+.2f}%p · 적용 비중 {gap_coverage:.1f}%"
@@ -152,7 +168,7 @@ def sector_related_news(ticker, session, news):
             continue
         recap = bool(re.search(r"美|미국|뉴욕|월가|Wall Street|Nasdaq|US |U\.S\.", title, re.I)
                      and re.search(r"마감|급락|하락|매도|selloff|sell-off|close|stocks", title, re.I))
-        if ticker in {"XLK", "IGV"} and re.search(r"CXMT|창신|한국 메모리|Korea.*(?:density|yield)", title, re.I):
+        if re.search(r"CXMT|창신|한국 메모리|Korea.*(?:density|yield)", title, re.I):
             continue
         if ticker in {"XLK", "IGV"} and not recap and ticker.lower() not in title.lower():
             continue
@@ -161,4 +177,4 @@ def sector_related_news(ticker, session, news):
         if indirect and not recap:
             continue
         matched.append(dict(item, ticker=ticker, market_context_only=indirect))
-    return matched
+    return sorted(matched, key=lambda item: not bool(re.search(r"AI\s*(?:차입|부채)\s*우려", text(item.get("title")), re.I)))

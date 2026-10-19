@@ -42,6 +42,7 @@ from datetime import date, datetime, timezone
 import hashlib
 from itertools import islice
 import math
+import logging
 import os
 import re
 import threading
@@ -143,13 +144,30 @@ def _request(url, *, params=None, payload=None, text=False):
         kwargs["json"] = payload
     if params is not None:
         kwargs["params"] = params
-    response = method(url, **kwargs)
+    census = url == CENSUS_URL
+    safe_params = {key: value for key, value in (params or {}).items()
+                   if key in {"get", "time", "category_code", "data_type_code", "seasonally_adj", "error_data"}}
     try:
+        response = method(url, **kwargs)
+    except requests.RequestException as exc:
+        if census:
+            logging.getLogger(__name__).warning("Census transport=%s params=%s", type(exc).__name__, safe_params)
+        raise
+    try:
+        if census:
+            log = logging.getLogger(__name__)
+            (log.info if response.status_code == 200 else log.warning)(
+                "Census HTTP=%s params=%s", response.status_code, safe_params)
         if response.status_code != 200:
             raise _Unavailable(f"http_{response.status_code}")
         if url.startswith(ECOS_URL):
             response.encoding = "utf-8"
-        return response.text if text else response.json()
+        try:
+            return response.text if text else response.json()
+        except ValueError:
+            if census:
+                logging.getLogger(__name__).warning("Census response_not_json HTTP=%s", response.status_code)
+            raise
     finally:
         response.close()
 
@@ -334,6 +352,10 @@ def _retail(now, api_key):
             value = _number(item.get("cell_value"))
             if period and period <= now.strftime("%Y-%m") and value is not None:
                 values[period] = value
+        if values:
+            logging.getLogger(__name__).info("Census observations=%s latest_period=%s", len(values), max(values))
+        else:
+            logging.getLogger(__name__).warning("Census no_valid_observations; publication_status=unconfirmed")
         return values
 
     data, error, retrieved = _cached(("retail", now.strftime("%Y-%m"), hashlib.sha256(api_key.encode()).hexdigest()), fetch, now)

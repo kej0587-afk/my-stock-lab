@@ -6,7 +6,7 @@ from stock_lab_core.report_evidence import closed_daily_frame
 from stock_lab_core.result_cache import cache_result
 
 MACRO_SYMBOLS = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
-SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지"}
+SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지", "139250.KS": "에너지", "396500.KS": "한국 반도체"}
 
 
 def btc_at_us_close(frame, current_date, previous_date):
@@ -69,9 +69,19 @@ def release_day_reaction(row, frames, now):
     at = row.get("release_at")
     if not at or row.get("actual") is None:
         return "발표일 미연결/미발표로 동일일 비교 보류"
-    day = str(at)[:10]
+    kr = str(row.get("indicator", "")).startswith("KR_")
+    try:
+        dt = pd.Timestamp(at)
+    except (ValueError, TypeError, OverflowError):
+        return "발표일 해석 불가로 동일일 비교 보류"
+    if pd.isna(dt):
+        return "발표일 미연결로 동일일 비교 보류"
+    if dt.tzinfo is not None:
+        dt = dt.tz_convert("Asia/Seoul" if kr else "America/New_York")
+    day = str(dt.date())
     parts = []
-    for label, ticker in (("10Y", "^TNX"), ("원/달러", "USDKRW=X"), ("나스닥", "^IXIC")):
+    assets = (("코스피", "^KS11"), ("원/달러", "USDKRW=X")) if kr else (("10Y", "^TNX"), ("원/달러", "USDKRW=X"), ("나스닥", "^IXIC"))
+    for label, ticker in assets:
         frame = closed_daily_frame(frames.get(ticker), ticker, now)
         if not frame.empty:
             frame = frame.loc[frame.index.strftime("%Y-%m-%d") <= day]

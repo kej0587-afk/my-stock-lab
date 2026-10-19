@@ -131,10 +131,12 @@ frames = {item.ticker: pd.DataFrame({'Close':[100,110,99]}, index=pd.to_datetime
 b.render_market_board(st, key='test', frames=frames)
 '''
     app = AppTest.from_string(source, default_timeout=20).run()
-    app.radio(key="test_scope").set_value("대표 종목").run()
+    assert app.radio(key="test_scope").value == "대표 종목"
     assert not app.exception and len(app.dataframe[0].value) == 36
+    assert app.dataframe[0].value["수익률(%)"].notna().all()
     app.radio(key="test_market").set_value("US").run()
     assert not app.exception and len(app.dataframe[0].value) == 52
+    assert app.dataframe[0].value["수익률(%)"].notna().all()
     app.selectbox(key="test_US_stocks_group").select("하드웨어").run()
     assert set(app.dataframe[0].value["티커"]) == {"AAPL", "DELL", "HPE", "ANET"}
     app.radio(key="test_scope").set_value("섹터 ETF").run()

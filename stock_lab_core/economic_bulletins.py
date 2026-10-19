@@ -26,7 +26,7 @@ def apply_official_bulletins(rows, now):
             failure = row.get("collection_error") or row.get("missing_reason") or "older_provider_period"
             row.clear()
             row.update(fact, status="verified_snapshot", collection_error=failure, api_key_configured=configured,
-                       as_of=now.isoformat(), verified_at=facts["verified_at"], forecast=None, history=[],
+                       as_of=now.isoformat(), verified_at=facts["verified_at"], expires_at=facts["expires_at"], forecast=None, history=[],
                        release_precision="date", value_kind="verified_official_bulletin",
                        previous_unit=fact["unit"], previous_basis=fact["basis"], previous_source=fact["source"])
     return result

@@ -300,8 +300,10 @@ def test_plotly_selection_validates_visible_leaf_tickers(event, expected):
 
 
 class FakeStreamlit:
-    def __init__(self, market="US", period="1D"):
+    def __init__(self, market="US", period="1D", scope=None):
         self.session_state = {"test_market": market, "test_period": period}
+        if scope:
+            self.session_state["test_scope"] = scope
         self.charts, self.tables, self.captions = [], [], []
         self.event = {"selection": {"points": []}}
         self.column_config = SimpleNamespace(NumberColumn=lambda **kwargs: kwargs)
@@ -341,7 +343,7 @@ class FakeStreamlit:
 
 def test_render_injected_frames_skips_all_fetches_and_sorts_missing_last(monkeypatch):
     monkeypatch.setattr(board, "load_market_frames", lambda *args: pytest.fail("fetch with supplied frames"))
-    st = FakeStreamlit()
+    st = FakeStreamlit(scope="섹터 ETF")
     frames = {"XLK": history([100, 110]), "XLF": history([100, 90]), "XLP": history([100, 100])}
     assert board.render_market_board(st, key="test", frames=frames) is None
     assert st.tables[-1]["티커"].tolist()[:3] == ["XLK", "XLP", "XLF"]
@@ -364,7 +366,7 @@ def test_kr_first_screen_loads_sector_etfs_once_without_overseas_fetch(monkeypat
 
     monkeypatch.setattr(prices.yf, "download", download)
     monkeypatch.setattr(prices, "load_price_frames_batch", lambda *a: pytest.fail("overseas fetch"))
-    st = FakeStreamlit(market="KR")
+    st = FakeStreamlit(market="KR", scope="섹터 ETF")
     assert board.render_market_board(st, key="test") is None
     assert st.tables[-1]["수익률(%)"].notna().sum() == 10
     assert any("상승 10 · 하락 0 · 보합 0 · 결측 0" in caption for caption in st.captions)
@@ -375,7 +377,7 @@ def test_kr_first_screen_loads_sector_etfs_once_without_overseas_fetch(monkeypat
 def test_render_loads_only_selected_market_and_filter_controls_tree_and_table(monkeypatch):
     calls = []
     monkeypatch.setattr(board, "load_market_frames", lambda market: calls.append(market) or all_frames())
-    st = FakeStreamlit(market="US")
+    st = FakeStreamlit(market="US", scope="섹터 ETF")
     st.session_state["test_US_group"] = "방어"
     board.render_market_board(st, key="test")
     assert calls == ["US"]
@@ -387,7 +389,7 @@ def test_render_loads_only_selected_market_and_filter_controls_tree_and_table(mo
 
 def test_render_chart_and_symbol_events_return_once_and_keep_detail(monkeypatch):
     monkeypatch.setattr(board, "load_market_frames", lambda *args: pytest.fail("fetch"))
-    st = FakeStreamlit()
+    st = FakeStreamlit(scope="섹터 ETF")
     st.event = {"selection": {"points": [{"customdata": ["XLK"]}]}}
     frames = all_frames()
     assert board.render_market_board(st, key="test", frames=frames) == "XLK"
@@ -414,6 +416,9 @@ st.session_state["result"] = board.render_market_board(st, key="smoke", frames=f
 '''
     app = AppTest.from_string(source, default_timeout=20).run()
     assert not app.exception
+    assert app.radio(key="smoke_scope").value == "대표 종목"
+    assert len(app.dataframe[0].value) == 36
+    app.radio(key="smoke_scope").set_value("섹터 ETF").run()
     assert len(app.metric) == 4 and len(app.dataframe[0].value) == 10
     app.radio(key="smoke_market").set_value("US").run()
     assert not app.exception and len(app.dataframe[0].value) == 11

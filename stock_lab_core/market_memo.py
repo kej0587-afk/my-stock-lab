@@ -2112,7 +2112,11 @@ def build_auto_market_memo(
             raw_news = (context.get("session_news", []) + context.get("next_session_news", [])
                         if "session_news" in context else records(market_news_rows) + records(news_rows))
             partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt)
-            partition["missing"] = list(dict.fromkeys(context.get("missing", []) + partition["missing"]))
+            # Source-fetch failures remain visible; old empty-bucket diagnostics
+            # must not survive a fresh partition that has accepted articles.
+            prior_missing = [item for item in context.get("missing", [])
+                             if not re.search(r"^(KR|US):.*(?:뉴스 없음|채택 뉴스 없음)$", str(item))]
+            partition["missing"] = list(dict.fromkeys(prior_missing + partition["missing"]))
             context.update(partition)
         elif "session_news" not in context:
             context.update(partition_session_market_news(curated, {}, now=dt))
