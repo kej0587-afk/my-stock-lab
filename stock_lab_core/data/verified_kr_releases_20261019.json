@@ -1,0 +1,36 @@
+{
+  "verified_at": "2026-10-19",
+  "expires_at": "2026-11-03",
+  "observations": [
+    {
+      "indicator": "KR_CPI",
+      "period": "2026-09",
+      "actual": 2.9,
+      "previous": null,
+      "unit": "%",
+      "basis": "YoY",
+      "seasonal_adjustment": "NSA",
+      "release_at": "2026-10-02",
+      "source": "농림축산식품부 공식 보도자료(국가데이터처 CPI 인용)",
+      "source_url": "https://www.korea.kr/briefing/pressReleaseView.do?newsId=156784080"
+    },
+    {
+      "indicator": "KR_EXPORTS",
+      "period": "2026-09",
+      "actual": 83.7,
+      "previous": 68.9,
+      "previous_period": "2026-08",
+      "unit": "%",
+      "basis": "YoY",
+      "seasonal_adjustment": "NSA",
+      "release_at": "2026-10-15",
+      "raw_actual": 121050,
+      "raw_year_ago": 65904,
+      "raw_year_ago_period": "2025-09",
+      "raw_unit": "백만 달러",
+      "source": "관세청 2026년 9월 수출입 확정치(8월 수정치 포함)",
+      "source_url": "https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do?bbsId=1362&mi=2891&nttSn=10179763",
+      "verification": "9월 확정치 83.7%. 8월 최초 확정치는 68.7%였으나 10/15 표의 8월 비교치는 68.9%로 수정됨."
+    }
+  ]
+}

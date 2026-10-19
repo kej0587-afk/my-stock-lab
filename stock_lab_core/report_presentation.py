@@ -46,7 +46,7 @@ def macro_change(previous, current):
 def candidate_line(row):
     ticker = text(first(row, "티커", "ticker"))
     name = text(first(row, "종목명", "name", "자산명")) or "종목명 미연결"
-    raw_grade = text(first(row, "📌후보등급", "후보등급"))
+    raw_grade = text(first(row, "후보품질", "📌후보등급", "후보등급", "grade"))
     grade = re.search(r"[SABCF]급", raw_grade)
     quality = grade.group() if grade else "등급 미제공"
     gate = text(first(row, "게이트상태", "gate_state")) or "판단자료 미제공"
@@ -71,26 +71,29 @@ def candidate_line(row):
     return f"- {name}({ticker}) · 개별 신호 {quality}, {action}({gate}) · 근거: {reason or '미제공'} · 해제 조건: {condition}"
 
 
-def account_estimate(held, observations, sessions):
+def account_metrics(held, observations, sessions):
     """Weight times actual asset return, never leverage an ETF's return twice."""
     from stock_lab_core.report_holdings import UNDERLYINGS
     from stock_lab_core.portfolio import infer_scenario_shock_multiplier
 
     daily, gap, coverage, gap_coverage = 0.0, 0.0, 0.0, 0.0
+    replacement, replacement_coverage, concentration = 0.0, 0.0, 0.0
     seen = set()
     for row in held:
         ticker = text(first(row, "티커", "ticker")).upper()
         weight = number(first(row, "현재비중", "current_w"))
         if ticker in seen or weight is None or not 0 <= weight <= 100:
-            return "계좌 합계(추정) 보류: 중복 종목 또는 비중 결측·범위 오류."
+            return {"error": "중복 종목 또는 비중 결측·범위 오류"}
         seen.add(ticker)
         obs = observations.get(ticker, {})
         region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
         move = number(obs.get("return"))
-        if move is not None and obs.get("date") == sessions.get(region) and sessions.get(region):
+        valid_move = move is not None and obs.get("date") == sessions.get(region) and sessions.get(region)
+        if valid_move:
             daily += weight * move
             coverage += weight
         if ticker.split(".")[0] in {"379800", "379810", "418660"}:
+            concentration += weight
             for base in UNDERLYINGS[ticker.split(".")[0]]:
                 proxy = observations.get(base, {})
                 change = number(proxy.get("return"))
@@ -98,12 +101,64 @@ def account_estimate(held, observations, sessions):
                     mult = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
                     gap += weight * change * mult
                     gap_coverage += weight
+                    replacement += weight * change * mult
+                    replacement_coverage += weight
                     break
+        elif region == "KR" and (ticker.split(".")[0] in {"0167A0", "0227L0"} or "미국" in text(first(row, "종목명", "name"))):
+            # No numerical scenario for a concentrated basket without its constituents.
+            continue
+        elif valid_move:
+            replacement += weight * move
+            replacement_coverage += weight
     if coverage > 100.01 or sum(number(first(row, "현재비중", "current_w")) or 0 for row in held) > 100.01:
-        return "계좌 합계(추정) 보류: 현재비중 합계가 100% 초과."
+        return {"error": "현재비중 합계가 100% 초과"}
     if not coverage:
-        return "계좌 합계(추정) 보류: 비중과 같은 시장 기준일의 등락 미연결."
+        return {"error": "비중과 같은 시장 기준일의 등락 미연결"}
+    return dict(daily=daily, gap=gap, coverage=coverage, gap_coverage=gap_coverage,
+                replacement=replacement, replacement_coverage=replacement_coverage,
+                concentration=concentration)
+
+
+def account_estimate(held, observations, sessions):
+    metrics = account_metrics(held, observations, sessions)
+    if metrics.get("error"):
+        return "계좌 합계(추정) 보류: " + metrics["error"] + "."
+    daily, gap = metrics["daily"], metrics["gap"]
+    coverage, gap_coverage = metrics["coverage"], metrics["gap_coverage"]
+    main = (f"미국 {sessions.get('US', '기준일 미확인')} 종가 반영 계좌 추정: {metrics['replacement']:+.2f}%p"
+            f" · 계산 연결 비중 {metrics['replacement_coverage']:.1f}% · 한국 상장 미국지수 ETF는 종가 등락 대신 갭 시나리오로 치환. ")
     note = f"계좌 일간 기여 합계(추정): {daily:+.2f}%p · 연결 비중 {coverage:.1f}%"
     if gap_coverage:
         note += f" / 한국 상장 미국자산 ETF 개장 전 갭 시나리오 기여(추정): {gap:+.2f}%p · 적용 비중 {gap_coverage:.1f}%"
-    return note + " · 현재비중 가중, 현금·미연결분 제외, 환율·거래 미반영. 서로 다른 세션/시나리오이므로 두 값을 합산하지 않음."
+    return (main + note + f" · 379810/379800/418660 집중도 {metrics['concentration']:.1f}%. "
+            "현재비중 가중, 현금·미연결분 제외, 환율·거래 미반영. 갭 미연결 종목은 대체 합산에서 제외. 일간 합계와 갭 기여를 단순 합산하지 않음.")
+
+
+def sector_related_news(ticker, session, news):
+    """Session and exposure must both match; Korean competition is not a US wrap."""
+    patterns = {"SOXX": r"반도체|semiconductor|\bsoxx\b|\bsmh\b|AI[· ·주]",
+                "DRAM": r"메모리|\bdram\b|micron|마이크론",
+                "XLK": r"기술주|빅테크|tech stocks|technology|AI[· ·주]|\bxlk\b",
+                "IGV": r"소프트웨어|software|사이버|cyber|AI[· ·주]|\bigv\b"}
+    pattern = patterns.get(ticker)
+    if not pattern:
+        return []
+    matched = []
+    for item in news:
+        title = text(item.get("title"))
+        if item.get("market") != "US" or item.get("session_date") != session:
+            continue
+        if not re.search(pattern, title, re.I):
+            continue
+        recap = bool(re.search(r"美|미국|뉴욕|월가|Wall Street|Nasdaq|US |U\.S\.", title, re.I)
+                     and re.search(r"마감|급락|하락|매도|selloff|sell-off|close|stocks", title, re.I))
+        if ticker in {"XLK", "IGV"} and re.search(r"CXMT|창신|한국 메모리|Korea.*(?:density|yield)", title, re.I):
+            continue
+        if ticker in {"XLK", "IGV"} and not recap and ticker.lower() not in title.lower():
+            continue
+        indirect = ((ticker == "IGV" and not re.search(r"소프트웨어|software|\bigv\b|사이버|cyber", title, re.I))
+                    or (ticker == "SOXX" and not re.search(r"반도체|semiconductor|\bsoxx\b|\bsmh\b", title, re.I)))
+        if indirect and not recap:
+            continue
+        matched.append(dict(item, ticker=ticker, market_context_only=indirect))
+    return matched

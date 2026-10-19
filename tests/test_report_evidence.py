@@ -18,6 +18,17 @@ def article(title, **kwargs):
                 published="2026-10-18 12:00", **kwargs)
 
 
+def test_calendar_fallback_reports_primary_failure_and_date_only():
+    context = {"calendar_events": [{"event": "Consumer Price Index", "date": "2026-10-20",
+                "source": "FRED release calendar", "source_url": "https://fred.stlouisfed.org/release?rid=10"}],
+               "calendar_sources": [{"name": "BLS CPI", "status": "connected", "provider": "FRED",
+                "reason": "", "primary_reason": "http_403"}]}
+    memo = build_auto_market_memo(report_context=context, now=NOW)
+    assert "FRED 공식 발표일로 보완" in memo and "http_403" in memo
+    assert "2026-10-20 (발표 시각 미제공)" in memo
+    assert "일정 미연결: BLS CPI" not in memo
+
+
 def test_news_clusters_cxmt_and_excludes_promotional_price_and_irrelevant():
     rows = [article("CXMT 기술 추격에 반도체 주가 급락"), article("CXMT 반도체 매출 7배 증가"),
             article("Ethereum ETF outflows rise as oil declines", market_category="에너지"),
@@ -86,7 +97,7 @@ def test_report_front_order_missing_reasons_and_leverage_not_double_multiplied()
     memo = build_auto_market_memo(report_context=context, now=NOW,
                                   market_news_rows=[article("CXMT 반도체 매출 증가")],
                                   summary_rows=[{"티커": "SOXL", "보유량": 1, "현재비중": 6, "목표비중": 5}])
-    assert memo.index("## 오늘의 시장 스토리") < memo.index("## 경제지표") < memo.index("## 내 보유 종목 영향")
+    assert memo.index("## 내 보유 종목 영향") < memo.index("## 오늘의 시장 스토리") < memo.index("## 경제지표")
     assert "🧭 오늘점검" not in memo
     assert "전년비" in memo and "예상대비 +0.20 %p" in memo
     assert "× 3 = -12.00%" in memo and "-36.00%" not in memo

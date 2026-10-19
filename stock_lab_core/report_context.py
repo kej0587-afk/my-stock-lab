@@ -27,7 +27,7 @@ def apply_verified_release_dates(rows, now):
 
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
                            economic_releases=None, calendar=None, btc_frame=None, include_news=False):
-    from stock_lab_core.economic_releases import load_economic_releases
+    from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
     from stock_lab_core.release_calendar import load_release_calendar
 
@@ -60,10 +60,13 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         observations["BTC-US-CLOSE"] = btc_at_us_close(load_btc_close_frame() if btc_frame is None else btc_frame,
                                                       window["date"], window["previous_date"])
     releases = load_economic_releases(event_rows=event_rows, now=now) if economic_releases is None else records(economic_releases)
+    if economic_releases is None:
+        from stock_lab_core.economic_bulletins import apply_official_bulletins
+        releases = apply_official_bulletins(releases, now)
     apply_verified_release_dates(releases, now)
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
-    calendar = load_release_calendar(now=now) if calendar is None else calendar
+    calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     sectors = [{"Ticker": ticker, "섹터": name, "구분": "한국 섹터" if ticker.endswith((".KS", ".KQ")) else "미국 섹터", "기준일": obs["date"],
                 "1일수익률": obs["return"]} for ticker, name in SECTORS.items()
                if (obs := observations[ticker])["date"] == sessions.get("KR" if ticker.endswith((".KS", ".KQ")) else "US") and obs["return"] is not None]

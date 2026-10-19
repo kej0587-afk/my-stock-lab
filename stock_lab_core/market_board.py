@@ -81,12 +81,23 @@ _COLUMNS = (
 )
 
 
-def market_tickers(market: str) -> tuple[str, ...]:
-    return tuple(sorted(item.ticker for item in MARKET_UNIVERSES[market]))
+def market_instruments(market: str, scope="basket"):
+    if scope == "basket" or market == "CRYPTO":
+        return MARKET_UNIVERSES[market]
+    if scope != "stocks":
+        raise ValueError("Unsupported market-board scope")
+    from stock_lab_core.market_board_universe import STOCK_UNIVERSES
+    indices = tuple(item for item in MARKET_UNIVERSES[market] if item.kind == "index")
+    return indices + tuple(Instrument(ticker, name, sector, sector, "stock")
+                           for ticker, name, sector in STOCK_UNIVERSES[market])
+
+
+def market_tickers(market: str, scope="basket") -> tuple[str, ...]:
+    return tuple(sorted(item.ticker for item in market_instruments(market, scope)))
 
 
 @cache_result(ttl=300, failure_ttl=15, is_success=bool)
-def load_kr_market_frames() -> dict:
+def load_kr_market_frames(scope="basket") -> dict:
     """Download the fixed KR universe once; preserve null closes for the board.
 
     The shared overseas batch excludes .KS symbols. Its public Close extractor
@@ -96,7 +107,7 @@ def load_kr_market_frames() -> dict:
     from stock_lab_core.prices import extract_download_close_series
     from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 
-    tickers = market_tickers("KR")
+    tickers = market_tickers("KR", scope)
     try:
         with YAHOO_HISTORY_LOCK:
             data = yf.download(list(tickers), period="6mo", interval="1d", group_by="ticker",
@@ -121,13 +132,13 @@ def load_kr_market_frames() -> dict:
     return frames
 
 
-def load_market_frames(market: str) -> dict:
+def load_market_frames(market: str, scope="basket") -> dict:
     """Reuse the provider's 300-second cache without extending its retention."""
     if market == "KR":
-        return load_kr_market_frames()
+        return load_kr_market_frames() if scope == "basket" else load_kr_market_frames(scope)
     from stock_lab_core.prices import load_price_frames_batch
 
-    tickers = market_tickers(market)
+    tickers = market_tickers(market, scope)
     try:
         loaded = load_price_frames_batch(tickers, "6mo")
     except Exception:
@@ -186,7 +197,7 @@ def completed_close_series(frame, market: str, *, now=None, include_current=Fals
     return close.loc[eligible], int((~eligible).sum())
 
 
-def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None, include_current=False) -> pd.DataFrame:
+def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None, include_current=False, scope="basket") -> pd.DataFrame:
     """Compute percent returns from raw Close, with explicit actual comparison dates.
 
     1D uses the preceding supplied session. 1W/1M/3M use the last supplied close
@@ -197,7 +208,7 @@ def build_market_snapshot(market: str, frames: Mapping, period="1D", *, now=None
         raise ValueError(f"Unsupported market-board period: {period}")
     now = _as_utc(now)
     rows = []
-    for item in MARKET_UNIVERSES[market]:
+    for item in market_instruments(market, scope):
         close, excluded = completed_close_series(frames.get(item.ticker), market, now=now, include_current=include_current)
         row = dict(ticker=item.ticker, name=item.name, sector=item.sector, group=item.group,
                    kind=item.kind, close=float("nan"), return_pct=float("nan"),
@@ -275,7 +286,8 @@ def build_treemap(rows: pd.DataFrame, period="1D"):
         for row in members.itertuples(index=False):
             finite = pd.notna(row.return_pct) and math.isfinite(row.return_pct)
             bounded = max(-limit, min(limit, row.return_pct)) if finite else float("nan")
-            nodes.append(dict(id=row.ticker, parent=parent, label=f"{row.sector}<br>{row.ticker}",
+            label = row.name if row.kind == "stock" else row.sector
+            nodes.append(dict(id=row.ticker, parent=parent, label=f"{label}<br>{row.ticker}",
                               size=1, color=bounded, ticker=row.ticker, name=row.name,
                               return_text=_pct(row.return_pct), close_date=row.close_date or "미제공",
                               base_date=row.base_date or "미제공", status=row.status,
@@ -301,7 +313,7 @@ def build_treemap(rows: pd.DataFrame, period="1D"):
                                         "수익률 %{customdata[2]}<br>종가 %{customdata[6]} · %{customdata[3]}"
                                         "<br>비교 종가 %{customdata[7]} · %{customdata[4]}"
                                         "<br>%{customdata[5]}<extra></extra>"))
-    figure.update_layout(height=365, margin=dict(t=4, l=0, r=0, b=0),
+    figure.update_layout(height=620 if len(rows) > 25 else 365, margin=dict(t=4, l=0, r=0, b=0),
                          paper_bgcolor="rgba(0,0,0,0)", font=dict(size=13),
                          uniformtext=dict(minsize=10, mode="hide"))
     return figure
@@ -356,10 +368,14 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
                           horizontal=True, key=f"{key}_market")
         period = st.radio("기간", PERIODS, horizontal=True, key=f"{key}_period")
         basis = st.radio("가격 기준", ("장중 포함", "완료 일봉"), horizontal=True, key=f"{key}_basis")
-    supplied = load_market_frames(market) if frames is None else frames
+    scope = "basket"
+    if market != "CRYPTO":
+        view_type = st.radio("표시 대상", ("섹터 ETF", "대표 종목"), horizontal=True, key=f"{key}_scope")
+        scope = "stocks" if view_type == "대표 종목" else "basket"
+    supplied = (load_market_frames(market) if scope == "basket" else load_market_frames(market, scope)) if frames is None else frames
     if not isinstance(supplied, Mapping):
         supplied = {}
-    snapshot = build_market_snapshot(market, supplied, period, include_current=basis == "장중 포함")
+    snapshot = build_market_snapshot(market, supplied, period, include_current=basis == "장중 포함", scope=scope)
     st.caption(f"대표 지수·ETF 및 고정 대표 바스켓 · 배당 제외 · {basis} · 공급처 조회 최대 5분 캐시")
     local = _as_utc().tz_convert(_TIMEZONES[market])
     if basis == "장중 포함" and market != "CRYPTO" and local.weekday() < 5 and local.hour * 60 + local.minute >= (540 if market == "KR" else 570):
@@ -382,8 +398,9 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
     else:
         timing = "15:45 KST" if market == "KR" else "16:15 ET (서머타임 자동 반영)"
         st.caption(f"완료 판단 {timing} · 1D 이전 거래봉 대비 / 1W 7일 / 1M·3M 달력 기준 · 진행 중 일봉은 변동 가능")
-    basket = snapshot.loc[snapshot["kind"] == "basket"]
-    group = st.selectbox("섹터 그룹", ["전체", *dict.fromkeys(basket["group"])], key=f"{key}_{market}_group")
+    basket = snapshot.loc[snapshot["kind"] != "index"]
+    namespace = f"{key}_{market}" + ("_stocks" if scope == "stocks" else "")
+    group = st.selectbox("섹터 그룹", ["전체", *dict.fromkeys(basket["group"])], key=f"{namespace}_group")
     view = basket if group == "전체" else basket.loc[basket["group"] == group]
     counts = breadth_counts(view)
     st.caption(f"대표 바스켓 {len(view)}개 · 상승 {counts['positive']} · 하락 {counts['negative']} · "
@@ -392,7 +409,7 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
         st.info("선택한 대표 바스켓의 비교 가능한 완료 일봉이 없습니다.")
     if market == "KR" and basket["close"].isna().any():
         st.caption(f"한국 ETF 종가 미제공 {int(basket['close'].isna().sum())}개")
-    chart_key = f"{key}_{market}_{period}_{group}_tree"
+    chart_key = f"{namespace}_{period}_{group}_tree"
     event = st.plotly_chart(build_treemap(view, period), width="stretch", key=chart_key,
                             on_select="rerun", selection_mode="points",
                             config={"displayModeBar": False, "scrollZoom": False})
@@ -404,7 +421,7 @@ def render_market_board(st, *, key="market_board", frames=None) -> str | None:
     st.session_state[event_key] = consumed
     choices = pd.concat([indices, view]).drop_duplicates("ticker")
     labels = {row.ticker: f"{row.sector} · {row.ticker} · {row.name}" for row in choices.itertuples()}
-    symbol_key = f"{key}_{market}_{group}_symbol"
+    symbol_key = f"{namespace}_{group}_symbol"
     symbol = st.selectbox("종목", list(labels), index=None, placeholder="종목 선택",
                           format_func=labels.get, key=symbol_key)
     previous_key = f"{symbol_key}_previous"

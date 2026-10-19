@@ -29,12 +29,19 @@ FOMC = '''<h4><a>2026 FOMC Meetings</a></h4>
 def pages(monkeypatch):
     calendar.clear_release_calendar_cache()
     state = {"calls": [], "closed": [], "fail": set(), "error": None,
-             "bls": BLS, "fomc": FOMC}
+             "bls": BLS, "fomc": FOMC, "fred_calls": [], "fred_payload": None}
 
     class Response:
-        def __init__(self, url):
+        def __init__(self, url, params=None):
             self.status_code = 403 if url in state["fail"] else 200
             self.text = state["fomc"] if url == calendar.FOMC_URL else state["bls"]
+            self.params = params
+
+        def json(self):
+            if state["fred_payload"] is not None:
+                return state["fred_payload"]
+            return {"release_dates": [{"release_id": self.params["release_id"], "date": day}
+                                     for day in ("2026-10-14", "2026-10-20", "2026-10-20")]}
 
         def close(self):
             state["closed"].append(True)
@@ -45,7 +52,9 @@ def pages(monkeypatch):
         assert kwargs["allow_redirects"] is False
         if state["error"]:
             raise state["error"]
-        return Response(url)
+        if url == calendar.FRED_DATES_URL:
+            state["fred_calls"].append(kwargs["params"])
+        return Response(url, kwargs.get("params"))
 
     monkeypatch.setattr(calendar.requests, "get", get)
     yield state
@@ -147,3 +156,64 @@ def test_date_clock_and_invalid_clock(pages):
     assert calendar.load_release_calendar(now=date(2026, 10, 18))["connected"] is True
     with pytest.raises(TypeError):
         calendar.load_release_calendar(now="2026-10-18")
+
+
+def test_failed_bls_uses_fred_dates_without_inventing_month_or_time(pages):
+    pages["fail"].update(calendar.SCHEDULE_URLS.values())
+    result = calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert result["connected"]
+    assert len(pages["fred_calls"]) == 3
+    assert {call["release_id"] for call in pages["fred_calls"]} == {10, 46, 50}
+    assert all(call["api_key"] == "test-secret" and call["include_release_dates_with_no_data"] == "true"
+               for call in pages["fred_calls"])
+    assert len(result["events"]) == 9  # Six deduplicated FRED dates + three FOMC dates.
+    for event in result["events"]:
+        if event["source"] == "FRED release calendar":
+            assert event["release_at"] == event["date"]
+            assert "period" not in event and "T" not in event["release_at"]
+    assert all(source["provider"] == "FRED" and source["primary_reason"] == "http_403"
+               for source in result["sources"][:3])
+    assert "test-secret" not in str(result) + str(calendar._CACHE)
+    assert len(pages["closed"]) == 7
+
+
+def test_bls_success_does_not_call_fred_even_with_key(pages):
+    calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert len(pages["calls"]) == 4 and not pages["fred_calls"]
+
+
+def test_fred_success_cached_but_primary_retry_can_recover(pages):
+    pages["fail"].add(calendar.SCHEDULE_URLS["cpi"])
+    calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert len(pages["fred_calls"]) == 1
+    pages["fail"].clear()
+    recovered = calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    cpi = [event for event in recovered["events"] if event["indicator"] == "US_CPI"]
+    assert cpi[0]["period"] == "2026-09" and "T" in cpi[0]["release_at"]
+    assert "provider" not in recovered["sources"][0]
+
+
+def test_fred_failure_is_safe_visible_and_retried(pages):
+    pages["fail"].update([calendar.SCHEDULE_URLS["cpi"], calendar.FRED_DATES_URL])
+    failed = calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert failed["sources"][0]["fallback_reason"] == "http_403"
+    assert failed["sources"][0]["status"] == "unavailable"
+    pages["fail"].remove(calendar.FRED_DATES_URL)
+    recovered = calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert recovered["sources"][0]["provider"] == "FRED"
+    assert len(pages["fred_calls"]) == 2 and "test-secret" not in str(failed)
+
+
+@pytest.mark.parametrize("payload", [[], {}, {"release_dates": []},
+    {"release_dates": [{"release_id": 50, "date": "2026-10-20"}]},
+    {"release_dates": [{"release_id": 10, "date": "2026-02-30"}]},
+    {"release_dates": [{"release_id": 10, "date": "2024-10-20"}]},
+    {"release_dates": [{"release_id": 10, "date": "2026-10-20T08:30:00"}]},
+])
+def test_fred_rejects_bad_or_irrelevant_dates(pages, payload):
+    pages["fail"].add(calendar.SCHEDULE_URLS["cpi"])
+    pages["fred_payload"] = payload
+    result = calendar.load_release_calendar(now=NOW, fred_api_key="test-secret")
+    assert result["sources"][0]["fallback_reason"] == "calendar_rows_unrecognized"
+    assert not any(event["indicator"] == "US_CPI" for event in result["events"])

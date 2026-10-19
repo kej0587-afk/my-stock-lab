@@ -9,7 +9,8 @@ the calendar does not publish a release time, so none is manufactured.
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 from html.parser import HTMLParser
 import re
 import threading
@@ -17,6 +18,10 @@ import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
+
+
+FRED_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
+_FRED_RELEASES = {"cpi": 10, "ppi": 46, "empsit": 50}
 
 
 REQUEST_TIMEOUT = 4.0
@@ -194,14 +199,61 @@ def _fomc_events(html, now):
     return events
 
 
-def _load_source(name, url, parser, now):
-    key = (url, now.year)
+def _fred_dates(group, now, api_key):
+    response = requests.get(
+        FRED_DATES_URL,
+        params={"release_id": _FRED_RELEASES[group], "api_key": api_key,
+                "file_type": "json", "include_release_dates_with_no_data": "true",
+                "realtime_start": (now.date() - timedelta(days=90)).isoformat(),
+                "realtime_end": (now.date() + timedelta(days=90)).isoformat(),
+                "limit": 1000, "sort_order": "asc"},
+        headers={"User-Agent": "StockLab-Release-Calendar/1.0"},
+        timeout=REQUEST_TIMEOUT, allow_redirects=False,
+    )
+    try:
+        if response.status_code != 200:
+            raise _InvalidCalendar("http_" + str(response.status_code))
+        return response.json()
+    finally:
+        response.close()
+
+
+def _fred_events(payload, group, now):
+    rows = payload.get("release_dates") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise _InvalidCalendar("calendar_rows_unrecognized")
+    release_id = _FRED_RELEASES[group]
+    dates = set()
+    for row in rows:
+        if not isinstance(row, dict) or str(row.get("release_id")) != str(release_id):
+            continue
+        raw_date = row.get("date")
+        if not isinstance(raw_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_date):
+            continue
+        try:
+            day = date.fromisoformat(raw_date)
+        except ValueError:
+            continue
+        if abs((day - now.date()).days) <= 90:
+            dates.add(raw_date)
+    if not dates:
+        raise _InvalidCalendar("calendar_rows_unrecognized")
+    # FRED supplies dates, not publication times or the observation month.
+    return [{"event": _GROUPS[group][0], "indicator": _GROUPS[group][1],
+             "release_at": day, "date": day, "release_precision": "date",
+             "market": "US", "source": "FRED release calendar",
+             "source_url": f"https://fred.stlouisfed.org/release?rid={release_id}"}
+            for day in sorted(dates)]
+
+
+def _load_source(name, url, parser, now, *, fetch=None, cache_scope=""):
+    key = (url, now.year, cache_scope)
     with _LOCK:
         cached = _CACHE.get(key)
         if cached and time.monotonic() - cached[0] < CACHE_TTL and cached[1] <= now.isoformat():
             return deepcopy(cached[2]), {"name": name, "status": "connected", "reason": ""}
     try:
-        events = parser(_request(url))
+        events = parser(fetch() if fetch is not None else _request(url))
     except _InvalidCalendar as exc:
         reason = str(exc)
     except requests.RequestException as exc:
@@ -218,19 +270,37 @@ def _load_source(name, url, parser, now):
     return [], {"name": name, "status": "unavailable", "reason": reason}
 
 
-def load_release_calendar(now=None):
+def _load_bls_source(group, url, now, fred_api_key):
+    name = _GROUPS[group][2]
+    events, source = _load_source(name, url, lambda html: _bls_events(html, group), now)
+    if source["status"] == "connected" or not fred_api_key:
+        return events, source
+    public_url = f"https://fred.stlouisfed.org/release?rid={_FRED_RELEASES[group]}"
+    scope = (sha256(fred_api_key.encode()).hexdigest(), now.date().isoformat())
+    fallback, fallback_source = _load_source(
+        name, public_url, lambda payload: _fred_events(payload, group, now), now,
+        fetch=lambda: _fred_dates(group, now, fred_api_key), cache_scope=scope,
+    )
+    if fallback_source["status"] == "connected":
+        fallback_source.update(provider="FRED", primary_reason=source["reason"])
+        return fallback, fallback_source
+    source["fallback_reason"] = fallback_source["reason"]
+    return [], source
+
+
+def load_release_calendar(now=None, *, fred_api_key=""):
     """Return {events, sources, connected}; connected means at least one source.
 
-    Four independent official pages, four workers, 4-second request timeouts.
+    Four workers, 4-second request timeouts; failed BLS pages may use FRED dates.
     Successful parsed pages alone are cached; failures are retried next call.
     No weekday rules, inferred release months, FOMC times, or forecast values.
     """
     now = _clock(now)
-    jobs = [(_GROUPS[group][2], url, lambda html, g=group: _bls_events(html, g))
-            for group, url in SCHEDULE_URLS.items()]
-    jobs.append(("Federal Reserve FOMC", FOMC_URL, lambda html: _fomc_events(html, now)))
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [executor.submit(_load_source, name, url, parser, now) for name, url, parser in jobs]
+        futures = [executor.submit(_load_bls_source, group, url, now, fred_api_key)
+                   for group, url in SCHEDULE_URLS.items()]
+        futures.append(executor.submit(_load_source, "Federal Reserve FOMC", FOMC_URL,
+                                       lambda html: _fomc_events(html, now), now))
         results = [future.result() for future in futures]
     events = [event for rows, _ in results for event in rows]
     sources = [source for _, source in results]

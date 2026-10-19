@@ -338,7 +338,7 @@ def _retail(now, api_key):
 
     data, error, retrieved = _cached(("retail", now.strftime("%Y-%m"), hashlib.sha256(api_key.encode()).hexdigest()), fetch, now)
     row = _row("US_RETAIL_SALES", "%", "MoM", "US Census Bureau (MARTS)", CENSUS_URL, now,
-               seasonal_adjustment="SA", retrieved_at=retrieved)
+               seasonal_adjustment="SA", retrieved_at=retrieved, api_key_configured=bool(api_key))
     if data:
         period = max(data)
         row.update(period=period, actual=data[period], previous=data.get(_shift(period, -1)),
@@ -391,7 +391,7 @@ def _ecos(now, api_key, indicator):
     stat, item, stat_name, item_name = _ECOS_SERIES[indicator]
     row = _row(indicator, "%", "YoY", "Bank of Korea ECOS", ECOS_URL, now,
                seasonal_adjustment="NSA", series_id=f"{stat}/{item}",
-               value_kind="calculated_from_official_levels")
+               value_kind="calculated_from_official_levels", api_key_configured=bool(api_key))
     if not api_key:
         _reason(row, "ECOS_API_KEY_missing")
         return row
@@ -401,7 +401,7 @@ def _ecos(now, api_key, indicator):
     credential_id = hashlib.sha256(api_key.encode()).hexdigest()
 
     def metadata():
-        payload = _request(f"{ECOS_URL}StatisticItemList/{api_key}/json/kr/1/10/{stat}")
+        payload = _request(f"{ECOS_URL}StatisticItemList/{api_key}/json/kr/1/100/{stat}")
         if "RESULT" in payload:
             raise _Unavailable("ecos_metadata_rejected")
         matches = [entry for entry in payload.get("StatisticItemList", {}).get("row", [])
@@ -456,6 +456,8 @@ def _ecos(now, api_key, indicator):
     row.update(period=period, actual=rates.get(period), previous=rates.get(_shift(period, -1)),
                previous_period=_shift(period, -1), previous_source=row["source"] + " (latest revised)",
                previous_unit="%", previous_basis="YoY", raw_unit=meta["unit"])
+    row.update(raw_actual=data[period], raw_year_ago=data.get(_shift(period, -12)),
+               raw_year_ago_period=_shift(period, -12))
     row["status"] = "released" if row["actual"] is not None else "unavailable"
     if row["actual"] is None:
         _reason(row, "comparison_period_unavailable")
@@ -680,11 +682,12 @@ def _finish(row):
 
 
 def load_economic_releases(event_rows=None, now=None):
-    """Return normalized list[dict]; no UI, writes, retries, or LLM calls.
+    """Return normalized rows; persist validated public monthly observations only.
 
     Requests have 4-second timeouts. One BLS batch, one Census query, up to one
     FRED query, four calendar pages, and up to four ECOS metadata/data queries.
-    Provider errors become explicit unavailable rows and are never cached.
+    Provider errors are not cached as success. Last verified monthly values are
+    retained separately and explicitly marked stale if collection fails.
     Supplied events are bounded to 64 rows. Dates without a time/value remain
     pending throughout that UTC date; timezone-less timestamps are not guessed.
     """
@@ -694,7 +697,7 @@ def load_economic_releases(event_rows=None, now=None):
         bls = executor.submit(_bls, now)
         retail = executor.submit(_retail, now, census_key)
         fed = executor.submit(_fed, now, fred_key)
-        calendar = executor.submit(load_release_calendar, now=now)
+        calendar = executor.submit(load_release_calendar, now=now, fred_api_key=fred_key)
         korea = [executor.submit(_ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
         rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
         calendar = calendar.result()
@@ -715,6 +718,8 @@ def load_economic_releases(event_rows=None, now=None):
                 name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
                 failure = next((source["reason"] for source in calendar["sources"] if source["name"] == name), "")
                 _reason(row, "release_schedule_" + (failure or "period_unavailable"))
+    from stock_lab_core.economic_cache import retain_successful_observations
+    rows = retain_successful_observations(rows, now)
     _merge_events(rows, event_rows, now)
     for row in rows:
         _finish(row)

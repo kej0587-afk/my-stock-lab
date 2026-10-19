@@ -100,8 +100,8 @@ def test_report_has_only_one_holdings_table_and_three_sector_labels():
                "calendar_sources": [{"name": "BLS", "status": "connected"}], "calendar_events": []}
     rows = [{"티커": "418660.KS", "보유량": 1, "판정코드": "MACRO", "게이트상태": "차단"}]
     report = build_auto_market_memo(summary_rows=rows, report_context=context, now=NOW)
-    assert report.count("종목 | 일간 등락 | 레버리지 환산 | 상태/사유") == 1
-    assert "🧭 오늘점검" not in report and "시장방어" not in report
+    assert report.count("종목 | 기준일 일간(실제) | 개장 전 갭 시나리오/배수 참고(추정) | 당일 현재(실제) | 상태/사유") == 1
+    assert "🧭 오늘점검" not in report
     assert "사실:" in report and "해석(추정):" in report and "미확인:" in report
     assert "항목 미수집(일정 없음으로 단정하지 않음)" in report
     assert "월요일 갭 예상 영향" in report

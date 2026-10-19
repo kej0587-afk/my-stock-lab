@@ -58,12 +58,13 @@ def test_report_acceptance_and_input_immutability():
     assert "스트레스 74→92" in report and "동일 기준일 자료 변경" in report
     assert "애플(AAPL) · 개별 신호 A급, 게이트로 보류" in report and "A급 (분할 매수)" not in report
     assert "신규매수 중단 해제" in report
-    sector = report.split("## 업종별 왜")[1].split("## 내 보유")[0]
-    assert "SOXX" in sector and "보도 요약(기사 주장" in sector and "美 AI·반도체 급락" in sector
+    sector = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
+    assert "SOXX" in sector and "제목 기준 보도(기사 주장" in sector and "美 AI·반도체 급락" in sector
     assert "전날 7%대 급락" in report and "[장중 보도]" in report
     assert "계좌 일간 기여 합계(추정): -1.27%p" in report and "-0.75%p" in report
     story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]
-    assert "전날 7%대 급락" in story and "계좌 일간 기여 합계" in story
+    assert "전날 7%대 급락" in story and "계좌 일간 기여 합계" not in story
+    assert report.index("## 내 보유 종목 영향") < report.index("## 오늘의 시장 스토리")
     assert "개장 후 당일 등락: 미수집" in report and "다음 개장 갭" not in report
     assert "FOMC · D-9" in report and "공식 일정: BLS CPI · http_403" in report
     assert (context, rows) == before

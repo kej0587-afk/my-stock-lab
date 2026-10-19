@@ -40,3 +40,10 @@ def isolate_yahoo_metadata_cache(monkeypatch):
     monkeypatch.setattr(reader, "_min_interval", 0)
     yield
     reader.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def isolate_public_economic_disk_cache(monkeypatch, tmp_path):
+    from stock_lab_core import economic_cache
+
+    monkeypatch.setattr(economic_cache, "CACHE_PATH", tmp_path / "economic_last_success.json")

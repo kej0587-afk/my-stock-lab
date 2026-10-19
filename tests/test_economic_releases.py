@@ -83,6 +83,10 @@ def providers(monkeypatch):
                 {"date": "2026-10-16", "value": "4.00"},
                 {"date": "2026-10-15", "value": "4.00"},
             ]})
+        elif url == release_calendar.FRED_DATES_URL:
+            response = Response({"release_dates": [
+                {"release_id": kwargs["params"]["release_id"], "date": "2026-10-14"},
+            ]})
         else:
             pytest.fail(f"unexpected URL: {url}")
         state["responses"].append(response)
@@ -134,6 +138,16 @@ def test_release_date_not_inferred_when_schedule_blocked(providers):
     assert row["period"] == "2026-09"
     assert "release_schedule_http_403" in row["missing_reason"]
     assert "release_date_unavailable" in row["missing_reason"]
+
+
+def test_fred_calendar_fallback_does_not_assign_an_observation_month(providers, monkeypatch):
+    providers["schedule_status"] = 403
+    monkeypatch.setattr(releases, "_api_key", lambda name: "test-fred-key" if name == "FRED_API_KEY" else "")
+    row = _find(releases.load_economic_releases(now=NOW))
+    assert row["actual"] == 1.0 and row["period"] == "2026-09"
+    assert row["release_at"] is None
+    assert "release_schedule_period_unavailable" in row["missing_reason"]
+    assert sum(url == release_calendar.FRED_DATES_URL for _, url, _ in providers["calls"]) == 3
 
 
 def test_missing_month_is_not_a_previous_observation(providers):

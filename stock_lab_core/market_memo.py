@@ -2157,8 +2157,24 @@ def build_auto_market_memo(
                 lines.append("각 스타일 독립 노출 최소 2개 미충족: 스타일 우열 판단 보류")
             else:
                 lines.append(f"{rotation.get('short_key')} 평균: 성장 {_fmt_auto_pct(rotation.get('growth_avg'))}, 방어 {_fmt_auto_pct(rotation.get('rotation_avg'))}. 가격 비교이며 실제 자금 유입은 아님.")
+        lines.extend(["", "## 기존 점검 · 중기 흐름 참고",
+                      f"오늘의 전략: 오늘점검 게이트 실행가능 {executable}개. 중기 순위는 별도 관찰자료이며 게이트를 우회하지 않습니다."])
+        for label, key, score_key in (("돈흐름·미국 섹터", "us_top5", "돈흐름점수"),
+                                      ("국내 섹터", "kr_top5", "돈흐름점수"),
+                                      ("글로벌 ETF", "global_top", "돈흐름점수"),
+                                      ("테마", "theme_top5", "테마돈흐름점수")):
+            eligible, excluded = _rankable_flow_rows(flow_snapshot.get(key), score_key)
+            if eligible:
+                lines.append(f"- {label}: " + " / ".join(_flow_bullet(row, score_key) for row in eligible[:2]))
+            else:
+                lines.append(f"- {label}: 비교 가능한 중기 자료 미연결")
+        semis = [row for row in _rankable_flow_rows(flow_snapshot.get("flow_df"))[0]
+                 if _row_ticker(row) in {"SOXX", "SMH", "DRAM"}]
+        if semis:
+            lines.append("- 반도체·AI: " + " / ".join(_flow_bullet(row) for row in semis[:3]))
+        lines.append("해제 기준: 비중은 목표 범위 복귀, 시장방어는 해당 시장 게이트 해제, 추세는 일봉·주봉 훼손 해소 후 재계산. 가격·손익비·과열 조건도 함께 통과해야 합니다.")
         if missing:
-            lines.extend(["", "데이터 누락:", *["- " + reason for reason in missing]])
+            lines.extend(["", "데이터 누락:", *["- " + reason for reason in dict.fromkeys(missing)]])
         return "\n".join(lines).strip()
     front, missing = report_sections(
         context=report_context, news=curated, flow_rows=flow_snapshot.get('flow_df'),

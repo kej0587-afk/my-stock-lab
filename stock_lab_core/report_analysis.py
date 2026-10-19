@@ -2,6 +2,7 @@
 
 from statistics import median
 from datetime import datetime
+import re
 
 from stock_lab_core.report_evidence import citation, first, number, records, text
 
@@ -83,7 +84,7 @@ def select_economic_stories(rows, limit=3):
     for raw in records(rows):
         actual, previous = number(raw.get("actual")), number(raw.get("previous"))
         metrics = comparison_metrics(raw)
-        if actual is None or previous is None or metrics["delta"] is None or raw.get("status") == "pending":
+        if actual is None or previous is None or metrics["delta"] is None or raw.get("status") in {"pending", "stale"}:
             continue
         history = [abs(value) for _, value in prior_history(raw)]
         scale = abs(previous) or (median(history) if history else 0)
@@ -117,12 +118,16 @@ def economic_story_lines(rows, limit=3):
         lines.append(line + ". " + citation(row))
         delta = metrics["delta"]
         if row.get("indicator") in {"US_CPI", "US_CORE_CPI", "US_PPI"} and row.get("basis") == "MoM" and row.get("unit") == "%":
-            direction = "물가 압력 재확대 가능성, 금리 인하 기대에는 부담" if delta > 0 else "물가 상승 속도 둔화 가능성" if delta < 0 else "전월과 같은 물가 상승 속도"
+            subject = "생산단계 비용 압력" if row["indicator"] == "US_PPI" else "소비자 물가 압력"
+            direction = subject + (" 확대: 긴축 유지·인상 압력을 높일 수 있음" if delta > 0 else " 둔화: 추가 긴축 필요성을 낮출 수 있음" if delta < 0 else "의 상승 속도는 전월과 같음")
             lines.append(f"해석(추정): {direction}. 예상치 미확보 시 시장 기대 대비 충격은 판단하지 않습니다.")
         elif row.get("indicator") == "US_NONFARM_PAYROLLS":
             lines.append("해석(추정): " + ("고용 증가 둔화는 금리 부담 완화 기대와 경기 둔화 우려가 공존합니다." if delta < 0 else "고용 증가 확대는 경기 지지와 금리 인하 지연 가능성이 공존합니다."))
         if row.get("reaction_source") and row.get("reaction"):
             lines.append("동일 발표일 관측: " + row["reaction"])
+            rate = re.search(r"10Y\s+([+-]?\d+(?:\.\d+)?)bp", row["reaction"])
+            if row.get("indicator") in {"US_CPI", "US_CORE_CPI", "US_PPI"} and delta > 0 and rate and float(rate.group(1)) < 0:
+                lines.append("동일일 움직임이 단순 해석과 어긋남: 물가 상승 속도는 높아졌지만 10Y는 하락. 기대 선반영·다른 재료의 기여는 미확인입니다.")
     return lines
 
 
@@ -157,7 +162,7 @@ def sector_evidence(row, macro_data, news):
     rate_bp = number(rate.get("day_change_bp"))
     oil = (macro_data or {}).get("유가", {})
     oil_ret = number(oil.get("day_ret"))
-    reading = "수집된 업종 가격만으로 금리·실적 등 경제적 경로를 구분할 수 없습니다"
+    reading = "직접 원인 자료 미연결"
     if ticker == "XLE" and oil_ret is not None and oil.get("as_of") == date and ret is not None:
         reading = (f"동일일 WTI {oil_ret * 100:+.2f}%와 업종이 " + ("같은 방향" if oil_ret * ret > 0 else "다른 방향") +
                    "; 에너지 가격 경로를 점검하되 선물·주식 수익률만으로 업종 이익 기여를 확정하지 않습니다")
@@ -171,11 +176,18 @@ def sector_evidence(row, macro_data, news):
             reading += "; 금리 하락에 따른 할인율 부담 완화 가능성"
         else:
             reading += "; 단순한 금리-주가 역방향 설명과 어긋나므로 다른 요인을 확인해야 함"
-        reading += f" [연준 할인율 설명]({FED_VALUATIONS})"
+        if "할인율 부담" in reading:
+            reading += f" [연준 할인율 설명]({FED_VALUATIONS})"
     related = [item for item in news if text(item.get("ticker")).upper() == ticker]
     unconfirmed = "해당 업종 움직임의 개별 원인·기여도는 확정 자료 없음"
     if related:
-        reading += " · 보도 요약(기사 주장, 인과 미확정): " + text(related[0].get("title")) + " " + citation(related[0])
+        item = related[0]
+        if reading == "직접 원인 자료 미연결":
+            reading = ""
+        topic = "AI 관련 시장 움직임" if any(re.search(r"AI|인공지능", text(r.get("title")), re.I) for r in related) else "해당 업종 움직임"
+        scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
+        reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
+                    + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(item))
     return {"fact": "사실: " + fact + " [공급처 일봉 종가]",
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}
