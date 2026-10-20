@@ -73,11 +73,11 @@ def test_history_preserves_names_and_held_status_without_account_details():
     current[1]["최종읽기"] = "관찰"
     current.append({"티커": "MSFT", "종목명": "마이크로소프트", "보유량": 0, "최종읽기": "대기"})
     text = "\n".join(comparison_lines(current, old, previous_date="2026-10-19", current_date="2026-10-20"))
-    assert "보유 1개: 변경 없음" in text
-    assert "관심·미보유 2개: 변경 1개" in text and "애플(AAPL)" in text
-    assert "목록 추가 1개: 마이크로소프트(MSFT)" in text
+    assert "보유 1개 | 1 | 0 | 0개" in text
+    assert "관심·미보유 2개 | 1 | 1 | 1개" in text and "애플(AAPL)" in text
+    assert "추가 | 마이크로소프트(MSFT)" in text
     removed = "\n".join(comparison_lines(current[:1], old, previous_date="2026-10-19", current_date="2026-10-20"))
-    assert "목록 이탈 1개: 애플(AAPL)" in removed
+    assert "이탈 | 애플(AAPL)" in removed
     assert "상위 10개 변화가 아닌 입력 목록 차이" in removed
 
 
@@ -98,7 +98,7 @@ def test_full_report_catalysts_same_market_and_foreign_news_separate():
     original = deepcopy(context)
     report = build_auto_market_memo(report_context=context, now=NOW)
     headline = report.split("## 한 줄 결론")[1].split("## 오늘의 시장 스토리")[0]
-    assert "코스피 당일 종가 -3.73%" in headline
+    assert "코스피는 하락했습니다(-3.73%, 2026-10-20 확정 종가)" in headline
     assert "AI 신용우려" in headline and "외국인·기관 동반 매도" in headline and "기사 주장" in headline
     sectors = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
     for symbol in ("SOXX", "XLK", "IGV"):
@@ -150,7 +150,7 @@ def test_intraday_rebound_does_not_inherit_previous_day_decline_claims():
     report = build_auto_market_memo(report_context=context,
         now=datetime.fromisoformat("2026-10-21T10:00:00+09:00"))
     headline = report.split("## 한 줄 결론")[1].split("## 오늘의 시장 스토리")[0]
-    assert "코스피 당일 +2.00%" in headline
+    assert "코스피는 반등을 시도 중입니다(+2.00%, 2026-10-21 장중·확정 아님)" in headline
     assert "AI 신용우려" not in headline and "외국인·기관 동반 매도" not in headline
 
 

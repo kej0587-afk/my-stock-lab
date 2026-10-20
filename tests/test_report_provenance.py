@@ -79,7 +79,7 @@ def test_same_session_history_and_prior_trading_day_are_both_available(tmp_path)
     line = "\n".join(comparison_lines(after, result["previous_run_summary"],
                             previous_date=result["previous_run_date"], current_date=result["summary_date"],
                             same_session=True, previous_run_at=result["previous_run_at"]))
-    assert "같은 거래일 직전 생성" in line and "게이트 대기/관찰 → 방어우선" in line
+    assert "같은 거래일 직전 생성" in line and "게이트 | 대기/관찰 | 방어우선" in line
     assert "previous_run_summary" not in update_report_history(after, dates, path=path, owner_scope="bob")
 
 

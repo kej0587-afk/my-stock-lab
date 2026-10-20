@@ -136,6 +136,15 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     result["scenario_observations"] = build_scenario_context(scenario_frames, sessions, now)
     if include_news:
         from stock_lab_core.today_news import fetch_session_market_news
+        held_exposures = []
+        for row in records(summary_rows):
+            if is_held(row):
+                held_exposures.append(row)
+                ticker = text(first(row, "티커", "ticker"))
+                held_exposures.extend({"Ticker": base, "섹터": SECTORS.get(base, "")}
+                                      for base in UNDERLYINGS.get(ticker.split(".")[0], ())
+                                      if base != "BTC-US-CLOSE")
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
-                                               categories=("반도체·AI", "매크로/중국"), per_category=5))
+                                               sector_rows=sectors + closed_rows, held_exposures=held_exposures,
+                                               per_category=5, use_cache=True))
     return result

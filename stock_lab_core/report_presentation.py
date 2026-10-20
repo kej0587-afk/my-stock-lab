@@ -213,6 +213,13 @@ def account_estimate(held, observations, sessions, *, mode="preopen"):
 
 
 def news_theme(title):
+    title = text(title)
+    if re.search(r"(?<![A-Za-z])AI(?![A-Za-z])|인공지능|CoreWeave|코어위브", title, re.I):
+        easing = re.search(r"(?:우려|불안).{0,8}(?:완화|해소)|(?:worr\w*|fear\w*|concern\w*).{0,15}(?:abat|eas|fad|reced)", title, re.I)
+        if easing and re.search(r"신용|\bcredit\b", title, re.I):
+            return "AI 신용우려 완화"
+        if easing and re.search(r"차입|부채|\bdebt\b|\bborrowing\b", title, re.I):
+            return "AI 차입우려 완화"
     for pattern, label in (
         (r"AI\s*신용\s*(?:우려|위험|리스크)", "AI 신용우려"),
         (r"AI\s*(?:차입|부채)\s*우려", "AI 차입 우려"),
@@ -220,7 +227,52 @@ def news_theme(title):
     ):
         if re.search(pattern, title, re.I):
             return label
+    ai = r"(?<![A-Za-z])AI(?![A-Za-z])|artificial intelligence|인공지능|코어위브|\bCoreWeave\b|네오클라우드|\bneoclouds?\b"
+    if re.search(ai, title, re.I):
+        concern = bool(re.search(r"우려|불안|위험|부담|worr|fear|concern|risk|crunch|jitters|burden", title, re.I))
+        for pattern, label in (
+            (r"신용|\bcredit\b", "AI 신용우려" if concern else "AI 신용 관련 보도"),
+            (r"차입|부채|빚|\bdebt\b|\bborrowing\b|\bleverage[d]?\b", "AI 차입 우려" if concern else "AI 차입·부채"),
+            (r"자금\s*조달|금융\s*조달|\bfinanc(?:e|es|ing)\b|\bfunding\b|\bbonds?\b", "AI 자금조달"),
+            (r"투자.{0,8}(?:불안|우려)|(?:capex|spending|investment).{0,30}(?:worr|fear|concern|risk)", "AI 투자 불안"),
+            (r"코어위브|\bCoreWeave\b|네오클라우드|\bneoclouds?\b", "AI 인프라 관련 보도"),
+            (r"반등|\brebound|\bbounc|\brecover", "AI 관련주 반등"),
+        ):
+            if re.search(pattern, title, re.I):
+                return label
     return ""
+
+
+# The same exposure vocabulary drives report searches and title matching.
+_SECTOR_NEWS_PROFILES = {
+    "semiconductor": ("SOXX SMH SOXL SOXS 396500.KS", r"반도체|semiconductor|\bchips?\b|\bSOXX\b|\bSMH\b|NVIDIA|엔비디아|삼성전자|SK\s*하이닉스", "반도체 OR 삼성전자 OR SK하이닉스", "semiconductor stocks OR chip stocks"),
+    "memory": ("DRAM MU", r"메모리|\bDRAM\b|\bHBM\b|Micron|마이크론|SK\s*하이닉스", "메모리 OR DRAM OR HBM", "memory stocks OR Micron OR DRAM"),
+    "technology": ("XLK QQQ TQQQ SQQQ TECL TECS FNGU FNGD", r"기술주?|빅테크|테크|FANG|\btechnology\b|\btech\b|\bXLK\b", "기술주 OR 빅테크 OR AI", "technology stocks OR big tech"),
+    "software": ("IGV", r"소프트웨어|software|사이버|cyber|\bIGV\b", "소프트웨어 OR 사이버보안", "software stocks OR cybersecurity stocks"),
+    "energy": ("XLE ERX ERY 139250.KS", r"에너지|energy|정유|석유|원유|유가|\boil\b|\bWTI\b|\bBrent\b|\bOPEC\b|\bXLE\b", "에너지주 OR 정유 OR 유가", "energy stocks OR oil prices OR oil producers"),
+    "utilities": ("XLU", r"유틸리티|utilities|전력|전기료|\bXLU\b", "전력 OR 유틸리티", "utilities stocks OR power demand"),
+    "communications": ("XLC VOX", r"통신|communication services|telecom|미디어|media stocks|광고|advertising|\bMeta\b|Alphabet|\bXLC\b", "통신주 OR 미디어 OR 광고", "communication services stocks OR telecom stocks OR Meta earnings"),
+    "consumer": ("XLY XLP VCR VDC", r"소비재|소비주|소비심리|소매|유통|음식료|consumer|retail|staples|\bXLY\b|\bXLP\b", "소비재 OR 소매판매 OR 유통", "consumer stocks OR retail sales OR consumer staples"),
+    "healthcare": ("XLV VHT", r"헬스케어|건강|의료|제약|health\s*care|pharma|\bXLV\b|\bVHT\b", "헬스케어 OR 의료 OR 제약", "healthcare stocks OR pharma stocks"),
+    "biotech": ("XBI IBB LABU LABD", r"바이오|생명과학|biotech|임상|clinical trial|FDA|백신|vaccine|\bXBI\b|\bIBB\b", "바이오 OR 임상 OR 제약", "biotech stocks OR clinical trial OR FDA approval"),
+    "cosmetics": ("", r"화장품|뷰티|cosmetics|beauty|아모레|Amorepacific|LG생활건강", "화장품 OR 뷰티 OR 아모레퍼시픽", "cosmetics stocks OR beauty sales"),
+    "battery": ("LIT BATT 305540.KS", r"2차전지|이차전지|배터리|리튬|양극재|음극재|battery|batteries|lithium|cathode|\bLIT\b|\bBATT\b", "2차전지 OR 배터리 OR 리튬", "battery stocks OR lithium stocks OR electric vehicle batteries"),
+    "financials": ("XLF KRE KBE", r"금융|은행|증권|보험|financials|banks?|banking|insurance|\bXLF\b", "금융주 OR 은행 OR 증권", "financial stocks OR bank stocks"),
+    "industrials": ("XLI", r"산업재|기계|건설|인프라|industrials|infrastructure|\bXLI\b", "산업재 OR 기계 OR 건설", "industrial stocks OR infrastructure"),
+}
+
+
+def sector_news_topics(ticker, *, sector_name=""):
+    """Return stable topic keys for symbols or full Korean ETF product names."""
+    symbol = text(ticker).upper()
+    sector_name = text(sector_name)
+    return tuple(key for key, (symbols, pattern, _, _) in _SECTOR_NEWS_PROFILES.items()
+                 if symbol in symbols.split() or (sector_name and re.search(pattern, sector_name, re.I)))
+
+
+def sector_news_query(topic, market):
+    profile = _SECTOR_NEWS_PROFILES[topic]
+    return profile[2 if market == "KR" else 3]
 
 
 def market_cause_candidates(news, market, session):
@@ -234,11 +286,13 @@ def market_cause_candidates(news, market, session):
     for row in news:
         title = text(row.get("title"))
         topic = news_theme(title)
-        published = stamp(first(row, "published", "published_at"))
+        published = stamp(first(row, "published_at", "published"))
         if (not topic or topic in seen or not row.get("link") or not published
                 or row.get("market") != market or row.get("session_date") != session
                 or row.get("news_bucket") in {"next_session_news", "other_market_news"}
-                or is_preopen_outlook(row) or published.astimezone(zone).date() != close.date()):
+                or is_preopen_outlook(row) or is_preopen_price_recap(row) or published.astimezone(zone).date() != close.date()):
+            continue
+        if row.get("news_bucket") == "current_session_news" and re.search(r"마감|\bclos(?:ed|ing)\b|\bmarket wrap\b", title, re.I):
             continue
         if published > close and not (row.get("retrospective_close_wrap") or row.get("is_close_wrap")
                                       or re.search(r"마감|close", title, re.I)):
@@ -249,10 +303,14 @@ def market_cause_candidates(news, market, session):
 
 
 def is_preopen_outlook(row):
-    """Identify a Korean forecast by its content, not the publication's KST hour."""
+    """Identify a market forecast by content, independent of publication hour."""
+    title = text(row.get("title"))
+    if re.search(r"\b(?:stocks?|index|equity|Wall Street|Nasdaq|Dow Jones|S&P(?:\s*500)?) futures\b|\bpre[- ]?market\b|\bahead of (?:the )?open\b|"
+                 r"\b(?:market|stocks?|wall street) (?:outlook|preview)\b|"
+                 r"\bstocks? (?:are )?(?:set|poised|expected) to\b|뉴욕증시\s*전망|미국\s*증시\s*전망", title, re.I):
+        return True
     if row.get("market") != "KR":
         return False
-    title = text(row.get("title"))
     if re.search(r"장전\s*전망|\[(?:장전|증시전망|오늘의?\s*증시)\]", title):
         return True
     if re.search(r"\[마감\]|(?:코스피|코스닥|한국\s*증시).{0,60}마감", title):
@@ -260,6 +318,23 @@ def is_preopen_outlook(row):
     return bool(re.search(r"개장\s*전|장\s*시작\s*전", title)) or (row.get("news_timing") in {"장전 보도", "장전전망(결과와 다름)"}
             and bool(re.search(r"코스피|코스닥|(?:한국|국내)\s*증시", title))
             and bool(re.search(r"전망|예상", title)))
+
+
+def is_preopen_price_recap(row):
+    """A pre-open market-price recap cannot describe that regular session."""
+    published = stamp(first(row, "published_at", "published"))
+    session = text(row.get("session_date"))
+    market = row.get("market")
+    if not published or not session or market not in {"KR", "US"}:
+        return False
+    zone = KST if market == "KR" else ZoneInfo("America/New_York")
+    opening = datetime.fromisoformat(session).replace(hour=9, minute=0 if market == "KR" else 30, tzinfo=zone)
+    if published >= opening:
+        return False
+    title = text(row.get("title"))
+    subject = re.search(r"코스피|코스닥|증시|\bstocks?\b|\bshares\b|Nasdaq|Wall Street|S&P\s*500", title, re.I)
+    movement = re.search(r"반등|급등|급락|하락|상승|회복|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bfall|\bdeclin|\bslump|\bsell.?off", title, re.I)
+    return bool(subject and movement)
 
 
 def compact_holding_reference(value):
@@ -281,7 +356,7 @@ def korean_market_catalysts(news, session):
     for item in news:
         if (item.get("market") != "KR" or item.get("session_date") != session
                 or item.get("news_bucket") in {"next_session_news", "other_market_news"}
-                or is_preopen_outlook(item)):
+                or is_preopen_outlook(item) or is_preopen_price_recap(item)):
             continue
         title = text(item.get("title"))
         if not re.search(r"코스피|코스닥|한국\s*증시", title):
@@ -295,50 +370,61 @@ def korean_market_catalysts(news, session):
 
 
 def sector_related_news(ticker, session, news, *, sector_name=""):
-    """Session and exposure must both match; Korean competition is not a US wrap."""
-    patterns = {"SOXX": r"반도체|semiconductor|\bsoxx\b|\bsmh\b|AI[· ·주]",
-                "DRAM": r"메모리|\bdram\b|micron|마이크론",
-                "XLK": r"기술주|빅테크|tech stocks|technology|AI[· ·주]|\bxlk\b",
-                "IGV": r"소프트웨어|software|사이버|cyber|AI[· ·주]|\bigv\b",
-                "XLE": r"에너지주|energy (?:stocks|shares|sector)|\bxle\b",
-                "XLU": r"유틸리티|utilities|\bxlu\b",
-                "XLC": r"통신주|communication services|\bxlc\b"}
+    """Keep sector reports, common themes and other-market context distinct."""
+    ticker = text(ticker).upper()
     region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
-    pattern = patterns.get(ticker) or (re.escape(sector_name.removeprefix("한국 ").strip()) if sector_name else None)
-    if ticker == "396500.KS":
-        pattern = r"반도체|삼성전자|SK하이닉스|메모리"
+    topics = sector_news_topics(ticker, sector_name=sector_name)
+    patterns = [_SECTOR_NEWS_PROFILES[topic][1] for topic in topics]
+    if not patterns and sector_name:
+        patterns = [re.escape(sector_name.removeprefix("한국 ").strip())]
+    ai_exposure = bool(set(topics) & {"semiconductor", "memory", "technology", "software"})
     matched = []
     for item in news:
         title = text(item.get("title"))
-        if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)", title, re.I):
+        if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)|Chinese (?:shares|stocks)", title, re.I):
             continue
         if (not session or item.get("market") != region or item.get("session_date") != session
                 or item.get("news_bucket") in {"next_session_news", "other_market_news"}
-                or is_preopen_outlook(item)):
+                or is_preopen_outlook(item) or is_preopen_price_recap(item)):
             continue
+        # A wrongly tagged or hand-supplied row must not bypass market checks.
+        cross_market_recap = bool(region == "US" and item.get("retrospective_close_wrap")
+                                  and item.get("news_bucket") == "session_news"
+                                  and re.search(r"코스피|코스닥", title)
+                                  and re.search(r"(?:美|미국|뉴욕|Wall Street).{0,15}(?:AI|반도체|semiconductor).{0,30}(?:급락|selloff|slump)", title, re.I))
+        if (region == "US" and not cross_market_recap
+                and re.search(r"코스피|코스닥|한국\s*증시|국내\s*증시|삼전닉스|삼성전자|SK\s*하이닉스|CXMT|창신|한국 메모리|Korea.*(?:density|yield)", title, re.I)):
+            continue
+        if region == "KR" and re.search(r"(?:美|미국|뉴욕)\s*증시|\bWall Street\b|\bU\.?S\.?\s+stocks", title, re.I):
+            continue
+        published = stamp(first(item, "published_at", "published"))
+        if published:
+            zone = KST if region == "KR" else ZoneInfo("America/New_York")
+            local = published.astimezone(zone)
+            if local.date().isoformat() != session:
+                from stock_lab_core.today_news import _us_close_recap
+                close = datetime.fromisoformat(session).replace(hour=16, tzinfo=zone)
+                if region != "US" or not _us_close_recap(title, published, {"end": close.isoformat()}):
+                    continue
+            if item.get("news_bucket") == "current_session_news" and re.search(r"마감|\bclos(?:ed|ing)\b|\bmarket wrap\b", title, re.I):
+                continue
+        direct = any(re.search(pattern, title, re.I) for pattern in patterns)
+        theme = news_theme(title)
+        common_ai = ai_exposure and bool(theme or re.search(r"(?<![A-Za-z])AI(?![A-Za-z])|인공지능", title, re.I))
         if region == "KR":
-            direct = bool(pattern and re.search(pattern, title, re.I))
             market_context = bool(re.search(r"코스피|코스닥", title) and
-                                  (news_theme(title) or re.search(r"매도|매수|급락|반등", title)))
-            if direct or market_context:
-                matched.append(dict(item, ticker=ticker, market_context_only=not direct))
-            continue
-        if not pattern:
-            continue
-        if not re.search(pattern, title, re.I):
-            continue
-        recap = bool(re.search(r"美|미국|뉴욕|월가|Wall Street|Nasdaq|US |U\.S\.", title, re.I)
-                     and re.search(r"마감|급락|하락|매도|selloff|sell-off|close|stocks", title, re.I))
-        if re.search(r"CXMT|창신|한국 메모리|Korea.*(?:density|yield)", title, re.I):
-            continue
-        if ticker in {"XLK", "IGV"} and not recap and ticker.lower() not in title.lower():
-            continue
-        indirect = ((ticker == "IGV" and not re.search(r"소프트웨어|software|\bigv\b|사이버|cyber", title, re.I))
-                    or (ticker == "XLK" and not re.search(r"기술주|빅테크|tech stocks|technology|\bxlk\b", title, re.I))
-                    or (ticker == "SOXX" and not re.search(r"반도체|semiconductor|\bsoxx\b|\bsmh\b", title, re.I)))
-        if indirect and not recap:
-            continue
-        matched.append(dict(item, ticker=ticker, market_context_only=indirect))
+                                  (theme or re.search(r"매도|매수|급락|반등", title)))
+        else:
+            market_context = common_ai
+        # Financing headlines describe a shared AI investment background even
+        # when the title also names chips or technology shares.
+        financing_theme = bool(theme and re.search(r"신용|차입|자금조달|투자 불안|인프라", theme))
+        if direct or market_context:
+            indirect = cross_market_recap or bool(item.get("market_context_only")) or not direct or (common_ai and financing_theme)
+            matched.append(dict(item, ticker=ticker, market_context_only=indirect,
+                                news_relation="related_cross_market" if cross_market_recap else "market_common_theme" if indirect else "sector_report",
+                                sector_news_topics=list(topics),
+                                exposure_theme_context=common_ai and region == "US"))
     seen = set()
     unique = []
     for item in sorted(matched, key=lambda item: (bool(item.get("market_context_only")),

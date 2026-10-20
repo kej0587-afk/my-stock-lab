@@ -275,10 +275,9 @@ def sector_evidence(row, macro_data, news, *, observations=None):
     rate_bp = number(rate.get("day_change_bp"))
     oil = (macro_data or {}).get("유가", {})
     oil_ret = number(oil.get("day_ret"))
-    reading = "직접 원인 자료 미연결"
+    reading = ""
     if ticker == "XLE" and oil_ret is not None and oil.get("as_of") == date and ret is not None:
-        reading = (f"동일일 WTI {oil_ret * 100:+.2f}%와 업종이 " + ("같은 방향" if oil_ret * ret > 0 else "다른 방향") +
-                   "; 에너지 가격 경로를 점검하되 선물·주식 수익률만으로 업종 이익 기여를 확정하지 않습니다")
+        reading = f"동일일 WTI {oil_ret * 100:+.2f}%와 업종이 " + ("같은 방향" if oil_ret * ret > 0 else "다른 방향")
     elif ticker in {"XLU", "XLK", "XLC"} and rate_bp is not None and rate.get("as_of") == date and ret is not None:
         reading = f"동일일 10Y {rate_bp:+.2f}bp와 업종 {ret * 100:+.2f}%"
         if abs(rate_bp) < 5:
@@ -291,31 +290,37 @@ def sector_evidence(row, macro_data, news, *, observations=None):
             reading += "; 단순한 금리-주가 역방향 설명과 어긋나므로 다른 요인을 확인해야 함"
         if "할인율 부담" in reading:
             reading += f" [연준 할인율 설명]({FED_VALUATIONS})"
-    region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
     excess, excess_text = sector_market_excess(row, observations)
-    related = [item for item in news if text(item.get("ticker")).upper() == ticker
-               and item.get("market") == region and item.get("session_date") == date
-               and item.get("news_bucket") not in {"next_session_news", "other_market_news"}]
-    unconfirmed = "해당 업종 움직임의 개별 원인·기여도는 확정 자료 없음"
+    from stock_lab_core.report_presentation import news_theme, sector_related_news
+    related = sector_related_news(ticker, date, [item for item in news if text(item.get("ticker")).upper() == ticker],
+                                  sector_name=text(first(row, "섹터", "종목명")))
+    unconfirmed = "개별 요인의 인과 기여"
     direct = [item for item in related if not item.get("market_context_only")]
+    unexplained_excess = ""
+    background = ""
     if excess is not None and round(abs(excess), 12) < SECTOR_EXCESS_CONTEXT_BAND:
-        reading = "시장 공통 맥락: 시장 대비 초과폭이 보고용 구분 기준 1.00%p 미만이며 개별 원인·기여도는 미확인"
+        reading = (reading + " · " if reading else "") + "시장 공통 맥락: 시장과 비슷한 등락(초과폭 1.00%p 미만)"
     elif excess is not None and not direct:
-        reading = "개별 원인 미확인: 시장 대비 초과폭이 1.00%p 이상이며 직접 업종 기사 미연결; 시장 공통 기사로 초과 움직임의 원인을 설명하지 않습니다"
-        related = []
+        unexplained_excess = f"시장 대비 {excess * 100:+.2f}%p 초과 움직임의 개별 원인 미확인"
+        # Keep relevant AI financing background visible for AI exposures. A
+        # generic index article cannot explain an unrelated sector's excess.
+        related = [item for item in related if item.get("exposure_theme_context")]
     if related:
         related = direct or related
         item = related[0]
-        if reading == "직접 원인 자료 미연결":
-            reading = ""
-        from stock_lab_core.report_presentation import news_theme
-        topic = ((news_theme(text(item.get("title"))) + "(기사 주장)") if news_theme(text(item.get("title"))) else
-                 "AI 관련 시장 움직임" if re.search(r"AI|인공지능", text(item.get("title")), re.I) else "해당 업종 움직임")
+        topic = news_theme(text(item.get("title"))) or "업종 관련 보도"
         scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
-        reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
-                    + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
+        if item.get("news_relation") == "related_cross_market":
+            scope = "다른 시장과 연결한 회고 맥락, 해당 업종의 직접 원인 아님"
+        background = f"보도 배경 · {topic} · 제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문"))
+    if not reading and ret is not None:
+        reading = "업종 상승 관측" if ret > 0 else "업종 하락 관측" if ret < 0 else "업종 보합 관측"
+    parts = [part for part in (reading, background, unexplained_excess) if part]
+    if not parts:
+        parts = ["업종 일간 수익률 미수집"]
     return {"fact": "사실: " + fact + f" [{kind}]",
             "daily": "사실: " + daily + f" [{kind}]", "medium": " · ".join(medium) or "중기 자료 미연결",
             "excess": excess_text,
-            "reading": "해석(추정): " + reading,
+            "reading": "해석(추정): " + " · ".join(parts),
+            "reported_background": background, "unexplained_excess": unexplained_excess,
             "unconfirmed": "미확인: " + unconfirmed}

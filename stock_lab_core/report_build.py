@@ -15,6 +15,7 @@ _RENDER_MODULES = (
     "report_holdings", "report_session", "today_news",
     "report_history", "report_prices", "report_context", "report_live", "report_history_store",
     "report_scenario",
+    "report_comparison", "report_market_summary", "report_view",
     "economic_releases", "economic_cache", "economic_bulletins",
 )
 

@@ -104,7 +104,9 @@ def test_common_ai_theme_from_other_market_date_does_not_explain_us_sector():
     linked = sector_related_news("SOXX", "2026-10-16", articles)
     assert not linked
     result = sector_evidence({"Ticker": "SOXX", "기준일": "2026-10-16", "1일수익률": -.04}, {}, linked)
-    assert "직접 원인 자료 미연결" in result["reading"]
+    assert "업종 하락 관측" in result["reading"]
+    assert result["reported_background"] == ""
+    assert "기여" in result["unconfirmed"]
     assert "AI 투자 불안" not in result["reading"]
     assert "2026-10-16" in result["fact"]
 

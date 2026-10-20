@@ -29153,7 +29153,8 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
 
     saved_report = str(st.session_state.get("today_market_memo_text", "") or "")
     if "## 기준일" in saved_report:
-        st.markdown(saved_report)
+        from stock_lab_core.report_view import render_market_report
+        render_market_report(saved_report)
         st.download_button("리포트 다운로드", saved_report.encode("utf-8"),
                            file_name="stock_lab_market_report.md", mime="text/markdown",
                            key="today_market_report_download", icon=":material/download:")

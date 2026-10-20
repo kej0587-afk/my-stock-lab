@@ -14,6 +14,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.result_cache import cache_result
 
 register_loaded_source(__name__, __file__)
 
@@ -396,11 +397,20 @@ def _us_close_recap(title, published, window):
     """Allow an explicit US recap until the next weekday open, not new causes."""
     if not window or not re.search(r"美|미국|뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I):
         return False
-    if not re.search(r"마감|급락 쇼크|\bclos(?:e[sd]?|ing)\b|market wrap|(?:美|미국|뉴욕)\s*증시\s*덮친.{0,25}AI\s*차입\s*우려", title, re.I):
-        return False
     if re.search(r"시간외|장후|after.hours|post.close|선물|예정|다음주", title, re.I):
         return False
+    from stock_lab_core.report_presentation import is_preopen_outlook
+    if is_preopen_outlook({"title": title, "market": "US"}):
+        return False
     close = datetime.fromisoformat(window["end"])
+    explicit = bool(re.search(r"마감|급락 쇼크|\bclos(?:e[sd]?|ing)\b|market wrap|(?:美|미국|뉴욕)\s*증시\s*덮친.{0,25}AI\s*차입\s*우려", title, re.I))
+    # A regular-session price recap need not contain the word 'close'. Only
+    # accept such titles immediately after this supplied, confirmed close.
+    near_close = close < published <= close + timedelta(hours=2)
+    market_prices = bool(re.search(r"\bstocks?\b|\bshares\b|Nasdaq|Wall Street|나스닥|증시", title, re.I)
+                         and re.search(r"반등|급등|급락|하락|상승|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
+    if not explicit and not (near_close and market_prices):
+        return False
     next_day = close.date() + timedelta(days=1)
     while next_day.weekday() >= 5:
         next_day += timedelta(days=1)
@@ -413,7 +423,9 @@ _HEADLINE_MARKETS = {
     "CN": re.compile(r"中\s*증시|중국\s*증시|Chinese\s+(?:shares|stocks)", re.I),
     "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)", re.I),
     "US": re.compile(r"(?:미국|뉴욕|美)\s*증시|나스닥|\bNasdaq\b|\bWall Street\b|"
-                     r"S&P\s*500|\bU\.?S\.?\s+(?:stocks?|equities|stock market)\b", re.I),
+                     r"S&P\s*500|\bU\.?S\.?\s+(?:(?:energy|consumer|healthcare|health care|biotech|technology|tech|software|"
+                     r"semiconductor|chip|memory|communication services|utilities|bank|financial|industrial)\s+)?"
+                     r"(?:stocks?|shares?|equities|stock market)\b|\bCoreWeave\b|코어위브", re.I),
 }
 
 
@@ -430,7 +442,9 @@ def _resolve_query_news_market(raw, windows):
         title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
     published = _news_timestamp(row.get("published_at") or row.get("published"))
     markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
-    if published and _us_close_recap(title, published, windows.get("US")):
+    if re.match(r"^Asia(?:n)?(?:[- ]Pacific)?\s+(?:shares|stocks|markets)\b", title, re.I):
+        row.update(market="ASIA", market_basis="explicit_headline_subject")
+    elif published and _us_close_recap(title, published, windows.get("US")):
         row.update(market="US", market_basis="explicit_us_recap")
     elif len(markets) == 1:
         row.update(market=markets[0], market_basis="explicit_headline_market")
@@ -481,7 +495,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
-        if market in {"JP", "CN"}:
+        if market in {"JP", "CN", "ASIA"}:
             published = _news_timestamp(raw.get("published_at") or raw.get("published"))
             if published and now - timedelta(days=7) <= published <= now:
                 result["other_market_news"].append(dict(raw, market=market, published_at=published.isoformat(),
@@ -498,13 +512,18 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         live = current_by_market.get(market)
         if live and datetime.fromisoformat(live["start"]) < published <= now:
             title = str(raw.get("title") or raw.get("제목") or "")
+            from stock_lab_core.report_presentation import news_theme, sector_news_topics
+            targeted = set(raw.get("query_topics") or ()) & set(sector_news_topics("", sector_name=title))
             if (market == "US" and raw.get("market_basis") == "search_query_only"
+                    and not targeted and not news_theme(title)
                     and not re.search(r"\b(?:AI|chip|tech|semiconductor)\s+(?:stocks|shares)|반도체|AI.{0,8}(?:주|투자)", title, re.I)):
                 rejected["미국 진행 세션과 직접 관련 없는 검색 결과"] += 1
                 continue
             # A Friday recap retrieved during Monday's live session still
             # belongs to Friday, when that closed session was supplied.
-            prior_wrap = bool(_CLOSE_WRAP.search(title)) and published < datetime.fromisoformat(live["open_at"])
+            # A close recap cannot describe a session that is still open,
+            # including a previous close republished after today's opening bell.
+            prior_wrap = bool(_CLOSE_WRAP.search(title)) or (market == "US" and _us_close_recap(title, published, by_market.get("US")))
             if not prior_wrap:
                 row = dict(raw, market=market, published_at=published.isoformat(),
                            session_date=live["date"], news_bucket="current_session_news",
@@ -562,7 +581,20 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
     return result
 
 
-def _session_query_specs(windows, categories, now):
+def _session_query_specs(windows, categories, now, *, sector_rows=(), held_exposures=()):
+    from stock_lab_core.report_presentation import sector_news_query, sector_news_topics
+
+    topics = {"KR": [], "US": []}
+    for collection in (held_exposures, sector_rows):
+        if hasattr(collection, "to_dict"):
+            collection = collection.to_dict("records")
+        for row in collection or ():
+            ticker = str(row.get("Ticker") or row.get("ticker") or row.get("티커") or "").strip().upper()
+            market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+            name = str(row.get("섹터") or row.get("종목명") or row.get("name") or "")
+            for topic in sector_news_topics(ticker, sector_name=name):
+                if topic not in topics[market]:
+                    topics[market].append(topic)
     requested = tuple(dict.fromkeys(categories or ()))
     available = {plan["category"]: plan["query"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     selected = [(category, available[category]) for category in requested if category in available][:3]
@@ -594,6 +626,19 @@ def _session_query_specs(windows, categories, now):
                     market_plans = [("장중 시황", "Wall Street stocks"),
                                     ("반도체·AI", "AI stocks"),
                                     ("반도체·AI", "semiconductor stocks"), *market_plans]
+            if topics[market]:
+                # Packs share a request, leaving every market/session a turn
+                # within the global budget even when many exposures are held.
+                pack_size = max(3, (len(topics[market]) + 2) // 3)
+                packs = [topics[market][index:index + pack_size] for index in range(0, len(topics[market]), pack_size)]
+                common = ('(AI OR CoreWeave OR neocloud) (credit OR debt OR financing OR rebound) OR "Treasury yields" OR "oil prices"'
+                          if market == "US" else '"AI 신용" OR "AI 차입" OR "외국인 기관" OR 금리 OR 환율')
+                market_plans = [("장중 시황" if window.get("is_closed") is False else "마감 시황",
+                                 "Wall Street stocks" if market == "US" and window.get("is_closed") is False
+                                 else "미국증시 마감" if market == "US" else "코스피 마감"),
+                                ("시장 공통 배경", common),
+                                *[("섹터:" + ",".join(pack), " OR ".join("(" + sector_news_query(topic, market) + ")" for topic in pack))
+                                  for pack in packs], *selected]
             for category, query in market_plans:
                 terms = market_spec["wrap"] if query is None else query
                 # Google date predicates have calendar precision. Pad boundaries
@@ -602,11 +647,16 @@ def _session_query_specs(windows, categories, now):
                 before = (upper.astimezone(ZoneInfo(window["timezone"])).date() + timedelta(days=1)).isoformat()
                 korean_wrap = terms in {"코스피 마감", "미국증시 마감"}
                 active_direct = window.get("is_closed") is False and terms in {"Wall Street stocks", "AI stocks", "semiconductor stocks"}
-                query_text = terms if korean_wrap or active_direct else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
+                if category.startswith("섹터:") or category == "시장 공통 배경":
+                    subject = '(한국 OR 국내 OR 코스피 OR 코스닥)' if market == "KR" else '(US OR "U.S." OR "Wall Street")'
+                    query_text = f"{subject} ({terms})"
+                else:
+                    query_text = terms if korean_wrap or active_direct else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
                 query_text += f" after:{after} before:{before}"
                 url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query_text})
                 locale = "hl=ko&gl=KR&ceid=KR:ko" if korean_wrap else market_spec["locale"]
-                specs.append({"market": market, "category": category, "url": url + "&" + locale})
+                specs.append({"market": market, "category": category, "url": url + "&" + locale,
+                              "query_topics": category.removeprefix("섹터:").split(",") if category.startswith("섹터:") else []})
         groups.append(specs)
     # Give every explicit window a turn before spending the remaining budget
     # on extra categories or the historical/latest split for one market.
@@ -615,6 +665,8 @@ def _session_query_specs(windows, categories, now):
 
 
 def _fetch_session_rss(spec):
+    from stock_lab_core.report_presentation import sector_news_topics
+
     rows = []
     try:
         request = urllib.request.Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 StockLab"})
@@ -628,30 +680,40 @@ def _fetch_session_rss(spec):
         for item in root.findall("./channel/item")[:80]:
             pub_dt = market_story_pub_dt(item)
             source = item.find("source")
+            title = html.unescape(str(item.findtext("title", "") or "").strip())
+            matched_topics = set(spec.get("query_topics") or ()) & set(sector_news_topics("", sector_name=title))
+            category = "섹터:" + ",".join(sorted(matched_topics)) if matched_topics else spec["category"]
             rows.append({
-                "title": html.unescape(str(item.findtext("title", "") or "").strip()),
+                "title": title,
                 "link": str(item.findtext("link", "") or "").strip(),
                 "publisher": html.unescape(str(item.findtext("source", "") or "").strip()),
                 "publisher_url": source.attrib.get("url", "") if source is not None else "",
                 "published_at": pub_dt.isoformat() if pub_dt else "",
                 "published": format_market_story_pub_dt(pub_dt),
-                "source": "Google News RSS", "market_category": spec["category"],
+                "source": "Google News RSS", "market_category": category,
                 "market": spec["market"],
                 "query_market": spec["market"], "market_basis": "search_query_only",
+                "query_topics": list(spec.get("query_topics") or ()),
             })
         return rows, ""
     except Exception:
         return [], f"{spec['market']}: RSS 수집 실패"
 
 
+@cache_result(ttl=300, failure_ttl=30, is_success=lambda result: bool(result[0]) and not result[1])
+def _cached_session_rss(spec):
+    return _fetch_session_rss(spec)
+
+
 def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
-                              current_sessions=None) -> dict:
+                              current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False) -> dict:
     """Bounded market-specific RSS retrieval plus source/event curation.
 
     Returns the same payload as partition_session_market_news. Queries include
     absolute after/before dates, with separate historical and latest retrieval.
     At most 16 requests run with four workers, five-second socket timeouts and
-    512 KiB responses. At most three requested categories supplement close wraps.
+    512 KiB responses. Exposure topic packs share the budget with categories.
+    Cached retrieval is opt-in; time partitioning always uses the supplied now.
     Explicit market headlines correct query tags before cross-query deduplication.
     Ambiguous cross-market results remain excluded. No sending/storage.
     current_sessions is optional and has the same contract as the pure partitioner.
@@ -663,14 +725,15 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     windows, _ = _session_news_windows(sessions, now)
     current_windows, _ = _current_news_windows(current_sessions, now)
     query_windows = current_windows + windows
-    specs = _session_query_specs(query_windows, categories, now)
+    specs = _session_query_specs(query_windows, categories, now,
+                                 sector_rows=sector_rows, held_exposures=held_exposures)
     try:
         per_category = max(1, min(int(per_category), 5))
     except (TypeError, ValueError):
         per_category = 3
     rows, failures = [], Counter()
     with ThreadPoolExecutor(max_workers=4) as executor:
-        for candidates, error in executor.map(_fetch_session_rss, specs):
+        for candidates, error in executor.map(_cached_session_rss if use_cache else _fetch_session_rss, specs):
             rows.extend(candidates)
             if error:
                 failures[error] += 1
@@ -712,6 +775,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             if not any(row["market"] == market for row in accepted):
                 result["missing"].append(f"{market}: {bucket} 출처·날짜·중복 검증 후 채택 뉴스 없음")
     result["missing"].extend(f"{reason}: {count}개 쿼리" for reason, count in failures.items())
+    result["news_retrieval"] = {"query_count": len(specs), "query_limit": _SESSION_QUERY_LIMIT,
+                                "max_workers": 4, "cached": bool(use_cache),
+                                "queried_topics": sorted({topic for spec in specs for topic in spec.get("query_topics", ())})}
     available = {plan["category"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     if any(category not in available for category in categories or ()):
         result["missing"].append("알 수 없는 뉴스 카테고리 제외")

@@ -17,14 +17,14 @@ SOURCE_NAMES = (
     "매일경제", "서울경제", "서울파이낸스", "조선비즈", "조선일보", "한겨레",
     "경향신문", "머니투데이", "아시아경제", "이데일리", "뉴시스", "cnbc", "bloomberg",
     "financial times", "wall street journal", "yahoo finance", "bls", "federal reserve",
-    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경",
+    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경", "axios",
 )
 SOURCE_DOMAINS = (
     "reuters.com", "apnews.com", "yna.co.kr", "yonhapnewstv.co.kr", "einfomax.co.kr",
     "hankyung.com", "mk.co.kr", "sedaily.com", "chosun.com", "edaily.co.kr",
     "mt.co.kr", "asiae.co.kr", "newsis.com", "cnbc.com", "bloomberg.com", "ft.com",
     "wsj.com", "finance.yahoo.com", "bls.gov", "federalreserve.gov", "bok.or.kr",
-    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com",
+    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com",
 )
 EVENT_CLUSTERS = (
     ("cxmt", ("cxmt", "창신", "창신메모리")),
@@ -33,7 +33,7 @@ EVENT_CLUSTERS = (
 )
 MARKET_TERMS = re.compile(
     r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|"
-    r"\b(stock|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductor|inflation|tariff|treasury|ceasefire)\b",
+    r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire)\b",
     re.IGNORECASE,
 )
 
@@ -140,6 +140,8 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False):
             "coinmarketcap", "tmgm", "prnewswire", "businesswire", "보도자료", "press release",
             "price today", "live price", "to usd", "rbc", "commerzbank", "일일 운세",
         )):
+            continue
+        if re.search(r"계좌.{0,16}(?:만들|개설).{0,25}(?:받으세요|이벤트|혜택)|주식\s*받으세요", title):
             continue
         if not (any(name in publisher.lower() for name in SOURCE_NAMES) or
                 any(domain == item or domain.endswith("." + item) for item in SOURCE_DOMAINS)):
@@ -362,60 +364,10 @@ def is_held(row):
 
 
 def comparison_lines(current, previous, *, previous_date="", current_date="", same_session=False, previous_run_at=""):
-    valid = previous_date == current_date if same_session else previous_date < current_date
-    if not previous_date or not current_date or not valid:
-        return ["전일 비교 없음: 이전 거래일의 저장된 점검이 없습니다."]
-    old = {text(first(row, "티커", "ticker")): row for row in records(previous) if text(first(row, "티커", "ticker"))}
-    current_rows = records(current)
-    keys = {text(first(row, "티커", "ticker")) for row in current_rows if text(first(row, "티커", "ticker"))}
-    changes = {"held": [], "watch": []}
-    compared = {"held": 0, "watch": 0}
-    def label(row, fallback=None):
-        ticker = text(first(row, "티커", "ticker"))
-        name = text(first(row, "종목명", "name", "자산명")) or text(first(fallback or {}, "종목명", "name", "자산명"))
-        return f"{name}({ticker})" if name and name != ticker else f"{ticker}(종목명 미저장)"
+    from stock_lab_core.report_comparison import history_comparison_lines
 
-    def reasons(row):
-        value = row.get("저장사유", holding_reasons(row))
-        return sorted(text(item) for item in value) if isinstance(value, (list, tuple)) else [text(value)]
-    for row in current_rows:
-        ticker = text(first(row, "티커", "ticker"))
-        if ticker not in old:
-            continue
-        before = text(first(old[ticker], "최종읽기", "🔥기술적 타점", "판정코드"))
-        after = text(first(row, "최종읽기", "🔥기술적 타점", "판정코드"))
-        if not before or not after:
-            continue
-        group = "held" if is_held(row) else "watch"
-        compared[group] += 1
-        old_reasons = reasons(old[ticker])
-        new_reasons = reasons(row)
-        old_gate = text(first(old[ticker], "게이트상태", "gate_state"))
-        new_gate = text(first(row, "게이트상태", "gate_state"))
-        if (before, old_reasons, old_gate) != (after, new_reasons, new_gate):
-            changes[group].append(f"{label(row, old[ticker])}: {before} / {', '.join(old_reasons)} → {after} / {', '.join(new_reasons)}" +
-                           (f" (게이트 {old_gate or '미제공'} → {new_gate or '미제공'})" if old_gate != new_gate else ""))
-    prefix = f"같은 거래일 직전 생성({previous_run_at or '시각 미확보'})" if same_session else f"이전 점검({previous_date})"
-    details = [prefix + " 대비:"]
-    for group, heading in (("held", "보유"), ("watch", "관심·미보유")):
-        total = sum(is_held(row) == (group == "held") for row in current_rows)
-        change = changes[group]
-        status = f"변경 {len(change)}개" if change else "변경 없음" if compared[group] else "비교 가능한 공통 종목 판정 없음"
-        details.append(f"- {heading} {total}개: {status} · 비교 {compared[group]}개 / 미비교 {total - compared[group]}개")
-        details.extend("  " + item for item in change[:10])
-        if len(change) > 10:
-            details.append(f"  나머지 변경 {len(change) - 10}개는 검토용 CSV 확인")
-    if not any(changes.values()) and any(compared.values()):
-        details.append("- 공통 종목 판정 변경 없음")
-    current_map = {text(first(row, "티커", "ticker")): row for row in current_rows}
-    if keys - old.keys():
-        added = sorted(keys - old.keys())
-        details.append(f"- 점검 입력 목록 추가 {len(added)}개: " + ", ".join(label(current_map[t]) for t in added))
-    if old.keys() - keys:
-        removed = sorted(old.keys() - keys)
-        details.append(f"- 점검 입력 목록 이탈 {len(removed)}개: " + ", ".join(label(old[t]) for t in removed)
-                       + " · 보고서 상위 10개 변화가 아닌 입력 목록 차이이며 관심등록 삭제 여부는 미확인")
-    return details
+    return history_comparison_lines(current, [{"previous": previous, "previous_date": previous_date,
+        "current_date": current_date, "same_session": same_session, "previous_run_at": previous_run_at}])
 
 
 def news_article_key(row):
@@ -424,10 +376,12 @@ def news_article_key(row):
 
 def participant_news_rows(news, session_date):
     """Keep distinct participant stories; do not infer net flows from titles."""
+    from stock_lab_core.report_presentation import is_preopen_outlook
+
     selected, seen_titles, seen_links = [], set(), set()
     for row in news:
         title = text(row.get("title"))
-        if row.get("market") != "KR" or row.get("session_date") != session_date:
+        if row.get("market") != "KR" or row.get("session_date") != session_date or is_preopen_outlook(row):
             continue
         if not re.search(r"外人|외국인|외인|기관|연기금|개인", title) or not re.search(r"매수|매도|수급", title):
             continue
@@ -464,7 +418,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     context = context or {}
     from stock_lab_core.report_analysis import comparison_metrics, economic_reaction_text, economic_story_dates, economic_story_lines, recent_economic_releases, outlier_check, sector_evidence
     from stock_lab_core.report_holdings import holding_estimate, completed_scenario_comparison, hedge_policy_line, hedge_source_lines
-    from stock_lab_core.report_presentation import account_estimate, account_metrics, account_headline, account_live_estimate, candidate_fields, compact_holding_reference, is_preopen_outlook, kst_time, market_cause_candidates, sector_related_news, korean_market_catalysts
+    from stock_lab_core.report_presentation import account_estimate, account_metrics, account_headline, account_live_estimate, candidate_fields, compact_holding_reference, is_preopen_outlook, is_preopen_price_recap, kst_time, market_cause_candidates, sector_related_news, korean_market_catalysts
     from stock_lab_core.report_session import report_mode, market_session_states, kst_now, MODE_LABELS, next_check
     from stock_lab_core.economic_cache import collection_status
     from stock_lab_core.report_scenario import latest_futures_line, scenario_observation_line
@@ -478,6 +432,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         news = [row for row in news if not is_preopen_outlook(row)]
     else:
         news = [dict(row, news_timing="장전전망(결과와 다름)") if is_preopen_outlook(row) else row for row in news]
+    story_news = [row for row in news if not is_preopen_outlook(row) and not is_preopen_price_recap(row)
+                  and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
     scenario_context = context.get("scenario_observations") or context.get("scenario_context")
     futures_line = latest_futures_line(scenario_context)
     missing = list(context.get("missing", []))
@@ -497,72 +453,41 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     if kr and us:
         lines.append(f"  비교하는 거래일: 한국 {kr} / 미국 {us}. 동시 거래 결과가 아닙니다.")
     lines.append("진행 중 세션의 장중 수치는 확정 종가 표와 별도이며 해당 세션 종가가 아닙니다.")
-    lines.extend(["", "## 판정 이력 비교"])
-    lines.extend(comparison_lines(summary_rows, context.get("previous_summary"),
-                                  previous_date=context.get("previous_date", ""),
-                                  current_date=context.get("summary_date", "")))
+    from stock_lab_core.report_comparison import history_comparison_lines
+    history_baselines = [{"previous": context.get("previous_summary"), "previous_date": context.get("previous_date", ""),
+                          "current_date": context.get("summary_date", "")}]
     if context.get("previous_run_summary"):
-        lines.extend(comparison_lines(summary_rows, context["previous_run_summary"],
-                     previous_date=context.get("previous_run_date", ""),
-                     current_date=context.get("summary_date", ""), same_session=True,
-                     previous_run_at=context.get("previous_run_at", "")))
-    elif not context.get("previous_summary"):
-        lines.append("같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.")
+        history_baselines.append({"previous": context["previous_run_summary"], "previous_date": context.get("previous_run_date", ""),
+                     "current_date": context.get("summary_date", ""), "same_session": True,
+                     "previous_run_at": context.get("previous_run_at", "")})
+    history_lines = ["", "## 판정 이력 비교", *history_comparison_lines(summary_rows, history_baselines)]
+    if not context.get("previous_run_summary") and not context.get("previous_summary"):
+        history_lines.append("같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.")
     if context.get("history_status"):
-        lines.append(context["history_status"] + ("" if context.get("history_durable") else " · 로컬 저장은 재배포 시 초기화될 수 있습니다."))
+        history_lines.extend(["", context["history_status"] + ("" if context.get("history_durable") else " · 로컬 저장은 재배포 시 초기화될 수 있습니다.")])
     index_rows = [(ticker, observations[ticker]) for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")
                   if observations.get(ticker, {}).get("return") is not None]
     names = {"^KS11": "코스피", "^KQ11": "코스닥", "^GSPC": "S&P500", "^IXIC": "나스닥", "^DJI": "다우"}
     conclusion = ", ".join(f"{names[t]} {_pct(row['return'])}({row.get('date', '미수집')} 확정 종가)" for t, row in index_rows) or "종가 자료 부족으로 시장 방향 결론을 보류합니다"
-    us_returns = [row["return"] for ticker, row in index_rows if ticker in {"^GSPC", "^IXIC", "^DJI"}]
-    kr_returns = [row["return"] for ticker, row in index_rows if ticker in {"^KS11", "^KQ11"}]
-    headline = ("미국 주요지수 동반 하락" if len(us_returns) == 3 and max(us_returns) < 0 else
-                "미국 주요지수 동반 상승" if len(us_returns) == 3 and min(us_returns) > 0 else "주요지수 혼조/자료 부족")
-    if kr_returns and min(kr_returns) > 0 and us_returns and max(us_returns) < 0:
-        headline += ", 앞서 마감한 한국 반등과 시차가 있어 한국장 반영을 별도로 확인"
     held = [row for row in records(summary_rows) if is_held(row)]
     portfolio = account_metrics(held, observations, sessions) if held else {}
     sector_facts = [f"{name} {_pct(observations[t]['return'])}({us} 확정 종가)" for t, name in (("SOXX", "미국 반도체"), ("IGV", "소프트웨어"))
                     if number(observations.get(t, {}).get("return")) is not None and observations[t].get("date") == us]
-    if sector_facts:
-        headline = " · ".join(sector_facts)
     live = context.get("intraday_prices", {})
     current_kr = live.get("^KS11", {})
     kr_close = observations.get("^KS11", {})
-    headline_kr = {}
-    if mode != "intraday" and kr_close.get("date") == kr and number(kr_close.get("return")) is not None:
-        headline_kr = kr_close
-        label = "당일" if kr == now.date().isoformat() else "최신 확정"
-        headline += f" / 코스피 {label} 종가 {_pct(kr_close['return'])}({kr_close['date']})"
-    elif mode == "intraday" and current_kr.get("date") == now.date().isoformat() and number(current_kr.get("return")) is not None:
-        headline_kr = current_kr
-        headline += f" / 코스피 당일 {_pct(current_kr['return'])}({kst_time(current_kr.get('retrieved_at'))} 조회)"
-    else:
-        headline += " / 한국 당일 반영 미확인(직전 종가와 구분)"
-    kr_catalysts = korean_market_catalysts(news, headline_kr.get("date"))
-    if kr_catalysts and number(headline_kr.get("return")) is not None and headline_kr["return"] < 0:
-        headline += " · 배경 보도(제목 기준·기사 주장): " + kr_catalysts
-    live_semis = [f"{t} {_pct(live[t]['return'])}" for t in ("SOXX", "SOXL", "RAM") if number(live.get(t, {}).get("return")) is not None]
-    if states["US"]["phase"] == "intraday" and live_semis:
-        headline += f" / 미국 {states['US']['active_date']} 장중(확정 아님): " + ", ".join(live_semis)
-    if portfolio and not portfolio.get("error"):
-        headline += " / " + account_headline(portfolio, sessions, mode)
-    if states["US"]["phase"] == "intraday" and live_semis:
-        headline = (account_headline(portfolio, sessions, mode) + " / " if portfolio else "")
-        if number(kr_close.get("return")) is not None:
-            headline += f"코스피 {_pct(kr_close['return'])}({kr_close.get('date', '미확인')} 확정 종가) / "
-        headline += f"미국 {states['US']['active_date']} 장중(확정 아님): " + ", ".join(live_semis)
-    if states["US"]["phase"] == "preopen":
-        headline += " / 미국 개장 전 · " + futures_line
-    lines.extend(["", "## 한 줄 결론", headline + ".", "", "## 오늘의 시장 스토리"])
+    from stock_lab_core.report_market_summary import market_summary, evidence_table
+    synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
+    lines.extend(["", "## 한 줄 결론", synthesis["headline"] + ".", "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
+    lines.extend(["", *evidence_table(synthesis), ""])
     if outlook_count:
-        lines.append(f"한국 장전전망 {outlook_count}건은 마감 결과 설명에서 제외했습니다(장전전망은 실제 결과와 다름).")
+        lines.append(f"장전전망 {outlook_count}건은 마감 결과 설명에서 제외했습니다(장전전망은 실제 결과와 다름).")
     kr_summary = "기준일 지수 미연결"
     if number(kr_close.get("return")) is not None:
         period_label = "당일" if kr_close.get("date") == now.date().isoformat() else "직전"
         kr_summary = f"{period_label} 코스피 {_pct(kr_close['return'])}, 5D {_pct(kr_close.get('return_5d'))} ({kr_close.get('date', '미수집')} 확정 종가)"
-    reversal = next((row for row in news if row.get("market") == "KR" and row.get("session_date") == kr
+    reversal = next((row for row in story_news if row.get("market") == "KR" and row.get("session_date") == kr
                      and re.search(r"반전|반등 성공|급락 출발", text(row.get("title")))), None)
     participant_rows = participant_news_rows(news, kr)
     used_story_news = {news_article_key(row) for row in participant_rows[:3]}
@@ -605,7 +530,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         live_items = [f"{names.get(t, t)} {_pct(live[t]['return'])} ({kst_time(live[t].get('as_of', live[t].get('retrieved_at')))})"
                       for t in ("^IXIC", "SOXX", "SOXL", "RAM") if number(live.get(t, {}).get("return")) is not None]
         lines.append(f"- 사실: 미국 {states['US']['active_date']} 장중 진행·확정 아님: " + (" / ".join(live_items) or "시각 확인 가능한 시세 미수집") + ". [근거: 정규장 5분봉·직전 확정 종가]")
-        rebound = next((r for r in news if r.get("market") == "US" and r.get("session_date") == states["US"]["active_date"]
+        rebound = next((r for r in story_news if r.get("market") == "US" and r.get("session_date") == states["US"]["active_date"]
+                        and r.get("news_bucket") == "current_session_news" and not is_preopen_outlook(r)
                         and re.search(r"반등|회복|rebound|recover|bounce", text(r.get("title")), re.I)), None)
         if rebound:
             lines.append("- 장중 배경(기사 주장·인과 미확정): " + korean_headline_reading(rebound) + " · " + story_news_citation(rebound))
@@ -648,7 +574,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                    for t in ("^KS11", "^KQ11") if live.get(t, {}).get("date") == now.date().isoformat()
                    and number(live[t].get("return")) is not None]
         lines.append("- 개장 후 당일 등락: " + (" / ".join(actuals) or "미수집. 위 과거 종가 등락을 오늘의 움직임으로 해석하지 않습니다."))
-    unused_news = [row for row in news if news_article_key(row) not in used_story_news]
+    unused_news = [row for row in story_news if news_article_key(row) not in used_story_news]
     cause_row = next((row for row in unused_news if reported_cause(row, sessions)), None)
     cause = reported_cause(cause_row, sessions) if cause_row else ""
     releases = records(context.get("economic_releases"))
@@ -667,7 +593,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     elif not news:
         lines.append("- 미확인: 가격 움직임의 원인 자료가 없습니다. 확인되지 않은 원인을 채우지 않습니다.")
         missing.append("허용 출처 핵심 뉴스")
-    kr_context = next((row for row in sorted(news, key=lambda row: not bool(re.search(r"전날|직전|거래일 만", row["title"]))) if news_article_key(row) not in used_story_news and row.get("market") == "KR" and
+    kr_context = next((row for row in sorted(story_news, key=lambda row: not bool(re.search(r"전날|직전|거래일 만", row["title"]))) if news_article_key(row) not in used_story_news and row.get("market") == "KR" and
                        re.search(r"전날|직전|거래일 만|순매수 전환", row["title"])), None)
     if kr_context:
         lines.append("- 한국 맥락 보도(기사 주장): " + story_news_citation(kr_context))
@@ -960,12 +886,14 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     for index, row in enumerate(additional_news[:5], 1):
         timing = " · 마감 후 회고(인과 확정 아님)" if row.get("retrospective_close_wrap") else ""
         timing_label = row.get("news_timing")
+        if is_preopen_price_recap(row):
+            timing_label = "개장 전 가격회고·대상 거래일 미확정"
         if row.get("kr_news_timing") and row.get("news_timing_market") != "KR":
             timing_label = f"한국 {row['kr_news_timing']} / {row.get('news_timing_market', '원시장')} {timing_label}"
         labels = list(dict.fromkeys(label for label in (timing_label, row["category"]) if label))
         reading = "제목 기준·세부 내용 미확인" if row["reading_ko"].startswith("제목 기준:") else row["reading_ko"]
         lines.append(" | ".join(_cell(value) for value in (
-            f"{index}. {' · '.join(labels)} · {kst_time(row['published'])}{timing}",
+            f"뉴스 {index} · {' · '.join(labels)} · {kst_time(row['published'])}{timing}",
             row["title"] + " " + citation(dict(row, title="원문")), reading)))
     if not news:
         lines.append("허용 출처·중복 제거 기준을 통과한 뉴스 없음.")
@@ -974,4 +902,5 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(["", "가격·거래량 흐름은 실제 자금 유입액이 아닙니다. 가속도는 최근 3개월 수익률과 직전 3개월 수익률 차이(%p), 다이버전스는 가격과 흐름 지표 방향이 엇갈리는 상태입니다."])
     # Move the single holdings section, without duplicating it in the story.
     lines = lines[:story_start] + lines[holding_start:holding_end] + lines[story_start:holding_start] + lines[holding_end:]
+    lines.extend(history_lines)
     return lines, list(dict.fromkeys(missing))
