@@ -33522,7 +33522,7 @@ def _render_today_queue_tab(mode):
     with measure("phase", "watchlist_prepare"):
         raw_watch_items = tuple(st.session_state.get("watchlist", []))
         flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
-        if st.session_state.get("today_queue_refresh_flow_candidates", False):
+        if st.session_state.get("today_queue_refresh_flow_candidates", True):
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
         else:
             watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
@@ -33594,7 +33594,7 @@ def _render_today_queue_tab(mode):
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
     refresh_flow_candidates = st.checkbox(
         "돈흐름 전체 후보도 새로 계산",
-        value=False,
+        value=True,
         key="today_queue_refresh_flow_candidates",
     )
     run_summary = c1.button(

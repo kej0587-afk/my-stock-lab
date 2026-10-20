@@ -18,7 +18,7 @@ def history(rows=252, direction=1):
                         index=pd.bdate_range("2025-01-02", periods=rows))
 
 
-def serial_metrics(data, universe):
+def serial_metrics(data, universe, *, failed_tickers=None):
     result = {}
     for item in universe:
         ticker = item["ticker"]
@@ -110,28 +110,26 @@ def test_shared_cap_between_sessions_and_no_parallel_us_fallback(monkeypatch):
     assert set(non_kr_threads) <= callers
 
 
-def test_provider_order_and_failure_visibility_preserved(monkeypatch):
+def test_kr_uses_bounded_feed_without_unbounded_fallback(monkeypatch):
     calls = []
     lock = Lock()
 
-    def krx(ticker):
+    def bounded(ticker):
         with lock:
-            calls.append((ticker, "krx"))
-        return pd.DataFrame()
+            calls.append(ticker)
+        return history(20) if ticker == "005930.KS" else pd.DataFrame()
 
     def fdr(ticker):
-        with lock:
-            calls.append((ticker, "fdr"))
-        return history(20)
+        raise AssertionError("must not retry the same feed via unbounded FDR")
 
-    monkeypatch.setattr(flow, "_fetch_pykrx_ohlc", krx)
+    monkeypatch.setattr(flow, "load_kr_flow_history", bounded)
     monkeypatch.setattr(flow, "_fetch_fdr_ohlc", fdr)
     monkeypatch.setattr(flow, "_FDR_AVAILABLE", True)
     universe = [{"ticker": ticker} for ticker in ["005930.KS", "0167A0.KS"]]
     metrics = flow._load_universe_metrics(pd.DataFrame(), universe)
-    for ticker in metrics:
-        assert [provider for key, provider in calls if key == ticker] == ["krx", "fdr"]
-        assert metrics[ticker] is not None
+    assert sorted(calls) == ["005930.KS", "0167A0.KS"]
+    assert metrics["005930.KS"] is not None
+    assert metrics["0167A0.KS"] is None
 
     def fail(data, ticker):
         raise RuntimeError("unexpected provider failure")

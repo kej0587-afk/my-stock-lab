@@ -46,6 +46,8 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.performance import submit_with_context, timed_call
+from stock_lab_core.kr_flow_history import load_kr_flow_history
+from stock_lab_core.result_cache import cache_result
 
 
 _KR_FLOW_HISTORY_SLOTS = BoundedSemaphore(4)
@@ -64,12 +66,6 @@ try:
     _FDR_AVAILABLE = True
 except ImportError:
     _FDR_AVAILABLE = False
-
-try:
-    from pykrx import stock as krx_stock
-    _PYKRX_AVAILABLE = True
-except ImportError:
-    _PYKRX_AVAILABLE = False
 
 for _streamlit_logger in (
     "streamlit.runtime.scriptrunner_utils.script_run_context",
@@ -1555,55 +1551,6 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
 # 가격 다운로드
 # ---------------------------------------------------------------------------
 
-def _normalize_krx_ohlc(df) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    out = df.copy().rename(columns={
-        "시가": "Open",
-        "고가": "High",
-        "저가": "Low",
-        "종가": "Close",
-        "거래량": "Volume",
-    })
-    if "Close" not in out.columns:
-        return pd.DataFrame()
-    for col in ("High", "Low"):
-        if col not in out.columns:
-            out[col] = out["Close"]
-    if "Volume" not in out.columns:
-        out["Volume"] = 0
-    cols = ["Close", "High", "Low", "Volume"]
-    out = out[cols].apply(pd.to_numeric, errors="coerce")
-    out.index = pd.to_datetime(out.index, errors="coerce")
-    out = out[~out.index.isna()].sort_index().ffill()
-    return out.dropna(subset=["Close", "High", "Low"])
-
-
-@st.cache_data(ttl=900, show_spinner=False)
-def _fetch_pykrx_ohlc(ticker: str) -> pd.DataFrame:
-    if not _PYKRX_AVAILABLE:
-        return pd.DataFrame()
-    ticker = normalize_money_flow_ticker(ticker)
-    if not _is_krx_money_flow_ticker(ticker):
-        return pd.DataFrame()
-    code = ticker.split(".", 1)[0]
-    start = (pd.Timestamp.now() - pd.DateOffset(years=1)).strftime("%Y%m%d")
-    end = pd.Timestamp.now().strftime("%Y%m%d")
-    getters = []
-    if hasattr(krx_stock, "get_market_ohlcv_by_date"):
-        getters.append(lambda: krx_stock.get_market_ohlcv_by_date(start, end, code))
-    if hasattr(krx_stock, "get_etf_ohlcv_by_date"):
-        getters.append(lambda: krx_stock.get_etf_ohlcv_by_date(start, end, code))
-    for getter in getters:
-        try:
-            out = _normalize_krx_ohlc(getter())
-            if not out.empty:
-                return out
-        except Exception:
-            continue
-    return pd.DataFrame()
-
-
 @timed_call("prices")
 @st.cache_data(ttl=900, show_spinner=False)
 def download_money_flow_prices(tickers) -> pd.DataFrame:
@@ -1625,6 +1572,7 @@ def download_money_flow_prices(tickers) -> pd.DataFrame:
             group_by="ticker",
             threads=min(4, max(1, len(yf_tickers))),
             auto_adjust=False,
+            timeout=8,
             **yahoo_session_kwargs(),
         )
 
@@ -1656,18 +1604,17 @@ def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """yfinance 결과에서 OHLCV 추출. 실패 시 폴백 순서대로 시도.
 
     폴백 순서:
-    1. yfinance (일괄 다운로드 결과)
-    2. FinanceDataReader — .T(도쿄), .KS/.KQ(KRX 알파벳코드), fdr 전용 심볼
+    국내: 기존 pykrx/FDR와 같은 네이버 일봉을 HTTPS·시간 제한으로 조회.
+    1. yfinance (해외 일괄 다운로드 결과)
+    2. FinanceDataReader — .T(도쿄), fdr 전용 심볼
     3. Alpha Vantage    — 미국 상장 티커 한정 (AV_API_KEY 필요)
     """
     ticker = normalize_money_flow_ticker(ticker)
     suffix = _money_flow_suffix(ticker)
 
     if _is_krx_money_flow_ticker(ticker):
-        out = _fetch_pykrx_ohlc(ticker)
-        if out.empty and _FDR_AVAILABLE:
-            out = _fetch_fdr_ohlc(ticker)
-        return out
+        # FDR retries the same feed without a timeout; do not re-enter it here.
+        return load_kr_flow_history(ticker)
 
     if suffix == "T" and _FDR_AVAILABLE:
         out = _fetch_fdr_ohlc(ticker)
@@ -1978,7 +1925,7 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 # ---------------------------------------------------------------------------
 
 @timed_call("phase", "flow_history_and_metrics")
-def _load_universe_metrics(data, universe):
+def _load_universe_metrics(data, universe, *, failed_tickers=None):
     """Load each ticker once; preserve ordered, single-threaded scoring.
 
     Only KRX history I/O is parallel. US/international fallback providers keep
@@ -2001,6 +1948,8 @@ def _load_universe_metrics(data, universe):
                 px = load_kr(ticker)
             else:
                 px = get_money_flow_ohlc(data, ticker)
+            if failed_tickers is not None and px.attrs.get("transport_error"):
+                failed_tickers.append(ticker)
             metrics[ticker] = _compute_ticker_metrics(px) if not px.empty and len(px) >= 20 else None
         return metrics
 
@@ -2012,7 +1961,7 @@ def _load_universe_metrics(data, universe):
 
 
 @timed_call("external_data")
-@st.cache_data(ttl=900, show_spinner=False)
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda df: not df.attrs.get("history_failures"))
 def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
     universe = [
@@ -2022,7 +1971,8 @@ def calculate_money_flow_df() -> pd.DataFrame:
     data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
 
     rows = []
-    metrics_by_ticker = _load_universe_metrics(data, universe)
+    failed_tickers = []
+    metrics_by_ticker = _load_universe_metrics(data, universe, failed_tickers=failed_tickers)
     for item in universe:
         ticker = item["ticker"]
         if metrics_by_ticker[ticker] is None:
@@ -2042,6 +1992,8 @@ def calculate_money_flow_df() -> pd.DataFrame:
         })
 
     df = pd.DataFrame(rows)
+    if failed_tickers:
+        df.attrs["history_failures"] = failed_tickers
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)
@@ -2049,7 +2001,7 @@ def calculate_money_flow_df() -> pd.DataFrame:
 
 
 @timed_call("external_data")
-@st.cache_data(ttl=900, show_spinner=False)
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda df: not df.attrs.get("history_failures"))
 def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산."""
     selected = str(theme or "").strip()
@@ -2073,7 +2025,8 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     }
 
     rows = []
-    metrics_by_ticker = _load_universe_metrics(data, universe)
+    failed_tickers = []
+    metrics_by_ticker = _load_universe_metrics(data, universe, failed_tickers=failed_tickers)
     for item in universe:
         ticker = item["ticker"]
         metrics = (metrics_by_ticker[ticker] if metrics_by_ticker[ticker] is not None else _empty).copy()
@@ -2086,6 +2039,8 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
         })
 
     df = pd.DataFrame(rows)
+    if failed_tickers:
+        df.attrs["history_failures"] = failed_tickers
     if df.empty:
         return df
     df["히트맵크기"] = (df["3개월수익률"].abs().fillna(0) * 100).clip(lower=1)

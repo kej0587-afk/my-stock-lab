@@ -72,7 +72,7 @@ def run_branch(*, full=False, fail=False):
     return calls, state, notes
 
 
-def test_default_queue_does_not_wait_for_full_market_discovery():
+def test_unchecked_discovery_does_not_wait_for_full_market():
     calls, state, notes = run_branch()
     assert calls == [("HELD", "WATCH")]
     assert state["signature"] == ("HELD", "WATCH")
@@ -88,7 +88,7 @@ def test_optional_discovery_and_failure_never_resign_stale_candidates(fail):
     assert any("조회 실패" in note for note in notes) == fail
 
 
-def test_discovery_checkbox_is_opt_in_and_initial_scope_matches_signature():
+def test_discovery_defaults_on_and_initial_scope_matches_signature():
     source = (ROOT / "app.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(source)
     render = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
@@ -96,7 +96,7 @@ def test_discovery_checkbox_is_opt_in_and_initial_scope_matches_signature():
     checkbox = next(node.value for node in ast.walk(render) if isinstance(node, ast.Assign)
                     and any(isinstance(target, ast.Name) and target.id == "refresh_flow_candidates"
                             for target in node.targets))
-    assert next(k.value.value for k in checkbox.keywords if k.arg == "value") is False
+    assert next(k.value.value for k in checkbox.keywords if k.arg == "value") is True
     prepare = next(node for node in render.body if isinstance(node, ast.With))
     assert "today_queue_refresh_flow_candidates" in ast.unparse(prepare)
     assert "build_today_queue_items(raw_watch_items)" in ast.unparse(prepare)
