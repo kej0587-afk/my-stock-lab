@@ -11,12 +11,12 @@ import requests
 from urllib3.exceptions import HTTPError as TransportError
 
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.http_body import read_response_body as _read_body
 
 
 _URL = "https://fchart.stock.naver.com/sise.nhn"
 _TIMEOUT = (2, 4)
 _BODY_BUDGET_SECONDS = 6
-_MAX_BODY_BYTES = 2 * 1024 * 1024
 _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 
 
@@ -24,33 +24,6 @@ def _unavailable(reason):
     frame = pd.DataFrame()
     frame.attrs["transport_error"] = reason
     return frame
-
-
-def _read_body(response, deadline, clock):
-    raw = getattr(response, "raw", None)
-    read1 = getattr(raw, "read1", None)
-    if callable(read1):
-        def chunks():
-            while True:
-                chunk = read1(65536, decode_content=True)
-                if not chunk:
-                    break
-                yield chunk
-        parts = chunks()
-    elif callable(getattr(response, "iter_content", None)):
-        parts = response.iter_content(chunk_size=1)
-    else:
-        # Injected in-memory test responses have no network stream.
-        return response.text
-    output, size = [], 0
-    for chunk in parts:
-        if clock() >= deadline:
-            raise requests.ReadTimeout("KR history response deadline reached")
-        size += len(chunk)
-        if size > _MAX_BODY_BYTES:
-            raise ValueError("KR history response exceeds size limit")
-        output.append(chunk)
-    return b"".join(output)
 
 
 def parse_history(text, start, end):

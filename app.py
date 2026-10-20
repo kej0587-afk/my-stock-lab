@@ -33457,7 +33457,8 @@ def render_today_queue_tab(mode):
                   "flow_etf_prices": "ETF·섹터 가격 조회", "flow_sector_rotation": "섹터 순위 계산",
                   "flow_theme_prices": "전체 테마 조회", "summary": "종목 신호 계산",
                   "price_history_1y": "일봉 시세 조회", "price_history_10y": "장기 시세 조회",
-                  "rs_price_history_3mo": "RS 이력 조회", "benchmarks": "벤치마크 조회"}
+                  "rs_price_history_3mo": "RS 이력 조회", "benchmarks": "벤치마크 조회",
+                  "flow_overseas_fallback": "해외 테마 보완 시세 조회"}
         labels["stock_signals"] = "종목별 지표·판정 계산"
         phase_status.caption(f"진행: {labels.get(name, name)} · 현재까지 {elapsed:.1f}초")
         st.session_state["today_queue_last_attempt_performance"] = trace.report()
@@ -33528,6 +33529,7 @@ def render_today_queue_tab(mode):
                 "flow_shortlist_render": "돈흐름 후보표 표시", "candidate_tools": "후보 도구·차트 전체",
                 "flow_detail_render": "돈흐름 상세 화면",
                 "kr_quote_fallback_wait": "국내 시세 보완 대기",
+                "flow_overseas_fallback": "해외 테마 보완 시세 조회",
             }
             phase_rows = [
                 {"단계": phase_labels.get(row["name"], row["name"]), "경과시간(초)": round(row["total_seconds"], 3)}

@@ -34,6 +34,7 @@ Refactoring changelog (2026-05):
 import json
 import logging
 import os
+import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -45,9 +46,10 @@ import streamlit as st
 import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
-from stock_lab_core.performance import submit_with_context, timed_call
+from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core.kr_flow_history import load_kr_flow_history
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.http_body import read_response_body
 
 
 _KR_FLOW_HISTORY_SLOTS = BoundedSemaphore(4)
@@ -1497,7 +1499,8 @@ def _fetch_alpha_vantage_ohlc(ticker: str) -> pd.DataFrame:
 # FinanceDataReader 폴백
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=900, show_spinner=False)
+@timed_call("prices")
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
 def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
     """FinanceDataReader로 단일 티커 OHLCV 취득.
 
@@ -1522,7 +1525,33 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
         fdr_symbol = ticker                 # VIX, US10YT 등 fdr 네이티브 심볼
 
     try:
-        df = fdr.DataReader(fdr_symbol, start)
+        if ticker.endswith(".T") or (not _is_krx_money_flow_ticker(ticker)
+                                      and ticker not in {"KS11", "KOSPI", "KQ11", "KOSDAQ", "KS200", "KPI200"}):
+            # FDR's Yahoo reader has no timeout. Keep its raw OHLCV, date
+            # conversion and endpoint, but bound the network transport.
+            import requests
+            symbols = {"DJI": "^DJI", "IXIC": "^IXIC", "US500": "^GSPC", "S&P500": "^GSPC",
+                       "RUT": "^RUT", "VIX": "^VIX", "N225": "^N225", "SSEC": "000001.SS",
+                       "FTSE": "^FTSE", "HSI": "^HSI", "FCHI": "^FCHI", "GDAXI": "^GDAXI",
+                       "US5YT": "^FVX", "US10YT": "^TNX", "US30YT": "^TYX"}
+            symbol = symbols.get(ticker, ticker)
+            deadline = time.monotonic() + 6
+            with measure("phase", "flow_overseas_fallback"):
+                with requests.get(
+                    f"https://query2.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol, safe='')}",
+                    params={"period1": int(time.mktime(pd.Timestamp(start).timetuple())),
+                            "period2": int(time.time()), "interval": "1d", "includeAdjustedClose": "true"},
+                    headers={"User-Agent": "Mozilla/5.0 AppleWebKit/537.36"},
+                    timeout=(2, 4), stream=True,
+                ) as response:
+                    response.raise_for_status()
+                    result = json.loads(read_response_body(response, deadline, time.monotonic))["chart"]["result"][0]
+            values = {**result["indicators"]["quote"][0], **result["indicators"]["adjclose"][0]}
+            df = pd.DataFrame(values, index=pd.to_datetime(result["timestamp"], unit="s").normalize())
+            df = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close",
+                                    "volume": "Volume", "adjclose": "Adj Close"})
+        else:
+            df = fdr.DataReader(fdr_symbol, start)
         if df is None or df.empty:
             return pd.DataFrame()
 
@@ -1543,8 +1572,11 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
 
         cols = ["Close", "High", "Low"] + (["Volume"] if "Volume" in df.columns else [])
         return df[cols].ffill().dropna(subset=["Close", "High", "Low"])
-    except Exception:
-        return pd.DataFrame()
+    except Exception as exc:
+        logging.warning("Money-flow fallback unavailable for %s (%s)", ticker, type(exc).__name__)
+        frame = pd.DataFrame()
+        frame.attrs["transport_error"] = type(exc).__name__
+        return frame
 
 
 # ---------------------------------------------------------------------------
