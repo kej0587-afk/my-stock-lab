@@ -6,6 +6,8 @@ from pathlib import Path
 import tempfile
 from datetime import datetime, timezone
 from copy import deepcopy
+from functools import lru_cache
+import csv
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -15,6 +17,47 @@ from stock_lab_core.today_snapshot import _snapshot_location
 from stock_lab_core.report_history_store import ReportHistoryStoreError, validate_session
 
 DEFAULT_PATH = Path(__file__).resolve().parents[1] / "cache" / "market_report_history.json"
+
+
+@lru_cache(maxsize=1)
+def _public_names():
+    from stock_lab_core.constants import KNOWN_TICKER_DISPLAY_NAMES
+    from stock_lab_core.money_flow import IMAGE_THEME_UNIVERSE
+
+    names = dict(KNOWN_TICKER_DISPLAY_NAMES)
+    names.update({text(row["ticker"]): text(row["name"]) for row in IMAGE_THEME_UNIVERSE})
+    path = Path(__file__).with_name("data") / "kr_kospi_sector_constituents.csv"
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("ticker") and row.get("name"):
+                    names.setdefault(row["ticker"], row["name"])
+    except OSError:
+        pass
+    return names
+
+
+def _valid_name(row):
+    ticker = text(first(row, "티커", "ticker"))
+    name = text(first(row, "종목명", "name", "자산명"))
+    return name if name not in {ticker, ticker.split(".")[0]} and "종목명 미저장" not in name else ""
+
+
+def _repair_names(saved, current):
+    # Only owner-bound history is supplied here; never mix private display names.
+    names = dict(_public_names())
+    sessions = sorted(saved.values(), key=_run_time) + [current]
+    for session in sessions:
+        for row in session["rows"]:
+            if name := _valid_name(row):
+                names[text(first(row, "티커", "ticker"))] = name
+    for session in sessions:
+        for row in session["rows"]:
+            ticker = text(first(row, "티커", "ticker"))
+            if not _valid_name(row):
+                name = names.get(ticker) or (names.get(ticker.split(".")[0]) if ticker.endswith((".KS", ".KQ")) else "")
+                if name:
+                    row.update(종목명=name, 종목명보완="동일 계정 이력/기존 공개 종목목록")
 
 
 def normalized_decisions(rows):
@@ -117,6 +160,7 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
         saved = _load_local(location, owner_hash)
     except (OSError, ValueError, TypeError, KeyError):
         saved, local_available = {}, False
+    _repair_names(saved, current)
     if store is not None:
         try:
             if not owner_scope:
@@ -128,6 +172,7 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
             for remote_key, value in remote.items():
                 if remote_key not in saved or _run_time(value) >= _run_time(saved[remote_key]):
                     saved[remote_key] = deepcopy(value)
+            _repair_names(saved, current)
             store.upsert_session(current, owner_scope=owner_scope)
             result.update(history_backend="supabase", history_durable=True)
         except Exception as exc:

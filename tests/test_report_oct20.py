@@ -106,7 +106,8 @@ def test_full_report_catalysts_same_market_and_foreign_news_separate():
         assert "AI 신용우려" not in line and "日증시" not in line
     for symbol in ("396500.KS", "139250.KS", "305540.KS"):
         line = next(line for line in sectors.splitlines() if f"({symbol})" in line)
-        assert "AI 신용우려" in line and "시장 공통 맥락" in line
+        assert "AI 신용우려" not in line and "개별 원인 미확인" in line
+        assert {"396500.KS": "-1.28%p", "139250.KS": "-3.44%p", "305540.KS": "-1.99%p"}[symbol] in line
     assert JP_WORRY in report.split("## 다른 시장/다른 날짜 맥락")[1]
     assert "- 당일 종가: 코스피" not in report
     assert context == original

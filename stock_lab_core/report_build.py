@@ -1,7 +1,6 @@
 """Identify loaded report code separately from files currently on disk."""
 
 from datetime import datetime, timezone
-from functools import lru_cache
 import hashlib
 import importlib
 import json
@@ -16,6 +15,7 @@ _RENDER_MODULES = (
     "report_holdings", "report_session", "today_news",
     "report_history", "report_prices", "report_context", "report_live", "report_history_store",
     "report_scenario",
+    "economic_releases", "economic_cache", "economic_bulletins",
 )
 
 
@@ -32,7 +32,6 @@ def register_loaded_source(name, filename):
     _LOADED[name] = {"path": path, "sha256": _file_hash(path)}
 
 
-@lru_cache(maxsize=1)
 def _revision():
     try:
         result = subprocess.run(

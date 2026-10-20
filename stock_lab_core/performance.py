@@ -8,6 +8,7 @@ from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
 import logging
+import re
 
 
 _trace = ContextVar("stock_lab_performance_trace", default=None)
@@ -54,6 +55,7 @@ class PerformanceTrace:
         self._entries = {}
         self._function_intervals = {}
         self._category_intervals = {}
+        self._events = {}
         self.elapsed_seconds = 0.0
         self.status = "not_started"
         self.on_phase = on_phase
@@ -106,11 +108,16 @@ class PerformanceTrace:
             if category != "phase":
                 self._category_intervals.setdefault(category, []).extend(exclusive)
 
+    def count_event(self, name, count=1):
+        with self._lock:
+            self._events[name] = self._events.get(name, 0) + count
+
     def report(self):
         with self._lock:
             entries = [dict(entry) for entry in self._entries.values()]
             function_intervals = {key: list(value) for key, value in self._function_intervals.items()}
             category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
+            events = dict(self._events)
         for entry in entries:
             entry["active_wall_seconds"] = _interval_seconds(function_intervals[(entry["category"], entry["name"])])
         entries.sort(key=lambda entry: entry["total_seconds"], reverse=True)
@@ -128,6 +135,7 @@ class PerformanceTrace:
             "elapsed_seconds": max(0.0, self.clock() - self._started) if self.status == "running" else self.elapsed_seconds,
             "measurement_status": self.status,
             "current_phase": self.current_phase,
+            "transport_events": events,
             "categories_work_seconds": categories,
             "functions": entries,
             "work_totals_are_concurrent": True,
@@ -139,16 +147,75 @@ class PerformanceTrace:
         }
 
 
+def count_event(name, count=1):
+    trace = _trace.get()
+    if trace is not None:
+        trace.count_event(name, count)
+
+
+def queue_measurement_details(report):
+    summary = next((row for row in report.get("functions", ())
+                    if row.get("category") == "phase" and row.get("name") == "summary"), None)
+    completed = bool(summary and not summary.get("failures"))
+    return {"measurement_kind": "calculation" if summary else "render_only",
+            "calculation_completed": completed,
+            "is_full_today_queue_measurement": completed and report.get("measurement_status", "completed") == "completed"}
+
+
+def archive_queue_measurement(state, report):
+    """Keep the report's exact measurement even after an unrelated rerender."""
+    identity = report.get("measurement_id")
+    if not identity:
+        return
+    report = dict(report, **queue_measurement_details(report))
+    history = dict(state.get("today_queue_measurements", {}))
+    pinned = state.get("today_market_report_measurement_id")
+    previous = state.get("today_queue_performance", {})
+    if pinned and previous.get("measurement_id") == pinned:
+        history.setdefault(pinned, previous)
+    history[identity] = report
+    removable = [key for key in history if key != pinned and key != identity]
+    while len(history) > 8 and removable:
+        history.pop(removable.pop(0))
+    state["today_queue_measurements"] = history
+    if report["calculation_completed"]:
+        state["today_queue_performance"] = report
+
+
+def matching_report_measurement(state, report_text):
+    match = re.search(r"점검 측정ID\s+([0-9a-f]{32})\b", str(report_text or ""))
+    if not match:
+        return None
+    identity = match[1]
+    for candidate in (state.get("today_queue_measurements", {}).get(identity), state.get("today_queue_performance")):
+        if isinstance(candidate, dict) and candidate.get("measurement_id") == identity:
+            return dict(candidate, **queue_measurement_details(candidate))
+    return None
+
+
 def queue_measurement_reference(previous=None):
     trace = _trace.get()
     if trace is not None:
         with trace._lock:
             calculated = ("phase", "summary") in trace._entries
         if calculated:
-            return {key: value for key, value in trace.report().items()
+            report = trace.report()
+            return {key: value for key, value in dict(report, **queue_measurement_details(report)).items()
                     if key.startswith("measurement_")}
     return {key: value for key, value in (previous or {}).items()
             if key.startswith("measurement_")}
+
+
+def bind_summary_measurement(summary):
+    summary.attrs["queue_measurement"] = queue_measurement_reference()
+    return summary
+
+
+def summary_measurement_reference(summary):
+    # The last completed trace may not belong to the currently displayed data
+    # (for example, a rerun stopped before replacing the cached result).
+    reference = getattr(summary, "attrs", {}).get("queue_measurement", {})
+    return dict(reference) if isinstance(reference, dict) else {}
 
 
 @contextmanager

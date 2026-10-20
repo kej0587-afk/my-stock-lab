@@ -4,10 +4,11 @@ from statistics import median
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
-from datetime import datetime
 import re
+from datetime import timedelta
+from zoneinfo import ZoneInfo
 
-from stock_lab_core.report_evidence import citation, first, number, records, text
+from stock_lab_core.report_evidence import KST, citation, closed_daily_frame, first, number, records, stamp, text
 
 INDICATOR_NAMES = {
     "US_CPI": "미국 CPI", "US_CORE_CPI": "미국 근원 CPI", "US_PPI": "미국 PPI",
@@ -17,6 +18,7 @@ INDICATOR_NAMES = {
 BLS_CONCEPTS = "https://www.bls.gov/opub/hom/cpi/concepts.htm"
 FED_VALUATIONS = "https://www.federalreserve.gov/publications/may-2021-asset-valuations.htm"
 OUTLIER_SOURCE = "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm"
+SECTOR_EXCESS_CONTEXT_BAND = .01  # Report wording only, never an execution gate.
 
 
 def unit_label(unit, *, difference=False):
@@ -74,6 +76,71 @@ def outlier_check(row):
         flag = abs(score) > 3.5
     return {"flag": flag, "status": "원자료 재확인 필요(통계상 이상치, 오류 확정 아님)" if flag else "분포 점검 범위 내",
             "count": len(history), "modified_z": score, "source_url": OUTLIER_SOURCE}
+
+
+def economic_story_dates(context, market, now):
+    """Freshness includes the generation's local trading date, even preopen."""
+    local = now.astimezone(KST if market == "KR" else ZoneInfo("America/New_York"))
+    if market == "US":
+        from stock_lab_core.prices import _us_equity_market_holidays
+        day, dates = local.date(), []
+        while len(dates) < 3:
+            if day.weekday() < 5 and day not in _us_equity_market_holidays(day.year):
+                dates.append(day.isoformat())
+            day -= timedelta(days=1)
+        return sorted(dates)
+    reference = local.date().isoformat()
+    dates = set()
+    symbols = ("^KS11", "^KQ11")
+    for symbol in symbols:
+        frame = closed_daily_frame((context.get("price_frames") or {}).get(symbol), symbol, now)
+        observed = sorted({day.isoformat() for day in frame.index.date if day.isoformat() <= reference}) if not frame.empty else []
+        dates.update(observed)
+    # KR has no connected holiday calendar. Only proven sessions enter the story.
+    session_date = text(context.get("sessions", {}).get(market))
+    dates.add(session_date)
+    for symbol in symbols:
+        obs = context.get("prices", {}).get(symbol, {})
+        if obs.get("date") == session_date:
+            dates.add(text(obs.get("previous_date")))
+    session = context.get("news_sessions", {}).get(market, {})
+    if isinstance(session, dict) and session.get("date") == session_date:
+        dates.add(text(session.get("previous_date")))
+    if context.get("kr_is_trading_day") is True and local.weekday() < 5:
+        dates.add(reference)
+    dates = {day for day in dates if day and day <= reference and stamp(day) and stamp(day).weekday() < 5}
+    day = local.date()
+    while day.weekday() >= 5 or (day == local.date() and context.get("kr_is_trading_day") is False):
+        day -= timedelta(days=1)
+    if day.isoformat() in dates:
+        return sorted(at for at in dates if at <= day.isoformat())[-3:]
+    # Unknown intervening KR holidays must tighten, never extend, freshness.
+    strict_window = set()
+    while len(strict_window) < 3:
+        if day.weekday() < 5:
+            strict_window.add(day.isoformat())
+        day -= timedelta(days=1)
+    return sorted(dates & strict_window)
+
+
+def recent_economic_releases(rows, context, now):
+    """Publication freshness is exchange-local; observation month is irrelevant."""
+    dates = {market: economic_story_dates(context, market, now) for market in ("KR", "US")}
+    selected = []
+    for row in records(rows):
+        indicator = text(row.get("indicator"))
+        market = indicator.split("_", 1)[0]
+        window = dates.get(market, [])
+        release = text(row.get("release_at"))
+        at = stamp(release)
+        if not window or not at or at > now or row.get("status") in {"pending", "scheduled", "예정", "stale"}:
+            continue
+        zone = KST if market == "KR" else ZoneInfo("America/New_York")
+        # A date-only release is already a local publication date, not KST midnight.
+        day = release if re.fullmatch(r"\d{4}-\d{2}-\d{2}", release) else at.astimezone(zone).date().isoformat()
+        if day in window:
+            selected.append(row)
+    return selected
 
 
 def select_economic_stories(rows, limit=3):
@@ -156,7 +223,22 @@ def inflation_reading(rows, context):
             f"{oil_text}. [BLS 지표 정의]({BLS_CONCEPTS}) " + citation(headline))
 
 
-def sector_evidence(row, macro_data, news):
+def sector_market_excess(row, observations):
+    ticker = text(first(row, "Ticker", "ticker", "티커")).upper()
+    benchmark = "^KS11" if ticker.endswith((".KS", ".KQ")) else "^GSPC"
+    date = text(first(row, "기준일", "date", "as_of"))
+    daily = number(first(row, "1일수익률", "1D"))
+    base = (observations or {}).get(benchmark, {})
+    market_return = number(base.get("return"))
+    if (not date or base.get("date") != date or daily is None or market_return is None
+            or any(token in text(row.get("수치종류")) + text(base.get("kind")) for token in ("장중", "미확인"))
+            or (row.get("previous_date") and base.get("previous_date") and row["previous_date"] != base["previous_date"])):
+        return None, f"미확인: {benchmark} 동일 종가일 일간 수익률 미연결"
+    excess = daily - market_return
+    return excess, f"{excess * 100:+.2f}%p (일간 − {benchmark} {market_return * 100:+.2f}%, {date})"
+
+
+def sector_evidence(row, macro_data, news, *, observations=None):
     ticker = text(first(row, "Ticker", "ticker", "티커"))
     ret = number(first(row, "1일수익률", "1D"))
     date = text(first(row, "기준일", "date", "as_of")) or "기준일 미제공"
@@ -189,20 +271,29 @@ def sector_evidence(row, macro_data, news):
         if "할인율 부담" in reading:
             reading += f" [연준 할인율 설명]({FED_VALUATIONS})"
     region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+    excess, excess_text = sector_market_excess(row, observations)
     related = [item for item in news if text(item.get("ticker")).upper() == ticker
                and item.get("market") == region and item.get("session_date") == date
                and item.get("news_bucket") not in {"next_session_news", "other_market_news"}]
     unconfirmed = "해당 업종 움직임의 개별 원인·기여도는 확정 자료 없음"
+    direct = [item for item in related if not item.get("market_context_only")]
+    if excess is not None and round(abs(excess), 12) < SECTOR_EXCESS_CONTEXT_BAND:
+        reading = "시장 공통 맥락: 시장 대비 초과폭이 보고용 구분 기준 1.00%p 미만이며 개별 원인·기여도는 미확인"
+    elif excess is not None and not direct:
+        reading = "개별 원인 미확인: 시장 대비 초과폭이 1.00%p 이상이며 직접 업종 기사 미연결; 시장 공통 기사로 초과 움직임의 원인을 설명하지 않습니다"
+        related = []
     if related:
+        related = direct or related
         item = related[0]
         if reading == "직접 원인 자료 미연결":
             reading = ""
         from stock_lab_core.report_presentation import news_theme
         topic = ((news_theme(text(item.get("title"))) + "(기사 주장)") if news_theme(text(item.get("title"))) else
-                 "AI 관련 시장 움직임" if any(re.search(r"AI|인공지능", text(r.get("title")), re.I) for r in related) else "해당 업종 움직임")
+                 "AI 관련 시장 움직임" if re.search(r"AI|인공지능", text(item.get("title")), re.I) else "해당 업종 움직임")
         scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
         reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
                     + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
     return {"fact": "사실: " + fact + f" [{kind}]",
+            "excess": excess_text,
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

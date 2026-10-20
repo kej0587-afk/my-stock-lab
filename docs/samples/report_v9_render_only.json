@@ -1,0 +1,35 @@
+{
+  "measurement_id": "1d9d3b1bc42a43d2a764c1bf80e8f919",
+  "measurement_started_at": "2026-10-20T13:34:52.284303+00:00",
+  "measurement_finished_at": "2026-10-20T13:34:52.503584+00:00",
+  "measurement_scope": "offline_report_v9_render_only",
+  "measurement_reused": false,
+  "elapsed_seconds": 0.21852159999980358,
+  "measurement_status": "completed",
+  "current_phase": "",
+  "transport_events": {},
+  "categories_work_seconds": {
+    "report_render": 0.21849029999975755
+  },
+  "functions": [
+    {
+      "category": "report_render",
+      "name": "build_auto_market_memo",
+      "calls": 1,
+      "total_seconds": 0.21849029999975755,
+      "self_seconds": 0.21849029999975755,
+      "max_seconds": 0.21849029999975755,
+      "failures": 0,
+      "active_wall_seconds": 0.21849029999975755
+    }
+  ],
+  "work_totals_are_concurrent": true,
+  "timing_schema_version": 2,
+  "categories_active_wall_seconds": {
+    "report_render": 0.21849029999975755
+  },
+  "measured_active_wall_seconds": 0.21849029999975755,
+  "concurrent_overlap_work_seconds": 0.0,
+  "active_wall_categories_can_overlap": true,
+  "is_full_today_queue_measurement": false
+}

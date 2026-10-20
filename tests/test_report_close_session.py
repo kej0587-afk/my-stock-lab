@@ -94,16 +94,20 @@ def test_close_report_acceptance_and_immutable_inputs():
     assert "당일 코스피 +1.76%" in report and "직전 거래일 +2.05%" in report
     assert REVERSAL_TITLE in report.split("## 경제지표")[0]
     assert KR_TITLE.replace("[", "(").replace("]", ")") in report
-    assert "한국 수출 2026-09 전년비 83.7% · 이전 대비 +14.80%p" in report
+    story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]
+    table = report.split("## 경제지표")[1].split("## 업종별 왜")[0]
+    assert "83.7" not in story  # Publication date is unknown; observation month is not a release date.
+    assert "한국 수출 2026-09 전년비" in table and "83.7%" in table and "이전 대비 +14.80%p" in table
     assert "만료 2026-11-03" in report
-    assert "시나리오 -2.50% vs 당일 종가 -1.19%" in report and "+1.31%p" in report
-    assert "시나리오 -5.00% vs 당일 종가 -2.54%" in report
+    assert "누적 비교 보류" in report  # No price histories in this saved-context fixture.
+    assert "시나리오 -2.50% vs 당일 종가 -1.19%" not in report and "차이(실제−시나리오)" not in report
+    assert "-1.19% (2026-10-19 확정 종가)" in report and "-2.54% (2026-10-19 확정 종가)" in report
     assert "당일 현재(실제)" not in report and "갭다운 위험(추정)" not in report
     assert "오늘 밤 미국장" in report
     sectors = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
     for ticker in ("SOXX", "IGV", "XLK"):
         line = next(line for line in sectors.splitlines() if f"({ticker})" in line)
-        assert "AI 차입 우려" in line and "기사 주장" in line
+        assert "개별 원인 미확인" in line and "AI 차입 우려" not in line
     line = next(line for line in sectors.splitlines() if "305540.KS" in line)
     assert "3M +23.5%" in line and "가속도 +50.2%p" in line
     assert "한국 반도체(396500.KS)" in sectors
@@ -112,14 +116,45 @@ def test_close_report_acceptance_and_immutable_inputs():
     assert "US: 채택 뉴스 없음" not in report and "Census: HTTP 오류" in report
 
 
-def test_scenario_requires_matching_prior_session_and_missing_actual_not_zero():
+def test_cumulative_comparison_requires_history_and_missing_actual_not_zero():
     context, rows, _ = close_case()
     row = rows[0]
     context["prices"]["QQQ"]["date"] = "2026-10-15"
     line = completed_scenario_comparison(row, context["prices"], context["sessions"], NOW)
-    assert "비교 보류" in line
+    assert "누적 비교 보류" in line and "차이(실제−시나리오)" not in line
     context["prices"][row["티커"]]["return"] = None
     assert "종가 미수집" in completed_scenario_comparison(row, context["prices"], context["sessions"], NOW)
+
+
+def test_close_report_uses_cumulative_frames_without_replacing_daily_actual():
+    # Rebased fixture prices reproduce the supplied two-day Nasdaq moves.
+    # The leveraged KR path is synthetic; it tests daily-reset compounding only.
+    context = dict(sessions={"KR": "2026-10-20", "US": "2026-10-19"}, prices={
+        "QQQ": {"date": "2026-10-19", "previous_date": "2026-10-16", "return": .0121},
+        "379810.KS": {"date": "2026-10-20", "previous_date": "2026-10-19", "return": -.0073},
+        "418660.KS": {"date": "2026-10-20", "previous_date": "2026-10-19", "return": -.01}},
+        price_frames={
+            "QQQ": pd.DataFrame({"Close": [100., 97.5, 97.5 * 1.0121]},
+                                index=pd.to_datetime(["2026-10-15", "2026-10-16", "2026-10-19"])),
+            "379810.KS": pd.DataFrame({"Close": [100., 98.81, 98.81 * .9927]},
+                                      index=pd.to_datetime(["2026-10-16", "2026-10-19", "2026-10-20"])),
+            "418660.KS": pd.DataFrame({"Close": [100., 97.46, 97.46 * .99]},
+                                      index=pd.to_datetime(["2026-10-16", "2026-10-19", "2026-10-20"]))})
+    rows = [{"티커": ticker, "보유량": 1} for ticker in ("379810.KS", "418660.KS")]
+    original = {ticker: frame.copy(deep=True) for ticker, frame in context["price_frames"].items()}
+    report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW.replace(day=20, hour=22))
+    nasdaq = next(line for line in report.splitlines() if "(379810.KS)" in line)
+    leveraged = next(line for line in report.splitlines() if "(418660.KS)" in line)
+    assert "-0.73% (2026-10-20 확정 종가)" in nasdaq and "실제 -1.91%" in nasdaq and "잔차 -0.59%p" in nasdaq
+    assert "누적 -1.32%" in nasdaq
+    assert "-1.00% (2026-10-20 확정 종가)" in leveraged and "실제 -3.51%" in leveraged and "잔차 -0.81%p" in leveraged
+    assert "2배 일간복리 참고 -2.70%" in leveraged
+    assert "한국 2026-10-16→2026-10-20" in nasdaq and "미국 2026-10-15→2026-10-19" in nasdaq
+    assert "한국 시작 종가 시점에 확정돼 있던 미국 종가를 기준" in report
+    assert "양국 종가 시각이 달라 잔차를 추적오차로 해석하지 않습니다" in report
+    assert nasdaq.count("환노출") == 1 and leveraged.count("환노출") == 1
+    for ticker, frame in context["price_frames"].items():
+        pd.testing.assert_frame_equal(frame, original[ticker])
 
 
 def test_market_recap_partition_and_wrong_cxmt_connection():

@@ -1,0 +1,81 @@
+{
+  "indicator": "KR_CPI",
+  "period": "2026-09",
+  "actual": 2.9,
+  "forecast": null,
+  "previous": 3.1,
+  "unit": "%",
+  "basis": "YoY",
+  "seasonal_adjustment": "NSA",
+  "release_at": null,
+  "release_precision": null,
+  "release_source": null,
+  "release_source_url": null,
+  "status": "released",
+  "source": "Bank of Korea ECOS",
+  "source_url": "https://ecos.bok.or.kr/api/StatisticSearch/sample/json/kr/1/10/901Y009/M/202606/202609/0",
+  "as_of": "2026-10-20T13:00:00+00:00",
+  "retrieved_at": "2026-10-20T13:00:00+00:00",
+  "forecast_source": null,
+  "forecast_source_url": null,
+  "forecast_unit": null,
+  "forecast_basis": null,
+  "previous_source": "Bank of Korea ECOS (latest revised)",
+  "previous_unit": "%",
+  "previous_basis": "YoY",
+  "previous_period": "2026-08",
+  "actual_minus_forecast": null,
+  "actual_minus_previous": -0.2,
+  "difference_unit": "pp",
+  "value_kind": "calculated_from_official_levels",
+  "data_vintage": "latest_revised",
+  "history": [
+    {
+      "period": "2026-06",
+      "value": 3.2
+    },
+    {
+      "period": "2026-07",
+      "value": 2.8
+    },
+    {
+      "period": "2026-08",
+      "value": 3.1
+    },
+    {
+      "period": "2026-09",
+      "value": 2.9
+    }
+  ],
+  "history_frequency": "monthly",
+  "previous3mean": 3.033333,
+  "previous3mean_reason": "",
+  "missing_reason": "forecast_not_supplied;release_date_unavailable",
+  "series_id": "901Y009/0",
+  "official_bulletin_fetch": true,
+  "fallback_mode": "automatic_official",
+  "fallback_access": "public_sample",
+  "fallback_limitations": "public_sample_max_10_rows;four_recent_months_only;latest_revised_vintage",
+  "source_urls": [
+    "https://ecos.bok.or.kr/api/StatisticItemList/sample/json/kr/1/10/901Y009",
+    "https://ecos.bok.or.kr/api/StatisticSearch/sample/json/kr/1/10/901Y009/M/202606/202609/0",
+    "https://ecos.bok.or.kr/api/StatisticSearch/sample/json/kr/1/10/901Y009/M/202506/202509/0"
+  ],
+  "bulletin_request_metadata": {
+    "metadata": {
+      "http_status": 200
+    },
+    "current": {
+      "http_status": 200
+    },
+    "year_ago": {
+      "http_status": 200
+    },
+    "from_cache": false
+  },
+  "raw_unit": "2020=100",
+  "raw_actual": 120.43,
+  "raw_year_ago": 117.06,
+  "raw_year_ago_period": "2025-09",
+  "observation_recency": "latest_completed_month"
+}

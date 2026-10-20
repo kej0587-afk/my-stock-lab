@@ -71,7 +71,10 @@ def test_context_report_midnight_acceptance_and_no_live_close_contamination():
         assert row["기준일"] == ("2026-10-19" if row["Ticker"].endswith(".KS") or row["Ticker"] in {"^KS11", "^KQ11"} else "2026-10-16")
     original = deepcopy(context)
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW)
-    assert context == original
+    assert {key: value for key, value in context.items() if key != "price_frames"} == {
+        key: value for key, value in original.items() if key != "price_frames"}
+    for ticker in original["price_frames"]:
+        pd.testing.assert_frame_equal(context["price_frames"][ticker], original["price_frames"][ticker])
     assert "한국: 2026-10-19 정규장 종가" in report
     assert "한국 당일 반영 미확인" not in report
     assert "연결 비중 99.9%" in report

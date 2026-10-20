@@ -1,9 +1,11 @@
-"""Automatic Customs final bulletins, then explicitly expiring manual fallback.
+"""Automatic public ECOS CPI observations and Customs final bulletins.
 
 The public board's search form and nttInfoBtn data attributes were verified on
 2026-10-20. No guessed article ids, attachment downloads or third-party data.
-Only collector-tagged KR_EXPORTS rows opt into network fallback; supplied rows
-keep the existing offline snapshot contract. HTML/schema changes fail closed.
+Only collector-tagged rows opt into network fallback. The public ECOS sample
+endpoint was verified on 2026-10-20: metadata and two four-month windows fit its
+10-row limit. CPI is calculated from same-unit official index levels, never a
+manually transcribed ministry citation. HTML/schema changes fail closed.
 """
 
 from copy import deepcopy
@@ -15,6 +17,9 @@ import re
 from urllib.parse import urlencode
 
 from stock_lab_core import economic_releases as releases
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 FACTS = Path(__file__).with_name("data") / "verified_kr_releases_20261019.json"
 CUSTOMS_LIST_URL = "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do"
@@ -233,6 +238,92 @@ def load_kr_exports_bulletin(now):
     return row
 
 
+def load_kr_cpi_bulletin(now):
+    """Three bounded public requests; no configured credentials are accessed.
+
+    Four recent index levels plus their exact year-ago months supply actual,
+    previous and the three consecutive prior YoY observations. This is a small
+    public-sample fallback, not an archive or a guarantee of future availability.
+    """
+    now = releases._clock(now)
+    end = releases._shift(now.strftime("%Y-%m"), -1)
+    start = releases._shift(end, -3)
+    windows = {"current": (start, end),
+               "year_ago": (releases._shift(start, -12), releases._shift(end, -12))}
+    metadata_url = releases.ECOS_URL + "StatisticItemList/sample/json/kr/1/10/901Y009"
+    urls = {name: releases.ECOS_URL + "StatisticSearch/sample/json/kr/1/10/901Y009/M/"
+                  + first.replace("-", "") + "/" + last.replace("-", "") + "/0"
+            for name, (first, last) in windows.items()}
+    diagnostics = {name: {"http_status": None} for name in ("metadata", "current", "year_ago")}
+
+    def fetch():
+        meta = releases._ecos_metadata(releases._request(metadata_url, diagnostics=diagnostics["metadata"]), "KR_CPI")
+        levels = {}
+        for name, (first, last) in windows.items():
+            payload = releases._request(urls[name], diagnostics=diagnostics[name])
+            values = releases._ecos_levels(payload, "KR_CPI", meta["unit"], first, last)
+            if not values:
+                raise releases._Unavailable("ecos_cpi_" + name + "_months_unavailable")
+            levels.update(values)
+        current = [period for period in levels if start <= period <= end]
+        if releases._shift(max(current), -12) not in levels:
+            raise releases._Unavailable("ecos_cpi_exact_year_ago_unavailable")
+        return {"levels": levels, "unit": meta["unit"], "request": deepcopy(diagnostics)}
+
+    data, error, retrieved = releases._cached(("ecos_public_cpi", end), fetch, now)
+    row = releases._row("KR_CPI", "%", "YoY", "Bank of Korea ECOS", urls["current"], now,
+                        seasonal_adjustment="NSA", series_id="901Y009/0", retrieved_at=retrieved,
+                        value_kind="calculated_from_official_levels", official_bulletin_fetch=True,
+                        fallback_mode="automatic_official", fallback_access="public_sample",
+                        fallback_limitations="public_sample_max_10_rows;four_recent_months_only;latest_revised_vintage",
+                        source_urls=[metadata_url, urls["current"], urls["year_ago"]])
+    row["bulletin_request_metadata"] = deepcopy(data["request"] if data else diagnostics)
+    row["bulletin_request_metadata"]["from_cache"] = bool(data and diagnostics["metadata"]["http_status"] is None)
+    if not data:
+        releases._reason(row, error)
+        return row
+    releases._ecos_rates(row, data["levels"], data["unit"])
+    row["observation_recency"] = "latest_completed_month"
+    if row["period"] != end:
+        row.update(status="stale", observation_recency="older_period")
+        releases._reason(row, "latest_completed_month_not_in_response")
+    releases._finish(row)
+    return row
+
+
+def _apply_live_cpi(rows, now):
+    from stock_lab_core.economic_cache import retain_successful_observations
+
+    for row in rows:
+        if (row.get("indicator") != "KR_CPI" or row.get("basis") != "YoY" or row.get("unit") != "%"
+                or row.get("value_kind") == "supplied_event" or row.get("status") == "pending"):
+            continue
+        if not row.get("official_bulletin_fetch"):
+            if row.get("actual") is None:
+                row.update(fallback_mode="unavailable", bulletin_collection_error="cpi_primary_automatic_fetch_not_enabled")
+            continue
+        if (row.get("status") == "released" and row.get("actual") is not None
+                and row.get("period") == releases._shift(now.strftime("%Y-%m"), -1)
+                and row.get("previous") is not None and row.get("previous3mean") is not None):
+            continue
+        live = load_kr_cpi_bulletin(now)
+        if live["actual"] is not None and (row.get("actual") is None or live["period"] >= row.get("period", "")):
+            configured = row.get("api_key_configured")
+            failure = row.get("collection_error") or row.get("missing_reason") or "provider_history_incomplete"
+            live = retain_successful_observations([live], now)[0]
+            row.clear()
+            row.update(live, api_key_configured=configured, primary_collection_error=failure)
+        else:
+            row["bulletin_request_metadata"] = live["bulletin_request_metadata"]
+            row["bulletin_source_url"] = live["source_url"]
+            if live["actual"] is None:
+                row["bulletin_collection_error"] = live["missing_reason"]
+                row.setdefault("missing_reason", "")
+                releases._reason(row, "cpi_automatic_primary_unavailable")
+            else:
+                row["bulletin_not_applied"] = "newer_observation_preserved"
+
+
 def _apply_live_exports(rows, now):
     from stock_lab_core.economic_cache import retain_successful_observations
 
@@ -263,7 +354,9 @@ def _apply_live_exports(rows, now):
 
 
 def apply_official_bulletins(rows, now):
+    now = releases._clock(now)
     result = deepcopy(rows)
+    _apply_live_cpi(result, now)
     _apply_live_exports(result, now)
     try:
         facts = json.loads(FACTS.read_text(encoding="utf-8"))
@@ -275,6 +368,8 @@ def apply_official_bulletins(rows, now):
         if row.get("status") == "pending" or row.get("value_kind") == "supplied_event":
             continue
         for fact in facts["observations"]:
+            if fact.get("indicator") == "KR_CPI":
+                continue
             if (row.get("indicator") != fact["indicator"] or row.get("basis") != fact["basis"]
                     or row.get("unit") != fact["unit"]):
                 continue

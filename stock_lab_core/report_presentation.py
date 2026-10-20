@@ -204,12 +204,40 @@ def news_theme(title):
     return ""
 
 
+def is_preopen_outlook(row):
+    """Identify a Korean forecast by its content, not the publication's KST hour."""
+    if row.get("market") != "KR":
+        return False
+    title = text(row.get("title"))
+    if re.search(r"장전\s*전망|\[(?:장전|증시전망|오늘의?\s*증시)\]", title):
+        return True
+    if re.search(r"\[마감\]|(?:코스피|코스닥|한국\s*증시).{0,60}마감", title):
+        return False
+    return bool(re.search(r"개장\s*전|장\s*시작\s*전", title)) or (row.get("news_timing") in {"장전 보도", "장전전망(결과와 다름)"}
+            and bool(re.search(r"코스피|코스닥|(?:한국|국내)\s*증시", title))
+            and bool(re.search(r"전망|예상", title)))
+
+
+def compact_holding_reference(value):
+    """Move only known shared limitations to the table note; keep hedge specifics."""
+    for phrase in (
+        " / 괴리율: 같은 시각 NAV·iNAV 미연결. 관측 등락이며 차이의 기여도 분해·합산은 아님.",
+        "시가 갭 오차가 아닌 종가 등락과의 비교, 환율·선물 미반영",
+        "환율·선물·추적오차 미반영, 확정 갭/가격 예측 아님",
+        "환율·선물·추적오차 미반영",
+        " 레버리지·환헤지 효과를 동일 배수로 추정하지 않음.",
+    ):
+        value = value.replace(phrase, "")
+    return value.rstrip(" ·.")
+
+
 def korean_market_catalysts(news, session):
     """Headline claims from the matching Korean session, not causal attribution."""
     parts = []
     for item in news:
         if (item.get("market") != "KR" or item.get("session_date") != session
-                or item.get("news_bucket") in {"next_session_news", "other_market_news"}):
+                or item.get("news_bucket") in {"next_session_news", "other_market_news"}
+                or is_preopen_outlook(item)):
             continue
         title = text(item.get("title"))
         if not re.search(r"코스피|코스닥|한국\s*증시", title):
@@ -227,7 +255,10 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
     patterns = {"SOXX": r"반도체|semiconductor|\bsoxx\b|\bsmh\b|AI[· ·주]",
                 "DRAM": r"메모리|\bdram\b|micron|마이크론",
                 "XLK": r"기술주|빅테크|tech stocks|technology|AI[· ·주]|\bxlk\b",
-                "IGV": r"소프트웨어|software|사이버|cyber|AI[· ·주]|\bigv\b"}
+                "IGV": r"소프트웨어|software|사이버|cyber|AI[· ·주]|\bigv\b",
+                "XLE": r"에너지주|energy (?:stocks|shares|sector)|\bxle\b",
+                "XLU": r"유틸리티|utilities|\bxlu\b",
+                "XLC": r"통신주|communication services|\bxlc\b"}
     region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
     pattern = patterns.get(ticker) or (re.escape(sector_name.removeprefix("한국 ").strip()) if sector_name else None)
     if ticker == "396500.KS":
@@ -238,7 +269,8 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
         if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)", title, re.I):
             continue
         if (not session or item.get("market") != region or item.get("session_date") != session
-                or item.get("news_bucket") in {"next_session_news", "other_market_news"}):
+                or item.get("news_bucket") in {"next_session_news", "other_market_news"}
+                or is_preopen_outlook(item)):
             continue
         if region == "KR":
             direct = bool(pattern and re.search(pattern, title, re.I))
@@ -258,13 +290,15 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
         if ticker in {"XLK", "IGV"} and not recap and ticker.lower() not in title.lower():
             continue
         indirect = ((ticker == "IGV" and not re.search(r"소프트웨어|software|\bigv\b|사이버|cyber", title, re.I))
+                    or (ticker == "XLK" and not re.search(r"기술주|빅테크|tech stocks|technology|\bxlk\b", title, re.I))
                     or (ticker == "SOXX" and not re.search(r"반도체|semiconductor|\bsoxx\b|\bsmh\b", title, re.I)))
         if indirect and not recap:
             continue
         matched.append(dict(item, ticker=ticker, market_context_only=indirect))
     seen = set()
     unique = []
-    for item in sorted(matched, key=lambda item: not bool(news_theme(text(item.get("title"))))):
+    for item in sorted(matched, key=lambda item: (bool(item.get("market_context_only")),
+                                                 not bool(news_theme(text(item.get("title")))))):
         key = text(first(item, "link", "title"))
         if key and key not in seen:
             seen.add(key)

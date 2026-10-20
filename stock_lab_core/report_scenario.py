@@ -46,7 +46,21 @@ def build_scenario_context(frames, sessions, now):
     current = {symbol: interval_observation(frames.get(symbol), base, now) for symbol in SYMBOLS}
     closed = ({symbol: interval_observation(frames.get(symbol), base, close) for symbol in SYMBOLS}
               if kr == now.date().isoformat() and now >= close else {})
-    return {"latest": current, "kr_close": closed}
+    status = {}
+    for symbol in SYMBOLS:
+        frame = frames.get(symbol)
+        if current.get(symbol):
+            continue
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            status[symbol] = "수집 실패/미수집: 시세 프레임 없음"
+        elif not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:
+            status[symbol] = "수집 자료의 시간대 정보 미확인"
+        else:
+            completed = frame.index[frame.index + pd.Timedelta(minutes=5) <= now]
+            status[symbol] = ("자료 지연: 현재 시점 10분 이내 완료 봉 없음"
+                              if completed.empty or completed.max() + pd.Timedelta(minutes=5) < now - timedelta(minutes=10)
+                              else "비교 기준 미국 종가 시각 자료 미수집/가격 결측")
+    return {"latest": current, "kr_close": closed, "latest_status": status}
 
 
 def scenario_observation_line(row, evidence):
@@ -78,5 +92,7 @@ def latest_futures_line(evidence):
         if move is not None:
             at = pd.Timestamp(item["as_of"]).tz_convert("Asia/Seoul").strftime("%m/%d %H:%M KST")
             parts.append(f"{symbol} {move * 100:+.2f}% ({at})")
-    return ("현재 선물 관측(미국 기준일 16:00 ET 대비, 지연 가능): " + " / ".join(parts)
-            if parts else "현재 선물: 같은 기준 시각의 자료 미수집, 방향 추정 안 함")
+        else:
+            reason = (evidence or {}).get("latest_status", {}).get(symbol, "수집 실패/지연 또는 비교 시각 자료 미수집")
+            parts.append(f"{symbol} 미수집({reason})")
+    return "현재 선물 관측(미국 기준일 16:00 ET 대비, 지연 가능): " + " / ".join(parts)

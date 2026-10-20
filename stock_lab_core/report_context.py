@@ -121,15 +121,14 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                if (obs := observations[ticker])["date"] == sessions.get("KR" if ticker.endswith((".KS", ".KQ")) else "US") and obs["return"] is not None]
     from stock_lab_core.portfolio import infer_scenario_shock_multiplier
     rotation_rows = [row for row in closed_rows if abs(infer_scenario_shock_multiplier({"티커": row["Ticker"]})) <= 1 and row["Ticker"] != "SMH"]
-    result = {"prices": observations, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
+    result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
               "market_states": states, "intraday_prices": intraday, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
-        if price_frames is None and any(text(first(row, "티커", "ticker")).split(".")[0] in {"379800", "379810", "418660"}
-                                        for row in records(summary_rows) if is_held(row)):
+        if price_frames is None:
             from stock_lab_core.report_live import load_us_live_frames
             scenario_frames = load_us_live_frames(SYMBOLS)
         else:

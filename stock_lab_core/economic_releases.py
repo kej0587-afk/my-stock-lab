@@ -56,7 +56,10 @@ from stock_lab_core.release_calendar import (
     clear_release_calendar_cache,
     load_release_calendar,
 )
+from stock_lab_core.report_build import register_loaded_source
 
+
+register_loaded_source(__name__, __file__)
 
 BLS_URL = "https://api.bls.gov/publicAPI/v1/timeseries/data/"
 CENSUS_URL = "https://api.census.gov/data/timeseries/eits/marts"
@@ -288,7 +291,7 @@ def _reason(row, *reasons):
 def _monthly_history(row, values):
     """Only same-unit monthly measures; require three consecutive prior months."""
     period = row["period"]
-    normalized = {month: value for month, value in values.items()
+    normalized = {month: _number(value) for month, value in values.items()
                   if _month(month) == month and month <= period and _number(value) is not None}
     row["history"] = [{"period": month, "value": normalized[month]}
                       for month in sorted(normalized)[-36:]]
@@ -296,7 +299,7 @@ def _monthly_history(row, values):
     if all(value is not None for value in prior):
         row.update(previous3mean=round(sum(prior) / 3, 6), previous3mean_reason="")
     else:
-        row["previous3mean_reason"] = "three_consecutive_prior_months_unavailable"
+        row.update(previous3mean=None, previous3mean_reason="three_consecutive_prior_months_unavailable")
 
 
 def _bls(now):
@@ -425,7 +428,9 @@ def _retail(now, api_key):
         _monthly_history(row, values)
     else:
         _reason(row, error)
-    row["request_metadata"] = dict(data["request"] if data else diagnostics)
+    if diagnostics.get("response_status") == "api_key_required":
+        _reason(row, "census_api_key_required")
+    row["request_metadata"] = deepcopy(data["request"] if data else diagnostics)
     row["request_metadata"]["from_cache"] = bool(data and diagnostics["http_status"] is None)
     row["publication_status"] = "available" if data else "unconfirmed"
     row["publication_source_url"] = CENSUS_PUBLICATION_URL
@@ -436,8 +441,15 @@ def _retail(now, api_key):
         row["status"] = "stale"
         row["publication_status"] = "unconfirmed"
         _reason(row, "latest_completed_month_not_in_response")
-    logging.getLogger(__name__).info("Census publication_status=%s latest_period=%s reason=%s",
-                                    row["publication_status"], row["period"] or "unavailable", error or "none")
+    row["request_metadata"].update(
+        failure_reason=row["missing_reason"], publication_status=row["publication_status"],
+        latest_completed_period=row["latest_completed_period"], observation_recency=row["observation_recency"])
+    log = logging.getLogger(__name__)
+    (log.warning if row["missing_reason"] else log.info)(
+        "Census HTTP=%s params=%s response_status=%s publication_status=%s latest_period=%s reason=%s",
+        row["request_metadata"]["http_status"], row["request_metadata"]["parameters"],
+        row["request_metadata"]["response_status"], row["publication_status"],
+        row["period"] or "unavailable", row["missing_reason"] or "none")
     return row
 
 
@@ -478,14 +490,82 @@ def _fed(now, api_key):
     return row
 
 
-def _ecos(now, api_key, indicator):
+def _ecos_payload_rows(payload, service):
+    if not isinstance(payload, dict):
+        raise _Unavailable("ecos_invalid_response")
+    if "RESULT" in payload:
+        result = payload["RESULT"]
+        code = result.get("CODE", "") if isinstance(result, dict) else ""
+        suffix = ":" + code if isinstance(code, str) and re.fullmatch(r"(?:INFO|ERROR)-\d{3}", code) else ""
+        stage = "metadata" if service == "StatisticItemList" else "observations"
+        raise _Unavailable("ecos_" + stage + "_rejected" + suffix)
+    data = payload.get(service)
+    rows = data.get("row") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or len(rows) > 100 or not all(isinstance(row, dict) for row in rows):
+        raise _Unavailable("ecos_invalid_response")
+    return rows
+
+
+def _ecos_metadata(payload, indicator):
     stat, item, stat_name, item_name = _ECOS_SERIES[indicator]
+    matches = [entry for entry in _ecos_payload_rows(payload, "StatisticItemList")
+               if entry.get("STAT_CODE") == stat and entry.get("ITEM_CODE") == item
+               and entry.get("GRP_CODE") == "Group1" and entry.get("CYCLE") == "M"
+               and stat_name in str(entry.get("STAT_NAME", "")) and entry.get("ITEM_NAME") == item_name]
+    if len(matches) != 1:
+        raise _Unavailable("ecos_series_mapping_unverified")
+    unit = matches[0].get("UNIT_NAME", "")
+    if not isinstance(unit, str) or not (
+            re.fullmatch(r"\d{4}=100", unit) if indicator == "KR_CPI" else unit == "천불"):
+        raise _Unavailable("ecos_series_unit_mismatch")
+    return {"unit": unit}
+
+
+def _ecos_levels(payload, indicator, unit, start, end):
+    stat, item, _, item_name = _ECOS_SERIES[indicator]
+    values = {}
+    for entry in _ecos_payload_rows(payload, "StatisticSearch"):
+        if (entry.get("STAT_CODE") != stat or entry.get("ITEM_CODE1") != item
+                or entry.get("ITEM_NAME1") != item_name
+                or any(entry.get(f"ITEM_CODE{index}") for index in (2, 3, 4))
+                or entry.get("UNIT_NAME") != unit):
+            raise _Unavailable("ecos_observation_series_or_unit_mismatch")
+        raw_period = str(entry.get("TIME", ""))
+        if not re.fullmatch(r"\d{6}", raw_period):
+            continue
+        period = _month(raw_period[:4] + "-" + raw_period[4:])
+        value = _number(entry.get("DATA_VALUE"))
+        if period and start <= period <= end and value is not None:
+            if indicator == "KR_CPI" and value <= 0:
+                raise _Unavailable("ecos_invalid_index_level")
+            if period in values and values[period] != value:
+                raise _Unavailable("ecos_conflicting_observations")
+            values[period] = value
+    return values
+
+
+def _ecos_rates(row, data, unit):
+    rates = {period: round((value / data[_shift(period, -12)] - 1) * 100, 1)
+             for period, value in data.items() if data.get(_shift(period, -12), 0) > 0}
+    period = max(data)
+    row.update(period=period, actual=rates.get(period), previous=rates.get(_shift(period, -1)),
+               previous_period=_shift(period, -1), previous_source=row["source"] + " (latest revised)",
+               previous_unit="%", previous_basis="YoY", raw_unit=unit,
+               raw_actual=data[period], raw_year_ago=data.get(_shift(period, -12)),
+               raw_year_ago_period=_shift(period, -12))
+    row["status"] = "released" if row["actual"] is not None else "unavailable"
+    if row["actual"] is None:
+        _reason(row, "comparison_period_unavailable")
+    _monthly_history(row, rates)
+
+
+def _ecos(now, api_key, indicator):
+    stat, item, _, _ = _ECOS_SERIES[indicator]
     row = _row(indicator, "%", "YoY", "Bank of Korea ECOS", ECOS_URL, now,
                seasonal_adjustment="NSA", series_id=f"{stat}/{item}",
                value_kind="calculated_from_official_levels", api_key_configured=bool(api_key))
-    if indicator == "KR_EXPORTS":
-        # The existing report bulletin hook may fetch public Customs final releases.
-        row["official_bulletin_fetch"] = True
+    # The report bulletin hook can use bounded, public primary-source fallbacks.
+    row["official_bulletin_fetch"] = True
     if not api_key:
         _reason(row, "ECOS_API_KEY_missing")
         return row
@@ -496,19 +576,7 @@ def _ecos(now, api_key, indicator):
 
     def metadata():
         payload = _request(f"{ECOS_URL}StatisticItemList/{api_key}/json/kr/1/100/{stat}")
-        if "RESULT" in payload:
-            raise _Unavailable("ecos_metadata_rejected")
-        matches = [entry for entry in payload.get("StatisticItemList", {}).get("row", [])
-                   if entry.get("STAT_CODE") == stat and entry.get("ITEM_CODE") == item
-                   and entry.get("GRP_CODE") == "Group1" and entry.get("CYCLE") == "M"
-                   and stat_name in str(entry.get("STAT_NAME", ""))
-                   and entry.get("ITEM_NAME") == item_name]
-        if len(matches) != 1:
-            raise _Unavailable("ecos_series_mapping_unverified")
-        unit = matches[0].get("UNIT_NAME", "")
-        if not (re.fullmatch(r"\d{4}=100", unit) if indicator == "KR_CPI" else unit == "천불"):
-            raise _Unavailable("ecos_series_unit_mismatch")
-        return {"unit": unit}
+        return _ecos_metadata(payload, indicator)
 
     meta, error, _ = _cached(("ecos_metadata", indicator, credential_id), metadata, now)
     if not meta:
@@ -518,44 +586,14 @@ def _ecos(now, api_key, indicator):
     def fetch():
         payload = _request(f"{ECOS_URL}StatisticSearch/{api_key}/json/kr/1/100/{stat}/M/"
                            f"{now.year - 3}01/{now:%Y%m}/{item}")
-        if "RESULT" in payload:
-            raise _Unavailable("ecos_observations_rejected")
-        values = {}
-        for entry in payload.get("StatisticSearch", {}).get("row", []):
-            if (entry.get("STAT_CODE") != stat or entry.get("ITEM_CODE1") != item
-                    or entry.get("ITEM_NAME1") != item_name
-                    or any(entry.get(f"ITEM_CODE{index}") for index in (2, 3, 4))
-                    or entry.get("UNIT_NAME") != meta["unit"]):
-                raise _Unavailable("ecos_observation_series_or_unit_mismatch")
-            raw_period = str(entry.get("TIME", ""))
-            if not re.fullmatch(r"\d{6}", raw_period):
-                continue
-            period = _month(raw_period[:4] + "-" + raw_period[4:])
-            value = _number(entry.get("DATA_VALUE"))
-            if period and period <= now.strftime("%Y-%m") and value is not None:
-                if period in values and values[period] != value:
-                    raise _Unavailable("ecos_conflicting_observations")
-                values[period] = value
-        return values
+        return _ecos_levels(payload, indicator, meta["unit"], f"{now.year - 3}-01", now.strftime("%Y-%m"))
 
     data, error, retrieved = _cached(("ecos", indicator, now.strftime("%Y-%m"), credential_id), fetch, now)
     row["retrieved_at"] = retrieved
     if not data:
         _reason(row, error)
         return row
-    rates = {period: round((value / data[_shift(period, -12)] - 1) * 100, 1)
-             for period, value in data.items()
-             if data.get(_shift(period, -12), 0) > 0}
-    period = max(data)
-    row.update(period=period, actual=rates.get(period), previous=rates.get(_shift(period, -1)),
-               previous_period=_shift(period, -1), previous_source=row["source"] + " (latest revised)",
-               previous_unit="%", previous_basis="YoY", raw_unit=meta["unit"])
-    row.update(raw_actual=data[period], raw_year_ago=data.get(_shift(period, -12)),
-               raw_year_ago_period=_shift(period, -12))
-    row["status"] = "released" if row["actual"] is not None else "unavailable"
-    if row["actual"] is None:
-        _reason(row, "comparison_period_unavailable")
-    _monthly_history(row, rates)
+    _ecos_rates(row, data, meta["unit"])
     return row
 
 
@@ -832,6 +870,9 @@ def load_economic_releases(event_rows=None, now=None):
             row["publication_status"] = "pending"
             logging.getLogger(__name__).info("Census publication_status=pending period=%s release_at=%s",
                                             row["period"] or "unavailable", row["release_at"] or "unavailable")
+        if row["indicator"] == "US_RETAIL_SALES" and "request_metadata" in row:
+            row["request_metadata"].update(publication_status=row["publication_status"],
+                                           observation_recency=row["observation_recency"])
     return rows
 
 

@@ -45,12 +45,15 @@ def test_verified_bulletins_use_latest_vintage_and_expire_without_live_claim():
     rows = [dict(success(), actual=None, period="", status="unavailable"),
             dict(success(), indicator="KR_EXPORTS", period="2026-08", actual=68.7)]
     revised = apply_official_bulletins(rows, NOW)
-    assert revised[0]["actual"] == 2.9 and revised[0]["status"] == "verified_snapshot"
+    # The ministry's manual CPI fallback is retired. Without an explicitly
+    # enabled primary-source fetch, do not manufacture an official observation.
+    assert revised[0]["actual"] is None and revised[0]["status"] == "unavailable"
     assert revised[1]["actual"] == 83.7 and revised[1]["previous"] == 68.9
     assert round((revised[1]["raw_actual"] / revised[1]["raw_year_ago"] - 1) * 100, 1) == 83.7
     assert revised[1]["history"] == [] and revised[1]["forecast"] is None
-    assert apply_official_bulletins(rows, NOW + timedelta(days=40)) == rows
-    assert apply_official_bulletins(rows, NOW - timedelta(days=1)) == rows
+    unchanged = [dict(rows[0], fallback_mode="unavailable", bulletin_collection_error="cpi_primary_automatic_fetch_not_enabled"), rows[1]]
+    assert apply_official_bulletins(rows, NOW + timedelta(days=40)) == unchanged
+    assert apply_official_bulletins(rows, NOW - timedelta(days=1)) == unchanged
     fresh = dict(success(), period="2026-10", actual=3.0)
     assert apply_official_bulletins([fresh], NOW) == [fresh]
 

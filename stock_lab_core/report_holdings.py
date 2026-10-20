@@ -1,5 +1,10 @@
 """Report estimates reuse portfolio exposure multipliers; never trade signals."""
 
+import math
+from datetime import timedelta
+
+import pandas as pd
+
 from stock_lab_core.portfolio import infer_scenario_shock_multiplier
 from stock_lab_core.report_build import register_loaded_source
 
@@ -13,8 +18,93 @@ UNDERLYINGS = {
 }
 
 
-def completed_scenario_comparison(row, observations, sessions, now):
-    """Compare a prior-US-close scenario to KR daily close, not the opening gap."""
+HEDGE_POLICIES = {
+    "379800": ("환노출(환헤지 안 함)", "삼성자산운용 상품정보", "https://m.samsungfund.com/etf/search.do?searchText=379800"),
+    "379810": ("환노출(환헤지 안 함)", "삼성자산운용 상품정보", "https://www.samsungfund.com/etf/search.do?searchText=379810"),
+    "418660": ("환노출(운용사 인용 보도 기준·최신 원문 재확인)", "미래에셋 운용담당자 인용 보도(2023-12-19); 최신 운용사 원문 HTTP 403",
+               "https://www.newsway.co.kr/news/view?ud=2023121915341181083"),
+}
+
+
+def hedge_policy_line(row):
+    code = text(first(row, "티커", "ticker")).upper().split(".")[0]
+    return HEDGE_POLICIES.get(code, ("환헤지 여부 미확인",))[0]
+
+
+def hedge_source_lines(rows):
+    codes = {text(first(row, "티커", "ticker")).upper().split(".")[0] for row in rows}
+    return [f"- 환헤지 출처 {code}: [{source}]({url})" for code, (_, source, url) in HEDGE_POLICIES.items() if code in codes]
+
+
+def cumulative_holding_comparison(row, observations, sessions, now, price_frames):
+    """Compare the as-yet-unreflected US sessions to cumulative KR closes."""
+    from stock_lab_core.report_evidence import closed_daily_frame
+    from stock_lab_core.prices import _us_equity_market_holidays
+
+    ticker = text(first(row, "티커", "ticker")).upper()
+    code = ticker.split(".")[0]
+    own = observations.get(ticker, {})
+    if code not in {"379800", "379810", "418660"}:
+        return {}
+    end_kr = own.get("date")
+    end_us = sessions.get("US")
+    if not end_kr or end_kr != sessions.get("KR") or not end_us:
+        return {"error": "양국 확정 종가 기준일 불일치"}
+    own_frame = closed_daily_frame((price_frames or {}).get(ticker), ticker, now)
+    for base in UNDERLYINGS[code]:
+        proxy = observations.get(base, {})
+        if proxy.get("date") != end_us:
+            continue
+        proxy_frame = closed_daily_frame((price_frames or {}).get(base), base, now)
+        if own_frame.empty or proxy_frame.empty:
+            continue
+        own_close = pd.to_numeric(own_frame["Close"], errors="coerce")
+        proxy_close = pd.to_numeric(proxy_frame["Close"], errors="coerce")
+        own_close.index = own_close.index.strftime("%Y-%m-%d")
+        proxy_close.index = proxy_close.index.strftime("%Y-%m-%d")
+        anchor = text(proxy.get("previous_date"))
+        if not anchor:
+            earlier = proxy_close.index[proxy_close.index < end_us]
+            anchor = max(earlier, default="")
+        # A US trading day can be a Korean holiday. Select a real KR close,
+        # disclose its date, and then recompute the US information-time anchor.
+        eligible_kr = own_close.index[(own_close.index <= anchor) & (own_close.index < end_kr)]
+        anchor = max(eligible_kr, default="")
+        if not anchor or not (anchor < end_us and anchor < end_kr):
+            continue
+        # KR's 15:30 close precedes that calendar day's US opening. Include the
+        # US return starting that day, not just its later close-to-close move.
+        kr_start_at = pd.Timestamp(anchor + " 15:30", tz="Asia/Seoul")
+        ny_start = kr_start_at.tz_convert("America/New_York")
+        us_start = ny_start.date() - timedelta(days=int(ny_start.hour < 16))
+        while us_start.weekday() >= 5 or us_start in _us_equity_market_holidays(us_start.year):
+            us_start -= timedelta(days=1)
+        anchor_us = us_start.isoformat()
+        if anchor not in own_close or end_kr not in own_close or anchor_us not in proxy_close or end_us not in proxy_close:
+            continue
+        path = proxy_close.loc[anchor_us:end_us]
+        required = {day.date().isoformat() for day in pd.bdate_range(anchor_us, end_us)
+                    if day.date() not in _us_equity_market_holidays(day.year)}
+        if not required.issubset(set(path.index)):
+            continue
+        endpoints = [own_close.loc[anchor], own_close.loc[end_kr], *path.tolist()]
+        if any(number(value) is None or value <= 0 for value in endpoints):
+            continue
+        multiplier = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
+        actual = float(own_close.loc[end_kr] / own_close.loc[anchor] - 1)
+        underlying = float(path.iloc[-1] / path.iloc[0] - 1)
+        # Daily-reset products compound daily shocks, not multiplier * total.
+        reference = float((1 + path.pct_change().dropna() * multiplier).prod() - 1)
+        if not all(math.isfinite(value) for value in (actual, underlying, reference)):
+            continue
+        return {"anchor": anchor, "us_anchor": anchor_us, "kr_date": end_kr, "us_date": end_us, "proxy": base,
+                "actual": actual, "underlying": underlying, "reference": reference,
+                "residual_pp": (actual - reference) * 100, "multiplier": multiplier}
+    return {"error": "같은 시작일의 한국 ETF·미국 기초자산 가격 이력 미수집"}
+
+
+def completed_scenario_comparison(row, observations, sessions, now, *, price_frames=None):
+    """Cumulative close comparison; one-day scenarios are only a reference."""
     ticker = text(first(row, "티커", "ticker")).upper()
     code = ticker.split(".")[0]
     own = observations.get(ticker, {})
@@ -25,17 +115,15 @@ def completed_scenario_comparison(row, observations, sessions, now):
         return "당일 종가 미수집: 시나리오와 실제 비교 보류"
     if code not in UNDERLYINGS:
         return f"당일 종가 {actual * 100:+.2f}% · 구성종목 기반 수치 시나리오 미제공, 갭 위험 문구로 실제 결과를 대체하지 않음"
-    for base in UNDERLYINGS[code]:
-        proxy = observations.get(base, {})
-        change = number(proxy.get("return"))
-        if change is None or proxy.get("date") != sessions.get("US") or own.get("previous_date") != proxy.get("date"):
-            continue
-        mult = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
-        scenario = change * mult
-        return (f"시나리오 {scenario * 100:+.2f}% vs 당일 종가 {actual * 100:+.2f}% · "
-                f"차이(실제−시나리오) {(actual - scenario) * 100:+.2f}%p · {base} {proxy['date']} 기준. "
-                "시가 갭 오차가 아닌 종가 등락과의 비교, 환율·선물 미반영")
-    return "비교 보류: 직전 한국 거래일과 미국 기초자산 기준일 일치 미확인"
+    comparison = cumulative_holding_comparison(row, observations, sessions, now, price_frames)
+    policy = hedge_policy_line(row)
+    if comparison.get("error") or not comparison:
+        return "누적 비교 보류: " + comparison.get("error", "누적 비교 기초자산 미연결") + " · " + policy
+    c = comparison
+    reference_label = f"{c['multiplier']:g}배 일간복리 참고" if c["multiplier"] != 1 else "누적"
+    return (f"누적 비교: 한국 {c['anchor']}→{c['kr_date']} 실제 {c['actual'] * 100:+.2f}% vs "
+            f"{c['proxy']} 미국 {c['us_anchor']}→{c['us_date']} {reference_label} {c['reference'] * 100:+.2f}% · "
+            f"잔차 {c['residual_pp']:+.2f}%p · {policy}")
 
 
 def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):

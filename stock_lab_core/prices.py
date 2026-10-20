@@ -20,6 +20,7 @@ import yfinance as yf
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.performance import measure, submit_with_context, timed_call
+from stock_lab_core import performance as _performance
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -35,6 +36,15 @@ _YAHOO_BLOCK_SECONDS = 180
 _FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
 _PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
 _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
+
+
+def _quote_transport_event(provider, outcome, error=None):
+    if error is not None:
+        cause = getattr(error, "reason", error)
+        outcome = "timeout" if isinstance(cause, TimeoutError) else "error"
+    counter = getattr(_performance, "count_event", None)
+    if counter is not None:
+        counter(f"{provider}.{outcome}")
 
 
 @contextmanager
@@ -606,10 +616,13 @@ def _fetch_naver_realtime_quote(ticker: str) -> dict:
         query = urllib.parse.quote(f"SERVICE_ITEM:{code}")
         url = f"https://polling.finance.naver.com/api/realtime?query={query}"
         req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        _quote_transport_event("naver_realtime", "request")
         raw = urllib.request.urlopen(req, timeout=4).read()
+        _quote_transport_event("naver_realtime", "response")
         text = raw.decode("utf-8", errors="ignore")
         return _parse_naver_realtime_quotes(text, [ticker]).get(normalize_price_lookup_key(ticker), {})
-    except Exception:
+    except Exception as exc:
+        _quote_transport_event("naver_realtime", "error", exc)
         return {}
 
 
@@ -622,7 +635,9 @@ def _fetch_naver_basic_quote(ticker: str) -> dict:
     try:
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
         req = urllib.request.Request(url, headers=_NAVER_HEADERS)
+        _quote_transport_event("naver_basic", "request")
         raw = urllib.request.urlopen(req, timeout=5).read()
+        _quote_transport_event("naver_basic", "response")
         text = raw.decode("utf-8", errors="ignore")
         try:
             data = json.loads(text)
@@ -645,7 +660,8 @@ def _fetch_naver_basic_quote(ticker: str) -> dict:
             if m:
                 obj[quote_field] = m.group(1)
         return _extract_naver_quote_from_obj(obj)
-    except Exception:
+    except Exception as exc:
+        _quote_transport_event("naver_basic", "error", exc)
         return {}
 
 

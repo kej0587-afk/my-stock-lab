@@ -29130,6 +29130,16 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
         st.download_button("리포트 다운로드", saved_report.encode("utf-8"),
                            file_name="stock_lab_market_report.md", mime="text/markdown",
                            key="today_market_report_download", icon=":material/download:")
+        from stock_lab_core.performance import matching_report_measurement
+        matched_measurement = matching_report_measurement(st.session_state, saved_report)
+        if matched_measurement:
+            st.download_button(
+                "이 리포트와 같은 측정ID JSON", json.dumps(matched_measurement, ensure_ascii=False, indent=2),
+                file_name=f"today_queue_{matched_measurement['measurement_id']}.json", mime="application/json",
+                key="today_market_report_matching_performance", on_click="ignore", icon=":material/download:",
+            )
+        else:
+            st.caption("이 리포트와 같은 측정ID의 계산 기록이 현재 세션에 없습니다. last_attempt와 대신 비교하지 않습니다.")
 
     with st.expander("뉴스픽/시황 붙여넣기", expanded=False):
         auto_cols = st.columns([1.15, 1.25, 0.9])
@@ -29509,7 +29519,7 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
 def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_history import update_report_history
-    from stock_lab_core.performance import queue_measurement_reference
+    from stock_lab_core.performance import summary_measurement_reference
     from stock_lab_core.report_history_store import SupabaseReportHistoryStore
     try:
         context = collect_report_context(summary_df, event_rows, include_news=include_news,
@@ -29522,7 +29532,9 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store))
     context["entrypoint"] = __file__
-    context["queue_measurement"] = queue_measurement_reference(st.session_state.get("today_queue_performance"))
+    context["queue_measurement"] = summary_measurement_reference(summary_df)
+    if context["queue_measurement"].get("measurement_id"):
+        st.session_state["today_market_report_measurement_id"] = context["queue_measurement"]["measurement_id"]
     return context
 
 
@@ -33477,7 +33489,15 @@ def render_today_queue_tab(mode):
         attempt = trace.report()
         attempt["before_today_seconds"] = before_today_seconds
         attempt["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
+        from stock_lab_core.performance import archive_queue_measurement, queue_measurement_details
+        attempt.update(queue_measurement_details(attempt))
+        attempt["cache_state"] = (st.session_state.get("today_queue_current_cache_policy", {"mode": "unrecorded"})
+                                  if attempt["calculation_completed"] else {"mode": "not_recalculated"})
+        if attempt["calculation_completed"]:
+            attempt["input_counts"] = st.session_state.get("today_queue_current_input_counts", {})
+        attempt["build"] = get_report_build_info(__file__)
         st.session_state["today_queue_last_attempt_performance"] = attempt
+        archive_queue_measurement(st.session_state, attempt)
     report = attempt
     phase_status.caption(f"화면 처리 완료 · {report['elapsed_seconds']:.1f}초")
     root_timing = next((row for row in report["functions"] if row["name"] == "today_queue_render"), None)
@@ -33701,12 +33721,23 @@ def _render_today_queue_tab(mode):
         else:
             st.info("보유·관심종목 점검 중 · 돈흐름 자동발굴은 이번 계산에서 제외")
         queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
+        st.session_state["today_queue_current_input_counts"] = {
+            "registered": len(raw_watch_items), "calculated": len(watch_items),
+            "auto_flow_candidates": len(flow_auto_items), "refresh_flow_candidates": bool(refresh_flow_candidates),
+        }
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
+            st.session_state["today_queue_current_cache_policy"] = {
+                "mode": "standard_refresh_not_fully_cold",
+                "reset": ["latest_quotes", "load_price_df", "load_price_frames_batch"],
+                "may_be_warm": ["provider_history", "analyst_6h", "financial_metadata"],
+            }
             clear_latest_price_cache()
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             cache_clear(load_price_frames_batch)
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+            from stock_lab_core.performance import bind_summary_measurement
+            summary_df = bind_summary_measurement(summary_df)
         last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig

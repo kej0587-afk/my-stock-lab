@@ -1,0 +1,48 @@
+{
+  "report_base_commit": "19bba8495737",
+  "report_measurement_id": "ce00ba228b994db1982230daa22becd0",
+  "uploaded_measurement_id": "bcef00ba4e644f31b87be42a5782d1d5",
+  "measurement_ids_match": false,
+  "measurement_kind": "render_only",
+  "calculation_completed": false,
+  "is_full_today_queue_measurement": false,
+  "elapsed_seconds": 24.00397821329534,
+  "analyst": {
+    "category": "external_data",
+    "name": "get_analyst_snapshot",
+    "calls": 62,
+    "total_seconds": 6.445707018487155,
+    "self_seconds": 6.445707018487155,
+    "max_seconds": 1.6585036888718605,
+    "failures": 0,
+    "active_wall_seconds": 1.672587607987225
+  },
+  "kr_batch_wait": {
+    "category": "phase",
+    "name": "kr_quote_fallback_wait",
+    "calls": 3,
+    "total_seconds": 11.090494452044368,
+    "self_seconds": 11.090494452044368,
+    "max_seconds": 8.167992589063942,
+    "failures": 0,
+    "active_wall_seconds": 11.090494452044368
+  },
+  "naver_single_realtime": {
+    "category": "prices",
+    "name": "_fetch_naver_realtime_quote",
+    "calls": 92,
+    "total_seconds": 37.634801391512156,
+    "self_seconds": 37.634801391512156,
+    "max_seconds": 0.6751095922663808,
+    "failures": 0,
+    "active_wall_seconds": 10.576575491577387
+  },
+  "transport_events": null,
+  "cold_cache_status": "미기록",
+  "conclusion": "측정ID/계산 구간 불일치: 전체 계산의 전후 성능 비교 불가",
+  "notes": [
+    "함수 호출 수는 캐시 적중을 포함할 수 있으며 HTTP 요청 수가 아님",
+    "kr_quote_fallback_wait는 병렬 배치 전체 대기시간이며 개별 요청 타임아웃 시간이 아님",
+    "과거 파일에 transport_events가 없으면 타임아웃 발생 여부는 확인 불가"
+  ]
+}
