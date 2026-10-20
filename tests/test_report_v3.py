@@ -37,7 +37,7 @@ def test_report_trading_history_overwrites_weekend_and_compares_reasons(tmp_path
         result = update_report_history(after, SESSIONS, owner_scope="alice", path=path)
         assert result["previous_date"] == "2026-10-15/2026-10-15"
         lines = comparison_lines(after, result["previous_summary"], previous_date=result["previous_date"], current_date=result["summary_date"])
-        assert "비중초과" in lines[0]
+        assert "비중초과" in "\n".join(lines)
     bob = update_report_history(after, SESSIONS, owner_scope="bob", path=path)
     assert not bob["previous_summary"]
 

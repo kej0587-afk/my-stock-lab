@@ -147,4 +147,5 @@ def test_new_and_removed_symbols_are_reported_not_called_unchanged():
     lines = comparison_lines([{"티커": "SOXL", "최종읽기": "대기"}], [{"티커": "AAPL", "최종읽기": "정밀확인"}],
                              previous_date="2026-10-15", current_date="2026-10-16")
     assert "변경 없음" not in lines[0]
-    assert "신규: SOXL" in lines[0] and "목록 제외: AAPL" in lines[0]
+    assert "점검 입력 목록 추가 1개: SOXL" in "\n".join(lines)
+    assert "점검 입력 목록 이탈 1개: AAPL" in "\n".join(lines)

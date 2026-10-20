@@ -122,6 +122,9 @@ def test_stock_heatmap_coverage_and_negative_live_bar(market, count):
 def test_stock_view_apptest_is_lazy_and_switch_safe(monkeypatch):
     from streamlit.testing.v1 import AppTest
     monkeypatch.setattr(market_board, "load_market_frames", lambda *args: pytest.fail("unexpected network"))
+    as_utc = market_board._as_utc
+    monkeypatch.setattr(market_board, "_as_utc", lambda now=None: as_utc(
+        now if now is not None else "2026-10-19T18:00:00Z"))
     source = '''
 import pandas as pd
 import streamlit as st

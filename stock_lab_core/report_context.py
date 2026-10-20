@@ -30,7 +30,7 @@ def apply_verified_release_dates(rows, now):
 
 
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
-                           economic_releases=None, calendar=None, btc_frame=None, live_frames=None, flow_snapshot=None, include_news=False):
+                           economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False):
     from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
     from stock_lab_core.release_calendar import load_release_calendar
@@ -93,8 +93,16 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     closed_rows = []
-    from stock_lab_core.money_flow import _compute_ticker_metrics
+    from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
+    metadata = {}
+    for item in MONEY_FLOW_UNIVERSE:
+        metadata.setdefault(text(item.get("ticker")), item)
+    for key in ("flow_df", "us_top5", "kr_top5", "global_top"):
+        for item in records((flow_snapshot or {}).get(key)):
+            symbol = text(first(item, "Ticker", "티커", "ticker"))
+            if symbol:
+                metadata[symbol] = dict(metadata.get(symbol, {}), **item)
     for ticker in sorted(tickers - set(MACRO_SYMBOLS.values())):
         frame = closed_daily_frame(frames.get(ticker), ticker, now)
         if len(frame) < 20 or not {"Close", "High", "Low"}.issubset(frame.columns):
@@ -103,8 +111,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         if str(frame.index[-1].date()) != sessions.get(region):
             continue
         metrics = _compute_ticker_metrics(frame)
-        closed_rows.append(dict(metrics, Ticker=ticker, 섹터=SECTORS.get(ticker, ticker),
-                                구분="한국 섹터" if ticker.endswith((".KS", ".KQ")) else "미국 섹터",
+        meta = metadata.get(ticker, {})
+        closed_rows.append(dict(metrics, Ticker=ticker, 섹터=text(meta.get("섹터")) or SECTORS.get(ticker, ticker),
+                                구분=text(meta.get("구분")) or ("한국 섹터" if ticker.endswith((".KS", ".KQ")) else "미국 섹터"),
                                 기준일=str(frame.index[-1].date()), 수치종류="확정 종가"))
     metrics_by_ticker = {row["Ticker"]: row for row in closed_rows}
     sectors = [dict(metrics_by_ticker.get(ticker, {}), **{"Ticker": ticker, "섹터": name, "구분": "한국 섹터" if ticker.endswith((".KS", ".KQ")) else "미국 섹터", "기준일": obs["date"],
@@ -117,6 +126,15 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
+    from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
+    if scenario_frames is None:
+        if price_frames is None and any(text(first(row, "티커", "ticker")).split(".")[0] in {"379800", "379810", "418660"}
+                                        for row in records(summary_rows) if is_held(row)):
+            from stock_lab_core.report_live import load_us_live_frames
+            scenario_frames = load_us_live_frames(SYMBOLS)
+        else:
+            scenario_frames = {}
+    result["scenario_observations"] = build_scenario_context(scenario_frames, sessions, now)
     if include_news:
         from stock_lab_core.today_news import fetch_session_market_news
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,

@@ -409,6 +409,8 @@ def _us_close_recap(title, published, window):
 
 
 _HEADLINE_MARKETS = {
+    "JP": re.compile(r"日\s*증시|일본\s*증시|닛케이|Japan(?:ese)?\s+(?:shares|stocks)|\bNikkei\b", re.I),
+    "CN": re.compile(r"中\s*증시|중국\s*증시|Chinese\s+(?:shares|stocks)", re.I),
     "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)", re.I),
     "US": re.compile(r"(?:미국|뉴욕|美)\s*증시|나스닥|\bNasdaq\b|\bWall Street\b|"
                      r"S&P\s*500|\bU\.?S\.?\s+(?:stocks?|equities|stock market)\b", re.I),
@@ -423,6 +425,9 @@ def _resolve_query_news_market(raw, windows):
         return row
     row["query_market"] = query_market or str(row.get("market") or "")
     title = str(row.get("title") or row.get("제목") or "")
+    publisher = str(row.get("publisher") or "").strip()
+    if publisher:
+        title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
     published = _news_timestamp(row.get("published_at") or row.get("published"))
     markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
     if published and _us_close_recap(title, published, windows.get("US")):
@@ -464,7 +469,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
     by_market = {window["market"]: window for window in windows}
     current_by_market = {window["market"]: window for window in current_windows}
     all_markets = by_market.keys() | current_by_market.keys()
-    result = {"session_news": [], "next_session_news": [], "current_session_news": [],
+    result = {"session_news": [], "next_session_news": [], "current_session_news": [], "other_market_news": [],
               "windows": windows, "current_windows": current_windows, "missing": missing}
     rejected = Counter()
     if hasattr(rows, "to_dict"):
@@ -476,6 +481,13 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
+        if market in {"JP", "CN"}:
+            published = _news_timestamp(raw.get("published_at") or raw.get("published"))
+            if published and now - timedelta(days=7) <= published <= now:
+                result["other_market_news"].append(dict(raw, market=market, published_at=published.isoformat(),
+                    session_date="", news_bucket="other_market_news", is_close_wrap=False,
+                    news_timing="다른 시장 맥락 · 한국/미국 종가 원인 아님"))
+            continue
         if market not in all_markets or (region and region != market):
             rejected["명시된 시장 또는 해당 시장의 유효한 세션 없음"] += 1
             continue
@@ -543,6 +555,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
                 missing.append(f"{market}: {'기준 세션' if bucket == 'session_news' else '종가 이후'} 뉴스 없음")
     missing.extend(f"{reason}: {count}건 제외" for reason, count in rejected.items())
     result["current_session_news"].sort(key=_news_sort_key)
+    result["other_market_news"].sort(key=_news_sort_key)
     for market in current_by_market:
         if not any(row["market"] == market for row in result["current_session_news"]):
             missing.append(f"{market}: 진행 세션 뉴스 없음")
@@ -672,7 +685,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         if any(len(origins.get(key, ())) > 1 for key in (row["link"], market_story_title_key(row["title"]))):
             row.pop("market", None)
     result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
-    for bucket in ("session_news", "next_session_news", "current_session_news"):
+    for bucket in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
         accepted, seen, seen_links, counts = [], set(), set(), Counter()
         for row in result[bucket]:
             # Exact time filtering already ran. Validate each source with the

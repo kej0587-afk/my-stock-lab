@@ -10,7 +10,7 @@ from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
 
-from stock_lab_core.report_evidence import first, holding_reasons, records, text
+from stock_lab_core.report_evidence import first, holding_reasons, is_held, records, text
 from stock_lab_core.today_snapshot import _snapshot_location
 from stock_lab_core.report_history_store import ReportHistoryStoreError, validate_session
 
@@ -19,6 +19,8 @@ DEFAULT_PATH = Path(__file__).resolve().parents[1] / "cache" / "market_report_hi
 
 def normalized_decisions(rows):
     return [{"티커": text(first(row, "티커", "ticker")),
+             "종목명": text(first(row, "종목명", "name", "자산명")),
+             "보유여부": is_held(row),
              "최종읽기": text(first(row, "최종읽기", "🔥기술적 타점", "판정코드")),
              "게이트상태": text(first(row, "게이트상태", "gate_state")),
              "저장사유": holding_reasons(row)} for row in records(rows)]

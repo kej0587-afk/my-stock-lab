@@ -188,20 +188,21 @@ def sector_evidence(row, macro_data, news):
             reading += "; 단순한 금리-주가 역방향 설명과 어긋나므로 다른 요인을 확인해야 함"
         if "할인율 부담" in reading:
             reading += f" [연준 할인율 설명]({FED_VALUATIONS})"
-    related = [item for item in news if text(item.get("ticker")).upper() == ticker]
+    region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+    related = [item for item in news if text(item.get("ticker")).upper() == ticker
+               and item.get("market") == region and item.get("session_date") == date
+               and item.get("news_bucket") not in {"next_session_news", "other_market_news"}]
     unconfirmed = "해당 업종 움직임의 개별 원인·기여도는 확정 자료 없음"
     if related:
         item = related[0]
         if reading == "직접 원인 자료 미연결":
             reading = ""
-        topic = ("AI 차입 우려(기사 주장)" if re.search(r"AI\s*(?:차입|부채)\s*우려", text(item.get("title")), re.I) else
+        from stock_lab_core.report_presentation import news_theme
+        topic = ((news_theme(text(item.get("title"))) + "(기사 주장)") if news_theme(text(item.get("title"))) else
                  "AI 관련 시장 움직임" if any(re.search(r"AI|인공지능", text(r.get("title")), re.I) for r in related) else "해당 업종 움직임")
         scope = "시장 공통 맥락, 해당 업종의 직접 원인 아님" if item.get("market_context_only") else "인과 기여 미확정"
         reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
                     + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
-        if any(r.get("common_theme") for r in related):
-            dates = sorted({text(r.get("published", r.get("published_at", "")))[:10] for r in related})
-            reading += " · 공통 테마 보도일 " + ", ".join(dates) + "(업종 기준일과 다를 수 있음; 해당 종가 원인으로 소급하지 않음)"
     return {"fact": "사실: " + fact + f" [{kind}]",
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

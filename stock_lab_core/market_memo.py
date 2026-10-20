@@ -2112,7 +2112,7 @@ def build_auto_market_memo(
         # No live macro fallback: missing session data must stay missing.
         macro_data = context.get("macro_data", {})
         if context.get("news_sessions"):
-            raw_news = (context.get("session_news", []) + context.get("next_session_news", []) + context.get("current_session_news", [])
+            raw_news = (context.get("session_news", []) + context.get("next_session_news", []) + context.get("current_session_news", []) + context.get("other_market_news", [])
                         if "session_news" in context else records(market_news_rows) + records(news_rows))
             partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt,
                                                       current_sessions=context.get("current_news_sessions"))
@@ -2131,10 +2131,24 @@ def build_auto_market_memo(
         report_flow = {**flow_snapshot}
         if "closed_flow_rows" in context:
             aligned = {text(first(row, "Ticker", "티커")): row for row in records(context["closed_flow_rows"])}
-            report_flow["flow_df"] = list(aligned.values())
-            for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
-                report_flow[key] = [dict(row, **aligned[text(first(row, "Ticker", "티커"))])
-                                    for row in records(flow_snapshot.get(key)) if text(first(row, "Ticker", "티커")) in aligned]
+            originals = {text(first(row, "Ticker", "티커")): row for row in records(flow_snapshot.get("flow_df"))}
+            def merge_aligned(row, fresh):
+                result = dict(row, **fresh)
+                symbol = text(first(fresh, "Ticker", "티커"))
+                for field in ("섹터", "ETF 이름", "종목명", "구분"):
+                    value = text(row.get(field))
+                    if value and (not text(fresh.get(field)) or text(fresh.get(field)) == symbol):
+                        result[field] = value
+                return result
+            report_flow["flow_df"] = [merge_aligned(originals.get(symbol, {}), row) for symbol, row in aligned.items()]
+            for key in ("us_top5", "kr_top5", "global_top"):
+                report_flow[key] = [merge_aligned(row, aligned[text(first(row, "Ticker", "티커"))])
+                                   for row in records(flow_snapshot.get(key)) if text(first(row, "Ticker", "티커")) in aligned]
+            # Themes are multi-stock aggregates, not missing single-ticker quotes.
+            report_flow["theme_top5"] = [
+                dict(row, 수치종류="원천 테마 집계 · 개별 ETF 종가와 별도",
+                     기준일=text(first(row, "기준일", "as_of", "date")) or "원천 기준일 미제공")
+                for row in records(flow_snapshot.get("theme_top5"))]
         front, missing = report_sections(context=context, news=curated,
             flow_rows=report_flow.get("flow_df"), event_rows=event_rows, summary_rows=summary_rows, now=dt)
         rows = records(summary_rows)
@@ -2154,6 +2168,11 @@ def build_auto_market_memo(
             lines.append(f"- {row['reading_ko']} · {kst_time(row['published'])} {citation(dict(row, title='원문'))}")
         if not late:
             lines.append("- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
+        elsewhere = curate_news(context.get("other_market_news", []), now=dt, limit=3)
+        if elsewhere:
+            lines.extend(["", "## 다른 시장/다른 날짜 맥락", "한국·미국 업종의 해당 종가 원인으로 연결하지 않은 별도 보도입니다."])
+            for row in elsewhere:
+                lines.append(f"- {text(row.get('market'))} · {kst_time(row.get('published'))} · {citation(row)}")
         lines.extend(["", "## 매크로 수치 근거", stress["explanation"], "",
                       "지표 | 수준 | 1개월 변화 | 비교 기준일 → 종가 기준일 | 상태 | 스트레스 기여",
                       "--- | --- | --- | --- | --- | ---"])
@@ -2171,6 +2190,10 @@ def build_auto_market_memo(
         if rotation.get("rows"):
             growth, defensive = rotation.get("growth_denominator", []), rotation.get("rotation_denominator", [])
             lines.extend(["", "## 스타일 비교", f"성장 [{', '.join(growth)}] / 방어 [{', '.join(defensive)}]"])
+            added_growth = set(growth) - {"SOXX", "XLK", "^IXIC"}
+            if added_growth:
+                lines.append("바스켓 변경 참고: 기존 성장 [SOXX, XLK, ^IXIC] 대비 추가 " + ", ".join(sorted(added_growth))
+                             + ". 입력 자료 확장에 따른 구성 변화로, 다른 구성일의 평균과 직접 비교하지 않습니다.")
             rotation_dates = sorted({str(row.get("기준일", "")) for row in rotation["rows"] if _rotation_market(row) == "us"})
             lines.append("미국 기준일 " + (", ".join(d for d in rotation_dates if d) or "미제공") +
                          (" · 확정 종가(장중 제외)" if "rotation_rows" in context else " · 종가/장중 구분 미확인(기존 저장 자료)"))

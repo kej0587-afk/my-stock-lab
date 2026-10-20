@@ -80,6 +80,7 @@ def account_metrics(held, observations, sessions):
     from stock_lab_core.portfolio import infer_scenario_shock_multiplier
 
     daily, gap, coverage, gap_coverage = 0.0, 0.0, 0.0, 0.0
+    by_market = {"US": 0.0, "KR": 0.0}
     replacement, replacement_coverage, concentration = 0.0, 0.0, 0.0
     seen = set()
     for row in held:
@@ -94,6 +95,7 @@ def account_metrics(held, observations, sessions):
         valid_move = move is not None and obs.get("date") == sessions.get(region) and sessions.get(region)
         if valid_move:
             daily += weight * move
+            by_market[region] += weight * move
             coverage += weight
         if ticker.split(".")[0] in {"379800", "379810", "418660"}:
             concentration += weight
@@ -119,7 +121,7 @@ def account_metrics(held, observations, sessions):
         return {"error": "비중과 같은 시장 기준일의 등락 미연결"}
     return dict(daily=daily, gap=gap, coverage=coverage, gap_coverage=gap_coverage,
                 replacement=replacement, replacement_coverage=replacement_coverage,
-                concentration=concentration)
+                concentration=concentration, by_market=by_market)
 
 
 def account_headline(metrics, sessions, mode):
@@ -128,8 +130,11 @@ def account_headline(metrics, sessions, mode):
         return "계좌 추정 보류: " + metrics.get("error", "보유자료 미연결")
     if metrics["coverage"] < 90:
         return f"계좌 추정 보류: 종가 연결 비중 {metrics['coverage']:.1f}%로 90% 미만"
+    split = metrics.get("by_market")
+    detail = (f" · 미국 상장 {split['US']:+.2f}%p / 한국 상장 {split['KR']:+.2f}%p"
+              if split else "")
     return (f"최신 종가 기준 계좌 추정 {metrics['daily']:+.2f}%p(연결 비중 {metrics['coverage']:.1f}%; "
-            f"미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')})")
+            f"미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')})" + detail)
 
 
 def account_live_estimate(held, live):
@@ -175,7 +180,7 @@ def account_estimate(held, observations, sessions, *, mode="preopen"):
     daily, gap = metrics["daily"], metrics["gap"]
     coverage, gap_coverage = metrics["coverage"], metrics["gap_coverage"]
     main = account_headline(metrics, sessions, mode) + ". "
-    if metrics["replacement_coverage"] < 90:
+    if mode != "closed" and metrics["replacement_coverage"] < 90:
         main += (f"장전 대체 합산은 연결 비중 {metrics['replacement_coverage']:.1f}%로 헤드라인 제외. "
                  + ("한국 최신 종가가 미국 기준일보다 뒤여서 이미 반영된 국내 미국지수 ETF를 장전 값으로 다시 치환하지 않음. "
                     if sessions.get("KR", "") > sessions.get("US", "") else "기초자산·갭 수치 미연결분 제외. "))
@@ -183,28 +188,66 @@ def account_estimate(held, observations, sessions, *, mode="preopen"):
     if gap_coverage:
         note += f" / 한국 상장 미국자산 ETF 개장 전 갭 시나리오 기여(추정): {gap:+.2f}%p · 적용 비중 {gap_coverage:.1f}%"
     return (main + note + f" · 379810/379800/418660 집중도 {metrics['concentration']:.1f}%. "
-            "현재비중 가중, 현금·미연결분 제외, 환율·거래 미반영. 갭 미연결 종목은 대체 합산에서 제외. 일간 합계와 갭 기여를 단순 합산하지 않음.")
+            "현재비중 가중, 현금·미연결분 제외, 환율·거래 미반영."
+            + (" 갭 미연결 종목은 대체 합산에서 제외. 일간 합계와 갭 기여를 단순 합산하지 않음."
+               if mode != "closed" else ""))
 
 
-def sector_related_news(ticker, session, news):
+def news_theme(title):
+    for pattern, label in (
+        (r"AI\s*신용\s*우려", "AI 신용우려"),
+        (r"AI\s*(?:차입|부채)\s*우려", "AI 차입 우려"),
+        (r"AI\s*투자\s*(?:불안|우려)", "AI 투자 불안"),
+    ):
+        if re.search(pattern, title, re.I):
+            return label
+    return ""
+
+
+def korean_market_catalysts(news, session):
+    """Headline claims from the matching Korean session, not causal attribution."""
+    parts = []
+    for item in news:
+        if (item.get("market") != "KR" or item.get("session_date") != session
+                or item.get("news_bucket") in {"next_session_news", "other_market_news"}):
+            continue
+        title = text(item.get("title"))
+        if not re.search(r"코스피|코스닥|한국\s*증시", title):
+            continue
+        label = news_theme(title)
+        if re.search(r"(?:外人|외인|외국인).{0,8}기관.{0,8}(?:동반\s*)?매도", title):
+            label = "외국인·기관 동반 매도"
+        if label and not any(label == prior[0] for prior in parts):
+            parts.append((label, text(first(item, "publisher", "source"))))
+    return " / ".join(f"{label}({publisher or '출처 미제공'})" for label, publisher in parts[:2])
+
+
+def sector_related_news(ticker, session, news, *, sector_name=""):
     """Session and exposure must both match; Korean competition is not a US wrap."""
     patterns = {"SOXX": r"반도체|semiconductor|\bsoxx\b|\bsmh\b|AI[· ·주]",
                 "DRAM": r"메모리|\bdram\b|micron|마이크론",
                 "XLK": r"기술주|빅테크|tech stocks|technology|AI[· ·주]|\bxlk\b",
                 "IGV": r"소프트웨어|software|사이버|cyber|AI[· ·주]|\bigv\b"}
-    pattern = patterns.get(ticker)
-    if not pattern:
-        return []
+    region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+    pattern = patterns.get(ticker) or (re.escape(sector_name.removeprefix("한국 ").strip()) if sector_name else None)
+    if ticker == "396500.KS":
+        pattern = r"반도체|삼성전자|SK하이닉스|메모리"
     matched = []
-    common = []
-    common_ai = re.compile(r"(?:AI|인공지능).{0,25}(?:투자|차입|부채|수익|bubble|debt|spending).{0,20}(?:불안|우려|걱정|concern|fear)|(?:AI|인공지능).{0,12}(?:불안|우려)", re.I)
     for item in news:
         title = text(item.get("title"))
-        if ticker in {"SOXX", "IGV", "XLK"} and common_ai.search(title):
-            common.append(dict(item, ticker=ticker, market_context_only=True, common_theme=True))
         if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)", title, re.I):
             continue
-        if item.get("market") != "US" or item.get("session_date") != session:
+        if (not session or item.get("market") != region or item.get("session_date") != session
+                or item.get("news_bucket") in {"next_session_news", "other_market_news"}):
+            continue
+        if region == "KR":
+            direct = bool(pattern and re.search(pattern, title, re.I))
+            market_context = bool(re.search(r"코스피|코스닥", title) and
+                                  (news_theme(title) or re.search(r"매도|매수|급락|반등", title)))
+            if direct or market_context:
+                matched.append(dict(item, ticker=ticker, market_context_only=not direct))
+            continue
+        if not pattern:
             continue
         if not re.search(pattern, title, re.I):
             continue
@@ -219,7 +262,11 @@ def sector_related_news(ticker, session, news):
         if indirect and not recap:
             continue
         matched.append(dict(item, ticker=ticker, market_context_only=indirect))
-    if len(common) >= 2:
-        keys = {text(first(item, "link", "title")) for item in matched}
-        matched.extend(item for item in common if text(first(item, "link", "title")) not in keys)
-    return sorted(matched, key=lambda item: not bool(re.search(r"AI\s*(?:차입|부채)\s*우려", text(item.get("title")), re.I)))
+    seen = set()
+    unique = []
+    for item in sorted(matched, key=lambda item: not bool(news_theme(text(item.get("title"))))):
+        key = text(first(item, "link", "title"))
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique

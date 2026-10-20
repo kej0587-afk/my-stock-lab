@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import math
 import re
@@ -11,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from stock_lab_core.asset_classifier import is_fin_score_exempt_asset
+from stock_lab_core.performance import submit_with_context
 from stock_lab_core.formatters import (
     clean_bool,
     ensure_kr_suffix_if_code,
@@ -108,6 +110,7 @@ def attach_today_analyst_context(
     ticker_col: str = "티커",
     price_col: str = "현재가",
     price_mismatch_tolerance_pct: float = 1.0,
+    max_workers: int = 4,
 ) -> pd.DataFrame:
     """Return a copy enriched with real consensus targets and numeric upside.
 
@@ -124,12 +127,19 @@ def attach_today_analyst_context(
     Original API fields are retained in attrs['today_analyst_snapshots']; when
     the existing news loader omits source/date, source is the loader name and
     asof stays blank. Grade, timing, wording, index and row order are preserved.
+
+    Only snapshot I/O runs concurrently, with at most four workers per call.
+    Snapshot callbacks must be thread-safe and must not access UI, session state
+    or secrets. Use max_workers=1 for caller-thread-only callbacks. Price
+    fallbacks and DataFrame updates always stay on the calling thread.
     """
     if not isinstance(summary_df, pd.DataFrame):
         raise TypeError("summary_df must be a pandas DataFrame")
     tolerance = _number(price_mismatch_tolerance_pct)
     if not math.isfinite(tolerance) or tolerance < 0:
         raise ValueError("price_mismatch_tolerance_pct must be finite and nonnegative")
+    if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 4:
+        raise ValueError("max_workers must be an integer between 1 and 4")
 
     out = summary_df.copy()
     rows = out.to_dict("records")
@@ -151,13 +161,37 @@ def attach_today_analyst_context(
     snapshot_cache: dict[str, tuple[Mapping, str, str, str]] = {}
     price_cache: dict[str, tuple[float, str]] = {}
     records = []
+    excluded = [_excluded(row, symbol) for row, symbol in zip(rows, symbols)]
+    tickers = list(dict.fromkeys(
+        lookup_symbol(symbol) for symbol, skip in zip(symbols, excluded) if symbol and not skip
+    ))
 
-    for row, symbol in zip(rows, symbols):
+    def fetch_snapshot(ticker: str) -> tuple[Mapping, str, str, str]:
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        try:
+            snapshot = snapshot_loader(ticker)
+            if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("data"), Mapping):
+                return (dict(snapshot) if isinstance(snapshot, Mapping) else {}, "invalid_snapshot", "Expected snapshot.data mapping", fetched_at)
+            return (dict(snapshot), "", "", fetched_at)
+        except Exception as exc:
+            return ({}, "lookup_error", f"{type(exc).__name__}: {exc}"[:300], fetched_at)
+
+    if max_workers > 1 and len(tickers) > 1:
+        # Initialize the default provider on the caller, not in a worker.
+        if get_analyst_snapshot is None:
+            snapshot_cache[tickers[0]] = fetch_snapshot(tickers[0])
+        pending = [ticker for ticker in tickers if ticker not in snapshot_cache]
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(pending))) as executor:
+            futures = [submit_with_context(executor, fetch_snapshot, ticker) for ticker in pending]
+            # Resolve in input order; workers never mutate caches or the frame.
+            snapshot_cache.update((ticker, future.result()) for ticker, future in zip(pending, futures))
+
+    for row, symbol, skip in zip(rows, symbols, excluded):
         record = {col: math.nan for col in _NUMERIC_COLUMNS}
         record.update({col: "" for col in _TEXT_COLUMNS})
         record.update({"애널목표가표시": "-", "애널목표Upside": "-"})
         records.append(record)
-        if _excluded(row, symbol):
+        if skip:
             record["애널목표상태"] = "etf_excluded"
             continue
         if not symbol:
@@ -167,15 +201,7 @@ def attach_today_analyst_context(
         ticker = lookup_symbol(symbol)
         record["애널조회티커"] = ticker
         if ticker not in snapshot_cache:
-            fetched_at = datetime.now(timezone.utc).isoformat()
-            try:
-                snapshot = snapshot_loader(ticker)
-                if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("data"), Mapping):
-                    snapshot_cache[ticker] = (dict(snapshot) if isinstance(snapshot, Mapping) else {}, "invalid_snapshot", "Expected snapshot.data mapping", fetched_at)
-                else:
-                    snapshot_cache[ticker] = (dict(snapshot), "", "", fetched_at)
-            except Exception as exc:
-                snapshot_cache[ticker] = ({}, "lookup_error", f"{type(exc).__name__}: {exc}"[:300], fetched_at)
+            snapshot_cache[ticker] = fetch_snapshot(ticker)
 
         snapshot, error_status, error_reason, fetched_at = snapshot_cache[ticker]
         data = snapshot.get("data", {})

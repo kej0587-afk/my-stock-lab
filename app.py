@@ -58,6 +58,7 @@ from stock_lab_core.kiwoom_data import kiwoom_client_from_secrets
 from stock_lab_core.market_evidence_panel import render_market_evidence_panel
 from stock_lab_core.news_evidence import render_price_news_evidence
 from stock_lab_core.review_audit import cross_view_flags
+from stock_lab_core.precision_review_export import render_precision_review_download
 from stock_lab_core.signal_evaluation import next_open_outcomes
 from stock_lab_core.backup import (
     RECOVERY_KIND_INFO,
@@ -7847,6 +7848,7 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
             "해석": snap.get("summary", "-"),
         })
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+    return {"bias": bias, "rows": rows}
 
 
 def infer_new_etf_proxy_checks(name="", ticker="", asset_class=""):
@@ -18683,12 +18685,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
 
     if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
         st.info(f"{plan_title}은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
-        return
+        return {"ticker": ticker, "status": "unavailable", "reason": "missing or invalid price/stop/target"}
 
     risk = cur - stop
     if risk <= 0:
         st.info(f"손절 폭을 산출할 수 없어 {plan_title}을 만들 수 없습니다.")
-        return
+        return {"ticker": ticker, "status": "unavailable", "reason": "invalid risk width"}
     rr = round((target - cur) / risk, 2) if target > cur else rr
 
     block_codes = {
@@ -19093,6 +19095,14 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         unsafe_allow_html=True,
     )
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+
+    return {
+        "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
+        "rows": rows, "amount_note": amount_note, "current_price": cur,
+        "target": target, "stop": stop, "target_source": target_source,
+        "stop_source": stop_source, "rr_now": rr_now_text,
+        "leveraged_timing": leveraged_timing, "new_core_verification": new_core_verification,
+    }
 
 
 LEVERAGED_ETF_PRECISION_PROFILES = {
@@ -20959,7 +20969,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
             "ETF는 개별 기업 PER/애널리스트 목표가보다 기초지수 흐름, 돈흐름 레이더, 운용보수, 괴리율을 보는 편이 더 적합합니다. "
             "단, 신규진입 실행계획의 R/R 목표가는 애널리스트 목표가가 아니라 최근 고점과 ATR로 계산한 차트 구조 목표가입니다."
         )
-        return
+        return {"ticker": ticker, "status": "ETF 별도판단"}
 
     snapshot = fetch_valuation_snapshot(ticker)
     data = snapshot.get("data", {}) if snapshot.get("ok") else {}
@@ -20998,6 +21008,11 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
     elif int(valuation.get("valuation_data_count", 0)) <= 1:
         st.caption("밸류 데이터 참고: 목표가 또는 일부 지표만 확보되어 PER/PSR 등 세부 지표 보강 후 판단합니다.")
+    return {
+        "ticker": ticker, "interpretation": valuation, "inputs": data,
+        "financial_inputs": fin_meta, "sources": snapshot.get("sources", []),
+        "source_ok": snapshot.get("ok"), "source_reason": snapshot.get("reason"),
+    }
 
 
 def get_valuation_headline_for_final_check(ticker, is_etf, current_price, fin_meta=None):
@@ -21407,6 +21422,7 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     if not show_df.empty:
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
     st.dataframe(show_df, width='stretch', hide_index=True)
+    return {"ticker": ticker, "rows": rows, "summary": summary}
 
 # ─────────────────────────────────────────────────
 # [삽입 위치] render_pre_buy_final_check_panel 함수
@@ -21500,7 +21516,7 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
     보유 중일 때만 표시. 재무 방향성 + 기술 + 손익 종합.
     """
     if not has_pos:
-        return
+        return {"ticker": ticker, "displayed": False, "reason": "not_held"}
 
     cur_p = clean_float(c.get("cur_p"), 0.0)
     dd = clean_float(c.get("dd"), 0.0)
@@ -21528,7 +21544,11 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             f"</div>",
             unsafe_allow_html=True,
         )
-        return
+        return {
+            "ticker": ticker, "displayed": True, "decision": leveraged_state.get("dca_stage", "-"),
+            "action": leveraged_state.get("dca_note", ""), "price_vs_avg": price_vs_avg,
+            "leveraged_state": leveraged_state,
+        }
 
     # ── 점수 계산 ──────────────────────────────
     total_score = 0
@@ -21677,6 +21697,11 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             for sig in fin_trend["signals"]:
                 st.markdown(f"- {sig}")
             st.caption("재무 방향성은 DART/FMP 자동 계산 데이터 기반입니다. 재무점수를 먼저 돌린 뒤 봐야 정확합니다.")
+    return {
+        "ticker": ticker, "displayed": True, "decision": decision, "action": action,
+        "total_score": total_score, "price_vs_avg": price_vs_avg, "macro_risk": macro_risk,
+        "financial_trend": fin_trend, "hold_reasons": hold_reasons, "cut_reasons": cut_reasons,
+    }
 
 
 def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers: int = 8):
@@ -34136,7 +34161,8 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         chart_df, live_applied = apply_live_price_to_ohlcv(df, c.get("cur_p", 0.0), tkr)
         if live_applied:
             chart_df = build_indicators(chart_df)
-        c = apply_precision_mtf_decision_guard(c, build_precision_multi_timeframe_pack(tkr, chart_df), has_pos=has_pos_value)
+        mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
+        c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos_value)
         c = apply_leveraged_precision_decision_override(c, name, tkr, has_pos_value, my_price)
         pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(detect_chart_pattern_candidates(chart_df), c)
         c["execution_workflow"] = build_precision_execution_workflow(
@@ -34165,7 +34191,16 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
         render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
                             is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"demo_review_{tkr}")
-        render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        render_precision_review_download(
+            st, selected_ticker=tkr, result_ticker=tkr, decision=c,
+            final_check=precision_final_check, financial=fin_meta, multi_timeframe=mtf_pack,
+            ohlcv={"daily_source": df, "display_chart": chart_df}, source="public_demo",
+            source_build=get_report_build_info(__file__),
+            signal_evidence={"pattern_timing": pattern_timing, "pattern_reason": pattern_reason, "pattern_bucket": pattern_bucket},
+            context={"name": name, "is_etf": is_etf, "asset_class": asset_class,
+                     "has_position": has_pos_value, "my_price": my_price},
+        )
         return
 
     if demo_page == "시나리오":
@@ -36161,8 +36196,9 @@ if main_page == "precision":
                             st.caption(f"• {_r}")
 
             st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+            precision_workflow_display = build_execution_workflow_display_df(c.get("execution_workflow"))
             st.dataframe(
-                build_execution_workflow_display_df(c.get("execution_workflow")),
+                precision_workflow_display,
                 width='stretch', hide_index=True,
             )
             with st.expander("외부자료 확인"):
@@ -36235,13 +36271,13 @@ if main_page == "precision":
             from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
             render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
                                 is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"precision_review_{tkr}")
-            render_precision_multi_timeframe_summary(mtf_pack, c)
+            precision_mtf_display = render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
                 build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
                 unsafe_allow_html=True,
             )
-            render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)
+            precision_entry_plan = render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)
             render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")
@@ -36290,10 +36326,31 @@ if main_page == "precision":
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
 
-        render_valuation_price_panel(name, tkr, is_etf, c, fin_score, fin_meta=fin_meta)
+        precision_valuation = render_valuation_price_panel(name, tkr, is_etf, c, fin_score, fin_meta=fin_meta)
 
-        render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
-        render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
+        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
+        precision_hold_or_cut = render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
+        render_precision_review_download(
+            st, selected_ticker=tkr, result_ticker=tkr, decision=c,
+            workflow_display=precision_workflow_display, final_check=precision_final_check,
+            valuation=precision_valuation, financial=fin_meta, entry_plan=precision_entry_plan,
+            hold_or_cut=precision_hold_or_cut, source_build=get_report_build_info(__file__),
+            multi_timeframe=mtf_pack, ohlcv={"daily_source": df, "display_chart": chart_df},
+            signal_evidence={
+                "pattern_candidates": precision_pattern_candidates,
+                "pattern_timing": precision_pattern_timing, "pattern_reason": precision_pattern_reason,
+                "pattern_bucket": precision_pattern_bucket, "liquidity_profile": precision_liquidity_profile,
+                "multi_timeframe_display": precision_mtf_display,
+            },
+            context={
+                "name": name, "is_etf": is_etf, "asset_class": a_class, "app_mode": app_mode,
+                "has_position": has_p, "my_price": my_p, "usdkrw": usdkrw,
+                "displayed_price": display_cur_p, "auto_price": auto_cur_p, "manual_price": manual_cur_p,
+                "price_source": price_source, "price_refresh_time": price_refresh_time,
+                "chart_load_note": precision_chart_load_note, "live_ohlcv_applied": _precision_live_ohlcv_applied,
+                "macro_risk": final_macro_risk, "macro_penalty": macro_penalty,
+            },
+        )
            
         render_research_report_panel(name, tkr, c["cur_p"], is_etf=is_etf)
 

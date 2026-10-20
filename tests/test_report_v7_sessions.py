@@ -92,17 +92,17 @@ def test_prior_us_close_cannot_be_reused_after_kr_already_reflected_it():
     assert "+4.00%" in fresh and "2026-10-19 장중 진행·확정 아님" in fresh
 
 
-def test_common_ai_theme_is_attributed_as_multimarket_article_claim_not_price_cause():
+def test_common_ai_theme_from_other_market_date_does_not_explain_us_sector():
     from stock_lab_core.report_presentation import sector_related_news
     from stock_lab_core.report_analysis import sector_evidence
     articles = [dict(title=title, market=market, session_date="2026-10-19", published="2026-10-19T18:00:00+09:00",
                      publisher="Reuters", link=f"https://www.reuters.com/markets/test-{i}/")
                 for i, (title, market) in enumerate((("日증시 AI 투자 불안", "KR"), ("중국 증시 AI 투자 불안에 반도체 하락", "KR")))]
     linked = sector_related_news("SOXX", "2026-10-16", articles)
-    assert len(linked) == 2
+    assert not linked
     result = sector_evidence({"Ticker": "SOXX", "기준일": "2026-10-16", "1일수익률": -.04}, {}, linked)
-    assert "복수 기사 2건이 거론(기사 주장)" in result["reading"]
-    assert "업종 기준일과 다를 수 있음" in result["reading"]
+    assert "직접 원인 자료 미연결" in result["reading"]
+    assert "AI 투자 불안" not in result["reading"]
     assert "2026-10-16" in result["fact"]
 
 
