@@ -17,10 +17,12 @@ CACHE_PATH = Path(__file__).resolve().parents[1] / "cache" / "economic_last_succ
 _LOCK = threading.Lock()
 _SERIES = {"KR_CPI", "KR_EXPORTS", "US_RETAIL_SALES"}
 _BLS = {"US_CPI", "US_CORE_CPI", "US_PPI", "US_NONFARM_PAYROLLS", "US_UNEMPLOYMENT"}
+_RELEASE_FIELDS = ("release_at", "release_precision", "release_source", "release_source_url")
 _FIELDS = {"indicator", "period", "actual", "previous", "unit", "basis", "source", "source_url", "source_urls",
            "seasonal_adjustment", "retrieved_at", "previous_period", "previous_source", "previous_unit",
            "previous_basis", "series_id", "value_kind", "raw_unit", "raw_actual", "raw_year_ago",
-           "raw_year_ago_period", "history", "history_frequency", "data_vintage", "previous3mean", "previous3mean_reason"}
+           "raw_year_ago_period", "history", "history_frequency", "data_vintage", "previous3mean", "previous3mean_reason",
+           *_RELEASE_FIELDS}
 
 
 def _key(row):
@@ -130,17 +132,27 @@ def _merge_months(row, saved):
     row.update(history_restored_from_cache=True, history_last_success_at=saved["retrieved_at"])
 
 
+def _valid_release(row, now):
+    from stock_lab_core.economic_releases import _future, _release
+
+    at, precision = _release(row.get("release_at"))
+    return bool(at and precision == row.get("release_precision") and row.get("release_source")
+                and row.get("release_source_url") and not _future(row, now))
+
+
 def _restore(row, saved, now, reason):
     # Request diagnostics stay attached to this failed attempt. Observation fields
     # and period-bound comparisons come exclusively from the last successful row.
     for field in _FIELDS:
         row.pop(field, None)
     row.update(deepcopy(saved), status="stale", collection_error=reason,
-               last_success_at=saved["retrieved_at"], as_of=now.isoformat())
+               last_success_at=saved["retrieved_at"], as_of=now.isoformat(), publication_status="unconfirmed")
     for field in ("forecast", "forecast_source", "forecast_source_url", "forecast_unit", "forecast_basis",
-                  "release_at", "release_precision", "release_source", "release_source_url",
                   "actual_minus_forecast", "actual_minus_previous"):
         row[field] = None
+    if not _valid_release(row, now):
+        for field in _RELEASE_FIELDS:
+            row[field] = None
     row.setdefault("previous", None)
     row.setdefault("previous_unit", None)
     row.setdefault("previous_basis", None)
@@ -180,6 +192,11 @@ def retain_successful_observations(rows, now):
             if row.get("status") == "released" and _valid(row, now):
                 if compatible:
                     _merge_months(row, previous)
+                    if (row["period"] == previous["period"] and not row.get("release_at")
+                            and _valid_release(previous, now)):
+                        row.update({field: previous[field] for field in _RELEASE_FIELDS})
+                        row["missing_reason"] = ";".join(code for code in row.get("missing_reason", "").split(";")
+                                                         if code and code != "release_date_unavailable")
                 saved[key] = {field: row[field] for field in _FIELDS if field in row}
                 changed = True
             elif row.get("actual") is None and (compatible or (
@@ -212,12 +229,14 @@ def retain_successful_observations(rows, now):
 
 def collection_status(row):
     """Only controlled codes reach the report, never credential-bearing exceptions."""
-    reason = str(row.get("collection_error") or row.get("missing_reason") or "")
+    if row.get("status") == "pending":
+        return "발표 대기"
+    reason = str(row.get("bulletin_collection_error") or row.get("collection_error") or row.get("missing_reason") or "")
     if "API_KEY_missing" in reason:
         return "키 미설정"
     if "API_KEY_invalid_format" in reason:
         return "키 형식 확인 필요"
-    if "census_api_key_required" in reason:
+    if "census_api_key_required" in reason.lower():
         return "Census API 키 필요"
     if any(code in reason for code in ("http_401", "http_403", "INFO-100", "ERROR-100")):
         return "인증/접근 거절(키·허용 환경 확인)"

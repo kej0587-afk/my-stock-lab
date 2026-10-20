@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -501,10 +502,17 @@ def _extract_naver_quote_from_obj(obj: dict) -> dict:
         price = _coerce_naver_number(obj.get(field))
         if price > 0:
             break
-    change_pct = 0.0
+    change_pct = None
     for field in ("cr", "fluctuationsRatio", "changeRate", "rate"):
-        change_pct = _coerce_naver_number(obj.get(field))
-        if change_pct:
+        raw = obj.get(field)
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            value = float(str(raw).replace(",", "").replace("%", "").strip())
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            change_pct = value
             break
     change_abs = 0.0
     for field in ("cv", "compareToPreviousClosePrice", "changePrice"):
@@ -513,14 +521,14 @@ def _extract_naver_quote_from_obj(obj: dict) -> dict:
             break
     sign = _naver_quote_sign(obj)
     if sign < 0:
-        if change_pct > 0:
+        if change_pct is not None and change_pct > 0:
             change_pct = -change_pct
         if change_abs > 0:
             change_abs = -change_abs
     quote = {}
     if price > 0:
         quote["price"] = price
-    if change_pct:
+    if change_pct is not None:
         quote["change_pct"] = change_pct
     if change_abs:
         quote["change_abs"] = change_abs
@@ -530,8 +538,8 @@ def _extract_naver_quote_from_obj(obj: dict) -> dict:
 def _naver_obj_code(obj: dict) -> str:
     for field in ("cd", "itemCode", "stockCode", "symbolCode", "code"):
         value = str(obj.get(field, "") or "").strip()
-        if re.fullmatch(r"\d{6}[A-Z0-9]*", value):
-            return value
+        if re.fullmatch(r"[0-9][A-Z0-9]{5}", value.upper()):
+            return value.upper()
     return ""
 
 
@@ -592,17 +600,22 @@ def _fetch_naver_quotes_bulk(kr_tickers: list) -> dict:
     """Naver realtime quote API: {ticker: {price, change_pct, change_abs}}."""
     if not kr_tickers:
         return {}
-    codes = [_kr_code(t) for t in kr_tickers]
+    codes = list(dict.fromkeys(_kr_code(t) for t in kr_tickers if _kr_code(t)))
     try:
-        query = "|".join(f"SERVICE_ITEM:{c}" for c in codes if c)
-        if not query:
+        if not codes:
             return {}
+        # Repeating SERVICE_ITEM areas with '|' returns only the final area.
+        query = "SERVICE_ITEM:" + ",".join(codes)
         url = f"https://polling.finance.naver.com/api/realtime?query={urllib.parse.quote(query)}"
         req = urllib.request.Request(url, headers=_NAVER_HEADERS)
-        raw = urllib.request.urlopen(req, timeout=6).read()
+        _quote_transport_event("naver_bulk", "request")
+        with urllib.request.urlopen(req, timeout=6) as response:
+            raw = response.read()
+        _quote_transport_event("naver_bulk", "response")
         text = raw.decode("utf-8", errors="ignore")
         return _parse_naver_realtime_quotes(text, kr_tickers)
-    except Exception:
+    except Exception as exc:
+        _quote_transport_event("naver_bulk", "error", exc)
         return {}
 
 
@@ -679,23 +692,7 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
             for key, quote in quotes.items()
             if float(quote.get("price", 0.0) or 0.0) > 0
         }
-    codes = [_kr_code(t) for t in kr_tickers]
-    try:
-        query = "|".join(f"SERVICE_ITEM:{c}" for c in codes)
-        url = f"https://polling.finance.naver.com/api/realtime?query={urllib.parse.quote(query)}"
-        req = urllib.request.Request(url, headers=_NAVER_HEADERS)
-        raw = urllib.request.urlopen(req, timeout=6).read()
-        text = raw.decode("utf-8", errors="ignore")
-        # {"SERVICE_ITEM:000660":{"nv":"1847000", ...}, ...}
-        prices = {}
-        for code, ticker in zip(codes, kr_tickers):
-            pattern = rf'"SERVICE_ITEM:{re.escape(code)}".*?"nv"\s*:\s*"?([\d,]+)"?'
-            m = re.search(pattern, text)
-            if m:
-                prices[normalize_price_lookup_key(ticker)] = float(m.group(1).replace(",", ""))
-        return prices
-    except Exception:
-        return {}
+    return {}
 
 
 @timed_call("prices")
@@ -1130,7 +1127,7 @@ def _load_latest_kr_quotes_batch_cached(ticker_keys: tuple[str, ...]) -> dict:
     quotes = _fetch_naver_quotes_bulk(kr_tickers)
     missing = [ticker for ticker in kr_tickers if not (
         quotes.get(normalize_price_lookup_key(ticker), {}).get("price", 0.0)
-        and quotes.get(normalize_price_lookup_key(ticker), {}).get("change_pct", 0.0)
+        and "change_pct" in quotes.get(normalize_price_lookup_key(ticker), {})
     )]
 
     @timed_call("prices", "kr_quote_fallback")
@@ -1138,7 +1135,7 @@ def _load_latest_kr_quotes_batch_cached(ticker_keys: tuple[str, ...]) -> dict:
         # The shared cap also bounds simultaneous sessions; providers are unchanged.
         with _NAVER_QUOTE_FALLBACK_SLOTS:
             direct = _fetch_naver_realtime_quote(ticker)
-            if not direct or not direct.get("change_pct", 0.0):
+            if not direct or "change_pct" not in direct:
                 direct = _fetch_naver_basic_quote(ticker)
         return direct
 
@@ -1155,7 +1152,8 @@ def _load_latest_kr_quotes_batch_cached(ticker_keys: tuple[str, ...]) -> dict:
             key = normalize_price_lookup_key(ticker)
             quote = quotes.get(key, {})
             merged = dict(quote)
-            merged.update({k: v for k, v in direct.items() if v not in ("", None, 0.0)})
+            merged.update({k: v for k, v in direct.items()
+                           if v not in ("", None, 0.0) or (k == "change_pct" and v == 0.0)})
             quotes[key] = merged
     return quotes
 

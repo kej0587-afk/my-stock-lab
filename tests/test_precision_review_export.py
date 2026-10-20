@@ -14,6 +14,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from stock_lab_core.decision_workflow import (
+    align_precision_entry_plan_rows,
+    build_decision_workflow,
+    format_precision_take_profit_condition,
+)
+from stock_lab_core.execution_gate import GATE_EXECUTABLE
 from stock_lab_core.precision_review_export import (
     EXPORT_VERSION,
     PrecisionReviewDownload,
@@ -611,6 +617,10 @@ def test_entry_plan_return_matches_rendered_rows_without_rebuilding():
         "escape_html_value": str, "is_kr_listed": lambda ticker: False,
         "build_leveraged_precision_state": lambda *args: {},
         "is_leveraged_or_inverse_product": lambda *args: False,
+        "align_precision_entry_plan_rows": align_precision_entry_plan_rows,
+        "build_decision_workflow": build_decision_workflow,
+        "format_precision_take_profit_condition": format_precision_take_profit_condition,
+        "GATE_EXECUTABLE": GATE_EXECUTABLE,
     })
     decision = {
         "cur_p": 100, "rr_stop": 90, "rr_target": 120, "atr": 5, "buy_amt": 100000,

@@ -5,7 +5,10 @@ from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
 
-from stock_lab_core.report_evidence import KST, first, macro_stress, number, stamp, text
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from stock_lab_core.report_evidence import KST, first, macro_stress, number, stamp, text, _cell
 
 
 def kst_time(value):
@@ -31,22 +34,32 @@ def macro_change(previous, current):
     if not previous:
         return "스트레스 변화: 이전 매크로 스냅샷 없음(변화 원인 추정 안 함)."
     before, after = macro_stress(previous), macro_stress(current)
+    if before["score"] is None or after["score"] is None:
+        return "스트레스 변화: 산출 가능한 지표 부족으로 비교 보류."
     old = {row["name"]: row for row in before["rows"]}
     if set(old) != {row["name"] for row in after["rows"]}:
         return "스트레스 변화: 수집 지표 구성이 달라 동일 기준 비교 보류."
-    parts = []
+    parts = [f"스트레스 {before['score']}→{after['score']}: 구성요소별 비교(이전 저장 스냅샷 대비, 일간 변화 아님)", "",
+             "지표 | 기준일 이전→현재 | 수준 이전→현재 | 1개월 변화율 이전→현재 | 기여 이전→현재 | 기여 Δ(점)",
+             "--- | --- | --- | --- | --- | ---"]
+    same_date_change = False
     for row in after["rows"]:
         prev = old[row["name"]]
         delta = row["contribution"] - prev["contribution"]
-        if delta:
-            detail = f"{row['name']} {prev['value']:.2f}→{row['value']:.2f}, 기여 {delta:+d}점"
-            if prev["as_of"] == row["as_of"]:
-                detail += " (동일 기준일 자료 변경, 시장의 하루 변화로 해석 금지)"
-            parts.append(detail)
-    return f"스트레스 {before['score']}→{after['score']}: " + (" / ".join(parts) or "구성요소 기여 변화 없음")
+        changes = [f"{item['change']:+.2f}%" if item["change"] is not None else "미수집" for item in (prev, row)]
+        parts.append(" | ".join(_cell(value) for value in (
+            row["label"], f"{prev['as_of'] or '미제공'}→{row['as_of'] or '미제공'}",
+            f"{prev['value']:.2f}→{row['value']:.2f}", "→".join(changes),
+            f"{prev['contribution']:+d}→{row['contribution']:+d}", f"{delta:+d}")))
+        same_date_change |= prev["as_of"] == row["as_of"] and any(
+            prev[key] != row[key] for key in ("value", "change", "contribution"))
+    if same_date_change:
+        parts.append("\n동일 기준일 자료 변경 포함: 시장의 하루 변화로 해석 금지.")
+    parts.append("\n기여 Δ 0은 가격 불변을 뜻하지 않습니다. 수준·1개월 방향에 따른 구간 점수이며, 0~100 제한으로 총점 변화가 가려질 수 있습니다. 신용 스프레드는 이 산식에 미포함입니다.")
+    return "\n".join(parts)
 
 
-def candidate_line(row):
+def candidate_fields(row):
     ticker = text(first(row, "티커", "ticker"))
     name = text(first(row, "종목명", "name", "자산명")) or "종목명 미연결"
     raw_grade = text(first(row, "후보품질", "📌후보등급", "후보등급", "grade"))
@@ -71,7 +84,12 @@ def candidate_line(row):
     explicit = text(first(row, "해제조건", "다음확인"))
     condition = explicit or " / ".join(checks) or "구체 해제 조건 미제공: 상세 게이트 근거 재확인"
     action = "실행가능" if gate in {"실행가능", "EXECUTABLE"} else "게이트로 보류"
-    return f"- {name}({ticker}) · 개별 신호 {quality}, {action}({gate}) · 근거: {reason or '미제공'} · 해제 조건: {condition}"
+    return (f"{name}({ticker}) · 개별 신호 {quality}, {action}({gate})", reason or "미제공", condition)
+
+
+def candidate_line(row):
+    label, reason, condition = candidate_fields(row)
+    return f"- {label} · 근거: {reason} · 해제 조건: {condition}"
 
 
 def account_metrics(held, observations, sessions):
@@ -168,9 +186,10 @@ def account_live_estimate(held, live):
             break
     if not dates:
         return ""
+    time_range = min(times) if min(times) == max(times) else f"{min(times)}~{max(times)}"
     return (f"미국 {', '.join(sorted(dates))} 장중 별도 추정(확정 아님): 미국 보유분 기여 {us:+.2f}%p(비중 {us_weight:.1f}%), "
             f"다음 한국장 미국지수 ETF 갭 시나리오 기여 {gap:+.2f}%p(비중 {gap_weight:.1f}%). "
-            f"시세 {min(times)}~{max(times)} · 종가 계좌 추정과 합산 금지, 환율·선물·추적오차 미반영.")
+            f"시세 {time_range} · 종가 계좌 추정과 합산 금지, 환율·선물·추적오차 미반영.")
 
 
 def account_estimate(held, observations, sessions, *, mode="preopen"):
@@ -195,13 +214,38 @@ def account_estimate(held, observations, sessions, *, mode="preopen"):
 
 def news_theme(title):
     for pattern, label in (
-        (r"AI\s*신용\s*우려", "AI 신용우려"),
+        (r"AI\s*신용\s*(?:우려|위험|리스크)", "AI 신용우려"),
         (r"AI\s*(?:차입|부채)\s*우려", "AI 차입 우려"),
         (r"AI\s*투자\s*(?:불안|우려)", "AI 투자 불안"),
     ):
         if re.search(pattern, title, re.I):
             return label
     return ""
+
+
+def market_cause_candidates(news, market, session):
+    """Retrospective claims may supply candidates, never proof of a price cause."""
+    if not session:
+        return []
+    zone = KST if market == "KR" else ZoneInfo("America/New_York")
+    close = datetime.fromisoformat(session).replace(
+        hour=15 if market == "KR" else 16, minute=30 if market == "KR" else 0, tzinfo=zone)
+    candidates, seen = [], set()
+    for row in news:
+        title = text(row.get("title"))
+        topic = news_theme(title)
+        published = stamp(first(row, "published", "published_at"))
+        if (not topic or topic in seen or not row.get("link") or not published
+                or row.get("market") != market or row.get("session_date") != session
+                or row.get("news_bucket") in {"next_session_news", "other_market_news"}
+                or is_preopen_outlook(row) or published.astimezone(zone).date() != close.date()):
+            continue
+        if published > close and not (row.get("retrospective_close_wrap") or row.get("is_close_wrap")
+                                      or re.search(r"마감|close", title, re.I)):
+            continue
+        seen.add(topic)
+        candidates.append(row)
+    return candidates[:2]
 
 
 def is_preopen_outlook(row):

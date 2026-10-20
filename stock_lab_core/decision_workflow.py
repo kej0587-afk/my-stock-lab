@@ -99,16 +99,54 @@ def build_decision_workflow(
     return row
 
 
+def align_precision_final_check_rows(rows, workflow):
+    """Keep check scores intact while qualifying entry prose with the gate."""
+    out = [dict(row) for row in rows]
+    if (workflow or {}).get("게이트상태") == GATE_EXECUTABLE:
+        return out
+    reason = (workflow or {}).get("게이트근거") or "실행 게이트 재확인 필요"
+    for row in out:
+        if row.get("점검항목") == "보유상태" and str(row.get("해석", "")).startswith("신규 진입."):
+            row["해석"] = f"신규 진입 후보입니다. 실행 조건 해소 전 신규진입은 보류합니다. {reason}."
+    return out
+
+
+def align_precision_entry_plan_rows(rows, workflow):
+    """Retain planned prices and sizes, but mark restricted entries conditional."""
+    out = [dict(row) for row in rows]
+    if (workflow or {}).get("게이트상태") == GATE_EXECUTABLE:
+        return out
+    reason = (workflow or {}).get("게이트근거") or "실행 게이트 재확인 필요"
+    prefix = f"실행 보류 · {reason} · 조건 해소 후 재확인: "
+    for row in out:
+        if str(row.get("단계", "")).startswith(("1차 진입", "추가 1차", "2차 추가", "3차 예비")):
+            detail = str(row.get("조건", ""))
+            if not detail.startswith(prefix):
+                row["조건"] = prefix + detail
+    return out
+
+
+def format_precision_take_profit_condition(current_price, stop, target):
+    """Describe the existing min(target, entry + risk) first exit accurately."""
+    cur, stop, target = (clean_float(value, math.nan) for value in (current_price, stop, target))
+    if all(finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target < cur + (cur - stop):
+        return "1R 미만의 구조 목표가 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향"
+    return "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향"
+
+
 def partition_today_queue(df: pd.DataFrame, reason_bucket: pd.Series) -> dict[str, pd.Series]:
     """Route each row once; an executable gate always enters the execution tab."""
     index = df.index
     state = df.get("게이트상태", pd.Series("", index=index)).fillna("")
+    gate_reason = df.get("게이트근거", pd.Series("", index=index)).fillna("")
     reason = reason_bucket.reindex(index).fillna("일반")
     assigned = pd.Series(False, index=index)
     masks = {}
     rules = {
         "execution": state.eq(GATE_EXECUTABLE),
-        "overweight": state.eq(GATE_DEFENSE) & reason.eq("비중초과 방어"),
+        "overweight": state.eq(GATE_DEFENSE) & (
+            reason.eq("비중초과 방어") | gate_reason.eq("목표비중/비중초과 우선")
+        ),
         "market_defense": state.eq(GATE_DEFENSE) & (reason.eq("시장방어") | df.get("시장실행상태", pd.Series("", index=index)).str.contains("시장방어", na=False)),
         "price_defense": state.eq(GATE_DEFENSE) & reason.eq("가격방어"),
         "rapid_drop": state.eq(GATE_DEFENSE) & reason.eq("급락방어"),

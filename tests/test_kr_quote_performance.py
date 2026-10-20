@@ -23,14 +23,15 @@ def _serial_reference(tickers, bulk, realtime, basic):
     for ticker in tickers:
         key = prices.normalize_price_lookup_key(ticker)
         quote = quotes.get(key, {})
-        if quote.get("price", 0.0) and quote.get("change_pct", 0.0):
+        if quote.get("price", 0.0) and "change_pct" in quote:
             continue
         direct = realtime(ticker)
-        if not direct or not direct.get("change_pct", 0.0):
+        if not direct or "change_pct" not in direct:
             direct = basic(ticker)
         if direct:
             merged = dict(quote)
-            merged.update({key: value for key, value in direct.items() if value not in ("", None, 0.0)})
+            merged.update({key: value for key, value in direct.items()
+                           if value not in ("", None, 0.0) or (key == "change_pct" and value == 0.0)})
             quotes[key] = merged
     return quotes
 

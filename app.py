@@ -431,7 +431,11 @@ from stock_lab_core.execution_gate import (
     apply_execution_gate_columns,
     classify_sector_rs_state,
 )
-from stock_lab_core.decision_workflow import attach_market_execution_context, build_decision_workflow, partition_today_queue
+from stock_lab_core.decision_workflow import (
+    align_precision_entry_plan_rows, align_precision_final_check_rows,
+    attach_market_execution_context, build_decision_workflow,
+    format_precision_take_profit_condition, partition_today_queue,
+)
 from stock_lab_core.relative_strength import compute_relative_strength, get_sector_provenance
 from stock_lab_core.today_enrichment import attach_today_analyst_context, build_today_analyst_upside_map
 from stock_lab_core.money_flow import (
@@ -19044,7 +19048,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 "가격": format_currency(tp1, ticker),
                 "금액/수량": "보유분 30~50%",
                 "예상 R/R": "-",
-                "조건": "1R 도달 시 일부 회수, 잔여 손절은 본전 근처로 상향",
+                "조건": format_precision_take_profit_condition(cur, stop, target),
             },
             {
                 "단계": "최종 익절",
@@ -19061,6 +19065,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         "예상 R/R": "-",
         "조건": "종가 기준 이탈 시 추가매수 시나리오 무효" if has_pos else "종가 기준 이탈 시 신규진입 시나리오 무효",
     })
+    plan_workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, has_pos=has_pos)
+    rows = align_precision_entry_plan_rows(rows, plan_workflow)
 
     if buy_amt_krw <= 0 and not has_pos:
         amount_note = "목표비중 또는 총자산을 입력하면 단계별 금액/주수가 자동 계산됩니다."
@@ -19079,7 +19085,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         amount_note = f"총 추가 필요: {total_order_text}. 이미 보유 중이면 잔여 목표비중 기준 추가 계획으로 해석하세요."
     else:
         amount_note = f"총 추가 필요: {total_order_text}. 아래 1~3차 행은 이 금액을 신호/RR에 맞춰 나눈 실행 계획입니다."
-    if buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing:
+    if (buy_amt_krw > 0 and rr < 1.5 and not is_hard_blocked and not leveraged_timing
+            and plan_workflow.get("게이트상태") == GATE_EXECUTABLE):
         amount_note += (
             " R/R이 낮아 추가 실행분은 1차 소액만 열어둡니다."
             if has_pos
@@ -19087,6 +19094,11 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         )
     if target_is_projection:
         amount_note += " 신고가/가격발견 구간이라 +4ATR은 확정 목표가가 아니라 강세 시나리오 상단이며, 실제 익절은 +1ATR/+2ATR 분할과 추적손절 중심으로 해석하세요."
+    if plan_workflow.get("게이트상태") != GATE_EXECUTABLE:
+        amount_note = (
+            f"실행 보류: {plan_workflow.get('게이트근거') or '실행 게이트 재확인 필요'}. "
+            "아래 신규/추가 매수 가격과 금액은 조건 해소 후 재검토할 계획값입니다. " + amount_note
+        )
 
     target_label = "강세 시나리오 상단" if target_is_projection else "목표가"
     rr_label = "투영 상단 기준 R/R" if target_is_projection else "현재가 기준 R/R"
@@ -19103,7 +19115,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         f"</div>",
         unsafe_allow_html=True,
     )
-    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True, row_height=64,
+                 height=min(900, 50 + len(rows) * 64))
 
     return {
         "ticker": ticker, "title": plan_title, "status": status, "status_note": status_note,
@@ -21285,6 +21298,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     else:
         add_check("보유상태", "통과", "보유 정보 기준의 특이 위험은 크지 않습니다.")
 
+    rows = align_precision_final_check_rows(rows, workflow)
     status_counts = pd.Series([row["상태"] for row in rows]).value_counts().to_dict()
     block_count = int(status_counts.get("차단", 0))
     caution_count = int(status_counts.get("주의", 0))
@@ -21430,7 +21444,8 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     show_df = pd.DataFrame(rows)
     if not show_df.empty:
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
-    st.dataframe(show_df, width='stretch', hide_index=True)
+    st.dataframe(show_df, width='stretch', hide_index=True, row_height=64,
+                 height=min(900, 50 + len(show_df) * 64))
     return {"ticker": ticker, "rows": rows, "summary": summary}
 
 # ─────────────────────────────────────────────────
@@ -21896,6 +21911,18 @@ def _safe_execution_workflow_row(workflow):
 def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
     row = _safe_execution_workflow_row(workflow)
     return pd.DataFrame([row]).reindex(columns=EXECUTION_WORKFLOW_DISPLAY_COLUMNS, fill_value="")
+
+
+def render_precision_execution_state(workflow):
+    row = _safe_execution_workflow_row(workflow)
+    label = f"현재 실행 판단: {row['게이트상태']} · {row['게이트근거']}"
+    if row["게이트상태"] in {GATE_DEFENSE, GATE_DATA_CHECK}:
+        st.error(label)
+    elif row["게이트상태"] != GATE_EXECUTABLE:
+        st.warning(label)
+    else:
+        st.info(label)
+    st.caption("후보품질은 종목의 평가, 기술적 타점은 가격 조건, 밸류는 가격매력입니다. 실제 실행 허용 여부는 게이트를 우선합니다.")
 
 
 @timed_call("decision")
@@ -31793,7 +31820,7 @@ def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame |
     )
     combined = combined.drop_duplicates("_검토키", keep="first")
     flow_cols = [
-        "Ticker", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
+        "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
         "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
     ]
     return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
@@ -31823,6 +31850,15 @@ def attach_today_flow_context(
         out = out.drop(columns=[col])
     out = out.merge(flow, on="_검토키", how="left")
     out = out.drop(columns=["_검토키"], errors="ignore")
+    if "돈흐름_종목명" in out:
+        names = out.get("종목명", pd.Series("", index=out.index)).fillna("").astype(str).str.strip()
+        tickers = out.get("티커", pd.Series("", index=out.index)).astype(str).map(_today_review_ticker_key)
+        flow_names = out["돈흐름_종목명"].fillna("").astype(str).str.strip()
+        missing_name = names.str.lower().isin({"", "nan", "none", "-"}) | names.map(_today_review_ticker_key).eq(tickers)
+        valid_name = ~flow_names.str.lower().isin({"", "nan", "none", "-"}) & ~flow_names.map(_today_review_ticker_key).eq(tickers)
+        out.loc[missing_name & valid_name, "종목명"] = flow_names
+    # A merge drops differing attrs, including the calculation ID used by reports.
+    out.attrs = summary_df.attrs
     return out
 
 
@@ -33456,8 +33492,16 @@ def render_today_queue_tab(mode):
     previous_attempt = st.session_state.get("today_queue_last_attempt_performance", {})
     with timing_panel:
         st.caption("시간 진단은 계산 시작 전부터 표시됩니다. 진행 단계의 시간은 마지막 단계 전환 시점 기준입니다.")
+        completed_calculation = st.session_state.get("today_queue_performance", {})
+        if completed_calculation.get("is_full_today_queue_measurement"):
+            st.download_button(
+                "전체 계산 시간 진단 JSON (완료)", data=json.dumps(completed_calculation, ensure_ascii=False, indent=2),
+                file_name="today_queue_full_calculation.json", mime="application/json", on_click="ignore",
+                icon=":material/download:", key="today_queue_full_calculation_download",
+            )
         if previous_attempt:
-            st.caption(f"직전 실행: {previous_attempt.get('measurement_status', '상태 미기록')} · {previous_attempt.get('elapsed_seconds', 0):.1f}초 · 마지막 단계 {previous_attempt.get('current_phase') or '미기록'}")
+            attempt_kind = "전체 계산" if previous_attempt.get("calculation_completed") else "화면 재표시/부분 실행 · 전체 계산 아님"
+            st.caption(f"직전 실행: {previous_attempt.get('measurement_status', '상태 미기록')} · {attempt_kind} · {previous_attempt.get('elapsed_seconds', 0):.1f}초 · 마지막 단계 {previous_attempt.get('current_phase') or '미기록'}")
             st.download_button(
                 "직전 실행 시간 진단 JSON", data=json.dumps(previous_attempt, ensure_ascii=False, indent=2),
                 file_name="today_queue_last_attempt.json", mime="application/json", on_click="ignore",
@@ -34269,6 +34313,8 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             pattern_timing, pattern_bucket, pattern_reason,
         )
         external = _safe_execution_workflow_row(c.get("execution_workflow"))
+        render_precision_execution_state(c.get("execution_workflow"))
+        st.caption("기술적 원신호 · 실행 허용과 별도")
         st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
         st.dataframe(pd.DataFrame([
             {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
@@ -36332,12 +36378,14 @@ if main_page == "precision":
                         for _r in _reasons:
                             st.caption(f"• {_r}")
 
-            st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+            render_precision_execution_state(c.get("execution_workflow"))
             precision_workflow_display = build_execution_workflow_display_df(c.get("execution_workflow"))
             st.dataframe(
                 precision_workflow_display,
                 width='stretch', hide_index=True,
             )
+            st.caption("기술적 원신호 · 실행 허용과 별도")
+            st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
             with st.expander("외부자료 확인"):
                 external = _safe_execution_workflow_row(c.get("execution_workflow"))
                 st.dataframe(pd.DataFrame([

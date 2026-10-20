@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from stock_lab_core.backup import build_review_export_zip
+from stock_lab_core.formatters import clean_float
 
 
 EXPORT_VERSION = "1.1"
@@ -183,7 +184,8 @@ def _stance(label):
         return "restricted"
     if any(word in label for word in (
         "실행가능", "분할 가능", "분할 진입 가능", "타점 가능", "소액 분할",
-        "1차 소액만", "매수 가능", "진입 가능", "승인", "정찰만",
+        "1차 소액만", "매수 가능", "진입 가능", "승인", "정찰만", "시작 가능",
+        "현재가 부근 1차 정찰", "현재가 부근 소액만",
     )):
         return "actionable_wording"
     return "unknown"
@@ -192,7 +194,8 @@ def _stance(label):
 def _conflict_flags(sections):
     decision = _mapping(sections["main_decision"])
     workflow = _mapping(sections["execution_workflow"])
-    summary = _mapping(_mapping(sections["final_check"]).get("summary"))
+    final_check = _mapping(sections["final_check"])
+    summary = _mapping(final_check.get("summary"))
     entry = _mapping(sections["entry_plan"])
     holding = _mapping(sections["hold_or_cut"])
     labels = {
@@ -220,6 +223,35 @@ def _conflict_flags(sections):
         add("candidate_quality_vs_gate", grade, labels["execution_gate"], "Candidate quality is not entry permission; this contrast may be intentional.")
     if labels["main_decision"] and labels["final_check"] and labels["main_decision"] != labels["final_check"]:
         add("different_conclusion_labels", labels["main_decision"], labels["final_check"], "Different labels alone do not establish a trading-logic defect.")
+    if _stance(labels["execution_gate"]) == "restricted":
+        for section_name, section, text_key in (
+            ("final_check", final_check, "해석"), ("entry_plan", entry, "조건"),
+        ):
+            rows = section.get("rows")
+            for index, row in enumerate(rows if isinstance(rows, list) else []):
+                detail = _mapping(row).get(text_key)
+                if _stance(detail) == "actionable_wording":
+                    add(
+                        f"{section_name}_row_vs_execution_gate", detail, labels["execution_gate"],
+                        f"{section_name}.rows[{index}].{text_key} permits entry while execution_workflow.게이트상태 is restricted. "
+                        f"Gate reason: {_text(workflow.get('게이트근거'))}",
+                    )
+    entry_rows = entry.get("rows")
+    entry_rows = entry_rows if isinstance(entry_rows, list) else []
+    final_exit_prices = {
+        _text(_mapping(row).get("가격")) for row in entry_rows
+        if _mapping(row).get("단계") == "최종 익절"
+    } - {""}
+    if clean_float(entry.get("rr_now"), math.nan) < 1.0:
+        for index, row in enumerate(entry_rows):
+            row = _mapping(row)
+            if (row.get("단계") == "1차 익절" and "1R 도달" in _text(row.get("조건"))
+                    and _text(row.get("가격")) in final_exit_prices):
+                add(
+                    "entry_plan_take_profit_below_1r", row.get("조건"), row.get("가격"),
+                    f"entry_plan.rows[{index}].가격 equals the final structure target, "
+                    f"but entry_plan.rr_now={entry.get('rr_now')} is below 1R.",
+                )
     holding_label = _text(holding.get("decision"))
     if holding_label and labels["final_check"]:
         add("holding_vs_entry_scope", holding_label, labels["final_check"], "Holding management and new entry have different scopes; compare their original reasons.")

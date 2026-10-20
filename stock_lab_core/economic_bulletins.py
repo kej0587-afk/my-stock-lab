@@ -310,6 +310,15 @@ def _apply_live_cpi(rows, now):
         if live["actual"] is not None and (row.get("actual") is None or live["period"] >= row.get("period", "")):
             configured = row.get("api_key_configured")
             failure = row.get("collection_error") or row.get("missing_reason") or "provider_history_incomplete"
+            # The sample publishes levels, not dates. Keep an already sourced date
+            # only when it belongs to this exact observation and comparison basis.
+            if (row.get("period") == live["period"] and row.get("release_at")
+                    and row.get("release_source") and row.get("release_source_url")
+                    and not releases._future(row, now)):
+                for field in ("release_at", "release_precision", "release_source", "release_source_url"):
+                    live[field] = row.get(field)
+                live["missing_reason"] = ";".join(code for code in live["missing_reason"].split(";")
+                                                  if code != "release_date_unavailable")
             live = retain_successful_observations([live], now)[0]
             row.clear()
             row.update(live, api_key_configured=configured, primary_collection_error=failure)

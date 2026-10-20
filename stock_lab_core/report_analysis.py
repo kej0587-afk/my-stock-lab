@@ -238,18 +238,39 @@ def sector_market_excess(row, observations):
     return excess, f"{excess * 100:+.2f}%p (일간 − {benchmark} {market_return * 100:+.2f}%, {date})"
 
 
+def economic_reaction_text(row):
+    """A collection failure does not establish that a release is unpublished."""
+    from stock_lab_core.economic_cache import collection_status
+
+    status = text(row.get("status"))
+    if status == "stale":
+        return "마지막 성공값 표시 · 최신 수집 실패로 현재 발표일 반응 비교 보류"
+    if number(row.get("actual")) is None:
+        if status in {"scheduled", "pending", "예정"}:
+            return "발표 예정 상태 · 확정 발표치 미연결, 반응 비교 보류"
+        return f"{collection_status(row)} · 발표 여부 미확인, 동일일 반응 비교 보류"
+    if not text(row.get("release_at")):
+        return "발표일 미연결로 동일일 비교 보류(미발표를 뜻하지 않음)"
+    return text(row.get("reaction")) if row.get("reaction_source") else "이벤트 전후 동시점 반응 미수집"
+
+
 def sector_evidence(row, macro_data, news, *, observations=None):
     ticker = text(first(row, "Ticker", "ticker", "티커"))
     ret = number(first(row, "1일수익률", "1D"))
     date = text(first(row, "기준일", "date", "as_of")) or "기준일 미제공"
     kind = text(row.get("수치종류")) or ("확정 종가" if date != "기준일 미제공" else "종가/장중 미확인")
-    fact = f"{ticker} 일간 {ret * 100:+.2f}% · {date}" if ret is not None else f"{ticker} 일간 자료 미수집"
+    daily = f"일간 {ret * 100:+.2f}% · {date}" if ret is not None else "일간 자료 미수집"
+    medium = []
     for keys, label in ((("3개월수익률", "3M"), "3M"), (("가속도",), "가속도")):
         value = number(first(row, *keys))
         if value is not None:
-            fact += f" · {label} {value * 100:+.1f}" + ("%p" if label == "가속도" else "%")
+            medium.append(f"{label} {value * 100:+.1f}" + ("%p" if label == "가속도" else "%"))
     if text(row.get("상태")):
-        fact += " · 중기 상태 " + text(row["상태"])
+        medium.append("[3M 중기] " + text(row["상태"]))
+    price_level = number(row.get("가격수준"))
+    if price_level is not None:
+        medium.append(f"수집기간 가격위치 {price_level * 100:.1f}%")
+    fact = f"{ticker} {daily}" + (" · " + " · ".join(medium) if medium else "")
     rate = (macro_data or {}).get("10Y 금리", {})
     rate_bp = number(rate.get("day_change_bp"))
     oil = (macro_data or {}).get("유가", {})
@@ -294,6 +315,7 @@ def sector_evidence(row, macro_data, news, *, observations=None):
         reading += ((" · " if reading else "") + f"{topic}: " + (f"복수 기사 {len(related)}건이 거론(기사 주장). " if len(related) > 1 else "")
                     + f"제목 기준 보도(기사 주장, {scope}): " + text(item.get("title")) + " " + citation(dict(item, title="원문")))
     return {"fact": "사실: " + fact + f" [{kind}]",
+            "daily": "사실: " + daily + f" [{kind}]", "medium": " · ".join(medium) or "중기 자료 미연결",
             "excess": excess_text,
             "reading": "해석(추정): " + reading,
             "unconfirmed": "미확인: " + unconfirmed}

@@ -277,7 +277,7 @@ def _row(indicator, unit, basis, source, source_url, now, **values):
         "value_kind": "official_observation", "data_vintage": "latest_revised",
         "history": [], "history_frequency": "monthly", "previous3mean": None,
         "previous3mean_reason": "monthly_history_unavailable",
-        "missing_reason": "",
+        "missing_reason": "", "publication_status": "unconfirmed",
     }
     row.update(values)
     return row
@@ -304,10 +304,12 @@ def _monthly_history(row, values):
 
 def _bls(now):
     ids = list(dict.fromkeys(spec.series for spec in _BLS_SERIES))
+    diagnostics = {"endpoint": BLS_URL, "http_status": None}
 
     def fetch():
         data = _request(BLS_URL, payload={"seriesid": ids,
-                        "startyear": str(now.year - 2), "endyear": str(now.year)})
+                        "startyear": str(now.year - 2), "endyear": str(now.year)},
+                        diagnostics=diagnostics)
         if not isinstance(data, dict) or data.get("status") != "REQUEST_SUCCEEDED":
             raise _Unavailable("bls_request_not_succeeded")
         result = {}
@@ -323,10 +325,13 @@ def _bls(now):
             if observations:
                 result[series.get("seriesID")] = observations
         # A partial batch stays usable, but is retried on the next call.
-        return result
+        return {"observations": result, "request": deepcopy(diagnostics)} if result else {}
 
     key = ("bls", now.strftime("%Y-%m"))
-    data, error, retrieved = _cached(key, fetch, now)
+    cached, error, retrieved = _cached(key, fetch, now)
+    data = cached["observations"] if cached else {}
+    request = deepcopy(cached["request"] if cached else diagnostics)
+    request["from_cache"] = bool(cached and diagnostics["http_status"] is None)
     if data and any(spec.series not in data for spec in _BLS_SERIES):
         with _CACHE_LOCK:
             _CACHE.pop(key, None)
@@ -335,7 +340,7 @@ def _bls(now):
         row = _row(spec.indicator, "thousand persons" if spec.mode == "change" else "%",
                    spec.basis, "BLS", BLS_URL + spec.series, now,
                    seasonal_adjustment=spec.adjustment, series_id=spec.series,
-                   retrieved_at=retrieved)
+                   retrieved_at=retrieved, request_metadata=deepcopy(request))
         observations = (data or {}).get(spec.series, {})
         if not observations:
             _reason(row, error or "bls_series_unavailable")
@@ -360,7 +365,16 @@ def _bls(now):
             row["status"] = "released" if row["actual"] is not None else "unavailable"
             if row["actual"] is None:
                 _reason(row, "comparison_period_unavailable")
+        row["publication_status"] = "available" if row["actual"] is not None else "unconfirmed"
+        row["request_metadata"].update(failure_reason=row["missing_reason"],
+                                       publication_status=row["publication_status"],
+                                       latest_observation_period=row["period"])
         rows.append(row)
+    if any(row["actual"] is None for row in rows):
+        logging.getLogger(__name__).warning(
+            "BLS HTTP=%s transport=%s publication_status=unconfirmed failures=%s",
+            request["http_status"], request.get("transport_error", "none"),
+            sorted({row["missing_reason"] for row in rows if row["actual"] is None}))
     return rows
 
 
@@ -795,6 +809,9 @@ def _merge_events(rows, event_rows, now):
 
 
 def _finish(row):
+    row["publication_status"] = ("pending" if row["status"] == "pending" else
+                                 "available" if row["actual"] is not None and row["status"] == "released"
+                                 else "unconfirmed")
     if row["actual"] is None:
         _reason(row, "actual_unavailable" if row["status"] != "pending" else "awaiting_release")
     if row["forecast"] is None:
@@ -818,6 +835,30 @@ def _finish(row):
             _reason(row, field + "_unit_or_basis_mismatch")
 
 
+def _link_bls_calendar(row, spec, calendar, now):
+    primary = {"cpi": "US_CPI", "ppi": "US_PPI", "empsit": "US_NONFARM_PAYROLLS"}
+    name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
+    source = next((source for source in calendar["sources"] if source["name"] == name), {})
+    row["release_calendar_status"] = dict(source)
+    row["fallback_connected"] = bool(source.get("fallback_connected"))
+    matches = [event for event in calendar["events"]
+               if event["indicator"] == primary[spec.group] and event.get("period") == row["period"]]
+    if len(matches) == 1:
+        event, = matches
+        at = event["release_at"]
+        row.update(release_at=at, release_precision="datetime" if "T" in at else "date",
+                   release_source="BLS schedule", release_source_url=event["source_url"])
+        row["missing_reason"] = ";".join(code for code in row["missing_reason"].split(";")
+                                          if code and not code.startswith("release_schedule_")
+                                          and code != "release_date_unavailable")
+        if _future(row, now):
+            row.update(actual=None, status="pending")
+            row["history"] = [entry for entry in row["history"] if entry["period"] < row["period"]]
+            _reason(row, "scheduled_release_not_yet_due")
+    elif not row.get("release_at"):
+        _reason(row, "release_schedule_" + (source.get("reason") or "period_unavailable"))
+
+
 def load_economic_releases(event_rows=None, now=None):
     """Return normalized rows; persist validated public monthly observations only.
 
@@ -838,31 +879,19 @@ def load_economic_releases(event_rows=None, now=None):
         korea = [executor.submit(_ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
         rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
         calendar = calendar.result()
-        primary = {"cpi": "US_CPI", "ppi": "US_PPI", "empsit": "US_NONFARM_PAYROLLS"}
         for row, spec in zip(rows, _BLS_SERIES):
-            name = {"cpi": "BLS CPI", "ppi": "BLS PPI", "empsit": "BLS Employment Situation"}[spec.group]
-            source = next((source for source in calendar["sources"] if source["name"] == name), {})
-            row["release_calendar_status"] = dict(source)
-            row["fallback_connected"] = bool(source.get("fallback_connected"))
-            matches = [event for event in calendar["events"]
-                       if event["indicator"] == primary[spec.group] and event.get("period") == row["period"]]
-            if len(matches) == 1:
-                event, = matches
-                at = event["release_at"]
-                row.update(release_at=at, release_precision="datetime" if "T" in at else "date",
-                           release_source="BLS schedule", release_source_url=event["source_url"])
-                if _future(row, now):
-                    row.update(actual=None, status="pending")
-                    row["history"] = [entry for entry in row["history"] if entry["period"] < row["period"]]
-                    _reason(row, "scheduled_release_not_yet_due")
-            else:
-                failure = next((source["reason"] for source in calendar["sources"] if source["name"] == name), "")
-                _reason(row, "release_schedule_" + (failure or "period_unavailable"))
+            _link_bls_calendar(row, spec, calendar, now)
     from stock_lab_core.economic_cache import retain_successful_observations
     rows = retain_successful_observations(rows, now)
+    # A failed batch has no period until the last successful observation is restored.
+    for row, spec in zip(rows, _BLS_SERIES):
+        if row["status"] == "stale":
+            _link_bls_calendar(row, spec, calendar, now)
     _merge_events(rows, event_rows, now)
     for row in rows:
         _finish(row)
+        if row["source"] == "BLS" and "request_metadata" in row:
+            row["request_metadata"]["publication_status"] = row["publication_status"]
         if row["indicator"] == "US_RETAIL_SALES" and row["status"] == "stale":
             row["observation_recency"] = "stale"
             row["publication_status"] = "unconfirmed"

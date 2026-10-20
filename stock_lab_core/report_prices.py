@@ -70,8 +70,12 @@ def aligned_macro(frames, reference_date, now):
 
 def release_day_reaction(row, frames, now):
     at = row.get("release_at")
-    if not at or row.get("actual") is None:
-        return "발표일 미연결/미발표로 동일일 비교 보류"
+    if row.get("status") == "pending":
+        return "발표 대기: 동일일 시장 반응 비교 보류"
+    if row.get("actual") is None:
+        return "발표치 수집 실패·발표 여부 미확인: 동일일 비교 보류"
+    if not at:
+        return "발표치는 수집됨·발표일 미확인: 동일일 비교 보류"
     kr = str(row.get("indicator", "")).startswith("KR_")
     try:
         dt = pd.Timestamp(at)

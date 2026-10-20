@@ -1,0 +1,117 @@
+{
+  "report_base_commit": "f6dfee8118e3",
+  "report_measurement_id": null,
+  "uploaded_measurement_id": "1903aca690be4774bf9fbd8d21af8405",
+  "measurement_ids_match": false,
+  "measurement_kind": "calculation",
+  "calculation_completed": true,
+  "is_full_today_queue_measurement": true,
+  "elapsed_seconds": 132.55092062600306,
+  "analyst": {
+    "category": "external_data",
+    "name": "get_analyst_snapshot",
+    "calls": 62,
+    "total_seconds": 32.23944383999333,
+    "self_seconds": 32.23944383999333,
+    "max_seconds": 1.6868034369981615,
+    "failures": 0,
+    "active_wall_seconds": 8.551607579982374
+  },
+  "kr_batch_wait": {
+    "category": "phase",
+    "name": "kr_quote_fallback_wait",
+    "calls": 2,
+    "total_seconds": 12.250024562017643,
+    "self_seconds": 12.250024562017643,
+    "max_seconds": 7.422592835006071,
+    "failures": 0,
+    "active_wall_seconds": 12.250024562017643
+  },
+  "main_phases": [
+    {
+      "category": "phase",
+      "name": "flow_refresh",
+      "calls": 1,
+      "total_seconds": 53.50723473899416,
+      "self_seconds": 0.000859739986481145,
+      "max_seconds": 53.50723473899416,
+      "failures": 0,
+      "active_wall_seconds": 53.50723473899416
+    },
+    {
+      "category": "phase",
+      "name": "flow_candidates_after_refresh",
+      "calls": 1,
+      "total_seconds": 14.586553906992776,
+      "self_seconds": 0.015572938980767503,
+      "max_seconds": 14.586553906992776,
+      "failures": 0,
+      "active_wall_seconds": 14.586553906992776
+    },
+    {
+      "category": "phase",
+      "name": "summary",
+      "calls": 1,
+      "total_seconds": 48.75318312700256,
+      "self_seconds": 0.036866937996819615,
+      "max_seconds": 48.75318312700256,
+      "failures": 0,
+      "active_wall_seconds": 48.75318312700256
+    },
+    {
+      "category": "phase",
+      "name": "analyst_enrichment",
+      "calls": 1,
+      "total_seconds": 8.576860738001415,
+      "self_seconds": 8.576860738001415,
+      "max_seconds": 8.576860738001415,
+      "failures": 0,
+      "active_wall_seconds": 8.576860738001415
+    },
+    {
+      "category": "phase",
+      "name": "flow_context",
+      "calls": 1,
+      "total_seconds": 4.261537156009581,
+      "self_seconds": 4.2349553069943795,
+      "max_seconds": 4.261537156009581,
+      "failures": 0,
+      "active_wall_seconds": 4.261537156009581
+    }
+  ],
+  "naver_single_realtime": {
+    "category": "prices",
+    "name": "_fetch_naver_realtime_quote",
+    "calls": 100,
+    "total_seconds": 42.83652013305982,
+    "self_seconds": 42.83652013305982,
+    "max_seconds": 1.4215318950009532,
+    "failures": 0,
+    "active_wall_seconds": 11.891841267002746
+  },
+  "transport_events": {
+    "naver_realtime.request": 100,
+    "naver_realtime.response": 100,
+    "naver_basic.request": 7,
+    "naver_basic.response": 7
+  },
+  "cold_cache_status": {
+    "mode": "standard_refresh_not_fully_cold",
+    "reset": [
+      "latest_quotes",
+      "load_price_df",
+      "load_price_frames_batch"
+    ],
+    "may_be_warm": [
+      "provider_history",
+      "analyst_6h",
+      "financial_metadata"
+    ]
+  },
+  "conclusion": "측정ID/계산 구간 불일치: 전체 계산의 전후 성능 비교 불가",
+  "notes": [
+    "함수 호출 수는 캐시 적중을 포함할 수 있으며 HTTP 요청 수가 아님",
+    "kr_quote_fallback_wait는 병렬 배치 전체 대기시간이며 개별 요청 타임아웃 시간이 아님",
+    "과거 파일에 transport_events가 없으면 타임아웃 발생 여부는 확인 불가"
+  ]
+}

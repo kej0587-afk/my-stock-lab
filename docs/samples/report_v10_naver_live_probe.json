@@ -1,0 +1,78 @@
+{
+  "scope": "public_8_ticker_quote_batch_only_not_full_today_queue",
+  "observed_at": "2026-10-21T00:20:34.345503+09:00",
+  "tickers": [
+    "005930.KS",
+    "000660.KS",
+    "379810.KS",
+    "379800.KS",
+    "418660.KS",
+    "0167A0.KS",
+    "003160.KS",
+    "096530.KQ"
+  ],
+  "before": {
+    "elapsed_seconds": 0.4776691999995819,
+    "transport_events": {
+      "naver_bulk.request": 1,
+      "naver_bulk.response": 1,
+      "naver_realtime.request": 7,
+      "naver_realtime.response": 7
+    },
+    "quotes_returned": 8,
+    "functions": [
+      {
+        "category": "prices",
+        "name": "kr_quote_fallback",
+        "calls": 7,
+        "total_seconds": 1.203207399998064,
+        "self_seconds": 0.00019689999862748664,
+        "max_seconds": 0.284967499999766,
+        "failures": 0,
+        "active_wall_seconds": 0.3803147999988141
+      },
+      {
+        "category": "prices",
+        "name": "_fetch_naver_realtime_quote",
+        "calls": 7,
+        "total_seconds": 1.2030104999994364,
+        "self_seconds": 1.2030104999994364,
+        "max_seconds": 0.2849446000000171,
+        "failures": 0,
+        "active_wall_seconds": 0.3802894999989803
+      },
+      {
+        "category": "phase",
+        "name": "kr_quote_fallback_wait",
+        "calls": 1,
+        "total_seconds": 0.38152249999984633,
+        "self_seconds": 0.38152249999984633,
+        "max_seconds": 0.38152249999984633,
+        "failures": 0,
+        "active_wall_seconds": 0.38152249999984633
+      }
+    ]
+  },
+  "after": {
+    "elapsed_seconds": 0.08958159999929194,
+    "transport_events": {
+      "naver_bulk.request": 1,
+      "naver_bulk.response": 1
+    },
+    "quotes_returned": 8,
+    "functions": [
+      {
+        "category": "phase",
+        "name": "kr_quote_fallback_wait",
+        "calls": 1,
+        "total_seconds": 3.1999989005271345e-06,
+        "self_seconds": 3.1999989005271345e-06,
+        "max_seconds": 3.1999989005271345e-06,
+        "failures": 0,
+        "active_wall_seconds": 3.1999989005271345e-06
+      }
+    ]
+  },
+  "same_quotes": true,
+  "note": "Live prices can move between probes. This does not measure Cloud end-to-end elapsed."
+}
