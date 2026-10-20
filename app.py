@@ -6781,7 +6781,7 @@ def clear_today_market_flow_snapshot_cache(clear_data_cache: bool = False):
 
 
 @timed_call("external_data")
-def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_refresh: bool = False):
+def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_refresh: bool = False, progress=None):
     """ETF/섹터 데이터 + 테마종목(옵션) 계산.
     include_theme=True도 기본 화면 새로고침은 테마 원자료 캐시를 유지한다.
     오늘점검 판정용 수동 계산은 force_theme_refresh=True로 후보 원자료까지 새로 본다.
@@ -6796,8 +6796,14 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_r
     cache_clear(get_sector_benchmark_holdings_name_map)
     if force_theme_refresh and IMAGE_THEME_FLOW_AVAILABLE:
         cache_clear(calculate_image_theme_flow_df)
-    flow_df = calculate_money_flow_df()
-    sector_rotation_df = calculate_sector_rotation_df(flow_df)
+    if progress:
+        progress("돈흐름 1/3: ETF·섹터 가격 조회")
+    with measure("phase", "flow_etf_prices"):
+        flow_df = calculate_money_flow_df()
+    if progress:
+        progress("돈흐름 2/3: 섹터 순위 계산")
+    with measure("phase", "flow_sector_rotation"):
+        sector_rotation_df = calculate_sector_rotation_df(flow_df)
     prev = {} if force_theme_refresh else (get_cached_today_market_flow_snapshot() or {})
     snapshot = {
         **prev,
@@ -6817,7 +6823,10 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_r
             for key in ("theme_flow_df", "theme_rotation_df", "subtheme_group_df", "theme_top5", "subtheme_top"):
                 snapshot[key] = prev.get(key, pd.DataFrame())
         else:
-            snapshot.update(_build_theme_flow_snapshot_payload())
+            if progress:
+                progress("돈흐름 3/3: 전체 테마 종목 가격·후보 계산")
+            with measure("phase", "flow_theme_prices"):
+                snapshot.update(_build_theme_flow_snapshot_payload())
 
     for key in ("_flow_shortlist_df", "_flow_shortlist_version"):
         snapshot.pop(key, None)
@@ -33513,7 +33522,10 @@ def _render_today_queue_tab(mode):
     with measure("phase", "watchlist_prepare"):
         raw_watch_items = tuple(st.session_state.get("watchlist", []))
         flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
-        watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+        if st.session_state.get("today_queue_refresh_flow_candidates", False):
+            watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+        else:
+            watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
     if not watch_items:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())
         render_today_unified_briefing_panel(
@@ -33580,6 +33592,11 @@ def _render_today_queue_tab(mode):
             st.session_state["today_queue_summary_last_nonempty_sig"] = disk_sig
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
+    refresh_flow_candidates = st.checkbox(
+        "돈흐름 전체 후보도 새로 계산",
+        value=False,
+        key="today_queue_refresh_flow_candidates",
+    )
     run_summary = c1.button(
         "오늘 종목 점검 계산/새로고침",
         key="today_queue_run_once",
@@ -33624,15 +33641,27 @@ def _render_today_queue_tab(mode):
             pass
 
     if run_summary:
-        try:
-            with measure("phase", "flow_refresh"), st.spinner("돈흐름 상세/차트 후보를 먼저 계산하는 중입니다..."):
-                flow_snapshot_for_queue = refresh_today_market_flow_snapshot(include_theme=True, force_theme_refresh=True)
-            with measure("phase", "flow_candidates_after_refresh"):
-                watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
-            queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
-            st.session_state["today_queue_open_flow_detail"] = True
-        except Exception as exc:
-            st.warning(f"돈흐름 상세/차트 계산은 실패했습니다. 전광판/보유 종목만 먼저 점검합니다: {exc}")
+        # Begin with user-owned inputs: failed or skipped discovery cannot carry
+        # old auto-candidates into a newly signed calculation.
+        watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
+        if refresh_flow_candidates:
+            flow_progress = st.empty()
+            try:
+                with measure("phase", "flow_refresh"), st.spinner("돈흐름 전체 후보 계산 중"):
+                    flow_snapshot_for_queue = refresh_today_market_flow_snapshot(
+                        include_theme=True, force_theme_refresh=True, progress=flow_progress.caption,
+                    )
+                with measure("phase", "flow_candidates_after_refresh"):
+                    watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
+                st.session_state["today_queue_open_flow_detail"] = True
+            except Exception as exc:
+                st.warning(f"돈흐름 전체 조회 실패. 보유·관심종목만 점검합니다: {type(exc).__name__}")
+                logging.exception("Today queue money-flow discovery failed")
+            finally:
+                flow_progress.empty()
+        else:
+            st.info("보유·관심종목 점검 중 · 돈흐름 자동발굴은 이번 계산에서 제외")
+        queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
         with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
             clear_latest_price_cache()
             enable_force_live_price_refresh()
