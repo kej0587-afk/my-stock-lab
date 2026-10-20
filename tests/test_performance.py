@@ -85,6 +85,50 @@ def test_nested_runs_are_isolated():
     assert [row["name"] for row in inner.report()["functions"]] == ["inner"]
 
 
+def test_running_phase_snapshot_is_available_before_blocking_work_finishes():
+    now = [0.0]
+    progress = []
+    with PerformanceTrace(clock=lambda: now[0], on_phase=lambda name, elapsed: progress.append((name, elapsed))) as trace:
+        now[0] = 2
+        with measure("phase", "price_history_10y"):
+            now[0] = 8
+            snapshot = trace.report()
+            assert snapshot["measurement_status"] == "running"
+            assert snapshot["elapsed_seconds"] == 8
+            assert snapshot["current_phase"] == "price_history_10y"
+            assert snapshot["measurement_finished_at"] is None
+    assert progress == [("price_history_10y", 2)]
+    assert trace.report()["measurement_status"] == "completed"
+
+
+def test_failed_run_records_time_and_does_not_swallow_original_error():
+    with pytest.raises(ValueError, match="source failed"):
+        with PerformanceTrace() as trace:
+            with measure("phase", "summary"):
+                raise ValueError("source failed")
+    report = trace.report()
+    assert report["measurement_status"] == "failed"
+    assert report["functions"][0]["failures"] == 1
+    assert report["measurement_finished_at"]
+
+
+def test_phase_notifications_stay_on_script_thread_and_observer_failures_do_not_change_results():
+    from threading import get_ident
+    calls = []
+    with PerformanceTrace(on_phase=lambda *a: calls.append(get_ident())):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def worker():
+                with measure("phase", "worker_phase"):
+                    return 42
+            assert submit_with_context(pool, worker).result() == 42
+        with measure("phase", "main_phase"):
+            pass
+    assert calls == [get_ident()]
+    with PerformanceTrace(on_phase=lambda *a: (_ for _ in ()).throw(RuntimeError("UI failed"))):
+        with measure("phase", "data"):
+            assert 2 + 2 == 4
+
+
 def test_timing_panel_renders_and_retains_last_calculation(app_module):
     from streamlit.testing.v1 import AppTest
     source = '''

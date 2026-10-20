@@ -324,34 +324,19 @@ def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
     return _clean_ohlcv_frame(out)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
 def _fetch_pykrx_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
+    """Keep the legacy API, but bound the same Naver adjusted-daily transport."""
     if not _is_kr_ticker(ticker):
         return pd.DataFrame()
     try:
-        from pykrx import stock as _pykrx
-    except Exception:
+        from stock_lab_core.kr_flow_history import load_kr_flow_history
+        frame = load_kr_flow_history(ticker, start=_period_start_timestamp(period))
+    except (ImportError, TypeError, ValueError, OverflowError):
+        # A cached pre-period helper is unavailable, never a one-year substitute
+        # for a requested ten-year history. The caller retains Yahoo fallback.
         return pd.DataFrame()
-
-    code = _kr_code(ticker)
-    if not code:
-        return pd.DataFrame()
-    start = _period_start_timestamp(period).strftime("%Y%m%d")
-    end = pd.Timestamp.today().normalize().strftime("%Y%m%d")
-    getters = []
-    if hasattr(_pykrx, "get_market_ohlcv_by_date"):
-        getters.append(lambda: _pykrx.get_market_ohlcv_by_date(start, end, code))
-    if hasattr(_pykrx, "get_etf_ohlcv_by_date"):
-        getters.append(lambda: _pykrx.get_etf_ohlcv_by_date(start, end, code))
-
-    for getter in getters:
-        try:
-            out = _normalize_pykrx_ohlcv(getter())
-            if not out.empty:
-                return out
-        except Exception:
-            continue
-    return pd.DataFrame()
+    return _normalize_pykrx_ohlcv(frame)
 
 
 def _fetch_pykrx_latest_close(ticker: str) -> float:
@@ -379,7 +364,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
             with _YF_LOCK:
                 df = yf.download(
                     yf_ticker, period=period, interval="1d",
-                    progress=False, threads=False, auto_adjust=False,
+                    progress=False, threads=False, auto_adjust=False, timeout=5,
                     **yahoo_session_kwargs(),
                 )
         except Exception:
@@ -407,7 +392,7 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
         with _YF_LOCK:
             data = yf.download(
                 symbols, period=period, interval="1d", group_by="ticker",
-                progress=False, threads=min(4, len(symbols)), auto_adjust=False,
+                progress=False, threads=min(4, len(symbols)), auto_adjust=False, timeout=5,
                 **yahoo_session_kwargs(),
             )
     except Exception:

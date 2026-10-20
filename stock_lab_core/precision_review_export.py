@@ -18,8 +18,13 @@ import pandas as pd
 from stock_lab_core.backup import build_review_export_zip
 
 
-EXPORT_VERSION = "1.0"
+EXPORT_VERSION = "1.1"
 REVIEW_NOTICE = "review not trading change"
+_READY_KEY = "_precision_review_export_ready"
+_REQUIRED_SECTIONS = {
+    "main_decision", "execution_workflow", "multi_timeframe", "final_check",
+    "valuation", "financial_inputs", "entry_plan", "hold_or_cut", "signal_evidence", "context",
+}
 _IDENTITY_KEYS = ("ticker", "tkr", "symbol", "티커")
 _PRIVATE_KEY = re.compile(
     r"secret|password|credential|token|api.?key|authorization|cookie|session|"
@@ -240,11 +245,27 @@ def _source_build(value):
     return result
 
 
+def _review_asof(histories):
+    for frame in histories.values():
+        if frame.empty:
+            continue
+        value = frame.index[-1]
+        if isinstance(value, (datetime, date, np.datetime64)) and not pd.isna(value):
+            return pd.Timestamp(value).isoformat()
+        if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T].*)?", value):
+            try:
+                return pd.Timestamp(value).isoformat()
+            except ValueError:
+                pass
+    return None
+
+
 def build_precision_review_export_zip(
     *, selected_ticker, result_ticker, decision=None, workflow_display=None,
     final_check=None, valuation=None, financial=None, entry_plan=None,
     signal_evidence=None, multi_timeframe=None, ohlcv=None, context=None,
     hold_or_cut=None, source_build=None, captured_at=None, source="precision",
+    completion=None, stage="rendered",
 ):
     """Build an in-memory review ZIP from this render's explicitly supplied values.
 
@@ -255,6 +276,8 @@ def build_precision_review_export_zip(
     ticker = _ticker(selected_ticker)
     if not re.fullmatch(r"[A-Z0-9^][A-Z0-9.^=_-]{0,39}", ticker) or ticker != _ticker(result_ticker):
         raise ValueError("Review snapshot ticker mismatch or missing ticker")
+    if completion not in (None, "partial", "complete"):
+        raise ValueError("Unknown review completion status")
     decision = _mapping(decision)
     workflow = _mapping(decision.get("execution_workflow"))
     for section in (
@@ -332,6 +355,10 @@ def build_precision_review_export_zip(
         }
 
     flags = _conflict_flags(sections)
+    missing_sections = [name for name, value in sections.items() if value is None or value == {}]
+    complete = not (_REQUIRED_SECTIONS.intersection(missing_sections)) and any(
+        not frame.empty for frame in histories.values()
+    )
     for name, section in sections.items():
         frames[f"{name}.csv"] = _csv_safe(pd.DataFrame(_flatten(section), columns=["field", "value"]))
     frames["conflict_flags.csv"] = _csv_safe(pd.DataFrame(
@@ -340,11 +367,14 @@ def build_precision_review_export_zip(
     manifest = {
         "format": "stock-lab-precision-review", "version": EXPORT_VERSION,
         "captured_at": captured.isoformat(), "selected_ticker": ticker,
+        "asof": _review_asof(histories),
+        "completion": "complete" if complete and completion != "partial" else "partial",
+        "stage": _public_text(_text(stage)),
         "result_ticker": _ticker(result_ticker), "source": _public_text(_text(source)),
         "scope": REVIEW_NOTICE, "recalculated_for_export": False,
         "fetched_for_export": False, "ohlcv": history_metadata,
         "source_build": sections["source_build"],
-        "missing_sections": [name for name, value in sections.items() if value is None or value == {}],
+        "missing_sections": missing_sections,
         "conflict_flag_count": len(flags),
         "limitations": [
             "Captured at render time, not download time; market data may be older.",
@@ -362,6 +392,28 @@ def build_precision_review_export_zip(
     return buffer.getvalue()
 
 
+def _download_manifest(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return json.loads(archive.read("manifest.json"))
+
+
+def _render_download(st, data, manifest, *, key_suffix="", saved=False):
+    ticker = manifest["selected_ticker"]
+    safe_ticker = re.sub(r"[^A-Z0-9._-]", "_", ticker)
+    status = "완료 결과" if manifest["completion"] == "complete" else "부분 결과"
+    st.caption(
+        f"{ticker} · 기준일 {manifest['asof'] or '미확인'} · {status} · "
+        f"저장 시각 {manifest['captured_at']}" + (" · 이전 저장 결과" if saved else "")
+    )
+    st.download_button(
+        f"{ticker} 검토 ZIP 다운로드 ({status})", data=data, mime="application/zip",
+        file_name=f"precision_review_{safe_ticker}.zip",
+        key=f"precision_review_export_{manifest['source']}_{safe_ticker}{key_suffix}",
+        on_click="ignore",
+        help="현재 표시 결과를 검토용으로 내보냅니다. 매매 판단은 변경하지 않습니다.",
+    )
+
+
 def render_precision_review_download(st, **snapshot):
     """Render a download from local values; clicking must not rerun the app."""
     try:
@@ -369,12 +421,56 @@ def render_precision_review_download(st, **snapshot):
     except (ValueError, TypeError, OverflowError):
         st.warning("검토 ZIP을 만들 수 없습니다. 선택 종목과 현재 표시 결과를 확인해 주세요.")
         return
-    ticker = _ticker(snapshot.get("selected_ticker"))
-    safe_ticker = re.sub(r"[^A-Z0-9._-]", "_", ticker)
-    st.download_button(
-        f"{ticker} 검토 ZIP 다운로드", data=data, mime="application/zip",
-        file_name=f"precision_review_{safe_ticker}.zip",
-        key=f"precision_review_export_{snapshot.get('source', 'precision')}_{safe_ticker}",
-        on_click="ignore",
-        help="현재 표시 결과를 검토용으로 내보냅니다. 매매 판단은 변경하지 않습니다.",
-    )
+    _render_download(st, data, _download_manifest(data))
+
+
+class PrecisionReviewDownload:
+    """Keep one session-local download ready before slower precision panels run."""
+
+    def __init__(self, st, *, selected_ticker, owner, context=None):
+        self.st = st
+        self.ticker = _ticker(selected_ticker)
+        self.owner = _text(owner).casefold()
+        self.slot = st.empty()
+        self.sequence = 0
+        self.snapshot = {
+            "selected_ticker": self.ticker, "result_ticker": self.ticker,
+            "source": "precision", "context": context,
+        }
+        cached = st.session_state.pop(_READY_KEY, None)
+        if self.owner and isinstance(cached, dict) and cached.get("owner") == self.owner:
+            try:
+                data = cached["data"]
+                manifest = _download_manifest(data)
+                if (
+                    manifest["selected_ticker"] == manifest["result_ticker"] == self.ticker
+                    and manifest["source"] == "precision"
+                    and manifest["version"] == EXPORT_VERSION
+                ):
+                    with self.slot.container():
+                        _render_download(st, data, manifest, key_suffix="_saved", saved=True)
+                    st.session_state[_READY_KEY] = cached
+                    return
+            except (KeyError, ValueError, TypeError, zipfile.BadZipFile):
+                pass
+        self.update(completion="partial", stage="selection")
+
+    def update(self, **snapshot):
+        candidate = {**self.snapshot, **snapshot}
+        candidate["captured_at"] = snapshot.get("captured_at") or datetime.now(timezone.utc)
+        try:
+            if _ticker(candidate["selected_ticker"]) != self.ticker:
+                raise ValueError("Review snapshot ticker mismatch")
+            data = build_precision_review_export_zip(**candidate)
+        except (ValueError, TypeError, OverflowError):
+            # A failed checkpoint must never leave another result downloadable.
+            self.st.session_state.pop(_READY_KEY, None)
+            with self.slot.container():
+                self.st.warning("검토 ZIP을 만들 수 없습니다. 선택 종목과 현재 표시 결과를 확인해 주세요.")
+            return
+        self.snapshot = candidate
+        self.sequence += 1
+        with self.slot.container():
+            _render_download(self.st, data, _download_manifest(data), key_suffix=f"_{self.sequence}")
+        if self.owner:
+            self.st.session_state[_READY_KEY] = {"owner": self.owner, "data": data}

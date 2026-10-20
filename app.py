@@ -22122,7 +22122,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
-    with price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
+    with measure("phase", "stock_signals"), price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             submit_with_context(executor,
                 _compute_summary_item,
@@ -33438,11 +33438,47 @@ def render_today_queue_tab(mode):
     if not KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE:
         st.warning("클러스터 성능 모듈이 이전 버전입니다. 기존 조회 방식으로 실행합니다. 최신 코드 전체 반영 후 앱 서버를 재시작해 주세요.")
     before_today_seconds = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
-    with PerformanceTrace(scope="today_queue_render_with_calculation") as trace:
-        scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"
-        with kr_cluster_snapshot_scope(owner_scope=scope_owner):
-            _render_today_queue_tab(mode)
-    report = trace.report()
+    logging.getLogger("stock_lab.performance").setLevel(logging.INFO)
+    timing_panel = st.container()
+    phase_status = st.empty()
+    previous_attempt = st.session_state.get("today_queue_last_attempt_performance", {})
+    with timing_panel:
+        st.caption("시간 진단은 계산 시작 전부터 표시됩니다. 진행 단계의 시간은 마지막 단계 전환 시점 기준입니다.")
+        if previous_attempt:
+            st.caption(f"직전 실행: {previous_attempt.get('measurement_status', '상태 미기록')} · {previous_attempt.get('elapsed_seconds', 0):.1f}초 · 마지막 단계 {previous_attempt.get('current_phase') or '미기록'}")
+            st.download_button(
+                "직전 실행 시간 진단 JSON", data=json.dumps(previous_attempt, ensure_ascii=False, indent=2),
+                file_name="today_queue_last_attempt.json", mime="application/json", on_click="ignore",
+                icon=":material/download:", key="today_queue_last_attempt_download",
+            )
+
+    def on_phase(name, elapsed):
+        labels = {"watchlist_prepare": "점검 대상 준비", "flow_refresh": "돈흐름 전체 조회",
+                  "flow_etf_prices": "ETF·섹터 가격 조회", "flow_sector_rotation": "섹터 순위 계산",
+                  "flow_theme_prices": "전체 테마 조회", "summary": "종목 신호 계산",
+                  "price_history_1y": "일봉 시세 조회", "price_history_10y": "장기 시세 조회",
+                  "rs_price_history_3mo": "RS 이력 조회", "benchmarks": "벤치마크 조회"}
+        labels["stock_signals"] = "종목별 지표·판정 계산"
+        phase_status.caption(f"진행: {labels.get(name, name)} · 현재까지 {elapsed:.1f}초")
+        st.session_state["today_queue_last_attempt_performance"] = trace.report()
+        logging.getLogger("stock_lab.performance").info("Today queue phase=%s elapsed=%.3f", name, elapsed)
+
+    trace_kwargs = {"scope": "today_queue_render_with_calculation"}
+    if "on_phase" in inspect.signature(PerformanceTrace).parameters:
+        trace_kwargs["on_phase"] = on_phase
+    trace = PerformanceTrace(**trace_kwargs)
+    try:
+        with trace:
+            scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"
+            with kr_cluster_snapshot_scope(owner_scope=scope_owner):
+                _render_today_queue_tab(mode)
+    finally:
+        attempt = trace.report()
+        attempt["before_today_seconds"] = before_today_seconds
+        attempt["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
+        st.session_state["today_queue_last_attempt_performance"] = attempt
+    report = attempt
+    phase_status.caption(f"화면 처리 완료 · {report['elapsed_seconds']:.1f}초")
     root_timing = next((row for row in report["functions"] if row["name"] == "today_queue_render"), None)
     if root_timing:
         report["unclassified_render_seconds"] = root_timing["self_seconds"]
@@ -33456,11 +33492,12 @@ def render_today_queue_tab(mode):
         logger.info("Today queue performance: %s", json.dumps(report))
     else:
         saved_measurement = st.session_state.get("today_queue_performance", {})
-        report = dict(saved_measurement, measurement_reused=True) if saved_measurement else {}
+        report = dict(saved_measurement, measurement_reused=True) if saved_measurement else dict(report, summary_recalculated=False)
     if report:
-        with st.expander("계산 시간 상세", expanded=False):
+        with timing_panel.expander("계산 시간 상세", expanded=False):
             st.caption(
-                ("이전 계산의 측정값입니다. 이번 화면 갱신에서는 재계산하지 않았습니다. " if report.get("measurement_reused") else "이번 오늘점검 계산 측정값입니다. ")
+                ("이전 계산의 측정값입니다. 이번 화면 갱신에서는 재계산하지 않았습니다. " if report.get("measurement_reused") else
+                 "이번 화면 표시 측정입니다. 종목 신호는 재계산하지 않았습니다. " if report.get("summary_recalculated") is False else "이번 오늘점검 계산 측정값입니다. ")
                 + f"측정 완료: {report.get('measurement_finished_at') or '기존 파일: 시각 미기록'} · 측정ID: {report.get('measurement_id') or '미기록'}"
             )
             c1, c2, c3 = st.columns(3)
@@ -35845,6 +35882,25 @@ if main_page == "precision":
     # 여기서 최종 표시명을 한 번 더 통일한다. 예: RAM이 Aries I로 저장된 경우.
     name = sanitize_asset_name(name, tkr)
 
+    from stock_lab_core import precision_review_export as _precision_review_export
+    _precision_review_download_type = getattr(_precision_review_export, "PrecisionReviewDownload", None)
+    if callable(_precision_review_download_type):
+        precision_review_download = _precision_review_download_type(
+            st, selected_ticker=tkr, owner=PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+            context={
+                "name": name, "is_etf": is_etf, "asset_class": a_class, "app_mode": app_mode,
+                "has_position": has_p, "my_price": my_p, "usdkrw": usdkrw,
+            },
+        )
+    else:
+        # A running Cloud process may still hold the pre-checkpoint module.
+        class _PrecisionReviewDownloadCompat:
+            def update(self, *, completion=None, stage=None, **snapshot):
+                if completion == "complete":
+                    render_precision_review_download(st, **snapshot)
+
+        precision_review_download = _PrecisionReviewDownloadCompat()
+
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
 
     f_labels = get_fin_label_map()
@@ -35876,6 +35932,13 @@ if main_page == "precision":
 
     fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
     fin_score = int(fin_score)
+    precision_review_download.update(
+        financial=fin_meta, completion="partial", stage="financial",
+        context={
+            "name": name, "is_etf": is_etf, "asset_class": a_class, "app_mode": app_mode,
+            "has_position": has_p, "my_price": my_p, "usdkrw": usdkrw,
+        },
+    )
     
     if fin_score not in f_labels:
         fin_score = UNCALCULATED_FIN_DEFAULT_SCORE
@@ -36093,6 +36156,10 @@ if main_page == "precision":
                                      precision_has_pos, fin_score, is_free,
                                      app_mode, 0.0, 0.0, 0.0,
                                      live_price=display_cur_p)
+        precision_review_download.update(
+            decision=c, financial=fin_meta, completion="partial", stage="daily_decision",
+            ohlcv={"daily_source": df, "display_chart": chart_df},
+        )
         with st.spinner("일봉·주봉·월봉 흐름 확인 중..."):
             mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
         c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=precision_has_pos)
@@ -36114,6 +36181,14 @@ if main_page == "precision":
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, a_class, precision_has_pos,
             precision_pattern_timing, precision_pattern_bucket, precision_pattern_reason,
+        )
+        precision_review_download.update(
+            decision=c, multi_timeframe=mtf_pack, completion="partial", stage="workflow",
+            signal_evidence={
+                "pattern_candidates": precision_pattern_candidates,
+                "pattern_timing": precision_pattern_timing, "pattern_reason": precision_pattern_reason,
+                "pattern_bucket": precision_pattern_bucket, "liquidity_profile": precision_liquidity_profile,
+            },
         )
 
         L, R = st.columns([1.1, 2.4])
@@ -36359,8 +36434,8 @@ if main_page == "precision":
 
         precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
         precision_hold_or_cut = render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
-        render_precision_review_download(
-            st, selected_ticker=tkr, result_ticker=tkr, decision=c,
+        precision_review_download.update(
+            selected_ticker=tkr, result_ticker=tkr, decision=c, completion="complete", stage="panels",
             workflow_display=precision_workflow_display, final_check=precision_final_check,
             valuation=precision_valuation, financial=fin_meta, entry_plan=precision_entry_plan,
             hold_or_cut=precision_hold_or_cut, source_build=get_report_build_info(__file__),

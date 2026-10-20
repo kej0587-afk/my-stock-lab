@@ -16,6 +16,7 @@ import pytest
 
 from stock_lab_core.precision_review_export import (
     EXPORT_VERSION,
+    PrecisionReviewDownload,
     REVIEW_NOTICE,
     build_precision_review_export_zip,
     render_precision_review_download,
@@ -268,6 +269,8 @@ def test_empty_export_and_empty_flags_still_have_manifest_and_csv_headers():
 
 class _UI:
     def __init__(self):
+        self.session_state = {}
+        self.captions = []
         self.downloads = []
         self.warnings = []
         self.frames = []
@@ -294,8 +297,14 @@ class _UI:
     def info(self, *args):
         pass
 
-    def caption(self, *args):
-        pass
+    def caption(self, text):
+        self.captions.append(text)
+
+    def empty(self):
+        return self
+
+    def container(self):
+        return self
 
     def expander(self, *args, **kwargs):
         return self
@@ -320,6 +329,248 @@ def test_download_is_eager_snapshot_bytes_and_does_not_rerun():
     render_precision_review_download(ui, **_snapshot(selected_ticker="AAPL"))
     assert len(ui.downloads) == 1 and len(ui.warnings) == 1
     assert "선택 종목" in ui.warnings[0]
+
+
+def _download_snapshot(ui):
+    with zipfile.ZipFile(io.BytesIO(ui.downloads[-1][1]["data"])) as archive:
+        return json.loads(archive.read("snapshot.json"))
+
+
+def _complete_snapshot(**overrides):
+    frame = pd.DataFrame({"Close": [105]}, index=pd.to_datetime(["2026-10-19"]))
+    return _snapshot(
+        financial={"final_score": 4}, valuation={"ticker": "MSFT", "status": "displayed"},
+        entry_plan={"ticker": "MSFT", "status": "분할 진입 가능"},
+        hold_or_cut={"ticker": "MSFT", "displayed": False},
+        multi_timeframe={"일봉": {"snapshot": {"state": "displayed"}}},
+        signal_evidence={"pattern_timing": "displayed"}, context={"name": "Microsoft"},
+        ohlcv={"daily_source": frame}, **overrides,
+    )
+
+
+def test_top_download_is_immediately_available_then_captures_each_local_checkpoint():
+    ui = _UI()
+    download = PrecisionReviewDownload(ui, selected_ticker="MSFT", owner="owner-a")
+    initial = _download_snapshot(ui)
+    assert initial["manifest"]["selected_ticker"] == "MSFT"
+    assert initial["manifest"]["completion"] == "partial"
+    assert initial["manifest"]["asof"] is None
+    assert "final_check" in initial["manifest"]["missing_sections"]
+    assert "기준일 미확인" in ui.captions[-1] and "부분 결과" in ui.captions[-1]
+    download.update(**_complete_snapshot(), completion="partial", stage="daily_decision")
+    partial = _download_snapshot(ui)
+    assert partial["manifest"]["completion"] == "partial"
+    assert partial["manifest"]["stage"] == "daily_decision"
+    assert partial["manifest"]["asof"] == "2026-10-19T00:00:00"
+    assert partial["manifest"]["captured_at"] == CAPTURED.isoformat()
+    before_complete = datetime.now(timezone.utc)
+    download.update(completion="complete", stage="panels")
+    after_complete = datetime.now(timezone.utc)
+    complete = _download_snapshot(ui)
+    assert complete["manifest"]["completion"] == "complete"
+    assert complete["sections"]["main_decision"] == partial["sections"]["main_decision"]
+    assert complete["sections"]["final_check"] == partial["sections"]["final_check"]
+    assert before_complete <= datetime.fromisoformat(complete["manifest"]["captured_at"]) <= after_complete
+    assert complete["manifest"]["stage"] == "panels"
+    assert "완료 결과" in ui.captions[-1] and "2026-10-19" in ui.captions[-1]
+    assert complete["manifest"]["captured_at"] in ui.captions[-1]
+    keys = [kwargs["key"] for _, kwargs in ui.downloads]
+    assert len(keys) == len(set(keys))
+    assert all(kwargs["on_click"] == "ignore" for _, kwargs in ui.downloads)
+    assert "owner-a" not in json.dumps(complete)
+
+
+@pytest.mark.parametrize("missing", ["decision", "final_check", "entry_plan", "valuation", "multi_timeframe", "ohlcv"])
+def test_incomplete_sections_cannot_be_labelled_complete(missing):
+    args = _complete_snapshot()
+    args[missing] = None
+    with zipfile.ZipFile(io.BytesIO(build_precision_review_export_zip(**args, completion="complete"))) as archive:
+        assert json.loads(archive.read("manifest.json"))["completion"] == "partial"
+
+
+def test_saved_download_reappears_before_any_rebuild_and_retains_its_asof(monkeypatch):
+    ui = _UI()
+    download = PrecisionReviewDownload(ui, selected_ticker="MSFT", owner="Owner-A")
+    download.update(**_complete_snapshot(), completion="complete")
+    saved = ui.downloads[-1][1]["data"]
+
+    def unexpected_build(**kwargs):
+        raise AssertionError("Cached download must not rebuild or fetch")
+
+    monkeypatch.setattr("stock_lab_core.precision_review_export.build_precision_review_export_zip", unexpected_build)
+    PrecisionReviewDownload(ui, selected_ticker=" msft ", owner="owner-a")
+    assert ui.downloads[-1][1]["data"] == saved
+    assert "이전 저장 결과" in ui.captions[-1] and "완료 결과" in ui.captions[-1]
+    assert "2026-10-19" in ui.captions[-1]
+
+
+@pytest.mark.parametrize("ticker,owner", [("AAPL", "owner-a"), ("MSFT", "owner-b"), ("MSFT", ""), ("MSFT", None)])
+def test_other_ticker_or_owner_never_reuses_a_saved_download(ticker, owner):
+    ui = _UI()
+    download = PrecisionReviewDownload(ui, selected_ticker="MSFT", owner="owner-a")
+    download.update(**_complete_snapshot(), completion="complete")
+    saved = ui.downloads[-1][1]["data"]
+    PrecisionReviewDownload(ui, selected_ticker=ticker, owner=owner)
+    current = _download_snapshot(ui)
+    assert ui.downloads[-1][1]["data"] != saved
+    assert current["manifest"]["selected_ticker"] == ticker
+    assert current["manifest"]["completion"] == "partial"
+    assert current["sections"]["main_decision"] == {}
+    assert current["sections"]["final_check"] is None
+    assert "이전 저장 결과" not in ui.captions[-1]
+    if not owner:
+        assert not ui.session_state
+
+
+def test_listing_switch_and_failed_checkpoint_discard_stale_results():
+    ui = _UI()
+    PrecisionReviewDownload(ui, selected_ticker="005930.KS", owner="owner-a")
+    download = PrecisionReviewDownload(ui, selected_ticker="005930.KQ", owner="owner-a")
+    assert _download_snapshot(ui)["manifest"]["selected_ticker"] == "005930.KQ"
+    assert "이전 저장 결과" not in ui.captions[-1]
+    count = len(ui.downloads)
+    download.update(decision={"ticker": "005930.KS"})
+    assert len(ui.downloads) == count and ui.warnings
+    assert not ui.session_state
+
+
+@pytest.mark.parametrize("index,expected", [
+    (pd.to_datetime(["2026-10-19"]), "2026-10-19T00:00:00"),
+    (["2026-10-19"], "2026-10-19T00:00:00"),
+    ([0], None), (["not a date"], None),
+])
+def test_asof_is_the_market_history_date_never_the_capture_date_or_numeric_index(index, expected):
+    _, data = _read(ohlcv={"daily_source": pd.DataFrame({"Close": [1]}, index=index)})
+    assert data["manifest"]["asof"] == expected
+
+
+def test_streamlit_replaces_the_top_download_without_duplicate_widgets_on_rerun():
+    from streamlit.testing.v1 import AppTest
+
+    script = """
+import io
+import json
+import zipfile
+import pandas as pd
+import streamlit as st
+from stock_lab_core.precision_review_export import PrecisionReviewDownload
+
+def saved_manifest():
+    data = st.session_state["_precision_review_export_ready"]["data"]
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return json.loads(archive.read("manifest.json"))
+
+download = PrecisionReviewDownload(st, selected_ticker="MSFT", owner="owner-a")
+st.session_state["initial_manifest"] = saved_manifest()
+if st.session_state.get("reuse_only", False):
+    st.stop()
+download.update(financial={"ticker": "MSFT", "final_score": 4}, stage="financial")
+download.update(
+    decision={"ticker": "MSFT", "dec": "displayed", "execution_workflow": {"티커": "MSFT"}},
+    stage="daily_decision", completion="partial",
+    ohlcv={"daily_source": pd.DataFrame({"Close": [100]}, index=pd.to_datetime(["2026-10-19"]))},
+)
+st.session_state["partial_manifest"] = saved_manifest()
+if st.session_state.get("finish", False):
+    download.update(
+        final_check={"ticker": "MSFT", "summary": {"final_label": "displayed"}},
+        entry_plan={"ticker": "MSFT", "status": "displayed"},
+        valuation={"ticker": "MSFT", "status": "displayed"},
+        hold_or_cut={"ticker": "MSFT", "displayed": False},
+        multi_timeframe={"day": {"snapshot": {"state": "displayed"}}},
+        signal_evidence={"pattern_timing": "displayed"}, context={"name": "Microsoft"},
+        completion="complete", stage="panels",
+    )
+st.session_state["final_manifest"] = saved_manifest()
+"""
+    app = AppTest.from_string(script).run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    assert "부분 결과" in app.caption[0].value
+    previous_partial = dict(app.session_state["final_manifest"])
+    app.session_state["reuse_only"] = True
+    app.run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    assert "이전 저장 결과" in app.caption[0].value and "부분 결과" in app.caption[0].value
+    assert previous_partial["captured_at"] in app.caption[0].value
+    app.session_state["reuse_only"] = False
+    app.session_state["finish"] = True
+    app.run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    assert app.session_state["initial_manifest"] == previous_partial
+    complete = app.session_state["final_manifest"]
+    assert complete["completion"] == "complete" and complete["stage"] == "panels"
+    assert complete["captured_at"] > app.session_state["partial_manifest"]["captured_at"]
+    assert "2026-10-19" in app.caption[0].value and "완료 결과" in app.caption[0].value
+    assert complete["captured_at"] in app.caption[0].value
+    assert "이전 저장 결과" not in app.caption[0].value
+    app.session_state["reuse_only"] = True
+    app.run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    assert app.session_state["initial_manifest"] == complete
+    assert "이전 저장 결과" in app.caption[0].value and "완료 결과" in app.caption[0].value
+    assert complete["captured_at"] in app.caption[0].value
+
+
+def _precision_download_startup():
+    tree = ast.parse(APP_PATH.read_text(encoding="utf-8-sig"))
+    precision = next(node for node in tree.body if isinstance(node, ast.If) and ast.unparse(node.test) == "main_page == 'precision'")
+    start = next(i for i, node in enumerate(precision.body) if isinstance(node, ast.ImportFrom) and any(
+        alias.name == "precision_review_export" for alias in node.names
+    ))
+    end = next(i for i, node in enumerate(precision.body) if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+               and isinstance(node.value.func, ast.Name) and node.value.func.id == "render_data_basis_caption")
+    return ast.Module(body=precision.body[start:end], type_ignores=[])
+
+
+def test_new_app_uses_legacy_renderer_once_when_cached_module_lacks_checkpoint_class(monkeypatch):
+    import stock_lab_core.precision_review_export as export_module
+
+    monkeypatch.delattr(export_module, "PrecisionReviewDownload")
+    calls = []
+
+    def legacy_render(st, *, selected_ticker, result_ticker, decision=None, workflow_display=None,
+                      final_check=None, valuation=None, financial=None, entry_plan=None,
+                      signal_evidence=None, multi_timeframe=None, ohlcv=None, context=None,
+                      hold_or_cut=None, source_build=None, captured_at=None, source="precision"):
+        calls.append((selected_ticker, result_ticker, captured_at))
+
+    namespace = {"st": _UI(), "render_precision_review_download": legacy_render}
+    exec(compile(_precision_download_startup(), str(APP_PATH), "exec"), namespace)
+    download = namespace["precision_review_download"]
+    download.update(financial={"ticker": "MSFT"}, completion="partial", stage="financial")
+    download.update(**_complete_snapshot(), completion="partial", stage="workflow")
+    assert not calls
+    download.update(**_complete_snapshot(), completion="complete", stage="panels")
+    assert calls == [("MSFT", "MSFT", CAPTURED)]
+    # Compile the entire entry point without running UI, auth, or DB initialization.
+    compile(APP_PATH.read_text(encoding="utf-8-sig"), str(APP_PATH), "exec")
+
+
+def test_streamlit_new_branch_runs_with_cached_module_missing_new_export(monkeypatch):
+    import stock_lab_core.precision_review_export as export_module
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.delattr(export_module, "PrecisionReviewDownload")
+    script = """
+import streamlit as st
+from stock_lab_core.precision_review_export import render_precision_review_download
+""" + ast.unparse(_precision_download_startup()) + """
+precision_review_download.update(financial={"ticker": "MSFT"}, completion="partial", stage="financial")
+precision_review_download.update(
+    selected_ticker="MSFT", result_ticker="MSFT", decision={"ticker": "MSFT", "dec": "displayed"},
+    completion="complete", stage="panels",
+)
+"""
+    app = AppTest.from_string(script).run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
+    app.run(timeout=15)
+    assert not app.exception
+    assert len(app.get("download_button")) == 1
 
 
 def _load_render_function(name, namespace):
@@ -449,10 +700,35 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
 
 def test_real_and_demo_call_sites_use_finished_local_results_not_download_calculations():
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8-sig"))
-    exports = [
+    precision_branch = next(node for node in tree.body if isinstance(node, ast.If) and ast.unparse(node.test) == "main_page == 'precision'")
+    updates = [
+        node for node in ast.walk(precision_branch) if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and ast.unparse(node.func) == "precision_review_download.update"
+    ]
+    real = next(node for node in updates if any(
+        kw.arg == "completion" and isinstance(kw.value, ast.Constant) and kw.value.value == "complete"
+        for kw in node.keywords
+    ))
+    render_calls = [
         node for node in ast.walk(tree) if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name) and node.func.id == "render_precision_review_download"
     ]
+    compat_class = next(node for node in ast.walk(precision_branch) if isinstance(node, ast.ClassDef)
+                        and node.name == "_PrecisionReviewDownloadCompat")
+    compat_calls = [node for node in ast.walk(compat_class) if node in render_calls]
+    assert len(compat_calls) == 1
+    compat_call = compat_calls[0]
+    assert [ast.unparse(arg) for arg in compat_call.args] == ["st"]
+    assert len(compat_call.keywords) == 1
+    assert compat_call.keywords[0].arg is None
+    assert ast.unparse(compat_call.keywords[0].value) == "snapshot"
+    compat_update = next(node for node in compat_class.body if isinstance(node, ast.FunctionDef) and node.name == "update")
+    assert [arg.arg for arg in compat_update.args.kwonlyargs] == ["completion", "stage"]
+    assert ast.unparse(compat_update.body[0].test) == "completion == 'complete'"
+    # Every renderer call is accounted for, including the legacy adapter.
+    standard_calls = [node for node in render_calls if node not in compat_calls]
+    assert len(standard_calls) == 1
+    exports = standard_calls + [real]
     assert len(exports) == 2
     for call in exports:
         # Only source hashing may run here, never market calculations or data fetching.
@@ -472,14 +748,29 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
             and node.value.func.id == "render_pre_buy_final_check_panel" and node.lineno < call.lineno
         ]
         assert prior_check
-    real = max(exports, key=lambda node: node.lineno)
     kwargs = {keyword.arg: keyword.value for keyword in real.keywords}
     assert kwargs["entry_plan"].id == "precision_entry_plan"
     assert kwargs["valuation"].id == "precision_valuation"
     assert kwargs["workflow_display"].id == "precision_workflow_display"
     assert kwargs["hold_or_cut"].id == "precision_hold_or_cut"
-    precision_branch = next(node for node in tree.body if isinstance(node, ast.If) and ast.unparse(node.test) == "main_page == 'precision'")
     success_branch = next(node for node in precision_branch.body if isinstance(node, ast.If) and ast.unparse(node.test) == "not df.empty")
+    startup = next(node for node in ast.walk(precision_branch) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_precision_review_download_type")
+    assert not any(
+        isinstance(node, ast.ImportFrom) and any(alias.name == "PrecisionReviewDownload" for alias in node.names)
+        for node in ast.walk(precision_branch)
+    )
+    calls_by_name = {
+        node.func.id: node for node in ast.walk(precision_branch)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert startup.lineno < calls_by_name["render_data_basis_caption"].lineno
+    assert startup.lineno < calls_by_name["load_fin_score_meta_fast"].lineno
+    stages = {next(kw.value.value for kw in node.keywords if kw.arg == "stage"): node for node in updates}
+    assert stages["financial"].lineno < calls_by_name["load_precision_price_history"].lineno
+    assert stages["daily_decision"].lineno < calls_by_name["build_precision_multi_timeframe_pack"].lineno
+    assert stages["workflow"].lineno < calls_by_name["render_peer_comparison_panel"].lineno
+    assert stages["workflow"].lineno < calls_by_name["render_personal_stock_analysis_panel"].lineno
+    assert stages["workflow"].lineno < calls_by_name["render_valuation_price_panel"].lineno
 
     def unconditional_assignments(body):
         for node in body:
@@ -488,6 +779,8 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
                     yield from (part.id for part in ast.walk(target) if isinstance(part, ast.Name))
             if isinstance(node, ast.With):
                 yield from unconditional_assignments(node.body)
+            if isinstance(node, ast.If):
+                yield from set(unconditional_assignments(node.body)).intersection(unconditional_assignments(node.orelse))
 
     assigned = set(unconditional_assignments(precision_branch.body)) | set(unconditional_assignments(success_branch.body))
     required = {node.id for node in ast.walk(real) if isinstance(node, ast.Name) and node.id.startswith("precision_")}
@@ -497,18 +790,27 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
     # Exercise the exact real-screen export call with offline render-local data.
     namespace = {node.id: None for node in ast.walk(real) if isinstance(node, ast.Name)}
     ui = _UI()
-    sample = _snapshot()
+    download = PrecisionReviewDownload(ui, selected_ticker="MSFT", owner="owner-a")
+    ui.downloads.clear()
+    sample = _complete_snapshot()
     namespace.update({
-        "render_precision_review_download": render_precision_review_download,
+        "precision_review_download": download,
         "st": ui, "tkr": "MSFT", "c": sample["decision"],
         "precision_final_check": sample["final_check"], "fin_meta": {"final_score": 4},
-        "df": pd.DataFrame({"Close": [100]}), "chart_df": pd.DataFrame({"Close": [105]}),
-        "mtf_pack": {}, "name": "Microsoft",
+        "precision_entry_plan": sample["entry_plan"], "precision_valuation": sample["valuation"],
+        "precision_hold_or_cut": sample["hold_or_cut"],
+        "df": sample["ohlcv"]["daily_source"], "chart_df": sample["ohlcv"]["daily_source"],
+        "mtf_pack": sample["multi_timeframe"], "name": "Microsoft",
         "get_report_build_info": lambda path: {"base_commit": "test"}, "__file__": str(APP_PATH),
     })
+    before_complete = datetime.now(timezone.utc)
     eval(compile(ast.Expression(body=real), str(APP_PATH), "eval"), namespace)
+    after_complete = datetime.now(timezone.utc)
     assert len(ui.downloads) == 1 and not ui.warnings
     archive = zipfile.ZipFile(io.BytesIO(ui.downloads[0][1]["data"]))
     captured = json.loads(archive.read("snapshot.json"))
     assert captured["sections"]["final_check"] == sample["final_check"]
     assert captured["manifest"]["source"] == "precision"
+    assert captured["manifest"]["completion"] == "complete"
+    assert captured["manifest"]["stage"] == "panels"
+    assert before_complete <= datetime.fromisoformat(captured["manifest"]["captured_at"]) <= after_complete

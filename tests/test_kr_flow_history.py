@@ -86,6 +86,31 @@ def test_empty_valid_ticker_response_does_not_disable_other_tickers():
     assert not reader.read("005930.KS", now="2026-10-20").empty
 
 
+def test_price_chart_history_preserves_requested_long_window():
+    calls = []
+    reader = history.KrFlowHistoryReader(request=lambda *a, **kw: calls.append(kw) or response())
+    long = reader.read("005930.KS", now="2026-10-20", start="2016-10-20")
+    short = reader.read("005930.KS", now="2026-10-20", start="2026-10-01")
+    assert pd.Timestamp("2024-10-19") in long.index
+    assert pd.Timestamp("2024-10-19") not in short.index
+    assert calls[0]["params"]["count"] > 3650
+    assert calls[1]["params"]["count"] == 21
+
+
+def test_price_loader_uses_bounded_feed_without_pykrx_initialization(monkeypatch):
+    from stock_lab_core import prices
+    calls = []
+    frame = history.parse_history(XML, "2016-10-20", "2026-10-20")
+    monkeypatch.setattr(history, "load_kr_flow_history", lambda ticker, **kw: calls.append((ticker, kw)) or frame)
+    prices._fetch_pykrx_ohlcv.clear()
+    try:
+        actual = prices._fetch_pykrx_ohlcv("005930.KS", "10y")
+        pd.testing.assert_frame_equal(actual, prices._normalize_pykrx_ohlcv(frame))
+        assert calls[0][1]["start"] < pd.Timestamp("2017-01-01")
+    finally:
+        prices._fetch_pykrx_ohlcv.clear()
+
+
 def test_invalid_rows_are_not_forward_filled_into_prices():
     xml = """<protocol>
     <item data="20261019|100|bad|90|105|12345"/>
@@ -95,6 +120,20 @@ def test_invalid_rows_are_not_forward_filled_into_prices():
     result = history.parse_history(xml, "2025-10-20", "2026-10-20")
     assert len(result) == 1
     assert result.index[0] == pd.Timestamp("2026-10-20")
+
+
+def test_real_euc_kr_bytes_stream_matches_unicode_parser_and_closes_response():
+    from io import BytesIO
+    text = XML.replace("<chartdata>", '<chartdata name="삼성전자">')
+    raw = BytesIO(text.encode("euc-kr"))
+    closed = []
+    reply = SimpleNamespace(raw=SimpleNamespace(read1=lambda size, decode_content: raw.read(size)),
+                            raise_for_status=lambda: None, close=lambda: closed.append(True))
+    reader = history.KrFlowHistoryReader(request=lambda *a, **kw: reply)
+    actual = reader.read("005930.KS", now="2026-10-20")
+    expected = history.parse_history(text, "2025-10-20", "2026-10-20")
+    pd.testing.assert_frame_equal(actual, expected)
+    assert closed == [True]
 
 
 def test_live_socket_stall_finishes_workers_without_background_futures(monkeypatch):
@@ -117,6 +156,40 @@ def test_live_socket_stall_finishes_workers_without_background_futures(monkeypat
             rows = list(pool.map(reader.read, [f"{i:06d}.KS" for i in range(100)]))
         assert all(row.empty for row in rows)
         assert monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_slow_drip_body_has_deadline_and_closes_response(monkeypatch):
+    class DripHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            try:
+                for value in (b"<protocol>" + b" " * 2000 + b"</protocol>"):
+                    self.wfile.write(bytes([value]))
+                    self.wfile.flush()
+                    sleep(.01)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                pass
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DripHandler)
+    server.daemon_threads = True
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(history, "_URL", f"http://127.0.0.1:{server.server_port}/")
+    monkeypatch.setattr(history, "_TIMEOUT", (.1, .05))
+    monkeypatch.setattr(history, "_BODY_BUDGET_SECONDS", .12)
+    started = monotonic()
+    try:
+        frame = history.KrFlowHistoryReader().read("005930.KS")
+        assert frame.empty and frame.attrs["transport_error"] == "ReadTimeout"
+        assert monotonic() - started < 1
     finally:
         server.shutdown()
         server.server_close()

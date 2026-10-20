@@ -3,10 +3,11 @@
 from contextlib import contextmanager
 from contextvars import ContextVar, copy_context
 from functools import wraps
-from threading import Lock
+from threading import Lock, get_ident
 from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
+import logging
 
 
 _trace = ContextVar("stock_lab_performance_trace", default=None)
@@ -43,7 +44,7 @@ def _interval_seconds(intervals):
 
 
 class PerformanceTrace:
-    def __init__(self, *, clock=perf_counter, scope="instrumented_run"):
+    def __init__(self, *, clock=perf_counter, scope="instrumented_run", on_phase=None):
         self.clock = clock
         self.scope = scope
         self.measurement_id = None
@@ -54,12 +55,17 @@ class PerformanceTrace:
         self._function_intervals = {}
         self._category_intervals = {}
         self.elapsed_seconds = 0.0
+        self.status = "not_started"
+        self.on_phase = on_phase
+        self.current_phase = ""
 
     def __enter__(self):
         self.measurement_id = uuid4().hex
         self.measurement_started_at = datetime.now(timezone.utc).isoformat()
         self.measurement_finished_at = None
         self._started = self.clock()
+        self._owner_thread = get_ident()
+        self.status = "running"
         self._token = _trace.set(self)
         self._span_token = _span.set(None)
         return self
@@ -67,8 +73,21 @@ class PerformanceTrace:
     def __exit__(self, *exc):
         self.elapsed_seconds = max(0.0, self.clock() - self._started)
         self.measurement_finished_at = datetime.now(timezone.utc).isoformat()
+        self.status = "completed" if not exc or exc[0] is None else "interrupted" if exc[0].__name__ in {"RerunException", "StopException"} else "failed"
         _span.reset(self._span_token)
         _trace.reset(self._token)
+
+    def phase_started(self, name):
+        # Streamlit output must remain on the script thread, never a price worker.
+        if get_ident() != self._owner_thread:
+            return
+        self.current_phase = name
+        if self.on_phase is not None:
+            try:
+                self.on_phase(name, max(0.0, self.clock() - self._started))
+            except Exception as exc:
+                self.on_phase = None
+                logging.warning("Performance progress display disabled (%s)", type(exc).__name__)
 
     def record(self, category, name, elapsed, children, failed, *, started, ended, child_intervals):
         exclusive = _exclusive_intervals(started, ended, child_intervals)
@@ -106,7 +125,9 @@ class PerformanceTrace:
             "measurement_finished_at": self.measurement_finished_at,
             "measurement_scope": self.scope,
             "measurement_reused": False,
-            "elapsed_seconds": self.elapsed_seconds,
+            "elapsed_seconds": max(0.0, self.clock() - self._started) if self.status == "running" else self.elapsed_seconds,
+            "measurement_status": self.status,
+            "current_phase": self.current_phase,
             "categories_work_seconds": categories,
             "functions": entries,
             "work_totals_are_concurrent": True,
@@ -136,6 +157,8 @@ def measure(category, name):
     if trace is None:
         yield
         return
+    if category == "phase":
+        trace.phase_started(name)
     parent = _span.get()
     current = {"children": 0.0, "intervals": []}
     token = _span.set(current)

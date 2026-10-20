@@ -508,7 +508,8 @@ def test_kr_price_df_falls_back_to_yfinance_when_pykrx_empty(monkeypatch):
 
     calls = []
 
-    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False, session=None):
+    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False, session=None, timeout=None):
+        assert timeout == 5
         calls.append(ticker)
         return pd.DataFrame({
             "Open": [1000.0],
@@ -531,7 +532,8 @@ def test_unsuffixed_kr_price_df_tries_ks_yahoo_symbol(monkeypatch):
 
     calls = []
 
-    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False, session=None):
+    def fake_download(ticker, period, interval, progress, threads, auto_adjust=False, session=None, timeout=None):
+        assert timeout == 5
         calls.append(ticker)
         if ticker == "0167A0.KS":
             return pd.DataFrame({
