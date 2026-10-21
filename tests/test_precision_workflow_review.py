@@ -196,13 +196,14 @@ def test_actual_precision_calls_align_displayed_and_exported_rows_before_renderi
                      and isinstance(node.value, ast.Call)
                      and ast.unparse(node.value.func) == "align_precision_entry_plan_rows")
     render = next(node for node in ast.walk(plan) if isinstance(node, ast.Call)
-                  and ast.unparse(node.func) == "st.dataframe")
+                  and ast.unparse(node.func) == "render_entry_plan_panel")
     assert ast.unparse(alignment.targets[0]) == "rows" and alignment.lineno < render.lineno
     assert any(isinstance(node, ast.Call) and ast.unparse(node.func) == "format_precision_take_profit_condition"
                for node in ast.walk(plan))
-    assert "'rows': rows" in ast.unparse(next(node for node in ast.walk(plan)
-                                             if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
-                                             and any(isinstance(key, ast.Constant) and key.value == "rows" for key in node.value.keys)))
+    payload = next(node for node in ast.walk(plan) if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "plan" for target in node.targets))
+    assert "'rows': rows" in ast.unparse(payload)
+    assert "return plan" in ast.unparse(plan)
 
 
 def test_actual_final_check_preserves_msft_verdict_and_counts(app_module, monkeypatch, msft_review):
