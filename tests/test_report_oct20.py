@@ -65,13 +65,13 @@ def test_account_region_components_sum_to_total_and_closed_copy_is_clean():
 def test_history_preserves_names_and_held_status_without_account_details():
     rows = [{"티커": "RAM", "종목명": "DRAM 2배", "보유량": 186, "매입가": 14.84, "최종읽기": "대기",
              "게이트상태": "방어우선", "owner_email": "private@example.com"},
-            {"티커": "AAPL", "종목명": "애플", "보유량": 0, "최종읽기": "대기"}]
+            {"티커": "AAPL", "종목명": "애플", "보유량": 0, "최종읽기": "대기", "입력출처": "등록"}]
     old = normalized_decisions(rows)
     assert old[0]["종목명"] == "DRAM 2배" and old[0]["보유여부"] is True
     assert not ({"매입가", "보유량", "owner_email"} & old[0].keys())
     current = deepcopy(rows)
     current[1]["최종읽기"] = "관찰"
-    current.append({"티커": "MSFT", "종목명": "마이크로소프트", "보유량": 0, "최종읽기": "대기"})
+    current.append({"티커": "MSFT", "종목명": "마이크로소프트", "보유량": 0, "최종읽기": "대기", "입력출처": "등록"})
     text = "\n".join(comparison_lines(current, old, previous_date="2026-10-19", current_date="2026-10-20"))
     assert "보유 1개 | 1 | 0 | 0개" in text
     assert "관심·미보유 2개 | 1 | 1 | 1개" in text and "애플(AAPL)" in text

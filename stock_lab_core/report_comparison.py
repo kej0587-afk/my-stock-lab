@@ -108,7 +108,8 @@ def history_comparison_lines(current, baselines):
         for action, tickers, source in (("추가", sorted(current_map.keys() - old.keys()), current_map),
                                          ("이탈", sorted(old.keys() - current_map.keys()), old)):
             for ticker in tickers:
-                item = membership.setdefault((action, ticker), {"label": _label(source[ticker]), "references": []})
+                item = membership.setdefault((action, ticker), {"label": _label(source[ticker]),
+                    "origin": text(source[ticker].get("입력출처")) or "미확인", "references": []})
                 if reference not in item["references"]:
                     item["references"].append(reference)
     lines = []
@@ -123,9 +124,14 @@ def history_comparison_lines(current, baselines):
                      "비교 가능한 공통 종목 판정 없음.")
     if membership:
         lines.extend(["", "**점검 입력 목록 변화**"])
+        for origin in ("등록", "자동", "보유목록", "미확인"):
+            counts = {action: sum(key[0] == action and value["origin"] == origin for key, value in membership.items())
+                      for action in ("추가", "이탈")}
+            if any(counts.values()):
+                lines.append(f"- {origin}: 추가 {counts['추가']}개 / 이탈 {counts['이탈']}개")
         lines += _table(("구분", "종목", "비교 기준"), [
-            (key[0], value["label"], " · ".join(value["references"])) for key, value in membership.items()])
+            (key[0], value["label"], " · ".join(value["references"])) for key, value in membership.items() if value["origin"] == "등록"])
         lines.append("입력 목록의 차이이며 관심등록 삭제 여부는 미확인입니다. 보고서 상위 10개 변화가 아닌 입력 목록 차이입니다.")
-        lines.append("등록/자동 입력 구분: 미확인(종목별 입력 출처 이력 미연결). 보유 여부·전체 건수로 출처를 추정하지 않습니다.")
+        lines.append("등록 종목만 상세 표시하며 자동 후보는 건수로 표시합니다. 과거 입력출처 미저장 행은 미확인으로 유지합니다.")
     lines.extend(dict.fromkeys(notes))
     return lines

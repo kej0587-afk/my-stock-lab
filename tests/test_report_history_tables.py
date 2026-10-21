@@ -7,6 +7,7 @@ from stock_lab_core.report_comparison import history_comparison_lines
 
 def row(ticker, reason="개별 위험사유 없음", *, gate="방어우선", name="", held=False):
     return {"티커": ticker, "종목명": name or ticker, "보유여부": held,
+            "입력출처": "등록",
             "최종읽기": "데이터확인: 판단 보류" if gate == "데이터확인" else "방어우선: 추가매수 보류",
             "게이트상태": gate, "저장사유": [reason]}
 
@@ -59,7 +60,7 @@ def test_uncomparable_and_membership_changes_do_not_look_unchanged():
     assert "비교 불가" in result and "변경 없음" not in result
     assert "추가 | 신규 / 이름(NEW)" in result and "이탈 | OLD(종목명 미저장)" in result
     assert "삭제 여부는 미확인" in result
-    assert "등록/자동 입력 구분: 미확인" in result
+    assert "등록: 추가 1개 / 이탈 1개" in result
 
 
 def test_history_keeps_more_than_ten_changes_and_escapes_every_table_cell():
@@ -109,7 +110,8 @@ def test_long_gap_is_labelled_as_older_source_dates_not_a_proven_stale_session()
 
 def test_holdings_or_data_provider_do_not_imply_registered_or_auto_origin():
     current = [dict(row("NEW", held=True), source="registered", provider="automatic")]
+    current[0].pop("입력출처")
     output = "\n".join(history_comparison_lines(current, [
         dict(previous=[row("OLD")], previous_date="2026-10-19", current_date="2026-10-20")]))
-    assert "등록/자동 입력 구분: 미확인" in output
+    assert "미확인: 추가 1개" in output
     assert "registered" not in output and "automatic" not in output

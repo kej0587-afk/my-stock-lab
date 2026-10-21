@@ -2158,6 +2158,11 @@ def build_auto_market_memo(
         stress = macro_stress(macro_data)
         status = f"신규매수 허용 {executable}개 / 보유 {held_count}, 관심 {len(rows) - held_count}"
         status += f" / 보고서 매크로 스트레스 {stress['score']} {stress['label']}(실행 여부는 종목별 게이트)" if stress["score"] is not None else " / 매크로 미수집"
+        partial_references = [name for name in ("유가", "환율") if name not in macro_data or
+                              (macro_data[name].get("kind") == "fixed_asof_reference" and macro_data[name].get("chg") is None)]
+        if partial_references:
+            status = status.replace("보고서 매크로 스트레스", "보고서 매크로 스트레스 부분합")
+            status += " · 매크로 일부 조건 미확인: " + ", ".join(partial_references) + "(점수 하락을 위험 완화로 해석하지 않음)"
         if unknown_gates:
             status += f" · 게이트 미제공 {unknown_gates}개(허용으로 추정하지 않음)"
         lines = [f"# Stock Lab 자동 뉴스픽 · {dt:%Y-%m-%d %H:%M} KST", "", status, "", *front]
@@ -2165,7 +2170,7 @@ def build_auto_market_memo(
         late = curate_news(context.get("next_session_news", []), now=dt)
         from stock_lab_core.report_evidence import citation
         for row in late:
-            lines.append(f"- {row['reading_ko']} · {kst_time(row['published'])} {citation(dict(row, title='원문'))}")
+            lines.append(f"- {row['reading_ko'] or row['title']} · {kst_time(row['published'])} {citation(dict(row, title='원문'))}")
         if not late:
             lines.append("- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
         elsewhere = curate_news(context.get("other_market_news", []), now=dt, limit=3)
@@ -2183,6 +2188,13 @@ def build_auto_market_memo(
                 f"{change:+.2f}%" if change is not None else "미수집", f"{original.get('base_date', '미수집')} → {item['as_of']}",
                 item["state"], f"{item['contribution']:+d}")))
         lines.extend(["", oil_explanation(macro_data), macro_change(context.get("previous_macro_data"), macro_data)])
+        for name, reference in macro_data.items():
+            if reference.get("kind") == "fixed_asof_reference":
+                lines.append(f"- {name} 고정 관측: {kst_time(reference.get('as_of_at'))} · 최초 저장 {kst_time(reference.get('captured_at'))} · {reference.get('source') or '출처 미확인'}")
+                if reference.get("chg") is None:
+                    lines.append(f"- {name} 1개월 동일 시각 기준값 미연결: 방향 점수 미확인, 0% 변동을 뜻하지 않습니다.")
+        if any(row.get("kind") == "fixed_asof_reference" for row in macro_data.values()):
+            lines.append("24시간 자산은 뉴욕 16:00 완료 5분봉을 같은 기준일에 재사용합니다. 거래소 공식 정산가가 아니며, 로컬 저장은 재배포 시 소실될 수 있습니다.")
         missing_macro = set(("10Y 금리", "VIX", "MOVE", "유가", "환율")) - macro_data.keys()
         if missing_macro:
             missing.append("거래일 정렬 매크로: " + ", ".join(sorted(missing_macro)))

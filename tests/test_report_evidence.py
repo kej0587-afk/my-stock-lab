@@ -144,7 +144,7 @@ def test_unparseable_and_missing_news_dates_do_not_bypass_recency():
 
 
 def test_new_and_removed_symbols_are_reported_not_called_unchanged():
-    lines = comparison_lines([{"티커": "SOXL", "최종읽기": "대기"}], [{"티커": "AAPL", "최종읽기": "정밀확인"}],
+    lines = comparison_lines([{"티커": "SOXL", "최종읽기": "대기", "입력출처": "등록"}], [{"티커": "AAPL", "최종읽기": "정밀확인", "입력출처": "등록"}],
                              previous_date="2026-10-15", current_date="2026-10-16")
     assert "변경 없음" not in lines[0]
     assert "추가 | SOXL(종목명 미저장) | 이전 저장 기준일" in "\n".join(lines)

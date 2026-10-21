@@ -68,7 +68,8 @@ def run_branch(*, full=False, fail=False):
         get_all_summary=compute, summary_key="summary", sig_key="signature", last_key="last",
     )
     exec(compile(ast.Module(body=[branch], type_ignores=[]), str(ROOT / "app.py"), "exec"), env)
-    pd.testing.assert_frame_equal(state["summary"], summary)
+    pd.testing.assert_frame_equal(state["summary"], summary.assign(입력출처="등록"))
+    assert list(summary.columns) == ["ticker"]
     return calls, state, notes
 
 

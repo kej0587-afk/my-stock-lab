@@ -7,6 +7,7 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 import pandas as pd
 from stock_lab_core.report_evidence import closed_daily_frame
+from stock_lab_core.report_reference import REFERENCE_SYMBOLS, macro_reference
 from stock_lab_core.result_cache import cache_result
 
 MACRO_SYMBOLS = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
@@ -92,12 +93,33 @@ def load_btc_close_frame():
         return pd.DataFrame()
 
 
-def aligned_macro(frames, reference_date, now):
+def aligned_macro(frames, reference_date, now, *, scenario_frames=None, cache_dir=None):
+    """Use fixed NY 16:00 references for 24h assets, daily closes for indices.
+
+    The collector must pass its Yahoo 5m scenario frames, including CL=F and
+    USDKRW=X. No network call or untimed daily fallback is made here. Missing
+    matching anchors omit returns, not substitute a different daily baseline.
+    Surface each row's comparison_missing separately from its price source;
+    stress_incomplete requires a partial/unavailable aggregate, not risk relief.
+    """
     result = {}
+    if not reference_date:
+        return result
+    sessions = closed_daily_frame(frames.get("^GSPC"), "^GSPC", now)
+    if not sessions.empty:
+        sessions = sessions.loc[sessions.index.strftime("%Y-%m-%d") <= reference_date]
+    dates = list(dict.fromkeys(sessions.index.strftime("%Y-%m-%d"))) if not sessions.empty else []
+    aligned_dates = bool(dates) and dates[-1] == reference_date
+    previous_date = dates[-2] if aligned_dates and len(dates) >= 2 else ""
+    base_date = dates[-22] if aligned_dates and len(dates) >= 22 else ""
     for name, ticker in MACRO_SYMBOLS.items():
-        frame = closed_daily_frame(frames.get(ticker), ticker, now)
-        if not reference_date:
+        if ticker in REFERENCE_SYMBOLS:
+            reference = macro_reference((scenario_frames or {}).get(ticker), ticker, reference_date, now,
+                                        previous_date=previous_date, base_date=base_date, cache_dir=cache_dir)
+            if reference:
+                result[name] = reference
             continue
+        frame = closed_daily_frame(frames.get(ticker), ticker, now)
         frame = frame.loc[frame.index.strftime("%Y-%m-%d") <= reference_date] if not frame.empty else frame
         if frame.empty or str(frame.index[-1].date()) != reference_date:
             continue

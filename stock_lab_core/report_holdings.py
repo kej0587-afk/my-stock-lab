@@ -1,8 +1,5 @@
 """Report estimates reuse portfolio exposure multipliers; never trade signals."""
 
-import math
-from datetime import timedelta
-
 import pandas as pd
 
 from stock_lab_core.portfolio import infer_scenario_shock_multiplier
@@ -36,86 +33,80 @@ def hedge_source_lines(rows):
     return [f"- 환헤지 출처 {code}: [{source}]({url})" for code, (_, source, url) in HEDGE_POLICIES.items() if code in codes]
 
 
-def cumulative_holding_comparison(row, observations, sessions, now, price_frames, *, intraday_prices=None):
-    """Compare the as-yet-unreflected US sessions to cumulative KR closes."""
-    from stock_lab_core.report_evidence import closed_daily_frame
-    from stock_lab_core.prices import _us_equity_market_holidays
+def cumulative_holding_comparison(row, observations, sessions, now, price_frames, *, intraday_prices=None, scenario_frames=None):
+    """Compare KR and futures at identical completed timestamps, never US daily closes."""
+    from stock_lab_core.report_evidence import closed_daily_frame, stamp
+    from stock_lab_core.report_intraday import valid_live_observation
+    from stock_lab_core.report_scenario import FUTURES, interval_observation
 
     ticker = text(first(row, "티커", "ticker")).upper()
     code = ticker.split(".")[0]
-    own = observations.get(ticker, {})
-    if code not in {"379800", "379810", "418660"}:
+    if code not in FUTURES:
         return {}
+    daily = closed_daily_frame((price_frames or {}).get(ticker), ticker, now)
+    if daily.empty:
+        return {"error": "한국 ETF 종가 이력 미연결"}
+    close = pd.to_numeric(daily["Close"], errors="coerce")
     current = (intraday_prices or {}).get(ticker, {})
-    current_price = number(current.get("price"))
-    from stock_lab_core.report_intraday import valid_live_observation
-    is_live = (valid_live_observation(current, "KR", now) and current_price is not None and current_price > 0)
-    if intraday_prices is not None and not is_live:
-        return {"error": "한국 장중 시세 미연결/지연 또는 시세시각 미확인"}
-    end_kr = current["date"] if is_live else own.get("date")
-    end_us = sessions.get("US")
-    if not end_kr or (not is_live and end_kr != sessions.get("KR")) or not end_us:
-        return {"error": "양국 확정 종가 기준일 불일치"}
-    own_frame = closed_daily_frame((price_frames or {}).get(ticker), ticker, now)
-    for base in UNDERLYINGS[code]:
-        proxy = observations.get(base, {})
-        if proxy.get("date") != end_us:
-            continue
-        proxy_frame = closed_daily_frame((price_frames or {}).get(base), base, now)
-        if own_frame.empty or proxy_frame.empty:
-            continue
-        own_close = pd.to_numeric(own_frame["Close"], errors="coerce")
-        proxy_close = pd.to_numeric(proxy_frame["Close"], errors="coerce")
-        own_close.index = own_close.index.strftime("%Y-%m-%d")
-        proxy_close.index = proxy_close.index.strftime("%Y-%m-%d")
-        if is_live:
-            own_close = own_close.copy()
-            own_close.loc[end_kr] = current_price
-            own_close = own_close.sort_index()
-        anchor = text(proxy.get("previous_date"))
-        if not anchor:
-            earlier = proxy_close.index[proxy_close.index < end_us]
-            anchor = max(earlier, default="")
-        # A US trading day can be a Korean holiday. Select a real KR close,
-        # disclose its date, and then recompute the US information-time anchor.
-        eligible_kr = own_close.index[(own_close.index <= anchor) & (own_close.index < end_kr)]
-        anchor = max(eligible_kr, default="")
-        if not anchor or not (anchor < end_us and anchor < end_kr):
-            continue
-        # KR's 15:30 close precedes that calendar day's US opening. Include the
-        # US return starting that day, not just its later close-to-close move.
-        kr_start_at = pd.Timestamp(anchor + " 15:30", tz="Asia/Seoul")
-        ny_start = kr_start_at.tz_convert("America/New_York")
-        us_start = ny_start.date() - timedelta(days=int(ny_start.hour < 16))
-        while us_start.weekday() >= 5 or us_start in _us_equity_market_holidays(us_start.year):
-            us_start -= timedelta(days=1)
-        anchor_us = us_start.isoformat()
-        if anchor not in own_close or end_kr not in own_close or anchor_us not in proxy_close or end_us not in proxy_close:
-            continue
-        path = proxy_close.loc[anchor_us:end_us]
-        required = {day.date().isoformat() for day in pd.bdate_range(anchor_us, end_us)
-                    if day.date() not in _us_equity_market_holidays(day.year)}
-        if not required.issubset(set(path.index)):
-            continue
-        endpoints = [own_close.loc[anchor], own_close.loc[end_kr], *path.tolist()]
-        if any(number(value) is None or value <= 0 for value in endpoints):
-            continue
-        multiplier = infer_scenario_shock_multiplier({"티커": ticker, "자산명": text(first(row, "종목명", "name"))})
-        actual = float(own_close.loc[end_kr] / own_close.loc[anchor] - 1)
-        underlying = float(path.iloc[-1] / path.iloc[0] - 1)
-        # Daily-reset products compound daily shocks, not multiplier * total.
-        reference = float((1 + path.pct_change().dropna() * multiplier).prod() - 1)
-        if not all(math.isfinite(value) for value in (actual, underlying, reference)):
-            continue
-        return {"anchor": anchor, "us_anchor": anchor_us, "kr_date": end_kr, "us_date": end_us, "proxy": base,
-                "actual": actual, "underlying": underlying, "reference": reference,
-                "residual_pp": (actual - reference) * 100, "multiplier": multiplier,
-                "intraday": is_live, "as_of": current.get("as_of") or current.get("retrieved_at", "")}
-    return {"error": "같은 시작일의 한국 ETF·미국 기초자산 가격 이력 미수집"}
+    live = intraday_prices is not None
+    end_day = current.get("date") if live else observations.get(ticker, {}).get("date")
+    if not end_day or (not live and end_day != sessions.get("KR")):
+        return {"error": "한국 종가 기준일 불일치"}
+    if live and not valid_live_observation(current, "KR", now):
+        return {"error": "한국 장중 시세 미연결/지연"}
+    earlier = close.loc[close.index.strftime("%Y-%m-%d") < end_day]
+    if earlier.empty:
+        return {"error": "직전 한국 종가 미연결"}
+    anchor = earlier.index[-1].date().isoformat()
+    start = pd.Timestamp(anchor + " 15:30", tz="Asia/Seoul")
+    end = pd.Timestamp(end_day + " 15:30", tz="Asia/Seoul")
+    base_price = number(earlier.iloc[-1])
+    last_price = number(close.iloc[-1])
+    frames = scenario_frames or {}
+    symbol = FUTURES[code]
+
+    def bars(frame):
+        if (not isinstance(frame, pd.DataFrame) or frame.empty or
+                not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None or
+                not isinstance(frame.get("Close"), pd.Series)):
+            return pd.Series(dtype=float)
+        values = pd.to_numeric(frame["Close"], errors="coerce").copy()
+        values.index = values.index.tz_convert("Asia/Seoul") + pd.Timedelta(minutes=5)
+        values = values.loc[~values.index.duplicated(keep="last")].sort_index()
+        return values.loc[values.map(lambda x: number(x) is not None and x > 0)]
+
+    future_bars = bars(frames.get(symbol))
+    if live:
+        own_bars = bars(frames.get(ticker))
+        if own_bars.empty or future_bars.empty:
+            return {"error": "한국 ETF·선물의 동일 시각 완료 5분봉 미연결(일봉으로 잔차 대체 안 함)"}
+        cutoff = min(pd.Timestamp(stamp(now)), pd.Timestamp(stamp(current["as_of"])))
+        common = own_bars.index.intersection(future_bars.index)
+        common = common[(common > start) & (common <= cutoff) &
+                        (common >= cutoff - pd.Timedelta(minutes=10))]
+        if not len(common):
+            return {"error": "한국 ETF·선물의 동일 시각 완료 5분봉 미연결(일봉으로 잔차 대체 안 함)"}
+        end = common.max()
+        last_price = number(own_bars.loc[end])
+    elif close.index[-1].date().isoformat() != end_day:
+        return {"error": "한국 끝 종가 기준일 불일치"}
+    if any(value is None or value <= 0 for value in (base_price, last_price)):
+        return {"error": "한국 비교 가격 결측/범위 오류"}
+    future = interval_observation(frames.get(symbol), start, end)
+    if not future or pd.Timestamp(future["base_at"]) != start or pd.Timestamp(future["as_of"]) != end:
+        return {"error": f"{symbol} 한국 종가 시각의 완료 봉 미연결(비동시 잔차 계산 안 함)"}
+    fx = interval_observation(frames.get("USDKRW=X"), start, end)
+    if not fx or pd.Timestamp(fx["base_at"]) != start or pd.Timestamp(fx["as_of"]) != end:
+        fx = {}
+    actual = last_price / base_price - 1
+    return {"anchor": anchor, "kr_date": end_day, "base_at": start.isoformat(), "as_of": end.isoformat(),
+            "actual": actual, "underlying": future["return"], "reference": future["return"],
+            "proxy": symbol, "fx_return": fx.get("return"), "intraday": live,
+            # Futures are not a daily-reset leveraged ETF's replicating portfolio.
+            "residual_pp": (actual - future["return"]) * 100 if code != "418660" else None}
 
 
-def completed_scenario_comparison(row, observations, sessions, now, *, price_frames=None, intraday_prices=None):
-    """Cumulative close comparison; one-day scenarios are only a reference."""
+def completed_scenario_comparison(row, observations, sessions, now, *, price_frames=None, intraday_prices=None, scenario_frames=None):
     ticker = text(first(row, "티커", "ticker")).upper()
     code = ticker.split(".")[0]
     own = (intraday_prices or {}).get(ticker) or observations.get(ticker, {})
@@ -126,17 +117,17 @@ def completed_scenario_comparison(row, observations, sessions, now, *, price_fra
         return "당일 시세 미수집: 누적 비교 보류" if intraday_prices is not None else "당일 종가 미수집: 시나리오와 실제 비교 보류"
     if code not in UNDERLYINGS:
         return f"당일 종가 {actual * 100:+.2f}% · 구성종목 기반 수치 시나리오 미제공, 갭 위험 문구로 실제 결과를 대체하지 않음"
-    comparison = cumulative_holding_comparison(row, observations, sessions, now, price_frames, intraday_prices=intraday_prices)
-    policy = hedge_policy_line(row)
-    if comparison.get("error") or not comparison:
-        return "누적 비교 보류: " + comparison.get("error", "누적 비교 기초자산 미연결") + " · " + policy
-    c = comparison
+    c = cumulative_holding_comparison(row, observations, sessions, now, price_frames,
+                                     intraday_prices=intraday_prices, scenario_frames=scenario_frames)
+    if c.get("error") or not c:
+        return "누적 비교 보류: " + c.get("error", "동일 시각 자료 미연결") + " · " + hedge_policy_line(row)
     from stock_lab_core.report_presentation import kst_time
-    live_note = f" 장중·미확정({kst_time(c['as_of'])})" if c.get("intraday") else ""
-    reference_label = f"{c['multiplier']:g}배 일간복리 참고" if c["multiplier"] != 1 else "누적"
-    return (f"누적 비교: 한국 {c['anchor']}→{c['kr_date']}{live_note} 실제 {c['actual'] * 100:+.2f}% vs "
-            f"{c['proxy']} 미국 {c['us_anchor']}→{c['us_date']} {reference_label} {c['reference'] * 100:+.2f}% · "
-            f"잔차 {c['residual_pp']:+.2f}%p · {policy}")
+    fx = f"{c['fx_return'] * 100:+.2f}%" if c["fx_return"] is not None else "미연결"
+    residual = (f"단순 차이 {c['residual_pp']:+.2f}%p(환율·베이시스 미조정, 추적오차 아님)"
+                if c["residual_pp"] is not None else "레버리지 재설정 미반영: 배수 잔차 산출 보류")
+    return (f"동일 시각 비교 {kst_time(c['base_at'])}→{kst_time(c['as_of'])}: "
+            f"한국 ETF 실제 {c['actual'] * 100:+.2f}% vs {c['proxy']} {c['reference'] * 100:+.2f}% · "
+            f"원/달러 별도 {fx} · {residual}" + (" · 장중·미확정" if c["intraday"] else ""))
 
 
 def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):

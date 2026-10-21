@@ -129,7 +129,7 @@ def test_cumulative_comparison_requires_history_and_missing_actual_not_zero():
 
 def test_close_report_uses_cumulative_frames_without_replacing_daily_actual():
     # Rebased fixture prices reproduce the supplied two-day Nasdaq moves.
-    # The leveraged KR path is synthetic; it tests daily-reset compounding only.
+    # US daily closes alone cannot support a same-clock residual.
     context = dict(sessions={"KR": "2026-10-20", "US": "2026-10-19"}, prices={
         "QQQ": {"date": "2026-10-19", "previous_date": "2026-10-16", "return": .0121},
         "379810.KS": {"date": "2026-10-20", "previous_date": "2026-10-19", "return": -.0073},
@@ -146,13 +146,12 @@ def test_close_report_uses_cumulative_frames_without_replacing_daily_actual():
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW.replace(day=20, hour=22))
     nasdaq = next(line for line in report.splitlines() if "(379810.KS)" in line)
     leveraged = next(line for line in report.splitlines() if "(418660.KS)" in line)
-    assert "-0.73% (2026-10-20 확정 종가)" in nasdaq and "실제 -1.91%" in nasdaq and "잔차 -0.59%p" in nasdaq
-    assert "누적 -1.32%" in nasdaq
-    assert "-1.00% (2026-10-20 확정 종가)" in leveraged and "실제 -3.51%" in leveraged and "잔차 -0.81%p" in leveraged
-    assert "2배 일간복리 참고 -2.70%" in leveraged
-    assert "한국 2026-10-16→2026-10-20" in nasdaq and "미국 2026-10-15→2026-10-19" in nasdaq
-    assert "한국 시작 종가 시점에 확정돼 있던 미국 종가를 기준" in report
-    assert "양국 종가 시각이 달라 잔차를 추적오차로 해석하지 않습니다" in report
+    assert "-0.73% (2026-10-20 확정 종가)" in nasdaq and "누적 비교 보류" in nasdaq
+    assert "잔차 -0.59%p" not in nasdaq and "누적 -1.32%" not in nasdaq
+    assert "-1.00% (2026-10-20 확정 종가)" in leveraged and "누적 비교 보류" in leveraged
+    assert "2배 일간복리 참고" not in leveraged
+    assert "직전 한국 종가 15:30" in report
+    assert "추적오차가 아니며" in report
     assert nasdaq.count("환노출") == 1 and leveraged.count("환노출") == 1
     for ticker, frame in context["price_frames"].items():
         pd.testing.assert_frame_equal(frame, original[ticker])

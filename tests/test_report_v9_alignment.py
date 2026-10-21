@@ -35,49 +35,56 @@ def cumulative_case():
     return frames, observations
 
 
-def test_unreflected_us_sessions_cumulate_without_double_counting():
+def aligned_frames():
+    index = pd.to_datetime(["2026-10-19T15:25:00+09:00", "2026-10-20T15:25:00+09:00"])
+    return {"NQ=F": pd.DataFrame({"Close": [100, 101.21]}, index=index),
+            "USDKRW=X": pd.DataFrame({"Close": [1300, 1313]}, index=index)}
+
+
+def test_same_kr_close_timestamps_replace_asynchronous_us_daily_residual():
     frames, obs = cumulative_case()
     before = {key: value.copy(deep=True) for key, value in frames.items()}
     row = {"티커": "379810.KS"}
-    actual = cumulative_holding_comparison(row, obs, DATES, NOW, frames)
-    assert actual["anchor"] == "2026-10-16" and actual["us_anchor"] == "2026-10-15"
-    assert actual["actual"] == pytest.approx(.9881 * .9927 - 1)
-    assert actual["reference"] == pytest.approx(.975 * 1.0121 - 1)
-    assert actual["residual_pp"] == pytest.approx(-.591063)
-    line = completed_scenario_comparison(row, obs, DATES, NOW, price_frames=frames)
-    assert "실제 -1.91%" in line and "누적 -1.32%" in line and "잔차 -0.59%p" in line
-    assert "2026-10-16→2026-10-20" in line and "2026-10-15→2026-10-19" in line
-    assert "환노출" in line and "시나리오" not in line
+    actual = cumulative_holding_comparison(row, obs, DATES, NOW, frames, scenario_frames=aligned_frames())
+    assert actual["anchor"] == "2026-10-19"
+    assert actual["actual"] == pytest.approx(-.0073)
+    assert actual["reference"] == pytest.approx(.0121)
+    assert actual["residual_pp"] == pytest.approx(-1.94)
+    assert actual["fx_return"] == pytest.approx(.01)
+    line = completed_scenario_comparison(row, obs, DATES, NOW, price_frames=frames, scenario_frames=aligned_frames())
+    assert "실제 -0.73%" in line and "NQ=F +1.21%" in line and "차이 -1.94%p" in line
+    assert "2026-10-19 15:30 KST" in line and "2026-10-20 15:30 KST" in line
+    assert "2026-10-15" not in line
     for key in frames:
         pd.testing.assert_frame_equal(frames[key], before[key])
 
 
-def test_leverage_reference_compounds_each_day_not_total_times_two():
+def test_leverage_does_not_pretend_raw_futures_match_daily_reset_product():
     frames, obs = cumulative_case()
-    result = cumulative_holding_comparison({"티커": "418660.KS"}, obs, DATES, NOW, frames)
-    assert result["reference"] == pytest.approx(.95 * 1.0242 - 1)
-    assert result["reference"] != pytest.approx(result["underlying"] * 2)
-    line = completed_scenario_comparison({"티커": "418660.KS"}, obs, DATES, NOW, price_frames=frames)
-    assert "2배 일간복리 참고" in line
+    result = cumulative_holding_comparison({"티커": "418660.KS"}, obs, DATES, NOW, frames, scenario_frames=aligned_frames())
+    assert result["reference"] == pytest.approx(.0121)
+    assert result["residual_pp"] is None
+    line = completed_scenario_comparison({"티커": "418660.KS"}, obs, DATES, NOW, price_frames=frames, scenario_frames=aligned_frames())
+    assert "배수 잔차 산출 보류" in line and "2배" not in line
 
 
-def test_missing_intermediate_us_session_does_not_collapse_daily_compounding():
+def test_missing_exact_future_anchor_is_not_filled_with_us_daily_close():
     frames, obs = cumulative_case()
-    frames["QQQ"] = frames["QQQ"].drop(pd.Timestamp("2026-10-16"))
-    result = cumulative_holding_comparison({"티커": "418660.KS"}, obs, DATES, NOW, frames)
+    scenario = aligned_frames()
+    scenario["NQ=F"] = scenario["NQ=F"].iloc[1:]
+    result = cumulative_holding_comparison({"티커": "418660.KS"}, obs, DATES, NOW, frames, scenario_frames=scenario)
     assert result.get("error") and "reference" not in result
 
 
-def test_korean_holiday_uses_actual_prior_kr_close_and_explicit_us_anchor():
-    frames = {
-        "379810.KS": pd.DataFrame({"Close": [100, 99, 98]}, index=pd.to_datetime(["2026-10-08", "2026-10-12", "2026-10-13"])),
-        "QQQ": pd.DataFrame({"Close": [100, 101, 102, 103]}, index=pd.to_datetime(["2026-10-07", "2026-10-08", "2026-10-09", "2026-10-12"])),
-    }
-    observations = {"379810.KS": {"date": "2026-10-13"}, "QQQ": {"date": "2026-10-12", "previous_date": "2026-10-09"}}
+def test_korean_holiday_uses_real_kr_close_with_same_time_future_anchor():
+    frames = {"379810.KS": pd.DataFrame({"Close": [100, 99, 98]}, index=pd.to_datetime(["2026-10-08", "2026-10-12", "2026-10-13"]))}
+    observations = {"379810.KS": {"date": "2026-10-13"}}
+    scenario = {"NQ=F": pd.DataFrame({"Close": [100, 103]},
+                 index=pd.to_datetime(["2026-10-12T15:25:00+09:00", "2026-10-13T15:25:00+09:00"]))}
     result = cumulative_holding_comparison({"티커": "379810.KS"}, observations,
-        {"KR": "2026-10-13", "US": "2026-10-12"}, NOW.replace(day=13), frames)
-    assert result["anchor"] == "2026-10-08" and result["us_anchor"] == "2026-10-07"
-    assert result["actual"] == pytest.approx(-.02) and result["reference"] == pytest.approx(.03)
+        {"KR": "2026-10-13", "US": "2026-10-12"}, NOW.replace(day=13), frames, scenario_frames=scenario)
+    assert result["anchor"] == "2026-10-12"
+    assert result["actual"] == pytest.approx(98 / 99 - 1) and result["reference"] == pytest.approx(.03)
 
 
 @pytest.mark.parametrize("problem", ["no_frames", "missing_anchor", "wrong_session", "invalid_price"])

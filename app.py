@@ -29561,7 +29561,8 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
-                                         macro_data=context.get("macro_data"), store=store))
+                                         macro_data=context.get("macro_data"), store=store,
+                                         source_provenance=context.get("source_provenance")))
     context["entrypoint"] = __file__
     from stock_lab_core.report_build import completed_measurement_reference
     context["queue_measurement"] = completed_measurement_reference(
@@ -33793,6 +33794,8 @@ def _render_today_queue_tab(mode):
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
             from stock_lab_core.performance import bind_summary_measurement
             summary_df = bind_summary_measurement(summary_df)
+            from stock_lab_core.report_history import tag_input_origins
+            summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
         last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig

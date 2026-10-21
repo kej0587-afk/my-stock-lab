@@ -67,7 +67,7 @@ def test_full_report_has_three_layers_current_account_and_unchanged_decisions():
                           "SOXX": {"date": "2026-10-20", "return": -.0038, "previous_return": .0173, "return_5d": -.12}},
                "closed_flow_rows": [{"Ticker": "SOXX", "기준일": "2026-10-20", "3개월수익률": -.10}]}
     report = build_auto_market_memo(report_context=context, summary_rows=held, now=NOW)
-    headline = report.split("## 한 줄 결론\n", 1)[1].split("\n", 1)[0]
+    headline = report.split("## 한 줄 결론\n", 1)[1].split("\n## ", 1)[0]
     for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "+2.31%p"):
         assert part in headline
     assert "약세 지속" not in headline
@@ -121,8 +121,10 @@ def test_live_cumulative_comparison_includes_observed_kr_endpoint():
     obs = {"379810.KS": {"date": "2026-10-20", "return": -2 / 101},
            "QQQ": {"date": "2026-10-20", "previous_date": "2026-10-19", "return": -1 / 102}}
     live = {"379810.KS": {"date": "2026-10-21", "price": 103, "return": 103 / 99 - 1, "as_of": NOW.isoformat()}}
-    line = completed_scenario_comparison({"티커": "379810.KS"}, obs, SESSIONS, NOW, price_frames=frames, intraday_prices=live)
-    assert "장중·미확정" in line and "실제 +1.98%" in line and "누적 +1.00%" in line and "잔차 +0.98%p" in line
+    scenario = {"379810.KS": pd.DataFrame({"Close": [103]}, index=pd.to_datetime(["2026-10-21T10:25:00+09:00"])),
+                "NQ=F": pd.DataFrame({"Close": [100, 102]}, index=pd.to_datetime(["2026-10-20T15:25:00+09:00", "2026-10-21T10:25:00+09:00"]))}
+    line = completed_scenario_comparison({"티커": "379810.KS"}, obs, SESSIONS, NOW, price_frames=frames, intraday_prices=live, scenario_frames=scenario)
+    assert "장중·미확정" in line and "실제 +4.04%" in line and "NQ=F +2.00%" in line and "차이 +2.04%p" in line
     live["379810.KS"]["as_of"] = (NOW - timedelta(hours=1)).isoformat()
     line = completed_scenario_comparison({"티커": "379810.KS"}, obs, SESSIONS, NOW, price_frames=frames, intraday_prices=live)
     assert "누적 비교 보류" in line and "실제 +1.98%" not in line

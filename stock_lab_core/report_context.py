@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 from stock_lab_core.report_build import register_loaded_source
 
@@ -60,14 +61,15 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                 frames[ticker] = load_price_df(ticker, "1y")
         from stock_lab_core.report_live import supplement_kr_indices
         frames = supplement_kr_indices(frames)
-    from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, extended_quote_observation, kr_index_observations
+    from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, extended_quote_observation, extended_quote_status, kr_index_observations
     held_us = tuple(sorted({text(first(row, "티커", "ticker")) for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker"))
                             and not text(first(row, "티커", "ticker")).endswith((".KS", ".KQ"))}))
     held_kr = tuple(sorted({text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker")).upper().endswith((".KS", ".KQ"))}))
+    kr_quote_tickers = tuple(sorted(set(held_kr) | {"396500.KS", "0167A0.KS"}))
     if quote_data is None:
-        quote_data = (load_report_quotes(held_us, include_kr=market_session_states(now)["KR"]["phase"] == "intraday", kr_tickers=held_kr)
+        quote_data = (load_report_quotes(held_us, include_kr=market_session_states(now)["KR"]["phase"] == "intraday", kr_tickers=kr_quote_tickers)
                       if price_frames is None else {})
     us_quotes = quote_data.get("US", {})
     # A response fetched after collection starts is not a future quote.
@@ -97,11 +99,16 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     intraday = {ticker: intraday_observation(frames.get(ticker), ticker, now) for ticker in tickers}
     if states["KR"]["phase"] == "intraday":
         # An untimed daily bar must not overrule a timestamped current index quote.
-        kr_live = kr_index_observations(quote_data.get("KR", {}), quote_now, tickers=held_kr)
-        for ticker in ("^KS11", "^KQ11", *held_kr):
+        kr_live = kr_index_observations(quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
+        for ticker in ("^KS11", "^KQ11", *kr_quote_tickers):
             intraday[ticker] = kr_live.get(ticker, {})
     extended = {ticker: obs for ticker in held_us
                 if (obs := extended_quote_observation(us_quotes.get(ticker, {}), ticker, quote_now))}
+    quote_status = {ticker: extended_quote_status(us_quotes.get(ticker, {}), ticker, quote_now)
+                    for ticker in held_us if ticker not in extended}
+    if price_frames is None:
+        for ticker, reason in quote_status.items():
+            logging.info("Report extended quote %s: %s", ticker, reason)
     if states["US"]["phase"] == "intraday":
         from stock_lab_core.report_live import load_us_live_frames, us_live_observation
         us_tickers = tuple(sorted(t for t in tickers if not t.endswith((".KS", ".KQ", "=X", "=F"))
@@ -158,19 +165,27 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     rotation_rows = [row for row in closed_rows if abs(infer_scenario_shock_multiplier({"티커": row["Ticker"]})) <= 1 and row["Ticker"] != "SMH"]
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
               "price_alignment": price_alignment,
-              "quote_checked_at": quote_now.isoformat(),
+              "quote_checked_at": quote_now.isoformat(), "extended_quote_status": quote_status,
               "market_states": states, "intraday_prices": intraday, "extended_prices": extended, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
-              "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
+              "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:
             from stock_lab_core.report_live import load_us_live_frames
-            scenario_frames = load_us_live_frames(SYMBOLS)
+            comparison_tickers = tuple(t for t in held_kr if t.split('.')[0] in {"379800", "379810", "418660"})
+            scenario_frames = load_us_live_frames(tuple(sorted({*SYMBOLS, *comparison_tickers, "CL=F"})))
         else:
             scenario_frames = {}
     result["scenario_observations"] = build_scenario_context(scenario_frames, sessions, now)
+    result["scenario_frames"] = scenario_frames
+    result["source_provenance"] = {"collected_at": quote_now.isoformat(),
+        "indices": {ticker: {key: observations[ticker].get(key) for key in ("date", "previous_date", "source")}
+                    for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")}}
+    result["macro_data"] = aligned_macro(frames, sessions.get("US"), now, scenario_frames=scenario_frames)
+    reference_missing = [f"{name}: 뉴욕 16:00 고정 기준값 미연결(변동 중 일봉 대체 금지)"
+                         for name in ("유가", "환율") if name not in result["macro_data"]]
     if include_news:
         from stock_lab_core.today_news import fetch_session_market_news
         held_exposures = []
@@ -184,5 +199,5 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                sector_rows=sectors + closed_rows, held_exposures=held_exposures,
                                                per_category=5, use_cache=True))
-    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"]))
+    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing))
     return result

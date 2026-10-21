@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 import json
+import logging
 import math
 from urllib.parse import quote
 
@@ -74,8 +75,12 @@ def load_us_report_quote(ticker):
         response = requests.get(f"https://finance.yahoo.com/quote/{quote(ticker, safe='')}/",
                                 headers={"User-Agent": "Mozilla/5.0"}, timeout=4)
         response.raise_for_status()
-        return parse_us_quote_page(response.text, ticker)
-    except (requests.RequestException, ValueError, TypeError):
+        result = parse_us_quote_page(response.text, ticker)
+        if not result:
+            logging.warning("Report quote %s: HTTP %s, embedded symbol quote missing", ticker, response.status_code)
+        return result
+    except (requests.RequestException, ValueError, TypeError) as exc:
+        logging.warning("Report quote %s: %s", ticker, type(exc).__name__)
         return {}
 
 
@@ -185,6 +190,26 @@ def extended_quote_observation(quote_row, ticker, now):
                       "previous_date": regular["date"], "previous_price": regular["price"],
                       "kind": label, "source": "Yahoo 별도 세션 시세(증권사·거래장소별 차이 가능)"})
     return max(found, key=lambda row: row["as_of"]) if found else {}
+
+
+def extended_quote_status(quote_row, ticker, now):
+    """Explain rejection without persisting a raw provider payload or credentials."""
+    if not quote_row:
+        return "제공처 시세 응답 미수집/종목 시세 없음(HTTP·파싱 상세는 서버 로그)"
+    if not regular_quote_observation(quote_row, ticker, now):
+        return "비교 기준 정규장 종가·시각 검증 실패"
+    if extended_quote_observation(quote_row, ticker, now):
+        return "연결됨"
+    times = [_epoch(quote_row.get(field + "MarketTime")) for field in ("overnight", "pre", "post")]
+    times = [at for at in times if at is not None]
+    if not times:
+        return "제공처 데이마켓/시간외 시각 미제공"
+    latest = max(times)
+    age = (pd.Timestamp(now) - latest).total_seconds()
+    stamp = latest.tz_convert(KST).strftime("%m/%d %H:%M KST")
+    if age > 1200:
+        return f"시간외 시세 지연: 마지막 {stamp}, {age / 60:.0f}분 경과(20분 초과)"
+    return f"시간외 가격·비교 시각 검증 실패: 마지막 {stamp}"
 
 
 def kr_index_observations(payload, now, *, tickers=()):

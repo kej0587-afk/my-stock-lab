@@ -114,7 +114,7 @@ def korean_headline_reading(row):
         (r"bitcoin|\bbtc\b", "비트코인"), (r"oil|\bwti\b|brent", "원유"),
         (r"middle east|ceasefire", "중동 휴전 협상"),
     )
-    subject = next((label for pattern, label in subjects if re.search(pattern, lower)), row["category"])
+    subject = next((label for pattern, label in subjects if re.search(pattern, lower)), "")
     actions = (
         (r"rebound|recover|bounc", "반등 관련 보도"),
         (r"cuts? rates|rate cut", "금리 인하 관련 보도"),
@@ -125,13 +125,19 @@ def korean_headline_reading(row):
         (r"rises?|gains?|surges?", "상승 관련 보도"),
     )
     action = next((label for pattern, label in actions if re.search(pattern, lower)), "관련 소식")
-    if action == "관련 소식":
-        return "영문 제목(번역 미연결): " + title
-    return f"제목 단서 해석: {subject} {action}. 세부 내용·가격 영향은 미확인"
+    if action == "관련 소식" or not subject:
+        return ""
+    return f"제목 표현 요약: {subject} {action}(본문·인과 미확인)"
 
 
 def _close_recap_key(row, title, published):
     """Group an exact closing move, not merely articles about the same theme."""
+    if (row.get("market") == "US" and row.get("session_date") and row.get("is_close_wrap")
+            and row.get("news_bucket") != "current_session_news"
+            and text(first(row, "publisher", "source")).startswith("연합뉴스")
+            and re.search(r"뉴욕증시.{0,60}혼조\s*마감", title)):
+        # One publisher's same-session market recaps; retain all article claims.
+        return ("US", row["session_date"], "연합뉴스", "뉴욕증시 혼조 마감")
     if row.get("market") != "KR" or not row.get("session_date") or row.get("news_bucket") == "current_session_news":
         return None
     if len(set(re.findall(r"코스피|코스닥", title))) != 1:
@@ -520,6 +526,10 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                      "current_date": context.get("summary_date", ""), "same_session": True,
                      "previous_run_at": context.get("previous_run_at", "")})
     history_lines = ["", "## 판정 이력 비교", *history_comparison_lines(summary_rows, history_baselines)]
+    if context.get("previous_generated_at"):
+        history_lines.append("이전 저장 생성 시각: " + kst_time(context["previous_generated_at"]))
+    if context.get("previous_summary") and not context.get("previous_source_provenance"):
+        history_lines.append("이전 저장본에는 지수별 출처·수집 시각이 없어 날짜 지연 원인을 확정할 수 없습니다. 현재 기준일은 UTC 날짜 계산이 아니라 각 지수의 확인된 종가 날짜이며, 새 이력부터 원자료 기준일·출처를 함께 저장합니다.")
     if not context.get("previous_run_summary") and not context.get("previous_summary"):
         history_lines.append("같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.")
     if context.get("history_status"):
@@ -533,14 +543,14 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     sector_facts = [f"{name} {_pct(observations[t]['return'])}({us} 확정 종가)" for t, name in (("SOXX", "미국 반도체"), ("IGV", "소프트웨어"))
                     if number(observations.get(t, {}).get("return")) is not None and observations[t].get("date") == us]
     live = context.get("intraday_prices", {})
-    from stock_lab_core.report_intraday import intraday_account_metrics, intraday_account_line, layered_market_headline
+    from stock_lab_core.report_intraday import intraday_account_metrics, intraday_account_line, layered_market_headline, missing_quote_sensitivity, valid_live_observation
     live_metrics = intraday_account_metrics(held, live, context.get("extended_prices"), states=states,
                                             now=max(now, stamp(context.get("quote_checked_at")) or now))
     current_kr = live.get("^KS11", {})
     kr_close = observations.get("^KS11", {})
     from stock_lab_core.report_market_summary import market_summary, evidence_table
     synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
-    headline = (layered_market_headline(context, flow_rows, states, now, live_metrics)
+    headline = (layered_market_headline(context, flow_rows, states, now, live_metrics, synthesis=synthesis)
                 if mode == "intraday" else synthesis["headline"])
     lines.extend(["", "## 한 줄 결론", headline + ".", "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
@@ -640,7 +650,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         if not actuals:
             lines.append("- 당일 종가 미수집. 직전 종가를 오늘 종가로 대체하지 않습니다.")
     elif mode == "intraday":
-        actuals = [f"{names[t]} {_pct(live[t]['return'])} ({kst_time(live[t].get('retrieved_at'))} 조회, 지연 가능)"
+        actuals = [f"{names[t]} {_pct(live[t]['return'])} ({kst_time(live[t].get('as_of') or live[t].get('retrieved_at'))} 조회, 지연 가능)"
                    for t in ("^KS11", "^KQ11") if live.get(t, {}).get("date") == now.date().isoformat()
                    and number(live[t].get("return")) is not None]
         lines.append("- 개장 후 당일 등락: " + (" / ".join(actuals) or "미수집. 위 과거 종가 등락을 오늘의 움직임으로 해석하지 않습니다."))
@@ -740,9 +750,17 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                                  + " · 응답 " + text(meta.get("response_status") or "미기록")
                                  + " · 발표 자료 " + text(row.get("publication_status") or "미확인")
                                  + " · 요청 " + str(allowed_params) + " · " + collection_status(row))
+            if meta.get("response_summary") or meta.get("rejected_rows"):
+                release_notes.append("소매판매 응답 점검(허용 항목만): " + str(meta.get("response_summary") or {})
+                                     + " · 제외 사유별 행수 " + str(meta.get("rejected_rows") or {}))
         if row.get("indicator") == "KR_EXPORTS":
             meta = row.get("bulletin_request_metadata") or {}
-            statuses = [f"{part} HTTP {item.get('http_status') or '미기록'}" for part, item in meta.items() if isinstance(item, dict)]
+            statuses = [f"{part}: {item.get('origin', '과거 진단 미저장')} · "
+                        + (f"HTTP {item['http_status']}" if item.get('http_status') else
+                           "요청 시도·HTTP 응답 없음" if item.get('attempted') else "이번 HTTP 요청 안 함")
+                        + (f" · {item['exception_type']}" if item.get('exception_type') else "")
+                        + (f" · 실패단계 {item['failure_stage']}" if item.get('failure_stage') else "")
+                        for part, item in meta.items() if isinstance(item, dict)]
             release_notes.append("한국 수출 자동 수집: " + (" / ".join(statuses) or "이번 응답 진단 미기록")
                                  + " · " + collection_status(row)
                                  + (" · 마지막 자동 성공값 표시" if row.get("last_success_at") else ""))
@@ -795,7 +813,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.append("미확인: 공통 한계로 기사 내용은 보도 주장입니다. 업종 등락의 개별 원인·기여도는 확정하지 않습니다.")
     lines.append("보고용 구분 기준: 시장 대비 초과수익 = 업종 일간 − 동일 시장·동일 종가일 지수 일간(KR ^KS11 / US ^GSPC). 절대 초과폭 1.00%p 미만은 시장 공통 맥락, 이상은 직접 업종 기사를 별도 확인합니다. 매매 임계값은 변경하지 않습니다.")
     lines.append("[3M 중기] 상태는 당일 방향과 별도입니다. 상태 분류에는 3M·6M·가속도·가격위치를 함께 쓰므로 3M·가속도가 비슷해도 상태는 다를 수 있습니다. 신생 ETF는 실제 관측 이력과 비교 구간을 별도 확인해야 합니다.")
-    lines.extend(["", "업종 | 일간 실제·기준일 | 3M 중기·직전 3M 대비 가속도 | 시장 대비 초과수익 | 해석(추정)", "--- | --- | --- | --- | ---"])
+    lines.extend(["", "업종 | 일간 실제·기준일 | 장중(참고·미확정) | 3M 중기·직전 3M 대비 가속도 | 시장 대비 초과수익 | 해석(추정)", "--- | --- | --- | --- | --- | ---"])
     for value, row in picks:
         ticker = text(first(row, "Ticker", "티커"))
         exposure = "US_SEMICONDUCTORS" if ticker in {"SOXX", "SMH"} else ticker
@@ -808,7 +826,11 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         linked = sector_related_news(ticker, text(first(row, "기준일", "date", "as_of")), theme_news, sector_name=label)
         evidence = sector_evidence(row, context.get("macro_data", {}), [dict(item, ticker=ticker) for item in linked], observations=observations)
         reading = evidence["reading"].replace("해석(추정): 직접 원인 자료 미연결", "해석(추정): 원인 기사 미연결")
-        lines.append(" | ".join(_cell(v) for v in (f"{label}({ticker})", evidence["daily"], evidence["medium"], evidence["excess"], reading)))
+        live_obs = live.get(ticker, {})
+        checked = max(now, stamp(context.get("quote_checked_at")) or now)
+        live_cell = (_pct(live_obs["return"]) + " · " + kst_time(live_obs["as_of"])
+                     if valid_live_observation(live_obs, region, checked, states=states) else "미연결/해당 장중 아님")
+        lines.append(" | ".join(_cell(v) for v in (f"{label}({ticker})", evidence["daily"], live_cell, evidence["medium"], evidence["excess"], reading)))
     if not seen:
         lines.append("- 당일 업종 등락 자료 미수집. 3개월 순위를 당일 상승/하락으로 대체하지 않습니다.")
     holding_start = len(lines)
@@ -818,6 +840,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     live_account = intraday_account_line(live_metrics)
     closed_account = account_estimate(held, observations, sessions, mode=mode) if held else "계좌 합계: 보유목록 미연결"
     account_lines = [live_account, closed_account] if mode == "intraday" else [closed_account]
+    if mode == "intraday" and missing_quote_sensitivity(live_metrics):
+        account_lines.append(missing_quote_sensitivity(live_metrics))
     if mode != "intraday" and (live_metrics.get("coverage") or 0) > 0:
         account_lines.append(live_account)
     lines.extend(["", "## 내 보유 종목 영향", *account_lines,
@@ -837,7 +861,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             estimate = completed_scenario_comparison(row, observations, sessions,
                                                      max(now, stamp(context.get("quote_checked_at")) or now) if mode == "intraday" else now,
                                                      price_frames=context.get("price_frames"),
-                                                     intraday_prices=live if mode == "intraday" else None) or estimate
+                                                     intraday_prices=live if mode == "intraday" else None,
+                                                     scenario_frames=context.get("scenario_frames")) or estimate
             if ticker.split(".")[0] not in {"379800", "379810", "418660"}:
                 estimate += scenario_observation_line(row, scenario_context)
         elif ticker == "0167A0.KS":
@@ -860,7 +885,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             extended = context.get("extended_prices", {}).get(ticker, {})
             actual_now = (_pct(extended["return"]) + f" ({extended['kind']}; {kst_time(extended['as_of'])}; "
                           + f"{extended['previous_date']} 정규장 종가 대비 · {extended['source']})"
-                          if number(extended.get("return")) is not None else "정규장 외 · 데이마켓/시간외 시세 미연결")
+                          if number(extended.get("return")) is not None else "정규장 외 · 데이마켓/시간외 시세 미연결: "
+                          + context.get("extended_quote_status", {}).get(ticker, "제공처 응답·시각 미확인"))
             if mode == "closed" and number(extended.get("return")) is not None:
                 reasons.append("별도 세션 " + actual_now)
         if leveraged:
@@ -871,7 +897,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         if weight is not None and 0 <= weight <= 100:
             reasons.append(f"현재비중 {weight:.2f}%")
             if number(value) is not None and obs.get("date") == sessions.get(region) and not portfolio.get("error"):
-                reasons.append(f"일간 기여 {weight * number(value):+.2f}%p(내부 추정)")
+                reasons.append(f"일간 기여 {round(weight * number(value), 2) or 0.0:+.2f}%p(내부 추정)")
             else:
                 reasons.append("일간 기여 미확인")
         else:
@@ -893,9 +919,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         missing.append("보유목록")
     if any(text(first(row, "티커", "ticker")).split(".")[0] in {"379800", "379810", "418660"} for row in held):
         lines.extend(["", "보유표 공통 각주(379800/379810/418660)",
-                      "- 누적 기준: 한국 시작 종가 시점에 확정돼 있던 미국 종가를 기준으로 비교합니다. 장중 끝값은 미확정이며 시가 갭 오차가 아닙니다.",
-                      "- 배수 참고: 레버리지는 일간 재설정 복리입니다. 환율·환헤지·보수·베이시스 차이는 미반영입니다. 양국 종가 시각이 달라 잔차를 추적오차로 해석하지 않습니다.",
-                      "- 선물·환율: 마지막 미국 종가부터 해당 관측 시각까지의 부분 구간입니다. 누적 잔차의 인과분해·기여도 합산이 아니며 같은 시각 NAV/iNAV 미연결로 괴리율은 미확인입니다."])
+                      "- 비교 기준: 직전 한국 종가 15:30→당일 종가 15:30 또는 한국 ETF·선물의 같은 시각 완료 5분봉. 동일 끝값이 없으면 비교를 보류합니다.",
+                      "- 원/달러는 같은 구간 관측을 별도로 표시합니다. 단순 차이는 환율·보수·베이시스를 조정한 추적오차가 아니며 레버리지의 배수 잔차는 산출하지 않습니다.",
+                      "- 아래 미국 종가 이후 선물 관측은 별도 참고 구간입니다. 위 차이에 더하지 않습니다. 같은 시각 NAV/iNAV 미연결로 괴리율은 미확인입니다."])
         for codes, label in (({"379810", "418660"}, "나스닥 ETF 379810/418660 공유(NQ=F)"),
                              ({"379800"}, "S&P500 ETF 379800(ES=F)")):
             group = next((row for row in held if text(first(row, "티커", "ticker")).split(".")[0] in codes), None)
@@ -942,6 +968,11 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         days = (stamp(date_text).date() - now.date()).days
         release_at = text(row.get("release_at")) or date_text
         display = kst_time(release_at) if "T" in release_at or " " in release_at else date_text + " (발표 시각 미제공)"
+        if row.get("indicator") == "US_FED_RATE_DECISION" and len(release_at) == 10:
+            # Regular FOMC statement convention; not an individually confirmed timestamp.
+            standard = datetime.fromisoformat(release_at + "T14:00:00").replace(tzinfo=ZoneInfo("America/New_York"))
+            display = kst_time(standard.isoformat()) + " (미국 14:00 ET 표준 적용, 예외 시각 미확인)"
+            days = (standard.astimezone(KST).date() - now.date()).days
         if row.get("session_timing") == "after_market_close":
             local_close = datetime.fromisoformat(date_text + "T16:00:00").replace(tzinfo=ZoneInfo("America/New_York")).astimezone(KST)
             display = f"미국 {date_text} 장 마감 후 / 한국 {local_close:%Y-%m-%d} 새벽(발표 분 시각 미확정)"

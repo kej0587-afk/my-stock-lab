@@ -59,13 +59,13 @@ def test_btc_close_uses_new_york_end_and_excludes_partial_bar():
     assert "마감→마감" in note and "= -4.00%" in note
 
 
-def test_macro_ignores_sunday_and_keeps_monthly_base_date():
+def test_macro_ignores_sunday_but_never_uses_untimed_fx_daily_as_fixed_reference(tmp_path):
     index = pd.date_range("2026-09-01", "2026-10-18")
     frame = pd.DataFrame({"Close": range(100, 100 + len(index))}, index=index)
-    macro = aligned_macro({"USDKRW=X": frame}, "2026-10-16", NOW)
-    assert macro["환율"]["as_of"] == "2026-10-16"
-    assert macro["환율"]["val"] == frame.loc["2026-10-16", "Close"]
-    assert macro["환율"]["base_date"] == "2026-09-25"
+    macro = aligned_macro({"USDKRW=X": frame, "^TNX": frame * .01}, "2026-10-16", NOW, cache_dir=tmp_path)
+    assert "환율" not in macro
+    assert macro["10Y 금리"]["as_of"] == "2026-10-16"
+    assert macro["10Y 금리"]["base_date"] == "2026-09-25"
     reaction = release_day_reaction({"actual": 1.3, "release_at": "2026-10-15T08:30:00-04:00"},
                                   {"^TNX": frame * .01}, NOW)
     assert "10Y +1.00bp" in reaction and "인과가 아님" in reaction

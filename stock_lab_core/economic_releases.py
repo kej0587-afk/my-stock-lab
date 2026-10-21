@@ -159,6 +159,44 @@ def _census_safe_params(params):
     return safe
 
 
+def _census_response_summary(payload, secret=""):
+    """Bounded, allowlisted evidence; never copy error bodies or arbitrary fields."""
+    summary = {"type": type(payload).__name__}
+    if not isinstance(payload, list):
+        return summary
+    summary["row_count"] = max(0, len(payload) - 1)
+    if not payload or not isinstance(payload[0], list):
+        return summary
+    header = payload[0]
+    fields = {"cell_value", "time_slot_date", "time", "category_code", "data_type_code",
+              "seasonally_adj", "error_data", "program_code", "geo_level_code", "us"}
+    summary["column_count"] = len(header)
+    summary["columns"] = [field if isinstance(field, str) and field in fields
+                          else "[redacted]" for field in header[:16]]
+
+    def safe_cell(field, value):
+        if value is None:
+            return None
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            return "[redacted]"
+        value = str(value)
+        if len(value) > 32 or (secret and secret in value):
+            return "[redacted]"
+        allowed = {"category_code": {"44X72", "44000"}, "data_type_code": {"MPCSM", "SM"},
+                   "seasonally_adj": {"yes", "no"}, "error_data": {"yes", "no"},
+                   "program_code": {"MARTS"}, "geo_level_code": {"US"}, "us": {"1"}}
+        if (value in allowed.get(field, set())
+                or (field == "cell_value" and re.fullmatch(r"[+-]?\d{1,12}(?:\.\d{1,6})?", value))
+                or (field in {"time", "time_slot_date"} and re.fullmatch(r"[0-9T:./ -]{4,32}", value))):
+            return value
+        return "[redacted]"
+
+    summary["sample_rows"] = [
+        [safe_cell(field, value) for field, value in zip(summary["columns"], cells[:16])]
+        if isinstance(cells, list) else "[invalid_row]" for cells in payload[1:3]]
+    return summary
+
+
 def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
     method = requests.post if payload is not None else requests.get
     kwargs = {"timeout": REQUEST_TIMEOUT, "allow_redirects": False,
@@ -169,11 +207,17 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
         kwargs["params"] = params
     census = url == CENSUS_URL
     safe_params = _census_safe_params(params) if census else {}
+    if diagnostics is not None:
+        if census or "attempted" in diagnostics:
+            diagnostics.update(attempted=True, from_cache=False, origin="network", http_status=None)
+        if census:
+            diagnostics["parameters"] = safe_params
     try:
         response = method(url, **kwargs)
     except requests.RequestException as exc:
         if diagnostics is not None:
             diagnostics["transport_error"] = type(exc).__name__
+            diagnostics["exception_type"] = type(exc).__name__
         if census:
             logging.getLogger(__name__).warning("Census transport=%s params=%s", type(exc).__name__, safe_params)
             raise type(exc)("census_transport_failed") from None
@@ -181,9 +225,9 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
     try:
         if diagnostics is not None:
             diagnostics["http_status"] = response.status_code
+            diagnostics["response_status"] = "http_ok" if response.status_code == 200 else "http_error"
         if census:
             if diagnostics is not None:
-                diagnostics["response_status"] = "http_ok" if response.status_code == 200 else "http_error"
                 if 300 <= response.status_code < 400:
                     diagnostics["response_status"] = "redirect_not_followed"
                     # This public redirect is verified; never expose Location/query/body.
@@ -199,12 +243,17 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
         if url.startswith(ECOS_URL):
             response.encoding = "utf-8"
         try:
-            return response.text if text else response.json()
+            result = response.text if text else response.json()
+            if census and diagnostics is not None:
+                diagnostics["response_summary"] = _census_response_summary(result, (params or {}).get("key", ""))
+            return result
         except ValueError:
             if census:
                 logging.getLogger(__name__).warning("Census response_not_json HTTP=%s", response.status_code)
                 if diagnostics is not None:
                     diagnostics["response_status"] = "response_not_json"
+                    diagnostics["exception_type"] = "ValueError"
+                    diagnostics["response_summary"] = {"type": "non_json"}
                 raise ValueError("census_response_not_json") from None
             raise
     finally:
@@ -407,23 +456,33 @@ def _retail(now, api_key):
                 or not required <= set(header) or not {"time_slot_date", "time"} & set(header)):
             raise _Unavailable("census_invalid_columns")
         values = {}
+        rejected = diagnostics["rejected_rows"] = {}
+        diagnostics["observation_count"] = 0
         for cells in payload[1:]:
             if not isinstance(cells, list) or len(cells) != len(header):
                 raise _Unavailable("census_invalid_row")
             item = dict(zip(header, cells))
-            if (item.get("category_code") != "44X72" or item.get("data_type_code") != "MPCSM"
-                    or str(item.get("seasonally_adj", "")).lower() != "yes"
-                    or str(item.get("error_data", "")).lower() != "no"):
-                continue
             period = _month(item.get("time_slot_date") or item.get("time"))
             value = _number(item.get("cell_value"))
-            if period and f"{now.year - 1}-01" <= period < now.strftime("%Y-%m") and value is not None:
-                if period in values and values[period] != value:
-                    raise _Unavailable("census_conflicting_observations")
-                values[period] = value
+            reason = next((code for invalid, code in (
+                (item.get("category_code") != "44X72", "category_mismatch"),
+                (item.get("data_type_code") != "MPCSM", "data_type_mismatch"),
+                (str(item.get("seasonally_adj", "")).lower() != "yes", "adjustment_mismatch"),
+                (str(item.get("error_data", "")).lower() != "no", "error_data"),
+                (not period, "invalid_period"),
+                (not f"{now.year - 1}-01" <= period < now.strftime("%Y-%m"), "outside_completed_range"),
+                (value is None, "invalid_value"),
+            ) if invalid), None)
+            if reason:
+                rejected[reason] = rejected.get(reason, 0) + 1
+                continue
+            if period in values and values[period] != value:
+                raise _Unavailable("census_conflicting_observations")
+            values[period] = value
         if values:
             logging.getLogger(__name__).info("Census observations=%s latest_period=%s", len(values), max(values))
         else:
+            diagnostics["response_status"] = "no_valid_observations"
             logging.getLogger(__name__).warning("Census no_valid_observations; publication_status=unconfirmed")
             raise _Unavailable("census_no_valid_observations")
         diagnostics.update(response_status="observations_validated", observation_count=len(values),
@@ -446,6 +505,8 @@ def _retail(now, api_key):
         _reason(row, "census_api_key_required")
     row["request_metadata"] = deepcopy(data["request"] if data else diagnostics)
     row["request_metadata"]["from_cache"] = bool(data and diagnostics["http_status"] is None)
+    if row["request_metadata"]["from_cache"]:
+        row["request_metadata"].update(attempted=False, origin="success_cache")
     row["publication_status"] = "available" if data else "unconfirmed"
     row["publication_source_url"] = CENSUS_PUBLICATION_URL
     row["latest_completed_period"] = _shift(now.strftime("%Y-%m"), -1)
@@ -460,10 +521,11 @@ def _retail(now, api_key):
         latest_completed_period=row["latest_completed_period"], observation_recency=row["observation_recency"])
     log = logging.getLogger(__name__)
     (log.warning if row["missing_reason"] else log.info)(
-        "Census HTTP=%s params=%s response_status=%s publication_status=%s latest_period=%s reason=%s",
+        "Census HTTP=%s params=%s response_status=%s publication_status=%s latest_period=%s reason=%s summary=%s rejected=%s",
         row["request_metadata"]["http_status"], row["request_metadata"]["parameters"],
         row["request_metadata"]["response_status"], row["publication_status"],
-        row["period"] or "unavailable", row["missing_reason"] or "none")
+        row["period"] or "unavailable", row["missing_reason"] or "none",
+        row["request_metadata"].get("response_summary", {}), row["request_metadata"].get("rejected_rows", {}))
     return row
 
 

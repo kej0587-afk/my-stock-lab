@@ -33,6 +33,12 @@ def oil_explanation(macro_data):
 def macro_change(previous, current):
     if not previous:
         return "스트레스 변화: 이전 매크로 스냅샷 없음(변화 원인 추정 안 함)."
+    if any(current.get(key, {}).get("kind") == "fixed_asof_reference" and
+           previous.get(key, {}).get("kind") != "fixed_asof_reference" for key in ("유가", "환율")):
+        return "스트레스 변화: 24시간 자산 기준이 일봉에서 뉴욕 16:00 고정 관측으로 변경되어 동일 기준 비교 보류."
+    if any(row.get("kind") == "fixed_asof_reference" and number(row.get("chg")) is None
+           for snapshot in (previous, current) for row in snapshot.values()):
+        return "스트레스 변화: 24시간 자산의 1개월 동일 시각 기준값 미연결로 비교 보류(점수 차이를 위험 완화로 해석하지 않음)."
     before, after = macro_stress(previous), macro_stress(current)
     if before["score"] is None or after["score"] is None:
         return "스트레스 변화: 산출 가능한 지표 부족으로 비교 보류."

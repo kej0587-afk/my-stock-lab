@@ -164,7 +164,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     evidence = [("시장", " / ".join(fact["phrase"] for fact in facts)),
                 ("배경 보도", " · ".join(claims) + "(기사 주장·기여도 미확정)" if claims else "당일 시장 방향과 연결할 배경 보도 미확보"),
                 ("매크로", macro_text), ("중기 가격·거래량", flow_text)]
-    return {"headline": headline, "evidence": evidence,
+    return {"headline": headline, "evidence": evidence, "market_claims": market_claims,
             "background_news": [row for rows in selected_news.values() for row in rows]}
 
 

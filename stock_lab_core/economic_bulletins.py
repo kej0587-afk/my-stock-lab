@@ -203,17 +203,28 @@ def _customs_observation(html, entry):
 
 def load_kr_exports_bulletin(now):
     """At most two public requests, using the existing timeout and success cache."""
+    import logging
     now = releases._clock(now)
-    diagnostics = {"listing": {"http_status": None}, "detail": {"http_status": None}}
+    diagnostics = {name: {"endpoint": endpoint, "http_status": None, "attempted": False,
+                          "from_cache": False, "origin": "not_attempted"}
+                   for name, endpoint in (("listing", CUSTOMS_LIST_URL), ("detail", CUSTOMS_DETAIL_URL))}
 
     def fetch():
-        html = releases._request(CUSTOMS_LIST_URL, text=True, diagnostics=diagnostics["listing"],
-                                 params={"bbsId": "1362", "mi": "2891", "searchType": "sj",
-                                         "searchValue": "\uc6d4\uac04 \uc218\ucd9c\uc785 \ud604\ud669", "listCo": "10"})
-        entry = _customs_listing(html, now)
-        params = {"bbsId": "1362", "mi": "2891", "nttSn": entry["nttSn"], "nttSnUrl": entry["nttSnUrl"]}
-        html = releases._request(CUSTOMS_DETAIL_URL, params=params, text=True, diagnostics=diagnostics["detail"])
-        observation = _customs_observation(html, entry)
+        stage, operation = "listing", "request"
+        try:
+            html = releases._request(CUSTOMS_LIST_URL, text=True, diagnostics=diagnostics["listing"],
+                                     params={"bbsId": "1362", "mi": "2891", "searchType": "sj",
+                                             "searchValue": "\uc6d4\uac04 \uc218\ucd9c\uc785 \ud604\ud669", "listCo": "10"})
+            operation = "parse"
+            entry = _customs_listing(html, now)
+            params = {"bbsId": "1362", "mi": "2891", "nttSn": entry["nttSn"], "nttSnUrl": entry["nttSnUrl"]}
+            stage, operation = "detail", "request"
+            html = releases._request(CUSTOMS_DETAIL_URL, params=params, text=True, diagnostics=diagnostics["detail"])
+            operation = "parse"
+            observation = _customs_observation(html, entry)
+        except (releases.requests.RequestException, ValueError, TypeError, KeyError, OverflowError, AttributeError) as exc:
+            diagnostics[stage].update(exception_type=type(exc).__name__, failure_stage=operation)
+            raise
         return {"observation": observation, "source_url": CUSTOMS_DETAIL_URL + "?" + urlencode(params),
                 "request": deepcopy(diagnostics)}
 
@@ -222,8 +233,18 @@ def load_kr_exports_bulletin(now):
                         CUSTOMS_LIST_URL, now, seasonal_adjustment="NSA", retrieved_at=retrieved,
                         value_kind="official_bulletin", official_bulletin_fetch=True,
                         fallback_mode="automatic_official", data_vintage="final_bulletin")
-    row["bulletin_request_metadata"] = deepcopy(data["request"] if data else diagnostics)
-    row["bulletin_request_metadata"]["from_cache"] = bool(data and diagnostics["listing"]["http_status"] is None)
+    request = row["bulletin_request_metadata"] = deepcopy(data["request"] if data else diagnostics)
+    request["from_cache"] = bool(data and not diagnostics["listing"]["attempted"])
+    request["failure_reason"] = error
+    if request["from_cache"]:
+        for stage in ("listing", "detail"):
+            request[stage].update(attempted=False, from_cache=True, origin="success_cache")
+    for stage in ("listing", "detail"):
+        item = request[stage]
+        logging.getLogger(__name__).log(logging.INFO if data else logging.WARNING,
+            "KR exports %s origin=%s attempted=%s HTTP=%s exception=%s stage=%s",
+            stage, item.get("origin"), item.get("attempted"), item.get("http_status"),
+            item.get("exception_type", ""), item.get("failure_stage", ""))
     if not data:
         releases._reason(row, error)
         return row

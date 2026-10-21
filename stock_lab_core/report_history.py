@@ -64,9 +64,22 @@ def normalized_decisions(rows):
     return [{"티커": text(first(row, "티커", "ticker")),
              "종목명": text(first(row, "종목명", "name", "자산명")),
              "보유여부": is_held(row),
+             "입력출처": text(row.get("입력출처")) or "미확인",
              "최종읽기": text(first(row, "최종읽기", "🔥기술적 타점", "판정코드")),
              "게이트상태": text(first(row, "게이트상태", "gate_state")),
              "저장사유": holding_reasons(row)} for row in records(rows)]
+
+
+def tag_input_origins(frame, registered_items, automatic_items):
+    """Annotate a freshly computed result; never relabel an older snapshot."""
+    def key(row):
+        return text(first(row, "티커", "ticker")).upper().removesuffix(".KS").removesuffix(".KQ")
+    registered = {key(row) for row in records(registered_items)} - {""}
+    automatic = {key(row) for row in records(automatic_items)} - {""}
+    result = frame.copy(deep=True)
+    result["입력출처"] = ["등록" if key(row) in registered else "자동" if key(row) in automatic
+                          else "보유목록" if is_held(row) else "미확인" for row in records(frame)]
+    return result
 
 
 def _load_local(location, owner_hash):
@@ -129,10 +142,12 @@ def _comparisons(saved, dates, result):
         previous = max(earlier, key=lambda value: (value["dates"]["US"], value["dates"]["KR"]))
         result.update(previous_summary=deepcopy(previous["rows"]),
                       previous_date=previous["dates"]["US"] + "/" + previous["dates"]["KR"],
-                      previous_sessions=deepcopy(previous["dates"]))
+                      previous_sessions=deepcopy(previous["dates"]),
+                      previous_source_provenance=deepcopy(previous.get("source_provenance", {})),
+                      previous_generated_at=previous.get("generated_at", ""))
 
 
-def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None, store=None):
+def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None, store=None, source_provenance=None):
     """Update a session pair, optionally using an owner-bound injected store.
 
     Stores implement load_sessions(dates, *, owner_scope) -> dict and
@@ -157,6 +172,8 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
                    "generated_at": generated_at or datetime.now(timezone.utc).isoformat()}
         if macro_data:
             current["macro_data"] = deepcopy(macro_data)
+        if source_provenance:
+            current["source_provenance"] = deepcopy(source_provenance)
         key = validate_session(current)
     except (ValueError, TypeError):
         return dict(result, history_status="거래일/판정 자료 오류: 비교 저장 보류")
