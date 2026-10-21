@@ -427,6 +427,7 @@ def _us_close_recap(title, published, window):
 
 
 _HEADLINE_MARKETS = {
+    "EU": re.compile(r"\bEurope(?:an)?(?:'s)?\s+(?:stocks?|shares?|markets?|earnings)|유럽\s*증시", re.I),
     "JP": re.compile(r"日\s*증시|일본\s*증시|닛케이|Japan(?:ese)?\s+(?:shares|stocks)|\bNikkei\b", re.I),
     "CN": re.compile(r"中\s*증시|중국\s*증시|Chinese\s+(?:shares|stocks)", re.I),
     "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)|한국은행|금융통화위원회|\bBank of Korea\b", re.I),
@@ -483,7 +484,13 @@ def _resolve_query_news_market(raw, windows):
     elif len(markets) > 1:
         row.update(market="", market_basis="ambiguous_headline_markets")
     elif re.search(r"엔비디아|\bNvidia\b|아마존|\bAmazon\b|\bAWS\b|메타\b|\bMeta\b|마이크론|\bMicron\b", title, re.I):
-        row.update(market="US", market_basis="explicit_headline_market")
+        # A counterparty mention does not make a domestic supplier a US issuer.
+        if re.match(r"^(?:\[[^]]+\]\s*)?(?:엔비디아|Nvidia\b|아마존|Amazon\b|AWS\b|메타\b|Meta\b|마이크론|Micron\b)", title, re.I):
+            row.update(market="US", market_basis="explicit_headline_market")
+        elif row["query_market"] == "US":
+            row.update(market="", market_basis="unconfirmed_issuer_subject")
+        else:
+            row.setdefault("market_basis", "search_query_only")
     else:
         row.setdefault("market_basis", "search_query_only")
     return row
@@ -529,7 +536,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
-        if market in {"JP", "CN", "ASIA"}:
+        if market in {"JP", "CN", "ASIA", "EU"}:
             published = _news_timestamp(raw.get("published_at") or raw.get("published"))
             if published and now - timedelta(days=7) <= published <= now:
                 result["other_market_news"].append(dict(raw, market=market, published_at=published.isoformat(),

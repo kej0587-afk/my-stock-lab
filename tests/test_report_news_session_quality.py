@@ -27,6 +27,23 @@ def article(title, published_at):
                 publisher="Reuters", link="https://www.reuters.com/" + title.split()[0])
 
 
+def test_korean_supplier_counterparty_mention_is_not_a_us_sector_cause():
+    raw = article('두산, 엔비디아 파트너사 행사에 잇달아 참가…"CCL 공급사 입지 강화"',
+                  "2026-10-21T05:00:00+09:00")
+    raw.update(source="Google News RSS", query_market="US", market_category="기업 재료")
+    result = partition_session_market_news([raw], CLOSED, now=NOW)
+    assert not result["session_news"] and not result["current_session_news"]
+
+
+def test_european_earnings_do_not_explain_the_us_energy_session():
+    raw = article("Europe's earnings boom widens beyond energy and AI", "2026-10-20T14:00:00-04:00")
+    raw.update(source="Google News RSS", query_market="US", market_category="섹터:energy")
+    result = partition_session_market_news([raw], CLOSED, now=NOW)
+    assert not result["session_news"] and not result["current_session_news"]
+    assert result["other_market_news"][0]["market"] == "EU"
+    assert not sector_related_news("XLE", "2026-10-20", result["other_market_news"])
+
+
 @pytest.mark.parametrize("previous,stamp,now", [
     ("2026-10-19", "2026-10-20T05:58:00+09:00", NOW),
     ("2026-10-16", "2026-10-17T05:58:00+09:00", NOW),

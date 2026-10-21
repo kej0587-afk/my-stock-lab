@@ -84,5 +84,18 @@ def test_summary_connects_rebound_drivers_but_rejects_a_relabelled_previous_day_
             article("U.S. Stocks Mixed as Strong Earnings Offset AI Credit Fears", published_at="2026-10-20T16:06:00-04:00",
                     retrospective_close_wrap=True)]
     headline = market_summary(context, rows, [], market_session_states(NOW, context["sessions"]), NOW)["headline"]
-    assert "반도체주 반등" in headline and "실적 호조·AI 신용우려가 교차" in headline
+    assert "반도체주 반등" in headline and "실적 호조·AI 신용우려 교차" in headline
     assert "AI 신용우려 완화" not in headline
+
+
+@pytest.mark.parametrize("title", [
+    "'삼전닉스 쌍끌이' 코스피 3%↑…환율 2년 만에 최저 (MTN 마감시황)",
+    "(증시-마감) 코스피 3.3% 급반등해 5,735…'삼전닉스' 6%↑",
+])
+def test_korean_rebound_headline_connects_explicit_samsung_hynix_strength(title):
+    from stock_lab_core.report_market_summary import market_summary
+    from stock_lab_core.report_session import market_session_states
+    context = {**CONTEXT, "prices": {"^KS11": {"date": "2026-10-21", "return": .0329}}}
+    row = article(title, market="KR", session_date="2026-10-21", published_at="2026-10-21T16:05:00+09:00")
+    result = market_summary(context, [row], [], market_session_states(NOW, context["sessions"]), NOW)
+    assert "삼성전자·SK하이닉스 강세" in result["headline"]

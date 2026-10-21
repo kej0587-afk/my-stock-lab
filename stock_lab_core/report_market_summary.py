@@ -137,6 +137,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             for row in eligible:
                 title = text(row.get("title"))
                 topic = news_theme(title)
+                korean_rebound = False
                 if (fact["market"] == "KR" and re.search(r"코스피|코스닥", title)
                         and re.search(r"(?:국제)?유가[·ㆍ/\s]+금리\s*(?:동반\s*)?안정", title)):
                     topic = "유가·금리 안정"
@@ -144,14 +145,17 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                     drivers = []
                     if re.search(r"반도체.{0,15}(?:반등|강세|급등|상승)", title):
                         drivers.append("반도체주 반등")
+                    if re.search(r"삼전닉스.{0,18}(?:쌍끌이|↑|급등|반등|강세|상승)", title):
+                        drivers.append("삼성전자·SK하이닉스 강세")
                     if re.search(r"외국인.{0,12}(?:순매수|매수 전환|매수세)", title):
                         drivers.append("외국인 매수")
                     if drivers:
                         topic = "·".join(drivers)
+                        korean_rebound = True
                 earnings_offset = bool(re.search(r"strong earnings offset AI credit fears", title, re.I))
                 if earnings_offset:
-                    topic = "실적 호조·AI 신용우려가 교차"
-                if topic and (earnings_offset or re.search(r"반등|회복|상승|강세|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bclimb|\bhigher", title, re.I)):
+                    topic = "실적 호조·AI 신용우려 교차"
+                if topic and (earnings_offset or korean_rebound or re.search(r"반등|회복|상승|강세|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bclimb|\bhigher", title, re.I)):
                     local_claims.append(topic)
                     local_news.append(row)
                     break
