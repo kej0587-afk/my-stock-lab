@@ -106,7 +106,8 @@ def _flow_evidence(context, flow_rows):
 def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     """Market moves -> reported background -> macro/medium-term interpretation."""
     facts = [_market_fact(context, market, states, now) for market in ("KR", "US")]
-    claims, market_claims, selected_news = [], {}, {}
+    from stock_lab_core.article_context import verified_body_facts, body_context_sentence
+    claims, market_claims, selected_news, body_sources = [], {}, {}, {}
     for fact in facts:
         if fact["change"] is None:
             continue
@@ -159,6 +160,11 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                     local_claims.append(topic)
                     local_news.append(row)
                     break
+        body_row = next((row for row in eligible if row.get("is_close_wrap") and verified_body_facts(row)), None)
+        if body_row:
+            body_sources[fact["market"]] = body_row
+            local_claims = [item["summary"] for item in verified_body_facts(body_row)[:2]]
+            local_news = [body_row]
         market_claims[fact["market"]] = local_claims
         selected_news[fact["market"]] = local_news
         claims.extend(local_claims)
@@ -192,7 +198,11 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             recent = number(row.get("return_5d"))
             if recent is not None and recent < 0:
                 narrative += f". 다만 최근 5거래일은 {_pct(recent)}로, 오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다"
-        sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
+        if fact["market"] in body_sources:
+            sentences.append(narrative + ". " + body_context_sentence(body_sources[fact["market"]])
+                             + " (기사 본문 확인·가격 기여도 미확정) " + " ".join(sources[:1]))
+        else:
+            sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
     headline = ".\n\n".join(sentences)
     if inference:
         caution = burden or "약세" in flow_condition

@@ -44,6 +44,14 @@ def test_european_earnings_do_not_explain_the_us_energy_session():
     assert not sector_related_news("XLE", "2026-10-20", result["other_market_news"])
 
 
+def test_explicit_index_percent_arrow_just_after_us_close_is_a_recap_not_next_session():
+    raw = article("뉴욕증시, 미·이란 중재 기대·실적 호조에 다우 1%↑(종합)", "2026-10-21T06:12:51+09:00")
+    result = partition_session_market_news([raw], CLOSED, now=NOW)
+    current, = result["session_news"]
+    assert current["is_close_wrap"] and current["session_date"] == "2026-10-20"
+    assert not result["next_session_news"]
+
+
 @pytest.mark.parametrize("previous,stamp,now", [
     ("2026-10-19", "2026-10-20T05:58:00+09:00", NOW),
     ("2026-10-16", "2026-10-17T05:58:00+09:00", NOW),

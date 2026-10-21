@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-10-21",
+  "purpose": "Exact-session original links retained after the rolling publisher RSS drops the early US recap; article bodies are not stored",
+  "articles": [
+    {
+      "title": "뉴욕증시, 미·이란 중재 기대·실적 호조에 다우 1%↑(종합)",
+      "link": "https://www.yna.co.kr/view/AKR20261021006751072",
+      "publisher": "연합뉴스",
+      "publisher_url": "https://www.yna.co.kr",
+      "market": "US",
+      "query_market": "US",
+      "session_date": "2026-10-20",
+      "published_at": "2026-10-21T06:12:51+09:00",
+      "source": "Verified publisher URL (2026-10-21)",
+      "market_category": "시장"
+    }
+  ]
+}

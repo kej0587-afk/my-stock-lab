@@ -93,12 +93,13 @@ def load_btc_close_frame():
         return pd.DataFrame()
 
 
-def aligned_macro(frames, reference_date, now, *, scenario_frames=None, cache_dir=None):
+def aligned_macro(frames, reference_date, now, *, scenario_frames=None, cache_dir=None, reference_loader=None):
     """Use fixed NY 16:00 references for 24h assets, daily closes for indices.
 
     The collector must pass its Yahoo 5m scenario frames, including CL=F and
-    USDKRW=X. No network call or untimed daily fallback is made here. Missing
-    matching anchors omit returns, not substitute a different daily baseline.
+    USDKRW=X. The collector may opt into bounded history backfill by passing
+    ``reference_loader=load_macro_reference_frame`` from report_reference.
+    Otherwise no network call is made. Missing matching anchors omit returns.
     Surface each row's comparison_missing separately from its price source;
     stress_incomplete requires a partial/unavailable aggregate, not risk relief.
     """
@@ -115,7 +116,8 @@ def aligned_macro(frames, reference_date, now, *, scenario_frames=None, cache_di
     for name, ticker in MACRO_SYMBOLS.items():
         if ticker in REFERENCE_SYMBOLS:
             reference = macro_reference((scenario_frames or {}).get(ticker), ticker, reference_date, now,
-                                        previous_date=previous_date, base_date=base_date, cache_dir=cache_dir)
+                                        previous_date=previous_date, base_date=base_date, cache_dir=cache_dir,
+                                        history_loader=reference_loader)
             if reference:
                 result[name] = reference
             continue

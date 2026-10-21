@@ -141,6 +141,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         from stock_lab_core.economic_bulletins import apply_official_bulletins
         releases = apply_official_bulletins(releases, now)
     apply_verified_release_dates(releases, now)
+    consensus_diagnostics = {}
+    if economic_releases is None:
+        from stock_lab_core.report_consensus import attach_economic_consensus
+        releases, consensus_diagnostics = attach_economic_consensus(releases, now,
+            api_key=_api_key("TRADING_ECONOMICS_API_KEY"))
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
@@ -182,7 +187,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "extended_reference_prices": extended_reference, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "sector_rows": sectors,
-              "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
+              "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
+              "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:
@@ -196,7 +202,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     result["source_provenance"] = {"collected_at": quote_now.isoformat(),
         "indices": {ticker: {key: observations[ticker].get(key) for key in ("date", "previous_date", "source")}
                     for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")}}
-    result["macro_data"] = aligned_macro(frames, sessions.get("US"), now, scenario_frames=scenario_frames)
+    from stock_lab_core.report_reference import load_macro_reference_frame
+    result["macro_data"] = aligned_macro(frames, sessions.get("US"), now, scenario_frames=scenario_frames,
+                                         reference_loader=load_macro_reference_frame if price_frames is None else None)
     reference_missing = [f"{name}: 뉴욕 16:00 고정 기준값 미연결(변동 중 일봉 대체 금지)"
                          for name in ("유가", "환율") if name not in result["macro_data"]]
     if include_news:
@@ -211,6 +219,6 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                                       if base != "BTC-US-CLOSE")
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                sector_rows=sectors + closed_rows, held_exposures=held_exposures,
-                                               per_category=5, use_cache=True))
+                                               per_category=5, use_cache=True, include_article_bodies=True))
     result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
     return result

@@ -749,10 +749,14 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             missing.append(f"{label}: 시장 반응 비교 보류/일부 결측")
         label += f" {citation(row)}"
         if row.get("forecast_source"):
-            forecast += " (" + text(row["forecast_source"]) + ")"
+            forecast += " " + citation(dict(title=row["forecast_source"], source_url=row.get("forecast_source_url")))
+            if row.get("forecast_verified_at"):
+                forecast += " · 확인 " + text(row["forecast_verified_at"])
         if row.get("forecast") is None:
             metrics = comparison_metrics(row)
             forecast = "컨센서스 미연결"
+            if row.get("indicator") == "US_FED_TARGET_UPPER":
+                forecast = "예상치 비교 대상 아님(일별 목표금리 상단)"
             if metrics["delta"] is not None:
                 forecast += f" · 이전 대비 {metrics['delta']:+.2f}" + ("%p" if unit == "%" else unit)
             if metrics["prior3_mean"] is not None:
@@ -793,6 +797,13 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                                  + (" · 마지막 자동 성공값 표시" if row.get("last_success_at") else ""))
     if release_notes:
         lines.extend(["", *release_notes])
+    consensus_status = context.get("consensus_diagnostics") or {}
+    if consensus_status:
+        lines.extend(["", f"컨센서스 연결: {consensus_status.get('attached_count', 0)}개 · "
+                      + text(consensus_status.get("verified_survey_coverage")),
+                      "예상치는 설문 출처별로 다를 수 있습니다. 기사 확인값은 해당 대상월·발표일에만 연결하며 다음 달로 넘겨 쓰지 않습니다."])
+        if consensus_status.get("reason") == "api_key_required":
+            lines.append("향후 자동 컨센서스 API: 키 미설정 · [경제지표용 설정 안내](https://docs.tradingeconomics.com/get_started/). 확인된 발표 당시 설문과 별도입니다.")
     if releases:
         lines.append("\n지표는 최신 수정치 기준입니다. 전월비·전년비/계절조정 기준이 다른 수치는 서로 비교하지 않습니다. 발표일 미제공은 관측월로 대체하지 않습니다.")
     exports = [row for row in releases if row.get("indicator") == "KR_EXPORTS" and row.get("basis") == "YoY"

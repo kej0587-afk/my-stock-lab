@@ -416,7 +416,7 @@ def _us_close_recap(title, published, window):
     # accept such titles immediately after this supplied, confirmed close.
     near_close = close < published <= close + timedelta(hours=2)
     market_prices = bool(re.search(r"\bstocks?\b|\bshares\b|Nasdaq|Wall Street|나스닥|증시", title, re.I)
-                         and re.search(r"반등|급등|급락|하락|상승|혼조|\bmixed\b|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
+                         and re.search(r"반등|급등|급락|하락|상승|혼조|%[↑↓]|\bmixed\b|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
     if not explicit and not (near_close and market_prices):
         return False
     next_day = close.date() + timedelta(days=1)
@@ -768,7 +768,8 @@ def _cached_session_rss(spec):
 
 
 def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
-                              current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False) -> dict:
+                              current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False,
+                              include_article_bodies=False) -> dict:
     """Bounded market-specific RSS retrieval plus source/event curation.
 
     Returns the same payload as partition_session_market_news. Queries include
@@ -799,6 +800,11 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             rows.extend(candidates)
             if error:
                 failures[error] += 1
+    if include_article_bodies:
+        from stock_lab_core.article_context import publisher_news
+        # Direct publisher links permit public-body verification without decoding
+        # a Google redirect or trying to access subscription-only articles.
+        rows = publisher_news(sessions, now) + rows
     by_market = {window["market"]: window for window in windows}
     rows = [_resolve_query_news_market(row, by_market) for row in rows]
     origins = {}
@@ -843,6 +849,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     result["news_retrieval"] = {"query_count": len(specs), "query_limit": _SESSION_QUERY_LIMIT,
                                 "max_workers": 4, "cached": bool(use_cache),
                                 "queried_topics": sorted({topic for spec in specs for topic in spec.get("query_topics", ())})}
+    if include_article_bodies:
+        from stock_lab_core.article_context import enrich_article_context
+        enrich_article_context(result, now)
     available = {plan["category"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     if any(category not in available for category in categories or ()):
         result["missing"].append("알 수 없는 뉴스 카테고리 제외")

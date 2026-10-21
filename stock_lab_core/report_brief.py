@@ -19,6 +19,8 @@ ENTITIES = (
 
 def brief_theme(row):
     title = text(row.get("title"))
+    if row.get("is_close_wrap") and re.search(r"코스피|코스닥|뉴욕증시|Wall Street|U\.S\. Stocks", title, re.I):
+        return "한국 시황" if row.get("market") == "KR" else "미국 시황"
     if re.search(r"CoreWeave|코어위브|Trainium|트레이니엄|NVIDIA|엔비디아|\bMicron\b|마이크론", title, re.I):
         return "반도체·AI"
     if re.search(r"\bTesla\b|테슬라|Roadster|로드스터", title, re.I):
@@ -41,6 +43,8 @@ def brief_theme(row):
 def _topics(title, entities):
     topics = set(sector_news_topics("", sector_name=title))
     if set(entities) & {"NVDA", "AMZN", "META", "MU", "CRWV", "MSFT"}:
+        topics.update(("technology", "semiconductor", "memory", "software"))
+    if re.search(r"(?:AI|인공지능).{0,20}(?:차입|신용|부채|투자|수요)|AI Debt", title, re.I):
         topics.update(("technology", "semiconductor", "memory", "software"))
     return topics
 
@@ -89,15 +93,19 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         if not target or row.get("session_date") != target or row.get("news_bucket") in {"next_session_news", "other_market_news"}:
             continue
         title = text(row.get("title"))
-        if text(first(row, "link", "url")) in excluded:
+        from stock_lab_core.article_context import verified_body_facts
+        body_facts = verified_body_facts(row)
+        if text(first(row, "link", "url")) in excluded and not body_facts:
             continue
         entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, title, re.I)]
         theme = brief_theme(row)
-        link = _holding_links(held, title, entities, theme, market)
+        context_title = title + " " + " ".join(fact["summary"] for fact in body_facts)
+        link = _holding_links(held, context_title, entities, theme, market)
         catalyst = bool(re.search(r"공급|계약|규제|제한|공개|출시|투자|실적|조달|인수|정책|earnings|guidance|funding|financing|contract|launch|chip|restrict|upgrade", title, re.I))
         topic = news_theme(title)
-        key = (market, target, topic, tuple(entities)) if topic else (market, target, row.get("event_key") or title.casefold())
-        score = (int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
+        key = ((market, target, "market_close") if row.get("is_close_wrap") else
+               (market, target, topic, tuple(entities)) if topic else (market, target, row.get("event_key") or title.casefold()))
+        score = (int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
         candidates.append((score, published, key, theme, row, link, active))
     selected, seen, counts = [], set(), {}
     for item in sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True):
@@ -109,7 +117,7 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         counts[theme] = counts.get(theme, 0) + 1
         if len(selected) >= limit:
             break
-    lines = ["분야 | 확인된 핵심 재료(보도) | 보유 노출 연결", "--- | --- | ---"]
+    lines = ["분야 | 무슨 일·왜 움직였나 | 내 보유 영향·다음 확인", "--- | --- | ---"]
     for _, published, _, theme, row, link, active in selected:
         title = text(row.get("title"))
         ko = text(first(row, "summary_ko", "한글요약"))
@@ -117,11 +125,19 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             focus = ko if re.search("[가-힣]", ko) else news_theme(title)
             title = (focus + " · " if focus else "영문 보도 · ") + title
         basis = f"{row['market']} {row['session_date']} {'진행 세션' if active else '종가 세션'}"
-        detail = citation(dict(row, title=title)) + f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
+        body_facts = verified_body_facts(row)
+        if body_facts:
+            detail = "사실(본문): " + " / ".join(fact["summary"] for fact in body_facts[:2])
+            detail += " " + citation(dict(row, title="기사 본문 확인"))
+            holding_fact = next((fact for fact in body_facts if fact["topic"] in {"ai_investment", "ai_credit"}), body_facts[0])
+            link += " · 해석(추정): " + holding_fact["implication"] + " · 다음 확인: " + holding_fact["check"]
+        else:
+            detail = citation(dict(row, title=title)) + " · 제목만 확인(본문 해석 보류)"
+        detail += f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
         lines.append(" | ".join(_cell(value) for value in (theme, detail, link)))
     if not selected:
         return {"lines": ["한 줄 결론에 인용한 보도 외에 해당 거래일·출처 기준을 통과한 추가 핵심 재료 미확보."], "article_keys": []}
-    lines.extend(["", "보도 내용은 출처의 주장입니다. 보유 연결은 업종·기초자산 노출이며 실제 가격 기여도나 매매 허용을 뜻하지 않습니다."])
+    lines.extend(["", "보도 내용은 출처의 주장입니다. 해석(추정)은 경제적 전달 경로이지 가격 원인의 확정이 아닙니다. 보유 연결은 업종·기초자산 노출이며 실제 가격 기여도나 매매 허용을 뜻하지 않습니다."])
     return {"lines": lines, "article_keys": [text(first(item[4], "link", "url")) for item in selected]}
 
 

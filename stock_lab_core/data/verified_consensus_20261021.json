@@ -1,0 +1,34 @@
+{
+  "verified_at": "2026-10-21",
+  "coverage": "September 2026 releases only; Reuters survey values verified from post-release reporting, not a point-in-time archive",
+  "sources": {
+    "cpi": {
+      "name": "Reuters survey (Investing.com syndication)",
+      "published_at": "2026-10-14T08:40:00-04:00",
+      "url": "https://www.investing.com/news/economy-news/us-consumer-prices-accelerate-in-september-on-costlier-gasoline-core-cpi-firmer-4949258"
+    },
+    "core_cpi": {
+      "name": "Reuters survey (MarketScreener syndication)",
+      "published_at": "2026-10-14T10:23:00-04:00",
+      "url": "https://ca.marketscreener.com/news/fed-rate-hike-call-seen-tight-as-inflation-heats-up-ce785dd2df8eff2d"
+    },
+    "ppi_retail": {
+      "name": "Reuters survey (MarketScreener syndication)",
+      "published_at": "2026-10-15T13:29:00-04:00",
+      "url": "https://www.marketscreener.com/news/us-producer-prices-post-largest-gain-in-4-1-2-years-expensive-gasoline-boosts-retail-sales-ce785dd3de89f222"
+    },
+    "jobs": {
+      "name": "Reuters survey (MarketScreener syndication)",
+      "published_at": "2026-10-02T09:33:00-04:00",
+      "url": "https://www.marketscreener.com/news/instant-view-soft-september-jobs-report-sends-markets-higher-ce785ddad18eff20"
+    }
+  },
+  "events": [
+    {"indicator": "US_CPI", "period": "2026-09", "basis": "MoM", "unit": "%", "release_at": "2026-10-14", "forecast": 0.6, "actual_at_release": 0.6, "source_id": "cpi"},
+    {"indicator": "US_CPI", "period": "2026-09", "basis": "YoY", "unit": "%", "release_at": "2026-10-14", "forecast": 3.6, "actual_at_release": 3.7, "source_id": "cpi"},
+    {"indicator": "US_CORE_CPI", "period": "2026-09", "basis": "YoY", "unit": "%", "release_at": "2026-10-14", "forecast": 2.5, "actual_at_release": 2.6, "source_id": "core_cpi"},
+    {"indicator": "US_PPI", "period": "2026-09", "basis": "MoM", "unit": "%", "release_at": "2026-10-15", "forecast": 0.5, "actual_at_release": 1.3, "source_id": "ppi_retail"},
+    {"indicator": "US_RETAIL_SALES", "period": "2026-09", "basis": "MoM", "unit": "%", "release_at": "2026-10-15", "forecast": 0.3, "actual_at_release": 0.8, "source_id": "ppi_retail"},
+    {"indicator": "US_NONFARM_PAYROLLS", "period": "2026-09", "basis": "MoM", "unit": "thousand persons", "release_at": "2026-10-02", "forecast": 90.0, "actual_at_release": 29.0, "source_id": "jobs"}
+  ]
+}

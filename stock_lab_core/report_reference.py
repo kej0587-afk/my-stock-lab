@@ -7,6 +7,7 @@ An unavailable/corrupt store fails closed instead of returning a moving value.
 
 from datetime import date
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.result_cache import cache_result
 
 register_loaded_source(__name__, __file__)
 
@@ -25,6 +27,7 @@ MAX_SNAPSHOTS = 128
 MAX_RECORD_BYTES = 8192
 NY = ZoneInfo("America/New_York")
 BAR = pd.Timedelta(minutes=5)
+HISTORY_RETENTION = pd.Timedelta(days=59)
 
 
 def _anchor(day):
@@ -89,6 +92,58 @@ def _closed_value(frame, anchor):
     if pd.api.types.is_bool_dtype(close.dtype) or pd.isna(value) or not math.isfinite(value) or value <= 0:
         return None
     return float(value)
+
+
+@cache_result(ttl=86400, failure_ttl=30, is_success=lambda frame: not frame.empty)
+def _load_reference_window(symbol, reference_dates):
+    import yfinance as yf
+    from stock_lab_core.prices import _select_download_ohlcv
+    from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
+
+    anchors = [_anchor(day) for day in reference_dates]
+    start, end = min(anchors) - BAR, max(anchors)
+    try:
+        with YAHOO_HISTORY_LOCK:
+            data = yf.download([symbol], start=start.to_pydatetime(), end=end.to_pydatetime(),
+                               interval="5m", auto_adjust=True, ignore_tz=False,
+                               group_by="ticker", threads=False, progress=False, timeout=4,
+                               **yahoo_session_kwargs())
+        frame = _select_download_ohlcv(data, symbol)
+        if (frame.empty or not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None
+                or not isinstance(frame.get("Close"), pd.Series)
+                or frame.attrs.get("interval") not in (None, "5m")):
+            return pd.DataFrame()
+        frame.attrs["interval"] = "5m"
+        # Retain only exact requested endpoints, never a nearby or filled candle.
+        starts = [anchor - BAR for anchor in anchors if _closed_value(frame, anchor) is not None]
+        return frame.loc[frame.index.isin(starts), ["Close"]].copy(deep=True)
+    except Exception as exc:
+        logging.warning("Report-only macro 5m download failed (%s)", type(exc).__name__)
+        return pd.DataFrame()
+
+
+def load_macro_reference_frame(symbol, reference_dates, now):
+    """Fetch missing completed anchors with bounded, explicit Yahoo 5m dates.
+
+    yfinance documents a 60-day intraday limit; leave a one-day margin. Explicit
+    start/end bounds cover 21 US sessions even when they exceed one month.
+    End is exclusive (the 15:55 bar ends at 16:00). Successful endpoints are
+    cached for a day; empty/invalid responses have only a 30-second cooldown.
+    """
+    if symbol not in REFERENCE_SYMBOLS:
+        return pd.DataFrame()
+    try:
+        observed = pd.Timestamp(now)
+        if pd.isna(observed) or observed.tzinfo is None:
+            return pd.DataFrame()
+        anchors = sorted({_anchor(day) for day in reference_dates})
+        dates = tuple(anchor.date().isoformat() for anchor in anchors
+                      if observed - HISTORY_RETENTION <= anchor - BAR and anchor <= observed)
+        if not dates:
+            return pd.DataFrame()
+    except (ValueError, TypeError, OverflowError):
+        return pd.DataFrame()
+    return _load_reference_window(symbol, dates)
 
 
 def _prune(directory):
@@ -159,14 +214,41 @@ def snapshot_at_us_close(frame, symbol, reference_date, now, *, cache_dir=None):
                 pass
 
 
-def macro_reference(frame, symbol, reference_date, now, *, previous_date="", base_date="", cache_dir=None):
+def macro_reference(frame, symbol, reference_date, now, *, previous_date="", base_date="", cache_dir=None,
+                    history_loader=None):
     """Compare only matching anchors on explicitly supplied US session dates.
 
     Price provenance is separate from comparison provenance/coverage. A caller
     must not present a complete stress score when ``stress_incomplete`` is true;
     no change, baseline, or risk-relief points are fabricated here.
+    Optional ``history_loader(symbol, missing_dates, now)`` is called once after
+    reusing live bars and immutable snapshots, only for missing valid dates.
     """
-    current = snapshot_at_us_close(frame, symbol, reference_date, now, cache_dir=cache_dir)
+    if symbol not in REFERENCE_SYMBOLS:
+        return {}
+    try:
+        anchor, observed = _anchor(reference_date), pd.Timestamp(now)
+        if pd.isna(observed) or observed.tzinfo is None or observed < anchor:
+            return {}
+    except (ValueError, TypeError, OverflowError):
+        return {}
+    dates = [reference_date]
+    for day in (previous_date, base_date):
+        try:
+            if day and _anchor(day) < anchor and day not in dates:
+                dates.append(day)
+        except (ValueError, TypeError, OverflowError):
+            continue
+    snapshots = {day: snapshot_at_us_close(frame, symbol, day, now, cache_dir=cache_dir) for day in dates}
+    missing = tuple(day for day in dates if not snapshots[day])
+    if missing and history_loader is not None:
+        try:
+            history = history_loader(symbol, missing, now)
+            for day in missing:
+                snapshots[day] = snapshot_at_us_close(history, symbol, day, now, cache_dir=cache_dir)
+        except Exception as exc:
+            logging.warning("Report-only macro reference history failed (%s)", type(exc).__name__)
+    current = snapshots[reference_date]
     if not current:
         return {}
     result = dict(current, chg=None, base_date="", base_as_of_at="", day_ret=None,
@@ -186,7 +268,7 @@ def macro_reference(frame, symbol, reference_date, now, *, previous_date="", bas
         result["comparison_missing"][value_key] = (
             f"{label} comparison unavailable: required baseline snapshot missing at {_anchor(day).isoformat()}"
         )
-        base = snapshot_at_us_close(frame, symbol, day, now, cache_dir=cache_dir)
+        base = snapshots.get(day)
         if base:
             result.update({value_key: (current["val"] / base["val"] - 1) * scale,
                            date_key: day, time_key: base["as_of_at"],

@@ -24,7 +24,9 @@ for function in tree.body:
     if isinstance(function, ast.FunctionDef) and function.name in names:
         exec(compile(ast.Module(body=[function], type_ignores=[]), "app.py", "exec"), globals())
 
-sample_path = ROOT / "docs/samples/market_report_quality_20261021.md"
+    sample_path = ROOT / "docs/samples/market_report_evidence_20261021.md"
+    if not sample_path.exists():
+        sample_path = ROOT / "docs/samples/market_report_quality_20261021.md"
 if not sample_path.exists():
     sample_path = ROOT / "docs/samples/market_report_readability_20261021.md"
 if sample_path.exists():
