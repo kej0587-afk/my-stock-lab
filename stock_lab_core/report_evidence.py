@@ -25,6 +25,7 @@ SOURCE_DOMAINS = (
     "mt.co.kr", "asiae.co.kr", "newsis.com", "cnbc.com", "bloomberg.com", "ft.com",
     "wsj.com", "finance.yahoo.com", "bls.gov", "federalreserve.gov", "bok.or.kr",
     "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com",
+    "aws.amazon.com", "pytorch.org", "nvidianews.nvidia.com", "investor.atmeta.com", "ir.tesla.com", "investors.coreweave.com",
 )
 EVENT_CLUSTERS = (
     ("cxmt", ("cxmt", "창신", "창신메모리")),
@@ -32,8 +33,8 @@ EVENT_CLUSTERS = (
     ("fomc", ("fomc", "fed rate decision", "연준 금리", "기준금리 동결")),
 )
 MARKET_TERMS = re.compile(
-    r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|"
-    r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire)\b",
+    r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|엔비디아|아마존|마이크론|코어위브|트레이니엄|파이토치|수주|가이던스|"
+    r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire|amazon|aws|trainium|pytorch|micron|guidance)\b",
     re.IGNORECASE,
 )
 
@@ -82,6 +83,14 @@ def safe_link(value):
 
 def news_category(title, fallback="시장"):
     lower = title.lower()
+    if re.search(r"CoreWeave|코어위브|Trainium|트레이니엄", title, re.I):
+        return "반도체/AI"
+    if re.search(r"\bMSCI\b", title, re.I):
+        return "금융/기업실적"
+    if re.search(r"\bTesla\b|테슬라|Roadster|로드스터", title, re.I):
+        return "자동차/모빌리티"
+    if re.search(r"\bRTX\b|BAE Systems|BAE시스템|APKWS|방산", title, re.I):
+        return "방산/군수"
     if re.match(r"^(?:\[[^]]+\]\s*)?(?:코스피|코스닥)\s*[,，]", title):
         return "시장 시황"
     if re.search(r"\b(eth|btc|ethereum|bitcoin|crypto)\b|이더리움|비트코인|가상자산", lower):
@@ -563,7 +572,12 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(["", "## 한 줄 결론"])
     if mode == "intraday" and synthesis.get("overview"):
         lines.extend([synthesis["overview"], ""])
-    lines.extend([headline + ".", "", "## 오늘의 시장 스토리"])
+    from stock_lab_core.report_brief import build_news_brief
+    brief = build_news_brief(context, news, summary_rows, now,
+                            exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
+                                          + participant_news_rows(news, kr)])
+    lines.extend([headline + ".", "", "## 오늘의 핵심 재료",
+                  *brief["lines"], "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
     lines.extend(["", *evidence_table(synthesis), ""])
     if outlook_count:
@@ -575,7 +589,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     reversal = next((row for row in story_news if row.get("market") == "KR" and row.get("session_date") == kr
                      and re.search(r"반전|반등 성공|급락 출발", text(row.get("title")))), None)
     participant_rows = participant_news_rows(news, kr)
-    used_story_news = {news_article_key(row) for row in participant_rows[:3]}
+    used_story_news = {news_article_key(row) for row in participant_rows[:3]} | set(brief["article_keys"])
     if reversal and news_article_key(reversal) not in used_story_news:
         kr_summary += f" · 제목 기준(기사 주장): {story_news_citation(reversal)}"
         used_story_news.add(news_article_key(reversal))
@@ -1047,5 +1061,11 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(["", "가격·거래량 흐름은 실제 자금 유입액이 아닙니다. 가속도는 최근 3개월 수익률과 직전 3개월 수익률 차이(%p), 다이버전스는 가격과 흐름 지표 방향이 엇갈리는 상태입니다."])
     # Move the single holdings section, without duplicating it in the story.
     lines = lines[:story_start] + lines[holding_start:holding_end] + lines[story_start:holding_start] + lines[holding_end:]
+    calendar_start = lines.index("## 다가오는 일정")
+    calendar_end = lines.index("## 추가 핵심 뉴스", calendar_start)
+    calendar_block = lines[calendar_start:calendar_end]
+    del lines[calendar_start:calendar_end]
+    holding_at = lines.index("## 내 보유 종목 영향")
+    lines[holding_at:holding_at] = calendar_block
     lines.extend(history_lines)
     return lines, list(dict.fromkeys(missing))

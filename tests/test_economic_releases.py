@@ -77,7 +77,7 @@ def providers(monkeypatch):
             response = Response(text='''<h4>2026 FOMC Meetings</h4><div class="fomc-meeting">
                 <div class="fomc-meeting__month">October</div>
                 <div class="fomc-meeting__date">27-28</div></div>''')
-        elif url == release_calendar.META_IR_URL:
+        elif url in {release_calendar.META_IR_URL, release_calendar.TESLA_IR_URL}:
             response = Response(status=403)
         elif url == releases.FRED_URL:
             response = Response({"observations": [

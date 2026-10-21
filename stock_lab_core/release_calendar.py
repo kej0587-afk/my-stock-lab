@@ -19,6 +19,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
+
 
 FRED_DATES_URL = "https://api.stlouisfed.org/fred/release/dates"
 _FRED_RELEASES = {"cpi": 10, "ppi": 46, "empsit": 50}
@@ -34,6 +38,7 @@ FOMC_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 BOK_URL = "https://www.bok.or.kr/portal/bbs/B0000502/view.do?nttId=10094300&menuNo=201265"
 META_IR_URL = ("https://investor.atmeta.com/investor-news/press-release-details/"
                "2026/Meta-to-Announce-Third-Quarter-2026-Results/default.aspx")
+TESLA_IR_URL = "https://ir.tesla.com/press-release/tesla-third-quarter-2026-production-deliveries-and-deployments"
 # The BOK page delegates its calendar to an attachment which blocks automated
 # retrieval. These are policy decisions, excluding general/stability meetings.
 _BOK_2026_DATES = ("2026-01-15", "2026-02-26", "2026-04-10", "2026-05-28",
@@ -343,6 +348,39 @@ def _meta_source(now):
                      "source_verified_at": _VERIFIED_ON}
 
 
+def _tesla_events(html):
+    parser = _PageText()
+    parser.feed(html)
+    page = " ".join(" ".join(parser.parts).split())
+    match = re.search(r"Tesla will post its financial results for the third quarter of (2026) after market close on "
+                      r"(?:\w+,? )?([A-Z][a-z]+) (\d{1,2}),? (2026)", page, re.I)
+    if not match:
+        raise _InvalidCalendar("calendar_rows_unrecognized")
+    day = datetime.strptime(f"{match[2]} {match[3]} {match[4]}", "%B %d %Y").date().isoformat()
+    event = {"event": "Tesla earnings", "indicator": "US_TSLA_EARNINGS", "ticker": "TSLA",
+             "market": "US", "date": day, "release_at": day, "release_precision": "date",
+             "timezone": "America/New_York", "session_timing": "after_market_close",
+             "release_time_confirmed": False, "source": "Tesla Investor Relations", "source_url": TESLA_IR_URL}
+    if re.search(r"5:30\s*p\.?m\.?\s*(?:Eastern Time|ET)", page, re.I):
+        event["conference_call_at"] = datetime.combine(date.fromisoformat(day), datetime_time(17, 30),
+                                                        ZoneInfo("America/New_York")).isoformat()
+    return [event]
+
+
+def _tesla_source(now):
+    name = "Tesla Investor Relations"
+    if not date(2026, 10, 2) <= now.date() <= date(2026, 12, 31):
+        return [], {"name": name, "status": "unavailable", "reason": "verified_quarter_unavailable"}
+    # Reuse this independently verified announcement without adding a request
+    # to each render. Coverage ends with the explicitly announced quarter.
+    event = _tesla_events("Tesla will post its financial results for the third quarter of 2026 after market close on "
+                          "Wednesday, October 21, 2026. Webcast 5:30 p.m. Eastern Time")
+    event[0].update(source_published_at="2026-10-02", source_verified_at="2026-10-21", source_kind="verified_fixture")
+    return event, {"name": name, "status": "connected", "reason": "", "provider": "verified_fixture",
+                   "source_url": TESLA_IR_URL,
+                   "source_verified_at": "2026-10-21"}
+
+
 def _load_source(name, url, parser, now, *, fetch=None, cache_scope=""):
     key = (url, now.year, cache_scope)
     with _LOCK:
@@ -402,6 +440,7 @@ def load_release_calendar(now=None, *, fred_api_key=""):
         futures.append(executor.submit(_load_source, "Federal Reserve FOMC", FOMC_URL,
                                        lambda html: _fomc_events(html, now), now))
         futures.append(executor.submit(_meta_source, now))
+        futures.append(executor.submit(_tesla_source, now))
         results = [future.result() for future in futures]
     results.append(_bok_source(now))
     events = [event for rows, _ in results for event in rows]

@@ -27,6 +27,8 @@ META = """<h2>Meta to Announce Third Quarter 2026 Results</h2>
 <p>October 12, 2026</p><p>The company's third quarter 2026 financial results
 will be released after market close on Wednesday, October 21st, 2026.</p>
 <p>Meta will host a conference call to discuss its results at 1:30 p.m. PT / 4:30 p.m. ET the same day.</p>"""
+TESLA = """<p>Tesla will post its financial results for the third quarter of 2026 after market close on
+Wednesday, October 21, 2026.</p><p>Webcast 5:30 p.m. Eastern Time</p>"""
 
 
 @pytest.fixture
@@ -39,7 +41,7 @@ def pages(monkeypatch):
         def __init__(self, url, params=None):
             self.status_code = 403 if url in state["fail"] else 200
             self.text = (state["fomc"] if url == calendar.FOMC_URL else
-                         state["meta"] if url == calendar.META_IR_URL else state["bls"])
+                         state["meta"] if url == calendar.META_IR_URL else TESLA if url == calendar.TESLA_IR_URL else state["bls"])
             self.params = params
 
         def json(self):
@@ -70,7 +72,7 @@ def test_confirmed_bls_reference_months_dst_and_date_only_fomc(pages):
     result = calendar.load_release_calendar(now=NOW)
     assert result["connected"] is True
     assert all(source["status"] == "connected" and source["reason"] == "" for source in result["sources"])
-    assert len(result["events"]) == 18
+    assert len(result["events"]) == 19
     cpi = [event for event in result["events"] if event["indicator"] == "US_CPI"]
     assert cpi[0]["period"] == "2026-09"
     assert cpi[0]["release_at"] == "2026-10-14T08:30:00-04:00"
@@ -174,7 +176,7 @@ def test_failed_bls_uses_fred_dates_with_explicit_standard_time_rule(pages):
     assert {call["release_id"] for call in pages["fred_calls"]} == {10, 46, 50}
     assert all(call["api_key"] == "test-secret" and call["include_release_dates_with_no_data"] == "true"
                for call in pages["fred_calls"])
-    assert len(result["events"]) == 18
+    assert len(result["events"]) == 19
     for event in result["events"]:
         if event["source"] == "FRED release calendar":
             assert event["release_at"].startswith(event["date"] + "T08:30:00")

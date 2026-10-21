@@ -124,7 +124,8 @@ def test_streamlit_report_smoke_collapsed_expanded_collapsed():
     app = AppTest.from_function(report_app, args=(report,), default_timeout=15).run()
     original_markdown = [item.value for item in app.markdown]
     original_labels = [item.label for item in app.expander]
-    assert len(original_labels) == 14
+    assert len(original_labels) == 13
+    assert "다가오는 일정" not in original_labels
 
     for opened in (False, True, False):
         if opened != app.checkbox[0].value:

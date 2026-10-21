@@ -428,7 +428,7 @@ def _bls(now):
 
 
 def _retail(now, api_key):
-    params = {"get": "cell_value,time_slot_date,category_code,data_type_code,seasonally_adj,error_data",
+    params = {"get": "cell_value,time_slot_date",
               "time": f"from {now.year - 1}-01 to {now:%Y-%m}",
               "category_code": "44X72", "data_type_code": "MPCSM",
               "seasonally_adj": "yes", "error_data": "no"}
@@ -462,7 +462,7 @@ def _retail(now, api_key):
             if not isinstance(cells, list) or len(cells) != len(header):
                 raise _Unavailable("census_invalid_row")
             item = dict(zip(header, cells))
-            period = _month(item.get("time_slot_date") or item.get("time"))
+            period = _month(item.get("time_slot_date")) or _month(item.get("time"))
             value = _number(item.get("cell_value"))
             reason = next((code for invalid, code in (
                 (item.get("category_code") != "44X72", "category_mismatch"),

@@ -261,6 +261,11 @@ _CLOSE_WRAP = re.compile(
     r"\b(?:stocks?|markets?|wall street|nasdaq|s&p).{0,80}\bclos(?:e[sd]?|ing)\b|"
     r"\bmarket wrap\b|\bclosing bell\b", re.I,
 )
+_KR_HEADLINE_SUBJECT = re.compile(
+    r"^\s*(?:(?:\[[^]]+\]|\([^)]*\))\s*)*"
+    r"(?:코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장))"
+    r"(?=\s|[,，:·…]|$|[은는이가]\s)", re.I,
+)
 
 
 def _news_timestamp(value):
@@ -395,7 +400,10 @@ def _news_sort_key(row):
 
 def _us_close_recap(title, published, window):
     """Allow an explicit US recap until the next weekday open, not new causes."""
-    if not window or not re.search(r"美|미국|뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I):
+    if (not window or _KR_HEADLINE_SUBJECT.search(title)
+            or not re.search(r"(?:美|미국)\s*(?:증시|주식시장)|"
+                             r"(?:美|미국)\s*(?:AI|반도체)(?:[·ㆍ/\s]+(?:AI|반도체))*주?\s*(?:중심\s*)?(?:급락|하락|급등|상승|반등|쇼크|약세|강세)|"
+                             r"뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I)):
         return False
     if re.search(r"시간외|장후|after.hours|post.close|선물|예정|다음주", title, re.I):
         return False
@@ -456,7 +464,8 @@ def _resolve_query_news_market(raw, windows):
     publisher = str(row.get("publisher") or "").strip()
     if publisher:
         title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
-    if row.get("query_topics") or str(row.get("market_category") or "").startswith("섹터:"):
+    if (row.get("query_topics") or str(row.get("market_category") or "").startswith("섹터:")
+            or row.get("market_category") == "기업 재료"):
         from stock_lab_core.report_presentation import sector_news_topics
         # Search packs describe retrieval, not evidence about this headline.
         topics = sector_news_topics("", sector_name=title)
@@ -465,12 +474,16 @@ def _resolve_query_news_market(raw, windows):
     markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
     if re.match(r"^Asia(?:n)?(?:[- ]Pacific)?\s+(?:shares|stocks|markets)\b", title, re.I):
         row.update(market="ASIA", market_basis="explicit_headline_subject")
+    elif _KR_HEADLINE_SUBJECT.search(title):
+        row.update(market="KR", market_basis="explicit_headline_subject")
     elif published and _us_close_recap(title, published, windows.get("US")):
         row.update(market="US", market_basis="explicit_us_recap")
     elif len(markets) == 1:
         row.update(market=markets[0], market_basis="explicit_headline_market")
     elif len(markets) > 1:
         row.update(market="", market_basis="ambiguous_headline_markets")
+    elif re.search(r"엔비디아|\bNvidia\b|아마존|\bAmazon\b|\bAWS\b|메타\b|\bMeta\b|마이크론|\bMicron\b", title, re.I):
+        row.update(market="US", market_basis="explicit_headline_market")
     else:
         row.setdefault("market_basis", "search_query_only")
     return row
@@ -574,6 +587,16 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         if published <= start or published > now:
             rejected["뉴스 시간창 밖 또는 미래 발행시각"] += 1
             continue
+        # The window starts at the supplied previous session's confirmed close.
+        if market == "US" and _us_close_recap(title, published, {"end": window["start"]}):
+            row = dict(raw, market=market, published_at=published.isoformat(),
+                       session_date=window["previous_date"], news_bucket="other_market_news",
+                       is_close_wrap=True, retrospective_close_wrap=True,
+                       post_close_context=False, session_status="closed", is_closed=True)
+            _publication_timing(row, published, market)
+            row["news_timing"] = "이전 미국장 마감 회고 · 현재 종가 원인 아님"
+            result["other_market_news"].append(row)
+            continue
         wrap = bool(_CLOSE_WRAP.search(str(raw.get("title") or raw.get("제목") or "")))
         title = str(raw.get("title") or raw.get("제목") or "")
         if re.search(r"post.close|after.hours|시간외|장후|마감 후", title, re.I):
@@ -661,12 +684,15 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                 packs = [topics[market][index:index + pack_size] for index in range(0, len(topics[market]), pack_size)]
                 common = ('(AI OR CoreWeave OR neocloud) (credit OR debt OR financing OR rebound) OR "Treasury yields" OR "oil prices"'
                           if market == "US" else '"AI 신용" OR "AI 차입" OR "외국인 기관" OR 금리 OR 환율')
+                company_plans = []
+                if market == "US" and set(topics[market]) & {"semiconductor", "memory", "technology", "software"}:
+                    company_plans = [("기업 재료", "(엔비디아 OR 아마존 OR AWS OR 메타 OR 마이크론 OR 코어위브) (칩 OR 공급 OR 자금조달 OR 실적)")]
                 market_plans = [("장중 시황" if window.get("is_closed") is False else "마감 시황",
                                  "Wall Street stocks" if market == "US" and window.get("is_closed") is False
                                  else "미국증시 마감" if market == "US" else "코스피 마감"),
                                 ("시장 공통 배경", common),
                                 *[("섹터:" + ",".join(pack), " OR ".join("(" + sector_news_query(topic, market) + ")" for topic in pack))
-                                  for pack in packs], *selected]
+                                  for pack in packs], *company_plans, *selected]
             for category, query in market_plans:
                 terms = market_spec["wrap"] if query is None else query
                 # Google date predicates have calendar precision. Pad boundaries
@@ -674,15 +700,16 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                 after = (lower.astimezone(ZoneInfo(window["timezone"])).date() - timedelta(days=1)).isoformat()
                 before = (upper.astimezone(ZoneInfo(window["timezone"])).date() + timedelta(days=1)).isoformat()
                 korean_wrap = terms in {"코스피 마감", "미국증시 마감"}
+                company_material = category == "기업 재료"
                 active_direct = window.get("is_closed") is False and terms in {"Wall Street stocks", "AI stocks", "semiconductor stocks"}
                 if category.startswith("섹터:") or category == "시장 공통 배경":
                     subject = '(한국 OR 국내 OR 코스피 OR 코스닥)' if market == "KR" else '(US OR "U.S." OR "Wall Street")'
                     query_text = f"{subject} ({terms})"
                 else:
-                    query_text = terms if korean_wrap or active_direct else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
+                    query_text = terms if korean_wrap or active_direct or company_material else f"{market_spec['query']} ({terms})" if terms else market_spec["query"]
                 query_text += f" after:{after} before:{before}"
                 url = "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query_text})
-                locale = "hl=ko&gl=KR&ceid=KR:ko" if korean_wrap else market_spec["locale"]
+                locale = "hl=ko&gl=KR&ceid=KR:ko" if korean_wrap or company_material else market_spec["locale"]
                 specs.append({"market": market, "category": category, "url": url + "&" + locale,
                               "query_topics": category.removeprefix("섹터:").split(",") if category.startswith("섹터:") else []})
         groups.append(specs)

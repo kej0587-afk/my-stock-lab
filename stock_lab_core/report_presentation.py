@@ -311,9 +311,11 @@ def market_cause_candidates(news, market, session):
 def is_preopen_outlook(row):
     """Identify a market forecast by content, independent of publication hour."""
     title = text(row.get("title"))
+    if re.search(r"(?:코스피|코스닥|(?:한국|국내)\s*증시)[\s,:·…]*(?:향방|전망)", title):
+        return True
     if re.search(r"\b(?:stocks?|index|equity|Wall Street|Nasdaq|Dow Jones|S&P(?:\s*500)?) futures\b|\bpre[- ]?market\b|\bahead of (?:the )?open\b|"
                  r"\b(?:market|stocks?|wall street) (?:outlook|preview)\b|"
-                 r"\bstocks? (?:are )?(?:set|poised|expected) to\b|뉴욕증시\s*전망|미국\s*증시\s*전망", title, re.I):
+                 r"\b(?:stocks?|Wall St(?:reet)?) (?:are |is )?(?:set|poised|expected) (?:to|for)\b|뉴욕증시\s*전망|미국\s*증시\s*전망", title, re.I):
         return True
     if row.get("market") != "KR":
         return False

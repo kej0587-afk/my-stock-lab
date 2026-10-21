@@ -140,6 +140,8 @@ def test_additional_news_rows_do_not_start_markdown_numbered_lists():
     # Mark the first article as used by the generic story; retain another item.
     context["session_news"].append(dict(context["session_news"][0], title="US banks gain after earnings",
                                          link="https://www.reuters.com/bank-fixture"))
+    context["session_news"].extend(dict(context["session_news"][0], title=f"US banks gain after earnings update {i}",
+                                      link=f"https://www.reuters.com/bank-fixture-{i}") for i in range(6))
     report = build_auto_market_memo(report_context=context, now=NOW)
     additional = report.split("## 추가 핵심 뉴스")[1].split("## 판정 이력 비교")[0]
     assert "뉴스 1 · " in additional and "\n1. " not in additional

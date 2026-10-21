@@ -1,6 +1,7 @@
 """Evidence-bound market synthesis, separate from portfolio P/L and trade gates."""
 
 import re
+from zoneinfo import ZoneInfo
 
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, citation, first, macro_stress, number, records, stamp, text
@@ -11,6 +12,21 @@ register_loaded_source(__name__, __file__)
 
 def _pct(value):
     return f"{value * 100:+.2f}%"
+
+
+def _news_matches_date(row, fact):
+    published = stamp(first(row, "published_at", "published"))
+    if not published or not fact.get("date"):
+        return False
+    zone = ZoneInfo("Asia/Seoul" if fact["market"] == "KR" else "America/New_York")
+    if published.astimezone(zone).date().isoformat() == fact["date"]:
+        return True
+    if fact["market"] == "US" and row.get("retrospective_close_wrap"):
+        from stock_lab_core.today_news import _us_close_recap
+        from datetime import datetime
+        close = datetime.fromisoformat(fact["date"]).replace(hour=16, tzinfo=zone)
+        return _us_close_recap(text(row.get("title")), published, {"end": close.isoformat()})
+    return False
 
 
 def _market_fact(context, market, states, now):
@@ -96,6 +112,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             continue
         eligible = [row for row in news if row.get("market") == fact["market"]
                     and row.get("session_date") == fact["date"] and not is_preopen_outlook(row) and not is_preopen_price_recap(row)
+                    and _news_matches_date(row, fact)
                     and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
         if fact["live"]:
             eligible = [row for row in eligible if row.get("news_bucket") == "current_session_news"]
@@ -123,7 +140,18 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                 if (fact["market"] == "KR" and re.search(r"코스피|코스닥", title)
                         and re.search(r"(?:국제)?유가[·ㆍ/\s]+금리\s*(?:동반\s*)?안정", title)):
                     topic = "유가·금리 안정"
-                if topic and re.search(r"반등|회복|상승|강세|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bclimb|\bhigher", title, re.I):
+                if fact["market"] == "KR" and re.search(r"코스피|코스닥", title):
+                    drivers = []
+                    if re.search(r"반도체.{0,15}(?:반등|강세|급등|상승)", title):
+                        drivers.append("반도체주 반등")
+                    if re.search(r"외국인.{0,12}(?:순매수|매수 전환|매수세)", title):
+                        drivers.append("외국인 매수")
+                    if drivers:
+                        topic = "·".join(drivers)
+                earnings_offset = bool(re.search(r"strong earnings offset AI credit fears", title, re.I))
+                if earnings_offset:
+                    topic = "실적 호조·AI 신용우려가 교차"
+                if topic and (earnings_offset or re.search(r"반등|회복|상승|강세|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bclimb|\bhigher", title, re.I)):
                     local_claims.append(topic)
                     local_news.append(row)
                     break
