@@ -770,6 +770,13 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         if states[region]["phase"] == "intraday":
             actual_now = (_pct(current["return"]) + f" ({current['date']} 장중 진행·확정 아님; {kst_time(current.get('as_of', current.get('retrieved_at')))})"
                           if current.get("date") == states[region]["active_date"] and number(current.get("return")) is not None else "시각 확인 가능한 시세 미수집")
+        elif region == "US":
+            extended = context.get("extended_prices", {}).get(ticker, {})
+            actual_now = (_pct(extended["return"]) + f" ({extended['kind']}; {kst_time(extended['as_of'])}; "
+                          + f"{extended['previous_date']} 정규장 종가 대비 · {extended['source']})"
+                          if number(extended.get("return")) is not None else "정규장 외 · 데이마켓/시간외 시세 미연결")
+            if mode == "closed" and number(extended.get("return")) is not None:
+                reasons.append("별도 세션 " + actual_now)
         if leveraged:
             reasons = [reason for reason in reasons if reason != "개별 위험사유 없음"]
             if "레버리지 보유" not in reasons:
@@ -783,7 +790,10 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                 reasons.append("일간 기여 미확인")
         else:
             reasons.append("현재비중·일간 기여 미연결")
-        cells = [f"{text(first(row, '종목명', 'name'))}({ticker})", _pct(value) + (f" ({obs['date']} 확정 종가)" if obs.get("date") else ""), estimate]
+        close_cell = _pct(value) + (f" ({obs['date']} 확정 종가)" if obs.get("date") else "")
+        if obs.get("stale"):
+            close_cell = "최신 종가 미수집 · 과거 참고 " + close_cell
+        cells = [f"{text(first(row, '종목명', 'name'))}({ticker})", close_cell, estimate]
         if mode != "closed":
             cells.append(actual_now)
         lines.append(" | ".join(_cell(v) for v in [*cells, ", ".join(reasons)]))

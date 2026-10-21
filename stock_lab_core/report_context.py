@@ -11,6 +11,7 @@ from stock_lab_core.report_evidence import KST, first, is_held, price_observatio
 from stock_lab_core.report_holdings import UNDERLYINGS
 from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, align_us_report_frames, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 from stock_lab_core.report_session import kst_now, market_session_states
+from stock_lab_core.performance import timed_call
 
 
 def apply_verified_release_dates(rows, now):
@@ -29,8 +30,10 @@ def apply_verified_release_dates(rows, now):
             row["verification"] = f"BLS 원문 재확인(2026-10-18) {state} [공식 발표문]({match['source_url']})"
 
 
+@timed_call("external_data", "report_context")
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
-                           economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False):
+                           economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False,
+                           quote_data=None):
     from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
     from stock_lab_core.release_calendar import load_release_calendar
@@ -57,6 +60,15 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                 frames[ticker] = load_price_df(ticker, "1y")
         from stock_lab_core.report_live import supplement_kr_indices
         frames = supplement_kr_indices(frames)
+    from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, extended_quote_observation, kr_index_observations
+    held_us = tuple(sorted({text(first(row, "티커", "ticker")) for row in records(summary_rows)
+                            if is_held(row) and text(first(row, "티커", "ticker"))
+                            and not text(first(row, "티커", "ticker")).endswith((".KS", ".KQ"))}))
+    if quote_data is None:
+        quote_data = (load_report_quotes(held_us, include_kr=market_session_states(now)["KR"]["phase"] == "intraday")
+                      if price_frames is None else {})
+    us_quotes = quote_data.get("US", {})
+    frames = repair_held_us_closes(frames, us_quotes, now)
     frames, price_alignment = align_us_report_frames(
         frames, tickers, now, reload_batch=load_price_frames_batch if price_frames is None else None)
     observations = {ticker: price_observation(frames.get(ticker), ticker, now) for ticker in tickers}
@@ -64,6 +76,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         # A missing preceding session makes a multi-day change, not a daily one.
         if observations[ticker]["date"] == price_alignment["expected_date"]:
             observations[ticker]["return"] = None
+        observations[ticker]["stale"] = True
     sessions, news_sessions = {}, {}
     for region, indices in (("KR", ("^KS11", "^KQ11")), ("US", ("^GSPC", "^IXIC", "^DJI"))):
         dates = {observations[ticker]["date"] for ticker in indices if observations[ticker]["date"]}
@@ -78,6 +91,13 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     if states["KR"]["phase"] == "intraday" and sessions.get("KR"):
         current_news_sessions["KR"] = {"date": states["KR"]["active_date"], "previous_date": sessions["KR"], "is_active": True}
     intraday = {ticker: intraday_observation(frames.get(ticker), ticker, now) for ticker in tickers}
+    if states["KR"]["phase"] == "intraday":
+        # An untimed daily bar must not overrule a timestamped current index quote.
+        kr_live = kr_index_observations(quote_data.get("KR", {}), now)
+        for ticker in ("^KS11", "^KQ11"):
+            intraday[ticker] = kr_live.get(ticker, {})
+    extended = {ticker: obs for ticker in held_us
+                if (obs := extended_quote_observation(us_quotes.get(ticker, {}), ticker, now))}
     if states["US"]["phase"] == "intraday":
         from stock_lab_core.report_live import load_us_live_frames, us_live_observation
         us_tickers = tuple(sorted(t for t in tickers if not t.endswith((".KS", ".KQ", "=X", "=F"))
@@ -134,7 +154,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     rotation_rows = [row for row in closed_rows if abs(infer_scenario_shock_multiplier({"티커": row["Ticker"]})) <= 1 and row["Ticker"] != "SMH"]
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
               "price_alignment": price_alignment,
-              "market_states": states, "intraday_prices": intraday, "closed_flow_rows": closed_rows,
+              "market_states": states, "intraday_prices": intraday, "extended_prices": extended, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}

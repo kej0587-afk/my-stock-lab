@@ -85,7 +85,7 @@ def test_current_kr_news_session_is_separate_from_completed_prices():
 
 
 def test_real_collection_path_repairs_report_data_without_changing_summary(monkeypatch):
-    from stock_lab_core import prices, report_live
+    from stock_lab_core import prices, report_live, report_quotes
     rows = [{"티커": "RAM", "보유량": 1, "현재비중": 10, "게이트상태": "방어우선", "Adj점수": 4}]
     before = deepcopy(rows)
     calls = []
@@ -99,6 +99,7 @@ def test_real_collection_path_repairs_report_data_without_changing_summary(monke
     monkeypatch.setattr(prices, "load_price_frames_batch", batch)
     monkeypatch.setattr(prices, "load_price_df", lambda *args: frame(["2026-10-19", "2026-10-20"], [100, 97]))
     monkeypatch.setattr(report_live, "supplement_kr_indices", lambda frames: frames)
+    monkeypatch.setattr(report_quotes, "load_report_quotes", lambda *args, **kwargs: {})
     context = collect_report_context(rows, now=NOW, economic_releases=[],
                                      calendar={"events": [], "sources": []}, scenario_frames={})
     assert len(calls) == 2 and calls[-1] == ("RAM", "SOXX")

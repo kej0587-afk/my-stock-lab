@@ -14,7 +14,7 @@ from stock_lab_core.result_cache import cache_result
 register_loaded_source(__name__, __file__)
 
 
-@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
+@cache_result(ttl=60, failure_ttl=15, is_success=lambda frame: not frame.empty)
 def load_kr_index_history(code):
     if code not in {"KOSPI", "KOSDAQ"}:
         return pd.DataFrame()
@@ -40,7 +40,7 @@ def supplement_kr_indices(frames):
         recent = list(pool.map(load_kr_index_history, ("KOSPI", "KOSDAQ")))
     for ticker, update in zip(("^KS11", "^KQ11"), recent):
         old = frames.get(ticker)
-        if update.empty or (old is not None and not old.empty and old.index[-1].date() >= update.index[-1].date()):
+        if update.empty or (old is not None and not old.empty and old.index[-1].date() > update.index[-1].date()):
             continue
         if old is not None and not old.empty:
             old = old.copy()

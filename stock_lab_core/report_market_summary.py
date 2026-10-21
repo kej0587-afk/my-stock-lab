@@ -26,6 +26,9 @@ def _market_fact(context, market, states, now):
         if not target or row.get("date") != target or change is None:
             continue
         kind = "장중·확정 아님" if live else "확정 종가"
+        if live and row.get("as_of"):
+            from stock_lab_core.report_presentation import kst_time
+            kind += "; " + kst_time(row["as_of"])
         if market == "KR":
             prefix = "당일 " if target == now.date().isoformat() else "최신 확정 "
             price_text = f"{label} {prefix}{'' if live else '종가 '}{_pct(change)}"
