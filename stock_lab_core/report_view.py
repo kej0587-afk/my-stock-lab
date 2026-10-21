@@ -8,6 +8,10 @@ register_loaded_source(__name__, __file__)
 
 REPORT_STYLE = """
 <style>
+.st-key-market_report_reading h1 { font-size: 1.5rem; }
+.st-key-market_report_reading h2 { font-size: 1.2rem; }
+.st-key-market_report_reading h3 { font-size: 1.05rem; }
+.st-key-market_report_reading { letter-spacing: 0; }
 .st-key-market_report_reading table {
     display: block;
     width: 100%;

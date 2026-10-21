@@ -36344,7 +36344,7 @@ if main_page == "precision":
                     st.caption(precision_chart_load_note)
 
             if is_free and not has_p:
-                st.info("💡 전광판/보유자산에 없는 미보유 관찰 종목입니다.")
+                st.info("💡 미보유 관찰 종목입니다.")
             else:
                 if has_p and my_p > 0: st.markdown(f"<div class='info-panel' style='border-left: 5px solid #27ae60;'><b>내 평단가 (DB 연동)</b><br><span class='highlight' style='color:#2ecc71;'>{format_currency(my_p, tkr)}</span></div>", unsafe_allow_html=True)
                 dca_html = ""

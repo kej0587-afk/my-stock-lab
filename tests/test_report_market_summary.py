@@ -173,5 +173,21 @@ def test_close_summary_explains_rebound_divergence_and_distinct_medium_trends():
     assert "최근 5거래일은 -4.55%" in headline
     assert "지수 방향이 엇갈린 혼조" in headline
     assert "반도체 중기 약세" in headline and "소프트웨어 중기 강세" in headline
+    assert len(headline.split("\n\n")) == 3
     assert "기사 주장" not in headline  # No news supplied, so no invented catalyst.
     assert context == original
+
+
+def test_closed_korea_is_not_mislabeled_as_missing_live_quote():
+    from stock_lab_core.report_intraday import account_overview_lines
+
+    metrics = {"coverage": 22.4, "total": 1.14, "groups": {
+        "KR": {"count": 0, "coverage": 0, "contribution": None},
+        "US_EXT": {"count": 4, "coverage": 22.4, "contribution": 1.14}}}
+    original = deepcopy(metrics)
+    after_close = "\n".join(account_overview_lines(metrics, {}, {}, "closed"))
+    assert "한국 상장 장중 | 해당없음 | - | 마감 후" in after_close
+    assert "미국 데이마켓·시간외 | +1.14%p | 22.4%" in after_close
+    intraday = "\n".join(account_overview_lines(metrics, {}, {}, "intraday"))
+    assert "한국 상장 장중 | 미연결" in intraday
+    assert metrics == original

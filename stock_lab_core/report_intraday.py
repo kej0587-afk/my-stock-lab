@@ -130,6 +130,10 @@ def account_overview_lines(metrics, closed, sessions, mode):
             group = metrics.get("groups", {}).get(key, {})
             if key == "US" and not group.get("count"):
                 continue
+            if key == "KR" and mode != "intraday" and not group.get("count"):
+                state = "마감 후" if mode == "closed" else "한국 정규장 외"
+                lines.append(f"한국 상장 장중 | 해당없음 | - | {state} · 장중 집계 대상 아님, 종가 행 참조")
+                continue
             lines.append(f"{label} | {pct(group.get('contribution'))} | {group.get('coverage', 0):.1f}% | {group.get('count', 0)}종목 연결")
     if closed and not closed.get("error"):
         lines.append(f"최신 종가 기준 계좌 추정 | {pct(closed['daily'])} | {closed['coverage']:.1f}% | 미국 {sessions.get('US', '미확인')} / 한국 {sessions.get('KR', '미확인')}"

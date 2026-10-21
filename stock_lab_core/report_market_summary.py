@@ -161,15 +161,15 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             if recent is not None and recent < 0:
                 narrative += f". 다만 최근 5거래일은 {_pct(recent)}로, 오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다"
         sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
-    headline = ". ".join(sentences)
+    headline = ".\n\n".join(sentences)
     if inference:
         caution = burden or "약세" in flow_condition
         check = "반등 지속성을" if any((fact["change"] or 0) > 0 for fact in facts) else "약세 확산 여부를"
         ending = (f" 환경에서는 {check} 확인할 국면입니다(종합 해석)" if caution else
                   "와 당일 방향의 동행 여부를 확인할 국면입니다(종합 해석)")
-        headline += (". 다만 " if caution else ". ") + "과 ".join(inference) + ending
+        headline += (".\n\n다만 " if caution else ".\n\n") + "과 ".join(inference) + ending
     if states["US"]["phase"] == "preopen" and futures_line:
-        headline += ". 미국 개장 전 참고: " + futures_line
+        headline += ".\n\n미국 개장 전 참고: " + futures_line
     incomplete = any(row.get("stress_incomplete") for row in aligned_macro.values()) or any(name not in aligned_macro for name in ("유가", "환율"))
     macro_text = (f"스트레스 {'부분합 ' if incomplete else ''}{stress['score']} {stress['label']} · " +
                   (" / ".join(f"{row['name']} {row['value']:.2f}({row['state']})" for row in burdens[:2]) or "확인 지표의 추가 스트레스 기여 없음") +
