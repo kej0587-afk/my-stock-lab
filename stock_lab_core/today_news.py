@@ -408,7 +408,7 @@ def _us_close_recap(title, published, window):
     # accept such titles immediately after this supplied, confirmed close.
     near_close = close < published <= close + timedelta(hours=2)
     market_prices = bool(re.search(r"\bstocks?\b|\bshares\b|Nasdaq|Wall Street|나스닥|증시", title, re.I)
-                         and re.search(r"반등|급등|급락|하락|상승|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
+                         and re.search(r"반등|급등|급락|하락|상승|혼조|\bmixed\b|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
     if not explicit and not (near_close and market_prices):
         return False
     next_day = close.date() + timedelta(days=1)
@@ -421,7 +421,7 @@ def _us_close_recap(title, published, window):
 _HEADLINE_MARKETS = {
     "JP": re.compile(r"日\s*증시|일본\s*증시|닛케이|Japan(?:ese)?\s+(?:shares|stocks)|\bNikkei\b", re.I),
     "CN": re.compile(r"中\s*증시|중국\s*증시|Chinese\s+(?:shares|stocks)", re.I),
-    "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)", re.I),
+    "KR": re.compile(r"코스피|코스닥|\bKOSPI\b|\bKOSDAQ\b|(?:한국|국내)\s*(?:증시|주식시장)|한국은행|금융통화위원회|\bBank of Korea\b", re.I),
     "US": re.compile(r"(?:미국|뉴욕|美)\s*증시|나스닥|\bNasdaq\b|\bWall Street\b|"
                      r"S&P\s*500|\bU\.?S\.?\s+(?:(?:energy|consumer|healthcare|health care|biotech|technology|tech|software|"
                      r"semiconductor|chip|memory|communication services|utilities|bank|financial|industrial)\s+)?"
@@ -531,7 +531,13 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
             rejected["뉴스 발행시각 누락/해석 불가"] += 1
             continue
         live = current_by_market.get(market)
-        if live and datetime.fromisoformat(live["start"]) < published <= now:
+        closed = by_market.get(market)
+        # Prior-day Korean post-close reports keep their publication session,
+        # even when their headline does not contain the word "close".
+        prior_kr_close = bool(market == "KR" and closed
+                              and published.astimezone(ZoneInfo("Asia/Seoul")).date().isoformat() == closed["date"]
+                              and published >= datetime.fromisoformat(closed["end"]))
+        if live and not prior_kr_close and datetime.fromisoformat(live["start"]) < published <= now:
             title = str(raw.get("title") or raw.get("제목") or "")
             from stock_lab_core.report_presentation import news_theme, sector_news_topics
             targeted = set(raw.get("query_topics") or ()) & set(sector_news_topics("", sector_name=title))
@@ -551,7 +557,8 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
                            session_status="in_progress", is_closed=False,
                            is_close_wrap=False, retrospective_close_wrap=False, post_close_context=False)
                 _publication_timing(row, published, market)
-                row["news_timing"] = "장중 보도" if published >= datetime.fromisoformat(live["open_at"]) else "장전 보도"
+                if published.astimezone(ZoneInfo(live["timezone"])).date().isoformat() == live["date"]:
+                    row["news_timing"] = "장중 보도" if published >= datetime.fromisoformat(live["open_at"]) else "장전 보도"
                 result["current_session_news"].append(row)
                 continue
         if market not in by_market:

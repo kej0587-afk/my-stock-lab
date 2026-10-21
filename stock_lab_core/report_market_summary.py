@@ -115,6 +115,9 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             for row in eligible:
                 title = text(row.get("title"))
                 topic = news_theme(title)
+                if (fact["market"] == "KR" and re.search(r"코스피|코스닥", title)
+                        and re.search(r"(?:국제)?유가[·ㆍ/\s]+금리\s*(?:동반\s*)?안정", title)):
+                    topic = "유가·금리 안정"
                 if topic and re.search(r"반등|회복|상승|강세|\brebound|\brecover|\bbounc|\brall|\brise|\brises|\bgain|\bclimb|\bhigher", title, re.I):
                     local_claims.append(topic)
                     local_news.append(row)
@@ -161,7 +164,8 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     evidence = [("시장", " / ".join(fact["phrase"] for fact in facts)),
                 ("배경 보도", " · ".join(claims) + "(기사 주장·기여도 미확정)" if claims else "당일 시장 방향과 연결할 배경 보도 미확보"),
                 ("매크로", macro_text), ("중기 가격·거래량", flow_text)]
-    return {"headline": headline, "evidence": evidence}
+    return {"headline": headline, "evidence": evidence,
+            "background_news": [row for rows in selected_news.values() for row in rows]}
 
 
 def evidence_table(summary):

@@ -231,6 +231,15 @@ def collection_status(row):
     """Only controlled codes reach the report, never credential-bearing exceptions."""
     if row.get("status") == "pending":
         return "발표 대기"
+    try:
+        has_value = not isinstance(row.get("actual"), bool) and math.isfinite(float(row.get("actual")))
+    except (TypeError, ValueError, OverflowError):
+        has_value = False
+    if row.get("status") == "verified_snapshot" and has_value:
+        return "수동 보완값 사용 · 자동 수집 성공 아님"
+    if (row.get("status") == "released" and has_value
+            and not row.get("bulletin_collection_error") and not row.get("collection_error")):
+        return "관측치 수집 성공" + (" · 발표일 미확인" if "release_date_unavailable" in str(row.get("missing_reason", "")) else "")
     reason = str(row.get("bulletin_collection_error") or row.get("collection_error") or row.get("missing_reason") or "")
     if "API_KEY_missing" in reason:
         return "키 미설정"
@@ -250,4 +259,8 @@ def collection_status(row):
         return "통계 항목/단위 검증 실패"
     if "http_" in reason:
         return "공급처 HTTP 오류"
+    if row.get("status") == "stale" and has_value:
+        return "최신 관측치 미확인 · 과거 성공값 사용"
+    if (row.get("request_metadata") or {}).get("http_status") == 200 and not has_value:
+        return "HTTP 응답 정상 · 유효 관측치 미확인"
     return "공급처 응답/관측치 확인 실패"

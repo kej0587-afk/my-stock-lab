@@ -82,6 +82,8 @@ def safe_link(value):
 
 def news_category(title, fallback="시장"):
     lower = title.lower()
+    if re.match(r"^(?:\[[^]]+\]\s*)?(?:코스피|코스닥)\s*[,，]", title):
+        return "시장 시황"
     if re.search(r"\b(eth|btc|ethereum|bitcoin|crypto)\b|이더리움|비트코인|가상자산", lower):
         return "암호화폐"
     if re.search(r"cxmt|반도체|nvidia|semiconductor|dram|hbm|엔비디아", lower):
@@ -128,11 +130,26 @@ def korean_headline_reading(row):
     return f"제목 단서 해석: {subject} {action}. 세부 내용·가격 영향은 미확인"
 
 
+def _close_recap_key(row, title, published):
+    """Group an exact closing move, not merely articles about the same theme."""
+    if row.get("market") != "KR" or not row.get("session_date") or row.get("news_bucket") == "current_session_news":
+        return None
+    if len(set(re.findall(r"코스피|코스닥", title))) != 1:
+        return None
+    recap = re.search(r"(코스피|코스닥).{0,70}?(\d+\.\d+)\s*%\s*(하락|급락|상승|급등)", title)
+    local = published.astimezone(KST)
+    after_close = local.date().isoformat() == row["session_date"] and (local.hour, local.minute) >= (15, 30)
+    from stock_lab_core.report_presentation import is_preopen_outlook
+    if not recap or is_preopen_outlook(row) or not (after_close or row.get("is_close_wrap") or "마감" in title):
+        return None
+    return ("KR", row["session_date"], recap[1], float(recap[2]), "down" if recap[3] in {"하락", "급락"} else "up")
+
+
 def curate_news(rows, *, now=None, limit=5, session_scoped=False):
     from stock_lab_core.today_news import _session_article_keys
     now = now or datetime.now(KST)
     now = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
-    accepted, seen, seen_links, close_recaps = [], set(), set(), {}
+    accepted, seen, seen_articles, seen_links, close_recaps = [], set(), set(), set(), {}
     source_rows = records(rows)
     # During KR trading, current-session articles precede yesterday's recaps.
     if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (15, 30):
@@ -158,26 +175,37 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False):
         if dt is None or not now - timedelta(days=7) <= dt <= now + timedelta(minutes=5):
             continue
         clean = re.sub(r"\s+[-|]\s+" + re.escape(publisher) + r"$", "", title, flags=re.I).strip() if publisher else title
-        recap = re.search(r"코스피.{0,70}?(\d+\.\d+)\s*%\s*(하락|급락|상승|급등)", clean)
-        recap_key = ((publisher, text(raw.get("session_date")), recap[1], "down" if recap[2] in {"하락", "급락"} else "up")
-                     if recap and raw.get("market") == "KR" and raw.get("session_date") and "마감" in clean else None)
+        canonical_link, canonical_title = _session_article_keys(dict(raw, title=clean, link=link))
+        article_key = (text(raw.get("market")), text(raw.get("session_date")), publisher, canonical_title)
+        if article_key in seen_articles or (canonical_link and canonical_link in seen_links):
+            continue
+        seen_articles.add(article_key)
+        if canonical_link:
+            seen_links.add(canonical_link)
+        recap_key = _close_recap_key(raw, clean, dt)
         if recap_key and recap_key in close_recaps:
             previous = close_recaps[recap_key]
-            previous["duplicate_count"] = previous.get("duplicate_count", 1) + 1
-            previous.setdefault("related_articles", []).append(dict(title=clean, publisher=publisher, link=link))
+            related = [dict(title=clean, publisher=publisher, link=link, published=dt.isoformat()),
+                       *raw.get("related_articles", [])]
+            known = {news_article_key(item) for item in [previous, *previous.get("related_articles", [])]}
+            for item in related:
+                item_key = news_article_key(item)
+                if item_key not in known:
+                    previous.setdefault("related_articles", []).append(dict(item))
+                    known.add(item_key)
+            previous["duplicate_count"] = 1 + len(previous.get("related_articles", []))
             continue
         key = next((key for key, words in EVENT_CLUSTERS if any(w in clean.lower() for w in words)),
                    re.sub(r"[\W_]+", "", clean.lower()))
         seen_key = (text(raw.get("market")), text(raw.get("session_date")), key) if session_scoped else key
-        canonical_link, _ = _session_article_keys(dict(raw, link=link))
-        if seen_key in seen or (canonical_link and canonical_link in seen_links):
+        if seen_key in seen:
             continue
         seen.add(seen_key)
-        if canonical_link:
-            seen_links.add(canonical_link)
         row = dict(raw, title=clean, publisher=publisher, link=link, published=dt.isoformat() if dt else published,
                    category=news_category(clean, text(first(raw, "market_category", "카테고리")) or "시장"),
                    event_key=key)
+        if raw.get("related_articles"):
+            row["related_articles"] = [dict(item) for item in raw["related_articles"]]
         row["reading_ko"] = korean_headline_reading(row)
         accepted.append(row)
         if recap_key:
@@ -203,7 +231,8 @@ def story_news_citation(row):
     if published:
         parts.append(published.astimezone(KST).strftime("%m/%d %H:%M KST"))
     if row.get("related_articles"):
-        parts.append(" · 함께 묶인 제목: " + " / ".join(citation(item) for item in row["related_articles"]))
+        parts.append(f" · 같은 시장·거래일 마감 등락 보도 {row.get('duplicate_count', 1 + len(row['related_articles']))}건 묶음 · 함께 묶인 제목: "
+                     + " / ".join(citation(item) for item in row["related_articles"]))
     return " ".join(parts)
 
 
@@ -402,7 +431,7 @@ def participant_news_rows(news, session_date):
 
     selected, seen_titles, seen_links = [], set(), set()
     for row in news:
-        title = text(row.get("title"))
+        title = " / ".join(text(item.get("title")) for item in [row, *row.get("related_articles", [])])
         if row.get("market") != "KR" or row.get("session_date") != session_date or is_preopen_outlook(row):
             continue
         if not re.search(r"外人|외국인|외인|기관|연기금|개인", title) or not re.search(r"매수|매도|수급", title):
@@ -422,7 +451,9 @@ def participant_news_lines(news, session_date, *, limit=3):
     selected = participant_news_rows(news, session_date)
     if not selected:
         return []
-    return [f"- 수급 주체 보도 {len(selected)}건(제목 기준·기사 주장, 순매수액 미검증): "
+    count = sum(row.get("duplicate_count", 1) for row in selected)
+    grouping = f" · {len(selected)}개 묶음" if count > len(selected) else ""
+    return [f"- 수급 주체 보도 {count}건{grouping}(제목 기준·기사 주장, 순매수액 미검증): "
             + " / ".join(story_news_citation(row) for row in selected[:limit])
             + (f" · 나머지 {len(selected) - limit}건 생략" if len(selected) > limit else "")]
 
@@ -542,7 +573,13 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                   "미국 업종 종가 | " + _cell(" · ".join(sector_facts) or "업종 종가 미연결"),
                   "한국 지수 종가 | " + _cell(kr_summary),
                   "최근 발표 지표 | " + _cell(" / ".join(economic_summary) or "최근 3거래일 이내 발표일이 확인된 주요 발표치 없음/미연결"), ""])
-    candidates = [row for market in ("KR", "US") for row in market_cause_candidates(news, market, sessions.get(market))]
+    candidates = []
+    candidate_keys = set(used_story_news)
+    for row in synthesis.get("background_news", []) + [item for market in ("KR", "US") for item in market_cause_candidates(news, market, sessions.get(market))]:
+        key = news_article_key(row)
+        if key not in candidate_keys:
+            candidates.append(row)
+            candidate_keys.add(key)
     if candidates:
         lines.extend(["보도상 배경 후보 | 대상 거래일 | 출처·보도 시각", "--- | --- | ---"])
         for row in candidates:
@@ -941,7 +978,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.append("당일 한국 장전·장중 기사 우선, 이전 마감 회고는 별도 맥락입니다." if mode == "intraday" else
                  "기준 거래일 마감시황 우선. 이전 거래일의 마감 회고는 제외하며, 마감 후 회고는 사후보도로 표시합니다.")
     lines.append("뉴스 분류: ‘추가 핵심 뉴스’는 기준 세션 기사·마감 후 회고, ‘다음 세션 재료’는 별도 분류된 후속 기사입니다. 다음 세션 재료가 비어 있어도 마감 후 회고는 있을 수 있습니다.")
-    lines.append(f"출처·중복 제거 기준 통과 {len(news)}건 · 스토리에서 다룬 {len(news) - len(additional_news)}건은 재출력하지 않습니다. 추가 {min(len(additional_news), 5)}건 표시.")
+    article_count = sum(row.get("duplicate_count", 1) for row in news)
+    lines.append(f"출처·중복 제거 기준 통과 기사 {article_count}건 · 표시 단위 {len(news)}개(같은 사건 묶음 포함). 스토리에서 다룬 {len(news) - len(additional_news)}개는 재출력하지 않습니다. 추가 {min(len(additional_news), 5)}개 표시.")
     if additional_news:
         lines.extend(["", "분류·보도 시각 | 기사·출처 | 제목 해석·한계", "--- | --- | ---"])
     for index, row in enumerate(additional_news[:5], 1):
@@ -957,7 +995,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         labels = list(dict.fromkeys(label for label in (timing_label, category) if label))
         reading = "제목 기준·세부 내용 미확인" if row["reading_ko"].startswith("제목 기준:") else row["reading_ko"]
         if row.get("duplicate_count", 1) > 1:
-            reading += f" · 동일 출처·세션 마감 수치 기사 {row['duplicate_count']}건 묶음"
+            reading += f" · 같은 시장·거래일 마감 등락 보도 {row['duplicate_count']}건 묶음"
             reading += " · 함께 묶인 제목: " + " / ".join(citation(item) for item in row.get("related_articles", []))
         lines.append(" | ".join(_cell(value) for value in (
             f"뉴스 {index} · {' · '.join(labels)} · {kst_time(row['published'])}{timing}",

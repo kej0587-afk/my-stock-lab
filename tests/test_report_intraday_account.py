@@ -150,9 +150,11 @@ def test_current_news_priority_close_recap_grouping_and_no_empty_english_reading
     assert rows[1]["duplicate_count"] == 2
     assert rows[1]["related_articles"][0]["title"] == duplicate["title"]
     assert "관련 소식" not in korean_headline_reading({"title": "US equities in focus", "category": "시장 공통 배경"})
-    # Different session or publisher must not be mistaken for the same recap.
+    # The same closing move groups across publishers without losing attribution.
     different = dict(duplicate, publisher="한국경제")
-    assert len(curate_news([yesterday, different], now=NOW, session_scoped=True)) == 2
+    cross_source = curate_news([yesterday, different], now=NOW, session_scoped=True)
+    assert len(cross_source) == 1
+    assert cross_source[0]["related_articles"][0]["publisher"] == "한국경제"
     buyers = article("코스피 3.73% 급락 마감, 연기금 저가 매수", "2026-10-20", link="https://newsis.com/buyers")
     grouped = curate_news([yesterday, buyers], now=NOW, session_scoped=True)
     assert "연기금 저가 매수" in grouped[0]["related_articles"][0]["title"]
