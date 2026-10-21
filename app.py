@@ -59,6 +59,11 @@ from stock_lab_core.market_evidence_panel import render_market_evidence_panel
 from stock_lab_core.news_evidence import render_price_news_evidence
 from stock_lab_core.review_audit import cross_view_flags
 from stock_lab_core.precision_review_export import render_precision_review_download
+import stock_lab_core.precision_selection as _precision_selection
+if not hasattr(_precision_selection, "remember_precision_selection"):
+    # Cloud hot reload may retain the previous, stateless selection module.
+    from importlib import reload as _reload_precision_selection
+    _reload_precision_selection(_precision_selection)
 from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
 from stock_lab_core.precision_chart_view import (
     build_price_figure, finish_price_figure, frame_last_date, render_chart_basis,

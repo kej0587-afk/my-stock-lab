@@ -174,3 +174,22 @@ def test_callback_survives_widget_state_lost_during_option_rebuild():
     _assert_selected_body_and_zip(app, BITX, "BITX")
     app.selectbox[0].select(app.selectbox[0].options[0]).run()
     _assert_selected_body_and_zip(app, app.selectbox[0].options[0], "GOOGL")
+
+
+def test_app_import_refreshes_old_selection_module_after_cloud_deploy(monkeypatch):
+    import stock_lab_core.precision_selection as selection
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
+    start = next(index for index, node in enumerate(tree.body) if isinstance(node, ast.Import)
+                 and any(alias.asname == "_precision_selection" for alias in node.names))
+    import_block = ast.Module(body=tree.body[start:start + 3], type_ignores=[])
+    monkeypatch.delattr(selection, "remember_precision_selection")
+    namespace = {}
+    exec(compile(import_block, "app_selection_import", "exec"), namespace)
+    state = {"widget": BITX}
+    namespace["remember_precision_selection"](state, "widget", "pending", {
+        BITX: {"type": "watchlist", "item": {"ticker": "BITX"}},
+    }, {})
+    assert state["pending"] == {"ticker": "BITX"}
+    assert namespace["resolve_precision_selection"]([FREE, BITX], free_option=FREE,
+                                                   widget_option=BITX) == (BITX, False)
