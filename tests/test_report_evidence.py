@@ -84,7 +84,7 @@ def test_previous_day_snapshot_survives_same_day_reruns_and_is_owner_scoped(tmp_
     assert frame.iloc[0]["티커"] == "001820.KS"
     assert frame.iloc[0]["최종읽기"] == "대기"
     assert load_previous_today_summary(owner_scope="bob", path=path)[0].empty
-    assert "전일 비교 없음" in comparison_lines([], [], previous_date="2026-10-16", current_date="2026-10-16")[0]
+    assert "이전 기준일 비교 없음" in comparison_lines([], [], previous_date="2026-10-16", current_date="2026-10-16")[0]
 
 
 def test_report_front_order_missing_reasons_and_leverage_not_double_multiplied():
@@ -147,5 +147,5 @@ def test_new_and_removed_symbols_are_reported_not_called_unchanged():
     lines = comparison_lines([{"티커": "SOXL", "최종읽기": "대기"}], [{"티커": "AAPL", "최종읽기": "정밀확인"}],
                              previous_date="2026-10-15", current_date="2026-10-16")
     assert "변경 없음" not in lines[0]
-    assert "추가 | SOXL(종목명 미저장) | 이전 거래일" in "\n".join(lines)
-    assert "이탈 | AAPL(종목명 미저장) | 이전 거래일" in "\n".join(lines)
+    assert "추가 | SOXL(종목명 미저장) | 이전 저장 기준일" in "\n".join(lines)
+    assert "이탈 | AAPL(종목명 미저장) | 이전 저장 기준일" in "\n".join(lines)

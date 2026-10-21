@@ -367,6 +367,21 @@ def test_current_provider_and_supplied_events_do_not_trigger_bulletin_fetch():
     assert bulletins.apply_official_bulletins([event], NOW) == [event]
 
 
+def test_direct_bulletin_failure_restores_automatic_cache_before_manual(customs):
+    base = releases._ecos(NOW, "", "KR_EXPORTS")
+    success = bulletins.apply_official_bulletins([base], NOW)[0]
+    releases.clear_economic_releases_cache()
+    customs["status"] = 503
+    # Deliberately skip the primary-provider cache wrapper to test this fallback.
+    row = bulletins.apply_official_bulletins([base], NOW)[0]
+    assert row["actual"] == success["actual"] and row["status"] == "stale"
+    assert row["source"] == "Korea Customs Service (monthly final bulletin)"
+    assert row["last_success_at"] == success["retrieved_at"]
+    assert row["bulletin_request_metadata"]["listing"]["http_status"] == 503
+    assert row["bulletin_collection_error"] == "http_503"
+    assert row.get("fallback_mode") != "manual_verified"
+
+
 def test_same_month_ecos_vintage_not_downgraded_by_final_bulletin(customs):
     row = releases._ecos(NOW, "", "KR_EXPORTS")
     row.update(status="stale", actual=84.1, period="2026-09", last_success_at=NOW.isoformat())

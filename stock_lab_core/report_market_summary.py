@@ -44,7 +44,7 @@ def _market_fact(context, market, states, now):
         else:
             medium = number(row.get("return_5d"))
             action = ("반등" if change > 0 and medium is not None and medium < 0 else
-                      "약세 지속" if change < 0 and medium is not None and medium < 0 else
+                      "약세 지속" if change < 0 and (number(row.get("down_days")) or 0) >= 2 else
                       "상승" if change > 0 else "하락" if change < 0 else "보합")
         verbs = {"약세 지속": "약세를 이어갔습니다", "반등": "반등했습니다", "반등 시도": "반등을 시도 중입니다",
                  "상승": "상승 중입니다" if live else "상승했습니다", "하락": "하락 중입니다" if live else "하락했습니다",

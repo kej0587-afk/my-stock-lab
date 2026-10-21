@@ -1583,30 +1583,47 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
 # 가격 다운로드
 # ---------------------------------------------------------------------------
 
-@timed_call("prices")
-@st.cache_data(ttl=900, show_spinner=False)
-def download_money_flow_prices(tickers) -> pd.DataFrame:
+def _money_flow_download_tickers(tickers):
     tickers = sorted({normalize_money_flow_ticker(t) for t in tickers if str(t).strip()})
-    if not tickers:
-        return pd.DataFrame()
-    yf_tickers = [
+    return tuple(
         t for t in tickers
         if not _is_krx_money_flow_ticker(t) and _money_flow_suffix(t) not in _UNRELIABLE_SUFFIXES
-    ]
+    )
+
+
+@timed_call("prices")
+def download_money_flow_prices(tickers) -> pd.DataFrame:
+    yf_tickers = _money_flow_download_tickers(tickers)
     if not yf_tickers:
         return pd.DataFrame()
+    return _download_money_flow_prices_cached(yf_tickers)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def _download_money_flow_prices_cached(tickers) -> pd.DataFrame:
+    # Cache the exact provider request, not input order or repeated memberships.
     with YAHOO_HISTORY_LOCK:
         return yf.download(
-            yf_tickers,
+            list(tickers),
             period="1y",
             interval="1d",
             progress=False,
             group_by="ticker",
-            threads=min(4, max(1, len(yf_tickers))),
+            threads=min(4, max(1, len(tickers))),
             auto_adjust=False,
             timeout=8,
             **yahoo_session_kwargs(),
         )
+
+
+def _clear_money_flow_price_cache(tickers=None):
+    if tickers is None:
+        _download_money_flow_prices_cached.clear()
+    else:
+        _download_money_flow_prices_cached.clear(_money_flow_download_tickers(tickers))
+
+
+download_money_flow_prices.clear = _clear_money_flow_price_cache
 
 
 def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:

@@ -199,17 +199,17 @@ def account_estimate(held, observations, sessions, *, mode="preopen"):
     daily, gap = metrics["daily"], metrics["gap"]
     coverage, gap_coverage = metrics["coverage"], metrics["gap_coverage"]
     main = account_headline(metrics, sessions, mode) + ". "
-    if mode != "closed" and metrics["replacement_coverage"] < 90:
+    if mode == "preopen" and metrics["replacement_coverage"] < 90:
         main += (f"장전 대체 합산은 연결 비중 {metrics['replacement_coverage']:.1f}%로 헤드라인 제외. "
                  + ("한국 최신 종가가 미국 기준일보다 뒤여서 이미 반영된 국내 미국지수 ETF를 장전 값으로 다시 치환하지 않음. "
                     if sessions.get("KR", "") > sessions.get("US", "") else "기초자산·갭 수치 미연결분 제외. "))
     note = f"계좌 일간 기여 합계(추정): {daily:+.2f}%p · 연결 비중 {coverage:.1f}%"
-    if gap_coverage:
+    if gap_coverage and mode == "preopen":
         note += f" / 한국 상장 미국자산 ETF 개장 전 갭 시나리오 기여(추정): {gap:+.2f}%p · 적용 비중 {gap_coverage:.1f}%"
     return (main + note + f" · 379810/379800/418660 집중도 {metrics['concentration']:.1f}%. "
             "현재비중 가중, 현금·미연결분 제외, 환율·거래 미반영."
             + (" 갭 미연결 종목은 대체 합산에서 제외. 일간 합계와 갭 기여를 단순 합산하지 않음."
-               if mode != "closed" else ""))
+               if mode == "preopen" else ""))
 
 
 def news_theme(title):

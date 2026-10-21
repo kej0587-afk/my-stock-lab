@@ -15,6 +15,48 @@ _trace = ContextVar("stock_lab_performance_trace", default=None)
 _span = ContextVar("stock_lab_performance_span", default=None)
 
 
+def _exception_details(exc):
+    """Retain types and safe message summaries, never exception payloads/URLs.
+
+    Arbitrary messages can contain unlabeled tokens, headers or widget state;
+    regex replacement alone cannot make them safe. Only fixed summaries leave
+    this function, with an optional recognized HTTP status number.
+    """
+    classes = type(exc).__mro__
+    streamlit_control = any(
+        cls.__name__ in {"RerunException", "StopException"}
+        or (cls.__name__ == "ScriptControlException"
+            and cls.__module__.startswith("streamlit.runtime.scriptrunner"))
+        for cls in classes
+    )
+    control = streamlit_control or isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit))
+    if streamlit_control:
+        message = "Streamlit script control flow (payload omitted)"
+    elif control:
+        message = "Interpreter control flow (payload omitted)"
+    else:
+        message = "Exception message redacted (untrusted payload)"
+        # Do not call arbitrary __str__/__repr__ or inspect response/state objects.
+        args = BaseException.args.__get__(exc)
+        text = " ".join(arg[:4096] for arg in args[:4] if type(arg) is str).lower()
+        names = {cls.__name__ for cls in classes}
+        status = re.search(r"\b([45]\d{2})\s+(?:client|server)\s+error\b", text)
+        if status:
+            message = f"HTTP {status[1]} response (details redacted)"
+        elif names & {"Timeout", "TimeoutError", "ReadTimeout", "ConnectTimeout", "ReadTimeoutError"} or "timed out" in text:
+            message = "Operation timed out (details redacted)"
+        elif names & {"ConnectionError", "ConnectionRefusedError", "NewConnectionError"}:
+            message = "Connection failed (details redacted)"
+        elif isinstance(exc, KeyError):
+            message = "Missing key (key redacted)"
+    return {
+        "exception_type": f"{type(exc).__module__}.{type(exc).__name__}",
+        "exception_kind": "control_flow" if control else "error",
+        "message": message,
+        "message_redacted": True,
+    }
+
+
 def _merged_intervals(intervals):
     merged = []
     for start, end in sorted(intervals):
@@ -60,11 +102,13 @@ class PerformanceTrace:
         self.status = "not_started"
         self.on_phase = on_phase
         self.current_phase = ""
+        self.termination_exception = None
 
     def __enter__(self):
         self.measurement_id = uuid4().hex
         self.measurement_started_at = datetime.now(timezone.utc).isoformat()
         self.measurement_finished_at = None
+        self.termination_exception = None
         self._started = self.clock()
         self._owner_thread = get_ident()
         self.status = "running"
@@ -75,7 +119,9 @@ class PerformanceTrace:
     def __exit__(self, *exc):
         self.elapsed_seconds = max(0.0, self.clock() - self._started)
         self.measurement_finished_at = datetime.now(timezone.utc).isoformat()
-        self.status = "completed" if not exc or exc[0] is None else "interrupted" if exc[0].__name__ in {"RerunException", "StopException"} else "failed"
+        self.termination_exception = _exception_details(exc[1]) if len(exc) > 1 and exc[1] is not None else None
+        self.status = ("completed" if self.termination_exception is None else
+                       "interrupted" if self.termination_exception["exception_kind"] == "control_flow" else "failed")
         _span.reset(self._span_token)
         _trace.reset(self._token)
 
@@ -91,19 +137,34 @@ class PerformanceTrace:
                 self.on_phase = None
                 logging.warning("Performance progress display disabled (%s)", type(exc).__name__)
 
-    def record(self, category, name, elapsed, children, failed, *, started, ended, child_intervals):
+    def record(self, category, name, elapsed, children, failed, *, started, ended, child_intervals, exception=None):
         exclusive = _exclusive_intervals(started, ended, child_intervals)
         with self._lock:
             entry = self._entries.setdefault((category, name), {
                 "category": category, "name": name, "calls": 0,
                 "total_seconds": 0.0, "self_seconds": 0.0,
                 "max_seconds": 0.0, "failures": 0,
+                "errors": 0, "control_flow_exits": 0, "unclassified_exceptions": 0,
+                "exceptions": [], "exceptions_omitted": 0,
             })
             entry["calls"] += 1
             entry["total_seconds"] += elapsed
             entry["self_seconds"] += max(0.0, elapsed - children)
             entry["max_seconds"] = max(entry["max_seconds"], elapsed)
             entry["failures"] += int(failed)
+            if failed:
+                counter = ("unclassified_exceptions" if exception is None else
+                           "control_flow_exits" if exception["exception_kind"] == "control_flow" else "errors")
+                entry[counter] += 1
+                if exception is not None:
+                    match = next((row for row in entry["exceptions"]
+                                  if all(row.get(key) == value for key, value in exception.items())), None)
+                    if match is not None:
+                        match["count"] += 1
+                    elif len(entry["exceptions"]) < 8:
+                        entry["exceptions"].append(dict(exception, count=1))
+                    else:
+                        entry["exceptions_omitted"] += 1
             self._function_intervals.setdefault((category, name), []).append((started, ended))
             if category != "phase":
                 self._category_intervals.setdefault(category, []).extend(exclusive)
@@ -114,7 +175,8 @@ class PerformanceTrace:
 
     def report(self):
         with self._lock:
-            entries = [dict(entry) for entry in self._entries.values()]
+            entries = [dict(entry, exceptions=[dict(row) for row in entry["exceptions"]])
+                       for entry in self._entries.values()]
             function_intervals = {key: list(value) for key, value in self._function_intervals.items()}
             category_intervals = {key: list(value) for key, value in self._category_intervals.items()}
             events = dict(self._events)
@@ -134,6 +196,9 @@ class PerformanceTrace:
             "measurement_reused": False,
             "elapsed_seconds": max(0.0, self.clock() - self._started) if self.status == "running" else self.elapsed_seconds,
             "measurement_status": self.status,
+            "termination_exception": dict(self.termination_exception) if self.termination_exception else None,
+            "exception_schema_version": 1,
+            "failure_count_includes_control_flow": True,
             "current_phase": self.current_phase,
             "transport_events": events,
             "categories_work_seconds": categories,
@@ -231,10 +296,12 @@ def measure(category, name):
     token = _span.set(current)
     started = trace.clock()
     failed = False
+    exception = None
     try:
         yield
-    except BaseException:
+    except BaseException as exc:
         failed = True
+        exception = _exception_details(exc)
         raise
     finally:
         ended = trace.clock()
@@ -244,7 +311,7 @@ def measure(category, name):
             parent["children"] += elapsed
             parent["intervals"].append((started, ended))
         trace.record(category, name, elapsed, current["children"], failed,
-                     started=started, ended=ended, child_intervals=current["intervals"])
+                     started=started, ended=ended, child_intervals=current["intervals"], exception=exception)
 
 
 def timed_call(category, name=None):

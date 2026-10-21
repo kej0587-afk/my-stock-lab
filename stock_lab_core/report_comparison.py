@@ -1,5 +1,7 @@
 """Compact report-only comparison of distinct history baselines."""
 
+from datetime import date
+
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import KST, _cell, first, holding_reasons, is_held, records, stamp, text
 
@@ -25,6 +27,23 @@ def _date_pair(value):
     return f"미국 {parts[0]} / 한국 {parts[1]}" if len(parts) == 2 else text(value)
 
 
+def _dates(value):
+    parts = value.split("/")
+    try:
+        parsed = tuple(date.fromisoformat(part) for part in parts)
+    except ValueError:
+        return ()
+    return parsed if len(parts) in (1, 2) and all(day.isoformat() == part for day, part in zip(parsed, parts)) else ()
+
+
+def _date_difference(previous, current):
+    markets = ("미국", "한국") if len(previous) == 2 else ("기준일",)
+    details = [f"{market} 동일({old})" if old == new else f"{market} 과거 기준일({old} → {new})"
+               for market, old, new in zip(markets, previous, current)]
+    return ("저장 기준일 비교: " + " · ".join(details) +
+            ". 직전 거래일 여부·원자료 최신성은 미확인입니다.")
+
+
 def _table(headers, rows):
     return [" | ".join(headers), " | ".join("---" for _ in headers),
             *(" | ".join(_cell(value) for value in row) for row in rows), ""]
@@ -39,12 +58,18 @@ def history_comparison_lines(current, baselines):
     for baseline in baselines:
         previous_date, current_date = text(baseline.get("previous_date")), text(baseline.get("current_date"))
         same = baseline.get("same_session", False)
-        valid = previous_date == current_date if same else previous_date < current_date
-        if not previous_date or not current_date or not valid:
+        previous_dates, current_dates = _dates(previous_date), _dates(current_date)
+        comparable = bool(previous_dates) and len(previous_dates) == len(current_dates)
+        valid = comparable and (previous_dates == current_dates if same else
+                                all(old <= new for old, new in zip(previous_dates, current_dates)) and
+                                any(old < new for old, new in zip(previous_dates, current_dates)))
+        if not valid:
             notes.append("같은 거래일 비교 없음: 직전 생성 이력이 없습니다." if same else
-                         "전일 비교 없음: 이전 거래일의 저장된 점검이 없습니다.")
+                         "이전 기준일 비교 없음: 비교 가능한 과거 기준일 이력이 없습니다.")
             continue
-        reference = "같은 거래일 직전 생성" if same else "이전 거래일"
+        reference = "같은 거래일 직전 생성" if same else "이전 저장 기준일"
+        if not same:
+            notes.append(_date_difference(previous_dates, current_dates))
         at = stamp(baseline.get("previous_run_at")) if same else None
         basis = at.astimezone(KST).strftime("%Y-%m-%d %H:%M KST") if at else _date_pair(previous_date)
         old = {text(first(row, "티커", "ticker")): row for row in records(baseline.get("previous"))
@@ -101,5 +126,6 @@ def history_comparison_lines(current, baselines):
         lines += _table(("구분", "종목", "비교 기준"), [
             (key[0], value["label"], " · ".join(value["references"])) for key, value in membership.items()])
         lines.append("입력 목록의 차이이며 관심등록 삭제 여부는 미확인입니다. 보고서 상위 10개 변화가 아닌 입력 목록 차이입니다.")
+        lines.append("등록/자동 입력 구분: 미확인(종목별 입력 출처 이력 미연결). 보유 여부·전체 건수로 출처를 추정하지 않습니다.")
     lines.extend(dict.fromkeys(notes))
     return lines

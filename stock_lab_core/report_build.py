@@ -15,7 +15,7 @@ _RENDER_MODULES = (
     "report_holdings", "report_session", "today_news",
     "report_history", "report_prices", "report_context", "report_live", "report_quotes", "report_history_store",
     "report_scenario",
-    "report_comparison", "report_market_summary", "report_view",
+    "report_comparison", "report_market_summary", "report_view", "report_intraday",
     "economic_releases", "economic_cache", "economic_bulletins",
 )
 
@@ -68,6 +68,17 @@ def get_report_build_info(entrypoint=None):
     }
 
 
+def completed_measurement_reference(reference, archive):
+    """Resolve timestamps only from the exact measurement, never latest rerun."""
+    result = dict(reference or {})
+    identity = result.get("measurement_id")
+    saved = (archive or {}).get(identity, {}) if identity else {}
+    if saved.get("measurement_id") == identity:
+        result.update({key: value for key, value in saved.items()
+                       if key.startswith("measurement_") and value is not None})
+    return result
+
+
 def report_footer(*, entrypoint=None, queue_measurement=None):
     info = get_report_build_info(entrypoint)
     queue = queue_measurement or {}
@@ -79,7 +90,8 @@ def report_footer(*, entrypoint=None, queue_measurement=None):
         + " · 생성ID " + uuid4().hex[:12]
         + " · 실제 생성시각 " + datetime.now(timezone.utc).isoformat(timespec="seconds")
         + " · 점검 측정ID " + str(queue.get("measurement_id") or "미연결")
-        + " (" + str(queue.get("measurement_finished_at") or "시각 미확보") + ")" + warning
+        + " (" + str(queue.get("measurement_finished_at") or
+                      ("시작 " + queue["measurement_started_at"] + " · 완료 시각 미확보" if queue.get("measurement_started_at") else "시각 미확보")) + ")" + warning
     )
 
 

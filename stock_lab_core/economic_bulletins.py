@@ -344,14 +344,17 @@ def _apply_live_exports(rows, now):
         if (row.get("actual") is not None and row.get("status") == "released"
                 and row.get("period", "") >= releases._shift(now.strftime("%Y-%m"), -1)):
             continue
-        live = load_kr_exports_bulletin(now)
+        # Restore the automatic provider's last success on a transient failure,
+        # before considering the explicitly dated manual fallback.
+        live = retain_successful_observations([load_kr_exports_bulletin(now)], now)[0]
+        if live.get("status") == "stale":
+            live["bulletin_collection_error"] = live.get("collection_error") or live.get("missing_reason") or "collection_failed"
         if (live["actual"] is not None
                 and (row.get("actual") is None or live["period"] > row.get("period", "")
                      or (live["period"] == row.get("period")
                          and row.get("value_kind") in {"official_bulletin", "verified_official_bulletin"}))):
             configured = row.get("api_key_configured")
             failure = row.get("collection_error") or row.get("missing_reason") or "older_provider_period"
-            live = retain_successful_observations([live], now)[0]
             row.clear()
             row.update(live, api_key_configured=configured, primary_collection_error=failure)
         else:

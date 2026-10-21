@@ -112,6 +112,95 @@ def test_failed_run_records_time_and_does_not_swallow_original_error():
     assert report["measurement_finished_at"]
 
 
+@pytest.mark.parametrize("kind", ["rerun", "stop", "error"])
+def test_exception_details_distinguish_control_flow_and_errors_without_payloads(kind):
+    import json
+    from streamlit.runtime.scriptrunner_utils.exceptions import RerunException, StopException
+    from streamlit.runtime.scriptrunner_utils.script_requests import RerunData
+
+    private = "PRIVATE_SECRET_VALUE"
+    error = (RerunException(RerunData(query_string="token=" + private)) if kind == "rerun" else
+             StopException(private) if kind == "stop" else ValueError(private))
+    with pytest.raises(type(error)) as caught:
+        with PerformanceTrace() as trace:
+            with measure("phase", "outer"):
+                with measure("external_data", "inner"):
+                    raise error
+    assert caught.value is error
+    report = trace.report()
+    control = kind != "error"
+    assert report["measurement_status"] == ("interrupted" if control else "failed")
+    assert report["termination_exception"]["exception_type"].endswith(type(error).__name__)
+    assert report["termination_exception"]["exception_kind"] == ("control_flow" if control else "error")
+    assert report["failure_count_includes_control_flow"]
+    for row in report["functions"]:
+        assert row["failures"] == 1
+        assert row["errors"] == int(not control)
+        assert row["control_flow_exits"] == int(control)
+        assert row["exceptions"][0]["message_redacted"]
+        assert row["exceptions"][0]["count"] == 1
+    assert private not in json.dumps(report)
+
+
+@pytest.mark.parametrize("error,expected", [
+    (TimeoutError("token=secret https://user:pass@example.com?a=secret"), "Operation timed out"),
+    (RuntimeError("403 Client Error: secret for url: https://example.com/private?key=secret"), "HTTP 403 response"),
+    (ConnectionError("Authorization: Bearer secret"), "Connection failed"),
+    (KeyError("private@example.com"), "Missing key"),
+    (ValueError("unlabeled-secret-value"), "Exception message redacted"),
+])
+def test_messages_fail_closed_and_caught_provider_error_does_not_fail_run(error, expected):
+    import json
+
+    with PerformanceTrace() as trace:
+        try:
+            with measure("phase", "flow_overseas_fallback"):
+                raise error
+        except Exception:
+            pass
+    report = trace.report()
+    row = report["functions"][0]
+    assert report["measurement_status"] == "completed"
+    assert report["termination_exception"] is None
+    assert row["errors"] == row["failures"] == 1
+    assert row["exceptions"][0]["message"].startswith(expected)
+    exported = json.dumps(report)
+    assert "secret" not in exported and "example.com" not in exported
+
+
+def test_diagnostics_never_call_exception_str_and_reports_are_detached():
+    class UnsafeError(Exception):
+        def __str__(self):
+            raise AssertionError("diagnostics must not stringify payloads")
+
+    with PerformanceTrace() as trace:
+        for _ in range(2):
+            with pytest.raises(UnsafeError):
+                with measure("prices", "fetch"):
+                    raise UnsafeError(object())
+            if _ == 0:
+                earlier = trace.report()
+    assert earlier["functions"][0]["exceptions"][0]["count"] == 1
+    assert trace.report()["functions"][0]["exceptions"][0]["count"] == 2
+
+
+def test_worker_exception_details_are_bounded_and_do_not_change_timings():
+    with PerformanceTrace() as trace:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            def worker(index):
+                with measure("prices", "fetch"):
+                    raise type(f"ProviderError{index}", (Exception,), {})("PRIVATE_PAYLOAD")
+            futures = [submit_with_context(pool, worker, i) for i in range(12)]
+            for future in futures:
+                with pytest.raises(Exception):
+                    future.result()
+    row = trace.report()["functions"][0]
+    assert row["calls"] == row["failures"] == row["errors"] == 12
+    assert len(row["exceptions"]) == 8
+    assert row["exceptions_omitted"] == 4
+    assert row["active_wall_seconds"] <= row["total_seconds"]
+
+
 def test_phase_notifications_stay_on_script_thread_and_observer_failures_do_not_change_results():
     from threading import get_ident
     calls = []

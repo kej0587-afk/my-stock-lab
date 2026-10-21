@@ -30,7 +30,7 @@ def test_us_intraday_never_overwrites_korean_credit_background_macro_or_flow():
     result = market_summary(context, news, [], market_session_states(NOW, context["sessions"]), NOW)
     headline = result["headline"]
     assert "AI 신용우려" in headline and "기사 주장" in headline
-    assert "코스피는 약세를 이어갔습니다(-3.73%" in headline
+    assert "코스피는 하락했습니다(-3.73%" in headline
     assert "미국 반도체는 반등을 시도 중입니다(+0.42%" in headline and "2026-10-20 장중·확정 아님" in headline
     assert "금리" in headline and "반도체 중기 약세" in headline
     assert "계좌" not in headline and "%p" not in headline

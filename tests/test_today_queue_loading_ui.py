@@ -69,7 +69,7 @@ def test_failed_attempt_keeps_diagnostics_and_downloads_them_on_next_render():
     app.session_state["fail"] = False
     app.run(timeout=15)
     assert not app.exception
-    assert len(app.get("download_button")) == 2
+    assert len(app.get("download_button")) == 1
     assert any("직전 실행: failed" in item.value for item in app.caption)
 
 

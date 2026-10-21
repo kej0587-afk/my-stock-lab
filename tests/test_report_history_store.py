@@ -128,6 +128,27 @@ def test_durable_pair_upsert_compares_prior_day_and_prior_run_after_restart(tmp_
     assert (ROWS, DATES, MACRO) == before
 
 
+def test_mixed_pair_ranking_is_source_date_policy_not_utc_or_generation_order(tmp_path):
+    client = FakeClient()
+    mixed = {"US": "2026-10-20", "KR": "2026-10-19"}
+    other = {"US": "2026-10-19", "KR": "2026-10-20"}
+    current = {"US": "2026-10-20", "KR": "2026-10-20"}
+    run(client, tmp_path / "mixed", dates=mixed, generated_at="2026-10-21T00:05:00+00:00")
+    run(client, tmp_path / "other", dates=other, generated_at="2026-10-21T00:10:00+00:00")
+    run(client, tmp_path / "same", dates=current, generated_at="2026-10-21T00:15:00+00:00")
+    original = deepcopy(client.database)
+
+    result = run(client, tmp_path / "restart", dates=current, generated_at="2026-10-21T10:32:00+09:00")
+
+    assert result["previous_date"] == "2026-10-20/2026-10-19"
+    assert result["previous_sessions"] == mixed
+    assert result["previous_run_date"] == "2026-10-20/2026-10-20"
+    assert result["previous_run_at"] == "2026-10-21T00:15:00+00:00"
+    for dates in (mixed, other):
+        key = ("alice@example.test", dates["US"], dates["KR"])
+        assert client.database[key] == original[key]
+
+
 def test_owner_isolation_and_case_normalization(tmp_path):
     client = FakeClient()
     run(client, tmp_path, owner=" Alice@Example.Test ", macro_data=MACRO)

@@ -141,7 +141,7 @@ def test_tables_keep_dates_returns_weights_gates_and_calendar_sources():
     assert "일간 -5.72% · 2026-10-20" in sector
     assert "3M +9.9% · 가속도 +30.9%p · [3M 중기] 급반등" in sector
     holding = next(line for line in report.splitlines() if line.startswith("반도체(SOXX) |"))
-    assert "현재비중 25.0000%" in holding and "일간 기여 +0.4325%p(내부 추정)" in holding
+    assert "현재비중 25.00%" in holding and "일간 기여 +0.43%p(내부 추정)" in holding
     assert "후보 / 검증(TEST) · 개별 신호 S급, 게이트로 보류" in report
     assert "시장방어 / 추세훼손" in report and "일봉·주봉 추세훼손 해제" in report
     assert "Test earnings · D-2 | 미국 2026-10-21 장 마감 후" in report

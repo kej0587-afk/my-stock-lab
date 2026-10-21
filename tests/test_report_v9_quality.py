@@ -223,7 +223,7 @@ def test_holdings_pass_frames_keep_daily_actual_and_group_residual_references(mo
         context["prices"][row["티커"]] = {"date": "2026-10-20", "return": -.02}
     seen = []
 
-    def cumulative(row, observations, sessions, now, *, price_frames=None):
+    def cumulative(row, observations, sessions, now, *, price_frames=None, intraday_prices=None):
         seen.append(price_frames)
         return None if row["티커"] == "SOXL" else "누적 비교 보류: 검증용 이력 부족"
 
@@ -243,6 +243,7 @@ def test_holdings_pass_frames_keep_daily_actual_and_group_residual_references(mo
     assert table.count("NQ=F -1.00%") == 1 and table.count("ES=F -1.00%") == 1
     assert table.count("같은 시각 NAV/iNAV 미연결") == 1
     assert "누적 비교 잔차와 별개" in table and "인과분해·기여도 합산 아님" in table
-    assert "마지막 미국 종가→한국 종가의 부분 구간 관측이며 누적 잔차 전체를 분해/검증한 값이 아닙니다" in table
+    assert "마지막 미국 종가부터 해당 관측 시각까지의 부분 구간" in table
+    assert "누적 잔차의 인과분해·기여도 합산이 아니며" in table
     assert table.count("공식 환헤지 출처") == 1
     assert "일간 참고(누적 비교 아님): 일간 배수 환산(추정): -3.00%" in table

@@ -36,7 +36,7 @@ def hedge_source_lines(rows):
     return [f"- 환헤지 출처 {code}: [{source}]({url})" for code, (_, source, url) in HEDGE_POLICIES.items() if code in codes]
 
 
-def cumulative_holding_comparison(row, observations, sessions, now, price_frames):
+def cumulative_holding_comparison(row, observations, sessions, now, price_frames, *, intraday_prices=None):
     """Compare the as-yet-unreflected US sessions to cumulative KR closes."""
     from stock_lab_core.report_evidence import closed_daily_frame
     from stock_lab_core.prices import _us_equity_market_holidays
@@ -46,9 +46,15 @@ def cumulative_holding_comparison(row, observations, sessions, now, price_frames
     own = observations.get(ticker, {})
     if code not in {"379800", "379810", "418660"}:
         return {}
-    end_kr = own.get("date")
+    current = (intraday_prices or {}).get(ticker, {})
+    current_price = number(current.get("price"))
+    from stock_lab_core.report_intraday import valid_live_observation
+    is_live = (valid_live_observation(current, "KR", now) and current_price is not None and current_price > 0)
+    if intraday_prices is not None and not is_live:
+        return {"error": "한국 장중 시세 미연결/지연 또는 시세시각 미확인"}
+    end_kr = current["date"] if is_live else own.get("date")
     end_us = sessions.get("US")
-    if not end_kr or end_kr != sessions.get("KR") or not end_us:
+    if not end_kr or (not is_live and end_kr != sessions.get("KR")) or not end_us:
         return {"error": "양국 확정 종가 기준일 불일치"}
     own_frame = closed_daily_frame((price_frames or {}).get(ticker), ticker, now)
     for base in UNDERLYINGS[code]:
@@ -62,6 +68,10 @@ def cumulative_holding_comparison(row, observations, sessions, now, price_frames
         proxy_close = pd.to_numeric(proxy_frame["Close"], errors="coerce")
         own_close.index = own_close.index.strftime("%Y-%m-%d")
         proxy_close.index = proxy_close.index.strftime("%Y-%m-%d")
+        if is_live:
+            own_close = own_close.copy()
+            own_close.loc[end_kr] = current_price
+            own_close = own_close.sort_index()
         anchor = text(proxy.get("previous_date"))
         if not anchor:
             earlier = proxy_close.index[proxy_close.index < end_us]
@@ -99,29 +109,32 @@ def cumulative_holding_comparison(row, observations, sessions, now, price_frames
             continue
         return {"anchor": anchor, "us_anchor": anchor_us, "kr_date": end_kr, "us_date": end_us, "proxy": base,
                 "actual": actual, "underlying": underlying, "reference": reference,
-                "residual_pp": (actual - reference) * 100, "multiplier": multiplier}
+                "residual_pp": (actual - reference) * 100, "multiplier": multiplier,
+                "intraday": is_live, "as_of": current.get("as_of") or current.get("retrieved_at", "")}
     return {"error": "같은 시작일의 한국 ETF·미국 기초자산 가격 이력 미수집"}
 
 
-def completed_scenario_comparison(row, observations, sessions, now, *, price_frames=None):
+def completed_scenario_comparison(row, observations, sessions, now, *, price_frames=None, intraday_prices=None):
     """Cumulative close comparison; one-day scenarios are only a reference."""
     ticker = text(first(row, "티커", "ticker")).upper()
     code = ticker.split(".")[0]
-    own = observations.get(ticker, {})
+    own = (intraday_prices or {}).get(ticker) or observations.get(ticker, {})
     actual = number(own.get("return"))
     if code not in {"379800", "379810", "418660", "0167A0", "0227L0"}:
         return None
     if actual is None or own.get("date") != now.date().isoformat():
-        return "당일 종가 미수집: 시나리오와 실제 비교 보류"
+        return "당일 시세 미수집: 누적 비교 보류" if intraday_prices is not None else "당일 종가 미수집: 시나리오와 실제 비교 보류"
     if code not in UNDERLYINGS:
         return f"당일 종가 {actual * 100:+.2f}% · 구성종목 기반 수치 시나리오 미제공, 갭 위험 문구로 실제 결과를 대체하지 않음"
-    comparison = cumulative_holding_comparison(row, observations, sessions, now, price_frames)
+    comparison = cumulative_holding_comparison(row, observations, sessions, now, price_frames, intraday_prices=intraday_prices)
     policy = hedge_policy_line(row)
     if comparison.get("error") or not comparison:
         return "누적 비교 보류: " + comparison.get("error", "누적 비교 기초자산 미연결") + " · " + policy
     c = comparison
+    from stock_lab_core.report_presentation import kst_time
+    live_note = f" 장중·미확정({kst_time(c['as_of'])})" if c.get("intraday") else ""
     reference_label = f"{c['multiplier']:g}배 일간복리 참고" if c["multiplier"] != 1 else "누적"
-    return (f"누적 비교: 한국 {c['anchor']}→{c['kr_date']} 실제 {c['actual'] * 100:+.2f}% vs "
+    return (f"누적 비교: 한국 {c['anchor']}→{c['kr_date']}{live_note} 실제 {c['actual'] * 100:+.2f}% vs "
             f"{c['proxy']} 미국 {c['us_anchor']}→{c['us_date']} {reference_label} {c['reference'] * 100:+.2f}% · "
             f"잔차 {c['residual_pp']:+.2f}%p · {policy}")
 

@@ -1,4 +1,4 @@
-"""Owner-scoped report history keyed by reference trading session, not run date."""
+"""Owner-scoped history keyed by observed source-date pair, not run date."""
 
 import json
 import os
@@ -108,6 +108,11 @@ def _run_time(session):
 
 
 def _comparisons(saved, dates, result):
+    """Choose compatible saved pairs, not calendar-verified previous sessions.
+
+    Unequal US/KR dates can be legitimate. Rank source dates US-first, matching
+    the remote store; generation times only reconcile copies of the same pair.
+    """
     key = result["summary_date"]
     candidates = [value for value in saved.values() if all(value["dates"][m] <= dates[m] for m in dates)]
     last = saved.get(key)
@@ -134,7 +139,7 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
     upsert_session(session, *, owner_scope). Local JSON remains a fallback and
     a best-effort mirror. history_durable is true only after a confirmed upsert.
     """
-    # A KR/US pair avoids comparing mismatched cross-market report sessions.
+    # Preserve observed dates; this layer has no verified KR holiday calendar.
     dates = {key: text(sessions.get(key)) for key in ("KR", "US")}
     result = {"summary_date": dates["US"] + "/" + dates["KR"], "previous_summary": [], "previous_date": "",
               "history_backend": "none", "history_durable": False, "history_fallback": False}

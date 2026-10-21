@@ -1,7 +1,7 @@
 """Timestamped report quotes. Never feed extended trading into decision bars."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 import json
 import math
@@ -80,10 +80,12 @@ def load_us_report_quote(ticker):
 
 
 @cache_result(ttl=30, failure_ttl=10, is_success=bool)
-def load_kr_report_quotes():
+def load_kr_report_quotes(tickers=()):
     try:
+        codes = sorted({ticker.split('.')[0] for ticker in tickers if ticker.endswith(('.KS', '.KQ'))})
+        query = "SERVICE_INDEX:KOSPI,KOSDAQ" + ("|SERVICE_ITEM:" + ",".join(codes) if codes else "")
         response = requests.get("https://polling.finance.naver.com/api/realtime",
-                                params={"query": "SERVICE_INDEX:KOSPI,KOSDAQ"}, timeout=4)
+                                params={"query": query}, timeout=4)
         response.raise_for_status()
         return response.json().get("result") or {}
     except (requests.RequestException, ValueError, TypeError, AttributeError):
@@ -91,12 +93,13 @@ def load_kr_report_quotes():
 
 
 @timed_call("prices", "report_quote_snapshot")
-def load_report_quotes(us_tickers, *, include_kr=False):
+def load_report_quotes(us_tickers, *, include_kr=False, kr_tickers=()):
     # Only held US symbols, once per report; no retry cascade or yfinance lock.
     with ThreadPoolExecutor(max_workers=3) as pool:
         pending = {ticker: pool.submit(load_us_report_quote, ticker) for ticker in sorted(set(us_tickers))}
-        kr = load_kr_report_quotes() if include_kr else {}
-        return {"KR": kr, "US": {ticker: job.result() for ticker, job in pending.items()}}
+        kr = (load_kr_report_quotes(tuple(sorted(set(kr_tickers)))) if kr_tickers else load_kr_report_quotes()) if include_kr else {}
+        us = {ticker: job.result() for ticker, job in pending.items()}
+        return {"KR": kr, "US": us, "retrieved_at": datetime.now(timezone.utc).isoformat()}
 
 
 def _epoch(value):
@@ -184,7 +187,7 @@ def extended_quote_observation(quote_row, ticker, now):
     return max(found, key=lambda row: row["as_of"]) if found else {}
 
 
-def kr_index_observations(payload, now):
+def kr_index_observations(payload, now, *, tickers=()):
     if not isinstance(payload, dict):
         return {}
     state = market_session_states(now)["KR"]
@@ -194,13 +197,15 @@ def kr_index_observations(payload, now):
     if at.tz_convert(KST).date().isoformat() != state["active_date"]:
         return {}
     result = {}
+    by_code = {ticker.split('.')[0]: ticker for ticker in tickers if ticker.endswith(('.KS', '.KQ'))}
     for area in payload.get("areas") or []:
-        if not isinstance(area, dict) or area.get("name") != "SERVICE_INDEX":
+        if not isinstance(area, dict) or area.get("name") not in {"SERVICE_INDEX", "SERVICE_ITEM"}:
             continue
+        index = area["name"] == "SERVICE_INDEX"
         for row in area.get("datas") or []:
             if not isinstance(row, dict):
                 continue
-            ticker = {"KOSPI": "^KS11", "KOSDAQ": "^KQ11"}.get(row.get("cd"))
+            ticker = ({"KOSPI": "^KS11", "KOSDAQ": "^KQ11"} if index else by_code).get(row.get("cd"))
             price, change = raw_number(row.get("nv")), raw_number(row.get("cv"))
             if not ticker or not price or price <= 0 or change is None or row.get("ms") != "OPEN":
                 continue
@@ -210,7 +215,10 @@ def kr_index_observations(payload, now):
             previous = price - abs(change) * sign
             if previous <= 0:
                 continue
-            result[ticker] = {"ticker": ticker, "price": price / 100, "return": price / previous - 1,
+            supplied_previous = raw_number(row.get("pcv"))
+            if supplied_previous is not None and abs(previous - supplied_previous) > .01:
+                continue
+            result[ticker] = {"ticker": ticker, "price": price / (100 if index else 1), "return": price / previous - 1,
                               "date": state["active_date"], "as_of": at.isoformat(),
-                              "kind": "장중 진행·확정 아님", "source": "Naver 지수(제공처 응답시각)"}
+                              "kind": "장중 진행·확정 아님", "source": "Naver 지수·보유종목(제공처 응답시각)"}
     return result

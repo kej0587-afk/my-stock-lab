@@ -21,6 +21,8 @@ def interval_observation(frame, start, end):
         return {}
     close = pd.to_numeric(frame["Close"], errors="coerce").sort_index()
     close = close.loc[~close.index.duplicated(keep="last")]
+    # Batched symbols share an index: newer FX bars can be empty for futures.
+    close = close.loc[close.map(lambda value: number(value) is not None and value > 0)]
     ends = close.index + pd.Timedelta(minutes=5)
     points = []
     for cutoff in (start, end):
@@ -56,10 +58,19 @@ def build_scenario_context(frames, sessions, now):
         elif not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:
             status[symbol] = "수집 자료의 시간대 정보 미확인"
         else:
-            completed = frame.index[frame.index + pd.Timedelta(minutes=5) <= now]
-            status[symbol] = ("자료 지연: 현재 시점 10분 이내 완료 봉 없음"
-                              if completed.empty or completed.max() + pd.Timedelta(minutes=5) < now - timedelta(minutes=10)
-                              else "비교 기준 미국 종가 시각 자료 미수집/가격 결측")
+            values = frame.get("Close")
+            if not isinstance(values, pd.Series):
+                status[symbol] = "가격 열 미수집/중복"
+                continue
+            valid = values.map(lambda value: number(value) is not None and number(value) > 0)
+            completed = frame.index[valid & (frame.index + pd.Timedelta(minutes=5) <= now)]
+            last = completed.max() + pd.Timedelta(minutes=5) if len(completed) else None
+            if last is None or last < now - timedelta(minutes=10):
+                status[symbol] = "자료 지연: 현재 시점 10분 이내 유효 완료 봉 없음"
+                if last is not None:
+                    status[symbol] += " · 마지막 유효 시각 " + last.tz_convert("Asia/Seoul").strftime("%m/%d %H:%M KST")
+            else:
+                status[symbol] = "비교 기준 미국 종가 시각의 유효 가격 미수집(" + base.isoformat() + ")"
     return {"latest": current, "kr_close": closed, "latest_status": status}
 
 
@@ -68,13 +79,14 @@ def scenario_observation_line(row, evidence):
     symbol = FUTURES.get(code)
     if not symbol:
         return ""
-    closed = (evidence or {}).get("kr_close", {})
+    closed = (evidence or {}).get("kr_close") or (evidence or {}).get("latest", {})
     parts = []
     for key, label in ((symbol, "미국 선물"), ("USDKRW=X", "원/달러")):
         item = closed.get(key, {})
         value = number(item.get("return"))
         if value is None:
-            parts.append(f"{label}: 동일 시간대 자료 미수집")
+            reason = (evidence or {}).get("latest_status", {}).get(key, "동일 시간대 자료 미수집")
+            parts.append(f"{label}: {reason}")
         else:
             start = pd.Timestamp(item["base_at"]).tz_convert("Asia/Seoul").strftime("%m/%d %H:%M")
             end = pd.Timestamp(item["as_of"]).tz_convert("Asia/Seoul").strftime("%m/%d %H:%M")

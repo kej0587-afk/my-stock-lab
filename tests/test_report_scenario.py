@@ -25,7 +25,7 @@ def test_close_and_latest_observations_are_separate_and_future_bar_excluded():
     assert "NQ=F -3.00%" in latest_futures_line(data)
     assert "17:00 KST" in latest_futures_line(data)
     line = scenario_observation_line({"티커": "418660.KS"}, data)
-    assert "NQ=F -2.00%" in line and "원/달러: 동일 시간대 자료 미수집" in line
+    assert "NQ=F -2.00%" in line and "원/달러: 수집 실패/미수집: 시세 프레임 없음" in line
     assert "NAV·iNAV 미연결" in line and "기여도 분해·합산은 아님" in line
     assert "동일 배수로 추정하지 않음" in line
     assert "-4.00%" not in line

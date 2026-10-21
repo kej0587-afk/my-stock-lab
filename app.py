@@ -29160,7 +29160,10 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                            key="today_market_report_download", icon=":material/download:")
         from stock_lab_core.performance import matching_report_measurement
         matched_measurement = matching_report_measurement(st.session_state, saved_report)
-        if matched_measurement:
+        current_measurement_id = st.session_state.get("today_queue_performance", {}).get("measurement_id")
+        if matched_measurement and matched_measurement.get("measurement_id") == current_measurement_id:
+            st.caption("이 리포트의 측정 기록은 위 ‘전체 계산 시간 진단 JSON’과 같습니다. 별도 파일로 중복 생성하지 않습니다.")
+        elif matched_measurement:
             st.download_button(
                 "이 리포트와 같은 측정ID JSON", json.dumps(matched_measurement, ensure_ascii=False, indent=2),
                 file_name=f"today_queue_{matched_measurement['measurement_id']}.json", mime="application/json",
@@ -29560,7 +29563,11 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store))
     context["entrypoint"] = __file__
-    context["queue_measurement"] = summary_measurement_reference(summary_df)
+    from stock_lab_core.report_build import completed_measurement_reference
+    context["queue_measurement"] = completed_measurement_reference(
+        summary_measurement_reference(summary_df), st.session_state.get("today_queue_measurements", {}))
+    matched_run = st.session_state.get("today_queue_measurements", {}).get(context["queue_measurement"].get("measurement_id"), {})
+    context["queue_input_counts"] = dict(matched_run.get("input_counts") or {})
     if context["queue_measurement"].get("measurement_id"):
         st.session_state["today_market_report_measurement_id"] = context["queue_measurement"]["measurement_id"]
     return context
@@ -33497,7 +33504,7 @@ def render_today_queue_tab(mode):
         if completed_calculation.get("is_full_today_queue_measurement"):
             st.download_button(
                 "전체 계산 시간 진단 JSON (완료)", data=json.dumps(completed_calculation, ensure_ascii=False, indent=2),
-                file_name="today_queue_full_calculation.json", mime="application/json", on_click="ignore",
+                file_name=f"today_queue_{completed_calculation.get('measurement_id') or 'legacy'}.json", mime="application/json", on_click="ignore",
                 icon=":material/download:", key="today_queue_full_calculation_download",
             )
         if previous_attempt:
@@ -33610,11 +33617,14 @@ def render_today_queue_tab(mode):
                 "self_seconds": "자체시간(초)", "max_seconds": "최장호출(초)", "failures": "예외수",
                 "active_wall_seconds": "중첩 제외 활성시간(초)",
             }), hide_index=True, width="stretch")
-            st.download_button(
-                "시간 진단 JSON", data=json.dumps(report, ensure_ascii=False, indent=2),
-                file_name="today_queue_performance.json", mime="application/json",
-                icon=":material/download:", on_click="ignore", key="today_queue_performance_download",
-            )
+            st.caption("완료한 전체 계산 기록은 위 ‘전체 계산 시간 진단 JSON’에서 내려받습니다. 직전 화면 재표시 기록과 구분됩니다.")
+            if (report.get("is_full_today_queue_measurement") and
+                    report.get("measurement_id") != completed_calculation.get("measurement_id")):
+                st.download_button(
+                    "이번에 완료한 계산 시간 진단 JSON", data=json.dumps(report, ensure_ascii=False, indent=2),
+                    file_name=f"today_queue_{report['measurement_id']}.json", mime="application/json",
+                    icon=":material/download:", on_click="ignore", key="today_queue_performance_download",
+                )
 
 
 @timed_call("phase", "today_queue_render")
