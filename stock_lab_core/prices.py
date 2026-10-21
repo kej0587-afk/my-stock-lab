@@ -2108,7 +2108,9 @@ def load_latest_price(ticker: str) -> float:
     단일 종목 현재가 조회 (공개 API, 짧은 TTL).
     실패는 5초만 재시도를 억제하고 정상 가격 캐시와 분리한다.
     """
-    return _load_latest_price_cached(ticker)
+    # Holdings may use lower case while the watchlist uses upper case.
+    # Normalize before the cache boundary so the same quote is fetched once.
+    return _load_latest_price_cached(normalize_price_lookup_key(ticker))
 
 
 @timed_call("prices")

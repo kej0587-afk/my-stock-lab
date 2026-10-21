@@ -61,21 +61,25 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                 frames[ticker] = load_price_df(ticker, "1y")
         from stock_lab_core.report_live import supplement_kr_indices
         frames = supplement_kr_indices(frames)
-    from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, extended_quote_observation, extended_quote_status, kr_index_observations
+    from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, repair_kr_report_closes, extended_quote_observation, extended_quote_status, kr_index_observations
     held_us = tuple(sorted({text(first(row, "티커", "ticker")) for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker"))
                             and not text(first(row, "티커", "ticker")).endswith((".KS", ".KQ"))}))
     held_kr = tuple(sorted({text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker")).upper().endswith((".KS", ".KQ"))}))
-    kr_quote_tickers = tuple(sorted(set(held_kr) | {t for t in SECTORS if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}))
+    kr_quote_tickers = tuple(sorted(set(held_kr) | {t for t in tickers if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}))
     # Quote only the fixed report sectors and holdings, never the full watchlist.
     us_quote_tickers = tuple(sorted(set(held_us) | {t for t in SECTORS if not t.endswith((".KS", ".KQ"))}))
     if quote_data is None:
-        quote_data = (load_report_quotes(us_quote_tickers, include_kr=market_session_states(now)["KR"]["phase"] == "intraday", kr_tickers=kr_quote_tickers)
+        quote_data = (load_report_quotes(us_quote_tickers, include_kr=market_session_states(now)["KR"]["phase"] in {"intraday", "closed"}, kr_tickers=kr_quote_tickers)
                       if price_frames is None else {})
     us_quotes = quote_data.get("US", {})
     # A response fetched after collection starts is not a future quote.
     quote_now = max(now, stamp(quote_data.get("retrieved_at")) or now)
+    if price_frames is None or quote_data.get("KR"):
+        frames = repair_kr_report_closes(frames, quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
+    pending_closes = [f"{ticker}: {frame.attrs['report_close_pending_date']} 한국 당일 종가 확인 대기 · 장중 캐시 제외"
+                      for ticker, frame in frames.items() if frame is not None and frame.attrs.get("report_close_pending_date")]
     frames = repair_held_us_closes(frames, us_quotes, quote_now)
     frames, price_alignment = align_us_report_frames(
         frames, tickers, now, reload_batch=load_price_frames_batch if price_frames is None else None)
@@ -208,5 +212,5 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                sector_rows=sectors + closed_rows, held_exposures=held_exposures,
                                                per_category=5, use_cache=True))
-    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing))
+    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
     return result

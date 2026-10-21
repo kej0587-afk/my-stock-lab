@@ -1536,7 +1536,8 @@ def _fetch_fdr_ohlc(ticker: str) -> pd.DataFrame:
                        "US5YT": "^FVX", "US10YT": "^TNX", "US30YT": "^TYX"}
             symbol = symbols.get(ticker, ticker)
             deadline = time.monotonic() + 6
-            with measure("phase", "flow_overseas_fallback"):
+            # Cached work must not emit progress UI into an external container.
+            with measure("prices", "flow_overseas_fallback"):
                 with requests.get(
                     f"https://query2.finance.yahoo.com/v8/finance/chart/{urllib.parse.quote(symbol, safe='')}",
                     params={"period1": int(time.mktime(pd.Timestamp(start).timetuple())),
@@ -1973,7 +1974,8 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 # 메인 계산 함수
 # ---------------------------------------------------------------------------
 
-@timed_call("phase", "flow_history_and_metrics")
+# This runs inside cached calculations; phase callbacks can poison UI replay.
+@timed_call("external_data", "flow_history_and_metrics")
 def _load_universe_metrics(data, universe, *, failed_tickers=None):
     """Load each ticker once; preserve ordered, single-threaded scoring.
 
@@ -2012,7 +2014,10 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None):
 @timed_call("external_data")
 @cache_result(ttl=900, failure_ttl=15, is_success=lambda df: not df.attrs.get("history_failures"))
 def calculate_money_flow_df() -> pd.DataFrame:
-    """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환."""
+    """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환.
+
+    Data-only cache revision: inner timings no longer capture progress UI.
+    """
     universe = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
         for item in build_money_flow_universe_with_naver_rankings()
@@ -2052,7 +2057,10 @@ def calculate_money_flow_df() -> pd.DataFrame:
 @timed_call("external_data")
 @cache_result(ttl=900, failure_ttl=15, is_success=lambda df: not df.attrs.get("history_failures"))
 def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
-    """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산."""
+    """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산.
+
+    Data-only cache revision: inner timings no longer capture progress UI.
+    """
     selected = str(theme or "").strip()
     universe = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))

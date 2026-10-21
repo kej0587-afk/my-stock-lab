@@ -133,13 +133,16 @@ def regular_quote_observation(quote_row, ticker, now):
         return {}
     local = pd.Timestamp(now).tz_convert(NEW_YORK)
     day = local.date()
-    if local.hour * 60 + local.minute < 975 or day.weekday() >= 5 or day in _us_equity_market_holidays(day.year):
+    if local.hour * 60 + local.minute < 960 or day.weekday() >= 5 or day in _us_equity_market_holidays(day.year):
         day = _previous_us_day(day)
     at = _epoch(quote_row.get("regularMarketTime"))
     price, previous = (raw_number(quote_row.get(key)) for key in ("regularMarketPrice", "regularMarketPreviousClose"))
     if quote_row.get("symbol") != ticker or at is None or not price or not previous or min(price, previous) <= 0:
         return {}
     stamp = at.tz_convert(NEW_YORK)
+    # During the daily-provider grace period require a timestamp at/after 16:00.
+    if stamp.date() == local.date() and local.hour * 60 + local.minute < 975 and stamp.hour * 60 + stamp.minute < 960:
+        return {}
     # A last trade near the regular close, never an extended-hours price.
     if stamp.date() != day or not 959 <= stamp.hour * 60 + stamp.minute <= 975 or at > pd.Timestamp(now):
         return {}
@@ -174,6 +177,72 @@ def repair_held_us_closes(frames, quotes, now):
             frame.loc[target, col] = value
         result[ticker] = frame.sort_index()
         result[ticker].attrs.update(source=obs["source"], quote_as_of=obs["as_of"])
+    return result
+
+
+def repair_kr_report_closes(frames, payload, now, *, tickers=()):
+    """Replace a cached intraday bar only with a same-day, CLOSE-state quote.
+
+    Each symbol needs its own dated bar; the polling clock does not prove a
+    trading date. Unverified cached bars remain pending, not confirmed closes.
+    """
+    result = dict(frames)
+    state = market_session_states(now)["KR"]
+    if state["phase"] != "closed":
+        return result
+    day = pd.Timestamp(state["local_date"])
+    for ticker, old in frames.items():
+        if not ticker.endswith((".KS", ".KQ")) and ticker not in {"^KS11", "^KQ11"}:
+            continue
+        if isinstance(old, pd.DataFrame) and not old.empty and day.date() in old.index.date:
+            result[ticker] = old.copy(deep=True)
+            result[ticker].attrs["report_close_pending_date"] = day.date().isoformat()
+    if not isinstance(payload, dict):
+        return result
+    at = _epoch((raw_number(payload.get("time")) or 0) / 1000)
+    if (at is None or at.tz_convert(KST).date() != day.date()
+            # This is the server response clock, not a future trade timestamp.
+            or not -5 <= (pd.Timestamp(now) - at).total_seconds() <= 120
+            or at.tz_convert(KST).hour * 60 + at.tz_convert(KST).minute < 930):
+        return result
+    symbols = {t.split('.')[0]: t for t in tickers}
+    for area in payload.get("areas") or []:
+        if not isinstance(area, dict) or area.get("name") not in {"SERVICE_INDEX", "SERVICE_ITEM"}:
+            continue
+        index = area["name"] == "SERVICE_INDEX"
+        for row in area.get("datas") or []:
+            if not isinstance(row, dict) or row.get("ms") != "CLOSE":
+                continue
+            ticker = ({"KOSPI": "^KS11", "KOSDAQ": "^KQ11"} if index else symbols).get(row.get("cd"))
+            old = frames.get(ticker)
+            if not isinstance(old, pd.DataFrame) or old.empty or day.date() not in old.index.date:
+                continue
+            scale = 100 if index else 1
+            values = {col: raw_number(row.get(key)) for col, key in
+                      (("Open", "ov"), ("High", "hv"), ("Low", "lv"), ("Close", "nv"))}
+            if any(v is None or v <= 0 for v in values.values()):
+                continue
+            if not values["Low"] <= min(values["Open"], values["Close"]) <= max(values["Open"], values["Close"]) <= values["High"]:
+                continue
+            sign = {"1": 1, "2": 1, "3": 0, "4": -1, "5": -1}.get(str(row.get("rf")))
+            change = raw_number(row.get("cv"))
+            if sign is None or change is None:
+                continue
+            previous = (values["Close"] - abs(change) * sign) / scale
+            frame = old.copy(deep=True)
+            frame.index = frame.index.tz_localize(None).normalize()
+            prior = frame.loc[frame.index < day, "Close"].dropna().sort_index()
+            if prior.empty or not math.isclose(float(prior.iloc[-1]), previous, rel_tol=1e-5):
+                continue
+            supplied = raw_number(row.get("pcv"))
+            if supplied is not None and not math.isclose(supplied / scale, previous, rel_tol=1e-5):
+                continue
+            for col, value in values.items():
+                frame.loc[day, col] = value / scale
+            frame.loc[day, "Volume"] = raw_number(row.get("aq"))
+            frame.attrs.update(source="Naver 정규장 마감 시세(CLOSE 확인)", quote_as_of=at.isoformat())
+            frame.attrs.pop("report_close_pending_date", None)
+            result[ticker] = frame.sort_index()
     return result
 
 

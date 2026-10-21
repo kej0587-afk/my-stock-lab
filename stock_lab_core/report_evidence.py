@@ -282,8 +282,12 @@ def closed_daily_frame(frame, ticker, now=None):
     end = local.date()
     # Provider daily index denotes trading date, not UTC instant.
     dates = frame.index.tz_localize(None).date
-    closed_today = not crypto and local.weekday() < 5 and (local.hour, local.minute) >= ((15, 40) if kr else (16, 15))
+    # Match the report's 15:30 KR close; 15:40 is off-hours trading, not the close.
+    closed_today = not crypto and local.weekday() < 5 and (local.hour, local.minute) >= ((15, 30) if kr else (16, 15))
     mask = (dates <= end) if closed_today else (dates < end)
+    pending = frame.attrs.get("report_close_pending_date")
+    if pending:
+        mask &= frame.index.strftime("%Y-%m-%d") != pending
     out = frame.loc[mask].sort_index()
     out = out.loc[~out.index.duplicated(keep="last")]
     close = pd.to_numeric(out["Close"], errors="coerce")
