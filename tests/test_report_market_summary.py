@@ -13,7 +13,7 @@ def case():
     context = {"sessions": {"KR": "2026-10-20", "US": "2026-10-19"}, "prices": {
         "^KS11": {"date": "2026-10-20", "return": -.0373, "return_5d": -.08},
         "SOXX": {"date": "2026-10-19", "return": -.01}},
-        "intraday_prices": {"SOXX": {"date": "2026-10-20", "return": .0042}},
+        "intraday_prices": {"SOXX": {"date": "2026-10-20", "return": .0042, "as_of": NOW.isoformat()}},
         "macro_data": {key: {"val": value, "chg": change, "as_of": "2026-10-19"}
                        for key, value, change in (("10Y 금리", 5.14, 2.76), ("유가", 103.66, 3.35))},
         "closed_flow_rows": [{"Ticker": "SOXX", "기준일": "2026-10-19", "3개월수익률": -.077}]}
@@ -60,7 +60,7 @@ def test_stale_or_wrong_session_macro_and_flow_do_not_create_current_risk_story(
 def test_live_korean_rebound_does_not_inherit_last_close_decline_news():
     context, news = case()
     now = datetime.fromisoformat("2026-10-21T10:00:00+09:00")
-    context["intraday_prices"]["^KS11"] = {"date": "2026-10-21", "return": .02}
+    context["intraday_prices"]["^KS11"] = {"date": "2026-10-21", "return": .02, "as_of": now.isoformat()}
     result = market_summary(context, news, [], market_session_states(now, context["sessions"]), now)
     assert "코스피는 반등을 시도 중입니다(+2.00%" in result["headline"]
     assert "AI 신용우려" not in result["headline"]

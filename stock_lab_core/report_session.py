@@ -1,5 +1,6 @@
 """Report time-of-day policy, independent of execution/market-risk gates."""
 
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from stock_lab_core.report_build import register_loaded_source
 
@@ -12,6 +13,28 @@ MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 
 
 def kst_now(now):
     return now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
+
+
+def us_extended_session(now):
+    """Venue trading window, not proof that every symbol has a fresh quote."""
+    from stock_lab_core.prices import _us_equity_market_holidays
+    local = kst_now(now).astimezone(NEW_YORK)
+    day, minute = local.date(), local.hour * 60 + local.minute
+    if minute >= 1200 or minute < 240:
+        target = day + timedelta(days=1) if minute >= 1200 else day
+        start_day = target - timedelta(days=1)
+        start, end, label = datetime.combine(start_day, time(20), NEW_YORK), datetime.combine(target, time(4), NEW_YORK), "데이마켓(미국 야간)"
+    elif minute < 570:
+        target = day
+        start, end, label = datetime.combine(day, time(4), NEW_YORK), datetime.combine(day, time(9, 30), NEW_YORK), "프리마켓"
+    elif minute >= 960:
+        target = day
+        start, end, label = datetime.combine(day, time(16), NEW_YORK), datetime.combine(day, time(20), NEW_YORK), "애프터마켓"
+    else:
+        return {}
+    if target.weekday() >= 5 or target in _us_equity_market_holidays(target.year):
+        return {}
+    return {"label": label, "date": target.isoformat(), "start": start.isoformat(), "end": end.isoformat()}
 
 
 def market_session_states(now, sessions=None):

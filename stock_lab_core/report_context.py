@@ -67,9 +67,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                             and not text(first(row, "티커", "ticker")).endswith((".KS", ".KQ"))}))
     held_kr = tuple(sorted({text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker")).upper().endswith((".KS", ".KQ"))}))
-    kr_quote_tickers = tuple(sorted(set(held_kr) | {"396500.KS", "0167A0.KS"}))
+    kr_quote_tickers = tuple(sorted(set(held_kr) | {t for t in SECTORS if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}))
+    # Quote only the fixed report sectors and holdings, never the full watchlist.
+    us_quote_tickers = tuple(sorted(set(held_us) | {t for t in SECTORS if not t.endswith((".KS", ".KQ"))}))
     if quote_data is None:
-        quote_data = (load_report_quotes(held_us, include_kr=market_session_states(now)["KR"]["phase"] == "intraday", kr_tickers=kr_quote_tickers)
+        quote_data = (load_report_quotes(us_quote_tickers, include_kr=market_session_states(now)["KR"]["phase"] == "intraday", kr_tickers=kr_quote_tickers)
                       if price_frames is None else {})
     us_quotes = quote_data.get("US", {})
     # A response fetched after collection starts is not a future quote.
@@ -102,8 +104,10 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         kr_live = kr_index_observations(quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
         for ticker in ("^KS11", "^KQ11", *kr_quote_tickers):
             intraday[ticker] = kr_live.get(ticker, {})
-    extended = {ticker: obs for ticker in held_us
+    extended = {ticker: obs for ticker in us_quote_tickers
                 if (obs := extended_quote_observation(us_quotes.get(ticker, {}), ticker, quote_now))}
+    extended_reference = {ticker: obs for ticker in us_quote_tickers if ticker not in extended
+                          if (obs := extended_quote_observation(us_quotes.get(ticker, {}), ticker, quote_now, allow_delayed=True))}
     quote_status = {ticker: extended_quote_status(us_quotes.get(ticker, {}), ticker, quote_now)
                     for ticker in held_us if ticker not in extended}
     if price_frames is None:
@@ -124,7 +128,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         window = {"date": sessions["US"], "previous_date": observations.get("^GSPC", {}).get("previous_date", "")}
         observations["BTC-US-CLOSE"] = btc_at_us_close(load_btc_close_frame() if btc_frame is None else btc_frame,
                                                       window["date"], window["previous_date"])
-    releases = load_economic_releases(event_rows=event_rows, now=now) if economic_releases is None else records(economic_releases)
+    if economic_releases is None and calendar is None:
+        # The release collector already fetched the calendar, including failure status.
+        releases, calendar = load_economic_releases(event_rows=event_rows, now=now, include_calendar=True)
+    else:
+        releases = load_economic_releases(event_rows=event_rows, now=now) if economic_releases is None else records(economic_releases)
     if economic_releases is None:
         from stock_lab_core.economic_bulletins import apply_official_bulletins
         releases = apply_official_bulletins(releases, now)
@@ -166,7 +174,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
               "price_alignment": price_alignment,
               "quote_checked_at": quote_now.isoformat(), "extended_quote_status": quote_status,
-              "market_states": states, "intraday_prices": intraday, "extended_prices": extended, "closed_flow_rows": closed_rows,
+              "market_states": states, "intraday_prices": intraday, "extended_prices": extended,
+              "extended_reference_prices": extended_reference, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "sector_rows": sectors,
               "economic_releases": releases, "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}

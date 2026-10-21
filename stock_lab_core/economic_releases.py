@@ -1,6 +1,6 @@
 """Bounded official observations for deterministic economic report tables.
 
-Public entrypoint: ``load_economic_releases(event_rows=None, now=None)``.
+Public entrypoint: ``load_economic_releases(event_rows=None, now=None, *, include_calendar=False)``.
 ``period`` is the observation month (or the daily Fed rate's effective date),
 never its announcement date. ``release_at`` is nullable and has its own source.
 BLS percentages are calculated from published index levels, rounded to 0.1;
@@ -921,8 +921,11 @@ def _link_bls_calendar(row, spec, calendar, now):
         _reason(row, "release_schedule_" + (source.get("reason") or "period_unavailable"))
 
 
-def load_economic_releases(event_rows=None, now=None):
+def load_economic_releases(event_rows=None, now=None, *, include_calendar=False):
     """Return normalized rows; persist validated public monthly observations only.
+
+    With include_calendar=True, return (rows, calendar) using the same calendar
+    already collected below, including unavailable-source diagnostics.
 
     Requests have 4-second timeouts. One BLS batch, one Census query, up to one
     FRED query, five calendar pages, and up to four ECOS metadata/data queries.
@@ -964,7 +967,7 @@ def load_economic_releases(event_rows=None, now=None):
         if row["indicator"] == "US_RETAIL_SALES" and "request_metadata" in row:
             row["request_metadata"].update(publication_status=row["publication_status"],
                                            observation_recency=row["observation_recency"])
-    return rows
+    return (rows, calendar) if include_calendar else rows
 
 
 load_economic_releases.clear = clear_economic_releases_cache

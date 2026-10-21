@@ -55,6 +55,7 @@ def parse_us_quote_page(page, ticker):
     # Parse the embedded response as JSON; nearby symbols must not donate quotes.
     parser = _QuoteScripts()
     parser.feed(page)
+    candidates = []
     for script in parser.scripts:
         try:
             envelope = json.loads(script or "{}")
@@ -63,10 +64,13 @@ def parse_us_quote_page(page, ticker):
             body = json.loads(envelope.get("body", "{}"))
             for row in (body.get("quoteResponse") or {}).get("result") or []:
                 if isinstance(row, dict) and row.get("symbol") == ticker:
-                    return row
+                    candidates.append(row)
         except (ValueError, TypeError, AttributeError):
             continue
-    return {}
+    def newest(row):
+        return max(raw_number(row.get(field + "MarketTime")) or 0
+                   for field in ("regular", "overnight", "day", "pre", "post"))
+    return max(candidates, key=newest) if candidates else {}
 
 
 @cache_result(ttl=60, failure_ttl=15, is_success=bool)
@@ -173,22 +177,30 @@ def repair_held_us_closes(frames, quotes, now):
     return result
 
 
-def extended_quote_observation(quote_row, ticker, now):
+def extended_quote_observation(quote_row, ticker, now, *, allow_delayed=False):
+    from stock_lab_core.report_session import us_extended_session
     regular = regular_quote_observation(quote_row, ticker, now)
     if not regular:
         return {}
+    window = us_extended_session(now)
     found = []
-    for field, label in (("overnight", "데이마켓(야간)"), ("pre", "프리마켓"), ("post", "애프터마켓")):
+    for field, label in (("overnight", "데이마켓(야간)"), ("day", "데이마켓(야간)"), ("pre", "프리마켓"), ("post", "애프터마켓")):
         at = _epoch(quote_row.get(field + "MarketTime"))
         price = raw_number(quote_row.get(field + "MarketPrice"))
-        if at is None or not price or price <= 0 or not 0 <= (pd.Timestamp(now) - at).total_seconds() <= 1200:
+        if at is None or not price or price <= 0:
+            continue
+        age = (pd.Timestamp(now) - at).total_seconds()
+        if age < 0 or (age > 1200 and not allow_delayed):
+            continue
+        if not window or not pd.Timestamp(window["start"]) <= at < pd.Timestamp(window["end"]):
             continue
         if at <= pd.Timestamp(regular["as_of"]):
             continue
         found.append({"ticker": ticker, "price": price, "return": price / regular["price"] - 1,
                       "date": at.tz_convert(NEW_YORK).date().isoformat(), "as_of": at.isoformat(),
                       "previous_date": regular["date"], "previous_price": regular["price"],
-                      "kind": label, "source": "Yahoo 별도 세션 시세(증권사·거래장소별 차이 가능)"})
+                      "kind": label, "delayed": age > 1200, "age_minutes": age / 60,
+                      "source": "Yahoo 별도 세션 마지막 체결(증권사·거래장소별 차이 가능)"})
     return max(found, key=lambda row: row["as_of"]) if found else {}
 
 
@@ -200,7 +212,7 @@ def extended_quote_status(quote_row, ticker, now):
         return "비교 기준 정규장 종가·시각 검증 실패"
     if extended_quote_observation(quote_row, ticker, now):
         return "연결됨"
-    times = [_epoch(quote_row.get(field + "MarketTime")) for field in ("overnight", "pre", "post")]
+    times = [_epoch(quote_row.get(field + "MarketTime")) for field in ("overnight", "day", "pre", "post")]
     times = [at for at in times if at is not None]
     if not times:
         return "제공처 데이마켓/시간외 시각 미제공"

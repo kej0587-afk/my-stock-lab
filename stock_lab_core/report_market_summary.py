@@ -3,7 +3,7 @@
 import re
 
 from stock_lab_core.report_build import register_loaded_source
-from stock_lab_core.report_evidence import _cell, citation, first, macro_stress, number, records, text
+from stock_lab_core.report_evidence import _cell, citation, first, macro_stress, number, records, stamp, text
 from stock_lab_core.report_presentation import is_preopen_outlook, is_preopen_price_recap, korean_market_catalysts, market_cause_candidates, news_theme
 
 register_loaded_source(__name__, __file__)
@@ -14,16 +14,19 @@ def _pct(value):
 
 
 def _market_fact(context, market, states, now):
+    from stock_lab_core.report_intraday import valid_live_observation
     sessions, prices = context.get("sessions", {}), context.get("prices", {})
     state = states[market]
     live = state["phase"] == "intraday"
     target = state.get("active_date") if live else sessions.get(market)
     observations = context.get("intraday_prices", {}) if live else prices
-    symbols = (("^KS11", "코스피"),) if market == "KR" else (("SOXX", "미국 반도체"), ("^IXIC", "나스닥"), ("^GSPC", "S&P500"))
+    symbols = (("^KS11", "코스피"),) if market == "KR" else (("^GSPC", "S&P500"), ("^IXIC", "나스닥"), ("^DJI", "다우"), ("SOXX", "미국 반도체"))
     for ticker, label in symbols:
         row = observations.get(ticker, {})
         change = number(row.get("return"))
         if not target or row.get("date") != target or change is None:
+            continue
+        if live and not valid_live_observation(row, market, max(now, stamp(context.get("quote_checked_at")) or now), states=states):
             continue
         kind = "장중·확정 아님" if live else "확정 종가"
         if live and row.get("as_of"):
@@ -158,14 +161,67 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         headline += (". 다만 " if caution else ". ") + "과 ".join(inference) + ending
     if states["US"]["phase"] == "preopen" and futures_line:
         headline += ". 미국 개장 전 참고: " + futures_line
-    macro_text = (f"스트레스 {stress['score']} {stress['label']} · " +
+    incomplete = any(row.get("stress_incomplete") for row in aligned_macro.values()) or any(name not in aligned_macro for name in ("유가", "환율"))
+    macro_text = (f"스트레스 {'부분합 ' if incomplete else ''}{stress['score']} {stress['label']} · " +
                   (" / ".join(f"{row['name']} {row['value']:.2f}({row['state']})" for row in burdens[:2]) or "확인 지표의 추가 스트레스 기여 없음") +
                   f" · 미국 {context['sessions']['US']} 종가 기준") if stress["score"] is not None else "기준일 정렬 매크로 자료 미연결"
     evidence = [("시장", " / ".join(fact["phrase"] for fact in facts)),
                 ("배경 보도", " · ".join(claims) + "(기사 주장·기여도 미확정)" if claims else "당일 시장 방향과 연결할 배경 보도 미확보"),
                 ("매크로", macro_text), ("중기 가격·거래량", flow_text)]
-    return {"headline": headline, "evidence": evidence, "market_claims": market_claims,
+    breadth = broad_market_reading(context, states, now)
+    if breadth:
+        evidence.insert(1, ("미국 시장 전체", breadth))
+    sector_text = broad_sector_reading(context)
+    if sector_text:
+        evidence.append(("업종 분포", sector_text))
+    overview = facts[0]["narrative"] + ". " + (breadth or facts[1]["narrative"])
+    if market_claims.get("KR"):
+        overview += " 한국 보도는 " + "·".join(market_claims["KR"]) + "을 배경으로 거론합니다(기사 주장)."
+    if burden:
+        overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
+    return {"headline": headline, "overview": overview, "evidence": evidence, "market_claims": market_claims,
             "background_news": [row for rows in selected_news.values() for row in rows]}
+
+
+def broad_market_reading(context, states, now):
+    from stock_lab_core.report_intraday import valid_live_observation
+    live = states["US"]["phase"] == "intraday"
+    day = states["US"].get("active_date") if live else context.get("sessions", {}).get("US")
+    prices = context.get("intraday_prices" if live else "prices", {})
+    items = [(name, number(prices.get(ticker, {}).get("return")))
+             for ticker, name in (("^GSPC", "S&P500"), ("^IXIC", "나스닥"), ("^DJI", "다우"))
+             if day and prices.get(ticker, {}).get("date") == day and number(prices.get(ticker, {}).get("return")) is not None
+             and (not live or valid_live_observation(prices[ticker], "US", max(now, stamp(context.get("quote_checked_at")) or now), states=states))]
+    if not items:
+        return ""
+    values = [value for _, value in items]
+    reading = ("지수 1개만 연결되어 미국 전체 방향 판단은 보류" if len(items) == 1 else
+               "지수 방향이 엇갈린 혼조로 미국 시장 전체의 동반 하락으로 볼 수 없습니다" if min(values) < 0 < max(values)
+               else "확인된 주요지수는 동반 상승" if min(values) > 0 else "확인된 주요지수는 동반 하락" if max(values) < 0 else "지수별 등락 차이를 확인할 구간")
+    return ("미국 " + " / ".join(name + " " + _pct(value) for name, value in items)
+            + f"({day} {'장중' if live else '확정 종가'}). " + reading + ".")
+
+
+def broad_sector_reading(context):
+    from stock_lab_core.report_prices import SECTORS
+    names = {**SECTORS, "XLF": "금융", "XLI": "산업재", "XLP": "필수소비", "XLV": "헬스케어", "XLY": "경기소비"}
+    seen, items = set(), []
+    for row in records(context.get("closed_flow_rows")) + records(context.get("sector_rows")):
+        ticker = text(first(row, "Ticker", "티커"))
+        value = number(first(row, "1일수익률", "1D"))
+        if ticker in seen or ticker not in names or ticker.endswith((".KS", ".KQ")) or value is None:
+            continue
+        if text(first(row, "기준일", "date")) != context.get("sessions", {}).get("US"):
+            continue
+        seen.add(ticker)
+        items.append((value, names[ticker], ticker))
+    if len(items) < 2:
+        return ""
+    items.sort()
+    low, high = items[0], items[-1]
+    return (f"미국 관측 업종 {len(items)}개 중 상승 {sum(v > 0 for v, _, _ in items)} / 하락 {sum(v < 0 for v, _, _ in items)}. "
+            f"상대 상위 {high[1]}({high[2]}) {_pct(high[0])}, 상대 하위 {low[1]}({low[2]}) {_pct(low[0])}. "
+            "표본 ETF의 확정 종가 분포이며 시장 전체 종목의 확산률·자금 유입액은 아닙니다.")
 
 
 def evidence_table(summary):
