@@ -3,6 +3,7 @@ from datetime import datetime
 from email.utils import format_datetime
 from io import BytesIO
 import xml.etree.ElementTree as ET
+import pytest
 
 from stock_lab_core import today_news
 from stock_lab_core.market_memo import build_auto_market_memo
@@ -128,3 +129,45 @@ def test_curator_drops_revised_title_at_same_url():
     original = article("코스피 주가 반등", "15:49", "https://example.com/same")
     updated = dict(original, title="코스피 기관 매수로 반등")
     assert len(curate_news([original, updated], now=NOW)) == 1
+
+
+@pytest.mark.parametrize("title,category", [
+    ("Dow outperforms as Wall Street rises, healthcare stocks lead gains", "섹터:healthcare"),
+    ("Dow leads Wall Street higher, investors focus on healthcare stocks", "섹터:healthcare"),
+    ("Wall Street stocks close higher", "시장"),
+])
+def test_query_pack_is_not_headline_sector_evidence(title, category):
+    now = datetime.fromisoformat("2026-10-21T09:15:00+09:00")
+    sessions = {market: {"date": "2026-10-20", "previous_date": "2026-10-19"}
+                for market in ("KR", "US")}
+    raw = dict(title=title, publisher="Reuters", link="https://www.reuters.com/health",
+               published_at="2026-10-21T06:14:00+09:00", market="KR", query_market="KR",
+               source="Google News RSS", market_category="섹터:technology,software,semiconductor",
+               query_topics=["technology", "software", "semiconductor"])
+    before = deepcopy(raw)
+    result = today_news.partition_session_market_news([raw], sessions, now=now)
+    row, = curate_news(result["session_news"], now=now)
+    assert row["market"] == "US" and row["query_market"] == "KR"
+    assert row["category"] == category
+    assert "technology" not in row["reading_ko"]
+    assert raw == before
+    assert today_news.partition_session_market_news(result["session_news"], sessions, now=now)["session_news"] == result["session_news"]
+
+
+def test_collection_deduplicates_tracking_url_and_syndicated_title(monkeypatch):
+    title = "코스피 급락 마감"
+    rows = [article(title, "16:10", "https://example.com/story?utm_source=rss#top"),
+            article("코스피 3.73% 급락 마감", "16:10", "https://example.com/story?utm_source=web"),
+            article("코스피  급락 마감 - 연합뉴스", "16:10", "https://example.com/syndicated")]
+    replay_feed(monkeypatch, rows)
+    result = today_news.fetch_session_market_news(SESSIONS, now=NOW, per_category=5)
+    assert len(result["session_news"]) == 1
+    assert result["session_news"][0]["link"] == rows[0]["link"]
+
+
+def test_collection_keeps_distinct_participant_suffixes_and_article_ids(monkeypatch):
+    rows = [article("코스피 하락 마감 - 외국인 매도", "16:10", "https://example.com/story?id=1"),
+            article("코스피 하락 마감 - 기관 매도", "16:10", "https://example.com/story?id=2")]
+    replay_feed(monkeypatch, rows)
+    result = today_news.fetch_session_market_news(SESSIONS, now=NOW, per_category=5)
+    assert {row["title"] for row in result["session_news"]} == {row["title"] for row in rows}

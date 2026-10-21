@@ -127,6 +127,7 @@ def korean_headline_reading(row):
 
 
 def curate_news(rows, *, now=None, limit=5, session_scoped=False):
+    from stock_lab_core.today_news import _session_article_keys
     now = now or datetime.now(KST)
     now = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
     accepted, seen, seen_links = [], set(), set()
@@ -154,11 +155,12 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False):
         key = next((key for key, words in EVENT_CLUSTERS if any(w in clean.lower() for w in words)),
                    re.sub(r"[\W_]+", "", clean.lower()))
         seen_key = (text(raw.get("market")), text(raw.get("session_date")), key) if session_scoped else key
-        if seen_key in seen or (link and link in seen_links):
+        canonical_link, _ = _session_article_keys(dict(raw, link=link))
+        if seen_key in seen or (canonical_link and canonical_link in seen_links):
             continue
         seen.add(seen_key)
-        if link:
-            seen_links.add(link)
+        if canonical_link:
+            seen_links.add(canonical_link)
         row = dict(raw, title=clean, publisher=publisher, link=link, published=dt.isoformat() if dt else published,
                    category=news_category(clean, text(first(raw, "market_category", "카테고리")) or "시장"),
                    event_key=key)
@@ -371,7 +373,9 @@ def comparison_lines(current, previous, *, previous_date="", current_date="", sa
 
 
 def news_article_key(row):
-    return safe_link(first(row, "link", "url")) or re.sub(r"\W+", "", text(row.get("title"))).casefold()
+    from stock_lab_core.today_news import _session_article_keys
+    link, _ = _session_article_keys(dict(row, link=safe_link(first(row, "link", "url"))))
+    return link or re.sub(r"\W+", "", text(row.get("title"))).casefold()
 
 
 def participant_news_rows(news, session_date):

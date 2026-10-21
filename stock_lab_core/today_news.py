@@ -429,6 +429,22 @@ _HEADLINE_MARKETS = {
 }
 
 
+def _session_article_keys(row):
+    title = str(row.get("title") or "").strip()
+    publisher = str(row.get("publisher") or "").strip()
+    if publisher:
+        title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
+    title = re.sub(r"\s+", " ", title).casefold()
+    raw_link = str(row.get("link") or "")
+    try:
+        link = urllib.parse.urlsplit(raw_link)
+    except ValueError:
+        return raw_link, title
+    query = urllib.parse.urlencode([(key, value) for key, value in urllib.parse.parse_qsl(link.query, keep_blank_values=True)
+                                   if not key.lower().startswith("utm_") and key.lower() not in {"fbclid", "gclid"}])
+    return urllib.parse.urlunsplit((link.scheme, link.netloc.lower(), link.path, query, "")), title
+
+
 def _resolve_query_news_market(raw, windows):
     """A search region is provenance, not the subject of a returned article."""
     row = dict(raw)
@@ -440,6 +456,11 @@ def _resolve_query_news_market(raw, windows):
     publisher = str(row.get("publisher") or "").strip()
     if publisher:
         title = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I)
+    if row.get("query_topics") or str(row.get("market_category") or "").startswith("섹터:"):
+        from stock_lab_core.report_presentation import sector_news_topics
+        # Search packs describe retrieval, not evidence about this headline.
+        topics = sector_news_topics("", sector_name=title)
+        row["market_category"] = "섹터:" + ",".join(sorted(topics)) if topics else "시장"
     published = _news_timestamp(row.get("published_at") or row.get("published"))
     markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
     if re.match(r"^Asia(?:n)?(?:[- ]Pacific)?\s+(?:shares|stocks|markets)\b", title, re.I):
@@ -741,15 +762,15 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     rows = [_resolve_query_news_market(row, by_market) for row in rows]
     origins = {}
     for row in rows:
-        for key in (row["link"], market_story_title_key(row["title"])):
+        for key in _session_article_keys(row):
             if key:
                 origins.setdefault(key, set()).add(row["market"])
     for row in rows:
-        if any(len(origins.get(key, ())) > 1 for key in (row["link"], market_story_title_key(row["title"]))):
+        if any(len(origins.get(key, ())) > 1 for key in _session_article_keys(row)):
             row.pop("market", None)
     result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
     for bucket in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
-        accepted, seen, seen_links, counts = [], set(), set(), Counter()
+        accepted, seen, seen_links, seen_titles, counts = [], set(), set(), set(), Counter()
         for row in result[bucket]:
             # Exact time filtering already ran. Validate each source with the
             # existing curator even for holiday windows longer than seven days.
@@ -759,14 +780,17 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             clean = checked[0]
             # Different closing stories may name different participants/causes.
             # Deduplicate the article, not every closing story for the session.
-            event_key = market_story_title_key(clean["title"]) if clean.get("is_close_wrap") else clean["event_key"]
+            article_link, article_title = _session_article_keys(clean)
+            event_key = article_title if clean.get("is_close_wrap") else clean["event_key"]
             event = (clean["market"], event_key)
             category = (clean["market"], clean["category"])
-            link_key = (clean["market"], clean["link"])
-            if event in seen or link_key in seen_links or counts[category] >= per_category or len(accepted) >= _SESSION_ROW_LIMIT:
+            link_key = (clean["market"], article_link)
+            title_key = (clean["market"], article_title)
+            if event in seen or link_key in seen_links or title_key in seen_titles or counts[category] >= per_category or len(accepted) >= _SESSION_ROW_LIMIT:
                 continue
             seen.add(event)
             seen_links.add(link_key)
+            seen_titles.add(title_key)
             counts[category] += 1
             accepted.append(clean)
         result[bucket] = accepted

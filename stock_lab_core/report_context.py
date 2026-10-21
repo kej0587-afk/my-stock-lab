@@ -9,7 +9,7 @@ register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import KST, first, is_held, price_observation, intraday_observation, records, text
 from stock_lab_core.report_holdings import UNDERLYINGS
-from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
+from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, align_us_report_frames, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 from stock_lab_core.report_session import kst_now, market_session_states
 
 
@@ -57,17 +57,26 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                 frames[ticker] = load_price_df(ticker, "1y")
         from stock_lab_core.report_live import supplement_kr_indices
         frames = supplement_kr_indices(frames)
+    frames, price_alignment = align_us_report_frames(
+        frames, tickers, now, reload_batch=load_price_frames_batch if price_frames is None else None)
     observations = {ticker: price_observation(frames.get(ticker), ticker, now) for ticker in tickers}
+    for ticker in price_alignment["unaligned"]:
+        # A missing preceding session makes a multi-day change, not a daily one.
+        if observations[ticker]["date"] == price_alignment["expected_date"]:
+            observations[ticker]["return"] = None
     sessions, news_sessions = {}, {}
     for region, indices in (("KR", ("^KS11", "^KQ11")), ("US", ("^GSPC", "^IXIC", "^DJI"))):
         dates = {observations[ticker]["date"] for ticker in indices if observations[ticker]["date"]}
         # Do not advertise a common close when constituent dates disagree.
         if len(dates) == 1:
             sessions[region] = dates.pop()
-            obs = next(observations[ticker] for ticker in indices if observations[ticker]["date"])
+            obs = max((observations[ticker] for ticker in indices if observations[ticker]["date"]),
+                      key=lambda row: row.get("previous_date", ""))
             news_sessions[region] = {"date": obs["date"], "previous_date": obs.get("previous_date", "")}
     states = market_session_states(now, sessions)
     current_news_sessions = {}
+    if states["KR"]["phase"] == "intraday" and sessions.get("KR"):
+        current_news_sessions["KR"] = {"date": states["KR"]["active_date"], "previous_date": sessions["KR"], "is_active": True}
     intraday = {ticker: intraday_observation(frames.get(ticker), ticker, now) for ticker in tickers}
     if states["US"]["phase"] == "intraday":
         from stock_lab_core.report_live import load_us_live_frames, us_live_observation
@@ -104,6 +113,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             if symbol:
                 metadata[symbol] = dict(metadata.get(symbol, {}), **item)
     for ticker in sorted(tickers - set(MACRO_SYMBOLS.values())):
+        if ticker in price_alignment["unaligned"]:
+            continue
         frame = closed_daily_frame(frames.get(ticker), ticker, now)
         if len(frame) < 20 or not {"Close", "High", "Low"}.issubset(frame.columns):
             continue
@@ -122,6 +133,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     from stock_lab_core.portfolio import infer_scenario_shock_multiplier
     rotation_rows = [row for row in closed_rows if abs(infer_scenario_shock_multiplier({"티커": row["Ticker"]})) <= 1 and row["Ticker"] != "SMH"]
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
+              "price_alignment": price_alignment,
               "market_states": states, "intraday_prices": intraday, "closed_flow_rows": closed_rows,
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "macro_data": aligned_macro(frames, sessions.get("US"), now), "sector_rows": sectors,
@@ -147,4 +159,5 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                sector_rows=sectors + closed_rows, held_exposures=held_exposures,
                                                per_category=5, use_cache=True))
+    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"]))
     return result

@@ -1,6 +1,7 @@
 """Session-aligned report prices and same-day comparisons, not causal claims."""
 
 import math
+import logging
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -10,6 +11,49 @@ from stock_lab_core.result_cache import cache_result
 
 MACRO_SYMBOLS = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
 SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지", "139250.KS": "에너지", "396500.KS": "한국 반도체"}
+
+
+def align_us_report_frames(frames, tickers, now, *, reload_batch=None):
+    """Retry lagging report histories once, without relabeling or filling prices.
+
+    The newest observed index close is the reference, never a guessed calendar
+    date. Both return endpoints must match before accepting the retry.
+    """
+    from stock_lab_core.report_evidence import price_observation
+
+    result = dict(frames)
+    indices = [price_observation(frames.get(t), t, now) for t in ("^GSPC", "^IXIC", "^DJI")]
+    reference = max(indices, key=lambda row: (row["date"], row.get("previous_date", "")))
+    expected = reference["date"]
+    status = {"expected_date": expected, "requested": [], "refreshed": [], "unaligned": [], "missing": []}
+    if not expected:
+        return result, status
+    symbols = sorted(t for t in tickers if not t.endswith((".KS", ".KQ", "=X", "=F", "-USD"))
+                     and t not in {"^KS11", "^KQ11", *MACRO_SYMBOLS.values()})
+
+    def aligned(frame, ticker):
+        obs = price_observation(frame, ticker, now)
+        return obs["date"] == expected and obs.get("previous_date") == reference.get("previous_date")
+
+    lagging = [t for t in symbols if not aligned(frames.get(t), t)]
+    if lagging and reload_batch is not None:
+        status["requested"] = lagging
+        try:
+            fresh = reload_batch(tuple(lagging), "1y")
+        except Exception as exc:
+            logging.warning("Report-only US history retry failed (%s)", type(exc).__name__)
+            fresh = {}
+        for ticker in lagging:
+            candidate = fresh.get(ticker) if isinstance(fresh, dict) else None
+            if aligned(candidate, ticker):
+                result[ticker] = candidate.copy(deep=True)
+                status["refreshed"].append(ticker)
+    for ticker in lagging:
+        if not aligned(result.get(ticker), ticker):
+            status["unaligned"].append(ticker)
+            actual = price_observation(result.get(ticker), ticker, now)["date"] or "미수집"
+            status["missing"].append(f"{ticker}: 미국 종가 기준일 {expected} 대비 {actual} · 수익률 비교일 미정합")
+    return result, status
 
 
 def btc_at_us_close(frame, current_date, previous_date):
