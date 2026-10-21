@@ -81,8 +81,10 @@ def _flow_evidence(context, flow_rows):
         return "같은 기준일의 업종 3M 자료 미연결", ""
     ticker, _, change = ordered[0]
     detail = " / ".join(f"{symbol} 3M {_pct(ret)}({date} 종가)" for symbol, date, ret in ordered[:2])
-    label = "반도체" if ticker in {"SOXX", "SMH"} else ticker
-    return detail + " · 가격·거래량 기반, 실제 자금 유출입액 아님", f"{label} 중기 {'약세' if change < 0 else '강세' if change > 0 else '보합'}"
+    labels = {"SOXX": "반도체", "SMH": "반도체", "IGV": "소프트웨어"}
+    conditions = [f"{labels.get(symbol, symbol)} 중기 {'약세' if ret < 0 else '강세' if ret > 0 else '보합'}"
+                  for symbol, _, ret in ordered[:2]]
+    return detail + " · 가격·거래량 기반, 실제 자금 유출입액 아님", "·".join(conditions)
 
 
 def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
@@ -141,6 +143,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         inference.append(burden + " 부담")
     if flow_condition:
         inference.append(flow_condition)
+    breadth = broad_market_reading(context, states, now)
     sentences = []
     for fact in facts:
         topics = market_claims.get(fact["market"], [])
@@ -151,7 +154,13 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                 sources.append(citation(dict(row, title="배경 보도")))
                 seen.add(key)
         sentence = (" · ".join(topics) + " 관련 보도가 나온 가운데(기사 주장), " if topics else "")
-        sentences.append(sentence + fact["narrative"] + (" " + " ".join(sources[:2]) if sources else ""))
+        narrative = breadth.rstrip(".") if fact["market"] == "US" and breadth else fact["narrative"]
+        if fact["market"] == "KR" and not fact["live"] and (fact["change"] or 0) > 0:
+            row = context.get("prices", {}).get(fact.get("ticker"), {})
+            recent = number(row.get("return_5d"))
+            if recent is not None and recent < 0:
+                narrative += f". 다만 최근 5거래일은 {_pct(recent)}로, 오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다"
+        sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
     headline = ". ".join(sentences)
     if inference:
         caution = burden or "약세" in flow_condition
@@ -168,7 +177,6 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     evidence = [("시장", " / ".join(fact["phrase"] for fact in facts)),
                 ("배경 보도", " · ".join(claims) + "(기사 주장·기여도 미확정)" if claims else "당일 시장 방향과 연결할 배경 보도 미확보"),
                 ("매크로", macro_text), ("중기 가격·거래량", flow_text)]
-    breadth = broad_market_reading(context, states, now)
     if breadth:
         evidence.insert(1, ("미국 시장 전체", breadth))
     sector_text = broad_sector_reading(context)

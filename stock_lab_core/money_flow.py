@@ -2006,9 +2006,12 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None):
 
     if len(kr_tickers) < 2:
         return collect({})
-    with ThreadPoolExecutor(max_workers=min(4, len(kr_tickers))) as executor:
-        futures = {ticker: submit_with_context(executor, load_kr, ticker) for ticker in kr_tickers}
-        return collect(futures)
+    from stock_lab_core.kr_flow_history import reuse_kr_history_connections
+
+    with reuse_kr_history_connections():
+        with ThreadPoolExecutor(max_workers=min(4, len(kr_tickers))) as executor:
+            futures = {ticker: submit_with_context(executor, load_kr, ticker) for ticker in kr_tickers}
+            return collect(futures)
 
 
 @timed_call("external_data")

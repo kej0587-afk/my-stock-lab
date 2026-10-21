@@ -150,3 +150,28 @@ def test_account_opening_promotion_is_not_market_news():
     article = {"title": "모니모서 삼성증권 계좌 만들고 코스피200 주식 받으세요", "publisher": "조선일보",
                "link": "https://www.chosun.com/promotion-fixture", "published_at": "2026-10-20T20:00:00+09:00"}
     assert not curate_news([article], now=NOW)
+
+
+def test_close_summary_explains_rebound_divergence_and_distinct_medium_trends():
+    context, _ = case()
+    now = datetime.fromisoformat("2026-10-21T16:30:00+09:00")
+    context["sessions"] = {"KR": "2026-10-21", "US": "2026-10-20"}
+    context["prices"] = {
+        "^KS11": {"date": "2026-10-21", "return": .0329, "return_5d": -.0455},
+        "^GSPC": {"date": "2026-10-20", "return": .0028},
+        "^IXIC": {"date": "2026-10-20", "return": -.0002},
+        "^DJI": {"date": "2026-10-20", "return": .0102},
+    }
+    context["closed_flow_rows"] = [
+        {"Ticker": "SMH", "기준일": "2026-10-20", "3개월수익률": -.0691},
+        {"Ticker": "IGV", "기준일": "2026-10-20", "3개월수익률": .2012},
+    ]
+    original = deepcopy(context)
+    result = market_summary(context, [], [], market_session_states(now, context["sessions"]), now)
+    headline = result["headline"]
+    assert "오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다" in headline
+    assert "최근 5거래일은 -4.55%" in headline
+    assert "지수 방향이 엇갈린 혼조" in headline
+    assert "반도체 중기 약세" in headline and "소프트웨어 중기 강세" in headline
+    assert "기사 주장" not in headline  # No news supplied, so no invented catalyst.
+    assert context == original

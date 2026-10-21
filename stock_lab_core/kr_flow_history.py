@@ -3,7 +3,9 @@
 import logging
 import re
 import time
-from threading import Lock
+from contextlib import contextmanager
+from contextvars import ContextVar
+from threading import Lock, get_ident
 from xml.etree import ElementTree
 
 import pandas as pd
@@ -18,6 +20,38 @@ _URL = "https://fchart.stock.naver.com/sise.nhn"
 _TIMEOUT = (2, 4)
 _BODY_BUDGET_SECONDS = 6
 _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
+_connections = ContextVar("kr_history_connections", default=None)
+
+
+@contextmanager
+def reuse_kr_history_connections():
+    """Reuse transport only within one batch; each worker owns its session."""
+    if _connections.get() is not None:
+        yield
+        return
+    sessions, lock = {}, Lock()
+    token = _connections.set((sessions, lock))
+    try:
+        yield
+    finally:
+        _connections.reset(token)
+        # The caller joins its workers before leaving this scope.
+        for session in sessions.values():
+            session.close()
+
+
+def _request_history(*args, **kwargs):
+    pool = _connections.get()
+    if pool is None:
+        return requests.get(*args, **kwargs)
+    sessions, lock = pool
+    with lock:
+        session = sessions.get(get_ident())
+        if session is None:
+            session = sessions[get_ident()] = requests.Session()
+    # Keep the original stateless feed request, while retaining TCP/TLS reuse.
+    session.cookies.clear()
+    return session.get(*args, **kwargs)
 
 
 def _unavailable(reason):
@@ -50,7 +84,7 @@ def parse_history(text, start, end):
 
 class KrFlowHistoryReader:
     def __init__(self, *, request=None, clock=time.monotonic):
-        self._request = request or requests.get
+        self._request = request or _request_history
         self._clock = clock
         self._lock = Lock()
         self._failures = 0
