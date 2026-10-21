@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from stock_lab_core.precision_selection import resolve_precision_selection
+from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
 
 
 def test_preserve_precision_target_keeps_free_ticker_for_next_rerun(app_module):
@@ -96,9 +96,15 @@ def _selection_screen_source():
                and any(isinstance(target, ast.Name) and target.id == "is_free" for target in node.targets))
     prefix = '''
 import streamlit as st
-from stock_lab_core.precision_selection import resolve_precision_selection
+from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
 from stock_lab_core.precision_review_export import build_precision_review_export_zip
 render_app_notice = lambda *args: None
+TICKER_MAP = {}
+def _queue_precision_selected_option(label):
+    st.session_state[PRECISION_PENDING_SELECTED_OPTION_KEY] = label
+def set_precision_target_ticker(ticker, option_map):
+    label = next(key for key, value in option_map.items() if (value.get("item") or {}).get("ticker") == ticker)
+    _queue_precision_selected_option(label)
 '''
     options_source = f'''
 def build_precision_select_options():
@@ -139,3 +145,32 @@ def test_holding_watchlist_relabel_then_bitx_keeps_widget_body_and_zip_together(
     _assert_selected_body_and_zip(app, OLD_MAGS, "MAGS")
     app.selectbox[0].select(BITX).run()
     _assert_selected_body_and_zip(app, BITX, "BITX")
+
+
+@pytest.mark.parametrize("label,expected", [
+    (BITX, {"ticker": "BITX"}),
+    (FREE, {"free": True}),
+    ("KR", {"ticker": "000660.KQ"}),
+])
+def test_callback_captures_identity_not_label_or_position(label, expected):
+    state = {"widget": label}
+    remember_precision_selection(state, "widget", "pending", {
+        BITX: {"type": "watchlist", "item": {"ticker": "BITX"}}, FREE: {"type": "free"},
+    }, {"KR": ("000660.KQ", False, "kr_stock")})
+    assert state["pending"] == expected
+
+
+def test_callback_survives_widget_state_lost_during_option_rebuild():
+    from streamlit.testing.v1 import AppTest
+
+    source = _selection_screen_source().replace(
+        "def build_precision_select_options():",
+        "def build_precision_select_options():\n    if st.session_state.get(PRECISION_PENDING_IDENTITY_KEY):\n        st.session_state.pop(PRECISION_SELECTED_WIDGET_KEY, None)",
+    )
+    app = AppTest.from_string(source).run()
+    app.selectbox[0].select(OLD_MAGS).run()
+    _assert_selected_body_and_zip(app, OLD_MAGS, "MAGS")
+    app.selectbox[0].select(BITX).run()
+    _assert_selected_body_and_zip(app, BITX, "BITX")
+    app.selectbox[0].select(app.selectbox[0].options[0]).run()
+    _assert_selected_body_and_zip(app, app.selectbox[0].options[0], "GOOGL")

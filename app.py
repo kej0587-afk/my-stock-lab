@@ -59,7 +59,7 @@ from stock_lab_core.market_evidence_panel import render_market_evidence_panel
 from stock_lab_core.news_evidence import render_price_news_evidence
 from stock_lab_core.review_audit import cross_view_flags
 from stock_lab_core.precision_review_export import render_precision_review_download
-from stock_lab_core.precision_selection import resolve_precision_selection
+from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
 from stock_lab_core.precision_chart_view import (
     build_price_figure, finish_price_figure, frame_last_date, render_chart_basis,
 )
@@ -17799,6 +17799,7 @@ PRECISION_FORCE_FREE_OPTION_KEY = "_precision_force_free_option"
 PRECISION_PENDING_SELECTED_OPTION_KEY = "_precision_pending_selected_option"
 PRECISION_PENDING_FREE_TICKER_KEY = "_precision_pending_free_ticker"
 PRECISION_PENDING_FREE_MARKET_KEY = "_precision_pending_free_market"
+PRECISION_PENDING_IDENTITY_KEY = "_precision_pending_identity"
 PRECISION_US_MARKET_OPTION = "미국/기타 (접미사 없음)"
 PRECISION_KR_MARKET_OPTIONS = ["KOSPI (.KS)", "KOSDAQ (.KQ)"]
 PRECISION_FREE_MARKET_OPTIONS = [PRECISION_US_MARKET_OPTION] + PRECISION_KR_MARKET_OPTIONS
@@ -35787,6 +35788,11 @@ if main_page == "dashboard":
 if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     free_option = FREE_SEARCH_OPTION if FREE_SEARCH_OPTION in options else (options[0] if options else "")
+    requested_identity = st.session_state.pop(PRECISION_PENDING_IDENTITY_KEY, {})
+    if requested_identity.get("free"):
+        _queue_precision_selected_option(free_option)
+    elif requested_identity.get("ticker"):
+        set_precision_target_ticker(requested_identity["ticker"], precision_option_map)
     pending_option = str(st.session_state.pop(PRECISION_PENDING_SELECTED_OPTION_KEY, "") or "")
     pending_free_ticker = str(st.session_state.pop(PRECISION_PENDING_FREE_TICKER_KEY, "") or "")
     pending_free_market = str(st.session_state.pop(PRECISION_PENDING_FREE_MARKET_KEY, "") or "")
@@ -35816,7 +35822,12 @@ if main_page == "precision":
     precision_select_kwargs = {"key": PRECISION_SELECTED_WIDGET_KEY}
     if reset_precision_widget or PRECISION_SELECTED_WIDGET_KEY not in st.session_state:
         precision_select_kwargs["index"] = selected_index
-    sel = st.selectbox("종목 선택", options, **precision_select_kwargs)
+    sel = st.selectbox(
+        "종목 선택", options, **precision_select_kwargs,
+        on_change=remember_precision_selection,
+        args=(st.session_state, PRECISION_SELECTED_WIDGET_KEY, PRECISION_PENDING_IDENTITY_KEY,
+              precision_option_map, TICKER_MAP),
+    )
     st.session_state[PRECISION_SELECTED_OPTION_KEY] = sel
     selected_option = precision_option_map.get(sel, {"type": "free" if sel == free_option else "preset"})
     is_free = (selected_option.get("type") == "free")
