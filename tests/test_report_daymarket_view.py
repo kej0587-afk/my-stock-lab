@@ -51,7 +51,7 @@ def test_old_daymarket_is_visible_reference_but_excluded_from_account():
     assert obs["return"] == pytest.approx(8.9 / 8.35 - 1)
     context = {"extended_reference_prices": {"RAM": obs}}
     text = extended_quote_text(context, "RAM", NOW)
-    assert "$8.90" in text and "12:28 KST" in text and "129분 전" in text
+    assert "USD 8.90" in text and "$" not in text and "12:28 KST" in text and "129분 전" in text
     assert "지연 참고·현재 합산 제외" in text
     # Even an accidentally supplied stale observation cannot enter the current sum.
     metrics = intraday_account_metrics([{"티커": "RAM", "현재비중": 13}], {}, {"RAM": obs}, now=NOW)

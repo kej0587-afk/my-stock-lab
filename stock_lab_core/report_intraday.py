@@ -124,7 +124,7 @@ def extended_quote_text(context, ticker, now):
             " · 참고 시세·현재 합산 제외" if reference_only else " · 별도 세션·미확정")
     price = number(obs.get("price"))
     return (f"{obs.get('kind', '시간외')} {number(obs['return']) * 100:+.2f}%"
-            + (f" (${price:.2f})" if price is not None else "")
+            + (f" (USD {price:.2f})" if price is not None else "")
             + f" · {kst_time(obs['as_of'])}" + note)
 
 
@@ -160,6 +160,8 @@ def account_overview_lines(metrics, closed, sessions, mode, latest_metrics=None)
     if mode == "intraday" or (metrics.get("coverage") or 0) > 0:
         coverage = metrics.get("coverage", 0)
         status = "전체 계좌 추정 보류(연결 90% 미만)" if coverage < 90 else "장중·미확정"
+        if latest_metrics is not None and not latest_metrics.get("error") and latest_metrics.get("coverage", 0) >= 90:
+            status = "장중·시간외만 집계(확정 종가 제외) · 전체는 위 통합행 참조"
         lines.append(f"장중 연결분 기여 | {pct(metrics.get('total'))} | {coverage:.1f}% | {metrics.get('error') or status}")
         for key, label in (("KR", "한국 상장 장중"), ("US", "미국 정규장"), ("US_EXT", "미국 데이마켓·시간외")):
             group = metrics.get("groups", {}).get(key, {})

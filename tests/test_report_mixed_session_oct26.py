@@ -209,7 +209,10 @@ def test_overview_prepends_combined_and_dated_breakdown_without_replacing_existi
     old = account_overview_lines(live, closed, context["sessions"], "closed")
     new = account_overview_lines(live, closed, context["sessions"], "closed", latest_metrics=latest)
     assert new[2].startswith("최신 관측 통합 계좌 추정 | +2.40%p")
-    assert all(line in new for line in old)
+    assert all(line in new for line in old if not line.startswith("장중 연결분 기여"))
+    live_row = next(line for line in new if line.startswith("장중 연결분 기여"))
+    assert live_row.split(" | ")[:3] == next(line for line in old if line.startswith("장중 연결분 기여")).split(" | ")[:3]
+    assert "전체는 위 통합행 참조" in live_row and "전체 계좌 추정 보류" not in live_row
     assert any("한국 확정 종가 | +1.20%p" in line and "2026-10-26" in line for line in new)
     assert any("미국 정규장 | +1.20%p" in line and "기준 종가 2026-10-23" in line for line in new)
 
