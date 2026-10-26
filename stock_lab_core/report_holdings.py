@@ -125,9 +125,10 @@ def completed_scenario_comparison(row, observations, sessions, now, *, price_fra
     fx = f"{c['fx_return'] * 100:+.2f}%" if c["fx_return"] is not None else "미연결"
     residual = (f"단순 차이 {c['residual_pp']:+.2f}%p(환율·베이시스 미조정, 추적오차 아님)"
                 if c["residual_pp"] is not None else "레버리지 재설정 미반영: 배수 잔차 산출 보류")
+    from stock_lab_core.report_fx import adjusted_reference
     return (f"동일 시각 비교 {kst_time(c['base_at'])}→{kst_time(c['as_of'])}: "
             f"한국 ETF 실제 {c['actual'] * 100:+.2f}% vs {c['proxy']} {c['reference'] * 100:+.2f}% · "
-            f"원/달러 별도 {fx} · {residual}" + (" · 장중·미확정" if c["intraday"] else ""))
+            f"원/달러 별도 {fx} · {residual}" + adjusted_reference(c, code) + (" · 장중·미확정" if c["intraday"] else ""))
 
 
 def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):

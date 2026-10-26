@@ -268,9 +268,20 @@ _SECTOR_NEWS_PROFILES = {
 }
 
 
+def sector_display_name(row):
+    from stock_lab_core.constants import KNOWN_TICKER_DISPLAY_NAMES
+    ticker = text(first(row, "Ticker", "티커", "ticker")).upper()
+    name = text(first(row, "섹터", "ETF 이름", "종목명", "name"))
+    if name and name.upper() not in {ticker, ticker.split(".")[0]}:
+        return name.rstrip(" ,")
+    return KNOWN_TICKER_DISPLAY_NAMES.get(ticker, KNOWN_TICKER_DISPLAY_NAMES.get(ticker.split(".")[0], ticker))
+
+
 def sector_news_topics(ticker, *, sector_name=""):
     """Return stable topic keys for symbols or full Korean ETF product names."""
     symbol = text(ticker).upper()
+    if symbol == "0167A0.KS":
+        symbol = "396500.KS"
     sector_name = text(sector_name)
     return tuple(key for key, (symbols, pattern, _, _) in _SECTOR_NEWS_PROFILES.items()
                  if symbol in symbols.split() or (sector_name and re.search(pattern, sector_name, re.I)))
@@ -389,6 +400,8 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
     matched = []
     for item in news:
         title = text(item.get("title"))
+        if re.search(r"^\s*\[표\]|순매수\s*(?:상위|순위)|순매도\s*(?:상위|순위)", title):
+            continue
         if re.search(r"日증시|일본\s*증시|중국\s*증시|대만\s*증시|Asian (?:shares|stocks)|Japan(?:ese)? (?:shares|stocks)|Chinese (?:shares|stocks)", title, re.I):
             continue
         if (not session or item.get("market") != region or item.get("session_date") != session

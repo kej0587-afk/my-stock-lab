@@ -13,6 +13,7 @@ def _label(row, fallback=None):
     name = text(first(row, "종목명", "name", "자산명"))
     if not name or name == ticker:
         name = text(first(fallback or {}, "종목명", "name", "자산명"))
+    name = name.rstrip(" ,")
     return f"{name}({ticker})" if name and name != ticker else f"{ticker}(종목명 미저장)"
 
 

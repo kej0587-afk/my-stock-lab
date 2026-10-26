@@ -95,7 +95,8 @@ def test_response_seconds_after_collection_start_is_not_future():
     assert context["intraday_prices"]["379810.KS"]["return"] == pytest.approx(.02)
     assert context["intraday_prices"]["379810.KS"]["as_of"] == context["intraday_prices"]["^KS11"]["as_of"]
     report = build_auto_market_memo(report_context=context, summary_rows=held, now=NOW)
-    assert "장중 계좌 영향 추정 +2.00%p" in report
+    assert "최신 관측 통합 계좌 영향 추정 +2.00%p" in report
+    assert "한국 상장 장중 +2.00%p" in report
     assert context["sessions"] == SESSIONS
 
 

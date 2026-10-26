@@ -5,6 +5,8 @@ The caller owns freshness/background labels and story eligibility. PCE/GDP/JOLTS
 identifiers below are accepted for supplied rows, not added to the collector.
 """
 
+import re
+
 from stock_lab_core.report_evidence import number, text
 from stock_lab_core.report_build import register_loaded_source
 
@@ -173,3 +175,24 @@ def economic_implication(row) -> str:
             effect = "예상치 대비 해석: " + effect
     parts = [observation, prior_note, forecast_note, effect, caution]
     return ". ".join(part for part in parts if part)
+
+
+def economic_reading_with_reaction(row):
+    """Keep the pure reading intact, then contrast a verified same-day reaction."""
+    reading = economic_implication(row)
+    indicator, actual = text(row.get("indicator")), number(row.get("actual"))
+    if (indicator not in _INFLATION or not indicator.startswith("US_") or actual is None
+            or row.get("unit") != "%" or row.get("basis") not in {"MoM", "YoY"}
+            or row.get("status") in {"pending", "scheduled", "stale", "예정"}
+            or not row.get("release_at") or not row.get("reaction_source")):
+        return reading
+    _, prior, _ = _comparison(row, "previous", actual)
+    _, forecast, _ = _comparison(row, "forecast", actual)
+    if prior is not None and forecast is not None and prior * forecast < 0:
+        return reading
+    direction = forecast if forecast is not None else prior
+    reaction = re.search(r"10Y\s+([+-]?\d+(?:\.\d+)?)bp", text(row.get("reaction")))
+    rate = float(reaction[1]) if reaction else None
+    if direction and rate is not None and abs(rate) >= 5 and direction * rate < 0:
+        reading += ". 동일일 움직임이 단순 해석과 어긋남: 발표일 10Y " + f"{rate:+.2f}bp" + ". 기대 선반영·다른 재료의 기여는 미확인(인과 아님)"
+    return reading

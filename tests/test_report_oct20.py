@@ -150,7 +150,8 @@ def test_intraday_rebound_does_not_inherit_previous_day_decline_claims():
     report = build_auto_market_memo(report_context=context,
         now=datetime.fromisoformat("2026-10-21T10:00:00+09:00"))
     headline = report.split("## 한 줄 결론")[1].split("## 오늘의 시장 스토리")[0]
-    assert "[장중] 코스피 당일 +2.00%(2026-10-21 장중·확정 아님; 2026-10-21 10:00 KST) · 반등 시도" in headline
+    assert "[장중] 코스피 +2.00%(2026-10-21 장중·미확정; 2026-10-21 10:00 KST)" in headline
+    assert "반등" in headline
     assert "AI 신용우려" not in headline and "외국인·기관 동반 매도" not in headline
 
 

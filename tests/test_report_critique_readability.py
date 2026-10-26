@@ -53,8 +53,8 @@ def test_postclose_candidate_is_cited_once_without_explaining_sector_excess():
     assert "보도상 배경 후보 | 대상 거래일 | 출처·보도 시각" in story
     assert context["session_news"][0]["title"] in story and "10/20 16:15 KST" in story
     assert "인과·기여도는 미확정" in story and "파급 범위" in story
-    # Cite the market conclusion and its evidence table, not an extra news item.
-    assert report.count(context["session_news"][0]["link"]) == 2
+    # The conclusion points to the story; keep a single linked evidence row.
+    assert report.count(context["session_news"][0]["link"]) == 1
     assert "개별 원인 미확인" in sectors and "AI 신용우려" not in sectors
     assert (context, rows) == before
 

@@ -124,6 +124,10 @@ def korean_headline_reading(row):
         (r"middle east|ceasefire", "중동 휴전 협상"),
     )
     subject = next((label for pattern, label in subjects if re.search(pattern, lower)), "")
+    if subject == "원유":
+        from stock_lab_core.article_price_facts import oil_price_fact
+        oil = oil_price_fact([title])
+        return ("제목 표현 요약: " + oil["summary"] + "(본문·인과 미확인)") if oil else ""
     actions = (
         (r"rebound|recover|bounc", "반등 관련 보도"),
         (r"cuts? rates|rate cut", "금리 인하 관련 보도"),
@@ -149,15 +153,19 @@ def _close_recap_key(row, title, published):
         return ("US", row["session_date"], "연합뉴스", "뉴욕증시 혼조 마감")
     if row.get("market") != "KR" or not row.get("session_date") or row.get("news_bucket") == "current_session_news":
         return None
-    if len(set(re.findall(r"코스피|코스닥", title))) != 1:
+    index = re.search(r"코스피|코스닥", title)
+    if not index:
         return None
-    recap = re.search(r"(코스피|코스닥).{0,70}?(\d+\.\d+)\s*%\s*(하락|급락|상승|급등)", title)
+    # The lead index owns the move; stop before another index's percentage.
+    segment = re.split(r"코스피|코스닥", title[index.end():], maxsplit=1)[0]
+    recap = re.search(r"(\d+\.\d+)\s*%\)?\s*(하락|급락|상승|급등|내린|밀린|떨어진|오른|올랐|↑|↓)", segment[:100])
     local = published.astimezone(KST)
     after_close = local.date().isoformat() == row["session_date"] and (local.hour, local.minute) >= (15, 30)
     from stock_lab_core.report_presentation import is_preopen_outlook
     if not recap or is_preopen_outlook(row) or not (after_close or row.get("is_close_wrap") or "마감" in title):
         return None
-    return ("KR", row["session_date"], recap[1], float(recap[2]), "down" if recap[3] in {"하락", "급락"} else "up")
+    return ("KR", row["session_date"], index[0], float(recap[1]),
+            "down" if recap[2] in {"하락", "급락", "내린", "밀린", "떨어진", "↓"} else "up")
 
 
 def curate_news(rows, *, now=None, limit=5, session_scoped=False):
@@ -489,7 +497,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     """Return report front matter and explicit missing-data reasons."""
     context = context or {}
     from stock_lab_core.report_analysis import comparison_metrics, economic_reaction_text, economic_story_dates, economic_story_lines, recent_economic_releases, outlier_check, sector_evidence
-    from stock_lab_core.report_economic_reading import economic_implication
+    from stock_lab_core.report_economic_reading import economic_reading_with_reaction
     from stock_lab_core.report_holdings import holding_estimate, completed_scenario_comparison, hedge_policy_line, hedge_source_lines
     from stock_lab_core.report_presentation import account_metrics, account_headline, candidate_fields, compact_holding_reference, is_preopen_outlook, is_preopen_price_recap, kst_time, market_cause_candidates, sector_related_news, korean_market_catalysts
     from stock_lab_core.report_session import report_mode, market_session_states, kst_now, MODE_LABELS, next_check, us_extended_session
@@ -560,18 +568,19 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     sector_facts = [f"{name} {_pct(observations[t]['return'])}({us} 확정 종가)" for t, name in (("SOXX", "미국 반도체"), ("IGV", "소프트웨어"))
                     if number(observations.get(t, {}).get("return")) is not None and observations[t].get("date") == us]
     live = context.get("intraday_prices", {})
-    from stock_lab_core.report_intraday import intraday_account_metrics, layered_market_headline, valid_live_observation, extended_quote_text, account_overview_lines
+    from stock_lab_core.report_intraday import intraday_account_metrics, layered_market_headline, valid_live_observation, extended_quote_text, account_overview_lines, latest_account_metrics
     live_metrics = intraday_account_metrics(held, live, context.get("extended_prices"), states=states,
                                             now=max(now, stamp(context.get("quote_checked_at")) or now))
+    latest_metrics = latest_account_metrics(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now))
     current_kr = live.get("^KS11", {})
     kr_close = observations.get("^KS11", {})
     from stock_lab_core.report_market_summary import market_summary, evidence_table
     synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
-    headline = (layered_market_headline(context, flow_rows, states, now, live_metrics, synthesis=synthesis)
-                if mode == "intraday" else synthesis["headline"])
+    headline = layered_market_headline(context, flow_rows, states, now, live_metrics,
+                                      synthesis=synthesis, latest_metrics=latest_metrics)
+    if states["US"]["phase"] == "preopen" and futures_line:
+        headline += ".\n\n미국 개장 전 참고: " + futures_line
     lines.extend(["", "## 한 줄 결론"])
-    if mode == "intraday" and synthesis.get("overview"):
-        lines.extend([synthesis["overview"], ""])
     from stock_lab_core.report_brief import build_news_brief
     brief = build_news_brief(context, news, summary_rows, now,
                             exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
@@ -766,7 +775,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             actual_text += " · " + checked["status"]
         if row.get("verification"):
             actual_text += " · " + row["verification"]
-        lines.append(" | ".join(_cell(v) for v in (label, actual_text, forecast, previous, economic_implication(row), reaction)))
+        lines.append(" | ".join(_cell(v) for v in (label, actual_text, forecast, previous, economic_reading_with_reaction(row), reaction)))
         if actual is None and state not in {"scheduled", "pending", "예정"}:
             configured = row.get("api_key_configured")
             reason = collection_status(row) + (" · 키 감지됨" if configured is True else " · 키 미감지" if configured is False else "")
@@ -859,7 +868,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             continue
         seen.add(ticker)
         seen_sector_exposures.add(exposure)
-        label = text(row.get("섹터"))
+        from stock_lab_core.report_presentation import sector_display_name
+        label = sector_display_name(row)
         region = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
         linked = sector_related_news(ticker, text(first(row, "기준일", "date", "as_of")), theme_news, sector_name=label)
         evidence = sector_evidence(row, context.get("macro_data", {}), [dict(item, ticker=ticker) for item in linked], observations=observations)
@@ -879,7 +889,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     holdings_header = ("종목 | 최신 종가 일간(실제·기준일) | 실제 누적 vs 기초자산 누적 / 일간 참고 | 상태/사유"
                        if mode == "closed" else "종목 | 기준일 일간(확정 종가) | 실제 누적 vs 기초자산 누적 / 일간 참고 | 당일 현재(장중·미확정) | 상태/사유"
                        if mode == "intraday" else "종목 | 기준일 일간(실제) | 개장 전 갭 시나리오/배수 참고(추정) | 당일 현재(실제) | 상태/사유")
-    account_lines = account_overview_lines(live_metrics, portfolio, sessions, mode)
+    account_lines = account_overview_lines(live_metrics, portfolio, sessions, mode, latest_metrics=latest_metrics)
+    from stock_lab_core.report_fx import portfolio_fx_lines
+    account_lines.extend(portfolio_fx_lines(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now)))
     lines.extend(["", "## 내 보유 종목 영향", *account_lines,
                   "재현 기준(내부 추정): 행별 현재비중(%) × 일간 수익률(%) ÷ 100 = 계좌 기여(%p). 아래 수치는 반올림 표시이며 실제 체결 손익과 별도입니다.",
                   "", holdings_header, "--- | --- | --- | ---" if mode == "closed" else "--- | --- | --- | --- | ---"])
@@ -976,6 +988,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     if not watches:
         lines.append("- 관심 후보 미연결/없음")
     lines.extend(["", "## 다가오는 일정"])
+    lines.append("기업 실적 일정은 연결·확인된 IR 공지만 포함합니다. 전체 보유·관심종목의 일정이 아니므로 목록에 없다고 미발표/일정 없음으로 판단하지 않습니다.")
     scheduled = []
     calendar_rows = records(context.get("calendar_events", event_rows))
     next_monthly = {}

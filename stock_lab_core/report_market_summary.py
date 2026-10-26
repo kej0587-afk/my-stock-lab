@@ -225,8 +225,10 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     if sector_text:
         evidence.append(("업종 분포", sector_text))
     overview = facts[0]["narrative"] + ". " + (breadth or facts[1]["narrative"])
-    if market_claims.get("KR"):
-        overview += " 한국 보도는 " + "·".join(market_claims["KR"]) + "을 배경으로 거론합니다(기사 주장)."
+    for market, name in (("KR", "한국"), ("US", "미국")):
+        if market_claims.get(market):
+            overview += f" {name} 보도상 배경: " + "·".join(market_claims[market]) + "(기사 주장)."
+            overview += " 출처는 아래 시장 스토리에 표시합니다."
     if burden:
         overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
     return {"headline": headline, "overview": overview, "evidence": evidence, "market_claims": market_claims,

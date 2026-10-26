@@ -154,16 +154,16 @@ def _body_facts(paragraphs):
          "일부 기업의 호실적이 시장을 지지한 배경으로 보도됐습니다",
          "실적 기대가 지수를 지지해도 AI 업종과 시장 전체의 방향은 다를 수 있습니다",
          "예정 실적의 매출·가이던스와 업종별 확산 확인"),
-        ("oil_easing", r"유가.{0,60}(?:하락|내려|진정)|oil prices.{0,25}(?:eased|fell|retreat)",
-         "유가 하락이 보도됐습니다",
-         "유가 하락은 비용·물가 부담을 덜 수 있지만 가격 수준이 여전히 높다면 부담 해소로 단정할 수 없습니다",
-         "WTI 가격 수준과 공급·지정학 뉴스의 지속성 확인"),
     )
     for topic, pattern, summary, implication, check in rules:
         matched = next((p for p in paragraphs if re.search(pattern, p, re.I)), None)
         if matched:
             facts.append(dict(topic=topic, summary=summary, implication=implication, check=check,
                               evidence=matched[:140] + ("…" if len(matched) > 140 else "")))
+    from stock_lab_core.article_price_facts import oil_price_fact
+    oil = oil_price_fact(paragraphs)
+    if oil:
+        facts.insert(0, oil)
     return facts[:4]
 
 
@@ -207,6 +207,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") == "verified")
 def _article(url, title):
+    # v2: subject-bound oil facts; invalidate cached whole-sentence attribution.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -252,7 +253,8 @@ def verified_body_facts(row):
 
 def body_context_sentence(row):
     labels = {"mediation": "미·이란 중재 기대", "ai_investment": "AI 실적·투자 확대와 수요 기대",
-              "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "earnings": "기업 호실적", "oil_easing": "유가 하락"}
+              "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "earnings": "기업 호실적",
+              "oil_easing": "유가 하락", "oil_rising": "유가 상승", "oil_mixed": "기간·유종별 유가 방향 혼재"}
     facts = verified_body_facts(row)
     positives = [labels[fact["topic"]] for fact in facts if fact["topic"] in labels]
     sentence = "기사에서는 " + "·".join(positives[:3]) + " 등을 시장 배경으로 짚었습니다." if positives else ""

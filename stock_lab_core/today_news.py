@@ -475,7 +475,7 @@ def _resolve_query_news_market(raw, windows):
     markets = [market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)]
     if re.match(r"^Asia(?:n)?(?:[- ]Pacific)?\s+(?:shares|stocks|markets)\b", title, re.I):
         row.update(market="ASIA", market_basis="explicit_headline_subject")
-    elif _KR_HEADLINE_SUBJECT.search(title):
+    elif _KR_HEADLINE_SUBJECT.search(title) or re.search(r"(?:美|미국)보다.{0,25}국장|국장.{0,25}(?:급락|하락|반등|상승)", title):
         row.update(market="KR", market_basis="explicit_headline_subject")
     elif published and _us_close_recap(title, published, windows.get("US")):
         row.update(market="US", market_basis="explicit_us_recap")
@@ -781,7 +781,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     Ambiguous cross-market results remain excluded. No sending/storage.
     current_sessions is optional and has the same contract as the pure partitioner.
     """
-    from stock_lab_core.report_evidence import curate_news
+    from stock_lab_core.report_evidence import curate_news, _close_recap_key
 
     now = _news_now(now)
     sessions, current_sessions = _split_news_sessions(sessions, current_sessions)
@@ -818,6 +818,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
     for bucket in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
         accepted, seen, seen_links, seen_titles, counts = [], set(), set(), set(), Counter()
+        recap_keys = set()
         for row in result[bucket]:
             # Exact time filtering already ran. Validate each source with the
             # existing curator even for holiday windows longer than seven days.
@@ -833,12 +834,17 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             category = (clean["market"], clean["category"])
             link_key = (clean["market"], article_link)
             title_key = (clean["market"], article_title)
-            if event in seen or link_key in seen_links or title_key in seen_titles or counts[category] >= per_category or len(accepted) >= _SESSION_ROW_LIMIT:
+            recap = _close_recap_key(clean, clean["title"], _news_timestamp(clean["published"]))
+            repeated_recap = recap is not None and recap in recap_keys
+            if event in seen or link_key in seen_links or title_key in seen_titles or (counts[category] >= per_category and not repeated_recap) or len(accepted) >= _SESSION_ROW_LIMIT:
                 continue
             seen.add(event)
             seen_links.add(link_key)
             seen_titles.add(title_key)
-            counts[category] += 1
+            if not repeated_recap:
+                counts[category] += 1
+            if recap:
+                recap_keys.add(recap)
             accepted.append(clean)
         result[bucket] = accepted
         for window in current_windows if bucket == "current_session_news" else windows:

@@ -93,6 +93,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         if not target or row.get("session_date") != target or row.get("news_bucket") in {"next_session_news", "other_market_news"}:
             continue
         title = text(row.get("title"))
+        if re.search(r"^\s*\[표\]|순매수\s*(?:상위|순위)|순매도\s*(?:상위|순위)", title):
+            continue
         from stock_lab_core.article_context import verified_body_facts
         body_facts = verified_body_facts(row)
         if text(first(row, "link", "url")) in excluded and not body_facts:
