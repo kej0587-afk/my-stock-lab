@@ -767,6 +767,39 @@ def _cached_session_rss(spec):
     return _fetch_session_rss(spec)
 
 
+def _retrieve_session_rss(specs, *, use_cache):
+    rows, failures, complete = [], Counter(), bool(specs)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for candidates, error in executor.map(_cached_session_rss if use_cache else _fetch_session_rss, specs):
+            rows.extend(candidates)
+            complete = complete and bool(candidates) and not error
+            if error:
+                failures[error] += 1
+    return {"rows": rows, "failures": failures, "complete": bool(complete)}
+
+
+@cache_result(ttl=60, failure_ttl=0, is_success=lambda result: result["complete"])
+def _cached_session_rss_batch(specs, session_key, time_bucket):
+    # Cache raw retrieval only. No market classification or time-filtered rows.
+    # Empty/partial batches are not retained; per-query failures still cool down.
+    return _retrieve_session_rss(specs, use_cache=True)
+
+
+def _session_retrieval_key(windows):
+    return tuple((window["market"], window["date"], window["previous_date"], window["timezone"],
+                  window["start"], window.get("open_at", ""),
+                  window.get("scheduled_close", window["end"]), window.get("is_closed", True))
+                 for window in windows)
+
+
+def clear_session_market_news_cache():
+    """Clear both RSS layers and public article caches for explicit refresh."""
+    from stock_lab_core.article_context import _article, _feed
+
+    for loader in (_cached_session_rss_batch, _cached_session_rss, _feed, _article):
+        loader.clear()
+
+
 def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
                               current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False,
                               include_article_bodies=False) -> dict:
@@ -777,6 +810,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     At most 16 requests run with four workers, five-second socket timeouts and
     512 KiB responses. Exposure topic packs share the budget with categories.
     Cached retrieval is opt-in; time partitioning always uses the supplied now.
+    Complete raw RSS batches are reused for up to 60 seconds, keyed by explicit
+    market/session windows, query specs and the supplied UTC minute. Existing
+    per-query 300s successes/30s failures remain underneath; no disk persistence.
     Explicit market headlines correct query tags before cross-query deduplication.
     Ambiguous cross-market results remain excluded. No sending/storage.
     current_sessions is optional and has the same contract as the pure partitioner.
@@ -794,12 +830,10 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         per_category = max(1, min(int(per_category), 5))
     except (TypeError, ValueError):
         per_category = 3
-    rows, failures = [], Counter()
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        for candidates, error in executor.map(_cached_session_rss if use_cache else _fetch_session_rss, specs):
-            rows.extend(candidates)
-            if error:
-                failures[error] += 1
+    retrieved = (_cached_session_rss_batch(specs, _session_retrieval_key(query_windows),
+                                          int(now.timestamp()) // 60)
+                 if use_cache else _retrieve_session_rss(specs, use_cache=False))
+    rows, failures = retrieved["rows"], retrieved["failures"]
     if include_article_bodies:
         from stock_lab_core.article_context import publisher_news
         # Direct publisher links permit public-body verification without decoding

@@ -120,7 +120,7 @@ def test_stress_shows_zero_contributions_while_values_change_without_rescaling()
     assert "스트레스 92→92" in result and "19.00→18.44" in result
     assert "+25.00%→+24.51%" in result
     rows = [line for line in result.splitlines() if line.startswith(("10Y 금리 |", "VIX |", "MOVE |", "WTI 선물", "환율 |"))]
-    assert len(rows) == 5 and all(line.endswith(" | +0") for line in rows)
+    assert len(rows) == 5 and all(line.split(" | ")[5] == "+0" for line in rows)
     assert "기여 Δ 0은 가격 불변을 뜻하지 않습니다" in result and "신용 스프레드" in result
     assert (previous, current) == before
 

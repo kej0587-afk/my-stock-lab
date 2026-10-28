@@ -212,7 +212,9 @@ def customs(monkeypatch):
     state = {"listing": LISTING, "detail": DETAIL, "status": 200, "calls": [], "responses": []}
 
     def get(url, **kwargs):
-        assert kwargs["allow_redirects"] is False and kwargs["timeout"] == 4
+        assert kwargs["allow_redirects"] is False
+        expected_timeout = bulletins.CUSTOMS_DETAIL_TIMEOUT if url == bulletins.CUSTOMS_DETAIL_URL else 4
+        assert kwargs["timeout"] == expected_timeout
         assert url in {bulletins.CUSTOMS_LIST_URL, bulletins.CUSTOMS_DETAIL_URL}
         assert "key" not in kwargs["params"]
         state["calls"].append((url, kwargs))

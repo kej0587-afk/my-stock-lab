@@ -89,8 +89,8 @@ def test_close_report_acceptance_and_immutable_inputs():
     assert (context, rows, flow) == original
     assert "보고서 모드: 마감 후" in report
     conclusion = report.split("## 한 줄 결론")[1].split("## 내 보유 종목 영향")[0]
-    assert "최신 관측 통합 계좌 영향 추정" in conclusion and "99.9%" in conclusion
-    assert "최신 종가 기준 계좌 추정" in report and "99.9%" in report
+    assert "통합 누적 계좌 영향 추정" in conclusion and "99.9%" in conclusion
+    assert "최신 종가 기준 계좌 추정" not in report and "99.9%" in report
     assert "코스피는 반등했습니다(+1.76%, 2026-10-19 확정 종가)" in conclusion
     assert "당일 코스피 +1.76%" in report and "직전 거래일 +2.05%" in report
     assert REVERSAL_TITLE in report.split("## 경제지표")[0]

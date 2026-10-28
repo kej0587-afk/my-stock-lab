@@ -12,7 +12,7 @@ from stock_lab_core.report_evidence import KST, first, is_held, price_observatio
 from stock_lab_core.report_holdings import UNDERLYINGS
 from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, align_us_report_frames, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 from stock_lab_core.report_session import kst_now, market_session_states
-from stock_lab_core.performance import timed_call
+from stock_lab_core.performance import measure, timed_call
 
 
 def apply_verified_release_dates(rows, now):
@@ -149,6 +149,16 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
+    earnings_sources = []
+    if economic_releases is None and price_frames is None:
+        from stock_lab_core.earnings_sources import load_official_earnings
+        # Explicitly requested issuers first; no broad market scan on a rerender.
+        earnings_tickers = list(dict.fromkeys(["000660.KS", "005930.KS", "NVDA", "GOOGL", "META", "MSFT", "TSLA",
+            *(text(first(row, "티커", "ticker")) for row in records(summary_rows))]))
+        earnings = load_official_earnings(earnings_tickers, now)
+        updated = {row.get("ticker") for row in earnings["events"]}
+        calendar = dict(calendar, events=[r for r in calendar["events"] if r.get("ticker") not in updated] + earnings["events"])
+        earnings_sources = earnings["sources"]
     closed_rows = []
     from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
@@ -188,7 +198,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "sector_rows": sectors,
               "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
-              "calendar_events": calendar["events"], "calendar_sources": calendar["sources"]}
+              "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources}
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:
@@ -217,8 +227,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                 held_exposures.extend({"Ticker": base, "섹터": SECTORS.get(base, "")}
                                       for base in UNDERLYINGS.get(ticker.split(".")[0], ())
                                       if base != "BTC-US-CLOSE")
-        result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
-                                               sector_rows=sectors + closed_rows, held_exposures=held_exposures,
-                                               per_category=5, use_cache=True, include_article_bodies=True))
+        with measure("external_data", "report_news"):
+            result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
+                                                   sector_rows=sectors + closed_rows, held_exposures=held_exposures,
+                                                   per_category=5, use_cache=True, include_article_bodies=True))
     result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
     return result

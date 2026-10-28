@@ -97,7 +97,8 @@ def layered_market_headline(context, flow_rows, states, now, metrics, *, synthes
     return ((overview + "\n\n" if overview else "")
             + "[중기] " + "; ".join(medium) + ". " + medium_read
             + "\n\n[최근 2거래일] " + "; ".join(recent) + "."
-            + "\n\n[장중] " + "; ".join(kr_facts)
+            + "\n\n[" + ("장중" if states["KR"]["phase"] == "intraday" else
+                            "한국 마감·미국 현재" if states["KR"]["phase"] == "closed" else "정규장 외·현재") + "] " + "; ".join(kr_facts)
             + ". " + inference + " " + us_current
             + "\n\n계좌: " + account
             + ". 시장·종목 실행 게이트는 기존 판정을 유지합니다")
@@ -143,6 +144,9 @@ def us_extended_summary(context, now):
 def account_overview_lines(metrics, closed, sessions, mode, latest_metrics=None):
     """Compact account view; missing/stale quotes never become zero returns."""
     from stock_lab_core.report_presentation import kst_time
+    if latest_metrics is not None and latest_metrics.get("basis") == "completed_session_to_latest":
+        from stock_lab_core.report_account import cumulative_account_table
+        return cumulative_account_table(latest_metrics, (closed or {}).get("concentration"))
     lines = ["구분 | 계좌 기여(추정) | 연결 비중 | 기준·상태", "--- | --- | --- | ---"]
     def pct(value):
         value = number(value)
@@ -299,6 +303,14 @@ def _latest_group_basis(group):
 
 
 def latest_account_line(metrics, *, compact=False):
+    if metrics.get("basis") == "completed_session_to_latest":
+        if metrics.get("error") or metrics.get("total") is None:
+            return "통합 누적 계좌 추정 미연결: " + metrics.get("error", "시세 또는 기준 종가일 미확인")
+        parts = [f"{label} {metrics['by_market'][market]:+.2f}%p" for market, label in (("KR", "한국 상장"), ("US", "미국 상장"))
+                 if metrics["by_market"].get(market) is not None]
+        return (f"통합 누적 계좌 영향 추정 {metrics['total']:+.2f}%p(연결 {metrics['coverage']:.1f}%) · "
+                + " / ".join(parts) + (" · 전체 추정 보류(90% 미만)" if metrics["coverage"] < 90 else "")
+                + " · 미국 최근 확정 정규장 구간부터 현재 / 한국 직전 종가부터 현재, 일간 손익 아님")
     if metrics.get("error"):
         return "최신 관측 통합 계좌 추정 보류: " + metrics["error"]
     if metrics.get("total") is None:

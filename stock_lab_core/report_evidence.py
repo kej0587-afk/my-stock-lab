@@ -183,6 +183,8 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False):
         link = safe_link(first(raw, "link", "링크", "url"))
         domain = urlparse(safe_link(raw.get("publisher_url")) or link).hostname or ""
         lower = f"{title} {publisher} {domain}".lower()
+        if re.search(r"^\s*\[표\].*(?:시세|종가|주가|증시|순매수|순매도)|시세표", title):
+            continue
         if not title or not MARKET_TERMS.search(title) or any(word in lower for word in (
             "coinmarketcap", "tmgm", "prnewswire", "businesswire", "보도자료", "press release",
             "price today", "live price", "to usd", "rbc", "commerzbank", "일일 운세",
@@ -571,7 +573,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     from stock_lab_core.report_intraday import intraday_account_metrics, layered_market_headline, valid_live_observation, extended_quote_text, account_overview_lines, latest_account_metrics
     live_metrics = intraday_account_metrics(held, live, context.get("extended_prices"), states=states,
                                             now=max(now, stamp(context.get("quote_checked_at")) or now))
-    latest_metrics = latest_account_metrics(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now))
+    from stock_lab_core.report_account import cumulative_account_metrics
+    latest_metrics = cumulative_account_metrics(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now))
     current_kr = live.get("^KS11", {})
     kr_close = observations.get("^KS11", {})
     from stock_lab_core.report_market_summary import market_summary, evidence_table
@@ -893,7 +896,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     from stock_lab_core.report_fx import portfolio_fx_lines
     account_lines.extend(portfolio_fx_lines(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now)))
     lines.extend(["", "## 내 보유 종목 영향", *account_lines,
-                  "재현 기준(내부 추정): 행별 현재비중(%) × 일간 수익률(%) ÷ 100 = 계좌 기여(%p). 아래 수치는 반올림 표시이며 실제 체결 손익과 별도입니다.",
+                  "재현 기준: 통합행은 현재비중(%) × 위에서 정의한 종목별 누적 수익률(%) ÷ 100입니다. 아래 종가 일간·시나리오 표는 별도 참고이며 통합행에 다시 합산하지 않습니다.",
                   "", holdings_header, "--- | --- | --- | ---" if mode == "closed" else "--- | --- | --- | --- | ---"])
     held = [row for row in records(summary_rows) if is_held(row)]
     for row in held:
@@ -1000,6 +1003,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                 next_monthly[indicator] = day
     for row in calendar_rows:
         date_text = text(first(row, "date", "날짜", "일자", "시작일", "발표일"))
+        if row.get("event_status"):
+            continue
         dt = stamp(date_text)
         title = text(first(row, "이벤트", "event", "title"))
         is_next_monthly = next_monthly.get(row.get("indicator")) == date_text
@@ -1051,6 +1056,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         note = "미국 CPI·PPI·고용 중 일부 다음 확정 발표일 미연결: 공식 캘린더/FRED 보완 미확보(일정 없음이 아님)"
         lines.append("- " + note)
         missing.append(note)
+    from stock_lab_core.report_calendar import earnings_calendar_lines
+    lines.extend(earnings_calendar_lines(context, now))
     additional_news = [row for row in news if news_article_key(row) not in used_story_news]
     lines.extend(["", "## 추가 핵심 뉴스"])
     lines.append("당일 한국 장전·장중 기사 우선, 이전 마감 회고는 별도 맥락입니다." if mode == "intraday" else
@@ -1092,4 +1099,6 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     holding_at = lines.index("## 내 보유 종목 영향")
     lines[holding_at:holding_at] = calendar_block
     lines.extend(history_lines)
+    from stock_lab_core.report_observation_panel import observation_report_lines
+    lines.extend(observation_report_lines(context, summary_rows, news, now))
     return lines, list(dict.fromkeys(missing))

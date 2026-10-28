@@ -19,6 +19,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
+from stock_lab_core.earnings_sources import (
+    VERIFIED_AT as EARNINGS_VERIFIED_AT, clear_earnings_source_cache, load_official_earnings,
+)
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -56,6 +59,7 @@ _LOCK = threading.Lock()
 def clear_release_calendar_cache():
     with _LOCK:
         _CACHE.clear()
+    clear_earnings_source_cache()
 
 
 def _clock(now):
@@ -330,6 +334,9 @@ def _meta_source(now):
     # This announced quarter has verified fallback coverage; no dates for other
     # quarters are extrapolated from previous earnings or third-party calendars.
     name = "Meta Investor Relations"
+    if now >= datetime.fromisoformat(EARNINGS_VERIFIED_AT):
+        result = load_official_earnings(["META"], now, refresh=False)
+        return result["events"], result["sources"][0]
     if not date(2026, 10, 12) <= now.date() <= date(2026, 12, 31):
         return [], {"name": name, "status": "unavailable", "reason": "verified_quarter_unavailable"}
     events, source = _load_source(name, META_IR_URL, lambda html: _meta_events(html, META_IR_URL), now)
@@ -369,6 +376,9 @@ def _tesla_events(html):
 
 def _tesla_source(now):
     name = "Tesla Investor Relations"
+    if now >= datetime.fromisoformat(EARNINGS_VERIFIED_AT):
+        result = load_official_earnings(["TSLA"], now, refresh=False)
+        return result["events"], result["sources"][0]
     if not date(2026, 10, 2) <= now.date() <= date(2026, 12, 31):
         return [], {"name": name, "status": "unavailable", "reason": "verified_quarter_unavailable"}
     # Reuse this independently verified announcement without adding a request
@@ -424,13 +434,14 @@ def _load_bls_source(group, url, now, fred_api_key):
     return [], source
 
 
-def load_release_calendar(now=None, *, fred_api_key=""):
+def load_release_calendar(now=None, *, fred_api_key="", earnings_tickers=None):
     """Return {events, sources, connected}; connected means at least one source.
 
     Four workers, 4-second request timeouts; failed BLS pages may use FRED dates.
-    BOK 2026 and Meta Q3 2026 fixtures carry official publication/verification
-    dates and finite coverage. Meta after-close timing has no guessed minute.
-    Successful parsed pages alone are cached; failures are retried next call.
+    Pass earnings_tickers for bounded holdings/watch coverage (no universe scan).
+    Omitting it preserves legacy Meta/Tesla coverage. Recent published results
+    and next schedules are separate; date-only evidence has no guessed minute.
+    Macro pages cache only successes; earnings checks also cool down failures.
     No guessed dates, inferred release months, FOMC times, or forecast values.
     """
     now = _clock(now)
@@ -439,14 +450,27 @@ def load_release_calendar(now=None, *, fred_api_key=""):
                    for group, url in SCHEDULE_URLS.items()]
         futures.append(executor.submit(_load_source, "Federal Reserve FOMC", FOMC_URL,
                                        lambda html: _fomc_events(html, now), now))
-        futures.append(executor.submit(_meta_source, now))
-        futures.append(executor.submit(_tesla_source, now))
+        if earnings_tickers is None:
+            futures.append(executor.submit(_meta_source, now))
+            futures.append(executor.submit(_tesla_source, now))
         results = [future.result() for future in futures]
     results.append(_bok_source(now))
+    if earnings_tickers is not None:
+        earnings = load_official_earnings(earnings_tickers, now)
+        results.extend(([], source) for source in earnings["sources"])
+        results.append((earnings["events"], None))
     events = [event for rows, _ in results for event in rows]
-    sources = [source for _, source in results]
+    sources = [source for _, source in results if source is not None]
+    for event in events:
+        if event.get("ticker") and "event_status" not in event:
+            local_day = now.astimezone(ZoneInfo(event["timezone"])).date().isoformat()
+            event["event_status"] = "elapsed_unconfirmed" if event["date"] < local_day else "scheduled"
+            event["event_kind"] = "scheduled_release"
     events.sort(key=lambda event: (event["date"], event["indicator"]))
     return {"events": events, "sources": sources,
+            "recent_earnings": [deepcopy(e) for e in events if e.get("event_status") == "released"],
+            "upcoming_earnings": [deepcopy(e) for e in events if e.get("event_status") == "scheduled"],
+            "elapsed_earnings": [deepcopy(e) for e in events if e.get("event_status") == "elapsed_unconfirmed"],
             "connected": any(source["status"] == "connected" for source in sources)}
 
 

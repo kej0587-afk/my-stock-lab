@@ -130,10 +130,10 @@ def test_report_explains_breadth_and_tables_without_promoting_stale_quotes():
     headline = report.split("## 한 줄 결론\n")[1].split("\n## ")[0]
     assert "S&P500" in headline and "다우" in headline and "나스닥" in headline
     assert "혼조" in headline and "미국 데이마켓" in headline and "지연 참고" in headline
-    assert "구분 | 계좌 기여(추정) | 연결 비중 | 기준·상태" in report
-    assert "장중 연결분 기여 | +0.75%p | 75.0%" in report
-    assert "미국 데이마켓·시간외 | 미연결 | 0.0%" in report
-    assert "종가 기여 분해 | 미국 상장 -0.50%p / 한국 상장 -1.50%p" in report
+    assert "구분 | 계좌 기여(추정) | 연결 비중 | 시작 종가일 → 관측일" in report
+    assert "통합 누적 계좌 추정 | +0.75%p | 75.0%" in report
+    assert "미연결 | 미연결 | 25.0% | RAM" in report
+    assert "종가 기여 분해" not in report
     assert "미연결분 ±3% 가정 민감도 | ±0.75%p" in report
     assert "해석(조건부)" in report and "물가 압력 확대" in report
     assert "오늘 등락의 원인 확정이나 매수 신호가 아닙니다" in report

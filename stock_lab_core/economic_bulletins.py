@@ -9,11 +9,14 @@ manually transcribed ministry citation. HTML/schema changes fail closed.
 """
 
 from copy import deepcopy
+from collections import OrderedDict
 from datetime import date
 from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
+import threading
+import time
 from urllib.parse import urlencode
 
 from stock_lab_core import economic_releases as releases
@@ -26,6 +29,47 @@ CUSTOMS_LIST_URL = "https://www.customs.go.kr/kcs/na/ntt/selectNttList.do"
 CUSTOMS_DETAIL_URL = "https://www.customs.go.kr/kcs/na/ntt/selectNttInfo.do"
 _TITLE = r"(\d{4})\ub144(\d{1,2})\uc6d4\uc6d4\uac04\uc218\ucd9c\uc785\ud604\ud669\[\ud655\uc815\uce58\]"
 _MAX_HTML = 2_000_000
+CUSTOMS_DETAIL_TIMEOUT = (2.0, 4.0)
+CUSTOMS_FAILURE_TTL = 180
+_CUSTOMS_FAILURES = OrderedDict()
+_CUSTOMS_LOCK = threading.Lock()
+
+
+def clear_customs_bulletin_failures():
+    with _CUSTOMS_LOCK:
+        _CUSTOMS_FAILURES.clear()
+
+
+def _customs_detail_request(params, diagnostics):
+    """Retry connection establishment once; never retry HTTP/parse failures."""
+    diagnostics["attempts"] = []
+    diagnostics["timeout_seconds"] = {"connect": CUSTOMS_DETAIL_TIMEOUT[0], "read": CUSTOMS_DETAIL_TIMEOUT[1]}
+    for attempt in range(1, 3):
+        started = time.monotonic()
+        item = {"attempt": attempt, "http_status": None}
+        diagnostics.update(attempted=True, from_cache=False, origin="network", http_status=None,
+                           attempt_count=attempt)
+        try:
+            response = releases.requests.get(
+                CUSTOMS_DETAIL_URL, params=params, timeout=CUSTOMS_DETAIL_TIMEOUT, allow_redirects=False,
+                headers={"User-Agent": "StockLab-Economic-Releases/1.0"})
+            try:
+                item["http_status"] = diagnostics["http_status"] = response.status_code
+                if response.status_code != 200:
+                    raise releases._Unavailable("http_" + str(response.status_code))
+                if len(response.text) > _MAX_HTML:
+                    raise releases._Unavailable("customs_invalid_page")
+                return response.text
+            finally:
+                response.close()
+        except releases.requests.RequestException as exc:
+            item["exception_type"] = type(exc).__name__
+            if not isinstance(exc, releases.requests.ConnectTimeout) or attempt == 2:
+                diagnostics["transport_error"] = type(exc).__name__
+                raise
+        finally:
+            item["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            diagnostics["attempts"].append(item)
 
 
 def _compact(text):
@@ -202,7 +246,11 @@ def _customs_observation(html, entry):
 
 
 def load_kr_exports_bulletin(now):
-    """At most two public requests, using the existing timeout and success cache."""
+    """Two public endpoints, one detail-connect retry, short failure cooldown.
+
+    Failed requests never extend successful observations or manual fact expiry.
+    Cached diagnostics are historical, not new network attempts.
+    """
     import logging
     now = releases._clock(now)
     diagnostics = {name: {"endpoint": endpoint, "http_status": None, "attempted": False,
@@ -219,7 +267,7 @@ def load_kr_exports_bulletin(now):
             entry = _customs_listing(html, now)
             params = {"bbsId": "1362", "mi": "2891", "nttSn": entry["nttSn"], "nttSnUrl": entry["nttSnUrl"]}
             stage, operation = "detail", "request"
-            html = releases._request(CUSTOMS_DETAIL_URL, params=params, text=True, diagnostics=diagnostics["detail"])
+            html = _customs_detail_request(params, diagnostics["detail"])
             operation = "parse"
             observation = _customs_observation(html, entry)
         except (releases.requests.RequestException, ValueError, TypeError, KeyError, OverflowError, AttributeError) as exc:
@@ -228,7 +276,24 @@ def load_kr_exports_bulletin(now):
         return {"observation": observation, "source_url": CUSTOMS_DETAIL_URL + "?" + urlencode(params),
                 "request": deepcopy(diagnostics)}
 
-    data, error, retrieved = releases._cached(("customs_exports", now.date().isoformat()), fetch, now)
+    key = ("customs_exports", now.date().isoformat())
+    cooldown = False
+    # Serialize this small collector so concurrent report renders cannot each
+    # start another retry pair during the same provider outage.
+    with _CUSTOMS_LOCK:
+        failed = _CUSTOMS_FAILURES.get(key)
+        if failed and failed[1] <= now.isoformat() and time.monotonic() - failed[0] < CUSTOMS_FAILURE_TTL:
+            data, error, retrieved = None, failed[2], None
+            diagnostics = deepcopy(failed[3])
+            cooldown = True
+            retry_after = max(0, CUSTOMS_FAILURE_TTL - (time.monotonic() - failed[0]))
+        else:
+            data, error, retrieved = releases._cached(key, fetch, now)
+            _CUSTOMS_FAILURES.pop(key, None)
+            if error == "request_failed:ConnectTimeout":
+                _CUSTOMS_FAILURES[key] = (time.monotonic(), now.isoformat(), error, deepcopy(diagnostics))
+                while len(_CUSTOMS_FAILURES) > 8:
+                    _CUSTOMS_FAILURES.popitem(last=False)
     row = releases._row("KR_EXPORTS", "%", "YoY", "Korea Customs Service (monthly final bulletin)",
                         CUSTOMS_LIST_URL, now, seasonal_adjustment="NSA", retrieved_at=retrieved,
                         value_kind="official_bulletin", official_bulletin_fetch=True,
@@ -236,11 +301,19 @@ def load_kr_exports_bulletin(now):
     request = row["bulletin_request_metadata"] = deepcopy(data["request"] if data else diagnostics)
     request["from_cache"] = bool(data and not diagnostics["listing"]["attempted"])
     request["failure_reason"] = error
+    request["failure_cooldown"] = cooldown
+    if cooldown:
+        request["retry_after_seconds"] = round(retry_after, 1)
+        for stage in ("listing", "detail"):
+            request[stage].update(attempted=False, from_cache=True, origin="failure_cooldown",
+                                  attempt_count=0)
     if request["from_cache"]:
         for stage in ("listing", "detail"):
-            request[stage].update(attempted=False, from_cache=True, origin="success_cache")
+            request[stage].update(attempted=False, from_cache=True, origin="success_cache", attempt_count=0)
     for stage in ("listing", "detail"):
         item = request[stage]
+        if not item.get("attempted"):
+            continue
         logging.getLogger(__name__).log(logging.INFO if data else logging.WARNING,
             "KR exports %s origin=%s attempted=%s HTTP=%s exception=%s stage=%s",
             stage, item.get("origin"), item.get("attempted"), item.get("http_status"),

@@ -156,6 +156,9 @@ def render_market_evidence_panel(st, *, status, fetch_snapshot, get_news, render
     if st.button("업종 수급 조회", key=key_prefix + "_flow"):
         st.session_state[key_prefix + "_loaded_market"] = market
     if st.session_state.get(key_prefix + "_loaded_market") == market:
-        render_snapshot(st, fetch_snapshot("sector_" + market.lower()))
+        kind = "sector_" + market.lower()
+        snapshot = fetch_snapshot(kind)
+        render_snapshot(st, snapshot)
+        st.session_state.setdefault("market_observation_evidence", {})[kind] = snapshot
     stocks = {row["코드"]: row for row in stock_rows}
     render_stock_news(st, stocks, get_news=get_news, render_news=render_news, key_prefix=key_prefix)

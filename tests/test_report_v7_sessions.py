@@ -77,8 +77,8 @@ def test_context_report_midnight_acceptance_and_no_live_close_contamination():
         pd.testing.assert_frame_equal(context["price_frames"][ticker], original["price_frames"][ticker])
     assert "한국: 2026-10-19 정규장 종가" in report
     assert "한국 당일 반영 미확인" not in report
-    assert "연결 비중 | 기준·상태" in report
-    assert any(line.startswith("최신 종가 기준 계좌 추정 |") and "| 99.9% |" in line for line in report.splitlines())
+    assert "연결 비중 | 시작 종가일 → 관측일" in report
+    assert any(line.startswith("통합 누적 계좌 추정 |") and "| 99.9% |" in line for line in report.splitlines())
     assert "미국 2026-10-19 장중" in report
     assert "418660.KS" in report and "다음 한국장 갭 예상 영향" in report
     assert "미국 기준일 2026-10-16 · 확정 종가(장중 제외)" in report

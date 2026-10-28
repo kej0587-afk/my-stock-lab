@@ -68,7 +68,9 @@ def test_full_report_has_three_layers_current_account_and_unchanged_decisions():
                "closed_flow_rows": [{"Ticker": "SOXX", "기준일": "2026-10-20", "3개월수익률": -.10}]}
     report = build_auto_market_memo(report_context=context, summary_rows=held, now=NOW)
     headline = report.split("## 한 줄 결론\n", 1)[1].split("\n## ", 1)[0]
-    for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "+2.31%p"):
+    # US regular baselines are intentionally absent: do not promote only the
+    # extended leg into the new cumulative definition.
+    for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "+0.93%p", "전체 추정 보류"):
         assert part in headline
     assert "약세 지속" not in headline
     assert "개장 전 갭 시나리오 기여" not in report and "장전 대체 합산" not in report
@@ -95,8 +97,8 @@ def test_response_seconds_after_collection_start_is_not_future():
     assert context["intraday_prices"]["379810.KS"]["return"] == pytest.approx(.02)
     assert context["intraday_prices"]["379810.KS"]["as_of"] == context["intraday_prices"]["^KS11"]["as_of"]
     report = build_auto_market_memo(report_context=context, summary_rows=held, now=NOW)
-    assert "최신 관측 통합 계좌 영향 추정 +2.00%p" in report
-    assert "한국 상장 장중 +2.00%p" in report
+    assert "통합 누적 계좌 영향 추정 +2.00%p" in report
+    assert "한국 상장 +2.00%p" in report
     assert context["sessions"] == SESSIONS
 
 

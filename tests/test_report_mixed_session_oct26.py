@@ -223,7 +223,7 @@ def test_closed_headline_keeps_dated_kr_facts_us_regular_and_synthesis():
     result = layered_market_headline(context, [], states, NOW, {}, latest_metrics=metrics,
                                     synthesis={"overview": "기존 근거 기반 종합 개요."})
     assert result.startswith("기존 근거 기반 종합 개요.")
-    for part in ("[중기]", "[최근 2거래일]", "[장중]", "코스피 +1.00%(2026-10-26 확정 종가)",
+    for part in ("[중기]", "[최근 2거래일]", "[한국 마감·미국 현재]", "코스피 +1.00%(2026-10-26 확정 종가)",
                  "한국 반도체 -1.00%(2026-10-26 확정 종가)", "SOL AI반도체 +2.00%(2026-10-26 확정 종가)",
                  "SOXX +4.00%", "DRAM +3.00%", "미국 정규장·미확정", "최신 관측 통합 계좌 영향 추정 +2.40%p",
                  "기존 판정을 유지합니다"):
@@ -237,7 +237,8 @@ def test_all_kr_modes_keep_three_layers(clock):
     now = datetime.fromisoformat(clock)
     context, states = context_at(now)
     result = layered_market_headline(context, [], states, now, {})
-    assert all(label in result for label in ("[중기]", "[최근 2거래일]", "[장중]"))
+    current_label = {"intraday": "[장중]", "closed": "[한국 마감·미국 현재]"}.get(states["KR"]["phase"], "[정규장 외·현재]")
+    assert all(label in result for label in ("[중기]", "[최근 2거래일]", current_label))
     if states["KR"]["phase"] == "intraday":
         assert "코스피 장중 시세 미연결" in result
     if now.hour == 20:

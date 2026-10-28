@@ -18,6 +18,8 @@ _RENDER_MODULES = (
     "report_comparison", "report_market_summary", "report_brief", "report_view", "report_intraday", "article_context",
     "economic_releases", "economic_cache", "economic_bulletins", "report_economic_reading", "release_calendar",
     "economic_consensus", "report_consensus",
+    "report_account", "report_calendar", "report_observation_panel",
+    "market_observation", "market_sentiment", "earnings_sources",
 )
 
 

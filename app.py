@@ -15141,6 +15141,8 @@ def load_precision_price_history(ticker: str, period: str = "1y"):
 def clear_news_report_cache():
     cache_clear(get_ticker_news)
     cache_clear(get_analyst_snapshot)
+    from stock_lab_core.today_news import clear_session_market_news_cache
+    clear_session_market_news_cache()
 
 
 def clear_market_context_cache():
@@ -29536,6 +29538,11 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
+    from stock_lab_core.market_sentiment import load_credit_spread
+    from stock_lab_core.economic_releases import _api_key
+    context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
+                                if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})
+    context["market_observation_evidence"] = dict(st.session_state.get("market_observation_evidence", {}))
     store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store,
@@ -30085,7 +30092,12 @@ def render_today_unified_briefing_panel(
     m4.metric("적립 현금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help=f"{clean_float(cash_available, 0.0):,.0f}원")
     m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
 
-    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
+    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움", "이벤트 장부"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
+    if detail == "이벤트 장부":
+        from stock_lab_core.event_swing import render_event_swing_panel
+        render_event_swing_panel(st, df, client=None if IS_PUBLIC_DEMO else supabase,
+                                 owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
+        return
     if detail == "뉴스":
         render_today_action_news_panel(df)
         return

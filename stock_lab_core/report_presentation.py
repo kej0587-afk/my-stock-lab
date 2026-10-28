@@ -46,17 +46,23 @@ def macro_change(previous, current):
     if set(old) != {row["name"] for row in after["rows"]}:
         return "스트레스 변화: 수집 지표 구성이 달라 동일 기준 비교 보류."
     parts = [f"스트레스 {before['score']}→{after['score']}: 구성요소별 비교(이전 저장 스냅샷 대비, 일간 변화 아님)", "",
-             "지표 | 기준일 이전→현재 | 수준 이전→현재 | 1개월 변화율 이전→현재 | 기여 이전→현재 | 기여 Δ(점)",
-             "--- | --- | --- | --- | --- | ---"]
+             "지표 | 기준일 이전→현재 | 수준 이전→현재 | 1개월 변화율 이전→현재 | 기여 이전→현재 | 기여 Δ(점) | 변화 해석",
+             "--- | --- | --- | --- | --- | --- | ---"]
     same_date_change = False
     for row in after["rows"]:
         prev = old[row["name"]]
         delta = row["contribution"] - prev["contribution"]
         changes = [f"{item['change']:+.2f}%" if item["change"] is not None else "미수집" for item in (prev, row)]
+        sign_flip = (delta and prev["change"] is not None and row["change"] is not None
+                     and prev["change"] * row["change"] < 0)
+        if sign_flip:
+            counterfactual = macro_stress({row["name"]: dict(current[row["name"]], chg=prev["change"])})["rows"][0]
+            sign_flip = counterfactual["contribution"] == prev["contribution"]
+        reason = "1개월 변화율 부호 전환으로 인한 구간 점수 변화(수준 등락과 별개)" if sign_flip else "기존 수준·방향 구간 기준"
         parts.append(" | ".join(_cell(value) for value in (
             row["label"], f"{prev['as_of'] or '미제공'}→{row['as_of'] or '미제공'}",
             f"{prev['value']:.2f}→{row['value']:.2f}", "→".join(changes),
-            f"{prev['contribution']:+d}→{row['contribution']:+d}", f"{delta:+d}")))
+            f"{prev['contribution']:+d}→{row['contribution']:+d}", f"{delta:+d}", reason)))
         same_date_change |= prev["as_of"] == row["as_of"] and any(
             prev[key] != row[key] for key in ("value", "change", "contribution"))
     if same_date_change:
@@ -67,7 +73,7 @@ def macro_change(previous, current):
 
 def candidate_fields(row):
     ticker = text(first(row, "티커", "ticker"))
-    name = text(first(row, "종목명", "name", "자산명")) or "종목명 미연결"
+    name = text(first(row, "종목명", "name", "자산명")).rstrip(" ,") or "종목명 미연결"
     raw_grade = text(first(row, "후보품질", "📌후보등급", "후보등급", "grade"))
     grade = re.search(r"[SABCF]급", raw_grade)
     quality = grade.group() if grade else "등급 미제공"

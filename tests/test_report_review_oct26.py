@@ -124,16 +124,17 @@ def test_report_restores_layers_after_kr_close_and_combines_latest_without_gate_
     context = {"sessions": {"KR": "2026-10-26", "US": "2026-10-23"},
                "prices": {"^KS11": {"date": "2026-10-26", "return": -.01, "previous_return": .02},
                           "396500.KS": {"date": "2026-10-26", "return": -.02},
-                          "0167A0.KS": {"date": "2026-10-26", "return": -.01},
+                          "0167A0.KS": {"date": "2026-10-26", "previous_date": "2026-10-23", "return": -.01},
+                          "DRAM": {"date": "2026-10-23", "previous_date": "2026-10-22", "return": .01},
                           "SOXX": {"date": "2026-10-23", "return": -.01, "previous_return": -.02}},
-               "intraday_prices": {symbol: {"date": "2026-10-26", "return": .02, "as_of": NOW.isoformat()}
+               "intraday_prices": {symbol: {"date": "2026-10-26", "previous_date": "2026-10-23", "return": .02, "as_of": NOW.isoformat()}
                                    for symbol in ("SOXX", "DRAM")}}
     rows = [{"티커": "0167A0.KS", "보유량": 1, "현재비중": 60, "최종읽기": "추세방어", "게이트상태": "방어우선"},
             {"티커": "DRAM", "보유량": 1, "현재비중": 40, "최종읽기": "대기", "게이트상태": "대기/관찰"}]
     before = deepcopy((context, rows))
     report = build_auto_market_memo(report_context=context, now=NOW, summary_rows=rows)
     headline = report.split("## 한 줄 결론")[1].split("## 오늘의 핵심 재료")[0]
-    assert all(marker in headline for marker in ("[중기]", "[최근 2거래일]", "[장중]", "SOXX +2.00%", "DRAM +2.00%"))
-    assert "최신 관측 통합 계좌 영향 추정 +0.20%p" in headline and "연결 비중 100.0%" in headline
-    assert "한국 확정 종가 -0.60%p" in headline and "미국 정규장 +0.80%p" in headline
+    assert all(marker in headline for marker in ("[중기]", "[최근 2거래일]", "[한국 마감·미국 현재]", "SOXX +2.00%", "DRAM +2.00%"))
+    assert "통합 누적 계좌 영향 추정 +0.61%p" in headline and "연결 100.0%" in headline
+    assert "한국 상장 -0.60%p" in headline and "미국 상장 +1.21%p" in headline
     assert (context, rows) == before

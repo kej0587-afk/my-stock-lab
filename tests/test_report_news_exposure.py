@@ -252,7 +252,7 @@ def test_retrieval_caps_http_requests_workers_bytes_and_timeout(monkeypatch):
 
 
 def test_cached_feed_does_not_refetch_or_bypass_new_now_filtering(monkeypatch):
-    today_news._cached_session_rss.clear()
+    today_news.clear_session_market_news_cache()
     calls = []
 
     def fetch(request, timeout):
@@ -271,7 +271,7 @@ def test_cached_feed_does_not_refetch_or_bypass_new_now_filtering(monkeypatch):
         again = today_news.fetch_session_market_news(now=NOW + timedelta(minutes=2), **kwargs)
         assert again["current_session_news"][0]["title"] != "mutated"
     finally:
-        today_news._cached_session_rss.clear()
+        today_news.clear_session_market_news_cache()
 
 
 def test_context_passes_held_underlyings_and_uses_cached_targeted_retrieval(monkeypatch):
