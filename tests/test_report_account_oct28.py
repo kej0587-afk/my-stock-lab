@@ -80,3 +80,13 @@ def test_quote_table_not_core_news_but_price_article_is_preserved():
     rows = [dict(base, title="[표] 국내 증시 시세표", link="https://www.yna.co.kr/view/a"),
             dict(base, title="코스피 상승 마감…반도체 강세", link="https://www.yna.co.kr/view/b")]
     assert [r["title"] for r in curate_news(rows, now=NOW)] == [rows[1]["title"]]
+
+
+@pytest.mark.parametrize("sources", [[], [{"ticker": "TEST", "status": "unavailable"}]])
+def test_earnings_notes_are_paragraphs_not_extra_table_rows(sources):
+    from stock_lab_core.report_calendar import earnings_calendar_lines
+
+    lines = earnings_calendar_lines({"earnings_sources": sources}, NOW)
+    for index, line in enumerate(lines):
+        if line.startswith(("미연결 범위:", "최근 발표는")):
+            assert lines[index - 1] == ""

@@ -33,8 +33,10 @@ def earnings_calendar_lines(context, now):
         count += 1
     if not count:
         lines.append("기업 실적 | 미연결 | 확정 공지·결과 자료 미확보, 일정 없음이 아님")
+    lines.append("")
     missing = [r.get("ticker", r.get("name", "")) for r in sources if r.get("status") != "connected"]
     if missing:
         lines.append("미연결 범위: " + ", ".join(dict.fromkeys(missing)) + ". 지원 기업·공지 범위 밖 또는 조회 실패이며 추정 일정으로 채우지 않습니다.")
+        lines.append("")
     lines.append("최근 발표는 예정 목록에서 삭제하지 않고 구분 보존합니다. 메타·테슬라는 이전의 ‘향후 일정만’ 필터로 숨겨졌던 항목입니다. 다음 분기 일정까지 자동 확보한 것은 아닙니다.")
     return lines
