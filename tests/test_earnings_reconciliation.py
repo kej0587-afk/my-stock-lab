@@ -213,6 +213,8 @@ def test_real_report_context_collects_once_and_render_never_refetches(monkeypatc
     import pandas as pd
     from stock_lab_core import prices, report_live, economic_releases, economic_bulletins
     from stock_lab_core import report_consensus, earnings_sources, earnings_result_sources
+    from stock_lab_core import outlook_sources
+    from stock_lab_core.report_outlook import official_outlook_lines
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_build import _RENDER_MODULES
 
@@ -226,14 +228,20 @@ def test_real_report_context_collects_once_and_render_never_refetches(monkeypatc
     monkeypatch.setattr(earnings_sources, "load_official_earnings", lambda *a: {"events": [event()], "sources": []})
     loader = Mock(return_value={"results": [result()], "sources": [{"ticker": "GOOGL", "status": "connected"}]})
     monkeypatch.setattr(earnings_result_sources, "load_earnings_results", loader)
+    outlook_loader = Mock(return_value={"events": [], "sources": [{"ticker": "ORCL", "reason": "test_unavailable"}]})
+    monkeypatch.setattr(outlook_sources, "load_official_outlooks", outlook_loader)
     data = collect_report_context(now=NOW, quote_data={}, scenario_frames={}, live_frames={})
     loader.assert_called_once_with([event()], NOW)
+    outlook_loader.assert_called_once_with(NOW)
     before = deepcopy(data)
     assert "공식 결과 발표 확인" in "\n".join(earnings_calendar_lines(data, NOW))
     assert "공식 결과 발표 확인" in "\n".join(earnings_calendar_lines(data, NOW))
     loader.assert_called_once()
+    assert "Oracle Investor Day 미연결" in "\n".join(official_outlook_lines(data, NOW))
+    assert "Oracle Investor Day 미연결" in "\n".join(official_outlook_lines(data, NOW))
+    outlook_loader.assert_called_once()
     for ticker, frame in data["price_frames"].items():
         pd.testing.assert_frame_equal(frame, before["price_frames"][ticker])
     assert {key: value for key, value in data.items() if key != "price_frames"} == {
         key: value for key, value in before.items() if key != "price_frames"}
-    assert {"earnings_reconciliation", "earnings_result_sources"}.issubset(_RENDER_MODULES)
+    assert {"earnings_reconciliation", "earnings_result_sources", "official_outlook", "outlook_sources", "report_outlook"}.issubset(_RENDER_MODULES)

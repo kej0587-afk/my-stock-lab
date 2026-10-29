@@ -94,3 +94,45 @@ Samsung returned Q3 revenue/operating income/PP&E cash purchase from pages
 5/15, leaving FCF missing. Actual report rendering confirmed those source
 pages and the distinction between PP&E cash outflow and company total CAPEX.
 These local live checks do not assert Cloud deployment completion.
+
+## Strategic outlooks: Oracle pilot
+
+Investor Day is now a separate `official_outlooks` report context, never an
+earnings-result event or an input to scores, gates, orders or the watchlist.
+The common event contract preserves issuer, event kind, publication date,
+observation time, field-level evidence and source URLs. Issuer-specific
+discovery/parsing stays outside the report renderer and `app.py`.
+
+The Oracle adapter reads the public news feed used by its official IR widget
+and follows at most one Investor Day article. It scans the latest 60 notices
+for the last 90 days; future dates, event invitations, quarterly releases,
+foreign URLs, mismatched titles/dates and unrecognized layouts are rejected.
+This is not a universal corporate outlook crawler, nor a claim that later
+quarterly guidance has not superseded the Investor Day outlook. A new issuer
+requires its own verified adapter and fixtures, not a copy of the renderer.
+
+CAPEX, FCF and additional funding are labelled company plans. Financing
+exclusions and already-completed ATM funding remain distinct: a funding
+ceiling is not shown when its scope cannot be verified. Missing or changed
+wording is not inferred from a prior release. The semiconductor implication
+is conditional on physical orders/deployments, with customer-owned hardware,
+financing and other customers' investments identified as alternative factors.
+
+Collection runs only during explicit report-context generation. It adds at
+most two bounded requests (2-second connect / 3-second read timeout, 2 MB per
+response, 10-second checked collection budget). Success/partial results use
+a six-hour process cache; failures use a 60-second cooldown. Concurrent
+sessions do not wait for the network or launch duplicate fetches. The report
+renderer performs no I/O and rejects future or over-one-day-old observations.
+No manual financial numbers or fabricated publication minute are inserted.
+
+2026-10-29 live check: official feed and article returned all five fields in
+1.00 second. The article identified FY27-FY28 peak CAPEX / FY29 reduction,
+H2 FY28 positive FCF / USD 30 billion+ FY29 target, and the USD 20 billion
+incremental funding limit with exclusions. Values were read from the live
+article, not from production constants. Final regression: 2,878 tests and
+18 subtests passed (107.34 seconds); 33 new synthetic tests cover isolation,
+missing data, scope, dates, URL restrictions, failure/cache paths and display.
+Independent review found conditional sentence tails and prior-cycle financing
+exclusions could be lost. Whole-sentence matching and adjacent current-plan
+scope validation now reject both cases; live extraction remained confirmed.

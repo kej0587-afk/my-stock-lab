@@ -995,6 +995,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append(" | ".join(_cell(value) for value in candidate_fields(row)))
     if not watches:
         lines.append("- 관심 후보 미연결/없음")
+    from stock_lab_core.report_outlook import official_outlook_lines
+    lines.extend(official_outlook_lines(context, now))
     lines.extend(["", "## 다가오는 일정"])
     lines.append("기업 실적 일정은 연결·확인된 IR 공지만 포함합니다. 전체 보유·관심종목의 일정이 아니므로 목록에 없다고 미발표/일정 없음으로 판단하지 않습니다.")
     scheduled = []

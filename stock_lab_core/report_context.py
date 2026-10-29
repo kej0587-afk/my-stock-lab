@@ -151,6 +151,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     earnings_sources = []
     earnings_results = {"results": [], "sources": []}
+    official_outlooks = None
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_sources import load_official_earnings
         # Explicitly requested issuers first; no broad market scan on a rerender.
@@ -163,6 +164,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         from stock_lab_core.earnings_result_sources import load_earnings_results
         with measure("external_data", "earnings_result_reconciliation"):
             earnings_results = load_earnings_results(earnings["events"], now)
+        from stock_lab_core.outlook_sources import load_official_outlooks
+        with measure("external_data", "official_outlook"):
+            official_outlooks = load_official_outlooks(now)
     closed_rows = []
     from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
@@ -204,6 +208,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
               "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources,
               "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"]}
+    if official_outlooks is not None:
+        result["official_outlooks"] = official_outlooks
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:
