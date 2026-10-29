@@ -57,3 +57,40 @@ connected SK hynix, Meta and Microsoft. Alphabet/SEC and Tesla returned HTTP
 coverage. Microsoft's revenue/profit were read from its result page; guidance
 was explicitly deferred to the conference call. Alphabet's current-quarter
 CAPEX/FCF table extraction is fixture-tested, not live-connected in this run.
+
+## Official alternatives (2026-10-29 follow-up)
+
+Alphabet's SEC exhibit can return HTTP 403 and Samsung Newsroom can time out.
+For those transport failures, the collector now tries one issuer-linked PDF:
+Alphabet's Q3 release on its Q4 CDN, or Samsung's Q3 earnings-call presentation
+on its official IR asset server. The exact issuer, path and covered period are
+allowlisted. A wrong-period document is rejected, not hidden by a fallback.
+No redirects, arbitrary URLs or retries on a blocked SEC endpoint are used.
+
+Each request keeps the existing connect/read timeout. PDF downloads are capped
+at 8 MB and 24 pages. Successful alternatives use the same six-hour result
+cache and record both source attempts. A failed alternate remains unconfirmed
+unless a valid, labelled last success exists within the existing age limit.
+
+PDF parsing is isolated in `earnings_result_pdf.py`; it does not read holdings,
+alter grades or calculate a trading signal. Alphabet uses the explicitly
+labelled current-quarter reconciliation, never its adjacent TTM column.
+Samsung's cash-flow PP&E purchase is labelled separately from total CAPEX.
+Samsung's PDF does not directly report FCF, so that field is not calculated
+from operating cash flow minus PP&E or supplied by a forecast. PDF creation
+time is not treated as the release time; date-only evidence stays date-only.
+
+This remains finite, verified-period coverage, not automatic discovery of all
+future quarters. Investor Day guidance is not a quarterly actual and is not
+silently inserted into these result fields.
+
+Follow-up verification: 2,845 tests and 18 subtests passed (107.34 seconds),
+including 117 focused earnings tests. Independent review added conflicting
+period-header regressions; a later YTD table cannot inherit a quarter header.
+At 2026-10-29 13:23-13:27 KST, the production collector reproduced SEC 403 and
+Samsung Newsroom ReadTimeout, then retrieved both official PDF alternatives.
+Alphabet returned Q3 revenue/operating income/CAPEX/FCF from pages 1/8;
+Samsung returned Q3 revenue/operating income/PP&E cash purchase from pages
+5/15, leaving FCF missing. Actual report rendering confirmed those source
+pages and the distinction between PP&E cash outflow and company total CAPEX.
+These local live checks do not assert Cloud deployment completion.

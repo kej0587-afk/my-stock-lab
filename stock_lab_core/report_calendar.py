@@ -58,6 +58,8 @@ def earnings_calendar_lines(context, now):
     diagnostics = []
     for row in records(context.get("earnings_result_sources")):
         reason = text(row.get("reason"))
+        if row.get("status") == "connected" and row.get("alternate_used"):
+            lines.extend([text(row.get("ticker")) + " 공식 IR 대체 자료 연결 완료 · 기존 출처 접근 실패와 실적 발표 여부는 별도입니다.", ""])
         if row.get("status") in {"connected", "fallback"} or reason in {"future_event", "refresh_disabled"}:
             continue
         message = ("HTTP " + reason[5:] if reason.startswith("http_") else
@@ -77,9 +79,13 @@ def _result_detail_lines(row):
     for key, label in METRIC_LABELS.items():
         metric = row["result_metrics"].get(key, {})
         detail = text(metric.get("text")) or "미연결"
+        if metric.get("status") == "missing" and metric.get("reason") == "not_reported_in_supported_pdf":
+            detail = "공식 PDF에 직접 공시값 없음 · 임의 계산하지 않음"
         url = safe_link(metric.get("source_url"))
         source_label = "보도" if key == "price_reaction" and metric.get("status") == "reported" else "공식 원문"
         source = f"[{source_label}]({url})" if url else text(metric.get("source")) or "미연결"
+        if metric.get("source_page"):
+            source += " · p." + str(metric["source_page"])
         if metric.get("observed_at"):
             source += " · " + kst_time(metric["observed_at"])
         lines.append(" | ".join(_cell(v) for v in (label, detail, source)))

@@ -313,3 +313,76 @@ def test_refresh_false_collection_cap_and_input_preservation(provider):
     assert len(payload["sources"]) == results.MAX_EVENTS + 1 and payload["sources"][-1]["reason"] == "event_limit"
     with pytest.raises(ValueError, match="offset-aware"):
         results.load_earnings_results(events, "2026-10-29")
+
+
+@pytest.mark.parametrize("ticker,failure", [("GOOGL", 403), ("005930.KS", requests.ReadTimeout("private"))])
+def test_transport_failure_uses_only_verified_pdf_and_caches_success(monkeypatch, ticker, failure):
+    from stock_lab_core import earnings_result_pdf
+    calls, closed = [], []
+    primary = results._PROFILES[ticker]["source_url"]
+    alternate = results._ALTERNATE_PDFS[ticker]
+    expected = results.parse_earnings_result(page(ticker), ticker, NOW)
+    expected["source_url"] = alternate
+    # The transport contract is tested here; table/period parsing has separate fixtures.
+    def parse(data, requested_ticker, spec, now):
+        assert data == b"%PDF-fixture" and requested_ticker == ticker
+        assert spec["source_url"] == alternate and now == NOW
+        return deepcopy(expected)
+    monkeypatch.setattr(earnings_result_pdf, "parse_official_result_pdf", parse)
+    class Response:
+        def __init__(self, url, status):
+            self.url, self.status_code = url, status
+        def iter_content(self, chunk_size):
+            yield b"%PDF-fixture"
+        def close(self):
+            closed.append(self.url)
+    def get(url, **kwargs):
+        calls.append(url)
+        assert not kwargs["allow_redirects"] and kwargs["timeout"] == results.REQUEST_TIMEOUT
+        if url == primary:
+            if isinstance(failure, Exception):
+                raise failure
+            return Response(url, failure)
+        assert url == alternate and kwargs["headers"]["Accept"] == "application/pdf"
+        return Response(url, 200)
+    monkeypatch.setattr(results.requests, "get", get)
+    payload = results.load_earnings_results([event(ticker)], NOW)
+    row, diagnostic = payload["results"][0], payload["sources"][0]
+    assert calls == [primary, alternate] and closed[-1] == alternate
+    assert row["source_url"] == alternate and row["stale"] is False
+    assert diagnostic["status"] == "connected" and diagnostic["alternate_used"]
+    assert len(diagnostic["attempts"]) == 2 and diagnostic["attempts"][0]["status"] == "unavailable"
+    assert "private" not in json.dumps(payload)
+    again = results.load_earnings_results([event(ticker)], NOW + timedelta(minutes=1))
+    assert again["sources"][0]["from_cache"] and len(calls) == 2
+
+
+def test_pdf_allowlist_is_issuer_path_and_scheme_bound():
+    for ticker, url in results._ALTERNATE_PDFS.items():
+        assert results.is_official_result_url(ticker, url)
+        assert not results.is_official_result_url("MSFT", url)
+        for bad in (url.replace("https:", "http:"), url + "?download=1", url + "/other",
+                    url.replace("2026", "2025"), url.replace("https://", "https://user@")):
+            assert not results.is_official_result_url(ticker, bad)
+
+
+def test_alternate_failure_is_bounded_and_does_not_confirm_result(monkeypatch):
+    calls = []
+    def get(url, **kwargs):
+        calls.append(url)
+        raise requests.ReadTimeout("private-response")
+    monkeypatch.setattr(results.requests, "get", get)
+    payload = results.load_earnings_results([event("GOOGL")], NOW)
+    assert not payload["results"] and len(calls) == 2
+    assert payload["sources"][0]["fallback_allowed"]
+    assert len(payload["sources"][0]["attempts"]) == 2
+    assert "private-response" not in json.dumps(payload)
+    results.load_earnings_results([event("GOOGL")], NOW + timedelta(seconds=1))
+    assert len(calls) == 2
+
+
+def test_changed_primary_evidence_cannot_be_hidden_by_alternate(provider):
+    provider["bodies"]["GOOGL"] = page(title="Alphabet Announces Second Quarter 2026 Results")
+    payload = results.load_earnings_results([event("GOOGL")], NOW)
+    assert not payload["results"] and len(provider["calls"]) == 1
+    assert payload["sources"][0]["reason"] == "result_identity_or_period_mismatch"

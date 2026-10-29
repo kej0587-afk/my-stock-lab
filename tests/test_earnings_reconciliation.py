@@ -179,6 +179,27 @@ def test_source_failure_displays_status_without_turning_missing_data_into_zero()
     assert "0.0" not in rendered and "공식 결과 발표 확인" not in rendered
 
 
+def test_official_alternate_pdf_confirms_result_and_missing_fcf_stays_explicit():
+    from stock_lab_core.earnings_result_sources import _ALTERNATE_PDFS
+    url = _ALTERNATE_PDFS["005930.KS"]
+    metrics = {
+        "capex": {"status": "reported", "text": "현금흐름표 유형자산 취득 2조원 (회사 총 CAPEX와 별도)",
+                  "source_url": url, "source_page": 15},
+        "free_cash_flow": {"status": "missing", "text": "", "reason": "not_reported_in_supported_pdf", "source_url": url},
+    }
+    data = context(calendar_events=[event(ticker="005930.KS", event="삼성전자", date="2026-10-29", market="KR", timezone="Asia/Seoul")],
+                   earnings_results=[result(ticker="005930.KS", release_date="2026-10-29", release_at=None,
+                                            source_url=url, metrics=metrics)],
+                   earnings_result_sources=[dict(ticker="005930.KS", status="connected", alternate_used=True,
+                                                  reason="official_alternative_result")])
+    row, = reconcile_earnings(data, NOW)
+    assert row["event_status"] == "released" and row["result_metrics"]["free_cash_flow"]["status"] == "missing"
+    rendered = "\n".join(earnings_calendar_lines(data, NOW))
+    assert "공식 IR 대체 자료 연결 완료" in rendered and "공식 결과 발표 확인" in rendered
+    assert "회사 총 CAPEX와 별도" in rendered and "p.15" in rendered
+    assert "공식 PDF에 직접 공시값 없음 · 임의 계산하지 않음" in rendered
+
+
 def test_no_evidence_keeps_schedule_and_all_other_context_exact():
     data = context(earnings_results=[])
     data["decision"] = {"code": "HARD_BLOCK", "score": 3}

@@ -34,6 +34,7 @@ FAILURE_TTL = 60
 LAST_SUCCESS_MAX_AGE = 7 * 86400
 MAX_EVENTS = 64
 MAX_BYTES = 2_000_000
+MAX_PDF_BYTES = 8_000_000
 MAX_SECONDS = 8
 _CACHE, _LAST_SUCCESS = {}, {}
 _LOCK = threading.Lock()
@@ -48,6 +49,11 @@ _PROFILES = {
 _PROFILES["GOOGL"]["source_url"] = "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000080/googexhibit991q32026.htm"
 _PROFILES["MSFT"]["source_url"] = "https://news.microsoft.com/source/2026/10/28/microsoft-announces-first-quarter-results-2/"
 _PROFILES["005930.KS"]["source_url"] = "https://news.samsung.com/global/samsung-electronics-announces-third-quarter-2026-results"
+# Linked from the issuers' IR earnings lists, not guessed quarterly URLs.
+_ALTERNATE_PDFS = {
+    "GOOGL": "https://s206.q4cdn.com/479360582/files/doc_financials/2026/q3/2026q3-alphabet-earnings-release.pdf",
+    "005930.KS": "https://images.samsung.com/is/content/samsung/assets/global/ir/docs/2026_3Q_conference_eng.pdf",
+}
 _HEADINGS = {
     "GOOGL": r"Alphabet Announces Third Quarter 2026 Results",
     "MSFT": r"Microsoft announces first quarter results",
@@ -56,7 +62,8 @@ _HEADINGS = {
     "META": r"Meta Reports Third Quarter 2026 Results",
     "TSLA": r"Tesla Releases Third Quarter 2026 Financial Results",
 }
-_HOSTS = {"www.sec.gov", "news.microsoft.com", "news.samsung.com", "news.skhynix.com", "investor.atmeta.com", "ir.tesla.com"}
+_HOSTS = {"www.sec.gov", "news.microsoft.com", "news.samsung.com", "news.skhynix.com", "investor.atmeta.com", "ir.tesla.com",
+          "s206.q4cdn.com", "images.samsung.com"}
 _METRICS = {
     "revenue": r"\b(?:revenues?|sales)\b",
     "profit": r"\b(?:operating (?:income|profit)|net (?:income|profit))\b",
@@ -89,14 +96,17 @@ def _text(node):
 
 def is_official_result_url(ticker, url):
     """Exact, issuer-bound covered result URL, not a general official-host check."""
-    expected = _PROFILES.get(_canonical(ticker), {}).get("source_url")
-    if not expected or not isinstance(url, str):
+    ticker = _canonical(ticker)
+    expected = [_PROFILES.get(ticker, {}).get("source_url"), _ALTERNATE_PDFS.get(ticker)]
+    if not any(expected) or not isinstance(url, str):
         return False
     try:
-        parsed, target = urlsplit(url), urlsplit(expected)
+        parsed = urlsplit(url)
         return (parsed.scheme == "https" and parsed.hostname in _HOSTS and not parsed.username
                 and not parsed.password and parsed.port is None and not parsed.query and not parsed.fragment
-                and parsed.hostname == target.hostname and parsed.path.rstrip("/") == target.path.rstrip("/"))
+                and any(parsed.hostname == urlsplit(target).hostname
+                        and parsed.path.rstrip("/") == urlsplit(target).path.rstrip("/")
+                        for target in expected if target))
     except ValueError:
         return False
 
@@ -367,8 +377,9 @@ def parse_earnings_result(data, ticker, now):
                                 observed_at=now.isoformat(), price_reaction_verified=False))
 
 
-def _request_result(ticker, now):
-    spec = _PROFILES[ticker]
+def _request_source(ticker, now, url, *, pdf=False):
+    """One bounded source attempt. Parser rejection is not a transport failure."""
+    spec = dict(_PROFILES[ticker], source_url=url)
     diagnostic = dict(ticker=ticker, fiscal_period=spec["fiscal_period"], source_url=spec["source_url"],
                       checked_at=now.isoformat(), attempted=True, from_cache=False, status="unavailable",
                       reason="", fallback_allowed=False)
@@ -378,7 +389,8 @@ def _request_result(ticker, now):
     started = time.monotonic()
     try:
         response = requests.get(spec["source_url"], timeout=REQUEST_TIMEOUT, allow_redirects=False, stream=True,
-                                headers={"User-Agent": "StockLab-OfficialResults/1.0", "Accept": "text/html"})
+                                headers={"User-Agent": "StockLab-OfficialResults/1.0",
+                                         "Accept": "application/pdf" if pdf else "text/html"})
         try:
             diagnostic["http_status"] = response.status_code
             if response.status_code != 200:
@@ -391,12 +403,16 @@ def _request_result(ticker, now):
             data = bytearray()
             for chunk in response.iter_content(chunk_size=64 * 1024):
                 data.extend(chunk)
-                if len(data) > MAX_BYTES:
+                if len(data) > (MAX_PDF_BYTES if pdf else MAX_BYTES):
                     raise ValueError("page_too_large")
                 if time.monotonic() - started > MAX_SECONDS:
                     diagnostic.update(reason="request_deadline", fallback_allowed=True)
                     return None, diagnostic
-            result = parse_earnings_result(bytes(data), ticker, now)
+            if pdf:
+                from stock_lab_core.earnings_result_pdf import parse_official_result_pdf
+                result = parse_official_result_pdf(bytes(data), ticker, spec, now)
+            else:
+                result = parse_earnings_result(bytes(data), ticker, now)
             diagnostic.update(status="connected", reason="official_result")
             return result, diagnostic
         finally:
@@ -408,11 +424,26 @@ def _request_result(ticker, now):
         reasons = {"future_result", "invalid_document_size", "result_identity_or_period_mismatch", "schedule_or_preview",
                    "release_date_not_in_body", "fiscal_period_not_in_body", "result_publication_unconfirmed",
                    "publication_date_mismatch", "publication_after_cutoff", "page_version_after_cutoff",
-                   "invalid_page_version", "conflicting_publication_times", "page_too_large"}
+                   "invalid_page_version", "conflicting_publication_times", "page_too_large", "pdf_reader_unavailable"}
         diagnostic["reason"] = str(exc) if str(exc) in reasons else "invalid_document"
     except (etree.LxmlError, TypeError, AttributeError):
         diagnostic["reason"] = "invalid_document"
     return None, diagnostic
+
+
+def _request_result(ticker, now):
+    """Try one verified IR alternate only when the primary transport fails."""
+    result, diagnostic = _request_source(ticker, now, _PROFILES[ticker]["source_url"])
+    alternate = _ALTERNATE_PDFS.get(ticker)
+    if result or not alternate or not diagnostic.get("fallback_allowed"):
+        return result, diagnostic
+    first = deepcopy(diagnostic)
+    result, diagnostic = _request_source(ticker, now, alternate, pdf=True)
+    diagnostic["attempts"] = [first, deepcopy(diagnostic)]
+    if result:
+        diagnostic.update(reason="official_alternative_result", alternate_used=True)
+        result["provenance"]["primary_failure"] = first["reason"]
+    return result, diagnostic
 
 
 def _safe_age(result, now, max_age):
@@ -456,7 +487,7 @@ def _collect(ticker, now, refresh):
 
 
 def load_earnings_results(events, now, *, refresh=True):
-    """At most one request per eligible issuer, three workers, no URL discovery.
+    """One primary plus one verified alternate per issuer, three workers.
 
     Input events require ticker, fiscal_period and date (or release_date).
     now is the caller's offset-aware capture cutoff. Same-day date-only source
