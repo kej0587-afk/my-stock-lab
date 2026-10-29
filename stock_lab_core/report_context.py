@@ -78,8 +78,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     quote_now = max(now, stamp(quote_data.get("retrieved_at")) or now)
     if price_frames is None or quote_data.get("KR"):
         frames = repair_kr_report_closes(frames, quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
-    pending_closes = [f"{ticker}: {frame.attrs['report_close_pending_date']} 한국 당일 종가 확인 대기 · 장중 캐시 제외"
+    pending_closes = [f"{ticker}: {frame.attrs['report_close_pending_date']} 한국 당일 종가 확인 대기 · "
+                      + frame.attrs.get("report_close_pending_reason", "장중 캐시 제외")
                       for ticker, frame in frames.items() if frame is not None and frame.attrs.get("report_close_pending_date")]
+    close_basis_notes = [f"{ticker}: {frame.attrs['report_close_basis_note']}"
+                         for ticker, frame in frames.items() if frame is not None and frame.attrs.get("report_close_basis_note")]
     frames = repair_held_us_closes(frames, us_quotes, quote_now)
     frames, price_alignment = align_us_report_frames(
         frames, tickers, now, reload_batch=load_price_frames_batch if price_frames is None else None)
@@ -242,5 +245,6 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                    sector_rows=sectors + closed_rows, held_exposures=held_exposures,
                                                    per_category=5, use_cache=True, include_article_bodies=True))
+    result["price_basis_notes"] = close_basis_notes
     result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
     return result

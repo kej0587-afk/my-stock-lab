@@ -70,8 +70,10 @@ def test_full_report_has_three_layers_current_account_and_unchanged_decisions():
     headline = report.split("## 한 줄 결론\n", 1)[1].split("\n## ", 1)[0]
     # US regular baselines are intentionally absent: do not promote only the
     # extended leg into the new cumulative definition.
-    for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "+0.93%p", "전체 추정 보류"):
+    for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "전체 계좌 추정 보류"):
         assert part in headline
+    assert "+0.93%p" not in headline
+    assert "연결분 기여(전체 추정 아님) | +0.93%p" in report
     assert "약세 지속" not in headline
     assert "개장 전 갭 시나리오 기여" not in report and "장전 대체 합산" not in report
     assert "미국 2026-10-21 장중 별도 추정" not in report

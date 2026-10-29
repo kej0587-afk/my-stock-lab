@@ -21,6 +21,7 @@ import pandas as pd
 
 from stock_lab_core.asset_classifier import is_leveraged_or_inverse_product
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.report_close_basis import pending_close_mask
 
 register_loaded_source(__name__, __file__)
 
@@ -108,6 +109,7 @@ def _closes(frame, column):
     if not isinstance(frame, pd.DataFrame) or column not in frame or not isinstance(frame.index, pd.DatetimeIndex):
         return pd.Series(dtype=float)
     prices = pd.to_numeric(frame[column], errors="coerce").copy()
+    prices.iloc[pending_close_mask(frame)] = float("nan")
     prices.index = frame.index.tz_localize(None).normalize()
     prices = prices.loc[prices.index.notna()]
     # Conflicting/repeated daily bars are missing evidence, not extra sessions.

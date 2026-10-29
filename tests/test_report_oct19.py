@@ -61,7 +61,8 @@ def test_report_acceptance_and_input_immutability():
     sector = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
     assert "SOXX" in sector and "제목 기준 보도(기사 주장" in sector and "美 AI·반도체 급락" in sector
     assert "전날 7%대 급락" in report and "[장중 보도]" in report
-    assert "통합 누적 계좌 추정 | -1.27%p" in report
+    assert "연결분 기여(전체 추정 아님) | -1.27%p" in report
+    assert "-1.27%p" not in report.split("## 한 줄 결론\n")[1].split("\n## ")[0]
     assert "전체 추정 보류" in report
     assert "개장 전 갭 시나리오 기여" not in report
     story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]

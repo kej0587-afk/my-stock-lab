@@ -60,7 +60,7 @@ def cumulative_account_metrics(held, context, states, now):
 
 
 def cumulative_account_table(metrics, concentration=None):
-    from stock_lab_core.report_intraday import _LATEST_GROUP_LABELS
+    from stock_lab_core.report_intraday import _LATEST_GROUP_LABELS, _account_coverage_text
 
     def pct(value):
         return f"{round(value, 2) or 0:+.2f}%p" if number(value) is not None else "미연결"
@@ -68,7 +68,8 @@ def cumulative_account_table(metrics, concentration=None):
     lines = ["구분 | 계좌 기여(추정) | 연결 비중 | 시작 종가일 → 관측일",
              "--- | --- | --- | ---"]
     status = metrics.get("error") or ("전체 추정 보류: 연결 90% 미만" if metrics.get("coverage", 0) < 90 else "비동시 누적 관측·확정 손익 아님")
-    lines.append(f"통합 누적 계좌 추정 | {pct(metrics.get('total'))} | {metrics.get('coverage', 0):.1f}% | {status}")
+    label = "통합 누적 계좌 추정" if metrics.get("coverage", 0) >= 90 else "연결분 기여(전체 추정 아님)"
+    lines.append(f"{label} | {pct(metrics.get('total'))} | {_account_coverage_text(metrics.get('coverage', 0))} | {status}")
     for key, label in _LATEST_GROUP_LABELS.items():
         group = metrics.get("groups", {}).get(key, {})
         if group.get("count"):

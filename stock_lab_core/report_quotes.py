@@ -12,6 +12,7 @@ import pandas as pd
 import requests
 
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.report_close_basis import confirm_kr_close_bar
 from stock_lab_core.report_session import NEW_YORK, KST, market_session_states
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.performance import timed_call
@@ -197,6 +198,7 @@ def repair_kr_report_closes(frames, payload, now, *, tickers=()):
         if isinstance(old, pd.DataFrame) and not old.empty and day.date() in old.index.date:
             result[ticker] = old.copy(deep=True)
             result[ticker].attrs["report_close_pending_date"] = day.date().isoformat()
+            result[ticker].attrs["report_close_pending_reason"] = "해당 종목의 유효한 마감 응답 미확인"
     if not isinstance(payload, dict):
         return result
     at = _epoch((raw_number(payload.get("time")) or 0) / 1000)
@@ -211,38 +213,18 @@ def repair_kr_report_closes(frames, payload, now, *, tickers=()):
             continue
         index = area["name"] == "SERVICE_INDEX"
         for row in area.get("datas") or []:
-            if not isinstance(row, dict) or row.get("ms") != "CLOSE":
+            if not isinstance(row, dict):
                 continue
             ticker = ({"KOSPI": "^KS11", "KOSDAQ": "^KQ11"} if index else symbols).get(row.get("cd"))
             old = frames.get(ticker)
             if not isinstance(old, pd.DataFrame) or old.empty or day.date() not in old.index.date:
                 continue
-            scale = 100 if index else 1
-            values = {col: raw_number(row.get(key)) for col, key in
-                      (("Open", "ov"), ("High", "hv"), ("Low", "lv"), ("Close", "nv"))}
-            if any(v is None or v <= 0 for v in values.values()):
-                continue
-            if not values["Low"] <= min(values["Open"], values["Close"]) <= max(values["Open"], values["Close"]) <= values["High"]:
-                continue
-            sign = {"1": 1, "2": 1, "3": 0, "4": -1, "5": -1}.get(str(row.get("rf")))
-            change = raw_number(row.get("cv"))
-            if sign is None or change is None:
-                continue
-            previous = (values["Close"] - abs(change) * sign) / scale
-            frame = old.copy(deep=True)
-            frame.index = frame.index.tz_localize(None).normalize()
-            prior = frame.loc[frame.index < day, "Close"].dropna().sort_index()
-            if prior.empty or not math.isclose(float(prior.iloc[-1]), previous, rel_tol=1e-5):
-                continue
-            supplied = raw_number(row.get("pcv"))
-            if supplied is not None and not math.isclose(supplied / scale, previous, rel_tol=1e-5):
-                continue
-            for col, value in values.items():
-                frame.loc[day, col] = value / scale
-            frame.loc[day, "Volume"] = raw_number(row.get("aq"))
-            frame.attrs.update(source="Naver 정규장 마감 시세(CLOSE 확인)", quote_as_of=at.isoformat())
-            frame.attrs.pop("report_close_pending_date", None)
-            result[ticker] = frame.sort_index()
+            frame, reason = confirm_kr_close_bar(old, row, day, scale=100 if index else 1)
+            if frame is None:
+                result[ticker].attrs["report_close_pending_reason"] = reason
+            else:
+                frame.attrs["quote_as_of"] = at.isoformat()
+                result[ticker] = frame
     return result
 
 

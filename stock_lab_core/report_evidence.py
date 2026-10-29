@@ -291,6 +291,7 @@ def reported_cause(row, sessions):
 def closed_daily_frame(frame, ticker, now=None):
     """Discard today's unclosed bar. Do not guess a missing exchange session."""
     import pandas as pd
+    from stock_lab_core.report_close_basis import pending_close_mask
     if not isinstance(frame, pd.DataFrame) or "Close" not in frame or not isinstance(frame.index, pd.DatetimeIndex):
         return pd.DataFrame()
     now = now or datetime.now(KST)
@@ -304,9 +305,7 @@ def closed_daily_frame(frame, ticker, now=None):
     # Match the report's 15:30 KR close; 15:40 is off-hours trading, not the close.
     closed_today = not crypto and local.weekday() < 5 and (local.hour, local.minute) >= ((15, 30) if kr else (16, 15))
     mask = (dates <= end) if closed_today else (dates < end)
-    pending = frame.attrs.get("report_close_pending_date")
-    if pending:
-        mask &= frame.index.strftime("%Y-%m-%d") != pending
+    mask &= ~pending_close_mask(frame)
     out = frame.loc[mask].sort_index()
     out = out.loc[~out.index.duplicated(keep="last")]
     close = pd.to_numeric(out["Close"], errors="coerce")
@@ -339,7 +338,9 @@ def price_observation(frame, ticker, now=None):
             "return_5d": float(close.iloc[-1] / close.iloc[-6] - 1) if len(close) >= 6 else None,
             "previous_return": float(close.iloc[-2] / close.iloc[-3] - 1) if len(close) >= 3 else None,
             "down_days": falls, "up_days": rises, "prior_down_days": prior_falls,
-            "previous_date": str(frame.index[-2].date()), "source": frame.attrs.get("source", "공급처 일봉 종가"), "kind": "확정 종가"}
+            "previous_date": str(frame.index[-2].date()), "source": frame.attrs.get("source", "공급처 일봉 종가"), "kind": "확정 종가",
+            "basis_note": frame.attrs.get("report_close_basis_note", ""),
+            "close_verification": frame.attrs.get("report_close_verification", "")}
 
 
 def intraday_observation(frame, ticker, now):
@@ -533,6 +534,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append(" | ".join(_cell(value) for value in (basis, label, active, state["calendar_note"])))
         if not session:
             missing.append(f"{name} 종가 기준일")
+    if context.get("price_basis_notes"):
+        lines.extend(["", "가격 기준 확인:", *["- " + note for note in dict.fromkeys(context["price_basis_notes"])]])
     kr, us = sessions.get("KR"), sessions.get("US")
     lines.append("")
     lines.append("- 시차: 한국장은 같은 날짜 미국장보다 먼저 마감합니다. 한국 마감 후 미국 뉴스·가격은 다음 거래일 갭 리스크입니다.")

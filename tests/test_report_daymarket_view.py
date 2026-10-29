@@ -131,7 +131,8 @@ def test_report_explains_breadth_and_tables_without_promoting_stale_quotes():
     assert "S&P500" in headline and "다우" in headline and "나스닥" in headline
     assert "혼조" in headline and "미국 데이마켓" in headline and "지연 참고" in headline
     assert "구분 | 계좌 기여(추정) | 연결 비중 | 시작 종가일 → 관측일" in report
-    assert "통합 누적 계좌 추정 | +0.75%p | 75.0%" in report
+    assert "연결분 기여(전체 추정 아님) | +0.75%p | 75.0%" in report
+    assert "계좌 추정 보류" in headline and "+0.75%p" not in headline
     assert "미연결 | 미연결 | 25.0% | RAM" in report
     assert "종가 기여 분해" not in report
     assert "미연결분 ±3% 가정 민감도 | ±0.75%p" in report
