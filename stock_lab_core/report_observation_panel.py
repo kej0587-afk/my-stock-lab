@@ -83,8 +83,6 @@ def observation_report_lines(context, summary_rows, news, now):
             falsifier, schedule = "추가 표본에서 중앙값 방향·분포 차이가 유지되지 않음", "다음 공식 발표 확인 후 5거래일 종료"
         lines.append(" | ".join(_cell(v) for v in (claim, data, falsifier, schedule)))
     executable = sum(text(first(row, "게이트상태", "gate_state")) in {"실행가능", "EXECUTABLE"} for row in records(summary_rows))
-    lines += ["", "**실행 게이트와 관찰 슬롯**", "구분 | 상태", "--- | ---",
-              f"신규 장기 편입·적립 게이트 | 기존 판정 유지 · 실행가능 {executable}개(오늘점검 입력 기준)",
-              "단기 이벤트 스윙 슬롯 | 건별 손실한도 미설정 · 촉매·손절·한도는 별도 기록, 매수 허용 아님",
-              "거래 기록 | 실제 체결을 ‘이벤트 장부’에 건별 수동 기록. 자동 주문·매매 연결 없음"]
+    lines += ["", "**기존 실행 게이트**",
+              f"신규 장기 편입·적립: 기존 판정 유지 · 실행가능 {executable}개(오늘점검 입력 기준). 위 관찰 근거는 매수 허용이나 자동 주문이 아닙니다."]
     return lines

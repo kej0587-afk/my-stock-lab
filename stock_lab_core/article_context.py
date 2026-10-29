@@ -198,7 +198,11 @@ def parse_article(data, url, expected_title):
         body = meta.get("articleBody")
         paragraphs = re.split(r"\n+|(?<=[.!?])\s+", body) if isinstance(body, str) else []
     paragraphs = [p for p in paragraphs if len(p) >= 25 and not re.search(r"무단\s*(?:전재|복제)|재배포\s*금지|저작권|구독|광고", p)]
-    facts = _body_facts(paragraphs)
+    from stock_lab_core.catalyst_news import catalyst_body_facts, catalyst_entities
+    issuer_context = bool(catalyst_entities(expected_title))
+    issuer_facts = catalyst_body_facts(paragraphs, expected_title) if issuer_context else []
+    # An issuer's capex/FCF discussion is not evidence that AI lifted the index.
+    facts = issuer_facts if issuer_context else _body_facts(paragraphs)
     return dict(body_status="verified" if facts else "no_supported_context", body_facts=facts,
                 body_published_at=published.isoformat(), body_modified_at=modified.isoformat(), body_source_url=url,
                 body_sha256=hashlib.sha256("\n".join(paragraphs).encode()).hexdigest(),
@@ -207,7 +211,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") == "verified")
 def _article(url, title):
-    # v2: subject-bound oil facts; invalidate cached whole-sentence attribution.
+    # v3: subject-bound issuer facts; no automatic AI-investment optimism.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -219,7 +223,10 @@ def enrich_article_context(result, now):
     """Read at most four direct public URLs after session/source curation."""
     buckets = ("current_session_news", "session_news", "next_session_news")
     rows = [row for bucket in buckets for row in result.get(bucket, []) if _safe_url(row.get("link", ""))]
-    rows.sort(key=lambda row: (not row.get("is_close_wrap"), row.get("market") != "KR"))
+    from stock_lab_core.catalyst_news import catalyst_entities, catalyst_topics
+    rows.sort(key=lambda row: (not (row.get("news_bucket") == "next_session_news"
+                                   and catalyst_entities(row.get("title")) and catalyst_topics(row.get("title"))),
+                               not row.get("is_close_wrap"), row.get("market") != "KR"))
     selected, market_counts, seen = [], {}, set()
     for row in rows:
         market, link = row.get("market"), row.get("link")
@@ -256,8 +263,11 @@ def body_context_sentence(row):
               "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "earnings": "기업 호실적",
               "oil_easing": "유가 하락", "oil_rising": "유가 상승", "oil_mixed": "기간·유종별 유가 방향 혼재"}
     facts = verified_body_facts(row)
-    positives = [labels[fact["topic"]] for fact in facts if fact["topic"] in labels]
+    positives = [labels[fact["topic"]] for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
     sentence = "기사에서는 " + "·".join(positives[:3]) + " 등을 시장 배경으로 짚었습니다." if positives else ""
     if any(fact["topic"] == "ai_credit" for fact in facts):
         sentence += (" " if sentence else "") + "AI 투자의 자금조달·수익성 우려도 함께 전했습니다."
+    issuer_facts = [fact["summary"] for fact in facts if fact.get("subject_ticker")]
+    if issuer_facts:
+        sentence += (" " if sentence else "") + "; ".join(issuer_facts[:3]) + "."
     return sentence

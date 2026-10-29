@@ -73,6 +73,19 @@ def test_korean_sector_story_is_not_presented_as_direct_us_constituent_exposure(
     assert "타시장 동종업종 참고: SOXL" in "\n".join(news_brief_lines(CONTEXT, [row], held, NOW))
 
 
+def test_cybersecurity_etf_does_not_inherit_every_chip_catalyst():
+    held = [{"티커": "CIBR", "종목명": "사이버보안", "보유량": 1}]
+    chips = "\n".join(news_brief_lines(CONTEXT, [article("NVIDIA AI chip supply rises")], held, NOW))
+    assert "CIBR" not in chips
+    cyber = "\n".join(news_brief_lines(CONTEXT, [article("F5 and Fortinet guidance disappoints")], held, NOW))
+    assert "사이버보안" in cyber and "CIBR(보안업종 간접)" in cyber
+    assert "하락 주도" not in cyber
+
+
+def test_alphabet_is_identified_as_company_earnings_not_unrelated_market_news():
+    assert brief_theme(article("Alphabet capex rises and free cash flow falls")) == "빅테크·기업실적"
+
+
 def test_summary_connects_rebound_drivers_but_rejects_a_relabelled_previous_day_article():
     from stock_lab_core.report_market_summary import market_summary
     from stock_lab_core.report_session import market_session_states
@@ -99,3 +112,11 @@ def test_korean_rebound_headline_connects_explicit_samsung_hynix_strength(title)
     row = article(title, market="KR", session_date="2026-10-21", published_at="2026-10-21T16:05:00+09:00")
     result = market_summary(context, [row], [], market_session_states(NOW, context["sessions"]), NOW)
     assert "삼성전자·SK하이닉스 강세" in result["headline"]
+
+
+def test_two_character_digit_company_names_remain_news_subjects():
+    from stock_lab_core.news import _company_in_headline
+
+    assert _company_in_headline("F5 reports earnings", "F5")
+    assert _company_in_headline("3M reports earnings", "3M")
+    assert not _company_in_headline("Stocks rise on earnings", "ON")

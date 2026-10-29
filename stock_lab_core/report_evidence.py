@@ -579,6 +579,10 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     kr_close = observations.get("^KS11", {})
     from stock_lab_core.report_market_summary import market_summary, evidence_table
     synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
+    from stock_lab_core.report_catalysts import post_close_brief
+    post_close = post_close_brief(context, news, summary_rows, now)
+    if post_close["overview"]:
+        synthesis["overview"] += "\n\n" + post_close["overview"]
     headline = layered_market_headline(context, flow_rows, states, now, live_metrics,
                                       synthesis=synthesis, latest_metrics=latest_metrics)
     if states["US"]["phase"] == "preopen" and futures_line:
@@ -589,7 +593,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                             exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
                                           + participant_news_rows(news, kr)])
     lines.extend([headline + ".", "", "## 오늘의 핵심 재료",
-                  *brief["lines"], "", "## 오늘의 시장 스토리"])
+                  *post_close["lines"], "", *brief["lines"], "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
     lines.extend(["", *evidence_table(synthesis), ""])
     if outlook_count:
@@ -601,7 +605,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     reversal = next((row for row in story_news if row.get("market") == "KR" and row.get("session_date") == kr
                      and re.search(r"반전|반등 성공|급락 출발", text(row.get("title")))), None)
     participant_rows = participant_news_rows(news, kr)
-    used_story_news = {news_article_key(row) for row in participant_rows[:3]} | set(brief["article_keys"])
+    used_story_news = ({news_article_key(row) for row in participant_rows[:3]}
+                       | set(brief["article_keys"]) | set(post_close["article_keys"]))
     if reversal and news_article_key(reversal) not in used_story_news:
         kr_summary += f" · 제목 기준(기사 주장): {story_news_citation(reversal)}"
         used_story_news.add(news_article_key(reversal))

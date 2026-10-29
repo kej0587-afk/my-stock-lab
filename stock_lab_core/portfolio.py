@@ -2449,9 +2449,11 @@ def infer_scenario_shock_multiplier(row):
     asset_class = str(row.get("asset_class", "")).strip().upper()
     text = f"{ticker} {name} {asset_class}"
 
-    inverse = any(keyword in text for keyword in [
-        "INVERSE", "인버스", "곱버스", "BEAR", "SHORT", "SQQQ", "SOXS", "SPXU", "SDS", "PSQ", "SH",
-    ])
+    # Ticker abbreviations must not match issuer names such as iShares/ProShares.
+    inverse = any(keyword in text for keyword in ["INVERSE", "인버스", "곱버스", "BEAR", "SHORT"]) or any(
+        re.search(rf"(?<![A-Z0-9]){code}(?![A-Z0-9])", text)
+        for code in ("SQQQ", "SOXS", "SPXU", "SDS", "PSQ", "SH")
+    )
 
     multiplier = 1.0
     if any(keyword in text for keyword in ["3X", "3배", "TQQQ", "SOXL", "SQQQ", "SOXS", "SPXL", "SPXU", "UPRO", "TECL", "FNGU", "BULZ"]):

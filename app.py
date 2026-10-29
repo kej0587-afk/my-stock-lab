@@ -15158,41 +15158,14 @@ def clear_market_context_cache():
 
 
 def get_market_status_label(ticker=""):
-    is_kr = is_kr_listed(ticker)
-
-    if is_kr:
-        now = get_kst_now()
-        minutes = now.hour * 60 + now.minute
-        if now.weekday() >= 5:
-            return "한국장 휴장/주말"
-        if 9 * 60 <= minutes < 15 * 60 + 30:
-            return "한국장 장중"
-        if 8 * 60 <= minutes < 9 * 60:
-            return "한국장 개장 전"
-        if 15 * 60 + 30 <= minutes < 18 * 60:
-            return "한국장 마감 직후"
-        return "한국장 마감"
-
-    try:
-        now = datetime.now(ZoneInfo("America/New_York"))
-    except Exception:
-        now = datetime.now(timezone.utc) - timedelta(hours=5)
-
-    minutes = now.hour * 60 + now.minute
-    if now.weekday() >= 5:
-        return "미국장 휴장/주말"
-    if 4 * 60 <= minutes < 9 * 60 + 30:
-        return "미국장 프리"
-    if 9 * 60 + 30 <= minutes < 16 * 60:
-        return "미국장 본장"
-    if 16 * 60 <= minutes < 20 * 60:
-        return "미국장 애프터"
-    return "미국장 마감"
+    from stock_lab_core.report_session import display_market_status
+    market = ("KR" if is_kr_listed(ticker) else "US") if ticker else None
+    return display_market_status(get_kst_now(), market=market)
 
 
 def render_data_basis_caption(area, ticker="", include_news=False, include_fin=False):
     parts = [
-        f"{area} {'화면 조회시각' if area == '정밀관측소' else '기준시각'}: {format_kst_now()}",
+        f"{area} 화면 조회시각: {format_kst_now()}",
         f"시장상태: {get_market_status_label(ticker)}",
         "현재가 TTL 60초",
         "차트/기술 TTL 5분",
@@ -21581,7 +21554,7 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             cut_reasons.append("재무점수 2점: 불안정")
     else:
         total_score += 1
-        hold_reasons.append("ETF: 개별기업 부도 리스크 없음")
+        hold_reasons.append("ETF: 개별기업 재무점수 대신 편입자산·상품구조 위험을 별도 확인")
 
     # 기술 구조
     if "정배열" in trend:
@@ -21593,10 +21566,10 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
 
     if rs_label == "🚀강함":
         total_score += 2
-        hold_reasons.append("RS 강함: 시장/섹터 대비 자금 유입 중")
+        hold_reasons.append("RS 강함: 비교 벤치마크 대비 가격 상대강도 우세 · 실제 자금 유입은 미확인")
     elif rs_label == "🐢약함":
         total_score -= 2
-        cut_reasons.append("RS 약함: 돈이 다른 종목/섹터로 이동 중")
+        cut_reasons.append("RS 약함: 비교 벤치마크 대비 가격 상대강도 열세 · 실제 자금 유출은 미확인")
 
     # MDD
     if dd <= -0.30:
@@ -21708,29 +21681,13 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
 
 
 def prefetch_price_data_parallel(tickers: list, period: str = "1y", max_workers: int = 8):
-    """
-    [속도 개선] 여러 티커의 가격 데이터를 ThreadPoolExecutor로 병렬 선제 로딩합니다.
-    해외 종목은 제한된 일괄 조회, 국내/누락 종목은 기존 로더로 보완합니다.
-    읽은 프레임을 반환해 계산 워커가 캐시를 다시 읽지 않도록 합니다.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    if not tickers:
-        return {}
-    unique = list(dict.fromkeys(sanitize_ticker_value(t) for t in tickers if sanitize_ticker_value(t)))
-    try:
-        frames = dict(load_price_frames_batch(tuple(sorted(unique)), period))
-    except Exception:
-        frames = {}
-    def _fetch_price_df(tkr):
-        try:
-            return load_price_df(tkr, period)
-        except Exception:
-            return None
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {submit_with_context(executor, _fetch_price_df, tkr): tkr for tkr in unique if tkr not in frames}
-        for future in as_completed(futures):
-            frames[futures[future]] = future.result()
-    return frames
+    from stock_lab_core.prices import prefetch_price_data_parallel as prefetch_histories
+
+    # Keep the app's instrumented loaders while reusing transport within this batch.
+    return prefetch_histories(
+        tickers, period, max_workers,
+        load_batch=load_price_frames_batch, load_one=load_price_df,
+    )
 
 
 def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_macro_risk=np.nan):
@@ -30062,13 +30019,12 @@ def render_today_unified_briefing_panel(
 
     st.markdown("#### 1. 오늘 브리핑 통합판")
     if not df.empty:
-        from stock_lab_core.report_evidence import comparison_lines
         from stock_lab_core.today_snapshot import load_previous_today_summary
+        from stock_lab_core.report_history_panel import render_history_changes
         previous_df, previous_date = load_previous_today_summary(
             owner_scope="" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower())
-        for change in comparison_lines(df, previous_df, previous_date=previous_date,
-                                       current_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10]):
-            st.caption(change)
+        render_history_changes(st, df, previous_df, previous_date=previous_date,
+                               current_date=str(st.session_state.get("today_queue_summary_last_run", ""))[:10])
     st.markdown(
         f"""
 <div class='info-panel' style='border-left:5px solid {color}; margin-bottom:12px;'>
@@ -30092,12 +30048,10 @@ def render_today_unified_briefing_panel(
     m4.metric("적립 현금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help=f"{clean_float(cash_available, 0.0):,.0f}원")
     m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
 
-    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움", "이벤트 장부"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
-    if detail == "이벤트 장부":
-        from stock_lab_core.event_swing import render_event_swing_panel
-        render_event_swing_panel(st, df, client=None if IS_PUBLIC_DEMO else supabase,
-                                 owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL)
-        return
+    # Keep existing sessions valid after retiring the optional manual ledger view.
+    if st.session_state.get("today_briefing_workspace_view") == "이벤트 장부":
+        st.session_state["today_briefing_workspace_view"] = "보유관리"
+    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
     if detail == "뉴스":
         render_today_action_news_panel(df)
         return

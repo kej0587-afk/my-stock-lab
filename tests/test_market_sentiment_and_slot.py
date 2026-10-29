@@ -49,5 +49,6 @@ def test_report_extensions_are_pure_and_never_fake_event_samples():
     rows = [{"티커": "RAM", "게이트상태": "방어우선"}]
     result = "\n".join(observation_report_lines({}, rows, [], kst_now(datetime(2026, 10, 28, 17))))
     assert "표본 0건" in result and "현재 LLM 미연결" in result
-    assert "건별 손실한도 미설정" in result
+    assert "기존 판정 유지 · 실행가능 0개" in result
+    assert "스윙 슬롯" not in result
     assert rows == [{"티커": "RAM", "게이트상태": "방어우선"}]

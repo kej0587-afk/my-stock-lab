@@ -405,7 +405,7 @@ def _us_close_recap(title, published, window):
                              r"(?:美|미국)\s*(?:AI|반도체)(?:[·ㆍ/\s]+(?:AI|반도체))*주?\s*(?:중심\s*)?(?:급락|하락|급등|상승|반등|쇼크|약세|강세)|"
                              r"뉴욕|월가|Wall Street|\bU\.?S\.?\b|Nasdaq", title, re.I)):
         return False
-    if re.search(r"시간외|장후|after.hours|post.close|선물|예정|다음주", title, re.I):
+    if re.search(r"시간외|장후|after.hours|extended (?:trading|hours)|post.(?:close|market)|선물|예정|다음주", title, re.I):
         return False
     from stock_lab_core.report_presentation import is_preopen_outlook
     if is_preopen_outlook({"title": title, "market": "US"}):
@@ -483,6 +483,12 @@ def _resolve_query_news_market(raw, windows):
         row.update(market=markets[0], market_basis="explicit_headline_market")
     elif len(markets) > 1:
         row.update(market="", market_basis="ambiguous_headline_markets")
+    elif row.get("query_kind") == "issuer_catalyst":
+        from stock_lab_core.catalyst_news import matches_catalyst_query
+        if matches_catalyst_query(title, row):
+            row.update(market="US", market_basis="explicit_issuer_catalyst")
+        else:
+            row.update(market="", market_basis="unconfirmed_issuer_subject")
     elif re.search(r"엔비디아|\bNvidia\b|아마존|\bAmazon\b|\bAWS\b|메타\b|\bMeta\b|마이크론|\bMicron\b", title, re.I):
         # A counterparty mention does not make a domestic supplier a US issuer.
         if re.match(r"^(?:\[[^]]+\]\s*)?(?:엔비디아|Nvidia\b|아마존|Amazon\b|AWS\b|메타\b|Meta\b|마이크론|Micron\b)", title, re.I):
@@ -514,6 +520,8 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
     with session_status=in_progress and is_closed=False. No live date is inferred.
     A sessions entry with is_active=True is equivalent to current_sessions.
     """
+    from stock_lab_core.catalyst_news import is_consumer_banking_promo
+
     now = _news_now(now)
     sessions, current_sessions = _split_news_sessions(sessions, current_sessions)
     windows, missing = _session_news_windows(sessions, now)
@@ -532,6 +540,9 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
     for raw in rows if rows is not None else ():
         if not isinstance(raw, Mapping):
             rejected["뉴스 행 형식 오류"] += 1
+            continue
+        if is_consumer_banking_promo(raw.get("title") or raw.get("제목")):
+            rejected["소비자 예적금 판촉"] += 1
             continue
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
@@ -606,7 +617,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
             continue
         wrap = bool(_CLOSE_WRAP.search(str(raw.get("title") or raw.get("제목") or "")))
         title = str(raw.get("title") or raw.get("제목") or "")
-        if re.search(r"post.close|after.hours|시간외|장후|마감 후", title, re.I):
+        if re.search(r"post.(?:close|market)|after.hours|extended (?:trading|hours)|시간외|장후|마감 후", title, re.I):
             wrap = False
         same_date = published.astimezone(ZoneInfo(window["timezone"])).date().isoformat() == window["date"]
         if wrap and published <= close and not same_date:
@@ -641,12 +652,15 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
 
 def _session_query_specs(windows, categories, now, *, sector_rows=(), held_exposures=()):
     from stock_lab_core.report_presentation import sector_news_query, sector_news_topics
+    from stock_lab_core.catalyst_news import exposure_catalyst_specs
 
     topics = {"KR": [], "US": []}
+    exposures = []
     for collection in (held_exposures, sector_rows):
         if hasattr(collection, "to_dict"):
             collection = collection.to_dict("records")
         for row in collection or ():
+            exposures.append(row)
             ticker = str(row.get("Ticker") or row.get("ticker") or row.get("티커") or "").strip().upper()
             market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
             name = str(row.get("섹터") or row.get("종목명") or row.get("name") or "")
@@ -722,12 +736,19 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
         groups.append(specs)
     # Give every explicit window a turn before spending the remaining budget
     # on extra categories or the historical/latest split for one market.
-    return [group[index] for index in range(max((len(group) for group in groups), default=0))
-            for group in groups if index < len(group)][:_SESSION_QUERY_LIMIT]
+    interleaved = [group[index] for index in range(max((len(group) for group in groups), default=0))
+                   for group in groups if index < len(group)]
+    catalysts = exposure_catalyst_specs(exposures, now=now) if any(w["market"] == "US" for w in windows) else []
+    ordered = interleaved[:len(groups)] + catalysts + interleaved[len(groups):]
+    unique = {}
+    for spec in ordered:
+        unique.setdefault(spec["url"], spec)
+    return list(unique.values())[:_SESSION_QUERY_LIMIT]
 
 
 def _fetch_session_rss(spec):
     from stock_lab_core.report_presentation import sector_news_topics
+    from stock_lab_core.catalyst_news import matches_catalyst_query, is_consumer_banking_promo
 
     rows = []
     try:
@@ -743,6 +764,10 @@ def _fetch_session_rss(spec):
             pub_dt = market_story_pub_dt(item)
             source = item.find("source")
             title = html.unescape(str(item.findtext("title", "") or "").strip())
+            publisher = html.unescape(str(item.findtext("source", "") or "").strip())
+            subject = re.sub(r"\s+[-|–—]\s*" + re.escape(publisher) + r"\s*$", "", title, flags=re.I) if publisher else title
+            if is_consumer_banking_promo(subject) or (spec.get("query_kind") == "issuer_catalyst" and not matches_catalyst_query(subject, spec)):
+                continue
             matched_topics = set(spec.get("query_topics") or ()) & set(sector_news_topics("", sector_name=title))
             category = "섹터:" + ",".join(sorted(matched_topics)) if matched_topics else spec["category"]
             rows.append({
@@ -756,6 +781,8 @@ def _fetch_session_rss(spec):
                 "market": spec["market"],
                 "query_market": spec["market"], "market_basis": "search_query_only",
                 "query_topics": list(spec.get("query_topics") or ()),
+                **({"query_kind": spec["query_kind"], "query_issuers": list(spec.get("query_issuers", ())) }
+                   if spec.get("query_kind") else {}),
             })
         return rows, ""
     except Exception:
@@ -769,8 +796,12 @@ def _cached_session_rss(spec):
 
 def _retrieve_session_rss(specs, *, use_cache):
     rows, failures, complete = [], Counter(), bool(specs)
+    def retrieve(spec):
+        # Issuer lookups are shared with precision news even in uncached reports.
+        loader = _cached_session_rss if use_cache or spec.get("query_kind") == "issuer_catalyst" else _fetch_session_rss
+        return loader(spec)
     with ThreadPoolExecutor(max_workers=4) as executor:
-        for candidates, error in executor.map(_cached_session_rss if use_cache else _fetch_session_rss, specs):
+        for candidates, error in executor.map(retrieve, specs):
             rows.extend(candidates)
             complete = complete and bool(candidates) and not error
             if error:
@@ -841,6 +872,12 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         rows = publisher_news(sessions, now) + rows
     by_market = {window["market"]: window for window in windows}
     rows = [_resolve_query_news_market(row, by_market) for row in rows]
+    from stock_lab_core.catalyst_news import constituent_links, prioritize_issuer_news, _tickers
+    has_cibr = "CIBR" in _tickers(held_exposures) or "CIBR" in _tickers(sector_rows)
+    if has_cibr:
+        for row in rows:
+            row["constituent_links"] = constituent_links(row.get("title"), "CIBR", now=now,
+                                                          published_at=row.get("published_at")) if row.get("market") == "US" else []
     origins = {}
     for row in rows:
         for key in _session_article_keys(row):
@@ -850,16 +887,20 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         if any(len(origins.get(key, ())) > 1 for key in _session_article_keys(row)):
             row.pop("market", None)
     result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
+    query_issuers = {issuer for spec in specs for issuer in spec.get("query_issuers", ())}
     for bucket in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
         accepted, seen, seen_links, seen_titles, counts = [], set(), set(), set(), Counter()
         recap_keys = set()
+        candidates = []
         for row in result[bucket]:
             # Exact time filtering already ran. Validate each source with the
             # existing curator even for holiday windows longer than seven days.
             checked = curate_news([row], now=_news_timestamp(row["published_at"]), limit=1)
             if not checked or not checked[0].get("link"):
                 continue
-            clean = checked[0]
+            candidates.append(checked[0])
+        # Validate first, then reserve distinct issuer coverage before category caps.
+        for clean in prioritize_issuer_news(candidates, query_issuers=query_issuers):
             # Different closing stories may name different participants/causes.
             # Deduplicate the article, not every closing story for the session.
             article_link, article_title = _session_article_keys(clean)
@@ -887,6 +928,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
                 result["missing"].append(f"{market}: {bucket} 출처·날짜·중복 검증 후 채택 뉴스 없음")
     result["missing"].extend(f"{reason}: {count}개 쿼리" for reason, count in failures.items())
     result["news_retrieval"] = {"query_count": len(specs), "query_limit": _SESSION_QUERY_LIMIT,
+                                "catalyst_query_count": sum(spec.get("query_kind") == "issuer_catalyst" for spec in specs),
                                 "max_workers": 4, "cached": bool(use_cache),
                                 "queried_topics": sorted({topic for spec in specs for topic in spec.get("query_topics", ())})}
     if include_article_bodies:

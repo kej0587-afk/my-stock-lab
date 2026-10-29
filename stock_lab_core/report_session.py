@@ -58,6 +58,15 @@ def market_session_states(now, sessions=None):
     return result
 
 
+def display_market_status(now, *, market=None):
+    """UI clock only; it does not imply that a quote is available or current."""
+    states = market_session_states(now)
+    extended = us_extended_session(now)
+    labels = {"KR": "한국 " + states["KR"]["label"],
+              "US": "미국 " + (extended["label"] if extended else states["US"]["label"])}
+    return (labels[market] if market in labels else " / ".join(labels.values())) + " 시간대"
+
+
 def report_mode(now, *, is_trading_day=None):
     local = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
     # Missing quotes alone cannot establish a holiday.

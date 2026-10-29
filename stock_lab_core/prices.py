@@ -424,6 +424,37 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
     return frames
 
 
+def prefetch_price_data_parallel(tickers, period="1y", max_workers=8, *, load_batch=None, load_one=None):
+    """Preload the existing histories with batch-local KR transport reuse."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from stock_lab_core.formatters import sanitize_ticker_value
+    from stock_lab_core.kr_flow_history import reuse_kr_history_connections
+
+    if not tickers:
+        return {}
+    load_batch = load_price_frames_batch if load_batch is None else load_batch
+    load_one = load_price_df if load_one is None else load_one
+    unique = list(dict.fromkeys(sanitize_ticker_value(t) for t in tickers if sanitize_ticker_value(t)))
+    try:
+        frames = dict(load_batch(tuple(sorted(unique)), period))
+    except Exception:
+        frames = {}
+
+    def fetch(ticker):
+        try:
+            return load_one(ticker, period)
+        except Exception:
+            return None
+
+    # Join all workers before closing their separate HTTP sessions.
+    with reuse_kr_history_connections():
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {submit_with_context(executor, fetch, ticker): ticker for ticker in unique if ticker not in frames}
+            for future in as_completed(futures):
+                frames[futures[future]] = future.result()
+    return frames
+
+
 def _fetch_naver_price(ticker: str) -> float:
     """
     네이버 모바일 API로 한국 주식 현재가 조회.

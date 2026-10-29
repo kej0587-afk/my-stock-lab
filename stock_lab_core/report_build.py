@@ -19,7 +19,7 @@ _RENDER_MODULES = (
     "economic_releases", "economic_cache", "economic_bulletins", "report_economic_reading", "release_calendar",
     "economic_consensus", "report_consensus",
     "report_account", "report_calendar", "report_observation_panel",
-    "market_observation", "market_sentiment", "earnings_sources",
+    "market_observation", "market_sentiment", "earnings_sources", "catalyst_news", "report_catalysts",
 )
 
 

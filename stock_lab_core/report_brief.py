@@ -12,6 +12,9 @@ ENTITIES = (
     ("NVDA", r"NVIDIA|엔비디아"), ("AMZN", r"Amazon|아마존|\bAWS\b|Trainium|트레이니엄"),
     ("META", r"\bMeta\b|메타"), ("MU", r"\bMicron\b|마이크론"),
     ("CRWV", r"CoreWeave|코어위브"), ("MSFT", r"Microsoft|마이크로소프트"),
+    ("GOOGL", r"Alphabet|알파벳|Google|구글"),
+    ("FFIV", r"\bF5\b|\bFFIV\b"), ("FTNT", r"Fortinet|포티넷|\bFTNT\b"),
+    ("PANW", r"Palo Alto|팔로알토|\bPANW\b"), ("CRWD", r"CrowdStrike|크라우드스트라이크|\bCRWD\b"),
     ("TSLA", r"\bTesla\b|테슬라"), ("RTX", r"\bRTX\b|Raytheon|레이시온"),
     ("BAE", r"BAE Systems|BAE시스템"), ("MSCI", r"\bMSCI\b"),
 )
@@ -21,6 +24,10 @@ def brief_theme(row):
     title = text(row.get("title"))
     if row.get("is_close_wrap") and re.search(r"코스피|코스닥|뉴욕증시|Wall Street|U\.S\. Stocks", title, re.I):
         return "한국 시황" if row.get("market") == "KR" else "미국 시황"
+    if re.search(r"사이버|cyber|Fortinet|포티넷|\bF5\b|\bFFIV\b|Palo Alto|팔로알토|CrowdStrike|크라우드스트라이크", title, re.I):
+        return "사이버보안"
+    if re.search(r"Alphabet|알파벳|Google|구글", title, re.I):
+        return "빅테크·기업실적"
     if re.search(r"CoreWeave|코어위브|Trainium|트레이니엄|NVIDIA|엔비디아|\bMicron\b|마이크론", title, re.I):
         return "반도체·AI"
     if re.search(r"\bTesla\b|테슬라|Roadster|로드스터", title, re.I):
@@ -49,7 +56,7 @@ def _topics(title, entities):
     return topics
 
 
-def _holding_links(held, title, entities, theme, market):
+def _holding_links(held, title, entities, theme, market, *, constituent_evidence=()):
     from stock_lab_core.report_holdings import UNDERLYINGS
 
     topics = _topics(title, entities)
@@ -57,6 +64,17 @@ def _holding_links(held, title, entities, theme, market):
     for row in held:
         ticker = text(first(row, "티커", "ticker", "Ticker")).upper()
         name = text(first(row, "종목명", "자산명", "name"))
+        # A broad AI/semiconductor story is not direct cybersecurity ETF exposure.
+        if ticker == "CIBR":
+            linked = [item for item in constituent_evidence if item.get("etf") == ticker]
+            if linked and market == "US":
+                members = ", ".join(dict.fromkeys(item["constituent"] for item in linked))
+                source = linked[0]
+                names.append(f"CIBR({members} 편입·{source['holdings_as_of']} 구성, 기여도 미확인)"
+                             f" [구성 출처]({source['source_url']})")
+            elif theme == "사이버보안" or ticker in entities:
+                (names if market == "US" else cross_market).append("CIBR(보안업종 간접)")
+            continue
         base_topics = set(sector_news_topics(ticker, sector_name=name))
         for base in UNDERLYINGS.get(ticker.split(".")[0], ()):
             base_topics.update(sector_news_topics(base))
@@ -102,7 +120,9 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, title, re.I)]
         theme = brief_theme(row)
         context_title = title + " " + " ".join(fact["summary"] for fact in body_facts)
-        link = _holding_links(held, context_title, entities, theme, market)
+        from stock_lab_core.catalyst_news import constituent_links
+        constituents = constituent_links(context_title, "CIBR", now=now, published_at=published)
+        link = _holding_links(held, context_title, entities, theme, market, constituent_evidence=constituents)
         catalyst = bool(re.search(r"공급|계약|규제|제한|공개|출시|투자|실적|조달|인수|정책|earnings|guidance|funding|financing|contract|launch|chip|restrict|upgrade", title, re.I))
         topic = news_theme(title)
         key = ((market, target, "market_close") if row.get("is_close_wrap") else

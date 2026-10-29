@@ -1,3 +1,7 @@
+from copy import deepcopy
+
+import pytest
+
 from stock_lab_core.hold_judgement import HoldDecision, build_hold_decision
 
 
@@ -135,3 +139,23 @@ def test_hold_decision_ignores_nan_average_price():
     )
 
     assert judgement.risk_score == 0
+
+
+@pytest.mark.parametrize("label,slope,tech_score,decision,reason", [
+    ("🚀강함", "", 2, HoldDecision.CONDITIONAL_HOLD, "가격 상대강도 우세"),
+    ("🚀강함", "📉RS하락중", 1, HoldDecision.CONDITIONAL_HOLD, "기울기 하락 중"),
+    ("🐢약함", "", -2, HoldDecision.WATCH, "가격 상대강도 열세"),
+    ("🐢약함", "📈RS상승중", -1, HoldDecision.WATCH, "기울기 개선 중"),
+])
+def test_etf_and_rs_wording_only_changes_descriptions_not_scores(label, slope, tech_score, decision, reason):
+    context = {"cur_p": 100, "dd": -0.05, "trend": "혼조세", "rs_label": label, "rs_slope_label": slope}
+    original = deepcopy(context)
+    result = build_hold_decision("CIBR", "First Trust Cybersecurity ETF", True, 0, context, 100, True)
+    assert (result.fundamental_score, result.technical_score, result.risk_score, result.thesis_score) == (2, tech_score, 0, 0)
+    assert result.score == 2 + tech_score and result.decision == decision
+    assert result.action_plan == "현재 포지션 유지 가능"
+    reasons = result.reasons_hold + result.reasons_caution
+    assert "ETF: 개별기업 재무점수 대신 편입자산·상품구조 위험을 별도 확인" in reasons
+    assert "부도 리스크 없음" not in " ".join(reasons)
+    assert any(reason in item and "미확인" in item for item in reasons)
+    assert context == original

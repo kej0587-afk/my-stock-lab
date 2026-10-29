@@ -54,7 +54,7 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
             r_caution.append("레버리지/인버스 ETF: 장기보유 판정은 별도 관리")
         else:
             fund_score = 2
-            r_hold.append("ETF: 개별기업 부도 리스크 없음")
+            r_hold.append("ETF: 개별기업 재무점수 대신 편입자산·상품구조 위험을 별도 확인")
     else:
         if not fin_valid:
             fund_score = 0
@@ -88,17 +88,17 @@ def build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos) -
     if "🚀" in rs_label:
         if "📉" in rs_slope_label:
             tech_score += 1
-            r_caution.append("RS 강함이나 기울기 하락 중 — 상대강도 약화 진행")
+            r_caution.append("가격 RS는 강하지만 기울기 하락 중 · 실제 자금 유출입은 미확인")
         else:
             tech_score += 2
-            r_hold.append("시장/섹터 대비 강한 상대강도")
+            r_hold.append("RS 강함: 비교 벤치마크 대비 가격 상대강도 우세 · 실제 자금 유입은 미확인")
     elif "🐢" in rs_label:
         if "📈" in rs_slope_label:
             tech_score -= 1
-            r_caution.append("RS 약하나 기울기 개선 중 — 반전 여부 관찰")
+            r_caution.append("가격 RS는 약하지만 기울기 개선 중 · 실제 자금 유출입은 미확인")
         else:
             tech_score -= 2
-            r_caution.append("시장/섹터 대비 약한 상대강도")
+            r_caution.append("RS 약함: 비교 벤치마크 대비 가격 상대강도 열세 · 실제 자금 유출은 미확인")
 
     if finite_num(dd) and dd <= -0.30:
         tech_score -= 3

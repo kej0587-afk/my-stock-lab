@@ -33,6 +33,39 @@ def _count(value):
     return int(number) if number is not None and number.is_integer() else None
 
 
+def _sector_change(item):
+    raw = str(item.get("flu_rt") if item.get("flu_rt") is not None else "").strip()
+    text = raw.replace(",", "")
+    value = _number(text)
+
+    def result(value, reason):
+        return value, f"등락률 확인: {reason} · 원값 {raw or '미제공'}"
+
+    if value is None or not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", text):
+        return result(None, "유효한 수치 미제공")
+    price, delta = _number(item.get("cur_prc")), _number(item.get("pred_pre"))
+    if price is None or delta is None:
+        if "." in text and value >= -100:
+            return result(value, "명시된 소수점 백분율")
+        return result(None, "배율 대조 근거 미제공")
+    delta_text = str(item.get("pred_pre")).strip().replace(",", "")
+    sign = str(item.get("pre_smbol") or "").strip()
+    expected_signs = {"1", "2"} if delta > 0 else {"4", "5"} if delta < 0 else {"3"}
+    if (delta != 0 and not re.fullmatch(r"[+-]\d+(?:\.\d+)?", delta_text)) or (sign and sign not in expected_signs):
+        return result(None, "전일대비 부호 미확인/불일치")
+    previous = abs(price) - delta
+    if abs(price) <= 0 or previous <= 0 or not math.isfinite(previous):
+        return result(None, "현재가/전일 기준값 불일치")
+    derived = delta / previous * 100
+    # Both price fields share a scale; rates round to two decimal places.
+    candidates = {candidate for candidate in (value, value / 100)
+                  if abs(candidate - derived) <= 0.005 + 1e-9}
+    if len(candidates) != 1:
+        return result(None, "배율 모호/전일대비 대조 불일치")
+    matched = candidates.pop()
+    return result(matched, "전일대비 대조 일치" if matched == value else "전일대비 대조 일치(원값/100)")
+
+
 def normalize_market_rows(payload, kind):
     key = {"turnover": "trde_prica_upper", "themes": "thema_grp", "theme_members": "thema_comp_stk",
            "sector_kospi": "inds_netprps", "sector_kosdaq": "inds_netprps"}.get(kind)
@@ -55,11 +88,13 @@ def normalize_market_rows(payload, kind):
         change = _number(item.get("flu_rt"))
         seen.add(code)
         if is_sector:
+            change, change_reason = _sector_change(item)
             rows.append({
                 "코드": code, "업종": name.strip(), "등락률(%)": change,
                 "외국인 순매수(억원)": _number(item.get("frgnr_netprps")),
                 "기관 순매수(억원)": _number(item.get("orgn_netprps")),
                 "개인 순매수(억원)": _number(item.get("ind_netprps")),
+                "구분": change_reason,
             })
         elif kind == "theme_members":
             price = _number(item.get("cur_prc"))

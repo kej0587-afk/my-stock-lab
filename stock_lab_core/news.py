@@ -1476,7 +1476,7 @@ def _target_clause_signal_reason(text, symbol, company_names, signals):
     if not clauses:
         clauses = [lowered]
     for clause in clauses:
-        if not any(alias in clause for alias in aliases):
+        if not any(_company_in_headline(clause, alias) for alias in aliases):
             continue
         key, reason = first_signal_reason(clause, signals)
         if key:
@@ -1516,7 +1516,11 @@ def build_news_query_plan(ticker, name):
         for q in direct_queries
     ]
 
-    if first_theme:
+    if symbol == "CIBR":
+        from stock_lab_core.catalyst_news import exposure_catalyst_specs
+        plan.extend(dict(query=spec["query"], category=NEWS_CATEGORY_SECTOR, strict=False, catalyst_spec=spec)
+                    for spec in exposure_catalyst_specs(["CIBR"]))
+    elif first_theme:
         if is_kr:
             plan.extend([
                 {"query": f'"{first_theme}" "{main}" 증권 실적', "category": NEWS_CATEGORY_SECTOR, "strict": False},
@@ -1544,15 +1548,33 @@ def build_news_query_plan(ticker, name):
     return deduped, company_names, theme_terms
 
 def symbol_appears_as_token(text, symbol):
-    text = str(text or "").lower()
-    symbol = str(symbol or "").lower()
-    tokens = text.replace("(", " ").replace(")", " ").replace(":", " ").replace(",", " ").replace(".", " ").split()
-    return symbol in tokens
+    symbol = str(symbol or "").upper()
+    if not symbol:
+        return False
+    if len(symbol) <= 2:
+        return bool(re.search(r"(?:\$|\b(?:NASDAQ|NYSE)\s*:\s*)" + re.escape(symbol) + r"\b", str(text or "")))
+    return bool(re.search(r"(?<![\w])" + re.escape(symbol) + r"(?![\w])", str(text or ""), re.I))
 
-def assess_news_item(title, publisher, ticker, company_names, theme_terms, category, strict=True):
+def _company_in_headline(title, alias):
+    alias = str(alias or "").strip()
+    if not alias:
+        return False
+    if alias.isascii():
+        return symbol_appears_as_token(title, alias) if len(alias) <= 2 and alias.isalpha() else bool(
+            re.search(r"(?<![\w])" + re.escape(alias) + r"(?![\w])", str(title or ""), re.I))
+    return alias.casefold() in str(title or "").casefold()
+
+
+def assess_news_item(title, publisher, ticker, company_names, theme_terms, category, strict=True,
+                     *, now=None, published_at=None, query_issuers=()):
+    from stock_lab_core.catalyst_news import (catalyst_entities, catalyst_topics, constituent_links,
+                                             is_consumer_banking_promo, us_symbol_collision)
     text = f"{title} {publisher}"
     text_l = text.lower()
     symbol = normalize_news_token(ticker).lower()
+
+    if us_symbol_collision(title, ticker) or is_consumer_banking_promo(title):
+        return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "다른 시장의 동명 심볼 또는 예적금 판촉"}
 
     if any(noise.lower() in text_l for noise in GENERAL_NOISE_WORDS):
         return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "주식 뉴스와 무관한 키워드"}
@@ -1561,8 +1583,11 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
     if _is_index_listing_mismatch(text, symbol, company_names, category):
         return {"ok": False, "score": -99, "relation": "무관", "sentiment": "중립", "reason": "지수보다 개별 종목 상장 이슈가 중심인 기사"}
 
-    has_company = any(str(n).lower() in text_l for n in company_names if str(n).strip())
-    has_symbol = symbol_appears_as_token(text, symbol)
+    has_company = any(_company_in_headline(title, n) for n in company_names)
+    has_symbol = symbol_appears_as_token(title, symbol)
+    links = constituent_links(title, ticker, now=now, published_at=published_at) if category == NEWS_CATEGORY_SECTOR else []
+    industry_issuers = sorted(set(catalyst_entities(title)) & set(query_issuers) & {"FFIV", "FTNT"}) if (
+        symbol == "cibr" and category == NEWS_CATEGORY_SECTOR and not links and catalyst_topics(title)) else []
     has_theme = keyword_in_text(text, theme_terms)
     has_stock_word = keyword_in_text(text, STOCK_NEWS_WORDS)
     has_high_value_word = keyword_in_text(text, HIGH_VALUE_NEWS_WORDS)
@@ -1607,7 +1632,7 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
             and score >= 3
         )
     elif category == NEWS_CATEGORY_SECTOR:
-        ok = (has_company or has_symbol or has_theme) and score >= 2
+        ok = (has_company or has_symbol or has_theme or bool(links or industry_issuers)) and (score >= 2 or bool(links or industry_issuers))
     else:
         ok = has_market_word and score >= 1
 
@@ -1678,6 +1703,14 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         reason = f"{reason} 반복 시세성 기사일 수 있어 출처와 원문 근거를 함께 확인하세요."
     elif is_low_quality and ok:
         reason = "반복 시세성 기사라 우선순위를 낮춰 표시"
+    if links:
+        relation, sentiment = "편입기업 간접", "중립"
+        reason = "공식 보유내역 기준 편입기업 보도입니다. CIBR 가격 방향·하락 원인·기여도는 확인되지 않았습니다."
+        score = max(score, 3)
+    elif industry_issuers:
+        relation, sentiment = "보안업종 간접", "중립"
+        reason = "보유내역 유효성·현재 편입·비중 미확인 상태의 보안업종 간접 보도입니다. CIBR 가격 원인·기여도는 확인되지 않았습니다."
+        score = max(score, 3)
 
     return {
         "ok": ok,
@@ -1686,6 +1719,8 @@ def assess_news_item(title, publisher, ticker, company_names, theme_terms, categ
         "sentiment": sentiment,
         "reason": reason,
         "topic": "실적/IR" if has_earnings_word else ("현장/사업" if has_field_word else ("가격변동" if has_price_move_word else "")),
+        "constituent_links": links,
+        "industry_issuers": industry_issuers,
     }
 
 def is_relevant_stock_news(title, publisher, ticker, company_names, strict=True):
@@ -1720,6 +1755,10 @@ def dedupe_news_by_publisher_latest(items):
     best_by_publisher = {}
     for item in items or []:
         publisher = clean_news_text(item.get("publisher", "")).lower() or "unknown"
+        if item.get("constituent_links"):
+            publisher = (publisher, tuple(sorted(link["constituent"] for link in item["constituent_links"])))
+        elif item.get("industry_issuers"):
+            publisher = (publisher, tuple(sorted(item["industry_issuers"])))
         old = best_by_publisher.get(publisher)
         if old is None:
             best_by_publisher[publisher] = item
@@ -1733,7 +1772,7 @@ def dedupe_news_by_publisher_latest(items):
     return list(best_by_publisher.values())
 
 @cache_result(ttl=600, failure_ttl=60, is_success=lambda result: bool(result[0]))
-def get_ticker_news(ticker, name, debug=False):
+def _get_ticker_news(ticker, name, debug=False, catalyst_day=""):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -1746,6 +1785,8 @@ def get_ticker_news(ticker, name, debug=False):
     groups = [[p for p in query_plan if p["category"] == category][:3]
               for category in (NEWS_CATEGORY_DIRECT, NEWS_CATEGORY_SECTOR, NEWS_CATEGORY_MARKET)]
     query_plan = [group[i] for i in range(3) for group in groups if i < len(group)]
+    # Shared component lookups get one result slot per issuer, within the same budget.
+    query_plan.sort(key=lambda plan: not bool(plan.get("catalyst_spec")))
     logs = [
         f"회사명 후보: {company_names if company_names else '없음'}",
         f"테마 키워드: {theme_terms if theme_terms else '없음'}",
@@ -1764,11 +1805,12 @@ def get_ticker_news(ticker, name, debug=False):
     request_count = 0
     successful_reads = 0
     raw_count = 0
+    shared_specs_read = set()
 
     def budget_exhausted():
         return request_count >= 16 or time.monotonic() - started >= 20
 
-    def add_item(title, link, publisher, pub_dt, category, strict=True):
+    def add_item(title, link, publisher, pub_dt, category, strict=True, query_issuers=()):
         if not link or link in seen_links:
             return False
 
@@ -1784,6 +1826,8 @@ def get_ticker_news(ticker, name, debug=False):
             theme_terms=theme_terms,
             category=category,
             strict=strict,
+            published_at=pub_dt,
+            query_issuers=query_issuers,
         )
         if not assessment["ok"]:
             return False
@@ -1793,6 +1837,7 @@ def get_ticker_news(ticker, name, debug=False):
             "link": link,
             "publisher": publisher,
             "published": format_news_pub_date(pub_dt),
+            "published_at": pub_dt.isoformat() if pub_dt is not None else "",
             "category": category,
             "relation": assessment["relation"],
             "sentiment": assessment["sentiment"],
@@ -1801,6 +1846,8 @@ def get_ticker_news(ticker, name, debug=False):
             "recency_score": news_recency_score(pub_dt),
             "topic": assessment.get("topic", ""),
             "_pub_dt": pub_dt,
+            "constituent_links": assessment.get("constituent_links", []),
+            "industry_issuers": assessment.get("industry_issuers", []),
         }
 
         if is_news_within_days(pub_dt, NEWS_RECENT_DAYS):
@@ -1856,6 +1903,34 @@ def get_ticker_news(ticker, name, debug=False):
             q = plan["query"]
             category = plan["category"]
             strict = plan.get("strict", True)
+            spec = plan.get("catalyst_spec")
+            if spec:
+                if spec["url"] in shared_specs_read:
+                    continue
+                from stock_lab_core.today_news import _cached_session_rss
+                from stock_lab_core.catalyst_news import matches_catalyst_query
+                shared_specs_read.add(spec["url"])
+                request_count += 1
+                candidates, error = _cached_session_rss(spec)
+                successful_reads += not bool(error)
+                raw_count += len(candidates)
+                accepted = 0
+                for row in sorted(candidates, key=lambda row: str(row.get("published_at") or ""), reverse=True):
+                    title = clean_news_text(row.get("title", ""))
+                    if not matches_catalyst_query(title, spec):
+                        continue
+                    try:
+                        pub_dt = datetime.fromisoformat(row.get("published_at", ""))
+                    except (TypeError, ValueError):
+                        continue
+                    if pub_dt.tzinfo is None:
+                        continue
+                    if add_item(title, row.get("link"), row.get("publisher", ""), pub_dt, category, strict=False,
+                                query_issuers=spec["query_issuers"]):
+                        accepted += 1
+                        break
+                logs.append(f"보안기업 공유 조회: {','.join(spec['query_issuers'])} / 원문 {len(candidates)}건, 통과 {accepted}건" + (" / 수집 실패" if error else ""))
+                continue
             if accepted_by_category.get(category, 0) >= NEWS_CATEGORY_SEARCH_LIMITS.get(category, NEWS_CATEGORY_LIMITS.get(category, 1)):
                 continue
             if (
@@ -1940,6 +2015,27 @@ def get_ticker_news(ticker, name, debug=False):
         logs.append(f"최근 {NEWS_RECENT_DAYS}일 뉴스가 부족한 카테고리는 {NEWS_FALLBACK_DAYS}일 이내 기사로 보충 표시")
 
     return selected, logs
+
+def get_ticker_news(ticker, name, debug=False):
+    # Do not let cached precision rows outlive the membership verification date.
+    return _get_ticker_news(ticker, name, debug, _ticker_catalyst_day(ticker))
+
+
+def _ticker_catalyst_day(ticker):
+    from stock_lab_core.catalyst_news import _now
+    from zoneinfo import ZoneInfo
+    return _now(None).astimezone(ZoneInfo("Asia/Seoul")).date().isoformat() if str(ticker).upper() == "CIBR" else ""
+
+
+def _clear_ticker_news(ticker=None, name=None, debug=False):
+    if ticker is None:
+        _get_ticker_news.clear()
+    else:
+        _get_ticker_news.clear(ticker, name, debug, _ticker_catalyst_day(ticker))
+
+
+get_ticker_news.clear = _clear_ticker_news
+
 
 def news_sentiment_class(sentiment):
     if sentiment == "호재":

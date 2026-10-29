@@ -2167,12 +2167,16 @@ def build_auto_market_memo(
             status += f" · 게이트 미제공 {unknown_gates}개(허용으로 추정하지 않음)"
         lines = [f"# Stock Lab 자동 뉴스픽 · {dt:%Y-%m-%d %H:%M} KST", "", status, "", *front]
         lines.extend(["", "## 다음 세션 재료"])
-        late = curate_news(context.get("next_session_news", []), now=dt)
-        from stock_lab_core.report_evidence import citation
+        from stock_lab_core.report_catalysts import post_close_brief
+        from stock_lab_core.report_evidence import citation, news_article_key
+        highlighted = set(post_close_brief(context, curated, summary_rows, dt)["article_keys"])
+        late = curate_news([row for row in context.get("next_session_news", [])
+                            if news_article_key(row) not in highlighted], now=dt)
         for row in late:
             lines.append(f"- {row['reading_ko'] or row['title']} · {kst_time(row['published'])} {citation(dict(row, title='원문'))}")
         if not late:
-            lines.append("- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
+            lines.append("- 채택한 기업 실적·시간외 보도는 위 핵심 재료에 표시했습니다. 추가 후속 기사 없음."
+                         if highlighted else "- 출처·시각 기준을 통과한 마감 후 기사 없음/미수집")
         elsewhere = curate_news(context.get("other_market_news", []), now=dt, limit=3)
         if elsewhere:
             lines.extend(["", "## 다른 시장/다른 날짜 맥락", "한국·미국 업종의 해당 종가 원인으로 연결하지 않은 별도 보도입니다."])
