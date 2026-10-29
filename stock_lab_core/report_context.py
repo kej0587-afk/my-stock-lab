@@ -150,6 +150,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     earnings_sources = []
+    earnings_results = {"results": [], "sources": []}
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_sources import load_official_earnings
         # Explicitly requested issuers first; no broad market scan on a rerender.
@@ -159,6 +160,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         updated = {row.get("ticker") for row in earnings["events"]}
         calendar = dict(calendar, events=[r for r in calendar["events"] if r.get("ticker") not in updated] + earnings["events"])
         earnings_sources = earnings["sources"]
+        from stock_lab_core.earnings_result_sources import load_earnings_results
+        with measure("external_data", "earnings_result_reconciliation"):
+            earnings_results = load_earnings_results(earnings["events"], now)
     closed_rows = []
     from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
@@ -198,7 +202,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "rotation_rows": [{**row, "1D": row["1일수익률"], "5D": row["5일수익률"], "2W": row["2주수익률"], "1M": row["1개월수익률"]} for row in rotation_rows],
               "sector_rows": sectors,
               "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
-              "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources}
+              "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources,
+              "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"]}
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:
