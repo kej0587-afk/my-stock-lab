@@ -42,6 +42,10 @@ keep its storage module/schema and any existing records intact.
   long ETFs. Use token boundaries for inverse ticker abbreviations, preserving
   the intended inverse and leveraged multipliers. This corrects scenario
   arithmetic, not the investment-decision engine.
+- Deployment verification reproduced HTTP 414 when reloading an old URL with
+  the entire registered watchlist encoded in it. Omit oversized URL copies
+  without truncating or modifying the DB/session watchlist or other query keys.
+  The clean app URL recovered the already authenticated session and DB data.
 
 ## Evidence checks
 

@@ -1670,6 +1670,11 @@ def load_watchlist_from_query():
 def sync_watchlist_to_query():
     desired = encode_watchlist(st.session_state.watchlist)
     current = st.query_params.get("wl", "")
+    # The DB is authoritative. Large URL copies can make reload fail with HTTP 414.
+    if len(desired) > 1800:
+        if "wl" in st.query_params:
+            del st.query_params["wl"]
+        return
     if current != desired:
         st.query_params["wl"] = desired
 
