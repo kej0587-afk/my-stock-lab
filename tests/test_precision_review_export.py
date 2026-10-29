@@ -60,6 +60,17 @@ def _csv(archive, name):
     return list(csv.DictReader(io.StringIO(archive.read(name).decode("utf-8-sig"))))
 
 
+def test_review_keeps_display_basis_and_indicator_warning_without_private_context():
+    basis = {"가격자료기준일": "2026-10-28", "지표마지막봉": "2026-10-28",
+             "계산시각": "2026-10-29 16:00:00 KST", "가격반영": "가격 이력 기준"}
+    _, snapshot = _read(context={"signal_basis": basis, "live_indicator_issue": "재계산 실패",
+                                 "owner_email": "private@example.com", "api_key": "private-key"})
+    context = snapshot["sections"]["context"]
+    assert context["signal_basis"] == basis
+    assert context["live_indicator_issue"] == "재계산 실패"
+    assert "owner_email" not in context and "api_key" not in context
+
+
 def test_archive_captures_rendered_sections_and_source_vs_display_prices_without_mutation():
     source = pd.DataFrame({
         "Open": [98.0, 100.0], "High": [101.0, 103.0], "Low": [97.0, 99.0],

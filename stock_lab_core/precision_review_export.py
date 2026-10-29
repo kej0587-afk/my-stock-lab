@@ -43,6 +43,7 @@ _CONTEXT_KEYS = {
     "name", "is_etf", "asset_class", "has_position", "my_price", "usdkrw",
     "app_mode", "displayed_price", "auto_price", "manual_price", "price_source",
     "price_refresh_time", "chart_load_note", "live_ohlcv_applied",
+    "signal_basis", "live_indicator_issue",
     "macro_risk", "macro_penalty",
 }
 _CANDIDATE_KEYS = (
@@ -202,7 +203,7 @@ def _conflict_flags(sections):
         "main_decision": decision.get("dec"),
         "execution_gate": workflow.get("게이트상태"),
         "final_check": summary.get("final_label"),
-        "entry_plan": entry.get("status"),
+        "entry_plan": entry.get("display_status") or entry.get("status"),
     }
     flags = []
 

@@ -183,6 +183,9 @@ def test_mtf_reuses_only_weekly_monthly_indicators(app_module, monkeypatch):
 @pytest.mark.parametrize("failed_rows", [False, True])
 def test_entire_summary_matches_old_rs_and_mtf_paths(app_module, monkeypatch, warm, failed_rows):
     app = app_module
+    basis_builder = app.build_signal_basis
+    monkeypatch.setattr(app, "build_signal_basis", lambda source, context: basis_builder(
+        source, context, calculated_at="2026-10-29 16:00:00 KST"))
     frame = make_price_df()
     long_frame = make_price_df(days=600)
     frames = {"1y": frame, "10y": long_frame, "3mo": frame.tail(64)}
