@@ -7,7 +7,9 @@ Money-flow scores are existing price/volume proxies, NOT measured fund inflows.
 
 Event studies additionally require caller-supplied exchange session schedules
 (date index, aware market_open/market_close columns). Never invent a calendar or
-announcement time from a headline. All mappings can be replaced by the caller;
+announcement time from a headline. Supplied conventional times with a verified
+date are kept in a separate assumption bucket, never confirmed observations.
+All mappings can be replaced by the caller;
 the defaults below are editable display classifications, not official metadata.
 """
 
@@ -35,12 +37,19 @@ DEFAULT_SECTOR_MAP = {
                 ("XLB", "Materials"), ("XLY", "Consumer discretionary"),
                 ("XLP", "Consumer staples"), ("XLU", "Utilities"), ("VNQ", "Real estate"),
                 ("SMH", "Semiconductors"), ("SOXX", "Semiconductors"),
-                ("DRAM", "Memory"), ("IGV", "Software"))),
+                ("DRAM", "Memory"), ("IGV", "Software"),
+                ("IBB", "Biotech"), ("PAVE", "Infrastructure"),
+                ("ITA", "Aerospace and defense"), ("CIBR", "Cybersecurity"),
+                ("XHB", "Homebuilders"))),
         ("KR", (("396500.KS", "Semiconductors"), ("305540.KS", "Batteries"),
                 ("139250.KS", "Energy"), ("139270.KS", "Financials"),
-                ("244580.KS", "Biotech"))),
+                ("244580.KS", "Biotech"), ("139260.KS", "Technology"),
+                ("487240.KS", "Power infrastructure"), ("494670.KS", "Shipbuilding"),
+                ("449450.KS", "Defense"), ("329200.KS", "Real estate"))),
     ) for ticker, sector in pairs
 }
+# Fixed subset already present in money_flow.MONEY_FLOW_UNIVERSE, not a new scan.
+ROTATION_UNIVERSE = tuple(DEFAULT_SECTOR_MAP)
 DEFAULT_NEWS_TAGS = {
     "ipo": ("ipo", "initial public offering", "listing application", "기업공개", "상장예비심사", "공모주", "상장 추진", "신규상장"),
     "earnings": ("earnings", "quarterly results", "실적", "잠정실적"),
@@ -53,6 +62,8 @@ _NON_SECTORS = {"SPY", "VOO", "IVV", "QQQ", "QQQM", "DIA", "IWM", "069500.KS", "
                 "GLD", "SLV", "TLT", "IEF", "SHY", "UUP", "USO", "UNG", "HYG", "LQD", "IBIT"}
 _NON_SECTORS.update({"SH", "PSQ", "DOG", "SDOW", "RWM", "SDS", "QID", "SSO", "ROM", "USD", "UWM",
                      "TECL", "TECS", "LABU", "LABD", "TNA", "TZA", "FNGU", "FNGD", "BULZ"})
+_NON_SECTORS.update({"BIL", "SGOV", "SHV", "USFR", "TFLO", "ICSH", "JPST", "BOXX",
+                     "459580.KS", "214980.KS", "488770.KS"})
 
 
 def _records(rows):
@@ -134,7 +145,7 @@ def _excluded_product(ticker, meta, rows):
     if is_leveraged_or_inverse_product(description, ticker, _text(meta.get("kind"))):
         return True
     return any(row.get(key) is True for row in [meta, *rows] for key in ("leveraged", "inverse", "macro")) or bool(
-        re.search(r"\b(macro|inverse|leveraged|bond|treasury|currency|commodity)\b|거시|국채|채권|인버스|레버리지", description, re.I))
+        re.search(r"\b(macro|inverse|leveraged|bond|treasury|currency|commodity|cash|money.market)\b|거시|국채|채권|인버스|레버리지|현금|머니마켓|금리형|CD금리|KOFR", description, re.I))
 
 
 def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
@@ -244,6 +255,108 @@ def _distribution(values):
     }.items()}}
 
 
+def _event_time_basis(row):
+    return "schedule_rule" if row.get("release_precision") == "schedule_rule" else "confirmed"
+
+
+def _assumption_problem(row, at):
+    """Validate an explicit date/clock supplied by the caller; never choose one."""
+    day = _text(_first(row, "release_date", "date"))
+    if (row.get("release_date_confirmed") is not True or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day)
+            or _day(day) != day):
+        return "missing_confirmed_release_date"
+    if not _text(row.get("schedule_rule")) or not _first(row, "schedule_rule_source_url", "schedule_rule_source"):
+        return "missing_time_assumption_or_source"
+    if at is None:
+        return "missing_assumed_timestamp"
+    zone = _text(row.get("timezone")) or _MARKET_HOURS.get(row.get("market"), ("", ""))[0]
+    try:
+        local_day = at.tz_convert(zone).date().isoformat() if zone else ""
+    except (KeyError, TypeError, ValueError):
+        return "invalid_assumption_timezone"
+    if local_day != day:
+        return "assumed_timestamp_date_mismatch"
+    return ""
+
+
+def historical_earnings_events(context, *, as_of, session_schedules=None, allow_conventional=False):
+    """Map already-connected official results into study inputs without I/O.
+
+    Official result pages take precedence over the same ticker/fiscal-period
+    calendar entry. An elapsed schedule, conference call or news story is not
+    publication evidence. URLs reuse the collector's exact issuer-bound checks.
+    Date-only results need explicit opt-in and a caller-supplied exchange
+    schedule: the actual session close becomes a LABELED timing assumption,
+    never an announced_at fact. No missing publication date/calendar is filled.
+    build_event_study still enforces complete pre/post windows for these inputs.
+    """
+    from stock_lab_core.earnings_result_sources import is_official_result_url
+
+    now = _clock(as_of)
+    schedules = {market: _schedule(frame) for market, frame in (session_schedules or {}).items()}
+    output = {"events": [], "skipped": []}
+    results = [dict(row, _result=True) for row in _records(context.get("earnings_results"))]
+    calendar = [dict(row, _result=False) for row in _records(context.get("calendar_events")) if row.get("ticker")]
+    seen = set()
+    for row in results + calendar:
+        ticker, period = _symbol(row), _text(row.get("fiscal_period"))
+        identity = (ticker, period)
+        if identity in seen:
+            continue
+        market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+        zone = _MARKET_HOURS[market][0]
+        day = _text(row.get("release_date") if row["_result"] else row.get("date"))
+        checked = _timestamp(row.get("checked_at") if row["_result"] else row.get("source_verified_at"))
+        source = _text(row.get("source_url"))
+        reason = ""
+        published = (row.get("status") == "official_result" if row["_result"] else
+                     row.get("event_status") == "released" and row.get("release_date_confirmed") is True
+                     and row.get("event_kind") != "conference_call")
+        if not published:
+            reason = "unconfirmed_publication"
+        elif not ticker or not period or not is_official_result_url(ticker, source):
+            reason = "missing_event_identity_or_official_source"
+        elif not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or _day(day) != day:
+            reason = "missing_confirmed_release_date"
+        elif checked is None or checked > now:
+            reason = "confirmation_not_available_as_of"
+        elif day > now.tz_convert(zone).date().isoformat():
+            reason = "future_event"
+        event = {"event_id": f"earnings:{ticker}:{period}", "ticker": ticker, "market": market,
+                 "event_type": "earnings", "confirmed": True, "release_date_confirmed": True,
+                 "date": day, "timezone": zone, "source_url": source,
+                 "known_at": checked.isoformat() if checked is not None else None}
+        if not reason and row.get("release_precision") == "datetime":
+            at = _timestamp(row.get("release_at"))
+            if at is None or row.get("release_time_confirmed") is False:
+                reason = "missing_confirmed_timestamp"
+            elif at > now or at > checked:
+                reason = "confirmation_not_available_as_of"
+            elif at.tz_convert(zone).date().isoformat() != day:
+                reason = "release_timestamp_date_mismatch"
+            else:
+                event.update(announced_at=at.isoformat(), release_precision="datetime", release_time_confirmed=True)
+        elif not reason:
+            schedule = schedules.get(market)
+            if not allow_conventional:
+                reason = "missing_confirmed_timestamp"
+            elif row.get("release_precision") != "date":
+                reason = "unconfirmed_event"
+            elif schedule is None or pd.Timestamp(day) not in schedule.index:
+                reason = "missing_or_invalid_session_schedule"
+            else:
+                event.update(release_at=schedule.loc[day, "market_close"].isoformat(),
+                    release_precision="schedule_rule", release_time_confirmed=False,
+                    schedule_rule="Exchange-close timing assumption; actual publication minute unconfirmed",
+                    schedule_rule_source="Caller-supplied exchange schedule; modeling assumption, not release evidence")
+        if reason:
+            output["skipped"].append({"event_id": event["event_id"], "ticker": ticker, "reason": reason})
+        else:
+            seen.add(identity)
+            output["events"].append(event)
+    return output
+
+
 def build_event_study(events, price_frames, *, as_of, window=5, session_schedules=None):
     """Completed N-session pre/post close returns, grouped by ticker/event type.
 
@@ -253,6 +366,13 @@ def build_event_study(events, price_frames, *, as_of, window=5, session_schedule
     Before-open announcements map to that open; at/after-close announcements
     map to the next supplied open. Intraday announcements cannot be isolated
     with daily bars and are excluded. No date-only/estimated/news dates accepted.
+    An explicit release_precision='schedule_rule' also needs confirmed=True,
+    release_date_confirmed=True, date/release_date, aware release_at/announced_at,
+    schedule_rule and schedule_rule_source(_url). Its supplied clock is an
+    assumption, not a verified announcement: separate assumption_observations,
+    assumption_groups and assumption_sample_count never enter confirmed counts
+    or hypotheses. The local date must match the verified date. No default
+    time or date is generated, and all existing price/calendar checks apply.
     Pre = C[i-1]/C[i-N-1]-1; post = C[i+N-1]/C[i-1]-1 (includes reaction gap).
     Missing bars never shorten N. Duplicate IDs and same-time/type aliases do
     not multiply samples; conflicting timestamps for one ID are all excluded.
@@ -264,24 +384,39 @@ def build_event_study(events, price_frames, *, as_of, window=5, session_schedule
     schedules = {key: _schedule(value) for key, value in (session_schedules or {}).items()}
     output = {"kind": "historical_observation", "not_trade_signal": True, "as_of": now.isoformat(),
               "window": window, "observations": [], "groups": [], "skipped": [], "sample_count": 0,
+              "assumption_observations": [], "assumption_groups": [], "assumption_sample_count": 0,
               "limitations": "Descriptive, not causal or a forecast. Overlapping distinct-event windows are not independent."}
     times_by_id = defaultdict(set)
+    confirmed_ids, confirmed_occurrences = set(), set()
     for row in rows:
         at = _timestamp(_first(row, "announced_at", "release_at"))
+        basis = _event_time_basis(row)
+        identity = (_symbol(row), _text(row.get("event_id")))
         if row.get("confirmed") is True and at is not None:
-            times_by_id[(_symbol(row), _text(row.get("event_id")))].add(at)
+            times_by_id[(identity, basis)].add(at)
+            if (basis == "confirmed" and row.get("release_time_confirmed") is not False
+                    and row.get("release_precision") in (None, "", "datetime")):
+                confirmed_ids.add(identity)
+                zone = _MARKET_HOURS.get(row.get("market"), ("UTC", ""))[0]
+                confirmed_occurrences.add((_symbol(row), _text(_first(row, "event_type", "indicator")).casefold(),
+                                           at.tz_convert(zone).date().isoformat()))
     seen_ids, seen_occurrences = set(), set()
     for row in rows:
         ticker, event_id = _symbol(row), _text(row.get("event_id"))
         kind = _text(_first(row, "event_type", "indicator"))
         at = _timestamp(_first(row, "announced_at", "release_at"))
+        basis = _event_time_basis(row)
+        assumed = basis == "schedule_rule"
         identity = (ticker, event_id)
-        occurrence = (ticker, kind.casefold(), at)
+        occurrence = (ticker, kind.casefold(), _text(_first(row, "release_date", "date")) if assumed else at, basis)
         reason = ""
-        if row.get("confirmed") is not True or row.get("release_time_confirmed") is False or row.get("release_precision") == "date":
+        if row.get("confirmed") is not True or (not assumed and (
+                row.get("release_time_confirmed") is False or row.get("release_precision") not in (None, "", "datetime"))):
             reason = "unconfirmed_event"
         elif not event_id or not ticker or not kind or not _first(row, "source_url", "source"):
             reason = "missing_event_identity_or_source"
+        elif assumed and _assumption_problem(row, at):
+            reason = _assumption_problem(row, at)
         elif at is None:
             reason = "missing_confirmed_timestamp"
         elif at > now:
@@ -289,15 +424,18 @@ def build_event_study(events, price_frames, *, as_of, window=5, session_schedule
         elif any(row.get(key) is not None and (_timestamp(row[key]) is None or _timestamp(row[key]) > now)
                  for key in ("confirmed_at", "known_at")):
             reason = "confirmation_not_available_as_of"
-        elif len(times_by_id[identity]) > 1:
+        elif assumed and (identity in confirmed_ids or
+                (ticker, kind.casefold(), _text(_first(row, "release_date", "date"))) in confirmed_occurrences):
+            reason = "superseded_by_confirmed_timestamp"
+        elif len(times_by_id[(identity, basis)]) > 1:
             reason = "conflicting_event_timestamp"
-        elif identity in seen_ids or occurrence in seen_occurrences:
+        elif (identity, basis) in seen_ids or occurrence in seen_occurrences:
             reason = "duplicate_event"
         schedule = schedules.get(row.get("market"))
         if not reason and schedule is None:
             reason = "missing_or_invalid_session_schedule"
         if not reason:
-            seen_ids.add(identity)
+            seen_ids.add((identity, basis))
             seen_occurrences.add(occurrence)
             intraday = (schedule.market_open < at) & (at < schedule.market_close)
             positions = [i for i, opening in enumerate(schedule.market_open) if opening >= at]
@@ -319,25 +457,36 @@ def build_event_study(events, price_frames, *, as_of, window=5, session_schedule
             if prices.isna().any():
                 reason = "missing_price_in_event_window"
         if reason:
-            output["skipped"].append({"event_id": event_id, "ticker": ticker, "reason": reason})
+            output["skipped"].append({"event_id": event_id, "ticker": ticker, "reason": reason, "time_basis": basis})
             continue
-        output["observations"].append({"event_id": event_id, "ticker": ticker, "event_type": kind,
-            "announced_at": at.isoformat(), "reaction_date": schedule.index[i].date().isoformat(),
+        observation = {"event_id": event_id, "ticker": ticker, "event_type": kind,
+            "announced_at": None if assumed else at.isoformat(), "reaction_date": schedule.index[i].date().isoformat(),
             "reaction_open": schedule.market_open.iloc[i].isoformat(),
             "pre_start_date": dates[0].date().isoformat(), "baseline_date": dates[window].date().isoformat(),
             "post_end_date": dates[-1].date().isoformat(), "completed_at": schedule.market_close.iloc[i + window - 1].isoformat(),
             "pre_return": float(prices.iloc[window] / prices.iloc[0] - 1),
             "post_return": float(prices.iloc[-1] / prices.iloc[window] - 1), "price_basis": column,
-            "source": _text(_first(row, "source_url", "source"))})
-    groups = defaultdict(list)
-    for row in output["observations"]:
-        groups[(row["ticker"], row["event_type"], row["price_basis"])].append(row)
-    for (ticker, kind, basis), samples in sorted(groups.items()):
-        output["groups"].append({"ticker": ticker, "event_type": kind, "price_basis": basis,
-            "sample_count": len(samples), "event_ids": [r["event_id"] for r in samples],
-            "pre": _distribution([r["pre_return"] for r in samples]),
-            "post": _distribution([r["post_return"] for r in samples])})
+            "source": _text(_first(row, "source_url", "source")), "time_basis": basis}
+        if assumed:
+            observation.update(assumed_release_at=at.isoformat(), release_time_confirmed=False,
+                release_date=_text(_first(row, "release_date", "date")),
+                time_assumption=_text(row["schedule_rule"]),
+                time_assumption_source=_text(_first(row, "schedule_rule_source_url", "schedule_rule_source")))
+        output["assumption_observations" if assumed else "observations"].append(observation)
+    for prefix in ("", "assumption_"):
+        groups = defaultdict(list)
+        for row in output[prefix + "observations"]:
+            groups[(row["ticker"], row["event_type"], row["price_basis"], row.get("time_assumption", ""))].append(row)
+        for (ticker, kind, basis, assumption), samples in sorted(groups.items()):
+            group = {"ticker": ticker, "event_type": kind, "price_basis": basis,
+                "sample_count": len(samples), "event_ids": [r["event_id"] for r in samples],
+                "pre": _distribution([r["pre_return"] for r in samples]),
+                "post": _distribution([r["post_return"] for r in samples])}
+            if prefix:
+                group.update(time_basis="schedule_rule", time_assumption=assumption, release_time_confirmed=False)
+            output[prefix + "groups"].append(group)
     output["sample_count"] = len(output["observations"])
+    output["assumption_sample_count"] = len(output["assumption_observations"])
     return output
 
 

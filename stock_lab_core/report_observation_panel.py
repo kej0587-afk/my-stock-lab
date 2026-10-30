@@ -24,6 +24,30 @@ def _pct(value):
     return f"{value * 100:+.2f}%" if number(value) is not None else "미연결"
 
 
+def _event_study_lines(study):
+    lines = ["", "**이벤트 스터디 · 전후 5거래일**",
+             f"확정 시각 표본 {study['sample_count']}건 / 관행 시각 가정 표본 {study.get('assumption_sample_count', 0)}건. "
+             "공식 발표일이 확인된 실적만 사용하며 완료된 전후 가격창이 필요합니다. 사후 분포이며 예측·인과 증명이 아닙니다."]
+    for key, label in (("groups", "발표 시각 확인"), ("assumption_groups", "관행 시각 가정·별도 표본")):
+        if not study.get(key):
+            continue
+        lines += ["", f"**{label}**", "종목·유형 | 표본 수 | 전 5일 중앙값 | 후 5일 중앙값 | 후 5일 25~75분위",
+                  "--- | --- | --- | --- | ---"]
+        for row in study[key]:
+            lines.append(" | ".join(_cell(v) for v in (row["ticker"] + " " + row["event_type"], row["sample_count"],
+                _pct(row["pre"]["median"]), _pct(row["post"]["median"]), _pct(row["post"]["p25"]) + " ~ " + _pct(row["post"]["p75"]))))
+    if not study.get("groups") and not study.get("assumption_groups"):
+        lines.append("완료 표본 없음: 공식 발표일·거래소 일정·전후 5거래일 이력이 모두 필요합니다.")
+    lines.append("관행 시각은 해당 거래소 마감 시점 가정입니다. 실제 발표 시각이 아니며 한국 기업의 장중 발표를 재현하지 못할 수 있습니다. 확정 표본·가설과 합산하지 않습니다.")
+    if study.get("skipped"):
+        from collections import Counter
+        counts = Counter(row["reason"] for row in study["skipped"])
+        labels = {"unfinished_post_window": "발표 후 5거래일 미완료", "insufficient_pre_history": "발표 전 이력 부족",
+                  "missing_price_in_event_window": "가격창 결측", "missing_or_invalid_session_schedule": "거래소 일정 미연결"}
+        lines.append("표본 제외: " + " / ".join(f"{labels.get(k, k)} {v}건" for k, v in sorted(counts.items())))
+    return lines
+
+
 def observation_report_lines(context, summary_rows, news, now):
     sentiment = sentiment_evidence(context)
     rotation = build_sector_rotation(context.get("price_frames", {}), context.get("closed_flow_rows", []),
@@ -36,9 +60,14 @@ def observation_report_lines(context, summary_rows, news, now):
              "지표 | 관측 | 기준일 | 범위·한계", "--- | --- | --- | ---"]
     lines += [" | ".join(_cell(r[k]) for k in ("지표", "관측", "기준일", "범위·한계")) for r in sentiment["rows"]]
     lines += ["", "**로테이션 관찰 후보**",
+              "고정 모집단: 미국 산업·섹터 ETF 20개 / 한국 업종 대용 ETF 10개(업종지수 자체 아님). "
+              + " / ".join(f"{market} 유효 {rotation.get('markets', {}).get(market, {}).get('sample_count', 0)}개"
+                           for market in ("US", "KR")),
               "동일 시장·확정 거래일 기준. 상·하위는 20일 상대강도 변화순, 개선 소외는 20일 음수·5일 양수 중 5일 상대강도순입니다. 돈흐름은 실제 자금 유입액이 아닌 기존 가격·거래량 점수이며 순위를 매수 순서로 쓰지 않습니다.",
               "시장·분류 | ETF·벤치 | 기준일 | RS 5D / 20D | 3M 가속도(%p) | 돈흐름점수", "--- | --- | --- | --- | --- | ---"]
     rotation_count = 0
+    names = {text(first(row, "Ticker", "티커")): text(first(row, "섹터", "종목명"))
+             for row in records(context.get("closed_flow_rows"))}
     for market, result in rotation.get("markets", {}).items():
         for key, label in (("top3", "상위"), ("bottom3", "하위"), ("improving_laggards3", "개선 소외·가설")):
             for row in result[key]:
@@ -46,7 +75,7 @@ def observation_report_lines(context, summary_rows, news, now):
                 acceleration = f"{row['accel_3m']*100:+.2f}" if row["accel_3m"] is not None else "미연결"
                 flow = f"{row['money_flow_score']:.1f}" if row["money_flow_score"] is not None else "미연결"
                 lines.append(" | ".join(_cell(v) for v in (market + " " + label,
-                    row["ticker"] + " / " + row["benchmark"], row["date"],
+                    (names.get(row["ticker"]) or row["sector"]) + f"({row['ticker']}) / " + row["benchmark"], row["date"],
                     _pct(row["rs_5d_change"]) + " / " + _pct(row["rs_20d_change"]), acceleration, flow)))
     if not rotation_count:
         lines.append("미연결 | - | - | - | - | 같은 거래일의 ETF·벤치 이력 부족")
@@ -58,15 +87,17 @@ def observation_report_lines(context, summary_rows, news, now):
             "후보·공식 발표일 미확인")))
     if not candidates:
         lines.append("후보 미수집 | - | - | 연결 뉴스에서 촉매 단서 미확보")
-    lines += ["", "**이벤트 스터디 · 전후 5거래일**",
-              f"확정 발표 시각·완료된 가격창이 연결된 표본 {study['sample_count']}건. 뉴스 후보를 역사적 이벤트로 간주하지 않습니다. 사후 분포이며 예측·인과 증명이 아닙니다."]
-    if study.get("groups"):
-        lines += ["종목·유형 | 표본 수 | 전 5일 중앙값 | 후 5일 중앙값 | 후 5일 25~75분위", "--- | --- | --- | --- | ---"]
-        for row in study["groups"]:
-            lines.append(" | ".join(_cell(v) for v in (row["ticker"] + " " + row["event_type"], row["sample_count"],
-                _pct(row["pre"]["median"]), _pct(row["post"]["median"]), _pct(row["post"]["p25"]) + " ~ " + _pct(row["post"]["p75"]))))
-    else:
-        lines.append("역사적 확정 발표시각·거래소 일정 이력 미연결: 분포 산출 보류. 발표일만 있는 공지를 임의 시각으로 바꾸지 않습니다.")
+    lines += _event_study_lines(study)
+    diagnostics = records(context.get("event_study_diagnostics"))
+    if diagnostics:
+        from collections import Counter
+        reasons = Counter(row.get("reason") for row in diagnostics if row.get("reason"))
+        labels = {"unfinished_post_window": "발표 후 5거래일 미완료", "missing_price_in_event_window": "가격창 결측",
+                  "unconfirmed_publication": "공식 결과 미확인", "missing_confirmed_release_date": "공식 발표일 미확인",
+                  "exchange_calendars_not_installed": "거래소 달력 설치 미완료", "no_connected_official_results": "공식 실적 미연결",
+                  "exchange_calendar_unavailable": "거래소 일정 조회 실패"}
+        if reasons:
+            lines.append("자료 대조: " + " / ".join(f"{labels.get(k, k)} {v}건" for k, v in sorted(reasons.items())))
     lines += ["", "**검증할 가설 3개**", "현재 LLM 미연결: 아래는 입력 근거만 사용하는 규칙 기반 관찰 가설입니다.",
               "가설 | 근거 | 반증 조건 | 확인 일정", "--- | --- | --- | ---"]
     for i, h in enumerate(hypotheses):

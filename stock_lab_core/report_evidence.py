@@ -170,10 +170,13 @@ def _close_recap_key(row, title, published):
 
 def curate_news(rows, *, now=None, limit=5, session_scoped=False):
     from stock_lab_core.today_news import _session_article_keys
+    from stock_lab_core.news_priority import market_news_priority
     now = now or datetime.now(KST)
     now = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
     accepted, seen, seen_articles, seen_links, close_recaps = [], set(), set(), set(), {}
     source_rows = records(rows)
+    source_rows.sort(key=lambda row: (-market_news_priority(row),
+        -(stamp(first(row, "published_at", "published", "시간")) or datetime(1970, 1, 2, tzinfo=KST)).timestamp()))
     # During KR trading, current-session articles precede yesterday's recaps.
     if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (15, 30):
         source_rows.sort(key=lambda row: not (row.get("market") == "KR" and row.get("session_date") == now.date().isoformat()))
@@ -590,15 +593,18 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                                       synthesis=synthesis, latest_metrics=latest_metrics)
     if states["US"]["phase"] == "preopen" and futures_line:
         headline += ".\n\n미국 개장 전 참고: " + futures_line
-    lines.extend(["", "## 한 줄 결론"])
+    from stock_lab_core.report_dashboard import current_state_lines, market_board_lines
+    lines.extend(["", "## 지금 상태 3줄", "\n\n".join(current_state_lines(context, states, now, latest_metrics))])
+    lines.extend(market_board_lines(context, states, now))
     from stock_lab_core.report_brief import build_news_brief
     brief = build_news_brief(context, news, summary_rows, now,
                             exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
                                           + participant_news_rows(news, kr)])
-    lines.extend([headline + ".", "", "## 오늘의 핵심 재료",
+    lines.extend(["", "## 오늘의 핵심 재료",
                   *post_close["lines"], "", *brief["lines"], "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
     lines.extend(["", *evidence_table(synthesis), ""])
+    lines.extend(["", "### 중기·최근 거래일·현재 맥락", headline + ".", ""])
     if outlook_count:
         lines.append(f"장전전망 {outlook_count}건은 마감 결과 설명에서 제외했습니다(장전전망은 실제 결과와 다름).")
     kr_summary = "기준일 지수 미연결"
@@ -724,6 +730,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append("- 한국 맥락 보도(기사 주장): " + story_news_citation(kr_context))
         used_story_news.add(news_article_key(kr_context))
     lines.append("- 다음 체크: " + next_check(mode) + " · " + futures_line)
+    from stock_lab_core.report_policy_panel import policy_evidence_lines
+    lines.extend(policy_evidence_lines(context, news, now))
     lines.extend(["", "## 경제지표",
                   "해석은 발표치의 경제적 의미이며 오늘 등락의 원인 확정이나 매수 신호가 아닙니다. 실제 반응은 오른쪽 열과 별도로 비교합니다.", "",
                   "지표 | 발표치 | 예상/대체 비교 | 이전 | 해석(조건부) | 시장 반응(금리·달러·지수)", "--- | --- | --- | --- | --- | ---"])
@@ -998,6 +1006,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append(" | ".join(_cell(value) for value in candidate_fields(row)))
     if not watches:
         lines.append("- 관심 후보 미연결/없음")
+    from stock_lab_core.market_guard_explanation import guard_explanation_lines
+    lines.extend(guard_explanation_lines(context.get("market_guard")))
     from stock_lab_core.report_outlook import official_outlook_lines
     lines.extend(official_outlook_lines(context, now))
     lines.extend(["", "## 다가오는 일정"])

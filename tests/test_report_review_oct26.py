@@ -133,7 +133,9 @@ def test_report_restores_layers_after_kr_close_and_combines_latest_without_gate_
             {"티커": "DRAM", "보유량": 1, "현재비중": 40, "최종읽기": "대기", "게이트상태": "대기/관찰"}]
     before = deepcopy((context, rows))
     report = build_auto_market_memo(report_context=context, now=NOW, summary_rows=rows)
-    headline = report.split("## 한 줄 결론")[1].split("## 오늘의 핵심 재료")[0]
+    status = report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0]
+    assert "**계좌** · 통합 누적 추정 +0.61%p" in status and "연결 100.0%" in status
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert all(marker in headline for marker in ("[중기]", "[최근 2거래일]", "[한국 마감·미국 현재]", "SOXX +2.00%", "DRAM +2.00%"))
     assert "통합 누적 계좌 영향 추정 +0.61%p" in headline and "연결 100.0%" in headline
     assert "한국 상장 -0.60%p" in headline and "미국 상장 +1.21%p" in headline

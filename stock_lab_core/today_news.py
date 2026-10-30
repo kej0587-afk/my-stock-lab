@@ -394,8 +394,9 @@ def _publication_timing(row, published, market):
 
 
 def _news_sort_key(row):
+    from stock_lab_core.news_priority import market_news_priority
     prefer_wrap = row["news_bucket"] == "session_news" and row["is_close_wrap"]
-    return (not prefer_wrap, -_news_timestamp(row["published_at"]).timestamp())
+    return (-market_news_priority(row), not prefer_wrap, -_news_timestamp(row["published_at"]).timestamp())
 
 
 def _us_close_recap(title, published, window):

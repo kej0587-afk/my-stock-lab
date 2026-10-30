@@ -15170,10 +15170,11 @@ def get_market_status_label(ticker=""):
 
 
 def render_data_basis_caption(area, ticker="", include_news=False, include_fin=False):
+    from stock_lab_core.prices import _LATEST_PRICE_CACHE_TTL_SECONDS
     parts = [
         f"{area} 화면 조회시각: {format_kst_now()}",
         f"시장상태: {get_market_status_label(ticker)}",
-        "현재가 TTL 60초",
+        f"현재가 기본 캐시 {_LATEST_PRICE_CACHE_TTL_SECONDS}초(공급 시세 시각은 별도)",
         "차트/기술 TTL 5분",
     ]
     if include_news:
@@ -28150,19 +28151,8 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
             portfolio_reasons.append(f"주의/차단 후보 {caution_count}개")
 
     context_score = int(flow_score + macro_score + event_score)
-    mode_score = int(regional_score)
-    if flow_score > 0:
-        mode_score += int(flow_score)
-    if macro_score >= 2:
-        mode_score += int(macro_score)
-    elif macro_score == 1 and regional_score < 5:
-        mode_score += 1
-    if event_score >= 2:
-        mode_score += int(event_score)
-    elif event_score == 1 and regional_score < 5:
-        mode_score += 1
-    if regional_score >= 5 and (macro_score + event_score) >= 3:
-        mode_score += 1
+    from stock_lab_core.market_guard_explanation import compose_market_guard_score
+    mode_score, mode_score_parts = compose_market_guard_score(regional_score, flow_score, macro_score, event_score)
     score = int(mode_score)
     total_risk_score = int(regional_score + context_score + portfolio_score)
 
@@ -28277,6 +28267,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "level": level,
         "score": int(score),
         "regional_score": int(regional_score),
+        "mode_score_parts": mode_score_parts,
         "context_score": int(context_score),
         "portfolio_score": int(portfolio_score),
         "total_risk_score": int(total_risk_score),
@@ -29151,11 +29142,15 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
-    from stock_lab_core.market_sentiment import load_credit_spread
+    from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence
     from stock_lab_core.economic_releases import _api_key
     context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
                                 if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})
     context["market_observation_evidence"] = dict(st.session_state.get("market_observation_evidence", {}))
+    context["market_observation_evidence"].update(load_investor_flow_evidence(
+        get_kiwoom_data_client() if not IS_PUBLIC_DEMO else None, public_demo=IS_PUBLIC_DEMO))
+    context["market_evidence_checked_at"] = datetime.now(KST).isoformat()
+    context["market_guard"] = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store,

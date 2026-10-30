@@ -127,7 +127,9 @@ def test_report_explains_breadth_and_tables_without_promoting_stale_quotes():
              "게이트상태": "방어우선", "최종읽기": "추가매수 보류"}]
     before = deepcopy(rows)
     report = build_auto_market_memo(report_context=ctx, summary_rows=rows, now=NOW)
-    headline = report.split("## 한 줄 결론\n")[1].split("\n## ")[0]
+    status = report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0]
+    assert "**계좌** · 전체 추정 보류" in status and "+0.75%p" not in status
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert "S&P500" in headline and "다우" in headline and "나스닥" in headline
     assert "혼조" in headline and "미국 데이마켓" in headline and "지연 참고" in headline
     assert "구분 | 계좌 기여(추정) | 연결 비중 | 시작 종가일 → 관측일" in report
@@ -161,6 +163,9 @@ def test_context_reuses_release_calendar_including_failed_sources(monkeypatch, c
 def test_sector_quotes_collected_for_nonheld_report_assets_in_one_kr_batch(monkeypatch):
     from stock_lab_core import prices, report_quotes, report_live
     from stock_lab_core.report_prices import SECTORS
+    sector_symbols = frozenset(SECTORS)
+    expected_us = {t for t in sector_symbols if not t.endswith((".KS", ".KQ"))}
+    expected_kr = {t for t in sector_symbols if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}
     monkeypatch.setattr(prices, "load_price_frames_batch", lambda *a, **k: {})
     monkeypatch.setattr(prices, "load_price_df", lambda *a, **k: pd.DataFrame())
     monkeypatch.setattr(report_live, "supplement_kr_indices", lambda frames: frames)
@@ -168,6 +173,8 @@ def test_sector_quotes_collected_for_nonheld_report_assets_in_one_kr_batch(monke
     monkeypatch.setattr(report_quotes, "load_report_quotes", quotes)
     collect_report_context(now=NOW, economic_releases=[], calendar={"events": [], "sources": []}, scenario_frames={})
     quotes.assert_called_once()
+    # Rotation histories must not mutate the sector map or expand live requests.
+    assert frozenset(SECTORS) == sector_symbols
     symbols = set(quotes.call_args.args[0])
-    assert symbols == {t for t in SECTORS if not t.endswith((".KS", ".KQ"))}
-    assert set(quotes.call_args.kwargs["kr_tickers"]) == {t for t in SECTORS if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}
+    assert symbols == expected_us
+    assert set(quotes.call_args.kwargs["kr_tickers"]) == expected_kr

@@ -97,7 +97,7 @@ def test_full_report_catalysts_same_market_and_foreign_news_separate():
     context = report_case()
     original = deepcopy(context)
     report = build_auto_market_memo(report_context=context, now=NOW)
-    headline = report.split("## 한 줄 결론")[1].split("## 오늘의 시장 스토리")[0]
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert "코스피는 하락했습니다(-3.73%, 2026-10-20 확정 종가)" in headline
     assert "AI 신용우려" in headline and "외국인·기관 동반 매도" in headline and "기사 주장" in headline
     sectors = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
@@ -149,7 +149,7 @@ def test_intraday_rebound_does_not_inherit_previous_day_decline_claims():
         "date": "2026-10-21", "return": .02, "as_of": "2026-10-21T10:00:00+09:00", "retrieved_at": "2026-10-21T10:00:00+09:00"}}
     report = build_auto_market_memo(report_context=context,
         now=datetime.fromisoformat("2026-10-21T10:00:00+09:00"))
-    headline = report.split("## 한 줄 결론")[1].split("## 오늘의 시장 스토리")[0]
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert "[장중] 코스피 +2.00%(2026-10-21 장중·미확정; 2026-10-21 10:00 KST)" in headline
     assert "반등" in headline
     assert "AI 신용우려" not in headline and "외국인·기관 동반 매도" not in headline

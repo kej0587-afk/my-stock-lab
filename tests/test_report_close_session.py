@@ -88,7 +88,9 @@ def test_close_report_acceptance_and_immutable_inputs():
     report = build_auto_market_memo(report_context=context, summary_rows=rows, flow_snapshot={"flow_df": flow}, now=NOW)
     assert (context, rows, flow) == original
     assert "보고서 모드: 마감 후" in report
-    conclusion = report.split("## 한 줄 결론")[1].split("## 내 보유 종목 영향")[0]
+    status = report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0]
+    assert "**계좌** · 통합 누적 추정" in status and "99.9%" in status
+    conclusion = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert "통합 누적 계좌 영향 추정" in conclusion and "99.9%" in conclusion
     assert "최신 종가 기준 계좌 추정" not in report and "99.9%" in report
     assert "코스피는 반등했습니다(+1.76%, 2026-10-19 확정 종가)" in conclusion

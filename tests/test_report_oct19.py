@@ -57,12 +57,19 @@ def test_report_acceptance_and_input_immutability():
     assert "100달러 이상 수준 경고 → 유가 기여 +18점" in report and "90~100달러 하락 구간의 +0" not in report
     assert "스트레스 74→92" in report and "동일 기준일 자료 변경" in report
     assert "애플(AAPL) · 개별 신호 A급, 게이트로 보류" in report and "A급 (분할 매수)" not in report
-    assert "신규매수 중단 해제" in report
+    candidates = report.split("## 관심 후보 상위 3개\n", 1)[1].split("\n## ", 1)[0]
+    assert "게이트 근거 | 해제 조건" in candidates
+    apple = next(line for line in candidates.splitlines() if line.startswith("애플(AAPL)"))
+    assert "시장방어: 신규매수 중단" in apple
+    assert "시장방어 근거표" in apple and "비상 조건 해소 확인" in apple
     sector = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
     assert "SOXX" in sector and "제목 기준 보도(기사 주장" in sector and "美 AI·반도체 급락" in sector
     assert "전날 7%대 급락" in report and "[장중 보도]" in report
     assert "연결분 기여(전체 추정 아님) | -1.27%p" in report
-    assert "-1.27%p" not in report.split("## 한 줄 결론\n")[1].split("\n## ")[0]
+    status = report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0]
+    detail = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
+    assert "-1.27%p" not in status and "-1.27%p" not in detail
+    assert "**계좌** · 전체 추정 보류" in status
     assert "전체 추정 보류" in report
     assert "개장 전 갭 시나리오 기여" not in report
     story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]

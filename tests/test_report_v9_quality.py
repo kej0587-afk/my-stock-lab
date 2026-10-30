@@ -186,7 +186,7 @@ def test_22h_preopen_futures_in_conclusion_and_next_check_with_missing_reason(sy
     for item in context["scenario_observations"]["latest"].values():
         item["return"] = item.pop("return_")
     report = build_auto_market_memo(report_context=context, now=NOW)
-    conclusion = report.split("## 한 줄 결론")[1].split("## 내 보유 종목 영향")[0]
+    conclusion = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     check = next(line for line in report.splitlines() if line.startswith("- 다음 체크:"))
     for section in (conclusion, check):
         for symbol in symbols:

@@ -36,6 +36,7 @@ _YAHOO_BLOCK_LOCK = threading.Lock()
 _YAHOO_BLOCK_SECONDS = 180
 _FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
 _PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
+_HISTORY_REQUEST_MEMO = ContextVar("stock_lab_history_request_memo", default=None)
 _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
 
 
@@ -50,7 +51,13 @@ def _quote_transport_event(provider, outcome, error=None):
 
 @contextmanager
 def price_frame_scope(frames, period):
-    """Reuse exact-period public histories only for this calculation run."""
+    """Reuse successful exact-request histories only for this calculation run.
+
+    Prefetched frames keep precedence. Missing requests use the existing cache
+    and retain a private success snapshot in this scope, including in workers
+    started with submit_with_context. Live quotes and failed histories are not
+    memoized. Nested scopes restore their parent's snapshots on exit.
+    """
     prepared = dict(_PREFETCHED_HISTORY.get() or {})
     prepared.update({
         (str(ticker).strip().upper(), period): frame
@@ -58,14 +65,18 @@ def price_frame_scope(frames, period):
         if isinstance(frame, pd.DataFrame) and not frame.empty
     })
     token = _PREFETCHED_HISTORY.set(prepared)
+    memo_token = _HISTORY_REQUEST_MEMO.set(dict(_HISTORY_REQUEST_MEMO.get() or {}))
     try:
         yield
     finally:
+        _HISTORY_REQUEST_MEMO.reset(memo_token)
         _PREFETCHED_HISTORY.reset(token)
 
 
 def _reuse_prefetched_history(fn):
     from functools import wraps
+
+    generation = object()
 
     @wraps(fn)
     def wrapped(ticker, period="1y"):
@@ -73,9 +84,30 @@ def _reuse_prefetched_history(fn):
         key = (str(ticker).strip().upper(), period)
         if frames is not None and key in frames:
             return frames[key].copy(deep=True)
-        return fn(ticker, period)
+        memo = _HISTORY_REQUEST_MEMO.get()
+        if memo is None:
+            return fn(ticker, period)
+        # Keep the original arguments: only prefetched keys are normalized.
+        request = (ticker, period)
+        entry = memo.get(request)
+        if entry is not None and entry[0] is generation:
+            return entry[1].copy(deep=True)
+        started_generation = generation
+        frame = fn(ticker, period)
+        if isinstance(frame, pd.DataFrame) and not frame.empty and started_generation is generation:
+            # Do not hold a lock across provider I/O; the existing cache handles
+            # simultaneous misses. Never retain a caller-owned mutable frame.
+            memo[request] = (started_generation, frame.copy(deep=True))
+        return frame
+
+    def clear(*args, **kwargs):
+        nonlocal generation
+        generation = object()
+        return fn.clear(*args, **kwargs)
 
     wrapped.__wrapped__ = getattr(fn, "__wrapped__", fn)
+    if hasattr(fn, "clear"):
+        wrapped.clear = clear
     return wrapped
 
 

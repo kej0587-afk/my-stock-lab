@@ -34,7 +34,7 @@ def test_three_readable_layers_explain_conflicting_directions_without_changing_g
             {"티커": "RAM", "보유량": 1, "현재비중": 25, "게이트상태": "방어우선", "최종읽기": "추가매수 보류"}]
     before = deepcopy(rows)
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW)
-    headline = report.split("## 한 줄 결론\n")[1].split("\n## ")[0]
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     assert len([line for line in headline.splitlines() if line.startswith("[")]) == 3
     for phrase in ("반도체(SMH)", "소프트웨어(IGV)", "업종 흐름이 갈려", "반등 뒤 하루 되돌림", "중기 추세 회복을 확정할 수 없습니다", "한국 반도체 +3.00%", "SOL AI반도체 +3.02%"):
         assert phrase in headline

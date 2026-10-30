@@ -10,6 +10,7 @@ register_loaded_source(__name__, __file__)
 
 from stock_lab_core.report_evidence import KST, first, is_held, price_observation, intraday_observation, records, text, stamp
 from stock_lab_core.report_holdings import UNDERLYINGS
+from stock_lab_core.market_observation import ROTATION_UNIVERSE
 from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, align_us_report_frames, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 from stock_lab_core.report_session import kst_now, market_session_states
 from stock_lab_core.performance import measure, timed_call
@@ -40,7 +41,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     from stock_lab_core.release_calendar import load_release_calendar
 
     now = kst_now(now or datetime.now(KST))
-    tickers = {"^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI", "QQQ", "XLF", "XLI", "XLP", "XLV", "IWM", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
+    from stock_lab_core.report_dashboard import INDEX_BOARD, COMMODITY_BOARD
+    tickers = {*INDEX_BOARD, *COMMODITY_BOARD, "QQQ", "XLF", "XLI", "XLP", "XLV", "IWM", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
     for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
         for row in records((flow_snapshot or {}).get(key))[:5]:
             ticker = text(first(row, "Ticker", "티커", "ticker"))
@@ -52,6 +54,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             if ticker:
                 tickers.add(ticker)
                 tickers.update(base for base in UNDERLYINGS.get(ticker.split(".")[0], ()) if base != "BTC-US-CLOSE")
+    # Rotation expands daily histories, not the set of live quote requests.
+    quote_universe = set(tickers)
+    tickers.update(ROTATION_UNIVERSE)
     frames = price_frames
     if frames is None:
         # Reuse the app's cached one-year histories, not one info request per asset.
@@ -67,7 +72,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                             and not text(first(row, "티커", "ticker")).endswith((".KS", ".KQ"))}))
     held_kr = tuple(sorted({text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker")).upper().endswith((".KS", ".KQ"))}))
-    kr_quote_tickers = tuple(sorted(set(held_kr) | {t for t in tickers if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}))
+    kr_quote_tickers = tuple(sorted(set(held_kr) | {t for t in quote_universe if t.endswith((".KS", ".KQ"))} | {"0167A0.KS"}))
     # Quote only the fixed report sectors and holdings, never the full watchlist.
     us_quote_tickers = tuple(sorted(set(held_us) | {t for t in SECTORS if not t.endswith((".KS", ".KQ"))}))
     if quote_data is None:
@@ -155,6 +160,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     earnings_sources = []
     earnings_results = {"results": [], "sources": []}
     official_outlooks = None
+    central_bank_results = []
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_sources import load_official_earnings
         # Explicitly requested issuers first; no broad market scan on a rerender.
@@ -172,6 +178,9 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         from stock_lab_core.outlook_sources import load_official_outlooks
         with measure("external_data", "official_outlook"):
             official_outlooks = load_official_outlooks(now)
+        from stock_lab_core.central_bank_results import fetch_central_bank_results
+        with measure("external_data", "official_policy_decisions"):
+            central_bank_results = fetch_central_bank_results(now)
     closed_rows = []
     from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
@@ -212,9 +221,15 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "sector_rows": sectors,
               "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
               "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources,
-              "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"]}
+              "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"],
+              "central_bank_results": central_bank_results}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
+    from stock_lab_core.report_eventstudy import collect_event_study_context
+    with measure("external_data", "event_study_context"):
+        study = collect_event_study_context(result, now)
+    result.update(confirmed_historical_events=study["events"], event_session_schedules=study["schedules"],
+                  event_study_diagnostics=study["diagnostics"])
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:

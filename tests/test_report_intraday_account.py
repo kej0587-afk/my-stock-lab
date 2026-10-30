@@ -67,7 +67,9 @@ def test_full_report_has_three_layers_current_account_and_unchanged_decisions():
                           "SOXX": {"date": "2026-10-20", "return": -.0038, "previous_return": .0173, "return_5d": -.12}},
                "closed_flow_rows": [{"Ticker": "SOXX", "기준일": "2026-10-20", "3개월수익률": -.10}]}
     report = build_auto_market_memo(report_context=context, summary_rows=held, now=NOW)
-    headline = report.split("## 한 줄 결론\n", 1)[1].split("\n## ", 1)[0]
+    status = report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0]
+    assert "**계좌** · 전체 추정 보류" in status and "+0.93%p" not in status
+    headline = report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n관측 축 |", 1)[0]
     # US regular baselines are intentionally absent: do not promote only the
     # extended leg into the new cumulative definition.
     for part in ("[중기]", "3M -10.00%", "[최근 2거래일]", "+1.34%", "[장중]", "+2.28%", "전체 계좌 추정 보류"):

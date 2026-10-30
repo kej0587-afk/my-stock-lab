@@ -39,10 +39,30 @@ def test_us_intraday_never_overwrites_korean_credit_background_macro_or_flow():
 
 def test_full_report_keeps_market_conclusion_independent_of_account_and_moves_history_down():
     context, _ = case()
+    # Connect the account leg so independence is tested against a changed total.
+    context["prices"]["SOXX"]["previous_date"] = "2026-10-16"
+    context["intraday_prices"]["SOXX"]["previous_date"] = "2026-10-19"
     reports = [build_auto_market_memo(report_context=context, now=NOW, summary_rows=rows) for rows in (
         [], [{"티커": "SOXX", "현재비중": 99.9, "보유량": 1}])]
-    headlines = [report.split("## 한 줄 결론\n")[1].split("\n\n")[0] for report in reports]
-    assert headlines[0] == headlines[1] and "계좌" not in headlines[0]
+    statuses = [report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0] for report in reports]
+    status_lines = [[line for line in status.splitlines() if line.strip()] for status in statuses]
+    for lines in status_lines:
+        assert len(lines) == 3
+        assert lines[0].startswith("**한국 현재**")
+        assert lines[1].startswith("**미국 현재")
+        assert lines[2].startswith("**계좌**")
+    assert status_lines[0][:2] == status_lines[1][:2]
+    assert all("계좌" not in line for line in status_lines[0][:2])
+    assert status_lines[0][2] != status_lines[1][2]
+    assert "전체 추정 보류" in status_lines[0][2]
+    assert "통합 누적 추정 -0.58%p" in status_lines[1][2] and "연결 99.9%" in status_lines[1][2]
+    market_details = [report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n\n계좌:", 1)[0]
+                      for report in reports]
+    assert market_details[0] == market_details[1] and "계좌" not in market_details[0]
+    assert "코스피는 하락했습니다(-3.73%" in market_details[0]
+    assert "미국 반도체는 반등을 시도 중입니다(+0.42%" in market_details[0]
+    assert "AI 신용우려" in market_details[0] and "기사 주장" in market_details[0]
+    assert "[중기]" in market_details[0] and "[최근 2거래일]" in market_details[0]
     assert reports[1].index("## 판정 이력 비교") > reports[1].index("## 오늘의 시장 스토리")
     assert reports[1].count("## 내 보유 종목 영향") == 1
 

@@ -1,7 +1,11 @@
 """Dated observation-only sentiment evidence, never an execution score."""
 
-from datetime import date
+from collections import OrderedDict
+from copy import deepcopy
+from datetime import date, datetime
 import logging
+import threading
+import time
 
 import requests
 
@@ -13,6 +17,137 @@ register_loaded_source(__name__, __file__)
 
 FRED_SERIES = "BAMLH0A0HYM2"
 FRED_SOURCE = "https://fred.stlouisfed.org/series/" + FRED_SERIES
+_INVESTOR_KINDS = ("sector_kospi", "sector_kosdaq")
+_INVESTOR_CACHE_TTL = 180
+_INVESTOR_FAILURE_TTL = 60
+_INVESTOR_CACHE_MAX_ENTRIES = 32
+_investor_cache = OrderedDict()
+_investor_cache_lock = threading.Lock()
+_INVESTOR_REASONS = {
+    "public_demo": "체험모드: 키움 인증·수급 조회 안 함",
+    "disabled": "키움 데이터 연결 비활성",
+    "missing_configuration": "키움 연결 설정 미완료",
+    "invalid_configuration": "키움 연결 설정 확인 필요",
+    "mock_excluded": "모의자료 제외: 실전 수급으로 대체하지 않음",
+    "unverified_environment": "실전 데이터 환경 미확인",
+    "client_version_mismatch": "키움 읽기 전용 클라이언트 갱신 필요",
+    "busy": "키움 조회 진행 중: 다음 보고서에서 재확인",
+    "timeout": "키움 수급 조회 시간 초과",
+    "network_error": "키움 수급 조회 연결 실패",
+    "rate_limited": "키움 조회 한도 도달: 잠시 후 재확인",
+    "auth_error": "키움 인증 실패: 연결 설정 확인 필요",
+    "http_error": "키움 수급 요청 거절",
+    "api_error": "키움 수급 API 오류",
+    "invalid_response": "키움 수급 응답 형식 미확인",
+    "no_data": "유효한 순매수 필드 미제공",
+    "unavailable": "키움 수급 조회 실패",
+}
+
+
+def _investor_failure(status):
+    status = status if isinstance(status, str) and status in _INVESTOR_REASONS else "unavailable"
+    return {"ok": False, "status": status, "reason": _INVESTOR_REASONS[status], "rows": [],
+            "source": "Kiwoom REST ka10051", "fetched_at": "", "asof": "", "has_more": False,
+            "is_mock": status == "mock_excluded"}
+
+
+def _read_investor_snapshot(client, kind):
+    try:
+        raw = client.get_market_snapshot(kind)
+    except Exception:
+        # Provider exception strings can contain credentials; never retain/log them.
+        return _investor_failure("unavailable")
+    if not isinstance(raw, dict):
+        return _investor_failure("invalid_response")
+    if raw.get("is_mock"):
+        return _investor_failure("mock_excluded")
+    if raw.get("is_mock") is not False:
+        return _investor_failure("unverified_environment")
+    if raw.get("ok") is not True:
+        return _investor_failure(raw.get("status"))
+    try:
+        at = datetime.fromisoformat(str(raw.get("fetched_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        return _investor_failure("invalid_response")
+    if at.tzinfo is None or not isinstance(raw.get("rows"), list):
+        return _investor_failure("invalid_response")
+    rows = []
+    for row in records(raw.get("rows"))[:200]:
+        if not isinstance(row, dict) or not isinstance(row.get("업종"), str) or not row["업종"].strip():
+            continue
+        values = {key: number(row.get(key)) for key in ("외국인 순매수(억원)", "기관 순매수(억원)")}
+        if any(value is not None for value in values.values()):
+            rows.append({"업종": row["업종"].strip()[:80], **values})
+    if not rows:
+        return _investor_failure("no_data")
+    return {"ok": True, "status": "available", "reason": "", "rows": rows,
+            "source": "Kiwoom REST ka10051", "fetched_at": at.isoformat(), "asof": "",
+            "has_more": raw.get("has_more") is True, "is_mock": False}
+
+
+def _cached_investor_snapshot(client, kind):
+    if not _investor_cache_lock.acquire(timeout=1):
+        return _investor_failure("busy")
+    try:
+        now = time.monotonic()
+        for key in list(_investor_cache):
+            if _investor_cache[key][1] <= now:
+                del _investor_cache[key]
+        key = (id(client), kind)
+        entry = _investor_cache.get(key)
+        if entry is not None and entry[0] is client:
+            _investor_cache.move_to_end(key)
+            return deepcopy(entry[2])
+        result = _read_investor_snapshot(client, kind)
+        ttl = _INVESTOR_CACHE_TTL if result["ok"] else _INVESTOR_FAILURE_TTL
+        # Hold the identity with the entry, so recycled object IDs cannot share data.
+        _investor_cache[key] = (client, time.monotonic() + ttl, result)
+        while len(_investor_cache) > _INVESTOR_CACHE_MAX_ENTRIES:
+            _investor_cache.popitem(last=False)
+        return deepcopy(result)
+    finally:
+        _investor_cache_lock.release()
+
+
+def load_investor_flow_evidence(client, *, public_demo=False):
+    """Collect the two live ka10051 first pages on report generation, not rendering.
+
+    Pass the app's configured/cached KiwoomDataClient to reuse its token. No
+    secrets, accounts, orders, retries or pagination are accessed here. Results
+    fit context['market_observation_evidence']; set market_evidence_checked_at
+    AFTER collection for the unchanged five-minute/future-evidence checks.
+    Do not advance quote_checked_at, which controls independent price validity.
+    Cache per client/market: success 180s, failure 60s, at most 32 entries; the
+    client retains its existing finite HTTP timeouts. No mock request is made.
+    """
+    reason = ""
+    if public_demo:
+        reason = "public_demo"
+    else:
+        try:
+            info = client.connection_info
+            status, environment = info.get("status"), info.get("environment")
+            if environment == "mock":
+                reason = "mock_excluded"
+            elif status != "ready":
+                reason = status if isinstance(status, str) and status in _INVESTOR_REASONS else "invalid_configuration"
+            elif environment != "real":
+                reason = "unverified_environment"
+            elif not callable(getattr(client, "get_market_snapshot", None)):
+                reason = "client_version_mismatch"
+        except Exception:
+            reason = "invalid_configuration"
+    return {kind: _investor_failure(reason) if reason else _cached_investor_snapshot(client, kind)
+            for kind in _INVESTOR_KINDS}
+
+
+def clear_investor_flow_cache():
+    """Clear only report investor evidence on an explicit connection refresh."""
+    with _investor_cache_lock:
+        _investor_cache.clear()
+
+
+load_investor_flow_evidence.clear = clear_investor_flow_cache
 
 
 def parse_credit_spread(payload, as_of):
@@ -52,7 +187,7 @@ def load_credit_spread(as_of, api_key):
 
 def _sector_flow_evidence(context):
     evidence = context.get("market_observation_evidence") or {}
-    checked = stamp(context.get("quote_checked_at"))
+    checked = stamp(context.get("market_evidence_checked_at") or context.get("quote_checked_at"))
     rows = []
     for kind, market in (("sector_kospi", "KOSPI"), ("sector_kosdaq", "KOSDAQ")):
         flows = evidence.get(kind) or {}
@@ -63,7 +198,7 @@ def _sector_flow_evidence(context):
         elif flows.get("is_mock"):
             reason = "모의자료 제외"
         elif not flows.get("ok"):
-            reason = "키움 업종 수급 조회 실패: " + str(flows.get("status") or "상태 미제공")
+            reason = _INVESTOR_REASONS.get(flows.get("status"), "키움 업종 수급 조회 실패: 상태 미확인")
         elif age is None:
             reason = "조회시각/보고서 기준시각 미확인: 키움 업종 수급 재조회 필요"
         elif age < 0:
@@ -80,7 +215,8 @@ def _sector_flow_evidence(context):
             observation = " / ".join(f"{row.get('업종', '업종 미제공')} {value:+,.1f}억원" for row, value in usable[:3])
             rows.append({"지표": market + " " + label, "관측": observation or "미연결",
                          "기준일": flows.get("fetched_at") or "-",
-                         "범위·한계": "업종 표 유효 첫 3행·전체 합산 아님·조회시각 기준·시세 기준시각 미제공" if observation else
+                         "범위·한계": ("업종 표 유효 첫 3행·전체 합산 아님·조회시각 기준·시세 기준시각 미제공"
+                                    + ("·추가 페이지 미조회" if flows.get("has_more") else "")) if observation else
                          reason or "유효한 순매수 필드 미제공"})
     return rows
 

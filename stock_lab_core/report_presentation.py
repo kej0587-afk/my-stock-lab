@@ -82,7 +82,7 @@ def candidate_fields(row):
     code = " ".join(text(row.get(key)) for key in ("판정코드", "최종읽기", "게이트근거", "시장실행상태", "상위시간대상태"))
     checks = []
     if any(word in code for word in ("시장", "MARKET", "MACRO")):
-        checks.append("해당 시장 신규매수 중단 해제 후 종목 게이트 재통과")
+        checks.append("아래 시장방어 근거표의 통합·해당 지역 점수 8 미만 및 비상 조건 해소 확인(레버리지 방어 기준은 5점)")
     if any(word in code for word in ("추세", "MTF", "STRUCTURE", "TREND", "상위 시간대 경고")):
         checks.append("일봉·주봉 추세훼손 해제 및 상위 시간대 경고 해소")
     if any(word in code for word in ("가격방어", "DRAWDOWN", "BREAKDOWN")):
