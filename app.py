@@ -1072,13 +1072,13 @@ def require_login():
     if AUTH_MODE == "password":
         return require_password_login()
 
-    if not st.user.is_logged_in:
+    if not getattr(st.user, "is_logged_in", False):
         st.title("Stock Lab")
         st.info("Log in with your allowed Google account.")
         st.button("Log in with Google", on_click=st.login)
         st.stop()
 
-    email = str(st.user.email or "").strip().lower()
+    email = str(getattr(st.user, "email", "") or "").strip().lower()
     allowed_emails = get_secret_emails("ALLOWED_EMAILS") | get_secret_emails("ADMIN_EMAILS")
 
     if not allowed_emails:
