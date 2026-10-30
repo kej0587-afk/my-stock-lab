@@ -30,7 +30,9 @@ def test_stop_new_buys_applies_to_all_products_and_cannot_be_bypassed(ticker):
     assert not masks["execution"].any()
     assert masks["market_defense"].all()
     assert frame.iloc[0].to_dict() == row
-    recovered = apply_execution_gate_columns(attach_market_execution_context(result, {"mode": "정상"}))
+    recovered = apply_execution_gate_columns(attach_market_execution_context(result, {
+        "mode": "정상", "kr_stats": {"mode": "정상"}, "us_stats": {"mode": "정상"},
+    }))
     assert recovered.loc[0, "게이트상태"] == GATE_EXECUTABLE
 
 

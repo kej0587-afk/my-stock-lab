@@ -160,6 +160,9 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "하드차단 우선"}
 
+    if market_execution.startswith("시장정보 확인 필요"):
+        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": market_execution}
+
     if math.isfinite(rr) and rr < 1.0:
         reasons.append(f"R/R {rr:.2f} < 1")
 

@@ -7,6 +7,8 @@ import pytest
 from stock_lab_core.execution_gate import (
     GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE, GATE_WAIT, GATE_WATCH_ONLY,
 )
+from stock_lab_core.decision_engine import build_core_dca_context_values
+from stock_lab_core.decision_workflow import build_decision_workflow
 
 
 class RecordingUI:
@@ -100,6 +102,43 @@ def test_held_nasdaq_overweight_keeps_final_check_and_zero_amounts(display_app):
     assert all(row["금액/수량"] == "-" for row in plan["rows"][:4])
     assert summary["block_count"] == 2 and summary["final_label"] == "매수 금지"
     assert next(row for row in rows if row["점검항목"] == "재무/상품")["상태"] == "통과"
+
+
+@pytest.mark.parametrize("cash,expected", [(0, "-"), (100_000, "100,000원 / 1000.00주")])
+def test_core_plan_keeps_cash_capped_amount_instead_of_target_gap(display_app, cash, expected):
+    app, _ = display_app
+    dca = build_core_dca_context_values(
+        mode="개인모드", rate=1, label="기존 적립률", buy_amount=1_000_000,
+        current_dd=-0.1, cash_available=cash, reserve_available=0,
+    )
+    decision = held_decision(
+        bucket="core", current_w=1, target_w=5, buy_amt=1_000_000,
+        dec="코어 적립", decision_code="CORE_ETF_DCA_BUY", **dca,
+    )
+    before = deepcopy(decision)
+    plan = app.render_entry_execution_plan("나스닥", "379810.KS", decision, has_pos=True)
+    installment = next(row for row in plan["rows"] if row["단계"] == "이번 회차 적립 기준")
+    assert installment["금액/수량"] == expected
+    if cash == 0:
+        assert all(row["금액/수량"] == "-" for row in plan["rows"][1:5])
+    assert plan["rows"][0]["금액/수량"].startswith("1,000,000원")
+    assert decision == before
+
+
+@pytest.mark.parametrize("target", [95, 100])
+def test_precision_plan_and_final_check_reject_old_positive_rr(display_app, target):
+    app, ui = display_app
+    decision = held_decision(rr_target=target, rr_ratio=2, current_w=1,
+                             decision_code="NEW_ENTRY_LEADER", dec="신규진입: 대장주 포착")
+    decision["execution_workflow"] = build_decision_workflow("Test", "TEST", decision)
+    plan = app.render_entry_execution_plan("Test", "TEST", decision)
+    assert plan["status"] == "unavailable"
+    assert "목표가" in ui.messages[-1]
+    checks, summary = app.build_pre_buy_final_checks("Test", "TEST", True, decision, 0, False, 0)
+    assert next(row for row in checks if row["점검항목"] == "손익비")["상태"] != "통과"
+    assert summary["final_label"] in {"대기", "매수 금지"}
+    narrative = app.build_precision_narrative("Test", "TEST", decision, 0, False, 0, is_etf=True)
+    assert "R/R 비율</b>: <b>2.00" not in narrative
 
 
 @pytest.mark.parametrize("ticker,metadata,kwargs,exempt", [

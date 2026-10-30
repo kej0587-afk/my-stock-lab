@@ -15,7 +15,7 @@ from stock_lab_core.dashboard_view import (
     prepare_dashboard_display, render_dashboard_group_summary,
 )
 from stock_lab_core.decision_workflow import attach_market_execution_context, build_decision_workflow
-from stock_lab_core.execution_gate import GATE_DEFENSE, GATE_EXECUTABLE, GATE_WAIT, apply_execution_gate_columns
+from stock_lab_core.execution_gate import GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE, GATE_WAIT, apply_execution_gate_columns
 from stock_lab_core.formatters import clean_float, normalize_ticker, sanitize_ticker_value
 
 
@@ -72,19 +72,21 @@ def test_display_matches_shared_gate_and_does_not_mutate_raw(ticker, guard):
 
 def test_same_cached_row_rechecks_changed_regional_guard():
     raw = pd.DataFrame([_candidate()])
-    assert _prepare(raw, {"kr_stats": {"mode": "위험"}}).iloc[0]["게이트상태"] == GATE_EXECUTABLE
+    assert _prepare(raw, {"kr_stats": {"mode": "위험"}}).iloc[0]["게이트상태"] == GATE_DATA_CHECK
+    assert _prepare(raw, {"kr_stats": {"mode": "위험"}, "us_stats": {"mode": "정상"}}).iloc[0]["게이트상태"] == GATE_EXECUTABLE
     assert _prepare(raw, {"us_stats": {"mode": "위험"}}).iloc[0]["게이트상태"] == GATE_DEFENSE
     assert raw.iloc[0]["게이트상태"] == GATE_EXECUTABLE
 
 
 def test_existing_flow_wait_and_missing_analyst_are_not_invented_consensus():
     raw = pd.DataFrame([_candidate()])
-    view = _prepare(raw, flow="눌림대기")
+    guard = {"us_stats": {"mode": "정상"}}
+    view = _prepare(raw, guard, flow="눌림대기")
     assert view.iloc[0]["게이트상태"] == GATE_WAIT
     assert view.iloc[0]["애널목표상태"] == "lookup_error"
     assert pd.isna(view.iloc[0]["애널목표Upside값"])
     assert view.iloc[0]["애널목표Upside"] == "-"
-    assert _prepare(raw).iloc[0]["게이트상태"] == GATE_EXECUTABLE
+    assert _prepare(raw, guard).iloc[0]["게이트상태"] == GATE_EXECUTABLE
 
 
 def test_analyst_uses_existing_loader_once_and_preserves_price_grade():

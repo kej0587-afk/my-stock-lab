@@ -127,7 +127,7 @@ def test_extracted_and_app_wrapper_match_original_html(case_id, case, app_namesp
     assert json.dumps(payload, sort_keys=True) == before
 
 
-def test_only_final_display_alignment_is_added_to_the_original_body(original_goldens):
+def test_only_gate_alignment_and_validated_rr_change_the_original_body(original_goldens):
     from stock_lab_core import precision_narrative
 
     core = function_node(Path(precision_narrative.__file__), "build_precision_narrative")
@@ -138,6 +138,11 @@ def test_only_final_display_alignment_is_added_to_the_original_body(original_gol
     assert len(alignment) == 1 and core.body[-3] is alignment[0]
     assert ast.unparse(alignment[0].targets[0]) == "(lines, border_color)"
     original_body = [node for node in core.body if node is not alignment[0]]
+    rr = next(node for node in original_body if isinstance(node, ast.Assign)
+              and ast.unparse(node.targets[0]) == "rr_ratio")
+    validated_rr = ast.parse('(c.get("execution_workflow") or {}).get("RR값", c.get("rr_ratio"))', mode="eval").body
+    assert ast.dump(rr.value) == ast.dump(validated_rr)
+    rr.value = ast.parse('c.get("rr_ratio")', mode="eval").body
     assert digest(ast.dump(ast.Module(body=original_body, type_ignores=[]))) == original_goldens["body_sha256"]
     assert ast.dump(wrapper.args) == original_goldens["signature_ast"]
     assert wrapper.end_lineno - wrapper.lineno < 15

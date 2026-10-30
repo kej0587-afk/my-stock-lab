@@ -1030,8 +1030,10 @@ def build_today_queue_execution_snapshot(
     atr = clean_float(c.get("atr"), 0.0)
     stop = clean_float(c.get("rr_stop"), 0.0)
     target = clean_float(c.get("rr_target"), 0.0)
-    rr = clean_float(c.get("rr_ratio"), math.nan)
-    if cur > 0 and stop > 0 and target > cur and stop < cur:
+    # Stored R/R may belong to older prices; only the current price triplet is valid.
+    rr = math.nan
+    valid_rr_prices = all(_finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target
+    if valid_rr_prices:
         rr = round((target - cur) / (cur - stop), 2)
 
     target_is_projection = bool(c.get("rr_target_is_projection", False))
@@ -1111,13 +1113,13 @@ def build_today_queue_execution_snapshot(
             "RR값": rr if _finite_num(rr) else math.nan,
         }
 
-    if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
+    if not valid_rr_prices:
         return {
             "R/R": rr_text,
             "차트목표": target_text,
             "손절가": stop_text,
             "1차기준": "데이터확인",
-            "1차조건": "가격/ATR 재조회 필요",
+            "1차조건": "목표가가 현재가 이하: 목표가/현재가 재확인 필요" if 0 < target <= cur else "가격/ATR 재조회 필요",
             "부족액": amount_text,
             "실행메모": "데이터확인",
             "R/R성격": rr_kind,

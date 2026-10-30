@@ -165,14 +165,16 @@ def partition_today_queue(df: pd.DataFrame, reason_bucket: pd.Series) -> dict[st
 def attach_market_execution_context(df: pd.DataFrame, market_guard: dict | None) -> pd.DataFrame:
     """Apply the same regional market restrictions to queue and precision rows."""
     out = df.copy()
-    guard = market_guard or {}
+    guard = market_guard if isinstance(market_guard, dict) else {}
     defensive = {"비상", "위험", "방어", "위험장 반등", "전시장 비상", "국장 비상", "미장 비상"}
+    known_local_modes = {"정상", "주의", "방어", "위험장 반등", "위험", "비상"}
     whole = str(guard.get("mode", ""))
     states = []
     for _, row in out.iterrows():
         ticker = str(row.get("티커", ""))
         region = "kr_stats" if is_kr_listed(ticker) else "us_stats"
-        local = str((guard.get(region) or {}).get("mode", ""))
+        local_stats = guard.get(region)
+        local = str(local_stats.get("mode", "")).strip() if isinstance(local_stats, dict) else ""
         relevant_whole = whole in {"전시장 비상", "비상", "위험", "방어", "위험장 반등"} or whole == ("국장 비상" if region == "kr_stats" else "미장 비상")
         leveraged = is_leveraged_or_inverse_product(str(row.get("종목명", "")), ticker, str(row.get("asset_class", "")))
         timing = str(row.get("🔥기술적 타점", ""))
@@ -187,6 +189,10 @@ def attach_market_execution_context(df: pd.DataFrame, market_guard: dict | None)
             states.append("시장방어: 신규매수 중단")
         elif leveraged and (local in defensive or relevant_whole):
             states.append("레버리지 시장방어")
+        elif local not in known_local_modes:
+            # An aggregate/other-market mode cannot validate missing local data.
+            market = "한국" if region == "kr_stats" else "미국"
+            states.append(f"시장정보 확인 필요: {market} 지수 데이터 미확인")
         else:
             states.append("정상")
     out["시장실행상태"] = states

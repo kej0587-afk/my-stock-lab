@@ -472,8 +472,10 @@ IMAGE_THEME_FLOW_AVAILABLE = True
 NAVER_THEME_COVERAGE_AVAILABLE = True
 from stock_lab_core.market_memo import analyze_market_memo, build_auto_market_memo
 from stock_lab_core.report_build import get_report_build_info, invalidate_saved_report, register_loaded_source
+from stock_lab_core.today_snapshot import invalidate_incompatible_summary_state
 
 register_loaded_source("stock_lab.app_entry", __file__)
+invalidate_incompatible_summary_state(st.session_state)
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts
@@ -18305,15 +18307,15 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     leveraged_precision_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
     leveraged_timing = build_leveraged_dca_timing_state(c, leveraged_precision_state) if leveraged_precision_state else {}
 
-    if cur <= 0 or stop <= 0 or target <= 0 or stop >= cur:
-        st.info(f"{plan_title}은 현재가, ATR 손절가, 목표가가 모두 계산될 때 표시됩니다.")
+    if not (all(finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target):
+        st.info(f"{plan_title}은 유효한 손절가 < 현재가 < 목표가가 확인될 때 표시됩니다.")
         return {"ticker": ticker, "status": "unavailable", "reason": "missing or invalid price/stop/target"}
 
     risk = cur - stop
     if risk <= 0:
         st.info(f"손절 폭을 산출할 수 없어 {plan_title}을 만들 수 없습니다.")
         return {"ticker": ticker, "status": "unavailable", "reason": "invalid risk width"}
-    rr = round((target - cur) / risk, 2) if target > cur else rr
+    rr = round((target - cur) / risk, 2)
 
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
@@ -18533,7 +18535,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         return f"{label} ({pct:.0f}%)" if pct > 0 else label
 
     plan_buy_amt_krw = buy_amt_krw
-    if is_core_dca and core_dca_amt > 0:
+    if is_core_dca:
         plan_buy_amt_krw = min(core_dca_amt, buy_amt_krw) if buy_amt_krw > 0 else core_dca_amt
 
     rr_now_text = rr_text(cur)
@@ -20693,7 +20695,6 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     macro_risk = clean_float(st.session_state.get("_app_final_macro_risk", np.nan), np.nan)
     mtf_bias_label = str(c.get("mtf_bias_label", ""))
     mtf_bias_text = str(c.get("mtf_bias_text", ""))
-    rr_ratio = clean_float(c.get("rr_ratio"), np.nan)
     price_vs_avg = np.nan
     if has_pos and clean_float(my_price, 0.0) > 0 and clean_float(c.get("cur_p"), 0.0) > 0:
         price_vs_avg = clean_float(c.get("cur_p"), 0.0) / clean_float(my_price, 0.0) - 1
@@ -20705,6 +20706,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     ]
     positive_words = ["매수", "진입", "S급", "적립", "승인", "탑승", "반등"]
     workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, is_etf=is_etf, has_pos=has_pos)
+    rr_ratio = clean_float(workflow.get("RR값", c.get("rr_ratio")), np.nan)
     execution_state = workflow.get("게이트상태", GATE_WATCH_ONLY)
     if execution_state in {GATE_DEFENSE, GATE_DATA_CHECK}:
         add_check("시스템 타점", "차단", workflow.get("게이트근거", ""))

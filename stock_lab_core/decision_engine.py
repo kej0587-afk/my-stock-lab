@@ -1874,7 +1874,7 @@ def build_core_dca_context_values(
     amount = 0.0
     if rate > 0:
         base_amount = max(clean_float(buy_amount), 0.0) * rate
-        amount = min(base_amount, max(pool, 0.0)) if pool > 0 else base_amount
+        amount = min(base_amount, max(pool, 0.0))
 
     return {
         "core_dca_rate": rate,

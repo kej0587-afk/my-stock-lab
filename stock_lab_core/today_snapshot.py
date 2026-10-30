@@ -14,9 +14,26 @@ from pathlib import Path
 import pandas as pd
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20261014_market_stop_basis_v8"
+TODAY_QUEUE_LOGIC_VERSION = "20261030_execution_input_safety_v9"
 TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
 _LOG = logging.getLogger(__name__)
+
+
+def invalidate_incompatible_summary_state(state) -> bool:
+    """Drop only derived summary caches when execution validation changes."""
+    version_key = "_decision_summary_logic_version"
+    if state.get(version_key) == TODAY_QUEUE_LOGIC_VERSION:
+        return False
+    removed = False
+    for key in (
+        "dashboard_summary_df", "dashboard_summary_sig", "dashboard_summary_last_run",
+        "today_queue_summary_df", "today_queue_summary_sig", "today_queue_summary_last_run",
+        "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig",
+    ):
+        removed = key in state or removed
+        state.pop(key, None)
+    state[version_key] = TODAY_QUEUE_LOGIC_VERSION
+    return removed
 
 
 def _snapshot_location(path, owner_scope):

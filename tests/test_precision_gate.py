@@ -110,7 +110,9 @@ def test_shared_precision_context_preserves_sources_and_gate(precision_app, monk
         return result
 
     monkeypatch.setattr(app, "attach_today_flow_context", attach_flow)
-    monkeypatch.setattr(app, "build_today_market_guard", lambda *args: {"mode": "정상"})
+    monkeypatch.setattr(app, "build_today_market_guard", lambda *args: {
+        "mode": "정상", "us_stats": {"mode": "정상"},
+    })
     calls = []
 
     def analyst(ticker):
