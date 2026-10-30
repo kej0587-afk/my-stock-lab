@@ -654,9 +654,11 @@ def test_valuation_return_reuses_the_displayed_inputs_and_interpretation():
     financial = {"final_score": 4}
     interpretation = {
         "headline": "중립", "target_upside": 5, "forward_pe": 20, "trailing_pe": 21,
-        "ps": 3, "note": "displayed", "color": "#000", "rows": [{"metric": 20}],
+        "ps": 3, "note": "displayed", "color": "#000",
+        "rows": [{"항목": "PER", "값": "20.0x", "판정": "적정"}],
         "valuation_data_count": 2,
     }
+    original_rows = deepcopy(interpretation["rows"])
 
     def fetch(ticker):
         calls.append(ticker)
@@ -675,7 +677,13 @@ def test_valuation_return_reuses_the_displayed_inputs_and_interpretation():
     assert captured["inputs"] is inputs
     assert captured["interpretation"] is interpretation
     assert captured["financial_inputs"] is financial
-    assert ui.frames[0].to_dict("records") == interpretation["rows"]
+    assert len(ui.frames) == 1
+    displayed, = ui.frames[0].to_dict("records")
+    assert displayed["항목"] == "선행 PER(예상 이익)"
+    assert {key: displayed[key] for key in ("값", "판정")} == {
+        key: original_rows[0][key] for key in ("값", "판정")
+    }
+    assert interpretation["rows"] == original_rows
     render_precision_review_download(ui, **_snapshot(valuation=captured))
     assert calls == ["MSFT"]
     assert render("Test", "MSFT", True, {}, 0)["status"] == "ETF 별도판단"

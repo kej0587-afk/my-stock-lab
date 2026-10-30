@@ -1,10 +1,37 @@
 """Render the existing precision narrative without changing decision policy."""
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from stock_lab_core.asset_classifier import is_fin_score_exempt_asset, is_leveraged_or_inverse_product
 from stock_lab_core.decision_engine import build_sideways_quality_state as _build_sideways_quality_state
+from stock_lab_core.execution_gate import GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE
 from stock_lab_core.formatters import clean_bool, clean_float, escape_html_value, finite_num, format_currency
+
+
+def align_precision_narrative_display(lines, border_color, workflow, *, entry_hint="", decision_code=""):
+    """Apply an already computed gate to prose, leaving technical inputs intact."""
+    aligned = list(lines)
+    if not aligned or not isinstance(workflow, Mapping) or "게이트상태" not in workflow:
+        return aligned, border_color
+    gate = workflow.get("게이트상태")
+    if gate == GATE_EXECUTABLE:
+        return aligned, border_color
+    reason = escape_html_value(workflow.get("게이트근거") or "실행 게이트 재확인 필요")
+    aligned[0] = (
+        f"<b>오늘 결론</b>: <b>실행 보류</b> · {escape_html_value(gate or '미확인')} · {reason}. "
+        "기술적 후보 신호와 실제 실행 허용은 별도입니다."
+    )
+    if len(aligned) > 1:
+        aligned[1] = aligned[1].replace("<b>📋 현재 판정</b>", "<b>기술적 원신호</b>", 1)
+    # Entry-only prose must not override the gate; holding/exit guidance stays intact.
+    if decision_code in {"QUALITY_PULLBACK_ENTRY", "TREND_PULLBACK_EXPLORE", "CORE_ETF_DCA_BUY"}:
+        if entry_hint and entry_hint in aligned:
+            aligned[aligned.index(entry_hint)] = (
+                f"<b>신규/추가 진입 보류</b>: {reason}. 조건 해소 후 원신호를 다시 확인합니다."
+            )
+    return aligned, "#ef4444" if gate in {GATE_DEFENSE, GATE_DATA_CHECK} else "#d97706"
 
 
 def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=None,
@@ -333,6 +360,9 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=No
 
     border_color = "#10b981" if "진입" in dec or "매수" in dec or "홀드" in dec else (
         "#ef4444" if "보류" in dec or "역배열" in dec else "#6366f1"
+    )
+    lines, border_color = align_precision_narrative_display(
+        lines, border_color, c.get("execution_workflow"), entry_hint=entry_hint, decision_code=decision_code,
     )
     html = (
         f"<div class='info-panel' style='border-left:5px solid {border_color}; line-height:2.0;'>"

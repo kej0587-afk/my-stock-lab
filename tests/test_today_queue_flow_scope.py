@@ -44,7 +44,8 @@ def run_branch(*, full=False, fail=False):
         extra = ({"ticker": "NEW"},)
         return tuple(items) + extra, extra
 
-    def compute(_scores, _mode, items):
+    def compute(_scores, _mode, items, *, fresh_quotes=False):
+        assert fresh_quotes is True
         calls.append(tuple(item["ticker"] for item in items))
         return summary.copy()
 

@@ -20115,6 +20115,11 @@ def ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta):
         merged["metrics"] = fallback_meta.get("metrics", {})
         merged["notes"] = fallback_meta.get("notes", merged.get("notes", {}))
         return merged
+    if isinstance(fallback_meta, dict) and fallback_meta.get("source") == "valuation_fin_fetch_failed":
+        # Preserve score/metrics, but do not lose the failed enrichment status.
+        merged = dict(fin_meta) if isinstance(fin_meta, dict) else {}
+        merged["valuation_lookup_status"] = "failed"
+        return merged
     return fin_meta
 
 
@@ -20584,6 +20589,8 @@ def build_valuation_interpretation(data, current_price, ticker, fin_meta=None):
 
 
 def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=None):
+    from stock_lab_core.valuation_presentation import build_valuation_presentation, render_valuation_details
+
     st.markdown("### 💎 밸류 / 가격매력 점검")
 
     if is_etf:
@@ -20604,12 +20611,15 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
     fin_meta = ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta)
     cur_p = clean_float(c.get("cur_p"), np.nan)
     valuation = build_valuation_interpretation(data, cur_p, ticker, fin_meta=fin_meta)
+    presentation = build_valuation_presentation(
+        valuation, snapshot=snapshot, analyst_snapshot=analyst_snapshot, fin_meta=fin_meta,
+    )
 
     v1, v2, v3, v4 = st.columns(4)
     v1.metric("밸류 판정", valuation["headline"])
     v2.metric("목표가 업사이드", format_backtest_percent(valuation["target_upside"]) or "-")
     pe_display = fmt_multiple(valuation["forward_pe"]) if finite_num(valuation["forward_pe"]) else fmt_multiple(valuation["trailing_pe"])
-    v3.metric("PER", pe_display)
+    v3.metric(presentation["per_label"], pe_display)
     v4.metric("PSR", fmt_multiple(valuation["ps"]))
 
     st.markdown(
@@ -20622,13 +20632,8 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         unsafe_allow_html=True,
     )
 
-    show_rows = valuation["rows"]
-    if show_rows:
-        with st.expander("밸류 세부 지표", expanded=False):
-            st.dataframe(pd.DataFrame(show_rows), width='stretch', hide_index=True)
-    if not snapshot.get("ok"):
-        st.caption(f"밸류 데이터 참고: {snapshot.get('reason', '제공 데이터 없음')}")
-    elif int(valuation.get("valuation_data_count", 0)) <= 1:
+    render_valuation_details(st, presentation)
+    if snapshot.get("ok") and int(valuation.get("valuation_data_count", 0)) <= 1:
         st.caption("밸류 데이터 참고: 목표가 또는 일부 지표만 확보되어 PER/PSR 등 세부 지표 보강 후 판단합니다.")
     return {
         "ticker": ticker, "interpretation": valuation, "inputs": data,
@@ -21705,8 +21710,10 @@ def prefetch_rs_price_frames(watchlist_items):
 
 
 @timed_call("phase", "summary")
-def get_all_summary(fin_score_map_items, mode, watchlist_items):
+def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=False):
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from contextlib import nullcontext
+    from stock_lab_core import prices as price_loader
 
     # [속도 개선] 전광판 종목 전체를 병렬로 선제 로딩 (이후 load_price_df는 캐시 히트)
     all_tickers = [
@@ -21734,7 +21741,11 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items):
 
     # 원래 순서를 보존하기 위해 인덱스를 키로 사용
     results_map: dict[int, dict] = {}
-    with measure("phase", "stock_signals"), price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
+    # Only explicit quote-cache-clearing refreshes prefetch. Ordinary reruns
+    # keep the existing warm caches; older loaded modules use the old path.
+    quote_scope = (price_loader.fresh_kr_quote_scope(all_tickers)
+                   if fresh_quotes and hasattr(price_loader, "fresh_kr_quote_scope") else nullcontext())
+    with measure("phase", "stock_signals"), quote_scope, price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             submit_with_context(executor,
                 _compute_summary_item,
@@ -33386,7 +33397,7 @@ def _render_today_queue_tab(mode):
             enable_force_live_price_refresh()
             cache_clear(load_price_df)
             cache_clear(load_price_frames_batch)
-            summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items)
+            summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items, fresh_quotes=True)
             from stock_lab_core.performance import bind_summary_measurement
             summary_df = bind_summary_measurement(summary_df)
             from stock_lab_core.report_history import tag_input_origins
@@ -35688,29 +35699,14 @@ if main_page == "precision":
             render_fin_health_summary(fin_score, fin_meta, is_etf=is_etf)
 
         with judgement_tab:
-            meta_rows = [
-                {"항목": "source", "값": str(fin_meta.get("source") or "-")},
-                {"항목": "mode", "값": str(fin_meta.get("mode") or "-")},
-                {"항목": "auto_score", "값": str(fin_meta.get("auto_score") or "-")},
-                {"항목": "manual_score", "값": str(fin_meta.get("manual_score") or "-")},
-                {"항목": "final_score", "값": str(fin_meta.get("final_score") or "-")},
-            ]
-            st.dataframe(pd.DataFrame(meta_rows), width='stretch', hide_index=True)
+            from stock_lab_core.valuation_presentation import financial_score_display_rows
+
+            score_display = financial_score_display_rows(fin_meta, weighted)
+            st.dataframe(pd.DataFrame(score_display["meta_rows"]), width='stretch', hide_index=True)
 
             if weighted:
-                weighted_rows = [
-                    {"항목": "weighted score", "값": str(weighted.get("weighted_net_score") or "-")},
-                    {"항목": "S_sum", "값": str(weighted.get("s_sum") or "-")},
-                    {"항목": "A_sum", "값": str(weighted.get("a_sum") or "-")},
-                    {"항목": "B_sum", "값": str(weighted.get("b_sum") or "-")},
-                    {"항목": "danger_count", "값": str(weighted.get("danger_count") or "-")},
-                    {"항목": "범용판단", "값": str(weighted.get("generic_score") or "-")},
-                    {"항목": "수주판단", "값": str(weighted.get("order_score") or "-")},
-                    {"항목": "중간형판단", "값": str(weighted.get("middle_score") or "-")},
-                    {"항목": "selected_mode", "값": str(weighted.get("selected_mode") or "-")},
-                ]
                 st.markdown("#### 가중 판정")
-                st.dataframe(pd.DataFrame(weighted_rows), width='stretch', hide_index=True)
+                st.dataframe(pd.DataFrame(score_display["weighted_rows"]), width='stretch', hide_index=True)
 
             st.markdown("#### 연간 판정 문구")
             if annual_judgements:

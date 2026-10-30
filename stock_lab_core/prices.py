@@ -22,6 +22,7 @@ from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwa
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core import performance as _performance
+from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, invalidate_prefetched_quotes
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -2173,7 +2174,17 @@ def load_latest_price(ticker: str) -> float:
     """
     # Holdings may use lower case while the watchlist uses upper case.
     # Normalize before the cache boundary so the same quote is fetched once.
-    return _load_latest_price_cached(normalize_price_lookup_key(ticker))
+    key = normalize_price_lookup_key(ticker)
+    price = prefetched_quote(key)
+    if price is not None:
+        _quote_transport_event("naver_bulk_scope", "hit")
+        return price
+    return _load_latest_price_cached(key)
+
+
+def fresh_kr_quote_scope(tickers):
+    keys = [normalize_price_lookup_key(t) for t in tickers if _is_kr_ticker(t)]
+    return fresh_quote_scope(keys, _fetch_naver_prices_bulk, ttl=_LATEST_PRICE_CACHE_TTL_SECONDS)
 
 
 @timed_call("prices")
@@ -2391,6 +2402,7 @@ def load_latest_prices_batch(tickers) -> dict:
 
 
 def clear_latest_price_cache():
+    invalidate_prefetched_quotes()
     for fn in [_load_latest_price_cached, load_latest_prices_batch,
                _load_latest_kr_quotes_batch_cached, _fetch_naver_realtime_quote, _fetch_naver_basic_quote]:
         if hasattr(fn, "clear"):
