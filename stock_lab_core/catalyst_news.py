@@ -24,6 +24,9 @@ _ISSUERS = {
     "FFIV": ("F5", r"\bFFIV\b|\bF5(?:\s+Networks|,?\s+Inc\.?)?\b"),
     "FTNT": ("Fortinet", r"\bFortinet\b|\bFTNT\b|포티넷"),
     "ON": ("onsemi", r"\bonsemi\b|\bON Semiconductor\b|온세미|(?-i:\$ON\b|\bNASDAQ\s*:\s*ON\b)"),
+    "AMZN": ("Amazon", r"\bAmazon\b|\bAMZN\b|아마존"),
+    "INTC": ("Intel", r"\bIntel\b|\bINTC\b|인텔"),
+    "SNDK": ("Sandisk", r"\bSanDisk\b|\bSNDK\b|샌디스크"),
 }
 _FINANCIAL = re.compile(r"\b(?:earnings|revenue|profit|EPS|capex|guidance|outlook|cash flow|shares?|stocks?|"
                         r"downgrad\w*|upgrad\w*|price target|options?|puts?|calls?|billings|FCF|cash burn)\b|"
@@ -213,13 +216,17 @@ def catalyst_query_specs(issuers, *, now=None):
     """Canonical specs shared verbatim by report and precision RSS caches."""
     now = _now(now).astimezone(ZoneInfo("America/New_York"))
     specs = []
-    for ticker in dict.fromkeys("GOOGL" if t == "GOOG" else t for t in _tickers(issuers)):
-        if ticker not in _ISSUERS or len(specs) >= MAX_CATALYST_QUERIES:
-            continue
-        name = _ISSUERS[ticker][0]
-        terms = f'("{name}" OR "{ticker}") (earnings OR guidance OR capex OR "free cash flow" OR downgrade OR "options activity" OR "extended trading")'
+    supported = list(dict.fromkeys("GOOGL" if t == "GOOG" else t for t in _tickers(issuers)
+                                   if t in _ISSUERS or t == "GOOG"))
+    # Preserve the request budget; overflow issuers share the final query.
+    groups = [[t] for t in supported[:MAX_CATALYST_QUERIES - 1]]
+    if supported[MAX_CATALYST_QUERIES - 1:]:
+        groups.append(supported[MAX_CATALYST_QUERIES - 1:])
+    for group in groups:
+        names = " OR ".join(f'"{_ISSUERS[t][0]}" OR "{t}"' for t in group)
+        terms = f'({names}) (earnings OR guidance OR capex OR "free cash flow" OR downgrade OR "options activity" OR "extended trading")'
         query = terms + f" after:{(now.date() - timedelta(days=3)).isoformat()} before:{(now.date() + timedelta(days=1)).isoformat()}"
-        specs.append(dict(market="US", category="기업 촉매", query_kind="issuer_catalyst", query_issuers=[ticker],
+        specs.append(dict(market="US", category="기업 촉매", query_kind="issuer_catalyst", query_issuers=group,
                           query_topics=[], query=terms,
                           url="https://news.google.com/rss/search?" + urlencode({"q": query}) + "&hl=en-US&gl=US&ceid=US:en"))
     return specs
@@ -264,6 +271,23 @@ def catalyst_body_facts(paragraphs, title=""):
     return facts
 
 
+def issuer_reported_issue(title):
+    """Explicit title claims only; caller must check market/session alignment."""
+    issuers = catalyst_entities(title)
+    if len(issuers) != 1 or _EXTENDED.search(title) or _PREVIEW.search(title):
+        return ""
+    issues = []
+    if re.search(r"\b(?:revenue|earnings|sales|profit)\s+miss(?:es|ed)?\b|(?:실적|매출|이익).{0,12}(?:기대|예상).{0,6}(?:하회|미달)", title, re.I):
+        issues.append("실적 기대 미달 보도")
+    if (re.search(r"\bcapex\b|capital (?:expenditure|spend)|설비투자", title, re.I)
+            and re.search(r"jitters|fears?|concerns?|worr|burden|부담|우려", title, re.I)):
+        issues.append("설비투자 부담")
+    if (re.search(r"free cash flow|\bFCF\b|잉여.?현금", title, re.I)
+            and re.search(r"negative|outflow|cash burn|declin|deteriorat|적자|악화|감소", title, re.I)):
+        issues.append("잉여현금흐름 악화 보도")
+    return _ISSUERS[issuers[0]][0] + " " + "·".join(issues) + "(제목 기준)" if issues else ""
+
+
 def after_close_catalysts(rows, *, closed_end, now, exposures=(), limit=4):
     """Pure selection for headline/story use, independent of regular-close facts.
 
@@ -282,6 +306,7 @@ def after_close_catalysts(rows, *, closed_end, now, exposures=(), limit=4):
     if not limit:
         return []
     from stock_lab_core.report_evidence import news_article_key
+    from stock_lab_core.today_news import _us_close_recap
 
     selected, seen = [], set()
     tickers = _tickers(exposures)
@@ -300,7 +325,8 @@ def after_close_catalysts(rows, *, closed_end, now, exposures=(), limit=4):
             safe = False
         if (not safe or not published or not end < published <= now or not issuers or not topics or
                 raw.get("market") in {"KR", "CA", "CN", "JP", "EU", "ASIA"} or
-                ((raw.get("is_close_wrap") or raw.get("retrospective_close_wrap")) and not _EXTENDED.search(title))):
+                ((raw.get("is_close_wrap") or raw.get("retrospective_close_wrap") or
+                  _us_close_recap(title, published, {"end": end.isoformat()})) and not _EXTENDED.search(title))):
             continue
         if _PREVIEW.search(title):
             continue

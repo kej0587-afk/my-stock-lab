@@ -64,6 +64,18 @@ _ISSUERS = {
         kind="results", published="2026-10-21", expires="2026-11-21",
         url="https://ir.tesla.com/press-release/tesla-releases-third-quarter-2026-financial-results",
         evidence=("Tesla Releases Third Quarter 2026 Financial Results", "October 21, 2026")),
+    "AMZN": dict(name="Amazon", market="US", date="2026-10-29", quarter="2026Q3",
+        kind="results", published="2026-10-29", expires="2026-11-29", verified_at="2026-10-30T00:27:00+00:00",
+        url="https://ir.aboutamazon.com/news-release/news-release-details/2026/Amazon-com-Announces-Third-Quarter-Results/default.aspx",
+        evidence=("Amazon.com Announces Third Quarter Results", "October 29, 2026")),
+    "INTC": dict(name="Intel", market="US", date="2026-10-29", quarter="2026Q3",
+        kind="results", published="2026-10-29", expires="2026-11-29", verified_at="2026-10-30T00:27:00+00:00",
+        url="https://www.intc.com/filings-reports/all-sec-filings/content/0000050863-26-000188/q326earningsrelease.htm",
+        evidence=("Intel Reports Third-Quarter 2026 Financial Results", "October 29, 2026")),
+    "SNDK": dict(name="Sandisk", market="US", date="2026-10-29", quarter="FY2027Q1",
+        kind="results", published="2026-10-29", expires="2026-11-29", verified_at="2026-10-30T00:27:00+00:00",
+        url="https://www.sandisk.com/company/newsroom/press-releases/2026/2026-10-29-sandisk-reports-fiscal-first-quarter-2027-financial-results",
+        evidence=("Sandisk Reports Fiscal First Quarter 2027 Financial Results", "October 29, 2026")),
 }
 _ALIASES = {"000660": "000660.KS", "005930": "005930.KS", "005935": "005930.KS",
             "005935.KS": "005930.KS", "GOOG": "GOOGL"}
@@ -147,10 +159,11 @@ def _issuer(ticker, requested, now, refresh):
                   next_schedule_status="unconfirmed")
     if spec is None:
         return [], source
-    source.update(source_url=spec["url"], source_verified_at=VERIFIED_AT,
+    verified_at = spec.get("verified_at", VERIFIED_AT)
+    source.update(source_url=spec["url"], source_verified_at=verified_at,
                   coverage_expires_at=spec["expires"])
     # No look-ahead into a same-day results page whose publication minute is unknown.
-    if now < datetime.fromisoformat(VERIFIED_AT) or now.date().isoformat() >= spec["expires"]:
+    if now < datetime.fromisoformat(verified_at) or now.date().isoformat() >= spec["expires"]:
         source.update(reason="verified_coverage_unavailable", coverage_status="expired_or_not_yet_verified")
         return [], source
     check = (_check_source(spec, now) if refresh and spec["evidence"] else
@@ -183,7 +196,7 @@ def _issuer(ticker, requested, now, refresh):
                  release_time_confirmed=False, timezone=zone, fiscal_period=spec["quarter"],
                  event_kind=spec["kind"], status=state, event_status=state,
                  source=source["name"], source_url=spec["url"], source_kind=source["provider"],
-                 source_published_at=spec["published"], source_verified_at=VERIFIED_AT,
+                 source_published_at=spec["published"], source_verified_at=verified_at,
                  coverage_expires_at=spec["expires"], next_schedule_status=source["next_schedule_status"])
     if spec.get("call"):
         event["conference_call_at"] = spec["call"]
@@ -201,7 +214,7 @@ def _issuer(ticker, requested, now, refresh):
 
 
 def load_official_earnings(tickers, now=None, *, refresh=True):
-    """At most seven issuers / six HTTP calls; unknown tickers never trigger I/O.
+    """Bounded verified issuer set; unknown tickers never trigger I/O.
 
     Pass holdings/watch tickers, not the market universe. GOOG/GOOGL and Samsung
     common/preferred share one issuer. Recent results remain separate from next

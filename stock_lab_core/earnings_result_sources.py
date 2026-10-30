@@ -61,18 +61,21 @@ _HEADINGS = {
     "000660.KS": r"SK hynix Announces 3Q26 Financial Results",
     "META": r"Meta Reports Third Quarter 2026 Results",
     "TSLA": r"Tesla Releases Third Quarter 2026 Financial Results",
+    "AMZN": r"Amazon\.com Announces Third Quarter Results",
+    "INTC": r"Intel Reports Third-Quarter 2026 Financial Results",
+    "SNDK": r"Sandisk Reports Fiscal First Quarter 2027 Financial Results",
 }
 _HOSTS = {"www.sec.gov", "news.microsoft.com", "news.samsung.com", "news.skhynix.com", "investor.atmeta.com", "ir.tesla.com",
-          "s206.q4cdn.com", "images.samsung.com"}
+          "s206.q4cdn.com", "images.samsung.com", "ir.aboutamazon.com", "www.intc.com", "www.sandisk.com"}
 _METRICS = {
     "revenue": r"\b(?:revenues?|sales)\b",
-    "profit": r"\b(?:operating (?:income|profit)|net (?:income|profit))\b",
+    "profit": r"\b(?:operating (?:income|profit)|net (?:income|profit)|earnings per share|EPS)\b",
     "capex": r"\b(?:capital expenditures?|capex|purchases of property and equipment)\b",
     "free_cash_flow": r"\bfree cash flow\b",
     "guidance": r"\bguidance\b|\boutlook\b",
 }
 _MONEY = re.compile(r"\$\s*\(?[\d,.]+|\b(?:KRW|USD)\s*[\d,.]+|[\d,.]+\s*(?:billion|million|trillion)\b", re.I)
-_FORWARD = re.compile(r"\b(?:expects?|expected|anticipates?|projects?|plans?|will|would|guidance|outlook)\b", re.I)
+_FORWARD = re.compile(r"\b(?:expects?|expected|forecasts?|forecasting|anticipates?|projects?|plans?|will|would|guidance|outlook)\b", re.I)
 _MONTHS = {name: index for index, name in enumerate(
     ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"), 1)}
 
@@ -206,13 +209,13 @@ def _body(root, spec):
     content = next((node for node in candidates if re.search(_HEADINGS[spec["ticker"]], _text(node), re.I)), root)
     headings = [_text(node) for node in content.xpath(".//h1|.//h2|.//h3")]
     result_heading = next((heading for heading in headings if re.search(r"results", heading, re.I)
-                           and re.search(r"Alphabet|Microsoft|Samsung|SK hynix|Meta|Tesla", heading, re.I)), "")
+                           and re.search(r"Alphabet|Microsoft|Samsung|SK hynix|Meta|Tesla|Amazon|Intel|Sandisk", heading, re.I)), "")
     if result_heading and not re.fullmatch(_HEADINGS[spec["ticker"]], result_heading, re.I):
         raise ValueError("result_identity_or_period_mismatch")
     title = next((heading for heading in headings if re.fullmatch(_HEADINGS[spec["ticker"]], heading, re.I)), "")
     # SEC exhibits use styled divs rather than semantic headings.
-    if not title and spec["ticker"] == "GOOGL":
-        match = re.search(_HEADINGS["GOOGL"], _text(content)[:800], re.I)
+    if not title and spec["ticker"] in {"GOOGL", "INTC"}:
+        match = re.search(_HEADINGS[spec["ticker"]], _text(content)[:800], re.I)
         title = match[0] if match else ""
     if not title:
         raise ValueError("result_identity_or_period_mismatch")
@@ -229,9 +232,17 @@ def _body(root, spec):
         raise ValueError("result_publication_unconfirmed")
     blocks = []
     for node in content.xpath(".//p|.//li|.//div")[:3000]:
-        if node.xpath("ancestor::table|.//table|.//p|.//li|.//div|.//h1|.//h2|.//h3"):
+        if node.xpath("ancestor::table") or any(
+            re.search(r"ai[-_ ]?summary", parent.get("class", ""), re.I)
+            for parent in (node, *node.iterancestors())
+        ):
             continue
-        if any(re.search(r"ai[-_ ]?summary", parent.get("class", ""), re.I) for parent in node.iterancestors()):
+        if node.tag == "li" and node.xpath("./ul|./ol"):
+            # Parent results may precede a nested list of segment results.
+            node = deepcopy(node)
+            for child in node.xpath("./ul|./ol"):
+                child.drop_tree()
+        if node.xpath(".//table|.//p|.//li|.//div|.//h1|.//h2|.//h3"):
             continue
         block = _text(node)
         for sentence in re.split(r"(?<=[.!?;])\s+(?=[A-Z])", block):
@@ -265,18 +276,25 @@ def _prose_metrics(blocks, spec):
         if key == "guidance":
             continue
         for block in blocks:
+            block = re.split(r"(?<=[.!?])\s+(?=[A-Z])", block, maxsplit=1)[0]
             if not re.search(pattern, block, re.I) or not _MONEY.search(block) or _FORWARD.search(block):
                 continue
-            if key in {"revenue", "profit"} and re.search(r"\b(?:division|segment|business|Google Cloud|Google Services|Azure|Samsung Display|Agents and Infra|Devices and Consumer)\b", block, re.I):
+            if key == "capex" and re.match(r"Free cash flow\b", block, re.I):
+                continue
+            if key in {"revenue", "profit"} and re.search(r"\b(?:division|segment|business|AWS|Amazon Web Services|annualized|run rate|Google Cloud|Google Services|Azure|Samsung Display|Agents and Infra|Devices and Consumer)\b", block, re.I):
                 continue
             # Prior-period notes and definitions are not this quarter's results.
-            if re.search(r"\b(?:define|defined|definition)\b", block, re.I) or _outside_current_quarter(block, spec):
+            current_clause = re.split(r",?\s+compared (?:with|to)\s+", block, maxsplit=1, flags=re.I)[0]
+            ttm = (spec["ticker"] == "AMZN" and key in {"capex", "free_cash_flow"}
+                   and bool(re.search(r"\btrailing (?:twelve|12) months\b", current_clause, re.I)))
+            if re.search(r"\b(?:define|defined|definition)\b", block, re.I) or (not ttm and _outside_current_quarter(current_clause, spec)):
                 continue
-            metrics[key] = _metric(block, "reported", spec, period_scope=spec["fiscal_period"], extraction="source_sentence")
+            scope = "trailing_twelve_months" if ttm else spec["fiscal_period"]
+            metrics[key] = _metric(block, "reported", spec, period_scope=scope, extraction="source_sentence")
             break
     deferred = next((b for b in blocks if re.search(r"will (?:provide|discuss).{0,80}(?:guidance|outlook)", b, re.I)
                      and re.search(r"conference call|webcast", b, re.I)), None)
-    guidance = next((b for b in blocks if _FORWARD.search(b) and re.search(r"guidance|outlook|revenue|capital expenditure", b, re.I)
+    guidance = next((b for b in blocks if _FORWARD.search(b) and re.search(r"guidance|outlook|revenue|sales|capital expenditure", b, re.I)
                      and _MONEY.search(b) and not re.search(r"risks? and uncertainties|may differ", b, re.I)), None)
     if guidance:
         metrics["guidance"] = _metric(guidance, "reported", spec, period_scope="management_outlook", extraction="source_sentence")

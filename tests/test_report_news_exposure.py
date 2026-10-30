@@ -280,12 +280,15 @@ def test_context_passes_held_underlyings_and_uses_cached_targeted_retrieval(monk
     calls = []
     monkeypatch.setattr(today_news, "fetch_session_market_news", lambda *args, **kwargs: calls.append(kwargs) or {})
     collect_report_context(summary_rows=[{"티커": "SOXL", "보유량": 1},
-                                         {"티커": "379810.KS", "보유량": 1}],
+                                         {"티커": "379810.KS", "보유량": 1},
+                                         {"티커": "AMZN", "보유량": 0}],
                            now=NOW, price_frames={}, economic_releases=[], calendar={"events": [], "sources": []},
                            scenario_frames={}, live_frames={}, include_news=True)
     options, = calls
     tickers = {item.get("Ticker") or item.get("티커") for item in options["held_exposures"]}
     assert {"SOXL", "SOXX", "379810.KS", "QQQ"} <= tickers
+    assert "AMZN" not in tickers
+    assert any(row["티커"] == "AMZN" for row in options["watched_exposures"])
     assert options["use_cache"] and "sector_rows" in options
     assert options.get("categories", ()) != ("반도체·AI", "매크로/중국")
 

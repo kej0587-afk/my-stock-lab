@@ -27,6 +27,9 @@ _NAMES = {
     "NVDA": r"\b(?:Nvidia|NVDA)\b|엔비디아",
     "000660.KS": r"\bSK\s*hynix\b|SK하이닉스|에스케이하이닉스",
     "005930.KS": r"Samsung Electronics|삼성전자",
+    "AMZN": r"\b(?:Amazon|AMZN)\b|아마존",
+    "INTC": r"\b(?:Intel|INTC)\b|인텔",
+    "SNDK": r"\b(?:Sandisk|SNDK)\b|샌디스크",
 }
 _PREVIEW = re.compile(r"\b(?:will|to report|preview|scheduled|expected to|ahead of|estimates? for|release date)\b|발표\s*예정|실적\s*전망|실적\s*앞두|예상\s*실적", re.I)
 _RESULT = re.compile(r"\b(?:reports?|reported|announces?|announced).{0,65}(?:results|earnings|revenue)|\bearnings.{0,45}(?:beat|miss|top|results|metrics)|\bresults\b|실적\s*발표|매출.{0,35}(?:기록|발표)|영업이익.{0,35}(?:기록|발표)", re.I)

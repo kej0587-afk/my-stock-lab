@@ -416,8 +416,11 @@ def _us_close_recap(title, published, window):
     # accept such titles immediately after this supplied, confirmed close.
     near_close = close < published <= close + timedelta(hours=2)
     market_prices = bool(re.search(r"\bstocks?\b|\bshares\b|Nasdaq|Wall Street|나스닥|증시", title, re.I)
-                         and re.search(r"반등|급등|급락|하락|상승|혼조|%[↑↓]|\bmixed\b|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bhigher|\blower", title, re.I))
-    if not explicit and not (near_close and market_prices):
+                         and re.search(r"반등|급등|급락|하락|상승|혼조|%[↑↓]|\bmixed\b|\brebound|\brecover|\bbounc|\brall|\bgain|\bclimb|\bfall|\bdeclin|\bslump|\bplung|\btumbl|\bhigher|\blower", title, re.I))
+    # A named US market move is a recap even when publication is delayed.
+    # Do not apply this to a single company's newly released earnings.
+    market_subject = bool(re.search(r"(?:\bUS|\bU\.S\.)\s+(?:stocks?|equities|equity markets?)\s+(?:slump|fall|slide|drop|rise|rall|end|clos)|\bWall Street\s+(?:slump|fall|slide|drop|rise|rall|end|clos)", title, re.I))
+    if not explicit and not ((near_close or market_subject) and market_prices):
         return False
     next_day = close.date() + timedelta(days=1)
     while next_day.weekday() >= 5:
@@ -833,7 +836,7 @@ def clear_session_market_news_cache():
 
 def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
                               current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False,
-                              include_article_bodies=False) -> dict:
+                              include_article_bodies=False, watched_exposures=()) -> dict:
     """Bounded market-specific RSS retrieval plus source/event curation.
 
     Returns the same payload as partition_session_market_news. Queries include
@@ -856,7 +859,8 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     current_windows, _ = _current_news_windows(current_sessions, now)
     query_windows = current_windows + windows
     specs = _session_query_specs(query_windows, categories, now,
-                                 sector_rows=sector_rows, held_exposures=held_exposures)
+                                 sector_rows=sector_rows,
+                                 held_exposures=[*held_exposures, *watched_exposures])
     try:
         per_category = max(1, min(int(per_category), 5))
     except (TypeError, ValueError):

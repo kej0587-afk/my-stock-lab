@@ -55,6 +55,10 @@ def test_seven_verified_issuers_keep_results_and_next_schedules_distinct(pages):
     assert all(e["release_precision"] == "date" for e in result["events"] if e["event_kind"] != "conference_call")
     assert all(e["source_url"].startswith("https://") and e["source_verified_at"] for e in result["events"])
     for s in result["sources"]:
+        if s["ticker"] in {"AMZN", "INTC", "SNDK"}:
+            assert s["coverage_status"] == "expired_or_not_yet_verified"
+            assert s["next_schedule_status"] == "unconfirmed"
+            continue
         assert s["next_schedule_status"] == ("unconfirmed" if s["ticker"] in {"META", "TSLA", "000660.KS"} else "confirmed")
     nvda = next(e for e in result["events"] if e["ticker"] == "NVDA")
     assert nvda["date"] == "2026-11-17" and nvda["source_page"] == 15

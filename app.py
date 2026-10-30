@@ -28723,6 +28723,9 @@ def resolve_today_market_memo_summary_df(summary_df=None, summary_signature=None
 
 
 def render_today_market_memo_panel(summary_df=None, summary_signature=None, title: str = "#### 시황 메모 분석"):
+    from stock_lab_core.report_widget_state import (
+        EDITOR_KEY, restore_report_editor, save_report_editor, clear_report_editor,
+    )
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
@@ -28733,11 +28736,13 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
         st.warning("디스크 파일과 실행 중인 보고서 코드가 다릅니다. 앱을 재시작한 뒤 생성해 주세요.")
 
     def _clear_market_memo():
-        st.session_state["today_market_memo_text"] = ""
+        clear_report_editor(st.session_state)
 
     saved_report = str(st.session_state.get("today_market_memo_text", "") or "")
     if "## 기준일" in saved_report:
         from stock_lab_core.report_view import render_market_report
+        from stock_lab_core.report_widget_state import saved_report_label
+        st.caption(saved_report_label(saved_report))
         render_market_report(saved_report)
         st.download_button("리포트 다운로드", saved_report.encode("utf-8"),
                            file_name="stock_lab_market_report.md", mime="text/markdown",
@@ -28897,9 +28902,12 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                 source_text = f" {memo_summary_source}를 사용했습니다." if memo_summary_source else ""
                 st.success(f"자동 뉴스픽을 만들었습니다.{source_text} 필요하면 시장/RSS 포함을 켜고 다시 생성할 수 있습니다.")
 
+        restore_report_editor(st.session_state)
         memo_text = st.text_area(
             "시황 메모",
-            key="today_market_memo_text",
+            key=EDITOR_KEY,
+            on_change=save_report_editor,
+            args=(st.session_state,),
             height=220,
             placeholder="반도체·AI, 매크로, 지정학, 종목 뉴스 메모를 붙여넣으세요.",
         )
@@ -29697,9 +29705,10 @@ def render_today_unified_briefing_panel(
     m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
 
     # Keep existing sessions valid after retiring the optional manual ledger view.
-    if st.session_state.get("today_briefing_workspace_view") == "이벤트 장부":
-        st.session_state["today_briefing_workspace_view"] = "보유관리"
-    detail = st.segmented_control("브리핑 보기", ["보유관리", "시장", "뉴스", "시황", "키움"], default="보유관리", key="today_briefing_workspace_view") or "보유관리"
+    from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
+    restore_briefing_view(st.session_state)
+    detail = st.segmented_control("브리핑 보기", list(VIEWS), key=VIEW_KEY,
+                                  on_change=save_briefing_view, args=(st.session_state,)) or "보유관리"
     if detail == "뉴스":
         render_today_action_news_panel(df)
         return

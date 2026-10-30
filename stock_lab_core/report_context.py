@@ -40,7 +40,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     from stock_lab_core.release_calendar import load_release_calendar
 
     now = kst_now(now or datetime.now(KST))
-    tickers = {"^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI", "QQQ", "XLF", "XLI", "XLP", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
+    tickers = {"^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI", "QQQ", "XLF", "XLI", "XLP", "XLV", "IWM", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
     for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
         for row in records((flow_snapshot or {}).get(key))[:5]:
             ticker = text(first(row, "Ticker", "티커", "ticker"))
@@ -158,8 +158,10 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_sources import load_official_earnings
         # Explicitly requested issuers first; no broad market scan on a rerender.
+        requested_tickers = [text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)]
+        from stock_lab_core.earnings_sources import _ISSUERS as connected_issuers
         earnings_tickers = list(dict.fromkeys(["000660.KS", "005930.KS", "NVDA", "GOOGL", "META", "MSFT", "TSLA",
-            *(text(first(row, "티커", "ticker")) for row in records(summary_rows))]))
+            *(ticker for ticker in requested_tickers if ticker in connected_issuers), *requested_tickers]))
         earnings = load_official_earnings(earnings_tickers, now)
         updated = {row.get("ticker") for row in earnings["events"]}
         calendar = dict(calendar, events=[r for r in calendar["events"] if r.get("ticker") not in updated] + earnings["events"])
@@ -244,6 +246,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         with measure("external_data", "report_news"):
             result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                    sector_rows=sectors + closed_rows, held_exposures=held_exposures,
+                                                   watched_exposures=records(summary_rows),
                                                    per_category=5, use_cache=True, include_article_bodies=True))
     result["price_basis_notes"] = close_basis_notes
     result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))

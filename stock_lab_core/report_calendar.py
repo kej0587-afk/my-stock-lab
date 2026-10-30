@@ -79,6 +79,8 @@ def _result_detail_lines(row):
     for key, label in METRIC_LABELS.items():
         metric = row["result_metrics"].get(key, {})
         detail = text(metric.get("text")) or "미연결"
+        if metric.get("period_scope") == "trailing_twelve_months":
+            detail = "최근 12개월 누적(TTM), 분기값 아님 · " + detail
         if metric.get("status") == "missing" and metric.get("reason") == "not_reported_in_supported_pdf":
             detail = "공식 PDF에 직접 공시값 없음 · 임의 계산하지 않음"
         url = safe_link(metric.get("source_url"))
@@ -89,5 +91,6 @@ def _result_detail_lines(row):
         if metric.get("observed_at"):
             source += " · " + kst_time(metric["observed_at"])
         lines.append(" | ".join(_cell(v) for v in (label, detail, source)))
+    lines.append("예상치 비교: 동일 분기·회계기준의 출처 확인 컨센서스 미연결 시 상회/하회 판단 보류. 회사 전망과 애널리스트 예상치, 목표주가와 모형 적정가는 서로 다릅니다.")
     lines.append("")
     return lines

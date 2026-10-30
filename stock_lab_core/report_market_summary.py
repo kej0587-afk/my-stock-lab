@@ -165,6 +165,14 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             body_sources[fact["market"]] = body_row
             local_claims = [item["summary"] for item in verified_body_facts(body_row)[:2]]
             local_news = [body_row]
+        elif fact["market"] == "US" and fact["change"] < 0:
+            from stock_lab_core.catalyst_news import issuer_reported_issue
+            for row in candidates + eligible:
+                issue = issuer_reported_issue(text(row.get("title")))
+                if issue:
+                    local_claims = [issue, *local_claims[:1]]
+                    local_news = [row, *local_news[:1]]
+                    break
         market_claims[fact["market"]] = local_claims
         selected_news[fact["market"]] = local_news
         claims.extend(local_claims)
@@ -225,6 +233,10 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     if sector_text:
         evidence.append(("업종 분포", sector_text))
     overview = facts[0]["narrative"] + ". " + (breadth or facts[1]["narrative"])
+    participation = market_participation_reading(context)
+    if participation:
+        overview += " " + participation
+        evidence.append(("지수와 내부 흐름", participation))
     for market, name in (("KR", "한국"), ("US", "미국")):
         if market_claims.get(market):
             overview += f" {name} 보도상 배경: " + "·".join(market_claims[market]) + "(기사 주장)."
@@ -274,6 +286,22 @@ def broad_sector_reading(context):
     return (f"미국 관측 업종 {len(items)}개 중 상승 {sum(v > 0 for v, _, _ in items)} / 하락 {sum(v < 0 for v, _, _ in items)}. "
             f"상대 상위 {high[1]}({high[2]}) {_pct(high[0])}, 상대 하위 {low[1]}({low[2]}) {_pct(low[0])}. "
             "표본 ETF의 확정 종가 분포이며 시장 전체 종목의 확산률·자금 유입액은 아닙니다.")
+
+
+def market_participation_reading(context):
+    """Compare dated price observations, not inferred constituent breadth/flows."""
+    prices, day = context.get("prices", {}), context.get("sessions", {}).get("US")
+    def observed(ticker):
+        row = prices.get(ticker, {})
+        return number(row.get("return")) if day and row.get("date") == day and not row.get("stale") else None
+    nasdaq, broad = observed("^IXIC"), observed("^GSPC")
+    positive = [(label, value) for ticker, label in (("XLV", "헬스케어"), ("XLF", "금융"), ("IWM", "중소형주"))
+                if (value := observed(ticker)) is not None and value > 0]
+    if nasdaq is None or broad is None or nasdaq >= 0 or not positive:
+        return ""
+    return ("지수 하락과 내부 흐름은 구분해야 합니다: " + " / ".join(f"{name} {_pct(value)}" for name, value in positive)
+            + f"({day} 종가). 기술주 약세와 다른 업종·규모의 강세가 공존합니다. "
+              "이는 ETF 가격 비교이며 상승 종목수·실제 자금 이동 확인은 아닙니다.")
 
 
 def evidence_table(summary):
