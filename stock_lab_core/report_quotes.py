@@ -128,6 +128,21 @@ def _previous_us_day(day):
     return day
 
 
+def _quote_direction_issue(row, field, price, previous):
+    """Cross-check one session only; never infer a missing sign from another."""
+    if not price or not previous or min(price, previous) <= 0:
+        return ""
+    change = price - previous
+    percent = (price / previous - 1) * 100
+    for suffix, computed in (("ChangePercent", percent), ("Change", change)):
+        supplied = raw_number(row.get(field + "Market" + suffix))
+        # Ignore sub-half-cent / sub-half-basis-point rounding around zero.
+        if supplied is not None and min(abs(computed), abs(supplied)) > .005 and computed * supplied < 0:
+            return (f"시세 부호 불일치: {field}Market{suffix} {supplied:+.4f}, "
+                    f"가격·기준가 계산 {computed:+.4f} (현재가 {price:g} / 기준가 {previous:g})")
+    return ""
+
+
 def regular_quote_observation(quote_row, ticker, now):
     from stock_lab_core.prices import _us_equity_market_holidays
     if not isinstance(quote_row, dict):
@@ -146,6 +161,10 @@ def regular_quote_observation(quote_row, ticker, now):
         return {}
     # A last trade near the regular close, never an extended-hours price.
     if stamp.date() != day or not 959 <= stamp.hour * 60 + stamp.minute <= 975 or at > pd.Timestamp(now):
+        return {}
+    issue = _quote_direction_issue(quote_row, "regular", price, previous)
+    if issue:
+        logging.warning("Report quote %s: %s; as_of=%s", ticker, issue, at.isoformat())
         return {}
     return {"ticker": ticker, "date": day.isoformat(), "previous_date": _previous_us_day(day).isoformat(),
             "price": price, "previous_price": previous, "return": price / previous - 1,
@@ -247,6 +266,10 @@ def extended_quote_observation(quote_row, ticker, now, *, allow_delayed=False):
             continue
         if at <= pd.Timestamp(regular["as_of"]):
             continue
+        issue = _quote_direction_issue(quote_row, field, price, regular["price"])
+        if issue:
+            logging.warning("Report quote %s: %s; as_of=%s", ticker, issue, at.isoformat())
+            continue
         found.append({"ticker": ticker, "price": price, "return": price / regular["price"] - 1,
                       "date": at.tz_convert(NEW_YORK).date().isoformat(), "as_of": at.isoformat(),
                       "previous_date": regular["date"], "previous_price": regular["price"],
@@ -260,9 +283,20 @@ def extended_quote_status(quote_row, ticker, now):
     if not quote_row:
         return "제공처 시세 응답 미수집/종목 시세 없음(HTTP·파싱 상세는 서버 로그)"
     if not regular_quote_observation(quote_row, ticker, now):
-        return "비교 기준 정규장 종가·시각 검증 실패"
+        issue = _quote_direction_issue(quote_row, "regular", raw_number(quote_row.get("regularMarketPrice")),
+                                       raw_number(quote_row.get("regularMarketPreviousClose")))
+        return issue or "비교 기준 정규장 종가·시각 검증 실패"
     if extended_quote_observation(quote_row, ticker, now):
         return "연결됨"
+    from stock_lab_core.report_session import us_extended_session
+    window = us_extended_session(now)
+    for field in ("overnight", "day", "pre", "post"):
+        at = _epoch(quote_row.get(field + "MarketTime"))
+        if window and at is not None and pd.Timestamp(window["start"]) <= at <= pd.Timestamp(now) < pd.Timestamp(window["end"]):
+            issue = _quote_direction_issue(quote_row, field, raw_number(quote_row.get(field + "MarketPrice")),
+                                           raw_number(quote_row.get("regularMarketPrice")))
+            if issue:
+                return issue
     times = [_epoch(quote_row.get(field + "MarketTime")) for field in ("overnight", "day", "pre", "post")]
     times = [at for at in times if at is not None]
     if not times:
