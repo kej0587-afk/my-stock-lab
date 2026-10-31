@@ -24,6 +24,39 @@ BODY_HOSTS = ("yna.co.kr", "apnews.com", "cnbc.com", "aws.amazon.com", "pytorch.
 MAX_BYTES = 750_000
 MAX_ARTICLES = 4
 
+_EARNINGS_MISS = (
+    r"(?:실적|매출|이익|가이던스|향후\s*전망).{0,50}(?:(?:기대|예상|컨센서스).{0,18}"
+    r"(?:미달|하회|밑돌|미치지\s*못)|부진|쇼크)|"
+    r"(?:기대|예상|컨센서스).{0,18}(?:밑도는|하회하는|미달한).{0,20}실적|"
+    r"\b(?:earnings|revenue|profit|guidance|outlook)\b.{0,30}\b(?:miss(?:ed|es)?|disappoint\w*|fell short)\b"
+)
+_AI_CONCERN = (
+    r"(?:AI|인공지능|코어위브|CoreWeave).{0,80}(?:차입\s*우려|신용\s*우려|부채\s*부담|"
+    r"자금조달\s*부담|투자\s*붕괴|수익성\s*우려|투자.{0,20}(?:우려|부담|회의론)|"
+    r"(?:수익|생산성|성과).{0,45}(?:회의론|의문|불확실|우려))"
+)
+_PAST_CONTEXT = re.compile(r"과거|한때|당시|작년|지난\s*(?:해|달|분기|주)|\bpreviously\b|\blast (?:year|quarter|month|week)\b", re.I)
+_NEGATED_CONTEXT = re.compile(
+    r"지(?:는|도)?\s*않|아니|없(?:었|다|는)|(?:해소|완화|진정|불식)(?:됐|되었|했다)|"
+    r"\b(?:not|never|unfounded|dismissed)\b", re.I)
+
+
+def _context_match(paragraphs, topic, pattern):
+    for paragraph in paragraphs:
+        for sentence in re.split(r"[;!?\n]|\.\s+", paragraph):
+            for match in re.finditer(pattern, sentence, re.I):
+                if topic in {"earnings", "ai_investment", "ai_credit"}:
+                    tail = re.split(r",|지만|으나|반면|면서|\bbut\b|\bwhile\b", sentence[match.end():], maxsplit=1, flags=re.I)[0][:32]
+                    if (_PAST_CONTEXT.search(sentence) or _NEGATED_CONTEXT.search(tail)
+                            or re.search(r"\b(?:not|never)\b", sentence[max(0, match.start()-24):match.end()], re.I)):
+                        continue
+                    if topic == "earnings" and re.search(r"우려|가능성|예상|기대|전망", tail):
+                        continue
+                    if topic == "ai_investment" and re.search(_AI_CONCERN + "|" + _EARNINGS_MISS, sentence, re.I):
+                        continue
+                return sentence
+    return None
+
 
 def _safe_url(url):
     try:
@@ -138,10 +171,10 @@ def _body_facts(paragraphs):
          "AI 관련 실적·투자 확대와 수요 기대가 보도됐습니다",
          "AI 수요 기대 회복은 반도체·기술주 투자심리에 우호적일 수 있지만 실제 수주·이익 개선 확인이 필요합니다",
          "AI 설비투자 계획과 다음 실적의 수요·현금흐름 확인"),
-        ("ai_credit", r"(?:AI|인공지능|코어위브|CoreWeave).{0,80}(?:차입\s*우려|신용\s*우려|부채\s*부담|자금조달\s*부담|투자\s*붕괴|수익성\s*우려)",
-         "AI 투자의 자금조달·수익성 우려가 보도됐습니다",
-         "차입 부담이 커지면 AI 인프라 투자 지속성에 대한 경계가 반도체·성장주로 번질 수 있습니다",
-         "차환 비용·고객 계약·투자 대비 현금흐름 확인"),
+        ("ai_credit", _AI_CONCERN,
+         "AI 투자 부담·성과에 대한 우려가 보도됐습니다",
+         "AI 투자 지속성과 성과에 대한 경계가 반도체·성장주로 번질 수 있으나 가격 기여도는 확정할 수 없습니다",
+         "AI 투자 계획·고객 계약과 투자 대비 수익·현금흐름 확인"),
         ("exports", r"수출.{0,60}(?:역대\s*최대|호조|신기록)",
          "한국 수출 호조가 투자심리 개선 배경으로 거론됐습니다",
          "수출 개선은 관련 기업의 매출 기대를 지지할 수 있으나 업종별 물량·마진은 별도 확인이 필요합니다",
@@ -151,19 +184,28 @@ def _body_facts(paragraphs):
          "현물 매수는 당일 수급을 지지한 정황입니다. 선물·환율 방향까지 일치하는지는 별도 확인해야 합니다",
          "다음 거래일 외국인 현물·선물과 원화 방향 확인"),
         ("earnings", r"(?:예상|기대).{0,25}(?:웃도|넘는|상회).{0,25}실적|실적\s*호조|strong (?:profit|earnings)|earnings.{0,15}(?:beat|exceed)",
-         "일부 기업의 호실적이 시장을 지지한 배경으로 보도됐습니다",
+         "일부 기업의 호실적이 보도됐습니다",
          "실적 기대가 지수를 지지해도 AI 업종과 시장 전체의 방향은 다를 수 있습니다",
          "예정 실적의 매출·가이던스와 업종별 확산 확인"),
     )
     for topic, pattern, summary, implication, check in rules:
-        matched = next((p for p in paragraphs if re.search(pattern, p, re.I)), None)
+        # Prefer an explicit miss over unrelated earnings beats in the same wrap.
+        missed = _context_match(paragraphs, topic, _EARNINGS_MISS) if topic == "earnings" else None
+        matched = missed or _context_match(paragraphs, topic, pattern)
         if matched:
-            facts.append(dict(topic=topic, summary=summary, implication=implication, check=check,
-                              evidence=matched[:140] + ("…" if len(matched) > 140 else "")))
+            fact = dict(topic=topic, summary=summary, implication=implication, check=check,
+                        evidence=matched[:140] + ("…" if len(matched) > 140 else ""))
+            if missed:
+                fact.update(polarity="negative", summary="기업 실적·전망 부진이 보도됐습니다",
+                            implication="실적·전망 부진은 관련 업종 투자심리에 부담이 될 수 있으나 시장 전체 하락의 단독 원인으로 확정할 수 없습니다",
+                            check="공식 실적·가이던스와 시장 기대치 비교 확인")
+            facts.append(fact)
     from stock_lab_core.article_price_facts import oil_price_fact
     oil = oil_price_fact(paragraphs)
     if oil:
         facts.insert(0, oil)
+    # Consumers show only the first two facts; retain supported adverse context.
+    facts.sort(key=lambda fact: 0 if fact.get("polarity") == "negative" else 1 if fact["topic"] == "ai_credit" else 2)
     return facts[:4]
 
 
@@ -211,7 +253,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") == "verified")
 def _article(url, title):
-    # v3: subject-bound issuer facts; no automatic AI-investment optimism.
+    # v4: sentence-scoped earnings/AI context and adverse-context priority.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -263,10 +305,12 @@ def body_context_sentence(row):
               "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "earnings": "기업 호실적",
               "oil_easing": "유가 하락", "oil_rising": "유가 상승", "oil_mixed": "기간·유종별 유가 방향 혼재"}
     facts = verified_body_facts(row)
-    positives = [labels[fact["topic"]] for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
-    sentence = "기사에서는 " + "·".join(positives[:3]) + " 등을 시장 배경으로 짚었습니다." if positives else ""
-    if any(fact["topic"] == "ai_credit" for fact in facts):
-        sentence += (" " if sentence else "") + "AI 투자의 자금조달·수익성 우려도 함께 전했습니다."
+    backgrounds = ["기업 실적·전망 부진" if fact.get("polarity") == "negative" and fact["topic"] == "earnings"
+                   else labels[fact["topic"]] for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
+    sentence = "기사에서는 " + "·".join(backgrounds[:3]) + " 등을 시장 배경으로 짚었습니다." if backgrounds else ""
+    for fact in facts:
+        if fact["topic"] == "ai_credit" and not fact.get("subject_ticker"):
+            sentence += (" " if sentence else "") + fact["summary"] + "."
     issuer_facts = [fact["summary"] for fact in facts if fact.get("subject_ticker")]
     if issuer_facts:
         sentence += (" " if sentence else "") + "; ".join(issuer_facts[:3]) + "."
