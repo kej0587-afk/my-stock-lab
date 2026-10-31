@@ -19,7 +19,7 @@ from stock_lab_core.backup import build_review_export_zip
 from stock_lab_core.formatters import clean_float
 
 
-EXPORT_VERSION = "1.1"
+EXPORT_VERSION = "1.2"
 REVIEW_NOTICE = "review not trading change"
 _READY_KEY = "_precision_review_export_ready"
 _REQUIRED_SECTIONS = {
@@ -343,7 +343,8 @@ def build_precision_review_export_zip(
 
     sections = _json_value({
         "candidate_grade": {key: decision.get(key) for key in _CANDIDATE_KEYS},
-        "main_decision": {key: value for key, value in decision.items() if key != "execution_workflow"},
+        "main_decision": {key: value for key, value in decision.items()
+                          if key not in {"execution_workflow", "chart_scorecard", "etf_holdings"}},
         "execution_workflow": workflow,
         "workflow_display": workflow_display,
         "multi_timeframe": timeframes,
@@ -354,6 +355,8 @@ def build_precision_review_export_zip(
         "hold_or_cut": hold_or_cut,
         "source_build": _source_build(source_build),
         "signal_evidence": signal_evidence,
+        "chart_scorecard": decision.get("chart_scorecard"),
+        "etf_holdings": decision.get("etf_holdings"),
         "context": {key: value for key, value in _mapping(context).items() if key in _CONTEXT_KEYS},
     })
     history_metadata = {}

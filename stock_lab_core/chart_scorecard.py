@@ -1,6 +1,7 @@
 """Source-inspired display scorecard, independent from Stock Lab trade gates."""
 
 import math
+from collections.abc import Mapping
 import pandas as pd
 from stock_lab_core.chart_enrichment import build_financial_snapshot_rows, build_volume_signal_series
 from stock_lab_core.financial_score import optional_float
@@ -58,7 +59,9 @@ def _session_close(frame):
 
 def build_chart_scorecard(info, frame, *, is_etf=False, benchmark=None):
     values = {row["key"]: row["value"] for row in build_financial_snapshot_rows(info, is_etf=is_etf)}
-    info = dict(info or {})
+    info = dict(info) if isinstance(info, Mapping) else {}
+    if isinstance(info.get("data"), Mapping):
+        info = dict(info["data"])
     factors = []
 
     def add(axis, label, value, score, unit=""):
@@ -89,7 +92,11 @@ def build_chart_scorecard(info, frame, *, is_etf=False, benchmark=None):
         score = _mid(value, 0, 40, 100) if key == "payoutRatio" else _higher(value, 0, 5)
         add("주주환원", label, value, score, "%")
     fcf, cap = values.get("freeCashflow"), values.get("marketCap")
-    fcf_yield = fcf / cap * 100 if fcf is not None and cap is not None and cap > 0 else None
+    # GBp (pence) and GBP (pounds) are different denominations.
+    quote_currency = str(info.get("currency") or "").strip()
+    financial_currency = str(info.get("financialCurrency") or "").strip()
+    same_currency = bool(quote_currency) and financial_currency == quote_currency
+    fcf_yield = fcf / cap * 100 if same_currency and fcf is not None and cap is not None and cap > 0 else None
     add("주주환원", "FCF 수익률", fcf_yield, _higher(fcf_yield, 0, 8), "%")
     source_close = _price_series(frame)
     close = source_close
@@ -159,16 +166,26 @@ def volume_review(frame, ticker=""):
 
 
 def render_chart_scorecard(st, frame, *, info=None, ticker="", is_etf=False, source="", benchmark=None):
+    from stock_lab_core.scorecard_review import build_scorecard_review
     rows, factors = build_chart_scorecard(info, frame, is_etf=is_etf, benchmark=benchmark)
+    review = build_scorecard_review(rows, factors, is_etf=is_etf)
     st.markdown("#### 재무·모멘텀 성적표")
-    st.dataframe(pd.DataFrame(rows)[["축", "점수", "자료"]], hide_index=True, width="stretch",
+    display = pd.DataFrame(review["axes"])
+    display["자료"] = display.apply(lambda row: f"{row['확인']}/{row['전체']} · {row['자료상태']}", axis=1)
+    st.dataframe(display[["축", "점수", "자료"]], hide_index=True, width="stretch",
                  column_config={"축": st.column_config.TextColumn("축", width=100),
                                 "점수": st.column_config.ProgressColumn("점수(0~100)", min_value=0, max_value=100, format="%.1f", width=130),
-                                "자료": st.column_config.TextColumn("자료", width=95)})
-    st.caption(f"첨부 지표를 가용 항목으로 축약 적용 · 결측 제외 평균/자료 충족도 · {source or '재무 기준시각 미제공'} · 기존 4점 재무/후보등급/매매판정과 별개")
+                                "자료": st.column_config.TextColumn("자료", width=140)})
+    st.caption(f"결측 제외 평균 · {source or '재무 출처 미수집'} · 최종 체크의 검토 근거로 연결, 기존 점수에 중복 가산하지 않음")
+    if review["warnings"]:
+        st.caption("확인할 수치: " + " · ".join(review["warnings"]))
+    if review["missing_axes"] or review["partial_axes"]:
+        st.caption("자료 누락: " + ", ".join(review["missing_axes"] + review["partial_axes"]) + " · 자료 부족은 낮은 기업 품질과 다릅니다.")
     with st.expander("성적표 산식·자료"):
         st.dataframe(pd.DataFrame(factors), hide_index=True, width="stretch")
         st.caption("선형 0~100점: ROE 5~25%, PER 45~8배, 매출성장 0~25%. 자사주 매입·ROIC·Piotroski 등 미연결 항목은 추정하지 않음. 업종 상대평가가 아닌 참고 점수.")
+        st.caption("주주환원 축의 FCF 수익률은 환원 여력이지 실제 자사주 매입·배당 지급액이 아닙니다. 시가총액과 현금흐름의 통화가 다르거나 불명확하면 FCF 수익률은 계산하지 않습니다.")
+    return {"rows": rows, "factors": factors, "review": review}
 
 
 def render_volume_review(st, frame, ticker=""):

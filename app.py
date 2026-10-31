@@ -8436,6 +8436,136 @@ def get_plotly_selected_ticker(event):
     return ""
 
 
+def queue_etf_constituent_review(parent_ticker, parent_name, child_ticker):
+    target = sanitize_ticker_value(child_ticker)
+    bare_kr_code = not target.endswith((".KS", ".KQ")) and _is_precision_kr_code_like(target)
+    if not target or bare_kr_code or not set_precision_target_ticker(target):
+        return False
+    st.session_state["_precision_parent_etf_review"] = {
+        "ticker": sanitize_ticker_value(parent_ticker), "name": parent_name, "child": target,
+    }
+    st.session_state["_pending_main_page_nav"] = "precision"
+    return True
+
+
+def render_etf_parent_return(ticker):
+    parent = st.session_state.get("_precision_parent_etf_review", {})
+    if not isinstance(parent, dict) or parent.get("child") != ticker:
+        return
+    if st.button(f"{parent.get('name') or parent['ticker']} 구성종목으로 돌아가기",
+                 key=f"etf_parent_return_{ticker}", icon=":material/arrow_back:"):
+        set_precision_target_ticker(parent["ticker"])
+        st.session_state["_pending_main_page_nav"] = "precision"
+        st.rerun()
+
+
+def render_etf_constituent_review(ticker, *, name="", key_prefix="precision"):
+    """Fetch the selected ETF only; opening a constituent never saves a holding."""
+    ticker = sanitize_ticker_value(ticker)
+    snapshot_key = f"etf_constituents_{ticker}"
+    snapshot = st.session_state.get(snapshot_key)
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    if snapshot.get("rows") and snapshot.get("observed_at"):
+        try:
+            observed = pd.Timestamp(snapshot["observed_at"])
+            if observed.tzinfo is not None and (pd.Timestamp.now(tz="UTC") - observed).total_seconds() > 3600:
+                snapshot = {**snapshot, "status": "stale",
+                            "reason": str(snapshot.get("reason") or "") + "; cached_snapshot_refresh_due"}
+        except (ValueError, TypeError, OverflowError):
+            pass
+    with st.expander("ETF 구성종목 · 개별 검토", expanded=bool(snapshot.get("rows"))):
+        fetch_col, source_col = st.columns([1, 2])
+        requested = fetch_col.button("구성종목 새로고침" if snapshot else "구성종목 조회",
+                                     key=f"{key_prefix}_etf_fetch_{ticker}", icon=":material/refresh:")
+        if requested:
+            with st.spinner("ETF 구성종목 확인 중..."):
+                try:
+                    from stock_lab_core.etf_holdings import load_etf_holdings
+                    fresh = load_etf_holdings(ticker, kr_catalog=load_cached_kr_etf_lab_data() if is_kr_listed(ticker) else None,
+                                             force_refresh=bool(snapshot))
+                    if not isinstance(fresh, dict):
+                        raise ValueError("Invalid holdings snapshot")
+                    archive = globals().get("US_ETF_COMPOSITION_FALLBACKS", {}).get(ticker)
+                    if not fresh.get("rows") and archive:
+                        fresh = {**fresh, "status": "stale", "source": archive["source"] + " · 과거 확인 자료",
+                                 "source_url": globals().get("US_ETF_HOLDINGS_URLS", {}).get(ticker),
+                                 "as_of": archive["as_of"], "scope": "top5", "holdings_basis": "historical_reference",
+                                 "reason": str(fresh.get("reason") or "") + "; historical_top5_not_current",
+                                 "rows": [{"name": member, "ticker": symbol, "source_ticker": symbol,
+                                           "weight_pct": weight, "kind": "security", "reviewable": True}
+                                          for member, symbol, weight in archive["rows"]]}
+                    snapshot = fresh
+                except Exception as exc:
+                    logging.warning("ETF holdings unavailable for %s (%s)", ticker, type(exc).__name__)
+                    snapshot = {**snapshot, "status": "stale" if snapshot.get("rows") else "unavailable",
+                                "reason": "구성종목 조회 실패: " + type(exc).__name__}
+                st.session_state[snapshot_key] = snapshot
+        if not snapshot:
+            st.caption("구성종목 자료는 선택한 ETF만 조회합니다. 스왑·선물·현금은 개별 주식과 구분합니다.")
+            return {"ticker": ticker, "status": "not_requested", "rows": []}
+        source_url = str(snapshot.get("source_url") or "")
+        if source_url.startswith("https://"):
+            source_col.link_button("구성 자료 출처", source_url, icon=":material/open_in_new:")
+        st.caption(f"출처: {snapshot.get('source') or '미확인'} · 구성 기준일: {snapshot.get('as_of') or '제공처 미제공'} · 조회시각: {snapshot.get('observed_at') or '미확인'}")
+        rows = snapshot.get("rows")
+        rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+        reason_labels = {
+            "holdings_as_of_unavailable": "구성 기준일 미제공",
+            "partial_holdings_scope": "전체가 아닌 일부 구성자료",
+            "some_weights_unavailable": "일부 비중 미수집",
+            "creation_basket_not_full_economic_exposure": "한국 ETF 설정·환매 바스켓이며 실효 노출 전체와 다를 수 있음",
+            "derivative_weights_are_not_daily_exposure": "파생상품 비중은 일일 실효 노출과 다름",
+            "foreign_identifiers_retained_without_guessed_mapping": "해외 식별코드 중 검증되지 않은 거래소 코드는 개별 검토에서 제외",
+            "yahoo_asset_types_and_holdings_date_unverified": "상위 편입 항목의 자산 종류·기준일 미확인",
+            "catalog_has_no_verified_symbols_or_holdings_date": "저장 목록의 종목코드·구성 기준일 미검증",
+            "request_timeout": "구성자료 제공처 응답시간 초과", "collection_deadline": "구성자료 조회 제한시간 초과",
+            "invalid_or_unavailable_response": "구성자료 응답형식 또는 제공 여부 확인 필요",
+            "holdings_date_too_old": "구성 기준일이 오래된 자료", "holdings_date_is_old": "구성 기준일이 오래된 자료", "future_holdings_date": "구성 기준일 오류",
+            "cached_snapshot_refresh_due": "마지막 조회 후 1시간 이상 경과한 저장 자료 · 새로고침 필요",
+            "historical_top5_not_current": "과거 확인 상위 5개 참고 자료이며 현재 편입·비중이 아님",
+        }
+        reasons = [reason.strip() for reason in str(snapshot.get("reason") or "").split(";") if reason.strip()]
+        reason_text = " · ".join(dict.fromkeys(reason_labels.get(reason, "제공처 요청 거부(HTTP " + reason[5:] + ")" if reason.startswith("http_") else reason) for reason in reasons))
+        if snapshot.get("status") not in {"ok", "success", "available"} and snapshot.get("reason"):
+            st.warning(reason_text)
+        elif reason_text:
+            st.caption(reason_text)
+        if not rows:
+            st.info("확인 가능한 구성종목 자료가 없습니다. 비중을 0%로 채우거나 임의 종목을 붙이지 않습니다.")
+            return snapshot
+        kinds = {"equity": "주식", "stock": "주식", "security": "상장 증권", "fund": "펀드/ETF", "etf": "펀드/ETF",
+                 "swap": "스왑", "future": "선물", "futures": "선물", "cash": "현금", "bond": "채권",
+                 "option": "옵션", "derivative": "파생상품", "unknown": "종류 미확인"}
+        display = pd.DataFrame([{"구성종목": row.get("name", ""), "티커": row.get("ticker") or "-", "원문 코드": row.get("source_ticker") or "-",
+                                 "비중(%)": clean_float(row.get("weight_pct"), np.nan),
+                                 "구분": kinds.get(row.get("kind"), row.get("kind") or "미확인"),
+                                 "개별검토": "가능" if row.get("reviewable") and row.get("ticker") else "종목코드/자산종류 확인 필요"} for row in rows])
+        st.dataframe(display, width='stretch', hide_index=True, height=min(440, 40 + len(display) * 35),
+                     column_config={"비중(%)": st.column_config.NumberColumn("비중(%)", format="%.2f%%")})
+        known_weights = pd.to_numeric(display["비중(%)"], errors="coerce").dropna()
+        weight_note = f"표시 비중 합 {known_weights.sum():.2f}%" if not known_weights.empty else "비중 미수집"
+        scope = {"all_reported": "제공처 보고 항목 전체", "partial": "일부 항목", "top10": "상위 10종목", "top5": "상위 5종목", "none": "미수집"}.get(snapshot.get("scope"), "확인 범위 미제공")
+        st.caption(f"조회 범위: {scope} · 표시 {len(rows)}개 · {weight_note}. 표시 자료를 100%로 재환산하지 않습니다.")
+        st.caption("레버리지 ETF의 스왑·담보 비중은 기초종목의 실효 노출 비중과 다릅니다. 구성종목의 높은 재무점수만으로 ETF의 위험 제한을 해제하지 않습니다.")
+        reviewable = {f"{row.get('name') or row['ticker']} ({row['ticker']})": row["ticker"]
+                      for row in rows if row.get("reviewable") and row.get("ticker")}
+        if reviewable:
+            select_key = f"{key_prefix}_etf_member_{ticker}"
+            if st.session_state.get(select_key) not in reviewable:
+                st.session_state.pop(select_key, None)
+            target = st.selectbox("개별 검토 종목", list(reviewable), key=select_key)
+            target_ticker = reviewable[target]
+            exchange_unknown = not target_ticker.endswith((".KS", ".KQ")) and _is_precision_kr_code_like(target_ticker)
+            if exchange_unknown:
+                market = st.selectbox("구성종목 상장시장", ["시장 선택", "KOSPI (.KS)", "KOSDAQ (.KQ)"],
+                                      key=f"{key_prefix}_etf_market_{ticker}_{target_ticker}")
+                target_ticker = target_ticker + (".KS" if market == "KOSPI (.KS)" else ".KQ") if market != "시장 선택" else ""
+            if st.button("정밀관측소 열기", key=f"{key_prefix}_etf_open_{ticker}", icon=":material/query_stats:", disabled=not target_ticker):
+                if queue_etf_constituent_review(ticker, name or ticker, target_ticker):
+                    st.rerun()
+        return snapshot
+
+
 def get_kr_etf_composition(ticker):
     kr_etf_df = load_cached_kr_etf_lab_data()
     if kr_etf_df.empty:
@@ -8613,43 +8743,14 @@ def render_money_flow_composition_panel(view_df, selected_ticker=""):
     if not _bl_rendered and _LWC_AVAILABLE:
         st.caption(f"📈 {ticker} 가격 데이터를 불러오지 못했습니다.")
 
-    st.markdown("#### ETF 구성종목")
-    if etf_row is None:
-        comp_df, us_meta = fetch_us_etf_composition(ticker)
-        if comp_df.empty:
-            st.info(f"{flow_name} ({ticker})는 국내 ETF 1020 데이터에 없고, 해외 ETF 구성종목 fallback도 아직 등록되어 있지 않습니다.")
-            return
-        c1, c2, c3 = st.columns(3)
-        c1.metric("ETF", str((us_meta or {}).get("name", flow_name))[:22])
-        c2.metric("출처", str((us_meta or {}).get("source", "issuer holdings"))[:18])
-        c3.metric("기준일", str((us_meta or {}).get("as_of", "-")))
-        show_comp = comp_df.copy()
-        show_comp["비중(%)"] = show_comp["비중(%)"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}")
-        st.dataframe(show_comp, width='stretch', hide_index=True)
-        if (us_meta or {}).get("fallback"):
-            st.caption("운용사 실시간 조회가 실패하거나 막힌 경우를 대비해 앱에 등록된 최근 확인 기준 TOP5를 표시합니다. 실제 비중은 운용사 원문에서 다시 확인하세요.")
-        else:
-            st.caption("해외 ETF 운용사 페이지에서 조회한 TOP5입니다. 운용사 데이터는 장중/일자별로 바뀔 수 있습니다.")
-        return
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("ETF", str(etf_row.get("name", flow_name))[:18])
-    c2.metric("대유형", str(etf_row.get("etf_big_type", "-") or "-"))
-    c3.metric("운용규모", f"{clean_float(etf_row.get('aum_krw_100m'), 0.0):,.0f}억")
-    c4.metric("실부담", f"{clean_float(etf_row.get('real_fee_pct'), 0.0):.3f}%")
-
-    if comp_df.empty:
-        st.info("이 ETF는 TOP 구성종목 데이터가 비어 있습니다.")
-    else:
-        show_comp = comp_df.copy()
-        show_comp["비중(%)"] = show_comp["비중(%)"].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.2f}")
-        st.dataframe(show_comp, width='stretch', hide_index=True)
-
-    st.caption(
-        f"기초지수: {etf_row.get('underlying_index', '-') or '-'} | "
-        f"운용사: {etf_row.get('manager', '-') or '-'} | "
-        f"분류: {etf_row.get('tags', '-') or '-'}"
-    )
+    render_etf_constituent_review(ticker, name=flow_name, key_prefix="money_flow")
+    if etf_row is not None:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("ETF", str(etf_row.get("name", flow_name))[:18])
+        c2.metric("대유형", str(etf_row.get("etf_big_type", "-") or "-"))
+        c3.metric("운용규모", f"{clean_float(etf_row.get('aum_krw_100m'), 0.0):,.0f}억")
+        c4.metric("실부담", f"{clean_float(etf_row.get('real_fee_pct'), 0.0):.3f}%")
+        st.caption(f"기초지수: {etf_row.get('underlying_index', '-') or '-'} | 운용사: {etf_row.get('manager', '-') or '-'} | 분류: {etf_row.get('tags', '-') or '-'}")
 
     # ── 전광판 추가 버튼 ──────────────────────────────────────────────
     selected_flow_row = view_df[view_df["Ticker"].astype(str).str.strip() == ticker.strip()]
@@ -19989,12 +20090,21 @@ def build_valuation_fields_from_fin_meta(fin_meta):
 
 def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
     from stock_lab_core.chart_scorecard import render_chart_scorecard
+    fin_meta = fin_meta if isinstance(fin_meta, dict) else {}
     fallback = build_valuation_fields_from_fin_meta(fin_meta)
     # The valuation panel below uses this same cached snapshot; no second provider path.
-    snapshot = fetch_valuation_snapshot(ticker) if not is_etf else {}
-    data = _merge_missing_valuation_fields(snapshot.get("data", {}), fallback)
-    source = ", ".join(snapshot.get("sources", [])) or str(fin_meta.get("source") or "")
-    if any(_valuation_missing(snapshot.get("data", {}).get(key)) and not _valuation_missing(value)
+    try:
+        snapshot = fetch_valuation_snapshot(ticker) if not is_etf else {}
+    except Exception as exc:
+        logging.warning("Chart financial snapshot unavailable for %s (%s)", ticker, type(exc).__name__)
+        snapshot = {"sources": ["외부 재무 조회 실패 · 저장 자료만 사용"]}
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    raw_data = snapshot.get("data") if isinstance(snapshot.get("data"), dict) else {}
+    data = _merge_missing_valuation_fields(raw_data, fallback)
+    sources = snapshot.get("sources")
+    source = ", ".join(str(item) for item in sources) if isinstance(sources, (list, tuple)) else str(sources or "")
+    source = source or str(fin_meta.get("source") or "")
+    if any(_valuation_missing(raw_data.get(key)) and not _valuation_missing(value)
            for key, value in fallback.items()):
         source += f" · 저장 재무 보완({fin_meta.get('source') or '출처 미저장'})"
     score_frame, benchmark_frame = frame, pd.DataFrame()
@@ -20014,10 +20124,11 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
     kwargs = dict(ticker=ticker, info=data, is_etf=is_etf, source=source)
     if "benchmark" in inspect.signature(render_chart_scorecard).parameters:
         kwargs["benchmark"] = benchmark_frame
-    render_chart_scorecard(st, score_frame, **kwargs)
+    scorecard = render_chart_scorecard(st, score_frame, **kwargs)
     if not is_etf:
         st.caption(f"저장 재무 기간: {financial_basis(fin_meta)['재무자료기간']} · 외부 밸류 수치의 발표 기준일은 공급처가 제공하지 않으면 미확인입니다.")
-    return {"data": data, "source": source}
+    return {"data": data, "source": source, **(scorecard if isinstance(scorecard, dict) else {}),
+            "price_asof": frame_last_date(score_frame), "financial_basis": financial_basis(fin_meta, is_etf=is_etf)}
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -20988,6 +21099,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         action = (workflow.get("게이트근거", "조건 확인 대기") if execution_state != GATE_EXECUTABLE else
                   "차단 항목 또는 핵심 미확인 자료가 남아 있습니다. 해소 전 신규·추가매수는 보류합니다.")
 
+    from stock_lab_core.scorecard_review import scorecard_decision_context
     return rows, {
         "final_label": final_label,
         "final_color": final_color,
@@ -20997,6 +21109,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         "block_count": block_count,
         "unknown_count": int(status_counts.get("미확인", 0)),
         "execution_allowed": execution_state == GATE_EXECUTABLE and block_count == 0 and not governance["core_missing_ids"] and final_label in actionable_labels,
+        "scorecard_evidence": scorecard_decision_context(c.get("chart_scorecard"), workflow, fin_score, is_etf=is_etf),
         **governance,
     }
 
@@ -21028,6 +21141,11 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
     st.dataframe(show_df, width='stretch', hide_index=True, row_height=64,
                  height=min(900, 50 + len(show_df) * 64))
+    scorecard_evidence = summary.get("scorecard_evidence", {})
+    if scorecard_evidence.get("status") == "linked":
+        st.markdown("#### 성적표와 실행 판단")
+        st.write(scorecard_evidence["summary"])
+        st.caption("성적표는 강약·결측 확인 근거이며 별도의 통과표나 차단표로 중복 합산하지 않습니다. 축 간 높고 낮음은 동일 업종 상대평가가 아닙니다.")
     return {"ticker": ticker, "rows": rows, "summary": summary}
 
 # ─────────────────────────────────────────────────
@@ -34009,6 +34127,11 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "애널목표기준일", "값": external.get("애널목표기준일", "")},
         ]), width='stretch', hide_index=True)
         chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)
+        c["chart_scorecard"] = chart_financial
+        if is_etf:
+            c["etf_holdings"] = render_etf_constituent_review(tkr, name=name, key_prefix="demo_precision")
+        else:
+            render_etf_parent_return(tkr)
         render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
         from stock_lab_core.chart_review import render_chart_review
@@ -35693,6 +35816,7 @@ if main_page == "precision":
         precision_review_download = _PrecisionReviewDownloadCompat()
 
     render_data_basis_caption("정밀관측소", tkr, include_news=True, include_fin=True)
+    render_etf_parent_return(tkr)
 
     f_labels = get_fin_label_map()
     fin_key = normalize_ticker(tkr)
@@ -35977,6 +36101,8 @@ if main_page == "precision":
 
         render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
+        if is_etf:
+            c["etf_holdings"] = render_etf_constituent_review(tkr, name=name)
         L, R = st.columns([1.1, 2.4])
         with L:
             st.markdown(f"<h2>📊 {escape_html_value(name)}</h2>", unsafe_allow_html=True)
@@ -36128,6 +36254,7 @@ if main_page == "precision":
 
         with R:
             chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)
+            c["chart_scorecard"] = chart_financial
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)
             p_line = my_p
             _show_avg = p_line > 0 and not is_free and has_p
