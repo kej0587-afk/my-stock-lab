@@ -35975,6 +35975,8 @@ if main_page == "precision":
             },
         )
 
+        render_precision_execution_state(c.get("execution_workflow"))
+        render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
         L, R = st.columns([1.1, 2.4])
         with L:
             st.markdown(f"<h2>📊 {escape_html_value(name)}</h2>", unsafe_allow_html=True)
@@ -36075,8 +36077,6 @@ if main_page == "precision":
                         for _r in _reasons:
                             st.caption(f"• {_r}")
 
-            render_precision_execution_state(c.get("execution_workflow"))
-            render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
             render_signal_basis(st, precision_signal_basis)
             precision_workflow_display = build_execution_workflow_display_df(c.get("execution_workflow"))
             with st.expander("기존 종합후보·원천근거"):
