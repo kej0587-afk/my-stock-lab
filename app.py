@@ -790,6 +790,8 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
         return
 
     judgement = build_hold_decision(ticker, name, is_etf, fin_score, c, my_price, has_pos)
+    from stock_lab_core.execution_readiness import precision_display_context
+    hold_workflow = precision_display_context(c).get("execution_workflow")
     
     color_map = {
         HoldDecision.STRONG_HOLD: "#16a34a", HoldDecision.CONDITIONAL_HOLD: "#22c55e",
@@ -803,7 +805,7 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
         f"<b>{escape_html_value(name)} 보유 판단</b><br>"
         f"<span class='highlight' style='font-size:1.3em; color:{color};'>"
         f"{escape_html_value(judgement.decision.value)}</span> (총 {judgement.score}점)<br><br>"
-        f"<b>행동 제안:</b> {escape_html_value(qualify_hold_action_plan(judgement.action_plan, c.get('execution_workflow')))}"
+        f"<b>행동 제안:</b> {escape_html_value(qualify_hold_action_plan(judgement.action_plan, hold_workflow))}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -18028,9 +18030,10 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=No
     외부 API 없이 이미 계산된 c 딕셔너리와 fin_score만 사용합니다.
     """
     from stock_lab_core.precision_narrative import build_precision_narrative as render_narrative
+    from stock_lab_core.execution_readiness import precision_display_context
 
     return render_narrative(
-        name, tkr, c, fin_score, has_p, my_p, is_etf=is_etf,
+        name, tkr, precision_display_context(c), fin_score, has_p, my_p, is_etf=is_etf,
         describe_fvg_plain=describe_fvg_plain,
         build_sideways_quality_state=build_sideways_quality_state,
     )
@@ -18771,6 +18774,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         "조건": "종가 기준 이탈 시 추가매수 시나리오 무효" if has_pos else "종가 기준 이탈 시 신규진입 시나리오 무효",
     })
     plan_workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, has_pos=has_pos)
+    from stock_lab_core.execution_readiness import build_execution_readiness
+    plan_workflow = build_execution_readiness(plan_workflow, c.get("chart_final_check"))["display_workflow"]
     rows = align_precision_entry_plan_rows(rows, plan_workflow)
 
     if buy_amt_krw <= 0 and not has_pos:
@@ -19549,7 +19554,8 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     watch_rows = state.get("watch_rows", [])
     dca_stage = state.get("dca_stage", "")
     dca_multiple = state.get("dca_multiple", "")
-    dca_note = state.get("dca_note", "")
+    from stock_lab_core.execution_readiness import precision_display_context
+    dca_note = qualify_hold_action_plan(state.get("dca_note", ""), precision_display_context(c).get("execution_workflow"))
     pnl = clean_float(state.get("pnl"), np.nan)
     recovery_checks = state.get("recovery_checks", [])
     recovery_label = state.get("recovery_label", "-")
@@ -21328,6 +21334,10 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
 
     leveraged_state = build_leveraged_precision_state(name, ticker, c, has_pos, my_price)
     if leveraged_state:
+        from stock_lab_core.execution_readiness import precision_display_context
+        leveraged_action = qualify_hold_action_plan(
+            leveraged_state.get("dca_note", ""), precision_display_context(c).get("execution_workflow"),
+        )
         h1, h2, h3, h4 = st.columns(4)
         h1.metric("종합 판정", leveraged_state.get("dca_stage", "-"))
         h2.metric("회복 체크", leveraged_state.get("recovery_label", "-"), leveraged_state.get("recovery_state", "-"))
@@ -21338,14 +21348,14 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
             f"<b>{escape_html_value(name)} 보유 판단</b><br>"
             f"<span class='highlight' style='color:#c4b5fd;font-size:1.15em;'>"
             f"⚡ 일반 손절표보다 레버리지 회차 관리 우선</span><br><br>"
-            f"{escape_html_value(leveraged_state.get('dca_note', ''))}<br>"
+            f"{escape_html_value(leveraged_action)}<br>"
             f"<span style='color:#94a3b8;'>손절/축소는 단순 -%보다 목표비중 상한, 환산노출, 기초축 동행, 미리 정한 손실 허용폭으로 따로 관리하세요.</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
         return {
             "ticker": ticker, "displayed": True, "decision": leveraged_state.get("dca_stage", "-"),
-            "action": leveraged_state.get("dca_note", ""), "price_vs_avg": price_vs_avg,
+            "action": leveraged_action, "price_vs_avg": price_vs_avg,
             "leveraged_state": leveraged_state,
         }
 
@@ -21452,7 +21462,8 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
         action = "여러 훼손 신호 동시 발생. 손절선을 명확히 설정하고 지키세요."
 
     # ── UI 렌더링 ───────────────────────────────
-    action = qualify_hold_action_plan(action, c.get("execution_workflow"))
+    from stock_lab_core.execution_readiness import precision_display_context
+    action = qualify_hold_action_plan(action, precision_display_context(c).get("execution_workflow"))
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("종합 판정", decision.split(" ", 1)[-1])
     h2.metric("종합 점수", f"{total_score:+d}점")
@@ -21673,10 +21684,14 @@ def build_execution_workflow_display_df(workflow) -> pd.DataFrame:
     return pd.DataFrame([row]).reindex(columns=EXECUTION_WORKFLOW_DISPLAY_COLUMNS, fill_value="")
 
 
-def render_precision_execution_state(workflow):
-    row = _safe_execution_workflow_row(workflow)
-    label = f"현재 실행 판단: {row['게이트상태']} · {row['게이트근거']}"
-    if row["게이트상태"] in {GATE_DEFENSE, GATE_DATA_CHECK}:
+def render_precision_execution_state(workflow, final_check=None):
+    from stock_lab_core.execution_readiness import build_execution_readiness
+    ready = build_execution_readiness(workflow, final_check)
+    row = ready["display_workflow"]
+    label = f"현재 실행 판단: {ready['label']} · {ready['reason']}"
+    if ready["state"] == "pending":
+        st.info(label)
+    elif row["게이트상태"] in {GATE_DEFENSE, GATE_DATA_CHECK}:
         st.error(label)
     elif row["게이트상태"] != GATE_EXECUTABLE:
         st.warning(label)
@@ -33924,8 +33939,8 @@ def _render_today_queue_tab(mode):
     show_cols = [
         "종목명", "티커", "유형", "현재가", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "후보품질", "후보점수", "후보검토사항",
         "가격자료기준일", "가격반영", "지표마지막봉", "계산시각", "자료주의",
-        "목표가요약", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
-        "1차기준", "1차조건", "부족액", "📌후보등급",
+        "목표가요약", "최종읽기", "현재실행안내", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
+        "1차기준", "현재진입조건", "부족액", "📌후보등급",
         "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
         "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "섹터RS상태", "섹터벤치", "섹터RS변화", "섹터RS기준일", "섹터분류근거", "섹터분류출처", "섹터검증일", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
@@ -33935,6 +33950,10 @@ def _render_today_queue_tab(mode):
             st.info(empty_msg)
             return
         view_df = view_df.copy()
+        from stock_lab_core.execution_readiness import execution_guidance_fields
+        guidance = pd.DataFrame([execution_guidance_fields(row) for row in view_df.to_dict("records")], index=view_df.index)
+        for col in guidance:
+            view_df[col] = guidance[col]
         view_df = sort_today_queue_detail_table(view_df, risk_first=sort_low_first)
         display_cols = [col for col in show_cols if col in view_df.columns]
         for state_col in ["매크로상태", "데이터상태"]:
@@ -33960,9 +33979,9 @@ def _render_today_queue_tab(mode):
                 "섹터분류출처": st.column_config.LinkColumn("섹터분류출처", display_text="분류 근거"),
                 "섹터RS변화": st.column_config.NumberColumn("섹터RS변화", format="%.2f%%", help="동일 거래일의 종목/벤치 가격비가 관측기간 동안 변한 비율입니다."),
                 "업사이드상태": st.column_config.TextColumn("업사이드상태", help="애널 목표가 업사이드 데이터의 사용 가능 상태입니다."),
-                "게이트상태": st.column_config.TextColumn("게이트상태", help="기존 판정문구를 바꾸지 않고 오늘 실행 가능 여부만 분류한 값입니다."),
+                "게이트상태": st.column_config.TextColumn("1차 게이트", help="종목 선별 결과입니다. 정밀관측소 최종 체크의 실행 허용과 구분합니다."),
                 "게이트근거": st.column_config.TextColumn("게이트근거", help="실행 후보에서 대기/방어로 내려간 직접 사유입니다."),
-                "실행메모": st.column_config.TextColumn("실행메모", help="오늘점검 신호를 주문 전 행동으로 압축한 값입니다."),
+                "현재실행안내": st.column_config.TextColumn("현재 실행 안내"),
                 "R/R": st.column_config.TextColumn("R/R", help="정밀관측소와 같은 2ATR 손절 기준의 현재가 손익비입니다. 일반 표에서는 Adj점수 다음 정렬 기준입니다."),
                 "R/R성격": st.column_config.TextColumn("R/R성격", help="차트 구조 고점 기준인지, 현재가+4ATR 투영 상단인지 구분합니다."),
                 "R/R출처": st.column_config.TextColumn("R/R출처", help="R/R 목표값을 산출한 기준입니다. 투영상단은 확정 목표가가 아닙니다."),
@@ -33972,12 +33991,15 @@ def _render_today_queue_tab(mode):
                 "차트목표": st.column_config.TextColumn("차트목표", help="R/R 계산에 쓰는 차트 구조 목표가 또는 강세 시나리오 상단입니다. 애널리스트 목표가와 다를 수 있습니다."),
                 "손절가": st.column_config.TextColumn("손절가", help="R/R 계산에 쓰는 2ATR 기준 손절선입니다."),
                 "1차기준": st.column_config.TextColumn("1차기준", help="현재가 실행이 아니면 MA5/MA20/FVG/ATR 중 가장 가까운 1차 확인 가격입니다."),
-                "1차조건": st.column_config.TextColumn("1차조건", help="1차 기준가를 어떻게 해석할지 보여줍니다. 보류 신호는 회복 후 재계산으로 표시됩니다."),
+                "현재진입조건": st.column_config.TextColumn("현재 진입 조건"),
                 "부족액": st.column_config.TextColumn("부족액", help="목표비중 대비 남은 매수 필요액입니다. 실제 주문 전에는 정밀관측소에서 회차 금액을 다시 확인하세요."),
             },
             width='stretch',
             hide_index=True,
         )
+        with st.expander("기술 원계획 · 실행 허용 아님"):
+            raw_cols = [col for col in ("종목명", "티커", "실행메모", "1차조건") if col in view_df]
+            st.dataframe(view_df[raw_cols], width='stretch', hide_index=True)
         st.download_button(
             "현재 표 CSV 다운로드 (앱 정렬 고정)",
             data=dataframe_to_csv_bytes(view_df[display_cols]),
@@ -34197,7 +34219,9 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             pattern_timing, pattern_bucket, pattern_reason,
         )
         external = _safe_execution_workflow_row(c.get("execution_workflow"))
-        render_precision_execution_state(c.get("execution_workflow"))
+        precision_execution_slot = st.empty()
+        with precision_execution_slot.container():
+            render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
         with st.expander("기술 원신호·점수"):
             st.write(c["dec"])
@@ -34222,6 +34246,10 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name, key_prefix="demo_precision")
         precision_pre_buy_checks = build_pre_buy_final_checks(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
         c["chart_final_check"] = precision_pre_buy_checks[1]
+        from stock_lab_core.execution_readiness import build_execution_readiness
+        c["execution_readiness"] = build_execution_readiness(c.get("execution_workflow"), c["chart_final_check"])
+        with precision_execution_slot.container():
+            render_precision_execution_state(c.get("execution_workflow"), c["chart_final_check"])
         c["chart_price_asof"] = frame_last_date(chart_df)
         c["chart_structure"] = {"일봉": render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)}
@@ -36196,7 +36224,9 @@ if main_page == "precision":
             },
         )
 
-        render_precision_execution_state(c.get("execution_workflow"))
+        precision_execution_slot = st.empty()
+        with precision_execution_slot.container():
+            render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
         if is_etf:
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name)
@@ -36354,6 +36384,10 @@ if main_page == "precision":
             c["chart_scorecard"] = chart_financial
             precision_pre_buy_checks = build_pre_buy_final_checks(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
             c["chart_final_check"] = precision_pre_buy_checks[1]
+            from stock_lab_core.execution_readiness import build_execution_readiness
+            c["execution_readiness"] = build_execution_readiness(c.get("execution_workflow"), c["chart_final_check"])
+            with precision_execution_slot.container():
+                render_precision_execution_state(c.get("execution_workflow"), c["chart_final_check"])
             c["chart_price_asof"] = frame_last_date(chart_df)
             c["chart_structure"] = {}
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)

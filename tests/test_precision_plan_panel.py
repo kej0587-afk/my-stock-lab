@@ -82,7 +82,8 @@ def test_restricted_headline_precedes_raw_plan_and_preserves_payload(display_app
 def test_executable_headline_and_plan_numbers_are_unchanged(display_app):
     app, ui = display_app
     decision = held_decision(buy_amt=140000, current_w=1.0,
-                             execution_workflow={"게이트상태": GATE_EXECUTABLE})
+                             execution_workflow={"게이트상태": GATE_EXECUTABLE},
+                             chart_final_check={"execution_allowed": True, "block_count": 0, "core_missing_ids": []})
     plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=True)
     assert "<span class='highlight'>분할 진입 가능</span>" in ui.markdowns[-1]
     assert plan["status_note"] in ui.markdowns[-1]

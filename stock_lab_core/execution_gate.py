@@ -301,4 +301,8 @@ def apply_execution_gate_columns(
     out["업사이드상태"] = upside_states
     out["섹터RS상태"] = sector_states
     out["후보검토사항"] = candidate_notes
+    from stock_lab_core.execution_readiness import execution_guidance_fields
+    guidance = pd.DataFrame([execution_guidance_fields(row) for row in out.to_dict("records")], index=out.index)
+    for col in guidance:
+        out[col] = guidance[col]
     return out
