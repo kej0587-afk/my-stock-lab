@@ -425,9 +425,12 @@ def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
                 continue
             if _chart_pattern_rel_diff(a["price"], b["price"]) > 0.045:
                 continue
-            segment = view.iloc[a["pos"]:b["pos"] + 1]
+            segment = view.iloc[a["pos"] + 1:b["pos"]]
             if kind == "bottom":
+                if float(segment["Low"].min()) < min(a["price"], b["price"]):
+                    continue
                 neckline = float(segment["High"].max())
+                neck_time = segment["High"].idxmax()
                 base = (a["price"] + b["price"]) / 2
                 height = (neckline - base) / base if base else 0
                 if height < 0.035 or close < base * (1 + min(height * 0.25, 0.03)):
@@ -437,7 +440,10 @@ def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
                 label = f"쌍바닥 {status}"
                 label_y = b["price"]
             else:
+                if float(segment["High"].max()) > max(a["price"], b["price"]):
+                    continue
                 neckline = float(segment["Low"].min())
+                neck_time = segment["Low"].idxmin()
                 top = (a["price"] + b["price"]) / 2
                 height = (top - neckline) / top if top else 0
                 if height < 0.035 or close > top * (1 - min(height * 0.25, 0.03)):
@@ -459,11 +465,13 @@ def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
                 "label_x": b["time"],
                 "label_y": label_y,
                 "line_points": [
-                    ((a["time"], a["price"]), (b["time"], b["price"])),
-                    ((a["time"], neckline), (view.index[-1], neckline)),
+                    ((a["time"], a["price"]), (neck_time, neckline)),
+                    ((neck_time, neckline), (b["time"], b["price"])),
+                    ((neck_time, neckline), (view.index[-1], neckline)),
                 ],
             }
-            if best is None or candidate["confidence"] > best["confidence"]:
+            # Prefer the current structure, not an older, deeper neckline.
+            if best is None or (candidate["created_pos"], candidate["confidence"]) > (best["created_pos"], best["confidence"]):
                 best = candidate
     return best
 
@@ -702,19 +710,32 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
         post_extreme = recent[extreme_idx:]
         min_span = max(6, int(len(view) * 0.04))
         if len(post_extreme) >= 2 and (post_extreme[-1]["pos"] - post_extreme[0]["pos"]) >= min_span:
-            return post_extreme[-4:]
-        return recent[-4:]
+            recent = post_extreme[-4:]
+            # Trimming history can remove the dominant peak/trough. Re-anchor
+            # the local structure before selecting the next confirmed touch.
+            local_extreme = (max if kind == "resistance" else min)(
+                range(len(recent)), key=lambda idx: recent[idx]["price"]
+            )
+            if local_extreme < len(recent) - 1:
+                recent = recent[local_extreme:]
+        else:
+            recent = recent[-4:]
+        return recent
 
     def _fit_line(points, label, color, kind):
         recent = _trend_points(points, kind)
         if len(recent) < 2:
             return None
-        x = np.array([p["pos"] for p in recent], dtype=float)
-        y = np.array([p["price"] for p in recent], dtype=float)
-        try:
-            slope, intercept = np.polyfit(x, y, 1)
-        except Exception:
+        anchor = recent[0]
+        candidates = [p for p in recent[1:] if p["pos"] > anchor["pos"]]
+        if not candidates:
             return None
+        # An edge through two actual pivots, not a regression through candles.
+        slope_to = lambda p: (p["price"] - anchor["price"]) / (p["pos"] - anchor["pos"])
+        touch = (max if kind == "resistance" else min)(candidates, key=slope_to)
+        slope = slope_to(touch)
+        intercept = anchor["price"] - slope * anchor["pos"]
+        x = np.array([anchor["pos"], touch["pos"]], dtype=float)
         y0 = float(slope * x[0] + intercept)
         y1 = float(slope * last_pos + intercept)
         if not finite_num(y0) or not finite_num(y1) or y0 <= 0 or y1 <= 0:
@@ -744,6 +765,7 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
             "x": view.index[int(x[0]):].tolist(),
             "y": (slope * np.arange(int(x[0]), last_pos + 1) + intercept).tolist(),
             "direction": direction,
+            "pivots": [dict(anchor), dict(touch)],
         }
 
     guides = []
@@ -768,3 +790,7 @@ def trendline_guides_caption(guides: list) -> str:
 
 chart_pattern_price_text = _chart_pattern_price_text
 build_recent_trendline_guides = _build_recent_trendline_guides
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

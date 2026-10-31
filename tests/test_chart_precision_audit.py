@@ -31,6 +31,8 @@ def test_chart_initial_zoom_keeps_full_history_and_volume_scale():
     assert figure.layout.xaxis.range[0] == frame.index[-180]
     assert figure.layout.yaxis.range[0] < frame.tail(180)["Low"].min()
     assert figure.layout.yaxis2.range is None
+    assert figure.layout.yaxis2.rangemode == "tozero"
+    assert figure.layout.yaxis2.fixedrange is True
     assert figure.layout.legend.y < 0
     assert figure.layout.margin.b >= 100
 

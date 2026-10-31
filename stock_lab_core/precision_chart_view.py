@@ -87,7 +87,8 @@ def finish_price_figure(fig, frame, volume_signals, *, show_level_labels=False):
             name="거래량 MA", line=dict(color="#fbbf24", width=1), mode="lines",
         ))
         fig.update_layout(yaxis=dict(domain=[0.25, 1]),
-                          yaxis2=dict(domain=[0, 0.17], title="거래량", anchor="x"))
+                          yaxis2=dict(domain=[0, 0.17], title="거래량", anchor="x",
+                                      rangemode="tozero", fixedrange=True))
     # Zones remain visible; crowded labels can be restored without changing data.
     fig.update_annotations(visible=show_level_labels)
     fig.update_layout(
@@ -108,3 +109,7 @@ def finish_price_figure(fig, frame, volume_signals, *, show_level_labels=False):
                 padding = (upper - lower) * 0.08
                 fig.update_layout(yaxis=dict(range=[max(0, lower - padding), upper + padding]))
     return fig
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from stock_lab_core.chart_patterns import (
     build_chart_pattern_timing_note,
@@ -153,3 +154,83 @@ def test_chart_pattern_caption_and_trendline_caption_are_human_readable():
 
     assert "기준 2,006,000.00 위 안착" in chart_pattern_caption([pattern])
     assert trendline_guides_caption(guides) == "추세선: 저항 하락 · 지지 상승 · 가격이 두 선 사이에서 위/아래 어느 쪽을 돌파하는지 봅니다."
+
+
+@pytest.mark.parametrize("kind", ["top", "bottom"])
+def test_double_pattern_draws_both_swings_and_starts_neckline_at_inner_pivot(kind):
+    from stock_lab_core.chart_patterns import _detect_double_pattern
+
+    frame = _sample_ohlc(50)
+    frame[["High", "Low", "Close"]] = [110.0, 105.0, 108.0]
+    points = [{"pos": pos, "time": frame.index[pos], "price": price}
+              for pos, price in ((10, 120), (30, 119))]
+    frame.loc[frame.index[20], "Low"] = 100
+    if kind == "bottom":
+        frame[["High", "Low", "Close"]] = 220 - frame[["Low", "High", "Close"]].to_numpy()
+        points = [dict(p, price=220 - p["price"]) for p in points]
+    before = frame.copy(deep=True)
+    pattern = _detect_double_pattern(frame, points, points, kind)
+    assert pattern is not None
+    neck = (frame.index[20], 100.0 if kind == "top" else 120.0)
+    assert pattern["line_points"] == [
+        ((points[0]["time"], points[0]["price"]), neck),
+        (neck, (points[1]["time"], points[1]["price"])),
+        (neck, (frame.index[-1], neck[1])),
+    ]
+    assert pattern["label_x"] == frame.index[30]
+    pd.testing.assert_frame_equal(frame, before)
+
+
+def test_double_top_prefers_latest_structure_over_older_deeper_neckline():
+    from stock_lab_core.chart_patterns import _detect_double_pattern
+
+    frame = _sample_ohlc(80)
+    frame[["High", "Low", "Close"]] = [340.0, 338.0, 339.0]
+    points = [{"pos": pos, "time": frame.index[pos], "price": price}
+              for pos, price in ((10, 351.60), (35, 364.17), (60, 359.40))]
+    for p in points:
+        frame.loc[p["time"], "High"] = p["price"]
+    frame.loc[frame.index[24], "Low"] = 327.74
+    frame.loc[frame.index[45], "Low"] = 335.51
+    frame.loc[frame.index[-1], "Close"] = 310
+    pattern = _detect_double_pattern(frame, points, [], "top")
+    assert pattern["label_x"] == frame.index[60]
+    assert pattern["line_points"][0][0] == (frame.index[35], 364.17)
+    assert pattern["trigger_price"] == 335.51
+
+
+@pytest.mark.parametrize("kind", ["top", "bottom"])
+def test_double_pattern_does_not_bridge_a_more_extreme_middle_pivot(kind):
+    from stock_lab_core.chart_patterns import _detect_double_pattern
+
+    frame = _sample_ohlc(50)
+    frame[["High", "Low", "Close"]] = [110.0, 100.0, 105.0]
+    frame.loc[frame.index[20], "High"] = 150
+    points = [{"pos": pos, "time": frame.index[pos], "price": 120.0} for pos in (10, 30)]
+    if kind == "bottom":
+        frame[["High", "Low", "Close"]] = 220 - frame[["Low", "High", "Close"]].to_numpy()
+        points = [dict(p, price=100.0) for p in points]
+    assert _detect_double_pattern(frame, points, points, kind) is None
+
+
+@pytest.mark.parametrize("kind", ["resistance", "support"])
+def test_recent_trendline_connects_real_structural_pivots_not_small_rebound_average(monkeypatch, kind):
+    import stock_lab_core.chart_patterns as patterns
+
+    frame = _sample_ohlc(140)
+    frame[["High", "Low", "Close"]] = [330.0, 310.0, 320.0]
+    points = [{"pos": pos, "time": frame.index[pos], "price": price} for pos, price in (
+        (78, 384.48), (91, 351.60), (99, 344.68), (105, 349.91),
+        (111, 364.17), (118, 353.22), (127, 359.40),
+    )]
+    if kind == "support":
+        points = [dict(p, price=640 - p["price"]) for p in points]
+    monkeypatch.setattr(patterns, "_chart_pattern_pivots", lambda view: (points, []) if kind == "resistance" else ([], points))
+    guide = patterns.build_recent_trendline_guides(frame)[0]
+    assert guide["direction"] == ("하락" if kind == "resistance" else "상승")
+    assert [p["pos"] for p in guide["pivots"]] == [111, 127]
+    assert guide["y0"] == pytest.approx(points[4]["price"])
+    assert guide["y"][16] == pytest.approx(points[6]["price"])
+    for p in points[4:]:
+        value = guide["y"][p["pos"] - 111]
+        assert value >= p["price"] - 1e-6 if kind == "resistance" else value <= p["price"] + 1e-6

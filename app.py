@@ -6861,17 +6861,17 @@ def _add_chart_pattern_overlays(fig, patterns: list):
                 x0=x0, y0=y0, x1=x1, y1=y1,
                 line=dict(color=color, width=line_width, dash="dot"),
             )
-        direction = pattern.get("direction", "neutral")
-        label_y = 0.96 if direction != "bullish" else 0.90
         fig.add_annotation(
-            x=0.02,
-            y=label_y,
-            xref="paper",
-            yref="paper",
+            x=pattern.get("label_x"),
+            y=pattern.get("label_y"),
+            xref="x",
+            yref="y",
             text=_chart_pattern_annotation_text(pattern),
-            showarrow=False,
-            xanchor="left",
-            yanchor="top",
+            showarrow=True,
+            arrowhead=0,
+            ax=0,
+            ay=28 if pattern.get("direction") == "bullish" else -28,
+            xanchor="center",
             bgcolor="rgba(15,23,42,0.72)",
             bordercolor=color,
             borderwidth=1,

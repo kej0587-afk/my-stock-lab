@@ -8,7 +8,8 @@ import sys
 from stock_lab_core import report_build
 
 
-MODULES = ("chart_scorecard", "scorecard_review", "etf_holdings", "precision_review_export")
+MODULES = ("chart_scorecard", "scorecard_review", "etf_holdings", "precision_review_export",
+           "chart_patterns", "chart_execution", "precision_chart_view")
 
 
 def precision_build_info(entrypoint=None):

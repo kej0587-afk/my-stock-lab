@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from stock_lab_core.chart_execution import (
     build_chart_execution_check_rows,
@@ -75,3 +76,23 @@ def test_chart_trigger_pass_does_not_override_common_waiting_gate():
     assert trigger["다음 행동"] == "조건 확인 대기"
     assert rows[0]["조건"] == "종합 실행"
     assert rows[0]["상태"] == "대기"
+
+
+@pytest.mark.parametrize("close,expected", [(280, "주의"), (370, "참고")])
+def test_bearish_pattern_is_invalidated_above_its_high_not_below_it(close, expected):
+    patterns = [{"name": "쌍봉", "direction": "bearish", "trigger_price": 335.51, "invalid_price": 369.63}]
+    guide = build_chart_execution_guide(patterns, [], {}, {}, "GOOGL", close)
+    assert "$369.63 위 회복 시 하락 패턴 경고 해제" in guide
+    assert "$369.63 이탈 시 후보 폐기" not in guide
+    rows = build_chart_execution_check_rows(_sample_price_df(close), patterns, [], {}, {}, "GOOGL")
+    invalid = next(row for row in rows if row["조건"] == "하락 패턴 무효화")
+    assert invalid["상태"] == expected
+    assert "회복 시나리오가 훼손" not in invalid["해석"]
+
+
+def test_bullish_pattern_still_invalidates_below_its_low():
+    patterns = [{"name": "쌍바닥", "direction": "bullish", "trigger_price": 70.0, "invalid_price": 65.0}]
+    guide = build_chart_execution_guide(patterns, [], {}, {}, "FCX", 64)
+    assert "$65.00 이탈 시 후보 폐기" in guide
+    rows = build_chart_execution_check_rows(_sample_price_df(64), patterns, [], {}, {}, "FCX")
+    assert next(row for row in rows if row["조건"] == "무효선 방어")["상태"] == "차단"

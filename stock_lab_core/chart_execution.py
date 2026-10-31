@@ -190,7 +190,10 @@ def build_chart_execution_guide(
 
     invalid_bits = []
     if finite_num(invalid) and invalid > 0:
-        invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)} 이탈 시 후보 폐기")
+        if direction == "bearish":
+            invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)} 위 회복 시 하락 패턴 경고 해제")
+        else:
+            invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)} 이탈 시 후보 폐기")
     if support_guide and finite_num(support_guide.get("y1")):
         invalid_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)} 아래는 추가매수 중단·다음 봉 회복 확인")
     invalid_text = " / ".join(invalid_bits[:2]) if invalid_bits else "지지선 이탈 시 추가매수 중단·다음 봉 회복 확인"
@@ -364,7 +367,7 @@ def build_chart_execution_check_rows(
     if support_guide and finite_num(support_guide.get("y1")):
         invalid_bits.append(f"저점선 {format_currency(support_guide.get('y1'), ticker)}")
     if invalid_bits:
-        pattern_broken = finite_num(invalid) and invalid > 0 and finite_num(close) and close < invalid
+        pattern_broken = direction == "bullish" and finite_num(invalid) and invalid > 0 and finite_num(close) and close < invalid
         support_broken = support_guide and finite_num(support_guide.get("y1")) and finite_num(close) and close < clean_float(support_guide.get("y1"), np.nan)
         if pattern_broken:
             invalid_state = "차단"
@@ -374,12 +377,18 @@ def build_chart_execution_check_rows(
             invalid_state = "주의"
             invalid_meaning = "단기 저점선은 이탈했지만 패턴 무효선은 아직 남아 있습니다. 추가매수보다 회복 확인이 먼저입니다."
             invalid_action = "추가매수 중단·다음 봉 회복 확인"
+        elif direction == "bearish":
+            cleared = finite_num(invalid) and invalid > 0 and finite_num(close) and close > invalid
+            invalid_state = "참고" if cleared else "주의" if finite_num(close) else "확인필요"
+            invalid_meaning = ("무효선 위 회복으로 하락 패턴 경고가 해제된 상태입니다." if cleared else
+                               "하락 패턴의 무효선은 위로 회복해야 경고가 해제됩니다. 아래에 있다는 이유로 회복 패턴 실패로 보지 않습니다.")
+            invalid_action = "다른 실행 조건 별도 확인" if cleared else "무효선 위 회복 여부 확인"
         else:
             invalid_state = "통과"
             invalid_meaning = "주요 방어선 위에 있어 회복 시나리오는 유지됩니다."
             invalid_action = "보유만 속도조절"
         add_row(
-            "무효선 방어",
+            "하락 패턴 무효화" if direction == "bearish" else "무효선 방어",
             invalid_state,
             " / ".join(invalid_bits[:2]),
             invalid_meaning,
@@ -391,3 +400,7 @@ def build_chart_execution_check_rows(
             if row["다음 행동"] in {"1차 정찰 가능", "소액 정찰만 검토", "다른 조건 통과 시 분할 검토"}:
                 row["다음 행동"] = workflow.get("게이트근거") or "조건 확인 대기"
     return rows
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
