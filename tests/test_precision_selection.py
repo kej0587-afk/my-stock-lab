@@ -83,6 +83,34 @@ def test_missing_identity_falls_back_to_free_without_guessing_a_label():
     assert resolve_precision_selection([], free_option="") == ("", True)
 
 
+def test_free_ticker_survives_streamlit_widget_cleanup():
+    from streamlit.testing.v1 import AppTest
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
+    keys = {"PRECISION_FREE_TICKER_KEY", "PRECISION_FREE_MARKET_KEY", "PRECISION_US_MARKET_OPTION"}
+    constants = [node for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id in keys for target in node.targets)]
+    precision = next(node for node in tree.body if isinstance(node, ast.If)
+                     and ast.unparse(node.test) == "main_page == 'precision'")
+    free = next(node for node in precision.body if isinstance(node, ast.If) and ast.unparse(node.test) == "is_free")
+    restore = next(node for node in free.body if isinstance(node, ast.If)
+                   and ast.unparse(node.test) == "PRECISION_FREE_TICKER_KEY not in st.session_state")
+    persist = next(node for node in free.body if isinstance(node, ast.If) and ast.unparse(node.test) == "user_tkr_raw")
+    prefix = ast.parse("import streamlit as st\nview = st.radio('View', ['free', 'preset'], key='view')")
+    fields = ast.parse("user_tkr_raw = st.text_input('Ticker', key=PRECISION_FREE_TICKER_KEY)\nmkt_opt = PRECISION_US_MARKET_OPTION").body
+    screen = ast.If(test=ast.parse("view == 'free'", mode="eval").body,
+                    body=[restore, *fields, persist], orelse=ast.parse("st.text('Preset')").body)
+    source = ast.unparse(ast.fix_missing_locations(ast.Module(
+        body=[prefix.body[0], *constants, prefix.body[1], screen], type_ignores=[])))
+    app = AppTest.from_string(source).run()
+    app.text_input[0].input("SOXX").run()
+    app.radio[0].set_value("preset").run()
+    app.run()
+    assert not app.text_input
+    app.radio[0].set_value("free").run()
+    assert not app.exception
+    assert app.text_input[0].value == "SOXX"
+
+
 def _selection_screen_source():
     """Exercise the actual app selection block without price/account services."""
     tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
