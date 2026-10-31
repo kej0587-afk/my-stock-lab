@@ -16,6 +16,46 @@ def _mid(value, low, ideal, high):
     return _higher(value, low, ideal) if value <= ideal else _higher(-value, -high, -ideal)
 
 
+def _price_series(frame, column="Close"):
+    if frame is None or column not in frame:
+        return pd.Series(dtype=float)
+    values = pd.to_numeric(frame[column], errors="coerce").replace([math.inf, -math.inf], math.nan)
+    return values.where(values > 0)
+
+
+def _year_position(frame, close):
+    if close.empty or pd.isna(close.iloc[-1]):
+        return None
+    if isinstance(frame.index, pd.DatetimeIndex):
+        if frame.index.hasnans or not frame.index.is_unique or not frame.index.is_monotonic_increasing:
+            return None
+        dates = frame.index.tz_localize(None).normalize()
+        cutoff = dates[-1] - pd.Timedelta(weeks=52)
+        if dates[0] > cutoff:
+            return None
+        window = frame.loc[dates > cutoff]
+    else:
+        if len(close) < 252:
+            return None
+        window = frame.tail(252)
+    high = _price_series(window, "High" if "High" in window else "Close")
+    low = _price_series(window, "Low" if "Low" in window else "Close")
+    if high.empty or high.isna().any() or low.isna().any() or (high < low).any():
+        return None
+    upper, lower = high.max(), low.min()
+    price = close.iloc[-1]
+    return float((price - lower) / (upper - lower) * 100) if upper > lower and lower <= price <= upper else None
+
+
+def _session_close(frame):
+    close = _price_series(frame)
+    if isinstance(close.index, pd.DatetimeIndex):
+        close.index = close.index.tz_localize(None).normalize()
+    if close.index.hasnans or not close.index.is_unique or not close.index.is_monotonic_increasing:
+        return pd.Series(dtype=float)
+    return close
+
+
 def build_chart_scorecard(info, frame, *, is_etf=False, benchmark=None):
     values = {row["key"]: row["value"] for row in build_financial_snapshot_rows(info, is_etf=is_etf)}
     info = dict(info or {})
@@ -51,15 +91,17 @@ def build_chart_scorecard(info, frame, *, is_etf=False, benchmark=None):
     fcf, cap = values.get("freeCashflow"), values.get("marketCap")
     fcf_yield = fcf / cap * 100 if fcf is not None and cap is not None and cap > 0 else None
     add("주주환원", "FCF 수익률", fcf_yield, _higher(fcf_yield, 0, 8), "%")
-    close = pd.to_numeric(frame["Close"], errors="coerce").dropna() if frame is not None and "Close" in frame else pd.Series(dtype=float)
+    source_close = _price_series(frame)
+    close = source_close
+    # Do not bridge missing sessions or reuse an older bar as the latest price.
+    gaps = close.isna().to_numpy().nonzero()[0]
+    if len(gaps):
+        close = close.iloc[gaps[-1] + 1:]
     rsi = position = ma_score = volatility = None
     if len(close) >= 15:
         from ta.momentum import RSIIndicator
         rsi = optional_float(RSIIndicator(close).rsi().iloc[-1])
-    if len(close) >= 252:
-        high = pd.to_numeric(frame["High"], errors="coerce").tail(252).max() if "High" in frame else close.tail(252).max()
-        low = pd.to_numeric(frame["Low"], errors="coerce").tail(252).min() if "Low" in frame else close.tail(252).min()
-        position = float((close.iloc[-1] - low) / (high - low) * 100) if high > low else None
+    position = _year_position(frame, source_close)
     if len(close) >= 200:
         price, ma20, ma50, ma200 = close.iloc[-1], close.tail(20).mean(), close.tail(50).mean(), close.tail(200).mean()
         ma_score = 100 if price > max(ma20, ma50, ma200) else 80 if price > max(ma50, ma200) else 60 if price > ma200 else 45 if price > ma50 else 25
@@ -69,14 +111,16 @@ def build_chart_scorecard(info, frame, *, is_etf=False, benchmark=None):
     add("모멘텀", "52주 위치", position, _higher(position, 20, 90), "%")
     add("모멘텀", "MA20/50/200", ma_score, ma_score)
     add("모멘텀", "30일 연율변동성", volatility, _higher(-volatility, -80, -10) if volatility is not None else None, "%")
+    asset_close = _session_close(frame)
+    benchmark_close = _session_close(benchmark)
     for days, label, bad, good in ((126, "6M RS", -20, 25), (252, "12M RS", -25, 35)):
         relative = None
-        if benchmark is not None and "Close" in benchmark and len(close) > days:
-            bclose = pd.to_numeric(benchmark["Close"], errors="coerce")
-            bclose = bclose.reindex(close.index)
+        if not benchmark_close.empty and len(asset_close) > days:
+            bclose = benchmark_close.reindex(asset_close.index)
             start, end = bclose.iloc[-days - 1], bclose.iloc[-1]
-            if pd.notna(start) and pd.notna(end) and start > 0:
-                relative = float(((close.iloc[-1] / close.iloc[-days - 1] - 1) - (end / start - 1)) * 100)
+            asset_start, asset_end = asset_close.iloc[-days - 1], asset_close.iloc[-1]
+            if all(pd.notna(value) for value in (start, end, asset_start, asset_end)):
+                relative = optional_float(((asset_end / asset_start - 1) - (end / start - 1)) * 100)
         add("모멘텀", label, relative, _higher(relative, bad, good), "%p")
     if is_etf:
         factors = [item for item in factors if item["축"] == "모멘텀"]
@@ -99,7 +143,7 @@ def volume_review(frame, ticker=""):
     labels = {"HVE": "로드 구간 최고 거래량", "HVY": "최근 252봉 최고 거래량", "HVQ": "최근 63봉 최고 거래량",
               "POCKET_PIVOT": "Pocket Pivot(거래량 조건만)", "POWER": "평균 2배 이상 거래량", "HIGH": "평균 1.5배 이상 거래량",
               "DRY60": "평균 50% 이하 + 60봉 최저 수축", "DRY20": "평균 50% 이하 + 20봉 최저 수축", "BASE": "평균적 거래량", "UNAVAILABLE": "자료 미수집"}
-    close = optional_float(frame["Close"].iloc[-1])
+    close = optional_float(_price_series(frame).iloc[-1]) if "Close" in frame else None
     currency = "KRW" if ticker.endswith((".KS", ".KQ")) or (len(ticker) == 6 and ticker[0].isdigit()) else "USD"
     avg, current = optional_float(last["volume_ma"]), optional_float(last["volume"])
     rows = [{"항목": "평균 거래량(50봉)", "값": avg, "단위": "주"},
@@ -114,8 +158,8 @@ def volume_review(frame, ticker=""):
     return rows, note + ". 거래량만으로 매집/매수 확정 불가. 종가 위치와 이후 봉을 함께 확인합니다."
 
 
-def render_chart_scorecard(st, frame, *, info=None, ticker="", is_etf=False, source=""):
-    rows, factors = build_chart_scorecard(info, frame, is_etf=is_etf)
+def render_chart_scorecard(st, frame, *, info=None, ticker="", is_etf=False, source="", benchmark=None):
+    rows, factors = build_chart_scorecard(info, frame, is_etf=is_etf, benchmark=benchmark)
     st.markdown("#### 재무·모멘텀 성적표")
     st.dataframe(pd.DataFrame(rows)[["축", "점수", "자료"]], hide_index=True, width="stretch",
                  column_config={"축": st.column_config.TextColumn("축", width=100),

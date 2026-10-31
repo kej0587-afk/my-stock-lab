@@ -159,6 +159,7 @@ from stock_lab_core.hold_judgement import (
     HoldDecision,
     build_hold_decision,
 )
+from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
 from stock_lab_core.runtime_status import build_speed_check_snapshot
 from stock_lab_core.db_schema import (
     get_feedback_create_sql,
@@ -701,19 +702,22 @@ def fetch_earnings_date(ticker: str) -> dict:
         if earnings_date is None or pd.isna(earnings_date):
             return {"ok": False, "label": "실적발표일 미확인"}
         
-        # 날짜 비교 (timezone 제거 후 계산)
-        target_dt = pd.to_datetime(earnings_date).tz_localize(None)
-        now_dt = pd.Timestamp.now().tz_localize(None)
-        days_until = (target_dt - now_dt).days
+        market_zone = ZoneInfo("Asia/Seoul" if str(ticker).upper().endswith((".KS", ".KQ")) else "America/New_York")
+        target_dt = pd.Timestamp(earnings_date)
+        if target_dt.tzinfo is not None:
+            target_dt = target_dt.tz_convert(market_zone)
+        now_dt = get_kst_now().astimezone(market_zone)
+        days_until = (target_dt.date() - now_dt.date()).days
         
         if days_until < 0:
-            risk_label = "실적 발표 완료"
+            risk_label = "실적 예정일 경과 · 발표 여부 미확인"
         elif days_until <= 7:
             risk_label = f"⚠️ 실적 {days_until}일 후 (주의)"
         else:
             risk_label = f"📅 실적 {days_until}일 후"
             
-        return {"ok": True, "label": risk_label, "high_risk": 0 <= days_until <= 7}
+        return {"ok": True, "label": risk_label, "high_risk": 0 <= days_until <= 7,
+                "scheduled_date": target_dt.date().isoformat(), "days_until": days_until}
     except Exception as exc:
         logging.warning("Failed to fetch earnings date for %s: %s", ticker, exc, exc_info=True)
         return {"ok": False, "label": "조회 불가"}
@@ -3553,6 +3557,8 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
     )
     if res is not None:
         load_fin_scores_db_for_user.clear()
+        st.session_state.setdefault("fin_score_map", {})[normalize_ticker(ticker)] = clean_int(final_score)
+        invalidate_watchlist_dependent_state()
     return res is not None
 
 
@@ -3586,7 +3592,7 @@ def delete_manual_fin_score_db(ticker):
         return
 
     row = matched.iloc[0]
-    run_supabase(
+    result = run_supabase(
         supabase.table("fin_scores").upsert({
             "owner_email": CURRENT_USER_EMAIL,
             "ticker": key,
@@ -3598,7 +3604,11 @@ def delete_manual_fin_score_db(ticker):
         }, on_conflict="owner_email,ticker"),
         "reset manual financial score",
     )
-    load_fin_scores_db_for_user.clear()
+    if result is not None:
+        load_fin_scores_db_for_user.clear()
+        st.session_state.setdefault("fin_score_map", {}).pop(key, None)
+        invalidate_watchlist_dependent_state()
+    return result is not None
 
 
 init_db()
@@ -5053,21 +5063,8 @@ def fmp_request(endpoint, ticker, period, limit, api_key):
     return data if isinstance(data, list) else []
 
 def find_fmp_match(records, income_row):
-    if not records: return {}
-    date = income_row.get("date")
-    fiscal_year = str(income_row.get("calendarYear") or income_row.get("fiscalYear") or "")[:4]
-    period = str(income_row.get("period", ""))
-
-    for r in records:
-        if date and r.get("date") == date: return r
-    for r in records:
-        r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
-        if fiscal_year and r_year == fiscal_year and str(r.get("period", "")) == period: return r
-    for r in records:
-        r_year = str(r.get("calendarYear") or r.get("fiscalYear") or "")[:4]
-        if fiscal_year and r_year == fiscal_year: return r
-
-    return records[0]
+    from stock_lab_core.financial_periods import match_statement_period
+    return match_statement_period(records, income_row)
 
 def extract_fmp_metrics(inc, bal, cf, period_type):
     fiscal_year = str(inc.get("calendarYear") or inc.get("fiscalYear") or "")[:4]
@@ -5256,134 +5253,27 @@ def fetch_sec_company_facts(cik: str):
     cik = str(cik or "").strip().zfill(10)
     return sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
 
-def sec_fact_rows(company_facts, tags, units=("USD", "shares")):
-    facts = company_facts.get("facts", {}) if isinstance(company_facts, dict) else {}
-    us_gaap = facts.get("us-gaap", {}) if isinstance(facts, dict) else {}
-    rows = []
-    for tag in tags:
-        tag_data = us_gaap.get(tag, {})
-        unit_data = tag_data.get("units", {}) if isinstance(tag_data, dict) else {}
-        for unit in units:
-            for row in unit_data.get(unit, []) or []:
-                if isinstance(row, dict) and row.get("val") not in [None, ""]:
-                    item = dict(row)
-                    item["tag"] = tag
-                    item["unit"] = unit
-                    rows.append(item)
-    return rows
+def _build_sec_enriched_records(company_facts):
+    from stock_lab_core.sec_financial_periods import build_sec_statement_records
+    annual, quarter = build_sec_statement_records(company_facts, SEC_US_GAAP_TAGS, SEC_FLOW_FIELDS)
+    def enriched(records):
+        output = []
+        for row in records:
+            row = dict(row, report_code="10-K" if row["period"] == "annual" else f"Q{row['fiscal_quarter']}")
+            row["report_label"] = row["report_code"]
+            row = enrich_fin_record(row)
+            if has_dart_core_values(row):
+                output.append(row)
+        return output
+    return enriched(annual)[-3:], enriched(quarter)[-4:]
 
-def sec_duration_days(row):
-    try:
-        start = row.get("start")
-        end = row.get("end")
-        if not start or not end:
-            return None
-        return (pd.Timestamp(end) - pd.Timestamp(start)).days
-    except Exception:
-        return None
-
-def sec_pick_value(company_facts, field, fy, forms, fps=None, annual_flow=False, quarterly_flow=False):
-    candidates = []
-    for row in sec_fact_rows(company_facts, SEC_US_GAAP_TAGS.get(field, [])):
-        try:
-            row_fy = int(row.get("fy"))
-        except Exception:
-            continue
-        if row_fy != int(fy):
-            continue
-        form = str(row.get("form", "")).upper()
-        fp = str(row.get("fp", "")).upper()
-        if form not in forms:
-            continue
-        if fps is not None and fp not in fps:
-            continue
-        duration = sec_duration_days(row)
-        if field in SEC_FLOW_FIELDS and annual_flow and duration is not None and duration < 250:
-            continue
-        if field in SEC_FLOW_FIELDS and quarterly_flow and duration is not None and duration > 140:
-            continue
-        candidates.append(row)
-
-    if not candidates:
-        return np.nan
-
-    candidates = sorted(
-        candidates,
-        key=lambda r: (str(r.get("filed", "")), str(r.get("end", "")), str(r.get("tag", ""))),
-    )
-    return safe_float(candidates[-1].get("val"))
 
 def build_sec_annual_records(company_facts):
-    revenue_rows = sec_fact_rows(company_facts, SEC_US_GAAP_TAGS["revenue"])
-    years = sorted({
-        int(row.get("fy"))
-        for row in revenue_rows
-        if str(row.get("form", "")).upper() in {"10-K", "10-K/A"}
-        and str(row.get("fp", "")).upper() == "FY"
-        and str(row.get("fy", "")).isdigit()
-    })
+    return _build_sec_enriched_records(company_facts)[0]
 
-    records = []
-    for fy in years[-5:]:
-        record = {
-            "period": "annual",
-            "fiscal_year": str(fy),
-            "fiscal_quarter": 4,
-            "report_code": "10-K",
-            "report_label": "10-K",
-            "date": str(fy),
-        }
-        for field in SEC_US_GAAP_TAGS:
-            record[field] = sec_pick_value(
-                company_facts,
-                field,
-                fy,
-                forms={"10-K", "10-K/A"},
-                fps={"FY"},
-                annual_flow=True,
-            )
-        record = enrich_fin_record(record)
-        if has_dart_core_values(record):
-            records.append(record)
-    return records[-3:]
 
 def build_sec_quarter_records(company_facts):
-    revenue_rows = sec_fact_rows(company_facts, SEC_US_GAAP_TAGS["revenue"])
-    keys = sorted({
-        (int(row.get("fy")), str(row.get("fp", "")).upper())
-        for row in revenue_rows
-        if str(row.get("form", "")).upper() in {"10-Q", "10-Q/A"}
-        and str(row.get("fp", "")).upper() in {"Q1", "Q2", "Q3"}
-        and str(row.get("fy", "")).isdigit()
-    })
-
-    records = []
-    for fy, fp in keys[-8:]:
-        try:
-            q_no = int(fp.replace("Q", ""))
-        except Exception:
-            q_no = None
-        record = {
-            "period": "quarter",
-            "fiscal_year": str(fy),
-            "fiscal_quarter": q_no,
-            "report_code": fp,
-            "report_label": fp,
-            "date": f"{fy}-{fp}",
-        }
-        for field in SEC_US_GAAP_TAGS:
-            record[field] = sec_pick_value(
-                company_facts,
-                field,
-                fy,
-                forms={"10-Q", "10-Q/A"},
-                fps={fp},
-                quarterly_flow=True,
-            )
-        record = enrich_fin_record(record)
-        if has_dart_core_values(record):
-            records.append(record)
-    return records[-4:]
+    return _build_sec_enriched_records(company_facts)[1]
 
 @cache_result(ttl=FIN_DATA_TTL_SECONDS)
 def fetch_us_financials_sec(ticker: str):
@@ -5394,8 +5284,7 @@ def fetch_us_financials_sec(ticker: str):
             return {"ok": False, "source": "sec_edgar", "reason": f"SEC CIK lookup failed: {symbol}"}
 
         facts = fetch_sec_company_facts(cik)
-        annual_records = build_sec_annual_records(facts)
-        quarter_records = build_sec_quarter_records(facts)
+        annual_records, quarter_records = _build_sec_enriched_records(facts)
 
         if len(annual_records) < 2:
             return {
@@ -5441,12 +5330,16 @@ def fetch_us_financials_fmp(ticker: str):
         for inc in annual_income[:3]:
             bal = find_fmp_match(annual_balance, inc)
             cf = find_fmp_match(annual_cashflow, inc)
+            if not bal or not cf:
+                return {"ok": False, "source": "fmp", "reason": f"FMP 연간 표 간 기간 일치 실패: {inc.get('date', '미확인')}"}
             annual_records.append(extract_fmp_metrics(inc, bal, cf, "annual"))
 
         quarter_records = []
         for inc in quarter_income[:4]:
             bal = find_fmp_match(quarter_balance, inc)
             cf = find_fmp_match(quarter_cashflow, inc)
+            if not bal or not cf:
+                return {"ok": False, "source": "fmp", "reason": f"FMP 분기 표 간 기간 일치 실패: {inc.get('date', '미확인')}"}
             quarter_records.append(extract_fmp_metrics(inc, bal, cf, "quarter"))
 
         annual_records = sorted(annual_records, key=lambda r: str(r.get("date")))
@@ -5541,6 +5434,9 @@ def build_fin_judgements(fin: dict, order_profile: bool = False):
     old_a = annual[-3] if len(annual) >= 3 else {}
     latest_q = quarter[-1] if quarter else {}
     prev_q = quarter[-2] if len(quarter) >= 2 else {}
+    from stock_lab_core.financial_periods import adjacent_quarters
+    if not adjacent_quarters(prev_q, latest_q):
+        prev_q = {}
     financial_profile = get_financial_profile_from_fin(fin, latest_a, latest_q)
     financial_business = is_financial_statement_profile(financial_profile)
     financial_label = FINANCIAL_PROFILE_LABELS.get(financial_profile, "일반기업")
@@ -6012,6 +5908,16 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
     financial_label = metrics.get("derived", {}).get("financial_profile_label", "일반기업")
     financial_business = is_financial_statement_profile(financial_profile)
 
+    from stock_lab_core.financial_periods import missing_scoring_inputs
+    missing_inputs = missing_scoring_inputs(fin, financial_business=financial_business)
+    if missing_inputs:
+        metrics.update(annual_records=fin.get("annual", []), quarter_records=fin.get("quarter", []))
+        notes = {"ok": False, "source": fin.get("source", "unknown"), "mode": "incomplete_statements",
+                 "reason": "재무점수 핵심 원자료 미확보: " + ", ".join(missing_inputs),
+                 "annual_judgements": {}, "quarter_judgements": {}, "weighted_scores": {},
+                 "missing_inputs": missing_inputs}
+        return AUTO_FIN_FAIL_SCORE, fin, notes, metrics
+
     generic_score, generic_detail = calc_generic_fin_total(all_j)
     order_score, order_detail = calc_order_fin_total(all_j)
     middle_score, middle_detail = calc_middle_fin_total(all_j)
@@ -6072,13 +5978,23 @@ def get_final_fin_score(ticker, is_etf, asset_class):
             if pd.notna(row["manual_score"]):
                 manual_score = int(row["manual_score"])
 
+        if isinstance(fin_notes, dict) and fin_notes.get("ok") is False:
+            if not matched.empty:
+                previous_score, previous_meta = load_fin_score_meta_fast(ticker, False)
+                return previous_score, dict(previous_meta, save_ok=False, refresh_status="failed",
+                    refresh_error=fin_notes.get("reason", "재무 조회 실패"))
+            return int(auto_score), {"auto_score": None, "manual_score": None, "final_score": int(auto_score),
+                "source": fin_notes.get("source", "not_calculated"), "notes": fin_notes, "metrics": fin_metrics,
+                "save_ok": False, "refresh_status": "failed", "refresh_error": fin_notes.get("reason", "재무 조회 실패")}
+
     final_score = 0 if is_etf else (manual_score if manual_score is not None else int(auto_score))
 
     stored_notes = dict(fin_notes) if isinstance(fin_notes, dict) else {"messages": fin_notes}
     stored_notes["metrics"] = fin_metrics
+    stored_notes["computed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     score_source = resolve_fin_score_source(fin_auto, stored_notes)
 
-    upsert_fin_score_db(
+    saved = upsert_fin_score_db(
         ticker=key, auto_score=int(auto_score), manual_score=manual_score,
         final_score=int(final_score), source=score_source, notes=stored_notes
     )
@@ -6087,6 +6003,7 @@ def get_final_fin_score(ticker, is_etf, asset_class):
         "auto_score": int(auto_score), "manual_score": manual_score, "final_score": int(final_score),
         "source": score_source, "mode": stored_notes.get("mode", "unknown"),
         "notes": stored_notes, "metrics": fin_metrics,
+        "save_ok": saved,
     }
 
 def set_manual_fin_score(ticker, score):
@@ -6095,25 +6012,24 @@ def set_manual_fin_score(ticker, score):
     matched = fin_scores_df[fin_scores_df["ticker"] == key]
 
     if matched.empty:
-        upsert_fin_score_db(
+        return upsert_fin_score_db(
             ticker=key, auto_score=None, manual_score=int(score), final_score=int(score),
             source="manual", notes={"messages": ["수동 재무점수 저장"]}
         )
-        return
 
     row = matched.iloc[0]
     notes = {}
     try: notes = json.loads(row["notes_json"]) if pd.notna(row["notes_json"]) else {}
     except Exception: notes = {}
 
-    upsert_fin_score_db(
+    return upsert_fin_score_db(
         ticker=key, auto_score=int(row["auto_score"]) if pd.notna(row["auto_score"]) else None,
         manual_score=int(score), final_score=int(score),
         source=row["source"] if pd.notna(row["source"]) else "manual", notes=notes
     )
 
 def reset_manual_fin_score(ticker):
-    delete_manual_fin_score_db(ticker)
+    return delete_manual_fin_score_db(ticker)
 
 def parse_notes_json(value):
     try:
@@ -6414,6 +6330,9 @@ def clear_financial_api_cache():
         "fetch_valuation_snapshot",
         "fetch_fmp_valuation_snapshot",
         "fetch_kiwoom_valuation_snapshot",
+        "fetch_fin_meta_for_valuation_fallback",
+        "get_analyst_snapshot",
+        "fetch_earnings_date",
         "lookup_yfinance_info",
         "lookup_yfinance_display_name",
     ]:
@@ -6963,14 +6882,12 @@ def _add_chart_pattern_overlays(fig, patterns: list):
 def _add_recent_trendline_guides(fig, df: pd.DataFrame) -> list:
     guides = _build_recent_trendline_guides(df)
     for guide in guides:
-        fig.add_shape(
-            type="line",
-            x0=guide["x0"],
-            y0=guide["y0"],
-            x1=guide["x1"],
-            y1=guide["y1"],
+        fig.add_trace(go.Scatter(
+            x=guide.get("x", [guide["x0"], guide["x1"]]),
+            y=guide.get("y", [guide["y0"], guide["y1"]]), mode="lines", name=guide["label"],
             line=dict(color=guide["color"], width=1.6, dash="dash"),
-        )
+            hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<extra>%{fullData.name}</extra>",
+        ))
         fig.add_annotation(
             x=guide["x1"],
             y=guide["y1"],
@@ -7117,7 +7034,7 @@ def build_liquidity_thermal_note(profile: dict, ticker: str) -> dict | None:
         f"하단 지지 {support_txt} ({support_gap_txt}) / 상단 저항 {resistance_txt} ({resistance_gap_txt})\n"
         f"최대 매물대 {poc_txt} · 하단 {profile.get('below_pct', 0)*100:.0f}% / 상단 {profile.get('above_pct', 0)*100:.0f}%"
     )
-    body += "\n일봉 고가~저가에 거래량을 균등 배분한 추정치이며 실제 호가·체결분포가 아닙니다."
+    body += "\n표시된 각 봉의 고가~저가에 거래량을 균등 배분한 추정치이며 실제 호가·체결분포가 아닙니다."
     return {"title": "🧊 추정 매물대", "body": body, "color": profile.get("color", "#94a3b8")}
 
 
@@ -7515,7 +7432,7 @@ def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
         "High": "max",
         "Low": "min",
         "Close": "last",
-        "Volume": "sum",
+        "Volume": lambda values: values.sum(min_count=1),
     }
     if isinstance(rule, pd.offsets.MonthEnd) or str(rule).upper() in {"M", "ME"}:
         month_source = source.copy()
@@ -11938,6 +11855,9 @@ def _flow_stat_top_etf_text(df, limit=2):
 
 
 def _flow_stat_market_mode(market_guard, market):
+    guard = market_guard or {}
+    if str(guard.get("mode", "")) in {"비상", "전시장 비상", "위험"} or "신규매수 중단" in str(guard.get("action", "")):
+        return str(guard.get("mode") or "위험")
     stats_key = "kr_stats" if market == "한국" else "us_stats"
     stats = (market_guard or {}).get(stats_key, {}) or {}
     return str(stats.get("mode", "확인 필요") or "확인 필요")
@@ -15189,7 +15109,7 @@ def render_data_basis_caption(area, ticker="", include_news=False, include_fin=F
         parts.append("뉴스 TTL 10분")
         parts.append("리포트/목표가 TTL 6시간")
     if include_fin:
-        parts.append("재무점수 TTL 6시간")
+        parts.append("재무 원자료 캐시 6시간 · 저장 점수는 자동 재계산 시 갱신")
     st.caption(" | ".join(parts))
 
 
@@ -20060,18 +19980,44 @@ def build_valuation_fields_from_fin_meta(fin_meta):
             "revenueGrowth": derived.get("rev_growth"),
             "earningsGrowth": derived.get("net_growth"),
         })
+    # Stored financial statements use percentage points; quote APIs use ratios.
+    for key in ("profitMargins", "operatingMargins", "returnOnEquity", "revenueGrowth", "earningsGrowth"):
+        if not _valuation_missing(data.get(key)):
+            data[key] = clean_float(data[key], np.nan) / 100.0
     return data
 
 
 def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
-    from stock_lab_core.chart_review import saved_financial_chart_info
     from stock_lab_core.chart_scorecard import render_chart_scorecard
-    fallback = saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta))
+    fallback = build_valuation_fields_from_fin_meta(fin_meta)
     # The valuation panel below uses this same cached snapshot; no second provider path.
     snapshot = fetch_valuation_snapshot(ticker) if not is_etf else {}
     data = _merge_missing_valuation_fields(snapshot.get("data", {}), fallback)
-    render_chart_scorecard(st, frame, ticker=ticker, info=data, is_etf=is_etf,
-                          source=str(fin_meta.get("source") or ", ".join(snapshot.get("sources", []))))
+    source = ", ".join(snapshot.get("sources", [])) or str(fin_meta.get("source") or "")
+    if any(_valuation_missing(snapshot.get("data", {}).get(key)) and not _valuation_missing(value)
+           for key, value in fallback.items()):
+        source += f" · 저장 재무 보완({fin_meta.get('source') or '출처 미저장'})"
+    score_frame, benchmark_frame = frame, pd.DataFrame()
+    if isinstance(frame, pd.DataFrame) and not frame.empty:
+        cutoff = frame.index[-1]
+        try:
+            extended = load_price_df(ticker, "2y")
+            if isinstance(extended, pd.DataFrame) and not extended.empty:
+                extended = extended.loc[extended.index.tz_localize(None) <= pd.Timestamp(cutoff).tz_localize(None)]
+                if not extended.empty and extended.index[-1].date() == pd.Timestamp(cutoff).date():
+                    score_frame = extended
+            benchmark_ticker = get_rs_benchmark(ticker, "kr_etf" if is_etf and is_kr_listed(ticker) else "kr_stock" if is_kr_listed(ticker) else "us_etf" if is_etf else "us_stock")
+            if benchmark_ticker:
+                benchmark_frame = load_price_df(benchmark_ticker, "2y")
+        except Exception as exc:
+            logging.warning("Chart scorecard history unavailable for %s (%s)", ticker, type(exc).__name__)
+    kwargs = dict(ticker=ticker, info=data, is_etf=is_etf, source=source)
+    if "benchmark" in inspect.signature(render_chart_scorecard).parameters:
+        kwargs["benchmark"] = benchmark_frame
+    render_chart_scorecard(st, score_frame, **kwargs)
+    if not is_etf:
+        st.caption(f"저장 재무 기간: {financial_basis(fin_meta)['재무자료기간']} · 외부 밸류 수치의 발표 기준일은 공급처가 제공하지 않으면 미확인입니다.")
+    return {"data": data, "source": source}
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
@@ -20373,8 +20319,7 @@ def fmt_growth_pct(value):
     number = clean_float(value, np.nan)
     if not finite_num(number):
         return "-"
-    if abs(number) <= 3:
-        number = number * 100
+    number = number * 100
     return f"{number:.1f}%"
 
 
@@ -20436,8 +20381,7 @@ def valuation_factor_label(kind, value):
         return "부담", -1
 
     if kind == "growth":
-        if abs(number) <= 3:
-            number = number * 100
+        number = number * 100
         if number >= 25:
             return "고성장", 2
         if number >= 10:
@@ -20447,8 +20391,7 @@ def valuation_factor_label(kind, value):
         return "역성장", -1
 
     if kind == "margin":
-        if abs(number) <= 3:
-            number = number * 100
+        number = number * 100
         if number >= 25:
             return "우수", 2
         if number >= 10:
@@ -21528,6 +21471,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
                           snap_cash_available, snap_reserve_available, *, _price_df=None, _long_price_df=None):
     """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
+    from stock_lab_core.financial_freshness import financial_basis
     tkr = sanitize_ticker_value(item.get("ticker", ""))
     name = sanitize_asset_name(item.get("name", ""), tkr)
     if not tkr:
@@ -21578,7 +21522,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     stage = "financial_score"
     try:
-        final_fin_score, _ = load_fin_score_meta_fast(tkr, is_etf)
+        final_fin_score, financial_meta = load_fin_score_meta_fast(tkr, is_etf)
         f_score = int(final_fin_score)
 
         my_p = get_my_price(name, tkr)
@@ -21607,6 +21551,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
         except Exception:
             c["mtf_bias_label"] = "자료부족"
+            c["data_state"] = "상위시간대 조회 실패"
         stage = "leverage_policy"
         c = apply_leveraged_dca_dashboard_override(c)
         c = apply_leveraged_precision_decision_override(c, name, tkr, has_p, my_p)
@@ -21657,6 +21602,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "고점대비": dd_text,
         "횡보품질": sideways_label,
         "재무점수": "해당없음" if is_etf else f"{f_score}/4", "RS": c["rs_label"],
+        **financial_basis(financial_meta, is_etf=is_etf),
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
         "기초벤치": get_benchmark_display_name(bm["underlying_bench"]) if bm["underlying_bench"] else "-",
@@ -21670,7 +21616,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "Adj점수": round(c["adj"], 1),
         "안전상태": c.get("safety_state", ""),
         "매크로상태": c.get("macro_state", ""),
-        "데이터상태": "OK",
+        "데이터상태": c.get("data_state", "OK"),
         "bucket": c.get("bucket", ""),
         "버킷": c.get("bucket", ""),
         "현재비중": round(clean_float(c.get("current_w"), np.nan), 2),
@@ -31473,6 +31419,7 @@ def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame |
     flow_cols = [
         "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
         "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
+        "기준일", "source_asof", "가격자료기준일", "자료기준일",
     ]
     return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
 
@@ -32134,6 +32081,11 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
     if flow_df is None or flow_df.empty:
         st.info("ETF/섹터 돈흐름 데이터가 아직 없습니다.")
         return snapshot
+
+    if market_guard is None:
+        market_guard = build_today_market_guard(snapshot, st.session_state.get("today_queue_summary_df", pd.DataFrame()))
+    st.info(f"시장 실행기준: {market_guard.get('mode', '미확인')} · {market_guard.get('action', '확인 필요')}")
+    st.caption("아래 흐름 순위·정밀관측 후보는 매수 허가가 아닙니다. 시장 실행기준과 종목별 타점·비중 제한은 별도로 적용합니다.")
 
     us_top5 = snapshot.get("us_top5", pd.DataFrame())
     kr_top5 = snapshot.get("kr_top5", pd.DataFrame())
@@ -33316,7 +33268,9 @@ def _render_today_queue_tab(mode):
         names = [f"{item.get('name', item.get('ticker', ''))}({item.get('ticker', '')})" for item in flow_auto_items[:6]]
         st.caption(f"돈흐름 후보 상위 {len(flow_auto_items)}개를 관심/눌림대기 계산에 자동 포함했습니다: {', '.join(names)}")
 
-    queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
+    financial_revision = financial_input_signature(load_fin_scores_db())
+    queue_logic_version = f"{TODAY_QUEUE_LOGIC_VERSION}:{financial_revision}"
+    queue_sig = build_today_queue_signature(watch_items, mode, logic_version=queue_logic_version)
     summary_key = "today_queue_summary_df"
     sig_key = "today_queue_summary_sig"
     last_key = "today_queue_summary_last_run"
@@ -33418,7 +33372,7 @@ def _render_today_queue_tab(mode):
                 flow_progress.empty()
         else:
             st.info("보유·관심종목 점검 중 · 돈흐름 자동발굴은 이번 계산에서 제외")
-        queue_sig = build_today_queue_signature(watch_items, mode, logic_version=TODAY_QUEUE_LOGIC_VERSION)
+        queue_sig = build_today_queue_signature(watch_items, mode, logic_version=queue_logic_version)
         st.session_state["today_queue_current_input_counts"] = {
             "registered": len(raw_watch_items), "calculated": len(watch_items),
             "auto_flow_candidates": len(flow_auto_items), "refresh_flow_candidates": bool(refresh_flow_candidates),
@@ -33987,12 +33941,12 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             {"항목": "애널목표출처", "값": external.get("애널목표출처", "")},
             {"항목": "애널목표기준일", "값": external.get("애널목표기준일", "")},
         ]), width='stretch', hide_index=True)
-        render_precision_scorecard(df, tkr, fin_meta, is_etf)
+        chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)
         render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
-        from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
-        render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
-                            is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"demo_review_{tkr}")
+        from stock_lab_core.chart_review import render_chart_review
+        render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
+                            is_etf=is_etf, source=chart_financial["source"], key=f"demo_review_{tkr}")
         precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
         render_precision_review_download(
             st, selected_ticker=tkr, result_ticker=tkr, decision=c,
@@ -35342,8 +35296,11 @@ if main_page == "dashboard":
                     name = sanitize_asset_name(item.get("name", ""), tkr)
                     a_class = item.get("asset_class", "")
                     try:
-                        get_final_fin_score(tkr, False, a_class)
-                        ok_list.append(name or tkr)
+                        _, refresh_meta = get_final_fin_score(tkr, False, a_class)
+                        if refresh_meta.get("save_ok") or IS_PUBLIC_DEMO:
+                            ok_list.append(name or tkr)
+                        else:
+                            fail_list.append(f"{name or tkr} (조회·저장 실패, 기존 점수 유지)")
                     except Exception as e:
                         fail_list.append(f"{name or tkr} ({e})")
                     prog.progress(
@@ -35382,6 +35339,7 @@ if main_page == "dashboard":
             account_inputs={
                 "krw_cash": st.session_state.get("_app_krw_cash"),
                 "usd_cash": st.session_state.get("_app_usd_cash"),
+                "financial_revision": financial_input_signature(load_fin_scores_db()),
             },
             owner=PUBLIC_DEMO_EMAIL if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
             logic_version=TODAY_QUEUE_LOGIC_VERSION,
@@ -35712,19 +35670,27 @@ if main_page == "precision":
     st.session_state.fin_score_map[fin_key] = fin_score
 
     st.markdown(f"<div class='info-panel'><b>재무 점수</b><br>{f_labels[fin_score]}</div>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame([financial_basis(fin_meta, is_etf=is_etf)]), width='stretch', hide_index=True)
+    if not is_etf:
+        st.caption("저장된 재무점수와 최신 뉴스·목표가는 기준 시점이 다를 수 있습니다. 실적 발표 후 자동 재무점수를 다시 계산해야 저장 점수에 반영됩니다. 목표가는 분기 실적 예상치가 아닙니다.")
 
     with st.expander("재무점수 계산 근거"):
         notes, metrics, weighted = get_fin_meta_parts(fin_meta)
 
         if not is_etf:
-            if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}"):
+            if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}", help="선택 종목의 재무·밸류·목표가 캐시를 갱신합니다. 저장 성공 후 전광판과 오늘점검의 이전 계산은 재사용하지 않습니다."):
                 with st.spinner("DART/FMP/SEC 재무 자동 계산 중..."):
                     clear_financial_api_cache()
-                    new_score, _ = get_final_fin_score(tkr, is_etf, a_class)
+                    new_score, new_meta = get_final_fin_score(tkr, is_etf, a_class)
+                if new_meta.get("save_ok") or IS_PUBLIC_DEMO:
                     st.session_state.fin_score_map[fin_key] = int(new_score)
-                st.success("자동 재무점수 계산 완료")
-                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
-                st.rerun()
+                    st.success("자동 재무점수 계산 완료")
+                    preserve_precision_target_for_next_rerun(tkr, precision_option_map)
+                    st.rerun()
+                else:
+                    st.warning("재무 조회 또는 저장에 실패해 기존 점수를 유지했습니다. 원자료·연결 상태를 확인한 뒤 다시 계산하세요.")
+                    if new_meta.get("refresh_error"):
+                        st.caption(new_meta["refresh_error"])
 
         annual_judgements = notes.get("annual_judgements", {})
         quarter_judgements = notes.get("quarter_judgements", {})
@@ -35791,10 +35757,11 @@ if main_page == "precision":
         manual_override = st.checkbox("재무점수 수동 수정", value=had_manual, key=f"manual_fin_{fin_key}")
 
         if had_manual and not manual_override:
-            reset_manual_fin_score(tkr)
-            st.session_state.fin_score_map.pop(fin_key, None)
-            preserve_precision_target_for_next_rerun(tkr, precision_option_map)
-            st.rerun()
+            if reset_manual_fin_score(tkr):
+                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
+                st.rerun()
+            else:
+                st.warning("수동점수 해제 저장에 실패했습니다. 기존 점수를 유지합니다.")
 
         if manual_override:
             manual_options = [1, 2, 3, 4]
@@ -35805,18 +35772,18 @@ if main_page == "precision":
             manual_score = st.radio("수동 재무점수", manual_options, index=manual_options.index(radio_default_value), format_func=lambda x: f_labels[x], horizontal=True, key=f"manual_fin_score_{fin_key}")
 
             if current_manual != int(manual_score):
-                set_manual_fin_score(tkr, manual_score)
-                st.session_state.fin_score_map[fin_key] = int(manual_score)
-                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
-                st.rerun()
-
-            fin_score = int(manual_score)
+                if set_manual_fin_score(tkr, manual_score):
+                    preserve_precision_target_for_next_rerun(tkr, precision_option_map)
+                    st.rerun()
+                else:
+                    st.warning("수동점수 저장에 실패했습니다. 기존 점수를 유지합니다.")
 
             if st.button("자동 재무점수로 되돌리기", key=f"reset_manual_{fin_key}"):
-                reset_manual_fin_score(tkr)
-                st.session_state.fin_score_map.pop(fin_key, None)
-                preserve_precision_target_for_next_rerun(tkr, precision_option_map)
-                st.rerun()
+                if reset_manual_fin_score(tkr):
+                    preserve_precision_target_for_next_rerun(tkr, precision_option_map)
+                    st.rerun()
+                else:
+                    st.warning("수동점수 해제 저장에 실패했습니다. 기존 점수를 유지합니다.")
 
     st.markdown("### ⭐ 관심종목 관리")
     a1, a2 = st.columns(2)
@@ -36084,7 +36051,7 @@ if main_page == "precision":
             st.caption("후보 등급은 종목의 우선순위입니다. 실제 매수 강도는 위 타점 문구, 목표비중, 포지션 사이징, 주봉·월봉 보정을 같이 봅니다.")
 
         with R:
-            render_precision_scorecard(df, tkr, fin_meta, is_etf)
+            chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)
             p_line = my_p
             _show_avg = p_line > 0 and not is_free and has_p
@@ -36115,9 +36082,9 @@ if main_page == "precision":
                 render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels)
             with month_tab:
                 render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels)
-            from stock_lab_core.chart_review import render_chart_review, saved_financial_chart_info
-            render_chart_review(st, df, ticker=tkr, info=saved_financial_chart_info(build_valuation_fields_from_fin_meta(fin_meta)),
-                                is_etf=is_etf, source=str(fin_meta.get("source") or ""), key=f"precision_review_{tkr}")
+            from stock_lab_core.chart_review import render_chart_review
+            render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
+                                is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")
             precision_mtf_display = render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(

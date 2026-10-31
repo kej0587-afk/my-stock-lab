@@ -49,6 +49,10 @@ def run_branch(*, full=False, fail=False):
         calls.append(tuple(item["ticker"] for item in items))
         return summary.copy()
 
+    def signature(items, *args, logic_version):
+        assert logic_version == "test:financial-fixture"
+        return tuple(item["ticker"] for item in items)
+
     env = dict(
         st=SimpleNamespace(
             session_state=state, spinner=lambda *a: nullcontext(), info=notes.append,
@@ -62,8 +66,8 @@ def run_branch(*, full=False, fail=False):
         build_today_queue_items=lambda items: items,
         refresh_today_market_flow_snapshot=refresh,
         build_today_queue_items_with_flow_candidates=merge,
-        build_today_queue_signature=lambda items, *a, **k: tuple(item["ticker"] for item in items),
-        TODAY_QUEUE_LOGIC_VERSION="test", mode="test",
+        build_today_queue_signature=signature,
+        TODAY_QUEUE_LOGIC_VERSION="test", queue_logic_version="test:financial-fixture", mode="test",
         clear_latest_price_cache=lambda: None, enable_force_live_price_refresh=lambda: None,
         cache_clear=lambda *a: None, load_price_df=None, load_price_frames_batch=None,
         get_all_summary=compute, summary_key="summary", sig_key="signature", last_key="last",

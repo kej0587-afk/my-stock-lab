@@ -34,9 +34,8 @@ def chart_latest_close(df: pd.DataFrame) -> float:
 def chart_volume_ratio(df: pd.DataFrame, lookback: int = 20) -> float:
     if df is None or df.empty or "Volume" not in df.columns:
         return np.nan
-    vol = pd.to_numeric(df["Volume"], errors="coerce").dropna()
-    if vol.empty:
-        return np.nan
+    vol = pd.to_numeric(df["Volume"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+    vol = vol.where(vol >= 0)
     current = clean_float(vol.iloc[-1], np.nan)
     avg = clean_float(vol.tail(max(3, lookback)).mean(), np.nan)
     if not finite_num(current) or not finite_num(avg) or avg <= 0:

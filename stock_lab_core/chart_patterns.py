@@ -740,6 +740,9 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
             "x1": view.index[-1],
             "y0": y0,
             "y1": y1,
+            # The fit uses bar positions; date-axis renderers need every bar.
+            "x": view.index[int(x[0]):].tolist(),
+            "y": (slope * np.arange(int(x[0]), last_pos + 1) + intercept).tolist(),
             "direction": direction,
         }
 

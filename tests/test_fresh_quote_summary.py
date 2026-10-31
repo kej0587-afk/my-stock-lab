@@ -260,6 +260,16 @@ def test_default_summary_preserves_warm_quote_cache_without_bulk(replay):
     replay.us.assert_not_called()
 
 
+def test_failed_upper_timeframe_verification_is_not_executable(replay):
+    def failed(*args, **kwargs):
+        raise TimeoutError("synthetic MTF lookup failure")
+    replay.env["build_precision_multi_timeframe_pack"] = failed
+    frame, _ = replay.run()
+    row = frame.set_index("티커").loc["MSFT"]
+    assert row["데이터상태"] == "상위시간대 조회 실패"
+    assert row["게이트상태"] == "데이터확인"
+
+
 def test_old_loaded_price_module_keeps_original_summary_path(replay, monkeypatch):
     before, before_state = replay.run()
     prices.clear_latest_price_cache()

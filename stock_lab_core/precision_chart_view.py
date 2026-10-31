@@ -62,7 +62,7 @@ def build_price_figure(frame, avg_price=0.0):
         if col in frame.columns:
             fig.add_trace(go.Scatter(
                 x=frame.index, y=frame[col],
-                line=dict(color=color, width=width, dash=dash), name=col,
+                line=dict(color=color, width=width, dash=dash), name=col, mode="lines",
             ))
     if avg_price and avg_price > 0:
         fig.add_hline(y=avg_price, line_dash="dash", line_color="#2ecc71", annotation_text="내 평단가")
@@ -70,24 +70,41 @@ def build_price_figure(frame, avg_price=0.0):
 
 
 def finish_price_figure(fig, frame, volume_signals, *, show_level_labels=False):
+    if not volume_signals.empty:
+        volume_signals = volume_signals.reindex(frame.index).copy()
+        volume_signals["color"] = volume_signals["color"].fillna("#94A3B8")
+        volume_signals["signal"] = volume_signals["signal"].fillna("UNAVAILABLE")
     if not volume_signals.empty and volume_signals["volume"].notna().any():
+        hover_data = volume_signals[["signal", "rvol"]].copy()
+        hover_data["rvol"] = hover_data["rvol"].map(lambda value: f"{value:.2f}x" if pd.notna(value) else "미수집")
         fig.add_trace(go.Bar(
             x=frame.index, y=volume_signals["volume"], marker_color=volume_signals["color"],
-            yaxis="y2", name="거래량 신호", customdata=volume_signals[["signal", "rvol"]].to_numpy(),
-            hovertemplate="%{x}<br>거래량 %{y:,.0f}<br>%{customdata[0]} · RVOL %{customdata[1]:.2f}x<extra></extra>",
+            yaxis="y2", name="거래량 신호", customdata=hover_data.to_numpy(),
+            hovertemplate="%{x|%Y-%m-%d}<br>거래량 %{y:,.0f}<br>%{customdata[0]} · RVOL %{customdata[1]}<extra></extra>",
         ))
         fig.add_trace(go.Scatter(
             x=frame.index, y=volume_signals["volume_ma"], yaxis="y2",
-            name="거래량 MA", line=dict(color="#fbbf24", width=1),
+            name="거래량 MA", line=dict(color="#fbbf24", width=1), mode="lines",
         ))
         fig.update_layout(yaxis=dict(domain=[0.25, 1]),
                           yaxis2=dict(domain=[0, 0.17], title="거래량", anchor="x"))
     # Zones remain visible; crowded labels can be restored without changing data.
     fig.update_annotations(visible=show_level_labels)
     fig.update_layout(
-        template="plotly_dark", height=600, xaxis_rangeslider_visible=False,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
-        margin=dict(l=8, r=8, t=32, b=32),
+        template="plotly_dark", height=640, xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", yanchor="top", y=-0.1, x=0, entrywidth=100),
+        margin=dict(l=8, r=8, t=24, b=120),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
     )
+    if isinstance(frame.index, pd.DatetimeIndex) and len(frame) > 2:
+        interval = frame.index.to_series().diff().median()
+        count = 60 if interval >= pd.Timedelta(days=20) else 104 if interval >= pd.Timedelta(days=5) else 180
+        if len(frame) > count:
+            visible = frame.tail(count)
+            lower = pd.to_numeric(visible["Low"], errors="coerce").min()
+            upper = pd.to_numeric(visible["High"], errors="coerce").max()
+            fig.update_xaxes(range=[visible.index[0], frame.index[-1] + interval])
+            if pd.notna(lower) and pd.notna(upper) and upper > lower > 0:
+                padding = (upper - lower) * 0.08
+                fig.update_layout(yaxis=dict(range=[max(0, lower - padding), upper + padding]))
     return fig

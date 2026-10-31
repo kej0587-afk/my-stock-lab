@@ -37,6 +37,15 @@ def unwrap_snapshot_data(snapshot: Optional[dict]) -> dict:
     return snapshot
 
 
+def _summary_percentage_points(value: Any) -> float | None:
+    number = optional_float(value)
+    if number is None:
+        return None
+    if isinstance(value, str) and value.strip().endswith("%"):
+        return number
+    return number * 100
+
+
 def estimate_kr_fin_score_from_naver_snapshot(
     snapshot: Optional[dict],
     default_score: int = 3,
@@ -51,10 +60,13 @@ def estimate_kr_fin_score_from_naver_snapshot(
 
     per = optional_float(data.get("trailingPE"))
     pbr = optional_float(data.get("priceToBook"))
-    roe = optional_float(data.get("returnOnEquity"))
-    op_margin = optional_float(data.get("operatingMargins"))
-    net_margin = optional_float(data.get("profitMargins"))
+    roe = _summary_percentage_points(data.get("returnOnEquity"))
+    op_margin = _summary_percentage_points(data.get("operatingMargins"))
+    net_margin = _summary_percentage_points(data.get("profitMargins"))
     debt_ratio = optional_float(data.get("debtToEquity"))
+
+    if all(value is None for value in (per, pbr, roe, op_margin, net_margin, debt_ratio)):
+        return int(default_score), "Naver fallback: no usable summary indicators; kept neutral default"
 
     hints: list[str] = []
     score = 1
@@ -69,7 +81,7 @@ def estimate_kr_fin_score_from_naver_snapshot(
             hints.append(f"PER {per:.1f} high")
 
     if roe is not None:
-        roe_pct = roe * 100 if abs(roe) <= 1 else roe
+        roe_pct = roe
         if roe_pct >= 15:
             score += 1
             hints.append(f"ROE {roe_pct:.1f}% strong")
@@ -87,7 +99,7 @@ def estimate_kr_fin_score_from_naver_snapshot(
             hints.append(f"PBR {pbr:.2f} high")
 
     if op_margin is not None:
-        op_margin_pct = op_margin * 100 if abs(op_margin) <= 1 else op_margin
+        op_margin_pct = op_margin
         if op_margin_pct >= 10:
             score += 1
             hints.append(f"operating margin {op_margin_pct:.1f}%")
@@ -96,7 +108,7 @@ def estimate_kr_fin_score_from_naver_snapshot(
             hints.append("operating margin negative")
 
     if net_margin is not None:
-        net_margin_pct = net_margin * 100 if abs(net_margin) <= 1 else net_margin
+        net_margin_pct = net_margin
         if net_margin_pct >= 8:
             score += 1
             hints.append(f"net margin {net_margin_pct:.1f}%")
@@ -109,11 +121,8 @@ def estimate_kr_fin_score_from_naver_snapshot(
             score -= 1
         hints.append(f"debt/equity {debt_ratio:.0f}% high")
 
-    if not hints:
-        return int(default_score), "Naver fallback: no usable summary indicators; kept neutral default"
-
     score = max(1, min(3, score))
-    return int(score), "Naver fallback: " + ", ".join(hints)
+    return int(score), "Naver fallback: " + (", ".join(hints) or "usable summary indicators; no threshold adjustments")
 
 
 def resolve_fin_score_source(fin_auto: Optional[dict], fin_notes: Optional[dict]) -> str:

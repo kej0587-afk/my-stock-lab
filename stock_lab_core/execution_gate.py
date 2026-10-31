@@ -145,6 +145,9 @@ def build_execution_gate(row: Any) -> dict[str, str]:
         reason = data_state if data_state.upper() not in {"", "OK", "NORMAL", "정상"} else "가격/지표 데이터 확인 필요"
         return {"게이트상태": GATE_DATA_CHECK, "게이트근거": reason}
 
+    if mtf_state in {"자료부족", "상위 시간대 자료부족", "상위시간대 조회 실패"}:
+        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "상위 시간대 검증 미완료"}
+
     if _RE_WEIGHT_BLOCK.search(text):
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "목표비중/비중초과 우선"}
 

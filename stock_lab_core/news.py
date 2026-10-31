@@ -883,7 +883,7 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
 
             # Latest non-consensus (실적) period key
             actual_keys = [t["key"] for t in tr_titles if t.get("isConsensus") == "N"]
-            period_key = actual_keys[-1] if actual_keys else (tr_titles[-1]["key"] if tr_titles else None)
+            period_key = actual_keys[-1] if actual_keys else None
 
             if period_key and row_list:
                 # {title: {period_key: value_str, ...}, ...}
@@ -895,23 +895,23 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
 
                 def _col_val(title: str):
                     cols = row_map.get(title, {})
-                    raw = cols.get(period_key) or (list(cols.values())[-1] if cols else None)
+                    raw = cols.get(period_key)
                     if raw is None:
                         return None
                     # value may be a dict {"value": "10.85"} or a plain string
                     if isinstance(raw, dict):
-                        raw = raw.get("value") or ""
+                        raw = raw.get("value")
                     return _parse_kr_num(str(raw).replace(",", ""))
 
                 roe = _col_val("ROE")
                 op_margin = _col_val("영업이익률")
                 net_margin = _col_val("순이익률")
 
-                if roe:
+                if roe is not None:
                     result["returnOnEquity"] = roe / 100.0
-                if op_margin:
+                if op_margin is not None:
                     result["operatingMargins"] = op_margin / 100.0
-                if net_margin:
+                if net_margin is not None:
                     result["profitMargins"] = net_margin / 100.0
 
                 # Fill PER/PBR/EPS/BPS from finance/annual when pykrx was unavailable
@@ -924,7 +924,7 @@ def fetch_naver_kr_snapshot(ticker: str) -> dict:
                         result.setdefault("trailingPE", per)
                     if pbr and pbr > 0:
                         result.setdefault("priceToBook", pbr)
-                    if eps:
+                    if eps is not None:
                         result.setdefault("trailingEps", eps)
                     if bps and bps > 0:
                         result.setdefault("bookValue", bps)
