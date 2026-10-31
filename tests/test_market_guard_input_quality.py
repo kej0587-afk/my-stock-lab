@@ -2,6 +2,8 @@
 
 from contextlib import nullcontext
 from copy import deepcopy
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -137,3 +139,24 @@ def test_panel_respects_global_stop_before_describing_a_normal_region(guard_app,
         "kr_stats": {"mode": "위험"}, "us_stats": {"mode": "정상"}})
     assert any("지역 모드가 정상이어도 신규매수 중단이 우선" in caption for caption in captions) is expect_stop
     assert any("미장 후보는 정밀관측소" in caption for caption in captions) is (not expect_stop)
+
+
+@pytest.mark.parametrize("mode,action,stopped", [("위험", "", True), ("전시장 비상", "", True),
+    ("방어", "신규매수 중단", True), ("방어", "", False)])
+def test_brief_market_phase_does_not_offer_other_region_entries_during_global_stop(guard_app, monkeypatch, mode, action, stopped):
+    monkeypatch.setattr(guard_app, "_build_market_regime_context", lambda frame: {})
+    result = guard_app._brief_market_phase(pd.DataFrame(), {"mode": mode, "action": action,
+        "kr_stats": {"mode": "방어", "avg_day": -.03}, "us_stats": {"mode": "정상", "avg_day": .01}})
+    assert ("통합 신규매수 중단" in result["headline"]) is stopped
+    assert ("별도 타점" in result["headline"]) is (not stopped)
+    assert ("지역 모드가 정상이어도 신규매수 중단이 우선" in result["note"]) is stopped
+
+
+def test_active_unified_briefing_renders_guard_coverage_and_stop_explanation():
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "render_today_unified_briefing_panel")
+    body = ast.unparse(function)
+    assert "flow_input_counts" in body
+    assert "돈흐름 유효 표본:" in body
+    assert "기존 보유 전량 매도 지시가 아니며" in body

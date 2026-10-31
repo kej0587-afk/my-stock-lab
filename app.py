@@ -11670,9 +11670,14 @@ def _brief_market_phase(index_df: pd.DataFrame, market_guard: dict | None) -> di
         bad_avg = kr_avg if kr_bad else us_avg
         if not bad_mode:
             bad_mode = "조정" if finite_num(bad_avg) and float(bad_avg) <= -0.015 else "방어"
-        headline = f"{bad_market} {bad_mode} · {normal_market} 별도 타점"
+        global_entry_stop = guard_mode in {"비상", "전시장 비상", "위험"} or "신규매수 중단" in str(market_guard.get("action", ""))
+        headline = f"{bad_market} {bad_mode} · " + ("통합 신규매수 중단" if global_entry_stop else f"{normal_market} 별도 타점")
         color = "#f59e0b"
-        note = "전체 시장점수보다 시장별 모드를 나눠 봅니다. 정상 시장도 종목별 과열/R/R은 따로 확인합니다."
+        note = (
+            "통합 위험/비상에서는 지역 모드가 정상이어도 신규매수 중단이 우선합니다. 보유 평가는 별도입니다."
+            if global_entry_stop else
+            "통합 중단이 없으면 시장별 모드를 나눠 봅니다. 정상 시장도 종목별 과열/R/R은 따로 확인합니다."
+        )
     elif finite_num(growth_1d) and finite_num(defense_1d) and defense_1d > growth_1d + 0.003:
         headline = "방어·가치 쪽 상대 우위"
         color = "#fbbf24"
@@ -29793,6 +29798,14 @@ def render_today_unified_briefing_panel(
     macro_risk = guard.get("macro_risk", np.nan)
     d4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     d5.metric("매크로 지수", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}pt")
+    flow_counts = guard.get("flow_input_counts", {})
+    if flow_counts.get("rows"):
+        st.caption(
+            f"돈흐름 유효 표본: 3M {flow_counts['breadth_valid']}/{flow_counts['rows']}개 · "
+            f"가속도 {flow_counts['accel_valid']}/{flow_counts['rows']}개. 결측값은 약세 0으로 채우지 않습니다."
+        )
+    if mode in {"비상", "전시장 비상", "위험"} or "신규매수 중단" in action_text:
+        st.caption("통합 위험/비상에서는 지역 모드가 정상이어도 신규매수 중단이 우선합니다. 기존 보유 전량 매도 지시가 아니며 후보품질·기술 타점과 실행 허용은 구분합니다.")
 
     bench_df = guard.get("bench_df", pd.DataFrame())
     macro_df = guard.get("macro_df", pd.DataFrame())
