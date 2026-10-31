@@ -19,6 +19,18 @@ def format_currency(val, ticker):
     return f"${val:,.2f}"
 
 
+def format_rr_ratio(value):
+    """Keep display rounding from crossing the minimum execution threshold."""
+    number = clean_float(value, math.nan)
+    if not math.isfinite(number):
+        return "-"
+    text = f"{number:.2f}"
+    if 0 < number < 1 and text == "1.00":
+        precise = f"{number:.4f}"
+        return precise if float(precise) < 1 else "<1.00"
+    return text
+
+
 def escape_html_value(value):
     return html.escape(str(value or ""))
 

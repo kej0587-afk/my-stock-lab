@@ -126,6 +126,17 @@ def align_precision_entry_plan_rows(rows, workflow):
     return out
 
 
+def qualify_hold_action_plan(action, workflow):
+    """Keep holding suitability distinct from today's entry permission."""
+    if (workflow or {}).get("게이트상태") == GATE_EXECUTABLE:
+        return action
+    reason = (workflow or {}).get("게이트근거") or "실행 게이트 미확인"
+    return (
+        f"현재 신규·추가매수는 실행 보류 · {reason}. "
+        f"아래는 개별 종목의 보유 평가이며 현재 매수 허가가 아닙니다: {action}"
+    )
+
+
 def format_precision_take_profit_condition(current_price, stop, target):
     """Describe the existing min(target, entry + risk) first exit accurately."""
     cur, stop, target = (clean_float(value, math.nan) for value in (current_price, stop, target))

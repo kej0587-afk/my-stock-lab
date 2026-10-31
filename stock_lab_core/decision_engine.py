@@ -569,7 +569,7 @@ def build_rr_context(df: pd.DataFrame, cur_p: float, levels: dict) -> dict:
 
     rr_stop_source = "변동성 손절: 현재가 - 2ATR"
     rr_reward = (rr_target_price - cur_p) if rr_target_price else 0
-    rr_ratio = round(rr_reward / rr_risk_atr, 2) if (rr_risk_atr > 0 and rr_reward > 0) else None
+    rr_ratio = rr_reward / rr_risk_atr if (rr_risk_atr > 0 and rr_reward > 0) else None
 
     return {
         "_atr": atr,

@@ -12,7 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from stock_lab_core.formatters import clean_float
+from stock_lab_core.formatters import clean_float, format_rr_ratio
 from stock_lab_core.today_queue import (
     TODAY_QUEUE_EXECUTION_WAIT_CODES,
     TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES,
@@ -124,14 +124,14 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     mtf_state = _text(_row_get(row, "상위시간대상태", ""))
 
     # Candidate quality and explanatory prose do not confirm an entry trigger.
-    text = _row_text(
+    signal_text = _row_text(
         row,
         "최종읽기",
         "실행메모",
         "🔥기술적 타점",
         "패턴타점",
-        "판정코드",
     )
+    text = " ".join((signal_text, _text(_row_get(row, "판정코드", ""))))
     conditions = _row_text(row, "1차조건")
     flow_text = " ".join([flow_verdict, flow_group])
 
@@ -153,7 +153,14 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if mtf_state == "상위 시간대 경고":
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "상위 시간대 추세훼손"}
 
-    if _RE_DEFENSE_BLOCK.search(text):
+    defense_match = _RE_DEFENSE_BLOCK.search(text)
+    if code == "CORE_DRAWDOWN_DCA":
+        # This code names accumulation; explicit defensive prose still wins.
+        defense_match = _RE_DEFENSE_BLOCK.search(signal_text) or re.search(
+            r"하드차단|매수\s*금지|추매\s*금지|구조\s*훼손|추세\s*훼손|역배열|하락추세",
+            signal_text,
+        )
+    if defense_match:
         return {"게이트상태": GATE_DEFENSE, "게이트근거": "시장/가격/추세 방어 신호 우선"}
 
     # Only explicit overheat codes use the wait policy; prose cannot relax a block.
@@ -164,7 +171,7 @@ def build_execution_gate(row: Any) -> dict[str, str]:
         return {"게이트상태": GATE_DATA_CHECK, "게이트근거": market_execution}
 
     if math.isfinite(rr) and rr < 1.0:
-        reasons.append(f"R/R {rr:.2f} < 1")
+        reasons.append(f"R/R {format_rr_ratio(rr)} < 1")
 
     if "투영상단" in rr_kind:
         reasons.append("R/R 목표가가 투영상단")

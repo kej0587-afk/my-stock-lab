@@ -237,6 +237,7 @@ from stock_lab_core.formatters import (
     escape_html_value,
     finite_num,
     format_currency,
+    format_rr_ratio,
     format_report_money,
     format_report_pct,
     format_report_price,
@@ -444,7 +445,7 @@ from stock_lab_core.execution_gate import (
 from stock_lab_core.decision_workflow import (
     align_precision_entry_plan_rows, align_precision_final_check_rows,
     attach_market_execution_context, build_decision_workflow,
-    format_precision_take_profit_condition, partition_today_queue,
+    format_precision_take_profit_condition, partition_today_queue, qualify_hold_action_plan,
 )
 from stock_lab_core.relative_strength import compute_relative_strength, get_sector_provenance
 from stock_lab_core.today_enrichment import attach_today_analyst_context, build_today_analyst_upside_map
@@ -798,7 +799,7 @@ def render_hold_decision_panel(name, ticker, is_etf, c, fin_score, has_pos, my_p
         f"<b>{escape_html_value(name)} 보유 판단</b><br>"
         f"<span class='highlight' style='font-size:1.3em; color:{color};'>"
         f"{escape_html_value(judgement.decision.value)}</span> (총 {judgement.score}점)<br><br>"
-        f"<b>행동 제안:</b> {escape_html_value(judgement.action_plan)}"
+        f"<b>행동 제안:</b> {escape_html_value(qualify_hold_action_plan(judgement.action_plan, c.get('execution_workflow')))}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -1789,7 +1790,7 @@ RS 라벨: {c['rs_label']}
 RS 기울기: {c['rs_slope_label']} ({c['rs_slope_val']:+.1f}%, Adj보정:{c['rs_slope_s']:+d})
 익절 시그널: {'⚠️발동(MFI≥80+%B>0.9+수익20%↑)' if c.get('profit_take_signal') else '없음'}
 52주 신고가 돌파: {'🚀발동' if c.get('is_52w_breakout') else '없음'}
-R/R 비율: {f"{c['rr_ratio']:.2f} (기준:{c['rr_target']:.0f} / 손절:{c['rr_stop']:.0f})" if c.get('rr_ratio') else '산출불가'}
+R/R 비율: {f"{format_rr_ratio(c['rr_ratio'])} (기준:{c['rr_target']:.0f} / 손절:{c['rr_stop']:.0f})" if c.get('rr_ratio') else '산출불가'}
 섹터 머니플로우: {c.get('sector_flow_state', '-')}
 RSI: {c['rsi']}
 MFI: {c['mfi']}
@@ -19109,7 +19110,7 @@ def build_leveraged_dca_timing_state(c, state):
 
     failed_text = ", ".join(failed_checks[:3]) if failed_checks else "추가 핵심 미통과 없음"
     underlying_text = "-" if not finite_num(underlying_1w) else f"{underlying_1w:+.1f}%"
-    rr_text = "-" if not finite_num(rr) else f"{rr:.2f}"
+    rr_text = format_rr_ratio(rr)
     condition_summary = (
         f"{dca_stage} {dca_multiple} · 회복 {recovery_passed}/{recovery_total}({recovery_state}) · "
         f"기초축 1W {underlying_text} · R/R {rr_text} · 비중 {current_w:.1f}/{target_w:.1f}% · 남은 확인: {failed_text}"
@@ -19507,7 +19508,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
         f"<span style='color:#cbd5e1;'>{escape_html_value(timing_state.get('condition_summary', ''))}</span><br>"
         f"{trade_plan_html}"
         f"{sideways_html}"
-        f"R/R {('-' if not finite_num(rr) else f'{rr:.2f}')} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
+        f"R/R {format_rr_ratio(rr)} · 목표비중 {target_w:.1f}% / 현재 {current_w:.1f}%"
         f"{(' · ' + escape_html_value(buy_note)) if buy_note else ''}<br>"
         f"<span style='color:#94a3b8;'>자동 매수 신호가 아니라, 중장기 보유용 회차 관리 체크리스트입니다.</span>"
         f"</div>",
@@ -20867,13 +20868,13 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
 
     if finite_num(rr_ratio):
         if bool(c.get("rr_target_is_projection", False)):
-            add_check("손익비", "주의", f"현재가 기준 R/R {rr_ratio:.2f}. +4ATR 투영값 기준이라 확정 목표가로 보지 말고 +1ATR/+2ATR 분할익절과 추적손절을 우선하세요.")
+            add_check("손익비", "주의", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. +4ATR 투영값 기준이라 확정 목표가로 보지 말고 +1ATR/+2ATR 분할익절과 추적손절을 우선하세요.")
         elif rr_ratio < 1.0:
-            add_check("손익비", "차단", f"현재가 기준 R/R {rr_ratio:.2f}. 기대수익보다 손절폭이 커서 현재가 실행은 보류가 맞습니다.")
+            add_check("손익비", "차단", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 기대수익보다 손절폭이 커서 현재가 실행은 보류가 맞습니다.")
         elif rr_ratio < 1.5:
-            add_check("손익비", "주의", f"현재가 기준 R/R {rr_ratio:.2f}. 풀비중보다 1차 정찰 중심이 맞습니다.")
+            add_check("손익비", "주의", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 풀비중보다 1차 정찰 중심이 맞습니다.")
         else:
-            add_check("손익비", "통과", f"현재가 기준 R/R {rr_ratio:.2f}. 최소 손익비 조건은 충족합니다.")
+            add_check("손익비", "통과", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 최소 손익비 조건은 충족합니다.")
     else:
         add_check("손익비", "주의", "R/R을 산출하지 못했습니다. 목표가/손절가 확인 전에는 분할 규모를 낮추세요.")
 
@@ -21284,6 +21285,7 @@ def render_hold_or_cut_panel(name, ticker, is_etf, fin_score, fin_meta,
         action = "여러 훼손 신호 동시 발생. 손절선을 명확히 설정하고 지키세요."
 
     # ── UI 렌더링 ───────────────────────────────
+    action = qualify_hold_action_plan(action, c.get("execution_workflow"))
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("종합 판정", decision.split(" ", 1)[-1])
     h2.metric("종합 점수", f"{total_score:+d}점")
@@ -27785,9 +27787,10 @@ def _calc_today_benchmark_guard_row(ticker: str, label: str, region: str = "", *
         recent_high = float(close.tail(20).max())
         row["20일고점대비"] = (last / recent_high - 1) if recent_high else np.nan
         ma20 = float(close.tail(20).mean())
-        ma50 = float(close.tail(min(50, len(close))).mean())
         row["MA20"] = "하회" if last < ma20 else "상회"
-        row["MA50"] = "하회" if last < ma50 else "상회"
+        if len(close) >= 50:
+            ma50 = float(close.tail(50).mean())
+            row["MA50"] = "하회" if last < ma50 else "상회"
         diffs = close.diff().tail(8).dropna()
         streak = 0
         for v in reversed(diffs.tolist()):
@@ -28095,12 +28098,18 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
 
     flow_breadth = np.nan
     flow_accel = np.nan
+    flow_input_counts = {"rows": 0, "breadth_valid": 0, "breadth_missing": 0,
+                         "accel_valid": 0, "accel_missing": 0}
     if snapshot:
         flow_df = snapshot.get("flow_df", pd.DataFrame())
         if flow_df is not None and not flow_df.empty:
             flow_calc = flow_df[flow_df.get("구분", pd.Series("", index=flow_df.index)).astype(str).ne("매크로")].copy()
+            from stock_lab_core.market_basis import positive_observation_fraction
+            flow_input_counts.update(rows=len(flow_calc), breadth_missing=len(flow_calc), accel_missing=len(flow_calc))
             if "3개월수익률" in flow_calc.columns and not flow_calc.empty:
-                flow_breadth = float((flow_calc["3개월수익률"].fillna(0) > 0).mean())
+                breadth = positive_observation_fraction(flow_calc["3개월수익률"])
+                flow_breadth = breadth["fraction"]
+                flow_input_counts.update(breadth_valid=breadth["valid"], breadth_missing=breadth["missing"])
                 if flow_breadth < 0.35:
                     flow_score += 2
                     reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
@@ -28108,7 +28117,9 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
                     flow_score += 1
                     reasons.append(f"돈흐름 3M 확산률 {flow_breadth*100:.0f}%")
             if "가속도" in flow_calc.columns and not flow_calc.empty:
-                flow_accel = float((flow_calc["가속도"].fillna(0) > 0).mean())
+                accel = positive_observation_fraction(flow_calc["가속도"])
+                flow_accel = accel["fraction"]
+                flow_input_counts.update(accel_valid=accel["valid"], accel_missing=accel["missing"])
                 if flow_accel < 0.35:
                     flow_score += 1
                     reasons.append(f"가속 ETF 비율 {flow_accel*100:.0f}%")
@@ -28297,6 +28308,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "bench_df": bench_df,
         "flow_breadth": flow_breadth,
         "flow_accel": flow_accel,
+        "flow_input_counts": flow_input_counts,
         "rebound_count": rebound_count,
         "strong_rebound_count": strong_rebound_count,
         "panic_day": panic_day,
@@ -28369,16 +28381,25 @@ def render_today_market_guard_panel(guard: dict, title: str = "#### 1. 시장 �
     macro_risk = guard.get("macro_risk", np.nan)
     c4.metric("돈흐름 확산률", "-" if not finite_num(flow_breadth) else f"{float(flow_breadth)*100:.0f}%")
     c5.metric("매크로 지수", "-" if not finite_num(macro_risk) else f"{float(macro_risk):.1f}pt")
+    flow_counts = guard.get("flow_input_counts", {})
+    if flow_counts.get("rows"):
+        st.caption(
+            f"돈흐름 유효 표본: 3M {flow_counts['breadth_valid']}/{flow_counts['rows']}개 · "
+            f"가속도 {flow_counts['accel_valid']}/{flow_counts['rows']}개. 결측값은 약세 0으로 채우지 않습니다."
+        )
     st.caption(
         "시장점수는 국장·미장·돈흐름·매크로를 합친 전체 안전벨트입니다. "
         "0~1 정상 · 2~4 주의 · 5~7 방어 · 8점 이상 위험입니다. "
         "국장/미장 평균과 MA 판정은 아래 세부 지표 표에 있는 정상 수집 지수 전체를 기준으로 계산합니다. "
-        "실제 매수 가능 여부는 바로 위 국장 모드/미장 모드를 따로 봅니다. "
-        "예: 국장 주의·미장 정상은 미장까지 자동 차단이라는 뜻이 아닙니다."
+        "실제 매수 가능 여부는 통합 모드와 해당 지역 모드, 종목별 실행 게이트를 함께 봅니다. "
+        "예: 통합 중단이 없는 국장 주의·미장 정상은 미장까지 자동 차단이라는 뜻이 아닙니다."
     )
     kr_mode_text = str(kr_stats.get("mode", ""))
     us_mode_text = str(us_stats.get("mode", ""))
-    if kr_mode_text != us_mode_text and "정상" in {kr_mode_text, us_mode_text}:
+    global_entry_stop = mode in {"비상", "전시장 비상", "위험"} or "신규매수 중단" in action_text
+    if global_entry_stop:
+        st.caption("통합 위험/비상에서는 지역 모드가 정상이어도 신규매수 중단이 우선합니다. 기존 보유 전량 매도 지시가 아니며 후보품질·기술 타점과 실행 허용은 구분합니다.")
+    elif kr_mode_text != us_mode_text and "정상" in {kr_mode_text, us_mode_text}:
         normal_market = "미장" if us_mode_text == "정상" else "국장"
         caution_market = "국장" if us_mode_text == "정상" else "미장"
         st.caption(
@@ -36102,7 +36123,7 @@ if main_page == "precision":
                 f_txt = _fvg_label if c['fvg_type'] != "없음" else "없음"
                 _rr_src = c.get("rr_target_source", "차트 구조")
                 _rr_label = "강세 상단" if bool(c.get("rr_target_is_projection", False)) else "목표"
-                _rr_str = f"{c['rr_ratio']:.2f} ({_rr_label} {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
+                _rr_str = f"{format_rr_ratio(c['rr_ratio'])} ({_rr_label} {format_currency(c['rr_target'], tkr)} · {_rr_src} / 손절 {format_currency(c['rr_stop'], tkr)})" if c.get('rr_ratio') else "산출불가"
                 _sf_str = c.get('sector_flow_state', '-')
                 _bk_badge = " <span style='color:#a78bfa;'>🚀52주 돌파</span>" if c.get('is_52w_breakout') else ""
                 st.markdown(f"<div class='info-panel' style='border-left: 5px solid #e67e22;'><b>🛡️ SMC 구조 해석</b><br>• 외부구조: <b>{c['ext_structure']}</b><br>• 내부구조: <b>{c['int_structure']}</b><br>• 내부 이벤트: <b>{c['int_event']}</b><br>• 외부 이벤트: <b>{c['ext_event']}</b><br>• 유동성 상태: <b>{c['liq_state']}</b><br>• FVG 상태: <b>{escape_html_value(f_txt)}</b><br>• P/D Zone: <b>{c['pd_zone']}</b><br>• 실시간 MACD: <b>{c['rt_macd']}</b><br>• SQZ: <b>{c['sqz']}</b><br>• R/R 비율: <b>{_rr_str}</b><br>• 섹터 머니플로우: <b>{_sf_str}</b>{_bk_badge}<hr style='margin:10px 0; border-color:#334155;'>🎯 <b>실행 해석:</b> {c['smc_action']}</div>", unsafe_allow_html=True)

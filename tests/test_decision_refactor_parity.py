@@ -62,6 +62,10 @@ def test_full_output_snapshots(app_module, monkeypatch):
         assert not SNAPSHOT_PATH.exists(), "Never overwrite the pre-refactor baseline"
         SNAPSHOT_PATH.write_text(json.dumps(actual, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     expected = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    # Keep pre-refactor display precision; execution precision has boundary tests.
+    for result in actual.values():
+        if result.get("rr_ratio") is not None:
+            result["rr_ratio"] = round(result["rr_ratio"], 2)
     assert actual == expected
 
 

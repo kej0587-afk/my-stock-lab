@@ -62,6 +62,11 @@ def guard_explanation_lines(guard):
         add(name, f"{val*100:.1f}%" if val is not None else "미연결", rule,
             f"가점 0까지 {max(0, (target-val)*100):.1f}%p 회복" if val is not None else "입력 확인")
     parts = guard.get("mode_score_parts") or {}
+    counts = guard.get("flow_input_counts") or {}
+    if counts.get("rows"):
+        add("돈흐름 유효 표본", f"3M {counts['breadth_valid']}/{counts['rows']}개 / 가속도 {counts['accel_valid']}/{counts['rows']}개",
+            "각 지표의 유효 숫자만 분모에 포함(실제 0은 포함)",
+            f"3M 결측 {counts['breadth_missing']}개 / 가속도 결측 {counts['accel_missing']}개 · 결측을 약세로 간주하지 않음")
     add("점수 구성", " / ".join(f"{k} {v:+d}" for k, v in parts.items()) or "구성 미연결",
         "지역 최대 + 흐름 + 조건부 매크로·이벤트 + 복합 가점", "각 입력 갱신 후 같은 함수로 재계산")
     add("매크로 가점", f"{guard.get('macro_score', '미연결')}점 · 부담 {guard.get('macro_pressure', '미연결')} / 리스크 {guard.get('macro_risk', '미연결')}",

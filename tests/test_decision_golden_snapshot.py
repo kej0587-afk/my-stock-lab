@@ -387,4 +387,7 @@ def test_decision_golden_snapshot(
         f"No golden snapshot for '{scenario_id}'. "
         f"Run with UPDATE_SNAPSHOTS=1 to create it, then review the diff."
     )
+    # Legacy goldens store display precision; boundary tests cover unrounded gates.
+    if actual.get("rr_ratio") is not None:
+        actual["rr_ratio"] = round(actual["rr_ratio"], 2)
     assert actual == snapshots[scenario_id]

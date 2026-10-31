@@ -18,6 +18,7 @@ from stock_lab_core.decision_workflow import (
     align_precision_entry_plan_rows,
     build_decision_workflow,
     format_precision_take_profit_condition,
+    qualify_hold_action_plan,
 )
 from stock_lab_core.execution_gate import GATE_EXECUTABLE
 from stock_lab_core.precision_review_export import (
@@ -704,6 +705,7 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
         "st": ui, "clean_float": lambda value, default: default if value is None else float(value),
         "finite_num": np.isfinite, "escape_html_value": str,
         "build_leveraged_precision_state": build,
+        "qualify_hold_action_plan": qualify_hold_action_plan,
         "detect_fin_trend_direction": lambda meta: {"score": 0, "label": "stable", "has_data": False},
     })
     captured = render("Test", "MSFT", False, 4, {}, {
@@ -724,7 +726,15 @@ def test_hold_or_cut_captures_each_rendered_path_without_recalculation(held, lev
     assert "hold_or_cut.csv" in archive.namelist()
     assert len(calls) == int(held)
     if held and not leveraged:
-        assert "holding_addition_vs_final_check" in {flag["code"] for flag in data["conflict_flags"]}
+        assert "현재 매수 허가가 아닙니다" in captured["action"]
+        assert "holding_addition_vs_final_check" not in {flag["code"] for flag in data["conflict_flags"]}
+
+
+def test_unqualified_holding_addition_still_flags_a_restricted_final_check():
+    _, data = _read(hold_or_cut={"ticker": "MSFT", "displayed": True,
+        "decision": "장기보유 적합",
+        "action": "목표비중까지 보유 유지, 추가 확대도 검토 가능."})
+    assert "holding_addition_vs_final_check" in {flag["code"] for flag in data["conflict_flags"]}
 
 
 def test_real_and_demo_call_sites_use_finished_local_results_not_download_calculations():

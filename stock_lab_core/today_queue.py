@@ -17,6 +17,7 @@ import pandas as pd
 from stock_lab_core.formatters import (
     clean_float,
     format_currency,
+    format_rr_ratio,
     is_kr_listed,
     sanitize_ticker_value,
 )
@@ -780,7 +781,7 @@ def format_dashboard_reason(decision: dict) -> str:
         base = f"{base} / {mtf_note}" if base else mtf_note
     if is_dashboard_low_rr_caution(decision):
         rr = clean_float((decision or {}).get("rr_ratio"), math.nan)
-        rr_note = f"R/R {rr:.2f}: 현재가 풀진입 보류"
+        rr_note = f"R/R {format_rr_ratio(rr)}: 현재가 풀진입 보류"
         return f"{base} / {rr_note}" if base else rr_note
     return base
 
@@ -1034,7 +1035,7 @@ def build_today_queue_execution_snapshot(
     rr = math.nan
     valid_rr_prices = all(_finite_num(value) for value in (cur, stop, target)) and 0 < stop < cur < target
     if valid_rr_prices:
-        rr = round((target - cur) / (cur - stop), 2)
+        rr = (target - cur) / (cur - stop)
 
     target_is_projection = bool(c.get("rr_target_is_projection", False))
     rr_target_source = str(c.get("rr_target_source", "") or "").strip()
@@ -1043,7 +1044,7 @@ def build_today_queue_execution_snapshot(
         target_prefix = "상단 " if target_is_projection else ""
         target_text = f"{target_prefix}{format_currency(target, tkr)}"
     stop_text = format_currency(stop, tkr) if stop > 0 else "-"
-    rr_text = f"{rr:.2f}" if _finite_num(rr) and rr > 0 else "-"
+    rr_text = format_rr_ratio(rr) if _finite_num(rr) and rr > 0 else "-"
     rr_kind = "투영상단" if target_is_projection else "차트구조"
     if not rr_target_source:
         rr_target_source = "강세 시나리오 상단: 현재가 + 4ATR" if target_is_projection else "차트 구조 목표가"

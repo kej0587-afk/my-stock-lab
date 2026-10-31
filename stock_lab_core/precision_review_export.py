@@ -256,7 +256,9 @@ def _conflict_flags(sections):
     holding_label = _text(holding.get("decision"))
     if holding_label and labels["final_check"]:
         add("holding_vs_entry_scope", holding_label, labels["final_check"], "Holding management and new entry have different scopes; compare their original reasons.")
-        if "추가 확대도 검토 가능" in _text(holding.get("action")) and _stance(labels["final_check"]) == "restricted":
+        if ("추가 확대도 검토 가능" in _text(holding.get("action"))
+                and _stance(holding.get("action")) != "restricted"
+                and _stance(labels["final_check"]) == "restricted"):
             add("holding_addition_vs_final_check", holding.get("action"), labels["final_check"], "Holding panel mentions additional exposure while final entry wording is restricted.")
         if any(word in holding_label for word in ("손절", "비중 축소")) and _stance(labels["final_check"]) == "actionable_wording":
             add("holding_defense_vs_final_check", holding_label, labels["final_check"], "Holding defense wording differs from final entry wording.")

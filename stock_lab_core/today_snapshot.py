@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 
 
-TODAY_QUEUE_LOGIC_VERSION = "20261030_execution_input_safety_v9"
+TODAY_QUEUE_LOGIC_VERSION = "20261031_guard_observation_and_rr_precision_v10"
 TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
 _LOG = logging.getLogger(__name__)
 

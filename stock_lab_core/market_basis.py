@@ -4,6 +4,18 @@ import numpy as np
 import pandas as pd
 
 
+def positive_observation_fraction(values):
+    """Exclude missing/non-finite observations, retaining genuine zero returns."""
+    raw = pd.Series(values)
+    numeric = pd.to_numeric(raw, errors="coerce")
+    valid = np.isfinite(numeric).fillna(False) & ~raw.map(lambda value: isinstance(value, (bool, np.bool_)))
+    observed = numeric.loc[valid]
+    return {
+        "fraction": float(observed.gt(0).mean()) if not observed.empty else np.nan,
+        "valid": int(valid.sum()), "missing": int((~valid).sum()),
+    }
+
+
 def daily_close(frame):
     """Keep provider trading dates; a daily index is not a live quote timestamp."""
     if not isinstance(frame, pd.DataFrame) or "Close" not in frame:
