@@ -20452,18 +20452,22 @@ def fetch_kiwoom_valuation_snapshot(ticker):
             "reason": "키움 제공 PER/PBR/EPS/BPS (결산 기준일 미제공)", "source": "Kiwoom REST ka10001"}
 
 
-@cache_result(ttl=21600)
-def fetch_valuation_snapshot(ticker):
+@cache_result(ttl=21600, is_success=lambda result: result.get("ok") is True and not result.get("retryable_failure"))
+def _fetch_valuation_snapshot_cached(ticker):
+    """Share successful info snapshots and provider cooldowns across views (v2)."""
     ticker = sanitize_ticker_value(ticker)
     if not ticker:
         return {"ok": False, "reason": "티커 없음", "data": {}}
     issues = []
     sources = []
-    try:
-        info = yf.Ticker(ticker, **yahoo_session_kwargs()).get_info()
-    except Exception as exc:
-        info = {}
-        issues.append(f"Yahoo 조회 실패: {type(exc).__name__}")
+    yahoo = yahoo_metadata_reader.read(
+        "info", ticker, lambda symbol: yf.Ticker(symbol, **yahoo_session_kwargs()).get_info(),
+        ttl=21600, is_success=lambda value: isinstance(value, dict) and bool(value), allow_stale=False,
+    )
+    info = yahoo.get("data") if yahoo.get("ok") else {}
+    attempts = [{"source": "yfinance.get_info", "status": yahoo.get("status", "error")}]
+    if not yahoo.get("ok"):
+        issues.append("Yahoo 조회 실패/제한 · 확보된 다른 공급자 자료와 구분")
     if not isinstance(info, dict):
         info = {}
 
@@ -20494,10 +20498,30 @@ def fetch_valuation_snapshot(ticker):
             sources.append("FMP")
 
     has_any = any(not _valuation_missing(data.get(k)) for k in VALUATION_INFO_KEYS)
+    fetched_at = yahoo.get("fetched_at") if yahoo.get("ok") else datetime.now(timezone.utc).isoformat()
+    metadata = {"provider_attempts": attempts, "fetched_at": fetched_at,
+                "retryable_failure": yahoo.get("status") in {"rate_limited", "error"}}
     if not has_any:
         reason = "yfinance/네이버 밸류 데이터 없음" if is_kr_listed(ticker) else "yfinance/FMP 밸류 데이터 없음"
-        return {"ok": False, "reason": " · ".join(issues + [reason]), "data": data, "sources": sources}
-    return {"ok": True, "reason": " · ".join(issues), "data": _derive_valuation_fields(data), "sources": sources}
+        return {"ok": False, "reason": " · ".join(issues + [reason]), "data": data, "sources": sources, **metadata}
+    return {"ok": True, "reason": " · ".join(issues), "data": _derive_valuation_fields(data), "sources": sources, **metadata}
+
+
+def fetch_valuation_snapshot(ticker):
+    snapshot = _fetch_valuation_snapshot_cached(ticker)
+    if snapshot.get("ok") and snapshot.get("fetched_at"):
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(snapshot["fetched_at"])).total_seconds()
+        except (TypeError, ValueError):
+            age = 21600
+        if age >= 21600 or age < 0:
+            _fetch_valuation_snapshot_cached.clear(ticker)
+            return _fetch_valuation_snapshot_cached(ticker)
+    return snapshot
+
+
+fetch_valuation_snapshot.clear = _fetch_valuation_snapshot_cached.clear
+fetch_valuation_snapshot.__wrapped__ = _fetch_valuation_snapshot_cached.__wrapped__
 
 
 def fmt_multiple(value, digits=1):
@@ -20733,6 +20757,7 @@ def build_valuation_interpretation(data, current_price, ticker, fin_meta=None):
 
 def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=None):
     from stock_lab_core.valuation_presentation import build_valuation_presentation, render_valuation_details
+    from stock_lab_core.valuation_inputs import resolve_valuation_inputs, consensus_connection_rows, valuation_reference_price
 
     st.markdown("### 💎 밸류 / 가격매력 점검")
 
@@ -20744,15 +20769,11 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         return {"ticker": ticker, "status": "ETF 별도판단"}
 
     snapshot = fetch_valuation_snapshot(ticker)
-    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
     analyst_snapshot = get_analyst_snapshot(ticker)
-    analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
-    for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
-        if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
-            data[key] = analyst_data.get(key)
+    data, analyst_context = resolve_valuation_inputs(snapshot, analyst_snapshot, ticker, c.get("cur_p"))
 
     fin_meta = ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta)
-    cur_p = clean_float(c.get("cur_p"), np.nan)
+    cur_p = valuation_reference_price(c.get("cur_p"), analyst_context)
     valuation = build_valuation_interpretation(data, cur_p, ticker, fin_meta=fin_meta)
     presentation = build_valuation_presentation(
         valuation, snapshot=snapshot, analyst_snapshot=analyst_snapshot, fin_meta=fin_meta,
@@ -20764,6 +20785,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
     pe_display = fmt_multiple(valuation["forward_pe"]) if finite_num(valuation["forward_pe"]) else fmt_multiple(valuation["trailing_pe"])
     v3.metric(presentation["per_label"], pe_display)
     v4.metric("PSR", fmt_multiple(valuation["ps"]))
+    st.dataframe(pd.DataFrame(consensus_connection_rows(analyst_context)), width="stretch", hide_index=True)
 
     st.markdown(
         f"<div class='info-panel' style='border-left: 5px solid {valuation['color']};'>"
@@ -20782,6 +20804,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         "ticker": ticker, "interpretation": valuation, "inputs": data,
         "financial_inputs": fin_meta, "sources": snapshot.get("sources", []),
         "source_ok": snapshot.get("ok"), "source_reason": snapshot.get("reason"),
+        "analyst_context": analyst_context,
     }
 
 
@@ -20789,13 +20812,11 @@ def get_valuation_headline_for_final_check(ticker, is_etf, current_price, fin_me
     if is_etf:
         return "ETF 별도판단", "ETF는 밸류보다 추세/돈흐름/괴리율 중심으로 봅니다.", np.nan
 
+    from stock_lab_core.valuation_inputs import resolve_valuation_inputs, valuation_reference_price
     snapshot = fetch_valuation_snapshot(ticker)
-    data = snapshot.get("data", {}) if snapshot.get("ok") else {}
     analyst_snapshot = get_analyst_snapshot(ticker)
-    analyst_data = analyst_snapshot.get("data", {}) if analyst_snapshot.get("ok") else {}
-    for key in ["targetMeanPrice", "targetMedianPrice", "numberOfAnalystOpinions", "recommendationKey", "currentPrice", "regularMarketPrice"]:
-        if _valuation_missing(data.get(key)) and not _valuation_missing(analyst_data.get(key)):
-            data[key] = analyst_data.get(key)
+    data, analyst_context = resolve_valuation_inputs(snapshot, analyst_snapshot, ticker, current_price)
+    current_price = valuation_reference_price(current_price, analyst_context)
 
     fin_meta = ensure_fin_meta_for_valuation(ticker, is_etf, fin_meta)
     valuation = build_valuation_interpretation(data, current_price, ticker, fin_meta=fin_meta)

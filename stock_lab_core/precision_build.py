@@ -10,7 +10,8 @@ from stock_lab_core import report_build
 
 MODULES = ("chart_scorecard", "scorecard_review", "etf_holdings", "precision_review_export",
            "chart_patterns", "chart_execution", "precision_chart_view", "chart_structure", "execution_readiness",
-           "data_freshness", "money_flow", "execution_gate", "decision_workflow", "flow_connection", "prices")
+           "data_freshness", "money_flow", "execution_gate", "decision_workflow", "flow_connection", "prices",
+           "valuation_inputs", "today_enrichment")
 
 
 def precision_build_info(entrypoint=None):

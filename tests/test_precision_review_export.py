@@ -675,11 +675,12 @@ def test_valuation_return_reuses_the_displayed_inputs_and_interpretation():
         "escape_html_value": str,
     })
     captured = render("Test", "MSFT", False, {"cur_p": 100}, 4)
-    assert captured["inputs"] is inputs
+    assert captured["inputs"] == inputs and captured["inputs"] is not inputs
     assert captured["interpretation"] is interpretation
     assert captured["financial_inputs"] is financial
-    assert len(ui.frames) == 1
-    displayed, = ui.frames[0].to_dict("records")
+    assert len(ui.frames) == 2
+    assert ui.frames[0].iloc[0]["목표가"] == "-"
+    displayed, = ui.frames[1].to_dict("records")
     assert displayed["항목"] == "선행 PER(예상 이익)"
     assert {key: displayed[key] for key in ("값", "판정")} == {
         key: original_rows[0][key] for key in ("값", "판정")

@@ -13,6 +13,7 @@ import pandas as pd
 
 from stock_lab_core.asset_classifier import is_fin_score_exempt_asset
 from stock_lab_core.performance import submit_with_context
+from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.formatters import (
     clean_bool,
     ensure_kr_suffix_if_code,
@@ -223,7 +224,8 @@ def attach_today_analyst_context(
             record["애널참여수"] = count
         target = math.nan
         # A failed snapshot may contain partial prices; it is not a valid target.
-        if snapshot.get("ok") is not False:
+        if (snapshot.get("ok") is not False and snapshot.get("stale") is not True
+                and snapshot.get("status") not in {"stale", "rate_limited", "lookup_error", "error"}):
             for key in ("targetMeanPrice", "targetMedianPrice"):
                 target = _positive(data.get(key))
                 if math.isfinite(target):
@@ -231,6 +233,7 @@ def attach_today_analyst_context(
                     break
         if not math.isfinite(target):
             status = snapshot.get("status")
+            status = "stale" if snapshot.get("stale") is True else status
             status = status if status in {"stale", "rate_limited", "lookup_error"} else "no_target"
             record.update({"애널목표상태": status, "애널목표사유": _text(snapshot.get("reason")) or "No positive mean/median consensus target"})
             continue
@@ -308,3 +311,6 @@ def build_today_analyst_upside_map(
         for key in keys - {""}:
             values.setdefault(key, set()).add(upside)
     return {key: next(iter(upsides)) for key, upsides in values.items() if len(upsides) == 1}
+
+
+register_loaded_source(__name__, __file__)

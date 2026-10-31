@@ -14,6 +14,7 @@ import pytest
 
 from stock_lab_core import valuation_presentation as presentation
 from stock_lab_core.financial_score import optional_float
+from stock_lab_core.valuation_inputs import resolve_valuation_inputs
 
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
@@ -122,7 +123,8 @@ def test_actual_panel_preserves_original_results_and_inputs_and_calls_new_detail
     calculation = {"cur_p": 100.0, "score": 0, "gate_state": "unchanged"}
     result = panel["render"]("Test", "MSFT", False, calculation, 0, fin_meta=panel["financial"])
     assert result["interpretation"] is panel["valuation"]
-    assert result["inputs"] is panel["inputs"]
+    expected_inputs, _ = resolve_valuation_inputs(panel["snapshot"], panel["analyst"], "MSFT", 100)
+    assert result["inputs"] == expected_inputs and result["inputs"] is not panel["inputs"]
     assert result["financial_inputs"] is panel["financial"]
     assert result["sources"] is panel["snapshot"]["sources"]
     assert result["source_ok"] is True and result["source_reason"] == ""
@@ -132,14 +134,14 @@ def test_actual_panel_preserves_original_results_and_inputs_and_calls_new_detail
     panel["fetch"].assert_called_once_with("MSFT")
     panel["analyst_fetch"].assert_called_once_with("MSFT")
     panel["financial_fetch"].assert_called_once_with("MSFT", False, panel["financial"])
-    panel["calculate"].assert_called_once_with(panel["inputs"], 100.0, "MSFT", fin_meta=panel["financial"])
+    panel["calculate"].assert_called_once_with(expected_inputs, 100.0, "MSFT", fin_meta=panel["financial"])
     panel["build_display"].assert_called_once_with(panel["valuation"], snapshot=panel["snapshot"],
         analyst_snapshot=panel["analyst"], fin_meta=panel["financial"])
     panel["render_details"].assert_called_once()
     shown = panel["render_details"].call_args.args[1]
     assert panel["render_details"].call_args.args[0] is panel["ui"]
     assert shown["duplicate_rows_removed"] == 1
-    assert sum(len(frame) for frame in panel["ui"].frames) == 3
+    assert sum(len(frame) for frame in panel["ui"].frames) == 4
     assert panel["ui"].metrics[2] == (expected_label, "20.0x" if forward is not None else "21.0x")
     assert any("회사 전망 원문 미연결" in str(item) for item in panel["ui"].log)
     assert len(result["interpretation"]["rows"]) == 4  # Only the presentation deduplicates.
@@ -167,7 +169,8 @@ def test_actual_panel_missing_lookups_do_not_invent_values_or_bypass_new_details
     before = deepcopy(panel["inputs"])
     result = panel["render"]("Test", "MSFT", False, {"cur_p": 100.0}, 0, fin_meta=panel["financial"])
     assert result["inputs"] == {} and panel["inputs"] == before
-    assert not panel["ui"].frames
+    assert len(panel["ui"].frames) == 1
+    assert panel["ui"].frames[0].iloc[0]["상태"] == "목표가 미제공"
     assert panel["ui"].metrics[2:] == [("PER(기준 미확인)", "-"), ("PSR", "-")]
     panel["render_details"].assert_called_once()
     assert any("밸류 조회: 자료 미제공" in str(item) for item in panel["ui"].log)
@@ -208,7 +211,8 @@ def test_actual_ensure_preserves_uncalculated_meta_and_exposes_enrichment_failur
     assert {key: returned[key] for key in original} == original
     assert returned["auto_score"] is None and returned["manual_score"] is None and returned["final_score"] == 3
     assert result["interpretation"] is panel["valuation"]
-    panel["calculate"].assert_called_once_with(panel["inputs"], 100.0, "MSFT", fin_meta=returned)
+    expected_inputs, _ = resolve_valuation_inputs(panel["snapshot"], panel["analyst"], "MSFT", 100)
+    panel["calculate"].assert_called_once_with(expected_inputs, 100.0, "MSFT", fin_meta=returned)
     shown = panel["render_details"].call_args.args[1]
     if lookup_failed:
         assert returned is not original
