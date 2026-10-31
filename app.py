@@ -20131,6 +20131,14 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
             "price_asof": frame_last_date(score_frame), "financial_basis": financial_basis(fin_meta, is_etf=is_etf)}
 
 
+def get_precision_build_info():
+    from stock_lab_core.precision_build import precision_build_info
+    info = precision_build_info(__file__)
+    if info.get("restart_required"):
+        st.warning("배포 코드와 현재 불러온 정밀관측소 모듈이 다릅니다. Streamlit Cloud에서 Reboot app이 필요합니다.")
+    return info
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_fin_meta_for_valuation_fallback(ticker, is_etf=False):
     ticker = sanitize_ticker_value(ticker)
@@ -34142,7 +34150,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             st, selected_ticker=tkr, result_ticker=tkr, decision=c,
             final_check=precision_final_check, financial=fin_meta, multi_timeframe=mtf_pack,
             ohlcv={"daily_source": df, "display_chart": chart_df}, source="public_demo",
-            source_build=get_report_build_info(__file__),
+            source_build=get_precision_build_info(),
             signal_evidence={"pattern_timing": pattern_timing, "pattern_reason": pattern_reason, "pattern_bucket": pattern_bucket},
             context={"name": name, "is_etf": is_etf, "asset_class": asset_class,
                      "has_position": has_pos_value, "my_price": my_price},
@@ -36351,7 +36359,7 @@ if main_page == "precision":
             selected_ticker=tkr, result_ticker=tkr, decision=c, completion="complete", stage="panels",
             workflow_display=precision_workflow_display, final_check=precision_final_check,
             valuation=precision_valuation, financial=fin_meta, entry_plan=precision_entry_plan,
-            hold_or_cut=precision_hold_or_cut, source_build=get_report_build_info(__file__),
+            hold_or_cut=precision_hold_or_cut, source_build=get_precision_build_info(),
             multi_timeframe=mtf_pack, ohlcv={"daily_source": df, "display_chart": chart_df},
             signal_evidence={
                 "pattern_candidates": precision_pattern_candidates,

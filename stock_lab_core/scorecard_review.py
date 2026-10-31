@@ -77,3 +77,7 @@ def scorecard_decision_context(scorecard, workflow, fin_score, *, is_etf=False):
             "price_asof": scorecard.get("price_asof", ""),
             "financial_basis": scorecard.get("financial_basis", {}),
             "score_added": 0, "thresholds_changed": False}
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

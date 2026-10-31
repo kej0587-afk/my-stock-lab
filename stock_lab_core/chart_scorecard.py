@@ -196,3 +196,7 @@ def render_volume_review(st, frame, ticker=""):
     with st.expander("거래량 색상·그래프 읽기"):
         st.markdown("보라 HVE/HVY/HVQ: 로드구간/252봉/63봉 최고. 핑크 Pocket Pivot: 상승·보합일 거래량이 직전 10봉 하락일 최대보다 큼(이평·가격 조건 제외). 청록/주황: 상승/하락일 평균 2배, 연한색: 1.5배. 검정/남색: 평균 50% 이하이면서 60/20봉 최저. 회색: 기타. 위 분류부터 하나만 적용합니다.")
         st.write("U/D는 최근 50봉 상승일 거래량 합 ÷ 하락일 합입니다. 분모가 0이거나 이력이 짧으면 미수집입니다. 하루 대량 거래에 치우칠 수 있어 여러 봉의 가격·거래량 동행을 봅니다. 거래대금은 체결가 합계가 아닌 종가 기반 근사치입니다.")
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

@@ -524,3 +524,7 @@ def load_etf_holdings(ticker, *, kr_catalog=None, force_refresh=False, fetch=Non
     if result["status"] != "ok":
         return _cached_result(entry, cache, now, max_age_days, failed=result)
     return deepcopy(result)
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

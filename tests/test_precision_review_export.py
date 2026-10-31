@@ -777,7 +777,7 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
             for node in ast.walk(keyword.value)
         )
         kwargs = {keyword.arg: keyword.value for keyword in call.keywords}
-        assert kwargs["source_build"].func.id == "get_report_build_info"
+        assert kwargs["source_build"].func.id == "get_precision_build_info"
         assert kwargs["decision"].id == "c"
         assert kwargs["selected_ticker"].id == kwargs["result_ticker"].id == "tkr"
         assert kwargs["final_check"].id == "precision_final_check"
@@ -841,6 +841,7 @@ def test_real_and_demo_call_sites_use_finished_local_results_not_download_calcul
         "df": sample["ohlcv"]["daily_source"], "chart_df": sample["ohlcv"]["daily_source"],
         "mtf_pack": sample["multi_timeframe"], "name": "Microsoft",
         "get_report_build_info": lambda path: {"base_commit": "test"}, "__file__": str(APP_PATH),
+        "get_precision_build_info": lambda: {"base_commit": "test"},
     })
     before_complete = datetime.now(timezone.utc)
     eval(compile(ast.Expression(body=real), str(APP_PATH), "eval"), namespace)

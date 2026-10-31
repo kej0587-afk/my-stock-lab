@@ -512,3 +512,7 @@ class PrecisionReviewDownload:
             _render_download(self.st, data, _download_manifest(data), key_suffix=f"_{self.sequence}")
         if self.owner:
             self.st.session_state[_READY_KEY] = {"owner": self.owner, "data": data}
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
