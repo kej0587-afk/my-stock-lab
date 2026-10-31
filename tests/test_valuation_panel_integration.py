@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from stock_lab_core import valuation_presentation as presentation
+from stock_lab_core import earnings_comparison as earnings
 from stock_lab_core.financial_score import optional_float
 from stock_lab_core.valuation_inputs import resolve_valuation_inputs
 
@@ -77,6 +78,7 @@ def load_render(tree, namespace):
 @pytest.fixture
 def panel(app_tree, monkeypatch):
     ui = UI()
+    monkeypatch.setattr(earnings, "get_earnings_comparison_snapshot", Mock(return_value={"ok": False, "status": "no_data"}))
     inputs = {"forwardPE": 20.0, "trailingPE": 21.0, "targetMeanPrice": 105.0,
               "targetMedianPrice": 104.0, "numberOfAnalystOpinions": 12,
               "recommendationKey": "hold", "currentPrice": 100.0, "regularMarketPrice": 100.0}
@@ -176,11 +178,31 @@ def test_actual_panel_missing_lookups_do_not_invent_values_or_bypass_new_details
     assert any("밸류 조회: 자료 미제공" in str(item) for item in panel["ui"].log)
 
 
+def test_quarterly_earnings_is_exported_as_evidence_without_entering_valuation_math(panel, monkeypatch):
+    from datetime import datetime, timezone
+    snapshot = {"ok": True, "status": "available", "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "data": {"quoteType": {"symbol": "MSFT", "quoteType": "EQUITY"},
+                 "earningsHistory": {"defaultMethodology": "gaap", "history": [{
+                     "quarter": {"fmt": "2026-06-30"}, "epsActual": {"raw": 4.0},
+                     "epsEstimate": {"raw": 3.0}, "currency": "USD"}]}}}
+    fetch = Mock(return_value=snapshot)
+    monkeypatch.setattr(earnings, "get_earnings_comparison_snapshot", fetch)
+    result = panel["render"]("Test", "MSFT", False, {"cur_p": 100.0}, 0, fin_meta=panel["financial"])
+    fetch.assert_called_once_with("MSFT")
+    evidence = result["earnings_comparison"]
+    assert evidence["actuals"][0]["difference"] == 1
+    assert evidence["comparison_used_for_scoring"] is False
+    assert result["interpretation"] is panel["valuation"]
+    assert panel["ui"].frames[-1].iloc[0]["실제−예상"] == "1.00 USD"
+    assert "earningsHistory" not in panel["calculate"].call_args.args[0]
+
+
 def test_etf_returns_before_fetch_scoring_or_new_presentation(panel):
     result = panel["render"]("ETF", "SPY", True, {}, 0, fin_meta=panel["financial"])
     assert result == {"ticker": "SPY", "status": "ETF 별도판단"}
     for key in ("fetch", "analyst_fetch", "financial_fetch", "calculate", "build_display", "render_details"):
         panel[key].assert_not_called()
+    earnings.get_earnings_comparison_snapshot.assert_not_called()
     assert not panel["ui"].frames and not panel["ui"].metrics
     assert any(kind == "info" for kind, _ in panel["ui"].log)
 

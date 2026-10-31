@@ -648,7 +648,9 @@ def test_entry_plan_return_matches_rendered_rows_without_rebuilding():
     assert missing["status"] == "unavailable"
 
 
-def test_valuation_return_reuses_the_displayed_inputs_and_interpretation():
+def test_valuation_return_reuses_the_displayed_inputs_and_interpretation(monkeypatch):
+    from stock_lab_core import earnings_comparison
+    monkeypatch.setattr(earnings_comparison, "get_earnings_comparison_snapshot", lambda ticker: {"ok": False, "status": "no_data"})
     ui = _UI()
     calls = []
     inputs = {"forwardPE": 20}

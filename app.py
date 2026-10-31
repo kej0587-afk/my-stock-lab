@@ -20758,6 +20758,9 @@ def build_valuation_interpretation(data, current_price, ticker, fin_meta=None):
 def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=None):
     from stock_lab_core.valuation_presentation import build_valuation_presentation, render_valuation_details
     from stock_lab_core.valuation_inputs import resolve_valuation_inputs, consensus_connection_rows, valuation_reference_price
+    from stock_lab_core.earnings_comparison import (
+        get_earnings_comparison_snapshot, build_earnings_comparison, render_earnings_comparison,
+    )
 
     st.markdown("### 💎 밸류 / 가격매력 점검")
 
@@ -20798,6 +20801,10 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
     )
 
     render_valuation_details(st, presentation)
+    earnings_snapshot = get_earnings_comparison_snapshot(ticker)
+    earnings_comparison = build_earnings_comparison(earnings_snapshot, fin_meta=fin_meta)
+    with st.expander("분기 실적·예상 대조", expanded=False):
+        render_earnings_comparison(st, earnings_comparison)
     if snapshot.get("ok") and int(valuation.get("valuation_data_count", 0)) <= 1:
         st.caption("밸류 데이터 참고: 목표가 또는 일부 지표만 확보되어 PER/PSR 등 세부 지표 보강 후 판단합니다.")
     return {
@@ -20805,6 +20812,7 @@ def render_valuation_price_panel(name, ticker, is_etf, c, fin_score, fin_meta=No
         "financial_inputs": fin_meta, "sources": snapshot.get("sources", []),
         "source_ok": snapshot.get("ok"), "source_reason": snapshot.get("reason"),
         "analyst_context": analyst_context,
+        "earnings_comparison": earnings_comparison,
     }
 
 
