@@ -251,9 +251,10 @@ def attach_today_analyst_context(
         if not math.isfinite(snapshot_price):
             snapshot_price = _positive(data.get("regularMarketPrice"))
             snapshot_price_key = "regularMarketPrice"
-        current = _positive(row.get(price_col))
+        raw_price = _positive(row.get("현재가원값")) if price_col == "현재가" else math.nan
+        current = raw_price if math.isfinite(raw_price) else _positive(row.get(price_col))
         if math.isfinite(current):
-            record.update({"애널가격출처": price_col, "애널가격상태": "row_price"})
+            record.update({"애널가격출처": "현재가원값" if math.isfinite(raw_price) else price_col, "애널가격상태": "row_price"})
             if math.isfinite(snapshot_price):
                 drift = (current / snapshot_price - 1.0) * 100.0
                 record["애널가격괴리pct"] = drift

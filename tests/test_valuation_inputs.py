@@ -66,6 +66,25 @@ def test_missing_asof_is_not_replaced_with_fetch_date_and_report_has_no_eps_clai
     assert row["자료"] == "애널리스트 주가 목표"
 
 
+def test_display_rounding_cannot_change_the_consensus_denominator(app_module):
+    shared = analyst(data={"targetMeanPrice": 406.54807})
+    price = 281.481
+    row = {"티커": "GOOGL", "현재가": "$281.48", "현재가원값": price}
+    queue = attach_today_analyst_context(pd.DataFrame([row]), get_analyst_snapshot=lambda _: shared).iloc[0]
+    data, context = resolve_valuation_inputs({}, shared, "GOOGL", price)
+    valuation = app_module.build_valuation_interpretation(data, price, "GOOGL")
+    assert queue["애널가격출처"] == "현재가원값"
+    assert queue["애널가격기준"] == price
+    assert queue["애널목표Upside값"] == context["애널목표Upside값"] == valuation["target_upside"]
+
+
+def test_explicit_custom_price_column_is_not_overridden_by_display_raw_price():
+    shared = analyst()
+    row = {"티커": "MSFT", "quote": 100, "현재가원값": 500}
+    result = attach_today_analyst_context(pd.DataFrame([row]), get_analyst_snapshot=lambda _: shared, price_col="quote").iloc[0]
+    assert result["애널목표Upside값"] == pytest.approx(20)
+
+
 def test_only_high_low_targets_do_not_turn_into_consensus():
     data, context = resolve_valuation_inputs({}, analyst(data={"targetHighPrice": 200, "targetLowPrice": 100}), "MSFT", 100)
     assert not data and context["애널목표상태"] == "no_target"
