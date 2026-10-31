@@ -191,6 +191,11 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     if missing_indicators:
         return _gate(GATE_DATA_CHECK, "핵심 지표 미확인: " + ", ".join(missing_indicators), "overheat")
 
+    from stock_lab_core.data_freshness import PRICE_BLOCK_STATES, FLOW_INVALID_STATES
+    verify_dates = _row_get(row, "가격신선도검증대상", False) is True
+    if verify_dates and _row_get(row, "가격신선도") in PRICE_BLOCK_STATES:
+        return _gate(GATE_DATA_CHECK, _text(_row_get(row, "가격신선도근거")) or "가격 기준일 확인 필요", "data.price")
+
     if math.isfinite(rr) and rr < 1.0:
         reasons.append(f"R/R {format_rr_ratio(rr)} < 1")
         evidence_ids.append("rr")
@@ -211,11 +216,15 @@ def build_execution_gate(row: Any) -> dict[str, str]:
         reasons.append("조건 확인 대기")
         evidence_ids.append("entry")
 
-    if _RE_FLOW_WAIT.search(flow_text):
+    flow_wait = _RE_FLOW_WAIT.search(flow_text)
+    flow_weak = math.isfinite(flow_score) and flow_score <= -10 and _RE_FLOW_WEAK.search(flow_text)
+    if verify_dates and (flow_wait or flow_weak) and _row_get(row, "돈흐름신선도") in FLOW_INVALID_STATES:
+        return _gate(GATE_DATA_CHECK, _text(_row_get(row, "돈흐름신선도근거")) or "돈흐름 기준일 확인 필요", "data.flow")
+    if flow_wait:
         reasons.append(f"돈흐름 {flow_verdict or flow_group}")
         evidence_ids.append("flow")
 
-    if math.isfinite(flow_score) and flow_score <= -10 and _RE_FLOW_WEAK.search(flow_text):
+    if flow_weak:
         reasons.append(f"돈흐름 약함 {flow_score:.1f}")
         evidence_ids.append("flow")
 
@@ -241,12 +250,14 @@ def apply_execution_gate_columns(
     df: pd.DataFrame,
     *,
     upside_value_map: dict[str, float] | None = None,
+    freshness_now=None,
 ) -> pd.DataFrame:
     """Return a copy with gate and quality columns attached."""
     if df is None or df.empty:
         return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
-    out = df.copy()
+    from stock_lab_core.data_freshness import attach_input_freshness
+    out = attach_input_freshness(df, now=freshness_now)
     upside_value_map = upside_value_map or {}
     upper_upside_value_map = {str(key).upper(): value for key, value in upside_value_map.items()}
     gate_rows: list[dict[str, str]] = []
@@ -267,6 +278,8 @@ def apply_execution_gate_columns(
             notes.append("섹터RS 약함")
         if math.isfinite(clean_float(upside, math.nan)) and upside <= 0:
             notes.append(f"애널목표Upside {upside:.1f}%")
+        if row.get("돈흐름사용범위") == "참고 전용 · 실행근거 제외":
+            notes.append("돈흐름 기준일 확인 · 실행근거 제외")
         candidate_notes.append(" · ".join(notes))
         type_text = _text(row.get("유형", ""))
         is_etf = "ETF" in type_text or "펀드" in type_text
@@ -306,3 +319,7 @@ def apply_execution_gate_columns(
     for col in guidance:
         out[col] = guidance[col]
     return out
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

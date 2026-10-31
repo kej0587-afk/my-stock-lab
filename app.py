@@ -6762,7 +6762,7 @@ def refresh_today_market_flow_snapshot(include_theme: bool = True, force_theme_r
     }
 
     if include_theme:
-        if (not force_theme_refresh) and _snapshot_has_theme_context(prev):
+        if (not force_theme_refresh) and _snapshot_has_theme_context(prev) and "기준일" in prev.get("theme_flow_df", pd.DataFrame()):
             for key in ("theme_flow_df", "theme_rotation_df", "subtheme_group_df", "theme_top5", "subtheme_top"):
                 snapshot[key] = prev.get(key, pd.DataFrame())
         else:
@@ -21638,6 +21638,7 @@ def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_cla
         is_leveraged_product_fn=is_leveraged_or_inverse_product,
     )
     workflow.update({
+        **(decision.get("input_basis") or {}),
         "종목명": name,
         "현재가": format_currency(decision.get("cur_p", 0.0), ticker),
         "섹터벤치": get_benchmark_display_name(benchmark.get("sector_bench", "")),
@@ -21844,6 +21845,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
     sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
     sector_rs_state = classify_sector_rs_state(sector_rs_label, is_etf=is_etf)
+    c["input_basis"] = {**build_signal_basis(df, live_context), **financial_basis(financial_meta, is_etf=is_etf)}
     workflow = build_decision_workflow(
         name, tkr, c, is_etf=is_etf, has_pos=has_p,
         pattern_timing=pattern_timing, pattern_bucket=pattern_bucket, pattern_reason=pattern_reason,
@@ -21895,7 +21897,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "목표비중": round(clean_float(c.get("target_w"), np.nan), 2),
         "비중차이": clean_float(c.get("target_w"), np.nan) - clean_float(c.get("current_w"), np.nan),
         **workflow,
-        **build_signal_basis(df, live_context),
+        **c["input_basis"],
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
@@ -31187,7 +31189,7 @@ TODAY_FLOW_SHORTLIST_COLS = [
     "후보군", "테마", "후보근거", "주의요인",
     "돈흐름점수", "1주수익률", "2주수익률", "1개월수익률", "3개월수익률",
 ]
-TODAY_FLOW_SHORTLIST_VERSION = "20261006_signal_audit_flow_capture_v5"
+TODAY_FLOW_SHORTLIST_VERSION = "20261031_actual_source_dates_v6"
 
 
 def _flow_shortlist_ticker_key(ticker: str) -> str:
@@ -31691,7 +31693,7 @@ def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame |
     flow_cols = [
         "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
         "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
-        "기준일", "source_asof", "가격자료기준일", "자료기준일",
+        "기준일", "source_asof", "가격자료기준일", "자료기준일", "거래량기준일",
     ]
     return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
 
@@ -33938,7 +33940,7 @@ def _render_today_queue_tab(mode):
 
     show_cols = [
         "종목명", "티커", "유형", "현재가", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "후보품질", "후보점수", "후보검토사항",
-        "가격자료기준일", "가격반영", "지표마지막봉", "계산시각", "자료주의",
+        "가격자료기준일", "가격신선도근거", "돈흐름기준일", "돈흐름신선도근거", "재무자료기간", "재무자료상태", "가격반영", "지표마지막봉", "계산시각", "자료주의",
         "목표가요약", "최종읽기", "현재실행안내", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
         "1차기준", "현재진입조건", "부족액", "📌후보등급",
         "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
@@ -34214,6 +34216,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos_value)
         c = apply_leveraged_precision_decision_override(c, name, tkr, has_pos_value, my_price)
         pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(detect_chart_pattern_candidates(chart_df), c)
+        c["input_basis"] = {**build_signal_basis(df, (chart_df, live_applied, "")), **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, asset_class, has_pos_value,
             pattern_timing, pattern_bucket, pattern_reason,
@@ -34223,6 +34226,9 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         with precision_execution_slot.container():
             render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
+        from stock_lab_core.data_freshness import input_freshness_rows
+        c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
+        st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
         with st.expander("기술 원신호·점수"):
             st.write(c["dec"])
             st.write(f"Adj: {c['adj']:.1f}점")
@@ -36211,6 +36217,7 @@ if main_page == "precision":
         precision_pattern_candidates = detect_chart_pattern_candidates(chart_df)
         precision_liquidity_profile = build_liquidity_thermal_profile(chart_df)
         precision_pattern_timing, precision_pattern_reason, precision_pattern_bucket = summarize_chart_pattern_for_dashboard(precision_pattern_candidates, c)
+        c["input_basis"] = {**precision_signal_basis, **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, a_class, precision_has_pos,
             precision_pattern_timing, precision_pattern_bucket, precision_pattern_reason,
@@ -36228,6 +36235,9 @@ if main_page == "precision":
         with precision_execution_slot.container():
             render_precision_execution_state(c.get("execution_workflow"))
         render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
+        from stock_lab_core.data_freshness import input_freshness_rows
+        c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
+        st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
         if is_etf:
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name)
         L, R = st.columns([1.1, 2.4])

@@ -344,8 +344,9 @@ def build_precision_review_export_zip(
     sections = _json_value({
         "candidate_grade": {key: decision.get(key) for key in _CANDIDATE_KEYS},
         "main_decision": {key: value for key, value in decision.items()
-                          if key not in {"execution_workflow", "execution_readiness", "chart_scorecard", "etf_holdings", "chart_structure", "chart_final_check"}},
+                          if key not in {"execution_workflow", "execution_readiness", "input_basis", "input_freshness", "chart_scorecard", "etf_holdings", "chart_structure", "chart_final_check"}},
         "execution_workflow": workflow,
+        "input_freshness": decision.get("input_freshness"),
         "execution_readiness": {key: value for key, value in _mapping(decision.get("execution_readiness")).items()
                                 if key != "display_workflow"} or None,
         "workflow_display": workflow_display,

@@ -1646,7 +1646,9 @@ def _extract_ohlc_from_yf(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if not all(c in out.columns for c in ("Close", "High", "Low")):
         return pd.DataFrame()
     cols = ["Close", "High", "Low"] + (["Volume"] if "Volume" in out.columns else [])
-    return out[cols].ffill().dropna(subset=["Close", "High", "Low"])
+    # A union of market calendars has empty rows for closed markets. These are
+    # not zero-return sessions, and missing volume must never be copied forward.
+    return out[cols].dropna(subset=["Close", "High", "Low"])
 
 
 @timed_call("prices")
@@ -1945,8 +1947,11 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
         flow_parts["점수_합계"] = flow_parts["점수_합계"] - recent_weak_penalty
     flow_score    = flow_parts["점수_합계"]
     swing_score   = _compute_swing_score(ret_2w, ret_1m, swing_accel, volume_growth, price_level)
+    volume_dates = px.index[pd.to_numeric(px["Volume"], errors="coerce").notna()] if "Volume" in px else []
 
     return {
+        "기준일": px.index[-1].strftime("%Y-%m-%d") if isinstance(px.index, pd.DatetimeIndex) and pd.notna(px.index[-1]) else "",
+        "거래량기준일": volume_dates[-1].strftime("%Y-%m-%d") if isinstance(px.index, pd.DatetimeIndex) and len(volume_dates) else "",
         "현재가":      cur,
         "가격수준":    price_level,
         "고점대비":    drawdown,
@@ -2019,7 +2024,7 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None):
 def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환.
 
-    Data-only cache revision: inner timings no longer capture progress UI.
+    Source-date revision: preserve actual sessions without forward-filled bars.
     """
     universe = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
@@ -2062,7 +2067,7 @@ def calculate_money_flow_df() -> pd.DataFrame:
 def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산.
 
-    Data-only cache revision: inner timings no longer capture progress UI.
+    Source-date revision: preserve actual sessions without forward-filled bars.
     """
     selected = str(theme or "").strip()
     universe = [
@@ -2522,3 +2527,7 @@ def get_sector_flow_state(sector_bench_ticker: str) -> str:
     if px.empty or len(px) < 20:
         return "-"
     return _compute_ticker_metrics(px)["상태"]
+
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)

@@ -17,7 +17,7 @@ _CHECK_IDS = {
     "매크로": "macro", "보유상태": "holding",
 }
 _RANK = {"통과": 0, "주의": 1, "미확인": 2, "차단": 3}
-_CORE_DATA = {"price", "data", "data.history", "mtf", "overheat", "macro", "rr", "market", "gate.local"}
+_CORE_DATA = {"price", "data", "data.history", "data.price", "data.flow", "mtf", "overheat", "macro", "rr", "market", "gate.local"}
 
 
 def quality_label(fin_score, fin_meta=None, *, is_etf=False):
