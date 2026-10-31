@@ -14,24 +14,25 @@ def _chart_pattern_source_df(df: pd.DataFrame, lookback: int = 140) -> pd.DataFr
     required = ["Open", "High", "Low", "Close"]
     if df is None or df.empty or any(col not in df.columns for col in required):
         return pd.DataFrame()
-    view = df[required].copy().dropna().tail(lookback)
+    view = df[required].apply(pd.to_numeric, errors="coerce").replace([np.inf, -np.inf], np.nan).tail(lookback)
+    if view.isna().any().any() or (view <= 0).any().any() or not view.index.is_unique or not view.index.is_monotonic_increasing:
+        return pd.DataFrame()
     if len(view) < 24:
         return pd.DataFrame()
     return view
 
 
 def _chart_pattern_pivots(view: pd.DataFrame, left: int = 3, right: int = 3):
-    highs, lows = [], []
-    for i in range(left, len(view) - right):
-        high_window = view["High"].iloc[i - left:i + right + 1]
-        low_window = view["Low"].iloc[i - left:i + right + 1]
-        high = float(view["High"].iloc[i])
-        low = float(view["Low"].iloc[i])
-        if high == float(high_window.max()):
-            highs.append({"pos": i, "time": view.index[i], "price": high})
-        if low == float(low_window.min()):
-            lows.append({"pos": i, "time": view.index[i], "price": low})
-    return highs, lows
+    width = left + right + 1
+    if len(view) < width:
+        return [], []
+    pivots = []
+    for col, reduce in (("High", np.nanmax), ("Low", np.nanmin)):
+        values = view[col].to_numpy(dtype=float)
+        windows = np.lib.stride_tricks.sliding_window_view(values, width)
+        positions = np.flatnonzero(values[left:len(view) - right] == reduce(windows, axis=1)) + left
+        pivots.append([{"pos": int(i), "time": view.index[i], "price": float(values[i])} for i in positions])
+    return tuple(pivots)
 
 
 def _chart_pattern_rel_diff(a, b) -> float:
@@ -383,7 +384,7 @@ def _chart_pattern_lifecycle(pattern: dict, view: pd.DataFrame) -> dict:
     return pattern
 
 
-def _finalize_chart_pattern_candidates(view: pd.DataFrame, patterns: list, max_patterns: int = 1) -> list:
+def _finalize_chart_pattern_candidates(view: pd.DataFrame, patterns: list, max_patterns: int = 1, *, distinct_directions=True) -> list:
     enriched = [_chart_pattern_lifecycle(pattern, view) for pattern in patterns]
     active = [p for p in enriched if p.get("lifecycle") in {"현재유효", "관찰"}]
     if not active:
@@ -400,7 +401,7 @@ def _finalize_chart_pattern_candidates(view: pd.DataFrame, patterns: list, max_p
     seen_direction = set()
     for pattern in active:
         direction = pattern.get("direction", "neutral")
-        if direction in seen_direction and len(selected) >= 1:
+        if distinct_directions and direction in seen_direction and len(selected) >= 1:
             continue
         selected.append(pattern)
         seen_direction.add(direction)
@@ -464,6 +465,8 @@ def _detect_double_pattern(view: pd.DataFrame, highs, lows, kind: str):
                 "invalid_price": (min(a["price"], b["price"]) * 0.985) if kind == "bottom" else (max(a["price"], b["price"]) * 1.015),
                 "label_x": b["time"],
                 "label_y": label_y,
+                "formation_id": ("double", kind, a["time"], b["time"]),
+                "known_at": view.index[min(b["pos"] + 3, len(view) - 1)],
                 "line_points": [
                     ((a["time"], a["price"]), (neck_time, neckline)),
                     ((neck_time, neckline), (b["time"], b["price"])),
@@ -497,10 +500,15 @@ def _detect_head_shoulders_pattern(view: pd.DataFrame, highs, lows, inverse: boo
             head_ok = head["price"] > left["price"] * 1.04 and head["price"] > right["price"] * 1.04
         if not head_ok:
             continue
-        mids = [p for p in opposite if left["pos"] < p["pos"] < right["pos"]]
-        if len(mids) < 2:
+        left_mids = [p for p in opposite if left["pos"] < p["pos"] < head["pos"]]
+        right_mids = [p for p in opposite if head["pos"] < p["pos"] < right["pos"]]
+        if not left_mids or not right_mids:
             continue
-        neckline = (mids[0]["price"] + mids[-1]["price"]) / 2
+        pick = max if inverse else min
+        mids = [pick(left_mids, key=lambda p: p["price"]), pick(right_mids, key=lambda p: p["price"])]
+        slope = (mids[1]["price"] - mids[0]["price"]) / (mids[1]["pos"] - mids[0]["pos"])
+        intercept = mids[0]["price"] - slope * mids[0]["pos"]
+        neckline = slope * (len(view) - 1) + intercept
         if inverse:
             status = "돌파" if close >= neckline * 0.997 else "관찰"
             label = f"역헤드앤숄더 {status}"
@@ -521,13 +529,19 @@ def _detect_head_shoulders_pattern(view: pd.DataFrame, highs, lows, inverse: boo
             "invalid_price": head["price"] * 0.985 if inverse else head["price"] * 1.015,
             "label_x": right["time"],
             "label_y": right["price"],
+            "formation_id": ("shoulders", inverse, left["time"], head["time"], right["time"]),
+            "known_at": view.index[min(right["pos"] + 3, len(view) - 1)],
             "line_points": [
-                ((left["time"], left["price"]), (head["time"], head["price"])),
-                ((head["time"], head["price"]), (right["time"], right["price"])),
-                ((mids[0]["time"], neckline), (view.index[-1], neckline)),
+                ((left["time"], left["price"]), (mids[0]["time"], mids[0]["price"])),
+                ((mids[0]["time"], mids[0]["price"]), (head["time"], head["price"])),
+                ((head["time"], head["price"]), (mids[1]["time"], mids[1]["price"])),
+                ((mids[1]["time"], mids[1]["price"]), (right["time"], right["price"])),
+                ((mids[0]["time"], mids[0]["price"]), (view.index[-1], neckline)),
             ],
+            "line_paths": [{"x": view.index[mids[0]["pos"]:].tolist(),
+                            "y": (slope * np.arange(mids[0]["pos"], len(view)) + intercept).tolist()}],
         }
-        if best is None or candidate["confidence"] > best["confidence"]:
+        if best is None or (candidate["created_pos"], candidate["confidence"]) > (best["created_pos"], best["confidence"]):
             best = candidate
     return best
 
@@ -576,6 +590,15 @@ def _detect_triangle_pattern(view: pd.DataFrame, highs, lows):
         "invalid_price": last_lower if direction == "bullish" else (last_upper if direction == "bearish" else 0.0),
         "label_x": view.index[-1],
         "label_y": close,
+        "formation_id": ("triangle", *(p["time"] for p in recent_highs + recent_lows)),
+        "formation_end": view.index[max(recent_highs[-1]["pos"], recent_lows[-1]["pos"])],
+        "known_at": view.index[min(max(recent_highs[-1]["pos"], recent_lows[-1]["pos"]) + 3, len(view) - 1)],
+        "line_paths": [
+            {"x": view.index[recent_highs[0]["pos"]:].tolist(),
+             "y": (high_slope * np.arange(recent_highs[0]["pos"], len(view)) + high_intercept).tolist()},
+            {"x": view.index[recent_lows[0]["pos"]:].tolist(),
+             "y": (low_slope * np.arange(recent_lows[0]["pos"], len(view)) + low_intercept).tolist()},
+        ],
         "line_points": [
             ((recent_highs[0]["time"], high_slope * recent_highs[0]["pos"] + high_intercept),
              (view.index[-1], last_upper)),
@@ -589,39 +612,38 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
     if len(view) < 45:
         return None
     impulse = view.iloc[-45:-18]
-    flag = view.iloc[-18:]
+    # The breakout bar cannot widen the flag it is meant to break.
+    flag = view.iloc[-18:-1]
     if len(impulse) < 12 or len(flag) < 10:
         return None
     impulse_ret = float(impulse["Close"].iloc[-1] / impulse["Close"].iloc[0] - 1)
     x = np.arange(len(flag), dtype=float)
     close_fit = _safe_polyfit(x, flag["Close"].astype(float).to_numpy(), 1)
-    high_fit = _safe_polyfit(x, flag["High"].astype(float).to_numpy(), 1)
-    low_fit = _safe_polyfit(x, flag["Low"].astype(float).to_numpy(), 1)
-    if close_fit is None or high_fit is None or low_fit is None:
+    if close_fit is None:
         return None
     close_slope, _ = close_fit
-    high_slope, high_intercept = high_fit
-    low_slope, low_intercept = low_fit
+    high_slope = low_slope = close_slope
+    high_intercept = float((flag["High"].to_numpy() - close_slope * x).max())
+    low_intercept = float((flag["Low"].to_numpy() - close_slope * x).min())
     price = float(view["Close"].iloc[-1])
     recent_range = (float(flag["High"].max()) - float(flag["Low"].min())) / price if price else 1
-    slope_limit = price * 0.004
     if bullish:
-        if impulse_ret < 0.12 or close_slope >= slope_limit or recent_range > 0.22:
+        if impulse_ret < 0.12 or close_slope > 0 or recent_range > 0.22:
             return None
-        upper_line = high_slope * (len(flag) - 1) + high_intercept
-        lower_line = low_slope * (len(flag) - 1) + low_intercept
+        upper_line = high_slope * len(flag) + high_intercept
+        lower_line = low_slope * len(flag) + low_intercept
         status = "돌파" if price > upper_line * 1.005 else "관찰"
         label, direction = f"상승 깃발형 {status}", "bullish"
         trigger_price, invalid_price = upper_line, lower_line * 0.985
     else:
-        if impulse_ret > -0.12 or close_slope <= -slope_limit or recent_range > 0.22:
+        if impulse_ret > -0.12 or close_slope < 0 or recent_range > 0.22:
             return None
-        upper_line = high_slope * (len(flag) - 1) + high_intercept
-        lower_line = low_slope * (len(flag) - 1) + low_intercept
+        upper_line = high_slope * len(flag) + high_intercept
+        lower_line = low_slope * len(flag) + low_intercept
         status = "이탈" if price < lower_line * 0.995 else "관찰"
         label, direction = f"하락 깃발형 {status}", "bearish"
         trigger_price, invalid_price = lower_line, upper_line * 1.015
-    start_time, end_time = flag.index[0], flag.index[-1]
+    start_time, end_time = flag.index[0], view.index[-1]
     return {
         "name": "상승 깃발형" if bullish else "하락 깃발형",
         "label": label,
@@ -633,15 +655,22 @@ def _detect_flag_pattern(view: pd.DataFrame, bullish: bool = True):
         "invalid_price": invalid_price,
         "label_x": end_time,
         "label_y": price,
+        "formation_id": ("flag", bullish, start_time),
+        "formation_end": flag.index[-1],
+        "known_at": end_time,
+        "line_paths": [
+            {"x": view.index[-18:].tolist(), "y": (high_slope * np.arange(len(flag) + 1) + high_intercept).tolist()},
+            {"x": view.index[-18:].tolist(), "y": (low_slope * np.arange(len(flag) + 1) + low_intercept).tolist()},
+        ],
         "line_points": [
-            ((start_time, high_intercept), (end_time, high_slope * (len(flag) - 1) + high_intercept)),
-            ((start_time, low_intercept), (end_time, low_slope * (len(flag) - 1) + low_intercept)),
+            ((start_time, high_intercept), (end_time, upper_line)),
+            ((start_time, low_intercept), (end_time, lower_line)),
         ],
     }
 
 
 @timed_call("indicators")
-def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 1) -> list:
+def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_patterns: int = 1, *, distinct_directions=True) -> list:
     """최근 OHLC 피벗으로 차트 패턴 후보를 보수적으로 탐지합니다."""
     view = _chart_pattern_source_df(df, lookback=lookback)
     if view.empty:
@@ -666,10 +695,10 @@ def detect_chart_pattern_candidates(df: pd.DataFrame, lookback: int = 140, max_p
             continue
         unique.append(pattern)
         seen.add(name)
-    return _finalize_chart_pattern_candidates(view, unique, max_patterns=max_patterns)
+    return _finalize_chart_pattern_candidates(view, unique, max_patterns=max_patterns, distinct_directions=distinct_directions)
 
 
-def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> list:
+def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140, *, enforce_price_proximity=True) -> list:
     view = _chart_pattern_source_df(df, lookback=lookback)
     if view.empty:
         return []
@@ -740,11 +769,11 @@ def _build_recent_trendline_guides(df: pd.DataFrame, lookback: int = 140) -> lis
         y1 = float(slope * last_pos + intercept)
         if not finite_num(y0) or not finite_num(y1) or y0 <= 0 or y1 <= 0:
             return None
-        if abs(y1 / current - 1.0) > 0.55:
+        if enforce_price_proximity and abs(y1 / current - 1.0) > 0.55:
             return None
-        if kind == "support" and y1 > current * 1.06:
+        if enforce_price_proximity and kind == "support" and y1 > current * 1.06:
             return None
-        if kind == "resistance" and y1 < current * 0.94:
+        if enforce_price_proximity and kind == "resistance" and y1 < current * 0.94:
             return None
         slope_pct = (y1 / y0 - 1.0) if y0 > 0 else 0.0
         if abs(slope_pct) < 0.015:

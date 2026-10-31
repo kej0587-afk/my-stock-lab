@@ -344,7 +344,7 @@ def build_precision_review_export_zip(
     sections = _json_value({
         "candidate_grade": {key: decision.get(key) for key in _CANDIDATE_KEYS},
         "main_decision": {key: value for key, value in decision.items()
-                          if key not in {"execution_workflow", "chart_scorecard", "etf_holdings"}},
+                          if key not in {"execution_workflow", "chart_scorecard", "etf_holdings", "chart_structure", "chart_final_check"}},
         "execution_workflow": workflow,
         "workflow_display": workflow_display,
         "multi_timeframe": timeframes,
@@ -357,6 +357,7 @@ def build_precision_review_export_zip(
         "signal_evidence": signal_evidence,
         "chart_scorecard": decision.get("chart_scorecard"),
         "etf_holdings": decision.get("etf_holdings"),
+        "chart_structure": decision.get("chart_structure"),
         "context": {key: value for key, value in _mapping(context).items() if key in _CONTEXT_KEYS},
     })
     history_metadata = {}

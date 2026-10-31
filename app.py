@@ -6854,19 +6854,26 @@ def _add_chart_pattern_overlays(fig, patterns: list):
     for pattern in patterns:
         color = _plotly_pattern_color(pattern.get("direction", "neutral"))
         line_width = 2.6 if pattern.get("lifecycle") == "현재유효" else 1.9
-        for line in pattern.get("line_points", []):
+        paths = pattern.get("line_paths") or []
+        lines = pattern.get("line_points", [])
+        for line in lines[:-len(paths)] if paths else lines:
             (x0, y0), (x1, y1) = line
             fig.add_shape(
                 type="line",
                 x0=x0, y0=y0, x1=x1, y1=y1,
                 line=dict(color=color, width=line_width, dash="dot"),
             )
+        for path in paths:
+            fig.add_trace(go.Scatter(x=path["x"], y=path["y"], mode="lines", showlegend=False,
+                                     name=pattern.get("name", "패턴"),
+                                     line=dict(color=color, width=line_width, dash="dot"),
+                                     hovertemplate="%{x|%Y-%m-%d}<br>기준선 %{y:,.2f}<extra>%{fullData.name}</extra>"))
         fig.add_annotation(
             x=pattern.get("label_x"),
             y=pattern.get("label_y"),
             xref="x",
             yref="y",
-            text=_chart_pattern_annotation_text(pattern),
+            text=f"{escape_html_value(pattern.get('name', '패턴'))} 구조",
             showarrow=True,
             arrowhead=0,
             ax=0,
@@ -7340,6 +7347,12 @@ def render_lwc_candlestick(df: pd.DataFrame, avg_price: float = 0.0, key: str = 
     return True
 
 
+@st.cache_data(ttl=300, max_entries=96, show_spinner=False)
+def _cached_chart_structure(df):
+    from stock_lab_core.chart_structure import build_chart_structure
+    return build_chart_structure(df)
+
+
 def render_precision_candlestick_chart(
     df: pd.DataFrame,
     avg_price: float = 0.0,
@@ -7350,6 +7363,8 @@ def render_precision_candlestick_chart(
     ticker: str = "",
     decision_context: dict | None = None,
     show_level_labels: bool = False,
+    show_channel: bool = True,
+    show_signals: bool = True,
 ):
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
@@ -7364,16 +7379,44 @@ def render_precision_candlestick_chart(
     smc_features = None
     if show_smc:
         smc_features = _add_smc_structure_overlays(fig, df, ticker)
+    from stock_lab_core.chart_structure import (
+        add_channel_overlay, add_event_overlays, chart_date_breaks, chart_structure_rows, qualify_chart_events,
+    )
+    structure = _cached_chart_structure(df) if show_patterns and (show_channel or show_signals) else {}
+    if structure.get("issue"):
+        st.warning(structure["issue"])
+    channel = structure.get("channel") if show_channel else {}
     trendline_guides = []
     if show_patterns:
-        trendline_guides = _add_recent_trendline_guides(fig, df)
+        trendline_guides = _build_recent_trendline_guides(df) if channel else _add_recent_trendline_guides(fig, df)
+    if channel:
+        add_channel_overlay(fig, channel)
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
     timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
+    from stock_lab_core.chart_structure import last_bar_is_provisional, latest_completed_chart_session
+    chart_context = dict(decision_context or {}, chart_expected_close=latest_completed_chart_session(ticker) if structure.get("events") and show_signals else None)
+    provisional_bar = last_bar_is_provisional(df, ticker, timeframe)
+    chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
+                                       provisional_last=provisional_bar) if show_signals else []
+    if chart_events:
+        add_event_overlays(fig, chart_events)
     volume_signals = build_volume_signal_series(df, timeframe=timeframe)
     finish_price_figure(fig, df, volume_signals, show_level_labels=show_level_labels)
+    fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
     st.plotly_chart(fig, width='stretch')
+    if channel:
+        st.caption(f"{channel['direction']} 평행 채널 · {channel['state']} · 확인 {pd.Timestamp(channel['known_at']):%Y-%m-%d} · 하단 {channel['lower'][-1]:,.2f} / 중심 {channel['middle'][-1]:,.2f} / 상단 {channel['upper'][-1]:,.2f}")
+    if show_patterns and show_signals:
+        event_rows = chart_structure_rows(structure, chart_events, decision_context)
+        if event_rows:
+            st.markdown("##### 패턴 신호 · 현재 실행 제한")
+            st.dataframe(pd.DataFrame(event_rows), hide_index=True, width='stretch')
+        else:
+            st.caption("최근 80봉: 확인된 패턴 돌파·이탈 신호 없음" if not structure.get("issue") else "패턴 신호 계산 보류")
+        workflow = (decision_context or {}).get("execution_workflow") or {}
+        st.caption(f"현재 실행: {workflow.get('게이트상태', '미확인')} · {workflow.get('게이트근거', '실행 제한 확인 필요')}")
     if not volume_signals.empty:
         latest_volume = volume_signals.iloc[-1]
         rvol_text = f"{latest_volume['rvol']:.2f}x" if pd.notna(latest_volume['rvol']) else "이력 부족"
@@ -7416,6 +7459,10 @@ def render_precision_candlestick_chart(
         caption = build_smc_overlay_caption(smc_features, ticker)
         if caption:
             st.caption(caption)
+    return {"channel": channel, "events": chart_events, "patterns": pattern_candidates,
+            "basis": structure.get("basis"), "last_bar": structure.get("last_bar"), "timeframe": timeframe,
+            "decision_asof": chart_context.get("chart_price_asof"), "expected_close": chart_context.get("chart_expected_close"),
+            "provisional_last": provisional_bar}
 
 
 def resample_ohlcv_timeframe(df: pd.DataFrame, rule) -> pd.DataFrame:
@@ -21137,9 +21184,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     }
 
 
-def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=None):
+def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=None, *, prepared_checks=None):
     st.markdown("### ✅ 매수 전 최종 체크")
-    rows, summary = build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=fin_meta)
+    rows, summary = prepared_checks if prepared_checks is not None else build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=fin_meta)
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("최종 판정", summary["final_label"])
@@ -34168,12 +34215,16 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         c["chart_scorecard"] = chart_financial
         if is_etf:
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name, key_prefix="demo_precision")
-        render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
-                                           ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
+        precision_pre_buy_checks = build_pre_buy_final_checks(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        c["chart_final_check"] = precision_pre_buy_checks[1]
+        c["chart_price_asof"] = frame_last_date(chart_df)
+        c["chart_structure"] = {"일봉": render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
+                                           ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)}
         from stock_lab_core.chart_review import render_chart_review
         render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
                             is_etf=is_etf, source=chart_financial["source"], key=f"demo_review_{tkr}")
-        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price)
+        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, int(fin_score), has_pos_value, my_price,
+                                                               prepared_checks=precision_pre_buy_checks)
         render_precision_review_download(
             st, selected_ticker=tkr, result_ticker=tkr, decision=c,
             final_check=precision_final_check, financial=fin_meta, multi_timeframe=mtf_pack,
@@ -36296,6 +36347,10 @@ if main_page == "precision":
         with R:
             chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)
             c["chart_scorecard"] = chart_financial
+            precision_pre_buy_checks = build_pre_buy_final_checks(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
+            c["chart_final_check"] = precision_pre_buy_checks[1]
+            c["chart_price_asof"] = frame_last_date(chart_df)
+            c["chart_structure"] = {}
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)
             p_line = my_p
             _show_avg = p_line > 0 and not is_free and has_p
@@ -36304,8 +36359,13 @@ if main_page == "precision":
                 "차트 패턴/추세선 표시",
                 value=True,
                 key=f"precision_chart_patterns_{tkr}",
-                help="쌍바닥, 쌍봉, 헤드앤숄더, 깃발형, 삼각수렴과 최근 고점/저점 추세선을 표시합니다. 오래 지나 현재가와 동떨어진 패턴은 숨깁니다.",
+                help="쌍바닥·쌍봉·헤드앤숄더·깃발·삼각수렴의 형성 구간을 표시합니다. 평행 채널과 매수형/매도형 신호는 별도로 켤 수 있습니다. 도형과 확인봉은 서로 다른 날짜일 수 있습니다.",
             )
+            channel_col, signal_col = st.columns(2)
+            show_parallel_channel = channel_col.checkbox("평행 추세 채널", value=True, key=f"precision_channel_{tkr}",
+                                                        help="확인된 고점 2개 또는 저점 2개로 기울기를 잡고, 반대 극점에 평행선을 긋습니다. 작도점 부족 시 억지로 만들지 않습니다.")
+            show_pattern_signals = signal_col.checkbox("돌파·이탈 신호", value=True, key=f"precision_signals_{tkr}",
+                                                      help="각 봉 당시 자료로 확인한 패턴 신호입니다. 과거 화살표의 당시 재무·시장·계좌 제한은 검증되지 않았습니다. 현재 매수 검토는 기존 실행 게이트와 최종 체크를 함께 통과해야 합니다.")
             show_liquidity_profile = st.checkbox(
                 "유동성 매물대 표시",
                 value=True,
@@ -36321,11 +36381,11 @@ if main_page == "precision":
             show_level_labels = st.checkbox("차트 안 가격대 이름", value=False, key=f"precision_level_labels_{tkr}")
             day_tab, week_tab, month_tab = st.tabs(["일봉", "주봉", "월봉"])
             with day_tab:
-                render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels)
+                c["chart_structure"]["일봉"] = render_precision_candlestick_chart((mtf_pack.get("일봉") or {}).get("df", chart_df), avg_price=avg_line, key=f"lwc_candle_day_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
             with week_tab:
-                render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels)
+                c["chart_structure"]["주봉"] = render_precision_candlestick_chart((mtf_pack.get("주봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_week_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
             with month_tab:
-                render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels)
+                c["chart_structure"]["월봉"] = render_precision_candlestick_chart((mtf_pack.get("월봉") or {}).get("df", pd.DataFrame()), avg_price=avg_line, key=f"lwc_candle_month_{tkr}", show_patterns=show_chart_patterns, show_liquidity=show_liquidity_profile, show_smc=show_smc_overlay, ticker=tkr, decision_context=c, show_level_labels=show_level_labels, show_channel=show_parallel_channel, show_signals=show_pattern_signals)
             from stock_lab_core.chart_review import render_chart_review
             render_chart_review(st, df, ticker=tkr, info=chart_financial["data"],
                                 is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")
@@ -36386,7 +36446,8 @@ if main_page == "precision":
 
         precision_valuation = render_valuation_price_panel(name, tkr, is_etf, c, fin_score, fin_meta=fin_meta)
 
-        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta)
+        precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta,
+                                                               prepared_checks=precision_pre_buy_checks)
         precision_hold_or_cut = render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
         precision_review_download.update(
             selected_ticker=tkr, result_ticker=tkr, decision=c, completion="complete", stage="panels",
