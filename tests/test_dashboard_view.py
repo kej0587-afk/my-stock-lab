@@ -265,7 +265,8 @@ def test_details_are_collapsed_and_fingerprint_registered():
                          expander=lambda label, **kwargs: calls.append(kwargs) or nullcontext())
     render_dashboard_group_summary(st, pd.DataFrame([_candidate()]), "전체")
     assert calls[1] == {"expanded": False}
-    assert "후보품질" not in calls[0] and "후보품질" in calls[2]
+    assert "후보품질" not in calls[0] and "기존 종합후보" in calls[2]
+    assert "기업품질" in calls[0] and "🔥기술적 타점" in calls[0]
 
 
 @pytest.mark.parametrize("age", [None, -1, 21600, 90000])

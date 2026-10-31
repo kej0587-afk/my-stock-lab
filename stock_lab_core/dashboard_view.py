@@ -26,10 +26,10 @@ _HOLDING_INPUTS = (
     "티커", "자산명", "보유량", "매입가", "목표비중",
     "bucket", "asset_class", "is_etf",
 )
-_PRIMARY_COLUMNS = ("종목명", "티커", "게이트상태", "게이트근거", "데이터상태", "가격자료기준일", "가격반영")
+_PRIMARY_COLUMNS = ("종목명", "티커", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "데이터상태", "가격자료기준일", "가격반영")
 _DETAIL_COLUMNS = (
     "시장", "유형", "종목명", "티커", "현재가", "현재비중", "목표비중", "MDD",
-    "후보품질", "후보점수", "후보검토사항", "횡보품질", "📌후보등급", "재무점수",
+    "기업품질", "후보품질", "후보점수", "후보검토사항", "횡보품질", "📌후보등급", "재무점수",
     "재무자료상태", "재무자료기간", "재무계산시각",
     "RS", "시장벤치", "기초자산", "기초벤치", "섹터RS", "섹터벤치", "섹터RS기준일",
     "RSI", "MFI", "볼린저 %B", "🔥기술적 타점", "패턴타점", "패턴근거", "핵심근거",
@@ -143,6 +143,9 @@ def dashboard_tables(frame, group_label):
         "방어·데이터확인": int(gates.isin([GATE_DEFENSE, GATE_DATA_CHECK]).sum()),
     }
     primary = view.reindex(columns=_PRIMARY_COLUMNS).copy()
+    quality = _column(view, "기업품질")
+    primary["기업품질"] = quality.where(quality.ne(""), _column(view, "재무점수")).replace("", "미확인")
+    primary["🔥기술적 타점"] = _column(view, "🔥기술적 타점").replace("", "미확인")
     for column in ("가격자료기준일", "가격반영"):
         values = _column(view, column).str.strip()
         primary[column] = values.mask(values.str.lower().isin({"", "-", "nan", "none", "nat"}), "미확인")
@@ -163,4 +166,4 @@ def render_dashboard_group_summary(st, frame, group_label):
         column.metric(label, f"{value}개")
     st.dataframe(primary, width="stretch", hide_index=True, height=min(520, 40 + 35 * len(primary)))
     with st.expander("후보품질·기술 신호 상세", expanded=False):
-        st.dataframe(detail, width="stretch", hide_index=True, height=min(640, 40 + 35 * len(detail)))
+        st.dataframe(detail.rename(columns={"후보품질": "기존 종합후보"}), width="stretch", hide_index=True, height=min(640, 40 + 35 * len(detail)))

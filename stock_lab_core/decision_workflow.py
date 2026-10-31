@@ -95,6 +95,9 @@ def build_decision_workflow(
             is_leveraged_product_fn=is_leveraged_product_fn,
         ),
     }
+    for key, source in (("RSI", "rsi"), ("MFI", "mfi"), ("볼린저 %B", "pct_b")):
+        if source in c:
+            row[key] = c[source]
     row.update(build_execution_gate(row))
     return row
 

@@ -37,7 +37,7 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _URL = re.compile(r"https?://[^\s<>\"']+")
 _FINANCIAL_KEYS = {
     "ticker", "auto_score", "manual_score", "final_score", "source", "mode",
-    "notes", "metrics", "updated_at", "asof", "score",
+    "notes", "metrics", "updated_at", "asof", "score", "evidence_audit",
 }
 _CONTEXT_KEYS = {
     "name", "is_etf", "asset_class", "has_position", "my_price", "usdkrw",

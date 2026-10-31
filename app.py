@@ -20657,7 +20657,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, is_etf=is_etf, has_pos=has_pos)
     rr_ratio = clean_float(workflow.get("RR값", c.get("rr_ratio")), np.nan)
     execution_state = workflow.get("게이트상태", GATE_WATCH_ONLY)
-    if execution_state in {GATE_DEFENSE, GATE_DATA_CHECK}:
+    if execution_state == GATE_DATA_CHECK:
+        add_check("시스템 타점", "미확인", workflow.get("게이트근거", ""))
+    elif execution_state == GATE_DEFENSE:
         add_check("시스템 타점", "차단", workflow.get("게이트근거", ""))
     elif execution_state != GATE_EXECUTABLE:
         add_check("시스템 타점", "주의", workflow.get("게이트근거", ""))
@@ -20781,6 +20783,8 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("과열", "차단", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 추격매수 부담이 큽니다.")
     elif (finite_num(mfi) and mfi >= 80) or (finite_num(rsi) and rsi >= 70) or (finite_num(pct_b) and pct_b >= 0.95):
         add_check("과열", "주의", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 눌림 대기가 더 유리할 수 있습니다.")
+    elif not all(finite_num(value) for value in (mfi, rsi, pct_b)):
+        add_check("과열", "미확인", "RSI/MFI/볼린저 %B 중 미수집 항목이 있습니다. 과열 없음으로 간주하지 않습니다.")
     else:
         add_check("과열", "통과", f"MFI {mfi:.1f}, RSI {rsi:.1f}, %B {pct_b:.2f}. 극단 과열은 아닙니다.")
 
@@ -20824,7 +20828,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         else:
             add_check("손익비", "통과", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 최소 손익비 조건은 충족합니다.")
     else:
-        add_check("손익비", "주의", "R/R을 산출하지 못했습니다. 목표가/손절가 확인 전에는 분할 규모를 낮추세요.")
+        add_check("손익비", "미확인", "R/R을 산출하지 못했습니다. 목표가/손절가 확인 전에는 분할 규모를 낮추세요.")
 
     if has_pos and target_w <= 0 and curr_w > 0:
         add_check("비중", "차단", f"현재 {curr_w:.2f}% / 목표 {target_w:.2f}%. 목표비중이 0%라 추가매수 대상이 아닙니다.")
@@ -20839,6 +20843,8 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         add_check("매크로", "차단", f"매크로 리스크 {macro_risk:.1f}. 신규/추매는 막고, 기존 보유는 손절선·비중·하락 원인 중심으로 점검합니다.")
     elif finite_num(macro_risk) and macro_risk >= 2.5:
         add_check("매크로", "주의", f"매크로 리스크 {macro_risk:.1f}. 분할 접근이 적합합니다.")
+    elif not finite_num(macro_risk):
+        add_check("매크로", "미확인", "매크로 리스크 원자료 미확인")
     else:
         add_check("매크로", "통과", "-" if not finite_num(macro_risk) else f"매크로 리스크 {macro_risk:.1f}. 큰 차단 신호는 아닙니다.")
 
@@ -20854,8 +20860,20 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     else:
         add_check("보유상태", "통과", "보유 정보 기준의 특이 위험은 크지 않습니다.")
 
+    if not finite_num(clean_float(c.get("cur_p"), np.nan)) or clean_float(c.get("cur_p"), 0.0) <= 0:
+        add_check("현재가", "미확인", "유효한 현재가를 확인하지 못했습니다.")
     rows = align_precision_final_check_rows(rows, workflow)
-    status_counts = pd.Series([row["상태"] for row in rows]).value_counts().to_dict()
+    from stock_lab_core.decision_governance import independent_check_summary
+    rows, governance = independent_check_summary(rows, workflow)
+    core_missing = set(governance["core_missing_ids"])
+    if not all(finite_num(value) for value in (mfi, rsi, pct_b)):
+        core_missing.add("overheat")
+    if not finite_num(macro_risk):
+        core_missing.add("macro")
+    if not finite_num(rr_ratio):
+        core_missing.add("rr")
+    governance["core_missing_ids"] = sorted(core_missing)
+    status_counts = governance["status_counts"]
     block_count = int(status_counts.get("차단", 0))
     caution_count = int(status_counts.get("주의", 0))
     pass_count = int(status_counts.get("통과", 0))
@@ -20962,10 +20980,13 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
     else:
         final_label, final_color, action = "조건부 관망", "#64748b", "강한 결론은 아닙니다. 신호, 실적 뉴스, 밸류 중 하나가 더 확인되면 좋습니다."
 
-    if execution_state != GATE_EXECUTABLE and final_label in {
+    actionable_labels = {
         "분할 가능", "소액 분할", "1차 소액만", "조건부 DCA 소액", "타점 가능", "타점 가능(금액 미설정)",
-    }:
-        final_label, final_color, action = "대기", "#d97706", workflow.get("게이트근거", "조건 확인 대기")
+    }
+    if (execution_state != GATE_EXECUTABLE or block_count or governance["core_missing_ids"]) and final_label in actionable_labels:
+        final_label, final_color = ("매수 금지", "#dc2626") if block_count >= 2 else ("대기", "#d97706")
+        action = (workflow.get("게이트근거", "조건 확인 대기") if execution_state != GATE_EXECUTABLE else
+                  "차단 항목 또는 핵심 미확인 자료가 남아 있습니다. 해소 전 신규·추가매수는 보류합니다.")
 
     return rows, {
         "final_label": final_label,
@@ -20974,6 +20995,9 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         "pass_count": pass_count,
         "caution_count": caution_count,
         "block_count": block_count,
+        "unknown_count": int(status_counts.get("미확인", 0)),
+        "execution_allowed": execution_state == GATE_EXECUTABLE and block_count == 0 and not governance["core_missing_ids"] and final_label in actionable_labels,
+        **governance,
     }
 
 
@@ -20986,6 +21010,7 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     k2.metric("통과", f"{summary['pass_count']}개")
     k3.metric("주의", f"{summary['caution_count']}개")
     k4.metric("차단", f"{summary['block_count']}개")
+    st.caption(f"독립 근거 기준 · 중복 제외 {summary.get('duplicate_count', 0)}건 · 미확인 {summary.get('unknown_count', 0)}건 · 핵심자료 미확인 {len(summary.get('core_missing_ids', []))}종류")
 
     st.markdown(
         f"<div class='info-panel' style='border-left: 5px solid {summary['final_color']};'>"
@@ -20998,6 +21023,7 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     )
 
     show_df = pd.DataFrame(rows)
+    show_df = show_df.drop(columns=["근거ID"], errors="ignore")
     if not show_df.empty:
         show_df["상태"] = show_df["상태"].apply(lambda x: f"{x}")
     st.dataframe(show_df, width='stretch', hide_index=True, row_height=64,
@@ -21463,7 +21489,43 @@ def render_precision_execution_state(workflow):
         st.warning(label)
     else:
         st.info(label)
-    st.caption("후보품질은 종목의 평가, 기술적 타점은 가격 조건, 밸류는 가격매력입니다. 실제 실행 허용 여부는 게이트를 우선합니다.")
+    st.caption("기업 품질·기술 타점·계좌 실행 제한은 별도 평가입니다. 기존 후보등급은 기술·재무 혼합 순위이며 기업 품질 점수에 다시 합산하지 않습니다.")
+
+
+def render_decision_roles(decision, workflow, fin_score, fin_meta, is_etf):
+    from stock_lab_core.decision_governance import role_rows
+    st.dataframe(pd.DataFrame(role_rows(decision, workflow, fin_score, fin_meta, is_etf=is_etf)),
+                 width='stretch', hide_index=True)
+
+
+def build_financial_evidence_review(fin_meta):
+    from stock_lab_core.financial_evidence import audit_financial_evidence
+    notes, _, _ = get_fin_meta_parts(fin_meta)
+    annual = notes.get("annual_judgements")
+    quarter = notes.get("quarter_judgements")
+    judgements = {**(annual if isinstance(annual, dict) else {}), **(quarter if isinstance(quarter, dict) else {})}
+    if not judgements:
+        return {"status": "no_evidence", "calibrated": False}
+    tiers = {**dict.fromkeys(FIN_S_KEYS, 3), **dict.fromkeys(FIN_A_KEYS, 2), **dict.fromkeys(FIN_B_KEYS, 1)}
+    labels = {key: str(value).split(":", 1)[0] for key, value in judgements.items()}
+    return dict(audit_financial_evidence(judgements, tiers), status="comparison_only", version="financial-evidence-v1", labels=labels)
+
+
+def render_financial_evidence_review(review):
+    if review.get("status") != "comparison_only":
+        st.info("비교할 원 재무 판정 근거가 저장되지 않았습니다.")
+        return
+    st.dataframe(pd.DataFrame([
+        {"산식": "현재 적용", "가중 순점수": review["raw_net"], "명목 최대": review["max_legacy_capacity"], "등급 적용": "기존 1~4점"},
+        {"산식": "중복 제거 비교", "가중 순점수": review["unique_net"], "명목 최대": review["max_dedup_capacity"], "등급 적용": "비교 전용 · 미검증"},
+    ]), width='stretch', hide_index=True)
+    st.caption("중복 제거안은 최대치가 달라 기존 45/25/5 경계와 직접 비교할 수 없습니다. 최대치 환산도 성과 검증을 대신하지 않으며 현재 등급은 유지합니다.")
+    labels = review.get("labels", {})
+    statuses = {"positive": "통과", "negative": "주의", "neutral": "중립/해당없음", "missing": "미확인",
+                "conflict": "근거 충돌", "unknown": "판독 미확인", "danger": "위험"}
+    rows = [{"근거": labels.get(row["selected_key"], row["family"]), "연결항목수": len(row["aliases"]), "가중치": row["weight"],
+             "점수": row["points"], "상태": statuses.get(row["status"], row["status"])} for row in review["evidence_rows"]]
+    st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 
 @timed_call("decision")
@@ -21472,6 +21534,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     """워커 함수: 조회와 계산 수행. session_state 쓰기 없음.
     매크로 전역값은 호출 시점에 스냅샷으로 전달받아 스레드 안전성을 보장합니다."""
     from stock_lab_core.financial_freshness import financial_basis
+    from stock_lab_core.decision_governance import quality_label
     tkr = sanitize_ticker_value(item.get("ticker", ""))
     name = sanitize_asset_name(item.get("name", ""), tkr)
     if not tkr:
@@ -21602,6 +21665,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "고점대비": dd_text,
         "횡보품질": sideways_label,
         "재무점수": "해당없음" if is_etf else f"{f_score}/4", "RS": c["rs_label"],
+        "기업품질": quality_label(f_score, financial_meta, is_etf=is_etf),
         **financial_basis(financial_meta, is_etf=is_etf),
         "시장벤치": get_benchmark_display_name(bm["market_bench"]),
         "기초자산": bm["underlying_asset"] if bm["underlying_bench"] else "-",
@@ -33665,10 +33729,10 @@ def _render_today_queue_tab(mode):
     st.markdown("#### 세부 근거: 상세 판정표")
 
     show_cols = [
-        "종목명", "티커", "유형", "현재가", "후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거",
+        "종목명", "티커", "유형", "현재가", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "후보품질", "후보점수", "후보검토사항",
         "가격자료기준일", "가격반영", "지표마지막봉", "계산시각", "자료주의",
         "목표가요약", "최종읽기", "실행메모", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
-        "1차기준", "1차조건", "부족액", "📌후보등급", "🔥기술적 타점",
+        "1차기준", "1차조건", "부족액", "📌후보등급",
         "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
         "핵심근거", "안전상태", "매크로상태", "데이터상태", "Adj점수", "RS", "섹터RS", "섹터RS상태", "섹터벤치", "섹터RS변화", "섹터RS기준일", "섹터분류근거", "섹터분류출처", "섹터검증일", "RSI", "MFI", "볼린저 %B", "고점대비",
     ]
@@ -33699,7 +33763,7 @@ def _render_today_queue_tab(mode):
                 "애널목표출처": st.column_config.TextColumn("애널목표출처", help="목표가를 제공한 데이터 소스입니다."),
                 "애널목표출처URL": st.column_config.LinkColumn("애널목표출처URL", display_text="원자료"),
                 "애널목표기준일": st.column_config.TextColumn("애널목표기준일", help="제공처가 명시한 목표가 기준일입니다. 기준일을 제공하지 않으면 비워 둡니다."),
-                "후보품질": st.column_config.TextColumn("후보품질", help="보유비중이나 현재 진입조건을 덧붙이기 전의 후보 등급입니다."),
+                "후보품질": st.column_config.TextColumn("기존 종합후보", help="기술·재무 혼합 순위입니다. 별도의 기업 품질 점수와 실행 게이트에 다시 합산하지 않습니다."),
                 "섹터분류출처": st.column_config.LinkColumn("섹터분류출처", display_text="분류 근거"),
                 "섹터RS변화": st.column_config.NumberColumn("섹터RS변화", format="%.2f%%", help="동일 거래일의 종목/벤치 가격비가 관측기간 동안 변한 비율입니다."),
                 "업사이드상태": st.column_config.TextColumn("업사이드상태", help="애널 목표가 업사이드 데이터의 사용 가능 상태입니다."),
@@ -33909,6 +33973,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
             return
         df = build_indicators(df)
         fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
+        fin_meta = dict(fin_meta, evidence_audit=build_financial_evidence_review(fin_meta))
         my_price = get_my_price(name, tkr)
         has_pos_value = has_position(name, tkr)
         c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드", live_price=load_display_live_price(tkr))
@@ -33925,8 +33990,10 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         )
         external = _safe_execution_workflow_row(c.get("execution_workflow"))
         render_precision_execution_state(c.get("execution_workflow"))
-        st.caption("기술적 원신호 · 실행 허용과 별도")
-        st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.4em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+        render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
+        with st.expander("기술 원신호·점수"):
+            st.write(c["dec"])
+            st.write(f"Adj: {c['adj']:.1f}점")
         st.dataframe(pd.DataFrame([
             {"항목": "현재가", "값": format_currency(c["cur_p"], tkr)},
             {"항목": "목표/현재 비중", "값": f"{c['target_w']:.2f}% / {c['current_w']:.2f}%"},
@@ -35655,6 +35722,7 @@ if main_page == "precision":
             a_class = "kr_stock" if is_kr_listed(tkr) else "us_stock"
 
     fin_score, fin_meta = load_fin_score_meta_fast(tkr, is_etf)
+    fin_meta = dict(fin_meta, evidence_audit=build_financial_evidence_review(fin_meta))
     fin_score = int(fin_score)
     precision_review_download.update(
         financial=fin_meta, completion="partial", stage="financial",
@@ -35695,7 +35763,10 @@ if main_page == "precision":
         annual_judgements = notes.get("annual_judgements", {})
         quarter_judgements = notes.get("quarter_judgements", {})
 
-        summary_tab, judgement_tab, raw_tab = st.tabs(["요약", "판정표", "원자료"])
+        summary_tab, judgement_tab, raw_tab, evidence_tab = st.tabs(["요약", "판정표", "원자료", "중복 비교"])
+
+        with evidence_tab:
+            render_financial_evidence_review(fin_meta["evidence_audit"])
 
         with summary_tab:
             render_fin_health_summary(fin_score, fin_meta, is_etf=is_etf)
@@ -36005,14 +36076,17 @@ if main_page == "precision":
                             st.caption(f"• {_r}")
 
             render_precision_execution_state(c.get("execution_workflow"))
+            render_decision_roles(c, c.get("execution_workflow"), fin_score, fin_meta, is_etf)
             render_signal_basis(st, precision_signal_basis)
             precision_workflow_display = build_execution_workflow_display_df(c.get("execution_workflow"))
-            st.dataframe(
-                precision_workflow_display.T.fillna("미확인").astype(str).rename(columns={0: "내용"}).rename_axis("구분").reset_index(),
-                width='stretch', hide_index=True, row_height=58,
-            )
-            st.caption("기술적 원신호 · 실행 허용과 별도")
-            st.markdown(f'<div class="signal-box" style="background-color: {c["col"]};"><div style="font-size: 1.5em;">{c["dec"]}</div><div class="score-detail">Adj: {c["adj"]:.1f}점</div></div>', unsafe_allow_html=True)
+            with st.expander("기존 종합후보·원천근거"):
+                st.dataframe(
+                    precision_workflow_display.rename(columns={"후보품질": "기존 종합후보"}).T.fillna("미확인").astype(str).rename(columns={0: "내용"}).rename_axis("구분").reset_index(),
+                    width='stretch', hide_index=True, row_height=58,
+                )
+            with st.expander("기술 원신호·점수"):
+                st.write(c["dec"])
+                st.write(f"Adj: {c['adj']:.1f}점")
             with st.expander("외부자료 확인"):
                 external = _safe_execution_workflow_row(c.get("execution_workflow"))
                 st.dataframe(pd.DataFrame([
@@ -36042,13 +36116,15 @@ if main_page == "precision":
                 )
 
             fin_text = "해당없음" if is_etf else f"{c['fin_score']}/4"
-            st.markdown(
-                f"<div class='info-panel' style='border-left: 5px solid #8b5cf6;'><b>📌 후보 등급 판정</b><br>"
-                f"<span class='highlight' style='font-size:1.1em;'>{c['grade']}</span> (총점: {c['t_score']}점)<br>"
-                f"└ 🛠️기술: {c['tech_total']} (RS:{c['rs_s']} {c['rs_slope_label']}, MFI:{c['mfi_s']}, 추세:{c['trend_s']}, MACD:{c['macd_s']}, SQZ:{c['sqz_s']}) Adj보정:{c['rs_slope_s']:+d}<br>"
-                f"└ 💰재무: {fin_text}</div>", unsafe_allow_html=True
-            )
-            st.caption("후보 등급은 종목의 우선순위입니다. 실제 매수 강도는 위 타점 문구, 목표비중, 포지션 사이징, 주봉·월봉 보정을 같이 봅니다.")
+            with st.expander("기존 종합후보 산식"):
+                st.dataframe(pd.DataFrame([
+                    {"항목": "기존 등급", "값": c["grade"]},
+                    {"항목": "기술·재무 총점", "값": str(c["t_score"])},
+                    {"항목": "기술 합계", "값": str(c["tech_total"])},
+                    {"항목": "재무", "값": fin_text},
+                    {"항목": "기술 구성", "값": f"RS {c['rs_s']} · MFI {c['mfi_s']} · 추세 {c['trend_s']} · MACD {c['macd_s']} · SQZ {c['sqz_s']}"},
+                    {"항목": "RS 기울기 보정", "값": str(c["rs_slope_s"])},
+                ]), width='stretch', hide_index=True)
 
         with R:
             chart_financial = render_precision_scorecard(df, tkr, fin_meta, is_etf)

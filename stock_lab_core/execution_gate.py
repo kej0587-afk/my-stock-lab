@@ -72,6 +72,11 @@ def _first_number(row: Any, *keys: str) -> float:
     return math.nan
 
 
+def _gate(state, reason, *evidence_ids):
+    return {"게이트상태": state, "게이트근거": reason,
+            "게이트근거ID": "|".join(dict.fromkeys(evidence_ids))}
+
+
 def classify_sector_rs_state(value: Any, *, flow_context: str = "", is_etf: bool = False) -> str:
     """Return a compact data-quality label for sector RS."""
     text = _text(value)
@@ -136,25 +141,27 @@ def build_execution_gate(row: Any) -> dict[str, str]:
     flow_text = " ".join([flow_verdict, flow_group])
 
     reasons: list[str] = []
+    evidence_ids: list[str] = []
 
     if code == "NEW_ETF_MIN_DATA_WATCH":
-        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "신규 ETF 가격 이력 부족: 최소 20봉 확인 필요"}
+        return _gate(GATE_DATA_CHECK, "신규 ETF 가격 이력 부족: 최소 20봉 확인 필요", "data.history")
     if code in {"DATA_ERROR", "DATA_UNAVAILABLE", "LIVE_ONLY_DATA"} or "데이터확인" in text or (
         _has_value(data_state) and data_state.upper() not in {"OK", "NORMAL", "정상"}
     ):
         reason = data_state if data_state.upper() not in {"", "OK", "NORMAL", "정상"} else "가격/지표 데이터 확인 필요"
-        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": reason}
+        cause = "mtf" if mtf_state in {"자료부족", "상위 시간대 자료부족", "상위시간대 조회 실패"} else "data"
+        return _gate(GATE_DATA_CHECK, reason, cause)
 
     if mtf_state in {"자료부족", "상위 시간대 자료부족", "상위시간대 조회 실패"}:
-        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "상위 시간대 검증 미완료"}
+        return _gate(GATE_DATA_CHECK, "상위 시간대 검증 미완료", "mtf")
 
     if _RE_WEIGHT_BLOCK.search(text):
-        return {"게이트상태": GATE_DEFENSE, "게이트근거": "목표비중/비중초과 우선"}
+        return _gate(GATE_DEFENSE, "목표비중/비중초과 우선", "weight")
 
     if "시장방어" in market_execution:
-        return {"게이트상태": GATE_DEFENSE, "게이트근거": market_execution}
+        return _gate(GATE_DEFENSE, market_execution, "market")
     if mtf_state == "상위 시간대 경고":
-        return {"게이트상태": GATE_DEFENSE, "게이트근거": "상위 시간대 추세훼손"}
+        return _gate(GATE_DEFENSE, "상위 시간대 추세훼손", "mtf")
 
     defense_match = _RE_DEFENSE_BLOCK.search(text)
     if code == "CORE_DRAWDOWN_DCA":
@@ -164,51 +171,70 @@ def build_execution_gate(row: Any) -> dict[str, str]:
             signal_text,
         )
     if defense_match:
-        return {"게이트상태": GATE_DEFENSE, "게이트근거": "시장/가격/추세 방어 신호 우선"}
+        cause = ("macro" if code in {"MACRO_STORM", "HARD_BLOCK_MACRO_STORM", "MACRO_STORM_HOLDING_CAUTION"} else "structure" if code in {
+            "PRICE_DRAWDOWN", "SINGLE_DAY_BREAKDOWN", "STRUCTURE_DAMAGE", "DOWNTREND", "REVERSE_TREND"
+        } or code.startswith(("PRICE_DRAWDOWN_", "SINGLE_DAY_BREAKDOWN_", "STRUCTURE_DAMAGE_",
+                              "DRAWDOWN_20_", "DOWNTREND_", "REVERSE_TREND_")) else "gate.unresolved")
+        return _gate(GATE_DEFENSE, "시장/가격/추세 방어 신호 우선", cause)
 
     # Only explicit overheat codes use the wait policy; prose cannot relax a block.
     if code.startswith("HARD_BLOCK") and code not in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES:
-        return {"게이트상태": GATE_DEFENSE, "게이트근거": "하드차단 우선"}
+        return _gate(GATE_DEFENSE, "하드차단 우선", "quality" if code in {"HARD_BLOCK_FINANCIAL", "HARD_BLOCK_FINANCIAL_F"} else "gate.hard_block")
 
     if market_execution.startswith("시장정보 확인 필요"):
-        return {"게이트상태": GATE_DATA_CHECK, "게이트근거": market_execution}
+        return _gate(GATE_DATA_CHECK, market_execution, "market")
+
+    missing = object()
+    missing_indicators = [key for key in ("RSI", "MFI", "볼린저 %B")
+                          if _row_get(row, key, missing) is not missing
+                          and not math.isfinite(clean_float(_row_get(row, key), math.nan))]
+    if missing_indicators:
+        return _gate(GATE_DATA_CHECK, "핵심 지표 미확인: " + ", ".join(missing_indicators), "overheat")
 
     if math.isfinite(rr) and rr < 1.0:
         reasons.append(f"R/R {format_rr_ratio(rr)} < 1")
+        evidence_ids.append("rr")
 
     if "투영상단" in rr_kind:
         reasons.append("R/R 목표가가 투영상단")
+        evidence_ids.append("rr")
 
     if _RE_RESISTANCE_WAIT.search(text):
         reasons.append("하락/저항 패턴 확인 필요")
+        evidence_ids.append("pattern")
 
     if code in TODAY_QUEUE_OVERHEAT_HARD_BLOCK_CODES or _RE_OVERHEAT_WAIT.search(text):
         reasons.append("과열/추격금지")
+        evidence_ids.append("overheat")
 
     if code in TODAY_QUEUE_EXECUTION_WAIT_CODES or code == "QUALITY_RECOVERY_WATCH" or _RE_GENERAL_WAIT.search(text) or _RE_CONDITION_WAIT.search(conditions):
         reasons.append("조건 확인 대기")
+        evidence_ids.append("entry")
 
     if _RE_FLOW_WAIT.search(flow_text):
         reasons.append(f"돈흐름 {flow_verdict or flow_group}")
+        evidence_ids.append("flow")
 
     if math.isfinite(flow_score) and flow_score <= -10 and _RE_FLOW_WEAK.search(flow_text):
         reasons.append(f"돈흐름 약함 {flow_score:.1f}")
+        evidence_ids.append("flow")
 
     if _RE_LEVERAGE_WAIT.search(text):
         reasons.append("레버리지 조건부 확인 대기")
+        evidence_ids.append("leverage")
 
     if reasons:
-        return {"게이트상태": GATE_WAIT, "게이트근거": " · ".join(dict.fromkeys(reasons))}
+        return _gate(GATE_WAIT, " · ".join(dict.fromkeys(reasons)), *evidence_ids)
 
     if group == "caution":
-        return {"게이트상태": GATE_WAIT, "게이트근거": "주의 판정은 실행 전 조건 확인"}
+        return _gate(GATE_WAIT, "주의 판정은 실행 전 조건 확인", "entry")
 
     if group == "buyish" or _RE_PRECISION_CONFIRM.search(final_read):
         if not math.isfinite(rr) or rr <= 0:
-            return {"게이트상태": GATE_DATA_CHECK, "게이트근거": "현재가 R/R 확인 필요"}
-        return {"게이트상태": GATE_EXECUTABLE, "게이트근거": "R/R·패턴·방어 게이트 통과"}
+            return _gate(GATE_DATA_CHECK, "현재가 R/R 확인 필요", "rr")
+        return _gate(GATE_EXECUTABLE, "R/R·패턴·방어 게이트 통과")
 
-    return {"게이트상태": GATE_WATCH_ONLY, "게이트근거": "실행 신호 아님"}
+    return _gate(GATE_WATCH_ONLY, "실행 신호 아님", "entry")
 
 
 def apply_execution_gate_columns(
@@ -257,7 +283,7 @@ def apply_execution_gate_columns(
         sector_states.append(classify_sector_rs_state(row.get("섹터RS", ""), flow_context=flow_context, is_etf=is_etf))
 
     gate_df = pd.DataFrame(gate_rows, index=out.index)
-    for col in ["게이트상태", "게이트근거"]:
+    for col in ["게이트상태", "게이트근거", "게이트근거ID"]:
         out[col] = gate_df[col] if col in gate_df.columns else ""
     if "최종읽기" in out:
         # Preserve diagnostics without allowing old action text to overrule a gate.

@@ -169,7 +169,7 @@ def test_stock_financial_quality_label_is_unchanged(display_app):
     assert "재무 💎완성형 우량(4/4)" in html
 
 
-def test_existing_ram_candidate_policy_keeps_four_blocks_but_gate_wait(display_app, monkeypatch):
+def test_ram_recovery_exception_does_not_soften_multiple_independent_blocks(display_app, monkeypatch):
     app, _ = display_app
     monkeypatch.setattr(app, "build_leveraged_precision_state", lambda *args: {
         "profile_key": "RAM", "dca_stage": "회복 후보", "dca_multiple": "×1", "recovery_passed": 4,
@@ -180,5 +180,6 @@ def test_existing_ram_candidate_policy_keeps_four_blocks_but_gate_wait(display_a
     decision = held_decision(structure_risk=True, mfi=85)
     _, summary = app.build_pre_buy_final_checks("RAM", "RAM", True, decision, 0, True, 95)
     assert summary["block_count"] == 4
-    assert summary["final_label"] == "대기"
+    assert summary["final_label"] == "매수 금지"
+    assert not summary["execution_allowed"]
     assert summary["action"] == "목표비중/비중초과 우선"
