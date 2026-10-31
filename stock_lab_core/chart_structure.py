@@ -242,10 +242,10 @@ def add_channel_overlay(fig, channel):
     for fraction in (.25, .75):
         values = np.array(channel["lower"]) + channel["width"] * fraction
         fig.add_trace(go.Scatter(x=channel["x"], y=values, mode="lines", showlegend=False, hoverinfo="skip",
-                                line=dict(color="#60a5fa", width=.7, dash="dot"), opacity=.45))
+                                line=dict(color="#60a5fa", width=.7, dash="dot"), opacity=.45, legendgroup="channel"))
     anchors = channel["anchors"]
     fig.add_trace(go.Scatter(x=[p["time"] for p in anchors], y=[p["price"] for p in anchors], mode="markers",
-                            marker=dict(size=6, color="#60a5fa", symbol="circle-open"), name="채널 작도점", showlegend=False,
+                            marker=dict(size=6, color="#60a5fa", symbol="circle-open"), name="채널 작도점", showlegend=False, legendgroup="channel",
                             hovertemplate="%{x|%Y-%m-%d}<br>작도점 %{y:,.2f}<extra></extra>"))
 
 
