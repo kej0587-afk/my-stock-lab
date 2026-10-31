@@ -8445,6 +8445,8 @@ def queue_etf_constituent_review(parent_ticker, parent_name, child_ticker):
         "ticker": sanitize_ticker_value(parent_ticker), "name": parent_name, "child": target,
     }
     st.session_state["_pending_main_page_nav"] = "precision"
+    if globals().get("IS_PUBLIC_DEMO", False):
+        st.session_state["_public_demo_precision_target"] = target
     return True
 
 
@@ -8456,6 +8458,8 @@ def render_etf_parent_return(ticker):
                  key=f"etf_parent_return_{ticker}", icon=":material/arrow_back:"):
         set_precision_target_ticker(parent["ticker"])
         st.session_state["_pending_main_page_nav"] = "precision"
+        if globals().get("IS_PUBLIC_DEMO", False):
+            st.session_state["_public_demo_precision_target"] = parent["ticker"]
         st.rerun()
 
 
@@ -34027,6 +34031,10 @@ def _render_today_queue_tab(mode):
 # ════════════════════════════════════════════════════════════════════════════
 
 def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividends_df, monthly_logs_df, portfolio_summary, krw_cash, usd_cash, usdkrw, reserve_target_weight):
+    demo_target = st.session_state.pop("_public_demo_precision_target", "")
+    if demo_target:
+        st.session_state["public_demo_fast_page"] = "정밀관측소"
+        st.session_state["_public_demo_precision_extra"] = demo_target
     st.caption("데모는 첫 화면 속도를 위해 선택한 화면만 계산합니다. 무거운 분석은 버튼을 누를 때만 실행됩니다.")
     demo_page = st.radio(
         "체험 화면",
@@ -34077,7 +34085,17 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         st.subheader("정밀관측소")
         st.caption("샘플 종목 하나만 골라 가볍게 판정을 확인합니다.")
         sample_items = [sanitize_watchlist_item(item) for item in st.session_state.get("watchlist", [])]
+        extra = st.session_state.get("_public_demo_precision_extra", "")
+        if extra and all(item["ticker"] != extra for item in sample_items):
+            extra_is_etf = is_known_etf_ticker(extra)
+            sample_items.append({"ticker": extra, "name": sanitize_asset_name(extra, extra), "is_etf": extra_is_etf,
+                                 "asset_class": infer_asset_class_for_ticker(extra, "") if extra_is_etf else "kr_stock" if is_kr_listed(extra) else "us_stock"})
         labels = [f"{item['name']} ({item['ticker']})" for item in sample_items]
+        if demo_target:
+            target_label = next((label for label, item in zip(labels, sample_items) if item["ticker"] == demo_target), "")
+            if target_label:
+                st.session_state["public_demo_precision_sample"] = target_label
+                st.session_state["public_demo_precision_ready"] = target_label
         selected_label = st.selectbox("샘플 종목", labels, key="public_demo_precision_sample")
         item = sample_items[labels.index(selected_label)] if labels else {}
         if not item:
@@ -34091,6 +34109,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 
         tkr = sanitize_ticker_value(item.get("ticker", ""))
         name = sanitize_asset_name(item.get("name", ""), tkr)
+        render_etf_parent_return(tkr)
         is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
         asset_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
         df = load_price_df(tkr, "1y")
@@ -34138,8 +34157,6 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         c["chart_scorecard"] = chart_financial
         if is_etf:
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name, key_prefix="demo_precision")
-        else:
-            render_etf_parent_return(tkr)
         render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)
         from stock_lab_core.chart_review import render_chart_review
