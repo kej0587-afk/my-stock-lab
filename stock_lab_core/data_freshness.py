@@ -82,8 +82,8 @@ def input_freshness_fields(row, *, reference):
     )} - {""}
     has_flow = any(isinstance(row.get(key), str) and row[key].strip() not in {"", "-", "nan"}
                    for key in ("돈흐름_Ticker", "돈흐름_판정", "돈흐름_후보군"))
-    if not has_flow and not flow_dates:
-        flow_state, flow_note, flow_day = "not_connected", "종목별 돈흐름 미연결", ""
+    if not flow_dates and (not has_flow or row.get("돈흐름_연결상태") == "자료부족"):
+        flow_state, flow_note, flow_day = "not_connected", row.get("돈흐름_연결사유") or "종목별 돈흐름 미연결", ""
     elif len(flow_dates) > 1:
         flow_state, flow_note, flow_day = "conflict", "돈흐름 원자료 날짜 간 불일치", " / ".join(sorted(flow_dates))
     else:

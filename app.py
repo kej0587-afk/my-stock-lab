@@ -21627,11 +21627,23 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
     return {"tkr": tkr, "f_score": None, "row": row}
 
 
+def build_source_flow_context(frame, ticker, name=""):
+    from stock_lab_core.flow_connection import build_price_flow_row
+
+    row = build_price_flow_row(frame, ticker, name)
+    if row["연결상태"] != "자료부족":
+        row = _normalize_today_flow_context_frame(pd.DataFrame([row]), 10, "종목 자체 흐름").iloc[0].to_dict()
+    return {f"돈흐름_{key}": value for key, value in row.items() if not str(key).startswith("_")}
+
+
 def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_class, has_pos,
-                                       pattern_timing="", pattern_bucket="", pattern_reason=""):
+                                       pattern_timing="", pattern_bucket="", pattern_reason="", *, price_df=None):
     benchmark = get_auto_benchmark_info(ticker, name, asset_class, is_etf)
+    workflow_decision = dict(decision)
+    if isinstance(price_df, pd.DataFrame):
+        workflow_decision["flow_context"] = build_source_flow_context(price_df, ticker, name)
     workflow = build_decision_workflow(
-        name, ticker, decision, is_etf=is_etf, has_pos=has_pos,
+        name, ticker, workflow_decision, is_etf=is_etf, has_pos=has_pos,
         pattern_timing=pattern_timing, pattern_bucket=pattern_bucket, pattern_reason=pattern_reason,
         sector_rs=benchmark.get("sector_rs_label", "-"),
         usdkrw_value=clean_float(globals().get("usdkrw", 1400.0), 1400.0),
@@ -21782,6 +21794,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         )
     # tail(300)으로 슬라이싱해 TA 계산량 제한 (1y ≈ 250행이라 실질적 안전망)
     try:
+        source_flow_context = build_source_flow_context(df, tkr, name)
         df = build_indicators(df.tail(300))
     except Exception as exc:
         logging.exception("Today queue failed: ticker=%s stage=indicators", tkr)
@@ -21846,6 +21859,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
     sector_rs_state = classify_sector_rs_state(sector_rs_label, is_etf=is_etf)
     c["input_basis"] = {**build_signal_basis(df, live_context), **financial_basis(financial_meta, is_etf=is_etf)}
+    c["flow_context"] = source_flow_context
     workflow = build_decision_workflow(
         name, tkr, c, is_etf=is_etf, has_pos=has_p,
         pattern_timing=pattern_timing, pattern_bucket=pattern_bucket, pattern_reason=pattern_reason,
@@ -31694,6 +31708,7 @@ def build_today_flow_context_df(snapshot=None, flow_shortlist_df: pd.DataFrame |
         "Ticker", "종목명", "후보군", "판정", "타이밍", "주의요인", "시장맥락",
         "기준업종", "테마", "세부축", "돈흐름점수", "등록상태", "후보근거",
         "기준일", "source_asof", "가격자료기준일", "자료기준일", "거래량기준일",
+        "1일수익률", "1개월수익률", "3개월수익률", "거래량증가", "연결경로", "연결사유",
     ]
     return combined[[col for col in flow_cols + ["_검토키"] if col in combined.columns]].copy()
 
@@ -31718,9 +31733,8 @@ def attach_today_flow_context(
     flow = flow.drop_duplicates("_검토키", keep="first")
     flow = flow.rename(columns={col: f"돈흐름_{col}" for col in flow.columns if col != "_검토키"})
 
-    for col in [c for c in flow.columns if c != "_검토키" and c in out.columns]:
-        out = out.drop(columns=[col])
-    out = out.merge(flow, on="_검토키", how="left")
+    from stock_lab_core.flow_connection import merge_flow_context
+    out = merge_flow_context(out, flow)
     out = out.drop(columns=["_검토키"], errors="ignore")
     if "돈흐름_종목명" in out:
         names = out.get("종목명", pd.Series("", index=out.index)).fillna("").astype(str).str.strip()
@@ -33941,6 +33955,7 @@ def _render_today_queue_tab(mode):
     show_cols = [
         "종목명", "티커", "유형", "현재가", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "후보품질", "후보점수", "후보검토사항",
         "가격자료기준일", "가격신선도근거", "돈흐름기준일", "돈흐름신선도근거", "재무자료기간", "재무자료상태", "가격반영", "지표마지막봉", "계산시각", "자료주의",
+        "돈흐름_연결경로", "돈흐름_연결사유", "돈흐름_연결보완사유",
         "목표가요약", "최종읽기", "현재실행안내", "R/R", "R/R성격", "R/R출처", "차트목표", "손절가",
         "1차기준", "현재진입조건", "부족액", "📌후보등급",
         "패턴타점", "패턴근거", "돈흐름_후보군", "돈흐름_판정", "돈흐름_주의요인", "돈흐름_시장맥락",
@@ -34219,7 +34234,7 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         c["input_basis"] = {**build_signal_basis(df, (chart_df, live_applied, "")), **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, asset_class, has_pos_value,
-            pattern_timing, pattern_bucket, pattern_reason,
+            pattern_timing, pattern_bucket, pattern_reason, price_df=df,
         )
         external = _safe_execution_workflow_row(c.get("execution_workflow"))
         precision_execution_slot = st.empty()
@@ -34229,6 +34244,10 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         from stock_lab_core.data_freshness import input_freshness_rows
         c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
         st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
+        from stock_lab_core.flow_connection import flow_connection_rows
+        c["flow_connection"] = flow_connection_rows(c.get("execution_workflow"))
+        st.dataframe(pd.DataFrame(c["flow_connection"]), width='stretch', hide_index=True)
+        st.caption("돈흐름은 가격·거래량 기반 지표이며 실제 순유입 금액이 아닙니다.")
         with st.expander("기술 원신호·점수"):
             st.write(c["dec"])
             st.write(f"Adj: {c['adj']:.1f}점")
@@ -36220,7 +36239,7 @@ if main_page == "precision":
         c["input_basis"] = {**precision_signal_basis, **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, a_class, precision_has_pos,
-            precision_pattern_timing, precision_pattern_bucket, precision_pattern_reason,
+            precision_pattern_timing, precision_pattern_bucket, precision_pattern_reason, price_df=df,
         )
         precision_review_download.update(
             decision=c, multi_timeframe=mtf_pack, completion="partial", stage="workflow",
@@ -36238,6 +36257,10 @@ if main_page == "precision":
         from stock_lab_core.data_freshness import input_freshness_rows
         c["input_freshness"] = input_freshness_rows(c.get("execution_workflow"))
         st.dataframe(pd.DataFrame(c["input_freshness"]), width='stretch', hide_index=True)
+        from stock_lab_core.flow_connection import flow_connection_rows
+        c["flow_connection"] = flow_connection_rows(c.get("execution_workflow"))
+        st.dataframe(pd.DataFrame(c["flow_connection"]), width='stretch', hide_index=True)
+        st.caption("돈흐름은 가격·거래량 기반 지표이며 실제 순유입 금액이 아닙니다.")
         if is_etf:
             c["etf_holdings"] = render_etf_constituent_review(tkr, name=name)
         L, R = st.columns([1.1, 2.4])

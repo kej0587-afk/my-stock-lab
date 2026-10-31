@@ -151,6 +151,7 @@ def replay(monkeypatch, summary_ast):
         build_sideways_quality_state=build_sideways_quality_state, classify_macro_state=classify_macro_state,
         build_decision_workflow=build_decision_workflow, classify_sector_rs_state=classify_sector_rs_state,
         build_signal_basis=lambda source, context: build_signal_basis(source, context, calculated_at="fixture clock"),
+        build_source_flow_context=lambda *args: {},
         calc_series_mdd=lambda series: (series / series.cummax() - 1).min(),
         prefetch_price_data_parallel=Mock(side_effect=prefetch),
         prefetch_rs_price_frames=Mock(return_value={}), prefetch_benchmark_info_parallel=Mock(),
@@ -258,6 +259,25 @@ def test_default_summary_preserves_warm_quote_cache_without_bulk(replay):
     replay.bulk.assert_not_called()
     replay.singles.assert_not_called()
     replay.us.assert_not_called()
+
+
+def test_flow_receives_full_calendar_year_before_300_bar_indicator_limit(replay):
+    dates = pd.date_range(end="2026-10-29", periods=365)
+    prices = np.linspace(100.0, 120.0, 365)
+    history = pd.DataFrame({"Open": prices, "High": prices + 1, "Low": prices - 1,
+                            "Close": prices, "Volume": 1000}, index=dates)
+    seen = []
+
+    def flow(frame, ticker, name):
+        seen.append(len(frame))
+        return {"돈흐름_자료봉수": len(frame)}
+
+    replay.env["build_source_flow_context"] = flow
+    result = replay.env["_compute_summary_item"](
+        {"ticker": "MSFT", "name": "Calendar-year history"}, "fixture mode", 1, 2, 1_000_000,
+        100_000, 200_000, _price_df=history,
+    )
+    assert seen == [365] and result["row"]["돈흐름_자료봉수"] == 365
 
 
 def test_failed_upper_timeframe_verification_is_not_executable(replay):

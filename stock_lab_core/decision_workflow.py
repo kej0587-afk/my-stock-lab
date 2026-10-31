@@ -98,6 +98,8 @@ def build_decision_workflow(
     for key, source in (("RSI", "rsi"), ("MFI", "mfi"), ("볼린저 %B", "pct_b")):
         if source in c:
             row[key] = c[source]
+    if isinstance(c.get("flow_context"), dict):
+        row.update(c["flow_context"])
     if isinstance(c.get("input_basis"), dict):
         from stock_lab_core.data_freshness import input_freshness_fields, session_reference
         row.update(c["input_basis"])

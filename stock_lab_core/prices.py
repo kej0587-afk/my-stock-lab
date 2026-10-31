@@ -335,6 +335,12 @@ def _clean_ohlcv_frame(df: pd.DataFrame, *, keep_adj_close: bool = False) -> pd.
         out[col] = out[col].fillna(out["Close"])
     out["High"] = out[["High", "Open", "Close"]].max(axis=1)
     out["Low"] = out[["Low", "Open", "Close"]].min(axis=1)
+    missing_volume = (out["Volume"].isna() if "Volume" in out else pd.Series(True, index=out.index))
+    missing_sessions = set(out.attrs.get("volume_missing_sessions") or [])
+    missing_sessions.update(out.index[missing_volume].strftime("%Y-%m-%d"))
+    if missing_sessions:
+        # Preserve provenance while retaining legacy numeric inputs for TA.
+        out.attrs["volume_missing_sessions"] = sorted(missing_sessions)
     if "Volume" not in out.columns:
         out["Volume"] = 0.0
     else:
@@ -362,7 +368,7 @@ def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
         if col not in out.columns:
             out[col] = out["Close"]
     if "Volume" not in out.columns:
-        out["Volume"] = 0
+        out["Volume"] = pd.NA
     cols = ["Open", "High", "Low", "Close", "Volume"]
     out = out[cols].apply(pd.to_numeric, errors="coerce")
     return _clean_ohlcv_frame(out)
@@ -370,7 +376,7 @@ def _normalize_pykrx_ohlcv(df) -> pd.DataFrame:
 
 @cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
 def _fetch_pykrx_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """Keep the legacy API, but bound the same Naver adjusted-daily transport."""
+    """Bound Naver daily transport and preserve missing-volume provenance (v2)."""
     if not _is_kr_ticker(ticker):
         return pd.DataFrame()
     try:
@@ -427,7 +433,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
 @timed_call("prices")
 @cache_result(ttl=300, failure_ttl=15, is_success=bool)
 def load_price_frames_batch(tickers, period="1y") -> dict:
-    """Batch overseas histories; omit missing symbols for individual fallback."""
+    """Batch histories with missing-volume provenance (v2); omit failed symbols."""
     symbols = sorted({normalize_price_lookup_key(t) for t in tickers
                       if str(t or "").strip() and not _is_kr_ticker(t)})
     if not symbols:
@@ -765,6 +771,7 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
 def load_price_df(ticker, period="1y"):
     """
     일봉 OHLCV 다운로드 (TTL=5분).
+    Missing-volume provenance revision v2; numeric TA inputs unchanged.
     _YF_LOCK으로 yfinance 동시 호출 직렬화 — prefetch_price_data_parallel 같은
     멀티스레드 환경에서 SQLite tz-cache 충돌("database is locked") 방지.
     """
@@ -2418,3 +2425,8 @@ def clear_price_history_cache():
 def clear_selected_price_cache():
     clear_latest_price_cache()
     clear_price_history_cache()
+
+
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
