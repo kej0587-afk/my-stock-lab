@@ -98,6 +98,7 @@ def _selection_screen_source():
 import streamlit as st
 from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
 from stock_lab_core.precision_review_export import build_precision_review_export_zip
+from stock_lab_core.formatters import sanitize_ticker_value
 render_app_notice = lambda *args: None
 TICKER_MAP = {}
 def _queue_precision_selected_option(label):
@@ -115,7 +116,9 @@ def build_precision_select_options():
         {BITX!r}: {{"type": "watchlist", "item": {{"ticker": "BITX"}}}},
     }}
 '''
-    return (prefix + ast.unparse(ast.Module(body=constants, type_ignores=[]))
+    priority = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "prioritize_precision_review_request")
+    return (prefix + ast.unparse(ast.Module(body=constants + [priority], type_ignores=[]))
             + options_source + ast.unparse(ast.Module(body=branch.body[:end + 1], type_ignores=[])) + '''
 tkr = selected_option.get("item", {}).get("ticker", "GOOGL")
 st.text(tkr)

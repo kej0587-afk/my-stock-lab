@@ -95,6 +95,7 @@ class ReviewUI:
 def app_definitions():
     functions = {
         "queue_etf_constituent_review", "render_etf_parent_return", "render_etf_constituent_review",
+        "prioritize_precision_review_request",
         "set_precision_target_ticker", "_queue_precision_selected_option", "_queue_precision_free_target",
         "_split_precision_free_ticker", "_is_precision_kr_code_like",
     }
@@ -509,3 +510,22 @@ def test_old_top_five_is_only_an_explicit_historical_fallback(offline_app, live_
         assert result["source_url"] == "https://issuer.example/holdings"
         assert result["rows"][0]["ticker"] == "OLD"
         assert any("현재 편입·비중이 아님" in text for text in app.st.warnings)
+
+
+@pytest.mark.parametrize("ticker,base,market", [("SOXX", "SOXX", "미국/기타 (접미사 없음)"),
+                                               ("247540.KQ", "247540", "KOSDAQ (.KQ)")])
+def test_review_target_wins_over_old_widget_callback_and_keeps_durable_identity(offline_app, ticker, base, market):
+    app = offline_app
+    previous = {"ticker": "GOOGL"}
+    app.st.session_state["_precision_review_requested_ticker"] = ticker
+    assert app.prioritize_precision_review_request({"free": {"type": "free"}}, previous) == {}
+    assert previous == {"ticker": "GOOGL"}
+    assert "_precision_review_requested_ticker" not in app.st.session_state
+    identity = app.st.session_state["_precision_last_free_identity"]
+    assert identity["ticker"] == base and identity["market"] == market
+    assert app.st.session_state[app.PRECISION_PENDING_FREE_TICKER_KEY] == base
+
+
+def test_normal_selector_callback_is_unchanged_without_review_request(offline_app):
+    identity = {"ticker": "MSFT"}
+    assert offline_app.prioritize_precision_review_request({}, identity) is identity

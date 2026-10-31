@@ -8445,6 +8445,7 @@ def queue_etf_constituent_review(parent_ticker, parent_name, child_ticker):
         "ticker": sanitize_ticker_value(parent_ticker), "name": parent_name, "child": target,
     }
     st.session_state["_pending_main_page_nav"] = "precision"
+    st.session_state["_precision_review_requested_ticker"] = target
     if globals().get("IS_PUBLIC_DEMO", False):
         st.session_state["_public_demo_precision_target"] = target
     return True
@@ -8457,6 +8458,7 @@ def render_etf_parent_return(ticker):
     if st.button(f"{parent.get('name') or parent['ticker']} 구성종목으로 돌아가기",
                  key=f"etf_parent_return_{ticker}", icon=":material/arrow_back:"):
         set_precision_target_ticker(parent["ticker"])
+        st.session_state["_precision_review_requested_ticker"] = parent["ticker"]
         st.session_state["_pending_main_page_nav"] = "precision"
         if globals().get("IS_PUBLIC_DEMO", False):
             st.session_state["_public_demo_precision_target"] = parent["ticker"]
@@ -8568,6 +8570,14 @@ def render_etf_constituent_review(ticker, *, name="", key_prefix="precision"):
                 if queue_etf_constituent_review(ticker, name or ticker, target_ticker):
                     st.rerun()
         return snapshot
+
+
+def prioritize_precision_review_request(option_map, requested_identity):
+    target = sanitize_ticker_value(st.session_state.pop("_precision_review_requested_ticker", ""))
+    if target and set_precision_target_ticker(target, option_map):
+        # Widget callbacks may still carry the previously displayed security.
+        return {}
+    return requested_identity
 
 
 def get_kr_etf_composition(ticker):
@@ -17859,6 +17869,7 @@ def _queue_precision_free_target(ticker: str) -> str:
     st.session_state[PRECISION_PENDING_FREE_TICKER_KEY] = base_ticker
     st.session_state[PRECISION_PENDING_FREE_MARKET_KEY] = market_option
     st.session_state["_precision_prefill_ticker"] = ticker
+    st.session_state["_precision_last_free_identity"] = {"ticker": base_ticker, "market": market_option}
     return FREE_SEARCH_OPTION
 
 
@@ -35662,6 +35673,7 @@ if main_page == "precision":
     options, precision_option_map = build_precision_select_options()
     free_option = FREE_SEARCH_OPTION if FREE_SEARCH_OPTION in options else (options[0] if options else "")
     requested_identity = st.session_state.pop(PRECISION_PENDING_IDENTITY_KEY, {})
+    requested_identity = prioritize_precision_review_request(precision_option_map, requested_identity)
     if requested_identity.get("free"):
         _queue_precision_selected_option(free_option)
     elif requested_identity.get("ticker"):
@@ -35749,8 +35761,9 @@ if main_page == "precision":
                 st.session_state[PRECISION_FREE_TICKER_KEY] = _base_ticker
                 st.session_state[PRECISION_FREE_MARKET_KEY] = _market_option
         if PRECISION_FREE_TICKER_KEY not in st.session_state:
-            st.session_state[PRECISION_FREE_TICKER_KEY] = "GOOGL"
-            st.session_state[PRECISION_FREE_MARKET_KEY] = PRECISION_US_MARKET_OPTION
+            last_free = st.session_state.get("_precision_last_free_identity", {})
+            st.session_state[PRECISION_FREE_TICKER_KEY] = last_free.get("ticker") or "GOOGL"
+            st.session_state[PRECISION_FREE_MARKET_KEY] = last_free.get("market") or PRECISION_US_MARKET_OPTION
         if st.session_state.get(PRECISION_FREE_MARKET_KEY) not in PRECISION_FREE_MARKET_OPTIONS:
             default_free_ticker = st.session_state.get(PRECISION_FREE_TICKER_KEY, "")
             st.session_state[PRECISION_FREE_MARKET_KEY] = (
@@ -35782,6 +35795,9 @@ if main_page == "precision":
         else:
             tkr = ensure_kr_suffix_if_code(user_tkr_raw, ".KQ" if "KOSDAQ" in mkt_opt else ".KS")
         tkr = sanitize_ticker_value(tkr)
+
+        if user_tkr_raw:
+            st.session_state["_precision_last_free_identity"] = {"ticker": user_tkr_raw, "market": mkt_opt}
 
         known_sp500_etfs = {"SPY", "VOO", "IVV", "SPLG", "SPYM", "379800.KS"}
         known_nasdaq_etfs = {"QQQ", "QQQM", "QLD", "TQQQ", "379810.KS"}
