@@ -104,6 +104,36 @@ def layered_market_headline(context, flow_rows, states, now, metrics, *, synthes
             + ". 시장·종목 실행 게이트는 기존 판정을 유지합니다")
 
 
+def extended_day_comparison(context, ticker, obs, now):
+    """Daily display basis, leaving the quote's incremental return untouched."""
+    import math
+    from stock_lab_core.report_session import us_extended_session
+
+    leg = number(obs.get("return"))
+    window = us_extended_session(now)
+    if leg is None or leg < -1 or not window:
+        return {}
+    base = text(obs.get("previous_date"))
+    if window["label"] != "애프터마켓":
+        return {"return": leg, "base_date": base, "leg_return": leg, "postmarket": False}
+    result = {"return": None, "base_date": "", "leg_return": leg, "postmarket": True}
+    if base != window["date"]:
+        return result
+    closed = context.get("prices", {}).get(ticker, {})
+    regular = obs if obs.get("regular_date") == base else closed
+    day = regular.get("regular_date") if regular is obs else regular.get("date")
+    previous = text(regular.get("regular_previous_date") if regular is obs else regular.get("previous_date"))
+    move = number(regular.get("regular_return") if regular is obs else regular.get("return"))
+    if day != base or not stamp(previous) or previous >= base or move is None or move <= -1 or regular.get("stale"):
+        return result
+    close_price, leg_base = number(closed.get("price")), number(obs.get("previous_price"))
+    if regular is closed and close_price is not None and leg_base is not None:
+        if min(close_price, leg_base) <= 0 or not math.isclose(close_price, leg_base, rel_tol=1e-5):
+            return result
+    result.update({"return": (1 + move) * (1 + leg) - 1, "base_date": previous, "regular_return": move})
+    return result
+
+
 def extended_quote_text(context, ticker, now):
     from stock_lab_core.report_presentation import kst_time
     from stock_lab_core.report_session import NEW_YORK, market_session_states, us_extended_session
@@ -124,9 +154,19 @@ def extended_quote_text(context, ticker, now):
     note = (f" · 마지막 체결 {age:.0f}분 전, 지연 참고·현재 합산 제외" if age > 20 else
             " · 참고 시세·현재 합산 제외" if reference_only else " · 별도 세션·미확정")
     price = number(obs.get("price"))
-    return (f"{obs.get('kind', '시간외')} {number(obs['return']) * 100:+.2f}%"
+    basis = extended_day_comparison(context, ticker, obs, now)
+    if basis.get("postmarket"):
+        total = basis["return"]
+        move = f"전일 종가 대비 {total * 100:+.2f}%" if total is not None else "전일 종가 대비 미연결"
+        detail = f" · 마감 후 {basis['leg_return'] * 100:+.2f}% ({obs.get('previous_date', '날짜 미확인')} 정규장 종가 대비)"
+    else:
+        move = f"{number(obs['return']) * 100:+.2f}%"
+        detail = f" · 직전 정규장 종가({obs.get('previous_date', '날짜 미확인')}) 대비"
+    if basis.get("base_date") and basis.get("postmarket"):
+        detail = f" · 기준 종가 {basis['base_date']}" + detail
+    return (f"{obs.get('kind', '시간외')} {move}"
             + (f" (USD {price:.2f})" if price is not None else "")
-            + f" · {kst_time(obs['as_of'])}" + note)
+            + detail + f" · {kst_time(obs['as_of'])}" + note)
 
 
 def us_extended_summary(context, now):

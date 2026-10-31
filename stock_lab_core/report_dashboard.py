@@ -18,7 +18,7 @@ def _pct(value, unit="%"):
 
 
 def current_state_lines(context, states, now, metrics):
-    from stock_lab_core.report_intraday import _latest_observation
+    from stock_lab_core.report_intraday import _latest_observation, extended_day_comparison
     from stock_lab_core.report_session import us_extended_session
     checked = max(now, stamp(context.get("quote_checked_at")) or now)
     kr_parts = []
@@ -33,7 +33,14 @@ def current_state_lines(context, states, now, metrics):
     for ticker in ("SOXX", "RAM"):
         group, obs = _latest_observation(ticker, "US", context, states, checked)
         if obs and group != "US_CLOSE":
-            us_parts.append(f"{ticker} {_pct(obs['return'])}")
+            if group == "US_EXT":
+                basis = extended_day_comparison(context, ticker, obs, checked)
+                if basis.get("postmarket"):
+                    us_parts.append(f"{ticker} 전일 종가 대비 {_pct(basis['return'])} / 마감 후 {_pct(basis['leg_return'])}")
+                else:
+                    us_parts.append(f"{ticker} {_pct(obs['return'])}(직전 종가 대비)")
+            else:
+                us_parts.append(f"{ticker} {_pct(obs['return'])}(직전 종가 대비)")
     futures = (context.get("scenario_observations") or {}).get("latest", {})
     for ticker in ("NQ=F", "ES=F"):
         obs = futures.get(ticker, {})

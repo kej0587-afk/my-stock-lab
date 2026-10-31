@@ -273,6 +273,9 @@ def extended_quote_observation(quote_row, ticker, now, *, allow_delayed=False):
         found.append({"ticker": ticker, "price": price, "return": price / regular["price"] - 1,
                       "date": at.tz_convert(NEW_YORK).date().isoformat(), "as_of": at.isoformat(),
                       "previous_date": regular["date"], "previous_price": regular["price"],
+                      "regular_return": regular["return"], "regular_date": regular["date"],
+                      "regular_previous_date": regular["previous_date"],
+                      "regular_previous_price": regular["previous_price"],
                       "kind": label, "delayed": age > 1200, "age_minutes": age / 60,
                       "source": "Yahoo 별도 세션 마지막 체결(증권사·거래장소별 차이 가능)"})
     return max(found, key=lambda row: row["as_of"]) if found else {}
