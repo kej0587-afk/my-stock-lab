@@ -7405,7 +7405,12 @@ def render_precision_candlestick_chart(
     volume_signals = build_volume_signal_series(df, timeframe=timeframe)
     finish_price_figure(fig, df, volume_signals, show_level_labels=show_level_labels)
     fig.update_xaxes(rangebreaks=chart_date_breaks(df, ticker))
-    st.plotly_chart(fig, width='stretch')
+    legend = dict(orientation="h", xref="container", yref="container", x=0.01, y=0,
+                  xanchor="left", yanchor="bottom", entrywidth=100)
+    if "maxheight" in go.layout.Legend()._valid_props:
+        legend["maxheight"] = 96
+    fig.update_layout(legend=legend)
+    st.plotly_chart(fig, width='stretch', key=key)
     if channel:
         st.caption(f"{channel['direction']} 평행 채널 · {channel['state']} · 확인 {pd.Timestamp(channel['known_at']):%Y-%m-%d} · 하단 {channel['lower'][-1]:,.2f} / 중심 {channel['middle'][-1]:,.2f} / 상단 {channel['upper'][-1]:,.2f}")
     if show_patterns and show_signals:

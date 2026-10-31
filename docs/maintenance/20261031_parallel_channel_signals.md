@@ -72,6 +72,10 @@ mark the actual observation/confirmation bar, not the old pivot.
   exchange-calendars dependency was installed locally to verify real calendars.
 - Final focused chart, export, and provenance suite after all source edits:
   172 passed in 31.12 seconds.
+- Responsive preview exposed a fullscreen resize legend issue. The app now
+  anchors the legend to the canvas bottom with a bounded scroll area when
+  supported and gives each chart its own stable widget key. The subsequent
+  geometry/presentation integration suite passed 64 tests (19.39 seconds).
 - Structure regressions cover parallel pivot contacts, exact
   legacy/vectorized pivot equality (including ties), actual break dates,
   append-only/no-future-arrow tests, both H&S directions, both flags, bad OHLC,

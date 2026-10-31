@@ -18,6 +18,8 @@ def test_precision_chart_volume_has_a_separate_axis(app_module, monkeypatch):
     assert fig.data[0].type == "candlestick"
     assert next(trace for trace in fig.data if trace.type == "bar").yaxis == "y2"
     assert fig.layout.yaxis.domain[0] > fig.layout.yaxis2.domain[1]
+    assert fig.layout.legend.yref == "container" and fig.layout.legend.y == 0
+    assert fig.layout.legend.yanchor == "bottom"
 
 
 def test_app_profile_conserves_volume_and_does_not_fabricate_it(app_module):
