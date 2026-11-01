@@ -1981,12 +1981,13 @@ def _compute_ticker_metrics(px: pd.DataFrame) -> dict:
 
 # This runs inside cached calculations; phase callbacks can poison UI replay.
 @timed_call("external_data", "flow_history_and_metrics")
-def _load_universe_metrics(data, universe, *, failed_tickers=None):
+def _load_universe_metrics(data, universe, *, failed_tickers=None, download_tickers=None):
     """Load each ticker once; preserve ordered, single-threaded scoring.
 
-    Only KRX history I/O is parallel. US/international fallback providers keep
-    their existing serial path, including quota-limited Alpha Vantage calls.
+    KRX history I/O can overlap the overseas batch download on the caller.
+    US/international fallbacks and scoring keep their existing serial path.
     The semaphore bounds KRX work across simultaneous sessions in this process.
+    Supplied data is used unchanged when no download is requested.
     """
     tickers = list(dict.fromkeys(item["ticker"] for item in universe))
     kr_tickers = [ticker for ticker in tickers if _is_krx_money_flow_ticker(ticker)]
@@ -1996,6 +1997,8 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None):
             return get_money_flow_ohlc(data, ticker)
 
     def collect(futures):
+        # KRX uses its own feed; let its bounded workers run during the batch wait.
+        batch_data = download_money_flow_prices(download_tickers) if download_tickers is not None else data
         metrics = {}
         for ticker in tickers:
             if ticker in futures:
@@ -2003,7 +2006,7 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None):
             elif ticker in kr_tickers:
                 px = load_kr(ticker)
             else:
-                px = get_money_flow_ohlc(data, ticker)
+                px = get_money_flow_ohlc(batch_data, ticker)
             if failed_tickers is not None and px.attrs.get("transport_error"):
                 failed_tickers.append(ticker)
             metrics[ticker] = _compute_ticker_metrics(px) if not px.empty and len(px) >= 20 else None
@@ -2030,11 +2033,12 @@ def calculate_money_flow_df() -> pd.DataFrame:
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
         for item in build_money_flow_universe_with_naver_rankings()
     ]
-    data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
-
     rows = []
     failed_tickers = []
-    metrics_by_ticker = _load_universe_metrics(data, universe, failed_tickers=failed_tickers)
+    metrics_by_ticker = _load_universe_metrics(
+        None, universe, failed_tickers=failed_tickers,
+        download_tickers=tuple(item["ticker"] for item in universe),
+    )
     for item in universe:
         ticker = item["ticker"]
         if metrics_by_ticker[ticker] is None:
@@ -2075,8 +2079,6 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
         for item in IMAGE_THEME_UNIVERSE
         if not selected or item["테마"] == selected
     ]
-    data = download_money_flow_prices(tuple(item["ticker"] for item in universe))
-
     _empty: dict = {
         "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
         "1일수익률": np.nan, "5일수익률": np.nan,
@@ -2091,7 +2093,10 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
 
     rows = []
     failed_tickers = []
-    metrics_by_ticker = _load_universe_metrics(data, universe, failed_tickers=failed_tickers)
+    metrics_by_ticker = _load_universe_metrics(
+        None, universe, failed_tickers=failed_tickers,
+        download_tickers=tuple(item["ticker"] for item in universe),
+    )
     for item in universe:
         ticker = item["ticker"]
         metrics = (metrics_by_ticker[ticker] if metrics_by_ticker[ticker] is not None else _empty).copy()

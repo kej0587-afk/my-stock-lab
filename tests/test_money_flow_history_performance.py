@@ -18,7 +18,9 @@ def history(rows=252, direction=1):
                         index=pd.bdate_range("2025-01-02", periods=rows))
 
 
-def serial_metrics(data, universe, *, failed_tickers=None):
+def serial_metrics(data, universe, *, failed_tickers=None, download_tickers=None):
+    if download_tickers is not None:
+        data = flow.download_money_flow_prices(download_tickers)
     result = {}
     for item in universe:
         ticker = item["ticker"]
