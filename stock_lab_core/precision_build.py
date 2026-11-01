@@ -12,7 +12,8 @@ MODULES = ("chart_scorecard", "scorecard_review", "etf_holdings", "precision_rev
            "chart_patterns", "chart_execution", "precision_chart_view", "chart_structure", "execution_readiness",
            "data_freshness", "money_flow", "execution_gate", "decision_workflow", "flow_connection", "prices",
            "valuation_inputs", "today_enrichment", "earnings_comparison", "flow_ability_evidence", "flow_snapshot", "flow_symbols", "today_snapshot",
-           "account_performance", "account_performance_io", "account_performance_view", "account_performance_store")
+           "account_performance", "account_performance_io", "account_performance_view", "account_performance_store",
+           "decision_priority")
 
 
 def precision_build_info(entrypoint=None):
