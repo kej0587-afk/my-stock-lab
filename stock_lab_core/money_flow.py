@@ -2358,12 +2358,12 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
             continue
         bench_rows = grp[grp["Ticker"].astype(str) == bench_ticker]
         if bench_rows.empty:
-            b_3m = 0.0
-            b_accel = 0.0
+            b_3m = np.nan
+            b_accel = np.nan
         else:
             b = bench_rows.iloc[0]
-            b_3m = float(b["3개월수익률"]) if finite_num(b.get("3개월수익률")) else 0.0
-            b_accel = float(b["가속도"]) if finite_num(b.get("가속도")) else 0.0
+            b_3m = float(b["3개월수익률"]) if finite_num(b.get("3개월수익률")) else np.nan
+            b_accel = float(b["가속도"]) if finite_num(b.get("가속도")) else np.nan
 
         for _, r in grp.iterrows():
             if str(r.get("Ticker", "")) == bench_ticker:
@@ -2390,7 +2390,9 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
             # RS모멘텀 ±5% 이내는 노이즈로 간주 — 약화/개선 판정 제외
             # (예: UFO -3.6%, ICLN -1.6% → 실제 강세지만 약화 오표시 방지)
             _RS_MOM_BAND = 0.05
-            if rs_3m >= 0 and rs_mom >= -_RS_MOM_BAND:
+            if not finite_num(rs_3m) or not finite_num(rs_mom):
+                quad = "미확인"
+            elif rs_3m >= 0 and rs_mom >= -_RS_MOM_BAND:
                 quad = "주도"
             elif rs_3m >= 0 and rs_mom < -_RS_MOM_BAND:
                 quad = "약화"
@@ -2414,6 +2416,8 @@ def calculate_sector_rotation_df(flow_df: pd.DataFrame) -> pd.DataFrame:
                 "구분":       group,
                 "섹터":       str(r.get("섹터", "")),
                 "Ticker":     str(r.get("Ticker", "")),
+                "기준일":     str(r.get("기준일", "")),
+                "거래량기준일": str(r.get("거래량기준일", "")),
                 "사분면":     quad,
                 "RS(3M)":     rs_3m,
                 "RS모멘텀":   rs_mom,
