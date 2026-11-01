@@ -4443,10 +4443,10 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
             if prev_month_str:
                 st.info(
                     f"직전 월 로그: **{prev_month_str}** · 누적 투자금 {prev_total_invested:,.0f}원  \n"
-                    f"→ 이번 달 적립금 **{monthly:,.0f}원** 합산 → 누적 **{new_total_invested:,.0f}원**"
+                    f"→ 이번 달 계획 적립금 **{monthly:,.0f}원** 반영 시 예상 누적 **{new_total_invested:,.0f}원** (실제 입금 미확인)"
                 )
             else:
-                st.info(f"월별 로그 없음 · 첫 달로 기록됩니다 (적립금: {monthly:,.0f}원)")
+                st.info("월별 로그 없음 · 최초 투자원금을 포함한 실제 누적 순입금액 확인이 필요합니다.")
 
             # 이월금 개념 설명
             if carryover > 0:
@@ -4458,14 +4458,30 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     f"이번달 총 투자 가능금: **{total_invest:,.0f}원** (적립금 {monthly:,.0f} + 이월금 {carryover:,.0f})"
                 )
 
+        from hashlib import sha256
+
+        log_scope = sha256(str(CURRENT_USER_EMAIL or "").lower().encode()).hexdigest()[:16]
+        current_log = monthly_logs_df[monthly_logs_df["month"].astype(str).eq(_this_month)] if isinstance(monthly_logs_df, pd.DataFrame) and "month" in monthly_logs_df else pd.DataFrame()
+        default_total = clean_float(current_log.iloc[-1].get("total_invested"), 0.0) if not current_log.empty else prev_total_invested
+        confirmed_total = st.number_input("확인한 실제 누적 순입금액(원)", value=default_total, step=10000.,
+                                          key=f"rebcalc_actual_total_{log_scope}_{_this_month}")
+        confirmed_log = st.checkbox("계획 금액이 아닌 실제 누적 입금액과 전체 계좌 평가액임을 확인했습니다", value=False,
+                                    key=f"rebcalc_actual_confirm_{log_scope}_{_this_month}")
+        all_accounts = set(st.session_state.get("_app_all_holding_accounts", []))
+        full_scope = bool(all_accounts) and all_accounts.issubset(set(st.session_state.get("acc_filter", [])))
+        if not full_scope:
+            st.warning("일부 계좌만 선택했거나 전체 계좌 범위를 확인하지 못해 공통 월별 로그 저장을 보류합니다.")
         b1, b2, b3 = st.columns(3)
         with b1:
-            if st.button("📝 이번달 로그 기록 (Supabase)", key="rebcalc_save_log"):
-                if monthly_logs_df is None:
+            if st.button("📝 이번달 로그 기록 (Supabase)", key="rebcalc_save_log", disabled=not (confirmed_log and full_scope)):
+                if not (confirmed_log and full_scope):
+                    st.warning("실제 누적 입금액과 전체 계좌 범위 확인 전에는 기록하지 않습니다.")
+                elif monthly_logs_df is None:
                     st.error("monthly_logs_df가 전달되지 않았습니다.")
                 elif IS_PUBLIC_DEMO:
                     st.warning("데모 모드에서는 저장할 수 없습니다.")
                 else:
+                    new_total_invested = confirmed_total
                     logs_copy = monthly_logs_df.copy()
                     existing_mask = logs_copy["month"].astype(str) == _this_month
                     _cur_asset = clean_float(
@@ -25782,6 +25798,9 @@ IR(정보비율)은 초과수익의 일관성입니다. 1 이상이면 우수, �
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
     st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
+    from stock_lab_core.account_performance_view import render_account_performance
+
+    render_account_performance(st, owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)
 
     period = st.selectbox(
         "분석 기간",
@@ -34571,6 +34590,7 @@ st.session_state["_app_krw_cash"] = krw_cash
 st.session_state["_app_usd_cash"] = usd_cash
 st.session_state["_app_usdkrw"] = usdkrw
 st.session_state["_app_reserve_target_weight"] = reserve_target_weight
+st.session_state["_app_all_holding_accounts"] = sorted(set(holdings_df.get("account_type", pd.Series("일반", index=holdings_df.index)).fillna("일반").astype(str)))
 st.session_state["_app_holdings_table"] = holdings_table
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "currency_basis": "KRW",
+  "flow_timing": "end_of_day",
+  "valuations": [
+    {"date": "2026-05-31", "account": "예제: 입금 분리", "value_krw": 100000},
+    {"date": "2026-06-30", "account": "예제: 입금 분리", "value_krw": 160000},
+    {"date": "2026-05-31", "account": "예제: 일자 가중", "value_krw": 100000},
+    {"date": "2026-06-30", "account": "예제: 일자 가중", "value_krw": 135000}
+  ],
+  "flows": [
+    {"id": "DEMO-001", "date": "2026-06-30", "account": "예제: 입금 분리", "amount": 50000, "currency": "KRW", "fx_rate": 1},
+    {"id": "DEMO-002", "date": "2026-06-06", "account": "예제: 일자 가중", "amount": -2000, "currency": "KRW", "fx_rate": 1},
+    {"id": "DEMO-003", "date": "2026-06-11", "account": "예제: 일자 가중", "amount": 20000, "currency": "KRW", "fx_rate": 1}
+  ]
+}

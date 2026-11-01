@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import subprocess
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -36,7 +37,12 @@ def approved_audit_changes(source):
     for old, new in replacements.items():
         assert old in source
         source = source.replace(old, new)
-    return source
+    head, tail = source.split("def render_portfolio_analysis_tab(", 1)
+    tail = tail.replace('    period = st.selectbox(',
+        '    from stock_lab_core.account_performance_view import render_account_performance\n'
+        '    render_account_performance(st, owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)\n'
+        '    period = st.selectbox(', 1)
+    return head + "def render_portfolio_analysis_tab(" + tail
 
 
 def freeze(value):
@@ -150,7 +156,9 @@ def run(source, app, payload, *, detail, ready, monthly):
     nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
              and node.name in (MAIN, *HELPERS)]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "<portfolio-renderer>", "exec"), namespace)
-    namespace[MAIN](pd.DataFrame(), 0., 0., 1300., 5., monthly_logs_df=pd.DataFrame())
+    with patch("stock_lab_core.account_performance_view.render_account_performance",
+               side_effect=lambda *a, **kw: ui.record("render_account_performance", **kw)):
+        namespace[MAIN](pd.DataFrame(), 0., 0., 1300., 5., monthly_logs_df=pd.DataFrame())
     return ui.log, ui.session_state
 
 
