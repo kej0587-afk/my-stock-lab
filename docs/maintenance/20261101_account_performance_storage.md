@@ -97,3 +97,16 @@ non-destructive load preview, explicit restore and completeness reset. The
 restored example still returns 15.31% Modified Dietz with KRW 17,000 investment
 profit and KRW 18,000 net external flows. These are validation examples, not
 the user's account performance. No real ledger row was inserted during tests.
+
+Production verification after deployment: the new optional-storage renderer
+appeared without a module-restart warning. An explicit owner-bound server read
+returned no stored ledger, showing that the dedicated table is reachable and
+the logged-in owner's first save is available. The agent did not execute the
+migration or press the production save button; no fabricated/private ledger
+rows were inserted. Actual production write/restore is therefore not claimed.
+
+Remaining UI performance boundary: panel actions still enter the existing
+whole-app rerun before reaching the ledger. The adapter adds no background
+market/database requests, but global quote initialization can delay that rerun.
+Fragment-level isolation is a separate optimization requiring rerun/state
+tests; it is not mixed into this persistence change.
