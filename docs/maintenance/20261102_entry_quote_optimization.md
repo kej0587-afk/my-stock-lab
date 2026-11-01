@@ -80,3 +80,59 @@ instead of accepting a value whose original age would be lost.
 Related entry, source-body parity, quote/cache priority, invalidation, concurrent
 scope isolation and bypass tests: 134 passed in 36.96s. No scoring thresholds,
 grades, decision wording, account records, authentication or DB writes changed.
+
+## Production Result
+
+Completed post-change calculation 0f148cd910ca4e9788c9986b223939e4 on
+292ffcd6 captured entry trace ebcd78c56e844d41b5da007742277cef.
+Both this run and a2010b7f used 81 registered / 94 calculated / 12 auto-flow
+candidates, full-flow refresh and the same declared standard-refresh policy.
+The previous day's 95-item profiles are not the before/after pair for this
+change; no candidate count was reduced by the optimization.
+
+| Metric | Before a2010b7f | After 0f148cd9 |
+| --- | ---: | ---: |
+| Before Today Queue (s) | 17.935 | 9.894 |
+| Holdings prices and valuation (s) | 16.406 | 8.697 |
+| Batch lookup (s) | 8.742 | 8.684 |
+| Seven display overrides (s) | 7.649 | 0.0017 |
+| Entry overnight HTTP requests | 14 | 7 |
+| Entry chart HTTP requests | 16 | 8 |
+| Scoped success / hit counts | not available | 7 / 7 |
+| Today Queue elapsed (s) | 86.689 | 86.318 |
+| Full script elapsed (s) | 104.711 | 96.312 |
+
+The source-chain wrapper still ran 14 times after the change; seven were
+actual successful chains and seven were local reuse hits. This distinction
+is why wrapper counts alone are not request counts. The unchanged batch
+latency and removed display wait match the intended optimization boundary.
+These are separate live observations, not a controlled network-latency A/B
+benchmark or a guarantee of the same gain on every render.
+
+Both traces were completed, had full-calculation flags, and had no measured
+failures. The post-change app source hash matched local LF-normalized source;
+reported stale_modules was empty. Actual us_quote_scope.hit events verify
+the new code path independently of source records. No extra Cloud reboot
+was needed for this verification.
+
+A news-module import KeyError was observed once during deployment. A normal
+browser reload subsequently started successfully and the above calculation
+completed. Its import-loader root cause was not proven, and no error masking
+or news-module changes were added.
+
+Final full suite: 5342 passed, 1 skipped, 18 subtests passed in 287.10s.
+Programmatic checks confirmed matching input counts/cache policy, completed
+queue and entry traces, seven genuine reuse hits, no measured failures and
+the matching app source hash. Only documentation changed after this suite.
+
+Saved UI proof: entry-scope-production.png in the 2026-11-02 visualization
+directory. The diagnostic now shows all entry stages beside that exact
+measurement's total; older reused reports retain their own entry snapshot.
+
+Remaining measured work includes multi-timeframe packs (94 calls, 19.38s
+active wall), current-price display (25.12s active wall) and history loading
+(20.34s active wall). These overlap and must not be summed. The measured full
+workflow remains above one minute; this change addresses entry duplication,
+not all calculation bottlenecks.
+
+Implementation reference: https://docs.python.org/3/library/contextvars.html
