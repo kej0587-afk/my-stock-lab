@@ -18,8 +18,8 @@ def no_external_lookup(monkeypatch):
     news.get_ticker_news.clear()
 
 
-def rss(*titles):
-    published = format_datetime(datetime.now(timezone.utc) - timedelta(hours=1))
+def rss(*titles, published_at=None):
+    published = format_datetime(published_at or (datetime.now(timezone.utc) - timedelta(hours=1)))
     items = "".join(f"<item><title>{escape(title)}</title><link>https://example.com/{i}</link>"
                     f"<source>Reuters</source><pubDate>{published}</pubDate></item>" for i, title in enumerate(titles))
     return BytesIO(f"<rss><channel>{items}</channel></rss>".encode())
@@ -31,10 +31,12 @@ def rss(*titles):
 ])
 def test_broad_query_still_filters_unrelated_news(monkeypatch, ticker, name, title, alias):
     calls, responses = [], []
+    # This tests relevance, not which repeated publisher feed arrived a second later.
+    published_at = datetime.now(timezone.utc) - timedelta(hours=1)
 
     def fetch(req, timeout):
         calls.append(req.full_url)
-        response = rss(title, "성시경도 극찬한 라면", "Other Company earnings shares rally")
+        response = rss(title, "성시경도 극찬한 라면", "Other Company earnings shares rally", published_at=published_at)
         responses.append(response)
         return response
 
@@ -43,7 +45,7 @@ def test_broad_query_still_filters_unrelated_news(monkeypatch, ticker, name, tit
     assert queries[0] == f'"{alias}"' and names[0] == alias
     items, logs = news.get_ticker_news(ticker, name, False)
     direct = [item for item in items if item["category"] == news.NEWS_CATEGORY_DIRECT]
-    assert [item["title"] for item in direct] == [title]
+    assert [item["title"] for item in direct] == [title], logs
     assert 0 < len(calls) <= 16 and all(response.closed for response in responses)
     count = len(calls)
     assert news.get_ticker_news(ticker, name, False) == (items, logs)
