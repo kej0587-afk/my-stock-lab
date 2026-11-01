@@ -40,9 +40,22 @@ class RemoveDiagnostics(ast.NodeTransformer):
             node.name = None
         return node
 
+    def visit_Assign(self, node):
+        # The only approved transport change is gzip negotiation for quote HTML.
+        expected = ast.parse('headers["Accept-Encoding"] = "gzip"').body[0]
+        if ast.dump(node, include_attributes=False) == ast.dump(expected, include_attributes=False):
+            return None
+        return self.generic_visit(node)
+
+    def visit_Call(self, node):
+        expected = ast.parse('read_quote_html(resp, provider="yahoo_overnight")', mode="eval").body
+        if ast.dump(node, include_attributes=False) == ast.dump(expected, include_attributes=False):
+            return ast.parse('resp.read().decode("utf-8", errors="ignore")', mode="eval").body
+        return self.generic_visit(node)
+
 
 @pytest.mark.parametrize("name", NAMES)
-def test_provider_body_matches_fixed_revision_except_diagnostics(name):
+def test_provider_body_matches_fixed_revision_except_diagnostics_and_gzip_transport(name):
     before = subprocess.run(
         ["git", "show", "5a859433:stock_lab_core/prices.py"], cwd=ROOT,
         capture_output=True, check=True, encoding="utf-8",

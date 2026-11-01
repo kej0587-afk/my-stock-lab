@@ -23,6 +23,7 @@ from stock_lab_core.result_cache import cache_result
 from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core import performance as _performance
 from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, invalidate_prefetched_quotes
+from stock_lab_core.quote_html import read_quote_html
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -1762,11 +1763,12 @@ def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
         url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(t)}/"
         headers = dict(_YQ_HEADERS)
         headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        headers["Accept-Encoding"] = "gzip"
         req = urllib.request.Request(url, headers=headers)
         _quote_transport_event("yahoo_overnight", "request")
         with urllib.request.urlopen(req, timeout=8) as resp:
             _quote_transport_event("yahoo_overnight", "response")
-            text = resp.read().decode("utf-8", errors="ignore")
+            text = read_quote_html(resp, provider="yahoo_overnight")
         return _extract_yahoo_overnight_price_from_html(text, t)
     except Exception as exc:
         _quote_transport_event("yahoo_overnight", "error", exc)

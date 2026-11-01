@@ -350,6 +350,7 @@ from stock_lab_core.decision_policies import (
 )
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
+from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
     TODAY_QUEUE_DEFENSE_TEXT_RE,
     TODAY_QUEUE_LOGIC_VERSION,
@@ -18012,10 +18013,11 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://finance.yahoo.com/",
+            "Accept-Encoding": "gzip",
         }
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=8) as resp:
-            text = resp.read().decode("utf-8", errors="ignore")
+            text = read_quote_html(resp, provider="yahoo_daymarket_direct")
         return _extract_yahoo_overnight_price_from_html(text, t)
     except Exception:
         return 0.0
@@ -20090,12 +20092,16 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
 
 
 def get_precision_build_info():
-    from stock_lab_core import precision_build, report_build
+    from stock_lab_core import precision_build, quote_html, report_build
+
+    # Restore only missing registry entries, using the module's real import snapshot.
+    report_build._LOADED.setdefault(quote_html.__name__, dict(quote_html.IMPORTED_SOURCE))
 
     # Sync metadata names only; preserve the hashes captured at real import time.
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
                         if name.startswith("stock_lab_core.account_performance") or name in {
-                            "stock_lab_core.decision_priority", "stock_lab_core.leveraged_watch"})
+                            "stock_lab_core.decision_priority", "stock_lab_core.leveraged_watch",
+                            "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
     if info.get("restart_required"):

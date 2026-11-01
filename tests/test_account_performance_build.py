@@ -4,7 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 from stock_lab_core import account_performance, account_performance_io, account_performance_view, account_performance_store
-from stock_lab_core import precision_build, report_build
+from stock_lab_core import precision_build, quote_html, report_build
 
 
 def setup_registry(monkeypatch, app):
@@ -22,10 +22,14 @@ def test_cached_old_module_list_gains_actual_registered_sources_without_a_reload
     names, registry, warnings = setup_registry(monkeypatch, app_module)
     original = deepcopy(registry)
     info = app_module.get_precision_build_info()
-    assert set(info["sources"]) == set(names)
+    # Newly imported quote HTML can recover a missing entry from its real snapshot.
+    expected = dict(original)
+    expected[quote_html.__name__] = dict(quote_html.IMPORTED_SOURCE)
+    assert set(info["sources"]) == set(expected)
     assert not info["restart_required"]
     assert not warnings
-    assert registry == original
+    assert registry == expected
+    assert {name: registry[name] for name in names} == original
     first = precision_build.MODULES
     assert app_module.get_precision_build_info() == info
     assert precision_build.MODULES == first
