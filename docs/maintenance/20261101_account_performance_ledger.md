@@ -1,5 +1,9 @@
 # 2026-11-01 Account Performance Ledger
 
+Storage follow-up: see 20261101_account_performance_storage.md. The session-only
+description below records the initial delivery; optional owner-bound server
+storage was added afterward and requires its separate table setup.
+
 ## Boundary
 
 This adds a separate, on-demand account-performance workspace ahead of the

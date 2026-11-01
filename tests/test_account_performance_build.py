@@ -3,12 +3,12 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-from stock_lab_core import account_performance, account_performance_io, account_performance_view
+from stock_lab_core import account_performance, account_performance_io, account_performance_view, account_performance_store
 from stock_lab_core import precision_build, report_build
 
 
 def setup_registry(monkeypatch, app):
-    names = [module.__name__ for module in (account_performance, account_performance_io, account_performance_view)]
+    names = [module.__name__ for module in (account_performance, account_performance_io, account_performance_view, account_performance_store)]
     registry = {name: deepcopy(report_build._LOADED[name]) for name in names}
     monkeypatch.setattr(report_build, "_LOADED", registry)
     monkeypatch.setattr(precision_build, "MODULES", ())

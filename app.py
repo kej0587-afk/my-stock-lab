@@ -25813,10 +25813,16 @@ IR(정보비율)은 초과수익의 일관성입니다. 1 이상이면 우수, �
 
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
-    st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
+    st.caption("보유자산 분석은 읽기 전용입니다. 계좌 성과 원장은 별도 저장 버튼으로만 반영합니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
     from stock_lab_core.account_performance_view import render_account_performance
 
-    render_account_performance(st, owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)
+    performance_options = dict(owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)
+    if "store" in inspect.signature(render_account_performance).parameters:
+        from stock_lab_core.account_performance_store import SupabaseAccountPerformanceStore
+        performance_options["store"] = None if IS_PUBLIC_DEMO else SupabaseAccountPerformanceStore(supabase, owner_scope=CURRENT_USER_EMAIL)
+    else:
+        st.warning("개인 원장 저장 모듈 교체 대기 · 현재는 파일 보관만 가능합니다. 앱 재시작 후 저장 연결을 다시 확인해 주세요.")
+    render_account_performance(st, **performance_options)
 
     period = st.selectbox(
         "분석 기간",

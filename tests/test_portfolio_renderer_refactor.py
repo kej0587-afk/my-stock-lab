@@ -23,6 +23,8 @@ HELPERS = ("_render_portfolio_risk_charts", "_render_portfolio_detailed_evaluati
 def approved_audit_changes(source):
     replacements = {
         "내 포트폴리오 수익률": "월별 원금대비 손익률 변화(%p)",
+        "읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.":
+            "보유자산 분석은 읽기 전용입니다. 계좌 성과 원장은 별도 저장 버튼으로만 반영합니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.",
         "%{x|%Y-%m}<br>누적수익률: %{y:.2f}%<extra></extra>": "%{x|%Y-%m}<br>첫 기록월 대비 손익률 변화: %{y:.2f}%p<extra></extra>",
         'yaxis_title="누적수익률(%)"': 'yaxis_title="가격 수익률(%) / 손익률 변화(%p)"',
         "초록선 = 첫 기록월 대비 내 실제 누적수익률 / 파란 점선 = 현재 보유 종목을 같은 시점부터 들고 있었다면의 가격 수익률 (비중 고정 가정)":
@@ -40,7 +42,13 @@ def approved_audit_changes(source):
     head, tail = source.split("def render_portfolio_analysis_tab(", 1)
     tail = tail.replace('    period = st.selectbox(',
         '    from stock_lab_core.account_performance_view import render_account_performance\n'
-        '    render_account_performance(st, owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)\n'
+        '    performance_options = dict(owner_scope=CURRENT_USER_EMAIL, monthly_logs_df=monthly_logs_df)\n'
+        '    if "store" in inspect.signature(render_account_performance).parameters:\n'
+        '        from stock_lab_core.account_performance_store import SupabaseAccountPerformanceStore\n'
+        '        performance_options["store"] = None if IS_PUBLIC_DEMO else SupabaseAccountPerformanceStore(supabase, owner_scope=CURRENT_USER_EMAIL)\n'
+        '    else:\n'
+        '        st.warning("개인 원장 저장 모듈 교체 대기 · 현재는 파일 보관만 가능합니다. 앱 재시작 후 저장 연결을 다시 확인해 주세요.")\n'
+        '    render_account_performance(st, **performance_options)\n'
         '    period = st.selectbox(', 1)
     return head + "def render_portfolio_analysis_tab(" + tail
 

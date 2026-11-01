@@ -1,4 +1,4 @@
-"""On-demand account performance workspace, with no broker or database writes."""
+"""On-demand performance drafts with optional, explicitly requested storage."""
 
 from hashlib import sha256
 
@@ -41,7 +41,58 @@ def _result_table(st, result):
                        file_name="stock_lab_account_performance_results.csv", mime="text/csv", key="account_performance_result_csv")
 
 
-def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
+_STORE_ERRORS = {
+    "schema_unavailable": "개인 원장 테이블 미연결 · 설정문 적용이 필요합니다. 현재 초안은 유지됩니다.",
+    "conflict": "다른 접속에서 저장본이 바뀌었습니다. 덮어쓰지 않았으며 현재 초안은 유지됩니다.",
+    "write_unconfirmed": "서버의 저장 결과를 확인하지 못했습니다. 재저장 전 서버 저장본을 확인해야 합니다. 현재 초안은 유지됩니다.",
+    "invalid_data": "서버 원장 형식 또는 저장할 데이터가 올바르지 않습니다. 현재 초안은 유지됩니다.",
+    "owner_scope_mismatch": "개인 원장 사용자 범위가 맞지 않아 접근을 보류했습니다.",
+    "store_unavailable": "개인 원장 서버 연결 실패 · 현재 초안은 유지됩니다.",
+}
+
+
+def _store_error(state, exc):
+    code = getattr(exc, "code", "store_unavailable")
+    state.update(known=False, error=code if isinstance(code, str) and code in _STORE_ERRORS else "store_unavailable", preview=False)
+
+
+def _storage_controls(st, store, owner_scope, prefix):
+    state = st.session_state.setdefault(prefix + "_storage", {"known": False})
+    if st.button("서버 저장본 확인", icon=":material/cloud_download:", key=prefix + "_fetch"):
+        try:
+            record = store.load(owner_scope=owner_scope)
+        except Exception as exc:
+            _store_error(state, exc)
+        else:
+            state.update(remote=record, preview=record is not None, error=None, notice=None)
+            if record is None:
+                state.update(known=True, base_revision=None)
+            elif not state.get("known") or state.get("base_revision") != record["revision"]:
+                state["known"] = False
+    if state.get("error"):
+        st.warning(_STORE_ERRORS[state["error"]])
+    elif state.get("notice"):
+        st.success(state["notice"])
+    if state.get("preview"):
+        record = state["remote"]
+        st.caption(f"서버 저장본 r{record['revision']} · 평가 {len(record['ledger']['valuations'])}건 / 입출금 {len(record['ledger']['flows'])}건 · 현재 초안은 아직 교체하지 않았습니다.")
+        confirmed = st.checkbox("서버 저장본으로 현재 초안을 교체합니다", value=False,
+                                key=prefix + f"_restore_confirm_{record['revision']}_{st.session_state[prefix + '_revision']}")
+        if st.button("저장본 적용", disabled=not confirmed, key=prefix + "_restore") and confirmed:
+            st.session_state[prefix + "_draft"] = {key: frame.copy(deep=True) for key, frame in record["ledger"].items()}
+            st.session_state[prefix + "_revision"] += 1
+            st.session_state.pop(prefix + "_result", None)
+            state.update(known=True, base_revision=record["revision"], preview=False, error=None, notice="서버 저장본을 초안으로 불러왔습니다.")
+            st.rerun()
+    elif state.get("known"):
+        revision = state.get("base_revision")
+        st.caption(f"개인 저장본 r{revision}" if revision is not None else "저장된 개인 원장 없음 · 최초 저장 가능")
+    else:
+        st.caption("서버 저장본 미확인 · 개인 저장 보류")
+    return state
+
+
+def render_account_performance(st, *, owner_scope, monthly_logs_df=None, store=None):
     scope = sha256(str(owner_scope or "").strip().lower().encode()).hexdigest()[:20]
     prefix = f"account_performance_v1_{scope}"
     draft_key, revision_key, result_key = prefix + "_draft", prefix + "_revision", prefix + "_result"
@@ -50,7 +101,11 @@ def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
         st.session_state[revision_key] = 0
     with st.expander("계좌 성과 원장", expanded=False):
         st.caption("평가액: 현금·배당 잔액과 당시 환율을 포함한 원화 총자산. 외부 입출금은 선택 계좌 밖에서 들어오거나 나간 금액입니다. 계좌 안 배당·매매·환전, 전체계좌 분석의 계좌간 이체는 외부 입출금이 아닙니다.")
-        st.caption("저장 위치: 현재 접속의 개인 초안 · 서버 영구저장 안 함 · 기존 보유자산·월별 기록은 변경하지 않음")
+        if store is None:
+            st.caption("저장 위치: 현재 접속의 개인 초안 · 서버 영구저장 안 함 · 기존 보유자산·월별 기록은 변경하지 않음")
+        else:
+            st.caption("개인 저장소: Supabase 연결 대상 · 미저장 초안은 현재 접속에만 보관 · 기존 보유자산·월별 기록은 변경하지 않음")
+        storage = _storage_controls(st, store, owner_scope, prefix) if store is not None else None
         old_count = len(monthly_logs_df) if isinstance(monthly_logs_df, pd.DataFrame) else 0
         if old_count:
             st.caption(f"기존 월별 기록 {old_count}개: 실제 평가일·입출금 날짜가 미저장되어 원장으로 자동 변환하지 않았습니다.")
@@ -66,6 +121,8 @@ def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
                 st.session_state[draft_key] = imported
                 st.session_state[revision_key] += 1
                 st.session_state.pop(result_key, None)
+                if storage is not None:
+                    storage["notice"] = None
                 st.success("원장 초안을 불러왔습니다. 입출금 누락 여부는 다시 확인해야 합니다.")
         draft = st.session_state[draft_key]
         revision = st.session_state[revision_key]
@@ -88,7 +145,8 @@ def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
                     "fx_rate": st.column_config.NumberColumn("당일 원/통화 환율", min_value=0., format="%.4f"),
                 })
             applied = st.form_submit_button("원장 초안 적용")
-        if applied:
+            cloud_save = st.form_submit_button("적용·개인 저장", icon=":material/save:", disabled=not storage.get("known")) if storage is not None else False
+        if applied or cloud_save:
             candidate = {"valuations": valuations.copy(), "flows": flows.copy()}
             try:
                 encode_ledger(candidate)
@@ -98,6 +156,16 @@ def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
                 st.session_state[draft_key] = candidate
                 st.session_state[revision_key] += 1
                 st.session_state.pop(result_key, None)
+                if storage is not None:
+                    storage["notice"] = None
+                if cloud_save and storage is not None and storage.get("known"):
+                    try:
+                        record = store.save(candidate, expected_revision=storage.get("base_revision"), owner_scope=owner_scope)
+                    except Exception as exc:
+                        _store_error(storage, exc)
+                    else:
+                        storage.update(known=True, base_revision=record["revision"], remote=record,
+                                       preview=False, error=None, notice=f"개인 원장 r{record['revision']} 저장 완료")
                 st.rerun()
 
         try:
