@@ -20278,8 +20278,13 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
 
 
 def get_precision_build_info():
-    from stock_lab_core.precision_build import precision_build_info
-    info = precision_build_info(__file__)
+    from stock_lab_core import precision_build, report_build
+
+    # Sync metadata names only; preserve the hashes captured at real import time.
+    registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
+                        if name.startswith("stock_lab_core.account_performance"))
+    precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
+    info = precision_build.precision_build_info(__file__)
     if info.get("restart_required"):
         st.warning("배포 코드와 현재 불러온 정밀관측소 모듈이 다릅니다. Streamlit Cloud에서 Reboot app이 필요합니다.")
     return info

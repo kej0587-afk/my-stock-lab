@@ -90,3 +90,14 @@ accounts, account switch, missing confirmation, upload, explicit reimport and
 reconfirmation. Reimport did not append duplicate transactions. Results
 show comma-formatted money, two-decimal percentages and explicit estimate
 labels. The widget-level upload limit is 1 MB in addition to parser limits.
+
+The first production ZIP used the new app entrypoint but a cached precision
+metadata module with an older module-name list. The new components themselves
+were newly imported and working, but their hashes were omitted from that ZIP.
+get_precision_build_info now idempotently adds the account-performance names
+already in the real import registry to that metadata list. This changes only
+coverage configuration: no module reload, no replacement of an original loaded
+hash with a current disk hash. A stale-code regression proves real mismatches
+still warn. No user reboot is requested for this metadata-only list drift.
+The 104 affected provenance, precision export, app-import and portfolio-renderer
+tests passed after this metadata bridge (46.67s); no financial formulas changed.
