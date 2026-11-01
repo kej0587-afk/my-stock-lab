@@ -4465,17 +4465,29 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
         default_total = clean_float(current_log.iloc[-1].get("total_invested"), 0.0) if not current_log.empty else prev_total_invested
         confirmed_total = st.number_input("확인한 실제 누적 순입금액(원)", value=default_total, step=10000.,
                                           key=f"rebcalc_actual_total_{log_scope}_{_this_month}")
-        confirmed_log = st.checkbox("계획 금액이 아닌 실제 누적 입금액과 전체 계좌 평가액임을 확인했습니다", value=False,
-                                    key=f"rebcalc_actual_confirm_{log_scope}_{_this_month}")
+        default_value = clean_float(current_log.iloc[-1].get("evaluated_value"), 0.0) if not current_log.empty else None
+        default_dividend = clean_float(current_log.iloc[-1].get("dividend"), 0.0) if not current_log.empty else None
+        confirmed_value = st.number_input("배당을 뺀 평가금액(원)", min_value=0., value=default_value, step=10000.,
+                                          key=f"rebcalc_ex_dividend_value_{log_scope}_{_this_month}")
+        confirmed_dividend = st.number_input("해당 월 수령 배당금(원)", min_value=0., value=default_dividend, step=100.,
+                                             key=f"rebcalc_month_dividend_{log_scope}_{_this_month}")
+        st.caption("월별 기록은 배당 제외 평가금액에 기록 시작 이후 누적 배당을 한 번 더합니다. 배당금은 누적액이 아닌 해당 월 수령액이며, 없는 달은 0원을 입력합니다. 달러 배당은 수령일 환율로 환산한 원화액입니다.")
+        st.caption("현재 총자산에는 보유자산과 예수금이 포함됩니다. 배당 포함 여부가 달라 월별 평가금액으로 자동 대입하지 않습니다.")
+        confirmed_log = st.checkbox("실제 누적 순입금액·배당 제외 평가금액·해당 월 배당과 전체 계좌 범위를 확인했습니다", value=False,
+                                    key=f"rebcalc_ex_dividend_confirm_{log_scope}_{_this_month}")
+        valid_monthly_values = all(
+            value is not None and not isinstance(value, bool) and math.isfinite(value)
+            for value in (confirmed_total, confirmed_value, confirmed_dividend)
+        ) and confirmed_value >= 0 and confirmed_dividend >= 0
         all_accounts = set(st.session_state.get("_app_all_holding_accounts", []))
         full_scope = bool(all_accounts) and all_accounts.issubset(set(st.session_state.get("acc_filter", [])))
         if not full_scope:
             st.warning("일부 계좌만 선택했거나 전체 계좌 범위를 확인하지 못해 공통 월별 로그 저장을 보류합니다.")
         b1, b2, b3 = st.columns(3)
         with b1:
-            if st.button("📝 이번달 로그 기록 (Supabase)", key="rebcalc_save_log", disabled=not (confirmed_log and full_scope)):
-                if not (confirmed_log and full_scope):
-                    st.warning("실제 누적 입금액과 전체 계좌 범위 확인 전에는 기록하지 않습니다.")
+            if st.button("📝 이번달 로그 기록 (Supabase)", key="rebcalc_save_log", disabled=not (confirmed_log and full_scope and valid_monthly_values)):
+                if not (confirmed_log and full_scope and valid_monthly_values):
+                    st.warning("실제 순입금·배당 제외 평가금액·해당 월 배당과 전체 계좌 범위 확인 전에는 기록하지 않습니다.")
                 elif monthly_logs_df is None:
                     st.error("monthly_logs_df가 전달되지 않았습니다.")
                 elif IS_PUBLIC_DEMO:
@@ -4484,24 +4496,23 @@ def render_monthly_rebalancing_calculator(holdings_table, usdkrw, portfolio_summ
                     new_total_invested = confirmed_total
                     logs_copy = monthly_logs_df.copy()
                     existing_mask = logs_copy["month"].astype(str) == _this_month
-                    _cur_asset = clean_float(
-                        portfolio_summary.get("current_asset") if portfolio_summary else None, 0.0
-                    )
+                    _cur_asset = confirmed_value
                     if existing_mask.any():
                         logs_copy.loc[existing_mask, "total_invested"] = new_total_invested
                         logs_copy.loc[existing_mask, "evaluated_value"] = _cur_asset
+                        logs_copy.loc[existing_mask, "dividend"] = confirmed_dividend
                     else:
                         new_row = pd.DataFrame([{
                             "month": _this_month,
                             "total_invested": new_total_invested,
                             "evaluated_value": _cur_asset,
-                            "dividend": 0.0,
+                            "dividend": confirmed_dividend,
                         }])
                         logs_copy = pd.concat([logs_copy, new_row], ignore_index=True)
                     if save_monthly_logs_db(logs_copy.fillna("")):
                         st.success(
                             f"✅ {_this_month} 로그 저장 완료 — "
-                            f"누적 투자금 {new_total_invested:,.0f}원 / 평가금액 {_cur_asset:,.0f}원"
+                            f"누적 순입금 {new_total_invested:,.0f}원 / 배당 제외 평가금액 {_cur_asset:,.0f}원 / 해당 월 배당 {confirmed_dividend:,.0f}원"
                         )
                         st.rerun()
         with b2:
@@ -28012,14 +28023,13 @@ def render_monthly_record_status(monthly_logs_df, portfolio_summary):
     latest_month = status_data["latest_month"]
     latest_asset = status_data["latest_asset"]
     latest_return = status_data["latest_return"]
-    asset_gap = status_data["asset_gap"]
-
     st.markdown("### 월별 기록 상태")
     cols = st.columns(4)
     cols[0].metric("기록 상태", status)
     cols[1].metric("최신 기록월", latest_month, f"{status_data['record_count']}개월")
-    cols[2].metric("기록 평가자산", f"{latest_asset:,.0f}원", f"현재와 {asset_gap:+,.0f}원")
+    cols[2].metric("기록 평가자산(배당 제외)", f"{latest_asset:,.0f}원")
     cols[3].metric("기록 누적수익률", f"{latest_return:.2f}%")
+    st.caption("기록 수익률 = (배당 제외 평가금액 + 기록 시작 이후 누적 배당 − 누적 순입금) ÷ 누적 순입금. 현재 총자산과 기록 평가금액은 배당 포함 범위·기준일이 달라 차이를 투자손익으로 표시하지 않습니다.")
 
     if status == "업데이트 필요":
         st.warning("월별 로그가 최근 월 기준으로 오래되었습니다. 입력/수정 영역에서 최신 월을 추가하면 차트가 더 정확해집니다.")
@@ -28093,6 +28103,7 @@ def render_asset_overview_dashboard(holdings_table, portfolio_summary, krw_cash,
     top_cols[1].metric(f"누적{m['profit_label']}", f"{m['cum_profit']:,.0f}원", m["profit_delta"])
     top_cols[2].metric("누적수익률", f"{m['cum_return']:.2f}%", f"누적배당 {m['total_dividend']:,.0f}원")
     top_cols[3].metric("대기자금", f"{m['waiting_value']:,.0f}원", m["waiting_delta"])
+    st.caption("현재 손익 = 배당 포함 총자산 − 설정 투자원금. 배당 수령액은 별도 참고값이며 손익에 다시 더하지 않습니다. 달러 배당 참고액은 현재 환율 환산으로 수령일 원화액과 다를 수 있습니다. 입출금 시점을 반영한 성과는 계좌 성과 원장에서 확인합니다.")
 
     detail_cols = st.columns(4)
     detail_cols[0].metric("투자자산", f"{m['invest_value']:,.0f}원", f"{m['invest_pct']:.2f}%")
@@ -37107,9 +37118,16 @@ if main_page == "asset":
                 st.rerun()
     
         st.markdown("### 4) 월별 로그 관리")
+        st.caption("평가금액은 배당 제외, 배당금은 해당 월 수령액(원화)입니다. 누적 배당은 수익 계산에서 별도로 합산합니다. 달러 배당은 수령일 환율로 환산하며, 배당 내역 관리 표와 자동 합산하지 않습니다.")
         monthly_editor_df = load_monthly_logs_db()
         if monthly_editor_df.empty: monthly_editor_df = pd.DataFrame(columns=["month", "total_invested", "evaluated_value", "dividend"])
-        edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", width='stretch', key="monthly_editor")
+        edited_monthly = st.data_editor(monthly_editor_df, num_rows="dynamic", width='stretch', key="monthly_editor",
+            column_config={
+                "month": st.column_config.TextColumn("기록월", help="YYYY-MM 형식, 월별 한 줄"),
+                "total_invested": st.column_config.NumberColumn("누적 순입금(원)", help="실제 누적 입금 − 출금. 배당과 계획 적립금은 제외합니다.", format="%.0f"),
+                "evaluated_value": st.column_config.NumberColumn("배당 제외 평가금액(원)", min_value=0., format="%.0f"),
+                "dividend": st.column_config.NumberColumn("해당 월 배당(원)", help="누적액이 아닌 해당 월 실제 수령액. 없으면 0. 외화는 수령일 환율로 원화 환산.", min_value=0., format="%.0f"),
+            })
     
         if st.button("월별 로그 저장"):
             if save_monthly_logs_db(edited_monthly.fillna("")):

@@ -54,6 +54,7 @@ def render_account_performance(st, *, owner_scope, monthly_logs_df=None):
         old_count = len(monthly_logs_df) if isinstance(monthly_logs_df, pd.DataFrame) else 0
         if old_count:
             st.caption(f"기존 월별 기록 {old_count}개: 실제 평가일·입출금 날짜가 미저장되어 원장으로 자동 변환하지 않았습니다.")
+        st.caption("기존 월별 기록의 배당 제외 평가금액과 기준이 다릅니다. 이 원장에는 배당 잔액·재투자분을 포함한 실제 계좌 총자산을 기록하고, 배당 수령·재투자는 외부 입금으로 적지 않습니다.")
 
         uploaded = st.file_uploader("성과 원장 JSON", type=["json"], max_upload_size=1, key=prefix + "_upload")
         if uploaded is not None and st.button("원장 불러오기", key=prefix + "_import"):

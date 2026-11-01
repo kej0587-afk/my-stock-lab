@@ -1271,6 +1271,12 @@ def apply_holdings_weight_columns(df, krw_cash, usd_cash, usdkrw):
 
 
 def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df):
+    """Live balances include retained/reinvested dividends; do not add them again.
+
+    The dividends total is a separate receipt reference translated at current
+    FX. Profit uses current assets minus the configured capital, not dated TWR.
+    Legacy monthly ex-dividend valuations follow a different contract below.
+    """
     stock_value = holdings_table["원화환산"].sum() if not holdings_table.empty else 0.0
     cash_value = krw_cash + (usd_cash * usdkrw)
     current_asset = stock_value + cash_value
@@ -1282,7 +1288,7 @@ def calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkr
             ccy = str(r.get("currency", "KRW")).upper()
             total_dividend += amt if ccy == "KRW" else amt * usdkrw
 
-    cum_profit = current_asset + total_dividend - seed_money
+    cum_profit = current_asset - seed_money
     cum_return = (cum_profit / seed_money * 100) if seed_money > 0 else 0.0
 
     return {
@@ -1653,6 +1659,12 @@ def parse_month_end_date(value):
 
 
 def prepare_monthly_performance_df(monthly_df):
+    """Legacy convention: ex-dividend valuation plus monthly cash dividends.
+
+    This is a return on cumulative net contributions, not flow-adjusted TWR.
+    Monthly dividends are accumulated here only; the separate dividends table
+    is never merged into these records.
+    """
     required = ["month", "total_invested", "evaluated_value", "dividend"]
     if monthly_df is None or monthly_df.empty:
         return pd.DataFrame(columns=required)
