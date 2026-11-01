@@ -78,6 +78,23 @@ Primary concurrency references:
 https://docs.python.org/3/library/concurrent.futures.html
 https://docs.python.org/3/library/contextvars.html
 
+## Production Check
+
+Immediately before deployment, complete measurement
+1a83f47d66cb4ae09d49346cb1ce5806 on 5a859433 finished at
+2026-11-01T12:18:18.321295+00:00: 96.33s Today Queue + 17.45s entry,
+113.88s script total. It has the same 81 registered / 95 calculated / 12
+auto-flow candidates and standard-refresh-not-fully-cold policy as d8ffa692.
+Summary 46.53s; stock signals 31.27s; live quote active wall 29.13s.
+
+Deployment 87d40eeb boots without an ImportError. A completed GOOGL review ZIP
+confirms app entrypoint and prices loaded/disk hashes match the new source.
+However, leveraged_watch has an unrecorded import hash, with a current disk
+file. The missing registry entry does NOT prove an older implementation is
+loaded. Keep the restart warning; do not invent a loaded hash from disk or
+declare full module verification. A Cloud Reboot app was requested before
+the final post-deployment measurement. No Cloud speedup is claimed yet.
+
 ## Remaining Work
 
 Production end-to-end improvement must be measured on a completed fresh
