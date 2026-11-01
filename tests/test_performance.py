@@ -241,8 +241,12 @@ finally:
     report = app.session_state["today_queue_performance"]
     assert report["functions"]
     assert len(app.metric) == 3
-    assert len(app.dataframe) == 3
+    assert len(app.dataframe) == 4
+    assert list(app.dataframe[0].value.columns) == ["진입 전 단계", "경과시간(초)"]
+    assert len(app.dataframe[0].value) == 10
+    assert report["entry_initialization"]["measurement_status"] == "completed"
     app.session_state["reuse"] = True
     app.run()
     assert not app.exception
     assert app.session_state["today_queue_performance"] == report
+    assert len(app.dataframe) == 4

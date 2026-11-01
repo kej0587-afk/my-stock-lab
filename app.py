@@ -33442,6 +33442,10 @@ def render_today_queue_tab(mode):
         attempt = trace.report()
         attempt["before_today_seconds"] = before_today_seconds
         attempt["script_elapsed_seconds"] = max(0.0, perf_counter() - SCRIPT_RUN_STARTED)
+        entry_timing = globals().get("ENTRY_INITIALIZATION_PERFORMANCE")
+        if isinstance(entry_timing, dict):
+            attempt["entry_initialization"] = entry_timing
+            attempt["other_before_today_seconds"] = max(0.0, before_today_seconds - entry_timing["elapsed_seconds"])
         from stock_lab_core.performance import archive_queue_measurement, queue_measurement_details
         attempt.update(queue_measurement_details(attempt))
         attempt["cache_state"] = (st.session_state.get("today_queue_current_cache_policy", {"mode": "unrecorded"})
@@ -33478,6 +33482,21 @@ def render_today_queue_tab(mode):
             c1.metric("오늘점검 경과시간", f"{report['elapsed_seconds']:.1f}초")
             c2.metric("점검 진입 전", f"{report.get('before_today_seconds', 0):.1f}초")
             c3.metric("실행 누적시간", f"{report.get('script_elapsed_seconds', report['elapsed_seconds']):.1f}초")
+            entry_timing = report.get("entry_initialization", {})
+            if entry_timing:
+                entry_labels = {
+                    "entry_macro": "매크로 조회", "entry_events": "경제 일정",
+                    "entry_settings": "계좌 설정 읽기", "entry_holdings": "보유자료 읽기",
+                    "entry_dividends": "배당자료 읽기", "entry_monthly_logs": "월별 기록 읽기",
+                    "entry_fx": "환율 조회", "entry_holdings_table": "보유시세·평가 계산",
+                    "entry_portfolio": "계좌 합계 계산",
+                }
+                entry_rows = [
+                    {"진입 전 단계": entry_labels.get(row["name"], row["name"]), "경과시간(초)": round(row["total_seconds"], 3)}
+                    for row in entry_timing.get("functions", []) if row["category"] == "phase"
+                ]
+                entry_rows.append({"진입 전 단계": "그 외 초기화·화면 준비", "경과시간(초)": round(report.get("other_before_today_seconds", 0), 3)})
+                st.dataframe(pd.DataFrame(entry_rows), hide_index=True, width="stretch")
             labels = {
                 "prices": "시세 조회·대기", "indicators": "지표·패턴 계산",
                 "external_data": "외부자료·돈흐름", "decision": "판정·결과 정리",
@@ -34379,51 +34398,62 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
 # -------------------------------------------------
 # 8. 메인 UI 렌더링
 # -------------------------------------------------
-macro_res, final_macro_risk, macro_penalty, move_val = get_public_demo_macro_analysis() if IS_PUBLIC_DEMO else get_macro_analysis()
-macro_event_df, macro_event_risk, macro_event_count = build_macro_event_risk_table()
-# globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
-st.session_state["_app_final_macro_risk"] = final_macro_risk
-st.session_state["_app_macro_event_risk"] = macro_event_risk
-st.caption(f"모드: {app_mode_label} | 매크로 지수: {final_macro_risk:.1f}pt | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: -{macro_penalty}")
-if IS_PUBLIC_DEMO:
-    st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
+with PerformanceTrace(scope="app_entry_initialization") as _entry_trace:
+    with measure("phase", "entry_macro"):
+        macro_res, final_macro_risk, macro_penalty, move_val = get_public_demo_macro_analysis() if IS_PUBLIC_DEMO else get_macro_analysis()
+    with measure("phase", "entry_events"):
+        macro_event_df, macro_event_risk, macro_event_count = build_macro_event_risk_table()
+    # globals() 의존 제거: 핵심 앱 상태를 session_state에 등록
+    st.session_state["_app_final_macro_risk"] = final_macro_risk
+    st.session_state["_app_macro_event_risk"] = macro_event_risk
+    st.caption(f"모드: {app_mode_label} | 매크로 지수: {final_macro_risk:.1f}pt | 이벤트 지수: {macro_event_risk:.1f}pt | 매크로 패널티: -{macro_penalty}")
+    if IS_PUBLIC_DEMO:
+        st.warning("체험모드입니다. 화면 조작은 가능하지만 보유자산, 관심종목, 재무점수, ETF 데이터, 복구/저장은 서버에 반영되지 않습니다.")
 
-if macro_res:
-    m_cols = st.columns(len(macro_res))
-    for i, (n, info) in enumerate(macro_res.items()):
-        s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] and n != "환율" else ""
-        m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
-else:
-    st.info("매크로 데이터를 불러오지 못했습니다.")
+    if macro_res:
+        m_cols = st.columns(len(macro_res))
+        for i, (n, info) in enumerate(macro_res.items()):
+            s_tag = "<br><span style='color:#ef4444; font-weight:bold;'>🚨폭풍</span>" if info["storm"] and n != "환율" else ""
+            m_cols[i].markdown(f"<div class='macro-panel'>🌐 {n}: <b>{info['val']:,.1f}</b> {info['icon']}{s_tag}</div>", unsafe_allow_html=True)
+    else:
+        st.info("매크로 데이터를 불러오지 못했습니다.")
 
-settings = load_settings_db()
-holdings_df = load_holdings_db()
-dividends_df = load_dividends_db()
-monthly_logs_df = load_monthly_logs_db()
+    with measure("phase", "entry_settings"):
+        settings = load_settings_db()
+    with measure("phase", "entry_holdings"):
+        holdings_df = load_holdings_db()
+    with measure("phase", "entry_dividends"):
+        dividends_df = load_dividends_db()
+    with measure("phase", "entry_monthly_logs"):
+        monthly_logs_df = load_monthly_logs_db()
 
-seed_money = float(settings.get("seed_money", 0.0))
-krw_cash = float(settings.get("krw_cash", 0.0))
-usd_cash = float(settings.get("usd_cash", 0.0))
-saved_usdkrw = float(settings.get("usdkrw", 1400.0))
-auto_usdkrw = None if IS_PUBLIC_DEMO else load_usdkrw_rate()
-usdkrw = float(auto_usdkrw) if auto_usdkrw and auto_usdkrw > 0 else saved_usdkrw
-usdkrw_source = "자동 환율" if auto_usdkrw and auto_usdkrw > 0 else "저장 환율"
-effective_settings = dict(settings)
-effective_settings["usdkrw"] = usdkrw
-reserve_target_weight = float(settings.get("reserve_target_weight", 10.0))      
+    seed_money = float(settings.get("seed_money", 0.0))
+    krw_cash = float(settings.get("krw_cash", 0.0))
+    usd_cash = float(settings.get("usd_cash", 0.0))
+    saved_usdkrw = float(settings.get("usdkrw", 1400.0))
+    with measure("phase", "entry_fx"):
+        auto_usdkrw = None if IS_PUBLIC_DEMO else load_usdkrw_rate()
+    usdkrw = float(auto_usdkrw) if auto_usdkrw and auto_usdkrw > 0 else saved_usdkrw
+    usdkrw_source = "자동 환율" if auto_usdkrw and auto_usdkrw > 0 else "저장 환율"
+    effective_settings = dict(settings)
+    effective_settings["usdkrw"] = usdkrw
+    reserve_target_weight = float(settings.get("reserve_target_weight", 10.0))
 
-render_refresh_control_panel()
+    render_refresh_control_panel()
 
-holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
-# globals() 의존 제거: 현금/환율/보유자산 테이블을 session_state에 등록
-st.session_state["_app_krw_cash"] = krw_cash
-st.session_state["_app_usd_cash"] = usd_cash
-st.session_state["_app_usdkrw"] = usdkrw
-st.session_state["_app_reserve_target_weight"] = reserve_target_weight
-st.session_state["_app_all_holding_accounts"] = sorted(set(holdings_df.get("account_type", pd.Series("일반", index=holdings_df.index)).fillna("일반").astype(str)))
-st.session_state["_app_holdings_table"] = holdings_table
-portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
-total_eval = portfolio_summary["current_asset"]
+    with measure("phase", "entry_holdings_table"):
+        holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
+    # globals() 의존 제거: 현금/환율/보유자산 테이블을 session_state에 등록
+    st.session_state["_app_krw_cash"] = krw_cash
+    st.session_state["_app_usd_cash"] = usd_cash
+    st.session_state["_app_usdkrw"] = usdkrw
+    st.session_state["_app_reserve_target_weight"] = reserve_target_weight
+    st.session_state["_app_all_holding_accounts"] = sorted(set(holdings_df.get("account_type", pd.Series("일반", index=holdings_df.index)).fillna("일반").astype(str)))
+    st.session_state["_app_holdings_table"] = holdings_table
+    with measure("phase", "entry_portfolio"):
+        portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
+    total_eval = portfolio_summary["current_asset"]
+ENTRY_INITIALIZATION_PERFORMANCE = _entry_trace.report()
 
 
 def render_print_report_v2():
