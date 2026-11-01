@@ -92,6 +92,39 @@ top-level summary, flow-refresh and analyst-enrichment phases were 57.22s,
 calls. Nested/concurrent function work totals are not additional elapsed time.
 The older 240s sample is not a comparable before benchmark.
 
+## Production Verification
+
+One complete Today Queue run after deployment to 3insky.streamlit.app:
+measurement d8ffa692d2cc441f93419d740d97ccc9, finished
+2026-11-01T11:47:05.453283+00:00, base commit afe0bd6b.
+The imported app entrypoint hash matches this patch's LF-normalized source.
+The report build metadata has restart_required=false and no stale modules.
+The run completed normally; no reboot or account-data mutation was needed.
+
+Both this run and the Oct 31 sample contain 81 registered items, 95 calculated
+items, 12 auto-flow candidates and the full flow-refresh option. Both declare
+standard_refresh_not_fully_cold, with possible warm provider/analyst caches.
+Different dates, provider latency and cache contents still prevent treating
+this as a controlled before/after benchmark.
+
+| Sequential Phase | Oct 31 Sample (s) | New Run (s) |
+| --- | ---: | ---: |
+| Today Queue elapsed | 111.80 | 100.13 |
+| Before Today Queue entry | 5.59 | 17.71 |
+| Script elapsed including entry | 117.55 | 117.92 |
+| Stock summary | 57.22 | 53.06 |
+| Full flow refresh | 26.05 | 20.20 |
+| Analyst enrichment | 10.38 | 4.33 |
+
+The user-visible total is effectively unchanged, not a demonstrated 11.7s
+speedup. This is not a one-minute completion. The new run's prices category
+occupies 66.61s active wall; the live-quote loader alone occupies 33.46s across
+133 calls. Those calls include cache/scope lookups and are not a count of
+outbound requests. The 731 price-frame calls likewise are not 731 network
+requests. KR cluster snapshot calls now total only 0.545s across 36 calls;
+KR fallback waiting is negligible in this run. Category active-wall windows
+overlap and must not be added to total elapsed time.
+
 Provider waits remain the main end-to-end target; pure policy extraction alone
 cannot remove them. Avoid freshness/TTL changes merely to improve timings.
 Ledger fragment isolation is another separate optimization: it must retain
