@@ -32441,12 +32441,6 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         clear_today_market_flow_snapshot_cache(clear_data_cache=False)
         st.rerun()
 
-    last_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY)
-    if last_run:
-        status_col.caption(f"마지막 계산: {last_run}")
-    elif snapshot:
-        status_col.caption("저장된 결과 표시 중")
-
     if refresh_clicked:
         # 강도 점수 delta 추적은 이제 파일(cache/cluster_strength_history.json)에
         # 일자별로 저장되므로 세션 간 prev/curr 스왑이 더 이상 필요 없다.
@@ -32460,6 +32454,12 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
                 st.caption("새 계산은 실패했지만 마지막 정상 돈흐름 결과를 유지해서 표시합니다.")
             else:
                 return None
+
+    last_run = st.session_state.get(TODAY_MARKET_FLOW_LAST_RUN_KEY)
+    if last_run:
+        status_col.caption(f"마지막 계산: {last_run}")
+    elif snapshot:
+        status_col.caption("저장된 결과 표시 중")
 
     if snapshot is None:
         st.info("🔄 **돈흐름 요약 새로고침** 버튼을 눌러 ETF/섹터 + 테마 후보 분석을 시작하세요.")

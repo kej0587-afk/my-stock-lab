@@ -1,5 +1,7 @@
 import ast
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -97,6 +99,7 @@ def test_missing_and_ended_evidence_rows_are_deduplicated_and_keep_source():
     assert rows[0]["자료상태"] == "거래종료"
     assert rows[0]["사유"] == "합병"
     assert rows[0]["공식출처"].startswith("https://www.nasdaqtrader.com/")
+    assert rows[1]["마지막거래일"] == ""
     assert flow_source_issue_rows({"theme_flow_df": pd.DataFrame()}) == []
 
 
@@ -112,3 +115,30 @@ def test_theme_positive_share_uses_only_finite_returns(returns, expected):
              "theme_df": pd.DataFrame({"3개월수익률": returns})}
     exec(compile(ast.Module(body=assignments, type_ignores=[]), "<positive-share>", "exec"), scope)
     assert pd.isna(scope["_th_pos_ratio"]) if pd.isna(expected) else scope["_th_pos_ratio"] == pytest.approx(expected)
+
+
+def test_completed_refresh_caption_uses_new_run_time_in_same_render():
+    tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8-sig"))
+    render = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                  and node.name == "render_today_market_flow_panel")
+    selected = [node for node in render.body if (
+        isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id in {"refresh_clicked", "last_run"}
+    ) or (isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "last_run"
+                                              for target in node.targets))]
+    assert len(selected) == 3
+    state = {"last": "old"}
+    captions = []
+
+    def refresh(**kwargs):
+        state["last"] = "new"
+        return {"fresh": True}
+
+    scope = {"st": SimpleNamespace(session_state=state, spinner=lambda _: nullcontext()),
+        "status_col": SimpleNamespace(caption=captions.append), "refresh_clicked": True,
+        "snapshot": {"old": True}, "TODAY_MARKET_FLOW_LAST_RUN_KEY": "last",
+        "refresh_today_market_flow_snapshot": refresh}
+    code = ast.FunctionDef(name="render", args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
+                           body=selected, decorator_list=[])
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[code], type_ignores=[])), "<refresh-caption>", "exec"), scope)
+    scope["render"]()
+    assert captions == ["마지막 계산: new"]

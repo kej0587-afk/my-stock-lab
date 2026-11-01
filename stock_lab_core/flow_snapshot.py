@@ -92,7 +92,7 @@ def flow_source_issue_rows(snapshot):
             if not ended and pd.notna(row.get("돈흐름점수")):
                 continue
             rows.append({"종목": row.get("종목명", row.get("ETF 이름", "")), "Ticker": row["Ticker"],
-                "자료상태": "거래종료" if ended else "가격부족", "마지막거래일": row.get("마지막거래일", ""),
+                "자료상태": "거래종료" if ended else "가격부족", "마지막거래일": session_date(row.get("마지막거래일")) or "",
                 "사유": row.get("원자료사유") if isinstance(row.get("원자료사유"), str) and row.get("원자료사유")
                         else "조회 불가 또는 계산에 필요한 일봉 부족",
                 "공식출처": row.get("공식출처", "") if ended else ""})
