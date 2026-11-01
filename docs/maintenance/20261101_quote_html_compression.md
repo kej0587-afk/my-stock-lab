@@ -101,6 +101,80 @@ No fresh price source has been removed and no TTL changed to improve timings.
 The saved timing screenshot is quote-gzip-pre-reboot-timing.png; it shows a
 completed run only, not verified transport activation.
 
+## Production Verification After Reboot
+
+After the user confirmed a Cloud reboot, calculation
+c8bc9b90748d4b77b00d04651a3bd3e5 completed at 2026-11-01 13:26:00 UTC
+on f1a5c50d. It retained 81 registered / 95 calculated / 12 auto-flow
+candidates and full-flow refresh. Status was completed, calculation_completed
+and is_full_today_queue_measurement were true. No stale sources were reported.
+
+This run actually exercised the decoder: 73 overnight requests, 73 responses,
+73 gzip responses and 73 quote_html_body calls. No measured decoder failures
+or instrumented HTTP error/429/timeout events were recorded. This is transport
+evidence; it does not certify the freshness/accuracy of every data provider.
+
+- Encoded response body bytes: 14,966,673.
+- Decoded body bytes: 69,996,193.
+- Encoded body was 21.38% of decoded size, a 78.62% reduction. These counters
+  exclude HTTP headers, TLS and connection overhead, so are not total traffic.
+- Body read/decode: 23.29s summed work / 15.74s active wall.
+- Full overnight caller: 49.51s summed work / 25.94s active wall.
+- Today Queue: 103.41s; before Today Queue: 17.21s; full script: 120.75s.
+
+This was the first calculation after reboot, not a verified fully cold
+benchmark. It was slower overall than the pre-reboot 85.90s observation.
+Neither that difference nor the byte reduction is claimed as an app-wide
+latency improvement. The prior missing decoder evidence was resolved after
+reboot, but the exact cause of the old in-memory call path was not proven.
+
+Related decoder/wiring tests rerun after the reboot request: 91 passed in
+15.92s. No runtime code changed during this verification. Saved screenshot:
+quote-gzip-post-reboot-first.png.
+
+### Repeated Full Refresh
+
+Calculation 60d1fd4e717e4dbba37e347d8fbf796b completed at
+2026-11-01 13:28:24 UTC on the same f1a5c50d code. Input counts, full-flow
+refresh and declared cache-reset policy matched the first calculation.
+Both completed calculation flags were true; no measured failures, stale
+sources or instrumented transport error/429/timeout events were recorded.
+
+| Metric | First After Reboot | Repeated Refresh |
+| --- | ---: | ---: |
+| Today Queue elapsed (s) | 103.41 | 60.51 |
+| Before Today Queue (s) | 17.21 | 17.00 |
+| Full script elapsed (s) | 120.75 | 77.63 |
+| Overnight requests / gzip responses / body calls | 73 / 73 / 73 | 56 / 56 / 56 |
+| Encoded body bytes | 14966673 | 11625442 |
+| Decoded body bytes | 69996193 | 54216568 |
+| Body size reduction (%) | 78.62 | 78.56 |
+| Overnight active wall (s) | 25.94 | 18.80 |
+| Body read/decode active wall (s) | 15.74 | 12.83 |
+| Flow refresh elapsed (s) | 19.86 | 7.70 |
+| Analyst enrichment elapsed (s) | 9.52 | 2.97 |
+| Multi-timeframe pack active wall (s) | 21.90 | 17.19 |
+
+The repeat is not a controlled A/B speed comparison: provider/analyst caches
+were warmer, chart requests fell from 144 to 106 and overnight requests fell
+from 73 to 56, despite matching declared refresh policies. Compression
+activation and body size reduction are verified; an app-wide causal latency
+gain is not quantified. The one-minute goal is not met for the full button
+workflow (77.63s), nor strictly for the measured calculation itself (60.51s).
+Saved screenshot: quote-gzip-post-reboot-repeat.png.
+
+Next measured targets are current-price wait, multi-timeframe indicator work
+and the 17s pre-Today path. Timings overlap, so they must not be added. The
+661 load_price_df calls in the repeat took 5.75s active wall, versus 21.56s
+for 701 calls in the first run; call counts are not external request counts.
+Existing exact-period frame reuse and TTL/source-order semantics should be
+retained when investigating those paths.
+
+Presentation follow-up: the pre-run previous-calculation download caption
+still showed the first 103.4s record while the completed detail showed the
+new 60.5s record. Verification and downloads used the detail's explicit
+60d1fd4e measurement ID, not that earlier caption or a last_attempt file.
+
 Primary references:
 https://docs.python.org/3.11/library/gzip.html
 https://docs.python.org/3.11/library/urllib.request.html
