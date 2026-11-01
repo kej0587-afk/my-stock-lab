@@ -93,13 +93,53 @@ However, leveraged_watch has an unrecorded import hash, with a current disk
 file. The missing registry entry does NOT prove an older implementation is
 loaded. Keep the restart warning; do not invent a loaded hash from disk or
 declare full module verification. A Cloud Reboot app was requested before
-the final post-deployment measurement. No Cloud speedup is claimed yet.
+the final post-deployment measurement.
+
+After the user confirmed Reboot app, a fresh completed GOOGL review ZIP on
+79cbb66c (2026-11-01T12:34:22.990649+00:00) confirms restart_required=false,
+with no stale modules. App entrypoint, prices, decision_priority and
+leveraged_watch each have recorded import hashes matching both the current
+disk file and this checkout's LF-normalized source. No runtime reload or
+replacement of an unrecorded hash with a disk hash was used.
+
+The complete post-reboot run, 999afd9de18d471bb3b1022c3d9f5067, finished
+2026-11-01T12:37:59.437468+00:00 on 79cbb66c. It contains the same
+81 registered / 95 calculated / 12 auto-flow candidates, full flow refresh
+enabled, and standard_refresh_not_fully_cold metadata. The calculation and
+full measurement both completed, with no recorded function errors or control
+flow exits. The new helper ran five times and processed 38 proxy rows.
+
+| Measurement | Before (s) | After Reboot (s) |
+| --- | ---: | ---: |
+| Today Queue elapsed | 96.33 | 94.72 |
+| Before Today Queue entry | 17.45 | 17.77 |
+| Script total including entry | 113.88 | 112.63 |
+| Stock summary | 46.53 | 45.96 |
+| Stock signals | 31.27 | 28.73 |
+| Full flow refresh | 20.31 | 18.50 |
+| Analyst enrichment | 5.49 | 9.93 |
+| Display quote loader active wall | 29.13 | 27.80 |
+
+The small total difference is NOT proof of a substantial end-to-end speedup.
+Identical input counts and declared refresh policy do not imply identical
+provider/cache contents, especially after reboot. Do not extrapolate the
+single-profile synthetic 2x scheduling result to the whole app. One-minute
+completion has not been achieved.
+
+The new trace isolates the next price-loading bottleneck: Yahoo overnight
+HTML, 73 function calls / 71 actual HTTP requests, 56.20s summed work,
+25.32s active wall. Yahoo chart made 140 HTTP requests (19.05s work / 12.17s
+active wall); regular-close made 3 HTTP requests. Requests/responses do not
+prove a usable quote was accepted. No HTTP 429 or timeout event was recorded
+in these instrumented transports; this is not a claim about all providers.
+Provider/fallback precedence has not been altered to avoid that HTML work.
+Loader calls, request counts, summed work and overlapping wall windows
+remain distinct; none should be added together as user-visible latency.
 
 ## Remaining Work
 
-Production end-to-end improvement must be measured on a completed fresh
-calculation with matching input counts/cache-policy metadata. A single
-before/after Cloud run is observational, not a controlled latency benchmark.
-Mixed loaded/disk sources must be resolved by app restart, not silent reload.
-Next investigate the newly separated US provider waits and the main-thread
-entry work before increasing concurrency or changing quote precedence.
+The deployment/loaded-source check is complete. The next optimization target
+is the measured overnight-HTML path and repeated main-thread entry work,
+without changing quote precedence or weakening freshness checks. A single
+before/after Cloud run is observational, not a controlled latency benchmark;
+keep repeatable output-parity and bounded-load tests alongside future work.
