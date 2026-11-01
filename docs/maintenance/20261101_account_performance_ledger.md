@@ -91,9 +91,10 @@ reconfirmation. Reimport did not append duplicate transactions. Results
 show comma-formatted money, two-decimal percentages and explicit estimate
 labels. The widget-level upload limit is 1 MB in addition to parser limits.
 
-The first production ZIP used the new app entrypoint but a cached precision
-metadata module with an older module-name list. The new components themselves
-were newly imported and working, but their hashes were omitted from that ZIP.
+The first production precision ZIP used the new app entrypoint, but omitted
+the account-performance module hashes. A cached older metadata-name list was
+a candidate cause, not a demonstrated financial-code mismatch. The separate
+portfolio page rendered successfully; real ledger data was not supplied.
 get_precision_build_info now idempotently adds the account-performance names
 already in the real import registry to that metadata list. This changes only
 coverage configuration: no module reload, no replacement of an original loaded
@@ -101,3 +102,14 @@ hash with a current disk hash. A stale-code regression proves real mismatches
 still warn. No user reboot is requested for this metadata-only list drift.
 The 104 affected provenance, precision export, app-import and portfolio-renderer
 tests passed after this metadata bridge (46.67s); no financial formulas changed.
+
+Final production precision ZIP: completed, entrypoint matches local commit
+0e32a544, restart_required=false, stale_modules=[]. The account-performance
+hashes were still absent from this observatory-only snapshot. Therefore this
+ZIP is NOT evidence of all portfolio modules' loaded hashes, and no extra
+reboot was requested on the basis of absence alone. Production verification
+here is the new panel's presence, session-only storage disclosure, legacy-data
+non-conversion and missing-data state. Calculation examples and file roundtrip
+were verified in the separate local browser fixture and tests, not against
+the user's actual account records. Cross-view provenance coverage is a
+remaining audit-design limitation, separate from the verified math engine.
