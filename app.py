@@ -5,6 +5,7 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 from datetime import datetime, timezone, timedelta
+from contextlib import nullcontext
 from time import perf_counter
 
 SCRIPT_RUN_STARTED = perf_counter()
@@ -43,6 +44,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logging.getLogger("peewee").setLevel(logging.CRITICAL)
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.performance import PerformanceTrace, measure, submit_with_context, timed_call
+from stock_lab_core import prices as _entry_price_loader
 try:
     from stock_lab_core.prices import price_frame_scope
     RS_SCOPED_PREFETCH_AVAILABLE = True
@@ -34441,7 +34443,7 @@ with PerformanceTrace(scope="app_entry_initialization") as _entry_trace:
 
     render_refresh_control_panel()
 
-    with measure("phase", "entry_holdings_table"):
+    with measure("phase", "entry_holdings_table"), getattr(_entry_price_loader, "realtime_quote_scope", nullcontext)():
         holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
     # globals() 의존 제거: 현금/환율/보유자산 테이블을 session_state에 등록
     st.session_state["_app_krw_cash"] = krw_cash

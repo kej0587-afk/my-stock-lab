@@ -14,6 +14,19 @@ class _UnsuccessfulResult(Exception):
         self.result = result
 
 
+class UncachedValue:
+    """Return usable data without starting another cache lifetime."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+class _UncachedResult(Exception):
+    def __init__(self, value):
+        super().__init__("Result deliberately bypasses cache storage")
+        self.value = value
+
+
 def cache_result(*, ttl, failure_ttl=60, is_success=None):
     """Cache successes normally; returned failures expire after a short cooldown.
 
@@ -33,6 +46,8 @@ def cache_result(*, ttl, failure_ttl=60, is_success=None):
 
         def success_only(*args, **kwargs):
             value = fn(*args, **kwargs)
+            if isinstance(value, UncachedValue):
+                raise _UncachedResult(value.value)
             if not successful(value):
                 raise _UnsuccessfulResult(value)
             return value
@@ -53,7 +68,10 @@ def cache_result(*, ttl, failure_ttl=60, is_success=None):
 
         @wraps(fn)
         def wrapped(*args, **kwargs):
-            return with_cooldown(*args, **kwargs)
+            try:
+                return with_cooldown(*args, **kwargs)
+            except _UncachedResult as exc:
+                return exc.value
 
         def clear(*args, **kwargs):
             with_cooldown.clear(*args, **kwargs)

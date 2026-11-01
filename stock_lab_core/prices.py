@@ -20,6 +20,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import YAHOO_HISTORY_LOCK, yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core import result_cache as _result_cache
 from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core import performance as _performance
 from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, invalidate_prefetched_quotes
@@ -39,6 +40,9 @@ _YAHOO_BLOCK_SECONDS = 180
 _FORCE_LIVE_REFRESH_KEY = "_force_live_price_refresh_until"
 _PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
 _HISTORY_REQUEST_MEMO = ContextVar("stock_lab_history_request_memo", default=None)
+_REALTIME_QUOTE_MEMO = ContextVar("stock_lab_realtime_quote_memo", default=None)
+_SCOPED_QUOTE_USED = ContextVar("stock_lab_scoped_quote_used", default=None)
+_REALTIME_QUOTE_GENERATION = object()
 _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
 
 
@@ -51,6 +55,53 @@ def _quote_transport_event(provider, outcome, error=None):
             counter(f"{provider}.http_429")
     if counter is not None:
         counter(f"{provider}.{outcome}")
+
+
+@contextmanager
+def realtime_quote_scope():
+    """Share successful exact-source quotes only within one holdings valuation."""
+    if not hasattr(_result_cache, "UncachedValue"):
+        _quote_transport_event("us_quote_scope", "unavailable")
+        yield
+        return
+    token = _REALTIME_QUOTE_MEMO.set({})
+    try:
+        yield
+    finally:
+        _REALTIME_QUOTE_MEMO.reset(token)
+
+
+def _reuse_realtime_quote(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(ticker):
+        memo = _REALTIME_QUOTE_MEMO.get()
+        if memo is None:
+            return fn(ticker)
+        key = normalize_price_lookup_key(ticker)
+        now = time.monotonic()
+        entry = memo.get(key)
+        if entry is not None:
+            generation, started, price = entry
+            if generation is _REALTIME_QUOTE_GENERATION and 0 <= now - started < _LATEST_PRICE_CACHE_TTL_SECONDS:
+                _quote_transport_event("us_quote_scope", "hit")
+                if _SCOPED_QUOTE_USED.get() is not None:
+                    _SCOPED_QUOTE_USED.set(True)
+                return price
+            memo.pop(key, None)
+            _quote_transport_event("us_quote_scope", "expired")
+        _quote_transport_event("us_quote_scope", "miss")
+        generation = _REALTIME_QUOTE_GENERATION
+        price = fn(ticker)
+        if (isinstance(price, (int, float)) and math.isfinite(price) and price > 0
+                and generation is _REALTIME_QUOTE_GENERATION
+                and 0 <= time.monotonic() - now < _LATEST_PRICE_CACHE_TTL_SECONDS):
+            memo[key] = (generation, now, price)
+            _quote_transport_event("us_quote_scope", "success")
+        return price
+
+    return wrapped
 
 
 @contextmanager
@@ -1564,6 +1615,7 @@ def _fetch_kis_us_quote_price(
 
 
 @timed_call("prices")
+@_reuse_realtime_quote
 def _fetch_us_realtime_price(ticker: str) -> float:
     """
     Prefer timestamped US prices before untimed brokerage/reference quotes.
@@ -2189,7 +2241,14 @@ def _fetch_price_uncached(ticker: str) -> float:
 @cache_result(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, failure_ttl=5, is_success=lambda value: value > 0)
 def _load_latest_price_cached(ticker: str) -> float:
     """Short TTL cache wrapper. Only successful prices (>0) are cached."""
-    return _fetch_price_uncached(ticker)
+    token = _SCOPED_QUOTE_USED.set(False)
+    try:
+        price = _fetch_price_uncached(ticker)
+        if _SCOPED_QUOTE_USED.get():
+            return _result_cache.UncachedValue(price)
+        return price
+    finally:
+        _SCOPED_QUOTE_USED.reset(token)
 
 
 @timed_call("prices")
@@ -2428,6 +2487,8 @@ def load_latest_prices_batch(tickers) -> dict:
 
 
 def clear_latest_price_cache():
+    global _REALTIME_QUOTE_GENERATION
+    _REALTIME_QUOTE_GENERATION = object()
     invalidate_prefetched_quotes()
     for fn in [_load_latest_price_cached, load_latest_prices_batch,
                _load_latest_kr_quotes_batch_cached, _fetch_naver_realtime_quote, _fetch_naver_basic_quote]:

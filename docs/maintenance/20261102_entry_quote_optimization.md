@@ -34,3 +34,49 @@ the baseline. Parallelizing them blindly can lose Streamlit session context,
 change cooldown admission, or remove the independent display-source override.
 No batch value is substituted for a display quote, and failed quote retries
 are not memoized away. Further changes require the actual entry profile.
+
+## Measured Entry Bottleneck
+
+Completed production calculation a2010b7fa6f840d98cb87b3b7d697a93 on
+236390c3 captured entry trace 453c1554f699454fa75fe0b49e9c2343:
+
+| Metric | Seconds |
+| --- | ---: |
+| Before Today Queue | 17.935 |
+| Instrumented entry initialization | 17.203 |
+| Holdings prices and valuation | 16.406 |
+| Batch quote lookup | 8.742 |
+| Seven display-price overrides | 7.649 |
+| Four saved-data reads combined | 0.755 |
+| FX lookup | 0.0003 |
+
+The seven US holdings triggered 14 realtime source-chain calls. HTML itself
+accounted for 4.413s; the full source chains took 15.863s. Merely parallelizing
+HTML would not address most of this wait. Today Queue was 86.689s and total
+script about 104.7s; this run is a measurement baseline, not an optimization gain.
+
+## Scoped Successful Source Reuse
+
+The optimization keeps both the batch lookup and the independent display
+override. Only successful, finite, positive _fetch_us_realtime_price results
+are shared inside one holdings valuation. Existing single-price cache hits
+still take precedence. Zero, invalid values and exceptions are not retained.
+Provider bodies/order, manual overrides, KR lookups and portfolio arithmetic
+remain unchanged; no worker threads are introduced.
+
+The deadline is the existing 15s price TTL measured from provider-call start,
+never renewed by a hit. Slow calls are not admitted. Every valuation starts
+with an empty ContextVar scope; nesting, errors and explicit cache clearing
+restore/invalidate it. The clear generation also prevents late publication
+into this local memo after a refresh.
+
+A scoped quote must NOT start a new global cache lifetime. result_cache's
+explicit UncachedValue crosses both Streamlit cache layers as an internal
+exception, then unwraps at the public decorator boundary. Only source values
+obtained through a scoped hit take this path. Ordinary success/failure caches
+and TTLs are unchanged. An older loaded cache module disables the new scope
+instead of accepting a value whose original age would be lost.
+
+Related entry, source-body parity, quote/cache priority, invalidation, concurrent
+scope isolation and bypass tests: 134 passed in 36.96s. No scoring thresholds,
+grades, decision wording, account records, authentication or DB writes changed.

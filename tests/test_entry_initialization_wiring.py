@@ -1,6 +1,7 @@
 """Exercise the actual entry block without UI, credentials or provider calls."""
 
 import ast
+from contextlib import nullcontext
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -39,8 +40,12 @@ def _without_timing(nodes):
     result = []
     for node in nodes:
         if isinstance(node, ast.With):
-            assert len(node.items) == 1
+            assert len(node.items) in {1, 2}
             assert node.items[0].context_expr.func.id in {"PerformanceTrace", "measure"}
+            if len(node.items) == 2:
+                expected = ast.parse('getattr(_entry_price_loader, "realtime_quote_scope", nullcontext)()', mode="eval").body
+                assert ast.dump(node.items[1].context_expr, include_attributes=False) == ast.dump(expected, include_attributes=False)
+                assert node.items[0].context_expr.args[1].value == "entry_holdings_table"
             result.extend(_without_timing(node.body))
         else:
             result.append(node)
@@ -77,6 +82,7 @@ def _run(nodes, *, demo=False, fail_at=None):
 
     namespace = {
         "PerformanceTrace": trace_factory, "measure": performance.measure,
+        "_entry_price_loader": SimpleNamespace(), "nullcontext": nullcontext,
         "IS_PUBLIC_DEMO": demo, "app_mode_label": "test", "pd": pd,
         "st": SimpleNamespace(session_state=state, caption=lambda *a: None,
                               warning=lambda *a: None, info=lambda *a: None),
