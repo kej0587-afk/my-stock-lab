@@ -14819,7 +14819,8 @@ def render_image_theme_flow_section():
     # ── 테마 수치 요약 카드 ──────────────────────────────────────────
     _th_avg_3m   = theme_df["3개월수익률"].dropna().mean()
     _th_avg_acc  = theme_df["가속도"].dropna().mean()
-    _th_pos_ratio = float((theme_df["3개월수익률"].fillna(0) > 0).mean())
+    from stock_lab_core.market_basis import positive_observation_fraction
+    _th_pos_ratio = positive_observation_fraction(theme_df["3개월수익률"])["fraction"]
     _th_n_sub    = int(group_df["하위테마"].nunique()) if not group_df.empty else 0
     _th_state    = classify_money_flow_state(
         _th_avg_3m if finite_num(_th_avg_3m) else None,
@@ -14838,7 +14839,7 @@ def render_image_theme_flow_section():
     m1.metric("계산 종목", f"{available_count}/{total_count}", f"국내 {domestic_count} · 해외 {foreign_count}")
     m2.metric("하위테마 수", f"{_th_n_sub}개")
     m3.metric("테마 평균 3M", fmt_flow_pct(_th_avg_3m) if finite_num(_th_avg_3m) else "-")
-    m4.metric("상승 종목 비율", f"{_th_pos_ratio*100:.0f}%")
+    m4.metric("상승 종목 비율", f"{_th_pos_ratio*100:.0f}%" if finite_num(_th_pos_ratio) else "-")
     m5.metric("테마 상태", f"{_state_icon} {_th_state}")
 
     _detail_reading = _build_theme_detail_reading(group_df, leader, accel_leader, weak)
@@ -14884,7 +14885,7 @@ def render_image_theme_flow_section():
         st.warning(
             f"⬛ 가격 데이터 부족 {_missing_cnt}개 종목이 점수 계산에서 제외됐습니다: {_missing_names}"
             + (" 외" if _missing_cnt > 5 else "")
-            + " (야후파이낸스 조회 실패 또는 상장 1년 미만)"
+            + " (조회 불가·일봉 부족·거래종료 포함; 원자료 사유 별도 확인)"
         )
 
     summary_tab, stocks_tab, raw_tab = st.tabs(["하위테마 요약", "종목별 흐름", "원자료"])
@@ -25054,189 +25055,7 @@ def get_cached_portfolio_signal_details():
     return pd.DataFrame()
 
 
-def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
-    st.subheader("포트폴리오 분석")
-    st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
-
-    period = st.selectbox(
-        "분석 기간",
-        ["6mo", "1y", "2y", "5y"],
-        index=1,
-        key="portfolio_analysis_period",
-        help="가격 데이터가 짧은 신규 ETF/종목은 일부 계산에서 제외될 수 있습니다.",
-    )
-    if not should_run_heavy_analysis(
-        "portfolio_analysis_lazy",
-        "상관관계와 포트폴리오 누적 흐름은 보유 종목별 가격 데이터를 조회하므로 필요할 때만 계산합니다.",
-    ):
-        return
-
-    analysis_start_date = get_portfolio_analysis_start_date(monthly_logs_df)
-    if analysis_start_date is not None:
-        st.caption(f"월별 로그 시작월({analysis_start_date.strftime('%Y-%m')}) 이후 가격 흐름만 분석합니다.")
-
-    analysis_holdings_table = holdings_table
-    cached_signal_df = get_cached_portfolio_signal_details()
-    if isinstance(cached_signal_df, pd.DataFrame) and not cached_signal_df.empty:
-        analysis_holdings_table = merge_portfolio_signal_details(holdings_table, cached_signal_df)
-    else:
-        st.caption("자산현황에서 분석 실행 후 다시 열면 보유종목별 기술 신호까지 붙여 포트폴리오 관리판을 보여줍니다.")
-
-    metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
-        analysis_holdings_table,
-        krw_cash,
-        usd_cash,
-        usdkrw,
-        reserve_target_weight,
-        period=period,
-        analysis_start_date=analysis_start_date,
-    )
-
-    reserve_summary = metrics["reserve_summary"]
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.markdown(
-        f"<div class='info-panel' style='border-left:5px solid {metrics['risk_color']};'><b>위험도</b><br>"
-        f"<span class='highlight'>{metrics['risk_grade']}</span><br>{metrics['risk_index']:.0f}/100</div>",
-        unsafe_allow_html=True,
-    )
-    m2.metric("연환산 변동성", "-" if not np.isfinite(metrics["portfolio_vol"]) else f"{metrics['portfolio_vol']:.1f}%")
-    m3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
-    m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
-    m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
-
-    st.markdown("### 핵심 요약")
-    render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
-    render_portfolio_action_decision_panel(metrics, asset_df)
-    render_portfolio_market_alignment_panel(metrics, asset_df)
-
-    ten_year_report = None
-    with st.expander("10년 작전 적합도", expanded=True):
-        ten_year_report = render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df, show_title=False)
-
-    st.markdown("#### 종합 포트폴리오 평가")
-    render_portfolio_final_summary_card(metrics, ten_year_report, reserve_target_weight)
-
-    with st.expander("위험도 계산 근거와 상세 지표", expanded=False):
-        render_portfolio_data_coverage_notice(metrics)
-        render_portfolio_risk_breakdown(metrics)
-        render_leverage_exposure_panel(metrics)
-
-        st.markdown("#### Risk Metrics")
-        st.caption(
-            "**연환산 수익률**: 분석 기간 포트폴리오 가격 흐름을 연 단위로 환산한 참고값.  "
-            "**Sharpe**: (연환산수익률 − 무위험이율 3.5%) ÷ 연환산변동성. 1 이상이면 변동성 대비 수익이 양호한 편.  "
-            "**Sortino**: 하락 변동성만 분모로 사용. Sharpe보다 하락 리스크에 예민.  "
-            "**Calmar**: 연환산수익률 ÷ |MDD|. 낙폭 대비 수익 효율.  "
-            "**VaR/CVaR**: 과거 일간 수익률 기반 참고 손실 추정치입니다."
-        )
-        r1, r2, r3, r4, r5 = st.columns(5)
-        r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
-        r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
-        r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
-        r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
-        r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
-        _sharpe_v = clean_float(metrics.get("sharpe_ratio"), np.nan)
-        _sortino_v = clean_float(metrics.get("sortino_ratio"), np.nan)
-        _obs = metrics.get("portfolio_observation_count", 0)
-        if (np.isfinite(_sharpe_v) and abs(_sharpe_v) > 4) or (np.isfinite(_sortino_v) and abs(_sortino_v) > 6) or _obs < 60:
-            st.warning(
-                f"⚠️ Sharpe/Sortino가 평소보다 높습니다 "
-                f"(Sharpe {format_metric_ratio(_sharpe_v)}, Sortino {format_metric_ratio(_sortino_v)}, 관측일 {_obs}일). "
-                "단기 상승장 구간이거나 관측 기간이 짧으면 연환산 수익률이 과장되어 비율이 크게 나올 수 있습니다. "
-                "참고값으로만 사용하세요."
-            )
-
-        tail_cols = st.columns(4)
-        tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
-        tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
-        tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
-        tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
-        st.caption("Risk Metrics는 총자산(현금 포함) 기준의 가중 포트폴리오 수익률을 사용합니다. VaR/CVaR 손실액도 총자산 기준이며, 현금 비중이 높을수록 손실 추정액이 낮아집니다. 미래 손실 한도가 아닌 참고값입니다.")
-        render_portfolio_sample_warning(metrics)
-
-    with st.expander("10년 목표 시뮬레이션", expanded=False):
-        render_long_term_goal_simulator(metrics)
-
-    if notes_df.empty:
-        st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
-    else:
-        st.markdown("#### 위험/분산 체크")
-        st.dataframe(notes_df, width='stretch', hide_index=True)
-
-    if asset_df.empty:
-        st.info("분석할 운용대상 보유자산이 없습니다.")
-        return
-
-    # ── 목표비중 vs 현재비중 비교 ──────────────────────────────────────────
-    if "목표비중" in asset_df.columns and asset_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum() > 0:
-        st.markdown("#### 목표비중 vs 현재비중")
-        st.caption(
-            "**현재비중**: 총자산(현금 포함) 대비 해당 자산의 비중. "
-            "**목표비중**: 보유종목관리에서 설정한 목표 배분. "
-            "**비중차이**: 목표 − 현재(양수=미달, 음수=초과)."
-        )
-        wt_df = asset_df[["자산명", "티커", "전체비중", "목표비중", "비중차이"]].copy()
-        wt_df = wt_df[wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)) > 0].copy()
-        if not wt_df.empty:
-            wt_df = wt_df.sort_values("비중차이", ascending=False).reset_index(drop=True)
-            wt_show = wt_df.copy()
-            for col in ["전체비중", "목표비중", "비중차이"]:
-                wt_show[col] = wt_show[col].apply(
-                    lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%"
-                )
-            wt_show = wt_show.rename(columns={"전체비중": "현재비중"})
-            st.dataframe(wt_show, width='stretch', hide_index=True)
-
-            # 비중 불일치 경고
-            big_under = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) >= 5]
-            big_over  = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) <= -5]
-            if not big_under.empty:
-                names = ", ".join(big_under["자산명"].fillna(big_under["티커"]).tolist())
-                st.warning(f"목표보다 5%p 이상 미달인 자산: {names} — 매수 또는 현금 투입을 검토하세요.")
-            if not big_over.empty:
-                names = ", ".join(big_over["자산명"].fillna(big_over["티커"]).tolist())
-                st.info(f"목표보다 5%p 이상 초과인 자산: {names} — 비중 조정 또는 트리밍을 고려하세요.")
-
-            # 현금 비중 현황
-            total_asset_val = metrics.get("total_asset", 0.0)
-            active_val = metrics.get("active_value", 0.0)
-            cash_pct = (total_asset_val - active_val) / total_asset_val * 100 if total_asset_val > 0 else 0.0
-            target_stock_pct = wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum()
-            implied_cash_target = max(100.0 - target_stock_pct, 0.0)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("현재 현금비중", f"{cash_pct:.1f}%")
-            c2.metric("목표 주식비중 합계", f"{target_stock_pct:.1f}%")
-            c3.metric("암묵적 현금 목표", f"{implied_cash_target:.1f}%")
-
-    # ── 자산별 위험 지표 ───────────────────────────────────────────────────
-    show_df = asset_df.copy()
-    # "기간수익률"은 자산 가격의 분석기간 등락률(내 매입가 기준 수익률 아님)임을 명확히 하기 위해 컬럼명 변경
-    if "기간수익률" in show_df.columns:
-        show_df = show_df.rename(columns={"기간수익률": "자산가격등락률"})
-    for col in ["전체비중", "목표비중", "비중차이", "운용비중", "자산가격등락률", "연환산변동성", "MDD"]:
-        if col in show_df.columns:
-            if col == "비중차이":
-                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):+.1f}%")
-            else:
-                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
-    if "원화환산" in show_df.columns:
-        show_df["원화환산"] = show_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
-
-    st.markdown("#### 자산별 위험 지표")
-    st.caption(
-        "**자산가격등락률**: 분석 기간 시작~종료 사이 해당 자산의 가격 변동률입니다. "
-        "내가 매입한 가격 기준 수익률과 다를 수 있습니다(매입 시점 차이). "
-        "**연환산변동성**: 일간 수익률의 표준편차를 연 단위로 환산. **MDD**: 분석 기간 내 최고점 대비 최대 낙폭."
-    )
-    st.dataframe(show_df, width='stretch', hide_index=True)
-    st.download_button(
-        "자산별 위험 지표 CSV 다운로드",
-        data=dataframe_to_csv_bytes(asset_df),
-        file_name=f"stock_lab_portfolio_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-        mime="text/csv",
-        key="download_portfolio_analysis_csv",
-    )
-
+def _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, risk_contrib_df, monthly_logs_df):
     st.markdown("#### 리스크 기여도")
     st.caption("운용비중이 아니라 포트폴리오 전체 변동성에 실제로 얼마나 영향을 주는지 보는 표입니다.")
     if risk_contrib_df is not None and not risk_contrib_df.empty:
@@ -25575,6 +25394,13 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
                 st.dataframe(bd_df, width='stretch', hide_index=True)
 
     # ── 종합 평가 ──────────────────────────────────────────────────────────
+
+
+
+    # ── 종합 평가 ──────────────────────────────────────────────────────────
+
+
+def _render_portfolio_detailed_evaluation(metrics, reserve_target_weight):
     st.markdown("#### 📋 상세 종합 포트폴리오 평가")
     if not st.toggle("상세 평가 보기", value=False, key="portfolio_detail_eval_toggle"):
         st.caption("위쪽 종합 포트폴리오 평가만 봐도 현재 결론은 확인할 수 있습니다. 세부 해석이 필요할 때만 펼치세요.")
@@ -25893,6 +25719,195 @@ IR(정보비율)은 초과수익의 일관성입니다. 1 이상이면 우수, �
 """, unsafe_allow_html=True)
 
     st.caption("종합 평가는 가격 데이터 기반 자동 생성 참고 의견입니다. 매입 시점·미실현 수익률·세금 효과는 반영되지 않습니다.")
+
+
+
+
+def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
+    st.subheader("포트폴리오 분석")
+    st.caption("읽기 전용 분석입니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
+
+    period = st.selectbox(
+        "분석 기간",
+        ["6mo", "1y", "2y", "5y"],
+        index=1,
+        key="portfolio_analysis_period",
+        help="가격 데이터가 짧은 신규 ETF/종목은 일부 계산에서 제외될 수 있습니다.",
+    )
+    if not should_run_heavy_analysis(
+        "portfolio_analysis_lazy",
+        "상관관계와 포트폴리오 누적 흐름은 보유 종목별 가격 데이터를 조회하므로 필요할 때만 계산합니다.",
+    ):
+        return
+
+    analysis_start_date = get_portfolio_analysis_start_date(monthly_logs_df)
+    if analysis_start_date is not None:
+        st.caption(f"월별 로그 시작월({analysis_start_date.strftime('%Y-%m')}) 이후 가격 흐름만 분석합니다.")
+
+    analysis_holdings_table = holdings_table
+    cached_signal_df = get_cached_portfolio_signal_details()
+    if isinstance(cached_signal_df, pd.DataFrame) and not cached_signal_df.empty:
+        analysis_holdings_table = merge_portfolio_signal_details(holdings_table, cached_signal_df)
+    else:
+        st.caption("자산현황에서 분석 실행 후 다시 열면 보유종목별 기술 신호까지 붙여 포트폴리오 관리판을 보여줍니다.")
+
+    metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
+        analysis_holdings_table,
+        krw_cash,
+        usd_cash,
+        usdkrw,
+        reserve_target_weight,
+        period=period,
+        analysis_start_date=analysis_start_date,
+    )
+
+    reserve_summary = metrics["reserve_summary"]
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.markdown(
+        f"<div class='info-panel' style='border-left:5px solid {metrics['risk_color']};'><b>위험도</b><br>"
+        f"<span class='highlight'>{metrics['risk_grade']}</span><br>{metrics['risk_index']:.0f}/100</div>",
+        unsafe_allow_html=True,
+    )
+    m2.metric("연환산 변동성", "-" if not np.isfinite(metrics["portfolio_vol"]) else f"{metrics['portfolio_vol']:.1f}%")
+    m3.metric("분석기간 MDD", "-" if not np.isfinite(metrics["portfolio_mdd"]) else f"{metrics['portfolio_mdd']:.1f}%")
+    m4.metric("상위 3개 비중", f"{metrics['top3_weight']:.1f}%")
+    m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
+
+    st.markdown("### 핵심 요약")
+    render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
+    render_portfolio_action_decision_panel(metrics, asset_df)
+    render_portfolio_market_alignment_panel(metrics, asset_df)
+
+    ten_year_report = None
+    with st.expander("10년 작전 적합도", expanded=True):
+        ten_year_report = render_ten_year_project_fit_panel(metrics, asset_df, monthly_logs_df, show_title=False)
+
+    st.markdown("#### 종합 포트폴리오 평가")
+    render_portfolio_final_summary_card(metrics, ten_year_report, reserve_target_weight)
+
+    with st.expander("위험도 계산 근거와 상세 지표", expanded=False):
+        render_portfolio_data_coverage_notice(metrics)
+        render_portfolio_risk_breakdown(metrics)
+        render_leverage_exposure_panel(metrics)
+
+        st.markdown("#### Risk Metrics")
+        st.caption(
+            "**연환산 수익률**: 분석 기간 포트폴리오 가격 흐름을 연 단위로 환산한 참고값.  "
+            "**Sharpe**: (연환산수익률 − 무위험이율 3.5%) ÷ 연환산변동성. 1 이상이면 변동성 대비 수익이 양호한 편.  "
+            "**Sortino**: 하락 변동성만 분모로 사용. Sharpe보다 하락 리스크에 예민.  "
+            "**Calmar**: 연환산수익률 ÷ |MDD|. 낙폭 대비 수익 효율.  "
+            "**VaR/CVaR**: 과거 일간 수익률 기반 참고 손실 추정치입니다."
+        )
+        r1, r2, r3, r4, r5 = st.columns(5)
+        r1.metric("연환산 수익률", format_metric_pct(metrics.get("portfolio_annual_return")))
+        r2.metric("Sharpe", format_metric_ratio(metrics.get("sharpe_ratio")))
+        r3.metric("Sortino", format_metric_ratio(metrics.get("sortino_ratio")))
+        r4.metric("Calmar", format_metric_ratio(metrics.get("calmar_ratio")))
+        r5.metric("95% VaR(1일)", format_metric_pct(metrics.get("daily_var_95")))
+        _sharpe_v = clean_float(metrics.get("sharpe_ratio"), np.nan)
+        _sortino_v = clean_float(metrics.get("sortino_ratio"), np.nan)
+        _obs = metrics.get("portfolio_observation_count", 0)
+        if (np.isfinite(_sharpe_v) and abs(_sharpe_v) > 4) or (np.isfinite(_sortino_v) and abs(_sortino_v) > 6) or _obs < 60:
+            st.warning(
+                f"⚠️ Sharpe/Sortino가 평소보다 높습니다 "
+                f"(Sharpe {format_metric_ratio(_sharpe_v)}, Sortino {format_metric_ratio(_sortino_v)}, 관측일 {_obs}일). "
+                "단기 상승장 구간이거나 관측 기간이 짧으면 연환산 수익률이 과장되어 비율이 크게 나올 수 있습니다. "
+                "참고값으로만 사용하세요."
+            )
+
+        tail_cols = st.columns(4)
+        tail_cols[0].metric("95% CVaR(1일)", format_metric_pct(metrics.get("daily_cvar_95")))
+        tail_cols[1].metric("95% VaR(월간 추정)", format_metric_pct(metrics.get("monthly_var_95")))
+        tail_cols[2].metric("VaR 손실액", format_metric_money(metrics.get("active_var_95_krw")))
+        tail_cols[3].metric("CVaR 손실액", format_metric_money(metrics.get("active_cvar_95_krw")))
+        st.caption("Risk Metrics는 총자산(현금 포함) 기준의 가중 포트폴리오 수익률을 사용합니다. VaR/CVaR 손실액도 총자산 기준이며, 현금 비중이 높을수록 손실 추정액이 낮아집니다. 미래 손실 한도가 아닌 참고값입니다.")
+        render_portfolio_sample_warning(metrics)
+
+    with st.expander("10년 목표 시뮬레이션", expanded=False):
+        render_long_term_goal_simulator(metrics)
+
+    if notes_df.empty:
+        st.success("현재 기준으로 크게 눈에 띄는 포트폴리오 위험 신호는 없습니다.")
+    else:
+        st.markdown("#### 위험/분산 체크")
+        st.dataframe(notes_df, width='stretch', hide_index=True)
+
+    if asset_df.empty:
+        st.info("분석할 운용대상 보유자산이 없습니다.")
+        return
+
+    # ── 목표비중 vs 현재비중 비교 ──────────────────────────────────────────
+    if "목표비중" in asset_df.columns and asset_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum() > 0:
+        st.markdown("#### 목표비중 vs 현재비중")
+        st.caption(
+            "**현재비중**: 총자산(현금 포함) 대비 해당 자산의 비중. "
+            "**목표비중**: 보유종목관리에서 설정한 목표 배분. "
+            "**비중차이**: 목표 − 현재(양수=미달, 음수=초과)."
+        )
+        wt_df = asset_df[["자산명", "티커", "전체비중", "목표비중", "비중차이"]].copy()
+        wt_df = wt_df[wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)) > 0].copy()
+        if not wt_df.empty:
+            wt_df = wt_df.sort_values("비중차이", ascending=False).reset_index(drop=True)
+            wt_show = wt_df.copy()
+            for col in ["전체비중", "목표비중", "비중차이"]:
+                wt_show[col] = wt_show[col].apply(
+                    lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%"
+                )
+            wt_show = wt_show.rename(columns={"전체비중": "현재비중"})
+            st.dataframe(wt_show, width='stretch', hide_index=True)
+
+            # 비중 불일치 경고
+            big_under = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) >= 5]
+            big_over  = wt_df[wt_df["비중차이"].apply(lambda v: clean_float(v, 0.0)) <= -5]
+            if not big_under.empty:
+                names = ", ".join(big_under["자산명"].fillna(big_under["티커"]).tolist())
+                st.warning(f"목표보다 5%p 이상 미달인 자산: {names} — 매수 또는 현금 투입을 검토하세요.")
+            if not big_over.empty:
+                names = ", ".join(big_over["자산명"].fillna(big_over["티커"]).tolist())
+                st.info(f"목표보다 5%p 이상 초과인 자산: {names} — 비중 조정 또는 트리밍을 고려하세요.")
+
+            # 현금 비중 현황
+            total_asset_val = metrics.get("total_asset", 0.0)
+            active_val = metrics.get("active_value", 0.0)
+            cash_pct = (total_asset_val - active_val) / total_asset_val * 100 if total_asset_val > 0 else 0.0
+            target_stock_pct = wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum()
+            implied_cash_target = max(100.0 - target_stock_pct, 0.0)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("현재 현금비중", f"{cash_pct:.1f}%")
+            c2.metric("목표 주식비중 합계", f"{target_stock_pct:.1f}%")
+            c3.metric("암묵적 현금 목표", f"{implied_cash_target:.1f}%")
+
+    # ── 자산별 위험 지표 ───────────────────────────────────────────────────
+    show_df = asset_df.copy()
+    # "기간수익률"은 자산 가격의 분석기간 등락률(내 매입가 기준 수익률 아님)임을 명확히 하기 위해 컬럼명 변경
+    if "기간수익률" in show_df.columns:
+        show_df = show_df.rename(columns={"기간수익률": "자산가격등락률"})
+    for col in ["전체비중", "목표비중", "비중차이", "운용비중", "자산가격등락률", "연환산변동성", "MDD"]:
+        if col in show_df.columns:
+            if col == "비중차이":
+                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):+.1f}%")
+            else:
+                show_df[col] = show_df[col].apply(lambda v: "" if not np.isfinite(clean_float(v, np.nan)) else f"{clean_float(v):.1f}%")
+    if "원화환산" in show_df.columns:
+        show_df["원화환산"] = show_df["원화환산"].apply(lambda v: f"{clean_float(v):,.0f}원")
+
+    st.markdown("#### 자산별 위험 지표")
+    st.caption(
+        "**자산가격등락률**: 분석 기간 시작~종료 사이 해당 자산의 가격 변동률입니다. "
+        "내가 매입한 가격 기준 수익률과 다를 수 있습니다(매입 시점 차이). "
+        "**연환산변동성**: 일간 수익률의 표준편차를 연 단위로 환산. **MDD**: 분석 기간 내 최고점 대비 최대 낙폭."
+    )
+    st.dataframe(show_df, width='stretch', hide_index=True)
+    st.download_button(
+        "자산별 위험 지표 CSV 다운로드",
+        data=dataframe_to_csv_bytes(asset_df),
+        file_name=f"stock_lab_portfolio_analysis_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        key="download_portfolio_analysis_csv",
+    )
+
+    _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, risk_contrib_df, monthly_logs_df)
+    _render_portfolio_detailed_evaluation(metrics, reserve_target_weight)
 
 
 def format_scenario_money(value):
@@ -32455,10 +32470,18 @@ def render_today_market_flow_panel(snapshot=None, show_shortlist=True, market_gu
         st.info("ETF/섹터 돈흐름 데이터가 아직 없습니다.")
         return snapshot
 
-    from stock_lab_core.flow_snapshot import flow_source_date_rows
-    source_dates = flow_source_date_rows(snapshot)
+    from stock_lab_core import flow_snapshot as source_checks
+    source_dates = source_checks.flow_source_date_rows(snapshot)
     if source_dates:
         st.dataframe(pd.DataFrame(source_dates), width="stretch", hide_index=True)
+    issue_builder = getattr(source_checks, "flow_source_issue_rows", None)
+    source_issues = issue_builder(snapshot) if issue_builder else []
+    if issue_builder is None:
+        st.warning("원자료 진단 모듈이 이전 버전입니다. Streamlit Cloud에서 Reboot app 후 상장변경 근거를 확인해 주세요.")
+    if source_issues:
+        with st.expander("원자료 누락·상장변경 근거"):
+            st.dataframe(pd.DataFrame(source_issues), width="stretch", hide_index=True,
+                         column_config={"공식출처": st.column_config.LinkColumn("공식출처", display_text="공식 공시")})
 
     if market_guard is None:
         market_guard = build_today_market_guard(snapshot, st.session_state.get("today_queue_summary_df", pd.DataFrame()))

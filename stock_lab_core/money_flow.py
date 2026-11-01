@@ -50,6 +50,7 @@ from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core.kr_flow_history import load_kr_flow_history
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.http_body import read_response_body
+from stock_lab_core.flow_symbols import flow_listing_event, resolve_flow_symbol
 
 
 _KR_FLOW_HISTORY_SLOTS = BoundedSemaphore(4)
@@ -1208,7 +1209,7 @@ IMAGE_THEME_GROUPS = [
             ]),
             ("핀테크·결제", [
                 ("비자", "V"), ("마스터카드", "MA"),
-                ("페이팔", "PYPL"), ("블록", "SQ"), ("어펌", "AFRM"),
+                ("페이팔", "PYPL"), ("블록", "XYZ"), ("어펌", "AFRM"),
             ]),
             ("보험·자산운용", [
                 ("버크셔해서웨이", "BRK-B"), ("블랙록", "BLK"),
@@ -1432,7 +1433,7 @@ def get_image_theme_names() -> list:
 # ---------------------------------------------------------------------------
 
 def normalize_money_flow_ticker(ticker: str) -> str:
-    """KRX 6자리 제로패딩 정규화.
+    """KRX 6자리 제로패딩과 확인된 동일 주식의 구티커 정규화.
 
     주의: 알파벳 포함 코드(0117V0, 0022T0 등)는 이미 6자이므로
     zfill 변환이 발생하지 않으며, yfinance도 해당 코드를 인식하지 못함.
@@ -1442,7 +1443,7 @@ def normalize_money_flow_ticker(ticker: str) -> str:
     if t.endswith(".KS") or t.endswith(".KQ"):
         code, suffix = t.split(".", 1)
         return f"{code.zfill(6)}.{suffix}"
-    return t
+    return resolve_flow_symbol(t)
 
 
 def _money_flow_suffix(ticker: str) -> str:
@@ -1589,6 +1590,7 @@ def _money_flow_download_tickers(tickers):
     return tuple(
         t for t in tickers
         if not _is_krx_money_flow_ticker(t) and _money_flow_suffix(t) not in _UNRELIABLE_SUFFIXES
+        and not flow_listing_event(t)
     )
 
 
@@ -1663,6 +1665,11 @@ def get_money_flow_ohlc(data: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """
     ticker = normalize_money_flow_ticker(ticker)
     suffix = _money_flow_suffix(ticker)
+    listing = flow_listing_event(ticker)
+    if listing:
+        frame = pd.DataFrame()
+        frame.attrs["listing_event"] = listing
+        return frame
 
     if _is_krx_money_flow_ticker(ticker):
         # FDR retries the same feed without a timeout; do not re-enter it here.
@@ -2001,6 +2008,9 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None, download_tick
         batch_data = download_money_flow_prices(download_tickers) if download_tickers is not None else data
         metrics = {}
         for ticker in tickers:
+            if flow_listing_event(ticker):
+                metrics[ticker] = None
+                continue
             if ticker in futures:
                 px = futures[ticker].result()
             elif ticker in kr_tickers:
@@ -2027,7 +2037,7 @@ def _load_universe_metrics(data, universe, *, failed_tickers=None, download_tick
 def calculate_money_flow_df() -> pd.DataFrame:
     """MONEY_FLOW_UNIVERSE 전체 돈흐름 점수 계산 및 랭킹 반환.
 
-    Source-date revision: preserve actual sessions without forward-filled bars.
+    Source-date revision: preserve sessions and exclude ended listings from live scoring.
     """
     universe = [
         dict(item, ticker=normalize_money_flow_ticker(item["ticker"]))
@@ -2071,7 +2081,7 @@ def calculate_money_flow_df() -> pd.DataFrame:
 def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     """IMAGE_THEME_GROUPS 개별 종목 돈흐름 점수 계산.
 
-    Source-date revision: preserve actual sessions without forward-filled bars.
+    Source-date revision: preserve ended listings with evidence, never merger-price substitutions.
     """
     selected = str(theme or "").strip()
     universe = [
@@ -2080,6 +2090,7 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
         if not selected or item["테마"] == selected
     ]
     _empty: dict = {
+        "기준일": "", "거래량기준일": "",
         "현재가": np.nan, "가격수준": np.nan, "기간수익률": np.nan,
         "1일수익률": np.nan, "5일수익률": np.nan,
         "1주수익률": np.nan, "2주수익률": np.nan, "1개월수익률": np.nan, "3개월수익률": np.nan, "6개월수익률": np.nan,
@@ -2100,6 +2111,12 @@ def calculate_image_theme_flow_df(theme: str) -> pd.DataFrame:
     for item in universe:
         ticker = item["ticker"]
         metrics = (metrics_by_ticker[ticker] if metrics_by_ticker[ticker] is not None else _empty).copy()
+        listing = flow_listing_event(ticker)
+        if listing:
+            metrics.update({
+                "상장상태": "거래종료", "마지막거래일": listing["last_trading_date"],
+                "원자료사유": listing["reason"], "공식출처": listing["source_url"],
+            })
         rows.append({
             "테마":     item["테마"],
             "하위테마": item["하위테마"],
