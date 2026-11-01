@@ -13,6 +13,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
+
 
 TODAY_QUEUE_LOGIC_VERSION = "20261031_consensus_raw_price_v14"
 TODAY_QUEUE_SUMMARY_SNAPSHOT_PATH = Path(__file__).resolve().parents[1] / "cache" / "today_queue_summary_snapshot.json"
@@ -29,6 +33,7 @@ def invalidate_incompatible_summary_state(state) -> bool:
         "dashboard_summary_df", "dashboard_summary_sig", "dashboard_summary_last_run",
         "today_queue_summary_df", "today_queue_summary_sig", "today_queue_summary_last_run",
         "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig",
+        "portfolio_today_signal_df",
     ):
         removed = key in state or removed
         state.pop(key, None)
@@ -79,6 +84,11 @@ def save_today_queue_summary_snapshot(
             "saved_at": datetime.now(timezone(timedelta(hours=9))).isoformat(),
             "data": summary_df.to_json(orient="split", force_ascii=False, date_format="iso"),
             "previous": previous,
+            "portfolio_signal_attrs": {
+                key: summary_df.attrs[key]
+                for key in ("portfolio_signal_context", "portfolio_signal_at")
+                if isinstance(summary_df.attrs.get(key), str)
+            },
         }
         snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         # A failed or concurrent write must leave readers a complete previous/new file.
@@ -136,6 +146,11 @@ def load_today_queue_summary_snapshot(
         frame = pd.read_json(io.StringIO(raw_data), orient="split", dtype=False)
         if frame.empty:
             return empty
+        metadata = payload.get("portfolio_signal_attrs", {})
+        if isinstance(metadata, dict):
+            frame.attrs.update({key: metadata[key]
+                                for key in ("portfolio_signal_context", "portfolio_signal_at")
+                                if isinstance(metadata.get(key), str)})
         return frame, signature, str(payload.get("last_run", ""))
     except FileNotFoundError:
         return empty

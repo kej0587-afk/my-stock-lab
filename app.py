@@ -2538,6 +2538,7 @@ def invalidate_watchlist_dependent_state():
         "today_queue_summary_last_run",
         "today_queue_summary_last_nonempty_df",
         "today_queue_summary_last_nonempty_sig",
+        "portfolio_today_signal_df",
     ):
         st.session_state.pop(key, None)
 
@@ -23164,11 +23165,12 @@ def calc_historical_stress_test(price_series_dict, asset_df, total_asset):
                 pass
         # 프록시 충격 (레버리지·인버스·자산유형 반영)
         text = f"{str(ticker).upper()} {str(asset_name or '').upper()}"
-        if any(k in text for k in ["SQQQ", "SOXS", "SPXU", "SDOW", "인버스", "INVERSE", "BEAR", "곱버스"]):
+        multiplier = infer_scenario_shock_multiplier({"티커": ticker, "자산명": asset_name})
+        if multiplier < 0:
             return base * -1.5
-        if any(k in text for k in ["3X", "TQQQ", "SOXL", "SPXL", "UPRO", "TECL", "FNGU", "BULZ"]):
+        if multiplier >= 3:
             return base * 2.8
-        if any(k in text for k in ["2X", "2배", "QLD", "SSO", "레버리지", "LEVERAGE"]):
+        if multiplier >= 2:
             return base * 1.85
         if any(k in text for k in ["GLD", "IAU", "금커버", "GOLD"]):
             return base * 0.05
@@ -23425,6 +23427,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
     risk_contrib_df = pd.DataFrame()
     avg_corr = np.nan
     portfolio_observation_count = 0
+    return_window = {}
     drawdown_details = {}
     benchmark_metrics_blended = {}
     benchmark_metrics_voo = {}
@@ -23434,7 +23437,8 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
 
     if price_series:
         prices = pd.concat(price_series.values(), axis=1).sort_index().ffill(limit=3)
-        returns_df = prices.pct_change().replace([np.inf, -np.inf], np.nan).dropna(how="all").fillna(0.0)
+        # Pre-listing/missing history is not a flat return; use jointly observed days.
+        returns_df = prices.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan).dropna(how="any")
 
         usable_cols = [col for col in returns_df.columns if col in set(asset_df["티커"])]
         if usable_cols:
@@ -23452,6 +23456,13 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
                 if not portfolio_returns.empty:
                     portfolio_observation_count = int(len(portfolio_returns))
                     portfolio_curve = (1 + portfolio_returns).cumprod()
+                    baseline_date = prices.index[prices.index < portfolio_returns.index[0]][-1]
+                    portfolio_curve = pd.concat([pd.Series([1.0], index=[baseline_date]), portfolio_curve])
+                    return_window = {
+                        "start": baseline_date,
+                        "end": portfolio_returns.index[-1],
+                        "excluded_days": max(len(prices) - 1 - len(portfolio_returns), 0),
+                    }
                     portfolio_vol_decimal = float(portfolio_returns.std() * np.sqrt(252))
                     portfolio_vol = portfolio_vol_decimal * 100
                     portfolio_mdd_decimal = calc_series_mdd(portfolio_curve)
@@ -23621,6 +23632,7 @@ def build_portfolio_analysis_report(holdings_table, krw_cash, usd_cash, usdkrw, 
         },
         "usable_asset_count": usable_asset_count,
         "portfolio_observation_count": portfolio_observation_count,
+        "return_window": return_window,
         "analysis_start_date": analysis_start_date,
         "drawdown_details": drawdown_details,
         "benchmark_blended": benchmark_metrics_blended,
@@ -23758,9 +23770,17 @@ def render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df=None):
     analysis_start = metrics.get("analysis_start_date")
     start_text = analysis_start.strftime("%Y-%m") if isinstance(analysis_start, pd.Timestamp) else "선택 기간"
     st.caption(
-        f"분석 기준: 실제 투자 성과는 월별 성과 기록({log_state})으로 보고, "
+        f"분석 기준: 월별 원금 대비 손익은 월별 성과 기록({log_state})으로 보고, "
         f"아래 위험지표는 {start_text} 이후 현재 보유비중을 가격 흐름에 적용한 참고 분석입니다."
     )
+    st.caption("계좌 범위: 보유자산은 선택 계좌 기준입니다. 예수금·월별 기록은 계좌 구분이 없는 전체 공통값이므로, 일부 계좌만 선택한 분석을 해당 계좌의 실제 성과로 해석하지 않습니다.")
+    window = metrics.get("return_window", {})
+    if window:
+        st.caption(
+            f"위험지표 공통 가격기간: {window['start']:%Y-%m-%d} ~ {window['end']:%Y-%m-%d} "
+            f"· {metrics['portfolio_observation_count']}개 일간 관측 · 가격 미연결 구간 {window['excluded_days']}일 제외. "
+            "상장 전 이력은 0%로 채우지 않습니다. 현지통화 가격 기준으로 과거 환율 변동·예수금 이자·대기자산 수익은 미반영입니다."
+        )
 
 
 def _portfolio_pnl_pct_from_row(row):
@@ -25018,12 +25038,43 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
         st.dataframe(show, width='stretch', hide_index=True)
 
 
+def portfolio_signal_input_context():
+    """Identify account-dependent inputs without invalidating on every live tick."""
+    import hashlib
+
+    holdings = st.session_state.get("_app_holdings_table", pd.DataFrame())
+    fields = ["티커", "보유량", "매입가", "목표비중", "bucket", "운용대상", "asset_class", "is_etf"]
+    rows = []
+    held_keys = set()
+    if isinstance(holdings, pd.DataFrame):
+        for _, row in holdings.iterrows():
+            rows.append([str(row.get(col, "")) for col in fields])
+            held_keys.add(_portfolio_flow_ticker_key(row.get("티커", "")))
+    payload = {
+        "owner": str(CURRENT_USER_EMAIL or "").strip().lower(),
+        "accounts": sorted(st.session_state.get("acc_filter", [])),
+        "holdings": sorted(rows),
+        "cash": [st.session_state.get("_app_krw_cash", 0), st.session_state.get("_app_usd_cash", 0)],
+        "reserve_target": st.session_state.get("_app_reserve_target_weight", 0),
+        "financial_scores": {key: value for key, value in st.session_state.get("fin_score_map", {}).items()
+                             if _portfolio_flow_ticker_key(key) in held_keys},
+        "version": TODAY_QUEUE_LOGIC_VERSION,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def stamp_portfolio_signal_context(frame):
+    result = frame.copy()
+    result.attrs["portfolio_signal_context"] = portfolio_signal_input_context()
+    result.attrs["portfolio_signal_at"] = datetime.now(timezone.utc).isoformat()
+    return result
+
+
 def get_cached_portfolio_signal_details():
-    """Return the richest cached per-ticker signal table available in this session."""
+    """Use verified current-account signals, newest row first across sources."""
     candidate_keys = [
         "_ticker_signal_detail_df",
-        "today_queue_summary_df",
-        "today_queue_summary_last_nonempty_df",
+        "portfolio_today_signal_df",
     ]
     rename_map = {
         "🔥기술적 타점": "기술적타점",
@@ -25034,9 +25085,13 @@ def get_cached_portfolio_signal_details():
         "티커", "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI",
         "MACD", "SQZ", "판정코드", "실행메모", "핵심근거",
     ]
+    context = portfolio_signal_input_context()
+    candidates = []
     for key in candidate_keys:
         df = st.session_state.get(key)
         if not isinstance(df, pd.DataFrame) or df.empty or "티커" not in df.columns:
+            continue
+        if df.attrs.get("portfolio_signal_context") != context:
             continue
         work = df.copy()
         for src, dst in rename_map.items():
@@ -25044,15 +25099,16 @@ def get_cached_portfolio_signal_details():
                 work[dst] = work[src]
         cols = [col for col in wanted_cols if col in work.columns]
         if "티커" in cols and len(cols) > 1:
-            return work[cols].copy()
-
-    cached_signal_map = st.session_state.get("_ticker_signal_cache")
-    if isinstance(cached_signal_map, dict) and cached_signal_map:
-        return pd.DataFrame([
-            {"티커": ticker, "기술적타점": signal}
-            for ticker, signal in cached_signal_map.items()
-        ])
-    return pd.DataFrame()
+            work = work[cols].copy()
+            work["_signal_at"] = pd.to_datetime(df.attrs.get("portfolio_signal_at"), utc=True, errors="coerce")
+            work["_signal_key"] = work["티커"].map(_portfolio_flow_ticker_key)
+            work.attrs = {}
+            candidates.append(work)
+    if not candidates:
+        return pd.DataFrame()
+    merged = pd.concat(candidates, ignore_index=True).sort_values("_signal_at", na_position="first", kind="stable")
+    merged = merged[merged["_signal_key"].ne("")].drop_duplicates("_signal_key", keep="last")
+    return merged.drop(columns=["_signal_at", "_signal_key"]).reset_index(drop=True)
 
 
 def _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, risk_contrib_df, monthly_logs_df):
@@ -25114,10 +25170,10 @@ def _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, r
                     x=actual_curve_df["month_end"],
                     y=actual_curve_df["relative_return_pct"],
                     mode="lines+markers",
-                    name="내 포트폴리오 수익률",
+                    name="월별 원금대비 손익률 변화(%p)",
                     line=dict(color="#22c55e", width=3),
                     marker=dict(size=7),
-                    hovertemplate="%{x|%Y-%m}<br>누적수익률: %{y:.2f}%<extra></extra>",
+                    hovertemplate="%{x|%Y-%m}<br>첫 기록월 대비 손익률 변화: %{y:.2f}%p<extra></extra>",
                 ))
 
             if has_price_curve:
@@ -25141,13 +25197,13 @@ def _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, r
             fig_curve.update_layout(
                 template="plotly_dark",
                 height=360,
-                yaxis_title="누적수익률(%)",
+                yaxis_title="가격 수익률(%) / 손익률 변화(%p)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
             )
             st.plotly_chart(fig_curve, width='stretch')
-            st.caption("초록선 = 첫 기록월 대비 내 실제 누적수익률 / 파란 점선 = 현재 보유 종목을 같은 시점부터 들고 있었다면의 가격 수익률 (비중 고정 가정)")
+            st.caption("초록선 = 월별 원금대비 손익률의 첫 기록월 대비 차이(%p). 입출금 시점이 없어 시간가중 투자성과(TWR)가 아닙니다. 파란 점선 = 현재 비중 고정 가격 수익률(%). 두 선의 차이는 초과수익이 아닙니다.")
         else:
             st.info("누적 흐름을 계산할 월별 기록 또는 가격 데이터가 부족합니다.")
 
@@ -25426,8 +25482,8 @@ def _render_portfolio_detailed_evaluation(metrics, reserve_target_weight):
     _stress = metrics.get("stress_results", [])
     _dd     = metrics.get("drawdown_details", {})
     _total  = metrics.get("total_asset", 0.0)
-    _active = metrics.get("active_value", 0.0)
-    _cash_pct = (_total - _active) / _total * 100 if _total > 0 else 0.0
+    _cash_value = clean_float(metrics.get("reserve_summary", {}).get("cash_value"), 0.0)
+    _cash_pct = _cash_value / _total * 100 if _total > 0 else 0.0
 
     # ── 1. 분석기간 경고 ──────────────────────────────────────────────────
     _short_period = _obs > 0 and _obs < 252
@@ -25749,7 +25805,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     if isinstance(cached_signal_df, pd.DataFrame) and not cached_signal_df.empty:
         analysis_holdings_table = merge_portfolio_signal_details(holdings_table, cached_signal_df)
     else:
-        st.caption("자산현황에서 분석 실행 후 다시 열면 보유종목별 기술 신호까지 붙여 포트폴리오 관리판을 보여줍니다.")
+        st.caption("현재 계좌·보유 조건과 일치하는 판정이 없습니다. 오늘점검 또는 자산현황에서 다시 계산하면 연결됩니다. 이전 계좌의 판정은 사용하지 않습니다.")
 
     metrics, asset_df, notes_df, corr_df, portfolio_curve, risk_contrib_df = build_portfolio_analysis_report(
         analysis_holdings_table,
@@ -25868,8 +25924,8 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
 
             # 현금 비중 현황
             total_asset_val = metrics.get("total_asset", 0.0)
-            active_val = metrics.get("active_value", 0.0)
-            cash_pct = (total_asset_val - active_val) / total_asset_val * 100 if total_asset_val > 0 else 0.0
+            cash_val = clean_float(reserve_summary.get("cash_value"), 0.0)
+            cash_pct = cash_val / total_asset_val * 100 if total_asset_val > 0 else 0.0
             target_stock_pct = wt_df["목표비중"].apply(lambda v: clean_float(v, 0.0)).sum()
             implied_cash_target = max(100.0 - target_stock_pct, 0.0)
             c1, c2, c3 = st.columns(3)
@@ -33678,7 +33734,7 @@ def _render_today_queue_tab(mode):
     snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     previous_owner = st.session_state.get("today_queue_summary_owner")
     if previous_owner is not None and previous_owner != snapshot_owner:
-        for key in (summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"):
+        for key in (summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig", "portfolio_today_signal_df"):
             st.session_state.pop(key, None)
     st.session_state["today_queue_summary_owner"] = snapshot_owner
 
@@ -33717,7 +33773,7 @@ def _render_today_queue_tab(mode):
 
     if not cached_summary.empty:
         if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
-            for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig"]:
+            for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig", "portfolio_today_signal_df"]:
                 st.session_state.pop(key, None)
             clear_today_queue_summary_snapshot(owner_scope=snapshot_owner)
             st.rerun()
@@ -33793,6 +33849,7 @@ def _render_today_queue_tab(mode):
             summary_df = bind_summary_measurement(summary_df)
             from stock_lab_core.report_history import tag_input_origins
             summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
+            summary_df = stamp_portfolio_signal_context(summary_df)
         last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
         st.session_state[summary_key] = summary_df
         st.session_state[sig_key] = queue_sig
@@ -33831,6 +33888,7 @@ def _render_today_queue_tab(mode):
         render_today_candidate_tools(pd.DataFrame(), start_index=0)
         return
 
+    portfolio_signal_attrs = dict(summary_df.attrs)
     summary_df = summary_df.copy()
     if "판정분류" in summary_df.columns:
         signal_group = summary_df["판정분류"].astype(str)
@@ -33998,6 +34056,10 @@ def _render_today_queue_tab(mode):
     summary_df = attach_market_execution_context(summary_df, market_guard)
     summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_value_map)
     summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
+    if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
+        portfolio_signals = summary_df.copy()
+        portfolio_signals.attrs.update(portfolio_signal_attrs)
+        st.session_state["portfolio_today_signal_df"] = portfolio_signals
 
     reason_bucket = reason_bucket.reindex(summary_df.index).fillna("일반")
     hard_block_mask = hard_block_mask.reindex(summary_df.index, fill_value=False)
@@ -34508,6 +34570,7 @@ holdings_table = build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw)
 st.session_state["_app_krw_cash"] = krw_cash
 st.session_state["_app_usd_cash"] = usd_cash
 st.session_state["_app_usdkrw"] = usdkrw
+st.session_state["_app_reserve_target_weight"] = reserve_target_weight
 st.session_state["_app_holdings_table"] = holdings_table
 portfolio_summary = calc_portfolio_summary(holdings_table, seed_money, krw_cash, usd_cash, usdkrw, dividends_df)
 total_eval = portfolio_summary["current_asset"]
@@ -37176,7 +37239,7 @@ if main_page == "asset":
                 str(row["티커"]): str(row["기술적타점"])
                 for _, row in signal_df.iterrows()
             }
-            st.session_state["_ticker_signal_detail_df"] = signal_df.copy()
+            st.session_state["_ticker_signal_detail_df"] = stamp_portfolio_signal_context(signal_df)
             dash_df = dash_df.merge(signal_df, on="티커", how="left")
 
         defaults = {

@@ -1,4 +1,4 @@
-"""Exact UI/figure parity with the 839-line portfolio renderer before extraction."""
+"""Renderer parity, except explicitly audited labels and true-cash corrections."""
 
 import ast
 from copy import deepcopy
@@ -17,6 +17,26 @@ from tests.test_money_flow_renderer_refactor import UI as BaseUI, freeze as base
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = "render_portfolio_analysis_tab"
 HELPERS = ("_render_portfolio_risk_charts", "_render_portfolio_detailed_evaluation")
+
+
+def approved_audit_changes(source):
+    replacements = {
+        "내 포트폴리오 수익률": "월별 원금대비 손익률 변화(%p)",
+        "%{x|%Y-%m}<br>누적수익률: %{y:.2f}%<extra></extra>": "%{x|%Y-%m}<br>첫 기록월 대비 손익률 변화: %{y:.2f}%p<extra></extra>",
+        'yaxis_title="누적수익률(%)"': 'yaxis_title="가격 수익률(%) / 손익률 변화(%p)"',
+        "초록선 = 첫 기록월 대비 내 실제 누적수익률 / 파란 점선 = 현재 보유 종목을 같은 시점부터 들고 있었다면의 가격 수익률 (비중 고정 가정)":
+            "초록선 = 월별 원금대비 손익률의 첫 기록월 대비 차이(%p). 입출금 시점이 없어 시간가중 투자성과(TWR)가 아닙니다. 파란 점선 = 현재 비중 고정 가격 수익률(%). 두 선의 차이는 초과수익이 아닙니다.",
+        "자산현황에서 분석 실행 후 다시 열면 보유종목별 기술 신호까지 붙여 포트폴리오 관리판을 보여줍니다.":
+            "현재 계좌·보유 조건과 일치하는 판정이 없습니다. 오늘점검 또는 자산현황에서 다시 계산하면 연결됩니다. 이전 계좌의 판정은 사용하지 않습니다.",
+        'active_val = metrics.get("active_value", 0.0)': 'cash_val = clean_float(reserve_summary.get("cash_value"), 0.0)',
+        'cash_pct = (total_asset_val - active_val) / total_asset_val': 'cash_pct = cash_val / total_asset_val',
+        '_active = metrics.get("active_value", 0.0)': '_cash_value = clean_float(metrics.get("reserve_summary", {}).get("cash_value"), 0.0)',
+        '_cash_pct = (_total - _active) / _total': '_cash_pct = _cash_value / _total',
+    }
+    for old, new in replacements.items():
+        assert old in source
+        source = source.replace(old, new)
+    return source
 
 
 def freeze(value):
@@ -61,7 +81,7 @@ class FixedDateTime(datetime):
 @pytest.fixture(scope="module")
 def sources():
     old = subprocess.check_output(["git", "show", "3160cd93:app.py"], cwd=ROOT, encoding="utf-8")
-    return old, (ROOT / "app.py").read_text(encoding="utf-8-sig")
+    return approved_audit_changes(old), (ROOT / "app.py").read_text(encoding="utf-8-sig")
 
 
 def report(kind):
@@ -77,7 +97,7 @@ def report(kind):
         리스크기여도=[70., 30.], 비중대비리스크=[1.2, .7])
     benchmark = {"beta": 1.2, "alpha": -3., "tracking_error": 5., "info_ratio": -.6,
                  "bm_period_return": 6., "n_common_days": 120}
-    metrics = {"reserve_summary": {"waiting_pct": 15.}, "risk_color": "#ef4444", "risk_grade": "위험",
+    metrics = {"reserve_summary": {"waiting_pct": 15., "cash_value": 150.}, "risk_color": "#ef4444", "risk_grade": "위험",
         "risk_index": 80., "portfolio_vol": 25., "portfolio_mdd": -28., "top1_weight": 50.,
         "top3_weight": 85., "portfolio_annual_return": -10., "portfolio_period_return": -5.,
         "sharpe_ratio": -1.2, "sortino_ratio": -1.4, "calmar_ratio": -.4,

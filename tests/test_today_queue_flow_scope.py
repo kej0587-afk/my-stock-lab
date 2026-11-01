@@ -71,6 +71,7 @@ def run_branch(*, full=False, fail=False):
         clear_latest_price_cache=lambda: None, enable_force_live_price_refresh=lambda: None,
         cache_clear=lambda *a: None, load_price_df=None, load_price_frames_batch=None,
         get_all_summary=compute, summary_key="summary", sig_key="signature", last_key="last",
+        stamp_portfolio_signal_context=lambda frame: frame,
     )
     exec(compile(ast.Module(body=[branch], type_ignores=[]), str(ROOT / "app.py"), "exec"), env)
     pd.testing.assert_frame_equal(state["summary"], summary.assign(입력출처="등록"))
