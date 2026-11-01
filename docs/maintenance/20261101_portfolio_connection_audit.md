@@ -81,3 +81,13 @@ that fixture namespace was updated, then the remaining 162 tests passed
 The 72-test focused portfolio run and 26-test renderer/calculation run also
 passed before the final persistence/lifecycle additions.
 No private portfolio amounts or credentials are stored in this document.
+
+Production verification: runtime commit a5bd8942, completed GOOGL review ZIP
+downloaded on 2026-11-01. Loaded and disk hashes match normalized local source
+for app_entry and today_snapshot; restart_required=false and stale_modules=[].
+No additional reboot was requested. The portfolio UI shows the common period,
+92 return observations and 121 excluded union-calendar observations. After
+recalculating held-asset signals, the unscoped-cache notice disappears and
+the portfolio summary reflects those held-asset blocking reasons. This verifies
+the asset-overview-to-portfolio path in production, not a full new today-check
+run. All new today-check persistence/clear paths were verified offline above.
