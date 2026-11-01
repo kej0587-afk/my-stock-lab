@@ -42,10 +42,12 @@ _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
 
 
 def _quote_transport_event(provider, outcome, error=None):
+    counter = getattr(_performance, "count_event", None)
     if error is not None:
         cause = getattr(error, "reason", error)
         outcome = "timeout" if isinstance(cause, TimeoutError) else "error"
-    counter = getattr(_performance, "count_event", None)
+        if counter is not None and isinstance(error, urllib.error.HTTPError) and error.code == 429:
+            counter(f"{provider}.http_429")
     if counter is not None:
         counter(f"{provider}.{outcome}")
 
@@ -1560,6 +1562,7 @@ def _fetch_kis_us_quote_price(
     return 0.0
 
 
+@timed_call("prices")
 def _fetch_us_realtime_price(ticker: str) -> float:
     """
     Prefer timestamped US prices before untimed brokerage/reference quotes.
@@ -1750,6 +1753,7 @@ def _extract_yahoo_overnight_price_from_html(text: str, ticker: str) -> float:
     return 0.0
 
 
+@timed_call("prices")
 def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
@@ -1759,10 +1763,13 @@ def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
         headers = dict(_YQ_HEADERS)
         headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         req = urllib.request.Request(url, headers=headers)
+        _quote_transport_event("yahoo_overnight", "request")
         with urllib.request.urlopen(req, timeout=8) as resp:
+            _quote_transport_event("yahoo_overnight", "response")
             text = resp.read().decode("utf-8", errors="ignore")
         return _extract_yahoo_overnight_price_from_html(text, t)
-    except Exception:
+    except Exception as exc:
+        _quote_transport_event("yahoo_overnight", "error", exc)
         pass
     return 0.0
 
@@ -1804,6 +1811,7 @@ def fetch_yahoo_display_metadata(ticker: str) -> dict:
     return {key: value for key, value in fields.items() if isinstance(value, str) and value.strip()}
 
 
+@timed_call("prices")
 def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, dict]:
     """
     Yahoo v8 chart API 단일 호출 — (캔들 마지막 Close, meta 딕셔너리) 반환.
@@ -1818,7 +1826,9 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
                 f"?interval={interval}&range={range_}&includePrePost=true"
             )
             req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            _quote_transport_event("yahoo_chart", "request")
             with urllib.request.urlopen(req, timeout=6) as resp:
+                _quote_transport_event("yahoo_chart", "response")
                 data = json.loads(resp.read())
             results = (data.get("chart") or {}).get("result") or []
             if not results:
@@ -1827,6 +1837,7 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
             meta = result.get("meta", {})
             return _last_candle_close(result), meta
         except Exception as exc:
+            _quote_transport_event("yahoo_chart", "error", exc)
             message = str(exc)
             if "401" in message or "Too Many Requests" in message or "Rate" in message:
                 return -1.0, {}
@@ -1834,6 +1845,7 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
     return 0.0, {}
 
 
+@timed_call("prices")
 @st.cache_data(ttl=60, show_spinner=False)
 def _fetch_yahoo_regular_close_price(ticker: str) -> float:
     t = normalize_price_lookup_key(ticker)
@@ -1846,7 +1858,9 @@ def _fetch_yahoo_regular_close_price(ticker: str) -> float:
                 f"{urllib.parse.quote(t)}?interval=1d&range=5d&includePrePost=false"
             )
             req = urllib.request.Request(url, headers=_YQ_HEADERS)
+            _quote_transport_event("yahoo_regular_close", "request")
             with urllib.request.urlopen(req, timeout=6) as resp:
+                _quote_transport_event("yahoo_regular_close", "response")
                 data = json.loads(resp.read())
             results = (data.get("chart") or {}).get("result") or []
             if not results:
@@ -1871,7 +1885,8 @@ def _fetch_yahoo_regular_close_price(ticker: str) -> float:
                     price = 0.0
                 if price > 0:
                     return price
-        except Exception:
+        except Exception as exc:
+            _quote_transport_event("yahoo_regular_close", "error", exc)
             continue
     return 0.0
 
@@ -1986,6 +2001,7 @@ def _fetch_yahoo_quote(ticker: str) -> float:
     return price
 
 
+@timed_call("prices")
 def _fetch_yf_fast_info_price(ticker: str) -> float:
     """
     yf.Ticker.fast_info 폴백.
@@ -2010,6 +2026,7 @@ def _fetch_yf_fast_info_price(ticker: str) -> float:
     return 0.0
 
 
+@timed_call("prices")
 def _fetch_yf_download_price(ticker: str, interval: str = "5m", prepost: bool = True) -> float:
     """_YF_LOCK 으로 SQLite tz 캐시 동시 쓰기 방지. threads=False 로 내부 병렬 차단."""
     try:

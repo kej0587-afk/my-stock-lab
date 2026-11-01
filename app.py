@@ -349,6 +349,7 @@ from stock_lab_core.decision_policies import (
     select_free_mode_decision,
 )
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
+from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.today_queue import (
     TODAY_QUEUE_DEFENSE_TEXT_RE,
     TODAY_QUEUE_LOGIC_VERSION,
@@ -18898,44 +18899,19 @@ def _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def build_leveraged_precision_watch_rows(profile_key):
+    from stock_lab_core import prices as price_loader
+
     profile = LEVERAGED_ETF_PRECISION_PROFILES.get(profile_key, {})
-    rows = []
-    for t, role, label in profile.get("watch", []):
-        ticker = sanitize_ticker_value(t)
-        px = clean_float(load_display_live_price(ticker), 0.0)
-        try:
-            hist = load_price_df(ticker, "6mo")
-            close = pd.to_numeric(hist["Close"], errors="coerce").dropna() if hist is not None and not hist.empty and "Close" in hist.columns else pd.Series(dtype=float)
-        except Exception:
-            close = pd.Series(dtype=float)
-
-        def _ret_from_close(bars):
-            if len(close) < 2:
-                return np.nan
-            end = px if px > 0 else clean_float(close.iloc[-1], np.nan)
-            base_idx = -bars - 1 if len(close) > bars else 0
-            base = clean_float(close.iloc[base_idx], np.nan)
-            if not finite_num(end) or not finite_num(base) or end <= 0 or base <= 0:
-                return np.nan
-            return (end / base - 1) * 100
-
-        day_ret = _ret_from_close(1)
-        week_ret = _ret_from_close(5)
-        month_ret = _ret_from_close(21)
-        rows.append({
-            "구분": role,
-            "확인축": label,
-            "Ticker": ticker,
-            "현재가": format_currency(px, ticker) if px > 0 else "-",
-            "1D": _leveraged_precision_pct_text(day_ret),
-            "1W": _leveraged_precision_pct_text(week_ret),
-            "1M": _leveraged_precision_pct_text(month_ret),
-            "판정": _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret),
-            "_1d": clean_float(day_ret, np.nan),
-            "_1w": clean_float(week_ret, np.nan),
-            "_1m": clean_float(month_ret, np.nan),
-        })
-    return rows
+    # Forced refresh reads session-local policy; retain its original thread.
+    force_refresh = getattr(price_loader, "_force_live_price_refresh_active", lambda: True)()
+    return build_leveraged_watch_rows(
+        profile.get("watch", []),
+        load_quote=load_display_live_price,
+        load_history=load_price_df,
+        pct_text=_leveraged_precision_pct_text,
+        judge=_leveraged_precision_proxy_judgement,
+        parallel=not force_refresh,
+    )
 
 
 def _classify_leveraged_dca_stage(c, has_pos, my_price, leverage):
@@ -20118,7 +20094,8 @@ def get_precision_build_info():
 
     # Sync metadata names only; preserve the hashes captured at real import time.
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
-                        if name.startswith("stock_lab_core.account_performance") or name == "stock_lab_core.decision_priority")
+                        if name.startswith("stock_lab_core.account_performance") or name in {
+                            "stock_lab_core.decision_priority", "stock_lab_core.leveraged_watch"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
     if info.get("restart_required"):
