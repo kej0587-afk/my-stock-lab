@@ -70,11 +70,13 @@ def run_branch(*, full=False, fail=False):
         TODAY_QUEUE_LOGIC_VERSION="test", queue_logic_version="test:financial-fixture", mode="test",
         clear_latest_price_cache=lambda: None, enable_force_live_price_refresh=lambda: None,
         cache_clear=lambda *a: None, load_price_df=None, load_price_frames_batch=None,
-        get_all_summary=compute, summary_key="summary", sig_key="signature", last_key="last",
+        get_all_summary=compute,
         stamp_portfolio_signal_context=lambda frame: frame,
     )
-    exec(compile(ast.Module(body=[branch], type_ignores=[]), str(ROOT / "app.py"), "exec"), env)
-    pd.testing.assert_frame_equal(state["summary"], summary.assign(입력출처="등록"))
+    calculate = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name == "_calculate_fresh_today_summary")
+    exec(compile(ast.Module(body=[calculate, branch], type_ignores=[]), "<queue-refresh-branch>", "exec"), env)
+    pd.testing.assert_frame_equal(state["today_queue_summary_df"], summary.assign(입력출처="등록"))
     assert list(summary.columns) == ["ticker"]
     return calls, state, notes
 
@@ -82,7 +84,7 @@ def run_branch(*, full=False, fail=False):
 def test_unchecked_discovery_does_not_wait_for_full_market():
     calls, state, notes = run_branch()
     assert calls == [("HELD", "WATCH")]
-    assert state["signature"] == ("HELD", "WATCH")
+    assert state["today_queue_summary_sig"] == ("HELD", "WATCH")
     assert any("자동발굴은 이번 계산에서 제외" in note for note in notes)
 
 
@@ -91,7 +93,7 @@ def test_optional_discovery_and_failure_never_resign_stale_candidates(fail):
     calls, state, notes = run_branch(full=True, fail=fail)
     expected = ("HELD", "WATCH") if fail else ("HELD", "WATCH", "NEW")
     assert calls == ["refresh", expected]
-    assert state["signature"] == expected
+    assert state["today_queue_summary_sig"] == expected
     assert any("조회 실패" in note for note in notes) == fail
 
 

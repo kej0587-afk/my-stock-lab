@@ -32927,6 +32927,25 @@ def render_today_queue_tab(mode):
                 )
 
 
+def _calculate_fresh_today_summary(mode, watch_items, raw_watch_items, flow_auto_items):
+    st.session_state["today_queue_current_cache_policy"] = {
+        "mode": "standard_refresh_not_fully_cold",
+        "reset": ["latest_quotes", "load_price_df", "load_price_frames_batch"],
+        "may_be_warm": ["provider_history", "analyst_6h", "financial_metadata"],
+    }
+    clear_latest_price_cache()
+    enable_force_live_price_refresh()
+    cache_clear(load_price_df)
+    cache_clear(load_price_frames_batch)
+    summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items, fresh_quotes=True)
+    from stock_lab_core.performance import bind_summary_measurement
+    summary_df = bind_summary_measurement(summary_df)
+    from stock_lab_core.report_history import tag_input_origins
+    summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
+    summary_df = stamp_portfolio_signal_context(summary_df)
+    return summary_df
+
+
 @timed_call("phase", "today_queue_render")
 def _render_today_queue_tab(mode):
     st.subheader("오늘 점검")
@@ -32976,36 +32995,15 @@ def _render_today_queue_tab(mode):
     financial_revision = financial_input_signature(load_fin_scores_db())
     queue_logic_version = f"{TODAY_QUEUE_LOGIC_VERSION}:{financial_revision}"
     queue_sig = build_today_queue_signature(watch_items, mode, logic_version=queue_logic_version)
-    summary_key = "today_queue_summary_df"
-    sig_key = "today_queue_summary_sig"
-    last_key = "today_queue_summary_last_run"
     snapshot_owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
-    previous_owner = st.session_state.get("today_queue_summary_owner")
-    if previous_owner is not None and previous_owner != snapshot_owner:
-        for key in (summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig", "portfolio_today_signal_df"):
-            st.session_state.pop(key, None)
-    st.session_state["today_queue_summary_owner"] = snapshot_owner
-
-    cached_summary = st.session_state.get(summary_key)
-    if not isinstance(cached_summary, pd.DataFrame):
-        cached_summary = pd.DataFrame()
-    if cached_summary.empty:
-        last_nonempty = st.session_state.get("today_queue_summary_last_nonempty_df")
-        if isinstance(last_nonempty, pd.DataFrame) and not last_nonempty.empty:
-            cached_summary = last_nonempty.copy()
-            st.session_state[sig_key] = st.session_state.get("today_queue_summary_last_nonempty_sig", "")
-    if cached_summary.empty:
-        disk_summary, disk_sig, disk_last_run = load_today_queue_summary_snapshot(
-            owner_scope=snapshot_owner, expected_signature=queue_sig,
-        )
-        if isinstance(disk_summary, pd.DataFrame) and not disk_summary.empty:
-            cached_summary = disk_summary.copy()
-            st.session_state[summary_key] = cached_summary
-            st.session_state[sig_key] = disk_sig
-            if disk_last_run:
-                st.session_state[last_key] = disk_last_run
-            st.session_state["today_queue_summary_last_nonempty_df"] = cached_summary.copy()
-            st.session_state["today_queue_summary_last_nonempty_sig"] = disk_sig
+    from stock_lab_core.today_queue_session import (
+        SIGNATURE_KEY as sig_key, LAST_RUN_KEY as last_key,
+        clear_cached_summary, restore_cached_summary, finalize_summary,
+    )
+    cached_summary = restore_cached_summary(
+        st.session_state, snapshot_owner, queue_sig,
+        load_today_queue_summary_snapshot=load_today_queue_summary_snapshot,
+    )
 
     c1, c2, c3 = st.columns([1.4, 1.0, 3.6])
     refresh_flow_candidates = st.checkbox(
@@ -33021,8 +33019,7 @@ def _render_today_queue_tab(mode):
 
     if not cached_summary.empty:
         if c2.button("결과 지우기", key="today_queue_clear_cached", width='stretch'):
-            for key in [summary_key, sig_key, last_key, "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig", "portfolio_today_signal_df"]:
-                st.session_state.pop(key, None)
+            clear_cached_summary(st.session_state)
             clear_today_queue_summary_snapshot(owner_scope=snapshot_owner)
             st.rerun()
         last_run = st.session_state.get(last_key)
@@ -33057,66 +33054,23 @@ def _render_today_queue_tab(mode):
             pass
 
     if run_summary:
-        # Begin with user-owned inputs: failed or skipped discovery cannot carry
-        # old auto-candidates into a newly signed calculation.
-        watch_items, flow_auto_items = build_today_queue_items(raw_watch_items), tuple()
-        if refresh_flow_candidates:
-            flow_progress = st.empty()
-            try:
-                with measure("phase", "flow_refresh"), st.spinner("돈흐름 전체 후보 계산 중"):
-                    flow_snapshot_for_queue = refresh_today_market_flow_snapshot(
-                        include_theme=True, force_theme_refresh=True, progress=flow_progress.caption,
-                    )
-                with measure("phase", "flow_candidates_after_refresh"):
-                    watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
-                st.session_state["today_queue_open_flow_detail"] = True
-            except Exception as exc:
-                st.warning(f"돈흐름 전체 조회 실패. 보유·관심종목만 점검합니다: {type(exc).__name__}")
-                logging.exception("Today queue money-flow discovery failed")
-            finally:
-                flow_progress.empty()
-        else:
-            st.info("보유·관심종목 점검 중 · 돈흐름 자동발굴은 이번 계산에서 제외")
-        queue_sig = build_today_queue_signature(watch_items, mode, logic_version=queue_logic_version)
-        st.session_state["today_queue_current_input_counts"] = {
-            "registered": len(raw_watch_items), "calculated": len(watch_items),
-            "auto_flow_candidates": len(flow_auto_items), "refresh_flow_candidates": bool(refresh_flow_candidates),
-        }
-        with st.spinner("관심/보유 종목 신호를 정리하는 중입니다..."):
-            st.session_state["today_queue_current_cache_policy"] = {
-                "mode": "standard_refresh_not_fully_cold",
-                "reset": ["latest_quotes", "load_price_df", "load_price_frames_batch"],
-                "may_be_warm": ["provider_history", "analyst_6h", "financial_metadata"],
-            }
-            clear_latest_price_cache()
-            enable_force_live_price_refresh()
-            cache_clear(load_price_df)
-            cache_clear(load_price_frames_batch)
-            summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), mode, watch_items, fresh_quotes=True)
-            from stock_lab_core.performance import bind_summary_measurement
-            summary_df = bind_summary_measurement(summary_df)
-            from stock_lab_core.report_history import tag_input_origins
-            summary_df = tag_input_origins(summary_df, raw_watch_items, flow_auto_items)
-            summary_df = stamp_portfolio_signal_context(summary_df)
-        last_run_text = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
-        st.session_state[summary_key] = summary_df
-        st.session_state[sig_key] = queue_sig
-        st.session_state[last_key] = last_run_text
-        if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
-            st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
-            st.session_state["today_queue_summary_last_nonempty_sig"] = queue_sig
+        from stock_lab_core.today_queue_session import refresh_today_summary
+        summary_df, watch_items, queue_sig = refresh_today_summary(
+            st, mode, raw_watch_items, refresh_flow_candidates, queue_logic_version,
+            build_today_queue_items=build_today_queue_items,
+            refresh_today_market_flow_snapshot=refresh_today_market_flow_snapshot,
+            build_today_queue_items_with_flow_candidates=build_today_queue_items_with_flow_candidates,
+            build_today_queue_signature=build_today_queue_signature,
+            calculate_fresh_summary=_calculate_fresh_today_summary, measure=measure,
+        )
     else:
         summary_df = cached_summary
 
-    summary_df = dedupe_dashboard_summary_df(summary_df)
-    st.session_state[summary_key] = summary_df
-    if isinstance(summary_df, pd.DataFrame) and not summary_df.empty:
-        st.session_state["today_queue_summary_last_nonempty_df"] = summary_df.copy()
-        st.session_state["today_queue_summary_last_nonempty_sig"] = st.session_state.get(sig_key, "")
-        if run_summary:
-            save_today_queue_summary_snapshot(
-                summary_df, queue_sig, st.session_state.get(last_key, ""), owner_scope=snapshot_owner,
-            )
+    summary_df = finalize_summary(
+        st.session_state, summary_df, queue_sig, run_summary, snapshot_owner,
+        dedupe_dashboard_summary_df=dedupe_dashboard_summary_df,
+        save_today_queue_summary_snapshot=save_today_queue_summary_snapshot,
+    )
 
     if summary_df.empty:
         market_guard = build_today_market_guard(get_cached_today_market_flow_snapshot(), pd.DataFrame())

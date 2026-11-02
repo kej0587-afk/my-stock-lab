@@ -198,10 +198,14 @@ def test_random_values_keep_risk_sorting_and_csv_bytes_identical(sources, seed):
     assert run(sources[0], frame) == run(sources[1], frame)
 
 
-def test_calculation_gates_cache_refresh_and_owner_isolation_are_syntax_unchanged(sources):
+def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources):
     old, new = map(function, sources)
-    assert ast.dump(ast.Module(body=old.body[:detail_start(old)], type_ignores=[])) == ast.dump(
-        ast.Module(body=new.body[:detail_start(new)], type_ignores=[]))
+    # Cache/refresh now has its own retained-baseline parity suite.
+    def policy_start(fn):
+        return next(i for i, n in enumerate(fn.body) if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "portfolio_signal_attrs" for t in n.targets))
+    assert ast.dump(ast.Module(body=old.body[policy_start(old):detail_start(old)], type_ignores=[])) == ast.dump(
+        ast.Module(body=new.body[policy_start(new):detail_start(new)], type_ignores=[]))
     assert ast.dump(ast.Module(body=old.decorator_list, type_ignores=[])) == ast.dump(
         ast.Module(body=new.decorator_list, type_ignores=[]))
 
