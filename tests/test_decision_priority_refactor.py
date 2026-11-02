@@ -17,6 +17,7 @@ from stock_lab_core import decision_engine, decision_policies, decision_priority
 from tests.fixtures_price import make_price_df
 from tests.test_decision_golden_snapshot import _bench_info, _to_jsonable
 from tests.test_decision_refactor_parity import scenarios
+from tests.test_decision_followup_refactor import restore_followup_for_ast
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +92,8 @@ def test_all_moved_conditions_literals_and_order_are_exact_and_fallback_is_untou
 
     current = next(node for node in ast.parse((ROOT / "app.py").read_text(encoding="utf-8-sig")).body
                    if isinstance(node, ast.FunctionDef) and node.name == "calc_scores_and_decision")
+    # Follow-up extraction has its own exact AST and full-output parity suite.
+    current = restore_followup_for_ast(current)
     new_choice = choice(current)
     current_fallback = new_choice.orelse[1].orelse[0]
     assert ast.dump(current_fallback) == ast.dump(fallback)

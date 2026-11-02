@@ -351,6 +351,7 @@ from stock_lab_core.decision_policies import (
     select_free_mode_decision,
 )
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
+from stock_lab_core.decision_followup import select_portfolio_followup_decision
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
@@ -16779,9 +16780,6 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     _is_recovered_drawdown_zone = structure_damage_context["_is_recovered_drawdown_zone"]
     is_capitulation_selloff = structure_damage_context["is_capitulation_selloff"]
 
-    def _set_decision(label, color, code=None, reasons=()):
-        outcome = build_decision_outcome(label, color, code, reasons=reasons)
-        return outcome.label, outcome.color, outcome
 
     if is_free:
         decision_outcome = select_free_mode_decision(
@@ -16881,105 +16879,36 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         if priority_outcome is not None:
             decision_outcome = priority_outcome
             dec, col = decision_outcome.label, decision_outcome.color
-        elif is_core_dca_allowed:
-            dca_label = core_dca_context["core_dca_label"]
-            prefix = "🧱신규 코어 ETF" if short_history else "🧱코어"
-            decision_outcome = build_core_dca_outcome(prefix, core_dca_rate, dca_label)
-            dec, col = decision_outcome.label, decision_outcome.color
-        elif is_etf and short_history:
-            decision_outcome = build_limited_history_etf_outcome(
-                len(df), has_pos, my_price, cur_p, targ_w, curr_w, weight_gap,
-                rsi_now, mfi_now, pct_b_now, price_vs_avg
-            )
-            dec, col = decision_outcome.label, decision_outcome.color
-        elif mfi_now >= 85:
-            dec, col, decision_outcome = _set_decision(
-                "🚫하드차단: MFI 극단 과열", "#dc2626", "HARD_BLOCK_MFI_OVERHEAT",
-                reasons=(
-                    f"MFI {mfi_now:.0f} (기준: 85 초과) / RSI {rsi_now:.0f} / %B {pct_b_now:.2f}",
-                    "자금흐름 극단 과열 — 추격 매수 위험, 눌림 후 재진입",
-                ),
-            )
-        elif is_breakout_extreme:
-            dec, col, decision_outcome = _set_decision(
-                "⚠️과열확장: 추격금지, MA5 대기", "#d97706", "OVERHEAT_EXTENSION_WAIT_MA5",
-                reasons=(
-                    f"RSI {rsi_now:.0f} / %B {pct_b_now:.2f} / MFI {mfi_now:.0f}",
-                    "과열 확장 구간 — MA5 눌림 확인 후 추가",
-                ),
-            )
-        elif is_breakout_normal:
-            dec, col, decision_outcome = _set_decision(
-                "🔥불뿜는 대장주: MA5 눌림 진입", "#ec4899", "LEADER_MA5_PULLBACK_ENTRY",
-                reasons=(
-                    f"RSI {rsi_now:.0f} / %B {pct_b_now:.2f} / MFI {mfi_now:.0f}",
-                    "불뿜는 대장주 — MA5 눌림 진입 기회",
-                ),
-            )
-        elif (not is_etf) and pct_b_now >= 0.95:
-            dec, col, decision_outcome = _set_decision(
-                "⏳볼린저 상단 초과: 추격대기" if pct_b_now > 1 else "⏳볼린저 상단권: 추격대기", "#dc2626", "HARD_BLOCK_BOLLINGER_UPPER",
-                reasons=(
-                    f"%B {pct_b_now:.2f} (기준: 0.95 이상) / MFI {mfi_now:.0f} / RSI {rsi_now:.0f}",
-                    "볼린저 상단권: 신규 추격은 대기, 하락 예측이나 매도 확정 아님",
-                ),
-            )
-        elif is_etf_accumulation_ok and weight_gap >= 10:
-            dec, col, decision_outcome = _set_decision(
-                "✅ETF 비중부족 큼: 소액 적립 허용", "#16a34a", "ETF_LARGE_GAP_DCA_OK",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족 (큰 미달)",
-                    f"ETF 적립 허용 / MFI {mfi_now:.0f} / RSI {rsi_now:.0f} / 추세 {trend}",
-                ),
-            )
-        elif is_etf_accumulation_ok:
-            dec, col, decision_outcome = _set_decision(
-                "✅ETF 목표비중 미달: 적립식 매수 가능", "#16a34a", "ETF_DCA_OK",
-                reasons=(
-                    f"목표비중 {targ_w:.1f}% 대비 {weight_gap:.1f}%p 부족",
-                    f"ETF 적립 가능 / MFI {mfi_now:.0f} / RSI {rsi_now:.0f} / 추세 {trend}",
-                ),
-            )
-        elif is_stock_add_on_strength:
-            dec, col, decision_outcome = _set_decision(
-                "✅상승확인: 2차 정찰 추매 가능", "#16a34a", "STRENGTH_ADD_ON_OK",
-                reasons=(
-                    f"RSI {rsi_now:.0f} / %B {pct_b_now:.2f} / MFI {mfi_now:.0f}",
-                    "상승 확인 후 2차 정찰 추매 — 조건 충족",
-                ),
-            )
-        elif has_pos and my_price > 0 and cur_p > my_price * 1.02:
-            # 최종승인자가 막는 이유를 구체적으로 표시
-            
-            # 케이스 1: 비중이 꽉 참
-            decision_outcome = select_profitable_holding_decision(
-                _fmr=_fmr,
-                curr_w=curr_w,
-                fin_score=fin_score,
-                grade=grade,
-                mfi_now=mfi_now,
-                pct_b_now=pct_b_now,
-                rs_label=rs_label,
-                rs_slope_label=rs_slope_label,
-                rsi_now=rsi_now,
-                targ_w=targ_w,
-                trend=trend,
-                weight_gap=weight_gap,
-            )
-            dec, col = decision_outcome.label, decision_outcome.color
-        elif has_pos:
-            decision_outcome = select_holding_decision(
+        else:
+            decision_outcome = select_portfolio_followup_decision(
                 _fmr=_fmr,
                 adj_tech_score=adj_tech_score,
+                core_dca_context=core_dca_context,
+                core_dca_rate=core_dca_rate,
                 cur_p=cur_p,
                 curr_w=curr_w,
                 current_dd=current_dd,
                 day_ret=day_ret,
                 day_ret_label=day_ret_label,
                 fin_score=fin_score,
+                grade=grade,
+                has_pos=has_pos,
+                history_days=len(df),
+                is_52w_breakout=is_52w_breakout,
+                is_breakout_extreme=is_breakout_extreme,
+                is_breakout_normal=is_breakout_normal,
+                is_clean_leader_entry=is_clean_leader_entry,
                 is_concentrated_upper_wait=is_concentrated_upper_wait,
+                is_core_dca_allowed=is_core_dca_allowed,
                 is_core_etf=is_core_etf,
+                is_early_entry=is_early_entry,
+                is_etf=is_etf,
+                is_etf_accumulation_ok=is_etf_accumulation_ok,
                 is_holding_upper_pullback_wait=is_holding_upper_pullback_wait,
+                is_quality_recovery_candidate=is_quality_recovery_candidate,
+                is_quality_recovery_scout=is_quality_recovery_scout,
+                is_quality_recovery_watch=is_quality_recovery_watch,
+                is_stock_add_on_strength=is_stock_add_on_strength,
                 is_tdf_or_fund=is_tdf_or_fund,
                 live_ref_ret=live_ref_ret,
                 ma20_now=ma20_now,
@@ -16988,36 +16917,15 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
                 my_price=my_price,
                 pct_b_now=pct_b_now,
                 price_vs_avg=price_vs_avg,
-                rs_label=rs_label,
-                rsi_now=rsi_now,
-                targ_w=targ_w,
-                trend=trend,
-                weight_gap=weight_gap,
-            )
-            dec, col = decision_outcome.label, decision_outcome.color
-        else:
-            decision_outcome = select_new_entry_decision(
-                _fmr=_fmr,
-                adj_tech_score=adj_tech_score,
-                cur_p=cur_p,
-                current_dd=current_dd,
-                fin_score=fin_score,
-                grade=grade,
-                is_52w_breakout=is_52w_breakout,
-                is_clean_leader_entry=is_clean_leader_entry,
-                is_concentrated_upper_wait=is_concentrated_upper_wait,
-                is_early_entry=is_early_entry,
-                is_quality_recovery_candidate=is_quality_recovery_candidate,
-                is_quality_recovery_scout=is_quality_recovery_scout,
-                is_quality_recovery_watch=is_quality_recovery_watch,
-                ma20_now=ma20_now,
-                mfi_now=mfi_now,
-                pct_b_now=pct_b_now,
                 ret_1m=ret_1m,
                 ret_3m=ret_3m,
                 rs_label=rs_label,
+                rs_slope_label=rs_slope_label,
                 rsi_now=rsi_now,
+                short_history=short_history,
+                targ_w=targ_w,
                 trend=trend,
+                weight_gap=weight_gap,
             )
             dec, col = decision_outcome.label, decision_outcome.color
 
@@ -19480,7 +19388,7 @@ def get_precision_build_info():
     # Sync metadata names only; preserve the hashes captured at real import time.
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
                         if name.startswith("stock_lab_core.account_performance") or name in {
-                            "stock_lab_core.decision_priority", "stock_lab_core.leveraged_watch",
+                            "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.leveraged_watch",
                             "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
