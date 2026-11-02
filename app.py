@@ -308,7 +308,6 @@ from stock_lab_core.decision_engine import (
     apply_safety_state_override as _apply_safety_state_override,
     apply_live_price_to_ohlcv,
     build_breakdown_risk_flags,
-    build_entry_signal_context,
     build_day_return_context,
     build_core_dca_outcome,
     build_decision_result,
@@ -353,6 +352,7 @@ from stock_lab_core.decision_policies import (
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
 from stock_lab_core.decision_followup import select_portfolio_followup_decision
 from stock_lab_core.decision_inputs import prepare_decision_price_inputs, prepare_decision_technical_inputs
+from stock_lab_core.decision_signals import build_entry_signal_context
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
@@ -19377,7 +19377,7 @@ def get_precision_build_info():
     # Sync metadata names only; preserve the hashes captured at real import time.
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
                         if name.startswith("stock_lab_core.account_performance") or name in {
-                            "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.decision_inputs", "stock_lab_core.leveraged_watch",
+                            "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.decision_inputs", "stock_lab_core.decision_signals", "stock_lab_core.leveraged_watch",
                             "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
