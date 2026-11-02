@@ -103,6 +103,183 @@ def _flow_evidence(context, flow_rows):
     return detail + " · 가격·거래량 기반, 실제 자금 유출입액 아님", "·".join(conditions)
 
 
+def _leader_news(leaders, change, fact, news, now):
+    """One attributed, dated headline about a leader; never an index cause."""
+    from stock_lab_core.report_evidence import curate_news, safe_link
+
+    patterns = []
+    for ticker, name in leaders:
+        patterns.append(r"조선(?:주|업|사|소)|한국조선해양|현대중공업|삼성중공업|한화오션" if ticker == "494670.KS"
+                        else re.escape(re.sub(r"^한국\s*", "", name)))
+    direction = (r"강세|급등|상승|반등|수주|호실적|↑" if change > 0 else
+                 r"약세|급락|하락|부진|적자|계약\s*취소|↓" if change < 0 else r"보합")
+    for row in sorted(records(news), key=lambda r: stamp(first(r, "published_at", "published")) or now, reverse=True):
+        at = stamp(first(row, "published_at", "published"))
+        title = text(row.get("title"))
+        if (row.get("market") != "KR" or row.get("session_date") != fact.get("date")
+                or not at or at > now or not _news_matches_date(row, fact)
+                or row.get("news_bucket") not in {"session_news", "current_session_news"}
+                or (fact["live"] and row.get("news_bucket") != "current_session_news")
+                or is_preopen_outlook(row) or is_preopen_price_recap(row)
+                or not safe_link(first(row, "link", "url")) or len(title) > 140):
+            continue
+        # A broad index rise elsewhere in the headline is not sector evidence.
+        if not any(re.search(f"(?:{pattern})[^,;…。.！!?]{{0,35}}(?:{direction})", title, re.I) for pattern in patterns):
+            continue
+        if not curate_news([row], now=now, limit=1):
+            continue
+        return "관련 보도(제목 확인·기사 주장): " + citation(row)
+    return ""
+
+
+def korean_sector_reading(context, fact, states, now, news=(), *, concise=False):
+    """Strongest daily return in the supplied sector ETF subset, never a census."""
+    from stock_lab_core.report_intraday import valid_live_observation
+
+    day = fact.get("date")
+    if not day:
+        return ""
+    selected = {}
+    for row in records(context.get("closed_flow_rows")) + records(context.get("sector_rows")):
+        ticker = text(first(row, "Ticker", "티커"))
+        name = text(row.get("섹터"))
+        if (not ticker.endswith((".KS", ".KQ")) or ticker in {"069500.KS", "229200.KS"}
+                or "미국" in name or ticker in selected or not name or name == ticker
+                or "섹터" not in text(row.get("구분")) or row.get("stale") or row.get("is_mock")):
+            continue
+        if fact["live"]:
+            obs = context.get("intraday_prices", {}).get(ticker, {})
+            if obs.get("date") != day or not valid_live_observation(
+                    obs, "KR", max(now, stamp(context.get("quote_checked_at")) or now), states=states):
+                continue
+            value = number(obs.get("return"))
+        else:
+            if text(first(row, "기준일", "date")) != day or row.get("수치종류", "확정 종가") != "확정 종가":
+                continue
+            value = number(first(row, "1일수익률", "1D"))
+        if value is not None:
+            selected[ticker] = (value, name)
+    if not selected:
+        return ""
+    high = max(value for value, _ in selected.values())
+    leaders = sorted((ticker, name) for ticker, (value, name) in selected.items() if value == high)
+    names = " / ".join(f"{name}({ticker})" for ticker, name in leaders)
+    kind = "장중·미확정" if fact["live"] else "확정 종가"
+    ranking = "관측 표본" if len(selected) == 1 else "관측 표본 내 당일 수익률 공동 상위" if len(leaders) > 1 else "관측 표본 내 당일 수익률 최상위"
+    if concise:
+        names = "·".join(name for _, name in leaders[:2]) + (f" 외 {len(leaders) - 2}개" if len(leaders) > 2 else "")
+        reading = f"관측 업종 ETF {len(selected)}개 중 상대 상위는 {names}({_pct(high)}, {kind})" if len(selected) > 1 else f"관측 업종 ETF는 {names}({_pct(high)}, {kind}) 1개"
+    else:
+        reading = (f"한국 업종 대용 ETF {len(selected)}개 {ranking}: {names} {_pct(high)}({day} {kind}). "
+                   "관측 범위의 가격 비교이며 시장 전체 업종 순위·지수 상승 기여도·순매수액은 아닙니다")
+    source = _leader_news(leaders, high, fact, news, now)
+    return reading + ("; " + source if source else "")
+
+
+def korean_investor_reading(context, fact, *, concise=False, programs_connected=False):
+    from stock_lab_core.public_market_data import validated_investor_flows
+    from stock_lab_core.report_evidence import safe_link
+
+    rows = validated_investor_flows(context.get("public_market_evidence"), session_date=fact.get("date"),
+                                    checked_at=context.get("market_evidence_checked_at"))
+    if concise:
+        readings = {}
+        for market in ("KOSPI", "KOSDAQ"):
+            local = [row for row in rows if row["market"] == market]
+            if not local:
+                continue
+            groups = [(label, [row["label"] for row in local if compare(row["value"])])
+                      for label, compare in (("순매수", lambda v: v > 0), ("순매도", lambda v: v < 0), ("순매수 0", lambda v: v == 0))]
+            readings[market] = "·".join("·".join(names) + " " + label for label, names in groups if names)
+            if groups[0][1] and groups[1][1]:
+                readings[market] += "로 엇갈림"
+        if len(readings) == 2 and readings["KOSPI"] == readings["KOSDAQ"]:
+            return "잠정 수급은 KOSPI·KOSDAQ 모두 " + readings["KOSPI"]
+        return "잠정 수급은 " + "; ".join(market + " " + value for market, value in readings.items()) if readings else ""
+    parts = []
+    for market in ("KOSPI", "KOSDAQ"):
+        local = [row for row in rows if row["market"] == market]
+        if not local:
+            continue
+        amounts = "·".join(f"{row['label']} 순매수 {row['value']:+,.2f}억원" for row in local)
+        parts.append(f"{market} {amounts} ({fact['date']}, 잠정·정정 가능; 조회 {local[0]['fetched_at']})"
+                     f" [공개 수급 출처]({safe_link(local[0]['source_url'])})")
+    if not parts:
+        return ""
+    return (" / ".join(parts) + ". KRX 시장 전체 투자자별 수급(NXT 제외)이며 업종 매수액·상승 원인·매수 동기는 확인되지 않습니다. "
+            "프로그램은 투자자 구분이 아닌 거래 방식으로, "
+            + ("프로그램 수치는 별도 근거 행에 표시합니다" if programs_connected else "별도 프로그램 수치는 미연결입니다"))
+
+
+def korean_program_reading(context, fact):
+    from stock_lab_core.public_market_data import validated_program_flows
+    from stock_lab_core.report_evidence import safe_link
+
+    rows = validated_program_flows(context.get("public_market_evidence"), session_date=fact.get("date"),
+                                   checked_at=context.get("market_evidence_checked_at"))
+    return " / ".join(
+        f"{row['market']} 차익 {row['arbitrage']:+,.2f}억원 · 비차익 {row['non_arbitrage']:+,.2f}억원 · 합계 {row['value']:+,.2f}억원 "
+        f"({row['asof']}; 조회 {row['fetched_at']}) · {row['limitation']} "
+        f"[프로그램 출처]({safe_link(row['source_url'])})" for row in rows)
+
+
+def korean_flow_tables(context, fact):
+    """Compact, independently validated identity and method tables for the report."""
+    from stock_lab_core.public_market_data import validated_investor_flows, validated_program_flows
+    from stock_lab_core.report_evidence import safe_link
+
+    options = dict(session_date=fact.get("date"), checked_at=context.get("market_evidence_checked_at"))
+    evidence = context.get("public_market_evidence")
+    investors = validated_investor_flows(evidence, **options)
+    programs = validated_program_flows(evidence, **options)
+    if not investors and not programs:
+        return []
+    lines = []
+    if investors:
+        lines += ["", "**한국 투자자별 순매수 · 억원(잠정)**", "시장 | 개인 | 외국인 | 기관 | 기준일", "--- | --- | --- | --- | ---"]
+        for market in ("KOSPI", "KOSDAQ"):
+            local = {row["identity"]: row for row in investors if row["market"] == market}
+            if local:
+                amounts = [f"{local[key]['value']:+,.2f}" if key in local else "—" for key in ("individual", "foreign", "institution")]
+                lines.append(" | ".join(_cell(value) for value in (market, *amounts, fact["date"])))
+    if programs:
+        lines += ["", "**한국 프로그램 순매수 · 억원(잠정)**", "시장 | 차익 | 비차익 | 합계 | 기준일", "--- | --- | --- | --- | ---"]
+        for row in programs:
+            lines.append(" | ".join(_cell(value) for value in (row["market"],
+                *(f"{row[key]:+,.2f}" for key in ("arbitrage", "non_arbitrage", "value")), row["asof"])))
+    else:
+        lines += ["", "프로그램 자료 미연결: 같은 기준일의 검증 통과 자료 없음."]
+    rows = investors + programs
+    sources = list(dict.fromkeys(safe_link(row["source_url"]) for row in rows))
+    from stock_lab_core.report_presentation import kst_time
+    fetched = list(dict.fromkeys(kst_time(row["fetched_at"]) for row in rows))
+    lines += ["", "출처: " + " / ".join(f"[Npay 증권 공개 데이터]({url})" for url in sources)
+              + " · 조회 " + " / ".join(fetched),
+              "KRX 시장 전체·NXT 제외·잠정/정정 가능. —는 미확인으로 0과 다릅니다. 업종 매수액·가격 원인·매수 동기를 뜻하지 않습니다."]
+    if programs:
+        lines.append("프로그램은 투자자 신분이 아닌 거래 방식으로, 투자자별 순매수와 합산하거나 기관 매수액으로 해석하지 않습니다. "
+                     "프로그램 자체 기준시각이 없어 같은 응답의 투자자 수급 기준일을 함께 표시합니다.")
+    return lines
+
+
+def _korean_positive_drivers(title):
+    drivers = []
+    if re.search(r"반도체.{0,15}(?:반등|강세|급등|상승)", title):
+        drivers.append("반도체주 반등")
+    if re.search(r"삼전닉스.{0,18}(?:쌍끌이|↑|급등|반등|강세|상승)", title):
+        drivers.append("삼성전자·SK하이닉스 강세")
+    if re.search(r"조선(?:주|업종|업|섹터)?(?:가|는|이|은)?\s*(?:동반\s*)?(?:반등|강세|급등|상승|↑)", title):
+        drivers.append("조선주 강세")
+    # Stop at another investor or program method; do not give their buys to
+    # the preceding investor (e.g. '외국인 매도, 기관 순매수').
+    for match in re.finditer(r"(외국인|기관|개인)((?:(?!외국인|기관|개인|프로그램|[,;…]).){0,24})", title):
+        identity, clause = match.groups()
+        if (re.search(r"순매수|매수\s*전환|매수세", clause)
+                and not re.search(r"순매도|매도세|실패|아니|않|부인", clause)):
+            drivers.append(identity + " 매수")
+    return list(dict.fromkeys(drivers))
+
+
 def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     """Market moves -> reported background -> macro/medium-term interpretation."""
     facts = [_market_fact(context, market, states, now) for market in ("KR", "US")]
@@ -143,13 +320,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                         and re.search(r"(?:국제)?유가[·ㆍ/\s]+금리\s*(?:동반\s*)?안정", title)):
                     topic = "유가·금리 안정"
                 if fact["market"] == "KR" and re.search(r"코스피|코스닥", title):
-                    drivers = []
-                    if re.search(r"반도체.{0,15}(?:반등|강세|급등|상승)", title):
-                        drivers.append("반도체주 반등")
-                    if re.search(r"삼전닉스.{0,18}(?:쌍끌이|↑|급등|반등|강세|상승)", title):
-                        drivers.append("삼성전자·SK하이닉스 강세")
-                    if re.search(r"외국인.{0,12}(?:순매수|매수 전환|매수세)", title):
-                        drivers.append("외국인 매수")
+                    drivers = _korean_positive_drivers(title)
                     if drivers:
                         topic = "·".join(drivers)
                         korean_rebound = True
@@ -190,6 +361,12 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     if flow_condition:
         inference.append(flow_condition)
     breadth = broad_market_reading(context, states, now)
+    kr_sector = korean_sector_reading(context, facts[0], states, now, news)
+    kr_programs = korean_program_reading(context, facts[0])
+    kr_investors = korean_investor_reading(context, facts[0], programs_connected=bool(kr_programs))
+    kr_observations = ". ".join(part for part in (
+        korean_sector_reading(context, facts[0], states, now, news, concise=True),
+        korean_investor_reading(context, facts[0], concise=True)) if part)
     sentences = []
     for fact in facts:
         topics = market_claims.get(fact["market"], [])
@@ -206,6 +383,8 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             recent = number(row.get("return_5d"))
             if recent is not None and recent < 0:
                 narrative += f". 다만 최근 5거래일은 {_pct(recent)}로, 오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다"
+        if fact["market"] == "KR" and kr_observations:
+            narrative += ". " + kr_observations
         if fact["market"] in body_sources:
             sentences.append(narrative + ". " + body_context_sentence(body_sources[fact["market"]])
                              + " (기사 본문 확인·가격 기여도 미확정) " + " ".join(sources[:1]))
@@ -232,7 +411,14 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     sector_text = broad_sector_reading(context)
     if sector_text:
         evidence.append(("업종 분포", sector_text))
-    overview = facts[0]["narrative"] + ". " + (breadth or facts[1]["narrative"])
+    if kr_sector:
+        evidence.append(("한국 관측 업종", kr_sector))
+    if kr_investors:
+        evidence.append(("한국 투자자별 수급", korean_investor_reading(context, facts[0], concise=True)
+                         + " · 금액·출처는 투자자별 순매수 표 참조"))
+    if kr_programs:
+        evidence.append(("한국 프로그램 매매", "검증된 차익·비차익·합계는 프로그램 순매수 표 참조 · 투자자별 수급과 별도"))
+    overview = facts[0]["narrative"] + ". " + (kr_observations + ". " if kr_observations else "") + (breadth or facts[1]["narrative"])
     participation = market_participation_reading(context)
     if participation:
         overview += " " + participation

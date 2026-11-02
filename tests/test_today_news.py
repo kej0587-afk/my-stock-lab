@@ -201,7 +201,8 @@ def test_session_fetch_bounds_queries_and_surfaces_errors(monkeypatch):
     sessions = dict(SESSIONS, KR={"date": "2026-10-16", "previous_date": "2026-10-15"})
     result = today_news.fetch_session_market_news(sessions, now=NEWS_NOW, categories=categories)
     assert 0 < len(calls) <= 16
-    assert any("수집 한도" in r for r in result["missing"])
+    assert not any("앞의 3개만" in r for r in result["missing"])
+    assert set(result["news_retrieval"]["queried_categories"]) == set(result["news_retrieval"]["requested_categories"])
     assert any("RSS 수집 실패" in r for r in result["missing"])
     assert not result["session_news"] and not result["next_session_news"]
 

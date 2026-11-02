@@ -35,7 +35,7 @@ def apply_verified_release_dates(rows, now):
 @timed_call("external_data", "report_context")
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
                            economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False,
-                           quote_data=None):
+                           quote_data=None, news_categories=(), news_per_category=5):
     from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
     from stock_lab_core.release_calendar import load_release_calendar
@@ -257,7 +257,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             result.update(fetch_session_market_news(news_sessions, now=now, current_sessions=current_news_sessions,
                                                    sector_rows=sectors + closed_rows, held_exposures=held_exposures,
                                                    watched_exposures=records(summary_rows),
-                                                   per_category=5, use_cache=True, include_article_bodies=True))
+                                                   categories=news_categories, per_category=news_per_category,
+                                                   use_cache=True, include_article_bodies=True))
     result["price_basis_notes"] = close_basis_notes
     result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
     return result

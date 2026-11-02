@@ -11,7 +11,7 @@ from stock_lab_core.report_reference import REFERENCE_SYMBOLS, macro_reference
 from stock_lab_core.result_cache import cache_result
 
 MACRO_SYMBOLS = {"10Y 금리": "^TNX", "유가": "CL=F", "환율": "USDKRW=X", "VIX": "^VIX", "MOVE": "^MOVE"}
-SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지", "139250.KS": "에너지", "396500.KS": "한국 반도체"}
+SECTORS = {"XLK": "기술", "XLC": "통신", "XLE": "에너지", "XLU": "유틸리티", "SOXX": "반도체", "DRAM": "메모리", "IGV": "소프트웨어", "305540.KS": "2차전지", "139250.KS": "에너지", "396500.KS": "한국 반도체", "494670.KS": "조선"}
 
 
 def align_us_report_frames(frames, tickers, now, *, reload_batch=None):

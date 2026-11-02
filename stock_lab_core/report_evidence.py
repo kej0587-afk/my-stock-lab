@@ -17,14 +17,14 @@ SOURCE_NAMES = (
     "매일경제", "서울경제", "서울파이낸스", "조선비즈", "조선일보", "한겨레",
     "경향신문", "머니투데이", "아시아경제", "이데일리", "뉴시스", "cnbc", "bloomberg",
     "financial times", "wall street journal", "yahoo finance", "bls", "federal reserve",
-    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경", "axios",
+    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경", "axios", "뉴스1",
 )
 SOURCE_DOMAINS = (
     "reuters.com", "apnews.com", "yna.co.kr", "yonhapnewstv.co.kr", "einfomax.co.kr",
     "hankyung.com", "mk.co.kr", "sedaily.com", "chosun.com", "edaily.co.kr",
     "mt.co.kr", "asiae.co.kr", "newsis.com", "cnbc.com", "bloomberg.com", "ft.com",
     "wsj.com", "finance.yahoo.com", "bls.gov", "federalreserve.gov", "bok.or.kr",
-    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com",
+    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com", "news1.kr",
     "aws.amazon.com", "pytorch.org", "nvidianews.nvidia.com", "investor.atmeta.com", "ir.tesla.com", "investors.coreweave.com",
 )
 EVENT_CLUSTERS = (
@@ -33,7 +33,8 @@ EVENT_CLUSTERS = (
     ("fomc", ("fomc", "fed rate decision", "연준 금리", "기준금리 동결")),
 )
 MARKET_TERMS = re.compile(
-    r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|엔비디아|아마존|마이크론|코어위브|트레이니엄|파이토치|수주|가이던스|"
+    r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|엔비디아|아마존|마이크론|코어위브|트레이니엄|파이토치|수주|가이던스|조선주|조선업|해운|건설|인프라|유동성|제약|백신|임상|"
+    r"\b(?:shipbuild\w*|shipping|infrastructure|construction|liquidity|biotech|vaccine|clinical trial|PBOC|refunding)\b|"
     r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire|amazon|aws|trainium|pytorch|micron|guidance)\b",
     re.IGNORECASE,
 )
@@ -101,6 +102,10 @@ def news_category(title, fallback="시장"):
         return "매크로"
     if re.search(r"\boil\b|\bwti\b|brent|원유|유가|opec", lower):
         return "에너지"
+    from stock_lab_core.report_news_selection import matching_categories
+    matched = matching_categories(title) if fallback == "시장" else []
+    if matched:
+        return matched[0]
     return fallback
 
 
@@ -583,7 +588,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     latest_metrics = cumulative_account_metrics(held, context, states, max(now, stamp(context.get("quote_checked_at")) or now))
     current_kr = live.get("^KS11", {})
     kr_close = observations.get("^KS11", {})
-    from stock_lab_core.report_market_summary import market_summary, evidence_table
+    from stock_lab_core.report_market_summary import market_summary, evidence_table, korean_flow_tables
     synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
     from stock_lab_core.report_catalysts import post_close_brief
     post_close = post_close_brief(context, news, summary_rows, now)
@@ -603,11 +608,17 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     brief = build_news_brief(context, news, summary_rows, now,
                             exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
                                           + participant_news_rows(news, kr)])
+    from stock_lab_core.report_news_selection import selected_category_lines
     lines.extend(["", "## 오늘의 핵심 재료",
-                  *post_close["lines"], "", *brief["lines"], "", "## 오늘의 시장 스토리"])
+                  *post_close["lines"], "", *brief["lines"],
+                  *selected_category_lines(context, now), "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
     lines.extend(earnings_story_lines(earnings_pipeline))
-    lines.extend(["", *evidence_table(synthesis), ""])
+    # Monetary flows are columns, not two markets' figures in a single long cell.
+    flow_tables = korean_flow_tables(context, {"date": states["KR"].get("active_date") if states["KR"]["phase"] == "intraday" else kr})
+    compact_evidence = dict(synthesis, evidence=[row for row in synthesis["evidence"]
+        if not flow_tables or row[0] not in {"한국 투자자별 수급", "한국 프로그램 거래"}])
+    lines.extend(["", *evidence_table(compact_evidence), "", *flow_tables, ""])
     lines.extend(["", "### 중기·최근 거래일·현재 맥락", headline + ".", ""])
     if outlook_count:
         lines.append(f"장전전망 {outlook_count}건은 마감 결과 설명에서 제외했습니다(장전전망은 실제 결과와 다름).")

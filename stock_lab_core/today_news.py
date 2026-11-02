@@ -20,6 +20,7 @@ register_loaded_source(__name__, __file__)
 
 
 TODAY_MARKET_STORY_RSS_PLAN = [
+    {"category": "조선", "query": '조선주 OR 조선업 OR 한화오션 OR 현대중공업 OR shipbuilding'},
     {
         "category": "국채/유동성",
         "query": '"Treasury buyback" OR "Treasury repurchase" OR refunding OR "long-dated Treasury" OR "Treasury liquidity"',
@@ -42,7 +43,7 @@ TODAY_MARKET_STORY_RSS_PLAN = [
     },
     {
         "category": "매크로/중국",
-        "query": 'China industrial production retail sales unemployment fixed asset investment',
+        "query": '중국 경제 OR China economy OR PBOC OR China stimulus',
     },
     {
         "category": "외환/금리",
@@ -78,7 +79,7 @@ TODAY_MARKET_STORY_RSS_PLAN = [
     },
     {
         "category": "건설·인프라",
-        "query": 'Hyundai Rotem OR railway contract OR infrastructure order OR Morocco rail maintenance',
+        "query": '건설 수주 OR 인프라 투자 OR construction OR infrastructure OR railway contract',
     },
 ]
 
@@ -487,6 +488,8 @@ def _resolve_query_news_market(raw, windows):
         row.update(market=markets[0], market_basis="explicit_headline_market")
     elif len(markets) > 1:
         row.update(market="", market_basis="ambiguous_headline_markets")
+    elif re.search(r"한화오션|HD현대중공업|한국조선해양|삼성중공업|삼성重|현대미포", title):
+        row.update(market="KR", market_basis="explicit_kr_issuer")
     elif row.get("query_kind") == "issuer_catalyst":
         from stock_lab_core.catalyst_news import matches_catalyst_query
         if matches_catalyst_query(title, row):
@@ -551,7 +554,7 @@ def partition_session_market_news(rows, sessions, *, now=None, current_sessions=
         raw = _resolve_query_news_market(raw, by_market)
         market = str(raw.get("market") or raw.get("region") or "").strip().upper()
         region = str(raw.get("region") or "").strip().upper()
-        if market in {"JP", "CN", "ASIA", "EU"}:
+        if market in {"JP", "CN", "ASIA", "EU", "GLOBAL"}:
             published = _news_timestamp(raw.get("published_at") or raw.get("published"))
             if published and now - timedelta(days=7) <= published <= now:
                 result["other_market_news"].append(dict(raw, market=market, published_at=published.isoformat(),
@@ -673,8 +676,10 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                     topics[market].append(topic)
     requested = tuple(dict.fromkeys(categories or ()))
     available = {plan["category"]: plan["query"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
-    selected = [(category, available[category]) for category in requested if category in available][:3]
-    plans = [("마감 시황", None)] + (selected if requested else [("시장", "")])
+    selected = [(category, available[category]) for category in requested if category in available]
+    # Explicit topics get reserved, shared queries below. Do not append them
+    # behind every market's exposures where the global budget silently drops them.
+    plans = [("마감 시황", None)] + ([] if requested else [("시장", "")])
     groups = []
     for window in windows:
         specs = []
@@ -717,7 +722,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                                  else "미국증시 마감" if market == "US" else "코스피 마감"),
                                 ("시장 공통 배경", common),
                                 *[("섹터:" + ",".join(pack), " OR ".join("(" + sector_news_query(topic, market) + ")" for topic in pack))
-                                  for pack in packs], *company_plans, *selected]
+                                  for pack in packs], *company_plans]
             for category, query in market_plans:
                 terms = market_spec["wrap"] if query is None else query
                 # Google date predicates have calendar precision. Pad boundaries
@@ -743,7 +748,27 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
     interleaved = [group[index] for index in range(max((len(group) for group in groups), default=0))
                    for group in groups if index < len(group)]
     catalysts = exposure_catalyst_specs(exposures, now=now) if any(w["market"] == "US" for w in windows) else []
-    ordered = interleaved[:len(groups)] + catalysts + interleaved[len(groups):]
+    topic_specs = []
+    if windows:
+        lower = max(min(datetime.fromisoformat(w["start"]) for w in windows), now - timedelta(days=7))
+        after = (lower.date() - timedelta(days=1)).isoformat()
+        before = (now.date() + timedelta(days=1)).isoformat()
+        # Prefer independent topics so prolific crypto/AI headlines cannot fill
+        # the RSS page ahead of banking/biotech. Pack only when the budget needs it.
+        slots = max(1, _SESSION_QUERY_LIMIT - len(groups) - min(len(catalysts), 2))
+        pack_size = max(1, (len(selected) + slots - 1) // slots)
+        for index in range(0, len(selected), pack_size):
+            pack = selected[index:index + pack_size]
+            from stock_lab_core.report_news_selection import SEARCH_TERMS
+            # Long mixed-language expressions containing bare multiword phrases
+            # were effectively over-constrained. Use explicit, short OR terms.
+            query = " OR ".join('"' + term + '"' for category, _ in pack for term in SEARCH_TERMS[category])
+            query += f" after:{after} before:{before}"
+            topic_specs.append({"market": "GLOBAL", "category": "선택 분야",
+                               "selected_categories": [category for category, _ in pack],
+                               "url": "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query}) + "&hl=ko&gl=KR&ceid=KR:ko",
+                               "query_topics": []})
+    ordered = interleaved[:len(groups)] + topic_specs + catalysts + interleaved[len(groups):]
     unique = {}
     for spec in ordered:
         unique.setdefault(spec["url"], spec)
@@ -774,6 +799,12 @@ def _fetch_session_rss(spec):
                 continue
             matched_topics = set(spec.get("query_topics") or ()) & set(sector_news_topics("", sector_name=title))
             category = "섹터:" + ",".join(sorted(matched_topics)) if matched_topics else spec["category"]
+            if spec.get("selected_categories"):
+                from stock_lab_core.report_news_selection import matching_categories
+                matches = matching_categories(subject, spec["selected_categories"])
+                if not matches:
+                    continue
+                category = matches[0]
             rows.append({
                 "title": title,
                 "link": str(item.findtext("link", "") or "").strip(),
@@ -800,17 +831,19 @@ def _cached_session_rss(spec):
 
 def _retrieve_session_rss(specs, *, use_cache):
     rows, failures, complete = [], Counter(), bool(specs)
+    failed_categories = set()
     def retrieve(spec):
         # Issuer lookups are shared with precision news even in uncached reports.
         loader = _cached_session_rss if use_cache or spec.get("query_kind") == "issuer_catalyst" else _fetch_session_rss
         return loader(spec)
     with ThreadPoolExecutor(max_workers=4) as executor:
-        for candidates, error in executor.map(retrieve, specs):
+        for spec, (candidates, error) in zip(specs, executor.map(retrieve, specs)):
             rows.extend(candidates)
             complete = complete and bool(candidates) and not error
             if error:
                 failures[error] += 1
-    return {"rows": rows, "failures": failures, "complete": bool(complete)}
+                failed_categories.update(spec.get("selected_categories", ()))
+    return {"rows": rows, "failures": failures, "complete": bool(complete), "failed_categories": sorted(failed_categories)}
 
 
 @cache_result(ttl=60, failure_ttl=0, is_success=lambda result: result["complete"])
@@ -866,15 +899,23 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         per_category = max(1, min(int(per_category), 5))
     except (TypeError, ValueError):
         per_category = 3
-    retrieved = (_cached_session_rss_batch(specs, _session_retrieval_key(query_windows),
-                                          int(now.timestamp()) // 60)
-                 if use_cache else _retrieve_session_rss(specs, use_cache=False))
-    rows, failures = retrieved["rows"], retrieved["failures"]
+    def retrieve():
+        return (_cached_session_rss_batch(specs, _session_retrieval_key(query_windows), int(now.timestamp()) // 60)
+                if use_cache else _retrieve_session_rss(specs, use_cache=False))
+    publisher_rows = []
     if include_article_bodies:
         from stock_lab_core.article_context import publisher_news
         # Direct publisher links permit public-body verification without decoding
         # a Google redirect or trying to access subscription-only articles.
-        rows = publisher_news(sessions, now) + rows
+        # Independent RSS and publisher feeds need not wait for each other.
+        # Existing per-source caches, 4 RSS/2 publisher workers and timeouts stay.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            pending = executor.submit(publisher_news, sessions, now)
+            retrieved = retrieve()
+            publisher_rows = pending.result()
+    else:
+        retrieved = retrieve()
+    rows, failures = publisher_rows + retrieved["rows"], retrieved["failures"]
     by_market = {window["market"]: window for window in windows}
     rows = [_resolve_query_news_market(row, by_market) for row in rows]
     from stock_lab_core.catalyst_news import constituent_links, prioritize_issuer_news, _tickers
@@ -886,13 +927,16 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     origins = {}
     for row in rows:
         for key in _session_article_keys(row):
-            if key:
+            if key and row.get("market") != "GLOBAL":
                 origins.setdefault(key, set()).add(row["market"])
     for row in rows:
         if any(len(origins.get(key, ())) > 1 for key in _session_article_keys(row)):
             row.pop("market", None)
     result = partition_session_market_news(rows, sessions, now=now, current_sessions=current_sessions)
     query_issuers = {issuer for spec in specs for issuer in spec.get("query_issuers", ())}
+    # A display count is not a retrieval cap: a banking article may also be the
+    # only infrastructure evidence. Keep the bounded pool for multi-topic reading.
+    retrieval_per_category = max(5, per_category) if categories else per_category
     for bucket in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
         accepted, seen, seen_links, seen_titles, counts = [], set(), set(), set(), Counter()
         recap_keys = set()
@@ -916,7 +960,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
             title_key = (clean["market"], article_title)
             recap = _close_recap_key(clean, clean["title"], _news_timestamp(clean["published"]))
             repeated_recap = recap is not None and recap in recap_keys
-            if event in seen or link_key in seen_links or title_key in seen_titles or (counts[category] >= per_category and not repeated_recap) or len(accepted) >= _SESSION_ROW_LIMIT:
+            if event in seen or link_key in seen_links or title_key in seen_titles or (counts[category] >= retrieval_per_category and not repeated_recap) or len(accepted) >= _SESSION_ROW_LIMIT:
                 continue
             seen.add(event)
             seen_links.add(link_key)
@@ -942,8 +986,12 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     available = {plan["category"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     if any(category not in available for category in categories or ()):
         result["missing"].append("알 수 없는 뉴스 카테고리 제외")
-    if len(set(categories or ()) & available) > 3:
-        result["missing"].append("수집 한도로 요청 카테고리 중 앞의 3개만 조회")
+    result["news_retrieval"].update(
+        requested_categories=list(dict.fromkeys(c for c in categories or () if c in available)),
+        per_category=per_category,
+        queried_categories=list(dict.fromkeys(c for spec in specs for c in spec.get("selected_categories", ()))),
+        failed_categories=retrieved.get("failed_categories", []),
+    )
     return result
 
 

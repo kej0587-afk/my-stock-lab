@@ -217,7 +217,7 @@ def test_fetch_accepts_active_flag_and_curates_live_and_closed_rows(monkeypatch)
     monkeypatch.setattr(today_news, "_fetch_session_rss", fetch)
     result = today_news.fetch_session_market_news(dict(CLOSED_KR, US=dict(LIVE_US["US"], is_active=True)),
                                                  now=LIVE_NOW, categories=("반도체·AI",))
-    assert 0 < len(calls) <= 16 and {spec["market"] for spec in calls} == {"US", "KR"}
+    assert 0 < len(calls) <= 16 and {spec["market"] for spec in calls} == {"US", "KR", "GLOBAL"}
     assert len(result["current_session_news"]) == len(result["session_news"]) == 1
     assert result["current_session_news"][0]["is_closed"] is False
     assert result["session_news"][0]["kr_news_timing"] == "장중 보도"
@@ -230,6 +230,7 @@ def test_query_budget_covers_live_and_closed_windows_in_both_markets():
     live, _ = today_news._current_news_windows(LIVE_US, now)
     categories = [plan["category"] for plan in today_news.TODAY_MARKET_STORY_RSS_PLAN][:3]
     specs = today_news._session_query_specs(live + closed, categories, now)
-    assert len(specs) == 16
+    assert 0 < len(specs) <= 16
     assert [spec["market"] for spec in specs[:3]] == ["US", "KR", "US"]
+    assert {c for spec in specs for c in spec.get("selected_categories", [])} == set(categories)
 

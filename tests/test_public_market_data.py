@@ -291,3 +291,76 @@ def test_future_or_old_collection_is_not_rendered(indicators, turnover, deposit,
 def test_invalid_request_date_does_not_start_network():
     with pytest.raises(ValueError, match="ISO date"):
         public.read_public_market_evidence("bad-date")
+
+
+def program_payload(arb="-18655058551", nonarb="95449946652", total="76794888101"):
+    return dict(arbitrageNetBuyAmount=arb, nonArbitrageNetBuyAmount=nonarb, totalNetBuyAmount=total)
+
+
+def test_optional_program_uses_same_get_and_keeps_required_success(indicators, turnover, deposit):
+    baseline, _, _ = collect(indicators, turnover, deposit)
+    assert "programs" not in baseline
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = program_payload()
+    indicators["domesticIndex"]["KOSDAQ"]["programTrend"] = program_payload("1699032960", "-43333917180", "-41634884220")
+    before = deepcopy(indicators)
+    data, calls, responses = collect(indicators, turnover, deposit)
+    rows = public.validated_program_flows(data, session_date=AS_OF.isoformat(), checked_at=NOW.isoformat())
+    assert data["ok"] and len(calls) == 3 and all(r.closed for r in responses)
+    assert data["flows"] == baseline["flows"] and indicators == before
+    assert [r["value"] for r in rows] == [767.94888101, -416.34884220]
+    assert rows[0]["arbitrage"] == -186.55058551 and rows[0]["non_arbitrage"] == 954.49946652
+    assert rows[0]["raw_value"] == rows[0]["raw_arbitrage"] + rows[0]["raw_non_arbitrage"]
+    assert rows[0]["http_status"] == 200 and rows[0]["source_url"] == public.FLOW_SOURCE
+    assert rows[0]["date_basis"] == "investorTrendBaseDate"
+    assert "프로그램 자체 기준시각 미제공" in rows[0]["limitation"]
+
+
+@pytest.mark.parametrize("field", ["arbitrageNetBuyAmount", "nonArbitrageNetBuyAmount", "totalNetBuyAmount"])
+@pytest.mark.parametrize("value", [None, True, 1.5, "1e8", "1,000", "", "NaN"])
+def test_invalid_optional_program_does_not_poison_investors(indicators, turnover, deposit, field, value):
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = dict(program_payload(), **{field: value})
+    data, calls, _ = collect(indicators, turnover, deposit)
+    assert data["ok"] and len(calls) == 3
+    assert data["flows"]["KOSPI"]["institution"]["ok"]
+    assert not data["programs"]["KOSPI"]["ok"]
+    assert public.validated_program_flows(data, session_date=AS_OF.isoformat(), checked_at=NOW.isoformat()) == []
+
+
+def test_program_total_must_match_exact_integer_sum_and_zero_is_valid(indicators, turnover, deposit):
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = program_payload(total="76794888102")
+    data, _, _ = collect(indicators, turnover, deposit)
+    assert data["ok"] and not data["programs"]["KOSPI"]["ok"]
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = program_payload("0", "0", "0")
+    data, _, _ = collect(indicators, turnover, deposit)
+    assert data["programs"]["KOSPI"]["value"] == 0
+    assert len(public.validated_program_flows(data, session_date=AS_OF.isoformat(), checked_at=NOW.isoformat())) == 1
+
+
+@pytest.mark.parametrize("field,value", [("investorTrendBaseDate", "2026-11-03"),
+    ("investorTrendBaseDate", "2026-10-20"), ("investorTrendBaseDate", None),
+    ("investorTrendExchangeType", "NXT"), ("itemCode", "KOSDAQ")])
+def test_program_parser_validates_shared_date_and_scope(indicators, field, value):
+    item = indicators["domesticIndex"]["KOSPI"]
+    item["programTrend"] = program_payload()
+    item[field] = value
+    data = public.parse_indicators(indicators, AS_OF, NOW)
+    assert not data["programs"]["KOSPI"]["ok"]
+
+
+@pytest.mark.parametrize("field,value", [("unit", "KRW"), ("raw_unit", "USD"), ("market", "KOSDAQ"),
+    ("exchange", "NXT"), ("date_basis", "guessed"), ("source", "unknown"), ("is_mock", True),
+    ("raw_value", 76794888102), ("arbitrage", -1), ("source_url", "javascript:bad"), ("asof", "2026-10-30")])
+def test_program_consumer_rechecks_saved_scope_units_and_values(indicators, field, value):
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = program_payload()
+    data = public.parse_indicators(indicators, AS_OF, NOW)
+    data["programs"]["KOSPI"][field] = value
+    assert not public.validated_program_flows(data, session_date=AS_OF.isoformat(), checked_at=NOW.isoformat())
+
+
+@pytest.mark.parametrize("seconds,valid", [(-1, False), (0, True), (300, True), (301, False)])
+def test_program_freshness_exact_bounds(indicators, seconds, valid):
+    indicators["domesticIndex"]["KOSPI"]["programTrend"] = program_payload()
+    data = public.parse_indicators(indicators, AS_OF, NOW)
+    rows = public.validated_program_flows(data, session_date=AS_OF.isoformat(),
+        checked_at=(NOW + timedelta(seconds=seconds)).isoformat())
+    assert bool(rows) is valid

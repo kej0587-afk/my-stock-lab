@@ -106,7 +106,11 @@ def parse_indicators(payload, as_of, fetched_at):
                   else _date_status(day, as_of, fetched_at))
         trends = item.get("investorTrends")
         output["flows"][market] = {}
-        for investor, provider in (("foreign", "foreigner"), ("institution", "organization")):
+        investors = [("foreign", "foreigner"), ("institution", "organization")]
+        # Optional identity: never derive individuals as the residual of other groups.
+        if isinstance(trends, list) and any(isinstance(row, dict) and row.get("investorType") == "individual" for row in trends):
+            investors.append(("individual", "individual"))
+        for investor, provider in investors:
             matches = [row for row in trends if isinstance(row, dict) and row.get("investorType") == provider] if isinstance(trends, list) else []
             value = _integer(matches[0].get("netBuyAmount")) if len(matches) == 1 else None
             result_status = status or ("available" if value is not None else "no_data")
@@ -117,6 +121,25 @@ def parse_indicators(payload, as_of, fetched_at):
                 value=value / 100_000_000 if result_status == "available" else None,
                 date_basis="investorTrendBaseDate", provisional=True,
                 limitation="KRX 시장 전체 순매수·NXT 제외·제공자 잠정/정정 가능·확정 종가 아님·반도체 등 업종별 수급/원인 근거 아님")
+
+        if "programTrend" in item:
+            program = item.get("programTrend")
+            program = program if isinstance(program, dict) else {}
+            arb, nonarb, total = (_integer(program.get(key)) for key in
+                                 ("arbitrageNetBuyAmount", "nonArbitrageNetBuyAmount", "totalNetBuyAmount"))
+            program_status = status or ("no_data" if None in (arb, nonarb, total) else
+                                       "invalid_response" if arb + nonarb != total else "available")
+            valid = program_status == "available"
+            output.setdefault("programs", {})[market] = _observation(
+                FLOW_SOURCE, INDICATORS_URL, fetched_at, status=program_status,
+                market=market, exchange="KRX", asof=day.isoformat() if day else "",
+                unit="억원", raw_unit="KRW", raw_arbitrage=arb if valid else None,
+                raw_non_arbitrage=nonarb if valid else None, raw_value=total if valid else None,
+                arbitrage=arb / 100_000_000 if valid else None,
+                non_arbitrage=nonarb / 100_000_000 if valid else None,
+                value=total / 100_000_000 if valid else None,
+                date_basis="investorTrendBaseDate", provisional=True,
+                limitation="같은 응답 investorTrendBaseDate 사용·프로그램 자체 기준시각 미제공·KRX 시장/NXT 제외·잠정/정정 가능·거래 방식별 집계로 투자자별 순매수와 합산 불가·기관 매수액/매수 동기 아님")
 
         price, breadth = item.get("price"), item.get("breadth")
         at = _timestamp(price.get("localTradedAt")) if isinstance(price, dict) else None
@@ -247,6 +270,7 @@ def read_public_market_evidence(as_of, *, request=None, now=None):
             if kind == "indicators":
                 parsed = parse_indicators(payload, target, fetched_at)
                 observations = [obs for market in MARKETS for obs in parsed["flows"][market].values()] + list(parsed["breadth"].values())
+                observations += list(parsed.get("programs", {}).values())
                 output.update(parsed)
             elif kind == "turnover":
                 output[kind] = parse_turnover(payload, target, fetched_at)
@@ -293,3 +317,58 @@ def observation_reason(obs, checked_at):
         return "조회 후 5분 초과: 공개 시장자료 재조회 필요"
     status = _date_status(_day(obs.get("asof")), checked.date(), checked)
     return REASONS.get(status, "")
+
+
+def validated_investor_flows(evidence, *, session_date, checked_at):
+    """Same-session identities for prose; program trading is not an identity.
+
+    Validate each observation independently so missing optional individuals or
+    another market cannot hide valid totals. Preserve source and provisionality.
+    """
+    if not isinstance(evidence, dict) or _day(session_date) is None:
+        return []
+    flows = evidence.get("flows")
+    if not isinstance(flows, dict):
+        return []
+    from stock_lab_core.report_evidence import number, safe_link
+
+    result = []
+    for market in MARKETS:
+        observations = flows.get(market)
+        if not isinstance(observations, dict):
+            continue
+        for identity, label in (("foreign", "외국인"), ("institution", "기관"), ("individual", "개인")):
+            obs = observations.get(identity)
+            if (observation_reason(obs, checked_at) or obs.get("asof") != session_date
+                    or obs.get("unit") != "억원" or obs.get("market") != market
+                    or obs.get("exchange") != "KRX" or not safe_link(obs.get("source_url"))):
+                continue
+            value = number(obs.get("value"))
+            if value is not None:
+                result.append(dict(obs, identity=identity, label=label, value=value))
+    return result
+
+
+def validated_program_flows(evidence, *, session_date, checked_at):
+    """Optional method totals, independent of required investor evidence."""
+    from stock_lab_core.report_evidence import safe_link
+
+    programs = evidence.get("programs") if isinstance(evidence, dict) else None
+    if not isinstance(programs, dict) or _day(session_date) is None:
+        return []
+    result = []
+    for market in MARKETS:
+        obs = programs.get(market)
+        if (observation_reason(obs, checked_at) or obs.get("asof") != session_date
+                or obs.get("unit") != "억원" or obs.get("raw_unit") != "KRW"
+                or obs.get("market") != market or obs.get("exchange") != "KRX"
+                or obs.get("date_basis") != "investorTrendBaseDate" or not safe_link(obs.get("source_url"))):
+            continue
+        arb, nonarb, total = (_integer(obs.get(key)) for key in ("raw_arbitrage", "raw_non_arbitrage", "raw_value"))
+        if None in (arb, nonarb, total) or arb + nonarb != total:
+            continue
+        if any(obs.get(key) != raw / 100_000_000 for key, raw in
+               (("arbitrage", arb), ("non_arbitrage", nonarb), ("value", total))):
+            continue
+        result.append(dict(obs))
+    return result

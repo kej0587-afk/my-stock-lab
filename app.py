@@ -28144,6 +28144,9 @@ def collect_today_auto_newspick_news(universe, summary_df=None, max_count=5):
             row["ticker"] = ticker
             row["name"] = name
             row["target_reason"] = target.get("reason", "")
+            row["query_market"] = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+            row.setdefault("market", row["query_market"])
+            row.setdefault("market_basis", "search_query_only")
             news_rows.append(row)
     return dedupe_today_auto_newspick_news_rows(news_rows), targets
 
@@ -28326,6 +28329,8 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     from stock_lab_core.report_widget_state import (
         EDITOR_KEY, restore_report_editor, save_report_editor, clear_report_editor,
     )
+    from stock_lab_core.report_news_selection import DEFAULT_CATEGORIES, restore_news_preferences, save_news_preferences
+    restore_news_preferences(st.session_state)
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     st.markdown(title)
@@ -28374,6 +28379,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
             "관심종목 RSS 포함",
             value=False,
             key="today_market_memo_include_rss",
+            on_change=save_news_preferences, args=(st.session_state,),
             help="체크하면 오늘점검 후보/보유 종목의 최신 RSS 뉴스를 일부 수집합니다. 네트워크 때문에 시간이 더 걸릴 수 있습니다.",
         )
         max_news_targets = int(auto_cols[2].number_input(
@@ -28383,23 +28389,26 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
             value=4,
             step=1,
             key="today_market_memo_news_count",
+            disabled=not include_rss_news,
+            on_change=save_news_preferences, args=(st.session_state,),
+            help="관심종목 RSS를 켠 경우 조회할 종목 수입니다. 시장 뉴스 건수와 별도입니다.",
         ))
         story_cols = st.columns([1.05, 2.0, 0.8])
         include_market_rss = story_cols[0].checkbox(
             "시장 전체 RSS 포함",
             value=True,
             key="today_market_memo_include_market_rss",
+            on_change=save_news_preferences, args=(st.session_state,),
             help="반도체/AI, 지정학, 매크로, 금리 등 장 전체 키워드 뉴스 RSS를 함께 수집합니다.",
         )
         market_story_categories = [row["category"] for row in TODAY_MARKET_STORY_RSS_PLAN]
         selected_market_story_categories = story_cols[1].multiselect(
             "시장 뉴스 범위",
             options=market_story_categories,
-            default=[
-                "반도체·AI", "지정학", "매크로/중국", "외환/금리",
-                "에너지/해운", "금융·은행", "암호화폐", "건설·인프라",
-            ],
+            default=list(DEFAULT_CATEGORIES),
             key="today_market_memo_story_categories",
+            disabled=not include_market_rss,
+            on_change=save_news_preferences, args=(st.session_state,),
         )
         market_story_per_category = int(story_cols[2].number_input(
             "분야별",
@@ -28408,8 +28417,11 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
             value=2,
             step=1,
             key="today_market_memo_story_per_category",
-            help="각 시장 뉴스 카테고리에서 가져올 제목 수입니다.",
+            disabled=not include_market_rss,
+            on_change=save_news_preferences, args=(st.session_state,),
+            help="선택 분야별 표에 표시할 최대 기사 수입니다. 출처·날짜 검증 후 부족하면 미확보로 표시합니다.",
         ))
+        st.caption("설정 변경 후 ‘자동 뉴스픽 생성’을 누르면 적용됩니다. 상단 저장 리포트는 자동으로 다시 계산하지 않습니다. 마감시황·보유 업종 기본 조회에 선택 분야를 추가합니다.")
 
         if auto_generate:
             with st.spinner("자동 뉴스픽 초안을 만드는 중입니다..."):
@@ -28430,7 +28442,9 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                 news_rows = []
                 news_targets = []
                 market_news_rows = []
-                report_context = _collect_today_report_context(memo_summary_df, event_rows, include_news=include_market_rss)
+                report_context = _collect_today_report_context(
+                    memo_summary_df, event_rows, include_news=include_market_rss,
+                    news_categories=tuple(selected_market_story_categories), news_per_category=market_story_per_category)
                 market_news_rows = report_context.get("session_news", []) + report_context.get("next_session_news", [])
                 if include_rss_news:
                     news_rows, news_targets = collect_today_auto_newspick_news(
@@ -28739,13 +28753,17 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
     )
 
 
-def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
+def _collect_today_report_context(summary_df, event_rows, *, include_news=True, news_categories=None, news_per_category=None):
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_history import update_report_history
     from stock_lab_core.performance import summary_measurement_reference
     from stock_lab_core.report_history_store import SupabaseReportHistoryStore
+    from stock_lab_core.report_news_selection import report_news_options
+    options = report_news_options(st.session_state)
     try:
         context = collect_report_context(summary_df, event_rows, include_news=include_news,
+                                         news_categories=options["categories"] if news_categories is None else news_categories,
+                                         news_per_category=options["per_category"] if news_per_category is None else news_per_category,
                                          flow_snapshot=get_cached_today_market_flow_snapshot())
     except Exception as exc:
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
@@ -28806,9 +28824,12 @@ def _generate_today_briefing_market_memo(summary_df=None) -> str:
     except Exception:
         index_rotation_rows = pd.DataFrame()
 
-    news_rows = st.session_state.get(TODAY_ACTION_NEWS_ROWS_KEY, [])
-    if not isinstance(news_rows, list):
-        news_rows = []
+    from stock_lab_core.report_news_selection import report_news_options
+    options = report_news_options(st.session_state)
+    news_rows = []
+    if options["include_stocks"]:
+        universe, _status = build_today_market_memo_universe(memo_summary_df)
+        news_rows, _targets = collect_today_auto_newspick_news(universe, memo_summary_df, max_count=options["stock_count"])
 
     memo_kwargs = {
         "flow_snapshot": snapshot,
@@ -28819,7 +28840,7 @@ def _generate_today_briefing_market_memo(summary_df=None) -> str:
         "news_rows": news_rows,
         "summary_rows": memo_summary_df,
         "now": datetime.now(timezone(timedelta(hours=9))),
-        "report_context": _collect_today_report_context(memo_summary_df, event_rows),
+        "report_context": _collect_today_report_context(memo_summary_df, event_rows, include_news=options["include_market"]),
     }
     try:
         return build_auto_market_memo(**memo_kwargs)

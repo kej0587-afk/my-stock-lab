@@ -2114,6 +2114,10 @@ def build_auto_market_memo(
         if context.get("news_sessions"):
             raw_news = (context.get("session_news", []) + context.get("next_session_news", []) + context.get("current_session_news", []) + context.get("other_market_news", [])
                         if "session_news" in context else records(market_news_rows) + records(news_rows))
+            if "session_news" in context:
+                # Optional stock RSS used to be discarded whenever market context
+                # existed, making the stock-count control appear ineffective.
+                raw_news = raw_news + records(news_rows)
             partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt,
                                                       current_sessions=context.get("current_news_sessions"))
             # Source-fetch failures remain visible; old empty-bucket diagnostics
