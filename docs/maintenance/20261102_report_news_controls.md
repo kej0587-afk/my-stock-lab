@@ -124,3 +124,8 @@ Publisher feed documentation: https://www.fnnews.com/rss
   an unselected article, an unsupported publisher, failed fetch, identity/date
   rejection, and a read body without a supported interpretation. No extra network
   requests, exception strings, full bodies, credentials, or user data are added.
+- Independent review reproduced an inline-markup defect: `itertext()` fragments
+  shorter than 25 characters lost bank-governance evidence when `strong`/links
+  split a sentence. Preserve inline text within block boundaries, keep unrelated
+  paragraphs separate, and invalidate the provider cache revision. This is a real
+  parser defect but not yet proof of the Cloud discrepancy's cause.

@@ -297,7 +297,12 @@ def parse_article(data, url, expected_title):
             body = containers[0]
             for extra in body.xpath('.//script|.//style|.//aside|.//figure|.//figcaption'):
                 extra.drop_tree()
-            paragraphs = [" ".join(part.split()) for part in body.itertext()]
+            # Inline emphasis/links split itertext() into tiny fragments. Preserve
+            # whole sentences while separating actual paragraph/block boundaries.
+            for block in body.xpath('.//p|.//div|.//li|.//h2|.//h3|.//br'):
+                block.text = "\n" + (block.text or "")
+                block.tail = "\n" + (block.tail or "")
+            paragraphs = [" ".join(part.split()) for part in body.text_content().splitlines()]
     else:
         body = meta.get("articleBody")
         paragraphs = re.split(r"\n+|(?<=[.!?])\s+", body) if isinstance(body, str) else []
@@ -317,7 +322,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v6: retain bounded failure codes, never exception text or response bodies.
+    # v7: preserve inline-formatted paragraphs; retain only safe failure codes.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
