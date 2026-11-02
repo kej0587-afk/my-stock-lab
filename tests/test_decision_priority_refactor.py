@@ -80,12 +80,36 @@ def defaults():
     )
 
 
+def restore_priority_stages_for_ast(functions):
+    """Inline only stage boundaries, retaining every original branch body."""
+    public = deepcopy(functions[SELECT.__name__])
+    guard_assignment, chain = public.body[1:3]
+    assert isinstance(chain.body[-1], ast.Return)
+    chain.body.pop()
+    cursor = chain
+    for name in (
+        "_select_leverage_and_core_priority",
+        "_select_recovery_and_drawdown_priority",
+        "_select_structure_and_exception_priority",
+    ):
+        stage = deepcopy(functions[name])
+        branch = stage.body[0]
+        cursor.orelse = [branch]
+        cursor = branch
+        while len(cursor.orelse) == 1 and isinstance(cursor.orelse[0], ast.If):
+            cursor = cursor.orelse[0]
+        assert isinstance(cursor.orelse[0], ast.Return)
+    return [guard_assignment, chain, stage.body[-1]]
+
+
 def test_all_moved_conditions_literals_and_order_are_exact_and_fallback_is_untouched():
     source = Path(decision_priority.__file__).read_text(encoding="utf-8-sig")
-    actual = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == SELECT.__name__)
+    functions = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
+    actual = functions[SELECT.__name__]
     expected, _, fallback = cut_priority(old_function())
     expected.append(ast.Return(value=ast.Name(id="decision_outcome", ctx=ast.Load())))
-    assert ast.dump(ast.Module(body=actual.body[1:], type_ignores=[])) == ast.dump(ast.Module(body=expected, type_ignores=[]))
+    restored = restore_priority_stages_for_ast(functions)
+    assert ast.dump(ast.Module(body=restored, type_ignores=[])) == ast.dump(ast.Module(body=expected, type_ignores=[]))
     assert set(inspect.signature(SELECT).parameters) == set(defaults())
     assert all(not isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(actual))
     assert not any(isinstance(node, ast.Name) and node.id in {"st", "df", "supabase", "locals"} for node in ast.walk(actual))

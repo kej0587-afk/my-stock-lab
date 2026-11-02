@@ -7,72 +7,23 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 
 
-def select_portfolio_priority_decision(
+def _select_leverage_and_core_priority(
     *,
-    _entry_risk_code,
-    _entry_risk_label,
-    _fmr,
-    _holding_risk_code,
-    _holding_risk_label,
-    _sd_reasons_t,
-    _single_day_only_entry_risk,
     core_dca_context,
-    core_dca_rate,
-    cur_p,
-    curr_w,
     current_dd,
-    day_ret,
-    fin_score,
-    has_pos,
     is_core_dca_allowed,
-    is_etf,
-    is_exception_entry,
     is_leveraged_daily_drop,
     is_leveraged_dca_conditional,
     is_leveraged_dca_wait_high,
     is_leveraged_or_inverse,
-    is_live_gap_shock,
-    is_quality_recovery_candidate,
-    is_quality_recovery_scout,
-    is_quality_recovery_watch,
-    is_structure_damage_entry_risk,
-    is_zero_target_holding,
     leveraged_drop_ret,
-    live_gap_move,
-    live_price_used,
-    live_rebound_holding_label,
-    live_rebound_holding_note,
-    live_rebound_label,
-    live_rebound_note,
-    mfi_now,
-    my_price,
     pct_b_now,
     price_vs_avg,
-    ret_1m,
-    rs_label,
-    rsi_now,
     short_history,
     targ_w,
-    trend,
     weight_gap,
 ) -> DecisionOutcome | None:
-    """Return the first matching priority outcome, or defer to normal entry rules."""
-    guard_outcome = select_portfolio_guard_decision(
-        _fmr=_fmr,
-        core_dca_context=core_dca_context,
-        core_dca_rate=core_dca_rate,
-        curr_w=curr_w,
-        fin_score=fin_score,
-        is_core_dca_allowed=is_core_dca_allowed,
-        is_etf=is_etf,
-        is_zero_target_holding=is_zero_target_holding,
-        short_history=short_history,
-        targ_w=targ_w,
-    )
-    if guard_outcome is not None:
-        decision_outcome = guard_outcome
-        dec, col = decision_outcome.label, decision_outcome.color
-    elif is_leveraged_daily_drop:
+    if is_leveraged_daily_drop:
         dec, col, decision_outcome = _set_decision(
             "⚡레버리지 급락: 추매금지/종가 확인", "#dc2626", "LEVERAGED_DAILY_DROP_NO_ADD",
             reasons=(
@@ -143,7 +94,27 @@ def select_portfolio_priority_decision(
                 "레버리지 ETF는 가격 하락률만 보고 현금 투입하지 않고 기초지수 동행, MA20/MA50, 회차 규칙을 먼저 확인합니다.",
             ),
         )
-    elif is_quality_recovery_candidate:
+    else:
+        return None
+    return decision_outcome
+
+
+def _select_recovery_and_drawdown_priority(
+    *,
+    core_dca_context,
+    current_dd,
+    fin_score,
+    is_core_dca_allowed,
+    is_etf,
+    is_quality_recovery_candidate,
+    is_quality_recovery_scout,
+    is_quality_recovery_watch,
+    ret_1m,
+    rs_label,
+    short_history,
+    trend,
+) -> DecisionOutcome | None:
+    if is_quality_recovery_candidate:
         dec, col, decision_outcome = _set_decision(
             "✅우량주 회복 후보: 분할 검토", "#22c55e", "QUALITY_RECOVERY_CANDIDATE",
             reasons=(
@@ -210,7 +181,39 @@ def select_portfolio_priority_decision(
                 f"코어 하락 매수 타이밍 — {core_dca_context['core_dca_label']} 적립",
             ),
         )
-    elif is_live_gap_shock and not has_pos:
+    else:
+        return None
+    return decision_outcome
+
+
+def _select_structure_and_exception_priority(
+    *,
+    _entry_risk_code,
+    _entry_risk_label,
+    _holding_risk_code,
+    _holding_risk_label,
+    _sd_reasons_t,
+    _single_day_only_entry_risk,
+    cur_p,
+    curr_w,
+    current_dd,
+    day_ret,
+    has_pos,
+    is_exception_entry,
+    is_live_gap_shock,
+    is_structure_damage_entry_risk,
+    live_gap_move,
+    live_price_used,
+    live_rebound_holding_label,
+    live_rebound_holding_note,
+    live_rebound_label,
+    live_rebound_note,
+    mfi_now,
+    my_price,
+    rsi_now,
+    targ_w,
+) -> DecisionOutcome | None:
+    if is_live_gap_shock and not has_pos:
         dec, col, decision_outcome = _set_decision(
             "⚠️실시간 급락: 정규장 확인대기", "#d97706", "LIVE_GAP_SHOCK_WAIT",
             reasons=(
@@ -311,7 +314,138 @@ def select_portfolio_priority_decision(
                 "예외 승인 — 정찰대 신규 진입 조건 충족",
             ),
         )
-
     else:
         return None
     return decision_outcome
+
+
+def select_portfolio_priority_decision(
+    *,
+    _entry_risk_code,
+    _entry_risk_label,
+    _fmr,
+    _holding_risk_code,
+    _holding_risk_label,
+    _sd_reasons_t,
+    _single_day_only_entry_risk,
+    core_dca_context,
+    core_dca_rate,
+    cur_p,
+    curr_w,
+    current_dd,
+    day_ret,
+    fin_score,
+    has_pos,
+    is_core_dca_allowed,
+    is_etf,
+    is_exception_entry,
+    is_leveraged_daily_drop,
+    is_leveraged_dca_conditional,
+    is_leveraged_dca_wait_high,
+    is_leveraged_or_inverse,
+    is_live_gap_shock,
+    is_quality_recovery_candidate,
+    is_quality_recovery_scout,
+    is_quality_recovery_watch,
+    is_structure_damage_entry_risk,
+    is_zero_target_holding,
+    leveraged_drop_ret,
+    live_gap_move,
+    live_price_used,
+    live_rebound_holding_label,
+    live_rebound_holding_note,
+    live_rebound_label,
+    live_rebound_note,
+    mfi_now,
+    my_price,
+    pct_b_now,
+    price_vs_avg,
+    ret_1m,
+    rs_label,
+    rsi_now,
+    short_history,
+    targ_w,
+    trend,
+    weight_gap,
+) -> DecisionOutcome | None:
+    """Return the first matching priority outcome, or defer to normal entry rules."""
+    guard_outcome = select_portfolio_guard_decision(
+        _fmr=_fmr,
+        core_dca_context=core_dca_context,
+        core_dca_rate=core_dca_rate,
+        curr_w=curr_w,
+        fin_score=fin_score,
+        is_core_dca_allowed=is_core_dca_allowed,
+        is_etf=is_etf,
+        is_zero_target_holding=is_zero_target_holding,
+        short_history=short_history,
+        targ_w=targ_w,
+    )
+    if guard_outcome is not None:
+        decision_outcome = guard_outcome
+        dec, col = decision_outcome.label, decision_outcome.color
+        return decision_outcome
+
+    # Keep short-circuit priority: later stages run only after no match.
+    decision_outcome = _select_leverage_and_core_priority(
+        core_dca_context=core_dca_context,
+        current_dd=current_dd,
+        is_core_dca_allowed=is_core_dca_allowed,
+        is_leveraged_daily_drop=is_leveraged_daily_drop,
+        is_leveraged_dca_conditional=is_leveraged_dca_conditional,
+        is_leveraged_dca_wait_high=is_leveraged_dca_wait_high,
+        is_leveraged_or_inverse=is_leveraged_or_inverse,
+        leveraged_drop_ret=leveraged_drop_ret,
+        pct_b_now=pct_b_now,
+        price_vs_avg=price_vs_avg,
+        short_history=short_history,
+        targ_w=targ_w,
+        weight_gap=weight_gap,
+    )
+    if decision_outcome is not None:
+        return decision_outcome
+    decision_outcome = _select_recovery_and_drawdown_priority(
+        core_dca_context=core_dca_context,
+        current_dd=current_dd,
+        fin_score=fin_score,
+        is_core_dca_allowed=is_core_dca_allowed,
+        is_etf=is_etf,
+        is_quality_recovery_candidate=is_quality_recovery_candidate,
+        is_quality_recovery_scout=is_quality_recovery_scout,
+        is_quality_recovery_watch=is_quality_recovery_watch,
+        ret_1m=ret_1m,
+        rs_label=rs_label,
+        short_history=short_history,
+        trend=trend,
+    )
+    if decision_outcome is not None:
+        return decision_outcome
+    decision_outcome = _select_structure_and_exception_priority(
+        _entry_risk_code=_entry_risk_code,
+        _entry_risk_label=_entry_risk_label,
+        _holding_risk_code=_holding_risk_code,
+        _holding_risk_label=_holding_risk_label,
+        _sd_reasons_t=_sd_reasons_t,
+        _single_day_only_entry_risk=_single_day_only_entry_risk,
+        cur_p=cur_p,
+        curr_w=curr_w,
+        current_dd=current_dd,
+        day_ret=day_ret,
+        has_pos=has_pos,
+        is_exception_entry=is_exception_entry,
+        is_live_gap_shock=is_live_gap_shock,
+        is_structure_damage_entry_risk=is_structure_damage_entry_risk,
+        live_gap_move=live_gap_move,
+        live_price_used=live_price_used,
+        live_rebound_holding_label=live_rebound_holding_label,
+        live_rebound_holding_note=live_rebound_holding_note,
+        live_rebound_label=live_rebound_label,
+        live_rebound_note=live_rebound_note,
+        mfi_now=mfi_now,
+        my_price=my_price,
+        rsi_now=rsi_now,
+        targ_w=targ_w,
+    )
+    if decision_outcome is not None:
+        return decision_outcome
+    return None
