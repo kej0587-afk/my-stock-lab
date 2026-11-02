@@ -200,12 +200,15 @@ def test_random_values_keep_risk_sorting_and_csv_bytes_identical(sources, seed):
 
 def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources):
     old, new = map(function, sources)
-    # Cache/refresh now has its own retained-baseline parity suite.
-    def policy_start(fn):
+    # Cache/refresh and display labels have dedicated retained-baseline suites.
+    def assignment(fn, name):
         return next(i for i, n in enumerate(fn.body) if isinstance(n, ast.Assign)
-                    and any(isinstance(t, ast.Name) and t.id == "portfolio_signal_attrs" for t in n.targets))
-    assert ast.dump(ast.Module(body=old.body[policy_start(old):detail_start(old)], type_ignores=[])) == ast.dump(
-        ast.Module(body=new.body[policy_start(new):detail_start(new)], type_ignores=[]))
+                    and any(isinstance(t, ast.Name) and t.id == name for t in n.targets))
+    def retained_policy(fn):
+        return (fn.body[assignment(fn, "portfolio_signal_attrs"):assignment(fn, "market_guard") + 1]
+                + fn.body[assignment(fn, "risk_df"):detail_start(fn)])
+    assert ast.dump(ast.Module(body=retained_policy(old), type_ignores=[])) == ast.dump(
+        ast.Module(body=retained_policy(new), type_ignores=[]))
     assert ast.dump(ast.Module(body=old.decorator_list, type_ignores=[])) == ast.dump(
         ast.Module(body=new.decorator_list, type_ignores=[]))
 
