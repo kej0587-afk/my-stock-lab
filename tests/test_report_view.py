@@ -96,6 +96,16 @@ def test_older_and_unknown_sections_fall_back_to_visible_markdown(monkeypatch):
     assert all(label is None for label, _ in chunks)
 
 
+def test_earnings_story_visible_and_raw_results_collapsed_without_export_loss(monkeypatch):
+    report = ("## 오늘의 시장 스토리\n**실적에서 확인할 시장 쟁점**\n실제와 예상 구분\n"
+              "## 다가오는 일정\nFOMC 일정\n**기업 실적 촉매**\n기업별 원문 수치\n**실적 연결 상태**\n누락 이유\n")
+    chunks, expanders = _render(monkeypatch, report)
+    visible = "".join(value for label, value in chunks if label is None)
+    assert "실적에서 확인할 시장 쟁점" in visible and "FOMC 일정" in visible
+    assert "기업별 원문 수치" not in visible and "누락 이유" not in visible
+    assert "기업별 실적 원문·연결 상태" in expanders
+
+
 def test_streamlit_report_smoke_collapsed_expanded_collapsed():
     from streamlit.testing.v1 import AppTest
 

@@ -159,22 +159,16 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     earnings_sources = []
     earnings_results = {"results": [], "sources": []}
+    earnings_scope = {}
     official_outlooks = None
     central_bank_results = []
     if economic_releases is None and price_frames is None:
-        from stock_lab_core.earnings_sources import load_official_earnings
-        # Explicitly requested issuers first; no broad market scan on a rerender.
-        requested_tickers = [text(first(row, "티커", "ticker")).upper() for row in records(summary_rows)]
-        from stock_lab_core.earnings_sources import _ISSUERS as connected_issuers
-        earnings_tickers = list(dict.fromkeys(["000660.KS", "005930.KS", "NVDA", "GOOGL", "META", "MSFT", "TSLA",
-            *(ticker for ticker in requested_tickers if ticker in connected_issuers), *requested_tickers]))
-        earnings = load_official_earnings(earnings_tickers, now)
-        updated = {row.get("ticker") for row in earnings["events"]}
-        calendar = dict(calendar, events=[r for r in calendar["events"] if r.get("ticker") not in updated] + earnings["events"])
-        earnings_sources = earnings["sources"]
-        from stock_lab_core.earnings_result_sources import load_earnings_results
-        with measure("external_data", "earnings_result_reconciliation"):
-            earnings_results = load_earnings_results(earnings["events"], now)
+        from stock_lab_core.earnings_collection import collect_report_earnings
+        earnings = collect_report_earnings(summary_rows, calendar, now)
+        calendar = dict(calendar, events=earnings["calendar_events"])
+        earnings_sources = earnings["earnings_sources"]
+        earnings_results = {"results": earnings["earnings_results"], "sources": earnings["earnings_result_sources"]}
+        earnings_scope = earnings["earnings_collection_scope"]
         from stock_lab_core.outlook_sources import load_official_outlooks
         with measure("external_data", "official_outlook"):
             official_outlooks = load_official_outlooks(now)
@@ -222,6 +216,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "economic_releases": releases, "consensus_diagnostics": consensus_diagnostics,
               "calendar_events": calendar["events"], "calendar_sources": calendar["sources"], "earnings_sources": earnings_sources,
               "earnings_results": earnings_results["results"], "earnings_result_sources": earnings_results["sources"],
+              "earnings_collection_scope": earnings_scope,
               "central_bank_results": central_bank_results}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks

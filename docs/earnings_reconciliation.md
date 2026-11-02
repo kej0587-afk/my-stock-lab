@@ -1,5 +1,39 @@
 # Earnings schedule / result reconciliation
 
+## Shared report pipeline (2026-11-02)
+
+`report_context` delegates its existing bounded request sequence to
+`earnings_collection`. `earnings_pipeline` then reconciles those results once
+and shares the same evidence with the story and calendar renderers.
+`earnings_discovery` examines already collected news using the existing KR/US
+representative-stock universe plus registered issuers; it adds no network calls.
+
+The visible story selects at most three recent issuer discussions, diversifying
+available sectors. This is not market-impact ranking or an all-market calendar.
+An issuer-specific news lead is labelled as a report awaiting official checks,
+not a verified release. An incidental partner, another quarter, a preview or
+an article publication date cannot supply a result or announcement timestamp.
+ETF/fund holdings are excluded from company-earnings coverage diagnostics.
+
+Revenue/profit, CAPEX, FCF, guidance, contemporaneous consensus and price
+reaction keep separate states. Missing consensus never becomes a calculated
+surprise; a historical FCF deficit in a comparison cannot become a current
+deficit. Original official values, periods, currency and qualifiers remain
+unchanged. Original details and missing-stage diagnostics are retained in an
+expandable calendar section and in the complete Markdown download.
+
+Regression checks compare the old/new event and metric outputs, collection
+order and request counts; repeated rendering performs no provider calls.
+New discovery fixtures include financials, healthcare, consumer and industrial
+issuers, Korean short names, source failures, aliases and ambiguous headlines.
+This stage does not expand official-source adapters or claim new consensus
+coverage, speed up price fetching, or change investment decisions.
+
+Validation: 6,110 tests and 18 subtests passed (326.71 seconds). Independent
+review counterexamples for historical FCF, incidental issuers, previews,
+compact fiscal periods and ticker aliases have regression coverage. Existing
+77 dependency/fixture warnings remain. No total-runtime speedup is claimed.
+
 ## Scope
 
 This is a report-only change. Candidate grades, execution gates, scoring,

@@ -3,13 +3,16 @@
 from stock_lab_core.report_evidence import _cell, records, safe_link, stamp, text
 from stock_lab_core.report_presentation import kst_time
 from stock_lab_core.report_build import register_loaded_source
-from stock_lab_core.earnings_reconciliation import METRIC_LABELS, reconcile_earnings
+from stock_lab_core.earnings_reconciliation import METRIC_LABELS
 
 register_loaded_source(__name__, __file__)
 
 
-def earnings_calendar_lines(context, now):
-    events = [r for r in reconcile_earnings(context, now) if r.get("event_status")]
+def earnings_calendar_lines(context, now, *, pipeline=None):
+    from stock_lab_core.earnings_pipeline import build_earnings_pipeline
+    from stock_lab_core.report_earnings import earnings_coverage_lines
+    pipeline = pipeline if pipeline is not None else build_earnings_pipeline(context, now=now)
+    events = [r for r in pipeline["events"] if r.get("event_status")]
     sources = records(context.get("earnings_sources"))
     lines = ["", "**기업 실적 촉매**", "기업·상태 | 발표일 / 콜 시각 | 근거·연결 범위", "--- | --- | ---"]
     count = 0
@@ -68,7 +71,8 @@ def earnings_calendar_lines(context, now):
         diagnostics.append(text(row.get("ticker")) + " " + message)
     if diagnostics:
         lines.extend(["공식 결과 수집: " + " / ".join(dict.fromkeys(diagnostics)) + ". 발표 여부와 세부 수치의 수집 상태는 별도입니다.", ""])
-    lines.append("최근 발표는 예정 목록에서 삭제하지 않고 구분 보존합니다. 메타·테슬라는 이전의 ‘향후 일정만’ 필터로 숨겨졌던 항목입니다. 다음 분기 일정까지 자동 확보한 것은 아닙니다.")
+    lines.append("최근 발표와 다음 예정일은 별도입니다. 다음 분기 일정까지 자동 확보한 것은 아닙니다.")
+    lines.extend(earnings_coverage_lines(pipeline))
     return lines
 
 

@@ -168,7 +168,7 @@ def _close_recap_key(row, title, published):
             "down" if recap[2] in {"하락", "급락", "내린", "밀린", "떨어진", "↓"} else "up")
 
 
-def curate_news(rows, *, now=None, limit=5, session_scoped=False):
+def curate_news(rows, *, now=None, limit=5, session_scoped=False, title_pattern=MARKET_TERMS):
     from stock_lab_core.today_news import _session_article_keys
     from stock_lab_core.news_priority import market_news_priority
     now = now or datetime.now(KST)
@@ -188,7 +188,7 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False):
         lower = f"{title} {publisher} {domain}".lower()
         if re.search(r"^\s*\[표\].*(?:시세|종가|주가|증시|순매수|순매도)|시세표", title):
             continue
-        if not title or not MARKET_TERMS.search(title) or any(word in lower for word in (
+        if not title or not title_pattern.search(title) or any(word in lower for word in (
             "coinmarketcap", "tmgm", "prnewswire", "businesswire", "보도자료", "press release",
             "price today", "live price", "to usd", "rbc", "commerzbank", "일일 운세",
         )):
@@ -587,6 +587,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     synthesis = market_summary(context, news, flow_rows, states, now, futures_line=futures_line)
     from stock_lab_core.report_catalysts import post_close_brief
     post_close = post_close_brief(context, news, summary_rows, now)
+    from stock_lab_core.earnings_pipeline import build_earnings_pipeline
+    from stock_lab_core.report_earnings import earnings_story_lines
+    earnings_pipeline = build_earnings_pipeline(context, summary_rows, news, now)
     if post_close["overview"]:
         synthesis["overview"] += "\n\n" + post_close["overview"]
     headline = layered_market_headline(context, flow_rows, states, now, live_metrics,
@@ -603,6 +606,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(["", "## 오늘의 핵심 재료",
                   *post_close["lines"], "", *brief["lines"], "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
+    lines.extend(earnings_story_lines(earnings_pipeline))
     lines.extend(["", *evidence_table(synthesis), ""])
     lines.extend(["", "### 중기·최근 거래일·현재 맥락", headline + ".", ""])
     if outlook_count:
@@ -1077,7 +1081,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         lines.append("- " + note)
         missing.append(note)
     from stock_lab_core.report_calendar import earnings_calendar_lines
-    lines.extend(earnings_calendar_lines(context, now))
+    lines.extend(earnings_calendar_lines(context, now, pipeline=earnings_pipeline))
     additional_news = [row for row in news if news_article_key(row) not in used_story_news]
     lines.extend(["", "## 추가 핵심 뉴스"])
     lines.append("당일 한국 장전·장중 기사 우선, 이전 마감 회고는 별도 맥락입니다." if mode == "intraday" else
