@@ -6,13 +6,54 @@ import pandas as pd
 import plotly.graph_objects as go
 
 
+def prepare_channel_display(frame, channel, *, provisional_last=False):
+    """Retire broken rails for display only; preserve geometry and causal events."""
+    if not channel:
+        return channel
+    times = pd.DatetimeIndex(channel["x"])
+    closes = pd.to_numeric(frame["Close"], errors="coerce").reindex(times)
+    rising = channel["direction"] == "상승"
+    edge = channel["lower"] if rising else channel["upper"]
+    outside = closes.lt(edge) if rising else closes.gt(edge)
+    confirmed = times >= pd.Timestamp(channel["known_at"])
+    if provisional_last:
+        confirmed &= times != frame.index[-1]
+    if "LiveQuoteOnly" in frame:
+        confirmed &= ~frame["LiveQuoteOnly"].reindex(times).fillna(False).astype(bool).to_numpy()
+    broken = [i for i, hit in enumerate(outside.to_numpy() & confirmed) if hit]
+    if broken:
+        end = broken[0]
+        return dict(channel, display_end_index=end, display_state="과거 채널 · 종료",
+                    ended_at=times[end], execution_guide_eligible=False)
+    if outside.iloc[-1]:
+        return dict(channel, display_state="미확정 봉 이탈 · 재확인",
+                    execution_guide_eligible=False)
+    return channel
+
+
+def channel_caption(channel):
+    if not channel:
+        return ""
+    end = channel.get("display_end_index", len(channel["x"]) - 1)
+    values = (f"하단 {channel['lower'][end]:,.2f} / 중심 {channel['middle'][end]:,.2f} / "
+              f"상단 {channel['upper'][end]:,.2f}")
+    if channel.get("ended_at") is not None:
+        breach = "하단 이탈" if channel["direction"] == "상승" else "상단 돌파"
+        return (f"과거 {channel['direction']} 평행 채널 · {pd.Timestamp(channel['ended_at']):%Y-%m-%d} "
+                f"{breach}로 종료 · 종료봉 기준 {values} · 현재 지지·저항 안내에서 제외")
+    state = channel.get("display_state", channel["state"])
+    return (f"{channel['direction']} 평행 채널 · {state} · "
+            f"확인 {pd.Timestamp(channel['known_at']):%Y-%m-%d} · {values}")
+
+
 def prepare_chart_layers(frame, *, show_patterns, show_channel, show_signals,
-                         load_structure, detect_patterns, build_trendlines):
+                         load_structure, detect_patterns, build_trendlines, provisional_last=False):
     """Independent layer switches; explanations follow the lines actually drawn."""
     structure = load_structure(frame) if show_channel or show_signals else {}
     patterns = (structure["patterns"] if "patterns" in structure and not structure.get("issue")
                 else detect_patterns(frame)) if show_patterns else []
-    channel = (structure.get("channel") or {}) if show_channel else {}
+    channel = prepare_channel_display(frame, structure.get("channel") or {},
+                                      provisional_last=provisional_last) if show_channel else {}
     if channel:
         guides = [{
             "kind": kind, "label": label, "direction": channel["direction"],
@@ -20,7 +61,8 @@ def prepare_chart_layers(frame, *, show_patterns, show_channel, show_signals,
             "y0": channel[rail][0], "y1": channel[rail][-1],
             "source": "parallel_channel", "channel_state": channel["state"],
         } for rail, kind, label in (("lower", "support", "채널 하단"),
-                                   ("upper", "resistance", "채널 상단"))]
+                                   ("upper", "resistance", "채널 상단"))
+                  if channel.get("execution_guide_eligible", True)]
     else:
         guides = build_trendlines(frame) if show_patterns else []
     return structure, patterns, channel, guides

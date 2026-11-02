@@ -306,7 +306,7 @@ def test_overlays_keep_channels_on_price_axis_and_markers_visible_without_annota
     assert all(trace.legendgroup == "channel" for trace in fig.data)
     events = qualify_chart_events(event_context())
     add_event_overlays(fig, events)
-    assert len([t for t in fig.data if t.mode == "lines"]) == 5
+    assert len([t for t in fig.data if t.mode == "lines"]) == 3
     marker = next(t for t in fig.data if t.name == "매수형 패턴")
     assert marker.marker.symbol[0] == "triangle-up"
     assert marker.x[0] == events[0]["time"]

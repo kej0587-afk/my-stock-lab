@@ -14,6 +14,8 @@ from stock_lab_core.chart_patterns import (
 )
 from stock_lab_core.execution_gate import GATE_EXECUTABLE
 
+CHANNEL_DISPLAY_VERSION = 1
+
 
 def build_parallel_channel(frame, lookback=140):
     view = _chart_pattern_source_df(frame, lookback)
@@ -235,17 +237,19 @@ def qualify_chart_events(structure, decision=None, *, timeframe="daily", provisi
 def add_channel_overlay(fig, channel):
     if not channel:
         return
+    # Display lifecycle never changes the original rails or historical events.
+    end = channel.get("display_end_index", len(channel["x"]) - 1) + 1
+    historical = channel.get("ended_at") is not None
+    times = channel["x"][:end]
+    color = "#94a3b8" if historical else "#60a5fa"
     for key, label, dash in (("lower", "채널 하단", "solid"), ("middle", "채널 중심", "dot"), ("upper", "채널 상단", "solid")):
-        fig.add_trace(go.Scatter(x=channel["x"], y=channel[key], mode="lines", name=label,
-                                legendgroup="channel", line=dict(color="#60a5fa", width=1.7 if key != "middle" else 1, dash=dash),
+        label = "과거 " + label if historical else label
+        fig.add_trace(go.Scatter(x=times, y=channel[key][:end], mode="lines", name=label,
+                                legendgroup="channel", line=dict(color=color, width=1.7 if key != "middle" else 1, dash="dash" if historical else dash),
                                 hovertemplate="%{x|%Y-%m-%d}<br>%{y:,.2f}<extra>" + label + "</extra>"))
-    for fraction in (.25, .75):
-        values = np.array(channel["lower"]) + channel["width"] * fraction
-        fig.add_trace(go.Scatter(x=channel["x"], y=values, mode="lines", showlegend=False, hoverinfo="skip",
-                                line=dict(color="#60a5fa", width=.7, dash="dot"), opacity=.45, legendgroup="channel"))
     anchors = channel["anchors"]
     fig.add_trace(go.Scatter(x=[p["time"] for p in anchors], y=[p["price"] for p in anchors], mode="markers",
-                            marker=dict(size=6, color="#60a5fa", symbol="circle-open"), name="채널 작도점", showlegend=False, legendgroup="channel",
+                            marker=dict(size=6, color=color, symbol="circle-open"), name="채널 작도점", showlegend=False, legendgroup="channel",
                             hovertemplate="%{x|%Y-%m-%d}<br>작도점 %{y:,.2f}<extra></extra>"))
 
 

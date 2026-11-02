@@ -6788,14 +6788,19 @@ def render_precision_candlestick_chart(
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
         return
-    from stock_lab_core import precision_chart_view
-    if not hasattr(precision_chart_view, "prepare_chart_layers"):
+    from stock_lab_core import precision_chart_view, chart_structure
+    if (not all(hasattr(precision_chart_view, name) for name in ("prepare_chart_layers", "channel_caption"))
+            or getattr(chart_structure, "CHANNEL_DISPLAY_VERSION", None) != 1):
         st.warning("차트 모듈 업데이트가 대기 중입니다. Streamlit Cloud에서 Reboot app 후 다시 확인해 주세요.")
         return {}
+    from stock_lab_core.chart_structure import last_bar_is_provisional, latest_completed_chart_session
+    timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
+    provisional_bar = last_bar_is_provisional(df, ticker, timeframe)
     structure, pattern_candidates, channel, trendline_guides = precision_chart_view.prepare_chart_layers(
         df, show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
         load_structure=_cached_chart_structure, detect_patterns=detect_chart_pattern_candidates,
         build_trendlines=_build_recent_trendline_guides,
+        provisional_last=provisional_bar,
     )
     # 정밀관측소 차트는 일봉/주봉/월봉 캡처가 같은 방식으로 동작하도록
     # 경량 차트가 아니라 Plotly 차트로 통일한다.
@@ -6818,10 +6823,7 @@ def render_precision_candlestick_chart(
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
-    timeframe = "weekly" if "week" in key else "monthly" if "month" in key else "daily"
-    from stock_lab_core.chart_structure import last_bar_is_provisional, latest_completed_chart_session
     chart_context = dict(decision_context or {}, chart_expected_close=latest_completed_chart_session(ticker) if structure.get("events") and show_signals else None)
-    provisional_bar = last_bar_is_provisional(df, ticker, timeframe)
     chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
                                        provisional_last=provisional_bar) if show_signals else []
     if chart_events:
@@ -6836,7 +6838,7 @@ def render_precision_candlestick_chart(
     fig.update_layout(legend=legend)
     st.plotly_chart(fig, width='stretch', key=key)
     if channel:
-        st.caption(f"{channel['direction']} 평행 채널 · {channel['state']} · 확인 {pd.Timestamp(channel['known_at']):%Y-%m-%d} · 하단 {channel['lower'][-1]:,.2f} / 중심 {channel['middle'][-1]:,.2f} / 상단 {channel['upper'][-1]:,.2f}")
+        st.caption(precision_chart_view.channel_caption(channel))
     if show_signals:
         event_rows = chart_structure_rows(structure, chart_events, decision_context)
         if event_rows:
@@ -19046,7 +19048,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
         position_note = "RS는 살아 있어도 당일 급락봉이 잡힌 구간입니다. 종가와 다음 봉 회복 확인"
     elif price_defense_signal or dd <= -0.2:
         position_label = "가격방어"
-        position_note = "낙폭이 커진 구간입니다. 추세훼손 확정은 아니며 하락 원인과 종가 안정 확인"
+        position_note = "낙폭 기준의 가격 경고입니다. 추세 상태는 위 시간대별 표, 추가매수 여부는 최종 체크를 함께 확인합니다."
     elif clean_float(c.get("current_w"), 0.0) >= clean_float(c.get("target_w"), 0.0) > 0:
         position_label = "비중 충족"
         position_note = "추가매수보다 보유/리스크 관리 우선"
@@ -19086,7 +19088,7 @@ def render_personal_stock_analysis_panel(name, ticker, is_etf, asset_class, c, f
                     "RS는 살아 있어도 단일 급락봉이 잡힌 급락방어 구간입니다. 종가와 거래량 진정, 다음 봉 회복 확인이 우선입니다."
                     if rapid_drop_signal
                     else (
-                        "고점대비 낙폭이 큰 가격방어 구간입니다. 추세훼손 확정은 아니며 하락 원인과 종가 안정 확인이 우선입니다."
+                        "고점대비 낙폭이 큰 가격방어 구간입니다. 이 낙폭 분류만으로 추세 상태를 단정하지 않으며, 시간대별 추세와 최종 체크를 함께 확인합니다."
                         if price_defense_signal
                         else "기술 구조상 즉시 하드 경고는 없습니다."
                     )
@@ -20217,7 +20219,7 @@ def build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_p
         elif rr_ratio < 1.0:
             add_check("손익비", "차단", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 기대수익보다 손절폭이 커서 현재가 실행은 보류가 맞습니다.")
         elif rr_ratio < 1.5:
-            add_check("손익비", "주의", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 풀비중보다 1차 정찰 중심이 맞습니다.")
+            add_check("손익비", "주의", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 실행이 허용된 경우에만 풀비중보다 1차 정찰 중심으로 검토합니다. 방어·차단 상태에서는 추가매수 보류가 우선입니다.")
         else:
             add_check("손익비", "통과", f"현재가 기준 R/R {format_rr_ratio(rr_ratio)}. 최소 손익비 조건은 충족합니다.")
     else:

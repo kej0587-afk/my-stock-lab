@@ -61,6 +61,7 @@ def test_channel_explanation_uses_drawn_msft_prices_not_hidden_trendlines():
     frame = wave()
     channel = dict(build_parallel_channel(frame), lower=[491.22, 521.528586],
                    upper=[535.99573, 566.304317], x=list(frame.index[-2:]))
+    frame.loc[frame.index[-2:], "Close"] = [522.65, 522.65]
     _, _, _, guides = prepare_chart_layers(
         frame, show_patterns=True, show_channel=True, show_signals=False,
         load_structure=lambda _: {"channel": channel, "patterns": []},
