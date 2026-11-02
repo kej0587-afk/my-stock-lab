@@ -154,7 +154,9 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             holding_fact = next((fact for fact in body_facts if fact["topic"] in {"ai_investment", "ai_credit"}), body_facts[0])
             link += " · 해석(추정): " + holding_fact["implication"] + " · 다음 확인: " + holding_fact["check"]
         else:
-            detail = citation(dict(row, title=title)) + " · 제목만 확인(본문 해석 보류)"
+            reading = ("본문 확인·자동 해석 근거 부족" if row.get("body_status") == "no_supported_context"
+                       else "제목만 확인(본문 해석 보류)")
+            detail = citation(dict(row, title=title)) + " · " + reading
         detail += f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
         lines.append(" | ".join(_cell(value) for value in (theme, detail, link)))
     if not selected:

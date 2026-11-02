@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
+from html import unescape
 import json
 from pathlib import Path
 import re
@@ -19,8 +20,10 @@ from stock_lab_core.result_cache import cache_result
 
 register_loaded_source(__name__, __file__)
 
-FEEDS = ("https://www.yna.co.kr/rss/market.xml", "https://www.yna.co.kr/rss/international.xml")
-BODY_HOSTS = ("yna.co.kr", "apnews.com", "cnbc.com", "aws.amazon.com", "pytorch.org")
+FEEDS = ("https://www.yna.co.kr/rss/market.xml", "https://www.yna.co.kr/rss/international.xml",
+         "https://www.fnnews.com/rss/r20/fn_realnews_stock.xml",
+         "https://www.fnnews.com/rss/r20/fn_realnews_finance.xml")
+BODY_HOSTS = ("yna.co.kr", "fnnews.com", "apnews.com", "cnbc.com", "aws.amazon.com", "pytorch.org")
 MAX_BYTES = 750_000
 MAX_ARTICLES = 4
 
@@ -45,7 +48,7 @@ def _context_match(paragraphs, topic, pattern):
     for paragraph in paragraphs:
         for sentence in re.split(r"[;!?\n]|\.\s+", paragraph):
             for match in re.finditer(pattern, sentence, re.I):
-                if topic in {"earnings", "ai_investment", "ai_credit"}:
+                if topic in {"earnings", "ai_investment", "ai_credit", "foreign_buying", "institution_buying"}:
                     tail = re.split(r",|지만|으나|반면|면서|\bbut\b|\bwhile\b", sentence[match.end():], maxsplit=1, flags=re.I)[0][:32]
                     if (_PAST_CONTEXT.search(sentence) or _NEGATED_CONTEXT.search(tail)
                             or re.search(r"\b(?:not|never)\b", sentence[max(0, match.start()-24):match.end()], re.I)):
@@ -99,11 +102,16 @@ def _public_bytes(url):
 
 
 def parse_publisher_feed(data):
+    from stock_lab_core.report_news_selection import matching_categories
     root = ET.fromstring(data)
     rows = []
     for item in root.findall("./channel/item")[:120]:
         title, link = item.findtext("title", ""), item.findtext("link", "")
-        if not _safe_url(link) or not re.search(r"코스피|코스닥|뉴욕증시|나스닥|월가|코어위브|미국\s*증시", title):
+        if not _safe_url(link):
+            continue
+        publisher = ("파이낸셜뉴스" if (urlsplit(link).hostname or "").endswith("fnnews.com") else "연합뉴스")
+        topics = matching_categories(title)
+        if not topics and not re.search(r"코스피|코스닥|뉴욕증시|나스닥|월가|코어위브|미국\s*증시", title):
             continue
         try:
             published = parsedate_to_datetime(item.findtext("pubDate", ""))
@@ -111,10 +119,11 @@ def parse_publisher_feed(data):
                 continue
         except (ValueError, TypeError):
             continue
-        market = "KR" if re.search(r"코스피|코스닥", title) else "US"
-        rows.append(dict(title=title, link=link, publisher="연합뉴스", publisher_url="https://www.yna.co.kr",
+        market = ("KR" if re.search(r"코스피|코스닥", title) else
+                  "US" if re.search(r"뉴욕증시|나스닥|월가|코어위브|미국\s*증시", title) else "GLOBAL")
+        rows.append(dict(title=title, link=link, publisher=publisher, publisher_url="https://" + urlsplit(link).hostname,
                          published_at=published.isoformat(), market=market, query_market=market,
-                         source="Yonhap public RSS", market_category="시장"))
+                         source=publisher + " public RSS", market_category="시장"))
     return rows
 
 
@@ -183,6 +192,10 @@ def _body_facts(paragraphs):
          "외국인의 현물 순매수가 보도됐습니다",
          "현물 매수는 당일 수급을 지지한 정황입니다. 선물·환율 방향까지 일치하는지는 별도 확인해야 합니다",
          "다음 거래일 외국인 현물·선물과 원화 방향 확인"),
+        ("institution_buying", r"기관.{0,90}순매수",
+         "기관의 순매수가 보도됐습니다",
+         "시장 전체 수급을 지지한 정황이며, 프로그램 매매 주체나 개별 업종 매수액을 뜻하지 않습니다",
+         "같은 거래일 투자자별 순매수 표와 다음 거래일 수급 지속성 확인"),
         ("earnings", r"(?:예상|기대).{0,25}(?:웃도|넘는|상회).{0,25}실적|실적\s*호조|strong (?:profit|earnings)|earnings.{0,15}(?:beat|exceed)",
          "일부 기업의 호실적이 보도됐습니다",
          "실적 기대가 지수를 지지해도 AI 업종과 시장 전체의 방향은 다를 수 있습니다",
@@ -199,6 +212,10 @@ def _body_facts(paragraphs):
                 fact.update(polarity="negative", summary="기업 실적·전망 부진이 보도됐습니다",
                             implication="실적·전망 부진은 관련 업종 투자심리에 부담이 될 수 있으나 시장 전체 하락의 단독 원인으로 확정할 수 없습니다",
                             check="공식 실적·가이던스와 시장 기대치 비교 확인")
+            if re.search(r"하락\s*출발|상승\s*출발|장\s*초반|개장\s*초", matched):
+                fact["market_phase"] = "opening"
+                fact["summary"] = "장 초반 배경: " + fact["summary"]
+                fact["implication"] += " 장 초반 설명이며 종가까지 같은 영향이 이어졌다는 뜻은 아닙니다."
             facts.append(fact)
     from stock_lab_core.article_price_facts import oil_price_fact
     oil = oil_price_fact(paragraphs)
@@ -207,6 +224,41 @@ def _body_facts(paragraphs):
     # Consumers show only the first two facts; retain supported adverse context.
     facts.sort(key=lambda fact: 0 if fact.get("polarity") == "negative" else 1 if fact["topic"] == "ai_credit" else 2)
     return facts[:4]
+
+
+def _sector_body_facts(paragraphs, title):
+    """Short attributed findings, not general market causality or order amounts."""
+    from stock_lab_core.report_news_selection import matching_categories
+    topics = matching_categories(title)
+    rules = (
+        ("조선", "shipbuilding_orders", r"(?:수주|건조\s*계약).{0,35}(?:소식|기대|체결|확보|성공)",
+         "조선 관련 수주 소식·사업 확대 기대가 보도됐습니다",
+         "업종 기대와 개별 기업의 확정 계약은 다릅니다. 수익성·인도 시점이 확인돼야 실적 영향을 판단할 수 있습니다",
+         "계약 당사자·확정 여부와 실제 수익성 확인"),
+        ("금융·은행", "bank_governance", r"(?:금융지주|은행|금융그룹).{0,70}연임.{0,50}(?:요건|규제|찬성|주주)",
+         "금융회사 경영진 연임 요건·주주 의결권 관련 내용이 보도됐습니다",
+         "경영진 선임과 지배구조에 영향을 줄 수 있지만 이익 증가나 금융업종 상승을 뜻하지 않습니다",
+         "공식 제도안·적용 대상·시행 시점 확인"),
+        ("금융·은행", "bank_capital", r"(?:금융지주|은행|금융그룹).{0,70}(?:배당|자사주|지분\s*(?:매각|처분))",
+         "금융회사 주주환원·자본 운용 관련 내용이 보도됐습니다",
+         "실제 환원 규모와 지속 가능성은 자본비율·이익 및 공식 이사회 결정에 달려 있습니다",
+         "해당 금융회사 공시의 금액·기간·자본비율 확인"),
+    )
+    facts = []
+    for category, topic, pattern, summary, implication, check in rules:
+        if category not in topics:
+            continue
+        for paragraph in paragraphs:
+            for sentence in re.split(r"[;!?\n]|\.\s+", paragraph):
+                match = re.search(pattern, sentence, re.I)
+                if not match or _PAST_CONTEXT.search(sentence) or _NEGATED_CONTEXT.search(sentence):
+                    continue
+                facts.append(dict(topic=topic, summary=summary, implication=implication, check=check,
+                                  evidence=sentence[:140] + ("…" if len(sentence) > 140 else "")))
+                break
+            if facts and facts[-1]["topic"] == topic:
+                break
+    return facts
 
 
 def parse_article(data, url, expected_title):
@@ -225,35 +277,47 @@ def parse_article(data, url, expected_title):
     meta = articles[0]
     if meta.get("isAccessibleForFree") in (False, "false", "False"):
         return {"body_status": "restricted_article"}
-    title = re.sub(r"\s+", "", str(meta.get("headline") or "")).casefold()
-    expected = re.sub(r"\s+", "", expected_title).casefold()
+    title = re.sub(r"\s+", "", unescape(str(meta.get("headline") or ""))).casefold()
+    expected = re.sub(r"\s+", "", unescape(expected_title)).casefold()
     if not title or not expected or not (title in expected or expected in title):
         return {"body_status": "headline_mismatch"}
     published = _date(meta.get("datePublished"))
     modified = _date(meta.get("dateModified")) or published
     if not published or not modified:
         return {"body_status": "article_timestamp_unavailable"}
-    if "yna.co.kr" in (urlsplit(url).hostname or ""):
+    host = urlsplit(url).hostname or ""
+    if "yna.co.kr" in host:
         paragraphs = root.xpath('//div[contains(concat(" ",normalize-space(@class)," ")," story-news ")]/p')
         paragraphs = [" ".join(p.text_content().split()) for p in paragraphs]
+    elif host == "www.fnnews.com" or host == "fnnews.com":
+        # Use the publisher's article body only, never page navigation/related news.
+        containers = root.xpath('//div[contains(concat(" ",normalize-space(@class)," ")," article-view__body ")]')
+        paragraphs = []
+        if len(containers) == 1:
+            body = containers[0]
+            for extra in body.xpath('.//script|.//style|.//aside|.//figure|.//figcaption'):
+                extra.drop_tree()
+            paragraphs = [" ".join(part.split()) for part in body.itertext()]
     else:
         body = meta.get("articleBody")
         paragraphs = re.split(r"\n+|(?<=[.!?])\s+", body) if isinstance(body, str) else []
     paragraphs = [p for p in paragraphs if len(p) >= 25 and not re.search(r"무단\s*(?:전재|복제)|재배포\s*금지|저작권|구독|광고", p)]
+    if not paragraphs:
+        return {"body_status": "article_body_unavailable"}
     from stock_lab_core.catalyst_news import catalyst_body_facts, catalyst_entities
     issuer_context = bool(catalyst_entities(expected_title))
     issuer_facts = catalyst_body_facts(paragraphs, expected_title) if issuer_context else []
     # An issuer's capex/FCF discussion is not evidence that AI lifted the index.
-    facts = issuer_facts if issuer_context else _body_facts(paragraphs)
+    facts = issuer_facts if issuer_context else (_sector_body_facts(paragraphs, expected_title) + _body_facts(paragraphs))[:4]
     return dict(body_status="verified" if facts else "no_supported_context", body_facts=facts,
                 body_published_at=published.isoformat(), body_modified_at=modified.isoformat(), body_source_url=url,
                 body_sha256=hashlib.sha256("\n".join(paragraphs).encode()).hexdigest(),
                 body_checked_at=datetime.now(timezone.utc).isoformat())
 
 
-@cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") == "verified")
+@cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v4: sentence-scoped earnings/AI context and adverse-context priority.
+    # v5: publisher body containers, entity-normalized identity and phase labels.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -263,36 +327,61 @@ def _article(url, title):
 
 def enrich_article_context(result, now):
     """Read at most four direct public URLs after session/source curation."""
-    buckets = ("current_session_news", "session_news", "next_session_news")
+    buckets = ("current_session_news", "session_news", "next_session_news", "other_market_news")
     rows = [row for bucket in buckets for row in result.get(bucket, []) if _safe_url(row.get("link", ""))]
     from stock_lab_core.catalyst_news import catalyst_entities, catalyst_topics
+    from stock_lab_core.news_priority import market_news_priority
+    from stock_lab_core.report_news_selection import matching_categories
+    from stock_lab_core.report_presentation import is_preopen_outlook
+    requested = result.get("news_retrieval", {}).get("requested_categories", ())
+    def market_wrap(row):
+        title = row.get("title", "")
+        return (bool(re.search(r"코스피|코스닥|뉴욕증시|나스닥|Wall Street", title, re.I))
+                and not is_preopen_outlook(row)
+                and not re.search(r"특징주|상장|장초반|전망|출발|개장|주간|마켓뷰|[?？]", title))
+    def selected_material(row):
+        title = row.get("title", "")
+        topics = matching_categories(title, requested)
+        return bool(("금융·은행" in topics and re.search(r"연임|지분.{0,12}매각|주주환원|충당금|이자마진", title))
+                    or ("조선" in topics and re.search(r"수주|건조\s*계약", title)))
     rows.sort(key=lambda row: (not (row.get("news_bucket") == "next_session_news"
                                    and catalyst_entities(row.get("title")) and catalyst_topics(row.get("title"))),
-                               not row.get("is_close_wrap"), row.get("market") != "KR"))
-    selected, market_counts, seen = [], {}, set()
+                               not market_wrap(row), not selected_material(row), -market_news_priority(row),
+                               -(_date(row.get("published_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp()))
+    selected, market_counts, seen, wrap_markets = [], {}, set(), set()
     for row in rows:
         market, link = row.get("market"), row.get("link")
-        if link in seen or market_counts.get(market, 0) >= 2:
+        # GLOBAL is a provenance bucket, not a single market: keep topic variety.
+        group = (market, row.get("category", "시장") if market == "GLOBAL" else "")
+        if link in seen or market_counts.get(group, 0) >= 2 or (market_wrap(row) and market in wrap_markets):
             continue
         selected.append(row)
         seen.add(link)
-        market_counts[market] = market_counts.get(market, 0) + 1
+        market_counts[group] = market_counts.get(group, 0) + 1
+        if market_wrap(row):
+            wrap_markets.add(market)
         if len(selected) >= MAX_ARTICLES:
             break
+    started = time.monotonic()
     with ThreadPoolExecutor(max_workers=4) as executor:
         pending = [executor.submit(_article, row["link"], row["title"]) for row in selected]
         for row, future in zip(selected, pending):
             evidence = future.result()
             published, modified = _date(evidence.get("body_published_at")), _date(evidence.get("body_modified_at"))
-            if evidence.get("body_status") == "verified" and (not published or not modified or max(published, modified) > now):
+            if evidence.get("body_status") in {"verified", "no_supported_context"} and (not published or not modified or max(published, modified) > now):
                 evidence = {"body_status": "article_version_after_report"}
             source_date = _date(row.get("published_at"))
-            if (evidence.get("body_status") == "verified" and source_date
+            if (evidence.get("body_status") in {"verified", "no_supported_context"} and source_date
                     and min(abs((source_date - published).total_seconds()), abs((source_date - modified).total_seconds())) > 3600):
                 evidence = {"body_status": "article_timestamp_mismatch"}
             row.update(evidence)
+    statuses = {}
+    for row in selected:
+        status = row.get("body_status", "unknown")
+        statuses[status] = statuses.get(status, 0) + 1
     result.setdefault("news_retrieval", {}).update(article_feed_count=len(FEEDS), article_body_limit=MAX_ARTICLES,
-        article_body_attempted=len(selected), article_body_verified=sum(row.get("body_status") == "verified" for row in selected))
+        article_body_attempted=len(selected), article_body_verified=sum(row.get("body_status") == "verified" for row in selected),
+        article_body_seconds=round(time.monotonic() - started, 3), article_body_statuses=statuses)
     return result
 
 
@@ -302,11 +391,13 @@ def verified_body_facts(row):
 
 def body_context_sentence(row):
     labels = {"mediation": "미·이란 중재 기대", "ai_investment": "AI 실적·투자 확대와 수요 기대",
-              "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "earnings": "기업 호실적",
+              "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "institution_buying": "기관 순매수", "earnings": "기업 호실적",
               "oil_easing": "유가 하락", "oil_rising": "유가 상승", "oil_mixed": "기간·유종별 유가 방향 혼재"}
     facts = verified_body_facts(row)
-    backgrounds = ["기업 실적·전망 부진" if fact.get("polarity") == "negative" and fact["topic"] == "earnings"
-                   else labels[fact["topic"]] for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
+    backgrounds = [("장 초반 " if fact.get("market_phase") == "opening" else "")
+                   + ("기업 실적·전망 부진" if fact.get("polarity") == "negative" and fact["topic"] == "earnings"
+                      else labels[fact["topic"]])
+                   for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
     sentence = "기사에서는 " + "·".join(backgrounds[:3]) + " 등을 시장 배경으로 짚었습니다." if backgrounds else ""
     for fact in facts:
         if fact["topic"] == "ai_credit" and not fact.get("subject_ticker"):

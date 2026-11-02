@@ -65,9 +65,10 @@ def test_enrichment_is_bounded_and_rejects_future_revision():
     result = {"session_news": rows}
     with patch.object(articles, "_article", return_value=articles.parse_article(page(modified="2026-10-21T21:00:00+09:00"), URL, TITLE)) as loader:
         articles.enrich_article_context(result, NOW)
-    assert loader.call_count == articles.MAX_ARTICLES
+    # One broad index recap per market leaves room for distinct sector evidence.
+    assert loader.call_count == 2
     assert result["news_retrieval"]["article_body_verified"] == 0
-    assert sum(r.get("body_status") == "article_version_after_report" for r in rows) == 4
+    assert sum(r.get("body_status") == "article_version_after_report" for r in rows) == 2
 
 
 def test_body_story_connects_event_interpretation_holdings_and_next_check_without_mutation():

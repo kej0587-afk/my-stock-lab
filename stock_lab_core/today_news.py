@@ -980,9 +980,6 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
                                 "catalyst_query_count": sum(spec.get("query_kind") == "issuer_catalyst" for spec in specs),
                                 "max_workers": 4, "cached": bool(use_cache),
                                 "queried_topics": sorted({topic for spec in specs for topic in spec.get("query_topics", ())})}
-    if include_article_bodies:
-        from stock_lab_core.article_context import enrich_article_context
-        enrich_article_context(result, now)
     available = {plan["category"] for plan in TODAY_MARKET_STORY_RSS_PLAN}
     if any(category not in available for category in categories or ()):
         result["missing"].append("알 수 없는 뉴스 카테고리 제외")
@@ -992,6 +989,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         queried_categories=list(dict.fromkeys(c for spec in specs for c in spec.get("selected_categories", ()))),
         failed_categories=retrieved.get("failed_categories", []),
     )
+    if include_article_bodies:
+        from stock_lab_core.article_context import enrich_article_context
+        enrich_article_context(result, now)
     return result
 
 

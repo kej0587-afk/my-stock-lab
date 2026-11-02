@@ -12,7 +12,9 @@ SEARCH_TERMS = {
     "반도체·AI": ("반도체", "AI 투자"), "반도체·AI 리스크": ("AI 부채", "메모리 급락"),
     "지정학": ("이란", "휴전"), "매크로/중국": ("중국 경제", "중국 부양책"),
     "외환/금리": ("환율", "금리"), "조선": ("조선주", "한화오션"),
-    "에너지/해운": ("유가", "해운"), "금융·은행": ("은행주", "금융주"),
+    "에너지/해운": ("유가", "해운"),
+    "금융·은행": ("은행주", "금융주", "금융지주", "KB금융", "신한지주", "하나금융",
+                  "우리금융", "기업은행", "카카오뱅크", "bank stocks", "JPMorgan"),
     "암호화폐": ("비트코인", "이더리움"), "건설·인프라": ("건설주", "인프라 투자"),
     "국채/유동성": ("국채", "유동성"), "바이오·헬스케어": ("바이오", "임상"),
     "원자재/금속": ("금값", "구리"), "실적/대장주": ("실적", "가이던스"),
@@ -40,7 +42,11 @@ TOPICS = {
     "외환/금리": r"환율|달러|엔화|금리|연준|\b(?:dollar|yen|yields?|rates?|FOMC|BOJ|Fed)\b",
     "조선": r"조선(?:주|업|사|소|업종)|조선\s*(?:강세|급등|상승|하락)|한국조선해양|현대중공업|삼성중공업|한화오션|\b(?:shipbuild\w*|shipyard\w*)\b",
     "에너지/해운": r"유가|원유|에너지|해운|운임|유조선|\b(?:oil|WTI|Brent|OPEC|shipping|tanker\w*|freight)\b",
-    "금융·은행": r"은행|금융주|보험주|증권주|\b(?:banks?|banking|insurers?|financials?)\b",
+    "금융·은행": (r"은행(?!나무|잎)|금융\s*지주|금융주|보험주|증권주|(?:KB|하나|우리|BNK|JB|DGB|iM)\s*금융|"
+                  r"신한\s*(?:지주|금융)|카카오뱅크|제이피모건|JP모건|골드만삭스|모[건간]스탠리|"
+                  r"\b(?:banks?|banking|insurers?|financials|financial\s+(?:groups?|holdings?|stocks?|institutions?)|"
+                  r"J\.?\s*P\.?\s*Morgan|Citigroup|"
+                  r"Goldman\s+Sachs|Morgan\s+Stanley|Wells\s+Fargo|HSBC)\b"),
     "암호화폐": r"비트코인|이더리움|가상자산|암호화폐|\b(?:Bitcoin|Ethereum|crypto|BTC|ETH)\b",
     "건설·인프라": r"건설|인프라|철도|전력망|\b(?:construction|infrastructure|railway|power grid)\b",
     "국채/유동성": r"국채|유동성|양적긴축|양적완화|\b(?:Treasur\w*|liquidity|QT|QE|refunding|repo)\b",
@@ -52,10 +58,36 @@ TOPICS = {
 }
 
 
+_CENTRAL_BANKS = re.compile(
+    r"한국은행|일본은행|중국인민은행|인민은행|(?:유럽)?중앙은행|세계은행|"
+    r"\b(?:(?:European\s+)?central\s+banks?|(?:Federal\s+)?Reserve\s+Bank(?:\s+of\s+\w+)?|"
+    r"Bank\s+of\s+(?:Korea|Japan|England|Canada)|People['’]s\s+Bank\s+of\s+China|World\s+Bank)\b", re.I)
+_FINANCE_MATERIAL = re.compile(
+    r"실적|순이익|순익|이자마진|순이자|충당금|연체율|부실|자본비율|배당|자사주|주주환원|"
+    r"규제|의결요건|지배구조|회장.{0,16}연임|지분.{0,16}(?:매각|인수)|"
+    r"\b(?:earnings|profits?|dividends?|buybacks?|CET1|NIM|defaults?|provisions?|regulat\w*)\b", re.I)
+_FINANCE_PROMO = re.compile(
+    r"연탄|김장|봉사활동|장학금|금융특강|금융교육|사회공헌|경품|쿠폰|캐시백|특판|"
+    r"관광.{0,30}(?:협약|협력|맞손)|"
+    r"가입.{0,12}(?:혜택|이벤트)|계좌.{0,12}개설.{0,20}(?:혜택|이벤트)|"
+    r"\b(?:cashback|giveaway|sweepstakes|sign.up\s+bonus|charity\s+event|food\s+banks?)\b", re.I)
+
+
+def _matches_finance(title):
+    # Central-bank policy alone is macro evidence, not listed-bank coverage.
+    subject = _CENTRAL_BANKS.sub("", title)
+    if not re.search(TOPICS["금융·은행"], subject, re.I):
+        return False
+    # Keep earnings/regulatory reporting about promotions or deposit competition.
+    return not _FINANCE_PROMO.search(subject) or bool(_FINANCE_MATERIAL.search(subject))
+
+
 def matching_categories(title, categories=None):
     # Query membership alone must never label unrelated search results.
+    title = str(title or "")
     return [category for category in (TOPICS if categories is None else categories)
-            if category in TOPICS and re.search(TOPICS[category], str(title or ""), re.I)]
+            if category in TOPICS and (_matches_finance(title) if category == "금융·은행"
+                                       else re.search(TOPICS[category], title, re.I))]
 
 
 def report_news_options(state):
@@ -97,7 +129,10 @@ def selected_category_lines(context, now):
     seen = {}
     for category in categories:
         selected, keys = [], set()
-        for row in rows:
+        # Stable sort preserves recency within each group and other topic order.
+        candidates = (sorted(rows, key=lambda row: not bool(_FINANCE_MATERIAL.search(str(row.get("title") or ""))))
+                      if category == "금융·은행" else rows)
+        for row in candidates:
             at = stamp(row.get("published_at") or row.get("published"))
             key = row.get("link")
             if not at or at > now or not key or key in keys or not matching_categories(row.get("title"), [category]):
@@ -122,7 +157,12 @@ def selected_category_lines(context, now):
                 if facts:
                     detail += " · 사실(본문): " + facts[0]["summary"] + " · 해석(추정): " + facts[0]["implication"]
                 else:
-                    detail += " · 제목 확인·본문 원인 해석 보류"
+                    body_times = [stamp(row.get(field)) for field in ("body_published_at", "body_modified_at")]
+                    checked = (row.get("body_status") == "no_supported_context"
+                               and row.get("body_source_url") == key
+                               and all(value and value <= now for value in body_times)
+                               and min(abs((at - value).total_seconds()) for value in body_times) <= 3600)
+                    detail += (" · 본문 확인·자동 해석 근거 부족" if checked else " · 제목 확인·본문 원인 해석 보류")
                     reading = row.get("reading_ko") or ""
                     if reading and not re.search("[가-힣]", row.get("title", "")):
                         detail += " · " + reading

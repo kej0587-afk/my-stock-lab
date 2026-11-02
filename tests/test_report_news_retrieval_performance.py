@@ -110,9 +110,12 @@ def report_context():
 
 
 def news_payload(context):
-    return {key: deepcopy(context[key]) for key in (
+    payload = {key: deepcopy(context[key]) for key in (
         "session_news", "next_session_news", "current_session_news", "other_market_news",
         "windows", "current_windows", "news_retrieval", "missing", "market_states", "sessions")}
+    # Duration is observability, not news content; warm cache timing must differ.
+    payload["news_retrieval"].pop("article_body_seconds", None)
+    return payload
 
 
 def test_controlled_report_news_cold_and_warm_three_repeats(monkeypatch):
@@ -134,7 +137,7 @@ def test_controlled_report_news_cold_and_warm_three_repeats(monkeypatch):
             if state == "warm":
                 assert not calls
             else:
-                assert calls["rss"] > 0 and calls["publisher_feed"] == 2 and calls["article_body"] == 1
+                assert calls["rss"] > 0 and calls["publisher_feed"] == len(article_context.FEEDS) == 4 and calls["article_body"] == 1
             measurements.append({"repeat": repeat + 1, "state": state,
                                  "seconds": round(elapsed, 6), "synthetic_requests": calls})
     print("synthetic_report_news=" + json.dumps({

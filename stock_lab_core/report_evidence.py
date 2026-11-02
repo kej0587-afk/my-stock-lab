@@ -17,14 +17,14 @@ SOURCE_NAMES = (
     "매일경제", "서울경제", "서울파이낸스", "조선비즈", "조선일보", "한겨레",
     "경향신문", "머니투데이", "아시아경제", "이데일리", "뉴시스", "cnbc", "bloomberg",
     "financial times", "wall street journal", "yahoo finance", "bls", "federal reserve",
-    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경", "axios", "뉴스1",
+    "한국은행", "통계청", "산업통상", "boj", "nikkei", "한경", "axios", "뉴스1", "파이낸셜뉴스",
 )
 SOURCE_DOMAINS = (
     "reuters.com", "apnews.com", "yna.co.kr", "yonhapnewstv.co.kr", "einfomax.co.kr",
     "hankyung.com", "mk.co.kr", "sedaily.com", "chosun.com", "edaily.co.kr",
     "mt.co.kr", "asiae.co.kr", "newsis.com", "cnbc.com", "bloomberg.com", "ft.com",
     "wsj.com", "finance.yahoo.com", "bls.gov", "federalreserve.gov", "bok.or.kr",
-    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com", "news1.kr",
+    "kostat.go.kr", "motie.go.kr", "boj.or.jp", "census.gov", "nikkei.com", "axios.com", "news1.kr", "fnnews.com",
     "aws.amazon.com", "pytorch.org", "nvidianews.nvidia.com", "investor.atmeta.com", "ir.tesla.com", "investors.coreweave.com",
 )
 EVENT_CLUSTERS = (
@@ -34,7 +34,7 @@ EVENT_CLUSTERS = (
 )
 MARKET_TERMS = re.compile(
     r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|엔비디아|아마존|마이크론|코어위브|트레이니엄|파이토치|수주|가이던스|조선주|조선업|해운|건설|인프라|유동성|제약|백신|임상|"
-    r"\b(?:shipbuild\w*|shipping|infrastructure|construction|liquidity|biotech|vaccine|clinical trial|PBOC|refunding)\b|"
+    r"금융지주|금융주|보험주|증권주|\b(?:shipbuild\w*|shipping|infrastructure|construction|liquidity|biotech|vaccine|clinical trial|PBOC|refunding)\b|"
     r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire|amazon|aws|trainium|pytorch|micron|guidance)\b",
     re.IGNORECASE,
 )

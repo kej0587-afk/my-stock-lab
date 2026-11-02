@@ -77,3 +77,38 @@ Sources: [Npay market data](https://stock.naver.com/market/stock/kr/trend/trader
   Profile access worked; managing apps required GitHub reauthentication. A Cloud
   reboot was requested. Do not describe a new Cloud report as verified until that
   reboot and a new generation complete.
+
+## Follow-up: 2026-11-03 public body and finance coverage
+
+- After the user rebooted, Cloud generated a report at 2026-11-02 22:38 KST
+  with build `72c3f290cf5d`. Shipbuilding and separate investor/program tables
+  were present. Finance remained empty in that run; most rows were title-only.
+- Finance matching now covers financial holdings and named banks, excludes
+  central-bank-only headlines and routine promotion, and prefers material
+  earnings/regulatory/capital stories. Retrieval still has at most 16 search
+  requests; source validation now accepts the official Financial News RSS.
+- Publisher feeds previously dropped sector stories before curation. They now
+  preserve matching topics. Added the publisher's documented finance/stock feeds
+  (4 feeds total, 2 workers) and narrowly scoped public body extraction. Body
+  requests remain capped at 4, with per-topic variety for the GLOBAL bucket.
+- Headline metadata contained `&apos;` while RSS used literal quotes; normalize
+  HTML entities before identity comparison. Keep different-headline, restricted,
+  future-version and timestamp checks. Empty bodies do not claim verification.
+- Prefer actual broad-market reports over IPO `상승 마감` stories; do not read
+  two broad recaps from the same market. Selected shipbuilding/finance material
+  receives a body-reading slot before routine features where available.
+- Institution buying and opening-session context have separate evidence labels.
+  Opening weakness is not presented as the whole-day cause. A finance governance
+  article does not become a prediction of banking-stock gains.
+- Same public HTML inputs (4 articles, collected 2026-11-03 00:07 KST): old
+  parser verified 1/4; new parser verified 4/4. This is a targeted reproduction,
+  not a universal coverage rate. Source bodies are not stored in the repository.
+- Local bounded news collection at 23:59 KST took 6.182s; body work 0.687s.
+  Re-selecting the same accepted pool after fixes took 0.688s for four bodies.
+  These are local observations, not Cloud/full-today timings or a controlled
+  speedup claim. Cold/warm synthetic tests confirm no extra warm network calls.
+- Related regression suite: 494 passed in 15.60s. Covers identity, future data,
+  public access, source whitelist, finance classification, UI preferences,
+  article limits, cold/warm equality (excluding measured duration), and stories.
+
+Publisher feed documentation: https://www.fnnews.com/rss
