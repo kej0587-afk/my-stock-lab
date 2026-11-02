@@ -34,6 +34,15 @@ review counterexamples for historical FCF, incidental issuers, previews,
 compact fiscal periods and ticker aliases have regression coverage. Existing
 77 dependency/fixture warnings remain. No total-runtime speedup is claimed.
 
+Cloud verification after reboot generated a report with build `45435ba620b6`:
+73 inspected issuers, 9 officially confirmed issuers and 1 issuer discovered
+in existing news. Thus broad official coverage is still incomplete; this
+refactor must not be described as a complete earnings calendar. Raw details
+were collapsed while the shared story and full download remained available.
+Visual inspection found Markdown dollar-sign math and cramped three-column
+layout; the follow-up escapes currency, uses two columns and labels the
+guidance target period separately. Its focused 205 regressions passed.
+
 ## Scope
 
 This is a report-only change. Candidate grades, execution gates, scoring,

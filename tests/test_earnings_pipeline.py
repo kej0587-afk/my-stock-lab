@@ -199,7 +199,7 @@ def test_historical_fcf_deficit_is_not_a_current_deficit(fcf):
     actual["metrics"]["free_cash_flow"]["text"] = fcf
     pipeline = build_earnings_pipeline(context(earnings_results=[actual]), now=NOW)
     assert "FCF 적자가 확인" not in pipeline["packets"][0]["commentary"]
-    assert fcf in "\n".join(earnings_story_lines(pipeline))
+    assert fcf.replace("$", r"\$") in "\n".join(earnings_story_lines(pipeline))
 
 
 def test_coverage_canonicalizes_aliases_and_excludes_funds_without_metadata():
@@ -227,3 +227,16 @@ def test_alias_collection_limit_diagnostic_is_canonical():
 def test_realized_results_with_estimates_or_outlook_are_not_previews(title):
     pipeline = build_earnings_pipeline({}, news=[news(title)], now=NOW)
     assert pipeline["highlights"] and pipeline["highlights"][0]["official"] is False
+
+
+def test_story_escapes_currency_and_separates_guidance_target_period():
+    actual = result()
+    actual["metrics"]["free_cash_flow"]["text"] = "Free cash flow was $5 billion, compared with $2 billion"
+    actual["metrics"]["capex"] = {}
+    actual["metrics"]["guidance"] = dict(status="available", text="Next quarter revenue $20 to $30 billion", source_url=SOURCE)
+    pipeline = build_earnings_pipeline(context(earnings_results=[actual]), now=NOW)
+    rendered = "\n".join(earnings_story_lines(pipeline))
+    assert r"\$5 billion, compared with \$2 billion" in rendered
+    assert "전망 대상 기간은 원문 기준" in rendered
+    assert "기업·확인된 사실 | 해석과 남은 확인" in rendered
+    assert "Next quarter revenue $20 to $30 billion" == pipeline["packets"][0]["metrics"]["guidance"]["text"]

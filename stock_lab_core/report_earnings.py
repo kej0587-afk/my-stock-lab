@@ -12,7 +12,7 @@ def earnings_story_lines(pipeline):
     if not selected:
         return []
     lines = ["", "**실적에서 확인할 시장 쟁점**",
-             "기업·대상 | 확인된 사실·보도 | 해석과 남은 확인", "--- | --- | ---"]
+             "기업·확인된 사실 | 해석과 남은 확인", "--- | ---"]
     for packet in selected:
         metrics = packet["metrics"]
         facts = []
@@ -21,8 +21,11 @@ def earnings_story_lines(pipeline):
             if metric.get("status") not in {"reported", "available"} or not safe_link(metric.get("source_url")) or not text(metric.get("text")):
                 continue
             scope = "TTM·분기값 아님" if metric.get("period_scope") == "trailing_twelve_months" else packet["fiscal_period"]
+            if key == "guidance":
+                scope = f"{packet['fiscal_period']} 발표에서 제시 · 전망 대상 기간은 원문 기준"
             # Keep the complete source sentence; truncating can remove a sign or unit.
-            facts.append(f"{METRIC_LABELS[key]} ({scope}): {text(metric['text'])} "
+            evidence = text(metric["text"]).replace("$", r"\$")
+            facts.append(f"{METRIC_LABELS[key]} ({scope}): {evidence} "
                          + f"[원문]({safe_link(metric['source_url'])})")
             if len(facts) == 2:
                 break
@@ -31,7 +34,7 @@ def earnings_story_lines(pipeline):
         target = f"{packet['name']}({packet['ticker']}) · {packet['sector']} · {packet['relationship']}"
         target += f" · {packet['date']} {packet['date_basis']}"
         reading = packet["commentary"] + " " + packet["consensus_status"] + "."
-        lines.append(" | ".join(_cell(v) for v in (target, " / ".join(facts), reading)))
+        lines.append(" | ".join(_cell(v) for v in (f"**{target}** " + " / ".join(facts), reading)))
     lines.extend(["", "최근 7일의 수집된 발표·보도에서 기업 중복을 줄이고 업종을 분산한 최대 3개입니다. 시장 영향도 순위나 매수 후보가 아니며, 근거가 없는 업종은 채우지 않습니다.", ""])
     return lines
 
