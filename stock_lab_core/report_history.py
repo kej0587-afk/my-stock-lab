@@ -147,7 +147,8 @@ def _comparisons(saved, dates, result):
                       previous_generated_at=previous.get("generated_at", ""))
 
 
-def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None, store=None, source_provenance=None):
+def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None, store=None, source_provenance=None,
+                          safeguard_news=None, safeguard_session_days=None):
     """Update a session pair, optionally using an owner-bound injected store.
 
     Stores implement load_sessions(dates, *, owner_scope) -> dict and
@@ -183,6 +184,7 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
     except (OSError, ValueError, TypeError, KeyError):
         saved, local_available = {}, False
     _repair_names(saved, current)
+    remote_loaded = False
     if store is not None:
         try:
             if not owner_scope:
@@ -195,6 +197,23 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
                 if remote_key not in saved or _run_time(value) >= _run_time(saved[remote_key]):
                     saved[remote_key] = deepcopy(value)
             _repair_names(saved, current)
+            remote_loaded = True
+        except Exception as exc:
+            code = exc.code if isinstance(exc, ReportHistoryStoreError) else "store_unavailable"
+            result.update(history_fallback=True, history_error=code)
+    if safeguard_news is not None or any(session.get("safeguard_events") for session in saved.values()):
+        from stock_lab_core.market_safeguards import safeguard_events
+        from stock_lab_core.safeguard_history import merge_safeguard_history
+
+        at = _run_time(current)
+        previous_events = [event for session in saved.values() if _run_time(session) <= at
+                           for event in session.get("safeguard_events", [])]
+        current["safeguard_events"] = merge_safeguard_history(
+            safeguard_events(safeguard_news, at), previous_events, safeguard_session_days, at,
+            retain_without_calendar=True)
+        result["safeguard_events"] = deepcopy(current["safeguard_events"])
+    if remote_loaded:
+        try:
             store.upsert_session(current, owner_scope=owner_scope)
             result.update(history_backend="supabase", history_durable=True)
         except Exception as exc:

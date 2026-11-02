@@ -1,7 +1,7 @@
 """Read-only report extension, isolated from signal grades and market gates."""
 
 from stock_lab_core.report_build import register_loaded_source
-from stock_lab_core.report_evidence import _cell, first, number, records, text
+from stock_lab_core.report_evidence import _cell, first, number, records, safe_link, text
 from stock_lab_core.market_observation import (
     build_sector_rotation, build_event_study, tag_candidate_news, build_observation_hypotheses,
 )
@@ -22,6 +22,24 @@ CATALYST_EXPOSURES = {
 
 def _pct(value):
     return f"{value * 100:+.2f}%" if number(value) is not None else "미연결"
+
+
+def _semiconductor_market_background(context, sentiment_rows):
+    if not isinstance(context.get("public_market_evidence"), dict):
+        return []
+    price = context.get("prices", {}).get("396500.KS", {})
+    day = price.get("date")
+    if (not day or day != context.get("sessions", {}).get("KR")
+            or price.get("stale") or number(price.get("return")) is None):
+        return []
+    flows = {row["지표"]: row for row in sentiment_rows}
+    foreign, institution = (flows.get("KOSPI " + name + " 순매수", {}) for name in ("외국인", "기관"))
+    if any(row.get("기준일") != day or row.get("관측") in {None, "", "미연결"}
+           or not safe_link(row.get("출처")) for row in (foreign, institution)):
+        return []
+    return ["", f"한국 반도체(396500.KS) {_pct(price['return'])}({day}) / 같은 날 KOSPI "
+            f"외국인 {foreign['관측']}·기관 {institution['관측']}; "
+            "시장 전체 수급, 반도체 매수액/상승 원인으로 확정하지 않음."]
 
 
 def _event_study_lines(study):
@@ -58,12 +76,22 @@ def observation_report_lines(context, summary_rows, news, now):
     hypotheses = build_observation_hypotheses(rotation, study, candidates)
     lines = ["", "## 관찰 근거 · 매매 판정과 별도", "**투자심리 상태**", sentiment["state"],
              "지표 | 관측 | 기준일 | 범위·한계", "--- | --- | --- | ---"]
-    lines += [" | ".join(_cell(r[k]) for k in ("지표", "관측", "기준일", "범위·한계")) for r in sentiment["rows"]]
+    for row in sentiment["rows"]:
+        scope = row["범위·한계"]
+        source = safe_link(row.get("출처"))
+        if source:
+            scope += f" · [출처]({source})"
+        if row.get("조회시각"):
+            scope += " · 조회 " + text(row["조회시각"])
+        lines.append(" | ".join(_cell(value) for value in (row["지표"], row["관측"], row["기준일"], scope)))
+    lines += _semiconductor_market_background(context, sentiment["rows"])
+    kr_excluded = [row for row in rotation["excluded"] if row.get("market") == "KR"]
     lines += ["", "**로테이션 관찰 후보**",
               "고정 모집단: 미국 산업·섹터 ETF 20개 / 한국 업종 대용 ETF 10개(업종지수 자체 아님). "
               + " / ".join(f"{market} 유효 {rotation.get('markets', {}).get(market, {}).get('sample_count', 0)}개"
-                           for market in ("US", "KR")),
+                           for market in ("US", "KR")) + f" / KR 제외 {len(kr_excluded)}개",
               "동일 시장·확정 거래일 기준. 상·하위는 20일 상대강도 변화순, 개선 소외는 20일 음수·5일 양수 중 5일 상대강도순입니다. 돈흐름은 실제 자금 유입액이 아닌 기존 가격·거래량 점수이며 순위를 매수 순서로 쓰지 않습니다.",
+              "유효 표본 6개 미만은 상·하위를 나누어 축소 표시(홀수의 추가 1개는 상위). 상·하위 ETF는 중복하지 않으며 개선 소외는 별도 조건이므로 재등장할 수 있습니다.",
               "시장·분류 | ETF·벤치 | 기준일 | RS 5D / 20D | 3M 가속도(%p) | 돈흐름점수", "--- | --- | --- | --- | --- | ---"]
     rotation_count = 0
     names = {text(first(row, "Ticker", "티커")): text(first(row, "섹터", "종목명"))
@@ -79,6 +107,23 @@ def observation_report_lines(context, summary_rows, news, now):
                     _pct(row["rs_5d_change"]) + " / " + _pct(row["rs_20d_change"]), acceleration, flow)))
     if not rotation_count:
         lines.append("미연결 | - | - | - | - | 같은 거래일의 ETF·벤치 이력 부족")
+    if kr_excluded:
+        reasons = {"pending_asset_close": "당일 종가 확인 대기",
+                   "missing_asset_history": "ETF 유효 가격 이력 미연결",
+                   "missing_asset_close": "ETF 기준일 종가 결측/무효",
+                   "missing_benchmark_close": "벤치마크 기준일 종가 미연결",
+                   "missing_shared_price_basis": "ETF·벤치 공통 가격 기준 미연결",
+                   "insufficient_benchmark_history": "벤치마크 21거래일 이력 부족",
+                   "missing_aligned_21_session_history": "동일 21거래일 ETF·벤치 이력 결측/무효(중복·0 이하 포함)",
+                   "missing_market_basis": "시장/기준 거래일 미연결",
+                   "unfinished_market_session": "기준 거래일 정규장 미완료",
+                   "not_unlevered_sector_etf": "비레버리지 업종 ETF 모집단 조건 미충족"}
+        lines += ["", "**KR 모집단 제외 사유**", "ETF | 기준일 | 제외 사유", "--- | --- | ---"]
+        for row in kr_excluded:
+            reason = reasons.get(row["detail"], row["detail"])
+            if row.get("note"):
+                reason += " · " + row["note"]
+            lines.append(" | ".join(_cell(value) for value in (row["ticker"], row["date"] or "미연결", reason)))
     lines += ["", "**뉴스 촉매 후보**", "후보·기사 | 분류 | 연결 노출(수동 매핑) | 확정 여부", "--- | --- | --- | ---"]
     labels = {"ipo": "IPO·상장", "earnings": "실적", "policy": "정책", "fomc": "FOMC"}
     for row in candidates[:5]:

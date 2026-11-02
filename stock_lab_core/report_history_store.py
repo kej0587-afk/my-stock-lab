@@ -40,6 +40,9 @@ def validate_session(session):
         raise ValueError("invalid history rows")
     if "macro_data" in session and not isinstance(session["macro_data"], dict):
         raise ValueError("invalid macro history")
+    if "safeguard_events" in session and (not isinstance(session["safeguard_events"], list)
+                                         or not all(isinstance(row, dict) for row in session["safeguard_events"])):
+        raise ValueError("invalid safeguard history")
     if "generated_at" in session and not isinstance(session["generated_at"], str):
         raise ValueError("invalid history timestamp")
     return session["dates"]["US"] + "/" + session["dates"]["KR"]

@@ -10,6 +10,9 @@ def app_source():
     path = Path(__file__).resolve().parents[1] / "app.py"
     tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     wrapper = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "render_today_queue_tab")
+    quote_helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_today_queue_overnight_tickers")
+    basket = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "INDEX_ROTATION_BASKET" for target in node.targets))
     return '''
 import inspect
 import json
@@ -20,6 +23,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from stock_lab_core.performance import PerformanceTrace, measure
+from stock_lab_core.formatters import clean_float, sanitize_ticker_value
+from stock_lab_core.money_flow import SECTOR_CLUSTERS_US
 SCRIPT_RUN_STARTED = perf_counter()
 KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE = True
 IS_PUBLIC_DEMO = True
@@ -40,7 +45,7 @@ def _render_today_queue_tab(mode):
         with measure("phase", "summary"):
             with measure("prices", "local_frame"):
                 pass
-''' + ast.unparse(wrapper) + '''
+''' + "\n".join(ast.unparse(node) for node in (basket, quote_helper, wrapper)) + '''
 try:
     render_today_queue_tab("test")
 except ValueError as exc:

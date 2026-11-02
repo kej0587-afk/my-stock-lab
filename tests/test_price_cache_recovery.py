@@ -1,5 +1,6 @@
 import ast
 from functools import wraps
+import inspect
 from pathlib import Path
 
 import pandas as pd
@@ -40,7 +41,7 @@ def test_price_loaders_retry_failures_before_normal_ttl(name, failure_ttl, args,
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
     cache_node = next(d for d in node.decorator_list if isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "cache_result")
     decorator = eval(compile(ast.Expression(cache_node), prices.__file__, "eval"), vars(prices))
-    cached = decorator(getattr(prices, name).__wrapped__)
+    cached = decorator(inspect.unwrap(getattr(prices, name)))
     failed = cached(*args)
     if isinstance(failed, pd.DataFrame):
         assert failed.empty

@@ -54,6 +54,10 @@ def current_state_lines(context, states, now, metrics):
         account = f"전체 추정 보류 · 연결 {coverage:.1f}% (90% 미만 또는 입력 확인 필요)"
     else:
         account = f"통합 누적 추정 {round(total, 2) or 0:+.2f}%p · 연결 {coverage:.1f}% · 확정 손익 아님"
+        from stock_lab_core.report_account import cumulative_account_decomposition
+        decomposition = cumulative_account_decomposition(metrics)
+        if decomposition:
+            account += " · " + decomposition
     return ["**한국 현재** · " + " / ".join(kr_parts),
             f"**미국 현재 · {phase}** · {us_line} (미확정·지연 가능)",
             "**계좌** · " + account]

@@ -148,6 +148,27 @@ def _excluded_product(ticker, meta, rows):
         re.search(r"\b(macro|inverse|leveraged|bond|treasury|currency|commodity|cash|money.market)\b|거시|국채|채권|인버스|레버리지|현금|머니마켓|금리형|CD금리|KOFR", description, re.I))
 
 
+def _rotation_history_detail(asset_frame, base_frame, column, day, reason):
+    """Diagnose existing exclusions without changing the aligned price selection."""
+    if not column:
+        if all(_closes(base_frame, col).loc[:day].dropna().empty for col in ("Adj Close", "Close")):
+            return "missing_benchmark_close"
+        if all(_closes(asset_frame, col).loc[:day].dropna().empty for col in ("Adj Close", "Close")):
+            return "missing_asset_history"
+        return "missing_shared_price_basis"
+    if reason == "missing_benchmark_close":
+        return reason
+    if asset_frame.attrs.get("report_close_pending_date") == day:
+        return "pending_asset_close"
+    base = _closes(base_frame, column).loc[:day]
+    asset = _closes(asset_frame, column).reindex(base.index)
+    if asset.iloc[-1:].isna().any():
+        return "missing_asset_close"
+    if len(base) < 21:
+        return "insufficient_benchmark_history"
+    return "missing_aligned_21_session_history"
+
+
 def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
                           sector_map=None, benchmarks=None):
     """Rank each market separately on its exact supplied completed benchmark date.
@@ -155,7 +176,8 @@ def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
     rs_5d_change/rs_20d_change = (ETF/benchmark)_t / (ETF/benchmark)_(t-N) - 1,
     NOT an RS level. No inner-join compression or forward filling is allowed.
     3M = 63 benchmark sessions; accel_3m = last 63 return - preceding 63 return.
-    Top/bottom three use 20D RS change; improving laggards have 20D < 0, 5D > 0.
+    Top/bottom use 20D RS change, at most three each, disjoint even below six
+    samples (odd extra row goes to top). Improving laggards have 20D < 0, 5D > 0.
     Missing short history excludes ranking; missing 3M/flow remains explicit.
     Flow scores require an exact matching date; undated rows never become zero.
     """
@@ -183,7 +205,8 @@ def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
             if pd.Timestamp(f"{day} {close_time}", tz=zone) > now:
                 reason = "unfinished_market_session"
         if reason:
-            output["excluded"].append({"ticker": ticker, "reason": reason})
+            output["excluded"].append({"ticker": ticker, "market": market, "benchmark": benchmark,
+                                       "date": day, "reason": reason, "detail": reason})
             continue
         asset_frame, base_frame = price_frames.get(ticker), price_frames.get(benchmark)
         column = next((col for col in ("Adj Close", "Close")
@@ -199,7 +222,11 @@ def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
             if rs5 is None or rs20 is None:
                 reason = "missing_aligned_21_session_history"
         if reason:
-            output["excluded"].append({"ticker": ticker, "reason": reason})
+            detail = _rotation_history_detail(asset_frame, base_frame, column, day, reason)
+            note = (_text(asset_frame.attrs.get("report_close_pending_reason"))
+                    if detail == "pending_asset_close" else "")
+            output["excluded"].append({"ticker": ticker, "market": market, "benchmark": benchmark,
+                                       "date": day, "reason": reason, "detail": detail, "note": note})
             continue
         ret3m, prev3m = _change(asset, 63), _change(asset, 63, 63)
         matching = [r for r in flows[ticker] if _day(_first(r, "기준일", "asof", "date")) == day]
@@ -217,8 +244,11 @@ def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
     for market in output["markets"].values():
         rows = market["rows"]
         market["sample_count"] = len(rows)
-        market["top3"] = sorted(rows, key=lambda r: (-r["rs_20d_change"], r["ticker"]))[:3]
-        market["bottom3"] = sorted(rows, key=lambda r: (r["rs_20d_change"], r["ticker"]))[:3]
+        top_count = min(3, (len(rows) + 1) // 2)
+        market["top3"] = sorted(rows, key=lambda r: (-r["rs_20d_change"], r["ticker"]))[:top_count]
+        top_tickers = {row["ticker"] for row in market["top3"]}
+        market["bottom3"] = sorted((r for r in rows if r["ticker"] not in top_tickers),
+                                   key=lambda r: (r["rs_20d_change"], r["ticker"]))[:min(3, len(rows) // 2)]
         market["improving_laggards3"] = sorted(
             (r for r in rows if r["rs_20d_change"] < 0 < r["rs_5d_change"]),
             key=lambda r: (-r["rs_5d_change"], r["ticker"]))[:3]

@@ -6,6 +6,17 @@ from stock_lab_core.report_evidence import first, number, text
 register_loaded_source(__name__, __file__)
 
 
+def fx_interval_note(comparison):
+    from stock_lab_core.report_presentation import kst_time
+
+    item = comparison.get("fx_observation", {})
+    if not item.get("approximate"):
+        return ""
+    return (f"(근접 완료 봉 ±{item['tolerance_minutes']:g}분 허용: "
+            f"{kst_time(item['base_at'])}→{kst_time(item['as_of'])}, "
+            f"시작 {item['base_offset_minutes']:+g}분 / 끝 {item['end_offset_minutes']:+g}분)")
+
+
 def adjusted_reference(comparison, code):
     # A daily-reset leveraged fund cannot be replicated by scaling one future.
     if code not in {"379800", "379810"}:
@@ -50,7 +61,7 @@ def portfolio_fx_lines(held, context, states, now):
         if fx is None or c.get("error"):
             missing.append(ticker)
             continue
-        key = (c["base_at"], c["as_of"])
+        key = (c["base_at"], c["as_of"], fx_interval_note(c))
         group = groups.setdefault(key, {"weight": 0.0, "impact": 0.0})
         group["weight"] += weight
         group["impact"] += weight * fx
@@ -61,9 +72,9 @@ def portfolio_fx_lines(held, context, states, now):
         lines.append("418660은 운용사 인용 보도 기준 환노출이며 최신 상품 문서 재확인이 필요합니다.")
     if groups:
         lines += ["", "동일 시각 환율 구간 | 연결 비중 | 환율 영향 근사치", "--- | --- | ---"]
-        for (start, end), group in groups.items():
+        for (start, end, note), group in groups.items():
             impact = round(group['impact'], 2) or 0.0
-            lines.append(f"{kst_time(start)}→{kst_time(end)} | {group['weight']:.1f}% | {impact:+.2f}%p")
+            lines.append(f"{kst_time(start)}→{kst_time(end)}{note} | {group['weight']:.1f}% | {impact:+.2f}%p")
         lines.append("현재비중×동일 시각 원/달러 변동의 단순 민감도입니다. ETF 가격에 반영된 환율 효과를 분해한 값이 아니며 계좌 추정에 다시 더하지 않습니다. 레버리지 재설정·환율과 기초자산의 교차효과는 미반영입니다.")
     if missing:
         lines.append("환율 영향 미연결: " + ", ".join(missing) + " · 동일 시각 자료 부족, 0으로 대체하지 않음.")

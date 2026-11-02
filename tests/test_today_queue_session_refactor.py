@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from stock_lab_core.formatters import clean_float, normalize_ticker, sanitize_ticker_value
+from stock_lab_core.money_flow import SECTOR_CLUSTERS_KR
 from tests.test_today_queue_view_refactor import FixedDateTime, freeze, UI as BaseUI
 
 
@@ -45,7 +46,11 @@ def compiled_prefix(source):
     start = next(i for i, n in enumerate(fn.body) if is_assignment(n, "portfolio_signal_attrs"))
     fn.body = fn.body[:start] + ast.parse("return summary_df, watch_items, queue_sig, run_summary").body
     fn.decorator_list = []
-    helpers = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_calculate_fresh_today_summary"]
+    helpers = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {
+        "_calculate_fresh_today_summary", "_preload_today_queue_kr_context", "_kr_rotation_context_requests"}]
+    helpers += [n for n in tree.body if any(is_assignment(n, name) for name in (
+        "TODAY_FLOW_SHORTLIST_VERSION", "MARKET_CLUSTER_CONTEXT_CACHE_KEY",
+        "MARKET_CLUSTER_CONTEXT_CACHE_VERSION", "MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS"))]
     return compile(ast.fix_missing_locations(ast.Module(body=helpers + [fn], type_ignores=[])), "<queue-session>", "exec")
 
 

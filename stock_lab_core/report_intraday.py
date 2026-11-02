@@ -353,13 +353,17 @@ def latest_account_line(metrics, *, compact=False):
         return (f"전체 계좌 추정 보류(연결 {_account_coverage_text(metrics['coverage'])}, 기준 90%) · "
                 "시세/기준 종가일 미확인 · 연결분 기여는 계좌 영향 표에서 별도 표시")
     if metrics.get("basis") == "completed_session_to_latest":
+        from stock_lab_core.report_account import cumulative_account_decomposition
+
         if metrics.get("error") or metrics.get("total") is None:
             return "통합 누적 계좌 추정 미연결: " + metrics.get("error", "시세 또는 기준 종가일 미확인")
         parts = [f"{label} {metrics['by_market'][market]:+.2f}%p" for market, label in (("KR", "한국 상장"), ("US", "미국 상장"))
                  if metrics["by_market"].get(market) is not None]
+        decomposition = cumulative_account_decomposition(metrics)
         label = "통합 누적 계좌 영향 추정" if metrics["coverage"] >= 90 else "통합 누적 연결분 기여(전체 추정 아님)"
         return (f"{label} {metrics['total']:+.2f}%p(연결 {_account_coverage_text(metrics['coverage'])}) · "
-                + " / ".join(parts) + (" · 전체 추정 보류(90% 미만)" if metrics["coverage"] < 90 else "")
+                + " / ".join(parts) + (" · 분해: " + decomposition if decomposition else "")
+                + (" · 전체 추정 보류(90% 미만)" if metrics["coverage"] < 90 else "")
                 + " · 미국 최근 확정 정규장 구간부터 현재 / 한국 직전 종가부터 현재, 일간 손익 아님")
     if metrics.get("error"):
         return "최신 관측 통합 계좌 추정 보류: " + metrics["error"]

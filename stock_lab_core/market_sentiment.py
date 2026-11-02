@@ -12,6 +12,7 @@ import requests
 from stock_lab_core.report_evidence import number, records, stamp
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.public_market_data import load_public_market_evidence, observation_reason
 
 register_loaded_source(__name__, __file__)
 
@@ -221,6 +222,60 @@ def _sector_flow_evidence(context):
     return rows
 
 
+def _public_market_rows(context):
+    """Pure rendering of separately collected public data; no broker substitution.
+
+    App integration: set context['public_market_evidence'] to
+    load_public_market_evidence(KST_today_iso), then set market_evidence_checked_at.
+    Keep the existing broker evidence and its mock-excluded status unchanged.
+    Do not invoke the loader in public-demo mode or during rendering.
+    """
+    evidence = context.get("public_market_evidence")
+    if not isinstance(evidence, dict):
+        return None
+    checked = context.get("market_evidence_checked_at")
+    rows = []
+
+    def add(label, obs, observation, unit):
+        obs = obs if isinstance(obs, dict) else {}
+        reason = observation_reason(obs, checked)
+        if not reason and (obs.get("unit") != unit or not observation):
+            reason = "공개 데이터 값/단위 미확인"
+        limit = reason or (obs.get("source", "") + " · " + obs.get("limitation", ""))
+        rows.append({"지표": label, "관측": "미연결" if reason else observation,
+                     "기준일": obs.get("asof") or "-", "범위·한계": limit,
+                     "출처": obs.get("source_url", ""), "조회시각": obs.get("fetched_at", "")})
+
+    def amount(obs, *, signed=False):
+        value = number(obs.get("value")) if isinstance(obs, dict) else None
+        if value is None:
+            return ""
+        return f"{value:+,.2f}억원" if signed else f"{value:,.2f}억원"
+
+    for market in ("KOSPI", "KOSDAQ"):
+        flows = (evidence.get("flows") or {}).get(market) or {}
+        for investor, label in (("foreign", "외국인"), ("institution", "기관")):
+            obs = flows.get(investor) or {}
+            add(f"{market} {label} 순매수", obs, amount(obs, signed=True), "억원")
+        broker = (context.get("market_observation_evidence") or {}).get("sector_" + market.lower()) or {}
+        if broker.get("status") == "mock_excluded" or broker.get("is_mock"):
+            for row in rows[-2:]:
+                row["범위·한계"] += " · 키움 모의자료 제외 유지; 별도 공개 출처"
+    for market in ("KOSPI", "KOSDAQ"):
+        obs = (evidence.get("breadth") or {}).get(market) or {}
+        counts = obs.get("counts") or {}
+        keys = (("risingCount", "상승"), ("unchangedCount", "보합"), ("fallingCount", "하락"),
+                ("upperLimitCount", "상한"), ("lowerLimitCount", "하한"))
+        valid = all(type(counts.get(key)) is int and 0 <= counts[key] <= 10000 for key, _ in keys)
+        observation = " · ".join(f"{label} {counts[key]:,}" for key, label in keys) if valid else ""
+        add(market + " 시장 폭", obs, observation, "종목")
+        obs = (evidence.get("turnover") or {}).get(market) or {}
+        add(market + " 거래대금", obs, amount(obs), "억원")
+    obs = evidence.get("margin_debt") or {}
+    add("신용융자잔고", obs, amount(obs), "억원")
+    return rows
+
+
 def sentiment_evidence(context):
     """Keep different dates and partial coverage explicit; no synthetic risk score."""
     rows, directions = [], []
@@ -240,11 +295,17 @@ def sentiment_evidence(context):
                      "기준일": credit["date"], "범위·한계": "7일 초과 지연" if credit.get("stale") else "ICE BofA/FRED · 종가·발표 지연 가능"})
     else:
         rows.append({"지표": "하이일드 신용 스프레드", "관측": "미연결", "기준일": "-", "범위·한계": credit.get("reason", "FRED 조회 미수행")})
-    rows.extend(_sector_flow_evidence(context))
-    for label, reason in (("시장 폭·신고가/신저가", "전체 시장 종목수·고저가 집계 미연결; ETF 표본으로 대체 안 함"),
-                          ("전체 거래대금", "시장 전체 거래대금 미연결; 상위 순위 합으로 대체 안 함"),
-                          ("신용융자잔고", "공식 잔고 시계열 미연결"),
-                          ("레버리지 ETF 거래 쏠림", "전체 ETF 거래대금 분모·동일 기준일 자료 미연결")):
+    public_rows = _public_market_rows(context)
+    if public_rows is None:
+        rows.extend(_sector_flow_evidence(context))
+        missing = [("시장 폭·신고가/신저가", "전체 시장 종목수·고저가 집계 미연결; ETF 표본으로 대체 안 함"),
+                   ("전체 거래대금", "시장 전체 거래대금 미연결; 상위 순위 합으로 대체 안 함"),
+                   ("신용융자잔고", "공식 잔고 시계열 미연결")]
+    else:
+        rows.extend(public_rows)
+        missing = [("신고가/신저가", "전체 시장 신고가/신저가 집계 미연결; 상하한가로 대체 안 함")]
+    missing.append(("레버리지 ETF 거래 쏠림", "전체 ETF 거래대금 분모·동일 기준일 자료 미연결"))
+    for label, reason in missing:
         rows.append({"지표": label, "관측": "미연결", "기준일": "-", "범위·한계": reason})
     direction = ("변동성 방향은 위험회피 쪽" if len(directions) == 2 and min(directions) > 0 else
                  "변동성 방향은 위험선호 쪽" if len(directions) == 2 and max(directions) < 0 else "변동성 방향 혼재/미확인")

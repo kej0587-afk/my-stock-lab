@@ -42,8 +42,53 @@ _PREFETCHED_HISTORY = ContextVar("stock_lab_prefetched_history", default=None)
 _HISTORY_REQUEST_MEMO = ContextVar("stock_lab_history_request_memo", default=None)
 _REALTIME_QUOTE_MEMO = ContextVar("stock_lab_realtime_quote_memo", default=None)
 _SCOPED_QUOTE_USED = ContextVar("stock_lab_scoped_quote_used", default=None)
+_OVERNIGHT_QUOTE_TICKERS = ContextVar("stock_lab_overnight_quote_tickers", default=None)
 _REALTIME_QUOTE_GENERATION = object()
 _NAVER_QUOTE_FALLBACK_SLOTS = threading.BoundedSemaphore(4)
+
+
+@contextmanager
+def overnight_quote_scope(tickers):
+    """Limit expensive HTML only for this queue run; precision stays unrestricted."""
+    token = _OVERNIGHT_QUOTE_TICKERS.set(tuple(sorted({normalize_price_lookup_key(t) for t in tickers})))
+    try:
+        yield
+    finally:
+        _OVERNIGHT_QUOTE_TICKERS.reset(token)
+
+
+def overnight_quote_allowed(ticker):
+    allowed = _OVERNIGHT_QUOTE_TICKERS.get()
+    return allowed is None or normalize_price_lookup_key(ticker) in allowed
+
+
+def _overnight_policy_cache_key(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        policy = _OVERNIGHT_QUOTE_TICKERS.get()
+        if policy is not None:
+            # A queue fallback must never fill an unrestricted precision cache.
+            kwargs["overnight_policy"] = policy
+        return fn(*args, **kwargs)
+
+    if hasattr(fn, "clear"):
+        wrapped.clear = fn.clear
+    return wrapped
+
+
+def _limit_overnight_quote(fn):
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapped(ticker):
+        if not overnight_quote_allowed(ticker):
+            _quote_transport_event("yahoo_overnight", "scope_skipped")
+            return 0.0
+        return fn(ticker)
+
+    return wrapped
 
 
 def _quote_transport_event(provider, outcome, error=None):
@@ -79,7 +124,7 @@ def _reuse_realtime_quote(fn):
         memo = _REALTIME_QUOTE_MEMO.get()
         if memo is None:
             return fn(ticker)
-        key = normalize_price_lookup_key(ticker)
+        key = (normalize_price_lookup_key(ticker), overnight_quote_allowed(ticker))
         now = time.monotonic()
         entry = memo.get(key)
         if entry is not None:
@@ -1807,6 +1852,7 @@ def _extract_yahoo_overnight_price_from_html(text: str, ticker: str) -> float:
 
 
 @timed_call("prices")
+@_limit_overnight_quote
 def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
     t = normalize_price_lookup_key(ticker)
     if not _looks_like_us_equity_ticker(t):
@@ -2238,8 +2284,9 @@ def _fetch_price_uncached(ticker: str) -> float:
         return 0.0
 
 
+@_overnight_policy_cache_key
 @cache_result(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, failure_ttl=5, is_success=lambda value: value > 0)
-def _load_latest_price_cached(ticker: str) -> float:
+def _load_latest_price_cached(ticker: str, *, overnight_policy=None) -> float:
     """Short TTL cache wrapper. Only successful prices (>0) are cached."""
     token = _SCOPED_QUOTE_USED.set(False)
     try:
@@ -2273,8 +2320,9 @@ def fresh_kr_quote_scope(tickers):
 
 
 @timed_call("prices")
+@_overnight_policy_cache_key
 @st.cache_data(ttl=_LATEST_PRICE_CACHE_TTL_SECONDS, show_spinner=False)
-def load_latest_prices_batch(tickers) -> dict:
+def load_latest_prices_batch(tickers, *, overnight_policy=None) -> dict:
     """
     여러 종목 현재가 일괄 조회. 짧은 TTL.
 

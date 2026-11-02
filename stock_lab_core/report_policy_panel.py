@@ -36,13 +36,18 @@ def policy_evidence_lines(context, news, now):
     lines += ["", "공식 성명의 결정값입니다. 기자회견 해석·주가 변동 원인이나 매수 허용을 뜻하지 않습니다.",
               "", "## 시장 안전장치 발동 근거",
               "발동일 | 시장·조치 | 확인 수준 | 보도·공시 출처", "--- | --- | --- | ---"]
-    events = safeguard_events(news, now)
+    from stock_lab_core.safeguard_history import merge_safeguard_history, observed_kr_sessions
+
+    events = merge_safeguard_history(safeguard_events(news, now), context.get("safeguard_events", []),
+                                     observed_kr_sessions(context), now)
     for row in events[:10]:
         kind = "사이드카" if row["kind"] == "sidecar" else "서킷브레이커"
         direction = {"buy": "매수", "sell": "매도", "down": "하락", "unknown": "방향 미확인"}[row["direction"]]
         status = "거래소 원문 확인" if row["status"] == "official" else "보도상 발동 · 거래소 원문 미대조"
         if row.get("date_basis") == "publication_date":
             status += " · 기사 발행일 기준"
+        if row.get("retained_from_history"):
+            status += " · 최근 5거래일 저장 이력"
         links = list(dict.fromkeys(_source(s) for s in row.get("sources", [row])))[:3]
         lines.append(" | ".join(_cell(v) for v in (row["date"], f"{row['market']} {direction} {kind}", status, " / ".join(links))))
     if not events:

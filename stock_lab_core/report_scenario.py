@@ -13,6 +13,39 @@ SYMBOLS = ("NQ=F", "ES=F", "USDKRW=X")
 FUTURES = {"379810": "NQ=F", "418660": "NQ=F", "379800": "ES=F"}
 
 
+def nearest_fx_interval(frame, start, end, now, *, tolerance_minutes=10):
+    """FX-only approximation: nearest completed bar, with explicit offsets."""
+    if (not isinstance(frame, pd.DataFrame) or frame.empty or
+            not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None or
+            not isinstance(frame.get("Close"), pd.Series)):
+        return {}
+    start, end, now = (pd.Timestamp(value) for value in (start, end, now))
+    if any(value.tzinfo is None or pd.isna(value) for value in (start, end, now)) or end <= start or end > now:
+        return {}
+    close = pd.to_numeric(frame["Close"], errors="coerce").copy()
+    close.index = close.index.tz_convert("Asia/Seoul") + pd.Timedelta(minutes=5)
+    close = close.loc[~close.index.duplicated(keep="last")].sort_index()
+    close = close.loc[close.map(lambda value: number(value) is not None and value > 0) & (close.index <= now)]
+    points, offsets = [], []
+    for target in (start, end):
+        target = target.tz_convert("Asia/Seoul")
+        eligible = close.loc[(abs(close.index - target) <= pd.Timedelta(minutes=tolerance_minutes)) &
+                             (close.index.date == target.date())]
+        if eligible.empty:
+            return {}
+        # On an equal-distance tie prefer the earlier completed observation.
+        at = min(eligible.index, key=lambda value: (abs(value - target), value))
+        points.append((at, float(eligible.loc[at])))
+        offsets.append((at - target).total_seconds() / 60)
+    if points[1][0] <= points[0][0]:
+        return {}
+    return {"return": points[1][1] / points[0][1] - 1,
+            "base_at": points[0][0].isoformat(), "as_of": points[1][0].isoformat(),
+            "base_offset_minutes": offsets[0], "end_offset_minutes": offsets[1],
+            "approximate": any(offsets), "tolerance_minutes": tolerance_minutes,
+            "source": "Yahoo 5분봉 · 완료 봉 · 지연 가능"}
+
+
 def interval_observation(frame, start, end):
     """Both endpoints need completed, timezone-aware 5m bars within ten minutes."""
     if not isinstance(frame, pd.DataFrame) or frame.empty or not isinstance(frame.index, pd.DatetimeIndex) or frame.index.tz is None:

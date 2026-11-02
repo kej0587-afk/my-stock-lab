@@ -37,7 +37,7 @@ def cumulative_holding_comparison(row, observations, sessions, now, price_frames
     """Compare KR and futures at identical completed timestamps, never US daily closes."""
     from stock_lab_core.report_evidence import closed_daily_frame, stamp
     from stock_lab_core.report_intraday import valid_live_observation
-    from stock_lab_core.report_scenario import FUTURES, interval_observation
+    from stock_lab_core.report_scenario import FUTURES, interval_observation, nearest_fx_interval
 
     ticker = text(first(row, "티커", "ticker")).upper()
     code = ticker.split(".")[0]
@@ -95,13 +95,11 @@ def cumulative_holding_comparison(row, observations, sessions, now, price_frames
     future = interval_observation(frames.get(symbol), start, end)
     if not future or pd.Timestamp(future["base_at"]) != start or pd.Timestamp(future["as_of"]) != end:
         return {"error": f"{symbol} 한국 종가 시각의 완료 봉 미연결(비동시 잔차 계산 안 함)"}
-    fx = interval_observation(frames.get("USDKRW=X"), start, end)
-    if not fx or pd.Timestamp(fx["base_at"]) != start or pd.Timestamp(fx["as_of"]) != end:
-        fx = {}
+    fx = nearest_fx_interval(frames.get("USDKRW=X"), start, end, now)
     actual = last_price / base_price - 1
     return {"anchor": anchor, "kr_date": end_day, "base_at": start.isoformat(), "as_of": end.isoformat(),
             "actual": actual, "underlying": future["return"], "reference": future["return"],
-            "proxy": symbol, "fx_return": fx.get("return"), "intraday": live,
+            "proxy": symbol, "fx_return": fx.get("return"), "fx_observation": fx, "intraday": live,
             # Futures are not a daily-reset leveraged ETF's replicating portfolio.
             "residual_pp": (actual - future["return"]) * 100 if code != "418660" else None}
 
@@ -125,10 +123,10 @@ def completed_scenario_comparison(row, observations, sessions, now, *, price_fra
     fx = f"{c['fx_return'] * 100:+.2f}%" if c["fx_return"] is not None else "미연결"
     residual = (f"단순 차이 {c['residual_pp']:+.2f}%p(환율·베이시스 미조정, 추적오차 아님)"
                 if c["residual_pp"] is not None else "레버리지 재설정 미반영: 배수 잔차 산출 보류")
-    from stock_lab_core.report_fx import adjusted_reference
+    from stock_lab_core.report_fx import adjusted_reference, fx_interval_note
     return (f"동일 시각 비교 {kst_time(c['base_at'])}→{kst_time(c['as_of'])}: "
             f"한국 ETF 실제 {c['actual'] * 100:+.2f}% vs {c['proxy']} {c['reference'] * 100:+.2f}% · "
-            f"원/달러 별도 {fx} · {residual}" + adjusted_reference(c, code) + (" · 장중·미확정" if c["intraday"] else ""))
+            f"원/달러 별도 {fx}{fx_interval_note(c)} · {residual}" + adjusted_reference(c, code) + (" · 장중·미확정" if c["intraday"] else ""))
 
 
 def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):

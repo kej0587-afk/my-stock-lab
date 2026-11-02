@@ -9145,6 +9145,66 @@ def _get_market_cluster_snapshot_cached(
     return snapshot
 
 
+def _kr_rotation_context_requests(frame, label_col):
+    requests = []
+    if not isinstance(frame, pd.DataFrame):
+        return requests
+    for _, row in frame.iterrows():
+        ticker = str(row.get("Ticker", "") or "").strip() or _extract_flow_ticker(row.get("대표주", ""))
+        if _is_us_rotation_context(row, label_col) or (ticker and not _is_kr_rotation_ticker(ticker)):
+            continue
+        cluster = _lookup_kr_rotation_cluster(row, label_col)
+        if cluster:
+            labels = [str(row.get(key, "") or "").strip() for key in (label_col, "테마", "섹터") if key]
+            requests.append((cluster, next((value for value in labels if value), cluster)))
+    return requests
+
+
+def _preload_today_queue_kr_context(snapshot):
+    """Union render-only requests before context tables/cards consume them."""
+    if not isinstance(snapshot, dict):
+        return
+    flow = snapshot.get("flow_df")
+    theme_flow = snapshot.get("theme_flow_df")
+    has_flow = isinstance(flow, pd.DataFrame) and not flow.empty
+    has_summary = any(isinstance(st.session_state.get(key), pd.DataFrame) and not st.session_state[key].empty
+                      for key in ("today_queue_summary_df", "today_queue_summary_last_nonempty_df"))
+    flow_detail = has_flow and st.session_state.get("today_queue_open_flow_detail", bool(snapshot))
+    shortlist_cached = (isinstance(snapshot.get("_flow_shortlist_df"), pd.DataFrame)
+                        and snapshot.get("_flow_shortlist_version") == TODAY_FLOW_SHORTLIST_VERSION)
+    shortlist_requested = (st.session_state.get("today_queue_refresh_flow_candidates", True) or has_summary
+                           or (flow_detail and st.session_state.get("today_market_flow_detail_view") == "개별 종목 후보"))
+    rebuild_shortlist = (shortlist_requested and not shortlist_cached and has_flow
+                         and isinstance(theme_flow, pd.DataFrame) and not theme_flow.empty)
+    if not rebuild_shortlist and not flow_detail:
+        # The summary's own theme-context loader already batches its exact rows.
+        return
+    requests = []
+    frames = [("theme_rotation_df", "테마")]
+    if rebuild_shortlist or st.session_state.get("today_market_flow_detail_view") == "로테이션 차트":
+        frames.append(("sector_rotation_df", "섹터"))
+    if rebuild_shortlist or has_summary:
+        frames.append(("theme_flow_df", "테마"))
+    for key, label in frames:
+        requests.extend(_kr_rotation_context_requests(snapshot.get(key), label))
+    rotation = snapshot.get("sector_rotation_df")
+    if flow_detail and isinstance(rotation, pd.DataFrame) and "Ticker" in rotation:
+        tickers = set(rotation["Ticker"].astype(str).str.upper())
+        requests.extend((name, name) for name, members in SECTOR_CLUSTERS_KR.items()
+                        if tickers.intersection(members))
+    if not requests:
+        return
+    cache = st.session_state.get(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})
+    now = pd.Timestamp.now().timestamp()
+    pending = []
+    for cluster, detail in dict.fromkeys(requests):
+        key = (MARKET_CLUSTER_CONTEXT_CACHE_VERSION, "KOSPI", cluster, detail, True)
+        cached = cache.get(key, {}) if isinstance(cache, dict) else {}
+        if not isinstance(cached, dict) or now - clean_float(cached.get("ts", 0.0), 0.0) > MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS:
+            pending.append((cluster, detail))
+    preload_kr_cluster_snapshots(pending)
+
+
 def _attach_kr_internal_context_to_rotation_df(
     grp_df: pd.DataFrame,
     label_col: str = "",
@@ -9175,15 +9235,7 @@ def _attach_kr_internal_context_to_rotation_df(
     preload_requests = []
     cached_context = st.session_state.get(MARKET_CLUSTER_CONTEXT_CACHE_KEY, {})
     now = pd.Timestamp.now().timestamp()
-    for _, row in out.iterrows():
-        ticker = str(row.get("Ticker", "") or "").strip() or _extract_flow_ticker(row.get("대표주", ""))
-        if _is_us_rotation_context(row, label_col) or (ticker and not _is_kr_rotation_ticker(ticker)):
-            continue
-        cluster = _lookup_kr_rotation_cluster(row, label_col)
-        if not cluster:
-            continue
-        labels = [str(row.get(key, "") or "").strip() for key in (label_col, "테마", "섹터") if key]
-        detail = next((value for value in labels if value), cluster)
+    for cluster, detail in _kr_rotation_context_requests(out, label_col):
         key = (MARKET_CLUSTER_CONTEXT_CACHE_VERSION, "KOSPI", cluster, detail, True)
         cached = cached_context.get(key, {}) if isinstance(cached_context, dict) else {}
         if not isinstance(cached, dict) or now - clean_float(cached.get("ts", 0.0), 0.0) > MARKET_CLUSTER_CONTEXT_CACHE_TTL_SECONDS:
@@ -17275,8 +17327,10 @@ def _is_recent_us_daymarket_epoch(ts, max_age_seconds: int = 16 * 60 * 60) -> bo
 
 
 def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
+    from stock_lab_core.prices import overnight_quote_allowed
+
     t = normalize_ticker(ticker)
-    if not t or is_kr_listed(t):
+    if not t or is_kr_listed(t) or not overnight_quote_allowed(t):
         return 0.0
     try:
         url = f"https://finance.yahoo.com/quote/{urllib.parse.quote(t)}/"
@@ -28697,19 +28751,25 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True):
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
-    from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence
+    from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence, load_public_market_evidence
     from stock_lab_core.economic_releases import _api_key
     context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
                                 if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})
     context["market_observation_evidence"] = dict(st.session_state.get("market_observation_evidence", {}))
     context["market_observation_evidence"].update(load_investor_flow_evidence(
         get_kiwoom_data_client() if not IS_PUBLIC_DEMO else None, public_demo=IS_PUBLIC_DEMO))
+    if not IS_PUBLIC_DEMO:
+        context["public_market_evidence"] = load_public_market_evidence(datetime.now(KST).date().isoformat())
     context["market_evidence_checked_at"] = datetime.now(KST).isoformat()
     context["market_guard"] = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
+    from stock_lab_core.safeguard_history import observed_kr_sessions
+
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store,
-                                         source_provenance=context.get("source_provenance")))
+                                         source_provenance=context.get("source_provenance"),
+                                         safeguard_news=context.get("session_news", []) + context.get("next_session_news", []),
+                                         safeguard_session_days=observed_kr_sessions(context)))
     context["entrypoint"] = __file__
     from stock_lab_core.report_build import completed_measurement_reference
     context["queue_measurement"] = completed_measurement_reference(
@@ -32668,6 +32728,20 @@ def render_today_review_export_download(summary_df, flow_shortlist_df=None, hold
             st.dataframe(flags_df, width='stretch', hide_index=True)
 
 
+def _today_queue_overnight_tickers():
+    from stock_lab_core.market_observation import DEFAULT_SECTOR_MAP
+
+    tickers = {ticker for members in SECTOR_CLUSTERS_US.values() for ticker in members}
+    tickers.update(ticker for ticker, spec in DEFAULT_SECTOR_MAP.items() if spec.get("market") == "US")
+    tickers.update(item["Ticker"] for item in INDEX_ROTATION_BASKET)
+    held = globals().get("holdings_table")
+    if isinstance(held, pd.DataFrame):
+        for _, row in held.iterrows():
+            if clean_float(row.get("보유량"), 0.0) > 0 or clean_float(row.get("현재비중"), 0.0) > 0:
+                tickers.add(sanitize_ticker_value(row.get("티커", "")))
+    return tickers
+
+
 def render_today_queue_tab(mode):
     if not KR_CLUSTER_SCOPED_PREFETCH_AVAILABLE:
         st.warning("클러스터 성능 모듈이 이전 버전입니다. 기존 조회 방식으로 실행합니다. 최신 코드 전체 반영 후 앱 서버를 재시작해 주세요.")
@@ -32712,8 +32786,10 @@ def render_today_queue_tab(mode):
     trace = PerformanceTrace(**trace_kwargs)
     try:
         with trace:
+            from stock_lab_core.prices import overnight_quote_scope
+
             scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"
-            with kr_cluster_snapshot_scope(owner_scope=scope_owner):
+            with overnight_quote_scope(_today_queue_overnight_tickers()), kr_cluster_snapshot_scope(owner_scope=scope_owner):
                 _render_today_queue_tab(mode)
     finally:
         attempt = trace.report()
@@ -32852,6 +32928,8 @@ def _render_today_queue_tab(mode):
     with measure("phase", "watchlist_prepare"):
         raw_watch_items = tuple(st.session_state.get("watchlist", []))
         flow_snapshot_for_queue = get_cached_today_market_flow_snapshot()
+        if not st.session_state.get("today_queue_run_once", False) and not st.session_state.get("today_market_flow_refresh_once", False):
+            _preload_today_queue_kr_context(flow_snapshot_for_queue)
         if st.session_state.get("today_queue_refresh_flow_candidates", True):
             watch_items, flow_auto_items = build_today_queue_items_with_flow_candidates(raw_watch_items, flow_snapshot_for_queue)
         else:
