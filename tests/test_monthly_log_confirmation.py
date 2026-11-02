@@ -56,10 +56,10 @@ DIVIDEND = "해당 월 수령 배당금(원)"
 
 @lru_cache(maxsize=1)
 def monthly_save_branch():
-    source = Path(__file__).resolve().parents[1] / "app.py"
+    source = Path(__file__).resolve().parents[1] / "stock_lab_core" / "monthly_rebalance_log.py"
     tree = ast.parse(source.read_text(encoding="utf-8-sig"))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-              and node.name == "render_monthly_rebalancing_calculator")
+              and node.name == "render_monthly_log_panel")
     selected = None
     for parent in ast.walk(fn):
         for _, items in ast.iter_fields(parent):
