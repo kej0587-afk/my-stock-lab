@@ -180,5 +180,8 @@ def selected_category_lines(context, now):
                   "조회 기사 | 결과", "--- | ---"]
         for row in reads:
             label = {"verified": "본문 근거 연결 완료", "no_supported_context": "본문 확인·자동 해석 근거 부족"}.get(row.get("body_status"))
-            lines.append(_cell(citation(row)) + " | " + _cell(label or body_unavailable_reason(row)))
+            label = label or body_unavailable_reason(row)
+            if row.get("body_status") == "headline_mismatch" and row.get("body_observed_headline"):
+                label += " · 원문 제목: " + row["body_observed_headline"]
+            lines.append(_cell(citation(row)) + " | " + _cell(label))
     return lines

@@ -280,7 +280,8 @@ def parse_article(data, url, expected_title):
     title = re.sub(r"\s+", "", unescape(str(meta.get("headline") or ""))).casefold()
     expected = re.sub(r"\s+", "", unescape(expected_title)).casefold()
     if not title or not expected or not (title in expected or expected in title):
-        return {"body_status": "headline_mismatch"}
+        return {"body_status": "headline_mismatch",
+                "body_observed_headline": str(meta.get("headline") or "")[:240]}
     published = _date(meta.get("datePublished"))
     modified = _date(meta.get("dateModified")) or published
     if not published or not modified:
@@ -322,7 +323,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v7: preserve inline-formatted paragraphs; retain only safe failure codes.
+    # v8: expose public metadata headline when strict identity validation fails.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -398,7 +399,7 @@ def enrich_article_context(result, now):
         article_body_attempted=len(selected), article_body_verified=sum(row.get("body_status") == "verified" for row in selected),
         article_body_seconds=round(time.monotonic() - started, 3), article_body_statuses=statuses,
         article_body_results=[{key: row.get(key, "") for key in
-                               ("title", "link", "body_status", "body_failure_reason")} for row in selected])
+                               ("title", "link", "body_status", "body_failure_reason", "body_observed_headline")} for row in selected])
     return result
 
 
