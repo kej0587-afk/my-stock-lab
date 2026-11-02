@@ -119,9 +119,11 @@ def guard_explanation_lines(guard):
     if not guard:
         return lines + ["오늘점검 시장 게이트 입력 미연결. 스트레스 점수로 대체 계산하지 않습니다."]
     lines += [f"현재 {guard.get('scope_text', '')} · 통합 {guard.get('mode', '미확인')}"]
-    lines += _guard_summary_lines(guard)
-    lines += [
+    for summary in _guard_summary_lines(guard):
+        lines += ["", summary]
+    lines += ["",
               "리포트 스트레스(0~100)는 설명용이며 아래 시장방어 점수와 다른 산식입니다. 값은 오늘점검 게이트 입력 스냅샷 기준이며 아래 표에서 판정을 바꾸지 않습니다.",
+              "",
               "구성 요소 | 현재값 | 기존 기준 | 기준까지 남은 조건", "--- | --- | --- | ---"]
 
     def add(name, value, rule, remaining):

@@ -60,6 +60,14 @@ candidates, 94 calculated rows, full money-flow refresh, and
 72 / 71 / 57; KR bulk requests were 3 / 3 / 3. This variability is why a
 single before/after wall-time difference is insufficient proof of a speedup.
 
+Cloud post-deployment observations on `7d9f33a77454`: 98.006 / 66.092 /
+61.342 seconds (mean 75.147), with the same inputs and refresh policy.
+Yahoo HTML requests fell to 14 / 8 / 8; chart fallback requests were
+117 / 96 / 96. Full-refresh KR bulk requests remained 3 / 3 / 3; the
+ten-to-one batch result above is specifically the render-only fixture.
+The mean total elapsed time did not improve. The narrower HTML workload is
+verified, but it is not evidence of an end-to-end speedup.
+
 ## Regression Coverage
 
 Coverage includes mock exclusion, partial failures, date/unit validation, source
@@ -73,5 +81,12 @@ Compilation and whitespace checks passed. Independent reviews covered public
 data/history, FX boundaries, and performance scoping; their two retention and
 unused-prefetch findings were fixed and regression-tested before this run.
 
-Cloud verification follows deployment. Private account reports and measurement
-downloads stay outside git.
+Cloud report generation and the visible report panels were verified after
+deployment. All four investor-flow rows, breadth and turnover had November 2
+data; margin debt retained its actual October 29 provider date. The FX fallback
+displayed October 30 15:40 (+10 minutes) to November 2 15:30 (+0 minutes).
+Account components reconciled, the 35%/50% boundaries were visible, and rotation
+showed four valid and six excluded rows with reasons. Browser error logs were
+empty. A final formatting-only adjustment separates the gate summary into
+Markdown paragraphs, with a regression assertion. Private account reports,
+measurement downloads and screenshots stay outside git.

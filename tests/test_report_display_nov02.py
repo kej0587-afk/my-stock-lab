@@ -146,6 +146,14 @@ def test_guard_summary_is_two_lines_with_actual_contributions_and_nearest_bounda
     assert guard == original
 
 
+def test_guard_summary_preserves_markdown_paragraphs(guard):
+    lines = guard_explanation_lines(guard)
+    for summary in _guard_summary_lines(guard):
+        index = lines.index(summary)
+        assert lines[index - 1] == ""
+        assert lines[index + 1] == ""
+
+
 @pytest.mark.parametrize("changes,missing", [
     ({"flow_accel": .5, "strong_rebound_count": 2}, False),
     ({"flow_breadth": .55, "max_day_gain": .05}, False),
