@@ -62,4 +62,18 @@ thresholds, portfolio records, authentication, or database changes.
 Sources: [Npay market data](https://stock.naver.com/market/stock/kr/trend/trader),
 [Kiwoom program trading explanation](https://download.kiwoom.com/hero4_help_new/0765.htm).
 
-Full-suite and production verification are recorded after the final run.
+## Final checks and deployment
+
+- Full suite: 6,219 passed, 1 skipped, 18 subtests passed in 367.03s. One new
+  presentation assertion still expected an ISO timestamp after the UI had changed
+  it to readable KST. Updated that assertion (no application-code change) and
+  reran the affected investor/program/news/UI suites: 169 passed in 5.95s.
+- Live public flow collection at 22:24 KST completed in 0.777s using the existing
+  three GETs. The compact reading reported institutions net-buying while foreign
+  and individual investors net-sold in both markets. Separate program tables
+  displayed validated arbitrage/non-arbitrage totals; no inferred buying motive.
+- Commit `d529cd2f` pushed to main. Cloud loaded new files but the operating UI
+  reported mismatched in-memory modules and correctly disabled report generation.
+  Profile access worked; managing apps required GitHub reauthentication. A Cloud
+  reboot was requested. Do not describe a new Cloud report as verified until that
+  reboot and a new generation complete.

@@ -283,7 +283,7 @@ def test_program_evidence_is_separate_and_never_enters_compact_narrative(context
     program = "\n".join(korean_flow_tables(context, {"date": DAY}))
     assert "KOSPI | -1.00 | +3.00 | +2.00 | " + DAY in program
     assert "프로그램 자체 기준시각이 없어" in program and "같은 응답의 투자자 수급 기준일" in program
-    assert DAY in program and NOW.isoformat() in program and "[Npay 증권 공개 데이터](https://" in program
+    assert DAY in program and NOW.strftime("%Y-%m-%d %H:%M KST") in program and "[Npay 증권 공개 데이터](https://" in program
     assert "투자자별 순매수와 합산하거나 기관 매수액으로 해석하지 않습니다" in program
     assert "미연결" not in program
     for surface in (result["overview"], result["headline"]):
