@@ -112,3 +112,15 @@ Sources: [Npay market data](https://stock.naver.com/market/stock/kr/trend/trader
   article limits, cold/warm equality (excluding measured duration), and stories.
 
 Publisher feed documentation: https://www.fnnews.com/rss
+
+## Follow-up: production body connection diagnosis
+
+- Build f3666d86 was verified after reboot. Production finance headlines appeared,
+  but the body remained unverified on repeat generation, while the same public
+  URL verified locally. Do not infer successful production extraction from local
+  success or infer HTTP blocking without a recorded status.
+- Preserve safe HTTP/timeout/parse failure codes and include a four-row bounded
+  body-connection check in the collapsed selected-topics section. Distinguish
+  an unselected article, an unsupported publisher, failed fetch, identity/date
+  rejection, and a read body without a supported interpretation. No extra network
+  requests, exception strings, full bodies, credentials, or user data are added.

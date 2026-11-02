@@ -116,7 +116,7 @@ def restore_news_preferences(state):
 def selected_category_lines(context, now):
     """Make every requested topic's result visible, including honest empty results."""
     from stock_lab_core.report_evidence import _cell, citation, stamp, curate_news
-    from stock_lab_core.article_context import verified_body_facts
+    from stock_lab_core.article_context import verified_body_facts, body_unavailable_reason
     categories = context.get("news_retrieval", {}).get("requested_categories", [])
     if not categories:
         return []
@@ -162,7 +162,8 @@ def selected_category_lines(context, now):
                                and row.get("body_source_url") == key
                                and all(value and value <= now for value in body_times)
                                and min(abs((at - value).total_seconds()) for value in body_times) <= 3600)
-                    detail += (" · 본문 확인·자동 해석 근거 부족" if checked else " · 제목 확인·본문 원인 해석 보류")
+                    detail += (" · 본문 확인·자동 해석 근거 부족" if checked else
+                               " · 제목 확인·본문 원인 해석 보류 (" + body_unavailable_reason(row) + ")")
                     reading = row.get("reading_ko") or ""
                     if reading and not re.search("[가-힣]", row.get("title", "")):
                         detail += " · " + reading
@@ -173,4 +174,11 @@ def selected_category_lines(context, now):
                      "해외·공통 맥락·한국/미국 등락 원인 미확정" if bucket == "other_market_news" else
                      f"{row.get('market', '')} {row.get('session_date', '')} {'장중' if bucket == 'current_session_news' else '종가 세션'}")
             lines.append(" | ".join(_cell(v) for v in (category, detail, f"{at:%m/%d %H:%M} KST · {basis}")))
+    reads = context.get("news_retrieval", {}).get("article_body_results", [])
+    if reads:
+        lines += ["", "본문 연결 점검 — 제한된 기사만 읽으며, 제목 확인과 본문 확인을 구분합니다.",
+                  "조회 기사 | 결과", "--- | ---"]
+        for row in reads:
+            label = {"verified": "본문 근거 연결 완료", "no_supported_context": "본문 확인·자동 해석 근거 부족"}.get(row.get("body_status"))
+            lines.append(_cell(citation(row)) + " | " + _cell(label or body_unavailable_reason(row)))
     return lines

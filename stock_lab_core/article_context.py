@@ -317,12 +317,22 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v5: publisher body containers, entity-normalized identity and phase labels.
+    # v6: retain bounded failure codes, never exception text or response bodies.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
-    except (requests.RequestException, ValueError, TypeError, etree.LxmlError):
-        return {"body_status": "fetch_unavailable"}
+    except requests.Timeout:
+        return {"body_status": "fetch_unavailable", "body_failure_reason": "timeout"}
+    except requests.RequestException:
+        return {"body_status": "fetch_unavailable", "body_failure_reason": "network_error"}
+    except (ValueError, TypeError, etree.LxmlError) as exc:
+        reason = str(exc)
+        if not (re.fullmatch(r"http_[1-5][0-9]{2}", reason) or reason in {
+            "unsupported_public_source", "redirect_source_not_allowed", "unexpected_content_type",
+            "article_deadline", "response_too_large", "redirect_limit",
+        }):
+            reason = "parse_error"
+        return {"body_status": "fetch_unavailable", "body_failure_reason": reason}
 
 
 def enrich_article_context(result, now):
@@ -381,8 +391,35 @@ def enrich_article_context(result, now):
         statuses[status] = statuses.get(status, 0) + 1
     result.setdefault("news_retrieval", {}).update(article_feed_count=len(FEEDS), article_body_limit=MAX_ARTICLES,
         article_body_attempted=len(selected), article_body_verified=sum(row.get("body_status") == "verified" for row in selected),
-        article_body_seconds=round(time.monotonic() - started, 3), article_body_statuses=statuses)
+        article_body_seconds=round(time.monotonic() - started, 3), article_body_statuses=statuses,
+        article_body_results=[{key: row.get(key, "") for key in
+                               ("title", "link", "body_status", "body_failure_reason")} for row in selected])
     return result
+
+
+def body_unavailable_reason(row):
+    """Explain a failed/omitted read without implying that a headline is a body."""
+    status = row.get("body_status", "")
+    labels = {
+        "unsupported_source": "본문 자동연결 대상 출처 아님",
+        "article_metadata_unavailable": "기사 식별정보 확인 실패",
+        "restricted_article": "공개 본문 접근 제한",
+        "headline_mismatch": "기사 제목 대조 불일치",
+        "article_timestamp_unavailable": "본문 발행시각 미확보",
+        "article_body_unavailable": "본문 영역 미확보",
+        "article_version_after_report": "생성 기준시각 이후 수정된 기사",
+        "article_timestamp_mismatch": "RSS와 본문 발행시각 불일치",
+    }
+    if status == "fetch_unavailable":
+        reason = row.get("body_failure_reason", "")
+        if re.fullmatch(r"http_[1-5][0-9]{2}", str(reason)):
+            return "출처 응답 HTTP " + reason[5:]
+        return {"timeout": "본문 응답 시간 초과", "article_deadline": "본문 읽기 제한시간 초과",
+                "response_too_large": "본문 응답 크기 제한 초과", "network_error": "출처 네트워크 연결 실패",
+                "parse_error": "본문 형식 해석 실패"}.get(reason, "본문 조회 실패")
+    if not status:
+        return "이번 본문 조회 대상에서 제외" if _safe_url(row.get("link", "")) else "본문 자동연결 대상 출처 아님"
+    return labels.get(status, "본문 근거 검증 미완료")
 
 
 def verified_body_facts(row):
