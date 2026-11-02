@@ -1,7 +1,59 @@
 """Precision chart presentation, without fetching prices or changing signals."""
 
+import math
+
 import pandas as pd
 import plotly.graph_objects as go
+
+
+def prepare_chart_layers(frame, *, show_patterns, show_channel, show_signals,
+                         load_structure, detect_patterns, build_trendlines):
+    """Independent layer switches; explanations follow the lines actually drawn."""
+    structure = load_structure(frame) if show_channel or show_signals else {}
+    patterns = (structure["patterns"] if "patterns" in structure and not structure.get("issue")
+                else detect_patterns(frame)) if show_patterns else []
+    channel = (structure.get("channel") or {}) if show_channel else {}
+    if channel:
+        guides = [{
+            "kind": kind, "label": label, "direction": channel["direction"],
+            "x0": channel["x"][0], "x1": channel["x"][-1],
+            "y0": channel[rail][0], "y1": channel[rail][-1],
+            "source": "parallel_channel", "channel_state": channel["state"],
+        } for rail, kind, label in (("lower", "support", "채널 하단"),
+                                   ("upper", "resistance", "채널 상단"))]
+    else:
+        guides = build_trendlines(frame) if show_patterns else []
+    return structure, patterns, channel, guides
+
+
+def arrange_price_level_labels(fig, frame):
+    """Move only label boxes; arrows retain the original price coordinates."""
+    levels = [a for a in fig.layout.annotations
+              if not a.showarrow and a.yref in (None, "y")
+              and isinstance(a.y, (int, float)) and math.isfinite(a.y)]
+    bounds = fig.layout.yaxis.range
+    low, high = bounds if bounds else (frame.Low.min(), frame.High.max())
+    if not levels or not math.isfinite(low) or not math.isfinite(high) or not high > low:
+        return
+    levels = [a for a in levels if low <= a.y <= high]
+    if not levels:
+        return
+    domain = fig.layout.yaxis.domain or (0, 1)
+    height = (fig.layout.height - fig.layout.margin.t - fig.layout.margin.b) * (domain[1] - domain[0])
+    levels = sorted(levels, key=lambda a: a.y)
+    positions = []
+    for a in levels:
+        wanted = (a.y - low) / (high - low) * height
+        positions.append(max(12, wanted, positions[-1] + 22 if positions else 12))
+    overflow = max(0, positions[-1] - (height - 12))
+    fig.update_layout(margin=dict(r=145))
+    for a, position in zip(levels, positions):
+        wanted = (a.y - low) / (high - low) * height
+        label = {"EQL": "동일 저점", "EQH": "동일 고점"}.get(a.text, a.text)
+        a.update(x=1, xref="paper", xanchor="left", yanchor="middle",
+                 text=f"{label} {a.y:,.2f}", showarrow=True, arrowhead=0,
+                 ax=10, ay=wanted - (position - overflow),
+                 bgcolor="rgba(15,23,42,0.88)", font=dict(size=11))
 
 
 def frame_last_date(frame):
@@ -108,6 +160,8 @@ def finish_price_figure(fig, frame, volume_signals, *, show_level_labels=False):
             if pd.notna(lower) and pd.notna(upper) and upper > lower > 0:
                 padding = (upper - lower) * 0.08
                 fig.update_layout(yaxis=dict(range=[max(0, lower - padding), upper + padding]))
+    if show_level_labels:
+        arrange_price_level_labels(fig, frame)
     return fig
 
 

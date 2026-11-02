@@ -6305,8 +6305,8 @@ def _add_chart_pattern_overlays(fig, patterns: list):
         )
 
 
-def _add_recent_trendline_guides(fig, df: pd.DataFrame) -> list:
-    guides = _build_recent_trendline_guides(df)
+def _add_recent_trendline_guides(fig, df: pd.DataFrame, *, guides=None) -> list:
+    guides = _build_recent_trendline_guides(df) if guides is None else guides
     for guide in guides:
         fig.add_trace(go.Scatter(
             x=guide.get("x", [guide["x0"], guide["x1"]]),
@@ -6788,7 +6788,15 @@ def render_precision_candlestick_chart(
     if df is None or df.empty:
         st.info("표시할 가격 데이터가 없습니다.")
         return
-    pattern_candidates = detect_chart_pattern_candidates(df) if show_patterns else []
+    from stock_lab_core import precision_chart_view
+    if not hasattr(precision_chart_view, "prepare_chart_layers"):
+        st.warning("차트 모듈 업데이트가 대기 중입니다. Streamlit Cloud에서 Reboot app 후 다시 확인해 주세요.")
+        return {}
+    structure, pattern_candidates, channel, trendline_guides = precision_chart_view.prepare_chart_layers(
+        df, show_patterns=show_patterns, show_channel=show_channel, show_signals=show_signals,
+        load_structure=_cached_chart_structure, detect_patterns=detect_chart_pattern_candidates,
+        build_trendlines=_build_recent_trendline_guides,
+    )
     # 정밀관측소 차트는 일봉/주봉/월봉 캡처가 같은 방식으로 동작하도록
     # 경량 차트가 아니라 Plotly 차트로 통일한다.
     fig = build_price_figure(df, avg_price)
@@ -6801,13 +6809,10 @@ def render_precision_candlestick_chart(
     from stock_lab_core.chart_structure import (
         add_channel_overlay, add_event_overlays, chart_date_breaks, chart_structure_rows, qualify_chart_events,
     )
-    structure = _cached_chart_structure(df) if show_patterns and (show_channel or show_signals) else {}
     if structure.get("issue"):
         st.warning(structure["issue"])
-    channel = structure.get("channel") if show_channel else {}
-    trendline_guides = []
-    if show_patterns:
-        trendline_guides = _build_recent_trendline_guides(df) if channel else _add_recent_trendline_guides(fig, df)
+    if show_patterns and not channel:
+        _add_recent_trendline_guides(fig, df, guides=trendline_guides)
     if channel:
         add_channel_overlay(fig, channel)
     if pattern_candidates:
@@ -6832,7 +6837,7 @@ def render_precision_candlestick_chart(
     st.plotly_chart(fig, width='stretch', key=key)
     if channel:
         st.caption(f"{channel['direction']} 평행 채널 · {channel['state']} · 확인 {pd.Timestamp(channel['known_at']):%Y-%m-%d} · 하단 {channel['lower'][-1]:,.2f} / 중심 {channel['middle'][-1]:,.2f} / 상단 {channel['upper'][-1]:,.2f}")
-    if show_patterns and show_signals:
+    if show_signals:
         event_rows = chart_structure_rows(structure, chart_events, decision_context)
         if event_rows:
             st.markdown("##### 패턴 신호 · 현재 실행 제한")
@@ -7060,7 +7065,7 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicat
         summary = f"{label}은 상승 추세지만 가격대가 높습니다. 일봉 눌림 신호가 떠도 정찰/분할만 적합합니다."
     elif short_term_pressure:
         state, color = "상승추세 내 조정", "#f59e0b"
-        summary = f"{label}은 큰 이평 배열은 상승이지만 현재가는 단기 이평 아래에서 조정 중입니다. 반등 확인 전 신규진입은 보류가 더 맞습니다."
+        summary = f"{label}은 큰 이평 배열은 상승이지만 단기 가격·모멘텀에는 조정 압력이 있습니다. 반등 확인이 필요한 기술 상태이며, 실제 실행 여부는 상단 실행 판단과 최종 체크를 따릅니다."
     elif pullback:
         state, color = "상승 눌림권", "#22c55e"
         summary = f"{label}도 상승 추세 안의 눌림권입니다. 일봉 신호와 방향이 맞습니다."
@@ -17825,6 +17830,8 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     plan_order_text = order_text(plan_buy_amt_krw, cur)
     if weight_gap > 0:
         total_condition = f"목표 {target_w:.2f}% - 현재 {current_w:.2f}% = 부족 {weight_gap:.2f}%p"
+    elif target_w <= 0 and current_w <= 0:
+        total_condition = "목표비중 미설정 · 배분금액/주수 미산출"
     else:
         total_condition = "목표비중 기준 추가 필요 없음"
 

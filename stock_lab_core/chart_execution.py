@@ -107,7 +107,8 @@ def pick_support_zone(
     support_guide = next((g for g in (trendline_guides or []) if g.get("kind") == "support"), None)
     if support_guide and finite_num(support_guide.get("y1")):
         y = clean_float(support_guide.get("y1"), np.nan)
-        add_candidate("상승 저점선", y, y, format_currency(y, ticker), 4)
+        label = support_guide["label"] if support_guide.get("source") == "parallel_channel" else "상승 저점선"
+        add_candidate(label, y, y, format_currency(y, ticker), 4)
     if not candidates:
         return {}
     return sorted(candidates, key=lambda item: (abs(clean_float(item.get("_distance"), 999.0)), item.get("_priority", 99)))[0]
@@ -136,8 +137,14 @@ def build_chart_execution_guide(
     resistance_dir = str((resistance_guide or {}).get("direction") or "")
     resistance_y = clean_float((resistance_guide or {}).get("y1"), np.nan)
     resistance_passed = finite_num(current) and finite_num(resistance_y) and current >= resistance_y * 1.003
+    channel_guide = next((g for g in (trendline_guides or []) if g.get("source") == "parallel_channel"), None)
+    support_name = "채널 하단" if channel_guide else "상승 저점선"
+    resistance_name = "채널 상단" if channel_guide else "고점선"
 
-    if support_dir == "상승" and resistance_dir == "하락" and resistance_passed:
+    if channel_guide:
+        structure_text = (f"표시된 {channel_guide['direction']} 평행 채널 기준 {channel_guide['channel_state']}입니다. "
+                          "채널 기울기는 작도 구간의 방향이며 현재 매수·매도 판정은 아닙니다.")
+    elif support_dir == "상승" and resistance_dir == "하락" and resistance_passed:
         structure_text = "저점은 올라왔고 내려오던 고점선은 이미 넘었습니다. 지금은 추격보다 돌파 후 눌림과 손익비를 확인하는 구간입니다."
     elif support_dir == "상승" and resistance_dir == "하락":
         structure_text = "저점은 올라오고 고점은 내려오는 수렴입니다. 어느 쪽으로 돌파되는지 확인하는 구간입니다."
@@ -157,14 +164,14 @@ def build_chart_execution_guide(
         resistance_gap = (resistance_y / current - 1.0) if finite_num(current) and current > 0 else np.nan
         far_upper_resistance = finite_num(resistance_gap) and resistance_gap >= 0.08
         if resistance_passed:
-            breakout_bits.append(f"고점선 돌파 완료: {format_currency(resistance_y, ticker)} 위 유지")
+            breakout_bits.append(f"{resistance_name} 돌파 완료: {format_currency(resistance_y, ticker)} 위 유지")
         elif far_upper_resistance:
             upper_target_text = (
                 f"{format_currency(resistance_y, ticker)}는 1차 매수 조건이 아니라 "
                 "상단 목표·큰 저항입니다. 그 근처에서는 추격보다 분할익절/재평가를 먼저 봅니다."
             )
         else:
-            breakout_bits.append(f"고점선 저항 {format_currency(resistance_y, ticker)} 위 돌파")
+            breakout_bits.append(f"{resistance_name} 저항 {format_currency(resistance_y, ticker)} 위 돌파")
     if breakout_bits:
         breakout_text = " / ".join(breakout_bits) + " + 거래량 증가가 확인될 때만 1차 정찰·분할 검토"
     else:
@@ -182,7 +189,7 @@ def build_chart_execution_guide(
     if liquidity_profile and liquidity_profile.get("ok") and liquidity_profile.get("support"):
         support_bits.append(f"유동성 지지 {liquidity_zone_price_text(liquidity_profile.get('support'), ticker)}")
     if support_guide and finite_num(support_guide.get("y1")):
-        support_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)} 부근")
+        support_bits.append(f"{support_name} {format_currency(support_guide.get('y1'), ticker)} 부근")
     if support_bits:
         pullback_text = " / ".join(support_bits[:3]) + "에서 하락 멈춤·양봉 전환·거래량 회복이 보이면 눌림 정찰 후보"
     else:
@@ -195,7 +202,7 @@ def build_chart_execution_guide(
         else:
             invalid_bits.append(f"패턴 무효선 {format_currency(invalid, ticker)} 이탈 시 후보 폐기")
     if support_guide and finite_num(support_guide.get("y1")):
-        invalid_bits.append(f"상승 저점선 {format_currency(support_guide.get('y1'), ticker)} 아래는 추가매수 중단·다음 봉 회복 확인")
+        invalid_bits.append(f"{support_name} {format_currency(support_guide.get('y1'), ticker)} 아래는 추가매수 중단·다음 봉 회복 확인")
     invalid_text = " / ".join(invalid_bits[:2]) if invalid_bits else "지지선 이탈 시 추가매수 중단·다음 봉 회복 확인"
 
     rows = [
@@ -292,7 +299,7 @@ def build_chart_execution_check_rows(
             )
         else:
             add_row(
-                "고점선/저항 돌파",
+                "채널 상단 돌파" if resistance_guide.get("source") == "parallel_channel" else "고점선/저항 돌파",
                 "통과" if passed else "대기",
                 f"{format_currency(resistance, ticker)} 위 유지",
                 resistance_meaning,
