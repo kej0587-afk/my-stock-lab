@@ -264,7 +264,19 @@ def _sector_body_facts(paragraphs, title):
 def parse_article(data, url, expected_title):
     if not _safe_url(url):
         return {"body_status": "unsupported_source"}
-    root = html.fromstring(data, parser=html.HTMLParser(no_network=True))
+    # libxml2 builds can disagree on HTML charset autodetection (Cloud decoded
+    # fnnews UTF-8 as Latin-1). Honor an explicit UTF-8 declaration/BOM, strictly:
+    # never repair garbled titles heuristically or weaken article identity.
+    encoding = None
+    if isinstance(data, bytes) and (data.startswith(b"\xef\xbb\xbf") or re.search(
+        br'<meta\b[^>]*\bcharset\s*=\s*[\"\x27]?\s*utf-?8\b', data[:32768], re.I
+    )):
+        try:
+            data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return {"body_status": "article_encoding_invalid"}
+        encoding = "utf-8"
+    root = html.fromstring(data, parser=html.HTMLParser(no_network=True, encoding=encoding))
     articles = []
     for script in root.xpath('//script[@type="application/ld+json"]')[:12]:
         try:
@@ -323,7 +335,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v8: expose public metadata headline when strict identity validation fails.
+    # v9: honor declared UTF-8 consistently across local/Cloud parser versions.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -413,6 +425,7 @@ def body_unavailable_reason(row):
         "headline_mismatch": "기사 제목 대조 불일치",
         "article_timestamp_unavailable": "본문 발행시각 미확보",
         "article_body_unavailable": "본문 영역 미확보",
+        "article_encoding_invalid": "원문의 문자 인코딩 선언과 데이터 불일치",
         "article_version_after_report": "생성 기준시각 이후 수정된 기사",
         "article_timestamp_mismatch": "RSS와 본문 발행시각 불일치",
     }

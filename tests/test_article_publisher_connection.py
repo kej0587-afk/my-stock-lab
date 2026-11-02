@@ -68,6 +68,34 @@ def test_inline_emphasis_preserves_bank_sentence_and_block_boundaries():
     assert not a.parse_article(page(unrelated, title=title), URL, title).get('body_facts')
 
 
+@pytest.mark.parametrize('declaration', [
+    '<meta charset="UTF-8">',
+    '<meta http-equiv="Content-Type" content="text/html;charset=UTF-8">',
+    '\ufeff',
+])
+def test_declared_utf8_survives_latin1_autodetection_environment(monkeypatch, declaration):
+    title = '금융지주 회장 연임 요건 강화'
+    metadata = {'@type': 'NewsArticle', 'headline': title,
+                'datePublished': '2026-11-02T16:00:00+09:00'}
+    data = (declaration + '<script type="application/ld+json">'
+            + json.dumps(metadata, ensure_ascii=False) + '</script>'
+            + '<div class="article-view__body"><p>금융지주 회장의 <strong>연임</strong> 요건이 강화돼 주주의 찬성 기준이 달라진다.</p></div>').encode('utf-8')
+    original = a.html.HTMLParser
+    def cloud_parser(**kwargs):
+        kwargs['encoding'] = kwargs.get('encoding') or 'iso-8859-1'
+        return original(**kwargs)
+    monkeypatch.setattr(a.html, 'HTMLParser', cloud_parser)
+    result = a.parse_article(data, URL, title)
+    assert result['body_status'] == 'verified'
+    assert result['body_facts'][0]['topic'] == 'bank_governance'
+    assert a.parse_article(data, URL, '다른 은행의 실적 발표')['body_status'] == 'headline_mismatch'
+
+
+def test_declared_utf8_with_invalid_bytes_is_not_silently_repaired():
+    data = page('<p>금융지주 회장의 연임 요건이 강화돼 주주의 찬성 기준이 달라진다.</p>') + b'\xff'
+    assert a.parse_article(data, URL, TITLE)['body_status'] == 'article_encoding_invalid'
+
+
 def test_identity_and_access_checks_also_apply_to_new_publisher():
     assert a.parse_article(page('text', free=False), URL, TITLE)['body_status'] == 'restricted_article'
     assert a.parse_article(page('text', title='different'), URL, TITLE)['body_status'] == 'headline_mismatch'

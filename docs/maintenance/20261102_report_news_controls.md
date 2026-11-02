@@ -129,3 +129,11 @@ Publisher feed documentation: https://www.fnnews.com/rss
   split a sentence. Preserve inline text within block boundaries, keep unrelated
   paragraphs separate, and invalidate the provider cache revision. This is a real
   parser defect but not yet proof of the Cloud discrepancy's cause.
+- Cloud report at 01:42 KST (`05d0e3d2`) recorded the actual fnnews metadata
+  headline as UTF-8 bytes decoded as Latin-1 (`ê...`). Both finance and construction
+  articles failed strict identity for that reason, not HTTP access. Explicitly
+  honor declared UTF-8/BOM after strict byte validation; preserve legacy charset
+  detection otherwise. Do not perform fuzzy title matching or repair guessed text.
+- Synthetic regression forces a Latin-1-default parser, checks both HTML meta
+  declaration forms and BOM, inline markup, invalid byte rejection, and continued
+  rejection of a genuinely different headline. The cache revision is bumped.
