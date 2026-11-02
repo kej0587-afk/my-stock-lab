@@ -17,6 +17,7 @@ from stock_lab_core import decision_followup
 from tests.fixtures_price import make_price_df
 from tests.test_decision_golden_snapshot import _bench_info, _to_jsonable
 from tests.test_decision_refactor_parity import scenarios
+from tests.test_decision_inputs_refactor import restore_inputs_for_ast
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ def choice(fn):
 
 def restore_followup_for_ast(fn):
     """Reverse just this extraction; older extraction suites retain their scope."""
-    fn = deepcopy(fn)
+    fn = restore_inputs_for_ast(fn)
     choice(fn).orelse[1].orelse = deepcopy(choice(baseline_function()).orelse[1].orelse)
     local_helper = next(n for n in baseline_function().body if isinstance(n, ast.FunctionDef)
                         and n.name == "_set_decision")

@@ -352,6 +352,7 @@ from stock_lab_core.decision_policies import (
 )
 from stock_lab_core.decision_priority import select_portfolio_priority_decision
 from stock_lab_core.decision_followup import select_portfolio_followup_decision
+from stock_lab_core.decision_inputs import prepare_decision_price_inputs, prepare_decision_technical_inputs
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
@@ -16470,49 +16471,26 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
         is_etf = False
         asset_class = normalize_individual_stock_asset_class(ticker, asset_class)
 
-    source_daily_close, source_prev_close = get_source_close_values(df)
-    if _live_indicator_context is None:
-        df, live_ohlcv_applied, indicator_data_issue = apply_live_price_with_indicators(
-            df, live_price, ticker, build_indicators,
-        )
-    else:
-        prepared_df, live_ohlcv_applied, indicator_data_issue = _live_indicator_context
-        df = prepared_df.copy(deep=True)
-    if indicator_data_issue:
-        live_price = 0.0
-
-    df = ensure_min_price_rows_for_decision(df)
-
-    last, prev = df.iloc[-1], df.iloc[-2]
-    daily_close = source_daily_close if source_daily_close > 0 else float(df.iloc[-1]["Close"])
-    cur_p, live_price_used = resolve_current_price_for_decision(
-        df,
-        live_price=live_price,
-        source_daily_close=daily_close,
-        live_ohlcv_applied=live_ohlcv_applied,
+    price_inputs = prepare_decision_price_inputs(
+        df, ticker, live_price, build_indicators=build_indicators,
+        apply_live_price_with_indicators=apply_live_price_with_indicators,
+        _live_indicator_context=_live_indicator_context,
     )
-    return_window_context = build_return_window_context(df, cur_p)
-    p1m = return_window_context["p1m"]
-    p3m = return_window_context["p3m"]
-    p6m = return_window_context["p6m"]
-    ret_1m = return_window_context["ret_1m"]
-    ret_3m = return_window_context["ret_3m"]
-    ret_6m = return_window_context["ret_6m"]
-    prev_close = float(prev["Close"]) if finite_num(prev["Close"]) else 0.0
-    day_return_context = build_day_return_context(
-        cur_p=cur_p,
-        daily_close=daily_close,
-        prev_close=prev_close,
-        source_daily_close=source_daily_close,
-        source_prev_close=source_prev_close,
-        live_price_used=live_price_used,
-    )
-    regular_day_ret = day_return_context["regular_day_ret"]
-    live_ref_ret = day_return_context["live_ref_ret"]
-    fallback_day_ret = day_return_context["fallback_day_ret"]
-    day_ret = day_return_context["day_ret"]
-    day_ret_label = day_return_context["day_ret_label"]
-    live_gap_move = day_return_context["live_gap_move"]
+    df = price_inputs["df"]
+    last = price_inputs["last"]
+    prev = price_inputs["prev"]
+    indicator_data_issue = price_inputs["indicator_data_issue"]
+    daily_close = price_inputs["daily_close"]
+    cur_p = price_inputs["cur_p"]
+    live_price_used = price_inputs["live_price_used"]
+    ret_1m = price_inputs["ret_1m"]
+    ret_3m = price_inputs["ret_3m"]
+    ret_6m = price_inputs["ret_6m"]
+    regular_day_ret = price_inputs["regular_day_ret"]
+    live_ref_ret = price_inputs["live_ref_ret"]
+    day_ret = price_inputs["day_ret"]
+    day_ret_label = price_inputs["day_ret_label"]
+    live_gap_move = price_inputs["live_gap_move"]
     live_rebound_context = build_live_rebound_context(is_kr_listed(ticker))
     live_rebound_label = live_rebound_context["live_rebound_label"]
     live_rebound_holding_label = live_rebound_context["live_rebound_holding_label"]
@@ -16522,25 +16500,27 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     high_52w = price_history_context["high_52w"]
     current_dd = price_history_context["current_dd"]
     short_history = price_history_context["short_history"]
-    trend = get_trend(last)
-    macd_state = get_macd_state(last["MACD"], last["MACD_Sig"], prev["MACD"], prev["MACD_Sig"])
-    rt_macd_label = "📈상승추세" if last["MACD"] > prev["MACD"] else ("📉하락추세" if last["MACD"] < prev["MACD"] else "⏳관망")
-    rsi_now, mfi_now, pct_b_now = float(last["RSI"]), float(last["MFI"]), float(last["%B"])
-    _, rs_label = get_rs_score(ticker, asset_class)
-    rs_slope_val, rs_slope_label, rs_slope_s = get_rs_slope(ticker, asset_class)
-    squeeze_status_context = build_squeeze_status_context(df, last, prev, get_sqz_status, release_lookback=20)
-    last_sqz_near = squeeze_status_context["last_sqz_near"]
-    prev_sqz_near = squeeze_status_context["prev_sqz_near"]
-    recent_sqz_near = squeeze_status_context["recent_sqz_near"]
-    sqz_status = squeeze_status_context["sqz_status"]
-
-    tech_scores = score_technical_components(rs_label, mfi_now, trend, macd_state, sqz_status)
-    rs_s = tech_scores["rs_s"]
-    mfi_s = tech_scores["mfi_s"]
-    trend_s = tech_scores["trend_s"]
-    macd_s = tech_scores["macd_s"]
-    sqz_s = tech_scores["sqz_s"]
-    tech_total = tech_scores["tech_total"]
+    technical_inputs = prepare_decision_technical_inputs(
+        df, last, prev, ticker, asset_class, get_rs_score=get_rs_score,
+        get_rs_slope=get_rs_slope, score_technical_components=score_technical_components,
+    )
+    trend = technical_inputs["trend"]
+    macd_state = technical_inputs["macd_state"]
+    rt_macd_label = technical_inputs["rt_macd_label"]
+    rsi_now = technical_inputs["rsi_now"]
+    mfi_now = technical_inputs["mfi_now"]
+    pct_b_now = technical_inputs["pct_b_now"]
+    rs_label = technical_inputs["rs_label"]
+    rs_slope_val = technical_inputs["rs_slope_val"]
+    rs_slope_label = technical_inputs["rs_slope_label"]
+    rs_slope_s = technical_inputs["rs_slope_s"]
+    sqz_status = technical_inputs["sqz_status"]
+    rs_s = technical_inputs["rs_s"]
+    mfi_s = technical_inputs["mfi_s"]
+    trend_s = technical_inputs["trend_s"]
+    macd_s = technical_inputs["macd_s"]
+    sqz_s = technical_inputs["sqz_s"]
+    tech_total = technical_inputs["tech_total"]
     tactical_price_context = build_tactical_price_context(df, last, cur_p)
     vol_ma20 = tactical_price_context["vol_ma20"]
     vol_ratio = tactical_price_context["vol_ratio"]
@@ -19388,7 +19368,7 @@ def get_precision_build_info():
     # Sync metadata names only; preserve the hashes captured at real import time.
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
                         if name.startswith("stock_lab_core.account_performance") or name in {
-                            "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.leveraged_watch",
+                            "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.decision_inputs", "stock_lab_core.leveraged_watch",
                             "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
