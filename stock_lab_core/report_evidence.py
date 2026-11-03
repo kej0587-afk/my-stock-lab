@@ -1022,7 +1022,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     if not watches:
         lines.append("- 관심 후보 미연결/없음")
     from stock_lab_core.market_guard_explanation import guard_explanation_lines
-    lines.extend(guard_explanation_lines(context.get("market_guard")))
+    lines.extend(guard_explanation_lines(context.get("market_guard"), sessions=sessions))
     from stock_lab_core.report_outlook import official_outlook_lines
     lines.extend(official_outlook_lines(context, now))
     lines.extend(["", "## 다가오는 일정"])

@@ -112,13 +112,48 @@ def _guard_summary_lines(guard):
             + " / 매크로 " + _macro_release(guard) + "(조건부 재계산) · 전술 " + tactical]
 
 
-def guard_explanation_lines(guard):
+def guard_basis_warnings(guard, sessions):
+    """Compare with report close dates, not intraday clocks; never alter scores."""
+    from datetime import date
+    from stock_lab_core.report_evidence import records
+
+    def day(value):
+        try:
+            return date.fromisoformat(str(value or "")[:10])
+        except ValueError:
+            return None
+
+    lines = []
+    rows = records((guard or {}).get("bench_df"))
+    for region, label in (("KR", "한국"), ("US", "미국")):
+        expected = day((sessions or {}).get(region))
+        if expected is None:
+            continue
+        local = [row for row in rows if row.get("지역") == region]
+        stale = [row for row in local if (basis := day(row.get("기준일"))) is not None and basis < expected]
+        if not stale:
+            continue
+        dates = ", ".join(sorted({str(row["기준일"]) for row in stale}))
+        delayed = [str(row.get("티커", "")) for row in local
+                   if (received := day(row.get("최근수신봉"))) is not None and received < expected]
+        unknown = [str(row.get("티커", "")) for row in local if day(row.get("최근수신봉")) is None]
+        detail = "최신 수신봉 지연: " + ", ".join(delayed) if delayed else "최신 수신봉 기준 지연 종목 특정 불가"
+        if unknown:
+            detail += " / 수신일 미확인: " + ", ".join(unknown)
+        lines.append(f"**기준일 지연 · {label}**: 게이트 {dates} / 리포트 정규장 종가 {expected.isoformat()}. "
+                     f"{detail}. 공통 거래일 정렬 또는 이전 스냅샷 여부를 확인하고 오늘점검을 재계산해야 합니다. "
+                     "아래 점수는 이전 입력 기준이며 현재 시장 판정으로 단정하지 않습니다. 장중 가격으로 대체하거나 매수 허용으로 변경하지 않습니다.")
+    return lines
+
+
+def guard_explanation_lines(guard, *, sessions=None):
     from stock_lab_core.report_evidence import _cell, records
     guard = guard or {}
     lines = ["", "## 시장방어 게이트 근거"]
     if not guard:
         return lines + ["오늘점검 시장 게이트 입력 미연결. 스트레스 점수로 대체 계산하지 않습니다."]
     lines += [f"현재 {guard.get('scope_text', '')} · 통합 {guard.get('mode', '미확인')}"]
+    lines += guard_basis_warnings(guard, sessions)
     for summary in _guard_summary_lines(guard):
         lines += ["", summary]
     lines += ["",

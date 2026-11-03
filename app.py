@@ -29228,7 +29228,7 @@ def render_today_unified_briefing_panel(
                     "목표비중": _weight_cell(target_w),
                     "비중차이": _weight_cell(gap_w),
                     "판정": label or final_read or "-",
-                    "보유 점검 사유": ", ".join(reasons),
+                    "보유 점검 사유": ", ".join(dict.fromkeys(reasons)),
                     "관리 해석": action,
                 })
 
