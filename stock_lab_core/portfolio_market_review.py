@@ -62,23 +62,8 @@ def _percent(value, scale=1):
 
 
 def _related_issuers(ticker, state, now):
-    """Only verified, dated holdings can turn an issuer into ETF evidence."""
-    linked = {canonical_ticker(ticker): ("직접 기업", "")}
-    snapshot = state.get("etf_constituents_" + ticker) or {}
-    observed, as_of = stamp(snapshot.get("observed_at")), stamp(snapshot.get("as_of"))
-    url = safe_link(snapshot.get("source_url"))
-    if (snapshot.get("status") not in {"ok", "partial"}
-            or snapshot.get("holdings_basis") in {"unverified_reference", "provider_reported_unverified", "historical_reference"}
-            or not observed or not as_of or not url
-            or not timedelta(0) <= now - observed <= timedelta(hours=1)
-            or not 0 <= (now.date() - as_of.date()).days <= 7):
-        return linked
-    for row in records(snapshot.get("rows")):
-        if row.get("reviewable") and row.get("kind") == "security":
-            key = canonical_ticker(row.get("ticker"))
-            if key:
-                linked[key] = (f"구성기업 간접 · 구성 {as_of:%Y-%m-%d}", url)
-    return linked
+    from stock_lab_core.etf_issuer_evidence import related_issuers
+    return related_issuers(ticker, state, now)
 
 
 def holding_market_review(ticker, data, state, *, now=None):
@@ -140,6 +125,8 @@ def holding_market_review(ticker, data, state, *, now=None):
         readings.append("연결된 종가 등락은 " + ", ".join(f"{s} {_percent(v, 100)}" for s, v in changes) +
                         "입니다. 단일 거래일 방향만으로 유지·축소를 바꾸지 않고 실적과 기존 관리 조건을 함께 봅니다.")
     linked = _related_issuers(ticker, state, now)
+    from stock_lab_core.etf_issuer_evidence import merge_issuer_evidence
+    data = merge_issuer_evidence(data, linked, state, now)
     earnings = []
     seen = set()
     for packet in sorted(data.get("earnings") or [], key=lambda p: text(p.get("date")), reverse=True):
@@ -225,7 +212,7 @@ def render_market_review(st, ticker, scope, *, refresh=None, choices=None):
         if review["earnings"]:
             st.dataframe(pd.DataFrame(review["earnings"]), hide_index=True, width="stretch")
         else:
-            st.caption("실적 근거 미연결. ETF는 정밀관측소에서 확인한 최신 구성자료가 있어야 기업 실적을 연결합니다.")
+            st.caption("실적 근거 미연결. 위 ETF 구성종목 조회 후 구성기업 실적을 선택 조회할 수 있습니다. 최신 구성비와 기업 실적의 확인 여부는 별개입니다.")
     st.caption("해석은 관찰용입니다. 축소는 기존 비중·손실 관리 조건, 현금 대기는 신규 투입 제한, 유지는 보유 가설 점검을 뜻하며 서로 같은 매도·매수 명령이 아닙니다.")
 
 

@@ -27,6 +27,7 @@ _RENDER_MODULES = (
     "report_policy_catalysts", "report_energy_basis", "article_events", "public_market_flow_history",
     "report_account_section", "report_calendar_section",
     "portfolio_market_review", "portfolio_holding_review", "portfolio_commentary",
+    "etf_review", "etf_issuer_evidence", "etf_roundhill",
 )
 
 

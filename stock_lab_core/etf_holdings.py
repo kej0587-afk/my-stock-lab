@@ -491,6 +491,17 @@ def load_etf_holdings(ticker, *, kr_catalog=None, force_refresh=False, fetch=Non
             return result
         if entry.get("good") and cache.clock() - entry["good_at"] < cache.success_ttl:
             return _cached_result(entry, cache, now, max_age_days)
+    if symbol in {"RAM", "DRAM", "MAGS"} and market == "US":
+        from stock_lab_core.etf_roundhill import collect_roundhill
+        try:
+            result = collect_roundhill(symbol, now=now, fetch=transport, timeout=timeout)
+            result = _aged(result, now, max_age_days)
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, _Unavailable) else "invalid_or_unavailable_response"
+            result = _snapshot(symbol, market, now, source="Roundhill", reason=reason)
+        cache._write(key, result)
+        return (_cached_result(entry, cache, now, max_age_days, failed=result)
+                if result["status"] != "ok" else deepcopy(result))
     if market == "KR":
         source, url, parser = "Naver ETF components", NAVER_URL.format(code=symbol), lambda data: _naver(data, symbol, fund_codes)
     else:

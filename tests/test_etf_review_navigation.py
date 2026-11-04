@@ -126,6 +126,8 @@ def offline_app(app_definitions, monkeypatch):
     timestamp.now.return_value = pd.Timestamp("2026-10-31T00:30:00Z")
     # Keep the cached fixture fresh without changing the process-wide clock.
     app_pandas = SimpleNamespace(DataFrame=pd.DataFrame, to_numeric=pd.to_numeric, Timestamp=timestamp)
+    from stock_lab_core import etf_review
+    monkeypatch.setattr(etf_review, "pd", app_pandas)
     app = SimpleNamespace(
         st=ReviewUI(), pd=app_pandas, np=np, re=re, logging=logging,
         sanitize_ticker_value=sanitize_ticker_value, clean_float=clean_float, is_kr_listed=is_kr_listed,

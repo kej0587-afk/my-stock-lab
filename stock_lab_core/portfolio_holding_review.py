@@ -102,7 +102,7 @@ def holding_choice_rows(detail, management=None):
     ])
 
 
-def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None, refresh_evidence=None):
+def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None, refresh_evidence=None, render_constituents=None):
     signals = select_portfolio_signals(st.session_state, context, detailed=True)
     overview, details = build_holding_review(holdings, signals, st.session_state.get(PRECISION_KEY), context)
     if overview.empty:
@@ -128,6 +128,8 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None, m
         if not matched.empty:
             action = matched.iloc[0].to_dict()
     from stock_lab_core.portfolio_market_review import render_market_review
+    if render_constituents is not None:
+        render_constituents(ticker, names[ticker])
     choices = holding_choice_rows(detail, action)
     render_market_review(st, ticker, context, refresh=refresh_evidence, choices=choices)
     with st.expander("저장 판정 · 기존 관리 조건", expanded=False):
