@@ -175,7 +175,7 @@ def _kind(name, asset_type=""):
         return "equity"
     if any(word in text for word in (" ETF", " FUND", "TIGER ", "KODEX ", "TREASURY INST", "TRSRY INST", "TRSY CAPITAL")):
         return "fund"
-    if any(word in text for word in ("BOND", "TREASURY NOTE", "TREASURY BILL", "채권")):
+    if re.search(r"\bBONDS?\b|\bTREASURY (?:NOTE|BILL)S?\b|채권", text):
         return "bond"
     return "unknown"
 

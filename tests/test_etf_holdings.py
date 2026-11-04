@@ -61,6 +61,17 @@ def offline(monkeypatch):
     monkeypatch.setattr(eh.requests, "get", lambda *a, **kw: pytest.fail("Unexpected HTTP"))
 
 
+@pytest.mark.parametrize("name,expected", [
+    ("Winbond Electronics Corp", "unknown"),
+    ("Bondtech Corp", "unknown"),
+    ("US TREASURY BILL 11/23/2026", "bond"),
+    ("CORPORATE BONDS", "bond"),
+    ("Winbond Electronics Corp SWAP", "swap"),
+])
+def test_bond_type_requires_a_separate_word(name, expected):
+    assert eh._kind(name) == expected
+
+
 def test_soxx_actual_equity_precision_cash_futures_and_date():
     result = load(" soxx ", ISHARES.encode("utf-8-sig"))
     assert result["status"] == "ok"
