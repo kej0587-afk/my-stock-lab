@@ -28,6 +28,7 @@ _RENDER_MODULES = (
     "report_account_section", "report_calendar_section",
     "portfolio_market_review", "portfolio_holding_review", "portfolio_commentary",
     "etf_review", "etf_issuer_evidence", "etf_roundhill",
+    "holding_evidence_commentary",
 )
 
 

@@ -96,7 +96,7 @@ def holding_market_review(ticker, data, state, *, now=None):
                               "관측": _percent(live.get("return"), 100),
                               "출처": text(live.get("source")) or "출처 미확인"})
     flow_rows = [r for r in records(data.get("closed_flow_rows")) if r.get("Ticker") in symbols]
-    readings = []
+    readings, flow_evidence = [], []
     for row in flow_rows:
         symbol = row["Ticker"]
         date = text(row.get("기준일"))
@@ -106,6 +106,7 @@ def holding_market_review(ticker, data, state, *, now=None):
         facts.append({"근거": "가격 기반 흐름 · 실제 순매수 아님", "대상": symbol, "기준": date,
                       "관측": f"5D {_percent(five, 100)} / 3M {_percent(medium, 100)}", "출처": "시황과 동일한 종가 이력"})
         flow_score = number(row.get("돈흐름점수"))
+        flow_evidence.append(dict(ticker=symbol, date=date, five=five, medium=medium, flow_score=flow_score))
         if flow_score is not None:
             facts.append({"근거": "돈흐름 지표 · 실제 순매수 아님", "대상": symbol, "기준": date,
                           "관측": f"{flow_score:+.1f}점 / 중기 상태: {text(row.get('상태')) or '미연결'}",
@@ -175,7 +176,8 @@ def holding_market_review(ticker, data, state, *, now=None):
     if articles:
         readings.append("연결된 보도 쟁점: " + text(articles[0]["보도 제목 · 주장"]) +
                         ". 이는 기사 주장으로, 보유 종목 등락의 인과관계나 매매 신호로 확정하지 않습니다.")
-    return {"facts": facts, "earnings": earnings, "news": articles[:3], "reading": "\n\n".join(readings)}
+    return {"facts": facts, "earnings": earnings, "news": articles[:3], "reading": "\n\n".join(readings),
+            "flow_evidence": flow_evidence}
 
 
 def render_market_review(st, ticker, scope, *, refresh=None, choices=None):
@@ -197,14 +199,35 @@ def render_market_review(st, ticker, scope, *, refresh=None, choices=None):
         st.caption("시황 리포트 생성 또는 근거 갱신 후 연결됩니다. 저장된 매매판정은 변경하지 않습니다.")
         return
     review = holding_market_review(ticker, data, st.session_state)
+    from stock_lab_core.holding_evidence_commentary import build_holding_evidence_commentary
+    synthesis = build_holding_evidence_commentary(ticker, review, choices)
     st.markdown("**시황·실적과 연결한 해석**")
-    for paragraph in review["reading"].split("\n\n"):
-        st.markdown(paragraph)
-    if isinstance(choices, pd.DataFrame) and not choices.empty:
-        st.markdown("**검토할 방향 · 기존 조건 유지**")
-        st.table(choices)
-    st.markdown("**연결 근거 · 종가와 장중 구분**")
-    st.dataframe(pd.DataFrame(review["facts"]), hide_index=True, width="stretch")
+    st.write(synthesis["headline"])
+    if synthesis["current"]:
+        st.caption(synthesis["current"] + " · 가격 관측이며 매매 신호가 아닙니다.")
+    st.markdown("**시장 흐름과 보유 가설**")
+    st.write(synthesis["flow"])
+    st.write(synthesis["company"])
+    st.write(synthesis["connection"])
+    with st.expander("해석에 연결된 기업 발표 · 원문과 출처", expanded=False):
+        if synthesis["evidence"]:
+            st.dataframe(pd.DataFrame(synthesis["evidence"]), hide_index=True, width="stretch")
+        else:
+            st.caption("확인된 공식 발표 근거가 없습니다.")
+    if synthesis["news"]:
+        article = synthesis["news"][0]
+        st.write("함께 볼 보도 쟁점(기사 주장): " + text(article.get("보도 제목 · 주장")))
+        st.caption(text(article.get("시장/세션")) + " · " + text(article.get("연결")))
+    st.markdown("**검토할 방향 · 기존 조건 유지**")
+    for option in synthesis["conditions"]:
+        with st.expander(option["검토 방향"] + " · 근거와 변경 조건", expanded=False):
+            st.write(option["근거를 어떻게 읽을까"])
+            st.markdown("**확인할 조건**")
+            st.write(option["대응을 바꾸기 전 확인"])
+    with st.expander("가격·돈흐름 근거 · 종가와 장중 구분", expanded=False):
+        st.dataframe(pd.DataFrame(review["facts"]), hide_index=True, width="stretch")
+        for paragraph in review["reading"].split("\n\n"):
+            st.write(paragraph)
     if review["news"]:
         with st.expander("연결된 보도 · 시장과 기준일", expanded=False):
             st.dataframe(pd.DataFrame(review["news"]), hide_index=True, width="stretch")
