@@ -54,7 +54,7 @@ TOPICS = {
     "원자재/금속": r"원자재|금값|구리|리튬|\b(?:gold|copper|lithium|metals?)\b",
     "실적/대장주": r"실적|가이던스|\b(?:earnings|guidance|revenue)\b",
     "우주/항공": r"우주|항공|위성|\b(?:SpaceX|Starlink|satellite|aerospace)\b",
-    "정책/규제": r"정책|규제|관세|\b(?:policy|regulation|tariff)\b",
+    "정책/규제": r"정책|규제|관세|중간선거|개표|\b(?:policy|regulation|tariff|midterm|election)\b",
 }
 
 
@@ -124,7 +124,9 @@ def selected_category_lines(context, now):
     rows = [row for bucket in ("session_news", "current_session_news", "next_session_news", "other_market_news")
             for row in context.get(bucket, [])]
     rows = curate_news(rows, now=now, limit=240, session_scoped=True)
-    rows.sort(key=lambda row: stamp(row.get("published_at") or row.get("published")) or now, reverse=True)
+    from stock_lab_core.news_priority import market_news_priority
+    rows.sort(key=lambda row: (-market_news_priority(row),
+                              -(stamp(row.get("published_at") or row.get("published")) or now).timestamp()))
     lines = ["", "## 선택 분야별 뉴스", "분야 | 확인된 재료·의미 | 시점·연결 상태", "--- | --- | ---"]
     seen = {}
     for category in categories:

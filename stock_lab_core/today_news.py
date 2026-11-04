@@ -710,7 +710,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
             if topics[market]:
                 # Packs share a request, leaving every market/session a turn
                 # within the global budget even when many exposures are held.
-                pack_size = max(3, (len(topics[market]) + 2) // 3)
+                pack_size = max(3, (len(topics[market]) + 1) // 2)
                 packs = [topics[market][index:index + pack_size] for index in range(0, len(topics[market]), pack_size)]
                 common = ('(AI OR CoreWeave OR neocloud) (credit OR debt OR financing OR rebound) OR "Treasury yields" OR "oil prices"'
                           if market == "US" else '"AI 신용" OR "AI 차입" OR "외국인 기관" OR 금리 OR 환율')
@@ -748,6 +748,20 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
     interleaved = [group[index] for index in range(max((len(group) for group in groups), default=0))
                    for group in groups if index < len(group)]
     catalysts = exposure_catalyst_specs(exposures, now=now) if any(w["market"] == "US" for w in windows) else []
+    company_material = [spec for spec in interleaved if spec["category"] == "기업 재료"][:1]
+    # Market-wide leads must not depend on portfolio membership or a fixed list
+    # of issuers. Keep them inside the existing request/timeout budget.
+    market_events = []
+    if any(w["market"] == "US" for w in windows):
+        event_day = now.astimezone(ZoneInfo("America/New_York")).date()
+        for category, terms in (
+            ("주요 실적", '(earnings OR "quarterly results") (guidance OR shares OR "after hours")'),
+            ("정책·기업 촉매", '("midterm election" OR "election results" OR IPO OR "AI funding") (stocks OR market OR shares)'),
+        ):
+            query = terms + f" after:{(event_day - timedelta(days=3)).isoformat()} before:{(event_day + timedelta(days=1)).isoformat()}"
+            market_events.append(dict(market="US", category=category, query_kind="market_event",
+                query_topics=[], url="https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query})
+                + "&hl=en-US&gl=US&ceid=US:en"))
     topic_specs = []
     if windows:
         lower = max(min(datetime.fromisoformat(w["start"]) for w in windows), now - timedelta(days=7))
@@ -755,7 +769,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
         before = (now.date() + timedelta(days=1)).isoformat()
         # Prefer independent topics so prolific crypto/AI headlines cannot fill
         # the RSS page ahead of banking/biotech. Pack only when the budget needs it.
-        slots = max(1, _SESSION_QUERY_LIMIT - len(groups) - min(len(catalysts), 2))
+        slots = max(1, _SESSION_QUERY_LIMIT - len(groups) - len(catalysts) - len(market_events) - len(company_material))
         pack_size = max(1, (len(selected) + slots - 1) // slots)
         for index in range(0, len(selected), pack_size):
             pack = selected[index:index + pack_size]
@@ -768,7 +782,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                                "selected_categories": [category for category, _ in pack],
                                "url": "https://news.google.com/rss/search?" + urllib.parse.urlencode({"q": query}) + "&hl=ko&gl=KR&ceid=KR:ko",
                                "query_topics": []})
-    ordered = interleaved[:len(groups)] + topic_specs + catalysts + interleaved[len(groups):]
+    ordered = interleaved[:len(groups)] + market_events + catalysts + company_material + topic_specs + interleaved[len(groups):]
     unique = {}
     for spec in ordered:
         unique.setdefault(spec["url"], spec)
