@@ -246,7 +246,9 @@ def test_compact_table_separates_raw_candidates_gates_and_source_dates():
                                              지표마지막봉="2026-10-28", 수급자료기준="거래량 원자료",
                                              자료주의="", 계산시각="2026-10-29 10:00")]), {"action": "신규매수 중단"})
     primary, detail, counts = dashboard_tables(frame, "전체")
-    assert counts["원시 후보 신호"] == 1 and counts["실행가능"] == 0
+    assert counts["원시 후보 신호"] == 1 and counts["정밀확인 후보"] == 0
+    assert "현재실행안내" in primary.columns
+    assert primary.columns[:4].tolist() == ["종목명", "티커", "게이트상태", "현재실행안내"]
     assert primary.iloc[0]["가격자료기준일"] == "2026-10-28"
     assert primary.iloc[0]["가격반영"] == "일봉 종가"
     assert "후보품질" not in primary and "후보품질" in detail

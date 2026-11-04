@@ -292,11 +292,14 @@ def test_render_union_is_one_batch_with_identical_snapshots_and_warm_cache(offli
     assert kr._KR_CLUSTER_RUN.get() is None
 
 
-def test_investment_and_precision_functions_are_unchanged():
-    names = {"_compute_summary_item", "calc_scores_and_decision", "build_precision_execution_workflow",
+def test_investment_functions_are_unchanged():
+    # Freeze after the approved recovery display fix. Precision context was
+    # extracted and has three-view frozen-input coverage in test_execution_context.
+    baseline = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=ROOT, encoding="utf-8-sig")
+    names = {"_compute_summary_item", "calc_scores_and_decision",
              "load_display_live_price", "build_holdings_table"}
     trees = [{node.name: ast.dump(node, include_attributes=False)
-              for node in ast.parse(source("app.py", before)).body
-              if isinstance(node, ast.FunctionDef) and node.name in names} for before in (True, False)]
+              for node in ast.parse(code).body
+              if isinstance(node, ast.FunctionDef) and node.name in names} for code in (baseline, source("app.py"))]
     assert trees[0].keys() == names
     assert trees[0] == trees[1]

@@ -12,6 +12,7 @@ import pandas as pd
 
 from stock_lab_core.decision_engine import classify_decision_signal
 from stock_lab_core.decision_workflow import attach_market_execution_context
+from stock_lab_core.execution_context import prepare_execution_context
 from stock_lab_core.execution_gate import (
     GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE, apply_execution_gate_columns,
 )
@@ -26,7 +27,7 @@ _HOLDING_INPUTS = (
     "티커", "자산명", "보유량", "매입가", "목표비중",
     "bucket", "asset_class", "is_etf",
 )
-_PRIMARY_COLUMNS = ("종목명", "티커", "기업품질", "🔥기술적 타점", "게이트상태", "게이트근거", "데이터상태", "가격자료기준일", "가격반영")
+_PRIMARY_COLUMNS = ("종목명", "티커", "게이트상태", "현재실행안내", "가격자료기준일", "가격반영", "게이트근거", "데이터상태", "기업품질", "🔥기술적 타점")
 _DETAIL_COLUMNS = (
     "시장", "유형", "종목명", "티커", "현재가", "현재비중", "목표비중", "MDD",
     "기업품질", "후보품질", "후보점수", "후보검토사항", "횡보품질", "📌후보등급", "재무점수",
@@ -114,16 +115,14 @@ def cached_dashboard_analyst_loader(frames, *, now):
 def prepare_dashboard_display(raw, *, snapshot, flow_shortlist, market_guard,
                               attach_flow_context, get_analyst_snapshot, load_latest_price):
     """Use the existing precision/Today context pipeline without caching its output."""
-    out = raw.copy(deep=True)
-    out.attrs = deepcopy(raw.attrs)
-    if out.empty:
-        return out
-    out = attach_flow_context(out, flow_shortlist, snapshot=snapshot)
-    out = attach_market_execution_context(out, market_guard)
-    out = attach_today_analyst_context(
-        out, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price,
+    return prepare_execution_context(
+        raw, snapshot=snapshot, flow_shortlist=flow_shortlist, market_guard=market_guard,
+        attach_flow=attach_flow_context, attach_market=attach_market_execution_context,
+        enrich_analyst=lambda frame: attach_today_analyst_context(
+            frame, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price,
+        ),
+        build_upside_map=build_today_analyst_upside_map, apply_gate=apply_execution_gate_columns,
     )
-    return apply_execution_gate_columns(out, upside_value_map=build_today_analyst_upside_map(out))
 
 
 def _column(frame, name):
@@ -141,7 +140,7 @@ def dashboard_tables(frame, group_label):
     counts = {
         "표시 종목": len(view),
         "원시 후보 신호": int(signals.eq("buyish").sum()),
-        "실행가능": int(gates.eq(GATE_EXECUTABLE).sum()),
+        "정밀확인 후보": int(gates.eq(GATE_EXECUTABLE).sum()),
         "방어·데이터확인": int(gates.isin([GATE_DEFENSE, GATE_DATA_CHECK]).sum()),
     }
     primary = view.reindex(columns=_PRIMARY_COLUMNS).copy()
@@ -166,6 +165,8 @@ def render_dashboard_group_summary(st, frame, group_label):
         return
     for column, (label, value) in zip(st.columns(len(counts)), counts.items()):
         column.metric(label, f"{value}개")
-    st.dataframe(primary, width="stretch", hide_index=True, height=min(520, 40 + 35 * len(primary)))
+    st.dataframe(primary, width="stretch", hide_index=True, height=min(520, 40 + 35 * len(primary)),
+                 column_config={"종목명": {"width": "medium"}, "티커": {"width": "small"},
+                                "게이트상태": {"width": "small"}, "현재실행안내": {"width": "medium"}})
     with st.expander("후보품질·기술 신호 상세", expanded=False):
         st.dataframe(detail.rename(columns={"후보품질": "기존 종합후보"}), width="stretch", hide_index=True, height=min(640, 40 + 35 * len(detail)))

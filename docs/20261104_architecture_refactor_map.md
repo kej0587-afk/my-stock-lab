@@ -92,3 +92,48 @@ price-cache durations. Verify which caches each caption refers to before changin
 Each pass needs a fixed-input before/after comparison, relevant missing-data and
 session-boundary cases, and a live smoke check. Broader financial policy changes
 remain a separate reviewed decision, not part of this refactor.
+
+## Held-Position Cross-View Pass
+
+- `execution_context.prepare_execution_context` now owns the common flow,
+  market, optional analyst and final-gate sequence. Today keeps its existing
+  analyst-before-flow order; precision/board keep analyst-after-market order.
+  Provider TTLs, raw decisions, scoring thresholds and gate priorities are unchanged.
+- Precision previously caught a TypeError/ValueError from the flow implementation
+  as though it were a signature-inspection failure, and retried without the frozen
+  snapshot. Only inspection failures now select the legacy two-argument adapter;
+  an implementation error propagates once. Keyword adapters retain the snapshot.
+- `precision_plan_rows` extracts the exit rows from the large entry-plan renderer.
+  Prices, allocation amounts and share calculations remain in the original path.
+  A frozen copy of the former block tests exact row output for held/unheld,
+  KR/US and projected/structural targets.
+- The board puts execution gate and current execution guidance before raw
+  technical signals. Its executable count is labelled as precision-review
+  candidates, not completed final-check approval. No gate value changes.
+- Live leveraged-ETF inspection exposed a presentation ambiguity: the final-check label
+  said conditional DCA waiting while overweight defense already blocked entry.
+  `precision_final_check_view` now shows the same execution restriction first
+  and labels the retained raw result as the individual check. The calculation,
+  raw final-check export, block counts and permission boolean stay unchanged.
+- A core ETF's installment reference row was missing the conditional-entry prefix
+  already applied to its three tranches. The same display qualifier now covers
+  that row under a restricted gate, without changing any price, amount or shares.
+- Synthetic frozen-input tests cover eleven representative tickers across normal, defensive,
+  missing-market and below-current analyst-target scenarios. Compare dates,
+  decision codes, grades, scores and gate reasons across all three context paths;
+  verify source inputs are unchanged and no extra price fetch occurs.
+- Live pre-deployment inspection: Today completed a full calculation in 93.5s.
+  Samples used US 11/03 and KR 11/04 inputs. Precision headers, plans and final
+  checks preserved the execution restrictions. Weekly/monthly bucket end labels were explicitly separated from
+  source dates. This is a live smoke check, not a simultaneous frozen-price replay
+  or a new speed benchmark. Investment thresholds were not retuned.
+
+Validation: full-suite execution passed 6,460 tests before stopping at one
+outdated AST-location assertion. Earlier extraction-location assertions and the
+pre-existing pre-recovery-display baseline were updated without relaxing their
+unchanged-policy checks. The final 423-test run covered all remaining test files,
+the corrected assertions, cross-view contracts, plan/final-check presentation,
+exports and decision goldens; all passed. The score function, final-check
+calculation and MTF decision guard have identical ASTs to `31513a51`.
+Compilation, diff whitespace checks and a real Streamlit AppTest of the new board
+columns/metrics passed. Live values were not used as investment backtest results.

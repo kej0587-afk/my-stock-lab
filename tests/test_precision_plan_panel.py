@@ -105,6 +105,23 @@ def test_held_nasdaq_overweight_keeps_final_check_and_zero_amounts(display_app):
     assert next(row for row in rows if row["점검항목"] == "재무/상품")["상태"] == "통과"
 
 
+@pytest.mark.parametrize("ticker", ["379810.KS", "379800.KS", "418660.KS", "CIBR", "SOXL",
+                                  "0167A0.KS", "BITX", "0025N0.KS", "MAGS", "RAM", "GOOGL"])
+def test_held_final_check_and_plan_keep_defensive_gate(display_app, ticker):
+    app, ui = display_app
+    decision = held_decision()
+    before = deepcopy(decision)
+    _, final = app.build_pre_buy_final_checks(ticker, ticker, ticker != "GOOGL", decision, 4, True, 95)
+    assert final["execution_allowed"] is False
+    decision["chart_final_check"] = final
+    plan = app.render_entry_execution_plan(ticker, ticker, decision, has_pos=True)
+    assert plan["display_status"] == "실행 보류"
+    assert plan["execution_gate"] != GATE_EXECUTABLE
+    assert (plan["current_price"], plan["target"], plan["stop"]) == (100, 120, 90)
+    assert plan["rows"] == ui.frames[-1].to_dict("records")
+    assert {k: v for k, v in decision.items() if k != "chart_final_check"} == before
+
+
 @pytest.mark.parametrize("cash,expected", [(0, "-"), (100_000, "100,000원 / 1000.00주")])
 def test_core_plan_keeps_cash_capped_amount_instead_of_target_gap(display_app, cash, expected):
     app, _ = display_app
@@ -120,6 +137,7 @@ def test_core_plan_keeps_cash_capped_amount_instead_of_target_gap(display_app, c
     plan = app.render_entry_execution_plan("나스닥", "379810.KS", decision, has_pos=True)
     installment = next(row for row in plan["rows"] if row["단계"] == "이번 회차 적립 기준")
     assert installment["금액/수량"] == expected
+    assert installment["조건"].startswith("실행 보류 · 목표비중/비중초과 우선")
     if cash == 0:
         assert all(row["금액/수량"] == "-" for row in plan["rows"][1:5])
     assert plan["rows"][0]["금액/수량"].startswith("1,000,000원")

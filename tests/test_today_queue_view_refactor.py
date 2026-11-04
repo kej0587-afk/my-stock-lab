@@ -205,8 +205,29 @@ def test_post_calculation_gates_and_timing_boundary_are_syntax_unchanged(sources
         return next(i for i, n in enumerate(fn.body) if isinstance(n, ast.Assign)
                     and any(isinstance(t, ast.Name) and t.id == name for t in n.targets))
     def retained_policy(fn):
-        return (fn.body[assignment(fn, "portfolio_signal_attrs"):assignment(fn, "market_guard") + 1]
-                + fn.body[assignment(fn, "risk_df"):detail_start(fn)])
+        nodes = (fn.body[assignment(fn, "portfolio_signal_attrs"):assignment(fn, "market_guard") + 1]
+                 + fn.body[assignment(fn, "risk_df"):detail_start(fn)])
+        expanded = []
+        for node in nodes:
+            if isinstance(node, ast.ImportFrom) and node.module == "stock_lab_core.execution_context":
+                continue
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                    and ast.unparse(node.value.func) == "prepare_execution_context"):
+                expected = ast.parse('''summary_df = prepare_execution_context(
+                    summary_df, snapshot=flow_snapshot_for_context, flow_shortlist=flow_shortlist_df,
+                    market_guard=market_guard, attach_flow=attach_today_flow_context,
+                    attach_market=attach_market_execution_context, apply_gate=apply_execution_gate_columns,
+                    upside_map=_upside_value_map)''').body[0]
+                assert ast.dump(node) == ast.dump(expected)
+                # Expand only the verified wiring; frozen-input tests check helper behavior.
+                expanded.extend(ast.parse('''
+summary_df = attach_today_flow_context(summary_df, flow_shortlist_df, snapshot=flow_snapshot_for_context)
+summary_df = attach_market_execution_context(summary_df, market_guard)
+summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_value_map)
+''').body)
+            else:
+                expanded.append(node)
+        return expanded
     assert ast.dump(ast.Module(body=retained_policy(old), type_ignores=[])) == ast.dump(
         ast.Module(body=retained_policy(new), type_ignores=[]))
     assert ast.dump(ast.Module(body=old.decorator_list, type_ignores=[])) == ast.dump(

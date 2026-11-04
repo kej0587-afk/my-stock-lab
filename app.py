@@ -17962,61 +17962,12 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
             "조건": entry3_cond,
         },
     ]
-    if target_is_projection:
-        rows += [
-            {
-                "단계": "1차 익절(+1ATR)",
-                "가격": format_currency(tp1, ticker),
-                "금액/수량": "보유분 20~30%",
-                "예상 R/R": "-",
-                "조건": "신고가 가격발견 구간의 첫 변동성 목표. 체결 후 잔여 손절을 본전~MA5 근처로 상향",
-            },
-            {
-                "단계": "2차 익절(+2ATR)",
-                "가격": format_currency(tp2, ticker),
-                "금액/수량": "보유분 30~40%",
-                "예상 R/R": "-",
-                "조건": "기본 변동성 목표. RSI/MFI/%B 과열이 동반되면 추가 회수",
-            },
-            {
-                "단계": "강세 상단(+4ATR)",
-                "가격": format_currency(tp3, ticker),
-                "금액/수량": "잔여 일부만",
-                "예상 R/R": "-",
-                "조건": "확정 목표가가 아니라 공격 시나리오 상단. 전량 지정가보다 일부만 열어두기",
-            },
-            {
-                "단계": "잔여 추적손절",
-                "가격": "MA5/전일저가/1ATR 이탈",
-                "금액/수량": "잔여분",
-                "예상 R/R": "-",
-                "조건": "상단 목표를 맞히기보다 추세가 꺾일 때 정리. 종가 기준 이탈 우선",
-            },
-        ]
-    else:
-        rows += [
-            {
-                "단계": "1차 익절",
-                "가격": format_currency(tp1, ticker),
-                "금액/수량": "보유분 30~50%",
-                "예상 R/R": "-",
-                "조건": format_precision_take_profit_condition(cur, stop, target),
-            },
-            {
-                "단계": "최종 익절",
-                "가격": format_currency(tp2, ticker),
-                "금액/수량": "잔여분",
-                "예상 R/R": "-",
-                "조건": "구조 목표가 도달 또는 MFI/%B 과열 동반 시",
-            },
-        ]
-    rows.append({
-        "단계": "손절",
-        "가격": format_currency(stop, ticker),
-        "금액/수량": "전량 또는 계획분",
-        "예상 R/R": "-",
-        "조건": "종가 기준 이탈 시 추가매수 시나리오 무효" if has_pos else "종가 기준 이탈 시 신규진입 시나리오 무효",
-    })
+    from stock_lab_core.precision_plan_rows import build_precision_exit_rows
+    rows += build_precision_exit_rows(
+        ticker=ticker, has_pos=has_pos, cur=cur, stop=stop, target=target,
+        tp1=tp1, tp2=tp2, tp3=tp3, target_is_projection=target_is_projection,
+        format_currency=format_currency, take_profit_condition=format_precision_take_profit_condition,
+    )
     plan_workflow = c.get("execution_workflow") or build_decision_workflow(name, ticker, c, has_pos=has_pos)
     from stock_lab_core.execution_readiness import build_execution_readiness
     plan_workflow = build_execution_readiness(plan_workflow, c.get("chart_final_check"))["display_workflow"]
@@ -20457,22 +20408,8 @@ def render_pre_buy_final_check_panel(name, ticker, is_etf, c, fin_score, has_pos
     st.markdown("### ✅ 매수 전 최종 체크")
     rows, summary = prepared_checks if prepared_checks is not None else build_pre_buy_final_checks(name, ticker, is_etf, c, fin_score, has_pos, my_price, fin_meta=fin_meta)
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("최종 판정", summary["final_label"])
-    k2.metric("통과", f"{summary['pass_count']}개")
-    k3.metric("주의", f"{summary['caution_count']}개")
-    k4.metric("차단", f"{summary['block_count']}개")
-    st.caption(f"독립 근거 기준 · 중복 제외 {summary.get('duplicate_count', 0)}건 · 미확인 {summary.get('unknown_count', 0)}건 · 핵심자료 미확인 {len(summary.get('core_missing_ids', []))}종류")
-
-    st.markdown(
-        f"<div class='info-panel' style='border-left: 5px solid {summary['final_color']};'>"
-        f"<b>{escape_html_value(name)} 최종 액션</b><br>"
-        f"<span class='highlight' style='font-size:1.08em;'>{summary['final_label']}</span><br>"
-        f"{escape_html_value(summary['action'])}<br>"
-        f"<span style='color:#cbd5e1;'>투자 권유가 아니라, 현재 앱 지표를 한 번에 묶은 의사결정 보조 체크입니다.</span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    from stock_lab_core.precision_final_check_view import render_final_check_heading
+    render_final_check_heading(st, name, summary, c.get("execution_workflow"))
 
     show_df = pd.DataFrame(rows)
     show_df = show_df.drop(columns=["근거ID"], errors="ignore")
@@ -20919,17 +20856,16 @@ def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_cla
     })
     snapshot = get_cached_today_market_flow_snapshot()
     flow_shortlist = build_today_flow_shortlist_df(snapshot)
-    try:
-        import inspect
-        if "snapshot" in inspect.signature(attach_today_flow_context).parameters:
-            context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist, snapshot=snapshot)
-        else:
-            context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist)
-    except (TypeError, ValueError):
-        context = attach_today_flow_context(pd.DataFrame([workflow]), flow_shortlist)
-    context = attach_market_execution_context(context, build_today_market_guard(snapshot, None))
-    context = attach_today_analyst_context(context, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
-    context = apply_execution_gate_columns(context, upside_value_map=build_today_analyst_upside_map(context))
+    from stock_lab_core.execution_context import prepare_execution_context
+    context = prepare_execution_context(
+        pd.DataFrame([workflow]), snapshot=snapshot, flow_shortlist=flow_shortlist,
+        market_guard=lambda: build_today_market_guard(snapshot, None),
+        attach_flow=attach_today_flow_context, attach_market=attach_market_execution_context,
+        enrich_analyst=lambda frame: attach_today_analyst_context(
+            frame, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price,
+        ),
+        build_upside_map=build_today_analyst_upside_map, apply_gate=apply_execution_gate_columns,
+    )
     return context.iloc[0].to_dict()
 
 
@@ -33113,9 +33049,13 @@ def _render_today_queue_tab(mode):
 
     flow_snapshot_for_context = get_cached_today_market_flow_snapshot()
     flow_shortlist_df = build_today_flow_shortlist_df(flow_snapshot_for_context)
-    summary_df = attach_today_flow_context(summary_df, flow_shortlist_df, snapshot=flow_snapshot_for_context)
-    summary_df = attach_market_execution_context(summary_df, market_guard)
-    summary_df = apply_execution_gate_columns(summary_df, upside_value_map=_upside_value_map)
+    from stock_lab_core.execution_context import prepare_execution_context
+    summary_df = prepare_execution_context(
+        summary_df, snapshot=flow_snapshot_for_context, flow_shortlist=flow_shortlist_df,
+        market_guard=market_guard, attach_flow=attach_today_flow_context,
+        attach_market=attach_market_execution_context, apply_gate=apply_execution_gate_columns,
+        upside_map=_upside_value_map,
+    )
     summary_df["목표가요약"] = summary_df.apply(build_today_analyst_target_summary, axis=1)
     if portfolio_signal_attrs.get("portfolio_signal_context") == portfolio_signal_input_context():
         portfolio_signals = summary_df.copy()

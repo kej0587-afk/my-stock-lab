@@ -128,7 +128,7 @@ def align_precision_entry_plan_rows(rows, workflow):
     reason = (workflow or {}).get("게이트근거") or "실행 게이트 재확인 필요"
     prefix = f"실행 보류 · {reason} · 조건 해소 후 재확인: "
     for row in out:
-        if str(row.get("단계", "")).startswith(("1차 진입", "추가 1차", "2차 추가", "3차 예비")):
+        if str(row.get("단계", "")).startswith(("1차 진입", "추가 1차", "2차 추가", "3차 예비", "이번 회차 적립 기준")):
             detail = str(row.get("조건", ""))
             if not detail.startswith(prefix):
                 row["조건"] = prefix + detail

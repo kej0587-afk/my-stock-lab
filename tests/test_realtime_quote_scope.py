@@ -223,7 +223,9 @@ def test_failed_chain_and_regular_fallback_do_not_block_fresh_display(first_over
 
 def test_holdings_manual_override_and_display_logic_are_unchanged():
     root = Path(__file__).resolve().parents[1]
-    before = subprocess.check_output(["git", "show", "7e67afba:app.py"], cwd=root).decode("utf-8-sig")
+    # The approved recovery-percentage display fix postdates the transport refactor.
+    # test_holdings_display_consistency covers that fix; freeze its approved version.
+    before = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=root).decode("utf-8-sig")
     after = (root / "app.py").read_text(encoding="utf-8-sig")
     functions = [next(n for n in ast.parse(s).body if isinstance(n, ast.FunctionDef) and n.name == "build_holdings_table") for s in (before, after)]
     assert ast.dump(functions[0], include_attributes=False) == ast.dump(functions[1], include_attributes=False)
