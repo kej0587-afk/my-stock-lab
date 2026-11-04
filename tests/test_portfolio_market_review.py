@@ -12,7 +12,7 @@ def context():
     return {"quote_checked_at": NOW, "sessions": {"US": "2026-11-03", "KR": "2026-11-03"},
             "prices": {"RAM": {"date": "2026-11-03", "return": -.07, "source": "test"},
                        "DRAM": {"date": "2026-11-03", "return": -.035, "source": "test"}},
-            "closed_flow_rows": [{"Ticker": "DRAM", "기준일": "2026-11-03", "5일수익률": -8, "3개월수익률": 20}],
+            "closed_flow_rows": [{"Ticker": "DRAM", "기준일": "2026-11-03", "5일수익률": -.08, "3개월수익률": .20}],
             "earnings": [], "news": []}
 
 
@@ -67,6 +67,21 @@ def test_mismatched_close_and_old_live_quotes_are_not_used():
     view = mod.holding_market_review("RAM", data, {}, now=NOW)
     assert "미정합" in view["facts"][0]["관측"]
     assert "7.13" not in str(view) and "중기 상승" not in view["reading"]
+
+
+def test_real_money_flow_return_units_match_report_display():
+    import numpy as np
+    from stock_lab_core.money_flow import _compute_ticker_metrics
+    close = np.linspace(80, 120, 150)
+    frame = pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1,
+                          "Close": close, "Volume": np.full(150, 1000)},
+                         index=pd.bdate_range(end="2026-11-03", periods=150))
+    metrics = _compute_ticker_metrics(frame)
+    data = context()
+    data["closed_flow_rows"] = [dict(metrics, Ticker="DRAM", 기준일="2026-11-03")]
+    view = mod.holding_market_review("RAM", data, {}, now=NOW)
+    expected = f"5D {metrics['5일수익률'] * 100:+.2f}% / 3M {metrics['3개월수익률'] * 100:+.2f}%"
+    assert view["facts"][2]["관측"] == expected
 
 
 def test_live_negative_sign_is_kept_separate_from_close():

@@ -116,7 +116,7 @@ def holding_market_review(ticker, data, state, *, now=None):
             continue
         five, medium = number(row.get("5일수익률")), number(row.get("3개월수익률"))
         facts.append({"근거": "가격 기반 흐름 · 실제 순매수 아님", "대상": symbol, "기준": date,
-                      "관측": f"5D {_percent(five)} / 3M {_percent(medium)}", "출처": "시황과 동일한 종가 이력"})
+                      "관측": f"5D {_percent(five, 100)} / 3M {_percent(medium, 100)}", "출처": "시황과 동일한 종가 이력"})
         if five is not None and medium is not None:
             if five < 0 < medium:
                 readings.append(f"{symbol}은 중기 상승과 최근 5일 약세가 겹칩니다. 중기 성장 가설만으로 단기 손실 위험을 상쇄했다고 보기는 어렵습니다.")
