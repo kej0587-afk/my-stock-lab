@@ -102,14 +102,19 @@ def holding_choice_rows(detail, management=None):
     ])
 
 
-def render_portfolio_holding_review(st, holdings, *, context, management=None):
+def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None):
     signals = select_portfolio_signals(st.session_state, context, detailed=True)
     overview, details = build_holding_review(holdings, signals, st.session_state.get(PRECISION_KEY), context)
     if overview.empty:
         return
-    st.markdown("#### 보유 선택지 · 연결 근거")
+    from stock_lab_core.portfolio_commentary import portfolio_commentary, render_holding_commentary
+    st.markdown("#### 내 포트폴리오 · 대응 해설")
+    if metrics is not None:
+        for paragraph in portfolio_commentary(metrics, details, management):
+            st.markdown(paragraph)
     st.caption("저장된 점검의 비교입니다. 신규매수 제한은 보유 매도 명령이 아니며, 성장 전망만으로 레버리지 보유를 승인하지 않습니다.")
-    st.dataframe(overview, hide_index=True, width="stretch")
+    with st.expander("보유 종목 판정·기준일 비교", expanded=False):
+        st.dataframe(overview, hide_index=True, width="stretch")
     options = overview["티커"].tolist()
     names = dict(zip(options, overview["종목"]))
     ticker = st.selectbox("보유 종목 근거", options, format_func=lambda value: f"{names[value]} ({value})", key="portfolio_holding_review_ticker")
@@ -122,7 +127,7 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None):
         matched = management[management["티커"].map(portfolio_flow_ticker_key).eq(portfolio_flow_ticker_key(ticker))]
         if not matched.empty:
             action = matched.iloc[0].to_dict()
-    st.dataframe(holding_choice_rows(detail, action), hide_index=True, width="stretch")
+    render_holding_commentary(st, detail, action, holding_choice_rows(detail, action))
     if precision:
         st.caption(f"정밀 가격 입력: {text((precision.get('basis') or {}).get('가격반영'))}")
         st.caption(f"정밀 실행 제한: {detail['ready']['reason']} · 차트 계산선은 개인적으로 정한 손절가격과 다를 수 있습니다.")
@@ -130,11 +135,13 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None):
         if valuation.get("status") == "ETF 별도판단":
             st.caption("ETF 밸류로 구성 기업의 저평가를 확인한 것은 아닙니다. 삼성전자·SK하이닉스 등 기업별 실적·전망·가격매력 점검이 별도로 필요합니다.")
     if portfolio_flow_ticker_key(ticker) == "RAM":
-        st.markdown("RAM은 DRAM의 **일간 2배** 목표 상품입니다. 장기 수익률 2배를 보장하지 않으며, 기초자산이 상승해도 보유 경로에 따라 손실이 날 수 있습니다. [운용사 상품·위험 설명](https://www.roundhillinvestments.com/etf/ram/)")
+        st.markdown("[RAM 운용사: 일간 배수·복리·상품 위험](https://www.roundhillinvestments.com/etf/ram/)")
     elif portfolio_flow_ticker_key(ticker) == "0167A0":
-        st.markdown("SOL AI반도체TOP2플러스는 삼성전자·SK하이닉스·SK스퀘어 중심의 국내 반도체 10종목 상품입니다. 두 기업 전망과 ETF 전체 집중위험을 구분해야 합니다. [운용사 구성종목](https://www.soletf.com/ko/fund/etf/211106?tabIndex=3)")
-    from stock_lab_core.memory_thesis import render_memory_thesis
-    render_memory_thesis(st, portfolio_flow_ticker_key(ticker))
+        st.markdown("[SOL 운용사: 상품·구성종목](https://www.soletf.com/ko/fund/etf/211106?tabIndex=3)")
+    if portfolio_flow_ticker_key(ticker) in {"RAM", "0167A0", "005930", "000660"}:
+        if st.checkbox("기업별 실적·밸류 보조자료", key="portfolio_company_evidence_visible"):
+            from stock_lab_core.memory_thesis import render_memory_thesis
+            render_memory_thesis(st, portfolio_flow_ticker_key(ticker))
 
 
 from stock_lab_core.report_build import register_loaded_source

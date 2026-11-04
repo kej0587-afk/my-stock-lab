@@ -97,6 +97,10 @@ class FakeUI:
     def dataframe(self, value, **kwargs): self.tables.append(value)
     def selectbox(self, label, options, **kwargs): return options[0]
     def button(self, *args, **kwargs): return False
+    def checkbox(self, *args, **kwargs): return False
+    def expander(self, *args, **kwargs):
+        from contextlib import nullcontext
+        return nullcontext()
 
 
 def test_renderer_does_not_fetch_or_mutate_account_and_discloses_daily_leverage():

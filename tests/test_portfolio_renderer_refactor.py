@@ -50,6 +50,15 @@ def approved_audit_changes(source):
         '        st.warning("개인 원장 저장 모듈 교체 대기 · 현재는 파일 보관만 가능합니다. 앱 재시작 후 저장 연결을 다시 확인해 주세요.")\n'
         '    render_account_performance(st, **performance_options)\n'
         '    period = st.selectbox(', 1)
+    # Intentional presentation change: commentary first, unchanged legacy panels folded.
+    old_panels = ('    render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)\n'
+                  '    render_portfolio_action_decision_panel(metrics, asset_df)')
+    assert old_panels in tail
+    tail = tail.replace(old_panels,
+        '    holding_management = build_portfolio_action_decision_df(metrics, asset_df)\n'
+        '    with st.expander("기존 위험·보유관리 상세", expanded=False):\n'
+        '        render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)\n'
+        '        render_portfolio_action_decision_panel(metrics, asset_df, prepared_decisions=holding_management)', 1)
     return head + "def render_portfolio_analysis_tab(" + tail
 
 
@@ -162,7 +171,7 @@ def run(source, app, payload, *, detail, ready, monthly):
             return {}
         namespace[name] = record
     nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
-             and node.name in (MAIN, *HELPERS)]
+             and node.name in (MAIN, *HELPERS, "render_portfolio_review_summary")]
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "<portfolio-renderer>", "exec"), namespace)
     with patch("stock_lab_core.account_performance_view.render_account_performance",
                side_effect=lambda *a, **kw: ui.record("render_account_performance", **kw)):

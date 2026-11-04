@@ -22915,8 +22915,8 @@ def build_portfolio_action_decision_df(metrics, asset_df=None):
     return build_portfolio_action_decision_df_from_inputs(metrics, asset_df)
 
 
-def render_portfolio_action_decision_panel(metrics, asset_df=None):
-    decision_df = build_portfolio_action_decision_df(metrics, asset_df)
+def render_portfolio_action_decision_panel(metrics, asset_df=None, *, prepared_decisions=None):
+    decision_df = prepared_decisions if isinstance(prepared_decisions, pd.DataFrame) else build_portfolio_action_decision_df(metrics, asset_df)
     if decision_df.empty:
         return
 
@@ -24853,6 +24853,19 @@ IR(정보비율)은 초과수익의 일관성입니다. 1 이상이면 우수, �
 
 
 
+def render_portfolio_review_summary(metrics, asset_df, holdings_table, monthly_logs_df=None):
+    from stock_lab_core.portfolio_holding_review import render_portfolio_holding_review
+
+    holding_management = build_portfolio_action_decision_df(metrics, asset_df)
+    render_portfolio_holding_review(
+        st, holdings_table, context=portfolio_signal_input_context(),
+        management=holding_management, metrics=metrics,
+    )
+    with st.expander("기존 위험·보유관리 상세", expanded=False):
+        render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
+        render_portfolio_action_decision_panel(metrics, asset_df, prepared_decisions=holding_management)
+
+
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
     st.subheader("포트폴리오 분석")
     st.caption("보유자산 분석은 읽기 전용입니다. 계좌 성과 원장은 별도 저장 버튼으로만 반영합니다. 가격 기반 변동성, MDD, 집중도, 상관관계, 대기자금 비중을 함께 봅니다.")
@@ -24913,13 +24926,7 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
     m5.metric("대기자금", f"{reserve_summary.get('waiting_pct', 0.0):.1f}%")
 
     st.markdown("### 핵심 요약")
-    render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
-    holding_management = render_portfolio_action_decision_panel(metrics, asset_df)
-    from stock_lab_core.portfolio_holding_review import render_portfolio_holding_review
-    render_portfolio_holding_review(
-        st, holdings_table, context=portfolio_signal_input_context(),
-        management=holding_management,
-    )
+    render_portfolio_review_summary(metrics, asset_df, holdings_table, monthly_logs_df)
     render_portfolio_market_alignment_panel(metrics, asset_df)
 
     ten_year_report = None
