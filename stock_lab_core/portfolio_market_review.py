@@ -148,6 +148,8 @@ def holding_market_review(ticker, data, state, *, now=None):
                              "근거": text(metric.get("text")) if confirmed else "미연결/재확인 필요",
                              "구분": "확인 보류" if not confirmed else "회사 전망 · 실제치 아님" if key == "guidance" else "관측 주가 · 인과 아님" if key == "price_reaction" else "공식 발표",
                              "출처": safe_link(metric.get("source_url")) if confirmed else "",
+                             "자료 범위": text(metric.get("scope_note") or metric.get("period_scope")) if confirmed else "",
+                             "출처 페이지": text(metric.get("source_page")) if confirmed else "",
                              "구성 출처": holdings_url})
         readings.append(f"{packet.get('name') or issuer} 실적은 매출·이익과 CAPEX·FCF·전망을 분리해 봅니다. "
                         "확인되지 않은 항목은 저평가나 회복의 근거로 채우지 않으며, 구성기업 자료는 ETF 전체 실적이나 하락 원인을 뜻하지 않습니다.")

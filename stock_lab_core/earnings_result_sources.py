@@ -49,6 +49,8 @@ _PROFILES = {
 _PROFILES["GOOGL"]["source_url"] = "https://www.sec.gov/Archives/edgar/data/1652044/000165204426000080/googexhibit991q32026.htm"
 _PROFILES["MSFT"]["source_url"] = "https://news.microsoft.com/source/2026/10/28/microsoft-announces-first-quarter-results-2/"
 _PROFILES["005930.KS"]["source_url"] = "https://news.samsung.com/global/samsung-electronics-announces-third-quarter-2026-results"
+# Fiscal quarter end and currency verified in the official release table.
+_PROFILES["SNDK"].update(period_end_label="October 2, 2026", reporting_currency="USD")
 # Linked from the issuers' IR earnings lists, not guessed quarterly URLs.
 _ALTERNATE_PDFS = {
     "GOOGL": "https://s206.q4cdn.com/479360582/files/doc_financials/2026/q3/2026q3-alphabet-earnings-release.pdf",
@@ -300,6 +302,11 @@ def _prose_metrics(blocks, spec):
         metrics["guidance"] = _metric(guidance, "reported", spec, period_scope="management_outlook", extraction="source_sentence")
     elif deferred:
         metrics["guidance"] = _metric(deferred, "deferred", spec, reason="guidance_deferred_to_call", period_scope="management_outlook")
+    else:
+        from stock_lab_core.earnings_cash_outlook import qualitative_outlook
+        outlook = qualitative_outlook(blocks, spec)
+        if outlook:
+            metrics["guidance"] = outlook
     return metrics
 
 
@@ -378,6 +385,11 @@ def parse_earnings_result(data, ticker, now):
     release_at, modified_at, time_status = _release_timing(root, spec, now)
     content, title, blocks = _body(root, spec)
     metrics = _prose_metrics(blocks, spec)
+    if metrics["free_cash_flow"]["status"] == "missing":
+        from stock_lab_core.earnings_cash_outlook import explicit_quarter_fcf
+        cash = explicit_quarter_fcf(content, spec, _table_grid)
+        if cash:
+            metrics["free_cash_flow"] = cash
     if ticker == "GOOGL":
         # Do not fall back to another comparative table or a generic FCF definition.
         for key in ("capex", "free_cash_flow"):

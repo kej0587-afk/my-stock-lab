@@ -15,7 +15,7 @@ MAX_PAGES = 24
 _NUMBER = r"\(?-?\d[\d,]*(?:\.\d+)?\)?"
 _COVERAGE = {
     "GOOGL": ("2026Q3", "2026-10-28", (0, 7)),
-    "005930.KS": ("2026Q3", "2026-10-29", (0, 4, 14)),
+    "005930.KS": ("2026Q3", "2026-10-29", (0, 4, 6, 14)),
 }
 
 
@@ -37,9 +37,11 @@ def _read_pdf(data, indices, now, zone):
             checked = max(version.replace(tzinfo=zone, fold=fold).astimezone(timezone.utc) for fold in (0, 1)) if version and version.tzinfo is None else version
             if checked and checked > now:
                 raise ValueError("page_version_after_cutoff")
-        pages = {i + 1: "\n".join(" ".join(line.split()) for line in
-                                 reader.pages[i].extract_text(extraction_mode="layout").splitlines())
-                 for i in indices}
+        pages = {}
+        for i in indices:
+            layout = reader.pages[i].extract_text(extraction_mode="layout")
+            # Page 7 keeps columns so historical results cannot leak into outlook.
+            pages[i + 1] = layout if i == 6 else "\n".join(" ".join(line.split()) for line in layout.splitlines())
         modified = next((v.isoformat() for v in reversed(versions) if v and v.tzinfo), None)
         return pages, modified
     except ValueError as exc:
@@ -117,6 +119,10 @@ def _samsung(pages, spec, metrics):
     if not summary.startswith("3Q 2026 Results Based on consolidated financial statements"):
         raise ValueError("result_identity_or_period_mismatch")
     metrics["free_cash_flow"]["reason"] = "not_reported_in_supported_pdf"
+    from stock_lab_core.earnings_cash_outlook import pdf_outlook_column
+    outlook = pdf_outlook_column(pages.get(7, ""), spec, heading="Memory", horizon="4Q 2026", next_horizon="2027", page=7)
+    if outlook:
+        metrics["guidance"] = outlook
     values = re.findall(r"Revenue Operating Profit R&D Investment KRW (\d+(?:\.\d+)?)T KRW (\d+(?:\.\d+)?)T KRW (\d+(?:\.\d+)?)T\b", summary)
     if len(values) == 1:
         for key, label, value in zip(("revenue", "profit"), ("연결 매출", "연결 영업이익"), values[0][:2]):

@@ -58,7 +58,8 @@ def _earnings_reading(rows):
             if key in confirmed:
                 row = confirmed[key]
                 excerpts.append({"기업": name, "발표/기간": period, "항목": key,
-                                 "확인 근거 · 원문": row["근거"], "구분": row["구분"], "출처": row["출처"]})
+                                 "확인 근거 · 원문": row["근거"], "구분": row["구분"],
+                                 "자료 범위": row.get("자료 범위", ""), "출처 페이지": row.get("출처 페이지", ""), "출처": row["출처"]})
     return summaries, excerpts
 
 

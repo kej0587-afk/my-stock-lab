@@ -107,7 +107,19 @@ def test_samsung_ppe_not_total_capex_and_no_computed_fcf(reader):
     assert metrics["free_cash_flow"]["reason"] == "not_reported_in_supported_pdf"
     assert metrics["guidance"]["status"] == "missing"
     assert result["provenance"]["release_date_basis"] == "verified_issuer_calendar"
-    assert result["release_at"] is None and reader["calls"] == [1, 5, 15]
+    assert result["release_at"] is None and reader["calls"] == [1, 5, 7, 15]
+
+
+def test_samsung_fallback_pdf_supplies_segment_outlook_but_not_inferred_fcf(reader):
+    reader["texts"] = {1: "SAMSUNG ELECTRONICS\n3Q 2026 Earnings Call", 5: SAMSUNG, 15: SAMSUNG_CASH,
+        7: "Memory\n" + "Results".ljust(80) + "Outlook\n" + "3Q 2026 Results".ljust(80) + "4Q 2026\n"
+        + "Historical revenue 999".ljust(80) + "Demand is expected to grow.\n" + "".ljust(80) + "2027"}
+    metrics = parse("005930.KS")["metrics"]
+    assert metrics["guidance"]["status"] == "reported"
+    assert metrics["guidance"]["source_page"] == 7
+    assert metrics["guidance"]["period_scope"] == "management_outlook"
+    assert "999" not in metrics["guidance"]["text"]
+    assert metrics["free_cash_flow"]["status"] == "missing"
 
 
 @pytest.mark.parametrize("bad", ["Alphabet Announces Second Quarter 2026 Results", "Other Announces Third Quarter 2026 Results"])
