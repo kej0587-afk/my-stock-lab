@@ -558,6 +558,7 @@ from stock_lab_core.research_links import (
     build_research_home_link_groups,
     build_research_links_for_ticker,
 )
+from stock_lab_core.holdings_display import breakeven_recovery_pct
 from stock_lab_core.portfolio import (
     PORTFOLIO_ADD_ACTIONS,
     PORTFOLIO_CAUTION_ACTIONS,
@@ -5866,7 +5867,7 @@ def build_holdings_table(holdings_df, krw_cash, usd_cash, usdkrw):
         # ── 손익분기점: 매입가 × (1 + 수수료율) ─────────────────────────────
         _fee_rate = 0.0015 if is_kr else 0.001   # KRX 0.15%, 해외 0.1%
         breakeven = round(avg_price * (1 + _fee_rate), 4) if avg_price > 0 else 0.0
-        to_breakeven_pct = round((cur_price / breakeven - 1) * 100, 2) if cur_price > 0 and breakeven > 0 else np.nan
+        to_breakeven_pct = breakeven_recovery_pct(cur_price, breakeven)
 
         rows.append({
             "자산명": name, "티커": ticker, "보유량": qty, "매입가": avg_price,

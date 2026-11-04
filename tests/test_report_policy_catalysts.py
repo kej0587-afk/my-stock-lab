@@ -80,7 +80,9 @@ def test_future_body_not_reused_and_result_claim_is_not_certification():
 def test_renderer_wired_without_gate_changes():
     from pathlib import Path
     source = (Path(__file__).parents[1] / "stock_lab_core/report_evidence.py").read_text(encoding="utf-8")
-    assert "policy_calendar_lines(context, news, now)" in source
+    calendar = (Path(__file__).parents[1] / "stock_lab_core/report_calendar_section.py").read_text(encoding="utf-8")
+    assert "upcoming_calendar_lines(context, news, event_rows, now, earnings_pipeline)" in source
+    assert "policy_calendar_lines(context, news, now)" in calendar
     assert "election_context_lines(context, news, summary_rows, now)" in source
 
 

@@ -25,6 +25,7 @@ _RENDER_MODULES = (
     "official_outlook", "outlook_sources", "report_outlook", "report_dashboard", "news_priority", "market_guard_explanation",
     "central_bank_results", "market_safeguards", "report_policy_panel", "report_eventstudy",
     "report_policy_catalysts", "report_energy_basis", "article_events", "public_market_flow_history",
+    "report_account_section", "report_calendar_section",
 )
 
 
