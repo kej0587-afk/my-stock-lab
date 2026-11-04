@@ -22951,6 +22951,7 @@ def render_portfolio_action_decision_panel(metrics, asset_df=None):
 
     show_cols = ["자산", "티커", "구분", "손익", "평가손익", "판정", "실행", "근거", "재개/해제 조건"]
     st.dataframe(decision_df[show_cols], width='stretch', hide_index=True)
+    return decision_df
 
 
 def render_portfolio_data_coverage_notice(metrics):
@@ -24180,43 +24181,8 @@ def stamp_portfolio_signal_context(frame):
 
 def get_cached_portfolio_signal_details():
     """Use verified current-account signals, newest row first across sources."""
-    candidate_keys = [
-        "_ticker_signal_detail_df",
-        "portfolio_today_signal_df",
-    ]
-    rename_map = {
-        "🔥기술적 타점": "기술적타점",
-        "📌후보등급": "후보등급",
-        "RR값": "R/R",
-    }
-    wanted_cols = [
-        "티커", "기술적타점", "ADJ점수", "후보등급", "추세", "RS", "RSI", "MFI",
-        "MACD", "SQZ", "판정코드", "실행메모", "핵심근거",
-    ]
-    context = portfolio_signal_input_context()
-    candidates = []
-    for key in candidate_keys:
-        df = st.session_state.get(key)
-        if not isinstance(df, pd.DataFrame) or df.empty or "티커" not in df.columns:
-            continue
-        if df.attrs.get("portfolio_signal_context") != context:
-            continue
-        work = df.copy()
-        for src, dst in rename_map.items():
-            if src in work.columns and dst not in work.columns:
-                work[dst] = work[src]
-        cols = [col for col in wanted_cols if col in work.columns]
-        if "티커" in cols and len(cols) > 1:
-            work = work[cols].copy()
-            work["_signal_at"] = pd.to_datetime(df.attrs.get("portfolio_signal_at"), utc=True, errors="coerce")
-            work["_signal_key"] = work["티커"].map(_portfolio_flow_ticker_key)
-            work.attrs = {}
-            candidates.append(work)
-    if not candidates:
-        return pd.DataFrame()
-    merged = pd.concat(candidates, ignore_index=True).sort_values("_signal_at", na_position="first", kind="stable")
-    merged = merged[merged["_signal_key"].ne("")].drop_duplicates("_signal_key", keep="last")
-    return merged.drop(columns=["_signal_at", "_signal_key"]).reset_index(drop=True)
+    from stock_lab_core.portfolio_signal_cache import select_portfolio_signals
+    return select_portfolio_signals(st.session_state, portfolio_signal_input_context())
 
 
 def _render_portfolio_risk_charts(metrics, asset_df, corr_df, portfolio_curve, risk_contrib_df, monthly_logs_df):
@@ -24948,7 +24914,12 @@ def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, re
 
     st.markdown("### 핵심 요약")
     render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
-    render_portfolio_action_decision_panel(metrics, asset_df)
+    holding_management = render_portfolio_action_decision_panel(metrics, asset_df)
+    from stock_lab_core.portfolio_holding_review import render_portfolio_holding_review
+    render_portfolio_holding_review(
+        st, holdings_table, context=portfolio_signal_input_context(),
+        management=holding_management,
+    )
     render_portfolio_market_alignment_panel(metrics, asset_df)
 
     ten_year_report = None
@@ -34847,6 +34818,11 @@ if main_page == "precision":
         precision_final_check = render_pre_buy_final_check_panel(name, tkr, is_etf, c, fin_score, has_p, my_p, fin_meta=fin_meta,
                                                                prepared_checks=precision_pre_buy_checks)
         precision_hold_or_cut = render_hold_or_cut_panel(name, tkr, is_etf, fin_score, fin_meta, c, my_p, has_p)
+        from stock_lab_core.portfolio_holding_review import capture_precision_review
+        capture_precision_review(
+            st.session_state, portfolio_signal_input_context(), tkr, c, precision_final_check,
+            valuation=precision_valuation,
+        )
         precision_review_download.update(
             selected_ticker=tkr, result_ticker=tkr, decision=c, completion="complete", stage="panels",
             workflow_display=precision_workflow_display, final_check=precision_final_check,
