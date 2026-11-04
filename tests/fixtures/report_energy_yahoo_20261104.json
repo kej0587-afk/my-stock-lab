@@ -1,0 +1,52 @@
+{
+  "purpose": "Observed public Yahoo responses; offline diagnostic fixture, never report reference overrides",
+  "request_policy": "One GET per symbol, connect/read timeout 5/12 seconds, no redirects, no credentials",
+  "period1": 1793595600,
+  "period2": 1793768400,
+  "CL=F": {
+    "retrieved_at": "2026-11-04T10:39:51.414407+09:00",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/CL%3DF?period1=1793595600&period2=1793768400&interval=5m",
+    "http_status": 200,
+    "interval": "5m",
+    "shortName": "Crude Oil Dec 26",
+    "contract_month_label": "2026-12 (current shortName only; historical bar contract mapping unavailable)",
+    "contract_roll_fields": {},
+    "rollover_history": null,
+    "official_settlement": null,
+    "bars": [
+      {"bar_start_ny": "2026-11-02T14:25:00-05:00", "close": 96.55999755859375},
+      {"bar_start_ny": "2026-11-02T15:55:00-05:00", "close": 95.87000274658203},
+      {"bar_start_ny": "2026-11-03T14:25:00-05:00", "close": 96.16000366210938},
+      {"bar_start_ny": "2026-11-03T15:55:00-05:00", "close": 96.54000091552734}
+    ]
+  },
+  "BZ=F": {
+    "retrieved_at": "2026-11-04T10:39:51.959486+09:00",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/BZ%3DF?period1=1793595600&period2=1793768400&interval=1d",
+    "http_status": 200,
+    "interval": "1d",
+    "shortName": "Brent Crude Oil Last Day Financ",
+    "contract_month_label": null,
+    "contract_roll_fields": {},
+    "rollover_history": null,
+    "official_settlement": null,
+    "bars": [
+      {"bar_start_ny": "2026-11-02T00:00:00-05:00", "close": 104.7699966430664},
+      {"bar_start_ny": "2026-11-03T00:00:00-05:00", "close": null},
+      {"bar_start_ny": "2026-11-03T20:29:50-05:00", "close": 103.75}
+    ],
+    "note": "Nov 3 daily date row has null close; separate timestamped latest row is not promoted to verified daily close or settlement"
+  },
+  "^TYX": {
+    "retrieved_at": "2026-11-04T10:39:52.467462+09:00",
+    "url": "https://query1.finance.yahoo.com/v8/finance/chart/%5ETYX?period1=1793595600&period2=1793768400&interval=1d",
+    "http_status": 200,
+    "interval": "1d",
+    "shortName": "Treasury Yield 30 Years",
+    "bars": [
+      {"bar_start_ny": "2026-11-02T08:20:00-05:00", "close": 5.269000053405762},
+      {"bar_start_ny": "2026-11-03T08:20:00-05:00", "close": 5.324000358581543}
+    ]
+  },
+  "conclusion_limit": "14:30 completion is a 14:25-14:30 5m close, not CME 14:28-14:30 VWAP. No rollover cause established. User report 96.55/+0.71% is not forced to match this provider response."
+}

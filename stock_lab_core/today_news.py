@@ -756,7 +756,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
         event_day = now.astimezone(ZoneInfo("America/New_York")).date()
         for category, terms in (
             ("주요 실적", '(earnings OR "quarterly results") (guidance OR shares OR "after hours")'),
-            ("정책·기업 촉매", '("midterm election" OR "election results" OR IPO OR "AI funding") (stocks OR market OR shares)'),
+            ("정책·기업 촉매", '("US midterm election" OR "U.S. midterm election" OR "midterm election results" OR ((IPO OR "AI funding") (stocks OR market OR shares)))'),
         ):
             query = terms + f" after:{(event_day - timedelta(days=3)).isoformat()} before:{(event_day + timedelta(days=1)).isoformat()}"
             market_events.append(dict(market="US", category=category, query_kind="market_event",

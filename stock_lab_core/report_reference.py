@@ -252,7 +252,7 @@ def macro_reference(frame, symbol, reference_date, now, *, previous_date="", bas
     if not current:
         return {}
     result = dict(current, chg=None, base_date="", base_as_of_at="", day_ret=None,
-                  previous_date="", previous_as_of_at="", day_change_bp=None,
+                  previous_date="", previous_as_of_at="", previous_val=None, day_change_bp=None,
                   chg_source="", day_ret_source="", comparison_missing={})
     for day, value_key, date_key, time_key, scale in (
         (previous_date, "day_ret", "previous_date", "previous_as_of_at", 1),
@@ -270,6 +270,8 @@ def macro_reference(frame, symbol, reference_date, now, *, previous_date="", bas
         )
         base = snapshots.get(day)
         if base:
+            if value_key == "day_ret":
+                result["previous_val"] = base["val"]
             result.update({value_key: (current["val"] / base["val"] - 1) * scale,
                            date_key: day, time_key: base["as_of_at"],
                            value_key + "_source": (

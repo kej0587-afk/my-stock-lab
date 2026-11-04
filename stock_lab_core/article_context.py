@@ -17,6 +17,8 @@ import requests
 
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.article_events import (body_scenarios, body_sentences, enhance_facts,
+                                           headline_events, is_strategy_article)
 
 register_loaded_source(__name__, __file__)
 
@@ -46,7 +48,7 @@ _NEGATED_CONTEXT = re.compile(
 
 def _context_match(paragraphs, topic, pattern):
     for paragraph in paragraphs:
-        for sentence in re.split(r"[;!?\n]|\.\s+", paragraph):
+        for sentence in body_sentences([paragraph]):
             for match in re.finditer(pattern, sentence, re.I):
                 if topic in {"earnings", "ai_investment", "ai_credit", "foreign_buying", "institution_buying"}:
                     tail = re.split(r",|지만|으나|반면|면서|\bbut\b|\bwhile\b", sentence[match.end():], maxsplit=1, flags=re.I)[0][:32]
@@ -223,7 +225,7 @@ def _body_facts(paragraphs):
         facts.insert(0, oil)
     # Consumers show only the first two facts; retain supported adverse context.
     facts.sort(key=lambda fact: 0 if fact.get("polarity") == "negative" else 1 if fact["topic"] == "ai_credit" else 2)
-    return facts[:4]
+    return enhance_facts(facts, paragraphs)
 
 
 def _sector_body_facts(paragraphs, title):
@@ -249,7 +251,7 @@ def _sector_body_facts(paragraphs, title):
         if category not in topics:
             continue
         for paragraph in paragraphs:
-            for sentence in re.split(r"[;!?\n]|\.\s+", paragraph):
+            for sentence in body_sentences([paragraph]):
                 match = re.search(pattern, sentence, re.I)
                 if not match or _PAST_CONTEXT.search(sentence) or _NEGATED_CONTEXT.search(sentence):
                     continue
@@ -324,10 +326,13 @@ def parse_article(data, url, expected_title):
         return {"body_status": "article_body_unavailable"}
     from stock_lab_core.catalyst_news import catalyst_body_facts, catalyst_entities
     issuer_context = bool(catalyst_entities(expected_title))
-    issuer_facts = catalyst_body_facts(paragraphs, expected_title) if issuer_context else []
+    issuer_facts = catalyst_body_facts(list(body_sentences(paragraphs)), expected_title) if issuer_context else []
     # An issuer's capex/FCF discussion is not evidence that AI lifted the index.
     facts = issuer_facts if issuer_context else (_sector_body_facts(paragraphs, expected_title) + _body_facts(paragraphs))[:4]
-    return dict(body_status="verified" if facts else "no_supported_context", body_facts=facts,
+    facts = enhance_facts(facts, paragraphs)
+    scenarios = body_scenarios(paragraphs)
+    return dict(body_status="verified" if facts or scenarios else "no_supported_context", body_facts=facts,
+                body_scenarios=scenarios, headline_events=headline_events(expected_title),
                 body_published_at=published.isoformat(), body_modified_at=modified.isoformat(), body_source_url=url,
                 body_sha256=hashlib.sha256("\n".join(paragraphs).encode()).hexdigest(),
                 body_checked_at=datetime.now(timezone.utc).isoformat())
@@ -335,7 +340,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
 def _article(url, title):
-    # v9: honor declared UTF-8 consistently across local/Cloud parser versions.
+    # v10: event/scenario evidence schema; invalidate the source-keyed v9 cache.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -357,6 +362,8 @@ def enrich_article_context(result, now):
     """Read at most four direct public URLs after session/source curation."""
     buckets = ("current_session_news", "session_news", "next_session_news", "other_market_news")
     rows = [row for bucket in buckets for row in result.get(bucket, []) if _safe_url(row.get("link", ""))]
+    for row in rows:
+        row["headline_events"] = headline_events(row.get("title", ""))
     from stock_lab_core.catalyst_news import catalyst_entities, catalyst_topics
     from stock_lab_core.news_priority import market_news_priority
     from stock_lab_core.report_news_selection import matching_categories
@@ -365,6 +372,7 @@ def enrich_article_context(result, now):
     def market_wrap(row):
         title = row.get("title", "")
         return (bool(re.search(r"코스피|코스닥|뉴욕증시|나스닥|Wall Street", title, re.I))
+                and not is_strategy_article(title)
                 and not is_preopen_outlook(row)
                 and not re.search(r"특징주|상장|장초반|전망|출발|개장|주간|마켓뷰|[?？]", title))
     def selected_material(row):
@@ -372,18 +380,23 @@ def enrich_article_context(result, now):
         topics = matching_categories(title, requested)
         return bool(("금융·은행" in topics and re.search(r"연임|지분.{0,12}매각|주주환원|충당금|이자마진", title))
                     or ("조선" in topics and re.search(r"수주|건조\s*계약", title)))
-    rows.sort(key=lambda row: (not (row.get("news_bucket") == "next_session_news"
+    rows.sort(key=lambda row: (not is_strategy_article(row.get("title", "")),
+                               not (row.get("news_bucket") == "next_session_news"
                                    and catalyst_entities(row.get("title")) and catalyst_topics(row.get("title"))),
                                not market_wrap(row), not selected_material(row), -market_news_priority(row),
                                -(_date(row.get("published_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp()))
     selected, market_counts, seen, wrap_markets = [], {}, set(), set()
+    strategy_selected = False
     for row in rows:
         market, link = row.get("market"), row.get("link")
+        strategy = is_strategy_article(row.get("title", ""))
         # GLOBAL is a provenance bucket, not a single market: keep topic variety.
         group = (market, row.get("category", "시장") if market == "GLOBAL" else "")
-        if link in seen or market_counts.get(group, 0) >= 2 or (market_wrap(row) and market in wrap_markets):
+        if (link in seen or (strategy and strategy_selected) or market_counts.get(group, 0) >= 2
+                or (market_wrap(row) and market in wrap_markets)):
             continue
         selected.append(row)
+        strategy_selected |= strategy
         seen.add(link)
         market_counts[group] = market_counts.get(group, 0) + 1
         if market_wrap(row):
@@ -402,6 +415,9 @@ def enrich_article_context(result, now):
             if (evidence.get("body_status") in {"verified", "no_supported_context"} and source_date
                     and min(abs((source_date - published).total_seconds()), abs((source_date - modified).total_seconds())) > 3600):
                 evidence = {"body_status": "article_timestamp_mismatch"}
+            if evidence.get("body_status") not in {"verified", "no_supported_context"}:
+                row.pop("body_facts", None)
+                row.pop("body_scenarios", None)
             row.update(evidence)
     statuses = {}
     for row in selected:
@@ -442,7 +458,23 @@ def body_unavailable_reason(row):
 
 
 def verified_body_facts(row):
-    return row.get("body_facts", []) if row.get("body_status") == "verified" else []
+    if row.get("body_status") != "verified":
+        return []
+    facts = []
+    for original in row.get("body_facts", []):
+        fact = dict(original)
+        concrete = fact.get("concrete_summary")
+        if (fact.get("evidence_basis") == "body" and isinstance(concrete, str)
+                and concrete == fact.get("evidence") and len(concrete) <= 140):
+            label = "본문 보도: "
+            if (fact.get("topic") == "earnings" and fact.get("polarity") == "negative"
+                    and "earnings_shock" in fact.get("event_tags", [])):
+                label = "실적·전망 부진 보도: "
+            elif fact.get("topic") == "ai_credit" and re.search(r"\bAI\b|인공지능", concrete, re.I):
+                label = "AI 투자 관련 보도: "
+            fact["summary"] = label + concrete
+        facts.append(fact)
+    return facts
 
 
 def body_context_sentence(row):

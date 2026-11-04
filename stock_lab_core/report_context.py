@@ -42,6 +42,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
 
     now = kst_now(now or datetime.now(KST))
     from stock_lab_core.report_dashboard import INDEX_BOARD, COMMODITY_BOARD
+    from stock_lab_core.report_energy_basis import REPORT_ONLY_DAILY, energy_daily_observations
     tickers = {*INDEX_BOARD, *COMMODITY_BOARD, "QQQ", "XLF", "XLI", "XLP", "XLV", "IWM", "SMH", *MACRO_SYMBOLS.values(), *SECTORS}
     for key in ("us_top5", "kr_top5", "global_top", "theme_top5"):
         for row in records((flow_snapshot or {}).get(key))[:5]:
@@ -57,6 +58,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     # Rotation expands daily histories, not the set of live quote requests.
     quote_universe = set(tickers)
     tickers.update(ROTATION_UNIVERSE)
+    tickers.update(REPORT_ONLY_DAILY)
     frames = price_frames
     if frames is None:
         # Reuse the app's cached one-year histories, not one info request per asset.
@@ -90,7 +92,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                          for ticker, frame in frames.items() if frame is not None and frame.attrs.get("report_close_basis_note")]
     frames = repair_held_us_closes(frames, us_quotes, quote_now)
     frames, price_alignment = align_us_report_frames(
-        frames, tickers, now, reload_batch=load_price_frames_batch if price_frames is None else None)
+        frames, tickers - set(REPORT_ONLY_DAILY), now, reload_batch=load_price_frames_batch if price_frames is None else None)
     observations = {ticker: price_observation(frames.get(ticker), ticker, now) for ticker in tickers}
     for ticker in price_alignment["unaligned"]:
         # A missing preceding session makes a multi-day change, not a daily one.
@@ -110,7 +112,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     current_news_sessions = {}
     if states["KR"]["phase"] == "intraday" and sessions.get("KR"):
         current_news_sessions["KR"] = {"date": states["KR"]["active_date"], "previous_date": sessions["KR"], "is_active": True}
-    intraday = {ticker: intraday_observation(frames.get(ticker), ticker, now) for ticker in tickers}
+    intraday = {ticker: intraday_observation(frames.get(ticker), ticker, now)
+                for ticker in tickers - set(REPORT_ONLY_DAILY)}
     if states["KR"]["phase"] == "intraday":
         # An untimed daily bar must not overrule a timestamped current index quote.
         kr_live = kr_index_observations(quote_data.get("KR", {}), quote_now, tickers=kr_quote_tickers)
@@ -128,7 +131,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     if states["US"]["phase"] == "intraday":
         from stock_lab_core.report_live import load_us_live_frames, us_live_observation
         us_tickers = tuple(sorted(t for t in tickers if not t.endswith((".KS", ".KQ", "=X", "=F"))
-                                  and t not in {"^KS11", "^KQ11", "^TNX", "^MOVE", "^VIX"}))
+                                  and t not in {"^KS11", "^KQ11", "^TNX", "^MOVE", "^VIX", *REPORT_ONLY_DAILY}))
         if live_frames is None:
             live_frames = load_us_live_frames(us_tickers) if price_frames is None else {}
         for ticker in us_tickers:
@@ -186,7 +189,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             symbol = text(first(item, "Ticker", "티커", "ticker"))
             if symbol:
                 metadata[symbol] = dict(metadata.get(symbol, {}), **item)
-    for ticker in sorted(tickers - set(MACRO_SYMBOLS.values())):
+    for ticker in sorted(tickers - set(MACRO_SYMBOLS.values()) - set(REPORT_ONLY_DAILY)):
         if ticker in price_alignment["unaligned"]:
             continue
         frame = closed_daily_frame(frames.get(ticker), ticker, now)
@@ -207,6 +210,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     from stock_lab_core.portfolio import infer_scenario_shock_multiplier
     rotation_rows = [row for row in closed_rows if abs(infer_scenario_shock_multiplier({"티커": row["Ticker"]})) <= 1 and row["Ticker"] != "SMH"]
     result = {"prices": observations, "price_frames": frames, "sessions": sessions, "news_sessions": news_sessions, "current_news_sessions": current_news_sessions,
+              "energy_daily": energy_daily_observations(frames, now),
               "price_alignment": price_alignment,
               "quote_checked_at": quote_now.isoformat(), "extended_quote_status": quote_status,
               "market_states": states, "intraday_prices": intraday, "extended_prices": extended,

@@ -67,6 +67,7 @@ def market_board_lines(context, states, now):
     from stock_lab_core.report_intraday import _latest_observation
     from stock_lab_core.report_presentation import kst_time
     from stock_lab_core.report_prices import MACRO_SYMBOLS
+    from stock_lab_core.report_energy_basis import REPORT_ONLY_DAILY
     lines = ["", "## 지수·매크로 한눈에", "대상 | 수준 | 등락·비교 기준 | 기준일·시각 | 출처", "--- | --- | --- | --- | ---"]
     checked = max(now, stamp(context.get("quote_checked_at")) or now)
     for ticker, label in INDEX_BOARD.items():
@@ -91,5 +92,17 @@ def market_board_lines(context, states, now):
         value = number(obs.get("price"))
         lines.append(" | ".join(_cell(x) for x in (f"{name}({ticker})", f"{value:,.2f} {unit}" if value is not None else "미연결",
                      _pct(obs.get("return")) + " · 전 거래일 대비", obs.get("date") or "미연결", obs.get("source", "미연결"))))
-    lines += ["", "지수 종가·장중과 매크로 1개월 변화는 비교 구간이 다릅니다. 금·은·구리는 연속 선물 일봉이며 현물·실시간 가격이나 공식 정산가가 아닙니다."]
+    for ticker, (name, unit) in REPORT_ONLY_DAILY.items():
+        obs = context.get("energy_daily", {}).get(ticker) or context.get("prices", {}).get(ticker, {})
+        value, previous = number(obs.get("price")), number(obs.get("previous_price"))
+        if ticker == "^TYX":
+            change = f"{(value - previous) * 100:+.2f}bp" if value is not None and previous is not None else "변화 미연결"
+            basis = "일봉 수익률 수준(%) · 이전 관측 대비"
+        else:
+            change, basis = _pct(obs.get("return")), "공급처 연속 선물 일봉 · 이전 관측 대비 · 공식 정산가 아님"
+        dates = f"{obs.get('previous_date') or '미연결'} → {obs.get('date') or '미연결'}"
+        lines.append(" | ".join(_cell(x) for x in (f"{name}({ticker})", f"{value:,.2f} {unit}" if value is not None else "미연결",
+                     change + " · " + basis, dates, obs.get("source") or "미연결")))
+    lines += ["", "지수 종가·장중과 매크로 1개월 변화는 비교 구간이 다릅니다. 금·은·구리·Brent는 연속 선물 일봉이며 현물·실시간 가격이나 공식 정산가가 아닙니다.",
+              "WTI 매크로는 NY 16:00 완료 5분봉 기준값이며 CME 14:28~14:30 ET VWAP 공식 정산가가 아닙니다. Brent·30년물은 보고서 전용이며 회전·매매 대상에 추가되지 않습니다."]
     return lines

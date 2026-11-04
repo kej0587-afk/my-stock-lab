@@ -24,6 +24,7 @@ _RENDER_MODULES = (
     "earnings_collection", "earnings_discovery", "earnings_pipeline", "report_earnings", "report_market_connections",
     "official_outlook", "outlook_sources", "report_outlook", "report_dashboard", "news_priority", "market_guard_explanation",
     "central_bank_results", "market_safeguards", "report_policy_panel", "report_eventstudy",
+    "report_policy_catalysts", "report_energy_basis", "article_events", "public_market_flow_history",
 )
 
 
@@ -59,6 +60,10 @@ def get_report_build_info(entrypoint=None):
         module = importlib.import_module(name)
         loaded = _LOADED.get(name, {"path": module.__file__, "sha256": "unrecorded"})
         sources[name] = dict(loaded, disk_sha256=_file_hash(loaded["path"]))
+    # This calendar is read afresh by the renderer, unlike imported Python code.
+    calendar = Path(__file__).with_name("data") / "verified_policy_calendar_20261104.json"
+    digest = _file_hash(calendar)
+    sources["data.policy_calendar"] = {"path": str(calendar), "sha256": digest, "disk_sha256": digest}
     if "stock_lab.app_entry" in _LOADED:
         loaded = _LOADED["stock_lab.app_entry"]
         sources["stock_lab.app_entry"] = dict(loaded, disk_sha256=_file_hash(loaded["path"]))

@@ -75,6 +75,7 @@ def test_short_live_frames_backfill_only_missing_21_session_anchors(monkeypatch)
         pd.testing.assert_frame_equal(live[symbol], original[symbol])
     assert macro[NAMES["CL=F"]]["chg"] == pytest.approx(20)
     assert macro[NAMES["CL=F"]]["day_ret"] == pytest.approx(72 / 70 - 1)
+    assert macro[NAMES["CL=F"]]["previous_val"] == 70
     assert macro[NAMES["USDKRW=X"]]["chg"] == pytest.approx((1440 / 1400 - 1) * 100)
     assert len(list(reference.DEFAULT_CACHE_DIR.glob("*.json"))) == 6
 

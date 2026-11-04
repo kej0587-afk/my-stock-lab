@@ -28786,6 +28786,8 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
     context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store,
                                          source_provenance=context.get("source_provenance"),
+                                         public_market_evidence=context.get("public_market_evidence"),
+                                         market_evidence_checked_at=context.get("market_evidence_checked_at"),
                                          safeguard_news=context.get("session_news", []) + context.get("next_session_news", []),
                                          safeguard_session_days=observed_kr_sessions(context)))
     context["entrypoint"] = __file__

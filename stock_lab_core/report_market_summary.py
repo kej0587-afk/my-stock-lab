@@ -259,6 +259,10 @@ def korean_flow_tables(context, fact):
     if programs:
         lines.append("프로그램은 투자자 신분이 아닌 거래 방식으로, 투자자별 순매수와 합산하거나 기관 매수액으로 해석하지 않습니다. "
                      "프로그램 자체 기준시각이 없어 같은 응답의 투자자 수급 기준일을 함께 표시합니다.")
+    if investors:
+        from stock_lab_core.public_market_flow_history import public_flow_history_lines
+
+        lines.extend(public_flow_history_lines(context, session_date=fact.get("date")))
     return lines
 
 

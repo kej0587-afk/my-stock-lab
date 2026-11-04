@@ -33,6 +33,7 @@ EVENT_CLUSTERS = (
     ("fomc", ("fomc", "fed rate decision", "연준 금리", "기준금리 동결")),
 )
 MARKET_TERMS = re.compile(
+    r"중간선거|미국.{0,10}개표|\bmidterms?\b|\belection results\b|"
     r"주식|증시|코스피|코스닥|나스닥|주가|반도체|금리|연준|물가|수출|환율|국채|인플레|고용|소매판매|실적|은행|원유|유가|달러|엔화|관세|무역|휴전|중동|투자|경제|자산|전력|바이오|메모리|코인|이더리움|비트코인|엔비디아|아마존|마이크론|코어위브|트레이니엄|파이토치|수주|가이던스|조선주|조선업|해운|건설|인프라|유동성|제약|백신|임상|"
     r"금융지주|금융주|보험주|증권주|\b(?:shipbuild\w*|shipping|infrastructure|construction|liquidity|biotech|vaccine|clinical trial|PBOC|refunding)\b|"
     r"\b(stocks?|shares?|equities|market|earnings|fed|fomc|cpi|ppi|jobs|rates?|boj|oil|wti|brent|bitcoin|ethereum|eth|btc|crypto|cxmt|nvidia|semiconductors?|technology|tech|coreweave|neoclouds?|credit|debt|financing|borrowing|inflation|tariff|treasury|ceasefire|amazon|aws|trainium|pytorch|micron|guidance)\b",
@@ -604,6 +605,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     from stock_lab_core.report_dashboard import current_state_lines, market_board_lines
     lines.extend(["", "## 지금 상태 3줄", "\n\n".join(current_state_lines(context, states, now, latest_metrics))])
     lines.extend(market_board_lines(context, states, now))
+    from stock_lab_core.report_energy_basis import energy_basis_lines
+    lines.extend(energy_basis_lines(context, news, now))
     from stock_lab_core.report_brief import build_news_brief
     brief = build_news_brief(context, news, summary_rows, now,
                             exclude_keys=[news_article_key(row) for row in synthesis.get("background_news", [])
@@ -615,6 +618,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     story_start = len(lines) - 2
     from stock_lab_core.report_market_connections import market_connection_lines
     lines.extend(market_connection_lines(context, earnings_pipeline, news, now))
+    from stock_lab_core.report_policy_catalysts import election_context_lines
+    lines.extend(election_context_lines(context, news, summary_rows, now))
     lines.extend(earnings_story_lines(earnings_pipeline))
     # Monetary flows are columns, not two markets' figures in a single long cell.
     flow_tables = korean_flow_tables(context, {"date": states["KR"].get("active_date") if states["KR"]["phase"] == "intraday" else kr})
@@ -1028,6 +1033,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     from stock_lab_core.report_outlook import official_outlook_lines
     lines.extend(official_outlook_lines(context, now))
     lines.extend(["", "## 다가오는 일정"])
+    from stock_lab_core.report_policy_catalysts import policy_calendar_lines
+    lines.extend(policy_calendar_lines(context, news, now))
+    lines.append("")
     lines.append("기업 실적 일정은 연결·확인된 IR 공지만 포함합니다. 전체 보유·관심종목의 일정이 아니므로 목록에 없다고 미발표/일정 없음으로 판단하지 않습니다.")
     scheduled = []
     calendar_rows = records(context.get("calendar_events", event_rows))

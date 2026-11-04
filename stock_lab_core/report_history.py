@@ -148,7 +148,8 @@ def _comparisons(saved, dates, result):
 
 
 def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_data=None, generated_at=None, store=None, source_provenance=None,
-                          safeguard_news=None, safeguard_session_days=None):
+                          safeguard_news=None, safeguard_session_days=None,
+                          public_market_evidence=None, market_evidence_checked_at=None):
     """Update a session pair, optionally using an owner-bound injected store.
 
     Stores implement load_sessions(dates, *, owner_scope) -> dict and
@@ -212,6 +213,20 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
             safeguard_events(safeguard_news, at), previous_events, safeguard_session_days, at,
             retain_without_calendar=True)
         result["safeguard_events"] = deepcopy(current["safeguard_events"])
+    if public_market_evidence is not None or any(session.get("public_market_flows") for session in saved.values()):
+        from stock_lab_core.public_market_flow_history import saved_public_flow_history, validated_flow_snapshot
+
+        checked = market_evidence_checked_at or current["generated_at"]
+        archived = [session.get("public_market_flows") for session in saved.values()
+                    if _run_time(session) <= _run_time(current)]
+        previous = saved_public_flow_history([saved.get(key, {}).get("public_market_flows")], checked_at=checked)
+        snapshot = validated_flow_snapshot(public_market_evidence, checked_at=checked)
+        if snapshot is None and previous:
+            snapshot = previous[0]
+        if snapshot is not None:
+            current["public_market_flows"] = snapshot
+        result["public_market_flow_history"] = saved_public_flow_history(
+            [*archived, snapshot], checked_at=checked)
     if remote_loaded:
         try:
             store.upsert_session(current, owner_scope=owner_scope)
