@@ -21,7 +21,7 @@ _RENDER_MODULES = (
     "report_account", "report_calendar", "report_observation_panel",
     "market_observation", "market_sentiment", "public_market_data", "earnings_sources", "catalyst_news", "report_catalysts",
     "earnings_result_sources", "earnings_result_pdf", "earnings_reconciliation",
-    "earnings_collection", "earnings_discovery", "earnings_pipeline", "report_earnings",
+    "earnings_collection", "earnings_discovery", "earnings_pipeline", "report_earnings", "report_market_connections",
     "official_outlook", "outlook_sources", "report_outlook", "report_dashboard", "news_priority", "market_guard_explanation",
     "central_bank_results", "market_safeguards", "report_policy_panel", "report_eventstudy",
 )

@@ -132,7 +132,9 @@ def selected_category_lines(context, now):
     for category in categories:
         selected, keys = [], set()
         # Stable sort preserves recency within each group and other topic order.
-        candidates = (sorted(rows, key=lambda row: not bool(_FINANCE_MATERIAL.search(str(row.get("title") or ""))))
+        candidates = (sorted(rows, key=lambda row: (
+                          not bool(_FINANCE_MATERIAL.search(str(row.get("title") or ""))),
+                          -(stamp(row.get("published_at") or row.get("published")) or now).timestamp()))
                       if category == "금융·은행" else rows)
         for row in candidates:
             at = stamp(row.get("published_at") or row.get("published"))

@@ -613,6 +613,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                   *post_close["lines"], "", *brief["lines"],
                   *selected_category_lines(context, now), "", "## 오늘의 시장 스토리"])
     story_start = len(lines) - 2
+    from stock_lab_core.report_market_connections import market_connection_lines
+    lines.extend(market_connection_lines(context, earnings_pipeline, news, now))
     lines.extend(earnings_story_lines(earnings_pipeline))
     # Monetary flows are columns, not two markets' figures in a single long cell.
     flow_tables = korean_flow_tables(context, {"date": states["KR"].get("active_date") if states["KR"]["phase"] == "intraday" else kr})
