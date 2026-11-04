@@ -102,7 +102,7 @@ def holding_choice_rows(detail, management=None):
     ])
 
 
-def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None):
+def render_portfolio_holding_review(st, holdings, *, context, management=None, metrics=None, refresh_evidence=None):
     signals = select_portfolio_signals(st.session_state, context, detailed=True)
     overview, details = build_holding_review(holdings, signals, st.session_state.get(PRECISION_KEY), context)
     if overview.empty:
@@ -127,7 +127,11 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None, m
         matched = management[management["티커"].map(portfolio_flow_ticker_key).eq(portfolio_flow_ticker_key(ticker))]
         if not matched.empty:
             action = matched.iloc[0].to_dict()
-    render_holding_commentary(st, detail, action, holding_choice_rows(detail, action))
+    from stock_lab_core.portfolio_market_review import render_market_review
+    choices = holding_choice_rows(detail, action)
+    render_market_review(st, ticker, context, refresh=refresh_evidence, choices=choices)
+    with st.expander("저장 판정 · 기존 관리 조건", expanded=False):
+        render_holding_commentary(st, detail, action, choices)
     if precision:
         st.caption(f"정밀 가격 입력: {text((precision.get('basis') or {}).get('가격반영'))}")
         st.caption(f"정밀 실행 제한: {detail['ready']['reason']} · 차트 계산선은 개인적으로 정한 손절가격과 다를 수 있습니다.")

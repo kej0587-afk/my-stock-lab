@@ -24860,10 +24860,25 @@ def render_portfolio_review_summary(metrics, asset_df, holdings_table, monthly_l
     render_portfolio_holding_review(
         st, holdings_table, context=portfolio_signal_input_context(),
         management=holding_management, metrics=metrics,
+        refresh_evidence=lambda: refresh_portfolio_market_evidence(holdings_table),
     )
     with st.expander("기존 위험·보유관리 상세", expanded=False):
         render_portfolio_decision_summary(metrics, asset_df, monthly_logs_df)
         render_portfolio_action_decision_panel(metrics, asset_df, prepared_decisions=holding_management)
+
+
+def refresh_portfolio_market_evidence(holdings_table):
+    """Explicit, report-source refresh; never recalculate trading decisions."""
+    from stock_lab_core.portfolio_market_review import capture_market_review
+    from stock_lab_core.report_context import collect_report_context
+    if get_report_build_info(__file__)["restart_required"]:
+        raise RuntimeError("report_restart_required")
+    summary = holdings_table.rename(columns={"자산명": "종목명"}).copy(deep=True)
+    scope = portfolio_signal_input_context()
+    context = collect_report_context(summary, [], include_news=True,
+                                     flow_snapshot=get_cached_today_market_flow_snapshot())
+    if not capture_market_review(st.session_state, scope, context, summary):
+        raise ValueError("report_evidence_unavailable")
 
 
 def render_portfolio_analysis_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight, monthly_logs_df=None):
@@ -28713,6 +28728,8 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
     context["queue_input_counts"] = dict(matched_run.get("input_counts") or {})
     if context["queue_measurement"].get("measurement_id"):
         st.session_state["today_market_report_measurement_id"] = context["queue_measurement"]["measurement_id"]
+    from stock_lab_core.portfolio_market_review import capture_market_review
+    capture_market_review(st.session_state, portfolio_signal_input_context(), context, summary_df)
     return context
 
 
