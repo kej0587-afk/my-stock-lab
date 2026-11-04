@@ -133,6 +133,8 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None):
         st.markdown("RAM은 DRAM의 **일간 2배** 목표 상품입니다. 장기 수익률 2배를 보장하지 않으며, 기초자산이 상승해도 보유 경로에 따라 손실이 날 수 있습니다. [운용사 상품·위험 설명](https://www.roundhillinvestments.com/etf/ram/)")
     elif portfolio_flow_ticker_key(ticker) == "0167A0":
         st.markdown("SOL AI반도체TOP2플러스는 삼성전자·SK하이닉스·SK스퀘어 중심의 국내 반도체 10종목 상품입니다. 두 기업 전망과 ETF 전체 집중위험을 구분해야 합니다. [운용사 구성종목](https://www.soletf.com/ko/fund/etf/211106?tabIndex=3)")
+    from stock_lab_core.memory_thesis import render_memory_thesis
+    render_memory_thesis(st, portfolio_flow_ticker_key(ticker))
 
 
 from stock_lab_core.report_build import register_loaded_source
