@@ -30,7 +30,9 @@ def capture_market_review(state, scope, context, summary_rows=()):
     packet = {key: deepcopy(context.get(key)) for key in _FIELDS}
     # IR collection may finish after quote collection; keep both clocks intact.
     packet["captured_at"] = completed.isoformat()
-    packet["earnings"] = build_earnings_pipeline(context, summary_rows, now=completed)["packets"]
+    earnings = build_earnings_pipeline(context, summary_rows, now=completed)
+    packet["earnings"] = earnings["packets"]
+    packet["earnings_missing"] = (earnings.get("coverage") or {}).get("missing", [])
     packet["news"] = curate_news([r for key in ("current_session_news", "session_news")
                                   for r in records(context.get(key))], now=completed, limit=120, session_scoped=True)
     state[EVIDENCE_KEY] = {"scope": deepcopy(scope), "data": packet}
@@ -104,7 +106,8 @@ def holding_market_review(ticker, data, state, *, now=None):
             at = stamp(live.get("as_of"))
             if number(live.get("return")) is not None and at and timedelta(0) <= now - at <= MAX_AGE:
                 facts.append({"근거": relation + " · " + label, "대상": symbol,
-                              "기준": text(live.get("as_of") or live.get("date")) or "시각 미확인",
+                              "기준": at.strftime("%m/%d %H:%M KST") + " / " +
+                                      (text(live.get("previous_date")) or "비교일 미확인") + " 종가 대비",
                               "관측": _percent(live.get("return"), 100),
                               "출처": text(live.get("source")) or "출처 미확인"})
     flow_rows = [r for r in records(data.get("closed_flow_rows")) if r.get("Ticker") in symbols]
@@ -117,6 +120,13 @@ def holding_market_review(ticker, data, state, *, now=None):
         five, medium = number(row.get("5일수익률")), number(row.get("3개월수익률"))
         facts.append({"근거": "가격 기반 흐름 · 실제 순매수 아님", "대상": symbol, "기준": date,
                       "관측": f"5D {_percent(five, 100)} / 3M {_percent(medium, 100)}", "출처": "시황과 동일한 종가 이력"})
+        flow_score = number(row.get("돈흐름점수"))
+        if flow_score is not None:
+            facts.append({"근거": "돈흐름 지표 · 실제 순매수 아님", "대상": symbol, "기준": date,
+                          "관측": f"{flow_score:+.1f}점 / 중기 상태: {text(row.get('상태')) or '미연결'}",
+                          "출처": "시황과 동일한 돈흐름 계산값"})
+            if five is not None and five > 0 and flow_score < 0:
+                readings.append(f"{symbol}은 최근 가격 반등에도 돈흐름 지표가 {flow_score:+.1f}점입니다. 가격 회복과 지표 회복이 엇갈려 반등만으로 비중 확대를 승인하지 않습니다.")
         if five is not None and medium is not None:
             if five < 0 < medium:
                 readings.append(f"{symbol}은 중기 상승과 최근 5일 약세가 겹칩니다. 중기 성장 가설만으로 단기 손실 위험을 상쇄했다고 보기는 어렵습니다.")
@@ -155,6 +165,10 @@ def holding_market_review(ticker, data, state, *, now=None):
                         "확인되지 않은 항목은 저평가나 회복의 근거로 채우지 않으며, 구성기업 자료는 ETF 전체 실적이나 하락 원인을 뜻하지 않습니다.")
     if not earnings:
         readings.append("해당 기업 또는 검증된 ETF 구성기업의 실적 연결이 없습니다. 실적 호조·저평가를 가정해 보유 지속을 정당화하지 않습니다.")
+        reasons = [f"{text(row.get('name')) or row.get('ticker')}: {text(row.get('reason'))}"
+                   for row in records(data.get("earnings_missing")) if canonical_ticker(row.get("ticker")) in linked]
+        if reasons:
+            readings.append("실적 수집 상태: " + " / ".join(reasons))
     from stock_lab_core.report_presentation import sector_related_news
     articles, seen_urls = [], set()
     for symbol in symbols:
@@ -201,7 +215,7 @@ def render_market_review(st, ticker, scope, *, refresh=None, choices=None):
         st.markdown(paragraph)
     if isinstance(choices, pd.DataFrame) and not choices.empty:
         st.markdown("**검토할 방향 · 기존 조건 유지**")
-        st.dataframe(choices, hide_index=True, width="stretch")
+        st.table(choices)
     st.markdown("**연결 근거 · 종가와 장중 구분**")
     st.dataframe(pd.DataFrame(review["facts"]), hide_index=True, width="stretch")
     if review["news"]:

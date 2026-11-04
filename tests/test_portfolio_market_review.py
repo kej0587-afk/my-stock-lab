@@ -82,6 +82,7 @@ def test_real_money_flow_return_units_match_report_display():
     view = mod.holding_market_review("RAM", data, {}, now=NOW)
     expected = f"5D {metrics['5일수익률'] * 100:+.2f}% / 3M {metrics['3개월수익률'] * 100:+.2f}%"
     assert view["facts"][2]["관측"] == expected
+    assert view["facts"][3]["관측"].startswith(f"{metrics['돈흐름점수']:+.1f}점")
 
 
 def test_live_negative_sign_is_kept_separate_from_close():
@@ -124,6 +125,15 @@ def test_stale_official_metrics_do_not_become_fresh_after_collection():
     assert all(r["근거"] == "미연결/재확인 필요" for r in view["earnings"])
 
 
+def test_expired_release_verification_reason_is_not_lost():
+    data = context()
+    data["earnings_missing"] = [{"ticker": "GOOGL", "name": "Alphabet", "reason": "기존 공지 만료·내용 재확인 필요"}]
+    view = mod.holding_market_review("GOOGL", data, {}, now=NOW)
+    assert "기존 공지 만료" in view["reading"]
+    assert not view["earnings"]
+    assert "기존 공지 만료" not in mod.holding_market_review("CIBR", data, {}, now=NOW)["reading"]
+
+
 def test_wrong_market_or_date_news_cannot_explain_proxy_movement():
     data = context()
     news = {"title": "Micron stocks fall on memory demand concerns", "market": "US", "session_date": "2026-11-03",
@@ -138,6 +148,7 @@ def test_streamlit_holding_switch_does_not_fetch_and_refresh_is_explicit():
     from streamlit.testing.v1 import AppTest
     at = AppTest.from_string('''
 import streamlit as st
+import pandas as pd
 from datetime import datetime, timezone
 from stock_lab_core.portfolio_market_review import render_market_review, EVIDENCE_KEY
 def refresh():
@@ -145,11 +156,13 @@ def refresh():
     st.session_state[EVIDENCE_KEY] = {'scope':'A', 'data': {
       'quote_checked_at':datetime.now(timezone.utc).isoformat(), 'sessions':{}, 'prices':{}, 'earnings':[]}}
 ticker = st.selectbox('Holding', ['RAM','MSFT'])
-render_market_review(st, ticker, 'A', refresh=refresh)
+render_market_review(st, ticker, 'A', refresh=refresh,
+                     choices=pd.DataFrame([{'검토 방향':'현금 대기', '확인할 조건':'기존 해제 조건 유지'}]))
 ''').run(timeout=30)
     assert not at.exception
     at.button[0].click().run(timeout=30)
     assert not at.exception and at.session_state['calls'] == 1
+    assert any('검토할 방향' in m.value for m in at.markdown)
     at.selectbox[0].select("MSFT").run(timeout=30)
     assert not at.exception and at.session_state['calls'] == 1
 
