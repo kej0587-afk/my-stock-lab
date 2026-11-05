@@ -94,6 +94,7 @@ def _holding_links(held, title, entities, theme, market, *, constituent_evidence
 def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=()):
     """Balance fresh company catalysts and market stories inside existing inputs."""
     from stock_lab_core.report_session import market_session_states
+    from stock_lab_core.news_priority import editorial_priority, market_news_priority
 
     states = context.get("market_states") or market_session_states(now, context.get("sessions"))
     held = [row for row in records(summary_rows) if is_held(row)]
@@ -115,7 +116,15 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             continue
         from stock_lab_core.article_context import verified_body_facts
         body_facts = verified_body_facts(row)
-        if text(first(row, "link", "url")) in excluded and not body_facts:
+        priority = editorial_priority(row, {
+            "sessions": context.get("sessions", {}),
+            "current_sessions": context.get("current_news_sessions", {}),
+            "sector_rows": [*context.get("sector_rows", ()), *context.get("closed_flow_rows", ())],
+        })
+        # A major session event must remain visible even if its body fetch fails
+        # or its headline was already cited in the opening summary.
+        urgent = priority >= 100 and market_news_priority(row) >= 25
+        if text(first(row, "link", "url")) in excluded and not body_facts and not urgent:
             continue
         entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, title, re.I)]
         theme = brief_theme(row)
@@ -127,7 +136,7 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         topic = news_theme(title)
         key = ((market, target, "market_close") if row.get("is_close_wrap") else
                (market, target, topic, tuple(entities)) if topic else (market, target, row.get("event_key") or title.casefold()))
-        score = (int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
+        score = (priority, int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
         candidates.append((score, published, key, theme, row, link, active))
     selected, seen, counts = [], set(), {}
     for item in sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True):

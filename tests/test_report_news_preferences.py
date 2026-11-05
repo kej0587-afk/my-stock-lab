@@ -106,7 +106,7 @@ def test_rss_and_publisher_feed_overlap_without_duplicate_requests(monkeypatch):
         return []
     monkeypatch.setattr(today_news, "_retrieve_session_rss", rss)
     monkeypatch.setattr(article_context, "publisher_news", publisher)
-    monkeypatch.setattr(article_context, "enrich_article_context", lambda *a: None)
+    monkeypatch.setattr(article_context, "enrich_article_context", lambda *a, **kw: None)
     today_news.fetch_session_market_news(SESSIONS, now=NOW, include_article_bodies=True)
     assert sorted(calls) == ["publisher", "rss"]
 

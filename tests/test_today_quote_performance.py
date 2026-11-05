@@ -298,8 +298,25 @@ def test_investment_functions_are_unchanged():
     baseline = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=ROOT, encoding="utf-8-sig")
     names = {"_compute_summary_item", "calc_scores_and_decision",
              "load_display_live_price", "build_holdings_table"}
-    trees = [{node.name: ast.dump(node, include_attributes=False)
-              for node in ast.parse(code).body
-              if isinstance(node, ast.FunctionDef) and node.name in names} for code in (baseline, source("app.py"))]
+    trees = []
+    expected_metadata = ast.parse(
+        '{"qty": clean_float(item.get("qty"), np.nan), '
+        '"has_pos": clean_float(item.get("qty"), float(has_p)) > 0}', mode="eval").body
+    for index, code in enumerate((baseline, source("app.py"))):
+        functions = {node.name: node for node in ast.parse(code).body
+                     if isinstance(node, ast.FunctionDef) and node.name in names}
+        if index:
+            row = next(node.value for node in functions["_compute_summary_item"].body
+                       if isinstance(node, ast.Assign) and any(
+                           isinstance(target, ast.Name) and target.id == "row" for target in node.targets))
+            metadata = [(key, value) for key, value in zip(row.keys, row.values)
+                        if isinstance(key, ast.Constant) and key.value in {"qty", "has_pos"}]
+            assert ast.dump(ast.Dict(keys=[key for key, _ in metadata],
+                                     values=[value for _, value in metadata])) == ast.dump(expected_metadata)
+            # Exclude only the approved output metadata, never decision expressions.
+            retained = [(key, value) for key, value in zip(row.keys, row.values)
+                        if not (isinstance(key, ast.Constant) and key.value in {"qty", "has_pos"})]
+            row.keys, row.values = [key for key, _ in retained], [value for _, value in retained]
+        trees.append({name: ast.dump(node, include_attributes=False) for name, node in functions.items()})
     assert trees[0].keys() == names
     assert trees[0] == trees[1]

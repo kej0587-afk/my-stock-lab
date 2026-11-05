@@ -358,14 +358,14 @@ def _article(url, title):
         return {"body_status": "fetch_unavailable", "body_failure_reason": reason}
 
 
-def enrich_article_context(result, now):
+def enrich_article_context(result, now, *, priority_context=None):
     """Read at most four direct public URLs after session/source curation."""
     buckets = ("current_session_news", "session_news", "next_session_news", "other_market_news")
     rows = [row for bucket in buckets for row in result.get(bucket, []) if _safe_url(row.get("link", ""))]
     for row in rows:
         row["headline_events"] = headline_events(row.get("title", ""))
     from stock_lab_core.catalyst_news import catalyst_entities, catalyst_topics
-    from stock_lab_core.news_priority import market_news_priority
+    from stock_lab_core.news_priority import editorial_priority
     from stock_lab_core.report_news_selection import matching_categories
     from stock_lab_core.report_presentation import is_preopen_outlook
     requested = result.get("news_retrieval", {}).get("requested_categories", ())
@@ -380,10 +380,12 @@ def enrich_article_context(result, now):
         topics = matching_categories(title, requested)
         return bool(("금융·은행" in topics and re.search(r"연임|지분.{0,12}매각|주주환원|충당금|이자마진", title))
                     or ("조선" in topics and re.search(r"수주|건조\s*계약", title)))
-    rows.sort(key=lambda row: (not is_strategy_article(row.get("title", "")),
+    for row in rows:
+        row["editorial_priority"] = editorial_priority(row, priority_context)
+    rows.sort(key=lambda row: (-row["editorial_priority"], not is_strategy_article(row.get("title", "")),
                                not (row.get("news_bucket") == "next_session_news"
                                    and catalyst_entities(row.get("title")) and catalyst_topics(row.get("title"))),
-                               not market_wrap(row), not selected_material(row), -market_news_priority(row),
+                               not market_wrap(row), not selected_material(row),
                                -(_date(row.get("published_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp()))
     selected, market_counts, seen, wrap_markets = [], {}, set(), set()
     strategy_selected = False
@@ -427,7 +429,7 @@ def enrich_article_context(result, now):
         article_body_attempted=len(selected), article_body_verified=sum(row.get("body_status") == "verified" for row in selected),
         article_body_seconds=round(time.monotonic() - started, 3), article_body_statuses=statuses,
         article_body_results=[{key: row.get(key, "") for key in
-                               ("title", "link", "body_status", "body_failure_reason", "body_observed_headline")} for row in selected])
+                               ("title", "link", "editorial_priority", "body_status", "body_failure_reason", "body_observed_headline")} for row in selected])
     return result
 
 

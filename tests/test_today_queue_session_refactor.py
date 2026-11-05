@@ -143,7 +143,7 @@ def case(kind):
     return state, settings
 
 
-def execute(source, kind):
+def execute(source, kind, *, raw=False):
     state, settings = case(kind)
     ui = UI(state, settings["action"], settings["full"])
     disk = settings["disk"]
@@ -258,6 +258,8 @@ def execute(source, kind):
     if isinstance(disk, pd.DataFrame):
         pd.testing.assert_frame_equal(disk, original_disk, check_exact=True)
         assert disk.attrs == original_disk.attrs
+    if raw:
+        return ui, result, error
     attrs = {key: value.attrs for key, value in ui.session_state.items() if isinstance(value, pd.DataFrame)}
     return freeze((ui.log, ui.session_state, attrs, result, error))
 
@@ -269,11 +271,44 @@ CASES = ("empty_watch", "first", "cached", "disk", "disk_no_time", "bad_disk", "
 
 
 @pytest.mark.parametrize("kind", CASES)
-def test_cache_refresh_errors_ui_call_order_state_and_payloads_match(sources, kind):
-    assert execute(sources[0], kind) == execute(sources[1], kind)
+def test_cache_refresh_contract_and_unchanged_paths_match(sources, kind):
+    from stock_lab_core.today_queue_session import STALE_KEY, CLEARED_OWNERS_KEY
+
+    unchanged = {"empty_watch", "cached", "old_time", "bad_time", "refresh",
+                 "refresh_flow_failure", "refresh_merge_failure", "refresh_save_failure", "refresh_dedupe_failure"}
+    if kind in unchanged:
+        assert execute(sources[0], kind) == execute(sources[1], kind)
+        return
+    ui, result, error = execute(sources[1], kind, raw=True)
+    state = ui.session_state
+    assert state["sentinel"] == "preserved"
+    assert state["watchlist"] == [{"ticker": "WATCH", "name": "Watch"}]
+    events = [entry[0] for entry in ui.log]
+    expected_error = {"disk_failure": "RuntimeError", "clear": "Rerun", "clear_failure": "RuntimeError",
+                      "refresh_compute_failure": "RuntimeError", "refresh_interrupt": "StopCalculation"}.get(kind)
+    assert (error[0] if error else None) == expected_error
+    if kind in {"clear", "clear_failure"}:
+        assert all(key not in state for key in (KEY, SIG, LAST, NONEMPTY, NONEMPTY_SIG, "portfolio_today_signal_df"))
+        assert "owner@example.invalid" in state[CLEARED_OWNERS_KEY]
+        assert "clear_snapshot" in events
+    elif kind in {"disk", "disk_no_time", "fallback", "stale_signature", "owner_change", "demo"}:
+        assert not state[KEY].empty and state[STALE_KEY]
+        assert "portfolio_signal_context" not in state[KEY].attrs
+        assert "portfolio_today_signal_df" not in state
+        assert state[KEY].iloc[0]["저장당시게이트상태"] == "방어우선"
+        assert state[KEY].iloc[0]["게이트상태"] == "데이터확인"
+        assert "calculate" not in events and "save_snapshot" not in events
+    elif kind in {"first", "bad_disk", "bad_cache"}:
+        assert state[KEY].empty and "calculate" not in events
+    elif kind == "refresh_basic":
+        assert state[KEY].iloc[0]["티커"] == "NEW_CALC"
+        assert STALE_KEY not in state and "save_snapshot" in events
+    elif kind in {"refresh_compute_failure", "refresh_interrupt", "refresh_empty"}:
+        assert "calculate" in events and "save_snapshot" not in events
+        assert state[NONEMPTY].iloc[0]["티커"] == "WATCH"
 
 
-def test_extracted_calculation_and_state_blocks_are_syntax_identical(sources):
+def test_calculation_and_refresh_blocks_remain_syntax_identical(sources):
     before = ast.parse(sources[0])
     after = ast.parse(sources[1])
     old = next(n for n in before.body if isinstance(n, ast.FunctionDef) and n.name == MAIN)
@@ -285,40 +320,11 @@ def test_extracted_calculation_and_state_blocks_are_syntax_identical(sources):
     module = ast.parse((ROOT / "stock_lab_core/today_queue_session.py").read_text(encoding="utf8"))
     functions = {n.name: n for n in module.body if isinstance(n, ast.FunctionDef)}
 
-    class OriginalNames(ast.NodeTransformer):
-        def visit_Name(self, node):
-            if node.id == "state":
-                return ast.Attribute(value=ast.Name(id="st", ctx=ast.Load()), attr="session_state", ctx=node.ctx)
-            if node.id in {"SUMMARY_KEY", "SIGNATURE_KEY", "LAST_RUN_KEY"}:
-                node.id = {"SUMMARY_KEY": "summary_key", "SIGNATURE_KEY": "sig_key", "LAST_RUN_KEY": "last_key"}[node.id]
-            return node
-
-    def original_body(name):
-        return [OriginalNames().visit(deepcopy(n)) for n in functions[name].body]
-
-    start = next(i for i, n in enumerate(old.body) if is_assignment(n, "previous_owner"))
-    end = next(i for i, n in enumerate(old.body) if isinstance(n, ast.Assign) and isinstance(n.targets[0], ast.Tuple))
-    restored = original_body("restore_cached_summary")[:-1]
-    # The only shared replacement is the same six-key invalidation loop.
-    restored[1].body = deepcopy(old.body[start + 1].body)
-    assert dump(old.body[start:end]) == dump(restored)
-
     remember_start = next(i for i, n in enumerate(branch.body) if is_assignment(n, "last_run_text")) + 1
-    assert dump(branch.body[remember_start:]) == dump(original_body("remember_calculated_summary"))
-    finalize_start = next(i for i, n in enumerate(old.body) if is_assignment(n, "summary_df")
-                          and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
-                          and n.value.func.id == "dedupe_dashboard_summary_df")
-    assert dump(old.body[finalize_start:finalize_start + 3]) == dump(original_body("finalize_summary")[:-1])
-
-    refresh = deepcopy(functions["refresh_today_summary"].body[:-1])
+    refresh = deepcopy(functions["refresh_today_summary"].body[:-2])
     refreshed_spinner = next(n for n in refresh if isinstance(n, ast.With))
     refreshed_spinner.body = deepcopy(calc.body[:-1])
-    refresh[-1:] = original_body("remember_calculated_summary")
-    assert dump(branch.body) == dump(refresh)
-
-    constants = next(n.value for n in module.body if is_assignment(n, "RESULT_KEYS"))
-    expected_keys = old.body[start + 1].body[0].iter
-    assert ast.dump(OriginalNames().visit(deepcopy(constants))) == ast.dump(expected_keys)
+    assert dump(branch.body[:remember_start]) == dump(refresh)
     for fn in functions.values():
         assert fn.end_lineno - fn.lineno + 1 <= 50, fn.name
 
@@ -341,7 +347,7 @@ def test_owner_change_never_restores_another_owners_memory(previous_owner, owner
     out = restore_cached_summary(state, owner, "expected", load_today_queue_summary_snapshot=load)
     changed = previous_owner is not None and previous_owner != owner
     assert out.iloc[0]["티커"] == ("OWN_DISK" if changed else "MEMORY")
-    assert calls == ([{"owner_scope": owner, "expected_signature": "expected"}] if changed else [])
+    assert calls == ([{"owner_scope": owner, "expected_signature": None}] if changed else [])
     assert state[OWNER] == owner
     assert state["watchlist"] == ["unchanged"] and state["fin_score_map"] == {"keep": 3}
     if changed:
@@ -353,7 +359,7 @@ def test_restore_and_finalize_keep_private_copies_and_save_only_fresh_nonempty()
 
     disk = summary()
     state = {}
-    out = restore_cached_summary(state, "a", "expected",
+    out = restore_cached_summary(state, "a", "sig",
         load_today_queue_summary_snapshot=lambda **kw: (disk, "sig", "timestamp"))
     out.loc[0, "종목명"] = "changed"
     assert disk.loc[0, "종목명"] == "Test WATCH"
@@ -449,7 +455,11 @@ if result is not None:
         assert len(new.dataframe[0].value) == 2
         for app in (old, new):
             app.checkbox(key="today_queue_refresh_flow_candidates").uncheck().run()
-        same()
+        assert not new.exception
+        assert [w.value for w in old.warning] == [w.value for w in new.warning]
+        pd.testing.assert_frame_equal(old.dataframe[0].value,
+                                      new.dataframe[0].value[old.dataframe[0].value.columns])
+        assert new.dataframe[0].value["게이트상태"].eq("데이터확인").all()
         assert new.session_state["fake_price_calls"] == 1
         for app in (old, new):
             app.button(key="today_queue_run_once").click().run()

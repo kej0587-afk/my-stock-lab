@@ -1005,7 +1005,9 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
     )
     if include_article_bodies:
         from stock_lab_core.article_context import enrich_article_context
-        enrich_article_context(result, now)
+        enrich_article_context(result, now, priority_context={
+            "sessions": sessions, "current_sessions": current_sessions or {}, "sector_rows": sector_rows,
+        })
     return result
 
 

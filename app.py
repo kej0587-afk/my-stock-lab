@@ -20645,6 +20645,8 @@ def build_summary_status_item(item, reason, code="DATA_UNAVAILABLE", snap_final_
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name,
         "티커": tkr,
+        "qty": clean_float(item.get("qty"), np.nan),
+        "has_pos": clean_float(item.get("qty"), float(has_position(name, tkr))) > 0,
         "현재가": display_price,
         "MDD": "-",
         "고점대비": "-",
@@ -20694,6 +20696,8 @@ def _build_live_only_summary_item(item, latest_price, reason, snap_final_macro_r
         "전광판그룹": get_dashboard_group_label(tkr, is_etf),
         "종목명": name,
         "티커": tkr,
+        "qty": clean_float(item.get("qty"), np.nan),
+        "has_pos": clean_float(item.get("qty"), float(has_position(name, tkr))) > 0,
         "현재가": format_currency(price, tkr) if price > 0 else "-",
         "MDD": "-",
         "고점대비": "-",
@@ -21013,6 +21017,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "비중차이": clean_float(c.get("target_w"), np.nan) - clean_float(c.get("current_w"), np.nan),
         **workflow,
         **c["input_basis"],
+        "qty": clean_float(item.get("qty"), np.nan),
+        "has_pos": clean_float(item.get("qty"), float(has_p)) > 0,
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
 
