@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **production Today Check bottleneck measurement**, on build
+`bd65d26b`, measurement `e36d58ac51f7463b9d86820aa3c4f8f9` (2026-11-07
+04:05:46–04:07:24 KST). Complete 95-row calculation: 98.540s wall, 101.682s
+including entry/bookkeeping. Standard refresh, not fully cold; unchanged scope.
+Price / indicator / external-data active unions: 66.016 / 20.936 / 23.361s;
+these overlap and must not be summed. KR history made 414 HTTP requests, with
+30.074s active union; the number of avoidable duplicates is not yet established.
+Analyst enrichment (1.800s) and KR cluster snapshots (0.524s) are not the current
+dominant bottleneck. Completed export/UI ID and local build matched; tracked
+report modules were not stale. Documentation-only task, no reboot needed.
+See [full measurement and limits](docs/maintenance/20261107_today_bottleneck_measurement.md).
+
 Latest bounded refactor: **`051ac66c`**, pushed from clean/equal `11565166`.
 Extracted only SMC context assembly into
 `stock_lab_core/decision_smc.py::build_decision_smc_context`.
@@ -37,7 +49,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [SMC context extraction](docs/maintenance/20261107_decision_smc_extraction.md).
+Latest record: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
 
 ## Preserved History
 
@@ -53,22 +65,26 @@ Latest record: [SMC context extraction](docs/maintenance/20261107_decision_smc_e
 
 ## Next Task Only
 
-**Measure one complete current-build Today Check run and identify its dominant bottleneck.**
+**Investigate and deduplicate only identical KR daily-history requests within one run.**
 
-The recent bounded extractions preserve behavior but do not establish a speedup.
-Do not keep extracting tiny blocks solely to shorten the orchestration function.
-Use authenticated production with unchanged account/ticker scope; run Today Check
-once, export its completed performance file and matching measurement/build ID.
-Separate wall time, self time, nested/parallel cumulative time, actual remote
-requests/cache misses and cache state. Do not substitute a partial last_attempt
-file or compare different inputs as if like-for-like. Inspect only the dominant
-measured path and propose exactly one bounded optimization as the next task.
-Do not change rules, TTLs, data scope or portfolio values during measurement.
-Keep private exports outside Git; commit/push the measurement record and handoff.
+Start with `kr_flow_history.py::load_kr_flow_history`, the explicit period-start
+caller in `prices.py`, and the default-start caller in `money_flow.py`. Record
+sanitized exact-request identity/call-site counts before assuming the measured
+414 requests are redundant. Normalize identity only when provider code, effective
+start/end, request count and adjustment semantics are identical. Existing exact
+period scopes already reuse 553 calls; do not replace them with broad range slicing.
+Preserve timezone boundaries, frame/index/dtype/attrs, defensive copies, failure
+cooldown and manual refresh. Do not alter TTLs, concurrency, data scope, rules or
+portfolio values. If exact duplicates are not demonstrated, stop speculative reuse.
+Run the prices regression gate before/after code changes, fixed-response parity
+and request-count checks, then one comparable completed production calculation.
+Report wall/self/parallel time and actual requests separately. Keep private
+exports outside Git; commit/push verification and update this handoff.
 
 ## Evidence and Remaining Limits
 
-- Latest: [SMC context extraction](docs/maintenance/20261107_decision_smc_extraction.md).
+- Latest: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
+- Previous: [SMC context extraction](docs/maintenance/20261107_decision_smc_extraction.md).
 - Previous: [Decision finalization extraction](docs/maintenance/20261107_decision_finalization_extraction.md).
 - Previous: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
 - Previous: [Theme group display extraction](docs/maintenance/20261107_theme_group_display_extraction.md).
