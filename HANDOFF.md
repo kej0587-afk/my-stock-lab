@@ -19,24 +19,28 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest bounded refactor: **`20ff2662`** pushed from clean/equal `612ab8c4`.
-Extracted only the subtheme summary table/CSV preparation into
-`stock_lab_core/theme_flow_view.py::prepare_theme_group_display`.
-`render_image_theme_flow_section` decreased from 521 to 489 lines. Ranking,
-classification, labels, charts, provider/TTL/lazy behavior and account scope did
-not change. This is structural work, not a measured speed improvement.
+Latest bounded refactor: **`7f7e2e4a`** pushed from clean/equal `340fe067`.
+Extracted only stock-detail table/CSV formatting into
+`stock_lab_core/theme_flow_view.py::prepare_theme_stock_display`.
+`render_image_theme_flow_section` decreased from 489 to 452 lines. Classification,
+ranking, labels, charts, provider/TTL/lazy behavior and account scope are unchanged.
+A missing-symbol reload guard applies only to the stateless formatting module,
+preventing retained old Cloud modules from failing the new import.
+This is structural work, not a measured speed improvement.
 
-Verification: report gate **180 passed before and after** (`report_dlh7p5lh`,
-`report_ous2lzkx`); existing money-flow UI/renderer tests **12 passed before**;
-with seven new exact-output/CSV/wiring tests **19 passed after**. Six original
-outputs frozen before extraction also match. No golden files regenerated.
-The reference renderer is retained at Git commit `612ab8c4`.
+Verification: report gate **180 passed before and after** (`report_u5_t2zfv`,
+`report__8qpu20t`); existing flow tests **19 passed before**, **40 passed after**.
+All 18 pre-edit frozen stock tables match; exact DataFrame/CSV parity, input
+nonmutation, renderer wiring and old-module import recovery passed. No golden
+files regenerated. Stock renderer reference: Git `340fe067`; earlier group
+reference `612ab8c4` remains intact.
 
-Post-push authenticated UI check passed after reload: theme source screen at
-00:19 KST displayed 46/46 instruments and the 11-row subtheme table/charts without
-traceback. Browser CSV-download completion was not confirmed; offline CSV parity
-passed. No runtime module-hash export was collected for the new display helper.
-Latest record: [Theme group display extraction](docs/maintenance/20261107_theme_group_display_extraction.md).
+Post-push authenticated production reload/analysis displayed 46/46 instruments,
+charts and the stock table with KRW/USD prices, percentages and state badges,
+without traceback. Offline CSV parity passed; browser CSV completion and helper
+runtime module hash were not collected. Screenshot is private/outside Git.
+
+Latest record: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
 
 ## Preserved History
 
@@ -52,22 +56,23 @@ Latest record: [Theme group display extraction](docs/maintenance/20261107_theme_
 
 ## Next Task Only
 
-**Extract only the stock-detail table formatting from `render_image_theme_flow_section`.**
+**Extract only the final safety/sizing orchestration from `calc_scores_and_decision`.**
 
-The renderer is still 489 lines and currently the largest top-level app function.
-Recheck current code and isolate the block from `show_stock = stock_view.copy()`
-through the `_it_show_cols` projection, using the new theme-flow view module.
-Preserve currency/percent formatting, badges, column order and missing-column
-handling. Do not move or alter classification, deduplication, ranking, captions,
-charts, selection/watchlist actions, provider calls or cache policy in this task.
-Freeze old outputs, test exact DataFrame/CSV parity and input nonmutation, run
-relevant existing contracts before/after and inspect the authenticated theme UI.
-Commit/push and leave one bounded next task. Do not claim speed gains without
-measurements or mix investment-rule changes into the extraction.
+After this extraction it is the largest top-level app function (480 lines).
+Recheck current code; isolate its final block from `_apply_safety_state_override`
+through `_compute_sizing_hint`, leaving `build_decision_result(locals())` in place.
+Use explicit inputs/dependencies and return the same decision_outcome, dec, col,
+buy_amount and sizing_hint, preserving the locals consumed by result assembly.
+Do not alter ordering, thresholds, labels, ETF/holding exceptions, data-error
+zero sizing, providers or cache policy. Freeze representative old outputs and
+use the existing decision contracts before/after; do not regenerate goldens.
+Include data-error, holding, ETF/core-DCA and panic scenarios in exact parity.
+Commit/push, verify deployment and leave exactly one bounded next task.
 
 ## Evidence and Remaining Limits
 
-- Latest: [Theme group display extraction](docs/maintenance/20261107_theme_group_display_extraction.md).
+- Latest: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
+- Previous: [Theme group display extraction](docs/maintenance/20261107_theme_group_display_extraction.md).
 - Connection: [Held-view connection review](docs/maintenance/20261107_held_view_connection_review.md).
 - Performance: [MFI window optimization and measurements](docs/maintenance/20261106_mfi_window_review.md).
 - Previous: [Yahoo chart connection measurements](docs/maintenance/20261106_yahoo_chart_connection_review.md).
