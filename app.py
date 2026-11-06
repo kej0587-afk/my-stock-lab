@@ -21049,7 +21049,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
     # keep the existing warm caches; older loaded modules use the old path.
     quote_scope = (price_loader.fresh_kr_quote_scope(all_tickers)
                    if fresh_quotes and hasattr(price_loader, "fresh_kr_quote_scope") else nullcontext())
-    with measure("phase", "stock_signals"), quote_scope, price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
+    with measure("phase", "stock_signals"), quote_scope, getattr(price_loader, "reuse_yahoo_chart_connections", nullcontext)(), price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             submit_with_context(executor,
                 _compute_summary_item,

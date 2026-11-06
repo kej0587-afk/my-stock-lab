@@ -39,6 +39,7 @@ SCOPES = {
         "test_report_reference_history", "test_report_news_session_quality",
     ),
     "prices": (
+        "test_yahoo_chart_connections", "test_quote_source_diagnostics",
         "test_history_preload_overlap", "test_kr_preload_connections", "test_result_cache",
         "test_today_queue_performance",
         "test_price_batch_selection",

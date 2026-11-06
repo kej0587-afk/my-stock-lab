@@ -25,6 +25,7 @@ from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core import performance as _performance
 from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, invalidate_prefetched_quotes
 from stock_lab_core.quote_html import read_quote_html
+from stock_lab_core.yahoo_chart_connections import open_yahoo_chart, reuse_yahoo_chart_connections
 from stock_lab_core.price_batch_selection import DownloadFrameSelector
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
@@ -1925,7 +1926,7 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
             )
             req = urllib.request.Request(url, headers=_YQ_HEADERS)
             _quote_transport_event("yahoo_chart", "request")
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with open_yahoo_chart(req, timeout=6) as resp:
                 _quote_transport_event("yahoo_chart", "response")
                 data = json.loads(resp.read())
             results = (data.get("chart") or {}).get("result") or []

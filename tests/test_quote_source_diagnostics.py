@@ -48,6 +48,9 @@ class RemoveDiagnostics(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Call(self, node):
+        # Connection reuse does not change chart query, parsing or fallback policy.
+        if isinstance(node.func, ast.Name) and node.func.id == "open_yahoo_chart":
+            node.func = ast.parse("urllib.request.urlopen", mode="eval").body
         expected = ast.parse('read_quote_html(resp, provider="yahoo_overnight")', mode="eval").body
         if ast.dump(node, include_attributes=False) == ast.dump(expected, include_attributes=False):
             return ast.parse('resp.read().decode("utf-8", errors="ignore")', mode="eval").body
