@@ -186,7 +186,13 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
 - Follow-up selected gate: 1,174 passed, zero failures/errors/skips or source
   mutation, 71.414s. Evidence: cache/refactor_checks/all_x7o0zklq/summary.json.
   Covers renderer envelope/summary parity, old-cache reads, commentary labels,
-  allowed/blocked permissions and malformed results. Cloud follow-up pending.
+  allowed/blocked permissions and malformed results.
+- Pushed fa44068b; Cloud logs confirmed update but reruns still showed the old
+  module's "unconfirmed" label. Rebooted via the owner's Manage app panel.
+  After restart, SOXL precision completed at 16:16 KST and portfolio commentary
+  showed its actual final label "DCA hold" for the 2026-11-05 price reference.
+  Market-defense restriction remained. Missing today/board cache after restart
+  was disclosed rather than filled from another account or treated as permission.
 - Next bounded consistency review: the portfolio flow/replacement candidate
   section can still show a reinforcement candidate while execution is withheld.
   Inspect its basis and clarify candidate versus permission before any rule
