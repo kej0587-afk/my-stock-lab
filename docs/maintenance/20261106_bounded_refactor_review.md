@@ -222,5 +222,13 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   or source mutations, 97.823s. Includes local Streamlit candidate-panel render.
   Evidence: cache/refactor_checks/all_rjynw3y_/summary.json. Test times are not
   an application-speed comparison. Compile/diff whitespace checks passed.
-- Live post-deploy presentation verification pending. No change to investment
-  thresholds, allocation math, provider caching or market-data reference basis.
+- Pushed b9df459f and verified authenticated Cloud rendering without reboot.
+  Before: BITX was introduced as an add/DCA candidate without its gate.
+  After, on the same completed today input: 1 flow candidate, 1 held/waiting,
+  0 precision-final-check candidates, 0 missing connections. BITX remained in
+  the list with market-defense/new-buy suspension beside it. The 10 held rows
+  exposed their restrictions before raw portfolio classifications. Narrow-view
+  screenshot confirmed restriction labels fit beside the asset names.
+- No change to investment thresholds, allocation math, provider caching or
+  market-data reference basis. Next: measure ONE price-provider bottleneck;
+  the pre-deploy live today run (94.0s) is not a before/after speed benchmark.
