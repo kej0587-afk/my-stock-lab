@@ -23,6 +23,11 @@ SCOPES = {
         "test_decision_inputs_refactor", "test_decision_signals_refactor",
         "test_execution_context", "test_precision_final_check_view",
         "test_market_guard_input_quality", "test_monthly_rebalance_refactor",
+        "test_final_check_extraction", "test_decision_governance",
+        "test_channel_display_lifecycle", "test_execution_readiness",
+        "test_precision_display_consistency", "test_precision_gate",
+        "test_precision_plan_panel", "test_precision_workflow_review",
+        "test_scorecard_review", "test_precision_chart_view", "test_precision_review_export",
     ),
     "report": (
         "test_report_section_contract", "test_report_split_quality",

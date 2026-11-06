@@ -55,12 +55,12 @@ run the SAME scope on the old and new code; inspect the source diff and evidence
 Snapshot baselines may only change in a separately reviewed behavior change.
 No finite test set proves every live input or every investment decision correct.
 
-## Next Single Production Change
+## Work Plan
 
 ## Agreed Work Order (2026-11-06)
 
 1. DONE: establish the bounded verification command; commit/push this safety baseline.
-2. IN PROGRESS: extract pure risk and portfolio check rows from
+2. DONE (local verification): extract pure risk and portfolio check rows from
    build_pre_buy_final_checks. Freeze full outputs before touching production.
    Preserve thresholds, row/reason ordering, counts and execution permission.
 3. NEXT: compare held-KR/held-US inputs across today queue, board, precision and
@@ -113,3 +113,28 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   and `pytest.log`. These contain local test evidence, not exported holdings.
 - Production files and stored golden snapshots were not modified. No deployment
   or Cloud UI change was made; live provider speed was not measured in this pass.
+
+## First Production Extraction (2026-11-06)
+
+- Safety baseline pushed as a246f722. The preceding verification notes describe
+  that baseline only; this follow-up changes app.py and adds final_check_rows.py.
+- build_pre_buy_final_checks: 381 -> 334 lines. Extracted structure/timeframe/
+  overheat rows and weight/macro/holding rows into two pure helpers. Call order,
+  explanation text and the existing governance/final execution veto are retained.
+- Reused the already-normalized daily return and computed the identical extreme
+  overheat predicate once. No provider, cache TTL, date basis or threshold change.
+- Captured 62 complete ordered-output digests from a246f722 BEFORE extraction;
+  tests/golden/final_check_rows_v1.json is not regenerated during verification.
+- Same 691 tests before/after: PASS, 44.625s / 44.776s runner wall time. These are
+  verification runtimes, NOT an application speed benchmark.
+- Added two local Streamlit AppTest renders of held-KR/held-US ETF final panels.
+  These use deterministic inputs, not the user's current Cloud account/data.
+- Additional related tests initially found a syntax-only equality assertion that
+  disallowed helper extraction. Retained its old source and wording corrections;
+  replaced the extracted-function AST comparison with 62 old/new full-output
+  comparisons. The unchanged function still uses exact AST equality.
+- No remote UI verification or live performance improvement is claimed here.
+- Final expanded gate: 1,060 passed, zero failures/errors/skips, no source/fixture
+  mutation; 64.899s. Evidence: cache/refactor_checks/all_tvvrnop0/summary.json.
+  Compile checks and git diff --check also passed. Next: step 3, authenticated
+  cross-view consistency; do not broaden to new providers or investment criteria.

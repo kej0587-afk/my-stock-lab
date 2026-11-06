@@ -125,7 +125,7 @@ def test_418660_export_regression_stops_september_channel_before_november():
 
 
 @pytest.mark.parametrize("name", ["render_personal_stock_analysis_panel", "build_pre_buy_final_checks"])
-def test_explanation_edits_leave_every_policy_expression_unchanged(name):
+def test_explanation_edits_leave_every_policy_expression_unchanged(name, app_module):
     import ast
     from pathlib import Path
     import subprocess
@@ -149,6 +149,20 @@ def test_explanation_edits_leave_every_policy_expression_unchanged(name):
             node.value = replacements[node.value]
             changed += 1
     assert changed == (2 if name == "render_personal_stock_analysis_panel" else 1)
+    if name == "build_pre_buy_final_checks":
+        # Helper extraction changes syntax, not the ordered output contract.
+        from unittest.mock import patch
+        from tests.test_final_check_extraction import CASES, digest, run_case
+
+        namespace = {}
+        exec(compile(ast.Module(body=[old_fn], type_ignores=[]), "legacy_final_check", "exec"),
+             app_module.__dict__, namespace)
+        for case_id, changes, options in CASES:
+            actual = run_case(app_module, changes, options)
+            with patch.object(app_module, name, namespace[name]):
+                expected = run_case(app_module, changes, options)
+            assert digest(actual) == digest(expected), case_id
+        return
     assert ast.dump(old_fn) == ast.dump(new_fn)
 
 
