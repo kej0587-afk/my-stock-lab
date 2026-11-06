@@ -184,6 +184,7 @@ def _reuse_prefetched_history(fn):
         frames = _PREFETCHED_HISTORY.get()
         key = (str(ticker).strip().upper(), period)
         if frames is not None and key in frames:
+            _performance.count_event("history_scope.prefetched_hit")
             return frames[key].copy(deep=True)
         memo = _HISTORY_REQUEST_MEMO.get()
         if memo is None:
@@ -192,6 +193,7 @@ def _reuse_prefetched_history(fn):
         request = (ticker, period)
         entry = memo.get(request)
         if entry is not None and entry[0] is generation:
+            _performance.count_event("history_scope.memo_hit")
             return entry[1].copy(deep=True)
         started_generation = generation
         frame = fn(ticker, period)
@@ -497,6 +499,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
     for yf_ticker in _yfinance_history_candidates(ticker):
         try:
             with _YF_LOCK:
+                _performance.count_event("yfinance_history.download_call")
                 df = yf.download(
                     yf_ticker, period=period, interval="1d",
                     progress=False, threads=False, auto_adjust=False, timeout=5,
@@ -516,7 +519,7 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
 
 
 @timed_call("prices")
-@cache_result(ttl=300, failure_ttl=15, is_success=bool)
+@cache_result(ttl=300, failure_ttl=15, is_success=bool, trace_name="history_batch")
 def load_price_frames_batch(tickers, period="1y") -> dict:
     """Batch histories with missing-volume provenance (v2); omit failed symbols."""
     symbols = sorted({normalize_price_lookup_key(t) for t in tickers
@@ -525,6 +528,7 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
         return {}
     try:
         with _YF_LOCK:
+            _performance.count_event("yfinance_history.batch_download_call")
             data = yf.download(
                 symbols, period=period, interval="1d", group_by="ticker",
                 progress=False, threads=min(4, len(symbols)), auto_adjust=False, timeout=5,
@@ -853,7 +857,8 @@ def _fetch_naver_prices_bulk(kr_tickers: list) -> dict:
 
 @timed_call("prices")
 @_reuse_prefetched_history
-@cache_result(ttl=300, failure_ttl=15, is_success=lambda frame: frame is not None and not frame.empty)
+@cache_result(ttl=300, failure_ttl=15, is_success=lambda frame: frame is not None and not frame.empty,
+              trace_name="price_history")
 def load_price_df(ticker, period="1y"):
     """
     일봉 OHLCV 다운로드 (TTL=5분).

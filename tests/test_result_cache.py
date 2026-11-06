@@ -1,6 +1,7 @@
 from functools import wraps
 
 from stock_lab_core import result_cache
+from stock_lab_core.performance import PerformanceTrace
 
 
 def test_failure_cooldown_expires_before_success_ttl_and_clear_clears_both(monkeypatch):
@@ -75,3 +76,41 @@ def test_changed_provider_code_does_not_reuse_old_success():
     finally:
         old_cached.clear()
         new_cached.clear()
+
+
+def test_optional_trace_distinguishes_execution_reuse_and_failure_without_keys():
+    calls = []
+
+    @result_cache.cache_result(ttl=300, failure_ttl=15, trace_name="test_price")
+    def lookup(ticker):
+        calls.append(ticker)
+        if ticker == "raise":
+            raise ValueError("private request omitted")
+        if ticker == "bypass":
+            return result_cache.UncachedValue({"ok": True})
+        return {"ok": ticker != "missing"}
+
+    lookup.clear()
+    try:
+        with PerformanceTrace() as trace:
+            assert lookup("private_ticker")["ok"]
+            assert lookup("private_ticker")["ok"]
+            assert not lookup("missing")["ok"]
+            assert not lookup("missing")["ok"]
+            for _ in range(2):
+                assert lookup("bypass")["ok"]
+                try:
+                    lookup("raise")
+                except ValueError:
+                    pass
+        events = trace.report()["transport_events"]
+        assert events == {
+            "cache.test_price.lookup": 8, "cache.test_price.miss": 6,
+            "cache.test_price.reuse": 2, "cache.test_price.success": 1,
+            "cache.test_price.unavailable": 1, "cache.test_price.bypass": 2,
+            "cache.test_price.raised": 2,
+        }
+        assert len(calls) == 6
+        assert "private" not in str(trace.report())
+    finally:
+        lookup.clear()

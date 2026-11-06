@@ -14,6 +14,7 @@ from urllib3.exceptions import HTTPError as TransportError
 
 from stock_lab_core.result_cache import cache_result
 from stock_lab_core.http_body import read_response_body as _read_body
+from stock_lab_core.performance import count_event, measure
 
 
 _URL = "https://fchart.stock.naver.com/sise.nhn"
@@ -111,15 +112,20 @@ class KrFlowHistoryReader:
         deadline = self._clock() + _BODY_BUDGET_SECONDS
         try:
             # Same adjusted daily feed as pykrx, without its unbounded HTTP call.
-            response = self._request(
-                _URL, params={"symbol": code, "timeframe": "day",
-                              "count": (end - start).days + 2, "requestType": "0"},
-                headers={"User-Agent": "StockLab/1.0", "Referer": "https://finance.naver.com/"},
-                timeout=_TIMEOUT, stream=True,
-            )
-            response.raise_for_status()
-            frame = parse_history(_read_body(response, deadline, self._clock), start, end)
+            with measure("prices", "kr_history_http"):
+                count_event("kr_history.request")
+                response = self._request(
+                    _URL, params={"symbol": code, "timeframe": "day",
+                                  "count": (end - start).days + 2, "requestType": "0"},
+                    headers={"User-Agent": "StockLab/1.0", "Referer": "https://finance.naver.com/"},
+                    timeout=_TIMEOUT, stream=True,
+                )
+                response.raise_for_status()
+                body = _read_body(response, deadline, self._clock)
+                count_event("kr_history.response")
+            frame = parse_history(body, start, end)
         except (requests.RequestException, TransportError, OSError, ElementTree.ParseError, ValueError) as exc:
+            count_event("kr_history.unavailable")
             with self._lock:
                 self._failures += 1
                 # Stop a provider outage becoming hundreds of sequential timeouts.
@@ -140,6 +146,7 @@ class KrFlowHistoryReader:
 _reader = KrFlowHistoryReader()
 
 
-@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty)
+@cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty,
+              trace_name="kr_history")
 def load_kr_flow_history(ticker, *, start=None):
     return _reader.read(ticker, start=start)
