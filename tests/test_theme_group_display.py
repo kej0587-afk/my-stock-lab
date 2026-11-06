@@ -85,7 +85,7 @@ def test_table_and_csv_equal_frozen_renderer_without_mutating_input(kind):
         pd.testing.assert_frame_equal(source, before, check_exact=True)
 
 
-def test_renderer_changes_only_summary_preparation():
+def test_renderer_changes_only_table_preparation():
     old = ast.parse(subprocess.check_output(["git", "show", BASE + ":app.py"], cwd=ROOT, encoding="utf-8"))
     new = ast.parse((ROOT / "app.py").read_text(encoding="utf-8-sig"))
     def renderer(tree):
@@ -104,5 +104,10 @@ def test_renderer_changes_only_summary_preparation():
                      and any(isinstance(t, ast.Name) and t.id == "show_group" for t in n.targets))
         summary.body[start:-1] = []
         summary.body[-1].value.args[0] = ast.Name(id="prepared_table", ctx=ast.Load())
+        # The next bounded extraction moves only the stock table preparation.
+        from tests.test_theme_stock_display import stock_block
+        tab, start, end = stock_block(node)
+        tab.body[end].value.args[0] = ast.Name(id="prepared_stock_table", ctx=ast.Load())
+        del tab.body[start:end]
         return ast.dump(node, include_attributes=False)
     assert replace_preparation(old) == replace_preparation(new)

@@ -230,7 +230,12 @@ create policy signal_journal_owner_delete
 on signal_journal for delete
 using (owner_email = coalesce(auth.jwt() ->> 'email', ''));
         """.strip()
-from stock_lab_core.theme_flow_view import prepare_theme_group_display
+import stock_lab_core.theme_flow_view as _theme_flow_view
+if not hasattr(_theme_flow_view, "prepare_theme_stock_display"):
+    # This module contains only pure formatting helpers, no caches or session state.
+    from importlib import reload as _reload_theme_flow_view
+    _reload_theme_flow_view(_theme_flow_view)
+from stock_lab_core.theme_flow_view import prepare_theme_group_display, prepare_theme_stock_display
 from stock_lab_core.formatters import (
     clean_bool,
     clean_float,
@@ -14509,46 +14514,9 @@ def render_image_theme_flow_section():
             top_n=12,
         )
 
-        show_stock = stock_view.copy()
-        # 투자유형은 이미 stock_view에 있음 — 포맷 유지
-        if "상태" in show_stock.columns:
-            show_stock["상태"] = show_stock["상태"].map(lambda s: _it_state_badge.get(str(s), str(s)))
-        # 현재가 포맷 (국내: 정수, 해외: 소수 2자리)
-        show_stock["현재가"] = show_stock.apply(
-            lambda r: format_currency(r["현재가"], r["Ticker"]) if finite_num(r["현재가"]) else "-",
-            axis=1,
-        )
-        # ── CSV 내보내기까지 올바르게 나오도록 모든 숫자를 문자열로 포맷 ──
-        for _col in ["1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률"]:
-            if _col in show_stock.columns:
-                show_stock[_col] = show_stock[_col].apply(fmt_flow_pct)
-        for _col in ["가속도", "거래량증가"]:
-            if _col in show_stock.columns:
-                show_stock[_col] = show_stock[_col].apply(
-                    lambda v: f"{v:.2f}" if finite_num(v) else "-"
-                )
-        if "가격수준" in show_stock.columns:
-            show_stock["가격수준"] = show_stock["가격수준"].apply(
-                lambda v: f"{v*100:.1f}%" if finite_num(v) else "-"
-            )
-        if "돈흐름점수" in show_stock.columns:
-            show_stock["돈흐름점수"] = show_stock["돈흐름점수"].apply(
-                lambda v: f"{v:.1f}" if finite_num(v) else "-"
-            )
-        # 데이터 없는 컬럼 제거
-        for _col in ["상대3개월수익률", "추격위험"]:
-            if _col in show_stock.columns:
-                _vals = show_stock[_col].replace("-", pd.NA).dropna()
-                if _vals.empty or (_vals.astype(str).str.strip() == "").all():
-                    show_stock.drop(columns=[_col], inplace=True)
-        _it_show_cols = [c for c in [
-            "투자유형", "하위테마", "종목명", "Ticker", "현재가", "상태",
-            "가격수준", "돈흐름점수",
-            "1개월수익률", "3개월수익률", "상대3개월수익률", "6개월수익률",
-            "가속도", "거래량증가",
-        ] if c in show_stock.columns]
+        show_stock = prepare_theme_stock_display(stock_view, _it_state_badge, format_pct=fmt_flow_pct)
         st.dataframe(
-            show_stock[_it_show_cols],
+            show_stock,
             column_config={
                 "투자유형":    st.column_config.TextColumn("유형", help="스윙후보: 가속도↑+1M↑  장기후보: 3M↑+52주35~80%  고점추격: 52주85% 초과"),
                 "가격수준":    st.column_config.TextColumn("52주위치",  help="52주 최저~최고 범위 내 현재 위치"),
