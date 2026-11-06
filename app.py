@@ -32509,9 +32509,15 @@ def render_today_queue_tab(mode):
     try:
         with trace:
             from stock_lab_core.prices import overnight_quote_scope
+            from contextlib import nullcontext
+            from stock_lab_core import kr_flow_history
+
+            history_scope = getattr(kr_flow_history, "reuse_kr_history_requests", None)
+            if history_scope is None:
+                st.warning("국내 이력 재사용 모듈이 이전 버전입니다. 기존 조회로 계산합니다. 서버 재시작 후 최적화가 적용됩니다.")
 
             scope_owner = "public_demo" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower() or "anonymous"
-            with overnight_quote_scope(_today_queue_overnight_tickers()), kr_cluster_snapshot_scope(owner_scope=scope_owner):
+            with (history_scope() if history_scope else nullcontext()), overnight_quote_scope(_today_queue_overnight_tickers()), kr_cluster_snapshot_scope(owner_scope=scope_owner):
                 _render_today_queue_tab(mode)
     finally:
         attempt = trace.report()

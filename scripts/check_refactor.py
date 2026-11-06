@@ -43,6 +43,7 @@ SCOPES = {
     "prices": (
         "test_yahoo_chart_connections", "test_quote_source_diagnostics",
         "test_history_preload_overlap", "test_kr_preload_connections", "test_result_cache",
+        "test_kr_history_request_scope",
         "test_today_queue_performance",
         "test_indicator_mfi_parity",
         "test_price_batch_selection",

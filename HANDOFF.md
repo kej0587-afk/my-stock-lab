@@ -19,6 +19,14 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+In progress: exact KR daily-history request reuse, verified locally against
+immutable `24244c3e`. Fixed responses: 8 -> 5 actual identical requests; frames
+and all non-wrapper app functions match. Focused tests 77 passed. Prices gate
+has the same pre-existing AST-freeze failure before/after (259 / 265 passed);
+see [request reuse record](docs/maintenance/20261107_kr_history_request_reuse.md).
+Production before/after verification is pending the code deployment; do not
+claim a Cloud speedup or old-module application until scope counters appear.
+
 Latest task: **production Today Check bottleneck measurement**, on build
 `bd65d26b`, measurement `e36d58ac51f7463b9d86820aa3c4f8f9` (2026-11-07
 04:05:46–04:07:24 KST). Complete 95-row calculation: 98.540s wall, 101.682s

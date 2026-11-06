@@ -1,6 +1,7 @@
 """Bounded access to the Naver daily feed used by pykrx/FDR money flow."""
 
 import logging
+from copy import deepcopy
 import re
 import time
 from contextlib import contextmanager
@@ -12,7 +13,7 @@ import pandas as pd
 import requests
 from urllib3.exceptions import HTTPError as TransportError
 
-from stock_lab_core.result_cache import cache_result
+from stock_lab_core.result_cache import UncachedValue, cache_result
 from stock_lab_core.http_body import read_response_body as _read_body
 from stock_lab_core.performance import count_event, measure
 
@@ -22,6 +23,27 @@ _TIMEOUT = (2, 4)
 _BODY_BUDGET_SECONDS = 6
 _COLUMNS = ["Open", "High", "Low", "Close", "Volume"]
 _connections = ContextVar("kr_history_connections", default=None)
+_request_scope = ContextVar("kr_history_request_scope", default=None)
+_cache_reuse_probe = ContextVar("kr_history_cache_reuse_probe", default=None)
+_request_generation = object()
+
+
+@contextmanager
+def reuse_kr_history_requests():
+    """Share only successful identical requests within one joined calculation.
+
+    Keys are resolved inside the reader, after its original date normalization.
+    No range slicing, cross-run retention or change to the provider cache TTL.
+    """
+    if _request_scope.get() is not None:
+        yield
+        return
+    token = _request_scope.set(({}, Lock()))
+    count_event("kr_history_scope.enabled_v1")
+    try:
+        yield
+    finally:
+        _request_scope.reset(token)
 
 
 @contextmanager
@@ -92,6 +114,7 @@ class KrFlowHistoryReader:
         self._retry_after = 0.0
 
     def read(self, ticker, *, now=None, start=None):
+        default_start = start is None
         code = str(ticker).strip().upper().split(".", 1)[0]
         if not re.fullmatch(r"[0-9A-Z]{6}", code):
             return pd.DataFrame()
@@ -108,6 +131,45 @@ class KrFlowHistoryReader:
         start = start.normalize()
         if pd.isna(start) or start > end:
             return pd.DataFrame()
+        scope = _request_scope.get()
+        if scope is None:
+            return self._read_resolved(code, start, end)
+        entries, guard = scope
+        generation = _request_generation
+        # Include the reader/endpoint and all effective request/parse semantics.
+        key = (generation, self, _URL, code, start.value, end.value,
+               "day", (end - start).days + 2, "0")
+        count_event("kr_history_scope.lookup")
+        count_event("kr_history_scope.default_start" if default_start
+                    else "kr_history_scope.explicit_start")
+        with guard:
+            if key not in entries:
+                entries[key] = {"lock": Lock(), "frame": None, "at": 0.0}
+                count_event("kr_history_scope.unique")
+            else:
+                count_event("kr_history_scope.repeat")
+            entry = entries[key]
+        # Different keys never wait on one another. The original bounded I/O
+        # and cooldown remain in _read_resolved. A failed result is not memoized.
+        with entry["lock"]:
+            if (generation is _request_generation and entry["frame"] is not None
+                    and 0 <= self._clock() - entry["at"] < 900):
+                count_event("kr_history_scope.reuse")
+                marker = _cache_reuse_probe.get()
+                if marker is not None:
+                    marker[0] = True
+                return deepcopy(entry["frame"])
+            count_event("kr_history_scope.miss")
+            frame = self._read_resolved(code, start, end)
+            if not frame.empty and generation is _request_generation:
+                entry["frame"], entry["at"] = deepcopy(frame), self._clock()
+            return frame
+
+    def _read_resolved(self, code, start, end):
+        # A worker may have waited behind another request that opened cooldown.
+        with self._lock:
+            if self._clock() < self._retry_after:
+                return _unavailable("provider_cooldown")
         response = None
         deadline = self._clock() + _BODY_BUDGET_SECONDS
         try:
@@ -149,4 +211,23 @@ _reader = KrFlowHistoryReader()
 @cache_result(ttl=900, failure_ttl=15, is_success=lambda frame: not frame.empty,
               trace_name="kr_history")
 def load_kr_flow_history(ticker, *, start=None):
-    return _reader.read(ticker, start=start)
+    marker = [False]
+    token = _cache_reuse_probe.set(marker)
+    try:
+        frame = _reader.read(ticker, start=start)
+    finally:
+        _cache_reuse_probe.reset(token)
+    # An alias must not start a fresh 900s cache lifetime for an older snapshot.
+    return UncachedValue(frame) if marker[0] else frame
+
+
+_clear_cached_history = load_kr_flow_history.clear
+
+
+def _clear_history(*args, **kwargs):
+    global _request_generation
+    _request_generation = object()
+    _clear_cached_history(*args, **kwargs)
+
+
+load_kr_flow_history.clear = _clear_history
