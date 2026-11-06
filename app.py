@@ -3575,6 +3575,17 @@ def upsert_fin_score_db(ticker, auto_score, manual_score, final_score, source, n
 
 
 def mark_fin_score_not_applicable_db(ticker, reason="ETF/ETN/레버리지 상품"):
+    # Reopening precision is not a financial-input change. An identical upsert
+    # would invalidate every Today/board signal through upsert_fin_score_db.
+    scores = load_fin_scores_db()
+    matched = scores[scores["ticker"] == normalize_ticker(ticker)]
+    if not matched.empty:
+        row = matched.iloc[0]
+        if (row.get("source") == "not_applicable"
+                and pd.to_numeric(row.get("auto_score"), errors="coerce") == 0
+                and pd.to_numeric(row.get("final_score"), errors="coerce") == 0
+                and pd.isna(row.get("manual_score"))):
+            return True
     return upsert_fin_score_db(
         ticker=ticker,
         auto_score=0,

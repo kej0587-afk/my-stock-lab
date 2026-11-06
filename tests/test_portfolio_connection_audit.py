@@ -80,6 +80,47 @@ def test_unrelated_financial_score_does_not_disconnect_held_signals(app_module, 
     assert app_module.portfolio_signal_input_context() != context
 
 
+def test_reopening_already_exempt_etf_preserves_scoped_signals(app_module, state, monkeypatch):
+    """Opening precision must not rewrite unchanged ETF metadata and clear all views."""
+    import json
+
+    signal = stamped(app_module, [{"티커": "AAA", "기술적타점": "saved"}], "2026-11-01T01:00Z")
+    for key in ("portfolio_today_signal_df", "portfolio_dashboard_signal_df", "today_queue_summary_df"):
+        state[key] = signal
+    monkeypatch.setattr(app_module, "load_fin_scores_db", lambda: pd.DataFrame([{
+        "ticker": "aaa", "auto_score": 0, "manual_score": np.nan, "final_score": 0,
+        "source": "not_applicable", "notes_json": json.dumps({"mode": "not_applicable"}),
+    }]))
+    writes = []
+
+    def save(**kwargs):
+        writes.append(kwargs)
+        app_module.invalidate_watchlist_dependent_state()
+        return True
+
+    monkeypatch.setattr(app_module, "upsert_fin_score_db", save)
+    assert app_module.mark_fin_score_not_applicable_db("AAA") is True
+    assert writes == []
+    for key in ("portfolio_today_signal_df", "portfolio_dashboard_signal_df", "today_queue_summary_df"):
+        assert state[key] is signal
+
+
+@pytest.mark.parametrize("changes", [
+    {"final_score": 3}, {"manual_score": 2}, {"auto_score": 4},
+    {"source": "manual"}, {"missing": True},
+])
+def test_new_or_changed_etf_exemption_still_saves(app_module, monkeypatch, changes):
+    row = dict(ticker="aaa", auto_score=0, manual_score=None, final_score=0, source="not_applicable")
+    row.update(changes)
+    frame = pd.DataFrame(columns=list(row)) if changes.get("missing") else pd.DataFrame([row])
+    monkeypatch.setattr(app_module, "load_fin_scores_db", lambda: frame)
+    writes = []
+    monkeypatch.setattr(app_module, "upsert_fin_score_db", lambda **kwargs: writes.append(kwargs) or True)
+    assert app_module.mark_fin_score_not_applicable_db("AAA") is True
+    assert len(writes) == 1
+    assert writes[0]["final_score"] == 0 and writes[0]["manual_score"] is None
+
+
 def test_snapshot_restores_original_context_and_time_not_a_fresh_stamp(app_module, state, tmp_path):
     from stock_lab_core.today_snapshot import save_today_queue_summary_snapshot, load_today_queue_summary_snapshot
 
