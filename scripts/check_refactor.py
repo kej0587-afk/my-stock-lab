@@ -42,6 +42,7 @@ SCOPES = {
         "test_yahoo_chart_connections", "test_quote_source_diagnostics",
         "test_history_preload_overlap", "test_kr_preload_connections", "test_result_cache",
         "test_today_queue_performance",
+        "test_indicator_mfi_parity",
         "test_price_batch_selection",
         "test_price_history_scope", "test_latest_price_cache_key",
         "test_price_cache_recovery", "test_money_flow_cache_replay",

@@ -8,6 +8,9 @@ app.py 전역 상태에 의존하지 않는 순수 함수만 포함하므로 독
 import numpy as np
 import pandas as pd
 from stock_lab_core.performance import timed_call
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 try:
     import ta
@@ -105,6 +108,32 @@ def get_macd_state(last_macd, last_sig, prev_macd, prev_sig) -> str:
 # 지표 계산
 # ---------------------------------------------------------------------------
 
+def _money_flow_index(high, low, close, volume):
+    """ta MFI(14, fillna=False), reducing whole windows without Python callbacks.
+
+    Keep each window's NumPy sum order (a rolling sum changes rounding), and
+    pandas rolling's requirement for 14 finite values. Missing live volume
+    therefore stays missing; it is never converted into a zero-flow session.
+    """
+    typical = (high + low + close) / 3.0
+    direction = np.where(typical > typical.shift(1), 1,
+                         np.where(typical < typical.shift(1), -1, 0))
+    flow = (typical * volume * direction).to_numpy(dtype="float64", na_value=np.nan)
+    result = np.full(len(flow), np.nan)
+    if len(flow) >= 14:
+        windows = np.lib.stride_tricks.sliding_window_view(flow, 14)
+        # Bound temporary arrays for callers with unusually long histories.
+        for start in range(0, len(windows), 4096):
+            block = windows[start:start + 4096]
+            valid = np.isfinite(block).all(axis=1)
+            positive = np.sum(np.where(block >= 0.0, block, 0.0), axis=1)
+            negative = np.abs(np.sum(np.where(block < 0.0, block, 0.0), axis=1))
+            with np.errstate(divide="ignore", invalid="ignore"):
+                values = 100 - (100 / (1 + positive / negative))
+            result[start + 13:start + 13 + len(block)] = np.where(valid, values, np.nan)
+    return pd.Series(result, index=close.index, name="mfi_14")
+
+
 @timed_call("indicators")
 def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """OHLCV DataFrame에 기술적 지표 컬럼을 추가하고 반환합니다."""
@@ -123,7 +152,7 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["MA50"]  = df["Close"].rolling(50).mean()
     df["MA120"] = df["Close"].rolling(120).mean()
     df["RSI"]   = ta.momentum.RSIIndicator(df["Close"]).rsi()
-    df["MFI"]   = ta.volume.MFIIndicator(df["High"], df["Low"], df["Close"], df["Volume"]).money_flow_index()
+    df["MFI"]   = _money_flow_index(df["High"], df["Low"], df["Close"], df["Volume"])
     macd        = ta.trend.MACD(df["Close"])
     df["MACD"]  = macd.macd()
     df["MACD_Sig"] = macd.macd_signal()
