@@ -19,28 +19,28 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest bounded refactor: **`7f7e2e4a`** pushed from clean/equal `340fe067`.
-Extracted only stock-detail table/CSV formatting into
-`stock_lab_core/theme_flow_view.py::prepare_theme_stock_display`.
-`render_image_theme_flow_section` decreased from 489 to 452 lines. Classification,
-ranking, labels, charts, provider/TTL/lazy behavior and account scope are unchanged.
-A missing-symbol reload guard applies only to the stateless formatting module,
-preventing retained old Cloud modules from failing the new import.
-This is structural work, not a measured speed improvement.
+Latest bounded refactor: **`fd0fe52e`**, pushed from clean/equal `c623569b`.
+Extracted only the final safety/sizing orchestration into
+`stock_lab_core/decision_finalization.py::finalize_decision_sizing`.
+`calc_scores_and_decision`: 480 -> 467 lines. Same explicit policy dependencies,
+same call order and five outputs restored to original locals before unchanged
+`build_decision_result(locals())`. No threshold/label/amount/provider/cache changes.
+New module records its loaded source in existing precision provenance.
 
-Verification: report gate **180 passed before and after** (`report_u5_t2zfv`,
-`report__8qpu20t`); existing flow tests **19 passed before**, **40 passed after**.
-All 18 pre-edit frozen stock tables match; exact DataFrame/CSV parity, input
-nonmutation, renderer wiring and old-module import recovery passed. No golden
-files regenerated. Stock renderer reference: Git `340fe067`; earlier group
-reference `612ab8c4` remains intact.
+Verification: selected decision gate **1,045 passed before** (88.583s),
+**1,132 passed after** (93.431s, includes 87 new tests). Forty full-result cases
+were frozen before editing the caller and all match; unrounded original/current
+outputs, policy calls, failure propagation and input nonmutation also match.
+Focused follow-up/priority/import checks passed (215 tests before the final
+seven edge/provenance additions). No golden files regenerated.
+This is a structural extraction, not a measured application speed improvement.
 
-Post-push authenticated production reload/analysis displayed 46/46 instruments,
-charts and the stock table with KRW/USD prices, percentages and state badges,
-without traceback. Offline CSV parity passed; browser CSV completion and helper
-runtime module hash were not collected. Screenshot is private/outside Git.
+Post-push authenticated GOOGL precision calculation and review ZIP succeeded.
+New helper loaded/disk/local hashes match; `restart_required=false` and
+`stale_modules=[]`. UI judgement/hold table rendered without traceback.
+No account/watchlist edits; exports and screenshot remain outside Git.
 
-Latest record: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
+Latest record: [Decision finalization extraction](docs/maintenance/20261107_decision_finalization_extraction.md).
 
 ## Preserved History
 
@@ -56,22 +56,22 @@ Latest record: [Theme stock display extraction](docs/maintenance/20261107_theme_
 
 ## Next Task Only
 
-**Extract only the final safety/sizing orchestration from `calc_scores_and_decision`.**
+**Extract only SMC context assembly from `calc_scores_and_decision`.**
 
-After this extraction it is the largest top-level app function (480 lines).
-Recheck current code; isolate its final block from `_apply_safety_state_override`
-through `_compute_sizing_hint`, leaving `build_decision_result(locals())` in place.
-Use explicit inputs/dependencies and return the same decision_outcome, dec, col,
-buy_amount and sizing_hint, preserving the locals consumed by result assembly.
-Do not alter ordering, thresholds, labels, ETF/holding exceptions, data-error
-zero sizing, providers or cache policy. Freeze representative old outputs and
-use the existing decision contracts before/after; do not regenerate goldens.
-Include data-error, holding, ETF/core-DCA and panic scenarios in exact parity.
-Commit/push, verify deployment and leave exactly one bounded next task.
+It remains the largest top-level app function at 467 lines. Recheck current
+code; isolate from `smc_structure_labels = build_smc_structure_labels(...)`
+through the `smc_insight = build_smc_insight(...)` assignment, into one pure helper
+with explicit inputs/dependencies. Return the existing structure/event/liquidity/
+FVG/PD/action/insight values to the same locals; preserve result assembly.
+Do not change detection algorithms, drawing, thresholds, labels, providers or
+cache policy. Freeze existing outputs, compare unrounded results, input
+nonmutation and exact dependency call order. Run the decision gate before/after.
+Do not regenerate goldens. Commit/push, verify deployment and leave one next task.
 
 ## Evidence and Remaining Limits
 
-- Latest: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
+- Latest: [Decision finalization extraction](docs/maintenance/20261107_decision_finalization_extraction.md).
+- Previous: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).
 - Previous: [Theme group display extraction](docs/maintenance/20261107_theme_group_display_extraction.md).
 - Connection: [Held-view connection review](docs/maintenance/20261107_held_view_connection_review.md).
 - Performance: [MFI window optimization and measurements](docs/maintenance/20261106_mfi_window_review.md).
