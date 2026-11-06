@@ -90,3 +90,40 @@ def test_application_publishes_after_enrichment_and_stamps_only_calculated_sourc
     calculation = next(n for n in ast.walk(branch) if isinstance(n, ast.If) and ast.unparse(n.test) == "_run_dash or not _dash_valid")
     assert any(isinstance(n, ast.Call) and ast.unparse(n.func) == "stamp_portfolio_signal_context" for n in ast.walk(calculation))
     assert not any(isinstance(n, ast.Call) and ast.unparse(n.func) == "stamp_portfolio_signal_context" for s in calculation.orelse for n in ast.walk(s))
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("allowed", [False, True])
+def test_rendered_precision_envelope_matches_summary_and_commentary(legacy, allowed):
+    from stock_lab_core.portfolio_commentary import holding_commentary
+
+    final = {"final_label": "분할 가능" if allowed else "매수 금지",
+             "execution_allowed": allowed, "block_count": 0 if allowed else 2,
+             "core_missing_ids": []}
+    envelope = {"ticker": "SOXL", "rows": [{"상태": "통과"}], "summary": final}
+    state = {}
+    decision = {"input_basis": {"가격자료기준일": "2026-11-05"},
+                "execution_workflow": {"게이트상태": "실행가능"}}
+    capture_precision_review(state, "account-a", "SOXL", decision, envelope)
+    assert state[PRECISION_KEY]["reviews"]["SOXL"]["final"] == final
+    if legacy:
+        state[PRECISION_KEY]["reviews"]["SOXL"]["final"] = deepcopy(envelope)
+    before = deepcopy(state)
+    _, details = build_holding_review(pd.DataFrame([{"티커": "SOXL", "보유량": 1}]),
+                                     pd.DataFrame(), state[PRECISION_KEY], "account-a")
+    assert details["SOXL"]["ready"]["execution_allowed"] is allowed
+    assert details["SOXL"]["ready"]["final_check_label"] == final["final_label"]
+    assert f"정밀 최종 체크: {final['final_label']}" in holding_commentary(details["SOXL"], {})["next_step"]
+    assert state == before
+    final["final_label"] = "mutated"
+    assert details["SOXL"]["precision"]["final"]["final_label"] != "mutated"
+
+
+@pytest.mark.parametrize("summary", [None, [], "invalid", {}])
+def test_malformed_precision_envelope_does_not_grant_execution(summary):
+    state = {}
+    capture_precision_review(state, "account-a", "RAM", {"execution_workflow": {"게이트상태": "실행가능"}},
+                             {"summary": summary, "execution_allowed": True, "final_label": "분할 가능"})
+    _, details = build_holding_review(pd.DataFrame([{"티커": "RAM", "보유량": 1}]),
+                                     pd.DataFrame(), state[PRECISION_KEY], "account-a")
+    assert not details["RAM"]["ready"]["execution_allowed"]

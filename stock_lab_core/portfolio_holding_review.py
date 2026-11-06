@@ -27,6 +27,14 @@ def display_time(value):
     return stamp.tz_convert("Asia/Seoul").strftime("%m/%d %H:%M KST") if pd.notna(stamp) else "미확인"
 
 
+def _final_check_summary(value):
+    """Accept the renderer's envelope and existing summary-only snapshots."""
+    if not isinstance(value, Mapping):
+        return {}
+    summary = value.get("summary") if "summary" in value else value
+    return dict(summary) if isinstance(summary, Mapping) else {}
+
+
 def capture_precision_review(state, context, ticker, decision, final_check, *, valuation=None, captured_at=None):
     """Store only completed, scoped evidence; never persist account data externally."""
     key = portfolio_flow_ticker_key(ticker)
@@ -37,7 +45,7 @@ def capture_precision_review(state, context, ticker, decision, final_check, *, v
     reviews[key] = deepcopy({
         "basis": decision.get("input_basis", {}),
         "workflow": decision.get("execution_workflow", {}),
-        "final": final_check,
+        "final": _final_check_summary(final_check),
         "stop": decision.get("rr_stop"),
         "stop_source": decision.get("rr_stop_source"),
         "valuation": valuation if isinstance(valuation, Mapping) else {},
@@ -65,7 +73,10 @@ def build_holding_review(holdings, signals, precision_cache, context):
         if not pd.notna(qty) or qty <= 0:
             continue
         signal = signal_map.get(key, {})
-        review = precision.get(key, {})
+        review = dict(precision.get(key, {}))
+        if review:
+            # Also read envelopes captured by the previous deployed version.
+            review["final"] = _final_check_summary(review.get("final"))
         basis = review.get("basis") or {}
         ready = build_execution_readiness(review.get("workflow"), review.get("final"))
         name = text(holding.get("자산명"), ticker)

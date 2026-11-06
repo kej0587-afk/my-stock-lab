@@ -167,5 +167,28 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   1,166 passed, zero failures/errors/skips or source changes during verification,
   69.086s. Evidence: cache/refactor_checks/all_ubu0295i/summary.json.
   Different test counts mean these are not before/after speed measurements.
-- Post-deploy board-to-portfolio Cloud verification remains to be observed;
-  this change does not claim an exhaustive audit of every holding or tab.
+- Pushed 74cf9b6e and verified live: board completed at 16:05 KST; portfolio
+  connected all 10 held tickers with price reference dates (previously zero).
+  SOXL displayed board saved 16:05 and precision calculated 16:03 separately.
+  Both retained market-defense/new-buy restrictions. This is not an exhaustive
+  audit of every holding or tab.
+
+### Follow-Up Found During Live Verification
+
+- Portfolio commentary still called SOXL's completed final check "unconfirmed".
+  render_pre_buy_final_check_panel returns {ticker, rows, summary}, whereas
+  portfolio readers expected final_label/execution_allowed directly on final.
+- Normalize this envelope at capture AND read time in portfolio_holding_review,
+  preserving older summary-only snapshots and already-stored envelopes. Keep
+  the original calculated summary, missing-data veto and account isolation;
+  no inference from positive labels and no rescore. Malformed summaries remain
+  unconfirmed, never execution approval. Do not mutate existing session evidence.
+- Follow-up selected gate: 1,174 passed, zero failures/errors/skips or source
+  mutation, 71.414s. Evidence: cache/refactor_checks/all_x7o0zklq/summary.json.
+  Covers renderer envelope/summary parity, old-cache reads, commentary labels,
+  allowed/blocked permissions and malformed results. Cloud follow-up pending.
+- Next bounded consistency review: the portfolio flow/replacement candidate
+  section can still show a reinforcement candidate while execution is withheld.
+  Inspect its basis and clarify candidate versus permission before any rule
+  change. The narrow comparison table also puts the execution gate offscreen;
+  prioritize its presentation over adding new scores/providers.
