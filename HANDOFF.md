@@ -19,15 +19,25 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-In progress: exact KR daily-history request reuse, verified locally against
-immutable `24244c3e`. Fixed responses: 8 -> 5 actual identical requests; frames
-and all non-wrapper app functions match. Focused tests 77 passed. Prices gate
-has the same pre-existing AST-freeze failure before/after (259 / 265 passed);
-see [request reuse record](docs/maintenance/20261107_kr_history_request_reuse.md).
-Production before/after verification is pending the code deployment; do not
-claim a Cloud speedup or old-module application until scope counters appear.
+Latest code: **`661431f9`**, exact KR daily-history request reuse, pushed and
+verified executing in production (`kr_history_scope.enabled_v1=1`, 277 lookups).
+Only identical resolved provider/date/count requests share successful copied
+frames in one run. Existing TTL/failure/refresh and decision rules unchanged.
+Fixed-response requests 8 -> 5; actual local Naver duplicate requests 3 -> 1
+(1.125 -> 0.352s), with all 244-row frames exactly equal. All non-wrapper app
+functions match immutable `24244c3e`; decision golden checks pass.
+Focused tests 77 passed. Prices gate retains the same pre-existing structural
+AST-freeze failure before/after (259 / 265 passed); no golden rebasing.
 
-Latest task: **production Today Check bottleneck measurement**, on build
+Adjacent full production runs: **89.438 -> 70.245s**, same 95-row count/settings,
+but provider caches were warmer afterward and new-scope reuse was **zero**.
+Do not attribute the 19.193s reduction or 416 -> 277 KR requests to this change.
+Before had one recovered overseas fallback ConnectTimeout; after none.
+No reboot required, no account changes. See the exact IDs, cache limitations,
+request proof and private evidence in the
+[request reuse record](docs/maintenance/20261107_kr_history_request_reuse.md).
+
+Previous task: **production Today Check bottleneck measurement**, on build
 `bd65d26b`, measurement `e36d58ac51f7463b9d86820aa3c4f8f9` (2026-11-07
 04:05:46–04:07:24 KST). Complete 95-row calculation: 98.540s wall, 101.682s
 including entry/bookkeeping. Standard refresh, not fully cold; unchanged scope.
@@ -57,7 +67,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
+Latest record: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
 
 ## Preserved History
 
@@ -73,25 +83,23 @@ Latest record: [Today Check bottleneck measurement](docs/maintenance/20261107_to
 
 ## Next Task Only
 
-**Investigate and deduplicate only identical KR daily-history requests within one run.**
+**Measure one complete provider-cold production run to quantify actual KR duplicate reuse.**
 
-Start with `kr_flow_history.py::load_kr_flow_history`, the explicit period-start
-caller in `prices.py`, and the default-start caller in `money_flow.py`. Record
-sanitized exact-request identity/call-site counts before assuming the measured
-414 requests are redundant. Normalize identity only when provider code, effective
-start/end, request count and adjustment semantics are identical. Existing exact
-period scopes already reuse 553 calls; do not replace them with broad range slicing.
-Preserve timezone boundaries, frame/index/dtype/attrs, defensive copies, failure
-cooldown and manual refresh. Do not alter TTLs, concurrency, data scope, rules or
-portfolio values. If exact duplicates are not demonstrated, stop speculative reuse.
-Run the prices regression gate before/after code changes, fixed-response parity
-and request-count checks, then one comparable completed production calculation.
-Report wall/self/parallel time and actual requests separately. Keep private
-exports outside Git; commit/push verification and update this handoff.
+Wait until the 900s KR provider TTL has elapsed since previous price/flow use;
+avoid warming those screens first. Retain account/filter settings, run Today
+Check once and download the matching completed JSON. Record upstream cache
+misses plus `kr_history_scope.unique/repeat/reuse/default_start/explicit_start`,
+wall/category times and errors. Zero repeats is a valid finding. Do not call
+the last 70.245s warm run a cold benchmark or attribute its reduction to reuse.
+If cold duplicates are absent, document that alias reuse is not the dominant
+path; do not widen history ranges/TTL or change rules to force hits. No additional
+optimization in this measurement task. Keep private exports outside Git and
+commit/push the measured conclusion and exactly one next task.
 
 ## Evidence and Remaining Limits
 
-- Latest: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
+- Latest: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
+- Previous: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
 - Previous: [SMC context extraction](docs/maintenance/20261107_decision_smc_extraction.md).
 - Previous: [Decision finalization extraction](docs/maintenance/20261107_decision_finalization_extraction.md).
 - Previous: [Theme stock display extraction](docs/maintenance/20261107_theme_stock_display_extraction.md).

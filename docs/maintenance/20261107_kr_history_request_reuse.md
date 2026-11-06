@@ -52,7 +52,69 @@ Private local evidence: `cache/kr_history_scope_benchmark.json`,
 
 ## Production verification
 
-Pending deployment and matching completed-run exports. Previous measurement
-`e36d58ac51f7463b9d86820aa3c4f8f9` was 98.540s on 95 rows, but hours earlier;
-do not treat it as a controlled before/after test. Record a fresh pre-deployment
-run and the deployed result, actual scope reuse, cache state and limitations.
+Code **`661431f9`** pushed and executed on production without a reboot. Both
+completed JSON IDs matched the UI, and build IDs matched the respective code.
+No tracked stale report modules or restart warning. `enabled_v1=1` and 277 reader
+lookups prove the new request path actually executed (not just new disk files).
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| ID | `139e8dee026d4f68b479027bfa872c80` | `cdff8f9b4f4445c8b0572bda598272d1` |
+| Build | `24244c3e` | `661431f9` |
+| Start, 2026-11-07 KST | 08:45:09 | 08:48:31 |
+| Full Today Check wall | 89.438s | 70.245s |
+| Script including entry | 94.137s | 72.897s |
+| Registered / calculated / auto-flow | 81 / 95 / 12 | 81 / 95 / 12 |
+| Prices active union | 49.904s | 39.526s |
+| Indicators active union | 17.911s | 18.259s |
+| External-data active union | 24.321s | 9.461s |
+| KR HTTP requests | 416 | 277 |
+| KR HTTP active union | 29.750s | 14.976s |
+| New scope unique / repeat / reuse | unavailable | 277 / 0 / 0 |
+
+**The 19.193s reduction is NOT demonstrated savings from this optimization.**
+Both use normal refresh (not fully cold); underlying provider caches survived
+between runs. All after-run reader calls had default starts; explicit-period
+providers were served upstream and never entered the new memo. Thus the 139
+fewer KR requests are not 139 new-scope hits. Before also had one recovered
+`flow_overseas_fallback` ConnectTimeout; after had zero instrumented errors.
+Category unions overlap and must not be added. Account/filter settings stayed
+unchanged, but live prices/automatic candidate identities were not frozen.
+
+The existing menu's chart refresh only clears outer price caches, not the KR
+provider cache; the authenticated viewer's Streamlit menu had no global-clear
+control. No broader cache reset or account edits were performed. Do not run
+repeated warm calculations to manufacture a speedup. The older 98.540s sample
+`e36d58ac51f7463b9d86820aa3c4f8f9` is not the adjacent baseline.
+
+Private completed profiles and screenshot in `C:/Users/82amf/Downloads/`:
+`today_queue_139e8dee026d4f68b479027bfa872c80.json`,
+`today_queue_cdff8f9b4f4445c8b0572bda598272d1.json`,
+`stock_lab_kr_history_reuse_20261107.jpg`. Profile SHA-256 respectively:
+`07bd6c2f065959b1d0f027ea4014bb442fbf84291c0d700e339d714365792085`,
+`ffba9363ee4982ba31af5feb2fbd6b32d1f543aa15ad24eff5337e0c463a0246`.
+
+## Actual identical-request check (local network, not Cloud throughput)
+
+To separate working reuse from the warm production path, replayed three real
+Naver requests via the immutable original reader and the new reader: `005930.KS`
+with default start, then `005930` and `005930.ks` with the identical explicit
+one-year start. Both readers used the same 2026-11-07 KST end date. No private
+holdings were sent; this is a public-symbol transport check.
+
+- Original: three HTTP requests/responses, **1.1247s**.
+- New: one unique HTTP request/response, two proven scope reuses, **0.3524s**.
+- All three returned **244 rows**; exact frame/index/dtype/attrs comparisons pass.
+- Evidence: ignored `cache/kr_history_scope_live.json`. This single sequential
+  network pair also has connection/provider variability; the request-count and
+  data-equivalence results are stronger evidence than its elapsed-time ratio.
+
+## Next bounded task and limits
+
+Measure one completed production run after the KR provider TTL has expired,
+before other price/flow screens warm it. Keep the same settings and record all
+scope counters, including zero repeats. Do not add more optimization until the
+real cold-path duplication is established. If it is zero, document that the safe
+alias memo is not the current bottleneck; do not widen ranges or TTL to gain hits.
+The pre-existing structural regression-gate failure remains separately recorded;
+no test baseline or investment rule was changed to conceal it.
