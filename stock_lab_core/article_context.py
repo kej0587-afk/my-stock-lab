@@ -388,8 +388,33 @@ def enrich_article_context(result, now, *, priority_context=None):
                                not market_wrap(row), not selected_material(row),
                                -(_date(row.get("published_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp()))
     selected, market_counts, seen, wrap_markets = [], {}, set(), set()
+    # Reserve the same top-three editorial stories shown by the report before
+    # applying diversity quotas. Unsupported publishers are explicit, not fetched.
+    if priority_context:
+        from stock_lab_core.report_brief import build_news_brief
+        report_context = dict(priority_context)
+        report_context["sessions"] = {key: value.get("date") if isinstance(value, dict) else value
+                                      for key, value in priority_context.get("sessions", {}).items()}
+        report_context["current_news_sessions"] = priority_context.get("current_sessions", {})
+        all_rows = [row for bucket in buckets for row in result.get(bucket, [])]
+        primary = build_news_brief(report_context, all_rows, [], now, limit=3)["article_keys"]
+        by_link = {row.get("link"): row for row in all_rows}
+        for link in primary:
+            row = by_link[link]
+            if not _safe_url(link):
+                row["body_status"] = "unsupported_source"
+                continue
+            selected.append(row)
+            seen.add(link)
+            market = row.get("market")
+            group = (market, row.get("category", "시장") if market == "GLOBAL" else "")
+            market_counts[group] = market_counts.get(group, 0) + 1
+            if market_wrap(row):
+                wrap_markets.add(market)
     strategy_selected = False
     for row in rows:
+        if len(selected) >= MAX_ARTICLES:
+            break
         market, link = row.get("market"), row.get("link")
         strategy = is_strategy_article(row.get("title", ""))
         # GLOBAL is a provenance bucket, not a single market: keep topic variety.

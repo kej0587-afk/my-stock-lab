@@ -93,8 +93,17 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     frames = repair_held_us_closes(frames, us_quotes, quote_now)
     frames, price_alignment = align_us_report_frames(
         frames, tickers - set(REPORT_ONLY_DAILY), now, reload_batch=load_price_frames_batch if price_frames is None else None)
+    from stock_lab_core.report_price_quality import validate_report_prices
+    etfs = set(SECTORS) | set(ROTATION_UNIVERSE)
+    etfs.update(text(first(row, "티커", "ticker")) for row in records(summary_rows) if row.get("is_etf") is True)
+    frames, quality_notes, quality_issues, daily_overrides = validate_report_prices(frames, us_quotes, quote_now, etf_tickers=etfs)
+    close_basis_notes.extend(quality_notes)
     observations = {ticker: price_observation(frames.get(ticker), ticker, now) for ticker in tickers}
+    observations.update(daily_overrides)
     for ticker in price_alignment["unaligned"]:
+        if (ticker in daily_overrides and observations[ticker]["date"] == price_alignment["expected_date"]
+                and observations[ticker]["previous_date"] == price_alignment["previous_date"]):
+            continue
         # A missing preceding session makes a multi-day change, not a daily one.
         if observations[ticker]["date"] == price_alignment["expected_date"]:
             observations[ticker]["return"] = None
@@ -264,5 +273,5 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
                                                    categories=news_categories, per_category=news_per_category,
                                                    use_cache=True, include_article_bodies=True))
     result["price_basis_notes"] = close_basis_notes
-    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes))
+    result["missing"] = list(dict.fromkeys(result.get("missing", []) + price_alignment["missing"] + reference_missing + pending_closes + quality_issues))
     return result

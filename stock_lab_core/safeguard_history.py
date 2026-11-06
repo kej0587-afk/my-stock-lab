@@ -91,4 +91,16 @@ def merge_safeguard_history(current, saved, session_days, now, *, retain_without
                 item["sources"] = list({s.get("source_url"): {k: s.get(k, "") for k in ("source", "source_url")}
                                         for s in sources if isinstance(s, dict) and safe_link(s.get("source_url"))}.values())[:8]
             grouped[key] = item
+    # Unknown direction is missing information, not a second confirmed halt.
+    # Only coalesce when exactly one known direction exists for the same event.
+    for key in list(grouped):
+        market, kind, direction, day = key
+        if direction != "unknown":
+            continue
+        matches = [other for other in grouped if other[:2] == key[:2]
+                   and other[3] == day and other[2] != "unknown"]
+        if len(matches) == 1:
+            target = grouped[matches[0]]
+            sources = _sources(target) + _sources(grouped.pop(key))
+            target["sources"] = list({s["source_url"]: s for s in sources}.values())[:8]
     return sorted(grouped.values(), key=lambda row: (row["date"], row["market"]), reverse=True)[:32]

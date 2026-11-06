@@ -122,6 +122,7 @@ def election_context_lines(context, news, summary_rows, now):
         lines += ["", "조건별 근거 미연결 업종: " + ", ".join(missing)]
     # Preserve claims and time; do not convert projections into certified outcomes.
     progress = [r for r in elections if re.search(r"개표|당선|의석|승리|results|wins?|seats?|counting", r.get("title", ""), re.I)
+                and not re.search(r"시청률|개표방송|시청자|방송.{0,8}(?:순위|1위)|ratings|viewership", r.get("title", ""), re.I)
                 and not re.search(r"시나리오|경우|만약|전망|예상|확률|scenario|could|would|polls", r.get("title", ""), re.I)
                 and stamp(r.get("published_at") or r.get("published")) >= now - timedelta(hours=24)]
     lines += ["", "**개표 관련 최신 보도**"]

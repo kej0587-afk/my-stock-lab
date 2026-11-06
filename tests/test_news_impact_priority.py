@@ -31,12 +31,14 @@ def test_same_session_crash_beats_flash_and_company_body_in_both_stages(monkeypa
     monkeypatch.setattr(article_context, "_article", fetch)
     article_context.enrich_article_context(result, NOW, priority_context=CONTEXT)
     assert calls[0] == close["link"]
-    assert flash["link"] not in calls
+    # The visible top three now take precedence over the old one-wrap quota.
+    assert flash["link"] in calls
     assert len(calls) <= article_context.MAX_ARTICLES
     before = deepcopy(result)
     brief = build_news_brief(CONTEXT, result["session_news"], [], NOW, limit=1)
     assert brief["article_keys"] == [close["link"]]
     assert "제목만 확인" in "\n".join(brief["lines"])
+    assert "본문 조회 실패: 본문 응답 시간 초과" in "\n".join(brief["lines"])
     assert result == before
     reused = build_news_brief(CONTEXT, result["session_news"], [], NOW, limit=1,
                               exclude_keys=[close["link"]])

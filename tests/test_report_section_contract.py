@@ -60,7 +60,15 @@ def test_full_output_preserved_across_sessions(clock, held):
     args = report_case(clock, held)
     before = deepcopy(args)
     output = report_sections(**args)
-    assert digest(output) == EXPECTED[f"{clock}/{held}"]
+    # Approved Report 33 additions: explicitly state end-weight limitations.
+    # Retain the old digest for every other byte, including all numeric output.
+    additions = {
+        "- 비중 기준은 점검 입력의 현재 평가비중(기간 시작 비중 아님)입니다. 가격 기준시각과 비중 산출시각은 다를 수 있습니다. 현재비중 × 누적 등락은 노출 참고값이며 실제 기간 손익이 아닙니다.",
+        "- 시작 비중은 시작 총자산·수량·현금·환율·중간 거래가 있어야 복원됩니다. 현재비중 ÷ (1+수익률)만으로는 시작 총자산 분모가 복원되지 않아 시작비중 기여도를 추정해 채우지 않습니다.",
+    }
+    assert all(output[0].count(line) == 1 for line in additions)
+    legacy = ([line for line in output[0] if line not in additions], output[1])
+    assert digest(legacy) == EXPECTED[f"{clock}/{held}"]
     assert args == before
     lines, _ = output
     assert lines.count("## 내 보유 종목 영향") == 1

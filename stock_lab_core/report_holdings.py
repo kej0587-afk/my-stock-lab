@@ -145,6 +145,8 @@ def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):
             value = number(current.get("return"))
             if value is None or not current.get("date") or current["date"] < own.get("date", ""):
                 continue
+            if value * multiplier < -1:
+                return "배수 환산 무효: -100% 미만 · 기초자산 분할/기준가 확인 필요", abs(multiplier) > 1
             from stock_lab_core.report_presentation import kst_time
             return (f"다음 한국장 갭 예상 영향(추정): {base} {value * 100:+.2f}% × {multiplier:g} = "
                     f"{value * multiplier * 100:+.2f}% · 미국 {current['date']} 장중 진행·확정 아님 · "
@@ -158,6 +160,8 @@ def holding_estimate(row, observations, sessions, now, *, intraday_prices=None):
             return f"미국 {expected} 종가 영향은 한국 {own['date']}에 이미 반영 · 다음 세션 자료 대기(중복 계상 안 함)", abs(multiplier) > 1
         if not domestic and own.get("date") and obs.get("date") != own["date"]:
             continue
+        if value * multiplier < -1:
+            return "배수 환산 무효: -100% 미만 · 기초자산 분할/기준가 확인 필요", abs(multiplier) > 1
         label = "BTC(미국장 마감→마감)" if base == "BTC-US-CLOSE" else base
         prefix = ("월요일 갭 예상 영향(추정)" if now.weekday() == 6 else "다음 한국장 갭 예상 영향(추정)") if domestic else "일간 배수 환산(추정)"
         if domestic and now.weekday() < 5 and now.hour >= 9:

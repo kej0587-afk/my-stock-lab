@@ -27,6 +27,7 @@ def current_state_lines(context, states, now, metrics):
         basis = ("장중" if group == "KR" else "종가") if obs else "미연결"
         kr_parts.append(f"{INDEX_BOARD[ticker]} {_pct(obs.get('return'))}"
                         + (f"({obs['date']} {basis})" if obs else ""))
+    kr_parts.extend(_kr_risk_brief(context, states, checked))
     window = us_extended_session(now)
     phase = "정규장 장중" if states["US"]["phase"] == "intraday" else window.get("label", "정규장 외")
     us_parts = []
@@ -61,6 +62,33 @@ def current_state_lines(context, states, now, metrics):
     return ["**한국 현재** · " + " / ".join(kr_parts),
             f"**미국 현재 · {phase}** · {us_line} (미확정·지연 가능)",
             "**계좌** · " + account]
+
+
+def _kr_risk_brief(context, states, now):
+    """Reuse dated evidence already collected; no extra network or gate changes."""
+    from stock_lab_core.report_intraday import _latest_observation
+    from stock_lab_core.public_market_data import validated_investor_flows
+    from stock_lab_core.market_safeguards import safeguard_events
+    day = (states["KR"].get("active_date") if states["KR"]["phase"] == "intraday"
+           else context.get("sessions", {}).get("KR"))
+    parts = []
+    _, obs = _latest_observation("396500.KS", "KR", context, states, now)
+    if obs and obs.get("date") == day:
+        parts.append("한국 반도체 " + _pct(obs.get("return")))
+    flows = validated_investor_flows(context.get("public_market_evidence"), session_date=day,
+                                    checked_at=context.get("market_evidence_checked_at"))
+    flow = [f"{r['label']} {r['value']:+,.0f}억" for r in flows
+            if r["market"] == "KOSPI" and r["label"] in {"외국인", "기관"}]
+    if flow:
+        parts.append("KOSPI 잠정 순매수 " + "·".join(flow))
+    events = safeguard_events(context.get("current_session_news", []) + context.get("session_news", []), now)
+    events += context.get("safeguard_events", [])
+    names = {"circuit_breaker": "서킷브레이커", "sidecar": "사이드카"}
+    observed = sorted({r["market"] + " " + names[r["kind"]] for r in events
+                       if r.get("date") == day and r.get("kind") in names})
+    if observed:
+        parts.append("발동 보도: " + "·".join(observed) + "(근거는 안전장치 표)")
+    return parts
 
 
 def market_board_lines(context, states, now):

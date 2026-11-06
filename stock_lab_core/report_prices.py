@@ -26,7 +26,8 @@ def align_us_report_frames(frames, tickers, now, *, reload_batch=None):
     indices = [price_observation(frames.get(t), t, now) for t in ("^GSPC", "^IXIC", "^DJI")]
     reference = max(indices, key=lambda row: (row["date"], row.get("previous_date", "")))
     expected = reference["date"]
-    status = {"expected_date": expected, "requested": [], "refreshed": [], "unaligned": [], "missing": []}
+    status = {"expected_date": expected, "previous_date": reference.get("previous_date", ""),
+              "requested": [], "refreshed": [], "unaligned": [], "missing": []}
     if not expected:
         return result, status
     symbols = sorted(t for t in tickers if not t.endswith((".KS", ".KQ", "=X", "=F", "-USD"))

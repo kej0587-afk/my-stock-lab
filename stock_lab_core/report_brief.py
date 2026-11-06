@@ -165,7 +165,10 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         else:
             reading = ("본문 확인·자동 해석 근거 부족" if row.get("body_status") == "no_supported_context"
                        else "제목만 확인(본문 해석 보류)")
-            detail = citation(dict(row, title=title)) + " · " + reading
+            from stock_lab_core.article_context import body_unavailable_reason
+            status = ("본문 조회 성공" if row.get("body_status") == "no_supported_context" else
+                      ("본문 조회 실패: " if row.get("body_status") else "본문 미시도: ") + body_unavailable_reason(row))
+            detail = citation(dict(row, title=title)) + " · " + reading + " · " + status
         detail += f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
         lines.append(" | ".join(_cell(value) for value in (theme, detail, link)))
     if not selected:

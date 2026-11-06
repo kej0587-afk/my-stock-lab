@@ -410,6 +410,19 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     evidence = [("시장", " / ".join(fact["phrase"] for fact in facts)),
                 ("배경 보도", " · ".join(claims) + "(기사 주장·기여도 미확정)" if claims else "당일 시장 방향과 연결할 배경 보도 미확보"),
                 ("매크로", macro_text), ("중기 가격·거래량", flow_text)]
+    if (facts[0]["live"] and (facts[0]["change"] or 0) < 0 and not market_claims.get("KR")
+            and (facts[1]["change"] or 0) < 0):
+        # A prior overseas session is context, never relabeled as a KR cause.
+        prior = facts[1]
+        candidates = [row for row in news if row.get("market") == "US"
+                      and row.get("session_date") == prior.get("date") and _news_matches_date(row, prior)
+                      and stamp(first(row, "published_at", "published")) is not None
+                      and 0 <= (now - stamp(first(row, "published_at", "published"))).total_seconds() <= 96 * 3600
+                      and re.search(r"급락|투매|하락|sell.?off|slump|plunge", text(row.get("title")), re.I)]
+        if candidates:
+            row = max(candidates, key=lambda r: stamp(first(r, "published_at", "published")))
+            evidence.append(("해외 전이 참고(기사 주장)", citation(row)
+                             + f" · 미국 {prior['date']} 세션, 한국 당일 원인 확정 아님·제목 기준"))
     if breadth:
         evidence.insert(1, ("미국 시장 전체", breadth))
     sector_text = broad_sector_reading(context)
