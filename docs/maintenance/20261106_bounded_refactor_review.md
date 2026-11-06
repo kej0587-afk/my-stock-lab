@@ -270,7 +270,7 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   requests. yfinance download counters are provider API calls, not verified
   wire requests inside yfinance. Instrumentation never records arguments/keys.
 - Before optimization, Cloud 96-row full calculations with flow refresh and
-  detail enabled: after reboot 106.851s (5d2ea741), then warm 67.478s
+  detail enabled: after reboot 106.851s (5d2ea741), then warm 67.476s
   (12a00d2f). KR HTTP requests 405 -> 0; KR cached reuses 13 -> 277.
   The first run's KR HTTP summed time 92.76s is 25.29s active wall, not 92.76s
   of page delay. Scoped histories were reused 548 times on each run.
@@ -288,3 +288,26 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   identical requests and results. This is synthetic I/O overlap evidence, NOT
   a measured Cloud full-calculation improvement. Post-deploy live comparison
   is recorded below after measurement; no historical 120s claim is reused.
+- Deployed optimization 2834ff49; owner reboot and identical account selection,
+  refresh-flow and flow-detail settings. The 96-row Cloud runs after reboot:
+  106.327s (992cf951), then warm 61.367s (5b77f19d). Both have zero errors.
+  App-entry-inclusive script times: cold 110.359 -> 109.976s; warm
+  72.119 -> 65.885s. Compare cold with cold and warm with warm, not their mean.
+  Full-run first-load improvement is negligible (0.524s); warm difference is
+  6.108s, but neither single pair isolates network/CPU variability. No claim of
+  guaranteed full-app speedup or completion under 60 seconds.
+- Cold KR HTTP count remained exactly 405; warm remained 0 (277 cache reuses).
+  Scoped history hits remained 548 on both sides. Provider periods/cache policy
+  were not shortened to achieve the observed times. Cold 1y/10y phase sums
+  10.648 -> 9.235s, while RS 3mo 7.144 -> 10.938s; batch-provider summed wait
+  8.965 -> 16.872s. Network variance masks scheduling gains in the full run.
+- Strengthened the whole-summary regression to run the legacy sequential
+  preload before the new preload: full result DataFrames and saved financial
+  scores equal for cold/warm and empty/error cases. Re-ran the selected full
+  gate: 1,340 passed, 104.248s, zero failures/errors/skips/source mutations.
+  Evidence: cache/refactor_checks/all_xk2iycr6/summary.json.
+- Actual authenticated UI: full result 96 rows, execution 0, caution 96,
+  hard blocks 5, same as the before-screen. Final timer 61.4s plus entry 4.4s;
+  completed diagnostic ID matches the downloaded JSON. No UI/rule changes.
+  Local screenshot: Downloads/stock_lab_performance_verified_20261106.png.
+  Personal diagnostic JSONs/screenshots are kept local, not committed.

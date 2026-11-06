@@ -182,7 +182,10 @@ def test_mtf_reuses_only_weekly_monthly_indicators(app_module, monkeypatch):
 @pytest.mark.parametrize("warm", [False, True])
 @pytest.mark.parametrize("failed_rows", [False, True])
 def test_entire_summary_matches_old_rs_and_mtf_paths(app_module, monkeypatch, warm, failed_rows):
+    from tests.test_kr_preload_connections import legacy_preload
+
     app = app_module
+    current_preload = prices.prefetch_price_data_parallel
     basis_builder = app.build_signal_basis
     monkeypatch.setattr(app, "build_signal_basis", lambda source, context: basis_builder(
         source, context, calculated_at="2026-10-29 16:00:00 KST"))
@@ -219,6 +222,7 @@ def test_entire_summary_matches_old_rs_and_mtf_paths(app_module, monkeypatch, wa
         prices.load_price_df.clear()
         monkeypatch.setattr(app, "prefetch_rs_price_frames", lambda *a: {})
         monkeypatch.setattr(app, "build_precision_timeframe_snapshot", lambda label, df, **kw: snapshot(label, df))
+        monkeypatch.setattr(prices, "prefetch_price_data_parallel", legacy_preload)
         baseline = app.get_all_summary((), "개인모드", items)
         baseline_scores = dict(app.st.session_state.fin_score_map)
         if not warm:
@@ -226,6 +230,7 @@ def test_entire_summary_matches_old_rs_and_mtf_paths(app_module, monkeypatch, wa
             prices.load_price_df.clear()
         monkeypatch.setattr(app, "prefetch_rs_price_frames", prefetch)
         monkeypatch.setattr(app, "build_precision_timeframe_snapshot", snapshot)
+        monkeypatch.setattr(prices, "prefetch_price_data_parallel", current_preload)
         app.st.session_state.fin_score_map = {}
         optimized = app.get_all_summary((), "개인모드", items)
         assert len(baseline) == len(items)
