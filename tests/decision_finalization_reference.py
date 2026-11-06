@@ -31,7 +31,8 @@ def final_block(fn):
 
 
 def restore_finalization_for_ast(fn):
-    fn = deepcopy(fn)
+    from tests.decision_smc_reference import restore_smc_for_ast
+    fn = restore_smc_for_ast(fn)
     start, end = final_block(fn)
     old_start, old_end = final_block(baseline())
     fn.body[start:end] = deepcopy(baseline().body[old_start:old_end])

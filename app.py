@@ -360,6 +360,7 @@ from stock_lab_core.decision_followup import select_portfolio_followup_decision
 from stock_lab_core.decision_inputs import prepare_decision_price_inputs, prepare_decision_technical_inputs
 from stock_lab_core.decision_signals import build_entry_signal_context
 from stock_lab_core.decision_finalization import finalize_decision_sizing
+from stock_lab_core.decision_smc import build_decision_smc_context
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
@@ -16509,18 +16510,14 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
     _bench_info = get_auto_benchmark_info(ticker, name, asset_class, is_etf)
     sector_flow_state = get_sector_flow_state(_bench_info.get("sector_bench", ""))
 
-    smc_structure_labels = build_smc_structure_labels(trend, rs_label, macd_state)
-    ext_structure = smc_structure_labels["ext_structure"]
-    int_structure = smc_structure_labels["int_structure"]
-
-    int_event, ext_event = detect_structure_event(df, levels)
-    liq_state = detect_liquidity_grab(df, levels)
-    fvg_info = detect_recent_fvg(df)
-    pd_zone = get_pd_zone(df)
-    smc_action = summarize_smc_action(ext_structure, int_structure, int_event, ext_event, liq_state, fvg_info, pd_zone)
-
-    smc_insight = build_smc_insight(
-        rsi_now, mfi_now, pct_b_now, sqz_status, trend, rs_label, rs_slope_label
+    (smc_structure_labels, ext_structure, int_structure, int_event, ext_event,
+     liq_state, fvg_info, pd_zone, smc_action, smc_insight) = build_decision_smc_context(
+        df=df, levels=levels, trend=trend, rs_label=rs_label, macd_state=macd_state,
+        rsi_now=rsi_now, mfi_now=mfi_now, pct_b_now=pct_b_now,
+        sqz_status=sqz_status, rs_slope_label=rs_slope_label,
+        build_smc_structure_labels=build_smc_structure_labels, detect_structure_event=detect_structure_event,
+        detect_liquidity_grab=detect_liquidity_grab, detect_recent_fvg=detect_recent_fvg,
+        get_pd_zone=get_pd_zone, summarize_smc_action=summarize_smc_action, build_smc_insight=build_smc_insight,
     )
 
     position_context = build_position_management_context(
@@ -19228,6 +19225,7 @@ def get_precision_build_info():
                         if name.startswith("stock_lab_core.account_performance") or name in {
                             "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.decision_inputs", "stock_lab_core.decision_signals", "stock_lab_core.leveraged_watch",
                             "stock_lab_core.decision_finalization",
+                            "stock_lab_core.decision_smc",
                             "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
