@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-06 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-07 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -19,6 +19,30 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded audit/fix: **`042c0bef`** pushed, following clean/equal `870c675a`.
+Compared the preserved Today snapshot through board/portfolio display paths and
+inspected authenticated Today, board, Precision and Portfolio screens. Found one
+reproduced lifecycle defect: first precision visit to an already-exempt ETF rewrote
+unchanged financial metadata and cleared all Today/board portfolio signal caches.
+`mark_fin_score_not_applicable_db` now skips that identical write. Actual input
+changes still save/invalidate. No scoring, thresholds, labels, amounts or gates changed.
+
+Baseline decision gate: **1039 passed** (`decision_sbu30koo`, 92.117s).
+Final decision gate: **1045 passed** (`decision_xuhsaf5x`, 88.248s), including six new
+exemption regression cases. Private 10-holding export replay: no display/handoff
+mismatch; it is not full OHLCV/precision recomputation. Cloud post-push verification
+passed in a new browser session: board calculated at 00:03 KST, precision completed
+at 00:04, then Portfolio retained all 10 connected results and showed the reviewed
+ETF's final execution restriction. New precision export reports `042c0bef`,
+`restart_required=false`, no stale modules. No Cloud reboot was needed.
+
+Latest audit: [Held-view connection review](docs/maintenance/20261107_held_view_connection_review.md).
+Private exports and the ignored replay script/result remain outside tracked files.
+Do not change unrelated zero-quantity/context semantics or loosen gates based on
+differences between earlier completed sessions and later live calculations.
+
+## Previous Performance Work
+
 Home checkout and upstream were clean/equal at `29d90955`. That state is preserved
 on local branch `codex/home-baseline-20261106-29d90955`; no home edits were discarded.
 Code commit **`ff2e8490`** is pushed. Use Git log for this later documentation commit.
@@ -35,7 +59,7 @@ Authenticated Cloud Precision Observatory export confirms `ff2e8490`, no stale
 modules, and loaded/disk/committed TA hashes equal. No extra reboot was required.
 Source SHA256: `c39ac3affbf312783e1c4ebc06ed38c9a85e130cacf0de2f4ac6de30167344ac`.
 
-## Verification
+## Previous Performance Verification
 
 - Before: selected `all` gate **1379 passed** (`all_um1dgosw`).
 - After: `prices` **260 passed** (`prices_25lfbci9`); selected `all` **1453 passed**
@@ -77,25 +101,26 @@ Live prices can change between runs; exact output equality was tested on fixed i
 
 ## Next Task Only
 
-**Compare held instruments across Today Check, the board, Precision Observatory
-and Portfolio Analysis using the same input snapshot.**
+**Extract one display-data preparation helper from `render_image_theme_flow_section`.**
 
-Use current holdings and matching reference/session dates. Check decisions,
-execution plans and final-check reasons, separating legitimate differences in
-purpose/timeframe from actual contradictions. Fix only a reproduced mismatch;
-otherwise report the audit without speculative edits. Preserve scores, labels,
-amounts and gates; do not mix threshold changes or another performance refactor in.
-Run relevant contracts before/after any fix, inspect the authenticated UI, commit/push
-verified changes, and replace this handoff with evidence and exactly one next task.
-No orders or account/holding edits are authorized by this maintenance task.
+It is currently the largest top-level function in app.py (521 lines before this
+audit). Recheck latest code first. Select one contiguous deterministic table/data
+preparation block, freeze representative current outputs, and move only that block
+to a pure helper with exact before/after equality. Run the relevant existing
+report/decision contracts before and after; inspect the money-flow UI. Preserve
+ordering, labels, ranking, scoring, dates, cache/provider behavior and account scope.
+No additional performance changes, whole-function rewrites, threshold changes or
+new features in this task. Do not claim speed gains from extraction alone.
+Commit/push, then leave exactly one next task with verification/deployment limits.
 
 ## Evidence and Remaining Limits
 
-- Latest: [MFI window optimization and measurements](docs/maintenance/20261106_mfi_window_review.md).
+- Latest: [Held-view connection review](docs/maintenance/20261107_held_view_connection_review.md).
+- Performance: [MFI window optimization and measurements](docs/maintenance/20261106_mfi_window_review.md).
 - Previous: [Yahoo chart connection measurements](docs/maintenance/20261106_yahoo_chart_connection_review.md).
 - Workflow: [Bounded refactor review](docs/maintenance/20261106_bounded_refactor_review.md).
-- Today's private timing IDs, deployment export and screenshot are documented in
-  the latest record. Full JSON/ZIP/screenshots remain in local Downloads, outside Git.
+- Previous timing IDs are in the MFI record. Latest deployment/connection evidence
+  is in the held-view review. Full JSON/ZIP/screenshots remain outside Git.
 - The preceding connection optimization improved its quote segment but not full
   runtime (64.779s -> 66.336s on a different 96-row input). Do not blend those old
   measurements with today's 95-row runs or claim a sub-minute guarantee.
