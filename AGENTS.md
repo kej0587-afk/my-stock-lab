@@ -55,5 +55,18 @@ It uses the `stock_lab_core` package for business logic, data formatting, and po
 - Preserve Korean UI text and data semantics when editing app behavior.
 - When asked to improve AI-related behavior, note that the current LLM hook is stubbed.
 
+## Bounded refactor verification
+
+- Reuse existing contracts before inventing new baselines. Run the relevant scope
+  before and after an extraction: `python scripts/check_refactor.py --scope decision`
+  (or `report`, `prices`, `all`). Use the repository's installed Python environment.
+- This gate is selected regression coverage, not a full-suite/live-UI/performance pass.
+  Do not regenerate golden files just to pass, auto-revert user edits, or mix an
+  investment-threshold change into a behavior-preserving extraction.
+- Measure remote requests/cache misses separately from function invocations.
+  Compare like-for-like inputs and sessions; do not change TTLs to claim speedups.
+- Current review and next bounded change:
+  `docs/maintenance/20261106_bounded_refactor_review.md`.
+
 ## Gemini-specific note
 This file is intended for Gemini/Copilot-style AI agents. Use the repo structure and run commands here to stay aligned with the user’s environment.
