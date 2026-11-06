@@ -262,3 +262,29 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   The main network bottleneck remains open. Next bounded performance work must
   measure exact provider request/cache-miss keys in a fresh full trace before
   attempting more reuse; preserve failure recovery and quote freshness.
+
+## History I/O Overlap (2026-11-06)
+
+- First deployed diagnostics only (3329229e): separate cache body executions,
+  cache/concurrent-wait reuse, scoped history reuse and actual Naver HTTP
+  requests. yfinance download counters are provider API calls, not verified
+  wire requests inside yfinance. Instrumentation never records arguments/keys.
+- Before optimization, Cloud 96-row full calculations with flow refresh and
+  detail enabled: after reboot 106.851s (5d2ea741), then warm 67.478s
+  (12a00d2f). KR HTTP requests 405 -> 0; KR cached reuses 13 -> 277.
+  The first run's KR HTTP summed time 92.76s is 25.29s active wall, not 92.76s
+  of page delay. Scoped histories were reused 548 times on each run.
+- Only optimize prefetch_price_data_parallel: begin the existing bounded
+  domestic workers while the overseas-only batch runs on the caller. Preserve
+  each period and provider request, the Yahoo lock, max 8 domestic workers,
+  cache TTL/clear/failure recovery and missing-overseas fallback after batch.
+  No investment formula, quote timestamp or adjustment-basis change.
+- Tests compare exact frames/attrs and request multisets for 1y/10y/3mo,
+  missing/failed symbols, actual cold/warm cache counters, worker-local session
+  lifetime and Streamlit cache execution. Expanded selected regression gate:
+  1,340 passed, zero failures/errors/skips/source mutations, 103.907s.
+  Evidence: cache/refactor_checks/all_ajclr7y6/summary.json.
+- Fixed response/delay scheduling test, 3 pairs: mean 0.327167 -> 0.227198s,
+  identical requests and results. This is synthetic I/O overlap evidence, NOT
+  a measured Cloud full-calculation improvement. Post-deploy live comparison
+  is recorded below after measurement; no historical 120s claim is reused.

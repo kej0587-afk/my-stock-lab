@@ -554,7 +554,11 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
 
 
 def prefetch_price_data_parallel(tickers, period="1y", max_workers=8, *, load_batch=None, load_one=None):
-    """Preload the existing histories with batch-local KR transport reuse."""
+    """Overlap domestic histories with the overseas-only batch loader.
+
+    Injected batch loaders follow load_price_frames_batch's overseas-only
+    contract. Missing overseas symbols still fall back only after the batch.
+    """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from stock_lab_core.formatters import sanitize_ticker_value
     from stock_lab_core.kr_flow_history import reuse_kr_history_connections
@@ -564,11 +568,6 @@ def prefetch_price_data_parallel(tickers, period="1y", max_workers=8, *, load_ba
     load_batch = load_price_frames_batch if load_batch is None else load_batch
     load_one = load_price_df if load_one is None else load_one
     unique = list(dict.fromkeys(sanitize_ticker_value(t) for t in tickers if sanitize_ticker_value(t)))
-    try:
-        frames = dict(load_batch(tuple(sorted(unique)), period))
-    except Exception:
-        frames = {}
-
     def fetch(ticker):
         try:
             return load_one(ticker, period)
@@ -578,7 +577,14 @@ def prefetch_price_data_parallel(tickers, period="1y", max_workers=8, *, load_ba
     # Join all workers before closing their separate HTTP sessions.
     with reuse_kr_history_connections():
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {submit_with_context(executor, fetch, ticker): ticker for ticker in unique if ticker not in frames}
+            domestic = [ticker for ticker in unique if _is_kr_ticker(ticker)]
+            futures = {submit_with_context(executor, fetch, ticker): ticker for ticker in domestic}
+            try:
+                frames = dict(load_batch(tuple(sorted(unique)), period))
+            except Exception:
+                frames = {}
+            futures.update({submit_with_context(executor, fetch, ticker): ticker
+                            for ticker in unique if ticker not in frames and ticker not in domestic})
             for future in as_completed(futures):
                 frames[futures[future]] = future.result()
     return frames
