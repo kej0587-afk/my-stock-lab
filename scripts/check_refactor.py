@@ -21,6 +21,7 @@ SCOPES = {
     "decision": (
         "test_decision_golden_snapshot", "test_decision_refactor_parity",
         "test_decision_inputs_refactor", "test_decision_signals_refactor",
+        "test_decision_finalization_refactor",
         "test_execution_context", "test_precision_final_check_view",
         "test_market_guard_input_quality", "test_monthly_rebalance_refactor",
         "test_final_check_extraction", "test_decision_governance",

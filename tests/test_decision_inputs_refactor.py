@@ -44,7 +44,8 @@ def baseline_function():
 
 def restore_inputs_for_ast(fn):
     """Allow older extraction suites to inspect their unchanged downstream code."""
-    fn = deepcopy(fn)
+    from tests.decision_finalization_reference import restore_finalization_for_ast
+    fn = restore_finalization_for_ast(fn)
     for first, end, start_old, end_old in (
         ("price_inputs", "live_rebound_context", 4, 26),
         ("technical_inputs", "tactical_price_context", 35, 53),

@@ -68,6 +68,9 @@ def test_original_expressions_order_constants_and_signature_are_preserved():
     for name in ("calc_scores_and_decision", "build_position_management_context"):
         current = next(n for n in current_app.body if isinstance(n, ast.FunctionDef) and n.name == name)
         old = next(n for n in old_app.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        if name == "calc_scores_and_decision":
+            from tests.decision_finalization_reference import restore_finalization_for_ast
+            current = restore_finalization_for_ast(current)
         assert ast.dump(current) == ast.dump(old)
 
 

@@ -359,6 +359,7 @@ from stock_lab_core.decision_priority import select_portfolio_priority_decision
 from stock_lab_core.decision_followup import select_portfolio_followup_decision
 from stock_lab_core.decision_inputs import prepare_decision_price_inputs, prepare_decision_technical_inputs
 from stock_lab_core.decision_signals import build_entry_signal_context
+from stock_lab_core.decision_finalization import finalize_decision_sizing
 from stock_lab_core.leveraged_watch import build_leveraged_watch_rows
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.today_queue import (
@@ -16825,31 +16826,18 @@ def calc_scores_and_decision(name, ticker, is_etf, asset_class, df, my_price, ha
             dec, col = decision_outcome.label, decision_outcome.color
 
     # ── 포지션 사이징 힌트 ────────────────────────────────────────────────────
-    dec, col, decision_outcome = _apply_safety_state_override(
-        decision_outcome, dec, col,
+    decision_outcome, dec, col, buy_amount, sizing_hint = finalize_decision_sizing(
+        decision_outcome=decision_outcome, dec=dec, col=col, buy_amount=buy_amount,
         safety_state=safety_state, has_pos=has_pos,
         tech_total=tech_total, main_score=main_score, adj_tech_score=adj_tech_score,
-    )
-    decision_outcome = _translate_new_entry_decision_for_holding(
-        decision_outcome, has_pos=has_pos, weight_gap=weight_gap,
-    )
-    decision_outcome = enforce_non_core_panic_scope(
-        decision_outcome,
+        weight_gap=weight_gap,
         is_core_dca_allowed=is_core_dca_allowed,
-        is_etf=is_etf,
-        current_dd=current_dd,
-    )
-    if indicator_data_issue:
-        decision_outcome = build_decision_outcome(
-            "⚪데이터확인: 실시간 지표 재계산 필요", "#64748b", "DATA_ERROR",
-            reasons=(indicator_data_issue, "새 가격과 이전 지표가 섞이지 않도록 직전 가격 이력으로 복원했습니다."),
-        )
-        buy_amount = 0.0
-    dec, col = decision_outcome.label, decision_outcome.color
-    sizing_hint = _compute_sizing_hint(
-        decision_outcome,
-        has_pos=has_pos, targ_w=targ_w, eff_total=eff_total, cur_p=cur_p, is_etf=is_etf,
-        weight_gap=weight_gap, ticker=ticker,
+        is_etf=is_etf, current_dd=current_dd, indicator_data_issue=indicator_data_issue,
+        targ_w=targ_w, eff_total=eff_total, cur_p=cur_p, ticker=ticker,
+        _apply_safety_state_override=_apply_safety_state_override,
+        _translate_new_entry_decision_for_holding=_translate_new_entry_decision_for_holding,
+        enforce_non_core_panic_scope=enforce_non_core_panic_scope,
+        build_decision_outcome=build_decision_outcome, _compute_sizing_hint=_compute_sizing_hint,
     )
 
     return build_decision_result(locals())
@@ -19239,6 +19227,7 @@ def get_precision_build_info():
     registered = sorted(name.removeprefix("stock_lab_core.") for name in report_build._LOADED
                         if name.startswith("stock_lab_core.account_performance") or name in {
                             "stock_lab_core.decision_priority", "stock_lab_core.decision_followup", "stock_lab_core.decision_inputs", "stock_lab_core.decision_signals", "stock_lab_core.leveraged_watch",
+                            "stock_lab_core.decision_finalization",
                             "stock_lab_core.quote_html"})
     precision_build.MODULES = tuple(dict.fromkeys((*precision_build.MODULES, *registered)))
     info = precision_build.precision_build_info(__file__)
