@@ -1,5 +1,14 @@
 # AI Agent Guide for my-stock-lab
 
+## Read first when resuming work
+
+- Read [HANDOFF.md](HANDOFF.md) before inspecting large source files or editing.
+  It records completed work, measured limitations and the next bounded task.
+- Check the working tree and recent commits first. Preserve edits made on another
+  computer; do not assume the previous chat or this document is the latest code.
+- After each bounded task, update the handoff with verification, deployment state,
+  unresolved issues and exactly one next task. Keep private account data out of Git.
+
 ## Purpose
 This repository is a Streamlit-based stock dashboard and portfolio analysis app for Korean and US markets.
 It uses the `stock_lab_core` package for business logic, data formatting, and portfolio calculations.
@@ -65,7 +74,7 @@ It uses the `stock_lab_core` package for business logic, data formatting, and po
   investment-threshold change into a behavior-preserving extraction.
 - Measure remote requests/cache misses separately from function invocations.
   Compare like-for-like inputs and sessions; do not change TTLs to claim speedups.
-- Current review and next bounded change:
+- Current task and work order: `HANDOFF.md`. Historical review:
   `docs/maintenance/20261106_bounded_refactor_review.md`.
 
 ## Gemini-specific note
