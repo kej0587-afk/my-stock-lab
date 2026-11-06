@@ -25,6 +25,7 @@ from stock_lab_core.performance import measure, submit_with_context, timed_call
 from stock_lab_core import performance as _performance
 from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, invalidate_prefetched_quotes
 from stock_lab_core.quote_html import read_quote_html
+from stock_lab_core.price_batch_selection import DownloadFrameSelector
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -382,22 +383,7 @@ def _period_start_timestamp(period: str) -> pd.Timestamp:
 
 def _select_download_ohlcv(df, ticker: str) -> pd.DataFrame:
     """Select the requested instrument before discarding Yahoo column levels."""
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex):
-        for level in range(df.columns.nlevels):
-            matches = [value for value in df.columns.get_level_values(level).unique()
-                       if str(value).strip().upper() == str(ticker).strip().upper()]
-            if matches:
-                out = df.xs(matches[0], axis=1, level=level).copy(deep=True)
-                break
-        else:
-            logging.warning("Yahoo OHLCV rejected: requested symbol absent (%s)", ticker)
-            return pd.DataFrame()
-        if isinstance(out.columns, pd.MultiIndex):
-            return pd.DataFrame()
-        return out
-    return df.copy(deep=True)
+    return DownloadFrameSelector(df).select(ticker)
 
 
 def _clean_ohlcv_frame(df: pd.DataFrame, *, keep_adj_close: bool = False) -> pd.DataFrame:
@@ -551,9 +537,10 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
     if len(symbols) > 1 and not isinstance(data.columns, pd.MultiIndex):
         return {}
     frames = {}
+    selector = DownloadFrameSelector(data)
     for symbol in symbols:
         try:
-            frame = _select_download_ohlcv(data, symbol)
+            frame = selector.select(symbol)
             frame = _clean_ohlcv_frame(frame, keep_adj_close=True)
             if not frame.empty:
                 frames[symbol] = _maybe_align_ohlcv_to_live_price(symbol, frame)

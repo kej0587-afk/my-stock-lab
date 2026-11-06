@@ -39,6 +39,7 @@ SCOPES = {
         "test_report_reference_history", "test_report_news_session_quality",
     ),
     "prices": (
+        "test_price_batch_selection",
         "test_price_history_scope", "test_latest_price_cache_key",
         "test_price_cache_recovery", "test_money_flow_cache_replay",
         "test_today_quote_performance", "test_performance_log_audit",

@@ -232,3 +232,33 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
 - No change to investment thresholds, allocation math, provider caching or
   market-data reference basis. Next: measure ONE price-provider bottleneck;
   the pre-deploy live today run (94.0s) is not a before/after speed benchmark.
+
+## Price Batch Selection (2026-11-06)
+
+- Audited the latest local full trace (70fe4d6, 103.731s): load_price_df
+  739 calls / 69.124s summed / 23.310s active wall; get_money_flow_ohlc
+  505 calls / 59.884s summed / 15.449s active wall; Yahoo chart 78 actual
+  requests. The function counts do not prove 739 or 505 external requests.
+  Existing history memoization, bulk KR quotes and bounded parallel flow I/O
+  are already present. No new cache TTL or removed recovery attempt was used.
+- Limited this change to repeated CPU work in downloaded-price selection.
+  Extracted DownloadFrameSelector, a batch-local column index, reused across
+  symbols by load_price_frames_batch. The legacy single-frame entrypoint remains.
+  Preserve exact normalized-symbol matching, first level/raw match precedence,
+  malformed/absent-symbol rejection, independent copies and provenance attrs.
+  No app/UI, investment rule, fallback ordering, provider request, reference
+  session, adjustment basis or cleaning formula changed.
+- Baseline price gate: 60 passed. Targeted pipeline/board regression: 122 passed.
+  Expanded selected all gate: 1,265 passed, zero failures/errors/skips or source
+  mutations, 95.650s. Evidence: cache/refactor_checks/all_jnm8tggb/summary.json.
+- Three paired CPU-only runs after tests finished: fixed 95 symbols x 3 row
+  lengths (64, 260, 2600), 285 exactly equal output frames per pair, including
+  attrs. Before [0.146572, 0.145572, 0.151987]s; after
+  [0.071191, 0.071374, 0.072413]s. Means 0.148044 -> 0.071659s.
+  This saves only about 0.076s in the measured selection stage, NOT tens of
+  seconds in the app. Neither side makes network requests in this benchmark.
+- Cloud full-run timing and post-deploy screen verification were not performed
+  for this change; do not reuse the previous 94.0s run as a new measurement.
+  The main network bottleneck remains open. Next bounded performance work must
+  measure exact provider request/cache-miss keys in a fresh full trace before
+  attempting more reuse; preserve failure recovery and quote freshness.
