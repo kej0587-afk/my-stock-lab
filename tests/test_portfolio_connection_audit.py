@@ -99,11 +99,15 @@ def test_derived_summary_invalidation_clears_portfolio_copy(app_module, state):
 
     frame = stamped(app_module, [{"티커": "AAA", "기술적타점": "saved"}], "2026-11-01T01:00Z")
     state["portfolio_today_signal_df"] = frame
+    state["portfolio_dashboard_signal_df"] = frame
     assert not app_module.get_cached_portfolio_signal_details().empty
     app_module.invalidate_watchlist_dependent_state()
+    assert "portfolio_dashboard_signal_df" not in state
     assert app_module.get_cached_portfolio_signal_details().empty
     state["portfolio_today_signal_df"] = frame
+    state["portfolio_dashboard_signal_df"] = frame
     assert invalidate_incompatible_summary_state(state)
+    assert "portfolio_dashboard_signal_df" not in state
     assert app_module.get_cached_portfolio_signal_details().empty
 
 

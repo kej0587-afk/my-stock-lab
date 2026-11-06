@@ -28,6 +28,8 @@ SCOPES = {
         "test_precision_display_consistency", "test_precision_gate",
         "test_precision_plan_panel", "test_precision_workflow_review",
         "test_scorecard_review", "test_precision_chart_view", "test_precision_review_export",
+        "test_portfolio_dashboard_bridge", "test_portfolio_connection_audit",
+        "test_portfolio_holding_review", "test_dashboard_consistency", "test_dashboard_view",
     ),
     "report": (
         "test_report_section_contract", "test_report_split_quality",

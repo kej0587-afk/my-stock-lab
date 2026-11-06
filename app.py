@@ -2547,6 +2547,7 @@ def invalidate_watchlist_dependent_state():
         "today_queue_summary_last_nonempty_df",
         "today_queue_summary_last_nonempty_sig",
         "portfolio_today_signal_df",
+        "portfolio_dashboard_signal_df",
     ):
         st.session_state.pop(key, None)
 
@@ -33881,23 +33882,25 @@ if main_page == "dashboard":
     if not isinstance(_dash_cached, pd.DataFrame):
         _dash_cached = pd.DataFrame()
     _dash_valid = dashboard_cache_matches(_dash_cached, st.session_state.get(_DASH_SIG_KEY), _dash_sig)
+    _dash_valid = _dash_valid and _dash_cached.attrs.get("portfolio_signal_context") == portfolio_signal_input_context()
 
     _d1, _d2, _d3 = st.columns([1.4, 1.0, 3.6])
     _run_dash = _d1.button("전광판 새로고침", key="dashboard_run_once", width="stretch")
     if not _dash_cached.empty:
         if _d2.button("결과 지우기", key="dashboard_clear_cached", width="stretch"):
-            for _k in [_DASH_KEY, _DASH_SIG_KEY, _DASH_LAST_KEY]:
+            for _k in [_DASH_KEY, _DASH_SIG_KEY, _DASH_LAST_KEY, "portfolio_dashboard_signal_df"]:
                 st.session_state.pop(_k, None)
             st.rerun()
         if not _dash_valid and not _run_dash:
             st.info("보유·관심 또는 판정 입력이 변경되어 전광판을 다시 계산합니다.")
 
     if _run_dash or not _dash_valid:
-        for _k in [_DASH_KEY, _DASH_SIG_KEY, _DASH_LAST_KEY]:
+        for _k in [_DASH_KEY, _DASH_SIG_KEY, _DASH_LAST_KEY, "portfolio_dashboard_signal_df"]:
             st.session_state.pop(_k, None)
         with st.spinner("전광판 계산 중..."):
             summary_df = get_all_summary(tuple(sorted(st.session_state.fin_score_map.items())), app_mode, _dash_items)
-        st.session_state[_DASH_KEY] = dedupe_dashboard_summary_df(summary_df).copy(deep=True)
+        summary_df = stamp_portfolio_signal_context(dedupe_dashboard_summary_df(summary_df))
+        st.session_state[_DASH_KEY] = summary_df.copy(deep=True)
         # Calculation refreshes fin_score_map; sign the values actually retained.
         st.session_state[_DASH_SIG_KEY] = _current_dashboard_signature()
         st.session_state[_DASH_LAST_KEY] = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
@@ -33908,6 +33911,7 @@ if main_page == "dashboard":
         _d3.caption(f"신호·비중 계산 기준: {_dash_last}")
     summary_df = dedupe_dashboard_summary_df(summary_df)
     if not summary_df.empty:
+        _dash_signal_source = summary_df
         _dash_flow = get_cached_today_market_flow_snapshot()
         _dash_analyst = cached_dashboard_analyst_loader(
             [summary_df, st.session_state.get("today_queue_summary_df"),
@@ -33923,6 +33927,13 @@ if main_page == "dashboard":
             get_analyst_snapshot=_dash_analyst,
             load_latest_price=lambda ticker: float("nan"),
         )
+        from stock_lab_core import portfolio_signal_cache as _portfolio_signal_cache
+        if hasattr(_portfolio_signal_cache, "capture_dashboard_signals"):
+            _portfolio_signal_cache.capture_dashboard_signals(
+                st.session_state, _dash_signal_source, summary_df, portfolio_signal_input_context(),
+            )
+        else:
+            st.caption("포트폴리오 연결 모듈 갱신 대기 · 앱 재시작 후 연결됩니다.")
     if summary_df.empty:
         st.warning("전광판에 표시할 종목이 없습니다.")
     else:

@@ -63,7 +63,7 @@ No finite test set proves every live input or every investment decision correct.
 2. DONE (local verification): extract pure risk and portfolio check rows from
    build_pre_buy_final_checks. Freeze full outputs before touching production.
    Preserve thresholds, row/reason ordering, counts and execution permission.
-3. NEXT: compare held-KR/held-US inputs across today queue, board, precision and
+3. IN PROGRESS: compare held-KR/held-US inputs across today queue, board, precision and
    portfolio views. Separate snapshot-age differences from genuine contradictions.
    Verify authenticated UI where available; report inaccessible views explicitly.
 4. QUEUED: select ONE provider bottleneck from fresh measurements. Count requests
@@ -138,3 +138,34 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   mutation; 64.899s. Evidence: cache/refactor_checks/all_tvvrnop0/summary.json.
   Compile checks and git diff --check also passed. Next: step 3, authenticated
   cross-view consistency; do not broaden to new providers or investment criteria.
+
+## Cross-View Handoff Fix (2026-11-06)
+
+- Live pre-change check: 379810.KS and SOXL precision upper result, management
+  plan and final check all withheld execution. The board's 379810.KS gate was
+  also defensive. The saved today result and freshly calculated precision result
+  had different observation times; that alone is not a calculation contradiction.
+- Reproduced a missing connection: after the board completed, portfolio showed
+  zero connected held signals. The real board never published its prepared
+  frame to the portfolio selector. Its existing `_ticker_signal_detail_df` source
+  was actually produced by asset overview, but labelled as the board.
+- Added capture_dashboard_signals to the existing portfolio_signal_cache module.
+  It copies the displayed rows without provider calls or score recalculation,
+  retains original calculation timestamp/account scope, and rejects missing or
+  mismatched provenance. A rerender cannot promote an older calculation.
+- The board stamps only fresh calculations, checks account scope on reuse, and
+  publishes after its existing gate preparation. Account/watchlist invalidation,
+  explicit clear and recalculation remove the derived portfolio copy. Legacy
+  source is now labelled asset overview. No investment rule, price/date basis,
+  allocation or cache TTL was changed.
+- Regression: 8 held tickers x 4 gates; exact displayed values/date preservation,
+  account isolation, old/new source priority, copy isolation, final-check veto,
+  invalidation and actual app-branch wiring. Existing Streamlit portfolio-panel
+  render/switch test is included. Initial dashboard fixture lacked the newly
+  used context functions; updated its test environment, not expected decisions.
+- Pre-change related baseline: 128 passed in 16.67s. Expanded selected gate:
+  1,166 passed, zero failures/errors/skips or source changes during verification,
+  69.086s. Evidence: cache/refactor_checks/all_ubu0295i/summary.json.
+  Different test counts mean these are not before/after speed measurements.
+- Post-deploy board-to-portfolio Cloud verification remains to be observed;
+  this change does not claim an exhaustive audit of every holding or tab.

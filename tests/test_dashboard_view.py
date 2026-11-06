@@ -207,6 +207,8 @@ def test_real_dashboard_branch_invalidates_recomputes_and_keeps_raw(cached, vali
                _current_dashboard_signature=lambda: str(state.fin_score_map["MSFT"]),
                _d3=SimpleNamespace(caption=lambda text: None), cached_dashboard_analyst_loader=cached_dashboard_analyst_loader,
                dedupe_dashboard_summary_df=lambda frame: frame.copy(),
+               stamp_portfolio_signal_context=lambda frame: frame,
+               portfolio_signal_input_context=lambda: "fixture-account",
                datetime=datetime, timezone=timezone, timedelta=timedelta,
                get_cached_today_market_flow_snapshot=lambda: {}, build_today_flow_shortlist_df=lambda snapshot: pd.DataFrame(),
                build_today_market_guard=lambda snapshot, summary: {"action": "신규매수 중단"},

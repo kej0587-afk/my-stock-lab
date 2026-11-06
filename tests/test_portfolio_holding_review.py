@@ -40,7 +40,7 @@ def test_newer_row_is_not_filled_with_an_older_gate():
     }
     row = select_portfolio_signals(state, "account-a", detailed=True).iloc[0]
     assert pd.isna(row["게이트상태"])
-    assert row["연결출처"] == "전광판"
+    assert row["연결출처"] == "자산현황"
 
 
 def test_complete_precision_is_scoped_and_deep_copied():

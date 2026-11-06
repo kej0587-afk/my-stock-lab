@@ -34,6 +34,7 @@ def invalidate_incompatible_summary_state(state) -> bool:
         "today_queue_summary_df", "today_queue_summary_sig", "today_queue_summary_last_run",
         "today_queue_summary_last_nonempty_df", "today_queue_summary_last_nonempty_sig",
         "portfolio_today_signal_df",
+        "portfolio_dashboard_signal_df",
     ):
         removed = key in state or removed
         state.pop(key, None)
