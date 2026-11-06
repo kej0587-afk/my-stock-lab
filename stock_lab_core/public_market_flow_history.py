@@ -101,6 +101,32 @@ def saved_public_flow_history(snapshots, *, checked_at):
             if (validated := validated_flow_snapshot(snapshot, checked_at=snapshot["checked_at"]))]
 
 
+def summarize_daily_values(values, days):
+    """Exact-session sums and bounded runs; shared by snapshots and daily backfill."""
+    result = dict(sum_5=None, sum_20=None, streak_days=None, streak_direction="", missing_dates={})
+    for window in (5, 20):
+        selected = days[-window:]
+        missing = [d for d in selected if values[d] is None]
+        result["missing_dates"][str(window)] = missing
+        if len(selected) == window and not missing:
+            result[f"sum_{window}"] = sum(values[d] for d in selected) / 100_000_000
+    latest = values[days[-1]]
+    if latest == 0:
+        result.update(streak_days=0, streak_direction="neutral")
+    elif latest is not None:
+        result["streak_direction"] = "buy" if latest > 0 else "sell"
+        count = 0
+        for d in reversed(days):
+            value = values[d]
+            if value is None:
+                break
+            if value == 0 or (value > 0) != (latest > 0):
+                result["streak_days"] = count
+                break
+            count += 1
+    return result
+
+
 def summarize_public_flow_history(evidence, history, *, session_date, checked_at):
     """5/20 XKRX-session sums and exact trailing sign runs, all provisional.
 
@@ -166,26 +192,7 @@ def summarize_public_flow_history(evidence, history, *, session_date, checked_at
         market, identity = row["market"], row["identity"]
         values = {d: series.get((market, identity, d), (None, None))[1] for d in days}
         values[session_date] = _raw_value(row, market, checked_at)
-        for window in (5, 20):
-            selected = days[-window:]
-            missing = [d for d in selected if values[d] is None]
-            row["missing_dates"][str(window)] = missing
-            if len(selected) == window and not missing:
-                row[f"sum_{window}"] = sum(values[d] for d in selected) / 100_000_000
-        latest = values[session_date]
-        if latest == 0:
-            row.update(streak_days=0, streak_direction="neutral")
-        elif latest is not None:
-            row["streak_direction"] = "buy" if latest > 0 else "sell"
-            count = 0
-            for d in reversed(days):
-                value = values[d]
-                if value is None:
-                    break
-                if value == 0 or (value > 0) != (latest > 0):
-                    row["streak_days"] = count
-                    break
-                count += 1
+        row.update(summarize_daily_values(values, days))
         if all(row[key] is not None for key in ("sum_5", "sum_20", "streak_days")):
             row["history_reason"] = "available"
     return result
@@ -193,6 +200,9 @@ def summarize_public_flow_history(evidence, history, *, session_date, checked_at
 
 def public_flow_history_lines(context, *, session_date):
     """Append a supplemental table; missing history never hides today's flow."""
+    if "public_flow_backfill" in context:
+        from stock_lab_core.public_flow_backfill import backfill_lines
+        return backfill_lines(context["public_flow_backfill"], checked_at=context.get("market_evidence_checked_at"))
     rows = summarize_public_flow_history(
         context.get("public_market_evidence"), context.get("public_market_flow_history"),
         session_date=session_date, checked_at=context.get("market_evidence_checked_at"))

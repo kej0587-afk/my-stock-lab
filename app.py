@@ -28627,6 +28627,8 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
     context["market_observation_evidence"].update(load_investor_flow_evidence(
         get_kiwoom_data_client() if not IS_PUBLIC_DEMO else None, public_demo=IS_PUBLIC_DEMO))
     if not IS_PUBLIC_DEMO:
+        from stock_lab_core.public_flow_backfill import collect_public_flow_backfill
+        context["public_flow_backfill"] = collect_public_flow_backfill()
         context["public_market_evidence"] = load_public_market_evidence(datetime.now(KST).date().isoformat())
     context["market_evidence_checked_at"] = datetime.now(KST).isoformat()
     context["market_guard"] = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
