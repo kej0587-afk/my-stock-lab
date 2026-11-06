@@ -198,3 +198,29 @@ review: 20261031_decision_criteria_audit.md. No threshold change is approved her
   Inspect its basis and clarify candidate versus permission before any rule
   change. The narrow comparison table also puts the execution gate offscreen;
   prioritize its presentation over adding new scores/providers.
+
+## Candidate / Execution Presentation (2026-11-06)
+
+- Confirmed display cause: market-alignment add candidates and recommendation
+  strength came from portfolio/flow classifications without the account-scoped
+  execution gate. The overview called them add/DCA candidates unconditionally.
+- Introduced portfolio_candidate_view for pure display joins and extracted
+  overview/recommendation rendering. One scoped signal selection is passed to
+  alignment, recommendations, next-check candidates and monthly playbook.
+  Match exact ticker aliases only; a theme's representative list does not
+  inherit a member's permission. Duplicate or missing matches remain unlinked.
+- Put restriction/reason/reference date before raw plan labels. Executable
+  screening rows still require precision final checks, weights and cash.
+  No price-reference date is not a completed check. Unknown evidence is not
+  an approval. Counts distinguish candidates, restrictions and missing evidence.
+- Preserve original ranking, score, portfolio classification, amounts and shares.
+  Monthly values are explicitly calculation-only allocations, not order budgets.
+  Hide repeated raw-detail tables behind expanders; no new provider calls.
+- Baseline related tests: 116 passed (30.09s). Five app calculation functions
+  have identical ASTs to 3b5df834; stock_lab_core/portfolio.py is unchanged.
+  Expanded selected regression gate: 1,253 passed, zero failures/errors/skips
+  or source mutations, 97.823s. Includes local Streamlit candidate-panel render.
+  Evidence: cache/refactor_checks/all_rjynw3y_/summary.json. Test times are not
+  an application-speed comparison. Compile/diff whitespace checks passed.
+- Live post-deploy presentation verification pending. No change to investment
+  thresholds, allocation math, provider caching or market-data reference basis.

@@ -30,6 +30,7 @@ SCOPES = {
         "test_scorecard_review", "test_precision_chart_view", "test_precision_review_export",
         "test_portfolio_dashboard_bridge", "test_portfolio_connection_audit",
         "test_portfolio_holding_review", "test_dashboard_consistency", "test_dashboard_view",
+        "test_portfolio_candidate_view", "test_portfolio_helpers", "test_portfolio_renderer_refactor",
     ),
     "report": (
         "test_report_section_contract", "test_report_split_quality",

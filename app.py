@@ -23819,11 +23819,11 @@ def build_portfolio_next_check_candidates_df(align_df, action_df=None, news_rows
     )
 
 
-def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_rows=None):
+def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_rows=None, *, signal_details=None):
     candidates = build_portfolio_next_check_candidates_df(align_df, action_df=action_df, news_rows=news_rows, limit=6)
     if candidates.empty:
         return
-    with st.expander("오늘점검 기반 다음 점검 후보", expanded=True):
+    with st.expander("다음 점검 후보 · 상세", expanded=False):
         st.caption(
             "오늘점검 주도축, 자산현황 실행판, 목표비중 미달, 뉴스 재료를 함께 본 점검 우선순위입니다. "
             "매수 확정이 아니라 가격위치, R/R, 뉴스 재료를 먼저 확인할 후보입니다."
@@ -23831,16 +23831,17 @@ def render_portfolio_next_check_candidates_panel(align_df, action_df=None, news_
         summary = build_portfolio_next_check_summary(candidates)
         if summary:
             st.info(summary)
-        show = candidates.copy()
+        from stock_lab_core.portfolio_candidate_view import candidate_execution_view
+        show = candidate_execution_view(candidates, signal_details)
         show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
         cols = [
-            "우선", "점검그룹", "점검유형", "후보", "티커", "우선점수", "비중상태", "손익",
+            "후보", "실행 확인", "제한·확인 사유", "판정 기준일", "우선", "점검그룹", "점검유형", "티커", "우선점수", "비중상태", "손익",
             "주도축", "시장/추세", "자산판정", "뉴스/재료", "다음 확인",
         ]
         st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
 
 
-def render_portfolio_recommendation_panel(align_df, metrics, snapshot=None, action_df=None, news_rows=None):
+def render_portfolio_recommendation_panel(align_df, metrics, snapshot=None, action_df=None, news_rows=None, *, signal_details=None):
     rec_df = build_portfolio_recommendation_df(
         align_df,
         metrics=metrics,
@@ -23849,37 +23850,16 @@ def render_portfolio_recommendation_panel(align_df, metrics, snapshot=None, acti
         news_rows=news_rows,
         limit=8,
     )
-    if rec_df.empty:
-        return
-    with st.expander("오늘점검 기반 추천/교체 후보", expanded=True):
-        st.caption(
-            "오늘점검 주도축, 뉴스 재료, 내 보유 비중, 자산현황 실행판을 합쳐 만든 검토 순서입니다. "
-            "주문 신호가 아니라 가격위치, R/R, 뉴스 재료를 확인할 후보판입니다."
-        )
-        idea_df = rec_df[~rec_df["추천구분"].eq("교체 재원")]
-        source_df = rec_df[rec_df["추천구분"].eq("교체 재원")]
-        idea_names = _portfolio_alignment_names(idea_df.rename(columns={"후보": "자산", "티커/대표": "티커"}), limit=3)
-        source_names = _portfolio_alignment_names(source_df.rename(columns={"후보": "자산", "티커/대표": "티커"}), limit=2)
-        st.info(
-            f"먼저 볼 후보: {idea_names}. "
-            f"재원/중단 점검: {source_names}. "
-            "보강 후보는 가격·R/R 확인 후, 교체 재원은 목표비중과 회복 조건을 먼저 봅니다."
-        )
-        show = rec_df.copy()
-        show["우선점수"] = show["우선점수"].apply(lambda v: f"{clean_float(v):.1f}")
-        cols = [
-            "우선", "추천구분", "후보", "티커/대표", "우선점수", "실행강도",
-            "근거", "다음 행동", "주의/조건", "뉴스/재료",
-        ]
-        st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
+    from stock_lab_core.portfolio_candidate_view import render_recommendation_candidates
+    render_recommendation_candidates(st, rec_df, signal_details)
 
 
-def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None):
+def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None, *, signal_details=None):
     if not isinstance(align_df, pd.DataFrame) or align_df.empty:
         return
     default_monthly = int(max(clean_float(st.session_state.get("rebcalc_monthly"), 0.0), 0.0))
-    with st.expander("이번 달 포트폴리오 관리안", expanded=True):
-        st.caption("주도축 매칭 결과를 새 돈 투입, 눌림 대기, 신규중단, 축소 후보로 다시 묶습니다. 주문표가 아니라 이번 달 관리 순서입니다.")
+    with st.expander("이번 달 포트폴리오 관리안", expanded=False):
+        st.caption("주도축 기준의 계산상 배분안입니다. 실행 보류 종목의 금액도 계산값으로 보존하며, 현재 주문 가능 금액을 뜻하지 않습니다.")
         monthly_budget = st.number_input(
             "이번 달 새 투입 가능액",
             min_value=0,
@@ -23899,18 +23879,19 @@ def render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=None)
         add_amount = float(playbook.loc[playbook["구분"].eq("새 돈 후보"), "제안금액"].apply(clean_float).sum()) if "구분" in playbook.columns else 0.0
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("배분 기준 예산", format_metric_money(total_budget))
-        c2.metric("주도축 배정", format_metric_money(add_amount))
+        c2.metric("계산상 주도축 배정", format_metric_money(add_amount))
         c3.metric("대기/미배정", format_metric_money(remaining_budget))
         c4.metric("초과대기 활용", format_metric_money(reserve_budget))
 
-        show = playbook.copy()
+        from stock_lab_core.portfolio_candidate_view import candidate_execution_view
+        show = candidate_execution_view(playbook, signal_details)
         for col in ["목표미달액", "제안금액"]:
             show[col] = show[col].apply(format_metric_money)
         cols = [
-            "구분", "자산", "티커", "포트판정", "시장판정", "자산현황판정", "자산현황실행",
+            "자산", "실행 확인", "제한·확인 사유", "판정 기준일", "구분", "티커", "포트판정", "시장판정", "자산현황판정", "자산현황실행",
             "현재/목표", "목표미달액", "제안금액", "조건", "재개/해제 조건", "근거",
         ]
-        st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
+        st.dataframe(show[[c for c in cols if c in show.columns]].rename(columns={"제안금액": "계산상 배분액"}), width='stretch', hide_index=True)
 
 
 def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
@@ -23929,32 +23910,12 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     news_rows = st.session_state.get(news_key, [])
 
     st.markdown("#### 포트폴리오 주도축 매칭")
-    st.caption("오늘점검의 주도맵과 내 보유 비중·손익·기술 신호를 합쳐 유지, 확대, 대기, 축소 후보를 다시 정리합니다.")
-
-    brief = build_portfolio_market_alignment_brief(align_df)
-    if brief:
-        st.info(
-            f"{brief.get('headline', '')}\n\n"
-            f"늘릴/적립 후보: {brief.get('add_names', '-')} ({brief.get('add_weight', 0.0):.1f}%) · "
-            f"직접흐름 확인: {brief.get('direct_names', '-')} ({brief.get('direct_weight', 0.0):.1f}%) · "
-            f"점검/대기: {brief.get('caution_names', '-')} ({brief.get('caution_weight', 0.0):.1f}%) · "
-            f"별도관리: {brief.get('separate_names', '-')} ({brief.get('separate_weight', 0.0):.1f}%)"
-        )
-
-    connected_mask = ~align_df["시장판정"].astype(str).eq("미연결")
-    add_mask = align_df["포트판정"].astype(str).isin(PORTFOLIO_ADD_ACTIONS)
-    caution_mask = align_df["포트판정"].astype(str).isin(PORTFOLIO_CAUTION_ACTIONS)
-    connected_weight = float(align_df.loc[connected_mask, "현재비중"].apply(clean_float).sum())
-    add_count = int(add_mask.sum())
-    caution_count = int(caution_mask.sum())
-    unlinked_weight = float(align_df.loc[~connected_mask, "현재비중"].apply(clean_float).sum())
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("주도축 연결 비중", f"{connected_weight:.1f}%")
-    c2.metric("확대/분할 후보", f"{add_count}개")
-    c3.metric("점검/축소 후보", f"{caution_count}개")
-    c4.metric("미연결 비중", f"{unlinked_weight:.1f}%")
-    render_portfolio_recommendation_panel(align_df, metrics, snapshot=snapshot, action_df=action_df, news_rows=news_rows)
+    from stock_lab_core.portfolio_signal_cache import select_portfolio_signals
+    from stock_lab_core.portfolio_candidate_view import render_alignment_overview
+    signal_details = select_portfolio_signals(st.session_state, portfolio_signal_input_context(), detailed=True)
+    render_alignment_overview(st, align_df, signal_details)
+    render_portfolio_recommendation_panel(align_df, metrics, snapshot=snapshot, action_df=action_df, news_rows=news_rows,
+                                          signal_details=signal_details)
 
     group_df = (
         align_df.groupby("포트판정", as_index=False)["현재비중"]
@@ -23962,6 +23923,7 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
         .sort_values("현재비중", ascending=True)
     )
     if not group_df.empty:
+        st.caption("주도축 분류별 보유 비중 · 실행 허가와 별도")
         color_map = {
             "비중확대 후보": "#22c55e",
             "계획적 적립": "#14b8a6",
@@ -24000,14 +23962,8 @@ def render_portfolio_market_alignment_panel(metrics, asset_df, snapshot=None):
     for col in ["현재비중", "목표비중", "비중차이"]:
         show[col] = show[col].apply(lambda v: f"{clean_float(v):+.1f}%" if col == "비중차이" else f"{clean_float(v):.1f}%")
     show["점수"] = show["점수"].apply(lambda v: "-" if not finite_num(clean_float(v, np.nan)) else f"{clean_float(v):.1f}")
-    cols = [
-        "자산", "티커", "구분", "손익", "현재비중", "목표비중", "비중차이",
-        "주도축", "세부축", "시장판정", "포트판정", "판단", "대표/ETF", "점수",
-    ]
-    st.dataframe(show[[c for c in cols if c in show.columns]], width='stretch', hide_index=True)
-
-    render_portfolio_next_check_candidates_panel(align_df, action_df=action_df, news_rows=news_rows)
-    render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=action_df)
+    render_portfolio_next_check_candidates_panel(align_df, action_df=action_df, news_rows=news_rows, signal_details=signal_details)
+    render_portfolio_rebalance_playbook_panel(align_df, metrics, action_df=action_df, signal_details=signal_details)
 
     with st.expander("매칭 근거 자세히 보기", expanded=False):
         st.dataframe(show, width='stretch', hide_index=True)
