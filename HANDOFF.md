@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **four KR sector-RS production acceptance**, deployed `b06916f8`.
+Fresh in-app tab restored control. Four completed precision exports before and
+after the existing flow-summary refresh (21:57 KST) confirm mappings/provenance,
+2026-11-06 RS dates and exact local RS matches:121600/305540 +33.567044%,
+006280/143860 +11.670106%,092730/228790 +22.822404%,003490/140710 -1.176051%.
+Sector fields remain identical. Seven core CSVs per ticker (financial inputs,
+candidate grade, main decision, final check, execution readiness, entry plan,
+workflow display) are byte-identical:28/28 pass. Same free-ticker mode, explicit
+listing suffixes; no registered/free-mode equivalence or new Today95-row claim.
+Build matches; monitored stale modules empty/restart false. No code/score/TTL change.
+Full execution workflow differs in flow references after summary refresh:
+source changes from stock-history reuse to radar, with reference labels changing
+from observation to swing/recovery. Root cause not yet determined; core decisions
+are unchanged. This is the next bounded investigation, not silently dismissed.
+Private evidence is ignored under `cache/kr_rs_*`; docs-only publication, no reboot.
+See [four-case Cloud acceptance](docs/maintenance/20261107_sector_rs_cloud_acceptance.md).
+
 Latest task: **SEC annual evidence production acceptance**, deployed `ed5539b3`.
 Fresh tab in the selected in-app browser recovered authenticated access; old-tab
 binding still failed. No reboot/login/permission changes required. Actual NBIS
@@ -423,19 +440,21 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the four restored sector-RS connections in production.**
+**Diagnose the four-case stock-history versus radar flow-reference difference.**
 
-Four mappings remain locally tested but not Cloud-verified:
-121600->305540,006280->143860,092730->228790,003490->140710.
-Use the existing explicit benchmark refresh (TTL1hour unchanged), inspect dated
-source/proxy notes and aligned price dates, compare saved score/decision fields
-and avoid new mapping expansion or financial score recalculation. If old-tab
-binding fails, create a fresh tab in the selected browser: this recovered access
-for NBIS acceptance. Do not request app reboot from a control-connection error.
+Use `cache/kr_rs_{code}_{before,after}.zip` and the acceptance JSON first. Trace
+why a flow-summary refresh changes the reference label from observation to swing
+or recovery while sector RS and all seven core decision sections stay identical.
+Compare input series length/date/adjustment basis and classification paths; do not
+assume that different reference labels imply a changed saved trading decision.
+Report the cause and make only a demonstrated bounded connection fix, if needed,
+with fixed-input contracts. Do not change grade thresholds, regenerate goldens,
+promote missing data or repeat a broad refactor. Use a fresh selected-browser tab
+if old-tab binding fails; no automatic reboot request.
 
-NBIS annual review UI acceptance is complete for one owner/company. SEC6-K/IFRS
-and automatic20-F scoring remain outside scope; review evidence must not claim
-latest interim earnings. Keep raw private evidence outside Git.
+Four sector-RS mappings and NBIS annual review now have bounded Cloud acceptance.
+SEC6-K/IFRS and automatic20-F scoring remain outside scope; review evidence must
+not claim latest interim earnings. Private exports stay outside Git.
 
 ## Evidence and Remaining Limits
 
