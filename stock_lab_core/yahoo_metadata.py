@@ -1,6 +1,8 @@
 """Share successful Yahoo metadata and throttling across dashboard views."""
 
 from collections import Counter, OrderedDict
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timezone
 import logging
@@ -8,6 +10,19 @@ import threading
 import time
 
 from yfinance.exceptions import YFRateLimitError
+from stock_lab_core.performance import count_event, measure
+
+_DIAGNOSTIC_SCOPE = ContextVar("yahoo_metadata_diagnostic_scope", default="")
+
+
+@contextmanager
+def metadata_diagnostic_scope(label):
+    """Label measurements only; never alter request/cache keys or policy."""
+    token = _DIAGNOSTIC_SCOPE.set(label)
+    try:
+        yield
+    finally:
+        _DIAGNOSTIC_SCOPE.reset(token)
 
 
 def is_rate_limit_error(exc):
@@ -45,28 +60,38 @@ class YahooMetadataReader:
     def read(self, operation, ticker, fetch, *, ttl=86400, failure_ttl=60,
              is_success=bool, allow_stale=True):
         key = (operation, str(ticker or "").strip().upper())
+        diagnostic_operation = f"{_DIAGNOSTIC_SCOPE.get()}:{operation}" if _DIAGNOSTIC_SCOPE.get() else operation
         # Hold the lock through HTTP completion so only one view probes Yahoo.
-        with self._lock:
+        count_event(f"yahoo_metadata.{diagnostic_operation}.lookup")
+        with ExitStack() as stack:
+            with measure("external_data", f"yahoo_metadata_lock_wait[{diagnostic_operation}]"):
+                stack.enter_context(self._lock)
             now = self._clock()
             entry = self._successes.get(key)
             if entry and now - entry[0] < ttl:
                 self._counts["cache_hits"] += 1
+                count_event(f"yahoo_metadata.{diagnostic_operation}.cache_hit")
                 return {"ok": True, "status": "available", "data": deepcopy(entry[2]),
                         "fetched_at": entry[1], "stale": False}
             if now < self._retry_after:
                 self._counts["blocked"] += 1
+                count_event(f"yahoo_metadata.{diagnostic_operation}.blocked")
                 return self._unavailable(key, "rate_limited", allow_stale)
             failure = self._failures.get(key)
             if failure and now < failure[0]:
                 self._counts["blocked"] += 1
+                count_event(f"yahoo_metadata.{diagnostic_operation}.blocked")
                 return self._unavailable(key, failure[1], allow_stale)
             delay = self._min_interval - (now - self._last_started)
             if delay > 0:
-                self._sleep(delay)
+                with measure("external_data", f"yahoo_metadata_throttle_wait[{diagnostic_operation}]"):
+                    self._sleep(delay)
             self._last_started = self._clock()
             self._counts["attempts"] += 1
+            count_event(f"yahoo_metadata.{diagnostic_operation}.provider_attempt")
             try:
-                value = fetch(key[1])
+                with measure("external_data", f"yahoo_metadata_provider[{diagnostic_operation}]"):
+                    value = fetch(key[1])
                 success = is_success(value)
             except Exception as exc:
                 if is_rate_limit_error(exc):
@@ -74,6 +99,7 @@ class YahooMetadataReader:
                     pause = min(self._cooldown * 2 ** (self._rate_limit_streak - 1), 1800)
                     self._retry_after = self._clock() + pause
                     self._counts["rate_limits"] += 1
+                    count_event(f"yahoo_metadata.{diagnostic_operation}.rate_limit")
                     logging.warning("Yahoo metadata rate limited; pausing requests for %ss", pause)
                     return self._unavailable(key, "rate_limited", allow_stale)
                 success, value, status = False, None, "error"

@@ -293,6 +293,7 @@ def test_render_union_is_one_batch_with_identical_snapshots_and_warm_cache(offli
 
 
 def test_investment_functions_are_unchanged():
+    from tests.test_summary_wait_diagnostics import strip_added_timing
     # Freeze after the approved recovery display fix. Precision context was
     # extracted and has three-view frozen-input coverage in test_execution_context.
     baseline = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=ROOT, encoding="utf-8-sig")
@@ -317,6 +318,6 @@ def test_investment_functions_are_unchanged():
             retained = [(key, value) for key, value in zip(row.keys, row.values)
                         if not (isinstance(key, ast.Constant) and key.value in {"qty", "has_pos"})]
             row.keys, row.values = [key for key, _ in retained], [value for _, value in retained]
-        trees.append({name: ast.dump(node, include_attributes=False) for name, node in functions.items()})
+        trees.append({name: ast.dump(strip_added_timing(node), include_attributes=False) for name, node in functions.items()})
     assert trees[0].keys() == names
     assert trees[0] == trees[1]

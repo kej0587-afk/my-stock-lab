@@ -20766,8 +20766,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
     name = sanitize_asset_name(item.get("name", ""), tkr)
     if not tkr:
         return None
-    is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
-    a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
+    with measure("external_data", f"summary_asset_metadata[{tkr}]"):
+        is_etf = is_fin_score_exempt_asset(tkr, item.get("is_etf", False), item.get("asset_class", ""), name)
+        a_class = infer_asset_class_for_ticker(tkr, item.get("asset_class", "")) if is_etf else item.get("asset_class", "")
 
     try:
         df = _price_df if _price_df is not None else load_price_df(tkr, "1y")
@@ -20813,13 +20814,16 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
 
     stage = "financial_score"
     try:
-        final_fin_score, financial_meta = load_fin_score_meta_fast(tkr, is_etf)
+        with measure("external_data", f"summary_financial_score[{tkr}]"):
+            final_fin_score, financial_meta = load_fin_score_meta_fast(tkr, is_etf)
         f_score = int(final_fin_score)
 
-        my_p = get_my_price(name, tkr)
-        has_p = has_position(name, tkr)
-        _live_p = load_display_live_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
-        live_context = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
+        with measure("decision", f"summary_holdings_lookup[{tkr}]"):
+            my_p = get_my_price(name, tkr)
+            has_p = has_position(name, tkr)
+        with measure("prices", f"summary_live_alignment[{tkr}]"):
+            _live_p = load_display_live_price(tkr)  # 프리마켓·애프터마켓 실시간가 (캐시 TTL=60s)
+            live_context = apply_live_price_with_indicators(df, _live_p, tkr, build_indicators)
 
         stage = "decision"
         c = calc_scores_and_decision(
@@ -20844,8 +20848,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
             c["mtf_bias_label"] = "자료부족"
             c["data_state"] = "상위시간대 조회 실패"
         stage = "leverage_policy"
-        c = apply_leveraged_dca_dashboard_override(c)
-        c = apply_leveraged_precision_decision_override(c, name, tkr, has_p, my_p)
+        with measure("external_data", f"summary_leverage_review[{tkr}]"):
+            c = apply_leveraged_dca_dashboard_override(c)
+            c = apply_leveraged_precision_decision_override(c, name, tkr, has_p, my_p)
         try:
             pattern_candidates = detect_chart_pattern_candidates(pattern_df)
             pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(pattern_candidates, c)
@@ -20861,7 +20866,8 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         )
 
     # 벤치마크 단일 진입점 — prefetch_benchmark_info_parallel 이 선제 캐싱함
-    bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
+    with measure("external_data", f"summary_benchmark_lookup[{tkr}]"):
+        bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
     sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
     sector_rs_state = classify_sector_rs_state(sector_rs_label, is_etf=is_etf)
     c["input_basis"] = {**build_signal_basis(df, live_context), **financial_basis(financial_meta, is_etf=is_etf)}
@@ -20922,6 +20928,15 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         "has_pos": clean_float(item.get("qty"), float(has_p)) > 0,
     }
     return {"tkr": tkr, "f_score": f_score, "row": row}
+
+
+def _timed_today_analyst_snapshot(ticker):
+    # Same callback/result; the timer includes outer-cache hits and cache waits.
+    from contextlib import nullcontext
+    from stock_lab_core import yahoo_metadata as metadata_loader
+    diagnostic_scope = getattr(metadata_loader, "metadata_diagnostic_scope", None)
+    with (diagnostic_scope("analyst") if diagnostic_scope else nullcontext()), measure("external_data", f"today_analyst_snapshot[{ticker}]"):
+        return get_analyst_snapshot(ticker)
 
 
 def prefetch_rs_price_frames(watchlist_items):
@@ -32825,7 +32840,7 @@ def _render_today_queue_tab(mode):
     reserve_available = clean_float(get_reserve_available_for_crash_buy(mode), 0.0)
 
     with measure("phase", "analyst_enrichment"):
-        summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=get_analyst_snapshot, load_latest_price=load_latest_price)
+        summary_df = attach_today_analyst_context(summary_df, get_analyst_snapshot=_timed_today_analyst_snapshot, load_latest_price=load_latest_price)
     _upside_value_map = build_today_analyst_upside_map(summary_df)
 
     flow_snapshot_for_context = get_cached_today_market_flow_snapshot()

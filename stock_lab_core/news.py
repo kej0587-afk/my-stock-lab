@@ -23,7 +23,7 @@ import yfinance as yf
 
 from stock_lab_core.yahoo_transport import yahoo_session_kwargs
 from stock_lab_core.result_cache import cache_result
-from stock_lab_core.performance import timed_call
+from stock_lab_core.performance import count_event, measure, timed_call
 from stock_lab_core.yahoo_metadata import is_rate_limit_error, yahoo_metadata_reader
 
 try:
@@ -1008,6 +1008,7 @@ def _parse_fnguide_kr_consensus(html_content, code):
     return {"ok": False, "data": {}, "reason": "FnGuide 공개 컨센서스 목표가 없음"}
 
 
+@timed_call("external_data")
 def fetch_fnguide_kr_consensus(ticker):
     """Fetch FnGuide's public, current consensus snapshot without authentication."""
     symbol = ensure_kr_suffix_if_code(sanitize_ticker_value(ticker))
@@ -1024,7 +1025,10 @@ def fetch_fnguide_kr_consensus(ticker):
         result["reason"] = "requests 라이브러리 없음"
         return result
     try:
-        response = _requests.get(url, headers={"User-Agent": _YF_UA, "Accept": "text/html"}, timeout=8)
+        with measure("external_data", "analyst_fnguide_http"):
+            count_event("analyst_fnguide.request")
+            response = _requests.get(url, headers={"User-Agent": _YF_UA, "Accept": "text/html"}, timeout=8)
+            count_event("analyst_fnguide.response")
         response.raise_for_status()
         parsed_url = urllib.parse.urlparse(response.url)
         if parsed_url.hostname != "wcomp.fnguide.com" or parsed_url.path.rstrip("/") != "/CompanyInfo/Snapshot":
@@ -1036,7 +1040,7 @@ def fetch_fnguide_kr_consensus(ticker):
     return result
 
 
-@cache_result(ttl=21600, is_success=lambda result: result.get("status") == "available")
+@cache_result(ttl=21600, is_success=lambda result: result.get("status") == "available", trace_name="analyst_snapshot")
 def _get_analyst_snapshot_cached(ticker):
     keys = [
         "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",

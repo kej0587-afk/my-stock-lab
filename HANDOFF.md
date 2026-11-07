@@ -19,6 +19,12 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current task: summary-worker/analyst wait instrumentation based on `f746134c`.
+Focused tests 166 passed; decisions, calls, cache keys/policy and concurrency
+unchanged. Per-symbol stage timings plus analyst-context lock/throttle/provider
+timings and cache events added. Production verification pending code push.
+See [wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
+
 Latest change: **`a25bd5ff` pushed**, exact **6mo leveraged-watch batching**, based on `b82d1b61`.
 One summary scope shares successful frames, avoids overlapping batch duplicates,
 and retains KR/missing/forced-refresh/original precision paths. No rules changed.
@@ -113,17 +119,14 @@ Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_hist
 
 ## Next Task Only
 
-**Measure unclassified summary-worker time before another optimization.**
+**Verify the new wait diagnostics in one full production Today Check.**
 
-`_compute_summary_item` self-time sum rose from about 14.1s to 69.8s after reboot
-(parallel sum, not wall); stock-signals wall rose 25.054s -> 34.858s. Add narrowly
-scoped timing around its currently uninstrumented financial metadata reads and
-cached leveraged-profile calls/waits, then run one full Today Check with the
-same settings. Separate provider misses/cache waits from function invocations.
-Do not infer a cause from aggregate self time, alter TTL/concurrency, repeat the
-completed watch optimization or change investment rules. Preserve call order and
-output parity. Keep private traces outside Git, use the matching completed JSON,
-commit/push findings and leave exactly one next bounded task.
+Keep the existing all-account/95-row scope and flow-refresh option. Confirm new
+per-symbol timers and analyst-context cache/lock/provider events in the matching
+completed JSON. Distinguish worker sums from wall time and callbacks from HTTP.
+If old modules remain loaded, record evidence before requesting Cloud reboot.
+Do not change TTL/concurrency or investment rules. Commit/push the measured
+findings and select exactly one evidence-based next task.
 
 ## Evidence and Remaining Limits
 
