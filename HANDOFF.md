@@ -25,14 +25,18 @@ and retains KR/missing/forced-refresh/original precision paths. No rules changed
 Focused contracts 205 passed plus final batch contracts 44 passed. Prices gate
 remains 265 passed / one pre-existing AST failure. Local measured path 7.567s ->
 2.437s, actual Yahoo chart HTTP 23 -> 23; not a controlled Cloud speedup.
-Cloud full run `bf29aab0bc784045aac20065be73d19e`: 90.206s, 95 rows, zero errors,
-new app build but **old watch module still executing** (no new events or even
-the new per-row quote/history timers). Safe fallback works; this is not a measured
-Cloud optimization. User asked to Reboot; app menu has no restart permission.
-The report-only empty stale-module list does not verify the watch module. See
+**After user Reboot, new path verified** in full Cloud run
+`6f1101e4f03b4f929275cce41dcfeb6e` (11:26–11:27 KST), build `42e80cb1`:
+95 rows, **107.934s** / script 119.269s, zero instrumented errors.
+Four 6mo batches, 13 shared hits, 36 batch-frame hits, two original KR fallbacks;
+new quote/history/batch timers present. New path union 12.250s. Prior 90.206s
+run used the old module; the latest full run is slower, not a proven speedup.
+Analyst phase 2.212s -> 9.038s, stock signals 25.054s -> 34.858s; conditions differ.
+KR scope still reuses 30 requests (416 -> 386 HTTP). All cache/rule settings kept.
+UI/export ID and local/loaded app hashes match; no further reboot needed. See
 [watch-history record](docs/maintenance/20261107_leveraged_history_batch.md).
 
-Latest measurement: **KR provider-cache expiry run**, 2026-11-07 09:37–09:39 KST,
+Earlier measurement: **KR provider-cache expiry run**, 2026-11-07 09:37–09:39 KST,
 ID `2f717dae89a341ba8e3c2f08676d4bcd`, build `5b5d81f6`. About 48 minutes elapsed
 since the last visible calculation; no preliminary price/flow reload. Same
 95-row calculation/settings. **91.089s** Today Check / **94.807s** script.
@@ -109,17 +113,17 @@ Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_hist
 
 ## Next Task Only
 
-**After the user's Cloud Reboot, verify the 6mo watch batch in one complete Today Check.**
+**Measure unclassified summary-worker time before another optimization.**
 
-Keep account/filter/flow settings unchanged. Download the completed matching JSON,
-check watch-module execution via shared/batch hit events and new timers, fallback counts,
-watch/quote/history times and total elapsed. Compare with the 91.089s expired-KR
-run without claiming identical live data/cache state. If the Cloud module is old,
-record that and use the safe fallback; do not claim optimization was applied.
-The previous post-push run used the old watch module. Use the lower "이번에 완료한
-계산 시간 진단 JSON" button and verify its ID; the upper button initially gave
-the prior completed export. Do not start another optimization until this gate is
-verified. Then update this handoff with the result and exactly one next bounded task.
+`_compute_summary_item` self-time sum rose from about 14.1s to 69.8s after reboot
+(parallel sum, not wall); stock-signals wall rose 25.054s -> 34.858s. Add narrowly
+scoped timing around its currently uninstrumented financial metadata reads and
+cached leveraged-profile calls/waits, then run one full Today Check with the
+same settings. Separate provider misses/cache waits from function invocations.
+Do not infer a cause from aggregate self time, alter TTL/concurrency, repeat the
+completed watch optimization or change investment rules. Preserve call order and
+output parity. Keep private traces outside Git, use the matching completed JSON,
+commit/push findings and leave exactly one next bounded task.
 
 ## Evidence and Remaining Limits
 

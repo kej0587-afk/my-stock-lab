@@ -73,7 +73,7 @@ zero instrumented errors. Prices/indicators/external active unions
 55.131 / 21.839 / 22.155s (overlap; do not sum). KR reuse still works:
 414 reader calls = 384 HTTP requests + 30 scope reuses.
 
-**Deployment verification remains pending a Cloud Reboot.** The new app build
+**Initial deployment was pending a Cloud Reboot (resolved below).** The new app build
 is confirmed, but all new watch events/timers are absent despite five watch
 builds/38 rows. Even the new quote/history timers in the original row function
 are absent: the old imported module is still executing. Three Yahoo batch calls
@@ -94,3 +94,50 @@ The upper completed-export button initially returned the previous measurement;
 the **"이번에 완료한 계산 시간 진단 JSON"** button returned the matching ID.
 Always check file/UI ID rather than filename freshness alone. The review ZIP
 contains CSV tables, not watch-module hashes; do not claim hash validation from it.
+
+## After user-confirmed Reboot: production path verified
+
+2026-11-07 **11:26:08–11:27:56 KST**, ID
+**`6f1101e4f03b4f929275cce41dcfeb6e`**, build **`42e80cb1`** (code `a25bd5ff`).
+Same four account selections, 81 registered / 95 calculated / 12 automatic
+candidates and full flow refresh. One completed full run, not reused/partial.
+UI/export IDs and local/loaded app hashes match. No source edits this turn.
+
+**The new watch path is now proven active:** five batched builds / 38 rows,
+four exact 6mo batch lookups, **13 shared-frame hits / 36 batch-frame hits**,
+two original-history fallbacks (the KR rows); no batch exception or instrumented
+error. All new per-row quote/history and batch timers are present. Total Yahoo
+batch-library calls 7 = three existing preloads + four watch batches; individual
+library calls 18 vs 41 before reboot. These are library counters, not measured
+Cloud Yahoo HTTP request totals. KR scope remains 416 reader calls = 386 actual
+HTTP requests + 30 reuses (two more domestic fallbacks than the previous run).
+
+| Timing | Before Reboot, old watch module | After Reboot, new watch path |
+| --- | ---: | ---: |
+| Full Today Check | 90.206s | **107.934s** |
+| Script including entry | 96.396s | 119.269s |
+| Summary phase | 39.497s | 52.276s |
+| Stock signal phase | 25.054s | 34.858s |
+| Analyst enrichment phase | 2.212s | 9.038s |
+| Flow refresh | 21.704s | 20.619s |
+
+New watch path active union **12.250s**, including batch work **5.584s** and
+row-builder union **6.543s**; row quote union **5.917s**, row history union
+**1.004s**. Nested/parallel values overlap and must not be added. The old watch
+union was 11.373s in the immediately previous run and 17.129s in the earlier
+expired-provider run. Thus **no end-to-end production speedup is established**;
+the cache/process/network conditions were not a controlled A/B. Reboot is not
+proof every provider/shared cache was cold. Do not attribute the total increase
+or reduction of any one subphase solely to the patch.
+
+Prices / indicators / external-data active unions: **61.048 / 25.673 / 29.812s**.
+The summary worker's self-time sum rose 14.138s -> 69.766s (parallel sum, not wall
+time); the export does not identify which uninstrumented helper/cache wait is
+responsible. Next bounded task is to measure that self-time before changing it,
+especially financial metadata reads and cached leveraged-profile waits.
+
+Private evidence: `C:/Users/82amf/Downloads/today_queue_6f1101e4f03b4f929275cce41dcfeb6e.json`
+and `stock_lab_watch_batch_verified_20261107.png`.
+JSON SHA-256 `1ec669aea8d3827a79b6bce552dddf091aa13319af76c0ee56db6c5035ec2322`.
+No repeated code tests for this documentation-only verification; the preceding
+parity checks and known structural-test limitation remain documented above.
