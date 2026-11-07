@@ -1,4 +1,36 @@
 {
+  "121600": {
+    "benchmark": "305540.KS",
+    "sector": "2차전지 소재",
+    "source_url": "https://file.alphasquare.co.kr/media/pdfs/company-ir/20250704%EB%82%98%EB%85%B8%EC%8B%A0%EC%86%8C%EC%9E%AC_%E2%80%B2KOSDAQ_Connect_2025%E2%80%B2_%EC%B0%B8%EA%B0%80.pdf",
+    "source_name": "나노신소재 작성 KOSDAQ Connect 2025 IR 자료 (배포본)",
+    "verified_on": "2026-11-07",
+    "proxy_note": "회사 IR의 이차전지 CNT 도전재 사업을 근거로 TIGER 2차전지테마를 대용 비교한다. 반도체·디스플레이·태양전지 소재 사업도 있어 순수 배터리 기업 분류나 현재 매출비중 확정을 뜻하지 않는다. ETF의 현재 편입 여부·비중은 보장하지 않는다. 벤치마크 설명: https://www.k-etf.com/etf/305540"
+  },
+  "006280": {
+    "benchmark": "143860.KS",
+    "sector": "헬스케어/제약",
+    "source_url": "https://www.gcbiopharma.com/kor/index.do",
+    "source_name": "GC녹십자 공식 제품 소개",
+    "verified_on": "2026-11-07",
+    "proxy_note": "공식 의약품·면역제제·백신 사업을 근거로 TIGER 헬스케어를 대용 비교한다. 의약품과 의료정밀 등을 포함한 광역 업종 ETF로 혈액제제 전용 지수가 아니다. 운용사 2025년 3월 자료는 지수 범위 확인용이며 현재 편입비중을 뜻하지 않는다. https://www.tigeretf.com/upload/etf/20250404024857001087.pdf"
+  },
+  "092730": {
+    "benchmark": "228790.KS",
+    "sector": "화장품",
+    "source_url": "https://www.neopharm.co.kr/ko/company.do",
+    "source_name": "네오팜 공식 기업개요 · 더마 코스메틱",
+    "verified_on": "2026-11-07",
+    "proxy_note": "공식 더마 코스메틱 연구·제조·판매 사업을 근거로 TIGER 화장품을 대용 비교한다. 이름의 팜으로 제약을 추정하지 않는다. 피부장벽 제품 전용 지수가 아니며 현재 ETF 편입 여부는 보장하지 않는다. 운용사 2024년 6월 자료는 지수 범위 확인용이다. https://www.tigeretf.com/upload/etf/20240704010011009311.pdf"
+  },
+  "003490": {
+    "benchmark": "140710.KS",
+    "sector": "운송/항공",
+    "source_url": "https://m.samsungfund.com/sheet/20170908/2ETF30_20170831.pdf",
+    "source_name": "삼성자산운용 KODEX 운송 공식 자료 (2017-08-31)",
+    "verified_on": "2026-11-07",
+    "proxy_note": "운용사의 KRX 운송 지수 설명과 대한항공 포함 자료를 근거로 KODEX 운송을 대용 비교한다. 항공 외 해운·물류를 포함하므로 항공 전용 지수가 아니다. 2017년 자료의 편입비중을 현재값으로 사용하지 않는다. 상품 코드 확인: https://www.k-etf.com/etf/140710"
+  },
   "VIAV": {
     "benchmark": "XLK",
     "sector": "미국 기술/통신장비",

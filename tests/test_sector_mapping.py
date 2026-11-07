@@ -27,6 +27,41 @@ PROVENANCE_FIELDS = {
     "benchmark", "sector", "source_url", "source_name", "verified_on", "proxy_note",
 }
 
+NOVEMBER_GAPS = {
+    "121600": ("305540.KS", "2차전지 소재"),
+    "006280": ("143860.KS", "헬스케어/제약"),
+    "092730": ("228790.KS", "화장품"),
+    "003490": ("140710.KS", "운송/항공"),
+}
+
+
+@pytest.mark.parametrize("ticker,expected", NOVEMBER_GAPS.items())
+def test_november_gaps_resolve_with_provenance(ticker, expected, sector_resolver, provenance):
+    from stock_lab_core.relative_strength import get_sector_provenance
+    for suffix in ("", ".KS", ".KQ"):
+        assert sector_resolver(ticker + suffix, "kr_stock", "") == expected
+        evidence = get_sector_provenance(ticker + suffix, expected[0])
+        assert evidence["섹터검증일"] == "2026-11-07"
+        assert evidence["섹터분류출처"] == provenance[ticker]["source_url"]
+        assert "대용 비교" in evidence["섹터분류근거"]
+    assert get_sector_provenance(ticker, "WRONG") == {}
+    assert set(provenance[ticker]) == PROVENANCE_FIELDS
+    with (ROOT / "stock_lab_core/data/kr_etf_lab.csv").open(encoding="utf-8-sig", newline="") as f:
+        catalog = {r["ticker"] for r in csv.DictReader(f)}
+    assert expected[0] in catalog
+
+
+def test_november_additions_preserve_all_existing_mappings(sector_map, provenance):
+    import subprocess
+    for path, current in (("sector_map.json", sector_map),
+                          ("stock_lab_core/data/sector_benchmark_sources.json", provenance)):
+        original = json.loads(subprocess.check_output(
+            ["git", "show", "d9900090:" + path], cwd=ROOT, encoding="utf-8"))
+        original = {k: (tuple(v) if path == "sector_map.json" else v)
+                    for k, v in original.items() if not k.startswith("_")}
+        assert set(current) - set(original) == set(NOVEMBER_GAPS)
+        assert {k: current[k] for k in original} == original
+
 
 def _unique_object(pairs):
     result = {}

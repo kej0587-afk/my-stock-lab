@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **four missing KR sector-RS mappings**, base `d9900090`.
+User explicitly allowed moving past blocked SEC work. Audited the four
+`벤치확인 필요` rows from the preserved95-row export: all lacked explicit mappings,
+not intentional exclusions. Added four mappings and dated source/proxy notes:
+121600->305540,006280->143860,092730->228790,003490->140710 (KR suffixes preserved).
+No existing mapping or executable app/core code changed. Market RS used in scoring,
+financial grades, thresholds and judgement labels remain unchanged. Sector evidence
+for these four intentionally changes from missing to a computable comparison.
+Actual local production price-loader calls for all eight stock/ETF histories
+yielded61 common sessions, matching2026-11-06 dates,20-session RS on Close/Close.
+Focused sector/RS tests:57 before,62 after. Decision gate:1,327 passed, zero failures,
+errors/skips/source mutations,103.707s (`cache/refactor_checks/decision_x0_pflhf`). See
+[mapping verification](docs/maintenance/20261107_sector_rs_four_gaps.md) for gate
+results and data-source limits. Operating Cloud UI/cache refresh remains unverified.
+SEC20-F implementation is deferred, not completed; no further blocked retries.
+
 Latest task: **NBIS official fixture acquisition**, base `554cafd1`.
 Direct official original20-F download returned HTTP403 (2026-11-07 11:03:32 UTC).
 No retry with rotated/spoofed identities; no financial fixture obtained. Research
@@ -358,22 +374,21 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Prepare verified NBIS 20-F evidence and an isolated annual review parser.**
+**Verify the four restored sector-RS connections in production.**
 
-Follow the [bounded proposal](docs/maintenance/20261107_nbis_financial_failure_diagnosis.md).
-First obtain a legitimate official companyfacts/filing fixture with source dates;
-do not invent SEC contact credentials or silently scrape around access denial.
-Current dependency: user sets local `sec_user_agent` with their real contact, or
-provides a legitimately downloaded official file. Never echo that contact/key.
-Check source availability with bounded requests after setup; do not promise403
-recovery. Original accession is0001104659-26-052948. Later accession
-0001104659-26-065681 is an exhibit-only amendment, not a replacement financial set.
-If payload access remains unavailable, report that limit instead of treating the
-synthetic diagnostic fixture as actual financial evidence. Support US-GAAP
-20-F/20-F/A annual records only in a separate review-only entrypoint; preserve
-source form, actual dates/currency and missing/comparability flags. Verify existing
-10-K/10-Q results unchanged. No 6-K quarter inference, IFRS expansion, live score
-refresh, DB writes or automatic-score integration in this bounded task.
+After the mapping-data commit deploys, use the existing explicit refresh to clear
+the applicable benchmark cache (normal TTL remains1hour). Verify the four selected
+tickers show the intended benchmark, dated source/proxy note and aligned price
+dates. Compare saved score/decision fields in completed review evidence; do not
+recalculate financial scores or change thresholds. No new mapping expansion.
+Do not request reboot solely from assumption; first inspect actual loaded results.
+If Cloud access is unavailable, preserve local evidence and report that limit.
+
+Deferred dependency: NBIS20-F review parser still needs a legitimate official
+fixture/working SEC identity. User allowed skipping it. Resume only after source
+access/file is available; use the diagnosis/acquisition records above. No fabricated
+contact or synthetic-as-real fixture; exhibit-only20-F/A must not replace original
+financials. No6-K/IFRS expansion or automatic-score integration.
 
 ## Evidence and Remaining Limits
 
