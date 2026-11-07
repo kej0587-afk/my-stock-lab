@@ -25,7 +25,12 @@ repeated one-row DataFrame/apply work. Generic multi-row path and all investment
 rules remain unchanged. Full-row/null/order/history parity:156 tests passed;
 adjacent summary/observatory/AST contracts:32 passed. Decision gate before1171 /
 after1327 passed, zero failures/errors/skips. Code and record pushed together;
-production calculation remains the single next verification task.
+**`d5dc6c02` pushed and production verified**: full run
+`d7330531d2d046b98cf29e2878ee7c3b` (14:34–14:35 KST),95 rows,**83.929s**,
+script92.993s, zero instrumented errors. Loaded/disk/local app hashes match;
+no reboot needed. Previous95.186s is not a controlled A/B: analyst70 cache reuses
+vs0 before (phase8.900 ->1.862s). Prices still54.497s active; no claim that all
+11.257s improvement comes from this patch. Current verification is docs-only.
 Fixed20-case residual median **.426508s -> .321040s (-24.73%)**, source-flow mean
 **.251149s -> .144432s**; complete output hash unchanged, zero replay network.
 Final four-worker median.332098s also matches the original complete outputs.
@@ -159,16 +164,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify single-row source-flow optimization in one full production Today Check.**
+**Extract only the theme-selection/description UI from the theme-flow renderer.**
 
-Confirm current loaded/disk/local app fingerprints and matching completed JSON.
-Use the same four accounts,81 registered/95 calculated/12 automatic candidates
-and flow-refresh option, noting any changed scope/cache state. Compare actual
-elapsed/category times to the95.186s reference; do not claim the local24.73%
-residual improvement applies to Cloud/full-check timing. This is an app-only
-helper, so do not request reboot without evidence. Keep all rules/TTL/concurrency
-unchanged and do not add a second optimization. Commit/push the measured finding
-and leave exactly one next bounded task.
+`render_image_theme_flow_section` remains452 lines; its selection widgets and
+description chip form a bounded display responsibility. Capture current widget
+call order/keys/selected values and empty-theme behavior, then extract that block
+without altering lazy-run guards, data loading, rankings, financial rules or
+adding features. Keep the UI output and state contract identical; run relevant
+contracts before/after, commit/push and verify that screen. This is maintenance,
+not a promised speedup. Leave exactly one next task; later closure checkpoints
+are four-view integration and final regression/deployment checks.
 
 ## Evidence and Remaining Limits
 
