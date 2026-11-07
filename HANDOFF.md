@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **read-only SEC eight-quarter financial evidence**, base `68d617a4`.
+User approved this financial-data phase, overriding pending report acceptance.
+New precision expander compares income/cash investment/OCF/cash and derived FCF,
+with explicit dates, source scope, missing/revision guards and review questions.
+Manual query only, selected company plus up to four comparison tickers; owner/
+ticker/selection-isolated session results, no score/DB/provider/cache changes.
+Actual official SEC responses for MSFT/AMZN/GOOGL/META/NVDA/MU provide8 quarters
+each; all latest raw fields present, derived FCF44/48 (four revision holds).
+Cash investment distinguishes PP&E from productive assets including intangibles.
+Focused105 tests pass; stable decision gate1334 passes in104.908s with no source
+changes. First gate run also passed tests but correctly blocked source edits
+during execution; not claimed accepted. Existing app functions AST-identical.
+Local real-source preview inspected; production acceptance pending publication.
+No LLM, consensus/segment guidance, debt maturity or valuation model implemented.
+See [quarter evidence verification](docs/maintenance/20261108_sec_quarter_evidence.md).
+
 Latest task: **report editorial/holiday status review**, base `ce13c311`.
 User supplied00:48 report and two timing files, overriding the old next inventory.
 Fixed weekend US live-disconnected wording using validated dated closes; no stale
@@ -500,15 +516,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify one newly generated production report with the editorial changes.**
+**Accept the SEC eight-quarter precision panel on production after publication.**
 
-Check loaded/disk modules first; request reboot only on actual stale evidence.
-Confirm weekend US closes (or correct active-session labels at that time), no
-volleyball finance rows, front interpretation and source-bound holding/check table.
-Keep report-generation and Today calculation measurement IDs/scopes separate.
-Do not change scoring, expand article crawling or infer missing account coverage.
-Local partial replay is not production acceptance. The old financial completeness
-inventory task is deferred by the user's explicit report-quality priority.
+Query MSFT through the explicit button; verify tables, source scope and JSON.
+Compare the completed precision ZIP before/after review for unchanged scores and
+decisions. Check runtime evidence before requesting reboot. Then record acceptance.
+Do not change scores or claim the report already consumes these financial tables.
+The earlier editorial report acceptance remains deferred by the user's explicit
+financial-evidence priority.
 
 ## Evidence and Remaining Limits
 

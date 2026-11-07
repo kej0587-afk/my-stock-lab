@@ -34267,6 +34267,15 @@ if main_page == "precision":
                         store_factory=lambda owner: SupabaseDartEvidenceStore(supabase, owner_scope=owner),
                     )
             else:
+                with st.expander("최근 8분기 · 매출·투자·현금흐름 비교 (점수 유지)"):
+                    from stock_lab_core.sec_quarter_review_view import render_sec_quarter_evidence
+                    render_sec_quarter_evidence(
+                        st, ticker=tkr, owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+                        configured=bool(get_sec_user_agent()), is_demo=IS_PUBLIC_DEMO,
+                        resolve_cik=get_sec_cik_for_ticker,
+                        fetch_facts=lambda cik: sec_request_json(
+                            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"),
+                    )
                 with st.expander("SEC 20-F 연간 근거 · 점수 유지"):
                     from stock_lab_core.sec_annual_review_view import render_sec_annual_evidence
                     render_sec_annual_evidence(
