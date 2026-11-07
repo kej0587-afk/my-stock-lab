@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **NBIS official fixture acquisition**, base `554cafd1`.
+Direct official original20-F download returned HTTP403 (2026-11-07 11:03:32 UTC).
+No retry with rotated/spoofed identities; no financial fixture obtained. Research
+access still reads the official filing text, which is not a raw companyfacts or
+iXBRL fixture. Local `sec_user_agent` absence was checked without printing secrets;
+user setup requested. Absence is not proven to be the cause of403, and setting it
+does not guarantee transport recovery. Official issuer IR supplied earnings-release
+links, not a verified20-F payload in the inspected pages.
+New acceptance finding: the2026-05-22 20-F/A adds Exhibit97.1 only; it does not
+replace financial disclosures in the2026-04-30 original. Latest filing alone must
+not erase prior valid financial facts. Parser implementation remains pending a
+legitimate source fixture; no runtime/score/DB changes. See
+[fixture acquisition record](docs/maintenance/20261107_nbis_fixture_acquisition.md).
+
 Latest task: **one US financial failure diagnosis (NBIS)**, base `8bdc407e`.
 Saved evidence confirms FMP402 and a resolved SEC CIK followed by insufficient
 parsed annual records. Official NBIS 2025 20-F contains US-GAAP multi-year
@@ -349,6 +363,11 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 Follow the [bounded proposal](docs/maintenance/20261107_nbis_financial_failure_diagnosis.md).
 First obtain a legitimate official companyfacts/filing fixture with source dates;
 do not invent SEC contact credentials or silently scrape around access denial.
+Current dependency: user sets local `sec_user_agent` with their real contact, or
+provides a legitimately downloaded official file. Never echo that contact/key.
+Check source availability with bounded requests after setup; do not promise403
+recovery. Original accession is0001104659-26-052948. Later accession
+0001104659-26-065681 is an exhibit-only amendment, not a replacement financial set.
 If payload access remains unavailable, report that limit instead of treating the
 synthetic diagnostic fixture as actual financial evidence. Support US-GAAP
 20-F/20-F/A annual records only in a separate review-only entrypoint; preserve
