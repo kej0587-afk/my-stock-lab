@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **NBIS official annual evidence reader**, base `febb067e`.
+User completed local SEC identity setup. Verified presence/format without exposing
+the value; one actual companyfacts request succeeded (HTTP200,1,568,737bytes).
+Committed public fixture contains83 unchanged official USD facts for2023–2025;
+full raw payload/secret remain ignored. Added isolated offline20-F/20-F/A annual
+review reader, with explicit CIK/currency/as-of, per-field provenance, missing-data
+and business-scope flags. Continuing/discontinued cash flows remain separate.
+No quarters/latest-earnings claim, scores, DB writes, provider routing or app imports.
+Existing app and10-K/10-Q parser unchanged; NBIS runtime failure is not yet fixed.
+Focused tests57 before/88 after (13.66s). Decision gate:1,327 passed, zero failures,
+errors/skips/source changes,101.773s (`cache/refactor_checks/decision_ir07t9cm`).
+All83 fixture rows match the actual payload; full source latest3 annuals exactly
+match fixture output. Local source access is resolved; Cloud access/UI unverified.
+Publication scope: isolated module/tests/docs; publishing changes no app behavior
+and needs no reboot. No production UI verification is claimed for this module.
+See [official annual evidence verification](docs/maintenance/20261107_sec_20f_annual_review.md).
+
 Latest task: **four missing KR sector-RS mappings**, base `d9900090`.
 User explicitly allowed moving past blocked SEC work. Audited the four
 `벤치확인 필요` rows from the preserved95-row export: all lacked explicit mappings,
@@ -33,7 +50,8 @@ Focused sector/RS tests:57 before,62 after. Decision gate:1,327 passed, zero fai
 errors/skips/source mutations,103.707s (`cache/refactor_checks/decision_x0_pflhf`). See
 [mapping verification](docs/maintenance/20261107_sector_rs_four_gaps.md) for gate
 results and data-source limits. Operating Cloud UI/cache refresh remains unverified.
-SEC20-F implementation is deferred, not completed; no further blocked retries.
+SEC20-F was deferred at this point; the subsequent isolated-reader task above
+resolves local acquisition/parsing only, not runtime integration.
 
 Latest task: **NBIS official fixture acquisition**, base `554cafd1`.
 Direct official original20-F download returned HTTP403 (2026-11-07 11:03:32 UTC).
@@ -384,11 +402,12 @@ recalculate financial scores or change thresholds. No new mapping expansion.
 Do not request reboot solely from assumption; first inspect actual loaded results.
 If Cloud access is unavailable, preserve local evidence and report that limit.
 
-Deferred dependency: NBIS20-F review parser still needs a legitimate official
-fixture/working SEC identity. User allowed skipping it. Resume only after source
-access/file is available; use the diagnosis/acquisition records above. No fabricated
-contact or synthetic-as-real fixture; exhibit-only20-F/A must not replace original
-financials. No6-K/IFRS expansion or automatic-score integration.
+Deferred integration: NBIS20-F official fixture and isolated annual reader now
+exist; the local identity request succeeded. Read-only review UI/provider wiring
+and Cloud transport verification remain separate future work after the bounded
+sector-RS check above. Do not route annual evidence into scores or claim latest
+interim earnings. Preserve scope warnings and original facts across exhibit-only
+amendments. No6-K/IFRS expansion or automatic-score integration.
 
 ## Evidence and Remaining Limits
 
