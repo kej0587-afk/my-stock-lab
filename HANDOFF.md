@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded change: single-row source-flow normalization, base`125748fc`.
+`build_source_flow_context` uses the existing scalar rules directly, avoiding
+repeated one-row DataFrame/apply work. Generic multi-row path and all investment
+rules remain unchanged. Full-row/null/order/history parity:156 tests passed;
+adjacent summary/observatory/AST contracts:32 passed. Decision gate before1171 /
+after1327 passed, zero failures/errors/skips. Code and record pushed together;
+production calculation remains the single next verification task.
+Fixed20-case residual median **.426508s -> .321040s (-24.73%)**, source-flow mean
+**.251149s -> .144432s**; complete output hash unchanged, zero replay network.
+Final four-worker median.332098s also matches the original complete outputs.
+This is local partial computation, not a Cloud/full-check speedup. See
+[single-row normalization](docs/maintenance/20261107_source_flow_row_fastpath.md).
+
 Latest completed task: **fixed-input residual summary profile**, base`5953ce37`.
 Production app/core unchanged; added `scripts/profile_summary_local.py` only.
 20 existing seeded scenarios, five repeats: sequential median**0.427s**,
@@ -130,7 +143,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [Fixed-input summary profile](docs/maintenance/20261107_summary_fixed_input_profile.md).
+Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_source_flow_row_fastpath.md).
 
 ## Preserved History
 
@@ -146,19 +159,20 @@ Latest record: [Fixed-input summary profile](docs/maintenance/20261107_summary_f
 
 ## Next Task Only
 
-**Optimize only single-row source-flow normalization with exact parity.**
+**Verify single-row source-flow optimization in one full production Today Check.**
 
-`build_source_flow_context` creates a one-row DataFrame and runs the generic
-`_normalize_today_flow_context_frame`. Reuse existing scalar rules to avoid
-repeated DataFrame/apply overhead for this path. Compare the full output with
-the existing generic path (column order, values/nulls, missing fields, short
-history, registration context); retain multi-row radar behavior. Use the new
-fixed-input profiler before/after. Keep rules/labels/source selection/TTL/
-concurrency unchanged; do not optimize chart patterns or claim Cloud savings
-from local timing. Commit/push verification and leave one next bounded task.
+Confirm current loaded/disk/local app fingerprints and matching completed JSON.
+Use the same four accounts,81 registered/95 calculated/12 automatic candidates
+and flow-refresh option, noting any changed scope/cache state. Compare actual
+elapsed/category times to the95.186s reference; do not claim the local24.73%
+residual improvement applies to Cloud/full-check timing. This is an app-only
+helper, so do not request reboot without evidence. Keep all rules/TTL/concurrency
+unchanged and do not add a second optimization. Commit/push the measured finding
+and leave exactly one next bounded task.
 
 ## Evidence and Remaining Limits
 
+- Latest: [Single-row source-flow normalization](docs/maintenance/20261107_source_flow_row_fastpath.md).
 - Latest: [Fixed-input summary profile](docs/maintenance/20261107_summary_fixed_input_profile.md).
 - Latest: [Summary/analyst wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 - Latest: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).

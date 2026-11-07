@@ -20638,7 +20638,7 @@ def build_source_flow_context(frame, ticker, name=""):
 
     row = build_price_flow_row(frame, ticker, name)
     if row["연결상태"] != "자료부족":
-        row = _normalize_today_flow_context_frame(pd.DataFrame([row]), 10, "종목 자체 흐름").iloc[0].to_dict()
+        row = _normalize_source_flow_row(row, 10, "종목 자체 흐름")
     return {f"돈흐름_{key}": value for key, value in row.items() if not str(key).startswith("_")}
 
 
@@ -30685,6 +30685,49 @@ def build_today_flow_shortlist_df(snapshot=None) -> pd.DataFrame:
     except Exception:
         pass
     return result
+
+
+def _normalize_source_flow_row(row: dict, priority: int, default_group: str) -> dict:
+    """Single source-price row; reuse the radar's scalar rules without row apply.
+
+    The generic multi-row normalizer remains unchanged. Keep field insertion
+    order and existing (even null) fields, as its column-presence checks do.
+    """
+    if "Ticker" not in row:
+        raise IndexError("single positional indexer is out-of-bounds")
+    work = dict(row)
+    if "종목명" not in work:
+        work["종목명"] = work.get("ETF 이름", work.get("섹터", work.get("Ticker", "")))
+    if "후보군" not in work:
+        work["후보군"] = default_group
+    if "시장" not in work:
+        work["시장"] = _flow_text(work["구분"], default="-") if "구분" in work else "-"
+    if "세부축" not in work:
+        work["세부축"] = work.get("하위테마", work.get("섹터", ""))
+    if "테마" not in work:
+        work["테마"] = work.get("섹터", "")
+    if "대분류" not in work:
+        try:
+            work["대분류"] = _flow_display_broad_context(work, label_col="테마")
+        except Exception:
+            work["대분류"] = work.get("섹터", "")
+    for key, calculate in (
+        ("기준업종", _flow_short_basis_context), ("타이밍", _flow_short_timing),
+        ("주의요인", _flow_short_risk), ("판정", _flow_short_verdict),
+        ("시장맥락", _flow_short_context),
+    ):
+        if key not in work:
+            work[key] = calculate(work)
+    if "등록상태" not in work:
+        work["등록상태"] = _today_flow_candidate_status(work.get("Ticker", ""), work.get("종목명", ""))
+    if "후보근거" not in work:
+        work["후보근거"] = _flow_short_reason(work, default_group)
+    work["_flow_context_priority"] = priority
+    work["_검토키"] = _today_review_ticker_key(str(work["Ticker"]))
+    if not str(work["_검토키"]):
+        raise IndexError("single positional indexer is out-of-bounds")
+    # Match Series.to_dict scalar boxing in the original one-row export.
+    return pd.Series(work, dtype=object).to_dict()
 
 
 def _normalize_today_flow_context_frame(df: pd.DataFrame, priority: int, default_group: str) -> pd.DataFrame:
