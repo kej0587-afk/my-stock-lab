@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **read-only DART evidence bridge design**, base `8cda6db8`.
+Selected local raw collection -> authenticated file preview/import -> a dedicated
+owner-scoped table in the existing Supabase project -> precision evidence review.
+Defined provenance, expiry, partial-data handling, immutable imports and strict
+separation from saved grades. Existing report/account tables cannot be reused.
+This is a documentation-only design: no collector, table, schedule or upload UI
+has been implemented, and Cloud financial transport remains unavailable.
+Verified against current parser/review/auth/storage contracts and official DART
+and Supabase documentation; no runtime or production validation claim.
+Documentation checks: local links resolve, exactly one Next Task Only section,
+and whitespace check passes. Documentation-only publication; production code stays
+unchanged, so no app restart is required for this task.
+See [DART evidence bridge design](docs/maintenance/20261107_dart_evidence_bridge_design.md).
+
 Latest task: **Cloud DART corporate-code connection diagnosis/recovery**, base
 `ee6a789e`. Diagnostic build `2f79bc3c` proved production connect timeout at
 8.021s, no HTTP/API response or payload. Local official API returns 4,013 public
@@ -256,15 +270,17 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Design one read-only DART financial-evidence collection path outside the failing Cloud route.**
+**Implement the local DART raw-evidence collector and version-1 package validator.**
 
-Corporate identity resolution is recovered temporarily, but Cloud financial API
-transport also fails. Compare the smallest path using the existing reachable local
-environment and existing authenticated storage; specify provenance, expiry and
-how it remains separate from saved grades. Do not repeat blind timeout increases,
-extend snapshot dates without an official fetch, transmit credentials to another
-service, provision new infrastructure or auto-recalculate scores. Prepare the
-concrete integration design first. SEC foreign-issuer support remains later work.
+Follow the [bridge design](docs/maintenance/20261107_dart_evidence_bridge_design.md).
+Use a bounded explicit year/report scope, credential-free provenance and strict
+validation; collect raw account rows without importing app.py or calculating scores.
+Test failure/no-data/partial output, identity mismatches, size/schema/clock checks,
+secret exclusion and preserving prior successful files. If the existing local key
+is available, verify one local dry-run package under ignored cache; do not commit
+it. No Cloud/UI/DB changes, credential migration or new infrastructure in this
+task. Saved decisions remain unchanged. SEC support and storage integration follow
+in separate bounded tasks.
 
 ## Evidence and Remaining Limits
 
