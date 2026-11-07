@@ -36,6 +36,7 @@ SCOPES = {
         "test_portfolio_candidate_view", "test_portfolio_helpers", "test_portfolio_renderer_refactor",
     ),
     "report": (
+        "test_theme_selection",
         "test_report_section_contract", "test_report_split_quality",
         "test_report_nov6_regressions", "test_report_quote_direction",
         "test_report_close_boundary", "test_report_intraday_account",

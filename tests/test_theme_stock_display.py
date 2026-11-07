@@ -99,7 +99,9 @@ def test_exact_display_csv_and_source_preservation(kind, mode):
 
 
 def test_only_stock_table_preparation_changes_in_renderer():
+    from tests.test_theme_selection import inline_theme_selection
     old, new = renderer(source()), renderer((ROOT / "app.py").read_text(encoding="utf-8-sig"))
+    new = inline_theme_selection(new)
     tab, start, end = stock_block(new)
     assert end == start + 1
     assert ast.unparse(tab.body[start].value) == (

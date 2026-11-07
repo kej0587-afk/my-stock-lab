@@ -14133,24 +14133,8 @@ ETF의 <b>전력기기/전력인프라</b>와 직접 비교할 대상은 이미�
     )
 
 
-def render_image_theme_flow_section():
-    st.subheader("🧭 테마 종목 흐름")
-    st.caption(
-        "테마/하위테마 묶음을 가격 기반 모멘텀으로 비교합니다. "
-        "실제 자금 유입액이 아니라 1개월/3개월/6개월 수익률, 최근 3개월-이전 3개월 가속도, 거래량 증가를 합친 참고 지표입니다."
-    )
-
-    themes = get_image_theme_names()
-    if not themes:
-        if not IMAGE_THEME_FLOW_AVAILABLE:
-            st.error(
-                "테마 종목 데이터 모듈이 아직 배포본에 반영되지 않았습니다. "
-                "`stock_lab_core/money_flow.py`까지 함께 배포되어야 국내/해외 테마 종목이 표시됩니다."
-            )
-        else:
-            st.info("등록된 테마 종목 universe가 없습니다.")
-        return
-
+def _render_image_theme_selection(themes):
+    """Render existing selection widgets and description; do not load data."""
     # ── 테마 선택 UI ──────────────────────────────────────────────────
     def _theme_label(t: str) -> str:
         meta = IMAGE_THEME_META.get(t, {})
@@ -14183,6 +14167,29 @@ def render_image_theme_flow_section():
             unsafe_allow_html=True,
         )
         st.write("")  # 여백
+
+    return selected_theme, selected_market
+
+
+def render_image_theme_flow_section():
+    st.subheader("🧭 테마 종목 흐름")
+    st.caption(
+        "테마/하위테마 묶음을 가격 기반 모멘텀으로 비교합니다. "
+        "실제 자금 유입액이 아니라 1개월/3개월/6개월 수익률, 최근 3개월-이전 3개월 가속도, 거래량 증가를 합친 참고 지표입니다."
+    )
+
+    themes = get_image_theme_names()
+    if not themes:
+        if not IMAGE_THEME_FLOW_AVAILABLE:
+            st.error(
+                "테마 종목 데이터 모듈이 아직 배포본에 반영되지 않았습니다. "
+                "`stock_lab_core/money_flow.py`까지 함께 배포되어야 국내/해외 테마 종목이 표시됩니다."
+            )
+        else:
+            st.info("등록된 테마 종목 universe가 없습니다.")
+        return
+
+    selected_theme, selected_market = _render_image_theme_selection(themes)
 
     if not should_run_heavy_analysis(
         "image_theme_flow_lazy",

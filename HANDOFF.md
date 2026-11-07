@@ -19,6 +19,15 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded change: **theme selection/description UI extraction**, base `9cd5f6a2`.
+Only `_render_image_theme_selection` was introduced in app.py; widget keys,
+labels, order, metadata HTML, empty-theme guard and lazy data-loading sequence
+are unchanged. Report gate before **180 passed**, after **208 passed**;
+adjacent contracts **186 passed**. Immutable baseline AST and 28 new UI event
+contracts pass; no golden regeneration or investment-rule changes. No runtime
+speedup is claimed. Commit/push and production smoke verification pending.
+See [theme selection extraction](docs/maintenance/20261107_theme_selection_extraction.md).
+
 Current bounded change: single-row source-flow normalization, base`125748fc`.
 `build_source_flow_context` uses the existing scalar rules directly, avoiding
 repeated one-row DataFrame/apply work. Generic multi-row path and all investment
@@ -164,16 +173,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Extract only the theme-selection/description UI from the theme-flow renderer.**
+**Verify the four-view integration using the same ticker and data session.**
 
-`render_image_theme_flow_section` remains452 lines; its selection widgets and
-description chip form a bounded display responsibility. Capture current widget
-call order/keys/selected values and empty-theme behavior, then extract that block
-without altering lazy-run guards, data loading, rankings, financial rules or
-adding features. Keep the UI output and state contract identical; run relevant
-contracts before/after, commit/push and verify that screen. This is maintenance,
-not a promised speedup. Leave exactly one next task; later closure checkpoints
-are four-view integration and final regression/deployment checks.
+Review Today Check, money-flow radar, precision observatory and portfolio for
+one held KR ETF and one US stock already present. Compare source dates, candidate
+quality, execution gates and portfolio risk context; different responsibilities
+must not be mistaken for contradictory decisions. Use existing outputs where
+possible, record missing/stale data explicitly, fix only demonstrated wiring
+errors without changing thresholds/text, and preserve private snapshots outside
+Git. Finish with focused regression/deployment verification and exactly one
+next task. This is the integration closure checkpoint, not another broad rewrite.
 
 ## Evidence and Remaining Limits
 

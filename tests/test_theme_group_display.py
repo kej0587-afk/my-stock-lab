@@ -92,6 +92,8 @@ def test_renderer_changes_only_table_preparation():
         return next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                     and n.name == "render_image_theme_flow_section")
     old, new = renderer(old), renderer(new)
+    from tests.test_theme_selection import inline_theme_selection
+    new = inline_theme_selection(new)
     assignments = [n for n in ast.walk(new) if isinstance(n, ast.Assign)
                    and any(isinstance(t, ast.Name) and t.id == "show_group" for t in n.targets)]
     assert len(assignments) == 1

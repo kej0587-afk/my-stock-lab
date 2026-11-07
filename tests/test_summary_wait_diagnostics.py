@@ -33,6 +33,9 @@ class StripAddedTiming(ast.NodeTransformer):
 
 
 def strip_added_timing(node):
+    if isinstance(node, ast.FunctionDef) and node.name == 'render_image_theme_flow_section':
+        from tests.test_theme_selection import inline_theme_selection
+        node = inline_theme_selection(node)
     return StripAddedTiming().visit(node)
 
 
@@ -44,7 +47,8 @@ def test_all_app_functions_match_immutable_reference_after_removing_only_timers(
                 # Source-flow fast path has immutable-wrapper/full-row parity
                 # coverage in test_source_flow_row; all other functions frozen.
                 if isinstance(n, ast.FunctionDef) and n.name not in {
-                    '_timed_today_analyst_snapshot', 'build_source_flow_context', '_normalize_source_flow_row'}}
+                    '_timed_today_analyst_snapshot', 'build_source_flow_context', '_normalize_source_flow_row',
+                    '_render_image_theme_selection'}}
     assert functions(old) == functions(current)
 
 

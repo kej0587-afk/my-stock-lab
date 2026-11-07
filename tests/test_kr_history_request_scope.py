@@ -168,5 +168,6 @@ def test_all_app_functions_except_scope_wrapper_unchanged():
                 and node.name not in {"render_today_queue_tab", "get_all_summary",
                                       "build_leveraged_precision_watch_rows", "_timed_today_analyst_snapshot",
                                       # Exact source-flow parity: test_source_flow_row.
-                                      "build_source_flow_context", "_normalize_source_flow_row"}}
+                                      "build_source_flow_context", "_normalize_source_flow_row",
+                                      "_render_image_theme_selection"}}
     assert functions(before) == functions(after)
