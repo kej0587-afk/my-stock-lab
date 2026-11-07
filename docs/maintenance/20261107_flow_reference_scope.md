@@ -64,3 +64,25 @@ wait label can still affect existing execution-gate behavior in other inputs;
 the prior28/28 unchanged result applies only to the four observed cases.
 Production display of the two new columns needs acceptance after deployment.
 No broad refactor, automatic20-F scoring or Cloud DART transport recovery is claimed.
+
+## Production acceptance attempt — deployed c96dfaa5
+
+A fresh authenticated in-app tab completed standalone121600.KQ with price date
+2026-11-06 and export timestamp2026-11-07T14:58:21.787960+00:00. Both new columns
+were absent from the visible connection table and completed ZIP. The build record
+reports the deployed commit, `restart_required=True`, and exactly one stale module:
+`stock_lab_core.flow_connection`. Loaded hash is
+`8cf5d8f59cfbcdd020f80c761613dab18d7f66c390ecb636d36ae3ca45b1fcfe`;
+disk hash is `c867b6cee90545cd6d15f496978a2a0043c65ad9c8c01910169003a6b4b72ca9`.
+The UI independently shows its existing Reboot app warning. This is evidence of
+old runtime code, not successful acceptance of the two-column change. User reboot
+was requested; do not bypass the guard or force module reloads.
+
+Compared with the preserved same-mode `cache/kr_rs_121600_before.zip`, all seven
+core CSVs (financial inputs, candidate grade, main decision, final check, execution
+readiness, entry plan, workflow display) and all five OHLCV CSVs are byte-identical.
+This proves that observed old-runtime case unchanged, not new-runtime parity.
+Radar-backed new-column acceptance still requires the reboot and a fresh export.
+Private evidence is ignored under `cache/flow_scope_cloud_*`. This follow-up changes
+documentation only, so prior regression tests were not needlessly rerun; no new
+performance measurement or full-suite claim is made.

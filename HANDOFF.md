@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **flow scope production acceptance attempted**, deployed `c96dfaa5`.
+Fresh authenticated tab completed standalone121600.KQ at2026-11-07T14:58:21Z.
+The ZIP confirms new disk commit but old `stock_lab_core.flow_connection` in memory:
+restart_required true, that single monitored stale module, and both new columns
+absent. UI also explicitly requests Reboot app. User was asked to reboot based on
+this evidence; production acceptance remains pending, not a new code regression.
+Seven core CSVs and all five OHLCV CSVs match the preserved same-mode standalone
+export byte-for-byte. No code/score/cache changes or new speed claim. Private
+evidence: `cache/flow_scope_cloud_{standalone.zip,acceptance.json,stale.png}`.
+See [scope diagnosis and acceptance](docs/maintenance/20261107_flow_reference_scope.md).
+
 Latest task: **flow reference scope diagnosis/display clarification**, base `3ec0137c`.
 Four saved cases have identical common returns, volume growth, flow score, dates
 and timing; all20 exported OHLCV files match byte-for-byte. Actual verdict-helper
@@ -456,8 +467,9 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the two new flow-reference scope columns in production.**
+**After the requested Cloud reboot, finish the two-column production acceptance.**
 
+Reboot was requested with confirmed stale-module evidence, not a browser error.
 Use a fresh selected-browser tab if old-tab binding fails. In precision, confirm
 the connection table/export now includes evaluation scope and candidate group for
 one standalone and one radar-backed result. Check existing label/numbers and core
