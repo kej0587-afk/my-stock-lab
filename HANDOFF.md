@@ -29,7 +29,14 @@ Targeted204 tests pass; decision gate1334 pass101.937s. Narrow AST adapter retai
 old baselines outside approved report statements. Report gate207 pass/one known
 whole-app function-set failure before/after. Live SEC2 requests HTTP200,4.560s;
 repeat0.000626s,no extra requests. Latest burden43.0% ->67.9%,3 valid YoY pairs,
-2 withheld quarters. Publication/Cloud acceptance pending; no Today speed claim.
+2 withheld quarters. Application `21758193` pushed and accepted in authenticated
+Cloud. Fresh report05:56KST/generationIDe83457ce3b52: entire cash section exactly
+matches local live-SEC calculation, one visible block,8 rows,dates/filing links,
+same3 valid comparisons and2 held quarters. Matching commit/no stale-code warning;
+no reboot. Same95 tickers and14 core score/grade/verdict/gate fields identical
+(1,330 comparisons). No whole-ZIP or auxiliary flow-scope identity claim.
+Private screen/report/ZIP/acceptance evidence ignored under cache/msft_cash_*.
+Separate briefing clock validated by replay; no second live generation/Today timing.
 See [cash trend verification](docs/maintenance/20261108_msft_cash_trend.md).
 
 Latest task: **MSFT evidence in automatic market reports**, base `5bdc22de`.
@@ -574,12 +581,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the published MSFT eight-quarter cash report in authenticated Cloud.**
+**Review the two withheld MSFT Q4 cash-flow quarters against official filings.**
 
-Generate one fresh report and download it; verify dates, numeric burden/comparison,
-held quarters, source links, readable placement and unchanged core decisions against
-the saved pre-deployment ZIP. Check runtime build before claiming acceptance. Do not
-bypass a stale-module guard or turn query-only timing into a Today speed claim.
+The2025-06-30 and2026-06-30 values currently derive from different filings' FY/9M
+cumulative amounts. Check official annual/interim originals and revision/business
+scope consistency. Restore only if a same-basis, auditable derivation is proven;
+otherwise retain explicit holds. Do not relax the generic guard or fill missing
+quarters with zero/estimates. Preserve scores and existing valid comparisons; no
+other issuer, LLM/DCF or broad refactor in this next bounded task.
 
 ## Evidence and Remaining Limits
 

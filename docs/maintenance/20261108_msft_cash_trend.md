@@ -44,7 +44,20 @@ eight-quarter interpretation, score preservation, Cloud verification and publica
 
 ## Deployment / limits
 
-Ready for publication; fresh authenticated Cloud report acceptance pending.
+Application commit `21758193` pushed and accepted in authenticated Cloud.
+Fresh report generated2026-11-08 05:56KST, generationID `e83457ce3b52`, loaded
+fingerprint `8192e9e8ad135e9d`, matching application commit and no stale-code warning.
+No reboot required. Downloaded Markdown contains exactly one cash-burden section;
+its entire text/table/filing links match local calculation from live SEC evidence
+exactly. Latest43.0% ->67.9%(+24.8pp),3 valid YoY pairs,2 held quarters all verified.
+Report download and pre/post Today ZIP downloads succeeded. Same95 tickers; all14
+core financial/candidate score, grade, verdict and execution-gate fields match
+(1,330 comparisons). No whole-ZIP/auxiliary flow-scope identity claim.
+Actual UI explanation and8-quarter table inspected; private screenshot, Markdown,
+live packet, source-only timing and acceptance JSON are ignored under cache/msft_cash_*.
+The separate briefing clock route is covered by a replay test, not a second live
+report generation. Report/decision/provider logic outside this bounded task unchanged.
+
 Do not describe issuer query time as Today/report speedup. No full Today benchmark.
 Comparative company cash flows do not isolate AI, verify business-scope stability,
 prove today's price cause or establish cash-exhaustion timing. Two held Q4 quarters
