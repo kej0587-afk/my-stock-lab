@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **final optimization/refactor closure**, base `d459f693`.
+Initial combined gate: 1,774 passed / one previously recorded structural-test
+failure. AST diff contains only the approved SMC/finalization extractions;
+updated the older test to reuse their existing AST adapter, keeping all frozen
+baseline commits and real helper-body/call/output tests. Focused verification:
+41 passed. Final combined gate **1,775 passed**, zero failures/errors/skips,
+171.623s; all524 source/test/fixture hashes unchanged during the run. Evidence:
+`cache/refactor_checks/all_n4m86e0j/summary.json`. No production code or investment rules
+changed. Preserved 15:53 production export matches all102 current app/core source
+hashes (LF-normalized), no stale modules; later commits changed only docs.
+See [closure record](docs/maintenance/20261107_refactor_closure.md) for counts,
+data freshness limitations and evidence boundaries. This closure record and the
+test adapter are committed/pushed together. **The bounded optimization/refactor
+sequence is complete; no further speculative extraction is scheduled.**
+
 Latest task: **four-view integration checkpoint**, base `ffa04ee9`.
 No demonstrated wiring defect; production code/rules unchanged. Live Today
 completed ~78.2s (displayed, not controlled A/B); 95 rows/32 flow candidates.
@@ -188,14 +203,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Run the final closure regression and record remaining limitations.**
+**If further work is requested, audit missing/simplified stock financial inputs.**
 
-Use `.venv311/Scripts/python.exe scripts/check_refactor.py --scope all`, with
-baseline regeneration disabled. Inspect failures against prior records before
-changing code; fix only demonstrated regressions without investment threshold
-or wording changes. Confirm clean Git/upstream and deployed build, document
-external-data freshness/missing-source limits and what was not tested. Close this
-bounded optimization/refactor sequence instead of inventing more small refactors.
+The optimization/refactor sequence is complete, not automatically extended.
+Start from the saved data-status evidence: 12 individual stocks with absent auto
+calculation/manual or temporary inputs, and 8 failed/simplified financial inputs.
+Trace provider/statement-date provenance and latest-release freshness before
+proposing a bounded fix. ETFs are not missing corporate financials. Preserve
+existing grades/thresholds and do not fabricate estimates or begin a broad rewrite.
 
 ## Evidence and Remaining Limits
 
