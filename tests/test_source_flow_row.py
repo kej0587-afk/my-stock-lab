@@ -89,10 +89,17 @@ def test_all_other_app_functions_unchanged_and_source_wrapper_only_changes_call(
     old, new = functions(before), functions(after)
     new.pop('_normalize_source_flow_row')
     new.pop('_render_image_theme_selection')
+    # Later financial-input repair adds read-only review and an OCF fallback.
+    # Those provider functions have direct contracts in test_financial_review;
+    # the preserved decision/flow functions and original Git baseline stay frozen.
+    new.pop('pick_dart_operating_cash_flow')
+    new.pop('inspect_financial_inputs')
     from tests.test_theme_selection import inline_theme_selection
     new['render_image_theme_flow_section'] = inline_theme_selection(new['render_image_theme_flow_section'])
     assert old.keys() == new.keys()
-    for name in old.keys() - {'build_source_flow_context'}:
+    financial_repairs = {'fetch_dart_finstate_all_raw', 'extract_dart_metrics',
+                         'fetch_kr_financials_auto', 'fetch_us_financials_sec'}
+    for name in old.keys() - {'build_source_flow_context'} - financial_repairs:
         assert ast.dump(old[name]) == ast.dump(new[name]), name
     # The only old-function edit is this call; generic multi-row path stays frozen.
     restored = after.replace('_normalize_source_flow_row(row, 10, "종목 자체 흐름")',

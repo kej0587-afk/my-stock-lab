@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **financial-input provenance audit and bounded repair**, base
+`009b74c4`. Audited all 12 missing-auto/manual inputs and 8 stored failed/simplified
+inputs against the authenticated read-only backup. Eleven lack a DB score row,
+one is manual-only; four KR failures are old Naver summaries, four US failures
+record FMP HTTP 402 plus insufficient parsed SEC annual data. Current KR providers
+return through Q2 2026, not every latest earnings announcement; FMP 402 reproduced.
+Fixed DART error loss/repeated requests and one proven OCF account-name omission.
+Precision now offers explicit read-only provider refresh/comparison; no saved
+score, judgement threshold/text, manual override or account data was changed.
+Before/after decision gates **1,327 passed**, final 101.269s, evidence
+`cache/refactor_checks/decision_3f_otwg2`; focused financial tests **162 passed**.
+Historical broad AST guard now excludes only these covered financial repairs;
+decision/flow bodies and original Git baselines remain frozen. No golden updates.
+Deployment: ready for commit/push; operating UI verification follows the push.
+See [financial audit](docs/maintenance/20261107_financial_input_audit.md) for exact
+provider findings, latest-release limits, private evidence and preservation scope.
+
 Latest task: **final optimization/refactor closure**, base `d459f693`.
 Initial combined gate: 1,774 passed / one previously recorded structural-test
 failure. AST diff contains only the approved SMC/finalization extractions;
@@ -203,14 +220,13 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**If further work is requested, audit missing/simplified stock financial inputs.**
+**Audit SEC foreign-issuer annual statement support (20-F) with fixed public fixtures.**
 
-The optimization/refactor sequence is complete, not automatically extended.
-Start from the saved data-status evidence: 12 individual stocks with absent auto
-calculation/manual or temporary inputs, and 8 failed/simplified financial inputs.
-Trace provider/statement-date provenance and latest-release freshness before
-proposing a bounded fix. ETFs are not missing corporate financials. Preserve
-existing grades/thresholds and do not fabricate estimates or begin a broad rewrite.
+Separate missing subscription access from unsupported form/taxonomy coverage.
+Start with annual periods, namespace/unit/date provenance and real filing sources;
+preserve existing 10-K/10-Q outputs and saved grades. Do not infer quarters from
+6-K labels, invent estimates, or automatically write new scores. The optimization/
+refactor sequence remains complete; this is one bounded financial-provider task.
 
 ## Evidence and Remaining Limits
 

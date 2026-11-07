@@ -162,6 +162,10 @@ from stock_lab_core.hold_judgement import (
     build_hold_decision,
 )
 from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
+from stock_lab_core.financial_review import (
+    DartProviderError, dart_status_error, stored_financial_diagnostic, build_financial_review,
+    sec_statement_coverage,
+)
 from stock_lab_core.runtime_status import build_speed_check_snapshot
 from stock_lab_core.db_schema import (
     get_feedback_create_sql,
@@ -4020,15 +4024,13 @@ def _render_dart_disclosure_single(ticker: str, name: str):
 def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
     api_key = get_dart_api_key()
     if not api_key:
-        raise RuntimeError("DART API 키 없음")
+        raise DartProviderError("DART API 키 없음")
 
     corp_code = get_dart_corp_code(stock_code)
     if not corp_code:
-        raise RuntimeError(f"DART corp_code 매핑 실패: {stock_code}")
+        raise DartProviderError("DART corp_code 매핑 실패")
 
     url = "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json"
-    last_message = ""
-
     for fs_div in ["CFS", "OFS"]:
         params = {
             "crtfc_key": api_key,
@@ -4038,13 +4040,17 @@ def fetch_dart_finstate_all_raw(stock_code, fiscal_year, report_code):
             "fs_div": fs_div,
         }
 
-        res = requests.get(url, params=params, timeout=15)
-        res.raise_for_status()
-
-        data = res.json()
+        try:
+            res = requests.get(url, params=params, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+        except requests.RequestException as exc:
+            raise DartProviderError(f"DART 전송 실패: {type(exc).__name__}") from None
+        except ValueError:
+            raise DartProviderError("DART 응답 JSON 오류") from None
         status = str(data.get("status", ""))
-        message = data.get("message", "")
-        last_message = message
+        if status not in {"000", "013"}:
+            raise dart_status_error(status)
 
         if status == "000" and data.get("list"):
             df = pd.DataFrame(data["list"])
@@ -4211,6 +4217,16 @@ def dart_flow_amount_cols(report_code):
 def dart_point_amount_cols():
     return ["thstrm_amount", "thstrmAmount"]
 
+def pick_dart_operating_cash_flow(df, amount_cols):
+    # Preserve existing matches; only fill a missing value from the exact CF total.
+    value = pick_account_amount(df, DART_OCF_KEYWORDS, amount_cols=amount_cols)
+    if finite_num(value) or df is None or df.empty:
+        return value
+    if not {"sj_div", "account_id"}.issubset(df.columns):
+        return value
+    total = df[df["sj_div"].eq("CF") & df["account_id"].eq("ifrs-full_CashFlowsFromUsedInOperatingActivities")]
+    return pick_account_amount(total, ["ifrs-full_CashFlowsFromUsedInOperatingActivities"], amount_cols=amount_cols)
+
 def extract_dart_metrics(df, fiscal_year, report_code):
     quarter_no = DART_QUARTER_NO_BY_REPORT.get(report_code)
     flow_cols = dart_flow_amount_cols(report_code)
@@ -4234,7 +4250,7 @@ def extract_dart_metrics(df, fiscal_year, report_code):
         ),
         "op_income": pick_account_amount(df, DART_OPERATING_INCOME_KEYWORDS, amount_cols=flow_cols),
         "net_income": pick_account_amount(df, DART_NET_INCOME_KEYWORDS, amount_cols=flow_cols),
-        "ocf": pick_account_amount(df, DART_OCF_KEYWORDS, amount_cols=flow_cols),
+        "ocf": pick_dart_operating_cash_flow(df, flow_cols),
         "equity": pick_account_amount(df, ["자본총계"], amount_cols=point_cols),
         "liabilities": pick_account_amount(df, ["부채총계"], amount_cols=point_cols),
         "assets": pick_account_amount(df, ["자산총계"], amount_cols=point_cols),
@@ -4304,6 +4320,8 @@ def fetch_kr_financials_auto(ticker: str):
                     rec["date"] = str(year)
                     if has_dart_core_values(rec):
                         annual_records.append(rec)
+            except DartProviderError:
+                raise
             except Exception:
                 continue
 
@@ -4323,6 +4341,8 @@ def fetch_kr_financials_auto(ticker: str):
                         rec = extract_dart_metrics(fs, year, report_code)
                         if has_dart_core_values(rec):
                             quarter_cum_by_year.setdefault(int(year), {})[report_code] = rec
+                except DartProviderError:
+                    raise
                 except Exception:
                     continue
 
@@ -4723,11 +4743,12 @@ def fetch_us_financials_sec(ticker: str):
         annual_records, quarter_records = _build_sec_enriched_records(facts)
 
         if len(annual_records) < 2:
+            coverage = sec_statement_coverage(facts)
             return {
                 "ok": False,
                 "source": "sec_edgar",
-                "reason": "SEC annual financials under 2 years",
-                "sec_meta": {"cik": cik, "ticker_meta": ticker_meta},
+                "reason": "SEC annual financials under 2 years: " + coverage["limitation"],
+                "sec_meta": {"cik": cik, "ticker_meta": ticker_meta, "coverage": coverage},
             }
 
         return {
@@ -5751,6 +5772,34 @@ def render_fin_health_summary(fin_score, fin_meta, is_etf=False):
 
     if not is_etf:
         st.caption("자동 재무점수는 투자 추천이 아니라 재무제표 기반 체크리스트입니다. 데이터 공백이나 최근 이벤트는 별도 확인이 필요합니다.")
+
+def inspect_financial_inputs(ticker, fin_meta):
+    """Explicit evidence refresh only; no score calculation, DB write or view invalidation."""
+    if is_kr_listed(ticker):
+        code = normalize_stock_code(ticker)
+        current_year = pd.Timestamp.today().year
+        fetch_kr_financials_auto.clear(ticker)
+        for year in range(current_year, current_year - 7, -1):
+            fetch_dart_finstate_all_raw.clear(code, year, "11011")
+            if year > current_year - 4:
+                for report in ("11013", "11012", "11014"):
+                    fetch_dart_finstate_all_raw.clear(code, year, report)
+        fin = fetch_kr_financials_auto(ticker)
+    else:
+        fetch_us_financials_auto.clear(ticker)
+        fetch_us_financials_fmp.clear(ticker)
+        fetch_us_financials_sec.clear(ticker)
+        # Resolve only when SEC is configured; FMP can still succeed without it.
+        if get_sec_user_agent():
+            try:
+                cik, _ = get_sec_cik_for_ticker(ticker)
+                if cik:
+                    fetch_sec_company_facts.clear(cik)
+            except Exception:
+                pass  # The provider returns its failure reason below.
+        fin = fetch_us_financials_auto(ticker)
+    return build_financial_review(fin_meta, fin)
+
 
 def clear_financial_api_cache():
     yahoo_metadata_reader.clear_cache()
@@ -34202,6 +34251,17 @@ if main_page == "precision":
         notes, metrics, weighted = get_fin_meta_parts(fin_meta)
 
         if not is_etf:
+            st.dataframe(pd.DataFrame([stored_financial_diagnostic(fin_meta)]), width='stretch', hide_index=True)
+            if st.button("최신 재무 원자료 확인 (점수 유지)", key=f"inspect_fin_{fin_key}",
+                         help="선택 종목의 공급처 캐시를 새로 조회해 저장 재무와 비교합니다. 점수·판정·계좌에는 저장하지 않습니다."):
+                with st.spinner("공급처 재무 원자료 확인 중..."):
+                    st.session_state[f"financial_review_{fin_key}"] = inspect_financial_inputs(tkr, fin_meta)
+            financial_review = st.session_state.get(f"financial_review_{fin_key}")
+            if financial_review:
+                st.dataframe(pd.DataFrame([{k: v for k, v in financial_review.items() if k != "원자료"}]), width='stretch', hide_index=True)
+                if financial_review["원자료"]:
+                    st.dataframe(pd.DataFrame(financial_review["원자료"]), width='stretch', hide_index=True)
+                st.caption("조회 성공은 최신 실적 발표 전체 반영의 증명이 아닙니다. 잠정실적·공시·API 제공 시점은 다르며, 위 자료는 기존 점수에 자동 반영되지 않습니다.")
             if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}", help="선택 종목의 재무·밸류·목표가 캐시를 갱신합니다. 저장 성공 후 전광판과 오늘점검의 이전 계산은 재사용하지 않습니다."):
                 with st.spinner("DART/FMP/SEC 재무 자동 계산 중..."):
                     clear_financial_api_cache()
