@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest completed task: **fixed-input residual summary profile**, base`5953ce37`.
+Production app/core unchanged; added `scripts/profile_summary_local.py` only.
+20 existing seeded scenarios, five repeats: sequential median**0.427s**,
+four-worker**0.449s**. Full rows match across instrumentation/repeats/workers;
+frames unchanged, zero replay network attempts. Related tests**29 passed**.
+Source-flow metrics/normalization dominates local remaining work (**59.46%**),
+pattern detection32.72%, workflow2.25%. One-row DataFrame normalization is a
+bounded improvement candidate. Parallel summed self time inflates substantially
+without equivalent CPU/wall growth; do not treat Cloud42.481s as removable CPU.
+This is not a live speedup; last full Cloud result95.186s remains the reference.
+No production reboot needed. See
+[fixed-input profile](docs/maintenance/20261107_summary_fixed_input_profile.md).
+
 Current task: **`50283998` pushed**, summary-worker/analyst wait instrumentation
 based on `f746134c`. Focused tests 166 passed; prices gate 265 passed / one same
 pre-existing decision AST failure. Decisions, calls, cache policy and concurrency
@@ -117,7 +130,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [Summary wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
+Latest record: [Fixed-input summary profile](docs/maintenance/20261107_summary_fixed_input_profile.md).
 
 ## Preserved History
 
@@ -133,18 +146,20 @@ Latest record: [Summary wait diagnostics](docs/maintenance/20261107_summary_wait
 
 ## Next Task Only
 
-**Profile the remaining summary-worker self time using fixed local inputs.**
+**Optimize only single-row source-flow normalization with exact parity.**
 
-The post-reboot run separates Yahoo waits, but `_compute_summary_item` still has
-42.481s summed self elapsed time across95 rows. Narrowly profile uninstrumented
-pattern detection, workflow creation and row assembly using frozen inputs and
-stubbed provider calls. Identify the dominant cost before selecting one exact-
-parity optimization; do not assume self time is CPU or repeat the completed
-analyst instrumentation. Preserve rules, output and call order; no changes to
-TTL/concurrency. Commit/push findings and leave exactly one next bounded task.
+`build_source_flow_context` creates a one-row DataFrame and runs the generic
+`_normalize_today_flow_context_frame`. Reuse existing scalar rules to avoid
+repeated DataFrame/apply overhead for this path. Compare the full output with
+the existing generic path (column order, values/nulls, missing fields, short
+history, registration context); retain multi-row radar behavior. Use the new
+fixed-input profiler before/after. Keep rules/labels/source selection/TTL/
+concurrency unchanged; do not optimize chart patterns or claim Cloud savings
+from local timing. Commit/push verification and leave one next bounded task.
 
 ## Evidence and Remaining Limits
 
+- Latest: [Fixed-input summary profile](docs/maintenance/20261107_summary_fixed_input_profile.md).
 - Latest: [Summary/analyst wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 - Latest: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).
 - Latest: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
