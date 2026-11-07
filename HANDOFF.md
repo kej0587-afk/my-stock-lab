@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **flow reference scope diagnosis/display clarification**, base `3ec0137c`.
+Four saved cases have identical common returns, volume growth, flow score, dates
+and timing; all20 exported OHLCV files match byte-for-byte. Actual verdict-helper
+replay reproduces8/8 labels, and changing only candidate group reproduces4/4 radar
+labels. Standalone context omits radar candidate selection; radar assigns swing/
+recovery groups. Missing extra fields are the explicit compact-column projection,
+not changed/zero metrics. No numeric/selection/scoring bug demonstrated by these cases.
+Added only two display columns to `flow_connection_rows`: evaluation scope and
+candidate group. Existing verdicts, gates, input rows, source choice, score and I/O
+are unchanged. Focused156 before/163 after passed (19.65s). Decision gate1,334
+passed, zero failures/errors/skips/source changes,101.453s
+(`cache/refactor_checks/decision_sf6xc782`). No golden regeneration. Publication
+contains helper/tests/docs; production display acceptance is still pending.
+Private replay/history evidence is ignored under `cache/kr_flow_*`.
+See [scope diagnosis](docs/maintenance/20261107_flow_reference_scope.md).
+
 Latest task: **four KR sector-RS production acceptance**, deployed `b06916f8`.
 Fresh in-app tab restored control. Four completed precision exports before and
 after the existing flow-summary refresh (21:57 KST) confirm mappings/provenance,
@@ -440,17 +456,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Diagnose the four-case stock-history versus radar flow-reference difference.**
+**Verify the two new flow-reference scope columns in production.**
 
-Use `cache/kr_rs_{code}_{before,after}.zip` and the acceptance JSON first. Trace
-why a flow-summary refresh changes the reference label from observation to swing
-or recovery while sector RS and all seven core decision sections stay identical.
-Compare input series length/date/adjustment basis and classification paths; do not
-assume that different reference labels imply a changed saved trading decision.
-Report the cause and make only a demonstrated bounded connection fix, if needed,
-with fixed-input contracts. Do not change grade thresholds, regenerate goldens,
-promote missing data or repeat a broad refactor. Use a fresh selected-browser tab
-if old-tab binding fails; no automatic reboot request.
+Use a fresh selected-browser tab if old-tab binding fails. In precision, confirm
+the connection table/export now includes evaluation scope and candidate group for
+one standalone and one radar-backed result. Check existing label/numbers and core
+score/decision sections are unchanged for comparable inputs. Do not force the two
+reference labels to match or alter scoring rules. If a stale module is actually
+observed, record the evidence; do not infer reboot need from tab-binding failures.
 
 Four sector-RS mappings and NBIS annual review now have bounded Cloud acceptance.
 SEC6-K/IFRS and automatic20-F scoring remain outside scope; review evidence must

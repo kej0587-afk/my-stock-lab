@@ -217,3 +217,36 @@ def test_export_contains_displayed_connection_rows_without_duplicate_decision_fi
         snapshot = json.loads(archive.read("snapshot.json"))
     assert snapshot["sections"]["flow_connection"] == rows
     assert not {"flow_context", "flow_connection"} & set(snapshot["sections"]["main_decision"])
+
+
+@pytest.mark.parametrize("path,group,verdict,scope", [
+    (module.SOURCE_PATH, "종목 자체 흐름", "관찰", "종목 가격 흐름 · 레이더 후보 선별 미포함"),
+    (module.RADAR_PATH, "스윙후보", "스윙 후보", "레이더 분류·후보군·타이밍 포함"),
+    (module.RADAR_PATH, "테마 주도주 · 회복추적", "회복확인", "레이더 분류·후보군·타이밍 포함"),
+    ("", None, "", "평가 범위 미확인"),
+])
+def test_display_explains_scope_without_changing_verdict_or_gate(path, group, verdict, scope):
+    workflow = _context(돈흐름_연결경로=path, 돈흐름_후보군=group, 돈흐름_판정=verdict,
+                        돈흐름_1일수익률=.04, 돈흐름_1개월수익률=.10,
+                        게이트상태="방어우선", RR값=2)
+    before = deepcopy(workflow)
+    gate_before = apply_execution_gate_columns(pd.DataFrame([workflow]))
+    displayed = module.flow_connection_rows(workflow)[0]
+    assert displayed["평가 범위"] == scope
+    assert displayed["후보군"] == (group or "미확인")
+    assert displayed["흐름 판정"] == (verdict or "미확인")
+    assert displayed["1일"] == "+4.00%" and displayed["1M"] == "+10.00%"
+    assert workflow == before
+    pd.testing.assert_frame_equal(apply_execution_gate_columns(pd.DataFrame([workflow])), gate_before)
+
+
+@pytest.mark.parametrize("group,expected", [("스윙후보", "스윙 후보"),
+    ("회복추적", "회복확인"), ("테마 주도주 · 회복추적", "회복확인")])
+def test_same_price_context_different_candidate_groups_explain_reference_labels(app_module, group, expected):
+    # One common verdict function, identical numeric inputs; only candidate scope changes.
+    row = {"후보군": "종목 자체 흐름", "타이밍": "급등 포착", "주의요인": "자료 확인",
+           "돈흐름점수": 43.5, "1개월수익률": .04, "3개월수익률": .49}
+    before = deepcopy(row)
+    assert app_module._flow_short_verdict(row) == "관찰"
+    assert app_module._flow_short_verdict({**row, "후보군": group}) == expected
+    assert row == before

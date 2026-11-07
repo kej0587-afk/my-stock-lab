@@ -115,6 +115,12 @@ def merge_flow_context(summary, flow):
 
 def flow_connection_rows(workflow):
     row = workflow if isinstance(workflow, Mapping) else {}
+    path = row.get(PREFIX + "연결경로")
+    scope = ("종목 가격 흐름 · 레이더 후보 선별 미포함" if path == SOURCE_PATH
+             else "레이더 분류·후보군·타이밍 포함" if path == RADAR_PATH
+             else "평가 범위 미확인")
+    group = row.get(PREFIX + "후보군")
+    group = group.strip() if isinstance(group, str) and group.strip() else "미확인"
 
     def number(key, *, percent=False):
         try:
@@ -126,6 +132,7 @@ def flow_connection_rows(workflow):
     return [{"연결경로": row.get(PREFIX + "연결경로") or "미연결",
              "기준일": row.get("돈흐름기준일") or row.get(PREFIX + "기준일") or "미확인",
              "흐름 판정": row.get(PREFIX + "판정") or "미확인",
+             "평가 범위": scope, "후보군": group,
              "1일": number("1일수익률", percent=True), "1M": number("1개월수익률", percent=True),
              "3M": number("3개월수익률", percent=True), "거래량 증감": number("거래량증가", percent=True),
              "자료상태": row.get(PREFIX + "연결사유") or row.get("돈흐름신선도근거") or "미연결"}]
