@@ -8,6 +8,9 @@ from zoneinfo import ZoneInfo
 
 from lxml import html
 
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
+
 ROOT = "https://www.microsoft.com"
 HOME = ROOT + "/en-us/investor/default"
 _RELEASE = r"/en-us/investor/earnings/fy-(\d{4})-q([1-4])/press-release-webcast"

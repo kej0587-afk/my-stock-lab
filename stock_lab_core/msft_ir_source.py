@@ -1,4 +1,4 @@
-"""At most three official pages, only on explicit precision-review request."""
+"""At most three official pages, on explicit review or report generation."""
 
 from datetime import datetime, timezone
 import time
@@ -11,6 +11,9 @@ from stock_lab_core.msft_ir_review import (
 )
 
 MAX_SECONDS, MAX_BYTES = 12, 2_000_000
+
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
 
 
 def read_official_page(url, deadline):

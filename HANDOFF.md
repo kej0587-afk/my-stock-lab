@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **MSFT evidence in automatic market reports**, base `5bdc22de`.
+Bounded official packet collected once in report context; successful public-only
+six-hour reuse. Visible report block connects demand, cash investment, company
+outlook, holding exposure and next checks. Dates/scopes/forecast expiry guarded;
+not today's price cause, no consensus imputation or scoring/decision changes.
+Targeted75 tests pass; decision gate1334 pass (117.415s). Report gate207 pass/one
+pre-existing whole-app AST assertion before/after, no new failure or golden reset.
+Live issuer query13 metrics,5.694s; cached<0.001s, not full report/Today timing.
+Production acceptance pending publication; before-export preserved in ignored cache.
+See [MSFT report integration](docs/maintenance/20261108_msft_report_evidence.md).
+
 Latest task: **MSFT official segment/investment guidance evidence**, base `9390e4ce`.
 New read-only precision expander, explicit homepage/release/call query (max3 URLs),
 latest linked FY/quarter discovery and actual/forecast provenance. Distinguishes
@@ -542,17 +553,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect the verified MSFT business evidence packet to automatic market reports.**
+**Verify the published MSFT report block in authenticated Cloud.**
 
-Add one bounded factual/interpretive block for MSFT using the verified packet,
-with publication age, fiscal period, forecast-vs-actual labels and next checks.
-Collect once outside rendering/reuse existing evidence; never fetch per section.
-Do not present an old release as today's catalyst or infer missing consensus/
-price causality. Preserve existing scores, no other issuer adapters or LLM/DCF
-redesign. Verify a newly generated report and keep report/Today timing scopes
-separate. The MSFT precision integration is accepted; report consumption is not.
-The earlier editorial report acceptance remains deferred by the user's explicit
-financial-evidence priority.
+Generate and download one fresh automatic report; confirm source dates, actual/
+forecast distinction, next checks, readable placement and preserved decision input.
+Check loaded/disk modules, never bypass the stale-module guard. Separate report
+generation timing from Today calculation. Do not expand to another issuer or LLM.
 
 ## Evidence and Remaining Limits
 

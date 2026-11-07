@@ -946,6 +946,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(guard_explanation_lines(context.get("market_guard"), sessions=sessions))
     from stock_lab_core.report_outlook import official_outlook_lines
     lines.extend(official_outlook_lines(context, now))
+    from stock_lab_core.report_msft import msft_business_lines
+    lines.extend(msft_business_lines(context, now, summary_rows))
     from stock_lab_core.report_calendar_section import upcoming_calendar_lines
     calendar_block, calendar_missing = upcoming_calendar_lines(context, news, event_rows, now, earnings_pipeline)
     missing.extend(calendar_missing)
