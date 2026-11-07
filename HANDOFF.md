@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **local DART collector and version-1 evidence validator**, base
+`db70567e`. Added a standalone bounded collector, strict JSON validator and CLI;
+no app import, score calculation, DB write or Cloud UI change. Existing runtime
+files and golden baselines remain untouched. Output stays under ignored local
+cache, with exclusive creation so prior successful files cannot be overwritten.
+Focused bridge/corporate/review/refresh tests: **129 passed** (14.15s).
+Final fixed-source decision gate: **1,327 passed**, 100.825s; evidence
+`cache/refactor_checks/decision_jz5id7nk`. No tests skipped or golden regeneration.
+Actual local official fetch: one company, half-year success, Q3 CFS/OFS no-data;
+1 report / 223 rows / 3 statement requests / 1.191s statement time. The lack of Q3
+is explicit, not filled with estimates. Final offline validation passed.
+This step does not repair Cloud transport or enable importing evidence into the UI.
+Publication includes only isolated local tooling/tests/docs; no restart required.
+See [collector implementation and verification](docs/maintenance/20261107_dart_evidence_collector.md)
+for commands, private evidence location, semantics and remaining boundaries.
+
 Latest task: **read-only DART evidence bridge design**, base `8cda6db8`.
 Selected local raw collection -> authenticated file preview/import -> a dedicated
 owner-scoped table in the existing Supabase project -> precision evidence review.
@@ -270,17 +286,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Implement the local DART raw-evidence collector and version-1 package validator.**
+**Implement the private immutable evidence storage adapter and prepare its SQL.**
 
-Follow the [bridge design](docs/maintenance/20261107_dart_evidence_bridge_design.md).
-Use a bounded explicit year/report scope, credential-free provenance and strict
-validation; collect raw account rows without importing app.py or calculating scores.
-Test failure/no-data/partial output, identity mismatches, size/schema/clock checks,
-secret exclusion and preserving prior successful files. If the existing local key
-is available, verify one local dry-run package under ignored cache; do not commit
-it. No Cloud/UI/DB changes, credential migration or new infrastructure in this
-task. Saved decisions remain unchanged. SEC support and storage integration follow
-in separate bounded tasks.
+Follow the [bridge design](docs/maintenance/20261107_dart_evidence_bridge_design.md)
+and reuse the strict package validator. Scope all reads/inserts by verified server
+owner plus ticker; test owner isolation, duplicate imports, changed receipt IDs,
+partial/expired data and storage failure using fakes. Prepare one dedicated-table
+migration and explain its shared-project impact, but do not execute it or change
+live data in this task. No UI wiring, automatic score refresh, secret migration or
+new infrastructure. App preview/import and a production roundtrip come afterward;
+Cloud DART transport remains unresolved. SEC support remains separate.
 
 ## Evidence and Remaining Limits
 
