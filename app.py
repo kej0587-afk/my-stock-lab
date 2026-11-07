@@ -28542,6 +28542,12 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence, load_public_market_evidence
+    from stock_lab_core.report_msft_cash import collect_msft_cash_evidence
+    with measure("external_data", "msft_cash_evidence"):
+        context["msft_cash_evidence"] = collect_msft_cash_evidence(
+            datetime.now(KST), configured=bool(get_sec_user_agent()), is_demo=IS_PUBLIC_DEMO,
+            resolve_cik=get_sec_cik_for_ticker,
+            fetch_facts=lambda cik: sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))
     from stock_lab_core.economic_releases import _api_key
     context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
                                 if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})
@@ -28617,8 +28623,8 @@ def _generate_today_briefing_market_memo(summary_df=None) -> str:
         "market_news_rows": news_rows,
         "news_rows": news_rows,
         "summary_rows": memo_summary_df,
-        "now": datetime.now(timezone(timedelta(hours=9))),
         "report_context": _collect_today_report_context(memo_summary_df, event_rows, include_news=options["include_market"]),
+        "now": datetime.now(timezone(timedelta(hours=9))),
     }
     try:
         return build_auto_market_memo(**memo_kwargs)

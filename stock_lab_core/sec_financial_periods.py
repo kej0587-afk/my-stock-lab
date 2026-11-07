@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 import math
 
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
+
 
 MAX_FACTS_PER_FIELD = 20_000
 _FORMS = {"10-K", "10-K/A", "10-Q", "10-Q/A"}

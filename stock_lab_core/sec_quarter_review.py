@@ -9,6 +9,9 @@ explicit: physical PP&E alone or productive assets including intangibles.
 from datetime import timedelta
 import re
 
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
+
 from stock_lab_core.sec_financial_periods import (
     MAX_FACTS_PER_FIELD, _date, _finite, build_sec_statement_records,
 )

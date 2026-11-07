@@ -123,7 +123,11 @@ def test_existing_app_functions_unchanged_and_no_score_provider_imports():
     old = subprocess.check_output(["git", "show", "68d617a4:app.py"]).decode("utf-8-sig")
     new = Path("app.py").read_text(encoding="utf-8-sig")
     def functions(text):
-        return {n.name: ast.dump(n, include_attributes=False) for n in ast.parse(text).body if isinstance(n, ast.FunctionDef)}
+        # Explicit adapter for approved report-only collection and timestamp order.
+        # Keep the old baseline for every other statement, not just score functions.
+        from tests.report_ast_contract import before_msft_cash_report
+        return {n.name:ast.dump(before_msft_cash_report(n),include_attributes=False)
+                for n in ast.parse(text).body if isinstance(n,ast.FunctionDef)}
     assert functions(old) == functions(new)
     for name in ("sec_quarter_review.py", "sec_quarter_review_view.py"):
         text = Path("stock_lab_core", name).read_text(encoding="utf-8")

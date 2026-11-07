@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **MSFT eight-quarter cash-burden report**, base `cab147bf`.
+Existing SEC quarter parser/identity loader reused once outside rendering; public
+six-hour success reuse. Same-period/USD/PP&E/provenance guards and same-filing YoY
+pairs;8-row dated table, interpretation and next checks.2 cross-filing Q4 periods
+held, never zero-filled. Existing scores/gates/provider TTLs unchanged. Fixed
+briefing timestamp order so freshly collected data is not rejected as future.
+Targeted204 tests pass; decision gate1334 pass101.937s. Narrow AST adapter retains
+old baselines outside approved report statements. Report gate207 pass/one known
+whole-app function-set failure before/after. Live SEC2 requests HTTP200,4.560s;
+repeat0.000626s,no extra requests. Latest burden43.0% ->67.9%,3 valid YoY pairs,
+2 withheld quarters. Publication/Cloud acceptance pending; no Today speed claim.
+See [cash trend verification](docs/maintenance/20261108_msft_cash_trend.md).
+
 Latest task: **MSFT evidence in automatic market reports**, base `5bdc22de`.
 Bounded official packet collected once in report context; successful public-only
 six-hour reuse. Visible report block connects demand, cash investment, company
@@ -561,14 +574,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Add a same-basis MSFT cash-investment trend to the report evidence.**
+**Verify the published MSFT eight-quarter cash report in authenticated Cloud.**
 
-Use the already verified SEC eight-quarter parser/packet to compare cash investment
-and operating cash flow across matching quarters, currencies and definitions.
-Start with pure fixed-input trend validation, then collect/reuse once outside report
-rendering if connected. Missing/revised quarters must not become zero or a forecast.
-Explain whether recent investment is consuming more cash, with sources and next
-checks. Preserve all scores and gates; no other issuer, consensus, LLM or DCF scope.
+Generate one fresh report and download it; verify dates, numeric burden/comparison,
+held quarters, source links, readable placement and unchanged core decisions against
+the saved pre-deployment ZIP. Check runtime build before claiming acceptance. Do not
+bypass a stale-module guard or turn query-only timing into a Today speed claim.
 
 ## Evidence and Remaining Limits
 

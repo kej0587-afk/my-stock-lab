@@ -5,6 +5,9 @@ from hashlib import sha256
 import json
 import re
 
+from stock_lab_core.report_build import register_loaded_source
+register_loaded_source(__name__, __file__)
+
 from stock_lab_core.sec_quarter_review import LABELS, build_sec_quarter_review, quarter_tables, review_questions
 
 
