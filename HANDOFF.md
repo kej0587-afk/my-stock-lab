@@ -27,7 +27,15 @@ not today's price cause, no consensus imputation or scoring/decision changes.
 Targeted75 tests pass; decision gate1334 pass (117.415s). Report gate207 pass/one
 pre-existing whole-app AST assertion before/after, no new failure or golden reset.
 Live issuer query13 metrics,5.694s; cached<0.001s, not full report/Today timing.
-Production acceptance pending publication; before-export preserved in ignored cache.
+Application `1259b5f7` pushed and accepted in authenticated Cloud, fresh report
+generationID9fbf13d5812c at03:31KST. Actual UI/Markdown: one MSFT block after core
+interpretation, verified facts/outlook/links/holding exposure/next-check table.
+Matching commit and no stale-code footer warning; no reboot. Same95 tickers and
+14 core score/grade/verdict/gate fields unchanged (1,330 comparisons). Auxiliary
+flow labels12 rows change from stock-history to radar scope after existing flow
+snapshot collection; same timing, score differences only rounding(max4.76e-11).
+Do not claim identical whole ZIPs or same flow scope. No Today timing benchmark.
+Private screenshots/Markdown/ZIP/acceptance JSON ignored under cache/report_msft_*.
 See [MSFT report integration](docs/maintenance/20261108_msft_report_evidence.md).
 
 Latest task: **MSFT official segment/investment guidance evidence**, base `9390e4ce`.
@@ -553,12 +561,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the published MSFT report block in authenticated Cloud.**
+**Add a same-basis MSFT cash-investment trend to the report evidence.**
 
-Generate and download one fresh automatic report; confirm source dates, actual/
-forecast distinction, next checks, readable placement and preserved decision input.
-Check loaded/disk modules, never bypass the stale-module guard. Separate report
-generation timing from Today calculation. Do not expand to another issuer or LLM.
+Use the already verified SEC eight-quarter parser/packet to compare cash investment
+and operating cash flow across matching quarters, currencies and definitions.
+Start with pure fixed-input trend validation, then collect/reuse once outside report
+rendering if connected. Missing/revised quarters must not become zero or a forecast.
+Explain whether recent investment is consuming more cash, with sources and next
+checks. Preserve all scores and gates; no other issuer, consensus, LLM or DCF scope.
 
 ## Evidence and Remaining Limits
 

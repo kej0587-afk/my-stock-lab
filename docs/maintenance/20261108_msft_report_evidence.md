@@ -37,9 +37,31 @@ score preservation, Cloud verification and commit/push. No user edits discarded.
 
 ## Deployment
 
-Implementation ready; authenticated production validation pending publication.
-Existing operating Today export preserved before deployment. No production timing
-or complete output acceptance is claimed until a new report is downloaded.
+Application commit `1259b5f7` pushed and accepted in authenticated Cloud. Fresh
+automatic report downloaded at2026-11-08 03:31 KST, generationID `9fbf13d5812c`,
+matching commit, loaded fingerprint `103ac1d93784f29c`, no stale-code footer warning.
+No reboot needed. Actual UI and downloaded Markdown contain exactly one MSFT block
+after core interpretation and before holdings, actual/guidance periods, dated
+official links,13-source-metric packet-derived values and the three-row next-check
+table. Publication age11 days, FY2027Q1 ended2026-09-30, FY2027Q2 outlook explicitly
+future/management-only. Holding links use existing exposure mapping.
+
+Preserved pre-deployment and post-generation Today ZIPs: same95 tickers, all14 core
+score/grade/verdict/gate fields identical (1,330 comparisons). No full-file identity
+claim:12 rows change auxiliary money-flow candidate scope from stock-history to
+ETF/sector radar when report generation populates the existing shared flow snapshot.
+Their timing labels stay unchanged; radar verdicts differ by scope. Flow numerical
+scores differ only by serialization rounding(max4.76e-11). The money-flow/scoring
+source is untouched. Saved/fresh input contexts must not be represented as identical.
+This is the already documented scope distinction, not evidence of MSFT changing
+investment decisions. Other auxiliary fields are not claimed byte-identical.
+
+Screenshot inspected for visible explanation, official links and readable next-check
+table. `cache/report_msft_cloud.png`, Markdown, comparison JSON and ZIPs are ignored.
+No full Today recalculation or production performance benchmark in this task; do not
+reuse issuer-only timing as whole-report elapsed time. Existing report source gaps
+outside MSFT remain outside this acceptance. Independent review flagged expired
+guidance; fixed and covered before publication.
 
 ## Scope limits
 
