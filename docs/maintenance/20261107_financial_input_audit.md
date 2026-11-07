@@ -83,6 +83,13 @@ not an exact-parity change to every future provider result.
   sources reported no stale module/restart, but the new financial-review module is
   not in that legacy monitored-source list; do not claim its hash was in the ZIP.
   The new review button and its real failure result were also verified visually.
+- Follow-up `ba0b243c` was verified with completed production review ZIP, unchanged
+  stored financial score/source, no restart requirement in the monitored list, and
+  readable vertical metadata. **Cloud corporate-code lookup still fails after
+  explicit cache clearing.** Current evidence identifies the failing stage, not
+  whether it is a credential/access, transport or payload problem. Do not present
+  cache recovery as a successful production reconnection. Local success is not
+  proof that Cloud configuration or network access is equivalent.
 - No latency improvement claimed. No full Today rerun or all-provider/all-stock
   latest-release completeness claim; this task is financial evidence repair.
 
@@ -91,10 +98,14 @@ Private local evidence: Downloads `stock_lab_review_export_20261107_1549.zip`,
 `cache/financial_live_parsed.json`, `cache/financial_ocf_after.json`, and financial
 test logs. The authenticated backup was downloaded read-only; no account data
 was edited. The 11 automatic-input origins were corroborated in master export.
+Production follow-up: Downloads `precision_review_329180.KS (1).zip` and ignored
+`cache/financial_review_production_20261107.jpg`. Financial grades remain stored;
+the new read-only evidence was not written back to the account.
 
 ## One next task
 
-Audit and implement **SEC foreign-issuer annual statement support** separately,
-starting with 20-F and actual namespace/unit/date provenance. Use fixed public
-fixtures, preserve existing 10-K/10-Q outputs and saved grades; do not infer
-quarterly statements from 6-K labels or broaden to an IFRS rewrite in one step.
+Diagnose **production DART corporate-code lookup** using safe HTTP/status/content
+type and timeout-stage metadata, then fix only the demonstrated cause. Preserve
+saved grades and verify read-only in Cloud. Do not inspect/print credentials or
+assume local configuration matches Cloud. SEC foreign-issuer support remains a
+later separate task with fixed public fixtures and existing-output preservation.

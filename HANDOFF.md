@@ -38,7 +38,13 @@ Cloud exposed a corporate-code lookup failure, unlike local DART success.
 Follow-up shortens empty-map caching to the existing 60s failure cooldown,
 retains 30-minute successful-map TTL, and clears the map on explicit review.
 The comparison metadata is now vertical to avoid clipped failure reasons.
-Follow-up operating verification is recorded below when complete.
+Follow-up `ba0b243c` pushed and verified in production: completed review ZIP has
+matching selected/result ticker, retained saved score/source, no stale module in
+the monitored list, no restart required. Vertical comparison table renders.
+**DART corporate-code mapping still fails in Cloud after explicit cache clearing.**
+Do not claim provider recovery or newest actuals are complete. Local DART succeeds;
+the current map loader suppresses its response/transport details, so the precise
+Cloud cause is unproven. Next work is only that production failure (below).
 See [financial audit](docs/maintenance/20261107_financial_input_audit.md) for exact
 provider findings, latest-release limits, private evidence and preservation scope.
 
@@ -226,13 +232,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Audit SEC foreign-issuer annual statement support (20-F) with fixed public fixtures.**
+**Diagnose production DART corporate-code lookup failure with safe response metadata.**
 
-Separate missing subscription access from unsupported form/taxonomy coverage.
-Start with annual periods, namespace/unit/date provenance and real filing sources;
-preserve existing 10-K/10-Q outputs and saved grades. Do not infer quarters from
-6-K labels, invent estimates, or automatically write new scores. The optimization/
-refactor sequence remains complete; this is one bounded financial-provider task.
+Start from `ba0b243c` and the saved production review. Explicit cache clearing did
+not recover the map, while local credentials/environment retrieved it successfully.
+Capture HTTP/status/content type and timeout stage without keys, URLs containing
+keys, or raw sensitive bodies; distinguish credential/access errors, timeouts and
+invalid ZIP. Fix only the demonstrated cause, retry read-only in Cloud and preserve
+saved grades. Do not assume the local and Cloud settings are identical. SEC foreign-
+issuer coverage remains later work; the optimization/refactor sequence is complete.
 
 ## Evidence and Remaining Limits
 
