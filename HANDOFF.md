@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **MSFT two withheld Q4 cash quarters**, base `64383d2b`.
+Original annual/interim and earnings-release cash statements reconcile both
+2025-06-30 and2026-06-30. The2026 exhibit directly reports both quarter values;
+original2025 figures agree. Narrow report-only recovery requires exact live
+companyfacts operands/status/filing metadata and reviewed date; any change holds
+again. No generic guard/SEC parser/score/decision/TTL/database edits or extra calls.
+Eight rows,zero held,four valid YoY pairs; latest43.0%→67.9% unchanged. Raw precision
+evidence remains conservative pending the next display-only task. Targeted109
+tests pass7.13s; independent review finds no concrete issue. Before decision1334
+pass102.713s; final1334 pass105.460s,stable source. Cloud acceptance pending. Report207 pass/one same
+pre-existing theme-selection whole-app assertion45.924s. Live SEC2 requests200,
+1.709s; cached0.000778s,not a Today/report benchmark. Private evidence ignored
+under cache/msft_q4_*. See [Q4 reconciliation](docs/maintenance/20261108_msft_q4_recovery.md).
+
 Latest task: **MSFT eight-quarter cash-burden report**, base `cab147bf`.
 Existing SEC quarter parser/identity loader reused once outside rendering; public
 six-hour success reuse. Same-period/USD/PP&E/provenance guards and same-filing YoY
@@ -581,14 +595,13 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Review the two withheld MSFT Q4 cash-flow quarters against official filings.**
+**Connect reviewed MSFT Q4 provenance to the read-only precision evidence display.**
 
-The2025-06-30 and2026-06-30 values currently derive from different filings' FY/9M
-cumulative amounts. Check official annual/interim originals and revision/business
-scope consistency. Restore only if a same-basis, auditable derivation is proven;
-otherwise retain explicit holds. Do not relax the generic guard or fill missing
-quarters with zero/estimates. Preserve scores and existing valid comparisons; no
-other issuer, LLM/DCF or broad refactor in this next bounded task.
+Reuse the same reviewed helper for the two known Q4 periods and label original
+raw SEC cumulative-difference status separately from the audited direct-release
+evidence. Preserve raw packets, scores, decisions and general parser guards;
+no new financial override, other issuer, LLM/DCF or broad refactor. Verify no
+report/precision discrepancy is introduced, with unchanged score exports.
 
 ## Evidence and Remaining Limits
 

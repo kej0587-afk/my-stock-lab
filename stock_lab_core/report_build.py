@@ -30,7 +30,7 @@ _RENDER_MODULES = (
     "etf_review", "etf_issuer_evidence", "etf_roundhill",
     "holding_evidence_commentary",
     "msft_ir_review", "msft_ir_source", "report_msft", "report_msft_source",
-    "msft_cash_trend", "report_msft_cash", "sec_quarter_review", "sec_quarter_review_view", "sec_financial_periods",
+    "msft_cash_trend", "msft_cash_q4", "report_msft_cash", "sec_quarter_review", "sec_quarter_review_view", "sec_financial_periods",
 )
 
 

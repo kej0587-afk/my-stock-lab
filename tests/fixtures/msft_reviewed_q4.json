@@ -1,0 +1,130 @@
+[
+  {
+    "start": "2025-04-01",
+    "end": "2025-06-30",
+    "fiscal_quarter": 4,
+    "unit": "USD",
+    "is_single_quarter": true,
+    "cash_capex_scope": "\uc720\ud615\uc790\uc0b0",
+    "ocf": 42647000000,
+    "cash_capex": 17079000000,
+    "provenance": {
+      "ocf": {
+        "method": "cumulative_difference",
+        "facts": [
+          {
+            "start": "2024-07-01",
+            "end": "2025-06-30",
+            "value": 136162000000,
+            "tag": "NetCashProvidedByUsedInOperatingActivities",
+            "unit": "USD",
+            "filed": "2026-07-29",
+            "accession": "0001193125-26-323660",
+            "form": "10-K"
+          },
+          {
+            "start": "2024-07-01",
+            "end": "2025-03-31",
+            "value": 93515000000,
+            "tag": "NetCashProvidedByUsedInOperatingActivities",
+            "unit": "USD",
+            "filed": "2026-04-29",
+            "accession": "0001193125-26-191507",
+            "form": "10-Q"
+          }
+        ],
+        "status": "cross_filing_difference_review"
+      },
+      "cash_capex": {
+        "method": "cumulative_difference",
+        "facts": [
+          {
+            "start": "2024-07-01",
+            "end": "2025-06-30",
+            "value": 64551000000,
+            "tag": "PaymentsToAcquirePropertyPlantAndEquipment",
+            "unit": "USD",
+            "filed": "2026-07-29",
+            "accession": "0001193125-26-323660",
+            "form": "10-K"
+          },
+          {
+            "start": "2024-07-01",
+            "end": "2025-03-31",
+            "value": 47472000000,
+            "tag": "PaymentsToAcquirePropertyPlantAndEquipment",
+            "unit": "USD",
+            "filed": "2026-04-29",
+            "accession": "0001193125-26-191507",
+            "form": "10-Q"
+          }
+        ],
+        "status": "cross_filing_difference_review"
+      }
+    }
+  },
+  {
+    "start": "2026-04-01",
+    "end": "2026-06-30",
+    "fiscal_quarter": 4,
+    "unit": "USD",
+    "is_single_quarter": true,
+    "cash_capex_scope": "\uc720\ud615\uc790\uc0b0",
+    "ocf": 55441000000,
+    "cash_capex": 35802000000,
+    "provenance": {
+      "ocf": {
+        "method": "cumulative_difference",
+        "facts": [
+          {
+            "start": "2025-07-01",
+            "end": "2026-06-30",
+            "value": 182935000000,
+            "tag": "NetCashProvidedByUsedInOperatingActivities",
+            "unit": "USD",
+            "filed": "2026-07-29",
+            "accession": "0001193125-26-323660",
+            "form": "10-K"
+          },
+          {
+            "start": "2025-07-01",
+            "end": "2026-03-31",
+            "value": 127494000000,
+            "tag": "NetCashProvidedByUsedInOperatingActivities",
+            "unit": "USD",
+            "filed": "2026-04-29",
+            "accession": "0001193125-26-191507",
+            "form": "10-Q"
+          }
+        ],
+        "status": "cross_filing_difference_review"
+      },
+      "cash_capex": {
+        "method": "cumulative_difference",
+        "facts": [
+          {
+            "start": "2025-07-01",
+            "end": "2026-06-30",
+            "value": 115948000000,
+            "tag": "PaymentsToAcquirePropertyPlantAndEquipment",
+            "unit": "USD",
+            "filed": "2026-07-29",
+            "accession": "0001193125-26-323660",
+            "form": "10-K"
+          },
+          {
+            "start": "2025-07-01",
+            "end": "2026-03-31",
+            "value": 80146000000,
+            "tag": "PaymentsToAcquirePropertyPlantAndEquipment",
+            "unit": "USD",
+            "filed": "2026-04-29",
+            "accession": "0001193125-26-191507",
+            "form": "10-Q"
+          }
+        ],
+        "status": "cross_filing_difference_review"
+      }
+    }
+  }
+]

@@ -6,6 +6,7 @@ import re
 from zoneinfo import ZoneInfo
 
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.msft_cash_q4 import reviewed_msft_q4
 
 register_loaded_source(__name__, __file__)
 
@@ -96,6 +97,9 @@ def _quarter(row, cutoff):
             accession=accession, filed=filed,
             source_url=f"https://www.sec.gov/Archives/edgar/data/{int(CIK)}/{accession.replace('-', '')}/{accession}-index.html")
     except (KeyError, TypeError, ValueError, IndexError):
+        restored = reviewed_msft_q4(row, cutoff)
+        if restored is not None:
+            return restored
         result['reason'] = '누락·제출본·기간/정의 확인 전 보류'
     return result
 
