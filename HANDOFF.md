@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **read-only SEC20-F precision panel**, base `5c83e217`.
+User authorized proceeding with code/test work while browser control is blocked.
+Added11 UI lines plus a separate evidence view: explicit ticker/CIK-verified SEC
+request, latest3 annual periods, continuing/discontinued cash-flow columns,
+balance/missing-data tables, field provenance and JSON download. Owner/ticker-scoped
+reruns make no panel request; failed refresh clears old display and sanitizes errors.
+Existing score/provider/cache/DB paths and all top-level app functions are unchanged.
+Automatic20-F scoring remains unsupported; the panel supplies review evidence only.
+Focused tests46 before/57 after; final combined99 passed (16.97s), including11
+UI/isolation contracts. Actual local official company list and companyfacts both
+HTTP200 through the panel loader; NBIS2023–2025 recovered, scoring eligibility false.
+Decision gate:1,327 passed, zero failures/errors/skips/source changes,105.532s
+(`cache/refactor_checks/decision_wl3rgaq6`). Publication scope: UI/helper/tests/docs only.
+Cloud access/configuration and saved-result parity are unverified; no reboot request
+is justified by the browser-control error alone. Four sector-RS checks remain open.
+See [SEC annual panel verification](docs/maintenance/20261107_sec_annual_review_ui.md).
+
 Latest task: **NBIS official annual evidence reader**, base `febb067e`.
 User completed local SEC identity setup. Verified presence/format without exposing
 the value; one actual companyfacts request succeeded (HTTP200,1,568,737bytes).
@@ -392,22 +409,22 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the four restored sector-RS connections in production.**
+**Verify the new NBIS annual evidence panel in production.**
 
-After the mapping-data commit deploys, use the existing explicit refresh to clear
-the applicable benchmark cache (normal TTL remains1hour). Verify the four selected
-tickers show the intended benchmark, dated source/proxy note and aligned price
-dates. Compare saved score/decision fields in completed review evidence; do not
-recalculate financial scores or change thresholds. No new mapping expansion.
-Do not request reboot solely from assumption; first inspect actual loaded results.
-If Cloud access is unavailable, preserve local evidence and report that limit.
+When browser control works, open NBIS in precision and record saved score/decision
+before using only the SEC annual evidence button. Verify ticker/CIK,2023–2025 dates,
+USD units, continuing/discontinued warnings and JSON download; compare saved fields
+afterward. Do not press automatic scoring or write financial/account data. Confirm
+Cloud configuration through actual response, without displaying the contact value.
+If browser control is still blocked, preserve local evidence and report that limit;
+do not repeatedly request reboot or claim live acceptance from AppTest alone.
 
-Deferred integration: NBIS20-F official fixture and isolated annual reader now
-exist; the local identity request succeeded. Read-only review UI/provider wiring
-and Cloud transport verification remain separate future work after the bounded
-sector-RS check above. Do not route annual evidence into scores or claim latest
-interim earnings. Preserve scope warnings and original facts across exhibit-only
-amendments. No6-K/IFRS expansion or automatic-score integration.
+Deferred verification: four restored sector-RS mappings remain locally tested but
+not Cloud-verified:121600->305540,006280->143860,092730->228790,003490->140710.
+Later use the existing explicit benchmark refresh (TTL1hour unchanged), inspect
+dated source/proxy notes and aligned price dates, compare saved score/decision
+fields and avoid new mapping expansion. SEC6-K/IFRS and automatic20-F scoring
+remain outside scope; review evidence must not claim latest interim earnings.
 
 ## Evidence and Remaining Limits
 

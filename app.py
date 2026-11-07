@@ -34266,6 +34266,17 @@ if main_page == "precision":
                         identity_loader=lambda ticker: resolve_dart_evidence_identity(ticker, fetch_dart_corp_code_map),
                         store_factory=lambda owner: SupabaseDartEvidenceStore(supabase, owner_scope=owner),
                     )
+            else:
+                with st.expander("SEC 20-F 연간 근거 · 점수 유지"):
+                    from stock_lab_core.sec_annual_review_view import render_sec_annual_evidence
+                    render_sec_annual_evidence(
+                        st, ticker=tkr, owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+                        configured=bool(get_sec_user_agent()), is_demo=IS_PUBLIC_DEMO,
+                        resolve_cik=get_sec_cik_for_ticker,
+                        fetch_facts=lambda cik: sec_request_json(
+                            f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"),
+                        tags=SEC_US_GAAP_TAGS, flow_fields=SEC_FLOW_FIELDS,
+                    )
             if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}", help="선택 종목의 재무·밸류·목표가 캐시를 갱신합니다. 저장 성공 후 전광판과 오늘점검의 이전 계산은 재사용하지 않습니다."):
                 with st.spinner("DART/FMP/SEC 재무 자동 계산 중..."):
                     clear_financial_api_cache()
