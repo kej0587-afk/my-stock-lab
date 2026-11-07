@@ -68,10 +68,33 @@ cannot connect. Do not extend the date without a successful official fetch.
   ZIP/XML/JSON/error distinctions, cache serialization, fallback nonmutation,
   alphanumeric IDs, expiry/future/source rejection, auth/access nonfallback,
   actuals contracts and no financial-score/DB writes during review.
-- Final decision gate and production result: see HANDOFF.md after deployment.
-  No thresholds, judgement labels, scoring functions or golden files changed.
+- Final decision gate: **1,327 passed** (101.628s), zero failures/errors/skips,
+  `cache/refactor_checks/decision_k9w2y2li`. No thresholds, judgement labels,
+  scoring functions or golden files changed.
+- Production code `1b612377`: read-only review now resolves corporate identity
+  through `official_snapshot` (4,013 mappings) and displays its timestamp/expiry.
+  The subsequent statement API fails transport; the review correctly shows
+  `DART 통신 실패` instead of corporate-code mapping failure. This is **temporary
+  identity-lookup recovery, not restored live financial connectivity**.
+- Completed production precision ZIP confirms matching selected/result ticker
+  and unchanged saved financial score/source. No stale modules in the monitored
+  list or restart requirement; new DART helpers are verified by actual behavior,
+  not claimed as present in the legacy monitored-module hash list.
+- Snapshot expiry: 2026-11-14 17:07:49 KST, plus any ordinary mapping cache
+  lifetime already in flight. No financial-score or account writes performed.
 
 Private evidence stays ignored: `cache/dart_corp_local_diagnostic.json`,
 `cache/dart_cloud_connect_timeout.jpg` and `cache/dart_corp_*` test logs.
 Production account scores remain untouched. The public ID snapshot alone is
 committed; no private account export or secrets are included.
+Final private evidence: `cache/dart_cloud_snapshot_recovery.jpg` and Downloads
+`precision_review_329180.KS (2).zip`.
+
+## One next task
+
+Design a minimal read-only financial-evidence path using the existing local
+environment that can reach DART and existing authenticated storage. Preserve
+statement provenance/expiry and separate evidence from saved grades. Do not
+provision a new service, copy credentials elsewhere, or auto-write new scores.
+The immediate network connection failure is proven; its upstream routing/access
+cause cannot be determined from the app response and is not fixed by this patch.

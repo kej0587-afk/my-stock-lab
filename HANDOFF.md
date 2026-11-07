@@ -29,7 +29,17 @@ Snapshot requires an official refresh after 7 days; it does not fix live network
 access or provide latest earnings. Existing cache TTLs and all saved scores,
 thresholds and decision text remain unchanged. No golden regeneration.
 Final focused tests **66 passed**, decision gate **1,327 passed** (101.628s),
-`cache/refactor_checks/decision_k9w2y2li`. Deployment/production verification follows.
+`cache/refactor_checks/decision_k9w2y2li`. Code `1b612377` pushed and verified in
+production. Completed precision ZIP confirms matching selected/result ticker,
+unchanged saved score/source, no stale entry among monitored modules and no
+restart requirement. UI confirms `official_snapshot`, 4,013 mappings, as-of and
+expiry; selected corporate code now resolves. **The subsequent financial API also
+fails transport, so live DART financial retrieval remains unavailable in Cloud.**
+No end-to-end live-connection or latest-earnings recovery claim. The bundled map
+expires 2026-11-14 17:07:49 KST (subject to ordinary 30-minute map caching).
+Private evidence: `cache/dart_cloud_connect_timeout.jpg`,
+`cache/dart_cloud_snapshot_recovery.jpg`, Downloads
+`precision_review_329180.KS (2).zip`. No API keys or private exports committed.
 See [Cloud DART connection record](docs/maintenance/20261107_dart_cloud_connection.md)
 for safe diagnostics, public snapshot maintenance and remaining network limits.
 
@@ -246,15 +256,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Diagnose production DART corporate-code lookup failure with safe response metadata.**
+**Design one read-only DART financial-evidence collection path outside the failing Cloud route.**
 
-Start from `ba0b243c` and the saved production review. Explicit cache clearing did
-not recover the map, while local credentials/environment retrieved it successfully.
-Capture HTTP/status/content type and timeout stage without keys, URLs containing
-keys, or raw sensitive bodies; distinguish credential/access errors, timeouts and
-invalid ZIP. Fix only the demonstrated cause, retry read-only in Cloud and preserve
-saved grades. Do not assume the local and Cloud settings are identical. SEC foreign-
-issuer coverage remains later work; the optimization/refactor sequence is complete.
+Corporate identity resolution is recovered temporarily, but Cloud financial API
+transport also fails. Compare the smallest path using the existing reachable local
+environment and existing authenticated storage; specify provenance, expiry and
+how it remains separate from saved grades. Do not repeat blind timeout increases,
+extend snapshot dates without an official fetch, transmit credentials to another
+service, provision new infrastructure or auto-recalculate scores. Prepare the
+concrete integration design first. SEC foreign-issuer support remains later work.
 
 ## Evidence and Remaining Limits
 
