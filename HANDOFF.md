@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **MSFT official segment/investment guidance evidence**, base `9390e4ce`.
+New read-only precision expander, explicit homepage/release/call query (max3 URLs),
+latest linked FY/quarter discovery and actual/forecast provenance. Distinguishes
+recast reporting segments, overlapping Cloud/Azure indicators and company CAPEX
+from cash PP&E. No score/DB/report/provider changes. Existing eight-quarter SEC
+snapshot reused under owner/ticker/selection scope, exact periods/currency only.
+New+quarter tests54 passed; stable decision gate1334 passed in101.466s, no source
+changes/failures/skips. Production acceptance pending publication.
+Actual official query succeeded locally with13 metrics; four SEC comparisons fall
+within rounding ranges. Source wording/conditions fail closed, no old transcript
+or consensus imputation. No LLM/DCF/report integration claimed. Private evidence
+under ignored cache/msft_*; clean base/user work preserved.
+See [MSFT business evidence](docs/maintenance/20261108_msft_business_evidence.md).
+
 Latest task: **read-only SEC eight-quarter financial evidence**, base `68d617a4`.
 User approved this financial-data phase, overriding pending report acceptance.
 New precision expander compares income/cash investment/OCF/cash and derived FCF,
@@ -522,14 +536,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect one company's official segment revenue/investment guidance: MSFT.**
+**Accept MSFT official business evidence on production after publication.**
 
-Use Microsoft's latest official earnings release/IR filing to distinguish cloud/
-AI-segment results and forward investment guidance from company-wide historical
-SEC cash investment. Retain period, units, source/quote and confirmed-vs-estimated
-labels; make a read-only evidence packet with next-check questions. Do not infer
-missing consensus, switch scoring, or implement a broad LLM/valuation redesign.
-The8-quarter panel is accepted; the report does not yet consume this evidence.
+Use the explicit MSFT IR button and reuse an existing same-period SEC review.
+Verify actual/guidance separation,4 reconciliations, JSON and unchanged core
+decision CSVs. Check loaded/disk evidence before requesting reboot. Do not add
+new issuer adapters, infer consensus, change scoring or claim report integration.
 The earlier editorial report acceptance remains deferred by the user's explicit
 financial-evidence priority.
 

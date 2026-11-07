@@ -34276,6 +34276,13 @@ if main_page == "precision":
                         fetch_facts=lambda cik: sec_request_json(
                             f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"),
                     )
+                if tkr == "MSFT":
+                    with st.expander("MSFT 사업 실적·투자 전망 (점수 유지)"):
+                        from stock_lab_core.msft_ir_review_view import render_msft_business_review
+                        render_msft_business_review(
+                            st, ticker=tkr, owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+                            is_demo=IS_PUBLIC_DEMO,
+                        )
                 with st.expander("SEC 20-F 연간 근거 · 점수 유지"):
                     from stock_lab_core.sec_annual_review_view import render_sec_annual_evidence
                     render_sec_annual_evidence(
