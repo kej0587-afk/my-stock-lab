@@ -162,6 +162,7 @@ from stock_lab_core.hold_judgement import (
     build_hold_decision,
 )
 from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
+from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
 from stock_lab_core.financial_review import (
     DartProviderError, dart_status_error, stored_financial_diagnostic, build_financial_review,
     sec_statement_coverage,
@@ -3782,31 +3783,7 @@ def get_sec_user_agent():
 
 @cache_result(ttl=1800, is_success=lambda result: isinstance(result, dict) and bool(result))
 def fetch_dart_corp_code_map():
-    api_key = get_dart_api_key()
-    if not api_key:
-        return {}
-
-    url = "https://opendart.fss.or.kr/api/corpCode.xml"
-
-    try:
-        res = requests.get(url, params={"crtfc_key": api_key}, timeout=8)
-        res.raise_for_status()
-
-        zf = zipfile.ZipFile(io.BytesIO(res.content))
-        xml_name = zf.namelist()[0]
-        root = ET.fromstring(zf.read(xml_name))
-    except Exception:
-        return {}
-
-    code_map = {}
-    for item in root.findall("list"):
-        corp_code = (item.findtext("corp_code") or "").strip()
-        stock_code = (item.findtext("stock_code") or "").strip()
-
-        if corp_code and stock_code:
-            code_map[stock_code] = corp_code
-
-    return code_map
+    return fetch_corporate_codes(get_dart_api_key(), get=requests.get, timeout=8)
 
 def get_dart_corp_code(stock_code):
     stock_code = normalize_stock_code(stock_code)
@@ -5800,7 +5777,12 @@ def inspect_financial_inputs(ticker, fin_meta):
             except Exception:
                 pass  # The provider returns its failure reason below.
         fin = fetch_us_financials_auto(ticker)
-    return build_financial_review(fin_meta, fin)
+    review = build_financial_review(fin_meta, fin)
+    if is_kr_listed(ticker):
+        diagnostic = getattr(fetch_dart_corp_code_map(), "diagnostic", {})
+        if isinstance(diagnostic, dict) and diagnostic:
+            review["기업코드 조회 진단"] = json.dumps(diagnostic, ensure_ascii=False)
+    return review
 
 
 def clear_financial_api_cache():
@@ -34260,7 +34242,10 @@ if main_page == "precision":
                     st.session_state[f"financial_review_{fin_key}"] = inspect_financial_inputs(tkr, fin_meta)
             financial_review = st.session_state.get(f"financial_review_{fin_key}")
             if financial_review:
-                st.dataframe(pd.DataFrame([{"항목": k, "내용": v} for k, v in financial_review.items() if k != "원자료"]), width='stretch', hide_index=True)
+                st.dataframe(pd.DataFrame([{"항목": k, "내용": v} for k, v in financial_review.items() if k not in {"원자료", "기업코드 조회 진단"}]), width='stretch', hide_index=True)
+                if financial_review.get("기업코드 조회 진단"):
+                    with st.expander("DART 연결 진단"):
+                        st.json(json.loads(financial_review["기업코드 조회 진단"]))
                 if financial_review["원자료"]:
                     st.dataframe(pd.DataFrame(financial_review["원자료"]), width='stretch', hide_index=True)
                 st.caption("조회 성공은 최신 실적 발표 전체 반영의 증명이 아닙니다. 잠정실적·공시·API 제공 시점은 다르며, 위 자료는 기존 점수에 자동 반영되지 않습니다.")
