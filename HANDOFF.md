@@ -32,8 +32,16 @@ Baseline decision1334 pass101.573s. Focused selection/reading/MSFT contracts151
 pass5.98s; source-flow/MSFT/cash183 pass22.09s. Bounded review found no concrete
 issue. Report207pass/one known theme-selection assertion48.736s. Live AMZN/NVDA
 SEC8quarters verified; NVDA cross-filing cash interpretation explicitly held.
-Final decision1334 passed108.758s,stable sources; Cloud acceptance pending.
-Private evidence cache/company_*.
+Final decision1334 passed108.758s,stable sources. Application `5d243918` pushed
+and verified in authenticated Cloud. Fresh market report08:22KST/generation
+008e550fc604 matches commit; market story/materials/index-macro precede holdings,
+no MSFT sections, no stale-code warning/reboot. AMZN explicitly selected/queried:
+8quarter packet,CIK,currency,status and all quarter records exactly match local
+live SEC data. Download succeeded; NVDA selection hides previous AMZN result
+without querying. Same95tickers and14 score/grade/verdict/gate fields unchanged
+(1,330 comparisons), not whole-ZIP identity. Screenshots/report/ZIP/packets ignored
+under cache/company_*. No live KR query or NVDA Cloud query claim (NVDA local
+source and UI switch tested). Startup/rerenders still slow; no Today timing claim.
 See [market/company split](docs/maintenance/20261108_market_company_split.md).
 
 Latest task: **MSFT two withheld Q4 cash quarters**, base `64383d2b`.

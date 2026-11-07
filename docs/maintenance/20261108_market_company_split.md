@@ -43,7 +43,23 @@ companies, with scoring unchanged and production verification.
   assertion48.736s (`report_ats0dt7m`). No new failure/golden regeneration.
 - Independent UI/scope review: no concrete issue. Live SEC AMZN/NVDA each8quarters
   verified; AMZN cash reading connected, NVDA cross-filing cash comparison held.
-- Authenticated production verification pending publication.
+- Application `5d243918` pushed and accepted in authenticated Cloud, no reboot
+  or stale-code warning. New market report08:22KST/generation `008e550fc604`,
+  loaded hash `d34e05e0828d1df3`, matching code. Downloaded Markdown headings:
+  basis/current status/interpretation/market story/materials/index-macro/holdings/
+  calendar; zero MSFT-specific sections. Default mode is Market.
+- Company view: actual held/watch selection AMZN, manual SEC query and JSON
+  download succeeded. Ticker/CIK/currency/status/gaps and complete8quarter records
+  equal independent local SEC retrieval. Why/next-check explanations and source
+  table visible. Switching to NVDA hides AMZN heading/evidence until explicitly
+  queried; returning to AMZN uses the selection-scoped saved result.
+- Pre/post95tickers match; all14 core score/grade/verdict/gate fields equal
+  (1,330 comparisons). No whole-ZIP equality claim. Private acceptance JSONs,
+  original report/ZIPs/issuer packets and screenshots under cache/company_*.
+- Live Korean query and Cloud NVDA query were not performed. KR failure routing
+  covered by AppTest; NVDA live SEC evidence checked locally and selection switch
+  checked in Cloud. Startup/report rerender delays persist; no full Today timing
+  or numerical total-speed improvement claim.
 
 ## Next bounded task
 
