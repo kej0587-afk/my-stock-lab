@@ -62,7 +62,7 @@ fixtures, not copied account records.
 The source distinction is useful evidence, not a new buy/sell judgement. A radar
 wait label can still affect existing execution-gate behavior in other inputs;
 the prior28/28 unchanged result applies only to the four observed cases.
-Production display of the two new columns needs acceptance after deployment.
+Production display was pending at publication; post-reboot acceptance is below.
 No broad refactor, automatic20-F scoring or Cloud DART transport recovery is claimed.
 
 ## Production acceptance attempt — deployed c96dfaa5
@@ -86,3 +86,37 @@ Radar-backed new-column acceptance still requires the reboot and a fresh export.
 Private evidence is ignored under `cache/flow_scope_cloud_*`. This follow-up changes
 documentation only, so prior regression tests were not needlessly rerun; no new
 performance measurement or full-suite claim is made.
+
+## Post-reboot acceptance — 2026-11-08 KST
+
+User confirmed Reboot app. A fresh authenticated browser session completed
+121600.KQ in free-ticker mode, first with standalone price context and then after
+the existing flow-summary refresh (00:33 KST). Both completed exports report build
+`9e393fe6`, restart false, no monitored stale modules, and matching loaded/disk
+flow_connection hash `c867b6cee90545cd6d15f496978a2a0043c65ad9c8c01910169003a6b4b72ca9`.
+Both new columns appear in the visible table and exported snapshot/CSV.
+
+| Source | Reference label | Evaluation scope | Candidate group |
+| --- | --- | --- | --- |
+| 종목 원자료 재사용 | 관찰 | 종목 가격 흐름 · 레이더 후보 선별 미포함 | 종목 자체 흐름 |
+| 레이더 원자료 | 스윙 후보 | 레이더 분류·후보군·타이밍 포함 | 스윙후보 |
+
+Every pre-existing flow-table field matches the corresponding preserved standalone
+or radar baseline. Five OHLCV files per route are byte-identical (10/10). Within
+the new session, all seven core CSVs are byte-identical before/after radar refresh.
+Against the older same-route baselines, six of seven core CSVs per route are
+byte-identical. The only final_check difference is `rows[9].해석`: macro risk1.4
+becomes0.5; exported `context.macro_risk` changes by exactly the same amount.
+`build_portfolio_check_rows` formats that input, and the macro row status remains
+`통과`. All other final-check fields, grades, execution gates and sizing outputs
+are unchanged. Thus do not claim all historical inputs/exports identical. This
+task verifies the presentation change; it does not audit the macro feed itself.
+
+Ignored evidence: `cache/flow_scope_reboot_standalone.zip`,
+`cache/flow_scope_reboot_radar.zip`, `cache/flow_scope_reboot_acceptance.json`,
+`cache/flow_scope_reboot_verified.png`. Screen review confirms the two explanations
+are readable in the ordinary table. No app code, stored score, DB, TTL or trading
+policy changed. Documentation checks replace a redundant rerun of unchanged code
+tests; the earlier1,334-pass decision gate remains the code-change verification.
+This closes the outstanding display acceptance, not all data-source limitations
+or all possible refactoring work. Documentation publication requires no reboot.

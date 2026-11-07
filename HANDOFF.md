@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-07 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-08 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -18,6 +18,23 @@ Repository: `https://github.com/kej0587-afk/my-stock-lab.git`, branch `main`.
 Production: `https://3insky.streamlit.app/`.
 
 ## Current State
+
+Latest task: **flow scope production acceptance completed after user reboot**,
+deployed `9e393fe6` (application change `c96dfaa5`). Fresh authenticated precision
+session verifies both new columns in UI and completed ZIP for121600.KQ standalone
+and radar-backed paths. Scope/group correctly distinguish stock-history observation
+from radar swing selection. Both exports: restart false, stale modules empty,
+loaded/disk flow_connection hashes equal. Every old connection-table field matches
+its respective saved baseline; all ten OHLCV comparisons pass. Same-session seven
+core CSVs are byte-identical across flow refresh. Against older same-route exports,
+six of seven core CSVs per route match byte-for-byte; final_check differs only in
+macro detail1.4 ->0.5, matching exported context.macro_risk, with status still pass.
+Do not claim old/new input identity or a complete final_check byte match. No code,
+score, cache or policy changes this task. Prior regression gate not rerun for docs.
+Private evidence: `cache/flow_scope_reboot_*`; no private files in publication.
+The planned bounded refactor and this pending display acceptance are now closed;
+this does not mean all large functions or provider/data limitations are resolved.
+See [scope acceptance](docs/maintenance/20261107_flow_reference_scope.md).
 
 Latest task: **flow scope production acceptance attempted**, deployed `c96dfaa5`.
 Fresh authenticated tab completed standalone121600.KQ at2026-11-07T14:58:21Z.
@@ -467,19 +484,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**After the requested Cloud reboot, finish the two-column production acceptance.**
+**On the next request, refresh the Today financial-input completeness inventory.**
 
-Reboot was requested with confirmed stale-module evidence, not a browser error.
-Use a fresh selected-browser tab if old-tab binding fails. In precision, confirm
-the connection table/export now includes evaluation scope and candidate group for
-one standalone and one radar-backed result. Check existing label/numbers and core
-score/decision sections are unchanged for comparable inputs. Do not force the two
-reference labels to match or alter scoring rules. If a stale module is actually
-observed, record the evidence; do not infer reboot need from tab-binding failures.
-
-Four sector-RS mappings and NBIS annual review now have bounded Cloud acceptance.
-SEC6-K/IFRS and automatic20-F scoring remain outside scope; review evidence must
-not claim latest interim earnings. Private exports stay outside Git.
+The current bounded refactor/display verification is finished; do not start another
+extraction by default. Use one completed Today export to distinguish saved scores,
+official review evidence and missing latest-release dates, comparing with the old
+95-instrument inventory without assuming the universe is unchanged. Report actual
+remaining gaps; do not change scores, automate20-F scoring or fabricate dates.
+Cloud live DART financial transport and SEC interim/IFRS support remain unresolved.
+Private exports stay outside Git. This next inventory is not an unfinished part
+of the accepted two-column display change.
 
 ## Evidence and Remaining Limits
 
