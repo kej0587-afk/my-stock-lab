@@ -4,6 +4,8 @@ Base: `9cd5f6a2`; clean working tree and upstream checked before editing.
 
 ## Change
 
+Renderer length: 452 -> 421 lines; extracted helper: 36 lines.
+
 Move only theme labels, selection widgets and the description/ETF chip into
 `_render_image_theme_selection(themes)` in app.py. The renderer retains heading,
 empty-theme handling, lazy-run guard, data loading and all calculation/display
@@ -24,7 +26,13 @@ unchanged. Keeping the helper in app.py avoids a new cross-module import contrac
 
 ## Deployment
 
-Commit/push and production smoke verification pending. No account data in Git.
+Code commit `6cae5e7e` pushed to origin/main. Production reopened after push. Theme selection shows the existing power/energy
+infrastructure choice; description and benchmark ETF 487240.KS render. Switching
+market all -> overseas -> all keeps the theme and the waiting/explicit-run state.
+No visible exception. No full analysis was triggered for this UI-only test.
+This is UI smoke evidence, not an exact runtime-source hash verification.
+Private screenshot: `C:/Users/82amf/Downloads/stock_lab_theme_selection_verified_20261107.png`.
+No account data in Git.
 
 ## Next bounded task
 

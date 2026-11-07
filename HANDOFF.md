@@ -25,7 +25,9 @@ labels, order, metadata HTML, empty-theme guard and lazy data-loading sequence
 are unchanged. Report gate before **180 passed**, after **208 passed**;
 adjacent contracts **186 passed**. Immutable baseline AST and 28 new UI event
 contracts pass; no golden regeneration or investment-rule changes. No runtime
-speedup is claimed. Commit/push and production smoke verification pending.
+speedup is claimed. Code `6cae5e7e` pushed. Production reopened successfully; theme/metadata/ETF
+chip and market selection (all -> overseas -> all) verified, lazy state remains
+waiting. No runtime source fingerprint was collected for this UI-only check.
 See [theme selection extraction](docs/maintenance/20261107_theme_selection_extraction.md).
 
 Current bounded change: single-row source-flow normalization, base`125748fc`.
