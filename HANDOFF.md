@@ -19,6 +19,15 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest change: exact **6mo leveraged-watch batching**, based on `b82d1b61`.
+One summary scope shares successful frames, avoids overlapping batch duplicates,
+and retains KR/missing/forced-refresh/original precision paths. No rules changed.
+Focused contracts 205 passed plus final batch contracts 44 passed. Prices gate
+remains 265 passed / one pre-existing AST failure. Local measured path 7.567s ->
+2.437s, actual Yahoo chart HTTP 23 -> 23; not a controlled Cloud speedup.
+Code ready for push/Cloud verification. See
+[watch-history record](docs/maintenance/20261107_leveraged_history_batch.md).
+
 Latest measurement: **KR provider-cache expiry run**, 2026-11-07 09:37–09:39 KST,
 ID `2f717dae89a341ba8e3c2f08676d4bcd`, build `5b5d81f6`. About 48 minutes elapsed
 since the last visible calculation; no preliminary price/flow reload. Same
@@ -80,7 +89,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
+Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).
 
 ## Preserved History
 
@@ -96,22 +105,18 @@ Latest record: [KR cache expiry measurement](docs/maintenance/20261107_kr_histor
 
 ## Next Task Only
 
-**Reduce exact 6mo history I/O for leveraged watch rows, after focused measurement.**
+**Verify the deployed 6mo watch batch in one complete production Today Check.**
 
-Start with `leveraged_watch.py::_build_watch_row` and the callback wrapper
-`app.py::build_leveraged_precision_watch_rows`. Five profile builds/38 rows took
-17.129s active union; this does not prove every history call is an HTTP request.
-Count/measure exact 6mo misses first, then batch/prefetch those required requests
-using existing infrastructure if beneficial. Preserve live quote/forced-refresh
-thread behavior, source/adjustment/range semantics, profile order, fallback,
-judgment outputs and copies. No 1y/10y slicing, TTL/concurrency/rule changes or
-other optimization. Use fixed-input row and decision parity plus prices checks
-before/after; explicitly retain the known pre-existing AST-freeze failure rather
-than regenerate goldens. Verify actual requests and one comparable full Cloud
-run; commit/push evidence and update this handoff with one next task.
+Keep account/filter/flow settings unchanged. Download the completed matching JSON,
+check loaded module hashes/staleness, shared/batch hit events, fallback counts,
+watch/quote/history times and total elapsed. Compare with the 91.089s expired-KR
+run without claiming identical live data/cache state. If the Cloud module is old,
+record that and use the safe fallback; do not claim optimization was applied.
+Then update this handoff with the result and exactly one next bounded task.
 
 ## Evidence and Remaining Limits
 
+- Latest: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).
 - Latest: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
 - Previous: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
 - Previous: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).

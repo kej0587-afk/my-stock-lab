@@ -150,6 +150,10 @@ def test_close_cache_hit_does_not_claim_another_http_request(monkeypatch):
 
 @pytest.mark.parametrize("forced", [False, True])
 def test_watch_wrapper_keeps_original_cache_and_forced_refresh_thread(monkeypatch, forced):
+    from stock_lab_core import leveraged_watch
+    # Preserve the old-module fallback contract; batch routing is covered by
+    # test_leveraged_watch_batch, including forced refresh and cache parity.
+    monkeypatch.delattr(leveraged_watch, "build_leveraged_watch_rows_batched")
     source = (ROOT / "app.py").read_text(encoding="utf-8-sig")
     node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)
                 and n.name == "build_leveraged_precision_watch_rows")
@@ -192,6 +196,8 @@ def test_watch_source_metadata_keeps_real_import_hash_with_old_name_list(monkeyp
 
 def test_real_watch_cache_hits_do_not_repeat_work_and_clear_keeps_force_policy(monkeypatch):
     import streamlit as st
+    from stock_lab_core import leveraged_watch
+    monkeypatch.delattr(leveraged_watch, "build_leveraged_watch_rows_batched")
 
     node = next(n for n in ast.parse((ROOT / "app.py").read_text(encoding="utf-8-sig")).body
                 if isinstance(n, ast.FunctionDef) and n.name == "build_leveraged_precision_watch_rows")

@@ -163,5 +163,7 @@ def test_all_app_functions_except_scope_wrapper_unchanged():
     def functions(source):
         return {node.name: ast.dump(node) for node in ast.parse(source).body
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and node.name != "render_today_queue_tab"}
+                # Watch I/O wrappers have their own immutable-reference test.
+                and node.name not in {"render_today_queue_tab", "get_all_summary",
+                                      "build_leveraged_precision_watch_rows"}}
     assert functions(before) == functions(after)

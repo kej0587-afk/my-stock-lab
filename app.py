@@ -18025,10 +18025,22 @@ def _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret):
 @st.cache_data(ttl=300, show_spinner=False)
 def build_leveraged_precision_watch_rows(profile_key):
     from stock_lab_core import prices as price_loader
+    from stock_lab_core import leveraged_watch as watch_loader
 
     profile = LEVERAGED_ETF_PRECISION_PROFILES.get(profile_key, {})
     # Forced refresh reads session-local policy; retain its original thread.
     force_refresh = getattr(price_loader, "_force_live_price_refresh_active", lambda: True)()
+    # Older loaded modules retain the original path until their next restart.
+    batch_builder = getattr(watch_loader, "build_leveraged_watch_rows_batched", None)
+    if not force_refresh and batch_builder is not None:
+        return batch_builder(
+            profile.get("watch", []),
+            load_quote=load_display_live_price,
+            load_history=load_price_df,
+            load_batch=price_loader.load_price_frames_batch,
+            pct_text=_leveraged_precision_pct_text,
+            judge=_leveraged_precision_proxy_judgement,
+        )
     return build_leveraged_watch_rows(
         profile.get("watch", []),
         load_quote=load_display_live_price,
@@ -20953,6 +20965,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from contextlib import nullcontext
     from stock_lab_core import prices as price_loader
+    from stock_lab_core import leveraged_watch as watch_loader
 
     # [속도 개선] 전광판 종목 전체를 병렬로 선제 로딩 (이후 load_price_df는 캐시 히트)
     all_tickers = [
@@ -20984,7 +20997,7 @@ def get_all_summary(fin_score_map_items, mode, watchlist_items, *, fresh_quotes=
     # keep the existing warm caches; older loaded modules use the old path.
     quote_scope = (price_loader.fresh_kr_quote_scope(all_tickers)
                    if fresh_quotes and hasattr(price_loader, "fresh_kr_quote_scope") else nullcontext())
-    with measure("phase", "stock_signals"), quote_scope, getattr(price_loader, "reuse_yahoo_chart_connections", nullcontext)(), price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
+    with measure("phase", "stock_signals"), getattr(watch_loader, "leveraged_watch_history_scope", nullcontext)(), quote_scope, getattr(price_loader, "reuse_yahoo_chart_connections", nullcontext)(), price_frame_scope(price_frames, "1y"), price_frame_scope(long_price_frames, "10y"), price_frame_scope(rs_frames, "3mo"), ThreadPoolExecutor(max_workers=6) as executor:
         futures = {
             submit_with_context(executor,
                 _compute_summary_item,

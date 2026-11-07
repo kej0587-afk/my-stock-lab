@@ -357,10 +357,13 @@ def test_context_propagates_per_row_and_timings_have_no_phase_status(callbacks):
         context.reset(token)
     assert len(rows) == 4 and phases == []
     entries = {row["name"]: row for row in trace.report()["functions"]}
-    assert set(entries) == {"build_leveraged_watch_rows", "_build_watch_row"}
+    assert set(entries) == {"build_leveraged_watch_rows", "_build_watch_row",
+                            "leveraged_watch_quote", "leveraged_watch_history_6mo"}
     assert entries["build_leveraged_watch_rows"]["calls"] == 1
     assert entries["_build_watch_row"]["calls"] == 4
-    assert all(row["category"] == "external_data" and row["errors"] == 0 for row in entries.values())
+    assert all(row["errors"] == 0 for row in entries.values())
+    assert entries["leveraged_watch_quote"]["category"] == "prices"
+    assert entries["leveraged_watch_history_6mo"]["calls"] == 4
 
 
 class RowAbort(BaseException):

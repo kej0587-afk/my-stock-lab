@@ -1,8 +1,10 @@
 """Build leveraged-product proxy rows with bounded, context-aware overlap."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from itertools import chain
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, RLock
 
 import numpy as np
 import pandas as pd
@@ -13,20 +15,33 @@ from stock_lab_core.formatters import (
     format_currency,
     sanitize_ticker_value,
 )
-from stock_lab_core.performance import submit_with_context, timed_call
+from stock_lab_core.performance import count_event, measure, submit_with_context, timed_call
 from stock_lab_core.report_build import register_loaded_source
 
 
 _PARALLEL_ROW_SLOTS = BoundedSemaphore(2)
+_BATCH_HISTORY = ContextVar("leveraged_watch_batch_history", default=None)
+
+
+@contextmanager
+def leveraged_watch_history_scope():
+    """Share successful exact-period frames only across this summary's profiles."""
+    token = _BATCH_HISTORY.set((RLock(), {}, {}))
+    try:
+        yield
+    finally:
+        _BATCH_HISTORY.reset(token)
 
 
 @timed_call("external_data")
 def _build_watch_row(entry, *, load_quote, load_history, pct_text, judge):
     t, role, label = entry
     ticker = sanitize_ticker_value(t)
-    px = clean_float(load_quote(ticker), 0.0)
+    with measure("prices", "leveraged_watch_quote"):
+        px = clean_float(load_quote(ticker), 0.0)
     try:
-        hist = load_history(ticker, "6mo")
+        with measure("prices", "leveraged_watch_history_6mo"):
+            hist = load_history(ticker, "6mo")
         close = pd.to_numeric(hist["Close"], errors="coerce").dropna() if hist is not None and not hist.empty and "Close" in hist.columns else pd.Series(dtype=float)
     except Exception:
         close = pd.Series(dtype=float)
@@ -85,6 +100,60 @@ def build_leveraged_watch_rows(watch, *, load_quote, load_history, pct_text, jud
         futures = [submit_with_context(executor, parallel_row, entry)
                    for entry in chain((first, second), entries)]
         return [future.result() for future in futures]
+
+
+@timed_call("external_data")
+def build_leveraged_watch_rows_batched(watch, *, load_quote, load_history, load_batch, pct_text, judge):
+    """Batch exact 6mo histories only inside a non-forced summary scope.
+
+    The existing batch provider excludes KR symbols. Failed/missing symbols use
+    the original loader. Frames never seed the general price cache: only Close
+    is consumed here, and Yahoo batch Adj Close may differ from single requests.
+    Forced refresh must continue through build_leveraged_watch_rows on its caller.
+    """
+    state = _BATCH_HISTORY.get()
+    if state is None:
+        return build_leveraged_watch_rows(watch, load_quote=load_quote, load_history=load_history,
+                                          pct_text=pct_text, judge=judge)
+    entries = list(watch)
+    symbols = tuple(sorted({sanitize_ticker_value(entry[0]) for entry in entries
+                            if sanitize_ticker_value(entry[0])}))
+    frames = {}
+    if len(symbols) > 1:
+        lock, memo, providers = state
+        # Avoid duplicate concurrent profile misses. The provider already uses
+        # one global Yahoo lock; row workers retain their existing two slots.
+        with measure("prices", "leveraged_watch_batch_wait"), lock:
+            provider_id = id(load_batch)
+            providers[provider_id] = load_batch
+            missing = tuple(t for t in symbols if (provider_id, t) not in memo)
+            count_event("leveraged_watch.shared_frame_hit", len(symbols) - len(missing))
+            if missing:
+                try:
+                    with measure("prices", "leveraged_watch_batch_6mo"):
+                        count_event("leveraged_watch.batch_lookup")
+                        fetched = load_batch(missing, "6mo")
+                    if isinstance(fetched, dict):
+                        for ticker in missing:
+                            frame = fetched.get(ticker)
+                            if isinstance(frame, pd.DataFrame) and not frame.empty and "Close" in frame:
+                                memo[provider_id, ticker] = frame.copy(deep=True)
+                except Exception:
+                    count_event("leveraged_watch.batch_exception")
+            frames = {t: memo[provider_id, t] for t in symbols if (provider_id, t) in memo}
+
+    def exact_history(ticker, period):
+        frame = frames.get(ticker) if period == "6mo" else None
+        if isinstance(frame, pd.DataFrame) and not frame.empty and "Close" in frame:
+            count_event("leveraged_watch.batch_frame_hit")
+            return frame.copy(deep=True)
+        count_event("leveraged_watch.original_history_fallback")
+        return load_history(ticker, period)
+
+    return build_leveraged_watch_rows(
+        entries, load_quote=load_quote, load_history=exact_history,
+        pct_text=pct_text, judge=judge, parallel=True,
+    )
 
 
 register_loaded_source(__name__, __file__)
