@@ -173,7 +173,6 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     earnings_results = {"results": [], "sources": []}
     earnings_scope = {}
     official_outlooks = None
-    msft_business_evidence = None
     central_bank_results = []
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_collection import collect_report_earnings
@@ -185,9 +184,6 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         from stock_lab_core.outlook_sources import load_official_outlooks
         with measure("external_data", "official_outlook"):
             official_outlooks = load_official_outlooks(now)
-        from stock_lab_core.report_msft_source import collect_msft_report_evidence
-        with measure("external_data", "msft_business_evidence"):
-            msft_business_evidence = collect_msft_report_evidence(now)
         from stock_lab_core.central_bank_results import fetch_central_bank_results
         with measure("external_data", "official_policy_decisions"):
             central_bank_results = fetch_central_bank_results(now)
@@ -237,8 +233,6 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "central_bank_results": central_bank_results}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
-    if msft_business_evidence is not None:
-        result["msft_business_evidence"] = msft_business_evidence
     from stock_lab_core.report_eventstudy import collect_event_study_context
     with measure("external_data", "event_study_context"):
         study = collect_event_study_context(result, now)

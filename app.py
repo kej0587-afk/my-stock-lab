@@ -28105,6 +28105,15 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     restore_news_preferences(st.session_state)
     memo_summary_df, memo_summary_source = resolve_today_market_memo_summary_df(summary_df, summary_signature)
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
+    from stock_lab_core.company_deep_dive import render_company_deep_dive
+    if st.radio("시황 보기", ["시장 전체", "기업 심층분석"], horizontal=True, key="market_report_view") == "기업 심층분석":
+        render_company_deep_dive(st, universe=[dict(item, is_etf=is_fin_score_exempt_asset(
+            item["ticker"], item.get("is_etf", False), item.get("asset_class", ""), item.get("name", ""))) for item in universe],
+            owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL, is_demo=IS_PUBLIC_DEMO,
+            configured=bool(get_sec_user_agent()), resolve_cik=get_sec_cik_for_ticker,
+            fetch_facts=lambda cik: sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"),
+            load_kr=fetch_kr_financials_auto)
+        return
     st.markdown(title)
     report_build = get_report_build_info(__file__)
     if invalidate_saved_report(st.session_state, report_build["loaded_source_sha256"]):
@@ -28542,12 +28551,6 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence, load_public_market_evidence
-    from stock_lab_core.report_msft_cash import collect_msft_cash_evidence
-    with measure("external_data", "msft_cash_evidence"):
-        context["msft_cash_evidence"] = collect_msft_cash_evidence(
-            datetime.now(KST), configured=bool(get_sec_user_agent()), is_demo=IS_PUBLIC_DEMO,
-            resolve_cik=get_sec_cik_for_ticker,
-            fetch_facts=lambda cik: sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"))
     from stock_lab_core.economic_releases import _api_key
     context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
                                 if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})

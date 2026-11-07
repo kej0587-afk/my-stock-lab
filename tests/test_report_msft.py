@@ -105,7 +105,7 @@ def test_failed_query_not_cached_or_silently_replaced_by_old_success(monkeypatch
 def test_presentation_order_keeps_explanation_near_front():
     from stock_lab_core.report_editorial import reading_order
     text='\n'.join(reading_order(['## 내 보유 종목 영향','holding','## MSFT 사업·투자 점검','msft','## 핵심 해석','market']))
-    assert text.index('핵심 해석')<text.index('MSFT 사업')<text.index('내 보유')
+    assert text.index('핵심 해석')<text.index('내 보유')<text.index('MSFT 사업')
 
 
 def test_full_report_consumes_packet_once_and_preserves_decision_inputs(monkeypatch):
@@ -121,5 +121,5 @@ def test_full_report_consumes_packet_once_and_preserves_decision_inputs(monkeypa
     text='\n'.join(lines)
     assert text.count('## MSFT 사업·투자 점검')==1
     assert '55십억 달러 초과' in text
-    assert text.index('## 핵심 해석')<text.index('## MSFT 사업')<text.index('## 내 보유 종목 영향')
+    assert text.index('## 핵심 해석')<text.index('## 내 보유 종목 영향')<text.index('## MSFT 사업')
     assert args==before

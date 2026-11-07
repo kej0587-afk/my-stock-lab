@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **market-first report and selected-company deep dive**, base `8d53b10f`.
+User superseded MSFT-only follow-up. Default report drops implicit MSFT SEC/IR
+collection; market story/materials/index-macro precede holdings/calendar. Separate
+Company view selects current held/watch stocks (ETFs excluded by existing asset
+classifier); explicit one-company query, owner/ticker-isolated results, safe failure
+and six-hour display freshness. US SEC8-quarter explanations/tables/source download;
+KR existing annual/quarter provider with explicit source/failure/coverage limits.
+MSFT Q4/IR extras retained only when selected. No score/decision/provider TTL/DB
+edits. Generic guidance/consensus and KR8-quarter CAPEX remain unconnected.
+Baseline decision1334 pass101.573s. Focused selection/reading/MSFT contracts151
+pass5.98s; source-flow/MSFT/cash183 pass22.09s. Bounded review found no concrete
+issue. Report207pass/one known theme-selection assertion48.736s. Live AMZN/NVDA
+SEC8quarters verified; NVDA cross-filing cash interpretation explicitly held.
+Final decision1334 passed108.758s,stable sources; Cloud acceptance pending.
+Private evidence cache/company_*.
+See [market/company split](docs/maintenance/20261108_market_company_split.md).
+
 Latest task: **MSFT two withheld Q4 cash quarters**, base `64383d2b`.
 Original annual/interim and earnings-release cash statements reconcile both
 2025-06-30 and2026-06-30. The2026 exhibit directly reports both quarter values;
@@ -603,13 +620,13 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect reviewed MSFT Q4 provenance to the read-only precision evidence display.**
+**Connect selected Korean company review to existing imported DART evidence.**
 
-Reuse the same reviewed helper for the two known Q4 periods and label original
-raw SEC cumulative-difference status separately from the audited direct-release
-evidence. Preserve raw packets, scores, decisions and general parser guards;
-no new financial override, other issuer, LLM/DCF or broad refactor. Verify no
-report/precision discrepancy is introduced, with unchanged score exports.
+When live Cloud DART fails, read the existing owner-scoped imported evidence,
+verify ticker/corporate code/period and show source/age distinctly. Preserve raw
+records, score/decision paths and generic parser guards. No new score override,
+database migration, imputation, LLM/DCF or broad refactor. Eight-quarter CAPEX
+coverage and company outlook remain explicitly limited until verified sources exist.
 
 ## Evidence and Remaining Limits
 

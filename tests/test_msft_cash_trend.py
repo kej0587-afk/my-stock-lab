@@ -142,7 +142,7 @@ def test_full_report_has_one_cash_section_preserves_inputs_and_old_report():
     args=report_case(NOW.isoformat());args['context']['msft_cash_evidence']={'packet':packet()}
     before=deepcopy(args);lines,_=report_sections(**args);s='\n'.join(lines)
     assert s.count('## MSFT 8분기 현금 부담')==1 and '75.0%' in s
-    assert s.index('## 핵심 해석')<s.index('## MSFT 8분기')<s.index('## 내 보유 종목 영향')
+    assert s.index('## 핵심 해석')<s.index('## 내 보유 종목 영향')<s.index('## MSFT 8분기')
     assert args==before and report.msft_cash_lines({},NOW)==[]
 
 
