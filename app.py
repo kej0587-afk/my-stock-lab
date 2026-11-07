@@ -28112,7 +28112,10 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
             owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL, is_demo=IS_PUBLIC_DEMO,
             configured=bool(get_sec_user_agent()), resolve_cik=get_sec_cik_for_ticker,
             fetch_facts=lambda cik: sec_request_json(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"),
-            load_kr=fetch_kr_financials_auto)
+            load_kr=fetch_kr_financials_auto,
+            kr_identity_loader=lambda ticker: resolve_dart_evidence_identity(ticker, fetch_dart_corp_code_map),
+            kr_store_factory=lambda owner: SupabaseDartEvidenceStore(supabase, owner_scope=owner),
+            kr_extract_metrics=extract_dart_metrics)
         return
     st.markdown(title)
     report_build = get_report_build_info(__file__)

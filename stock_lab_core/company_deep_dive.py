@@ -7,7 +7,7 @@ import re
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.sec_quarter_review_view import load_quarter_evidence, _safe_error
 from stock_lab_core.sec_quarter_review import quarter_tables
-from stock_lab_core.financial_review import build_financial_review
+from stock_lab_core.company_kr_evidence import load_company_kr_evidence
 
 register_loaded_source(__name__, __file__)
 
@@ -27,7 +27,8 @@ def company_options(universe):
 
 
 def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
-                             fetch_facts, load_kr, is_demo=False, now=None):
+                             fetch_facts, load_kr, kr_identity_loader=None,
+                             kr_store_factory=None, kr_extract_metrics=None, is_demo=False, now=None):
     st.subheader('기업 심층분석')
     st.caption('보유·관심 개별기업을 선택해 실적 → 현금 창출 → 투자 부담 → 다음 확인 순서로 봅니다. 시장 시황과 기존 점수·판정은 바뀌지 않습니다. ETF는 기업 재무 비교에서 제외됩니다.')
     if not owner or is_demo:
@@ -51,7 +52,9 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         try:
             with st.spinner('선택 기업 공시 확인 중...'):
                 checked = now or datetime.now(timezone.utc)
-                packet = (build_financial_review({}, load_kr(symbol), checked_at=checked.isoformat()) if kr else
+                packet = (load_company_kr_evidence(symbol, owner=owner, load_live=load_kr,
+                          identity_loader=kr_identity_loader, store_factory=kr_store_factory,
+                          extract_metrics=kr_extract_metrics, now=checked) if kr else
                           load_quarter_evidence(symbol, resolve_cik=resolve_cik, fetch_facts=fetch_facts, now=checked))
             st.session_state[prefix] = dict(ticker=symbol, kind='kr' if kr else 'us', packet=packet,
                                             checked_at=checked.isoformat())
@@ -67,15 +70,32 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         st.info('조회 후 6시간이 지났거나 조회시각 확인이 필요합니다. 버튼을 눌러 다시 확인하세요.')
         return
     packet = bundle['packet']
+    stored = packet.get('저장 근거') if kr else None
+    if stored:
+        stored_age = (now or datetime.now(timezone.utc)) - datetime.fromisoformat(stored['collected_at'])
+        if not -timedelta(minutes=5) <= stored_age <= timedelta(days=7):
+            st.info('개인 저장 자료의 수집 유효기간(7일)이 지났습니다. 새 DART 자료를 가져온 뒤 다시 조회하세요.')
+            return
     st.subheader(f"{options[symbol]['name']} ({symbol})")
     st.caption(f"{options[symbol]['source']} 기업 · 조회 {bundle['checked_at']} · 회사 전체 자료이며 당일 주가 움직임의 원인으로 단정하지 않습니다.")
     if kr:
         st.write(packet['조회 상태'])
         st.caption(f"공급처: {packet['공급처']} · 보고기간: {packet['공급처 조회 기간']}")
+        if stored:
+            collected = datetime.fromisoformat(stored['collected_at']).astimezone(timezone(timedelta(hours=9)))
+            freshness = '최근 수집' if stored_age <= timedelta(days=1) else '낡은 자료'
+            st.caption(f"수집 {collected:%Y-%m-%d %H:%M} KST · {max(0, stored_age.total_seconds())/3600:.1f}시간 전 · {freshness}")
+            st.caption('실시간 조회 사유: ' + packet['실패 사유'])
+        if packet.get('저장 근거 상태'):
+            st.info(packet['저장 근거 상태'])
         st.write('왜 중요한가: 매출·이익이 늘어도 영업현금이 따라오는지 함께 봐야 합니다. 누적 분기와 단독 분기, 연결·별도 기준을 맞춘 뒤 비교해야 합니다.')
         st.write('다음 확인: 최신 DART 보고기간, 영업현금흐름, 현금 투자지출의 수집 여부를 확인하세요. 현재 국내 조회는 기존 연간·분기 원자료 범위이며, 8분기 투자비율·전망 분석은 미연결입니다.')
         if packet['원자료']:
-            st.dataframe(packet['원자료'], hide_index=True, width='stretch')
+            st.dataframe(packet['원자료'], hide_index=True, width='stretch',
+                         column_config={'공시 원문': st.column_config.LinkColumn('공시 원문', display_text='DART 원문')})
+            if packet.get('수집 범위'):
+                with st.expander('저장 자료의 보고기간·수집 상태'):
+                    st.dataframe(packet['수집 범위'], hide_index=True, width='stretch')
         else:
             st.info(packet['실패 사유'] or '국내 재무 원자료 미연결 · 정밀관측소의 DART 파일 가져오기에서 확인할 수 있습니다.')
     else:

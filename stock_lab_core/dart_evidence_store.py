@@ -10,6 +10,9 @@ import hashlib
 import re
 
 from stock_lab_core.dart_evidence import canonical_bytes, stamp, validate_bundle, validate_scope
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 
 TABLE_NAME = "financial_evidence_bundles"
@@ -129,3 +132,25 @@ class SupabaseDartEvidenceStore:
         if not data:
             return None
         return self._decode(data[0], ticker, corporate_codes, current, scope_hash=scope)
+
+    def load_recent(self, ticker, *, owner_scope, corporate_codes, now=None):
+        """Latest collected bundle, any stored scope; NOT latest released filing.
+
+        Company review has no uploaded scope to select. Return one validated
+        bundle with its original requested_reports; never merge reporting bases.
+        The precision panel's exact-scope load_latest contract stays unchanged.
+        """
+        current = self._context(owner_scope, ticker, corporate_codes, now)
+        try:
+            response = (self._query(ticker)
+                        .gte("collected_at", (current - timedelta(days=7)).isoformat())
+                        .lte("collected_at", (current + timedelta(minutes=5)).isoformat())
+                        .order("collected_at", desc=True).order("imported_at", desc=True)
+                        .order("bundle_sha256", desc=True).limit(1).execute())
+        except Exception as error:
+            raise _database_error(error) from None
+        data = getattr(response, "data", None)
+        _check(isinstance(data, list) and len(data) <= 1, "invalid_data")
+        if not data:
+            return None
+        return self._decode(data[0], ticker, corporate_codes, current)

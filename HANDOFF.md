@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **Korean selected-company imported DART fallback**, base `e3c75cc2`.
+Explicit company query uses the existing owner-scoped stored evidence only when
+live DART fails. Corporate/listing identity, ticker, original scope, hash and
+seven-day collection expiry validated; source/age/cumulative/CFS-OFS/missing
+periods shown. No DB writes, score/decision/parser/TTL changes. Baseline1334 pass
+103.346s; final1334 pass105.735s, stable sources. Focused133 pass/one pre-existing
+whole-app historical AST failure19.51s (old5cadb203 versus already-changed HEAD);
+no golden changes. Bounded reviewer: no concrete findings. Local saved Samsung
+bundle validated, one collected/two requested reports; expected hash/rows private
+under cache/company_kr_*. Production verification pending publication.
+See [KR imported evidence](docs/maintenance/20261108_company_kr_imported_evidence.md).
+
 Latest task: **market-first report and selected-company deep dive**, base `8d53b10f`.
 User superseded MSFT-only follow-up. Default report drops implicit MSFT SEC/IR
 collection; market story/materials/index-macro precede holdings/calendar. Separate
@@ -628,13 +640,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect selected Korean company review to existing imported DART evidence.**
+**Explain selected Korean company evidence without new data calls.**
 
-When live Cloud DART fails, read the existing owner-scoped imported evidence,
-verify ticker/corporate code/period and show source/age distinctly. Preserve raw
-records, score/decision paths and generic parser guards. No new score override,
-database migration, imputation, LLM/DCF or broad refactor. Eight-quarter CAPEX
-coverage and company outlook remain explicitly limited until verified sources exist.
+Build why/next-check explanations from validated stored DART rows. Keep annual
+and cumulative periods, CFS/OFS and currencies separate; hold comparisons without
+matching evidence. Preserve original figures, score/decision paths and generic
+parser guards. No new fetches, DB writes, CAPEX imputation or valuation claims.
 
 ## Evidence and Remaining Limits
 

@@ -249,6 +249,39 @@ def test_scope_hash_is_order_independent():
     assert _scope_hash(scope, NOW) == _scope_hash(list(reversed(scope)), NOW)
 
 
+def test_recent_bundle_read_is_scoped_validated_and_never_writes(storage):
+    store, memory, client = storage
+    save(store)
+    count = len(memory.calls)
+    kwargs = dict(owner_scope=OWNER, corporate_codes=MAP, now=NOW)
+    result = store.load_recent('005930.KS', **kwargs)
+    assert result['payload'] == bundle()
+    assert [r.method for r in memory.calls[count:]] == ['GET']
+    assert 'scope_sha256' not in memory.calls[-1].url.params
+    assert store.load_recent('000660.KS', **kwargs) is None
+    other = SupabaseDartEvidenceStore(client, owner_scope='second@example.invalid')
+    assert other.load_recent('005930.KS', **{**kwargs, 'owner_scope': 'second@example.invalid'}) is None
+    assert store.load_recent('005930.KS', **{**kwargs, 'now': NOW+timedelta(days=8)}) is None
+    memory.override = deepcopy(memory.rows)
+    memory.override[0]['scope_sha256'] = '0'*64
+    with pytest.raises(EvidenceStoreError, match='invalid_data'):
+        store.load_recent('005930.KS', **kwargs)
+
+
+@pytest.mark.parametrize('change', ['owner', 'ticker', 'corporation', 'expired'])
+def test_recent_bundle_rejects_untrusted_return(storage, change):
+    store, memory, _ = storage
+    save(store)
+    memory.override = deepcopy(memory.rows)
+    kwargs = dict(owner_scope=OWNER, corporate_codes=MAP, now=NOW)
+    if change == 'owner': memory.override[0]['owner_email'] = 'other@example.invalid'
+    if change == 'ticker': memory.override[0]['ticker'] = '000660.KS'
+    if change == 'corporation': kwargs['corporate_codes'] = {'005930': '99999999'}
+    if change == 'expired': kwargs['now'] = NOW+timedelta(days=8)
+    with pytest.raises(EvidenceStoreError):
+        store.load_recent('005930.KS', **kwargs)
+
+
 def test_prepared_sql_is_insert_only_and_has_isolation_guards():
     sql = Path("docs/20261107_dart_evidence.sql").read_text(encoding="utf-8")
     assert "grant select, insert on" in sql
