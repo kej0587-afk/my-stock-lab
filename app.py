@@ -163,6 +163,7 @@ from stock_lab_core.hold_judgement import (
 )
 from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
 from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
+from stock_lab_core.dart_corporate_snapshot import use_corporate_snapshot
 from stock_lab_core.financial_review import (
     DartProviderError, dart_status_error, stored_financial_diagnostic, build_financial_review,
     sec_statement_coverage,
@@ -3783,7 +3784,8 @@ def get_sec_user_agent():
 
 @cache_result(ttl=1800, is_success=lambda result: isinstance(result, dict) and bool(result))
 def fetch_dart_corp_code_map():
-    return fetch_corporate_codes(get_dart_api_key(), get=requests.get, timeout=8)
+    live = fetch_corporate_codes(get_dart_api_key(), get=requests.get, timeout=8)
+    return use_corporate_snapshot(live)
 
 def get_dart_corp_code(stock_code):
     stock_code = normalize_stock_code(stock_code)
@@ -5782,6 +5784,10 @@ def inspect_financial_inputs(ticker, fin_meta):
         diagnostic = getattr(fetch_dart_corp_code_map(), "diagnostic", {})
         if isinstance(diagnostic, dict) and diagnostic:
             review["기업코드 조회 진단"] = json.dumps(diagnostic, ensure_ascii=False)
+            if diagnostic.get("mapping_source") == "official_snapshot":
+                review["기업코드 연결"] = "공식 기업코드 보관본 사용 · 실시간 DART 연결 실패"
+                review["기업코드 보관 기준"] = diagnostic["snapshot_asof"]
+                review["기업코드 보관 유효기한"] = diagnostic["snapshot_valid_until"]
     return review
 
 

@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **Cloud DART corporate-code connection diagnosis/recovery**, base
+`ee6a789e`. Diagnostic build `2f79bc3c` proved production connect timeout at
+8.021s, no HTTP/API response or payload. Local official API returns 4,013 public
+mappings in 2.638s. Added safe transport diagnostics and a dated official public-ID
+snapshot fallback for transient transport failures only. No API keys, account
+data, private tickers/weights or financial statements are in the snapshot.
+Snapshot requires an official refresh after 7 days; it does not fix live network
+access or provide latest earnings. Existing cache TTLs and all saved scores,
+thresholds and decision text remain unchanged. No golden regeneration.
+Final focused tests **66 passed**, decision gate **1,327 passed** (101.628s),
+`cache/refactor_checks/decision_k9w2y2li`. Deployment/production verification follows.
+See [Cloud DART connection record](docs/maintenance/20261107_dart_cloud_connection.md)
+for safe diagnostics, public snapshot maintenance and remaining network limits.
+
 Latest task: **financial-input provenance audit and bounded repair**, base
 `009b74c4`. Audited all 12 missing-auto/manual inputs and 8 stored failed/simplified
 inputs against the authenticated read-only backup. Eleven lack a DB score row,
