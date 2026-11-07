@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **private immutable DART evidence storage adapter**, base `9054d62b`.
+Added owner-bound INSERT/SELECT with exact duplicate verification, payload validation,
+and an indexed scope hash so another report period cannot satisfy the same lookup.
+Prepared `docs/20261107_dart_evidence.sql`: one new private table/index/policy,
+SELECT/INSERT-only server access. **SQL has not been executed; no live DB access.**
+Focused storage/collector/financial tests: **131 passed** (15.01s), using actual
+PostgREST builders with mock HTTP transport. SQL syntax: 10 statements parsed;
+not a live RLS/DB integration test. Existing runtime and decision files unchanged.
+Fixed-source decision gate: **1,327 passed**, 100.682s, no skips/source changes;
+evidence `cache/refactor_checks/decision_9gnax73k`. No golden files regenerated.
+The adapter is not wired into the UI yet; publication does not require a reboot.
+See [DART evidence storage verification](docs/maintenance/20261107_dart_evidence_storage.md)
+for shared-project migration impact, semantics and remaining limits.
+
 Latest task: **local DART collector and version-1 evidence validator**, base
 `db70567e`. Added a standalone bounded collector, strict JSON validator and CLI;
 no app import, score calculation, DB write or Cloud UI change. Existing runtime
@@ -286,16 +300,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Implement the private immutable evidence storage adapter and prepare its SQL.**
+**Wire explicit precision file preview/import and read-only stored evidence.**
 
-Follow the [bridge design](docs/maintenance/20261107_dart_evidence_bridge_design.md)
-and reuse the strict package validator. Scope all reads/inserts by verified server
-owner plus ticker; test owner isolation, duplicate imports, changed receipt IDs,
-partial/expired data and storage failure using fakes. Prepare one dedicated-table
-migration and explain its shared-project impact, but do not execute it or change
-live data in this task. No UI wiring, automatic score refresh, secret migration or
-new infrastructure. App preview/import and a production roundtrip come afterward;
-Cloud DART transport remains unresolved. SEC support remains separate.
+Use the [storage adapter](docs/maintenance/20261107_dart_evidence_storage.md) and
+existing verified app owner. Check selected ticker, official corporate identity
+and listing suffix; show provenance, original age and missing report coverage.
+Keep saved grades/Today Check untouched, with no automatic recalculation. Handle
+missing schema as setup required and link the prepared SQL; never execute migration
+from the app. Verify locally, then perform a production roundtrip only after the
+table has been set up. No automatic collection/scheduling or SEC expansion.
 
 ## Evidence and Remaining Limits
 
