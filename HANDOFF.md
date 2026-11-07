@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **one US financial failure diagnosis (NBIS)**, base `8bdc407e`.
+Saved evidence confirms FMP402 and a resolved SEC CIK followed by insufficient
+parsed annual records. Official NBIS 2025 20-F contains US-GAAP multi-year
+statements. Current SEC parser excludes 20-F twice: form allowlist and 10-K-only
+annual anchor. A synthetic form-isolation probe reproduced 0 annual records for
+20-F, still0 with allowlist-only relaxation, and3 for identical 10-K control.
+The wrapper also hard-codes annual report labels to10-K. This is confirmed parser
+coverage loss, not proof of absent company statements. Live companyfacts payload
+could not be fetched through the research tool; no latest Cloud transport recovery
+or exact NBIS fact/tag coverage claim. Existing SEC/review tests: **57 passed**,
+16.47s. No app/provider/score changes, DB writes or recalculation; docs only.
+See [NBIS bounded diagnosis](docs/maintenance/20261107_nbis_financial_failure_diagnosis.md).
+
 Latest task: **authenticated production DART import roundtrip**, deployed base
 `142e749a`. User reported table setup complete; actual production INSERT,
 duplicate rejection/recovery and exact-scope SELECT all succeeded through the UI.
@@ -331,14 +344,17 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Diagnose one remaining US financial-data failure, read-only.**
+**Prepare verified NBIS 20-F evidence and an isolated annual review parser.**
 
-Use the existing financial-input audit to select one of the four FMP402/insufficient
-SEC cases. Check official SEC filing forms, available companyfacts tags/periods
-and the current parser to distinguish provider coverage from a mapping defect.
-Report the evidence and one bounded repair proposal; do not expand to all issuers,
-change grades/thresholds, refresh saved scores, or add a new provider in this task.
-Preserve the now-verified DART import path and its evidence-only semantics.
+Follow the [bounded proposal](docs/maintenance/20261107_nbis_financial_failure_diagnosis.md).
+First obtain a legitimate official companyfacts/filing fixture with source dates;
+do not invent SEC contact credentials or silently scrape around access denial.
+If payload access remains unavailable, report that limit instead of treating the
+synthetic diagnostic fixture as actual financial evidence. Support US-GAAP
+20-F/20-F/A annual records only in a separate review-only entrypoint; preserve
+source form, actual dates/currency and missing/comparability flags. Verify existing
+10-K/10-Q results unchanged. No 6-K quarter inference, IFRS expansion, live score
+refresh, DB writes or automatic-score integration in this bounded task.
 
 ## Evidence and Remaining Limits
 
