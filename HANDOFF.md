@@ -27,8 +27,17 @@ periods shown. No DB writes, score/decision/parser/TTL changes. Baseline1334 pas
 103.346s; final1334 pass105.735s, stable sources. Focused133 pass/one pre-existing
 whole-app historical AST failure19.51s (old5cadb203 versus already-changed HEAD);
 no golden changes. Bounded reviewer: no concrete findings. Local saved Samsung
-bundle validated, one collected/two requested reports; expected hash/rows private
-under cache/company_kr_*. Production verification pending publication.
+bundle validated, one collected/two requested reports; actual-payload local
+failure replay matches hash/all metrics/coverage with injected identity/store.
+Application `07b34e61` pushed and verified in authenticated Cloud. Diagnostic
+fcb7703e37eb4a1a8a55985b4c741b13 has matching commit, restart false, no stale
+modules; new helper/store loaded hashes match disk. No reboot. Samsung live query
+now succeeds; all7rows/packet fields except query timestamp equal pre-deployment
+output. Same95tickers and14 score/grade/verdict/gate fields unchanged(1,330
+comparisons). No whole-ZIP identity claim. Cloud failure/fallback was not induced;
+fallback verified locally with real imported payload and injected read-only store,
+plus synthetic HTTP/store/UI tests. No live fallback success claim. Private proof
+under cache/company_kr_*. No full Today timing; startup/rerender delays remain.
 See [KR imported evidence](docs/maintenance/20261108_company_kr_imported_evidence.md).
 
 Latest task: **market-first report and selected-company deep dive**, base `8d53b10f`.

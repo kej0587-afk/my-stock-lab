@@ -35,8 +35,24 @@ US/default market paths unchanged. New modules join loaded/disk build monitoring
 - Local saved 005930.KS bundle: eligible; original requested two periods with
   one collected report. Expected parsed rows/coverage/hash saved privately under
   cache/company_kr_expected.json; no extra collection or new database import.
-- Production acceptance pending deployment. Before ZIP downloaded08:38KST.
-  Do not claim full Today performance or live score parity before final checks.
+- Application commit `07b34e61` pushed. Authenticated Cloud diagnostic
+  fcb7703e37eb4a1a8a55985b4c741b13 matches commit, restart_required false and
+  stale_modules empty. Loaded/disk hashes for company_deep_dive,
+  company_kr_evidence and dart_evidence_store all match; no reboot requested.
+- Cloud's Samsung live provider now succeeds: seven annual/quarter rows through
+  FY2025/FY2026Q2. Do not claim a real Cloud failure/fallback in this session.
+  Local forced-failure replay uses the real previously imported Samsung JSON
+  with injected identity/store (not a real Supabase read): hash, all metrics and
+  requested-period coverage exactly match independent existing-parser output.
+  The bundle has 2026 half-year data; Q3 is source no-data, never synthesized.
+- Cloud manual Samsung query and JSON download succeeded with the new modules.
+  Seven annual/quarter rows and every packet field other than query timestamp
+  exactly match the pre-deployment packet; live-success path was preserved.
+  Before08:38/after08:49 ZIPs contain the same95tickers. All14 core score/grade/
+  verdict/gate fields match (1,330 comparisons). No whole-ZIP identity claim.
+  Screenshot and diagnostic/packet/ZIP acceptance evidence are ignored under
+  cache/company_kr_*. No new saved financial rows or scores were written.
+  No full Today performance claim; initial startup/rerenders remain slow.
 
 ## Next bounded task
 
