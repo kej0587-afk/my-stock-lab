@@ -19,10 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Current task: summary-worker/analyst wait instrumentation based on `f746134c`.
-Focused tests 166 passed; decisions, calls, cache keys/policy and concurrency
-unchanged. Per-symbol stage timings plus analyst-context lock/throttle/provider
-timings and cache events added. Production verification pending code push.
+Current task: **`50283998` pushed**, summary-worker/analyst wait instrumentation
+based on `f746134c`. Focused tests 166 passed; prices gate 265 passed / one same
+pre-existing decision AST failure. Decisions, calls, cache policy and concurrency
+unchanged. Full Cloud run `0d35d5810c284faf924b437fb1a4f7f8` (12:01–12:02 KST):
+95 rows, **86.710s**, script 94.680s, zero instrumented errors. Previous 107.934s
+is not a controlled A/B speed comparison. Analyst phase **1.896s**; 73 callbacks
+sum 5.245s. Summary live alignment sum32.015s, leverage review11.810s,
+financial score5.413s; parallel sums, not exclusive waiting/wall time.
+**Cloud reboot requested:** app timers loaded and hashes match, but old
+news/metadata path persists (73 analyst calls, no new cache lookup/lock/provider
+events). Do not interpret absent instrumentation as zero requests/waits.
 See [wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 
 Latest change: **`a25bd5ff` pushed**, exact **6mo leveraged-watch batching**, based on `b82d1b61`.
@@ -103,7 +110,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).
+Latest record: [Summary wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 
 ## Preserved History
 
@@ -119,17 +126,20 @@ Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_hist
 
 ## Next Task Only
 
-**Verify the new wait diagnostics in one full production Today Check.**
+**After user Cloud Reboot, verify the new wait diagnostics in one full Today Check.**
 
 Keep the existing all-account/95-row scope and flow-refresh option. Confirm new
 per-symbol timers and analyst-context cache/lock/provider events in the matching
 completed JSON. Distinguish worker sums from wall time and callbacks from HTTP.
-If old modules remain loaded, record evidence before requesting Cloud reboot.
+Reboot was requested after the documented 12:01 run proved old helper execution.
+The pending measurement must separate analyst lock/throttle/provider time;
+generic per-symbol processing sums alone cannot answer this question.
 Do not change TTL/concurrency or investment rules. Commit/push the measured
 findings and select exactly one evidence-based next task.
 
 ## Evidence and Remaining Limits
 
+- Latest: [Summary/analyst wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 - Latest: [Watch history batching](docs/maintenance/20261107_leveraged_history_batch.md).
 - Latest: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
 - Previous: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
