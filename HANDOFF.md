@@ -19,13 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest change: exact **6mo leveraged-watch batching**, based on `b82d1b61`.
+Latest change: **`a25bd5ff` pushed**, exact **6mo leveraged-watch batching**, based on `b82d1b61`.
 One summary scope shares successful frames, avoids overlapping batch duplicates,
 and retains KR/missing/forced-refresh/original precision paths. No rules changed.
 Focused contracts 205 passed plus final batch contracts 44 passed. Prices gate
 remains 265 passed / one pre-existing AST failure. Local measured path 7.567s ->
 2.437s, actual Yahoo chart HTTP 23 -> 23; not a controlled Cloud speedup.
-Code ready for push/Cloud verification. See
+Cloud full run `bf29aab0bc784045aac20065be73d19e`: 90.206s, 95 rows, zero errors,
+new app build but **old watch module still executing** (no new events or even
+the new per-row quote/history timers). Safe fallback works; this is not a measured
+Cloud optimization. User asked to Reboot; app menu has no restart permission.
+The report-only empty stale-module list does not verify the watch module. See
 [watch-history record](docs/maintenance/20261107_leveraged_history_batch.md).
 
 Latest measurement: **KR provider-cache expiry run**, 2026-11-07 09:37–09:39 KST,
@@ -105,14 +109,17 @@ Latest record: [Watch history batching](docs/maintenance/20261107_leveraged_hist
 
 ## Next Task Only
 
-**Verify the deployed 6mo watch batch in one complete production Today Check.**
+**After the user's Cloud Reboot, verify the 6mo watch batch in one complete Today Check.**
 
 Keep account/filter/flow settings unchanged. Download the completed matching JSON,
-check loaded module hashes/staleness, shared/batch hit events, fallback counts,
+check watch-module execution via shared/batch hit events and new timers, fallback counts,
 watch/quote/history times and total elapsed. Compare with the 91.089s expired-KR
 run without claiming identical live data/cache state. If the Cloud module is old,
 record that and use the safe fallback; do not claim optimization was applied.
-Then update this handoff with the result and exactly one next bounded task.
+The previous post-push run used the old watch module. Use the lower "이번에 완료한
+계산 시간 진단 JSON" button and verify its ID; the upper button initially gave
+the prior completed export. Do not start another optimization until this gate is
+verified. Then update this handoff with the result and exactly one next bounded task.
 
 ## Evidence and Remaining Limits
 

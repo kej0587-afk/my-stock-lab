@@ -65,5 +65,32 @@ Private local evidence (ignored `cache/`): `watch_history_live_probe.json`,
 
 ## Deployment
 
-Code ready for push; full Cloud execution and loaded-module confirmation follow
-the code commit. Record matching measurement ID and qualified comparison here.
+Code **`a25bd5ff`** committed/pushed. One full Cloud calculation completed on
+the new app build: **`bf29aab0bc784045aac20065be73d19e`**, ending
+2026-11-07 10:48:13 KST, 81 registered / 95 calculated / 12 automatic candidates,
+full flow refresh enabled. Elapsed **90.206s**, including entry **96.396s**;
+zero instrumented errors. Prices/indicators/external active unions
+55.131 / 21.839 / 22.155s (overlap; do not sum). KR reuse still works:
+414 reader calls = 384 HTTP requests + 30 scope reuses.
+
+**Deployment verification remains pending a Cloud Reboot.** The new app build
+is confirmed, but all new watch events/timers are absent despite five watch
+builds/38 rows. Even the new quote/history timers in the original row function
+are absent: the old imported module is still executing. Three Yahoo batch calls
+are the existing 1y/10y/3mo preloads, not the new 6mo path. Watch-build active
+union 11.373s is therefore **not evidence of this optimization's speedup**.
+The report build's `stale_modules=[]` only covers its tracked report sources and
+does not prove the watch module was refreshed. Safe old-module fallback worked.
+
+The accessible app menu offers Print/Record screen, not Reboot. Asked the user
+to Reboot 3insky in Streamlit Cloud, then repeat one complete calculation and
+verify the new events. No extra source edits or cache-policy changes to force it.
+
+Private Downloads evidence:
+`today_queue_bf29aab0bc784045aac20065be73d19e.json`,
+`stock_lab_review_export_20261107_1048.zip`,
+`stock_lab_watch_batch_pending_20261107.png`.
+The upper completed-export button initially returned the previous measurement;
+the **"이번에 완료한 계산 시간 진단 JSON"** button returned the matching ID.
+Always check file/UI ID rather than filename freshness alone. The review ZIP
+contains CSV tables, not watch-module hashes; do not claim hash validation from it.
