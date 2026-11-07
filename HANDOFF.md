@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **SEC annual evidence production acceptance**, deployed `ed5539b3`.
+Fresh tab in the selected in-app browser recovered authenticated access; old-tab
+binding still failed. No reboot/login/permission changes required. Actual NBIS
+SEC query, annual tables, source expander and JSON download succeeded on Cloud.
+Query time2026-11-07T12:46:46.261046+00:00; CIK0001513845;2023–2025 USD periods.
+All parsed annual records exactly match the local official-source result.
+Before/after completed ZIPs have byte-identical financial inputs, candidate grade,
+main decision, final check, execution readiness, entry plan and workflow display.
+Build matches deployed commit; monitored stale modules empty/restart false. New
+SEC helper is outside that monitor list, so actual UI/data verified separately.
+No runtime fix or score/DB write. Docs-only verification; previous tests not rerun.
+Private ZIPs/JSON/screenshot remain ignored under `cache/nbis_cloud_*`.
+See [Cloud acceptance record](docs/maintenance/20261107_sec_annual_cloud_acceptance.md).
+
 Latest task: **read-only SEC20-F precision panel**, base `5c83e217`.
 User authorized proceeding with code/test work while browser control is blocked.
 Added11 UI lines plus a separate evidence view: explicit ticker/CIK-verified SEC
@@ -409,22 +423,19 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the new NBIS annual evidence panel in production.**
+**Verify the four restored sector-RS connections in production.**
 
-When browser control works, open NBIS in precision and record saved score/decision
-before using only the SEC annual evidence button. Verify ticker/CIK,2023–2025 dates,
-USD units, continuing/discontinued warnings and JSON download; compare saved fields
-afterward. Do not press automatic scoring or write financial/account data. Confirm
-Cloud configuration through actual response, without displaying the contact value.
-If browser control is still blocked, preserve local evidence and report that limit;
-do not repeatedly request reboot or claim live acceptance from AppTest alone.
+Four mappings remain locally tested but not Cloud-verified:
+121600->305540,006280->143860,092730->228790,003490->140710.
+Use the existing explicit benchmark refresh (TTL1hour unchanged), inspect dated
+source/proxy notes and aligned price dates, compare saved score/decision fields
+and avoid new mapping expansion or financial score recalculation. If old-tab
+binding fails, create a fresh tab in the selected browser: this recovered access
+for NBIS acceptance. Do not request app reboot from a control-connection error.
 
-Deferred verification: four restored sector-RS mappings remain locally tested but
-not Cloud-verified:121600->305540,006280->143860,092730->228790,003490->140710.
-Later use the existing explicit benchmark refresh (TTL1hour unchanged), inspect
-dated source/proxy notes and aligned price dates, compare saved score/decision
-fields and avoid new mapping expansion. SEC6-K/IFRS and automatic20-F scoring
-remain outside scope; review evidence must not claim latest interim earnings.
+NBIS annual review UI acceptance is complete for one owner/company. SEC6-K/IFRS
+and automatic20-F scoring remain outside scope; review evidence must not claim
+latest interim earnings. Keep raw private evidence outside Git.
 
 ## Evidence and Remaining Limits
 
