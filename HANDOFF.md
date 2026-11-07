@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest measurement: **KR provider-cache expiry run**, 2026-11-07 09:37–09:39 KST,
+ID `2f717dae89a341ba8e3c2f08676d4bcd`, build `5b5d81f6`. About 48 minutes elapsed
+since the last visible calculation; no preliminary price/flow reload. Same
+95-row calculation/settings. **91.089s** Today Check / **94.807s** script.
+Actual duplicate reuse confirmed: 427 provider-cache lookups = 13 existing-cache
+hits + 414 reader calls; **414 = 384 HTTP requests + 30 new-scope reuses**.
+30 bypass events preserve cache age. No instrumented errors. Provider misses
+96.96%; financial caches can still be warm, so not a fully cold app benchmark.
+Price / indicator / external-data active unions: **56.841 / 19.137 / 28.666s**
+(overlapping). Prices still dominate; leveraged watch rows cover 17.129s active
+union (five builds, 38 rows), a bounded next I/O target. No code/rule changes.
+See [expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
+
 Latest code: **`661431f9`**, exact KR daily-history request reuse, pushed and
 verified executing in production (`kr_history_scope.enabled_v1=1`, 277 lookups).
 Only identical resolved provider/date/count requests share successful copied
@@ -67,7 +80,7 @@ Post-push GOOGL precision calculation, SMC detail display and review ZIP passed.
 New helper loaded/disk/local hashes match; no stale modules/restart required.
 No account/watchlist edits. Private UI/ZIP evidence is linked in the record below.
 
-Latest record: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
+Latest record: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
 
 ## Preserved History
 
@@ -83,22 +96,24 @@ Latest record: [Exact KR request reuse](docs/maintenance/20261107_kr_history_req
 
 ## Next Task Only
 
-**Measure one complete provider-cold production run to quantify actual KR duplicate reuse.**
+**Reduce exact 6mo history I/O for leveraged watch rows, after focused measurement.**
 
-Wait until the 900s KR provider TTL has elapsed since previous price/flow use;
-avoid warming those screens first. Retain account/filter settings, run Today
-Check once and download the matching completed JSON. Record upstream cache
-misses plus `kr_history_scope.unique/repeat/reuse/default_start/explicit_start`,
-wall/category times and errors. Zero repeats is a valid finding. Do not call
-the last 70.245s warm run a cold benchmark or attribute its reduction to reuse.
-If cold duplicates are absent, document that alias reuse is not the dominant
-path; do not widen history ranges/TTL or change rules to force hits. No additional
-optimization in this measurement task. Keep private exports outside Git and
-commit/push the measured conclusion and exactly one next task.
+Start with `leveraged_watch.py::_build_watch_row` and the callback wrapper
+`app.py::build_leveraged_precision_watch_rows`. Five profile builds/38 rows took
+17.129s active union; this does not prove every history call is an HTTP request.
+Count/measure exact 6mo misses first, then batch/prefetch those required requests
+using existing infrastructure if beneficial. Preserve live quote/forced-refresh
+thread behavior, source/adjustment/range semantics, profile order, fallback,
+judgment outputs and copies. No 1y/10y slicing, TTL/concurrency/rule changes or
+other optimization. Use fixed-input row and decision parity plus prices checks
+before/after; explicitly retain the known pre-existing AST-freeze failure rather
+than regenerate goldens. Verify actual requests and one comparable full Cloud
+run; commit/push evidence and update this handoff with one next task.
 
 ## Evidence and Remaining Limits
 
-- Latest: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
+- Latest: [KR cache expiry measurement](docs/maintenance/20261107_kr_history_expired_measurement.md).
+- Previous: [Exact KR request reuse](docs/maintenance/20261107_kr_history_request_reuse.md).
 - Previous: [Today Check bottleneck measurement](docs/maintenance/20261107_today_bottleneck_measurement.md).
 - Previous: [SMC context extraction](docs/maintenance/20261107_decision_smc_extraction.md).
 - Previous: [Decision finalization extraction](docs/maintenance/20261107_decision_finalization_extraction.md).
