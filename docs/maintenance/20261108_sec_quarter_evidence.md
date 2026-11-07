@@ -62,7 +62,19 @@ segment revenue, debt-maturity model or DCF is claimed implemented in this phase
   This does not verify every latest earnings release or custom XBRL extension.
 - Real-source panel preview is isolated at127.0.0.1:8535; raw responses and preview
   artifacts remain ignored under `cache/quarter_*`. No personal data is published.
-- Production acceptance/deployment will be recorded after verification.
+- Published application commit: `7c7ead8c`. Authenticated production precision
+  MSFT query, both tabs, readable next-check explanations and JSON download all
+  succeeded without reboot. Eight quarter records exactly match local SEC results.
+  Seven core CSVs match byte-for-byte both before/after deployment and before/after
+  the explicit quarter query: financial inputs, candidate grade, main decision,
+  final check, execution readiness, entry plan and workflow display. Completed
+  ZIP reports matching commit, restart_required=False, stale_modules=[]. The new
+  module is not in the old monitor list; actual rendered output/JSON was verified.
+  Private evidence: cache/quarter_cloud_{before,ready,after}.zip,
+  quarter_cloud_evidence.json, quarter_cloud_acceptance.json, quarter_cloud_20261108.png.
+  No six-company production or full Today performance claim; all six were checked
+  against SEC locally, MSFT exercised end-to-end on Cloud. The initial Cloud app
+  render was slow before the explicit SEC request; this task does not fix that path.
 
 ## Sources and remaining work
 

@@ -31,7 +31,13 @@ Cash investment distinguishes PP&E from productive assets including intangibles.
 Focused105 tests pass; stable decision gate1334 passes in104.908s with no source
 changes. First gate run also passed tests but correctly blocked source edits
 during execution; not claimed accepted. Existing app functions AST-identical.
-Local real-source preview inspected; production acceptance pending publication.
+Published application commit `7c7ead8c`. Actual authenticated Cloud MSFT8-quarter
+query, both tabs and JSON download verified; all records match local SEC output.
+Seven core CSVs byte-identical before/after deployment AND before/after explicit
+query. Completed ZIP: matching build, restart false, stale modules empty. No reboot
+needed. New module is outside old monitor list; actual UI/JSON verified separately.
+Private evidence under ignored cache/quarter_cloud_*; no personal data in Git.
+Six-company Cloud/Today performance not tested; default app startup remains slow.
 No LLM, consensus/segment guidance, debt maturity or valuation model implemented.
 See [quarter evidence verification](docs/maintenance/20261108_sec_quarter_evidence.md).
 
@@ -516,12 +522,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Accept the SEC eight-quarter precision panel on production after publication.**
+**Connect one company's official segment revenue/investment guidance: MSFT.**
 
-Query MSFT through the explicit button; verify tables, source scope and JSON.
-Compare the completed precision ZIP before/after review for unchanged scores and
-decisions. Check runtime evidence before requesting reboot. Then record acceptance.
-Do not change scores or claim the report already consumes these financial tables.
+Use Microsoft's latest official earnings release/IR filing to distinguish cloud/
+AI-segment results and forward investment guidance from company-wide historical
+SEC cash investment. Retain period, units, source/quote and confirmed-vs-estimated
+labels; make a read-only evidence packet with next-check questions. Do not infer
+missing consensus, switch scoring, or implement a broad LLM/valuation redesign.
+The8-quarter panel is accepted; the report does not yet consume this evidence.
 The earlier editorial report acceptance remains deferred by the user's explicit
 financial-evidence priority.
 
