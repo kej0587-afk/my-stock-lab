@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **four-view integration checkpoint**, base `ffa04ee9`.
+No demonstrated wiring defect; production code/rules unchanged. Live Today
+completed ~78.2s (displayed, not controlled A/B); 95 rows/32 flow candidates.
+Held KR ETF and registered US stock match across ten Today/precision fields
+on the 2026-11-06 session. Radar reuses the same 15:48 snapshot. Portfolio after
+precision retains 10/10 scoped signals with price dates and the reviewed ETF's
+final restriction. Free exploration uses a distinct existing policy; switching
+to registered mode resolves the apparent raw-code difference. Completed ZIPs
+confirm `ffa04ee9`, no stale modules/restart requirement. Focused tests199 +
+frozen-input tests55 pass; private ten-holding replay has zero mismatches.
+See [four-view integration](docs/maintenance/20261107_four_view_integration.md)
+for evidence, source freshness limits and the unsuccessful grid CSV download.
+
 Latest bounded change: **theme selection/description UI extraction**, base `9cd5f6a2`.
 Only `_render_image_theme_selection` was introduced in app.py; widget keys,
 labels, order, metadata HTML, empty-theme guard and lazy data-loading sequence
@@ -175,16 +188,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify the four-view integration using the same ticker and data session.**
+**Run the final closure regression and record remaining limitations.**
 
-Review Today Check, money-flow radar, precision observatory and portfolio for
-one held KR ETF and one US stock already present. Compare source dates, candidate
-quality, execution gates and portfolio risk context; different responsibilities
-must not be mistaken for contradictory decisions. Use existing outputs where
-possible, record missing/stale data explicitly, fix only demonstrated wiring
-errors without changing thresholds/text, and preserve private snapshots outside
-Git. Finish with focused regression/deployment verification and exactly one
-next task. This is the integration closure checkpoint, not another broad rewrite.
+Use `.venv311/Scripts/python.exe scripts/check_refactor.py --scope all`, with
+baseline regeneration disabled. Inspect failures against prior records before
+changing code; fix only demonstrated regressions without investment threshold
+or wording changes. Confirm clean Git/upstream and deployed build, document
+external-data freshness/missing-source limits and what was not tested. Close this
+bounded optimization/refactor sequence instead of inventing more small refactors.
 
 ## Evidence and Remaining Limits
 
