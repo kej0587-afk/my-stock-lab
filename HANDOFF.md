@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **authenticated production DART import roundtrip**, deployed base
+`142e749a`. User reported table setup complete; actual production INSERT,
+duplicate rejection/recovery and exact-scope SELECT all succeeded through the UI.
+Uploaded the unchanged recent collector JSON, verified corporate/listing identity,
+and reloaded its half-year data plus explicit Q3 no-data status from private storage.
+Before/after completed precision exports match selected/result ticker. Financial
+inputs, candidate grade, main decision and final check are identical; execution
+workflow differs only in calculation time. Build matches `142e749a`, monitored
+stale modules are empty and restart is not required. No runtime changes or score
+recalculation. Private exports/screenshots remain ignored. Production path verified
+for one authenticated owner/company/scope, not all users/providers or RLS denial.
+See [production roundtrip record](docs/maintenance/20261107_dart_evidence_live_roundtrip.md).
+
 Latest task: **precision DART file preview/import UI**, base `5cadb203`.
 Connected the non-ETF Korean-stock financial-evidence expander to strict preview,
 explicit corporate/listing identity verification, private import and exact-scope
@@ -32,8 +45,9 @@ switch, schema missing, duplicate import and raw-uploader rendering.
 Combined UI/store/collector/financial tests: **145 passed**, 17.47s. Fixed-source
 decision gate: **1,327 passed**, 100.663s; no skips/changes/golden regeneration,
 evidence `cache/refactor_checks/decision_w6u3nx3x`. Code and docs ready for publication.
-**Live table setup and production roundtrip are not yet confirmed.** No live DB
-operations or schema execution were performed in this task.
+At implementation time live setup/roundtrip were unconfirmed; the subsequent
+production verification above closes that acceptance step. No schema execution
+was performed by the agent.
 See [precision evidence UI verification](docs/maintenance/20261107_dart_evidence_precision_ui.md).
 
 Latest task: **private immutable DART evidence storage adapter**, base `9054d62b`.
@@ -317,15 +331,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify one authenticated production evidence import/reload after table setup.**
+**Diagnose one remaining US financial-data failure, read-only.**
 
-Use the [new UI path](docs/maintenance/20261107_dart_evidence_precision_ui.md).
-First confirm the prepared `docs/20261107_dart_evidence.sql` has been applied. If
-missing, request one-time setup; do not execute a migration automatically. With a
-current collector file, verify preview, explicit import, duplicate import and
-exact-scope stored reload. Compare saved grade/decision before and after and check
-owner/ticker identity. Never renew file dates by editing them. No new features,
-automatic score refresh, schedules or SEC expansion in this bounded task.
+Use the existing financial-input audit to select one of the four FMP402/insufficient
+SEC cases. Check official SEC filing forms, available companyfacts tags/periods
+and the current parser to distinguish provider coverage from a mapping defect.
+Report the evidence and one bounded repair proposal; do not expand to all issuers,
+change grades/thresholds, refresh saved scores, or add a new provider in this task.
+Preserve the now-verified DART import path and its evidence-only semantics.
 
 ## Evidence and Remaining Limits
 
