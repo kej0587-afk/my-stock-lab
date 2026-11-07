@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **precision DART file preview/import UI**, base `5cadb203`.
+Connected the non-ETF Korean-stock financial-evidence expander to strict preview,
+explicit corporate/listing identity verification, private import and exact-scope
+stored-evidence lookup. Preview alone does not write or fetch; normal reruns reuse
+owner/ticker-scoped state. Identity expires after at most10minutes; partial/expired/
+mismatched files cannot be saved. Demo is preview-only. Missing schema displays
+setup guidance and the prepared SQL download; migrations never run in the app.
+Existing app function ASTs match the baseline exactly; scores/decisions unchanged.
+Standalone Streamlit AppTest: **14 passed**, including button lifecycle, account
+switch, schema missing, duplicate import and raw-uploader rendering.
+Combined UI/store/collector/financial tests: **145 passed**, 17.47s. Fixed-source
+decision gate: **1,327 passed**, 100.663s; no skips/changes/golden regeneration,
+evidence `cache/refactor_checks/decision_w6u3nx3x`. Code and docs ready for publication.
+**Live table setup and production roundtrip are not yet confirmed.** No live DB
+operations or schema execution were performed in this task.
+See [precision evidence UI verification](docs/maintenance/20261107_dart_evidence_precision_ui.md).
+
 Latest task: **private immutable DART evidence storage adapter**, base `9054d62b`.
 Added owner-bound INSERT/SELECT with exact duplicate verification, payload validation,
 and an indexed scope hash so another report period cannot satisfy the same lookup.
@@ -300,15 +317,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Wire explicit precision file preview/import and read-only stored evidence.**
+**Verify one authenticated production evidence import/reload after table setup.**
 
-Use the [storage adapter](docs/maintenance/20261107_dart_evidence_storage.md) and
-existing verified app owner. Check selected ticker, official corporate identity
-and listing suffix; show provenance, original age and missing report coverage.
-Keep saved grades/Today Check untouched, with no automatic recalculation. Handle
-missing schema as setup required and link the prepared SQL; never execute migration
-from the app. Verify locally, then perform a production roundtrip only after the
-table has been set up. No automatic collection/scheduling or SEC expansion.
+Use the [new UI path](docs/maintenance/20261107_dart_evidence_precision_ui.md).
+First confirm the prepared `docs/20261107_dart_evidence.sql` has been applied. If
+missing, request one-time setup; do not execute a migration automatically. With a
+current collector file, verify preview, explicit import, duplicate import and
+exact-scope stored reload. Compare saved grade/decision before and after and check
+owner/ticker identity. Never renew file dates by editing them. No new features,
+automatic score refresh, schedules or SEC expansion in this bounded task.
 
 ## Evidence and Remaining Limits
 

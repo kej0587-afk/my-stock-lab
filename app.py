@@ -164,6 +164,9 @@ from stock_lab_core.hold_judgement import (
 from stock_lab_core.financial_freshness import financial_basis, financial_input_signature
 from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
 from stock_lab_core.dart_corporate_snapshot import use_corporate_snapshot
+from stock_lab_core.dart_evidence_preview import resolve_identity as resolve_dart_evidence_identity
+from stock_lab_core.dart_evidence_store import SupabaseDartEvidenceStore
+from stock_lab_core.dart_evidence_view import render_dart_evidence
 from stock_lab_core.financial_review import (
     DartProviderError, dart_status_error, stored_financial_diagnostic, build_financial_review,
     sec_statement_coverage,
@@ -34255,6 +34258,14 @@ if main_page == "precision":
                 if financial_review["원자료"]:
                     st.dataframe(pd.DataFrame(financial_review["원자료"]), width='stretch', hide_index=True)
                 st.caption("조회 성공은 최신 실적 발표 전체 반영의 증명이 아닙니다. 잠정실적·공시·API 제공 시점은 다르며, 위 자료는 기존 점수에 자동 반영되지 않습니다.")
+            if is_kr_listed(tkr):
+                with st.expander("로컬 DART 근거 · 미리보기/가져오기"):
+                    render_dart_evidence(
+                        st, ticker=tkr, owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL,
+                        fin_meta=fin_meta, extract_metrics=extract_dart_metrics, is_demo=IS_PUBLIC_DEMO,
+                        identity_loader=lambda ticker: resolve_dart_evidence_identity(ticker, fetch_dart_corp_code_map),
+                        store_factory=lambda owner: SupabaseDartEvidenceStore(supabase, owner_scope=owner),
+                    )
             if st.button("자동 재무점수 돌리기", key=f"run_auto_fin_{fin_key}", help="선택 종목의 재무·밸류·목표가 캐시를 갱신합니다. 저장 성공 후 전광판과 오늘점검의 이전 계산은 재사용하지 않습니다."):
                 with st.spinner("DART/FMP/SEC 재무 자동 계산 중..."):
                     clear_financial_api_cache()
