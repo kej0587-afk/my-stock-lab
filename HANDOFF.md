@@ -28,10 +28,18 @@ again. No generic guard/SEC parser/score/decision/TTL/database edits or extra ca
 Eight rows,zero held,four valid YoY pairs; latest43.0%→67.9% unchanged. Raw precision
 evidence remains conservative pending the next display-only task. Targeted109
 tests pass7.13s; independent review finds no concrete issue. Before decision1334
-pass102.713s; final1334 pass105.460s,stable source. Cloud acceptance pending. Report207 pass/one same
+pass102.713s; final1334 pass105.460s,stable source. Report207 pass/one same
 pre-existing theme-selection whole-app assertion45.924s. Live SEC2 requests200,
 1.709s; cached0.000778s,not a Today/report benchmark. Private evidence ignored
-under cache/msft_q4_*. See [Q4 reconciliation](docs/maintenance/20261108_msft_q4_recovery.md).
+under cache/msft_q4_*. Application `1314a530` pushed and verified in authenticated
+Cloud. Fresh report07:39KST/generation951d071278fc matches commit; entire cash
+section matches local live-SEC output exactly,8rows/0held/2reviewed/4YoYpairs,
+direct exhibit links and unaudited notes visible. No stale warning/reboot.
+Same95tickers,13 core score/grade/verdict/gate fields unchanged(1,235 comparisons).
+Four saved gate-reason strings have different R/R values alongside live price/
+enrichment refresh; this is NOT identical inputs or whole-ZIP parity. Fixed-input
+decision gate passes. Startup/report loading is still slow; no Today speed claim.
+See [Q4 reconciliation](docs/maintenance/20261108_msft_q4_recovery.md).
 
 Latest task: **MSFT eight-quarter cash-burden report**, base `cab147bf`.
 Existing SEC quarter parser/identity loader reused once outside rendering; public

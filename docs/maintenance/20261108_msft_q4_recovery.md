@@ -74,7 +74,20 @@ quarter values appear in the same exhibit. Latest headline remains43.0%→67.9%.
   (`decision_fwbvwnym`). Report gate207 passed/one known failure45.924s
   (`report_whezebf0`): same pre-existing `test_theme_selection.py:47` whole-app
   function-set assertion. No golden regeneration or new failure.
-- Authenticated Cloud acceptance: pending before publication.
+- Application `1314a530` pushed; authenticated Cloud report generated07:39KST,
+  generationID `951d071278fc`, matching commit, loaded hash `8168fcd04d7726a0`.
+  No stale-code warning or reboot required. Original existing tab connection
+  failed; a fresh authenticated tab worked. Startup/rerenders remained slow.
+- Downloaded Markdown's entire cash section exactly matches local live-SEC
+  calculation, including8rows/0held/2reviewed/4YoYpairs, both direct exhibit links,
+  unaudited statement and unchanged latest43.0%→67.9% comparison. Actual UI viewed.
+- Before/after ZIPs have the same95 tickers and identical13 core score/grade/
+  verdict/gate fields (1,235 comparisons). Four saved gate-reason strings change
+  their R/R content alongside live price/analyst/enrichment refresh. This is NOT
+  an identical-input or whole-ZIP comparison; do not claim14fields all identical.
+  Private changed-row detail is in cache/msft_q4_cloud_acceptance.json, not Git.
+- Report generation/download and ZIP downloads verified. Raw private evidence
+  and screenshot remain ignored under cache/msft_q4_*. No full Today benchmark.
 
 ## Next bounded task
 
