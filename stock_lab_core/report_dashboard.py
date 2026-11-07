@@ -29,6 +29,7 @@ def current_state_lines(context, states, now, metrics):
                         + (f"({obs['date']} {basis})" if obs else ""))
     kr_parts.extend(_kr_risk_brief(context, states, checked))
     window = us_extended_session(now)
+    closed_session = states["US"]["phase"] in {"holiday", "closed"} and not window
     phase = "정규장 장중" if states["US"]["phase"] == "intraday" else window.get("label", "정규장 외")
     us_parts = []
     for ticker in ("SOXX", "RAM"):
@@ -43,12 +44,24 @@ def current_state_lines(context, states, now, metrics):
             else:
                 us_parts.append(f"{ticker} {_pct(obs['return'])}(직전 종가 대비)")
     futures = (context.get("scenario_observations") or {}).get("latest", {})
-    for ticker in ("NQ=F", "ES=F"):
+    for ticker in (() if closed_session else ("NQ=F", "ES=F")):
         obs = futures.get(ticker, {})
         if number(obs.get("return")) is not None:
             us_parts.append(f"{ticker} {_pct(obs['return'])}")
     # No stale closing return is advertised as a current overnight quote.
     us_line = " · ".join(us_parts) or "현재 시세 미연결(직전 종가는 아래 표)"
+    us_label, us_note = f"미국 현재 · {phase}", " (미확정·지연 가능)"
+    if closed_session:
+        # No active venue window is not a failed live lookup. Reuse only dated,
+        # validated closes; never promote weekend futures or old extended quotes.
+        closes = []
+        for ticker in ("^GSPC", "^IXIC", "^SOX"):
+            group, obs = _latest_observation(ticker, "US", context, states, checked)
+            if group == "US_CLOSE":
+                closes.append(f"{INDEX_BOARD[ticker]} {_pct(obs['return'])}({obs['date']} 종가)")
+        status = "휴장" if states["US"]["phase"] == "holiday" else "거래시간 외"
+        us_label, us_note = f"미국 · {status} · 최근 확정 종가", ""
+        us_line = " / ".join(closes) or "기준일이 확인된 종가 자료 미연결"
     coverage = number((metrics or {}).get("coverage")) or 0
     total = number((metrics or {}).get("total"))
     if (metrics or {}).get("error") or total is None or coverage < 90:
@@ -60,7 +73,7 @@ def current_state_lines(context, states, now, metrics):
         if decomposition:
             account += " · " + decomposition
     return ["**한국 현재** · " + " / ".join(kr_parts),
-            f"**미국 현재 · {phase}** · {us_line} (미확정·지연 가능)",
+            f"**{us_label}** · {us_line}{us_note}",
             "**계좌** · " + account]
 
 

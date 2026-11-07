@@ -25,7 +25,7 @@ _RENDER_MODULES = (
     "official_outlook", "outlook_sources", "report_outlook", "report_dashboard", "news_priority", "market_guard_explanation",
     "central_bank_results", "market_safeguards", "report_policy_panel", "report_eventstudy",
     "report_policy_catalysts", "report_energy_basis", "article_events", "public_market_flow_history", "public_flow_backfill",
-    "report_account_section", "report_calendar_section",
+    "report_account_section", "report_calendar_section", "report_editorial",
     "portfolio_market_review", "portfolio_holding_review", "portfolio_commentary",
     "etf_review", "etf_issuer_evidence", "etf_roundhill",
     "holding_evidence_commentary",

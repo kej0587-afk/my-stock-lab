@@ -71,12 +71,16 @@ _FINANCE_PROMO = re.compile(
     r"관광.{0,30}(?:협약|협력|맞손)|"
     r"가입.{0,12}(?:혜택|이벤트)|계좌.{0,12}개설.{0,20}(?:혜택|이벤트)|"
     r"\b(?:cashback|giveaway|sweepstakes|sign.up\s+bonus|charity\s+event|food\s+banks?)\b", re.I)
+_SPORTS = re.compile(r"배구|농구|축구|V리그|V-리그|디펜딩\s*챔프|연승|연패|득점|"
+                     r"\b(?:volleyball|basketball|football|championship|winning streak)\b", re.I)
 
 
 def _matches_finance(title):
     # Central-bank policy alone is macro evidence, not listed-bank coverage.
     subject = _CENTRAL_BANKS.sub("", title)
     if not re.search(TOPICS["금융·은행"], subject, re.I):
+        return False
+    if _SPORTS.search(subject) and not _FINANCE_MATERIAL.search(subject):
         return False
     # Keep earnings/regulatory reporting about promotions or deposit competition.
     return not _FINANCE_PROMO.search(subject) or bool(_FINANCE_MATERIAL.search(subject))

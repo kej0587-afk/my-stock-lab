@@ -987,4 +987,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     lines.extend(history_lines)
     from stock_lab_core.report_observation_panel import observation_report_lines
     lines.extend(observation_report_lines(context, summary_rows, news, now))
+    from stock_lab_core.report_editorial import editorial_lines, reading_order
+    lines.extend(editorial_lines(context, synthesis, summary_rows, states, now))
+    lines = reading_order(lines)
     return lines, list(dict.fromkeys(missing))

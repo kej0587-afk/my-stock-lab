@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **report editorial/holiday status review**, base `ce13c311`.
+User supplied00:48 report and two timing files, overriding the old next inventory.
+Fixed weekend US live-disconnected wording using validated dated closes; no stale
+futures fallback. Finance topic excludes sports-only bank-team stories. Added a
+read-only source-bound editorial front section with holding links/check questions,
+reordered explanation ahead of audit tables, retained evidence in exports and
+collapsed more audit sections in UI. No trade/scoring/provider/cache/DB changes.
+Final targeted190 tests pass. Report gate207 pass/1 pre-existing whole-app AST
+theme-extraction assertion before and after; historical hashes unchanged with
+explicit adapters for approved presentation changes. Not a clean full-suite claim.
+Uploaded full Today run87.220s, initial script94.800s; render-only71.960s is a
+different interrupted/rerun scope, not a comparable calculation benchmark.
+Local reconstructed preview inspected; it is not a fresh operating report. Private
+artifacts remain ignored. Publication is ready; Cloud acceptance remains pending.
+See [report quality/timing audit](docs/maintenance/20261108_report_editorial_review.md).
+
 Latest task: **flow scope production acceptance completed after user reboot**,
 deployed `9e393fe6` (application change `c96dfaa5`). Fresh authenticated precision
 session verifies both new columns in UI and completed ZIP for121600.KQ standalone
@@ -484,16 +500,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**On the next request, refresh the Today financial-input completeness inventory.**
+**Verify one newly generated production report with the editorial changes.**
 
-The current bounded refactor/display verification is finished; do not start another
-extraction by default. Use one completed Today export to distinguish saved scores,
-official review evidence and missing latest-release dates, comparing with the old
-95-instrument inventory without assuming the universe is unchanged. Report actual
-remaining gaps; do not change scores, automate20-F scoring or fabricate dates.
-Cloud live DART financial transport and SEC interim/IFRS support remain unresolved.
-Private exports stay outside Git. This next inventory is not an unfinished part
-of the accepted two-column display change.
+Check loaded/disk modules first; request reboot only on actual stale evidence.
+Confirm weekend US closes (or correct active-session labels at that time), no
+volleyball finance rows, front interpretation and source-bound holding/check table.
+Keep report-generation and Today calculation measurement IDs/scopes separate.
+Do not change scoring, expand article crawling or infer missing account coverage.
+Local partial replay is not production acceptance. The old financial completeness
+inventory task is deferred by the user's explicit report-quality priority.
 
 ## Evidence and Remaining Limits
 
