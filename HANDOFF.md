@@ -26,7 +26,13 @@ recast reporting segments, overlapping Cloud/Azure indicators and company CAPEX
 from cash PP&E. No score/DB/report/provider changes. Existing eight-quarter SEC
 snapshot reused under owner/ticker/selection scope, exact periods/currency only.
 New+quarter tests54 passed; stable decision gate1334 passed in101.466s, no source
-changes/failures/skips. Production acceptance pending publication.
+changes/failures/skips. Application `30117c33` pushed and accepted on Cloud.
+Authenticated MSFT IR query, three tabs,4 same-period SEC comparisons and JSON
+download succeeded. All13 metric records match local parsing. Seven core CSVs
+byte-identical before/after deployment and before/after SEC+IR queries. Matching
+build, restart false, stale modules empty; no reboot. New modules are outside
+the old monitor list, so actual UI/data were checked directly. Screenshot/JSON/
+ZIP evidence ignored under cache/msft_ir_cloud_*. No full Today timing claim.
 Actual official query succeeded locally with13 metrics; four SEC comparisons fall
 within rounding ranges. Source wording/conditions fail closed, no old transcript
 or consensus imputation. No LLM/DCF/report integration claimed. Private evidence
@@ -536,12 +542,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Accept MSFT official business evidence on production after publication.**
+**Connect the verified MSFT business evidence packet to automatic market reports.**
 
-Use the explicit MSFT IR button and reuse an existing same-period SEC review.
-Verify actual/guidance separation,4 reconciliations, JSON and unchanged core
-decision CSVs. Check loaded/disk evidence before requesting reboot. Do not add
-new issuer adapters, infer consensus, change scoring or claim report integration.
+Add one bounded factual/interpretive block for MSFT using the verified packet,
+with publication age, fiscal period, forecast-vs-actual labels and next checks.
+Collect once outside rendering/reuse existing evidence; never fetch per section.
+Do not present an old release as today's catalyst or infer missing consensus/
+price causality. Preserve existing scores, no other issuer adapters or LLM/DCF
+redesign. Verify a newly generated report and keep report/Today timing scopes
+separate. The MSFT precision integration is accepted; report consumption is not.
 The earlier editorial report acceptance remains deferred by the user's explicit
 financial-evidence priority.
 

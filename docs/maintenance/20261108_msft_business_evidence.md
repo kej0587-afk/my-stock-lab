@@ -52,7 +52,19 @@ short numerical evidence fragments are included in a JSON download.
   are extracted at runtime, not hardcoded in a manual data profile.
 - Four same-period comparisons against the existing SEC result fall inside the
   release/call rounding ranges. Private raw HTML/results remain ignored in cache.
-- Production UI/download/decision acceptance will be recorded after deployment.
+- Application commit `30117c33` published and accepted in authenticated Cloud
+  precision MSFT. Official IR query, actual/outlook/reconciliation tabs and JSON
+  download succeeded. All13 metric records exactly match local parsing; all4 SEC
+  comparisons agree within the stated rounding ranges. No reboot required.
+- Seven core CSVs match byte-for-byte before/after deployment and again before/
+  after SEC+IR queries: financial inputs, candidate grade, main decision, final
+  check, execution readiness, entry plan, workflow display. Completed ZIP reports
+  matching application commit, restart_required=False, stale_modules=[]. New
+  modules are outside the existing monitor list; UI/data were checked directly.
+- Private proof: cache/msft_ir_cloud_{before,ready,after}.zip,
+  msft_ir_cloud_evidence.json, msft_ir_cloud_acceptance.json and
+  msft_ir_cloud_20261108.png. These files are ignored, not published.
+  No full Today performance or other-issuer verification claim is made.
 
 ## Official sources and limits
 
