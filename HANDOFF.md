@@ -27,9 +27,16 @@ unchanged. Full Cloud run `0d35d5810c284faf924b437fb1a4f7f8` (12:01–12:02 KST)
 is not a controlled A/B speed comparison. Analyst phase **1.896s**; 73 callbacks
 sum 5.245s. Summary live alignment sum32.015s, leverage review11.810s,
 financial score5.413s; parallel sums, not exclusive waiting/wall time.
-**Cloud reboot requested:** app timers loaded and hashes match, but old
-news/metadata path persists (73 analyst calls, no new cache lookup/lock/provider
-events). Do not interpret absent instrumentation as zero requests/waits.
+**After user Reboot, new reader verified:** full run
+`03869fcad7d54ba5a1de6d614dc3d7c4`, build `019b9950`, 12:42–12:43 KST.
+95 rows **95.186s**, script101.073s; analyst phase8.900s. All73 analyst lookups
+were misses (70success/3unavailable). Analyst Yahoo lock-wait sum20.210s,
+throttle1.237s, provider7.558s; FnGuide4 HTTP calls sum5.645s. These overlap,
+not additive wall time or guaranteed savings. Global serialization is unchanged.
+Prices remain largest active union55.496s. Remaining summary self sum42.481s
+is unclassified elapsed time, not established CPU/wait. No instrumented errors;
+loaded/disk/local app hashes match and new events prove reader execution.
+No further reboot required. Documentation-only verification this turn.
 See [wait diagnostics](docs/maintenance/20261107_summary_wait_diagnostics.md).
 
 Latest change: **`a25bd5ff` pushed**, exact **6mo leveraged-watch batching**, based on `b82d1b61`.
@@ -126,16 +133,15 @@ Latest record: [Summary wait diagnostics](docs/maintenance/20261107_summary_wait
 
 ## Next Task Only
 
-**After user Cloud Reboot, verify the new wait diagnostics in one full Today Check.**
+**Profile the remaining summary-worker self time using fixed local inputs.**
 
-Keep the existing all-account/95-row scope and flow-refresh option. Confirm new
-per-symbol timers and analyst-context cache/lock/provider events in the matching
-completed JSON. Distinguish worker sums from wall time and callbacks from HTTP.
-Reboot was requested after the documented 12:01 run proved old helper execution.
-The pending measurement must separate analyst lock/throttle/provider time;
-generic per-symbol processing sums alone cannot answer this question.
-Do not change TTL/concurrency or investment rules. Commit/push the measured
-findings and select exactly one evidence-based next task.
+The post-reboot run separates Yahoo waits, but `_compute_summary_item` still has
+42.481s summed self elapsed time across95 rows. Narrowly profile uninstrumented
+pattern detection, workflow creation and row assembly using frozen inputs and
+stubbed provider calls. Identify the dominant cost before selecting one exact-
+parity optimization; do not assume self time is CPU or repeat the completed
+analyst instrumentation. Preserve rules, output and call order; no changes to
+TTL/concurrency. Commit/push findings and leave exactly one next bounded task.
 
 ## Evidence and Remaining Limits
 
