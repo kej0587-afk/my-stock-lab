@@ -85,6 +85,9 @@ def test_refresh_review_never_scores_or_persists(app_module, monkeypatch, ticker
     app = app_module
     meta = {"auto_score": 2, "manual_score": 4, "final_score": 4}
     original = deepcopy(meta)
+    corporate_map = Mock()
+    corporate_map.clear = Mock()
+    monkeypatch.setattr(app, "fetch_dart_corp_code_map", corporate_map)
     for name in ("fetch_kr_financials_auto", "fetch_us_financials_auto", "fetch_us_financials_fmp",
                  "fetch_us_financials_sec", "fetch_dart_finstate_all_raw"):
         fn = Mock(return_value={"ok": False, "source": "test"})
@@ -96,6 +99,7 @@ def test_refresh_review_never_scores_or_persists(app_module, monkeypatch, ticker
         monkeypatch.setattr(app, name, forbidden)
     result = app.inspect_financial_inputs(ticker, meta)
     assert "저장 점수 유지" in result["조회 상태"] and meta == original
+    assert corporate_map.clear.call_count == int(ticker.endswith('.KS'))
     forbidden.assert_not_called()
 
 
@@ -104,3 +108,21 @@ def test_sec_foreign_forms_are_diagnosed_not_promoted_to_supported():
     coverage = sec_statement_coverage(facts)
     assert coverage["limitation"] == "unsupported_statement_forms"
     assert coverage["namespaces"] == ["ifrs-full"]
+
+
+def test_explicit_corporate_map_refresh_recovers_empty_response(app_module, monkeypatch):
+    import io
+    import zipfile
+    app = app_module
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, 'w') as archive:
+        archive.writestr('CORPCODE.xml', '<result><list><corp_code>00123456</corp_code><stock_code>329180</stock_code></list></result>')
+    monkeypatch.setattr(app, 'get_dart_api_key', lambda: 'test')
+    request = Mock(side_effect=[SimpleNamespace(raise_for_status=lambda: None, content=b'not a zip'),
+        SimpleNamespace(raise_for_status=lambda: None, content=payload.getvalue())])
+    monkeypatch.setattr(app.requests, 'get', request)
+    app.fetch_dart_corp_code_map.clear()
+    assert app.get_dart_corp_code('329180') is None
+    app.fetch_dart_corp_code_map.clear()
+    assert app.get_dart_corp_code('329180') == '00123456'
+    assert request.call_count == 2

@@ -3780,7 +3780,7 @@ def get_krx_api_key():
 def get_sec_user_agent():
     return get_secret_value("sec_user_agent")
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@cache_result(ttl=1800, is_success=lambda result: isinstance(result, dict) and bool(result))
 def fetch_dart_corp_code_map():
     api_key = get_dart_api_key()
     if not api_key:
@@ -5778,6 +5778,8 @@ def inspect_financial_inputs(ticker, fin_meta):
     if is_kr_listed(ticker):
         code = normalize_stock_code(ticker)
         current_year = pd.Timestamp.today().year
+        # Explicit refresh must recover a previously empty corporate-code cache.
+        fetch_dart_corp_code_map.clear()
         fetch_kr_financials_auto.clear(ticker)
         for year in range(current_year, current_year - 7, -1):
             fetch_dart_finstate_all_raw.clear(code, year, "11011")
@@ -34258,7 +34260,7 @@ if main_page == "precision":
                     st.session_state[f"financial_review_{fin_key}"] = inspect_financial_inputs(tkr, fin_meta)
             financial_review = st.session_state.get(f"financial_review_{fin_key}")
             if financial_review:
-                st.dataframe(pd.DataFrame([{k: v for k, v in financial_review.items() if k != "원자료"}]), width='stretch', hide_index=True)
+                st.dataframe(pd.DataFrame([{"항목": k, "내용": v} for k, v in financial_review.items() if k != "원자료"]), width='stretch', hide_index=True)
                 if financial_review["원자료"]:
                     st.dataframe(pd.DataFrame(financial_review["원자료"]), width='stretch', hide_index=True)
                 st.caption("조회 성공은 최신 실적 발표 전체 반영의 증명이 아닙니다. 잠정실적·공시·API 제공 시점은 다르며, 위 자료는 기존 점수에 자동 반영되지 않습니다.")

@@ -28,11 +28,17 @@ return through Q2 2026, not every latest earnings announcement; FMP 402 reproduc
 Fixed DART error loss/repeated requests and one proven OCF account-name omission.
 Precision now offers explicit read-only provider refresh/comparison; no saved
 score, judgement threshold/text, manual override or account data was changed.
-Before/after decision gates **1,327 passed**, final 101.269s, evidence
-`cache/refactor_checks/decision_3f_otwg2`; focused financial tests **162 passed**.
+Before/after decision gates **1,327 passed**, final 101.185s, evidence
+`cache/refactor_checks/decision_5l_tifla`; focused financial tests **163 passed**.
 Historical broad AST guard now excludes only these covered financial repairs;
 decision/flow bodies and original Git baselines remain frozen. No golden updates.
-Deployment: ready for commit/push; operating UI verification follows the push.
+Deployment: `85eb8c1a` pushed; production read-only review rendered and complete
+precision ZIP confirmed the selected/result ticker and unchanged saved score.
+Cloud exposed a corporate-code lookup failure, unlike local DART success.
+Follow-up shortens empty-map caching to the existing 60s failure cooldown,
+retains 30-minute successful-map TTL, and clears the map on explicit review.
+The comparison metadata is now vertical to avoid clipped failure reasons.
+Follow-up operating verification is recorded below when complete.
 See [financial audit](docs/maintenance/20261107_financial_input_audit.md) for exact
 provider findings, latest-release limits, private evidence and preservation scope.
 

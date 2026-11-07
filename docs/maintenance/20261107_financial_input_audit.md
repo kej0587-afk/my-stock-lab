@@ -40,6 +40,11 @@ proof of support or of automatically comparable quarterly periods.
 - DART provider errors retain safe status/category messages instead of becoming
   empty data and repeated historical requests. Status 013 still tries OFS.
   Credential-bearing request URLs and raw provider error bodies are not echoed.
+- Production review exposed corporate-code mapping failure, unlike local success.
+  Empty mapping now uses the existing result-cache 60s failure cooldown instead
+  of 30-minute success retention. Explicit read-only refresh clears this mapping;
+  successful mapping TTL remains 30 minutes. A recovery contract verifies an
+  empty response can recover to the actual ZIP mapping on explicit refresh.
 - A demonstrated OCF miss: the Korean label “영업활동으로 인한 순현금흐름” did not
   match the existing keywords. Only when the original result is missing, use
   the exact CF account `ifrs-full_CashFlowsFromUsedInOperatingActivities`.
@@ -63,15 +68,21 @@ not an exact-parity change to every future provider result.
 
 - Before: focused financial contracts 148 passed (16.77s); decision gate 1,327
   passed (101.896s), evidence `cache/refactor_checks/decision_f34ngpg0`.
-- After: focused financial contracts 162 passed (16.65s), including failure
+- After: focused financial contracts 163 passed (18.17s), including failure
   redaction, one-request terminal errors, OFS fallback, exact OCF total/zero,
   foreign-form diagnosis and refresh-without-score/DB-write tests.
 - Initial decision recheck: 1,326 passed, one broad historical AST freeze failed
   because new financial helpers were intentionally added. Its original Git
   baseline and every decision/flow body remain frozen. Exempted only the two
-  added financial helpers and four repaired provider/extractor functions, which
+  added financial helpers and five repaired provider/extractor functions, which
   have direct financial contracts; no golden files were regenerated.
-- Final decision gate and deployment verification are recorded in HANDOFF.md.
+- Final decision gate: 1,327 passed, zero failures/errors/skips (101.185s),
+  `cache/refactor_checks/decision_5l_tifla`. No decision golden files changed.
+- Initial production code `85eb8c1a` and selected/result ticker were confirmed by
+  completed precision ZIP; saved financial score/source retained. Its 101 monitored
+  sources reported no stale module/restart, but the new financial-review module is
+  not in that legacy monitored-source list; do not claim its hash was in the ZIP.
+  The new review button and its real failure result were also verified visually.
 - No latency improvement claimed. No full Today rerun or all-provider/all-stock
   latest-release completeness claim; this task is financial evidence repair.
 

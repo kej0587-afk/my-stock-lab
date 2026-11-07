@@ -97,7 +97,7 @@ def test_all_other_app_functions_unchanged_and_source_wrapper_only_changes_call(
     from tests.test_theme_selection import inline_theme_selection
     new['render_image_theme_flow_section'] = inline_theme_selection(new['render_image_theme_flow_section'])
     assert old.keys() == new.keys()
-    financial_repairs = {'fetch_dart_finstate_all_raw', 'extract_dart_metrics',
+    financial_repairs = {'fetch_dart_corp_code_map', 'fetch_dart_finstate_all_raw', 'extract_dart_metrics',
                          'fetch_kr_financials_auto', 'fetch_us_financials_sec'}
     for name in old.keys() - {'build_source_flow_context'} - financial_repairs:
         assert ast.dump(old[name]) == ast.dump(new[name]), name
