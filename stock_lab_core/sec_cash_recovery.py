@@ -12,7 +12,7 @@ from urllib.parse import urljoin
 
 from lxml import html
 
-from stock_lab_core.company_cash_reading import _checked_field
+from stock_lab_core.company_cash_reading import _checked_field, prior_year_cash_row
 from stock_lab_core.earnings_result_sources import _table_grid, _text
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.sec_financial_periods import _date, _finite, _quarter_span
@@ -258,11 +258,19 @@ def collect_cash_release(packet, *, fetch_json, user_agent, get=None):
         url=links.pop();content=document(url);values=parse_cash_release(content,packet)
         if values is None:
             raise ValueError('release_period_or_amount_unverified')
-        return dict(status='verified_release',cik=cik,ticker=packet.get('ticker'),start=row['start'],end=row['end'],
+        result = dict(status='verified_release',cik=cik,ticker=packet.get('ticker'),start=row['start'],end=row['end'],
                     as_of=packet['as_of'],accession=accession,filed=nearest.isoformat(),source_url=url,
                     document_sha256=sha256(content).hexdigest(),values=values,
                     anchors={k:deepcopy(row['provenance'][k]) for k in FIELDS},
                     review_only=True,eligible_for_scoring=False)
+        # Reuse the same downloaded exhibit, never fetch another filing.
+        prior = prior_year_cash_row(packet)
+        if prior is not None:
+            prior_values = parse_cash_release(content,dict(packet,quarter=[prior]))
+            result['prior_year'] = (dict(result, start=prior['start'],end=prior['end'],values=prior_values,
+                anchors={k:deepcopy(prior['provenance'][k]) for k in FIELDS}) if prior_values else
+                {'status':'held','reason':'prior_period_or_amount_unverified'})
+        return result
     except Exception as error:
         # Never put provider bodies, contact details or exception strings in UI.
         return {'status':'held','reason':str(error) if type(error) is ValueError and str(error) in {

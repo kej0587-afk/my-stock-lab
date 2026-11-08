@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **generic selected-company prior-year cash-burden comparison**,
+base08b2ac4e. Same downloaded8-K provides prior-year columns; no additional HTTP.
+Shared calendar/scope/source guards; same10-Q basis and same8-K hash when recovered.
+Raw8quarter, scores/gates, app.py, TTL/DB unchanged. Existing issuer reviews deduped.
+DDOG company FCF/OCF/PPE/development comparison verified; NVDA prior productive
+asset purchases1,894m release vs1,895m raw YTD difference stays held; latest cash
+recovery unaffected. Do not assume rounding/override. UI separates market leadership,
+company quality and cash sustainability; cash is not a universal market ranking.
+Focused234pass15.83s; baseline decision1367pass134.934s. Independent review clean.
+Final decision1367pass137.468s, stable sources. Commit/Cloud verification pending.
+See [Cash YoY comparison](docs/maintenance/20261108_cash_yoy_comparison.md).
+
 Latest task: **DDOG/NVDA held cash-flow reconciliation**, base `7dd38ffe`.
 10-Q cash tables supply YTD only; existing different-filing hold is justified.
 Shared explicit-query8-K99.1 parser independently verifies BOTH quarter and YTD
@@ -825,14 +837,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Generic prior-year cash-burden comparison for the selected company.**
+**Market-wide leadership storyline from existing dated evidence.**
 
-DDOG/NVDA latest release recovery is accepted in Cloud. Compare a matched
-prior-year quarter using validated same-scope sources only. Explain OCF/investment
-change and software/lease scope; hold incompatible or missing operands. No dated
-issuer exception, background network work, score/gate change or unmeasured speed
-claim. Historical8quarter recovery, KR8quarter and arbitrary ticker search remain
-separate scopes.
+Refine `report_leadership.leadership_lines`: explain weakening leaders, improving
+alternative sectors, and the next evidence needed to confirm a shift. Use existing
+relative AND absolute price/volume strength, macro context and sourced earnings/news;
+no unsupported causal story, universal cash-burden ranking or changed scores/gates.
+Keep collection bounded; no new provider pipeline or issuer cash exception. NVDA's
+prior1m source mismatch remains documented/held as a separate unresolved limitation.
 
 ## Evidence and Remaining Limits
 

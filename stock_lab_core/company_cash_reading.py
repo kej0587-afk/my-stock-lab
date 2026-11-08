@@ -18,6 +18,25 @@ _FIELDS = ("revenue", "op_income", "net_income", "ocf", "cash_capex")
 _CAPEX_SCOPES = dict(zip(TAGS["cash_capex"], ("유형자산", "유형·소프트웨어·무형자산")))
 
 
+def prior_year_cash_row(packet):
+    """Select one fiscal-matched prior quarter, including 52/53-week calendars."""
+    try:
+        current = packet['quarter'][-1]
+        start, end = _date(current['start']), _date(current['end'])
+        if not start or not end or current.get('fiscal_quarter') not in (1,2,3,4):
+            return None
+        candidates = []
+        for row in packet['quarter'][:-1]:
+            a, b = _date(row.get('start')), _date(row.get('end'))
+            if (a and b and a <= b and row.get('fiscal_quarter') == current['fiscal_quarter']
+                    and 350 <= (start-a).days <= 380 and 350 <= (end-b).days <= 380
+                    and abs((end-start).days-(b-a).days) <= 7):
+                candidates.append(row)
+        return candidates[0] if len(candidates)==1 else None
+    except (KeyError,TypeError,IndexError):
+        return None
+
+
 def _checked_field(row, field, start, end, cutoff):
     """Return an amount and its exact period/filing signature, or a hold reason.
 

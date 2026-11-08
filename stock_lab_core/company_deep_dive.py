@@ -31,6 +31,7 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                              kr_store_factory=None, kr_extract_metrics=None, is_demo=False, now=None,
                              market_context=None, cash_release_loader=None):
     st.subheader('기업 심층분석')
+    st.caption('시황은 시장 환경 → 주도 업종의 변화 → 실적·전망을 먼저 봅니다. 여기서는 정밀관측소의 재무 등급을 다시 매기지 않고, 실적과 현금 흐름의 변화를 검토합니다. 현금 부담만으로 주도주나 매매 여부를 정하지 않습니다.')
     st.caption('보유·관심 개별기업을 선택해 실적 → 현금 창출 → 투자 부담 → 다음 확인 순서로 봅니다. 시장 시황과 기존 점수·판정은 바뀌지 않습니다. ETF는 기업 재무 비교에서 제외됩니다.')
     if not owner or is_demo:
         st.info('개인 계정의 보유·관심목록에서 기업을 선택할 수 있습니다.')
@@ -145,6 +146,12 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                                                      readings=readings, now=now)
         render_company_market_reading(st, market_review, market_status)
         financial, quality, sources = quarter_tables(packet)
+        from stock_lab_core.company_cash_comparison import build_cash_comparison, render_cash_comparison
+        cash_comparison = build_cash_comparison(packet,recovery)
+        download_bundle = dict(download_bundle,cash_comparison=cash_comparison)
+        # Existing validated issuer reviews already compare cash periods.
+        if not cash_review and not amazon_review:
+            render_cash_comparison(st,cash_comparison)
         if financial:
             if recovered:
                 with st.expander('원자료 8분기·자동 추출 보류 상태'):
