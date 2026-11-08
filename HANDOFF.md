@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **Amazon individual-company cash drivers**, basef59f7c41.
+Selected AMZN connects source-bound Q32026 cash figures, gross/netcash distinction,
+AWS/regional PP&E net additions(non-cash included), other investment cash and next
+checks. No AWS-only cash split or all-AI assumption. Generic packet, scores/gates,
+DB/TTL/default collection unchanged; download adds separate narrative. Baseline
+decision1334pass103.788s; focused121pass8.17s. Fresh local SEC and original HTML
+cash/segment rows verified. Decision1334pass106.863s; reviewer found unconditional
+growth wording with missing prior, corrected to neutral current-period wording.
+Production deployment/acceptance pending.
+See [Amazon individual cash](docs/maintenance/20261108_amazon_individual_cash.md).
+
 Latest task: **Alphabet individual-company cash reading**, basec7d4a5fe.
 Reuses verified Q3 recovery, same cash checks as Big Tech mode; generic packets,
 scores/gates/DB/TTL/default market fetching unchanged. Selected GOOG/GOOGL shows
@@ -737,12 +748,13 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect Amazon's same-period cash drivers to its selected-company deep dive.**
+**Measure actual full Today bottlenecks before one targeted optimization.**
 
-Inspect original cash-flow and earnings explanations, then connect verified
-AWS-versus-other-investment context and next checks. Preserve generic packets,
-scores and explicit on-demand collection. No AI-only allocation or unsupported
-working-capital attribution; use dated evidence, not current-price causal claims.
+User explicitly wants performance work after Amazon, so pause issuer expansion.
+Run the full calculation with expired caches, preserve input universe/measurement
+ID, separate price/indicator/external work time and wall time, requests/misses and
+lock waits. Choose one measured bottleneck; preserve results and TTLs. Render-only
+diagnostics cannot stand in for a full calculation or support a speed claim.
 KR prose-only extension remains deferred.
 
 ## Evidence and Remaining Limits

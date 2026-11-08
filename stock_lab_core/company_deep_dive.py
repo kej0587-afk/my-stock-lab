@@ -113,13 +113,19 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
     else:
         from stock_lab_core.company_cash_reading import company_cash_reading
         from stock_lab_core.alphabet_cash_reading import alphabet_cash_reading, render_alphabet_cash_reading
+        from stock_lab_core.amazon_cash_reading import amazon_cash_reading, render_amazon_cash_reading
         cash_review = alphabet_cash_reading(packet)
+        amazon_review = amazon_cash_reading(packet)
         readings = company_cash_reading(packet)
         if cash_review:
             render_alphabet_cash_reading(st, cash_review)
             download_bundle = dict(bundle, alphabet_cash_review=cash_review)
             # The raw extractor intentionally still holds these cash fields.
             # Avoid presenting its unrecovered coverage/cash prose as the final review.
+            readings = [item for item in readings if item['검토축'] == '매출·이익']
+        elif amazon_review:
+            render_amazon_cash_reading(st, amazon_review)
+            download_bundle = dict(bundle, amazon_cash_review=amazon_review)
             readings = [item for item in readings if item['검토축'] == '매출·이익']
         for item in readings:
             st.markdown('**' + item['검토축'] + '**')
@@ -131,6 +137,10 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
             if cash_review:
                 with st.expander('원자료 8분기·복구 전 보류 상태'):
                     st.caption('자동 추출 원자료입니다. 위 현금 비교는 원문 대조로 별도 복구했으며 원자료·점수에는 합산하지 않습니다.')
+                    st.dataframe(financial, hide_index=True, width='stretch')
+            elif amazon_review:
+                with st.expander('원자료 8분기·총현금 취득 기준'):
+                    st.caption('원자료의 총현금 취득 기준을 유지합니다. 위 순현금·사업부문 해석은 별도 검토 근거입니다.')
                     st.dataframe(financial, hide_index=True, width='stretch')
             else:
                 st.dataframe(financial, hide_index=True, width='stretch')
