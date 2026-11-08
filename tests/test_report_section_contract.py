@@ -62,7 +62,10 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     # Nov08 deliberately adds editorial prose/reorders sections; these are
     # independently exercised in test_report_editorial_nov08. Keep the immutable
     # digest for the underlying legacy sections rather than regenerate goldens.
-    from stock_lab_core import report_editorial, report_dashboard
+    from stock_lab_core import report_editorial, report_dashboard, report_leadership
+    # The requested leadership reading is independently covered by
+    # test_report_leadership. Exclude only this new section; keep legacy hashes.
+    monkeypatch.setattr(report_leadership, "leadership_lines", lambda *a: [])
     monkeypatch.setattr(report_editorial, "editorial_lines", lambda *a: [])
     monkeypatch.setattr(report_editorial, "reading_order", lambda lines: lines)
     original_status = report_dashboard.current_state_lines

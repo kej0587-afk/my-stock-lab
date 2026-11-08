@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **market leadership reading and issuer questions**, base `cf84af2d`.
+User clarified market rotation/semiconductor/Big Tech purpose, reprioritizing the
+pending KR prose extension. Reuses existing rotation calculation once; adds actual
+5/20-session returns, separates rising candidates from relative defense/rebounds,
+deduplicates sector ETF votes and preserves KR/US dates. Promoted front section;
+old audit tables collapsed, not deleted. Big Tech/supplier research questions link
+to held/watch company review. No new requests, scores/gates/DB/TTL changes.
+Decision before1334pass103.067s; final1334pass105.779s,stable source. Targeted155pass
+8.07s. Review caught omitted KR technology focus; fixed/tested. Report's new section
+has a narrow historical-digest adapter, no golden rewrite; final report207pass/one
+same historical theme-selection failure41.830s. Cloud acceptance pending. Private
+before ZIP under cache/leadership_before.zip.
+See [leadership reading](docs/maintenance/20261108_market_leadership_reading.md).
+
 Latest task: **Korean selected-company imported DART fallback**, base `e3c75cc2`.
 Explicit company query uses the existing owner-scoped stored evidence only when
 live DART fails. Corporate/listing identity, ticker, original scope, hash and
@@ -649,12 +663,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Explain selected Korean company evidence without new data calls.**
+**Compare selected Big Tech cash generation and investment on demand.**
 
-Build why/next-check explanations from validated stored DART rows. Keep annual
-and cumulative periods, CFS/OFS and currencies separate; hold comparisons without
-matching evidence. Preserve original figures, score/decision paths and generic
-parser guards. No new fetches, DB writes, CAPEX imputation or valuation claims.
+Reuse existing SEC8-quarter loader for selected held/watch companies. Align fiscal
+periods and scope, separate cash PP&E from leases/commitments and hold missing
+comparisons. No implicit default-report fetches, valuation/price prediction or
+score/gate changes. The KR prose-only extension is deferred, not completed.
 
 ## Evidence and Remaining Limits
 

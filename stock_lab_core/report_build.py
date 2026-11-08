@@ -31,7 +31,7 @@ _RENDER_MODULES = (
     "holding_evidence_commentary",
     "msft_ir_review", "msft_ir_source", "report_msft", "report_msft_source",
     "msft_cash_trend", "msft_cash_q4", "report_msft_cash", "sec_quarter_review", "sec_quarter_review_view", "sec_financial_periods",
-    "company_deep_dive", "company_cash_reading", "company_kr_evidence", "dart_evidence_store",
+    "company_deep_dive", "company_cash_reading", "company_kr_evidence", "dart_evidence_store", "report_leadership",
 )
 
 

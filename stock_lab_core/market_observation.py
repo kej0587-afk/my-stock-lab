@@ -237,6 +237,7 @@ def build_sector_rotation(price_frames, flow_rows=None, *, sessions, as_of,
                "rs_5d_start": base.index[-6].date().isoformat(),
                "rs_20d_start": base.index[-21].date().isoformat(),
                "rs_5d_change": rs5, "rs_20d_change": rs20, "return_3m": ret3m,
+               "return_5d": _change(asset, 5), "return_20d": _change(asset, 20),
                "accel_3m": ret3m - prev3m if ret3m is not None and prev3m is not None else None,
                "money_flow_score": score, "money_flow_date": day if score is not None else None}
         row["missing"] = [key for key in ("return_3m", "accel_3m", "money_flow_score") if row[key] is None]

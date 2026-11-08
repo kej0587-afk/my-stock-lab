@@ -46,6 +46,12 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         format_func=lambda s: '기업을 선택하세요' if not s else f"{options[s]['name']} ({s}) · {options[s]['source']}")
     if not symbol:
         return
+    from stock_lab_core.report_leadership import company_research_question
+    question = company_research_question(symbol)
+    st.markdown('**시장 흐름에서 이 기업에 확인할 질문**')
+    st.write(question['시장 질문'])
+    st.caption('검토할 조건: ' + question['다음 확인'])
+    st.caption('조사 질문이며 아직 확인된 실적 변화가 아닙니다. 회사 전체 수치를 AI/데이터센터 사업부 수치로 대신하지 않습니다.')
     kr = bool(re.fullmatch(r'\d[0-9A-Z]{5}(?:\.(?:KS|KQ))?', symbol))
     if st.button('선택 기업 근거 조회 (점수 유지)', key=prefix+'_load', disabled=not kr and not configured):
         st.session_state.pop(prefix, None)

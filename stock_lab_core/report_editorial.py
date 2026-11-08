@@ -82,5 +82,5 @@ def reading_order(lines):
     from stock_lab_core.report_view import split_report_sections
     sections = split_report_sections("\n".join(lines))
     priority = {title: i for i, title in enumerate(("", "기준일", "지금 상태 3줄", "핵심 해석",
-        "오늘의 시장 스토리", "오늘의 핵심 재료", "지수·매크로 한눈에", "내 보유 종목 영향", "다가오는 일정"))}
+        "주도 업종 교체 관측", "오늘의 시장 스토리", "오늘의 핵심 재료", "지수·매크로 한눈에", "내 보유 종목 영향", "다가오는 일정"))}
     return "".join(content for title, content in sorted(sections, key=lambda part: priority.get(part[0], 99))).split("\n")
