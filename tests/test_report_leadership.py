@@ -137,6 +137,7 @@ def test_story_links_weak_focus_and_real_alternative_without_claiming_capital_tr
     assert '주도권 이동 가능성' in out and '자금 이동이나 실적 개선까지 증명된 것은 아닙니다' in out
     assert '반도체의 5일 반등은 이 중기 약세와 함께' in out
     assert '구성종목으로 확산' in out and '수주' in out
+    assert '\n\n해석(추정):' in out and '\n\n다음 확인:' in out
     assert r==before
 
 

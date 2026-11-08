@@ -224,8 +224,9 @@ def leadership_lines(rotation, summary_rows, context=None, news=(), now=None):
         if len(rows) < 6:
             lines += ['비교 표본이 6업종 미만이므로 시장 전체의 주도권 변화로 일반화하기 어렵습니다.']
         story, checks = _market_story(rows)
-        lines += ['', *[line + ' [근거: 아래 동일 기준일 가격·RS 표]' if i == 0 else line
-                       for i, line in enumerate(story)], '']
+        for i, line in enumerate(story):
+            lines += ['', line + ' [근거: 아래 동일 기준일 가격·RS 표]' if i == 0 else line]
+        lines.append('')
         selected.extend(checks)
         for label, limit in (('상승 추세 후보',2),('상대적 방어',1),('반등·회복 관찰',1)):
             alternatives.extend(sorted(groups[label],key=lambda r:(-r['rs_20d_change'],r['ticker']))[:limit])
