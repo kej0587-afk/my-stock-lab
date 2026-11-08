@@ -162,4 +162,4 @@ def observation_report_lines(context, summary_rows, news, now):
     lines += ["", "**기존 실행 게이트**",
               f"신규 장기 편입·적립: 기존 판정 유지 · 실행가능 {executable}개(오늘점검 입력 기준). 위 관찰 근거는 매수 허용이나 자동 주문이 아닙니다."]
     from stock_lab_core.report_leadership import leadership_lines
-    return leadership_lines(rotation, summary_rows) + lines
+    return leadership_lines(rotation, summary_rows, context, news, now) + lines

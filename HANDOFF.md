@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **market-wide leadership storyline**, base5f145fa3. US/KR paragraphs
+separate actual uptrends from relative defense and rebounds; weak focus exposures
+and alternative strength form a hypothesis, never capital-transfer/buy claims.
+Existing dated news/body evidence, macro and price/volume proxies reused with no
+new requests. Direct sector evidence precedes URL dedup; market-common news is
+separate, after-close labels preserved, source text escaped. Detailed price/RS
+tables collapsed but retained in exports. App, raw rotation, grades/gates/TTL/DB
+unchanged. Focused213pass/one known editorial-order test deselected after base
+reproduction. Report baseline207pass/one old theme AST failure42.660s; final207/
+same failure47.210s. Independent findings fixed/closed,31review probes passed.
+Decision1367pass138.179s, stable source hashes. Application commit/Cloud acceptance
+pending at this checkpoint.
+See [Leadership storyline](docs/maintenance/20261108_leadership_story.md).
+
 Latest task: **generic selected-company prior-year cash-burden comparison**,
 base08b2ac4e. Same downloaded8-K provides prior-year columns; no additional HTTP.
 Shared calendar/scope/source guards; same10-Q basis and same8-K hash when recovered.
@@ -848,14 +862,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Market-wide leadership storyline from existing dated evidence.**
+**Measure full automatic-news generation before the next optimization.**
 
-Refine `report_leadership.leadership_lines`: explain weakening leaders, improving
-alternative sectors, and the next evidence needed to confirm a shift. Use existing
-relative AND absolute price/volume strength, macro context and sourced earnings/news;
-no unsupported causal story, universal cash-burden ranking or changed scores/gates.
-Keep collection bounded; no new provider pipeline or issuer cash exception. NVDA's
-prior1m source mismatch remains documented/held as a separate unresolved limitation.
+Measure one actual complete generation, separating price history, macro/official
+sources, news/body collection and report rendering. Count actual remote requests
+and cache misses separately from function calls; record input/cache/session state.
+Use the largest measured bottleneck to propose one bounded optimization. Preserve
+content, date/source guards, TTLs and scores/gates. NVDA's prior1m source mismatch
+and the two pre-existing test expectations remain separate documented limitations.
 
 ## Evidence and Remaining Limits
 

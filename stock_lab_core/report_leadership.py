@@ -1,6 +1,8 @@
 """A reading path from sector prices to issuer research; no I/O or trade scores."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from stock_lab_core.report_build import register_loaded_source
-from stock_lab_core.report_evidence import _cell, first, number, records, text
+from stock_lab_core.report_evidence import _cell, first, number, records, safe_link, stamp, text
 
 register_loaded_source(__name__, __file__)
 
@@ -63,17 +65,148 @@ def _unique_rows(result):
     """Avoid giving duplicated sector ETFs extra votes; prefer SOXX to SMH."""
     selected = {}
     for row in sorted(result.get('rows', []), key=lambda r:(r['ticker'] != 'SOXX', r['ticker'])):
+        if row.get('date') != result.get('date'):
+            continue
         selected.setdefault(row['sector'], row)
     return list(selected.values())
 
 
-def leadership_lines(rotation, summary_rows):
+def _names(rows):
+    return '·'.join(NAMES.get(r['sector'], r['sector']) for r in rows)
+
+
+def _market_story(rows):
+    """Describe coexistence, not a causal fund transfer or a past leadership claim."""
+    focus = [r for r in rows if r['ticker'] in FOCUS]
+    weak = [r for r in focus if all(_value(r, k) is not None and _value(r, k) < 0
+                                  for k in ('return_20d', 'rs_20d_change'))]
+    weak.sort(key=lambda r: r['rs_20d_change'])
+    other = [r for r in rows if r['ticker'] not in FOCUS]
+    strong = sorted((r for r in other if price_reading(r)[0] == '상승 추세 후보'),
+                    key=lambda r: (-r['rs_20d_change'], r['ticker']))
+    defense = sorted((r for r in other if price_reading(r)[0] == '상대적 방어'), key=lambda r: -r['rs_20d_change'])
+    recovery = sorted((r for r in other if price_reading(r)[0] == '반등·회복 관찰'), key=lambda r: -r['rs_20d_change'])
+    facts = (f"{_names(weak[:2])}는 20일 실제 수익률과 시장 대비 상대강도가 함께 약합니다. " if weak else
+             '반도체·기술 표본에서 20일 가격·상대강도의 동반 약세는 확인되지 않았습니다. ' if focus else
+             '반도체·기술 표본이 없어 기존 관심 업종의 방향은 판단을 보류합니다. ')
+    if strong:
+        facts += f"반면 {_names(strong[:2])}는 5·20·63일 실제 상승과 5·20일 상대우위를 함께 유지했습니다."
+        meaning = ('약해진 관심 업종과 다른 업종의 강세가 공존해 주도권 이동 가능성을 살필 구도입니다. ' if weak else
+                   '다른 업종에서도 강세가 관측되지만 기존 업종에서 주도권이 넘어왔다고 확정할 수는 없습니다. ')
+        meaning += '자금 이동이나 실적 개선까지 증명된 것은 아닙니다.'
+    else:
+        facts += '다른 업종에서도 실제 상승·상대우위 조건을 모두 충족한 대안은 없습니다.'
+        meaning = '현재 표본만으로 새 주도업종이 생겼다고 읽기 어렵습니다.'
+        if defense:
+            meaning += f" {_names(defense[:2])}의 상대적 방어는 덜 하락한 것이며 상승 추세와 다릅니다."
+        if recovery:
+            meaning += f" {_names(recovery[:2])}의 단기 반등도 중기 회복 확인이 필요합니다."
+    rebound = [r for r in weak if (_value(r, 'return_5d') or 0) > 0]
+    if rebound:
+        facts += f" {_names(rebound[:2])}의 5일 반등은 이 중기 약세와 함께 나타납니다."
+    next_check = ('다음 확정 종가에서 대안 업종의 실제 상승·상대우위가 함께 유지되는지, 구성종목으로 확산되는지 확인합니다. '
+                  '이후 실적·수주 근거가 따라오지 않거나 상대우위가 사라지면 교체 가설을 낮춰 봅니다.' if strong else
+                  '다음 확정 종가에서 20·63일 실제 수익률과 5·20일 상대강도가 함께 회복되는 업종부터 확인합니다. '
+                  '상대 순위만 오르면 대안 확정은 계속 보류합니다.')
+    chosen = weak[:1] or sorted(focus, key=lambda r: (_value(r, 'rs_20d_change') or 0, r['ticker']))[:1]
+    chosen += strong[:1] or defense[:1] or recovery[:1]
+    return [facts, '해석(추정): ' + meaning, '다음 확인: ' + next_check], chosen
+
+
+def _business_check(sector):
+    checks = {
+        'Semiconductors': '고객의 투자 계획이 실제 주문·매출로 이어지는지, 재고·마진과 함께 확인',
+        'Memory': 'HBM·메모리 주문과 판매가격, 재고·마진을 함께 확인',
+        'Software': '신규 계약·계약 잔액과 매출 성장, 마진·현금 회수 확인',
+        'Technology': '사업부 매출·마진과 투자 집행을 함께 확인; 전체 투자액을 AI 투자로 치환하지 않음',
+        'Shipbuilding': '신규 수주·수주잔고가 인도·매출·마진으로 이어지는지 확인',
+        'Financials': '이자이익·대손비용·자본여력을 함께 확인; 일반기업 설비투자 기준으로 평가하지 않음',
+        'Biotech': '임상·허가 결과와 현금 보유·조달 계획 확인; 기대를 확정 매출로 치환하지 않음',
+        'Energy': '유가와 판매량·정제마진·생산비를 구분해 이익 전망 확인',
+        'Power infrastructure': '전력설비 수주·수주잔고와 납기·마진 확인',
+        'Infrastructure': '인프라 발주·수주잔고와 원가·마진 확인',
+        'Industrials': '신규 수주·가동률과 원가·마진 확인',
+        'Defense': '계약 확정·납기·수주잔고와 이익 전환 확인',
+        'Aerospace and defense': '계약 확정·납기·수주잔고와 이익 전환 확인',
+    }
+    return checks.get(sector, '업종 대표기업의 매출·이익 전망과 수요 근거가 가격 강세를 뒷받침하는지 확인')
+
+
+def _evidence_lines(selected, context, news, now):
+    from stock_lab_core.article_context import verified_body_facts
+    from stock_lab_core.report_presentation import sector_related_news
+    from stock_lab_core.report_evidence import macro_components
+    lines = ['', '**가격 관측을 사업 근거로 확인할 곳**',
+             '시장·업종 | 연결된 보도와 확인 수준 | 왜 중요한가 · 다음 확인', '--- | --- | ---']
+    seen, common = set(), []
+    def citation(article, row, at, url):
+        zone = ZoneInfo('Asia/Seoul' if row['market'] == 'KR' else 'America/New_York')
+        close = datetime.fromisoformat(row['date']).replace(
+            hour=15 if row['market'] == 'KR' else 16, minute=30 if row['market'] == 'KR' else 0, tzinfo=zone)
+        timing = ' · 종가 이후 보도(당시 가격 원인으로 소급하지 않음)' if at > close else ''
+        return f"[{_cell(text(article.get('title')))}]({url}) · {at:%m/%d %H:%M} KST{timing}"
+    for row in selected:
+        label = NAMES.get(row['sector'], row['sector'])
+        linked = sector_related_news(row['ticker'], row['date'], records(news), sector_name=label)
+        evidence, check = '미확인: 같은 세션의 관련 보도 원문 미연결', _business_check(row['sector'])
+        for article in linked:
+            at = stamp(first(article, 'published_at', 'published'))
+            url = safe_link(article.get('link'))
+            if not now or not at or at > now or not url:
+                continue
+            if article.get('market_context_only'):
+                common.append((row, article, at, url))
+                continue
+            if url in seen:
+                evidence = '앞 행과 같은 보도; 독립적인 업종 근거로 중복 계산하지 않음'
+                continue
+            seen.add(url)
+            source = citation(article, row, at, url)
+            facts = [f for f in verified_body_facts(article)
+                     if all(text(f.get(k)) for k in ('summary', 'implication', 'check'))]
+            if facts:
+                fact = facts[0]
+                evidence = f"기사 주장 · 업종 관련 보도: {_cell(fact.get('summary'))} · {source}"
+                check = f"해석(추정): {text(fact.get('implication'))} / 다음 확인: {text(fact.get('check'))}. {check}"
+            else:
+                evidence = f'제목 수준 · 업종 관련 보도: {source} · 본문 인과 미확인'
+            break
+        flow = _value(row, 'money_flow_score') if row.get('money_flow_date') == row['date'] else None
+        if flow is not None:
+            check += f". 보조 관측: 가격·거래량 점수 {flow:.1f}({row['date']}); 실제 자금 유입액·상승 확산의 증거는 아님"
+        lines.append(' | '.join((_cell(f"{row['market']} {label} · {row['date']} 종가"), evidence, _cell(check))))
+    common_markets = set()
+    for row, article, at, url in common:
+        if url in seen or row['market'] in common_markets:
+            continue
+        seen.add(url)
+        common_markets.add(row['market'])
+        lines += ['', f"{row['market']} 시장 공통 보도(업종 고유 원인 아님): " + citation(article, row, at, url)]
+    macro = []
+    for item in macro_components(context.get('macro_data')):
+        region = 'KR' if item['name'] == '환율' else 'US'
+        day = context.get('sessions', {}).get(region)
+        if not day or item['as_of'] != day:
+            continue
+        change = item['change']
+        change_text = f' · 1개월 변화 {change:+.1f}%' if change is not None else ' · 1개월 변화 미연결'
+        unit = {'10Y 금리': '%', 'VIX': 'pt', 'MOVE': 'pt', '유가': '달러/배럴', '환율': '원/달러'}[item['name']]
+        macro.append((abs(item['contribution']), f"{item['label']} {item['value']:,.2f}{unit}{change_text} · {item['state']}({day}, {item['source']})"))
+    lines += ['', '**함께 볼 시장 환경**',
+              (' / '.join(value for _, value in sorted(macro, key=lambda r: -r[0])[:2]) +
+               '. 업종 순위와 별도로 금리·변동성·환율 부담이 완화되는지 확인합니다. 동시 관측이며 업종 등락 원인으로 단정하지 않습니다.' if macro else
+               '같은 확정 거래일의 매크로 근거가 미연결되어 시장 환경과의 종합 해석을 보류합니다.'),
+              '보도는 표시된 발표 시점의 자료이며 20·63일 흐름 전체의 원인 증명이 아닙니다. 종가 이후 보도는 사후 정보로 구분합니다. 확인 질문은 매수·매도 판정을 바꾸지 않습니다.', '']
+    return lines
+
+
+def leadership_lines(rotation, summary_rows, context=None, news=(), now=None):
     lines = ['', '## 주도 업종 교체 관측', '',
         '반도체·AI가 회복하는지와 다른 업종으로 강세가 확산되는지를 나누어 봅니다. 아래는 확정 종가의 가격 관측이며, 차기 주도주 확정이나 매수 허용 판정이 아닙니다.', '']
     markets = rotation.get('markets', {})
     if not markets:
         lines += ['동일 기준일의 업종·시장 가격 이력이 부족해 후보 선정을 보류합니다.']
-    focus, alternatives = [], []
+    focus, alternatives, selected = [], [], []
     for market in ('US','KR'):
         result = markets.get(market)
         if not result:
@@ -90,8 +223,14 @@ def leadership_lines(rotation, summary_rows):
         lines += [f"**{market} · {result['date']} 확정 종가:** {conclusion} 비교 {len(rows)}업종(ETF {result['sample_count']}개; 동일 업종 중복 제외)."]
         if len(rows) < 6:
             lines += ['비교 표본이 6업종 미만이므로 시장 전체의 주도권 변화로 일반화하기 어렵습니다.']
+        story, checks = _market_story(rows)
+        lines += ['', *[line + ' [근거: 아래 동일 기준일 가격·RS 표]' if i == 0 else line
+                       for i, line in enumerate(story)], '']
+        selected.extend(checks)
         for label, limit in (('상승 추세 후보',2),('상대적 방어',1),('반등·회복 관찰',1)):
             alternatives.extend(sorted(groups[label],key=lambda r:(-r['rs_20d_change'],r['ticker']))[:limit])
+    if selected:
+        lines += _evidence_lines(selected, context or {}, news, stamp(now))
     for heading, rows in (('반도체·AI 연관 업종의 현재 방향', focus), ('다른 업종에서 확인할 후보', alternatives)):
         if not rows:
             continue
