@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **Alphabet Q3 original-statement cash recovery**, base4f9dc9ab.
+Direct2025/2026Q3 values in the2026 earnings exhibit reconcile to9mo-6mo10-Q
+and2025 original release. Report-only exact-operand/issuer/period/status check;
+no general parser/score/gate/DB/TTL changes. Big Tech comparison restores both
+quarters with original-release/unaudited labels and separate recovery audit;
+raw packets stay held. Individual-company generic reader remains unchanged.
+CurrentOCF42290/cashPP&E51355 millionUSD,121.4% ratio,YoY+72.0pp; no AI-only or
+price-cause claim. Baseline1334pass102.038s/final1334pass104.438s; targeted145pass
+7.96s. Report207pass/one same historical theme-selection failure44.848s.
+Reviewer found no concrete scoped issue; fresh local SEC and4original documents
+verified. Cloud before ZIP preserved privately; deployment/live acceptance pending.
+See [Alphabet cash reconciliation](docs/maintenance/20261108_alphabet_cash_q3.md).
+
 Latest task: **on-demand same-period Big Tech cash comparison**, base8736d90e.
 Company mode compares held/watch MSFT/AMZN/Alphabet/META with exact calendar
 quarters; cash definitions separated, no totals/rankings. YoY requires same
@@ -695,12 +708,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Reconcile Alphabet's withheld latest/prior-year Q3 cash comparison.**
+**Connect verified Alphabet cash recovery to its individual-company deep dive.**
 
-Check original comparative filings for the cross-filing cumulative difference.
-Recover report-only figures only with proven same-period/scope reconciliation;
-otherwise retain the hold. No generic parser/score/gate/DB changes. KR prose-only
-extension remains deferred, not completed.
+Reuse this source-bound recovery and explain operating/working-capital/one-off
+cash effects from original disclosures; keep generic source packets and scores
+intact. No current-price causal claims or implicit default-report fetching.
+Finish pending Cloud acceptance first. KR prose-only extension remains deferred.
 
 ## Evidence and Remaining Limits
 

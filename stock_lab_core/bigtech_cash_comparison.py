@@ -2,6 +2,7 @@
 from stock_lab_core.company_cash_reading import _checked_field, _same_basis
 from stock_lab_core.sec_financial_periods import _date, _finite, _quarter_span
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.alphabet_cash_q3 import reviewed_alphabet_q3
 
 register_loaded_source(__name__, __file__)
 
@@ -41,11 +42,17 @@ def _periods(packet):
     return result
 
 
-def _cash(row, cutoff):
+def _cash(row, cutoff, packet=None):
     start, end = _date(row['start']), _date(row['end'])
     checked = {f: _checked_field(row, f, start, end, cutoff) for f in ('ocf', 'cash_capex')}
     ocf, capex = (checked[f][0] for f in ('ocf', 'cash_capex'))
     paired = _same_basis(checked, 'ocf', 'cash_capex')
+    recovered = reviewed_alphabet_q3(packet, row) if not paired and packet else None
+    if recovered:
+        ocf, capex = recovered['ocf'], recovered['cash_capex']
+        return dict(ocf=ocf, capex=capex, residual=ocf-capex, ratio=capex/ocf*100,
+                    paired=True, scope='유형자산', reason='', recovery=recovered,
+                    filings=frozenset({(recovered['accession'], recovered['filed'], 'USD')}))
     residual = ocf - capex if paired else None
     ratio = capex / ocf * 100 if paired and ocf > 0 else None
     return dict(ocf=ocf, capex=capex, residual=residual if _finite(residual) else None,
@@ -66,7 +73,7 @@ def _growth(value, previous):
 
 def compare_bigtech_cash(packets):
     """No I/O, mutation, scores, older-good-row fallback, totals or issuer ranking."""
-    result = dict(period='', previous_period='', rows=[], trends=[], readings=[], coverage=[],
+    result = dict(period='', previous_period='', rows=[], trends=[], readings=[], coverage=[], recoveries=[],
                   conclusion='', limits=LIMIT, status='held')
     if (len(packets) < 2 or len(packets) > 4 or any(t not in BIGTECH for t in packets)
             or ('GOOG' in packets and 'GOOGL' in packets)):
@@ -89,9 +96,10 @@ def compare_bigtech_cash(packets):
     scopes = set()
     for t, packet in packets.items():
         row = periods[t][key]
-        current = _cash(row, _date(packet['as_of']))
+        current = _cash(row, _date(packet['as_of']), packet)
         previous_row = periods[t].get(prior_key)
-        previous = _cash(previous_row, _date(packet['as_of'])) if previous_row else None
+        previous = _cash(previous_row, _date(packet['as_of']), packet) if previous_row else None
+        result['recoveries'].extend(c['recovery'] for c in (current, previous) if c and c.get('recovery'))
         compatible = bool(previous and current['paired'] and previous['paired']
                           and current['scope'] == previous['scope'] and current['filings'] == previous['filings'])
         ocf_yoy = _growth(current['ocf'], previous['ocf']) if compatible else None
@@ -105,7 +113,8 @@ def compare_bigtech_cash(packets):
             '현금 투자(백만$)': _million(current['capex']), '단순차액(백만$)': _million(current['residual']),
             '투자/영업현금(%)': round(current['ratio'], 1) if current['ratio'] is not None else None,
             '투자 범위': current['scope'], '확인 상태': current['reason'] or
-                ('동일 제출본 확인' if current['paired'] else '두 항목 제출본 불일치')})
+                ('실적발표 원문 대조(미감사)' if current.get('recovery') else
+                 '동일 제출본 확인' if current['paired'] else '두 항목 제출본 불일치')})
         result['trends'].append({'기업': t, '전년 영업현금(백만$)': _million(previous['ocf']) if compatible else None,
             '전년 현금 투자(백만$)': _million(previous['capex']) if compatible else None,
             '영업현금 YoY(%)': round(ocf_yoy, 1) if ocf_yoy is not None else None,

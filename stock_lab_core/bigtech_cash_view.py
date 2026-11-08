@@ -13,7 +13,7 @@ register_loaded_source(__name__, __file__)
 def _display_rows(rows):
     """Readable UI only; the downloadable audit keeps numeric values and holds."""
     return [{k: ('보류' if v is None else f'{v:,.1f}' if isinstance(v, (float, int)) else
-                 '공시 대조 필요' if k == '확인 상태' and v != '동일 제출본 확인' else v)
+                 '공시 대조 필요' if k == '확인 상태' and v not in {'동일 제출본 확인', '실적발표 원문 대조(미감사)'} else v)
              for k, v in row.items()} for row in rows]
 
 
@@ -64,9 +64,17 @@ def render_bigtech_comparison(st, *, options, prefix, configured, resolve_cik, f
         st.markdown('**같은 기간 현금 비교 · ' + result['period'] + '**')
         st.dataframe(_display_rows(result['rows']), hide_index=True, width='stretch')
         for row in result['rows']:
-            if row['확인 상태'] != '동일 제출본 확인':
+            if row['확인 상태'] not in {'동일 제출본 확인', '실적발표 원문 대조(미감사)'}:
                 reason = row['확인 상태'].replace('cash_capex', '현금 투자').replace('ocf', '영업현금')
                 st.caption(row['기업'] + ' · 보류 근거: ' + reason)
+        recovered = result.get('recoveries', [])
+        if recovered:
+            st.caption('원문 복구 적용 분기: ' + ', '.join(sorted({r['end'] for r in recovered})))
+            st.caption('Alphabet 원문 대조 복구: 2026-10-28 실적발표의 올해·전년 동기 직접 분기값(미감사)을 '
+                       '9개월·6개월 공시 및 2025년 원발표와 대조했습니다. 대조일 2026-11-08. '
+                       '조회 금액·기간·제출본이 검증 기록과 달라지면 다시 보류합니다.')
+            st.markdown(f"[올해·전년 동기 직접 분기값]({recovered[0]['source_url']}) · "
+                        f"[2025년 원발표]({recovered[0]['prior_source_url']})")
         st.caption(result['scope_note'] + ' 빈칸은 0이 아닙니다. 공통 기간이 기업의 최신 분기보다 과거일 수 있습니다.')
         st.markdown('**전년 동기 대비 · ' + result['previous_period'] + '**')
         st.dataframe(_display_rows(result['trends']), hide_index=True, width='stretch')
@@ -78,6 +86,8 @@ def render_bigtech_comparison(st, *, options, prefix, configured, resolve_cik, f
             st.caption('근거: ' + item['근거'])
     st.caption(result['limits'])
     with st.expander('기업별 최신 기간·공시 원문·보류 근거'):
+        if result.get('recoveries'):
+            st.caption('아래 SEC 일반추출표의 보류 상태는 검토 원본으로 보존됩니다. 위 비교표의 복구값·출처·차감 대조는 검토 파일의 recoveries에 별도로 기록됩니다.')
         st.dataframe(result['coverage'], hide_index=True, width='stretch')
         for t, packet in bundle['packets'].items():
             if packet.get('quarter'):
