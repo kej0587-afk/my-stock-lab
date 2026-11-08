@@ -28,7 +28,17 @@ from simple OCF-minus-PPE. NVDA productive-assets scope stays broad. Export adds
 source-bound `cash_recovery`; raw table/status preserved. Local original documents
 and dynamic official discovery verified both. Focused208pass14.11s; baseline
 decision1367pass133.454s; final1367pass132.291s, stable source hashes.
-Independent review findings closed. Commit/push and Cloud acceptance pending.
+Independent review findings closed. **3bf84647 pushed/accepted in authenticated
+Cloud**: both actual selected-company queries returned verified_release and source
+links; explanations/downloads matched local validator. Raw8quarter packets unchanged
+except checked_at, original holds preserved. Before13:59/after14:15ZIP95symbols ×
+11score/grade/verdict/gate columns identical(1045values); not full recalculation.
+App/view/recovery module loaded/disk/local hashes match; restartfalse/stale[].
+Fresh session initially stalled in asset view; Stop/reload recovered, no Cloud reboot;
+exact startup cause unproven. Current market context was absent in fresh session and
+correctly held; no new automatic market report generated in this cash-only check.
+Private evidence cache/cash_cloud_* plus cash_recovery_before/after.zip; screenshots
+visually checked. Current update is docs-only; no further application changes.
 See [SEC cash recovery](docs/maintenance/20261108_sec_cash_recovery.md).
 
 Latest task: **selected-company market/sector context**, base `9f4451ed`.
@@ -817,7 +827,7 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 **Generic prior-year cash-burden comparison for the selected company.**
 
-After current DDOG/NVDA release recovery is accepted in Cloud, compare a matched
+DDOG/NVDA latest release recovery is accepted in Cloud. Compare a matched
 prior-year quarter using validated same-scope sources only. Explain OCF/investment
 change and software/lease scope; hold incompatible or missing operands. No dated
 issuer exception, background network work, score/gate change or unmeasured speed

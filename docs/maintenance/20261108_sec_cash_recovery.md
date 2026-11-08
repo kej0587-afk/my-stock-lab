@@ -60,8 +60,26 @@ This does not recover historical eight-quarter trends or provide forecasts/DCF.
 - Independent review found sign/scope/exhibit parsing weaknesses; corrected with
   counterexamples. Independent reviewer confirmed closure;47focused tests passed.
   Final decision1367passed132.291s (`decision_1bdyko67`), stable source hashes.
-- Application not yet pushed/Cloud verified at this checkpoint. Update this section
-  after real selected-company queries, downloads, module hashes and score comparison.
+- Application `3bf84647` pushed and accepted in authenticated Cloud. Explicit DDOG
+  and NVDA queries both return `verified_release`; downloaded latest cash facts and
+  explanations match the local validator and official source figures above.
+- Raw8-quarter packet comparison with pre-change Cloud packets differs only in
+  `checked_at`; original cumulative hold statuses remain. Source link, separate
+  original-data expander, development-cost scope and downloadable proof verified.
+- Before13:59 / after14:15KST Today ZIP: same95symbols;11score/grade/verdict/gate
+  columns identical (1045values). This is saved-result preservation, not a full
+  Today recalculation/performance test. Latest12.1s diagnostic is render_only.
+- Diagnostic build3bf84647: app/view/recovery module loaded/disk/local normalized
+  hashes match, restart_required=false, stale_modules=[]. No Cloud reboot requested.
+- Old session stalled after deployment; new session initially stalled in asset
+  view, then Stop/reload recovered. Exact startup cause not established here.
+  This recovery query does not run during startup. Fresh-session market context
+  was absent and correctly held; no full new market report generated for this task.
+- Private proof: `cache/cash_cloud_DDOG.json`, `cash_cloud_NVDA.json`,
+  `cash_cloud_diagnostic.json`, `cash_cloud_acceptance.json`,
+  `cash_recovery_before.zip`, `cash_recovery_after.zip`; screenshots
+  `cash_ddog_cloud.png`, `cash_nvda_cloud.png` visually inspected, excluded from Git.
+- This final update is documentation-only; application work complete.
 
 ## Next bounded task
 
