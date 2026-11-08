@@ -6,6 +6,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 from tests.test_company_cash_reading import packet, set_value
 from stock_lab_core.bigtech_cash_comparison import compare_bigtech_cash, comparison_options
+from stock_lab_core.bigtech_cash_view import _display_rows
 
 
 def comparable(ticker='MSFT', productive=False):
@@ -85,6 +86,12 @@ def test_universe_dedup_and_failed_selected_company():
     assert comparison_options(['MSFT','GOOG','GOOGL','NVDA','AMZN']) == ['MSFT','AMZN','GOOGL']
     assert not compare_bigtech_cash(dict(MSFT=comparable(), AMZN={}))['rows']
     assert not compare_bigtech_cash(dict(GOOG=comparable('GOOG'), GOOGL=comparable('GOOGL')))['rows']
+
+
+def test_display_formats_holds_without_changing_numeric_audit():
+    rows = [{'현금': None, '금액': 12345.1, '확인 상태': 'ocf: cross filing'}]
+    assert _display_rows(rows) == [{'현금': '보류', '금액': '12,345.1', '확인 상태': '공시 대조 필요'}]
+    assert rows[0]['현금'] is None and rows[0]['금액'] == 12345.1
 
 
 def test_changed_scope_blocks_yoy_and_never_uses_cached_derived_values():

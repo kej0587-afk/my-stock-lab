@@ -10,6 +10,13 @@ from stock_lab_core.report_build import register_loaded_source
 register_loaded_source(__name__, __file__)
 
 
+def _display_rows(rows):
+    """Readable UI only; the downloadable audit keeps numeric values and holds."""
+    return [{k: ('보류' if v is None else f'{v:,.1f}' if isinstance(v, (float, int)) else
+                 '공시 대조 필요' if k == '확인 상태' and v != '동일 제출본 확인' else v)
+             for k, v in row.items()} for row in rows]
+
+
 def render_bigtech_comparison(st, *, options, prefix, configured, resolve_cik, fetch_facts, now=None):
     st.subheader('빅테크 현금 창출·투자 부담')
     available = comparison_options(options)
@@ -51,13 +58,18 @@ def render_bigtech_comparison(st, *, options, prefix, configured, resolve_cik, f
     result = bundle['comparison']
     st.markdown('**무엇을 읽어야 하나**')
     st.write(result['conclusion'])
-    st.caption('조회 ' + bundle['checked_at'] + ' · 최근 실적발표·가이던스 전체 반영은 미확인')
+    local_time = datetime.fromisoformat(bundle['checked_at']).astimezone(timezone(timedelta(hours=9)))
+    st.caption(f'조회 {local_time:%Y-%m-%d %H:%M} KST · 최근 실적발표·가이던스 전체 반영은 미확인')
     if result['period']:
         st.markdown('**같은 기간 현금 비교 · ' + result['period'] + '**')
-        st.dataframe(result['rows'], hide_index=True, width='stretch')
+        st.dataframe(_display_rows(result['rows']), hide_index=True, width='stretch')
+        for row in result['rows']:
+            if row['확인 상태'] != '동일 제출본 확인':
+                reason = row['확인 상태'].replace('cash_capex', '현금 투자').replace('ocf', '영업현금')
+                st.caption(row['기업'] + ' · 보류 근거: ' + reason)
         st.caption(result['scope_note'] + ' 빈칸은 0이 아닙니다. 공통 기간이 기업의 최신 분기보다 과거일 수 있습니다.')
         st.markdown('**전년 동기 대비 · ' + result['previous_period'] + '**')
-        st.dataframe(result['trends'], hide_index=True, width='stretch')
+        st.dataframe(_display_rows(result['trends']), hide_index=True, width='stretch')
         for item in result['readings']:
             st.markdown('**' + item['기업'] + ' · 왜 중요한가**')
             st.write('사실: ' + item['사실'])
