@@ -28144,6 +28144,8 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
         st.download_button("리포트 다운로드", saved_report.encode("utf-8"),
                            file_name="stock_lab_market_report.md", mime="text/markdown",
                            key="today_market_report_download", icon=":material/download:")
+        from stock_lab_core.report_generation_performance import render_generation_timing
+        render_generation_timing(st, st.session_state, saved_report)
         from stock_lab_core.performance import matching_report_measurement
         matched_measurement = matching_report_measurement(st.session_state, saved_report)
         current_measurement_id = st.session_state.get("today_queue_performance", {}).get("measurement_id")
@@ -28216,19 +28218,28 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
         st.caption("설정 변경 후 ‘자동 뉴스픽 생성’을 누르면 적용됩니다. 상단 저장 리포트는 자동으로 다시 계산하지 않습니다. 마감시황·보유 업종 기본 조회에 선택 분야를 추가합니다.")
 
         if auto_generate:
-            with st.spinner("자동 뉴스픽 초안을 만드는 중입니다..."):
+            from stock_lab_core.report_generation_performance import generation_measurement, set_report_stage, report_degraded
+            with st.spinner("자동 뉴스픽 초안을 만드는 중입니다..."), generation_measurement(
+                st.session_state, entrypoint=__file__, script_started=SCRIPT_RUN_STARTED,
+                options={'include_market_rss': include_market_rss, 'include_watch_rss': include_rss_news,
+                         'categories': list(selected_market_story_categories), 'per_category': market_story_per_category,
+                         'watch_news_limit': max_news_targets, 'summary_count': len(memo_summary_df)}):
+                set_report_stage('flow_snapshot')
                 snapshot = get_cached_today_market_flow_snapshot()
                 if snapshot is None:
                     try:
                         snapshot = refresh_today_market_flow_snapshot(include_theme=False)
                     except Exception:
+                        report_degraded('flow_snapshot_unavailable')
                         snapshot = {}
 
+                set_report_stage('macro_official')
                 event_rows = globals().get("macro_event_df", pd.DataFrame())
                 if not isinstance(event_rows, pd.DataFrame) or event_rows.empty:
                     try:
                         event_rows, _, _ = build_macro_event_risk_table()
                     except Exception:
+                        report_degraded('event_rows_unavailable')
                         event_rows = pd.DataFrame()
 
                 news_rows = []
@@ -28238,6 +28249,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                     memo_summary_df, event_rows, include_news=include_market_rss,
                     news_categories=tuple(selected_market_story_categories), news_per_category=market_story_per_category)
                 market_news_rows = report_context.get("session_news", []) + report_context.get("next_session_news", [])
+                set_report_stage('news')
                 if include_rss_news:
                     news_rows, news_targets = collect_today_auto_newspick_news(
                         universe,
@@ -28245,6 +28257,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                         max_count=max_news_targets,
                     )
 
+                set_report_stage('calculations')
                 index_rotation_rows = pd.DataFrame()
                 try:
                     flow_df_for_rotation = snapshot.get("flow_df") if isinstance(snapshot, dict) else pd.DataFrame()
@@ -28266,11 +28279,13 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                     "now": datetime.now(timezone(timedelta(hours=9))),
                     "report_context": report_context,
                 }
+                set_report_stage('assembly')
                 try:
                     generated_memo = build_auto_market_memo(**memo_kwargs)
                 except TypeError:
                     # Streamlit Cloud may briefly serve an older market_memo.py while app.py is new.
                     # Retry without the new optional market_news_rows argument instead of crashing.
+                    report_degraded('assembly_legacy_arguments')
                     fallback_kwargs = dict(memo_kwargs)
                     fallback_kwargs.pop("market_news_rows", None)
                     fallback_kwargs.pop("index_rotation_rows", None)
@@ -28278,12 +28293,14 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                         generated_memo = build_auto_market_memo(**fallback_kwargs)
                         st.warning("시장 전체 RSS는 이번 생성에서 제외됐습니다. 새 파일 배포가 반영되면 다시 포함됩니다.")
                     except TypeError:
+                        report_degraded('assembly_minimal_data')
                         fallback_kwargs["flow_snapshot"] = {}
                         fallback_kwargs["event_rows"] = pd.DataFrame()
                         try:
                             generated_memo = build_auto_market_memo(**fallback_kwargs)
                             st.warning("일부 시장 데이터 형식이 맞지 않아 뉴스/RSS 중심 초안으로 생성했습니다.")
                         except TypeError:
+                            report_degraded('assembly_notice_only')
                             generated_memo = (
                                 "🌇 Stock Lab 자동 뉴스픽\n"
                                 f"{datetime.now(timezone(timedelta(hours=9))).strftime('%m/%d · %H:%M')}\n"
@@ -28296,7 +28313,7 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
                             )
                             st.warning("자동 뉴스픽 일부 모듈이 맞지 않아 안전 안내 초안으로 대체했습니다.")
                 st.session_state["today_market_memo_text"] = generated_memo
-                st.rerun()
+            st.rerun()
 
             if include_market_rss or include_rss_news:
                 target_labels = [f"{t.get('name', t.get('ticker'))}({t.get('ticker')})" for t in news_targets]
@@ -28546,6 +28563,7 @@ def render_today_holdings_risk_panel(risk_df, title: str = "#### 세부 근거: 
 
 
 def _collect_today_report_context(summary_df, event_rows, *, include_news=True, news_categories=None, news_per_category=None):
+    from stock_lab_core.report_generation_performance import set_report_stage, component
     from stock_lab_core.report_context import collect_report_context
     from stock_lab_core.report_history import update_report_history
     from stock_lab_core.performance import summary_measurement_reference
@@ -28559,25 +28577,29 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
                                          flow_snapshot=get_cached_today_market_flow_snapshot())
     except Exception as exc:
         logging.warning("Report context unavailable (%s)", type(exc).__name__)
+        from stock_lab_core.report_generation_performance import report_degraded
+        report_degraded('report_context_unavailable')
         context = {"missing": [f"시황 자료 수집 실패: {type(exc).__name__}"]}
+    set_report_stage('macro_official')
     owner = "" if IS_PUBLIC_DEMO else str(CURRENT_USER_EMAIL or "").strip().lower()
     from stock_lab_core.market_sentiment import load_credit_spread, load_investor_flow_evidence, load_public_market_evidence
     from stock_lab_core.economic_releases import _api_key
-    context["credit_spread"] = (load_credit_spread(datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
+    context["credit_spread"] = (component(load_credit_spread, datetime.now(KST).date().isoformat(), _api_key("FRED_API_KEY"))
                                 if not IS_PUBLIC_DEMO else {"ok": False, "reason": "체험모드: 신용 자료 조회 안 함"})
     context["market_observation_evidence"] = dict(st.session_state.get("market_observation_evidence", {}))
-    context["market_observation_evidence"].update(load_investor_flow_evidence(
+    context["market_observation_evidence"].update(component(load_investor_flow_evidence,
         get_kiwoom_data_client() if not IS_PUBLIC_DEMO else None, public_demo=IS_PUBLIC_DEMO))
     if not IS_PUBLIC_DEMO:
         from stock_lab_core.public_flow_backfill import collect_public_flow_backfill
-        context["public_flow_backfill"] = collect_public_flow_backfill()
-        context["public_market_evidence"] = load_public_market_evidence(datetime.now(KST).date().isoformat())
+        context["public_flow_backfill"] = component(collect_public_flow_backfill)
+        context["public_market_evidence"] = component(load_public_market_evidence, datetime.now(KST).date().isoformat())
     context["market_evidence_checked_at"] = datetime.now(KST).isoformat()
     context["market_guard"] = build_today_market_guard(get_cached_today_market_flow_snapshot(), summary_df)
     store = SupabaseReportHistoryStore(supabase, owner_scope=owner) if owner and supabase is not None else None
     from stock_lab_core.safeguard_history import observed_kr_sessions
 
-    context.update(update_report_history(summary_df, context.get("sessions", {}), owner_scope=owner,
+    set_report_stage('persistence')
+    context.update(component(update_report_history, summary_df, context.get("sessions", {}), owner_scope=owner,
                                          macro_data=context.get("macro_data"), store=store,
                                          source_provenance=context.get("source_provenance"),
                                          public_market_evidence=context.get("public_market_evidence"),

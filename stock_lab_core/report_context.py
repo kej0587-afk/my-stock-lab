@@ -14,6 +14,7 @@ from stock_lab_core.market_observation import ROTATION_UNIVERSE
 from stock_lab_core.report_prices import MACRO_SYMBOLS, SECTORS, align_us_report_frames, aligned_macro, btc_at_us_close, load_btc_close_frame, release_day_reaction
 from stock_lab_core.report_session import kst_now, market_session_states
 from stock_lab_core.performance import measure, timed_call
+from stock_lab_core.report_generation_performance import set_report_stage, component
 
 
 def apply_verified_release_dates(rows, now):
@@ -36,6 +37,7 @@ def apply_verified_release_dates(rows, now):
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
                            economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False,
                            quote_data=None, news_categories=(), news_per_category=5):
+    set_report_stage('prices')
     from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
     from stock_lab_core.release_calendar import load_release_calendar
@@ -152,23 +154,24 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         window = {"date": sessions["US"], "previous_date": observations.get("^GSPC", {}).get("previous_date", "")}
         observations["BTC-US-CLOSE"] = btc_at_us_close(load_btc_close_frame() if btc_frame is None else btc_frame,
                                                       window["date"], window["previous_date"])
+    set_report_stage('macro_official')
     if economic_releases is None and calendar is None:
         # The release collector already fetched the calendar, including failure status.
-        releases, calendar = load_economic_releases(event_rows=event_rows, now=now, include_calendar=True)
+        releases, calendar = component(load_economic_releases, event_rows=event_rows, now=now, include_calendar=True)
     else:
-        releases = load_economic_releases(event_rows=event_rows, now=now) if economic_releases is None else records(economic_releases)
+        releases = component(load_economic_releases, event_rows=event_rows, now=now) if economic_releases is None else records(economic_releases)
     if economic_releases is None:
         from stock_lab_core.economic_bulletins import apply_official_bulletins
-        releases = apply_official_bulletins(releases, now)
+        releases = component(apply_official_bulletins, releases, now)
     apply_verified_release_dates(releases, now)
     consensus_diagnostics = {}
     if economic_releases is None:
         from stock_lab_core.report_consensus import attach_economic_consensus
-        releases, consensus_diagnostics = attach_economic_consensus(releases, now,
+        releases, consensus_diagnostics = component(attach_economic_consensus, releases, now,
             api_key=_api_key("TRADING_ECONOMICS_API_KEY"))
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
-    calendar = load_release_calendar(now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
+    calendar = component(load_release_calendar, now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
     earnings_sources = []
     earnings_results = {"results": [], "sources": []}
     earnings_scope = {}
@@ -176,7 +179,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     central_bank_results = []
     if economic_releases is None and price_frames is None:
         from stock_lab_core.earnings_collection import collect_report_earnings
-        earnings = collect_report_earnings(summary_rows, calendar, now)
+        earnings = component(collect_report_earnings, summary_rows, calendar, now)
         calendar = dict(calendar, events=earnings["calendar_events"])
         earnings_sources = earnings["earnings_sources"]
         earnings_results = {"results": earnings["earnings_results"], "sources": earnings["earnings_result_sources"]}
@@ -187,6 +190,7 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
         from stock_lab_core.central_bank_results import fetch_central_bank_results
         with measure("external_data", "official_policy_decisions"):
             central_bank_results = fetch_central_bank_results(now)
+    set_report_stage('calculations')
     closed_rows = []
     from stock_lab_core.money_flow import _compute_ticker_metrics, MONEY_FLOW_UNIVERSE
     from stock_lab_core.report_evidence import closed_daily_frame
@@ -234,10 +238,12 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
     from stock_lab_core.report_eventstudy import collect_event_study_context
+    set_report_stage('macro_official')
     with measure("external_data", "event_study_context"):
         study = collect_event_study_context(result, now)
     result.update(confirmed_historical_events=study["events"], event_session_schedules=study["schedules"],
                   event_study_diagnostics=study["diagnostics"])
+    set_report_stage('prices')
     from stock_lab_core.report_scenario import SYMBOLS, build_scenario_context
     if scenario_frames is None:
         if price_frames is None:

@@ -247,7 +247,7 @@ def test_success_ttl_is_short_and_failure_cooldown_is_not_extended():
     tree = ast.parse(inspect.getsource(today_news._cached_session_rss_batch))
     decorator = tree.body[0].decorator_list[0]
     options = {item.arg: ast.literal_eval(item.value) for item in decorator.keywords if item.arg != "is_success"}
-    assert options == {"ttl": 60, "failure_ttl": 0}
+    assert options == {"ttl": 60, "failure_ttl": 0, "trace_name": "report_rss_batch"}
 
 
 def test_explicit_refresh_clears_both_rss_layers_and_public_articles(monkeypatch):

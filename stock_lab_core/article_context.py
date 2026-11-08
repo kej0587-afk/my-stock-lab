@@ -17,6 +17,8 @@ import requests
 
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.performance import timed_call, submit_with_context
+from stock_lab_core.report_generation_performance import report_phase, report_http_attempt
 from stock_lab_core.article_events import (body_scenarios, body_sentences, enhance_facts,
                                            headline_events, is_strategy_article)
 
@@ -73,6 +75,7 @@ def _safe_url(url):
         return False
 
 
+@timed_call('report_transport', 'public_news_http')
 def _public_bytes(url):
     if not _safe_url(url):
         raise ValueError("unsupported_public_source")
@@ -80,6 +83,7 @@ def _public_bytes(url):
         session.trust_env = False
         started = time.monotonic()
         for _ in range(3):
+            report_http_attempt('public_news')
             with session.get(url, timeout=(2, 3), allow_redirects=False, stream=True,
                              headers={"User-Agent": "StockLab/1.0 (personal public-news reader)"}) as response:
                 if response.status_code in (301, 302, 303, 307, 308):
@@ -129,7 +133,7 @@ def parse_publisher_feed(data):
     return rows
 
 
-@cache_result(ttl=300, failure_ttl=30, is_success=lambda result: bool(result["rows"]))
+@cache_result(ttl=300, failure_ttl=30, is_success=lambda result: bool(result["rows"]), trace_name='report_publisher_feed')
 def _feed(url):
     try:
         data, _ = _public_bytes(url)
@@ -138,10 +142,12 @@ def _feed(url):
         return {"rows": [], "status": "unavailable"}
 
 
+@timed_call('report_component', 'publisher_feeds')
 def publisher_news(sessions=None, now=None):
     # The publisher explicitly offers these feeds for non-commercial use.
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(_feed, FEEDS))
+        pending = [submit_with_context(executor, _feed, url) for url in FEEDS]
+        results = [future.result() for future in pending]
     rows = [row for result in results for row in result["rows"]]
     if sessions and now:
         stored = json.loads((Path(__file__).with_name("data") / "verified_article_sources_20261021.json").read_text(encoding="utf-8"))
@@ -338,7 +344,7 @@ def parse_article(data, url, expected_title):
                 body_checked_at=datetime.now(timezone.utc).isoformat())
 
 
-@cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"})
+@cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"}, trace_name='report_article_body')
 def _article(url, title):
     # v10: event/scenario evidence schema; invalidate the source-keyed v9 cache.
     try:
@@ -358,6 +364,7 @@ def _article(url, title):
         return {"body_status": "fetch_unavailable", "body_failure_reason": reason}
 
 
+@report_phase('articles')
 def enrich_article_context(result, now, *, priority_context=None):
     """Read at most four direct public URLs after session/source curation."""
     buckets = ("current_session_news", "session_news", "next_session_news", "other_market_news")
@@ -432,7 +439,7 @@ def enrich_article_context(result, now, *, priority_context=None):
             break
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=4) as executor:
-        pending = [executor.submit(_article, row["link"], row["title"]) for row in selected]
+        pending = [submit_with_context(executor, _article, row["link"], row["title"]) for row in selected]
         for row, future in zip(selected, pending):
             evidence = future.result()
             published, modified = _date(evidence.get("body_published_at")), _date(evidence.get("body_modified_at"))

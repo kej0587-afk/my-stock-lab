@@ -4,6 +4,8 @@ from copy import deepcopy
 
 
 def before_company_market_context(node):
+    from tests.report_timing_ast_contract import before_report_timing
+    node = before_report_timing(node)
     node = deepcopy(node)
     if node.name != 'render_today_market_memo_panel':
         return node

@@ -213,6 +213,8 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
         if census:
             diagnostics["parameters"] = safe_params
     try:
+        from stock_lab_core.report_generation_performance import report_http_attempt
+        report_http_attempt('economic_api')
         response = method(url, **kwargs)
     except requests.RequestException as exc:
         if diagnostics is not None:
@@ -936,12 +938,13 @@ def load_economic_releases(event_rows=None, now=None, *, include_calendar=False)
     """
     now = _clock(now)
     census_key, fred_key, ecos_key = (_api_key(name) for name in ("CENSUS_API_KEY", "FRED_API_KEY", "ECOS_API_KEY"))
+    from stock_lab_core.performance import submit_with_context
     with ThreadPoolExecutor(max_workers=6) as executor:
-        bls = executor.submit(_bls, now)
-        retail = executor.submit(_retail, now, census_key)
-        fed = executor.submit(_fed, now, fred_key)
-        calendar = executor.submit(load_release_calendar, now=now, fred_api_key=fred_key)
-        korea = [executor.submit(_ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
+        bls = submit_with_context(executor, _bls, now)
+        retail = submit_with_context(executor, _retail, now, census_key)
+        fed = submit_with_context(executor, _fed, now, fred_key)
+        calendar = submit_with_context(executor, load_release_calendar, now=now, fred_api_key=fred_key)
+        korea = [submit_with_context(executor, _ecos, now, ecos_key, indicator) for indicator in _ECOS_SERIES]
         rows = bls.result() + [retail.result(), fed.result()] + [future.result() for future in korea]
         calendar = calendar.result()
         for row, spec in zip(rows, _BLS_SERIES):

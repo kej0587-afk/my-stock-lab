@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.performance import submit_with_context, timed_call
+from stock_lab_core.report_generation_performance import report_phase, report_http_attempt
 
 register_loaded_source(__name__, __file__)
 
@@ -789,6 +791,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
     return list(unique.values())[:_SESSION_QUERY_LIMIT]
 
 
+@timed_call('report_transport', 'google_session_rss')
 def _fetch_session_rss(spec):
     from stock_lab_core.report_presentation import sector_news_topics
     from stock_lab_core.catalyst_news import matches_catalyst_query, is_consumer_banking_promo
@@ -796,6 +799,7 @@ def _fetch_session_rss(spec):
     rows = []
     try:
         request = urllib.request.Request(spec["url"], headers={"User-Agent": "Mozilla/5.0 StockLab"})
+        report_http_attempt('google_rss')
         with urllib.request.urlopen(request, timeout=_SESSION_RSS_TIMEOUT) as response:
             data = response.read(_SESSION_RSS_MAX_BYTES + 1)
         if len(data) > _SESSION_RSS_MAX_BYTES:
@@ -838,7 +842,7 @@ def _fetch_session_rss(spec):
         return [], f"{spec['market']}: RSS 수집 실패"
 
 
-@cache_result(ttl=300, failure_ttl=30, is_success=lambda result: bool(result[0]) and not result[1])
+@cache_result(ttl=300, failure_ttl=30, is_success=lambda result: bool(result[0]) and not result[1], trace_name='report_rss_query')
 def _cached_session_rss(spec):
     return _fetch_session_rss(spec)
 
@@ -851,7 +855,9 @@ def _retrieve_session_rss(specs, *, use_cache):
         loader = _cached_session_rss if use_cache or spec.get("query_kind") == "issuer_catalyst" else _fetch_session_rss
         return loader(spec)
     with ThreadPoolExecutor(max_workers=4) as executor:
-        for spec, (candidates, error) in zip(specs, executor.map(retrieve, specs)):
+        pending = [submit_with_context(executor, retrieve, spec) for spec in specs]
+        for spec, future in zip(specs, pending):
+            candidates, error = future.result()
             rows.extend(candidates)
             complete = complete and bool(candidates) and not error
             if error:
@@ -860,7 +866,7 @@ def _retrieve_session_rss(specs, *, use_cache):
     return {"rows": rows, "failures": failures, "complete": bool(complete), "failed_categories": sorted(failed_categories)}
 
 
-@cache_result(ttl=60, failure_ttl=0, is_success=lambda result: result["complete"])
+@cache_result(ttl=60, failure_ttl=0, is_success=lambda result: result["complete"], trace_name='report_rss_batch')
 def _cached_session_rss_batch(specs, session_key, time_bucket):
     # Cache raw retrieval only. No market classification or time-filtered rows.
     # Empty/partial batches are not retained; per-query failures still cool down.
@@ -882,6 +888,7 @@ def clear_session_market_news_cache():
         loader.clear()
 
 
+@report_phase('news')
 def fetch_session_market_news(sessions, *, now=None, categories=(), per_category=3,
                               current_sessions=None, sector_rows=(), held_exposures=(), use_cache=False,
                               include_article_bodies=False, watched_exposures=()) -> dict:
@@ -924,7 +931,7 @@ def fetch_session_market_news(sessions, *, now=None, categories=(), per_category
         # Independent RSS and publisher feeds need not wait for each other.
         # Existing per-source caches, 4 RSS/2 publisher workers and timeouts stay.
         with ThreadPoolExecutor(max_workers=2) as executor:
-            pending = executor.submit(publisher_news, sessions, now)
+            pending = submit_with_context(executor, publisher_news, sessions, now)
             retrieved = retrieve()
             publisher_rows = pending.result()
     else:

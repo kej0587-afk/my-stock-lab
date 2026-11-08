@@ -3,6 +3,8 @@ import ast
 
 
 def before_msft_cash_report(node):
+    from tests.report_timing_ast_contract import before_report_timing
+    node = before_report_timing(node)
     from tests.mtf_ast_contract import before_optional_daily_snapshot
     node = before_optional_daily_snapshot(node)
     if node.name == 'render_today_market_memo_panel':

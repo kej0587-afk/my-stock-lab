@@ -19,6 +19,15 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Active task: **full automatic report timing**, based on e56b95e0. Dedicated
+generation trace is saved before rerun and tied to the Markdown output hash;
+exclusive wall stages, parallel work, HTTP attempts and cache misses/reuses are
+separate. Retrieval rules, worker counts, TTLs and score/gate/content logic stay
+unchanged. Local focused177, additional AST/timing10 and decision1367 passed. Production
+acceptance pending; see
+[measurement record](docs/maintenance/20261108_auto_report_generation_measurement.md).
+Do not confuse the outer interrupted `today_queue` trace with this full report run.
+
 Latest task: **market-wide leadership storyline**, base5f145fa3. US/KR paragraphs
 separate actual uptrends from relative defense and rebounds; weak focus exposures
 and alternative strength form a hypothesis, never capital-transfer/buy claims.
