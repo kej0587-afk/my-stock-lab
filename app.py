@@ -28109,7 +28109,10 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
     universe, status_map = build_today_market_memo_universe(memo_summary_df)
     from stock_lab_core.company_deep_dive import render_company_deep_dive
     if st.radio("시황 보기", ["시장 전체", "기업 심층분석"], horizontal=True, key="market_report_view") == "기업 심층분석":
-        render_company_deep_dive(st, universe=[dict(item, is_etf=is_fin_score_exempt_asset(
+        from stock_lab_core.portfolio_market_review import select_market_review
+        render_company_deep_dive(st, universe=[dict(item,
+            sector=SECTOR_BENCHMARK_MAP.get(normalize_ticker(item["ticker"]), SECTOR_BENCHMARK_MAP.get(clean_symbol(item["ticker"]), ())),
+            is_etf=is_fin_score_exempt_asset(
             item["ticker"], item.get("is_etf", False), item.get("asset_class", ""), item.get("name", ""))) for item in universe],
             owner="" if IS_PUBLIC_DEMO else CURRENT_USER_EMAIL, is_demo=IS_PUBLIC_DEMO,
             configured=bool(get_sec_user_agent()), resolve_cik=get_sec_cik_for_ticker,
@@ -28117,7 +28120,8 @@ def render_today_market_memo_panel(summary_df=None, summary_signature=None, titl
             load_kr=fetch_kr_financials_auto,
             kr_identity_loader=lambda ticker: resolve_dart_evidence_identity(ticker, fetch_dart_corp_code_map),
             kr_store_factory=lambda owner: SupabaseDartEvidenceStore(supabase, owner_scope=owner),
-            kr_extract_metrics=extract_dart_metrics)
+            kr_extract_metrics=extract_dart_metrics,
+            market_context=lambda: select_market_review(st.session_state, portfolio_signal_input_context()))
         return
     st.markdown(title)
     report_build = get_report_build_info(__file__)

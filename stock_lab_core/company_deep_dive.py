@@ -28,7 +28,8 @@ def company_options(universe):
 
 def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                              fetch_facts, load_kr, kr_identity_loader=None,
-                             kr_store_factory=None, kr_extract_metrics=None, is_demo=False, now=None):
+                             kr_store_factory=None, kr_extract_metrics=None, is_demo=False, now=None,
+                             market_context=None):
     st.subheader('기업 심층분석')
     st.caption('보유·관심 개별기업을 선택해 실적 → 현금 창출 → 투자 부담 → 다음 확인 순서로 봅니다. 시장 시황과 기존 점수·판정은 바뀌지 않습니다. ETF는 기업 재무 비교에서 제외됩니다.')
     if not owner or is_demo:
@@ -51,12 +52,7 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         format_func=lambda s: '기업을 선택하세요' if not s else f"{options[s]['name']} ({s}) · {options[s]['source']}")
     if not symbol:
         return
-    from stock_lab_core.report_leadership import company_research_question
-    question = company_research_question(symbol)
-    st.markdown('**시장 흐름에서 이 기업에 확인할 질문**')
-    st.write(question['시장 질문'])
-    st.caption('검토할 조건: ' + question['다음 확인'])
-    st.caption('조사 질문이며 아직 확인된 실적 변화가 아닙니다. 회사 전체 수치를 AI/데이터센터 사업부 수치로 대신하지 않습니다.')
+    st.caption('근거 조회 후 기존 시황과 공시를 연결합니다. 시장 근거가 없거나 오래됐다면 시장 전체에서 자동 뉴스픽을 먼저 생성하세요.')
     kr = bool(re.fullmatch(r'\d[0-9A-Z]{5}(?:\.(?:KS|KQ))?', symbol))
     if st.button('선택 기업 근거 조회 (점수 유지)', key=prefix+'_load', disabled=not kr and not configured):
         st.session_state.pop(prefix, None)
@@ -82,6 +78,8 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         return
     packet = bundle['packet']
     download_bundle = bundle
+    from stock_lab_core.company_market_reading import build_company_market_reading, render_company_market_reading
+    data, market_status = market_context() if market_context else ({}, '시황 근거 미연결')
     stored = packet.get('저장 근거') if kr else None
     if stored:
         stored_age = (now or datetime.now(timezone.utc)) - datetime.fromisoformat(stored['collected_at'])
@@ -91,6 +89,8 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
     st.subheader(f"{options[symbol]['name']} ({symbol})")
     st.caption(f"{options[symbol]['source']} 기업 · 조회 {bundle['checked_at']} · 회사 전체 자료이며 당일 주가 움직임의 원인으로 단정하지 않습니다.")
     if kr:
+        market_review = build_company_market_reading(symbol, data, sector=options[symbol].get('sector', ()), now=now)
+        render_company_market_reading(st, market_review, market_status)
         st.write(packet['조회 상태'])
         st.caption(f"공급처: {packet['공급처']} · 보고기간: {packet['공급처 조회 기간']}")
         if stored:
@@ -127,11 +127,9 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
             render_amazon_cash_reading(st, amazon_review)
             download_bundle = dict(bundle, amazon_cash_review=amazon_review)
             readings = [item for item in readings if item['검토축'] == '매출·이익']
-        for item in readings:
-            st.markdown('**' + item['검토축'] + '**')
-            st.write(item['확인된 사실'])
-            st.write('왜 중요한가: ' + item['왜 중요한가'])
-            st.caption('다음 확인: ' + item['다음 확인'])
+        market_review = build_company_market_reading(symbol, data, sector=options[symbol].get('sector', ()),
+                                                     readings=readings, now=now)
+        render_company_market_reading(st, market_review, market_status)
         financial, quality, sources = quarter_tables(packet)
         if financial:
             if cash_review:
@@ -156,5 +154,6 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                 st.markdown('\n'.join(msft_cash_lines({'msft_cash_evidence':{'packet':packet}}, now or datetime.now(timezone.utc))))
                 from stock_lab_core.msft_ir_review_view import render_msft_business_review
                 render_msft_business_review(st, ticker=symbol, owner=owner)
+    download_bundle = dict(download_bundle, market_review=market_review)
     st.download_button('선택 기업 검토 파일 받기', json.dumps(download_bundle, ensure_ascii=False, indent=2),
         file_name=f'company_review_{symbol}.json', mime='application/json', key=prefix+'_download', on_click='ignore')

@@ -13,6 +13,7 @@ from stock_lab_core import decision_engine
 from stock_lab_core.signal_basis import build_signal_basis
 from tests.fixtures_price import make_price_df
 from tests.mtf_ast_contract import before_optional_daily_snapshot
+from tests.company_market_ast_contract import before_company_market_context
 from tests.test_decision_golden_snapshot import _bench_info, _to_jsonable
 from tests.test_decision_refactor_parity import scenarios
 
@@ -37,7 +38,7 @@ def stable(value):
 
 def test_only_two_app_functions_change_and_only_reviewed_expressions(original_source):
     def functions(source, restore=False):
-        return {n.name: ast.dump(before_optional_daily_snapshot(n) if restore else n)
+        return {n.name: ast.dump(before_company_market_context(before_optional_daily_snapshot(n) if restore else n))
                 for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
     old, new = functions(original_source), functions(current)

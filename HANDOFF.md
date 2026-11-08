@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **selected-company market/sector context**, base `9f4451ed`.
+Reuses account-scoped report snapshot, existing static sector proxies and validated
+company financial readings. No implicit network collection, score/gate/TTL changes.
+Dates must match the latest completed local exchange calendar session; old or
+missing data do not become current facts. Same-session sector news remains article
+claims. Raw financial packet preserved; export adds separate `market_review`.
+Focused147pass57.74s; decision1367pass139.702s (before1367pass129.756s).
+Report207pass/one pre-existing theme whole-app AST failure reproduced on base.
+Independent review freshness finding fixed/closed; raw score baselines unchanged.
+Deployment pending final operational acceptance update.
+See [Company market reading](docs/maintenance/20261108_company_market_reading.md).
+
 Latest task: **full Today bottleneck measurement / unused daily MTF snapshot**,
 basec2d9397e. Actual full Cloud95-symbol run `c0463d50817d4d8faa53ef2c400a2f28`
 85.258s/script94.910s; prices54.923s, indicators19.029s, external22.189s active
@@ -781,17 +793,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect selected-company analysis to current market/sector evidence.**
+**General same-period earnings/cash comparison for selected companies.**
 
-The current company question receives only a ticker; the general cash reader
-already handles supported US-GAAP packets but lacks current sector/news context.
-Reuse existing report/sector snapshots to connect dated observations to that
-reader: what changed -> possible company exposure -> observed financial support
-or contradiction -> next check. Keep facts, interpretation and unconfirmed causes
-distinct; no extra default network work, fabricated segment/forecast values, or
-score/gate changes. Verify at least two ordinary supported companies plus a
-missing/unsupported case. Do not add another dated issuer-only exception.
-KR8quarter expansion and arbitrary ticker search remain separate later scopes.
+Use the existing supported US-GAAP packets to compare latest observed quarter
+with the prior-year quarter only when periods, units, scope and source provenance
+match. Explain whether earnings and cash investment burden move together; missing
+or restated/changed-definition comparisons must remain held. Connect the result
+to the current market review without another issuer-only dated exception, new
+default network work or score/gate changes. Verify two ordinary companies plus
+incomplete/non-comparable evidence. KR8quarter and arbitrary ticker search remain
+separate scopes. Preserve the latest performance record; no unmeasured speed claim.
 
 ## Evidence and Remaining Limits
 
