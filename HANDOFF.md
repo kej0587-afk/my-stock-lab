@@ -27,7 +27,19 @@ collector/HTTP/cache/wait traces added; do not double-count bulletin_http agains
 report_http.economic_api. Focused158 pass, frozen18-mode full-output/request/store
 parity, decision1367 pass140.489s, independent review clean. Report207pass/known
 old theme AST failure; additional98pass/two pre-existing Mock __name__ failures
-reproduced on baseline. Runtime commit and matched Cloud timing still pending.
+reproduced on baseline. **730d7871 pushed and verified in Cloud**, no reboot. Completed/normal run
+e93556d34e58473ea2077ce7f637ebaa: all100 loaded/disk/local hashes match, no stale
+modules, report SHA matches. Bulletin7.457->7.372s; macro21.098->21.107s;
+full generation56.778->57.631s; separate app work22.973s, combined80.604s.
+**No demonstrated speedup:** CPI already complete, so safe serial path ran.
+Customs listing4.461s + dependent detail2.864s dominate; bothHTTP200/one attempt,
+one export cache miss, no retry/cooldown. Concurrency remains a tested conditional
+optimization, not an exercised Cloud benefit. Same95 rows/11categories/2percategory,
+marketRSSon/watchRSSoff; price43lookup/26reuse/17miss and9KRrequests match baseline.
+Bodies4cachehits vs old4misses: not a controlled identical-cache comparison.
+All22 score/verdict/gate/flow columns match across deployment AND report generation;
+three KR_CPI/KR_EXPORTS display rows unchanged. Private proof cache/bulletin_*;
+visually checked complete screenshot; final update documentation only.
 See [Bulletin overlap](docs/maintenance/20261108_official_bulletin_overlap.md).
 
 Latest bounded work: **full automatic report timing accepted in Cloud**, based on
@@ -902,15 +914,18 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Finish production acceptance of official-bulletin retrieval overlap.**
+**Investigate Customs listing -> detail transport connection reuse only.**
 
-Push the reviewed implementation, confirm loaded/disk/local source matches, then
-repeat complete generation with the accepted settings (95 rows,11 categories,
-2/category,market RSS on,stock RSS off,partly warm prices). Compare the 7.456865s
-bulletin / 21.098s macro / 56.778s generation baseline, cache misses/HTTP and
-same-session score parity. Use dedicated full-generation JSON + matching Markdown,
-not outer Today/render-only traces. Do not alter cache TTLs or expand optimization.
-Record any actual reboot/login blocker instead of claiming production acceptance.
+Actual Cloud bulletin cost7.372s is listing4.461 + dependent detail2.864, not CPI.
+No duplicate request; CPI-complete guards correctly skip the new overlap path.
+Evaluate a short-lived same-origin connection reuse without changing listing
+selection, cookies/request semantics, parameters, retries/timeouts, failure
+cooldowns, TTLs or data/score/gate output. Prove full fixed-input parity and actual
+request counts, then compare natural-expiry cache-miss Cloud runs. Do not assume
+handshake savings, parallelize dependent URLs, reuse a stale article ID, or change
+freshness to claim a gain. See the latest bulletin record for baseline/options;
+cache/bulletin_cloud.json is completed full generation, not a Today partial trace.
+Browser tab38 holds the accepted report. No other performance scope in this task.
 
 ## Evidence and Remaining Limits
 

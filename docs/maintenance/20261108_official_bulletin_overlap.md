@@ -43,10 +43,62 @@ existing parsers worked; local timing must not be presented as a Cloud speedup.
 
 ## Deployment and production comparison
 
-Pending runtime commit/push and matched production run. Preserve the accepted
-baseline and compare 95 Today rows, 11 news categories, 2/category, market RSS on,
-stock RSS off, partly warm prices without clearing TTLs. Verify runtime hashes,
-full dedicated generation JSON and matching Markdown, plus same-session score
-parity. Separate total wall time from overlapping CPI/export collection and wait.
+Runtime **730d7871** pushed and accepted without a reboot. Completed/normal run
+**e93556d34e58473ea2077ce7f637ebaa**, generated 17:02 KST. All 100 monitored
+loaded/disk/local LF source hashes match, stale list empty, restart false;
+exported Markdown SHA256 matches the dedicated full-generation JSON.
 
-Private evidence is ignored under cache/: bulletin_* and refactor_checks/.
+Same settings: 95 Today rows, 11 categories, 2/category, market RSS on, stock RSS
+off. Today was recalculated first (~84.8s, outside report timing). No cache clear.
+
+| Wall-time boundary | Before (s) | After (s) |
+| --- | ---: | ---: |
+| apply_official_bulletins | 7.457 | 7.372 |
+| macro/official stage | 21.098 | 21.107 |
+| prices/alignment | 15.816 | 15.819 |
+| closed indicators | 1.066 | 1.094 |
+| RSS | 1.959 | 2.021 |
+| article bodies | 1.198 | 0.287 |
+| history/persistence | 6.103 | 7.245 |
+| assembly | 9.538 | 10.058 |
+| complete generation | 56.778 | 57.631 |
+| separate pre-generation work | 23.290 | 22.973 |
+| script start to saved report | 80.068 | 80.604 |
+
+**No demonstrated production speedup.** CPI already met the current-period
+complete guard, so no CPI HTTP was necessary and the serial branch correctly ran.
+Customs exports used one cache miss: listing 4.461s, detail 2.864s, collection
+7.368s. Both returned HTTP200, one attempt each, no connect retry/cooldown.
+The 0.085s bulletin difference is ordinary observed variation, not evidence of
+the concurrency improvement. Conditional overlap is verified on frozen inputs,
+but was not exercised by this production input. Do not force redundant CPI
+requests just to exercise it.
+
+Price history counts match (43 lookup/26 reuse/17 misses, nine KR requests).
+RSS counts match (16 misses/15 success/one unavailable), publisher feeds four
+attempts, economic_api eight attempts. Article bodies were four cache hits after
+vs four misses before. These are observational production runs, not an identical
+cache-state or network-controlled benchmark. Existing economic_api includes the
+Customs listing; add only the newly visible detail attempt when describing the
+coverage, not all bulletin counters again. Browser paint/rerun remain excluded.
+
+95 tickers x all 22 score/verdict/gate/flow columns match both across deployment
+and across this report generation (2,090 cells per comparison). The three report
+rows containing KR_CPI/KR_EXPORTS also match exactly. This preserves existing
+data semantics; it does not certify unrelated economic observations as correct.
+
+Private artifacts: cache/bulletin_cloud.json, bulletin_cloud.md, bulletin_input.zip,
+bulletin_after.zip, bulletin_acceptance.json and visually inspected
+bulletin_cloud_complete.png. The accepted older baseline remains untouched.
+
+## One next bounded task
+
+Investigate **Customs listing -> detail connection reuse** with the now measured
+4.461s + 2.864s chain. Detail parameters depend on the listing result; there is no
+same-run duplicate or safe parallelism between these two requests. Reusing a
+short-lived same-origin transport may reduce handshakes, but needs its own proof;
+no saving is promised. Preserve fresh listing selection, cookies/request semantics,
+HTTP parameters/response guards, retries/timeouts, failure cooldown and TTLs.
+Validate fixed-input full output/request/persistence parity first and then compare
+cache-miss production runs after natural expiry. Do not shortcut source selection
+with an old article ID, change cache freshness, or expand to unrelated stages.
