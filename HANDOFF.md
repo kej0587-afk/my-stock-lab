@@ -26,12 +26,22 @@ cash burden summary, source-dated driver table and next-check conditions. Separa
 technical-infrastructure capex, TPU inventory working capital and2018EC fine cash
 payment; no invented cause allocation/adjusted cash/price claim. Raw holds remain
 in an expandable audit table; download adds a separate recovery/narrative object.
-Baseline decision1334pass103.321s; focused155pass8.43s; independent reviewer no
-concrete scoped issues. Final decision1334pass108.85s, stable sources. Production
-deployment/acceptance pending; do not treat local tests as operating verification.
+Baseline decision1334pass103.321s; final1334pass108.85s, stable sources. Focused
+155pass8.43s and155pass8.15s after table-wrap-only correction; reviewer no concrete
+scoped issue. Application7d9745fe plus UI4fc40f67 pushed/accepted in authenticated
+Cloud. Actual11:26KST GOOGL query: full8quarter packet matches fresh local SEC
+except collection timestamp; recovered2quarters and entire narrative match local.
+Original packet cash holds preserved. Explanations initially clipped; final
+wrapping tables visibly verified with source dates/links. Before11:21/after11:28
+ZIP: same95tickers and14score/grade/verdict/gate fields identical(1,330values).
+Not whole-ZIP identity/full recalculation. Diagnostic4fc40f67: loaded/disk/commit
+hashes match3target modules, restart false/stale empty, no reboot. Final11.732s
+diagnostic is render_only, not full Today/SEC timing or a speed improvement.
+Private evidence cache/alphabet_individual_*; no account data committed. Source
+commentary is reviewed2026Q3, not an automatic new-quarter transcript analysis.
 See [Alphabet individual cash](docs/maintenance/20261108_alphabet_individual_cash.md).
 
-Latest task: **Alphabet Q3 original-statement cash recovery**, base4f9dc9ab.
+Previous task: **Alphabet Q3 original-statement cash recovery**, base4f9dc9ab.
 Direct2025/2026Q3 values in the2026 earnings exhibit reconcile to9mo-6mo10-Q
 and2025 original release. Report-only exact-operand/issuer/period/status check;
 no general parser/score/gate/DB/TTL changes. Big Tech comparison restores both

@@ -48,8 +48,23 @@ remain unchanged.
   67targeted tests/isolation probes passed. Local previously collected live SEC
   packet yields exactly2recoveries and the values above without input mutation.
 - Final decision gate:1334pass108.85s(decision_z13himhd), stable source hashes.
-  Authenticated Cloud acceptance pending deployment; never infer production
-  success from tests. No whole-suite/full-Today/performance claim.
+  After the two presentation calls changed to wrapping tables, the focused
+  155tests passed again in8.15s. No calculation changes after the decision gate.
+- Application7d9745fe and UI4fc40f67 pushed/accepted in authenticated Cloud.
+  Fresh local SEC at11:26KST and actual Cloud query11:26:40KST: all8quarter packet
+  fields match except collection timestamp; downloaded narrative equals local
+  calculation, exactly2recoveries, raw cross-filing cash holds retained.
+- Operating screenshot confirms readable wrapped driver/check tables, dated
+  source labels/links and summary. Download contains separate narrative/audit.
+- Before11:21/after11:28KST ZIP: same95tickers,14core score/grade/verdict/gate fields
+  identical(1,330values). No whole-ZIP identity or new full calculation claim.
+- Final diagnostic4fc40f67: alphabet_cash_reading, alphabet_cash_q3 and
+  company_deep_dive loaded/disk/Git hashes match; restart_required false and no
+  stale modules. No reboot required.11.732s is render_only, not full Today/SEC-only
+  duration, and not evidence of speed improvement. No whole-suite pass claim.
+- Private proof under ignored cache/alphabet_individual_*: before/after ZIP,
+  fresh SEC packet, Cloud review JSON, local narrative, acceptance/score checks,
+  final diagnostic and screenshot. No private account data committed.
 
 ## Next bounded task
 
