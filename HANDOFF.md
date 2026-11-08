@@ -25,13 +25,19 @@ quarters; cash definitions separated, no totals/rankings. YoY requires same
 comparative filing; ratios need positive OCF. Fact/interpretation/next-check prose
 does not assert AI-specific demand or explain current prices. No implicit market
 fetches, score/gate/TTL/DB edits. Owner/selection-scoped6h display; explicit queries.
-Baseline decision1334pass100.924s; final1334pass106.109s. Focused90pass7.03s.
+Baseline decision1334pass100.924s; final1334pass100.136s. Focused91pass6.78s.
 Report207pass/one same historical theme-selection failure45.423s. Reviewer's two
 period/prose findings fixed and tested. Live local MSFT/AMZN/GOOGL8quarter requests
 succeeded: commonJul-Sep2026 versusJul-Sep2025. MSFT/AMZN cash burden increases;
 Alphabet withheld due cross-filing cumulative subtraction. No substitution.
-Cloud before ZIP saved privately(cache/bigtech_before.zip); application deployment
-and live comparison acceptance pending this commit. No speed/full-suite claims.
+Application7f00c7cf and presentation fix5a7038f1 pushed/accepted in authenticated
+Cloud. Actual10:22KST three-company8quarter packets and complete comparison equal
+local live SEC data; final UI holds/commas/KST verified. Diagnostic5a7038f1 has
+matching loaded/disk hashes, restart false/stale modules empty; no reboot.
+Same95tickers and14score/grade/verdict/gate fields identical(1,330 comparisons),
+not whole-ZIP identity or full recalculation. Evidence/screenshots ignored under
+cache/bigtech_*. Startup/rerender delays remain;37.08s diagnostic is partial screen
+execution, not full Today or SEC timing. No speed/full-suite claims.
 See [Big Tech cash comparison](docs/maintenance/20261108_bigtech_cash_comparison.md).
 
 Latest task: **market leadership reading and issuer questions**, base `cf84af2d`.
@@ -694,7 +700,7 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 Check original comparative filings for the cross-filing cumulative difference.
 Recover report-only figures only with proven same-period/scope reconciliation;
 otherwise retain the hold. No generic parser/score/gate/DB changes. KR prose-only
-extension remains deferred, not completed. Finish pending Cloud acceptance first.
+extension remains deferred, not completed.
 
 ## Evidence and Remaining Limits
 

@@ -27,9 +27,10 @@ semiconductor/data-center implication; preserve all scores and decisions.
 
 ## Verification
 
-- Decision baseline1334pass100.924s(decision_04fgbcch), final1334pass106.109s
-  (decision_lusgjyqf), stable source. Not a performance measurement.
-- Focused comparison/UI/company/SEC90pass7.03s. Covers owner/selection/rerender,
+- Decision baseline1334pass100.924s(decision_04fgbcch), initial1334pass106.109s
+  (decision_lusgjyqf), final production code1334pass100.136s(decision_ea76k1ae),
+  stable source. Not a performance measurement.
+- Focused comparison/UI/company/SEC final91pass6.78s. Covers owner/selection/rerender,
   failed refresh, expiry, mismatched scope/currency/period/provenance, zero/negative
   OCF, mutated derived data, latest-common/withheld cases and fiscal label mismatch.
 - Bounded reviewer found YoY cross-filing and ratio-rise wording risks; fixed and
@@ -46,8 +47,26 @@ semiconductor/data-center implication; preserve all scores and decisions.
   [Amazon Q3 filing](https://www.sec.gov/Archives/edgar/data/1018724/000101872426000040/amzn-20260930.htm).
   IR headline capex/lease or net-of-incentive figures must not replace the generic
   cash-statement tag values; different definitions are intentionally explicit.
-- Cloud before ZIP preserved privately as cache/bigtech_before.zip. Deployment
-  and authenticated Cloud actual query/download verification pending this commit.
+- Application7f00c7cf and presentation fix5a7038f1 pushed. Authenticated Cloud
+  actual three-company query10:22KST succeeded; JSON download has identical eight
+  quarter records, CIK, currency, status, as_of and complete calculated comparison
+  to local live SEC verification. This is selected3-company evidence, not all
+  Big Tech/AI orders verification; META not in current held/watch eligible list.
+- Cloud screenshot review caught raw None and long machine field reasons. Final
+  UI uses comma-separated values, explicit holds, separate Korean hold reasons
+  and KST query time; downloadable numeric audit remains unchanged. No reboot.
+- Final Cloud diagnostic records5a7038f1, restart_required false/stale_modules
+  empty; loaded/disk hashes match company_deep_dive and both bigtech modules.
+- Before/after ZIP: same95tickers and14core score/grade/verdict/gate fields
+  unchanged(1,330 comparisons). Not whole-ZIP identity or full Today recalculation.
+- Private proof:cache/bigtech_before.zip, bigtech_after.zip,
+  bigtech_cloud_comparison.json, bigtech_local_comparison.json,
+  bigtech_acceptance.json, bigtech_score_acceptance.json,
+  bigtech_cloud_diagnostic.json, bigtech_cloud.png. No private records in Git.
+- Startup/rerenders delayed verification; deployment temporarily invalidated an
+  old download control. A completed rerender restored the download. Final37.08s
+  diagnostic is partial screen execution, not full Today/SEC-only elapsed time.
+  No speed improvement claim or unrequested bottleneck changes.
 
 ## Next bounded task
 
