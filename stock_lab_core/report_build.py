@@ -33,7 +33,7 @@ _RENDER_MODULES = (
     "msft_cash_trend", "msft_cash_q4", "report_msft_cash", "sec_quarter_review", "sec_quarter_review_view", "sec_financial_periods",
     "company_deep_dive", "company_cash_reading", "company_kr_evidence", "dart_evidence_store", "report_leadership",
     "bigtech_cash_comparison", "bigtech_cash_view",
-    "alphabet_cash_q3",
+    "alphabet_cash_q3", "alphabet_cash_reading",
 )
 
 

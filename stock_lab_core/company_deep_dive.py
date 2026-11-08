@@ -81,6 +81,7 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         st.info('조회 후 6시간이 지났거나 조회시각 확인이 필요합니다. 버튼을 눌러 다시 확인하세요.')
         return
     packet = bundle['packet']
+    download_bundle = bundle
     stored = packet.get('저장 근거') if kr else None
     if stored:
         stored_age = (now or datetime.now(timezone.utc)) - datetime.fromisoformat(stored['collected_at'])
@@ -111,14 +112,28 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
             st.info(packet['실패 사유'] or '국내 재무 원자료 미연결 · 정밀관측소의 DART 파일 가져오기에서 확인할 수 있습니다.')
     else:
         from stock_lab_core.company_cash_reading import company_cash_reading
-        for item in company_cash_reading(packet):
+        from stock_lab_core.alphabet_cash_reading import alphabet_cash_reading, render_alphabet_cash_reading
+        cash_review = alphabet_cash_reading(packet)
+        readings = company_cash_reading(packet)
+        if cash_review:
+            render_alphabet_cash_reading(st, cash_review)
+            download_bundle = dict(bundle, alphabet_cash_review=cash_review)
+            # The raw extractor intentionally still holds these cash fields.
+            # Avoid presenting its unrecovered coverage/cash prose as the final review.
+            readings = [item for item in readings if item['검토축'] == '매출·이익']
+        for item in readings:
             st.markdown('**' + item['검토축'] + '**')
             st.write(item['확인된 사실'])
             st.write('왜 중요한가: ' + item['왜 중요한가'])
             st.caption('다음 확인: ' + item['다음 확인'])
         financial, quality, sources = quarter_tables(packet)
         if financial:
-            st.dataframe(financial, hide_index=True, width='stretch')
+            if cash_review:
+                with st.expander('원자료 8분기·복구 전 보류 상태'):
+                    st.caption('자동 추출 원자료입니다. 위 현금 비교는 원문 대조로 별도 복구했으며 원자료·점수에는 합산하지 않습니다.')
+                    st.dataframe(financial, hide_index=True, width='stretch')
+            else:
+                st.dataframe(financial, hide_index=True, width='stretch')
             with st.expander('기간·누락·누적차감·공시 출처'):
                 st.dataframe(quality, hide_index=True, width='stretch')
                 st.dataframe(sources, hide_index=True, width='stretch')
@@ -131,5 +146,5 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                 st.markdown('\n'.join(msft_cash_lines({'msft_cash_evidence':{'packet':packet}}, now or datetime.now(timezone.utc))))
                 from stock_lab_core.msft_ir_review_view import render_msft_business_review
                 render_msft_business_review(st, ticker=symbol, owner=owner)
-    st.download_button('선택 기업 검토 파일 받기', json.dumps(bundle, ensure_ascii=False, indent=2),
+    st.download_button('선택 기업 검토 파일 받기', json.dumps(download_bundle, ensure_ascii=False, indent=2),
         file_name=f'company_review_{symbol}.json', mime='application/json', key=prefix+'_download', on_click='ignore')

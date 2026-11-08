@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **Alphabet individual-company cash reading**, basec7d4a5fe.
+Reuses verified Q3 recovery, same cash checks as Big Tech mode; generic packets,
+scores/gates/DB/TTL/default market fetching unchanged. Selected GOOG/GOOGL shows
+cash burden summary, source-dated driver table and next-check conditions. Separates
+technical-infrastructure capex, TPU inventory working capital and2018EC fine cash
+payment; no invented cause allocation/adjusted cash/price claim. Raw holds remain
+in an expandable audit table; download adds a separate recovery/narrative object.
+Baseline decision1334pass103.321s; focused155pass8.43s; independent reviewer no
+concrete scoped issues. Final decision1334pass108.85s, stable sources. Production
+deployment/acceptance pending; do not treat local tests as operating verification.
+See [Alphabet individual cash](docs/maintenance/20261108_alphabet_individual_cash.md).
+
 Latest task: **Alphabet Q3 original-statement cash recovery**, base4f9dc9ab.
 Direct2025/2026Q3 values in the2026 earnings exhibit reconcile to9mo-6mo10-Q
 and2025 original release. Report-only exact-operand/issuer/period/status check;
@@ -715,11 +727,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect verified Alphabet cash recovery to its individual-company deep dive.**
+**Connect Amazon's same-period cash drivers to its selected-company deep dive.**
 
-Reuse this source-bound recovery and explain operating/working-capital/one-off
-cash effects from original disclosures; keep generic source packets and scores
-intact. No current-price causal claims or implicit default-report fetching.
+Inspect original cash-flow and earnings explanations, then connect verified
+AWS-versus-other-investment context and next checks. Preserve generic packets,
+scores and explicit on-demand collection. No AI-only allocation or unsupported
+working-capital attribution; use dated evidence, not current-price causal claims.
 KR prose-only extension remains deferred.
 
 ## Evidence and Remaining Limits
