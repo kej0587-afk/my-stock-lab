@@ -34,12 +34,25 @@ cache TTLs or refresh policy are changed. Private reports stay in ignored cache/
   Existing decisions and all other app functions remain under their old contracts.
 - Report gate: baseline 207 passed + existing theme-selection whole-app AST
   failure; final same 207/one failure (48.274s gate wall). No golden regeneration.
-- Independent instrumentation review: no remaining actionable findings.
+- Independent instrumentation review: no remaining runtime findings. Review of
+  the AST adapter found masking gaps; the adapter now rejects side-effecting
+  discarded arguments, import aliases, context bindings and duplicate contexts.
+  Final timing/AST/old-gate probes: 15 passed (17.67s), including five negative
+  mutations. Immutable reference commits and golden files were not changed.
 - Full decision gate: 1,367 passed, 142.873s, unchanged source hashes;
   `cache/refactor_checks/decision_ny78ipmy`. Production acceptance pending below.
 
 ## Production acceptance
 
-Pending deployment and one complete authenticated generation with matching
-output hash and loaded/disk source hashes. Do not use today's interrupted outer
-`today_queue` record as the report's generation duration.
+Runtime commit **6ac42e31** pushed. Authenticated Cloud reached the report panel
+after deployment but displayed a loaded-code/disk mismatch and disabled automatic
+generation. Reload did not fix it. Cloud My apps redirected to GitHub login;
+current app viewer menu offers Print/Record only, not Reboot. User reboot request
+is pending. No full-generation time, HTTP count or bottleneck is claimed yet.
+
+Pre-deployment 95-row export is preserved privately at
+`cache/report_generation_before.zip`; UI blocker screenshot is
+`cache/report_generation_cloud_wait.png`. After reboot, use the dedicated
+`auto_report_<id>.json` download and matching Markdown, verify completed/normal
+path and loaded/disk hashes, and compare the 95-row stored scores/verdicts.
+Do not use the outer interrupted `today_queue` record as generation duration.

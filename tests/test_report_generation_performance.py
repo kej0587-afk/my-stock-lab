@@ -125,3 +125,30 @@ def test_app_diff_contains_only_reviewed_measurement_not_decision_or_report_chan
     def functions(source):
         return {n.name: ast.dump(before_report_timing(n)) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     assert functions(base) == functions(current)
+
+
+@pytest.mark.parametrize('mutation', ['call_side_effect', 'import_alias', 'with_binding', 'with_argument', 'duplicate_context'])
+def test_ast_normalization_rejects_hidden_semantic_mutations(mutation):
+    import ast
+    from pathlib import Path
+    from tests.report_timing_ast_contract import before_report_timing
+    source = (Path(__file__).resolve().parents[1] / 'app.py').read_text(encoding='utf-8-sig')
+    node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == 'render_today_market_memo_panel')
+    for n in ast.walk(node):
+        if mutation == 'duplicate_context' and isinstance(n, ast.With) and any(isinstance(item.context_expr, ast.Call) and ast.unparse(item.context_expr.func) == 'generation_measurement' for item in n.items):
+            n.items.append(ast.withitem(context_expr=ast.parse('generation_measurement(st.session_state.clear())', mode='eval').body))
+            break
+        if mutation == 'call_side_effect' and isinstance(n, ast.Call) and ast.unparse(n.func) == 'set_report_stage':
+            n.args[0] = ast.parse("(st.session_state.clear(), 'flow_snapshot')[1]", mode='eval').body
+            break
+        if mutation == 'import_alias' and isinstance(n, ast.ImportFrom) and n.module == 'stock_lab_core.report_generation_performance':
+            n.names[0].asname = 'build_auto_market_memo'
+            break
+        if mutation.startswith('with_') and isinstance(n, ast.withitem) and isinstance(n.context_expr, ast.Call) and ast.unparse(n.context_expr.func) == 'generation_measurement':
+            if mutation == 'with_binding':
+                n.optional_vars = ast.Name(id='memo_summary_df', ctx=ast.Store())
+            else:
+                n.context_expr.args[0] = ast.parse('st.session_state.clear()', mode='eval').body
+            break
+    with pytest.raises(AssertionError):
+        before_report_timing(node)

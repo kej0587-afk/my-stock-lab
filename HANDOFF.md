@@ -19,12 +19,14 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Active task: **full automatic report timing**, based on e56b95e0. Dedicated
+Latest bounded work: **full automatic report timing**, based on e56b95e0. Dedicated
 generation trace is saved before rerun and tied to the Markdown output hash;
 exclusive wall stages, parallel work, HTTP attempts and cache misses/reuses are
 separate. Retrieval rules, worker counts, TTLs and score/gate/content logic stay
-unchanged. Local focused177, additional AST/timing10 and decision1367 passed. Production
-acceptance pending; see
+unchanged. Local focused177, final AST/timing15 and decision1367 passed. Runtime
+commit **6ac42e31 pushed**; Cloud displayed loaded/disk mismatch with generation
+disabled. Cloud management requires GitHub login, user reboot request pending.
+No actual generation timing/bottleneck claimed yet. See
 [measurement record](docs/maintenance/20261108_auto_report_generation_measurement.md).
 Do not confuse the outer interrupted `today_queue` trace with this full report run.
 
@@ -882,11 +884,17 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Measure full automatic-news generation before the next optimization.**
+**After the requested Cloud reboot, complete one automatic-news measurement.**
 
-Measure one actual complete generation, separating price history, macro/official
-sources, news/body collection and report rendering. Count actual remote requests
-and cache misses separately from function calls; record input/cache/session state.
+The instrumentation is already pushed; do not reimplement it. Existing browser
+tab33 is the authenticated production report panel; tab35 is Cloud/GitHub login.
+Use unchanged 11-category/2-per-category, market RSS on, watched RSS off settings.
+Generate once and download the dedicated `auto_report_<id>.json` plus matching
+Markdown. Confirm completed/normal generation and loaded/disk hash agreement.
+Compare stored scores/verdicts with private `cache/report_generation_before.zip`
+(95 rows). Separate price history, macro/official sources, news/body collection
+and assembly wall time. Count instrumented remote attempts and cache misses
+separately from SDK/function calls; state incomplete HTTP coverage and cache warmth.
 Use the largest measured bottleneck to propose one bounded optimization. Preserve
 content, date/source guards, TTLs and scores/gates. NVDA's prior1m source mismatch
 and the two pre-existing test expectations remain separate documented limitations.
