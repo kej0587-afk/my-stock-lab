@@ -57,7 +57,25 @@ research questions, preserving all trading grades/gates.
   Narrow adapter now excludes only leadership_lines in the historical digest test;
   original expected hashes retained, new section independently tested.
   Final report gate207pass/one same historical theme-selection failure41.830s
-  (report_rs56kvb2), stable sources. Cloud acceptance pending; no full-suite/speed claim.
+  (report_rs56kvb2), stable sources. No full-suite/speed claim.
+- Application8eeed6db pushed. Authenticated Cloud diagnostic matches commit;
+  restart_required false/stale_modules empty and loaded/disk hashes match for
+  report_leadership, market_observation and company_deep_dive. No reboot.
+  Fresh report accepted09:19KST, generationf922ba27b64f, loaded source639c2e2a02e0ac57.
+  Downloaded Markdown has one new front section between core interpretation and
+  market story, both markets dated2026-11-06. Six AI/technology focus rows,
+  SOXX/SMH deduplicated, XLP's displayed five return/RS values positive. XLI/KR
+  real-estate negative actual20-day returns remain defense, XHB's negative63-day
+  return is recovery rather than rising candidate. This describes report inputs,
+  not an independently verified next-leader forecast.
+- Same95tickers and14 score/grade/verdict/gate fields unchanged(1,330 comparisons)
+  before/after live generation. No whole-ZIP identity claim. Screenshot/Markdown/
+  diagnostic/ZIP acceptance evidence ignored under cache/leadership_*.
+  Actual market-to-company navigation verified: selected MSFT displays the
+  investment/recovery question and conditional checks before requesting evidence.
+  No additional SEC query or cross-company financial comparison claimed here.
+  Initial page rerender was slow; reconnecting the agent-created browser session
+  resolved verification. Full Today timing/performance was not measured.
 - Private before ZIP:cache/leadership_before.zip(09:06KST). No private rows in Git.
 
 ## Next bounded task

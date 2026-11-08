@@ -29,8 +29,19 @@ to held/watch company review. No new requests, scores/gates/DB/TTL changes.
 Decision before1334pass103.067s; final1334pass105.779s,stable source. Targeted155pass
 8.07s. Review caught omitted KR technology focus; fixed/tested. Report's new section
 has a narrow historical-digest adapter, no golden rewrite; final report207pass/one
-same historical theme-selection failure41.830s. Cloud acceptance pending. Private
-before ZIP under cache/leadership_before.zip.
+same historical theme-selection failure41.830s. Application8eeed6db pushed and
+accepted in authenticated Cloud. Diagnostic:matching commit/loaded hashes,
+restart false/stale modules empty; no reboot. Fresh09:19KST report generation
+f922ba27b64f/loaded639c2e2a02e0ac57 has one front section, distinct KR/US dated
+2026-11-06,6 focus rows and deduplicated SOXX/SMH. XLP meets positive5/20/63+RS
+conditions; falling relative winners remain defense; XHB negative63-day return
+remains recovery. Same95tickers and14 core score/grade/verdict/gate fields identical
+(1,330 comparisons), not whole-ZIP identity. Private proof cache/leadership_*.
+No full Today timing or independently verified leadership prediction claim.
+Company-specific segment/outlook metrics are still incomplete; the new questions
+are research directions, not evidence that those business changes have occurred.
+Actual MSFT selection shows investment/recovery question before explicit evidence
+query. Company screen proof saved privately; no new SEC/cross-company query claim.
 See [leadership reading](docs/maintenance/20261108_market_leadership_reading.md).
 
 Latest task: **Korean selected-company imported DART fallback**, base `e3c75cc2`.
