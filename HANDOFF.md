@@ -28,7 +28,18 @@ asset purchases1,894m release vs1,895m raw YTD difference stays held; latest cas
 recovery unaffected. Do not assume rounding/override. UI separates market leadership,
 company quality and cash sustainability; cash is not a universal market ranking.
 Focused234pass15.83s; baseline decision1367pass134.934s. Independent review clean.
-Final decision1367pass137.468s, stable sources. Commit/Cloud verification pending.
+Final decision1367pass137.468s, stable sources. **134c64fc pushed/accepted in
+authenticated Cloud after user reboot**. DDOG shows7-row same-quarter comparison,
+cash interpretation and next checks; NVDA prior comparison remains held while latest
+verified cash is preserved. Both downloaded comparisons match local/original-document
+replay after JSON serialization; raw8quarter packets differ only in checked_at.
+Four changed business-module loaded/disk/local hashes match; restartfalse/stale[].
+Reboot cleared the session's full Today result. No live95-row score comparison or
+full recalculation claimed this time: score preservation is supported by unchanged
+app.py and fixed-input1367 regression tests. Initial sessions stalled before query;
+Stop/reload and user reboot restored access, exact startup cause remains unproven.
+Private proof cache/cash_yoy_cloud_{DDOG,NVDA,diagnostic,acceptance}.json and
+cash_yoy_cloud.png; screenshot inspected. This final update is documentation only.
 See [Cash YoY comparison](docs/maintenance/20261108_cash_yoy_comparison.md).
 
 Latest task: **DDOG/NVDA held cash-flow reconciliation**, base `7dd38ffe`.

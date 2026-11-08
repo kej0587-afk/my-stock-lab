@@ -71,7 +71,26 @@ Offline replay of real SEC documents: DDOG verified comparison, NVDA held, uncha
 latest recovered values and exactly3request callback invocations per company.
 
 Final decision1367pass137.468s (`decision_vo13ocia`), stable source hashes.
-Commit and authenticated Cloud verification pending at this checkpoint.
+Application commit **134c64fc** pushed and accepted in authenticated Cloud after
+the user rebooted the app. Actual DDOG query displays7comparison rows, exact fiscal
+periods, ratios, meaning and next checks; the screen was visually inspected/saved.
+Actual NVDA query preserves latest verified cash and explicitly holds prior-year
+comparison. Both downloaded comparisons equal local calculation and saved official
+document replay after JSON serialization (Python filing tuples become JSON lists).
+Raw8quarter packets differ from before only in checked_at; latest recovered cash
+values are identical. No source/amount mismatch was hidden to pass acceptance.
+
+Latest completed render diagnostic identifies134c64fc; company_cash_reading,
+sec_cash_recovery, company_cash_comparison and company_deep_dive loaded/disk/local
+normalized hashes agree, restart_required=false and stale_modules empty.
+Cloud reboot cleared the full Today session result, so this task does NOT claim a
+live95-row before/after score comparison or full Today recalculation. Preservation
+evidence is unchanged app.py plus1367fixed-input regression tests. The initial two
+browser sessions stalled before the comparison query; Stop/reload and user reboot
+restored access. Exact startup cause is unproven and no startup speedup is claimed.
+Private acceptance: cache/cash_yoy_cloud_acceptance.json, company downloads,
+cash_yoy_cloud_diagnostic.json and visually checked cash_yoy_cloud.png.
+Final update is documentation only; no further application change/reboot requested.
 Private evidence in cache/cash_yoy_* only; never commit account exports/screenshots.
 
 ## Next task
