@@ -28,7 +28,17 @@ claims. Raw financial packet preserved; export adds separate `market_review`.
 Focused147pass57.74s; decision1367pass139.702s (before1367pass129.756s).
 Report207pass/one pre-existing theme whole-app AST failure reproduced on base.
 Independent review freshness finding fixed/closed; raw score baselines unchanged.
-Deployment pending final operational acceptance update.
+Application2b08d36a pushed/accepted in authenticated Cloud. DDOG/IGV and NVDA/SMH
+show dated market/sector context, validated quarter facts, next checks and2related
+article claims each; changing selection clears previous company display. Both
+downloaded financial narratives exactly match unchanged local validator output;
+raw8quarter packets preserved. Latest cash fields still held for different-filing
+cumulative operands (not recovered). Before12:42/after13:02ZIP:95symbols and
+11score/grade/verdict/gate columns identical(1045values), not full recalculation.
+App/view/new reader loaded/disk/local normalized hashes match; restartfalse/stale[].
+Old session stalled around deployment; new session recovered without user reboot,
+exact cause unproven. Private proof cache/company_market_*; screenshot inspected.
+Current update is docs-only; no further UI/network/performance changes.
 See [Company market reading](docs/maintenance/20261108_company_market_reading.md).
 
 Latest task: **full Today bottleneck measurement / unused daily MTF snapshot**,
@@ -793,16 +803,17 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**General same-period earnings/cash comparison for selected companies.**
+**Verify generic cumulative cash holds against DDOG/NVDA original filings.**
 
-Use the existing supported US-GAAP packets to compare latest observed quarter
-with the prior-year quarter only when periods, units, scope and source provenance
-match. Explain whether earnings and cash investment burden move together; missing
-or restated/changed-definition comparisons must remain held. Connect the result
-to the current market review without another issuer-only dated exception, new
-default network work or score/gate changes. Verify two ordinary companies plus
-incomplete/non-comparable evidence. KR8quarter and arbitrary ticker search remain
-separate scopes. Preserve the latest performance record; no unmeasured speed claim.
+The actual Cloud packets in the latest record hold latest OCF/cash CAPEX because
+cumulative operands use different submissions. Determine whether the common
+extractor missed same-filing anchors or whether scope/restatement differences
+require continued holds. Recover only provable comparable operands through the
+shared parser/validator with source provenance and counterexample tests. No dated
+issuer-only exception, automatic extra network work, or score/gate changes.
+Reliable operands precede general year-over-year cash-burden interpretation.
+KR8quarter and arbitrary ticker search remain separate scopes. Preserve latest
+performance record; no unmeasured speed claim.
 
 ## Evidence and Remaining Limits
 

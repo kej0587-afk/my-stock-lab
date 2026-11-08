@@ -41,12 +41,36 @@ unchanged. Scores, thresholds, verdicts, account data, caches and TTLs unchanged
 - Final focused tests: 147 passed, 57.74s. Final decision gate: 1,367 passed,
   139.702s; stable sources and no golden regeneration. Reviewer verified the
   freshness fix with 14 network-blocked focused cases; no remaining finding.
-- Cloud verification: pending below.
+- Authenticated Cloud verification passed below.
 
 ## Operational acceptance
 
-Before export preserved privately as `cache/company_market_before.zip`.
-Deployment and authenticated selected-company checks pending.
+Application commit `2b08d36a` pushed and accepted in Cloud. New session report
+collected at 12:57 KST, then queried registered DDOG and NVDA individually.
+Both show the expected existing proxies (IGV / SMH), 2026-11-06 completed close,
+market-relative daily change, conditional interpretation and next checks.
+Two session-filtered related articles each remain article claims. Switching
+companies removes the old company's evidence before the next explicit query.
+
+Actual review JSONs preserve eight-quarter packets. The separate narrative's
+financial rows exactly match a fresh local call of the unchanged validator on
+each downloaded packet. Both latest cash fields remain held because their
+cumulative operands came from different submissions; no fabricated cash values,
+ratio or deterioration claim. This is an existing evidence limitation, not a
+successful full cash recovery. Missing/unsupported cases were tested locally.
+
+Before12:42/after13:02 Today ZIPs: same95symbols and11score/grade/verdict/gate
+columns identical (1,045 values). No full Today recalculation or speed claim.
+Latest runtime diagnostic: base2b08d36a, restart_required=False, stale_modules=[].
+App, company view and new reader loaded/disk/local normalized hashes all match.
+The old session stalled around deployment; a fresh session initially showed the
+Cloud loading spinner and then recovered without requesting a user reboot. The
+exact cause of that temporary stall was not established.
+
+Private evidence (ignored): `cache/company_market_before.zip`, `_after.zip`,
+`company_market_DDOG.json`, `company_market_NVDA.json`,
+`company_market_diagnostic.json`, `company_market_acceptance.json`, and
+`company_market_cloud.png`. Wrapped narrative and actual browser layout inspected.
 
 ## Limits / next scope
 
@@ -55,6 +79,8 @@ causal proof. Quarter facts are not today’s earnings or business-unit numbers.
 Unmapped sectors and unsupported filings are explicit. Refresh market-wide report
 if its snapshot is absent, scoped differently or older than 30 minutes.
 
-Next: general same-period year-over-year earnings/cash comparison for supported
-company packets, with matching definitions and provenance; no dated issuer-only
-exception or investment score changes.
+Next: investigate the generic different-submission cumulative cash holds seen in
+DDOG/NVDA against their original filings. Recover only provable operands through
+the shared parser/validator, retaining ambiguous holds and raw provenance. Do not
+add another dated issuer exception. Reliable cash operands precede adding general
+year-over-year cash-burden interpretation; scores remain unchanged.
