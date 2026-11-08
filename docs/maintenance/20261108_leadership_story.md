@@ -47,7 +47,7 @@ This reference does not validate a forecast or today's price cause.
   counterexamples and31focused tests passed on re-review.
 - App entrypoint, rotation calculation and existing report evidence logic unchanged.
   Decision1367passed138.179s (`decision_wv3kkdj8`), stable source hashes.
-  Application commit/Cloud acceptance pending at this checkpoint.
+  Application commits and Cloud acceptance are recorded below.
 
 ## Deployment / limits
 
@@ -56,8 +56,34 @@ It has US19unique sectors/20ETFs and KR10sectors/10ETFs,11/06completed close.
 Its US staples satisfy the existing uptrend condition; KR has no qualifying
 nontechnology alternative. This is report input evidence, not independent market
 price verification. No Today full calculation/portfolio rows in that fresh session.
-After-deployment UI, source fingerprints and exported section remain to verify.
 No generation speedup is claimed; input collection is unchanged.
+
+Live QA: a910fcc3 generated correctly but Markdown joined fact/interpretation/check
+into one paragraph. 9a2c1d5c separates those paragraphs (38focused tests passed).
+Its actual10price/RS display rows matched the saved before report exactly and all
+three loaded/disk/local module hashes matched; no reboot was required. The actual
+related-news selector also chose an incidental chip-component listing notice and
+an evergreen housing column. 0a4c980b excludes listing notices/evergreen opinion
+titles from this evidence panel only; no wider news collection/filter changes.
+40focused tests passed3.33s.
+
+**Final Cloud acceptance:0a4c980b**, no user reboot. Newly generated report has
+separate readable observations/interpretation/next-check paragraphs and collapsed
+price/RS audit. US staples are an actual-uptrend candidate while memory/chips are
+weak; KR has relative defense but no qualifying nontechnology uptrend. All10prior
+displayed price/RS rows remain identical. The listing/evergreen articles no longer
+appear in this evidence panel. Four selected sectors still lack direct original
+article evidence; common US/KR session stories are separate and are not upgraded
+to industry causes or20/63-day explanations. This source-coverage limit remains.
+
+Downloaded report and completed render diagnostic verify all three modified module
+loaded/disk/local normalized hashes agree; restart_required=false/stale_modules[].
+The diagnostic is render_only and cannot measure full report generation or imply a
+speedup. No full Today/portfolio recalculation in this fresh session: score parity
+rests on unchanged app.py and1367fixed-input tests, not a live account comparison.
+Private artifacts: cache/leadership_before.md, leadership_after.md,
+leadership_before_rows.json, leadership_diagnostic.json, leadership_acceptance.json
+and visually inspected leadership_cloud.png. Final publication is docs only.
 
 ## Next task
 

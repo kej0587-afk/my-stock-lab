@@ -29,8 +29,19 @@ tables collapsed but retained in exports. App, raw rotation, grades/gates/TTL/DB
 unchanged. Focused213pass/one known editorial-order test deselected after base
 reproduction. Report baseline207pass/one old theme AST failure42.660s; final207/
 same failure47.210s. Independent findings fixed/closed,31review probes passed.
-Decision1367pass138.179s, stable source hashes. Application commit/Cloud acceptance
-pending at this checkpoint.
+Decision1367pass138.179s, stable source hashes. **a910fcc3 plus UI followups
+9a2c1d5c/0a4c980b pushed/accepted in authenticated Cloud**, no reboot. Followups
+separate Markdown paragraphs and exclude incidental listing notices/evergreen
+columns from this panel only; final40focused tests passed3.33s. Final report shows
+US staples actual strength vs weak memory/chips, KR relative defense without an
+actual uptrend alternative.10price/RS rows identical before/after. Three changed
+module loaded/disk/local hashes match; restartfalse/stale[]. Same-session direct
+sector/body evidence is still absent for4selected rows; common US/KR news is separate,
+not a substitute for industry causes. Next-check questions remain explicit.
+No full Today run/live portfolio-score comparison: app unchanged and regression
+tests support score preservation. Final diagnostic is completed render_only, NOT
+whole report-generation timing; no speedup claim. Private proof cache/leadership_*
+and visually checked leadership_cloud.png. Final update is documentation only.
 See [Leadership storyline](docs/maintenance/20261108_leadership_story.md).
 
 Latest task: **generic selected-company prior-year cash-burden comparison**,
