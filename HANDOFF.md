@@ -29,7 +29,14 @@ CurrentOCF42290/cashPP&E51355 millionUSD,121.4% ratio,YoY+72.0pp; no AI-only or
 price-cause claim. Baseline1334pass102.038s/final1334pass104.438s; targeted145pass
 7.96s. Report207pass/one same historical theme-selection failure44.848s.
 Reviewer found no concrete scoped issue; fresh local SEC and4original documents
-verified. Cloud before ZIP preserved privately; deployment/live acceptance pending.
+verified. Applicationbc123b44 pushed/accepted in authenticated Cloud. Fresh10:40KST
+3-company packets/comparison/recoveries match local live SEC. Exactly2quarters
+restored; MSFT/AMZN rows/trends/readings unchanged. UI original-source links and
+unaudited/recovery dates verified. Same95tickers and14score/grade/verdict/gate
+fields identical(1,330 comparisons); no whole-ZIP/full-recalculation claim.
+Diagnosticbc123b44 matches new module hashes, restart false/no stale modules;
+no reboot. Private proof cache/alphabet_*.14.14s diagnostic is partial display,
+not full Today or SEC timing. Startup/rerender delay remains; no speed claim.
 See [Alphabet cash reconciliation](docs/maintenance/20261108_alphabet_cash_q3.md).
 
 Latest task: **on-demand same-period Big Tech cash comparison**, base8736d90e.
@@ -713,7 +720,7 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 Reuse this source-bound recovery and explain operating/working-capital/one-off
 cash effects from original disclosures; keep generic source packets and scores
 intact. No current-price causal claims or implicit default-report fetching.
-Finish pending Cloud acceptance first. KR prose-only extension remains deferred.
+KR prose-only extension remains deferred.
 
 ## Evidence and Remaining Limits
 

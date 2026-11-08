@@ -69,8 +69,22 @@ submissions. No credentials or private account records included in this document
   (test_theme_selection:47),44.848s(report_dtifh14k). No golden rewrites.
 - Fresh local live SEC8quarter packets produce exactly two recoveries and the
   amounts above. Public original evidence under ignored cache/alphabet_*.
-- Cloud before ZIP preserved(cache/alphabet_before.zip,10:34KST). Application
-  deployment and authenticated fresh-query/score parity acceptance pending commit.
+- Applicationbc123b44 pushed/accepted in authenticated Cloud. Fresh10:40KST
+  MSFT/AMZN/GOOGL query and downloaded JSON: each8quarter record,CIK,currency,
+  status/as_of equals fresh local SEC input; complete comparison/recoveries equals
+  local calculation. Exactly2025-09-30 and2026-09-30 restored. Other2companies'
+  rows/trends/readings unchanged against previous accepted production output.
+- UI shows restored values, actual recovery dates, unaudited label and both direct
+  original-release links. Screenshot saved privately. General SEC audit packet
+  remains unchanged and original hold is explained in the source expander.
+- Before10:34/after10:40KST ZIP: same95tickers and14core score/grade/verdict/gate
+  fields unchanged(1,330 comparisons); not whole-ZIP identity or full recalculation.
+- Diagnosticbc123b44: restart_required false/stale_modules empty; loaded/disk hashes
+  match alphabet_cash_q3 and both Big Tech modules. No reboot required.
+- Proof ignored under cache/alphabet_*: original HTML/source numeric acceptance,
+  before/afterZIP, cloud/local comparison, acceptance, score acceptance, diagnostic
+  and screenshot. No private account data committed. Startup/rerender delay persists;
+  final14.14s diagnostic is partial display execution, not full Today/SEC-only timing.
 
 ## Next bounded task
 
