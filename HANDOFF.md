@@ -19,14 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest bounded work: **full automatic report timing**, based on e56b95e0. Dedicated
-generation trace is saved before rerun and tied to the Markdown output hash;
-exclusive wall stages, parallel work, HTTP attempts and cache misses/reuses are
-separate. Retrieval rules, worker counts, TTLs and score/gate/content logic stay
-unchanged. Local focused177, final AST/timing15 and decision1367 passed. Runtime
-commit **6ac42e31 pushed**; Cloud displayed loaded/disk mismatch with generation
-disabled. Cloud management requires GitHub login, user reboot request pending.
-No actual generation timing/bottleneck claimed yet. See
+Latest bounded work: **full automatic report timing accepted in Cloud**, based on
+e56b95e0. Runtime6ac42e31/test-docs64f12040 loaded after user reboot. Measurement
+**22bf0c2dc45b47538e96953665062f70**, completed/normal, no stale modules; all100
+monitored source hashes match local LF content and exported Markdown hash matches.
+Generation **56.778s**: macro/official21.098, prices15.816, assembly9.538,
+history6.103, RSS1.959, article bodies1.198, calculations1.066. Pre-generation
+app work adds23.290s = **80.068s** to saved report; browser paint/rerun excluded.
+After reboot, Today calculated95 inputs first (not part of report time); prices
+partly warm, RSS/body misses present, no cache clear. Same95 rows and all22
+score/verdict/gate columns unchanged before/after generation. Older pre-reboot
+export had stale-input data-confirmation gates and is not a valid parity baseline.
+Dedicated trace survives rerun and is linked to report SHA256. Partial HTTP
+coverage is documented; do not treat SDK calls or concurrent totals as HTTP/wall.
+No provider/TTL/score changes. Local focused177, AST/timing15 and decision1367
+passed; known report-gate whole-app AST failure remains. See
 [measurement record](docs/maintenance/20261108_auto_report_generation_measurement.md).
 Do not confuse the outer interrupted `today_queue` trace with this full report run.
 
@@ -884,20 +891,21 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**After the requested Cloud reboot, complete one automatic-news measurement.**
+**Reduce official-bulletin waiting inside apply_official_bulletins only.**
 
-The instrumentation is already pushed; do not reimplement it. Existing browser
-tab33 is the authenticated production report panel; tab35 is Cloud/GitHub login.
-Use unchanged 11-category/2-per-category, market RSS on, watched RSS off settings.
-Generate once and download the dedicated `auto_report_<id>.json` plus matching
-Markdown. Confirm completed/normal generation and loaded/disk hash agreement.
-Compare stored scores/verdicts with private `cache/report_generation_before.zip`
-(95 rows). Separate price history, macro/official sources, news/body collection
-and assembly wall time. Count instrumented remote attempts and cache misses
-separately from SDK/function calls; state incomplete HTTP coverage and cache warmth.
-Use the largest measured bottleneck to propose one bounded optimization. Preserve
-content, date/source guards, TTLs and scores/gates. NVDA's prior1m source mismatch
-and the two pre-existing test expectations remain separate documented limitations.
+This function costs7.457s within the largest generation stage (macro/official
+21.098s). Split CPI/export request/cache timings first, then implement one safe
+exact-request reuse or independent-request concurrency improvement. Preserve
+eligibility, pending/latest-period guards, vintage/source labels, application
+order, failure handling, timeouts, TTLs and all scores/gates. Prove output parity
+with frozen inputs and repeat like-for-like production generation. Current
+baseline:95 rows,11 categories,2/category,market RSS on,stock RSS off, partly warm
+prices. Dedicated JSON/Markdown/CSV parity artifacts are in ignored cache/ and
+the linked measurement record. Browser tab37 holds completed production report.
+No need to rerun the completed measurement just to begin code inspection.
+Separate pre-generation23.290s and report assembly9.538s are later targets;
+do not expand scope now. NVDA prior1m source mismatch and known old test
+expectations remain separate documented limitations.
 
 ## Evidence and Remaining Limits
 
