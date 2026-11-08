@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work: **official-bulletin independent retrieval overlap**, base
+44e5ba9f. One Customs worker overlaps CPI on owner, only for exactly one eligible
+row each; apply/persist order stays CPI -> exports -> manual fallback. Duplicate
+rows stay serial. Providers/TTL/retries/guards/sources/scores unchanged. Fixed-label
+collector/HTTP/cache/wait traces added; do not double-count bulletin_http against
+report_http.economic_api. Focused158 pass, frozen18-mode full-output/request/store
+parity, decision1367 pass140.489s, independent review clean. Report207pass/known
+old theme AST failure; additional98pass/two pre-existing Mock __name__ failures
+reproduced on baseline. Runtime commit and matched Cloud timing still pending.
+See [Bulletin overlap](docs/maintenance/20261108_official_bulletin_overlap.md).
+
 Latest bounded work: **full automatic report timing accepted in Cloud**, based on
 e56b95e0. Runtime6ac42e31/test-docs64f12040 loaded after user reboot. Measurement
 **22bf0c2dc45b47538e96953665062f70**, completed/normal, no stale modules; all100
@@ -891,21 +902,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Reduce official-bulletin waiting inside apply_official_bulletins only.**
+**Finish production acceptance of official-bulletin retrieval overlap.**
 
-This function costs7.457s within the largest generation stage (macro/official
-21.098s). Split CPI/export request/cache timings first, then implement one safe
-exact-request reuse or independent-request concurrency improvement. Preserve
-eligibility, pending/latest-period guards, vintage/source labels, application
-order, failure handling, timeouts, TTLs and all scores/gates. Prove output parity
-with frozen inputs and repeat like-for-like production generation. Current
-baseline:95 rows,11 categories,2/category,market RSS on,stock RSS off, partly warm
-prices. Dedicated JSON/Markdown/CSV parity artifacts are in ignored cache/ and
-the linked measurement record. Browser tab37 holds completed production report.
-No need to rerun the completed measurement just to begin code inspection.
-Separate pre-generation23.290s and report assembly9.538s are later targets;
-do not expand scope now. NVDA prior1m source mismatch and known old test
-expectations remain separate documented limitations.
+Push the reviewed implementation, confirm loaded/disk/local source matches, then
+repeat complete generation with the accepted settings (95 rows,11 categories,
+2/category,market RSS on,stock RSS off,partly warm prices). Compare the 7.456865s
+bulletin / 21.098s macro / 56.778s generation baseline, cache misses/HTTP and
+same-session score parity. Use dedicated full-generation JSON + matching Markdown,
+not outer Today/render-only traces. Do not alter cache TTLs or expand optimization.
+Record any actual reboot/login blocker instead of claiming production acceptance.
 
 ## Evidence and Remaining Limits
 

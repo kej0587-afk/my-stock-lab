@@ -10,6 +10,7 @@ manually transcribed ministry citation. HTML/schema changes fail closed.
 
 from copy import deepcopy
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from html.parser import HTMLParser
 import json
@@ -21,6 +22,7 @@ from urllib.parse import urlencode
 
 from stock_lab_core import economic_releases as releases
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.performance import count_event, measure, submit_with_context, timed_call
 
 register_loaded_source(__name__, __file__)
 
@@ -33,6 +35,29 @@ CUSTOMS_DETAIL_TIMEOUT = (2.0, 4.0)
 CUSTOMS_FAILURE_TTL = 180
 _CUSTOMS_FAILURES = OrderedDict()
 _CUSTOMS_LOCK = threading.Lock()
+
+
+def _bulletin_request(name, *args, **kwargs):
+    count_event(f"bulletin_http.{name}.attempt")
+    with measure("report_transport", f"bulletin_{name}_http"):
+        return releases._request(*args, **kwargs)
+
+
+def _bulletin_cached(name, key, loader, now):
+    count_event(f"bulletin_cache.{name}.lookup")
+    invoked = False
+
+    def fetch():
+        nonlocal invoked
+        invoked = True
+        count_event(f"bulletin_cache.{name}.miss")
+        return loader()
+
+    result = releases._cached(key, fetch, now)
+    if not invoked:
+        count_event(f"bulletin_cache.{name}.reuse")
+    count_event(f"bulletin_cache.{name}.{'success' if result[0] else 'unavailable'}")
+    return result
 
 
 def clear_customs_bulletin_failures():
@@ -50,9 +75,11 @@ def _customs_detail_request(params, diagnostics):
         diagnostics.update(attempted=True, from_cache=False, origin="network", http_status=None,
                            attempt_count=attempt)
         try:
-            response = releases.requests.get(
-                CUSTOMS_DETAIL_URL, params=params, timeout=CUSTOMS_DETAIL_TIMEOUT, allow_redirects=False,
-                headers={"User-Agent": "StockLab-Economic-Releases/1.0"})
+            count_event("bulletin_http.exports_detail.attempt")
+            with measure("report_transport", "bulletin_exports_detail_http"):
+                response = releases.requests.get(
+                    CUSTOMS_DETAIL_URL, params=params, timeout=CUSTOMS_DETAIL_TIMEOUT, allow_redirects=False,
+                    headers={"User-Agent": "StockLab-Economic-Releases/1.0"})
             try:
                 item["http_status"] = diagnostics["http_status"] = response.status_code
                 if response.status_code != 200:
@@ -245,6 +272,7 @@ def _customs_observation(html, entry):
     return candidates[0]
 
 
+@timed_call("report_component", "bulletin_exports_collect")
 def load_kr_exports_bulletin(now):
     """Two public endpoints, one detail-connect retry, short failure cooldown.
 
@@ -260,7 +288,7 @@ def load_kr_exports_bulletin(now):
     def fetch():
         stage, operation = "listing", "request"
         try:
-            html = releases._request(CUSTOMS_LIST_URL, text=True, diagnostics=diagnostics["listing"],
+            html = _bulletin_request("exports_listing", CUSTOMS_LIST_URL, text=True, diagnostics=diagnostics["listing"],
                                      params={"bbsId": "1362", "mi": "2891", "searchType": "sj",
                                              "searchValue": "\uc6d4\uac04 \uc218\ucd9c\uc785 \ud604\ud669", "listCo": "10"})
             operation = "parse"
@@ -286,9 +314,10 @@ def load_kr_exports_bulletin(now):
             data, error, retrieved = None, failed[2], None
             diagnostics = deepcopy(failed[3])
             cooldown = True
+            count_event("bulletin_cache.exports.failure_cooldown")
             retry_after = max(0, CUSTOMS_FAILURE_TTL - (time.monotonic() - failed[0]))
         else:
-            data, error, retrieved = releases._cached(key, fetch, now)
+            data, error, retrieved = _bulletin_cached("exports", key, fetch, now)
             _CUSTOMS_FAILURES.pop(key, None)
             if error == "request_failed:ConnectTimeout":
                 _CUSTOMS_FAILURES[key] = (time.monotonic(), now.isoformat(), error, deepcopy(diagnostics))
@@ -332,6 +361,7 @@ def load_kr_exports_bulletin(now):
     return row
 
 
+@timed_call("report_component", "bulletin_cpi_collect")
 def load_kr_cpi_bulletin(now):
     """Three bounded public requests; no configured credentials are accessed.
 
@@ -351,10 +381,10 @@ def load_kr_cpi_bulletin(now):
     diagnostics = {name: {"http_status": None} for name in ("metadata", "current", "year_ago")}
 
     def fetch():
-        meta = releases._ecos_metadata(releases._request(metadata_url, diagnostics=diagnostics["metadata"]), "KR_CPI")
+        meta = releases._ecos_metadata(_bulletin_request("cpi_metadata", metadata_url, diagnostics=diagnostics["metadata"]), "KR_CPI")
         levels = {}
         for name, (first, last) in windows.items():
-            payload = releases._request(urls[name], diagnostics=diagnostics[name])
+            payload = _bulletin_request("cpi_" + name, urls[name], diagnostics=diagnostics[name])
             values = releases._ecos_levels(payload, "KR_CPI", meta["unit"], first, last)
             if not values:
                 raise releases._Unavailable("ecos_cpi_" + name + "_months_unavailable")
@@ -364,7 +394,7 @@ def load_kr_cpi_bulletin(now):
             raise releases._Unavailable("ecos_cpi_exact_year_ago_unavailable")
         return {"levels": levels, "unit": meta["unit"], "request": deepcopy(diagnostics)}
 
-    data, error, retrieved = releases._cached(("ecos_public_cpi", end), fetch, now)
+    data, error, retrieved = _bulletin_cached("cpi", ("ecos_public_cpi", end), fetch, now)
     row = releases._row("KR_CPI", "%", "YoY", "Bank of Korea ECOS", urls["current"], now,
                         seasonal_adjustment="NSA", series_id="901Y009/0", retrieved_at=retrieved,
                         value_kind="calculated_from_official_levels", official_bulletin_fetch=True,
@@ -385,20 +415,36 @@ def load_kr_cpi_bulletin(now):
     return row
 
 
+def _cpi_candidate(row):
+    return (row.get("indicator") == "KR_CPI" and row.get("basis") == "YoY" and row.get("unit") == "%"
+            and row.get("value_kind") != "supplied_event" and row.get("status") != "pending")
+
+
+def _cpi_complete(row, now):
+    return (row.get("status") == "released" and row.get("actual") is not None
+            and row.get("period") == releases._shift(now.strftime("%Y-%m"), -1)
+            and row.get("previous") is not None and row.get("previous3mean") is not None)
+
+
+def _exports_fetch_needed(row, now):
+    return (row.get("indicator") == "KR_EXPORTS" and bool(row.get("official_bulletin_fetch"))
+            and row.get("basis") == "YoY" and row.get("unit") == "%"
+            and row.get("value_kind") != "supplied_event" and row.get("status") != "pending"
+            and not (row.get("actual") is not None and row.get("status") == "released"
+                     and row.get("period", "") >= releases._shift(now.strftime("%Y-%m"), -1)))
+
+
 def _apply_live_cpi(rows, now):
     from stock_lab_core.economic_cache import retain_successful_observations
 
     for row in rows:
-        if (row.get("indicator") != "KR_CPI" or row.get("basis") != "YoY" or row.get("unit") != "%"
-                or row.get("value_kind") == "supplied_event" or row.get("status") == "pending"):
+        if not _cpi_candidate(row):
             continue
         if not row.get("official_bulletin_fetch"):
             if row.get("actual") is None:
                 row.update(fallback_mode="unavailable", bulletin_collection_error="cpi_primary_automatic_fetch_not_enabled")
             continue
-        if (row.get("status") == "released" and row.get("actual") is not None
-                and row.get("period") == releases._shift(now.strftime("%Y-%m"), -1)
-                and row.get("previous") is not None and row.get("previous3mean") is not None):
+        if _cpi_complete(row, now):
             continue
         live = load_kr_cpi_bulletin(now)
         if live["actual"] is not None and (row.get("actual") is None or live["period"] >= row.get("period", "")):
@@ -427,20 +473,15 @@ def _apply_live_cpi(rows, now):
                 row["bulletin_not_applied"] = "newer_observation_preserved"
 
 
-def _apply_live_exports(rows, now):
+def _apply_live_exports(rows, now, *, _loader=None):
     from stock_lab_core.economic_cache import retain_successful_observations
 
     for row in rows:
-        if (row.get("indicator") != "KR_EXPORTS" or not row.get("official_bulletin_fetch")
-                or row.get("basis") != "YoY" or row.get("unit") != "%"
-                or row.get("value_kind") == "supplied_event" or row.get("status") == "pending"):
-            continue
-        if (row.get("actual") is not None and row.get("status") == "released"
-                and row.get("period", "") >= releases._shift(now.strftime("%Y-%m"), -1)):
+        if not _exports_fetch_needed(row, now):
             continue
         # Restore the automatic provider's last success on a transient failure,
         # before considering the explicitly dated manual fallback.
-        live = retain_successful_observations([load_kr_exports_bulletin(now)], now)[0]
+        live = retain_successful_observations([(_loader or load_kr_exports_bulletin)(now)], now)[0]
         if live.get("status") == "stale":
             live["bulletin_collection_error"] = live.get("collection_error") or live.get("missing_reason") or "collection_failed"
         if (live["actual"] is not None
@@ -462,8 +503,24 @@ def _apply_live_exports(rows, now):
 def apply_official_bulletins(rows, now):
     now = releases._clock(now)
     result = deepcopy(rows)
-    _apply_live_cpi(result, now)
-    _apply_live_exports(result, now)
+    cpi_needed = sum(_cpi_candidate(row) and bool(row.get("official_bulletin_fetch"))
+                     and not _cpi_complete(row, now) for row in result)
+    exports_needed = sum(_exports_fetch_needed(row, now) for row in result)
+    if cpi_needed == exports_needed == 1:
+        # Only retrieval overlaps. Row mutation and last-success persistence stay
+        # CPI -> exports -> manual fallback on the owner thread. Duplicate rows
+        # retain their serial cache/diagnostic behavior rather than sharing a row.
+        count_event("bulletin_prefetch.exports.started")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = submit_with_context(executor, load_kr_exports_bulletin, now)
+            _apply_live_cpi(result, now)
+            with measure("report_component", "bulletin_exports_wait"):
+                exported = pending.result()
+            _apply_live_exports(result, now, _loader=lambda _: exported)
+    else:
+        count_event("bulletin_prefetch.serial")
+        _apply_live_cpi(result, now)
+        _apply_live_exports(result, now)
     try:
         facts = json.loads(FACTS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
