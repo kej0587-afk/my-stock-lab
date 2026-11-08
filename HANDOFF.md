@@ -29,8 +29,18 @@ precision default, weekly/monthly guard, scores/TTL unchanged. Focused100pass;
 ~14% substage reduction with exact guarded outputs; not Cloud/full speedup.
 Review found no concrete scoped issue. Baseline decision1334pass; prices265pass/
 one pre-existing DART whole-app AST mismatch. Final decision1367pass133.850s;
-prices265pass/same pre-existing failure52.003s, stable sources. Deployment
-acceptance pending. Private evidence cache/perf_20261108_*.
+prices265pass/same pre-existing failure52.003s, stable sources. **d1d17690 pushed
+and accepted in Cloud**. After full run `f3f000044b2f4119ab93d94a12a84e13`
+12:31KST, same95symbols:79.759s/script89.212s; indicator builds380->285. KR
+421/437misses,391HTTP/30reuses; analysts70/73warm. Prices53.189s, indicators
+15.755s, external16.349s active(overlap). Observed5.499s reduction is not all
+patch effect: flow refresh20.735->16.365s, stock signals21.534->22.403s.
+Before/after11score/verdict/gate columns(1045values) identical; common columns
+differ only calculation/analyst timestamps. App loaded/disk/local hashes match,
+restart false/stale empty; no reboot. Initial old browser session stalled in
+asset-page loading, fresh session recovered; cause unproven/outside Today timer.
+Private evidence cache/perf_20261108_*. Application work complete, current
+verification update is docs-only.
 See [Today MTF performance](docs/maintenance/20261108_today_mtf_performance.md).
 
 Latest task: **Amazon individual-company cash drivers**, basef59f7c41.
@@ -771,13 +781,17 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Finish post-deployment full Today acceptance of the daily MTF optimization.**
+**Connect selected-company analysis to current market/sector evidence.**
 
-Compare completed measurement and95-symbol input/score export to the recorded
-85.258s baseline, identify cache/network differences, verify285 vs380 indicator
-builds and loaded code. Do not claim a controlled full speedup. After acceptance,
-return to the common selected-company market-context design, not another issuer
-exception. KR prose-only extension remains deferred.
+The current company question receives only a ticker; the general cash reader
+already handles supported US-GAAP packets but lacks current sector/news context.
+Reuse existing report/sector snapshots to connect dated observations to that
+reader: what changed -> possible company exposure -> observed financial support
+or contradiction -> next check. Keep facts, interpretation and unconfirmed causes
+distinct; no extra default network work, fabricated segment/forecast values, or
+score/gate changes. Verify at least two ordinary supported companies plus a
+missing/unsupported case. Do not add another dated issuer-only exception.
+KR8quarter expansion and arbitrary ticker search remain separate later scopes.
 
 ## Evidence and Remaining Limits
 

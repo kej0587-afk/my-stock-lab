@@ -20,7 +20,7 @@ ignored `cache/perf_20261108_before.*`.
 | Decisions | 8.664 | 11.419 |
 
 Category active unions can overlap; sums are not additive wall time. Prices are
-largest. Summary38.721s; stock signals21.53s; flow refresh20.73s; analyst1.84s.
+largest. Summary38.719s; stock signals21.53s; flow refresh20.73s; analyst1.84s.
 KR HTTP389 requests,105.41s concurrent sum/30.38s union. History lookup435:
 419 misses(96.3%),16 prior-cache reuses;419 reader calls =389 HTTP +30 exact
 request reuses. Price frame lookups164/163misses/1reuse;548 preloaded frame hits.
@@ -67,5 +67,48 @@ The optimization avoids95 daily rebuilds when all95 inputs are valid.
   `cache/refactor_checks/decision_e8m_v6sv`, `prices_xkoi2svn`. Independent
   read-only review found no concrete scoped correctness/parity/deployment issue.
 
-Deployment and post-change full run pending; do not infer production improvement
-from the local benchmark.
+## Production acceptance
+
+Application **d1d17690** committed/pushed. After deployment an old browser session
+remained on Running in the asset page; Stop did not produce a visible response.
+A fresh authenticated session opened normally. This navigation delay is not
+included in Today timing and its server cause is unproven; no reboot was needed.
+
+Completed full calculation12:31:27–12:32:46 KST, ID
+`f3f000044b2f4119ab93d94a12a84e13`, **79.759s**/script89.212s. Same95 symbols,
+81registered/12flow candidates and full-flow setting. The prior full calculation
+was17minutes earlier, beyond the900s KR provider TTL. Actual events confirm
+421/437KR cache misses(96.3%),16cache reuses,391HTTP and30exact request reuses.
+Prices164lookups/163misses,548preloaded hits; analysts still70reuses/3misses.
+This remains mixed-cache, not a fully cold app. No instrumented errors.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Whole Today, seconds | 85.258 | 79.759 |
+| Prices active union, seconds | 54.923 | 53.189 |
+| Indicators active union, seconds | 19.029 | 15.755 |
+| External active union, seconds | 22.189 | 16.349 |
+| MTF calls | 95 | 95 |
+| Indicator builds | 380 | **285** |
+| Summary phase, seconds | 38.719 | 36.549 |
+| Stock-signal phase, seconds | 21.534 | 22.403 |
+| Flow-refresh phase, seconds | 20.735 | 16.365 |
+| Analyst phase, seconds | 1.839 | 1.647 |
+
+Observed whole time decreased5.499s, but flow/network also differed (KR389->391
+requests, Yahoo chart137->135; stock-signal wall actually increased). This is
+**not a controlled5.5s patch speedup**. The causal fixed-input evidence is the
+local~14% MTF reduction and the removed95 indicator builds in production.
+
+Before/after master exports have identical95ticker sets and all1,045values in
+11score/grade/verdict/gate columns. Across common columns only calculation
+timestamps(95rows) and analyst-query timestamps(3rows) differ. No claim of
+whole ZIP byte identity. Local/loaded/disk app SHA-256 all
+`582907764c7087a2cd07d1013fbb58000228c466f8a69cd2565fc9738f3fe4c0`;
+stale modules empty/restart false. Private proof:
+`cache/perf_20261108_after.json`, `_after.zip`, `_acceptance.json`, `_after.png`.
+
+Prices remain the largest measured category. Do not extend TTLs, remove
+data coverage, or merge distinct date-range requests to promise a1minute run.
+The agreed next step returns to a shared company/market-context analysis path;
+further performance changes require a distinct measured opportunity.
