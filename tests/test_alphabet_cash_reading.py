@@ -82,6 +82,7 @@ def test_selected_company_ui_download_and_expiry():
     assert a.session_state.calls == []
     a.button[0].click().run()
     assert not a.exception and a.session_state.calls == ['GOOGL']
+    assert len(a.table) == 2  # Explanatory prose wraps rather than clipping in a grid.
     text = '\n'.join(x.value for x in a.markdown)
     assert '121.4%' in text and '다음 실적에서 확인할 조건' in text
     assert '5개 항목 중 3개 확인' not in text and '단순차액·투자지출 비율 보류' not in text

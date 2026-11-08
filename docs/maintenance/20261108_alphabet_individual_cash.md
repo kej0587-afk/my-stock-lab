@@ -38,6 +38,9 @@ remain unchanged.
   rows. Generic cash/coverage prose is replaced only when recovery succeeds.
   Income reading stays generic; original eight-quarter table remains expandable
   with explicit pre-recovery hold label. Source/raw-quality tables remain.
+- First Cloud visual check found long driver/check cells clipped in dataframe
+  grids. Changed only these explanatory tables to wrapping static tables;
+  numeric comparison grid stays unchanged. No calculation or data change.
 - Download adds a separate alphabet_cash_review including narrative, source
   dates, values, change calculations and recovery audit. Original packet unchanged.
 - Before decision gate:1334pass103.321s(decision_shuvalo0).
