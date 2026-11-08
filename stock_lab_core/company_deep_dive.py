@@ -29,7 +29,7 @@ def company_options(universe):
 def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                              fetch_facts, load_kr, kr_identity_loader=None,
                              kr_store_factory=None, kr_extract_metrics=None, is_demo=False, now=None,
-                             market_context=None):
+                             market_context=None, cash_release_loader=None):
     st.subheader('기업 심층분석')
     st.caption('보유·관심 개별기업을 선택해 실적 → 현금 창출 → 투자 부담 → 다음 확인 순서로 봅니다. 시장 시황과 기존 점수·판정은 바뀌지 않습니다. ETF는 기업 재무 비교에서 제외됩니다.')
     if not owner or is_demo:
@@ -65,6 +65,9 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
                           load_quarter_evidence(symbol, resolve_cik=resolve_cik, fetch_facts=fetch_facts, now=checked))
             st.session_state[prefix] = dict(ticker=symbol, kind='kr' if kr else 'us', packet=packet,
                                             checked_at=checked.isoformat())
+            if not kr and cash_release_loader:
+                with st.spinner('보류된 현금흐름과 실적발표 원문 대조 중...'):
+                    st.session_state[prefix]['cash_recovery'] = cash_release_loader(packet)
         except Exception as error:
             st.warning('DART 자료 연결 실패 · 이전 기업 자료를 대신 표시하지 않습니다.' if kr else _safe_error(error))
     if not kr and not configured:
@@ -117,6 +120,17 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         cash_review = alphabet_cash_reading(packet)
         amazon_review = amazon_cash_reading(packet)
         readings = company_cash_reading(packet)
+        from stock_lab_core.sec_cash_recovery import recovered_cash_reading
+        recovery = bundle.get('cash_recovery') or {}
+        recovered = recovered_cash_reading(packet, recovery)
+        if recovered:
+            readings = [recovered if item['검토축']=='현금 창출·투자' else item for item in readings]
+            readings = [dict(item, **{'확인된 사실':'자동 추출 기준: ' + item['확인된 사실'] + ' 현금 2항목은 아래 실적발표 원문 대조로 별도 복구.'})
+                        if item['검토축']=='자료 범위' else item for item in readings]
+            st.caption('자동 추출의 누적차감 보류를 유지하고, 같은 기간의 실적발표 분기값·누적값을 대조한 근거를 별도로 연결했습니다.')
+            st.markdown('[대조한 SEC 실적발표 원문](' + recovery['source_url'] + ')')
+        elif recovery.get('status')=='held':
+            st.caption('실적발표 원문 대조 보류: ' + recovery.get('reason','source_unavailable') + ' · 자동 추출 보류를 유지합니다.')
         if cash_review:
             render_alphabet_cash_reading(st, cash_review)
             download_bundle = dict(bundle, alphabet_cash_review=cash_review)
@@ -132,7 +146,11 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         render_company_market_reading(st, market_review, market_status)
         financial, quality, sources = quarter_tables(packet)
         if financial:
-            if cash_review:
+            if recovered:
+                with st.expander('원자료 8분기·자동 추출 보류 상태'):
+                    st.caption('원자료는 수정하지 않았습니다. 위 최신 현금 해석만 실적발표 원문과 추가 대조했습니다.')
+                    st.dataframe(financial, hide_index=True, width='stretch')
+            elif cash_review:
                 with st.expander('원자료 8분기·복구 전 보류 상태'):
                     st.caption('자동 추출 원자료입니다. 위 현금 비교는 원문 대조로 별도 복구했으며 원자료·점수에는 합산하지 않습니다.')
                     st.dataframe(financial, hide_index=True, width='stretch')

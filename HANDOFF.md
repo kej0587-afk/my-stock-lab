@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **DDOG/NVDA held cash-flow reconciliation**, base `7dd38ffe`.
+10-Q cash tables supply YTD only; existing different-filing hold is justified.
+Shared explicit-query8-K99.1 parser independently verifies BOTH quarter and YTD
+against held operands. No issuer/date constants, raw-packet/score/gate/TTL/DB changes.
+DDOG software development cost is separate from PPE; company FCF distinguished
+from simple OCF-minus-PPE. NVDA productive-assets scope stays broad. Export adds
+source-bound `cash_recovery`; raw table/status preserved. Local original documents
+and dynamic official discovery verified both. Focused208pass14.11s; baseline
+decision1367pass133.454s; final1367pass132.291s, stable source hashes.
+Independent review findings closed. Commit/push and Cloud acceptance pending.
+See [SEC cash recovery](docs/maintenance/20261108_sec_cash_recovery.md).
+
 Latest task: **selected-company market/sector context**, base `9f4451ed`.
 Reuses account-scoped report snapshot, existing static sector proxies and validated
 company financial readings. No implicit network collection, score/gate/TTL changes.
@@ -803,17 +815,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Verify generic cumulative cash holds against DDOG/NVDA original filings.**
+**Generic prior-year cash-burden comparison for the selected company.**
 
-The actual Cloud packets in the latest record hold latest OCF/cash CAPEX because
-cumulative operands use different submissions. Determine whether the common
-extractor missed same-filing anchors or whether scope/restatement differences
-require continued holds. Recover only provable comparable operands through the
-shared parser/validator with source provenance and counterexample tests. No dated
-issuer-only exception, automatic extra network work, or score/gate changes.
-Reliable operands precede general year-over-year cash-burden interpretation.
-KR8quarter and arbitrary ticker search remain separate scopes. Preserve latest
-performance record; no unmeasured speed claim.
+After current DDOG/NVDA release recovery is accepted in Cloud, compare a matched
+prior-year quarter using validated same-scope sources only. Explain OCF/investment
+change and software/lease scope; hold incompatible or missing operands. No dated
+issuer exception, background network work, score/gate change or unmeasured speed
+claim. Historical8quarter recovery, KR8quarter and arbitrary ticker search remain
+separate scopes.
 
 ## Evidence and Remaining Limits
 
