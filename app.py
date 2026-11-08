@@ -7161,7 +7161,7 @@ def build_precision_timeframe_snapshot(label: str, df: pd.DataFrame, *, _indicat
 
 
 @timed_call("indicators")
-def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None) -> dict:
+def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *, _long_price_df=None, _include_daily_snapshot=True) -> dict:
     raw_long = pd.DataFrame()
     for period in ("10y", "max", "5y", "2y"):
         try:
@@ -7182,7 +7182,7 @@ def build_precision_multi_timeframe_pack(ticker: str, daily_df: pd.DataFrame, *,
     monthly_df = build_indicators(monthly_raw.tail(180)) if not monthly_raw.empty else pd.DataFrame()
 
     return {
-        "일봉": {"df": daily_df, "snapshot": build_precision_timeframe_snapshot("일봉", daily_df)},
+        "일봉": {"df": daily_df, "snapshot": build_precision_timeframe_snapshot("일봉", daily_df) if _include_daily_snapshot else {}},
         "주봉": {"df": weekly_df, "source_kind": "daily_fallback" if used_daily_fallback else "long_history", "source_asof": "" if used_daily_fallback else frame_last_date(raw_long), "snapshot": build_precision_timeframe_snapshot("주봉", weekly_df, _indicators_ready=True)},
         "월봉": {"df": monthly_df, "source_kind": "daily_fallback" if used_daily_fallback else "long_history", "source_asof": "" if used_daily_fallback else frame_last_date(raw_long), "snapshot": build_precision_timeframe_snapshot("월봉", monthly_df, _indicators_ready=True)},
     }
@@ -20891,7 +20891,9 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         if pattern_issue:
             logging.warning("Today queue pattern overlay rejected: ticker=%s", tkr)
         try:
-            mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df, _long_price_df=_long_price_df)
+            # Today consumes only the weekly/monthly guard. Precision screens
+            # retain the default daily narrative, including its original rebuild.
+            mtf_pack = build_precision_multi_timeframe_pack(tkr, pattern_df, _long_price_df=_long_price_df, _include_daily_snapshot=False)
             c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_p)
         except Exception:
             c["mtf_bias_label"] = "자료부족"

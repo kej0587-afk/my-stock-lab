@@ -33,6 +33,8 @@ class StripAddedTiming(ast.NodeTransformer):
 
 
 def strip_added_timing(node):
+    from tests.mtf_ast_contract import before_optional_daily_snapshot
+    node = before_optional_daily_snapshot(node)
     if isinstance(node, ast.FunctionDef) and node.name == 'render_image_theme_flow_section':
         from tests.test_theme_selection import inline_theme_selection
         node = inline_theme_selection(node)

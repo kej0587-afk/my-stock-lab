@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **full Today bottleneck measurement / unused daily MTF snapshot**,
+basec2d9397e. Actual full Cloud95-symbol run `c0463d50817d4d8faa53ef2c400a2f28`
+85.258s/script94.910s; prices54.923s, indicators19.029s, external22.189s active
+unions(overlap). KR419misses/435lookups,389HTTP/30exact reuses; analysts70/73
+warm. Not fully cold. Removed only unused daily MTF narrative in Today workers;
+precision default, weekly/monthly guard, scores/TTL unchanged. Focused100pass;
+20-case local MTF sequential.819337->.703249s, six-worker.870645->.747107s,
+~14% substage reduction with exact guarded outputs; not Cloud/full speedup.
+Review found no concrete scoped issue. Baseline decision1334pass; prices265pass/
+one pre-existing DART whole-app AST mismatch. Final decision1367pass133.850s;
+prices265pass/same pre-existing failure52.003s, stable sources. Deployment
+acceptance pending. Private evidence cache/perf_20261108_*.
+See [Today MTF performance](docs/maintenance/20261108_today_mtf_performance.md).
+
 Latest task: **Amazon individual-company cash drivers**, basef59f7c41.
 Selected AMZN connects source-bound Q32026 cash figures, gross/netcash distinction,
 AWS/regional PP&E net additions(non-cash included), other investment cash and next
@@ -757,14 +771,13 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Measure actual full Today bottlenecks before one targeted optimization.**
+**Finish post-deployment full Today acceptance of the daily MTF optimization.**
 
-User explicitly wants performance work after Amazon, so pause issuer expansion.
-Run the full calculation with expired caches, preserve input universe/measurement
-ID, separate price/indicator/external work time and wall time, requests/misses and
-lock waits. Choose one measured bottleneck; preserve results and TTLs. Render-only
-diagnostics cannot stand in for a full calculation or support a speed claim.
-KR prose-only extension remains deferred.
+Compare completed measurement and95-symbol input/score export to the recorded
+85.258s baseline, identify cache/network differences, verify285 vs380 indicator
+builds and loaded code. Do not claim a controlled full speedup. After acceptance,
+return to the common selected-company market-context design, not another issuer
+exception. KR prose-only extension remains deferred.
 
 ## Evidence and Remaining Limits
 

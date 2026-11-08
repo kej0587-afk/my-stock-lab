@@ -3,6 +3,8 @@ import ast
 
 
 def before_msft_cash_report(node):
+    from tests.mtf_ast_contract import before_optional_daily_snapshot
+    node = before_optional_daily_snapshot(node)
     if node.name == 'render_today_market_memo_panel':
         node.body = [s for s in node.body if not (
             isinstance(s, ast.ImportFrom) and s.module == 'stock_lab_core.company_deep_dive'

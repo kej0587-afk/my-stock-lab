@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 SCOPES = {
     "decision": (
-        "test_source_flow_row", "test_flow_connection",
+        "test_source_flow_row", "test_flow_connection", "test_today_mtf_snapshot",
         "test_decision_golden_snapshot", "test_decision_refactor_parity",
         "test_decision_inputs_refactor", "test_decision_signals_refactor",
         "test_decision_finalization_refactor",
