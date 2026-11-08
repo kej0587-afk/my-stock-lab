@@ -1,6 +1,7 @@
 """A reading path from sector prices to issuer research; no I/O or trade scores."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import re
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, first, number, records, safe_link, stamp, text
 
@@ -153,6 +154,11 @@ def _evidence_lines(selected, context, news, now):
             at = stamp(first(article, 'published_at', 'published'))
             url = safe_link(article.get('link'))
             if not now or not at or at > now or not url:
+                continue
+            # Incidental sector words in listing notices or evergreen columns
+            # do not supply evidence about that sector's demand/earnings shift.
+            if re.search(r'신규\s*상장|상장\s*예비|기업\s*공개|\bIPO\b|칼럼|사설|기고|정석|\b(?:opinion|explainer|column)\b',
+                         text(article.get('title')), re.I):
                 continue
             if article.get('market_context_only'):
                 common.append((row, article, at, url))

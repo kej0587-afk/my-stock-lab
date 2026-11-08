@@ -155,6 +155,8 @@ def test_relative_defense_is_not_an_improving_leader_and_dates_are_filtered():
     {'market':'KR'}, {'session_date':'2026-11-05'}, {'news_bucket':'next_session_news'},
     {'published_at':'2026-11-09T00:00:00Z'}, {'published_at':''}, {'link':'javascript:alert(1)'},
     {'title':'Chip stocks futures poised to rise ahead of open'},
+    {'title':'반도체 부품 업체 코스닥 신규상장, 거래 개시'},
+    {'title':'반도체 주가 오르면 매수? [투자 정석]'},
 ])
 def test_story_rejects_news_outside_session_or_source(changes):
     out='\n'.join(leadership_lines(packet([row('SOXX')]),[],{},[article(**changes)],'2026-11-08T00:00:00Z'))
