@@ -47,7 +47,22 @@ collection changes. Follow-up is actual bottleneck measurement, not another issu
 - Decision1334pass106.863s(decision_gp8vmulr), stable sources. Independent reviewer
   caught unconditional growth prose when prior is held; changed that one sentence
   to neutral current-period wording and added regression coverage after the gate.
-  Production acceptance pending. No full-suite/full-Today/performance claims.
+  Final targeted121pass7.61s; reviewer confirmed the finding closed.
+- Applicationedd125db pushed/accepted in authenticated Cloud. Actual11:49:11KST
+  AMZN query and downloaded review:8quarter packet matches fresh local SEC except
+  collection timestamp; complete narrative equals local computation. Original
+  raw packet preserved; separate amazon_cash_review verified in download.
+- Visual review confirms cash-vs-noncash labels, dates/links, readable wrapped
+  explanation/next-check tables. No layout correction required in production.
+- Before11:44/after11:49ZIP: same95tickers and14core score/grade/verdict/gate fields
+  identical(1,330values). Not whole-ZIP identity or fresh full calculation.
+- Diagnosticedd125db: amazon_cash_reading/company_deep_dive loaded/disk/Git hashes
+  match, restart_required false/stale_modules empty; no reboot.11.012s is render_only,
+  not a full Today or SEC-only measure and not evidence of speed improvement.
+- Proof ignored under cache/amazon_*: source HTML/hash/numeric acceptance, fresh
+  SEC packet, local and Cloud narratives, before/afterZIP, score acceptance,
+  loaded-module diagnostic and screenshots. No private account data committed.
+  No full-suite/full-Today/performance claim.
 
 ## Next bounded task
 

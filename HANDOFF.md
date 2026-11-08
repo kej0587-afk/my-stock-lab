@@ -27,10 +27,19 @@ DB/TTL/default collection unchanged; download adds separate narrative. Baseline
 decision1334pass103.788s; focused121pass8.17s. Fresh local SEC and original HTML
 cash/segment rows verified. Decision1334pass106.863s; reviewer found unconditional
 growth wording with missing prior, corrected to neutral current-period wording.
-Production deployment/acceptance pending.
+Final focused121pass7.61s; reviewer confirmed finding closed. Applicationedd125db
+pushed/accepted in authenticated Cloud. Actual11:49KST AMZN query:8quarter packet
+matches fresh local SEC except collection timestamp; full narrative matches local,
+raw packet unchanged. Readable wrapped explanation/check tables, cash-vs-noncash
+labels, source links and download verified. Before11:44/after11:49ZIP: same95tickers
+and14score/grade/verdict/gate fields identical(1,330values); not whole-ZIP identity
+or full recalculation. Diagnosticedd125db: new module and company view loaded/disk/
+commit hashes match, restart false/stale empty, no reboot.11.012s render_only is
+not full Today/SEC timing or a speed improvement. Private proof cache/amazon_*.
+Dated2026Q3 narrative, not automatic new-quarter transcript/forecast generation.
 See [Amazon individual cash](docs/maintenance/20261108_amazon_individual_cash.md).
 
-Latest task: **Alphabet individual-company cash reading**, basec7d4a5fe.
+Previous task: **Alphabet individual-company cash reading**, basec7d4a5fe.
 Reuses verified Q3 recovery, same cash checks as Big Tech mode; generic packets,
 scores/gates/DB/TTL/default market fetching unchanged. Selected GOOG/GOOGL shows
 cash burden summary, source-dated driver table and next-check conditions. Separates
