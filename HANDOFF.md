@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest task: **on-demand same-period Big Tech cash comparison**, base8736d90e.
+Company mode compares held/watch MSFT/AMZN/Alphabet/META with exact calendar
+quarters; cash definitions separated, no totals/rankings. YoY requires same
+comparative filing; ratios need positive OCF. Fact/interpretation/next-check prose
+does not assert AI-specific demand or explain current prices. No implicit market
+fetches, score/gate/TTL/DB edits. Owner/selection-scoped6h display; explicit queries.
+Baseline decision1334pass100.924s; final1334pass106.109s. Focused90pass7.03s.
+Report207pass/one same historical theme-selection failure45.423s. Reviewer's two
+period/prose findings fixed and tested. Live local MSFT/AMZN/GOOGL8quarter requests
+succeeded: commonJul-Sep2026 versusJul-Sep2025. MSFT/AMZN cash burden increases;
+Alphabet withheld due cross-filing cumulative subtraction. No substitution.
+Cloud before ZIP saved privately(cache/bigtech_before.zip); application deployment
+and live comparison acceptance pending this commit. No speed/full-suite claims.
+See [Big Tech cash comparison](docs/maintenance/20261108_bigtech_cash_comparison.md).
+
 Latest task: **market leadership reading and issuer questions**, base `cf84af2d`.
 User clarified market rotation/semiconductor/Big Tech purpose, reprioritizing the
 pending KR prose extension. Reuses existing rotation calculation once; adds actual
@@ -674,12 +689,12 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Compare selected Big Tech cash generation and investment on demand.**
+**Reconcile Alphabet's withheld latest/prior-year Q3 cash comparison.**
 
-Reuse existing SEC8-quarter loader for selected held/watch companies. Align fiscal
-periods and scope, separate cash PP&E from leases/commitments and hold missing
-comparisons. No implicit default-report fetches, valuation/price prediction or
-score/gate changes. The KR prose-only extension is deferred, not completed.
+Check original comparative filings for the cross-filing cumulative difference.
+Recover report-only figures only with proven same-period/scope reconciliation;
+otherwise retain the hold. No generic parser/score/gate/DB changes. KR prose-only
+extension remains deferred, not completed. Finish pending Cloud acceptance first.
 
 ## Evidence and Remaining Limits
 

@@ -39,6 +39,11 @@ def render_company_deep_dive(st, *, universe, owner, configured, resolve_cik,
         st.info('보유·관심목록에 분석할 개별기업이 없습니다.')
         return
     prefix = 'market_company_' + sha256(str(owner).strip().lower().encode()).hexdigest()[:20]
+    if st.radio('기업 분석 방식', ['개별기업', '빅테크 같은 기간 비교'], horizontal=True, key=prefix+'_mode') == '빅테크 같은 기간 비교':
+        from stock_lab_core.bigtech_cash_view import render_bigtech_comparison
+        render_bigtech_comparison(st, options=options, prefix=prefix, configured=configured,
+                                 resolve_cik=resolve_cik, fetch_facts=fetch_facts, now=now)
+        return
     selection_key = prefix + '_selection'
     if st.session_state.get(selection_key) not in ['', *options]:
         st.session_state[selection_key] = ''
