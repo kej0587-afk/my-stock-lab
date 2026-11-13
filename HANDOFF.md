@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base f56454dc): CPI missing comparison metadata
+and latest preliminary Korean exports. See
+`docs/maintenance/20261113_economic_freshness.md`. No investment thresholds changed.
+Official October CPI YoY is unavailable because October 2025 indexes are absent;
+do NOT synthesize a YoY or replace it with a cached September rate. Release-date
+fallback is exact-period, source-verified and expires; automatic BLS HTML access
+still returns 403. Korean exports now discover the ministry's newer preliminary
+month, with final/preliminary separation and strict no-estimation parsing.
+Focused economic/calendar tests: 232 passed. Local production renderer verified.
+Final immutable-source decision gate: 1367 passed (127.564s). Local browser confirmed
+the production renderer with live public inputs. Cloud deployment check pending.
+Exactly one next bounded task: audit current market-mode input freshness and
+gate components/release conditions, without changing investment thresholds.
+SOXL channel/timing review follows that audit, not part of this data patch.
+
 Latest bounded work (2026-11-13, after 500c41e1): report input availability and
 financing-ad filtering. See `docs/maintenance/20261113_report_input_status.md`.
 Market-only reports explicitly omit account claims; connected reports retain

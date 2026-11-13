@@ -763,6 +763,10 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         actual = row.get("actual")
         state = text(row.get("status"))
         actual_text = f"{actual}{unit}" if actual is not None else "발표 예정" if state in {"scheduled", "pending", "예정"} else "미수집"
+        if row.get("official_comparison_unavailable") and actual is None:
+            actual_text = collection_status(row)
+        if row.get("data_vintage") == "preliminary_bulletin" and actual is not None:
+            actual_text += " · 공식 잠정치(확정치와 구분)"
         if state == "stale":
             actual_text += f" · 수집 실패, 마지막 성공: {row.get('period', '')} ({kst_time(row.get('last_success_at'))})"
             missing.append(f"{indicator_names.get(row.get('indicator'), row.get('indicator'))}: {collection_status(row)} · 마지막 성공값 표시")
@@ -780,6 +784,10 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
         release_at = text(row.get("release_at"))
         if release_at:
             label += " · 발표 " + (release_at + " (시각 미제공)" if row.get("release_precision") == "date" else kst_time(release_at))
+            if row.get("release_metadata_mode") == "verified_snapshot":
+                label += " · 공식 발표문 확인일자 보완"
+                release_notes.append("발표일 보완: " + citation(dict(title=row.get("release_source"), source_url=row.get("release_source_url")))
+                                     + " · 해당 기준월만 적용한 검증 자료이며, 일정 자동 조회 복구를 뜻하지 않습니다.")
         if row.get("actual_minus_forecast") is not None:
             surprise = number(row["actual_minus_forecast"])
             actual_text += f" (예상대비 {surprise:+.2f}{' %p' if unit == '%' else ' ' + unit})"
@@ -810,7 +818,9 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             configured = row.get("api_key_configured")
             reason = collection_status(row) + (" · 키 감지됨" if configured is True else " · 키 미감지" if configured is False else "")
             missing.append(indicator_names.get(text(row.get("indicator")), text(row.get("indicator"))) + ": " + reason)
-        if row.get("indicator") == "KR_EXPORTS" and number(row.get("raw_actual")) is not None:
+        if row.get("indicator") == "KR_EXPORTS" and row.get("data_vintage") == "preliminary_bulletin":
+            release_notes.append(f"한국 수출 {row.get('period')}: 공식 잠정치 · {row.get('raw_actual')} {row.get('raw_unit')} · 전년비 {row.get('actual')}%. 전년 금액을 역산하거나 확정치로 간주하지 않습니다.")
+        elif row.get("indicator") == "KR_EXPORTS" and number(row.get("raw_actual")) is not None:
             release_notes.append(f"수출 원자료 검산: {row.get('period')} {row['raw_actual']:,.1f} / {row.get('raw_year_ago_period')} {row.get('raw_year_ago')} {row.get('raw_unit', '')}; (당월/전년동월−1)×100. 위 출처의 수록월·수정치 기준이며 속보치와 별도입니다.")
         if row.get("indicator") == "US_RETAIL_SALES":
             meta = row.get("request_metadata") or {}
@@ -835,7 +845,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
                                  + " · " + collection_status(row)
                                  + (" · 마지막 자동 성공값 표시" if row.get("last_success_at") else ""))
     if release_notes:
-        lines.extend(["", *release_notes])
+        lines.extend(["", *dict.fromkeys(release_notes)])
     consensus_status = context.get("consensus_diagnostics") or {}
     if consensus_status:
         lines.extend(["", f"컨센서스 연결: {consensus_status.get('attached_count', 0)}개 · "

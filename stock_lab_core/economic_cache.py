@@ -27,6 +27,8 @@ _FIELDS = {"indicator", "period", "actual", "previous", "unit", "basis", "source
 
 def _key(row):
     indicator = row.get("indicator")
+    if indicator == "KR_EXPORTS" and row.get("series_id") == "ministry/monthly_preliminary":
+        return "KR_EXPORTS|ministry/monthly_preliminary"
     return "|".join(str(row.get(k, "")) for k in ("indicator", "basis", "unit", "series_id")) if indicator in _BLS else indicator
 
 
@@ -69,6 +71,8 @@ def _provider_series(row):
         expected = "MARTS/44X72/MPCSM"
     elif indicator == "KR_EXPORTS" and source == "Korea Customs Service (monthly final bulletin)":
         expected = "customs/monthly_final"
+    elif indicator == "KR_EXPORTS" and source == "산업통상부 수출입동향 (잠정치)":
+        expected = "ministry/monthly_preliminary"
     else:
         return None
     return expected if row.get("series_id") in (None, "", expected) else None
@@ -182,6 +186,10 @@ def retain_successful_observations(rows, now):
                 continue
             if row.get("status") == "pending" or row.get("value_kind") == "supplied_event":
                 continue
+            # A published missing comparison is not a failed request. Do not
+            # substitute last month's rate for this month's unavailable rate.
+            if row.get("official_comparison_unavailable") and row.get("actual") is None:
+                continue
             key = _key(row)
             previous = saved.get(key, {})
             compatible = _valid(previous, now) and _same_series(row, previous)
@@ -231,6 +239,8 @@ def collection_status(row):
     """Only controlled codes reach the report, never credential-bearing exceptions."""
     if row.get("status") == "pending":
         return "발표 대기"
+    if row.get("official_comparison_unavailable") and row.get("actual") is None:
+        return "공식 비교 기준값 미제공(" + str(row.get("comparison_period", "")) + ") · 증감률 산출 불가, 추정하지 않음"
     try:
         has_value = not isinstance(row.get("actual"), bool) and math.isfinite(float(row.get("actual")))
     except (TypeError, ValueError, OverflowError):
@@ -239,7 +249,7 @@ def collection_status(row):
         return "수동 보완값 사용 · 자동 수집 성공 아님"
     if (row.get("status") == "released" and has_value
             and not row.get("bulletin_collection_error") and not row.get("collection_error")):
-        return "관측치 수집 성공" + (" · 발표일 미확인" if "release_date_unavailable" in str(row.get("missing_reason", "")) else "")
+        return "관측치 수집 성공" + (" · 잠정치" if row.get("data_vintage") == "preliminary_bulletin" else "") + (" · 발표일 미확인" if "release_date_unavailable" in str(row.get("missing_reason", "")) else "")
     reason = str(row.get("bulletin_collection_error") or row.get("collection_error") or row.get("missing_reason") or "")
     if "API_KEY_missing" in reason:
         return "키 미설정"

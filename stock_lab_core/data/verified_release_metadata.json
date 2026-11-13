@@ -1,0 +1,10 @@
+[
+  {
+    "indicators": ["US_CPI", "US_CORE_CPI"],
+    "period": "2026-10",
+    "release_at": "2026-11-10T08:30:00-05:00",
+    "source_url": "https://www.bls.gov/news.release/archives/cpi_11102026.htm",
+    "verified_at": "2026-11-13",
+    "expires_at": "2026-12-13"
+  }
+]

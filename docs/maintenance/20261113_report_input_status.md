@@ -37,6 +37,10 @@ The user also asked to check CPI and other releases. Report generated at
 - US CPI October MoM 0.4% and core MoM 0.3% are already updated. Official release
   was November 10. YoY inputs and release dates are missing in the report; this
   is a partial data/metadata failure, not evidence the entire CPI row is old.
+  Correction from subsequent official-release verification: October YoY itself
+  was not published because October 2025 comparison indexes are unavailable.
+  Only the release-date and missing-reason connection needed correction; do not
+  fill the YoY with an estimate. See 20261113_economic_freshness.md.
   https://www.bls.gov/news.release/cpi.nr0.htm
 - US PPI October release is scheduled for November 13 08:30 ET / 22:30 KST.
   September is still the latest release at this morning's validation time.

@@ -52,6 +52,10 @@ def inputs(mode):
                                 'same_period', 'sourced_date', 'http_failure', 'cpi_reject',
                                 'cooldown', 'expired_manual', 'restored_success'])
 def test_full_output_requests_cache_and_persistence_equal_original(original, monkeypatch, tmp_path, mode):
+    # This contract isolates the original CPI/Customs concurrency refactor.
+    # The later preliminary-provider upgrade has its own full-path tests.
+    from stock_lab_core import economic_exports_preliminary as preliminary
+    monkeypatch.setattr(preliminary, 'apply_preliminary_exports', lambda rows, now: None)
     public = public_cpi.__wrapped__(monkeypatch)
     cpi_get = r.requests.get
     calls, failing = [], [False]

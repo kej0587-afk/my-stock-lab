@@ -242,7 +242,7 @@ def _request(url, *, params=None, payload=None, text=False, diagnostics=None):
                 "Census HTTP=%s params=%s", response.status_code, safe_params)
         if response.status_code != 200:
             raise _Unavailable(f"http_{response.status_code}")
-        if url.startswith(ECOS_URL):
+        if url.startswith(ECOS_URL) or url.startswith("https://www.motir.go.kr/"):
             response.encoding = "utf-8"
         try:
             result = response.text if text else response.json()
@@ -363,7 +363,7 @@ def _bls(now):
                         diagnostics=diagnostics)
         if not isinstance(data, dict) or data.get("status") != "REQUEST_SUCCEEDED":
             raise _Unavailable("bls_request_not_succeeded")
-        result = {}
+        result, unavailable = {}, {}
         for series in data.get("Results", {}).get("series", []):
             observations = {}
             for item in series.get("data", []):
@@ -371,12 +371,14 @@ def _bls(now):
                     continue
                 period = _month(f"{item.get('year')}-{item['period'][1:]}")
                 value = _number(item.get("value"))
+                if period and str(item.get("value", "")).strip() in {"-", "--", "."}:
+                    unavailable.setdefault(series.get("seriesID"), []).append(period)
                 if period and period <= now.strftime("%Y-%m") and value is not None:
                     observations[period] = value
             if observations:
                 result[series.get("seriesID")] = observations
         # A partial batch stays usable, but is retried on the next call.
-        return {"observations": result, "request": deepcopy(diagnostics)} if result else {}
+        return {"observations": result, "unavailable": unavailable, "request": deepcopy(diagnostics)} if result else {}
 
     key = ("bls", now.strftime("%Y-%m"))
     cached, error, retrieved = _cached(key, fetch, now)
@@ -416,6 +418,10 @@ def _bls(now):
             row["status"] = "released" if row["actual"] is not None else "unavailable"
             if row["actual"] is None:
                 _reason(row, "comparison_period_unavailable")
+                baseline = _shift(period, -12 if spec.basis == "YoY" else -1)
+                if baseline in (cached or {}).get("unavailable", {}).get(spec.series, []):
+                    row.update(official_comparison_unavailable=True, comparison_period=baseline)
+                    _reason(row, "official_comparison_observation_missing")
         row["publication_status"] = "available" if row["actual"] is not None else "unconfirmed"
         row["request_metadata"].update(failure_reason=row["missing_reason"],
                                        publication_status=row["publication_status"],
@@ -876,6 +882,8 @@ def _finish(row):
     row["publication_status"] = ("pending" if row["status"] == "pending" else
                                  "available" if row["actual"] is not None and row["status"] == "released"
                                  else "unconfirmed")
+    if row.get("official_comparison_unavailable") and row["actual"] is None:
+        row["publication_status"] = "comparison_observation_unavailable"
     if row["actual"] is None:
         _reason(row, "actual_unavailable" if row["status"] != "pending" else "awaiting_release")
     if row["forecast"] is None:
@@ -921,6 +929,8 @@ def _link_bls_calendar(row, spec, calendar, now):
             _reason(row, "scheduled_release_not_yet_due")
     elif not row.get("release_at"):
         _reason(row, "release_schedule_" + (source.get("reason") or "period_unavailable"))
+        from stock_lab_core.economic_release_metadata import apply_verified_release_metadata
+        apply_verified_release_metadata(row, now)
 
 
 def load_economic_releases(event_rows=None, now=None, *, include_calendar=False):

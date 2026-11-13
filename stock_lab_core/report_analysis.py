@@ -246,6 +246,8 @@ def economic_reaction_text(row):
     if status == "stale":
         return "마지막 성공값 표시 · 최신 수집 실패로 현재 발표일 반응 비교 보류"
     if number(row.get("actual")) is None:
+        if row.get("official_comparison_unavailable"):
+            return "공식 비교 기준값 결측 · 증감률 기준 반응 비교 보류"
         if status in {"scheduled", "pending", "예정"}:
             return "발표 예정 상태 · 확정 발표치 미연결, 반응 비교 보류"
         return f"{collection_status(row)} · 발표 여부 미확인, 동일일 반응 비교 보류"

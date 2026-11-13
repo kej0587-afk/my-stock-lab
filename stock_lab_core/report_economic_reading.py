@@ -114,6 +114,8 @@ def economic_implication(row) -> str:
     if text(row.get("status")) in {"pending", "scheduled", "예정"}:
         return "발표 예정 상태: 확정 발표치 확인 전 해석 보류(중립 판단 아님)"
     if actual is None:
+        if row.get("official_comparison_unavailable"):
+            return "공식 비교 기준값 결측: 증감률 해석 보류. 전월비 발표치와 별도로 봅니다."
         return "발표치 미확인: 해석 보류(중립 판단 아님, 미발표를 뜻하지 않음)"
 
     indicator, basis, unit = text(row.get("indicator")).upper(), text(row.get("basis")), text(row.get("unit"))

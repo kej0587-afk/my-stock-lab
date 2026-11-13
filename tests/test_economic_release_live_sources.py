@@ -215,7 +215,8 @@ def customs(monkeypatch):
         assert kwargs["allow_redirects"] is False
         expected_timeout = bulletins.CUSTOMS_DETAIL_TIMEOUT if url == bulletins.CUSTOMS_DETAIL_URL else 4
         assert kwargs["timeout"] == expected_timeout
-        assert url in {bulletins.CUSTOMS_LIST_URL, bulletins.CUSTOMS_DETAIL_URL}
+        from stock_lab_core.economic_exports_preliminary import LIST_URL
+        assert url in {bulletins.CUSTOMS_LIST_URL, bulletins.CUSTOMS_DETAIL_URL, LIST_URL}
         assert "key" not in kwargs["params"]
         state["calls"].append((url, kwargs))
         if url == bulletins.CUSTOMS_DETAIL_URL:

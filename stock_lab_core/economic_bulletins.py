@@ -521,6 +521,8 @@ def apply_official_bulletins(rows, now):
         count_event("bulletin_prefetch.serial")
         _apply_live_cpi(result, now)
         _apply_live_exports(result, now)
+    from stock_lab_core.economic_exports_preliminary import apply_preliminary_exports
+    apply_preliminary_exports(result, now)
     try:
         facts = json.loads(FACTS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
