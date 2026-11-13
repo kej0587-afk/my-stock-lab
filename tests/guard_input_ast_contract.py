@@ -9,6 +9,7 @@ def before_guard_input_repair(node):
     node = deepcopy(node)
     removals = {
         'get_macro_analysis': [
+            'close = close[np.isfinite(close) & close.gt(0)]',
             'for info in results.values():\n    info["guard_macro_base"] = storm_count + macro_trend + move_score\n    info["guard_event_risk"] = event_risk'],
         '_today_benchmark_guard_stats': ['from stock_lab_core.market_basis import unique_guard_benchmarks'],
         'build_today_market_guard': [
@@ -27,8 +28,20 @@ def before_guard_input_repair(node):
             continue
         if node.name == '_today_benchmark_guard_stats' and dump == replacement:
             statement = ast.parse('valid_df = valid_df.copy() if isinstance(valid_df, pd.DataFrame) else pd.DataFrame()').body[0]
+        if node.name == 'get_macro_analysis' and dump == ast.dump(ast.parse('close = pd.to_numeric(ticker_df["Close"], errors="coerce").dropna()').body[0]):
+            statement = ast.parse('close = ticker_df["Close"].ffill().dropna()').body[0]
         body.append(statement)
     node.body = body
+    if node.name == 'get_macro_analysis':
+        class RestoreClose(ast.NodeTransformer):
+            def visit_Assign(self, statement):
+                dump = ast.dump(statement)
+                if dump == ast.dump(ast.parse('close = close[np.isfinite(close) & close.gt(0)]').body[0]):
+                    return None
+                if dump == ast.dump(ast.parse('close = pd.to_numeric(ticker_df["Close"], errors="coerce").dropna()').body[0]):
+                    return ast.parse('close = ticker_df["Close"].ffill().dropna()').body[0]
+                return self.generic_visit(statement)
+        node = RestoreClose().visit(node)
     fields = {
         '_today_benchmark_guard_stats': {
             'benchmark_tickers': 'valid_df["티커"].astype(str).tolist() if "티커" in valid_df else []',

@@ -27,7 +27,11 @@ separate captured event risk from the market-guard macro input. Original stock
 penalties and all guard thresholds stay unchanged. Applied versus raw points
 and input dates are now disclosed. Focused 104, affected extraction 180 and build
 10 tests passed; immutable-source decision gate 1367 passed (127.905s).
-Cloud verification pending. Exactly one next bounded task: verify the
+Cloud initial 12:14 report verified risk 9 and separate macro/event inputs.
+Its date display exposed Yahoo union-index forward filling; corrected macro
+inputs to actual finite observations only (no invented US close on an FX date).
+Follow-up focused 106 and immutable-source decision 1367 passed (125.569s).
+Final Cloud date verification pending. Exactly one next bounded task: verify the
 deployed guard audit in a newly generated report before starting SOXL timing work.
 
 Latest bounded work (2026-11-13, base f56454dc): CPI missing comparison metadata

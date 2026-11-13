@@ -15480,7 +15480,10 @@ def get_macro_analysis():
             else:
                 ticker_df = data
 
-            close = ticker_df["Close"].ffill().dropna()
+            # Multi-symbol downloads align FX and US sessions on a union index.
+            # Do not turn another market's trading date into an observed close.
+            close = pd.to_numeric(ticker_df["Close"], errors="coerce").dropna()
+            close = close[np.isfinite(close) & close.gt(0)]
             if close.empty:
                 continue
 

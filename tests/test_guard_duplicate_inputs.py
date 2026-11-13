@@ -114,3 +114,21 @@ def test_only_exact_reviewed_app_edits_differ_from_parent():
         return {node.name: ast.dump(before_guard_input_repair(node) if restore else node)
                 for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
     assert functions(old) == functions(new, restore=True)
+
+
+def test_macro_union_index_does_not_redate_us_close_to_fx_session(guard_app, monkeypatch):
+    import numpy as np
+    dates = pd.bdate_range(end="2026-11-13", periods=25)
+    rates = pd.Series(list(np.linspace(4.8, 5.1, 24)) + [np.nan], index=dates)
+    fx = pd.Series([1332.] * 25, index=dates)
+    data = pd.concat({"^TNX": pd.DataFrame({"Close": rates}),
+                      "USDKRW=X": pd.DataFrame({"Close": fx})}, axis=1)
+    monkeypatch.setattr(guard_app.yf, "download", lambda *args, **kwargs: data)
+    monkeypatch.setattr(guard_app, "build_macro_event_risk_table", lambda: (pd.DataFrame(), 0., 0))
+    guard_app.get_macro_analysis.clear()
+    results, *_ = guard_app.get_macro_analysis()
+    assert results["10Y 금리"]["as_of"] == "2026-11-12"
+    assert results["환율"]["as_of"] == "2026-11-13"
+    observed = rates.dropna()
+    assert results["10Y 금리"]["chg"] == pytest.approx((observed.iloc[-1] / observed.iloc[-22] - 1) * 100)
+    guard_app.get_macro_analysis.clear()

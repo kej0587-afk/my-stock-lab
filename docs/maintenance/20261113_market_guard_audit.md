@@ -35,6 +35,12 @@ No threshold was lowered to admit trades.
    Show raw and applied separately and explain the existing combined condition.
 4. Display flow row dates and per-indicator macro dates, not report creation time.
    Existing market-specific common-date alignment and stale-date warnings remain.
+5. The deployed 12:14 report exposed a further input-date bug: all macro rows
+   appeared as Nov 13. The multi-symbol Yahoo union index includes FX dates when
+   US index closes are missing; ffill promoted yesterday's US value to that date
+   and could also shift the 22-observation comparison. Use finite positive actual
+   closes only. A union-index regression verifies US Nov 12 / FX Nov 13 and the
+   observed 22-bar comparison. Formula and risk thresholds remain unchanged.
 
 Correlated MA20/MA50/5-day weakness rules are intentional separate criteria; they
 were not removed. Portfolio caution counts are not added to market-mode score.
@@ -54,5 +60,11 @@ Report stress 0-100 is a different explanatory measure, not this guard score.
 - Report provenance/build: 10 passed (8.59s).
 - Final immutable-source decision gate: 1367 passed, 127.905s; no changed sources.
   Evidence: cache/refactor_checks/decision_754545vm. Deployed UI pending.
+
+Initial deployment 1b9b6960 verified on Cloud in a new 12:14 KST market-only
+report: integrated risk remains 9; SPY excluded, macro-only 0 versus legacy 1
+and captured event 1; flow dates Nov 12/13. Union-date follow-up: focused 106
+passed (15.95s); final immutable-source decision gate 1367 passed (125.569s),
+cache/refactor_checks/decision_9iirttc3. Deployed date confirmation pending.
 
 No account trades, no automatic orders, no performance improvement claimed.
