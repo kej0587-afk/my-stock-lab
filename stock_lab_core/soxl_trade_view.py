@@ -79,23 +79,8 @@ def render_stats(st, report, format_time):
 
 
 def render_research(st, format_time):
-    key = "soxl_linked_research_v1"
-    with st.expander("과거 승률 · 손실 · 당일/야간 비교", expanded=False):
-        if st.button("동일 규칙 과거 검증", key="soxl_replay_load_v1"):
-            with st.spinner("SOXX/SOXL 과거 동시각 자료 검증 중..."):
-                payload = load_trade_history()
-                if not payload["ok"]:
-                    st.session_state[key] = {"issue": payload["issue"], "policies": {}}
-                else:
-                    try:
-                        st.session_state[key] = cached_replay(payload["frames"], payload["captured_at"])
-                    except Exception as exc:
-                        st.session_state[key] = {"issue": "과거 검증 실패: " + type(exc).__name__, "policies": {}}
-        report = st.session_state.get(key)
-        if report:
-            render_stats(st, report, format_time)
-        else:
-            st.info("과거 검증 미실행 · 승률은 0%가 아니라 미산출")
+    from stock_lab_core.short_trade_view import render_symbol_research
+    render_symbol_research(st, "SOXL", show_plan=False)
 
 
 def render_sizing(st, plan):

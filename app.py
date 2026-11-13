@@ -34875,6 +34875,10 @@ if main_page == "precision":
         from stock_lab_core.soxl_short_view import render_soxl_short_observation
         render_soxl_short_observation(st, tkr, c)
 
+        if str(tkr).upper() != "SOXL":
+            from stock_lab_core.short_trade_view import render_symbol_research
+            render_symbol_research(st, tkr, c)
+
         render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)

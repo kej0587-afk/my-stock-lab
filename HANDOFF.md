@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base a5c80464): generic KR/US stock/ETF
+short-strategy validation. Read docs/maintenance/20261113_symbol_trade_validation.md.
+Shared replay extracted from SOXL; legacy SOXL trades/statistics byte-identical
+on frozen input. Other tickers use own regular OHLC, no guessed proxy or leverage
+multiplier. Opt-in precision panel only, no queue/background requests or score
+changes. Per-symbol costs, sample uncertainty, net expectancy, worst trade,
+time halves, double costs, current fixed-bin comparable frequency and CSV.
+No current-price success prediction or automatic profitability/entry approval.
+US/KR data support does not guarantee enough history for every symbol.
+Baseline/shared gate 1369/1369 passed; focused 141 passed. Frozen replay11.449/11.925s; no speedup
+claim. Local real UI MSFT/Samsung confirmed; production verification pending.
+Exactly one next task: forward same-clock signal/executable-price evidence on
+one preselected rule/symbol including market gate before claiming a tradable edge.
+
 Latest bounded work (2026-11-13, base 350a342f): connected SOXL short research
 desk. Read `docs/maintenance/20261113_soxl_trade_desk.md` first. Existing
 SOXX hourly model, app.py, scores, market defense and allocations untouched.
