@@ -39,7 +39,11 @@ Final decision gate 1369 passed/129.248s (decision_1_tp5lui); no benchmark
 speedup claimed. Code 98680df1/a6e3a28c pushed; production quick SOXL input,
 validation, and guide-tab return retain SOXL and report 46bdabd56c3a3624.
 64 USD warning correctly uses the original 64.41 USD hourly-low reference.
-Final manual-entry persistence follow-up is pending production verification.
+Manual-entry follow-up 9ff85638 is pushed. After authorized Cloud reboot,
+production SOXL query/validation retained entry64, cost10, and report
+46bdabd56c3a3624 after a fully rendered guide-page visit and return; no extra
+validation query was needed. Original market-defense gate remained unchanged.
+Focused 134 tests also rerun successfully (21.77s) after final deployment.
 Persistence is within the Streamlit session, NOT across logout/server reboot.
 Current-price profitability/success probability is still NOT established; the
 existing frozen SOXL research has negative mean after costs. A discretionary
