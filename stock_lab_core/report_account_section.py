@@ -10,7 +10,11 @@ register_loaded_source(__name__, __file__)
 
 
 def holdings_impact_lines(*, context, held, observations, sessions, states, mode, now,
-                         live, live_metrics, portfolio, latest_metrics, scenario_context):
+                         live, live_metrics, portfolio, latest_metrics, scenario_context,
+                         summary_available=True):
+    if not summary_available:
+        from stock_lab_core.report_input_status import MISSING_ACCOUNT
+        return ["", "## 내 보유 종목 영향", MISSING_ACCOUNT], ["보유목록 입력 미수집"]
     from stock_lab_core.report_holdings import holding_estimate, completed_scenario_comparison, hedge_policy_line, hedge_source_lines
     lines, missing = [], []
     checked = max(now, stamp(context.get("quote_checked_at")) or now)

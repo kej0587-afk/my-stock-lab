@@ -69,8 +69,8 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     monkeypatch.setattr(report_editorial, "editorial_lines", lambda *a: [])
     monkeypatch.setattr(report_editorial, "reading_order", lambda lines: lines)
     original_status = report_dashboard.current_state_lines
-    def legacy_status(context, states, now, metrics):
-        lines = original_status(context, states, now, metrics)
+    def legacy_status(context, states, now, metrics, **kwargs):
+        lines = original_status(context, states, now, metrics, **kwargs)
         if "최근 확정 종가" in lines[1]:
             # This fixture has no intraday/extended/futures quotes. Only the old
             # misleading holiday sentence is restored for historical parity.
@@ -78,6 +78,17 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
             lines[1] = "**미국 현재 · 정규장 외** · 현재 시세 미연결(직전 종가는 아래 표) (미확정·지연 가능)"
         return lines
     monkeypatch.setattr(report_dashboard, "current_state_lines", legacy_status)
+    # Nov13 intentionally corrects history availability wording. Keep the old
+    # whole-output digest for all other sections; new states have dedicated tests.
+    from stock_lab_core import report_input_status
+    from stock_lab_core.report_comparison import history_comparison_lines
+    def legacy_history(rows, context):
+        assert context["history_status"] == "fixture history" and context["history_durable"]
+        return ["", "## 판정 이력 비교", *history_comparison_lines(rows, [{
+            "previous": None, "previous_date": "", "current_date": ""}]),
+            "같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.",
+            "", "fixture history"]
+    monkeypatch.setattr(report_input_status, "history_panel_lines", legacy_history)
     output = report_sections(**args)
     # Approved Report 33 additions: explicitly state end-weight limitations.
     # Retain the old digest for every other byte, including all numeric output.

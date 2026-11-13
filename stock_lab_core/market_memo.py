@@ -2109,6 +2109,10 @@ def build_auto_market_memo(
         from stock_lab_core.report_presentation import oil_explanation, macro_change, kst_time
         from stock_lab_core.today_news import partition_session_market_news
         context = dict(report_context)
+        from stock_lab_core.report_news_ads import without_promotions
+        for key in ("session_news", "next_session_news", "current_session_news", "other_market_news"):
+            if key in context:
+                context[key] = without_promotions(records(context[key]))
         # No live macro fallback: missing session data must stay missing.
         macro_data = context.get("macro_data", {})
         if context.get("news_sessions"):
@@ -2118,7 +2122,7 @@ def build_auto_market_memo(
                 # Optional stock RSS used to be discarded whenever market context
                 # existed, making the stock-count control appear ineffective.
                 raw_news = raw_news + records(news_rows)
-            partition = partition_session_market_news(raw_news, context["news_sessions"], now=dt,
+            partition = partition_session_market_news(without_promotions(raw_news), context["news_sessions"], now=dt,
                                                       current_sessions=context.get("current_news_sessions"))
             # Source-fetch failures remain visible; old empty-bucket diagnostics
             # must not survive a fresh partition that has accepted articles.
@@ -2160,7 +2164,8 @@ def build_auto_market_memo(
         executable = sum(text(first(row, "게이트상태", "gate_state")) in {"실행가능", "EXECUTABLE"} for row in rows)
         unknown_gates = sum(not text(first(row, "게이트상태", "gate_state")) for row in rows)
         stress = macro_stress(macro_data)
-        status = f"신규매수 허용 {executable}개 / 보유 {held_count}, 관심 {len(rows) - held_count}"
+        from stock_lab_core.report_input_status import report_count_status, report_scope_lines
+        status = report_count_status(rows, held_count, executable)
         status += f" / 보고서 매크로 스트레스 {stress['score']} {stress['label']}(실행 여부는 종목별 게이트)" if stress["score"] is not None else " / 매크로 미수집"
         partial_references = [name for name in ("유가", "환율") if name not in macro_data or
                               (macro_data[name].get("kind") == "fixed_asof_reference" and macro_data[name].get("chg") is None)]
@@ -2169,7 +2174,7 @@ def build_auto_market_memo(
             status += " · 매크로 일부 조건 미확인: " + ", ".join(partial_references) + "(점수 하락을 위험 완화로 해석하지 않음)"
         if unknown_gates:
             status += f" · 게이트 미제공 {unknown_gates}개(허용으로 추정하지 않음)"
-        lines = [f"# Stock Lab 자동 뉴스픽 · {dt:%Y-%m-%d %H:%M} KST", "", status, "", *front]
+        lines = [f"# Stock Lab 자동 뉴스픽 · {dt:%Y-%m-%d %H:%M} KST", "", *report_scope_lines(rows), "", status, "", *front]
         lines.extend(["", "## 다음 세션 재료"])
         from stock_lab_core.report_catalysts import post_close_brief
         from stock_lab_core.report_evidence import citation, news_article_key
@@ -2221,8 +2226,10 @@ def build_auto_market_memo(
                 lines.append("각 스타일 독립 노출 최소 2개 미충족: 스타일 우열 판단 보류")
             else:
                 lines.append(f"{rotation.get('short_key')} 평균: 성장 {_fmt_auto_pct(rotation.get('growth_avg'))}, 방어 {_fmt_auto_pct(rotation.get('rotation_avg'))}. 가격 비교이며 실제 자금 유입은 아님.")
+        strategy = (f"오늘의 전략: 오늘점검 게이트 실행가능 {executable}개." if rows else
+                    "오늘의 전략: 오늘점검 입력 미수집으로 실행 가능 여부 미확인.")
         lines.extend(["", "## 기존 점검 · 중기 흐름 참고",
-                      f"오늘의 전략: 오늘점검 게이트 실행가능 {executable}개. 중기 순위는 별도 관찰자료이며 게이트를 우회하지 않습니다."])
+                      strategy + " 중기 순위는 별도 관찰자료이며 게이트를 우회하지 않습니다."])
         for label, key, score_key in (("돈흐름·미국 섹터", "us_top5", "돈흐름점수"),
                                       ("국내 섹터", "kr_top5", "돈흐름점수"),
                                       ("글로벌 ETF", "global_top", "돈흐름점수"),

@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, after 500c41e1): report input availability and
+financing-ad filtering. See `docs/maintenance/20261113_report_input_status.md`.
+Market-only reports explicitly omit account claims; connected reports retain
+the existing counts/calculations. History read status is metadata only; no
+storage migration or private snapshot commit. Decision regression: 1367 passed;
+focused report tests: 173 passed. Local production-renderer UI checked with
+synthetic empty/connected inputs; Cloud validation pending deployment.
+Next bounded task: inspect CPI YoY/release-date and KR export freshness, not
+investment thresholds. Official CPI MoM October already matches the report;
+KR exports remain September despite an official October bulletin. Details below
+in the new record. No economic values were hardcoded or changed in this patch.
+
 Latest bounded work (2026-11-13): **article evidence -> market-event reading ->
 top report explanation**, base da1f26c2. User superseded the previous performance
 next task with report quality. No investment rules, prices, gates, providers,

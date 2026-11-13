@@ -159,7 +159,8 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
     # Preserve observed dates; this layer has no verified KR holiday calendar.
     dates = {key: text(sessions.get(key)) for key in ("KR", "US")}
     result = {"summary_date": dates["US"] + "/" + dates["KR"], "previous_summary": [], "previous_date": "",
-              "history_backend": "none", "history_durable": False, "history_fallback": False}
+              "history_backend": "none", "history_durable": False, "history_fallback": False,
+              "history_read_status": "not_attempted"}
     if not all(dates.values()):
         return dict(result, history_status="기준 거래일 미확보: 비교 저장 보류")
     rows = records(rows)
@@ -202,6 +203,7 @@ def update_report_history(rows, sessions, *, owner_scope="", path=None, macro_da
         except Exception as exc:
             code = exc.code if isinstance(exc, ReportHistoryStoreError) else "store_unavailable"
             result.update(history_fallback=True, history_error=code)
+    result["history_read_status"] = "loaded" if remote_loaded or local_available else "failed"
     if safeguard_news is not None or any(session.get("safeguard_events") for session in saved.values()):
         from stock_lab_core.market_safeguards import safeguard_events
         from stock_lab_core.safeguard_history import merge_safeguard_history

@@ -175,6 +175,7 @@ def _close_recap_key(row, title, published):
 
 
 def curate_news(rows, *, now=None, limit=5, session_scoped=False, title_pattern=MARKET_TERMS):
+    from stock_lab_core.report_news_ads import is_financing_promotion
     from stock_lab_core.today_news import _session_article_keys
     from stock_lab_core.news_priority import market_news_priority
     now = now or datetime.now(KST)
@@ -187,6 +188,8 @@ def curate_news(rows, *, now=None, limit=5, session_scoped=False, title_pattern=
     if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) < (15, 30):
         source_rows.sort(key=lambda row: not (row.get("market") == "KR" and row.get("session_date") == now.date().isoformat()))
     for raw in source_rows:
+        if is_financing_promotion(raw):
+            continue
         title = text(first(raw, "title", "제목"))
         publisher = text(first(raw, "publisher", "출처", "source"))
         link = safe_link(first(raw, "link", "링크", "url"))
@@ -556,22 +559,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
             f"{label} {int(counts[key])}개" for key, label in (("registered", "등록 원천"), ("auto_flow_candidates", "자동 돈흐름 후보"), ("calculated", "최종 계산"))
             if number(counts.get(key)) is not None))
     lines.append("‘관심’ 건수는 최종 계산 목록의 미보유 종목 수로, 직접 등록 종목 수와 다릅니다. 등록·자동 후보는 중복/보유 포함 가능하며 종목별 입력 출처가 없으면 분리 추정하지 않습니다.")
-    from stock_lab_core.report_comparison import history_comparison_lines
-    history_baselines = [{"previous": context.get("previous_summary"), "previous_date": context.get("previous_date", ""),
-                          "current_date": context.get("summary_date", "")}]
-    if context.get("previous_run_summary"):
-        history_baselines.append({"previous": context["previous_run_summary"], "previous_date": context.get("previous_run_date", ""),
-                     "current_date": context.get("summary_date", ""), "same_session": True,
-                     "previous_run_at": context.get("previous_run_at", "")})
-    history_lines = ["", "## 판정 이력 비교", *history_comparison_lines(summary_rows, history_baselines)]
-    if context.get("previous_generated_at"):
-        history_lines.append("이전 저장 생성 시각: " + kst_time(context["previous_generated_at"]))
-    if context.get("previous_summary") and not context.get("previous_source_provenance"):
-        history_lines.append("이전 저장본에는 지수별 출처·수집 시각이 없어 날짜 지연 원인을 확정할 수 없습니다. 현재 기준일은 UTC 날짜 계산이 아니라 각 지수의 확인된 종가 날짜이며, 새 이력부터 원자료 기준일·출처를 함께 저장합니다.")
-    if not context.get("previous_run_summary") and not context.get("previous_summary"):
-        history_lines.append("같은 거래일 직전 생성 이력도 없습니다. 매크로 변화와 종목 판정 비교는 별도 저장 자료를 사용합니다.")
-    if context.get("history_status"):
-        history_lines.extend(["", context["history_status"] + ("" if context.get("history_durable") else " · 로컬 저장은 재배포 시 초기화될 수 있습니다.")])
+    from stock_lab_core.report_input_status import history_panel_lines
+    history_lines = history_panel_lines(records(summary_rows), context)
     index_rows = [(ticker, observations[ticker]) for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")
                   if observations.get(ticker, {}).get("return") is not None]
     names = {"^KS11": "코스피", "^KQ11": "코스닥", "^GSPC": "S&P500", "^IXIC": "나스닥", "^DJI": "다우"}
@@ -602,7 +591,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     if states["US"]["phase"] == "preopen" and futures_line:
         headline += ".\n\n미국 개장 전 참고: " + futures_line
     from stock_lab_core.report_dashboard import current_state_lines, market_board_lines
-    lines.extend(["", "## 지금 상태 3줄", "\n\n".join(current_state_lines(context, states, now, latest_metrics))])
+    lines.extend(["", "## 지금 상태 3줄", "\n\n".join(current_state_lines(
+        context, states, now, latest_metrics, summary_available=bool(records(summary_rows))))])
     lines.extend(market_board_lines(context, states, now))
     from stock_lab_core.report_energy_basis import energy_basis_lines
     lines.extend(energy_basis_lines(context, news, now))
@@ -929,7 +919,8 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     holdings_block, holdings_missing = holdings_impact_lines(
         context=context, held=held, observations=observations, sessions=sessions,
         states=states, mode=mode, now=now, live=live, live_metrics=live_metrics,
-        portfolio=portfolio, latest_metrics=latest_metrics, scenario_context=scenario_context)
+        portfolio=portfolio, latest_metrics=latest_metrics, scenario_context=scenario_context,
+        summary_available=bool(records(summary_rows)))
     missing.extend(holdings_missing)
     watches = [row for row in records(summary_rows) if not is_held(row)]
     watches.sort(key=lambda row: (number(first(row, "Adj점수", "adj")) or 0), reverse=True)
@@ -941,7 +932,7 @@ def report_sections(*, context, news, flow_rows, event_rows, summary_rows, now):
     for row in watches[:3]:
         lines.append(" | ".join(_cell(value) for value in candidate_fields(row)))
     if not watches:
-        lines.append("- 관심 후보 미연결/없음")
+        lines.append("- 계산된 입력 내 미보유 관심 후보 없음" if records(summary_rows) else "- 관심 후보 미수집: 오늘점검 입력 미연결")
     from stock_lab_core.market_guard_explanation import guard_explanation_lines
     lines.extend(guard_explanation_lines(context.get("market_guard"), sessions=sessions))
     from stock_lab_core.report_outlook import official_outlook_lines

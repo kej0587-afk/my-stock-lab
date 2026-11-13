@@ -17,7 +17,7 @@ def _pct(value, unit="%"):
     return f"{round(value * 100, 2) or 0:+.2f}{unit}" if value is not None else "미연결"
 
 
-def current_state_lines(context, states, now, metrics):
+def current_state_lines(context, states, now, metrics, *, summary_available=True):
     from stock_lab_core.report_intraday import _latest_observation, extended_day_comparison
     from stock_lab_core.report_session import us_extended_session
     checked = max(now, stamp(context.get("quote_checked_at")) or now)
@@ -64,7 +64,10 @@ def current_state_lines(context, states, now, metrics):
         us_line = " / ".join(closes) or "기준일이 확인된 종가 자료 미연결"
     coverage = number((metrics or {}).get("coverage")) or 0
     total = number((metrics or {}).get("total"))
-    if (metrics or {}).get("error") or total is None or coverage < 90:
+    if not summary_available:
+        from stock_lab_core.report_input_status import MISSING_ACCOUNT
+        account = MISSING_ACCOUNT
+    elif (metrics or {}).get("error") or total is None or coverage < 90:
         account = f"전체 추정 보류 · 연결 {coverage:.1f}% (90% 미만 또는 입력 확인 필요)"
     else:
         account = f"통합 누적 추정 {round(total, 2) or 0:+.2f}%p · 연결 {coverage:.1f}% · 확정 손익 아님"
