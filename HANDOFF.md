@@ -29,7 +29,11 @@ time halves, double costs, current fixed-bin comparable frequency and CSV.
 No current-price success prediction or automatic profitability/entry approval.
 US/KR data support does not guarantee enough history for every symbol.
 Baseline/shared gate 1369/1369 passed; focused 141 passed. Frozen replay11.449/11.925s; no speedup
-claim. Local real UI MSFT/Samsung confirmed; production verification pending.
+claim. Final gate 1369 passed /128.605s. Code 0fb961bc pushed; local real UI
+MSFT/Samsung and production registered MSFT query verified. Production sample
+54/54 trades,35.2%/37.0% wins, both no edge; not current-price probabilities.
+Quick direct-ticker selection reverted on a later rerun during deployment;
+registered selection worked. Persistence was not changed in this task.
 Exactly one next task: forward same-clock signal/executable-price evidence on
 one preselected rule/symbol including market gate before claiming a tradable edge.
 

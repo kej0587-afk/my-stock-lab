@@ -71,7 +71,26 @@ MSFT snapshot: 59 day trades /37.3% wins /-0.14% mean; 59 overnight /39.0%
 /-0.29%. Both no edge; Samsung also no positive full-sample expectancy.
 US EST vs KR KST calendars/currency and latest reference times differ correctly.
 These provider snapshots are not stable cross-run performance guarantees.
-No private account data is committed. Production deployment verification follows.
+No private account data is committed.
+
+## Production verification
+
+Code commit 0fb961bc pushed to main. Cloud picked up the common panel without a
+reboot. Registered MSFT selection -> explicit run -> completed result verified
+on the real precision page. Existing execution remained defense/wait.
+Production capture fingerprint fd4cefce74696781: day 54 /35.2% wins, overnight
+54 /37.0%; both nonpositive net expectancy, no edge. Latest current channel was
+unformed, so no current-entry probability was shown. This is a different provider
+snapshot from local MSFT (different fingerprint), not a before/after comparison.
+The frozen SOXL hash comparison above is the behavior-preservation evidence.
+Narrow viewport checked: plan/status tables wrap, metric grids scroll horizontally.
+Private screenshot: cache/short_research_production.png. Local preview server
+and created tab were stopped/closed; no account positions or orders changed.
+
+One navigation limitation observed during deployment: quick direct-ticker entry
+showed MSFT, but a subsequent rerun returned to the prior SOXL selection. Choosing
+MSFT from the registered selector worked and retained its research result. This
+task did not modify selection persistence or claim that transition is repaired.
 
 ## Next Bounded Task
 
