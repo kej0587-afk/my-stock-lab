@@ -28,7 +28,11 @@ closes are displayed separately from US closes; BTC UTC daily history cannot
 supply a US-close comparison and remains unavailable, not estimated.
 Original thresholds, DCA sizes and basket membership unchanged. Corrected return
 inputs can change recovery checks; this is not all-numeric-output equivalence.
-Local focused tests and deployment/live verification status are in the record.
+Final focused 208 passed; decision gate 1367 passed (125.282s). Code `2fad1460`
+pushed and all four Cloud comparison tables verified around 13:26-13:27 KST.
+US comparison end Nov 13 06:00 KST; KR end Nov 12 15:30 KST, separate tables;
+BTC same-clock comparison explicitly unavailable. No server reboot required.
+Visible SOXL/BITX/418660 execution blocks remain; no holdings/targets edited.
 Exactly one next bounded task: audit timestamped extended-session observations
 for these same products, without inferring missing BTC/US-close observations or
 changing investment thresholds.

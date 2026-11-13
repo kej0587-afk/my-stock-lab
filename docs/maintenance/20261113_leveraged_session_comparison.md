@@ -26,7 +26,8 @@ Cloud before edits showed this limitation and the legacy mixed-session values.
   not NY-close observations, so the BTC comparison is unavailable. IBIT remains
   a same-session comparison ETF, not BITX's mandated underlying or futures NAV.
 - Latest prices remain on the main screen, separate from the completed-close
-  table. Comparison rows no longer request live quotes. One product history is
+  table. Comparison rows no longer call the live-quote callback. Upstream history
+  normalization retains its existing behavior. One product history is
   additionally included using the existing history loaders/batch cache policy.
 - Compact display tables plus endpoint audit expander replace mixed labels.
   Cold deployment with an old watch module defers comparison rather than raising
@@ -39,7 +40,21 @@ Cloud before edits showed this limitation and the legacy mixed-session values.
 - Final focused 208 passed (18.64s), including Streamlit rendering and old-module
   deployment deferral. Final decision gate 1367 passed (125.282s), with source
   hashes unchanged throughout the run (`decision_hy_tw65b`).
-- Commit/push and Cloud verification: pending below.
+- Code `2fad1460` committed/pushed. All four new Cloud precision views verified
+  at approximately 13:26-13:27 KST on Nov 13, without a server reboot.
+- SOXL/SOXX, RAM/DRAM and BITX/IBIT use Nov 12 US close = Nov 13 06:00 KST.
+  The SOXL endpoint audit shows 1W Nov 6 06:00 to Nov 13 06:00 KST identically
+  for SOXL, SOXX, SMH and QQQ; 21-session start remains 05:00 KST under DST.
+- RAM's Korean representatives and 418660 use Nov 12 15:30 KST separately.
+  The 418660 main price remains Nov 13 intraday; its comparison table clearly
+  labels the previous completed Korean close rather than relabeling it as live.
+- BTC-USD shows unavailable same-clock comparison, not a fabricated return or
+  zero. BITX recovery average changed from mixed-time inputs to completed-close
+  inputs; its displayed execution gate remains leverage market defense.
+  SOXL and 418660 also visibly retain the execution block.
+- Screenshots saved privately in Downloads: `leveraged_SOXL_session_verified.jpg`,
+  `leveraged_BITX_session_verified.jpg`, `leveraged_418660_session_verified.jpg`.
+  No holdings, target weights, thresholds or orders were edited through the UI.
 - Historical AST adapters remove only reviewed routing keywords/signature and
   the exact deployment guard; mutation tests still detect altered calculations.
 - These are correctness checks, not an investment backtest or a full-account
