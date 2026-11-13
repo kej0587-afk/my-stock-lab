@@ -59,12 +59,23 @@ Report stress 0-100 is a different explanatory measure, not this guard score.
 - Focused repair plus affected extraction contracts: 180 passed (49.89s).
 - Report provenance/build: 10 passed (8.59s).
 - Final immutable-source decision gate: 1367 passed, 127.905s; no changed sources.
-  Evidence: cache/refactor_checks/decision_754545vm. Deployed UI pending.
+  Evidence: cache/refactor_checks/decision_754545vm.
 
 Initial deployment 1b9b6960 verified on Cloud in a new 12:14 KST market-only
 report: integrated risk remains 9; SPY excluded, macro-only 0 versus legacy 1
 and captured event 1; flow dates Nov 12/13. Union-date follow-up: focused 106
 passed (15.95s); final immutable-source decision gate 1367 passed (125.569s),
-cache/refactor_checks/decision_9iirttc3. Deployed date confirmation pending.
+cache/refactor_checks/decision_9iirttc3.
+
+Final deployment d98ec8fe verified in a new Cloud market-only report generated
+2026-11-13 12:25 KST. US rates/oil/VIX/MOVE observations are Nov 12; FX Nov 13.
+KR/US benchmark dates Nov 13/12; flow dates Nov 12/13. SPY exclusion is visible.
+Actual-observation correction changes macro base to -0.5 (aggregate 0.5 with
+event 1); pressure count 2 still yields macro guard point 1. Integrated risk
+remains 9 = regional 4 + flow 3 + macro 1 + event 1. Both regions are caution,
+neither emergency; US below-MA20/MA50 counts are now 3/4 after proxy deduplication.
+Release explanation correctly requires at least two net points to fall below 8.
+Screenshots saved privately in Downloads/market_guard_audit_verified.png and
+Downloads/market_guard_dates_verified.png. No account-wide recalculation was run.
 
 No account trades, no automatic orders, no performance improvement claimed.

@@ -31,8 +31,15 @@ Cloud initial 12:14 report verified risk 9 and separate macro/event inputs.
 Its date display exposed Yahoo union-index forward filling; corrected macro
 inputs to actual finite observations only (no invented US close on an FX date).
 Follow-up focused 106 and immutable-source decision 1367 passed (125.569s).
-Final Cloud date verification pending. Exactly one next bounded task: verify the
-deployed guard audit in a newly generated report before starting SOXL timing work.
+Code commits 1b9b6960 and d98ec8fe pushed. Final Cloud market-only report generated
+2026-11-13 12:25 KST verified: US macro observations Nov 12, FX Nov 13; KR/US
+guard dates Nov 13/12; SPY excluded. Risk remains 9 = 4+3+1+1, no emergency.
+Actual-observation correction changes macro base to -0.5 (aggregate 0.5 with
+event 1), but macro guard point remains 1 from pressure count 2. No account
+recalculation. Private screenshots in Downloads/market_guard_*_verified.png.
+Exactly one next bounded task: audit SOXL timing/proxy/channel consistency,
+keeping investment thresholds unchanged and separating observations from any
+proposed strategy change.
 
 Latest bounded work (2026-11-13, base f56454dc): CPI missing comparison metadata
 and latest preliminary Korean exports. See
