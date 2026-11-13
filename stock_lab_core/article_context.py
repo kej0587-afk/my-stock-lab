@@ -178,12 +178,9 @@ def _objects(value):
 
 
 def _body_facts(paragraphs):
+    from stock_lab_core.article_market_events import market_event_facts, ordered_market_facts
     facts = []
     rules = (
-        ("mediation", r"(?:미[·ㆍ/-]?이란|미국.{0,10}이란).{0,40}(?:중재|외교|협상)",
-         "미·이란 외교·중재 가능성이 보도됐습니다",
-         "지정학적 위험 프리미엄이 낮아질 수 있으나 제안 보도만으로 합의나 공급 정상화를 확정할 수 없습니다",
-         "당사국의 중재안 수용 여부와 실제 원유 공급·유가 확인"),
         ("ai_investment", r"(?:AI|인공지능).{0,70}(?:호실적|투자\s*확대|시설투자|설비투자|수요\s*기대|수요\s*증가)",
          "AI 관련 실적·투자 확대와 수요 기대가 보도됐습니다",
          "AI 수요 기대 회복은 반도체·기술주 투자심리에 우호적일 수 있지만 실제 수주·이익 개선 확인이 필요합니다",
@@ -231,7 +228,7 @@ def _body_facts(paragraphs):
         facts.insert(0, oil)
     # Consumers show only the first two facts; retain supported adverse context.
     facts.sort(key=lambda fact: 0 if fact.get("polarity") == "negative" else 1 if fact["topic"] == "ai_credit" else 2)
-    return enhance_facts(facts, paragraphs)
+    return enhance_facts(ordered_market_facts(market_event_facts(paragraphs) + facts), paragraphs)
 
 
 def _sector_body_facts(paragraphs, title):
@@ -333,8 +330,16 @@ def parse_article(data, url, expected_title):
     from stock_lab_core.catalyst_news import catalyst_body_facts, catalyst_entities
     issuer_context = bool(catalyst_entities(expected_title))
     issuer_facts = catalyst_body_facts(list(body_sentences(paragraphs)), expected_title) if issuer_context else []
+    from stock_lab_core.article_market_events import market_event_facts, ordered_market_facts
     # An issuer's capex/FCF discussion is not evidence that AI lifted the index.
-    facts = issuer_facts if issuer_context else (_sector_body_facts(paragraphs, expected_title) + _body_facts(paragraphs))[:4]
+    facts = (market_event_facts(paragraphs) + issuer_facts if issuer_context else
+             _sector_body_facts(paragraphs, expected_title) + _body_facts(paragraphs))
+    if issuer_context and re.search(r"뉴욕증시|코스피|코스닥|나스닥|Wall Street", expected_title, re.I):
+        from stock_lab_core.article_price_facts import oil_price_fact
+        oil = oil_price_fact(paragraphs)
+        if oil:
+            facts.append(oil)
+    facts = ordered_market_facts(facts)[:4]
     facts = enhance_facts(facts, paragraphs)
     scenarios = body_scenarios(paragraphs)
     return dict(body_status="verified" if facts or scenarios else "no_supported_context", body_facts=facts,
@@ -346,7 +351,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"}, trace_name='report_article_body')
 def _article(url, title):
-    # v10: event/scenario evidence schema; invalidate the source-keyed v9 cache.
+    # v11: polarity-preserving diplomacy and generic leadership evidence.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)
@@ -512,7 +517,8 @@ def verified_body_facts(row):
 
 
 def body_context_sentence(row):
-    labels = {"mediation": "미·이란 중재 기대", "ai_investment": "AI 실적·투자 확대와 수요 기대",
+    from stock_lab_core.article_market_events import event_context_sentence
+    labels = {"ai_investment": "AI 실적·투자 확대와 수요 기대",
               "exports": "한국 수출 호조", "foreign_buying": "외국인 현물 순매수", "institution_buying": "기관 순매수", "earnings": "기업 호실적",
               "oil_easing": "유가 하락", "oil_rising": "유가 상승", "oil_mixed": "기간·유종별 유가 방향 혼재"}
     facts = verified_body_facts(row)
@@ -520,7 +526,9 @@ def body_context_sentence(row):
                    + ("기업 실적·전망 부진" if fact.get("polarity") == "negative" and fact["topic"] == "earnings"
                       else labels[fact["topic"]])
                    for fact in facts if fact["topic"] in labels and not fact.get("subject_ticker")]
-    sentence = "기사에서는 " + "·".join(backgrounds[:3]) + " 등을 시장 배경으로 짚었습니다." if backgrounds else ""
+    sentence = event_context_sentence(facts)
+    if backgrounds:
+        sentence += (" " if sentence else "") + "기사에서는 " + "·".join(backgrounds[:3]) + " 등을 시장 배경으로 짚었습니다."
     for fact in facts:
         if fact["topic"] == "ai_credit" and not fact.get("subject_ticker"):
             sentence += (" " if sentence else "") + fact["summary"] + "."

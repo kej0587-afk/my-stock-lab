@@ -291,6 +291,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     """Market moves -> reported background -> macro/medium-term interpretation."""
     facts = [_market_fact(context, market, states, now) for market in ("KR", "US")]
     from stock_lab_core.article_context import verified_body_facts, body_context_sentence
+    from stock_lab_core.article_market_events import event_context_sentence
     claims, market_claims, selected_news, body_sources = [], {}, {}, {}
     for fact in facts:
         if fact["change"] is None:
@@ -340,7 +341,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                     break
         body_row = next((row for row in eligible if row.get("is_close_wrap") and verified_body_facts(row)), None)
         if body_row:
-            body_sources[fact["market"]] = body_row
+            body_sources[fact["market"]] = [body_row]
             local_claims = [item["summary"] for item in verified_body_facts(body_row)[:2]]
             local_news = [body_row]
         elif fact["market"] == "US" and fact["change"] < 0:
@@ -351,6 +352,14 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                     local_claims = [issue, *local_claims[:1]]
                     local_news = [row, *local_news[:1]]
                     break
+        # A separate verified event in this same session must not disappear just
+        # because a broad wrap already supplied a generic commodity explanation.
+        event_row = next((row for row in eligible if row is not body_row
+                          and any(f.get("topic") == "leadership" for f in verified_body_facts(row))), None)
+        if event_row and not (body_row and any(f.get("topic") == "leadership" for f in verified_body_facts(body_row))):
+            body_sources.setdefault(fact["market"], []).insert(0, event_row)
+            local_news = [event_row, *local_news]
+            local_claims = [event_context_sentence(verified_body_facts(event_row)), *local_claims]
         market_claims[fact["market"]] = local_claims
         selected_news[fact["market"]] = local_news
         claims.extend(local_claims)
@@ -393,8 +402,10 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         if fact["market"] == "KR" and kr_observations:
             narrative += ". " + kr_observations
         if fact["market"] in body_sources:
-            sentences.append(narrative + ". " + body_context_sentence(body_sources[fact["market"]])
-                             + " (기사 본문 확인·가격 기여도 미확정) " + " ".join(sources[:1]))
+            backgrounds = [body_context_sentence(row) + " " + citation(dict(row, title="배경 보도"))
+                           for row in body_sources[fact["market"]]]
+            sentences.append(narrative + ". " + " ".join(backgrounds)
+                             + " (기사 본문 확인·가격 기여도 미확정)")
         else:
             sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
     headline = ".\n\n".join(sentences)

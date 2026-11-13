@@ -19,6 +19,35 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13): **article evidence -> market-event reading ->
+top report explanation**, base da1f26c2. User superseded the previous performance
+next task with report quality. No investment rules, prices, gates, providers,
+request budgets or TTLs changed. New `article_market_events.py` isolates short
+attributed diplomacy/leadership events and editorial selection. Diplomacy keeps
+the complete source sentence (including denial/conditional wording), never turns
+the word "negotiation" into optimism. Generic CEO transitions are recognized
+without issuer-specific stories; denied/historical/planned/demanded changes are
+not treated as completed transitions. At most four body facts remain; existing
+earnings/AI-risk priority is preserved. Same-market/session verified events can
+survive a generic wrap; the three-row editorial table may reuse a wrap for distinct
+events instead of silently dropping every fact after its first. Named-issuer
+market recaps also retain explicit oil observations. Interpretation is separate
+and does not assert production cuts, competitor benefits or causal price amounts.
+Body parser cache revision v11 prevents reuse of v10 interpreted bodies; added
+module is monitored by report build diagnostics. Saved old Markdown is unchanged:
+generate a new report after deployment. No Cloud/UI acceptance claimed yet.
+
+Verification: new synthetic regressions reproduced 11 failures before changes;
+focused article/collection/summary/editorial/session/transport suite now 283 passed
+(one pre-existing editorial-order assertion explicitly excluded after baseline
+reproduction). Final decision gate 1367 passed with stable source hashes; report
+gate 207 passed / same pre-existing theme AST failure as baseline. Evidence and
+limitations are recorded in `docs/maintenance/20261113_article_market_events.md`.
+Exactly one next task: inspect a newly generated Cloud report's top interpretation
+and article-body diagnostics for this path; do not expand sources/indicators or
+change investment thresholds. This is a bounded correction, not comprehensive
+natural-language event coverage. Long ambiguous sentences remain unpromoted.
+
 Latest bounded work: **official-bulletin independent retrieval overlap**, base
 44e5ba9f. One Customs worker overlaps CPI on owner, only for exactly one eligible
 row each; apply/persist order stays CPI -> exports -> manual fallback. Duplicate

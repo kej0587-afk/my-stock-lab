@@ -9,7 +9,7 @@ register_loaded_source(__name__, __file__)
 
 
 def editorial_lines(context, synthesis, summary_rows, states, now):
-    from stock_lab_core.article_context import verified_body_facts
+    from stock_lab_core.article_market_events import select_editorial_facts
     from stock_lab_core.report_brief import ENTITIES, _holding_links, brief_theme
     from stock_lab_core.report_intraday import _latest_observation
 
@@ -33,7 +33,7 @@ def editorial_lines(context, synthesis, summary_rows, states, now):
     if synthesis.get("headline"):
         lines += [synthesis["headline"], ""]
     held = [row for row in records(summary_rows) if is_held(row)]
-    selected, topics, urls = [], set(), set()
+    eligible, topics, urls = [], set(), set()
     for row in synthesis.get("background_news", []):
         at = stamp(first(row, "published_at", "published"))
         if not at or at > now or not 0 <= (now - at).total_seconds() <= 7 * 86400:
@@ -41,19 +41,15 @@ def editorial_lines(context, synthesis, summary_rows, states, now):
         source = citation(row)
         if not source or row.get("link") in urls:
             continue
-        for fact in verified_body_facts(row):
-            topic = fact.get("topic")
-            if topic in topics or not all(text(fact.get(k)) for k in ("summary", "implication", "check")):
-                continue
-            title = text(row.get("title")) + " " + text(fact["summary"])
-            entities = [ticker for ticker, pattern in ENTITIES if re.search(pattern, title, re.I)]
-            holdings = _holding_links(held, title, entities, brief_theme(row), row.get("market"))
-            selected.append((fact, row, holdings, source))
-            topics.add(topic)
-            urls.add(row.get("link"))
-            break
-        if len(selected) == 3:
-            break
+        eligible.append(row)
+        urls.add(row.get("link"))
+    selected = []
+    for fact, row in select_editorial_facts(eligible):
+        title = text(row.get("title")) + " " + text(fact["summary"])
+        entities = [ticker for ticker, pattern in ENTITIES if re.search(pattern, title, re.I)]
+        holdings = _holding_links(held, title, entities, brief_theme(row), row.get("market"))
+        selected.append((fact, row, holdings, citation(row)))
+        topics.add(fact.get("topic"))
     if selected:
         lines += ["**근거에서 계좌까지**", "확인된 보도·시점 | 전달 경로·해석(추정) | 보유 연결·확인할 조건", "--- | --- | ---"]
         for fact, row, holdings, source in selected:
