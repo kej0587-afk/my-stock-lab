@@ -27,15 +27,19 @@ before rendering; explicit widget state synchronizes the frontend. Reuses the
 existing free-ticker/market persistence. Per-symbol short research cost is now
 stored outside widget lifecycle alongside the existing saved report. Unchanged
 inputs restore the result without downloads; edited costs still require rerun.
-SOXL invalid manual entry now shows both entry and the original hourly-low stop,
-without lowering stops or inventing a probability. No score, gate, research
+SOXL invalid manual entry now shows both entry and the original hourly-low stop;
+the manual entry survives page cleanup too. No stop widening or invented
+probability. No score, gate, research
 engine, threshold, allocation, TTL or price-source changes.
-Focused 133 tests passed, including actual app blocks in AppTest, KR suffix,
+Focused 134 tests passed, including actual app blocks in AppTest, KR suffix,
 registered/free switching, page cleanup, cost edits and result isolation.
 Local browser: direct MSFT, cost20, report abf1f20a122ed225 restored unchanged
 after leaving/returning to the page. Baseline decision gate 1369 passed/129.274s.
 Final decision gate 1369 passed/129.248s (decision_1_tp5lui); no benchmark
-speedup claimed. Production verification pending after push.
+speedup claimed. Code 98680df1/a6e3a28c pushed; production quick SOXL input,
+validation, and guide-tab return retain SOXL and report 46bdabd56c3a3624.
+64 USD warning correctly uses the original 64.41 USD hourly-low reference.
+Final manual-entry persistence follow-up is pending production verification.
 Persistence is within the Streamlit session, NOT across logout/server reboot.
 Current-price profitability/success probability is still NOT established; the
 existing frozen SOXL research has negative mean after costs. A discretionary

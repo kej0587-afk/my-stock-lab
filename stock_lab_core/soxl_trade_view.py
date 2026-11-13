@@ -123,8 +123,11 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
             price_time = five["end"]
     if plan:
         st.caption("가정 진입 기준 가격시각: " + format_time(price_time) + " · 최근 동일 시각 완료봉, 체결가 아님")
-        entry = st.number_input("SOXL 가정 진입가 (USD, 0 = 표시 기준가격)", min_value=0., value=0., step=.01,
+        if "soxl_scenario_entry_v1" not in st.session_state:
+            st.session_state["soxl_scenario_entry_v1"] = st.session_state.get("soxl_scenario_entry_saved_v1", 0.)
+        entry = st.number_input("SOXL 가정 진입가 (USD, 0 = 표시 기준가격)", min_value=0., step=.01,
                                 key="soxl_scenario_entry_v1")
+        st.session_state["soxl_scenario_entry_saved_v1"] = entry
         custom = entry > 0
         reference_stop = plan["stop"]
         plan = price_plan(entry or plan["entry"], reference_stop)

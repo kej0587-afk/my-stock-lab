@@ -227,3 +227,23 @@ def test_manual_entry_below_reference_explains_numbers_without_widening_stop(mon
     assert not any("1R 익절 참고선" in str(table) for table in ui.tables)
     assert all(row["수량"] == "미산출" for table in ui.tables for row in table if "손실예산" in row)
     assert decision == before
+
+
+def test_manual_entry_survives_streamlit_widget_cleanup():
+    import ast
+    import inspect
+    from streamlit.testing.v1 import AppTest
+    from stock_lab_core.soxl_trade_view import render_trade_desk
+    tree = ast.parse(inspect.getsource(render_trade_desk))
+    block = next(node for node in tree.body[0].body if isinstance(node, ast.If)
+                 and ast.unparse(node.test) == "plan")
+    start = next(i for i, node in enumerate(block.body) if isinstance(node, ast.If)
+                 and "soxl_scenario_entry_v1" in ast.unparse(node.test))
+    source = ast.unparse(ast.Module(body=block.body[start:start + 3], type_ignores=[]))
+    app = AppTest.from_string("import streamlit as st\npage = st.radio('Page', ['plan', 'other'])\n"
+                              "if page == 'plan':\n" + "\n".join("    " + line for line in source.splitlines())).run()
+    app.number_input[0].set_value(64.).run()
+    app.radio[0].set_value("other").run()
+    app.radio[0].set_value("plan").run()
+    assert not app.exception
+    assert app.number_input[0].value == 64.
