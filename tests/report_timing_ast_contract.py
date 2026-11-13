@@ -4,6 +4,8 @@ from copy import deepcopy
 
 
 def before_report_timing(node):
+    from tests.guard_input_ast_contract import before_guard_input_repair
+    node = before_guard_input_repair(node)
     if node.name not in {'render_today_market_memo_panel', '_collect_today_report_context'}:
         return node
 

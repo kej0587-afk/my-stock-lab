@@ -15504,6 +15504,9 @@ def get_macro_analysis():
     move_score = 1.5 if move_val >= 120 else (0.5 if not finite_num(move_val) or move_val >= 100 else 0)
     _, event_risk, _ = build_macro_event_risk_table()
     final_macro_risk = storm_count + macro_trend + move_score + event_risk
+    for info in results.values():
+        info["guard_macro_base"] = storm_count + macro_trend + move_score
+        info["guard_event_risk"] = event_risk
     macro_penalty = 2 if final_macro_risk >= 4 else (1.5 if final_macro_risk >= 2.5 else (0.5 if final_macro_risk >= 1.5 else 0))
     return results, final_macro_risk, macro_penalty, move_val
 
@@ -27214,7 +27217,8 @@ def _today_guard_reason_suffix(valid_df: pd.DataFrame, mask) -> str:
 
 
 def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
-    valid_df = valid_df.copy() if isinstance(valid_df, pd.DataFrame) else pd.DataFrame()
+    from stock_lab_core.market_basis import unique_guard_benchmarks
+    valid_df, excluded_duplicates = unique_guard_benchmarks(valid_df)
     if valid_df.empty:
         return {
             "score": 0,
@@ -27311,6 +27315,8 @@ def _today_benchmark_guard_stats(valid_df: pd.DataFrame) -> dict:
         "max_day_gain": max_day_gain,
         "avg_day": avg_day,
         "avg_day_tickers": avg_day_tickers,
+        "benchmark_tickers": valid_df["티커"].astype(str).tolist() if "티커" in valid_df else [],
+        "excluded_duplicate_tickers": excluded_duplicates,
         "mode": mode,
         "level": level,
     }
@@ -27449,6 +27455,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     flow_accel = np.nan
     flow_input_counts = {"rows": 0, "breadth_valid": 0, "breadth_missing": 0,
                          "accel_valid": 0, "accel_missing": 0}
+    flow_calc = pd.DataFrame()
     if snapshot:
         flow_df = snapshot.get("flow_df", pd.DataFrame())
         if flow_df is not None and not flow_df.empty:
@@ -27476,6 +27483,10 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
     macro_df, macro_pressure, macro_relief, macro_note = build_today_macro_guard_table()
     event_df, event_risk, event_count = build_macro_event_risk_table()
     macro_risk = clean_float(globals().get("final_macro_risk", np.nan), np.nan)
+    from stock_lab_core.market_basis import guard_macro_input, guard_input_dates
+    macro_input = guard_macro_input(globals().get("macro_res", {}), macro_risk)
+    macro_risk = macro_input["risk"]
+    input_dates = guard_input_dates(flow_calc, globals().get("macro_res", {}))
     if macro_pressure >= 4:
         macro_score += 2
     elif macro_pressure >= 2:
@@ -27658,6 +27669,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "flow_breadth": flow_breadth,
         "flow_accel": flow_accel,
         "flow_input_counts": flow_input_counts,
+        "input_dates": input_dates,
         "rebound_count": rebound_count,
         "strong_rebound_count": strong_rebound_count,
         "panic_day": panic_day,
@@ -27666,6 +27678,7 @@ def build_today_market_guard(snapshot=None, summary_df=None) -> dict:
         "max_day_gain": max_day_gain,
         "tactical_rebound": tactical_rebound,
         "macro_risk": macro_risk,
+        "macro_risk_input": macro_input,
         "macro_df": macro_df,
         "event_df": event_df,
         "event_risk": event_risk,

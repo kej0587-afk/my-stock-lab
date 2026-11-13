@@ -174,6 +174,10 @@ def guard_explanation_lines(guard, *, sessions=None):
             add(label + " 계산 기준", " / ".join(sorted({str(r.get("기준일") or "미확인") for r in bench})),
                 "시장별 일봉 정렬 · 장중 지수판과 수신 시점이 다를 수 있음",
                 ", ".join(str(r.get("티커", "")) for r in bench))
+        if stats.get("excluded_duplicate_tickers"):
+            add(label + " 중복 제외", ", ".join(stats["excluded_duplicate_tickers"]),
+                "S&P500 지수와 SPY는 동일 기초시장 1개로 계산",
+                "지수 입력이 없으면 SPY 사용 · 나스닥종합/나스닥100은 별개")
         if not stats or stats.get("mode") == "데이터부족":
             add(label + " 지수", "데이터부족", "숫자 0을 정상으로 해석하지 않음", "유효 기준 지수 조회")
             continue
@@ -205,6 +209,11 @@ def guard_explanation_lines(guard, *, sessions=None):
             (_flow_release(val, breadth=key == "flow_breadth") + "; "
              f"가점 0까지 {max(0, (target-val)*100):.1f}%p 회복" if val is not None else "입력 확인"))
     parts = guard.get("mode_score_parts") or {}
+    dates = guard.get("input_dates") or {}
+    add("돈흐름 입력 기준일", ", ".join(dates.get("flow") or []) or "미확인",
+        "3개월 수익률·가속도 표본의 실제 기준일", "생성 시각과 다름 · 오래된 표본은 원자료 갱신 확인")
+    add("매크로 입력 기준일", " / ".join(f"{key} {value}" for key, value in (dates.get("macro") or {}).items()) or "미확인",
+        "각 공급자 일봉 기준일", "장중 지수와 동일 시각이라는 뜻이 아님")
     counts = guard.get("flow_input_counts") or {}
     if counts.get("rows"):
         add("돈흐름 유효 표본", f"3M {counts['breadth_valid']}/{counts['rows']}개 / 가속도 {counts['accel_valid']}/{counts['rows']}개",
@@ -213,11 +222,20 @@ def guard_explanation_lines(guard, *, sessions=None):
     add("점수 구성", " / ".join(f"{k} {number(v):+g}" if number(v) is not None else f"{k} 미연결"
                                for k, v in parts.items()) or "구성 미연결",
         "지역 최대 + 흐름 + 조건부 매크로·이벤트 + 복합 가점", "각 입력 갱신 후 같은 함수로 재계산")
-    add("매크로 가점", f"{guard.get('macro_score', '미연결')}점 · 부담 {guard.get('macro_pressure', '미연결')} / 리스크 {guard.get('macro_risk', '미연결')}",
+    add("매크로 가점", f"원점수 {guard.get('macro_score', '미연결')} / 실제 반영 {parts.get('macro', '미연결')} · 부담 {guard.get('macro_pressure', '미연결')} / 리스크 {guard.get('macro_risk', '미연결')}",
         "부담 2/4 이상 +1/+2, 리스크 3.5/4.5 이상 +1/+2, 합계 최대 3",
         "다음 경계: " + _macro_release(guard) + "; 부담 <2 및 리스크 <3.5 시 매크로 가점 0")
-    add("이벤트 가점", f"{guard.get('event_score', '미연결')}점 · 위험값 {guard.get('event_risk', '미연결')}",
+    macro_input = guard.get("macro_risk_input") or {}
+    if macro_input.get("status") == "event_separated":
+        add("매크로·이벤트 분리", f"기존 합계 {macro_input.get('legacy_risk')} / 매크로 단독 {macro_input.get('risk')} / 당시 이벤트 {macro_input.get('event_included')}",
+            "매크로 단독값에 이벤트를 중복 포함하지 않음", "이벤트는 별도 최신 이벤트 표로 평가 · 종목 매크로 패널티는 유지")
+    elif macro_input.get("status") == "legacy_unverified":
+        add("매크로·이벤트 분리", "이전 입력 분해 미확인", "기존 값 유지·이벤트 차감 추정 안 함", "최신 코드로 매크로 입력 재조회 필요")
+    add("이벤트 가점", f"원점수 {guard.get('event_score', '미연결')} / 실제 반영 {parts.get('event', '미연결')} · 위험값 {guard.get('event_risk', '미연결')}",
         "위험값 >0이면 +1 / 2 이상 +2", "위험값 0 시 이벤트 가점 0")
+    add("조건부 반영", "복합 가점 " + str(parts.get("combined", "미연결")),
+        "지역 5 이상에서는 원점수 1은 직접 반영하지 않음; 매크로+이벤트 원점수 합 3 이상이면 복합 +1",
+        "해제는 전체 재계산 기준 · 원점수 감소가 통합점수 감소와 같지 않을 수 있음")
     tactical = _tactical_rebound_lines(guard)
     add("전술 반등 예외", tactical[0], "기존 판정 유지·누락값은 미충족/충족으로 대체하지 않음", tactical[1])
     lines += ["", "일반 종목 신규매수 중단 해소는 통합·해당 지역의 위험/비상 조건이 모두 해소되어야 합니다. 레버리지는 방어(5점 이상)도 별도 제한합니다. 위 수치 회복만으로 매수 허용은 아니며 종목별 비중·추세·손익비 체크는 유지합니다."]

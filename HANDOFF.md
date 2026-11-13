@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base a7e34691): market-mode input audit.
+See `docs/maintenance/20261113_market_guard_audit.md`. Cloud before edits was
+KR/US caution, integrated risk 9; dates KR Nov 13 / US Nov 12, not stale on
+this observation. Fixes remove duplicate S&P500/SPY risk observations and
+separate captured event risk from the market-guard macro input. Original stock
+penalties and all guard thresholds stay unchanged. Applied versus raw points
+and input dates are now disclosed. Focused 104, affected extraction 180 and build
+10 tests passed; immutable-source decision gate 1367 passed (127.905s).
+Cloud verification pending. Exactly one next bounded task: verify the
+deployed guard audit in a newly generated report before starting SOXL timing work.
+
 Latest bounded work (2026-11-13, base f56454dc): CPI missing comparison metadata
 and latest preliminary Korean exports. See
 `docs/maintenance/20261113_economic_freshness.md`. No investment thresholds changed.
