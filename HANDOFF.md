@@ -28,7 +28,10 @@ pure observation and rendering; app.py adds only the isolated renderer call.
 Missing/stale/gapped bars or a price outside the channel hold the hypothetical
 plan. No SOXL order prices, automatic orders, or 3x target conversion.
 All 820 existing app top-level function ASTs match the immutable base.
-Focused verification: 127 passed. Production verification recorded in linked note.
+Focused verification: 127 passed; final decision gate: 1369 passed.
+Code `7de2a6ae` pushed; Cloud SOXL verified 14:41-14:42 KST, no reboot.
+Existing market defense remained; SOXX above the 1h channel holds the new plan.
+Production verification recorded in linked note.
 Next bounded task: review this observation UI before adding timeframes or rules;
 do not interpret the hypothetical latest-close entry as a validated buy signal.
 

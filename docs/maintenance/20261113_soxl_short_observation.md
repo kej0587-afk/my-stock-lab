@@ -42,7 +42,15 @@ Date: 2026-11-13. Immutable base: ae466e4e.
   Synthetic values are labeled and confined to an ignored local preview.
 - Final decision gate: 1369 passed, zero failures/errors/skips, 131.712 seconds.
   Evidence: `cache/refactor_checks/decision_03v_d_34`.
-- Cloud verification: pending deployment below.
+- Code pushed: `7de2a6ae`. Cloud precision SOXL verified around 14:41-14:42 KST.
+  Existing execution restriction remained market defense. New source caption,
+  completed/expected bar time (Nov 12 15:30 ET), primary/reference separation and
+  outside-channel plan hold all rendered correctly, without a reboot.
+  Observed SOXX close 154.35 above channel upper 145.02 (lower 122.38); explicitly
+  held the hypothetical plan rather than inventing a target above the price.
+  Four reference changes and prices matched the local provider observation.
+  The narrow production viewport showed wrapping text and a nonblank candle/
+  channel chart. Screenshot: ignored `cache/soxl_short_cloud_20261113.png`.
 
 Private screenshots, quote outputs and preview files remain in ignored cache.
 No account holdings, target weights or secrets modified.
