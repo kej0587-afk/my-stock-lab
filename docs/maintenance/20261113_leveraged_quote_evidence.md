@@ -31,7 +31,14 @@ Base: a477dcac, 2026-11-13 KST. Scope: SOXL, RAM, BITX, 418660.KS.
 - Live public responses around 13:36 KST had valid exact-symbol overnight
   observations for all three US products; negative signs preserved. Private
   account data and raw provider payloads are not committed.
-- Cloud screen verification pending deployment.
+- Code `487605f9` pushed. Cloud final completed-result screens verified around
+  13:40-13:41 KST without reboot: SOXL, RAM, BITX all showed daymarket observations,
+  negative changes and Nov 12 US regular-close bases. Displayed observation times
+  were 13:39:16, 13:39:22 and 13:40:25 KST respectively. 418660.KS showed the
+  Korean-listed exclusion, not an imported US quote. No exception seen in those
+  completed results. Do not compare changing live prices as numerical parity.
+- Private visual evidence: Downloads/leveraged_SOXL_quote_session_verified.jpg.
+  Narrow-screen wrapping was checked; evidence is outside Git.
 
 ## Limits
 

@@ -28,7 +28,10 @@ from existing scalar calculation inputs. No decision thresholds or input prices
 changed. Missing quotes remain unavailable; KR product never borrows US quotes.
 Decision baseline/final: 1367 passed, 126.512s/134.941s (test runtimes, not app
 performance). Focused 132 passed, 2 known baseline calendar-mock failures excluded;
-additional leveraged/build coverage 208 passed. Cloud verification pending push.
+additional leveraged/build coverage 208 passed. Code `487605f9` pushed. Cloud
+four-product screens verified 13:40-13:41 KST: all three US products show negative
+daymarket changes with actual observation timestamps and Nov 12 close bases;
+418660 explicitly excludes US daymarket/after-hours. No reboot required.
 Exactly one next bounded task: review SOXL entry interpretation using the verified
 price/session basis, with existing thresholds unchanged and no new signal rules.
 
