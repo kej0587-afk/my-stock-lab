@@ -47,7 +47,21 @@ order logic, TTLs or request budgets changed. No automated trades.
   against immutable 21428d1b; a mutation test ensures numeric edits still fail.
 - The previous parser AST identity contract intentionally became valid same-symbol
   baseline parity: wrong-symbol behavior is an explicit, tested bug correction.
-- Source provenance includes both new helpers. Cloud post-deployment check pending.
+- Source provenance includes both new helpers.
+
+## Cloud Verification
+
+Code `5ed16cf3` pushed. After reload, all four precision views were freshly
+queried and checked on 2026-11-13 about 13:05-13:08 KST; no manual reboot needed.
+The new product tables, proxy explanations and own-price channel captions were
+visible. SOXL/RAM/418660 retained market-defense execution blocks. BITX retained
+recovery-before-DCA hold; its proxy UUP now showed USD29.42, not USD79.68.
+BITX recovery average changed from +57.6% to -0.5%, checks 1/6 to 0/6, consistent
+with removing a false positive input. These live samples differ in capture time;
+they are not an immutable numerical parity or performance benchmark. Numeric
+parity for unchanged logic is covered separately by the decision regression.
+Private visual proof: `Downloads/leveraged_BITX_product_verified.jpg` outside Git.
+No account holdings, targets or order instructions were changed.
 
 ## Official Product References
 

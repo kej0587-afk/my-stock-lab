@@ -30,7 +30,11 @@ as the requested ticker. Structured exact-symbol quote parsing now rejects that
 case and preserves existing fallbacks; local live UUP quote returned USD29.42.
 Final decision gate 1367 passed; focused parser/view/transport 106 passed.
 Prices gate has the same pre-existing broad AST failure before/after (265 passed,
-1 failed), not a full-suite pass. Cloud post-deployment verification pending.
+1 failed), not a full-suite pass. Additional channel/watch/build tests 196 passed.
+Code 5ed16cf3 pushed; all four new product views confirmed on Cloud around
+13:05-13:08 KST after reload. UUP USD29.42 verified; BITX recovery average now
+-0.5% instead of false +57.6%, with 0/6 instead of 1/6. Existing execution
+blocks remain. No holdings/targets changed; screenshot outside Git in Downloads.
 Exactly one next bounded task: verify quote/history timestamp alignment in the
 leveraged proxy comparisons without changing recovery membership or thresholds.
 
