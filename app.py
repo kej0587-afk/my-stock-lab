@@ -34643,9 +34643,12 @@ if main_page == "precision":
                     st.rerun()
                 st.caption(price_source)
                 if price_refresh_time:
-                    st.caption(f"갱신 {price_refresh_time[-8:]}")
+                    st.caption(f"조회 요청 {price_refresh_time[-8:]} KST · 체결 시각 아님")
                 if precision_chart_load_note:
                     st.caption(precision_chart_load_note)
+
+            from stock_lab_core.leveraged_quote_view import render_quote_evidence
+            render_quote_evidence(st, tkr, manual_price=manual_cur_p)
 
             if is_free and not has_p:
                 st.info("💡 미보유 관찰 종목입니다.")

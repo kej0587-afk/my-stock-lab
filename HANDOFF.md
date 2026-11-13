@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base a477dcac): timestamped extended-session
+evidence for SOXL/RAM/BITX/418660. See
+`docs/maintenance/20261113_leveraged_quote_evidence.md`.
+Shared report quote validator now requires field/session agreement, not only a
+timestamp inside the window. Precision shows verified observations separately
+from existing scalar calculation inputs. No decision thresholds or input prices
+changed. Missing quotes remain unavailable; KR product never borrows US quotes.
+Decision baseline/final: 1367 passed, 126.512s/134.941s (test runtimes, not app
+performance). Focused 132 passed, 2 known baseline calendar-mock failures excluded;
+additional leveraged/build coverage 208 passed. Cloud verification pending push.
+Exactly one next bounded task: review SOXL entry interpretation using the verified
+price/session basis, with existing thresholds unchanged and no new signal rules.
+
 Latest bounded work (2026-11-13, base 9e07a76e): leveraged comparison session
 alignment. See `docs/maintenance/20261113_leveraged_session_comparison.md`.
 SOXL/RAM/BITX/418660 watch rows now use exact completed exchange-session closes

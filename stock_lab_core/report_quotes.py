@@ -247,6 +247,13 @@ def repair_kr_report_closes(frames, payload, now, *, tickers=()):
     return result
 
 
+def _extended_field_matches(field, window):
+    label = (window or {}).get("label", "")
+    return ((field in {"overnight", "day"} and label.startswith("데이마켓"))
+            or (field == "pre" and label == "프리마켓")
+            or (field == "post" and label == "애프터마켓"))
+
+
 def extended_quote_observation(quote_row, ticker, now, *, allow_delayed=False):
     from stock_lab_core.report_session import us_extended_session
     regular = regular_quote_observation(quote_row, ticker, now)
@@ -255,6 +262,8 @@ def extended_quote_observation(quote_row, ticker, now, *, allow_delayed=False):
     window = us_extended_session(now)
     found = []
     for field, label in (("overnight", "데이마켓(야간)"), ("day", "데이마켓(야간)"), ("pre", "프리마켓"), ("post", "애프터마켓")):
+        if not _extended_field_matches(field, window):
+            continue
         at = _epoch(quote_row.get(field + "MarketTime"))
         price = raw_number(quote_row.get(field + "MarketPrice"))
         if at is None or not price or price <= 0:
@@ -293,9 +302,13 @@ def extended_quote_status(quote_row, ticker, now):
         return "연결됨"
     from stock_lab_core.report_session import us_extended_session
     window = us_extended_session(now)
+    if not window:
+        return "현재 미국 시간외·데이마켓 세션 아님(휴장·단축장은 별도 확인)"
     for field in ("overnight", "day", "pre", "post"):
         at = _epoch(quote_row.get(field + "MarketTime"))
         if window and at is not None and pd.Timestamp(window["start"]) <= at <= pd.Timestamp(now) < pd.Timestamp(window["end"]):
+            if not _extended_field_matches(field, window):
+                return "제공처 시세 필드와 관측 시각의 세션 불일치"
             issue = _quote_direction_issue(quote_row, field, raw_number(quote_row.get(field + "MarketPrice")),
                                            raw_number(quote_row.get("regularMarketPrice")))
             if issue:
