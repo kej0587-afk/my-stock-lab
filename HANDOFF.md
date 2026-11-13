@@ -36,10 +36,17 @@ in 130.29s (`cache/refactor_checks/decision_wgzsshro`). An earlier gate had
 Local browser: live provider response correctly withheld comparison because
 hourly price was outside the channel; synthetic close-breach/return timestamps
 and scenario table visually checked. Production SOXL before deploy retained
-execution hold / leveraged market defense. Cloud verification pending push.
+execution hold / leveraged market defense. Feature pushed as 87aeae93;
+prior research preserved in 09833c43. User-authorized Cloud reboot completed.
+Cloud SOXL at 2026-11-13 15:59 KST shows the new five-minute panel and budget
+table. Live SOXX hourly Close 154.35 above channel 145.02 leaves plan empty;
+five-minute comparison is withheld, not fabricated or a buy permission.
+Existing leveraged market defense remained in both top and final checks.
+Private screenshot: `cache/soxl_five_cloud.png`. No live eligible channel
+occurred during verification; breach/return states verified with synthetic data.
 Prior research files are preserved separately; private cache data stay untracked.
-Exactly one next task: verify this observation panel after deployment, without
-changing the existing hourly stop or market-defense thresholds.
+Exactly one next task: observe an eligible hourly-channel session and confirm
+the five-minute timestamps, without changing hourly stops or market defense.
 
 Latest bounded work (2026-11-13, base a384f025): SOXL 5m exit-only paired audit.
 Read `docs/maintenance/20261113_soxl_five_minute.md`; reproducer
