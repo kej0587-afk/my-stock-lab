@@ -19,6 +19,19 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base ae466e4e): isolated SOXL short observation.
+See `docs/maintenance/20261113_soxl_short_observation.md`.
+Precision SOXL now offers an opt-in SOXX completed regular-session 1h panel.
+SOX/SMH/QQQ are synchronized context only. No scoring, market-defense, allocation
+or existing entry-plan inputs are changed. Three small modules separate fetching,
+pure observation and rendering; app.py adds only the isolated renderer call.
+Missing/stale/gapped bars or a price outside the channel hold the hypothetical
+plan. No SOXL order prices, automatic orders, or 3x target conversion.
+All 820 existing app top-level function ASTs match the immutable base.
+Focused verification: 127 passed. Production verification recorded in linked note.
+Next bounded task: review this observation UI before adding timeframes or rules;
+do not interpret the hypothetical latest-close entry as a validated buy signal.
+
 Latest bounded work (2026-11-13, base 768ceb5c): three precision review defects.
 See `docs/maintenance/20261113_precision_three_fixes.md`.
 Missing RS no longer passes recovery; missing underlying 1W/RR holds proposed

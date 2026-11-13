@@ -34872,6 +34872,9 @@ if main_page == "precision":
                     _vol_ratio_text = "데이터 부족"
                 st.markdown(f"<div class='info-panel' style='border-left: 5px solid #10b981;'><b>📐 전술 지표</b><br>• 추세: <b>{c['trend']}</b> | MACD: <b>{c['macd']}</b><br>• RS: <b>{c['rs_label']}</b> | RSI: <b>{c['rsi']:.1f}</b> | MFI: <b>{c['mfi']:.1f}</b><br>• 볼린저 %B: <b>{c['pct_b']:.2f}</b> | SQZ: <b>{c['sqz']}</b><br>• {ret_html} | 거래량 기준비: <b>{_vol_ratio_text}</b> | 구조위험: <b style='color:{structure_color};'>{structure_note}</b><hr style='margin:10px 0; border-color:#334155;'><span class='smc-tag'>MA5</span> {format_currency(c['ma5'], tkr)}<br><span class='smc-tag'>MA20</span> {format_currency(c['ma20'], tkr)}<br><span class='smc-tag'>MA50</span> {format_currency(c['ma50'], tkr)}<br><span class='smc-tag'>MA120</span> {format_currency(c['ma120'], tkr)}<hr style='margin:10px 0; border-color:#334155;'>💡 <b>보조 해석:</b> {c['smc_insight']}</div>", unsafe_allow_html=True)
 
+        from stock_lab_core.soxl_short_view import render_soxl_short_observation
+        render_soxl_short_observation(st, tkr, c)
+
         render_leveraged_etf_precision_panel(name, tkr, c, has_p, my_p, usdkrw=usdkrw)
 
         render_personal_stock_analysis_panel(name, tkr, is_etf, a_class, c, fin_score, fin_meta, has_p, my_p)
