@@ -223,7 +223,7 @@ def test_manual_entry_below_reference_explains_numbers_without_widening_stop(mon
     ui.number_input = lambda label, **kw: 64. if kw["key"] == "soxl_scenario_entry_v1" else kw.get("value", 0.)
     render_trade_desk(ui, dict(frames={"SOXL": xl}, five_minute={}), hourly, sched, now, decision, str)
     text = " ".join(ui.text)
-    assert "$64.00" in text and "$64.41" in text and "손절선은 자동으로 낮아지지" in text
+    assert "64.00 USD" in text and "64.41 USD" in text and "손절선은 자동으로 낮아지지" in text
     assert not any("1R 익절 참고선" in str(table) for table in ui.tables)
     assert all(row["수량"] == "미산출" for table in ui.tables for row in table if "손실예산" in row)
     assert decision == before

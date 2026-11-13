@@ -148,7 +148,7 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
                 fig.update_layout(height=350, margin=dict(l=10,r=10,t=30,b=15), xaxis=dict(type="category",nticks=5,rangeslider=dict(visible=False),title="봉 시작 · ET"), yaxis_title="SOXL USD")
                 st.plotly_chart(fig, width="stretch", key="soxl_plan_chart_v1")
         else:
-            st.warning(f"가정 진입가 ${entry:.2f}가 자동 손절 참고선 ${reference_stop:.2f} 이하입니다. "
+            st.warning(f"가정 진입가 {entry:.2f} USD가 자동 손절 참고선 {reference_stop:.2f} USD 이하입니다. "
                        "같은 SOXL 1시간봉 저가를 손절선으로 쓰는 기존 연구안에서는 손익비·수량을 산출할 수 없습니다.")
             st.caption("진입가만 바뀌며 손절선은 자동으로 낮아지지 않습니다. 별도로 정한 더 낮은 손절가의 "
                        "시나리오나 이 가격의 승률을 검증한 결과가 아닙니다.")
