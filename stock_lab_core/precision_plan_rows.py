@@ -7,7 +7,7 @@ register_loaded_source(__name__, __file__)
 
 def build_precision_exit_rows(*, ticker, has_pos, cur, stop, target, tp1, tp2, tp3,
                               target_is_projection, format_currency, take_profit_condition):
-    """Format existing targets without recomputing prices, amounts or policy."""
+    """Format targets; cur is the first planned entry's risk basis, not a live quote."""
     rows = []
     if target_is_projection:
         rows += [
@@ -41,13 +41,15 @@ def build_precision_exit_rows(*, ticker, has_pos, cur, stop, target, tp1, tp2, t
             },
         ]
     else:
+        condition = take_profit_condition(cur, stop, target)
+        condition += f" · 1차 계획 진입가 {format_currency(cur, ticker)} 기준(실제 체결·추가 진입 후 재산출)"
         rows += [
             {
                 "단계": "1차 익절",
                 "가격": format_currency(tp1, ticker),
                 "금액/수량": "보유분 30~50%",
                 "예상 R/R": "-",
-                "조건": take_profit_condition(cur, stop, target),
+                "조건": condition,
             },
             {
                 "단계": "최종 익절",

@@ -19,5 +19,7 @@ def test_exit_rows_equal_pre_refactor(app_module, ticker, has_pos, projection):
                   format_currency=format_currency)
     condition = app_module.format_precision_take_profit_condition
     expected = old(**inputs, format_precision_take_profit_condition=condition)
+    if not projection:
+        expected[0]["조건"] += f" · 1차 계획 진입가 {format_currency(inputs['cur'], ticker)} 기준(실제 체결·추가 진입 후 재산출)"
     actual = build_precision_exit_rows(**inputs, take_profit_condition=condition)
     assert actual == expected

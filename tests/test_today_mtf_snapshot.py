@@ -37,8 +37,9 @@ def stable(value):
 
 
 def test_only_two_app_functions_change_and_only_reviewed_expressions(original_source):
+    from tests.precision_fix_ast_contract import before_precision_fixes
     def functions(source, restore=False):
-        return {n.name: ast.dump(before_company_market_context(before_optional_daily_snapshot(n) if restore else n))
+        return {n.name: ast.dump(before_company_market_context(before_optional_daily_snapshot(before_precision_fixes(n)) if restore else before_precision_fixes(n)))
                 for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
     old, new = functions(original_source), functions(current)

@@ -92,6 +92,25 @@ def test_executable_headline_and_plan_numbers_are_unchanged(display_app):
     assert plan["rows"] == ui.frames[-1].to_dict("records")
 
 
+@pytest.mark.parametrize("has_pos", [False, True])
+def test_pullback_entry_and_first_profit_share_risk_basis(display_app, has_pos):
+    app, ui = display_app
+    decision = held_decision(cur_p=64.29, rr_stop=38.2, rr_target=108.6,
+                             rr_ratio=1.7, atr=13.045, ma5=60.86, ma20=57.77,
+                             dec="눌림 대기", decision_code="S_UPTREND_WAIT_PULLBACK", current_w=0,
+                             buy_amt=140000)
+    before = deepcopy(decision)
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=has_pos)
+    entry = next(row for row in plan["rows"] if row["단계"].startswith(("1차 진입", "추가 1차")))
+    first = next(row for row in plan["rows"] if row["단계"] == "1차 익절")
+    price = float(entry["가격"].replace("$", "").replace(",", ""))
+    assert price < decision["cur_p"]
+    assert first["가격"] == f"${min(108.6, price + (price - 38.2)):.2f}"
+    assert "1차 계획 진입가" in first["조건"]
+    assert plan["rows"] == ui.frames[-1].to_dict("records")
+    assert decision == before
+
+
 def test_held_nasdaq_overweight_keeps_final_check_and_zero_amounts(display_app):
     app, ui = display_app
     decision = held_decision()

@@ -86,7 +86,8 @@ def test_all_other_app_functions_unchanged_and_source_wrapper_only_changes_call(
     after = (ROOT/'app.py').read_text(encoding='utf-8-sig')
     def functions(source):
         from tests.report_ast_contract import before_msft_cash_report
-        return {n.name: before_msft_cash_report(n) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+        from tests.precision_fix_ast_contract import before_precision_fixes
+        return {n.name: before_msft_cash_report(before_precision_fixes(n)) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     old, new = functions(before), functions(after)
     new.pop('_normalize_source_flow_row')
     new.pop('_render_image_theme_selection')

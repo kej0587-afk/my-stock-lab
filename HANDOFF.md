@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base 768ceb5c): three precision review defects.
+See `docs/maintenance/20261113_precision_three_fixes.md`.
+Missing RS no longer passes recovery; missing underlying 1W/RR holds proposed
+leverage tranches. Broken support lines are recovery references. Structural 1R
+uses the first planned entry in both price and explanation. Numerical investment
+thresholds, channel geometry, input sessions and valid-input allocations unchanged.
+Final decision gate PASS: 1369 tests; focused 197 passed; 960 available-input
+timing cases exactly match the immutable base. Local actual-renderer UI verified.
+Cloud post-push check pending; do not claim deployed verification yet.
+Exactly one next bounded task: verify these three fixes on Cloud, then record
+deployment evidence without expanding strategy or data-source scope.
+
 Latest bounded work (2026-11-13, base a477dcac): timestamped extended-session
 evidence for SOXL/RAM/BITX/418660. See
 `docs/maintenance/20261113_leveraged_quote_evidence.md`.

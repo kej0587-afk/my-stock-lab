@@ -145,7 +145,21 @@ def test_exact_adapter_preserves_immutable_calculation_bodies():
     for name in ("build_leveraged_precision_watch_rows", "build_leveraged_precision_state"):
         before = next(n for n in old.body if isinstance(n, ast.FunctionDef) and n.name == name)
         after = next(n for n in new.body if isinstance(n, ast.FunctionDef) and n.name == name)
-        assert ast.dump(before_leveraged_product_view(after)) == ast.dump(before)
+        reviewed = deepcopy(after)
+        if name == "build_leveraged_precision_state":
+            # Permit only the reviewed missing-RS correction, not basket/threshold changes.
+            additions = ast.parse('''rs_label = str(c.get("rs_slope_label") or "").strip()
+rs_known = any(label in rs_label for label in ("RS상승중", "RS횡보", "RS하락중"))''').body
+            for addition in additions:
+                matches = [n for n in reviewed.body if ast.dump(n) == ast.dump(addition)]
+                assert len(matches) == 1
+                reviewed.body.remove(matches[0])
+            checks = next(n.value for n in reviewed.body if isinstance(n, ast.Assign)
+                          and any(isinstance(t, ast.Name) and t.id == "recovery_checks" for t in n.targets))
+            expected = ast.parse('("RS 기울기", rs_known and "하락" not in rs_label, "상대강도 약화 멈춤" if rs_known else "RS 기울기 미확인")', mode="eval").body
+            assert ast.dump(checks.elts[4]) == ast.dump(expected)
+            checks.elts[4] = ast.parse('("RS 기울기", "하락" not in str(c.get("rs_slope_label", "")), "상대강도 약화 멈춤")', mode="eval").body
+        assert ast.dump(before_leveraged_product_view(reviewed)) == ast.dump(before)
         altered = deepcopy(after)
         altered.body += ast.parse("underlying_1w_avg = 999").body
         assert ast.dump(before_leveraged_product_view(altered)) != ast.dump(before)

@@ -17731,7 +17731,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         tp2 = rr_tp2 if rr_tp2 > cur else cur + atr * 2.0
         tp3 = rr_tp3 if rr_tp3 > cur else target
     else:
-        tp1 = min(target, cur + risk)
+        tp1 = min(target, entry1 + (entry1 - stop))
         tp2 = target
         tp3 = target
 
@@ -17863,7 +17863,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     ]
     from stock_lab_core.precision_plan_rows import build_precision_exit_rows
     rows += build_precision_exit_rows(
-        ticker=ticker, has_pos=has_pos, cur=cur, stop=stop, target=target,
+        ticker=ticker, has_pos=has_pos, cur=entry1, stop=stop, target=target,
         tp1=tp1, tp2=tp2, tp3=tp3, target_is_projection=target_is_projection,
         format_currency=format_currency, take_profit_condition=format_precision_take_profit_condition,
     )
@@ -18187,12 +18187,14 @@ def build_leveraged_precision_state(name, ticker, c, has_pos, my_price):
     ]
     underlying_1w_avg = float(np.nanmean(underlying_1w_vals)) if underlying_1w_vals else np.nan
     dca_stage, dca_multiple, dca_note, pnl = _classify_leveraged_dca_stage(c, has_pos, my_price, leverage)
+    rs_label = str(c.get("rs_slope_label") or "").strip()
+    rs_known = any(label in rs_label for label in ("RS상승중", "RS횡보", "RS하락중"))
     recovery_checks = [
         ("MA20 위", cur > ma20 > 0, "단기 바닥 회복"),
         ("MA50 회복", cur > ma50 > 0, "중기 추세 회복"),
         ("MA120 위", cur > ma120 > 0, "장기 기준선 위"),
         ("MACD 상승", "상승" in str(c.get("macd", "")) or "상승" in str(c.get("rt_macd", "")), "반등 탄력"),
-        ("RS 기울기", "하락" not in str(c.get("rs_slope_label", "")), "상대강도 약화 멈춤"),
+        ("RS 기울기", rs_known and "하락" not in rs_label, "상대강도 약화 멈춤" if rs_known else "RS 기울기 미확인"),
         ("기초축 1W", finite_num(underlying_1w_avg) and underlying_1w_avg >= 0, "기초 ETF/시장 동행"),
     ]
     passed = sum(1 for _, ok, _ in recovery_checks if ok)
@@ -18269,7 +18271,13 @@ def build_leveraged_dca_timing_state(c, state):
 
     ma20_ok = cur > ma20 > 0
     ma50_ok = cur > ma50 > 0
-    underlying_ok = (not finite_num(underlying_1w)) or underlying_1w >= 0
+    missing_inputs = []
+    if not finite_num(underlying_1w):
+        missing_inputs.append("기초축 1W")
+    if not finite_num(rr):
+        missing_inputs.append("R/R")
+    inputs_known = not missing_inputs
+    underlying_ok = finite_num(underlying_1w) and underlying_1w >= 0
     rr_wait = finite_num(rr) and rr < 0.8
     rr_scout_only = finite_num(rr) and rr < 1.5
     heat_wait = (
@@ -18287,7 +18295,8 @@ def build_leveraged_dca_timing_state(c, state):
         or (target_w > 0 and current_w >= target_w)
     )
     allow_current = (
-        not dca_blocked
+        inputs_known
+        and not dca_blocked
         and ma20_ok
         and underlying_ok
         and not heat_wait
@@ -18301,15 +18310,19 @@ def build_leveraged_dca_timing_state(c, state):
         f"{dca_stage} {dca_multiple} · 회복 {recovery_passed}/{recovery_total}({recovery_state}) · "
         f"기초축 1W {underlying_text} · R/R {rr_text} · 비중 {current_w:.1f}/{target_w:.1f}% · 남은 확인: {failed_text}"
     )
+    if missing_inputs:
+        condition_summary += " · 미확인: " + ", ".join(missing_inputs)
     technical_entry_ready = (
-        recovery_passed >= 5
+        inputs_known
+        and recovery_passed >= 5
         and ma20_ok
         and underlying_ok
         and not heat_wait
         and not rr_scout_only
     )
     technical_entry_watch = (
-        recovery_passed >= 3
+        inputs_known
+        and recovery_passed >= 3
         and ma20_ok
         and underlying_ok
         and not rr_wait
@@ -18345,7 +18358,14 @@ def build_leveraged_dca_timing_state(c, state):
             f"${pullback_low:.2f}~${pullback_high:.2f} 눌림 지지 시 일부 복구 후보."
         )
 
-    if dca_blocked:
+    if missing_inputs:
+        status = "레버리지 자료 확인: 신규·추가매수 보류"
+        status_note = f"{condition_summary}. 결측은 회복 조건 통과로 보지 않으며 자료 확인 후 타점을 다시 계산합니다."
+        color = "#64748b"
+        entry1_verdict = "미확인"
+        tranche_weights = [0.0, 0.0, 0.0]
+        entry1_cond = "기초축 1W와 R/R 자료 확인 후 재계산"
+    elif dca_blocked:
         if dca_stage == "미보유 관찰":
             if technical_entry_ready:
                 status = "레버리지 신규 1차 정찰 가능"
@@ -18491,7 +18511,9 @@ def build_leveraged_dca_timing_state(c, state):
         if profile_key == "RAM"
         else "3차는 MA50 회복 또는 손절선 근처 변동성 진정 확인 전까지 예비 회차"
     )
-    if dca_blocked:
+    if missing_inputs:
+        entry2_cond = entry3_cond = "자료 미확인 · 추가 회차 보류"
+    elif dca_blocked:
         if dca_stage == "미보유 관찰":
             entry2_cond = "목표비중 설정 후 같은 타점 기준으로 금액 재계산"
             entry3_cond = "DCA가 아니라 신규 포지션 계획에서만 사용"

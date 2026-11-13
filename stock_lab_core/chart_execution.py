@@ -188,8 +188,16 @@ def build_chart_execution_guide(
             break
     if liquidity_profile and liquidity_profile.get("ok") and liquidity_profile.get("support"):
         support_bits.append(f"유동성 지지 {liquidity_zone_price_text(liquidity_profile.get('support'), ticker)}")
+    recovery_text = ""
     if support_guide and finite_num(support_guide.get("y1")):
-        support_bits.append(f"{support_name} {format_currency(support_guide.get('y1'), ticker)} 부근")
+        support_y = float(support_guide["y1"])
+        if finite_num(current) and current < support_y:
+            recovery_text = (
+                f"{support_name} {format_currency(support_y, ticker)}는 이미 이탈한 선입니다. "
+                "현재 지지가 아니라 위쪽 회복 기준이며, 재돌파 후 지지 전환을 확인합니다."
+            )
+        elif finite_num(current):
+            support_bits.append(f"{support_name} {format_currency(support_y, ticker)} 부근")
     if support_bits:
         pullback_text = " / ".join(support_bits[:3]) + "에서 하락 멈춤·양봉 전환·거래량 회복이 보이면 눌림 정찰 후보"
     else:
@@ -211,6 +219,8 @@ def build_chart_execution_guide(
         ("눌림 기준", pullback_text),
         ("폐기 기준", invalid_text),
     ]
+    if recovery_text:
+        rows.insert(2, ("이탈선 회복", recovery_text))
     if upper_target_text:
         rows.insert(3, ("상단 목표", upper_target_text))
     body = "<br>".join(
