@@ -39,8 +39,15 @@ worse 8; all results in ignored cache/soxl_linked_research.
 Reproducer: scripts/research_soxl_linked.py. Two runs 11.684/11.641s,
 identical outcomes (replay CPU times, NOT full app speed improvement).
 Focused/research 118 passed. Baseline decision gate 1369 passed/129.065s.
-Final decision gate 1369 passed/133.58s (decision_2t10sr52). Cloud deploy
-verification pending below.
+Final decision gate 1369 passed/133.58s (decision_2t10sr52). Code 2ab02612
+pushed and production UI verified on 2026-11-13 without a reboot. SOXX/SOXL
+5m timestamps match; outside regular hours, references remain explicitly prior
+regular-session values. Original leverage market-defense block unchanged.
+Fresh Cloud history differs from the frozen offline fixture: missing bars 35/36
+instead of 14/15; day 57/20 wins (35.1%), overnight 56/24 (42.9%). Both net
+means remain negative. These are separate provider captures, not a deterministic
+before/after comparison or a current-entry probability. CSV/detail UI worked.
+Private evidence: cache/soxl_trade_cloud.png and soxl_trade_cloud_plan.png.
 Local actual renderers verified real outside-channel state, synthetic 60/58/62
 plan and zero-cash/positive-cash sizing. Script: scripts/preview_soxl_trade_desk.py.
 Exactly one next task: collect out-of-sample same-clock signal/fill evidence,

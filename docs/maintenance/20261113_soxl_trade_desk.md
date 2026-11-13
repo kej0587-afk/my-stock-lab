@@ -64,4 +64,21 @@ final decision gate 1369 passed/133.58s (`decision_2t10sr52`).
 Local browser verified actual saved prices outside the channel still have a
 separately labeled price scenario; synthetic 60/58/62 arithmetic; zero cash
 zero quantity and cash-capped integer sizing. Real historical win rates remain
-separate from the synthetic UI scenario. Production validation pending.
+separate from the synthetic UI scenario.
+
+Code commit 2ab02612 pushed. Production precision SOXL panel verified on
+2026-11-13: original leverage market-defense block remains; latest completed
+SOXX/SOXL 5m pair has the same timestamp, with a prior regular-session label
+outside regular hours. SOXL scenario uses its own prices, not a x3 translation.
+Zero/unset account inputs do not populate a tradable quantity.
+
+Production opt-in history fetch/replay completed and rendered statistics,
+uncertainty, negative-expectancy warnings, chronological halves, missing counts
+and CSV controls. Fresh capture: day 57 trades/20 wins (35.1%, interval
+24.0-48.1%); overnight 56/24 (42.9%, interval 30.8-55.9%); both net means
+negative. Missing SOXX/SOXL bars 35/36, versus frozen fixture 14/15, so these
+provider captures are not identical input datasets. Do not present the result
+difference as a performance or rule change. Current-price odds remain unknown.
+Evidence screenshots in ignored cache: soxl_trade_cloud.png and
+soxl_trade_cloud_plan.png. Narrow layout wraps explanatory text and scrolls
+wide tables; no account settings, orders or existing criteria were changed.
