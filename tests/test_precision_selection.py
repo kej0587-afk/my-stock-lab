@@ -7,7 +7,7 @@ import zipfile
 
 import pytest
 
-from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
+from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection, apply_precision_quick_target
 
 
 def test_preserve_precision_target_keeps_free_ticker_for_next_rerun(app_module):
@@ -207,14 +207,15 @@ def test_callback_survives_widget_state_lost_during_option_rebuild():
     _assert_selected_body_and_zip(app, app.selectbox[0].options[0], "GOOGL")
 
 
-def test_app_import_refreshes_old_selection_module_after_cloud_deploy(monkeypatch):
+@pytest.mark.parametrize("missing", ["remember_precision_selection", "apply_precision_quick_target"])
+def test_app_import_refreshes_old_selection_module_after_cloud_deploy(monkeypatch, missing):
     import stock_lab_core.precision_selection as selection
 
     tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
     start = next(index for index, node in enumerate(tree.body) if isinstance(node, ast.Import)
                  and any(alias.asname == "_precision_selection" for alias in node.names))
     import_block = ast.Module(body=tree.body[start:start + 3], type_ignores=[])
-    monkeypatch.delattr(selection, "remember_precision_selection")
+    monkeypatch.delattr(selection, missing)
     namespace = {}
     exec(compile(import_block, "app_selection_import", "exec"), namespace)
     state = {"widget": BITX}
@@ -224,3 +225,65 @@ def test_app_import_refreshes_old_selection_module_after_cloud_deploy(monkeypatc
     assert state["pending"] == {"ticker": "BITX"}
     assert namespace["resolve_precision_selection"]([FREE, BITX], free_option=FREE,
                                                    widget_option=BITX) == (BITX, False)
+
+
+def _direct_input_screen_source():
+    """Use the production quick-input/rerun path, with no account or price I/O."""
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8-sig"))
+    source = _selection_screen_source().split('\ntkr = selected_option.get')[0]
+    helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in {
+        "_is_precision_kr_code_like", "_split_precision_free_ticker",
+        "_queue_precision_free_target", "apply_precision_quick_target",
+    }]
+    branch = next(node for node in tree.body if isinstance(node, ast.If)
+                  and ast.unparse(node.test) == "main_page == 'precision'")
+    quick = next(node for node in branch.body if isinstance(node, ast.If)
+                 and ast.unparse(node.test) == "not is_free and free_option")
+    free = deepcopy(next(node for node in branch.body if isinstance(node, ast.If)
+                         and ast.unparse(node.test) == "is_free"))
+    end = next(i for i, node in enumerate(free.body) if isinstance(node, ast.If)
+               and ast.unparse(node.test) == "user_tkr_raw")
+    free.body = free.body[:end + 1]
+    free.orelse = ast.parse('tkr = selected_option["item"]["ticker"]').body
+    return ("import re\nfrom stock_lab_core.formatters import ensure_kr_suffix_if_code\n"
+            "from stock_lab_core.precision_selection import apply_precision_quick_target\n"
+            + ast.unparse(ast.Module(body=helpers, type_ignores=[])) + "\n"
+            + source + "\n" + ast.unparse(ast.Module(body=[quick, free], type_ignores=[])) + '''
+st.text(tkr)
+if st.button("Validate"):
+    st.session_state["result_" + tkr] = "validated " + tkr
+st.text(st.session_state.get("result_" + tkr, "not run"))
+''')
+
+
+@pytest.mark.parametrize("ticker,market,expected", [
+    ("SOXL", "미국/기타 (접미사 없음)", "SOXL"),
+    ("005930", "KOSPI (.KS)", "005930.KS"),
+    ("083450", "KOSDAQ (.KQ)", "083450.KQ"),
+    ("083450.KQ", "KOSPI (.KS)", "083450.KQ"),
+])
+def test_direct_ticker_and_result_survive_apply_validate_and_rerun(ticker, market, expected):
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_string(_direct_input_screen_source()).run()
+    app.selectbox[0].select(BITX).run()
+    app.text_input(key="precision_quick_free_ticker").input(ticker)
+    app.selectbox(key="precision_quick_free_market").select(market)
+    app.button(key="precision_quick_free_apply").click().run()
+    assert not app.exception
+    assert app.selectbox[0].value == app.selectbox[0].options[0]
+    assert app.selectbox[0].proto.set_value
+    assert app.text[0].value == expected
+    app.button[0].click().run()
+    assert not app.exception
+    assert app.text[0].value == expected
+    assert app.text[1].value == "validated " + expected
+    app.run()
+    assert app.text[0].value == expected
+    assert app.text[1].value == "validated " + expected
+    app.selectbox[0].select(BITX).run()
+    assert app.text[0].value == "BITX"
+    app.selectbox[0].select(app.selectbox[0].options[0]).run()
+    assert not app.exception
+    assert app.text[0].value == expected
+    assert app.text[1].value == "validated " + expected

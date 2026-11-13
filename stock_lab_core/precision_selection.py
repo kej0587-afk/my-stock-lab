@@ -1,5 +1,23 @@
 """Pure selection precedence for the precision observatory."""
 
+from stock_lab_core.formatters import sanitize_ticker_value
+
+
+def apply_precision_quick_target(state, split_ticker, queue_free_target, pending_key, kr_markets):
+    """Apply before widgets render so the browser and body share one identity."""
+    ticker = sanitize_ticker_value(state.get("precision_quick_free_ticker", ""))
+    if not ticker:
+        return
+    base, market = split_ticker(ticker)
+    selected_market = state.get("precision_quick_free_market")
+    if selected_market in kr_markets and market in kr_markets and "." not in ticker.upper():
+        market = selected_market
+    target = base
+    if market in kr_markets:
+        target += ".KQ" if "KOSDAQ" in market else ".KS"
+    state.pop(pending_key, None)
+    queue_free_target(target)
+
 
 def remember_precision_selection(state, widget_key, pending_key, option_map, preset_map):
     """Capture identity in the widget callback, before rerun rebuilds its options."""

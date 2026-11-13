@@ -62,11 +62,11 @@ from stock_lab_core.news_evidence import render_price_news_evidence
 from stock_lab_core.review_audit import cross_view_flags
 from stock_lab_core.precision_review_export import render_precision_review_download
 import stock_lab_core.precision_selection as _precision_selection
-if not hasattr(_precision_selection, "remember_precision_selection"):
+if not all(hasattr(_precision_selection, name) for name in ("remember_precision_selection", "apply_precision_quick_target")):
     # Cloud hot reload may retain the previous, stateless selection module.
     from importlib import reload as _reload_precision_selection
     _reload_precision_selection(_precision_selection)
-from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection
+from stock_lab_core.precision_selection import resolve_precision_selection, remember_precision_selection, apply_precision_quick_target
 from stock_lab_core.signal_basis import build_signal_basis, quote_display_label, render_signal_basis
 from stock_lab_core.precision_chart_view import (
     build_price_figure, finish_price_figure, frame_last_date, render_chart_basis,
@@ -34114,16 +34114,14 @@ if main_page == "precision":
     )
 
     st.session_state[PRECISION_SELECTED_OPTION_KEY] = desired_precision_option
-    if reset_precision_widget and PRECISION_SELECTED_WIDGET_KEY in st.session_state:
-        del st.session_state[PRECISION_SELECTED_WIDGET_KEY]
-    selected_index = options.index(desired_precision_option) if desired_precision_option in options else 0
+    if reset_precision_widget or PRECISION_SELECTED_WIDGET_KEY not in st.session_state:
+        # Explicit state sends the new value to the existing keyed frontend widget.
+        st.session_state[PRECISION_SELECTED_WIDGET_KEY] = desired_precision_option
 
     _precision_jump_notice = st.session_state.pop("_precision_jump_notice", "")
     if _precision_jump_notice:
         render_app_notice(_precision_jump_notice, "info")
     precision_select_kwargs = {"key": PRECISION_SELECTED_WIDGET_KEY}
-    if reset_precision_widget or PRECISION_SELECTED_WIDGET_KEY not in st.session_state:
-        precision_select_kwargs["index"] = selected_index
     sel = st.selectbox(
         "종목 선택", options, **precision_select_kwargs,
         on_change=remember_precision_selection,
@@ -34154,19 +34152,12 @@ if main_page == "precision":
             with q3:
                 st.write("")
                 st.write("")
-                if st.button("적용", key="precision_quick_free_apply", width='stretch'):
+                if st.button("적용", key="precision_quick_free_apply", width='stretch',
+                             on_click=apply_precision_quick_target,
+                             args=(st.session_state, _split_precision_free_ticker, _queue_precision_free_target,
+                                   PRECISION_PENDING_IDENTITY_KEY, PRECISION_KR_MARKET_OPTIONS)):
                     if not quick_ticker:
                         st.warning("티커나 종목코드를 입력하세요.")
-                    else:
-                        quick_base_ticker, quick_inferred_market = _split_precision_free_ticker(quick_ticker)
-                        if quick_market in PRECISION_KR_MARKET_OPTIONS and quick_inferred_market != PRECISION_US_MARKET_OPTION and "." not in quick_ticker.upper():
-                            quick_inferred_market = quick_market
-                        st.session_state[PRECISION_FREE_TICKER_KEY] = quick_base_ticker
-                        st.session_state[PRECISION_FREE_MARKET_KEY] = quick_inferred_market
-                        st.session_state[PRECISION_FORCE_FREE_OPTION_KEY] = True
-                        st.session_state[PRECISION_SELECTED_OPTION_KEY] = FREE_SEARCH_OPTION
-                        _queue_precision_selected_option(FREE_SEARCH_OPTION)
-                        st.rerun()
 
     if is_free:
         # 오늘의 종목 후보 등에서 전달된 티커는 rerun 이후에도 유지한다.

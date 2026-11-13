@@ -126,7 +126,8 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
         entry = st.number_input("SOXL 가정 진입가 (USD, 0 = 표시 기준가격)", min_value=0., value=0., step=.01,
                                 key="soxl_scenario_entry_v1")
         custom = entry > 0
-        plan = price_plan(entry or plan["entry"], plan["stop"])
+        reference_stop = plan["stop"]
+        plan = price_plan(entry or plan["entry"], reference_stop)
         if custom:
             st.caption("수동 진입가 시나리오 · 이 가격의 조건부 승률은 검증되지 않았습니다.")
         if plan:
@@ -147,7 +148,10 @@ def render_trade_desk(st, payload, hourly, schedule, now, decision, format_time)
                 fig.update_layout(height=350, margin=dict(l=10,r=10,t=30,b=15), xaxis=dict(type="category",nticks=5,rangeslider=dict(visible=False),title="봉 시작 · ET"), yaxis_title="SOXL USD")
                 st.plotly_chart(fig, width="stretch", key="soxl_plan_chart_v1")
         else:
-            st.warning("가정 진입가가 손절 참고선 이하 · 유효한 손익비/수량 없음")
+            st.warning(f"가정 진입가 ${entry:.2f}가 자동 손절 참고선 ${reference_stop:.2f} 이하입니다. "
+                       "같은 SOXL 1시간봉 저가를 손절선으로 쓰는 기존 연구안에서는 손익비·수량을 산출할 수 없습니다.")
+            st.caption("진입가만 바뀌며 손절선은 자동으로 낮아지지 않습니다. 별도로 정한 더 낮은 손절가의 "
+                       "시나리오나 이 가격의 승률을 검증한 결과가 아닙니다.")
     else:
         st.info("동일 시각 SOXL 가격 계획 미산출 · 자료 또는 손절거리 확인 필요")
     st.markdown("**같은 시각 5분 가격 · 이탈은 관찰 전용**")

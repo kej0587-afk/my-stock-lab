@@ -118,8 +118,14 @@ def render_symbol_research(st, ticker, decision=None, *, show_plan=True):
                    f"{profile['market']} 정규장 완료 1시간 수정 OHLC. 시간외·데이마켓 제외.")
         st.caption("각 ETF 실제 가격을 사용하며 기초자산 수익률을 2배·3배로 곱하지 않습니다. "
                    "현물 BTC의 24시간 흐름이나 다른 국가의 비동시 가격을 섞지 않습니다.")
-        cost = st.number_input("편도 총 거래비용 가정 (bp)", min_value=0., max_value=100., value=10.,
+        saved = st.session_state.get(key)
+        # Widget keys disappear on page/symbol changes; research inputs must not.
+        cost_key = key + "_saved_cost"
+        if key + "_cost" not in st.session_state:
+            st.session_state[key + "_cost"] = st.session_state.get(cost_key, (saved or {}).get("cost", 10.))
+        cost = st.number_input("편도 총 거래비용 가정 (bp)", min_value=0., max_value=100.,
                                step=1., key=key + "_cost")
+        st.session_state[cost_key] = cost
         if st.button("이 종목 단기 검증 실행", key=key + "_load"):
             with st.spinner("현재 완료봉·과거 표본 조회 및 검증 중..."):
                 history, live = load_history(profile["ticker"]), load_current(profile["ticker"])

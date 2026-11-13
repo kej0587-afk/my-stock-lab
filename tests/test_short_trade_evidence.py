@@ -146,7 +146,8 @@ def test_rerender_no_fetch_and_decision_unchanged(monkeypatch):
     for ticker in ("MSFT","RAM","BITX","418660.KS"):
         ui=UI()
         view.render_symbol_research(ui,ticker,decision)
-        assert not ui.session_state and "과거 검증 미실행" in " ".join(ui.text)
+        assert f"short_evidence_v1_{ticker}" not in ui.session_state
+        assert "과거 검증 미실행" in " ".join(ui.text)
     assert decision == before
 
 
@@ -164,13 +165,60 @@ def test_changed_cost_hides_stale_result_and_ticker_state_isolated(monkeypatch):
     monkeypatch.setattr(view, "load_current", fail)
     ui = UI()
     ui.session_state["short_evidence_v1_MSFT"] = {"cost": 20., "report": {"policies": {}}}
+    ui.session_state["short_evidence_v1_MSFT_cost"] = 10.
+    ui.number_input = lambda label, **kwargs: ui.session_state[kwargs["key"]]
     before = deepcopy(ui.session_state)
     view.render_symbol_research(ui, "MSFT")
     assert "비용 가정 변경" in " ".join(ui.text)
     ui.text.clear()
     view.render_symbol_research(ui, "RAM")
     assert "과거 검증 미실행" in " ".join(ui.text)
-    assert ui.session_state == before
+    assert ui.session_state["short_evidence_v1_MSFT"] == before["short_evidence_v1_MSFT"]
+    assert "short_evidence_v1_RAM" not in ui.session_state
+
+
+def test_symbol_result_and_cost_survive_page_and_ticker_widget_cleanup(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from stock_lab_core import short_trade_view as view
+    calls = []
+    def history(ticker):
+        calls.append(ticker)
+        return dict(ok=True, issue="", frames={}, captured_at="2026-11-12T22:00Z")
+    monkeypatch.setattr(view, "load_history", history)
+    monkeypatch.setattr(view, "load_current", lambda ticker: dict(ok=False, issue="fixture"))
+    monkeypatch.setattr(view, "cached_evidence", lambda frames, captured, profile, cost:
+                        dict(fingerprint=profile["ticker"], cost_bps=cost))
+    monkeypatch.setattr(view, "render_evidence", lambda st, report, *args:
+                        st.text(f"{report['fingerprint']}:{report['cost_bps']}"))
+    app = AppTest.from_string('''
+import streamlit as st
+from stock_lab_core.short_trade_view import render_symbol_research
+page = st.radio("Page", ["precision", "other"])
+ticker = st.selectbox("Symbol", ["MSFT", "RAM"])
+if page == "precision":
+    render_symbol_research(st, ticker)
+''').run()
+    app.number_input[0].set_value(20.).run()
+    app.button[0].click().run()
+    assert app.text[0].value == "MSFT:20.0"
+    app.radio[0].set_value("other").run()
+    app.radio[0].set_value("precision").run()
+    assert app.number_input[0].value == 20.
+    assert app.text[0].value == "MSFT:20.0"
+    app.selectbox[0].select("RAM").run()
+    assert app.number_input[0].value == 10.
+    app.button[0].click().run()
+    assert app.text[0].value == "RAM:10.0"
+    app.selectbox[0].select("MSFT").run()
+    assert app.text[0].value == "MSFT:20.0"
+    app.number_input[0].set_value(25.).run()
+    app.radio[0].set_value("other").run()
+    app.radio[0].set_value("precision").run()
+    assert not app.exception
+    assert app.number_input[0].value == 25.
+    assert not app.text
+    assert any("비용 가정 변경" in item.value for item in app.info)
+    assert calls == ["MSFT", "RAM"]
 
 
 def test_frequency_does_not_look_like_positive_return():

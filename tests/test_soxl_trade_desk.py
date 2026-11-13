@@ -204,3 +204,26 @@ def test_ui_no_trade_permission_and_budget_inputs_do_not_mutate_decision(monkeyp
     policy = dict(stats=empty,early=empty,late=empty,cost20=empty,trades=[],rejected={})
     render_stats(ui,dict(rule="test",policies={"day":policy,"overnight":policy},first=now,last=now,missing={}),str)
     assert "미산출" in str(ui.tables) and "0.0%" not in str(ui.tables)
+
+
+def test_manual_entry_below_reference_explains_numbers_without_widening_stop(monkeypatch):
+    from stock_lab_core.soxl_trade_view import render_trade_desk
+    sched, now, _, xx, xl, _ = sample()
+    xl = xl.copy()
+    xl.loc[:, "Open"] = 65.
+    xl.loc[:, "Close"] = 65.53
+    xl.loc[:, "High"] = 66.
+    xl.loc[:, "Low"] = 64.41
+    grid = completed_hour_grid(sched, now)
+    hourly = dict(frame=xx.reindex(grid), channel={}, plan={}, status="채널 미형성",
+                  as_of=grid[-1]+HOUR, expected_end=grid[-1]+HOUR)
+    decision = {"execution_workflow": {"게이트상태": "방어우선", "게이트근거": "시장방어"}, "buy_amt": 0}
+    before = deepcopy(decision)
+    ui = UI()
+    ui.number_input = lambda label, **kw: 64. if kw["key"] == "soxl_scenario_entry_v1" else kw.get("value", 0.)
+    render_trade_desk(ui, dict(frames={"SOXL": xl}, five_minute={}), hourly, sched, now, decision, str)
+    text = " ".join(ui.text)
+    assert "$64.00" in text and "$64.41" in text and "손절선은 자동으로 낮아지지" in text
+    assert not any("1R 익절 참고선" in str(table) for table in ui.tables)
+    assert all(row["수량"] == "미산출" for table in ui.tables for row in table if "손실예산" in row)
+    assert decision == before
