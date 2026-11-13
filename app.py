@@ -18082,10 +18082,13 @@ def _leveraged_precision_proxy_judgement(day_ret, week_ret, month_ret):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def build_leveraged_precision_watch_rows(profile_key):
+def build_leveraged_precision_watch_rows(profile_key, comparison_ticker=""):
     from stock_lab_core import prices as price_loader
     from stock_lab_core import leveraged_watch as watch_loader
 
+    if comparison_ticker and not getattr(watch_loader, "SESSION_COMPARISON_VERSION", ""):
+        st.warning("레버리지 비교 모듈 갱신 대기 · 비교값 사용 보류. Cloud 앱 재시작이 필요합니다.")
+        return []
     profile = LEVERAGED_ETF_PRECISION_PROFILES.get(profile_key, {})
     # Forced refresh reads session-local policy; retain its original thread.
     force_refresh = getattr(price_loader, "_force_live_price_refresh_active", lambda: True)()
@@ -18099,6 +18102,8 @@ def build_leveraged_precision_watch_rows(profile_key):
             load_batch=price_loader.load_price_frames_batch,
             pct_text=_leveraged_precision_pct_text,
             judge=_leveraged_precision_proxy_judgement,
+            comparison_profile=profile_key,
+            comparison_ticker=comparison_ticker,
         )
     return build_leveraged_watch_rows(
         profile.get("watch", []),
@@ -18107,6 +18112,8 @@ def build_leveraged_precision_watch_rows(profile_key):
         pct_text=_leveraged_precision_pct_text,
         judge=_leveraged_precision_proxy_judgement,
         parallel=not force_refresh,
+        comparison_profile=profile_key,
+        comparison_ticker=comparison_ticker,
     )
 
 
@@ -18167,7 +18174,7 @@ def build_leveraged_precision_state(name, ticker, c, has_pos, my_price):
     ma20 = clean_float(c.get("ma20"), 0.0)
     ma50 = clean_float(c.get("ma50"), 0.0)
     ma120 = clean_float(c.get("ma120"), 0.0)
-    watch_rows_raw = build_leveraged_precision_watch_rows(profile_key)
+    watch_rows_raw = build_leveraged_precision_watch_rows(profile_key, comparison_ticker=ticker)
     watch_rows = [{k: v for k, v in row.items() if not str(k).startswith("_")} for row in watch_rows_raw]
     underlying_rows = [
         row for row in watch_rows_raw

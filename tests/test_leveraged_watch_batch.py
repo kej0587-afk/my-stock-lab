@@ -185,6 +185,8 @@ def test_only_explicit_io_wrapping_changed_against_immutable_reference():
     old = {n.name: n for n in original.body if isinstance(n, ast.FunctionDef) and n.name in names}
     new = {n.name: n for n in current.body if isinstance(n, ast.FunctionDef) and n.name in names}
     for name, node in new.items():
+        from tests.leveraged_view_ast_contract import before_leveraged_product_view
+        node = before_leveraged_product_view(node)
         node.body = [n for n in node.body if not (
             isinstance(n, ast.ImportFrom) and any(alias.asname == 'watch_loader' for alias in n.names))]
         if name == 'build_leveraged_precision_watch_rows':

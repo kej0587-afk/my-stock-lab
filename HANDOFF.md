@@ -19,6 +19,20 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base 9e07a76e): leveraged comparison session
+alignment. See `docs/maintenance/20261113_leveraged_session_comparison.md`.
+SOXL/RAM/BITX/418660 watch rows now use exact completed exchange-session closes
+for 1/5/21-session returns, never current extended/daymarket quotes. Product
+rows are explicitly excluded from the original recovery-average basket. KR
+closes are displayed separately from US closes; BTC UTC daily history cannot
+supply a US-close comparison and remains unavailable, not estimated.
+Original thresholds, DCA sizes and basket membership unchanged. Corrected return
+inputs can change recovery checks; this is not all-numeric-output equivalence.
+Local focused tests and deployment/live verification status are in the record.
+Exactly one next bounded task: audit timestamped extended-session observations
+for these same products, without inferring missing BTC/US-close observations or
+changing investment thresholds.
+
 Latest bounded work (2026-11-13, base 21428d1b): SOXL/RAM/BITX/418660 product,
 proxy and channel audit. See `docs/maintenance/20261113_leveraged_product_audit.md`.
 Four Cloud precision views inspected; channel geometry verified on SOXL/BITX

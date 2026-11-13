@@ -19,6 +19,34 @@ def original_watch_block():
 
 
 def before_leveraged_product_view(node):
+    if node.name in {"build_leveraged_precision_watch_rows", "build_leveraged_precision_state"}:
+        node = deepcopy(node)
+        if node.name == "build_leveraged_precision_watch_rows" and len(node.args.args) == 2:
+            assert node.args.args[-1].arg == "comparison_ticker"
+            assert len(node.args.defaults) == 1 and ast.literal_eval(node.args.defaults[0]) == ""
+            node.args.args.pop()
+            node.args.defaults.pop()
+            guard = ast.parse('''if comparison_ticker and not getattr(watch_loader, "SESSION_COMPARISON_VERSION", ""):
+    st.warning("레버리지 비교 모듈 갱신 대기 · 비교값 사용 보류. Cloud 앱 재시작이 필요합니다.")
+    return []''').body[0]
+            node.body = [value for value in node.body if ast.dump(value) != ast.dump(guard)]
+        for call in ast.walk(node):
+            if not isinstance(call, ast.Call):
+                continue
+            target = ast.unparse(call.func)
+            allowed = {"batch_builder", "build_leveraged_watch_rows"} if node.name == "build_leveraged_precision_watch_rows" else {"build_leveraged_precision_watch_rows"}
+            if target not in allowed:
+                continue
+            kept = []
+            for keyword in call.keywords:
+                if keyword.arg == "comparison_profile":
+                    assert node.name == "build_leveraged_precision_watch_rows" and ast.unparse(keyword.value) == "profile_key"
+                elif keyword.arg == "comparison_ticker":
+                    assert ast.unparse(keyword.value) == ("comparison_ticker" if node.name == "build_leveraged_precision_watch_rows" else "ticker")
+                else:
+                    kept.append(keyword)
+            call.keywords = kept
+        return node
     if node.name not in {"render_precision_candlestick_chart", "render_leveraged_etf_precision_panel"}:
         return node
     if not any(isinstance(n, ast.ImportFrom) and n.module == "stock_lab_core.leveraged_product_view" for n in node.body):

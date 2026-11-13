@@ -72,7 +72,12 @@ def watch_display_rows(ticker, rows):
         # These roles match the existing recovery rule, not official index weights.
         included = row.get("구분") in {"기초 ETF", "섹터 확인", "시장 환경"} and valid
         display = {k: v for k, v in row.items() if not str(k).startswith("_")}
-        for old, new in (("1D", "1봉 기준*"), ("1W", "5봉 기준*"), ("1M", "21봉 기준*")):
+        aligned = bool(row.get("_comparison_version"))
+        if aligned:
+            display["기준 종가"] = display.pop("현재가", "-")
+        labels = (("1D", "1거래일"), ("1W", "5거래일"), ("1M", "21거래일")) if aligned else (
+            ("1D", "1봉 기준*"), ("1W", "5봉 기준*"), ("1M", "21봉 기준*"))
+        for old, new in labels:
             if old in display:
                 display[new] = display.pop(old)
         display["구분"] = ROLE_OVERRIDES.get((product_key(ticker), row.get("Ticker")), row.get("구분", ""))
@@ -106,11 +111,46 @@ def render_watch_basis(st, ticker, rows):
             "공식 편입비중이 아닌 비교용 목록입니다."
         )
         if rows:
-            st.dataframe(watch_display_rows(ticker, rows), width="stretch", hide_index=True)
+            aligned = any(row.get("_comparison_version") for row in rows)
+            if aligned:
+                render_session_comparison(st, ticker, rows)
+            else:
+                st.dataframe(watch_display_rows(ticker, rows), width="stretch", hide_index=True)
         else:
             st.info("기초축 확인 데이터가 아직 없습니다.")
+        if rows and any(row.get("_comparison_version") for row in rows):
+            st.caption("최신 장중·프리·애프터·데이마켓 가격은 상단 현재가에서 별도로 확인합니다. "
+                       "위 수익률에는 혼합하지 않습니다. 종가 확인 유예 15분 · 결측 시작/종료 가격은 대체하지 않습니다. "
+                       "수익률 배수만으로 레버리지 ETF 목표가를 계산하지 않습니다.")
+            return
         st.caption(
             "* 이력의 1·5·21봉 전 종가 대비 최근 조회가(없으면 마지막 종가) 기준입니다. "
             "이력이 짧으면 가용 첫 종가를 사용합니다. 시세·이력의 동일 세션은 미검증이며 정규장 확정 수익률이 아닙니다. "
             "BTC 일봉에는 주말이 포함되므로 5·21봉을 1주·1개월로 읽지 마세요."
         )
+
+
+def render_session_comparison(st, ticker, rows):
+    """Separate exchange clocks; keep wide audit metadata out of the main table."""
+    for market, title in (("US", "미국 완료 정규장 비교"), ("KR", "한국 완료 정규장 · 미국과 별도 시각"),
+                          ("CRYPTO", "24시간 현물 · 동시각 비교 미연결")):
+        selected = [row for row in rows if row.get("_comparison_market") == market]
+        if not selected:
+            continue
+        st.markdown("**" + title + "**")
+        end = selected[0].get("종료 시각", "미연결")
+        st.caption("비교 종료: " + end)
+        columns = ("확인축", "Ticker", "기준 종가", "1거래일", "5거래일", "21거래일", "판정", "회복 평균 반영")
+        table = [{key: row.get(key, "-") for key in columns} for row in watch_display_rows(ticker, selected)]
+        st.dataframe(table, width="stretch", hide_index=True)
+        missing = [row for row in selected if row.get("자료 상태") != "동일 시장 완료 세션 연결"]
+        for row in missing:
+            st.caption(f"{row['Ticker']}: {row['자료 상태']}")
+    with st.expander("비교 시작·종료 시각과 자료 상태", expanded=False):
+        audit = []
+        for row in rows:
+            for period, window in row.get("_comparison_windows", {}).items():
+                audit.append({"Ticker": row["Ticker"], "기간": period,
+                              "시작": window["start"], "종료": window["end"], "자료 상태": row["자료 상태"]})
+        if audit:
+            st.dataframe(audit, width="stretch", hide_index=True)

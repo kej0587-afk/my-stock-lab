@@ -21,6 +21,7 @@ from stock_lab_core.report_build import register_loaded_source
 
 _PARALLEL_ROW_SLOTS = BoundedSemaphore(2)
 _BATCH_HISTORY = ContextVar("leveraged_watch_batch_history", default=None)
+SESSION_COMPARISON_VERSION = "completed-session-v1"
 
 
 @contextmanager
@@ -34,7 +35,16 @@ def leveraged_watch_history_scope():
 
 
 @timed_call("external_data")
-def _build_watch_row(entry, *, load_quote, load_history, pct_text, judge):
+def _build_watch_row(entry, *, load_quote, load_history, pct_text, judge, comparison=None):
+    if comparison is not None:
+        from stock_lab_core.leveraged_comparison import completed_comparison_row
+        try:
+            with measure("prices", "leveraged_watch_history_6mo"):
+                history = load_history(sanitize_ticker_value(entry[0]), "6mo")
+        except Exception:
+            history = None
+        return completed_comparison_row(entry, history, context=comparison,
+                                        pct_text=pct_text, judge=judge)
     t, role, label = entry
     ticker = sanitize_ticker_value(t)
     with measure("prices", "leveraged_watch_quote"):
@@ -75,10 +85,16 @@ def _build_watch_row(entry, *, load_quote, load_history, pct_text, judge):
 
 
 @timed_call("external_data")
-def build_leveraged_watch_rows(watch, *, load_quote, load_history, pct_text, judge, parallel=True):
+def build_leveraged_watch_rows(watch, *, load_quote, load_history, pct_text, judge, parallel=True,
+                               comparison_profile="", comparison_ticker=""):
     """Keep provider/cache policy in the callbacks; serial calls stay on the caller."""
     callbacks = dict(load_quote=load_quote, load_history=load_history,
                      pct_text=pct_text, judge=judge)
+    if comparison_profile:
+        from stock_lab_core.leveraged_comparison import comparison_context, comparison_entries, exact_profile
+        profile = exact_profile(comparison_profile, comparison_ticker)
+        watch = comparison_entries(watch, profile)
+        callbacks["comparison"] = comparison_context(profile)
     if not parallel:
         return [_build_watch_row(entry, **callbacks) for entry in watch]
 
@@ -103,7 +119,8 @@ def build_leveraged_watch_rows(watch, *, load_quote, load_history, pct_text, jud
 
 
 @timed_call("external_data")
-def build_leveraged_watch_rows_batched(watch, *, load_quote, load_history, load_batch, pct_text, judge):
+def build_leveraged_watch_rows_batched(watch, *, load_quote, load_history, load_batch, pct_text, judge,
+                                      comparison_profile="", comparison_ticker=""):
     """Batch exact 6mo histories only inside a non-forced summary scope.
 
     The existing batch provider excludes KR symbols. Failed/missing symbols use
@@ -114,8 +131,12 @@ def build_leveraged_watch_rows_batched(watch, *, load_quote, load_history, load_
     state = _BATCH_HISTORY.get()
     if state is None:
         return build_leveraged_watch_rows(watch, load_quote=load_quote, load_history=load_history,
-                                          pct_text=pct_text, judge=judge)
+                                          pct_text=pct_text, judge=judge, comparison_profile=comparison_profile,
+                                          comparison_ticker=comparison_ticker)
     entries = list(watch)
+    if comparison_profile:
+        from stock_lab_core.leveraged_comparison import comparison_entries, exact_profile
+        entries = comparison_entries(entries, exact_profile(comparison_profile, comparison_ticker))
     symbols = tuple(sorted({sanitize_ticker_value(entry[0]) for entry in entries
                             if sanitize_ticker_value(entry[0])}))
     frames = {}
@@ -153,6 +174,8 @@ def build_leveraged_watch_rows_batched(watch, *, load_quote, load_history, load_
     return build_leveraged_watch_rows(
         entries, load_quote=load_quote, load_history=exact_history,
         pct_text=pct_text, judge=judge, parallel=True,
+        comparison_profile=comparison_profile,
+        comparison_ticker=comparison_ticker,
     )
 
 
