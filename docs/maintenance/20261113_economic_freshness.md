@@ -42,7 +42,13 @@ investment scores, market gates, position sizes or channel rules changed.
 - Final immutable-source decision run: 1367 passed, 127.564s, evidence
   `cache/refactor_checks/decision_ydgxil_m`. Earlier interrupted-source run is
   not used as acceptance evidence. Final focused run: 232 passed, 7.29s.
-- Cloud acceptance remains separate from local renderer verification.
+- Code 36cf81dd pushed; Cloud rebooted and new market-only report generated
+  2026-11-13 11:51 KST. Actual UI shows the missing CPI comparison explanation,
+  November 10 22:30 KST release time and October Korean export preliminary
+  +93.7%, with ministry listing/detail HTTP 200. Private screenshots remain
+  outside Git. No account calculation, timing benchmark or threshold audit claimed.
+- Separate pre-existing FF calendar CPI row still has unknown comparison basis;
+  it was not merged with the official BLS observation or given invented values.
 
 ## Next Bounded Task
 

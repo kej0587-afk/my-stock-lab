@@ -29,7 +29,13 @@ still returns 403. Korean exports now discover the ministry's newer preliminary
 month, with final/preliminary separation and strict no-estimation parsing.
 Focused economic/calendar tests: 232 passed. Local production renderer verified.
 Final immutable-source decision gate: 1367 passed (127.564s). Local browser confirmed
-the production renderer with live public inputs. Cloud deployment check pending.
+the production renderer with live public inputs. Code commit 36cf81dd pushed.
+Cloud rebooted; newly generated 2026-11-13 11:51 KST market-only report verified:
+CPI October YoY explicitly unavailable (official comparison missing), release
+Nov 10 22:30 KST; October Korean exports +93.7% preliminary with HTTP 200 for
+listing/detail. BLS automatic HTML/calendar 403 remains; date fallback is not
+an automatic-collection repair. Report regression retains one pre-existing AST
+failure (207 pass); do not claim the entire suite passed. No account recalculation.
 Exactly one next bounded task: audit current market-mode input freshness and
 gate components/release conditions, without changing investment thresholds.
 SOXL channel/timing review follows that audit, not part of this data patch.
