@@ -41,3 +41,30 @@ def load_short_hours():
     finally:
         YAHOO_HISTORY_LOCK.release()
     return result
+
+
+@cache_result(ttl=60, failure_ttl=30, trace_name="soxl_short_five")
+def load_short_five():
+    """One opt-in SOXX request, not added to daily scoring or background refresh."""
+    import yfinance as yf
+
+    captured = datetime.now(timezone.utc)
+    result = {"ok": False, "frame": pd.DataFrame(), "captured_at": captured.isoformat(), "issue": ""}
+    if not YAHOO_HISTORY_LOCK.acquire(timeout=5):
+        result["issue"] = "5분 가격 조회 사용 중 · 잠시 후 재조회"
+        return result
+    try:
+        data = yf.download(["SOXX"], period="5d", interval="5m", prepost=False,
+                           auto_adjust=True, ignore_tz=False, group_by="ticker",
+                           threads=False, progress=False, timeout=6, **yahoo_session_kwargs())
+        if isinstance(data, pd.DataFrame) and isinstance(data.columns, pd.MultiIndex):
+            result["frame"] = DownloadFrameSelector(data).select("SOXX")
+        result["ok"] = not result["frame"].empty
+        if not result["ok"]:
+            result["issue"] = "SOXX 5분봉 미수집 · 보간하지 않음"
+    except Exception as exc:
+        logging.warning("SOXX five-minute download failed: %s", type(exc).__name__)
+        result["issue"] = "5분봉 조회 실패: " + type(exc).__name__
+    finally:
+        YAHOO_HISTORY_LOCK.release()
+    return result

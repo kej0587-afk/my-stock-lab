@@ -19,6 +19,88 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base a384f025): opt-in SOXL five-minute
+observation and scenario-only loss-budget weights. Existing hourly criteria,
+daily scoring, market defense, allocations and orders unchanged.
+`soxl_five_observation.py` compares completed regular-session SOXX 5m bars
+only AFTER the current valid hourly reference, within the same exchange session.
+Missing/stale/invalid bars cannot pass as recovery. No reconstructed history,
+actual fill claim, SOXX risk x3 sizing or automatic buy permission.
+`soxl_five_view.py` shows low breach vs close breach vs return; separate table
+uses account loss budgets 0.25/0.5/1% and hypothetical SOXL losses 5/10/15/20%.
+Data fetch is SOXX-only, opt-in on the existing short-data button (60s success,
+30s failure cache), not on every rerender or the today-queue calculation.
+Verification: 100 focused/research tests passed; decision gate 1369 passed
+in 130.29s (`cache/refactor_checks/decision_wgzsshro`). An earlier gate had
+1369 passing tests but was invalidated by concurrent file edits; not counted.
+Local browser: live provider response correctly withheld comparison because
+hourly price was outside the channel; synthetic close-breach/return timestamps
+and scenario table visually checked. Production SOXL before deploy retained
+execution hold / leveraged market defense. Cloud verification pending push.
+Prior research files are preserved separately; private cache data stay untracked.
+Exactly one next task: verify this observation panel after deployment, without
+changing the existing hourly stop or market-defense thresholds.
+
+Latest bounded work (2026-11-13, base a384f025): SOXL 5m exit-only paired audit.
+Read `docs/maintenance/20261113_soxl_five_minute.md`; reproducer
+`scripts/research_soxl_five_minute.py` (offline default, --fetch explicit).
+5m range Sep15-Nov12 matches only 5 old entries (1 stop + 4 winners). Other
+30 stops unavailable; direct July request rejected by provider's 60-day limit.
+All 5 overlap paths reconcile to frozen hourly OHLC and original exit Opens.
+Sep16 stop: hourly -1.159%, 5m close -0.772%; earliest low observed in
+10:30-10:35 ET bar, original confirmation 13:30. Exact crossing and bid/ask
+fills unknown. Five-minute close worsens 2 old winners, including +16.72%
+to -5.07%; do not infer a better stop rule or optimize size from five samples.
+Scenario-only risk-budget weights saved; existing gates/allocations untouched.
+67 tests passed. App unchanged, no commit/deploy. Private outputs in
+`cache/soxl_five_minute/`, including old-range failure and coverage records.
+Exactly one next task: replay worst overnight stop with genuine historical
+5m/quote data if supplied; otherwise leave execution verification incomplete.
+
+Latest bounded work (2026-11-13, base a384f025): SOXL stop-loss attribution and
+BITX/418660 product-risk review, research only. Read
+`docs/maintenance/20261113_leverage_stop_risk.md`. Reproducers:
+`scripts/research_soxl_stop_loss.py`, `scripts/research_leverage_daily_risk.py`.
+Frozen support/1R stop sample: 31 trades, mean net -2.852%, worst -8.746%.
+Mean contributions: within-bar -2.188pp, overnight -0.456pp, intraday boundary
+-0.004pp, confirmation-close to next open -0.010pp, costs -0.194pp. These are
+OHLC proxy moves, not actual order slippage or exact first-crossing loss.
+10 trades confirm after the first low breach bar; exact intrabar crossing unknown.
+All attribution sums match original outcomes. Separate daily snapshot 15:24 KST
+has BTC 11/12 missing and 418660 three calendar mismatches; never fill these.
+Current size/holdings not re-read. No investment thresholds, app changes or deploy.
+Verification: 52 focused tests passed (4.73s), diff whitespace clean; app.py and
+stock_lab_core unchanged. Research and handoff files remain local/uncommitted.
+Exactly one proposed next task: finer-bar first-breach to confirmation execution
+audit, only if actual data are available; retain existing market defense.
+
+Latest bounded work (2026-11-13, base a384f025): offline SOXL session restrictions.
+Read `docs/maintenance/20261113_soxl_session_limits.md` and reproduce with
+`scripts/research_soxl_session_limits.py`. Same frozen input hashes and baseline
+entry/exit times/returns verified; no production edits or deployment.
+Support/1R mean net: allowed +0.69%, no late entry +0.38%, flat daily -0.48%,
+both -0.57%. Late cutoff avoids one -8.75% loser but misses three winners
+(best +20.85%). Flat daily improves worst trade to -6.96% but worsens close-only
+MDD from -28.86% to -31.62%; paired overnight outcomes: 5 better, 15 worse.
+45 tests passed; 495 ledger trades pass chronology/policy/non-overlap audits.
+Last partial-bar Close is a scheduled-close fill proxy, NOT proven auction fill.
+Historical gates unavailable: never label these ungated results defense-adjusted.
+Exactly one proposed next task: analyze signal-to-fill SOXL loss and gaps versus
+a predefined trade risk budget; do not enable trading or change current gates.
+
+Latest bounded work (2026-11-13, base a384f025): offline SOXL hourly observation
+research, no app or strategy edits. Read
+`docs/maintenance/20261113_soxl_hour_research.md` before proposing a short gate.
+Reproducer: `scripts/research_soxl_hours.py`, immutable downloaded inputs and
+ledgers in ignored `cache/soxl_hour_research/`. Historical complete market gates
+cannot be reconstructed from the session-pair last-snapshot storage; do not call
+a synthetic filter the original defense. Full regular 1h prefix channels, next
+SOXL opens and costs used. Support/1R: 63 trades, 50.8% wins, mean +0.69%,
+median +0.12%, worst -8.75%; best three removed mean -0.11%. Not a validated edge.
+Tests: 36 passed. Research files saved for review, no production deployment.
+Exactly one next task: separately test late-day entries and overnight exposure
+with predeclared execution rules, while retaining the existing market defense.
+
 Latest bounded work (2026-11-13, base ae466e4e): isolated SOXL short observation.
 See `docs/maintenance/20261113_soxl_short_observation.md`.
 Precision SOXL now offers an opt-in SOXX completed regular-session 1h panel.

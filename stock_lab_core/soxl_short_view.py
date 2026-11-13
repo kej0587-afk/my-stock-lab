@@ -8,7 +8,8 @@ import plotly.graph_objects as go
 
 from stock_lab_core.execution_readiness import precision_display_context
 from stock_lab_core.report_eventstudy import _exchange_schedule
-from stock_lab_core.soxl_short_data import load_short_hours
+from stock_lab_core.soxl_short_data import load_short_hours, load_short_five
+from stock_lab_core.soxl_five_view import render_budget_table, render_five_observation
 from stock_lab_core.soxl_short_observation import VERSION, build_short_observation
 from stock_lab_core.report_build import register_loaded_source
 
@@ -90,8 +91,10 @@ def render_soxl_short_observation(st, ticker, decision):
         if st.button("SOXX 단기 자료 조회", key="soxl_short_load_v1"):
             with st.spinner("SOXX와 참고 흐름 1시간봉 조회 중..."):
                 st.session_state[key] = load_short_hours()
+                st.session_state[key]["five_minute"] = load_short_five()
         payload = st.session_state.get(key)
         if not payload:
+            render_budget_table(st)
             return
         st.caption("수집 시각: " + _time(payload["captured_at"]) + " · 조회 캐시 최대 5분")
         if payload.get("issue"):
@@ -102,6 +105,8 @@ def render_soxl_short_observation(st, ticker, decision):
                                           (pd.Timestamp(now) + pd.Timedelta(days=1)).date().isoformat())
             model = build_short_observation(payload["frames"], schedule, now)
             render_observation_result(st, model)
+            render_five_observation(st, payload.get("five_minute") or {}, model, schedule, now, _time)
         except Exception as exc:
             logging.warning("SOXL short observation unavailable: %s", type(exc).__name__)
             st.warning("단기 관찰 자료 확인 필요: " + type(exc).__name__ + " · 기존 판정은 유지됩니다.")
+        render_budget_table(st)
