@@ -36,7 +36,18 @@ provider/session inputs or channel construction rules changed.
   produces first take-profit 105.00, with the same entry in its explanation.
 
 These are test runtimes, not a claim of application speed improvement.
-Cloud post-push verification remains to be recorded separately.
+Code pushed: `70ad0493`. Cloud post-push verification at 14:09-14:10 KST:
+
+- SOXL completed precision view: planned entry 61.69, stop 39.78, first
+  take-profit 83.60. Its condition explicitly uses planned entry 61.69.
+  Existing leverage market-defense execution hold is still present.
+- NVDA completed precision view: broken channel lower 182.16 appears under
+  recovery reference, not pullback support. Separate lower liquidity support
+  remains visible. Existing higher-timeframe damage and buy block remain.
+- Missing-input state was verified with synthetic local renderer inputs, not
+  injected into production data. No account settings or positions changed.
+- No Cloud reboot was required. Screenshots are private ignored cache files;
+  account screenshots are not committed.
 
 ## Next Bounded Task
 

@@ -27,9 +27,13 @@ uses the first planned entry in both price and explanation. Numerical investment
 thresholds, channel geometry, input sessions and valid-input allocations unchanged.
 Final decision gate PASS: 1369 tests; focused 197 passed; 960 available-input
 timing cases exactly match the immutable base. Local actual-renderer UI verified.
-Cloud post-push check pending; do not claim deployed verification yet.
-Exactly one next bounded task: verify these three fixes on Cloud, then record
-deployment evidence without expanding strategy or data-source scope.
+Code `70ad0493` pushed. Cloud SOXL/NVDA screens verified 14:09-14:10 KST:
+planned-entry 1R arithmetic matches; broken channel reference is separate from
+current support; existing market/higher-timeframe execution blocks remain.
+Missing-data UI checked locally with synthetic inputs, not production injection.
+No reboot required. No holdings or target settings changed.
+Exactly one next bounded task: review SOXL strategy improvement proposals
+separately, without changing thresholds until rules and validation are approved.
 
 Latest bounded work (2026-11-13, base a477dcac): timestamped extended-session
 evidence for SOXL/RAM/BITX/418660. See
