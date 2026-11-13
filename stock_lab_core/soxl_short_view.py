@@ -9,15 +9,16 @@ import plotly.graph_objects as go
 from stock_lab_core.execution_readiness import precision_display_context
 from stock_lab_core.report_eventstudy import _exchange_schedule
 from stock_lab_core.soxl_short_data import load_short_hours, load_short_five
-from stock_lab_core.soxl_five_view import render_budget_table, render_five_observation
+from stock_lab_core.soxl_five_view import render_five_observation
 from stock_lab_core.soxl_short_observation import VERSION, build_short_observation
+from stock_lab_core.soxl_trade_view import render_trade_desk, render_research
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
 
 
 def _time(value):
-    return "미연결" if value is None else pd.Timestamp(value).tz_convert("America/New_York").strftime("%m/%d %H:%M ET")
+    return "미연결" if value is None else pd.Timestamp(value).tz_convert("America/New_York").strftime("%Y-%m-%d %H:%M ET")
 
 
 def _price(value):
@@ -80,21 +81,22 @@ def render_observation_result(st, model):
 def render_soxl_short_observation(st, ticker, decision):
     if str(ticker).upper() != "SOXL":
         return
-    with st.expander("SOXL 단기 관찰 · SOXX 1시간봉", expanded=False):
+    with st.expander("SOXL 단기 계획 · 가격·손실예산·과거 검증", expanded=False):
         workflow = precision_display_context(decision).get("execution_workflow") or {}
         st.markdown("**관찰 전용 · 매수 승인 아님**")
         st.caption("기존 실행 제한: " + str(workflow.get("게이트상태", "미확인")) + " · "
                    + str(workflow.get("게이트근거", "기존 중기 판정·시장방어 유지")))
         st.caption("Yahoo 미국 정규장 완료 60분봉 · 수정 OHLC · 프리/애프터/데이마켓 제외. "
                    "개장 시각부터 1시간 단위이며 마지막 30분 및 단축장 잔여 봉 제외. 조회 지연 가능.")
-        key = f"soxl_short_hours_v{VERSION}"
-        if st.button("SOXX 단기 자료 조회", key="soxl_short_load_v1"):
+        key = f"soxl_short_hours_v{VERSION}_paired"
+        if st.button("SOXX·SOXL 단기 자료 조회", key="soxl_short_load_v1"):
             with st.spinner("SOXX와 참고 흐름 1시간봉 조회 중..."):
                 st.session_state[key] = load_short_hours()
                 st.session_state[key]["five_minute"] = load_short_five()
         payload = st.session_state.get(key)
         if not payload:
-            render_budget_table(st)
+            st.info("단기 자료 미조회 · 기존 판정과 분리된 가격 계획입니다.")
+            render_research(st, _time)
             return
         st.caption("수집 시각: " + _time(payload["captured_at"]) + " · 조회 캐시 최대 5분")
         if payload.get("issue"):
@@ -104,9 +106,10 @@ def render_soxl_short_observation(st, ticker, decision):
             schedule = _exchange_schedule("US", (pd.Timestamp(now) - pd.Timedelta(days=65)).date().isoformat(),
                                           (pd.Timestamp(now) + pd.Timedelta(days=1)).date().isoformat())
             model = build_short_observation(payload["frames"], schedule, now)
-            render_observation_result(st, model)
-            render_five_observation(st, payload.get("five_minute") or {}, model, schedule, now, _time)
+            render_trade_desk(st, payload, model, schedule, now, decision, _time)
+            with st.expander("SOXX 1시간 채널 · 5분 이탈 상세", expanded=False):
+                render_observation_result(st, model)
+                render_five_observation(st, payload.get("five_minute") or {}, model, schedule, now, _time)
         except Exception as exc:
             logging.warning("SOXL short observation unavailable: %s", type(exc).__name__)
             st.warning("단기 관찰 자료 확인 필요: " + type(exc).__name__ + " · 기존 판정은 유지됩니다.")
-        render_budget_table(st)

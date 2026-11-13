@@ -19,6 +19,33 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base 350a342f): connected SOXL short research
+desk. Read `docs/maintenance/20261113_soxl_trade_desk.md` first. Existing
+SOXX hourly model, app.py, scores, market defense and allocations untouched.
+Pure plan/sizing, prefix-only replay and rendering split into soxl_trade_*.py.
+Pairs SOXX/SOXL regular completed 5m prices, shows independent SOXL price
+scenario even when SOXX technical setup is unmet, and separates closed market,
+missing inputs and unchanged execution blocks. Cash/account USD inputs are
+local hypothetical values only; zero cash yields zero shares. No orders.
+New RESEARCH rule uses SOXL signal-hour Low protective stop and own-price 1R;
+this is NOT a proven strategy or a replacement of the existing hourly stop.
+5m remains advisory, not a backtested entry filter. Current-price success
+probability unavailable; historical rule frequency shown with uncertainty.
+Offline frozen Nov14 2024-Nov12 2026: day 64 trades, 37.5% wins, mean net
+-0.581%, worst -5.720%; overnight 63, 41.27%, mean -0.567%, worst -6.920%.
+Both fail to show positive after-cost expectancy. Full historical market gates
+unavailable, no gate-adjusted claims. Exact matched entries 63; day better 4,
+worse 8; all results in ignored cache/soxl_linked_research.
+Reproducer: scripts/research_soxl_linked.py. Two runs 11.684/11.641s,
+identical outcomes (replay CPU times, NOT full app speed improvement).
+Focused/research 118 passed. Baseline decision gate 1369 passed/129.065s.
+Final decision gate 1369 passed/133.58s (decision_2t10sr52). Cloud deploy
+verification pending below.
+Local actual renderers verified real outside-channel state, synthetic 60/58/62
+plan and zero-cash/positive-cash sizing. Script: scripts/preview_soxl_trade_desk.py.
+Exactly one next task: collect out-of-sample same-clock signal/fill evidence,
+including original gates, before claiming a tradable edge or changing criteria.
+
 Latest bounded work (2026-11-13, base a384f025): opt-in SOXL five-minute
 observation and scenario-only loss-budget weights. Existing hourly criteria,
 daily scoring, market defense, allocations and orders unchanged.

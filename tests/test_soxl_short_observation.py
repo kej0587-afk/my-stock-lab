@@ -143,6 +143,9 @@ class UI:
     def caption(self, text): self.text.append(text)
     def info(self, text): self.text.append(text)
     def warning(self, text): self.text.append(text)
+    def write(self, text): self.text.append(str(text))
+    def number_input(self, label, **kwargs): return kwargs.get("value", 0)
+    def download_button(self, *args, **kwargs): pass
     def table(self, rows): self.tables.append(rows)
     def dataframe(self, rows, **kwargs): self.tables.append(rows)
     def plotly_chart(self, fig, **kwargs): pass
@@ -163,12 +166,12 @@ def test_render_is_opt_in_soxl_only_and_preserves_decision(monkeypatch):
     assert not ui.text
 
 
-def test_loader_requests_only_four_regular_hourly_symbols(monkeypatch):
+def test_loader_requests_reference_and_soxl_in_one_regular_hourly_batch(monkeypatch):
     import yfinance
     from stock_lab_core import soxl_short_data as data
     _, _, _, frame = fixture()
     def download(tickers, **kwargs):
-        assert tuple(tickers) == obs.SYMBOLS
+        assert tuple(tickers) == (*obs.SYMBOLS, "SOXL")
         assert kwargs["interval"] == "60m" and not kwargs["prepost"]
         assert kwargs["auto_adjust"] and not kwargs["ignore_tz"]
         assert kwargs["timeout"] == 6
@@ -192,7 +195,7 @@ def test_loader_failure_is_explicit_not_zero(monkeypatch):
 def test_no_fetch_on_rerender_and_missing_plan_visible(monkeypatch):
     from stock_lab_core import soxl_short_view as view
     ui = UI()
-    ui.session_state[f"soxl_short_hours_v{obs.VERSION}"] = {
+    ui.session_state[f"soxl_short_hours_v{obs.VERSION}_paired"] = {
         "frames": {}, "captured_at": "2026-11-13T05:30Z", "issue": "timeout"}
     monkeypatch.setattr(view, "_exchange_schedule", lambda *args: schedule())
     def fail(): raise AssertionError("rerender must not fetch")

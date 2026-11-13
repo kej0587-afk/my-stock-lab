@@ -40,7 +40,12 @@ def build_five_observation(raw, hourly, schedule, now):
     except (KeyError, TypeError, ValueError):
         valid = False
     if not valid:
-        result["issue"] = "유효한 최신 1시간 계획 미확보 · 5분 비교 보류"
+        channel = hourly.get("channel") or {}
+        if channel and hourly.get("as_of") == hourly.get("expected_end") and not plan:
+            result["status"] = "타점 조건 미충족"
+            result["issue"] = str(hourly.get("status", "채널 내부 조건 미충족")) + " · 데이터 미수집과 별개"
+        else:
+            result["issue"] = "유효한 최신 1시간 계획 미확보 · 5분 비교 보류"
         return result
     result["stop"] = stop
     grid = completed_five_grid(schedule, now)

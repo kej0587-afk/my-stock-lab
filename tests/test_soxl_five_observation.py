@@ -116,10 +116,10 @@ def test_loader_only_soxx_regular_five_and_explicit_failure(monkeypatch):
     from stock_lab_core.soxl_short_data import load_short_five
     _, _, _, frame, _ = sample()
     def download(tickers, **kwargs):
-        assert tickers == ["SOXX"] and kwargs["interval"] == "5m"
+        assert tickers == ["SOXX", "SOXL"] and kwargs["interval"] == "5m"
         assert kwargs["period"] == "5d" and kwargs["auto_adjust"] and not kwargs["prepost"]
         assert kwargs["timeout"] == 6 and not kwargs["threads"]
-        return pd.concat({"SOXX": frame}, axis=1)
+        return pd.concat({"SOXX": frame, "SOXL": frame}, axis=1)
     monkeypatch.setattr(yfinance, "download", download)
     assert load_short_five.__wrapped__()["ok"]
     def fail(*args, **kwargs): raise TimeoutError()
