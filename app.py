@@ -6902,6 +6902,10 @@ def render_precision_candlestick_chart(
     st.plotly_chart(fig, width='stretch', key=key)
     if channel:
         st.caption(precision_chart_view.channel_caption(channel))
+    from stock_lab_core.leveraged_product_view import channel_basis_note
+    leverage_basis_note = channel_basis_note(ticker)
+    if leverage_basis_note:
+        st.caption(leverage_basis_note)
     if show_signals:
         event_rows = chart_structure_rows(structure, chart_events, decision_context)
         if event_rows:
@@ -18628,7 +18632,6 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     buy_amt_krw = clean_float(c.get("buy_amt"), 0.0)
     effective_exposure = current_w * leverage
 
-    watch_rows = state.get("watch_rows", [])
     dca_stage = state.get("dca_stage", "")
     dca_multiple = state.get("dca_multiple", "")
     from stock_lab_core.execution_readiness import precision_display_context
@@ -18642,16 +18645,18 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     sideways_state = build_sideways_quality_state(c, is_leveraged_product=True, has_pos=has_pos)
 
     st.markdown("### ⚡ 레버리지 ETF 중장기 관리")
-    st.markdown(
-        f"<div class='info-panel' style='border-left:5px solid #8b5cf6; line-height:1.75;'>"
-        f"<b>{escape_html_value(profile.get('display_name', name))}</b><br>"
-        f"{escape_html_value(profile.get('reset_note', '일일 레버리지 ETF입니다.'))}<br>"
-        f"<span style='color:#94a3b8;'>레버리지 ETF는 일반 ETF 장기보유 점수보다 "
-        f"회복조건, 기초축 동행, 목표비중 상한, 회차별 DCA 규칙을 먼저 봅니다.</span><br>"
-        f"<span style='color:#94a3b8;'>{escape_html_value(profile.get('underlying_note', ''))}</span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    from stock_lab_core.leveraged_product_view import render_product_basis, render_watch_basis
+    if not render_product_basis(st, ticker):
+        st.markdown(
+            f"<div class='info-panel' style='border-left:5px solid #8b5cf6; line-height:1.75;'>"
+            f"<b>{escape_html_value(profile.get('display_name', name))}</b><br>"
+            f"{escape_html_value(profile.get('reset_note', '일일 레버리지 ETF입니다.'))}<br>"
+            f"<span style='color:#94a3b8;'>레버리지 ETF는 일반 ETF 장기보유 점수보다 "
+            f"회복조건, 기초축 동행, 목표비중 상한, 회차별 DCA 규칙을 먼저 봅니다.</span><br>"
+            f"<span style='color:#94a3b8;'>{escape_html_value(profile.get('underlying_note', ''))}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("DCA 단계", dca_stage, dca_multiple)
@@ -18721,15 +18726,7 @@ def render_leveraged_etf_precision_panel(name, ticker, c, has_pos, my_price, usd
     ])
     st.dataframe(check_df, width='stretch', hide_index=True)
 
-    with st.expander("기초축/대표 프록시 확인", expanded=True):
-        st.caption(
-            "공식 실시간 보유비중표가 아니라 각 상품의 기초축과 대표 프록시 흐름을 같이 봅니다. "
-            "SOXL은 반도체, RAM은 DRAM·메모리, BITX는 BTC·비트코인 ETF·위험선호 프록시를 확인합니다."
-        )
-        if watch_rows:
-            st.dataframe(pd.DataFrame(watch_rows), width='stretch', hide_index=True)
-        else:
-            st.info("기초축 확인 데이터가 아직 없습니다.")
+    render_watch_basis(st, ticker, state.get("watch_rows_raw", []))
 
     render_leveraged_reentry_simulator(name, ticker, c)
 

@@ -1808,46 +1808,10 @@ def _fetch_robinhood_us_quote(ticker: str) -> float:
 
 
 def _extract_yahoo_overnight_price_from_html(text: str, ticker: str) -> float:
-    """Extract Yahoo's overnight/day-market price from quote-page HTML."""
-    t = normalize_price_lookup_key(ticker)
-    if not text or not t:
-        return 0.0
-    normalized = html.unescape(str(text)).replace('\\"', '"').replace("\\/", "/")
-    symbol_token = f'"symbol":"{re.escape(t)}"'
-    fields = (
-        ("overnightMarketPrice", "overnightMarketTime"),
-        ("dayMarketPrice", "dayMarketTime"),
-    )
+    """Reject recommendation/sidebar quotes belonging to another symbol."""
+    from stock_lab_core.overnight_quote import extract_overnight_quote
 
-    for price_field, time_field in fields:
-        price_pattern = re.compile(
-            rf'"{re.escape(price_field)}"\s*:\s*\{{\s*"raw"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-            flags=re.IGNORECASE,
-        )
-        time_pattern = re.compile(
-            rf'"{re.escape(time_field)}"\s*:\s*\{{\s*"raw"\s*:\s*([0-9]+)',
-            flags=re.IGNORECASE,
-        )
-        candidates: list[tuple[int, int, float]] = []
-        for match in price_pattern.finditer(normalized):
-            window_start = max(0, match.start() - 1800)
-            window_end = min(len(normalized), match.end() + 1800)
-            window = normalized[window_start:window_end]
-            symbol_rank = 0 if re.search(symbol_token, window, flags=re.IGNORECASE) else 1
-            time_match = time_pattern.search(window)
-            if not time_match:
-                continue
-            try:
-                price = float(match.group(1))
-                ts = int(time_match.group(1))
-            except Exception:
-                continue
-            if price > 0 and _is_recent_epoch(ts):
-                candidates.append((symbol_rank, -ts, price))
-        if candidates:
-            candidates.sort()
-            return float(candidates[0][2])
-    return 0.0
+    return extract_overnight_quote(text, normalize_price_lookup_key(ticker), _is_recent_epoch)
 
 
 @timed_call("prices")

@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-13, base 21428d1b): SOXL/RAM/BITX/418660 product,
+proxy and channel audit. See `docs/maintenance/20261113_leveraged_product_audit.md`.
+Four Cloud precision views inspected; channel geometry verified on SOXL/BITX
+exports. Display helpers extracted; actual target versus comparison ETF, own-price
+channel, daily reset, BTC futures/weekend risks and mixed-session limits disclosed.
+No investment thresholds, DCA sizing, channel rules or basket membership changed.
+Found a real UUP quote-contamination bug: Yahoo recommendation prices were accepted
+as the requested ticker. Structured exact-symbol quote parsing now rejects that
+case and preserves existing fallbacks; local live UUP quote returned USD29.42.
+Final decision gate 1367 passed; focused parser/view/transport 106 passed.
+Prices gate has the same pre-existing broad AST failure before/after (265 passed,
+1 failed), not a full-suite pass. Cloud post-deployment verification pending.
+Exactly one next bounded task: verify quote/history timestamp alignment in the
+leveraged proxy comparisons without changing recovery membership or thresholds.
+
 Latest bounded work (2026-11-13, base a7e34691): market-mode input audit.
 See `docs/maintenance/20261113_market_guard_audit.md`. Cloud before edits was
 KR/US caution, integrated risk 9; dates KR Nov 13 / US Nov 12, not stale on

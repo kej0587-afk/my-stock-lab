@@ -127,11 +127,20 @@ def test_bad_encoding_keeps_existing_next_source_fallback(monkeypatch, wire, cod
     next_source.assert_called_once_with("TEST")
 
 
-def test_parser_remains_exactly_the_same_as_fixed_baseline():
+def test_valid_same_symbol_quotes_match_fixed_baseline(monkeypatch):
+    # Nov 13: parser attribution intentionally fixed; transport remains unchanged.
     name = "_extract_yahoo_overnight_price_from_html"
-    nodes = [next(n for n in ast.parse(source("stock_lab_core/prices.py", baseline)).body
-                  if isinstance(n, ast.FunctionDef) and n.name == name) for baseline in (True, False)]
-    assert ast.dump(nodes[0], include_attributes=False) == ast.dump(nodes[1], include_attributes=False)
+    node = next(n for n in ast.parse(source("stock_lab_core/prices.py", True)).body
+                if isinstance(n, ast.FunctionDef) and n.name == name)
+    monkeypatch.setattr(prices, "_is_recent_epoch", lambda ts: ts >= NOW)
+    env = dict(vars(prices))
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "<baseline-parser>", "exec"), env)
+    for prefix in ("overnight", "day"):
+        for stamp in (NOW - 1, NOW, NOW + 1):
+            payload = json.dumps({"symbol": "UUP", prefix + "MarketPrice": {"raw": 29.35},
+                                  prefix + "MarketTime": {"raw": stamp}}, separators=(",", ":"))
+            for text in (payload, payload.replace('"', '\\"')):
+                assert env[name](text, "UUP") == getattr(prices, name)(text, "UUP")
 
 
 @pytest.mark.parametrize("stale", [False, True])
