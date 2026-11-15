@@ -30,7 +30,8 @@ review -> sector rotation -> schedule. Original data/diagnostics remain in a
 closed appendix. Fixes recent earnings follow-up selection, hidden guidance and
 false oil-sector linkage from the Constellation Energy company name. Sources,
 date/period labels, score/gate/allocation and TTLs retained; no extra data calls.
-Stable decision gate 1369 passed/144.032s; focused278 passed/13.99s. Final report
+Code commit f931f2b4 pushed to origin/main. Final import-compatibility/UI subset
+44 passed/3.42s. Stable decision gate 1369 passed/144.032s; focused278 passed/13.99s. Final report
 gate207 passed/1 pre-existing theme AST failure. Production baseline normal report
 generation31.469s; private evidence cache/report_reading_20261115. Post-change
 production verification remains unfinished: CUA stopped selecting the user's Edge

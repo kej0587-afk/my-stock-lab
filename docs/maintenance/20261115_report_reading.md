@@ -69,7 +69,9 @@ No claims from the user's example report were embedded as live data.
 
 ## Deployment and remaining limit
 
-Code validation complete; commit/push authorized. Existing saved reports must be
+Code `f931f2b4` committed and pushed to origin/main. Final import-compatibility/UI
+subset44 passed/3.42s; new-module import does not require a newly added symbol
+from a potentially older cached view module. Existing saved reports must be
 regenerated to use this layout. `report_reading` participates in the loaded/disk
 code check. Post-change production validation is NOT complete: user confirmed
 management login, but the IAB management tab still showed GitHub sign-in. While
