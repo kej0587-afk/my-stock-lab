@@ -27,12 +27,27 @@ use one evidence sentence per row and retain distinct checks for shared evidence
 post-close/global context can link existing holdings without relabelling it a
 closing cause. Equivalent weekly previews share the eight-read budget; original
 news rows remain. Overnight futures are no longer labelled prior cash closes.
-No score/grade/gate/data/TTL changes. Related300pass; decision1369pass/135.0s
-before final report-only presentation follow-ups (80 focused tests pass).
-Operating verification is pending this code deployment; use the preserved
-before_review.zip and old22:12 report in cache/article_story_20261115 and
-cache/event_watch_20261115. Do not claim new operating timing until downloaded
-Markdown/diagnostic/decision exports are compared. Customs stash untouched.
+No score/grade/gate/data/TTL changes. Related301pass/8.82s; decision1369pass/135.0s
+before final report-only presentation follow-ups. Codes d749976a and6f8af64b
+pushed. Cloud reboot and full Today completed; final23:08KST report run
+e44746785c014bad905dbc811df0375a normal,69.474s, entry-to-report92.240s,
+no degraded reasons.111 loaded/disk/Git hashes match, restart_required=false;
+downloaded Markdown matches diagnostic SHA256. Generation leaves all95rows and
+23decision columns identical. Across reboot94common rows agree; one dynamic
+input addition/removal prevents a full95-row equality claim. Main generic
+disclaimer6->0; body evidence occurs once in introduction/table reading path.
+Datacenter evidence now verified, borrowed-capex risk linked to existing
+holdings; futures labelled local22:15 observation, not previous cash close.
+Bodies remain8attempts; equivalent preview freed one slot for another event.
+First after-reboot report81.480s; final69.474s vs prior warm54.714s is NOT a
+controlled speed comparison. Final macro22.298s,prices14.180s,news2.169s,
+bodies0.392s,persistence9.369s,assembly19.974s. Main407->412lines: no claim of
+overall report shortening. Three-column rows wrap tall at536px, no clipped
+content in the saved US-story viewport. Private artifacts, verification.json,
+first_* intermediate files and operating_story.png: cache/article_story_20261115.
+Final report-only hot update was verified without a second reboot. An initial
+incomplete hot-update attempt has no completed diagnostic; do not use its
+wall-clock waiting as generation time. Customs stash untouched.
 
 Latest completed work (2026-11-15 event-watch request, base27e039e9): read
 docs/maintenance/20261115_event_watch.md. Main calendar now connects sourced
@@ -1399,15 +1414,18 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Complete operating verification of the article-story deployment.**
+**Connect sector-table explanations to the verified article evidence.**
 
-Generate one new operating report with unchanged settings and compare its
-Markdown, matching diagnostic and before/after decision exports. Check actual
-body facts, datacenter next-session timing, overnight futures labels, distinct
-checks retained under deduplication and all loaded/disk/Git hashes. Only reboot
-if the application requires it; owner access and reboot are already authorized.
-Record elapsed/stages without claiming a controlled speedup. Update this task
-to exactly one bounded follow-up after verification; preserve the Customs stash.
+Use the final23:08KST report and matching diagnostic in cache/article_story_20261115.
+Limit the first comparison to US base semiconductor/software sectors: compare
+their existing "why" cells with the new market-story body facts. Reuse already
+collected evidence only when issuer/sector, session and source match; retain
+market-excess-return and common-market-vs-sector-specific distinctions. Do not
+turn indirect holdings exposure into realised price contribution. Show one
+specific next check per supported sector and retain explicit missing evidence.
+No new provider, LLM, scoring/grade/gate/TTL changes or broad optimization.
+Verify unchanged numeric rows/decisions and operating rendering, then update
+the handoff. Preserve the interrupted Customs stash.
 
 ## Evidence and Remaining Limits
 

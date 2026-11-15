@@ -71,4 +71,28 @@ Final presentation follow-up keeps the existing observed market/breadth context
 in the introduction and the attributed event/implication/check in its table once.
 Legacy headline output remains available in the evidence appendix.301 related
 tests pass after this correction, including backward-compatible summary shapes.
-Final operating regeneration is pending this follow-up deployment.
+Final operating verification: code6f8af64b,23:08KST report
+e44746785c014bad905dbc811df0375a,69.474s (entry-to-report92.240s). Normal path,
+no degraded reasons; all111 loaded/disk/Git hashes agree and Markdown SHA256
+matches the diagnostic. Final ZIP again proves95rows x23columns unchanged since
+pre-generation;94common rows unchanged across reboot, one input changed. Main
+uncertainty evidence occurs once, generic disclaimer6->0. Final main412lines
+versus baseline407 is not a total-length reduction claim. US-story screenshot
+shows distinct evidence/exposure/check rows; at536px they remain tall but do not
+clip. No second reboot was required for this final report-only hot update.
+
+Final stages: macro22.298,prices14.180,news2.169,bodies0.392,calculations1.093,
+persistence9.369,assembly19.974s. Cache/network conditions differ from both
+earlier reports. Body-fetch budget/TTLs unchanged, no performance guarantee.
+Three concerns still depend on evidence availability: only8public bodies read,
+unmatched sources remain title-only, and verified text remains a publisher
+claim rather than proven causal price attribution. The separate sector-table
+"why" path is the one next bounded task in HANDOFF, not completed here.
+
+Private evidence: cache/article_story_20261115/{report.md,report_timing.json,
+verification.json,before_review.zip,before_generation_review.zip,after_review.zip,
+operating_story.png}. first_* files preserve the81.480s intermediate sample.
+Raw article pages/account holdings are not committed. Related final selection:
+301passed,8384deselected, one unrelated existing pytest parametrization warning;
+no full-suite pass claimed. GitHub push and final clean/upstream check recorded
+at completion; preserved Customs stash remains untouched.
