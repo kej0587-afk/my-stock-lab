@@ -396,7 +396,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     kr_observations = ". ".join(part for part in (
         korean_sector_reading(context, facts[0], states, now, news, concise=True),
         korean_investor_reading(context, facts[0], concise=True)) if part)
-    sentences = []
+    sentences, market_observations = [], {}
     for fact in facts:
         topics = market_claims.get(fact["market"], [])
         sources, seen = [], set()
@@ -414,6 +414,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
                 narrative += f". 다만 최근 5거래일은 {_pct(recent)}로, 오늘 반등이 최근 하락분을 모두 회복한 것은 아닙니다"
         if fact["market"] == "KR" and kr_observations:
             narrative += ". " + kr_observations
+        market_observations[fact["market"]] = narrative
         if fact["market"] in body_sources:
             backgrounds = [body_context_sentence(row) + " " + citation(dict(row, title="배경 보도"))
                            for row in body_sources[fact["market"]]]
@@ -475,6 +476,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
     return {"headline": headline, "overview": overview, "evidence": evidence, "market_claims": market_claims,
             "market_readings": {fact["market"]: sentence for fact, sentence in zip(facts, sentences)},
+            "market_observations": market_observations,
             "background_news": [row for rows in selected_news.values() for row in rows]}
 
 

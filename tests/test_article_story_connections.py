@@ -94,6 +94,17 @@ def test_post_close_body_connects_holdings_without_rewriting_last_close():
     assert (ctx,held) == before
 
 
+def test_main_intro_does_not_repeat_the_body_evidence_table():
+    from stock_lab_core.report_reading import compose_reading_report
+    sentence = 'AI 인프라 확충 부담으로 관련 서버 업종에 대한 경계가 이어졌다고 전했다.'
+    row = article([sentence])
+    output = compose_reading_report('# Stock Lab\n', context=context(), news=[row],
+                                    summary_rows=[], now=NOW)
+    main = output.split('## 상세 근거', 1)[0]
+    assert main.count(sentence) == 1
+    assert '발주·가동' in main and '현금흐름' in main
+
+
 @pytest.mark.parametrize('change', [
     {'body_status': 'fetch_unavailable'}, {'session_date': '2026-11-11'},
     {'news_bucket': 'next_session_news'}, {'published_at': '2026-11-14T07:00:00+09:00'},

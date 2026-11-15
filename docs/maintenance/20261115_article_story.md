@@ -50,6 +50,25 @@ closes; an index name and a late clock alone no longer prove a closing report.
 - Independent review found shared-sentence checks could be lost during summary
   deduplication; corrected and regression-tested before deployment.
 
-Operating generation, source hashes, timings and decision export comparison
-are pending deployment. The previous54.714s report is a warm-cache observation,
-not a controlled benchmark. Save new evidence before drawing conclusions.
+First operating verification: d749976a after authorized Cloud reboot;
+23:01KST report c124bdc606d04c5cb6586c36b4e8d73e,81.480s, script-to-report105.281s.
+Normal path, no degraded reasons;111 loaded/disk/Git hashes agree, no restart
+required, Markdown matches diagnostic SHA256. All95rows/23decision columns
+unchanged during generation;94common rows unchanged across reboot, with one
+dynamic candidate addition/removal. Bodies still8attempted: duplicate preview
+slot replaced by a different news item; datacenter now verified, prior futures
+label corrected, generic disclaimer6->0 in the main report. Main407->411lines
+is not an overall shortening claim. Individual event rows improve separation.
+
+Warm baseline54.714s versus new81.480s: macro16.258->28.168, prices9.620->19.471,
+news0.424->2.083, bodies0.173->2.058, persistence8.972->8.864,
+assembly17.822->19.708s. Different cache/network conditions; no causal speedup
+or regression conclusion. An initial hot-update attempt was not captured as a
+completed diagnostic before reboot; exclude it from timing comparisons.
+
+Operating reading exposed repetition between the introduction and body table.
+Final presentation follow-up keeps the existing observed market/breadth context
+in the introduction and the attributed event/implication/check in its table once.
+Legacy headline output remains available in the evidence appendix.301 related
+tests pass after this correction, including backward-compatible summary shapes.
+Final operating regeneration is pending this follow-up deployment.

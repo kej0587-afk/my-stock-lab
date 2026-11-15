@@ -586,7 +586,7 @@ def body_context_sentence(row):
         sentence += (" " if sentence else "") + "기사에서는 " + "·".join(backgrounds[:3]) + " 등을 시장 배경으로 짚었습니다."
     for fact in facts:
         if fact["topic"] == "ai_credit" and not fact.get("subject_ticker"):
-            sentence += (" " if sentence else "") + fact["summary"] + "."
+            sentence += (" " if sentence else "") + fact["summary"].rstrip(".") + "."
     issuer_facts = [fact["summary"] for fact in facts if fact.get("subject_ticker")]
     if issuer_facts:
         sentence += (" " if sentence else "") + "; ".join(issuer_facts[:3]) + "."

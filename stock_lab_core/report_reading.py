@@ -174,7 +174,10 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     explained = {(r.get("link") or r.get("url")) for r in synthesis.get("background_news", [])}
     for market, label in (("KR", "한국 시황"), ("US", "미국 시황")):
         fact = _market_fact(context, market, states, now)
-        lines += ["## " + label, "", synthesis["market_readings"].get(market) or fact["phrase"], ""]
+        # The event/implication/check table immediately below carries the body
+        # evidence once; keep only observed market context in this introduction.
+        overview = synthesis.get("market_observations", synthesis.get("market_readings", {}))
+        lines += ["## " + label, "", overview.get(market) or fact["phrase"], ""]
         if market == "KR":
             # The data tables retain market, source, provisional status and unit.
             flow = korean_flow_tables(context, fact)
