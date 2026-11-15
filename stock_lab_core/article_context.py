@@ -29,7 +29,7 @@ FEEDS = ("https://www.yna.co.kr/rss/market.xml", "https://www.yna.co.kr/rss/inte
          "https://www.fnnews.com/rss/r20/fn_realnews_finance.xml")
 BODY_HOSTS = ("yna.co.kr", "fnnews.com", "apnews.com", "cnbc.com", "aws.amazon.com", "pytorch.org")
 MAX_BYTES = 750_000
-MAX_ARTICLES = 4
+MAX_ARTICLES = 8
 
 _EARNINGS_MISS = (
     r"(?:실적|매출|이익|가이던스|향후\s*전망).{0,50}(?:(?:기대|예상|컨센서스).{0,18}"
@@ -371,9 +371,15 @@ def _article(url, title):
 
 @report_phase('articles')
 def enrich_article_context(result, now, *, priority_context=None):
-    """Read at most four direct public URLs after session/source curation."""
+    """Read bounded direct public URLs after session/source/materiality curation."""
     buckets = ("current_session_news", "session_news", "next_session_news", "other_market_news")
-    rows = [row for bucket in buckets for row in result.get(bucket, []) if _safe_url(row.get("link", ""))]
+    from stock_lab_core.report_brief import material_news, brief_theme
+    def eligible(row):
+        return material_news(row) or is_strategy_article(row.get("title", ""))
+    def coverage_group(row):
+        return row.get("market"), brief_theme(row, comprehensive=True)
+    rows = [row for bucket in buckets for row in result.get(bucket, [])
+            if _safe_url(row.get("link", "")) and eligible(row)]
     for row in rows:
         row["headline_events"] = headline_events(row.get("title", ""))
     from stock_lab_core.catalyst_news import catalyst_entities, catalyst_topics
@@ -408,7 +414,7 @@ def enrich_article_context(result, now, *, priority_context=None):
         report_context["sessions"] = {key: value.get("date") if isinstance(value, dict) else value
                                       for key, value in priority_context.get("sessions", {}).items()}
         report_context["current_news_sessions"] = priority_context.get("current_sessions", {})
-        all_rows = [row for bucket in buckets for row in result.get(bucket, [])]
+        all_rows = [row for bucket in buckets for row in result.get(bucket, []) if eligible(row)]
         primary = build_news_brief(report_context, all_rows, [], now, limit=3)["article_keys"]
         by_link = {row.get("link"): row for row in all_rows}
         for link in primary:
@@ -419,7 +425,7 @@ def enrich_article_context(result, now, *, priority_context=None):
             selected.append(row)
             seen.add(link)
             market = row.get("market")
-            group = (market, row.get("category", "시장") if market == "GLOBAL" else "")
+            group = coverage_group(row)
             market_counts[group] = market_counts.get(group, 0) + 1
             if market_wrap(row):
                 wrap_markets.add(market)
@@ -429,8 +435,9 @@ def enrich_article_context(result, now, *, priority_context=None):
             break
         market, link = row.get("market"), row.get("link")
         strategy = is_strategy_article(row.get("title", ""))
-        # GLOBAL is a provenance bucket, not a single market: keep topic variety.
-        group = (market, row.get("category", "시장") if market == "GLOBAL" else "")
+        # A market can contain policy, semiconductors, credit and other distinct
+        # catalysts; two US articles must not exhaust all US body coverage.
+        group = coverage_group(row)
         if (link in seen or (strategy and strategy_selected) or market_counts.get(group, 0) >= 2
                 or (market_wrap(row) and market in wrap_markets)):
             continue

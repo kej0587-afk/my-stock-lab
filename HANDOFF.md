@@ -30,7 +30,9 @@ validation and existing cached loaders; 10 collector tests pass. See
 docs/maintenance/20261115_report_quality_followup.md. Main-news materiality is
 reviewed: related370 and integrated103 tests pass. Decision1367 passed plus two
 exact report-opt-in AST checks passed after narrow normalization; goldens intact.
-News/price deployment is ready for operating reboot and regeneration;
+News/price deployment is ready for operating reboot and regeneration. Body
+selection now shares the materiality filter and reads at most8 public articles
+across market/theme groups (existing4workers/TTLs/guards retained); 100tests pass;
 do not claim the earlier quality gaps have all been resolved.
 
 Latest bounded work (2026-11-15 production validation, base 9f95190f): read

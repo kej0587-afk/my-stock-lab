@@ -52,5 +52,15 @@ pre-existing report whole-app AST mismatch remains recorded, not hidden.
 Production regeneration, representative coverage, timing and unchanged-decision
 comparison are pending deployment verification below.
 
+The prior body collector still spent its four slots on some items now excluded
+from the main reading path. Applied the same materiality filter before body
+selection, retained strategic scenario coverage, expanded the bounded budget to
+eight public articles, and keyed diversity by market AND theme rather than only
+market. This permits policy, chips, credit and other US catalysts to coexist.
+Four workers, provider allowlist, byte/time/date guards and success/failure TTLs
+are unchanged. Original evidence is retained; failed bodies never become verified
+facts. Article/materiality regression: 100 passed/4.09s. Extra real requests must
+be reported as a coverage cost, not described as an optimization.
+
 Additional representative histories may add genuine cache misses. Do not claim
 a speedup from a warm-cache sample or change cache lifetimes to hide that cost.

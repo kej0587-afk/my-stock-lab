@@ -200,7 +200,7 @@ def test_one_strategy_slot_keeps_market_wrap_material_diversity_and_allowlist(mo
     monkeypatch.setattr(articles, "_article", lambda url, title: calls.append(title) or {"body_status": "fetch_unavailable"})
     result = {"session_news": rows}
     articles.enrich_article_context(result, NOW)
-    assert len(calls) == articles.MAX_ARTICLES == 4
+    assert len(calls) == 4 <= articles.MAX_ARTICLES
     assert sum(events.is_strategy_article(title) for title in calls) == 1
     assert titles[3] in calls and titles[4] in calls
     assert "Election scenarios" not in calls
