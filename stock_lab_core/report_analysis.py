@@ -313,12 +313,25 @@ def sector_body_reasons(row, news, context, now):
             subject_market = explicit_news_market(dict(clean, title=evidence))
             if subject_market and subject_market != market:
                 continue
-            fact_topics = set(sector_news_topics("", sector_name=evidence))
+            # Broad discovery terms (infrastructure/construction/equipment) do
+            # not identify a physical industry, especially in cloud articles.
+            match_evidence = (re.sub(r"Constellation\s+Energy|콘스텔레이션\s*에너지", "", evidence, flags=re.I)
+                              if "energy" in topics else evidence)
+            fact_topics = set(sector_news_topics("", sector_name=match_evidence))
+            ai_fact = fact.get("topic") in {"ai_credit", "ai_investment"}
             common = (fact.get("topic") == "rates" and ai_exposure) or (
-                fact.get("topic") in {"ai_credit", "ai_investment"} and ai_exposure and not cybersecurity)
+                ai_fact and ai_exposure and not cybersecurity)
             direct = bool(topics & fact_topics)
+            if "industrials" in topics:
+                industry_pattern = {
+                    "XHB": r"주택|주거|\b(?:homebuilders?|homebuilding|housing|residential)\b",
+                    "PAVE": r"도로|교량|철도|항만|공항|토목|상하수도|전력망|공공\s*인프라|\b(?:roads?|bridges?|railways?|railroads?|highways?|public infrastructure|power grid)\b",
+                }.get(ticker, r"산업재|산업용\s*(?:기계|장비)|건설\s*기계|중장비|기계업|기계주|\bindustrials?\b|\bindustrial (?:machinery|equipment)\b|\bheavy machinery\b")
+                direct = bool(re.search(industry_pattern, evidence, re.I))
             if cybersecurity:
-                direct = bool(re.search(r"사이버|보안|cyber|security", evidence, re.I))
+                direct = bool(re.search(r"사이버|정보\s*보안|네트워크\s*보안|보안\s*(?:소프트웨어|업체|기업|업종)|\bcyber\w*|\b(?:network|information|software) security\b", evidence, re.I))
+            if ai_fact:
+                direct = False  # AI investment channels stay common AI context.
             if not common and not direct:
                 continue
             scope = "market_common_theme" if common else "sector_report"

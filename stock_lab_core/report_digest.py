@@ -9,9 +9,9 @@ register_loaded_source(__name__, __file__)
 
 # Subjects, not assertions about direction or a supplied example's truth.
 _THEMES = (
-    ("엔비디아 경영·규제 보도", r"(?:NVIDIA|엔비디아|젠슨|Jensen).*(?:사임|사퇴|경영|CEO|조사|규제|수출|resign|export|probe|leadership)",
+    ("엔비디아 경영·규제 보도", r"(?:NVIDIA|엔비디아|젠슨\s*황|Jensen).*(?:사임|사퇴|퇴임|퇴진|경영|CEO|조사|규제|수출|resign|export|probe|leadership)",
      "반도체", "회사·규제기관 원문, 고객 계약·공급 일정 변경 여부"),
-    ("AI 인프라 투자·자금 부담", r"(?:AI|데이터센터|data cent[er]+|클라우드|cloud).*(?:투자|부채|차입|신용|조정|수요|capex|debt|credit|spend|invest)",
+    ("AI 인프라 투자·자금 부담", r"(?:AI|데이터센터|data cent[er]+|클라우드|cloud).*(?:투자|부채|차입|신용|부담|조정|수요|급락|capex|debt|credit|spend|invest)",
      "클라우드·소프트웨어", "투자 전망 대비 영업현금·리스·차입, 주문 지연·가동률"),
     ("통화정책·금리·물가", r"연준|연은|금리|국채|물가|한국은행|금통위|\bFed\b|FOMC|CPI|PPI|Treasury|inflation|yields?",
      "금리·경제지표", "공식 발표·이전치 수정, 금리·달러의 동반 반응"),
@@ -24,7 +24,9 @@ _THEMES = (
 
 def _theme(row):
     from stock_lab_core.report_brief import brief_theme
-    for label, pattern, category, check in _THEMES:
+    # The subject of a crypto/oil headline stays crypto/oil even when it also
+    # mentions rates. Broad close-wrap labels are not distinct weekly themes.
+    for label, pattern, category, check in (*_THEMES[-2:], *_THEMES[:-2]):
         if re.search(pattern, text(row.get("title")), re.I):
             return label, category, check
     category = brief_theme(row, comprehensive=True)
@@ -32,7 +34,7 @@ def _theme(row):
 
 
 def weekly_themes(context, news, summary_rows, now):
-    """Unique collected headlines since Monday KST; not a full-week crawl.
+    """Unique collected headlines over seven calendar days; not a full crawl.
 
     Context rows are accepted as dated weekly background, not close-session
     causes. Count a duplicated URL/title once across all collection buckets.
@@ -44,7 +46,7 @@ def weekly_themes(context, news, summary_rows, now):
     from stock_lab_core.report_presentation import is_preopen_outlook
 
     local = now.astimezone(KST)
-    start = (local - timedelta(days=local.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = (local - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
     raw = records(news) + [row for bucket in ("session_news", "current_session_news", "next_session_news", "other_market_news")
                            for row in records(context.get(bucket))]
     held = [row for row in records(summary_rows) if is_held(row)]
@@ -64,6 +66,8 @@ def weekly_themes(context, news, summary_rows, now):
     groups = {}
     for row in unique:
         label, category, check = _theme(row)
+        if label in {"시장·업종", "한국 시황", "미국 시황"}:
+            continue
         group = groups.setdefault(label, {"label": label, "category": category, "check": check, "articles": []})
         group["articles"].append(row)
     result = []
@@ -84,7 +88,7 @@ def weekly_themes(context, news, summary_rows, now):
 
 def weekly_theme_lines(digest):
     lines = ["## 이번 주 테마 5개", "",
-             f"{digest['start']:%m/%d}~{digest['end']:%m/%d %H:%M} KST · 수집된 주간 헤드라인 {digest['headlines']}건의 상위 테마(중복 제외).", ""]
+             f"최근 7일 · {digest['start']:%m/%d}~{digest['end']:%m/%d %H:%M} KST · 수집 헤드라인 {digest['headlines']}건에서 구체적 테마 선정(중복 제외).", ""]
     if not digest["themes"]:
         return lines + ["출처·발행시각·관련성 기준을 통과한 이번 주 기사 미확보.", ""]
     lines += ["테마 | 헤드라인 | 관련 보유 | 다음 확인", "--- | --- | --- | ---"]

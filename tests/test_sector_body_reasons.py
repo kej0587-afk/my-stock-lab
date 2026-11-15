@@ -167,3 +167,38 @@ def test_shared_sentence_retains_each_relevant_interpretation_and_check():
 def test_legacy_no_body_contract_is_unchanged():
     args = sector(), {}, []
     assert sector_evidence(*args) == sector_evidence(*args, body_reasons=[])
+
+
+@pytest.mark.parametrize("ticker,name", [("XHB", "주택건설"), ("XLI", "산업재"), ("PAVE", "인프라")])
+def test_ai_infrastructure_is_not_physical_industry_direct_evidence(ticker, name):
+    target = dict(sector(ticker, .03), 섹터=name)
+    item = article([AI])
+    ctx = context(target)
+    assert sector_body_reasons(target, [item], ctx, NOW) == []
+    rendered = '\n'.join(sector_coverage_lines(ctx, [item], "US", NOW))
+    assert AI not in rendered and "+4.00%p 초과 움직임의 개별 원인 미확인" in rendered
+
+
+@pytest.mark.parametrize("ticker,name,sentence", [
+    ("XHB", "주택건설", "클라우드 인프라 기업의 실적이 시장 기대치를 하회했다."),
+    ("XLI", "산업재", "서버 장비와 클라우드 인프라 기업의 실적이 시장 기대치를 하회했다."),
+    ("PAVE", "인프라", "소프트웨어 인프라 기업의 실적이 시장 기대치를 하회했다."),
+    ("XLE", "에너지", "Constellation Energy earnings beat expectations."),
+    ("CIBR", "사이버보안", "National security regulations tightened export controls."),
+])
+def test_generic_words_or_company_names_do_not_donate_sector_identity(ticker, name, sentence):
+    item = article([sentence])
+    assert item["body_facts"]
+    assert sector_body_reasons(dict(sector(ticker), 섹터=name), [item], context(), NOW) == []
+
+
+@pytest.mark.parametrize("ticker,name,sentence", [
+    ("XHB", "주택건설", "주택 건설 기업의 실적이 시장 기대치를 하회했다."),
+    ("XHB", "주택건설", "Homebuilders earnings beat expectations."),
+    ("XLI", "산업재", "산업용 기계 기업의 실적이 시장 기대치를 하회했다."),
+    ("PAVE", "인프라", "도로와 교량 건설 기업의 실적이 시장 기대치를 하회했다."),
+    ("CIBR", "사이버보안", "Cybersecurity software earnings beat expectations."),
+])
+def test_specific_industry_words_keep_supported_body_links(ticker, name, sentence):
+    reasons = sector_body_reasons(dict(sector(ticker), 섹터=name), [article([sentence])], context(), NOW)
+    assert reasons and all(reason["scope"] == "sector_report" for reason in reasons)

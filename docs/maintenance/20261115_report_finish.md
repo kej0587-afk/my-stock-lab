@@ -11,8 +11,8 @@ cache TTL, authentication or storage schema changes.
   publication/body version and same-session gates. Common financing/rate context
   remains separate from sector-specific explanations of excess returns. Each
   supported channel carries a conditional implication and next check.
-- Top five weekly themes use collected, source-checked, dated headlines since
-  Monday KST. Distinct URLs/titles count once across news buckets. Five is a
+- Top five weekly themes use collected, source-checked, dated headlines over the
+  latest seven calendar days (KST). Distinct URLs/titles count once across news buckets. Five is a
   maximum, not a quota filled with unsupported stories. Theme labels describe
   subjects, not assertions that the user's example events occurred. Holdings
   links describe exposure, not realised price contributions. Detailed headline
@@ -63,3 +63,20 @@ verification evidence, not a runtime dependency.
   **51 passed /4.19s**. No decision code changed after the passing gate.
 - Production verification pending after push. Private exports and screenshots:
   `cache/report_finish_20261115/`; never commit account data.
+
+## Operating review corrections
+
+First complete production report (23:56KST, fa304fca) ran normally in78.301s;
+112 loaded/disk/Git hashes agreed, report SHA and split-file rejoin matched.
+All95rows/23decision columns matched before/after generation and the prior run.
+Footer:5passed/0failed/1unconfirmed (partial article-body coverage).
+Review then found two presentation defects requiring a final regeneration:
+- Broad market-wrap categories crowded out specific themes. Exclude those
+  categories as themes; refine governance/crypto subjects, use an explicit
+  seven-day window so a Monday pre-open report retains recent trading material.
+- AI infrastructure body facts overmatched XHB/XLI/PAVE through broad words.
+  Body linkage now requires actual housing/industrial machinery/public-infra
+  evidence; AI financing remains common AI-sector background only.
+No price or decision values changed. First artifacts retain `first_` prefixes.
+
+Final operating-review corrections: related **440 passed /16.44s**.

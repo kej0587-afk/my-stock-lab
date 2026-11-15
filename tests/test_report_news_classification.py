@@ -123,11 +123,11 @@ def test_full_report_routes_marketview_once_not_to_next_session(monkeypatch):
     report = build_auto_market_memo(report_context=context, now=NOW)
     late = report.split("## 다음 세션 재료")[1].split("## 매크로 수치 근거")[0]
     assert "마켓뷰" not in late
-    # One reading-path citation. The separately downloadable evidence preserves
-    # both the weekly-count source and the original report's source.
+    # One reading-path citation and one original evidence citation. A general
+    # market wrap is not a specific weekly theme, so adds no theme-source copy.
     main, evidence = report.split("## 상세 근거", 1)
     assert main.count(row["link"]) == 1
-    assert evidence.count(row["link"]) == 2
+    assert evidence.count(row["link"]) == 1
 
 
 def test_curator_drops_revised_title_at_same_url():

@@ -78,6 +78,18 @@ def test_real_earnings_and_policy_material_not_filtered():
     assert material_news(article("Fed officials discuss inflation and rate outlook"))
 
 
+def test_monday_keeps_recent_trading_week_and_general_wraps_are_not_themes():
+    monday = datetime.fromisoformat("2026-11-16T00:10:00+09:00")
+    rows = [article("코스피 하락 마감", is_close_wrap=True, market="KR"),
+            article("젠슨 황 퇴진에 엔비디아 주가 급락", link="https://www.reuters.com/ceo"),
+            article("비트코인 급락…금리·수급 겹악재", link="https://www.reuters.com/btc")]
+    result = weekly_themes({}, rows, [], monday)
+    labels = [g["label"] for g in result["themes"]]
+    assert "엔비디아 경영·규제 보도" in labels and "암호화폐·유동성" in labels
+    assert "한국 시황" not in labels and "시장·업종" not in labels
+    assert result["start"].strftime("%m/%d") == "11/10"
+
+
 @pytest.mark.parametrize("market", ["GLOBAL", "JP", "CN", ""])
 def test_global_theme_links_existing_exposure_without_relabelling_market(market):
     row = article("AI 데이터센터 투자·차입 부담에 반도체주 하락", market=market)
