@@ -14,7 +14,7 @@ _RENDER_MODULES = (
     "market_memo", "report_evidence", "report_analysis", "report_presentation", "report_generation_performance",
     "report_holdings", "report_session", "today_news",
     "report_history", "report_prices", "report_context", "report_live", "report_quotes", "report_history_store",
-    "report_scenario", "report_reference", "report_close_basis", "report_price_quality",
+    "report_scenario", "report_reference", "report_close_basis", "report_price_quality", "report_company_prices",
     "report_comparison", "report_market_summary", "report_brief", "report_view", "report_intraday", "article_context", "report_news_selection",
     "economic_releases", "economic_cache", "economic_bulletins", "economic_exports_preliminary",
     "economic_release_metadata", "report_economic_reading", "release_calendar",

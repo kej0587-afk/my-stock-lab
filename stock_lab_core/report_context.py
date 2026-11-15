@@ -36,7 +36,7 @@ def apply_verified_release_dates(rows, now):
 @timed_call("external_data", "report_context")
 def collect_report_context(summary_rows=None, event_rows=None, *, now=None, price_frames=None,
                            economic_releases=None, calendar=None, btc_frame=None, live_frames=None, scenario_frames=None, flow_snapshot=None, include_news=False,
-                           quote_data=None, news_categories=(), news_per_category=5):
+                           quote_data=None, news_categories=(), news_per_category=5, include_company_prices=False):
     set_report_stage('prices')
     from stock_lab_core.economic_releases import _api_key, load_economic_releases
     from stock_lab_core.prices import load_price_df, load_price_frames_batch
@@ -254,6 +254,11 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
             scenario_frames = {}
     result["scenario_observations"] = build_scenario_context(scenario_frames, sessions, now)
     result["scenario_frames"] = scenario_frames
+    if include_company_prices:
+        from stock_lab_core.report_company_prices import collect_company_prices
+        with measure("prices", "report_company_prices"):
+            result["company_prices"], result["company_price_diagnostics"] = collect_company_prices(
+                summary_rows, frames, observations, sessions, now, allow_fetch=price_frames is None)
     result["source_provenance"] = {"collected_at": quote_now.isoformat(),
         "indices": {ticker: {key: observations[ticker].get(key) for key in ("date", "previous_date", "source")}
                     for ticker in ("^KS11", "^KQ11", "^GSPC", "^IXIC", "^DJI")}}

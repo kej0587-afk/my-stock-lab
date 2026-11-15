@@ -28613,7 +28613,7 @@ def _collect_today_report_context(summary_df, event_rows, *, include_news=True, 
     from stock_lab_core.report_news_selection import report_news_options
     options = report_news_options(st.session_state)
     try:
-        context = collect_report_context(summary_df, event_rows, include_news=include_news,
+        context = collect_report_context(summary_df, event_rows, include_news=include_news, include_company_prices=True,
                                          news_categories=options["categories"] if news_categories is None else news_categories,
                                          news_per_category=options["per_category"] if news_per_category is None else news_per_category,
                                          flow_snapshot=get_cached_today_market_flow_snapshot())
