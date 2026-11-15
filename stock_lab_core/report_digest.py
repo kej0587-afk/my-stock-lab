@@ -104,13 +104,17 @@ def weekly_theme_lines(digest):
 
 
 def weekly_source_lines(digest):
+    from stock_lab_core.article_context import body_connection_state, body_unavailable_reason
     lines = ["### 주간 테마 집계 근거", "",
-             "테마 | 헤드라인·출처 | 발행시각(KST)", "--- | --- | ---"]
+             "테마 | 헤드라인·출처 | 발행시각(KST) | 본문 상태", "--- | --- | --- | ---"]
     for group in digest["themes"]:
         for row in group["articles"]:
             headline, source = text(row.get("title")), first(row, "link", "url")
             published = stamp(first(row, "published_at", "published")).astimezone(KST)
-            lines.append(" | ".join(_cell(x) for x in (group["label"], f"[{headline}]({source})", f"{published:%m/%d %H:%M}")))
+            state = body_connection_state(row)
+            if state == "접근·검증 실패":
+                state += " · " + body_unavailable_reason(row)
+            lines.append(" | ".join(_cell(x) for x in (group["label"], f"[{headline}]({source})", f"{published:%m/%d %H:%M}", state)))
     return lines + [""] if digest["themes"] else []
 
 
@@ -129,8 +133,13 @@ def connection_checks(context, summary_rows, digest, reading, now):
                    f"오늘점검 {len(records(summary_rows))}행 연결; 시세 최신성·전체 계좌 완전성은 별도"))
     groups = digest["themes"]
     total, bodies = sum(g["count"] for g in groups), sum(g["body_count"] for g in groups)
+    from collections import Counter
+    from stock_lab_core.article_context import body_connection_state
+    coverage = Counter(body_connection_state(row) for group in groups for row in group["articles"])
+    reasons = " · ".join(f"{label} {coverage[label]}건" for label in (
+        "조회 대상 제외", "미지원 출처", "본문 확인·해석 보류", "접근·검증 실패") if coverage[label])
     checks.append(("상위 테마 본문", "통과" if total and total == bodies else "미확인",
-                   f"헤드라인 {total}건 중 검증 본문 {bodies}건; 미검증 보도는 시장 원인 확정 아님"))
+                   f"헤드라인 {total}건 중 검증 본문 {bodies}건; {reasons or '미연결 항목 없음'}; 미검증 보도는 시장 원인 확정 아님"))
     rows, failure = summarize_backfill(context.get("public_flow_backfill"), checked_at=context.get("market_evidence_checked_at"))
     individual = [row for row in rows if row["label"] == "개인"]
     linked = len(individual) == 2 and all(row.get("sum_5") is not None and row.get("sum_20") is not None for row in individual)

@@ -473,10 +473,13 @@ def enrich_article_context(result, now, *, priority_context=None):
             market_counts[group] = market_counts.get(group, 0) + 1
             if market_wrap(row):
                 wrap_markets.add(market)
-    strategy_selected = False
-    for row in rows:
+    from stock_lab_core.report_digest import _theme
+    covered_themes = {_theme(row)[0] for row in selected}
+    strategy_selected = any(is_strategy_article(row.get("title", "")) for row in selected)
+    def select_candidate(row):
+        nonlocal strategy_selected
         if len(selected) >= MAX_ARTICLES:
-            break
+            return
         market, link = row.get("market"), row.get("link")
         strategy = is_strategy_article(row.get("title", ""))
         # A market can contain policy, semiconductors, credit and other distinct
@@ -486,7 +489,7 @@ def enrich_article_context(result, now, *, priority_context=None):
         if (link in seen or (preview is not None and preview in seen_previews)
                 or (strategy and strategy_selected) or market_counts.get(group, 0) >= 2
                 or (market_wrap(row) and market in wrap_markets)):
-            continue
+            return
         selected.append(row)
         strategy_selected |= strategy
         seen.add(link)
@@ -495,8 +498,27 @@ def enrich_article_context(result, now, *, priority_context=None):
         market_counts[group] = market_counts.get(group, 0) + 1
         if market_wrap(row):
             wrap_markets.add(market)
+        covered_themes.add(_theme(row)[0])
+
+    # Keep the report's primary stories, then the best remaining market wraps.
+    # Theme breadth must not displace a market's closing account.
+    for row in rows:
+        if (row.get("market") in {"KR", "US"} and market_wrap(row)
+                and (row.get("is_close_wrap") or row.get("retrospective_close_wrap")
+                     or re.search(r"마감|장종료|\b(?:market close|clos(?:ed|ing))\b", row.get("title", ""), re.I))):
+            select_candidate(row)
+    # One public candidate per uncovered named weekly theme before repeat reads.
+    # The existing rank, group caps and dedup guards still apply in both passes.
+    for row in rows:
         if len(selected) >= MAX_ARTICLES:
             break
+        theme = _theme(row)[0]
+        if theme not in covered_themes and theme not in {"시장·업종", "한국 시황", "미국 시황"}:
+            select_candidate(row)
+    for row in rows:
+        if len(selected) >= MAX_ARTICLES:
+            break
+        select_candidate(row)
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=4) as executor:
         pending = [submit_with_context(executor, _article, row["link"], row["title"]) for row in selected]
@@ -538,6 +560,7 @@ def body_unavailable_reason(row):
         "article_encoding_invalid": "원문의 문자 인코딩 선언과 데이터 불일치",
         "article_version_after_report": "생성 기준시각 이후 수정된 기사",
         "article_timestamp_mismatch": "RSS와 본문 발행시각 불일치",
+        "no_supported_context": "본문 확인·자동 해석 근거 부족",
     }
     if status == "fetch_unavailable":
         reason = row.get("body_failure_reason", "")
@@ -549,6 +572,18 @@ def body_unavailable_reason(row):
     if not status:
         return "이번 본문 조회 대상에서 제외" if _safe_url(row.get("link", "")) else "본문 자동연결 대상 출처 아님"
     return labels.get(status, "본문 근거 검증 미완료")
+
+
+def body_connection_state(row):
+    """Coverage categories; an unread article is not a failed HTTP request."""
+    if verified_body_facts(row):
+        return "근거 연결"
+    status = row.get("body_status")
+    if status in {"verified", "no_supported_context"}:
+        return "본문 확인·해석 보류"
+    if status == "unsupported_source" or not status and not _safe_url(row.get("link", "")):
+        return "미지원 출처"
+    return "접근·검증 실패" if status else "조회 대상 제외"
 
 
 def verified_body_facts(row):

@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded work (2026-11-16 article-body coverage, based54a8f73): read
+[body coverage verification](docs/maintenance/20261116_body_coverage.md).
+User chose this source task before the deferred export optimization. Kept top3
+stories/explicit market-close coverage, diversified the remaining eight body
+slots, added attributed leadership requests/conflict reports and per-article
+coverage reasons. No score/grade/gate/price/TTL/source whitelist changes.
+Related408pass; decision1369pass/136.983s (decision_itsdpjfs), no goldens changed.
+Fresh old-code operating baseline08:43KST normal77.706s/bodies1.964s, eight
+connected articles; post-push production verification is still pending.
+Private snapshots: cache/body_coverage_20261116. Customs stash preserved.
+
 Latest completed work (2026-11-16 report finish, base4f657800): read
 [report finish verification](docs/maintenance/20261115_report_finish.md).
 Code817105f3 is pushed and operating-verified. Added specific weekly themes,

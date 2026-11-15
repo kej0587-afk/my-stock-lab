@@ -78,6 +78,50 @@ def test_issuer_specific_title_does_not_discard_leadership():
     assert sentence in articles.body_context_sentence(row)
 
 
+def test_shareholder_request_is_evidence_of_a_request_not_a_personnel_decision():
+    sentence = "가온테크 투자자들은 전 CEO의 복귀를 요구하는 서한을 이사회에 보냈다고 밝혔다."
+    row = article([sentence], title="가온테크 주주, 전 CEO 복귀 요구")
+    fact, = row["body_facts"]
+    assert fact["topic"] == "leadership_request"
+    assert fact["evidence"] == sentence
+    assert "실제 복귀를 뜻하지 않습니다" in fact["implication"]
+    assert "이사회" in fact["check"]
+    assert sentence in articles.body_context_sentence(row)
+
+
+@pytest.mark.parametrize("sentence", [
+    "주주들은 가온테크 CEO 복귀를 요구하지 않았다고 밝혔다.",
+    "지난해 주주들은 가온테크 CEO 복귀를 요구하는 청원을 제출했다.",
+    "투자자들이 가온테크 CEO 복귀를 요구할 수 있다는 전망이 나왔다.",
+])
+def test_request_not_created_from_denial_history_or_speculation(sentence):
+    assert not any(f["topic"] == "leadership_request" for f in article([sentence])["body_facts"])
+
+
+@pytest.mark.parametrize("sentence", [
+    "이란 당국은 군사 시설을 드론으로 공격했다고 주장했다.",
+    "바레인군은 발사체를 목표물에 도달하기 전에 요격했다고 밝혔다.",
+])
+def test_conflict_claim_retains_attribution_without_inferred_damage_or_oil_move(sentence):
+    row = article([sentence], title="중동 충돌 관련 당사국 발표")
+    fact, = row["body_facts"]
+    assert fact["topic"] == "conflict_report"
+    assert fact["concrete_summary"] == fact["evidence"] == sentence
+    assert "피해·공급 차질이나 가격 영향을 확정하지 않습니다" in fact["implication"]
+    assert "상대 당사국 확인" in fact["check"]
+
+
+@pytest.mark.parametrize("sentence", [
+    "이란 당국은 군사 시설을 공격하지 않았다고 밝혔다.",
+    "지난해 이란 당국은 군사 시설을 공격했다고 주장했다.",
+    "이란 당국은 군사 시설을 공격할 수 있다고 밝혔다.",
+    "보안 회사는 악성 프로그램의 공격을 차단했다고 밝혔다.",
+])
+def test_conflict_event_does_not_promote_historical_conditional_or_cyber_attack(sentence):
+    row = article([sentence], title="관련 당사자 발표")
+    assert not any(f["topic"] == "conflict_report" for f in row["body_facts"])
+
+
 @pytest.mark.parametrize("sentence", [
     "가온테크 CEO는 사임하지 않았다고 회사가 발표했다.",
     "가온테크 CEO가 사임할 가능성이 있다는 관측이 나왔다.",
