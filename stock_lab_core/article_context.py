@@ -473,7 +473,7 @@ def enrich_article_context(result, now, *, priority_context=None):
             market_counts[group] = market_counts.get(group, 0) + 1
             if market_wrap(row):
                 wrap_markets.add(market)
-    from stock_lab_core.report_digest import _theme
+    from stock_lab_core.report_digest import _theme, weekly_themes
     covered_themes = {_theme(row)[0] for row in selected}
     strategy_selected = any(is_strategy_article(row.get("title", "")) for row in selected)
     def select_candidate(row):
@@ -507,6 +507,17 @@ def enrich_article_context(result, now, *, priority_context=None):
                 and (row.get("is_close_wrap") or row.get("retrospective_close_wrap")
                      or re.search(r"마감|장종료|\b(?:market close|clos(?:ed|ing))\b", row.get("title", ""), re.I))):
             select_candidate(row)
+    # Match the visible top-five weekly themes before lower-volume categories.
+    # A fresh single-company story must not crowd out a heavily covered theme.
+    # This is a pure grouping of already collected, dated and validated rows.
+    for group in weekly_themes(result, [], [], now)["themes"]:
+        theme = group["label"]
+        if theme not in covered_themes:
+            for row in rows:
+                if _theme(row)[0] == theme:
+                    select_candidate(row)
+                    if theme in covered_themes or len(selected) >= MAX_ARTICLES:
+                        break
     # One public candidate per uncovered named weekly theme before repeat reads.
     # The existing rank, group caps and dedup guards still apply in both passes.
     for row in rows:

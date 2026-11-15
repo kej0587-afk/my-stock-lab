@@ -73,6 +73,29 @@ def test_missing_theme_with_only_unsupported_links_does_not_consume_a_slot(reads
     assert extra[0]["link"] in reads and extra[2]["link"] in reads  # spare slots fill distinct events
 
 
+def test_visible_high_volume_themes_precede_new_single_company_categories(reads, monkeypatch):
+    from stock_lab_core.report_digest import weekly_themes
+    primary = [item("뉴욕증시 혼조 마감", "us-wrap"), item("코스피 상승 마감", "kr-wrap", "KR"),
+               item("NVIDIA earnings beat estimates", "result")]
+    headlines = ["Eli Lilly clinical trial results", "JPMorgan earnings beat forecasts",
+                 "BAE defense contract announced", "Tesla sales rise", "Oracle cloud earnings beat forecasts"]
+    fresh = [item(title, 'fresh'+str(i), 'GLOBAL') for i, title in enumerate(headlines)]
+    themes = [item(title+str(i), 'theme'+str(i)+str(j), 'GLOBAL')
+              for j,title in enumerate(("Iran oil supply disruption ", "Fed rate outlook ", "Bitcoin prices fall "))
+              for i in range(4)]
+    rows=primary+fresh+themes
+    monkeypatch.setattr(report_brief, "build_news_brief", lambda *args, **kwargs:
+                        {"article_keys": [row["link"] for row in primary]})
+    monkeypatch.setattr(news_priority, "editorial_priority", lambda row, context: 100-rows.index(row))
+    context={"session_news": rows}
+    visible={group['label'] for group in weekly_themes(context, [], [], NOW)['themes']}
+    assert {'지정학·에너지', '통화정책·금리·물가', '암호화폐·유동성'} <= visible
+    articles.enrich_article_context(context, NOW, priority_context={"sessions": {"US":"2026-11-13"}})
+    assert len(reads)==8
+    for term in ('Iran', 'Fed', 'Bitcoin'):
+        assert any(row['link'] in reads and term in row['title'] for row in themes)
+
+
 def test_close_wraps_remain_selected_before_uncovered_themes_fill_budget(reads, monkeypatch):
     primary = [item("NVIDIA earnings beat estimates", "p1"),
                item("Oracle cloud earnings beat forecasts", "p2"),
