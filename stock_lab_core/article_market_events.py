@@ -18,7 +18,9 @@ _LEADERSHIP_REQUEST = re.compile(
     r"|(?:주주|투자자|직원).{0,45}(?:CEO|최고경영자|대표이사).{0,35}(?:복귀|복직|사임|퇴진|교체).{0,20}(?:요구|촉구)", re.I)
 _CONFLICT_REPORT = re.compile(
     r"(?:이란|중동|바레인|호르무즈|우크라이나|러시아|미군|혁명수비대).{0,90}"
-    r"(?:공격|공습|요격|격추|폭격).{0,35}(?:밝혔|주장했|전했|보도했|확인했)", re.I)
+    r"(?:공격|공습|요격|격추|폭격)(?:했|한|해|하였|이.{0,10}발생).{0,35}(?:밝혔|주장했|전했|보도했|확인했)", re.I)
+_MILITARY_CONTEXT = re.compile(r"군사|미군|기지|드론|미사일|발사체|레이더|방공|군대|병력|전투|유조선|군함|항로")
+_PENDING_ACTION = re.compile(r"계획|예정|위협|경고했|공격하겠|보낼|제출할|전달할|요구할")
 _QUALIFIED = re.compile(
     r"과거|지난해|작년|당시|지난\s*(?:주|달|분기)|않|아니|없|부인|가능|예정|검토|관측|전망|한다면|할\s*경우"
     r"|요구|촉구|필요|논의|계획|사임설|퇴진설"
@@ -38,12 +40,14 @@ def market_event_facts(paragraphs):
             implication = "협상의 진전·결렬·부인은 구분해야 합니다. 이 보도만으로 합의 성사나 유가 방향을 확정하지 않습니다"
             check = "당사국 공식 발표와 같은 세션의 유가·금리 반응 확인"
         elif (_LEADERSHIP_REQUEST.search(sentence)
-              and not any(rule.search(sentence) for rule in (_HISTORY, _NEGATION, _CONDITIONAL))):
+              and not any(rule.search(sentence) for rule in (_HISTORY, _NEGATION, _CONDITIONAL, _PENDING_ACTION))):
             topic = "leadership_request"
-            implication = "주주의 인사 요구는 경영 불확실성이 이어지는 정황입니다. 이사회의 결정이나 실제 복귀를 뜻하지 않습니다"
+            implication = "인사 요구는 경영 불확실성이 이어지는 정황입니다. 이사회의 결정이나 실제 복귀를 뜻하지 않습니다"
             check = "이사회 공식 답변·인사 공시와 고객 계약·제품 일정 변경 여부 확인"
         elif (_CONFLICT_REPORT.search(sentence)
-              and not any(rule.search(sentence) for rule in (_HISTORY, _NEGATION, _CONDITIONAL))):
+              and _MILITARY_CONTEXT.search(sentence)
+              and not re.search(r"사이버|해커|해킹|전산망|악성코드|cyber|hacker", sentence, re.I)
+              and not any(rule.search(sentence) for rule in (_HISTORY, _NEGATION, _CONDITIONAL, _PENDING_ACTION))):
             topic = "conflict_report"
             implication = "군사 충돌 보도는 에너지·물류 공급 위험을 높일 수 있습니다. 당사자 주장만으로 피해·공급 차질이나 가격 영향을 확정하지 않습니다"
             check = "상대 당사국 확인, 실제 시설·항로 피해와 같은 세션의 유가·운임 반응 확인"

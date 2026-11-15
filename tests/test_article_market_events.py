@@ -89,10 +89,18 @@ def test_shareholder_request_is_evidence_of_a_request_not_a_personnel_decision()
     assert sentence in articles.body_context_sentence(row)
 
 
+def test_employee_request_does_not_invent_a_shareholder_subject():
+    sentence = "직원들은 전 CEO의 복귀를 요구하는 서한을 이사회에 보냈다고 밝혔다."
+    fact, = article([sentence], title="가온테크 직원, 인사 요구 서한")["body_facts"]
+    assert fact["topic"] == "leadership_request"
+    assert fact["evidence"] == sentence and "주주" not in fact["implication"]
+
+
 @pytest.mark.parametrize("sentence", [
     "주주들은 가온테크 CEO 복귀를 요구하지 않았다고 밝혔다.",
     "지난해 주주들은 가온테크 CEO 복귀를 요구하는 청원을 제출했다.",
     "투자자들이 가온테크 CEO 복귀를 요구할 수 있다는 전망이 나왔다.",
+    "주주들은 가온테크 CEO 복귀를 요구하는 서한을 다음 주 보낼 계획이라고 밝혔다.",
 ])
 def test_request_not_created_from_denial_history_or_speculation(sentence):
     assert not any(f["topic"] == "leadership_request" for f in article([sentence])["body_facts"])
@@ -116,6 +124,10 @@ def test_conflict_claim_retains_attribution_without_inferred_damage_or_oil_move(
     "지난해 이란 당국은 군사 시설을 공격했다고 주장했다.",
     "이란 당국은 군사 시설을 공격할 수 있다고 밝혔다.",
     "보안 회사는 악성 프로그램의 공격을 차단했다고 밝혔다.",
+    "러시아 해커가 은행 전산망을 사이버 공격했다고 보안업체가 밝혔다.",
+    "러시아 군이 군사 시설에 사이버 공격했다고 당국이 밝혔다.",
+    "이란 당국은 다음 주 군사 시설을 공격할 계획이라고 밝혔다.",
+    "이란 당국은 군사 시설을 공격하겠다고 위협했다고 밝혔다.",
 ])
 def test_conflict_event_does_not_promote_historical_conditional_or_cyber_attack(sentence):
     row = article([sentence], title="관련 당사자 발표")
