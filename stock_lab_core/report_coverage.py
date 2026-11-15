@@ -52,15 +52,16 @@ def sector_coverage_lines(context, news, market, now):
 
 def company_coverage_lines(context, summary_rows, market):
     """Show available representative/registered stocks; count only same-day closes."""
-    from stock_lab_core.earnings_discovery import issuer_catalog
+    from stock_lab_core.report_company_prices import company_catalog
     day = context.get("sessions", {}).get(market)
     if not day:
         return []
     groups = {}
-    for ticker, issuer in issuer_catalog(summary_rows).items():
+    company_prices = context.get("company_prices", context.get("prices", {}))
+    for ticker, issuer in company_catalog(summary_rows).items():
         if issuer["market"] != market:
             continue
-        obs = context.get("prices", {}).get(ticker, {})
+        obs = company_prices.get(ticker, {})
         value = number(obs.get("return"))
         if (obs.get("date") != day or value is None or obs.get("stale")
                 or any(x in text(obs.get("kind")) for x in ("장중", "미확인"))):
@@ -71,14 +72,23 @@ def company_coverage_lines(context, summary_rows, market):
         groups.setdefault(issuer["sector"], []).append((issuer["name"], ticker, value,
                                                        obs.get("source") or "공급처 미기록"))
     rows = []
+    sources = list(dict.fromkeys(source for members in groups.values() for *_, source in members))
     for sector, members in groups.items():
         members.sort(key=lambda item: item[2], reverse=True)
-        values = " / ".join(f"{name}({ticker}) {value * 100:+.2f}%" for name, ticker, value, _ in members)
-        rows.append((sector, f"{sum(value > 0 for _, _, value, _ in members)}/{len(members)}", values,
-                     " / ".join(dict.fromkeys(source for *_, source in members))))
+        values = " / ".join(f"{name}({ticker}) {value * 100:+.2f}%" + (f" [{sources.index(source) + 1}]" if len(sources) > 1 else "")
+                            for name, ticker, value, source in members)
+        rows.append((sector, f"{sum(value > 0 for _, _, value, _ in members)}/{len(members)}", values))
+    coverage = context.get("company_price_diagnostics", {}).get("coverage", {}).get(market, {})
+    connected, expected = number(coverage.get("connected")), number(coverage.get("expected"))
+    coverage_line = ([f"기업 가격 수집 연결 {connected:g}/{expected:g} · 동일 세션 표기 {sum(map(len, groups.values()))}개."]
+                     if connected is not None and expected is not None else [])
+    if not rows and "company_prices" in context:
+        return [*coverage_line, f"대표·보유·관심 종목 등락: {market} {day}의 유효한 동일 세션 기업 가격 미확보 · 상승/관측 집계 보류.", ""]
     return ([f"**대표·보유·관심 종목 등락 · {day} 확정 종가**",
              "상승/관측은 이번 보고서에 가격이 연결된 종목만 센 값입니다.",
-             *_table(["분야", "상승/관측", "종목별 등락", "가격 출처"], rows)] if rows else [])
+             *coverage_line, *_table(["분야", "상승/관측", "종목별 등락"], rows),
+             "가격 출처: " + " / ".join((f"[{i}] " if len(sources) > 1 else "") + _cell(source)
+                                       for i, source in enumerate(sources, 1)), ""] if rows else [])
 
 
 def context_news_lines(context, now, *, bucket, excluded=(), market=None):
@@ -86,19 +96,29 @@ def context_news_lines(context, now, *, bucket, excluded=(), market=None):
     from stock_lab_core.article_context import verified_body_facts
     from stock_lab_core.report_news_selection import matching_categories, TOPIC_CHECKS
     from stock_lab_core.report_presentation import kst_time
-    from stock_lab_core.today_news import _session_article_keys
+    from stock_lab_core.today_news import _news_timestamp, _session_article_keys
+    from stock_lab_core.report_brief import _BRIEF_TERMS, explicit_news_market, material_news, news_observation, news_session_bounds, brief_theme
     seen, seen_titles, rows = set(excluded), set(), []
     # Validate separately: legacy topic clustering would collapse independent
     # BOJ/Fed events before the reading path could expose their different facts.
-    items = [valid for raw in records(context.get(bucket))
-             for valid in curate_news([raw], now=now, limit=1, session_scoped=True)]
+    raw_items = records(context.get(bucket))
+    if bucket == "other_market_news":
+        # Mis-tagged search results belong in dated context, not the US/KR close.
+        raw_items = [*raw_items, *(row for name in ("session_news", "current_session_news", "next_session_news")
+            for row in records(context.get(name)) if explicit_news_market(row)
+            and explicit_news_market(row) != row.get("market"))]
+    items = [valid for raw in raw_items if material_news(raw)
+             for valid in curate_news([raw], now=now, limit=1, session_scoped=True, title_pattern=_BRIEF_TERMS)]
     items.sort(key=lambda row: stamp(first(row, "published_at", "published")) or now, reverse=True)
     for item in items:
         key = text(first(item, "link", "url"))
-        published = stamp(first(item, "published_at", "published"))
+        published = _news_timestamp(first(item, "published_at", "published"))
         if not key or key in seen or not published or published > now:
             continue
         if market and item.get("market") != market:
+            continue
+        subject = explicit_news_market(item)
+        if bucket == "next_session_news" and subject and subject != item.get("market"):
             continue
         canonical_link, canonical_title = _session_article_keys(item)
         title_key = (item.get("market"), item.get("session_date"), canonical_title)
@@ -108,8 +128,8 @@ def context_news_lines(context, now, *, bucket, excluded=(), market=None):
             window = next((w for w in records(context.get("windows"))
                            if w.get("market") == item.get("market")
                            and w.get("date") == context.get("sessions", {}).get(item.get("market"))), {})
-            end = stamp(window.get("end"))
-            if not end or published <= end:
+            _, close = news_session_bounds(context, item.get("market"), window.get("date"))
+            if not close or published <= close:
                 continue
         seen.add(key)
         seen.add(canonical_link)
@@ -124,7 +144,7 @@ def context_news_lines(context, now, *, bucket, excluded=(), market=None):
         else:
             detail += " (제목 확인·기사 주장)"
             check = next((TOPIC_CHECKS[t] for t in topics if t in TOPIC_CHECKS), "공식 발표·원문 및 후속 가격 확인")
-        basis = "마감 후·다음 세션" if bucket == "next_session_news" else "해외·공통 맥락"
-        rows.append(("·".join(topics[:2]) or "시장 이슈", detail,
+        basis = "마감 후·다음 세션 · 해당 종가 원인 미확인" if bucket == "next_session_news" else news_observation(item, context)[1]
+        rows.append((brief_theme(item, comprehensive=True), detail,
                      f"{kst_time(published)} · {basis}", check))
     return _table(["분야", "확인된 재료", "보도시각·범위", "다음 확인"], rows) if rows else []

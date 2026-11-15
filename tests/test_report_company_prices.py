@@ -93,3 +93,15 @@ def test_existing_large_move_guard_blocks_unverified_split(small):
     result, diag = target.collect_company_prices([], {"MSFT": frame((100, 30))}, benchmarks(), SESSIONS, NOW, allow_fetch=False)
     assert result["MSFT"]["return"] is None
     assert diag["issues"]
+
+
+def test_old_app_contract_only_allows_exact_report_opt_in():
+    import ast
+    from tests.report_timing_ast_contract import before_report_timing
+    def function(argument):
+        return ast.parse("def _collect_today_report_context():\n    collect_report_context(rows" + argument + ")").body[0]
+    assert ast.dump(before_report_timing(function(", include_company_prices=True"))) == ast.dump(function(""))
+    with pytest.raises(AssertionError):
+        before_report_timing(function(", include_company_prices=False"))
+    # All other arguments stay visible to the original golden comparison.
+    assert "changed_score" in ast.dump(before_report_timing(function(", changed_score=1, include_company_prices=True")))

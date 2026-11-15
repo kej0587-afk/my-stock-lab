@@ -1,7 +1,7 @@
 """Reader-facing news selection from dated evidence, never invented catalysts."""
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from stock_lab_core.report_build import register_loaded_source
@@ -59,6 +59,9 @@ def _comprehensive_theme(row):
     legacy = brief_theme(row)
     if row.get("is_close_wrap") or legacy in {"사이버보안", "자동차·모빌리티", "방산·군수", "암호화폐"}:
         return legacy
+    # Central-bank speakers are policy subjects, not bank/issuer aliases.
+    if re.search(r"\b(?:Fed|FOMC|ECB|BOJ|PBOC|Federal Reserve|central bank|Bank of Japan|Bank of Korea)\b|연준|연은|한국은행|일본은행|중앙은행", title, re.I):
+        return "금리·경제지표"
     for label, pattern in (
         ("반도체", r"Trainium|트레이니엄|TSMC|삼성전자|SK\s*하이닉스"),
         ("클라우드·소프트웨어", r"CoreWeave|코어위브|\bAWS\b|\bAzure\b|Google Cloud|클라우드|\bcloud\b|\bneoclouds?\b"),
@@ -86,7 +89,109 @@ def _comprehensive_theme(row):
     return legacy
 
 
-_BRIEF_TERMS = re.compile(MARKET_TERMS.pattern + r"|\b(?:revenues?|profits?|EPS|dividends?|cloud|software|regulation|options?|central bank|speech)\b", re.I)
+_MATERIAL_TERMS = re.compile(
+    r"실적|매출|영업이익|순이익|가이던스|수주|계약|공급|출시|인수|합병|조달|부채|채무|투자|규제|정책|"
+    r"금리|환율|국채|물가|고용|증시|코스피|코스닥|나스닥|주가|급등|급락|상승|하락|유가|원유|"
+    r"관세|제재|전쟁|타격|휴전|사임|사퇴|퇴진|경영진|파업|교섭|상장|임상|허가|발표|경고|"
+    r"\b(?:earnings|revenues?|profits?|EPS|guidance|results|contracts?|supply|launch\w*|acquisition|merger|"
+    r"debt|credit|financing|funding|investment|capex|capital expenditur\w*|capital spending|dividends?|buybacks?|"
+    r"regulation|restrictions?|tariffs?|sanctions?|rates?|inflation|yields?|jobs|sales|stocks?|shares?|markets?|"
+    r"rall\w*|gains?|falls?|rises?|oil|resigns?|succession|IPO|approv\w*|trial|announc\w*|warn\w*|policy|speech|liquidity)\b", re.I)
+_BRIEF_TERMS = re.compile(MARKET_TERMS.pattern + "|" + _MATERIAL_TERMS.pattern + r"|\b(?:cloud|software|options?|central bank)\b", re.I)
+
+
+def material_news(row):
+    """Main-path editorial filter only; the collected appendix stays untouched.
+
+    No issuer list, count quota or source promotion. Explicit promotional/history
+    formats stay in the appendix; generic valuation questions need body evidence.
+    """
+    from stock_lab_core.article_context import verified_body_facts
+    title = text(row.get("title"))
+    if re.search(r"폐(?:전자제품|가전).{0,25}재활용|임직원.{0,20}(?:봉사|나눔)|상속\s*서비스|비대면\s*상속|"
+                 r"이런 펀드 어때요|채권투자 길라잡이|캠퍼스\s*인접|모델하우스|분양\s*(?:혜택|홍보)|"
+                 r"인물열전|급등주 지금은|화제의 바이오人|기자수첩|\((?:기고|칼럼)\)|"
+                 r"\b(?:historical profile|sponsored content|banking rewards|how to open an account)\b", title, re.I):
+        return False
+    facts = verified_body_facts(row)
+    if not facts and re.search(r"\b(?:cheap(?:er)?|bargain|investment case|bull case|fair value|undervalued narrative)\b|"
+                              r"\bvaluation\b.{0,30}\bfocus\b|\bHow .{0,60}\b(?:impact|affect)\b.{0,30}\binvestors\b", title, re.I):
+        return False
+    return bool(facts or _MATERIAL_TERMS.search(title))
+
+
+def explicit_news_market(row):
+    """Known subject identity, independent of query locale or article language."""
+    from stock_lab_core.earnings_discovery import issuer_catalog, _name_match
+    from stock_lab_core.today_news import _HEADLINE_MARKETS
+    title = text(row.get("title"))
+    markets = {market for market, pattern in _HEADLINE_MARKETS.items() if pattern.search(title)}
+    if len(markets) == 1:
+        return next(iter(markets))
+    if markets:
+        return ""
+    markets = {entry["market"] for entry in issuer_catalog().values() if _name_match(title, entry)}
+    # Existing domestic semiconductor universe (money_flow) includes this issuer;
+    # keep the identity local without loading the price/flow collector.
+    if re.search(r"제주반도체|\bJeju Semiconductor\b", title, re.I):
+        markets.add("KR")
+    return next(iter(markets)) if len(markets) == 1 else ""
+
+
+def news_session_bounds(context, market, day):
+    """Exchange schedule only. A news window's end is not a closing timestamp."""
+    if market not in {"KR", "US"}:
+        return None, None
+    zone = ZoneInfo("Asia/Seoul" if market == "KR" else "America/New_York")
+    try:
+        session_day = datetime.fromisoformat(day)
+    except (ValueError, TypeError):
+        return None, None
+    specs = [context.get(name, {}).get(market, {}) for name in ("current_news_sessions", "news_sessions")]
+    specs += records(context.get("current_windows")) + records(context.get("windows"))
+    specs = [spec for spec in specs if spec.get("date") == day and spec.get("market", market) == market]
+
+    def scheduled(*fields):
+        for spec in specs:
+            value = stamp(first(spec, *fields))
+            if value and value.astimezone(zone).date() == session_day.date():
+                return value
+        return None
+
+    opening = scheduled("open_at", "scheduled_open") or session_day.replace(hour=9, minute=0 if market == "KR" else 30, tzinfo=zone)
+    close = scheduled("scheduled_close", "close_at") or session_day.replace(hour=15 if market == "KR" else 16, minute=30 if market == "KR" else 0, tzinfo=zone)
+    return opening, close
+
+
+def news_observation(row, context):
+    """Publication-time label and display order, never a reconstructed price cause."""
+    market, day = row.get("market"), text(row.get("session_date"))
+    published = stamp(first(row, "published_at", "published"))
+    subject = explicit_news_market(row)
+    if subject and market in {"KR", "US"} and subject != market:
+        return 0, f"{subject} 기업·시장 재료 · 수집시장 {market} · 해당 종가 귀속 미확인"
+    if market not in {"KR", "US"} or not day or published is None:
+        scope = "국내·공통 맥락" if subject == "KR" else "해외·공통 맥락"
+        return 0, f"{subject or market or '시장 미확인'} · 발행시각 기준 {scope}"
+    zone = ZoneInfo("Asia/Seoul" if market == "KR" else "America/New_York")
+    local = published.astimezone(zone)
+    opening, close = news_session_bounds(context, market, day)
+    if opening is None or close is None:
+        return 0, f"{market} · 발행시각 기준 · 거래일 귀속 미확인"
+    title = text(row.get("title"))
+    wrap = bool(row.get("is_close_wrap") or re.search(r"마감|장종료|\bclose[ds]?\b|\bend\b.{0,30}\b(?:higher|lower|week)\b", title, re.I))
+    reference = max(day, text(context.get("sessions", {}).get(market)))
+    if local.date().isoformat() < reference:
+        prior_close = wrap or (local.hour >= 16 and market == "US" and re.search(r"나스닥|뉴욕증시|Wall Street|S&P|Nasdaq", title, re.I))
+        label = "이전 종가 관측" if prior_close else "이전 거래일 보도·장전 재료"
+        return 0, f"{market} {local:%Y-%m-%d} {label} · {reference} 종가 원인 미확인"
+    if published < opening:
+        return 1, f"{market} {day} 장전 보도 · 종가 원인 미확인"
+    if published < close:
+        return 1, f"{market} {day} 장중 관측 · 종가와 구분"
+    if local.date().isoformat() == day and wrap:
+        return 3, f"{market} {day} 마감 보도 · 기사 주장"
+    return 2, f"{market} {day} 마감 후 보도 · 해당 종가 원인 미확인"
 
 
 def _validated_brief_row(row, context, now, *, other=False):
@@ -100,6 +205,9 @@ def _validated_brief_row(row, context, now, *, other=False):
     if not checked or not safe_link(checked[0].get("link")):
         return None
     clean = checked[0]
+    subject = explicit_news_market(clean)
+    if not other and subject and subject != clean.get("market"):
+        return None
     if other:
         return clean
     market = clean.get("market")
@@ -107,9 +215,16 @@ def _validated_brief_row(row, context, now, *, other=False):
     if market in closed or market in current:
         partitioned = partition_session_market_news([clean], closed, now=now, current_sessions=current)
         bucket = clean.get("news_bucket") or "session_news"
+        candidates = partitioned.get(bucket, [])
         if not any(candidate.get("market") == market and candidate.get("session_date") == clean.get("session_date")
-                   for candidate in partitioned.get(bucket, [])):
-            return None
+                   for candidate in candidates):
+            # Keep a validated previous close as explicitly dated context, never
+            # as the new session's return/cause. Do not invent a previous day.
+            previous = closed.get(market, {}).get("previous_date")
+            if not (clean.get("session_date") == closed.get(market, {}).get("date") and any(
+                    candidate.get("market") == market and candidate.get("session_date") == previous
+                    and candidate.get("is_close_wrap") for candidate in partitioned.get("other_market_news", []))):
+                return None
     else:
         # Older saved contexts lack previous-session windows. Do not invent one
         # or accept a previous-day story merely because its UI label was changed.
@@ -170,7 +285,7 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
                      comprehensive=False, include_other_markets=False):
     """Read existing news only. Default selection retains the legacy caps.
 
-    comprehensive=True (or limit=None) returns all validated distinct articles,
+    comprehensive=True (or limit=None) retains distinct material articles,
     without row/theme quotas or broad topic clustering. Explicit exclusions are
     final. Opt-in other-market rows retain their own publication context; pass
     those rows separately to render a global-context section, not KR/US causes.
@@ -187,6 +302,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         market = row.get("market")
         other = comprehensive and include_other_markets and market in {"GLOBAL", "JP", "CN", "ASIA", "EU"}
         if comprehensive:
+            if not material_news(row):
+                continue
             if market not in states and not other:
                 continue
             if text(first(row, "link", "url")) in excluded:
@@ -195,7 +312,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             if row is None:
                 continue
         published = stamp(first(row, "published_at", "published"))
-        if (market not in states and not other) or not published or published > now or is_preopen_outlook(row) or is_preopen_price_recap(row):
+        if ((market not in states and not other) or not published or published > now or is_preopen_outlook(row)
+                or (not comprehensive and is_preopen_price_recap(row))):
             continue
         active = not other and row.get("news_bucket") == "current_session_news"
         if not other and states[market]["phase"] == "intraday" and not active:
@@ -235,7 +353,7 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         score = (priority, int(bool(body_facts)), int(not link.startswith("직접 보유")), int(catalyst), int(bool(entities)), int(bool(re.search("[가-힣]", title))))
         candidates.append((score, published, key, theme, row, link, active))
     selected, seen, counts, seen_links, seen_titles = [], set(), {}, set(), set()
-    for item in sorted(candidates, key=lambda item: (item[0], item[1]), reverse=True):
+    for item in sorted(candidates, key=lambda item: ((news_observation(item[4], context)[0] if comprehensive else 0), item[0], item[1]), reverse=True):
         _, _, key, theme, row, _, _ = item
         if comprehensive:
             scope, url, title_key = key[:2], key[2], key[3]
@@ -250,7 +368,7 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         counts[theme] = counts.get(theme, 0) + 1
         if not comprehensive and len(selected) >= limit:
             break
-    lines = ["분야 | 무슨 일·왜 움직였나 | 내 보유 영향·다음 확인", "--- | --- | ---"]
+    lines = ["분야 | " + ("확인된 재료·관측 시점" if comprehensive else "무슨 일·왜 움직였나") + " | 내 보유 영향·다음 확인", "--- | --- | ---"]
     for _, published, _, theme, row, link, active in selected:
         title = text(row.get("title"))
         ko = text(first(row, "summary_ko", "한글요약"))
@@ -259,6 +377,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             title = (focus + " · " if focus else "영문 보도 · ") + title
         basis = (f"{row['market']} · 발행시각 기준 타시장·공통 맥락" if row["market"] not in states else
                  f"{row['market']} {row['session_date']} {'진행 세션' if active else '종가 세션'}")
+        if comprehensive:
+            basis = news_observation(row, context)[1]
         body_facts = verified_body_facts(row)
         if compact:
             if body_facts:

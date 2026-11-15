@@ -31,6 +31,14 @@ def before_report_timing(node):
             return self.generic_visit(value)
 
         def visit_Call(self, value):
+            # Reviewed report-only observation opt-in; do not relax decisions or
+            # replace the immutable older app baseline.
+            if node.name == '_collect_today_report_context' and ast.unparse(value.func) == 'collect_report_context':
+                opt_in = [kw for kw in value.keywords if kw.arg == 'include_company_prices']
+                assert len(opt_in) <= 1
+                for kw in opt_in:
+                    assert isinstance(kw.value, ast.Constant) and kw.value.value is True
+                    value.keywords.remove(kw)
             if ast.unparse(value.func) == 'component':
                 assert ast.unparse(value.args[0]) in {'load_credit_spread', 'load_investor_flow_evidence',
                     'collect_public_flow_backfill', 'load_public_market_evidence', 'update_report_history'}

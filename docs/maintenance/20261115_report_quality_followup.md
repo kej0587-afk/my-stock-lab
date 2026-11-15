@@ -32,9 +32,25 @@ changes. It is not evidence that the decision suite failed; report separately.
 
 ## News and operating verification
 
-Main-path materiality/session labeling changes are under independent review.
+Main-path review now excludes explicit promotional/history formats and unsupported
+generic valuation filler. It keeps distinct material events and all original
+appendix evidence without imposing a per-sector count cap. Central-bank speakers
+precede issuer aliases; known Korean subjects no longer sit in the US-close table.
+Prior-close, intraday and closing stories have separate labels/order. A news
+collection window's end is never treated as the exchange's closing time; supplied
+special-session close times take precedence. Shared representative price sources
+are printed once below the table, with connected/expected company counts.
+
+Independent related coverage: 370 tests passed. Integrated changed-area run:
+103 passed/3.61s. Decision gate initially: 1,367 passed, two old-app AST comparisons
+failed solely on the new report opt-in keyword. The exact True opt-in is now
+normalized by the existing contract helper; both failing checks passed on rerun
+(13 tests including collector/strict normalization checks, 15.33s). Original
+Git baselines and all golden decision results are unchanged. The separate
+pre-existing report whole-app AST mismatch remains recorded, not hidden.
+
 Production regeneration, representative coverage, timing and unchanged-decision
-comparison will be recorded here after the deployed modules are verified.
+comparison are pending deployment verification below.
 
 Additional representative histories may add genuine cache misses. Do not claim
 a speedup from a warm-cache sample or change cache lifetimes to hide that cost.

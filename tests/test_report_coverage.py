@@ -39,6 +39,31 @@ def test_company_breadth_counts_only_available_same_session_and_period():
     assert "이번 보고서에 가격이 연결된 종목만" in rendered
 
 
+def test_company_prices_are_separate_from_portfolio_prices_and_missing_is_explicit():
+    context = dict(sessions={"US": DAY}, prices={"NVDA": dict(date=DAY, **{"return": .9}),
+        "^GSPC": dict(date=DAY, previous_date="2026-11-12")}, company_prices={})
+    assert "기업 가격 미확보" in "\n".join(company_coverage_lines(context, [], "US"))
+    context["company_prices"] = {"NVDA": dict(date=DAY, previous_date="2026-11-12", source="fixture", **{"return": -.01})}
+    rendered = "\n".join(company_coverage_lines(context, [], "US"))
+    assert "NVIDIA(NVDA) -1.00%" in rendered and "+90.00%" not in rendered
+
+
+def test_company_coverage_reports_connected_scope_and_shares_attributed_sources_once():
+    prices = {ticker: dict(date=DAY, source=source, **{"return": value}) for ticker, source, value in
+              [("NVDA", "fixture-source-a", .01), ("AMD", "fixture-source-a", -.01), ("JPM", "fixture-source-b", .02)]}
+    context = dict(sessions={"US": DAY}, company_prices=prices,
+                   company_price_diagnostics={"coverage": {"US": {"expected": 8, "connected": 3}}})
+    output = "\n".join(company_coverage_lines(context, [], "US"))
+    assert "수집 연결 3/8 · 동일 세션 표기 3개" in output
+    assert output.count("fixture-source-a") == output.count("fixture-source-b") == 1
+    assert "NVIDIA(NVDA) +1.00% [1]" in output and "JPMorgan(JPM) +2.00% [2]" in output
+    assert "분야 | 상승/관측 | 종목별 등락\n" in output
+    context["company_prices"] = {}
+    context["company_price_diagnostics"]["coverage"]["US"]["connected"] = 0
+    output = "\n".join(company_coverage_lines(context, [], "US"))
+    assert "수집 연결 0/8" in output and "기업 가격 미확보" in output
+
+
 def article(title, path, published="2026-11-13T22:00:00+00:00", **fields):
     return dict(title=title, link="https://www.reuters.com/markets/" + path, publisher="Reuters",
                 published_at=published, market="US", session_date=DAY, **fields)
