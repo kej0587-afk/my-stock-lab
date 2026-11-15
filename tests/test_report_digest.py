@@ -78,6 +78,16 @@ def test_real_earnings_and_policy_material_not_filtered():
     assert material_news(article("Fed officials discuss inflation and rate outlook"))
 
 
+@pytest.mark.parametrize("market", ["GLOBAL", "JP", "CN", ""])
+def test_global_theme_links_existing_exposure_without_relabelling_market(market):
+    row = article("AI 데이터센터 투자·차입 부담에 반도체주 하락", market=market)
+    holdings = [{"티커": "SOXL", "보유여부": True}]
+    result = weekly_themes({}, [row], holdings, NOW)
+    assert "SOXL" in result["themes"][0]["related"]
+    assert "타시장" in result["themes"][0]["related"]
+    assert row["market"] == market
+
+
 def test_checks_do_not_mark_missing_data_or_wrong_date_passed():
     digest = weekly_themes({}, [article()], [], NOW)
     context = {"sessions": {"KR": "2026-11-13", "US": "2026-11-13"},

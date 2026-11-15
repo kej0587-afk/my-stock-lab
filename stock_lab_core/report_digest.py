@@ -72,7 +72,7 @@ def weekly_themes(context, news, summary_rows, now):
         title = " / ".join(text(row.get("title")) for row in items)
         entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, title, re.I)]
         links = [_holding_links(held, title, entities, group["category"], market) for market in
-                 sorted({row.get("market") for row in items if row.get("market") in {"US", "KR"}})]
+                 sorted({text(row.get("market")) or "GLOBAL" for row in items})]
         direct = [link for link in links if not link.startswith(("타시장", "직접 보유 연결 없음"))]
         related = " / ".join(dict.fromkeys(direct or links)) or "직접 보유 연결 없음 · 시장 참고"
         group.update(articles=items, count=len(items), related=related,

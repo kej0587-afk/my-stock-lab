@@ -57,5 +57,9 @@ verification evidence, not a runtime dependency.
 - First decision gate identified only two historical app-AST failures from the
   proposed download wiring. That app edit was removed. Final decision gate:
   **1,369 passed /137.938s**, `cache/refactor_checks/decision_f1lu3eob`.
+- Read-only final review found global-only themes incorrectly showing no related
+  holdings. The same exposure matcher now handles global/other-market articles
+  with a cross-market label; final focused view/digest/classification checks:
+  **51 passed /4.19s**. No decision code changed after the passing gate.
 - Production verification pending after push. Private exports and screenshots:
   `cache/report_finish_20261115/`; never commit account data.
