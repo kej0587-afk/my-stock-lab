@@ -77,7 +77,8 @@ Data-source symbol references checked 2026-11-15:
 
 ## Deployment
 
-Pending final commit and production regeneration. Pre-deployment live full
+Historical deployment record (superseded by
+[production validation](20261115_report_production_validation.md)). Pre-deployment live full
 Today Check78.2s; report58.3s, ID62070e9d8d4f45089f56ff86e6621ed4. Downloaded report
 and matching timing retained in ignored cache/report_coverage_20261115. The IAB
 Cloud Linked accounts page explicitly reports no source-control sign-in despite
@@ -90,3 +91,9 @@ stopped because the browser tool could not establish its current URL. Stopped
 browser work immediately; no reboot, no after-generation timing, and no claimed
 post-deployment UI/data verification. Next task remains production coverage
 validation after a supported authenticated management connection/reboot.
+
+Follow-up: owner authentication and actual Cloud reboot succeeded on Nov15.
+New production generation, file hashes and decision preservation were verified;
+see the linked record. Coverage increased, but observed missing PPI release
+metadata, representative-stock data and noisy/misclassified news prevent a
+claim that report analysis quality is complete.

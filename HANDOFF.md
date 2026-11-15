@@ -19,6 +19,33 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-15 production validation, base 9f95190f): read
+docs/maintenance/20261115_report_production_validation.md. Clean tree and origin
+0/0 confirmed at start. Supported IAB GitHub authentication completed through
+the existing Google sign-in. Used the actual Cloud Reboot action and confirmation;
+observed startup and authenticated recovery. Do not repeat the old assertion
+that this browser lacks Cloud management access. Report code50551641 was already
+loaded before the requested reboot: all108 recorded source hashes match committed
+Git blobs (raw Windows working files may differ due to CRLF), restart_required=false.
+Before reboot, full Today83.9s and new report64.038s, ID8ff86d8d9d034fea83da33a85209755e;
+the downloaded report hash matches its diagnostic. Rebooted full Today113.5s;
+post-reboot report66.952s, ID159a4617664c43c4871a1b0ef6d74720, normal path,
+no degraded reasons, loaded/disk agreement and matching Markdown hash confirmed.
+Pre-generation script21.175s makes entry-to-saved-report88.127s; browser render
+is separate. Do not use the later partial-screen26.4s as generation time.
+All95 rows agree on23 decision/score/gate columns before/after generation and
+across the reboot; no source, threshold, grade, TTL or score changes this task.
+Coverage improved9->29 sector rows and5->7 earnings issuers, but quality is NOT
+complete: PPI values lack verified release metadata and disappear from the main
+freshness table; US representative prices are absent, KR breadth is only one
+TDF; title-only/promotional noise and session/issuer misclassification remain.
+Main reading path196->348/347 lines is not a readability success. A narrow-view
+screen capture confirms large table rows/horizontal source-column overflow.
+The20:30KST final report, matching diagnostic and before/after ZIPs are preserved.
+See the detailed
+evidence record and one next task below. Private artifacts remain ignored under
+cache/report_coverage_20261115/production. Customs stash remains unapplied.
+
 Latest bounded work (2026-11-15 coverage follow-up, base f78c6fd2): user clarified
 that the supplied market examples require core content coverage, not just layout.
 Read docs/maintenance/20261115_report_coverage.md. Main rendering removes four-news,
@@ -1303,19 +1330,20 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Finish production validation of the Nov15 report coverage follow-up only.**
+**Repair PPI official release-date linkage only.**
 
-Reconnect the existing authenticated production/Cloud browser. Reboot is already
-authorized; do not ask for permission again. If GitHub needs authentication,
-resolve the actual user's logged-in management surface without bypassing browser
-safety checks. Regenerate one report, confirm loaded/disk module agreement,
-macro/index/KR/US/portfolio/flow ordering, all collected news/sector/earnings rows,
-Russell2000/gas/dollar units, no morning-only rally as closing cause, distinct
-post-close/global timing, one closed appendix, and existing score/gate output.
-Download the matching report/timing/Today ZIP and record the before58.3s vs after
-with cache-state caveats; do not claim cold-cache parity. Commit/push handoff proof.
-The interrupted Customs patch stays stashed. Expired supported-issuer IR notices
-blocking result collection are a later candidate, not part of this next task.
+The actual Nov15 production report has PPI actual/previous values in the economic
+appendix but no release_at, so the recent-release freshness filter omits it from
+the main report. Trace official release metadata/cache merge, restore a verified
+publication date from the official source, and keep existing values, periods,
+consensus semantics, source precedence, TTLs and investment decisions unchanged.
+Do not infer the release day from the user's sample or a generic monthly rule.
+Test valid/missing/stale/future dates and confirm the PPI main-table row in a new
+production report. Record source, timing, build agreement and decision preservation.
+Other evidence-selection/breadth defects are listed in the production validation
+record; do not mix them or a broad optimization into this bounded fix.
+Cloud reboot is authorized and the IAB owner session was connected successfully.
+The interrupted Customs patch stays stashed; do not pop it indiscriminately.
 
 ## Evidence and Remaining Limits
 
