@@ -55,8 +55,17 @@ but correctly blocked because concurrent calendar edits changed source hashes.
 Stable-source decision gate:1369passed, no failures/errors/skips,136.985s.
 Subsequent display-only follow-up retains next-month macro schedules, explicitly
 labels standard-rule times and preserves existing policy/debt deadlines. New
-tables separate the coming week/recent outcomes from later45-day events. Focused
+tables separate the coming week/recent outcomes from later90-day events. Focused
 calendar/rendering tests cover that follow-up. Operating regeneration pending.
+Independent boundary review then found status-string stale values, future
+released events, a shortened legacy90-day next-release horizon and malformed
+URLs. All now have regressions. First operating sample additionally exposed
+period-less FRED calendars incorrectly calling already dated CPI/PPI results
+unconfirmed: connect only exact indicator/local publication date and an actual
+release period; do not infer a period from a date. Known period mismatches still
+fail closed. Preserve FOMC's labelled14:00ET convention, group identical option
+interpretations, and group Anthropic IPO tracking while retaining source links.
+Final related tests:181passed. A final operating rerun follows this correction.
 Private artifacts belong in ignored cache/event_watch_20261115; do not commit
 portfolio exports.
 

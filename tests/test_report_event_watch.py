@@ -42,7 +42,7 @@ def test_elapsed_time_does_not_invent_result_and_later_release_updates_same_even
     assert len(event_watch_rows(c, [], now)) == 1
 
 
-@pytest.mark.parametrize("changes", [{"period": "2026-09"}, {"stale": True}, {"release_at": "2026-11-19T08:30:00-05:00"}])
+@pytest.mark.parametrize("changes", [{"period": "2026-09"}, {"stale": True}, {"status": "stale"}, {"release_at": "2026-11-19T08:30:00-05:00"}])
 def test_wrong_period_stale_or_future_release_cannot_complete_event(changes):
     c = context(event())
     c["economic_releases"] = [dict(indicator="US_RETAIL_SALES", period="2026-10", actual=.1,
@@ -59,7 +59,7 @@ def test_fomc_result_date_uses_us_local_date_not_next_kst_day():
 
 @pytest.mark.parametrize("changes", [{"source_url": ""}, {"source": "fallback"}, {"date": "2026-10-01"},
     {"coverage_expires_at": "2026-11-15"}, {"source_verified_at": "2026-11-16"}, {"timezone": "invalid"},
-    {"schedule_status": "unconfirmed"}, {"date": "2027-01-01"}])
+    {"schedule_status": "unconfirmed"}, {"date": "2027-03-01"}, {"source_url": "https://[invalid"}])
 def test_unverified_expired_or_out_of_scope_events_are_not_promoted(changes):
     assert event_watch_rows(context(event(**changes)), [], NOW) == []
 
@@ -67,7 +67,8 @@ def test_unverified_expired_or_out_of_scope_events_are_not_promoted(changes):
 def test_pipeline_result_replaces_schedule_without_mutating_decision_rows():
     scheduled = event(ticker="NVDA", indicator="US_NVDA_EARNINGS", event="NVIDIA earnings",
                       event_status="scheduled", date="2026-11-13")
-    result = dict(scheduled, event_status="released", result_metrics={"revenue": {"status": "reported", "text": "synthetic"}})
+    result = dict(scheduled, event_status="released", release_at="2026-11-13T16:30:00-05:00",
+                  result_metrics={"revenue": {"status": "reported", "text": "synthetic"}})
     summary = [{"티커": "NVDA", "판정코드": "BLOCK", "Adj점수": 7, "보유여부": True}]
     before = deepcopy(summary)
     rows = event_watch_rows(context(scheduled), summary, NOW, pipeline={"events": [result]})
@@ -122,8 +123,60 @@ def test_next_month_macro_stays_visible_and_standard_time_is_not_exact_confirmat
     c = context(event(indicator="US_CPI", date="2026-12-10", release_at="2026-12-10T08:30:00-05:00",
                       release_precision="schedule_rule"))
     output = "\n".join(event_watch_lines(c, [], [], NOW))
-    assert "이후 확정 일정·45일 이내" in output
+    assert "이후 확정 일정·90일 이내" in output
     assert "12/10 22:30 KST · 표준시각·예외 미확인" in output
+
+
+def test_existing_next_release_inside_ninety_days_stays_visible():
+    c = context(event(date="2027-01-15", release_at="2027-01-15", release_precision="date"))
+    assert "2027-01-15 현지" in "\n".join(event_watch_lines(c, [], [], NOW))
+
+
+def test_fomc_date_only_keeps_existing_labelled_standard_clock():
+    c = context(event(indicator="US_FED_RATE_DECISION", date="2026-12-09", release_at="2026-12-09", release_precision="date"))
+    output = "\n".join(event_watch_lines(c, [], [], NOW))
+    assert "12/09 14:00 EST / 12/10 04:00 KST · 표준시각·예외 미확인" in output
+
+
+def test_ipo_tracking_groups_same_issuer_links_without_losing_other_ipo():
+    c = context()
+    c['other_market_news'] = [dict(title=title, link=f'https://www.reuters.com/{i}', publisher='Reuters',
+        published_at='2026-11-15T12:00:00+09:00', market='US') for i, title in enumerate(
+        ['Anthropic IPO proposed offering', 'Anthropic IPO expected demand', 'Another company IPO proposed offering'])]
+    output = '\n'.join(event_watch_lines(c, [], [], NOW))
+    assert '관련 보도 2건' in output and 'Another company' in output
+    assert all(f'https://www.reuters.com/{i}' in output for i in range(3))
+
+
+@pytest.mark.parametrize("status", ["released", "reported_results"])
+def test_future_official_or_news_result_is_not_presented_as_confirmed(status):
+    row = event_watch_rows(context(event(event_status=status)), [], NOW)[0]
+    assert row["state"] == "결과 시점 불일치·재확인 필요"
+
+
+def test_stale_status_does_not_leak_actuals_into_result_summary():
+    c = context(event())
+    c["economic_releases"] = [dict(indicator="US_RETAIL_SALES", period="2026-10", actual=99,
+        status="stale", release_at="2026-11-17T08:30:00-05:00")]
+    row = event_watch_rows(c, [], datetime.fromisoformat("2026-11-18T03:00:00+09:00"))[0]
+    assert row["observed"] == "" and "결과 미확인" in row["state"]
+
+
+def test_date_only_macro_calendar_connects_verified_same_day_release_period():
+    c = context(event(indicator="US_PPI", period="", date="2026-11-13", release_at="2026-11-13",
+                      release_precision="date"))
+    c["economic_releases"] = [dict(indicator="US_PPI", period="2026-10", actual=.3,
+        status="released", basis="MoM", unit="%", release_at="2026-11-13T08:30:00-05:00")]
+    row = event_watch_rows(c, [], NOW)[0]
+    assert row["state"] == "공식 결과 확인" and row["observed"].startswith("결과 2026-10")
+    c["economic_releases"][0]["release_at"] = "2026-10-15T08:30:00-04:00"
+    assert "결과 미확인" in event_watch_rows(c, [], NOW)[0]["state"]
+
+
+def test_identical_option_interpretation_is_not_repeated_per_trading_date():
+    c = context(event(indicator="US_VIX_LAST_TRADE"), event(indicator="US_VIX_STANDARD_EXPIRY", date="2026-11-18"))
+    rendered = "\n".join(event_watch_lines(c, [], [], NOW))
+    assert rendered.count("만기만으로 상승·하락을 예측하지 않음") == 1
 
 
 def test_reader_connects_watch_once_without_changing_audit_or_decisions():

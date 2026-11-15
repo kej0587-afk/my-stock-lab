@@ -3,10 +3,11 @@
 No provider calls, trading decisions, implied probabilities or invented dates.
 Rebuilt at each report generation; a saved report remains an as-of snapshot.
 """
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from stock_lab_core.report_build import register_loaded_source
-from stock_lab_core.report_evidence import KST, _cell, first, is_held, number, records, safe_link, stamp, text
+from stock_lab_core.report_evidence import KST, _cell, first, is_held, number, records, safe_link as _evidence_link, stamp, text
 
 register_loaded_source(__name__, __file__)
 
@@ -20,12 +21,33 @@ _EVENT_NAMES = {
 }
 
 
+def safe_link(value):
+    try:
+        return _evidence_link(value)
+    except (ValueError, TypeError):
+        return ""
+
+
+def _unavailable(row):
+    return bool(row.get("stale") or row.get("result_stale")
+                or text(row.get("status")).lower() in {"stale", "unavailable", "missing", "error"})
+
+
+def _same_release(row, release):
+    zone = ZoneInfo(row.get("timezone") or ("Asia/Seoul" if row.get("market") == "KR" else "America/New_York"))
+    at, day = stamp(release.get("release_at")), stamp(row.get("date"))
+    return bool(at and day and release.get("period") and row.get("indicator")
+                and release.get("indicator") == row["indicator"]
+                and (not row.get("period") or row["period"] == release["period"])
+                and at.astimezone(zone).date() == day.date())
+
+
 def _profile(row):
     indicator, ticker = text(row.get("indicator")), text(row.get("ticker"))
     if indicator == "US_RETAIL_SALES":
         return ("소비 수요가 기업 매출과 금리 전망에 함께 영향을 줌", "헤드라인·자동차 제외·통제그룹, 이전치 수정; 명목 매출과 실질 소비 구분",
                 "약한 소비와 물가·임금 둔화가 함께 확인되면 긴축 부담 완화 가능; 소비만 약하면 경기·이익 둔화 우려도 병존. 한 지표로 25/50bp나 확률을 결정하지 않음", "금리·경제지표")
-    if "FED" in indicator or "FOMC" in text(row.get("event")).upper():
+    if "FED" in indicator or "RATE_DECISION" in indicator or "FOMC" in text(row.get("event")).upper():
         return ("할인율과 기업 조달비용의 기준", "결정·성명·기자회견 또는 의사록, 물가·고용 판단과 전망 변화",
                 "긴축 신호 강화 시 성장주 할인율·차입 부담 확대 가능; 완화 신호도 경기 악화 때문인지 구분", "금리·경제지표")
     if any(k in indicator for k in ("CPI", "PPI", "PAYROLL", "EMPLOY", "WAGE")):
@@ -53,21 +75,22 @@ def _profile(row):
 def _event_state(row, context, now):
     """An elapsed calendar date is not proof of a release or its contents."""
     status = text(row.get("event_status") or row.get("status"))
-    if row.get("result_stale") or row.get("stale"):
+    if _unavailable(row):
         return "마지막 확인값·재조회 필요"
     if status in {"cancelled", "canceled", "postponed"}:
         return "취소·연기 확인"
-    if status == "released":
-        return "공식 결과 확인"
-    if status == "reported_results":
-        return "결과 보도·공식 대조 대기"
     zone = ZoneInfo(row.get("timezone") or ("Asia/Seoul" if row.get("market") == "KR" else "America/New_York"))
+    if status in {"released", "reported_results"}:
+        at = stamp(row.get("result_release_at") or row.get("release_at"))
+        day = stamp(row.get("date"))
+        if ((day and day.date() > now.astimezone(zone).date())
+                or (at and row.get("release_precision") == "datetime" and at > now)):
+            return "결과 시점 불일치·재확인 필요"
+        return "공식 결과 확인" if status == "released" else "결과 보도·공식 대조 대기"
     for release in records(context.get("economic_releases")):
-        if (row.get("indicator") and release.get("indicator") == row["indicator"]
-                and row.get("period") and release.get("period") == row["period"]
-                and not release.get("stale") and number(release.get("actual")) is not None
-                and (at := stamp(release.get("release_at"))) and at <= now
-                and at.astimezone(zone).date() == stamp(row.get("date")).date()):
+        if (_same_release(row, release) and not _unavailable(release)
+                and release.get("status") != "pending" and number(release.get("actual")) is not None
+                and (at := stamp(release.get("release_at"))) and at <= now):
             return "공식 결과 확인"
     precision = row.get("event_precision") or row.get("release_precision")
     at = stamp(row.get("event_at") or row.get("release_at") or row.get("date"))
@@ -93,6 +116,10 @@ def _timing(row):
     value = row.get("event_at") if row.get("event_kind") == "conference_call" else row.get("release_at")
     precision = row.get("event_precision") if row.get("event_kind") == "conference_call" else row.get("release_precision")
     at = stamp(value)
+    if row.get("indicator") == "US_FED_RATE_DECISION" and len(text(value)) == 10:
+        # Preserve the existing report's explicitly labelled statement convention.
+        at = datetime.fromisoformat(value + "T14:00:00").replace(tzinfo=zone)
+        precision = "schedule_rule"
     if at and precision in {"datetime", "schedule_rule"}:
         label = "콜 " if row.get("event_kind") == "conference_call" else ""
         timing = f"{label}{at.astimezone(zone):%m/%d %H:%M %Z} / {at.astimezone(KST):%m/%d %H:%M KST}"
@@ -112,10 +139,11 @@ def _result_summary(row, context, now):
     for release in records(context.get("economic_releases")):
         at = stamp(release.get("release_at"))
         if (release.get("indicator") != row.get("indicator") or not row.get("indicator")
-                or release.get("stale") or not at or at > now or number(release.get("actual")) is None):
+                or _unavailable(release) or release.get("status") == "pending"
+                or not at or at > now or number(release.get("actual")) is None):
             continue
         basis = {"MoM": "전월비", "YoY": "전년비"}.get(release.get("basis"), text(release.get("basis")))
-        prefix = "결과" if row.get("period") == release.get("period") else "직전 관측(이번 예상 아님)"
+        prefix = "결과" if _same_release(row, release) else "직전 관측(이번 예상 아님)"
         piece = f"{prefix} {release.get('period', '')} {basis} {release['actual']}{release.get('unit', '')}"
         if number(release.get("previous")) is not None:
             piece += f" / 이전 {release['previous']}{release.get('unit', '')}"
@@ -146,7 +174,7 @@ def event_watch_rows(context, summary_rows, now, *, pipeline=None):
             continue
         if row.get("schedule_status") == "unconfirmed":
             continue
-        if not -7 <= (day.date() - now.date()).days <= 45:
+        if not -7 <= (day.date() - now.date()).days <= 90:
             continue
         try:
             state = _event_state(row, context, now)
@@ -206,23 +234,31 @@ def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
     if rows:
         near = [r for r in rows if (stamp(r['date']).date() - now.date()).days <= 7]
         later = [r for r in rows if r not in near]
-        for label, group in (("이번 주·최근 발표", near), ("이후 확정 일정·45일 이내", later)):
+        for label, group in (("이번 주·최근 발표", near), ("이후 확정 일정·90일 이내", later)):
             if not group:
                 continue
             lines += [f"**{label}**", "", *_table(["일정·현지 / 한국 시각", "상태·근거", "확인할 핵심"], [
                 (f"{r['event']} · {r['timing']}", f"{r['state']} · [{r.get('source') or '원문'}]({r['source_url']})" + (" · " + r['observed'] if r['observed'] else ""), r['check']) for r in group])]
         lines += ["**왜 중요한가 · 결과별 읽는 법(조건부 해석)**", ""]
         interpretation_rows = (near + [r for r in later if "FED" in text(r.get('indicator'))]) or later
+        grouped = {}
+        for row in interpretation_rows:
+            key = (row['why'] + ". " + row['conditional'], row['exposure'])
+            grouped.setdefault(key, []).append(row['event'])
         lines += _table(["이벤트", "의미·조건부 해석", "보유·업종 연결"], [
-            (r['event'], r['why'] + ". " + r['conditional'], r['exposure']) for r in interpretation_rows])
+            (" · ".join(dict.fromkeys(names)), meaning, exposure)
+            for (meaning, exposure), names in grouped.items()])
     else:
         lines += ["확인된 향후 일정·최근 결과 미연결. 일정이 없다는 뜻은 아닙니다.", ""]
     # Rumoured listings/meetings remain dated news, never become calendar events.
     from stock_lab_core.report_policy_catalysts import policy_news
+    from stock_lab_core.report_brief import material_news
     import re
-    tracked, seen = [], set()
+    tracked, seen = {}, set()
     for row in policy_news(context, news, now):
         title = text(row.get("title"))
+        if not material_news(row):
+            continue
         if not re.search(r"IPO|기업공개|상장|정상회담|APEC", title, re.I) or re.search(r"상장폐지|delist", title, re.I):
             continue
         family = "IPO·상장" if re.search(r"IPO|기업공개|상장", title, re.I) else "외교·규제"
@@ -232,9 +268,14 @@ def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
         seen.add(link)
         check = ("공식 공모가·상장일·조달액·자금 사용처, 상장 후 공모가 유지와 추가 자금 필요를 확인"
                  if family == "IPO·상장" else "개별 회담 성사·합의문·규제 시행일 확인; 행사 개최와 합의는 별개")
-        tracked.append((f"[{title}]({link})", "보도·일정 확정과 별도", check))
+        key = "anthropic_ipo" if family == "IPO·상장" and re.search(r"Anthropic|앤트로픽|앤스로픽", title, re.I) else link
+        if key not in tracked:
+            tracked[key] = [title, [], check]
+        tracked[key][1].append(link)
     if tracked:
-        lines += ["**일정 확정과 별도로 추적할 재료**", "", *_table(["최근 근거", "구분", "다음 확인"], tracked)]
+        lines += ["**일정 확정과 별도로 추적할 재료**", "", *_table(["최근 근거", "구분", "다음 확인"], [
+            (f"[{title}]({links[0]})" + (f" · 관련 보도 {len(links)}건: " + " ".join(f"[{i}]({link})" for i, link in enumerate(links, 1)) if len(links) > 1 else ""),
+             "보도·일정 확정과 별도", check) for title, links, check in tracked.values()])]
     lines += ["**계속 볼 흐름**", "", *_ongoing_watch(context, now)]
     missing = [s.get("name", "공식 일정") for s in records(context.get("market_watch_sources")) if s.get("status") != "connected"]
     if missing:
