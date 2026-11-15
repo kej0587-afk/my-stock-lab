@@ -39,8 +39,9 @@ _EARNINGS_MISS = (
 )
 _AI_CONCERN = (
     r"(?:AI|인공지능|코어위브|CoreWeave).{0,80}(?:차입\s*우려|신용\s*우려|부채\s*부담|"
-    r"자금조달\s*부담|투자\s*붕괴|수익성\s*우려|투자.{0,20}(?:우려|부담|회의론)|"
-    r"(?:수익|생산성|성과).{0,45}(?:회의론|의문|불확실|우려))"
+    r"자금조달\s*부담|투자\s*붕괴|수익성\s*우려|(?:투자|인프라\s*확충|설비\s*확장).{0,20}(?:우려|부담|회의론)|"
+    r"(?:수익|생산성|성과).{0,45}(?:회의론|의문|불확실|우려))|"
+    r"(?:데이터센터|클라우드).{0,55}차입.{0,100}(?:우려|부담)"
 )
 _PAST_CONTEXT = re.compile(r"과거|한때|당시|작년|지난\s*(?:해|달|분기|주)|\bpreviously\b|\blast (?:year|quarter|month|week)\b", re.I)
 _NEGATED_CONTEXT = re.compile(
@@ -187,7 +188,7 @@ def _body_facts(paragraphs):
          "AI 설비투자 계획과 다음 실적의 수요·현금흐름 확인"),
         ("ai_credit", _AI_CONCERN,
          "AI 투자 부담·성과에 대한 우려가 보도됐습니다",
-         "AI 투자 지속성과 성과에 대한 경계가 반도체·성장주로 번질 수 있으나 가격 기여도는 확정할 수 없습니다",
+         "투자 재원이 약해지면 데이터센터 발주·가동이 늦어져 반도체·장비 업체의 매출 인식도 지연될 수 있습니다",
          "AI 투자 계획·고객 계약과 투자 대비 수익·현금흐름 확인"),
         ("exports", r"수출.{0,60}(?:역대\s*최대|호조|신기록)",
          "한국 수출 호조가 투자심리 개선 배경으로 거론됐습니다",
@@ -331,10 +332,15 @@ def parse_article(data, url, expected_title):
     issuer_context = bool(catalyst_entities(expected_title))
     issuer_facts = catalyst_body_facts(list(body_sentences(paragraphs)), expected_title) if issuer_context else []
     from stock_lab_core.article_market_events import market_event_facts, ordered_market_facts
+    market_wrap = bool(re.search(r"뉴욕증시|코스피|코스닥|Wall Street|U\.?S\.? stocks", expected_title, re.I))
     # An issuer's capex/FCF discussion is not evidence that AI lifted the index.
-    facts = (market_event_facts(paragraphs) + issuer_facts if issuer_context else
+    # Conversely, an issuer named in a market wrap must not hide the wrap's
+    # other events (funding pressure, inflation, sector-wide selling).
+    facts = (market_event_facts(paragraphs) + issuer_facts if issuer_context and not market_wrap else
              _sector_body_facts(paragraphs, expected_title) + _body_facts(paragraphs))
-    if issuer_context and re.search(r"뉴욕증시|코스피|코스닥|나스닥|Wall Street", expected_title, re.I):
+    if issuer_context and market_wrap:
+        facts += issuer_facts
+    if issuer_context and not market_wrap and re.search(r"나스닥", expected_title, re.I):
         from stock_lab_core.article_price_facts import oil_price_fact
         oil = oil_price_fact(paragraphs)
         if oil:
@@ -398,6 +404,39 @@ def enrich_article_context(result, now, *, priority_context=None):
         topics = matching_categories(title, requested)
         return bool(("금융·은행" in topics and re.search(r"연임|지분.{0,12}매각|주주환원|충당금|이자마진", title))
                     or ("조선" in topics and re.search(r"수주|건조\s*계약", title)))
+    bucket_by_row = {id(row): bucket for bucket in buckets for row in result.get(bucket, [])}
+    def weekly_preview_key(row):
+        """Only equivalent event-list previews; unknown detail keeps its own slot."""
+        title = row.get("title", "")
+        published = _date(row.get("published_at"))
+        if (not published or row.get("body_facts") or row.get("body_scenarios")
+                or re.search(r"\d", title)
+                or not re.search(r"주간(?:증시)?전망|(?:이번|다음)\s*주|금주|차주|\bweekly (?:preview|outlook)\b|\b(?:this|next) week\b|\bweek ahead\b", title, re.I)):
+            return None
+        subjects = []
+        if re.search(r"엔비디아|\b(?:NVIDIA|NVDA)\b", title, re.I):
+            if not re.search(r"(?:엔비디아|\b(?:NVIDIA|NVDA)\b)(?:의|'s|’s)?\s*(?:실적|\bearnings\b)", title, re.I):
+                return None
+            subjects.append("NVDA_EARNINGS")
+        if re.search(r"앤트로픽|앤스로픽|\bAnthropic\b", title, re.I):
+            if not re.search(r"(?:앤트로픽|앤스로픽|\bAnthropic\b)(?:의|'s|’s)?\s*(?:상장|기업공개|\bIPO\b)", title, re.I):
+                return None
+            subjects.append("ANTHROPIC_IPO")
+        if not subjects:
+            return None
+        # Remove only known preview boilerplate. Earnings outcomes, extra issuers,
+        # policy events, fiscal periods and other unmatched detail prevent merging.
+        residual = re.sub(r"엔비디아|앤트로픽|앤스로픽|주간(?:증시)?전망|뉴욕증시|실적\s*발표|실적|기업공개|상장|"
+                          r"쏠리는\s*눈|빅위크|주목|주시|앞두고|전망|이번\s*주|다음\s*주|금주|차주|"
+                          r"\b(?:NVIDIA|NVDA|Anthropic|earnings|IPO|weekly|preview|outlook|week|ahead|this|next|"
+                          r"Wall Street|in focus|investors|watch|await|focus on|and|the|on|AI)\b", " ", title, flags=re.I)
+        residual = re.sub(r"(?:^|\s)(?:은|는|이|가|에|을|를|의|와|과|도|까지|엔|에만)(?=\s|[^\w]|$)", " ", residual)
+        if re.search(r"\w", residual):
+            return None
+        week_focus = ("next" if re.search(r"다음\s*주|차주|\bnext week\b|\bweek ahead\b", title, re.I)
+                      else "this" if re.search(r"이번\s*주|금주|\bthis week\b", title, re.I) else "unspecified")
+        return (row.get("market"), row.get("session_date"), bucket_by_row.get(id(row)),
+                published.astimezone(timezone.utc).isocalendar()[:2], week_focus, tuple(subjects))
     for row in rows:
         row["editorial_priority"] = editorial_priority(row, priority_context)
     rows.sort(key=lambda row: (-row["editorial_priority"], not is_strategy_article(row.get("title", "")),
@@ -405,7 +444,7 @@ def enrich_article_context(result, now, *, priority_context=None):
                                    and catalyst_entities(row.get("title")) and catalyst_topics(row.get("title"))),
                                not market_wrap(row), not selected_material(row),
                                -(_date(row.get("published_at")) or datetime(1970, 1, 1, tzinfo=timezone.utc)).timestamp()))
-    selected, market_counts, seen, wrap_markets = [], {}, set(), set()
+    selected, market_counts, seen, wrap_markets, seen_previews = [], {}, set(), set(), set()
     # Reserve the same top-three editorial stories shown by the report before
     # applying diversity quotas. Unsupported publishers are explicit, not fetched.
     if priority_context:
@@ -419,11 +458,16 @@ def enrich_article_context(result, now, *, priority_context=None):
         by_link = {row.get("link"): row for row in all_rows}
         for link in primary:
             row = by_link[link]
+            preview = weekly_preview_key(row)
+            if link in seen or (preview is not None and preview in seen_previews):
+                continue
             if not _safe_url(link):
                 row["body_status"] = "unsupported_source"
                 continue
             selected.append(row)
             seen.add(link)
+            if preview is not None:
+                seen_previews.add(preview)
             market = row.get("market")
             group = coverage_group(row)
             market_counts[group] = market_counts.get(group, 0) + 1
@@ -438,12 +482,16 @@ def enrich_article_context(result, now, *, priority_context=None):
         # A market can contain policy, semiconductors, credit and other distinct
         # catalysts; two US articles must not exhaust all US body coverage.
         group = coverage_group(row)
-        if (link in seen or (strategy and strategy_selected) or market_counts.get(group, 0) >= 2
+        preview = weekly_preview_key(row)
+        if (link in seen or (preview is not None and preview in seen_previews)
+                or (strategy and strategy_selected) or market_counts.get(group, 0) >= 2
                 or (market_wrap(row) and market in wrap_markets)):
             continue
         selected.append(row)
         strategy_selected |= strategy
         seen.add(link)
+        if preview is not None:
+            seen_previews.add(preview)
         market_counts[group] = market_counts.get(group, 0) + 1
         if market_wrap(row):
             wrap_markets.add(market)

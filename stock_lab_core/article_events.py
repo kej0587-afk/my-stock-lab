@@ -122,7 +122,10 @@ def enhance_facts(facts, paragraphs):
                     event_tags=[event["event_tag"] for event in events])
         used.update(event["event_tag"] for event in events)
     additions = []
-    for sentence in sentences:
+    # Prefer a directly observed Treasury move to a generic policy expectation
+    # when only one rates fact fits. Qualifiers/negation still use event_metadata.
+    observed_rates = re.compile(r"국채\s*금리.{0,25}(?:상승|하락|올랐|내렸)|\btreasury yields?\b.{0,25}\b(?:rose|fell|ris\w*|fall\w*)\b", re.I)
+    for sentence in sorted(sentences, key=lambda s: not bool(observed_rates.search(s))):
         if len(sentence) > 140:
             continue
         for event in event_metadata(sentence):
@@ -131,14 +134,34 @@ def enhance_facts(facts, paragraphs):
                 continue
             if any(f["topic"] == tag for f in additions):
                 continue
+            implication, check = event_reading(tag, sentence)
             additions.append(dict(topic="earnings" if tag == "earnings_shock" else tag,
                 summary="본문 보도: " + sentence, concrete_summary=sentence,
-                implication="출처의 보도 내용이며 시장 가격의 원인이나 향후 방향을 확정하지 않습니다",
-                check="공식 발표와 보도 시점·적용 대상 확인", evidence=sentence,
+                implication=implication, check=check, evidence=sentence,
                 evidence_basis="body", event_tags=[tag], events=[event]))
-    # New concrete events precede generic AI concerns; existing facts keep order.
-    split = next((i for i, f in enumerate(result) if f["topic"] == "ai_credit"), len(result))
-    return (result[:split] + additions + result[split:])[:4]
+    from stock_lab_core.article_market_events import ordered_market_facts
+    # One sentence may match several event rules; show its evidence once.
+    selected, seen = [], set()
+    for fact in ordered_market_facts(result + additions):
+        key = (fact.get("topic"), fact.get("evidence") or fact.get("summary"))
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(fact)
+    return selected[:4]
+
+
+def event_reading(tag, sentence):
+    """Conditional economic transmission, separate from the reported claim."""
+    readings = {
+        "earnings_shock": ("실적의 기대 대비 차이는 이익 전망 재평가 요인입니다", "공식 실적의 일회성 항목·가이던스와 다음 정규장 반응 확인"),
+        "regulation": ("규제 변화는 판매 가능 시장과 공급 일정에 영향을 줄 수 있습니다", "공식 규제의 대상 제품·국가·시행일과 매출 노출 확인"),
+        "credit": ("조달 부담 확대는 신규 투자 여력과 고객 발주 지속성에 부담이 될 수 있습니다", "부채 만기·차입 비용·영업현금흐름과 투자 계획 변경 확인"),
+        "geopolitics": ("제재·협상 변화는 공급 비용과 위험 프리미엄에 영향을 줄 수 있습니다", "당사국 공식 조치와 유가·운임·환율의 후속 반응 확인"),
+        "flows": ("순매매는 수급의 방향을 보여주며 지속 여부가 중요합니다", "같은 시장·기간의 순매매와 다음 거래일 지속성 확인"),
+        "rates": ("금리 경로 변화는 성장주의 할인율과 기업 조달 비용에 영향을 줄 수 있습니다", "공식 지표의 예상 대비 차이, 2년·10년 금리와 다음 연준 발언 확인"),
+    }
+    return readings[tag]
 
 
 _SECTORS = (

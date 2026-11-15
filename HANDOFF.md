@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-15 article-story request, base491a9a61): read
+docs/maintenance/20261115_article_story.md. Verified article facts now connect
+business/regulatory uncertainty, datacenter borrowing/capex concerns and actual
+Treasury responses to conditional implications and concrete checks. Main tables
+use one evidence sentence per row and retain distinct checks for shared evidence;
+post-close/global context can link existing holdings without relabelling it a
+closing cause. Equivalent weekly previews share the eight-read budget; original
+news rows remain. Overnight futures are no longer labelled prior cash closes.
+No score/grade/gate/data/TTL changes. Related300pass; decision1369pass/135.0s
+before final report-only presentation follow-ups (80 focused tests pass).
+Operating verification is pending this code deployment; use the preserved
+before_review.zip and old22:12 report in cache/article_story_20261115 and
+cache/event_watch_20261115. Do not claim new operating timing until downloaded
+Markdown/diagnostic/decision exports are compared. Customs stash untouched.
+
 Latest completed work (2026-11-15 event-watch request, base27e039e9): read
 docs/maintenance/20261115_event_watch.md. Main calendar now connects sourced
 local/KST timing, release lifecycle, concrete questions, conditional readings
@@ -1384,22 +1399,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Improve current-session market-story synthesis from verified article bodies.**
+**Complete operating verification of the article-story deployment.**
 
-Use the preserved22:12KST cache/event_watch_20261115/report.md and its matching
-diagnostic, comparing21:17KST quality_after.md and public body outcomes as needed.
-The US-close explanation still reduces to generic PPI prose; the datacenter
-article was read but produced no supported interpretation, while two weekly
-previews consumed two slots. Preserve distinct material events, deduplicate
-equivalent previews and replace repeated generic disclaimers with specific,
-source-backed event -> implication -> next-check text where available. Keep
-unsupported causes explicit. In the same story-input audit, distinguish the
-previous-day overnight S&P futures headline from a confirmed prior close; its
-current fallback label is too strong. Do not change scores/gates/TTLs, invent
-causality, broaden to unverified sources or add a broad optimization. Verify
-body/date/source guards, unchanged decisions, operating generation and timing.
-Cloud reboot is authorized and the IAB owner session was connected successfully.
-The interrupted Customs patch stays stashed; do not pop it indiscriminately.
+Generate one new operating report with unchanged settings and compare its
+Markdown, matching diagnostic and before/after decision exports. Check actual
+body facts, datacenter next-session timing, overnight futures labels, distinct
+checks retained under deduplication and all loaded/disk/Git hashes. Only reboot
+if the application requires it; owner access and reboot are already authorized.
+Record elapsed/stages without claiming a controlled speedup. Update this task
+to exactly one bounded follow-up after verification; preserve the Customs stash.
 
 ## Evidence and Remaining Limits
 

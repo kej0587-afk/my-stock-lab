@@ -117,7 +117,8 @@ def material_news(row):
     if not facts and re.search(r"\b(?:cheap(?:er)?|bargain|investment case|bull case|fair value|undervalued narrative)\b|"
                               r"\bvaluation\b.{0,30}\bfocus\b|\bHow .{0,60}\b(?:impact|affect)\b.{0,30}\binvestors\b", title, re.I):
         return False
-    return bool(facts or _MATERIAL_TERMS.search(title))
+    return bool(facts or _MATERIAL_TERMS.search(title)
+                or re.search(r"(?:금융지주|은행|금융그룹).{0,35}(?:연임|지배구조)", title))
 
 
 def explicit_news_market(row):
@@ -180,9 +181,14 @@ def news_observation(row, context):
         return 0, f"{market} · 발행시각 기준 · 거래일 귀속 미확인"
     title = text(row.get("title"))
     wrap = bool(row.get("is_close_wrap") or re.search(r"마감|장종료|\bclose[ds]?\b|\bend\b.{0,30}\b(?:higher|lower|week)\b", title, re.I))
+    futures = bool(re.search(r"선물|\bfutures?\b", title, re.I))
+    extended = bool(re.search(r"시간외|장전|장후|프리마켓|애프터마켓|pre[- ]?market|after[- ]?hours", title, re.I))
     reference = max(day, text(context.get("sessions", {}).get(market)))
+    if futures or extended:
+        phase = "선물 관측" if futures else "정규장 외 보도"
+        return 0 if local.date().isoformat() < reference else 1, f"{market} {local:%Y-%m-%d %H:%M} 현지 {phase} · 정규장 종가와 구분"
     if local.date().isoformat() < reference:
-        prior_close = wrap or (local.hour >= 16 and market == "US" and re.search(r"나스닥|뉴욕증시|Wall Street|S&P|Nasdaq", title, re.I))
+        prior_close = wrap
         label = "이전 종가 관측" if prior_close else "이전 거래일 보도·장전 재료"
         return 0, f"{market} {local:%Y-%m-%d} {label} · {reference} 종가 원인 미확인"
     if published < opening:
@@ -241,7 +247,8 @@ def _topics(title, entities):
     topics = set(sector_news_topics("", sector_name=title))
     if set(entities) & {"NVDA", "AMZN", "META", "MU", "CRWV", "MSFT"}:
         topics.update(("technology", "semiconductor", "memory", "software"))
-    if re.search(r"(?:AI|인공지능).{0,20}(?:차입|신용|부채|투자|수요)|AI Debt", title, re.I):
+    if (re.search(r"(?:AI|인공지능).{0,20}(?:차입|신용|부채|투자|수요)|AI Debt", title, re.I)
+            or ("데이터센터" in title and re.search(r"차입|신용|부채|투자|수요", title))):
         topics.update(("technology", "semiconductor", "memory", "software"))
     return topics
 
@@ -383,6 +390,34 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         if compact:
             if body_facts:
                 facts = body_facts if comprehensive else body_facts[:1]
+                if comprehensive:
+                    # One event per row: attach only its own exposure and check,
+                    # not the headline company's exposure to every macro fact.
+                    grouped = {}
+                    for fact in facts:
+                        grouped.setdefault(fact["summary"], []).append(fact)
+                    seen_readings, seen_checks = set(), set()
+                    for group in grouped.values():
+                        fact = group[0]
+                        evidence = fact["summary"]
+                        fact_entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, evidence, re.I)]
+                        fact_theme = "금리·경제지표" if fact["topic"] == "rates" else theme
+                        exposure = (link if row["market"] not in states else _holding_links(
+                            held, evidence, fact_entities, fact_theme, row["market"],
+                            constituent_evidence=constituent_links(evidence, "CIBR", now=now, published_at=published)))
+                        detail = evidence + " " + citation(dict(row, title="원문"))
+                        detail += f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
+                        reading = exposure
+                        implications = list(dict.fromkeys(f["implication"] for f in group if f["implication"] not in seen_readings))
+                        checks = list(dict.fromkeys(f["check"] for f in group if f["check"] not in seen_checks))
+                        if implications:
+                            reading += " · 해석(추정): " + " / ".join(implications)
+                            seen_readings.update(implications)
+                        if checks:
+                            reading += " · 다음 확인: " + " / ".join(checks)
+                            seen_checks.update(checks)
+                        lines.append(" | ".join(_cell(value) for value in (fact_theme, detail, reading)))
+                    continue
                 summaries = [fact["summary"] for fact in facts]
                 if comprehensive:
                     summaries = list(dict.fromkeys(summaries))

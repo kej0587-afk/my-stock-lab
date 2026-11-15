@@ -1,5 +1,7 @@
 """Complete the reading path from collected evidence; never fetch or score."""
 
+import re
+
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, citation, curate_news, first, number, records, stamp, text
 
@@ -91,7 +93,7 @@ def company_coverage_lines(context, summary_rows, market):
                                        for i, source in enumerate(sources, 1)), ""] if rows else [])
 
 
-def context_news_lines(context, now, *, bucket, excluded=(), market=None):
+def context_news_lines(context, now, *, bucket, excluded=(), market=None, summary_rows=()):
     """Do not lose global or post-close events just because no fixed issuer matches."""
     from stock_lab_core.article_context import verified_body_facts
     from stock_lab_core.report_news_selection import matching_categories, TOPIC_CHECKS
@@ -141,6 +143,13 @@ def context_news_lines(context, now, *, bucket, excluded=(), market=None):
             detail += " · 본문: " + " / ".join(dict.fromkeys(f["summary"] for f in facts))
             check = "해석(추정): " + " / ".join(dict.fromkeys(f["implication"] for f in facts))
             check += " · 다음 확인: " + " / ".join(dict.fromkeys(f["check"] for f in facts))
+            from stock_lab_core.report_brief import ENTITIES, _holding_links
+            from stock_lab_core.report_evidence import is_held
+            evidence = " ".join(f["summary"] for f in facts)
+            held = [row for row in records(summary_rows) if is_held(row)]
+            if held:
+                entities = [ticker for ticker, pattern in ENTITIES if re.search(pattern, evidence, re.I)]
+                check = _holding_links(held, evidence, entities, brief_theme(item), item.get("market")) + " · " + check
         else:
             detail += " (제목 확인·기사 주장)"
             check = next((TOPIC_CHECKS[t] for t in topics if t in TOPIC_CHECKS), "공식 발표·원문 및 후속 가격 확인")

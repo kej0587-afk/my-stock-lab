@@ -129,7 +129,7 @@ def test_other_market_bodies_are_read_with_same_budget_and_version_check(monkeyp
     assert result['news_retrieval']['article_body_statuses'] == {'article_version_after_report': 1}
 
 
-def test_ipo_rally_does_not_displace_market_wrap_and_four_article_budget(monkeypatch):
+def test_ipo_rally_does_not_displace_market_wrap_and_eight_article_budget(monkeypatch):
     titles = ['[특징주] 신규기업, 코스닥 상장 첫날 급등 마감',
               '코스피, 기술주 하락 딛고 반등(종합)', '코스피 상승 마감',
               '금융지주 회장 연임 요건 강화', '조선주 수주 소식에 상승',
@@ -142,7 +142,9 @@ def test_ipo_rally_does_not_displace_market_wrap_and_four_article_budget(monkeyp
         return {'body_status': 'fetch_unavailable'}
     monkeypatch.setattr(a, '_article', read)
     a.enrich_article_context({'session_news': rows}, NOW)
-    assert len(calls) == a.MAX_ARTICLES == 4
+    assert a.MAX_ARTICLES == 8
+    assert len(calls) == 5
+    assert titles[3] in calls  # financial governance is a material event
     assert calls[0] == titles[1]
     assert titles[2] not in calls
 

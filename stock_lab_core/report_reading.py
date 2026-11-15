@@ -165,7 +165,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
             lines += _table(header, rows)
     if macro_brief["article_keys"]:
         lines += macro_brief["lines"] + [""]
-    shared = context_news_lines(context, now, bucket="other_market_news", excluded=macro_brief["article_keys"])
+    shared = context_news_lines(context, now, bucket="other_market_news", excluded=macro_brief["article_keys"], summary_rows=summary_rows)
     if shared:
         lines += ["**해외·공통 재료**", *shared]
     lines += ["## 지수", "", *indices]
@@ -195,7 +195,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         lines += company_coverage_lines(context, summary_rows, market)
         lines += compact_catalyst_lines(pipeline, market, limit=None)
         after = context_news_lines(context, now, bucket="next_session_news", market=market,
-                                   excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained])
+                                   excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained], summary_rows=summary_rows)
         if after:
             lines += ["**장 마감 후 · 다음 세션 재료**", *after]
     lines += _portfolio_lines(sections, preamble)

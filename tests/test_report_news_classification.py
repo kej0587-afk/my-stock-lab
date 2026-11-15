@@ -107,9 +107,10 @@ def test_report_does_not_repeat_participant_article_in_story_or_news_list(monkey
     assert "수급 주체 보도 2건" in report
     assert report.count("[마감 후 보도]") == 2
     assert "10/19 16:19 KST" in report and "10/19 16:07 KST" in report
+    main = report.split('## 상세 근거', 1)[0]
     for row in rows:
-        assert report.count(row["link"]) == 1
-        assert report.count(row["title"].replace("[", "(").replace("]", ")")) == 1
+        assert main.count(row["link"]) == 1
+        assert main.count(row["title"].replace("[", "(").replace("]", ")")) == 1
     assert "추가 기사 없음" in report
     assert "제목 기준 보도(기사 주장):" not in report
 

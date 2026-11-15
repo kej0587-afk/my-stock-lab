@@ -10,6 +10,9 @@ _DIPLOMACY = re.compile(r"(?:미[·ㆍ/-]?이란|미국.{0,10}이란).{0,40}(?:�
 _LEADERSHIP = re.compile(
     r"(?:CEO|최고경영자|대표이사|회장).{0,60}(?:사임|퇴진|해임|교체|resign\w*|step(?:ped|s)? down|dismiss\w*)"
     r"|(?:임시|신임|interim|new).{0,15}(?:CEO|최고경영자|대표이사).{0,35}(?:선임|임명|appoint\w*|nam\w*)", re.I)
+_BUSINESS_RISK = re.compile(
+    r"(?:리더십|경영진|승계|규제).{0,30}(?:공백|불확실|우려)"
+    r"|\b(?:leadership|succession|regulatory)\b.{0,30}\b(?:vacuum|uncertainty|concerns?)\b", re.I)
 _QUALIFIED = re.compile(
     r"과거|지난해|작년|당시|지난\s*(?:주|달|분기)|않|아니|없|부인|가능|예정|검토|관측|전망|한다면|할\s*경우"
     r"|요구|촉구|필요|논의|계획|사임설|퇴진설"
@@ -32,6 +35,13 @@ def market_event_facts(paragraphs):
             topic = "leadership"
             implication = "경영진 교체는 의사결정·사업 일정의 불확실성을 높일 수 있습니다. 생산·계약 변경이나 경쟁사 수혜가 확인된 것은 아닙니다"
             check = "공식 인사 발표와 사업 일정·고객 계약 유지 여부, 관련 기업의 같은 세션 가격 반응 확인"
+        elif _BUSINESS_RISK.search(sentence) and not re.search(
+                r"과거|지난해|작년|당시|않|아니|없|부인|해소|완화|\b(?:not|never|denied|resolved|last year)\b", sentence, re.I):
+            # Report the uncertainty itself, never promote it to an actual
+            # resignation, restriction or cancelled customer contract.
+            topic = "business_uncertainty"
+            implication = "경영·규제 불확실성은 고객 발주와 공급 일정의 가시성을 낮출 수 있습니다"
+            check = "공식 승계·규제 발표, 고객 계약과 제품 공급 일정의 실제 변경 여부 확인"
         else:
             continue
         if topic in seen:
@@ -50,13 +60,13 @@ def ordered_market_facts(facts):
             return 0
         if fact.get("polarity") == "negative":
             return 1
-        return {"ai_credit": 2, "mediation": 3}.get(fact.get("topic"), 4)
+        return {"business_uncertainty": 1, "ai_credit": 2, "mediation": 3}.get(fact.get("topic"), 4)
     return sorted(facts, key=priority)
 
 
 def event_context_sentence(facts):
     claims = [fact["summary"] for fact in ordered_market_facts(facts)
-              if fact.get("topic") in {"leadership", "mediation"}]
+              if fact.get("topic") in {"leadership", "business_uncertainty", "mediation"}]
     return " ".join(claims[:2])
 
 
