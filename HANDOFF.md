@@ -37,7 +37,12 @@ retained, original board contract isolated from three intentionally added symbol
 Production pre-deployment full Today78.2s; report58.3s, measurement62070e9d8d4f45089f56ff86e6621ed4.
 Private artifacts cache/report_coverage_20261115. Cloud IAB account is email-only;
 Linked accounts explicitly reports no source-control login, so reboot access is
-not established. New deployment/regeneration proof remains to be recorded below.
+not established. Code50551641 committed/pushed; origin matched, working tree clean
+before this documentation follow-up. Reconnecting the user's open Edge window
+was stopped by browser safety because its current URL could not be established.
+No reboot was performed and post-deployment regeneration/UI verification remains
+unfinished. Do not retry/bypass that browser block in the same turn. Existing
+generated reports are still pre-50551641; do not mistake them for new output.
 Interrupted Customs stash remains preserved and unapplied.
 
 Latest bounded work (2026-11-15, company base 746b92fb): user requested report
