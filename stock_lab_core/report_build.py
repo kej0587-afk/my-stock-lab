@@ -19,7 +19,7 @@ _RENDER_MODULES = (
     "economic_releases", "economic_cache", "economic_bulletins", "economic_exports_preliminary",
     "economic_release_metadata", "report_economic_reading", "release_calendar",
     "economic_consensus", "report_consensus",
-    "report_account", "report_calendar", "report_observation_panel",
+    "report_account", "report_calendar", "report_observation_panel", "report_event_watch", "market_watch_calendar",
     "market_observation", "market_sentiment", "public_market_data", "earnings_sources", "catalyst_news", "report_catalysts",
     "earnings_result_sources", "earnings_result_pdf", "earnings_cash_outlook", "earnings_reconciliation",
     "earnings_collection", "earnings_discovery", "earnings_pipeline", "report_earnings", "report_market_connections",

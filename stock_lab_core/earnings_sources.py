@@ -153,6 +153,15 @@ def _check_source(spec, now):
 
 def _issuer(ticker, requested, now, refresh):
     spec = _ISSUERS.get(ticker)
+    # The later IR announcement supersedes the older transcript only after its
+    # verification date; historical reports keep their original evidence.
+    if ticker == "NVDA" and now >= datetime.fromisoformat("2026-11-15T00:00:00+00:00"):
+        spec = dict(name="NVIDIA", market="US", date="2026-11-17", quarter="FY2027Q3",
+            kind="scheduled_release", published="2026-10-28", expires="2026-11-24",
+            verified_at="2026-11-15T00:00:00+00:00", call="2026-11-17T17:00:00-05:00",
+            session="after_market_close",
+            url="https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Sets-Conference-Call-for-Third-Quarter-Financial-Results/",
+            evidence=("Tuesday, November 17", "third quarter of fiscal year 2027", "1:20 p.m. PT"))
     source = dict(name=(spec["name"] + " Investor Relations") if spec else ticker + " earnings",
                   ticker=ticker, requested_tickers=requested, status="unavailable",
                   reason="issuer_not_connected", coverage_status="unconnected",

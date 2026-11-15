@@ -172,6 +172,12 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     for row in releases:
         row.update(reaction=release_day_reaction(row, frames, now), reaction_source="Yahoo daily, release calendar")
     calendar = component(load_release_calendar, now=now, fred_api_key=_api_key("FRED_API_KEY")) if calendar is None else calendar
+    market_watch_sources = None
+    if economic_releases is None and price_frames is None:
+        from stock_lab_core.market_watch_calendar import load_market_watch_calendar
+        watch = component(load_market_watch_calendar, now)
+        calendar = dict(calendar, events=[*calendar["events"], *watch["events"]])
+        market_watch_sources = watch["sources"]
     earnings_sources = []
     earnings_results = {"results": [], "sources": []}
     earnings_scope = {}
@@ -237,6 +243,8 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
               "central_bank_results": central_bank_results}
     if official_outlooks is not None:
         result["official_outlooks"] = official_outlooks
+    if market_watch_sources is not None:
+        result["market_watch_sources"] = market_watch_sources
     from stock_lab_core.report_eventstudy import collect_event_study_context
     set_report_stage('macro_official')
     with measure("external_data", "event_study_context"):

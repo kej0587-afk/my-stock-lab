@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest work (2026-11-15 event-watch request, base27e039e9): read
+docs/maintenance/20261115_event_watch.md. Main calendar now connects sourced
+local/KST timing, release lifecycle, concrete questions, conditional readings
+and existing holding links. Census/APEC/Cboe added as bounded official sources;
+NVDA latest IR schedule verified, IPO/meeting news not promoted to confirmed dates.
+AI productivity/revenue/margin checks accompany cash/capex. Each new report
+refreshes this view through existing caches; saved reports are snapshots, no
+background automation added. Scores/gates/TTLs unchanged. Final operating
+verification and deployment are pending; update this paragraph before handoff.
+The one Next Task Only below remains article-story synthesis, deferred by this
+explicit user request. Preserved Customs stash remains untouched.
+
 Latest completed work (2026-11-15 continuation, base3b8feabf): user authorized
 separate successive report fixes and operating reboot. Code90629496 pushed;
 read docs/maintenance/20261115_report_quality_followup.md and

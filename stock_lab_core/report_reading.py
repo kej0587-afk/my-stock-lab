@@ -216,6 +216,17 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                 lines += _table(header, future)
     if len(lines) == calendar_start:
         lines += ["확인된 향후 일정 미연결. 상세 연결 상태는 아래 근거에서 확인할 수 있습니다.", ""]
+    from stock_lab_core.report_event_watch import event_watch_lines
+    watch = event_watch_lines(context, news, summary_rows, now, pipeline=pipeline)
+    if watch:
+        lines[calendar_start:] = watch
+        # Keep distinct policy/debt deadlines; IPO news already has a watch row.
+        for header, rows in tables(scheduled):
+            if header[0] == "일정·촉매":
+                extra = [row for row in rows if row[0] != "최근 IPO 보도"
+                         and not any("미연결" in cell for cell in row)]
+                if extra:
+                    lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
     # Keep every original number, condition, diagnostic and source for review.
     # Retain heading structure for saved-report readers; the UI folds the rest
     # from this boundary into one expander, rather than rewriting old sections.
