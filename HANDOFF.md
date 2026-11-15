@@ -19,15 +19,29 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest work (2026-11-15 event-watch request, base27e039e9): read
+Latest completed work (2026-11-15 event-watch request, base27e039e9): read
 docs/maintenance/20261115_event_watch.md. Main calendar now connects sourced
 local/KST timing, release lifecycle, concrete questions, conditional readings
 and existing holding links. Census/APEC/Cboe added as bounded official sources;
 NVDA latest IR schedule verified, IPO/meeting news not promoted to confirmed dates.
 AI productivity/revenue/margin checks accompany cash/capex. Each new report
 refreshes this view through existing caches; saved reports are snapshots, no
-background automation added. Scores/gates/TTLs unchanged. Final operating
-verification and deployment are pending; update this paragraph before handoff.
+background automation added. Scores/gates/TTLs unchanged. Code7492cde0 pushed;
+operating22:12KST report46f4f243959846dcb053085150a174a2 normal,54.714s,
+entry-to-report78.942s, no degraded reasons. All111 loaded/disk/Git source hashes
+match, restart_required=false; Markdown matches its diagnostic hash. Related
+tests182pass; stable decision gate1369pass. Final report-only boundary fixes
+have focused regressions, no golden changes. Generation leaves all95rows and
+23decision columns identical. Across deployment94common rows agree; one input
+addition/removal means do not claim full95-row equality across deployment.
+Full Today104.4s; first new-report sample74.9s, final54.714s with warm caches
+(calendar helper0.001s), not a controlled speedup. Reboot completed through Cloud
+owner UI; later report-only hot reload was verified by all module hashes, so
+do not ask for another reboot merely because one was needed earlier. Official
+Census/APEC/Cboe sources connected; CPI/PPI exact release-day matching, source
+stale-status handling, future results and invalid URLs/timestamps covered.
+Private artifacts and screenshot: cache/event_watch_20261115. Saved reports
+remain snapshots; Cboe finite verified2026Nov/Dec mapping expires2027-01-01.
 The one Next Task Only below remains article-story synthesis, deferred by this
 explicit user request. Preserved Customs stash remains untouched.
 
@@ -1372,7 +1386,8 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 **Improve current-session market-story synthesis from verified article bodies.**
 
-Use the preserved21:17KST quality_after.md and actual public body outcomes first.
+Use the preserved22:12KST cache/event_watch_20261115/report.md and its matching
+diagnostic, comparing21:17KST quality_after.md and public body outcomes as needed.
 The US-close explanation still reduces to generic PPI prose; the datacenter
 article was read but produced no supported interpretation, while two weekly
 previews consumed two slots. Preserve distinct material events, deduplicate
