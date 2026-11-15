@@ -19,21 +19,33 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-In progress (2026-11-15 continuation, base3b8feabf): user authorized continuing
-through remaining report defects, preserving decisions. PPI metadata recovery
-verified against BLS archive; read docs/maintenance/20261115_ppi_release_link.md.
-69 focused tests pass. October PPI dates now use the existing period-exact,
-expiring verified_snapshot fallback; raw values/consensus/TTLs unchanged.
-Production check is pending the combined follow-up deployment. Representative
-price wiring is implemented with separate company_prices, exact benchmark-pair
-validation and existing cached loaders; 10 collector tests pass. See
-docs/maintenance/20261115_report_quality_followup.md. Main-news materiality is
-reviewed: related370 and integrated103 tests pass. Decision1367 passed plus two
-exact report-opt-in AST checks passed after narrow normalization; goldens intact.
-News/price deployment is ready for operating reboot and regeneration. Body
-selection now shares the materiality filter and reads at most8 public articles
-across market/theme groups (existing4workers/TTLs/guards retained); 100tests pass;
-do not claim the earlier quality gaps have all been resolved.
+Latest completed work (2026-11-15 continuation, base3b8feabf): user authorized
+separate successive report fixes and operating reboot. Code90629496 pushed;
+read docs/maintenance/20261115_report_quality_followup.md and
+docs/maintenance/20261115_ppi_release_link.md. PPI exact-period expiring official
+publication metadata restored; raw values/consensus/TTLs/decisions unchanged.
+Separate company_prices connects KR59/59 and US75/75 same-session companies,
+excludes TDF from company breadth and reuses existing cached loaders. Main news
+filters promotional/history/generic valuation filler, fixes policy/issuer and
+prior-session/intraday labels. Body collection shares the filter and covers at
+most8public articles across market/theme groups with existing4workers/guards/TTLs.
+Final report/article382 tests pass; full decision1369pass, no failures/skips.
+Older report whole-app AST mismatch remains separately documented; no all-suite
+pass claim and no regenerated goldens.
+
+Operating reboot completed through connected Cloud owner session. New21:17KST
+report run292ccf9f7ebb45d2a271a1fb4a14b1f5:68.846s versus prior66.952s, normal,
+no degraded reasons, all109 source hashes match committed Git blobs, disk/loaded
+agreement, matching downloaded Markdown hash. Company prices4.559s inside the
+prices stage18.506s; bodies1.805s. Script-to-saved-report88.796s. Full Today126.3s.
+Different cache/network state means no causal speedup/regression claim.95tickers
+and23score/decision/gate columns identical across deployment and report generation.
+Main title-only mentions112->82, body mentions8->16;8bodies attempted,7verified.
+PPI visible withNov13 22:30KST date. Main357lines; improved coverage but generic
+causal prose/duplicate weekly previews still require work. Screenshot confirms
+75/75 company table; narrow sector rows are still tall. Private quality_* exports
+and verification_quality.json remain ignored under cache/report_coverage_20261115/
+production. Customs stash remains untouched. See exactly one next task below.
 
 Latest bounded work (2026-11-15 production validation, base 9f95190f): read
 docs/maintenance/20261115_report_production_validation.md. Clean tree and origin
@@ -1346,18 +1358,19 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Repair PPI official release-date linkage only.**
+**Improve current-session market-story synthesis from verified article bodies.**
 
-The actual Nov15 production report has PPI actual/previous values in the economic
-appendix but no release_at, so the recent-release freshness filter omits it from
-the main report. Trace official release metadata/cache merge, restore a verified
-publication date from the official source, and keep existing values, periods,
-consensus semantics, source precedence, TTLs and investment decisions unchanged.
-Do not infer the release day from the user's sample or a generic monthly rule.
-Test valid/missing/stale/future dates and confirm the PPI main-table row in a new
-production report. Record source, timing, build agreement and decision preservation.
-Other evidence-selection/breadth defects are listed in the production validation
-record; do not mix them or a broad optimization into this bounded fix.
+Use the preserved21:17KST quality_after.md and actual public body outcomes first.
+The US-close explanation still reduces to generic PPI prose; the datacenter
+article was read but produced no supported interpretation, while two weekly
+previews consumed two slots. Preserve distinct material events, deduplicate
+equivalent previews and replace repeated generic disclaimers with specific,
+source-backed event -> implication -> next-check text where available. Keep
+unsupported causes explicit. In the same story-input audit, distinguish the
+previous-day overnight S&P futures headline from a confirmed prior close; its
+current fallback label is too strong. Do not change scores/gates/TTLs, invent
+causality, broaden to unverified sources or add a broad optimization. Verify
+body/date/source guards, unchanged decisions, operating generation and timing.
 Cloud reboot is authorized and the IAB owner session was connected successfully.
 The interrupted Customs patch stays stashed; do not pop it indiscriminately.
 
