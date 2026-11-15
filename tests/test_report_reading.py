@@ -59,7 +59,7 @@ def render(context=None, news=()):
 def test_reading_order_moves_boilerplate_but_retains_original_audit_exactly():
     output = render()
     parts = split_report_sections(output.split("## " + AUDIT_TITLE, 1)[0])
-    assert [title for title, _ in parts][1:] == ["매크로", "지수", "한국 시황", "미국 시황",
+    assert [title for title, _ in parts][1:] == ["이번 주 테마 5개", "매크로", "지수", "한국 시황", "미국 시황",
         "포트폴리오 · 교체 검토", "돈흐름 · 업종 순환", "다음 일정"]
     main, audit = output.split("## " + AUDIT_TITLE, 1)
     assert "반도체·AI가 회복하는지와" not in main

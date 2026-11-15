@@ -114,6 +114,8 @@ def material_news(row):
                  r"\b(?:historical profile|sponsored content|banking rewards|how to open an account)\b", title, re.I):
         return False
     facts = verified_body_facts(row)
+    if not facts and re.search(r"time to (?:buy|sell|hold)|require action from.{0,50}investors|저가매수\s*해볼까", title, re.I):
+        return False  # Portfolio-advice headlines without checked facts are not market events.
     if not facts and re.search(r"\b(?:cheap(?:er)?|bargain|investment case|bull case|fair value|undervalued narrative)\b|"
                               r"\bvaluation\b.{0,30}\bfocus\b|\bHow .{0,60}\b(?:impact|affect)\b.{0,30}\binvestors\b", title, re.I):
         return False

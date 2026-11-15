@@ -19,6 +19,15 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest work (2026-11-15 report finish, base4f657800): see
+[report finish review](docs/maintenance/20261115_report_finish.md).
+Sector-body evidence, weekly top-five themes, summary/evidence tabs/downloads,
+explicit connection checks and individual-investor daily history are implemented.
+BOK2026-11-26 was already connected; official source/date-only verification added.
+No score/grade/gate/price/TTL changes; app.py unchanged. Focused411pass; final
+view/digest + historical app-function189pass. Final decision1369pass/137.938s
+(decision_f1lu3eob); production verification pending below. Private artifacts: cache/report_finish_20261115. Customs stash kept.
+
 Latest bounded work (2026-11-15 article-story request, base491a9a61): read
 docs/maintenance/20261115_article_story.md. Verified article facts now connect
 business/regulatory uncertainty, datacenter borrowing/capex concerns and actual
@@ -1414,18 +1423,14 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Connect sector-table explanations to the verified article evidence.**
+**Finish production verification of the report-finish changes.**
 
-Use the final23:08KST report and matching diagnostic in cache/article_story_20261115.
-Limit the first comparison to US base semiconductor/software sectors: compare
-their existing "why" cells with the new market-story body facts. Reuse already
-collected evidence only when issuer/sector, session and source match; retain
-market-excess-return and common-market-vs-sector-specific distinctions. Do not
-turn indirect holdings exposure into realised price contribution. Show one
-specific next check per supported sector and retain explicit missing evidence.
-No new provider, LLM, scoring/grade/gate/TTL changes or broad optimization.
-Verify unchanged numeric rows/decisions and operating rendering, then update
-the handoff. Preserve the interrupted Customs stash.
+After pushing, inspect the loaded-source guard and reboot only if required.
+Generate one complete operating report. Verify five-or-fewer dated themes,
+sector body provenance, individual flow rows, BOK schedule, summary/evidence
+pages and lossless downloads. Compare unchanged Today inputs/decision columns,
+record actual timing/source hashes and any missing data. Update this task after
+verification; do not add sources, rules or thresholds. Preserve the Customs stash.
 
 ## Evidence and Remaining Limits
 

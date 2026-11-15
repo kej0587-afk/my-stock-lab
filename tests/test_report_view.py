@@ -96,15 +96,34 @@ def test_older_and_unknown_sections_fall_back_to_visible_markdown(monkeypatch):
     assert all(label is None for label, _ in chunks)
 
 
-def test_new_reader_has_one_closed_appendix_with_original_heading_structure(monkeypatch):
-    from stock_lab_core.report_view import AUDIT_TITLE
+def test_new_reader_has_separate_summary_and_evidence_pages():
+    from stock_lab_core.report_view import AUDIT_TITLE, split_report_documents
+    from streamlit.testing.v1 import AppTest
     report = ("## 매크로\nMain\n## 미국 시황\nNews\n## " + AUDIT_TITLE
               + "\nNotes\n## 지금 상태 3줄\nOld status\n## 내 보유 종목 영향\nOld details\n")
-    chunks, expanders = _render(monkeypatch, report)
-    assert expanders == [AUDIT_TITLE]
-    visible = "".join(value for label, value in chunks if label is None)
+    def report_app(report):
+        import streamlit as st
+        from stock_lab_core.report_view import render_market_report
+        render_market_report(report)
+        st.download_button("리포트 다운로드", report.encode("utf-8"), file_name="stock_lab_market_report.md")
+    app = AppTest.from_function(report_app, args=(report,)).run()
+    assert not app.exception
+    assert [tab.label for tab in app.tabs] == ["요약", "상세 근거"]
+    visible = "".join(item.value for item in app.tabs[0].markdown)
     assert "Main" in visible and "News" in visible and "Old" not in visible
-    assert "## 내 보유 종목 영향" in chunks[-1][1]
+    assert "## 내 보유 종목 영향" in "".join(item.value for item in app.tabs[1].markdown)
+    assert len(app.get("download_button")) == 3
+    assert "".join(split_report_documents(report)) == report
+
+
+def test_split_documents_is_lossless_and_ignores_fenced_boundary():
+    from stock_lab_core.report_view import AUDIT_TITLE, split_report_documents
+    fake = f"~~~\n## {AUDIT_TITLE}\n~~~\n"
+    assert split_report_documents(fake) == (fake, "")
+    report = fake + f"## {AUDIT_TITLE}\r\nEvidence"
+    summary, evidence = split_report_documents(report)
+    assert summary == fake and evidence.endswith("Evidence")
+    assert summary + evidence == report
 
 
 def test_earnings_story_visible_and_raw_results_collapsed_without_export_loss(monkeypatch):

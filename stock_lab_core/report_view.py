@@ -73,30 +73,61 @@ def split_report_sections(report):
     return sections
 
 
+def split_report_documents(report):
+    """Lossless summary/evidence split, ignoring headings inside code fences."""
+    for offset, line in _report_lines(report):
+        if line.strip() == "## " + AUDIT_TITLE:
+            return report[:offset], report[offset:]
+    return report, ""
+
+
+def render_report_downloads(report):
+    import streamlit as st
+
+    summary, evidence = split_report_documents(report)
+    if evidence:
+        for label, content, suffix in (("요약 다운로드", summary, "summary"), ("상세 근거 다운로드", evidence, "evidence")):
+            st.download_button(label, content.encode("utf-8"), file_name=f"stock_lab_market_report_{suffix}.md",
+                               mime="text/markdown", key=f"today_market_report_{suffix}_download", on_click="ignore")
+
+
 def render_market_report(report):
     import streamlit as st
 
     st.markdown(REPORT_STYLE, unsafe_allow_html=True)
     with st.container(key="market_report_reading"):
-        parts = split_report_sections(report)
-        for index, (title, section) in enumerate(parts):
-            if title == AUDIT_TITLE:
-                with st.expander(title, expanded=False):
-                    st.markdown("".join(content for _, content in parts[index:]))
-                break
-            if title in COLLAPSED_SECTIONS:
-                with st.expander(title, expanded=False):
-                    st.markdown(section)
-                continue
-            detail = SECTION_DETAILS.get(title)
-            if detail:
-                marker, label = detail
-                boundary = next((offset for offset, line in _report_lines(section)
-                                 if line.startswith(marker)), None)
-                if boundary is not None:
-                    st.markdown(section[:boundary])
-                    with st.expander(label, expanded=False):
-                        st.markdown(section[boundary:])
-                    continue
-            # Unknown/older sections stay visible rather than losing their context.
+        summary, evidence = split_report_documents(report)
+        if evidence:
+            reading_tab, evidence_tab = st.tabs(["요약", "상세 근거"])
+            with reading_tab:
+                _render_sections(summary)
+            with evidence_tab:
+                _render_sections(evidence, evidence_page=True)
+            render_report_downloads(report)
+        else:
+            _render_sections(report)
+
+
+def _render_sections(report, *, evidence_page=False):
+    import streamlit as st
+
+    for title, section in split_report_sections(report):
+        if title == AUDIT_TITLE and evidence_page:
             st.markdown(section)
+            continue
+        if title in COLLAPSED_SECTIONS:
+            with st.expander(title, expanded=False):
+                st.markdown(section)
+            continue
+        detail = SECTION_DETAILS.get(title)
+        if detail:
+            marker, label = detail
+            boundary = next((offset for offset, line in _report_lines(section)
+                             if line.startswith(marker)), None)
+            if boundary is not None:
+                st.markdown(section[:boundary])
+                with st.expander(label, expanded=False):
+                    st.markdown(section[boundary:])
+                continue
+        # Unknown/older sections stay visible rather than losing their context.
+        st.markdown(section)

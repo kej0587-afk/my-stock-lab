@@ -256,7 +256,83 @@ def economic_reaction_text(row):
     return text(row.get("reaction")) if row.get("reaction_source") else "이벤트 전후 동시점 반응 미수집"
 
 
-def sector_evidence(row, macro_data, news, *, observations=None):
+def sector_body_reasons(row, news, context, now):
+    """Verified, same-session body channels; no headline-derived sector identity.
+
+    Each reason carries scope (sector_report/market_common_theme), the complete
+    evidence sentence, source, observation label, implications and next checks.
+    A sector report is related evidence, never proof of excess-return causality.
+    """
+    from stock_lab_core.article_context import _date, _safe_url, verified_body_facts
+    from stock_lab_core.report_brief import (explicit_news_market, _validated_brief_row,
+                                            news_observation, news_session_bounds)
+    from stock_lab_core.report_presentation import (sector_news_topics, sector_display_name,
+                                                   is_preopen_outlook, is_preopen_price_recap)
+
+    ticker = text(first(row, "Ticker", "ticker", "티커")).upper()
+    market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+    day = text(first(row, "기준일", "date", "as_of"))
+    topics = set(sector_news_topics(ticker, sector_name=sector_display_name(row)))
+    if not topics or context.get("sessions", {}).get(market) != day:
+        return []
+    opening, close = news_session_bounds(context, market, day)
+    if opening is None or close is None:
+        return []
+    ai_exposure = bool(topics & {"semiconductor", "memory", "technology", "software"})
+    cybersecurity = ticker == "CIBR" or "사이버보안" in sector_display_name(row)
+    grouped = {}
+    for item in records(news):
+        if (item.get("body_status") != "verified" or item.get("market") != market
+                or item.get("session_date") != day
+                or item.get("news_bucket") in {"next_session_news", "other_market_news"}
+                or is_preopen_outlook(item) or is_preopen_price_recap(item)):
+            continue
+        clean = _validated_brief_row(item, context, now)
+        if clean is None:
+            continue
+        published = _date(first(clean, "published_at", "published"))
+        body_published, modified = _date(item.get("body_published_at")), _date(item.get("body_modified_at"))
+        source = text(item.get("body_source_url"))
+        if (not published or not body_published or not modified or not _safe_url(source)
+                or max(published, body_published, modified) > now
+                or published < now - timedelta(days=7)
+                or min(abs((published - at).total_seconds()) for at in (body_published, modified)) > 3600
+                or any(at.astimezone(close.tzinfo).date().isoformat() != day
+                       for at in (published, body_published, modified))):
+            continue
+        observation_rank, observation = news_observation(clean, context)
+        if (observation_rank == 0 or "선물 관측" in observation or "정규장 외" in observation
+                or (published >= close and observation_rank != 3)):
+            continue
+        for fact in verified_body_facts(item):
+            evidence = text(fact.get("evidence"))
+            if (fact.get("evidence_basis") != "body" or not evidence
+                    or fact.get("concrete_summary") != evidence or len(evidence) > 140
+                    or not text(fact.get("implication")) or not text(fact.get("check"))):
+                continue
+            subject_market = explicit_news_market(dict(clean, title=evidence))
+            if subject_market and subject_market != market:
+                continue
+            fact_topics = set(sector_news_topics("", sector_name=evidence))
+            common = (fact.get("topic") == "rates" and ai_exposure) or (
+                fact.get("topic") in {"ai_credit", "ai_investment"} and ai_exposure and not cybersecurity)
+            direct = bool(topics & fact_topics)
+            if cybersecurity:
+                direct = bool(re.search(r"사이버|보안|cyber|security", evidence, re.I))
+            if not common and not direct:
+                continue
+            scope = "market_common_theme" if common else "sector_report"
+            key = (source, evidence, scope)
+            reason = grouped.setdefault(key, dict(scope=scope, evidence=evidence,
+                source=citation(dict(clean, title="본문 원문", link=source)),
+                observation=observation, implications=[], checks=[]))
+            for field, value in (("implications", fact["implication"]), ("checks", fact["check"])):
+                if value not in reason[field]:
+                    reason[field].append(value)
+    return list(grouped.values())
+
+
+def sector_evidence(row, macro_data, news, *, observations=None, body_reasons=()):
     ticker = text(first(row, "Ticker", "ticker", "티커"))
     ret = number(first(row, "1일수익률", "1D"))
     date = text(first(row, "기준일", "date", "as_of")) or "기준일 미제공"
@@ -297,7 +373,8 @@ def sector_evidence(row, macro_data, news, *, observations=None):
     related = sector_related_news(ticker, date, [item for item in news if text(item.get("ticker")).upper() == ticker],
                                   sector_name=text(first(row, "섹터", "종목명")))
     unconfirmed = "개별 요인의 인과 기여"
-    direct = [item for item in related if not item.get("market_context_only")]
+    direct = ([item for item in body_reasons if item["scope"] == "sector_report"] if body_reasons else
+              [item for item in related if not item.get("market_context_only")])
     unexplained_excess = ""
     background = ""
     if excess is not None and round(abs(excess), 12) < SECTOR_EXCESS_CONTEXT_BAND:
@@ -307,7 +384,16 @@ def sector_evidence(row, macro_data, news, *, observations=None):
         # Keep relevant AI financing background visible for AI exposures. A
         # generic index article cannot explain an unrelated sector's excess.
         related = [item for item in related if item.get("exposure_theme_context")]
-    if related:
+    if body_reasons:
+        channels = []
+        for item in body_reasons:
+            scope = ("동일 시장 공통 배경 · 업종 초과수익의 직접 근거 아님"
+                     if item["scope"] == "market_common_theme" else "업종 관련 본문 · 초과수익 인과 기여 미확정")
+            channels.append(f"{scope}: 본문 보도: {item['evidence']} {item['source']} · {item['observation']}"
+                            + " · 해석(추정): " + " / ".join(item["implications"])
+                            + " · 다음 확인: " + " / ".join(item["checks"]))
+        background = " / ".join(channels)
+    elif related:
         related = direct or related
         item = related[0]
         topic = news_theme(text(item.get("title"))) or "업종 관련 보도"

@@ -156,7 +156,9 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     title = next((line for line in preamble.splitlines() if line.startswith("# ")), "# Stock Lab 자동 뉴스픽")
     macro_brief = build_news_brief(context, [r for r in records(news)
         if brief_theme(r) in {"금리·경제지표", "에너지·지정학"}], summary_rows, now, limit=None, compact=True)
-    lines = [title, "", "## 매크로", "", *macro]
+    from stock_lab_core.report_digest import weekly_themes, weekly_theme_lines, weekly_source_lines, connection_checks, check_lines
+    digest = weekly_themes(context, news, summary_rows, now)
+    lines = [title, "", *weekly_theme_lines(digest), "## 매크로", "", *macro]
     lines += _recent_releases(sections, context, now)
     policy = tables(sections.get("중앙은행 공식 결과", ""))
     if policy:
@@ -233,6 +235,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     # Keep every original number, condition, diagnostic and source for review.
     # Retain heading structure for saved-report readers; the UI folds the rest
     # from this boundary into one expander, rather than rewriting old sections.
-    lines += [f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", ""]
+    status, checks = check_lines(connection_checks(context, summary_rows, digest, "\n".join(lines), now))
+    lines += [status, "", f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", "", *checks, *weekly_source_lines(digest)]
     lines.append(report)
     return "\n".join(lines).strip()

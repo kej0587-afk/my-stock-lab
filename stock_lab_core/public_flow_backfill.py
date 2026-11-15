@@ -26,8 +26,10 @@ MAX_ROWS = 60
 GROUPS = {
     "foreign": ("9000", "9001"),
     "institution": ("1000", "2000", "3000", "3100", "4000", "5000", "6000", "7000"),
+    # Provider daily-table JS verified 2026-11-15: 8000 = individual (개인).
+    "individual": ("8000",),
 }
-LABELS = {"foreign": "외국인", "institution": "기관"}
+LABELS = {"foreign": "외국인", "institution": "기관", "individual": "개인"}
 
 
 def completed_sessions(now):

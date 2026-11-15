@@ -17,7 +17,7 @@ def sector_coverage_lines(context, news, market, now):
     """Every collected base-sector proxy, not just top/bottom or technology."""
     from stock_lab_core.market_observation import DEFAULT_SECTOR_MAP
     from stock_lab_core.report_prices import SECTORS
-    from stock_lab_core.report_analysis import sector_evidence
+    from stock_lab_core.report_analysis import sector_body_reasons, sector_evidence
     from stock_lab_core.report_presentation import sector_display_name, sector_related_news
 
     day = context.get("sessions", {}).get(market)
@@ -46,7 +46,8 @@ def sector_coverage_lines(context, news, market, now):
         label = sector_display_name(row)
         related = sector_related_news(ticker, day, clean_news, sector_name=label)
         evidence = sector_evidence(row, context.get("macro_data", {}),
-            [dict(item, ticker=ticker) for item in related], observations=context.get("prices", {}))
+            [dict(item, ticker=ticker) for item in related], observations=context.get("prices", {}),
+            body_reasons=sector_body_reasons(row, news, context, now))
         rows.append((f"{label}({ticker})", evidence["daily"], evidence["excess"], evidence["reading"]))
     return ["**업종 전체 비교 · 수집된 기초 업종 ETF**", *_table(
         ["업종", "일간·기준일", "시장 대비 초과", "관련 재료·해석"], rows)] if rows else []
