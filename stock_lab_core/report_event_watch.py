@@ -116,7 +116,7 @@ def _timing(row):
     value = row.get("event_at") if row.get("event_kind") == "conference_call" else row.get("release_at")
     precision = row.get("event_precision") if row.get("event_kind") == "conference_call" else row.get("release_precision")
     at = stamp(value)
-    if row.get("indicator") == "US_FED_RATE_DECISION" and len(text(value)) == 10:
+    if at and row.get("indicator") == "US_FED_RATE_DECISION" and len(text(value)) == 10:
         # Preserve the existing report's explicitly labelled statement convention.
         at = datetime.fromisoformat(value + "T14:00:00").replace(tzinfo=zone)
         precision = "schedule_rule"

@@ -138,6 +138,12 @@ def test_fomc_date_only_keeps_existing_labelled_standard_clock():
     assert "12/09 14:00 EST / 12/10 04:00 KST · 표준시각·예외 미확인" in output
 
 
+def test_invalid_fomc_clock_cannot_crash_valid_date_report():
+    c = context(event(indicator="US_FED_RATE_DECISION", date="2026-12-09", release_at="2026-99-99", release_precision="date"))
+    output = "\n".join(event_watch_lines(c, [], [], NOW))
+    assert "2026-12-09 현지 · 시각 미확인" in output
+
+
 def test_ipo_tracking_groups_same_issuer_links_without_losing_other_ipo():
     c = context()
     c['other_market_news'] = [dict(title=title, link=f'https://www.reuters.com/{i}', publisher='Reuters',
