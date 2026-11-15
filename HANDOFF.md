@@ -19,6 +19,15 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+In progress (2026-11-15 continuation, base3b8feabf): user authorized continuing
+through remaining report defects, preserving decisions. PPI metadata recovery
+verified against BLS archive; read docs/maintenance/20261115_ppi_release_link.md.
+69 focused tests pass. October PPI dates now use the existing period-exact,
+expiring verified_snapshot fallback; raw values/consensus/TTLs unchanged.
+Production check is pending the combined follow-up deployment. Representative
+price wiring and main-news materiality are the next separate bounded patches;
+do not claim the earlier quality gaps have all been resolved.
+
 Latest bounded work (2026-11-15 production validation, base 9f95190f): read
 docs/maintenance/20261115_report_production_validation.md. Clean tree and origin
 0/0 confirmed at start. Supported IAB GitHub authentication completed through
