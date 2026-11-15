@@ -61,7 +61,7 @@ verification evidence, not a runtime dependency.
   holdings. The same exposure matcher now handles global/other-market articles
   with a cross-market label; final focused view/digest/classification checks:
   **51 passed /4.19s**. No decision code changed after the passing gate.
-- Production verification pending after push. Private exports and screenshots:
+- Final production verification is recorded below. Private exports and screenshots:
   `cache/report_finish_20261115/`; never commit account data.
 
 ## Operating review corrections
@@ -80,3 +80,46 @@ Review then found two presentation defects requiring a final regeneration:
 No price or decision values changed. First artifacts retain `first_` prefixes.
 
 Final operating-review corrections: related **440 passed /16.44s**.
+
+## Final production verification — 2026-11-16 00:17 KST
+
+Final code `817105f3` (earlier `dcddfd46`, `fa304fca`, `7c898e73`). Cloud owner
+Reboot was performed during verification; the final small deployment reset the
+session, so Today input was reconnected and recalculated (67.8s; an earlier cold
+Today run was83.5s, not a controlled speed comparison). No login/input changes.
+
+- Final report run `ba57ecaba1d04867850dbd9bb86d4dd1`: normal, no degraded reasons,
+  **69.442s generation /91.515s script-to-report**. Macro22.133s, prices16.848s,
+  calculations0.981s, news2.277s, bodies0.335s, persistence8.234s, assembly18.634s.
+  Prior69.474s and first78.301s are different cache/session runs; no speedup claim.
+- **112** loaded/disk/Git source hashes match; `restart_required=false`.
+  Downloaded full-report SHA matches the diagnostic. Summary+evidence bytes
+  rejoin exactly to the full original. Both tabs and all downloads were exercised.
+- **95 rows x23 decision columns unchanged** across final report generation,
+  and all95match the initial pre-change export; no added/removed input tickers.
+- Five concrete themes appear (general market-wrap categories excluded), with
+  headline counts, existing exposure and checks. Named leadership articles now
+  retain the issuer's related holdings even without the company name in title.
+- Verified sector-body rows: KRsemiconductors, USsoftware/cybersecurity/technology/
+  memory/semiconductors. XHB/XLI/PAVE no longer receive the unrelated AI body.
+- Individual rows appear for both KOSPI/KOSDAQ with independently collected
+  five/twenty-session sums. BOK2026-11-26 appears once in the reading schedule,
+  date-only precision, no invented result or release time.
+- Footer **5passed /0failed /1unconfirmed**: theme article bodies are only partly
+  connected. This is an explicit evidence-coverage limitation, not a failed
+  arithmetic check, and does not certify all article claims.
+- Final report/sector contracts440pass/16.44s. Final decision gate1369pass/135.995s
+  in `cache/refactor_checks/decision_7347f0r5`; later issuer-alias-only change:
+  focused digest/view/sector72pass/3.75s, no decision code changes.
+
+Private final artifacts: report.md, summary.md, evidence.md, report_timing.json,
+verification.json, before_generation_review.zip, after_review.zip,
+operating_summary.png, operating_evidence.png in cache/report_finish_20261115.
+Earlier first_/second_ files are retained for diagnosis, not final deliverables.
+No account data, credentials or private snapshots were committed.
+
+The summary is still a comprehensive market reading path, not a one-page digest.
+On a narrow phone viewport, wide tables scroll horizontally. New split downloads
+avoid a rerun; pre-existing full-report/review-ZIP buttons still rerun Today and
+incur about20s of screen processing. This observed export overhead is the sole
+next bounded task; no new sources, LLM, thresholds or broad refactoring.

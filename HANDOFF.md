@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-15 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-16 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -19,14 +19,25 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Latest work (2026-11-15 report finish, base4f657800): see
-[report finish review](docs/maintenance/20261115_report_finish.md).
-Sector-body evidence, weekly top-five themes, summary/evidence tabs/downloads,
-explicit connection checks and individual-investor daily history are implemented.
-BOK2026-11-26 was already connected; official source/date-only verification added.
-No score/grade/gate/price/TTL changes; app.py unchanged. Focused411pass; final
-view/digest + historical app-function189pass. Final decision1369pass/137.938s
-(decision_f1lu3eob); production verification pending below. Private artifacts: cache/report_finish_20261115. Customs stash kept.
+Latest completed work (2026-11-16 report finish, base4f657800): read
+[report finish verification](docs/maintenance/20261115_report_finish.md).
+Code817105f3 is pushed and operating-verified. Added specific weekly themes,
+verified sector body evidence, summary/evidence tabs and lossless downloads,
+explicit connection checks and individual daily-flow rows. BOK2026-11-26 official
+schedule was already connected and reverified. Operating review corrected broad
+market categories, unrelated AI->XHB/XLI/PAVE links, global/named-issuer exposure.
+No score/grade/gate/price/TTL changes; app.py remains unchanged.
+Final related440pass; decision1369pass/135.995s (decision_7347f0r5); later
+issuer-alias-only follow-up72pass. No golden regeneration.
+Final report00:17KST run ba57ecaba1d04867850dbd9bb86d4dd1 normal,
+69.442s generation/91.515s script-to-report; not a controlled speed comparison.
+112loaded/disk/Git hashes agree; restart_required=false; SHA matches and
+summary+evidence bytes reconstruct the full original. Both pages/downloads checked.
+All95rows/23decision columns match before/after generation and initial export.
+Footer5passed/0failed/1unconfirmed: partial article-body coverage, not certified
+claims. Both markets' individual flow rows and BOK date-only schedule present.
+Private final artifacts: cache/report_finish_20261115; first_/second_ are older
+review iterations. Current screenshot/report files are final. Customs stash kept.
 
 Latest bounded work (2026-11-15 article-story request, base491a9a61): read
 docs/maintenance/20261115_article_story.md. Verified article facts now connect
@@ -1423,14 +1434,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Finish production verification of the report-finish changes.**
+**Prevent unnecessary Today reruns for read-only full-report/review-ZIP downloads.**
 
-After pushing, inspect the loaded-source guard and reboot only if required.
-Generate one complete operating report. Verify five-or-fewer dated themes,
-sector body provenance, individual flow rows, BOK schedule, summary/evidence
-pages and lossless downloads. Compare unchanged Today inputs/decision columns,
-record actual timing/source hashes and any missing data. Update this task after
-verification; do not add sources, rules or thresholds. Preserve the Customs stash.
+Operating final report generation was69.442s, but clicking the legacy full-report
+or review-ZIP export still incurs about20s of screen processing. New summary and
+evidence downloads already use on_click="ignore". Limit the next task to those
+legacy read-only exports: preserve bytes, hashes, names and matching measurement
+IDs; verify clicking does not recalculate signals/fetch sources/change state.
+Handle historical app-AST contracts with a narrowly reviewed UI-only allowance,
+not new golden baselines. No score/gate/price/cache TTL/provider/auth changes.
+Confirm in production, update this handoff, preserve the Customs stash.
 
 ## Evidence and Remaining Limits
 
