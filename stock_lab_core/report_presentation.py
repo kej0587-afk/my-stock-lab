@@ -435,7 +435,11 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
                     continue
             if item.get("news_bucket") == "current_session_news" and re.search(r"마감|\bclos(?:ed|ing)\b|\bmarket wrap\b", title, re.I):
                 continue
-        direct = any(re.search(pattern, title, re.I) for pattern in patterns)
+        # A company name containing Energy is not evidence about oil producers.
+        # Keep an explicit oil/WTI/energy-sector mention elsewhere in the title.
+        match_title = (re.sub(r"Constellation\s+Energy|콘스텔레이션\s*에너지", "", title, flags=re.I)
+                       if "energy" in topics else title)
+        direct = any(re.search(pattern, match_title, re.I) for pattern in patterns)
         theme = news_theme(title)
         common_ai = ai_exposure and bool(theme or re.search(r"(?<![A-Za-z])AI(?![A-Za-z])|인공지능", title, re.I))
         if region == "KR":

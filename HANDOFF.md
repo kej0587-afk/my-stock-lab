@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-08 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-15 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -18,6 +18,26 @@ Repository: `https://github.com/kej0587-afk/my-stock-lab.git`, branch `main`.
 Production: `https://3insky.streamlit.app/`.
 
 ## Current State
+
+Latest bounded work (2026-11-15, company base 746b92fb): user requested report
+readability/coverage review, superseding the old Customs next-task instruction.
+Read `docs/maintenance/20261115_report_reading.md`. Preserved all seven interrupted
+local files in ignored cache/resume_20261115_pre_sync and named Git stash before
+fast-forwarding 28 company commits. Stash NOT applied; overlaps company collection
+changes and must be reviewed separately. No user/company work discarded.
+Main report now follows macro -> indices -> Korea -> US -> portfolio/replacement
+review -> sector rotation -> schedule. Original data/diagnostics remain in a
+closed appendix. Fixes recent earnings follow-up selection, hidden guidance and
+false oil-sector linkage from the Constellation Energy company name. Sources,
+date/period labels, score/gate/allocation and TTLs retained; no extra data calls.
+Stable decision gate 1369 passed/144.032s; focused278 passed/13.99s. Final report
+gate207 passed/1 pre-existing theme AST failure. Production baseline normal report
+generation31.469s; private evidence cache/report_reading_20261115. Post-change
+production verification remains unfinished: CUA stopped selecting the user's Edge
+window because the browser URL could not be established. User confirmed Cloud
+login but IAB still showed GitHub sign-in; do not repeat browser actions this turn
+or claim reboot success. Existing saved reports need regeneration. Known old
+whole-app/order test failures are documented, not hidden by replacing golden files.
 
 Latest bounded work (2026-11-13, base b5e0ecfd): precision direct-input/rerun
 repair. Live reproduction: quick SOXL input rendered SOXL while the keyed
@@ -1256,18 +1276,18 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Investigate Customs listing -> detail transport connection reuse only.**
+**Finish production validation of the Nov15 report reading update only.**
 
-Actual Cloud bulletin cost7.372s is listing4.461 + dependent detail2.864, not CPI.
-No duplicate request; CPI-complete guards correctly skip the new overlap path.
-Evaluate a short-lived same-origin connection reuse without changing listing
-selection, cookies/request semantics, parameters, retries/timeouts, failure
-cooldowns, TTLs or data/score/gate output. Prove full fixed-input parity and actual
-request counts, then compare natural-expiry cache-miss Cloud runs. Do not assume
-handshake savings, parallelize dependent URLs, reuse a stale article ID, or change
-freshness to claim a gain. See the latest bulletin record for baseline/options;
-cache/bulletin_cloud.json is completed full generation, not a Today partial trace.
-Browser tab38 holds the accepted report. No other performance scope in this task.
+Reconnect the existing authenticated production/Cloud browser. Reboot is already
+authorized; do not ask for permission again. If GitHub needs authentication,
+resolve the actual user's logged-in management surface without bypassing browser
+safety checks. Regenerate one report, confirm loaded/disk module agreement,
+macro/index/KR/US/portfolio/flow ordering, one closed appendix, fresh earnings and
+guidance visibility, no CEG-name-only XLE linkage, and existing score/gate output.
+Download the matching report/timing/Today ZIP and record the before31.469s vs after
+with cache-state caveats; do not claim cold-cache parity. Commit/push handoff proof.
+The interrupted Customs patch stays stashed. Expired supported-issuer IR notices
+blocking result collection are a later candidate, not part of this next task.
 
 ## Evidence and Remaining Limits
 

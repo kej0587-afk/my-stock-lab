@@ -44,6 +44,13 @@ def test_full_report_keeps_market_conclusion_independent_of_account_and_moves_hi
     context["intraday_prices"]["SOXX"]["previous_date"] = "2026-10-19"
     reports = [build_auto_market_memo(report_context=context, now=NOW, summary_rows=rows) for rows in (
         [], [{"티커": "SOXX", "현재비중": 99.9, "보유량": 1}])]
+    # Nov15 reader layout moves the unchanged detailed blocks into one appendix.
+    # Check main market/account independence, then the retained numerical/date
+    # assertions below. Original headings and golden values remain unchanged.
+    from stock_lab_core.report_view import split_report_sections
+    main_sections = [dict(split_report_sections(report)) for report in reports]
+    for market in ("한국 시황", "미국 시황"):
+        assert main_sections[0][market].split("\n\n")[1] == main_sections[1][market].split("\n\n")[1]
     statuses = [report.split("## 지금 상태 3줄\n", 1)[1].split("\n## ", 1)[0] for report in reports]
     status_lines = [[line for line in status.splitlines() if line.strip()] for status in statuses]
     for lines in status_lines:
@@ -54,7 +61,7 @@ def test_full_report_keeps_market_conclusion_independent_of_account_and_moves_hi
     assert status_lines[0][:2] == status_lines[1][:2]
     assert all("계좌" not in line for line in status_lines[0][:2])
     assert status_lines[0][2] != status_lines[1][2]
-    assert "전체 추정 보류" in status_lines[0][2]
+    assert "입력 미수집" in status_lines[0][2]  # Nov13 distinguishes missing input from partial coverage.
     assert "통합 누적 추정 -0.58%p" in status_lines[1][2] and "연결 99.9%" in status_lines[1][2]
     market_details = [report.split("### 중기·최근 거래일·현재 맥락\n", 1)[1].split("\n\n계좌:", 1)[0]
                       for report in reports]

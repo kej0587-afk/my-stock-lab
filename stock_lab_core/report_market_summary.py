@@ -461,6 +461,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     if burden:
         overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
     return {"headline": headline, "overview": overview, "evidence": evidence, "market_claims": market_claims,
+            "market_readings": {fact["market"]: sentence for fact, sentence in zip(facts, sentences)},
             "background_news": [row for rows in selected_news.values() for row in rows]}
 
 

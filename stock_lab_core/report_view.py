@@ -27,7 +27,9 @@ REPORT_STYLE = """
 </style>
 """
 
+AUDIT_TITLE = "상세 근거 · 계산 기준 · 연결 상태"
 COLLAPSED_SECTIONS = frozenset({
+    AUDIT_TITLE,
     "관찰 근거 · 매매 판정과 별도",
     "기준일", "경제지표", "업종별 왜", "관심 후보 상위 3개",
     "추가 핵심 뉴스", "판정 이력 비교", "다음 세션 재료", "다른 시장/다른 날짜 맥락",
@@ -76,7 +78,12 @@ def render_market_report(report):
 
     st.markdown(REPORT_STYLE, unsafe_allow_html=True)
     with st.container(key="market_report_reading"):
-        for title, section in split_report_sections(report):
+        parts = split_report_sections(report)
+        for index, (title, section) in enumerate(parts):
+            if title == AUDIT_TITLE:
+                with st.expander(title, expanded=False):
+                    st.markdown("".join(content for _, content in parts[index:]))
+                break
             if title in COLLAPSED_SECTIONS:
                 with st.expander(title, expanded=False):
                     st.markdown(section)

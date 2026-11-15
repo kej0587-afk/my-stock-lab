@@ -89,12 +89,15 @@ def _commentary(packet):
 
 
 def _select_highlights(packets, now):
-    recent = [p for p in packets if (day := stamp(p["date"])) is not None and
-              now.date() - timedelta(days=7) <= day.date() <= now.date() and "예정" not in p["release_status"]]
+    recent = [p for p in packets if (day := stamp(p["date"])) is not None and day.date() <= now.date()
+              and (evidence := stamp(p.get("latest_evidence_at") or p["date"])) is not None
+              and now.date() - timedelta(days=7) <= evidence.date() and evidence <= now
+              and "예정" not in p["release_status"]]
     # Prefer the verified period over an unassigned follow-up about that issuer.
     official_tickers = {p["ticker"] for p in recent if p["official"]}
     recent = [p for p in recent if p["official"] or p["ticker"] not in official_tickers]
-    recent.sort(key=lambda p: (p["date"], bool(p["topics"]), p["official"], p["relationship"] == "보유", p["ticker"]), reverse=True)
+    recent.sort(key=lambda p: (stamp(p.get("latest_evidence_at") or p["date"]), bool(p["topics"]),
+                              p["official"], p["relationship"] == "보유", p["ticker"]), reverse=True)
     picked, sectors, tickers = [], set(), set()
     # Diversity breaks ties among existing evidence; never invent missing sectors.
     for diverse in (True, False):
@@ -118,6 +121,10 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
     corpus = [*records(news), *(row for key in ("current_session_news", "session_news", "next_session_news")
                                for row in records(context.get(key)))]
     discovery = discover_earnings_news(corpus, catalog, now)
+    linked = [item for item in discovery["items"] if safe_link(item["article"].get("link"))]
+    if len(linked) != len(discovery["items"]):
+        discovery["excluded"]["원문 URL 미연결"] = len(discovery["items"]) - len(linked)
+        discovery["items"] = linked
     packets, by_key = [], {}
     for event in events:
         ticker = canonical_ticker(event.get("ticker"))
@@ -133,7 +140,9 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
     discovered_groups = {}
     for item in discovery["items"]:
         # Unknown periods cannot borrow an old official result or surprise.
-        packet = by_key.get((item["ticker"], item["fiscal_period"])) if item["fiscal_period"] else None
+        # A preview also cannot renew a past result, even with the same period.
+        packet = (by_key.get((item["ticker"], item["fiscal_period"]))
+                  if item["fiscal_period"] and item["phase"] != "preview" else None)
         if packet is None:
             key = (item["ticker"], item["fiscal_period"], item["published_at"][:10], item["phase"] == "preview")
             if key not in discovered_groups:
@@ -150,6 +159,20 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
         packet["articles"].append(item["article"])
         packet["topics"] = list(dict.fromkeys([*packet["topics"], *item["topics"]]))
     for packet in packets:
+        event = packet["event"]
+        baseline = (event.get("release_at") if packet["official"] and event.get("release_precision") == "datetime"
+                    else packet["date"])
+        latest = stamp(baseline)
+        packet["latest_evidence_at"] = baseline if latest and latest <= now else ""
+        packet["latest_evidence_basis"] = packet["date_basis"] if packet["latest_evidence_at"] else ""
+        # Use publication evidence, never the collection/check time. The release
+        # date, fiscal period, official metrics and calendar events stay intact.
+        for article in packet["articles"]:
+            published = stamp(article.get("published_at") or article.get("published"))
+            if published and published <= now and (not packet["latest_evidence_at"] or published > latest):
+                latest = published
+                packet["latest_evidence_at"] = published.isoformat()
+                packet["latest_evidence_basis"] = "보도일·발표일 아님"
         packet["commentary"] = _commentary(packet)
     source_tickers = {canonical_ticker(row.get("ticker")) for row in records(context.get("earnings_sources")) if row.get("ticker")}
     requested = {canonical_ticker(value) for value in (context.get("earnings_collection_scope") or {}).get("requested", [])} | source_tickers

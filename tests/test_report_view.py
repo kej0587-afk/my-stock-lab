@@ -96,6 +96,17 @@ def test_older_and_unknown_sections_fall_back_to_visible_markdown(monkeypatch):
     assert all(label is None for label, _ in chunks)
 
 
+def test_new_reader_has_one_closed_appendix_with_original_heading_structure(monkeypatch):
+    from stock_lab_core.report_view import AUDIT_TITLE
+    report = ("## 매크로\nMain\n## 미국 시황\nNews\n## " + AUDIT_TITLE
+              + "\nNotes\n## 지금 상태 3줄\nOld status\n## 내 보유 종목 영향\nOld details\n")
+    chunks, expanders = _render(monkeypatch, report)
+    assert expanders == [AUDIT_TITLE]
+    visible = "".join(value for label, value in chunks if label is None)
+    assert "Main" in visible and "News" in visible and "Old" not in visible
+    assert "## 내 보유 종목 영향" in chunks[-1][1]
+
+
 def test_earnings_story_visible_and_raw_results_collapsed_without_export_loss(monkeypatch):
     report = ("## 오늘의 시장 스토리\n**실적에서 확인할 시장 쟁점**\n실제와 예상 구분\n"
               "## 다가오는 일정\nFOMC 일정\n**기업 실적 촉매**\n기업별 원문 수치\n**실적 연결 상태**\n누락 이유\n")

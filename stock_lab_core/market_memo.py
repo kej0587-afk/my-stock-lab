@@ -2248,7 +2248,9 @@ def build_auto_market_memo(
             lines.extend(["", "데이터 누락:", *["- " + reason for reason in dict.fromkeys(missing)]])
         lines.extend(["", "---", report_footer(entrypoint=context.get("entrypoint"),
                                                queue_measurement=context.get("queue_measurement"))])
-        return "\n".join(lines).strip()
+        from stock_lab_core.report_reading import compose_reading_report
+        return compose_reading_report("\n".join(lines).strip(), context=context, news=curated,
+                                      summary_rows=summary_rows, now=dt)
     front, missing = report_sections(
         context=report_context, news=curated, flow_rows=flow_snapshot.get('flow_df'),
         event_rows=event_rows, summary_rows=None, now=dt,

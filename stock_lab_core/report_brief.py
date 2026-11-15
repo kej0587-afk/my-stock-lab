@@ -91,7 +91,7 @@ def _holding_links(held, title, entities, theme, market, *, constituent_evidence
     return "직접 보유 연결 없음 · 시장 참고"
 
 
-def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=()):
+def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=(), compact=False):
     """Balance fresh company catalysts and market stories inside existing inputs."""
     from stock_lab_core.report_session import market_session_states
     from stock_lab_core.news_priority import editorial_priority, market_news_priority
@@ -157,6 +157,17 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
             title = (focus + " · " if focus else "영문 보도 · ") + title
         basis = f"{row['market']} {row['session_date']} {'진행 세션' if active else '종가 세션'}"
         body_facts = verified_body_facts(row)
+        if compact:
+            if body_facts:
+                fact = body_facts[0]
+                detail = "본문 근거: " + fact["summary"] + " " + citation(dict(row, title="원문"))
+                link += " · 해석(추정): " + fact["implication"] + " · 다음 확인: " + fact["check"]
+            else:
+                detail = citation(dict(row, title=title)) + " (제목 확인·기사 주장)"
+                link += " · 원문·후속 공시 확인"
+            detail += f" · {published.astimezone(KST):%m/%d %H:%M} KST / {basis}"
+            lines.append(" | ".join(_cell(value) for value in (theme, detail, link)))
+            continue
         if body_facts:
             detail = "사실(본문): " + " / ".join(fact["summary"] for fact in body_facts[:2])
             detail += " " + citation(dict(row, title="기사 본문 확인"))
@@ -173,7 +184,8 @@ def build_news_brief(context, news, summary_rows, now, *, limit=6, exclude_keys=
         lines.append(" | ".join(_cell(value) for value in (theme, detail, link)))
     if not selected:
         return {"lines": ["한 줄 결론에 인용한 보도 외에 해당 거래일·출처 기준을 통과한 추가 핵심 재료 미확보."], "article_keys": []}
-    lines.extend(["", "보도 내용은 출처의 주장입니다. 해석(추정)은 경제적 전달 경로이지 가격 원인의 확정이 아닙니다. 보유 연결은 업종·기초자산 노출이며 실제 가격 기여도나 매매 허용을 뜻하지 않습니다."])
+    if not compact:
+        lines.extend(["", "보도 내용은 출처의 주장입니다. 해석(추정)은 경제적 전달 경로이지 가격 원인의 확정이 아닙니다. 보유 연결은 업종·기초자산 노출이며 실제 가격 기여도나 매매 허용을 뜻하지 않습니다."])
     return {"lines": lines, "article_keys": [text(first(item[4], "link", "url")) for item in selected]}
 
 
