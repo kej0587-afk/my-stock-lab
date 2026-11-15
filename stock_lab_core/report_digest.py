@@ -75,6 +75,8 @@ def weekly_themes(context, news, summary_rows, now):
         items = sorted(group["articles"], key=lambda r: (bool(verified_body_facts(r)), stamp(first(r, "published_at", "published"))), reverse=True)
         title = " / ".join(text(row.get("title")) for row in items)
         entities = [symbol for symbol, pattern in ENTITIES if re.search(pattern, title, re.I)]
+        if group["label"] == "엔비디아 경영·규제 보도" and "NVDA" not in entities:
+            entities.append("NVDA")  # Jensen Huang headlines already identify this issuer in _theme.
         links = [_holding_links(held, title, entities, group["category"], market) for market in
                  sorted({text(row.get("market")) or "GLOBAL" for row in items})]
         direct = [link for link in links if not link.startswith(("타시장", "직접 보유 연결 없음"))]

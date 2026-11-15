@@ -90,6 +90,13 @@ def test_monday_keeps_recent_trading_week_and_general_wraps_are_not_themes():
     assert result["start"].strftime("%m/%d") == "11/10"
 
 
+def test_named_leadership_theme_keeps_issuer_exposure_without_company_spelled_out():
+    row = article("젠슨 황 퇴임 충격에 코스피 하락 마감", market="KR")
+    result = weekly_themes({}, [row], [{"티커": "SOXL", "보유여부": True}], NOW)
+    assert result["themes"][0]["label"] == "엔비디아 경영·규제 보도"
+    assert "SOXL" in result["themes"][0]["related"]
+
+
 @pytest.mark.parametrize("market", ["GLOBAL", "JP", "CN", ""])
 def test_global_theme_links_existing_exposure_without_relabelling_market(market):
     row = article("AI 데이터센터 투자·차입 부담에 반도체주 하락", market=market)
