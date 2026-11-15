@@ -23,9 +23,11 @@ def _fact_keys(packet):
             + (["guidance"] if "guidance" in available else []))
 
 
-def _metric_facts(packet):
+def _metric_facts(packet, *, full=False):
     facts = []
-    for key in _fact_keys(packet):
+    keys = ([key for key in ("revenue", "profit", "guidance", "capex", "free_cash_flow")
+             if key in _available_metrics(packet)] if full else _fact_keys(packet))
+    for key in keys:
         metric = packet["metrics"][key]
         scope = "TTM·분기값 아님" if metric.get("period_scope") == "trailing_twelve_months" else packet["fiscal_period"]
         if key == "guidance":
@@ -55,8 +57,8 @@ def _packet_dates(packet):
     return dates
 
 
-def _packet_facts(packet, now):
-    facts = _metric_facts(packet)
+def _packet_facts(packet, now, *, full=False):
+    facts = _metric_facts(packet, full=full)
     article = _latest_article(packet, now)
     if article:
         facts.append("제목 기준·기사 주장: " + citation(article).replace("$", r"\$"))
@@ -131,8 +133,8 @@ def earnings_story_lines(pipeline):
     return lines
 
 
-def compact_catalyst_lines(pipeline, market) -> list[str]:
-    """At most four collected issuers for one market; no I/O or new evidence.
+def compact_catalyst_lines(pipeline, market, *, limit=4) -> list[str]:
+    """Collected issuers for one market; limit=None exposes all, without I/O.
 
     Recent results retain the pipeline's 30-day window; news retains seven days.
     Confirmed upcoming schedules are separate from released results. Holdings
@@ -172,7 +174,7 @@ def compact_catalyst_lines(pipeline, market) -> list[str]:
         if packet["ticker"] not in seen:
             chosen.append((packet, scheduled))
             seen.add(packet["ticker"])
-        if len(chosen) == 4:
+        if limit is not None and len(chosen) >= limit:
             break
     if not chosen:
         return []
@@ -188,7 +190,7 @@ def compact_catalyst_lines(pipeline, market) -> list[str]:
             check = "발표 매출·이익과 회사 전망의 대상 기간 확인; 콜과 결과 공개는 구분"
         else:
             status = "공식 발표 확인" if packet["official"] else "기사 주장·공식 대조 대기"
-            facts = " / ".join(_packet_facts(packet, now))
+            facts = " / ".join(_packet_facts(packet, now, full=limit is None))
             why, check = _catalyst_reading(packet, now)
         lines.append(" | ".join(_cell(value) for value in (identity, status, facts, why, check)))
     lines.append("")

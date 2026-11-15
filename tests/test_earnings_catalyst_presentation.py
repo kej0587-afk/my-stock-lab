@@ -33,6 +33,20 @@ def compact(pipeline, market="US"):
     return "\n".join(report_earnings.compact_catalyst_lines(pipeline, market))
 
 
+def test_comprehensive_catalysts_show_all_issuers_and_revenue_profit_not_only_cash():
+    pipeline = build_earnings_pipeline(current_context(), news=[followup()], now=NOW)
+    base = deepcopy(pipeline["packets"][0])
+    pipeline["packets"] = [dict(deepcopy(base), ticker=f"FIX{i}", name=f"Fixture {i}") for i in range(7)]
+    before = deepcopy(pipeline)
+    legacy = compact(pipeline)
+    full = "\n".join(report_earnings.compact_catalyst_lines(pipeline, "US", limit=None))
+    assert legacy.count("**Fixture") == 4
+    assert full.count("**Fixture") == 7
+    for value in ("Revenue: USD 100", "GAAP EPS 2", "CAPEX: USD 50", "FCF: USD -10"):
+        assert value in full
+    assert pipeline == before
+
+
 def test_same_period_followup_keeps_release_date_and_metrics_but_refreshes_evidence():
     data, row = current_context(), followup()
     before = deepcopy(data)

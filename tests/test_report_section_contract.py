@@ -63,6 +63,14 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     # independently exercised in test_report_editorial_nov08. Keep the immutable
     # digest for the underlying legacy sections rather than regenerate goldens.
     from stock_lab_core import report_editorial, report_dashboard, report_leadership
+    # Nov15 explicitly adds three report-only market instruments. Their units,
+    # missing states and batch isolation are tested in test_report_energy_basis.
+    # Keep this historical digest for the original board; do not refresh goldens.
+    from stock_lab_core import report_energy_basis
+    monkeypatch.setattr(report_dashboard, "INDEX_BOARD",
+                        {k: v for k, v in report_dashboard.INDEX_BOARD.items() if k != "^RUT"})
+    monkeypatch.setattr(report_energy_basis, "REPORT_ONLY_DAILY",
+                        {k: v for k, v in report_energy_basis.REPORT_ONLY_DAILY.items() if k in {"BZ=F", "^TYX"}})
     # The requested leadership reading is independently covered by
     # test_report_leadership. Exclude only this new section; keep legacy hashes.
     monkeypatch.setattr(report_leadership, "leadership_lines", lambda *a: [])

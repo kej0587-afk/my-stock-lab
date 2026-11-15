@@ -1,5 +1,7 @@
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
+
 from stock_lab_core import today_news
 from stock_lab_core.report_news_selection import selected_category_lines, matching_categories
 from tests.test_report_news_preferences import SESSIONS, NOW, row
@@ -36,3 +38,26 @@ def test_earnings_not_displaced_by_newer_small_ai_investment():
 def test_election_classification_does_not_require_a_price_direction():
     assert matching_categories("US midterm election results pending", ["정책/규제"]) == ["정책/규제"]
     assert matching_categories("미국 중간선거 개표 진행", ["정책/규제"]) == ["정책/규제"]
+
+
+@pytest.mark.parametrize("tickers,legacy_count", [
+    ((), 11), (("SOXL",), 13), (("XLF",), 11), (("GOOGL", "MSFT", "AMZN", "INTC", "SNDK"), 15),
+])
+@pytest.mark.parametrize("all_categories", [False, True])
+def test_broader_queries_preserve_request_counts_and_category_reservations(tickers, legacy_count, all_categories):
+    categories = [p["category"] for p in today_news.TODAY_MARKET_STORY_RSS_PLAN] if all_categories else ()
+    windows, _ = today_news._session_news_windows(SESSIONS, NOW)
+    specs = today_news._session_query_specs(windows, categories, NOW,
+        held_exposures=[{"Ticker": ticker} for ticker in tickers])
+    assert len(specs) == (16 if all_categories else legacy_count)
+    assert {c for spec in specs for c in spec.get("selected_categories", [])} == set(categories)
+    assert len([spec for spec in specs if spec.get("query_kind") == "market_event"]) == 2
+    policy = next(spec for spec in specs if spec["category"] == "정책·기업 촉매")
+    query = parse_qs(urlsplit(policy["url"]).query)["q"][0]
+    assert all(term in query for term in ("central bank", "Fed speech", "economic report", "regulation", "credit", "geopolitics", "options"))
+    assert "after:" in query and "before:" in query
+    for spec in specs:
+        if spec["category"] == "기업 재료":
+            query = parse_qs(urlsplit(spec["url"]).query)["q"][0]
+            assert all(term in query for term in ("earnings", "movers", "retail", "banks", "energy", "healthcare", "cloud", "semiconductor"))
+            assert not any(name in query for name in ("엔비디아", "아마존", "마이크론", "코어위브"))

@@ -19,6 +19,27 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-15 coverage follow-up, base f78c6fd2): user clarified
+that the supplied market examples require core content coverage, not just layout.
+Read docs/maintenance/20261115_report_coverage.md. Main rendering removes four-news,
+two-theme and four-issuer truncation, retains verified distinct body facts and
+revenue/EPS, restores all collected base sectors, global/post-close evidence,
+recent indicator reaction columns and observed company breadth. Same-date/source
+validation retained; no score/gate/TTL changes. Added report price symbols RUT,
+NG and DXY to the existing batch; live probe linked Nov13 frames in 2.961s.
+New operating report exposed a morning-rally article in a negative closing
+summary: now excluded from the closing-cause selection, retained in timed news.
+Summary citations no longer hide detailed article evidence from the main path.
+Final focused281 passed/9.52s. Stable decision1369 passed/223.697s (concurrent tests,
+not a performance comparison); subsequent report-only follow-up also passed85.
+Report gate207 passed/1 pre-existing whole-app AST failure; old golden digests
+retained, original board contract isolated from three intentionally added symbols.
+Production pre-deployment full Today78.2s; report58.3s, measurement62070e9d8d4f45089f56ff86e6621ed4.
+Private artifacts cache/report_coverage_20261115. Cloud IAB account is email-only;
+Linked accounts explicitly reports no source-control login, so reboot access is
+not established. New deployment/regeneration proof remains to be recorded below.
+Interrupted Customs stash remains preserved and unapplied.
+
 Latest bounded work (2026-11-15, company base 746b92fb): user requested report
 readability/coverage review, superseding the old Customs next-task instruction.
 Read `docs/maintenance/20261115_report_reading.md`. Preserved all seven interrupted
@@ -1277,15 +1298,16 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Finish production validation of the Nov15 report reading update only.**
+**Finish production validation of the Nov15 report coverage follow-up only.**
 
 Reconnect the existing authenticated production/Cloud browser. Reboot is already
 authorized; do not ask for permission again. If GitHub needs authentication,
 resolve the actual user's logged-in management surface without bypassing browser
 safety checks. Regenerate one report, confirm loaded/disk module agreement,
-macro/index/KR/US/portfolio/flow ordering, one closed appendix, fresh earnings and
-guidance visibility, no CEG-name-only XLE linkage, and existing score/gate output.
-Download the matching report/timing/Today ZIP and record the before31.469s vs after
+macro/index/KR/US/portfolio/flow ordering, all collected news/sector/earnings rows,
+Russell2000/gas/dollar units, no morning-only rally as closing cause, distinct
+post-close/global timing, one closed appendix, and existing score/gate output.
+Download the matching report/timing/Today ZIP and record the before58.3s vs after
 with cache-state caveats; do not claim cold-cache parity. Commit/push handoff proof.
 The interrupted Customs patch stays stashed. Expired supported-issuer IR notices
 blocking result collection are a later candidate, not part of this next task.

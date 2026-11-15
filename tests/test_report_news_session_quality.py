@@ -174,8 +174,8 @@ def test_korean_company_query_preserves_background_and_topic_budget():
         query = params["q"][0]
         assert spec["market"] == "US" and not spec["query_topics"]
         assert params["hl"] == ["ko"] and params["ceid"] == ["KR:ko"]
-        assert query.startswith("(엔비디아 OR 아마존 OR AWS OR 메타 OR 마이크론 OR 코어위브)")
-        assert "칩 OR 공급 OR 자금조달 OR 실적" in query
+        assert query.startswith("(실적 OR 가이던스 OR 급등 OR 급락 OR earnings OR movers)")
+        assert "반도체 OR 클라우드 OR 소비재 OR 금융 OR 에너지 OR 헬스케어" in query
         assert "after:" in query and "before:" in query
         assert "Wall Street" not in query and "U.S." not in query
     for market in ("KR", "US"):

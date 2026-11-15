@@ -67,7 +67,11 @@ def _recent_releases(sections, context, now):
     from stock_lab_core.report_evidence import citation
 
     original = records(context.get("economic_releases"))
-    selected = select_economic_stories(recent_economic_releases(original, context, now), limit=3)
+    recent = recent_economic_releases(original, context, now)
+    ranked = select_economic_stories(recent, limit=max(1, len(recent)))
+    identity = lambda row: tuple(row.get(k) for k in ("indicator", "period", "basis", "release_at"))
+    ranked_ids = {identity(row) for row in ranked}
+    selected = ranked + [row for row in recent if identity(row) not in ranked_ids]
     blocks = tables(sections.get("경제지표", ""))
     if not blocks or len(blocks[0][1]) != len(original):
         return []  # Never align rows by a guessed name or changed table schema.
@@ -78,11 +82,12 @@ def _recent_releases(sections, context, now):
     for picked in selected:
         for index, row in enumerate(original):
             if all(row.get(k) == picked.get(k) for k in ("indicator", "period", "basis", "release_at")):
-                values = source[index][:5]
-                values[0] += f" · 발표 {row.get('release_at')} " + citation(row)
+                values = source[index][:]
+                if " · 발표 " not in values[0]:
+                    values[0] += f" · 발표 {row.get('release_at')} " + citation(row)
                 rows.append(values)
                 break
-    return ["**최근 발표 · 변화가 큰 지표**", *_table(header[:5], rows)] if rows else []
+    return ["**최근 발표 · 변화가 큰 지표부터**", *_table(header, rows)] if rows else []
 
 
 def _flow_lines(sections):
@@ -141,7 +146,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     from stock_lab_core.report_session import market_session_states
     from stock_lab_core.earnings_pipeline import build_earnings_pipeline
     from stock_lab_core.report_earnings import compact_catalyst_lines
-    from stock_lab_core.report_catalysts import post_close_brief
+    from stock_lab_core.report_coverage import sector_coverage_lines, company_coverage_lines, context_news_lines
 
     parts = split_report_sections(report)
     sections = dict(parts)
@@ -150,11 +155,19 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     macro, indices = _board(sections)
     title = next((line for line in preamble.splitlines() if line.startswith("# ")), "# Stock Lab 자동 뉴스픽")
     macro_brief = build_news_brief(context, [r for r in records(news)
-        if brief_theme(r) in {"금리·경제지표", "에너지·지정학"}], summary_rows, now, limit=3, compact=True)
+        if brief_theme(r) in {"금리·경제지표", "에너지·지정학"}], summary_rows, now, limit=None, compact=True)
     lines = [title, "", "## 매크로", "", *macro]
     lines += _recent_releases(sections, context, now)
+    policy = tables(sections.get("중앙은행 공식 결과", ""))
+    if policy:
+        lines += ["**중앙은행 공식 발표**"]
+        for header, rows in policy:
+            lines += _table(header, rows)
     if macro_brief["article_keys"]:
         lines += macro_brief["lines"] + [""]
+    shared = context_news_lines(context, now, bucket="other_market_news", excluded=macro_brief["article_keys"])
+    if shared:
+        lines += ["**해외·공통 재료**", *shared]
     lines += ["## 지수", "", *indices]
     pipeline = build_earnings_pipeline(context, summary_rows, news, now)
     synthesis = market_summary(context, news, context.get("closed_flow_rows", []), states, now)
@@ -169,19 +182,22 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                 lines += _table([header[0] + " · 억원(잠정)", *header[1:]], rows)
             lines += [line for line in flow if line.startswith(("출처:", "프로그램 자료 미연결:", "프로그램은", "KRX 시장 전체"))]
             lines += [""]
+            for header, rows in tables(sections.get("시장 안전장치 발동 근거", "")):
+                lines += ["**시장 안전장치 · 확인 근거**", *_table(header, rows)]
         brief = build_news_brief(context, [r for r in records(news) if r.get("market") == market
-            and (r.get("link") or r.get("url")) not in explained | set(macro_brief["article_keys"])],
-                                 summary_rows, now, limit=4, compact=True)
+            and (r.get("link") or r.get("url")) not in set(macro_brief["article_keys"])],
+                                 summary_rows, now, limit=None, compact=True)
         if brief["article_keys"]:
             lines += [*brief["lines"], ""]
         elif not any(r.get("market") == market for r in synthesis.get("background_news", [])):
             lines += ["해당 세션의 출처·시각 기준을 통과한 핵심 기사 미확보.", ""]
-        lines += _sector_table(sections, market)
-        lines += compact_catalyst_lines(pipeline, market)
-        if market == "US":
-            after = post_close_brief(context, news, summary_rows, now)
-            if after["article_keys"]:
-                lines += ["**장 마감 후 · 다음 세션 재료**", *after["lines"], ""]
+        lines += sector_coverage_lines(context, news, market, now) or _sector_table(sections, market)
+        lines += company_coverage_lines(context, summary_rows, market)
+        lines += compact_catalyst_lines(pipeline, market, limit=None)
+        after = context_news_lines(context, now, bucket="next_session_news", market=market,
+                                   excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained])
+        if after:
+            lines += ["**장 마감 후 · 다음 세션 재료**", *after]
     lines += _portfolio_lines(sections, preamble)
     lines += _flow_lines(sections)
     lines += ["## 다음 일정", ""]

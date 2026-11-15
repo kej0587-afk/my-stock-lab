@@ -37,6 +37,23 @@ def test_us_intraday_never_overwrites_korean_credit_background_macro_or_flow():
     assert (context, news) == original
 
 
+def test_mislabeled_morning_wrap_not_used_as_closing_cause(monkeypatch):
+    context, news = case()
+    morning = dict(news[0], title="코스피 장 초반 2% 상승, 기관 순매수",
+                   link="https://www.yna.co.kr/view/fixture-morning", published_at="2026-10-20T10:00:00+09:00")
+    monkeypatch.setattr("stock_lab_core.article_context.verified_body_facts", lambda row: [])
+    result = market_summary(context, [morning, *news], [], market_session_states(NOW, context["sessions"]), NOW)
+    assert "기관 순매수" not in result["market_readings"]["KR"]
+    assert "AI 신용우려" in result["market_readings"]["KR"]
+    assert morning not in result["background_news"]
+
+
+def test_wrap_with_morning_rally_and_later_reversal_is_not_rejected():
+    from stock_lab_core.report_market_summary import _intraday_snapshot_only
+    assert not _intraday_snapshot_only({"title": "코스피 장 초반 반등했지만 하락 마감"}, {"live": False})
+    assert not _intraday_snapshot_only({"title": "코스피 장 초반 상승"}, {"live": True})
+
+
 def test_full_report_keeps_market_conclusion_independent_of_account_and_moves_history_down():
     context, _ = case()
     # Connect the account leg so independence is tested against a changed total.

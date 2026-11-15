@@ -123,6 +123,14 @@ def test_empty_report_still_has_named_missing_states():
     assert "종가 미수집" in result and "업종 비교 자료 미연결" in result
 
 
+def test_summary_citation_does_not_hide_article_details_from_main(monkeypatch):
+    row = article()
+    monkeypatch.setattr("stock_lab_core.report_market_summary.market_summary", lambda *a: {
+        "market_readings": {"US": "시장 혼조 [배경 보도](" + row["link"] + ")"}, "background_news": [row]})
+    main = render(news=[row]).split("## " + AUDIT_TITLE, 1)[0]
+    assert row["title"] in main and "제목 확인·기사 주장" in main
+
+
 def test_pipe_prose_is_not_a_table():
     assert tables("this | is prose\nnot a table\nnext | line") == []
 
@@ -146,6 +154,7 @@ def test_macro_summary_only_promotes_recent_verified_period_rows():
     result = "\n".join(_recent_releases({"경제지표": source}, context, NOW))
     assert "PPI |" not in result  # date and source are attached to its label
     assert "발표 2026-11-13" in result and "0.3% | 0.4% | 0.2%" in result
+    assert "+2bp" in result and result.count("0.3% | 0.4% | 0.2%") == 1
     assert "CPI" not in result
     context["economic_releases"] = [old, dict(current, status="stale")]
     assert not _recent_releases({"경제지표": source}, context, NOW)

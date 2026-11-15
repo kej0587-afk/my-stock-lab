@@ -718,7 +718,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
                           if market == "US" else '"AI 신용" OR "AI 차입" OR "외국인 기관" OR 금리 OR 환율')
                 company_plans = []
                 if market == "US" and set(topics[market]) & {"semiconductor", "memory", "technology", "software"}:
-                    company_plans = [("기업 재료", "(엔비디아 OR 아마존 OR AWS OR 메타 OR 마이크론 OR 코어위브) (칩 OR 공급 OR 자금조달 OR 실적)")]
+                    company_plans = [("기업 재료", "(실적 OR 가이던스 OR 급등 OR 급락 OR earnings OR movers) (반도체 OR 클라우드 OR 소비재 OR 금융 OR 에너지 OR 헬스케어 OR semiconductor OR cloud OR retail OR banks OR energy OR healthcare)")]
                 market_plans = [("장중 시황" if window.get("is_closed") is False else "마감 시황",
                                  "Wall Street stocks" if market == "US" and window.get("is_closed") is False
                                  else "미국증시 마감" if market == "US" else "코스피 마감"),
@@ -758,7 +758,7 @@ def _session_query_specs(windows, categories, now, *, sector_rows=(), held_expos
         event_day = now.astimezone(ZoneInfo("America/New_York")).date()
         for category, terms in (
             ("주요 실적", '(earnings OR "quarterly results") (guidance OR shares OR "after hours")'),
-            ("정책·기업 촉매", '("US midterm election" OR "U.S. midterm election" OR "midterm election results" OR ((IPO OR "AI funding") (stocks OR market OR shares)))'),
+            ("정책·기업 촉매", '("central bank" OR "Fed speech" OR "economic report" OR regulation OR credit OR geopolitics OR options OR "midterm election" OR IPO) (stocks OR markets OR economy)'),
         ):
             query = terms + f" after:{(event_day - timedelta(days=3)).isoformat()} before:{(event_day + timedelta(days=1)).isoformat()}"
             market_events.append(dict(market="US", category=category, query_kind="market_event",

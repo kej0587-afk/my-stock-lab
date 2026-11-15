@@ -6,7 +6,7 @@ from stock_lab_core.report_evidence import number, text, stamp, _cell
 register_loaded_source(__name__, __file__)
 
 INDEX_BOARD = {"^KS11": "코스피", "^KQ11": "코스닥", "^GSPC": "S&P500",
-               "^IXIC": "나스닥종합", "^SOX": "필라델피아 반도체", "^DJI": "다우"}
+               "^IXIC": "나스닥종합", "^SOX": "필라델피아 반도체", "^DJI": "다우", "^RUT": "러셀2000"}
 COMMODITY_BOARD = {"GC=F": ("금 선물", "USD/트로이온스"),
                    "SI=F": ("은 선물", "USD/트로이온스"),
                    "HG=F": ("구리 선물", "USD/파운드")}
@@ -128,8 +128,13 @@ def market_board_lines(context, states, now):
         obs = context.get("macro_data", {}).get(name, {})
         value, change = number(obs.get("val")), number(obs.get("chg"))
         unit = "%" if ticker == "^TNX" else "원/USD" if ticker.endswith("=X") else "USD/배럴" if ticker == "CL=F" else "pt"
+        comparison = f"{change:+.2f}% · 1개월 변화" if change is not None else "1개월 변화 미연결"
+        daily = number(obs.get("day_change_bp")) if ticker == "^TNX" else number(obs.get("day_ret"))
+        if daily is not None:
+            current = f"{daily:+.2f}bp" if ticker == "^TNX" else f"{daily * 100:+.2f}%"
+            comparison = current + " · 일간 기준값 변화 / " + comparison
         lines.append(" | ".join(_cell(x) for x in (f"{name}({ticker})", f"{value:,.2f} {unit}" if value is not None else "미연결",
-                     f"{change:+.2f}% · 1개월 변화" if change is not None else "1개월 변화 미연결",
+                     comparison,
                      obs.get("as_of") or obs.get("date") or "미연결", obs.get("source", "공급처 기준값"))))
     for ticker, (name, unit) in COMMODITY_BOARD.items():
         obs = context.get("prices", {}).get(ticker, {})
@@ -142,6 +147,8 @@ def market_board_lines(context, states, now):
         if ticker == "^TYX":
             change = f"{(value - previous) * 100:+.2f}bp" if value is not None and previous is not None else "변화 미연결"
             basis = "일봉 수익률 수준(%) · 이전 관측 대비"
+        elif ticker == "DX-Y.NYB":
+            change, basis = _pct(obs.get("return")), "달러지수 일봉 · 이전 관측 대비"
         else:
             change, basis = _pct(obs.get("return")), "공급처 연속 선물 일봉 · 이전 관측 대비 · 공식 정산가 아님"
         dates = f"{obs.get('previous_date') or '미연결'} → {obs.get('date') or '미연결'}"

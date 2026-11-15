@@ -287,6 +287,18 @@ def _korean_positive_drivers(title):
     return list(dict.fromkeys(drivers))
 
 
+def _intraday_snapshot_only(row, fact):
+    """A morning rally report cannot explain a later negative closing print."""
+    if fact.get("live"):
+        return False
+    from stock_lab_core.article_context import verified_body_facts
+    content = text(row.get("title")) + " " + " ".join(f["summary"] for f in verified_body_facts(row))
+    early = re.search(r"장\s*초반|개장\s*직후|오전\s*장|\bearly trading\b|\bat the open\b", content, re.I)
+    closed = re.search(r"(?:상승|하락|보합|혼조|급락|급등).{0,15}마감|마감.{0,15}(?:상승|하락|보합|혼조)|"
+                       r"\bclosed\s+(?:higher|lower|up|down|mixed)\b|\bat the close\b", content, re.I)
+    return bool(early and not closed)
+
+
 def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
     """Market moves -> reported background -> macro/medium-term interpretation."""
     facts = [_market_fact(context, market, states, now) for market in ("KR", "US")]
@@ -299,6 +311,7 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         eligible = [row for row in news if row.get("market") == fact["market"]
                     and row.get("session_date") == fact["date"] and not is_preopen_outlook(row) and not is_preopen_price_recap(row)
                     and _news_matches_date(row, fact)
+                    and not _intraday_snapshot_only(row, fact)
                     and row.get("news_bucket") not in {"next_session_news", "other_market_news"}]
         if fact["live"]:
             eligible = [row for row in eligible if row.get("news_bucket") == "current_session_news"]

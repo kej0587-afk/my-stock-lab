@@ -21,7 +21,9 @@ from stock_lab_core.report_reference import NY, _closed_value
 
 register_loaded_source(__name__, __file__)
 
-REPORT_ONLY_DAILY = {"BZ=F": ("브렌트유", "USD/배럴"), "^TYX": ("미국 30년물 금리", "%")}
+REPORT_ONLY_DAILY = {"BZ=F": ("브렌트유", "USD/배럴"), "^TYX": ("미국 30년물 금리", "%"),
+                     "NG=F": ("미국 천연가스 선물", "USD/MMBtu"),
+                     "DX-Y.NYB": ("달러지수", "pt")}
 MISSING = "미연결"
 
 
@@ -42,7 +44,7 @@ def energy_daily_observations(frames, now):
             "return": current / previous - 1 if previous is not None else None,
             "source": frame.attrs.get("source") or "Yahoo Finance daily",
             "basis": "공급처 일봉 · 공식 정산가 아님" if ticker.endswith("=F")
-                     else "공급처 일봉 금리 수준(%)",
+                     else "공급처 일봉 금리 수준(%)" if ticker == "^TYX" else "공급처 지수 일봉",
         }
     return result
 

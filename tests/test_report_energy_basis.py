@@ -119,7 +119,7 @@ def test_daily_endpoints_single_row_missing_and_board_yield_bp():
     assert observations["BZ=F"]["price"] == 104.77
     assert observations["BZ=F"]["previous_price"] is None and observations["BZ=F"]["return"] is None
     assert observations["CL=F"]["previous_price"] == 100
-    assert energy_daily_observations({}, NOW) == {"CL=F": {}, "BZ=F": {}, "^TYX": {}}
+    assert energy_daily_observations({}, NOW) == {"CL=F": {}, "BZ=F": {}, "^TYX": {}, "NG=F": {}, "DX-Y.NYB": {}}
     ctx = dict(context(), energy_daily=observations)
     board = "\n".join(market_board_lines(ctx, market_session_states(NOW), NOW))
     assert "브렌트유(BZ=F)" in board and "104.77 USD/배럴" in board
@@ -127,6 +127,21 @@ def test_daily_endpoints_single_row_missing_and_board_yield_bp():
     assert "2026-11-02 → 2026-11-03" in board and "Yahoo Finance daily fixture" in board
     for ticker in frames:
         pd.testing.assert_frame_equal(frames[ticker], before[ticker])
+
+
+def test_report_gas_dollar_russell_and_daily_macro_units_are_not_substitutes():
+    frames = {"NG=F": daily([3.0, 3.3]), "DX-Y.NYB": daily([100, 101])}
+    ctx = dict(context(), energy_daily=energy_daily_observations(frames, NOW),
+               macro_data={"10Y 금리": dict(val=5.15, chg=2.2, day_change_bp=5.0, as_of="2026-11-03"),
+                           "유가": dict(val=88, chg=-3, day_ret=.01, as_of="2026-11-03")})
+    board = "\n".join(market_board_lines(ctx, market_session_states(NOW), NOW))
+    assert "+5.00bp · 일간 기준값 변화 / +2.20% · 1개월 변화" in board
+    assert "+1.00% · 일간 기준값 변화 / -3.00% · 1개월 변화" in board
+    assert "3.30 USD/MMBtu" in board and "+10.00%" in board
+    dollar = next(line for line in board.splitlines() if "DX-Y.NYB" in line)
+    assert "달러지수 일봉" in dollar and "+1.00%" in dollar
+    assert "금리" not in dollar and "bp" not in dollar and "선물" not in dollar
+    assert "러셀2000(^RUT)" in board
 
 
 def test_verified_external_evidence_is_explicit_and_stale_probability_historical():
