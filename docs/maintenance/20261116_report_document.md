@@ -66,10 +66,22 @@ providers, scoring, thresholds, price calculations, trade advice or TTL changes.
 ## Deployment
 
 First push e9483eef was operating-verified with the 11:34 KST report (loaded
-source 57cb8499a7c67afc): one report title, decision/reasons/boundaries above
-collapsed details, stale-input warning retained. The live check identified an
-overlong overview; the final one-sentence polish still needs regeneration.
-Raw reports and account screenshots stay outside Git.
+source 57cb8499a7c67afc). Its overlong overview prompted the final polish.
+Code 01ba5509283b is pushed and operating-verified with the 11:42 KST report:
+loaded source 0c7ac92fb5f6aad7, generation ID 26b860bc876a. Cloud invalidated the
+older report after deployment; regenerating used the new code, without reboot.
+The private download `stock_lab_market_report (43).md` contains one H1, one
+core-reason summary and one next-boundary line. Interpretation fell from 975
+to 83 characters (including its Markdown label), not a claim about total size.
+Verified the summary, expandable data and separate evidence tab. Screenshot:
+`cache/report_document_20261116_live.png` (private, ignored by Git).
+
+The operating queue still warns that its inputs changed and need recalculation;
+95 connected rows are not proof of current decisions. This task regenerated the
+report, not the investment calculation. The warning remains above the summary.
+Raw reports and account screenshots stay outside Git. Semantic news repetition,
+unsupported article coverage and other pre-existing failures are not resolved
+by this presentation change.
 
 ## One Next Task
 

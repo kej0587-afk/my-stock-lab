@@ -27,8 +27,11 @@ existing action/reasons/recheck boundaries with stale-input warnings, and folded
 long reader data sections. No investment rules, providers, prices or TTL changes.
 Targeted187pass; decision1369pass. Broad report baseline1414pass/19failures,
 after1422pass/18failures; XML confirms no new failing IDs. Do not claim full-suite
-green. First push e9483eef verified on the 11:34 KST operating report; final
-one-sentence interpretation polish awaits regeneration (see linked record).
+green. Code01ba5509283b is pushed and verified on the 11:42 KST operating report
+(loaded0c7ac92fb5f6aad7, generation26b860bc876a): one title/reason/boundary;
+top interpretation83chars, details preserved. Summary and evidence tabs checked.
+Current queue still has an input-change/recalculation warning; report regeneration
+does not refresh investment decisions. See linked record for private artifacts.
 Exactly one next task: restore time/session caveats omitted from the projected
 holdings reader table; see the linked record. Do not restart broad feature work.
 
