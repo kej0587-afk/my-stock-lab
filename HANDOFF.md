@@ -19,16 +19,31 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
-Current bounded work (2026-11-16 article-body coverage, based54a8f73): read
+Latest completed work (2026-11-16 article-body coverage, based54a8f73): read
 [body coverage verification](docs/maintenance/20261116_body_coverage.md).
 User chose this source task before the deferred export optimization. Kept top3
-stories/explicit market-close coverage, diversified the remaining eight body
-slots, added attributed leadership requests/conflict reports and per-article
-coverage reasons. No score/grade/gate/price/TTL/source whitelist changes.
-Related408pass; decision1369pass/136.983s (decision_itsdpjfs), no goldens changed.
-Fresh old-code operating baseline08:43KST normal77.706s/bodies1.964s, eight
-connected articles; post-push production verification is still pending.
-Private snapshots: cache/body_coverage_20261116. Customs stash preserved.
+stories/explicit market-close coverage; reserve remaining eight-read slots for
+the displayed top-five themes before minor categories. Added attributed requests/
+military reports, completed market-estimate earnings misses, and per-article
+coverage reasons. Cyber/planned actions and employee/shareholder confusion are
+guarded. No score/grade/gate/price/TTL/provider whitelist changes; cache rulev12
+invalidates old interpretation results, not the6h/30s TTLs.
+Codeeb43939f pushed and operating-verified. Final related420pass/10.94s;
+decision1369pass/136.983s (decision_itsdpjfs) before the last narration/selection
+guards, which final420tests cover. No goldens regenerated.
+Final09:06KST run c334506f23134575967d05a282e8e7f9 normal76.469s/bodies2.179s
+(before77.706s/1.964s; different news/cache, not a speedup claim). 112loaded/disk/
+Git source hashes agree; restart_required=false. Report SHA matches joined split
+downloads; summary/detail pages verified. All95rows/23decision columns match
+before/after generation and original pre-change export.
+Eight reads:7connected/1conditional policy-outlook interpretation withheld.
+Rates and KEPCO energy/earnings body links confirmed. Top-five theme51headlines:
+4body-evidence rows/9unselected/37unsupported links/1read-withheld (no fetch/
+identity/date failure in this set). These are different scopes, not a mismatch.
+Footer5pass/0fail/1unconfirmed remains honest about incomplete coverage.
+Private final snapshots: cache/body_coverage_20261116 after_* /verification.json/
+operating_*.png; first_after_/second_after_ are earlier iterations. Customs stash
+preserved; no private data committed.
 
 Latest completed work (2026-11-16 report finish, base4f657800): read
 [report finish verification](docs/maintenance/20261115_report_finish.md).
@@ -1447,7 +1462,7 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 **Prevent unnecessary Today reruns for read-only full-report/review-ZIP downloads.**
 
-Operating final report generation was69.442s, but clicking the legacy full-report
+Latest operating report generation was76.469s, but clicking the legacy full-report
 or review-ZIP export still incurs about20s of screen processing. New summary and
 evidence downloads already use on_click="ignore". Limit the next task to those
 legacy read-only exports: preserve bytes, hashes, names and matching measurement
