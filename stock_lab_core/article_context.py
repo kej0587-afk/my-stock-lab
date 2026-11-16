@@ -36,6 +36,7 @@ _EARNINGS_MISS = (
     r"(?:미달|하회|밑돌|미치지\s*못)|부진|쇼크)|"
     r"(?:기대|예상|컨센서스).{0,18}(?:밑도는|하회하는|미달한).{0,20}실적|"
     r"\b(?:earnings|revenue|profit|guidance|outlook)\b.{0,30}\b(?:miss(?:ed|es)?|disappoint\w*|fell short)\b"
+    r"|(?:실적|매출|이익).{0,40}시장\s*(?:전망치|추정치).{0,35}(?:밑돌았|하회했|미달했)"
 )
 _AI_CONCERN = (
     r"(?:AI|인공지능|코어위브|CoreWeave).{0,80}(?:차입\s*우려|신용\s*우려|부채\s*부담|"
@@ -357,7 +358,8 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"}, trace_name='report_article_body')
 def _article(url, title):
-    # v11: polarity-preserving diplomacy and generic leadership evidence.
+    # v12: attributed requests/conflict and completed market-estimate misses.
+    # cache_result keys this rule revision; the successful-body TTL stays 6h.
     try:
         data, final_url = _public_bytes(url)
         return parse_article(data, final_url, title)

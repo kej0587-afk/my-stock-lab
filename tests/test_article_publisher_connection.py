@@ -49,6 +49,27 @@ def test_sector_body_does_not_turn_negation_or_history_into_current_fact(body):
     assert not result.get('body_facts')
 
 
+def test_completed_earnings_miss_against_market_estimate_is_body_evidence():
+    title='가온전력 목표주가 조정'
+    sentence='영업이익은 시장 전망치인 2천억원을 약 30% 밑돌았다.'
+    result=a.parse_article(page('<p>'+sentence+'</p>', title=title), URL, title)
+    assert result['body_status']=='verified'
+    fact=next(f for f in result['body_facts'] if f['topic']=='earnings')
+    assert fact['polarity']=='negative' and fact['concrete_summary']==sentence
+    assert '시장 전체 하락의 단독 원인으로 확정할 수 없습니다' in fact['implication']
+
+
+@pytest.mark.parametrize('sentence', [
+    '영업이익은 시장 전망치를 밑돌 것으로 예상된다는 분석이 나왔다.',
+    '영업이익은 시장 전망치를 밑돌지 않았다고 회사가 밝혔다.',
+    '지난해 영업이익은 시장 전망치를 하회했다는 과거 사례를 설명했다.',
+    '영업이익이 시장 전망치를 밑돌았다는 보도는 사실이 아니라고 밝혔다.',
+])
+def test_market_estimate_comparison_does_not_promote_forecast_denial_or_history(sentence):
+    result=a.parse_article(page('<p>'+sentence+'</p>', title='가온전력 전망'), URL, '가온전력 전망')
+    assert not any(f.get('polarity')=='negative' for f in result.get('body_facts',[]))
+
+
 def test_bank_governance_has_specific_interpretation_without_price_claim():
     title = '금융지주 회장 연임 요건 강화'
     result = a.parse_article(page('<p>금융지주 회장의 연임 요건이 강화돼 주주의 찬성 기준이 달라진다.</p>', title=title), URL, title)
