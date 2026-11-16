@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded work (2026-11-16 holdings session display): read
+[holdings verification](docs/maintenance/20261116_holdings_display.md) first.
+Base15e86ac5. Restore all generated holding cells, including comparison/session
+timestamps and unavailable quotes; closed mode keeps missing US extended-session
+status in the existing status column. No calculations, rules or data sources
+changed. Focused133pass and historical section20pass. Broad1434pass/16failures,
+down from1422pass/18failures; no new failing IDs. Operating deployment verification
+is pending. Preserve the queue's stale-input warning; report regeneration is not
+investment recalculation. Exactly one next task: semantic duplicate-news audit
+on a frozen article set, without new providers or investment-rule changes.
+
 Current bounded work (2026-11-16 single report / visible decision summary): read
 [document verification](docs/maintenance/20261116_report_document.md) first.
 Based on home d4dc17a3; preserve those changes. Extracted presentation-only
@@ -32,8 +43,7 @@ green. Code01ba5509283b is pushed and verified on the 11:42 KST operating report
 top interpretation83chars, details preserved. Summary and evidence tabs checked.
 Current queue still has an input-change/recalculation warning; report regeneration
 does not refresh investment decisions. See linked record for private artifacts.
-Exactly one next task: restore time/session caveats omitted from the projected
-holdings reader table; see the linked record. Do not restart broad feature work.
+Its deferred holding-caveat task is now addressed by the newer record above.
 
 Latest completed work (2026-11-16 article-body coverage, based54a8f73): read
 [body coverage verification](docs/maintenance/20261116_body_coverage.md).

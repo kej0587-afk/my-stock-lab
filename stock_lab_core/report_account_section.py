@@ -63,10 +63,10 @@ def holdings_impact_lines(*, context, held, observations, sessions, states, mode
             actual_now = (_pct(current["return"]) + f" ({current['date']} 장중 진행·확정 아님; {kst_time(current.get('as_of', current.get('retrieved_at')))})"
                           if valid_live_observation(current, region, checked, states=states) else "시각 확인 가능한 시세 미수집")
         elif region == "US":
-            extended = context.get("extended_prices", {}).get(ticker, {})
             actual_now = (extended_quote_text(context, ticker, max(now, stamp(context.get("quote_checked_at")) or now))
                           or "정규장 외 · 데이마켓/시간외 시세 미연결: " + context.get("extended_quote_status", {}).get(ticker, "제공처 응답·시각 미확인"))
-            if mode == "closed" and (extended or context.get("extended_reference_prices", {}).get(ticker)):
+            if mode == "closed":
+                # Closed-mode tables have no current-quote column; keep its status here.
                 reasons.append("별도 세션 " + actual_now)
         if leveraged:
             reasons = [reason for reason in reasons if reason != "개별 위험사유 없음"]

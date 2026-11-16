@@ -109,9 +109,8 @@ def _portfolio_lines(sections):
     # Account summary tables carry exact aggregate values, units and as-of labels.
     for header, rows in tables(source):
         if header[0] == "종목":
-            current = len(header) == 5 and any(re.search(r"[+\-]\d+\.\d+%", r[3]) for r in rows)
-            columns = [0, 1] + ([3] if current else []) + [len(header) - 1]
-            lines += _table([header[i] for i in columns], [[r[i] for i in columns] for r in rows])
+            # Session timestamps and missing-quote reasons are data, even without a return.
+            lines += _table(header, rows)
         elif "재현 기준" not in header[0]:
             lines += _table(header, rows)
             if "계좌 기여(추정)" in header:

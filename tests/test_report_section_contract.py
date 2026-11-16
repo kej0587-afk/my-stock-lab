@@ -105,7 +105,12 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
         "- 시작 비중은 시작 총자산·수량·현금·환율·중간 거래가 있어야 복원됩니다. 현재비중 ÷ (1+수익률)만으로는 시작 총자산 분모가 복원되지 않아 시작비중 기여도를 추정해 채우지 않습니다.",
     }
     assert all(output[0].count(line) == 1 for line in additions)
-    legacy = ([line for line in output[0] if line not in additions], output[1])
+    # Nov16 restores an explicit missing-session notice in closed holding rows.
+    # Remove only that approved text; keep all prices, decisions and old hashes.
+    notice = "별도 세션 정규장 외 · 데이마켓/시간외 시세 미연결: 제공처 응답·시각 미확인, "
+    expected_notices = int(held and clock in {"2026-11-04T17:00:00+09:00", "2026-11-04T23:00:00+09:00"})
+    assert sum(line.count(notice) for line in output[0]) == expected_notices
+    legacy = ([line.replace(notice, "") for line in output[0] if line not in additions], output[1])
     assert digest(legacy) == EXPECTED[f"{clock}/{held}"]
     assert args == before
     lines, _ = output

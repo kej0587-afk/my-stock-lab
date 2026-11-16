@@ -65,7 +65,8 @@ def test_reading_order_keeps_one_report_and_unique_audit_evidence():
     assert "반도체·AI가 회복하는지와" not in main
     assert output.count("# Stock Lab 자동 뉴스픽 · fixture") == 1
     assert "PPI 근거 · 2026-11-13 원문" in audit
-    assert "-11.01% 추정" in audit  # Projected reader table must not erase full source fields.
+    assert "-11.01% 추정" in main  # Holdings retain their session/comparison qualifiers.
+    assert "Fixture(SOXL) |" not in audit
     assert "MSFT · 공식 결과 발표 확인" in audit
     assert "코스피(^KS11)" not in audit
     assert output.count("MSFT · 방어우선 | 시장방어 | 시장 게이트 해제 후 재계산") == 1
@@ -84,9 +85,58 @@ def test_units_dates_partial_coverage_and_gate_do_not_disappear():
     assert "-11.00% (2026-11-13 확정 종가)" in portfolio
     assert "방어우선 · 레버리지 보유" in portfolio
     assert "시장 게이트 해제 후 재계산" in portfolio
-    assert "배수 참고" not in portfolio and "당일 현재" not in portfolio
+    assert "배수 참고" in portfolio and "당일 현재" in portfolio
     assert "NVDA · 예정" in sections["다음 일정"]
     assert "MSFT · 공식 결과" not in sections["다음 일정"]
+
+
+@pytest.mark.parametrize("current", [
+    "데이마켓(야간) -3.45% · 2026-11-16 11:41 KST · 별도 세션·미확정",
+    "프리마켓 +1.25% · 2026-11-16 19:10 KST · 별도 세션·미확정",
+    "마감 후 -2.30% · 2026-11-14 07:10 KST · 별도 세션·미확정",
+    "+0.00% (2026-11-16 장중 진행·확정 아님; 2026-11-16 11:41 KST)",
+    "정규장 외 · 데이마켓/시간외 시세 미연결: 제공처 응답·시각 미확인",
+    "시각 확인 가능한 시세 미수집",
+    "해당없음",
+])
+def test_reader_preserves_every_holding_cell_even_without_numeric_quote(current):
+    from stock_lab_core.report_reading import _portfolio_lines
+    source = REPORT.split("## 내 보유 종목 영향\n", 1)[1].split("## 관심 후보", 1)[0]
+    source = source.replace("-11.01% 추정", "누적 비교 보류: 동일 시각 자료 미연결")
+    source = source.replace("해당없음", current)
+    sections = {"내 보유 종목 영향": source}
+    original = deepcopy(sections)
+    output = "\n".join(_portfolio_lines(sections))
+    expected = next(table for table in tables(source) if table[0][0] == "종목")
+    assert expected in tables(output)
+    assert sections == original
+
+
+def test_unknown_holdings_schema_is_preserved_not_projected_by_column_count():
+    from stock_lab_core.report_reading import _portfolio_lines
+    source = "종목 | 조회시각 | 공급자 | 연결 상태 | 판정 | 새 열\n--- | --- | --- | --- | --- | ---\nTEST | 미확인 | fixture | 미연결 | 방어우선 | 원문 유지"
+    output = "\n".join(_portfolio_lines({"내 보유 종목 영향": source}))
+    assert tables(source)[0] in tables(output)
+
+
+def test_missing_session_survives_streamlit_render_and_rerun():
+    from streamlit.testing.v1 import AppTest
+    from stock_lab_core.report_reading import _portfolio_lines
+
+    def report_app(report):
+        from stock_lab_core.report_view import render_market_report
+        render_market_report(report)
+
+    source = REPORT.split("## 내 보유 종목 영향\n", 1)[1].split("## 관심 후보", 1)[0]
+    source = source.replace("해당없음", "정규장 외 · 시간외 시세 미연결: 시각 미확인")
+    report = "\n".join(_portfolio_lines({"내 보유 종목 영향": source}))
+    app = AppTest.from_function(report_app, args=(report,)).run()
+    for _ in range(2):
+        assert not app.exception
+        shown = "\n".join(item.value for item in app.markdown)
+        assert "2026-11-13 확정 종가" in shown and "시간외 시세 미연결: 시각 미확인" in shown
+        assert "방어우선 · 레버리지 보유" in shown
+        app.run()
 
 
 def article(**kwargs):

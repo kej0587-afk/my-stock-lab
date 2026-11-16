@@ -129,6 +129,19 @@ def test_cumulative_comparison_requires_history_and_missing_actual_not_zero():
     assert "종가 미수집" in completed_scenario_comparison(row, context["prices"], context["sessions"], NOW)
 
 
+def test_closed_holdings_keep_missing_extended_session_without_changing_prices_or_gate():
+    context, rows, _ = close_case()
+    context["extended_quote_status"] = {"RAM": "요청 시간초과"}
+    original = deepcopy((context, rows))
+    report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW)
+    for ticker in ("RAM", "SOXL", "CIBR"):
+        line = next(line for line in report.splitlines() if line.startswith(ticker + "(검증용)"))
+        assert "2026-10-16 확정 종가" in line
+        assert "별도 세션 정규장 외 · 데이마켓/시간외 시세 미연결" in line
+        assert "요청 시간초과" in line if ticker == "RAM" else "제공처 응답·시각 미확인" in line
+    assert (context, rows) == original
+
+
 def test_close_report_uses_cumulative_frames_without_replacing_daily_actual():
     # Rebased fixture prices reproduce the supplied two-day Nasdaq moves.
     # US daily closes alone cannot support a same-clock residual.
