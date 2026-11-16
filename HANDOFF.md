@@ -24,10 +24,14 @@ Current bounded work (2026-11-16 holdings session display): read
 Base15e86ac5. Restore all generated holding cells, including comparison/session
 timestamps and unavailable quotes; closed mode keeps missing US extended-session
 status in the existing status column. No calculations, rules or data sources
-changed. Focused133pass and historical section20pass. Broad1434pass/16failures,
-down from1422pass/18failures; no new failing IDs. Operating deployment verification
-is pending. Preserve the queue's stale-input warning; report regeneration is not
-investment recalculation. Exactly one next task: semantic duplicate-news audit
+changed. Focused133pass, decision/report parity45pass. Broad1434pass/16failures,
+down from1422pass/18failures; no new failing IDs. Code1e9a538290b4 is pushed and
+operating-verified at12:01KST (load ec492c7643df180a, generation d7d69de2f01f).
+All7holding close/status cells match the prior export; all7retain current quote
+timestamps and3comparison-missing notices restored. No reboot needed. Missing
+extended quotes are fixture-tested; the operating run had connected quotes.
+Preserve the queue's stale-input warning; report regeneration is not investment
+recalculation. Exactly one next task: semantic duplicate-news audit
 on a frozen article set, without new providers or investment-rule changes.
 
 Current bounded work (2026-11-16 single report / visible decision summary): read

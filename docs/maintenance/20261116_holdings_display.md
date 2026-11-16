@@ -51,7 +51,27 @@ status only when a quote/reference object existed.
 Operating pre-change table inspected: numeric quotes retained their dates,
 but comparison qualifiers were absent from the first visible holding table.
 The current queue has an input-change/recalculation warning; generating a report
-must not imply fresh investment decisions. Post-push verification pending.
+must not imply fresh investment decisions.
+
+Code1e9a538290b4 was pushed and operating-verified. Cloud invalidated the old
+report; the new report was generated at 12:01 KST, loaded source
+ec492c7643df180a, generation d7d69de2f01f. No reboot was needed. Private download:
+`C:/Users/82amf/Downloads/stock_lab_market_report (44).md`.
+
+Comparison with the preceding operating export (43): all seven holding names,
+confirmed-close cells and status/weight cells match exactly. All seven current
+quote rows retain dated KST timestamps; three same-clock comparison-unavailable
+notices are restored. Each complete holding row occurs once in the report.
+Newly fetched intraday prices differ; this is not a frozen-price performance or
+data-provider accuracy comparison. The stale-input warning remains unchanged.
+
+The operating run had connected extended quotes, so unavailable extended-quote
+states were verified with missing-data fixtures and Streamlit AppTest, not by
+claiming a live provider failure. Actual narrow-screen inspection confirmed
+horizontal table scrolling reaches all restored columns without text overlap.
+Private screenshots (ignored by Git):
+`cache/holdings_display_20261116_comparison.png` and
+`cache/holdings_display_20261116_sessions.png`.
 
 ## One Next Task
 
