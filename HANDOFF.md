@@ -25,9 +25,10 @@ Based on home d4dc17a3; preserve those changes. Extracted presentation-only
 `report_document.py`, removed the appended second report/copy tables, promoted
 existing action/reasons/recheck boundaries with stale-input warnings, and folded
 long reader data sections. No investment rules, providers, prices or TTL changes.
-Targeted170pass; decision1369pass. Broad report baseline1414pass/19failures,
-after1421pass/18failures; XML confirms no new failing IDs. Do not claim full-suite
-green. Operating deployment/verification still pending.
+Targeted187pass; decision1369pass. Broad report baseline1414pass/19failures,
+after1422pass/18failures; XML confirms no new failing IDs. Do not claim full-suite
+green. First push e9483eef verified on the 11:34 KST operating report; final
+one-sentence interpretation polish awaits regeneration (see linked record).
 Exactly one next task: restore time/session caveats omitted from the projected
 holdings reader table; see the linked record. Do not restart broad feature work.
 

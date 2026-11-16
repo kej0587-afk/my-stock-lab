@@ -160,7 +160,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     digest = weekly_themes(context, news, summary_rows, now)
     synthesis = market_summary(context, news, context.get("closed_flow_rows", []), states, now)
     lines = [title, "", *decision_summary_lines(sections, context=context, summary_rows=summary_rows,
-        overview=synthesis.get("overview", "")), *weekly_theme_lines(digest), "## 매크로", "", *macro]
+        interpretation=synthesis.get("interpretation", "")), *weekly_theme_lines(digest), "## 매크로", "", *macro]
     lines += _recent_releases(sections, context, now)
     policy = tables(sections.get("중앙은행 공식 결과", ""))
     if policy:

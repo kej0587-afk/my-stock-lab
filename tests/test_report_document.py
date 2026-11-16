@@ -51,6 +51,24 @@ def test_missing_account_is_not_zero_or_buy_permission():
     assert "재검토 조건 미연결" in result
 
 
+def test_top_uses_existing_interpretation_without_repeating_market_overview():
+    from stock_lab_core.report_market_summary import market_summary
+    from stock_lab_core.report_session import market_session_states
+    from tests.test_report_market_summary import case, NOW as summary_now
+
+    context, news = case()
+    before = deepcopy((context, news))
+    synthesis = market_summary(context, news, [], market_session_states(summary_now, context["sessions"]), summary_now)
+    interpretation = synthesis["interpretation"]
+    assert interpretation and interpretation in synthesis["headline"]
+    assert len(interpretation) < 200
+    output = compose_reading_report(REPORT, context=context, news=news, summary_rows=[], now=summary_now)
+    top = output.split("## 지금 상태 3줄", 1)[0].split("## 이번 주 테마", 1)[0]
+    assert "**시장 해석** · " + interpretation in top
+    assert synthesis["overview"] not in top
+    assert (context, news) == before
+
+
 def test_row_dedup_only_within_explicit_source_destination_preserves_different_date():
     table = "대상 | 값 | 기준일\n--- | --- | ---\nA | 1% | 2026-11-13\nB | 2% | 2026-11-13"
     source = "# Fixture\n\n## 지수·매크로 한눈에\n" + table + "\nA | 1% | 2026-11-12"

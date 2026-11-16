@@ -26,7 +26,10 @@ providers, scoring, thresholds, price calculations, trade advice or TTL changes.
 
 - Extract `report_document.py`: promote the existing guard action, scope, score
   decomposition, next boundaries, basis warnings and current market/account rows.
-  Report interpretation reuses `market_summary.overview`, without new inference.
+  Report interpretation exposes the existing final inference sentence from
+  `market_summary.headline`, without new inference. Operating inspection found
+  that the full overview repeated too much evidence at the top, so it stays in
+  detailed sections instead of the decision summary.
 - Keep input-change/recalculation warnings at the top; missing inputs do not
   become zero or permission. Entry restrictions do not mean sell all holdings.
 - Remove the second report title/preamble and copied tables/paragraphs from their
@@ -39,7 +42,9 @@ providers, scoring, thresholds, price calculations, trade advice or TTL changes.
 
 ## Verification
 
-- Targeted report/UI/source contracts: 170 passed, 6.94s.
+- Targeted report/UI/source contracts: 187 passed, 8.04s (including summary).
+- Compared old/new `market_summary` on populated and missing-input fixtures:
+  all pre-existing returned fields are identical; only `interpretation` is new.
 - Decision gate: 1369 passed, 145.586s; private record
   `cache/refactor_checks/decision_31nkzh9p/summary.json`.
 - Pre-change selected report gate: 207 passed / 1 failed, 43.692s.
@@ -47,8 +52,8 @@ providers, scoring, thresholds, price calculations, trade advice or TTL changes.
   compares the current large app against a historical extraction; unchanged here.
 - Broad report suite baseline in an isolated d4dc17a3 worktree: 1414 passed /
   19 failed, 67.19s. Baseline XML remains in the local temporary worktree.
-  Post-change: 1421 passed / 18 failed, 54.83s; private record
-  `cache/report_document_20261116_tests.xml`. XML comparison confirms no new
+  Final post-change: 1422 passed / 18 failed, 56.40s; private record
+  `cache/report_document_20261116_final_tests.xml`. XML comparison confirms no new
   failing test IDs. The candidate/order assertion was updated to the single
   canonical reader location. All 18 remaining failures also fail at baseline;
   these include historical layout contracts, incomplete test doubles and reader
@@ -60,9 +65,11 @@ providers, scoring, thresholds, price calculations, trade advice or TTL changes.
 
 ## Deployment
 
-Pending commit/push and operating report regeneration. Do not claim deployed
-validation based on local fixtures. Raw reports and account screenshots stay
-outside Git.
+First push e9483eef was operating-verified with the 11:34 KST report (loaded
+source 57cb8499a7c67afc): one report title, decision/reasons/boundaries above
+collapsed details, stale-input warning retained. The live check identified an
+overlong overview; the final one-sentence polish still needs regeneration.
+Raw reports and account screenshots stay outside Git.
 
 ## One Next Task
 

@@ -25,7 +25,7 @@ MOVED_SECTIONS = {
 }
 
 
-def decision_summary_lines(sections, *, context, summary_rows, overview=""):
+def decision_summary_lines(sections, *, context, summary_rows, interpretation=""):
     """Promote the existing action/reasons/boundaries, including stale warnings."""
     preamble = sections.get("", "")
     lines = [line for line in preamble.splitlines() if line and not line.startswith("# ")]
@@ -44,8 +44,8 @@ def decision_summary_lines(sections, *, context, summary_rows, overview=""):
     for line in source.splitlines():
         if line.startswith("**기준일 지연"):
             lines += [line, ""]
-    if overview:
-        lines += ["**시장 해석** · " + overview, ""]
+    if interpretation:
+        lines += ["**시장 해석** · " + interpretation, ""]
     reason = next((line for line in source.splitlines() if line.startswith("**핵심 요약**")), "")
     boundary = next((line for line in source.splitlines() if line.startswith("**다음 경계**")), "")
     lines += [reason or "핵심 근거 미연결: 보고서 스트레스로 시장 게이트를 대체하지 않습니다.", "",

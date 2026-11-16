@@ -423,12 +423,14 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
         else:
             sentences.append(sentence + narrative + (" " + " ".join(sources[:2]) if sources else ""))
     headline = ".\n\n".join(sentences)
+    interpretation = ""
     if inference:
         caution = burden or "약세" in flow_condition
         check = "반등 지속성을" if any((fact["change"] or 0) > 0 for fact in facts) else "약세 확산 여부를"
         ending = (f" 환경에서는 {check} 확인할 국면입니다(종합 해석)" if caution else
                   "와 당일 방향의 동행 여부를 확인할 국면입니다(종합 해석)")
-        headline += (".\n\n다만 " if caution else ".\n\n") + "과 ".join(inference) + ending
+        interpretation = ("다만 " if caution else "") + "과 ".join(inference) + ending
+        headline += ".\n\n" + interpretation
     if states["US"]["phase"] == "preopen" and futures_line:
         headline += ".\n\n미국 개장 전 참고: " + futures_line
     incomplete = any(row.get("stress_incomplete") for row in aligned_macro.values()) or any(name not in aligned_macro for name in ("유가", "환율"))
@@ -474,7 +476,8 @@ def market_summary(context, news, flow_rows, states, now, *, futures_line=""):
             overview += " 출처는 아래 시장 스토리에 표시합니다."
     if burden:
         overview += " 다만 " + burden + " 부담이 남아, 단기 반등과 위험 해소를 같은 의미로 보기는 어렵습니다(종합 해석)."
-    return {"headline": headline, "overview": overview, "evidence": evidence, "market_claims": market_claims,
+    return {"headline": headline, "overview": overview, "interpretation": interpretation,
+            "evidence": evidence, "market_claims": market_claims,
             "market_readings": {fact["market"]: sentence for fact, sentence in zip(facts, sentences)},
             "market_observations": market_observations,
             "background_news": [row for rows in selected_news.values() for row in rows]}
