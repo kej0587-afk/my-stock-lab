@@ -57,7 +57,7 @@ def test_report_acceptance_and_input_immutability():
     assert "100달러 이상 수준 경고 → 유가 기여 +18점" in report and "90~100달러 하락 구간의 +0" not in report
     assert "스트레스 74→92" in report and "동일 기준일 자료 변경" in report
     assert "애플(AAPL) · 개별 신호 A급, 게이트로 보류" in report and "A급 (분할 매수)" not in report
-    candidates = report.split("## 관심 후보 상위 3개\n", 1)[1].split("\n## ", 1)[0]
+    candidates = report.split("**비교 검토 후보 · 기존 게이트 유지**", 1)[1].split("\n## ", 1)[0]
     assert "게이트 근거 | 해제 조건" in candidates
     apple = next(line for line in candidates.splitlines() if line.startswith("애플(AAPL)"))
     assert "시장방어: 신규매수 중단" in apple
@@ -74,7 +74,7 @@ def test_report_acceptance_and_input_immutability():
     assert "개장 전 갭 시나리오 기여" not in report
     story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]
     assert "전날 7%대 급락" in story and "계좌 일간 기여 합계" not in story
-    assert report.index("## 내 보유 종목 영향") < report.index("## 오늘의 시장 스토리")
+    assert report.index("## 포트폴리오 · 교체 검토") < report.index("## 오늘의 시장 스토리")
     assert "개장 후 당일 등락: 미수집" in report and "다음 개장 갭" not in report
     assert "FOMC · D-9" in report and "일부 다음 확정 발표일 미연결" in report
     assert "BLS CPI · http_403" not in report

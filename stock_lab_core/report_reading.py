@@ -4,6 +4,7 @@ import re
 
 from stock_lab_core.report_build import register_loaded_source
 from stock_lab_core.report_evidence import _cell, records
+from stock_lab_core.report_document import additional_evidence, decision_summary_lines
 from stock_lab_core.report_view import split_report_sections
 
 register_loaded_source(__name__, __file__)
@@ -102,11 +103,9 @@ def _flow_lines(sections):
     return lines
 
 
-def _portfolio_lines(sections, preamble):
+def _portfolio_lines(sections):
     source = sections.get("내 보유 종목 영향", "")
     lines = ["## 포트폴리오 · 교체 검토", ""]
-    status = [line for line in preamble.splitlines() if "실행" in line and "매크로" in line]
-    lines += status[:1] + [""]
     # Account summary tables carry exact aggregate values, units and as-of labels.
     for header, rows in tables(source):
         if header[0] == "종목":
@@ -136,7 +135,7 @@ def _portfolio_lines(sections, preamble):
 
 
 def compose_reading_report(report, *, context, news, summary_rows, now):
-    """Expose one concise main path; keep original evidence intact in one appendix.
+    """Expose one reading path; retain additional evidence once in the appendix.
 
     The legacy renderer stays independently testable. Tables are copied, not
     recomputed; all per-row missing/stale/session qualifiers remain attached.
@@ -148,6 +147,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
     from stock_lab_core.report_earnings import compact_catalyst_lines
     from stock_lab_core.report_coverage import sector_coverage_lines, company_coverage_lines, context_news_lines
 
+    report = report.lstrip("\ufeff")
     parts = split_report_sections(report)
     sections = dict(parts)
     preamble = sections.get("", "")
@@ -158,7 +158,9 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         if brief_theme(r) in {"금리·경제지표", "에너지·지정학"}], summary_rows, now, limit=None, compact=True)
     from stock_lab_core.report_digest import weekly_themes, weekly_theme_lines, weekly_source_lines, connection_checks, check_lines
     digest = weekly_themes(context, news, summary_rows, now)
-    lines = [title, "", *weekly_theme_lines(digest), "## 매크로", "", *macro]
+    synthesis = market_summary(context, news, context.get("closed_flow_rows", []), states, now)
+    lines = [title, "", *decision_summary_lines(sections, context=context, summary_rows=summary_rows,
+        overview=synthesis.get("overview", "")), *weekly_theme_lines(digest), "## 매크로", "", *macro]
     lines += _recent_releases(sections, context, now)
     policy = tables(sections.get("중앙은행 공식 결과", ""))
     if policy:
@@ -172,7 +174,6 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
         lines += ["**해외·공통 재료**", *shared]
     lines += ["## 지수", "", *indices]
     pipeline = build_earnings_pipeline(context, summary_rows, news, now)
-    synthesis = market_summary(context, news, context.get("closed_flow_rows", []), states, now)
     explained = {(r.get("link") or r.get("url")) for r in synthesis.get("background_news", [])}
     for market, label in (("KR", "한국 시황"), ("US", "미국 시황")):
         fact = _market_fact(context, market, states, now)
@@ -203,7 +204,7 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                                    excluded=[*macro_brief["article_keys"], *brief["article_keys"], *explained], summary_rows=summary_rows)
         if after:
             lines += ["**장 마감 후 · 다음 세션 재료**", *after]
-    lines += _portfolio_lines(sections, preamble)
+    lines += _portfolio_lines(sections)
     lines += _flow_lines(sections)
     lines += ["## 다음 일정", ""]
     calendar_start = len(lines)
@@ -232,10 +233,9 @@ def compose_reading_report(report, *, context, news, summary_rows, now):
                          and not any("미연결" in cell for cell in row)]
                 if extra:
                     lines += ["**추가 정책·발행 일정**", "", *_table(header, extra)]
-    # Keep every original number, condition, diagnostic and source for review.
-    # Retain heading structure for saved-report readers; the UI folds the rest
-    # from this boundary into one expander, rather than rewriting old sections.
+    # Keep unique evidence; do not append a second complete legacy report.
+    reading = "\n".join(lines)
     status, checks = check_lines(connection_checks(context, summary_rows, digest, "\n".join(lines), now))
     lines += [status, "", f"## {AUDIT_TITLE}", "", "시장별 기준시각·원문·산식·누락 자료를 보관한 상세 근거입니다.", "", *checks, *weekly_source_lines(digest)]
-    lines.append(report)
+    lines.append(additional_evidence(report, reading))
     return "\n".join(lines).strip()

@@ -56,14 +56,20 @@ def render(context=None, news=()):
     return compose_reading_report(REPORT, context=context or deepcopy(CONTEXT), news=news, summary_rows=[], now=NOW)
 
 
-def test_reading_order_moves_boilerplate_but_retains_original_audit_exactly():
+def test_reading_order_keeps_one_report_and_unique_audit_evidence():
     output = render()
     parts = split_report_sections(output.split("## " + AUDIT_TITLE, 1)[0])
-    assert [title for title, _ in parts][1:] == ["이번 주 테마 5개", "매크로", "지수", "한국 시황", "미국 시황",
+    assert [title for title, _ in parts][1:] == ["오늘의 판단", "이번 주 테마 5개", "매크로", "지수", "한국 시황", "미국 시황",
         "포트폴리오 · 교체 검토", "돈흐름 · 업종 순환", "다음 일정"]
     main, audit = output.split("## " + AUDIT_TITLE, 1)
     assert "반도체·AI가 회복하는지와" not in main
-    assert audit.endswith(REPORT.strip())
+    assert output.count("# Stock Lab 자동 뉴스픽 · fixture") == 1
+    assert "PPI 근거 · 2026-11-13 원문" in audit
+    assert "-11.01% 추정" in audit  # Projected reader table must not erase full source fields.
+    assert "MSFT · 공식 결과 발표 확인" in audit
+    assert "코스피(^KS11)" not in audit
+    assert output.count("MSFT · 방어우선 | 시장방어 | 시장 게이트 해제 후 재계산") == 1
+    assert output.count("신규매수 허용 0개 / 보고서 매크로 스트레스 74 경고") == 1
     assert AUDIT_TITLE in COLLAPSED_SECTIONS
 
 

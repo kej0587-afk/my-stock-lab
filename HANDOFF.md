@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded work (2026-11-16 single report / visible decision summary): read
+[document verification](docs/maintenance/20261116_report_document.md) first.
+Based on home d4dc17a3; preserve those changes. Extracted presentation-only
+`report_document.py`, removed the appended second report/copy tables, promoted
+existing action/reasons/recheck boundaries with stale-input warnings, and folded
+long reader data sections. No investment rules, providers, prices or TTL changes.
+Targeted170pass; decision1369pass. Broad report baseline1414pass/19failures,
+after1421pass/18failures; XML confirms no new failing IDs. Do not claim full-suite
+green. Operating deployment/verification still pending.
+Exactly one next task: restore time/session caveats omitted from the projected
+holdings reader table; see the linked record. Do not restart broad feature work.
+
 Latest completed work (2026-11-16 article-body coverage, based54a8f73): read
 [body coverage verification](docs/maintenance/20261116_body_coverage.md).
 User chose this source task before the deferred export optimization. Kept top3

@@ -185,7 +185,7 @@ def test_identical_option_interpretation_is_not_repeated_per_trading_date():
     assert rendered.count("만기만으로 상승·하락을 예측하지 않음") == 1
 
 
-def test_reader_connects_watch_once_without_changing_audit_or_decisions():
+def test_reader_connects_watch_once_without_duplicating_source_report_or_changing_decisions():
     from stock_lab_core.report_reading import compose_reading_report, AUDIT_TITLE
     original = "# 합성 리포트\n## 다가오는 일정\n일정·촉매 | 시점·상태 | 근거\n--- | --- | ---\n정부 지원 시한 | 재확인 필요 | 공식 보관값\n## 내 보유 종목 영향\n판정 원문 유지"
     c = context(event())
@@ -196,7 +196,9 @@ def test_reader_connects_watch_once_without_changing_audit_or_decisions():
     assert main.count("**계속 볼 흐름**") == 1
     assert "미국 소매판매(속보)" in main and "11/17 22:30 KST" in main
     assert "정부 지원 시한 | 재확인 필요" in main
-    assert audit.endswith(original) and (c, rows) == before
+    assert output.count("# 합성 리포트") == 1
+    assert output.count("정부 지원 시한 | 재확인 필요 | 공식 보관값") == 1
+    assert "판정 원문 유지" in output and (c, rows) == before
 
 
 @pytest.mark.parametrize("changes", [{"price_kind": "intraday"}, {"is_active": True}, {"stale": True}, {"date": "2026-11-16"}])

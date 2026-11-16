@@ -109,7 +109,10 @@ def test_old_future_and_undated_releases_stay_in_table_but_not_either_story_path
     assert "83.7" not in story and "7.7" not in story and "9.9" not in story
     assert "미국 PPI" not in story and "비농업고용" not in story
     assert "미국 소매판매 전월비 0.9%" in story
-    assert all(value in table for value in ("83.7", "7.7", "9.9", "0.9", "29천 명", "1.3%"))
+    # Recent rows move to the reader's macro table; older/undated rows stay in evidence.
+    macro = report.split("## 매크로\n", 1)[1].split("\n## ", 1)[0]
+    assert all(value in table for value in ("83.7", "7.7", "9.9", "29천 명", "1.3%"))
+    assert "0.9%" in macro
     assert "최근 3거래일 이내 발표일" in story
     assert context["economic_releases"] == before["economic_releases"]
     for ticker, frame in context["price_frames"].items():

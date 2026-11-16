@@ -96,6 +96,19 @@ def test_older_and_unknown_sections_fall_back_to_visible_markdown(monkeypatch):
     assert all(label is None for label, _ in chunks)
 
 
+def test_decision_and_current_conditions_stay_visible_while_reader_tables_fold(monkeypatch):
+    report = ("# Fixture\n## 오늘의 판단\n기존 방향: 대기\n재검토: 입력 갱신\n"
+              "## 지금 상태 3줄\n계좌 추정 보류 · 자료 부족\n"
+              "## 매크로\n수치 | 기준일\n--- | ---\n40 | 2026-11-13\n"
+              "## 포트폴리오 · 교체 검토\n종목별 상세\n")
+    chunks, expanded = _render(monkeypatch, report)
+    visible = "".join(value for label, value in chunks if label is None)
+    assert "기존 방향: 대기" in visible and "재검토: 입력 갱신" in visible
+    assert "계좌 추정 보류 · 자료 부족" in visible
+    assert "2026-11-13" not in visible and "종목별 상세" not in visible
+    assert expanded == ["매크로", "포트폴리오 · 교체 검토"]
+
+
 def test_new_reader_has_separate_summary_and_evidence_pages():
     from stock_lab_core.report_view import AUDIT_TITLE, split_report_documents
     from streamlit.testing.v1 import AppTest
