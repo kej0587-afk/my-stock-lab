@@ -187,7 +187,7 @@ def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False)
          "prices": "기존 1차 계획: " + refs["entry"] + " / 기존 목표: " + refs["target"],
          "invalidate": "일봉 지지 실패, 상위 추세훼손 또는 자료 미확인 시 A안 보류. B/C안으로 재점검."},
         {"name": "B안 · 이탈·악화", "evidence": (current_sell or "·".join(damaged) + " 추세훼손" if current_sell or damaged else "현재 완료봉의 이탈 신호 미확인 · 앞으로의 악화에 대비하는 조건부 계획"),
-         "condition": f"기존 손절 참고선 {refs['stop']}. 원계획의 일봉 종가 이탈 조건과 갭·체결 위험을 확인. 종료된 채널을 새 지지로 사용하지 않음.",
+         "condition": f"기존 손절 참고선 {refs['stop']}. 신규·추가매수 계획 무효선이며 보유분 매도선과 별도. 원계획의 일봉 종가 이탈 조건과 갭·체결 위험을 확인. 종료된 채널을 새 지지로 사용하지 않음.",
          "holding": "보유분 축소·손절 조건 우선 점검 · 자동 전량매도 명령 아님" if has_pos else "미보유 · 하락만으로 신규진입하지 않음",
          "new_money": "추가매수로 손실을 덮지 않고 기존 제한과 현금 대기를 유지",
          "prices": "기존 손절 참고선: " + refs["stop"] + " · 실제 청산가격 보장 아님",

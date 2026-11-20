@@ -135,6 +135,7 @@ def flow_connection_rows(workflow):
              "평가 범위": scope, "후보군": group,
              "1일": number("1일수익률", percent=True), "1M": number("1개월수익률", percent=True),
              "3M": number("3개월수익률", percent=True), "거래량 증감": number("거래량증가", percent=True),
+             "거래량 비교 기준": "최근 20일 평균 / 직전 최대 60일 평균 - 1 · 당일/20일 비율과 별도",
              "자료상태": row.get(PREFIX + "연결사유") or row.get("돈흐름신선도근거") or "미연결"}]
 
 

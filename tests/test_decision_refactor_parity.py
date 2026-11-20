@@ -62,6 +62,21 @@ def test_full_output_snapshots(app_module, monkeypatch):
         assert not SNAPSHOT_PATH.exists(), "Never overwrite the pre-refactor baseline"
         SNAPSHOT_PATH.write_text(json.dumps(actual, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     expected = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    # The historical fixture includes a quote-only same-date bar in ATR. Correct
+    # only its six dependent prices from observed bars; retain all other fields.
+    for sid, prices, _, _, _, live_gap in scenarios():
+        if not live_gap:
+            continue
+        frame = make_price_df(**prices).iloc[:-1]
+        tr = pd.concat([frame.High - frame.Low, (frame.High - frame.Close.shift()).abs(),
+                        (frame.Low - frame.Close.shift()).abs()], axis=1).max(axis=1)
+        atr = float(tr.rolling(14).mean().iloc[-1])
+        result = expected[sid]
+        assert result["rr_target_is_projection"] is True
+        current = result["cur_p"]
+        result.update(atr=atr, rr_stop=round(current - 2 * atr, 4),
+                      rr_tp1=round(current + atr, 4), rr_tp2=round(current + 2 * atr, 4),
+                      rr_tp3=round(current + 4 * atr, 4), rr_target=round(current + 4 * atr, 4))
     # Keep pre-refactor display precision; execution precision has boundary tests.
     for result in actual.values():
         if result.get("rr_ratio") is not None:

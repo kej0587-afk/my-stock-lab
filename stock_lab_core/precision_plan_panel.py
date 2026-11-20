@@ -4,6 +4,9 @@ import pandas as pd
 
 from stock_lab_core.execution_gate import GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE
 from stock_lab_core.formatters import escape_html_value, format_currency
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 
 def entry_plan_display(plan, workflow):
@@ -41,9 +44,13 @@ def render_entry_plan_panel(st, plan, *, workflow, status_color, target_is_proje
         f"{raw_plan_note}"
         f"{target_label} {format_currency(plan['target'], ticker)} <span style='color:#94a3b8;'>({escape_html_value(plan['target_source'])})</span> / "
         f"손절 {format_currency(plan['stop'], ticker)} <span style='color:#94a3b8;'>({escape_html_value(plan['stop_source'])})</span><br>"
+        "신규·추가매수 계획 무효선 · 보유분 매도 판단은 별도<br>"
         f"기준가 {format_currency(plan['current_price'], ticker)} / {rr_label} {plan['rr_now']}<br>"
+        "R/R은 목표·손절 고정 시의 가격 비율이며 승률이 아닙니다. 낮은 진입가만으로 비율이 커져도 회복 근거가 늘지는 않습니다.<br>"
         "<details><summary>배분 기준·계획 주의사항</summary>"
         f"{escape_html_value(plan['amount_note'])}<br>"
+        "손절 참고선은 신규·추가매수 계획의 무효선입니다. 보유분 전량매도 권고나 실제 체결가가 아니며, 보유 위험관리는 별도로 확인합니다.<br>"
+        "비중 항목 통과는 목표비중까지 여유가 있다는 뜻이지 매수 근거가 아닙니다.<br>"
         "투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</details>"
         "</div>",
         unsafe_allow_html=True,

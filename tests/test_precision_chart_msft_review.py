@@ -130,6 +130,24 @@ def test_timeframe_comment_does_not_override_final_execution_policy(app_module, 
     assert "신규진입은 보류" not in result["summary"]
 
 
+def test_timeframe_drawdown_window_and_provisional_basis_are_visible(app_module, monkeypatch):
+    monkeypatch.setattr(app_module.st, "markdown", lambda *a, **kw: None)
+    monkeypatch.setattr(app_module.st, "dataframe", lambda *a, **kw: None)
+    pack = {label: {"snapshot": {"rows": 100, "dd": -75.2}} for label in ("일봉", "주봉", "월봉")}
+    pack["일봉"]["df"] = pd.DataFrame({"LiveQuoteOnly": [True]})
+    before = deepcopy(pack)
+    result = app_module.render_precision_multi_timeframe_summary(pack, {"live_price_used": True})
+    assert [row["낙폭 비교창"] for row in result["rows"]] == [
+        "최근 52개 일봉 고가 기준", "최근 52개 주봉 고가 기준", "최근 52개 월봉 고가 기준"]
+    assert result["rows"][0]["가격 기준"] == "현재가 반영 임시값"
+    assert result["rows"][1]["가격 기준"] == "해당 시간봉 가격 이력"
+    pd.testing.assert_frame_equal(pack["일봉"]["df"], before["일봉"]["df"])
+    assert pack["일봉"]["snapshot"] == before["일봉"]["snapshot"]
+    pack["일봉"]["df"]["LiveQuoteOnly"] = False
+    result = app_module.render_precision_multi_timeframe_summary(pack, {"live_price_used": True})
+    assert result["rows"][0]["가격 기준"] == "해당 시간봉 가격 이력"
+
+
 @pytest.mark.parametrize("target,current", [(0, 0), (5, 5), (5, 1), (0, 1)])
 def test_plan_amounts_prices_and_status_match_baseline_except_unset_weight_text(app_module, monkeypatch, target, current):
     import ast

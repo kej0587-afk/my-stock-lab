@@ -79,6 +79,19 @@ def test_restricted_headline_precedes_raw_plan_and_preserves_payload(display_app
     assert decision == before
 
 
+def test_plan_explains_ratio_invalidation_and_weight_without_changing_numbers(display_app):
+    app, ui = display_app
+    decision = held_decision()
+    before = deepcopy(decision)
+    app.render_entry_execution_plan("Test", "TEST", decision, has_pos=True)
+    html = ui.markdowns[-1]
+    assert "승률이 아닙니다" in html
+    assert "신규·추가매수 계획의 무효선" in html
+    assert "보유분 전량매도 권고" in html
+    assert "비중 항목 통과" in html and "매수 근거가 아닙니다" in html
+    assert decision == before
+
+
 def test_executable_headline_and_plan_numbers_are_unchanged(display_app):
     app, ui = display_app
     decision = held_decision(buy_amt=140000, current_w=1.0,

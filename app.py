@@ -7377,6 +7377,10 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
     rows = []
     for label in ["일봉", "주봉", "월봉"]:
         snap = (mtf_pack.get(label) or {}).get("snapshot", {})
+        frame = (mtf_pack.get(label) or {}).get("df")
+        quote_only = (isinstance(frame, pd.DataFrame) and not frame.empty
+                      and "LiveQuoteOnly" in frame and pd.notna(frame["LiveQuoteOnly"].iloc[-1])
+                      and bool(frame["LiveQuoteOnly"].iloc[-1]))
         rows.append({
             "구분": label,
             "상태": snap.get("state", "-"),
@@ -7387,6 +7391,8 @@ def render_precision_multi_timeframe_summary(mtf_pack: dict, c: dict):
             "%B": "-" if not np.isfinite(clean_float(snap.get("pct_b"), np.nan)) else f"{clean_float(snap.get('pct_b')):.2f}",
             "MA20 이격": "-" if not np.isfinite(clean_float(snap.get("ma20_gap"), np.nan)) else f"{clean_float(snap.get('ma20_gap')):+.1f}%",
             "고점대비": "-" if not np.isfinite(clean_float(snap.get("dd"), np.nan)) else f"{clean_float(snap.get('dd')):+.1f}%",
+            "낙폭 비교창": f"최근 {min(int(snap.get('rows') or 0), 52)}개 {label} 고가 기준",
+            "가격 기준": "현재가 반영 임시값" if quote_only else "해당 시간봉 가격 이력",
             "해석": snap.get("summary", "-"),
         })
     st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
@@ -34687,7 +34693,7 @@ if main_page == "precision":
                     f"<div class='info-panel'>현재가: <span class='highlight'>{format_currency(display_cur_p, tkr)}</span><br>"
                     f"3개월 수익률: <span style='color:{ret3_color}; font-weight:bold;'>{ret3_text}</span><br>"
                     f"6개월 수익률: <span style='color:{ret6_color}; font-weight:bold;'>{ret6_text}</span><br>"
-                    f"52주 고점대비: <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
+                    f"52주 고점대비(상단 기준가): <span style='color:{dd_c}; font-weight:bold;'>{c['dd']*100:.1f}%</span></div>",
                     unsafe_allow_html=True
                 )
             with price_refresh_col:

@@ -44,7 +44,7 @@ Base: a53885a1. Scope: shared reference-price construction and precision readabi
 - Final frozen preservation gate: 1,836 passed, 0 failed/error/skipped, 195.338s;
   source hashes unchanged (`cache/refactor_checks/all_wnf54wvy`). Selected
   correctness contracts, not the entire test suite. Final historical comparison
-  rerun also passed all 192 cases. Operating verification: pending below.
+  rerun also passed all 192 cases. Operating verification: completed below.
 - No overall latency improvement or validated trading edge is claimed.
 
 ## Direct Screen Audit
@@ -52,6 +52,12 @@ Base: a53885a1. Scope: shared reference-price construction and precision readabi
 Pre-change authenticated SOXL had B focus but A selected, and its expanded
 four-axis evidence pushed all scenario responses below the narrow viewport.
 The same R/R and allocation explanations appeared in both header and table.
+
+Commit 47935154 was pushed, then verified in authenticated production after an
+authorized reboot. SOXL still shows market-defense / new-buy stop. B is initially
+selected; switching to A shows the same first-entry and target references as the
+original blocked plan. The allocation disclosure opens successfully. Proof is
+local and ignored: `cache/operating_20261120/entry_price_alignment.jpg`.
 
 Additional observed backlog, not changed in this task:
 

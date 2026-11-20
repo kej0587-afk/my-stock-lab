@@ -20,6 +20,19 @@ Production: `https://3insky.streamlit.app/`.
 ## Current State
 
 Latest bounded work (2026-11-20): read
+[quote-only ATR and precision input labels](docs/maintenance/20261120_quote_only_atr.md).
+The user's SOXL export reproduced an ATR input bug: a flagged quote-only OHLC
+placeholder entered the 14-bar range. The shared helper now excludes those rows;
+thresholds and gate policy are unchanged, but affected ATR-derived references
+correctly change. Provisional momentum, source-close scorecard, prior MFI and
+ATR now have separate labels. Drawdown windows and volume-growth denominators
+are explicit. R/R, invalidation and weight-capacity limits are clarified.
+Verification/deployment status is in the linked record; do not assume live proof
+from a commit alone. Exactly one next task: reconcile actual quote timestamp and
+completed-session identity across precision/Today, including provider partial
+daily bars and channel freshness. This replaces the older next-task entries.
+
+Latest bounded work (2026-11-20): read
 [queue/precision price alignment](docs/maintenance/20261120_entry_price_alignment.md).
 This supersedes the numerical-plan next task in the historical entries below.
 Shared pure reference-price construction replaces duplicated support ladders.
@@ -28,7 +41,9 @@ fixed; dedicated leverage timing and all investment thresholds/gates are retaine
 A/B/C now opens the current focus first; repeated plan explanations are collapsed.
 Focused340pass; historical fixed-input192case full payload parity (intentional
 bug corrections tested separately). Frozen preservation1836pass/0fail/0skip,
-195.338s, source hashes unchanged. Live deployment pending; see record.
+195.338s, source hashes unchanged. Commit47935154 is pushed and live-verified:
+SOXL B-focus opens first, A references agree with the original blocked plan,
+market-defense is retained and allocation details expand; see record.
 Exactly one next task: reconcile current quote, completed daily bar and channel/
 plan timestamps on identical saved inputs. Other observed duplication/news issues
 are recorded in that document, not silently folded into this change.

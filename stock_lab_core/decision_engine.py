@@ -17,6 +17,9 @@ import pandas as pd
 
 from stock_lab_core.formatters import clean_float, finite_num, is_kr_listed
 from stock_lab_core.decision_signals import build_entry_signal_context
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 
 @dataclass(frozen=True)
@@ -534,7 +537,9 @@ def build_breakdown_risk_flags(
 
 
 def calc_atr_for_decision(df: pd.DataFrame, period: int = 14) -> float:
-    """Calculate ATR for decision helpers."""
+    """Calculate ATR from price bars, excluding quote-only OHLC placeholders."""
+    if df is not None and "LiveQuoteOnly" in df.columns:
+        df = df.loc[~_quote_only_rows(df)]
     if df is None or len(df) < period + 1:
         return 0.0
     tr = pd.concat([
