@@ -26,8 +26,18 @@ uncached and batch US quote selectors. Pre-market tries live candles before the
 previous overnight quote. Existing holidays/DST, other-session order, fallback
 providers, TTL and score/gate formulas are preserved. Corrected selected prices
 may intentionally change numeric outputs. Frozen selected-all gate: 2,353 passed, zero failures/errors/skips, 232.959s
-(`all_jrek51xw`). Production deployment/reboot verification is pending; do not
-treat this entry as proof of deployment until updated below.
+(`all_jrek51xw`). Code `77ab44fe` pushed; owner Cloud Reboot completed directly.
+Actual Today: 95 rows, 93.353s, measurement `1d643f651c7d4f9e9c1bb6c51ec1f879`,
+full completed calculation; standard refresh, not fully cold and not a matched
+speed benchmark. 50 chart timestamps connected, 45 remain explicitly unknown.
+00:36 KST GOOGL precision export has no stale modules; prices and three selected
+quote/input helpers match loaded/disk/committed hashes. Overnight helper was not
+loaded in this regular-session path; missing evidence is not a hash mismatch.
+Price-input replay ID e4f3a675caffbd4d matches capture; ATR 10.818564278738839.
+Actual current-session verification is regular-session only. Pre-market behavior
+is verified by fixed-clock/candidate replay; live pre-market recheck remains.
+Private evidence is under ignored cache/operating_20261121/ and Downloads;
+see the linked record. No portfolio records or secrets were committed.
 The single current next task is at **Next Task Only**; historical next-task
 sentences below are superseded.
 
