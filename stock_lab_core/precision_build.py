@@ -16,7 +16,7 @@ MODULES = ("chart_scorecard", "scorecard_review", "etf_holdings", "precision_rev
            "decision_priority", "decision_followup", "decision_inputs", "decision_signals", "leveraged_watch", "quote_html", "ta_engine",
            "leveraged_product_view", "overnight_quote", "leveraged_comparison", "leveraged_quote_view",
            "decision_brief", "decision_workspace", "precision_scenarios", "entry_prices",
-           "decision_engine", "signal_basis", "precision_plan_panel")
+           "decision_engine", "signal_basis", "precision_plan_panel", "scenario_evidence")
 
 
 def precision_build_info(entrypoint=None):

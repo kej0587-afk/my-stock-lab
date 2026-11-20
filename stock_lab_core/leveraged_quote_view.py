@@ -44,10 +44,11 @@ def render_quote_evidence(st, ticker, *, manual_price=0, now=None, fetch_quote=l
             st.caption(evidence["status"])
             if ticker != "418660.KS":
                 st.caption("검증된 시간외 가격 미연결 · 0원이나 정규장 가격으로 대체하지 않음")
-            return
+            return evidence
         st.markdown(f"**{evidence['session']} · USD {evidence['price']:,.2f} · {evidence['change']:+.2f}%**")
         st.caption(f"관측 {evidence['as_of']} · 비교: 미국 {evidence['base']} 정규장 종가")
         st.caption(evidence["source"] + " · 판정·차트 입력에 반영하지 않는 별도 참고값")
+    return evidence
 
 
 register_loaded_source(__name__, __file__)

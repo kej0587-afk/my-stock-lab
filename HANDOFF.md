@@ -20,6 +20,18 @@ Production: `https://3insky.streamlit.app/`.
 ## Current State
 
 Latest bounded work (2026-11-20): read
+[completed-bar A/B/C observations](docs/maintenance/20261120_completed_scenarios.md).
+The user asked for usable numeric scenarios. Pure source-only evidence now keeps
+complete daily OHLC, dated pivots/ranges, time/volume measures and conditional
+A/B/C prices separate from the original execution plan and un-timestamped quote.
+Prior completed volume is no longer discarded because live volume is missing.
+No market-defense/threshold/sizing changes. Verification and deployment status
+are in that record. Exactly one next task: reconcile quote/session identity in
+the shared Today/board/precision decision input contract with identical captures.
+This supersedes the older next-task wording below; do not claim all price paths
+were unified by the scenario-only observation change.
+
+Latest bounded work (2026-11-20): read
 [quote-only ATR and precision input labels](docs/maintenance/20261120_quote_only_atr.md).
 The user's SOXL export reproduced an ATR input bug: a flagged quote-only OHLC
 placeholder entered the 14-bar range. The shared helper now excludes those rows;

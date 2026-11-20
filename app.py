@@ -6938,7 +6938,7 @@ def render_precision_candlestick_chart(
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
     from stock_lab_core.execution_readiness import precision_display_context
-    chart_context = dict(precision_display_context(decision_context or {}), chart_expected_close=latest_completed_chart_session(ticker) if structure.get("events") and show_signals else None)
+    chart_context = dict(precision_display_context(decision_context or {}), chart_expected_close=latest_completed_chart_session(ticker))
     chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
                                        provisional_last=provisional_bar) if show_signals else []
     if chart_events:
@@ -34721,7 +34721,7 @@ if main_page == "precision":
                     st.caption(precision_chart_load_note)
 
             from stock_lab_core.leveraged_quote_view import render_quote_evidence
-            render_quote_evidence(st, tkr, manual_price=manual_cur_p)
+            precision_quote_evidence = render_quote_evidence(st, tkr, manual_price=manual_cur_p)
 
             if is_free and not has_p:
                 st.info("💡 미보유 관찰 종목입니다.")
@@ -34883,9 +34883,18 @@ if main_page == "precision":
             precision_strategy_slot = st.empty()
             precision_entry_plan = render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)
             from stock_lab_core.precision_scenarios import build_precision_scenarios, render_precision_scenarios
+            from stock_lab_core.scenario_evidence import completed_scenario_frame
+            scenario_expected_close = (c.get("chart_structure", {}).get("일봉") or {}).get("expected_close")
+            scenario_frame, _scenario_status = completed_scenario_frame(df, scenario_expected_close)
+            scenario_profile = build_liquidity_thermal_profile(scenario_frame)
+            scenario_profile["asof"] = frame_last_date(scenario_frame)
             precision_strategy = build_precision_scenarios(c, tkr, {
                 "multi_timeframe": mtf_pack, "liquidity_profile": precision_liquidity_profile,
                 "signal_basis": precision_signal_basis,
+                "daily_source": df, "expected_close": scenario_expected_close,
+                "completed_profile": scenario_profile,
+                "quote_evidence": precision_quote_evidence,
+                "decision_price_label": format_currency(c.get("cur_p"), tkr) + " · " + price_source,
             }, precision_entry_plan, has_pos=has_p)
             with precision_strategy_slot.container():
                 render_precision_scenarios(st, precision_strategy)
@@ -34973,6 +34982,7 @@ if main_page == "precision":
                 "price_source": price_source, "price_refresh_time": price_refresh_time,
                 "chart_load_note": precision_chart_load_note, "live_ohlcv_applied": _precision_live_ohlcv_applied,
                 "signal_basis": precision_signal_basis, "live_indicator_issue": _precision_live_issue,
+                "scenario_analysis": precision_strategy,
                 "macro_risk": final_macro_risk, "macro_penalty": macro_penalty,
             },
         )

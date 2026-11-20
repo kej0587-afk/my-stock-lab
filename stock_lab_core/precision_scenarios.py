@@ -10,6 +10,7 @@ from stock_lab_core.execution_readiness import build_execution_readiness
 from stock_lab_core.formatters import escape_html_value, format_currency
 from stock_lab_core.precision_observation import build_precision_observation_rows, duration_observation
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.scenario_evidence import build_scenario_evidence, scenario_evidence_rows, conditional_price_rows
 
 
 def _map(value):
@@ -127,6 +128,52 @@ def _current_sell_event(chart, frame):
     return ""
 
 
+def _attach_completed_observations(model, context, ticker):
+    """Enrich conditional responses without changing the original focus or execution gate."""
+    if "daily_source" not in context:
+        return model
+    evidence = build_scenario_evidence(context.get("daily_source"), context.get("expected_close"),
+                                       profile=context.get("completed_profile"))
+    model["completed_evidence"] = evidence
+    rows = scenario_evidence_rows(evidence, ticker)
+    model["price_rows"] = conditional_price_rows(evidence, ticker)
+    if not rows:
+        model["thesis"] += " 완료봉 관측: " + evidence["status"] + "."
+        return model
+    structure_note = model["axes"][0]["해석"]
+    model["axes"] = rows
+    # Current quote volume and last completed volume are different evidence sets.
+    model["thesis"] = structure_note + (f" 아래 가격·진폭·거래량은 {evidence['asof']} {evidence['status']} 기준입니다. "
+                         "현재 시세의 미확인 거래량과 구분하며, 관측 가격은 체결가나 매수 허가가 아닙니다.")
+    model["price_basis"] = f"시나리오 종가 {format_currency(evidence['close'], ticker)} · {evidence['asof']} / 기존 판정 입력 {context.get('decision_price_label', '시각·세션 미확인')}"
+    quote = _map(context.get("quote_evidence"))
+    if quote.get("status") == "연결됨" and _positive(quote.get("price")):
+        model["quote_basis"] = (f"별도 참고시세 {format_currency(quote['price'], ticker)} · {quote.get('session', '세션 미확인')} "
+                                 f"· {quote.get('as_of', '시각 미확인')} · 완료봉/기존 판정 입력과 혼합하지 않음")
+        support, recovery = evidence.get("support"), evidence.get("recovery")
+        if evidence["fresh"] and support and recovery:
+            position = ("하방 관찰선 아래 · 종가 이탈 확정 전" if quote["price"] < support["price"]
+                        else "회복 장벽 위 · 종가 회복 확정 전" if quote["price"] > recovery["price"]
+                        else "관찰 가격 범위 안 · 지지 확인/매집 확정 아님")
+            model["quote_basis"] += " / " + position
+    for item, prices in zip(model["scenarios"], model["price_rows"]):
+        item["legacy_prices"] = item["prices"]
+        item["price_observations"] = prices
+        item["prices"] = " / ".join(f"{key}: {prices[key]}" for key in ("확인 가격", "다음 가격", "실패·전환", "가격비율"))
+        if prices["안"] == "A":
+            item["evidence"] = rows[0]["관측"] + " / " + rows[2]["해석"]
+            item["condition"] = (prices["확인 가격"] + ". 같은 완료 일봉에서 회복 유지와 거래량 반응을 확인. "
+                                  "상위 추세훼손은 반대 근거이며 기존 최종 체크를 우회하지 않음.")
+        elif prices["안"] == "B":
+            item["condition"] = (prices["확인 가격"] + ". 이 가격은 관측된 구조 이탈 기준이며 기존 계획 손절선과 별개. "
+                                  "보유분 위험 재검토 조건이지 자동 전량매도 지시가 아님.")
+        else:
+            item["condition"] = (prices["확인 가격"] + ". 범위 내 반응과 다음 완료봉을 비교. "
+                                  "진폭·거래량 수축 여부는 기간 축의 수치로 확인하며 매집으로 단정하지 않음.")
+            item["evidence"] = rows[2]["관측"] + " / " + rows[3]["관측"]
+    return model
+
+
 def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False):
     """Synthesize captured facts, never recalculate scores, orders or target prices."""
     decision, context = _map(decision), _map(context)
@@ -199,9 +246,9 @@ def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False)
          "prices": "범위 미확인 시 임의 지지·저항·매수가를 만들지 않음",
          "invalidate": "A의 지지·회복 또는 B의 이탈 조건을 확인하면 해당 안을 재점검."},
     ]
-    return {"ticker": ticker, "focus": focus, "thesis": thesis, "execution": execution,
+    return _attach_completed_observations({"ticker": ticker, "focus": focus, "thesis": thesis, "execution": execution,
             "axes": axes, "scenarios": scenarios, "location": location, "plan": refs,
-            "ready": ready, "has_pos": bool(has_pos), "duration_known": duration_known, "flow_known": flow_known}
+            "ready": ready, "has_pos": bool(has_pos), "duration_known": duration_known, "flow_known": flow_known}, context, ticker)
 
 
 def render_precision_scenarios(st, model):
@@ -210,7 +257,13 @@ def render_precision_scenarios(st, model):
     st.markdown(f"<p><b>{escape(model['focus'])}</b><br>{escape(model['thesis'])}<br>"
                 f"<b>현재 실행:</b> {escape(model['execution'])}</p>", unsafe_allow_html=True)
     st.caption("일봉 관리 시나리오 · 실시간 발동·승률 판정 아님 · 1시간/5분 단타 계획과 별도")
-    with st.expander("구조·가격·시간·유동성 근거", expanded=False):
+    if model.get("price_basis"):
+        st.caption(model["price_basis"].replace("$", r"\$"))
+    if model.get("quote_basis"):
+        st.caption(model["quote_basis"].replace("$", r"\$"))
+    from contextlib import nullcontext
+    expanded_evidence = _map(model.get("completed_evidence")).get("available")
+    with nullcontext() if expanded_evidence else st.expander("구조·가격·시간·유동성 근거", expanded=False):
         rows = "".join(f"<tr><th style='width:80px;vertical-align:top;text-align:left;padding:8px;'>{escape(row['축'])}</th>"
                        f"<td style='padding:8px;'><b>{escape(row['관측'])}</b><br>{escape(row['해석'])}"
                        f"<br><small>{escape(row['기준·제한'])}</small></td></tr>" for row in model["axes"])
@@ -219,10 +272,21 @@ def render_precision_scenarios(st, model):
     scenarios = sorted(model["scenarios"], key=lambda row: not model["focus"].startswith(row["name"][:2]))
     for tab, item in zip(st.tabs([row["name"] for row in scenarios]), scenarios):
         with tab:
+            if item.get("price_observations"):
+                p = item["price_observations"]
+                cells = "".join(f"<tr><th style='width:85px;padding:8px;text-align:left;vertical-align:top;'>{escape(key)}</th>"
+                                f"<td style='padding:8px;'>{escape(p[key])}</td></tr>"
+                                for key in ("확인 가격", "다음 가격", "실패·전환", "가격비율"))
+                st.markdown("<table style='width:100%;table-layout:fixed;overflow-wrap:anywhere;'>" + cells + "</table>", unsafe_allow_html=True)
             rows = [("현재 근거·반대 근거", item["evidence"]), ("확인 조건", item["condition"]), ("보유분", item["holding"]),
-                    ("신규·추가 자금", item["new_money"]), ("가격 기준", item["prices"]),
+                    ("신규·추가 자금", item["new_money"]),
                     ("무효화·전환", item["invalidate"])]
+            if not item.get("price_observations"):
+                rows.insert(-1, ("가격 기준", item["prices"]))
             st.markdown("".join(f"<p><b>{escape(label)}</b><br>{escape(value)}</p>" for label, value in rows), unsafe_allow_html=True)
+            if item.get("legacy_prices"):
+                with st.expander("기존 실행계획 가격과의 구분", expanded=False):
+                    st.markdown(escape(item["legacy_prices"]) + "<br>관찰 가격은 기존 주문·배분·손절 계산을 대체하지 않습니다.", unsafe_allow_html=True)
     st.caption("네 축은 상관된 관측일 수 있습니다. 점수를 중복 가산하지 않으며 기존 시장방어·최종 체크·가격·주수를 바꾸지 않습니다.")
 
 
