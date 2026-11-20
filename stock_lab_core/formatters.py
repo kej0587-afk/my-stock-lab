@@ -35,6 +35,22 @@ def escape_html_value(value):
     return html.escape(str(value or ""))
 
 
+def format_zoned_timestamp(value):
+    """Format known instants only; do not invent a timezone for naive values."""
+    if value is None or not pd.api.types.is_scalar(value) or pd.isna(value):
+        return "미확인"
+    original = str(value).strip()
+    if not original or original.endswith(" KST"):
+        return original or "미확인"
+    try:
+        stamp = pd.Timestamp(value)
+        if pd.notna(stamp) and stamp.tzinfo is not None:
+            return stamp.tz_convert("Asia/Seoul").strftime("%Y-%m-%d %H:%M:%S KST")
+    except (TypeError, ValueError):
+        pass
+    return original
+
+
 def normalize_text(x):
     return str(x).strip().lower()
 

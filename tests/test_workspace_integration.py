@@ -74,3 +74,43 @@ def test_precision_raw_gate_is_labelled_screening_not_final_permission():
     row = role_rows({}, {"게이트상태": "실행가능"}, 4, {})[-1]
     assert row["구분"] == "종목 선별 게이트 · 최종 체크 전"
     assert row["평가"] == "실행가능"
+
+
+def test_scenario_selection_survives_widget_cleanup_and_scope_changes():
+    app = AppTest.from_string('''
+import streamlit as st
+from unittest.mock import patch
+from stock_lab_core import decision_workspace as w
+from stock_lab_core.decision_brief import build_decision_brief
+page = st.radio("Page", ["scenario", "chart"], key="page")
+scope = st.selectbox("Account", ["one", "two"], key="scope")
+st.session_state.setdefault("raw_gate", {"score": 9, "decision": "blocked"})
+if page == "scenario":
+    tickers = ["MSFT", "SOXL"] if scope == "one" else ["QQQ"]
+    briefs = [build_decision_brief({"티커": t}, source=s,
+        calculated_at="2026-11-20T05:00:00Z")
+        for t in tickers for s in ["오늘점검", "정밀관측소"]]
+    with patch.object(w, "collect_decision_briefs", return_value=briefs):
+        w.render_scenario_workspace(st, context=scope)
+''').run()
+    app.selectbox(key="scenario_decision_ticker").set_value("SOXL").run()
+    app.radio(key="scenario_decision_source").set_value("정밀관측소").run()
+    app.radio(key="page").set_value("chart").run()
+    assert "scenario_decision_ticker" not in app.session_state.filtered_state
+    app.radio(key="page").set_value("scenario").run()
+    assert not app.exception
+    assert app.selectbox(key="scenario_decision_ticker").value == "SOXL"
+    assert app.radio(key="scenario_decision_source").value == "정밀관측소"
+    app.selectbox(key="scope").set_value("two").run()
+    assert not app.exception
+    assert app.selectbox(key="scenario_decision_ticker").value == "QQQ"
+    assert app.radio(key="scenario_decision_source").value == "오늘점검"
+    assert app.session_state["raw_gate"] == {"score": 9, "decision": "blocked"}
+
+
+def test_clock_format_converts_only_timezone_aware_instants():
+    from stock_lab_core.formatters import format_zoned_timestamp
+    assert format_zoned_timestamp("2026-11-20T05:16:13.709717+00:00") == "2026-11-20 14:16:13 KST"
+    assert format_zoned_timestamp("2026-11-20 14:17:51 KST") == "2026-11-20 14:17:51 KST"
+    assert format_zoned_timestamp("2026-11-20 05:00:00") == "2026-11-20 05:00:00"
+    assert format_zoned_timestamp(None) == "미확인"

@@ -231,7 +231,8 @@ def render_macro_monitor(st, *, key="macro_monitor", data=None, now=None, explic
             return
         data = captured["data"]
         captured_at = captured["at"]
-        st.caption(f"자료 조회: {captured_at} · 저장 시점 기준 · 현재 신선도 미재검증")
+        from stock_lab_core.formatters import format_zoned_timestamp
+        st.caption(f"자료 조회: {format_zoned_timestamp(captured_at)} · 저장 시점 기준 · 현재 신선도 미재검증")
     supplied = load_group(group, years, now) if data is None else data
     rows, histories = [], {}
     for item in selected:

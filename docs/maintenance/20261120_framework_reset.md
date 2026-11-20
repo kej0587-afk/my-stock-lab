@@ -57,6 +57,9 @@ resting stops. Such hypotheses require explicit definitions and out-of-sample te
   demo) and portfolio. Separate scoped captures in the scenario workspace;
   timestamps and price basis remain attached to the original whole source row.
   No cross-source value splicing or inference that equal dates mean equal inputs.
+  Selections survive Streamlit widget cleanup, with invalid options/account scope
+  reset safely. Known timezone-aware calculation times display in KST; naive
+  times are not guessed. Stored timestamps and numerical inputs stay untouched.
 - Scenario page now separates conditional response from portfolio stress.
   The old stress body is extracted intact into `render_portfolio_stress_scenario`.
   Its arithmetic, multiplier assumptions and controls are unchanged.
@@ -147,4 +150,19 @@ screening references are not yet the unified detailed execution plan in step 2.
   collection and reuse on symbol/mode/group/period changes, with unchanged gates.
 - These are selected correctness contracts, not a complete repository test run,
   a speed benchmark, strategy profitability validation, or complete site parity.
-- Operating verification follows deployment and is recorded below when observed.
+- Operating verification of 7c3c50d5 after reboot: direct macro view queried on
+  request, produced a nonblank 250-observation S&P chart, and kept the same query
+  timestamp when changing to drawdown. KOSDAQ/Bitcoin late observations visibly
+  stayed labelled late, not current. Narrow 536px browser layout checked.
+- A new Today run calculated 95 symbols in 88.8 seconds (single live observation,
+  not a controlled speed comparison). SOXL's existing market-defense restriction
+  was displayed consistently in Today, portfolio, board and precision. The
+  scenario shortcut opened SOXL precision and its chart/final check.
+- Live navigation exposed a selection reset when returning from precision; added
+  a non-widget selection store and an AppTest covering leave/return and account
+  changes. Final focused run: 80 passed (workspace, integration, portfolio holding
+  review, macro monitor, formatters), 12.69 seconds.
+- Final frozen-source gate after the navigation/time-format fix: 1,820 passed,
+  zero failures/errors/skips, 205.946 seconds; evidence
+  `cache/refactor_checks/all__gjbnona/summary.json`. No changed source during run.
+- Final operating selection-persistence verification follows the follow-up push.

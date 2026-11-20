@@ -5,10 +5,24 @@ from collections.abc import Mapping
 import pandas as pd
 
 from stock_lab_core.decision_brief import build_decision_brief, compare_decision_briefs, text
-from stock_lab_core.formatters import escape_html_value
+from stock_lab_core.formatters import escape_html_value, format_zoned_timestamp
 from stock_lab_core.portfolio import portfolio_flow_ticker_key
 from stock_lab_core.portfolio_holding_review import PRECISION_KEY
 from stock_lab_core.portfolio_signal_cache import SIGNAL_SOURCES
+
+
+def _saved_choice(st, control, label, options, *, key, context=None, **kwargs):
+    # Streamlit deletes widget keys on navigation; keep selection outside widgets.
+    memory = dict(st.session_state.get("_decision_choice_memory", {}))
+    saved = memory.get(key, {})
+    value = st.session_state.get(key, saved.get("value"))
+    if saved.get("context") != context or value not in options:
+        value = options[0]
+    st.session_state[key] = value
+    selected = control(label, options, key=key, **kwargs)
+    memory[key] = {"value": selected, "context": context}
+    st.session_state["_decision_choice_memory"] = memory
+    return selected
 
 
 def collect_decision_briefs(state, context):
@@ -68,7 +82,7 @@ def render_decision_brief(st, brief, *, expanded=False):
                     f"기존 판정: {escape(brief['decision'])}<br>"
                     f"현재 실행: {escape(brief['ready']['label'])} · {escape(text(brief['ready']['reason']))}</p>",
                     unsafe_allow_html=True)
-        st.caption(f"{brief['source']} · 계산 {brief['calculated_at']} · 가격 기준일 {brief['basis']} · {brief['price_basis']}")
+        st.caption(f"{brief['source']} · 계산 {format_zoned_timestamp(brief['calculated_at'])} · 가격 기준일 {brief['basis']} · {brief['price_basis']}")
         _table(st, [{"판단 축": row["단계"], "상태·근거": row["상태"] + "\n" + row["근거"] + "\n" + row["확인"]}
                     for row in brief["layers"]], ("판단 축", "상태·근거"))
         st.markdown("**조건별 대응**")
@@ -93,7 +107,8 @@ def render_frame_decision_brief(st, frame, *, source, key):
     tickers = [text(row.get("티커")) for row in records]
     options = list(dict.fromkeys(tickers))
     names = {text(row.get("티커")): text(row.get("종목명"), text(row.get("자산명"), text(row.get("티커")))) for row in records}
-    selection = st.selectbox("판단·대응 종목", options, key=key,
+    selection = _saved_choice(st, st.selectbox, "판단·대응 종목", options, key=key,
+                             context=frame.attrs.get("portfolio_signal_context"),
                              format_func=lambda ticker: f"{names[ticker]} ({ticker})")
     selected = [row for row in records if portfolio_flow_ticker_key(row.get("티커")) == portfolio_flow_ticker_key(selection)]
     if len(selected) != 1:
@@ -109,11 +124,13 @@ def render_scenario_workspace(st, *, context, open_precision=None):
         st.info("현재 계좌 입력과 일치하는 저장 판정이 없습니다. 오늘점검 또는 정밀관측소 계산 후 연결됩니다.")
         return
     options = list(dict.fromkeys(item["ticker"] for item in briefs))
-    ticker = st.selectbox("대응 계획 종목", options, key="scenario_decision_ticker")
+    ticker = _saved_choice(st, st.selectbox, "대응 계획 종목", options,
+                           key="scenario_decision_ticker", context=context)
     key = portfolio_flow_ticker_key(ticker)
     candidates = [item for item in briefs if portfolio_flow_ticker_key(item["ticker"]) == key]
     sources = [item["source"] for item in candidates]
-    source = st.radio("판정 출처", sources, key="scenario_decision_source", horizontal=True)
+    source = _saved_choice(st, st.radio, "판정 출처", sources, key="scenario_decision_source",
+                           context=(context, key), horizontal=True)
     selected = next(item for item in candidates if item["source"] == source)
     render_decision_brief(st, selected, expanded=True)
     if len(candidates) > 1:
