@@ -110,7 +110,21 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     notice = "별도 세션 정규장 외 · 데이마켓/시간외 시세 미연결: 제공처 응답·시각 미확인, "
     expected_notices = int(held and clock in {"2026-11-04T17:00:00+09:00", "2026-11-04T23:00:00+09:00"})
     assert sum(line.count(notice) for line in output[0]) == expected_notices
-    legacy = ([line.replace(notice, "") for line in output[0] if line not in additions], output[1])
+    # Nov21 replaces the misleading fixed-hours caveat with the actual calendar
+    # source. These normal-session fixtures differ in only these two source cells;
+    # retain all original hashes/numbers and test special dates independently.
+    calendar_sources = ("exchange_calendars XKRX", "exchange_calendars XNYS")
+    for source in calendar_sources:
+        assert sum(line.endswith(" | " + source) for line in output[0]) == 1
+    legacy_lines = []
+    for line in output[0]:
+        if line in additions:
+            continue
+        for source in calendar_sources:
+            if line.endswith(" | " + source):
+                line = line[:-len(source)] + "정규장 시간 기준; 특별 휴장·단축장 별도 확인"
+        legacy_lines.append(line.replace(notice, ""))
+    legacy = (legacy_lines, output[1])
     assert digest(legacy) == EXPECTED[f"{clock}/{held}"]
     assert args == before
     lines, _ = output

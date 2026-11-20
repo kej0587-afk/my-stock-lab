@@ -13,6 +13,7 @@ import pytest
 from scripts import audit_daily_bar_consumers as audit
 from stock_lab_core.market_board import completed_close_series
 from stock_lab_core.report_session import market_session_states
+from stock_lab_core.report_eventstudy import _exchange_schedule
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +41,8 @@ def capture():
         "Low": [price - 2 for price in closes],
         "Close": closes,
         "Volume": [1000. + 10 * i for i in range(60)],
-    }, index=pd.bdate_range(end="2026-11-20", periods=60))
+    # A weekday range included Labor Day; retain the same 60 values on real sessions.
+    }, index=_exchange_schedule("US", "2026-07-01", "2026-11-20").index[-60:])
     source.attrs = {"source": "synthetic", "audit_note": {"keep": ["unchanged"]}}
     chart = source.copy(deep=True)
     decision = {
@@ -114,6 +116,9 @@ def test_us_partial_source_and_completed_report_split_without_mutation(capture):
 
 def test_kr_completed_same_source_consumers_agree_without_claiming_regular_provider(capture):
     capture["ticker"] = "379810.KS"
+    # KR and US have different holidays; the numerical fixture stays identical.
+    for key in ("source", "chart"):
+        capture[key].index = _exchange_schedule("KR", "2026-07-01", "2026-11-20").index[-60:]
     capture["basis"]["가격입력ID"] = audit.price_input_identity(
         capture["source"], capture["chart"], ticker=capture["ticker"], input_price=140.)
     capture["saved_scenario"] = {"asof": "2026-11-20", "close": 140.}
@@ -253,10 +258,8 @@ def test_cli_blocks_dns_and_socket_connect_before_any_network(tmp_path, monkeypa
         assert not output.exists()
 
 
-@pytest.mark.xfail(strict=True, reason="known report cutoff uses normal hours; next task calendar alignment")
 def test_known_special_session_report_consumers_should_wait_for_actual_close():
-    # Isolated desired behavior: current generic report/board clocks wrongly treat
-    # this 16:30 KRX close as finished at 16:00. Do not bless that discrepancy.
+    # Regression: this 16:30 KRX close must not be treated as finished at 16:00.
     # The separate regular_close_frame production path already has calendar protection.
     now = pd.Timestamp("2026-11-19T16:00+09:00").to_pydatetime()
     source = pd.DataFrame({"Close": [100., 110.]},

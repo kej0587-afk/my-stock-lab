@@ -15,6 +15,9 @@ import math
 import pandas as pd
 
 from stock_lab_core.result_cache import cache_result
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
 
 
 @dataclass(frozen=True)
@@ -157,10 +160,10 @@ def _as_utc(now=None) -> pd.Timestamp:
     return stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
 
 
-def completed_close_series(frame, market: str, *, now=None, include_current=False) -> tuple[pd.Series, int]:
+def completed_close_series(frame, market: str, *, now=None, include_current=False, use_exchange_calendar=True) -> tuple[pd.Series, int]:
     """Retain null candles and provider session-date labels; never forward-fill.
 
-    Today's stock candle is conservatively excluded until normal close + 15 min
+    Today's stock candle is conservatively excluded until actual close + 15 min
     (also on early-close days). Crypto candles complete at the next UTC midnight.
     Exchange holidays are not synthesized; only dates actually supplied are used.
     """
@@ -186,14 +189,16 @@ def completed_close_series(frame, market: str, *, now=None, include_current=Fals
     local = _as_utc(now).tz_convert(_TIMEZONES[market])
     today = local.tz_localize(None).normalize()
     if market == "CRYPTO":
-        completed = close.index < today
-    else:
+        eligible = close.index <= today if include_current else close.index < today
+    elif not use_exchange_calendar:
+        # Compatibility for mixed macro feeds; not proof of their venue close.
         close_minute = 15 * 60 + 45 if market == "KR" else 16 * 60 + 15
         cutoff = today if local.hour * 60 + local.minute >= close_minute else today - pd.Timedelta(days=1)
-        completed = (close.index <= cutoff) & (close.index.dayofweek < 5)
-    eligible = close.index <= today if include_current else completed
-    if market != "CRYPTO":
-        eligible &= close.index.dayofweek < 5
+        eligible = (close.index <= (today if include_current else cutoff)) & (close.index.dayofweek < 5)
+    else:
+        from stock_lab_core.report_exchange_clock import eligible_daily_dates
+        eligible = eligible_daily_dates(close.index, market, _as_utc(now),
+                                        close_delay_minutes=15, include_current=include_current)
     return close.loc[eligible], int((~eligible).sum())
 
 

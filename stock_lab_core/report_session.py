@@ -8,7 +8,7 @@ register_loaded_source(__name__, __file__)
 
 KST = ZoneInfo("Asia/Seoul")
 NEW_YORK = ZoneInfo("America/New_York")
-MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 후", "holiday": "휴장일"}
+MODE_LABELS = {"preopen": "개장 전", "intraday": "장중", "closed": "마감 후", "holiday": "휴장일", "unknown": "거래일정 미확인"}
 
 
 def kst_now(now):
@@ -17,7 +17,7 @@ def kst_now(now):
 
 def us_extended_session(now):
     """Venue trading window, not proof that every symbol has a fresh quote."""
-    from stock_lab_core.prices import _us_equity_market_holidays
+    from stock_lab_core.report_exchange_clock import session_on_date
     local = kst_now(now).astimezone(NEW_YORK)
     day, minute = local.date(), local.hour * 60 + local.minute
     if minute >= 1200 or minute < 240:
@@ -32,29 +32,32 @@ def us_extended_session(now):
         start, end, label = datetime.combine(day, time(16), NEW_YORK), datetime.combine(day, time(20), NEW_YORK), "애프터마켓"
     else:
         return {}
-    if target.weekday() >= 5 or target in _us_equity_market_holidays(target.year):
+    session = session_on_date("US", target)
+    if not session["known"] or not session["trading_day"]:
+        return {}
+    # A regular-session calendar does not certify extended venue hours on a
+    # shortened day. Display the known regular close, not an invented 20:00 end.
+    if label == "애프터마켓" and session["close"].tz_convert(NEW_YORK).time() != time(16):
         return {}
     return {"label": label, "date": target.isoformat(), "start": start.isoformat(), "end": end.isoformat()}
 
 
 def market_session_states(now, sessions=None):
     """One reporting clock, independent exchange-local regular sessions."""
-    from stock_lab_core.prices import _us_equity_market_holidays
+    from stock_lab_core.report_exchange_clock import exchange_clock
 
     now = kst_now(now)
     result = {}
-    for market, zone, opening, closing in (("KR", KST, 540, 930), ("US", NEW_YORK, 570, 960)):
-        local = now.astimezone(zone)
-        minute = local.hour * 60 + local.minute
-        holiday = local.weekday() >= 5 or (market == "US" and local.date() in _us_equity_market_holidays(local.year))
-        phase = "holiday" if holiday else "preopen" if minute < opening else "intraday" if minute < closing else "closed"
+    for market in ("KR", "US"):
+        reference = exchange_clock(market, now)
+        phase = reference["phase"]
         label = MODE_LABELS[phase]
         if market == "KR" and phase == "preopen" and (sessions or {}).get("KR"):
             label = "마감 후·다음 개장 전"
         result[market] = {"phase": phase, "label": label, "last_close": (sessions or {}).get(market, ""),
-                          "active_date": local.date().isoformat() if phase == "intraday" else "",
-                          "local_date": local.date().isoformat(), "as_of": now.isoformat(),
-                          "calendar_note": "정규장 시간 기준; 특별 휴장·단축장 별도 확인"}
+                          "active_date": reference["local_date"] if phase == "intraday" else "",
+                          "local_date": reference["local_date"], "as_of": now.isoformat(),
+                          "calendar_note": reference["source"]}
     return result
 
 
@@ -68,16 +71,15 @@ def display_market_status(now, *, market=None):
 
 
 def report_mode(now, *, is_trading_day=None):
-    local = now.replace(tzinfo=KST) if now.tzinfo is None else now.astimezone(KST)
     # Missing quotes alone cannot establish a holiday.
-    if local.weekday() >= 5 or is_trading_day is False:
+    if is_trading_day is False:
         return "holiday"
-    minute = local.hour * 60 + local.minute
-    return "preopen" if minute < 540 else "intraday" if minute < 930 else "closed"
+    return market_session_states(now)["KR"]["phase"]
 
 
 def next_check(mode):
     return {
+        "unknown": "거래소 일정 연결을 확인한 뒤 개장·마감 상태와 종가를 다시 확인합니다.",
         "closed": "오늘 밤 미국장 종가·반도체 흐름과 다음 한국 거래일의 실제 반영을 확인합니다. 오늘의 시나리오 비교는 내일 예측이 아닙니다.",
         "intraday": "오늘 한국장 마감과 오늘 밤 미국장 흐름을 확인합니다. 장중 등락은 종가와 달라질 수 있습니다.",
         "holiday": "다음 미국·한국 거래일의 개장과 최신 종가 반영을 확인합니다. 휴장 중 수치를 오늘 등락으로 해석하지 않습니다.",

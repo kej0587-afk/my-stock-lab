@@ -304,6 +304,7 @@ def closed_daily_frame(frame, ticker, now=None):
     """Discard today's unclosed bar. Do not guess a missing exchange session."""
     import pandas as pd
     from stock_lab_core.report_close_basis import pending_close_mask
+    from stock_lab_core.report_exchange_clock import non_equity_daily
     if not isinstance(frame, pd.DataFrame) or "Close" not in frame or not isinstance(frame.index, pd.DatetimeIndex):
         return pd.DataFrame()
     now = now or datetime.now(KST)
@@ -314,9 +315,17 @@ def closed_daily_frame(frame, ticker, now=None):
     end = local.date()
     # Provider daily index denotes trading date, not UTC instant.
     dates = frame.index.tz_localize(None).date
-    # Match the report's 15:30 KR close; 15:40 is off-hours trading, not the close.
-    closed_today = not crypto and local.weekday() < 5 and (local.hour, local.minute) >= ((15, 30) if kr else (16, 15))
-    mask = (dates <= end) if closed_today else (dates < end)
+    if crypto:
+        mask = dates < end
+    elif non_equity_daily(ticker):
+        # Preserve the existing macro-feed cutoff, not a NYSE completion claim.
+        closed_today = local.weekday() < 5 and (local.hour, local.minute) >= (16, 15)
+        mask = (dates <= end) if closed_today else (dates < end)
+    else:
+        from stock_lab_core.report_exchange_clock import eligible_daily_dates
+        # Keep existing report delays: KR actual close, US actual close + 15m.
+        mask = eligible_daily_dates(frame.index, "KR" if kr else "US", now,
+                                    close_delay_minutes=0 if kr else 15)
     mask &= ~pending_close_mask(frame)
     out = frame.loc[mask].sort_index()
     out = out.loc[~out.index.duplicated(keep="last")]
@@ -366,12 +375,22 @@ def price_observation(frame, ticker, now=None):
 def intraday_observation(frame, ticker, now):
     from stock_lab_core.market_board import completed_close_series
     from stock_lab_core.report_session import kst_now, market_session_states
+    from stock_lab_core.report_exchange_clock import non_equity_daily
     now = kst_now(now)
     market = "KR" if ticker.endswith((".KS", ".KQ")) or ticker in {"^KS11", "^KQ11"} else "US"
     local = now.astimezone(KST if market == "KR" else ZoneInfo("America/New_York"))
-    if market_session_states(now)[market]["phase"] != "intraday":
+    equity_calendar = not non_equity_daily(ticker)
+    if equity_calendar:
+        active = market_session_states(now)[market]["phase"] == "intraday"
+    else:
+        # Existing report observation window only; no new futures/FX hours rule.
+        from stock_lab_core.prices import _us_equity_market_holidays
+        active = (local.weekday() < 5 and local.date() not in _us_equity_market_holidays(local.year)
+                  and (9, 30) <= (local.hour, local.minute) < (16, 0))
+    if not active:
         return {}
-    close, _ = completed_close_series(frame, market, now=now, include_current=True)
+    close, _ = completed_close_series(frame, market, now=now, include_current=True,
+                                      use_exchange_calendar=equity_calendar)
     if len(close) < 2 or close.index[-1].date() != local.date() or local.weekday() >= 5:
         return {}
     if not math.isfinite(close.iloc[-1]) or not math.isfinite(close.iloc[-2]) or close.iloc[-2] <= 0:

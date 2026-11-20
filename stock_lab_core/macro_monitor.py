@@ -139,7 +139,9 @@ def load_macro_series(symbol, years, as_of):
 def completed_price_history(frame, market, now):
     from stock_lab_core.market_board import completed_close_series
     from stock_lab_core.report_eventstudy import _exchange_schedule
-    series, _ = completed_close_series(frame, market, now=now)
+    # Mixed futures/FX feeds keep their prior filtering policy. This observatory
+    # already applies its own expected-date guard below; report clocks are separate.
+    series, _ = completed_close_series(frame, market, now=now, use_exchange_calendar=False)
     clock = pd.Timestamp(now)
     clock = clock.tz_localize("Asia/Seoul") if clock.tzinfo is None else clock
     if market == "CRYPTO":

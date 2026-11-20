@@ -34,35 +34,40 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
-[2026-11-21 fixed partial-daily-bar audit](docs/maintenance/20261121_partial_daily_bar_audit.md),
-based on `32541f3a`. New offline diagnostic/tests only; application code unchanged.
+[2026-11-21 report exchange calendar](docs/maintenance/20261121_report_exchange_calendar.md),
+based on `58a51bff`. One shared local calendar now drives report session state,
+completed daily bars and market-board cutoffs. KR special-session exceptions reuse
+existing verified calendar data; US holidays/early closes use the same schedule.
 
-- Restored two private precision exports with exact price input IDs. Saved current
-  price, RSI, ATR, source day return and R/R all match; saved scenario date/close match.
-- 379810: 245 rows through Nov20 in both decision and completed observations.
-- GOOGL: decision uses Nov20 partial bar (252 rows); A/B/C and report close use
-  Nov19 (251 rows). Report intraday separately retains Nov20 with provisional label.
-- GOOGL source RSI 36.838639 / ATR 10.818564 vs completed-only 30.579554 / 10.657137.
-  Fixed quote/target R/R sensitivity 1.156570 -> 1.174086 is NOT a new decision.
-- Differences are purpose-specific. Source rows do not certify completion; do not
-  globally exclude partial bars under an unchanged-score task.
-- Found report-only calendar inconsistency: on the code's Nov19 special session,
-  16:00 KST is still before 16:30 close but generic report/board filters include it
-  and phase says closed. Separate KR regular history already protects that path.
-- Saved GOOGL intraday return label `전일등락` is ambiguous; leave numerical policy
-  and decision labels untouched. Presentation clarification is a later bounded item.
-- Verification: existing relevant contracts **344 passed** (32.66s; 2 existing
-  pandas warnings); new audit **11 passed, 1 strict xfailed** (6.94s). The xfail
-  reproduces the known special-session defect; it is not a completed fix.
-- Actual saved operating inputs replayed with network blocked; no new live report,
-  grade calculation or Cloud reboot. KR report's separate provider capture is not
-  in these ZIPs; same-source helper comparison is not full-report certification.
-- Artifact: ignored `cache/operating_20261121/partial_bar_consumer_audit.json`.
-  Only synthetic fixtures, diagnostic source and docs go into Git.
+- Nov19 16:00 KST stays intraday until 16:30; KR report and board preserve their
+  existing separate close delays (0 / 15 minutes). US preserves 15 minutes.
+- KR holidays, US Thanksgiving/13:00 early close, normal DST sessions, actual-open
+  checks, unavailable calendars and input immutability are covered offline.
+- Calendar unavailable means unknown/withheld, not a guessed weekday completion.
+  Year-based calendar reuse adds no quote requests or changes to cache TTLs.
+- Short-day regular hours do not certify extended-venue hours; do not invent a
+  20:00 afterhours end on an early-close date. Normal extended windows are retained.
+- Final related contracts: **253 passed**, 23.01s (41 new calendar/boundary cases). The previous special-session strict xfail now passes.
+  Test dates with invented holiday prices were corrected; values/goldens retained.
+- Fixed saved 379810/GOOGL consumer-audit JSON is exactly equal before/after.
+  Current price, RSI, ATR, return, R/R and scenario date/close all match. These
+  captures are normal-session cases, not a new full grade/live report calculation.
+- Initial selected-all gate: 2,454 pass, 12 historical digest mismatches, no errors.
+  Direct output diff isolates two calendar-source text cells. The contract now
+  asserts those new sources and preserves original hashes for every other byte;
+  all 20 tests in that file pass. Selected-all rerun: **2,466 passed**, 229.844s,
+  `cache/refactor_checks/all_swbjv6ii`. After preserving non-equity caller boundaries,
+  final selected-report gate: **208 passed**, 47.276s,
+  `cache/refactor_checks/report_9lrrgl58`; final saved JSON remains exactly equal.
+  Deployment/owner reboot verification is pending below.
+- Mixed futures/FX/macro daily and observation windows retain the old filters and
+  existing macro expected-date guard. They are not certified by the equity calendar.
+- Decision functions, partial-bar scoring policy, thresholds and decision labels
+  are untouched. Source-calendar metadata changes are intentional.
 
-Prior [Naver comparison](docs/maintenance/20261121_naver_source_comparison.md) was
-completed in `32541f3a`: keep existing route, unknown polling time stays unknown;
-basic per-symbol requests did not establish a no-extra-cost equivalent replacement.
+Previous [partial-bar audit](docs/maintenance/20261121_partial_daily_bar_audit.md)
+explains the intentional decision/observation differences and preserved input IDs.
+Private artifacts stay under ignored `cache/operating_20261121/`; do not add to Git.
 
 The former 1,787-line handoff is preserved, unabridged, at
 [HANDOFF_HISTORY_20261121.md](HANDOFF_HISTORY_20261121.md). It was copied before this
@@ -95,22 +100,16 @@ input `e4f3a675caffbd4d`. Inspect availability before assuming a fixed replay ex
 
 ## Next Task Only
 
-**Align report session status and completed-bar cutoffs to the existing exchange calendar.**
+**Clarify the displayed daily-return basis without changing the decision result.**
 
-Fix the reproduced special-session mismatch in `report_session.market_session_states`,
-`report_evidence.closed_daily_frame` and the report-facing market-board filter through
-one explicit session reference. Preserve intended per-consumer close buffers and
-KR regular-history guards. Cover normal days, KR holidays/special hours, US early
-closes and missing calendars without fabricating completion.
-
-Start from `test_known_special_session_report_consumers_should_wait_for_actual_close`
-in `tests/test_daily_bar_consumer_audit.py`; remove its xfail once the defect is fixed.
-Run relevant report/price/session contracts before and after. Prove same fixed normal
-session outputs; explain only intended special-session corrections. Do not alter
-decision functions, partial-bar scoring policy, thresholds, labels, TTLs or sources.
-Then verify the deployed report path as available; preserve exports and record exact
-scope. Do not mix in new report features, the ambiguous return-label cleanup or more
-provider replacement work. This is one report-calendar consistency task.
+Use the saved GOOGL intraday and 379810 completed-session inputs from the prior
+consumer audit. Inspect how precision/Today/report show the source trading date,
+comparison close date and provisional/completed status next to the return. Saved
+`전일등락` wording is ambiguous for an active-day bar. Preserve the numeric policy,
+existing score/decision wording and return values; add or reuse separate evidence
+labels only where the actual input certifies them. Missing timestamps stay unknown.
+Do not change quote providers, TTLs, scoring, or globally exclude partial bars.
+Prove fixed-input parity, then verify the relevant operating display as available.
 
 ## Verification Discipline
 

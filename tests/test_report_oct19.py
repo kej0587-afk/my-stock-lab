@@ -106,7 +106,9 @@ def test_market_board_now_declines_even_when_previous_close_rose():
 
 
 def test_price_multiday_context_uses_closed_bars_only():
-    frame = pd.DataFrame({"Close": [100, 99, 98, 97, 90, 92, 80]}, index=pd.bdate_range("2026-10-09", periods=7))
+    # Oct 9 is a KR holiday; keep seven prices on seven actual sessions.
+    frame = pd.DataFrame({"Close": [100, 99, 98, 97, 90, 92, 80]},
+                         index=pd.to_datetime(["2026-10-08", "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19"]))
     row = price_observation(frame, "^KS11", NOW)
     assert row["date"] == "2026-10-16" and row["previous_return"] == pytest.approx(90 / 97 - 1)
     assert row["return_5d"] == pytest.approx(-.08) and row["down_days"] == 0
