@@ -184,14 +184,23 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
         if dart_key:
             try:
                 def code_map():
-                    data = use_corporate_snapshot(fetch_corporate_codes(dart_key, get=get, timeout=5), now=now)
+                    data = fetch_corporate_codes(dart_key, get=get, timeout=5)
+                    attempts = 1
+                    # A transient directory failure must not remove every KR
+                    # issuer; one retry shares the existing collection budget.
+                    if (not data and data.diagnostic.get("cause") in
+                            {"connect_timeout", "read_timeout", "timeout", "transport_error"}
+                            and deadline - time.monotonic() >= 6):
+                        data = fetch_corporate_codes(dart_key, get=get, timeout=5)
+                        attempts += 1
+                    data = use_corporate_snapshot(data, now=now)
                     if not data:
                         cause = data.diagnostic.get("cause", "unavailable")
                         status = str(data.diagnostic.get("api_status", ""))
                         suffix = "_" + status if re.fullmatch(r"\d{3}", status) else ""
                         raise ValueError("dart_corporate_mapping_" + cause + suffix)
-                    return dict(data), {key: data.diagnostic[key] for key in
-                        ("mapping_source", "snapshot_asof", "snapshot_valid_until") if key in data.diagnostic}
+                    return dict(data), {"mapping_attempts": attempts, **{key: data.diagnostic[key] for key in
+                        ("mapping_source", "snapshot_asof", "snapshot_valid_until") if key in data.diagnostic}}
                 (codes, mapping), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
                 if mapping.get("snapshot_valid_until") and now > datetime.fromisoformat(mapping["snapshot_valid_until"]):
                     raise ValueError("dart_corporate_mapping_snapshot_expired")

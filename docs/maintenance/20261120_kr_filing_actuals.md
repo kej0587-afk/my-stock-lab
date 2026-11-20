@@ -63,6 +63,21 @@ Actual announcement date, consensus, outlook and price reaction require separate
 official evidence; filing receipt cannot fill those gaps. This does not complete
 all earlier audit backlog.
 
+## Operating Follow-up
+
+Code e7e29020 was pushed and rebooted with existing authorization. The13:11report55
+completed94.634s with118loaded/disk/Git source hashes and report checksum equal,
+no stale modules/restart requirement/termination exception. Its DART directory
+request failed with connect_timeout. A second13:14report56 also retained that
+explicit gap, rather than presenting fictional actuals. These are not successful
+live numerical-connection checks.
+
+The discovery-only directory loader now retries a transient transport failure
+once, only with at least6seconds left in its original24second budget. It does not
+retry auth/API/HTTP failures or consume an expired snapshot. Mapping attempt
+count is recorded. Expanded integration503passed/22.62s; a new frozen-source gate
+and operating retry are pending. This does not modify global DART consumers.
+
 Next bounded task after operating verification: reconcile the verified Korean
 IR announcement and this same-quarter filing in the earnings evidence view,
 without treating receipt as announcement or inventing missing guidance.

@@ -271,3 +271,31 @@ def test_financial_budget_exhaustion_preserves_verified_receipt(monkeypatch):
     assert second["events"][0]["filing_receipt"] == first["events"][0]["filing_receipt"]
     assert not second["results"] and get.call_count == 3
     assert second["sources"][0]["financial_reason"] == "collection_time_budget"
+
+
+@pytest.mark.parametrize("cause,retry", [("connect_timeout", True), ("read_timeout", True),
+                                       ("api_error", False), ("http_error", False)])
+def test_directory_retries_transport_once_inside_original_budget(monkeypatch, cause, retry):
+    from stock_lab_core import dart_corporate_codes
+    setup_codes(monkeypatch)
+    failed = dart_corporate_codes.CorporateCodeMap(diagnostic={"cause": cause})
+    success = dart_corporate_codes.CorporateCodeMap({"123456": CORP}, diagnostic={"mapping_source": "live"})
+    fetch = Mock(side_effect=[failed, success])
+    monkeypatch.setattr(dart_corporate_codes, "fetch_corporate_codes", fetch)
+    get = Mock(side_effect=[Response(dart_payload()), Response(COMPANY), Response(payload())])
+    collected = sources.collect_filing_earnings([TICKER], NOW, sec_user_agent="", dart_api_key="test", get=get)
+    assert fetch.call_count == (2 if retry else 1)
+    assert bool(collected["results"]) == retry
+    if retry:
+        assert collected["sources"][0]["mapping_attempts"] == 2
+
+
+def test_directory_retry_does_not_expand_time_budget(monkeypatch):
+    from stock_lab_core import dart_corporate_codes
+    setup_codes(monkeypatch)
+    failed = dart_corporate_codes.CorporateCodeMap(diagnostic={"cause": "connect_timeout"})
+    fetch = Mock(return_value=failed)
+    monkeypatch.setattr(dart_corporate_codes, "fetch_corporate_codes", fetch)
+    monkeypatch.setattr(sources, "MAX_SECONDS", 5)
+    collected = sources.collect_filing_earnings([TICKER], NOW, sec_user_agent="", dart_api_key="test", get=Mock())
+    assert fetch.call_count == 1 and not collected["events"]
