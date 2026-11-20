@@ -75,6 +75,17 @@ def test_deepcopy_isolated_dict_and_numeric_identity():
     assert "stock_lab_core.quote_observation" in report_build._LOADED
 
 
+def test_observation_helper_is_in_actual_precision_build_manifest(monkeypatch):
+    from stock_lab_core import precision_build
+    assert "quote_observation" in precision_build.MODULES
+    monkeypatch.setattr(precision_build, "MODULES", ("quote_observation",))
+    monkeypatch.setattr(report_build, "get_report_build_info", lambda _: {"sources": {}, "stale_modules": []})
+    info = precision_build.precision_build_info()
+    row = info['sources']['stock_lab_core.quote_observation']
+    assert row['sha256'] == row['disk_sha256']
+    assert not info['restart_required']
+
+
 @pytest.mark.parametrize("value", [None, True, "42.77", PRICE, 0., -1., float("nan"), float("inf")])
 def test_plain_or_invalid_values_have_no_provenance(value):
     assert quote_provenance(value, "SOXL") == {}
