@@ -1,0 +1,199 @@
+"""Bounded SEC/DART discovery for requested issuers, separate from decisions."""
+
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from datetime import timedelta
+import hashlib
+import json
+import re
+import threading
+import time
+
+import requests
+from lxml import etree
+
+from stock_lab_core.earnings_filing_evidence import (
+    latest_dart_report, latest_sec_filing, parse_sec_release, sec_base, sec_document, sec_release_link,
+)
+from stock_lab_core.performance import measure, submit_with_context
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
+
+CACHE_TTL = 600
+FAILURE_TTL = 90
+MAX_SECONDS = 24
+MAX_BYTES = 3_000_000
+_CACHE = {}
+_LOCK = threading.RLock()
+_SEC_LOCK = threading.Lock()
+_SEC_NEXT = 0.0
+
+
+class CachedFailure(ValueError):
+    from_cache = True
+
+
+def clear_cache():
+    with _LOCK:
+        _CACHE.clear()
+
+
+def _cached(key, now, loader, *, ttl=CACHE_TTL):
+    with _LOCK:
+        saved = _CACHE.get(key)
+        if saved and 0 <= (now - saved[0]).total_seconds() < (ttl if saved[2] is None else FAILURE_TTL):
+            if saved[2]:
+                raise CachedFailure(saved[2])
+            return deepcopy(saved[1]), True
+    try:
+        value = loader()
+    except ValueError as error:
+        with _LOCK:
+            _CACHE[key] = (now, None, str(error))
+        raise
+    with _LOCK:
+        _CACHE[key] = (now, deepcopy(value), None)
+    return value, False
+
+
+def _request(url, *, deadline, user_agent="", params=None, get=requests.get):
+    global _SEC_NEXT
+    remaining = deadline - time.monotonic()
+    if remaining < 1:
+        raise ValueError("collection_time_budget")
+    if user_agent:
+        # Shared workers stay below the SEC fair-access request rate.
+        with _SEC_LOCK:
+            delay = max(0, _SEC_NEXT - time.monotonic())
+            if delay:
+                time.sleep(delay)
+            _SEC_NEXT = time.monotonic() + 0.2
+    try:
+        with measure("external_data", "earnings_official.request"):
+            response = get(url, params=params, headers={"User-Agent": user_agent} if user_agent else {},
+                           timeout=(min(2, remaining), min(3, remaining)), allow_redirects=False, stream=True)
+            try:
+                if response.status_code != 200:
+                    raise ValueError(f"http_{response.status_code}")
+                chunks, size = [], 0
+                for chunk in response.iter_content(65536):
+                    size += len(chunk)
+                    if size > MAX_BYTES:
+                        raise ValueError("document_size_limit")
+                    if time.monotonic() > deadline:
+                        raise ValueError("collection_time_budget")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+            finally:
+                response.close()
+    except requests.Timeout:
+        raise ValueError("request_timeout") from None
+    except requests.RequestException:
+        raise ValueError("request_transport_error") from None
+
+
+def _json(url, **kwargs):
+    try:
+        data = json.loads(_request(url, **kwargs))
+        if not isinstance(data, dict):
+            raise ValueError("invalid_provider_json")
+        return data
+    except (json.JSONDecodeError, UnicodeError):
+        raise ValueError("invalid_provider_json") from None
+
+
+def _sec_collect(ticker, directory, user_agent, now, deadline, get):
+    candidates = [row for row in directory.values() if isinstance(row, dict)
+                  and str(row.get("ticker", "")).replace(".", "-").upper() == ticker.replace(".", "-")]
+    if len(candidates) != 1:
+        raise ValueError("sec_ticker_mapping_unavailable")
+    cik = str(int(candidates[0]["cik_str"]))
+    options = dict(user_agent=user_agent, deadline=deadline, get=get)
+    submissions = _json(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", **options)
+    filing = latest_sec_filing(submissions, ticker, cik, now)
+    base = sec_base(cik, filing["accessionNumber"])
+    primary = sec_document(base, filing["primaryDocument"])
+    release_url = sec_release_link(_request(primary, **options), base)
+    return parse_sec_release(_request(release_url, **options), ticker, cik, filing, release_url, now,
+                             issuer_name=submissions.get("name"))
+
+
+def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=None, get=requests.get):
+    """Every requested issuer gets a result or an explicit reason, never a guess.
+
+    Cache entries are issuer/credential scoped; historical cutoffs cannot consume
+    future cache entries. A shared wall budget bounds cold work across issuers.
+    """
+    from stock_lab_core.economic_releases import _api_key
+    from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
+
+    user_agent = _api_key("sec_user_agent") if sec_user_agent is None else sec_user_agent
+    dart_key = _api_key("dart_api_key") if dart_api_key is None else dart_api_key
+    deadline = time.monotonic() + MAX_SECONDS
+    symbols = list(dict.fromkeys(tickers))
+    directory, codes, setup_errors = {}, {}, {}
+    auth = hashlib.sha256((user_agent + "\0" + dart_key).encode()).hexdigest()
+    if any(not t.endswith((".KS", ".KQ")) for t in symbols):
+        if user_agent:
+            try:
+                directory, _ = _cached(("sec_directory", auth), now, lambda: _json(
+                    "https://www.sec.gov/files/company_tickers.json", user_agent=user_agent, deadline=deadline, get=get), ttl=86400)
+            except ValueError as error:
+                setup_errors["US"] = str(error)
+        else:
+            setup_errors["US"] = "sec_user_agent_missing"
+    if any(t.endswith((".KS", ".KQ")) for t in symbols):
+        if dart_key:
+            try:
+                def code_map():
+                    data = fetch_corporate_codes(dart_key, get=get, timeout=5)
+                    if not data:
+                        raise ValueError("dart_corporate_mapping_" + data.diagnostic.get("cause", "unavailable"))
+                    return dict(data)
+                codes, _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
+            except ValueError as error:
+                setup_errors["KR"] = str(error)
+        else:
+            setup_errors["KR"] = "dart_api_key_missing"
+
+    def collect(ticker):
+        market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
+        diagnostic = dict(ticker=ticker, provider="official_filing_discovery", checked_at=now.isoformat(),
+                          status="unavailable", attempted=False, from_cache=False)
+        try:
+            if market in setup_errors:
+                raise ValueError(setup_errors[market])
+            def fetch():
+                if time.monotonic() >= deadline:
+                    raise ValueError("collection_time_budget")
+                diagnostic["attempted"] = True
+                if market == "US":
+                    return _sec_collect(ticker, directory, user_agent, now, deadline, get)
+                corp = codes.get(ticker.split(".")[0])
+                if not corp:
+                    raise ValueError("dart_ticker_mapping_unavailable")
+                data = _json("https://opendart.fss.or.kr/api/list.json", deadline=deadline, get=get,
+                             params=dict(crtfc_key=dart_key, corp_code=corp,
+                                         bgn_de=(now - timedelta(days=200)).strftime("%Y%m%d"),
+                                         end_de=now.strftime("%Y%m%d"), pblntf_ty="A", last_reprt_at="Y",
+                                         page_count=100, sort="date", sort_mth="desc"))
+                return latest_dart_report(data, corp, ticker, now), None
+            pair, cached = _cached(("issuer", ticker, auth), now, fetch)
+            diagnostic.update(status="connected", reason="official_filing", from_cache=cached,
+                              fiscal_period=pair[0]["fiscal_period"], source_url=pair[0]["source_url"],
+                              source_verified_at=pair[0]["source_verified_at"])
+            return pair, diagnostic
+        except (ValueError, TypeError, KeyError, AttributeError, etree.LxmlError) as error:
+            # Never retain provider bodies, credentials or exception URLs.
+            reason = str(error)
+            diagnostic["from_cache"] = getattr(error, "from_cache", False)
+            diagnostic["reason"] = reason if re.fullmatch(r"[a-z][a-z0-9_]{1,80}", reason) else "invalid_provider_schema"
+            return (None, None), diagnostic
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [submit_with_context(pool, collect, ticker) for ticker in symbols]
+        collected = [future.result() for future in futures]
+    return dict(events=[pair[0] for pair, _ in collected if pair[0]],
+                results=[pair[1] for pair, _ in collected if pair[1]],
+                sources=[source for _, source in collected])

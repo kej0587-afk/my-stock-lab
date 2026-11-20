@@ -24,6 +24,9 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
         status = {"released": "공식 결과 발표 확인", "reported_results": "실적 보도 확인·공식 대조 대기",
                   "scheduled": "예정", "elapsed_unconfirmed": "예정일 경과·결과 미확인"}.get(row["event_status"], "미확인")
         time = text(row.get("date")) + " (발표 분 시각 미제공)"
+        if row.get("source_kind") == "dart_discovered_report":
+            status = "공식 정기보고서 확인"
+            time = text(row.get("date")) + " 공시 접수일 · 실적 발표일/회계분기 미확인"
         if row.get("release_precision") == "datetime" and row.get("release_at"):
             time = kst_time(row["release_at"])
         if row.get("event_status") == "reported_results":
@@ -46,7 +49,7 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
         provenance += " · 범위 만료 " + str(row.get("coverage_expires_at", "미제공"))
         lines.append(" | ".join(_cell(v) for v in (label + " · " + status, time, provenance)))
         count += 1
-        if row.get("result_metrics"):
+        if row.get("result_metrics") and row.get("source_kind") != "dart_discovered_report":
             result_details.extend(_result_detail_lines(row))
     if not count:
         lines.append("기업 실적 | 미연결 | 확정 공지·결과 자료 미확보, 일정 없음이 아님")
@@ -54,7 +57,8 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
     if result_details:
         lines.extend(["실제 실적·회사 전망·주가 반응은 별도 항목입니다. 전년비 성장과 컨센서스 상회는 다르며, 예상치 미연결 항목은 서프라이즈로 판정하지 않습니다.", ""])
     lines.extend(result_details)
-    missing = [r.get("ticker", r.get("name", "")) for r in sources if r.get("status") != "connected"]
+    connected = {r.get("ticker") for r in sources if r.get("status") == "connected"}
+    missing = [r.get("ticker", r.get("name", "")) for r in sources if r.get("status") != "connected" and r.get("ticker") not in connected]
     if missing:
         lines.append("미연결 범위: " + ", ".join(dict.fromkeys(missing)) + ". 지원 기업·공지 범위 밖 또는 조회 실패이며 추정 일정으로 채우지 않습니다.")
         lines.append("")

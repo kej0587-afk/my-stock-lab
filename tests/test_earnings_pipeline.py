@@ -165,8 +165,8 @@ def test_source_failure_and_collection_limit_are_different_from_no_earnings():
     assert "미연결은 0·미발표·실적 부진이 아닙니다" in rendered
 
 
-def test_collection_extraction_preserves_old_order_limits_outputs_and_call_counts(monkeypatch):
-    from stock_lab_core import earnings_sources, earnings_result_sources
+def test_collection_uses_requested_issuer_order_preserves_fallback_and_render_purity(monkeypatch):
+    from stock_lab_core import earnings_sources, earnings_result_sources, earnings_filing_sources
     summaries = [{"ticker": "MSFT"}, {"ticker": "LLY"}, {"ticker": "GOOGL"}, {"ticker": "LLY"}]
     calendar = {"events": [event(), {"indicator": "US_CPI"}], "sources": ["macro"]}
     before = deepcopy(calendar)
@@ -175,11 +175,12 @@ def test_collection_extraction_preserves_old_order_limits_outputs_and_call_count
     result_loader = Mock(return_value={"results": [result()], "sources": []})
     monkeypatch.setattr(earnings_sources, "load_official_earnings", schedule_loader)
     monkeypatch.setattr(earnings_result_sources, "load_earnings_results", result_loader)
+    discovery_loader = Mock(return_value={"events": [], "results": [], "sources": []})
+    monkeypatch.setattr(earnings_filing_sources, "collect_filing_earnings", discovery_loader)
     supplied = list(dict.fromkeys(row["ticker"] for row in summaries))
-    old_order = list(dict.fromkeys(["000660.KS", "005930.KS", "NVDA", "GOOGL", "META", "MSFT", "TSLA",
-        *(ticker for ticker in supplied if ticker in earnings_sources._ISSUERS), *supplied]))
     collected = collect_report_earnings(summaries, calendar, NOW)
-    schedule_loader.assert_called_once_with(old_order, NOW)
+    schedule_loader.assert_called_once_with(supplied, NOW)
+    discovery_loader.assert_called_once_with(supplied, NOW)
     result_loader.assert_called_once_with([event()], NOW)
     assert collected["calendar_events"] == [{"indicator": "US_CPI"}, event()]
     assert collected["earnings_results"] == [result()] and collected["earnings_sources"] == sources
@@ -192,14 +193,15 @@ def test_collection_extraction_preserves_old_order_limits_outputs_and_call_count
     assert schedule_loader.call_count == result_loader.call_count == 1
 
 
-def test_collection_records_all_unsubmitted_issuers_without_increasing_budget(monkeypatch):
-    from stock_lab_core import earnings_sources, earnings_result_sources
-    summaries = [{"ticker": f"TEST{i}"} for i in range(60)]
+def test_collection_records_unsubmitted_issuers_at_generic_discovery_limit(monkeypatch):
+    from stock_lab_core import earnings_sources, earnings_result_sources, earnings_filing_sources
+    summaries = [{"ticker": f"TEST{i}"} for i in range(100)]
     monkeypatch.setattr(earnings_sources, "load_official_earnings", lambda *a: {"events": [], "sources": []})
     monkeypatch.setattr(earnings_result_sources, "load_earnings_results", lambda *a: {"results": [], "sources": []})
+    monkeypatch.setattr(earnings_filing_sources, "collect_filing_earnings", lambda *a: {"events": [], "results": [], "sources": []})
     scope = collect_report_earnings(summaries, {"events": []}, NOW)["earnings_collection_scope"]
-    assert len(scope["submitted"]) == earnings_sources.MAX_TICKERS
-    assert len(scope["requested"]) == 67 and len(scope["not_submitted"]) == 35
+    assert len(scope["submitted"]) == 96
+    assert len(scope["requested"]) == 100 and len(scope["not_submitted"]) == 4
 
 
 @pytest.mark.parametrize("fcf", [

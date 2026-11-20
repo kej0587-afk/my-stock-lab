@@ -19,6 +19,21 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded work (2026-11-20 official earnings): read
+[official earnings discovery](docs/maintenance/20261120_official_earnings_discovery.md).
+Base0a8bbb73. Report-only SEC filing/exhibit discovery for held/watch issuers and
+DART periodic-report discovery replace the fixed seven-company front list.
+Publication/receipt/acceptance/fiscal-period distinctions and missing values are
+preserved; no investment thresholds or numerical decision inputs changed.
+Final preservation gate1820pass/0fail/0skip, hashes unchanged during verification
+(`all_y48q057n`). Focused tests and operating deployment status are in the record.
+Generic KR filing discovery currently confirms document/period only; metrics and
+outlook still need verified extraction. SEC periodless titles/large exhibits/6-K
+remain explicit gaps. Do not claim all earnings or all earlier backlog complete.
+Operating verification is pending this code commit; update this entry after the
+authorized reboot and new report. Next task must follow the observed evidence,
+not an issuer-specific hardcoded report sentence.
+
 Current work (2026-11-20): read
 [data/explanation audit](docs/maintenance/20261120_data_and_explanation_audit.md).
 Base12269b6b; report-only regular-close source correction, financial period

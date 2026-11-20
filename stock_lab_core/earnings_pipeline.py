@@ -22,7 +22,7 @@ def _metric_state(metric):
 
 
 def _source_reason(ticker, context):
-    rows = [row for key in ("earnings_result_sources", "earnings_sources")
+    rows = [row for key in ("earnings_sources", "earnings_result_sources")
             for row in records(context.get(key)) if canonical_ticker(row.get("ticker")) == ticker]
     failures = [row for row in rows if row.get("status") not in {"connected", "fallback"}]
     if failures:
@@ -35,6 +35,18 @@ def _source_reason(ticker, context):
             return "수집 한도 밖"
         if reason in {"verified_coverage_unavailable", "announcement_evidence_changed"}:
             return "기존 공지 만료·내용 재확인 필요"
+        meanings = {"sec_user_agent_missing": "SEC 연락처 설정 미연결",
+                    "dart_api_key_missing": "DART API 설정 미연결",
+                    "collection_time_budget": "공식 공시 수집 시간 한도·이번 조회 보류",
+                    "recent_earnings_filing_unavailable": "최근 SEC 실적 공시 미확인",
+                    "explicit_fiscal_quarter_unavailable": "공식 발표문 기준분기 대조 미완료",
+                    "release_dateline_unavailable": "공식 발표문 발표일 대조 미완료",
+                    "dart_period_report_unavailable": "DART 정기보고서 기준기간 미확인",
+                    "unique_earnings_exhibit_unavailable": "SEC 실적 발표문 첨부 대조 미완료",
+                    "document_size_limit": "공식 원문 크기 한도 초과·수치 추출 보류",
+                    "sec_ticker_mapping_unavailable": "SEC 회사 식별자 미연결"}
+        if reason in meanings:
+            return meanings[reason]
     if ticker in {canonical_ticker(value) for value in (context.get("earnings_collection_scope") or {}).get("not_submitted", [])}:
         return "수집 한도 밖"
     return "해당 기업·분기 공식 수집 미연결"
@@ -49,6 +61,8 @@ def _event_packet(event, catalog, context):
     release = "공식 발표 확인" if official else {
         "reported_results": "실적 보도·공식 미확인", "scheduled": "예정", "elapsed_unconfirmed": "예정일 경과·결과 미확인",
     }.get(event.get("event_status"), "미확인")
+    if event.get("source_kind") == "dart_discovered_report":
+        release = "공식 정기보고서 확인·실적 발표일 미확인"
     reaction = metrics.get("price_reaction") or {}
     if reaction.get("status") == "reported":
         states["price_reaction"] = "보도 주장·시세 대조 미완료"
@@ -60,7 +74,7 @@ def _event_packet(event, catalog, context):
     return dict(ticker=ticker, name=entry["name"], sector=entry["sector"], market=entry["market"],
         relationship="보유" if entry["held"] else "관심·점검" if entry["registered"] else "시장 대표",
         fiscal_period=event.get("fiscal_period", ""), release_status=release, official=official,
-        date=event.get("date", ""), date_basis="공식 발표일" if official else "일정 기준일",
+        date=event.get("date", ""), date_basis=event.get("date_basis") or ("공식 발표일" if official else "일정 기준일"),
         metrics=metrics, stages=states, gaps=gaps, articles=[], topics=[],
         source_url=event.get("result_source_url") or event.get("source_url", ""),
         consensus_status="발표 당시 예상치 미연결·상회/하회 판단 보류", event=deepcopy(event))
@@ -68,6 +82,8 @@ def _event_packet(event, catalog, context):
 
 def _commentary(packet):
     """Explain the evidence gap, never invent an earnings surprise or causality."""
+    if packet.get("event", {}).get("source_kind") == "dart_discovered_report":
+        return "공식 정기보고서의 접수일·보고기간은 확인했습니다. 실제 실적 발표일·회계분기와 개별 수치는 아직 대조되지 않았으며, 이 공시를 새로운 실적 발표나 주가 변화의 원인으로 해석하지 않습니다."
     metrics = packet["metrics"]
     topics = [label for key, label, _ in TOPICS if key in packet["topics"]]
     if not packet["official"]:
@@ -90,6 +106,7 @@ def _commentary(packet):
 
 def _select_highlights(packets, now):
     recent = [p for p in packets if (day := stamp(p["date"])) is not None and day.date() <= now.date()
+              and p.get("event", {}).get("source_kind") != "dart_discovered_report"
               and (evidence := stamp(p.get("latest_evidence_at") or p["date"])) is not None
               and now.date() - timedelta(days=7) <= evidence.date() and evidence <= now
               and "예정" not in p["release_status"]]
@@ -129,7 +146,7 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
     for event in events:
         ticker = canonical_ticker(event.get("ticker"))
         day = stamp(event.get("date"))
-        if ticker not in catalog or not event.get("event_status") or not day or not -30 <= (day.date() - now.date()).days <= 45:
+        if ticker not in catalog or not event.get("event_status") or not day or not -200 <= (day.date() - now.date()).days <= 45:
             continue
         key = (ticker, event.get("fiscal_period", ""))
         if key in by_key:

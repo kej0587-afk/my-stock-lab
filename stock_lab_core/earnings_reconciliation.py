@@ -107,6 +107,7 @@ def _eligible_news(event, news, now):
 
 
 def _official_result(event, results, now):
+    from stock_lab_core.earnings_filing_evidence import valid_discovered_result
     ticker = _ticker(event.get("ticker"))
     day = _event_day(event)
     for item in results:
@@ -114,7 +115,8 @@ def _official_result(event, results, now):
         checked = stamp(item.get("checked_at"))
         if (_ticker(item.get("ticker")) != ticker or item.get("fiscal_period") != event.get("fiscal_period")
                 or item.get("status") != "official_result" or not published or not checked
-                or checked > now or not is_official_result_url(ticker, item.get("source_url")) or day is None):
+                or checked > now or not (is_official_result_url(ticker, item.get("source_url"))
+                    or valid_discovered_result(event, item)) or day is None):
             continue
         zone = ZoneInfo(event.get("timezone") or "America/New_York")
         release_day = str(item.get("release_date") or "")[:10]
@@ -177,6 +179,11 @@ def reconcile_earnings(context, now):
     events = deepcopy(records(context.get("calendar_events")))
     for event in events:
         if not event.get("event_status") or not event.get("fiscal_period"):
+            continue
+        if event.get("source_kind") == "dart_discovered_report":
+            # A regulatory receipt confirms publication, not the earnings-call
+            # time or a price reaction to the earlier announcement.
+            event.update(result_confirmation="official_filing", result_metrics=_empty_metrics())
             continue
         matching = _eligible_news(event, news, now)
         official = _official_result(event, results, now)
