@@ -34,21 +34,35 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
-[2026-11-21 Naver route comparison](docs/maintenance/20261121_naver_source_comparison.md),
-based on `f915d5ee`. New standalone probe and offline contracts; no application edits.
+[2026-11-21 fixed partial-daily-bar audit](docs/maintenance/20261121_partial_daily_bar_audit.md),
+based on `32541f3a`. New offline diagnostic/tests only; application code unchanged.
 
-- Two local closed-session rounds: 005930.KS, 000660.KS, 379810.KS; eight HTTP calls.
-- Polling: one batch, 0.104416 / 0.084633 seconds. Basic: three individual calls,
-  sequential 0.284028 / 0.268339 seconds. This is not a Cloud speed comparison.
-- Root prices matched in both rounds, but 000660's nested NXT price differed.
-  Matching numbers do not prove the same session. Do not graft nested time onto nv.
-- Basic has its own supplier timestamp but costs one request per symbol. This
-  comparison does not support an equivalent, no-extra-request replacement.
-- Retain current route. Live regular/NXT equivalence remains unmeasured.
-- New diagnostic tests: 15 passed; combined Naver/observation/prefetch tests:
-  **259 passed, 15.49s**. No production/core edits or live score recalculation.
-- Delivery scope: standalone probe, tests and documentation only; no Cloud reboot
-  required. The application source remains unchanged; check Git for the delivery hash.
+- Restored two private precision exports with exact price input IDs. Saved current
+  price, RSI, ATR, source day return and R/R all match; saved scenario date/close match.
+- 379810: 245 rows through Nov20 in both decision and completed observations.
+- GOOGL: decision uses Nov20 partial bar (252 rows); A/B/C and report close use
+  Nov19 (251 rows). Report intraday separately retains Nov20 with provisional label.
+- GOOGL source RSI 36.838639 / ATR 10.818564 vs completed-only 30.579554 / 10.657137.
+  Fixed quote/target R/R sensitivity 1.156570 -> 1.174086 is NOT a new decision.
+- Differences are purpose-specific. Source rows do not certify completion; do not
+  globally exclude partial bars under an unchanged-score task.
+- Found report-only calendar inconsistency: on the code's Nov19 special session,
+  16:00 KST is still before 16:30 close but generic report/board filters include it
+  and phase says closed. Separate KR regular history already protects that path.
+- Saved GOOGL intraday return label `전일등락` is ambiguous; leave numerical policy
+  and decision labels untouched. Presentation clarification is a later bounded item.
+- Verification: existing relevant contracts **344 passed** (32.66s; 2 existing
+  pandas warnings); new audit **11 passed, 1 strict xfailed** (6.94s). The xfail
+  reproduces the known special-session defect; it is not a completed fix.
+- Actual saved operating inputs replayed with network blocked; no new live report,
+  grade calculation or Cloud reboot. KR report's separate provider capture is not
+  in these ZIPs; same-source helper comparison is not full-report certification.
+- Artifact: ignored `cache/operating_20261121/partial_bar_consumer_audit.json`.
+  Only synthetic fixtures, diagnostic source and docs go into Git.
+
+Prior [Naver comparison](docs/maintenance/20261121_naver_source_comparison.md) was
+completed in `32541f3a`: keep existing route, unknown polling time stays unknown;
+basic per-symbol requests did not establish a no-extra-cost equivalent replacement.
 
 The former 1,787-line handoff is preserved, unabridged, at
 [HANDOFF_HISTORY_20261121.md](HANDOFF_HISTORY_20261121.md). It was copied before this
@@ -81,20 +95,22 @@ input `e4f3a675caffbd4d`. Inspect availability before assuming a fixed replay ex
 
 ## Next Task Only
 
-**Audit final daily-bar treatment with fixed 379810.KS and GOOGL inputs.**
+**Align report session status and completed-bar cutoffs to the existing exchange calendar.**
 
-Trace actual included rows, session/price kind and calculation timestamps through
-`calc_scores_and_decision`, the observation axes A/B/C and report presentation.
-Reuse preserved captures and shared input contracts. Compare RSI/ATR/RR only where
-needed to explain a discrepancy. Distinguish intentional purposes from inconsistent
-input selection; do not assume one latest bar is correct for every consumer.
+Fix the reproduced special-session mismatch in `report_session.market_session_states`,
+`report_evidence.closed_daily_frame` and the report-facing market-board filter through
+one explicit session reference. Preserve intended per-consumer close buffers and
+KR regular-history guards. Cover normal days, KR holidays/special hours, US early
+closes and missing calendars without fabricating completion.
 
-Deliver one compact per-consumer table and a reproducible fixed-input comparison.
-If captures lack required data, collect only the missing input without overwriting
-old evidence and state the limitation. This audit does NOT change partial-bar
-exclusion policy, score weights, thresholds, labels or provider routing. Any
-behavior-changing fix requires its own explicit scope/evidence. Do not broaden into
-new report features or another speculative provider replacement in this task.
+Start from `test_known_special_session_report_consumers_should_wait_for_actual_close`
+in `tests/test_daily_bar_consumer_audit.py`; remove its xfail once the defect is fixed.
+Run relevant report/price/session contracts before and after. Prove same fixed normal
+session outputs; explain only intended special-session corrections. Do not alter
+decision functions, partial-bar scoring policy, thresholds, labels, TTLs or sources.
+Then verify the deployed report path as available; preserve exports and record exact
+scope. Do not mix in new report features, the ambiguous return-label cleanup or more
+provider replacement work. This is one report-calendar consistency task.
 
 ## Verification Discipline
 
@@ -105,6 +121,6 @@ new report features or another speculative provider replacement in this task.
   `cache/historical_baselines_20261107/`, not restored over current caches.
 - Compare remote requests/cache misses separately from calls; distinguish elapsed
   critical path from overlapping worker totals. Do not change TTLs to claim speedups.
-- New diagnostic command and exact limits: latest comparison record above.
+- New offline audit command and exact limits: latest audit record above.
 - Source architecture: [map](docs/20261104_architecture_refactor_map.md).
   Refactor procedure: [review](docs/maintenance/20261106_bounded_refactor_review.md).
