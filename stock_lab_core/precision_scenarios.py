@@ -157,7 +157,7 @@ def build_precision_scenarios(decision, ticker, context, plan, *, has_pos=False)
     current = _positive(decision.get("cur_p"))
     axes[1] = dict(axes[1], 관측="판정가 " + (format_currency(current, ticker) if current else "미확인") + " · " + location["location"])
     interpretations = [structure,
-        location["location"] + " · 범위 내 위치는 기업 저평가나 반등 확률이 아닙니다.",
+        "범위 내 위치는 기업 저평가나 반등 확률이 아닙니다.",
         "표시된 형성·지속 기간을 근거로 다음 일봉을 비교합니다. 기간만으로 조정 충분·에너지 축적을 확정할 수 없습니다.",
         "거래량·MFI·추정 매물대는 가격 반응의 보조 근거입니다. 손절 주문량·참가자 의도·유동성 사냥 완료는 미확인입니다."]
     axes = [dict(row, 해석=interpretation) for row, interpretation in zip(axes, interpretations)]
@@ -210,12 +210,14 @@ def render_precision_scenarios(st, model):
     st.markdown(f"<p><b>{escape(model['focus'])}</b><br>{escape(model['thesis'])}<br>"
                 f"<b>현재 실행:</b> {escape(model['execution'])}</p>", unsafe_allow_html=True)
     st.caption("일봉 관리 시나리오 · 실시간 발동·승률 판정 아님 · 1시간/5분 단타 계획과 별도")
-    with st.expander("구조·가격·시간·유동성 근거", expanded=True):
+    with st.expander("구조·가격·시간·유동성 근거", expanded=False):
         rows = "".join(f"<tr><th style='width:80px;vertical-align:top;text-align:left;padding:8px;'>{escape(row['축'])}</th>"
                        f"<td style='padding:8px;'><b>{escape(row['관측'])}</b><br>{escape(row['해석'])}"
                        f"<br><small>{escape(row['기준·제한'])}</small></td></tr>" for row in model["axes"])
         st.markdown("<table style='width:100%;table-layout:fixed;overflow-wrap:anywhere;line-height:1.6;'>" + rows + "</table>", unsafe_allow_html=True)
-    for tab, item in zip(st.tabs([row["name"] for row in model["scenarios"]]), model["scenarios"]):
+    # Open the scenario named by the summary first, without changing its analysis.
+    scenarios = sorted(model["scenarios"], key=lambda row: not model["focus"].startswith(row["name"][:2]))
+    for tab, item in zip(st.tabs([row["name"] for row in scenarios]), scenarios):
         with tab:
             rows = [("현재 근거·반대 근거", item["evidence"]), ("확인 조건", item["condition"]), ("보유분", item["holding"]),
                     ("신규·추가 자금", item["new_money"]), ("가격 기준", item["prices"]),

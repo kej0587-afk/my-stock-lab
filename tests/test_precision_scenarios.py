@@ -249,10 +249,13 @@ def test_higher_timeframe_unconfirmed_a_is_explicitly_provisional(case, tf, prov
 class FakeUI:
     def __init__(self):
         self.markdowns, self.captions, self.tab_names = [], [], []
+        self.expanders = []
     def subheader(self, value): pass
     def caption(self, value): self.captions.append(value)
     def markdown(self, value, **kwargs): self.markdowns.append((value, kwargs))
-    def expander(self, *args, **kwargs): return nullcontext()
+    def expander(self, *args, **kwargs):
+        self.expanders.append(kwargs)
+        return nullcontext()
     def tabs(self, names):
         self.tab_names = names
         return [nullcontext() for _ in names]
@@ -274,4 +277,18 @@ def test_renderer_escapes_evidence_plan_and_gate_html_without_mutating_model(cas
     assert html.escape(payload) in output
     assert "현재 근거·반대 근거" in output and "table-layout:fixed" in output
     assert any("승률 판정 아님" in value for value in ui.captions)
+    assert_unchanged(model, before)
+
+
+@pytest.mark.parametrize("focus", ["A안", "B안", "C안"])
+def test_summary_scenario_opens_first_and_evidence_remains_accessible(case, focus):
+    model = build(case)
+    model["focus"] = focus + " · 현재 요약"
+    before = deepcopy(model)
+    ui = FakeUI()
+    render_precision_scenarios(ui, model)
+    assert ui.tab_names[0].startswith(focus)
+    assert len(ui.tab_names) == 3
+    assert ui.expanders == [{"expanded": False}]
+    assert "구조" in ui.markdowns[1][0] and "유동성" in ui.markdowns[1][0]
     assert_unchanged(model, before)

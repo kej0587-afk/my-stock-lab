@@ -21,6 +21,7 @@ from stock_lab_core.decision_workflow import (
     qualify_hold_action_plan,
 )
 from stock_lab_core.execution_gate import GATE_EXECUTABLE
+from stock_lab_core.formatters import format_rr_ratio
 from stock_lab_core.precision_review_export import (
     EXPORT_VERSION,
     PrecisionReviewDownload,
@@ -626,6 +627,7 @@ def test_entry_plan_return_matches_rendered_rows_without_rebuilding():
     render = _load_render_function("render_entry_execution_plan", {
         "st": ui, "pd": pd, "np": np, "clean_float": lambda value, default=0: float(value) if value is not None else default,
         "finite_num": np.isfinite, "format_currency": lambda value, ticker: f"${value:.2f}",
+        "format_rr_ratio": format_rr_ratio,
         "escape_html_value": str, "is_kr_listed": lambda ticker: False,
         "build_leveraged_precision_state": lambda *args: {},
         "is_leveraged_or_inverse_product": lambda *args: False,

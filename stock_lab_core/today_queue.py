@@ -990,31 +990,6 @@ def _compact_action(decision_code: str, decision_label: str, *, is_weight_block:
     return "분할 가능"
 
 
-def _dedup_supports(candidates: list[tuple[str, float]], current_price: float) -> list[tuple[str, float]]:
-    candidates = sorted(candidates, key=lambda item: item[1], reverse=True)
-    unique_candidates: list[tuple[str, float]] = []
-    min_gap = max(current_price * 0.003, 1.0)
-    for label, value in candidates:
-        if all(abs(value - used_value) > min_gap for _, used_value in unique_candidates):
-            unique_candidates.append((label, value))
-    return unique_candidates
-
-
-def _support_candidates(c: dict, current_price: float, stop: float, atr: float) -> list[tuple[str, float]]:
-    candidates: list[tuple[str, float]] = []
-    for label, value in [
-        ("MA5", clean_float(c.get("ma5"), 0.0)),
-        ("MA20", clean_float(c.get("ma20"), 0.0)),
-        ("FVG 상단", clean_float(c.get("fvg_top"), 0.0)),
-        ("FVG 하단", clean_float(c.get("fvg_bottom"), 0.0)),
-        ("0.5ATR", current_price - atr * 0.5 if atr > 0 else 0.0),
-        ("1ATR", current_price - atr if atr > 0 else 0.0),
-    ]:
-        if _finite_num(value) and stop < float(value) < current_price:
-            candidates.append((label, float(value)))
-    return _dedup_supports(candidates, current_price)
-
-
 def build_today_queue_execution_snapshot(
     name: str,
     ticker: str,
@@ -1028,7 +1003,6 @@ def build_today_queue_execution_snapshot(
     c = decision or {}
     tkr = sanitize_ticker_value(ticker)
     cur = clean_float(c.get("cur_p"), 0.0)
-    atr = clean_float(c.get("atr"), 0.0)
     stop = clean_float(c.get("rr_stop"), 0.0)
     target = clean_float(c.get("rr_target"), 0.0)
     # Stored R/R may belong to older prices; only the current price triplet is valid.
@@ -1128,9 +1102,10 @@ def build_today_queue_execution_snapshot(
             "RR값": math.nan,
         }
 
-    supports = _support_candidates(c, cur, stop, atr)
-    if (is_wait or is_poor_rr) and supports:
-        entry_label, entry_price = supports[0]
+    from stock_lab_core.entry_prices import build_entry_price_plan
+    prices = build_entry_price_plan(c, wait_for_pullback=is_wait or is_poor_rr)
+    entry_label, entry_price = prices["entries"][0]
+    if entry_price < cur:
         entry_text = format_currency(entry_price, tkr)
         entry_cond = f"{entry_label} 눌림 후 R/R 재계산" if is_poor_rr else f"{entry_label} 눌림 확인 후 1차"
     else:

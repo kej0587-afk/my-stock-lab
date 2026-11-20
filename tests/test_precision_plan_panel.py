@@ -111,6 +111,51 @@ def test_pullback_entry_and_first_profit_share_risk_basis(display_app, has_pos):
     assert decision == before
 
 
+@pytest.mark.parametrize("rr", [.996, .9999, 1.0, 1.004, 1.496, 1.5, 2.0])
+@pytest.mark.parametrize("wait", [False, True])
+def test_queue_precision_same_price_and_unrounded_boundaries(display_app, rr, wait):
+    from stock_lab_core.today_queue import build_today_queue_execution_snapshot
+    from stock_lab_core.formatters import format_rr_ratio
+    app, ui = display_app
+    decision = held_decision(
+        rr_target=100 + 10 * rr, rr_ratio=99, buy_amt=140000, current_w=1,
+        decision_code="S_UPTREND_WAIT_PULLBACK" if wait else "NEW_ENTRY_LEADER",
+        dec="눌림 대기" if wait else "신규진입",
+        execution_workflow={"게이트상태": GATE_WAIT, "게이트근거": "기존 대기"},
+    )
+    original = deepcopy(decision)
+    queue = build_today_queue_execution_snapshot("Test", "TEST", decision, has_pos=True)
+    plan = app.render_entry_execution_plan("Test", "TEST", decision, has_pos=True)
+    first = next(row for row in plan["rows"] if row["단계"].startswith("추가 1차"))
+    assert first["가격"] == queue["1차기준"] == ("$98.00" if wait or rr < 1 else "$100.00")
+    assert plan["rr_now"] == queue["R/R"] == format_rr_ratio(queue["RR값"])
+    if rr < 1:
+        assert plan["status"] == "현재가 보류 / 눌림 대기"
+    if not wait:
+        assert first["단계"] == ("추가 1차 (30%)" if rr < 1.5 else "추가 1차 (40%)")
+    assert plan["display_status"] == "실행 보류"
+    assert "1차 1." not in ui.markdowns[-1]
+    assert "<details><summary>배분 기준·계획 주의사항</summary>" in ui.markdowns[-1]
+    assert decision == original
+
+
+@pytest.mark.parametrize("allow_current,expected", [(True, "$100.00"), (False, "$98.00")])
+def test_dedicated_leverage_timing_is_not_replaced_by_ordinary_rr_policy(display_app, monkeypatch, allow_current, expected):
+    app, _ = display_app
+    monkeypatch.setattr(app, "build_leveraged_precision_state", lambda *args: {"profile_key": "SOXL"})
+    monkeypatch.setattr(app, "build_leveraged_dca_timing_state", lambda *args: {
+        "status": "기존 레버리지 조건", "allow_current": allow_current,
+        "tranche_weights": [.25, .35, .40],
+    })
+    c = held_decision(rr_target=109, rr_ratio=.9, decision_code="LEVERAGED_RECOVERY_DCA_CONDITIONAL",
+                      dec="조건부", current_w=1, buy_amt=140000)
+    plan = app.render_entry_execution_plan("SOXL", "SOXL", c, has_pos=True)
+    first = next(row for row in plan["rows"] if row["단계"].startswith("추가 1차"))
+    assert first["가격"] == expected
+    assert first["단계"] == "추가 1차 (25%)"
+    assert plan["display_status"] == "실행 보류"
+
+
 def test_held_nasdaq_overweight_keeps_final_check_and_zero_amounts(display_app):
     app, ui = display_app
     decision = held_decision()

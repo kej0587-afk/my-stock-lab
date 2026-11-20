@@ -41,10 +41,10 @@ def render_entry_plan_panel(st, plan, *, workflow, status_color, target_is_proje
         f"{raw_plan_note}"
         f"{target_label} {format_currency(plan['target'], ticker)} <span style='color:#94a3b8;'>({escape_html_value(plan['target_source'])})</span> / "
         f"손절 {format_currency(plan['stop'], ticker)} <span style='color:#94a3b8;'>({escape_html_value(plan['stop_source'])})</span><br>"
-        f"기준가 {format_currency(plan['current_price'], ticker)} / {rr_label} {plan['rr_now']} / "
-        f"1차 {entry_rr[0]} · 2차 {entry_rr[1]} · 3차 {entry_rr[2]}<br>"
+        f"기준가 {format_currency(plan['current_price'], ticker)} / {rr_label} {plan['rr_now']}<br>"
+        "<details><summary>배분 기준·계획 주의사항</summary>"
         f"{escape_html_value(plan['amount_note'])}<br>"
-        "<span style='color:#94a3b8;'>투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</span>"
+        "투자 권유가 아니라, 현재 앱 지표를 주문 전 체크리스트로 풀어쓴 값입니다.</details>"
         "</div>",
         unsafe_allow_html=True,
     )

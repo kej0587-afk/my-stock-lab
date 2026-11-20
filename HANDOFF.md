@@ -20,6 +20,20 @@ Production: `https://3insky.streamlit.app/`.
 ## Current State
 
 Latest bounded work (2026-11-20): read
+[queue/precision price alignment](docs/maintenance/20261120_entry_price_alignment.md).
+This supersedes the numerical-plan next task in the historical entries below.
+Shared pure reference-price construction replaces duplicated support ladders.
+Ordinary poor-R/R first-entry mismatch and precision pre-comparison rounding are
+fixed; dedicated leverage timing and all investment thresholds/gates are retained.
+A/B/C now opens the current focus first; repeated plan explanations are collapsed.
+Focused340pass; historical fixed-input192case full payload parity (intentional
+bug corrections tested separately). Frozen preservation1836pass/0fail/0skip,
+195.338s, source hashes unchanged. Live deployment pending; see record.
+Exactly one next task: reconcile current quote, completed daily bar and channel/
+plan timestamps on identical saved inputs. Other observed duplication/news issues
+are recorded in that document, not silently folded into this change.
+
+Latest bounded work (2026-11-20): read
 [four-axis A/B/C management plans](docs/maintenance/20261120_precision_abc.md).
 The user's clarification asks for actual structure/price/time/liquidity synthesis,
 not another blocked-gate summary. The precision panel now consumes its original

@@ -17572,10 +17572,6 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
                 buy_amt_krw = round(sheet_total * sheet_gap / 100.0, 0)
         except Exception:
             pass
-    ma5 = clean_float(c.get("ma5"), 0.0)
-    ma20 = clean_float(c.get("ma20"), 0.0)
-    fvg_top = clean_float(c.get("fvg_top"), 0.0)
-    fvg_bottom = clean_float(c.get("fvg_bottom"), 0.0)
     pct_b = clean_float(c.get("pct_b"), 0.0)
     decision_code = str(c.get("decision_code", "") or "")
     decision_label = str(c.get("dec", "") or "")
@@ -17583,9 +17579,6 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     target_source = str(c.get("rr_target_source", "") or "차트 구조 목표가")
     stop_source = str(c.get("rr_stop_source", "") or "2ATR 손절")
     target_is_projection = bool(c.get("rr_target_is_projection", False))
-    rr_tp1 = clean_float(c.get("rr_tp1"), 0.0)
-    rr_tp2 = clean_float(c.get("rr_tp2"), 0.0)
-    rr_tp3 = clean_float(c.get("rr_tp3"), 0.0)
     bucket = str(c.get("bucket", "") or "").lower()
     core_dca_rate = clean_float(c.get("core_dca_rate"), 0.0)
     core_dca_amt = clean_float(c.get("core_dca_amt"), 0.0)
@@ -17605,7 +17598,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
     if risk <= 0:
         st.info(f"손절 폭을 산출할 수 없어 {plan_title}을 만들 수 없습니다.")
         return {"ticker": ticker, "status": "unavailable", "reason": "invalid risk width"}
-    rr = round((target - cur) / risk, 2)
+    rr = (target - cur) / risk
 
     block_codes = {
         "REVERSE_TREND_NO_ENTRY", "STRONG_REVERSE_NO_ENTRY", "DOWNTREND_NO_ENTRY",
@@ -17734,58 +17727,25 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         status_color = "#10b981"
         status_note = "현재 앱 신호 기준으로 1차 정찰 후 눌림에서 추가하는 구간입니다."
 
-    support_candidates = []
-    for label, value in [
-        ("MA5", ma5),
-        ("MA20", ma20),
-        ("FVG 상단", fvg_top),
-        ("FVG 하단", fvg_bottom),
-        ("0.5ATR 눌림", cur - atr * 0.5 if atr > 0 else 0.0),
-        ("1ATR 눌림", cur - atr if atr > 0 else 0.0),
-    ]:
-        if finite_num(value) and stop < value < cur:
-            support_candidates.append((label, float(value)))
-    support_candidates = sorted(support_candidates, key=lambda item: item[1], reverse=True)
-    unique_candidates = []
-    min_gap = max(cur * 0.003, 1.0)
-    for label, value in support_candidates:
-        if all(abs(value - used_value) > min_gap for _, used_value in unique_candidates):
-            unique_candidates.append((label, value))
-    support_candidates = unique_candidates
-
-    if leveraged_timing and not leveraged_timing.get("allow_current", False) and support_candidates:
-        entry1_label, entry1 = support_candidates[0]
+    from stock_lab_core.entry_prices import build_entry_price_plan
+    leverage_wait = bool(leveraged_timing) and not leveraged_timing.get("allow_current", False)
+    # The dedicated leverage timing policy keeps its existing current-entry rule.
+    poor_rr_wait = is_poor_rr and not leveraged_timing
+    prices = build_entry_price_plan(c, wait_for_pullback=is_wait or leverage_wait or poor_rr_wait)
+    (entry1_label, entry1), (entry2_label, entry2), (entry3_label, entry3) = prices["entries"]
+    entry1_label, entry2_label, entry3_label = (
+        label + " 눌림" if label.endswith("ATR") else label
+        for label in (entry1_label, entry2_label, entry3_label)
+    )
+    if leverage_wait and prices["supports"]:
         entry1_cond = leveraged_timing.get("entry1_cond") or f"{entry1_label} 눌림 확인 후 1차"
-    elif is_wait and support_candidates:
-        entry1_label, entry1 = support_candidates[0]
+    elif poor_rr_wait and prices["supports"]:
+        entry1_cond = f"{entry1_label} 눌림 후 R/R 재계산"
+    elif is_wait and prices["supports"]:
         entry1_cond = f"{entry1_label} 눌림 확인 후 1차"
     else:
-        entry1 = cur
         entry1_cond = "현재 보유분 유지, 추가 1차는 현재가 부근 소액만" if has_pos else "현재가 부근 1차 정찰"
-
-    if len(support_candidates) >= 2:
-        entry2_label, entry2 = support_candidates[1]
-    elif support_candidates:
-        entry2_label, entry2 = support_candidates[0]
-    else:
-        entry2_label, entry2 = "0.5ATR 눌림", max(stop + risk * 0.45, cur - risk * 0.25)
-
-    if len(support_candidates) >= 3:
-        entry3_label, entry3 = support_candidates[2]
-    else:
-        entry3_label = "손절 전 마지막 방어선"
-        entry3 = stop + risk * 0.25
-        if abs(entry3 - entry2) <= min_gap:
-            entry3 = max(stop + risk * 0.15, entry2 - risk * 0.25)
-
-    if target_is_projection and atr > 0:
-        tp1 = rr_tp1 if rr_tp1 > cur else cur + atr
-        tp2 = rr_tp2 if rr_tp2 > cur else cur + atr * 2.0
-        tp3 = rr_tp3 if rr_tp3 > cur else target
-    else:
-        tp1 = min(target, entry1 + (entry1 - stop))
-        tp2 = target
-        tp3 = target
+    tp1, tp2, tp3 = prices["exits"]
 
     if leveraged_timing:
         tranche_weights = leveraged_timing.get("tranche_weights", [0.0, 0.0, 0.0])
@@ -17818,7 +17778,7 @@ def render_entry_execution_plan(name, ticker, c, has_pos=False, usdkrw=1400.0, m
         entry = clean_float(entry_price, 0.0)
         if entry <= 0 or stop <= 0 or target <= entry or stop >= entry:
             return "-"
-        return f"{(target - entry) / (entry - stop):.2f}"
+        return format_rr_ratio((target - entry) / (entry - stop))
 
     def tranche_label(label, weight):
         pct = clean_float(weight, 0.0) * 100
