@@ -28,7 +28,17 @@ borrowed, even if prices match. Polling now identifies its source while time sta
 unknown. The domestic batch reuse scope preserves the carrier instead of casting
 it away. No numeric quote, request/order/TTL, score/gate or daily-bar policy change.
 Focused tests: 210 passed. Final selected-all gate: 2,466 passed, zero
-failures/errors/skips, 234.228s (`all_t0oang_2`). Deployment evidence pending.
+failures/errors/skips, 234.228s (`all_t0oang_2`). Code `eb0af4a2` pushed and owner
+Cloud Reboot completed directly. Actual Today: 95 rows, 106.065s, full completed
+run `c4cd1b65cb224e08ae4aefaee052ed76` on new code, no stale report modules.
+45 domestic rows now identify naver_polling; their per-item timestamps are still
+absent at the provider, not reconstructed. Other 50 Yahoo chart times remain.
+379810 precision before/after: price 23,180, input ID bf23c77900eefde6, scores,
+grade, decision code and gate match. All five quote/reuse/input helper hashes
+match loaded/disk/committed; no stale modules. Actual basic timestamp was checked
+locally and in fixed fallback tests, not falsely claimed as selected in Cloud.
+Normal refresh is not fully cold; no speedup claim. Private files are under
+Downloads and ignored cache/operating_20261121/ (see the linked record).
 The single current next task is at **Next Task Only** below.
 
 Latest bounded work (2026-11-21): read
