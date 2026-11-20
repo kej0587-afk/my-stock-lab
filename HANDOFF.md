@@ -25,16 +25,28 @@ Base0a8bbb73. Report-only SEC filing/exhibit discovery for held/watch issuers an
 DART periodic-report discovery replace the fixed seven-company front list.
 Publication/receipt/acceptance/fiscal-period distinctions and missing values are
 preserved; no investment thresholds or numerical decision inputs changed.
-Final preservation gate1820pass/0fail/0skip, hashes unchanged during verification
-(`all_y48q057n`). Focused tests and operating deployment status are in the record.
+Code fc9a0197 and bounded follow-up29d918b0 are operating-verified. A final
+DART company-name/report-title separation follows that evidence. Preservation
+gate1820pass/0fail/0skip, hashes unchanged (`all_z97aj3ek`), focused293pass.
+Evidence and limits are in the record.
 Generic KR filing discovery currently confirms document/period only; metrics and
 outlook still need verified extraction. SEC periodless titles/large exhibits/6-K
 remain explicit gaps. Do not claim all earnings or all earlier backlog complete.
-Operating verification is pending this code commit; update this entry after the
-authorized reboot and new report. Next task must follow the observed evidence,
-not an issuer-specific hardcoded report sentence.
+The first operating run connected18official announcements (previous6), including
+PANW FY2027Q1 actuals/FCF/Q2 outlook and NVDA FY2027Q3/Q4 outlook; 95rows/18core
+fields stayed equal across report generation. Follow-up guards exclude exported
+ETF metadata, reject accounting definitions as outlook, distinguish DART report
+receipt from earnings announcement, and report the DART identity failure stage.
+The existing public DART identity snapshot is expired; never date-shift it.
+The11:54follow-up report's live DART queries succeeded:74registered,13official
+announcements,12periodic-report confirmations; DDOG's false outlook was removed.
+All116source hashes matched Git and95rows/18corefields matched before/after.
+Final company-name display verification follows its deployment.
+Exactly one next task: extract generic KR actual quarter values from verified
+report evidence, separately from publication dates and management outlook.
+Do not add issuer-specific prose or infer an announcement time from receipt.
 
-Current work (2026-11-20): read
+Earlier work (2026-11-20): read
 [data/explanation audit](docs/maintenance/20261120_data_and_explanation_audit.md).
 Base12269b6b; report-only regular-close source correction, financial period
 regression protection/SEC comparison, consistent precision final-check display,
@@ -49,8 +61,8 @@ calculation82.1s/report generation78.689s are observations, not speedup claims.
 Not all requested work is complete: finite official earnings coverage, delayed US
 histories, broad news interpretations, full chart geometry and server-local Today
 cache durability remain. Read the audit's precise limits before promising parity.
-Exactly one next task: generic official quarterly release discovery/period
-lifecycle on a frozen multi-sector fixture, not issuer-specific report prose.
+Its deferred generic official release discovery task is addressed by the newer
+record above; consult that record's explicit coverage gaps before extending it.
 
 Current bounded work (2026-11-16 holdings session display): read
 [holdings verification](docs/maintenance/20261116_holdings_display.md) first.

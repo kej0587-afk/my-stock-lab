@@ -174,6 +174,16 @@ def dart_payload(**changes):
                                         rcept_dt="20261116", rcept_no="20261116000001", **changes)])
 
 
+@pytest.mark.parametrize("name", ["Example Korea", "", None])
+def test_dart_company_name_never_uses_the_filing_title(name):
+    event = latest_dart_report(dart_payload(corp_name=name), "00123456", "123456.KS", NOW)
+    expected = name or "123456.KS"
+    assert event["name"] == expected
+    assert event["event"] == "분기보고서 (2026.09)"
+    pipeline = build_earnings_pipeline(dict(calendar_events=[event]), now=NOW)
+    assert pipeline["packets"][0]["name"] == expected
+
+
 def test_dart_receipt_is_not_announcement_or_inferred_fiscal_quarter():
     event = latest_dart_report(dart_payload(), "00123456", "123456.KS", NOW)
     assert event["release_date_confirmed"] is False

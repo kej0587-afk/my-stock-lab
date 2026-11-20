@@ -132,3 +132,28 @@ report-section/discovery/catalyst checks then passed 76/76. The final focused
 integration passed 270/270 in 16.14 s. The final selected preservation gate passed
 1820/1820, no errors/skips, in 197.65 s (`all_m_oiy2ps`); source hashes were
 unchanged throughout that gate. Follow-up operating verification follows below.
+
+Code `29d918b0` was pushed and rebooted with the user's prior authorization.
+The 11:54 KST report (private report50, generation25fe25d49720412596d6b439f422854a)
+completed in115.888s with no termination exception. All116loaded/disk/Git hashes
+matched; report download SHA matched. Pre/post exports11:51/11:55 again matched
+95rows/18corefields. The cold Today calculation was117.0s. Official collection
+26.148s/discovery23.582s,76instrumented requests; these changing live conditions
+do not support a performance improvement claim.
+
+Operating coverage was74registered issuers,13official announcement confirmations,
+12periodic-report confirmations (categories can overlap). The TDF no longer
+entered the company catalog. DDOG retained its actuals/FCF but the accounting
+definition was no longer reported as outlook. PANW still showed explicit FY2027Q1
+actuals/FCF and FY2027Q2 outlook. Unlike the preceding run, live DART identity and
+report-list requests succeeded for12companies: report receipt/period were shown
+separately, not treated as announcement date or complete numerical actuals.
+Other companies remained explicitly deferred by the bounded collection budget.
+
+That newly connected DART branch exposed a display defect: some unknown-universe
+issuers used the filing title as the company name. The parser now carries the
+verified DART corp_name separately from report_nm; absent names fall back to the
+ticker, not the filing title. Three source/pipeline regression cases cover this.
+Final focused integration including report-section contracts:293pass/15.79s.
+The final label-fix preservation gate passed1820/1820 with no errors/skips and
+unchanged source hashes,201.32s (`all_z97aj3ek`).

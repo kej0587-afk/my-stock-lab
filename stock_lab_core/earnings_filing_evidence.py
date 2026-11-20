@@ -243,11 +243,11 @@ def latest_dart_report(payload, corp, ticker, now):
         period = f"{match[2]}-{match[3]}"
         if not 1 <= int(match[3]) <= 12 or day > today or period > day.isoformat()[:7] or (today - day).days > 200:
             continue
-        candidates.append((period, day.isoformat(), receipt, title))
+        candidates.append((period, day.isoformat(), receipt, title, str(row.get("corp_name") or ticker).strip()))
     if not candidates:
         raise ValueError("dart_period_report_unavailable")
-    period, day, receipt, title = max(candidates)
-    return dict(ticker=ticker, event=title, indicator="COMPANY_EARNINGS", market="KR", date=day,
+    period, day, receipt, title, name = max(candidates)
+    return dict(ticker=ticker, name=name or ticker, event=title, indicator="COMPANY_EARNINGS", market="KR", date=day,
                 fiscal_period=f"{period} 보고기간·회계분기 미확인", reporting_period_end_month=period,
                 event_kind="regulatory_report", event_status="released", status="공식 정기보고서 확인",
                 source="DART 정기보고서", source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt}",
