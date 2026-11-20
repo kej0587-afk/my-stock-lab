@@ -72,6 +72,9 @@ def price_input_identity(source, chart, *, ticker="", input_price=None):
             digest.update(b"missing")
             continue
         values = frame.reindex(columns=PRICE_COLUMNS).apply(pd.to_numeric, errors="coerce").astype(float)
+        # pandas 2/3 and CSV replay can encode identical dates as ns/us/ms/s.
+        if isinstance(values.index, pd.DatetimeIndex):
+            values.index = values.index.as_unit("ns")
         # Include provisional status; equal prices do not imply equal observations.
         values["LiveQuoteOnly"] = frame.get("LiveQuoteOnly", pd.Series(False, index=frame.index)).fillna(False).astype(bool)
         digest.update(pd.util.hash_pandas_object(values, index=True).values.tobytes())

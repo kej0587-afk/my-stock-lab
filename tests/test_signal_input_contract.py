@@ -114,6 +114,38 @@ def test_identity_detects_source_quote_ticker_or_provisional_changes():
     assert key != price_input_identity(source, altered, ticker='SOXL', input_price=100)
 
 
+@pytest.mark.parametrize('unit', ['ns', 'us', 'ms', 's'])
+def test_identity_ignores_datetime_storage_resolution(unit):
+    source = make_price_df(seed=17)
+    other = source.copy()
+    other.index = other.index.as_unit(unit)
+    assert price_input_identity(source, source, ticker='SOXL', input_price=42.93) == price_input_identity(
+        other, other, ticker='SOXL', input_price=42.93)
+
+
+def test_exported_price_frames_replay_same_identity(monkeypatch):
+    from stock_lab_core.precision_review_export import build_precision_review_export_zip
+    source = make_price_df(seed=17)
+    price = float(source.Close.iloc[-1]) * .92
+    monkeypatch.setattr(engine, '_get_live_price_row_date', lambda _: source.index[-1])
+    chart, applied = engine.apply_live_price_to_ohlcv(source, price, 'SOXL')
+    assert applied
+    data = build_precision_review_export_zip(selected_ticker='SOXL', result_ticker='SOXL',
+        decision={'cur_p': price}, ohlcv={'source':source, 'chart':chart})
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        replay = []
+        for label in ('source', 'chart'):
+            entry = manifest['ohlcv'][label]
+            frame = pd.read_csv(io.BytesIO(archive.read(entry['file'])), float_precision='round_trip')
+            frame.index = pd.DatetimeIndex(pd.to_datetime(frame.pop('_row_index'))).as_unit('us')
+            frame.attrs = entry['attrs']
+            replay.append(frame)
+    assert price_input_identity(source, chart, ticker='SOXL', input_price=price) == price_input_identity(
+        *replay, ticker='SOXL', input_price=price)
+    assert engine.calc_atr_for_decision(replay[1]) == engine.calc_atr_for_decision(source)
+
+
 def test_real_entrypoints_share_context_and_pass_quote_identity():
     tree = ast.parse((Path(__file__).parents[1]/'app.py').read_text(encoding='utf-8-sig'))
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)]
