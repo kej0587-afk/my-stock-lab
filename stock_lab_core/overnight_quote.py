@@ -7,6 +7,7 @@ import math
 from types import MappingProxyType
 
 from stock_lab_core import report_build
+from stock_lab_core.quote_observation import QuoteObservation
 
 report_build.register_loaded_source(__name__, __file__)
 IMPORTED_SOURCE = MappingProxyType(dict(report_build._LOADED[__name__]))
@@ -90,5 +91,7 @@ def extract_overnight_quote(text, ticker, is_recent):
             if math.isfinite(price) and price > 0 and is_recent(stamp):
                 candidates.append((stamp, price))
         if candidates:
-            return max(candidates)[1]
+            stamp, price = max(candidates)
+            return QuoteObservation(price, source="yahoo_overnight", symbol=ticker,
+                                    observed_at=stamp, session=prefix, timestamp_kind="trade")
     return 0.0

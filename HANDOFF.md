@@ -19,6 +19,22 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-20 evening): read
+[selected quote observation contract](docs/maintenance/20261120_quote_observation_contract.md).
+The exact selected Yahoo scalar now retains supplier timestamp, timestamp meaning
+and supplied session evidence through caches and Today/board/precision basis.
+Candle timestamps are bar starts, not last-trade times. Manual/untimed/other-provider
+prices remain explicitly unknown. Daily-source audit is display-only and does not
+certify or remove partial vendor bars. No numerical price, score, gate, priority,
+request count or cache TTL policy change. Final frozen selected-all gate: 2,210
+passed, zero failures/errors/skips, 222.544s (`all_d4eezq90`). Nine obsolete local
+Nov 7 cache comparisons also failed on untouched 7ee2fc7d; 41 artifacts preserved
+with matching hashes under `cache/historical_baselines_20261107/`. No golden
+regeneration. Deployment verification is pending push/reboot below.
+The single current next task is at **Next Task Only** below; all older next-task
+sentences in historical entries are superseded.
+
+
 Latest bounded work (2026-11-20): read
 [shared price inputs and same-date ATR](docs/maintenance/20261120_price_input_contract.md).
 Same-date scalar overlays now preserve the original last source OHLCV for ATR;
@@ -1678,16 +1694,15 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Prevent unnecessary Today reruns for read-only full-report/review-ZIP downloads.**
+**Carry the selected domestic Naver quote's own timestamp through the same contract.**
 
-Latest operating report generation was76.469s, but clicking the legacy full-report
-or review-ZIP export still incurs about20s of screen processing. New summary and
-evidence downloads already use on_click="ignore". Limit the next task to those
-legacy read-only exports: preserve bytes, hashes, names and matching measurement
-IDs; verify clicking does not recalculate signals/fetch sources/change state.
-Handle historical app-AST contracts with a narrowly reviewed UI-only allowance,
-not new golden baselines. No score/gate/price/cache TTL/provider/auth changes.
-Confirm in production, update this handoff, preserve the Customs stash.
+Inspect captured existing Naver responses for an attributable symbol/price/time.
+Reuse the existing response only, preserving provider priority, numeric selection,
+TTL, request count and all decisions. If a timestamp/session cannot be verified,
+leave it unknown. Compare the same captured source daily frame and quote, including
+possible intraday rows; do not silently certify or drop bars. Verify Today/precision
+exports and production hashes. Keep KIS/yfinance/untimed fallback coverage explicit.
+Do not resume superseded report-download/news work from older historical entries.
 
 ## Evidence and Remaining Limits
 

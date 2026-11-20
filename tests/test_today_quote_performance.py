@@ -296,6 +296,7 @@ def test_investment_functions_are_unchanged():
     from tests.test_summary_wait_diagnostics import strip_added_timing
     from tests.decision_finalization_reference import restore_finalization_for_ast
     from tests.signal_basis_reference import before_price_basis_identity
+    from tests.quote_observation_reference import before_quote_observation
     # Freeze after the approved recovery display fix. Precision context was
     # extracted and has three-view frozen-input coverage in test_execution_context.
     baseline = subprocess.check_output(["git", "show", "31513a51:app.py"], cwd=ROOT, encoding="utf-8-sig")
@@ -309,6 +310,7 @@ def test_investment_functions_are_unchanged():
         functions = {node.name: node for node in ast.parse(code).body
                      if isinstance(node, ast.FunctionDef) and node.name in names}
         if index:
+            functions['load_display_live_price'] = before_quote_observation(functions['load_display_live_price'])
             functions['_compute_summary_item'] = before_price_basis_identity(functions['_compute_summary_item'])
             # Restore only the approved SMC/finalization extractions. Their actual
             # bodies, arguments, return order and outputs are independently frozen

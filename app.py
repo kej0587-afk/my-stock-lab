@@ -17312,16 +17312,18 @@ def fetch_yahoo_daymarket_price_direct(ticker: str) -> float:
 
 @timed_call("prices")
 def load_display_live_price(ticker: str) -> float:
-    latest = clean_float(load_latest_price(ticker), 0.0)
+    observed = load_latest_price(ticker)
+    latest = clean_float(observed, 0.0)
     if latest > 0:
-        return latest
+        return observed if isinstance(observed, float) else latest
     if ticker and not is_kr_listed(ticker):
         direct = fetch_yahoo_daymarket_price_direct(ticker)
         if direct > 0:
             return direct
-        regular_close = clean_float(_fetch_yahoo_regular_close_price(ticker), 0.0)
+        observed_close = _fetch_yahoo_regular_close_price(ticker)
+        regular_close = clean_float(observed_close, 0.0)
         if regular_close > 0:
-            return regular_close
+            return observed_close if isinstance(observed_close, float) else regular_close
     return 0.0
 
 

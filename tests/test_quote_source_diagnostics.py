@@ -65,8 +65,11 @@ def test_provider_body_matches_fixed_revision_except_diagnostics_and_gzip_transp
     ).stdout
     after = (ROOT / "stock_lab_core/prices.py").read_text(encoding="utf-8-sig")
     functions = []
-    for source in (before, after):
+    for index, source in enumerate((before, after)):
         node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == name)
+        if index:
+            from tests.quote_observation_reference import before_provider_observation
+            node = before_provider_observation(node)
         functions.append(ast.dump(RemoveDiagnostics().visit(deepcopy(node)), include_attributes=False))
     assert functions[0] == functions[1]
 
@@ -90,7 +93,7 @@ class Response:
 def test_transport_counts_actual_requests_without_exposing_payload(monkeypatch, kind, outcome):
     prices._fetch_yahoo_regular_close_price.clear()
     monkeypatch.setattr(prices, "_looks_like_us_equity_ticker", lambda ticker: True)
-    monkeypatch.setattr(prices, "_last_candle_close", lambda result: 145.25)
+    monkeypatch.setattr(prices, "_last_candle_close", lambda result, ticker="", source="yahoo_chart": 145.25)
     monkeypatch.setattr(prices, "_extract_yahoo_overnight_price_from_html",
                         lambda text, ticker: 145.25 if outcome == "success" else 0.)
     row = {"meta": {"symbol": "TEST"}, "indicators": {"quote": [{"close": [None, 145.25]}]}}

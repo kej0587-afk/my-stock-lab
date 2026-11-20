@@ -170,7 +170,8 @@ def test_basis_survives_workflow_export_and_view_projection():
         decision=decision, context={'signal_basis': basis}, workflow_display=pd.DataFrame([workflow]))
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         exported = json.loads(archive.read('snapshot.json'))['sections']['context']['signal_basis']
-    for column in ('가격입력ID','현재가출처','임시봉날짜의미','ATR기준일'):
+    for column in ('가격입력ID','현재가출처','임시봉날짜의미','ATR기준일',
+                   '현재가관측시각','현재가관측UTC','현재가세션','현재가시각종류','원자료봉상태'):
         assert column in _DETAIL_COLUMNS and column in DETAIL_COLUMNS
         assert workflow[column] == exported[column] == basis[column]
 

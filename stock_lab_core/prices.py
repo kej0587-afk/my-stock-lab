@@ -27,6 +27,7 @@ from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, i
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.yahoo_chart_connections import open_yahoo_chart, reuse_yahoo_chart_connections
 from stock_lab_core.price_batch_selection import DownloadFrameSelector
+from stock_lab_core.quote_observation import QuoteObservation
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -1676,7 +1677,8 @@ def _fetch_us_realtime_price(ticker: str) -> float:
     def _first_price(source_calls) -> float:
         for source in source_calls:
             try:
-                price = float(source() or 0.0)
+                selected = source() or 0.0
+                price = selected if isinstance(selected, QuoteObservation) else float(selected)
             except Exception:
                 price = 0.0
             if price > 0:
@@ -1837,7 +1839,38 @@ def _fetch_yahoo_overnight_page_price(ticker: str) -> float:
     return 0.0
 
 
-def _last_candle_close(result: dict) -> float:
+def _candle_session(meta, timestamp) -> str:
+    """Use only this response's nonoverlapping supplier session intervals."""
+    periods = meta.get("currentTradingPeriod") if isinstance(meta, dict) else None
+    if not isinstance(periods, dict) or isinstance(timestamp, bool):
+        return "unknown"
+    try:
+        stamp = float(timestamp)
+        if not math.isfinite(stamp) or stamp <= 0:
+            return "unknown"
+        intervals = []
+        for session in ("pre", "regular", "post"):
+            if session not in periods:
+                continue
+            period = periods[session]
+            if not isinstance(period, dict):
+                return "unknown"
+            start, end = period.get("start"), period.get("end")
+            if isinstance(start, bool) or isinstance(end, bool):
+                return "unknown"
+            start, end = float(start), float(end)
+            if not (math.isfinite(start) and math.isfinite(end) and 0 < start < end):
+                return "unknown"
+            intervals.append((start, end, session))
+        intervals.sort()
+        if any(left[1] > right[0] for left, right in zip(intervals, intervals[1:])):
+            return "unknown"
+        return next((session for start, end, session in intervals if start <= stamp < end), "unknown")
+    except (TypeError, ValueError, OverflowError):
+        return "unknown"
+
+
+def _last_candle_close(result: dict, ticker: str = "", source: str = "yahoo_chart") -> float:
     """
     Yahoo v8 chart 응답에서 가장 최근 1분봉 Close 값을 꺼냅니다.
     meta.regularMarketPrice 는 종종 이전 세션 종가를 캐싱하므로 캔들이 더 정확합니다.
@@ -1853,9 +1886,14 @@ def _last_candle_close(result: dict) -> float:
             ts = stamps[idx] if idx < len(stamps) else 0
             if stamps and not _is_recent_epoch(ts):
                 continue
-            valid.append(close)
+            valid.append((close, ts))
         if valid:
-            return float(valid[-1])
+            close, ts = valid[-1]
+            meta = result.get("meta")
+            symbol = meta.get("symbol") if isinstance(meta, dict) else None
+            return QuoteObservation(float(close), source=source, symbol=symbol or ticker,
+                                    observed_at=ts, session=_candle_session(meta, ts),
+                                    timestamp_kind="bar_start")
     except Exception:
         pass
     return 0.0
@@ -1898,7 +1936,7 @@ def _fetch_yahoo_chart(ticker: str, interval: str, range_: str) -> tuple[float, 
                 continue
             result = results[0]
             meta = result.get("meta", {})
-            return _last_candle_close(result), meta
+            return _last_candle_close(result, ticker=ticker, source="yahoo_chart"), meta
         except Exception as exc:
             _quote_transport_event("yahoo_chart", "error", exc)
             message = str(exc)
@@ -1993,13 +2031,14 @@ def _accept_us_untimed_quote_price(ticker: str, price: float) -> float:
     return repaired if repaired > 0 else 0.0
 
 
-def _meta_best_price(meta: dict) -> float:
+def _meta_best_price(meta: dict, ticker: str = "", source: str = "yahoo_chart") -> float:
     """meta 필드에서 timestamp 기준 가장 최근 가격을 뽑는다."""
     best_price, best_ts = 0.0, 0
-    for price_key, time_key in (
-        ("postMarketPrice",    "postMarketTime"),
-        ("preMarketPrice",     "preMarketTime"),
-        ("regularMarketPrice", "regularMarketTime"),
+    best_session = "unknown"
+    for price_key, time_key, session in (
+        ("postMarketPrice",    "postMarketTime", "post"),
+        ("preMarketPrice",     "preMarketTime", "pre"),
+        ("regularMarketPrice", "regularMarketTime", "regular"),
     ):
         val = meta.get(price_key)
         ts = meta.get(time_key) or 0
@@ -2009,12 +2048,18 @@ def _meta_best_price(meta: dict) -> float:
             ts = 0
         if val and float(val) > 0 and ts > best_ts and _is_recent_epoch(ts):
             best_price, best_ts = float(val), ts
+            best_session = session
     if best_price > 0:
-        return best_price
+        return QuoteObservation(best_price, source=source, symbol=meta.get("symbol") or ticker,
+                                observed_at=best_ts, session=best_session, timestamp_kind="trade")
     for key in ("regularMarketPrice", "currentPrice", "chartPreviousClose"):
         val = meta.get(key)
         if val and float(val) > 0:
-            return float(val)
+            regular = key == "regularMarketPrice"
+            return QuoteObservation(float(val), source=source, symbol=meta.get("symbol") or ticker,
+                                    observed_at=meta.get("regularMarketTime") if regular else None,
+                                    session="regular" if regular else "unknown",
+                                    timestamp_kind="trade" if regular else "unknown")
     return 0.0
 
 
@@ -2023,7 +2068,7 @@ def _fetch_yahoo_quote(ticker: str) -> float:
     Yahoo Finance chart API 직접 호출 — yfinance SQLite lock 없음.
 
     우선순위:
-      1) 1분봉(range=1d) 캔들의 마지막 Close  ← 진짜 실시간 체결가
+      1) 1분봉(range=1d) 캔들의 마지막 Close (timestamp는 봉 시작 시각)
       2) 5분봉(range=2d) 캔들의 마지막 Close  ← 1분봉 데이터 없을 때 재시도
       3) meta.postMarket/preMarket/regularMarketPrice (timestamp 최신 기준)
       4) meta.currentPrice / chartPreviousClose
@@ -2060,7 +2105,7 @@ def _fetch_yahoo_quote(ticker: str) -> float:
         return candle_5m
 
     # 3/4) 캔들 데이터 없음 → meta 필드 폴백 (1분봉 meta 우선, 없으면 5분봉 meta)
-    price = _meta_best_price(meta) or _meta_best_price(meta_5m)
+    price = _meta_best_price(meta, ticker=ticker) or _meta_best_price(meta_5m, ticker=ticker)
     return price
 
 
