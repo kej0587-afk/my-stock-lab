@@ -25,10 +25,10 @@ Base0a8bbb73. Report-only SEC filing/exhibit discovery for held/watch issuers an
 DART periodic-report discovery replace the fixed seven-company front list.
 Publication/receipt/acceptance/fiscal-period distinctions and missing values are
 preserved; no investment thresholds or numerical decision inputs changed.
-Code fc9a0197 and bounded follow-up29d918b0 are operating-verified. A final
-DART company-name/report-title separation follows that evidence. Preservation
-gate1820pass/0fail/0skip, hashes unchanged (`all_z97aj3ek`), focused293pass.
-Evidence and limits are in the record.
+Codes fc9a0197,29d918b0,fa1710f1,c2839821 and final presentation-only dollar
+escape453635d1 are pushed and operating-verified. Latest preservation
+gate1820pass/0fail/0skip, hashes unchanged
+(`all_6qcsay9u`), focused335pass. Evidence and limits are in the record.
 Generic KR filing discovery currently confirms document/period only; metrics and
 outlook still need verified extraction. SEC periodless titles/large exhibits/6-K
 remain explicit gaps. Do not claim all earnings or all earlier backlog complete.
@@ -38,10 +38,21 @@ fields stayed equal across report generation. Follow-up guards exclude exported
 ETF metadata, reject accounting definitions as outlook, distinguish DART report
 receipt from earnings announcement, and report the DART identity failure stage.
 The existing public DART identity snapshot is expired; never date-shift it.
-The11:54follow-up report's live DART queries succeeded:74registered,13official
-announcements,12periodic-report confirmations; DDOG's false outlook was removed.
-All116source hashes matched Git and95rows/18corefields matched before/after.
-Final company-name display verification follows its deployment.
+The12:23report53 used c2839821:74registered,13official announcements,
+12periodic-report confirmations. DART company names were correct and receipts
+no longer appeared in either catalyst calendar. The evidence table retained
+receipt/period/missing metrics. DDOG's false accounting-definition outlook was
+removed. All116loaded/disk/Git source hashes and the report checksum matched;
+95rows/18corefields matched before/after generation. Collection105.186s is a
+live observation, not a controlled speedup comparison. DART transport can still
+fail intermittently; an earlier run exposed connect_timeout, a retry connected.
+Final12:34report54 used453635d1:74registered,21official announcements,
+31periodic reports (categories may overlap). All116loaded/disk/Git hashes and
+report checksum matched, no restart/stale modules/generation exception.
+12:25/12:36exports retained95rows/18corefields. PANW actuals/FCF versus next-quarter
+outlook and missing CAPEX/reaction were visually checked; dollars now render
+literally in the detailed table. Warm generation67.471s is not a speedup claim.
+Private screenshot:cache/operating_20261120/official_earnings_final.jpg.
 Exactly one next task: extract generic KR actual quarter values from verified
 report evidence, separately from publication dates and management outlook.
 Do not add issuer-specific prose or infer an announcement time from receipt.

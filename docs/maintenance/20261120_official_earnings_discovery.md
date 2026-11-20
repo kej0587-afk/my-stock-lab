@@ -198,3 +198,27 @@ existing guidance test now covers the detailed renderer and input immutability.
 Focused integration after this display correction:335pass/15.72s.
 Preservation gate after it:1820pass/0fail/0skip,198.186s (`all_6qcsay9u`),
 source hashes unchanged. No golden baseline was regenerated.
+
+## Final Deployment Check
+
+Code `453635d1` was pushed and hot-loaded. After the deployment rerun finished,
+the12:34report54 (generation`63a496ffa07446bc87da73b684e6a544`) completed normally
+in67.471s. Official collection22.388s/discovery21.214s; cache/source conditions
+differ from preceding runs, so these timings are not a controlled speedup claim.
+All116loaded/disk/Git hashes and the downloaded report checksum match.
+restart_required=false, no stale module or termination exception.
+
+Final coverage:74registered issuers,21official announcements,31periodic reports;
+these counts can overlap and do not mean all issuer metrics are available.
+No periodic-report title appears in either catalyst calendar. The coverage
+table keeps document confirmation separate from announcement date/quarter values.
+Private12:25/12:36review ZIP exports match95rows/18corefields. Actual PANW detail
+view was inspected: revenue/profit/FCF remain actuals, Q2outlook remains outlook,
+CAPEX and price reaction stay missing, and paired dollar amounts no longer become
+math or lose spacing. Screenshot is private and ignored by Git:
+`cache/operating_20261120/official_earnings_final.jpg`.
+
+Next bounded task: generic KR per-quarter actuals from verified report evidence,
+separately from receipt dates, announcement dates and forward guidance. Preserve
+the existing DART failure diagnostics and do not reuse an expired identity map.
+This completes the bounded discovery/display task, not all earlier audit backlog.
