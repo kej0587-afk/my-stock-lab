@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCOPES = {
     "decision": (
         "test_quote_only_atr",
+        "test_signal_input_contract", "test_signal_basis",
         "test_scenario_evidence", "test_precision_scenarios", "test_precision_observation", "test_leveraged_quote_view",
         "test_source_flow_row", "test_flow_connection", "test_today_mtf_snapshot",
         "test_decision_golden_snapshot", "test_decision_refactor_parity",

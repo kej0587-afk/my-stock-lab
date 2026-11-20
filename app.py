@@ -20978,7 +20978,7 @@ def _compute_summary_item(item, mode, snap_macro_penalty, snap_final_macro_risk,
         bm = get_auto_benchmark_info(tkr, name, a_class, is_etf)
     sector_rs_label = bm["sector_rs_label"] if bm["sector_bench"] else "-"
     sector_rs_state = classify_sector_rs_state(sector_rs_label, is_etf=is_etf)
-    c["input_basis"] = {**build_signal_basis(df, live_context), **financial_basis(financial_meta, is_etf=is_etf)}
+    c["input_basis"] = {**build_signal_basis(df, live_context, ticker=tkr, input_price=_live_p), **financial_basis(financial_meta, is_etf=is_etf)}
     c["flow_context"] = source_flow_context
     workflow = build_decision_workflow(
         name, tkr, c, is_etf=is_etf, has_pos=has_p,
@@ -33230,15 +33230,16 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         fin_meta = dict(fin_meta, evidence_audit=build_financial_evidence_review(fin_meta))
         my_price = get_my_price(name, tkr)
         has_pos_value = has_position(name, tkr)
-        c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드", live_price=load_display_live_price(tkr))
-        chart_df, live_applied = apply_live_price_to_ohlcv(df, c.get("cur_p", 0.0), tkr)
-        if live_applied:
-            chart_df = build_indicators(chart_df)
+        demo_live_price = load_display_live_price(tkr)
+        demo_live_context = apply_live_price_with_indicators(df, demo_live_price, tkr, build_indicators)
+        c = calc_scores_and_decision(name, tkr, is_etf, asset_class, df, my_price, has_pos_value, int(fin_score), False, "개인모드",
+                                     live_price=demo_live_price, _live_indicator_context=demo_live_context)
+        chart_df, live_applied, demo_live_issue = demo_live_context
         mtf_pack = build_precision_multi_timeframe_pack(tkr, chart_df)
         c = apply_precision_mtf_decision_guard(c, mtf_pack, has_pos=has_pos_value)
         c = apply_leveraged_precision_decision_override(c, name, tkr, has_pos_value, my_price)
         pattern_timing, pattern_reason, pattern_bucket = summarize_chart_pattern_for_dashboard(detect_chart_pattern_candidates(chart_df), c)
-        c["input_basis"] = {**build_signal_basis(df, (chart_df, live_applied, "")), **financial_basis(fin_meta, is_etf=is_etf)}
+        c["input_basis"] = {**build_signal_basis(df, demo_live_context, ticker=tkr, input_price=demo_live_price), **financial_basis(fin_meta, is_etf=is_etf)}
         c["execution_workflow"] = build_precision_execution_workflow(
             name, tkr, c, is_etf, asset_class, has_pos_value,
             pattern_timing, pattern_bucket, pattern_reason, price_df=df,
@@ -34616,7 +34617,8 @@ if main_page == "precision":
         display_cur_p = manual_cur_p if manual_cur_p > 0 else auto_cur_p
         precision_live_context = apply_live_price_with_indicators(df, display_cur_p, tkr, build_indicators)
         chart_df, _precision_live_ohlcv_applied, _precision_live_issue = precision_live_context
-        precision_signal_basis = build_signal_basis(df, precision_live_context)
+        precision_signal_basis = build_signal_basis(df, precision_live_context, ticker=tkr,
+                                                     input_price=display_cur_p, manual=manual_cur_p > 0)
         precision_has_pos = has_p
         c = calc_scores_and_decision(name, tkr, is_etf, a_class, df, my_p,
                                      precision_has_pos, fin_score, is_free,

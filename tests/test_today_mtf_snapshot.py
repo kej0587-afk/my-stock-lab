@@ -13,6 +13,7 @@ from stock_lab_core import decision_engine
 from stock_lab_core.signal_basis import build_signal_basis
 from tests.fixtures_price import make_price_df
 from tests.mtf_ast_contract import before_optional_daily_snapshot
+from tests.signal_basis_reference import before_price_basis_identity
 from tests.test_decision_golden_snapshot import _bench_info, _to_jsonable
 from tests.test_decision_refactor_parity import scenarios
 
@@ -37,10 +38,11 @@ def stable(value):
 
 def test_only_two_app_functions_change_and_only_reviewed_expressions(original_source):
     approved = subprocess.check_output(['git', 'show', 'd1d17690:app.py'], cwd=ROOT, encoding='utf-8-sig')
-    def functions(source):
-        return {n.name: ast.dump(n) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+    def functions(source, current=False):
+        return {n.name: ast.dump(before_price_basis_identity(n) if current and n.name == '_compute_summary_item' else n)
+                for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
-    old, extracted, now = functions(original_source), functions(approved), functions(current)
+    old, extracted, now = functions(original_source), functions(approved), functions(current, current=True)
     owned = {'build_precision_multi_timeframe_pack', '_compute_summary_item'}
     assert old.keys() == extracted.keys()
     assert {k for k in old if old[k] != extracted[k]} == owned
@@ -94,6 +96,11 @@ def test_entire_today_worker_row_matches_original(app_module, monkeypatch, origi
     long = make_price_df(days=600)
     originals = frame.copy(deep=True), long.copy(deep=True)
     frozen = json.loads((ROOT / 'tests/golden/decision_refactor_full_snapshots.json').read_text(encoding='utf-8'))[sid]
+    live = float(frame.Close.iloc[-1]) * (1 + live_gap) if live_gap else 0.
+    def captured_basis(frame, context, **metadata):
+        # Old entrypoint lacked provenance arguments; compare the same capture.
+        assert metadata in ({}, {'ticker': kwargs['ticker'], 'input_price': live})
+        return build_signal_basis(frame, context, calculated_at='fixed', ticker=kwargs['ticker'], input_price=live)
     def forbidden(*a, **k):
         raise AssertionError('Unexpected provider request')
     replacements = {
@@ -108,7 +115,7 @@ def test_entire_today_worker_row_matches_original(app_module, monkeypatch, origi
         'apply_leveraged_precision_decision_override': lambda value, *a: value,
         'get_auto_benchmark_info': lambda *a: _bench_info(),
         '_today_flow_candidate_status': lambda *a: '미등록',
-        'build_signal_basis': lambda frame, context: build_signal_basis(frame, context, calculated_at='fixed'),
+        'build_signal_basis': captured_basis,
     }
     for key, value in replacements.items():
         monkeypatch.setattr(app, key, value)

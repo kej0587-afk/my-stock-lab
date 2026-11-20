@@ -62,12 +62,18 @@ def test_full_output_snapshots(app_module, monkeypatch):
         assert not SNAPSHOT_PATH.exists(), "Never overwrite the pre-refactor baseline"
         SNAPSHOT_PATH.write_text(json.dumps(actual, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     expected = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
-    # The historical fixture includes a quote-only same-date bar in ATR. Correct
-    # only its six dependent prices from observed bars; retain all other fields.
+    # Correct only ATR-dependent references. The same-date source bar is now
+    # retained before overlay; invalid synthetic OHLC still stays excluded.
     for sid, prices, _, _, _, live_gap in scenarios():
         if not live_gap:
             continue
-        frame = make_price_df(**prices).iloc[:-1]
+        frame = make_price_df(**prices)
+        last = frame.iloc[-1]
+        captured = {'at': frame.index[-1].isoformat(), **{
+            key: float(last[key]) for key in ('Open', 'High', 'Low', 'Close', 'Volume')}}
+        expected[sid]['live_quote']['source_last_bar'] = captured
+        if not (last.Low <= min(last.Open, last.Close) and last.High >= max(last.Open, last.Close)):
+            frame = frame.iloc[:-1]
         tr = pd.concat([frame.High - frame.Low, (frame.High - frame.Close.shift()).abs(),
                         (frame.Low - frame.Close.shift()).abs()], axis=1).max(axis=1)
         atr = float(tr.rolling(14).mean().iloc[-1])

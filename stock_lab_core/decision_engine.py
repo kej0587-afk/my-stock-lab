@@ -18,6 +18,7 @@ import pandas as pd
 from stock_lab_core.formatters import clean_float, finite_num, is_kr_listed
 from stock_lab_core.decision_signals import build_entry_signal_context
 from stock_lab_core.report_build import register_loaded_source
+from stock_lab_core.signal_input_contract import capture_source_last_bar, source_price_rows
 
 register_loaded_source(__name__, __file__)
 
@@ -311,6 +312,7 @@ def apply_live_price_to_ohlcv(
         return out, False
 
     mfi_value, mfi_asof = _prior_valid_mfi(df)
+    source_last_bar = capture_source_last_bar(df)
     for col in ("Open", "High", "Low", "Volume"):
         if col not in out.columns:
             out[col] = math.nan
@@ -338,6 +340,7 @@ def apply_live_price_to_ohlcv(
     out.attrs["live_quote"] = {
         "volume_status": "missing_live_volume",
         "quote_date_status": "calendar_unverified",
+        "source_last_bar": source_last_bar,
         "mfi_status": "prior_valid" if mfi_asof is not None else "unavailable",
         "mfi_asof": mfi_asof,
         "mfi_value": mfi_value,
@@ -538,8 +541,7 @@ def build_breakdown_risk_flags(
 
 def calc_atr_for_decision(df: pd.DataFrame, period: int = 14) -> float:
     """Calculate ATR from price bars, excluding quote-only OHLC placeholders."""
-    if df is not None and "LiveQuoteOnly" in df.columns:
-        df = df.loc[~_quote_only_rows(df)]
+    df = source_price_rows(df)
     if df is None or len(df) < period + 1:
         return 0.0
     tr = pd.concat([
