@@ -180,3 +180,21 @@ Final preservation gate:1820pass/0fail/0skip,200.745s, unchanged hashes
 (`all_cz2azjpm`). Other calendar consumers were inspected: the event study already
 rejects release_date_confirmed=false; macro scheduling and BOK checks do not
 promote these records. No additional provider or collection loop was added.
+
+Code `c2839821` hot-loaded without another reboot. The12:23report53 (generation
+`a73a6f1100cf473484bc8e2ae85c2e89`) completed105.186s; official collection26.058s,
+discovery23.469s. All116loaded/disk/Git hashes and the report download checksum
+matched, restart_required=false, no stale module or generation exception.
+Pre/post12:19/12:25exports retained95rows/18corefields. Coverage:74registered,
+13official announcements,12periodic reports. Both catalyst routes contained no
+periodic-report title/receipt rows; the evidence coverage table retained12receipt
+records and their missing metrics. Actual evidence/catalyst views were inspected.
+
+That inspection found dollar-delimited source amounts rendered as math in the
+detailed result table. The compact story already escaped dollars; the detailed
+calendar/result renderer now applies the same presentation-only escape. Raw
+evidence, numbers, missing values and pipeline data remain unchanged. The
+existing guidance test now covers the detailed renderer and input immutability.
+Focused integration after this display correction:335pass/15.72s.
+Preservation gate after it:1820pass/0fail/0skip,198.186s (`all_6qcsay9u`),
+source hashes unchanged. No golden baseline was regenerated.

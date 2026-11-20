@@ -104,6 +104,8 @@ def test_unknown_period_followup_cannot_refresh_or_borrow_official_metrics():
 
 
 def test_guidance_is_visible_alongside_fcf_and_capex_without_changing_evidence():
+    from stock_lab_core.report_calendar import earnings_calendar_lines
+
     data = current_context()
     guidance = "Next quarter revenue $20 to $30 billion; not current revenue"
     data["earnings_results"][0]["metrics"]["guidance"] = dict(status="available", text=guidance, source_url=SOURCE)
@@ -114,6 +116,11 @@ def test_guidance_is_visible_alongside_fcf_and_capex_without_changing_evidence()
         assert guidance.replace("$", r"\$") in rendered
         assert "전망 대상 기간은 원문 기준" in rendered
         assert "실제치 아님" in rendered and SOURCE in rendered
+    assert pipeline == before
+    detailed = "\n".join(earnings_calendar_lines(data, NOW, pipeline=pipeline))
+    assert guidance.replace("$", r"\$") in detailed
+    assert guidance not in detailed
+    assert data["earnings_results"][0]["metrics"]["guidance"]["text"] == guidance
     assert pipeline == before
 
 

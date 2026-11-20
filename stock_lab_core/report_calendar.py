@@ -84,7 +84,7 @@ def _result_detail_lines(row):
     lines = [f"**{name} · {row.get('fiscal_period', '')} 결과 대조**", "항목 | 확인 내용 | 근거", "--- | --- | ---"]
     for key, label in METRIC_LABELS.items():
         metric = row["result_metrics"].get(key, {})
-        detail = text(metric.get("text")) or "미연결"
+        detail = text(metric.get("text")).replace("$", r"\$") or "미연결"
         if metric.get("period_scope") == "trailing_twelve_months":
             detail = "최근 12개월 누적(TTM), 분기값 아님 · " + detail
         if metric.get("status") == "missing" and metric.get("reason") == "not_reported_in_supported_pdf":
