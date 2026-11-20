@@ -25,11 +25,20 @@ Base7bd6e6d5. Generic DART full accounts now keep three-month income, cumulative
 cash flow and annual amounts separate, matched by official fiscal calendar and
 receipt identity. Receipt is not announcement; IR collection remains separate.
 No inferred FCF/CAPEX, missing-to-zero replacement or investment-rule changes.
-Expanded integration498pass; final preservation1820pass/0fail/0skip,
-198.635s, unchanged hashes (`all_hbys7a7g`). Operating verification pending.
-The latest report per issuer is covered, not a historical series. Exactly one
-next task after verification: reconcile same-quarter verified KR IR and filing
-evidence without inferring an announcement date or forward guidance.
+Code e7e29020 plus bounded directory-retry a85be653 are pushed. Relevant
+integration503pass; final preservation1820pass/0fail/0skip,204.497s, unchanged
+hashes (`all_49f6rj5l`). Operating13:19report57 uses a85be653, all118loaded/disk/Git
+hashes and report checksum match; no stale module/restart/exception.95rows/18
+core fields are unchanged across13:09/13:20exports of one Today calculation.
+IMPORTANT: three operating generations failed at the DART corporate-directory
+request (connect_timeout), so live Korean numerical connection is NOT verified.
+No numbers were guessed. Failure states were inspected and screenshot saved;
+details are in the record. The latest periodic report is supported, not a whole
+historical series. Exactly one next task: diagnose the Cloud-to-DART directory
+transport failure and verify quarter/YTD/receipt fields on a successful live
+response. Do not broaden features, export credentials, use an expired identity
+snapshot or claim API-wide outage from Cloud-only failures. Same-quarter IR
+consolidation is deferred until this prerequisite works.
 
 Current bounded work (2026-11-20 official earnings): read
 [official earnings discovery](docs/maintenance/20261120_official_earnings_discovery.md).

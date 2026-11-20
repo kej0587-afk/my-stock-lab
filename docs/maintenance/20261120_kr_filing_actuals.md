@@ -78,6 +78,33 @@ retry auth/API/HTTP failures or consume an expired snapshot. Mapping attempt
 count is recorded. Expanded integration503passed/22.62s; a new frozen-source gate
 and operating retry are pending. This does not modify global DART consumers.
 
-Next bounded task after operating verification: reconcile the verified Korean
-IR announcement and this same-quarter filing in the earnings evidence view,
-without treating receipt as announcement or inventing missing guidance.
+## Final Verification Status
+
+Code a85be653 was pushed and hot-loaded without another reboot. The13:19report57
+(generation1ec907b1c1524099956ad879ab3f4ac1) completed84.249s, with118loaded/disk/Git
+hashes and report checksum equal. No stale module, restart requirement or
+termination exception. Discovery still reports DART directory connect_timeout;
+numerical production connection is NOT verified. No missing financial amounts
+were fabricated or replaced by zero. Three generated reports encountered the
+same prerequisite failure; these timings are observations, not speedup evidence.
+
+Final frozen-source preservation gate:1820passed/0fail/0skip,204.497s,
+unchanged hashes (`all_49f6rj5l`). Relevant integration503passed/22.62s. No golden
+baseline regenerated. The13:09and13:20private review ZIP exports match95rows/18
+core fields: price, adjusted score, reading/code/classification, R/R, target,
+stop, first-entry basis/condition, allocation gap, gate/state/reason, weights,
+execution guidance/condition and market execution state. This compares a single
+Today calculation across report generation, not prices before/after reboot.
+
+Operating evidence view was inspected: KR issuers retain the specific DART
+company-identity transport failure; neither fictional quarter amounts nor new
+announcement dates appear. Private screenshot (ignored by Git):
+`cache/operating_20261120/kr_filing_connection_blocked.jpg`.
+
+Exactly one next task: diagnose the Cloud-to-DART corporate-directory transport
+failure, then verify the already-implemented quarter/YTD/receipt fields with a
+successful operating response. Do not keep extending financial features while
+that prerequisite is failing. Do not read/export Cloud secrets, date-shift the
+expired identity snapshot, weaken identity validation, or claim API-wide outage
+from these Cloud-only timeouts. Same-quarter IR/filing consolidation remains
+deferred until numerical live connection is verified.
