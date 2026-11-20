@@ -91,7 +91,7 @@ class FakeUI:
         self.tables = []
         self.messages = []
 
-    def markdown(self, value): self.messages.append(value)
+    def markdown(self, value, **kwargs): self.messages.append(value)
     def caption(self, value): self.messages.append(value)
     def warning(self, value): self.messages.append(value)
     def dataframe(self, value, **kwargs): self.tables.append(value)

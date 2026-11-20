@@ -94,6 +94,6 @@ def role_rows(decision, workflow, fin_score, fin_meta=None, *, is_etf=False):
         {"구분": "상품 구조" if is_etf else "기업 품질", "평가": quality, "근거": basis["재무자료기간"], "자료상태": basis["재무자료상태"]},
         {"구분": "기술 타점", "평가": workflow.get("🔥기술적 타점") or decision.get("dec", "미확인"),
          "근거": decision.get("mtf_bias_label") or "상위 시간대 미확인", "자료상태": workflow.get("데이터상태") or "미확인"},
-        {"구분": "계좌 실행 제한", "평가": workflow.get("게이트상태", "데이터확인"),
+        {"구분": "종목 선별 게이트 · 최종 체크 전", "평가": workflow.get("게이트상태", "데이터확인"),
          "근거": workflow.get("게이트근거", "실행 근거 미확인"), "자료상태": workflow.get("게이트근거ID", "기존 결과") or "정상 조건"},
     ]

@@ -25026,6 +25026,24 @@ def format_scenario_pct(value):
 
 def render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.subheader("시나리오 점검")
+    view = st.radio("시나리오 구분", ("조건별 대응", "계좌 충격 계산"), horizontal=True,
+                    key="scenario_workspace_view")
+    if view == "조건별 대응":
+        from stock_lab_core.decision_workspace import render_scenario_workspace
+        render_scenario_workspace(st, context=portfolio_signal_input_context(),
+                                  open_precision=open_decision_precision)
+        return
+    render_portfolio_stress_scenario(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+
+
+def open_decision_precision(ticker):
+    _, option_map = build_precision_select_options()
+    if set_precision_target_ticker(ticker, option_map):
+        st.session_state["_pending_main_page_nav"] = "precision"
+        st.rerun()
+
+
+def render_portfolio_stress_scenario(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight):
     st.caption("미래 예측이 아니라 현재 보유자산에 가상의 충격률을 넣어보는 읽기 전용 점검입니다.")
 
     if not should_run_heavy_analysis(
@@ -29256,6 +29274,9 @@ def render_today_unified_briefing_panel(
     m4.metric("적립 현금(만원)", f"{clean_float(cash_available, 0.0)/10000:,.1f}", help=f"{clean_float(cash_available, 0.0):,.0f}원")
     m5.metric("예비자금(만원)", f"{clean_float(reserve_available, 0.0)/10000:,.1f}", help=f"{clean_float(reserve_available, 0.0):,.0f}원")
 
+    from stock_lab_core.decision_workspace import render_frame_decision_brief
+    render_frame_decision_brief(st, df, source="오늘점검", key="today_decision_brief_ticker")
+
     # Keep existing sessions valid after retiring the optional manual ledger view.
     from stock_lab_core.report_widget_state import VIEWS, VIEW_KEY, restore_briefing_view, save_briefing_view
     restore_briefing_view(st.session_state)
@@ -29275,7 +29296,7 @@ def render_today_unified_briefing_panel(
         market_view = st.radio("시장 화면", ("시장판", "매크로 관측실"), horizontal=True, key="today_market_surface")
         if market_view == "매크로 관측실":
             from stock_lab_core.macro_monitor import render_macro_monitor
-            render_macro_monitor(st, key="today_macro_monitor")
+            render_macro_monitor(st, key="today_macro_monitor", explicit_refresh=True)
             return
         render_market_board(st, key="today_market_board")
         st.divider()
@@ -33295,6 +33316,12 @@ def render_public_demo_fast_shell(settings, holdings_df, holdings_table, dividen
         c["execution_readiness"] = build_execution_readiness(c.get("execution_workflow"), c["chart_final_check"])
         with precision_execution_slot.container():
             render_precision_execution_state(c.get("execution_workflow"), c["chart_final_check"])
+            from stock_lab_core.decision_brief import build_decision_brief
+            from stock_lab_core.decision_workspace import render_decision_brief
+            render_decision_brief(st, build_decision_brief(
+                c.get("execution_workflow"), source="정밀관측소",
+                final_check=c["chart_final_check"],
+            ))
         c["chart_price_asof"] = frame_last_date(chart_df)
         c["chart_structure"] = {"일봉": render_precision_candlestick_chart(chart_df, avg_price=my_price if has_pos_value else 0,
                                            ticker=tkr, key=f"demo_candle_{tkr}", decision_context=c)}
@@ -33867,6 +33894,7 @@ if IS_PUBLIC_DEMO:
 MAIN_PAGE_OPTIONS = {
     "asset": "💼 자산 현황",
     "today": "✅ 오늘 점검",
+    "macro": "시장·매크로 차트",
     "portfolio": "📊 포트폴리오 분석",
     "dashboard": "📋 전광판",
     "precision": "🔍 정밀관측소",
@@ -34106,6 +34134,8 @@ if main_page == "dashboard":
             f"{row['종목명']} ({row['티커']})": row["티커"]
             for _, row in summary_df.iterrows()
         }
+        from stock_lab_core.decision_workspace import render_frame_decision_brief
+        render_frame_decision_brief(st, summary_df, source="전광판", key="dashboard_decision_brief_ticker")
         quick_jump_cols = st.columns([2.6, 1.0, 2.4])
         with quick_jump_cols[0]:
             quick_jump_label = st.selectbox(
@@ -34836,6 +34866,12 @@ if main_page == "precision":
             c["execution_readiness"] = build_execution_readiness(c.get("execution_workflow"), c["chart_final_check"])
             with precision_execution_slot.container():
                 render_precision_execution_state(c.get("execution_workflow"), c["chart_final_check"])
+                from stock_lab_core.decision_brief import build_decision_brief
+                from stock_lab_core.decision_workspace import render_decision_brief
+                render_decision_brief(st, build_decision_brief(
+                    c.get("execution_workflow"), source="정밀관측소",
+                    final_check=c["chart_final_check"],
+                ))
             c["chart_price_asof"] = frame_last_date(chart_df)
             c["chart_structure"] = {}
             render_chart_basis(st, df, chart_df, mtf_pack, live_applied=_precision_live_ohlcv_applied)
@@ -35849,6 +35885,10 @@ if main_page == "portfolio":
 
 if main_page == "scenario":
     render_scenario_check_tab(holdings_table, krw_cash, usd_cash, usdkrw, reserve_target_weight)
+
+if main_page == "macro":
+    from stock_lab_core.macro_monitor import render_macro_monitor
+    render_macro_monitor(st, key="standalone_macro_monitor", explicit_refresh=True)
 
 if main_page == "short":
     render_short_trend_tab(holdings_table, st.session_state.watchlist)

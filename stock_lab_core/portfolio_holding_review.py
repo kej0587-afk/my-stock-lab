@@ -131,6 +131,12 @@ def render_portfolio_holding_review(st, holdings, *, context, management=None, m
     ticker = st.selectbox("보유 종목 근거", options, format_func=lambda value: f"{names[value]} ({value})", key="portfolio_holding_review_ticker")
     detail = details[portfolio_flow_ticker_key(ticker)]
     signal, precision = detail["signal"], detail["precision"]
+    from stock_lab_core.decision_brief import build_decision_brief
+    from stock_lab_core.decision_workspace import render_decision_brief
+    render_decision_brief(st, build_decision_brief(
+        signal, source=text(signal.get("연결출처"), "저장 점검"),
+        calculated_at=signal.get("저장시각"),
+    ))
     st.caption(f"{text(signal.get('연결출처'))} 저장: {display_time(signal.get('저장시각'))} · 정밀 계산: {display_time(precision.get('captured_at'))}. 저장시각은 시세 제공시각이 아닙니다.")
     st.warning("현재 시세로 재검증한 통합 매매판정이 아닙니다. 계산시각·가격 기준이 다르거나 미확인이면 오늘점검과 정밀관측소를 다시 확인하세요.")
     action = {}

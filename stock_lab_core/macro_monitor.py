@@ -210,18 +210,35 @@ def observation(item, series, now, reason=""):
             "상태": state, "출처": item.url}, series
 
 
-def render_macro_monitor(st, *, key="macro_monitor", data=None, now=None):
+def render_macro_monitor(st, *, key="macro_monitor", data=None, now=None, explicit_refresh=False):
     import plotly.graph_objects as go
     now = pd.Timestamp.now(tz="Asia/Seoul") if now is None else pd.Timestamp(now)
     st.subheader("매크로 관측실")
     group = st.radio("관측 분야", GROUPS, horizontal=True, key=key + "_group")
     years = st.selectbox("조회 기간", (1, 3, 5, 10), format_func=lambda n: f"{n}년", key=key + "_years")
     selected = [item for item in METRICS if item.group == group]
+    captured_at = None
+    if explicit_refresh and data is None:
+        capture_key = "_macro_observation_captures"
+        captures = dict(st.session_state.get(capture_key, {}))
+        selection = (group, years)
+        if st.button("관측 자료 조회/새로고침", icon=":material/refresh:", key=key + "_refresh"):
+            captures[selection] = {"data": load_group(group, years, now), "at": now.isoformat()}
+            st.session_state[capture_key] = captures
+        captured = captures.get(selection)
+        if captured is None:
+            st.info("선택한 분야·기간의 저장 관측치가 없습니다.")
+            return
+        data = captured["data"]
+        captured_at = captured["at"]
+        st.caption(f"자료 조회: {captured_at} · 저장 시점 기준 · 현재 신선도 미재검증")
     supplied = load_group(group, years, now) if data is None else data
     rows, histories = [], {}
     for item in selected:
         series, reason = supplied.get(item.symbol, (pd.Series(dtype=float), "조회 자료 없음"))
         row, history = observation(item, series, now, reason)
+        if captured_at:
+            row["상태"] = "저장 시점 기준 · " + row["상태"] + " · 현재 미재검증"
         rows.append(row)
         histories[item.symbol] = history.loc[history.index >= now.tz_localize(None) - pd.DateOffset(years=years)]
     st.caption("관측용 · 기존 시장방어·매매 판정과 별도 · 관측일은 발표일/조회시각과 다릅니다. 미수집은 0으로 채우지 않습니다.")

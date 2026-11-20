@@ -19,6 +19,23 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current priority (2026-11-20 framework reset): read
+[framework and locked work order](docs/maintenance/20261120_framework_reset.md).
+The latest user explicitly superseded the DART-only sequence below: organize
+judgment roles, conditional scenarios and direct market/chart access first.
+The new read-only decision brief is shared by Today, board, precision (also demo)
+and portfolio. Scenario view separates captured conditional responses from the
+unchanged stress calculator. Standalone macro navigation captures on explicit
+refresh; changing the chart does not collect again. Missing values stay missing,
+source captures remain separate, and investment thresholds/calculations are intact.
+Operating verification and final commit status are recorded in the linked document.
+Exactly one next implementation task: compare and consolidate original numerical
+entry/exit plans between queue screening and precision using fixed inputs. There
+is a known ordinary poor-R/R branch difference; do not silently pick one plan or
+alter thresholds. Price continuity and canonical event state follow in the locked
+order. New report critiques join that backlog unless an urgent correctness issue
+requires immediate attention. Do not restart with another isolated connector.
+
 Current bounded work (2026-11-20 Korean actuals): read
 [Korean filing extraction](docs/maintenance/20261120_kr_filing_actuals.md).
 Base7bd6e6d5. Generic DART full accounts now keep three-month income, cumulative
