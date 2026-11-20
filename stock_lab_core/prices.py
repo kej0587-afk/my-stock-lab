@@ -27,7 +27,7 @@ from stock_lab_core.quote_prefetch import fresh_quote_scope, prefetched_quote, i
 from stock_lab_core.quote_html import read_quote_html
 from stock_lab_core.yahoo_chart_connections import open_yahoo_chart, reuse_yahoo_chart_connections
 from stock_lab_core.price_batch_selection import DownloadFrameSelector
-from stock_lab_core.quote_observation import QuoteObservation
+from stock_lab_core.quote_observation import QuoteObservation, observed_price, quote_provenance
 
 # ── yfinance SQLite tz-cache 동시성 보호 ─────────────────────────────────────
 # Streamlit Cloud 멀티스레드 환경에서 여러 스레드가 동시에 yfinance를 호출하면
@@ -607,12 +607,14 @@ def _fetch_naver_price(ticker: str) -> float:
         raw = urllib.request.urlopen(req, timeout=5).read()
         text = raw.decode("utf-8", errors="ignore")
         # closePrice: "1,847,000" 형태 → 숫자 추출
+        field = "closePrice"
         m = re.search(r'"closePrice"\s*:\s*"([\d,]+)"', text)
         if not m:
             # 장 시작 전/후 stockEndType 대비 fallback
+            field = "stockEndPrice"
             m = re.search(r'"stockEndPrice"\s*:\s*"([\d,]+)"', text)
         if m:
-            return float(m.group(1).replace(",", ""))
+            return _observe_naver_text_price(float(m.group(1).replace(",", "")), text, ticker, "naver_basic", field)
     except Exception:
         pass
     return 0.0
@@ -630,7 +632,7 @@ def _fetch_naver_realtime_price(ticker: str) -> float:
         text = raw.decode("utf-8", errors="ignore")
         m = re.search(r'"nv"\s*:\s*"?([\d,]+)"?', text)
         if m:
-            return float(m.group(1).replace(",", ""))
+            return _observe_naver_text_price(float(m.group(1).replace(",", "")), text, ticker, "naver_polling", "nv")
     except Exception:
         pass
     return 0.0
@@ -662,7 +664,65 @@ def _naver_quote_sign(obj: dict) -> int:
     return 0
 
 
-def _extract_naver_quote_from_obj(obj: dict) -> dict:
+def _observe_naver_selected_price(price, ticker, obj, source, field, *, item_code=""):
+    """Attach same-object supplier evidence without changing the selected number.
+
+    Polling's result.time is response time, and nxtOverMarketPriceInfo belongs to
+    a different price. Neither is evidence for nv, even when prices coincide.
+    """
+    try:
+        key = normalize_price_lookup_key(ticker)
+        code = _kr_code(key)
+        if not isinstance(obj, dict) or not re.fullmatch(r"[0-9][A-Z0-9]{5}", code):
+            return price
+        identities = [str(obj.get(name, "") or "").strip().upper()
+                      for name in ("cd", "itemCode", "stockCode", "symbolCode", "code")]
+        identities = [value for value in identities if re.fullmatch(r"[0-9][A-Z0-9]{5}", value)]
+        if item_code:
+            identities.append(str(item_code).strip().upper())
+        if not identities or any(value != code for value in identities):
+            return price
+        if (source not in {"naver_polling", "naver_basic"} or
+                not math.isfinite(price) or price <= 0 or _coerce_naver_number(obj.get(field)) != price):
+            return price
+        stamp = obj.get("localTradedAt") if source == "naver_basic" and field == "closePrice" else None
+        # Only the aware ISO field is established by the basic endpoint contract.
+        stamp = stamp if isinstance(stamp, str) and "T" in stamp else None
+        result = observed_price(price, ticker=key, source=source, observed_at=stamp,
+                                timestamp_kind="trade" if stamp else "unknown")
+        if "observed_at" not in quote_provenance(result):
+            return observed_price(price, ticker=key, source=source, observed_at=None, timestamp_kind="unknown")
+        session_value = obj.get("marketSessionType")
+        session = ({"regularMarket": "regular", "preMarket": "pre", "afterMarket": "post"}.get(
+            session_value, "unknown") if isinstance(session_value, str) else "unknown")
+        return observed_price(price, ticker=key, source=source, observed_at=stamp, session=session)
+    except Exception:
+        # Evidence parsing must never turn a previously usable quote into failure.
+        return price
+
+
+def _observe_naver_text_price(price, text, ticker, source, field):
+    """Keep legacy regex selection; ambiguous/malformed payloads stay untimed."""
+    try:
+        data = json.loads(text)
+        matches = list(re.finditer(rf'"{re.escape(field)}"\s*:', text))
+        if len(matches) != 1:
+            return price
+        if source == "naver_basic":
+            # Never borrow a nested quote's field or a same-valued other symbol.
+            return _observe_naver_selected_price(price, ticker, data, source, field)
+        objects = list(_walk_naver_quote_objects(data))
+        # The walker may yield a keyed object twice; deduplicate by object identity.
+        unique = {id(obj): (code, obj) for code, obj in objects}
+        if len(unique) == 1 and len({code for code, _ in objects}) == 1:
+            code, obj = next(iter(unique.values()))
+            return _observe_naver_selected_price(price, ticker, obj, source, field, item_code=code)
+    except Exception:
+        pass
+    return price
+
+
+def _extract_naver_quote_from_obj(obj: dict, *, ticker="", source="", item_code="") -> dict:
     if not isinstance(obj, dict):
         return {}
     price = 0.0
@@ -695,7 +755,10 @@ def _extract_naver_quote_from_obj(obj: dict) -> dict:
             change_abs = -change_abs
     quote = {}
     if price > 0:
-        quote["price"] = price
+        # The field loop above selected this exact scalar. Change fields are separate.
+        price_field = next(name for name in ("nv", "closePrice", "stockEndPrice", "currentPrice", "tradePrice")
+                           if _coerce_naver_number(obj.get(name)) > 0)
+        quote["price"] = _observe_naver_selected_price(price, ticker, obj, source, price_field, item_code=item_code)
     if change_pct is not None:
         quote["change_pct"] = change_pct
     if change_abs:
@@ -740,7 +803,7 @@ def _parse_naver_realtime_quotes(text: str, kr_tickers: list) -> dict:
             key = code_to_key.get(str(code or "").strip())
             if not key or key in quotes:
                 continue
-            quote = _extract_naver_quote_from_obj(obj)
+            quote = _extract_naver_quote_from_obj(obj, ticker=key, source="naver_polling", item_code=code)
             if quote:
                 quotes[key] = quote
     except Exception:
@@ -758,7 +821,7 @@ def _parse_naver_realtime_quotes(text: str, kr_tickers: list) -> dict:
             m = re.search(rf'"{field}"\s*:\s*"?([^",}}]+)"?', block)
             if m:
                 obj[field] = m.group(1)
-        quote = _extract_naver_quote_from_obj(obj)
+        quote = _extract_naver_quote_from_obj(obj, ticker=key, source="naver_polling", item_code=code)
         if quote:
             quotes[key] = quote
     return quotes
@@ -822,7 +885,7 @@ def _fetch_naver_basic_quote(ticker: str) -> dict:
         text = raw.decode("utf-8", errors="ignore")
         try:
             data = json.loads(text)
-            quote = _extract_naver_quote_from_obj(data)
+            quote = _extract_naver_quote_from_obj(data, ticker=ticker, source="naver_basic")
             if quote:
                 return quote
         except Exception:

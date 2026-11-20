@@ -6,6 +6,11 @@ import logging
 import math
 import time
 
+from stock_lab_core.quote_observation import QuoteObservation
+from stock_lab_core.report_build import register_loaded_source
+
+register_loaded_source(__name__, __file__)
+
 
 _QUOTES = ContextVar("stock_lab_fresh_quote_batch", default=None)
 _GENERATION = object()
@@ -52,7 +57,7 @@ def fresh_quote_scope(tickers, fetch_prices, *, ttl):
             if isinstance(value, bool):
                 continue
             try:
-                value = float(value)
+                value = value if isinstance(value, QuoteObservation) else float(value)
             except (ValueError, TypeError):
                 continue
             if math.isfinite(value) and value > 0:

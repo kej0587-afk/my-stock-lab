@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-21, Naver): read
+[Naver selected-quote evidence](docs/maintenance/20261121_naver_quote_observation.md).
+Naver basic closePrice now retains same-object aware localTradedAt and explicit
+marketSessionType through the existing scalar carrier. Polling nv has no per-item
+time in actual captures: its response clock and nested NXT time must not be
+borrowed, even if prices match. Polling now identifies its source while time stays
+unknown. The domestic batch reuse scope preserves the carrier instead of casting
+it away. No numeric quote, request/order/TTL, score/gate or daily-bar policy change.
+Focused tests: 210 passed. Final selected-all gate: 2,466 passed, zero
+failures/errors/skips, 234.228s (`all_t0oang_2`). Deployment evidence pending.
+The single current next task is at **Next Task Only** below.
+
 Latest bounded work (2026-11-21): read
 [US pre-market quote priority](docs/maintenance/20261121_premarket_quote_priority.md).
 The missing 04:00–09:30 ET pre-market predicate is now connected to the primary,
@@ -1726,19 +1738,18 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Transport timestamp evidence for the selected domestic Naver quote.**
+**Assess a timestamp-bearing replacement for the untimed Naver polling path.**
 
-The pre-market priority fix is bounded to the three US selector paths. Its
-current-session production result and frozen pre-market replay are documented
-above; a future live pre-market recheck is still useful and must not be claimed
-from a regular-session run. Next, inspect the actual Naver selected-quote payload
-and carry only a supplier timestamp tied to that exact symbol/price through the
-existing QuoteObservation contract. Preserve numeric quotes, provider order,
-cache TTL, score/gate formulas and unknown status when evidence is unavailable.
-Use fixed payload tests and one actual domestic export; do not attach a separate
-quote's timestamp, broaden to KIS/yfinance simultaneously, or change partial-bar
-policy. Existing Nov 20 Today capture had 45 rows without quote time evidence;
-it is a coverage observation, not proof that all 45 are Naver failures.
+The evidence transport is connected, but actual polling responses do not contain
+per-stock observation time. Compare the already-used mobile basic endpoint with
+polling on matched symbols/session captures, including a domestic ETF, a KRX/NXT
+stock and different-price/closed-session fixtures. Check price semantics, session
+labels and measured request cost before proposing a replacement that does not
+add one request per stock. Preserve current provider routing, TTL and decisions
+in this comparison task; do not force polling failures or graft another response's
+time onto its price. Distinguish closed-session evidence from live regular/NXT
+coverage. Record whether a safe replacement is supported or which evidence is
+missing. Do not resume unrelated report expansion or change partial-bar policy.
 
 ## Evidence and Remaining Limits
 

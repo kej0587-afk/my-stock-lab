@@ -46,7 +46,7 @@ SCOPES = {
         "test_report_reference_history", "test_report_news_session_quality",
     ),
     "prices": (
-        "test_quote_observation", "test_premarket_selection", "test_overnight_quote", "test_realtime_quote_scope",
+        "test_quote_observation", "test_naver_quote_observation", "test_premarket_selection", "test_overnight_quote", "test_realtime_quote_scope",
         "test_yahoo_chart_connections", "test_quote_source_diagnostics",
         "test_history_preload_overlap", "test_kr_preload_connections", "test_result_cache",
         "test_kr_history_request_scope",
