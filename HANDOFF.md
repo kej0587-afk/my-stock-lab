@@ -20,6 +20,29 @@ Production: `https://3insky.streamlit.app/`.
 ## Current State
 
 Latest bounded work (2026-11-20): read
+[shared price inputs and same-date ATR](docs/maintenance/20261120_price_input_contract.md).
+Same-date scalar overlays now preserve the original last source OHLCV for ATR;
+invalid/missing captures keep quote-only exclusion. Today/board/precision expose
+price-input ID, source/ATR dates, quote provenance and provisional-date meaning.
+Public precision reuses one indicator context for chart and decision. No market
+defense, threshold or position-sizing policy changes. ATR-derived references can
+correctly change where the original source bar was previously dropped.
+Code 5de4b3f5 and timestamp-ID portability fix 1d9116cc pushed. The latter was
+found by actual Cloud ZIP replay (pandas 2 ns vs local pandas 3 us date storage).
+Today and precision captured IDs now replay exactly; dashboard detail columns
+were verified, but its CSV download did not complete. Final frozen selected gate:
+2,068 passed, zero failures/errors/skips, 206.966s; not the full repository suite.
+Final Cloud reboot verified: completed SOXL export base commit 1d9116cc, no stale
+modules, helper loaded/disk/local hashes equal; quote 42.77 reproduces input ID
+98546325ebb6bb46 and ATR 11.373572213309151 exactly. A/B/C numeric observation tabs
+and market defense remain visible. Actual provider timestamp/session remains
+unconnected in the scalar decision loader and is marked unknown, not inferred.
+Exactly one next task: carry timestamp/session from the existing scalar quote
+provider through the shared input contract, then audit vendor partial daily bars
+with the same captured inputs. Add no provider and change no trading thresholds.
+This supersedes older next-task entries; the whole price migration is not done.
+
+Latest bounded work (2026-11-20): read
 [completed-bar A/B/C observations](docs/maintenance/20261120_completed_scenarios.md).
 The user asked for usable numeric scenarios. Pure source-only evidence now keeps
 complete daily OHLC, dated pivots/ranges, time/volume measures and conditional
