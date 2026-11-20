@@ -73,6 +73,8 @@ def _event_packet(event, catalog, context):
     }.get(event.get("event_status"), "미확인")
     if event.get("source_kind") == "dart_discovered_report":
         release = "공식 정기보고서 확인·실적 발표일 미확인"
+        if event.get("financial_values"):
+            release = "공식 공시 실제치 대조·실적 발표일 미확인"
     reaction = metrics.get("price_reaction") or {}
     if reaction.get("status") == "reported":
         states["price_reaction"] = "보도 주장·시세 대조 미완료"
@@ -81,6 +83,8 @@ def _event_packet(event, catalog, context):
         gaps.insert(0, _source_reason(ticker, context))
     if event.get("result_stale"):
         gaps.insert(0, "원문 재조회 실패·마지막 확인값 사용")
+    if event.get("financial_reason"):
+        gaps.insert(0, "DART 수치 연결 보류: " + event["financial_reason"])
     return dict(ticker=ticker, name=entry["name"], sector=entry["sector"], market=entry["market"],
         relationship="보유" if entry["held"] else "관심·점검" if entry["registered"] else "시장 대표",
         fiscal_period=event.get("fiscal_period", ""), release_status=release, official=official,
@@ -93,6 +97,8 @@ def _event_packet(event, catalog, context):
 def _commentary(packet):
     """Explain the evidence gap, never invent an earnings surprise or causality."""
     if packet.get("event", {}).get("source_kind") == "dart_discovered_report":
+        if packet["event"].get("financial_values"):
+            return "공시 실제치에서 3개월 손익과 누적 현금흐름을 구분해 확인합니다. 접수일은 실적 발표일이 아니며, 회사 전망·컨센서스·주가 반응은 별도 대조가 필요합니다."
         return "공식 정기보고서의 접수일·보고기간은 확인했습니다. 실제 실적 발표일·회계분기와 개별 수치는 아직 대조되지 않았으며, 이 공시를 새로운 실적 발표나 주가 변화의 원인으로 해석하지 않습니다."
     metrics = packet["metrics"]
     topics = [label for key, label, _ in TOPICS if key in packet["topics"]]
@@ -159,6 +165,8 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
         if ticker not in catalog or not event.get("event_status") or not day or not -200 <= (day.date() - now.date()).days <= 45:
             continue
         key = (ticker, event.get("fiscal_period", ""))
+        if event.get("source_kind") == "dart_discovered_report":
+            key += ("filing",)
         if key in by_key:
             continue
         packet = _event_packet(event, catalog, context)

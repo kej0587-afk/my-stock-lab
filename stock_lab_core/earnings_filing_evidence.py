@@ -249,6 +249,7 @@ def latest_dart_report(payload, corp, ticker, now):
     period, day, receipt, title, name = max(candidates)
     return dict(ticker=ticker, name=name or ticker, event=title, indicator="COMPANY_EARNINGS", market="KR", date=day,
                 fiscal_period=f"{period} 보고기간·회계분기 미확인", reporting_period_end_month=period,
+                filing_receipt=receipt, filing_corp_code=corp,
                 event_kind="regulatory_report", event_status="released", status="공식 정기보고서 확인",
                 source="DART 정기보고서", source_url=f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt}",
                 source_kind="dart_discovered_report", date_basis="공시 접수일·실적 발표일 미확인",

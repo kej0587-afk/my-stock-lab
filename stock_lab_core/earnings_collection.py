@@ -43,6 +43,12 @@ def _merge_discovered(events, results, discovered):
                         if metric.get("status") == "reported" and row["metrics"].get(key, {}).get("status") == "missing":
                             row["metrics"][key] = {**deepcopy(metric), "enrichment_checked_at": prior.get("checked_at")}
                 results.append(row)
+        elif event.get("source_kind") == "dart_discovered_report":
+            events = [row for row in events if not (row.get("ticker") == ticker
+                      and row.get("source_kind") == "dart_discovered_report")]
+            results = [row for row in results if not (row.get("ticker") == ticker
+                       and row.get("status") == "official_filing_result")]
+            results.extend(deepcopy(row) for row in discovered["results"] if row.get("ticker") == ticker)
         events.append(event)
     return events, results
 
@@ -60,7 +66,7 @@ def collect_report_earnings(summary_rows, calendar, now):
     tickers = sorted(eligible, key=lambda ticker: not catalog[ticker]["held"])
     with measure("external_data", "earnings_filing_discovery"):
         discovered = collect_filing_earnings(tickers[:96], now)
-    fresh = {row["ticker"] for row in discovered["results"]}
+    fresh = {row["ticker"] for row in discovered["results"] if row.get("collection_reason") == "sec_exhibit_99_1"}
     # The old verified IR sources remain a fallback, not the discovery universe.
     earnings = load_official_earnings([t for t in tickers if t not in fresh], now)
     updated = {row.get("ticker") for row in earnings["events"]}

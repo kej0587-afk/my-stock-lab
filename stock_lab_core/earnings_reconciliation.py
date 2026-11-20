@@ -184,6 +184,12 @@ def reconcile_earnings(context, now):
             # A regulatory receipt confirms publication, not the earnings-call
             # time or a price reaction to the earlier announcement.
             event.update(result_confirmation="official_filing", result_metrics=_empty_metrics())
+            event.pop("financial_values", None)
+            from stock_lab_core.earnings_dart_financials import matched_financial_result
+            financials = matched_financial_result(event, results, now)
+            if financials:
+                event["result_metrics"].update(financials["metrics"])
+                event.update(financial_values=financials["financial_values"], result_checked_at=financials["checked_at"])
             continue
         matching = _eligible_news(event, news, now)
         official = _official_result(event, results, now)

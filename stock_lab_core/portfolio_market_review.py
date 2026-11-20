@@ -138,15 +138,16 @@ def holding_market_review(ticker, data, state, *, now=None):
             continue
         seen.add(issuer)
         relation, holdings_url = linked[issuer]
+        filing = (packet.get("event") or {}).get("source_kind") == "dart_discovered_report"
         for key in ("revenue", "profit", "capex", "free_cash_flow", "guidance", "price_reaction"):
             metric = (packet.get("metrics") or {}).get(key) or {}
             confirmed = (packet.get("official") and not (packet.get("event") or {}).get("result_stale")
                          and (packet.get("stages") or {}).get(key) == "확인")
             earnings.append({"기업": packet.get("name") or issuer, "연결": relation,
-                             "발표/기간": f"{packet.get('date')} / {packet.get('fiscal_period') or '기간 미확인'}",
+                             "발표/기간": ("공시 접수 · 발표일 미확인 / " if filing else "") + f"{packet.get('date')} / {packet.get('fiscal_period') or '기간 미확인'}",
                              "항목": METRIC_LABELS[key],
                              "근거": text(metric.get("text")) if confirmed else "미연결/재확인 필요",
-                             "구분": "확인 보류" if not confirmed else "회사 전망 · 실제치 아님" if key == "guidance" else "관측 주가 · 인과 아님" if key == "price_reaction" else "공식 발표",
+                             "구분": "확인 보류" if not confirmed else "공시 실제치" if filing else "회사 전망 · 실제치 아님" if key == "guidance" else "관측 주가 · 인과 아님" if key == "price_reaction" else "공식 발표",
                              "출처": safe_link(metric.get("source_url")) if confirmed else "",
                              "자료 범위": text(metric.get("scope_note") or metric.get("period_scope")) if confirmed else "",
                              "출처 페이지": text(metric.get("source_page")) if confirmed else "",

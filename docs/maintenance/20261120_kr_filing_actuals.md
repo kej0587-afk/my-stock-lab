@@ -1,0 +1,68 @@
+# Korean Filing Actuals, 2026-11-20
+
+Base: `7bd6e6d5`, main. Bounded report-only extraction for the existing held/watch
+issuer universe. No investment thresholds, score inputs, prices, allocation,
+orders or golden baselines changed. No issuer-specific financial prose added.
+
+## Official Contracts
+
+- [DART full financial statements](https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS003&apiId=2019020):
+  interim IS/CIS `thstrm_amount` is the three-month amount;
+  `thstrm_add_amount` is year-to-date. CF `thstrm_amount` is year-to-date.
+- [DART company profile](https://opendart.fss.or.kr/guide/detail.do?apiGrpCd=DS001&apiId=2019002):
+  official `acc_mt` identifies fiscal close month. Match report title/end month,
+  fiscal year and report code before extracting numbers.
+- Require the same issuer, receipt, year/code, currency and consolidated/separate
+  basis throughout the response. A restatement mismatch is missing, not an old
+  value reused under a new receipt. No nearby-date announcement matching.
+
+## Implementation
+
+`earnings_dart_financials.py` contains pure account extraction and receipt-bound
+reconciliation; `report_dart_earnings.py` contains read-only summary/detail views.
+The existing bounded discovery collector fetches company profile and full
+accounts. Consolidated first; separate fallback only on explicit no-data013,
+not auth/quota/transport errors. Existing24second budget/3workers remain.
+Company profile cache1day, receipt-scoped financial cache10minutes, failure90s.
+Warm report rendering makes no new financial request.
+
+Quarter income and cumulative cash flows occupy separate fields/columns. Annual
+amounts are not Q4 amounts. Direct FCF/CAPEX accounts only; tangible asset
+purchases are explicitly not total CAPEX. No cumulative subtraction, CFO-CAPEX
+model, zero-filling, guidance guessing or price-causality claim.
+
+The filing remains a regulatory receipt, not an earnings announcement. Existing
+IR collection continues separately, including same-quarter announcements.
+Receipt events stay excluded from catalyst calendars, cross-announcement
+interpretation and event-study sampling. Report and portfolio evidence labels
+retain the receipt/announcement distinction. Summary shows at most3held/watch
+issuers; details show all connected reports. No score consumer changed.
+
+## Verification
+
+- Pre-change focused baseline:144passed/11.88s.
+- Expanded extraction/collection/report/portfolio/reading integration:498passed/25.19s.
+- Covers Q1/Q2/Q3/annual, non-December fiscal year, negative/zero/missing values,
+  conflicting accounts, parent-specific versus total profit, currency/basis and
+  receipt mismatches, future results, missing-quarter preservation, CFS/OFS,
+  timeout retry/failure cache, time budget and unchanged input objects.
+- Earlier preservation runs passed1820tests but were correctly blocked because
+  final extraction/reading edits occurred during those runs. The frozen-source
+  gate and actual operating verification are pending; do not count a changed
+  source manifest as a passed gate. Final frozen-source gate:1820passed,
+  0failures/0errors/0skips,198.635s, hashes unchanged (`all_hbys7a7g`).
+  Actual operating verification remains pending deployment.
+
+## Limits
+
+Only the latest discovered periodic report per issuer is fetched, not an entire
+historical quarterly series. Cash-flow quarter values are intentionally absent
+when only cumulative values are reported. Custom unrecognized accounts, delayed
+XBRL, receipt mismatch, API failures and exhausted collection budget stay missing.
+Actual announcement date, consensus, outlook and price reaction require separate
+official evidence; filing receipt cannot fill those gaps. This does not complete
+all earlier audit backlog.
+
+Next bounded task after operating verification: reconcile the verified Korean
+IR announcement and this same-quarter filing in the earnings evidence view,
+without treating receipt as announcement or inventing missing guidance.

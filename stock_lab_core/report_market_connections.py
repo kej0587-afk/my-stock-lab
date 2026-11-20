@@ -34,6 +34,7 @@ def _evidence(context, pipeline, news, now):
     for packet in pipeline.get("packets", []):
         day = stamp(packet.get("date"))
         if (not packet.get("official") or packet.get("event", {}).get("result_stale") or not day
+                or packet.get("event", {}).get("source_kind") == "dart_discovered_report"
                 or not now.date() - timedelta(days=3) <= day.date() <= now.date()):
             continue
         for key, metric in (packet.get("metrics") or {}).items():

@@ -19,6 +19,18 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Current bounded work (2026-11-20 Korean actuals): read
+[Korean filing extraction](docs/maintenance/20261120_kr_filing_actuals.md).
+Base7bd6e6d5. Generic DART full accounts now keep three-month income, cumulative
+cash flow and annual amounts separate, matched by official fiscal calendar and
+receipt identity. Receipt is not announcement; IR collection remains separate.
+No inferred FCF/CAPEX, missing-to-zero replacement or investment-rule changes.
+Expanded integration498pass; final preservation1820pass/0fail/0skip,
+198.635s, unchanged hashes (`all_hbys7a7g`). Operating verification pending.
+The latest report per issuer is covered, not a historical series. Exactly one
+next task after verification: reconcile same-quarter verified KR IR and filing
+evidence without inferring an announcement date or forward guidance.
+
 Current bounded work (2026-11-20 official earnings): read
 [official earnings discovery](docs/maintenance/20261120_official_earnings_discovery.md).
 Base0a8bbb73. Report-only SEC filing/exhibit discovery for held/watch issuers and

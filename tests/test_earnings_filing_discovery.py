@@ -296,7 +296,8 @@ def test_dart_transport_snapshot_identity_does_not_supply_financial_values(monke
     collected = sources.collect_filing_earnings(["123456.KS"], NOW, sec_user_agent="", dart_api_key="test", get=get)
     fallback.assert_called_once_with(live, now=NOW)
     assert collected["events"][0]["release_date_confirmed"] is False
-    assert collected["results"] == [] and get.call_count == 1
+    assert collected["results"] == [] and get.call_count == 2
+    assert collected["sources"][0]["financial_reason"] == "dart_company_identity_mismatch"
     assert collected["sources"][0]["mapping_source"] == "official_snapshot"
 
 

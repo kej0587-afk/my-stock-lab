@@ -23,6 +23,7 @@ _RENDER_MODULES = (
     "market_observation", "market_sentiment", "public_market_data", "earnings_sources", "catalyst_news", "report_catalysts",
     "earnings_result_sources", "earnings_result_pdf", "earnings_cash_outlook", "earnings_reconciliation",
     "earnings_collection", "earnings_discovery", "earnings_filing_sources", "earnings_filing_evidence",
+    "earnings_dart_financials", "report_dart_earnings",
     "earnings_pipeline", "report_earnings", "report_market_connections",
     "official_outlook", "outlook_sources", "report_outlook", "report_dashboard", "news_priority", "market_guard_explanation", "market_basis",
     "central_bank_results", "market_safeguards", "report_policy_panel", "report_eventstudy",

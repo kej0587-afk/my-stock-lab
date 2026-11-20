@@ -11,6 +11,7 @@ register_loaded_source(__name__, __file__)
 def earnings_calendar_lines(context, now, *, pipeline=None):
     from stock_lab_core.earnings_pipeline import build_earnings_pipeline
     from stock_lab_core.report_earnings import earnings_coverage_lines
+    from stock_lab_core.report_dart_earnings import filing_actual_lines
     pipeline = pipeline if pipeline is not None else build_earnings_pipeline(context, now=now)
     events = [r for r in pipeline["events"] if r.get("event_status")
               and r.get("source_kind") != "dart_discovered_report"]
@@ -74,6 +75,7 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
     if diagnostics:
         lines.extend(["공식 결과 수집: " + " / ".join(dict.fromkeys(diagnostics)) + ". 발표 여부와 세부 수치의 수집 상태는 별도입니다.", ""])
     lines.append("최근 발표와 다음 예정일은 별도입니다. 다음 분기 일정까지 자동 확보한 것은 아닙니다.")
+    lines.extend(filing_actual_lines(pipeline, detailed=True))
     lines.extend(earnings_coverage_lines(pipeline))
     return lines
 

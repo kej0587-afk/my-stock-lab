@@ -118,9 +118,11 @@ def _catalyst_reading(packet, now):
 
 
 def earnings_story_lines(pipeline):
+    from stock_lab_core.report_dart_earnings import filing_actual_lines
+    filings = filing_actual_lines(pipeline)
     selected = pipeline["highlights"]
     if not selected:
-        return []
+        return filings
     lines = ["", "**실적에서 확인할 시장 쟁점**",
              "기업·확인된 사실 | 해석과 남은 확인", "--- | ---"]
     for packet in selected:
@@ -130,7 +132,7 @@ def earnings_story_lines(pipeline):
         reading = packet["commentary"] + " " + packet["consensus_status"] + "."
         lines.append(" | ".join(_cell(v) for v in (f"**{target}** " + " / ".join(facts), reading)))
     lines.extend(["", "최근 7일의 수집된 발표·보도에서 기업 중복을 줄이고 업종을 분산한 최대 3개입니다. 시장 영향도 순위나 매수 후보가 아니며, 근거가 없는 업종은 채우지 않습니다.", ""])
-    return lines
+    return lines + filings
 
 
 def compact_catalyst_lines(pipeline, market, *, limit=4) -> list[str]:

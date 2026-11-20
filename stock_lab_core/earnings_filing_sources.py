@@ -119,6 +119,42 @@ def _sec_collect(ticker, directory, user_agent, now, deadline, get):
                              issuer_name=submissions.get("name"))
 
 
+def _dart_financials(event, auth, api_key, now, deadline, get):
+    from stock_lab_core.earnings_dart_financials import ENDPOINT, parse_financials, report_spec
+
+    diagnostic = dict(financial_status="unavailable", financial_attempted=False, financial_from_cache=False)
+    corp = event["filing_corp_code"]
+
+    def request(url, **params):
+        diagnostic["financial_attempted"] = True
+        return _json(url, deadline=deadline, get=get, params=dict(crtfc_key=api_key, corp_code=corp, **params))
+
+    def company():
+        data = request("https://opendart.fss.or.kr/api/company.json")
+        report_spec(event, data, corp)
+        return {key: data[key] for key in ("status", "corp_code", "stock_code", "acc_mt") if key in data}
+
+    try:
+        profile, _ = _cached(("dart_company", corp, auth), now, company, ttl=86400)
+        spec = report_spec(event, profile, corp)
+
+        def financials():
+            for basis in ("CFS", "OFS"):
+                data = request(ENDPOINT, bsns_year=spec["year"], reprt_code=spec["report_code"], fs_div=basis)
+                if data.get("status") == "013" and basis == "CFS":
+                    continue
+                return parse_financials(data, event, spec, basis, now)
+
+        pair, cached = _cached(("dart_accounts", event["ticker"], spec["receipt"], auth), now, financials)
+        diagnostic.update(financial_status="connected", financial_reason="direct_reported_accounts", financial_from_cache=cached)
+        return pair, diagnostic
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        reason = str(error)
+        reason = reason if re.fullmatch(r"[a-z][a-z0-9_]{1,80}", reason) else "invalid_provider_schema"
+        diagnostic.update(financial_reason=reason, financial_from_cache=getattr(error, "from_cache", False))
+        return ({**event, "financial_reason": reason}, None), diagnostic
+
+
 def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=None, get=requests.get):
     """Every requested issuer gets a result or an explicit reason, never a guess.
 
@@ -188,7 +224,10 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
                                          end_de=now.strftime("%Y%m%d"), pblntf_ty="A", last_reprt_at="Y",
                                          page_count=100, sort="date", sort_mth="desc"))
                 return latest_dart_report(data, corp, ticker, now), None
-            pair, cached = _cached(("issuer", ticker, auth), now, fetch)
+            pair, cached = _cached(("issuer_accounts_v1", ticker, auth), now, fetch)
+            if market == "KR":
+                pair, financial_diagnostic = _dart_financials(pair[0], auth, dart_key, now, deadline, get)
+                diagnostic.update(financial_diagnostic)
             diagnostic.update(status="connected", reason="official_filing", from_cache=cached,
                               fiscal_period=pair[0]["fiscal_period"], source_url=pair[0]["source_url"],
                               source_verified_at=pair[0]["source_verified_at"])
