@@ -12,7 +12,8 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
     from stock_lab_core.earnings_pipeline import build_earnings_pipeline
     from stock_lab_core.report_earnings import earnings_coverage_lines
     pipeline = pipeline if pipeline is not None else build_earnings_pipeline(context, now=now)
-    events = [r for r in pipeline["events"] if r.get("event_status")]
+    events = [r for r in pipeline["events"] if r.get("event_status")
+              and r.get("source_kind") != "dart_discovered_report"]
     sources = records(context.get("earnings_sources"))
     lines = ["", "**기업 실적 촉매**", "기업·상태 | 발표일 / 콜 시각 | 근거·연결 범위", "--- | --- | ---"]
     count = 0
@@ -24,9 +25,6 @@ def earnings_calendar_lines(context, now, *, pipeline=None):
         status = {"released": "공식 결과 발표 확인", "reported_results": "실적 보도 확인·공식 대조 대기",
                   "scheduled": "예정", "elapsed_unconfirmed": "예정일 경과·결과 미확인"}.get(row["event_status"], "미확인")
         time = text(row.get("date")) + " (발표 분 시각 미제공)"
-        if row.get("source_kind") == "dart_discovered_report":
-            status = "공식 정기보고서 확인"
-            time = text(row.get("date")) + " 공시 접수일 · 실적 발표일/회계분기 미확인"
         if row.get("release_precision") == "datetime" and row.get("release_at"):
             time = kst_time(row["release_at"])
         if row.get("event_status") == "reported_results":

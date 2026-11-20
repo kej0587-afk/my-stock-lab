@@ -197,7 +197,11 @@ def test_dart_receipt_is_not_announcement_or_inferred_fiscal_quarter():
     assert compact_catalyst_lines(pipeline, "KR", limit=None) == []
     assert "정기보고서 확인 1개(실적 발표일 별도)" in "\n".join(earnings_coverage_lines(pipeline))
     assert all(state == "미연결" for state in pipeline["packets"][0]["stages"].values())
-    assert "공시 접수일 · 실적 발표일/회계분기 미확인" in "\n".join(earnings_calendar_lines(data, NOW, pipeline=pipeline))
+    calendar = "\n".join(earnings_calendar_lines(data, NOW, pipeline=pipeline))
+    assert "공시 접수일·실적 발표일 미확인" in calendar
+    assert "분기보고서 (2026.09)" not in calendar
+    from stock_lab_core.report_event_watch import event_watch_rows
+    assert event_watch_rows(data, [], NOW, pipeline=pipeline) == []
     with pytest.raises(ValueError, match="dart_period"):
         latest_dart_report(dart_payload(), "wrong", "123456.KS", NOW)
 

@@ -157,3 +157,26 @@ ticker, not the filing title. Three source/pipeline regression cases cover this.
 Final focused integration including report-section contracts:293pass/15.79s.
 The final label-fix preservation gate passed1820/1820 with no errors/skips and
 unchanged source hashes,201.32s (`all_z97aj3ek`).
+
+Code `fa1710f1` was pushed/rebooted. The12:08report51 completed112.087s with
+116loaded/disk/Git hashes equal, no stale modules, and equal95rows/18corefields
+(12:04/12:09exports). Live DART timed out at corporate identity connection;
+the report exposed connect_timeout rather than inventing results. A single
+explicit warm retry produced12:11report52 in79.26s. DART succeeded, names for
+HD Hyundai Heavy Industries, Hyundai AutoEver and Samsung Electro-Mechanics were
+confirmed in the operating evidence table. Coverage:74registered,19announcement
+confirmations,17periodic-report confirmations. Another95rows/18field comparison
+(12:04/12:12) was equal. Warm/cold/source coverage differ: not a speedup benchmark.
+
+The now-populated DART branch exposed one further presentation route: the
+general catalyst watch still promoted a report receipt to an earnings result.
+Exclude discovered periodic filings from both the general catalyst watch and
+the earnings catalyst calendar; retain their issuer/receipt/period/source and
+missing metrics in the evidence coverage table. The regression crosses the raw
+calendar, reconciled pipeline, compact catalyst and coverage renderers. Focused
+integration including the event-watch suite:335pass/15.74s. No source values,
+investment thresholds or scoring inputs changed.
+Final preservation gate:1820pass/0fail/0skip,200.745s, unchanged hashes
+(`all_cz2azjpm`). Other calendar consumers were inspected: the event study already
+rejects release_date_confirmed=false; macro scheduling and BOK checks do not
+promote these records. No additional provider or collection loop was added.

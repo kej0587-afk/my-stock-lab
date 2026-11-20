@@ -164,6 +164,8 @@ def event_watch_rows(context, summary_rows, now, *, pipeline=None):
     events = [*records(context.get("calendar_events")), *records((pipeline or {}).get("events"))]
     selected = {}
     for row in events:
+        if row.get("source_kind") == "dart_discovered_report":
+            continue
         day = stamp(row.get("date"))
         source = safe_link(row.get("result_source_url") or row.get("source_url"))
         if not day or not source or text(row.get("source")) == "fallback":
