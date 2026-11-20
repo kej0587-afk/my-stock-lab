@@ -185,12 +185,13 @@ def test_no_negative_or_missing_reference_becomes_a_recommendation(bars):
 
 
 @pytest.mark.parametrize('quote_position', ['below','inside','above'])
-def test_intraday_reference_never_confirms_daily_break(case,bars,quote_position):
+@pytest.mark.parametrize('as_string', [False, True])
+def test_intraday_reference_never_confirms_daily_break(case,bars,quote_position,as_string):
     d,c,p=case
     c.update(daily_source=bars,expected_close=bars.index[-1].strftime('%Y-%m-%d'))
     e=evidence(bars)
     price={'below':e['support']['price']-1,'inside':e['close'],'above':e['recovery']['price']+1}[quote_position]
-    c['quote_evidence']={'status':'연결됨','price':price,'session':'시간외','as_of':'2026-11-20 05:30 KST'}
+    c['quote_evidence']={'status':'연결됨','price':str(price) if as_string else price,'session':'시간외','as_of':'2026-11-20 05:30 KST'}
     model=build_precision_scenarios(d,'TEST',c,p)
     assert '확정' in model['quote_basis']
     assert '종가 이탈 확정 전' in model['quote_basis'] if quote_position=='below' else True

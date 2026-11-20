@@ -147,13 +147,14 @@ def _attach_completed_observations(model, context, ticker):
                          "현재 시세의 미확인 거래량과 구분하며, 관측 가격은 체결가나 매수 허가가 아닙니다.")
     model["price_basis"] = f"시나리오 종가 {format_currency(evidence['close'], ticker)} · {evidence['asof']} / 기존 판정 입력 {context.get('decision_price_label', '시각·세션 미확인')}"
     quote = _map(context.get("quote_evidence"))
-    if quote.get("status") == "연결됨" and _positive(quote.get("price")):
-        model["quote_basis"] = (f"별도 참고시세 {format_currency(quote['price'], ticker)} · {quote.get('session', '세션 미확인')} "
+    quote_price = _positive(quote.get("price"))
+    if quote.get("status") == "연결됨" and quote_price:
+        model["quote_basis"] = (f"별도 참고시세 {format_currency(quote_price, ticker)} · {quote.get('session', '세션 미확인')} "
                                  f"· {quote.get('as_of', '시각 미확인')} · 완료봉/기존 판정 입력과 혼합하지 않음")
         support, recovery = evidence.get("support"), evidence.get("recovery")
         if evidence["fresh"] and support and recovery:
-            position = ("하방 관찰선 아래 · 종가 이탈 확정 전" if quote["price"] < support["price"]
-                        else "회복 장벽 위 · 종가 회복 확정 전" if quote["price"] > recovery["price"]
+            position = ("하방 관찰선 아래 · 종가 이탈 확정 전" if quote_price < support["price"]
+                        else "회복 장벽 위 · 종가 회복 확정 전" if quote_price > recovery["price"]
                         else "관찰 가격 범위 안 · 지지 확인/매집 확정 아님")
             model["quote_basis"] += " / " + position
     for item, prices in zip(model["scenarios"], model["price_rows"]):
