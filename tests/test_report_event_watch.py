@@ -95,6 +95,20 @@ def test_missing_collection_keeps_existing_report_fallback():
     assert "일정이 없다는 뜻은 아닙니다" in output and "일정 연결 미완료: Census" in output
 
 
+@pytest.mark.parametrize("title,expected", [
+    ("새 기업 IPO 상장 첫날 공모가 대비 20% 상승", "상장 후 거래 보도"),
+    ("New company shares debuted higher after IPO", "상장 후 거래 보도"),
+    ("새 기업 상장 계획 발표, 조달 목표 공개", "일정·공모 계획 보도"),
+    ("새 기업 상장 첫날 공모가 대비 상승 전망", "일정·공모 계획 보도"),
+    ("IPO 상장 첫날 전망, 상장 연기 발표", "상장 철회·연기 보도"),
+])
+def test_listing_stage_is_generic_and_does_not_invent_calendar_date(title, expected):
+    from stock_lab_core.report_event_watch import listing_news_stage
+    stage, check = listing_news_stage(title)
+    assert stage == expected
+    assert "확인" in check
+
+
 def test_latest_nvidia_ir_supersedes_only_after_verification_date():
     from stock_lab_core.earnings_sources import _issuer
     old, _ = _issuer("NVDA", ["NVDA"], datetime.fromisoformat("2026-11-14T12:00:00+00:00"), False)

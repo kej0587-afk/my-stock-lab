@@ -40,17 +40,35 @@ def sector_coverage_lines(context, news, market, now):
             continue
         seen.add(ticker)
         observations.append(row)
-    rows = []
+    rows, shared = [], {}
     for row in sorted(observations, key=lambda r: number(first(r, "1일수익률", "1D")), reverse=True):
         ticker = text(first(row, "Ticker", "티커"))
         label = sector_display_name(row)
         related = sector_related_news(ticker, day, clean_news, sector_name=label)
+        direct_news = [item for item in related if not item.get("market_context_only")]
+        body = sector_body_reasons(row, news, context, now)
+        direct_body = [item for item in body if item.get("scope") == "sector_report"]
+        direct_news = [item for item in direct_news if not (
+            item.get("body_status") == "verified" and item.get("body_source_url")
+            and any(item["body_source_url"] in reason["source"] for reason in body))]
+        for item in body:
+            if item.get("scope") == "market_common_theme":
+                shared.setdefault((item["source"], item["evidence"]), item)
         evidence = sector_evidence(row, context.get("macro_data", {}),
-            [dict(item, ticker=ticker) for item in related], observations=context.get("prices", {}),
-            body_reasons=sector_body_reasons(row, news, context, now))
+            [dict(item, ticker=ticker) for item in direct_news], observations=context.get("prices", {}),
+            body_reasons=direct_body)
         rows.append((f"{label}({ticker})", evidence["daily"], evidence["excess"], evidence["reading"]))
-    return ["**업종 전체 비교 · 수집된 기초 업종 ETF**", *_table(
-        ["업종", "일간·기준일", "시장 대비 초과", "관련 재료·해석"], rows)] if rows else []
+    if not rows:
+        return []
+    output = ["**업종 전체 비교 · 수집된 기초 업종 ETF**", "업종 직접 관련 재료만 연결합니다. IPO·금리·시장 전체 수급은 공통 시황과 구분하며 업종의 실제 자금 유입을 뜻하지 않습니다.", *_table(
+        ["업종", "일간·기준일", "시장 대비 초과", "관련 재료·해석"], rows)]
+    if shared:
+        output += ["**동일 시장 공통 배경 · 업종 초과수익의 직접 근거 아님**", *_table(
+            ["본문 보도·출처", "해석(추정)·다음 확인"], [
+                (f"{item['evidence']} {item['source']} · {item['observation']}",
+                 " / ".join(item["implications"]) + " · 다음 확인: " + " / ".join(item["checks"]))
+                for item in shared.values()])]
+    return output
 
 
 def company_coverage_lines(context, summary_rows, market):

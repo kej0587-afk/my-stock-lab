@@ -117,6 +117,25 @@ def restore_news_preferences(state):
         state.setdefault("today_market_memo_" + key, value)
 
 
+def _checked_context_status(row, published_at, now):
+    """Keep a rejected body check from reusing its saved success label."""
+    from stock_lab_core.report_evidence import stamp
+
+    status = row.get("body_status")
+    if status != "no_supported_context":
+        return status
+    if row.get("body_source_url") != row.get("link"):
+        return "article_source_mismatch"
+    times = [stamp(row.get(field)) for field in ("body_published_at", "body_modified_at")]
+    if not all(times):
+        return "article_timestamp_unavailable"
+    if max(times) > now:
+        return "article_version_after_report"
+    if min(abs((published_at - value).total_seconds()) for value in times) > 3600:
+        return "article_timestamp_mismatch"
+    return status
+
+
 def selected_category_lines(context, now):
     """Make every requested topic's result visible, including honest empty results."""
     from stock_lab_core.report_evidence import _cell, citation, stamp, curate_news
@@ -165,13 +184,10 @@ def selected_category_lines(context, now):
                 if facts:
                     detail += " · 사실(본문): " + facts[0]["summary"] + " · 해석(추정): " + facts[0]["implication"]
                 else:
-                    body_times = [stamp(row.get(field)) for field in ("body_published_at", "body_modified_at")]
-                    checked = (row.get("body_status") == "no_supported_context"
-                               and row.get("body_source_url") == key
-                               and all(value and value <= now for value in body_times)
-                               and min(abs((at - value).total_seconds()) for value in body_times) <= 3600)
-                    detail += (" · 본문 확인·자동 해석 근거 부족" if checked else
-                               " · 제목 확인·본문 원인 해석 보류 (" + body_unavailable_reason(row) + ")")
+                    status = _checked_context_status(row, at, now)
+                    detail += (" · 본문 확인·자동 해석 근거 부족" if status == "no_supported_context" else
+                               " · 제목 확인·본문 원인 해석 보류 ("
+                               + body_unavailable_reason(dict(row, body_status=status)) + ")")
                     reading = row.get("reading_ko") or ""
                     if reading and not re.search("[가-힣]", row.get("title", "")):
                         detail += " · " + reading

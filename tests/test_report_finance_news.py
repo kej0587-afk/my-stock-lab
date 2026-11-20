@@ -153,6 +153,36 @@ def test_unverified_or_future_body_does_not_claim_checked_context(changes):
     assert "제목 확인·본문 원인 해석 보류" in output
 
 
+@pytest.mark.parametrize("changes,reason", [
+    ({"body_modified_at": "2026-11-03T00:00:00+09:00"}, "생성 기준시각 이후 수정된 기사"),
+    ({"body_published_at": ""}, "본문 발행시각 미확보"),
+    ({"body_modified_at": "not-a-timestamp"}, "본문 발행시각 미확보"),
+    ({"body_source_url": "https://www.yna.co.kr/view/different"}, "기사 링크와 본문 출처 불일치"),
+    ({"body_source_url": ""}, "기사 링크와 본문 출처 불일치"),
+    ({"body_published_at": "2026-10-30T12:00:00+09:00",
+      "body_modified_at": "2026-10-30T12:00:00+09:00"}, "RSS와 본문 발행시각 불일치"),
+])
+def test_rejected_body_displays_validation_reason_without_mutating_article(changes, reason):
+    from copy import deepcopy
+
+    row = checked_article(**changes)
+    before = deepcopy(row)
+    output = render([row])
+    assert "제목 확인·본문 원인 해석 보류 (" + reason + ")" in output
+    assert "본문 확인·자동 해석 근거 부족" not in output
+    assert row == before
+
+
+@pytest.mark.parametrize("body_at,checked", [
+    ("2026-11-02T11:21:47+00:00", True),  # Exactly the existing one-hour tolerance.
+    ("2026-11-02T11:21:46+00:00", False),
+    ("2026-11-02T12:21:47+00:00", True),
+])
+def test_body_validation_keeps_existing_timestamp_tolerance(body_at, checked):
+    output = render([checked_article(body_published_at=body_at, body_modified_at=body_at)])
+    assert ("본문 확인·자동 해석 근거 부족" in output) is checked
+
+
 def test_future_article_is_not_selected_as_finance_evidence():
     output = render([article(published_at="2026-11-03T00:00:00+09:00")])
     assert "날짜·출처·주제 검증을 통과한 기사 없음" in output

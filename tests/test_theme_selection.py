@@ -24,10 +24,11 @@ def functions(source):
     return {n.name:n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
 
 
-def inline_theme_selection(node):
+def inline_theme_selection(node, helper=None):
     """Restore just the tested helper call for earlier immutable renderer guards."""
     node = deepcopy(node)
-    helper = functions(sources()[1])[HELPER]
+    if helper is None:
+        helper = functions(sources()[1])[HELPER]
     result = []
     for statement in node.body:
         if (isinstance(statement, ast.Assign) and isinstance(statement.value, ast.Call)
@@ -41,12 +42,19 @@ def inline_theme_selection(node):
 
 
 def test_extraction_changes_no_other_statements_or_functions():
-    before, after = map(functions, sources())
-    helper = after.pop(HELPER)
+    approved = subprocess.check_output(['git', 'show', '6cae5e7e:app.py'], cwd=ROOT, encoding='utf-8-sig')
+    before, current = sources()
+    extracted, now = functions(approved), functions(current)
+    for name in (RENDERER, HELPER):
+        assert ast.dump(now[name]) == ast.dump(extracted[name]), name
+    helper = extracted[HELPER]
     assert ast.unparse(helper.body[-1]) == 'return (selected_theme, selected_market)'
-    assert before.keys() == after.keys()
-    after[RENDERER] = inline_theme_selection(after[RENDERER])
-    assert {k:ast.dump(v) for k,v in before.items()} == {k:ast.dump(v) for k,v in after.items()}
+    # Inline the historical helper, not the current implementation, for the
+    # immutable whole-module extraction proof.
+    historical = ast.parse(approved)
+    historical.body = [inline_theme_selection(n, helper) if isinstance(n, ast.FunctionDef) and n.name == RENDERER else n
+                       for n in historical.body if not (isinstance(n, ast.FunctionDef) and n.name == HELPER)]
+    assert ast.dump(ast.parse(before)) == ast.dump(historical)
 
 
 class UI:

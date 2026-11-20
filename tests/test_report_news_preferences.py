@@ -175,7 +175,9 @@ def test_streamlit_controls_change_actual_generation_arguments():
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from time import perf_counter
 from stock_lab_core.today_news import TODAY_MARKET_STORY_RSS_PLAN
+SCRIPT_RUN_STARTED = perf_counter()
 def resolve_today_market_memo_summary_df(*args): return pd.DataFrame(), "test"
 def build_today_market_memo_universe(*args): return [], {}
 def get_report_build_info(*args): return {"loaded_source_sha256": "test", "restart_required": False}

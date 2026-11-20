@@ -121,7 +121,10 @@ def test_previous_us_close_is_not_relabelled_to_korean_calendar_day(day, previou
     result = build_news_brief(context, [row], [], datetime.fromisoformat(now), limit=None, compact=True)
     output = "\n".join(result["lines"])
     assert row["link"] in output
-    assert f"US {previous} 이전 종가 관측" in output and f"{day} 종가 원인 미확인" in output
+    # The headline does not claim a closing recap; retain the prior local date
+    # without promoting a generic report to an observed close.
+    assert f"US {previous} 이전 거래일 보도·장전 재료" in output and f"{day} 종가 원인 미확인" in output
+    assert "이전 종가 관측" not in output
     assert f"US {day} 종가 세션" not in output
 
 

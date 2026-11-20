@@ -168,8 +168,15 @@ def test_watch_wrapper_keeps_original_cache_and_forced_refresh_thread(monkeypatc
     monkeypatch.setattr(prices, "_force_live_price_refresh_active", lambda: forced)
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROOT / "app.py"), "exec"), env)
     assert env[node.name]("fixture") is helper.return_value
+    # 2fad1460 threads the profile/ticker through the completed-session comparison.
     helper.assert_called_once_with(watch, load_quote=quote, load_history=history,
-                                   pct_text=pct, judge=judge, parallel=not forced)
+                                   pct_text=pct, judge=judge, parallel=not forced,
+                                   comparison_profile="fixture", comparison_ticker="")
+    helper.reset_mock()
+    assert env[node.name]("fixture", comparison_ticker="SOXL") is helper.return_value
+    helper.assert_called_once_with(watch, load_quote=quote, load_history=history,
+                                   pct_text=pct, judge=judge, parallel=not forced,
+                                   comparison_profile="fixture", comparison_ticker="SOXL")
 
 
 @pytest.mark.parametrize("stale", [False, True])

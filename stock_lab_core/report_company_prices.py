@@ -20,7 +20,7 @@ def company_catalog(summary_rows=()):
 
 
 def collect_company_prices(summary_rows, frames, benchmark_prices, sessions, now, *,
-                           allow_fetch=True, loader=None):
+                           allow_fetch=True, loader=None, regular_loader=None):
     """Reuse available histories and batch only missing ones using existing TTLs.
 
     Injected report fixtures set allow_fetch=False. Missing/stale histories stay
@@ -33,16 +33,21 @@ def collect_company_prices(summary_rows, frames, benchmark_prices, sessions, now
     missing = tuple(sorted(set(catalog) - set(selected)))
     reused = len(selected)
     error = ""
-    if missing and allow_fetch:
+    regular_basis = loader is None or regular_loader is not None
+    overseas_missing = tuple(t for t in missing if not regular_basis or not t.endswith((".KS", ".KQ")))
+    if overseas_missing and allow_fetch:
         if loader is None:
             from stock_lab_core.prices import prefetch_price_data_parallel
             loader = prefetch_price_data_parallel
         try:
-            fetched = loader(missing, period="1y", max_workers=4)
+            fetched = loader(overseas_missing, period="1y", max_workers=4)
             selected.update({ticker: frame for ticker, frame in fetched.items() if ticker in missing})
         except Exception as exc:
             error = type(exc).__name__
     # Apply the existing split/large-change guard, not an inferred price repair.
+    if allow_fetch and regular_basis:
+        from stock_lab_core.kr_regular_history import align_regular_frames
+        selected = align_regular_frames(selected, catalog, now, **({"loader": regular_loader} if regular_loader else {}))
     selected, notes, issues, _ = validate_report_prices(selected, {}, now, etf_tickers=tuple(catalog))
     result = {}
     for ticker, entry in catalog.items():

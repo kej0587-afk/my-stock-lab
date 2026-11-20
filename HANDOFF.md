@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-16 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-20 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -18,6 +18,18 @@ Repository: `https://github.com/kej0587-afk/my-stock-lab.git`, branch `main`.
 Production: `https://3insky.streamlit.app/`.
 
 ## Current State
+
+Current work (2026-11-20): read
+[data/explanation audit](docs/maintenance/20261120_data_and_explanation_audit.md).
+Base12269b6b; report-only regular-close source correction, financial period
+regression protection/SEC comparison, consistent precision final-check display,
+four observational axes, industry/common-news separation and macro observatory.
+No investment thresholds, trade orders or golden baselines changed. Expanded
+integration2728pass, selected preservation gate1820pass/0fail; source hashes
+unchanged. Operating deployment verification is pending; local tests are not
+operating proof. Missing sources and remaining scope are explicit in the audit.
+Exactly one next task: generic official quarterly release discovery/period
+lifecycle on a frozen multi-sector fixture, not issuer-specific report prose.
 
 Current bounded work (2026-11-16 holdings session display): read
 [holdings verification](docs/maintenance/20261116_holdings_display.md) first.

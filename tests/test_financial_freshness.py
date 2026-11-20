@@ -66,7 +66,8 @@ def test_successful_retrieval_records_time_and_reports_actual_save_result(app_mo
     frame = records()
     frame.loc[0, "manual_score"] = 2
     monkeypatch.setattr(app, "load_fin_scores_db", lambda: frame.copy())
-    monkeypatch.setattr(app, "get_auto_fin_score_for_ticker", lambda *args: (4, {"ok": True}, {"ok": True}, {"fresh": 1}))
+    monkeypatch.setattr(app, "get_auto_fin_score_for_ticker", lambda *args: (
+        4, {"ok": True}, {"ok": True}, {"quarter_latest": {"date": "2026-09-30"}}))
     save = Mock(return_value=saved)
     monkeypatch.setattr(app, "upsert_fin_score_db", save)
     score, meta = app.get_final_fin_score("GOOGL", False, "us_stock")

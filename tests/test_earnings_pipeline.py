@@ -35,11 +35,25 @@ def news(title, suffix="one", **changes):
     ("Alphabet 2026Q3 earnings beat estimates", "GOOGL"),
     ("Microsoft FY2027Q1 earnings beat estimates", "MSFT"),
     ("Microsoft fiscal year 2027 earnings beat estimates", "MSFT"),
+    ("팔로알토 실적 발표, 매출 증가", "PANW"),
+    ("크라우드스트라이크 실적 발표", "CRWD"),
+    ("지스케일러 실적 발표", "ZS"),
 ])
 def test_existing_market_universe_discovers_non_tech_without_network(title, ticker):
     market = "KR" if ticker.endswith(".KS") else "US"
     data = discover_earnings_news([news(title, market=market)], issuer_catalog(), NOW)
     assert [row["ticker"] for row in data["items"]] == [ticker]
+
+
+def test_registered_cybersecurity_names_share_sector_without_financial_inference():
+    source = [{"티커": "NET", "종목명": "Cloudflare"}, {"티커": "OKTA", "종목명": "Okta,"}]
+    before = deepcopy(source)
+    catalog = issuer_catalog(source)
+    assert all(catalog[t]["sector"] == "사이버보안" for t in ("NET", "OKTA", "PANW", "CRWD", "ZS"))
+    for title, symbol in (("클라우드플레어 실적 발표", "NET"), ("옥타 실적 발표", "OKTA")):
+        found = discover_earnings_news([news(title)], catalog, NOW)
+        assert found["items"][0]["ticker"] == symbol
+    assert source == before
 
 
 @pytest.mark.parametrize("title", [

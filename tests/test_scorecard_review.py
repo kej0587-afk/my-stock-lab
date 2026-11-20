@@ -310,6 +310,38 @@ def test_precision_render_accepts_none_fin_meta_and_etf_skips_financial_fetch(of
         assert set(result["review"]["missing_axes"]) == {"품질", "가치", "성장", "재무건전성", "주주환원"}
 
 
+@pytest.mark.parametrize("fetched_at", [None, "2026-11-20T01:02:03+00:00"])
+def test_scorecard_labels_saved_and_external_evidence_without_scoring_or_fetching_statements(offline_app, fetched_at):
+    app, meta = offline_app, stored_financial()
+    snapshot = {"sources": ["Yahoo", "FMP"], "fetched_at": fetched_at,
+                "data": {"returnOnEquity": 0, "revenueGrowth": None}}
+    before = deepcopy((meta, snapshot))
+    app.fetch_valuation_snapshot.return_value = snapshot
+    forbidden = Mock(side_effect=AssertionError("Rendering cannot refresh financial scores"))
+    app.get_final_fin_score = app.get_auto_fin_score_for_ticker = app.fetch_us_financials_sec = forbidden
+    result = app.render_precision_scorecard(bars(), "MSFT", meta, False)
+    captions = "\n".join(app.st.captions)
+    assert "저장 점수 근거: saved synthetic statements" in captions and "2025-12-31" in captions
+    assert "성적표 외부 필드: Yahoo, FMP" in captions
+    assert f"조회 시각 {fetched_at or '미제공'}" in captions
+    assert "필드별 보고기간·발표일 미확인" in captions
+    assert "조회 시각은 실적 기준일이 아니며" in captions
+    assert result["data"]["returnOnEquity"] == 0 and result["data"]["revenueGrowth"] == .15
+    assert (meta, snapshot) == before
+    forbidden.assert_not_called()
+    app.fetch_valuation_snapshot.assert_called_once_with("MSFT")
+
+
+def test_external_fields_without_provider_metadata_are_not_attributed_to_saved_source(offline_app):
+    app = offline_app
+    app.fetch_valuation_snapshot.return_value = {"data": {"returnOnEquity": 0}}
+    result = app.render_precision_scorecard(bars(), "MSFT", stored_financial(), False)
+    captions = "\n".join(app.st.captions)
+    assert "성적표 외부 필드: 출처 미확인" in captions
+    assert "저장 점수 근거: saved synthetic statements" in captions
+    assert result["data"]["returnOnEquity"] == 0
+
+
 @pytest.mark.parametrize("scorecard", [None, {}, {"review": None}, {"review": []}])
 def test_unlinked_scorecard_has_no_added_vote(scorecard):
     assert scorecard_decision_context(scorecard, None, 0) == {

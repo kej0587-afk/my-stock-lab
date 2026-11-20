@@ -59,10 +59,11 @@ def test_body_channels_reach_semiconductor_and_software_without_explaining_exces
         line = next(line for line in rendered.splitlines() if f"({ticker})" in line)
         old = next(line for line in baseline.splitlines() if f"({ticker})" in line)
         assert line.split(" | ")[:3] == old.split(" | ")[:3]
-        assert AI in line and RATES in line and item["link"] in line
-        assert "동일 시장 공통 배경" in line and "초과수익의 직접 근거 아님" in line
-        assert "해석(추정)" in line and "다음 확인" in line and "현금흐름" in line
-        assert "제목 기준 보도" not in line and "마감 보도" in line
+        assert AI not in line and RATES not in line
+        assert "해석(추정)" in line and "제목 기준 보도" not in line
+    assert rendered.count(AI) == rendered.count(RATES) == 1
+    assert "동일 시장 공통 배경" in rendered and "초과수익의 직접 근거 아님" in rendered
+    assert "다음 확인" in rendered and "현금흐름" in rendered and "마감 보도" in rendered
     soxx = next(line for line in rendered.splitlines() if "(SOXX)" in line)
     assert "-3.00%p 초과 움직임의 개별 원인 미확인" in soxx
     assert (ctx, item) == before
@@ -198,7 +199,15 @@ def test_generic_words_or_company_names_do_not_donate_sector_identity(ticker, na
     ("XLI", "산업재", "산업용 기계 기업의 실적이 시장 기대치를 하회했다."),
     ("PAVE", "인프라", "도로와 교량 건설 기업의 실적이 시장 기대치를 하회했다."),
     ("CIBR", "사이버보안", "Cybersecurity software earnings beat expectations."),
+    ("CIBR", "사이버보안", "팔로알토 실적이 시장 기대치를 상회했다. 회사는 이번 분기 실적과 연간 전망을 발표했다."),
+    ("CIBR", "사이버보안", "PANW earnings beat expectations."),
 ])
 def test_specific_industry_words_keep_supported_body_links(ticker, name, sentence):
     reasons = sector_body_reasons(dict(sector(ticker), 섹터=name), [article([sentence])], context(), NOW)
     assert reasons and all(reason["scope"] == "sector_report" for reason in reasons)
+
+
+def test_market_wide_investor_flow_is_not_sector_flow():
+    sentence = "시장 전체 기관 순매수에도 금융주 실적이 시장 기대치를 하회했다."
+    reasons = sector_body_reasons(sector("XLF"), [article([sentence])], context(), NOW)
+    assert reasons and all(reason["scope"] == "market_common_theme" for reason in reasons)

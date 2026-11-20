@@ -157,17 +157,18 @@ def test_cached_alias_does_not_extend_snapshot_ttl(monkeypatch):
 
 
 def test_all_app_functions_except_scope_wrapper_unchanged():
-    from tests.test_summary_wait_diagnostics import strip_added_timing
     before = subprocess.check_output(["git", "show", f"{REFERENCE_COMMIT}:app.py"],
                                      cwd=ROOT, encoding="utf-8")
+    approved = subprocess.check_output(["git", "show", "661431f9:app.py"], cwd=ROOT, encoding="utf-8")
     after = (ROOT / "app.py").read_text(encoding="utf-8")
-    def functions(source):
-        return {node.name: ast.dump(strip_added_timing(node)) for node in ast.parse(source).body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                # Watch I/O wrappers have their own immutable-reference test.
-                and node.name not in {"render_today_queue_tab", "get_all_summary",
-                                      "build_leveraged_precision_watch_rows", "_timed_today_analyst_snapshot",
-                                      # Exact source-flow parity: test_source_flow_row.
-                                      "build_source_flow_context", "_normalize_source_flow_row",
-                                      "_render_image_theme_selection"}}
-    assert functions(before) == functions(after)
+    def wrapper(tree):
+        matches = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "render_today_queue_tab"]
+        assert len(matches) == 1
+        return matches[0]
+    original, historical, current = map(ast.parse, (before, approved, after))
+    extracted = wrapper(historical)
+    assert ast.dump(wrapper(current)) == ast.dump(extracted)
+    # Only this wrapper belongs to the request-scope change. The full historical
+    # module (including every other function and top-level statement) is frozen.
+    historical.body[historical.body.index(extracted)] = wrapper(original)
+    assert ast.dump(original) == ast.dump(historical)

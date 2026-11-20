@@ -29,6 +29,11 @@ def _exchange_schedule(market, start, end):
         raise ValueError("invalid_exchange_calendar")
     checked.attrs.update(source="exchange_calendars " + CALENDARS[market],
                          source_url=CALENDAR_SOURCE, version=calendars.__version__)
+    # Published exchange exception missing from the bundled calendar version.
+    if market == "KR" and pd.Timestamp("2026-11-19") in checked.index:
+        checked.loc[pd.Timestamp("2026-11-19"), "market_open"] = pd.Timestamp("2026-11-19T01:00Z")
+        checked.loc[pd.Timestamp("2026-11-19"), "market_close"] = pd.Timestamp("2026-11-19T07:30Z")
+        checked.attrs["exception_source"] = "https://kind.krx.co.kr/external/2026/11/05/000141/20261105000216/99303.htm"
     return checked
 
 

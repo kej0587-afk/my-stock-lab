@@ -168,7 +168,7 @@ def test_verified_external_evidence_is_explicit_and_stale_probability_historical
 
 def test_collection_adds_daily_only_no_live_rotation_or_macro_changes(monkeypatch):
     from stock_lab_core import prices, report_live, report_quotes, report_reference
-    from stock_lab_core import market_observation, report_prices
+    from stock_lab_core import market_observation, report_prices, kr_regular_history
     import requests
 
     def forbidden(*args, **kwargs):
@@ -183,6 +183,7 @@ def test_collection_adds_daily_only_no_live_rotation_or_macro_changes(monkeypatc
     monkeypatch.setattr(prices, "load_price_frames_batch", batch)
     monkeypatch.setattr(prices, "load_price_df", lambda *args: daily(list(range(100, 125)), dates))
     monkeypatch.setattr(report_live, "supplement_kr_indices", lambda frames: frames)
+    monkeypatch.setattr(kr_regular_history, "align_regular_frames", lambda frames, *args: frames)
     monkeypatch.setattr(report_live, "load_us_live_frames", lambda tickers: live_calls.append(tickers) or {})
     monkeypatch.setattr(report_quotes, "load_report_quotes", lambda tickers, **kwargs: quote_calls.append(tickers) or {})
     monkeypatch.setattr(report_reference, "load_macro_reference_frame", lambda *args: pd.DataFrame())

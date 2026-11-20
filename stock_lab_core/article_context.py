@@ -203,7 +203,7 @@ def _body_facts(paragraphs):
          "기관의 순매수가 보도됐습니다",
          "시장 전체 수급을 지지한 정황이며, 프로그램 매매 주체나 개별 업종 매수액을 뜻하지 않습니다",
          "같은 거래일 투자자별 순매수 표와 다음 거래일 수급 지속성 확인"),
-        ("earnings", r"(?:예상|기대).{0,25}(?:웃도|넘는|상회).{0,25}실적|실적\s*호조|strong (?:profit|earnings)|earnings.{0,15}(?:beat|exceed)",
+        ("earnings", r"(?:예상|기대).{0,25}(?:웃도|넘는|상회).{0,25}실적|실적.{0,25}(?:예상|기대).{0,15}(?:웃돌|상회)|실적\s*호조|strong (?:profit|earnings)|earnings.{0,15}(?:beat|exceed)",
          "일부 기업의 호실적이 보도됐습니다",
          "실적 기대가 지수를 지지해도 AI 업종과 시장 전체의 방향은 다를 수 있습니다",
          "예정 실적의 매출·가이던스와 업종별 확산 확인"),
@@ -358,7 +358,7 @@ def parse_article(data, url, expected_title):
 
 @cache_result(ttl=21_600, failure_ttl=30, is_success=lambda result: result.get("body_status") in {"verified", "no_supported_context"}, trace_name='report_article_body')
 def _article(url, title):
-    # v12: attributed requests/conflict and completed market-estimate misses.
+    # v13: retain trust checks and recognize completed Korean earnings beats.
     # cache_result keys this rule revision; the successful-body TTL stays 6h.
     try:
         data, final_url = _public_bytes(url)
@@ -568,6 +568,7 @@ def body_unavailable_reason(row):
         "article_metadata_unavailable": "기사 식별정보 확인 실패",
         "restricted_article": "공개 본문 접근 제한",
         "headline_mismatch": "기사 제목 대조 불일치",
+        "article_source_mismatch": "기사 링크와 본문 출처 불일치",
         "article_timestamp_unavailable": "본문 발행시각 미확보",
         "article_body_unavailable": "본문 영역 미확보",
         "article_encoding_invalid": "원문의 문자 인코딩 선언과 데이터 불일치",

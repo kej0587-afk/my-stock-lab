@@ -5302,7 +5302,7 @@ def _estimate_kr_fin_score_from_naver(ticker: str) -> tuple:
         return AUTO_FIN_FAIL_SCORE, f"Naver간이추정 실패: {e}"
 
 
-def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
+def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool, *, financials=None):
     if is_etf:
         notes = {
             "ok": True, "source": "etf", "mode": "ETF", "reason": "ETF는 재무점수 미합산",
@@ -5311,7 +5311,9 @@ def get_auto_fin_score_for_ticker(ticker: str, is_etf: bool):
         return 0, {"ok": True, "source": "etf"}, notes, {}
 
     is_kr = is_kr_listed(ticker)
-    fin = fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
+    fin = financials if financials is not None else (
+        fetch_kr_financials_auto(ticker) if is_kr else fetch_us_financials_auto(ticker)
+    )
 
     if not fin.get("ok", False):
         metrics = {
@@ -5412,10 +5414,59 @@ def get_final_fin_score(ticker, is_etf, asset_class):
     if not is_etf:
         fin_scores_df = load_fin_scores_db()
         matched = fin_scores_df[fin_scores_df["ticker"] == key]
+        previous_metrics, previous_source = {}, ""
         if not matched.empty:
             row = matched.iloc[0]
             if pd.notna(row["manual_score"]):
                 manual_score = int(row["manual_score"])
+            previous_notes = parse_notes_json(row.get("notes_json"))
+            previous_metrics = previous_notes.get("metrics", {})
+            previous_source = row.get("source", "")
+
+        if isinstance(fin_notes, dict) and fin_notes.get("ok") is True:
+            from stock_lab_core.financial_refresh import financial_refresh_is_newer, financial_refresh_period_issues
+
+            issues = financial_refresh_period_issues(
+                fin_metrics, previous_metrics,
+                candidate_source=fin_auto.get("source", ""), baseline_source=previous_source,
+            )
+            if not is_kr_listed(ticker) and fin_auto.get("source") == "fmp":
+                # Explicit refresh only: compare the cached SEC set once, even
+                # when saved evidence is as old as FMP. Never merge providers.
+                comparison = {"source": "sec_edgar", "status": "unavailable"}
+                try:
+                    sec_fin = fetch_us_financials_sec(ticker)
+                    if sec_fin.get("ok"):
+                        sec_fin = dict(sec_fin, fallback_from={
+                            "source": "fmp", "reason": "Verified SEC statement periods newer than FMP",
+                        })
+                        sec_score, sec_auto, sec_notes, sec_metrics = get_auto_fin_score_for_ticker(
+                            ticker, False, financials=sec_fin,
+                        )
+                        if sec_notes.get("ok") is not True:
+                            comparison["status"] = "incomplete"
+                        elif not financial_refresh_is_newer(
+                            sec_metrics, fin_metrics, candidate_source="sec_edgar", baseline_source="fmp",
+                        ):
+                            comparison["status"] = "not_proven_newer"
+                        elif financial_refresh_period_issues(
+                            sec_metrics, previous_metrics,
+                            candidate_source="sec_edgar", baseline_source=previous_source,
+                        ):
+                            comparison["status"] = "regresses_saved"
+                        else:
+                            auto_score, fin_auto, fin_notes, fin_metrics = sec_score, sec_auto, sec_notes, sec_metrics
+                            comparison["status"] = "selected_newer"
+                            issues = []
+                except Exception as exc:
+                    comparison["error_type"] = type(exc).__name__
+                fin_notes = dict(fin_notes, provider_comparison=comparison)
+                if issues:
+                    issues.append("SEC comparison: " + comparison["status"])
+            if issues:
+                previous_score, previous_meta = load_fin_score_meta_fast(ticker, False)
+                return previous_score, dict(previous_meta, save_ok=False, refresh_status="stale",
+                    refresh_error="재무 보고기간 후퇴/확인 불가: " + "; ".join(issues))
 
         if isinstance(fin_notes, dict) and fin_notes.get("ok") is False:
             if not matched.empty:
@@ -6886,7 +6937,8 @@ def render_precision_candlestick_chart(
     if pattern_candidates:
         _add_chart_pattern_overlays(fig, pattern_candidates)
     from stock_lab_core.chart_enrichment import build_volume_signal_series
-    chart_context = dict(decision_context or {}, chart_expected_close=latest_completed_chart_session(ticker) if structure.get("events") and show_signals else None)
+    from stock_lab_core.execution_readiness import precision_display_context
+    chart_context = dict(precision_display_context(decision_context or {}), chart_expected_close=latest_completed_chart_session(ticker) if structure.get("events") and show_signals else None)
     chart_events = qualify_chart_events(structure, chart_context, timeframe=timeframe,
                                        provisional_last=provisional_bar) if show_signals else []
     if chart_events:
@@ -6907,13 +6959,13 @@ def render_precision_candlestick_chart(
     if leverage_basis_note:
         st.caption(leverage_basis_note)
     if show_signals:
-        event_rows = chart_structure_rows(structure, chart_events, decision_context)
+        event_rows = chart_structure_rows(structure, chart_events, chart_context)
         if event_rows:
             st.markdown("##### 패턴 신호 · 현재 실행 제한")
             st.dataframe(pd.DataFrame(event_rows), hide_index=True, width='stretch')
         else:
             st.caption("최근 80봉: 확인된 패턴 돌파·이탈 신호 없음" if not structure.get("issue") else "패턴 신호 계산 보류")
-        workflow = (decision_context or {}).get("execution_workflow") or {}
+        workflow = chart_context.get("execution_workflow") or {}
         st.caption(f"현재 실행: {workflow.get('게이트상태', '미확인')} · {workflow.get('게이트근거', '실행 제한 확인 필요')}")
     if not volume_signals.empty:
         latest_volume = volume_signals.iloc[-1]
@@ -6931,7 +6983,7 @@ def render_precision_candlestick_chart(
             smc_features,
             liquidity_profile,
             ticker,
-            decision_context,
+            chart_context,
         )
         if check_rows:
             st.markdown("##### 실행조건 체크표")
@@ -17162,7 +17214,7 @@ def render_dashboard_group_summary(df, group_label):
     render_group(st, dedupe_dashboard_summary_df(df), group_label)
 
 
-def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=None):
+def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=None, observation_context=None):
     """
     정밀관측소 차트 아래 표시할 종합 서술형 해설.
     외부 API 없이 이미 계산된 c 딕셔너리와 fin_score만 사용합니다.
@@ -17171,7 +17223,7 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=No
     from stock_lab_core.execution_readiness import precision_display_context
 
     return render_narrative(
-        name, tkr, precision_display_context(c), fin_score, has_p, my_p, is_etf=is_etf,
+        name, tkr, precision_display_context(c), fin_score, has_p, my_p, is_etf=is_etf, observation_context=observation_context,
         describe_fvg_plain=describe_fvg_plain,
         build_sideways_quality_state=build_sideways_quality_state,
     )
@@ -19279,6 +19331,9 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
     data = _merge_missing_valuation_fields(raw_data, fallback)
     sources = snapshot.get("sources")
     source = ", ".join(str(item) for item in sources) if isinstance(sources, (list, tuple)) else str(sources or "")
+    external_source = source or (
+        "출처 미확인" if any(not _valuation_missing(value) for value in raw_data.values()) else "미수집"
+    )
     source = source or str(fin_meta.get("source") or "")
     if any(_valuation_missing(raw_data.get(key)) and not _valuation_missing(value)
            for key, value in fallback.items()):
@@ -19302,7 +19357,11 @@ def render_precision_scorecard(frame, ticker, fin_meta, is_etf):
         kwargs["benchmark"] = benchmark_frame
     scorecard = render_chart_scorecard(st, score_frame, **kwargs)
     if not is_etf:
-        st.caption(f"저장 재무 기간: {financial_basis(fin_meta)['재무자료기간']} · 외부 밸류 수치의 발표 기준일은 공급처가 제공하지 않으면 미확인입니다.")
+        st.caption(f"저장 점수 근거: {fin_meta.get('source') or '출처 미저장'} · {financial_basis(fin_meta)['재무자료기간']}")
+        st.caption(
+            f"성적표 외부 필드: {external_source} · 조회 시각 {snapshot.get('fetched_at') or '미제공'} · "
+            "필드별 보고기간·발표일 미확인. 조회 시각은 실적 기준일이 아니며, 저장 점수의 근거와 별도입니다."
+        )
     return {"data": data, "source": source, **(scorecard if isinstance(scorecard, dict) else {}),
             "price_asof": frame_last_date(score_frame), "financial_basis": financial_basis(fin_meta, is_etf=is_etf)}
 
@@ -29213,6 +29272,11 @@ def render_today_unified_briefing_panel(
         return
     if detail == "시장":
         from stock_lab_core.market_board import render_market_board
+        market_view = st.radio("시장 화면", ("시장판", "매크로 관측실"), horizontal=True, key="today_market_surface")
+        if market_view == "매크로 관측실":
+            from stock_lab_core.macro_monitor import render_macro_monitor
+            render_macro_monitor(st, key="today_macro_monitor")
+            return
         render_market_board(st, key="today_market_board")
         st.divider()
 
@@ -34815,7 +34879,10 @@ if main_page == "precision":
             precision_mtf_display = render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
             st.markdown(
-                build_precision_narrative(name, tkr, c, fin_score, has_p, my_p),
+                build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, observation_context={
+                    "multi_timeframe": mtf_pack, "liquidity_profile": precision_liquidity_profile,
+                    "signal_basis": precision_signal_basis,
+                }),
                 unsafe_allow_html=True,
             )
             precision_entry_plan = render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)

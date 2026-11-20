@@ -9,6 +9,7 @@ from stock_lab_core.economic_cache import collection_status
 from stock_lab_core.market_memo import build_auto_market_memo
 from stock_lab_core.report_evidence import curate_news
 from stock_lab_core.today_news import partition_session_market_news
+from stock_lab_core.report_view import split_report_sections
 
 
 NOW = datetime.fromisoformat("2026-10-21T12:45:00+09:00")
@@ -69,15 +70,23 @@ def test_rebound_background_is_connected_once_and_wrong_session_is_not_reused():
     rebound = article(REBOUND, "2026-10-21T09:20:00+09:00", "rebound")
     report = build_auto_market_memo(report_context=context([rebound]), now=NOW)
     assert "배경 보도 | 유가·금리 안정(기사 주장" in report
-    assert report.count(rebound["link"]) == 1
+    sections = dict(split_report_sections(report))
+    # Attribution, the macro material table and the timestamped candidate row
+    # have different roles; one global URL count would remove valid citations.
+    for title in ("핵심 해석", "매크로", "오늘의 시장 스토리"):
+        assert report.count("\n## " + title + "\n") == 1
+        assert sections[title].count(rebound["link"]) == 1
+    assert "기사 주장" in sections["핵심 해석"] and "장중·확정 아님" in sections["핵심 해석"]
     assert "당일 시장 방향과 연결할 배경 보도 미확보" not in report
     old = dict(rebound, published_at="2026-10-20T09:20:00+09:00")
     report = build_auto_market_memo(report_context=context([old]), now=NOW)
     assert "배경 보도 | 당일 시장 방향과 연결할 배경 보도 미확보" in report
+    assert old["link"] not in dict(split_report_sections(report))["핵심 해석"]
     falling = context([rebound])
     falling["intraday_prices"]["^KS11"]["return"] = -.03
     report = build_auto_market_memo(report_context=falling, now=NOW)
     assert "배경 보도 | 유가·금리 안정" not in report
+    assert rebound["link"] not in dict(split_report_sections(report))["핵심 해석"]
 
 
 def test_cross_publisher_same_closing_move_group_keeps_sources_once():

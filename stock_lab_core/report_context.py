@@ -65,11 +65,10 @@ def collect_report_context(summary_rows=None, event_rows=None, *, now=None, pric
     if frames is None:
         # Reuse the app's cached one-year histories, not one info request per asset.
         frames = load_price_frames_batch(tuple(sorted(tickers)), "1y")
-        for ticker in sorted(tickers):
-            if ticker.endswith((".KS", ".KQ")):
-                frames[ticker] = load_price_df(ticker, "1y")
         from stock_lab_core.report_live import supplement_kr_indices
         frames = supplement_kr_indices(frames)
+        from stock_lab_core.kr_regular_history import align_regular_frames
+        frames = align_regular_frames(frames, tickers, now)
     from stock_lab_core.report_quotes import load_report_quotes, repair_held_us_closes, repair_kr_report_closes, extended_quote_observation, extended_quote_status, kr_index_observations
     held_us = tuple(sorted({text(first(row, "티커", "ticker")) for row in records(summary_rows)
                             if is_held(row) and text(first(row, "티커", "ticker"))

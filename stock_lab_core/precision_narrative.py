@@ -8,6 +8,7 @@ from stock_lab_core.asset_classifier import is_fin_score_exempt_asset, is_levera
 from stock_lab_core.decision_engine import build_sideways_quality_state as _build_sideways_quality_state
 from stock_lab_core.execution_gate import GATE_DATA_CHECK, GATE_DEFENSE, GATE_EXECUTABLE
 from stock_lab_core.formatters import clean_bool, clean_float, escape_html_value, finite_num, format_currency
+from stock_lab_core.precision_observation import render_precision_observation
 
 
 def align_precision_narrative_display(lines, border_color, workflow, *, entry_hint="", decision_code=""):
@@ -35,12 +36,16 @@ def align_precision_narrative_display(lines, border_color, workflow, *, entry_hi
 
 
 def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=None,
+                              observation_context=None,
                               describe_fvg_plain,
                               build_sideways_quality_state=_build_sideways_quality_state):
     """
     정밀관측소 차트 아래 표시할 종합 서술형 해설.
     외부 API 없이 이미 계산된 c 딕셔너리와 fin_score만 사용합니다.
     """
+    if observation_context is not None:
+        return render_precision_observation(c, tkr, observation_context)
+
     dec         = c.get("dec", "")
     grade       = c.get("grade", "")
     t_score     = c.get("t_score", 0)

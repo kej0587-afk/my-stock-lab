@@ -329,9 +329,12 @@ def sector_body_reasons(row, news, context, now):
                 }.get(ticker, r"산업재|산업용\s*(?:기계|장비)|건설\s*기계|중장비|기계업|기계주|\bindustrials?\b|\bindustrial (?:machinery|equipment)\b|\bheavy machinery\b")
                 direct = bool(re.search(industry_pattern, evidence, re.I))
             if cybersecurity:
-                direct = bool(re.search(r"사이버|정보\s*보안|네트워크\s*보안|보안\s*(?:소프트웨어|업체|기업|업종)|\bcyber\w*|\b(?:network|information|software) security\b", evidence, re.I))
+                direct = "cybersecurity" in fact_topics
             if ai_fact:
                 direct = False  # AI investment channels stay common AI context.
+            if re.search(r"코스피|코스닥|시장\s*전체", evidence) and re.search(r"순매수|순매도", evidence):
+                # Aggregate investor totals do not establish sector money flow.
+                common, direct = True, False
             if not common and not direct:
                 continue
             scope = "market_common_theme" if common else "sector_report"

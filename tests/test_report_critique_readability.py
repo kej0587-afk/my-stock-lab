@@ -9,6 +9,7 @@ from stock_lab_core.market_memo import build_auto_market_memo
 from stock_lab_core.report_analysis import economic_reaction_text, sector_evidence
 from stock_lab_core.report_evidence import macro_stress
 from stock_lab_core.report_presentation import account_live_estimate, macro_change, market_cause_candidates
+from stock_lab_core.report_view import split_report_sections
 
 
 NOW = datetime.fromisoformat("2026-10-20T23:48:00+09:00")
@@ -48,13 +49,17 @@ def test_postclose_candidate_is_cited_once_without_explaining_sector_excess():
     context, rows = report_case()
     before = deepcopy((context, rows))
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW)
-    story = report.split("## 오늘의 시장 스토리")[1].split("## 경제지표")[0]
-    sectors = report.split("## 업종별 왜")[1].split("## 관심 후보")[0]
+    sections = dict(split_report_sections(report))
+    story = sections["오늘의 시장 스토리"]
+    sectors = sections["업종별 왜"]
     assert "보도상 배경 후보 | 대상 거래일 | 출처·보도 시각" in story
     assert context["session_news"][0]["title"] in story and "10/20 16:15 KST" in story
     assert "인과·기여도는 미확정" in story and "파급 범위" in story
-    # The conclusion points to the story; keep a single linked evidence row.
-    assert report.count(context["session_news"][0]["link"]) == 1
+    # The approved reader retains distinct attribution, exposure and collection
+    # evidence. Each narrative/table location must still cite this source once.
+    for title in ("오늘의 시장 스토리", "핵심 해석", "한국 시황"):
+        assert report.count("\n## " + title + "\n") == 1
+        assert sections[title].count(context["session_news"][0]["link"]) == 1
     assert "개별 원인 미확인" in sectors and "AI 신용우려" not in sectors
     assert (context, rows) == before
 
@@ -137,7 +142,12 @@ def test_live_quote_time_single_value_or_real_range():
 def test_tables_keep_dates_returns_weights_gates_and_calendar_sources():
     context, rows = report_case()
     report = build_auto_market_memo(report_context=context, summary_rows=rows, now=NOW)
-    sector = next(line for line in report.splitlines() if line.startswith("2차전지(305540.KS) |") and "일간 -5.72%" in line)
+    sections = dict(split_report_sections(report))
+    compact = next(line for line in sections["한국 시황"].splitlines() if line.startswith("2차전지(305540.KS) |"))
+    assert "일간 -5.72% · 2026-10-20" in compact and "개별 원인 미확인" in compact
+    # The compact reader projects fewer fields; the full 3M/acceleration cells
+    # remain in the detailed sector table, with the same date and daily return.
+    sector = next(line for line in sections["업종별 왜"].splitlines() if line.startswith("2차전지(305540.KS) |"))
     assert "일간 -5.72% · 2026-10-20" in sector
     assert "3M +9.9% · 가속도 +30.9%p · [3M 중기] 급반등" in sector
     holding = next(line for line in report.splitlines() if line.startswith("반도체(SOXX) |"))

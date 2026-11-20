@@ -212,6 +212,8 @@ def repair_kr_report_closes(frames, payload, now, *, tickers=()):
         return result
     day = pd.Timestamp(state["local_date"])
     for ticker, old in frames.items():
+        if getattr(old, "attrs", {}).get("price_basis") == "KRX_regular":
+            continue
         if not ticker.endswith((".KS", ".KQ")) and ticker not in {"^KS11", "^KQ11"}:
             continue
         if isinstance(old, pd.DataFrame) and not old.empty and day.date() in old.index.date:
@@ -236,6 +238,8 @@ def repair_kr_report_closes(frames, payload, now, *, tickers=()):
                 continue
             ticker = ({"KOSPI": "^KS11", "KOSDAQ": "^KQ11"} if index else symbols).get(row.get("cd"))
             old = frames.get(ticker)
+            if getattr(old, "attrs", {}).get("price_basis") == "KRX_regular":
+                continue
             if not isinstance(old, pd.DataFrame) or old.empty or day.date() not in old.index.date:
                 continue
             frame, reason = confirm_kr_close_bar(old, row, day, scale=100 if index else 1)

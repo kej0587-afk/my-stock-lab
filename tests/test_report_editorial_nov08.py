@@ -134,7 +134,7 @@ def test_full_report_integrates_editorial_without_touching_inputs():
     lines, _ = report_sections(context=ctx, news=[], flow_rows=[], event_rows=[], summary_rows=[], now=NOW)
     out = "\n".join(lines)
     assert out.count("## 핵심 해석") == 1
-    assert out.index("## 핵심 해석") < out.index("## 내 보유 종목 영향") < out.index("## 지수·매크로 한눈에")
+    assert out.index("## 핵심 해석") < out.index("## 지수·매크로 한눈에") < out.index("## 내 보유 종목 영향")
     assert "미국 · 휴장 · 최근 확정 종가" in out and ctx == original
     build = get_report_build_info()['sources']['stock_lab_core.report_editorial']
     assert build['sha256'] == build['disk_sha256']

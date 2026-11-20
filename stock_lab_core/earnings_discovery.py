@@ -24,6 +24,10 @@ _ALIASES = {
     "UNH": ("유나이티드헬스",), "WMT": ("월마트",), "CAT": ("캐터필러",),
     "XOM": ("엑슨모빌",), "CVX": ("셰브론",), "COST": ("코스트코",),
     "INTC": ("Intel", "인텔"), "SNDK": ("Sandisk", "샌디스크"),
+    "PANW": ("Palo Alto", "팔로알토", "팔로알토 네트웍스"),
+    "CRWD": ("CrowdStrike", "크라우드스트라이크"), "ZS": ("Zscaler", "지스케일러"),
+    "OKTA": ("Okta", "옥타"), "NET": ("Cloudflare", "클라우드플레어"),
+    "FTNT": ("Fortinet", "포티넷"), "FFIV": ("F5", "F5 Networks"),
 }
 _EARNINGS = re.compile(r"\b(?:earnings|quarterly results|financial results|EPS|guidance)\b|실적|가이던스|"
                        r"(?:매출|영업이익|순이익).{0,30}(?:발표|기록|전망|증가|감소)", re.I)
@@ -62,6 +66,9 @@ def issuer_catalog(summary_rows=(), events=()):
             entry["aliases"] = list(dict.fromkeys([*entry["aliases"], name]))
         entry["held"] |= is_held(row)
         entry["registered"] |= not bool(row.get("event_status"))
+    for ticker in ("PANW", "CRWD", "ZS", "OKTA", "NET", "FTNT", "FFIV"):
+        if ticker in catalog:
+            catalog[ticker]["sector"] = "사이버보안"
     return catalog
 
 

@@ -115,9 +115,15 @@ def test_fx_report_uses_quote_collection_completion_time(monkeypatch):
     monkeypatch.setattr(fx, "portfolio_fx_lines", lambda held, context, states, at: checked.append(at) or [])
     now = datetime.fromisoformat("2026-10-26T10:32:00+09:00")
     quote_at = datetime.fromisoformat("2026-10-26T10:32:08+09:00")
-    build_auto_market_memo(now=now, report_context={"quote_checked_at": quote_at.isoformat(),
-        "sessions": {"KR": "2026-10-23", "US": "2026-10-23"}, "prices": {}})
+    context = {"quote_checked_at": quote_at.isoformat(),
+               "sessions": {"KR": "2026-10-23", "US": "2026-10-23"}, "prices": {}}
+    original = deepcopy(context)
+    market_only = build_auto_market_memo(now=now, report_context=context)
+    assert checked == [] and "시장 전용 리포트" in market_only
+    build_auto_market_memo(now=now, report_context=context,
+                          summary_rows=[{"티커": "379810.KS", "보유량": 1, "현재비중": 100}])
     assert checked == [quote_at]
+    assert context == original
 
 
 def test_report_restores_layers_after_kr_close_and_combines_latest_without_gate_changes():

@@ -149,9 +149,14 @@ def test_plan_amounts_prices_and_status_match_baseline_except_unset_weight_text(
                     rr_ratio=1.2140223, target_w=target, current_w=current,
                     effective_total_asset=20000000, decision_code="NEW_ENTRY_LEADER",
                     asset_class="us_stock", is_leveraged_or_inverse=False)
+    original = deepcopy(decision)
     expected = env[fn.name]("Microsoft", "MSFT", decision)
     actual = app_module.render_entry_execution_plan("Microsoft", "MSFT", decision)
     if target == current == 0:
-        assert "미설정" in actual["rows"][0]["조건"]
-        actual["rows"][0]["조건"] = expected["rows"][0]["조건"]
+        expected["rows"][0]["조건"] = "목표비중 미설정 · 배분금액/주수 미산출"
+    # Approved 70ad0493 adds the planned-entry basis after the 4b24b751 baseline.
+    # Keep every other cell, amount, price and status under full equality.
+    first_exit = next(row for row in expected["rows"] if row["단계"] == "1차 익절")
+    first_exit["조건"] += " · 1차 계획 진입가 $522.65 기준(실제 체결·추가 진입 후 재산출)"
     assert actual == expected
+    assert decision == original

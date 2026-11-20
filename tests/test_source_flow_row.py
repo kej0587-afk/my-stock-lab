@@ -83,27 +83,23 @@ def test_failure_and_registration_call_order_preserved(app_module, monkeypatch):
 
 def test_all_other_app_functions_unchanged_and_source_wrapper_only_changes_call():
     before = subprocess.check_output(['git', 'show', '125748fc:app.py'], cwd=ROOT, encoding='utf-8-sig')
+    approved = subprocess.check_output(['git', 'show', 'd5dc6c02:app.py'], cwd=ROOT, encoding='utf-8-sig')
     after = (ROOT/'app.py').read_text(encoding='utf-8-sig')
-    def functions(source):
-        from tests.report_ast_contract import before_msft_cash_report
-        from tests.precision_fix_ast_contract import before_precision_fixes
-        return {n.name: before_msft_cash_report(before_precision_fixes(n)) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
-    old, new = functions(before), functions(after)
-    new.pop('_normalize_source_flow_row')
-    new.pop('_render_image_theme_selection')
-    # Later financial-input repair adds read-only review and an OCF fallback.
-    # Those provider functions have direct contracts in test_financial_review;
-    # the preserved decision/flow functions and original Git baseline stay frozen.
-    new.pop('pick_dart_operating_cash_flow')
-    new.pop('inspect_financial_inputs')
-    from tests.test_theme_selection import inline_theme_selection
-    new['render_image_theme_flow_section'] = inline_theme_selection(new['render_image_theme_flow_section'])
-    assert old.keys() == new.keys()
-    financial_repairs = {'fetch_dart_corp_code_map', 'fetch_dart_finstate_all_raw', 'extract_dart_metrics',
-                         'fetch_kr_financials_auto', 'fetch_us_financials_sec'}
-    for name in old.keys() - {'build_source_flow_context'} - financial_repairs:
-        assert ast.dump(old[name]) == ast.dump(new[name]), name
-    # The only old-function edit is this call; generic multi-row path stays frozen.
-    restored = after.replace('_normalize_source_flow_row(row, 10, "종목 자체 흐름")',
-        '_normalize_today_flow_context_frame(pd.DataFrame([row]), 10, "종목 자체 흐름").iloc[0].to_dict()')
-    assert ast.dump(functions(restored)['build_source_flow_context']) == ast.dump(old['build_source_flow_context'])
+    def functions(tree):
+        return {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    historical = ast.parse(approved)
+    extracted, current = functions(historical), functions(ast.parse(after))
+    owned = {'build_source_flow_context', '_normalize_source_flow_row', '_normalize_today_flow_context_frame'}
+    for name in owned:
+        assert ast.dump(current[name]) == ast.dump(extracted[name]), name
+
+    # Prove the entire historical module changed only by the helper and this call.
+    historical.body.remove(extracted['_normalize_source_flow_row'])
+    call = ast.parse('row = _normalize_source_flow_row(row, 10, "종목 자체 흐름")').body[0]
+    assignments = [n for n in ast.walk(extracted['build_source_flow_context'])
+                   if isinstance(n, ast.Assign) and ast.dump(n) == ast.dump(call)]
+    assert len(assignments) == 1
+    assignments[0].value = ast.parse(
+        '_normalize_today_flow_context_frame(pd.DataFrame([row]), 10, "종목 자체 흐름").iloc[0].to_dict()',
+        mode='eval').body
+    assert ast.dump(ast.parse(before)) == ast.dump(historical)

@@ -261,6 +261,7 @@ _SECTOR_NEWS_PROFILES = {
     "memory": ("DRAM MU", r"메모리|\bDRAM\b|\bHBM\b|Micron|마이크론|SK\s*하이닉스", "메모리 OR DRAM OR HBM", "memory stocks OR Micron OR DRAM"),
     "technology": ("XLK QQQ TQQQ SQQQ TECL TECS FNGU FNGD", r"기술주?|빅테크|테크|FANG|\btechnology\b|\btech\b|\bXLK\b", "기술주 OR 빅테크 OR AI", "technology stocks OR big tech"),
     "software": ("IGV", r"소프트웨어|software|사이버|cyber|\bIGV\b", "소프트웨어 OR 사이버보안", "software stocks OR cybersecurity stocks"),
+    "cybersecurity": ("CIBR HACK BUG", r"사이버|정보\s*보안|cyber|팔로알토|Palo Alto|포티넷|Fortinet|크라우드스트라이크|CrowdStrike|옥타|\bOkta\b|클라우드플레어|Cloudflare|지스케일러|Zscaler|\b(?:PANW|CRWD|FTNT|FFIV|CIBR)\b", "사이버보안 OR 팔로알토 OR 포티넷 실적", "cybersecurity stocks OR Palo Alto OR Fortinet earnings"),
     "energy": ("XLE ERX ERY 139250.KS", r"에너지|energy|정유|석유|원유|유가|\boil\b|\bWTI\b|\bBrent\b|\bOPEC\b|\bXLE\b", "에너지주 OR 정유 OR 유가", "energy stocks OR oil prices OR oil producers"),
     "utilities": ("XLU", r"유틸리티|utilities|전력|전기료|\bXLU\b", "전력 OR 유틸리티", "utilities stocks OR power demand"),
     "communications": ("XLC VOX", r"통신|communication services|telecom|미디어|media stocks|광고|advertising|\bMeta\b|Alphabet|\bXLC\b", "통신주 OR 미디어 OR 광고", "communication services stocks OR telecom stocks OR Meta earnings"),
@@ -402,7 +403,7 @@ def sector_related_news(ticker, session, news, *, sector_name=""):
     patterns = [_SECTOR_NEWS_PROFILES[topic][1] for topic in topics]
     if not patterns and sector_name:
         patterns = [re.escape(sector_name.removeprefix("한국 ").strip())]
-    ai_exposure = bool(set(topics) & {"semiconductor", "memory", "technology", "software"})
+    ai_exposure = bool(set(topics) & {"semiconductor", "memory", "technology", "software"}) and "cybersecurity" not in topics
     matched = []
     for item in news:
         title = text(item.get("title"))

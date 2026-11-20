@@ -222,6 +222,17 @@ def _ongoing_watch(context, now):
     ])
 
 
+def listing_news_stage(title):
+    """Classify the reported stage, not an independently verified listing date."""
+    import re
+    if re.search(r"철회|무산|연기|withdraw|postpon|cancel", title, re.I):
+        return "상장 철회·연기 보도", "공식 철회·연기 공지와 새 일정 확인; 기존 예정일을 유지하지 않음"
+    preview = re.search(r"예정|전망|예상|계획|앞두|할까|\b(?:expected|plans?|could|would|ahead of)\b", title, re.I)
+    if not preview and re.search(r"상장\s*(?:첫날|후|완료|첫\s*거래)|거래\s*시작|공모가\s*대비|\b(?:trading debut|began trading|first day of trading|shares debuted)\b", title, re.I):
+        return "상장 후 거래 보도", "실제 조달액·자금 사용처·공모가 대비 거래와 유통 물량 확인; 후속 수요는 실적과 별도"
+    return "일정·공모 계획 보도", "공식 공모가·상장일·조달액·자금 사용처 확인; 계획과 실제 거래 개시를 구분"
+
+
 def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
     """Only render the richer calendar when the collector is explicitly connected."""
     if "market_watch_sources" not in context:
@@ -266,16 +277,22 @@ def event_watch_lines(context, news, summary_rows, now, *, pipeline=None):
         if not link or link in seen:
             continue
         seen.add(link)
-        check = ("공식 공모가·상장일·조달액·자금 사용처, 상장 후 공모가 유지와 추가 자금 필요를 확인"
-                 if family == "IPO·상장" else "개별 회담 성사·합의문·규제 시행일 확인; 행사 개최와 합의는 별개")
-        key = "anthropic_ipo" if family == "IPO·상장" and re.search(r"Anthropic|앤트로픽|앤스로픽", title, re.I) else link
+        stage, check = (listing_news_stage(title) if family == "IPO·상장" else
+                        ("외교·규제 보도", "개별 회담 성사·합의문·규제 시행일 확인; 행사 개최와 합의는 별개"))
+        from stock_lab_core.catalyst_news import catalyst_entities
+        issuers = tuple(sorted(catalyst_entities(title)))
+        if not issuers and family == "IPO·상장":
+            subject = re.match(r"^([\w가-힣]+(?:\s+[\w가-힣]+)?)\s+(?:IPO|기업공개|상장)\b", title, re.I)
+            if subject:
+                issuers = (subject[1].casefold(),)
+        key = (family, issuers, stage) if issuers else link
         if key not in tracked:
-            tracked[key] = [title, [], check]
+            tracked[key] = [title, [], check, stage]
         tracked[key][1].append(link)
     if tracked:
         lines += ["**일정 확정과 별도로 추적할 재료**", "", *_table(["최근 근거", "구분", "다음 확인"], [
             (f"[{title}]({links[0]})" + (f" · 관련 보도 {len(links)}건: " + " ".join(f"[{i}]({link})" for i, link in enumerate(links, 1)) if len(links) > 1 else ""),
-             "보도·일정 확정과 별도", check) for title, links, check in tracked.values()])]
+             stage + " · 보도·일정 확정과 별도", check) for title, links, check, stage in tracked.values()])]
     lines += ["**계속 볼 흐름**", "", *_ongoing_watch(context, now)]
     missing = [s.get("name", "공식 일정") for s in records(context.get("market_watch_sources")) if s.get("status") != "connected"]
     if missing:

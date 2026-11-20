@@ -3,7 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
 
 import pandas as pd
 import pytest
@@ -149,8 +149,9 @@ def test_report_explains_breadth_and_tables_without_promoting_stale_quotes():
 def test_context_reuses_release_calendar_including_failed_sources(monkeypatch, connected):
     from stock_lab_core import economic_releases, release_calendar, economic_bulletins
     calendar = {"events": [], "sources": [{"name": "BLS", "status": "connected" if connected else "unavailable"}]}
-    loader = Mock(return_value=([], calendar))
+    loader = create_autospec(economic_releases.load_economic_releases, return_value=([], calendar))
     monkeypatch.setattr(economic_releases, "load_economic_releases", loader)
+    monkeypatch.setattr(economic_releases, "_api_key", lambda name: "")
     monkeypatch.setattr(economic_bulletins, "apply_official_bulletins", lambda rows, now: rows)
     duplicate = Mock(side_effect=AssertionError("Calendar collected twice"))
     monkeypatch.setattr(release_calendar, "load_release_calendar", duplicate)
@@ -161,7 +162,7 @@ def test_context_reuses_release_calendar_including_failed_sources(monkeypatch, c
 
 
 def test_sector_quotes_collected_for_nonheld_report_assets_in_one_kr_batch(monkeypatch):
-    from stock_lab_core import prices, report_quotes, report_live
+    from stock_lab_core import prices, report_quotes, report_live, kr_regular_history
     from stock_lab_core.report_prices import SECTORS
     sector_symbols = frozenset(SECTORS)
     expected_us = {t for t in sector_symbols if not t.endswith((".KS", ".KQ"))}
@@ -169,6 +170,7 @@ def test_sector_quotes_collected_for_nonheld_report_assets_in_one_kr_batch(monke
     monkeypatch.setattr(prices, "load_price_frames_batch", lambda *a, **k: {})
     monkeypatch.setattr(prices, "load_price_df", lambda *a, **k: pd.DataFrame())
     monkeypatch.setattr(report_live, "supplement_kr_indices", lambda frames: frames)
+    monkeypatch.setattr(kr_regular_history, "align_regular_frames", lambda frames, *args: frames)
     quotes = Mock(return_value={})
     monkeypatch.setattr(report_quotes, "load_report_quotes", quotes)
     collect_report_context(now=NOW, economic_releases=[], calendar={"events": [], "sources": []}, scenario_frames={})

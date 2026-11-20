@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from stock_lab_core.execution_readiness import precision_display_context
 from stock_lab_core.formatters import (
     clean_float,
     escape_html_value,
@@ -263,7 +264,7 @@ def build_chart_execution_check_rows(
             "다음 행동": action,
         })
 
-    workflow = (decision_context or {}).get("execution_workflow", {})
+    workflow = precision_display_context(decision_context or {}).get("execution_workflow", {})
     if workflow:
         gate = workflow.get("게이트상태", "관망")
         state = {"실행가능": "통과", "방어우선": "차단", "데이터확인": "확인필요"}.get(gate, "대기")

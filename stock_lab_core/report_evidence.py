@@ -329,6 +329,14 @@ def price_observation(frame, ticker, now=None):
     if len(frame) < 2:
         return {"ticker": ticker, "date": "", "return": None, "source": "종가 이력 미수집"}
     close = frame["Close"].astype(float)
+    if frame.attrs.get("price_basis") == "KRX_regular":
+        dates = [str(day.date()) for day in frame.index[-2:]]
+        expected = [frame.attrs.get("report_regular_previous"), frame.attrs.get("report_regular_expected")]
+        base = number(frame["RegularBase"].iloc[-1]) if "RegularBase" in frame else None
+        if dates != expected or base is None or not math.isclose(base, close.iloc[-2], rel_tol=1e-5):
+            return {"ticker": ticker, "date": dates[-1], "previous_date": dates[-2], "price": float(close.iloc[-1]),
+                    "return": None, "stale": True, "source": frame.attrs.get("source", ""),
+                    "basis_note": "정규장 종가 기준일·비교 기준가 미정합: 비교 보류"}
     falls = 0
     changes = list(close.pct_change().iloc[1:][::-1])
     for change in changes:

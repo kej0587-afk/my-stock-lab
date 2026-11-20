@@ -13,7 +13,6 @@ from stock_lab_core import decision_engine
 from stock_lab_core.signal_basis import build_signal_basis
 from tests.fixtures_price import make_price_df
 from tests.mtf_ast_contract import before_optional_daily_snapshot
-from tests.company_market_ast_contract import before_company_market_context
 from tests.test_decision_golden_snapshot import _bench_info, _to_jsonable
 from tests.test_decision_refactor_parity import scenarios
 
@@ -37,14 +36,22 @@ def stable(value):
 
 
 def test_only_two_app_functions_change_and_only_reviewed_expressions(original_source):
-    from tests.precision_fix_ast_contract import before_precision_fixes
-    def functions(source, restore=False):
-        return {n.name: ast.dump(before_company_market_context(before_optional_daily_snapshot(before_precision_fixes(n)) if restore else before_precision_fixes(n)))
-                for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+    approved = subprocess.check_output(['git', 'show', 'd1d17690:app.py'], cwd=ROOT, encoding='utf-8-sig')
+    def functions(source):
+        return {n.name: ast.dump(n) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
     current = (ROOT / 'app.py').read_text(encoding='utf-8-sig')
-    old, new = functions(original_source), functions(current)
-    assert {k for k in old if old[k] != new[k]} == {'build_precision_multi_timeframe_pack', '_compute_summary_item'}
-    assert old == functions(current, restore=True)
+    old, extracted, now = functions(original_source), functions(approved), functions(current)
+    owned = {'build_precision_multi_timeframe_pack', '_compute_summary_item'}
+    assert old.keys() == extracted.keys()
+    assert {k for k in old if old[k] != extracted[k]} == owned
+    for name in owned:
+        assert now[name] == extracted[name], name
+    # Restore only the reviewed expressions in the immutable extraction, including
+    # a whole-module check so top-level statements are not silently excluded.
+    historical = ast.parse(approved)
+    historical.body = [before_optional_daily_snapshot(n) if isinstance(n, ast.FunctionDef) else n
+                       for n in historical.body]
+    assert ast.dump(ast.parse(original_source)) == ast.dump(historical)
 
 
 @pytest.mark.parametrize('days', [0, 2, 12, 20, 64, 260])

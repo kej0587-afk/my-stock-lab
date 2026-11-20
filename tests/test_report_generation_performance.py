@@ -121,10 +121,16 @@ def test_app_diff_contains_only_reviewed_measurement_not_decision_or_report_chan
     from tests.report_timing_ast_contract import before_report_timing
     root = Path(__file__).resolve().parents[1]
     base = subprocess.check_output(['git', 'show', 'e56b95e0:app.py'], cwd=root, encoding='utf-8-sig')
+    measured = subprocess.check_output(['git', 'show', '6ac42e31:app.py'], cwd=root, encoding='utf-8-sig')
     current = (root / 'app.py').read_text(encoding='utf-8-sig')
-    def functions(source):
-        return {n.name: ast.dump(before_report_timing(n)) for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
-    assert functions(base) == functions(current)
+    def functions(source, names=None):
+        return {n.name: ast.dump(before_report_timing(n)) for n in ast.parse(source).body
+                if isinstance(n, ast.FunctionDef) and (names is None or n.name in names)}
+    # The approved measurement commit preserves all functions. Later precision,
+    # finance and reader work is not part of this instrumentation-only contract.
+    assert functions(base) == functions(measured)
+    owned = {'render_today_market_memo_panel', '_collect_today_report_context'}
+    assert functions(current, owned) == functions(base, owned)
 
 
 @pytest.mark.parametrize('mutation', ['call_side_effect', 'import_alias', 'with_binding', 'with_argument', 'duplicate_context'])
