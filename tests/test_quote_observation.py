@@ -285,6 +285,7 @@ def test_yahoo_selector_preserves_exact_selected_observation(monkeypatch, route,
 def test_realtime_scalar_and_streamlit_cache_keep_evidence(monkeypatch, regular, after_hours):
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: regular)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: after_hours)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     selected = observed()
     primary = Mock(return_value=selected)
     other = Mock(side_effect=AssertionError("unselected provider called"))
@@ -306,6 +307,7 @@ def test_realtime_scalar_and_streamlit_cache_keep_evidence(monkeypatch, regular,
 def test_batch_cache_keeps_each_symbols_own_evidence(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     provider = Mock(side_effect=lambda ticker: observed(PRICE if ticker == "SOXL" else 100., ticker=ticker))
     monkeypatch.setattr(prices, "_fetch_yahoo_quote", provider)
@@ -320,6 +322,7 @@ def test_batch_cache_keeps_each_symbols_own_evidence(monkeypatch):
 def test_uninstrumented_fallback_stays_unknown(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: True)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 0.)
     fallback = Mock(return_value=PRICE)
     monkeypatch.setattr(prices, "_fetch_yf_download_price", fallback)

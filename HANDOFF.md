@@ -1,6 +1,6 @@
 # Stock Lab Work Handoff
 
-Updated: 2026-11-20 KST. Read before inspecting large source files or editing.
+Updated: 2026-11-21 KST. Read before inspecting large source files or editing.
 Check Git first; this document is not evidence that another computer has no newer edits.
 
 ## Resume Safely
@@ -18,6 +18,18 @@ Repository: `https://github.com/kej0587-afk/my-stock-lab.git`, branch `main`.
 Production: `https://3insky.streamlit.app/`.
 
 ## Current State
+
+Latest bounded work (2026-11-21): read
+[US pre-market quote priority](docs/maintenance/20261121_premarket_quote_priority.md).
+The missing 04:00–09:30 ET pre-market predicate is now connected to the primary,
+uncached and batch US quote selectors. Pre-market tries live candles before the
+previous overnight quote. Existing holidays/DST, other-session order, fallback
+providers, TTL and score/gate formulas are preserved. Corrected selected prices
+may intentionally change numeric outputs. Frozen selected-all gate: 2,353 passed, zero failures/errors/skips, 232.959s
+(`all_jrek51xw`). Production deployment/reboot verification is pending; do not
+treat this entry as proof of deployment until updated below.
+The single current next task is at **Next Task Only**; historical next-task
+sentences below are superseded.
 
 Latest bounded work (2026-11-20 evening): read
 [selected quote observation contract](docs/maintenance/20261120_quote_observation_contract.md).
@@ -1704,21 +1716,19 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Fix stale overnight selection during an already-open US pre-market session.**
+**Transport timestamp evidence for the selected domestic Naver quote.**
 
-New actual Cloud evidence: GOOGL calculated at 2026-11-20 23:21:53 KST still used
-Yahoo overnight observed at 17:59:37 KST (08:59:37 UTC); input ID
-954a9e6f4a09e2a7. The session selector accepts this old overnight quote before
-checking a potentially newer pre-market quote. This was exposed, not introduced,
-by timestamp transport; no freshness/selection policy changed in the current patch.
-Reproduce using fixed candidate captures, verify the same instrument's timestamps
-and supplier session boundaries, and correct only proven stale-session selection.
-Keep score/gate formulas, trading thresholds, provider set and TTLs unchanged;
-record intended numerical quote differences separately from policy changes. Cover
-DST/closed days and verify actual Today/precision exports after production reboot.
-Domestic Naver/KIS/yfinance timestamp coverage remains incomplete but is lower
-priority than this observed stale-price selection. Do not resume historical news
-or download work before resolving this input issue.
+The pre-market priority fix is bounded to the three US selector paths. Its
+current-session production result and frozen pre-market replay are documented
+above; a future live pre-market recheck is still useful and must not be claimed
+from a regular-session run. Next, inspect the actual Naver selected-quote payload
+and carry only a supplier timestamp tied to that exact symbol/price through the
+existing QuoteObservation contract. Preserve numeric quotes, provider order,
+cache TTL, score/gate formulas and unknown status when evidence is unavailable.
+Use fixed payload tests and one actual domestic export; do not attach a separate
+quote's timestamp, broaden to KIS/yfinance simultaneously, or change partial-bar
+policy. Existing Nov 20 Today capture had 45 rows without quote time evidence;
+it is a coverage observation, not proof that all 45 are Naver failures.
 
 ## Evidence and Remaining Limits
 

@@ -67,6 +67,7 @@ def test_missing_quote_continues_existing_fallback(monkeypatch):
     prices.clear_latest_price_cache()
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_is_live_priority_us_ticker", lambda ticker: False)
     monkeypatch.setattr(prices, "_fetch_yahoo_overnight_page_price", lambda ticker: read(page([quote("TLT", 79.72)])))
     monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: 29.35)

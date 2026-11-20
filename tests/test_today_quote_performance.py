@@ -103,6 +103,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(prices, "_is_recent_epoch", lambda ts: 0 <= NOW - ts < 60)
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: False)
     monkeypatch.setattr(prices, "_is_live_priority_us_ticker", lambda t: False)
     monkeypatch.setattr(prices, "_YAHOO_BLOCK_UNTIL", 0)

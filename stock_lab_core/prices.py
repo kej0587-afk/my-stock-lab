@@ -1111,6 +1111,24 @@ def _us_equity_after_hours_active() -> bool:
     return (16 * 60) <= minutes < (20 * 60)
 
 
+def _us_equity_premarket_active() -> bool:
+    """US business-day pre-market, 04:00–09:30 ET; NY timezone handles DST."""
+    try:
+        now = pd.Timestamp.now(tz="America/New_York")
+    except Exception:
+        return False
+    if now.date().weekday() >= 5 or now.date() in _us_equity_market_holidays(now.year):
+        return False
+    minutes = now.hour * 60 + now.minute
+    return (4 * 60) <= minutes < (9 * 60 + 30)
+
+
+def _us_equity_extended_session_active() -> bool:
+    # Pre-market must try live candles before the previous overnight session.
+    # Keep the legacy after-hours helper's meaning for existing callers.
+    return _us_equity_after_hours_active() or _us_equity_premarket_active()
+
+
 def _latest_recent_close_from_series(series, max_age: int = _US_INTRADAY_QUOTE_MAX_AGE_SECONDS) -> float:
     if isinstance(series, pd.DataFrame):
         if series.empty:
@@ -1690,7 +1708,7 @@ def _fetch_us_realtime_price(ticker: str) -> float:
         return _accept_us_untimed_quote_price(t, price)
 
     regular_session_active = _us_equity_regular_session_active()
-    after_hours_active = _us_equity_after_hours_active()
+    after_hours_active = _us_equity_extended_session_active()
     if regular_session_active:
         price = _first_price([
             lambda: _fetch_yahoo_quote(t),
@@ -2210,7 +2228,7 @@ def _fetch_price_uncached(ticker: str) -> float:
             if price > 0:
                 return price
         else:
-            after_hours_active = _us_equity_after_hours_active()
+            after_hours_active = _us_equity_extended_session_active()
             if after_hours_active:
                 price = _fetch_yahoo_quote(ticker)
                 if price > 0:
@@ -2399,7 +2417,7 @@ def load_latest_prices_batch(tickers, *, overnight_policy=None) -> dict:
     # ── 미국/기타: Pyth → Yahoo chart → yfinance 분봉 → fast_info 폴백 ──
     if us_tickers:
         regular_session_active = _us_equity_regular_session_active()
-        after_hours_active = _us_equity_after_hours_active()
+        after_hours_active = _us_equity_extended_session_active()
         for t in us_tickers:
             key = normalize_price_lookup_key(t)
             p = _fetch_us_realtime_price(t)

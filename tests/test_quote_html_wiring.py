@@ -117,6 +117,7 @@ def test_compressed_and_identity_paths_match_fixed_uncompressed_price(monkeypatc
 def test_bad_encoding_keeps_existing_next_source_fallback(monkeypatch, wire, coding):
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_is_live_priority_us_ticker", lambda ticker: False)
     request = Mock(return_value=Response(wire, coding))
     next_source = Mock(return_value=145.25)

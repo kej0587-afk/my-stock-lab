@@ -32,6 +32,7 @@ def before_provider_observation(function):
     if function.name == '_fetch_us_realtime_price':
         first = ast.parse('selected = source() or 0.0').body[0]
         second = ast.parse('price = selected if isinstance(selected, QuoteObservation) else float(selected)').body[0]
+        extended = ast.parse('after_hours_active = _us_equity_extended_session_active()').body[0]
         seen = []
         class Restore(ast.NodeTransformer):
             def visit_Assign(self, node):
@@ -41,9 +42,12 @@ def before_provider_observation(function):
                 if ast.dump(node) == ast.dump(second):
                     seen.append('scalar')
                     return ast.parse('price = float(source() or 0.0)').body[0]
+                if ast.dump(node) == ast.dump(extended):
+                    seen.append('extended')
+                    return ast.parse('after_hours_active = _us_equity_after_hours_active()').body[0]
                 return self.generic_visit(node)
         function = Restore().visit(function)
-        assert seen == ['source', 'scalar']
+        assert seen == ['source', 'scalar', 'extended']
     elif function.name == '_fetch_yahoo_chart':
         calls = [n for n in ast.walk(function) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Name) and n.func.id == '_last_candle_close']

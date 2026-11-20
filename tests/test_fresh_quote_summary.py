@@ -150,7 +150,7 @@ def replay(monkeypatch, summary_ast):
         build_indicators=build_indicators, apply_live_price_with_indicators=apply_live_price_with_indicators,
         build_sideways_quality_state=build_sideways_quality_state, classify_macro_state=classify_macro_state,
         build_decision_workflow=build_decision_workflow, classify_sector_rs_state=classify_sector_rs_state,
-        build_signal_basis=lambda source, context: build_signal_basis(source, context, calculated_at="fixture clock"),
+        build_signal_basis=lambda source, context, **kwargs: build_signal_basis(source, context, calculated_at="fixture clock", **kwargs),
         build_source_flow_context=lambda *args: {},
         calc_series_mdd=lambda series: (series / series.cummax() - 1).min(),
         prefetch_price_data_parallel=Mock(side_effect=prefetch),
@@ -307,6 +307,7 @@ def test_real_summary_preserves_us_session_source_order(replay, monkeypatch, ses
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: session == "closed")
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: session == "regular")
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: session == "after_hours")
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_accept_us_untimed_quote_price", lambda ticker, value: value)
     monkeypatch.setattr(prices, "_fetch_kis_us_quote_price", lambda ticker, **kwargs: calls.append(("kis", kwargs)) or 120)
     monkeypatch.setattr(prices, "_fetch_yahoo_quote", lambda ticker: calls.append("yahoo_quote") or 120)

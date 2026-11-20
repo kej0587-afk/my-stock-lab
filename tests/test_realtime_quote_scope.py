@@ -155,6 +155,7 @@ def test_errors_propagate_without_cache_or_scope_leak(error):
 def first_overnight(monkeypatch):
     monkeypatch.setattr(prices, "_us_equity_regular_session_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_after_hours_active", lambda: False)
+    monkeypatch.setattr(prices, "_us_equity_premarket_active", lambda: False)
     monkeypatch.setattr(prices, "_us_equity_market_closed_today", lambda: True)
     return []
 
