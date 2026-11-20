@@ -26,8 +26,14 @@ regression protection/SEC comparison, consistent precision final-check display,
 four observational axes, industry/common-news separation and macro observatory.
 No investment thresholds, trade orders or golden baselines changed. Expanded
 integration2728pass, selected preservation gate1820pass/0fail; source hashes
-unchanged. Operating deployment verification is pending; local tests are not
-operating proof. Missing sources and remaining scope are explicit in the audit.
+unchanged. Code f6d75028 pushed and operating-verified after authorized reboot:
+10:45 report,114 loaded/disk/Git hashes equal,95 rows'18 core fields unchanged
+across report generation, precision execution explanations consistent, financial
+equal-period refresh preserved4 points, and new macro screen verified. Full
+calculation82.1s/report generation78.689s are observations, not speedup claims.
+Not all requested work is complete: finite official earnings coverage, delayed US
+histories, broad news interpretations, full chart geometry and server-local Today
+cache durability remain. Read the audit's precise limits before promising parity.
 Exactly one next task: generic official quarterly release discovery/period
 lifecycle on a frozen multi-sector fixture, not issuer-specific report prose.
 
