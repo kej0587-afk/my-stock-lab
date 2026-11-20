@@ -26,6 +26,12 @@ not another blocked-gate summary. The precision panel now consumes its original
 management plan once, separates conditional holding responses from new-risk
 permission, and keeps absent/stale evidence explicit. No score/threshold/price/
 quantity changes. Verification and deployment status are recorded in that file.
+Code db3c2ced is pushed and operating-verified after authorized reboot: SOXL
+shows four-axis evidence and all A/B/C tabs; its original market-defense block
+and same-capture management-plan prices remain consistent. New tests87passed,
+related integration307passed, frozen preservation1820passed (193.327s, unchanged
+source hashes). Current quote/channel and volume gaps stay explicit. Private
+screenshot is ignored. No new provider calls or claimed strategy win rate.
 This adds richer explanation to authenticated precision, not a new engine in
 all views. Exactly one next task remains consolidation of original numerical
 queue/precision entry-exit plans with fixed-input comparisons, as below.
