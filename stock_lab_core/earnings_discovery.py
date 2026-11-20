@@ -56,6 +56,7 @@ def issuer_catalog(summary_rows=(), events=()):
         asset = text(first(row, "asset_class", "자산군")).lower()
         name = text(first(row, "종목명", "name", "종목", "event"))
         if (not re.fullmatch(r"[A-Z0-9][A-Z0-9.-]{0,19}", ticker)
+                or text(first(row, "유형", "asset_type")).upper() in {"ETF", "ETN", "FUND", "펀드", "현금", "CASH"}
                 or is_fin_score_exempt_asset(ticker, row.get("is_etf", False), asset, name)
                 or re.search(r"\bETF\b", name, re.I)):
             continue

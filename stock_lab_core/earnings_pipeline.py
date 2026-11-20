@@ -35,6 +35,13 @@ def _source_reason(ticker, context):
             return "수집 한도 밖"
         if reason in {"verified_coverage_unavailable", "announcement_evidence_changed"}:
             return "기존 공지 만료·내용 재확인 필요"
+        if reason.startswith("dart_corporate_mapping_"):
+            cause = reason.removeprefix("dart_corporate_mapping_")
+            if cause in {"connect_timeout", "read_timeout", "timeout", "transport_error"}:
+                return "DART 회사 식별자 조회 실패·시간초과 (" + cause + ")"
+            if cause.startswith("api_error"):
+                return "DART 회사 식별자 API 오류 (" + cause + ")"
+            return "DART 회사 식별자 연결 실패 (" + cause + ")"
         meanings = {"sec_user_agent_missing": "SEC 연락처 설정 미연결",
                     "dart_api_key_missing": "DART API 설정 미연결",
                     "collection_time_budget": "공식 공시 수집 시간 한도·이번 조회 보류",
@@ -42,6 +49,9 @@ def _source_reason(ticker, context):
                     "explicit_fiscal_quarter_unavailable": "공식 발표문 기준분기 대조 미완료",
                     "release_dateline_unavailable": "공식 발표문 발표일 대조 미완료",
                     "dart_period_report_unavailable": "DART 정기보고서 기준기간 미확인",
+                    "dart_ticker_mapping_unavailable": "DART 종목·회사 식별자 미연결",
+                    "dart_api_error": "DART 정기보고서 API 오류·결과 미확인",
+                    "dart_no_reports": "조회 기간 내 DART 정기보고서 없음",
                     "unique_earnings_exhibit_unavailable": "SEC 실적 발표문 첨부 대조 미완료",
                     "document_size_limit": "공식 원문 크기 한도 초과·수치 추출 보류",
                     "sec_ticker_mapping_unavailable": "SEC 회사 식별자 미연결"}
@@ -196,10 +206,12 @@ def build_earnings_pipeline(context, summary_rows=(), news=(), now=None):
     requested &= catalog.keys()
     registered = {ticker for ticker, entry in catalog.items() if entry["registered"]}
     covered = {p["ticker"] for p in packets if p["official"]}
+    filings = {p["ticker"] for p in packets if p["event"].get("source_kind") == "dart_discovered_report"}
+    announcements = {p["ticker"] for p in packets if p["official"] and p["event"].get("source_kind") != "dart_discovered_report"}
     missing = [dict(ticker=ticker, name=catalog.get(ticker, {}).get("name", ticker),
                     reason=_source_reason(ticker, context)) for ticker in sorted((requested | registered) - covered)
                if not any(p["ticker"] == ticker and p["release_status"] == "예정" for p in packets)]
     return dict(events=events, packets=packets, highlights=_select_highlights(packets, now), discovery=discovery,
-                coverage=dict(registered=len(registered), official=len(covered),
+                coverage=dict(registered=len(registered), official=len(announcements), filings=len(filings),
                     discovered=len({item["ticker"] for item in discovery["items"]}), missing=missing),
                 generated_at=now.isoformat(), scoring_used=False)

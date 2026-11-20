@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import json
 import re
@@ -127,12 +127,13 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
     """
     from stock_lab_core.economic_releases import _api_key
     from stock_lab_core.dart_corporate_codes import fetch_corporate_codes
+    from stock_lab_core.dart_corporate_snapshot import use_corporate_snapshot
 
     user_agent = _api_key("sec_user_agent") if sec_user_agent is None else sec_user_agent
     dart_key = _api_key("dart_api_key") if dart_api_key is None else dart_api_key
     deadline = time.monotonic() + MAX_SECONDS
     symbols = list(dict.fromkeys(tickers))
-    directory, codes, setup_errors = {}, {}, {}
+    directory, codes, setup_errors, mapping = {}, {}, {}, {}
     auth = hashlib.sha256((user_agent + "\0" + dart_key).encode()).hexdigest()
     if any(not t.endswith((".KS", ".KQ")) for t in symbols):
         if user_agent:
@@ -147,11 +148,17 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
         if dart_key:
             try:
                 def code_map():
-                    data = fetch_corporate_codes(dart_key, get=get, timeout=5)
+                    data = use_corporate_snapshot(fetch_corporate_codes(dart_key, get=get, timeout=5), now=now)
                     if not data:
-                        raise ValueError("dart_corporate_mapping_" + data.diagnostic.get("cause", "unavailable"))
-                    return dict(data)
-                codes, _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
+                        cause = data.diagnostic.get("cause", "unavailable")
+                        status = str(data.diagnostic.get("api_status", ""))
+                        suffix = "_" + status if re.fullmatch(r"\d{3}", status) else ""
+                        raise ValueError("dart_corporate_mapping_" + cause + suffix)
+                    return dict(data), {key: data.diagnostic[key] for key in
+                        ("mapping_source", "snapshot_asof", "snapshot_valid_until") if key in data.diagnostic}
+                (codes, mapping), _ = _cached(("dart_codes", auth), now, code_map, ttl=86400)
+                if mapping.get("snapshot_valid_until") and now > datetime.fromisoformat(mapping["snapshot_valid_until"]):
+                    raise ValueError("dart_corporate_mapping_snapshot_expired")
             except ValueError as error:
                 setup_errors["KR"] = str(error)
         else:
@@ -161,6 +168,8 @@ def collect_filing_earnings(tickers, now, *, sec_user_agent=None, dart_api_key=N
         market = "KR" if ticker.endswith((".KS", ".KQ")) else "US"
         diagnostic = dict(ticker=ticker, provider="official_filing_discovery", checked_at=now.isoformat(),
                           status="unavailable", attempted=False, from_cache=False)
+        if market == "KR":
+            diagnostic.update(mapping)
         try:
             if market in setup_errors:
                 raise ValueError(setup_errors[market])

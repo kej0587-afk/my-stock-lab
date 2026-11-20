@@ -50,6 +50,14 @@ Selected preservation gate: 1820 passed / 0 failed / 0 skipped, unchanged source
 hashes during the run (`cache/refactor_checks/all__lrpeps8`, private local output).
 Final checks and operating deployment evidence are appended below.
 
+Final focused integration: 238 passed in 14.04 seconds (filing discovery,
+pipeline/reconciliation, official result/cash sources, ETF issuer evidence,
+report review and catalyst presentation). Final preservation gate: 1820 passed,
+0 failed, 0 skipped in 200.467 seconds, unchanged source hashes
+(`cache/refactor_checks/all_y48q057n`). No golden rebaseline. These are selected
+regression suites, not a claim that every repository test or live issuer passes.
+Code `fc9a0197` pushed to origin/main; authorized Cloud reboot at 11:26 KST.
+
 Live public-source probe at about 11:16 KST (not portfolio performance):
 six issuers MSFT/GOOGL/AMZN/PANW/WMT/CAT, cold 4.448 s; warm 0.021 / 0.024 s.
 Three discovered result documents, three explicit-period parser deferrals.
@@ -80,3 +88,47 @@ Official API references:
   causal attribution. Existing price-reaction/session guards remain in place.
 - Wider delayed-US-history, chart geometry, news causality, and Today cache
   durability issues from the preceding audit are not resolved by this work.
+
+## Operating Verification and Follow-up
+
+After the authorized 11:26 KST reboot, code `fc9a0197` produced the 11:32 report
+(`stock_lab_market_report (49).md`, private Downloads). Its 116 loaded/source
+hashes matched, restart was not required and no stale module was reported.
+Generation `96e716e0ea16499197b0a616c1d6b5f2` completed normally in 101.297 s;
+the later Streamlit rerun interruption is not a generation failure. Official
+earnings collection took 25.658 s, including 23.677 s bounded filing discovery.
+The cold Today calculation took 89.4 s. These are observations, not controlled
+before/after speedup measurements. The report checksum matched the download.
+
+Pre/post generation review exports (11:29/11:33) retained 95 rows and all 18
+compared decision/price/allocation-input fields. External descriptive enrichment
+can change independently; this is not byte equality of every export field.
+Official release coverage rose from 6 to 18 companies in this live run; time and
+cache conditions differ. PANW's 11/18 FY2027Q1 actual revenue/profit/FCF and Q2
+outlook, and NVDA's 11/17 FY2027Q3 actuals/Q4 outlook were visible in the report
+and operating US earnings table. Missing CAPEX and other unparsed values stayed
+missing. The narrow browser view still makes the long earnings table hard to
+scan; no broad table-layout redesign is claimed.
+
+Operating evidence identified four bounded follow-ups:
+- Exclude ETF/FUND metadata even when exported rows lack the original is_etf flag
+  (the TDF fund had entered the company request catalog).
+- Expose DART company-identifier failures at the failing stage. Reuse the existing
+  dated public identity snapshot only for transient transport failures, and reject
+  expired cached snapshots. Never substitute it for financial values or mask an
+  authentication/API error. The existing local public snapshot is expired; this
+  fallback does not establish successful generic KR coverage in the live run.
+- Reject accounting definitions/disclaimers misclassified as outlook (DDOG's
+  definition of non-GAAP results was the observed case), without inventing a
+  replacement forecast.
+- Count DART report receipt separately from earnings announcement confirmation;
+  do not promote a periodic filing receipt as a new earnings catalyst.
+
+Follow-up focused integration: 270 passed in 16.49 s. An intermediate selected
+gate had 12 report-section digest failures because a zero-count filing annotation
+changed unrelated historical prose. Production rendering was corrected to add
+that annotation only when filings exist; no golden was changed. Targeted
+report-section/discovery/catalyst checks then passed 76/76. The final focused
+integration passed 270/270 in 16.14 s. The final selected preservation gate passed
+1820/1820, no errors/skips, in 197.65 s (`all_m_oiy2ps`); source hashes were
+unchanged throughout that gate. Follow-up operating verification follows below.

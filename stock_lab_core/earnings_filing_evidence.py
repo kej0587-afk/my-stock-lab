@@ -184,6 +184,13 @@ def parse_sec_release(data, ticker, cik, filing, url, now, *, issuer_name=None):
         for key, metric in existing.get("metrics", {}).items():
             if metric.get("status") in {"reported", "deferred"}:
                 metrics[key] = {**metric, "source_url": url}
+    guidance = metrics.get("guidance", {})
+    if guidance.get("status") == "reported" and re.search(
+            r"\bdefines?\s+(?:its\s+|our\s+)?(?:non-GAAP|adjusted|free cash flow|operating|net income)\b|"
+            r"\b(?:is|are) defined as\b|\b(?:safe harbor|forward-looking statements)\b",
+            guidance.get("text", ""), re.I):
+        metrics["guidance"] = dict(status="missing", text="", source_url=url,
+                                  reason="accounting_definition_or_disclaimer_not_outlook")
     proof = dict(provider="sec_discovered_release", cik=str(int(cik)), accession=filing["accessionNumber"],
                  filing_date=filing["filingDate"], accepted_at=filing["acceptanceDateTime"],
                  primary_url=sec_document(sec_base(cik, filing["accessionNumber"]), filing["primaryDocument"]),

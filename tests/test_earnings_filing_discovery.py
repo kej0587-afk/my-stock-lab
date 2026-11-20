@@ -87,6 +87,15 @@ def test_outlook_bullets_inherit_period_and_never_fill_missing_actuals():
     assert "$3.530 billion to $3.550 billion" in guidance["text"]
 
 
+def test_adjusted_accounting_definition_is_not_company_outlook():
+    _, result = parsed(facts="""<h2>Financial Outlook</h2>
+      <p>Example Cyber defines non-GAAP operating income as GAAP balances adjusted for
+      (1) stock-based compensation and (2) an assumed provision for income taxes
+      based on our long-term projected tax rate.</p>""")
+    assert result["metrics"]["guidance"]["status"] == "missing"
+    assert result["metrics"]["guidance"]["text"] == ""
+
+
 def test_ceo_mention_of_guidance_does_not_cut_off_realized_results():
     _, result = parsed(facts="""<p>We are raising our full year guidance.</p>
       <p>Revenue was $3 billion.</p><p>Free cash flow was $200 million.</p>
@@ -173,6 +182,10 @@ def test_dart_receipt_is_not_announcement_or_inferred_fiscal_quarter():
     pipeline = build_earnings_pipeline(data, [dict(ticker="123456.KS", name="Example Korea")], now=NOW)
     assert pipeline["packets"][0]["date_basis"] == "공시 접수일·실적 발표일 미확인"
     assert pipeline["highlights"] == []
+    assert pipeline["coverage"]["official"] == 0 and pipeline["coverage"]["filings"] == 1
+    from stock_lab_core.report_earnings import compact_catalyst_lines, earnings_coverage_lines
+    assert compact_catalyst_lines(pipeline, "KR", limit=None) == []
+    assert "정기보고서 확인 1개(실적 발표일 별도)" in "\n".join(earnings_coverage_lines(pipeline))
     assert all(state == "미연결" for state in pipeline["packets"][0]["stages"].values())
     assert "공시 접수일 · 실적 발표일/회계분기 미확인" in "\n".join(earnings_calendar_lines(data, NOW, pipeline=pipeline))
     with pytest.raises(ValueError, match="dart_period"):
@@ -246,3 +259,54 @@ def test_actual_holdings_and_watchlist_not_fixed_issuers_drive_discovery(monkeyp
     collected = collect_report_earnings(rows, dict(events=[]), NOW)
     assert set(loader.call_args.args[0]) == {"CYBR", "LLY", "GOOGL"}
     assert collected["earnings_collection_scope"]["excluded_non_issuers"] == ["SOXL"]
+
+
+def test_exported_fund_type_is_not_a_company_even_without_etf_in_name():
+    from stock_lab_core.earnings_discovery import issuer_catalog
+    rows = [{"티커": "0025N0.KS", "종목명": "TDF 2045", "유형": "ETF"},
+            {"티커": "123456.KS", "종목명": "Example Industries", "유형": "주식"}]
+    catalog = issuer_catalog(rows)
+    assert "0025N0.KS" not in catalog and catalog["123456.KS"]["registered"]
+
+
+def test_dart_transport_snapshot_identity_does_not_supply_financial_values(monkeypatch):
+    from stock_lab_core import dart_corporate_codes, dart_corporate_snapshot
+    sources.clear_cache()
+    live = dart_corporate_codes.CorporateCodeMap(diagnostic={"cause": "read_timeout"})
+    snapshot = dart_corporate_codes.CorporateCodeMap({"123456": "00123456"}, diagnostic={
+        "mapping_source": "official_snapshot", "snapshot_asof": "2026-11-20T00:00:00+00:00"})
+    monkeypatch.setattr(dart_corporate_codes, "fetch_corporate_codes", Mock(return_value=live))
+    fallback = Mock(return_value=snapshot)
+    monkeypatch.setattr(dart_corporate_snapshot, "use_corporate_snapshot", fallback)
+    get = Mock(return_value=Response(dart_payload()))
+    collected = sources.collect_filing_earnings(["123456.KS"], NOW, sec_user_agent="", dart_api_key="test", get=get)
+    fallback.assert_called_once_with(live, now=NOW)
+    assert collected["events"][0]["release_date_confirmed"] is False
+    assert collected["results"] == [] and get.call_count == 1
+    assert collected["sources"][0]["mapping_source"] == "official_snapshot"
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("dart_corporate_mapping_read_timeout", "시간초과"),
+    ("dart_corporate_mapping_api_error_020", "API 오류"),
+    ("dart_no_reports", "정기보고서 없음"),
+    ("dart_ticker_mapping_unavailable", "식별자 미연결"),
+])
+def test_dart_failure_stage_is_visible_without_credentials(reason, expected):
+    from stock_lab_core.earnings_pipeline import _source_reason
+    context = dict(earnings_sources=[dict(ticker="123456.KS", status="unavailable", reason=reason)])
+    assert expected in _source_reason("123456.KS", context)
+
+
+def test_cached_dart_identity_cannot_outlive_snapshot_validity():
+    import hashlib
+    sources.clear_cache()
+    auth = hashlib.sha256(b"\0test").hexdigest()
+    sources._cached(("dart_codes", auth), NOW, lambda: ({"123456": "00123456"}, {
+        "snapshot_valid_until": (NOW + timedelta(minutes=1)).isoformat()}))
+    get = Mock()
+    collected = sources.collect_filing_earnings(["123456.KS"], NOW + timedelta(minutes=2),
+                                              sec_user_agent="", dart_api_key="test", get=get)
+    assert collected["events"] == [] and not collected["sources"][0]["attempted"]
+    assert collected["sources"][0]["reason"] == "dart_corporate_mapping_snapshot_expired"
+    get.assert_not_called()

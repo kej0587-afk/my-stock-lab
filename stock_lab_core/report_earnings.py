@@ -145,6 +145,8 @@ def compact_catalyst_lines(pipeline, market, *, limit=4) -> list[str]:
         return []
     candidates = []
     for packet in pipeline["packets"]:
+        if packet.get("event", {}).get("source_kind") == "dart_discovered_report":
+            continue
         day = stamp(packet["date"])
         if packet["market"] != market or day is None or not -30 <= (day.date() - now.date()).days <= 45:
             continue
@@ -199,8 +201,11 @@ def compact_catalyst_lines(pipeline, market, *, limit=4) -> list[str]:
 
 def earnings_coverage_lines(pipeline):
     coverage = pipeline["coverage"]
+    filing_note = (f"정기보고서 확인 {coverage['filings']}개(실적 발표일 별도) · "
+                   if coverage.get("filings") else "")
     lines = ["", "**실적 연결 상태**",
-             f"점검 기업 {coverage['registered']}개 · 공식 발표 확인 기업 {coverage['official']}개 · 기존 뉴스에서 발견 {coverage['discovered']}개(서로 중복 가능). "
+             f"점검 기업 {coverage['registered']}개 · 공식 발표 확인 기업 {coverage['official']}개 · "
+             f"{filing_note}기존 뉴스에서 발견 {coverage['discovered']}개(서로 중복 가능). "
              "전시장 실적 캘린더가 아니라 기존 수집자료의 연결 범위입니다.",
              "기업·분기 | 일정·발표 확인 | 실제치·현금흐름 | 예상치·전망·반응", "--- | --- | --- | ---"]
     for packet in pipeline["packets"]:
