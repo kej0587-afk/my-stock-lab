@@ -26,11 +26,21 @@ and supplied session evidence through caches and Today/board/precision basis.
 Candle timestamps are bar starts, not last-trade times. Manual/untimed/other-provider
 prices remain explicitly unknown. Daily-source audit is display-only and does not
 certify or remove partial vendor bars. No numerical price, score, gate, priority,
-request count or cache TTL policy change. Final frozen selected-all gate: 2,210
-passed, zero failures/errors/skips, 222.544s (`all_d4eezq90`). Nine obsolete local
+request count or cache TTL policy change. Final frozen selected-all gate after the manifest fix: 2,211
+passed, zero failures/errors/skips, 226.721s (`all_29vsd6tk`). Nine obsolete local
 Nov 7 cache comparisons also failed on untouched 7ee2fc7d; 41 artifacts preserved
 with matching hashes under `cache/historical_baselines_20261107/`. No golden
-regeneration. Deployment verification is pending push/reboot below.
+regeneration. Code d9459894 + manifest fix c1a11059 pushed; owner Cloud reboot
+performed directly. Final 23:31 KST GOOGL ZIP has no stale modules and all five
+quote/input helper hashes match local/disk/loaded. New regular-session bar time
+23:31:07 KST is shown as bar-start time, and actual Nov 20 partial daily input is
+flagged. Replay ID e5bbc4a302f8ae5e / ATR 10.214994158063616 match the capture.
+Earlier same-capture GOOGL ID/ATR/decision/gate stayed identical before/after.
+Today full run: 95 rows, 105.2s; supplier times connected for 50, unknown for 45.
+No speedup claim. Source partial daily bars are audited but still used by existing
+calculations. Crucially, the new evidence exposed >5-hour-old overnight prices
+selected during pre-market (GOOGL earlier, SOXL/BITX in Today). Next Task Only
+prioritizes this observed stale-session selection before broader provider work.
 The single current next task is at **Next Task Only** below; all older next-task
 sentences in historical entries are superseded.
 
@@ -1694,15 +1704,21 @@ Latest record: [Single-row source-flow normalization](docs/maintenance/20261107_
 
 ## Next Task Only
 
-**Carry the selected domestic Naver quote's own timestamp through the same contract.**
+**Fix stale overnight selection during an already-open US pre-market session.**
 
-Inspect captured existing Naver responses for an attributable symbol/price/time.
-Reuse the existing response only, preserving provider priority, numeric selection,
-TTL, request count and all decisions. If a timestamp/session cannot be verified,
-leave it unknown. Compare the same captured source daily frame and quote, including
-possible intraday rows; do not silently certify or drop bars. Verify Today/precision
-exports and production hashes. Keep KIS/yfinance/untimed fallback coverage explicit.
-Do not resume superseded report-download/news work from older historical entries.
+New actual Cloud evidence: GOOGL calculated at 2026-11-20 23:21:53 KST still used
+Yahoo overnight observed at 17:59:37 KST (08:59:37 UTC); input ID
+954a9e6f4a09e2a7. The session selector accepts this old overnight quote before
+checking a potentially newer pre-market quote. This was exposed, not introduced,
+by timestamp transport; no freshness/selection policy changed in the current patch.
+Reproduce using fixed candidate captures, verify the same instrument's timestamps
+and supplier session boundaries, and correct only proven stale-session selection.
+Keep score/gate formulas, trading thresholds, provider set and TTLs unchanged;
+record intended numerical quote differences separately from policy changes. Cover
+DST/closed days and verify actual Today/precision exports after production reboot.
+Domestic Naver/KIS/yfinance timestamp coverage remains incomplete but is lower
+priority than this observed stale-price selection. Do not resume historical news
+or download work before resolving this input issue.
 
 ## Evidence and Remaining Limits
 

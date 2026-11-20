@@ -40,7 +40,8 @@ This continues the latest handoff's input/session task, not historical news work
   222.544s; source hashes unchanged during run. Evidence:
   `cache/refactor_checks/all_d4eezq90`. This is selected regression coverage, not
   the full repository suite, a speed benchmark, or investment validation.
-- Deployment verification will be recorded below after push/reboot.
+- Deployment verification is recorded below; both code commits are pushed and
+  the final Cloud reboot/export are verified.
 
 ## Historical local cache conflict found during verification
 
@@ -61,3 +62,61 @@ expression or expected score was replaced. The final selected gate retains all
 
 Private captures remain under ignored `cache/operating_20261120/` and Downloads;
 no account data or credentials are committed.
+
+## Operating verification and discovered limitation
+
+- Code `d9459894` pushed; Cloud owner menu reboot performed directly. App login
+  succeeded through the existing Google account without credential entry.
+- Actual completed GOOGL ZIP at 23:21 KST reports `restart_required=False`, no
+  stale modules, and matching local/disk/loaded prices, overnight, signal-basis
+  and input-contract hashes. Its price-input ID `954a9e6f4a09e2a7`, ATR
+  `10.657137189592634`, `CRISIS_PANIC_SELL_OFF` and defense gate match the
+  pre-change captured input/result. The input frames replay exactly.
+- The new helper itself was missing from the precision manifest's module list.
+  Follow-up `c1a11059` includes it; 184 focused export/build/input tests passed
+  (25.22s). A final frozen gate and second actual Cloud reboot follow this fix.
+- Actual selected quote is Yahoo overnight, observed **17:59:37 KST**; calculation
+  was **23:21:53 KST** (pre-market). This over-five-hour-old selection is an
+  existing provider-priority/freshness issue, now visible. This change deliberately
+  preserves the selected value; it must NOT be described as a fresh live quote.
+  Fixing this proven input issue supersedes domestic timestamp coverage as the
+  single next task. All providers are not yet migrated.
+
+- Follow-up frozen selected-all gate: **2,211 passed**, zero failures/errors/skips,
+  226.721s, unchanged source hashes (`cache/refactor_checks/all_29vsd6tk`).
+- Post-reboot Today full calculation: 95 unique rows, 105.2s wall screen time.
+  The ZIP contains every new basis field; 50 rows have actual supplier observation
+  times (44 Yahoo chart, six Yahoo overnight), 45 retain unknown provenance.
+  Sessions: 42 pre-market, six overnight, one regular, 46 unknown. This is one
+  actual run, not a matched speed benchmark; no speed improvement is claimed.
+- In the same Today capture GOOGL used a 23:28:35 KST pre-market bar while
+  SOXL/BITX still used roughly 17:59 KST overnight quotes. Code inspection confirms
+  `_us_equity_after_hours_active` covers only 16:00–20:00 ET; pre-market falls into
+  the overnight-first branch. The unchanged freshness window is 16 hours.
+  This supports the next-task diagnosis without claiming different runtime
+  quotes are identical inputs. The read-only ZIP click rerendered in 15.2s;
+  it was not another full 95-stock calculation.
+
+- Final actual GOOGL completed export at 23:31 KST is on `c1a11059`, with
+  `restart_required=False` and no stale modules. All five quote/input helpers,
+  including `quote_observation`, have identical loaded/disk/committed hashes.
+  The selected Yahoo chart time is 23:31:07 KST, session regular, kind bar start.
+  Source last date and ATR date are now Nov 20, 252 source rows: the supplier's
+  in-progress daily row really is included and the new table explicitly flags
+  possible incompleteness. This audit does not change that existing behavior.
+- Captured final frames replay ID `e5bbc4a302f8ae5e` and ATR
+  `10.214994158063616`; defense gate and `CRISIS_PANIC_SELL_OFF` remain. The source
+  gained a new trading-day bar since the earlier 251-row capture, so this ATR is
+  not a same-input before/after comparison. Frozen-input parity remains the
+  relevant no-policy-change check.
+- Final screenshot: ignored `cache/operating_20261120/quote_observation_live.jpg`.
+  Final audits: `quote_observation_final_GOOGL.json` and
+  `quote_observation_today_counts.json` in the same private folder. Board projection
+  is regression-tested; no separate live board run was claimed in this task.
+
+## Handoff
+
+This bounded quote-evidence and partial-bar audit is complete and deployed.
+The single next task is the proven stale overnight selection in pre-market;
+see HANDOFF.md. Domestic provider timestamp coverage and completed-daily-bar
+policy remain explicit limitations, not silently completed work.
