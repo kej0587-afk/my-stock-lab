@@ -34914,14 +34914,15 @@ if main_page == "precision":
                                 is_etf=is_etf, source=chart_financial["source"], key=f"precision_review_{tkr}")
             precision_mtf_display = render_precision_multi_timeframe_summary(mtf_pack, c)
             render_newly_listed_core_etf_guide(name, tkr, is_etf, a_class, c, mtf_pack)
-            st.markdown(
-                build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, observation_context={
-                    "multi_timeframe": mtf_pack, "liquidity_profile": precision_liquidity_profile,
-                    "signal_basis": precision_signal_basis,
-                }),
-                unsafe_allow_html=True,
-            )
+            precision_strategy_slot = st.empty()
             precision_entry_plan = render_entry_execution_plan(name, tkr, c, has_pos=has_p, usdkrw=usdkrw, my_price=my_p)
+            from stock_lab_core.precision_scenarios import build_precision_scenarios, render_precision_scenarios
+            precision_strategy = build_precision_scenarios(c, tkr, {
+                "multi_timeframe": mtf_pack, "liquidity_profile": precision_liquidity_profile,
+                "signal_basis": precision_signal_basis,
+            }, precision_entry_plan, has_pos=has_p)
+            with precision_strategy_slot.container():
+                render_precision_scenarios(st, precision_strategy)
             render_peer_comparison_panel(tkr, name, a_class)
 
         st.markdown("---")

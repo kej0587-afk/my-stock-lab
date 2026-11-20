@@ -55,30 +55,34 @@ def _channel_location(channel, ticker):
     return f"채널 {_text(channel.get('state'))} · " + " / ".join(levels)
 
 
-def _duration(chart, frame):
+def duration_observation(chart, frame):
     events = chart.get("events")
     event = _mapping(events[-1]) if isinstance(events, list) and events else {}
     if event:
         start, end = _date(event.get("formation_start")), _date(event.get("formation_end"))
         count = "관측봉 수 미확인"
+        count_known = False
         # Count supplied observations, not calendar days or assumed sessions.
         if (isinstance(frame, pd.DataFrame) and isinstance(frame.index, pd.DatetimeIndex)
                 and frame.index.is_monotonic_increasing and frame.index.is_unique and not frame.index.hasnans):
             dates = frame.index.strftime("%Y-%m-%d")
             if start in dates and end in dates and start <= end:
                 count = f"{int(((dates >= start) & (dates <= end)).sum())}개 관측봉"
+                known, confirmed = _date(event.get("known_at")), _date(event.get("time"))
+                count_known = (known in dates and confirmed in dates and end <= known <= confirmed
+                               and event.get("provisional") is False)
         observed = f"일봉 {_text(event.get('name'))} 형성 {start}~{end} · {count}"
         status = "미확정 관측" if event.get("provisional") else "확인봉"
         note = f"피벗 확인 {_date(event.get('known_at'))} · {status} {_date(event.get('time'))}"
-        return observed, note
+        return observed, note, count_known
     patterns = chart.get("patterns")
     pattern = _mapping(patterns[0]) if isinstance(patterns, list) and patterns else {}
     if pattern:
         age = clean_float(pattern.get("age"), math.nan)
         elapsed = f"{int(age)}봉" if math.isfinite(age) and age >= 0 and age.is_integer() else "미확인"
         return (f"일봉 {_text(pattern.get('name'))} · 형성 말단 이후 {elapsed}",
-                f"피벗 확인 {_date(pattern.get('known_at'))} · 돌파/이탈 확인봉 자료 없음")
-    return "일봉 패턴 기간 미확인", "형성·확인 날짜 자료 없음"
+                f"피벗 확인 {_date(pattern.get('known_at'))} · 돌파/이탈 확인봉 자료 없음", False)
+    return "일봉 패턴 기간 미확인", "형성·확인 날짜 자료 없음", False
 
 
 def build_precision_observation_rows(decision, ticker, context):
@@ -108,7 +112,7 @@ def build_precision_observation_rows(decision, ticker, context):
                 f"일봉 MA20 이격 {_number(snapshot.get('ma20_gap'), '+.1f', '%')} · "
                 f"%B {_number(snapshot.get('pct_b'))}")
     location += " / " + _channel_location(_mapping(chart.get("channel")), ticker)
-    duration, duration_note = _duration(chart, daily.get("df"))
+    duration, duration_note, _ = duration_observation(chart, daily.get("df"))
 
     ratio = clean_float(decision.get("vol_ratio"), math.nan)
     count = clean_float(decision.get("vol_valid_count"), math.nan)

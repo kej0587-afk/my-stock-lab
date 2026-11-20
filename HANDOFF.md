@@ -19,6 +19,17 @@ Production: `https://3insky.streamlit.app/`.
 
 ## Current State
 
+Latest bounded work (2026-11-20): read
+[four-axis A/B/C management plans](docs/maintenance/20261120_precision_abc.md).
+The user's clarification asks for actual structure/price/time/liquidity synthesis,
+not another blocked-gate summary. The precision panel now consumes its original
+management plan once, separates conditional holding responses from new-risk
+permission, and keeps absent/stale evidence explicit. No score/threshold/price/
+quantity changes. Verification and deployment status are recorded in that file.
+This adds richer explanation to authenticated precision, not a new engine in
+all views. Exactly one next task remains consolidation of original numerical
+queue/precision entry-exit plans with fixed-input comparisons, as below.
+
 Current priority (2026-11-20 framework reset): read
 [framework and locked work order](docs/maintenance/20261120_framework_reset.md).
 The latest user explicitly superseded the DART-only sequence below: organize
