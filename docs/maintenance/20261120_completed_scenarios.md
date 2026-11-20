@@ -74,7 +74,52 @@ price-range and volume contraction. Prior MFI is 32.5653; these are NOT live vol
   source hashes unchanged (`cache/refactor_checks/all_whstmuow`). This includes
   the final quote-position/export-wiring tests and unchanged decision goldens.
   Selected contracts are not a full-repository, performance or strategy backtest.
-- Production verification pending.
+- Quote normalization hardening: numeric strings are converted once before
+  range comparison. Focused 161 passed; frozen selected gate then 2,028 passed,
+  zero failures/errors/skips, 210.422s (`cache/refactor_checks/all_cjd4_y5l`).
+- Export integration follow-up: the operating ZIP exposed a missing context
+  allowlist entry, despite the production caller passing the new model. Added
+  `scenario_analysis` to that list and an actual ZIP round-trip test (not merely
+  an AST presence check), preserving source levels, axes and price rows without
+  exposing private context keys. Focused scenario/export coverage: 209 passed,
+  13.35s. Final frozen selected gate: 2,029 passed, zero failures/errors/skips,
+  202.192s, unchanged source hashes (`cache/refactor_checks/all_0l8n78_0`).
+
+## Operating Verification
+
+- Code 883b4da6 and quote normalization d0569e9a pushed. Authorized Cloud reboot
+  recovered from transient hot-reload import KeyErrors; this is not a claim that
+  the deployment reload race is fixed. The next complete SOXL capture (16:36 KST)
+  identified d0569e9a, no stale modules or restart requirement, and matching local,
+  loaded and disk hashes for scenario evidence, scenario rendering and quote view.
+- Actual A/B/C tabs and four axes checked at the existing narrow viewport. Prices
+  and labels wrap, dollar signs are literal, and the original market defense and
+  DCA block remain. A shows 69.73 / 80.22 / 40.59 / 0.36R; B shows 40.59 and no
+  invented lower target; C shows 40.59-69.73 and A/B transition conditions.
+- Source-close 45.30 and dated completed volume remain separate from the existing
+  untimestamped scalar decision input and a separately timestamped day-market
+  reference. The latter does not confirm a daily break or change the plan.
+- The initial operating ZIP omitted the scenario model; fixed in 11ef6ecf. Do
+  not describe the initial capture as containing this new context section.
+- Final complete operating ZIP after the export fix identifies 11ef6ecf, no
+  stale modules/restart requirement, and matching exporter loaded/disk hash
+  (also matches the local source after Windows CRLF normalization). Its context
+  and flattened CSV contain the full A/B/C observations, source date, four axes
+  and measured numbers. Rebuilding evidence/prices from its captured daily OHLC
+  reproduces them exactly with `read_csv(float_precision="round_trip")`, excluding
+  the separately captured profile input. Default CSV float parsing had machine-
+  epsilon differences, not changed displayed prices or plan logic.
+- A second display run changed the live scalar/reference prices, as expected,
+  while 11/19 source-close observations stayed 45.30 / 40.59 / 69.73 / 80.22.
+  Ordinary GOOGL also rendered the same generic observation pathway; no SOXL
+  numbers are hardcoded. Missing lower references remain missing, not invented.
+- Hot deployment temporarily left the old assets body under a precision sidebar
+  selection. Browser reload and selection restored the correct final screen.
+  This does not demonstrate ordinary navigation-state persistence or fix the
+  wider deployment reset issue; it is recorded, not folded into this change.
+- Ignored local proof: `cache/operating_20261120/completed_scenario_axes.jpg`,
+  `completed_scenario_A.jpg`, `completed_scenario_C.jpg`, and final B tab in
+  `completed_scenario_axes_final.jpg`. No private ZIP committed.
 
 ## Limits and One Next Task
 

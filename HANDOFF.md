@@ -25,8 +25,12 @@ The user asked for usable numeric scenarios. Pure source-only evidence now keeps
 complete daily OHLC, dated pivots/ranges, time/volume measures and conditional
 A/B/C prices separate from the original execution plan and un-timestamped quote.
 Prior completed volume is no longer discarded because live volume is missing.
-No market-defense/threshold/sizing changes. Verification and deployment status
-are in that record. Exactly one next task: reconcile quote/session identity in
+No market-defense/threshold/sizing changes. Code 883b4da6/d0569e9a/11ef6ecf pushed;
+Cloud actual A/B/C tabs and completed SOXL ZIP verified, no stale source modules.
+The ZIP allowlist omission found during verification is fixed and covered by a
+real serialization round-trip test. Final frozen selected gate: 2,029 passed,
+zero failures/errors/skips, 202.192s. Full limits and proof are in that record.
+Exactly one next task: reconcile quote/session identity in
 the shared Today/board/precision decision input contract with identical captures.
 This supersedes the older next-task wording below; do not claim all price paths
 were unified by the scenario-only observation change.
