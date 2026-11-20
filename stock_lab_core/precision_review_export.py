@@ -43,7 +43,7 @@ _CONTEXT_KEYS = {
     "name", "is_etf", "asset_class", "has_position", "my_price", "usdkrw",
     "app_mode", "displayed_price", "auto_price", "manual_price", "price_source",
     "price_refresh_time", "chart_load_note", "live_ohlcv_applied",
-    "signal_basis", "live_indicator_issue",
+    "signal_basis", "live_indicator_issue", "scenario_analysis",
     "macro_risk", "macro_penalty",
 }
 _CANDIDATE_KEYS = (

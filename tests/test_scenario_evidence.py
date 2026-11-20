@@ -1,8 +1,11 @@
 """Completed-session scenario observations must not become new investment rules."""
 
 from copy import deepcopy
+import io
+import json
 import math
 import socket
+import zipfile
 
 import numpy as np
 import pandas as pd
@@ -12,6 +15,7 @@ from stock_lab_core.scenario_evidence import (
     build_scenario_evidence, completed_scenario_frame, conditional_price_rows, scenario_evidence_rows,
 )
 from stock_lab_core.precision_scenarios import build_precision_scenarios, render_precision_scenarios
+from stock_lab_core.precision_review_export import build_precision_review_export_zip
 from tests.test_precision_scenarios import case, assert_unchanged, FakeUI
 
 
@@ -33,6 +37,24 @@ def bars():
 
 def evidence(bars, **kwargs):
     return build_scenario_evidence(bars, bars.index[-1].date().isoformat(), **kwargs)
+
+
+def test_rendered_scenario_survives_review_export_allowlist(case, bars):
+    decision, context, plan = case
+    context.update(daily_source=bars, expected_close=bars.index[-1].date().isoformat())
+    model = build_precision_scenarios(decision, 'TEST', context, plan)
+    before = deepcopy(model)
+    archive = zipfile.ZipFile(io.BytesIO(build_precision_review_export_zip(
+        selected_ticker='TEST', result_ticker='TEST', decision=decision,
+        context={'scenario_analysis': model, 'owner_email': 'private@example.com'},
+    )))
+    exported = json.loads(archive.read('snapshot.json'))['sections']['context']
+    assert exported['scenario_analysis']['completed_evidence'] == model['completed_evidence']
+    assert exported['scenario_analysis']['price_rows'] == model['price_rows']
+    assert exported['scenario_analysis']['axes'] == model['axes']
+    assert 'scenario_analysis.completed_evidence.asof' in archive.read('context.csv').decode('utf-8-sig')
+    assert 'owner_email' not in exported
+    assert model == before
 
 
 def test_source_prices_volume_and_pivot_confirmation_are_measured(bars):
