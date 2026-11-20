@@ -27,8 +27,12 @@ thresholds and gate policy are unchanged, but affected ATR-derived references
 correctly change. Provisional momentum, source-close scorecard, prior MFI and
 ATR now have separate labels. Drawdown windows and volume-growth denominators
 are explicit. R/R, invalidation and weight-capacity limits are clarified.
-Verification/deployment status is in the linked record; do not assume live proof
-from a commit alone. Exactly one next task: reconcile actual quote timestamp and
+Code commit2453be28 is pushed and Cloud-reboot verified: completed SOXL export
+matches loaded/disk hashes, no stale modules. At live quote42.00 the execution
+check and A/B/C/management plan agree on stop19.25 and R/R1.22; defense remains.
+1849 selected tests passed, then1401 final decision contracts passed after a
+wording-only refinement. See record for scope, intentional ATR changes and proof.
+Exactly one next task: reconcile actual quote timestamp and
 completed-session identity across precision/Today, including provider partial
 daily bars and channel freshness. This replaces the older next-task entries.
 

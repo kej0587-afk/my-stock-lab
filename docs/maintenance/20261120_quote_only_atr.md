@@ -63,7 +63,29 @@ outside Git. No new feed, guessed quote session, investment threshold or order.
   repository tests or a strategy backtest. A subsequent wording-only refinement
   limits the scorecard basis label to its RSI/52-week position, not all returns.
   Final decision gate after that label: 1401 passed, no failures/errors/skips,
-  127.350s, unchanged hashes (`decision_2jepvacd`). Production verification pending.
+  127.350s, unchanged hashes (`decision_2jepvacd`).
+- Code commit `2453be28` pushed. Cloud hot-reload briefly logged a
+  `stock_lab_core.browser_safety` import KeyError; an authorized reboot completed.
+  This records recovery, not a claimed fix for that separate hot-reload cause.
+- Production SOXL completed at 16:09 KST. The downloaded review manifest reports
+  commit `2453be286552a43d3d2693888c3ed4f22773c895`, `restart_required=false`,
+  no stale modules, and matching loaded/disk hashes for the decision engine,
+  signal-basis helper and plan panel. Download itself did not refetch/recalculate.
+- Live quote 42.00 produced stop reference 19.25 and R/R 1.22 in the execution
+  check and A/B/C/management plan. Target 69.73 remained a recent internal high,
+  not a forecast. Market-defense and leverage DCA deferral remained in place.
+- Visually checked the four-row basis table: provisional RSI/MA dated 11/20,
+  source-close scorecard and quote-only-excluded ATR dated 11/19, prior MFI
+  explicitly separated. The separate session panel showed a 16:09 KST daymarket
+  observation; the legacy upper-price input still correctly says session unknown.
+  Equal displayed prices do not prove those two feeds have identical timestamps.
+- Verified the horizontally scrollable timeframe table labels recent 52 daily,
+  weekly and monthly bars, and provisional daily versus source timeframe prices.
+  The live export also contains the exact volume-growth comparison denominator.
+- Private UI proof: `cache/operating_20261120/quote_only_basis.jpg`; completed
+  export: local `precision_review_SOXL (6).zip`. Neither is committed. During
+  Streamlit rerun the previous symbol's lower sections remained temporarily;
+  the completed SOXL result was verified without those old-symbol sections.
 
 ## Exactly One Next Task
 
