@@ -29,6 +29,11 @@ unchanged stress calculator. Standalone macro navigation captures on explicit
 refresh; changing the chart does not collect again. Missing values stay missing,
 source captures remain separate, and investment thresholds/calculations are intact.
 Operating verification and final commit status are recorded in the linked document.
+Deployed framework: 7c3c50d5; navigation/time-format follow-up: a9815081. Live
+Today/board/portfolio/precision SOXL restrictions matched. Scenario -> SOXL chart
+-> scenario retained the ticker and precision source after the follow-up. Final
+frozen correctness gate: 1,820 passed; final focused tests: 80 passed. This is not
+full site parity, an investment validation, or completion of report-58 repairs.
 Exactly one next implementation task: compare and consolidate original numerical
 entry/exit plans between queue screening and precision using fixed inputs. There
 is a known ordinary poor-R/R branch difference; do not silently pick one plan or

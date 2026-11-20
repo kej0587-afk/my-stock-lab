@@ -135,6 +135,9 @@ The supplied critique is output evidence, not proof of each provider root cause.
 These remaining issues are not declared fixed by a presentation framework.
 The new response panel is not a predictive support/rebound strategy, and its
 screening references are not yet the unified detailed execution plan in step 2.
+Live precision also exposed an options-quote page and low-information discussion
+headlines in its raw news list. This is another consumer for the shared event/news
+eligibility contract, not a reason to create another SOXL-specific filter here.
 
 ## Verification
 
@@ -165,4 +168,15 @@ screening references are not yet the unified detailed execution plan in step 2.
 - Final frozen-source gate after the navigation/time-format fix: 1,820 passed,
   zero failures/errors/skips, 205.946 seconds; evidence
   `cache/refactor_checks/all__gjbnona/summary.json`. No changed source during run.
-- Final operating selection-persistence verification follows the follow-up push.
+- Follow-up implementation commit: a9815081 (foundation: 7c3c50d5), both pushed.
+  Cloud loaded the follow-up automatically; no second reboot was required.
+- Final live check: selected SOXL and the precision source in scenario, used the
+  chart/final-check shortcut, waited for completed SOXL precision, and returned.
+  Both SOXL and the precision source remained selected. Calculation time displayed
+  in KST. The comparison table retained independent Today/board/precision captures
+  at 05:16:13 / 05:22:26 / 05:26:30 UTC, all with 2026-11-19 price basis and explicit
+  unconfirmed current-quote adjustment. No same-input/price identity was asserted.
+- Local ignored screenshot evidence: `cache/operating_20261120/macro_framework.png`.
+  Financial account screenshots/captures were not committed. Desktop-wide layout,
+  full reference-site parity, all review-58 fixes and investment-rule calibration
+  are still outside the completed evidence.
