@@ -228,6 +228,12 @@ def build_precision_narrative(name, tkr, c, fin_score, has_p, my_p, *, is_etf=No
     elif day_ret != 0:
         dr_emoji = "🔺" if day_ret > 0 else "🔻"
         flow_parts.append(f"{day_ret_label}: {dr_emoji} <b>{day_ret*100:.1f}%</b>")
+    basis = c.get("input_basis") or {}
+    if basis.get("등락비교기준"):
+        comparison = f"{basis['등락비교기준']} · {basis.get('등락봉시간상태', '완료 여부 미확인')}"
+        if c.get("live_price_used"):
+            comparison += " / 최신가 비교: " + basis.get("최신가비교기준", "미확인")
+        flow_parts.append("등락 기준: " + escape_html_value(comparison))
     if finite_num(vol_ratio) and vol_ratio > 0:
         vol_desc = "거래량 급증" if vol_ratio >= 2 else ("보통" if vol_ratio >= 0.7 else "거래량 감소")
         volume_detail = ""

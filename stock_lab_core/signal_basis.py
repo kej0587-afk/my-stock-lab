@@ -61,6 +61,48 @@ def source_date(frame):
     return stamp.strftime("%Y-%m-%d") if pd.notna(stamp) else "미확인"
 
 
+def source_return_basis(source, ticker, calculated_at):
+    """Describe the actual source pair; never recalculate or select a return."""
+    result = {"등락비교기준": "원자료 비교쌍 미확인", "등락봉시간상태": "완료 여부 미확인"}
+    if (not isinstance(source, pd.DataFrame) or len(source) < 2 or "Close" not in source
+            or not isinstance(source.index, pd.DatetimeIndex)):
+        return result
+    dates = source.index[-2:].tz_localize(None).normalize()
+    values = pd.to_numeric(source.Close.iloc[-2:], errors="coerce")
+    if (dates.isna().any() or dates[0] >= dates[1]
+            or not all(pd.notna(v) and math.isfinite(v) and v > 0 for v in values)):
+        return result
+    previous, current = dates.strftime("%Y-%m-%d")
+    result["등락비교기준"] = f"원자료 Close {previous} → {current}"
+    symbol = str(ticker).strip().upper()
+    market = "KR" if symbol.endswith((".KS", ".KQ")) or symbol in {"^KS11", "^KQ11"} else (
+        "US" if re.fullmatch(r"[A-Z]{1,6}(?:[.-][A-Z])?", symbol) else None)
+    if not market:
+        return result
+    try:
+        raw = str(calculated_at)
+        # Only an explicit KST suffix or aware clock may establish a time boundary.
+        clock = (pd.Timestamp(raw[:-4]).tz_localize("Asia/Seoul") if raw.endswith(" KST")
+                 else pd.Timestamp(calculated_at))
+        if pd.isna(clock) or clock.tzinfo is None:
+            return result
+        from stock_lab_core.report_exchange_clock import session_on_date
+        session = session_on_date(market, current)
+        if not session["known"]:
+            result["등락봉시간상태"] = "거래일정 미확인"
+        elif not session["trading_day"]:
+            result["등락봉시간상태"] = "비거래일 날짜의 원자료 · 확인 필요"
+        elif clock < session["open"]:
+            result["등락봉시간상태"] = "개장 전 날짜의 원자료 · 확인 필요"
+        elif clock < session["close"]:
+            result["등락봉시간상태"] = "장중 원자료 · 미확정"
+        else:
+            result["등락봉시간상태"] = "마감시각 경과 · 공급처 확정 여부 미확인"
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return result
+
+
 def build_signal_basis(source, context, *, calculated_at=None, ticker="", input_price=None, manual=False):
     chart, applied, issue = context
     quote = dict(getattr(chart, "attrs", {}).get("live_quote") or {})
@@ -70,6 +112,11 @@ def build_signal_basis(source, context, *, calculated_at=None, ticker="", input_
     except (TypeError, ValueError):
         has_quote = bool(applied)
     provenance, quote_fields = _quote_basis(input_price, ticker, manual, has_quote)
+    calculated_at = calculated_at or datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
+    return_basis = source_return_basis(source, ticker, calculated_at)
+    latest_basis = (f"선택 현재가 / {source_date(source)} 원자료 Close · "
+                    f"시세시각 {quote_fields['현재가관측시각']} · 세션 {quote_fields['현재가세션']}"
+                    if has_quote and return_basis["등락비교기준"] != "원자료 비교쌍 미확인" else "비교기준 미확인")
     return {
         "가격자료기준일": source_date(source),
         "지표마지막봉": source_date(chart),
@@ -83,10 +130,12 @@ def build_signal_basis(source, context, *, calculated_at=None, ticker="", input_
         "ATR가격봉수": len(atr_frame) if isinstance(atr_frame, pd.DataFrame) else 0,
         "가격입력ID": price_input_identity(source, chart, ticker=ticker, input_price=input_price),
         **quote_fields,
+        **return_basis,
+        "최신가비교기준": latest_basis,
         "원자료봉상태": source_bar_observation(atr_frame, provenance, ticker),
         "임시봉날짜의미": "계산용 현지 날짜 · 실제 체결 시각/정규장 완료일 아님" if applied else "원자료 봉 날짜",
         # Processing time is not the vendor's quote time.
-        "계산시각": calculated_at or datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST"),
+        "계산시각": calculated_at,
     }
 
 
@@ -117,6 +166,11 @@ def render_signal_basis(st, basis):
                                        basis.get("현재가세션", "미확인"), basis.get("현재가시각종류", "")])})
     rows.append({"항목": "원자료 일봉 확인", "기준일/봉 날짜": basis.get("ATR기준일", "미확인"),
                  "가격 기준": basis.get("원자료봉상태", "완료 여부 미확인")})
+    if basis.get("등락비교기준"):
+        rows.append({"항목": "일간 등락 비교", "기준일/봉 날짜": basis["등락비교기준"],
+                     "가격 기준": basis.get("등락봉시간상태", "완료 여부 미확인")})
+        rows.append({"항목": "최신가 비교가 표시될 때", "기준일/봉 날짜": basis.get("가격자료기준일", "미확인"),
+                     "가격 기준": basis.get("최신가비교기준", "비교기준 미확인")})
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption(f"계산 {basis['계산시각']} · 시세 제공시각과 별도")
     if basis.get("가격입력ID"):

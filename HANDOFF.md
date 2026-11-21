@@ -34,40 +34,36 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
-[2026-11-21 report exchange calendar](docs/maintenance/20261121_report_exchange_calendar.md),
-based on `58a51bff`. One shared local calendar now drives report session state,
-completed daily bars and market-board cutoffs. KR special-session exceptions reuse
-existing verified calendar data; US holidays/early closes use the same schedule.
+[2026-11-21 daily-return display basis](docs/maintenance/20261121_daily_return_basis.md),
+based on `c759c585`. This is display evidence only, not a new return calculation.
 
-- Nov19 16:00 KST stays intraday until 16:30; KR report and board preserve their
-  existing separate close delays (0 / 15 minutes). US preserves 15 minutes.
-- KR holidays, US Thanksgiving/13:00 early close, normal DST sessions, actual-open
-  checks, unavailable calendars and input immutability are covered offline.
-- Calendar unavailable means unknown/withheld, not a guessed weekday completion.
-  Year-based calendar reuse adds no quote requests or changes to cache TTLs.
-- Short-day regular hours do not certify extended-venue hours; do not invent a
-  20:00 afterhours end on an early-close date. Normal extended windows are retained.
-- Final related contracts: **253 passed**, 23.01s (41 new calendar/boundary cases). The previous special-session strict xfail now passes.
-  Test dates with invented holiday prices were corrected; values/goldens retained.
-- Fixed saved 379810/GOOGL consumer-audit JSON is exactly equal before/after.
-  Current price, RSI, ATR, return, R/R and scenario date/close all match. These
-  captures are normal-session cases, not a new full grade/live report calculation.
-- Initial selected-all gate: 2,454 pass, 12 historical digest mismatches, no errors.
-  Direct output diff isolates two calendar-source text cells. The contract now
-  asserts those new sources and preserves original hashes for every other byte;
-  all 20 tests in that file pass. Selected-all rerun: **2,466 passed**, 229.844s,
-  `cache/refactor_checks/all_swbjv6ii`. After preserving non-equity caller boundaries,
-  final selected-report gate: **208 passed**, 47.276s,
-  `cache/refactor_checks/report_9lrrgl58`; final saved JSON remains exactly equal.
-  Code `8c0caab5` pushed; owner reboot and new operating report verified below.
-- Mixed futures/FX/macro daily and observation windows retain the old filters and
-  existing macro expected-date guard. They are not certified by the equity calendar.
-- Decision functions, partial-bar scoring policy, thresholds and decision labels
-  are untouched. Source-calendar metadata changes are intentional.
+- Source return now carries the actual previous/current row dates. No assumed
+  previous trading day replaces a missing source row.
+- Calendar/calculation time separates active partial bars from elapsed closes;
+  elapsed close time still does not certify supplier finalization.
+- Latest-price comparison identifies the actual last source Close. Supplier time
+  and session remain unknown when the selected price carries no observation.
+- Same evidence appears in precision input table, tactical/narrative displays and
+  Today/dashboard detail columns. Existing return numbers, day_ret_label, scores,
+  decision reasons, execution gates, price identity and cache TTLs remain unchanged.
+- Report already separates completed/intraday values. Its computations/output were
+  not rewritten or replaced with the decision engine's return.
+- Two saved normal/intraday captures reproduce price, RSI, ATR, return, R/R and
+  scenario date/price. Existing build_signal_basis fields are equal for the same
+  frames/quote/clock; only three display fields are added.
+- Baseline selected decision gate: **1,638 passed**, 153.437s,
+  `cache/refactor_checks/decision_0r18f482`. Initial relevant tests: **140 passed**.
+  New evidence tests: **19 passed**, 5.81s; final evidence/calendar/audit contracts
+  **72 passed**, 11.82s. Final selected decision gate: **1,638 passed**, 151.881s,
+  `cache/refactor_checks/decision_pmcv6zmr` (no failures/errors/skips/source drift).
+  Deployment verification pending below.
+- Ignored fixed-input record: `cache/operating_20261121/daily_return_basis_fixed.json`.
+  No private ZIP/report goes into Git.
 
-Previous [partial-bar audit](docs/maintenance/20261121_partial_daily_bar_audit.md)
-explains the intentional decision/observation differences and preserved input IDs.
-Private artifacts stay under ignored `cache/operating_20261121/`; do not add to Git.
+Previous [calendar fix](docs/maintenance/20261121_report_exchange_calendar.md)
+aligned report equity sessions with exchange calendars while preserving separate
+close buffers and legacy non-equity feed handling. It was deployed and verified
+in `8c0caab5`; the record retains detailed tests and the operating report evidence.
 
 The former 1,787-line handoff is preserved, unabridged, at
 [HANDOFF_HISTORY_20261121.md](HANDOFF_HISTORY_20261121.md). It was copied before this
@@ -103,16 +99,16 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Clarify the displayed daily-return basis without changing the decision result.**
+**Audit cross-view decisions using three representative fixed-input cases.**
 
-Use the saved GOOGL intraday and 379810 completed-session inputs from the prior
-consumer audit. Inspect how precision/Today/report show the source trading date,
-comparison close date and provisional/completed status next to the return. Saved
-`전일등락` wording is ambiguous for an active-day bar. Preserve the numeric policy,
-existing score/decision wording and return values; add or reuse separate evidence
-labels only where the actual input certifies them. Missing timestamps stay unknown.
-Do not change quote providers, TTLs, scoring, or globally exclude partial bars.
-Prove fixed-input parity, then verify the relevant operating display as available.
+Compare Today, precision and portfolio evidence for one ordinary US stock, one
+KR-listed ETF and one leveraged product. Preserve snapshots/input IDs; compare the
+same price/financial/market/account inputs wherever possible. Distinguish candidate
+quality, technical timing and execution/account limits; legitimate role differences
+are not duplicated votes. First identify whether divergent displays use different
+inputs/times or truly disagree. Fix only a demonstrated connection/display defect,
+with fixed-input parity. Do not change scores, thresholds, labels, quote providers,
+TTLs or create another scoring engine. Record one bounded result and one next task.
 
 ## Verification Discipline
 

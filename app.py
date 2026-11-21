@@ -34933,6 +34933,12 @@ if main_page == "precision":
                 else:
                     ret_label = str(c.get("day_ret_label") or "전일등락")
                     ret_html = f"{escape_html_value(ret_label)}: <b>{c['day_ret']*100:.1f}%</b>"
+                _return_basis = c.get("input_basis") or {}
+                if _return_basis.get("등락비교기준"):
+                    _return_note = f"{_return_basis['등락비교기준']} · {_return_basis.get('등락봉시간상태', '완료 여부 미확인')}"
+                    if c.get("live_price_used"):
+                        _return_note += " / 최신가 비교: " + _return_basis.get("최신가비교기준", "미확인")
+                    ret_html += f"<br><small>등락 기준: {escape_html_value(_return_note)}</small>"
                 _vol_ratio = clean_float(c.get("vol_ratio"), np.nan)
                 _vol_ma20 = clean_float(c.get("vol_ma20"), np.nan)
                 _last_volume = clean_float(c.get("last_volume"), np.nan)
