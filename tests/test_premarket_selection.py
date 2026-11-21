@@ -20,7 +20,7 @@ import pytest
 from stock_lab_core import prices
 from stock_lab_core.overnight_quote import extract_overnight_quote
 from stock_lab_core.quote_observation import quote_provenance
-from tests.quote_observation_reference import before_provider_observation
+from tests.quote_observation_reference import before_provider_observation, before_daily_close_repair
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,7 +285,7 @@ def test_same_fixed_candidates_old_route_selects_overnight_new_route_selects_pre
 @pytest.mark.parametrize("name", ["_fetch_us_realtime_price", "_fetch_price_uncached", "load_latest_prices_batch"])
 @pytest.mark.parametrize("winner", ["_fetch_yahoo_quote", "_fetch_yf_download_price",
                                     "_fetch_yahoo_overnight_page_price", "_fetch_kis_us_quote_price", None])
-def test_nonpremarket_prices_and_complete_provider_order_match_fixed_revision(monkeypatch, instant, name, winner):
+def test_nonpremarket_prices_and_provider_order_except_reviewed_untimed_fallback(monkeypatch, instant, name, winner):
     clock_at(monkeypatch, instant)
     assert not prices._us_equity_premarket_active()
     calls, _ = install_providers(monkeypatch, winner, parsed=False)
@@ -298,6 +298,17 @@ def test_nonpremarket_prices_and_complete_provider_order_match_fixed_revision(mo
     calls.clear()
     actual = getattr(prices, name)(argument)
     assert actual == expected
+    if name == '_fetch_us_realtime_price' and instant in ('2026-11-20T08:00:00Z', '2026-11-21T14:00:00Z'):
+        # Deliberate SOXL fix: chart/download precede untimed KIS day values.
+        chain = ['_fetch_yahoo_overnight_page_price', '_fetch_yahoo_quote',
+                 '_fetch_yf_download_price:1m', '_fetch_yf_download_price:5m',
+                 '_fetch_robinhood_us_quote', '_fetch_kis_us_quote_price:day',
+                 '_fetch_configured_us_quote_price', '_fetch_pyth_us_live_price',
+                 '_fetch_cboe_book_price', '_fetch_kis_us_quote_price:regular']
+        if winner is not None:
+            stop = next(i for i, label in enumerate(chain) if label.split(':')[0] == winner)
+            chain = chain[:stop + 1]
+        expected_calls = [(label, 'RAM') for label in chain]
     assert calls == expected_calls
 
 
@@ -306,6 +317,7 @@ def test_only_the_reviewed_routing_assignment_changed(name):
     current = (ROOT / "stock_lab_core/prices.py").read_text(encoding="utf-8-sig")
     before = function_node(historical_source(), name)
     after = function_node(current, name)
+    after = before_daily_close_repair(after)
     assignments = [node for node in ast.walk(after) if isinstance(node, ast.Assign)
                    and any(isinstance(target, ast.Name) and target.id == "after_hours_active" for target in node.targets)]
     assert len(assignments) == 1

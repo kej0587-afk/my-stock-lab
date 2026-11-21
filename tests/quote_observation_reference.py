@@ -3,6 +3,38 @@
 import ast
 
 
+def before_daily_close_repair(function):
+    """Undo only the reviewed missing-close fix for older body contracts."""
+    if function.name == '_fetch_us_realtime_price':
+        pairs = [
+            ('_is_live_priority_us_ticker(t) and after_hours_active', '_is_live_priority_us_ticker(t)'),
+            ('not _is_live_priority_us_ticker(t) or not after_hours_active', 'not _is_live_priority_us_ticker(t)'),
+        ]
+        for current, previous in pairs:
+            matches = [n for n in ast.walk(function) if isinstance(n, ast.If)
+                       and ast.dump(n.test) == ast.dump(ast.parse(current, mode='eval').body)]
+            assert len(matches) == 1
+            matches[0].test = ast.parse(previous, mode='eval').body
+    elif function.name == '_fetch_yahoo_regular_close_price':
+        approved = ast.parse('''from stock_lab_core.yahoo_daily_close import missing_close_quote
+repaired = missing_close_quote(result, t)
+if repaired is not None:
+    return repaired
+''').body
+        keys = {ast.dump(n) for n in approved}
+        seen = []
+        class Restore(ast.NodeTransformer):
+            def visit(self, node):
+                key = ast.dump(node)
+                if key in keys:
+                    seen.append(key)
+                    return None
+                return super().visit(node)
+        function = Restore().visit(function)
+        assert len(seen) == len(keys) and set(seen) == keys
+    return function
+
+
 def before_quote_observation(function):
     pairs = [
         ('observed = load_latest_price(ticker)', None),
@@ -29,6 +61,7 @@ def before_quote_observation(function):
 
 def before_provider_observation(function):
     """Keep the old provider priority AST; normalize only exact evidence wiring."""
+    function = before_daily_close_repair(function)
     if function.name == '_fetch_us_realtime_price':
         first = ast.parse('selected = source() or 0.0').body[0]
         second = ast.parse('price = selected if isinstance(selected, QuoteObservation) else float(selected)').body[0]

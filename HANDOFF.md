@@ -34,6 +34,33 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+Current bounded work: [cross-view evidence and SOXL close repair](docs/maintenance/20261121_cross_view_soxl_close.md).
+Started clean at `c895a19b`. The user reported SOXL 42.34 versus regular close 30.88
+during the cross-view audit; the explicit price bug took priority over the former
+no-provider-change restriction. Implementation/tests complete; production verification pending.
+
+- `1a9989fb` passes existing calculated weights into precision's shared evidence.
+  Three fixed cases preserve every existing workflow field and portfolio readiness;
+  only two display fields are added. Original captures are not identical full inputs.
+- Yahoo's Nov20 SOXL daily row has OHL/volume but null Close, while same-symbol
+  regularMarketPrice=30.88 at 16:00:04 ET. Existing cleanup dropped the row; old
+  regular-close fallback selected Nov19 45.30. The 42.34 quote had no provider/time
+  evidence, so its actual supplier cannot be determined from the old ZIP.
+- Repair only an existing missing US tail Close with matching symbol/calendar/date,
+  close-time and OHL validation. Keep Adj Close unknown. Shared scalar/batch path;
+  complete frames make no extra request. Prefer chart over untimed day fallback
+  outside extended sessions. No TTL/score/formula/threshold/decision-label changes.
+- Corrected data can change calculated results; this is an explicit input bug fix,
+  not a claim that old wrong prices must yield identical output.
+- Final selected prices: **646 passed / 60.359s**, `prices_eeb6nivt`.
+  Final selected decision: **1,638 passed / 153.218s**, `decision_bqkmn9n1`.
+  New/focused contracts: **75 passed / 26.26s**, including NaT/duplicate-column
+  guards found in focused review. No golden regeneration.
+- Local live probe restores Nov20 Close30.88; separate post-session quote33.3694
+  carries actual supplier timestamp/session. Production recheck follows push/reboot.
+
+### Previous completed display task
+
 [2026-11-21 daily-return display basis](docs/maintenance/20261121_daily_return_basis.md),
 based on `c759c585`. This is display evidence only, not a new return calculation.
 
@@ -122,16 +149,15 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Audit cross-view decisions using three representative fixed-input cases.**
+**Record and replay free-entry versus held-selection account limits.**
 
-Compare Today, precision and portfolio evidence for one ordinary US stock, one
-KR-listed ETF and one leveraged product. Preserve snapshots/input IDs; compare the
-same price/financial/market/account inputs wherever possible. Distinguish candidate
-quality, technical timing and execution/account limits; legitimate role differences
-are not duplicated votes. First identify whether divergent displays use different
-inputs/times or truly disagree. Fix only a demonstrated connection/display defect,
-with fixed-input parity. Do not change scores, thresholds, labels, quote providers,
-TTLs or create another scoring engine. Record one bounded result and one next task.
+For one fixed held KR ETF, capture selection mode (`is_free`) plus matching price,
+market and account inputs in Today/precision evidence. The old 379810 captures have
+the same price ID but different decision codes; their missing mode/context prevents
+a causal conclusion. Reproduce both modes with fixed inputs, distinguish legitimate
+account-limit differences from a display/connection error, and fix only a proven
+defect. Preserve existing scores, thresholds, labels, TTLs and user-owned inputs.
+Do not start another broad refactor. Finish one record and exactly one next task.
 
 ## Verification Discipline
 

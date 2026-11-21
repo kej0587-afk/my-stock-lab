@@ -514,10 +514,20 @@ def _fetch_yfinance_ohlcv(ticker: str, period: str = "1y") -> pd.DataFrame:
         df = _select_download_ohlcv(df, yf_ticker)
         if "Close" not in df.columns:
             continue
+        df = _repair_missing_us_daily_close(yf_ticker, df)
         df = _clean_ohlcv_frame(df, keep_adj_close=True)
         if not df.empty:
             return _maybe_align_ohlcv_to_live_price(yf_ticker, df)
     return pd.DataFrame()
+
+
+def _repair_missing_us_daily_close(ticker, frame):
+    # Query only an existing incomplete tail, never every symbol on every render.
+    if (not _looks_like_us_equity_ticker(ticker) or frame.empty or not frame.columns.is_unique or "Close" not in frame
+            or not isinstance(frame.index, pd.DatetimeIndex) or pd.notna(frame.Close.iloc[-1])):
+        return frame
+    from stock_lab_core.yahoo_daily_close import fill_history_close
+    return fill_history_close(frame, ticker, _fetch_yahoo_regular_close_price(ticker))
 
 
 @timed_call("prices")
@@ -547,6 +557,7 @@ def load_price_frames_batch(tickers, period="1y") -> dict:
     for symbol in symbols:
         try:
             frame = selector.select(symbol)
+            frame = _repair_missing_us_daily_close(symbol, frame)
             frame = _clean_ohlcv_frame(frame, keep_adj_close=True)
             if not frame.empty:
                 frames[symbol] = _maybe_align_ohlcv_to_live_price(symbol, frame)
@@ -1798,7 +1809,7 @@ def _fetch_us_realtime_price(ticker: str) -> float:
         ]
     else:
         non_regular_sources = [lambda: _fetch_yahoo_overnight_page_price(t)]
-    if _is_live_priority_us_ticker(t):
+    if _is_live_priority_us_ticker(t) and after_hours_active:
         non_regular_sources.append(_kis_daytime_price)
     if not after_hours_active:
         non_regular_sources.extend([
@@ -1807,7 +1818,7 @@ def _fetch_us_realtime_price(ticker: str) -> float:
             lambda: _fetch_yf_download_price(t, interval="5m", prepost=True),
             lambda: _fetch_robinhood_us_quote(t),
         ])
-    if not _is_live_priority_us_ticker(t):
+    if not _is_live_priority_us_ticker(t) or not after_hours_active:
         non_regular_sources.append(_kis_daytime_price)
     non_regular_sources.extend([
         lambda: _accept_us_untimed_quote_price(t, _fetch_configured_us_quote_price(t)),
@@ -2048,6 +2059,10 @@ def _fetch_yahoo_regular_close_price(ticker: str) -> float:
             if not results:
                 continue
             result = results[0]
+            from stock_lab_core.yahoo_daily_close import missing_close_quote
+            repaired = missing_close_quote(result, t)
+            if repaired is not None:
+                return repaired
             closes = ((result.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
             valid = []
             for close in closes:
