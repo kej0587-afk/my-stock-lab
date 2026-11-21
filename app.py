@@ -20785,7 +20785,14 @@ def build_precision_execution_workflow(name, ticker, decision, is_etf, asset_cla
         ),
         build_upside_map=build_today_analyst_upside_map, apply_gate=apply_execution_gate_columns,
     )
-    return context.iloc[0].to_dict()
+    result = context.iloc[0].to_dict()
+    # Carry the already-calculated account weights for the shared brief only.
+    # Attach after the existing gate pipeline; never re-score or infer missing weights.
+    result.update({
+        "현재비중": round(clean_float(decision.get("current_w"), np.nan), 2),
+        "목표비중": round(clean_float(decision.get("target_w"), np.nan), 2),
+    })
+    return result
 
 
 EXECUTION_WORKFLOW_DISPLAY_COLUMNS = ["후보품질", "후보점수", "후보검토사항", "게이트상태", "게이트근거"]
