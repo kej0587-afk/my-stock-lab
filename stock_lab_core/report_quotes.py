@@ -120,12 +120,21 @@ def _epoch(value):
         return None
 
 
-def _previous_us_day(day):
-    from stock_lab_core.prices import _us_equity_market_holidays
-    day -= timedelta(days=1)
-    while day.weekday() >= 5 or day in _us_equity_market_holidays(day.year):
-        day -= timedelta(days=1)
-    return day
+def _completed_us_sessions(clock):
+    """Latest two completed sessions; unknown calendars cannot certify a close."""
+    from stock_lab_core.report_exchange_clock import session_on_date
+    day = clock.tz_convert(NEW_YORK).date()
+    completed = []
+    for offset in range(32):
+        candidate = day - timedelta(days=offset)
+        session = session_on_date("US", candidate)
+        if not session["known"]:
+            return []
+        if session["trading_day"] and session["close"] <= clock:
+            completed.append((candidate, session["close"]))
+            if len(completed) == 2:
+                return completed
+    return []
 
 
 def _quote_direction_issue(row, field, price, previous):
@@ -144,29 +153,36 @@ def _quote_direction_issue(row, field, price, previous):
 
 
 def regular_quote_observation(quote_row, ticker, now):
-    from stock_lab_core.prices import _us_equity_market_holidays
     if not isinstance(quote_row, dict):
         return {}
-    local = pd.Timestamp(now).tz_convert(NEW_YORK)
-    day = local.date()
-    if local.hour * 60 + local.minute < 960 or day.weekday() >= 5 or day in _us_equity_market_holidays(day.year):
-        day = _previous_us_day(day)
+    try:
+        clock = pd.Timestamp(now)
+        if pd.isna(clock) or clock.tzinfo is None:
+            return {}
+    except (TypeError, ValueError, OverflowError):
+        return {}
     at = _epoch(quote_row.get("regularMarketTime"))
     price, previous = (raw_number(quote_row.get(key)) for key in ("regularMarketPrice", "regularMarketPreviousClose"))
-    if quote_row.get("symbol") != ticker or at is None or not price or not previous or min(price, previous) <= 0:
+    if (quote_row.get("symbol") != ticker or at is None or at > clock
+            or not price or not previous or min(price, previous) <= 0):
         return {}
+    sessions = _completed_us_sessions(clock)
+    if not sessions:
+        return {}
+    (day, closing), (previous_day, _) = sessions
     stamp = at.tz_convert(NEW_YORK)
-    # During the daily-provider grace period require a timestamp at/after 16:00.
-    if stamp.date() == local.date() and local.hour * 60 + local.minute < 975 and stamp.hour * 60 + stamp.minute < 960:
+    # Preserve the 15-minute grace period, relative to the actual exchange close.
+    if clock < closing + timedelta(minutes=15) and at < closing:
         return {}
-    # A last trade near the regular close, never an extended-hours price.
-    if stamp.date() != day or not 959 <= stamp.hour * 60 + stamp.minute <= 975 or at > pd.Timestamp(now):
+    # Preserve the existing minute-resolution window, including close+15:59.
+    minutes_from_close = (at.floor("min") - closing).total_seconds() / 60
+    if stamp.date() != day or not -1 <= minutes_from_close <= 15:
         return {}
     issue = _quote_direction_issue(quote_row, "regular", price, previous)
     if issue:
         logging.warning("Report quote %s: %s; as_of=%s", ticker, issue, at.isoformat())
         return {}
-    return {"ticker": ticker, "date": day.isoformat(), "previous_date": _previous_us_day(day).isoformat(),
+    return {"ticker": ticker, "date": day.isoformat(), "previous_date": previous_day.isoformat(),
             "price": price, "previous_price": previous, "return": price / previous - 1,
             "as_of": at.isoformat(), "source": "Yahoo 정규장 시세(일봉 종가 누락 보완)"}
 

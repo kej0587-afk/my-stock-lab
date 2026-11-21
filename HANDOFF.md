@@ -34,6 +34,18 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Report auxiliary short-session close](docs/maintenance/20261121_report_short_close.md),
+started clean at `ce54e1eb`. Implementation/local verification complete; deployment
+verification is the remaining part of this bounded task.
+`regular_quote_observation` now uses the shared exchange calendar for latest and
+previous completed sessions rather than fixed16:00. Normal grace/window,
+quote validation, history repair, scores/labels/TTLs and extended hours unchanged.
+Selected report **208 passes before/after** (`report_ps1ctilw`, `report_0oe6dzri`),
+focused **137 passes**, original/new normal-session outputs **128 exact matches**.
+Nov27 13:00 short close recovery is fixed-clock synthetic verification only.
+
+### Previous completed report audit
+
 [Report repaired-close audit](docs/maintenance/20261121_report_repaired_close.md),
 started clean at `6660a895`. Public report quote endpoint and completed operating
 report confirm Nov20 SOXL close30.88/-31.83%, GOOGL265.29/-2.70%, matching prior
@@ -251,17 +263,13 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Align the report's auxiliary regular-quote fallback with US short-session closes.**
+**Finish operating verification of the report auxiliary short-close fix.**
 
-`report_quotes.regular_quote_observation` still validates fixed 16:00. Read-only
-reproduction: XNYS Nov27 close18:00 UTC (13:00 ET), valid 13:00:04 quote rejected
-at 13:20. Use existing exchange-calendar helpers for this report-only validation,
-including actual previous trading session and holiday/early-close boundaries.
-Preserve normal-session behavior, quote symbol/price/sign checks, existing history
-repair, current/extended separation, scores/labels/TTLs and caller data. Do not
-invent early-close extended venue hours or expand into another broad refactor.
-Run fixed-clock normal/short/holiday cases and the selected report gate; record
-production applicability honestly (today is not the future short session).
+Push, owner reboot, generate a completed report and compare loaded/disk/commit
+hashes for report_quotes. Confirm ordinary Nov20 regular returns and inactive
+weekend labels remain unchanged. Record actual generation time without a speedup
+claim. Future Nov27 short close is simulated, not a live-market verification.
+Then update this handoff with the completed state and exactly one next task.
 
 ## Verification Discipline
 
