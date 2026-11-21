@@ -116,6 +116,11 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
     calendar_sources = ("exchange_calendars XKRX", "exchange_calendars XNYS")
     for source in calendar_sources:
         assert sum(line.endswith(" | " + source) for line in output[0]) == 1
+    # Nov21: an inactive US venue window is not a failed current quote. Validate
+    # the one changed fixture cell, then retain the original digest everywhere
+    # else. Active/missing and repaired-close paths have separate regressions.
+    inactive = "미국 정규장 마감 · 별도 현재시세 표시 안 함 · 기준일 종가 참조"
+    assert sum(line.count(inactive) for line in output[0]) == int(held and clock == "2026-11-07T12:00:00+09:00")
     legacy_lines = []
     for line in output[0]:
         if line in additions:
@@ -123,7 +128,8 @@ def test_full_output_preserved_across_sessions(clock, held, monkeypatch):
         for source in calendar_sources:
             if line.endswith(" | " + source):
                 line = line[:-len(source)] + "정규장 시간 기준; 특별 휴장·단축장 별도 확인"
-        legacy_lines.append(line.replace(notice, ""))
+        legacy_lines.append(line.replace(notice, "").replace(
+            inactive, "정규장 외 · 데이마켓/시간외 시세 미연결: 제공처 응답·시각 미확인"))
     legacy = (legacy_lines, output[1])
     assert digest(legacy) == EXPECTED[f"{clock}/{held}"]
     assert args == before

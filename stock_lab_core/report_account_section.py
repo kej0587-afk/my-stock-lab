@@ -63,8 +63,15 @@ def holdings_impact_lines(*, context, held, observations, sessions, states, mode
             actual_now = (_pct(current["return"]) + f" ({current['date']} 장중 진행·확정 아님; {kst_time(current.get('as_of', current.get('retrieved_at')))})"
                           if valid_live_observation(current, region, checked, states=states) else "시각 확인 가능한 시세 미수집")
         elif region == "US":
-            actual_now = (extended_quote_text(context, ticker, max(now, stamp(context.get("quote_checked_at")) or now))
-                          or "정규장 외 · 데이마켓/시간외 시세 미연결: " + context.get("extended_quote_status", {}).get(ticker, "제공처 응답·시각 미확인"))
+            from stock_lab_core.report_session import us_extended_session
+            if states["US"]["phase"] in {"holiday", "closed"} and not us_extended_session(checked):
+                # Match the report header: no active venue window is not a failed
+                # live lookup. Do not promote a previous post quote to current.
+                label = "미국 휴장" if states["US"]["phase"] == "holiday" else "미국 정규장 마감"
+                actual_now = label + " · 별도 현재시세 표시 안 함 · 기준일 종가 참조"
+            else:
+                actual_now = (extended_quote_text(context, ticker, checked)
+                              or "정규장 외 · 데이마켓/시간외 시세 미연결: " + context.get("extended_quote_status", {}).get(ticker, "제공처 응답·시각 미확인"))
             if mode == "closed":
                 # Closed-mode tables have no current-quote column; keep its status here.
                 reasons.append("별도 세션 " + actual_now)

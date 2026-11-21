@@ -32,7 +32,22 @@ supplier fields are explicit limitations, not a reason to block all later stages
 No score thresholds, decision labels, TTLs or trading permissions may be changed
 under a behavior-preserving task. Investment performance validation is separate.
 
-## Latest Completed Task
+## Current Bounded Task
+
+[Report repaired-close audit](docs/maintenance/20261121_report_repaired_close.md),
+started clean at `6660a895`. Public report quote endpoint and completed operating
+report confirm Nov20 SOXL close30.88/-31.83%, GOOGL265.29/-2.70%, matching prior
+Today/precision. Post quotes are separate and not current during the weekend.
+
+Fixed only the holdings report's misleading inactive-window "quote disconnected"
+label; it now states holiday/closed and refers to dated closes. Active-window
+missing/delayed warnings, numeric output, decisions and TTLs unchanged.
+New/relevant 77 tests pass; selected report 208 passes before and after
+(`report_jxn3q92o`, `report_gyh3u4_r`). No golden regeneration.
+Code ready; push/owner reboot and final operating report verification pending.
+Finish that comparison before starting the next task.
+
+## Previous Completed Task
 
 Completed after `bf7b385b`: [cross-view price/mode audit](docs/maintenance/20261121_cross_view_price_mode.md).
 Code **`801cdf67`** pushed, owner reboot and production verification completed.
@@ -212,17 +227,17 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Verify the automatic market report uses the repaired regular close separately
-from extended-session quotes.**
+**Align the report's auxiliary regular-quote fallback with US short-session closes.**
 
-Generate one completed operating report with matching diagnostic ID. For SOXL and
-one ordinary US stock, compare its regular close/date and separate afterhours quote
-with the public source and Today/precision evidence. Confirm the earlier missing
-Close cannot silently roll the report back one session. Fix only a reproduced
-report connection/display defect; preserve scores, policy paths, labels, TTLs and
-user inputs. Existing price tests cover the shared repair; do not re-open general
-refactoring or force unknown supplier finalization. Record timing as an observation,
-not a speedup without like-for-like measurements. Finish one record and one next task.
+`report_quotes.regular_quote_observation` still validates fixed 16:00. Read-only
+reproduction: XNYS Nov27 close18:00 UTC (13:00 ET), valid 13:00:04 quote rejected
+at 13:20. Use existing exchange-calendar helpers for this report-only validation,
+including actual previous trading session and holiday/early-close boundaries.
+Preserve normal-session behavior, quote symbol/price/sign checks, existing history
+repair, current/extended separation, scores/labels/TTLs and caller data. Do not
+invent early-close extended venue hours or expand into another broad refactor.
+Run fixed-clock normal/short/holiday cases and the selected report gate; record
+production applicability honestly (today is not the future short session).
 
 ## Verification Discipline
 
