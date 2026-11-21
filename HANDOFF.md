@@ -56,7 +56,7 @@ based on `c759c585`. This is display evidence only, not a new return calculation
   New evidence tests: **19 passed**, 5.81s; final evidence/calendar/audit contracts
   **72 passed**, 11.82s. Final selected decision gate: **1,638 passed**, 151.881s,
   `cache/refactor_checks/decision_pmcv6zmr` (no failures/errors/skips/source drift).
-  Deployment verification pending below.
+  Code `35dd624d` pushed; owner reboot and precision operating verification completed.
 - Ignored fixed-input record: `cache/operating_20261121/daily_return_basis_fixed.json`.
   No private ZIP/report goes into Git.
 
@@ -71,6 +71,29 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[Daily-return basis deployment](docs/maintenance/20261121_daily_return_basis.md):
+code **`35dd624d`**, owner Cloud Reboot completed directly; authenticated session recovered.
+
+- GOOGL completed capture at 2026-11-21 09:42 KST: base_commit matches,
+  restart_required=false, stale_modules=[]. `signal_basis` loaded/disk hashes match.
+- Precision table and expanded tactical panel display actual source Close
+  Nov19 → Nov20, elapsed-close/supplier-finalization-unknown status, and separate
+  selected quote timestamp Nov21 09:42:12 KST / afterhours session.
+- Downloaded context and execution_workflow agree on all three new fields.
+  Replaying the source dates and captured clock reproduces both date/status fields.
+- Current quote/input ID differs from the pre-deploy capture. No like-for-like
+  operating score equality is claimed. Numeric preservation uses the saved fixed
+  inputs and selected regression gate above. The existing source-bar audit rejects
+  this new quote-overlay capture by design; it was not weakened to force a pass.
+- Today/dashboard detail columns are contract-checked; no new full Today run or
+  report generation this turn. Cross-view evidence audit is the next task below.
+- Private evidence: Downloads `precision_review_GOOGL (35).zip` before and `(36).zip`
+  after; ignored `cache/operating_20261121/daily_return_basis_live.json` and
+  `daily_return_basis_operating.jpg`. The captured tactical panel visibly confirms
+  the tactical UI path, not merely a module fingerprint.
+
+### Previous Report Verification
 
 [Report calendar deployment](docs/maintenance/20261121_report_exchange_calendar.md):
 code **`8c0caab5`**, owner Reboot completed after one Cloud internal-error retry.
