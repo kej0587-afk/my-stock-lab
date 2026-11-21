@@ -35,14 +35,17 @@ under a behavior-preserving task. Investment performance validation is separate.
 ## Latest Completed Task
 
 [Report auxiliary short-session close](docs/maintenance/20261121_report_short_close.md),
-started clean at `ce54e1eb`. Implementation/local verification complete; deployment
-verification is the remaining part of this bounded task.
+started clean at `ce54e1eb`. Code **`10d216ab`** pushed; direct owner reboot and
+completed operating report verification finished.
 `regular_quote_observation` now uses the shared exchange calendar for latest and
 previous completed sessions rather than fixed16:00. Normal grace/window,
 quote validation, history repair, scores/labels/TTLs and extended hours unchanged.
 Selected report **208 passes before/after** (`report_ps1ctilw`, `report_0oe6dzri`),
 focused **137 passes**, original/new normal-session outputs **128 exact matches**.
 Nov27 13:00 short close recovery is fixed-clock synthetic verification only.
+Operating checks **13 passed**; normal Nov20 SOXL/GOOGL returns unchanged.
+Today107.1s, report127.153s; prior report85.817s has uncontrolled cache/inputs/network.
+No speedup or regression-cause claim. Next bounded task is measured filing discovery.
 
 ### Previous completed report audit
 
@@ -149,6 +152,30 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[Report auxiliary short-close verification](docs/maintenance/20261121_report_short_close.md),
+code **`10d216ab`**, direct owner Reboot complete. Today **107.1s**; completed report
+**127.153s**, ID `eb46a301838b450181a765803b4dbc68`, 17:17:45–17:19:52 KST.
+
+- 13 operating checks pass: completed/normal, no degraded reasons, no stale modules,
+  report output hash and three relevant loaded/disk/Git hashes match.
+- SOXL -31.83%, GOOGL -2.70% retain Nov20 regular-close basis. Holdings inactive
+  weekend label visibly correct; no post price promoted. Future short session is
+  fixed-clock only. Same-input normal-session outputs match in 128 local cases.
+- Exclusive stages: prices32.387s, macro/official47.742s, calculations1.260s,
+  news1.954s, articles2.208s, persistence13.633s, assembly27.968s.
+  Old report85.817s vs127.153s is uncontrolled; no causal speed claim.
+- Filing discovery23.260s despite official HTTP76calls/active wall12.136s.
+  Earlier discovery23.421s /142calls/21.474s is not a like-for-like request set.
+  Two customs-body attempts failed; full normal mode does not certify every source.
+- Ignore separate interrupted screen-rerender diagnostics for report timings.
+  This completed report's diagnostic and Markdown hashes match. Browser download
+  timeout was recovered via correct visible button, not a report regeneration.
+- Private evidence: ignored `cache/operating_20261121/stock_lab_market_report (44).md`,
+  `auto_report_eb46a301838b450181a765803b4dbc68.json`,
+  `report_short_close_operating_audit.json`, `report_short_close_operating.jpg`.
+
+### Previous report-close verification
 
 [Report repaired-close verification](docs/maintenance/20261121_report_repaired_close.md),
 code **`bc5d8d2e`**, owner Reboot completed. Today full run **85.7s** restored held
@@ -263,13 +290,17 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Finish operating verification of the report auxiliary short-close fix.**
+**Profile the report's earnings-filing discovery on fixed inputs.**
 
-Push, owner reboot, generate a completed report and compare loaded/disk/commit
-hashes for report_quotes. Confirm ordinary Nov20 regular returns and inactive
-weekend labels remain unchanged. Record actual generation time without a speedup
-claim. Future Nov27 short close is simulated, not a live-market verification.
-Then update this handoff with the completed state and exactly one next task.
+Latest completed report records earnings_filing_discovery23.260s while official
+HTTP76calls has active wall12.136s; prior observation23.421s /142calls/21.474s is
+not a controlled comparison. Inspect `earnings_collection.py` and
+`earnings_filing_sources.py`, distinguish HTTP, queue/wait and parsing time, and
+count exact request identities/cache misses rather than function calls.
+Preserve coverage, provider priority, date/period semantics, TTLs and scores.
+Only reuse requests proved identical within the same execution; if none are
+redundant, report the measured cause without a speculative rewrite. Run relevant
+report contracts before/after any change, and update this handoff with one next task.
 
 ## Verification Discipline
 
