@@ -35,13 +35,18 @@ under a behavior-preserving task. Investment performance validation is separate.
 ## Latest Completed Task
 
 [Earnings discovery profiling](docs/maintenance/20261121_earnings_discovery_profile.md),
-started clean at `05202ad1`. Instrumentation/local equivalence completed; operating
-verification remains. Added setup/SEC rate wait/HTTP/body/parse/worker/join timings,
+started clean at `05202ad1`. Code **`8604900a`** pushed; direct owner reboot and
+two completed operating reports verified. Added setup/SEC rate wait/HTTP/body/parse/worker/join timings,
 actual request identities and cache hit/miss counters, aggregate-only diagnostics.
-No request reuse yet: duplicate requests must be measured, not assumed.
+Exact duplicate request identities **0 in both runs**; no response reuse added.
 Coverage/provider/date/TTL/deadline/concurrency/scoring and financial outputs unchanged.
 142 related tests passed, fixed cold/warm/failure/expiry replay **9 exact outputs**
 and identical request argument multisets; selected report208 passed before/after.
+First discovery23.486s = SEC setup0.133 + DART setup10.179 + worker join13.158 + other.
+Repeat DART setup0.003s proves existing cache reuse, but discovery24.234s still fills
+the collection budget with unique requests/SEC rate waits. Full reports116.109s and
+78.992s have uncontrolled cache/network; not a measured code speedup.
+SEC release validation refused9/15 then21/31; correctness of those refusals is next.
 
 ### Previous completed short-close task
 
@@ -163,6 +168,26 @@ rewrite; its links retain their repository-root meaning. Read specific historica
 records only as needed. Do not resume an older next task from that archive.
 
 ## Last Direct Production Verification
+
+[Filing-discovery profiling](docs/maintenance/20261121_earnings_discovery_profile.md),
+code **`8604900a`**, direct owner Reboot complete. Today95.1s; completed reports:
+
+- First `4fa936799cd74701a0bf195894fc31f3` /116.109s; repeat
+  `18f64f40ba704c5da03864baf9e5b1e0` /78.992s. Both12 checks pass, completed/normal,
+  output hashes match, three loaded/disk/Git hashes match, no stale modules.
+- Both collect74 issuers. SEC/DART get attempts51/31 then100/33; exact duplicate0.
+  DART directory10.179s→0.003s; successful issuer cache16hits on repeat, but58misses:
+  this is partial warmth, not an all-cache run. Failure TTL90s unchanged.
+- Discovery23.486s→24.234s; SEC rate wait active wall5.649→14.940s.
+  Parsing/selection cumulative0.575→1.269s. Worker join is waiting, not CPU work;
+  do not sum overlapping worker/network/queue totals. No speculative reuse applied.
+- SEC release parser validation exceptions9/15 then21/31 are caught by the existing
+  collector. Do not call them confirmed bugs; audit original evidence next.
+- Private evidence under ignored `cache/earnings_discovery_20261121/`: reports
+  `(45).md`, `(46).md`, matching auto_report JSONs and operating_<ID> audits,
+  `operating_profile.jpg`. Browser left on the completed79.0s report timing panel.
+
+### Previous short-close verification
 
 [Report auxiliary short-close verification](docs/maintenance/20261121_report_short_close.md),
 code **`10d216ab`**, direct owner Reboot complete. Today **107.1s**; completed report
@@ -301,15 +326,17 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Complete operating verification of earnings-filing discovery profiling.**
+**Audit SEC earnings-release validation refusals on fixed official evidence.**
 
-Push the verified instrumentation, owner reboot, generate a completed report and
-inspect earnings_discovery.* timings/events. Compare report output hash and
-loaded/disk/Git sources, not separate interrupted screen-rerender diagnostics.
-Separate actual HTTP and parse time from worker join/queue and SEC rate waits.
-Preserve coverage, dates, provider priority, TTLs and decisions. Reuse only proven
-identical requests; if none, report evidence without a speculative optimization.
-Then record operating findings and exactly one next bounded task.
+Latest operating trace has parse_sec_release31 calls/21 caught validation errors;
+first run15/9. Obtain safe per-reason counts from collector sources and choose
+three representative refusals, then replay the same official filing/exhibit bytes
+to distinguish justified withholding from recoverable parser defects.
+Do not relax issuer/period/date/metric identity to improve coverage. Preserve
+scores, TTLs, provider priority, request-rate/deadline policy and financial meaning.
+Only fix demonstrated parser errors with fixture/regression coverage; otherwise
+record limits. Same-run exact request duplicates were0; no speculative response
+memoization or larger parallelism. Update handoff with one bounded next task.
 
 ## Verification Discipline
 
