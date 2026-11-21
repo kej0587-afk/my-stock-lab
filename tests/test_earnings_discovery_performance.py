@@ -29,6 +29,23 @@ def get_fixture():
         Response(release())])
 
 
+def test_rejection_counts_only_actual_validation_and_hides_unknown_exception_text(monkeypatch):
+    args = dict(sec_user_agent="Research private@example.test", dart_api_key="", get=get_fixture())
+    def refuse(*a, **k):
+        raise ValueError("release_dateline_unavailable")
+    monkeypatch.setattr(sources, "parse_sec_release", refuse)
+    with PerformanceTrace() as first:
+        result = sources.collect_filing_earnings(["CYBR"], NOW, **args)
+    with PerformanceTrace() as cached:
+        again = sources.collect_filing_earnings(["CYBR"], NOW + timedelta(seconds=1), **args)
+    assert result["sources"][0]["reason"] == again["sources"][0]["reason"] == "release_dateline_unavailable"
+    assert first.report()["transport_events"]["earnings_discovery.sec_release.release_dateline_unavailable"] == 1
+    assert not any(k.startswith("earnings_discovery.sec_release.") for k in cached.report()["transport_events"])
+    with PerformanceTrace() as private:
+        profiling.release_validation_event("https://example.test/private?secret=value")
+    assert private.report()["transport_events"] == {"earnings_discovery.sec_release.other_validation_error": 1}
+
+
 def test_cold_and_warm_measurements_preserve_collection_and_freshness():
     get = get_fixture()
     args = dict(sec_user_agent="Research private@example.test", dart_api_key="", get=get)
@@ -49,6 +66,7 @@ def test_cold_and_warm_measurements_preserve_collection_and_freshness():
     assert events.get("earnings_discovery.http.sec.duplicate_identity", 0) == 0
     assert events["earnings_discovery.workers_started"] == 1
     assert events["earnings_discovery.cache.issuer_accounts_v1.miss"] == 1
+    assert events["earnings_discovery.sec_release.accepted"] == 1
     names = {row["name"] for row in report["functions"]}
     assert {"earnings_discovery.setup_sec", "earnings_discovery.worker_join",
             "earnings_discovery.worker", "earnings_discovery.sec_rate_wait",
@@ -56,6 +74,7 @@ def test_cold_and_warm_measurements_preserve_collection_and_freshness():
             "earnings_discovery.parse_json", "earnings_discovery.parse_sec_release"} <= names
     warm_events = warm.report()["transport_events"]
     assert not any(key.endswith(".attempt") for key in warm_events)
+    assert not any(key.startswith("earnings_discovery.sec_release.") for key in warm_events)
     assert warm_events["earnings_discovery.cache.issuer_accounts_v1.hit"] == 1
     assert warm_events["earnings_discovery.cache.sec_directory.hit"] == 1
     assert sources.CACHE_TTL == 600 and sources.FAILURE_TTL == 90 and sources.MAX_SECONDS == 24

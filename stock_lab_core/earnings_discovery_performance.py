@@ -61,3 +61,11 @@ def cache_event(key, outcome):
     allowed = {"sec_directory", "dart_codes", "issuer_accounts_v1", "dart_company", "dart_accounts"}
     bucket = key[0] if isinstance(key, tuple) and key and key[0] in allowed else "other"
     count_event("earnings_discovery.cache." + bucket + "." + outcome)
+
+
+def release_validation_event(reason):
+    """Only actual parser calls, not cache hits; fixed vocabulary, no raw errors."""
+    allowed = {"accepted", "result_heading_unavailable", "release_issuer_mismatch",
+               "explicit_fiscal_quarter_unavailable", "release_dateline_unavailable",
+               "release_filing_date_mismatch", "future_result"}
+    count_event("earnings_discovery.sec_release." + (reason if reason in allowed else "other_validation_error"))

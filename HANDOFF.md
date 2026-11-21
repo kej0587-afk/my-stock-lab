@@ -34,6 +34,16 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+Current bounded work: [SEC release refusals](docs/maintenance/20261121_sec_release_refusals.md).
+Local verification complete: 231 relevant tests, selected report208 before/after,
+9 identical existing fixed collector outputs, same official bytes for3 issuers.
+MSFT year-less title recovers explicit FY2027Q1 from realized body evidence;
+AAPL remains withheld for missing dateline, AMAT for issuer-name mismatch.
+No score/TTL/provider/deadline/rate changes. Source push/reboot/live verification
+pending; finish that verification before choosing another task.
+
+### Previous completed profiling task
+
 [Earnings discovery profiling](docs/maintenance/20261121_earnings_discovery_profile.md),
 started clean at `05202ad1`. Code **`8604900a`** pushed; direct owner reboot and
 two completed operating reports verified. Added setup/SEC rate wait/HTTP/body/parse/worker/join timings,

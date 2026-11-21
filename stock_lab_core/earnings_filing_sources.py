@@ -16,7 +16,7 @@ from stock_lab_core.earnings_filing_evidence import (
     latest_dart_report, latest_sec_filing, parse_sec_release, sec_base, sec_document, sec_release_link,
 )
 from stock_lab_core.performance import measure, submit_with_context
-from stock_lab_core.earnings_discovery_performance import FilingProbe, cache_event
+from stock_lab_core.earnings_discovery_performance import FilingProbe, cache_event, release_validation_event
 from stock_lab_core.report_build import register_loaded_source
 
 register_loaded_source(__name__, __file__)
@@ -128,8 +128,14 @@ def _sec_collect(ticker, directory, user_agent, now, deadline, get):
         release_url = sec_release_link(primary_body, base)
     release_body = _request(release_url, **options)
     with measure("external_data", "earnings_discovery.parse_sec_release"):
-        return parse_sec_release(release_body, ticker, cik, filing, release_url, now,
-                                 issuer_name=submissions.get("name"))
+        try:
+            pair = parse_sec_release(release_body, ticker, cik, filing, release_url, now,
+                                     issuer_name=submissions.get("name"))
+        except ValueError as error:
+            release_validation_event(str(error))
+            raise
+        release_validation_event("accepted")
+        return pair
 
 
 def _dart_financials(event, auth, api_key, now, deadline, get):

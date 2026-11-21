@@ -96,6 +96,44 @@ def _fiscal_period(text):
     return ("FY" if any(fiscal for _, _, fiscal in found) else "") + year + "Q" + quarter
 
 
+def _release_period(title, root):
+    """Year-less headlines need an explicit realized FY/Q in the same release."""
+    from stock_lab_core.earnings_result_sources import _text, _FORWARD
+
+    try:
+        return _fiscal_period(title)
+    except ValueError:
+        # Do not repair contradictory/dated headlines using a convenient body Q.
+        if re.search(r"\b20\d{2}\b", title):
+            raise
+    numbers = {"first": "1", "second": "2", "third": "3", "fourth": "4",
+               "1st": "1", "2nd": "2", "3rd": "3", "4th": "4"}
+    quarters = {numbers[q.lower()] for q in re.findall(
+        r"\b(first|second|third|fourth|1st|2nd|3rd|4th)[- ]quarter\b", title, re.I)}
+    if len(quarters) != 1:
+        raise ValueError("explicit_fiscal_quarter_unavailable")
+    candidates = []
+    for node in root.xpath("//h1|//h2|//h3|//p|//li|//div[not(p or div or table)]"):
+        value = _text(node)
+        if len(value) <= 120 and re.fullmatch(
+                r"(?:(?:fiscal|financial|business|company|first|second|third|fourth|quarter|full|year|and|20\d{2})\s+)*(?:outlook|guidance)",
+                value, re.I):
+            break
+        if (node.xpath("ancestor::table") or not 20 <= len(value) <= 900
+                or _FORWARD.search(value)
+                or re.search(r"\b(?:previous|prior|last|corresponding|compared)\b", value, re.I)):
+            continue
+        # Do not infer FY from a quarter-end date, a forecast or comparison table.
+        if not re.search(r"\b(?:announced|reported|generated|returned|posted)\b", value, re.I):
+            continue
+        if re.search(r"\b(?:fiscal(?:\s+year)?\s+|FY\s*)20\d{2}\b", value, re.I):
+            candidates.append(value)
+    period = _fiscal_period(" ".join(candidates))
+    if not period.startswith("FY") or not period.endswith("Q" + next(iter(quarters))):
+        raise ValueError("explicit_fiscal_quarter_unavailable")
+    return period
+
+
 def _release_metrics(root, body, spec):
     from stock_lab_core.earnings_result_sources import _prose_metrics, _text, _MONEY
 
@@ -157,7 +195,7 @@ def parse_sec_release(data, ticker, cik, filing, url, now, *, issuer_name=None):
     normalize = lambda value: re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
     if not name.strip() or not re.search(r"\b" + re.escape(normalize(name)) + r"\b", normalize(title)):
         raise ValueError("release_issuer_mismatch")
-    period = _fiscal_period(title)
+    period = _release_period(title, root)
     # Dateline appears before the first report sentence. A quarter-end date in
     # that sentence is not substituted for the announcement day.
     prefix = re.split(r"\b(?:today\s+)?(?:announced|reported)\b", body, maxsplit=1, flags=re.I)[0]
