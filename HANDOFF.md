@@ -34,6 +34,17 @@ under a behavior-preserving task. Investment performance validation is separate.
 
 ## Latest Completed Task
 
+[Earnings discovery profiling](docs/maintenance/20261121_earnings_discovery_profile.md),
+started clean at `05202ad1`. Instrumentation/local equivalence completed; operating
+verification remains. Added setup/SEC rate wait/HTTP/body/parse/worker/join timings,
+actual request identities and cache hit/miss counters, aggregate-only diagnostics.
+No request reuse yet: duplicate requests must be measured, not assumed.
+Coverage/provider/date/TTL/deadline/concurrency/scoring and financial outputs unchanged.
+142 related tests passed, fixed cold/warm/failure/expiry replay **9 exact outputs**
+and identical request argument multisets; selected report208 passed before/after.
+
+### Previous completed short-close task
+
 [Report auxiliary short-session close](docs/maintenance/20261121_report_short_close.md),
 started clean at `ce54e1eb`. Code **`10d216ab`** pushed; direct owner reboot and
 completed operating report verification finished.
@@ -290,17 +301,15 @@ partial-bar audit. Keep these private files out of Git.
 
 ## Next Task Only
 
-**Profile the report's earnings-filing discovery on fixed inputs.**
+**Complete operating verification of earnings-filing discovery profiling.**
 
-Latest completed report records earnings_filing_discovery23.260s while official
-HTTP76calls has active wall12.136s; prior observation23.421s /142calls/21.474s is
-not a controlled comparison. Inspect `earnings_collection.py` and
-`earnings_filing_sources.py`, distinguish HTTP, queue/wait and parsing time, and
-count exact request identities/cache misses rather than function calls.
-Preserve coverage, provider priority, date/period semantics, TTLs and scores.
-Only reuse requests proved identical within the same execution; if none are
-redundant, report the measured cause without a speculative rewrite. Run relevant
-report contracts before/after any change, and update this handoff with one next task.
+Push the verified instrumentation, owner reboot, generate a completed report and
+inspect earnings_discovery.* timings/events. Compare report output hash and
+loaded/disk/Git sources, not separate interrupted screen-rerender diagnostics.
+Separate actual HTTP and parse time from worker join/queue and SEC rate waits.
+Preserve coverage, dates, provider priority, TTLs and decisions. Reuse only proven
+identical requests; if none, report evidence without a speculative optimization.
+Then record operating findings and exactly one next bounded task.
 
 ## Verification Discipline
 
